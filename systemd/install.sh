@@ -647,6 +647,17 @@ if [ -f "$SPIRA_RUN/world.halted" ]; then
         if [ "${_MASKED[$u]:-}" = "1" ]; then
             printf 'install: %s is masked — skipping\n' "$u"; continue
         fi
+        # CONTROL PLANE: a unit declared suspended in $SPIRA_CTRL is not enabled, even when
+        # the world is halted. The subject is the base unit name without instance suffix or
+        # extension (e.g. "spira-suites" from "spira-suites-prod.timer"). ctrl.sh check exits
+        # 0 when a suspension is in force. If ctrl.sh is absent or fails, the unit is enabled
+        # normally — a missing control tool is not a reason to refuse enabling everything.
+        _cs="${u%"-${SPIRA_INSTANCE}.service"}"; _cs="${_cs%"-${SPIRA_INSTANCE}.timer"}"
+        _cs="${_cs%.service}"; _cs="${_cs%.timer}"
+        if [ -x "$SPIRA_HOME/ctrl.sh" ] && \
+                "$SPIRA_HOME/ctrl.sh" check "$_cs" >/dev/null 2>&1; then
+            printf 'install: %s is suspended (ctrl: %s) — skipping\n' "$u" "$_cs"; continue
+        fi
         _en="$(systemctl --user is-enabled "$u" 2>/dev/null || true)"
         if [ "$_en" = "disabled" ] && [ -z "${_NEW[$u]:-}" ]; then
             printf 'install: %s is disabled by operator — leaving unchanged\n' "$u"; continue
@@ -664,6 +675,14 @@ else
     for u in "${ENABLE[@]}"; do
         if [ "${_MASKED[$u]:-}" = "1" ]; then
             printf 'install: %s is masked — skipping\n' "$u"; continue
+        fi
+        # CONTROL PLANE: a unit declared suspended in $SPIRA_CTRL is not enabled.
+        # See the HALTED branch above for the full rationale.
+        _cs="${u%"-${SPIRA_INSTANCE}.service"}"; _cs="${_cs%"-${SPIRA_INSTANCE}.timer"}"
+        _cs="${_cs%.service}"; _cs="${_cs%.timer}"
+        if [ -x "$SPIRA_HOME/ctrl.sh" ] && \
+                "$SPIRA_HOME/ctrl.sh" check "$_cs" >/dev/null 2>&1; then
+            printf 'install: %s is suspended (ctrl: %s) — skipping\n' "$u" "$_cs"; continue
         fi
         # AN OPERATOR-DISABLED UNIT IS LEFT AT ITS CURRENT STATE. A freshly installed unit
         # (_NEW) also reports 'disabled' from is-enabled because it has never been enabled,
@@ -765,9 +784,15 @@ done
 if [ ! -f "$SPIRA_RUN/world.halted" ]; then
     not_active=""
     for u in "${ENABLE[@]}"; do
-        # Masked and operator-disabled units were intentionally left alone; do not
-        # fault them as "enabled but not active".
+        # Masked, operator-disabled, and control-plane-suspended units were intentionally
+        # left alone; do not fault them as "enabled but not active".
         [ "${_MASKED[$u]:-}" = "1" ] && continue
+        _cs="${u%"-${SPIRA_INSTANCE}.service"}"; _cs="${_cs%"-${SPIRA_INSTANCE}.timer"}"
+        _cs="${_cs%.service}"; _cs="${_cs%.timer}"
+        if [ -x "$SPIRA_HOME/ctrl.sh" ] && \
+                "$SPIRA_HOME/ctrl.sh" check "$_cs" >/dev/null 2>&1; then
+            continue
+        fi
         _en="$(systemctl --user is-enabled "$u" 2>/dev/null || true)"
         [ "$_en" = "disabled" ] && [ -z "${_NEW[$u]:-}" ] && continue
         state="$(systemctl --user is-active "$u" 2>/dev/null || true)"

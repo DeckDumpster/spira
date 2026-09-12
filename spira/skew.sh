@@ -190,7 +190,7 @@ check() {
     done
 
     local findings="" hard=0 base remote behind dirty control c_name c_path c_dir c_kind
-    local cond_behind=0 cond_dirty=0 cond_copy=0 cond_stale=0
+    local cond_behind=0 cond_dirty=0 cond_copy=0 cond_stale=0 cond_ctrl=0
 
     # THE POSITIVE CONTROL, FIRST AND UNCONDITIONALLY. Every finding below is an absence
     # claim resting on one matcher, and a matcher that has stopped matching reports a clean
@@ -342,6 +342,25 @@ ${_legacy_note}    Re-run $installer to bring the installed units into line with
         fi
     fi
 
+    # ---------------------------------------------------------------- CTRL DIVERGENCE
+    # A unit declared suspended by the control plane but found active or enabled in systemd
+    # is a decision the system overrode. This does not reconcile; it reports, so the owning
+    # bead or the operator decides. ctrl.sh divergence exits 0 when the declared state matches
+    # systemd's, 1 when there is a mismatch, 2 on error.
+    local ctrl_div_out ctrl_div_rc
+    if [ -x "${SPIRA_HOME}/ctrl.sh" ]; then
+        ctrl_div_out="$("${SPIRA_HOME}/ctrl.sh" divergence 2>&1)"; ctrl_div_rc=$?
+        if [ "$ctrl_div_rc" = 1 ]; then
+            hard=1; cond_ctrl=1
+            findings="${findings}CTRL-DIVERGENCE control plane vs. systemd mismatch:
+$(printf '%s\n' "$ctrl_div_out" | sed 's/^/    /')
+"
+        elif [ "$ctrl_div_rc" != 0 ]; then
+            findings="${findings}CANNOT-CHECK-CTRL ctrl.sh divergence failed (rc=$ctrl_div_rc)
+"
+        fi
+    fi
+
     if [ -z "$findings" ]; then
         printf 'skew: in effect — %s is %s, clean, the only harness the map names, and units match\n' \
             "$SPIRA_REPO" "${base:-its base ref}"
@@ -363,7 +382,7 @@ ${_legacy_note}    Re-run $installer to bring the installed units into line with
         # the condition stays constant, which produced a new ask every hour as the repo fell
         # further behind (sp-624f). The condition key is versioned so a stamp written by the
         # old scheme (a bare cksum) cannot match and causes one re-escalation on upgrade.
-        local condition_key="v2:BEHIND=${cond_behind} DIRTY=${cond_dirty} COPY=${cond_copy} STALE=${cond_stale}"
+        local condition_key="v2:BEHIND=${cond_behind} DIRTY=${cond_dirty} COPY=${cond_copy} STALE=${cond_stale} CTRL=${cond_ctrl}"
         escalate "$condition_key" "$findings"
     fi
     return 1

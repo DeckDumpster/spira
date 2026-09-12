@@ -54,7 +54,7 @@ SPIRA_CONF_KEYS="
 SPIRA_HOME_REPO SPIRA_DB SPIRA_RUN SPIRA_GOAL
 SPIRA_PATH SPIRA_WORKSPACES SPIRA_REPO_MAP SPIRA_PREFIX_MAP SPIRA_CHAMBER SPIRA_WATCHERS
 SPIRA_ACTIONABLE SPIRA_ID_PREFIX SPIRA_HEALTH_TIMEOUT SPIRA_ANSWER_STATE SPIRA_NOTIFY_AGE
-SPIRA_CLIENT_SETTINGS SPIRA_HOOK_LINES
+SPIRA_CLIENT_SETTINGS SPIRA_HOOK_LINES SPIRA_CTRL
 SPIRA_COCKPIT SPIRA_COCKPIT_TRACE_LINES SPIRA_NOTIFY SPIRA_PANEL SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_RECLAIM_SKIP_LABEL
 SPIRA_CI_LABEL SPIRA_CI_PARK_MAX SPIRA_WORLD_STOP_LABEL
 SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE SPIRA_VERDICT_TTL SPIRA_REBASE_ESCALATE_AT SPIRA_VERDICT_WINDOW
@@ -225,6 +225,12 @@ spira_conf_defaults() {
     # ledger, the cockpit state — so a test instance cannot overwrite prod's working state.
     # For prod the suffix is empty; the path is unchanged.
     : "${SPIRA_RUN:=$SPIRA_REPO/.runtime/spira${_spira_inst_sfx}}"
+    # THE OPERATIONAL CONTROL PLANE FILE. Durable state — suspensions, pauses, drains —
+    # that lives outside source control and survives install.sh, pull, and reset.
+    # Defaults to the gitignored runtime directory so no git operation ever touches it.
+    # An operator who wants it elsewhere (e.g. truly outside the repository directory)
+    # sets this key.
+    : "${SPIRA_CTRL:=$SPIRA_RUN/control}"
     : "${SPIRA_GOAL:=sp-spira}"
     : "${SPIRA_PATH:=}"
     : "${SPIRA_WORKSPACES:=$(dirname "$SPIRA_REPO")}"
@@ -1022,7 +1028,7 @@ export SPIRA_INSTANCE \
        SPIRA_TOWN SPIRA_MIRROR SPIRA_EXPORTER SPIRA_DESIGN SPIRA_WIKI SPIRA_WIKI_HOOK SPIRA_DOLT_DATA \
        SPIRA_ALERT_GLOB \
        SPIRA_GATE_NOVERDICT SPIRA_GATE_BASEFAIL \
-       SPIRA_BD SPIRA_CONF_FILE SPIRA_PROD \
+       SPIRA_BD SPIRA_CONF_FILE SPIRA_PROD SPIRA_CTRL \
        SPIRA_REVIEWER_VERDICTS SPIRA_REVIEWER_MODEL SPIRA_REVIEW_LABEL
 
 # --------------------------------------------------------------------------------------
