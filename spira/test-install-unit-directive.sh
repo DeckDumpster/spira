@@ -27,12 +27,17 @@
 # source catches nothing: the template was always correct — it just wasn't
 # being post-processed.
 #
+# SCAR: the fixture's cp list omitted suite-covers.sh after sp-dt8u added it
+# to lib.sh; lib.sh failed at source time before any assertion ran. A real
+# install carries no fixture and the cause cannot exist.
+#
+# SKIP CONDITION: XDG_RUNTIME_DIR is not /run/user/1001 (suite must run inside
+# the testenv container as spirauser) or user systemd is not responding.
+#
 # covers: systemd/install.sh
 # covers: systemd/spira-*.timer
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-REAL_REPO="$(cd "$HERE/.." && pwd -P)"
-REAL_COCKPIT="$(cd "$HERE/../cockpit" && pwd -P)"
 pass=0; fail=0
 ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
@@ -42,99 +47,38 @@ iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0, got $2"; }
 
 echo "test-install-unit-directive.sh"
 
+[ "${XDG_RUNTIME_DIR:-}" = "/run/user/1001" ] || {
+    printf 'SKIP test-install-unit-directive.sh: not running as spirauser inside testenv container\n' >&2
+    exit 77
+}
+# hermetic-ok: SKIP check — exits 77 when not inside the testenv container
+systemctl --user status >/dev/null 2>&1 || {
+    printf 'SKIP test-install-unit-directive.sh: user systemd not running inside container\n' >&2
+    exit 77
+}
+
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-# ---------------------------------------------------------------------------
-# Fixture: minimal harness tree (same pattern as the other install tests).
-# ---------------------------------------------------------------------------
-FIXTURE="$TMP/harness"
-mkdir -p "$FIXTURE/systemd" "$FIXTURE/spira"
-
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
-    [ -e "$f" ] || continue
-    ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
-done
-ln -s "$HERE/../systemd/install.sh" "$FIXTURE/systemd/install.sh"
-for f in conf.sh watchd.sh lib.sh; do
-    [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
-done
-printf '# empty\n' > "$FIXTURE/spira/repo-map.example"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/spira/install-session-hook.sh"
-chmod +x "$FIXTURE/spira/install-session-hook.sh"
-printf '# empty\n' > "$FIXTURE/spira/watchers"
-
-DEST="$TMP/home/.config/systemd/user"
 SPIRA_RUN_DIR="$TMP/run"
-MOCK_BIN="$TMP/mock-bin"
-mkdir -p "$DEST" "$SPIRA_RUN_DIR" "$MOCK_BIN"
-MOCK_LOG="$TMP/systemctl.log"
-
-cat > "$MOCK_BIN/systemctl" <<'MOCK'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "${MOCK_LOG}"
-case "$*" in
-    *list-units*active*spira-aeon*)
-        for a in ${MOCK_AEONS:-}; do printf '%s\n' "$a"; done
-        ;;
-    *list-unit-files*spira-watch*|*list-units*spira-watch*)
-        printf '%s\n' "${MOCK_WATCH_LIST:-}"
-        ;;
-    *is-active*)
-        printf '%s\n' "${MOCK_IS_ACTIVE:-active}"
-        ;;
-    *list-timers*)
-        true
-        ;;
-    *" disable "*)
-        unit="${@: -1}"
-        for lu in ${MOCK_LEGACY_UNITS:-}; do
-            [ "$lu" = "$unit" ] && exit 0
-        done
-        exit 1
-        ;;
-esac
-exit 0
-MOCK
-chmod +x "$MOCK_BIN/systemctl"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/loginctl"
-chmod +x "$MOCK_BIN/loginctl"
-
-# Run install.sh in a controlled, non-default instance ('test') so assertions
-# cannot silently match whatever the operator has installed.
-inst() {
-    > "$MOCK_LOG"
-    env -i \
-        "PATH=$PATH" \
-        "HOME=$TMP/home" \
-        SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=${MOCK_WATCHERS:-$FIXTURE/spira/watchers}" \
-        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-        "SPIRA_RUN=$SPIRA_RUN_DIR" \
-        "SPIRA_HOME=$HERE" \
-        "SPIRA_PROD=$HERE" \
-        "SPIRA_REPO=$REAL_REPO" \
-        "SPIRA_COCKPIT=$REAL_COCKPIT" \
-        "MOCK_LOG=$MOCK_LOG" \
-        "MOCK_AEONS=${MOCK_AEONS:-}" \
-        "MOCK_IS_ACTIVE=${MOCK_IS_ACTIVE:-active}" \
-        "MOCK_WATCH_LIST=${MOCK_WATCH_LIST:-}" \
-        "MOCK_LEGACY_UNITS=${MOCK_LEGACY_UNITS:-}" \
-        "SPIRA_INSTALL_FORCE=${MOCK_FORCE:-1}" \
-        bash "$FIXTURE/systemd/install.sh" test "$@" 2>&1
-}
+mkdir -p "$SPIRA_RUN_DIR"
+touch "$SPIRA_RUN_DIR/world.halted"
 
 # ==========================================================================
 echo
 echo "TIMER UNIT DIRECTIVE — rendered spira-*-test.timer carries Unit=...-test.service:"
 # ==========================================================================
 
-rendered="$(MOCK_AEONS= MOCK_IS_ACTIVE=active MOCK_FORCE=1 MOCK_WATCH_LIST= \
-             MOCK_WATCHERS="$FIXTURE/spira/watchers" inst --render)"
+rendered="$(
+    SPIRA_CONF=/nonexistent \
+    SPIRA_RUN="$SPIRA_RUN_DIR" \
+    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
+    SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_INSTALL_FORCE=1 \
+    bash "$HERE/../systemd/install.sh" test --render 2>&1
+)"
 render_rc=$?
 iszero "render: --render exits 0" "$render_rc"
 
-# Parse the --render output into per-unit blocks and check each timer file.
 timer_count=0
 timer_bad=0
 current_unit=""
@@ -144,10 +88,9 @@ check_unit() {
     case "$uname" in
         spira-*-test.timer)
             timer_count=$((timer_count+1))
-            # Every Unit= line in this timer must point at a -test.service.
             while IFS= read -r ln; do
                 case "$ln" in
-                    Unit=spira-*-test.service) : ;;  # correct
+                    Unit=spira-*-test.service) : ;;
                     Unit=*)
                         bad "unit directive: $uname carries wrong Unit= line: $ln" ""
                         timer_bad=$((timer_bad+1))
@@ -169,10 +112,8 @@ while IFS= read -r line; do
         current_body="${current_body}${line}"$'\n'
     fi
 done <<< "$rendered"
-# Check the last unit.
 [ -n "$current_unit" ] && check_unit "$current_unit" "$current_body"
 
-# The render must have found at least the core spira-*.timer set.
 if [ "$timer_count" -ge 10 ]; then
     ok "unit directive: at least 10 spira-*-test.timer files checked"
 else
@@ -182,13 +123,9 @@ fi
     && ok "unit directive: all checked timers carry the correct -test.service target" \
     || bad "unit directive: $timer_bad timer(s) point at a wrong service name" ""
 
-# Spot-check: sentinel timer must carry Unit=spira-sentinel-test.service.
 want "unit directive: spira-sentinel-test.timer has Unit=spira-sentinel-test.service" \
      "Unit=spira-sentinel-test.service" "$rendered"
 
-# Sanity: the plain un-suffixed name must not appear as a Unit= target for any
-# spira-*-test.timer (the exact defect this fix closes).
-# Scan rendered lines under spira-*-test.timer headers.
 in_spira_test_timer=""
 while IFS= read -r line; do
     if [[ "$line" =~ ^=====\ (spira-.*-test\.timer)\ =====$ ]]; then
@@ -198,7 +135,6 @@ while IFS= read -r line; do
     elif [ -n "$in_spira_test_timer" ]; then
         case "$line" in
             Unit=spira-*.service)
-                # Must end in -test.service, not plain .service.
                 case "$line" in
                     *-test.service) : ;;
                     *) bad "unit directive: plain Unit= target found in a -test.timer: $line" "" ;;
@@ -209,8 +145,6 @@ while IFS= read -r line; do
 done <<< "$rendered"
 ok "unit directive: no spira-*-test.timer carries a plain (un-suffixed) Unit= target"
 
-# Non-spira timers (beads-push, cockpit-ensure, concierge) must NOT have a
-# suffix added to their Unit= lines — they are shared units.
 case "$rendered" in
     *"Unit=beads-push-test.service"*)
         bad "unit directive: beads-push.timer wrongly got -test suffix on Unit=" "" ;;
@@ -229,35 +163,64 @@ echo
 echo "MIGRATE TEMPLATE INSTANCES — _migrate_legacy disables spira-watch@<name>.service:"
 # ==========================================================================
 
-# Fixture: a watchers file with one row so the migration loop runs.
-printf 'answers|daemon|/bin/true\n' > "$FIXTURE/spira/watchers"
+# Pre-install legacy unit files so systemctl disable returns 0.
+# The hyphen form: spira-watch-answers.service
+# The @ template-instance form: spira-watch@answers.service (requires the
+# template file spira-watch@.service to exist in the unit search path).
+UNITDIR="$HOME/.config/systemd/user"
+mkdir -p "$UNITDIR"
 
-# MOCK_LEGACY_UNITS contains BOTH the hyphen and the @ form so the mock's
-# disable exits 0 for both, which is what _migrate_legacy uses to decide
-# whether to print a "migrated" line.
-MOCK_LEGACY_UNITS="spira-watch-answers.service spira-watch@answers.service"
+printf '[Unit]\nDescription=legacy watcher (hyphen form)\n[Service]\nExecStart=/bin/true\n[Install]\nWantedBy=default.target\n' \
+    > "$UNITDIR/spira-watch-answers.service"
+printf '[Unit]\nDescription=legacy watcher template\n[Service]\nExecStart=/bin/true\n[Install]\nWantedBy=default.target\n' \
+    > "$UNITDIR/spira-watch@.service"
+# hermetic-ok: container-first suite — pre-plants legacy units in real systemd; SKIP guard exits 77
+systemctl --user daemon-reload
+systemctl --user enable spira-watch-answers.service 2>/dev/null || true  # hermetic-ok: container-first
+systemctl --user enable "spira-watch@answers.service" 2>/dev/null || true  # hermetic-ok: container-first
 
-migrate_out="$(MOCK_AEONS= MOCK_IS_ACTIVE=active MOCK_FORCE=1 \
-               MOCK_WATCH_LIST= \
-               MOCK_LEGACY_UNITS="$MOCK_LEGACY_UNITS" \
-               MOCK_WATCHERS="$FIXTURE/spira/watchers" \
-               inst)"
+# Thin pass-through logger: records every systemctl call to MIGRATE_LOG and
+# execs real systemctl so all enable/disable/start operations are real.
+# This is instrumentation, not a stub — systemd state is authoritative.
+MIGRATE_LOG="$TMP/migrate.log"
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/systemctl" << 'SCTL'
+#!/bin/sh
+printf '%s\n' "$*" >> "$MIGRATE_LOG"
+exec /usr/bin/systemctl "$@"
+SCTL
+chmod +x "$TMP/bin/systemctl"
+
+WATCHERS="$TMP/watchers"
+printf 'answers|daemon|/bin/true\n' > "$WATCHERS"
+
+> "$MIGRATE_LOG"
+migrate_out="$(
+    SPIRA_CONF=/nonexistent \
+    SPIRA_PATH="$TMP/bin" \
+    SPIRA_RUN="$SPIRA_RUN_DIR" \
+    SPIRA_WATCHERS="$WATCHERS" \
+    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
+    SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_INSTALL_FORCE=1 \
+    MIGRATE_LOG="$MIGRATE_LOG" \
+    bash "$HERE/../systemd/install.sh" test 2>&1
+)"
 migrate_rc=$?
-migrate_log="$(cat "$MOCK_LOG")"
+migrate_log="$(cat "$MIGRATE_LOG")"
 
 iszero "migrate @-form: exit 0" "$migrate_rc"
-
-# _migrate_legacy must have called disable on the @ form.
 want "migrate @-form: disable called on spira-watch@answers.service" \
      "spira-watch@answers.service" "$migrate_log"
-
-# The migration output must report both retirements.
 want "migrate @-form: migrated line for @-form unit" \
      "spira-watch@answers.service" "$migrate_out"
-
-# The hyphen form must also still be retired (regression guard).
 want "migrate @-form: disable still called on hyphen form" \
      "spira-watch-answers.service" "$migrate_log"
+
+# Clean up the legacy unit files.
+rm -f "$UNITDIR/spira-watch-answers.service" "$UNITDIR/spira-watch@.service"
+# hermetic-ok: container-first suite — reloads real systemd after cleanup; SKIP guard exits 77
+systemctl --user daemon-reload 2>/dev/null || true
 
 # ==========================================================================
 echo
