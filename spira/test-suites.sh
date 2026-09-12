@@ -36,6 +36,11 @@
 # defect: sp-ewnb
 # covers: spira/suites.sh spira/gate-suites spira/gate-spira.sh spira/incident.sh
 # timeout: 180
+# host-reason: testdb provides isolation; no host systemd or network contact required.
+# scar: the landing-gate section's hand-written stub loop listed `exclude.sh inventory.sh
+# hermetic.sh sop.sh` and omitted `literal-lint.sh` when c515322 added it as gate-spira.sh's
+# fourth fence — gate refused with "literal-lint.sh is missing" on every gate invocation in the
+# section; gate_fence_stubs derives the fence list from gate-spira.sh at call time (sp-vnxz).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0
@@ -49,6 +54,7 @@ echo "test-suites.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
+. "$HERE/gate-fences.sh"
 testdb_require test-suites
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up suites || { echo "test-suites: could not build a fixture database"; exit 1; }
@@ -518,9 +524,10 @@ GT="$TMP/gtree"
 mkdir -p "$GT/spira"
 git init -q -b main "$GT"
 cp "$HERE/gate-spira.sh" "$HERE/suite-covers.sh" "$GT/spira/"
-for stub in exclude.sh inventory.sh hermetic.sh sop.sh; do
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$GT/spira/$stub"
-done
+gate_fence_stubs "$GT/spira/gate-spira.sh" "$GT/spira"
+# sop.sh is checked by gate-spira.sh outside the fence loop, so gate_fence_stubs does not
+# create it; stub it separately so the gate reaches the suites section.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$GT/spira/sop.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$GT/spira/test-gt-ok.sh"
 git -C "$GT" add -A
 git -C "$GT" -c user.email=t@t -c user.name=t commit -q -m base
