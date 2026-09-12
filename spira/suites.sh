@@ -340,6 +340,7 @@ file_env_red() {    # file_env_red <basename> <rc> <seconds> <fp> <output> <diff
           SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" \
           SPIRA_INCIDENT_REPO="$SPIRA_HOME_REPO" \
           SPIRA_INCIDENT_REF="runner-env:$s" \
+          SPIRA_INCIDENT_CAUSE=runner-env \
           SPIRA_INCIDENT_PATH="$HERE/$s" \
           SPIRA_DB="$SPIRA_DB" \
           bash "$INC" file "$s is red under the timed runner but passes in an aeon's environment" - <<PAYLOAD
@@ -401,6 +402,7 @@ file_fixture_fault() {  # file_fixture_fault <n> <suite-list> <fixture-name>
           SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" \
           SPIRA_INCIDENT_REPO="$SPIRA_HOME_REPO" \
           SPIRA_INCIDENT_REF="fixture-fault:${fixture}" \
+          SPIRA_INCIDENT_CAUSE=fixture-fault \
           SPIRA_INCIDENT_PATH="$HERE/testdb.sh" \
           SPIRA_DB="$SPIRA_DB" \
           bash "$INC" file "shared fixture collapsed — ${n} suite(s) could not start" - <<PAYLOAD

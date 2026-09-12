@@ -601,6 +601,7 @@ if [ "$_unsent_oldest" != "?" ] && [ "$_unsent_oldest" -ge "$UNSENT_WARN_H" ] 2>
         SPIRA_SIN_EXEMPT=1 \
         SPIRA_INCIDENT_REPO=spira \
         SPIRA_INCIDENT_REF=incident:sending-oldest-unsent \
+        SPIRA_INCIDENT_CAUSE=oldest-unsent \
         bash "$INC" file "SENDING: oldest unsent branch above threshold" - >/dev/null || true
         log "watchtower: sending escalation filed (oldest unsent ${_unsent_oldest}h >= ${UNSENT_WARN_H}h threshold)"
     else
@@ -619,6 +620,7 @@ if [ "$_unadopted" != "?" ] && [ "$_unadopted" -gt 0 ] 2>/dev/null; then
         SPIRA_SIN_EXEMPT=1 \
         SPIRA_INCIDENT_REPO=spira \
         SPIRA_INCIDENT_REF=incident:sending-unadopted-refs \
+        SPIRA_INCIDENT_CAUSE=unadopted-refs \
         bash "$INC" file "SENDING: unadopted refs cannot be reaped" - >/dev/null || true
         log "watchtower: unadopted escalation filed (${_unadopted} unadopted refs)"
     else
@@ -660,6 +662,7 @@ if [ "$_dup_refs" != "?" ] && [ "$_dup_refs" -gt 0 ] 2>/dev/null; then
         SPIRA_SIN_EXEMPT=1 \
         SPIRA_INCIDENT_REPO=spira \
         SPIRA_INCIDENT_REF=incident:dedup-meter-nonzero \
+        SPIRA_INCIDENT_CAUSE=dedup-meter \
         bash "$INC" file "DEDUP: duplicate incident refs detected (${_dup_refs} refs, ${_dup_beads} surplus)" - >/dev/null || true
         log "watchtower: dedup escalation filed (${_dup_refs} dup refs, ${_dup_beads} surplus beads)"
     else

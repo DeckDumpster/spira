@@ -309,6 +309,7 @@ base_incident() {        # base_incident <repo> <suite> <reason> <branch> <base>
           SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" \
           SPIRA_INCIDENT_REPO="$name" \
           SPIRA_INCIDENT_REF="basefail:$name:$suite" \
+          SPIRA_INCIDENT_CAUSE=base-suite-red \
           bash "$INC" file "$name's own gate fails against $base — nothing can land" - <<PAYLOAD
 $name's landing gate was run against $base itself and failed there, so every branch of
 this repository is refused for a condition no branch caused. No bead has been reopened and

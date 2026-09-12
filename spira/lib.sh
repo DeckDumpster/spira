@@ -2946,7 +2946,7 @@ for bead in beads:
 # file_unclaimable_incidents — for each UNCLAIMABLE line in detect_unclaimable_ready output,
 # file a P1 incident so Ops can claim and fix the label.
 #
-# THE CALL IS IDEMPOTENT. incident.sh dedupes on SPIRA_INCIDENT_REF=unclaimable:<id>, so a
+# THE CALL IS IDEMPOTENT. incident.sh dedupes on the unclaimable:<id> ref, so a
 # bead that is still unclaimable on the next sentinel pass bumps the recurrence counter
 # rather than filing a duplicate. An operator who fixes the label and the pass goes quiet is
 # the passing case; one who does not is a recurrence, not a new incident.
@@ -2971,6 +2971,7 @@ file_unclaimable_incidents() {   # file_unclaimable_incidents <detect_unclaimabl
         SPIRA_INCIDENT_ACTOR=sentinel \
         SPIRA_INCIDENT_REPO="${SPIRA_SCOPE_LABEL:-spira}" \
         SPIRA_INCIDENT_REF="unclaimable:$bid" \
+        SPIRA_INCIDENT_CAUSE=unclaimable \
         bash "$inc" file "UNCLAIMABLE: $bid — fix the fayth: or partition label" \
             - <<< "$reason" >/dev/null 2>&1 || true
     done <<< "$1"

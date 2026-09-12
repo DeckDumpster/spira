@@ -63,6 +63,7 @@ _file_incident() {
     SPIRA_INCIDENT_LABELS="spira,incident" \
     SPIRA_INCIDENT_REPO="spira" \
     SPIRA_INCIDENT_REF="canary:pipeline" \
+    SPIRA_INCIDENT_CAUSE=canary-fail \
         bash "$inc" file "$title" - <<< "$body" >/dev/null 2>&1 || true
 }
 
