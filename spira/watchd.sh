@@ -589,7 +589,7 @@ cmd_status() {
         [ -n "$name" ] || continue
         wname+=("$name"); wkind+=("$kind"); wtarget+=("$target"); whealth+=("$health")
         wlog+=("$(_wd_logfile "$name" "$kind" "$target")")
-        [ "$kind" = daemon ] && units+=("spira-watch@$name.service")
+        [ "$kind" = daemon ] && units+=("$(watch_unit_name "$name")")
     done <<< "$rows"
 
     # ONE EXEC FOR EVERY UNIT. `systemctl is-active` takes any number of units and answers one
@@ -655,7 +655,18 @@ cmd_status() {
         # in the table.
         if [ -n "${mtime["$lf"]-}" ]; then age="$(_wd_age "$(( now - ${mtime["$lf"]} ))")"; else age="-"; fi
 
-        _wd_probe "${whealth[$i]}"
+        # A DAEMON WHOSE UNIT IS NOT ACTIVE IS A DEAD WRITER, AND HEALTH MUST SAY SO. The
+        # probe answers "can the watcher see what it watches?", but a watcher that is not
+        # running cannot see anything. Skipping the probe when the unit is down avoids a
+        # false OK from a probe that reads a file the dead watcher last wrote hours ago
+        # (law-absence-needs-a-positive-control). The UNIT column already shows the state;
+        # HEALTH names the condition in terms a Monitor-attaching session needs to act on.
+        if [ "${wkind[$i]}" = daemon ] && [ "$state" != "active" ]; then
+            _wd_hstate="DEGRADED"
+            _wd_hwhy="unit is $state — no writer"
+        else
+            _wd_probe "${whealth[$i]}"
+        fi
         [ "$_wd_hstate" = DEGRADED ] && degraded+=("${wname[$i]}: $_wd_hwhy")
 
         printf '%-14s %-10s %-8s %7s %10s %8s  %s\n' \
@@ -963,7 +974,7 @@ cmd_restart() {
             fi
             continue
         fi
-        units+=("spira-watch@$name.service"); names+=("$name")
+        units+=("$(watch_unit_name "$name")"); names+=("$name")
     done <<< "$rows"
 
     if [ -n "$only" ] && [ -z "$found" ]; then

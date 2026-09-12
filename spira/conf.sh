@@ -1058,6 +1058,16 @@ spira_bin_purpose() {
     esac
 }
 
+# watch_unit_name <watcher-name> -> the installed systemd unit name for a daemon watcher.
+#
+# MIRRORS inst_watch_name IN systemd/units.sh — one formula, two callers. A watcher named
+# "answers" installs as spira-watch-answers-prod.service (not spira-watch@answers.service,
+# which is the template form and is never instantiated). Querying the template form always
+# returns 'inactive', so a stopped watcher and a running watcher are indistinguishable.
+# Every caller that queries or restarts a watcher unit goes through this function so the two
+# cannot drift.
+watch_unit_name() { printf 'spira-watch-%s-%s.service' "$1" "${SPIRA_INSTANCE:-prod}"; }
+
 # spira_unit <base> [service|timer] -> the unit name for this installation.
 # Tries the instance-qualified form first (spira-<base>-<instance>.<type>); if that
 # unit is not loaded (neither enabled nor active), falls back to the plain form.
