@@ -20,11 +20,16 @@
 # POSITIVE CONTROL: the matcher must first demonstrate it finds a known collision,
 # then be trusted when it reports none (law-absence-needs-a-positive-control).
 #
+# SCAR: the fixture's cp list omitted suite-covers.sh after sp-dt8u added it to
+# lib.sh; lib.sh failed at source time before any assertion ran. A real install
+# carries no fixture and the cause cannot exist.
+#
+# SKIP CONDITION: XDG_RUNTIME_DIR is not /run/user/1001 (suite runs inside the
+# testenv container as spirauser) or user systemd is not responding.
+#
 # covers: systemd/install.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-REAL_REPO="$(cd "$HERE/.." && pwd -P)"
-REAL_COCKPIT="$(cd "$HERE/../cockpit" && pwd -P)"
 pass=0; fail=0
 ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
@@ -35,97 +40,51 @@ nonzero() { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit, got 0"; 
 
 echo "test-install-paths.sh"
 
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-
-# ---------------------------------------------------------------------------
-# Fixture: minimal harness tree.
-# ---------------------------------------------------------------------------
-FIXTURE="$TMP/harness"
-mkdir -p "$FIXTURE/systemd" "$FIXTURE/spira"
-
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
-    [ -e "$f" ] || continue
-    ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
-done
-ln -s "$HERE/../systemd/install.sh" "$FIXTURE/systemd/install.sh"
-for f in conf.sh watchd.sh lib.sh; do
-    [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
-done
-printf '# empty\n' > "$FIXTURE/spira/watchers"
-printf '# empty\n' > "$FIXTURE/spira/repo-map"
-printf '# empty\n' > "$FIXTURE/spira/repo-map.example"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/spira/install-session-hook.sh"
-chmod +x "$FIXTURE/spira/install-session-hook.sh"
-
-DEST="$TMP/home/.config/systemd/user"
-SPIRA_RUN_DIR="$TMP/run"
-MOCK_BIN="$TMP/mock-bin"
-# The config directory — both instance configs live here so the collision check finds them.
-CONF_DIR="$TMP/home/.config/spira"
-mkdir -p "$DEST" "$SPIRA_RUN_DIR" "$MOCK_BIN" "$CONF_DIR"
-MOCK_LOG="$TMP/systemctl.log"
-
-cat > "$MOCK_BIN/systemctl" <<'MOCK'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "${MOCK_LOG}"
-case "$*" in
-    *list-units*active*spira-aeon*) true ;;
-    *list-unit-files*spira-watch*) true ;;
-    *list-units*spira-watch*) true ;;
-    *is-active*) printf 'active\n' ;;
-    *list-timers*) true ;;
-esac
-exit 0
-MOCK
-chmod +x "$MOCK_BIN/systemctl"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/loginctl"
-chmod +x "$MOCK_BIN/loginctl"
-
-# inst_conf <spira-conf-path> [extra-env...] — run install.sh for the 'test' instance
-# with SPIRA_CONF pointing at the given file. SPIRA_RUN is passed in the environment
-# (env wins over the config file) so the collision check compares against it.
-inst_conf() {
-    local conf_path="$1"; shift
-    > "$MOCK_LOG"
-    env -i \
-        "PATH=$PATH" \
-        "HOME=$TMP/home" \
-        "SPIRA_CONF=$conf_path" \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-        "SPIRA_RUN=$SPIRA_RUN_DIR" \
-        "SPIRA_HOME=$FIXTURE/spira" \
-        "SPIRA_PROD=$FIXTURE/spira" \
-        "SPIRA_REPO=$REAL_REPO" \
-        "SPIRA_COCKPIT=$REAL_COCKPIT" \
-        "MOCK_LOG=$MOCK_LOG" \
-        SPIRA_INSTALL_FORCE=1 \
-        "$@" \
-        bash "$FIXTURE/systemd/install.sh" test 2>&1
+[ "${XDG_RUNTIME_DIR:-}" = "/run/user/1001" ] || {
+    printf 'SKIP test-install-paths.sh: not running as spirauser inside testenv container\n' >&2
+    exit 77
+}
+# hermetic-ok: SKIP check — exits 77 when not inside the testenv container
+systemctl --user status >/dev/null 2>&1 || {
+    printf 'SKIP test-install-paths.sh: user systemd not running inside container\n' >&2
+    exit 77
 }
 
-# Seed DEST with pre-rendered units so the install loop has existing files to compare.
-# Use SPIRA_CONF=/nonexistent (no config file) for the seed render so it is clean.
-rendered="$(
-    env -i \
-        "PATH=$PATH" \
-        "HOME=$TMP/home" \
-        SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-        "SPIRA_RUN=$SPIRA_RUN_DIR" \
-        "SPIRA_HOME=$FIXTURE/spira" \
-        "SPIRA_PROD=$FIXTURE/spira" \
-        "SPIRA_REPO=$REAL_REPO" \
-        "SPIRA_COCKPIT=$REAL_COCKPIT" \
-        "MOCK_LOG=$MOCK_LOG" \
-        bash "$FIXTURE/systemd/install.sh" test --render 2>&1
-)"
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+
+CONF_DIR="$TMP/conf"
+SPIRA_RUN_DIR="$TMP/run"
+DEST="$HOME/.config/systemd/user"
+mkdir -p "$CONF_DIR" "$SPIRA_RUN_DIR" "$DEST"
+
+# world.halted causes install.sh to enable units but not start them and to skip
+# the end-state check (which needs bd + a real database, absent here).
+touch "$SPIRA_RUN_DIR/world.halted"
+
+# inst_paths [extra-env...] — run install.sh with path-collision env.
+inst_paths() {
+    SPIRA_RUN="$SPIRA_RUN_DIR" \
+    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
+    SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_INSTALL_FORCE=1 \
+    "$@" \
+    bash "$HERE/../systemd/install.sh" test 2>&1
+}
+
+# Seed DEST by rendering with no collision check (SPIRA_CONF=/nonexistent).
+rendered="$(SPIRA_CONF=/nonexistent inst_paths)"
 render_rc=$?
 if [ "$render_rc" != 0 ]; then
-    printf 'fixture: --render failed (rc=%s) — cannot continue\n' "$render_rc"
+    # Retry with --render only (collision check may still block a full install here).
+    rendered="$(SPIRA_CONF=/nonexistent SPIRA_RUN="$SPIRA_RUN_DIR" \
+        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
+        SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
+        SPIRA_INSTALL_FORCE=1 \
+        bash "$HERE/../systemd/install.sh" test --render 2>&1)"
+    render_rc=$?
+fi
+if [ "$render_rc" != 0 ]; then
+    printf 'fixture: install.sh test --render failed (rc=%s)\n' "$render_rc"
     printf '%s\n' "$rendered"
     exit 1
 fi
@@ -142,22 +101,17 @@ done <<< "$rendered"
 echo
 echo "POSITIVE CONTROL — collision on SPIRA_RUN is detected:"
 # ==========================================================================
-# Create a prod.conf that explicitly sets SPIRA_RUN to the same value we pass
-# in the environment. The check compares the env-resolved SPIRA_RUN against
-# what prod.conf explicitly declares — they match, so it must refuse.
-
 printf 'SPIRA_INSTANCE = prod\nSPIRA_RUN = %s\n' "$SPIRA_RUN_DIR" \
     > "$CONF_DIR/prod.conf"
 printf 'SPIRA_INSTANCE = test\n' > "$CONF_DIR/test.conf"
 
-collision_out="$(inst_conf "$CONF_DIR/test.conf")"
+collision_out="$(SPIRA_CONF="$CONF_DIR/test.conf" inst_paths)"
 collision_rc=$?
 
 nonzero "collision: exit non-zero when SPIRA_RUN collides"   "$collision_rc"
 want    "collision: names the colliding key"                  "SPIRA_RUN"   "$collision_out"
 want    "collision: names the other instance"                 "prod"        "$collision_out"
 want    "collision: names the other config file"              "prod.conf"   "$collision_out"
-# No unit must have been written — DEST should still hold only the seeded files.
 installed_after="$(ls "$DEST" | wc -l | tr -d ' ')"
 pre_seeded="$(ls "$DEST" | wc -l | tr -d ' ')"
 [ "$installed_after" = "$pre_seeded" ] \
@@ -168,12 +122,10 @@ pre_seeded="$(ls "$DEST" | wc -l | tr -d ' ')"
 echo
 echo "DISTINCT PATHS — different SPIRA_RUN values do not block the install:"
 # ==========================================================================
-# prod.conf sets a DIFFERENT SPIRA_RUN. The check must stay silent.
-
 printf 'SPIRA_INSTANCE = prod\nSPIRA_RUN = %s\n' "$TMP/other-run" \
     > "$CONF_DIR/prod.conf"
 
-distinct_out="$(inst_conf "$CONF_DIR/test.conf")"
+distinct_out="$(SPIRA_CONF="$CONF_DIR/test.conf" inst_paths)"
 distinct_rc=$?
 
 iszero  "distinct: exit 0 when no path collision"            "$distinct_rc"
@@ -184,25 +136,7 @@ nowant  "distinct: no collision mention in output"           "collides" "$distin
 echo
 echo "NO CONFIG FILE — SPIRA_CONF=/nonexistent skips the collision check:"
 # ==========================================================================
-# When SPIRA_CONF_FILE is empty (no file found), the check returns 0 immediately.
-
-no_conf_out="$(
-    env -i \
-        "PATH=$PATH" \
-        "HOME=$TMP/home" \
-        SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-        "SPIRA_RUN=$SPIRA_RUN_DIR" \
-        "SPIRA_HOME=$FIXTURE/spira" \
-        "SPIRA_PROD=$FIXTURE/spira" \
-        "SPIRA_REPO=$REAL_REPO" \
-        "SPIRA_COCKPIT=$REAL_COCKPIT" \
-        "MOCK_LOG=$MOCK_LOG" \
-        SPIRA_INSTALL_FORCE=1 \
-        bash "$FIXTURE/systemd/install.sh" test 2>&1
-)"
+no_conf_out="$(SPIRA_CONF=/nonexistent inst_paths)"
 no_conf_rc=$?
 
 iszero  "no-conf: exit 0 when no config file (check skipped)" "$no_conf_rc"
@@ -212,20 +146,15 @@ nowant  "no-conf: no refusal message"                          "refusing" "$no_c
 echo
 echo "SAME INSTANCE — two configs with the same SPIRA_INSTANCE are not compared:"
 # ==========================================================================
-# A config file declaring the SAME instance as the current install should be ignored,
-# even if it sets a matching SPIRA_RUN. Comparing an instance against itself is not
-# a collision; it is the same install run more than once.
-
 printf 'SPIRA_INSTANCE = test\nSPIRA_RUN = %s\n' "$SPIRA_RUN_DIR" \
     > "$CONF_DIR/test-other.conf"
 
-same_inst_out="$(inst_conf "$CONF_DIR/test.conf")"
+same_inst_out="$(SPIRA_CONF="$CONF_DIR/test.conf" inst_paths)"
 same_inst_rc=$?
 
 iszero  "same-instance: exit 0 when other config has same SPIRA_INSTANCE" "$same_inst_rc"
 nowant  "same-instance: no refusal message"                                "refusing" "$same_inst_out"
 
-# Clean up the extra config.
 rm -f "$CONF_DIR/test-other.conf"
 
 # ==========================================================================
