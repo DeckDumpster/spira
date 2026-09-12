@@ -70,7 +70,9 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
        concierge.service concierge.timer
        beads-push.service beads-push.timer
        spira-archive.service spira-archive.timer
-       spira-suites.service spira-suites.timer
+       # spira-suites.* SUSPENDED 2026-09-12 (per Ryan) — the timed suite run is off while the
+       # suite-red backlog is cleaned up. Listed here rather than deleted so skew.sh reports it
+       # UNLISTED and the suspension stays visible. Restore both lines via sp-jxia.
        spira-groom.service spira-groom.timer
        spira-maechen.service spira-maechen.timer
        spira-moot-sweep.service spira-moot-sweep.timer
@@ -85,7 +87,6 @@ _ENABLE_TMPL=(cockpit-ensure.timer concierge.timer spira-watch-refresh.timer
               spira-watchtower.timer spira-skew.timer spira-promote.timer
               spira-archive.timer
               spira-archivist.timer spira-watch-notify.timer
-              spira-suites.timer
               spira-groom.timer
               spira-maechen.timer
               spira-moot-sweep.timer
