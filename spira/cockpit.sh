@@ -1158,7 +1158,18 @@ except Exception: print("")' 2>/dev/null)"
     # TAB-SEPARATED: id, repo, priority, closed_at, title. The extra fields feed the PEND
     # section below without a second walk of the database. The first two fields serve the
     # existing landing check; the rest serve the unlanded-queue detail rows.
-    closed_pairs="$(bdjson list --status closed --limit 0 --label "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" 2>/dev/null | python3 -c '
+    #
+    # bdjson is a pipeline ending in sed (json_only), so it exits 0 even when bd refuses and
+    # produces nothing. Call bdq directly and gate on emptiness before parsing: an empty
+    # response means the probe refused, which must render ? not 0 (law-detection-outranks-rejection).
+    local _closed_raw _closed_read=1
+    _closed_raw="$(bdq list --status closed --limit 0 --label "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" --json 2>/dev/null)"
+    [ -n "$_closed_raw" ] || _closed_read=0
+    if [ "$_closed_read" = 0 ]; then
+        echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_AWAITING_LAND=?"; echo "SP_UNLANDED=?"
+        echo "SP_PEND_N=?"; echo "SP_PEND_OLDEST=?"
+    else
+    closed_pairs="$(printf '%s\n' "$_closed_raw" | json_only | python3 -c '
 import sys, json, os, re, datetime
 run, home = sys.argv[1], sys.argv[2]
 try: d = json.load(sys.stdin)
@@ -1281,6 +1292,7 @@ for i in awaiting_ids:
             echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_AWAITING_LAND=?"; echo "SP_UNLANDED=?"
             echo "SP_PEND_N=?"; echo "SP_PEND_OLDEST=?"
         fi
+    fi
     fi
     fi
 

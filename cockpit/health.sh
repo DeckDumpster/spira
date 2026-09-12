@@ -1279,7 +1279,7 @@ standing_lines() {
     # produced nonsense — 59% of the row was outside its header's window.
     printf '        %s24h worked %s:%s %s landed · %s%s awaiting%s · %s%s never landed%s\n' \
         "$C_DIM" "${SP_CLOSED:-?}" "$C_RST" "${SP_LANDED:-?}" \
-        "$C_DIM" "${SP_AWAITING_LAND:-0}" "$C_RST" \
+        "$C_DIM" "${SP_AWAITING_LAND:-?}" "$C_RST" \
         "$( [ "${SP_UNLANDED:-0}" = 0 ] && printf '%s' "$C_OK" || printf '%s' "$C_BAD$C_B")" "${SP_UNLANDED:-?}" "$C_RST"
     fit "never landed = closed, no commit names it, no branch" $(( COLS - 8 ))
     printf '        %s%s%s\n' "$C_DIM" "$FIT" "$C_RST"
