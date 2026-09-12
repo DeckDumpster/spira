@@ -3,7 +3,7 @@
 #
 # Given a branch: resolves the base ref via spira_landref, computes the full diff
 # against it (the release unit), selects suites whose # covers: globs intersect,
-# stands up one container, installs the candidate, runs the selection serially,
+# stands up one container, installs the candidate, runs the selected suites,
 # collects results onto the host, and tears down.
 #
 # BASE REF IS RESOLVED, NEVER ASSUMED. Three repos use master; the assumption was
@@ -12,13 +12,15 @@
 # master-base fixture case is an acceptance criterion, not an afterthought.
 #
 # RESULT PROTOCOL. Each suite writes <results>/<suite>.result and <results>/<suite>.out.
-# Result format: <status> <epoch> <seconds> <fingerprint> — the shape suites.sh uses.
+# Result format: <status> <epoch> <seconds> <fingerprint> <mode>.
 # A selected suite with no result file is unreached, never green. unreached never
 # overwrites a completed status (law-absence-needs-a-positive-control; sp-u1g would
 # have overwritten here — that defect is why this protocol exists).
+# The mode (parallel or serial) is the 5th field: a green under serial is a weaker
+# claim than a green under parallel; the record must not conflate them.
 #
 # USAGE
-#   testenv-batch.sh <branch> [<repo-name-or-path>]
+#   testenv-batch.sh [--mode parallel|serial] <branch> [<repo-name-or-path>]
 #
 # EXIT STATUS
 #   0   all selected suites passed or skipped
@@ -54,11 +56,36 @@ _CONTAINER_CARGO="/var/spira/cargo"
 _CONTAINER_WORKSPACE="/workspace"
 
 # ---------------------------------------------------------------------------
-# ARGS
+# ARGS — parse --mode flag before positional arguments.
 # ---------------------------------------------------------------------------
+MODE="parallel"  # default: parallel is safer and the normal operating mode
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --mode)
+            [ $# -ge 2 ] || { printf 'batch: --mode requires an argument\n' >&2; exit 2; }
+            MODE="$2"; shift 2 ;;
+        --mode=*)
+            MODE="${1#--mode=}"; shift ;;
+        --)
+            shift; break ;;
+        -*)
+            printf 'batch: unknown option: %s\n' "$1" >&2
+            printf 'usage: testenv-batch.sh [--mode parallel|serial] <branch> [<repo-name>]\n' >&2
+            exit 2 ;;
+        *)  break ;;
+    esac
+done
+case "$MODE" in
+    parallel|serial) ;;
+    *) printf 'batch: --mode must be parallel or serial, got: %s\n' "$MODE" >&2; exit 2 ;;
+esac
+
 BR="${1:-}"
 REPO_ARG="${2:-}"
-[ -n "$BR" ] || { printf 'usage: testenv-batch.sh <branch> [<repo-name>]\n' >&2; exit 2; }
+[ -n "$BR" ] || {
+    printf 'usage: testenv-batch.sh [--mode parallel|serial] <branch> [<repo-name>]\n' >&2
+    exit 2
+}
 
 # ---------------------------------------------------------------------------
 # REPO — resolve path and name, following gate.sh's pattern.
@@ -199,7 +226,8 @@ _batch_key() {
     sel_h="$(printf '%s\n' $SELECTED | sort | sha256sum | cut -d' ' -f1)"
     harness_h="$(cat "$0" "$HERE/suite-covers.sh" 2>/dev/null | sha256sum | cut -d' ' -f1)"
     [ -n "$harness_h" ] || return 1
-    printf '%s\n' "$REPO_NAME $tree $IMG_TAG $sel_h $harness_h" | sha256sum | cut -d' ' -f1
+    # MODE is included: a serial-green must not replay for a parallel run.
+    printf '%s\n' "$REPO_NAME $tree $IMG_TAG $sel_h $harness_h $MODE" | sha256sum | cut -d' ' -f1
 }
 BATCH_KEY="$(_batch_key 2>/dev/null || true)"
 
@@ -264,10 +292,12 @@ INSTANCE="${SPIRA_BATCH_INSTANCE:-$_inst_default}"
 CNAME="spira-batch-${INSTANCE}"
 
 _batch_tmp="$(mktemp)"
+_par_tmp=""  # set in parallel block; empty means serial mode was used
 
 _batch_cleanup() {
     bash "$TESTENV" down --name "$CNAME" >/dev/null 2>&1 || true
     rm -f "$_batch_tmp"
+    [ -n "$_par_tmp" ] && rm -rf "$_par_tmp" || true
 }
 trap _batch_cleanup EXIT INT TERM
 
@@ -319,69 +349,181 @@ if [ -z "${SPIRA_BATCH_SKIP_INSTALL:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# RUN SUITES SERIALLY
+# RUN SUITES — serial or parallel, per --mode.
+#
+# MODE is recorded as the 5th field of every result file: a green under serial
+# is a weaker claim than a green under parallel; the record must not conflate them.
+#
+# PARALLEL isolation (each suite gets its own):
+#   SPIRA_INSTANCE: units are named per-instance; parallel suites cannot collide.
+#   SPIRA_RUN:      each suite's temp state is isolated at a distinct path.
+#   TESTDB_NAME:    TESTDB_SHARED=0 + empty TESTDB_NAME → testdb.sh generates a
+#                   unique name per invocation; multiple parallel calls each get
+#                   their own fixture database.
 # ---------------------------------------------------------------------------
 _n_selected=0; for _s in $SELECTED; do _n_selected=$((_n_selected+1)); done
-log "batch: running $_n_selected suite(s) in $CNAME"
+log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE)"
 
 _batch_red=0
 _batch_container_dead=0
 
-for s in $SELECTED; do
-    t0="$(date +%s)"
-    out_file="$RESULTS/$s.out"
-    res_file="$RESULTS/$s.result"
+if [ "$MODE" = serial ]; then
 
-    # Run inside container, capture combined output. _rc records the suite's exit code.
-    _rc=0
-    podman exec --user "$_SPIRA_USER" \
-        -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
-        -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
-        -e "CARGO_HOME=${_CONTAINER_CARGO}" \
-        -e "TESTDB_SHARED=0" \
-        -e "TESTDB_NAME=" \
-        -e "TESTDB_DIR=" \
-        "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" >"$_batch_tmp" 2>&1 || _rc=$?
+    # Serial: one suite at a time. Suites share SPIRA_RUN inside the container.
+    # Container-death check runs after each suite so the remaining ones are
+    # marked unreached rather than never recorded.
+    for s in $SELECTED; do
+        t0="$(date +%s)"
+        out_file="$RESULTS/$s.out"
+        res_file="$RESULTS/$s.result"
 
-    out="$(cat "$_batch_tmp")" || true
-    secs=$(( $(date +%s) - t0 ))
+        _rc=0
+        podman exec --user "$_SPIRA_USER" \
+            -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
+            -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
+            -e "CARGO_HOME=${_CONTAINER_CARGO}" \
+            -e "TESTDB_SHARED=0" \
+            -e "TESTDB_NAME=" \
+            -e "TESTDB_DIR=" \
+            -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
+            "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" >"$_batch_tmp" 2>&1 || _rc=$?
 
-    # Distinguish a dead container from a suite that simply failed: podman exec
-    # returns non-zero for both. A dead container is a harness fault; a failing
-    # suite is a branch fault. Check that the container is still RUNNING — an
-    # exited container still passes `podman container exists`, so inspect the
-    # state field directly.
+        out="$(cat "$_batch_tmp")" || true
+        secs=$(( $(date +%s) - t0 ))
+
+        # Distinguish a dead container from a suite that simply failed: podman exec
+        # returns non-zero for both. A dead container is a harness fault; a failing
+        # suite is a branch fault. Check that the container is still RUNNING — an
+        # exited container still passes `podman container exists`, so inspect the
+        # state field directly.
+        if ! podman container inspect --format '{{.State.Running}}' "$CNAME" 2>/dev/null \
+               | grep -qx 'true'; then
+            _batch_container_dead=1
+            log "batch: container died during $s — remaining suites will be unreached"
+            # The suite that was running when the container died gets no result file;
+            # the unreached loop below marks it along with any suites not yet started.
+            break
+        fi
+
+        # Write the output file before the result file. The result file's presence is
+        # the signal that the suite completed; readers must not see it before the output.
+        printf '%s\n' "$out" > "$out_file"
+
+        # 77: skip (automake convention; already in suites.sh). Not a failure, not filed.
+        case "$_rc" in
+            0)
+                printf '%s %s %s %s %s\n' ok "$(date +%s)" "$secs" - "$MODE" > "$res_file"
+                printf '  %-32s ok      %ss\n' "$s" "$secs"
+                ;;
+            77)
+                printf '%s %s %s %s %s\n' skip "$(date +%s)" "$secs" - "$MODE" > "$res_file"
+                printf '  %-32s SKIPPED\n' "$s"
+                ;;
+            *)
+                _fp_val="$(_fp "$_rc" "$out")"
+                printf '%s %s %s %s %s\n' red "$(date +%s)" "$secs" "$_fp_val" "$MODE" > "$res_file"
+                _batch_red=$(( _batch_red + 1 ))
+                printf '  %-32s RED     rc=%s after %ss\n' "$s" "$_rc" "$secs"
+                ;;
+        esac
+    done
+
+else
+
+    # Parallel: all suites concurrently, each with its own SPIRA_INSTANCE,
+    # SPIRA_RUN, and testdb fixture (TESTDB_SHARED=0 + empty TESTDB_NAME).
+    #
+    # Each subshell writes .out and .result immediately on completion, so
+    # results appear as suites finish — not after all suites complete. The
+    # .rc signal file goes to $par_tmp so the main shell can count reds.
+    #
+    # A suite that passes serially and fails in parallel means shared state
+    # leaked between suites — a bead against the leak, never a retry.
+    _par_tmp="$(mktemp -d)"
+    _par_pids=""
+    _n=0
+
+    for s in $SELECTED; do
+        _n=$((_n+1))
+        _suite_instance="${INSTANCE}-${_n}"
+        _suite_run="/tmp/spira-batch-${INSTANCE}-${_n}"
+        _t0="$(date +%s)"
+
+        # Each variable is captured by value at fork time; the outer loop
+        # changes them, but each subshell has the snapshot from this iteration.
+        (
+            _inner_rc=0
+            podman exec --user "$_SPIRA_USER" \
+                -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
+                -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
+                -e "CARGO_HOME=${_CONTAINER_CARGO}" \
+                -e "TESTDB_SHARED=0" \
+                -e "TESTDB_NAME=" \
+                -e "TESTDB_DIR=" \
+                -e "SPIRA_INSTANCE=${_suite_instance}" \
+                -e "SPIRA_RUN=${_suite_run}" \
+                "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" \
+                >"$_par_tmp/$s.rawout" 2>&1 || _inner_rc=$?
+
+            _secs=$(( $(date +%s) - _t0 ))
+            _out="$(cat "$_par_tmp/$s.rawout" 2>/dev/null || true)"
+
+            # Write output before result — same ordering guarantee as serial.
+            printf '%s\n' "$_out" > "$RESULTS/$s.out"
+
+            case "$_inner_rc" in
+                0)
+                    printf '%s %s %s %s %s\n' ok "$(date +%s)" "$_secs" - "$MODE" \
+                        > "$RESULTS/$s.result"
+                    printf '  %-32s ok      %ss\n' "$s" "$_secs"
+                    ;;
+                77)
+                    printf '%s %s %s %s %s\n' skip "$(date +%s)" "$_secs" - "$MODE" \
+                        > "$RESULTS/$s.result"
+                    printf '  %-32s SKIPPED\n' "$s"
+                    ;;
+                *)
+                    _fp_val="$(_fp "$_inner_rc" "$_out")"
+                    printf '%s %s %s %s %s\n' red "$(date +%s)" "$_secs" "$_fp_val" "$MODE" \
+                        > "$RESULTS/$s.result"
+                    printf '  %-32s RED     rc=%s after %ss\n' "$s" "$_inner_rc" "$_secs"
+                    ;;
+            esac
+
+            # Signal to the main shell that this suite completed and its rc.
+            printf '%s\n' "$_inner_rc" > "$_par_tmp/$s.rc"
+        ) &
+        _par_pids="$_par_pids $!"
+    done
+
+    # Wait for all suites to complete.
+    for _pid in $_par_pids; do
+        wait "$_pid" 2>/dev/null || true
+    done
+
+    # Container-death check after all jobs have finished.
     if ! podman container inspect --format '{{.State.Running}}' "$CNAME" 2>/dev/null \
            | grep -qx 'true'; then
         _batch_container_dead=1
-        log "batch: container died during $s — remaining suites will be unreached"
-        # The suite that was running when the container died gets no result file;
-        # the unreached loop below marks it along with any suites not yet started.
-        break
+        log "batch: container died during parallel run"
     fi
 
-    # Write the output file before the result file. The result file's presence is
-    # the signal that the suite completed; readers must not see it before the output.
-    printf '%s\n' "$out" > "$out_file"
+    # Count reds from the signal files. Suites with no .rc file were never
+    # reached (e.g., the bash process was killed before all subshells launched);
+    # the unreached loop below handles those.
+    for s in $SELECTED; do
+        [ -f "$_par_tmp/$s.rc" ] || continue
+        _par_rc="$(cat "$_par_tmp/$s.rc")"
+        case "$_par_rc" in
+            0|77) ;;
+            *) _batch_red=$((_batch_red+1)) ;;
+        esac
+    done
 
-    # 77: skip (automake convention; already in suites.sh). Not a failure, not filed.
-    case "$_rc" in
-        0)
-            printf '%s %s %s %s\n' ok "$(date +%s)" "$secs" - > "$res_file"
-            printf '  %-32s ok      %ss\n' "$s" "$secs"
-            ;;
-        77)
-            printf '%s %s %s %s\n' skip "$(date +%s)" "$secs" - > "$res_file"
-            printf '  %-32s SKIPPED\n' "$s"
-            ;;
-        *)
-            _fp_val="$(_fp "$_rc" "$out")"
-            printf '%s %s %s %s\n' red "$(date +%s)" "$secs" "$_fp_val" > "$res_file"
-            _batch_red=$(( _batch_red + 1 ))
-            printf '  %-32s RED     rc=%s after %ss\n' "$s" "$_rc" "$secs"
-            ;;
-    esac
-done
+    rm -rf "$_par_tmp"
+    _par_tmp=""
+
+fi
 
 rm -f "$_batch_tmp"
 
@@ -402,8 +544,8 @@ done
 # BATCH METADATA — image tag and key in one file so the result is self-contained.
 # Readers who want to know what image produced this run do not have to infer it.
 # ---------------------------------------------------------------------------
-printf 'image_tag=%s\nbranch=%s\nbase=%s\nkey=%s\n' \
-    "$IMG_TAG" "$BR" "$BASE" "${BATCH_KEY:--}" > "$RESULTS/batch.meta"
+printf 'image_tag=%s\nbranch=%s\nbase=%s\nkey=%s\nmode=%s\n' \
+    "$IMG_TAG" "$BR" "$BASE" "${BATCH_KEY:--}" "$MODE" > "$RESULTS/batch.meta"
 
 # ---------------------------------------------------------------------------
 # VERDICT — three distinguishable outcomes.

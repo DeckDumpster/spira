@@ -354,7 +354,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_B3" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B3" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="$KILL_INSTANCE" \
-    bash "$BATCH" topic "$FIXTURE" &
+    bash "$BATCH" --mode serial topic "$FIXTURE" &
 BATCH_PID=$!
 
 # Positive control: poll until ka's result file appears under the results root.
