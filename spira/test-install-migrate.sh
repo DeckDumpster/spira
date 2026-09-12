@@ -14,17 +14,23 @@
 #    counterparts (not shared units like cockpit-ensure, concierge, beads-push).
 # 3. CLEAN INSTALL: when no legacy units are present, no spurious disable calls
 #    report success — a fresh-box install produces no migration output.
+# 4. --NO-MIGRATE-WATCHERS: skips only watcher loops; sentinel is still migrated.
 #
-# THE FIXTURE. A mock systemctl tracks which unit names are presented to it as
-# "legacy" via MOCK_LEGACY_UNITS (space-separated). `disable` exits 0 only for
-# those names; for all others it exits 1. The log records every call in order,
-# so the ordering assertion reads the log top-to-bottom.
+# A THIN PASS-THROUGH LOGGER records every systemctl call in order and execs
+# real systemctl. The ordering assertion reads that log top-to-bottom. Legacy
+# unit files are pre-installed in the user unit directory so disable returns 0
+# (unit present but not started) and _migrate_legacy prints "migrated" output.
+#
+# SCAR: the fixture's cp list omitted suite-covers.sh after sp-dt8u added it to
+# lib.sh; lib.sh failed at source time before any assertion ran. A real install
+# carries no fixture and the cause cannot exist.
+#
+# SKIP CONDITION: XDG_RUNTIME_DIR is not /run/user/1001 (suite must run inside
+# the testenv container as spirauser) or user systemd is not responding.
 #
 # covers: systemd/install.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-REAL_REPO="$(cd "$HERE/.." && pwd -P)"
-REAL_COCKPIT="$(cd "$HERE/../cockpit" && pwd -P)"
 pass=0; fail=0
 ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
@@ -32,8 +38,6 @@ want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 nowant()  { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0, got $2"; }
 # before <label> <must-precede> <must-follow> <log>
-# Asserts that at least one line containing <must-precede> appears before the
-# first line containing <must-follow>.
 before() {
     local label="$1" na="$2" nb="$3" log="$4"
     local lno=0 lno_a=0 lno_b=0 line
@@ -51,95 +55,68 @@ before() {
 
 echo "test-install-migrate.sh"
 
+[ "${XDG_RUNTIME_DIR:-}" = "/run/user/1001" ] || {
+    printf 'SKIP test-install-migrate.sh: not running as spirauser inside testenv container\n' >&2
+    exit 77
+}
+# hermetic-ok: SKIP check — exits 77 when not inside the testenv container
+systemctl --user status >/dev/null 2>&1 || {
+    printf 'SKIP test-install-migrate.sh: user systemd not running inside container\n' >&2
+    exit 77
+}
+
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-# ---------------------------------------------------------------------------
-# Fixture: minimal harness tree (same pattern as other install tests).
-# ---------------------------------------------------------------------------
-FIXTURE="$TMP/harness"
-mkdir -p "$FIXTURE/systemd" "$FIXTURE/spira"
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
-    [ -e "$f" ] || continue
-    ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
-done
-ln -s "$HERE/../systemd/install.sh" "$FIXTURE/systemd/install.sh"
-for f in conf.sh watchd.sh lib.sh; do
-    [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
-done
-printf '# empty\n' > "$FIXTURE/spira/repo-map.example"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/spira/install-session-hook.sh"
-chmod +x "$FIXTURE/spira/install-session-hook.sh"
-printf '# empty\n' > "$FIXTURE/spira/watchers"
-
-DEST="$TMP/home/.config/systemd/user"
 SPIRA_RUN_DIR="$TMP/run"
-MOCK_BIN="$TMP/mock-bin"
-mkdir -p "$DEST" "$SPIRA_RUN_DIR" "$MOCK_BIN"
-MOCK_LOG="$TMP/systemctl.log"
+DEST="$HOME/.config/systemd/user"
+WATCHERS="$TMP/watchers"
+mkdir -p "$SPIRA_RUN_DIR" "$DEST"
+touch "$SPIRA_RUN_DIR/world.halted"
+printf '# empty\n' > "$WATCHERS"
 
-# ---------------------------------------------------------------------------
-# Mock systemctl.
-#
-#   MOCK_LEGACY_UNITS  space-separated unit names treated as "present" legacy
-#                      units. Any `disable` call exits 0 iff the unit name
-#                      (last word of $*) is in MOCK_LEGACY_UNITS; exits 1
-#                      otherwise (simulating "unit not found").
-#   MOCK_IS_ACTIVE     returned by is-active queries (default: active)
-# ---------------------------------------------------------------------------
-cat > "$MOCK_BIN/systemctl" <<'MOCK'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "${MOCK_LOG}"
-case "$*" in
-    *list-units*active*spira-aeon*)
-        for a in ${MOCK_AEONS:-}; do printf '%s\n' "$a"; done
-        ;;
-    *list-unit-files*spira-watch*|*list-units*spira-watch*)
-        printf '%s\n' "${MOCK_WATCH_LIST:-}"
-        ;;
-    *is-active*)
-        printf '%s\n' "${MOCK_IS_ACTIVE:-active}"
-        ;;
-    *list-timers*)
-        true
-        ;;
-    *" disable "*)
-        # Extract unit name: last positional argument.
-        # ${*##* } strips prefixes per-param rather than across the joined string,
-        # so use ${@: -1} to get the actual last arg (the unit name).
-        unit="${@: -1}"
-        for lu in ${MOCK_LEGACY_UNITS}; do
-            [ "$lu" = "$unit" ] && exit 0
-        done
-        exit 1
-        ;;
-esac
-exit 0
-MOCK
-chmod +x "$MOCK_BIN/systemctl"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/loginctl"
-chmod +x "$MOCK_BIN/loginctl"
+# Thin pass-through logger.
+SCTL_LOG="$TMP/systemctl.log"
+mkdir -p "$TMP/bin"
+cat > "$TMP/bin/systemctl" << 'SCTL'
+#!/bin/sh
+printf '%s\n' "$*" >> "$SCTL_LOG"
+exec /usr/bin/systemctl "$@"
+SCTL
+chmod +x "$TMP/bin/systemctl"
 
 inst() {
-    > "$MOCK_LOG"
-    env -i \
-        "PATH=$PATH" \
-        "HOME=$TMP/home" \
-        SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$MOCK_BIN" \
-        "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
-        "SPIRA_RUN=$SPIRA_RUN_DIR" \
-        "SPIRA_HOME=$HERE" \
-        "SPIRA_PROD=$HERE" \
-        "SPIRA_REPO=$REAL_REPO" \
-        "SPIRA_COCKPIT=$REAL_COCKPIT" \
-        "MOCK_LOG=$MOCK_LOG" \
-        "MOCK_AEONS=${MOCK_AEONS:-}" \
-        "MOCK_IS_ACTIVE=${MOCK_IS_ACTIVE:-active}" \
-        "MOCK_WATCH_LIST=${MOCK_WATCH_LIST:-}" \
-        "MOCK_LEGACY_UNITS=${MOCK_LEGACY_UNITS:-}" \
-        "SPIRA_INSTALL_FORCE=${MOCK_FORCE:-1}" \
-        bash "$FIXTURE/systemd/install.sh" test "$@" 2>&1
+    > "$SCTL_LOG"
+    SCTL_LOG="$SCTL_LOG" \
+    SPIRA_PATH="$TMP/bin" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_RUN="$SPIRA_RUN_DIR" \
+    SPIRA_WATCHERS="$WATCHERS" \
+    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
+    SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_INSTALL_FORCE=1 \
+    bash "$HERE/../systemd/install.sh" test "$@" 2>&1
+}
+
+# Helper: plant a legacy unit file in DEST and register it with systemd.
+# An enabled (symlinked) unit causes `systemctl disable --now` to return 0,
+# which is the condition _migrate_legacy uses to print its "migrated" message.
+plant_legacy() {
+    local u="$1"
+    printf '[Unit]\nDescription=legacy %s\n[Service]\nExecStart=/bin/true\n[Install]\nWantedBy=default.target\n' \
+        "$u" > "$DEST/$u"
+    # hermetic-ok: container-first suite — registers unit with real systemd; SKIP guard exits 77
+    systemctl --user daemon-reload 2>/dev/null
+    systemctl --user enable "$u" 2>/dev/null || true  # hermetic-ok: container-first
+}
+remove_legacy() {
+    local u
+    for u in "$@"; do
+        # hermetic-ok: container-first suite — cleans up real systemd state; SKIP guard exits 77
+        systemctl --user disable --now "$u" 2>/dev/null || true
+        rm -f "$DEST/$u"
+    done
+    # hermetic-ok: container-first suite — registers unit with real systemd; SKIP guard exits 77
+    systemctl --user daemon-reload 2>/dev/null
 }
 
 # ==========================================================================
@@ -147,17 +124,21 @@ echo
 echo "MIGRATION ORDERING — disable legacy units before enabling per-instance:"
 # ==========================================================================
 
-# DEST is empty — all units are new, so the enable/restart loop calls systemctl
-# for each one. This puts both disable and enable/restart calls in the mock log,
-# making the ordering assertion possible.
-rm -rf "$DEST"; mkdir -p "$DEST"
+# DEST is empty of spira-*-test.* files — all units are new, so the enable loop
+# calls systemctl for each one. This puts both disable and enable calls in the log,
+# making the ordering assertion (before()) readable.
+for f in "$DEST"/spira-*-test.*; do [ -e "$f" ] && rm -f "$f"; done
+# hermetic-ok: container-first suite — reloads real systemd after unit cleanup; SKIP guard exits 77
+systemctl --user daemon-reload 2>/dev/null
 
-ord_out="$(MOCK_LEGACY_UNITS="spira-sentinel.service spira-sentinel.timer \
-    spira-ops.service spira-ops.timer" \
-    MOCK_AEONS= MOCK_IS_ACTIVE=active MOCK_WATCH_LIST= \
-    inst)"
+plant_legacy "spira-sentinel.service"
+plant_legacy "spira-sentinel.timer"
+plant_legacy "spira-ops.service"
+plant_legacy "spira-ops.timer"
+
+ord_out="$(inst)"
 ord_rc=$?
-ord_log="$(cat "$MOCK_LOG")"
+ord_log="$(cat "$SCTL_LOG")"
 
 iszero "ordering: install.sh exits 0 with legacy units present"  "$ord_rc"
 want   "ordering: sentinel legacy unit appears in disable call"  \
@@ -167,80 +148,83 @@ want   "ordering: ops legacy unit appears in disable call"       \
 want   "ordering: install output reports migration"              \
        "migrated" "$ord_out"
 
-# The last disable of a legacy unit must appear in the log before the first
-# reference to the corresponding new per-instance unit (enable or restart).
 before "ordering: sentinel migrated before new unit starts" \
        "spira-sentinel.service" "spira-sentinel-test" "$ord_log"
 before "ordering: ops migrated before new unit starts" \
        "spira-ops.service" "spira-ops-test" "$ord_log"
+
+remove_legacy "spira-sentinel.service" "spira-sentinel.timer" \
+              "spira-ops.service" "spira-ops.timer" 2>/dev/null || true
 
 # ==========================================================================
 echo
 echo "MIGRATION SCOPE — shared units (cockpit-ensure, concierge, beads-push) excluded:"
 # ==========================================================================
 
-# Use the same log from the ordering scenario.
-scope_log="$(cat "$MOCK_LOG")"
-
-# Shared units pass through inst_name unchanged; they are not legacy names.
 nowant "scope: cockpit-ensure.service not passed to disable" \
-       "disable" "$(grep 'cockpit-ensure' "$MOCK_LOG" || true)"
+       "disable" "$(grep 'cockpit-ensure' "$SCTL_LOG" || true)"
 nowant "scope: concierge.service not passed to disable" \
-       "disable" "$(grep 'concierge' "$MOCK_LOG" || true)"
+       "disable" "$(grep 'concierge' "$SCTL_LOG" || true)"
 nowant "scope: beads-push.service not passed to disable" \
-       "disable" "$(grep 'beads-push' "$MOCK_LOG" || true)"
+       "disable" "$(grep 'beads-push' "$SCTL_LOG" || true)"
 
 # ==========================================================================
 echo
 echo "CLEAN INSTALL — no legacy units → disable returns 1, no migration output:"
 # ==========================================================================
 
-# Fresh DEST, empty MOCK_LEGACY_UNITS. disable exits 1 for every unit name.
-rm -rf "$DEST"; mkdir -p "$DEST"
+# No legacy units installed: systemctl disable for non-existent units returns 1
+# (unit file not found), so _migrate_legacy's && short-circuits and no "migrated"
+# message is printed.
+for f in "$DEST"/spira-*-test.*; do [ -e "$f" ] && rm -f "$f"; done
+# hermetic-ok: container-first suite — reloads real systemd after unit cleanup; SKIP guard exits 77
+systemctl --user daemon-reload 2>/dev/null
 
-clean_out="$(MOCK_LEGACY_UNITS= MOCK_AEONS= MOCK_IS_ACTIVE=active MOCK_WATCH_LIST= \
-    inst)"
+clean_out="$(inst)"
 clean_rc=$?
 
 iszero  "clean install: exits 0 with no legacy units" "$clean_rc"
-# No "migrated" output — disable failed (exit 1) for every legacy name.
 nowant  "clean install: no 'migrated' in output" "migrated" "$clean_out"
 
 # ==========================================================================
 echo
 echo "--NO-MIGRATE-WATCHERS — skips only watcher loops; sentinel is still migrated:"
 # ==========================================================================
-# Add a watcher to the fixture so the skip is observable: the sentinel
-# legacy unit should be disabled, the watcher legacy unit should not.
-printf 'testwatcher|daemon|/bin/true|\n' >> "$FIXTURE/spira/watchers"
 
-rm -rf "$DEST"; mkdir -p "$DEST"
+printf 'testwatcher|daemon|/bin/true|\n' >> "$WATCHERS"
 
-skip_out="$(MOCK_LEGACY_UNITS="spira-sentinel.service spira-sentinel.timer \
-    spira-watch-testwatcher.service spira-watch@testwatcher.service" \
-    MOCK_AEONS= MOCK_IS_ACTIVE=active MOCK_WATCH_LIST= \
-    inst --no-migrate-watchers)"
+for f in "$DEST"/spira-*-test.*; do [ -e "$f" ] && rm -f "$f"; done
+# hermetic-ok: container-first suite — reloads real systemd after unit cleanup; SKIP guard exits 77
+systemctl --user daemon-reload 2>/dev/null
+
+plant_legacy "spira-sentinel.service"
+plant_legacy "spira-sentinel.timer"
+plant_legacy "spira-watch-testwatcher.service"
+# @ template-instance form
+printf '[Unit]\nDescription=legacy watcher template\n[Service]\nExecStart=/bin/true\n[Install]\nWantedBy=default.target\n' \
+    > "$DEST/spira-watch@.service"
+# hermetic-ok: container-first suite — pre-plants @-template in real systemd; SKIP guard exits 77
+systemctl --user daemon-reload 2>/dev/null
+systemctl --user enable "spira-watch@testwatcher.service" 2>/dev/null || true  # hermetic-ok: container-first
+
+skip_out="$(inst --no-migrate-watchers)"
 skip_rc=$?
-skip_log="$(cat "$MOCK_LOG")"
+skip_log="$(cat "$SCTL_LOG")"
 
 iszero  "--no-migrate-watchers: install.sh exits 0" "$skip_rc"
-# NON-WATCHER legacy units (sentinel) ARE still migrated even when the flag is set —
-# the unit name is the sentinel's only concurrency control, and leaving a stale plain
-# unit alongside the instance unit defeats the mutex.
 want    "--no-migrate-watchers: sentinel disable fires despite flag" \
         "disable --now spira-sentinel.service" "$skip_log"
-# Watcher legacy units must still be skipped by the flag.
 nowant  "--no-migrate-watchers: watcher legacy unit not disabled" \
         "disable --now spira-watch-testwatcher" "$skip_log"
-# install.sh should announce that the watcher skip is in effect.
 want    "--no-migrate-watchers: output notes the skip" \
         "no-migrate-watchers" "$skip_out"
-# Normal units still get installed — the flag touches nothing else.
 want    "--no-migrate-watchers: sentinel per-instance unit still enabled" \
         "spira-sentinel-test" "$skip_log"
 
-# Restore empty watchers file for subsequent tests.
-printf '# empty\n' > "$FIXTURE/spira/watchers"
+remove_legacy "spira-sentinel.service" "spira-sentinel.timer" \
+              "spira-watch-testwatcher.service" "spira-watch@.service" 2>/dev/null || true
+
+printf '# empty\n' > "$WATCHERS"
 
 # ==========================================================================
 echo
