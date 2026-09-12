@@ -80,7 +80,7 @@ unset _f _summon _line
 testdb_require fayth || exit 77
 TMP="$(mktemp -d)"
 trap 'testdb_drop 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
-testdb_up fayth
+testdb_up fayth || exit 1
 BD="${SPIRA_BD:-bd}"
 
 # Create test beads in the fixture database.
