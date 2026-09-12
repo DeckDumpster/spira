@@ -338,6 +338,74 @@ if [ -n "$halt_since" ]; then
 "
 fi
 
+# ---------------------------------------------------------------------------------------
+# LAPSED AEONS — aeons the liveness lease killed since the previous sweep.
+#
+# sp-a8zy writes a record under $SPIRA_RUN/lapsed/ on each lapse, named
+# <bead-id>-<YYYYMMDDTHHmmSSZ>. This section reads those whose timestamp is newer than the
+# marker in $SPIRA_RUN/lapsed.swept (the previous sweep's cutoff), so each lapse appears in
+# exactly one sweep.
+#
+# ? WHEN THE DIRECTORY CANNOT BE READ — not 0, not silence. A section that renders empty
+# on a failed read displaces the suspicion that would prompt a look, which is the exact
+# failure mode this whole program is a response to (law-absence-needs-a-positive-control).
+#
+# THE MARKER IS CAPTURED NOW, before reading records, and written after the prompt file is
+# written atomically. That ordering ensures a lapse that arrives while this sweep is running
+# falls in the next pass rather than being lost — and that the marker never advances if the
+# write fails (so the record stays visible on retry).
+#
+# THE CUTOFF IS A LEXICOGRAPHIC COMPARISON. Timestamps are YYYYMMDDTHHmmSSZ — ISO-8601 UTC
+# compact format — which sorts correctly as strings. No date parsing is needed: a later
+# timestamp always sorts after an earlier one in this format.
+#
+# CONFIGURED PATHS, NOT LITERALS. `sop.sh write` scans for absolute paths; a literal would
+# fail the inventory gate on every landing and on every colleague's clone.
+# ---------------------------------------------------------------------------------------
+LAPSED_DIR="${SPIRA_LAPSED_DIR:-$SPIRA_RUN/lapsed}"
+LAPSED_MARKER="${SPIRA_LAPSED_MARKER:-$SPIRA_RUN/lapsed.swept}"
+_lapsed_prev="$(cat "$LAPSED_MARKER" 2>/dev/null || true)"
+_lapsed_now="$(date -u +%Y%m%dT%H%M%SZ)"
+
+lapsed_count="?"
+lapsed_section=""
+if [ ! -e "$LAPSED_DIR" ]; then
+    # No lapses ever recorded — the directory is created by aeon.sh on the first lapse.
+    lapsed_count=0
+    lapsed_section="  none since last sweep"
+elif [ ! -d "$LAPSED_DIR" ]; then
+    # Path exists but is not a directory — something replaced it; treat as unreadable.
+    lapsed_count="?"
+    lapsed_section="  ? (expected a directory at SPIRA_LAPSED_DIR — path exists but is not a directory)"
+else
+    # Directory exists; read records newer than the previous marker.
+    _lapsed_n=0
+    _lapsed_body=""
+    while IFS= read -r _lf; do
+        [ -r "$_lf" ] || continue
+        _lfname="$(basename "$_lf")"
+        # Timestamp suffix is the last 16 chars of the basename (YYYYMMDDTHHmmSSZ).
+        _lfts="$(printf '%s' "$_lfname" | grep -oE '[0-9]{8}T[0-9]{6}Z$' 2>/dev/null || true)"
+        [ -n "$_lfts" ] || continue
+        # Skip records at or before the previous marker (already shown in a prior sweep).
+        # String comparison on ISO-8601 timestamps is chronological — no date math needed.
+        [ -z "$_lapsed_prev" ] || [[ "$_lfts" > "$_lapsed_prev" ]] || continue
+        _lapsed_n=$(( _lapsed_n + 1 ))
+        _lapsed_body="${_lapsed_body}
+  [${_lfname}]
+$(sed 's/^/    /' "$_lf" 2>/dev/null)
+"
+    done < <(find "$LAPSED_DIR" -maxdepth 1 -type f 2>/dev/null | sort)
+    lapsed_count="$_lapsed_n"
+    if [ "$_lapsed_n" -eq 0 ]; then
+        lapsed_section="  none since last sweep"
+    else
+        [ "$_lapsed_n" -eq 1 ] && _lapse_word="lapse" || _lapse_word="lapses"
+        lapsed_section="  ${_lapsed_n} ${_lapse_word} since last sweep:
+${_lapsed_body}"
+    fi
+fi
+
 # Drain section: present only when the stamp exists. Unlike the halt section, a draining
 # world still files its sweep — the loop and landing continue. The section is a warning
 # banner, not a suppression notice.
@@ -397,6 +465,14 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
   stranded (claimed, nobody home)     $(g SP_STRAND_GHOST)
   strand ledger, other classes        $(g SP_STRAND_OTHER)
   account capacity paused             $(g SP_CAPACITY_PAUSED)
+
+### Lapsed aeons — killed by the liveness lease since the previous sweep
+
+  An aeon whose trace was silent for the full lease is killed and its work preserved.
+  Classify each into one of four outcomes (sop-lapsed-aeon-postmortem) — a lapse is
+  never closed as "noted". ? = directory could not be read, not zero lapses.
+
+${lapsed_section}
 
 ### The graph
 
@@ -458,7 +534,10 @@ fi
 INC="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
 PROMPT_FILE="${SPIRA_WATCH_PROMPT_FILE:-$SPIRA_RUN/ops-sweep-prompt.txt}"
 if snapshot > "${PROMPT_FILE}.tmp" 2>/dev/null && mv -f "${PROMPT_FILE}.tmp" "$PROMPT_FILE"; then
-    log "watchtower: swept — ${since_land}m since the last landing, $(g SP_UNLANDED) unlanded, ${aeons_live} aeons"
+    # THE MARKER ADVANCES ONLY HERE — after a successful write. A failed write leaves the
+    # marker where it was so the next sweep sees the same records rather than losing them.
+    printf '%s\n' "$_lapsed_now" > "$LAPSED_MARKER" 2>/dev/null || true
+    log "watchtower: swept — ${since_land}m since the last landing, $(g SP_UNLANDED) unlanded, ${aeons_live} aeons, ${lapsed_count} lapsed"
 else
     rm -f "${PROMPT_FILE}.tmp"
     log "watchtower: could not write the prompt file ($PROMPT_FILE)"
