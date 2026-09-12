@@ -1505,6 +1505,20 @@ standing_lines() {
             "$C_DIM" "$C_RST" "${SP_SELF_STARVED_LAST:-?}" "$C_RST"
     fi
 
+    # THRASH alert: aeons requeued because their deliverable did not move while turns
+    # advanced. "?" means the probe broke (law-absence-needs-a-positive-control); show it
+    # so the missing row cannot be read as "no thrashes happened".
+    local _thrash="${SP_AEON_THRASH:-?}"
+    if [ "$_thrash" = "?" ]; then
+        printf ' %sTHRSH%s  %s?%s cannot read thrash count\n' \
+            "$C_BAD" "$C_RST" "$C_BAD$C_B" "$C_RST"
+    elif [ "$_thrash" -gt 0 ] 2>/dev/null; then
+        printf ' %sTHRSH%s  %s%s%s thrash-requeued%s %s(deliverable stalled while turning)%s\n' \
+            "$C_WARN" "$C_RST" \
+            "$C_WARN$C_B" "$_thrash" "$C_RST" \
+            "$C_DIM" "$C_DIM" "$C_RST"
+    fi
+
     # JUDGE: always shown. Distinguishes "never fired" from "fired 40 passes ago".
     printf ' %sSELF%s   %sjudgement%s %s\n' "$C_DIM" "$C_RST" "$C_DIM" "$C_RST" "$judge_str"
     printf ' %sBOX%s    %sdisk%s / %s  %sworkspaces%s %s  %scpu%s %s%% idle  %sload%s %s\n' \

@@ -67,7 +67,7 @@ SPIRA_TOWN SPIRA_MIRROR SPIRA_EXPORTER SPIRA_DESIGN SPIRA_WIKI SPIRA_WIKI_HOOK S
 SPIRA_VIEW SPIRA_VIEW_SESSION
 SPIRA_ALERT_GLOB
 SPIRA_BD SPIRA_BD_PIN
-SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_QA_DEPTH
+SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_QA_DEPTH SPIRA_THRASH_MINUTES
 SPIRA_TOKEN_WINDOW_H SPIRA_TOKEN_PROJECTS SPIRA_CTX_WARN SPIRA_CTX_HIGH SPIRA_CTX_LIMIT
 SPIRA_ARCHIVE
 SPIRA_ARCHIVIST_EVERY SPIRA_ARCHIVIST_IDLE SPIRA_ARCHIVIST_MODEL SPIRA_ARCHIVIST_TIMEOUT
@@ -443,6 +443,12 @@ spira_conf_defaults() {
     # EMPTY BY DEFAULT, meaning no ceiling and exactly the behaviour that shipped: a host
     # constrained by cores rather than by an account must not acquire this by upgrading.
     : "${SPIRA_MAX_LIVE_AEONS:=}"
+    # HOW LONG THE DELIVERABLE-PROGRESS WALL GIVES AN AEON BEFORE REQUEUEING IT. The wall
+    # trips when the aeon's deliverable (commits ahead of the base ref + file writes in its
+    # worktree) has not moved for this many minutes while turns still advance. 20 minutes is
+    # the default; the case that motivated this would have been freed at ~20 rather than 76.
+    # A gate suppresses the fuse, so a correct mid-review aeon is never tripped.
+    : "${SPIRA_THRASH_MINUTES:=20}"
     # DEPTH OF THE QA SWEEP — controls how wide the periodic QA pass looks.
     # Three settings, each a strict superset of the one before it:
     #

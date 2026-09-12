@@ -688,6 +688,20 @@ print(d[0].get("status","") if d else "")' 2>/dev/null)"
             ledger_done "$rc" slain
             exit $rc
         fi
+        # THRASH IS NOT FAILURE. The heartbeat writes this file when the deliverable
+        # has not moved for SPIRA_THRASH_MINUTES while turns still advance, then sends
+        # TERM to this process. The file carries the last action — the sticking point —
+        # so the next aeon does not spend its first pass rediscovering it. No attempt is
+        # charged; the bead's requeue note names the cause and the handoff explicitly.
+        if [ -f "$SPIRA_RUN/$BEAD_ID.thrash" ]; then
+            _thrash_note="$(cat "$SPIRA_RUN/$BEAD_ID.thrash" 2>/dev/null)"
+            rm -f "$SPIRA_RUN/$BEAD_ID.thrash"
+            release_own_claim "$BEAD_ID"
+            bdq note "$BEAD_ID" "Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m while turns advanced. Last action: ${_thrash_note:-?}. No attempt charged — the next aeon should start from this sticking point." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID thrash-requeued — no attempt charged (last: ${_thrash_note:-?})"
+            ledger_done "$rc" "requeue-thrash"
+            exit $rc
+        fi
         # A VERDICT NOBODY HAS IS NOT A FAILED ATTEMPT. The landing gate outgrew the ceiling
         # an agent's tool puts on one command, so a session that ran it in the foreground had
         # it moved to the background, ended its turn to wait — which ends the session — and
@@ -888,6 +902,33 @@ STALL_BEATS="${FAYTH_STALL_BEATS:-10}"   # x heartbeat interval; 10 x 120s = 20 
             fi
             log "$FAYTH: $BEAD_ID model idle ${model_idle:-?}s, no work for $((idle * ${FAYTH_HEARTBEAT_SECONDS:-120} / 60))m — releasing the lease to the reaper"
             exit 0
+        fi
+        # DELIVERABLE-PROGRESS WALL. The stall detector above catches a model that has
+        # stopped acting; this catches one that IS acting but whose deliverable (commits
+        # or file writes) has not moved. The fuse is computed by aeon_fuse_minutes in
+        # lib.sh — the same function cockpit.sh uses to render it, so the display and the
+        # trip agree on when the fuse is burning. A gate suppresses the fuse and is
+        # excluded here the same way.
+        #
+        # ONLY WHEN THE MODEL IS STILL WORKING (idle < STALL_BEATS). An idle aeon that
+        # has been quiet for 20+ minutes would also have a burning fuse, but the stall
+        # detector handles that case — adding a second requeue path for it would produce
+        # two notes on the same bead and obscure which mechanism acted.
+        #
+        # `$$` IS THE PARENT AEON'S PID INSIDE THIS SUBSHELL. bash keeps $$ as the
+        # top-level process's PID, so kill -TERM $$ reaches the parent while BASHPID
+        # names this subshell. The parent's TERM trap then runs cleanup(), which sees
+        # the .thrash file and does the requeue with no attempt charged.
+        if [ "$idle" -lt "$STALL_BEATS" ]; then
+            _dfuse="$(aeon_fuse_minutes "$BEAD_ID" "$SPIRA_RUN/worktree/$BEAD_ID" "$REPO_NAME" 2>/dev/null)"
+            _dwall="${SPIRA_THRASH_MINUTES:-20}"
+            if [[ "${_dfuse:-?}" =~ ^[0-9]+$ ]] && [ "$_dfuse" -ge "$_dwall" ] 2>/dev/null; then
+                _dlast="$(trace_last "$LOGF" 2>/dev/null | head -c 300)"
+                printf '%s\n' "${_dlast:-no last action}" > "$SPIRA_RUN/$BEAD_ID.thrash"
+                log "$FAYTH: $BEAD_ID deliverable stalled ${_dfuse}m (wall ${_dwall}m) — requeueing for thrash"
+                kill -TERM $$ 2>/dev/null
+                exit 0
+            fi
         fi
         bdq heartbeat "$BEAD_ID" >/dev/null 2>&1 || exit 0
     done

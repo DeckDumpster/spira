@@ -2380,6 +2380,58 @@ subtree_has_flock() {
 }
 
 # --------------------------------------------------------------------------------------
+# aeon_fuse_minutes <bead-id> <worktree> <repo-name> -> minutes since the deliverable
+# last moved, "gate" if a live gate is running, or "?" if the probe failed.
+#
+# THE DELIVERABLE MOVES when either a commit lands ahead of the base ref or a file is
+# written in the worktree. Both are repository facts, not session facts — the session can
+# grow its log indefinitely by reading the same two files and never move either of these.
+# A probe that fails renders "?", never 0 (law-absence-needs-a-positive-control): zero
+# reads as "just moved", the reassuring answer and the wrong one when the probe broke.
+#
+# THE FUSE DOES NOT BURN WHILE A GATE RUNS FOR THIS BEAD. A gate correctly writes
+# nothing and commits nothing for many minutes; a fuse that burned there would train the
+# operator to ignore it (law-alerts-must-be-actionable). A live gate is detected from
+# /proc argv, not from a directory alone — a stale pid file must not mask real silence.
+#
+# SHARED BETWEEN cockpit.sh (display) AND aeon.sh (trip). Two implementations of "has
+# the deliverable moved" is the two-lists defect applied to a probe; one implementation
+# ensures the display and the trip always agree on when the fuse is burning. (sp-cuvi)
+# --------------------------------------------------------------------------------------
+aeon_fuse_minutes() {
+    local bead="$1" wt="$2" repo_name="${3:-}"
+    local _fuse="?" _fuse_gate=""
+    for _gf in "$SPIRA_RUN/gate-run/"*"_${bead}/pid"; do
+        [ -f "$_gf" ] || continue
+        local _gp; _gp="$(cat "$_gf" 2>/dev/null)"
+        [ -n "${_gp:-}" ] && [ -d "/proc/$_gp" ] || continue
+        local _gc; { _gc="$(tr '\0' ' ' < "/proc/$_gp/cmdline")"; } 2>/dev/null
+        [[ "${_gc:-}" == *gate* ]] && { _fuse_gate=1; break; }
+    done
+    if [ "${_fuse_gate:-}" = 1 ]; then
+        _fuse=gate
+    elif [ -d "$wt" ]; then
+        local _last_t=0 _ct="" _base=""
+        if [ -n "${repo_name:-}" ]; then
+            _base="$(spira_landref "$repo_name" 2>/dev/null)" || _base=""
+            if [ -n "${_base:-}" ]; then
+                _ct="$(git -C "$wt" log --format='%ct' -1 "${_base}..HEAD" 2>/dev/null)" \
+                    || _ct=""
+                [ -n "${_ct:-}" ] && [ "${_ct:-0}" -gt "$_last_t" ] && _last_t="$_ct"
+            fi
+        fi
+        local _mt
+        _mt="$(find "$wt" -not -path '*/.git*' -printf '%T@\n' 2>/dev/null \
+               | sort -rn | head -1 | cut -d. -f1)"
+        [ -n "${_mt:-}" ] && [ "${_mt:-0}" -gt "$_last_t" ] && _last_t="$_mt"
+        if [ "${_last_t:-0}" -gt 0 ] 2>/dev/null; then
+            _fuse=$(( ( $(date +%s) - _last_t ) / 60 ))
+        fi
+    fi
+    printf '%s' "$_fuse"
+}
+
+# --------------------------------------------------------------------------------------
 # trace_tail <logfile> [n] -> the last n human-readable moments of a session.
 #
 # The session log is stream-json now, which is the right format for a machine watching for

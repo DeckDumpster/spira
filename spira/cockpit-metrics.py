@@ -156,7 +156,7 @@ def ledger_metrics(lines, since):
     in its first second has the first and not the second, which is precisely the cgroup
     teardown bug, and no other failure has that signature.
     """
-    born = lived = worked = 0
+    born = lived = worked = thrash = 0
     for line in lines:
         m = LEDGER_RE.match(line)
         if not m:
@@ -177,6 +177,11 @@ def ledger_metrics(lines, since):
             # report peak throughput for the whole of an outage.
             if rest not in ("capacity", "paused", "idle", ""):
                 worked += 1
+        elif event == "done" and "status=requeue-thrash" in rest:
+            # THRASH REQUEUES ARE NOT FAILURES and are not counted as attempts, but they
+            # are worth tracking: a bead that is thrash-requeued repeatedly points at a
+            # genuine blocker the aeon cannot escape on its own.
+            thrash += 1
     return {
         "SP_AEON_BORN": born,
         "SP_AEON_LIVED": lived,
@@ -184,6 +189,7 @@ def ledger_metrics(lines, since):
         # its disposition yet, and one negative reading would render as an alarm.
         "SP_AEON_STILLBORN": max(0, born - lived),
         "SP_AEON_WORKED": worked,
+        "SP_AEON_THRASH": thrash,
     }
 
 
@@ -387,7 +393,8 @@ def main():
          ("SP_PASSES", "SP_ACTS", "SP_FALSE_ACTS", "SP_FALSE_PER_PASS", "SP_SINCE_JUDGEMENT",
           "SP_STARVED_PASSES")),
         (sys.argv[2], ledger_metrics,
-         ("SP_AEON_BORN", "SP_AEON_LIVED", "SP_AEON_STILLBORN", "SP_AEON_WORKED")),
+         ("SP_AEON_BORN", "SP_AEON_LIVED", "SP_AEON_STILLBORN", "SP_AEON_WORKED",
+          "SP_AEON_THRASH")),
     ):
         try:
             out.update(fn(read(path), since))
