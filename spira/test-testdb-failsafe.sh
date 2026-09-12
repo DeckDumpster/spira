@@ -24,6 +24,7 @@
 #
 # covers: spira/testdb.sh spira/test-cockpit-landed.sh spira/test-cockpit-unlanded.sh
 #         spira/test-cockpit-unsent.sh spira/test-loom-page.sh
+#         spira/test-landing.sh spira/test-timeout.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"
@@ -112,7 +113,10 @@ suite_env=(
     TESTDB_SERVER_BD="${TESTDB_SERVER_BD:-bd}"
 )
 
-for suite in test-cockpit-landed test-cockpit-unlanded test-cockpit-unsent; do
+# test-landing.sh and test-timeout.sh use testdb with real bd writes and each guard
+# with `testdb_up ... || exit 1`; they are included here to confirm the failsafe
+# protects them when the shared-fixture reset fails and SPIRA_DB is left unset.
+for suite in test-cockpit-landed test-cockpit-unlanded test-cockpit-unsent test-landing test-timeout; do
     out="$("${suite_env[@]}" bash "$HERE/$suite.sh" 2>&1)"; rc=$?
     if [ $rc -ne 0 ]; then
         ok "$suite exits non-zero when testdb_up fails (rc=$rc)"
