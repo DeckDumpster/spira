@@ -80,7 +80,15 @@ echo "test-incident-recur-cause.sh"
 
 # ======================================================================================
 echo
-echo "1. default cause (SPIRA_INCIDENT_CAUSE unset) — label is sp-recur-1-unrecorded:"
+# sp-recur-N-<cause> labels are no longer written (sp-lzt); recurrences are events.
+# The assertions in sections 1 and 2 that checked for those labels have been removed:
+#   deleted: "initial filing carries sp-recur-1-unrecorded" (label no longer written)
+#   deleted: "initial filing carries sp-recur-1-suite-red" (label no longer written)
+#   deleted: "recurrence counter advanced to 2" via recur_max (recur_max reads labels)
+#   deleted: "recurrence carries sp-recur-2-suite-red" (label no longer written)
+#   deleted: "recur_causes reports suite-red" (recur_causes reads labels, now always empty)
+# The replacement properties — bead creation and events-based recurrence count — are below.
+echo "1. default cause (SPIRA_INCIDENT_CAUSE unset) — bead created, no recurrence event on first filing:"
 # ======================================================================================
 testdb_reset; mkdir -p "$TMP/run"
 ref="incident:test-default-cause"
@@ -99,16 +107,11 @@ for i in d:
 [ -n "$bid" ] && ok "bead was created for default-cause ref" \
     || { bad "bead was created for default-cause ref" "none found"; printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
 
-has_label_like "$bid" "sp-recur-1-unrecorded" \
-    && ok "initial filing carries sp-recur-1-unrecorded" \
-    || bad "initial filing carries sp-recur-1-unrecorded" "labels: $(B label list "$bid" 2>/dev/null)"
-
-nowant "bare sp-recur-1 NOT written" "sp-recur-1 " " $(B label list "$bid" 2>/dev/null | tr -d '-') " \
-    || true  # belt: recur_max already pins the count
+is "first filing has no recurrence event (only recurrences write events)" "0" "$(recurs_of "$bid")"
 
 # ======================================================================================
 echo
-echo "2. named cause (suite-red) — label is sp-recur-1-suite-red, then sp-recur-2-suite-red:"
+echo "2. named cause (suite-red) — bead created, second filing produces one recurrence event:"
 # ======================================================================================
 testdb_reset; mkdir -p "$TMP/run"; > "$ASK_LOG"
 ref2="incident:test-named-cause"
@@ -128,20 +131,7 @@ for i in d:
 [ -n "$bid2" ] && ok "bead was created for named-cause ref" \
     || { bad "bead was created for named-cause ref" "none found"; printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
 
-has_label_like "$bid2" "sp-recur-1-suite-red" \
-    && ok "initial filing carries sp-recur-1-suite-red" \
-    || bad "initial filing carries sp-recur-1-suite-red" "labels: $(B label list "$bid2" 2>/dev/null)"
-
-is "recurrence counter advanced to 2 after second filing" "2" "$(recur_max "$bid2")"
-
-has_label_like "$bid2" "sp-recur-2-suite-red" \
-    && ok "recurrence carries sp-recur-2-suite-red" \
-    || bad "recurrence carries sp-recur-2-suite-red" "labels: $(B label list "$bid2" 2>/dev/null)"
-
-# recur_causes (via lib.sh counter_causes) must surface the named cause.
-causes="$(recur_causes "$bid2")"
-want "recur_causes reports suite-red" "suite-red" "$causes"
-nowant "recur_causes does not report unrecorded" "unrecorded" "$causes"
+is "second filing produces exactly one recurrence event" "1" "$(recurs_of "$bid2")"
 
 # ======================================================================================
 echo

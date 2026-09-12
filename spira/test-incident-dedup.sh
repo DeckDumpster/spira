@@ -175,23 +175,12 @@ done
 n_dedup="$(count_by_ref "$DEDUP_REF")"
 is "$N filings of the same external_ref produce exactly one bead" "1" "$n_dedup"
 
-# VERIFY THE RECURRENCE COUNT. Each filing after the first must increment the recurrence
-# counter — so after N filings the highest sp-recur-K label must be sp-recur-N.
-# A dedup that silently drops filings without incrementing is not the one the code specifies.
-_recur_max="$(bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label spira,incident --json 2>/dev/null \
-  | python3 -c '
-import sys, json, re
-target = sys.argv[1]
-try:
-    d = json.load(sys.stdin)
-    for b in (d if isinstance(d, list) else [d]):
-        if b.get("external_ref") != target: continue
-        ns = [int(m.group(1)) for l in (b.get("labels") or [])
-              for m in [re.match(r"^sp-recur-(\d+)(?:-|$)", l)] if m]
-        print(max(ns) if ns else 0)
-except: print(0)
-' "$DEDUP_REF")"
-is "$N filings advance recurrence counter to $N" "$N" "$_recur_max"
+# VERIFY RECURRENCES ARE LOGGED. sp-recur-N-<cause> labels are no longer written (sp-lzt);
+# recurrences are recorded as events and logged in the incident log. The first of N filings
+# creates the bead (no recurrence entry) and each of the remaining N-1 filings logs a
+# recurrence — so the incident log must contain exactly N-1 "recurred" lines.
+_recur_count="$(grep -c ' recurred ' "$ILOG" 2>/dev/null || true)"
+is "$((N-1)) recurrences logged after $N filings" "$((N-1))" "$_recur_count"
 
 testdb_reset; mkdir -p "$RUN"; > "$ILOG"
 

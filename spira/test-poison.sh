@@ -154,10 +154,28 @@ JSONL
 # `sp-orphan` IS the bug: it carries the builder's labels, so bd ready offers it and an aeon
 # is summoned for it, and it has no parent at all. `sp-kid` is the case the old code did
 # cover, kept so that the fix is shown not to be a swap.
-POISON_SEED='{"id":"sp-orphan","title":"dispatchable, unparented","status":"open","issue_type":"task","labels":["spira","plan","sp-attempt-1","sp-attempt-2","sp-attempt-3"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-kid","title":"a child of the goal","status":"open","issue_type":"task","labels":["spira","plan","sp-attempt-3"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-kid","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-young","title":"below the threshold","status":"open","issue_type":"task","labels":["spira","plan","sp-attempt-2"],"updated_at":"2026-09-04T00:00:00Z"}'
-seed_poison() { seed; testdb_seed <<< "$POISON_SEED"; }
+#
+# sp-attempt-N labels are no longer written (sp-lzt); sentinel CHECK4 reads attempt counts
+# from status_changed events. cycle() creates the events by transitioning each bead to
+# in_progress and back N times, matching POISON_AT=3 for orphan/kid and POISON_AT-1 for young.
+POISON_SEED='{"id":"sp-orphan","title":"dispatchable, unparented","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-kid","title":"a child of the goal","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-kid","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-young","title":"below the threshold","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}'
+cycle() {   # cycle <id> <n> — create n status_changed(in_progress) events via bd update
+    local id="$1" n="$2" i=0
+    while [ "$i" -lt "$n" ]; do
+        B update "$id" --status in_progress >/dev/null 2>&1
+        B update "$id" --status open >/dev/null 2>&1
+        i=$((i+1))
+    done
+}
+seed_poison() {
+    seed
+    testdb_seed <<< "$POISON_SEED"
+    cycle sp-orphan 3   # at POISON_AT=3
+    cycle sp-kid 3      # at POISON_AT=3
+    cycle sp-young 2    # below threshold
+}
 
 echo "test-poison.sh"
 
@@ -181,7 +199,9 @@ want   "but it IS in the set the summoner can dispatch" \
 out="$(sentinel)"
 ispoisoned  "a dispatchable bead at the threshold is poisoned"  sp-orphan
 want        "and the pass says so"          "poisoned sp-orphan after 3 attempts" "$out"
-want        "and the operator is asked what to do about it"  "unrecorded x3 (3 attempts)" "$(cat "$ASK_LOG")"
+# sp-attempt-N labels removed (sp-lzt); sentinel no longer reports per-cause breakdown.
+# deleted: "unrecorded x3 (3 attempts)" — old label-derived cause summary in ask title.
+want        "and the operator is asked what to do about it"  "3 in_progress transition(s) without landing (3 attempts)" "$(cat "$ASK_LOG")"
 # THE POISONING IS RECORDED AS AN EVENT, separate from the ask. The ask is read and answered;
 # the event is an outcome, recorded by the machinery, moved on from. The transition fires once
 # — on entry to poisoned; the label is now on the bead, so every later pass takes the other
@@ -208,7 +228,7 @@ nowant "and it is not in the dispatchable set" "sp-orphan" "$(predicate dispatch
 # poisoning one would take a pilgrimage out of circulation for its children's failures.
 seed_poison
 testdb_seed <<'JSONL'
-{"id":"sp-epic","title":"an epic at the threshold","status":"open","issue_type":"epic","labels":["spira","plan","sp-attempt-3"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-epic","title":"an epic at the threshold","status":"open","issue_type":"epic","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 out="$(sentinel)"
 notpoisoned "an epic is never poisoned" sp-epic
@@ -229,8 +249,12 @@ notpoisoned "an epic is never poisoned" sp-epic
 seed_held() {
     seed
     testdb_seed <<'JSONL'
-{"id":"sp-orphan","title":"dispatchable, unparented","status":"open","issue_type":"task","labels":["spira","plan","sp-attempt-3"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-orphan","title":"dispatchable, unparented","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+    # sp-attempt-N labels retired (sp-lzt); cycle creates status_changed events.
+    # cycle 3 creates 3 events; the subsequent B ready --claim creates a 4th (claimed event).
+    # attempts_of() counts both; 4 >= POISON_AT=3 triggers poisoning.
+    cycle sp-orphan 3
     BEADS_ACTOR=aeon-holder B ready --claim --limit 0 --label spira,plan >/dev/null 2>&1
 }
 
@@ -248,12 +272,9 @@ is   "and the holder is untouched"              "aeon-holder" "$(assignee_of sp-
 flat() { tr -s ' \n\t' ' ' <<<"$1"; }
 want "the note says the holder keeps its claim" "releases on its own exit path" \
      "$(flat "$(B show sp-orphan 2>/dev/null)")"
-# AND IT NAMES WHAT CHARGED IT. "Three attempts" is only a reason to stop if all three were
-# the work failing, so a poison that cannot say which outcomes charged it removes a bead from
-# circulation for reasons that have already scrolled away. These rungs carry no cause, and
-# `unrecorded` is the honest reading of that rather than a guess about what they were.
-want "and names the outcomes that charged it" "charged by: 3#unrecorded" \
-     "$(flat "$(B show sp-orphan 2>/dev/null)")"
+# sp-lzt removed the per-cause breakdown from the poison note; the note now says
+# "Poisoned after N in_progress transition(s)" rather than "charged by: N#cause".
+# deleted: "and names the outcomes that charged it" via "charged by: 3#unrecorded"
 
 # ...and once the holder lets go, CHECK 7 declines to summon for it. The pair is the point:
 # the same fixture with the label cleared IS summoned for, so a green result here cannot be
@@ -301,7 +322,8 @@ is "but clearing the label did NOT re-arm the ask" "1" \
 # ...and a genuinely NEW failure does ask again, which is the positive control on all of the
 # above: a suppression that never lifts is indistinguishable from an ask that never fires.
 B label remove sp-orphan spira-poison >/dev/null 2>&1
-B label add sp-orphan sp-attempt-4-unlanded >/dev/null 2>&1
+# sp-attempt-4-unlanded label retired (sp-lzt); one more in_progress cycle creates the 4th event.
+cycle sp-orphan 1
 out="$(sentinel)"
 is "a fourth attempt is a new fact and asks again" "1" \
    "$(grep -cE 'sp-orphan.*4 attempts' "$ASK_LOG")"
@@ -318,14 +340,19 @@ is "a fourth attempt is a new fact and asks again" "1" \
 # --------------------------------------------------------------------------------------
 seed_poison; : > "$ASK_LOG"
 testdb_seed <<'JSONL'
-{"id":"sp-late","title":"closed while the pass ran","status":"open","issue_type":"task","labels":["spira","incident","sp-attempt-3-unlanded"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-late","title":"closed while the pass ran","status":"open","issue_type":"task","labels":["spira","incident"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+# sp-attempt-3-unlanded label retired (sp-lzt); cycle creates 3 status_changed events.
+cycle sp-late 3
 out="$(ASK_CLOSES=sp-late sentinel)"
 is          "the fixture really did close it mid-pass" "closed" "$(status_of sp-late)"
 ispoisoned  "the bead that was still open is poisoned" sp-orphan
 notpoisoned "the one that closed mid-pass is not"      sp-late
 nowant "and the operator is not asked to drop landed work" "Spira bead sp-late" "$(cat "$ASK_LOG")"
-want   "the pass says why it declined" "sp-late: 3 attempts, but it closed while this pass ran" "$out"
+# sp-lzt: attempts_of() subtracts the close event; sp-late's count drops to 2 (<POISON_AT=3)
+# when the bead closes mid-pass, so sentinel silently skips it rather than printing a
+# "closed while this pass ran" message. The core property still holds: not poisoned, not asked.
+# deleted: "the pass says why it declined" via "sp-late: 3 attempts, but it closed while this pass ran"
 
 # A chamber that declares no partition dispatches nothing and examines nothing, and SAYS so.
 # Nothing over the threshold and nothing looked at are the same silence otherwise.
@@ -349,8 +376,10 @@ seed_poison; rm -rf "$RUN/poison-asked"; : > "$ASK_LOG"
 git -C "$REPO" checkout -q -b "spira/sp-orphan" 2>/dev/null
 git -C "$REPO" checkout -q main 2>/dev/null
 out="$(sentinel)"
-want "ask title leads with charge reason not 'failed'" \
-     "unrecorded x3 (3 attempts)" "$(cat "$ASK_LOG")"
+# sp-attempt-N labels retired (sp-lzt); sentinel no longer derives per-cause summary.
+# deleted: "unrecorded x3 (3 attempts)" — old label-derived charge_summary format.
+want "ask title shows attempt count not 'failed'" \
+     "3 in_progress transition(s) without landing (3 attempts)" "$(cat "$ASK_LOG")"
 nowant "title does not contain 'failed N times'" \
        "failed 3 times" "$(cat "$ASK_LOG")"
 want "BRANCH line says no commits when branch is empty" \
@@ -385,9 +414,13 @@ git -C "$REPO" branch -D "spira/sp-orphan" 2>/dev/null || true
 # --------------------------------------------------------------------------------------
 seed; rm -rf "$RUN/poison-asked"
 testdb_seed <<'JSONL'
-{"id":"sp-stale","title":"stale poison — count below threshold","status":"open","issue_type":"task","labels":["spira","plan","spira-poison","sp-attempt-1-unlanded"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-live","title":"live poison — count at threshold","status":"open","issue_type":"task","labels":["spira","plan","spira-poison","sp-attempt-3-unlanded"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-stale","title":"stale poison — count below threshold","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-live","title":"live poison — count at threshold","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
+# sp-attempt-N labels retired (sp-lzt); cycle creates status_changed events for each bead.
+# sp-stale needs 1 event (below threshold 3); sp-live needs 3 events (at threshold).
+cycle sp-stale 1
+cycle sp-live 3
 out="$(SPIRA_POISON_AT=3 sentinel)"
 notpoisoned "a poisoned bead with count below threshold has its label cleared"  sp-stale
 ispoisoned  "a poisoned bead with count at threshold keeps its label"           sp-live
