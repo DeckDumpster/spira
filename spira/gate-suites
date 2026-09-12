@@ -21,6 +21,11 @@
 # does not, because a gate that quietly runs five checks where six are written down is a gate
 # reporting on work it never looked at.
 #
+# A SUITE NAMED HERE IS FIXED IN THE COMMIT THAT BREAKS IT, OR DELETED WITH THE GAP RECORDED
+# HERE — never left running and red with a note explaining why. Red-with-an-explanation is not
+# a third option: it masks every future regression in the code it covers while costing a slice
+# on every branch, and a stale note reads identically to a live one.
+#
 # Blank lines and `#` comments are ignored. One repository-relative path per line.
 
 # THE VERDICT CACHE'S OWN, and it earns its place by being the one check between a branch and
@@ -92,10 +97,3 @@ spira/test-literal-lint.sh
 # because the gate was already over budget before this epic landed (sp-rg2du, sp-ba2a) and
 # every entry here costs every branch. A gap: regressions in these paths are caught within
 # one timed-run window (~1h), not at landing. Promote one when a suite leaves the gate.
-#
-# KNOWN FAILING IN THE TIMED SET: test-work-services-exclusion.sh. The stub's list-units
-# handler returns service names for all patterns; after world.sh adopted list-units and
-# list-unit-files to enumerate timers dynamically, the stub feeds cockpit-prod and loom-prod
-# into the TIMERS array on every invocation, causing 4/7 assertions to fail. The code under
-# test (work_services() exclusion) is correct; the stub needs updating to match the new
-# enumeration shape. Permanent red in this suite masks future work_services() regressions.
