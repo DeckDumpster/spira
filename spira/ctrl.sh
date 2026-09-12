@@ -184,24 +184,33 @@ for subject, ops in sorted(data.items()):
 PY
 }
 
-# divergence -> for each declared suspension, check whether the unit is actually
-# active or enabled in systemd. Exits 1 if any divergence is found, 0 if clean.
+# divergence -> Check for mismatches in both directions:
+#   1. declared-but-running: a declared suspension whose unit is active or enabled in systemd.
+#   2. undeclared-but-masked: a spira unit masked in systemd with no control-plane entry.
+# Exits 1 if any divergence is found, 2 on a read fault, 0 if clean.
 #
-# A POSITIVE CONTROL IS BUILT IN. When no suspensions are declared, this fact is printed
-# explicitly rather than silently. An empty report that gives no evidence it ran is not a
-# clean verdict; a positive report from an empty set is (law-absence-needs-a-positive-control).
+# ABSENT CONTROL FILE: treated as empty — direction 1 has nothing to check, direction 2 still
+# runs. An unreadable file is a fault (returns 2), not a clean pass; the caller cannot tell
+# from outside whether silence is agreement or a broken probe.
 do_divergence() {
-    if [ ! -f "${SPIRA_CTRL}" ]; then
-        printf 'ctrl: no control file — no suspensions declared\n'
-        return 0
+    local inst="${SPIRA_INSTANCE:-prod}"
+    local div_found=0 ctrl_json='{}'
+    local suspended_subjects subject unit state enabled
+    local unit_list line unit_name unit_state base has_entry
+
+    # Read the control file. Absent means no entries; unreadable is a fault.
+    if [ -f "${SPIRA_CTRL}" ]; then
+        ctrl_json="$(cat "${SPIRA_CTRL}")" || {
+            printf 'ctrl: cannot read control file\n' >&2; return 2
+        }
     fi
 
-    local suspended_subjects
-    suspended_subjects="$(python3 - "${SPIRA_CTRL}" <<'PY'
+    # Direction 1: declared-but-running.
+    # For each declared suspension, report any unit that is active or enabled in systemd.
+    suspended_subjects="$(python3 - "$ctrl_json" <<'PY'
 import json, sys
 try:
-    with open(sys.argv[1]) as f:
-        data = json.load(f)
+    data = json.loads(sys.argv[1])
     for s, ops in sorted(data.items()):
         if 'suspend' in ops:
             print(s)
@@ -210,14 +219,6 @@ except Exception as e:
     sys.exit(2)
 PY
 )" || return 2
-
-    if [ -z "$suspended_subjects" ]; then
-        printf 'ctrl: no suspensions declared\n'
-        return 0
-    fi
-
-    local inst="${SPIRA_INSTANCE:-prod}"
-    local div_found=0 subject unit state enabled
 
     while IFS= read -r subject; do
         [ -n "$subject" ] || continue
@@ -236,7 +237,40 @@ PY
         done
     done <<< "$suspended_subjects"
 
+    # Direction 2: undeclared-but-masked.
+    # Any spira unit that systemd reports as masked but has no control-plane suspension entry
+    # is a divergence — the unit was suspended outside the control plane.
+    unit_list="$("$SC" --user list-unit-files 'spira*' --no-legend --no-pager 2>/dev/null || true)"
+
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        read -r unit_name unit_state _ <<< "$line"
+        [ "$unit_state" = "masked" ] || continue
+
+        # Derive the subject: strip the file extension, then the instance suffix if present.
+        base="${unit_name%.*}"
+        subject="${base%-${inst}}"
+
+        has_entry="$(python3 - "$ctrl_json" "$subject" <<'PY'
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    subject = sys.argv[2]
+    print("yes" if (subject in data and 'suspend' in data[subject]) else "no")
+except Exception:
+    print("no")
+PY
+)"
+        if [ "$has_entry" = "no" ]; then
+            printf 'ctrl: DIVERGENCE %s is masked but has no control-plane entry (undeclared suspension)\n' \
+                "$unit_name"
+            div_found=1
+        fi
+    done <<< "$unit_list"
+
     [ "$div_found" = 1 ] && return 1
+
+    printf 'ctrl: 0 divergences\n'
     return 0
 }
 

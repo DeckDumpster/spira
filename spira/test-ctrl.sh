@@ -55,16 +55,19 @@ ctrl() {
         bash "$HERE/ctrl.sh" "$@"
 }
 
-# write_sc <active_unit> <enabled_unit>
+# write_sc <active_unit> <enabled_unit> [masked_units...]
 # Write a systemctl stub that bakes the values in so no env vars are needed at runtime.
 # The divergence command passes SPIRA_SYSTEMCTL=$TMP/sc, which is this stub.
+# masked_units is a space-separated list of unit names that list-unit-files should report
+# as masked; used by the undeclared-direction divergence tests.
 write_sc() {
-    local active_unit="${1:-}" enabled_unit="${2:-}"
+    local active_unit="${1:-}" enabled_unit="${2:-}" masked_units="${3:-}"
     cat > "$TMP/sc" <<SC
 #!/usr/bin/env bash
+masked_units="${masked_units}"
 verb=""; subject=""
 for a; do
-    case "\$a" in --user) ;; *) [ -z "\$verb" ] && verb="\$a" || subject="\$a" ;; esac
+    case "\$a" in --user|--no-legend|--no-pager) ;; *) [ -z "\$verb" ] && verb="\$a" || subject="\$a" ;; esac
 done
 case "\$verb" in
     is-active)
@@ -72,13 +75,20 @@ case "\$verb" in
         echo inactive; exit 3 ;;
     is-enabled)
         [ "\$subject" = "${enabled_unit}" ] && { echo enabled; exit 0; }
+        for mu in \$masked_units; do
+            [ "\$subject" = "\$mu" ] && { echo masked; exit 1; }
+        done
         echo disabled; exit 1 ;;
+    list-unit-files)
+        for mu in \$masked_units; do
+            printf '%s  masked  enabled\n' "\$mu"
+        done ;;
     *)  exit 0 ;;
 esac
 SC
     chmod +x "$TMP/sc"
 }
-write_sc "" ""   # initial stub: nothing is active or enabled
+write_sc "" ""   # initial stub: nothing is active, enabled, or masked
 
 mkdir -p "$TMP/run" "$TMP/home/.config/systemd/user"
 
@@ -146,12 +156,12 @@ echo
 echo "DIVERGENCE: suspended-but-running detection"
 # ==========================================================================
 
-# No control file → silent, exits 0 (positive control: it ran and found nothing)
+# No control file → exits 0, both directions find nothing.
 rm -f "$CTRL_FILE"
 write_sc "" ""
 out="$(ctrl divergence 2>&1)"; rc=$?
 rc_is "divergence with no ctrl file exits 0" 0 $rc
-want  "divergence with no ctrl file names reason" "no control file" "$out"
+want  "divergence with no ctrl file reports summary" "0 divergences" "$out"
 
 # Suspend a unit; systemctl says it's inactive → no divergence
 ctrl suspend spira-suites --reason "test" --owner sp-x000 >/dev/null
@@ -181,6 +191,36 @@ write_sc "spira-suites-prod.timer" ""   # unit is still "active" in stub
 out="$(ctrl divergence 2>&1)"; rc=$?
 rc_is "divergence: no suspension → exits 0 even when unit is active" 0 $rc
 nowant "divergence: without suspension, active unit is not a divergence" "DIVERGENCE" "$out"
+
+# ==========================================================================
+echo
+echo "DIVERGENCE: undeclared direction (masked without control-plane entry)"
+# ==========================================================================
+
+# Negative control: no masked units, no entries — divergence exits 0 (baseline proves it runs).
+rm -f "$CTRL_FILE"
+write_sc "" "" ""
+out="$(ctrl divergence 2>&1)"; rc=$?
+rc_is "undeclared: no masked units, no entries → exits 0" 0 $rc
+nowant "undeclared: no masked units → no DIVERGENCE" "DIVERGENCE" "$out"
+
+# Plant the offender: a unit is masked in systemd with NO control-plane entry.
+# This is the shape found in production — units masked outside the control plane.
+# The check must exit non-zero.
+write_sc "" "" "spira-suites-prod.timer"
+out="$(ctrl divergence 2>&1)"; rc=$?
+rc_is "undeclared: masked unit without entry exits 1" 1 $rc
+want  "undeclared: prints DIVERGENCE"      "DIVERGENCE"              "$out"
+want  "undeclared: names the masked unit"  "spira-suites-prod.timer" "$out"
+
+# Positive control: register the suspension in the control plane.
+# The masked unit is now declared — divergence must exit 0.
+ctrl suspend spira-suites --reason "probe test" --owner sp-x000 >/dev/null
+out="$(ctrl divergence 2>&1)"; rc=$?
+rc_is "undeclared: declared masked unit exits 0" 0 $rc
+nowant "undeclared: declared masked unit not a divergence" "DIVERGENCE" "$out"
+
+ctrl resume spira-suites >/dev/null
 
 # ==========================================================================
 echo
