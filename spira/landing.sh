@@ -1292,7 +1292,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 # b85e5db and $repo's origin/main had not caught up. This is the rule that
                 # already existed and that the first two versions of this guard did not
                 # apply: re-fetch immediately before asserting that something did NOT land.
-                git -C "$repo" fetch -q origin 2>/dev/null || true
+                git -C "$repo" fetch -q --no-write-fetch-head origin 2>/dev/null || true
                 local _rn_merge _anc=no
                 _rn_merge="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
                 git -C "$repo" merge-base --is-ancestor "$br" "$base" 2>/dev/null && _anc=yes
