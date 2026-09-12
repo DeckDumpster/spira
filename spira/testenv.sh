@@ -41,11 +41,34 @@ _CONTAINER_CARGO="/var/spira/cargo"
 _USER_RUNTIME="/run/user/${_SPIRA_UID}"
 _DEFAULT_NAME="spira-testenv"
 
-# Image tag derived from the Containerfile hash. When the Containerfile changes, the
-# old tag is a miss and a fresh build runs automatically. The old image accumulates
-# but is never used, and `podman image prune` cleans it when needed.
+# Image tag derived from the build closure: Containerfile, the bd pin, and the program
+# lists that doctor.sh declares. All three determine what the image must provide; a change
+# to any of them must produce a new tag so a fresh build fires automatically rather than
+# a stale image being reused.
+#
+# The program lists are read from doctor.sh directly — a copy would be a second list that
+# must agree with the source, which is the defect class this function exists to prevent.
 _image_tag() {
-    sha256sum "$TESTENV_DIR/Containerfile" 2>/dev/null | cut -c1-12
+    # conf.sh supplies SPIRA_BD_PIN when it is not already in the environment. The guard is
+    # conf.sh's own (SPIRA_CONF_LOADED), so re-sourcing inside a session is a no-op.
+    [ -z "${SPIRA_CONF_LOADED:-}" ] && . "$HERE/conf.sh"
+    local _pin="${SPIRA_BD_PIN:-}"
+    {
+        # Containerfile: the recipe for the image itself.
+        sha256sum "$TESTENV_DIR/Containerfile" 2>/dev/null || true
+        # bd pin: migration count and build flags for the installed bd binary. A rebuild that
+        # changes the migration count may invalidate schema expectations in the test suites, so
+        # the image must be rebuilt when the pin changes.
+        [ -f "$_pin" ] && cat "$_pin"
+        # Program lists: the FATAL loop (bd git python3 flock …) and the WARN loop
+        # (dolt gh claude tmux cargo node …) from doctor.sh. When a program is added to
+        # either list, the image must provide it — the tag must move first so a build fires.
+        grep -E '^for b in ' "$HERE/doctor.sh" 2>/dev/null || true
+    } | sha256sum | cut -c1-12
+}
+
+cmd_tag() {
+    printf '%s\n' "$(_image_tag)"
 }
 
 _image_ref() {
@@ -302,13 +325,15 @@ case "${1:-}" in
     probe)   shift; cmd_probe   "$@" ;;
     scratch) shift; cmd_scratch "$@" ;;
     shell)   shift; cmd_shell   "$@" ;;
+    tag)     shift; cmd_tag              ;;
     *)
-        printf 'usage: testenv.sh up|down|exec|probe|scratch|shell [OPTIONS]\n' >&2
+        printf 'usage: testenv.sh up|down|exec|probe|scratch|shell|tag [OPTIONS]\n' >&2
         printf '  up      [--name NAME] [--checkout PATH]\n' >&2
         printf '  down    [--name NAME] [--volumes]\n' >&2
         printf '  exec    [--name NAME] [--user USER] CMD ARGS...\n' >&2
         printf '  probe   [--name NAME]\n' >&2
         printf '  scratch          # print a throwaway SPIRA_DB path; caller cleans up\n' >&2
         printf '  shell            # subshell with SPIRA_DB/RUN/SPOOL on throwaway paths\n' >&2
+        printf '  tag              # print the computed image tag (the build closure hash)\n' >&2
         exit 1 ;;
 esac
