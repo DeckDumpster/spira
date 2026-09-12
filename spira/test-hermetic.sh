@@ -36,6 +36,11 @@
 #
 # defect: sp-4d8v
 # covers: spira/hermetic.sh spira/gate-spira.sh spira/gate-fences.sh
+# scar: plant() used a hand-written stub list that omitted `literal-lint.sh` when c515322 added
+# it as gate-spira.sh's fourth fence — gate refused with "literal-lint.sh is missing" on both
+# mini-gate invocations; gate_fence_stubs derives the fence list from gate-spira.sh at call time
+# (sp-i7u). Seen red (2 failures): FAIL the installed tree can announce itself: wanted
+# [MARKER-INSTALLED] in [gate: spira/literal-lint.sh is missing — refusing to land unchecked]
 # shellcheck disable=SC1090
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -47,6 +52,11 @@ want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 echo "test-hermetic.sh"
+
+[ "${XDG_RUNTIME_DIR:-}" = "/run/user/1001" ] || {
+    printf 'SKIP test-hermetic.sh: not running inside testenv container\n' >&2
+    exit 77
+}
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 . "$HERE/gate-fences.sh"
