@@ -18,6 +18,10 @@
 #
 # defect: sp-2inx
 # covers: spira/doctor.sh spira/lib.sh
+# scar: when the while loop that checks NF<6 was removed, "fewer than six columns is
+# stated" failed: wanted [fewer than six] in the doctor.sh output but it was absent.
+# Seen red (sp-841s): 3 failed — narrow row: fewer than six columns is stated: wanted
+# [fewer than six] in [... 4 fatal, 16 warnings ...] — the awk block never ran.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -29,17 +33,8 @@ nowant(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]
 echo "test-repo.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
-SH="$TMP/spira"; REPO="$TMP/repo"
-mkdir -p "$SH" "$REPO" "$TMP/home" "$TMP/run"
-
-cp "$HERE/doctor.sh" "$HERE/conf.sh" "$HERE/lib.sh" "$SH/"
-
-# Stubs for scripts doctor.sh invokes that are out of scope here.
-# skew.sh: doctor.sh runs it with `bash "$SPIRA_HOME/skew.sh" copies`; exit 1 → WARN, continue.
-printf '#!/usr/bin/env bash\nexit 1\n' > "$SH/skew.sh"; chmod +x "$SH/skew.sh"
-# install-session-hook.sh: called for the session-hook check; exit 1 → WARN, continue.
-printf '#!/usr/bin/env bash\nexit 1\n' > "$SH/install-session-hook.sh"
-chmod +x "$SH/install-session-hook.sh"
+REPO="$TMP/repo"
+mkdir -p "$REPO" "$TMP/home" "$TMP/run"
 
 # A real git repo so the per-row path checks in the repositories section have
 # something to resolve. doctor.sh uses the map's path column, not SPIRA_REPO,
@@ -53,17 +48,21 @@ git -C "$REPO" remote add origin "$REPO"
 git -C "$REPO" fetch -q
 
 # run_doctor <map-path> -> doctor.sh output; always exits 0 (we read the output).
+# SPIRA_HOME points at $HERE (the source checkout) so doctor.sh locates lib.sh,
+# conf.sh, and peer scripts without a separate copy. No stubs for skew.sh or
+# install-session-hook.sh: those produce WARNs, not FAILs, and the assertions here
+# check only for "fewer than six" (repo column count) and do not conflict with them.
 run_doctor() {
     env -i PATH="$PATH" HOME="$TMP/home" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t \
         GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         SPIRA_CONF="$TMP/no-such.conf" \
-        SPIRA_HOME="$SH" SPIRA_REPO="$REPO" \
+        SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
         SPIRA_DB="$TMP/no-db" \
         SPIRA_REPO_MAP="$1" \
         SPIRA_RUN="$TMP/run" \
         SPIRA_NOTIFY="$TMP/no-notify" \
-        bash "$SH/doctor.sh" 2>&1 || true
+        bash "$HERE/doctor.sh" 2>&1 || true
 }
 
 # ==========================================================================

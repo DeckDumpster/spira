@@ -361,6 +361,29 @@ WHY
     printf '%d\n' "$count"
     exit 0
     ;;
+
+# --count-copying: print the count of suites that still copy harness files or create inline
+# stubs — the wave 2 migration backlog. Falls monotonically as child beads of sp-841s close.
+# Renders ? if the glob matches nothing. Host-reason suites are excluded: they are declared
+# and intentional, not wave-2 candidates. Exits 0 either way — informational, not a gate.
+--count-copying)
+    shopt -s nullglob
+    suites=("$ROOT"/spira/test-*.sh)
+    if [ "${#suites[@]}" -eq 0 ]; then printf '?\n'; exit 0; fi
+    count=0
+    for f in "${suites[@]}"; do
+        host_reason_of "$f" > /dev/null && continue   # declared host suite, not wave-2 work
+        # Detect cp of harness files or inline stub creation. Three patterns cover the corpus:
+        #   cp "$HERE/  — copies a named harness script to a scratch dir
+        #   FAKE_SPIRA_HOME — creates a fake installation tree
+        #   cat > "$...sh  — writes an inline stub script to a variable path
+        if grep -qE 'cp "\$HERE/|FAKE_SPIRA_HOME=|cat > "\$[A-Za-z_]+/[^ ].*\.sh' "$f" 2>/dev/null; then
+            count=$(( count + 1 ))
+        fi
+    done
+    printf '%d\n' "$count"
+    exit 0
+    ;;
 esac
 
 # THE GLOB MUST MATCH SOMETHING (law-absence-needs-a-positive-control). An empty expansion

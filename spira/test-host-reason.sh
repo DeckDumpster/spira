@@ -160,19 +160,56 @@ count_empty="$(fence_at "$EMPTY_ROOT" --count-undeclared)"
 is "empty tree renders ? not 0" "?" "$count_empty"
 
 # ==========================================================================
-# suites.sh status renders the count on the sweep line.
-# The shipped suites are not yet fully migrated, so the count is a non-zero number.
+# --count-copying: wave-2 migration backlog. Counts suites still copying harness
+# files or creating inline stubs. Positive control first, then host-reason exclusion.
+# ==========================================================================
+COPY_ROOT="$TMP/copy-root"; mkdir -p "$COPY_ROOT/spira"
+cp "$HERE/hermetic.sh" "$COPY_ROOT/spira/hermetic.sh"
+git init -q -b main "$COPY_ROOT"
+git -C "$COPY_ROOT" config user.email t@t; git -C "$COPY_ROOT" config user.name t
+
+# Empty tree -> ?
+is "count-copying: empty tree renders ? not 0" "?" \
+   "$(fence_at "$COPY_ROOT" --count-copying)"
+
+# Plant a suite that copies a harness file. The count must report 1.
+COPY_SUITE="$COPY_ROOT/spira/test-copy-planted.sh"
+printf '#!/usr/bin/env bash\nset -e\ncp "$HERE/lib.sh" "$TMP/"\n' > "$COPY_SUITE"
+is "POSITIVE CONTROL: count-copying sees a planted cp suite" "1" \
+   "$(fence_at "$COPY_ROOT" --count-copying)"
+
+# A host-reason suite with cp is NOT counted — it is a declared host suite, not wave-2 work.
+HR_SUITE="$COPY_ROOT/spira/test-hr-copy.sh"
+printf '#!/usr/bin/env bash\n# host-reason: needs host systemd\ncp "$HERE/lib.sh" "$TMP/"\n' > "$HR_SUITE"
+is "host-reason suite is excluded from count-copying" "1" \
+   "$(fence_at "$COPY_ROOT" --count-copying)"
+
+# Remove the copying suite — count falls to 0 (migration complete for that tree).
+rm "$COPY_SUITE"
+is "count-copying falls when the suite is migrated" "0" \
+   "$(fence_at "$COPY_ROOT" --count-copying)"
+
+# ==========================================================================
+# suites.sh status renders both counts on the sweep.
 # ==========================================================================
 if [ -x "$HERE/suites.sh" ]; then
     status_out="$(bash "$HERE/suites.sh" status 2>&1 || true)"
     want "suites.sh status names the host-reason line" "host-reason" "$status_out"
-    # The count is either a number or ? — not blank, not the literal string "undeclared".
+    # The undeclared count is either a number or ? — not blank, not "undeclared".
     if [[ "$status_out" =~ "host suites without # host-reason:" ]]; then
-        # Extract the value after the label.
         val="$(printf '%s\n' "$status_out" | grep 'host suites without' | sed 's/.*# host-reason:[[:space:]]*//')"
         case "$val" in
             [0-9]*|'?') ok "sweep line carries a number or ? [$val]" ;;
             *) bad "sweep line carries a number or ?" "got [$val]" ;;
+        esac
+    fi
+    # The wave-2 copying/stubbing count must appear and render as number or ?.
+    want "suites.sh status includes wave-2 migration line" "copying/stubbing" "$status_out"
+    if [[ "$status_out" =~ "copying/stubbing" ]]; then
+        wave2="$(printf '%s\n' "$status_out" | grep 'copying/stubbing' | grep -oE '[0-9]+|\?' | head -1)"
+        case "${wave2:-}" in
+            [0-9]*|'?') ok "wave-2 count is a number or ? [${wave2:-?}]" ;;
+            *) bad "wave-2 count is a number or ?" "got [${wave2:-}]" ;;
         esac
     fi
 fi
