@@ -126,7 +126,7 @@ wr_pass() {
     fi
 
     local -a units=()
-    for name in "${names[@]}"; do units+=("spira-watch@$name.service"); done
+    for name in "${names[@]}"; do units+=("$(watch_unit_name "$name")"); done
 
     # ---- exec 1 of 2 -------------------------------------------------------------------
     local show rc

@@ -140,7 +140,7 @@ show() {
     printf 'Id=%s\nActiveState=%s\nActiveEnterTimestamp=%s\nExecStart={ path=%s ; argv[]=%s %s ; pid=1 }\n\n' \
         "$1" "$2" "$3" "${4:-$CLONE/spira/watchd.sh}" "${4:-$CLONE/spira/watchd.sh}" "exec x" >> "$SHOW"
 }
-fresh_show() { : > "$SHOW"; show "spira-watch@answers.service" active "@$UNIT_START"; }
+fresh_show() { : > "$SHOW"; show "spira-watch-answers-prod.service" active "@$UNIT_START"; }
 
 # runpass [dry] — one pass, as a FUNCTION, with the exec log truncated immediately before it.
 #
@@ -174,7 +174,7 @@ is "and says nothing"                        "" "$(cat "$TMP/out")"
 # systemctl was never reached, restarts nothing in exactly the same way.
 has "but it did ask systemd"                 "$(cat "$EXECLOG")" "systemctl --user show"
 has "and it did stat the files"              "$(cat "$EXECLOG")" "stat -c %Y %n"
-has "one show for every unit at once"        "$(cat "$EXECLOG")" "spira-watch@answers.service"
+has "one show for every unit at once"        "$(cat "$EXECLOG")" "spira-watch-answers-prod.service"
 
 echo
 echo "what one pass costs (law-fence-loops-on-shared-hardware)"
@@ -194,7 +194,7 @@ restarts_on() {          # restarts_on <label> <file to touch>
     touch -d "@$NEWER" "$2"
     runpass
     case "$(acted)" in
-        *"restart spira-watch@answers.service"*) ;;
+        *"restart spira-watch-answers-prod.service"*) ;;
         *) bad "$1" "acted: [$(acted)] out: $(cat "$TMP/out")"; return ;;
     esac
     ok "$1"
@@ -213,10 +213,10 @@ restarts_on "the dispatcher it is started through" "$CLONE/spira/watchd.sh"
 # AND THE UNIT'S OWN ExecStart, which is not necessarily this harness's copy. A box carrying
 # an install from another checkout runs that tree's dispatcher, and only systemd knows.
 reset_mtimes; : > "$SHOW"
-show "spira-watch@answers.service" active "@$UNIT_START" "$OTHER/watchd.sh"
+show "spira-watch-answers-prod.service" active "@$UNIT_START" "$OTHER/watchd.sh"
 touch -d "@$NEWER" "$OTHER/watchd.sh"
 runpass
-has "the unit's own ExecStart, wherever it points" "$(acted)" "restart spira-watch@answers.service"
+has "the unit's own ExecStart, wherever it points" "$(acted)" "restart spira-watch-answers-prod.service"
 has "and the message names the file that caused it" "$(cat "$TMP/out")" "$OTHER/watchd.sh"
 
 echo
@@ -235,19 +235,19 @@ MAN2="$TMP/watchers-argv"
 cat > "$MAN2" <<EOF
 viewer|daemon|@SPIRA_COCKPIT@/viewer watch|
 EOF
-argv_show() { : > "$SHOW"; show "spira-watch@viewer.service" active "@$UNIT_START"; }
+argv_show() { : > "$SHOW"; show "spira-watch-viewer-prod.service" active "@$UNIT_START"; }
 
 reset_mtimes; touch -d "@$T0" "$MAN2"; argv_show
 WR_MAN="$MAN2" runpass
 is "unchanged, it is left alone"             "" "$(acted)"
 # The positive control for the line above: an argument in the target must not quietly cost
 # the row its whole check.
-has "and it was asked about all the same"    "$(cat "$EXECLOG")" "spira-watch@viewer.service"
+has "and it was asked about all the same"    "$(cat "$EXECLOG")" "spira-watch-viewer-prod.service"
 
 reset_mtimes; touch -d "@$T0" "$MAN2"; argv_show
 touch -d "@$NEWER" "$COCKPIT/viewer"
 WR_MAN="$MAN2" runpass
-has "the program is taken from the target's first word" "$(acted)" "restart spira-watch@viewer.service"
+has "the program is taken from the target's first word" "$(acted)" "restart spira-watch-viewer-prod.service"
 has "and the message names the program, not the command" "$(cat "$TMP/out")" "$COCKPIT/viewer"
 # Asserted at the stat call and not only at the restart: under the whole-string bug the
 # program is never among the paths asked about at all, and the `-e` filter then drops the
@@ -279,7 +279,7 @@ runpass
 hasnt "the log row is never asked about"  "$(cat "$EXECLOG")" "spira-watch@cron"
 hasnt "and never restarted"               "$(acted)" "cron"
 reset_mtimes; : > "$SHOW"
-show "spira-watch@answers.service" inactive ""
+show "spira-watch-answers-prod.service" inactive ""
 touch -d "@$NEWER" "$COCKPIT/watch-answers.sh"
 runpass
 # Restart=always is what brings a dead unit back; a restart aimed at one here fights
@@ -316,7 +316,7 @@ reset_mtimes; fresh_show; touch -d "@$NEWER" "$COCKPIT/watch-answers.sh"
 n_before="$(cat "$RUN/watchd/answers.restarts" 2>/dev/null)"
 runpass dry
 is "it restarts nothing"        "" "$(acted)"
-has "but says what it would do" "$(cat "$TMP/out")" "would restart spira-watch@answers.service"
+has "but says what it would do" "$(cat "$TMP/out")" "would restart spira-watch-answers-prod.service"
 is "and the meter does not move" "$n_before" "$(cat "$RUN/watchd/answers.restarts" 2>/dev/null)"
 
 echo
@@ -333,7 +333,7 @@ has "and names it"  "$(cat "$TMP/err")" "systemctl show failed"
 # AN OLDER systemd THAT DOES NOT KNOW --timestamp=unix hands back a localised date. Guessing
 # at the format is how a check quietly starts answering about nothing.
 reset_mtimes; : > "$SHOW"
-show "spira-watch@answers.service" active "Mon 2026-09-07 01:35:41 UTC"
+show "spira-watch-answers-prod.service" active "Mon 2026-09-07 01:35:41 UTC"
 touch -d "@$NEWER" "$COCKPIT/watch-answers.sh"
 runpass; rc=$?
 is "a start time it cannot read is not guessed at" "" "$(acted)"
@@ -465,7 +465,7 @@ out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_WATCH
       WR_PROC_ROOT="$EMPTYPROC" \
       bash "$CLONE/spira/watch-refresh.sh" 2>&1)"; rc=$?
 is "it runs"                       "0" "$rc"
-has "and restarts the stale unit"  "$(acted)" "restart spira-watch@answers.service"
+has "and restarts the stale unit"  "$(acted)" "restart spira-watch-answers-prod.service"
 hasnt "and sourcing watchd.sh printed no manifest of its own" "$out" "|daemon|"
 out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
       SPIRA_PATH="$SHIM" WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
