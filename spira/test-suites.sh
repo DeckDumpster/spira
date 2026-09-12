@@ -517,7 +517,7 @@ echo "the landing gate reads the same file, and fails closed on a bad one:"
 GT="$TMP/gtree"
 mkdir -p "$GT/spira"
 git init -q -b main "$GT"
-cp "$HERE/gate-spira.sh" "$GT/spira/"
+cp "$HERE/gate-spira.sh" "$HERE/suite-covers.sh" "$GT/spira/"
 for stub in exclude.sh inventory.sh hermetic.sh sop.sh; do
     printf '#!/usr/bin/env bash\nexit 0\n' > "$GT/spira/$stub"
 done

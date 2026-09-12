@@ -46,6 +46,7 @@ testdb_up coversgate || { echo "test-gate-covers: could not build fixture databa
 SH="$TMP/spira"
 mkdir -p "$SH"
 cp "$HERE/gate-spira.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
+   "$HERE/suite-covers.sh" \
    "$HERE/exclude.sh" "$HERE/inventory.sh" "$HERE/hermetic.sh" "$HERE/sop.sh" \
    "$HERE/literal-lint.sh" "$SH/"
 [ -f "$HERE/inventory-deny" ] && cp "$HERE/inventory-deny" "$SH/"
@@ -165,6 +166,31 @@ want "positive-B: fallback announcement appears"               "unmapped"  "$out
 mk_suite test-cv-fail.sh "src/a.sh" 0   # restore to passing for budget test
 run_gate "src/a.sh"; out="$(cat "$GOUT")"
 want "budget: cost total= line present"                      "cost total=" "$out"
+
+# --------------------------------------------------------------------------------------
+# 7. STRUCTURAL: suite_covers_of is the only # covers: parser. Neither gate-spira.sh
+# nor suites.sh may carry an inline sed substitution after sp-dt8u.
+#
+# POSITIVE CONTROL (law-absence-needs-a-positive-control): create a temp file with the
+# inline sed substitution, verify the grep finds it — then verify no real file outside
+# suite-covers.sh carries the same pattern.
+#
+# Pattern is constructed from two separate literals (_cpa + _cpb) so the full string
+# 'covers: *//' does not appear as a continuous span in this file — which would cause
+# grep -F to find this file and count it as an offender. -F (fixed-string) is required
+# because the pattern contains '*' which grep BRE treats as a quantifier, not a literal.
+# --------------------------------------------------------------------------------------
+_cpa='covers:'; _cpb=' *//'
+_off="$TMP/fake-parser.sh"
+printf '#!/usr/bin/env bash\n_cov="$(sed '"'"'s/^# %s%s'"'"' file)"\n' "$_cpa" "$_cpb" > "$_off"
+_found="$(grep -Fl "${_cpa}${_cpb}" "$_off" 2>/dev/null || true)"
+is "structural positive control: grep -F finds inline parser" "$_off" "$_found"
+
+_dup="$(grep -rFl "${_cpa}${_cpb}" "$HERE"/*.sh 2>/dev/null \
+    | grep -Fv suite-covers.sh \
+    | grep -Fv test-gate-covers.sh \
+    || true)"
+is "no duplicate covers: parser outside suite-covers.sh" "" "$_dup"
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

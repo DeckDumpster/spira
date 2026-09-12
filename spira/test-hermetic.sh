@@ -222,7 +222,7 @@ is   "and it is executable"      "0" "$([ -x "$HERE/hermetic.sh" ]; echo $?)"
 # ---------------------------------------------------------------------------------------
 plant() {                # plant <root> <marker> — a tree whose fences announce which one it is
     mkdir -p "$1/spira"
-    cp "$HERE/gate-spira.sh" "$1/spira/"
+    cp "$HERE/gate-spira.sh" "$HERE/suite-covers.sh" "$1/spira/"
     # EVERY fence the gate insists on, derived from gate-spira.sh so adding a fence
     # here requires no edit in this suite (gate_fence_stubs fails closed if the list
     # is empty — law-absence-needs-a-positive-control).

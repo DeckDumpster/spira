@@ -49,6 +49,9 @@
 # It fails CLOSED, and a check that could not run is not a pass.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Shared # covers: accessor — must not be reimplemented inline (sp-dt8u).
+[ -r "$HERE/suite-covers.sh" ] || { printf 'gate: suite-covers.sh is missing\n' >&2; exit 1; }
+. "$HERE/suite-covers.sh"
 # IT JUDGES THE TREE IT IS PART OF, and it finds that tree from its own path. This read
 # `cd "${SPIRA_GATE_REPO:-.}"`, and the gate sets SPIRA_GATE_REPO to the INSTALLED CHECKOUT
 # while extracting the branch to a scratch worktree and running the command there — so this
@@ -325,7 +328,7 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
             # Separate suites with no # covers: line — they always run, never skipped.
             _cv_nocov=""
             for _cv_ts in $_cv_all; do
-                _cv_cov="$(grep -m1 '^# covers:' "$_cv_ts" 2>/dev/null | sed 's/^# covers: *//')"
+                _cv_cov="$(suite_covers_of "$_cv_ts")"
                 [ -z "$_cv_cov" ] && _cv_nocov="$_cv_nocov $_cv_ts"
             done
 
@@ -335,7 +338,7 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
             for _cv_f in $_cv_changed; do
                 _cv_hit=0
                 for _cv_ts in $_cv_all; do
-                    _cv_cov="$(grep -m1 '^# covers:' "$_cv_ts" 2>/dev/null | sed 's/^# covers: *//')"
+                    _cv_cov="$(suite_covers_of "$_cv_ts")"
                     [ -z "$_cv_cov" ] && continue
                     for _cv_pat in $_cv_cov; do
                         case "$_cv_f" in

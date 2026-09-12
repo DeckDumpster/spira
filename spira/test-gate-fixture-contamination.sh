@@ -63,7 +63,7 @@ for b in (d if isinstance(d, list) else []):
 # the fixture database.
 SH="$TMP/spira"
 mkdir -p "$SH"
-cp "$HERE/gate-spira.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/sop.sh" "$SH/"
+cp "$HERE/gate-spira.sh" "$HERE/suite-covers.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/sop.sh" "$SH/"
 gate_fence_cp "$HERE/gate-spira.sh" "$HERE" "$SH"
 [ -f "$HERE/inventory-deny" ] && cp "$HERE/inventory-deny" "$SH/"
 # A REPO-MAP so _bdq_check_repo_label allows repo:spira if file_budget_bead fires.

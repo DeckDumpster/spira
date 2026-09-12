@@ -108,8 +108,6 @@ gated_suites() {
 # is_gated <basename> -> 0 when the gate already runs it
 is_gated() { case " $GATED " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
-# covers_of <basename> -> the suite's `# covers:` globs, or empty
-covers_of() { sed -n 's/^# *covers: *//p' "$HERE/$1" 2>/dev/null | head -1; }
 
 # priority_of <basename> -> the priority a red from this suite is filed at.
 #
@@ -235,7 +233,7 @@ cause_fp() {           # cause_fp <rc> <output> -> stable first-FAIL-line hash
 # --------------------------------------------------------------------------------------
 file_red() {             # file_red <basename> <status> <rc> <seconds> <fp> <output>
     local s="$1" status="$2" rc="$3" secs="$4" fp="$5" out="$6" cov id=""
-    cov="$(covers_of "$s")"
+    cov="$(suite_covers_of "$HERE/$s")"
     if [ ! -r "$INC" ]; then
         log "suites: no intake at $INC — $s is red and the finding reaches nobody"
         return 1
@@ -299,7 +297,7 @@ PAYLOAD
 # --------------------------------------------------------------------------------------
 file_env_red() {    # file_env_red <basename> <rc> <seconds> <fp> <output> <differing_vars>
     local s="$1" rc="$2" secs="$3" fp="$4" out="$5" differing="$6" cov id=""
-    cov="$(covers_of "$s")"
+    cov="$(suite_covers_of "$HERE/$s")"
     if [ ! -r "$INC" ]; then
         log "suites: no intake at $INC — $s env mismatch and the finding reaches nobody"
         return 1
@@ -421,7 +419,7 @@ PAYLOAD
 file_cluster() {  # file_cluster <n> <suite-list> <cfp> <repr-suite> <repr-rc> <repr-secs> <repr-out> <prio>
     local n="$1" suites="$2" cfp="$3" repr_suite="$4" repr_rc="$5" repr_secs="$6"
     local repr_out="$7" prio="$8" cov id="" s
-    cov="$(covers_of "$repr_suite")"
+    cov="$(suite_covers_of "$HERE/$repr_suite")"
     if [ ! -r "$INC" ]; then
         log "suites: no intake at $INC — cause-cluster of $n ($suites) reaches nobody"
         return 1
@@ -506,7 +504,7 @@ cmd_run() {
     for s in $(all_suites); do
         is_gated "$s" && continue
         timed="$timed $s"
-        [ -n "$(covers_of "$s")" ] || undeclared="$undeclared $s"
+        [ -n "$(suite_covers_of "$HERE/$s")" ] || undeclared="$undeclared $s"
     done
     timed="$(echo $timed)"
     if [ -z "$timed" ]; then
@@ -928,7 +926,7 @@ cmd_list() {
         fi
         [ "$where" = gate ] && { st=-; age=-; }
         printf '%-26s %-7s %-9s %-8s %s\n' "$s" "$where" "$st" "$age" \
-            "$(covers_of "$s" || true)"
+            "$(suite_covers_of "$HERE/$s")"
     done
     [ "$gated_ok" = 1 ] || printf '\n%s is unreadable — which suites the gate runs is unknown\n' "$GATE_LIST"
 }

@@ -22,6 +22,7 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
     return 1 2>/dev/null || exit 1
 }
 . "$_spira_lib_dir/conf.sh"
+. "$_spira_lib_dir/suite-covers.sh"
 unset _spira_lib_dir
 export BEADS_NO_AUTO_IMPORT=1
 mkdir -p "$SPIRA_RUN"
