@@ -45,6 +45,7 @@ wiki/
 .beads/
 .dolt/
 .beads-credential-key
+.beads.gate.lock
 *.jsonl
 *.db
 *.db-*
