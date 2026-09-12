@@ -35,13 +35,6 @@
 # seconds, and it plants an offender for every side of the key.
 spira/test-gate-verdict.sh
 
-# THE SOAK. Does the merge queue make progress while several gates and a landing pass run
-# against each other? It reproduces the livelock that cost a whole morning against the old
-# code and shows it gone. Every failure this pipeline has ever had is a property of the
-# pipeline — two things running at once, a lock, a queue that stops moving — never a function
-# returning the wrong value, and this is the check for that class.
-spira/test-soak.sh
-
 # THE WATCHTOWER'S OWN, and it earns its place by the same rule read the other way round. A
 # gate that breaks refuses good work, loudly; a DETECTOR that breaks reports the stall and the
 # healthy case identically, and the reassuring reading is the one it gives. Detection is what
@@ -91,9 +84,9 @@ spira/test-gate-budget.sh
 # to match for any reason and the gate would call it a pass.
 spira/test-literal-lint.sh
 
-# NOT IN THE GATE (budget): test-owned, test-uninstall, test-ready, test-install-conflicts,
-# test-configure, test-build. These hermetic suites cover the install/uninstall/configure/
-# ready/owned/build paths and run in the timed set (suites.sh). They are kept out of the gate
-# because the gate was already over budget before this epic landed (sp-rg2du, sp-ba2a) and
-# every entry here costs every branch. A gap: regressions in these paths are caught within
-# one timed-run window (~1h), not at landing. Promote one when a suite leaves the gate.
+# NOT IN THE GATE (budget): test-soak, test-owned, test-uninstall, test-ready,
+# test-install-conflicts, test-configure, test-build. test-soak (~90s) was moved to the timed
+# set to bring the gate under SPIRA_GATE_BUDGET (sp-jb7y); the deadlock it covers is still
+# caught on the ~1h timed-run window. The remaining suites cover install/uninstall/configure/
+# ready/owned/build paths; regressions in those paths are caught within one timed-run window,
+# not at landing. Promote one when the budget allows.
