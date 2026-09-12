@@ -957,7 +957,17 @@ cmd_status() {
         if [ "$(( now - at ))" -gt "$STALE" ]; then stale=$(( stale + 1 )); fi
         if [ -z "$oldest" ] || [ "$at" -lt "$oldest" ]; then oldest="$at"; oldest_s="$s"; fi
     done
+    # Count suites without a # host-reason: or container calls — migration progress.
+    # hermetic.sh --count-undeclared does the walk; ? when it is unreadable or the glob
+    # matches nothing (indistinguishable from a wrong path), never a silent 0.
+    local undeclared="?"
+    if [ -x "$HERE/hermetic.sh" ]; then
+        undeclared="$(bash "$HERE/hermetic.sh" --count-undeclared 2>/dev/null)" || undeclared="?"
+        # Guard against a blank result from a shell that executed but printed nothing.
+        [ -n "$undeclared" ] || undeclared="?"
+    fi
     printf '  %-36s%s\n' "suites in the tree" "$total   ($gate_n gated, $timed_n timed)"
+    printf '  %-36s%s\n' "host suites without # host-reason:" "$undeclared"
     printf '  %-36s%s\n' "timed suites with no result yet" "$never"
     printf '  %-36s%s\n' "timed results older than $(( STALE / 3600 ))h" "$stale"
     printf '  %-36s%s\n' "timed suites red at last run" "$red"
