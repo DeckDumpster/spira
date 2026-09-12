@@ -160,6 +160,36 @@ record_read() {          # record_read <basename> -> `<status> <epoch> <seconds>
 }
 
 # --------------------------------------------------------------------------------------
+# THE UNREACHED FLAG. Separate from the result record so that a suite skipped by the
+# budget guard does not overwrite the verdict and runtime it recorded on its last real run.
+#
+# A SUITE CAN BE RED AND UNREACHED AT THE SAME TIME. "red" is the last verdict; "unreached"
+# means the budget did not reach this suite in the most recent pass. Both facts must survive:
+# the red drives the bead count on the sweep; the unreached flag explains why the age column
+# has not advanced. Merging the two into one field (the pre-sp-u1g behaviour) made them
+# mutually exclusive, so 117 of 210 result files showed "unreached" with no verdict at all.
+#
+# CLEARING. When a suite runs in a pass — any outcome — its .unreached file is removed.
+# When a suite is not reached, its .unreached file is written (with the pass epoch). The
+# .unreached file's epoch compared with the .result epoch tells cmd_list whether the suite's
+# last record is from before or after its last skipped pass, but neither cmd_list nor
+# cmd_status requires that comparison: the presence of the file is the signal.
+# --------------------------------------------------------------------------------------
+unreached_write() {   # unreached_write <basename>  — record that this pass skipped the suite
+    mkdir -p "$STATE" 2>/dev/null || return 1
+    printf '%s\n' "$(date +%s)" > "$STATE/$1.unreached"
+}
+unreached_clear() {   # unreached_clear <basename>  — suite ran this pass; clear the flag
+    rm -f "$STATE/$1.unreached"
+}
+unreached_read() {    # unreached_read <basename> -> epoch when last skipped, or fails
+    local f="$STATE/$1.unreached"
+    [ -r "$f" ] || return 1
+    local ep; read -r ep < "$f" 2>/dev/null || true
+    printf '%s' "${ep:-}"
+}
+
+# --------------------------------------------------------------------------------------
 # THE FINGERPRINT — the second half of the dedupe key, the first being the suite.
 #
 # A PERSISTENT FAILURE MUST FILE ONCE, NOT ONCE A CYCLE. Six passes an hour against a suite
@@ -231,8 +261,9 @@ cause_fp() {           # cause_fp <rc> <output> -> stable first-FAIL-line hash
 # spend its first minutes reproducing what this pass has already got, and it would reproduce
 # it against a tree that has moved (law-escalations-carry-their-evidence).
 # --------------------------------------------------------------------------------------
-file_red() {             # file_red <basename> <status> <rc> <seconds> <fp> <output>
+file_red() {             # file_red <basename> <status> <rc> <seconds> <fp> <output> [priority]
     local s="$1" status="$2" rc="$3" secs="$4" fp="$5" out="$6" cov id=""
+    local _prio="${7:-$(priority_of "$s")}"
     cov="$(suite_covers_of "$HERE/$s")"
     if [ ! -r "$INC" ]; then
         log "suites: no intake at $INC — $s is red and the finding reaches nobody"
@@ -246,7 +277,7 @@ file_red() {             # file_red <basename> <status> <rc> <seconds> <fp> <out
     # spooled event exits non-zero and is a RETRY rather than a loss.
     local out_inc rc_inc
     out_inc="$(SPIRA_INCIDENT_TYPE=bug \
-          SPIRA_INCIDENT_PRIORITY="$(priority_of "$s")" \
+          SPIRA_INCIDENT_PRIORITY="$_prio" \
           SPIRA_INCIDENT_ACTOR=suites \
           SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" \
           SPIRA_INCIDENT_REPO="$SPIRA_HOME_REPO" \
@@ -697,6 +728,7 @@ cmd_run() {
         secs=$(( $(date +%s) - t0 ))
         ran=$(( ran + 1 ))
         suites_with_results="$suites_with_results $s"
+        unreached_clear "$s"
         # FIXTURE FAULT. When the shared fixture collapsed and the suite exited before
         # running a single assertion, classify as fixture-fault rather than red. Only
         # applicable when this pass built a shared fixture (_td_shared=1): a suite that
@@ -733,10 +765,20 @@ cmd_run() {
                 printf '  %-26s SKIPPED  %s\n' "$s" \
                     "$(printf '%s' "$out" | sed -n 's/.*SKIP *//p' | head -1)" ;;
             124) status=timeout
-                fp="$(fingerprint "$rc" "killed at ${slice}s")"
+                # Fingerprint over the suite name, not the slice. The slice is a property of
+                # the budget (it varies when left < PER_SUITE), not a property of the failure —
+                # fingerprinting it filed a new bead per pass for the same timing-out suite (sp-u1g).
+                fp="$(fingerprint "$rc" "timeout:$s")"
                 record_write "$s" timeout "$secs" "$fp"
                 red=$(( red + 1 ))
-                id="$(file_red "$s" timeout "$rc" "$secs" "$fp" "$out" || true)"
+                # A truncated slice timeout is a budget artefact: the suite was started with
+                # less than its full allotment and killed for it. Use the default priority rather
+                # than the suite's declared priority — a suite that declares P0 for genuine reds
+                # must not manufacture P0s when it only timed out because the budget was short.
+                local _full_to="${declared_to:-$PER_SUITE}"
+                local _to_prio; _to_prio="$(priority_of "$s")"
+                [ "$slice" -lt "$_full_to" ] && _to_prio="$PRIORITY"
+                id="$(file_red "$s" timeout "$rc" "$secs" "$fp" "$out" "$_to_prio" || true)"
                 printf '  %-26s TIMEOUT  killed at %ss  %s\n' "$s" "$slice" "${id:-not filed}" ;;
             *)  status=red
                 fp="$(fingerprint "$rc" "$out")"
@@ -825,8 +867,11 @@ cmd_run() {
     suites_with_results=" $suites_with_results "
     for s in $timed; do
         case "$suites_with_results" in
-            *" $s "*) ;; # Already has a result
-            *) record_write "$s" unreached 0 - ;; # Write unreached record
+            *" $s "*) ;; # Already ran this pass — unreached_clear was called during the run
+            # Suite was not reached this pass. Write the .unreached flag without touching
+            # .result: the previous verdict and runtime are preserved for the red count and
+            # for the budget skip guard's last_secs read.
+            *) unreached_write "$s" ;;
         esac
     done
 
@@ -906,10 +951,10 @@ cmd_run() {
 # ask before: which suites in this tree are executed by nothing.
 # --------------------------------------------------------------------------------------
 cmd_list() {
-    local s where rec st at secs age gated_ok=1
+    local s where rec st at secs age reach gated_ok=1
     GATED="$(gated_suites)" || gated_ok=0
     GATED=" $(echo ${GATED:-}) "
-    printf '%-26s %-7s %-9s %-8s %s\n' SUITE RUNS LAST AGE COVERS
+    printf '%-26s %-7s %-9s %-8s %-7s %s\n' SUITE RUNS LAST AGE REACH COVERS
     for s in $(all_suites); do
         if [ "$gated_ok" = 0 ]; then where='?'
         elif is_gated "$s"; then where=gate
@@ -924,8 +969,19 @@ cmd_list() {
             # a friendlier word for "no evidence" is how the original defect read as fine.
             st=-; age=-
         fi
-        [ "$where" = gate ] && { st=-; age=-; }
-        printf '%-26s %-7s %-9s %-8s %s\n' "$s" "$where" "$st" "$age" \
+        if [ "$where" = gate ]; then
+            st=-; age=-; reach=-
+        elif [ -f "$STATE/$s.unreached" ]; then
+            # Not reached in the most recent pass that scheduled this suite. The previous
+            # verdict is preserved in .result; show it alongside the "not reached" indicator
+            # so both facts are visible and "red, not reached" cannot render as green.
+            reach="—"
+        elif [ -n "$rec" ]; then
+            reach=ok
+        else
+            reach=-
+        fi
+        printf '%-26s %-7s %-9s %-8s %-7s %s\n' "$s" "$where" "$st" "$age" "$reach" \
             "$(suite_covers_of "$HERE/$s")"
     done
     [ "$gated_ok" = 1 ] || printf '\n%s is unreadable — which suites the gate runs is unknown\n' "$GATE_LIST"
@@ -939,7 +995,7 @@ cmd_list() {
 # EVERY FIELD RENDERS `?` WHEN IT COULD NOT BE READ, never 0.
 # --------------------------------------------------------------------------------------
 cmd_status() {
-    local s rec st at total=0 gate_n=0 timed_n=0 never=0 stale=0 red=0 skip=0 oldest="" oldest_s="" now
+    local s rec st at total=0 gate_n=0 timed_n=0 never=0 stale=0 red=0 skip=0 not_reached=0 oldest="" oldest_s="" now
     now="$(date +%s)"
     if ! GATED="$(gated_suites)"; then
         printf 'suites          ?   %s is unreadable — the gated set is unknown\n' "$GATE_LIST"
@@ -951,11 +1007,16 @@ cmd_status() {
         if is_gated "$s"; then gate_n=$(( gate_n + 1 )); continue; fi
         timed_n=$(( timed_n + 1 ))
         rec="$(record_read "$s" || true)"
-        if [ -z "$rec" ]; then never=$(( never + 1 )); continue; fi
-        read -r st at _ _ <<< "$rec"
-        case "$st" in red|timeout|red-unconfirmed) red=$(( red + 1 )) ;; skip) skip=$(( skip + 1 )) ;; esac
-        if [ "$(( now - at ))" -gt "$STALE" ]; then stale=$(( stale + 1 )); fi
-        if [ -z "$oldest" ] || [ "$at" -lt "$oldest" ]; then oldest="$at"; oldest_s="$s"; fi
+        if [ -z "$rec" ]; then never=$(( never + 1 )); fi
+        # A suite's last verdict survives an unreached pass — count red regardless of reach.
+        if [ -n "$rec" ]; then
+            read -r st at _ _ <<< "$rec"
+            case "$st" in red|timeout|red-unconfirmed) red=$(( red + 1 )) ;; skip) skip=$(( skip + 1 )) ;; esac
+            if [ "$(( now - at ))" -gt "$STALE" ]; then stale=$(( stale + 1 )); fi
+            if [ -z "$oldest" ] || [ "$at" -lt "$oldest" ]; then oldest="$at"; oldest_s="$s"; fi
+        fi
+        # The .unreached file is distinct from a missing record (law-absence-needs-a-positive-control).
+        [ -f "$STATE/$s.unreached" ] && not_reached=$(( not_reached + 1 ))
     done
     # Count suites without a # host-reason: or container calls — migration progress.
     # hermetic.sh --count-undeclared does the walk; ? when it is unreadable or the glob
@@ -972,6 +1033,7 @@ cmd_status() {
     printf '  %-36s%s\n' "timed results older than $(( STALE / 3600 ))h" "$stale"
     printf '  %-36s%s\n' "timed suites red at last run" "$red"
     printf '  %-36s%s\n' "timed suites skipped at last run" "$skip"
+    printf '  %-36s%s\n' "timed suites not reached last pass" "$not_reached"
     if [ -n "$oldest" ]; then
         printf '  %-36s%sm   %s\n' "oldest timed result" "$(( (now - oldest) / 60 ))" "$oldest_s"
     else

@@ -165,20 +165,25 @@ is "test-fx-slow.sh (hung, killed by watchdog) has a timeout result" "timeout" "
 
 # CASE 3 — BUDGET-UNREACHED. After test-fx-slow.sh is killed, left ≈ 4 ≤ 5, so
 # test-fx-zzz.sh is put in the unreached list rather than started. The post-loop block
-# in cmd_run must write an "unreached" record for it. Without that block (the defect
-# shape of sp-04bd), this suite would have no result file at all.
-zzz_st="$(result_status test-fx-zzz.sh)"
-is "test-fx-zzz.sh (budget-unreached) has an unreached result" "unreached" "$zzz_st"
+# in cmd_run must write a .unreached file for it. The .result file is NOT written because
+# test-fx-zzz.sh has never actually run — the .unreached flag is the only record (sp-u1g).
+# Without the post-loop block (the defect shape of sp-04bd), this suite would have no
+# record at all, and the status pane would read "?" — indistinguishable from "never ran".
+[ -f "$STATE/test-fx-zzz.sh.unreached" ] \
+    && ok "test-fx-zzz.sh (budget-unreached) has a .unreached file" \
+    || bad "test-fx-zzz.sh (budget-unreached) has a .unreached file" "file not found: $STATE/test-fx-zzz.sh.unreached"
 
 # ======================================================================================
 echo
-echo "every result file carries a valid, recent epoch timestamp:"
+echo "result and unreached files carry valid, recent epoch timestamps:"
 # ======================================================================================
 # A missing timestamp, a zero, or a non-numeric value means the file was written by the
 # wrong code path or not at all; a stale timestamp means the result is from a prior run
 # and the runner did not overwrite it. Both would make suites.sh status mislead the pane.
+# test-fx-zzz.sh never actually ran, so it has no .result file — its timestamp lives in
+# its .unreached file (sp-u1g).
 now="$(date +%s)"
-for fx in test-fx-aaa.sh test-fx-slow.sh test-fx-zzz.sh; do
+for fx in test-fx-aaa.sh test-fx-slow.sh; do
     f="$STATE/$fx.result"
     if [ ! -r "$f" ]; then
         bad "$fx: result file exists for timestamp check" "not found"
@@ -194,6 +199,21 @@ for fx in test-fx-aaa.sh test-fx-slow.sh test-fx-zzz.sh; do
                || bad "$fx: result timestamp is recent" "${age}s old" ;;
     esac
 done
+# test-fx-zzz.sh: timestamp comes from the .unreached file, not .result.
+f="$STATE/test-fx-zzz.sh.unreached"
+if [ ! -r "$f" ]; then
+    bad "test-fx-zzz.sh: .unreached file exists for timestamp check" "not found"
+else
+    read -r at_ur < "$f" 2>/dev/null || at_ur=""
+    case "${at_ur:-}" in
+        ''|*[!0-9]*) bad "test-fx-zzz.sh: .unreached has a numeric epoch" "got [${at_ur:-empty}]" ;;
+        0) bad "test-fx-zzz.sh: .unreached timestamp is non-zero" "got 0" ;;
+        *) age=$(( now - at_ur ))
+           [ "$age" -lt 600 ] \
+               && ok "test-fx-zzz.sh: .unreached has a current timestamp (${age}s ago)" \
+               || bad "test-fx-zzz.sh: .unreached timestamp is recent" "${age}s old" ;;
+    esac
+fi
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

@@ -299,9 +299,14 @@ want "positive control: pass output shows the suite passed" "test-fx-declared-ti
 
 # SKIP: with BUDGET=30 (< declared 60), the suite should be deferred, not killed.
 find "$STATE" -maxdepth 1 -name '*.result' -delete 2>/dev/null; true
+find "$STATE" -maxdepth 1 -name '*.unreached' -delete 2>/dev/null; true
 out_skip="$(BUDGET=30 sut run)"
-skip_st="$( { read -r s _ < "$STATE/test-fx-declared-timeout.sh.result"; printf '%s' "${s:-MISSING}"; } 2>/dev/null )"
-is "suite is deferred (unreached) when budget < declared timeout" "unreached" "$skip_st"
+# The suite was deferred: it must have a .unreached file (sp-u1g: unreached no longer
+# writes to .result, so checking .result for "unreached" would show MISSING).
+[ -f "$STATE/test-fx-declared-timeout.sh.unreached" ] \
+    && ok "suite is deferred (has .unreached file) when budget < declared timeout" \
+    || bad "suite is deferred (has .unreached file) when budget < declared timeout" \
+          "file not found: $STATE/test-fx-declared-timeout.sh.unreached"
 # The pass output names the deferred suite rather than silently dropping it.
 want "deferred suite appears in pass output" "test-fx-declared-timeout.sh" "$out_skip"
 # Crucially: NOT killed (which would produce a filed bead and look like a broken suite).
