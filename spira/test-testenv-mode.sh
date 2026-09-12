@@ -48,14 +48,14 @@ REMOTE="$TMP/remote"
 FIXTURE="$TMP/fixture"
 
 git init -q --initial-branch=master "$REMOTE"
-git -C "$REMOTE" config user.email "test@spira.test"
+git -C "$REMOTE" config user.email "test@spira.local"
 git -C "$REMOTE" config user.name "Spira Test"
 touch "$REMOTE/placeholder"
 git -C "$REMOTE" add placeholder
 git -C "$REMOTE" commit -q -m "initial (master)"
 
 git clone -q --local "$REMOTE" "$FIXTURE"
-git -C "$FIXTURE" config user.email "test@spira.test"
+git -C "$FIXTURE" config user.email "test@spira.local"
 git -C "$FIXTURE" config user.name "Spira Test"
 git -C "$FIXTURE" checkout -q -b topic
 printf '#!/bin/bash\necho changed\n' > "$FIXTURE/changed.sh"
