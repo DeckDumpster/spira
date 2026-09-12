@@ -436,10 +436,22 @@ if [ -z "${SPIRA_INSTALL_FORCE:-}" ]; then
 fi
 
 declare -A _CHANGED=()  # units whose rendered content differs from what is installed
+declare -A _MASKED=()   # units masked by the operator — skipped, never overwritten
+declare -A _NEW=()      # units that did not exist before this run — safe to enable fresh
+_n_unchanged=0
 for u in "${UNITS[@]}"; do
     [ "$u" = "spira-watch@.service" ] && continue
     inst="$(inst_name "$u")"
     unit_text="$(render "$SRC/$u")" || { echo "install: $u FAILED" >&2; exit 1; }
+    # A MASK IS A SYMLINK TO /dev/null — an explicit operator decision that this unit
+    # must not run. [ -f ] follows symlinks: a character device fails -f, so a masked
+    # unit looks MISSING to the comparison below and would be classified as a change
+    # and written over, silently undoing the operator's decision. Detect it first.
+    if [ -L "$DEST/$inst" ] && [ "$(readlink "$DEST/$inst" 2>/dev/null)" = "/dev/null" ]; then
+        printf 'install: %s is masked — skipping\n' "$inst" >&2
+        _MASKED[$inst]=1
+        continue
+    fi
     # REFUSE AN UNEXECUTABLE ExecStart TARGET before writing a single byte. The failure mode
     # this prevents is 203/EXEC: systemd accepts the unit, a timer reports 'active', and the
     # service never runs. Every path is in hand at render time; an unresolved @KEY@ raises an
@@ -458,11 +470,21 @@ for u in "${UNITS[@]}"; do
                 ;;
         esac
     done <<< "$unit_text"
-    if [ ! -f "$DEST/$inst" ] || ! cmp -s <(printf '%s\n' "$unit_text") "$DEST/$inst"; then
+    # WRITE ONLY WHEN THE CONTENT DIFFERS. An unconditional write triggers daemon-reload
+    # and restarts units on every install, even when nothing changed — including reloading
+    # unit state for running aeons that were not touched.
+    if [ ! -f "$DEST/$inst" ]; then
+        _NEW[$inst]=1; _CHANGED[$inst]=1
+        printf '%s\n' "$unit_text" > "$DEST/$inst.new"
+        mv "$DEST/$inst.new" "$DEST/$inst" && chmod 0644 "$DEST/$inst" && echo "installed $inst"
+    elif ! cmp -s <(printf '%s\n' "$unit_text") "$DEST/$inst"; then
         _CHANGED[$inst]=1
+        printf '%s\n' "$unit_text" > "$DEST/$inst.new"
+        mv "$DEST/$inst.new" "$DEST/$inst" && chmod 0644 "$DEST/$inst" && echo "installed $inst"
+    else
+        echo "unchanged $inst"
+        _n_unchanged=$(( _n_unchanged + 1 ))
     fi
-    printf '%s\n' "$unit_text" > "$DEST/$inst.new"
-    mv "$DEST/$inst.new" "$DEST/$inst" && chmod 0644 "$DEST/$inst" && echo "installed $inst"
 done
 
 # WATCHER UNITS — one plain file per manifest row per instance. The template
@@ -472,6 +494,11 @@ for _wname in "${_watch_names[@]}"; do
     inst="$(inst_watch_name "$_wname")"
     unit_text="$(render "$SRC/spira-watch@.service" "$_wname")" \
         || { echo "install: watcher $_wname FAILED" >&2; exit 1; }
+    if [ -L "$DEST/$inst" ] && [ "$(readlink "$DEST/$inst" 2>/dev/null)" = "/dev/null" ]; then
+        printf 'install: %s is masked — skipping\n' "$inst" >&2
+        _MASKED[$inst]=1
+        continue
+    fi
     while IFS= read -r line; do
         case "$line" in
             ExecStart=*)
@@ -485,14 +512,36 @@ for _wname in "${_watch_names[@]}"; do
                 ;;
         esac
     done <<< "$unit_text"
-    if [ ! -f "$DEST/$inst" ] || ! cmp -s <(printf '%s\n' "$unit_text") "$DEST/$inst"; then
+    if [ ! -f "$DEST/$inst" ]; then
+        _NEW[$inst]=1; _CHANGED[$inst]=1
+        printf '%s\n' "$unit_text" > "$DEST/$inst.new"
+        mv "$DEST/$inst.new" "$DEST/$inst" && chmod 0644 "$DEST/$inst" && echo "installed $inst"
+    elif ! cmp -s <(printf '%s\n' "$unit_text") "$DEST/$inst"; then
         _CHANGED[$inst]=1
+        printf '%s\n' "$unit_text" > "$DEST/$inst.new"
+        mv "$DEST/$inst.new" "$DEST/$inst" && chmod 0644 "$DEST/$inst" && echo "installed $inst"
+    else
+        echo "unchanged $inst"
+        _n_unchanged=$(( _n_unchanged + 1 ))
     fi
-    printf '%s\n' "$unit_text" > "$DEST/$inst.new"
-    mv "$DEST/$inst.new" "$DEST/$inst" && chmod 0644 "$DEST/$inst" && echo "installed $inst"
 done
 
-systemctl --user daemon-reload
+# SUMMARY before any enable/restart. An idempotent installer that prints nothing is
+# indistinguishable from one that silently skipped everything.
+_n_changed="${#_CHANGED[@]}"
+_n_masked="${#_MASKED[@]}"
+printf 'install: %d unit file(s) changed, %d unchanged' "$_n_changed" "$_n_unchanged"
+[ "$_n_masked" -gt 0 ] && printf ', %d masked (skipped)' "$_n_masked"
+printf '\n'
+
+# DAEMON-RELOAD ONLY WHEN UNIT FILES ACTUALLY CHANGED. An unconditional reload invalidates
+# systemd's state for every unit on the machine — including running aeons — on every install,
+# even when no file was written.
+if [ "${#_CHANGED[@]}" -gt 0 ]; then
+    systemctl --user daemon-reload
+else
+    printf 'install: no unit files changed — skipping daemon-reload\n'
+fi
 
 # Without lingering, user units stop when the last session closes — which is precisely the
 # case these exist to survive.
@@ -595,6 +644,13 @@ if [ -f "$SPIRA_RUN/world.halted" ]; then
     printf 'install: reason: %s\n' "$(sed -n 2p "$SPIRA_RUN/world.halted")"
     printf 'install: units installed but NOT started — run world.sh start to lift the halt\n\n'
     for u in "${ENABLE[@]}"; do
+        if [ "${_MASKED[$u]:-}" = "1" ]; then
+            printf 'install: %s is masked — skipping\n' "$u"; continue
+        fi
+        _en="$(systemctl --user is-enabled "$u" 2>/dev/null || true)"
+        if [ "$_en" = "disabled" ] && [ -z "${_NEW[$u]:-}" ]; then
+            printf 'install: %s is disabled by operator — leaving unchanged\n' "$u"; continue
+        fi
         systemctl --user enable "$u" 2>/dev/null && printf 'enabled   %s (stopped — world is halted)\n' "$u"
     done
 else
@@ -606,6 +662,16 @@ else
     # Template units (spira-watch@.service) cover all their instances: if the template
     # changed, every instance derived from it is restarted.
     for u in "${ENABLE[@]}"; do
+        if [ "${_MASKED[$u]:-}" = "1" ]; then
+            printf 'install: %s is masked — skipping\n' "$u"; continue
+        fi
+        # AN OPERATOR-DISABLED UNIT IS LEFT AT ITS CURRENT STATE. A freshly installed unit
+        # (_NEW) also reports 'disabled' from is-enabled because it has never been enabled,
+        # but that is not a decision the operator made, so it is enabled as normal.
+        _en="$(systemctl --user is-enabled "$u" 2>/dev/null || true)"
+        if [ "$_en" = "disabled" ] && [ -z "${_NEW[$u]:-}" ]; then
+            printf 'install: %s is disabled by operator — leaving unchanged\n' "$u"; continue
+        fi
         tmpl="${u%%@*}@.service"
         changed="${_CHANGED[$u]:-}${_CHANGED[$tmpl]:-}"
         if [ -z "$changed" ]; then
@@ -699,6 +765,11 @@ done
 if [ ! -f "$SPIRA_RUN/world.halted" ]; then
     not_active=""
     for u in "${ENABLE[@]}"; do
+        # Masked and operator-disabled units were intentionally left alone; do not
+        # fault them as "enabled but not active".
+        [ "${_MASKED[$u]:-}" = "1" ] && continue
+        _en="$(systemctl --user is-enabled "$u" 2>/dev/null || true)"
+        [ "$_en" = "disabled" ] && [ -z "${_NEW[$u]:-}" ] && continue
         state="$(systemctl --user is-active "$u" 2>/dev/null || true)"
         [ "$state" = "active" ] || not_active="${not_active}    $u ($state)"$'\n'
     done

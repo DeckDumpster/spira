@@ -236,7 +236,9 @@ force_rc=$?
 force_log="$(cat "$MOCK_LOG")"
 
 iszero  "force override: exit 0 with SPIRA_INSTALL_FORCE=1"        "$force_rc"
-want    "force override: daemon-reload IS called"                   "daemon-reload" "$force_log"
+# No unit files changed (DEST was seeded from the same templates), so daemon-reload
+# is not triggered even when SPIRA_INSTALL_FORCE bypasses the aeon guard.
+nowant  "force override: no daemon-reload when no file changed"     "daemon-reload" "$force_log"
 
 # ==========================================================================
 echo
@@ -249,7 +251,7 @@ noop_rc=$?
 noop_log="$(cat "$MOCK_LOG")"
 
 iszero  "no-op: exit 0 when nothing changed"                       "$noop_rc"
-want    "no-op: daemon-reload is called"                            "daemon-reload" "$noop_log"
+nowant  "no-op: daemon-reload NOT called when nothing changed"      "daemon-reload" "$noop_log"
 nowant  "no-op: no restart command"                                 "restart" "$noop_log"
 nowant  "no-op: no enable --now command"                            "enable --now" "$noop_log"
 want    "no-op: unchanged units reported as skipped"                "unchanged" "$noop_out"
