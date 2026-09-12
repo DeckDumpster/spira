@@ -400,6 +400,72 @@ is   "trigger exits 0 after no-origin repo in map" 0 "$rc_b4t"
 want "bd create called — counted repo after no-origin repo was tallied" \
     "create" "$(cat "$BD_LOG")"
 
+# ==========================================================================================
+echo
+echo "REGRESSION sp-3ljk: non-origin remote — landings must be counted"
+# ==========================================================================================
+# DEFECT: _count_landings hardcoded 'origin' in both branches of the base-ref resolver.
+# A repository whose remote is named anything else (e.g. 'gitea') resolves no base ref,
+# logs "cannot resolve base ref", and its landings are silently counted as zero.
+#
+# POSITIVE CONTROL (law-absence-needs-a-positive-control):
+#   Before fix: "cannot resolve base ref" appears in the output; landing trigger does not fire.
+#   After fix:  trigger fires; no "cannot resolve base ref" in the output.
+#
+# Setup: a local bare repo acts as the 'gitea' remote so that spira_landref's
+# `git remote set-head gitea --auto` resolves without network access.
+
+BARE_3LJK="$T/bare-3ljk"
+git init -q --bare "$BARE_3LJK"
+git -C "$BARE_3LJK" symbolic-ref HEAD refs/heads/master
+
+GITEA_WORK="$T/gitea-work-3ljk"
+git init -q "$GITEA_WORK"
+git -C "$GITEA_WORK" config user.email "test@example.com"
+git -C "$GITEA_WORK" config user.name "Test"
+git -C "$GITEA_WORK" commit --allow-empty -q -m "initial"
+git -C "$GITEA_WORK" commit --allow-empty -q -m "sp-alt1: first landing on gitea remote"
+git -C "$GITEA_WORK" commit --allow-empty -q -m "sp-alt2: second landing on gitea remote"
+git -C "$GITEA_WORK" remote add gitea "$BARE_3LJK"
+git -C "$GITEA_WORK" push -q gitea master:master
+
+GITEA_REPO="$T/gitea-repo-3ljk"
+git clone -q -o gitea "$BARE_3LJK" "$GITEA_REPO"
+git -C "$GITEA_REPO" config user.email "test@example.com"
+git -C "$GITEA_REPO" config user.name "Test"
+
+HOME_3LJK="$T/home-3ljk"
+git init -q "$HOME_3LJK"
+git -C "$HOME_3LJK" config user.email "test@example.com"
+git -C "$HOME_3LJK" config user.name "Test"
+git -C "$HOME_3LJK" commit --allow-empty -q -m "initial"
+mkdir -p "$HOME_3LJK/.git/refs/remotes/origin"
+git -C "$HOME_3LJK" rev-parse HEAD > "$HOME_3LJK/.git/refs/remotes/origin/main"
+
+REPOMAP_3LJK="$T/repomap-3ljk"
+printf 'gitea-repo|%s|\n' "$GITEA_REPO" > "$REPOMAP_3LJK"
+
+printf '0\n' > "$WATERMARK_FILE"
+: > "$BD_LOG"
+out_3ljk="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:/usr/lib/git-core" \
+    SPIRA_CONF="$NONE" \
+    SPIRA_BD="$STUB_BD" \
+    BD_LOG_PATH="$BD_LOG" \
+    BD_LIST_OUTPUT="[]" \
+    SPIRA_DB="$T/fixture.db" \
+    SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO="$HOME_3LJK" \
+    SPIRA_REPO_MAP="$REPOMAP_3LJK" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" \
+    SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 \
+    SPIRA_MAECHEN_LANDING_INTERVAL=2 \
+    bash "$TRIGSH" 2>&1)"; rc_3ljk=$?
+nowant "no 'cannot resolve base ref' for gitea-remote repo" \
+    "cannot resolve base ref" "$out_3ljk"
+is   "landing trigger fires for gitea-remote repo" 0 "$rc_3ljk"
+want "bd create called for gitea-remote repo" "create" "$(cat "$BD_LOG")"
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

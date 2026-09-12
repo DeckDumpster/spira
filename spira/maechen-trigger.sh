@@ -36,11 +36,11 @@
 #   0  bead filed, or an open trigger already exists (dedup) — either is correct
 #   1  error writing watermark or filing the bead
 #
-# covers: spira/maechen-trigger.sh spira/conf.sh
+# covers: spira/maechen-trigger.sh spira/conf.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=conf.sh
-. "$HERE/conf.sh"
+# shellcheck source=lib.sh
+. "$HERE/lib.sh"
 
 BD="${SPIRA_BD:-bd}"
 DB="${SPIRA_DB:-.}"
@@ -104,10 +104,12 @@ id_prefix="${SPIRA_ID_PREFIX:-sp}"
 
 _count_landings() {   # _count_landings <repo_path> <since_ts>
     local rp="$1" ts="$2" base_ref="" n=0 subject
-    # Resolve the remote-tracking base ref (prefer symbolic HEAD; fall back to main/master).
-    base_ref="$(git -C "$rp" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" \
-        || base_ref="$(git -C "$rp" for-each-ref --format='%(refname:short)' \
-               'refs/remotes/origin/main' 'refs/remotes/origin/master' 2>/dev/null | head -1)"
+    # Resolve the remote-tracking base ref via spira_landref — handles any remote name.
+    # The old inline implementation hardcoded 'origin', silently zeroing counts for repos
+    # whose remote has a different name (sp-3ljk). spira_landref resolves the remote name
+    # dynamically: declared base in the repo-map, then the remote's own symbolic HEAD, then
+    # by asking the remote once and caching the answer.
+    base_ref="$(spira_landref "$rp" 2>/dev/null)" || base_ref=""
     if [ -z "$base_ref" ]; then
         log "landing count: cannot resolve base ref for $rp — skipped"
         printf '0'; return 0
