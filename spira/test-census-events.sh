@@ -126,6 +126,40 @@ JSONL
 out="$(census_out)"
 is "census is empty when no bump events exist" "" "$out"
 
+# ======================================================================================
+echo
+echo "caller-side: bead_reopen + bump_requeue (the landing.sh requeue path)"
+# ======================================================================================
+# The landing pass calls bead_reopen then bump_requeue when a branch cannot rebase.
+# Calling bump_requeue alone would pass even if landing.sh had no bump call; this test
+# exercises the exact two-call sequence landing.sh uses, so removing bump_requeue from
+# landing.sh leaves a gap the existing direct-call tests would not catch.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-f1","title":"landing test","status":"in_progress","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
+JSONL
+bead_reopen "sp-f1" "rebase conflict test" >/dev/null 2>&1
+bump_requeue "sp-f1" merge-conflict >/dev/null 2>&1
+
+out="$(census_out)"
+want "landing requeue path produces sp-requeue-merge-conflict" "1 sp-requeue-merge-conflict" "$out"
+
+# ======================================================================================
+echo
+echo "caller-side: bdq reclaim + bump_reclaim ghost (the strand.sh reclaim path)"
+# ======================================================================================
+# strand.sh calls bdq reclaim --id then bump_reclaim ghost. Seeding in_progress lets the
+# reclaim succeed; the bump_reclaim call that follows is what census reads.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-f2","title":"strand test","status":"in_progress","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
+JSONL
+bdq reclaim --id "sp-f2" --older-than 1s >/dev/null 2>&1 || true
+bump_reclaim "sp-f2" ghost >/dev/null 2>&1
+
+out="$(census_out)"
+want "strand reclaim path produces sp-reclaim-ghost" "1 sp-reclaim-ghost" "$out"
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

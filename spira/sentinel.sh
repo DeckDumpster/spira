@@ -189,6 +189,10 @@ while IFS=$'\t' read -r part _; do
     grep -q 'No stale leases' <<< "$out" && continue
     n="$(grep -cE '^(✓|Reclaimed)' <<< "$out" || true)"
     n_reclaimed=$(( n_reclaimed + ${n:-0} ))
+    while IFS= read -r _rline; do
+        _rid="$(printf '%s' "$_rline" | grep -oE '[a-z]+-[a-z0-9]+' | head -1 || true)"
+        [ -n "$_rid" ] && bump_reclaim "$_rid" stale-lease >/dev/null 2>&1
+    done < <(grep -E '^(✓|Reclaimed)' <<< "$out")
 done <<< "$PARTITIONS"
 # A REAPER WITH NOTHING TO REAP OVER SAYS SO. With no partition declared this writes nothing
 # and returns clean, which reads exactly like a harness with no dead leases.

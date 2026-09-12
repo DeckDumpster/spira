@@ -623,6 +623,7 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
             # Counter labels (sp-requeue-N) are no longer written; rebase-conflict
             # requeue escalation is disabled — the bead is always reopened (sp-lzt).
             bead_reopen "$id" "$_reopen_note"
+            bump_requeue "$id" merge-conflict >/dev/null 2>&1
             progress "reopened $id — does not rebase onto $base"
             spira_event bead.reopened "$id" "reopened $id — $br does not rebase onto $base in $name" \
                 "conflicts in ${REBASE_CONFLICTS:-unknown}; the next aeon is handed the rebase" || true
@@ -916,6 +917,7 @@ for i in d:
             # Counter labels (sp-requeue-N) are no longer written; rebase-conflict
             # requeue escalation is disabled — the bead is always reopened (sp-lzt).
             bead_reopen "$id" "$_reopen_note"
+            bump_requeue "$id" merge-conflict >/dev/null 2>&1
             progress "reopened $id — does not rebase onto $base"
             spira_event bead.reopened "$id" "reopened $id — $br does not rebase onto $base in $name" \
                 "conflicts in ${REBASE_CONFLICTS:-unknown}; the next aeon is handed the rebase" || true

@@ -297,6 +297,7 @@ Reopened by dedup — same external ref seen again within ${DEDUP_LOOKBACK_DAYS}
         fi
         bdq note "$id" "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ).${_reopen_note}
 $(head -c 2000 "$pf")" >/dev/null 2>&1
+        bump_recur "$id" "$INCIDENT_CAUSE" >/dev/null 2>&1
         ilog "$ref recurred ($n) — $id${_log_suffix}"
         # A Sin: it keeps coming back because nothing has broken the cycle. Escalated once,
         # on the crossing, never again — a second page buries the first.
