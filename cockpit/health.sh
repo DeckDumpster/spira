@@ -735,12 +735,36 @@ now_section() {
         # P<n> FIRST, exactly as next_row and the RECENT rows lead — the three sections
         # describe the same beads at three stages of one lifecycle, and until this was here
         # they could not be compared down the column.
+        # FUSE: minutes since the aeon's deliverable last moved, against the wall. It sits
+        # right-aligned on the bead row because it is a fact about the WORK's repository, not
+        # about the session. "gate" means a live gate is running for this bead — the fuse does
+        # not burn during a gate (a correct mid-gate aeon writes nothing; burning the fuse on
+        # it would train the eye to ignore the signal). "?" means the worktree or base ref
+        # could not be read; that must never read as 0 (law-absence-needs-a-positive-control).
+        eval "local _fuse=\${SP_AEON${i}_FUSE:-?} _fw=\${SP_AEON${i}_WALL:-?}"
+        local fuse_disp fuse_col
+        if [ "$_fuse" = "gate" ]; then
+            fuse_disp="gate"; fuse_col="$C_DIM"
+        elif [ "$_fuse" = "?" ]; then
+            fuse_disp="?"; fuse_col="$C_DIM"
+        else
+            fuse_disp="${_fuse}m/${_fw}m"
+            if [ "$_fuse" -ge "${_fw:-0}" ] 2>/dev/null && [ "${_fw:-0}" -gt 0 ] 2>/dev/null; then
+                fuse_col="$C_BAD$C_B"
+            elif [ "$_fuse" -ge 20 ] 2>/dev/null; then
+                fuse_col="$C_WARN"
+            else
+                fuse_col="$C_DIM"
+            fi
+        fi
         local pw=8; [ "${#pa}" -gt "$pw" ] && pw=${#pa}
-        fit "${ti:-?}" $(( COLS - 13 - pw - (${#bd} > 14 ? ${#bd} : 14) ))
-        printf '        %sP%s%s %s%-*s%s %s%-14s%s %s%s%s\n' \
+        local fuse_w="${#fuse_disp}"
+        fit "${ti:-?}" $(( COLS - 13 - pw - (${#bd} > 14 ? ${#bd} : 14) - 1 - fuse_w ))
+        printf '        %sP%s%s %s%-*s%s %s%-14s%s %s%s%s %s%s%s\n' \
             "$(pri_colour "P$pr")" "$pr" "$C_RST" \
             "$C_DIM" "$pw" "$pa" "$C_RST" \
-            "$C_ACC" "$bd" "$C_RST" "$C_DIM" "$FIT" "$C_RST"
+            "$C_ACC" "$bd" "$C_RST" "$C_DIM" "$FIT" "$C_RST" \
+            "$fuse_col" "$fuse_disp" "$C_RST"
         # THE ACTION AND THE SILENCE ON ONE ROW, at opposite ends of it. They are one fact
         # read together and useless read apart: `Bash gh run watch` quiet for eleven minutes
         # is a session waiting correctly, and the same command quiet for twenty-five is the

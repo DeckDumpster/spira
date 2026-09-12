@@ -2393,6 +2393,11 @@ trace_tail() {
     attempt_trace "$f" 200000 2>/dev/null | python3 -c '
 import sys, json
 out = []
+# A result event is a turn boundary, not a terminal state: the session continues
+# immediately and resumes the same session_id. Counting them as turns lets the reader
+# tell "turn 122 of N, still going" from "done" — which the old "session ended" label
+# could not do and caused the operator to conclude the pane was stale when it was live.
+turn_n = 0
 for line in sys.stdin:
     line = line.strip()
     if not line.startswith("{"):
@@ -2418,7 +2423,8 @@ for line in sys.stdin:
                 if body:
                     out.append("    -> " + body[:160])
     elif t == "result":
-        out.append("  [session ended: %s]" % e.get("subtype", "?"))
+        turn_n += 1
+        out.append("  [turn %d: %s]" % (turn_n, e.get("subtype", "?")))
 sys.stdout.write("\n".join(out[-int(sys.argv[1]):]) if out else "(trace had no readable events)")
 ' "$n" 2>/dev/null || printf '(could not render the trace)'
 }

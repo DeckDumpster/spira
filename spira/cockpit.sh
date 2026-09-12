@@ -145,15 +145,22 @@ now_keys() {
         # PARTITION AND TITLE FROM THE STORE, not from label parsing. bd state reads the
         # fayth dimension written by bd set-state — the single-valued attribute the harness
         # already maintains, so this cannot disagree with the claim view.
-        local title pri partition meta
+        # REPO LABEL FROM THE SAME CALL. spira_landref needs a repo name; reading it from
+        # the same bdjson call that already runs here adds no round trip.
+        local title pri partition meta repo_name _meta_tmp
         meta="$(bdjson show "$bead" 2>/dev/null | python3 -c '
 import sys, json, re
 try: d = json.load(sys.stdin); i = (d if isinstance(d, list) else [d])[0]
 except Exception: raise SystemExit
-print("%s\t%s" % (i.get("priority"),
-    re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:80]))' 2>/dev/null)"
-        pri="${meta%%$'\t'*}"; title="${meta#*$'\t'}"
-        [ "$pri" = "$meta" ] && { pri=""; title=""; }
+repo = next((l[5:] for l in (i.get("labels") or []) if l.startswith("repo:")), "")
+print("%s\t%s\t%s" % (i.get("priority"),
+    re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:80],
+    repo))' 2>/dev/null)"
+        pri="${meta%%$'\t'*}"
+        _meta_tmp="${meta#*$'\t'}"
+        title="${_meta_tmp%%$'\t'*}"
+        repo_name="${_meta_tmp#*$'\t'}"
+        [ "$pri" = "$meta" ] && { pri=""; title=""; repo_name=""; }
         partition="$(bdq state "$bead" fayth 2>/dev/null)" || partition="?"
         [ -n "$partition" ] || partition="?"
         echo "SP_AEON${i}_PRI=${pri:-?}"
@@ -171,6 +178,55 @@ print("%s\t%s" % (i.get("priority"),
         echo "SP_AEON${i}_FAYTH_MODEL=${_fayth_mdl:-?}"
         echo "SP_AEON${i}_BEAD=${bead:-?}"
         echo "SP_AEON${i}_MIN=$(( ${secs:-0} / 60 ))"
+        # LIVENESS FUSE — minutes since the aeon's deliverable last moved, against the wall.
+        # A deliverable moves when either a commit lands ahead of the base ref or a file is
+        # written in the worktree. Both are repository facts, not session facts: this is a new
+        # signal rather than a rearrangement of the TURNS/CTX/QUIET ones already above.
+        #
+        # TWO CHEAP CALLS PER AEON: one bounded git log (-1) and one find. Neither retries on
+        # failure — a probe that fails renders ?, never 0. Zero reads as "just moved", which is
+        # the reassuring answer and the wrong one when the probe itself broke.
+        #
+        # THE FUSE DOES NOT BURN WHILE A GATE RUNS FOR THIS BEAD. A gate correctly writes
+        # nothing and commits nothing for many minutes; a fuse that fired on the healthy case
+        # would train the operator to ignore it (law-alerts-must-be-actionable). A live gate is
+        # detected from /proc argv, not from a directory alone — a stale pid file must not mask
+        # real deliverable silence.
+        local _fuse="?" _fuse_gate=""
+        for _gf in "$SPIRA_RUN/gate-run/"*"_${bead}/pid"; do
+            [ -f "$_gf" ] || continue
+            local _gp; _gp="$(cat "$_gf" 2>/dev/null)"
+            [ -n "${_gp:-}" ] && [ -d "/proc/$_gp" ] || continue
+            local _gc; { _gc="$(tr '\0' ' ' < "/proc/$_gp/cmdline")"; } 2>/dev/null
+            [[ "${_gc:-}" == *gate* ]] && { _fuse_gate=1; break; }
+        done
+        if [ "${_fuse_gate:-}" = 1 ]; then
+            _fuse=gate
+        else
+            local _wt="$SPIRA_RUN/worktree/$bead"
+            if [ -d "$_wt" ]; then
+                local _last_t=0 _ct="" _base=""
+                if [ -n "${repo_name:-}" ]; then
+                    _base="$(spira_landref "$repo_name" 2>/dev/null)" || _base=""
+                    if [ -n "${_base:-}" ]; then
+                        _ct="$(git -C "$_wt" log --format='%ct' -1 "${_base}..HEAD" 2>/dev/null)" \
+                            || _ct=""
+                        [ -n "${_ct:-}" ] && [ "${_ct:-0}" -gt "$_last_t" ] \
+                            && _last_t="$_ct"
+                    fi
+                fi
+                # Newest file mtime across the worktree, excluding the .git pointer.
+                local _mt
+                _mt="$(find "$_wt" -not -path '*/.git*' -printf '%T@\n' 2>/dev/null \
+                       | sort -rn | head -1 | cut -d. -f1)"
+                [ -n "${_mt:-}" ] && [ "${_mt:-0}" -gt "$_last_t" ] && _last_t="$_mt"
+                if [ "${_last_t:-0}" -gt 0 ] 2>/dev/null; then
+                    _fuse=$(( ( $(date +%s) - _last_t ) / 60 ))
+                fi
+            fi
+        fi
+        echo "SP_AEON${i}_FUSE=${_fuse}"
+        echo "SP_AEON${i}_WALL=$(( ${secs:-0} / 60 ))"
         # HOW HEALTHY THE SESSION IS, not merely that it exists. TURNS CTX TOOLS FILES QUIET
         # ACT SAID, from ONE streaming read of the aeon's stream-json trace — the only
         # artifact that knows any of it. Held to one read per aeon per pass because the trace
