@@ -17,6 +17,12 @@
 #
 # defect: sp-cv0i
 # covers: spira/gate-spira.sh spira/conf.sh spira/gate-fences.sh
+# host-reason: testdb provides isolation; gate-spira.sh fixture runs without host systemd.
+# scar: the fence cp list (exclude.sh inventory.sh hermetic.sh) omitted `literal-lint.sh` when
+# c515322 added it as gate-spira.sh's fourth fence — gate refused with "literal-lint.sh is
+# missing" on every invocation; gate_fence_cp derives the fence list from gate-spira.sh at call
+# time (sp-i7u). Seen red: FAIL gate exits 0 when suites pass and budget is not exceeded:
+# wanted [0] got [1] — gate: spira/literal-lint.sh is missing — refusing to land unchecked
 # shellcheck disable=SC1090
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

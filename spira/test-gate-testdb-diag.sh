@@ -17,6 +17,13 @@
 # all-clear on Case 2.
 #
 # covers: spira/gate-spira.sh spira/gate-fences.sh
+# host-reason: testdb provides isolation; gate-spira.sh fixture runs without host systemd.
+# scar: the fence cp list (exclude.sh inventory.sh hermetic.sh) omitted `literal-lint.sh` when
+# c515322 added it as gate-spira.sh's fourth fence — gate refused before reaching the fixture
+# suite so the diagnostic token could not be captured; gate_fence_cp derives the fence list
+# from gate-spira.sh at call time (sp-i7u). Seen red: FAIL testdb_up diagnostic appears in
+# gate-spira.sh output: wanted [TESTDB_INIT_DIAG_SURVIVES] in [gate: spira/literal-lint.sh is
+# missing — refusing to land unchecked]
 # shellcheck disable=SC1090
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -20,6 +20,13 @@
 #
 # defects: sp-pvoyq, sp-qxxfd, sp-2mo8w, sp-05dvg, sp-ejjkr, sp-ubhqe
 # covers: spira/gate-spira.sh spira/gate-fences.sh
+# host-reason: testdb provides isolation; gate-spira.sh fixture runs without host systemd.
+# scar: the fence cp list (exclude.sh inventory.sh hermetic.sh) omitted `literal-lint.sh` when
+# c515322 added it as gate-spira.sh's fourth fence — gate refused with "literal-lint.sh is
+# missing" so contamination cases could not be tested; gate_fence_cp derives the fence list
+# from gate-spira.sh at call time (sp-i7u). Seen red (6 failures): FAIL gate names the
+# contaminating bead id: wanted [sp-...] in [gate: spira/literal-lint.sh is missing — refusing
+# to land unchecked]
 # shellcheck disable=SC1090
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
