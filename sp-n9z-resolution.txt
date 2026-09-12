@@ -1,0 +1,15 @@
+sp-n9z: unadopted refs cleanup — verification pass
+
+INCIDENT: Watchtower reported unadopted spira/* branches (no corresponding beads).
+
+SOP APPLIED: sop-unadopted-refs-stale-db
+
+CHECK RESULT: PASS
+  Verified no unadopted refs across spira-prod and brain repositories.
+  Previous cleanup work held successfully.
+
+ROOT CAUSE: aeon.sh line 984 creates branches before beads exist, creating orphans
+  when beads are deleted or database is reset. Tracked in sp-zc2a for code-level fix.
+
+CLOSURE: SOP fit, CHECK passed, FIX held. The symptom cleanup is Ops's responsibility;
+  code fix to prevent recurrence is tracked as sp-zc2a in the development queue.
