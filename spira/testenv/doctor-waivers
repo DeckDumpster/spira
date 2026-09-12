@@ -1,0 +1,12 @@
+# doctor-waivers — programs intentionally absent from the testenv container image.
+#
+# Format: one program per non-blank, non-comment line:
+#   <name>  <reason>
+# An empty reason is refused by doctor-check.sh: omitting a program must be a
+# written decision, not a silence.
+#
+# Every line here is read by the Containerfile's RUN doctor-check.sh step and by
+# test-testenv-doctor-check.sh. Do not add a program to this file without a reason
+# that a reader six months from now would find convincing.
+
+claude  aeon binary — runs on the operator's host as the agent process; the container never invokes it directly

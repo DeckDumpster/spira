@@ -1,24 +1,33 @@
-# spira/testenv/Containerfile — Ubuntu 24.04 with system and user systemd, and Rust.
+# spira/testenv/Containerfile — Ubuntu 24.04 with system and user systemd,
+# Rust, and every dependency that doctor.sh declares.
 #
-# PURPOSE. Test suites that exercise code calling systemctl --user need a real user
-# systemd session. This image supplies one: PID 1 is system systemd, and spirauser
-# (uid 1001) gets a session bus after `loginctl enable-linger` runs at container startup.
+# THE IMAGE IS VERIFIED, NOT ASSERTED. After installation, doctor-check.sh runs
+# doctor.sh's declared program lists against PATH and fails the build on any
+# FATAL absence or any un-waived WARN absence. A program added to doctor.sh's
+# FATAL or WARN loop fails this build until the image carries it — the mechanism
+# is self-maintaining in the right direction.
 #
-# RUST. cargo and rustc from the Ubuntu archive so spira's loom binary can be built
-# inside the container. CARGO_HOME is at /var/spira/cargo so a named volume mounted
-# there holds the registry without needing a path under a user home directory (which
-# inventory.sh would refuse in any tracked file that named it literally).
+# SIZING. Only what the tests and doctor.sh need. The caller's checkout is
+# bind-mounted by testenv.sh at /workspace; this image provides only the runtime.
 #
-# SIZING. Only what the tests need. No bd, no Dolt, no tmux. The harness checkout is
-# bind-mounted by the caller at /workspace; this image provides only the runtime.
+# BUILD CONTEXT. The build context is spira/ (the harness root), set by
+# testenv.sh's -f flag. COPY paths below are relative to that root.
 
 FROM docker.io/library/ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# System init, session bus, Rust toolchain, and tools the install cycle needs.
+# ── Base: system init, session bus, core tools ─────────────────────────────
 # All from the distro archive; no external download scripts.
-# python3 and git are required by install.sh (template rendering and repo root detection).
+# python3 and git: required by install.sh (template rendering, repo root detection).
+# flock: serialises writers sharing one path — landing gate per-repository tree.
+# cargo+rustc: build spira's loom binary inside the container.
+# tmux: cockpit panes; doctor.sh WARN.
+# nodejs: gate the browser page's view model; test-loom-page.sh exits 0 with SKIP
+#         when node is absent, making syntax errors in loom/static/ permanently
+#         invisible. This is the hard argument for including it.
+# build-essential: gcc for CGO_ENABLED=1 when building bd from source.
+# curl+ca-certificates: download gh and dolt release archives.
 RUN apt-get update -q && \
     apt-get install -yq --no-install-recommends \
         systemd \
@@ -30,9 +39,75 @@ RUN apt-get update -q && \
         rustc \
         python3 \
         git \
+        curl \
+        ca-certificates \
+        gpg \
+        build-essential \
+        tmux \
+        nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# spirauser (uid 1001): the non-root user whose session bus the tests drive.
+# ── gh — GitHub CLI ────────────────────────────────────────────────────────
+# Official GitHub CLI apt repository. Pinned to the stable channel rather than
+# a specific version so security patches arrive without a Containerfile edit.
+RUN mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | gpg --dearmor -o /etc/apt/keyrings/githubcli.gpg && \
+    chmod go+r /etc/apt/keyrings/githubcli.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli.gpg] \
+https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list && \
+    apt-get update -q && \
+    apt-get install -yq --no-install-recommends gh && \
+    rm -rf /var/lib/apt/lists/*
+
+# ── dolt — SQL server for bd's server-backed testdb mode ──────────────────
+# Pinned to the same version as the operator's install to avoid schema drift
+# between server and client during server-mode test runs.
+ARG DOLT_VERSION=2.2.3
+RUN curl -fsSL -o /tmp/dolt.tar.gz \
+    "https://github.com/dolthub/dolt/releases/download/v${DOLT_VERSION}/dolt-linux-amd64.tar.gz" && \
+    tar -C /tmp -xzf /tmp/dolt.tar.gz && \
+    install -m 0755 /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt && \
+    rm -rf /tmp/dolt.tar.gz /tmp/dolt-linux-amd64
+
+# ── Go toolchain — used only to build bd; removed after ───────────────────
+# build-bd.sh on this host uses go1.26.5. The beads project requires CGO_ENABLED=1
+# and -tags gms_pure_go (see build-bd.sh header for why both are required and why
+# both were got wrong once each). Ubuntu 24.04's golang-go (1.22) may lack newer
+# standard library additions the project uses; download the matching version.
+ARG GO_VERSION=1.26.5
+RUN curl -fsSL -o /tmp/go.tar.gz \
+    "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" && \
+    tar -C /usr/local -xzf /tmp/go.tar.gz && \
+    rm /tmp/go.tar.gz
+
+# ── bd — the beads issue tracker, built from source ────────────────────────
+# CGO_ENABLED=1: embedded Dolt is opened through cgo; a pure-Go build refuses
+# at runtime. -tags gms_pure_go: avoids ICU linking failures via go-mysql-server.
+# The tag is pinned here; build-bd.sh on the host uses the same tag.
+# Both bd and bd-embedded are installed: testdb.sh checks for bd-embedded by name.
+ARG BD_TAG=v1.2.1
+ARG BD_REPO=https://github.com/steveyegge/beads.git
+RUN git clone --depth 1 --branch "${BD_TAG}" "${BD_REPO}" /tmp/bd-src && \
+    cd /tmp/bd-src && \
+    CGO_ENABLED=1 /usr/local/go/bin/go build -tags gms_pure_go -o /usr/local/bin/bd ./cmd/bd && \
+    install -m 0755 /usr/local/bin/bd /usr/local/bin/bd-embedded && \
+    rm -rf /tmp/bd-src /usr/local/go
+
+# ── doctor-check: image is verified, not asserted ─────────────────────────
+# COPY doctor.sh and the check script into a scratch location. Run the check
+# to verify every program doctor.sh declares is present or explicitly waived.
+# The scripts are deleted after; they are a build-time gate, not a runtime tool.
+COPY doctor.sh /tmp/doctor-check/doctor.sh
+COPY testenv/doctor-check.sh /tmp/doctor-check/doctor-check.sh
+COPY testenv/doctor-waivers /tmp/doctor-check/doctor-waivers
+RUN bash /tmp/doctor-check/doctor-check.sh \
+        /tmp/doctor-check/doctor.sh \
+        /tmp/doctor-check/doctor-waivers && \
+    rm -rf /tmp/doctor-check
+
+# ── spirauser — non-root user the tests run as ─────────────────────────────
 # A fixed UID keeps the cargo cache volume owner stable across image rebuilds.
 RUN useradd -m -s /bin/bash -u 1001 spirauser && \
     echo 'spirauser ALL=(ALL) NOPASSWD: /usr/bin/systemctl' \
@@ -62,8 +137,8 @@ RUN systemctl mask \
 WORKDIR /workspace
 
 # systemd expects SIGRTMIN+3 as its clean shutdown signal. --systemd=true in the
-# podman run invocation sets this automatically; the STOPSIGNAL declaration makes the
-# intent visible here regardless of how the container is started.
+# podman run invocation sets this automatically; the STOPSIGNAL declaration makes
+# the intent visible here regardless of how the container is started.
 STOPSIGNAL SIGRTMIN+3
 
 CMD ["/lib/systemd/systemd"]

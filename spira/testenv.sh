@@ -77,11 +77,17 @@ _image_ref() {
 
 # Build the image if the computed tag is not present. Prints the image ref on stdout
 # so callers can capture it; all progress goes to stderr.
+#
+# BUILD CONTEXT IS HERE (the spira/ directory), not TESTENV_DIR. The Containerfile's
+# COPY instructions reference both spira/doctor.sh and spira/testenv/doctor-check.sh,
+# and a file outside the build context cannot be COPY'd. Using HERE as context with -f
+# pointing at the Containerfile satisfies both: podman resolves COPY paths relative to
+# the context root (HERE), and the Containerfile itself is specified explicitly.
 _ensure_image() {
     local img; img="$(_image_ref)"
     if ! podman image exists "$img" 2>/dev/null; then
         printf 'testenv: building image %s\n' "$img" >&2
-        podman build -q -t "$img" "$TESTENV_DIR" >&2 || {
+        podman build -q -t "$img" -f "$TESTENV_DIR/Containerfile" "$HERE" >&2 || {
             printf 'testenv: image build failed — check Containerfile in %s\n' "$TESTENV_DIR" >&2
             return 1
         }
