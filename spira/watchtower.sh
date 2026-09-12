@@ -410,13 +410,13 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
 A sweep is not only a set of numbers to read. These are the scans that are worth sampling
 before anything else, because each answers a question the numbers above cannot.
 
-  bash $SUITES run
+  (the timed suite run is SUSPENDED — do not run it)
 
-    Every \`spira/test-*.sh\` in the tree that the landing gate does NOT run, discovered by
-    glob so a new suite is run by existing and a deleted one stops being run. It files a bead
-    per red, blocks nothing and reopens nothing, and is budgeted at ${SPIRA_SUITES_BUDGET:-420}s
-    so it fits inside your own wall. Worth a pass when a figure below says a timed suite has
-    no result or a stale one; skip it when they are all fresh and green.
+    Per Ryan, 2026-09-12: the timed suite run is suspended while the suite-red backlog is
+    cleaned up. spira-suites-prod.timer is stopped and disabled, and this menu entry is
+    withdrawn because it was the OTHER trigger — the Ops session running it on every sweep,
+    which is what kept filing beads after the timer was slowed. Do not run suites.sh run.
+    Re-enable via sp-jxia when the backlog clears.
 
 $suites_block
 
