@@ -1534,6 +1534,7 @@ bump_reclaim() { _bump_write_event "${1:-}" reclaimed "${2:-unrecorded}"; }
 bump_requeue() { _bump_write_event "${1:-}" requeued  "${2:-unrecorded}"; }
 bump_timeout() { return 0; }
 bump_recur()   { _bump_write_event "${1:-}" recurred  "${2:-unrecorded}"; }
+bump_lapsed()  { _bump_write_event "${1:-}" lapsed    "${2:-unrecorded}"; }
 
 # DIAGNOSTIC ACCESSORS — requeue/reclaim/recur counters are now read from the events
 # table (sp-2lk). Two paths, matching _bump_write_event. timeouts_of returns 0 (no
@@ -2429,6 +2430,31 @@ aeon_fuse_minutes() {
         fi
     fi
     printf '%s' "$_fuse"
+}
+
+# --------------------------------------------------------------------------------------
+# aeon_lease_minutes <bead-id> -> minutes left in the liveness lease, or "?" if the
+# deadline file cannot be read.
+#
+# THE FILE IS THE SINGLE SOURCE, shared between the killer (aeon.sh heartbeat) and this
+# function (used by cockpit.sh). Both readers arrive at the same deadline because it comes
+# from one write, not from a formula each would hold separately.
+#
+# NEVER 0 WHEN UNREADABLE. An absent or unreadable file is not "0 minutes remaining"; it
+# is an absent reading. "?" makes the gap visible so the operator does not see an all-clear
+# where there is no signal (law-absence-needs-a-positive-control).
+# --------------------------------------------------------------------------------------
+aeon_lease_minutes() {
+    local bead="${1:-}" lease_file deadline now
+    [ -n "$bead" ] || { printf '?'; return 0; }
+    lease_file="${SPIRA_RUN}/aeon/${bead}.lease"
+    deadline="$(cat "$lease_file" 2>/dev/null)"
+    if [ -z "${deadline:-}" ] || ! printf '%d' "$deadline" >/dev/null 2>&1; then
+        printf '?'
+        return 0
+    fi
+    now="$(date +%s)"
+    printf '%d' "$(( (deadline - now) / 60 ))"
 }
 
 # --------------------------------------------------------------------------------------

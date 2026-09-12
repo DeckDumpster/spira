@@ -51,7 +51,8 @@ FAYTH_LANE=groomer
 # time it takes to read all open beads plus one bd call per finding. Ten minutes covers a
 # graph with hundreds of beads; the heartbeat is short so a killed pass is reclaimable fast.
 FAYTH_LEASE_MINUTES=10
-FAYTH_HEARTBEAT_SECONDS=60
+FAYTH_HEARTBEAT_SECONDS=30
+FAYTH_LEASE_SECONDS=600
 FAYTH_STALL_BEATS=8
 
 FAYTH_TOOLS="Bash,Read,Glob,Grep,TodoWrite"

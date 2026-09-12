@@ -182,6 +182,10 @@ print("%s\t%s\t%s" % (i.get("priority"),
         # Shared with aeon.sh so the display and the trip always agree on when the fuse burns.
         echo "SP_AEON${i}_FUSE=$(aeon_fuse_minutes "$bead" "$SPIRA_RUN/worktree/$bead" "${repo_name:-}")"
         echo "SP_AEON${i}_WALL=$(( ${secs:-0} / 60 ))"
+        # LIVENESS LEASE COUNTDOWN — see aeon_lease_minutes in lib.sh. One file read per
+        # aeon per pass; the file is written by the heartbeat subshell and is the single
+        # source shared between the killer and this display (law-verify-the-discriminating-fact).
+        echo "SP_AEON${i}_LEASE=$(aeon_lease_minutes "$bead" 2>/dev/null || echo ?)"
         # HOW HEALTHY THE SESSION IS, not merely that it exists. TURNS CTX TOOLS FILES QUIET
         # ACT SAID, from ONE streaming read of the aeon's stream-json trace — the only
         # artifact that knows any of it. Held to one read per aeon per pass because the trace

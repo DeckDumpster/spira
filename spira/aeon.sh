@@ -625,6 +625,7 @@ cleanup() {
     fi
     fixture_drop
     rm -f "$PIDFILE" "${PIDFILE%.pid}.name"
+    rm -f "$SPIRA_RUN/aeon/$BEAD_ID.lease"
     # RESTORE THE WORLD if this aeon stopped it. Runs here, after the heartbeat and fixture
     # but before any bead operations, so it fires on every exit path — a world halted for a
     # bead that fails must not stay halted because the aeon died mid-teardown.
@@ -700,6 +701,29 @@ print(d[0].get("status","") if d else "")' 2>/dev/null)"
             bdq note "$BEAD_ID" "Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m while turns advanced. Last action: ${_thrash_note:-?}. No attempt charged — the next aeon should start from this sticking point." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID thrash-requeued — no attempt charged (last: ${_thrash_note:-?})"
             ledger_done "$rc" "requeue-thrash"
+            exit $rc
+        fi
+        # LEASE LAPSE IS A VERDICT. The heartbeat writes this file when the trace has been
+        # silent for the full lease duration — evidence the session wedged, not merely that
+        # the operator stopped it. Unlike slay or thrash, the attempt IS charged toward
+        # poison so a bead nothing can finish reaches the escalation threshold. The branch
+        # and worktree are preserved (the kill left them intact) so attempt 2 can continue.
+        if [ -f "$SPIRA_RUN/$BEAD_ID.lapsed" ]; then
+            _lapsed_body="$(cat "$SPIRA_RUN/$BEAD_ID.lapsed" 2>/dev/null)"
+            _lapsed_quiet="${_lapsed_body%%$'\t'*}"
+            _lapsed_last="${_lapsed_body#*$'\t'}"
+            rm -f "$SPIRA_RUN/$BEAD_ID.lapsed"
+            bump_lapsed "$BEAD_ID" "${_lapsed_last:-?}"
+            mkdir -p "$SPIRA_RUN/lapsed"
+            _lapsed_ts="$(date -u +%Y%m%dT%H%M%SZ)"
+            printf 'bead: %s\nquiet: %ss\nlast: %s\nbranch: spira/%s\ntip: %s\n' \
+                "$BEAD_ID" "${_lapsed_quiet:-?}" "${_lapsed_last:-?}" \
+                "$BEAD_ID" "$(git -C "${WORK:-/dev/null}" rev-parse --short HEAD 2>/dev/null || echo ?)" \
+                > "$SPIRA_RUN/lapsed/$BEAD_ID-$_lapsed_ts"
+            bdq note "$BEAD_ID" "Lease lapsed: the trace was silent for ${_lapsed_quiet:-?}s (limit ${FAYTH_LEASE_SECONDS:-600}s). Last: ${_lapsed_last:-?}. Branch spira/$BEAD_ID preserved. Attempt 2 should start from where attempt 1 wedged." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID lease lapsed — attempt charged (quiet ${_lapsed_quiet:-?}s)"
+            release_own_claim "$BEAD_ID"
+            ledger_done "$rc" lapsed
             exit $rc
         fi
         # A VERDICT NOBODY HAS IS NOT A FAILED ATTEMPT. The landing gate outgrew the ceiling
@@ -813,122 +837,74 @@ REQUEUE_CAUSE=""; REQUEUE_WHY=""
 SESSION_RC=0
 trap cleanup EXIT INT TERM
 
-# ---- heartbeat: PROVE WORK, NOT MERE EXISTENCE ---------------------------------------
-# An aeon runs until it finishes. There is no wall-clock ceiling, because a clock cannot
-# tell SLOW from STUCK: a bead whose CI takes four rounds is not failing, and killing it at
-# an arbitrary hour burned an attempt toward the poison threshold for the crime of being
-# legitimately long (the operator, verbatim: "why would aeons have a time limit? they should
-# exist until they finish their work").
+# ---- heartbeat: LIVENESS LEASE -------------------------------------------------------
+# A fixed 10-minute lease. The trace file growing — even by one byte — renews it in full.
+# If the lease lapses the aeon is killed, work is preserved, and the bead carries a nudge
+# note for the next attempt. The fuse on the ops pane shows time left in the lease.
 #
-# What the timeout was actually guarding is real but narrower: an unconditional heartbeat
-# proves the PROCESS is alive, not that WORK is happening, so a wedged session would beat
-# forever and hold its lease. So the heartbeat is conditional — but not on log file growth.
+# WHY TRACE GROWTH IS SUFFICIENT. The CLI emits a tool_progress heartbeat every ~30s while
+# blocked on a single tool call. Measured across 789 aeon traces: only Bash (max 600s),
+# TaskOutput (max 600s), and Agent (max 210s) emit tool_progress — every other tool is
+# silent. So any ongoing tool invocation keeps the trace growing and holds the lease, and
+# Bash's 600s ceiling means no single call can outlast the 600s lease. Silence is the one
+# state a wedged aeon reaches, and the one state that lets the lease lapse.
 #
-# LOG GROWTH IS NOT THE SIGNAL. The CLI emits a tool_progress heartbeat every ~30s while the
-# model is blocked on a single tool call, and every heartbeat is a line in the log. So a
-# fully blocked aeon's log grows steadily, and a size check cannot tell it from one doing
-# real work. Measured: an aeon sat 510s inside a single `tail --pid` while the size check
-# and the lease both reported it healthy.
-#
-# THE SIGNAL THAT WORKS is elapsed_time_seconds on the trailing heartbeat — time since the
-# model last ACTED — qualified by whether the blocked command's process subtree has started
-# anything. The qualification matters: a gate run measured 776s cold, and blocked is not
-# stuck. A flock wait for the test fixture is a legitimate queue, not a stall.
-STALL_BEATS="${FAYTH_STALL_BEATS:-10}"   # x heartbeat interval; 10 x 120s = 20 min idle
+# THE CASE THIS REPLACES (sp-9ix, 2026-09-12). An aeon whose trailing trace line is a
+# result — a turn boundary — and which then hangs. The old model_idle detector read
+# elapsed_time_seconds on the trailing heartbeat: a result line reads as elapsed=0,
+# classified "acting", idle reset to zero. So a session that completed a turn and hung
+# reported "acting" forever and the stall counter never fired. 122 turns, 76 minutes, one
+# unchanging ops pane line — caught only by eye. The lease has no such blind spot: silence
+# is silence regardless of what the trailing JSON says.
 (
-    idle=0; grants=0
-    # SLEEP IS BACKGROUNDED AND WAITED FOR so that SIGTERM (sent by cleanup via `kill $HB_PID`)
-    # can interrupt the wait and allow the trap to kill the sleep child. A `while sleep X; do`
-    # pattern is NOT interruptible: bash defers traps while waiting for a foreground command,
-    # so `kill $HB_PID` kills the subshell but leaves `sleep X` running as an orphan in the
-    # suite's process group. `wait BUILTIN` IS interruptible — a signal with a set trap causes
-    # wait to return immediately with exit > 128, then the trap fires. Without this, suites.sh
-    # reported the suite red for leaving background jobs even after all tests passed.
     _hb_s=""
     trap 'kill "$_hb_s" 2>/dev/null; exit 0' TERM INT
+    _lease_dur="${FAYTH_LEASE_SECONDS:-600}"
+    _lease_dir="$SPIRA_RUN/aeon"
+    _lease_file="$_lease_dir/$BEAD_ID.lease"
+    _prev_mtime="$(stat -c %Y "$LOGF" 2>/dev/null || echo 0)"
+    _now="$(date +%s)"
+    _deadline=$((_now + _lease_dur))
+    mkdir -p "$_lease_dir"
+    # WRITE BESIDE AND RENAME so readers never see a partial file.
+    printf '%s' "$_deadline" > "${_lease_file}.tmp" && mv "${_lease_file}.tmp" "$_lease_file"
     while true; do
-        sleep "${FAYTH_HEARTBEAT_SECONDS:-120}" & _hb_s=$!
+        sleep "${FAYTH_HEARTBEAT_SECONDS:-30}" & _hb_s=$!
         wait "$_hb_s" 2>/dev/null || break
-        read -r model_idle model_state < <(heartbeat_model_idle "$LOGF")
-
-        case "$model_state" in
-            acting)
-                # The model produced output within the last log line — clearly working.
-                idle=0
-                ;;
-            blocked)
-                # The model is blocked on a tool call. "Blocked" is not "stuck": check
-                # whether the command's process subtree started anything recently. A subtree
-                # whose youngest member is newer than two minutes is still doing real work.
-                # The heartbeat's own subtree (sleep, etc.) is excluded so it cannot keep
-                # itself alive.
-                _youngest="$(youngest_in_subtree "$$" "$BASHPID")"
-                _now="$(date +%s)"
-                if [ "$_youngest" -gt 0 ] && [ $((_now - _youngest)) -lt 120 ]; then
-                    idle=0
-                else
-                    idle=$((idle+1))
-                fi
-                ;;
-            silent)
-                # Trace mark written, no model output yet. Normal startup takes seconds;
-                # 300s of silence is a summon that went nowhere.
-                [ "${model_idle:-0}" -lt 300 ] && idle=0 || idle=$((idle+1))
-                ;;
-            *)
-                idle=$((idle+1))
-                ;;
-        esac
-
-        if [ "$idle" -ge "$STALL_BEATS" ]; then
-            if [ "$grants" -lt "${FAYTH_STALL_GRANTS:-6}" ]; then
-                # A flock is a legitimate queue wait for the test fixture. A heartbeat that
-                # calls it stuck gets something killed that should not be.
-                if subtree_has_flock "$$"; then
-                    grants=$((grants+1))
-                    idle=0
-                    log "$FAYTH: $BEAD_ID blocked on a flock — extending ($grants/${FAYTH_STALL_GRANTS:-6})"
-                    continue
-                fi
-                # SILENCE IS NOT THE SAME AS STUCK. A session blocked on `gh run watch`
-                # emits nothing for the whole of a CI run, and killing it there would reopen
-                # a bead whose work was minutes from landing.
-                if still_waiting "$LOGF"; then
-                    grants=$((grants+1))
-                    idle=0
-                    log "$FAYTH: $BEAD_ID quiet but waiting on \"$(trace_last "$LOGF" | cut -c1-70)\" — extending ($grants/${FAYTH_STALL_GRANTS:-6})"
-                    continue
-                fi
-            fi
-            log "$FAYTH: $BEAD_ID model idle ${model_idle:-?}s, no work for $((idle * ${FAYTH_HEARTBEAT_SECONDS:-120} / 60))m — releasing the lease to the reaper"
+        _cur_mtime="$(stat -c %Y "$LOGF" 2>/dev/null || echo 0)"
+        _now="$(date +%s)"
+        if [ "$_cur_mtime" != "$_prev_mtime" ]; then
+            # Trace grew — renew the lease in full.
+            _prev_mtime="$_cur_mtime"
+            _deadline=$((_now + _lease_dur))
+            printf '%s' "$_deadline" > "${_lease_file}.tmp" && mv "${_lease_file}.tmp" "$_lease_file"
+        fi
+        if [ "$_now" -ge "${_deadline:-0}" ]; then
+            # Lease lapsed. Write the marker first so cleanup() takes the lapse path,
+            # then kill the process group ($$=parent PID is also the PGID, so -$$ reaches
+            # the claude session, aeon.sh, and this subshell together).
+            _trailing="$(trace_last "$LOGF" 2>/dev/null | head -c 200)"
+            _quiet=$((_now - _cur_mtime))
+            printf '%s\t%s\n' "$_quiet" "${_trailing:-?}" > "$SPIRA_RUN/$BEAD_ID.lapsed"
+            log "$FAYTH: $BEAD_ID lease lapsed (trace quiet ${_quiet}s, last: ${_trailing:-?}) — killing"
+            kill -TERM -$$ 2>/dev/null
             exit 0
         fi
-        # DELIVERABLE-PROGRESS WALL. The stall detector above catches a model that has
-        # stopped acting; this catches one that IS acting but whose deliverable (commits
-        # or file writes) has not moved. The fuse is computed by aeon_fuse_minutes in
-        # lib.sh — the same function cockpit.sh uses to render it, so the display and the
-        # trip agree on when the fuse is burning. A gate suppresses the fuse and is
-        # excluded here the same way.
+        # DELIVERABLE-PROGRESS WALL. Catches an aeon whose turns advance (trace grows,
+        # lease renews) while commits and worktree writes do not. Orthogonal to the lease:
+        # the lease catches silence, the wall catches motion-without-progress.
         #
-        # ONLY WHEN THE MODEL IS STILL WORKING (idle < STALL_BEATS). An idle aeon that
-        # has been quiet for 20+ minutes would also have a burning fuse, but the stall
-        # detector handles that case — adding a second requeue path for it would produce
-        # two notes on the same bead and obscure which mechanism acted.
-        #
-        # `$$` IS THE PARENT AEON'S PID INSIDE THIS SUBSHELL. bash keeps $$ as the
-        # top-level process's PID, so kill -TERM $$ reaches the parent while BASHPID
-        # names this subshell. The parent's TERM trap then runs cleanup(), which sees
-        # the .thrash file and does the requeue with no attempt charged.
-        if [ "$idle" -lt "$STALL_BEATS" ]; then
-            _dfuse="$(aeon_fuse_minutes "$BEAD_ID" "$SPIRA_RUN/worktree/$BEAD_ID" "$REPO_NAME" 2>/dev/null)"
-            _dwall="${SPIRA_THRASH_MINUTES:-20}"
-            if [[ "${_dfuse:-?}" =~ ^[0-9]+$ ]] && [ "$_dfuse" -ge "$_dwall" ] 2>/dev/null; then
-                _dlast="$(trace_last "$LOGF" 2>/dev/null | head -c 300)"
-                printf '%s\n' "${_dlast:-no last action}" > "$SPIRA_RUN/$BEAD_ID.thrash"
-                log "$FAYTH: $BEAD_ID deliverable stalled ${_dfuse}m (wall ${_dwall}m) — requeueing for thrash"
-                kill -TERM $$ 2>/dev/null
-                exit 0
-            fi
+        # `$$` IS THE PARENT AEON'S PID INSIDE THIS SUBSHELL. kill -TERM $$ reaches only
+        # the parent bash process; the parent's TERM trap then fires cleanup(), which sees
+        # the .thrash file and requeues with no attempt charged.
+        _dfuse="$(aeon_fuse_minutes "$BEAD_ID" "$SPIRA_RUN/worktree/$BEAD_ID" "$REPO_NAME" 2>/dev/null)"
+        _dwall="${SPIRA_THRASH_MINUTES:-20}"
+        if [[ "${_dfuse:-?}" =~ ^[0-9]+$ ]] && [ "$_dfuse" -ge "$_dwall" ] 2>/dev/null; then
+            _dlast="$(trace_last "$LOGF" 2>/dev/null | head -c 300)"
+            printf '%s\n' "${_dlast:-no last action}" > "$SPIRA_RUN/$BEAD_ID.thrash"
+            log "$FAYTH: $BEAD_ID deliverable stalled ${_dfuse}m (wall ${_dwall}m) — requeueing for thrash"
+            kill -TERM $$ 2>/dev/null
+            exit 0
         fi
         bdq heartbeat "$BEAD_ID" >/dev/null 2>&1 || exit 0
     done

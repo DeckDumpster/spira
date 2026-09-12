@@ -735,42 +735,34 @@ now_section() {
         # P<n> FIRST, exactly as next_row and the RECENT rows lead — the three sections
         # describe the same beads at three stages of one lifecycle, and until this was here
         # they could not be compared down the column.
-        # FUSE: minutes since the aeon's deliverable last moved, against the wall. It sits
-        # right-aligned on the bead row because it is a fact about the WORK's repository, not
-        # about the session. "gate" means a live gate is running for this bead — the fuse does
-        # not burn during a gate (a correct mid-gate aeon writes nothing; burning the fuse on
-        # it would train the eye to ignore the signal). "?" means the worktree or base ref
-        # could not be read; that must never read as 0 (law-absence-needs-a-positive-control).
-        eval "local _fuse=\${SP_AEON${i}_FUSE:-?} _fw=\${SP_AEON${i}_WALL:-?}"
-        local fuse_disp fuse_col
-        if [ "$_fuse" = "gate" ]; then
-            fuse_disp="gate"; fuse_col="$C_DIM"
-        elif [ "$_fuse" = "?" ]; then
-            fuse_disp="?"; fuse_col="$C_DIM"
+        # LEASE: time left in the liveness lease, counting down as the trace stops growing.
+        # Renewed by any trace write (tool_progress, model output). "?" when the deadline
+        # file cannot be read — never 0, which would look like "about to expire" rather
+        # than "probe failed" (law-absence-needs-a-positive-control).
+        eval "local _lease=\${SP_AEON${i}_LEASE:-?}"
+        local lease_disp lease_col
+        if [ "$_lease" = "?" ]; then
+            lease_disp="?"; lease_col="$C_DIM"
+        elif [ "$_lease" -lt 3 ] 2>/dev/null; then
+            lease_disp="${_lease}m"; lease_col="$C_BAD$C_B"
+        elif [ "$_lease" -lt 5 ] 2>/dev/null; then
+            lease_disp="${_lease}m"; lease_col="$C_WARN"
         else
-            fuse_disp="${_fuse}m/${_fw}m"
-            if [ "$_fuse" -ge "${_fw:-0}" ] 2>/dev/null && [ "${_fw:-0}" -gt 0 ] 2>/dev/null; then
-                fuse_col="$C_BAD$C_B"
-            elif [ "$_fuse" -ge 20 ] 2>/dev/null; then
-                fuse_col="$C_WARN"
-            else
-                fuse_col="$C_DIM"
-            fi
+            lease_disp="${_lease}m"; lease_col="$C_DIM"
         fi
         local pw=8; [ "${#pa}" -gt "$pw" ] && pw=${#pa}
-        local fuse_w="${#fuse_disp}"
-        fit "${ti:-?}" $(( COLS - 13 - pw - (${#bd} > 14 ? ${#bd} : 14) - 1 - fuse_w ))
+        local lease_w="${#lease_disp}"
+        fit "${ti:-?}" $(( COLS - 13 - pw - (${#bd} > 14 ? ${#bd} : 14) - 1 - lease_w ))
         printf '        %sP%s%s %s%-*s%s %s%-14s%s %s%s%s %s%s%s\n' \
             "$(pri_colour "P$pr")" "$pr" "$C_RST" \
             "$C_DIM" "$pw" "$pa" "$C_RST" \
             "$C_ACC" "$bd" "$C_RST" "$C_DIM" "$FIT" "$C_RST" \
-            "$fuse_col" "$fuse_disp" "$C_RST"
+            "$lease_col" "$lease_disp" "$C_RST"
         # THE ACTION AND THE SILENCE ON ONE ROW, at opposite ends of it. They are one fact
         # read together and useless read apart: `Bash gh run watch` quiet for eleven minutes
-        # is a session waiting correctly, and the same command quiet for twenty-five is the
-        # one the reaper is coming for. The thresholds are the stall detector's own — 300s is
-        # where a silence stops being ordinary thinking, and 1200s is ten beats of 120s,
-        # after which the heartbeat stops and the lease starts running out.
+        # is a session waiting correctly, and the same command quiet for ten minutes is the
+        # one whose lease is about to lapse. 300s is where a silence stops being ordinary
+        # thinking; 600s is the lease duration, after which the aeon is killed.
         local qs qcol
         if [ "$qt" = "?" ] || [ "$qt" = "-" ]; then qs="quiet $qt"; qcol="$C_BAD$C_B"
         else
