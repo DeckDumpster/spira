@@ -48,7 +48,7 @@ mkdir -p "$SH"
 cp "$HERE/gate-spira.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
    "$HERE/suite-covers.sh" \
    "$HERE/exclude.sh" "$HERE/inventory.sh" "$HERE/hermetic.sh" "$HERE/sop.sh" \
-   "$HERE/literal-lint.sh" "$SH/"
+   "$HERE/literal-lint.sh" "$HERE/orphan-test.sh" "$SH/"
 [ -f "$HERE/inventory-deny" ] && cp "$HERE/inventory-deny" "$SH/"
 printf 'spira | %s\n' "$TMP" > "$SH/repo-map"
 

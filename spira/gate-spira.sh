@@ -111,7 +111,7 @@ BODY
 # ---------------------------------------------------------------------------------------
 # 1. THE FENCES — first, and independently of everything below.
 # ---------------------------------------------------------------------------------------
-for fence in spira/exclude.sh spira/inventory.sh spira/hermetic.sh spira/literal-lint.sh; do
+for fence in spira/exclude.sh spira/inventory.sh spira/hermetic.sh spira/literal-lint.sh spira/orphan-test.sh; do
     [ -r "$fence" ] || { say "$fence is missing — refusing to land unchecked"; exit 1; }
 done
 
@@ -162,6 +162,28 @@ if ! lit="$(bash spira/literal-lint.sh 2>&1)"; then
     printf '%s\n' "$lit" >&2
     exit 1
 fi
+
+# ORPHAN-TEST FENCE. A diff that removes a hyphenated token from a non-test source file
+# while a test suite that is NOT in the same diff still asserts on that token orphans that
+# test: it goes red on the next timed run, pointed at the correct source file, and the beads
+# are filed against code that is correct. This is rung 4 (a program that refuses) after two
+# independent re-violations of law-prefer-the-real-dependency.
+#
+# It exits 77 (skip) when SPIRA_GATE_BASE is absent — the scheduled test runner has no diff
+# to analyze. That skip is recorded and is not a pass. When running from the landing gate
+# (SPIRA_GATE_BASE is in the environment), an exit 77 is still logged and not treated as a
+# pass by the gate's run() function above.
+[ -r spira/orphan-test.sh ] || { say "spira/orphan-test.sh is missing — refusing to land unchecked"; exit 1; }
+ot_rc=0
+ot="$(bash spira/orphan-test.sh 2>&1)" || ot_rc=$?
+if [ "$ot_rc" -ne 0 ] && [ "$ot_rc" -ne 77 ]; then
+    printf '%s\n' "$ot" >&2
+    exit 1
+fi
+# Exit 77 means the fence skipped (no diff context) — reported but not a branch failure.
+[ "$ot_rc" -eq 77 ] && say "orphan-test SKIPPED — $(printf '%s' "$ot" | head -1)"
+# Print the clean line on success so gate output is consistent with the other fences.
+[ "$ot_rc" -eq 0 ] && printf '%s\n' "$ot" >&2 || true
 
 # FIXTURE CONTAMINATION FENCE. A production store that contains test-only beads means a
 # test wrote to the live database instead of an isolated fixture. Two markers identify
