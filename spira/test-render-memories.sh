@@ -151,6 +151,12 @@ echo "=== index heading present when index tier is non-empty ==="
 out_heading="$(run_render "law-rm-alpha" "law-rm-")"
 want "index heading: bind-equally text" "Statutes in force" "$out_heading"
 want "index heading: rule.sh command"   "rule.sh show"      "$out_heading"
+_rule_path="$(printf '%s\n' "$out_heading" | sed -n 's|^ *\(/[^ ]*rule\.sh\) show.*|\1|p' | head -1)"
+if [ -x "${_rule_path:-}" ]; then
+    ok "index heading: rule.sh path is executable"
+else
+    bad "index heading: rule.sh path is executable" "not executable: [${_rule_path:-<not found>}]"
+fi
 
 # ==========================================================================
 echo
