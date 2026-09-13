@@ -74,6 +74,13 @@ mkdir -p "$SPIRA_RUN_DIR" "$DEST"
 touch "$SPIRA_RUN_DIR/world.halted"
 printf '# empty\n' > "$WATCHERS"
 
+# PARALLEL-SAFE INSTANCE NAME. This suite shares the real DEST directory with
+# other container-first suites (test-install-instance.sh, test-install-paths.sh).
+# test-install-instance.sh uses "test" as its instance. The cleanup loops below
+# delete all spira-*-${_INST}.* files; using a distinct name prevents those loops
+# from deleting test-install-instance.sh's units when both suites run in parallel.
+_INST="mig"
+
 # Thin pass-through logger.
 SCTL_LOG="$TMP/systemctl.log"
 mkdir -p "$TMP/bin"
@@ -94,7 +101,7 @@ inst() {
     SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
-    bash "$HERE/../systemd/install.sh" test "$@" 2>&1
+    bash "$HERE/../systemd/install.sh" "$_INST" "$@" 2>&1
 }
 
 # Helper: plant a legacy unit file in DEST and register it with systemd.
@@ -124,10 +131,10 @@ echo
 echo "MIGRATION ORDERING — disable legacy units before enabling per-instance:"
 # ==========================================================================
 
-# DEST is empty of spira-*-test.* files — all units are new, so the enable loop
+# DEST is empty of spira-*-${_INST}.* files — all units are new, so the enable loop
 # calls systemctl for each one. This puts both disable and enable calls in the log,
 # making the ordering assertion (before()) readable.
-for f in "$DEST"/spira-*-test.*; do [ -e "$f" ] && rm -f "$f"; done
+for f in "$DEST"/spira-*-${_INST}.*; do [ -e "$f" ] && rm -f "$f"; done
 # hermetic-ok: container-first suite — reloads real systemd after unit cleanup; SKIP guard exits 77
 systemctl --user daemon-reload 2>/dev/null
 
@@ -149,9 +156,9 @@ want   "ordering: install output reports migration"              \
        "migrated" "$ord_out"
 
 before "ordering: sentinel migrated before new unit starts" \
-       "spira-sentinel.service" "spira-sentinel-test" "$ord_log"
+       "spira-sentinel.service" "spira-sentinel-${_INST}" "$ord_log"
 before "ordering: ops migrated before new unit starts" \
-       "spira-ops.service" "spira-ops-test" "$ord_log"
+       "spira-ops.service" "spira-ops-${_INST}" "$ord_log"
 
 remove_legacy "spira-sentinel.service" "spira-sentinel.timer" \
               "spira-ops.service" "spira-ops.timer" 2>/dev/null || true
@@ -176,7 +183,7 @@ echo "CLEAN INSTALL — no legacy units → disable returns 1, no migration outp
 # No legacy units installed: systemctl disable for non-existent units returns 1
 # (unit file not found), so _migrate_legacy's && short-circuits and no "migrated"
 # message is printed.
-for f in "$DEST"/spira-*-test.*; do [ -e "$f" ] && rm -f "$f"; done
+for f in "$DEST"/spira-*-${_INST}.*; do [ -e "$f" ] && rm -f "$f"; done
 # hermetic-ok: container-first suite — reloads real systemd after unit cleanup; SKIP guard exits 77
 systemctl --user daemon-reload 2>/dev/null
 
@@ -193,7 +200,7 @@ echo "--NO-MIGRATE-WATCHERS — skips only watcher loops; sentinel is still migr
 
 printf 'testwatcher|daemon|/bin/true|\n' >> "$WATCHERS"
 
-for f in "$DEST"/spira-*-test.*; do [ -e "$f" ] && rm -f "$f"; done
+for f in "$DEST"/spira-*-${_INST}.*; do [ -e "$f" ] && rm -f "$f"; done
 # hermetic-ok: container-first suite — reloads real systemd after unit cleanup; SKIP guard exits 77
 systemctl --user daemon-reload 2>/dev/null
 
@@ -219,7 +226,7 @@ nowant  "--no-migrate-watchers: watcher legacy unit not disabled" \
 want    "--no-migrate-watchers: output notes the skip" \
         "no-migrate-watchers" "$skip_out"
 want    "--no-migrate-watchers: sentinel per-instance unit still enabled" \
-        "spira-sentinel-test" "$skip_log"
+        "spira-sentinel-${_INST}" "$skip_log"
 
 remove_legacy "spira-sentinel.service" "spira-sentinel.timer" \
               "spira-watch-testwatcher.service" "spira-watch@.service" 2>/dev/null || true
