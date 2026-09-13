@@ -70,11 +70,16 @@ TM="tmux -L $SOCKET"
 # The same two-part shape aeon.sh uses: the persona's markdown with `{{...}}` placeholders
 # substituted, then the statute book appended whole.
 #
-# IT WRITES A FILE AND PASSES `--append-system-prompt-file`, never the text as an argument.
-# The statute book is tens of kilobytes and the session is started through `tmux new-session`,
-# which takes its command as a STRING — the prompt would have to survive two rounds of shell
-# quoting, and a statute containing a quote or a backtick would either break the launch or,
-# far worse, be silently truncated into a brief that reads as complete.
+# IT PASSES THE TEXT VIA `--append-system-prompt`, not `--append-system-prompt-file`. The
+# `-file` variant appears in help text for another flag and is silently accepted by
+# claude 2.1.270 but not honoured — a session launched with it receives no system prompt.
+#
+# The statute book is tens of kilobytes. For `here`, the brief passes as "$(cat "$BRIEF")":
+# bash expands it before exec, so the content arrives as a single argument without a shell
+# layer in between. For `start`, the command goes through `tmux new-session` as a STRING —
+# two rounds of shell quoting would corrupt a statute containing a quote or a backtick.
+# Instead, `start` writes a launcher script using `printf '%q'` to embed the content, and
+# tmux runs the script.
 #
 # A MISSING BRIEF IS A REFUSAL, NOT A DEGRADED START. A concierge launched without its brief
 # is the exact session this file exists to stop shipping: it looks identical to a working one
@@ -174,9 +179,20 @@ start)
     # only SUBTRACT, and the persona's remit is unbounded — see concierge.fayth, where the
     # absence is the declaration. Every other persona names its tools because aeon.sh passes
     # them as an allow list that keeps a worker inside its job.
-    $TM new-session -d -s "$SESSION" -c "$BRAIN" \
-        "claude --remote-control '$SESSION' --dangerously-skip-permissions \
-                ${MODEL:+--model '$MODEL'} --append-system-prompt-file '$BRIEF'"
+    #
+    # LAUNCHER INSTEAD OF INLINE. The brief's text cannot survive two rounds of shell quoting
+    # inside tmux's command string (see compose_brief above). printf '%q' writes it as a
+    # bash-safe literal in the launcher, so the content reaches claude intact regardless of
+    # what characters the statute book contains.
+    LAUNCHER="$SPIRA_RUN/concierge-launch.sh"
+    {
+        printf '#!/usr/bin/env bash\n'
+        printf 'exec claude --remote-control %q --dangerously-skip-permissions ' "$SESSION"
+        [ -n "$MODEL" ] && printf -- '--model %q ' "$MODEL"
+        printf -- '--append-system-prompt %q\n' "$(cat "$BRIEF")"
+    } > "$LAUNCHER"
+    chmod +x "$LAUNCHER"
+    $TM new-session -d -s "$SESSION" -c "$BRAIN" "$LAUNCHER"
     sleep 3
     if $TM has-session -t "$SESSION" 2>/dev/null; then
         echo "concierge: started as Remote Control session '$SESSION'"
@@ -234,7 +250,7 @@ here)
     # nobody uses — but a caller who passes their own --permission-mode gets it, because the
     # flag they wrote comes after ours on the command line and wins.
     exec claude --dangerously-skip-permissions \
-        ${MODEL:+--model "$MODEL"} --append-system-prompt-file "$BRIEF" "$@"
+        ${MODEL:+--model "$MODEL"} --append-system-prompt "$(cat "$BRIEF")" "$@"
     ;;
 
 # RENDER IT AND PRINT THE PATH, CHANGING NOTHING. The brief is the part of this session that
