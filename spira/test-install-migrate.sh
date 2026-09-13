@@ -18,8 +18,10 @@
 #
 # A THIN PASS-THROUGH LOGGER records every systemctl call in order and execs
 # real systemctl. The ordering assertion reads that log top-to-bottom. Legacy
-# unit files are pre-installed in the user unit directory so disable returns 0
-# (unit present but not started) and _migrate_legacy prints "migrated" output.
+# unit files are pre-installed in the user unit directory. The wrapper tracks
+# which units plant_legacy enabled; a disable call returns 0 iff the unit was
+# previously enabled through the wrapper — parallel suites may have already run
+# _migrate_legacy on the same legacy names and removed them from real systemd.
 #
 # SCAR: the fixture's cp list omitted suite-covers.sh after sp-dt8u added it to
 # lib.sh; lib.sh failed at source time before any assertion ran. A real install
@@ -87,7 +89,28 @@ mkdir -p "$TMP/bin"
 cat > "$TMP/bin/systemctl" << 'SCTL'
 #!/bin/sh
 printf '%s\n' "$*" >> "$SCTL_LOG"
-exec /usr/bin/systemctl "$@"
+# PARALLEL-SAFE ENABLE/DISABLE TRACKING. Another parallel install.sh
+# (test-install-instance.sh) may call `systemctl disable --now` on the legacy
+# units this test plants — the file is gone by the time _migrate_legacy runs here.
+# Track which units this wrapper enabled; a disable returns 0 iff the unit was
+# explicitly enabled through this wrapper, regardless of real systemd state. This
+# preserves the clean-install invariant (no plants → no 0-returning disables) while
+# surviving the race.
+_ENABLED="${SCTL_LOG}.enabled"
+case "$*" in
+    "--user enable "*)
+        _u="${*#*--user enable }"; printf '%s\n' "$_u" >> "$_ENABLED"
+        exec /usr/bin/systemctl "$@" ;;
+    "--user disable --now "*)
+        _u="${*#*--user disable --now }"
+        if grep -qxF "$_u" "$_ENABLED" 2>/dev/null; then
+            grep -vxF "$_u" "$_ENABLED" 2>/dev/null > "${_ENABLED}.tmp" \
+                && mv "${_ENABLED}.tmp" "$_ENABLED" 2>/dev/null || true
+            /usr/bin/systemctl "$@" 2>/dev/null || true; exit 0
+        fi
+        exec /usr/bin/systemctl "$@" ;;
+    *) exec /usr/bin/systemctl "$@" ;;
+esac
 SCTL
 chmod +x "$TMP/bin/systemctl"
 
@@ -104,16 +127,17 @@ inst() {
     bash "$HERE/../systemd/install.sh" "$_INST" "$@" 2>&1
 }
 
-# Helper: plant a legacy unit file in DEST and register it with systemd.
-# An enabled (symlinked) unit causes `systemctl disable --now` to return 0,
-# which is the condition _migrate_legacy uses to print its "migrated" message.
+# Helper: plant a legacy unit file in DEST and register it with the thin wrapper.
+# Using the wrapper for enable registers the unit in the wrapper's tracking file so
+# that _migrate_legacy's disable call returns 0 even if a parallel install.sh
+# (test-install-instance.sh) has already disabled the unit via real systemd.
 plant_legacy() {
     local u="$1"
     printf '[Unit]\nDescription=legacy %s\n[Service]\nExecStart=/bin/true\n[Install]\nWantedBy=default.target\n' \
         "$u" > "$DEST/$u"
     # hermetic-ok: container-first suite — registers unit with real systemd; SKIP guard exits 77
     systemctl --user daemon-reload 2>/dev/null
-    systemctl --user enable "$u" 2>/dev/null || true  # hermetic-ok: container-first
+    "$TMP/bin/systemctl" --user enable "$u" 2>/dev/null || true  # hermetic-ok: container-first
 }
 remove_legacy() {
     local u
