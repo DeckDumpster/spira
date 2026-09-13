@@ -61,11 +61,37 @@ done
 # WARN: each disables one feature, named, rather than the loop.
 # SPIRA_AGENT is used here rather than a literal: an operator who sets it to a different
 # binary name gets a useful message about that binary, not about a product they did not install.
-for b in dolt gh "${SPIRA_AGENT:-claude}" tmux cargo node; do
+for b in dolt gh "${SPIRA_AGENT:-claude}" tmux node; do
     if command -v "$b" >/dev/null 2>&1; then OK "$b — $(command -v "$b")"
     else WARN "$b is not on PATH — $(spira_bin_purpose "$b")" \
               "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."; fi
 done
+# CARGO VERSION CHECK. cargo absent is a WARN — the loop runs fine without the panel.
+# cargo present but below 1.78.0 is a FAIL: loom/Cargo.lock is version 4, which only
+# parses on rustc >= 1.78.0. A stale toolchain fails silently in build.sh with "lock file
+# version 4 requires -Znext-lockfile-bump" and leaves the panel unbuildable with no
+# indication that the toolchain is the fault (sp-tst3). Presence alone is not enough.
+if command -v cargo >/dev/null 2>&1; then
+    _cargo_ver="$(cargo --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    _cargo_major="$(printf '%s\n' "${_cargo_ver:-0.0.0}" | cut -d. -f1)"
+    _cargo_minor="$(printf '%s\n' "${_cargo_ver:-0.0.0}" | cut -d. -f2)"
+    if [ -z "$_cargo_ver" ]; then
+        FAIL "cargo is on PATH but its version could not be determined" \
+             "Run 'cargo --version' to inspect it."
+    elif [ "$_cargo_major" -gt 1 ] \
+      || { [ "$_cargo_major" -eq 1 ] && [ "$_cargo_minor" -ge 78 ]; }; then
+        OK "cargo — $(command -v cargo) ($_cargo_ver)"
+    else
+        FAIL "cargo $_cargo_ver is below the required minimum 1.78.0" \
+             "loom/Cargo.lock is version 4, which requires rustc >= 1.78.0. A build with
+        this toolchain fails immediately: 'lock file version 4 requires -Znext-lockfile-bump'.
+        Update the Rust toolchain: rustup update, or install via https://rustup.rs/"
+    fi
+    unset _cargo_ver _cargo_major _cargo_minor
+else
+    WARN "cargo is not on PATH — $(spira_bin_purpose cargo)" \
+         "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."
+fi
 
 # EVERY bd ON PATH, with its version. When more than one is present, PATH order decides
 # which one an unconfigured caller picks — and that order differs between a login shell, a
