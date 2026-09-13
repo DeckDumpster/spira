@@ -28,7 +28,10 @@
 # covers: .github/workflows/release.yml
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-REPO_ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)"
+# $HERE is always the spira/ directory, one level below the repo root.
+# git rev-parse --show-toplevel fails inside the gate's container because the
+# worktree .git file references the parent repo path, which is not mounted there.
+REPO_ROOT="$(cd "$HERE/.." && pwd -P)"
 WORKFLOW="$REPO_ROOT/.github/workflows/release.yml"
 
 pass=0; fail=0
