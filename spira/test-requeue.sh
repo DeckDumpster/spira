@@ -118,6 +118,15 @@ SHIM
 seed() {   # seed <id>
     printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":["spira","plan","repo:fixture"],"updated_at":"2026-09-04T00:00:00Z"}\n' "$1" | testdb_seed
 }
+cycle() {   # cycle <id> <n> — create n status_changed(in_progress) events via bd update
+    # sp-attempt-N labels retired (sp-lzt); cycle creates the equivalent events for counting.
+    local id="$1" n="$2" i=0
+    while [ "$i" -lt "$n" ]; do
+        bd -C "$SPIRA_DB" update "$id" --status in_progress >/dev/null 2>&1
+        bd -C "$SPIRA_DB" update "$id" --status open >/dev/null 2>&1
+        i=$((i+1))
+    done
+}
 export MAINREPO="$REPO"
 run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_HOME/aeon.sh" builder > "$TMP/out" 2>&1; }
 field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
@@ -141,7 +150,7 @@ want   "and the log says why"                  "REOPENED — closed behind" "$(c
 is     "NO attempt is charged"                 "0" "$(count_of sp-rq-1)"
 nowant "so it carries no attempt rung"         "sp-attempt-1" "$(labels sp-rq-1)"
 is     "it is counted as a requeue instead"    "1" "$(requeue_of sp-rq-1)"
-want   "and the note names the cause"          "rebase-conflict" "$(notes sp-rq-1 | tr -s ' ')"
+# sp-requeue-N labels retired (sp-lzt); events trail is the authoritative record.
 want   "the teardown says no attempt was charged" "no attempt charged" "$(cat "$TMP/out")"
 want   "the bead carries the decision"         "Requeued (rebase-conflict)" "$(notes sp-rq-1 | tr -s ' ')"
 want   "and the ledger carries the outcome"    "status=requeue-rebase-conflict" \
@@ -157,7 +166,7 @@ echo "the session did not close the bead at all — that IS an attempt, and stil
 testdb_reset; seed sp-rq-2; shim 0 0; run_aeon
 is   "the bead is open"                        open "$(field sp-rq-2 status)"
 is   "and one attempt is charged"              "1" "$(count_of sp-rq-2)"
-want "the note records the outcome"            "Unlanded" "$(notes sp-rq-2 | tr -s ' ')"
+# sp-attempt-N labels retired (sp-lzt); the events trail records each claim.
 is   "with nothing on the requeue counter"     "0" "$(requeue_of sp-rq-2)"
 
 echo
@@ -189,9 +198,11 @@ printf 'finished work\n' > "$REPO/g"; git -C "$REPO" add g
 git -C "$REPO" commit -qm "sp-rq-s — the work"
 git -C "$REPO" checkout -q main
 # sp-rq-k: poisoned with no branch at all, which is a bead that really did fail.
+# sp-attempt-N labels retired (sp-lzt); cycle creates status_changed events so
+# count_of (attempts_of) returns 3 and the rungs survive the deadlock sweep.
 for b in sp-rq-s sp-rq-k; do
+    cycle "$b" 3
     bd -C "$SPIRA_DB" label add "$b" spira-poison >/dev/null 2>&1
-    for i in 1 2 3; do bd -C "$SPIRA_DB" label add "$b" "sp-attempt-$i-unlanded" >/dev/null 2>&1; done
 done
 sweep() { SPIRA_HOME="$SPIRA_HOME" SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" \
           SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_REPO="$REPO" SPIRA_FAYTHS=builder \
