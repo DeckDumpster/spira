@@ -48,7 +48,7 @@ testdb_up suites-cluster || { echo "test-suites-cluster: could not build a fixtu
 
 SH="$TMP/spira"; RUN="$TMP/run"; STATE="$TMP/state"; GATEF="$TMP/gate-suites"
 mkdir -p "$SH" "$RUN" "$STATE" "$TMP/repo"
-cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$SH/"
+cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$HERE/suite-covers.sh" "$SH/"
 
 printf '# the gated sentinel\nspira/test-cl-gated.sh\n' > "$GATEF"
 
