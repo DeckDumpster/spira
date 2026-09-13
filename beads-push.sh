@@ -41,9 +41,58 @@ if ! grep -q '^sync.remote:' "$DB/.beads/config.yaml" 2>/dev/null; then
     exit 0
 fi
 
+# ── PRE-PUSH: commit any dirty tracked tables ─────────────────────────────────
+# bd never creates a Dolt commit for config writes (statutes, memories), so a bare
+# push leaves those changes behind and a fresh clone is short however many statutes
+# were enacted since the last issue write. An empty working set is a no-op —
+# bd dolt commit refuses to create an empty commit.
+#
+# TWO QUERY PATHS: bd sql (server mode) and dolt --data-dir (embedded mode).
+# The embedded binary refuses bd sql; dolt can read the same storage directly.
+_bp_dirty_count() {
+    local db="$1" n=""
+    # Server mode.
+    n=$(bd -C "$db" sql "SELECT COUNT(*) FROM dolt_status" 2>/dev/null \
+        | sed -n '3p' | tr -d ' ')
+    [[ "${n:-}" =~ ^[0-9]+$ ]] && { printf '%s' "$n"; return; }
+    # Embedded mode.
+    local doltdb="$db/.beads/embeddeddolt"
+    [ -d "$doltdb" ] && command -v dolt >/dev/null 2>&1 || { printf '0'; return; }
+    local dbn
+    dbn="$(ls "$doltdb" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" \
+        || dbn="sp"
+    n="$(dolt --data-dir "$doltdb" sql -q \
+        "use ${dbn:-sp}; SELECT COUNT(*) FROM dolt_status;" \
+        2>/dev/null | sed -n '4p' | tr -d '| ')"
+    [[ "${n:-}" =~ ^[0-9]+$ ]] && printf '%s' "$n" || printf '0'
+}
+
+_bp_statute_count() {
+    bd -C "$1" memories --json 2>/dev/null \
+        | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(sum(1 for k in d if k.startswith("law-")))
+except Exception:
+    print("?")
+' 2>/dev/null || echo "?"
+}
+
+dirty="$(_bp_dirty_count "$DB")"
+if [ "${dirty:-0}" -gt 0 ]; then
+    commit_out=$(bd -C "$DB" dolt commit -m "beads-push: $stamp" 2>&1)
+    commit_rc=$?
+    if [ "$commit_rc" -ne 0 ]; then
+        echo "beads-push: $stamp — pre-push commit failed: $(tail -2 <<<"$commit_out" | tr '\n' ' ')" >&2
+        exit 1
+    fi
+    echo "beads-push: $stamp — committed ${dirty} dirty table(s) ($(_bp_statute_count "$DB") statutes)"
+fi
+
 out=$(timeout 900 bd -C "$DB" dolt push --remote beads 2>&1)
 if grep -q 'Push complete' <<<"$out"; then
-    echo "beads-push: $stamp — spira OK"
+    echo "beads-push: $stamp — spira OK ($(_bp_statute_count "$DB") statutes)"
     exit 0
 fi
 
