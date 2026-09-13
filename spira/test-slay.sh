@@ -260,13 +260,33 @@ nowant "bogus id does not report a slaying" "slain: sp-nosuchbead9" "$out"
 is   "bogus id leaves no .slain marker"    no \
      "$([ -f "$SPIRA_RUN/sp-nosuchbead9.slain" ] && echo yes || echo no)"
 
-# --- a reason passed where the id goes ---------------------------------------------
+# --- a reason passed where the id used to go ---------------------------------------
+# There are no positionals at all now, so the sentence is refused as an unexpected
+# argument rather than mistaken for a second id. The message must name BOTH flags,
+# because the operator who typed this wanted --why and reached for the wrong shape.
 seed sp-s8
 out="$(bash "$SLAY" --bead sp-s8 "blocked on the P0 fixes" 2>&1)"; rc=$?
-is   "two positionals exit 2"              2 "$rc"
-want "names both ids"                      "two bead ids given" "$out"
-want "points at the right flag"            '--why' "$out"
+is   "a positional argument exits 2"       2 "$rc"
+want "refuses it by name"                  'unexpected argument' "$out"
+want "says the tool takes named arguments" 'named arguments only' "$out"
+want "points at --bead"                    '--bead' "$out"
+want "points at --why"                     '--why' "$out"
 is   "the real bead was NOT touched"       in_progress "$(status_of sp-s8)"
+
+# --- --bead twice is also refused ---------------------------------------------------
+out="$(bash "$SLAY" --bead sp-s8 --bead sp-s9 2>&1)"; rc=$?
+is   "--bead twice exits 2"                2 "$rc"
+want "names both values"                   'given twice' "$out"
+
+# --- -h lists every argument --------------------------------------------------------
+# It was `sed -n '2,12p' $0`, a fixed line range of the header: editing the header
+# silently truncated the help, which is how a flag comes to be undocumented.
+out="$(bash "$SLAY" -h 2>&1)"; rc=$?
+is   "-h exits 0"                          0 "$rc"
+for _f in --bead --why --keep-work --close --reopen; do
+    want "-h documents $_f"                "$_f" "$out"
+done
+want "-h gives the exit codes"             'EXIT' "$out"
 
 # --- POSITIVE CONTROL --------------------------------------------------------------
 # Without this, a slay.sh that refused EVERYTHING would pass both cases above.
