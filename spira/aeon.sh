@@ -1641,11 +1641,15 @@ if [ "$st" = "closed" ] && [ "$committed" = "no" ] && [ "$superseded" != 1 ]; th
             _dval="${_deliver#*:}"
             case "$_dtype" in
                 beads)
+                    # EXCLUDE event-type children. aeon.sh itself creates a state-change
+                    # child (issue_type=event) when it records the branch affinity. That
+                    # internal record is not a deliverable and must not satisfy the check.
                     _cnt="$(bdjson children "$BEAD_ID" 2>/dev/null | python3 -c '
 import sys,json
 try: d=json.load(sys.stdin)
 except Exception: print(0); sys.exit()
-print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/dev/null)" || _cnt=0
+print(len([x for x in (d if isinstance(d,list) else [d])
+           if x.get("id") and x.get("issue_type") != "event"]))' 2>/dev/null)" || _cnt=0
                     if [ "${_cnt:-0}" -le 0 ] 2>/dev/null; then
                         _delivers_ok=0
                         _delivers_fail="delivers:beads declared but no child beads name $BEAD_ID as source"
