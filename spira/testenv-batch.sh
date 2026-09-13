@@ -12,15 +12,18 @@
 # master-base fixture case is an acceptance criterion, not an afterthought.
 #
 # RESULT PROTOCOL. Each suite writes <results>/<suite>.result and <results>/<suite>.out.
-# Result format: <status> <epoch> <seconds> <fingerprint> <mode>.
+# Result format: <status> <epoch> <seconds> <fingerprint> <mode> [subset].
 # A selected suite with no result file is unreached, never green. unreached never
 # overwrites a completed status (law-absence-needs-a-positive-control; sp-u1g would
 # have overwritten here — that defect is why this protocol exists).
 # The mode (parallel or serial) is the 5th field: a green under serial is a weaker
 # claim than a green under parallel; the record must not conflate them.
+# The 6th field "subset" appears only on --suites runs: a green over 4 suites is a
+# weaker claim than a green over 245, and the record must not conflate them.
 #
 # USAGE
-#   testenv-batch.sh [--mode parallel|serial] <branch> [<repo-name-or-path>]
+#   testenv-batch.sh [--mode parallel|serial] [--suites <suite1.sh,suite2.sh,...>]
+#                    <branch> [<repo-name-or-path>]
 #
 # EXIT STATUS
 #   0   all selected suites passed or skipped
@@ -56,9 +59,10 @@ _CONTAINER_CARGO="/var/spira/cargo"
 _CONTAINER_WORKSPACE="/workspace"
 
 # ---------------------------------------------------------------------------
-# ARGS — parse --mode flag before positional arguments.
+# ARGS — parse flags before positional arguments.
 # ---------------------------------------------------------------------------
 MODE="parallel"  # default: parallel is safer and the normal operating mode
+SUITES_EXPLICIT=""  # empty: use diff-derived selection; non-empty: use this comma-list
 while [ $# -gt 0 ]; do
     case "$1" in
         --mode)
@@ -66,11 +70,22 @@ while [ $# -gt 0 ]; do
             MODE="$2"; shift 2 ;;
         --mode=*)
             MODE="${1#--mode=}"; shift ;;
+        --suites)
+            [ $# -ge 2 ] || { printf 'batch: --suites requires an argument\n' >&2; exit 2; }
+            [ -z "$SUITES_EXPLICIT" ] || {
+                printf 'batch: --suites may only be given once\n' >&2; exit 2
+            }
+            SUITES_EXPLICIT="$2"; shift 2 ;;
+        --suites=*)
+            [ -z "$SUITES_EXPLICIT" ] || {
+                printf 'batch: --suites may only be given once\n' >&2; exit 2
+            }
+            SUITES_EXPLICIT="${1#--suites=}"; shift ;;
         --)
             shift; break ;;
         -*)
             printf 'batch: unknown option: %s\n' "$1" >&2
-            printf 'usage: testenv-batch.sh [--mode parallel|serial] <branch> [<repo-name>]\n' >&2
+            printf 'usage: testenv-batch.sh [--mode parallel|serial] [--suites <list>] <branch> [<repo-name>]\n' >&2
             exit 2 ;;
         *)  break ;;
     esac
@@ -126,12 +141,15 @@ fi
 
 # ---------------------------------------------------------------------------
 # CHANGED FILES — the release unit is the full diff against the base ref.
+# Skipped when --suites is given: explicit selection does not need the diff.
 # ---------------------------------------------------------------------------
 _cv_changed=""
-while IFS= read -r _f || [ -n "$_f" ]; do
-    [ -n "$_f" ] || continue
-    _cv_changed="$_cv_changed $_f"
-done < <(git -C "$REPO" diff --name-only "$BASE...$BR" 2>/dev/null || true)
+if [ -z "$SUITES_EXPLICIT" ]; then
+    while IFS= read -r _f || [ -n "$_f" ]; do
+        [ -n "$_f" ] || continue
+        _cv_changed="$_cv_changed $_f"
+    done < <(git -C "$REPO" diff --name-only "$BASE...$BR" 2>/dev/null || true)
+fi
 
 # ---------------------------------------------------------------------------
 # SUITE DIRECTORY — where to find test-*.sh on the host.
@@ -139,10 +157,16 @@ done < <(git -C "$REPO" diff --name-only "$BASE...$BR" 2>/dev/null || true)
 SUITE_DIR="${SPIRA_BATCH_SUITE_DIR:-$HERE}"
 
 # ---------------------------------------------------------------------------
-# SUITE SELECTION — same logic as gate-spira.sh coverage selection.
-# A file declared by no suite triggers the fallback: all suites run.
-# A suite with no # covers: line always runs.
+# SUITE SELECTION — two mutually exclusive modes:
+#   --suites <list>  explicit: validate names, use the list directly.
+#   (default)        diff-derived: same logic as gate-spira.sh coverage selection.
+#                    A file declared by no suite triggers the fallback: all run.
+#                    A suite with no # covers: line always runs.
+# Passing --suites bypasses diff-derived entirely; combining the two is a
+# usage error (caught above by --suites=... being set before the branch arg).
 # ---------------------------------------------------------------------------
+
+# Corpus of all known suites — used for validation and for diff-derived selection.
 _cv_all=""
 for _cv_f in "$SUITE_DIR"/test-*.sh; do
     [ -r "$_cv_f" ] || continue
@@ -150,60 +174,93 @@ for _cv_f in "$SUITE_DIR"/test-*.sh; do
 done
 
 SELECTED=""
-if [ -n "$_cv_changed" ] && [ -n "$_cv_all" ]; then
-    _cv_nocov=""
-    for _cv_s in $_cv_all; do
-        _cv_cov="$(suite_covers_of "$SUITE_DIR/$_cv_s")"
-        [ -z "$_cv_cov" ] && _cv_nocov="$_cv_nocov $_cv_s"
-    done
+_SELECTION_TYPE=full
 
-    _cv_unmapped=""
-    _cv_sel=""
-    for _cv_f in $_cv_changed; do
-        _cv_hit=0
+if [ -n "$SUITES_EXPLICIT" ]; then
+    # Explicit suite list: parse comma-separated names, validate each against the
+    # corpus, and reject an unknown name immediately rather than silently skipping.
+    _SELECTION_TYPE=subset
+    _rest="$SUITES_EXPLICIT"
+    while [ -n "$_rest" ]; do
+        _s="${_rest%%,*}"
+        _rest="${_rest#"$_s"}"
+        _rest="${_rest#,}"
+        # Strip leading/trailing whitespace.
+        _s="${_s#"${_s%%[![:space:]]*}"}"
+        _s="${_s%"${_s##*[![:space:]]}"}"
+        [ -n "$_s" ] || continue
+        if [ ! -r "$SUITE_DIR/$_s" ]; then
+            printf 'batch: unknown suite: %s\n' "$_s" >&2
+            printf 'batch: suite must exist in %s\n' "$SUITE_DIR" >&2
+            exit 2
+        fi
+        case " $SELECTED " in
+            *" $_s "*) ;;  # deduplicate
+            *) SELECTED="$SELECTED $_s" ;;
+        esac
+    done
+    SELECTED="$(echo $SELECTED)"  # normalise whitespace
+    _n=0; for _cv_s in $SELECTED; do _n=$((_n + 1)); done
+    log "batch: --suites: selected $_n explicit suite(s)"
+
+else
+    # Diff-derived selection.
+    if [ -n "$_cv_changed" ] && [ -n "$_cv_all" ]; then
+        _cv_nocov=""
         for _cv_s in $_cv_all; do
             _cv_cov="$(suite_covers_of "$SUITE_DIR/$_cv_s")"
-            [ -z "$_cv_cov" ] && continue
-            for _cv_pat in $_cv_cov; do
-                case "$_cv_f" in
-                    $_cv_pat)
-                        _cv_hit=1
-                        case " $_cv_sel " in
-                            *" $_cv_s "*) ;;
-                            *) _cv_sel="$_cv_sel $_cv_s" ;;
-                        esac ;;
+            [ -z "$_cv_cov" ] && _cv_nocov="$_cv_nocov $_cv_s"
+        done
+
+        _cv_unmapped=""
+        _cv_sel=""
+        for _cv_f in $_cv_changed; do
+            _cv_hit=0
+            for _cv_s in $_cv_all; do
+                _cv_cov="$(suite_covers_of "$SUITE_DIR/$_cv_s")"
+                [ -z "$_cv_cov" ] && continue
+                for _cv_pat in $_cv_cov; do
+                    case "$_cv_f" in
+                        $_cv_pat)
+                            _cv_hit=1
+                            case " $_cv_sel " in
+                                *" $_cv_s "*) ;;
+                                *) _cv_sel="$_cv_sel $_cv_s" ;;
+                            esac ;;
+                    esac
+                done
+            done
+            [ "$_cv_hit" -eq 0 ] && _cv_unmapped="$_cv_unmapped $_cv_f"
+        done
+
+        if [ -n "$_cv_unmapped" ]; then
+            log "batch: unmapped file(s):$(printf ' %s' $_cv_unmapped) — running all suites"
+            SELECTED="$_cv_all"
+        else
+            _cv_deduped=""
+            for _cv_s in $_cv_sel $_cv_nocov; do
+                case " $_cv_deduped " in
+                    *" $_cv_s "*) ;;
+                    *) _cv_deduped="$_cv_deduped $_cv_s" ;;
                 esac
             done
+            SELECTED="$_cv_deduped"
+            _n=0; for _cv_s in $_cv_deduped; do _n=$((_n + 1)); done
+            log "batch: selected $_n suite(s)"
+        fi
+    elif [ -z "$_cv_changed" ]; then
+        # No changed files: run only the always-run (no-covers) suites.
+        _cv_nocov=""
+        for _cv_s in $_cv_all; do
+            _cv_cov="$(suite_covers_of "$SUITE_DIR/$_cv_s")"
+            [ -z "$_cv_cov" ] && _cv_nocov="$_cv_nocov $_cv_s"
         done
-        [ "$_cv_hit" -eq 0 ] && _cv_unmapped="$_cv_unmapped $_cv_f"
-    done
-
-    if [ -n "$_cv_unmapped" ]; then
-        log "batch: unmapped file(s):$(printf ' %s' $_cv_unmapped) — running all suites"
-        SELECTED="$_cv_all"
-    else
-        _cv_deduped=""
-        for _cv_s in $_cv_sel $_cv_nocov; do
-            case " $_cv_deduped " in
-                *" $_cv_s "*) ;;
-                *) _cv_deduped="$_cv_deduped $_cv_s" ;;
-            esac
-        done
-        SELECTED="$_cv_deduped"
-        _n=0; for _cv_s in $_cv_deduped; do _n=$((_n + 1)); done
-        log "batch: selected $_n suite(s)"
+        SELECTED="$_cv_nocov"
+        log "batch: no changed files — running only unconditional suites"
     fi
-elif [ -z "$_cv_changed" ]; then
-    # No changed files: run only the always-run (no-covers) suites.
-    _cv_nocov=""
-    for _cv_s in $_cv_all; do
-        _cv_cov="$(suite_covers_of "$SUITE_DIR/$_cv_s")"
-        [ -z "$_cv_cov" ] && _cv_nocov="$_cv_nocov $_cv_s"
-    done
-    SELECTED="$_cv_nocov"
-    log "batch: no changed files — running only unconditional suites"
+    SELECTED="$(echo $SELECTED)"  # normalise whitespace
+
 fi
-SELECTED="$(echo $SELECTED)"  # normalise whitespace
 
 if [ -z "$SELECTED" ]; then
     log "batch: no suites selected — nothing to do"
@@ -226,8 +283,9 @@ _batch_key() {
     sel_h="$(printf '%s\n' $SELECTED | sort | sha256sum | cut -d' ' -f1)"
     harness_h="$(cat "$0" "$HERE/suite-covers.sh" 2>/dev/null | sha256sum | cut -d' ' -f1)"
     [ -n "$harness_h" ] || return 1
-    # MODE is included: a serial-green must not replay for a parallel run.
-    printf '%s\n' "$REPO_NAME $tree $IMG_TAG $sel_h $harness_h $MODE" | sha256sum | cut -d' ' -f1
+    # MODE and _SELECTION_TYPE are included: a serial-green must not replay for a
+    # parallel run; a subset-green must not replay for a full-corpus run.
+    printf '%s\n' "$REPO_NAME $tree $IMG_TAG $sel_h $harness_h $MODE $_SELECTION_TYPE" | sha256sum | cut -d' ' -f1
 }
 BATCH_KEY="$(_batch_key 2>/dev/null || true)"
 
@@ -428,18 +486,24 @@ if [ "$MODE" = serial ]; then
         printf '%s\n' "$out" > "$out_file"
 
         # 77: skip (automake convention; already in suites.sh). Not a failure, not filed.
+        # The 6th field "subset" appears only on --suites runs (law: a weaker claim must
+        # not conflate with a full-corpus result — same reasoning as the MODE field).
+        _result_extra=""; [ "$_SELECTION_TYPE" = subset ] && _result_extra=" subset"
         case "$_rc" in
             0)
-                printf '%s %s %s %s %s\n' ok "$(date +%s)" "$secs" - "$MODE" > "$res_file"
+                printf '%s %s %s %s %s%s\n' ok "$(date +%s)" "$secs" - "$MODE" \
+                    "$_result_extra" > "$res_file"
                 printf '  %-32s ok      %ss\n' "$s" "$secs"
                 ;;
             77)
-                printf '%s %s %s %s %s\n' skip "$(date +%s)" "$secs" - "$MODE" > "$res_file"
+                printf '%s %s %s %s %s%s\n' skip "$(date +%s)" "$secs" - "$MODE" \
+                    "$_result_extra" > "$res_file"
                 printf '  %-32s SKIPPED\n' "$s"
                 ;;
             *)
                 _fp_val="$(_fp "$_rc" "$out")"
-                printf '%s %s %s %s %s\n' red "$(date +%s)" "$secs" "$_fp_val" "$MODE" > "$res_file"
+                printf '%s %s %s %s %s%s\n' red "$(date +%s)" "$secs" "$_fp_val" "$MODE" \
+                    "$_result_extra" > "$res_file"
                 _batch_red=$(( _batch_red + 1 ))
                 printf '  %-32s RED     rc=%s after %ss\n' "$s" "$_rc" "$secs"
                 ;;
@@ -489,21 +553,23 @@ else
             # Write output before result — same ordering guarantee as serial.
             printf '%s\n' "$_out" > "$RESULTS/$s.out"
 
+            # _SELECTION_TYPE is captured by value at fork time (subshell inherits it).
+            _par_extra=""; [ "$_SELECTION_TYPE" = subset ] && _par_extra=" subset"
             case "$_inner_rc" in
                 0)
-                    printf '%s %s %s %s %s\n' ok "$(date +%s)" "$_secs" - "$MODE" \
-                        > "$RESULTS/$s.result"
+                    printf '%s %s %s %s %s%s\n' ok "$(date +%s)" "$_secs" - "$MODE" \
+                        "$_par_extra" > "$RESULTS/$s.result"
                     printf '  %-32s ok      %ss\n' "$s" "$_secs"
                     ;;
                 77)
-                    printf '%s %s %s %s %s\n' skip "$(date +%s)" "$_secs" - "$MODE" \
-                        > "$RESULTS/$s.result"
+                    printf '%s %s %s %s %s%s\n' skip "$(date +%s)" "$_secs" - "$MODE" \
+                        "$_par_extra" > "$RESULTS/$s.result"
                     printf '  %-32s SKIPPED\n' "$s"
                     ;;
                 *)
                     _fp_val="$(_fp "$_inner_rc" "$_out")"
-                    printf '%s %s %s %s %s\n' red "$(date +%s)" "$_secs" "$_fp_val" "$MODE" \
-                        > "$RESULTS/$s.result"
+                    printf '%s %s %s %s %s%s\n' red "$(date +%s)" "$_secs" "$_fp_val" "$MODE" \
+                        "$_par_extra" > "$RESULTS/$s.result"
                     printf '  %-32s RED     rc=%s after %ss\n' "$s" "$_inner_rc" "$_secs"
                     ;;
             esac
@@ -562,8 +628,9 @@ done
 # BATCH METADATA — image tag and key in one file so the result is self-contained.
 # Readers who want to know what image produced this run do not have to infer it.
 # ---------------------------------------------------------------------------
-printf 'image_tag=%s\nbranch=%s\nbase=%s\nkey=%s\nmode=%s\n' \
-    "$IMG_TAG" "$BR" "$BASE" "${BATCH_KEY:--}" "$MODE" > "$RESULTS/batch.meta"
+printf 'image_tag=%s\nbranch=%s\nbase=%s\nkey=%s\nmode=%s\nselection=%s\n' \
+    "$IMG_TAG" "$BR" "$BASE" "${BATCH_KEY:--}" "$MODE" "$_SELECTION_TYPE" \
+    > "$RESULTS/batch.meta"
 
 # ---------------------------------------------------------------------------
 # VERDICT — three distinguishable outcomes.
