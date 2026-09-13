@@ -603,6 +603,19 @@ gate: this is the harness's budget, not a fault in the branch; raise SPIRA_GATE_
 $out"
 fi
 
+# THE GATE COMMAND ITSELF REPORTED A HARNESS FAULT ($NV). The repo-map command converts a
+# container death (testenv-batch.sh exit 2) to exit $NV before returning here. A container
+# or install that died is a machinery fault, not the branch's: running the base trial would
+# trivially pass (origin/main has zero changed files, so it selects only no-covers suites),
+# and that false pass makes every harness fault look like the branch's own failure. Detect it
+# here and short-circuit rather than letting the base trial classify it as branch-red.
+if [ "$gate_rc_branch" -eq "$NV" ]; then
+    verdict "$NV" harness-fault \
+        "gate: $REPO_NAME's own gate reported a harness fault (exit $NV) — container or install failed.
+gate: command: $CMD
+$out"
+fi
+
 # A FAILING GATE MUST SAY WHOSE FAULT IT IS. A command that already fails against the base
 # rejects every branch for a condition no branch caused — three attempts, then poison, then
 # an escalation to the operator about work that was fine, with nothing in it pointing at the real
