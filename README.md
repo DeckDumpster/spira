@@ -449,7 +449,7 @@ spira/strand.sh report       # work that exists and is not moving, with the reas
 spira/watchtower.sh --show   # the pipeline's vital signs
 spira/suites.sh list         # every suite, where it runs, what it claims to cover
 
-spira/slay.sh <bead-id>      # stop one aeon cleanly and make its bead say what is true
+spira/slay.sh --bead <id>      # stop one aeon cleanly and make its bead say what is true
 spira/hold.sh <bead-id>      # claim a bead for a non-aeon actor
 spira/release.sh <bead-id>
 ```

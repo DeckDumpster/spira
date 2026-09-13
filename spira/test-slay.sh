@@ -128,7 +128,7 @@ make_work sp-s1
 is "bead starts in_progress"   in_progress "$(status_of sp-s1)"
 is "bead starts assigned"      aeon-test   "$(assignee_of sp-s1)"
 
-out="$(bash "$SLAY" sp-s1 2>&1)"
+out="$(bash "$SLAY" --bead sp-s1 2>&1)"
 rc=$?
 is  "slay exits 0"             0    "$rc"
 is  "bead is now open"         open "$(status_of sp-s1)"
@@ -152,7 +152,7 @@ echo "slay --close:"
 seed sp-s2
 make_work sp-s2
 
-out="$(bash "$SLAY" sp-s2 --close "operator decided to drop this" 2>&1)"
+out="$(bash "$SLAY" --bead sp-s2 --close "operator decided to drop this" 2>&1)"
 rc=$?
 is "slay --close exits 0"   0      "$rc"
 is "bead is closed"          closed "$(status_of sp-s2)"
@@ -169,7 +169,7 @@ echo "slay --keep-work:"
 seed sp-s3
 make_work sp-s3
 
-out="$(bash "$SLAY" sp-s3 --keep-work 2>&1)"
+out="$(bash "$SLAY" --bead sp-s3 --keep-work 2>&1)"
 rc=$?
 is   "slay --keep-work exits 0"   0   "$rc"
 is   "bead is open"               open "$(status_of sp-s3)"
@@ -189,7 +189,7 @@ make_work sp-s4
 echo "uncommitted work" > "$SPIRA_RUN/worktree/sp-s4/unsaved.txt"
 git -C "$SPIRA_RUN/worktree/sp-s4" add unsaved.txt
 
-out="$(bash "$SLAY" sp-s4 2>&1)"
+out="$(bash "$SLAY" --bead sp-s4 2>&1)"
 rc=$?
 is "slay with dirty worktree exits 0" 0 "$rc"
 salvaged="$(ls "$SPIRA_RUN/reaped"/sp-s4.*.patch 2>/dev/null | head -1)"
@@ -208,7 +208,7 @@ echo "parking:"
 seed sp-s5
 make_work sp-s5
 
-out="$(bash "$SLAY" sp-s5 2>&1)"
+out="$(bash "$SLAY" --bead sp-s5 2>&1)"
 is   "branch with unique work is parked" 0 \
      "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-s5 2>/dev/null; echo $?)"
 want "reports parking"                    "parked" "$out"
@@ -219,7 +219,7 @@ seed sp-s6
 git -C "$REPO" branch -q spira/sp-s6 main 2>/dev/null
 git -C "$REPO" worktree add -q "$SPIRA_RUN/worktree/sp-s6" spira/sp-s6 2>/dev/null
 
-out="$(bash "$SLAY" sp-s6 2>&1)"
+out="$(bash "$SLAY" --bead sp-s6 2>&1)"
 is     "branch on main is NOT parked" 1 \
        "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-s6 2>/dev/null; echo $?)"
 nowant "does not report parking"       "parked" "$out"
@@ -234,10 +234,66 @@ echo "slay --close on already-closed bead:"
 
 seed sp-s7 closed ""
 
-out="$(bash "$SLAY" sp-s7 --close "second close" 2>&1)"
+out="$(bash "$SLAY" --bead sp-s7 --close "second close" 2>&1)"
 rc=$?
 is "slay --close on closed bead exits 0" 0      "$rc"
 is "bead is still closed"                closed "$(status_of sp-s7)"
+
+
+# ======================================================================================
+# REFUSALS — a destructive tool must fail closed on a target it never found.
+#
+# Both of these were real and both fired on the same command on 2026-09-13:
+#   bash slay.sh --bead sp-gjpc "blocked on the P0 fixes"
+# The second positional silently REPLACED the bead id, the run proceeded against a bead
+# named after the sentence, found nothing, printed "slain: <sentence>" and exited 0.
+# Nothing was slain and the operator was told three times that something had been.
+# ======================================================================================
+echo
+echo "refusals:"
+
+# --- a bead id no bead carries -----------------------------------------------------
+out="$(bash "$SLAY" --bead sp-nosuchbead9 --why probe 2>&1)"; rc=$?
+is   "bogus id exits 2"                    2 "$rc"
+want "bogus id names the store"            "refusing to act" "$out"
+nowant "bogus id does not report a slaying" "slain: sp-nosuchbead9" "$out"
+is   "bogus id leaves no .slain marker"    no \
+     "$([ -f "$SPIRA_RUN/sp-nosuchbead9.slain" ] && echo yes || echo no)"
+
+# --- a reason passed where the id used to go ---------------------------------------
+# There are no positionals at all now, so the sentence is refused as an unexpected
+# argument rather than mistaken for a second id. The message must name BOTH flags,
+# because the operator who typed this wanted --why and reached for the wrong shape.
+seed sp-s8
+out="$(bash "$SLAY" --bead sp-s8 "blocked on the P0 fixes" 2>&1)"; rc=$?
+is   "a positional argument exits 2"       2 "$rc"
+want "refuses it by name"                  'unexpected argument' "$out"
+want "says the tool takes named arguments" 'named arguments only' "$out"
+want "points at --bead"                    '--bead' "$out"
+want "points at --why"                     '--why' "$out"
+is   "the real bead was NOT touched"       in_progress "$(status_of sp-s8)"
+
+# --- --bead twice is also refused ---------------------------------------------------
+out="$(bash "$SLAY" --bead sp-s8 --bead sp-s9 2>&1)"; rc=$?
+is   "--bead twice exits 2"                2 "$rc"
+want "names both values"                   'given twice' "$out"
+
+# --- -h lists every argument --------------------------------------------------------
+# It was `sed -n '2,12p' $0`, a fixed line range of the header: editing the header
+# silently truncated the help, which is how a flag comes to be undocumented.
+out="$(bash "$SLAY" -h 2>&1)"; rc=$?
+is   "-h exits 0"                          0 "$rc"
+for _f in --bead --why --keep-work --close --reopen; do
+    want "-h documents $_f"                "$_f" "$out"
+done
+want "-h gives the exit codes"             'EXIT' "$out"
+
+# --- POSITIVE CONTROL --------------------------------------------------------------
+# Without this, a slay.sh that refused EVERYTHING would pass both cases above.
+out="$(bash "$SLAY" --bead sp-s8 --keep-work --why "positive control" 2>&1)"; rc=$?
+is   "a real id with a --why still slays"  0    "$rc"
+is   "and the bead is released"            open "$(status_of sp-s8)"
+teardown sp-s8
 
 # ======================================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

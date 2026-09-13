@@ -2,10 +2,21 @@
 #
 # slay.sh — stop one aeon cleanly and make its bead say what is true.
 #
-#   slay.sh <bead-id>                      stop it, release the bead (open, unassigned), nuke its work
-#   slay.sh <bead-id> --close "<reason>"   ...and close the bead with that reason instead of reopening
-#   slay.sh <bead-id> --keep-work          ...but leave its branch and worktree in place
-#   slay.sh <bead-id> --why "<text>"       what the note on the bead says the operator's reason was
+#   slay.sh --bead <id> [--why "<text>"] [--keep-work] [--close "<reason>" | --reopen]
+#
+# NAMED ARGUMENTS ONLY — there are no positionals, and a bare word is a usage error. The
+# old form took the bead id positionally beside three flags that each carry a value, and
+# `slay.sh sp-gjpc "blocked on the P0 fixes"` therefore read the SENTENCE as the bead id
+# (2026-09-13). `--bead` cannot be confused with a reason. `-h` lists every argument.
+#
+# "RETIRE", NOT "NUKE" — the default does not lose work, and the old one-word summary saying
+# it did caused an operator to reach for --keep-work in an incident and pass the reason as a
+# second positional to get it (2026-09-13). What the default does, in step 5: uncommitted
+# work is salvaged to $SPIRA_RUN/reaped, a branch carrying commits the base does not have is
+# parked at refs/slain/<id> (a real ref, survives gc), and the deletion is REFUSED outright
+# if that parking fails. Only a branch with nothing the base lacks is simply removed. Use
+# --keep-work when you want the branch to stay claimable-looking in refs/heads; do not use
+# it out of fear of losing the commits.
 #
 # WHAT "CLEANLY" MEANS, in order, because each step is the one the next depends on:
 #   1. A MARKER FIRST, so the aeon's own exit path knows it was slain. aeon.sh charges an
@@ -37,22 +48,84 @@
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 
+usage() {
+    cat <<'USAGE'
+slay.sh — stop one aeon cleanly and make its bead say what is true.
+
+  slay.sh --bead <id> [--why "<text>"] [--keep-work] [--close "<reason>" | --reopen]
+
+REQUIRED
+  --bead <id>        The bead whose aeon is to be stopped. Must exist in SPIRA_DB;
+                     an id no bead carries is refused rather than acted on.
+
+OPTIONAL
+  --why "<text>"     What the note on the bead records as the operator's reason.
+                     Default: "slain by the operator". This is where a sentence goes.
+  --keep-work        Leave the branch and worktree exactly as they are.
+  --close "<reason>" Close the bead with this reason instead of releasing it.
+  --reopen           Release the bead as open and unassigned. This is the default.
+  -h, --help         This text.
+
+WHAT HAPPENS TO THE WORK WITHOUT --keep-work
+  It is RETIRED, not lost. Uncommitted changes are salvaged to SPIRA_RUN/reaped as a
+  patch; a branch carrying commits the base does not have is parked at refs/slain/<id>,
+  a real ref that survives gc; and if that parking fails the deletion is REFUSED. Only a
+  branch holding nothing the base lacks is simply removed. Use --keep-work when you want
+  the branch left in refs/heads, not because you fear losing the commits.
+
+EXIT
+  0  the aeon was stopped and the bead says what is true
+  1  something could not be done — the message names it
+  2  usage: no --bead, an unknown flag, a positional argument, two --bead values,
+     or a bead id the store does not carry
+USAGE
+}
+
 ID=""; MODE=reopen; REASON=""; KEEP=0; WHY="slain by the operator"
 while [ $# -gt 0 ]; do
     case "$1" in
+        --bead)      [ -z "$ID" ] || { printf 'slay.sh: --bead given twice (%s, %s)\n' "$ID" "${2:-}" >&2; exit 2; }
+                     ID="${2:?--bead needs a bead id}"; shift ;;
         --close)     MODE=close; REASON="${2:?--close needs a reason}"; shift ;;
         --reopen)    MODE=reopen ;;
         --keep-work) KEEP=1 ;;
         --why)       WHY="${2:?--why needs text}"; shift ;;
-        -h|--help)   sed -n '2,12p' "$0"; exit 0 ;;
-        -*)          echo "slay.sh: unknown flag $1" >&2; exit 2 ;;
-        *)           ID="$1" ;;
+        -h|--help)   usage; exit 0 ;;
+        -*)          printf 'slay.sh: unknown flag %s\n' "$1" >&2; usage >&2; exit 2 ;;
+        # NO POSITIONALS. A bare word here used to become the bead id, so a reason written
+        # beside the id silently replaced it and the run proceeded against a bead named
+        # after the sentence, reporting success (2026-09-13).
+        *)           printf 'slay.sh: unexpected argument "%s" — this tool takes named arguments only.\n' "$1" >&2
+                     printf 'slay.sh: the bead goes in --bead, a reason goes in --why.\n' >&2
+                     exit 2 ;;
     esac
     shift
 done
-[ -n "$ID" ] || { echo "usage: slay.sh <bead-id> [--close \"<reason>\"] [--keep-work] [--why \"<text>\"]" >&2; exit 2; }
+[ -n "$ID" ] || { printf 'slay.sh: --bead is required\n' >&2; usage >&2; exit 2; }
 fail=0
 say() { printf '%s\n' "$*"; }
+
+# ---- 0. THE BEAD MUST EXIST ------------------------------------------------------------
+# Step 6 says this script exits non-zero on anything it could not do. It did not: given an id
+# no bead carries, it wrote a .slain marker, reported `bead: None status=None`, printed
+# `slain: <id>` and exited 0 (2026-09-13). A destructive operator tool that reports success
+# for a target it never found is the failure mode every other fence here exists to prevent.
+#
+# COMPARE THE ID THAT COMES BACK, never just `bd show`'s exit status: `bd show sp-ofeb`
+# resolves an orphaned child `sp-ofeb.1` by PREFIX and answers as though the parent existed.
+_slay_found="$(bdq show "$ID" --json 2>/dev/null | python3 -c '
+import json,sys
+try:
+    d = json.load(sys.stdin)
+    d = d[0] if isinstance(d, list) else d
+    print(d.get("id",""))
+except Exception:
+    print("")' 2>/dev/null)"
+[ "$_slay_found" = "$ID" ] || {
+    printf 'slay.sh: no bead %s in %s — refusing to act\n' "$ID" "${SPIRA_DB:-?}" >&2
+    [ -n "$_slay_found" ] && printf 'slay.sh: the store answered with %s instead (prefix match)\n' "$_slay_found" >&2
+    exit 2
+}
 
 # ---- 1. the marker ---------------------------------------------------------------------
 printf '%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$WHY" > "$SPIRA_RUN/$ID.slain"
