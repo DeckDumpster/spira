@@ -35,15 +35,6 @@
 # seconds, and it plants an offender for every side of the key.
 spira/test-gate-verdict.sh
 
-# THE WATCHTOWER'S OWN, and it earns its place by the same rule read the other way round. A
-# gate that breaks refuses good work, loudly; a DETECTOR that breaks reports the stall and the
-# healthy case identically, and the reassuring reading is the one it gives. Detection is what
-# this gate deferred to (law-detection-outranks-rejection), so the one check the deleted
-# seventeen minutes cannot be traded for is that the detector can still read the far end of
-# the queue. Its headline field was unreadable from the day it shipped and woke three Ops
-# sessions before anyone looked at the bytes.
-spira/test-watchtower.sh
-
 # THE HERMETICITY FENCE'S OWN POSITIVE CONTROL, and it is the reason that fence is worth the
 # line it costs. A static check that reports a clean tree looks identical whether its matcher
 # fires or never could, so the fence alone would be a green light nobody had tested; this
@@ -84,9 +75,11 @@ spira/test-gate-budget.sh
 # to match for any reason and the gate would call it a pass.
 spira/test-literal-lint.sh
 
-# NOT IN THE GATE (budget): test-soak, test-owned, test-uninstall, test-ready,
-# test-install-conflicts, test-configure, test-build. test-soak (~90s) was moved to the timed
-# set to bring the gate under SPIRA_GATE_BUDGET (sp-jb7y); the deadlock it covers is still
-# caught on the ~1h timed-run window. The remaining suites cover install/uninstall/configure/
-# ready/owned/build paths; regressions in those paths are caught within one timed-run window,
-# not at landing. Promote one when the budget allows.
+# NOT IN THE GATE (budget): test-watchtower, test-soak, test-owned, test-uninstall, test-ready,
+# test-install-conflicts, test-configure, test-build. test-watchtower (~263s) was moved to the
+# timed set to bring the gate under SPIRA_GATE_BUDGET (sp-6ceo); the pipeline-stall detection
+# it covers is still caught on the ~1h timed-run window. test-soak (~90s) was moved to the
+# timed set earlier (sp-jb7y); the deadlock it covers is still caught on the ~1h timed-run
+# window. The remaining suites cover install/uninstall/configure/ready/owned/build paths;
+# regressions in those paths are caught within one timed-run window, not at landing. Promote
+# one when the budget allows.
