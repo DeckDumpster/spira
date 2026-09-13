@@ -240,6 +240,10 @@ SCRIPT
     # PATH: prepend the bd shim so 'bd' resolves to bd-embedded in child processes.
     printf 'export PATH=%s:${PATH}\n'    "$root/bin"
     printf 'export SPIRA_PATH=%s\n'      "$root/bin"
+    # Stage operates without a scope label so sentinel, canary-worker, and bead creation
+    # all see an empty value — the conf.sh default of 'spira' would make them query for
+    # 'spira,plan' while the bead is created with 'plan' only, and plan_ready stays 0.
+    printf 'export SPIRA_SCOPE_LABEL=\n'
 }
 
 # ─── down ────────────────────────────────────────────────────────────────────

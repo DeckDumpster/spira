@@ -23,6 +23,7 @@
 #   - The real SPIRA_DB (before stage eval) is never written to in any test
 #
 # covers: spira/canary.sh spira/stage.sh
+# scar: unrecorded
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
