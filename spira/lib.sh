@@ -3259,12 +3259,26 @@ spira_containment_check() {
                 # compare the literal string so an unmade path is still caught by name)
                 local path_real; path_real="$(cd "$path" 2>/dev/null && pwd -P)"
                 [ -n "$path_real" ] || path_real="$path"
-                case "$path_real" in
-                    "$ws_real"/*|"$ws_real") ;;   # inside workspaces root — ok
-                    *) printf 'spira: containment: instance %s is confined to %s — %s (%s) is outside it\n' \
-                           "${SPIRA_INSTANCE}" "$ws" "$name" "$path" >&2
-                       bad=1 ;;
-                esac
+                # A LITERAL PREFIX TEST, NOT A GLOB. When the workspace root is "/" —
+                # which is what dirname gives for a checkout mounted at /workspace, i.e.
+                # every container run — the old pattern "$ws_real"/* expanded to //* and NO
+                # absolute path matched it, so every row was refused whatever it said. That
+                # is why no suite had ever executed in a container: the check was not
+                # rejecting the rows, it was rejecting its own glob.
+                #
+                # Stripping the slash into a quoted case pattern does NOT fix it: a QUOTED
+                # EMPTY STRING in a case pattern matches nothing, so "${ws_real%/}"/* still
+                # fails where the bare literal /* succeeds. Verified 2026-09-13. Hence a
+                # prefix comparison with a quoted expansion, which neither globs nor cares
+                # what characters the path contains.
+                local ws_pfx="${ws_real%/}/"
+                if [ "$path_real" = "$ws_real" ] || [ "${path_real#"$ws_pfx"}" != "$path_real" ]; then
+                    :                                   # inside workspaces root — ok
+                else
+                    printf 'spira: containment: instance %s is confined to %s — %s (%s) is outside it\n' \
+                        "${SPIRA_INSTANCE}" "$ws" "$name" "$path" >&2
+                    bad=1
+                fi
             else
                 # SPIRA_WORKSPACES does not exist as a directory; compare literal prefix
                 case "$path" in

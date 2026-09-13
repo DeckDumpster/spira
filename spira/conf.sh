@@ -233,7 +233,11 @@ spira_conf_defaults() {
     : "${SPIRA_CTRL:=$SPIRA_RUN/control}"
     : "${SPIRA_GOAL:=sp-spira}"
     : "${SPIRA_PATH:=}"
+    # NORMALISED SO DERIVED PATHS DO NOT DOUBLE THE SLASH. dirname returns "/" for a
+    # checkout mounted at the filesystem root (/workspace in every container run), and
+    # "$SPIRA_WORKSPACES/beads-test" then yields //beads-test, which mkdir refuses.
     : "${SPIRA_WORKSPACES:=$(dirname "$SPIRA_REPO")}"
+    SPIRA_WORKSPACES="${SPIRA_WORKSPACES%/}"; : "${SPIRA_WORKSPACES:=/}"
     : "${SPIRA_PREFIX_MAP:=$SPIRA_HOME/prefix-map}"
     : "${SPIRA_CHAMBER:=$SPIRA_HOME/chamber}"
     # THE ONE LIST OF WHAT SHOULD BE WATCHING. One `daemon` row is one systemd unit, so this

@@ -180,5 +180,42 @@ want "unset-instance map prints 'loaded'" "loaded" "$out"
 
 # ===========================================================================
 echo
+echo "D — a workspaces root of \"/\" contains everything instead of nothing:"
+# ===========================================================================
+# THE BUG THIS CASE EXISTS FOR. dirname returns "/" for a checkout mounted at the
+# filesystem root, which is every container run (/workspace). The check built its
+# pattern as "$ws_real"/*, which for ws_real=/ expands to //* — and NO absolute path
+# matches //*. So every repo-map row was refused whatever it said, and no suite ever
+# executed in a container. The check was rejecting its own glob, not the rows.
+#
+# Stripping the slash into a QUOTED case pattern does not fix it either: "" /* matches
+# nothing, while the bare literal /* matches. That near-miss is why this asserts the
+# observable outcome (the map loads) and not the shape of the pattern.
+load_at_root() {   # load_at_root <instance> <map-path> — same as load, ws pinned to /
+    env -i PATH="$PATH" HOME="$TMP/home" \
+        SPIRA_HOME="$HARNESS/spira" \
+        SPIRA_REPO="$HARNESS" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_INSTANCE="${1:-prod}" \
+        SPIRA_WORKSPACES="/" \
+        SPIRA_REPO_MAP="${2:-}" \
+        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
+        bash -c ". '$HARNESS/spira/conf.sh'; . '$HARNESS/spira/lib.sh'; echo loaded" 2>&1
+}
+out="$(load_at_root test "$MAP_GOOD" 2>&1)"
+rc=$?
+is   "ws=/ loads a map whose paths are absolute (rc=0)" "0" "$rc"
+want "ws=/ map prints 'loaded'"                    "loaded" "$out"
+
+# AND IT MUST STILL BE A CHECK. A root of / contains every path by definition, so the
+# path arm cannot fire — but the real-remote arm must, or "contains everything" would
+# have quietly become "checks nothing".
+out="$(load_at_root test "$MAP_REAL_REMOTE" 2>&1)"
+rc=$?
+is   "ws=/ still refuses a clone with a real remote" "1" "$rc"
+want "ws=/ refusal mentions containment"   "containment" "$out"
+
+# ===========================================================================
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
