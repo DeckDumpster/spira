@@ -286,7 +286,11 @@ echo "a persistent red files once — and a red that CHANGES files again:"
 # ======================================================================================
 sut run >/dev/null
 is   "the same failure a second cycle is still one bead" "1" "$(count "$(beads 'test-fx-red.sh')")"
-want "recorded as a recurrence on it"                    "sp-recur-2" "$(B label list "$id" 2>&1)"
+# sp-recur-N labels are no longer written (sp-lzt); recurrences are recorded as events and
+# logged to the incident log as "... recurred (N) — <id>". Checking the log for the bead id
+# in a "recurred" line is the correct signal that the dedup path ran and recorded the recurrence.
+want "recorded as a recurrence on it"                    "$id" \
+     "$(grep ' recurred ' "$RUN/incident.log" 2>/dev/null || true)"
 
 # THE POSITIVE CONTROL FOR THAT SILENCE. A dedupe that swallowed everything would pass the
 # case above just as well, so the same suite is made to fail DIFFERENTLY and must be heard.
@@ -321,7 +325,10 @@ is "first run of a timestamped failure files one bead" "1" "$(count "$(beads 'te
 sleep 2  # ensure the wall-clock moves so the timestamp in the output changes
 sut run >/dev/null
 is "a second run at a later timestamp is still one bead" "1" "$(count "$(beads 'test-fx-timestamped.sh')")"
-want "recorded as a recurrence on the same bead" "sp-recur-2" "$(B label list "${ts_id:-none}" 2>&1)"
+# sp-recur-N labels are no longer written (sp-lzt); check the incident log for the bead id
+# in a "recurred" line — the dedup path logs "... recurred (N) — <id>" on each recurrence.
+want "recorded as a recurrence on the same bead" "${ts_id:-none}" \
+     "$(grep ' recurred ' "$RUN/incident.log" 2>/dev/null || true)"
 
 # NEGATIVE CONTROL. A genuinely different failure must still file a fresh bead even when the
 # only FAIL line it shares with the first is the timestamp token — the normaliser must not
