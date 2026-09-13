@@ -37,6 +37,7 @@
 # defect: sp-gsmx.4
 # covers: spira/review.sh spira/promote.sh spira/conf.sh spira/lib.sh
 # covers: spira/release.sh
+# scar: review.sh had no suite; a missing or broken reviewer produced no verdict and promote would not gate on it.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -83,7 +84,7 @@ git -C "$REPO" push -q origin trunk 2>/dev/null
 # ---- harness fixture -------------------------------------------------------
 SH="$TMP/spira"
 mkdir -p "$SH"
-for f in review.sh release.sh unhold.sh lib.sh conf.sh; do
+for f in review.sh release.sh unhold.sh lib.sh conf.sh suite-covers.sh; do
     [ -f "$HERE/$f" ] && cp "$HERE/$f" "$SH/"
 done
 chmod +x "$SH/review.sh" "$SH/release.sh"
