@@ -1061,14 +1061,23 @@ unsent_keys() {
     # the home repo's branches would report "no unsent work" while another repository's
     # branches aged forever — the reassuring answer, produced by looking in the wrong place.
     # Refs are a local read, so this costs nothing per repository; no fetch happens here.
-    _fail=0; _n=0; _o=""; _done=0; _unadopted=0
+    _fail=0; _n=0; _o=""; _done=0; _unadopted=0; _orphan_work=0
     for _r in $(spira_repos); do
         _p="$(repo_root "$_r")" || continue
         [ -e "$_p/.git" ] || continue
+        # Resolve the base ref once per repo. spira_landref reads the repo-map's declared base
+        # column first, which is the only authoritative source for repos whose remote is not
+        # named `origin` (e.g. a repo with a `gitea` remote). The result is used below to
+        # distinguish orphan work from unadopted strays.
+        _base="$(spira_landref "$_r" 2>/dev/null)" || _base=""
         # ONE LOOP PER REPOSITORY, fetching both name and timestamp. The bead lookup decides
-        # whether a branch counts as unsent work or as an unadopted stray — a ref whose suffix
-        # resolves to no bead can never be reaped by any rite and is a permanent +1 on a figure
-        # whose whole purpose is to trend to zero.
+        # whether a branch counts as unsent work, a true unadopted stray, or orphan work.
+        # A ref with no bead may be: (a) a disposable stray whose commits are already on the
+        # base — safe to delete, counted as SP_UNADOPTED; or (b) a branch that carries commits
+        # absent from the base — unlanded work awaiting human attention, counted as
+        # SP_ORPHAN_WORK and never filed as a reapable stray. Conflating the two produced a
+        # recurring unadopted-refs incident every 30 minutes for a hold repo whose branch had
+        # unlanded commits and could not be deleted by any rite. (sp-doh5)
         if _brs="$(git -C "$_p" for-each-ref --format='%(refname:short) %(committerdate:unix)' 'refs/heads/spira/*' 2>/dev/null)"; then
             while read -r _b _ts; do
                 [ -n "$_b" ] || continue
@@ -1087,7 +1096,15 @@ import sys, json
 try: d = json.load(sys.stdin); print((d if isinstance(d, list) else [d])[0].get("status", ""))
 except Exception: print("")' 2>/dev/null)"
                 if [ -z "$_st" ]; then
-                    _unadopted=$((_unadopted+1))
+                    # No bead for this branch. Only count as an unadopted stray (safe to delete)
+                    # when the tip is confirmed to be already on the base branch. If the base is
+                    # unknown or the branch has commits absent from base, count as orphan work —
+                    # it is safer to over-report work than to misclassify unlanded commits as strays.
+                    if [ -n "$_base" ] && git -C "$_p" merge-base --is-ancestor "$_b" "$_base" 2>/dev/null; then
+                        _unadopted=$((_unadopted+1))
+                    else
+                        _orphan_work=$((_orphan_work+1))
+                    fi
                     continue
                 fi
                 [ "$_st" = closed ] && _done=$((_done+1))
@@ -1102,6 +1119,7 @@ except Exception: print("")' 2>/dev/null)"
     done
     echo "SP_BRANCH_DONE=$_done"
     echo "SP_UNADOPTED=$_unadopted"
+    echo "SP_ORPHAN_WORK=$_orphan_work"
     if [ "$_fail" = 1 ]; then
         echo "SP_UNSENT=?"
         echo "SP_UNSENT_OLDEST_H=?"

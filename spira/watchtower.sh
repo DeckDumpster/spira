@@ -434,13 +434,15 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
 ### The Sending — are finished branches leaving?
 
   An unsent branch belonging to a live in_progress bead is work in flight, not backlog;
-  the raw count alone is not a fault. An unadopted ref (a spira/* branch whose suffix
-  resolves to no bead) can never be reaped by any rite and is a permanent +1 on a figure
-  whose purpose is to trend to zero.
+  the raw count alone is not a fault. A no-bead branch splits into two kinds: one whose
+  commits are already on the base (SP_UNADOPTED — safe to delete, no aeon holds it) and
+  one whose commits are absent from the base (SP_ORPHAN_WORK — unlanded work, needs human
+  attention; deletion would destroy commits). Only SP_UNADOPTED triggers the reap escalation.
 
   unsent branches                     $(g SP_UNSENT)
   oldest unsent (hours)               $(g SP_UNSENT_OLDEST_H)
-  unadopted refs (no bead, permanent) $(g SP_UNADOPTED)
+  strays (no bead, commits on base)   $(g SP_UNADOPTED)
+  orphan work (no bead, has commits)  $(g SP_ORPHAN_WORK)
   fiends (FAILED deletes, came back)  $(g SP_SENT_FAILED)
 
 ### The gate — is it buying anything?
@@ -628,10 +630,13 @@ fi
 # bead is a branch nobody is about to send, and the rite that should reap it has failed
 # or not run. Filed only when SP_UNSENT_OLDEST_H is numeric and at or above the threshold.
 #
-# UNADOPTED. A spira/* branch whose suffix resolves to no bead can never be reaped by any
-# rite — the reaper checks the bead, finds nothing, and skips. It is a permanent +1 on a
-# figure whose purpose is to trend to zero. Filed whenever SP_UNADOPTED is nonzero, using
-# incident.sh dedup so repeated sweeps bump a recurrence rather than filing duplicates.
+# UNADOPTED. A spira/* branch whose suffix resolves to no bead AND whose commits are all
+# already on the base branch is a true stray — the reaper checks the bead, finds nothing,
+# and skips, so it is a permanent +1 until removed by hand. Filed whenever SP_UNADOPTED is
+# nonzero, using incident.sh dedup so repeated sweeps bump a recurrence rather than filing
+# duplicates. SP_ORPHAN_WORK (no bead but commits absent from base) is deliberately excluded:
+# deleting orphan work would destroy unlanded commits, so it is not a reapable stray and must
+# never be filed as one. (sp-doh5)
 #
 # ONLY WHEN NUMERIC. A `?` means the probe failed; filing an escalation on an unreadable
 # probe would sound the alarm without evidence (law-absence-needs-a-positive-control).
