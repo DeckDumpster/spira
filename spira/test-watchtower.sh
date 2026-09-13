@@ -438,7 +438,8 @@ fresh
 mkdir -p "$TMP/run"
 printf '2026-09-08 20:02:00 UTC\nsummons gated in summon_fayth; loop and landing still running.\n' \
     > "$TMP/run/world.draining"
-# Touch the stamp to a known age (5 minutes ago) so the field is a number, not unknown.
+# Touch the stamp to a known age so the field is a number, not unknown. The exact elapsed
+# minutes grow as the test runs, so the check below verifies a number rather than "5".
 touch -d "@$(( NOW - 300 ))" "$TMP/run/world.draining" 2>/dev/null || true
 snap="$(wt)"
 want "a drain stamp surfaces in the snapshot"    "DRAINING"                     "$snap"
@@ -448,7 +449,12 @@ want "and says summons are gated"                "Summons gated"                
 nowant "a drain is not a halt"                   "HALTED"                       "$snap"
 nowant "and does not claim no incidents are filed" "No incidents are filed"     "$snap"
 # The section label distinguishes drain from the not-draining state.
-want "drain_mins is a number — positive control" "5"   "$(field "$snap" 'draining since (? = cannot read)')"
+# Check the first token is a number, not "?". The exact value grows as the test runs, so
+# asserting "5" here produces a timing-sensitive failure in slow containers (sp-c0lz scar).
+dm_pos="$(field "$snap" 'draining since (? = cannot read)')"
+[ "${dm_pos%% *}" = "?" ] \
+    && bad "drain_mins is a number — positive control" "got [?]" \
+    || ok "drain_mins is a number — positive control"
 
 # NO DRAIN STAMP renders 0, NOT `?`. "Not draining" and "draining but probe failed" are
 # different facts; the former is the healthy state and must not show the alarm colour.
