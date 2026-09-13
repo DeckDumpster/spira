@@ -47,6 +47,12 @@ is()    { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 echo "test-beads-push-commit.sh"
 TMP="$(mktemp -d)"
 
+# This suite adds a Dolt remote to SPIRA_DB and modifies its config.yaml — state
+# changes that corrupt the fixture for parallel suites sharing the same SPIRA_DB.
+# Opt out of the shared fixture so testdb_up builds a private one.
+TESTDB_SHARED=0
+export TESTDB_SHARED
+
 . "$HERE/testdb.sh"
 testdb_require beads-push-commit
 testdb_up beads-push-commit
