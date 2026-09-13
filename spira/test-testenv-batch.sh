@@ -104,17 +104,24 @@ _select_suites() {  # _select_suites <suite-dir> <changed-file1> [<changed-file2
         for cv_s in $cv_all; do
             cv_cov="$(suite_covers_of "$sd/$cv_s")"
             [ -z "$cv_cov" ] && continue
+            set -f
             for cv_pat in $cv_cov; do
                 case "$cv_f" in
                     $cv_pat) cv_hit=1
                         case " $cv_sel " in *" $cv_s "*) ;; *) cv_sel="$cv_sel $cv_s" ;; esac ;;
                 esac
             done
+            set +f
         done
         [ "$cv_hit" -eq 0 ] && cv_unmapped="$cv_unmapped $cv_f"
     done
     if [ -n "$cv_unmapped" ]; then
-        printf '%s' "$cv_all"  # fallback: all suites
+        # Unmapped files: merge covered suites with no-covers suites (same as testenv-batch.sh).
+        local deduped2="" cv_s2
+        for cv_s2 in $cv_sel $cv_nocov; do
+            case " $deduped2 " in *" $cv_s2 "*) ;; *) deduped2="$deduped2 $cv_s2" ;; esac
+        done
+        printf '%s' "$deduped2"
     else
         local deduped="" cv_s2
         for cv_s2 in $cv_sel $cv_nocov; do
@@ -183,6 +190,46 @@ want "A2: positive-control: D is selected when D covers changed.sh" "test-fx-d.s
 _n_ctrl=0; for _s in $sel_ctrl; do _n_ctrl=$((_n_ctrl+1)); done
 [ "$_n_ctrl" = 2 ] && ok "A2: positive-control: 2 suites selected (D+C)" \
                    || bad "A2: positive-control: 2 suites selected (D+C)" "got $_n_ctrl"
+
+# --------------------------------------------------------------------------------------
+# A3: UNMAPPED FALLBACK — a file declared by no suite does not expand the selection to
+# all suites. Only the explicitly covered files (plus no-covers suites) are selected.
+#
+# REGRESSION CHECK (law-a-regression-test-must-be-seen-to-fail). Before this change,
+# the unmapped path set SELECTED = _cv_all (all suites). The new path sets
+# SELECTED = merge(_cv_sel, _cv_nocov). This test was verified to fail against the
+# old code: with all-covered suites and an unmapped file, the old code returned
+# "test-fx-e.sh" (one suite), the new code returns "" (zero suites).
+#
+# TWO-SIDED POSITIVE CONTROL: first confirm the selector CAN fire for a covered file
+# (the positive direction), then confirm it does NOT add suites for an unmapped file.
+# --------------------------------------------------------------------------------------
+SUITE_ALLCOV="$TMP/suites-allcov"
+mkdir -p "$SUITE_ALLCOV"
+# Suite E: covers spira/*.sh — will be selected for covered files, not for unmapped.
+cat > "$SUITE_ALLCOV/test-fx-e.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: spira/*.sh
+printf '  ok    test-fx-e ran\n'; exit 0
+EOF
+chmod +x "$SUITE_ALLCOV/test-fx-e.sh"
+
+# Positive control: a covered file selects test-fx-e.sh.
+sel_covered="$(_select_suites "$SUITE_ALLCOV" "spira/foo.sh")"
+want "A3: positive-control: covered file selects test-fx-e.sh" "test-fx-e.sh" "$sel_covered"
+
+# Unmapped file + all-covered suites: 0 suites selected (not all suites).
+sel_unmapped="$(_select_suites "$SUITE_ALLCOV" "README.md")"
+_n_u=0; for _s in $sel_unmapped; do _n_u=$((_n_u+1)); done
+[ "$_n_u" = 0 ] && ok "A3: unmapped-only file selects 0 suites (gate stays fast)" \
+                || bad "A3: unmapped-only file selects 0 suites (gate stays fast)" "got $_n_u: $sel_unmapped"
+
+# Mixed: one covered + one unmapped → only the covered suite is selected.
+sel_mixed="$(_select_suites "$SUITE_ALLCOV" "spira/foo.sh" "README.md")"
+want "A3: mixed: covered file still selects test-fx-e.sh" "test-fx-e.sh" "$sel_mixed"
+_n_m=0; for _s in $sel_mixed; do _n_m=$((_n_m+1)); done
+[ "$_n_m" = 1 ] && ok "A3: mixed: exactly 1 suite (not all)" \
+                || bad "A3: mixed: exactly 1 suite (not all)" "got $_n_m: $sel_mixed"
 
 # ===========================================================================
 # PART B: CONTAINER TIER

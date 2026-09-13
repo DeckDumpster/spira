@@ -998,6 +998,13 @@ for i in d:
         # filed as work for whoever can change that code. A NO_VERDICT has none: nobody can
         # be handed a lock or a deadline, so it is counted and, if it keeps recurring, put in
         # front of the operator. Only a FAIL reopens the bead.
+        #
+        # HOW A REPOSITORY'S OWN GATE COMMAND MAPS INTO THESE OUTCOMES. The gate command
+        # in the repo-map is the repository's contract with this pass; its non-zero exit
+        # codes must land in the right outcome. For spira, testenv-batch.sh exits 2 when
+        # the container fails to start and 3 when installation inside it fails — both are
+        # harness faults, not branch faults. The gate command maps both to exit 75 (NO_VERDICT)
+        # before returning, so neither charges the branch an attempt.
         # ------------------------------------------------------------------------------
         gate_outcome="$(spira_gate_outcome "$gate_rc")"
         # The gate's own machine-readable line, when it produced one. Read anchored, so a

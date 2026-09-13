@@ -262,6 +262,7 @@ else
             for _cv_s in $_cv_all; do
                 _cv_cov="$(suite_covers_of "$SUITE_DIR/$_cv_s")"
                 [ -z "$_cv_cov" ] && continue
+                set -f
                 for _cv_pat in $_cv_cov; do
                     case "$_cv_f" in
                         $_cv_pat)
@@ -272,14 +273,29 @@ else
                             esac ;;
                     esac
                 done
+                set +f
             done
             [ "$_cv_hit" -eq 0 ] && _cv_unmapped="$_cv_unmapped $_cv_f"
         done
 
         if [ -n "$_cv_unmapped" ]; then
-            log "batch: unmapped file(s):$(printf ' %s' $_cv_unmapped) — running all suites"
-            SELECTED="$_cv_all"
-            _SELECTION_TYPE=all
+            # Unmapped files do not trigger the all-suites fallback. Running everything for
+            # a documentation or config file that no suite declares defeats the fast-gate
+            # property the timed runner (gate-spira.sh) is designed to complement: that
+            # runner keeps the all-suites fallback; this one keeps the gate cheap.
+            # Covered files in the same diff still select their own suites; unmapped ones
+            # contribute nothing beyond the always-run (no # covers:) set.
+            log "batch: unmapped file(s):$(printf ' %s' $_cv_unmapped) — not expanding to all suites; running covered and unconditional"
+            _cv_deduped=""
+            for _cv_s in $_cv_sel $_cv_nocov; do
+                case " $_cv_deduped " in
+                    *" $_cv_s "*) ;;
+                    *) _cv_deduped="$_cv_deduped $_cv_s" ;;
+                esac
+            done
+            SELECTED="$_cv_deduped"
+            _n=0; for _cv_s in $_cv_deduped; do _n=$((_n + 1)); done
+            log "batch: selected $_n suite(s) (unmapped files skipped)"
         else
             _cv_deduped=""
             for _cv_s in $_cv_sel $_cv_nocov; do
