@@ -166,11 +166,12 @@ watching() { partitions | cut -f1 | paste -sd' ' -; }
 # The harness's own pulse, for the case where this is run from outside it.
 harness_state() {
     local active age=-1 mtime now _su
+    local SC="${SPIRA_SYSTEMCTL:-systemctl}"
     _su="$(spira_unit sentinel timer)"
     if [ "$_su" = '?' ]; then
         active=unknown
     else
-        active="$(systemctl --user is-active "$_su" 2>/dev/null)"
+        active="$("$SC" --user is-active "$_su" 2>/dev/null)"
         [ -n "$active" ] || active=unknown
     fi
     if [ -f "$SENTINEL_LOG" ]; then
