@@ -794,6 +794,16 @@ for u in $({ systemctl --user list-unit-files --no-legend \
                  "spira-watch-*-${SPIRA_INSTANCE}.service" 2>/dev/null
              systemctl --user list-units --all --no-legend \
                  "spira-watch-*-${SPIRA_INSTANCE}.service" 2>/dev/null
+             # DEST scan catches orphans that systemd has not yet indexed — before
+             # daemon-reload, or when the systemd daemon's HOME differs from install.sh's
+             # HOME (per-suite test isolation gives each suite its own HOME, but the daemon
+             # was started with the real user home). DEST is where install.sh writes unit
+             # files, so a watcher file here that is absent from the manifest is an orphan
+             # regardless of what the daemon's search path currently includes. In production
+             # DEST == the real systemd unit dir, so both sources agree and sort -u deduplicates.
+             for _df in "$DEST"/spira-watch-*-"${SPIRA_INSTANCE}".service; do
+                 [ -e "$_df" ] && basename "$_df"
+             done
            } | tr -s ' \t' '\n\n' \
              | grep -E "^spira-watch-[A-Za-z0-9_-]+-${SPIRA_INSTANCE}\.service$" | sort -u); do
     case "$watch_units" in *" $u "*) continue ;; esac
