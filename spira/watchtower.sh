@@ -490,6 +490,8 @@ before anything else, because each answers a question the numbers above cannot.
 
   (the timed suite run is SUSPENDED — do not run it)
 
+    suites.sh run covers every spira/test-*.sh the landing gate does NOT run.
+
     Per Ryan, 2026-09-12: the timed suite run is suspended while the suite-red backlog is
     cleaned up. spira-suites-prod.timer is stopped and disabled, and this menu entry is
     withdrawn because it was the OTHER trigger — the Ops session running it on every sweep,

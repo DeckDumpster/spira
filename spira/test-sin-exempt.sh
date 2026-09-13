@@ -40,6 +40,10 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 testdb_require test-sin-exempt
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up sinex || { echo "test-sin-exempt: could not build a fixture database"; exit 1; }
+# lib.sh provides recurs_of for event-based recurrence counting (sp-recur-N labels
+# are no longer written; sp-lzt moved the count to the events table).
+# shellcheck disable=SC1090
+. "$HERE/lib.sh"
 
 INC="$HERE/incident.sh"
 B() { bd -C "$SPIRA_DB" "$@"; }

@@ -273,13 +273,14 @@ file_one() {
     # DEDUP QUERY — two passes (open first, closed second if needed). If the database is
     # unreachable, _dedup_incident prints nothing; id stays empty and the probe below catches
     # it. The probe is skipped on the recurrence path because a result from _dedup_incident
-    # proves the database is reachable. The recurrence count comes from the JSON labels,
-    # so no separate bdq label list call is needed on the common recurrence path.
+    # proves the database is reachable. The recurrence count comes from the events table
+    # (sp-lzt removed sp-recur-N label writes; _dedup_incident's label-extracted count
+    # is always 0 and is overridden by recurs_of immediately after the id is known).
     _hit="$(_dedup_incident "$ref")"
     id="" _was_closed=0 _recur_n=0
     case "$_hit" in
-        "open "*)   _rest="${_hit#open }";   id="${_rest%% *}"; _recur_n="${_rest##* }" ;;
-        "closed "*) _rest="${_hit#closed }"; id="${_rest%% *}"; _recur_n="${_rest##* }"; _was_closed=1 ;;
+        "open "*)   _rest="${_hit#open }";   id="${_rest%% *}"; _was_closed=0 ;;
+        "closed "*) _rest="${_hit#closed }"; id="${_rest%% *}"; _was_closed=1 ;;
     esac
     if [ -n "${id:-}" ]; then
         # THE COUNT COMES FROM THE EVENT HISTORY. sp-recur-N labels stopped being written
@@ -414,6 +415,9 @@ $(head -c 2000 "$pf")" >/dev/null 2>&1
     # scanning all open incident beads. Added at creation so every new bead carries it from
     # the start; the backfill-ref-labels subcommand labels beads filed before this was added.
     bdq label add "$id" "ref:$(_ref_hash "$ref")" >/dev/null 2>&1
+    # Write occurrence 1 to the events trail so N filings produce recurs_of==N. The label
+    # sp-recur-1-<cause> is no longer written (sp-lzt); bump_recur is the only writer now.
+    bump_recur "$id" "$INCIDENT_CAUSE" >/dev/null 2>&1
     # AN UNDECLARED REPO STAYS VISIBLE. Filed but labelled needs-repo-triage so an aeon
     # that would claim it in the home-repo fallback is stopped by its own confusion rather
     # than silently working in the wrong checkout. Escalated once so the operator can
