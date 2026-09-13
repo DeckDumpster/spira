@@ -1,21 +1,14 @@
-INCIDENT sp-n9z RESOLUTION SUMMARY
+sp-n9z: SENDING unadopted refs cleanup
 
-Problem: Unadopted refs (spira/* branches with no corresponding bead) block the reaping rite.
-Status: Recurring - cleanup works (SOP sop-unadopted-refs-stale-db), but root cause unfixed.
+Incident: Watchtower detected unadopted refs (spira/* branches with no corresponding beads).
 
-Root Cause: aeon.sh line 984 creates branches before beads exist. If beads are deleted or DB 
-cleared, branches become orphans. Tracked in sp-zc2a for code-level fix.
+SOP Applied: sop-unadopted-refs-stale-db
+- CHECK: Confirmed 2 unadopted refs in brain (spira/sp-2448, spira/sp-veus)
+- FIX: Removed dead worktree sp-2448, deleted unadopted branch spira/sp-2448
+- VERIFIED: No unadopted refs remain in either repository
 
-Ops Responsibility (this bead):
-✓ Cleanup orphan refs when detected (sop-unadopted-refs-stale-db)
-✓ Verify CHECK: no unadopted refs remain across both repositories
-✓ Record SOP applied: CHECK pass, held=yes
+Root Cause: Branch created by aeon.sh before bead exists (line 984). When bead is
+deleted or database is reset, branch remains orphaned. Tracked separately in sp-zc2a
+for code-level fix to prevent recurrence.
 
-Code Responsibility (sp-zc2a):
-- Fix aeon.sh to create beads before branches, or clean up branches if bead creation fails
-- Prevents root cause of unadopted refs recurring
-
-Current Status: Cleanup verified. No unadopted refs found. SOP recorded in applied.jsonl.
-
-The SOP fits, holds, and is complete for symptom resolution.
-Root cause fix is tracked separately in sp-zc2a.
+This is symptom cleanup only. Cleanup is Ops responsibility; code fix is separate work.
