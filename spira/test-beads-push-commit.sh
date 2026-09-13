@@ -16,21 +16,22 @@
 # This suite would pass without the fix in embedded mode (where bd-embedded
 # auto-commits every write). The positive control defeats that: it writes a statute
 # with --dolt-auto-commit off to put the config table in a dirty state, then pushes
-# WITHOUT committing, and asserts the statute is NOT in a fresh clone. Only then
-# does it run beads-push.sh (which commits and pushes) and assert the statute IS
-# in a fresh clone.
+# WITHOUT committing, and asserts the statute is NOT visible via a fresh clone. Only
+# then does it run beads-push.sh (which commits and pushes) and assert the statute IS
+# visible via a fresh clone.
 #
 # If the commit step is removed from beads-push.sh, the positive control passes (0
 # as expected) but the real test fails (clone still shows 0, expected 1) — so the
 # suite goes red whenever the fix is absent.
 #
-# HOW THE FILE:// REMOTE WORKS
-# ----------------------------
-# bd-embedded dolt push writes to a directory using the remote API format, not the
-# standard .dolt/ layout. The remote directory must be empty before the first push —
-# a pre-initialised directory (dolt init) adds a .dolt/ subdirectory that confuses
-# the manifest and produces an empty clone. dolt clone understands the remote API
-# format when the directory has only the push-written files.
+# HOW CLONING IS VERIFIED (no dolt clone)
+# ----------------------------------------
+# bd-embedded dolt push writes to a file:// directory using the remote API format.
+# The standalone dolt 2.2.3 in the gate container cannot clone that format: its
+# `dolt clone` uses a client-side protocol implementation that diverges from what
+# the embedded library wrote. Using `bd bootstrap` avoids this: bootstrap uses the
+# same embedded library that wrote the remote, so the format is always compatible.
+# After bootstrap, `bd memories --json` counts the target statute key.
 #
 # defect: sp-e1l1
 # covers: beads-push.sh spira/conf.sh
@@ -47,10 +48,35 @@ echo "test-beads-push-commit.sh"
 TMP="$(mktemp -d)"
 
 . "$HERE/testdb.sh"
+testdb_require beads-push-commit
 testdb_up beads-push-commit
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
-command -v dolt >/dev/null 2>&1 || { echo "SKIP: dolt not found on PATH"; exit 0; }
+# _count_in_remote <key> <url>
+# How many memories with exactly the given key appear in a fresh bootstrap from <url>.
+# Uses bd bootstrap (same embedded library as the pusher) rather than dolt clone to
+# avoid the file:// format incompatibility between bd-embedded and standalone dolt.
+_count_in_remote() {
+    local key="$1" url="$2"
+    local d; d="$(mktemp -d)"
+    mkdir -p "$d/.beads"
+    printf 'sync.remote: "%s"\n' "$url" > "$d/.beads/config.yaml"
+    BD_NON_INTERACTIVE=1 bd -C "$d" bootstrap --yes >/dev/null 2>&1 \
+        || { rm -rf "$d"; printf '?'; return; }
+    local count
+    count="$(bd -C "$d" memories --json 2>/dev/null \
+        | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    k = sys.argv[1]
+    print(sum(1 for key in d if key == k))
+except Exception:
+    print("?")
+' "$key" 2>/dev/null)" || count="?"
+    rm -rf "$d"
+    printf '%s' "${count:-?}"
+}
 
 # ── SETUP ─────────────────────────────────────────────────────────────────────
 echo
@@ -75,7 +101,7 @@ ok "setup: seed push"
 # ── POSITIVE CONTROL ──────────────────────────────────────────────────────────
 # Write a statute in dirty mode (--dolt-auto-commit off simulates server-mode
 # behaviour where bd writes config without creating a Dolt commit), then push
-# WITHOUT committing. The clone must NOT contain the statute.
+# WITHOUT committing. The fresh bootstrap clone must NOT see the statute.
 echo
 echo "positive control — push without commit does not include dirty statute:"
 
@@ -86,18 +112,12 @@ bd -C "$SPIRA_DB" --dolt-auto-commit off \
 # Simulate old beads-push.sh: push directly, skipping the commit step.
 bd -C "$SPIRA_DB" dolt push --remote beads >/dev/null 2>&1
 
-CLONE_PC="$TMP/clone-pc"
-dolt clone "file://$REMOTE" "$CLONE_PC" >/dev/null 2>&1 || {
-    bad "positive control: clone" "dolt clone failed"; exit 1; }
-
-count_pc="$(cd "$CLONE_PC" && dolt sql -r csv \
-    -q "SELECT COUNT(*) FROM config WHERE \`key\` = 'kv.memory.law-push-test'" \
-    2>/dev/null | tail -1 | tr -d '\r')"
+count_pc="$(_count_in_remote "law-push-test" "file://$REMOTE")"
 is "positive control: dirty statute absent from clone without commit" "0" "$count_pc"
 
 # ── REAL TEST ─────────────────────────────────────────────────────────────────
 # Run beads-push.sh (which now commits dirty tables). The statute must appear in
-# a fresh clone.
+# a fresh bootstrap clone.
 echo
 echo "real test — beads-push.sh commits dirty tables and pushes:"
 
@@ -115,27 +135,23 @@ else
         "did not find 'committed ... dirty table' in: $push_out"
 fi
 
-CLONE_REAL="$TMP/clone-real"
-dolt clone "file://$REMOTE" "$CLONE_REAL" >/dev/null 2>&1 || {
-    bad "real test: clone" "dolt clone failed"; exit 1; }
-
-count_real="$(cd "$CLONE_REAL" && dolt sql -r csv \
-    -q "SELECT COUNT(*) FROM config WHERE \`key\` = 'kv.memory.law-push-test'" \
-    2>/dev/null | tail -1 | tr -d '\r')"
+count_real="$(_count_in_remote "law-push-test" "file://$REMOTE")"
 is "real test: statute present in clone after beads-push.sh" "1" "$count_real"
 
 # ── NO-OP TEST ────────────────────────────────────────────────────────────────
 # Run beads-push.sh again with nothing dirty. It must not create a new commit.
+# The Dolt manifest file records the current commit hash; a new commit updates it.
 echo
 echo "no-op test — beads-push.sh with clean working set makes no commit:"
 
 EMBDIR="$SPIRA_DB/.beads/embeddeddolt"
 DBNAME="$(ls "$EMBDIR" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)"
+MANIFEST="$EMBDIR/$DBNAME/.dolt/noms/manifest"
 
-log_before="$(cd "$EMBDIR/$DBNAME" && dolt log --oneline 2>/dev/null | head -1)"
+manifest_before="$(cat "$MANIFEST" 2>/dev/null)"
 SPIRA_DB="$SPIRA_DB" bash "$ROOT/beads-push.sh" >/dev/null 2>&1
-log_after="$(cd "$EMBDIR/$DBNAME" && dolt log --oneline 2>/dev/null | head -1)"
-is "no-op: clean state produces no new commit" "$log_before" "$log_after"
+manifest_after="$(cat "$MANIFEST" 2>/dev/null)"
+is "no-op: clean state produces no new commit" "$manifest_before" "$manifest_after"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
