@@ -326,7 +326,7 @@ if [ -z "${SPIRA_BATCH_SKIP_INSTALL:-}" ]; then
         -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
         -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
         -e "CARGO_HOME=${_CONTAINER_CARGO}" \
-        -e "CONFIGURE_PROD=${_CONTAINER_WORKSPACE}" \
+        -e "CONFIGURE_PROD=${_CONTAINER_WORKSPACE}/spira" \
         -e "CONFIGURE_MAX_AEONS=1" \
         -e "CONFIGURE_MAX_LIVE_AEONS=1" \
         -e "CONFIGURE_LOOM_ADDR=127.0.0.1:7300" \
@@ -336,6 +336,22 @@ if [ -z "${SPIRA_BATCH_SKIP_INSTALL:-}" ]; then
         exit 3
     }
 
+    # Loom and the cockpit panel are Rust; the container image ships an older rustc
+    # that cannot build lockfile v4, so their binaries never exist in the container.
+    # Suspend them in the control plane so systemd/install.sh skips their units rather
+    # than enabling services whose ExecStart target is absent.
+    log "batch: suspending Rust-backed units inside $CNAME (image rustc too old for lockfile v4)"
+    for _u in spira-loom spira-cockpit; do
+        podman exec --user "$_SPIRA_USER" \
+            -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
+            -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
+            "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/ctrl.sh" suspend "$_u" \
+                --reason "image rustc too old for lockfile v4" --owner sp-fud1 >&2 || {
+            log "batch: ctrl suspend failed for $_u — harness fault"
+            exit 3
+        }
+    done
+
     log "batch: install instance $INSTANCE inside $CNAME"
     podman exec --user "$_SPIRA_USER" \
         -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
@@ -343,6 +359,7 @@ if [ -z "${SPIRA_BATCH_SKIP_INSTALL:-}" ]; then
         -e "CARGO_HOME=${_CONTAINER_CARGO}" \
         -e "SPIRA_INSTALL_FORCE=1" \
         -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
+        -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
         "$CNAME" bash "${_CONTAINER_WORKSPACE}/systemd/install.sh" "$INSTANCE" >&2 || {
         log "batch: install failed — harness fault"
         exit 3
