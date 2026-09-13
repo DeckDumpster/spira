@@ -950,6 +950,7 @@ elif "${SPIRA_LAUNCH:-systemd-run}" --user --collect --quiet \
         --setenv=SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
         --setenv=SPIRA_HOME_REPO="$(spira_home_repo)" \
         --setenv=SPIRA_BD="${SPIRA_BD:-bd}" --setenv=SPIRA_GH="${SPIRA_GH:-gh}" \
+        --setenv=SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
         --setenv=SPIRA_LAND_MAXSEC="$LAND_MAXSEC" \
         "$SPIRA_HOME/landing.sh" 2>/dev/null
 then

@@ -56,15 +56,14 @@
 #                           recorded as "timeout" and the corpus continues. This
 #                           mirrors gate-spira.sh's per-suite watchdog so neither
 #                           runner can be held indefinitely by one runaway suite.
-#   SPIRA_BATCH_MAXPAR      max parallel suites in --mode parallel (default: 32).
-#                           Throttles the parallel loop to prevent container PID
-#                           exhaustion on very large selections. Measured: 11 heavy
-#                           suites concurrently consumed ~1 300 PIDs (baseline ~100
-#                           + ~100/suite); at MAXPAR 32 the peak is ~3 300 PIDs,
-#                           well below the container pids-limit (8 192). At the 245-
-#                           suite full corpus, unlimited concurrency would need
-#                           ~24 500 PIDs — above any limit. Set to 0 for unlimited
-#                           (useful for small explicit selections or stress tests).
+#   SPIRA_BATCH_MAXPAR      max parallel suites in --mode parallel.
+#                           Default: nproc (the number of available CPU cores). CPU is
+#                           the binding resource: on a 4-core host, 37 concurrent suites
+#                           drove CPU pressure to 97% and produced fork-EAGAIN errors the
+#                           gate blamed on the branch rather than the load. The PID budget
+#                           (container pids-limit 8 192) is a ceiling, not the sizing
+#                           input — at nproc=4 the peak is far below it. Set to 0 for
+#                           unlimited (useful for small explicit selections or stress tests).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -527,7 +526,7 @@ fi
 _n_selected=0; for _s in $SELECTED; do _n_selected=$((_n_selected+1)); done
 
 if [ "$MODE" = parallel ]; then
-    _maxpar_display="${SPIRA_BATCH_MAXPAR:-32}"
+    _maxpar_display="${SPIRA_BATCH_MAXPAR:-$(nproc)}"
     [ "${_maxpar_display:-0}" -gt 0 ] 2>/dev/null \
         && log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar_display)" \
         || log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: unlimited)"
@@ -644,9 +643,9 @@ else
     # A suite that passes serially and fails in parallel means shared state
     # leaked between suites — a bead against the leak, never a retry.
     #
-    # MAXPAR: SPIRA_BATCH_MAXPAR caps concurrent suites to prevent PID exhaustion.
-    # See ENVIRONMENT comment above for the measurement behind the default.
-    _maxpar="${SPIRA_BATCH_MAXPAR:-32}"
+    # MAXPAR: SPIRA_BATCH_MAXPAR caps concurrent suites. Default from nproc: the PID
+    # budget (container pids-limit) has headroom; CPU is the binding resource.
+    _maxpar="${SPIRA_BATCH_MAXPAR:-$(nproc)}"
     _par_tmp="$(mktemp -d)"
     _par_pids=""
     _n=0
