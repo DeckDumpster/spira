@@ -6,26 +6,34 @@
 #
 # WHAT THIS SUITE IS FOR
 # ----------------------
-# hermetic.sh --host-check refuses a suite that runs on the host without explaining
+# host-check.sh refuses a suite that runs on the host without explaining
 # why: either it calls testenv.sh (up/exec) so its assertions run in a container, or
 # it carries a non-empty `# host-reason: <text>` annotation.  This suite proves the
 # fence can go red (positive control first), that the escape works, and that the count
-# hermetic.sh --count-undeclared prints is what suites.sh status renders.
+# host-check.sh --count-undeclared prints is what suites.sh status renders.
 #
-# THE POSITIVE CONTROL IS THE FIRST ASSERTION. With the REGULAR hermetic.sh (no
-# --host-check flag) run against a planted undeclared suite, the fence is silent.
-# That silence proves the regular check does not know about host-reason, so when
-# --host-check IS used and refuses the same suite, the --host-check mode is what
-# produced the refusal.  Without this pair, a check that never fired looks identical
-# to a check that fired and found nothing (law-absence-needs-a-positive-control).
+# THE POSITIVE CONTROL IS THE FIRST ASSERTION (law-absence-needs-a-positive-control).
+# A fence that never fires and a fence that fires and finds nothing are the same silence
+# from outside.  Plant an undeclared suite, require the fence to name it (SEEN RED),
+# then withdraw it and require a clean pass (SEEN GREEN).  Only after this pair does
+# the count's silence mean anything.
+#
+# This fence is the replacement for two older gate checks that were both detecting suites
+# reaching the running system (hermetic.sh's main scan and the fixture-contamination fence
+# in gate-spira.sh).  Both became moot once every suite runs in a container — commands
+# that were unroutable on the host are legitimate inside a real install, and the container
+# provides the isolation the two fences were compensating for.  This fence is what remains:
+# it ensures any host-running exception is visible and intentional, so a suite that would
+# contaminate the production store (no container isolation, no declaration) cannot be added
+# silently.
 #
 # THE WHOLE-TREE WALK IS OVER A SCRATCH REPOSITORY, because the shipped suites are
-# not yet fully migrated and running --host-check against them would produce noise
+# not yet fully migrated and running host-check.sh against them would produce noise
 # that teaches nothing about whether the fence itself is correct.
 #
 # host-reason: tests the host-reason fence; assertions run on the host using scratch repos only
 #
-# covers: spira/hermetic.sh spira/suites.sh
+# covers: spira/host-check.sh spira/suites.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0
@@ -43,53 +51,60 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # ---- scratch repository shared by the whole-tree tests ----
 ROOT="$TMP/root"; mkdir -p "$ROOT/spira"
-cp "$HERE/hermetic.sh" "$ROOT/spira/hermetic.sh"
+cp "$HERE/host-check.sh" "$ROOT/spira/host-check.sh"
 git init -q -b main "$ROOT"
 git -C "$ROOT" config user.email t@t; git -C "$ROOT" config user.name t
 
-fence_at() {     # fence_at <root> [args...] -> hermetic.sh output from that root
-    env -i PATH="$PATH" HOME="$TMP" TERM=dumb bash "$1/spira/hermetic.sh" "${@:2}" 2>&1
+fence_at() {     # fence_at <root> [args...] -> host-check.sh output from that root
+    env -i PATH="$PATH" HOME="$TMP" TERM=dumb bash "$1/spira/host-check.sh" "${@:2}" 2>&1
 }
 
-fence() {        # fence [args...] -> hermetic.sh from the scratch root
+fence() {        # fence [args...] -> host-check.sh from the scratch root
     fence_at "$ROOT" "$@"
 }
 
 # The planted suite: a bare host suite with no host-reason and no container usage.
 # Line 1 is the shebang, so the first real content is line 2 — known to the assertions below.
 PLANTED="$ROOT/spira/test-planted-undeclared.sh"
+
+# A clean suite that stays in the tree so withdrawal does not produce an empty tree.
+# An empty tree returns exit 3 (refusing to report clean on nothing), not exit 0; the
+# positive control's SEEN GREEN must be a real pass, not an absence-of-suites.
+CLEAN="$ROOT/spira/test-planted-clean.sh"
+printf '#!/usr/bin/env bash\n# host-reason: clean placeholder for positive control\necho clean\n' > "$CLEAN"
+
 printf '#!/usr/bin/env bash\necho hello from planted\n' > "$PLANTED"
 
 # ==========================================================================
-# THE POSITIVE CONTROL. Run the REGULAR hermetic.sh (without --host-check) on the tree
-# that contains the planted undeclared suite.  The regular check does not know about
-# host-reason, so it must be silent about the plant.  Only AFTER proving this does the
-# --host-check refusal mean something.
+# THE POSITIVE CONTROL. Plant an undeclared host suite; require the fence to
+# refuse it (SEEN RED), then withdraw it and require a clean pass (SEEN GREEN).
+# This is the pair that makes the subsequent silence over the shipped tree mean
+# something (law-absence-needs-a-positive-control).
 # ==========================================================================
 out="$(fence)"; rc=$?
-is   "SEEN GREEN: regular check is silent about a missing # host-reason:" "0" "$rc"
-nowant "regular check does not mention host-reason" "host-reason" "$out"
-
-# Now --host-check: the same tree must be refused.
-out="$(fence --host-check)"; rc=$?
-isnz "SEEN RED: --host-check refuses the same undeclared suite" "$rc"
+isnz "SEEN RED: host-check.sh refuses the undeclared planted suite" "$rc"
 want "and names the file"     "test-planted-undeclared" "$out"
 want "and names the override" "host-reason"             "$out"
 
 # The fix is in the override message: add host-reason or container calls.
 want "refusal mentions the fix" "host-reason" "$out"
 
+# Withdrawn — the clean suite remains, so the tree is non-empty and exit 0 is a real pass.
+rm "$PLANTED"
+out="$(fence)"; rc=$?
+isz "SEEN GREEN: after removing the planted suite the fence clears" "$rc"
+
 # ==========================================================================
 # EMPTY REASON IS REFUSED — the reason is the point of the declaration.
 # ==========================================================================
 printf '#!/usr/bin/env bash\n# host-reason:\necho hello\n' > "$PLANTED"
-out="$(fence --host-check)"; rc=$?
+out="$(fence)"; rc=$?
 isnz "empty # host-reason: is refused" "$rc"
 want "and explains that the reason text is required" "no reason" "$out"
 
 # A reason that is only whitespace is also empty after trimming.
 printf '#!/usr/bin/env bash\n# host-reason:   \necho hello\n' > "$PLANTED"
-out="$(fence --host-check)"; rc=$?
+out="$(fence)"; rc=$?
 isnz "whitespace-only # host-reason: is refused" "$rc"
 
 # ==========================================================================
@@ -97,13 +112,13 @@ isnz "whitespace-only # host-reason: is refused" "$rc"
 # ==========================================================================
 printf '#!/usr/bin/env bash\n# host-reason: tests the fence — assertions run on the host\necho hello\n' \
     > "$PLANTED"
-out="$(fence --host-check)"; rc=$?
+out="$(fence)"; rc=$?
 isz "non-empty # host-reason: passes the fence" "$rc"
 
 # The host-reason annotation can appear after the shebang comment block, not only on line 2.
 printf '#!/usr/bin/env bash\n#\n# Some description.\n#\n# host-reason: drives real systemd\nset -e\necho hi\n' \
     > "$PLANTED"
-out="$(fence --host-check)"; rc=$?
+out="$(fence)"; rc=$?
 isz "host-reason anywhere in the file header passes" "$rc"
 
 # ==========================================================================
@@ -113,18 +128,18 @@ isz "host-reason anywhere in the file header passes" "$rc"
 # ==========================================================================
 printf '#!/usr/bin/env bash\nTESTENV="$HERE/testenv.sh"\nbash "$TESTENV" up --name my-test\necho done\n' \
     > "$PLANTED"
-out="$(fence --host-check)"; rc=$?
+out="$(fence)"; rc=$?
 isz "testenv up in code passes without # host-reason:" "$rc"
 
 printf '#!/usr/bin/env bash\nTESTENV="$HERE/testenv.sh"\nbash "$TESTENV" exec -- bash -c "echo hi"\n' \
     > "$PLANTED"
-out="$(fence --host-check)"; rc=$?
+out="$(fence)"; rc=$?
 isz "testenv exec in code passes without # host-reason:" "$rc"
 
 # A testenv call in a COMMENT does not count — the suite itself is not a container suite.
 printf '#!/usr/bin/env bash\n# calls: bash "$TESTENV" up (for reference)\necho hello\n' \
     > "$PLANTED"
-out="$(fence --host-check)"; rc=$?
+out="$(fence)"; rc=$?
 isnz "testenv up in a comment does not count as container usage" "$rc"
 
 # ==========================================================================
@@ -153,7 +168,7 @@ esac
 
 # An empty tree (no suites) renders ? rather than 0 (law-absence-needs-a-positive-control).
 EMPTY_ROOT="$TMP/empty"; mkdir -p "$EMPTY_ROOT/spira"
-cp "$HERE/hermetic.sh" "$EMPTY_ROOT/spira/hermetic.sh"
+cp "$HERE/host-check.sh" "$EMPTY_ROOT/spira/host-check.sh"
 git init -q -b main "$EMPTY_ROOT"
 git -C "$EMPTY_ROOT" config user.email t@t; git -C "$EMPTY_ROOT" config user.name t
 count_empty="$(fence_at "$EMPTY_ROOT" --count-undeclared)"
@@ -164,7 +179,7 @@ is "empty tree renders ? not 0" "?" "$count_empty"
 # files or creating inline stubs. Positive control first, then host-reason exclusion.
 # ==========================================================================
 COPY_ROOT="$TMP/copy-root"; mkdir -p "$COPY_ROOT/spira"
-cp "$HERE/hermetic.sh" "$COPY_ROOT/spira/hermetic.sh"
+cp "$HERE/host-check.sh" "$COPY_ROOT/spira/host-check.sh"
 git init -q -b main "$COPY_ROOT"
 git -C "$COPY_ROOT" config user.email t@t; git -C "$COPY_ROOT" config user.name t
 

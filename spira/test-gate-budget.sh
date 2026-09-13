@@ -60,8 +60,8 @@ printf 'marker\n' > "$TMP/marker.txt"
 git -C "$TMP" add marker.txt 2>/dev/null || true
 git -C "$TMP" -c user.email=t@t -c user.name=t commit -q -m init 2>/dev/null || true
 
-# A DUMMY SUITE so hermetic.sh finds at least one test-*.sh (law-absence-needs-a-positive-
-# control: an empty glob and a clean tree are the same silence from outside).
+# A DUMMY SUITE so the gate-suites list is non-empty when only the timing suites are
+# under test (gate-spira.sh refuses to report a pass on an empty list).
 printf '#!/usr/bin/env bash\n# covers: spira/gate-spira.sh\nset -uo pipefail\nexit 0\n' \
     > "$SH/test-dummy.sh"; chmod +x "$SH/test-dummy.sh"
 

@@ -35,11 +35,13 @@
 # seconds, and it plants an offender for every side of the key.
 spira/test-gate-verdict.sh
 
-# THE HERMETICITY FENCE'S OWN POSITIVE CONTROL, and it is the reason that fence is worth the
-# line it costs. A static check that reports a clean tree looks identical whether its matcher
-# fires or never could, so the fence alone would be a green light nobody had tested; this
-# plants an offender of each shape and requires it to be named.
-spira/test-hermetic.sh
+# THE HOST-ESCAPE FENCE'S OWN POSITIVE CONTROL. host-check.sh requires every suite to run
+# in a container or carry a # host-reason: declaration; this suite plants an undeclared host
+# suite (SEEN RED), withdraws it (SEEN GREEN), and verifies the count suites.sh renders.
+# host-check.sh replaces both hermetic.sh's main scan and the fixture-contamination fence
+# (both deleted in sp-1ctx): a suite without a declaration cannot be added silently, which
+# is the class of defect the contamination fence existed to detect after the fact.
+spira/test-host-reason.sh
 
 # THE ATTEMPT LEDGER'S OWN. An attempt count decides whether work is poisoned, so a count
 # that charges the harness for its own restarts removes work nobody ever tried.

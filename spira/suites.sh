@@ -1103,15 +1103,15 @@ cmd_status() {
         [ -f "$STATE/$s.unreached" ] && not_reached=$(( not_reached + 1 ))
     done
     # Count suites without a # host-reason: or container calls — migration progress.
-    # hermetic.sh --count-undeclared does the walk; ? when it is unreadable or the glob
+    # host-check.sh --count-undeclared does the walk; ? when it is unreadable or the glob
     # matches nothing (indistinguishable from a wrong path), never a silent 0.
     local undeclared="?" copying="?"
-    if [ -x "$HERE/hermetic.sh" ]; then
-        undeclared="$(bash "$HERE/hermetic.sh" --count-undeclared 2>/dev/null)" || undeclared="?"
+    if [ -x "$HERE/host-check.sh" ]; then
+        undeclared="$(bash "$HERE/host-check.sh" --count-undeclared 2>/dev/null)" || undeclared="?"
         [ -n "$undeclared" ] || undeclared="?"
         # Wave-2 migration backlog: suites still copying harness files or creating inline stubs.
         # Falls monotonically as sp-841s child beads close; ? if unreadable.
-        copying="$(bash "$HERE/hermetic.sh" --count-copying 2>/dev/null)" || copying="?"
+        copying="$(bash "$HERE/host-check.sh" --count-copying 2>/dev/null)" || copying="?"
         [ -n "$copying" ] || copying="?"
     fi
     printf '  %-36s%s\n' "suites in the tree" "$total   ($gate_n gated, $timed_n timed)"

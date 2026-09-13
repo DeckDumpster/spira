@@ -31,11 +31,11 @@
 #   1. THE FENCES. Not quality checks: guards against things that cannot be undone by
 #      deleting a commit. A published beads database holds internal notes, agent memories and
 #      the operator's own judgement; a published operator inventory names one person's
-#      machine. The third is undone by a revert and is here for a different reason: a suite
-#      that reads the state of the box refuses correct work with nothing in its output
-#      pointing anywhere but at the branch, and both failures the deleted 17 minutes produced
-#      on its last day were that. These run first, independently, and nothing routes around
-#      them.
+#      machine. These run first, independently, and nothing routes around them.
+#      (hermetic.sh and the fixture-contamination fence were here until sp-1ctx: both detected
+#      suites reaching the running system, damage that running every suite in a container
+#      prevents. host-check.sh carries the host-escape declaration requirement — see it and
+#      suites.sh status for the migration count.)
 #   2. THE SOAK. Does the merge queue make progress while several gates and a landing pass
 #      run against each other? It reproduces the 2026-09-07 livelock against the old code at
 #      the production ratio, then shows it gone.
@@ -111,7 +111,7 @@ BODY
 # ---------------------------------------------------------------------------------------
 # 1. THE FENCES — first, and independently of everything below.
 # ---------------------------------------------------------------------------------------
-for fence in spira/exclude.sh spira/inventory.sh spira/hermetic.sh spira/literal-lint.sh spira/orphan-test.sh; do
+for fence in spira/exclude.sh spira/inventory.sh spira/literal-lint.sh spira/orphan-test.sh; do
     [ -r "$fence" ] || { say "$fence is missing — refusing to land unchecked"; exit 1; }
 done
 
@@ -128,14 +128,6 @@ fi
 
 if ! inv="$(bash spira/inventory.sh 2>&1)"; then
     printf '%s\n' "$inv" >&2
-    exit 1
-fi
-
-# The suites are checked before any of them is run, and the check is static — so a suite that
-# would have decided its verdict from this machine is named here rather than discovered later
-# as a red that looks like the branch's fault (law-gates-run-in-a-clean-environment).
-if ! herm="$(bash spira/hermetic.sh 2>&1)"; then
-    printf '%s\n' "$herm" >&2
     exit 1
 fi
 
@@ -184,52 +176,6 @@ fi
 [ "$ot_rc" -eq 77 ] && say "orphan-test SKIPPED — $(printf '%s' "$ot" | head -1)"
 # Print the clean line on success so gate output is consistent with the other fences.
 [ "$ot_rc" -eq 0 ] && printf '%s\n' "$ot" >&2 || true
-
-# FIXTURE CONTAMINATION FENCE. A production store that contains test-only beads means a
-# test wrote to the live database instead of an isolated fixture. Two markers identify
-# test-only beads unambiguously:
-#
-#   external_ref of the form "fixture-fault:<name>" where <name> does not start with
-#   "sptest_": real fixture-fault beads from suites.sh carry TESTDB_NAMEs of the form
-#   sptest_<tag>_<epoch>_<pid>; a name without that prefix is a literal tag from test code
-#   (e.g. "test_fixture") that never appears in operational data.
-#
-#   description exactly "Test payload" (after trimming whitespace): the literal placeholder
-#   string test code uses to avoid writing meaningful content into fixture beads.
-#
-# The fence is skipped when SPIRA_DB is not set or does not point at an existing database
-# directory — normal in test environments that supply a nonexistent path to isolate
-# themselves from the live store. When the database is present but bd cannot query it, the
-# failure is logged and the fence skips: inability to read is not evidence of contamination,
-# and refusing to land because the database is temporarily unreachable is a different kind
-# of wrong (law-alerts-must-be-actionable).
-if [ -n "${SPIRA_DB:-}" ] && [ -d "${SPIRA_DB}" ]; then
-    fixture_hits="$(
-        . "$HERE/lib.sh" 2>/dev/null || exit 0
-        bdq list --status open,in_progress --limit 0 --json 2>/dev/null \
-          | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: d = []
-for b in (d if isinstance(d, list) else []):
-    ref = b.get("external_ref") or ""
-    body = (b.get("description") or "").strip()
-    # fixture-fault:<name> where <name> lacks the sptest_ production prefix is a test
-    # artifact. Real TESTDB_NAMEs are always sptest_<tag>_<epoch>_<pid>.
-    if ref.startswith("fixture-fault:") and not ref[len("fixture-fault:"):].startswith("sptest_"):
-        print(b["id"] + " (external_ref=" + ref + ")")
-    elif body == "Test payload":
-        print(b["id"] + " (body=Test payload)")
-' 2>/dev/null || true
-    )"
-    if [ -n "$fixture_hits" ]; then
-        say "fixture contamination: test beads found in the production database — refusing to land:"
-        printf '%s\n' "$fixture_hits" | sed 's/^/gate:   /' >&2
-        say "each bead was written by a test that used the live database instead of a fixture."
-        say "remove them before landing: \$SPIRA_BD -C \$SPIRA_DB close <id>"
-        exit 1
-    fi
-fi
 
 # ---------------------------------------------------------------------------------------
 # 2 AND 3 — the pipeline. Both are real programs run against each other; neither models

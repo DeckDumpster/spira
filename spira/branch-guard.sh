@@ -27,7 +27,7 @@
 #
 # THE OVERRIDE is "git commit --no-verify", which git already provides and which there is
 # no point pretending to take away. The fence that survives --no-verify is the landing gate,
-# which runs inventory.sh and hermetic.sh on every branch.
+# which runs inventory.sh and the other configured fences on every branch.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"

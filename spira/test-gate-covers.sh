@@ -47,7 +47,7 @@ SH="$TMP/spira"
 mkdir -p "$SH"
 cp "$HERE/gate-spira.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
    "$HERE/suite-covers.sh" \
-   "$HERE/exclude.sh" "$HERE/inventory.sh" "$HERE/hermetic.sh" "$HERE/sop.sh" \
+   "$HERE/exclude.sh" "$HERE/inventory.sh" "$HERE/sop.sh" \
    "$HERE/literal-lint.sh" "$HERE/orphan-test.sh" "$SH/"
 [ -f "$HERE/inventory-deny" ] && cp "$HERE/inventory-deny" "$SH/"
 printf 'spira | %s\n' "$TMP" > "$SH/repo-map"
@@ -60,8 +60,7 @@ git -C "$TMP" add marker.txt 2>/dev/null || true
 git -C "$TMP" -c user.email=t@t -c user.name=t commit -q -m init 2>/dev/null || true
 
 # --------------------------------------------------------------------------------------
-# THE FIXTURE SUITES. Each is a one-liner so hermetic.sh cannot flag them and the test
-# stays fast. The covers line is the only meaningful field.
+# THE FIXTURE SUITES. Each is a one-liner — the covers line is the only meaningful field.
 #
 #   test-cv-a.sh   — covers src/a.sh, always passes
 #   test-cv-b.sh   — covers src/b.sh, always passes

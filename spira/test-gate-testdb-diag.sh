@@ -100,8 +100,8 @@ exit 0
 SUITE
 chmod +x "$SH/test-pass.sh"
 
-# HERMETIC.SH POSITIVE CONTROL: at least one test-*.sh with a covers: line so
-# hermetic.sh does not silently match an empty glob (law-absence-needs-a-positive-control).
+# A DUMMY SUITE so the gate-suites list is non-empty; gate-spira.sh refuses to report
+# a pass on an empty list (law-absence-needs-a-positive-control).
 cat > "$SH/test-dummy.sh" << 'SUITE'
 #!/usr/bin/env bash
 # covers: spira/gate-spira.sh
