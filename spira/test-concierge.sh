@@ -22,6 +22,8 @@
 # defect: sp-u4x
 # covers: spira/lib.sh concierge.sh spira/chamber/concierge.fayth spira/chamber/concierge.md
 # hermetic-ok: fixture chamber, no systemd or database for the roster checks
+# host-reason: the brief section invokes concierge.sh which requires claude and tmux on PATH (operator tools not available in the container)
+# scar: the concierge persona lacked FAYTH_SUMMON=operator and could be claimed by the sentinel as an ordinary worker.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 HARNESS="$(cd "$HERE/.." && pwd)"
