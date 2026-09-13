@@ -1,0 +1,76 @@
+# release.yml — build and publish a Spira release tarball.
+#
+# Triggered by every spira-release-* tag pushed to the repository. The tag is
+# cut by release.sh; this workflow builds both Rust binaries against the pinned
+# toolchain, assembles the tarball via build-tarball.sh, and attaches it to a
+# GitHub release of the same name.
+#
+# TOOLCHAIN PINNING
+# The lockfile version (v4) requires Rust >= 1.78. The version is pinned to a
+# specific semver — never "stable" — so a runner upgrade cannot silently change
+# what binary ships. An assertion step exits non-zero if the installed version
+# does not match the pin, so a mismatch is a hard failure rather than invisible
+# drift.
+#
+# FAILURE SEMANTICS
+# Every build step runs with the default failure policy: a step that exits
+# non-zero fails the job and the publish step never runs. A build that fails
+# silently publishes a broken binary; this workflow publishes nothing instead.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'spira-release-*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.82.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.82.0'
+
+      - name: Assert Rust version
+        # The installed version must match the pinned value exactly. A runner
+        # whose default Rust differs from the pin would otherwise produce
+        # binaries built against an unrecorded toolchain.
+        run: |
+          got=$(rustc --version | awk '{print $2}')
+          [ "$got" = "1.82.0" ] || {
+            printf 'expected Rust 1.82.0, got %s\n' "$got" >&2
+            exit 1
+          }
+
+      - name: Build loom
+        run: cargo build --release
+        working-directory: loom
+
+      - name: Build panel
+        run: cargo build --release
+        working-directory: cockpit/panel
+
+      - name: Build release tarball
+        id: tarball
+        run: |
+          tarball=$(bash spira/build-tarball.sh build \
+            --loom-bin loom/target/release/loom \
+            --panel-bin cockpit/panel/target/release/panel \
+            --output /tmp/artifacts)
+          printf 'path=%s\n' "$tarball" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            "${{ steps.tarball.outputs.path }}"
