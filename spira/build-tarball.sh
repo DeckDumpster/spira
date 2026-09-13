@@ -43,7 +43,7 @@
 #       --panel-bin cockpit/panel/target/release/panel
 #
 #   # Verify a release directory:
-#   build-tarball.sh verify /workspaces/spira-releases/current --repo /path/to/harness
+#   build-tarball.sh verify /opt/spira-releases/current --repo /path/to/harness
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
