@@ -12,14 +12,18 @@
 # master-base fixture case is an acceptance criterion, not an afterthought.
 #
 # RESULT PROTOCOL. Each suite writes <results>/<suite>.result and <results>/<suite>.out.
-# Result format: <status> <epoch> <seconds> <fingerprint> <mode> [subset].
+# Result format: <status> <epoch> <seconds> <fingerprint> <mode> <producer>.
 # A selected suite with no result file is unreached, never green. unreached never
 # overwrites a completed status (law-absence-needs-a-positive-control; sp-u1g would
 # have overwritten here — that defect is why this protocol exists).
 # The mode (parallel or serial) is the 5th field: a green under serial is a weaker
 # claim than a green under parallel; the record must not conflate them.
-# The 6th field "subset" appears only on --suites runs: a green over 4 suites is a
-# weaker claim than a green over 245, and the record must not conflate them.
+# The producer is the 6th field — who decided which suites to run:
+#   explicit  a person or aeon named the suites via --suites
+#   diff      the selector derived them from the branch diff
+#   all       the diff had an unmapped file; the whole corpus ran as a fallback
+# A diff result is a weaker claim than an all result, and an explicit result is
+# a weaker claim than either; the record must name what asked for the run.
 #
 # USAGE
 #   testenv-batch.sh [--mode parallel|serial] [--suites <suite1.sh,suite2.sh,...>]
@@ -174,12 +178,12 @@ for _cv_f in "$SUITE_DIR"/test-*.sh; do
 done
 
 SELECTED=""
-_SELECTION_TYPE=full
+_SELECTION_TYPE=diff
 
 if [ -n "$SUITES_EXPLICIT" ]; then
     # Explicit suite list: parse comma-separated names, validate each against the
     # corpus, and reject an unknown name immediately rather than silently skipping.
-    _SELECTION_TYPE=subset
+    _SELECTION_TYPE=explicit
     _rest="$SUITES_EXPLICIT"
     while [ -n "$_rest" ]; do
         _s="${_rest%%,*}"
@@ -236,6 +240,7 @@ else
         if [ -n "$_cv_unmapped" ]; then
             log "batch: unmapped file(s):$(printf ' %s' $_cv_unmapped) — running all suites"
             SELECTED="$_cv_all"
+            _SELECTION_TYPE=all
         else
             _cv_deduped=""
             for _cv_s in $_cv_sel $_cv_nocov; do
@@ -284,7 +289,7 @@ _batch_key() {
     harness_h="$(cat "$0" "$HERE/suite-covers.sh" 2>/dev/null | sha256sum | cut -d' ' -f1)"
     [ -n "$harness_h" ] || return 1
     # MODE and _SELECTION_TYPE are included: a serial-green must not replay for a
-    # parallel run; a subset-green must not replay for a full-corpus run.
+    # parallel run; a partial-selection green must not replay for an all-corpus run.
     printf '%s\n' "$REPO_NAME $tree $IMG_TAG $sel_h $harness_h $MODE $_SELECTION_TYPE" | sha256sum | cut -d' ' -f1
 }
 BATCH_KEY="$(_batch_key 2>/dev/null || true)"
@@ -486,9 +491,10 @@ if [ "$MODE" = serial ]; then
         printf '%s\n' "$out" > "$out_file"
 
         # 77: skip (automake convention; already in suites.sh). Not a failure, not filed.
-        # The 6th field "subset" appears only on --suites runs (law: a weaker claim must
-        # not conflate with a full-corpus result — same reasoning as the MODE field).
-        _result_extra=""; [ "$_SELECTION_TYPE" = subset ] && _result_extra=" subset"
+        # The 6th field is the producer — who decided which suites to run (explicit /
+        # diff / all). Same reasoning as the MODE field: a weaker claim must not
+        # conflate with a stronger one.
+        _result_extra=" $_SELECTION_TYPE"
         case "$_rc" in
             0)
                 printf '%s %s %s %s %s%s\n' ok "$(date +%s)" "$secs" - "$MODE" \
@@ -554,7 +560,7 @@ else
             printf '%s\n' "$_out" > "$RESULTS/$s.out"
 
             # _SELECTION_TYPE is captured by value at fork time (subshell inherits it).
-            _par_extra=""; [ "$_SELECTION_TYPE" = subset ] && _par_extra=" subset"
+            _par_extra=" $_SELECTION_TYPE"
             case "$_inner_rc" in
                 0)
                     printf '%s %s %s %s %s%s\n' ok "$(date +%s)" "$_secs" - "$MODE" \

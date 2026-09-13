@@ -445,6 +445,79 @@ if [ -n "$RD_B4" ]; then
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# B5: PRODUCER FIELD — the 6th field records explicit / diff / all.
+#
+# Three producer values, one assertion each:
+#   explicit — suites named via --suites
+#   diff     — suites derived from the branch diff
+#   all      — diff had an unmapped file; fallback ran the whole corpus
+# ---------------------------------------------------------------------------
+echo
+echo "B5: producer field"
+
+# B5a: diff-derived result has producer "diff".
+# Reuses B1's results — the B1 run was diff-derived (suite g covers changed.sh).
+if [ -n "$RD_B1" ] && [ -f "$RD_B1/test-fx-g.sh.result" ]; then
+    _prod_b5a="$(awk '{print $6}' "$RD_B1/test-fx-g.sh.result")"
+    [ "$_prod_b5a" = diff ] && ok "B5a: diff-derived result has producer=diff" \
+                             || bad "B5a: diff-derived result has producer=diff" \
+                                    "got '$_prod_b5a' (full record: $(cat "$RD_B1/test-fx-g.sh.result"))"
+fi
+
+# B5b: --suites result has producer "explicit".
+# test-fx-ka.sh was already copied to $FIXTURE/spira/ in B3.
+SUITE_B5b="$TMP/suites-B5b"
+mkdir -p "$SUITE_B5b"
+cp "$SUITE_B3/test-fx-ka.sh" "$SUITE_B5b/"
+
+RESULTS_ROOT_B5b="$TMP/results-B5b"
+rc_b5b=0
+SPIRA_BATCH_SUITE_DIR="$SUITE_B5b" \
+SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B5b" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_BATCH_INSTANCE="b5b-$$" \
+    bash "$BATCH" --suites test-fx-ka.sh topic "$FIXTURE" || rc_b5b=$?
+iszero "B5b: --suites run exits 0" "$rc_b5b"
+
+RD_B5b="$(find_results_dir "$RESULTS_ROOT_B5b")"
+if [ -n "$RD_B5b" ] && [ -f "$RD_B5b/test-fx-ka.sh.result" ]; then
+    _prod_b5b="$(awk '{print $6}' "$RD_B5b/test-fx-ka.sh.result")"
+    [ "$_prod_b5b" = explicit ] && ok "B5b: --suites result has producer=explicit" \
+                                 || bad "B5b: --suites result has producer=explicit" \
+                                        "got '$_prod_b5b' (full record: $(cat "$RD_B5b/test-fx-ka.sh.result"))"
+fi
+
+# B5c: unmapped-file fallback produces producer "all".
+# Suite fx-p covers only "unreachable.sh"; the diff has changed.sh which maps
+# to nothing — the unmapped fallback fires and runs the whole corpus.
+SUITE_B5c="$TMP/suites-B5c"
+mkdir -p "$SUITE_B5c"
+cat > "$SUITE_B5c/test-fx-p.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: unreachable.sh
+printf '  ok    test-fx-p ran\n'; exit 0
+EOF
+chmod +x "$SUITE_B5c/test-fx-p.sh"
+cp "$SUITE_B5c/test-fx-p.sh" "$FIXTURE/spira/test-fx-p.sh"
+
+RESULTS_ROOT_B5c="$TMP/results-B5c"
+rc_b5c=0
+SPIRA_BATCH_SUITE_DIR="$SUITE_B5c" \
+SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B5c" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_BATCH_INSTANCE="b5c-$$" \
+    bash "$BATCH" topic "$FIXTURE" || rc_b5c=$?
+iszero "B5c: all-fallback run exits 0" "$rc_b5c"
+
+RD_B5c="$(find_results_dir "$RESULTS_ROOT_B5c")"
+if [ -n "$RD_B5c" ] && [ -f "$RD_B5c/test-fx-p.sh.result" ]; then
+    _prod_b5c="$(awk '{print $6}' "$RD_B5c/test-fx-p.sh.result")"
+    [ "$_prod_b5c" = all ] && ok "B5c: unmapped-fallback result has producer=all" \
+                            || bad "B5c: unmapped-fallback result has producer=all" \
+                                   "got '$_prod_b5c' (full record: $(cat "$RD_B5c/test-fx-p.sh.result"))"
+fi
+
 # ===========================================================================
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
