@@ -195,7 +195,13 @@ run() {                  # run <suite> — its output only when it matters; cost
     # job inheriting that pipe's write end blocks the gate until it exits or is killed. Running
     # via setsid (suite gets PGID = suite_pid) lets us sweep survivors with kill -- -$suite_pid
     # after the suite exits, so no orphan can hold any descriptor open (sp-a8c5).
-    setsid bash "$s" > "$tmp" 2>&1 &
+    #
+    # RE-ENTRY GUARD. Suites inherit the environment; a suite that is itself a gate
+    # (test-gate-budget.sh, test-gate-covers.sh) would see SPIRA_GATE_FILES and run its own
+    # coverage selection from whatever CWD it starts in — potentially the real workspace.
+    # Clearing the variable here breaks that chain: inner gates invoked by a suite run only
+    # their gated list, not a second coverage pass (sp-u06o).
+    SPIRA_GATE_FILES= setsid bash "$s" > "$tmp" 2>&1 &
     suite_pid=$!
     # KILLER IN ITS OWN PROCESS GROUP so that `kill -- -$killer` sweeps both the sh and the
     # `sleep` child in one shot.  Without setsid, `sleep` orphans in the test script's PGID
@@ -281,8 +287,14 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
 
     if [ -n "$_cv_changed" ]; then
         # Collect every non-gated suite (the glob complement of gate-suites).
+        # THE GLOB IS ANCHORED TO $HERE (the gate's own directory), not to the
+        # current working directory. This prevents the fixture gate from selecting
+        # suites outside its temp tree when run by test-gate-covers.sh: a relative
+        # `spira/test-*.sh` expands from CWD, which can diverge from $HERE if the
+        # caller's context changes; `"$HERE"/test-*.sh` is always the gate's own
+        # sibling suites regardless of CWD (sp-u06o).
         _cv_all=""
-        for _cv_ts in spira/test-*.sh; do
+        for _cv_ts in "$HERE"/test-*.sh; do
             [ -r "$_cv_ts" ] || continue
             _cv_base="$(basename "$_cv_ts")"
             # Skip any suite already in the gated list.

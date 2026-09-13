@@ -86,10 +86,13 @@ gate_rc=0
 GOUT="$TMP/gate-out"
 FLIST="$TMP/flist"
 
+_rg_n=0   # run_gate call counter for per-call timing
 run_gate() {
     # run_gate <file-list-lines> [<extra-gate-suites-lines>]
     # Sets gate_rc and writes stdout+stderr to GOUT.
     local files="${1:-}" extra="${2:-}"
+    _rg_n=$((_rg_n+1))
+    local _rg_t0; _rg_t0="$(date +%s 2>/dev/null)"
     printf '%s\n' "$GATED_LIST" > "$SH/gate-suites"
     [ -n "$extra" ] && printf '%s\n' "$extra" >> "$SH/gate-suites"
     printf '%s\n' "$files" > "$FLIST"
@@ -100,6 +103,10 @@ run_gate() {
         SPIRA_GATE_FILES="$FLIST" \
             bash spira/gate-spira.sh 2>&1
     ) > "$GOUT"; gate_rc=$?
+    local _rg_t1; _rg_t1="$(date +%s 2>/dev/null)"
+    local _rg_cost="?"
+    [ -n "$_rg_t0" ] && [ -n "$_rg_t1" ] && _rg_cost="$((_rg_t1 - _rg_t0))s"
+    printf '  [run_gate #%s cost=%s files="%s"]\n' "$_rg_n" "$_rg_cost" "$files" >&2
 }
 
 echo "test-gate-covers.sh — coverage-based suite selection"
@@ -115,6 +122,17 @@ run_gate "src/a.sh"; out="$(cat "$GOUT")"
 is   "selection: gate exits 0"                                       0 "$gate_rc"
 want "selection: test-cv-a.sh runs for its covered file"  "test-cv-a.sh" "$out"
 nowant "selection: test-cv-b.sh does not run (src/b.sh unchanged)" "test-cv-b.sh" "$out"
+
+# --------------------------------------------------------------------------------------
+# HERMETIC-SELECTION CONTROL (sp-u06o): the inner gate must not run ANY suite outside
+# $TMP. A relative glob from the wrong CWD, or SPIRA_GATE_FILES propagating through
+# run(), would select real harness suites whose names do not start with "test-cv-".
+# This assertion is RED against the un-fixed tree and GREEN after the hermetic-glob fix.
+# --------------------------------------------------------------------------------------
+_gate_run="$(grep -oE 'gate: test-[a-z0-9-]+\.sh' "$GOUT" 2>/dev/null \
+    | sed 's/gate: //' | sort -u || true)"
+_real_suites="$(printf '%s\n' "$_gate_run" | grep -Ev '^$|^test-cv-' || true)"
+is "inner gate runs only fixture suites (no real suite escapes)" "" "$_real_suites"
 
 # --------------------------------------------------------------------------------------
 # 2. NO-COVERS ALWAYS-INCLUDE: test-cv-nc.sh has no # covers: line and always runs
