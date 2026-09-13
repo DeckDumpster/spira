@@ -157,7 +157,7 @@ else
     bad "fixture: landed branch should be seen as landed by content_landed" "returned non-zero"
 fi
 
-out="$(bash "$SLAY" sp-s1 2>&1)"
+out="$(bash "$SLAY" --bead sp-s1 2>&1)"
 rc=$?
 is "slay exits 0 for landed branch"       0  "$rc"
 is "landed branch is gone after slay"     1  "$(branch_exists spira/sp-s1; echo $?)"
@@ -189,7 +189,7 @@ else
     ok "fixture: content_landed correctly sees branch as unlanded"
 fi
 
-out="$(bash "$SLAY" sp-s2 2>&1)"
+out="$(bash "$SLAY" --bead sp-s2 2>&1)"
 rc=$?
 is "slay exits 0 for unlanded branch"              0  "$rc"
 is "unlanded branch is gone after slay"            1  "$(branch_exists spira/sp-s2; echo $?)"

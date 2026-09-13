@@ -204,7 +204,7 @@ stop)
         bead="$(basename "$pf" .pid)"; bead="${bead#aeon-}"; bead="${bead#*-}"
         if [ -n "$bead" ]; then
             printf '  slaying %s (pid %s)\n' "$bead" "$pid"
-            "$SPIRA_HOME/slay.sh" "$bead" --keep-work --why "${why:-the world was stopped}" >/dev/null 2>&1 \
+            "$SPIRA_HOME/slay.sh" --bead "$bead" --keep-work --why "${why:-the world was stopped}" >/dev/null 2>&1 \
                 || printf '    slay.sh could not stop %s — left running, say so rather than pretend\n' "$bead"
             n=$((n+1))
         fi
@@ -226,7 +226,7 @@ stop)
             fi
         done
         if [ -n "$bead_for_pid" ]; then
-            printf '  WARNING: %s (pid %s) — named by a pidfile but slay did not stop it; run: slay.sh %s\n' \
+            printf '  WARNING: %s (pid %s) — named by a pidfile but slay did not stop it; run: slay.sh --bead %s\n' \
                 "$bead_for_pid" "$apid" "$bead_for_pid"
         else
             printf '  WARNING: pid %s (%s) — no pidfile names it; could not resolve to a bead — inspect /proc/%s/cmdline before killing\n' \
