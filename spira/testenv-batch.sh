@@ -26,8 +26,13 @@
 # a weaker claim than either; the record must name what asked for the run.
 #
 # USAGE
-#   testenv-batch.sh [--mode parallel|serial] [--suites <suite1.sh,suite2.sh,...>]
+#   testenv-batch.sh [--mode parallel|serial] [--suites <suite1.sh,suite2.sh,...|->]
 #                    <branch> [<repo-name-or-path>]
+#
+#   --suites -  reads suite names from stdin, one per line (blank lines ignored).
+#               Empty stdin means "nothing to run" — exit 0, not an error.
+#               Composes with a selector:
+#                 select.sh --base X --head Y | testenv-batch.sh --suites - <branch> [<repo>]
 #
 # EXIT STATUS
 #   0   all selected suites passed or skipped
@@ -89,7 +94,7 @@ while [ $# -gt 0 ]; do
             shift; break ;;
         -*)
             printf 'batch: unknown option: %s\n' "$1" >&2
-            printf 'usage: testenv-batch.sh [--mode parallel|serial] [--suites <list>] <branch> [<repo-name>]\n' >&2
+            printf 'usage: testenv-batch.sh [--mode parallel|serial] [--suites <list|->] <branch> [<repo-name>]\n' >&2
             exit 2 ;;
         *)  break ;;
     esac
@@ -161,13 +166,14 @@ fi
 SUITE_DIR="${SPIRA_BATCH_SUITE_DIR:-$HERE}"
 
 # ---------------------------------------------------------------------------
-# SUITE SELECTION — two mutually exclusive modes:
-#   --suites <list>  explicit: validate names, use the list directly.
+# SUITE SELECTION — a list from one source at a time:
+#   --suites <list>  comma-separated names: validate each, use the list directly.
+#   --suites -       stdin: read newline-separated names; blank lines ignored.
+#                    Empty stdin means "nothing to run" — exit 0, not an error.
 #   (default)        diff-derived: same logic as gate-spira.sh coverage selection.
 #                    A file declared by no suite triggers the fallback: all run.
 #                    A suite with no # covers: line always runs.
-# Passing --suites bypasses diff-derived entirely; combining the two is a
-# usage error (caught above by --suites=... being set before the branch arg).
+# --suites bypasses diff-derived entirely; only one --suites is accepted.
 # ---------------------------------------------------------------------------
 
 # Corpus of all known suites — used for validation and for diff-derived selection.
@@ -181,31 +187,59 @@ SELECTED=""
 _SELECTION_TYPE=diff
 
 if [ -n "$SUITES_EXPLICIT" ]; then
-    # Explicit suite list: parse comma-separated names, validate each against the
-    # corpus, and reject an unknown name immediately rather than silently skipping.
     _SELECTION_TYPE=explicit
-    _rest="$SUITES_EXPLICIT"
-    while [ -n "$_rest" ]; do
-        _s="${_rest%%,*}"
-        _rest="${_rest#"$_s"}"
-        _rest="${_rest#,}"
-        # Strip leading/trailing whitespace.
-        _s="${_s#"${_s%%[![:space:]]*}"}"
-        _s="${_s%"${_s##*[![:space:]]}"}"
-        [ -n "$_s" ] || continue
-        if [ ! -r "$SUITE_DIR/$_s" ]; then
-            printf 'batch: unknown suite: %s\n' "$_s" >&2
-            printf 'batch: suite must exist in %s\n' "$SUITE_DIR" >&2
-            exit 2
+
+    if [ "$SUITES_EXPLICIT" = "-" ]; then
+        # Read newline-separated suite names from stdin; blank lines ignored.
+        # An unknown name is a usage error naming the suite — same as the comma-list path.
+        while IFS= read -r _line || [ -n "$_line" ]; do
+            _line="${_line#"${_line%%[![:space:]]*}"}"
+            _line="${_line%"${_line##*[![:space:]]}"}"
+            [ -n "$_line" ] || continue
+            if [ ! -r "$SUITE_DIR/$_line" ]; then
+                printf 'batch: unknown suite: %s\n' "$_line" >&2
+                printf 'batch: suite must exist in %s\n' "$SUITE_DIR" >&2
+                exit 2
+            fi
+            case " $SELECTED " in
+                *" $_line "*) ;;
+                *) SELECTED="$SELECTED $_line" ;;
+            esac
+        done
+        SELECTED="$(echo $SELECTED)"
+        if [ -z "$SELECTED" ]; then
+            log "batch: --suites -: empty stdin — nothing to run"
+            exit 0
         fi
-        case " $SELECTED " in
-            *" $_s "*) ;;  # deduplicate
-            *) SELECTED="$SELECTED $_s" ;;
-        esac
-    done
-    SELECTED="$(echo $SELECTED)"  # normalise whitespace
-    _n=0; for _cv_s in $SELECTED; do _n=$((_n + 1)); done
-    log "batch: --suites: selected $_n explicit suite(s)"
+        _n=0; for _cv_s in $SELECTED; do _n=$((_n + 1)); done
+        log "batch: --suites -: selected $_n suite(s) from stdin"
+
+    else
+        # Explicit comma-separated list: parse names, validate each against the
+        # corpus, and reject an unknown name immediately rather than silently skipping.
+        _rest="$SUITES_EXPLICIT"
+        while [ -n "$_rest" ]; do
+            _s="${_rest%%,*}"
+            _rest="${_rest#"$_s"}"
+            _rest="${_rest#,}"
+            # Strip leading/trailing whitespace.
+            _s="${_s#"${_s%%[![:space:]]*}"}"
+            _s="${_s%"${_s##*[![:space:]]}"}"
+            [ -n "$_s" ] || continue
+            if [ ! -r "$SUITE_DIR/$_s" ]; then
+                printf 'batch: unknown suite: %s\n' "$_s" >&2
+                printf 'batch: suite must exist in %s\n' "$SUITE_DIR" >&2
+                exit 2
+            fi
+            case " $SELECTED " in
+                *" $_s "*) ;;  # deduplicate
+                *) SELECTED="$SELECTED $_s" ;;
+            esac
+        done
+        SELECTED="$(echo $SELECTED)"  # normalise whitespace
+        _n=0; for _cv_s in $SELECTED; do _n=$((_n + 1)); done
+        log "batch: --suites: selected $_n explicit suite(s)"
+    fi
 
 else
     # Diff-derived selection.
