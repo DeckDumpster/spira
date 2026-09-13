@@ -130,10 +130,11 @@ is "census is empty when no bump events exist" "" "$out"
 echo
 echo "caller-side: bead_reopen + bump_requeue (the landing.sh requeue path)"
 # ======================================================================================
-# The landing pass calls bead_reopen then bump_requeue when a branch cannot rebase.
-# Calling bump_requeue alone would pass even if landing.sh had no bump call; this test
-# exercises the exact two-call sequence landing.sh uses, so removing bump_requeue from
-# landing.sh leaves a gap the existing direct-call tests would not catch.
+# The landing pass calls bump_requeue when a branch cannot rebase (before deciding
+# whether to reopen or escalate). Calling bump_requeue alone would pass even if
+# landing.sh had no bump call; this test exercises the caller-side path so removing
+# bump_requeue from landing.sh leaves a gap the existing direct-call tests would not
+# catch.
 testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-f1","title":"landing test","status":"in_progress","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
