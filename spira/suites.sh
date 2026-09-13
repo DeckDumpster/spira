@@ -437,6 +437,73 @@ PAYLOAD
 }
 
 # --------------------------------------------------------------------------------------
+# FILING A SETUP FAULT. Called when a suite exits non-zero but emitted ASSERTIONS 0 —
+# meaning it reached no assertion before it exited. The setup failed; the code under
+# # covers: is not the problem, and a worker sent there will find it correct.
+#
+# THE DISCRIMINANT IS THE ASSERTIONS TRAILER, not the exit code. A missing trailer means
+# the suite has not yet adopted the counter; suites.sh treats that as red (as today) so
+# that an un-migrated suite cannot silently become a setup-fault. This is law-absence-
+# needs-a-positive-control applied to the counter itself: absence must never read as zero.
+#
+# THE REF IS setup-fault:<suite>. Repeated failures on the same suite bump recurrence on
+# one bead rather than filing a fresh one each pass. A change in the suite's output opens
+# a new investigation (same dedup policy as suite reds, narrowed to this suite only).
+#
+# THE BEAD NAMES THE SUITE, NOT THE COVERS FILE. Filing against the covers file sent
+# workers to code that never ran; this bead's reproduce line is the suite itself, and the
+# body says plainly that the covered file is not at fault.
+# --------------------------------------------------------------------------------------
+file_setup_fault() {  # file_setup_fault <basename> <rc> <seconds> <output>
+    local s="$1" rc="$2" secs="$3" out="$4" id=""
+    if [ ! -r "$INC" ]; then
+        log "suites: no intake at $INC — $s setup-fault reaches nobody"
+        return 1
+    fi
+    local out_inc rc_inc
+    out_inc="$(SPIRA_INCIDENT_TYPE=bug \
+          SPIRA_INCIDENT_PRIORITY="$(priority_of "$s")" \
+          SPIRA_INCIDENT_ACTOR=suites \
+          SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" \
+          SPIRA_INCIDENT_REPO="$SPIRA_HOME_REPO" \
+          SPIRA_INCIDENT_REF="setup-fault:$s" \
+          SPIRA_INCIDENT_PATH="$HERE/$s" \
+          SPIRA_INCIDENT_CAUSE=setup-fault \
+          SPIRA_DB="$SPIRA_DB" \
+          bash "$INC" file "$s is setup-fault in the timed suite run" - <<PAYLOAD
+The timed full run found this suite exiting non-zero with zero assertions reached. The
+suite's setup failed before any assertion ran — the code under \`# covers:\` is NOT at
+fault, and a worker sent there will find it correct.
+
+  suite            $s
+  status           setup-fault (rc=$rc) after ${secs}s
+  ran assertions   0
+  reproduce        bash spira/$s
+
+Fix: find why the suite's setup fails before its first assertion. Common causes: a fixture
+component is missing (repo-map, config file, required binary); a dependency exits during
+source; a gate refuses the run before the test body executes. The output below shows
+where the suite stopped.
+
+The dedupe ref is setup-fault:$s — repeated failures on the same suite bump recurrence on
+this bead rather than filing another. A change in the suite's output opens a new one.
+
+--- output -------------------------------------------------------------------------
+$(printf '%s\n' "$out" | tail -c 6000)
+PAYLOAD
+    )"; rc_inc=$?
+    if [ "$rc_inc" -ne 0 ]; then
+        log "suites: the intake could not file setup-fault for $s — it stays spooled"
+        return 1
+    fi
+    id="$(printf '%s\n' "$out_inc" | tail -n 1 | tr -d '[:space:]')"
+    case "${id:-}" in
+        ''|*[!A-Za-z0-9-]*|-*|*-) log "suites: the intake returned no id for $s setup-fault"; return 1 ;;
+    esac
+    printf '%s' "$id"
+}
+
+# --------------------------------------------------------------------------------------
 # FILING A SAME-CAUSE CLUSTER. Called after the suite loop when N>=2 confirmed reds share
 # the same normalised first FAIL line. Files one bead naming every member suite.
 #
@@ -519,6 +586,7 @@ cmd_run() {
     # Cluster workspace: confirmed reds are deferred here; after the loop they are grouped
     # by cause_fp and filed as one bead per group (law-count-things-not-log-lines).
     local _cfp_dir="" _deferred_red_count=0 _cluster_suppressed=0
+    local _setup_fault_count=0
     started="$(date +%s)"; deadline=$(( started + BUDGET ))
     mkdir -p "$STATE" 2>/dev/null
 
@@ -784,6 +852,20 @@ cmd_run() {
                 printf '  %-26s TIMEOUT  killed at %ss  %s\n' "$s" "$slice" "${id:-not filed}" ;;
             *)  status=red
                 fp="$(fingerprint "$rc" "$out")"
+                # SETUP-FAULT GUARD. A suite that emitted ASSERTIONS 0 ran no assertions
+                # before exiting — its setup failed. The code under # covers: is not the
+                # problem; a worker sent there will find it correct. The discriminant is the
+                # ASSERTIONS trailer (present and zero), never the exit code alone. A missing
+                # trailer is treated as red (as today) so that un-migrated suites cannot
+                # silently become setup-faults — the same rule suites.sh already applies to an
+                # unreadable gate-suites list: absence never reads as all-clear.
+                if grep -qxF 'ASSERTIONS 0' <<< "$out" 2>/dev/null; then
+                    record_write "$s" setup-fault "$secs" -
+                    _setup_fault_count=$(( _setup_fault_count + 1 ))
+                    id="$(file_setup_fault "$s" "$rc" "$secs" "$out" || true)"
+                    printf '  %-26s SETUP-FAULT  ran no assertions (rc=%s)  %s\n' "$s" "$rc" "${id:-not filed}"
+                    continue
+                fi
                 red=$(( red + 1 ))
                 # CONFIRMING RUN. Before filing, re-run the suite without runner-injected
                 # variables — the environment an aeon's reproduce line runs in. If the suite
@@ -939,13 +1021,13 @@ cmd_run() {
     # the runner-environment divergence is. When this reaches zero and stays there, a full
     # environment scrub (runner using env -i) becomes landable as a deliberate act rather than
     # a hopeful one. Print it even when zero so the line is parseable on every pass.
-    printf '%s ran, %s red (%s env-mismatch, %s suppressed by clustering), %s skipped, %s fixture-fault, %ss\n' \
-        "$ran" "$red" "$env_mismatch" "$_cluster_suppressed" "$skipped" "$_fixture_fault_count" "$(( $(date +%s) - started ))"
-    # Exit 2 when suites are red or a fixture fault was filed: incidents were filed, the pass
-    # completed normally. Exit 1 is reserved for errors that abort before any suite runs
-    # (gate-suites unreadable). The unit carries SuccessExitStatus=2 so systemd does not
-    # mark it failed on a routine red day.
-    [ "$red" -eq 0 ] && [ "$_fixture_fault_count" -eq 0 ] || return 2
+    printf '%s ran, %s red (%s env-mismatch, %s suppressed by clustering), %s skipped, %s fixture-fault, %s setup-fault, %ss\n' \
+        "$ran" "$red" "$env_mismatch" "$_cluster_suppressed" "$skipped" "$_fixture_fault_count" "$_setup_fault_count" "$(( $(date +%s) - started ))"
+    # Exit 2 when suites are red, a fixture fault, or a setup-fault was filed: incidents were
+    # filed, the pass completed normally. Exit 1 is reserved for errors that abort before any
+    # suite runs (gate-suites unreadable). The unit carries SuccessExitStatus=2 so systemd
+    # does not mark it failed on a routine red day.
+    [ "$red" -eq 0 ] && [ "$_fixture_fault_count" -eq 0 ] && [ "$_setup_fault_count" -eq 0 ] || return 2
 }
 
 # --------------------------------------------------------------------------------------
@@ -997,7 +1079,7 @@ cmd_list() {
 # EVERY FIELD RENDERS `?` WHEN IT COULD NOT BE READ, never 0.
 # --------------------------------------------------------------------------------------
 cmd_status() {
-    local s rec st at total=0 gate_n=0 timed_n=0 never=0 stale=0 red=0 skip=0 not_reached=0 oldest="" oldest_s="" now
+    local s rec st at total=0 gate_n=0 timed_n=0 never=0 stale=0 red=0 skip=0 setup_fault=0 not_reached=0 oldest="" oldest_s="" now
     now="$(date +%s)"
     if ! GATED="$(gated_suites)"; then
         printf 'suites          ?   %s is unreadable — the gated set is unknown\n' "$GATE_LIST"
@@ -1013,7 +1095,7 @@ cmd_status() {
         # A suite's last verdict survives an unreached pass — count red regardless of reach.
         if [ -n "$rec" ]; then
             read -r st at _ _ <<< "$rec"
-            case "$st" in red|timeout|red-unconfirmed) red=$(( red + 1 )) ;; skip) skip=$(( skip + 1 )) ;; esac
+            case "$st" in red|timeout|red-unconfirmed) red=$(( red + 1 )) ;; skip) skip=$(( skip + 1 )) ;; setup-fault|fixture-fault) setup_fault=$(( setup_fault + 1 )) ;; esac
             if [ "$(( now - at ))" -gt "$STALE" ]; then stale=$(( stale + 1 )); fi
             if [ -z "$oldest" ] || [ "$at" -lt "$oldest" ]; then oldest="$at"; oldest_s="$s"; fi
         fi
@@ -1038,6 +1120,7 @@ cmd_status() {
     printf '  %-36s%s\n' "timed suites with no result yet" "$never"
     printf '  %-36s%s\n' "timed results older than $(( STALE / 3600 ))h" "$stale"
     printf '  %-36s%s\n' "timed suites red at last run" "$red"
+    printf '  %-36s%s\n' "timed suites setup/fixture fault at last run" "$setup_fault"
     printf '  %-36s%s\n' "timed suites skipped at last run" "$skip"
     printf '  %-36s%s\n' "timed suites not reached last pass" "$not_reached"
     if [ -n "$oldest" ]; then
