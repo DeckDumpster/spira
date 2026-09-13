@@ -9,6 +9,7 @@
 # the bead without charging an attempt.
 #
 # covers: spira/lib.sh spira/aeon.sh spira/cockpit.sh spira/cockpit-metrics.py
+# scar: unrecorded
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 

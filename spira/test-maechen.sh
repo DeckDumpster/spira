@@ -25,6 +25,7 @@
 #
 # covers: spira/chamber/maechen.fayth spira/chamber/maechen.md spira/conf.sh
 # hermetic-ok: no database, no systemd; reads files only
+# scar: unrecorded
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 

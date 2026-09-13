@@ -36,6 +36,7 @@
 # suites that use testdb.sh.
 #
 # covers: spira/groom-trigger.sh spira/conf.sh
+# scar: groom-trigger.sh was absent, so the groomer never ran; without a trigger bead the groomer's partition was always empty.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

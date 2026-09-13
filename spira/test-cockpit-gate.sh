@@ -14,6 +14,7 @@
 #
 # defect: sp-idml
 # covers: spira/cockpit.sh spira/gate-run.sh cockpit/health.sh
+# scar: the gate/landing section was absent from the cockpit snapshot, so the DONE-to-LANDED stretch and live gate status were invisible on the health pane.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

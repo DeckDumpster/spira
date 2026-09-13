@@ -16,6 +16,7 @@
 #
 # defect: sp-20d
 # covers: spira/cockpit.sh
+# scar: cockpit.sh wrote the snapshot unconditionally; an aeon running a vendored copy or a manual invocation overwrote the live snapshot, and the pane read `?` for every key the interloper lacked.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

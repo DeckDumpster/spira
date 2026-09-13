@@ -22,6 +22,7 @@
 # (law-absence-needs-a-positive-control).
 # defect: sp-obd sp-1wzp
 # covers: spira/pilgrimage.sh cockpit/ask.sh
+# scar: a completed pilgrimage was filed as ask.sh insight rather than a closed event bead; outcomes and insights are read by different people for different reasons.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

@@ -28,6 +28,7 @@
 #
 # covers: spira/groomer.sh spira/conf.sh
 # defect: sp-gsmx.8
+# scar: groomer.sh lacked a hard refusal of unwanted-close; the only barrier against closing a bead as unwanted was a sentence in a brief.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

@@ -48,6 +48,7 @@
 # defect: sp-mqsl
 # covers: spira/sending.sh spira/lib.sh
 # hermetic-ok: fixture database and local git repos, no systemd, no network
+# scar: sending.sh passed unlanded branches to spira_destroy_branch once holder-witness checks passed; work that had not reached origin/main was silently deleted.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

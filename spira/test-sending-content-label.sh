@@ -26,6 +26,7 @@
 # defect: sp-796o
 # covers: spira/sending.sh
 # hermetic-ok: fixture database and local git repos, no systemd, no network
+# scar: the content-landed label was never written; the CHECK 5 exemption that skips labelled beads was dead code, and the loop ran on every landing regardless.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

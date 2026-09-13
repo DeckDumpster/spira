@@ -26,6 +26,7 @@
 #
 # covers: spira/aeon.sh spira/pre-commit-guard.sh
 # defect: sp-rbxr
+# scar: an aeon ran `git add -A` and staged a pre-existing dirty file; the commit named the bead but carried another process's uncommitted work instead of the aeon's own.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 

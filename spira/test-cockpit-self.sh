@@ -40,6 +40,7 @@
 # covers: spira/cockpit-metrics.py cockpit/health.sh
 
 # covers: spira/cockpit-metrics.py cockpit/health.sh
+# scar: the SELF metrics (repeating aeons, stillborn starts, starved passes) were absent; current session anomalies were invisible on the health pane.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 HEALTH="$(cd "$(dirname "$0")/../cockpit" && pwd)/health.sh"

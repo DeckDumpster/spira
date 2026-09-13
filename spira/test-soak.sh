@@ -27,6 +27,7 @@
 # would have passed all morning today.
 #
 # covers: spira/gate.sh spira/landing.sh
+# scar: a per-repository flock correct for two concurrent gates was wrong in composition with a landing pass; four aeons held the tree for 50 minutes while origin/main sat still.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

@@ -16,6 +16,7 @@
 #
 # defect: sp-atts
 # covers: spira/sop.sh spira/gate-spira.sh
+# scar: bd remember sop-<slug> bypassed sop.sh write's validator; a 236-word prose SOP with no structured fields was stored and was findable only by weak key-token fallback.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

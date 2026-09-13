@@ -19,6 +19,7 @@
 #
 # defect: sp-q697
 # covers: spira/lib.sh spira/aeon.sh
+# scar: the heartbeat signal was log file growth, which tool_progress events satisfied while the model was fully stuck; elapsed_time_seconds now distinguishes work from mere aliveness.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 

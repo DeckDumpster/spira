@@ -17,6 +17,7 @@
 #
 # defect: sp-9ix
 # covers: spira/lib.sh spira/aeon.sh spira/cockpit.sh cockpit/health.sh
+# scar: the STALL_BEATS/model_idle apparatus was replaced by a liveness lease on trace growth; suites covering the old mechanism were testing code that no longer ran.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

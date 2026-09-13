@@ -39,6 +39,7 @@
 #
 # covers: spira/maechen-trigger.sh spira/conf.sh
 # hermetic-ok: stub bd, real git with throwaway repos
+# scar: unrecorded
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0

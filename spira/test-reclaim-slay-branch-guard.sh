@@ -37,6 +37,7 @@
 #
 # defect: sp-mqsl
 # covers: spira/lib.sh spira/slay.sh
+# scar: spira_destroy_branch deleted branches unconditionally; a slay or reclaim on a bead with unlanded commits silently lost that work.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

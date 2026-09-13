@@ -30,6 +30,7 @@
 #
 # defect: sp-0uu
 # covers: spira/ctx-meter.sh
+# scar: the rate-limit window projected from evenly-spaced samples, a cadence the hook never produces; the real uneven cadence produced a wrong fill projection.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 CTX="$HERE/ctx-meter.sh"

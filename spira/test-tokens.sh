@@ -13,6 +13,7 @@
 #
 # defect: sp-rcr
 # covers: spira/tokens.sh
+# scar: worktree transcripts were attributed to the interactive session rather than to the aeons that produced them; the token split on the pane collapsed all aeon work into operator spend.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

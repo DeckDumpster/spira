@@ -30,6 +30,7 @@
 # defect: sp-wwav
 # covers: spira/cockpit.sh spira/sop.sh
 # covers: spira/cockpit-metrics.py
+# scar: SP_SOP_NEVER_FIRED and SP_SOP_RECURRED were absent from the snapshot; a broken probe rendered as all-clear for dead-weight runbooks and recurring incidents.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

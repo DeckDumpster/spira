@@ -40,6 +40,7 @@
 #
 # defect: sp-9p1a
 # covers: spira/sop.sh spira/chamber/ops.md spira/chamber/*
+# scar: nothing recorded that an SOP was matched and applied; a session that ignored a runbook left the same trace as one that executed it faithfully.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

@@ -16,6 +16,7 @@
 #
 # defect: sp-881
 # covers: spira/ctx-meter.sh
+# scar: ctx-meter env mode picked the newest-mtime transcript across every project; with aeons running it reported an aeon's worktree transcript rather than the operator's session.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 CTX="$HERE/ctx-meter.sh"

@@ -18,6 +18,7 @@
 #
 # defect: sp-ekio
 # covers: spira/slay.sh spira/lib.sh
+# scar: slay.sh left the bead in an inconsistent state after terminating the aeon and did not salvage uncommitted work from the worktree.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

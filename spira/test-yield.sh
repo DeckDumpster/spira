@@ -30,6 +30,7 @@
 #
 # defect: sp-1xb0
 # covers: spira/yield.sh spira/gate.sh spira/watchtower.sh cockpit/health.sh
+# scar: yield.sh was absent; gate faults landed in the wrong column and no count existed, so the gate's cost-vs-catch ratio was unmeasured.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

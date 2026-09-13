@@ -18,6 +18,7 @@
 # defect: sp-f8vry
 # covers: spira/cockpit.sh
 # hermetic-ok: mock bd binary, no systemd or database
+# scar: a bead carrying fayth:ops on spira,plan labels appeared in builder's partition query; the panel said "builder" for fifteen hours while the bead was unclaimable by any persona.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

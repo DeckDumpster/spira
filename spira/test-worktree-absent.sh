@@ -31,6 +31,7 @@
 #
 # defect: sp-hl92
 # covers: spira/lib.sh
+# scar: spira_destroy_worktree refused to prune a registry entry outside SPIRA_RUN/worktree even when the directory was gone; sentinel.log accrued "was not removed" on every pass permanently.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0

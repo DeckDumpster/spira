@@ -25,6 +25,7 @@
 #
 # defect: sp-qj8n
 # covers: spira/sending.sh
+# scar: sending.sh reaped content-landed branches without a landstate record silently; the selection gap behind sp-qj8n's four close/reopen cycles was invisible until the assertion was added.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

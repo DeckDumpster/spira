@@ -33,6 +33,7 @@
 #
 # defect: sp-mqsl
 # covers: spira/lib.sh
+# scar: spira_destroy_branch called git branch -D unconditionally; a branch reclaimed before its commits reached origin/main was silently garbage-collected with no error.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
