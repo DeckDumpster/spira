@@ -185,7 +185,7 @@ fi
 
 # Collect classes already covered by an open remedy bead.
 _suppressed_classes() {
-    bdq list --status open --label "$REMEDY_LABEL" --json 2>/dev/null \
+    bdq list --status open,in_progress,blocked,deferred --label "$REMEDY_LABEL" --json 2>/dev/null \
         | python3 "$_TMPDIR/covers.py"
 }
 

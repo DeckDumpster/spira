@@ -158,9 +158,35 @@ want "with --with-suppressed, marked [suppressed]"       "[suppressed]"       "$
 
 # ==============================================================================
 echo
+echo "2b. Remedy bead in_progress → class still suppressed"
+# ==============================================================================
+# The fix for sp-1cmo: --status open in _suppressed_classes misses remedy beads
+# that are being actively worked. Verify suppression holds for in_progress.
+B update "$remedy_id" --status in_progress >/dev/null 2>&1
+
+out2b="$(run_census)"
+lack "sp-recur-suite-red excluded when remedy is in_progress" "sp-recur-suite-red" "$out2b"
+
+out2bs="$(run_census --with-suppressed)"
+want "in_progress remedy still annotates [suppressed]" "[suppressed]" "$out2bs"
+
+# ==============================================================================
+echo
+echo "2c. Remedy bead blocked → class still suppressed"
+# ==============================================================================
+B update "$remedy_id" --status blocked >/dev/null 2>&1
+
+out2c="$(run_census)"
+lack "sp-recur-suite-red excluded when remedy is blocked"  "sp-recur-suite-red" "$out2c"
+
+out2cs="$(run_census --with-suppressed)"
+want "blocked remedy still annotates [suppressed]" "[suppressed]" "$out2cs"
+
+# ==============================================================================
+echo
 echo "3. CONTROL: closing remedy bead makes class reappear"
 # ==============================================================================
-B close "$remedy_id" --reason "test control: remove suppression" >/dev/null 2>&1
+B close "$remedy_id" --reason "test control: remove suppression" --force >/dev/null 2>&1
 
 out3="$(run_census)"
 want "sp-recur-suite-red reappears after remedy closed"    "sp-recur-suite-red"    "$out3"
