@@ -342,6 +342,7 @@ if [ -z "${SPIRA_BATCH_SKIP_INSTALL:-}" ]; then
         -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
         -e "CARGO_HOME=${_CONTAINER_CARGO}" \
         -e "SPIRA_INSTALL_FORCE=1" \
+        -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
         "$CNAME" bash "${_CONTAINER_WORKSPACE}/systemd/install.sh" "$INSTANCE" >&2 || {
         log "batch: install failed — harness fault"
         exit 3

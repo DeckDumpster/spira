@@ -180,40 +180,50 @@ want "unset-instance map prints 'loaded'" "loaded" "$out"
 
 # ===========================================================================
 echo
-echo "D — a workspaces root of \"/\" contains everything instead of nothing:"
+echo "D — workspace root / passes containment for all absolute paths:"
 # ===========================================================================
-# THE BUG THIS CASE EXISTS FOR. dirname returns "/" for a checkout mounted at the
-# filesystem root, which is every container run (/workspace). The check built its
-# pattern as "$ws_real"/*, which for ws_real=/ expands to //* — and NO absolute path
-# matches //*. So every repo-map row was refused whatever it said, and no suite ever
-# executed in a container. The check was rejecting its own glob, not the rows.
-#
-# Stripping the slash into a QUOTED case pattern does not fix it either: "" /* matches
-# nothing, while the bare literal /* matches. That near-miss is why this asserts the
-# observable outcome (the map loads) and not the shape of the pattern.
-load_at_root() {   # load_at_root <instance> <map-path> — same as load, ws pinned to /
+# Regression for sp-5jg4: when ws_real is "/" the old code built the glob "//*"
+# ("$ws_real"/* with ws_real="/") — this matches no absolute path because a single
+# leading slash cannot match two.  The fix strips the trailing slash so the pattern
+# becomes "/*", which correctly matches every absolute path.
+
+load_ws() {  # load_ws <workspaces> <instance> <map-path>
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_HOME="$HARNESS/spira" \
         SPIRA_REPO="$HARNESS" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_INSTANCE="${1:-prod}" \
-        SPIRA_WORKSPACES="/" \
-        SPIRA_REPO_MAP="${2:-}" \
+        SPIRA_INSTANCE="${2:-prod}" \
+        SPIRA_WORKSPACES="$1" \
+        SPIRA_REPO_MAP="${3:-}" \
         SPIRA_WATCHERS="$HARNESS/spira/watchers" \
         bash -c ". '$HARNESS/spira/conf.sh'; . '$HARNESS/spira/lib.sh'; echo loaded" 2>&1
 }
-out="$(load_at_root test "$MAP_GOOD" 2>&1)"
-rc=$?
-is   "ws=/ loads a map whose paths are absolute (rc=0)" "0" "$rc"
-want "ws=/ map prints 'loaded'"                    "loaded" "$out"
 
-# AND IT MUST STILL BE A CHECK. A root of / contains every path by definition, so the
-# path arm cannot fire — but the real-remote arm must, or "contains everything" would
-# have quietly become "checks nothing".
-out="$(load_at_root test "$MAP_REAL_REMOTE" 2>&1)"
-rc=$?
-is   "ws=/ still refuses a clone with a real remote" "1" "$rc"
-want "ws=/ refusal mentions containment"   "containment" "$out"
+# POSITIVE CONTROL — prove the workspace check is reachable when ws != /.
+# Repos are under $TMP; they must pass when SPIRA_WORKSPACES=$TMP.
+out_d0="$(load_ws "$TMP" test "$MAP_GOOD" 2>&1)"
+rc_d0=$?
+is "D0: workspace=$TMP: repos under it pass containment (rc=0)" "0" "$rc_d0"
+want "D0: workspace=$TMP prints 'loaded'" "loaded" "$out_d0"
+
+# REGRESSION — workspace=/ must accept any absolute path (all live under /).
+MAP_ROOT="$TMP/map-root"
+cat >"$MAP_ROOT" <<EOF
+repo-a  | $REPO_A  | push | origin/main | |
+repo-b  | $REPO_B  | push | origin/main | |
+EOF
+
+out_d1="$(load_ws "/" test "$MAP_ROOT" 2>&1)"
+rc_d1=$?
+is "D1: workspace=/: absolute paths pass containment (rc=0)" "0" "$rc_d1"
+want "D1: workspace=/ prints 'loaded'" "loaded" "$out_d1"
+
+# AND IT MUST STILL BE A CHECK. Accepting every absolute path must not silently disable
+# the real-remote refusal — that arm is independent and must still fire.
+out_d2="$(load_ws "/" test "$MAP_REAL_REMOTE" 2>&1)"
+rc_d2=$?
+is   "D2: ws=/ still refuses a clone with a real remote" "1" "$rc_d2"
+want "D2: ws=/ refusal mentions containment" "containment" "$out_d2"
 
 # ===========================================================================
 echo
