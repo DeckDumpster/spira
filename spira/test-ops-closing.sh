@@ -81,7 +81,10 @@ printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
 
 HOMEDIR="$TMP/home"; mkdir -p "$HOMEDIR/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/sop.sh" "$HOMEDIR/"
+# SCAR: the fixture's cp list omitted suite-covers.sh after sp-dt8u added it to lib.sh.
+# lib.sh sources suite-covers.sh at boot; without it a "No such file" error goes to stderr,
+# which 2>&1 in the sop helper merges into stdout, inflating sop digest | grep -c . by 1.
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/sop.sh" "$HERE/suite-covers.sh" "$HOMEDIR/"
 cp -r "$HERE/actors" "$HOMEDIR/" 2>/dev/null || true
 RUN="$TMP/run"; mkdir -p "$RUN"
 REPO_MAP="$TMP/repo-map"
