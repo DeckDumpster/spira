@@ -285,7 +285,17 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
     # --files passes the pre-computed list from gate.sh directly rather than
     # re-computing the diff — avoids double work and lets test fixtures supply
     # the list without needing git refs.
+    # Run select.sh synchronously in a command substitution so it fully exits before
+    # we read the mode file. A process substitution (< <(bash select.sh ...)) leaves
+    # select.sh running as a background subshell that can block in a container
+    # environment when a suite exits non-zero — the background process holds open
+    # file descriptors that delay gate-spira.sh's cleanup path.
     _cv_mode_file="$(mktemp)"
+    _cv_raw="$(bash "$HERE/select.sh" \
+        --files "${SPIRA_GATE_FILES}" \
+        --mode-file "$_cv_mode_file" \
+        2>/dev/null || true)"
+    _cv_mode="$(cat "$_cv_mode_file" 2>/dev/null || true)"; rm -f "$_cv_mode_file"
     while IFS= read -r _s || [ -n "$_s" ]; do
         [ -n "$_s" ] || continue
         _cv_path="spira/$_s"
@@ -294,11 +304,7 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
             *" $_cv_path "*) ;;
             *) extra_suites="$extra_suites $_cv_path" ;;
         esac
-    done < <(bash "$HERE/select.sh" \
-        --files "${SPIRA_GATE_FILES}" \
-        --mode-file "$_cv_mode_file" \
-        2>/dev/null || true)
-    _cv_mode="$(cat "$_cv_mode_file" 2>/dev/null || true)"; rm -f "$_cv_mode_file"
+    done <<< "$_cv_raw"
     _cv_n=0; for _cv_ts in $extra_suites; do _cv_n=$((_cv_n + 1)); done
     if [ "$_cv_mode" = all ]; then
         say "coverage: unmapped file(s) in diff — running all non-gated suites"
