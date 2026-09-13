@@ -103,6 +103,7 @@
 # incident where the harness itself is broken is the one incident that leaves no trace.
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 
 # `synth` renders into the operator's wiki, which is the one thing here the harness must not
 # require. SPIRA_WIKI is empty on a clone that has no wiki, and `synth` says so and stops
