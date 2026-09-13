@@ -76,6 +76,14 @@ spira/test-sop-lint.sh
 # to match for any reason and the gate would call it a pass.
 spira/test-literal-lint.sh
 
+# THE SCRATCH-FENCE'S OWN POSITIVE CONTROL. scratch-fence.sh refuses sp-* notes and
+# *.fixed artefacts at the repository root — aeon working notes that ship to every consumer
+# and cost suite time on every branch that follows them. This suite plants each pattern
+# (SEEN RED), withdraws it (SEEN GREEN), and confirms the fence is referenced in gate-spira.sh.
+# Without this, a fence whose matcher never fires is indistinguishable from one that passes
+# a clean tree.
+spira/test-scratch-fence.sh
+
 # NOT IN THE GATE (budget): test-watchtower, test-soak, test-owned, test-uninstall, test-ready,
 # test-install-conflicts, test-configure, test-build. test-watchtower (~263s) was moved to the
 # timed set to bring the gate under SPIRA_GATE_BUDGET (sp-6ceo); the pipeline-stall detection

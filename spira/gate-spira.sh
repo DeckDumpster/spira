@@ -111,7 +111,7 @@ BODY
 # ---------------------------------------------------------------------------------------
 # 1. THE FENCES — first, and independently of everything below.
 # ---------------------------------------------------------------------------------------
-for fence in spira/exclude.sh spira/inventory.sh spira/literal-lint.sh spira/orphan-test.sh; do
+for fence in spira/exclude.sh spira/inventory.sh spira/scratch-fence.sh spira/literal-lint.sh spira/orphan-test.sh; do
     [ -r "$fence" ] || { say "$fence is missing — refusing to land unchecked"; exit 1; }
 done
 
@@ -130,6 +130,18 @@ if ! inv="$(bash spira/inventory.sh 2>&1)"; then
     printf '%s\n' "$inv" >&2
     exit 1
 fi
+
+# SCRATCH-FILE FENCE. Aeon working notes committed to the harness root ship to every
+# consumer and trigger the all-suites fallback in coverage selection (a file no suite
+# declares widens the diff to the full corpus, ~65 min). The class of defect is repeatable:
+# ten accumulated before this fence existed. SCRATCH_FENCE_OK=1 is the named override,
+# valid only for the commit that removes existing offenders.
+[ -r spira/scratch-fence.sh ] || { say "spira/scratch-fence.sh is missing — refusing to land unchecked"; exit 1; }
+if ! scr="$(bash spira/scratch-fence.sh 2>&1)"; then
+    printf '%s\n' "$scr" >&2
+    exit 1
+fi
+printf '%s\n' "$scr" >&2
 
 # THE SOP SHELF. `sop.sh write` validates; `bd remember sop-<slug>` does not — it is the
 # back door this check closes. Lint reads every sop- key and applies the same rules, so a
