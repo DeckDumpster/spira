@@ -494,6 +494,7 @@ run_gate() {             # run_gate <ref-being-tested> -> the command's own stat
         SPIRA_GATE_BRANCH="$1" SPIRA_GATE_BASE="$BASE" \
         SPIRA_GATE_FILES="$FILELIST" \
         SPIRA_GATE_ALL="${SPIRA_GATE_ALL:-0}" \
+        SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
         timeout "${SPIRA_GATE_TIMEOUT:-2700}" bash -c "$CMD" 9>&- ) 2>&1
     return $?
 }

@@ -133,9 +133,17 @@ cmd_up() {
     local vol_reg="${name}-cargo-reg"
     local vol_git="${name}-cargo-git"
 
+    # PIDS LIMIT: rootless podman defaults to 2048. Running many parallel test suites
+    # simultaneously — each spawning bd, git, python3, and bash subshells, plus systemd
+    # and the dolt test-fixture server in the baseline — exhausts the default: fork()
+    # returns EAGAIN, suites die with "Resource temporarily unavailable", and dolt cannot
+    # start because systemd cannot fork it. Measured: 11 heavy parallel suites consumed
+    # ~1 300 PIDs (baseline ~100 + ~100/suite); 52 suites exhausted the 2 048 default.
+    # 8 192 is 4x the default and fits well within a typical user nproc ceiling (~60 000).
     podman run -d \
         --name "$name" \
         --systemd=true \
+        --pids-limit 8192 \
         --volume "${checkout}:${_CONTAINER_CHECKOUT}:z" \
         --volume "${vol_reg}:${_CONTAINER_CARGO}/registry" \
         --volume "${vol_git}:${_CONTAINER_CARGO}/git" \

@@ -56,6 +56,15 @@
 #                           recorded as "timeout" and the corpus continues. This
 #                           mirrors gate-spira.sh's per-suite watchdog so neither
 #                           runner can be held indefinitely by one runaway suite.
+#   SPIRA_BATCH_MAXPAR      max parallel suites in --mode parallel (default: 32).
+#                           Throttles the parallel loop to prevent container PID
+#                           exhaustion on very large selections. Measured: 11 heavy
+#                           suites concurrently consumed ~1 300 PIDs (baseline ~100
+#                           + ~100/suite); at MAXPAR 32 the peak is ~3 300 PIDs,
+#                           well below the container pids-limit (8 192). At the 245-
+#                           suite full corpus, unlimited concurrency would need
+#                           ~24 500 PIDs — above any limit. Set to 0 for unlimited
+#                           (useful for small explicit selections or stress tests).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -491,14 +500,40 @@ fi
 # is a weaker claim than a green under parallel; the record must not conflate them.
 #
 # PARALLEL isolation (each suite gets its own):
-#   SPIRA_INSTANCE: units are named per-instance; parallel suites cannot collide.
+#   HOME:           each suite runs with a private home directory. $HOME/.config and
+#                   $HOME/.local are per-suite, so unit fixture files written by one
+#                   suite to $HOME/.config/systemd/user are invisible to neighbours.
+#                   The batch install step (run before suites) uses the container
+#                   user's real home; per-suite HOME means suites cannot see those
+#                   batch-installed units either, preventing false "unexpected file"
+#                   failures in suites that scan $HOME/.config/systemd/user.
+#                   LIMIT: the shared systemd user daemon is bound to the container
+#                   UID, not to HOME. Suites that call real systemctl --user connect
+#                   to the same daemon regardless of HOME and must isolate via
+#                   SPIRA_INSTANCE unit-name namespacing, not HOME. See SCAR below.
+#   SPIRA_INSTANCE: units are named per-instance; parallel suites cannot collide on
+#                   installed unit names.
 #   SPIRA_RUN:      each suite's temp state is isolated at a distinct path.
 #   TESTDB_NAME:    TESTDB_SHARED=0 + empty TESTDB_NAME → testdb.sh generates a
 #                   unique name per invocation; multiple parallel calls each get
 #                   their own fixture database.
+#
+# SCAR: test-install-migrate.sh and test-install-instance.sh plant legacy systemd
+# unit fixtures (spira-sentinel.service etc.) in the real systemd unit directory via
+# `systemctl --user enable`. With per-suite HOME those suites need to either use
+# SPIRA_INSTANCE namespacing or declare a skip when HOME is not the real container
+# home (XDG_RUNTIME_DIR check already acts as a container guard; HOME can extend it).
 # ---------------------------------------------------------------------------
 _n_selected=0; for _s in $SELECTED; do _n_selected=$((_n_selected+1)); done
-log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE)"
+
+if [ "$MODE" = parallel ]; then
+    _maxpar_display="${SPIRA_BATCH_MAXPAR:-32}"
+    [ "${_maxpar_display:-0}" -gt 0 ] 2>/dev/null \
+        && log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar_display)" \
+        || log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: unlimited)"
+else
+    log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE)"
+fi
 
 _batch_red=0
 _batch_container_dead=0
@@ -599,7 +634,7 @@ if [ "$MODE" = serial ]; then
 
 else
 
-    # Parallel: all suites concurrently, each with its own SPIRA_INSTANCE,
+    # Parallel: suites run concurrently, each with its own HOME, SPIRA_INSTANCE,
     # SPIRA_RUN, and testdb fixture (TESTDB_SHARED=0 + empty TESTDB_NAME).
     #
     # Each subshell writes .out and .result immediately on completion, so
@@ -608,6 +643,10 @@ else
     #
     # A suite that passes serially and fails in parallel means shared state
     # leaked between suites — a bead against the leak, never a retry.
+    #
+    # MAXPAR: SPIRA_BATCH_MAXPAR caps concurrent suites to prevent PID exhaustion.
+    # See ENVIRONMENT comment above for the measurement behind the default.
+    _maxpar="${SPIRA_BATCH_MAXPAR:-32}"
     _par_tmp="$(mktemp -d)"
     _par_pids=""
     _n=0
@@ -616,7 +655,24 @@ else
         _n=$((_n+1))
         _suite_instance="${INSTANCE}-${_n}"
         _suite_run="/tmp/spira-batch-${INSTANCE}-${_n}"
+        _suite_home="/tmp/spira-batch-${INSTANCE}-${_n}/home"
         _t0="$(date +%s)"
+
+        # Throttle: wait for a slot before launching the next suite.
+        # `wait -n` (bash 4.3+) waits for exactly one job; the fallback
+        # loop with `true` prevents a hard failure on older bash.
+        if [ "${_maxpar:-0}" -gt 0 ] 2>/dev/null; then
+            while [ "$(jobs -rp | wc -l)" -ge "$_maxpar" ]; do
+                wait -n 2>/dev/null || true
+            done
+        fi
+
+        # Create the per-suite home dir inside the container before the subshell
+        # starts. The suite then runs with HOME pointing here; $HOME/.config and
+        # $HOME/.local are clean per-suite scratch that no other suite can see.
+        podman exec --user "$_SPIRA_USER" "$CNAME" \
+            mkdir -p "${_suite_home}/.config/systemd/user" \
+            >/dev/null 2>&1 || true
 
         # Each variable is captured by value at fork time; the outer loop
         # changes them, but each subshell has the snapshot from this iteration.
@@ -624,6 +680,7 @@ else
             _inner_rc=0
             if [ "${_suite_timeout:-0}" -gt 0 ] 2>/dev/null; then
                 timeout "$_suite_timeout" podman exec --user "$_SPIRA_USER" \
+                    -e "HOME=${_suite_home}" \
                     -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
                     -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
                     -e "CARGO_HOME=${_CONTAINER_CARGO}" \
@@ -636,6 +693,7 @@ else
                     >"$_par_tmp/$s.rawout" 2>&1 || _inner_rc=$?
             else
                 podman exec --user "$_SPIRA_USER" \
+                    -e "HOME=${_suite_home}" \
                     -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
                     -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
                     -e "CARGO_HOME=${_CONTAINER_CARGO}" \
