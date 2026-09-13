@@ -187,6 +187,28 @@ echo "maechen.md — encodes the closing rule (quiet pass is distinguishable)"
 want "brief requires recording the pass" "maechen.log"      "$brief"
 want "brief outlaws silence"             "Silence is what"  "$brief"
 
+# ==========================================================================================
+echo
+echo "maechen.md — all \$SPIRA_HOME paths resolve to existing files"
+# ==========================================================================================
+# POSITIVE CONTROL: plant a doubled segment (e.g. spira/spira/census.sh) and this fails.
+# law-a-rename-repoints-no-reader: a persona edit that renames or moves a helper is caught
+# by the same check without manual update.
+_path_count=0
+while IFS= read -r rel; do
+    _path_count=$((_path_count+1))
+    if [ -f "$HERE/$rel" ]; then
+        ok "persona path resolves: \$SPIRA_HOME/$rel"
+    else
+        bad "persona path missing" "\$SPIRA_HOME/$rel not found under $HERE"
+    fi
+done < <(grep -oE '\$SPIRA_HOME/[^"'"'"' )]+' "$BRIEF" | sed 's|^\$SPIRA_HOME/||' | sort -u)
+if [ "$_path_count" -gt 0 ]; then
+    ok "persona names at least one \$SPIRA_HOME path (positive-control anchor)"
+else
+    bad "persona path extraction" "grep found no \$SPIRA_HOME paths in maechen.md — positive control is absent"
+fi
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

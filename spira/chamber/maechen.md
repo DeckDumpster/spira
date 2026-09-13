@@ -19,7 +19,7 @@ indistinguishable from one that did not happen.
 
 Aggregate failure events and rank by **since-watermark count** with open-remedy suppression:
 
-    bash "$SPIRA_HOME/spira/census.sh" --with-suppressed
+    bash "$SPIRA_HOME/census.sh" --with-suppressed
 
 `census.sh` queries the events table and outputs one line per class:
 
