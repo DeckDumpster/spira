@@ -9,4 +9,4 @@
 # test-testenv-doctor-check.sh. Do not add a program to this file without a reason
 # that a reader six months from now would find convincing.
 
-claude  aeon binary — runs on the operator's host as the agent process; the container never invokes it directly
+# claude is installed as a stub binary — no waiver needed.

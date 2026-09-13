@@ -109,6 +109,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 #         invisible. This is the hard argument for including it.
 # build-essential: gcc for cargo's C linker when compiling Rust crates.
 # curl+ca-certificates: download gh and dolt release archives.
+# locales: locale-gen; suites need a UTF-8 locale for string operations.
 RUN apt-get update -q && \
     apt-get install -yq --no-install-recommends \
         systemd \
@@ -124,7 +125,24 @@ RUN apt-get update -q && \
         build-essential \
         tmux \
         nodejs \
+        locales \
     && rm -rf /var/lib/apt/lists/*
+
+# ── Locale — suites need a UTF-8 locale for string operations ─────────────
+# Without this, LANG and LC_ALL are unset and LC_CTYPE defaults to C, which
+# refuses multi-byte characters in tools that respect the locale.
+RUN locale-gen en_US.UTF-8
+ENV LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8
+
+# ── Git identity — embedded bd init and suites that commit need an author ──
+# bd init creates an initial commit; git refuses without user.name/user.email.
+# A missing identity makes _testdb_embedded_check fail, which cascades to every
+# suite that calls testdb_up (no embedded mode and SPIRA_DOLT_DATA empty = no
+# server mode either — suite exits non-zero rather than 77).
+# System-level config is read by all users including spirauser.
+RUN git config --system user.email "spirauser@localhost" && \
+    git config --system user.name "spirauser"
 
 # ── gh — GitHub CLI ────────────────────────────────────────────────────────
 # Official GitHub CLI apt repository. Pinned to the stable channel rather than
@@ -156,6 +174,15 @@ RUN curl -fsSL -o /tmp/dolt.tar.gz \
 # Both bd and bd-embedded are installed: testdb.sh checks for bd-embedded by name.
 COPY --from=bd-builder /out/bd /usr/local/bin/bd
 RUN install -m 0755 /usr/local/bin/bd /usr/local/bin/bd-embedded
+
+# ── claude stub — satisfies 'command -v claude' checks ────────────────────
+# concierge.sh calls spira_require claude before any subcommand dispatch,
+# including the 'brief' subcommand that test-concierge.sh drives. A missing
+# claude is a hard refusal — not a degraded run — so the test fails even for
+# the sections that never invoke a real session. The stub satisfies the check;
+# any actual session invocation exits 127 so the failure is visible, not silent.
+RUN printf '#!/bin/sh\n# testenv stub: satisfies command -v claude and spira_require claude.\n# Not a real Claude installation. Exits non-zero when invoked as a session.\nprintf "claude: testenv container stub; not a real installation\\n" >&2\nexit 127\n' \
+    > /usr/local/bin/claude && chmod 0755 /usr/local/bin/claude
 
 # ── doctor-check: image is verified, not asserted ─────────────────────────
 # COPY doctor.sh and the check script into a scratch location. Run the check

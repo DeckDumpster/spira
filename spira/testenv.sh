@@ -154,6 +154,13 @@ cmd_up() {
     # system systemd to start user@1001.service and keep it running without a login session.
     podman exec "$name" loginctl enable-linger "$_SPIRA_USER" 2>/dev/null || true
 
+    # Trust the bind-mounted checkout. The host UID owning the files may differ from
+    # spirauser (1001) inside the container; git refuses operations on directories it
+    # considers dubiously owned. safe.directory is set at the system level so it applies
+    # to all users, including spirauser running test suites.
+    podman exec "$name" git config --system --add safe.directory "$_CONTAINER_CHECKOUT" \
+        >/dev/null 2>&1 || true
+
     # Wait for the user session manager to become active (~1-2s after enable-linger).
     if _wait_for 20 podman exec "$name" systemctl is-active "user@${_SPIRA_UID}.service"; then
         printf 'testenv: user@%s.service active; systemctl --user ready\n' "$_SPIRA_UID" >&2
