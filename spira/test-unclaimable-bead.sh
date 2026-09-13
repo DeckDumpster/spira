@@ -155,10 +155,17 @@ echo "case 7 — spira-poison and needs-ryan beads are excluded (have their own 
 # detect_unclaimable_ready must not flag beads already handled by CHECK 4 (poison) or the
 # ask taxonomy (needs-ryan). Both would otherwise produce noise on every pass.
 testdb_reset
-testdb_seed <<'JSONL'
+# THE SEEDED LABEL MUST MATCH SPIRA_ASK_LABEL. detect_unclaimable_ready excludes
+# beads whose label set intersects {SPIRA_ASK_LABEL, spira-poison}. A bead carrying
+# a hardcoded "needs-ryan" is invisible to the exclusion when SPIRA_ASK_LABEL is
+# "needs-operator" (conf.sh default), so the bead appears UNCLAIMABLE instead of
+# being skipped — and the assertion fails. Use the live variable.
+{ cat <<'JSONL'
 {"id":"sp-unc6a","title":"poisoned: skipped","status":"open","issue_type":"task","labels":["spira-poison","repo:spira","spira"]}
-{"id":"sp-unc6b","title":"needs-ryan: skipped","status":"open","issue_type":"task","labels":["needs-ryan","repo:spira","spira"]}
 JSONL
+printf '{"id":"sp-unc6b","title":"ask-label: skipped","status":"open","issue_type":"task","labels":["%s","repo:spira","spira"]}\n' \
+    "${SPIRA_ASK_LABEL:-needs-operator}"
+} | testdb_seed
 
 out="$(detect_unclaimable_ready 2>/dev/null)"
 lacks "poisoned bead not flagged by unclaimable check"   "sp-unc6a" "$out"

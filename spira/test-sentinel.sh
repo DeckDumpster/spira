@@ -89,9 +89,13 @@ echo "open-ask suppression — does not ask again while one is already open:"
 # ask_already_open would return 1 (nothing found) and the clock's SPIRA_LAND_ESCALATE_EVERY=0
 # would let the escalation through — making the test vacuously green.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ask1","title":"Spira is landing nothing — its last run exited 1","status":"open","issue_type":"decision","labels":["needs-ryan"],"updated_at":"2026-09-07T00:00:00Z"}
-JSONL
+# THE SEEDED LABEL MUST MATCH SPIRA_ASK_LABEL. ask_already_open queries with
+# --label $SPIRA_ASK_LABEL; a bead carrying a different label is invisible to
+# the query even when open — making suppression silently fail. conf.sh defaults
+# SPIRA_ASK_LABEL to needs-operator; production spira.conf sets it to needs-ryan.
+# Hardcoding either value broke the other environment; use the live variable.
+printf '{"id":"sp-ask1","title":"Spira is landing nothing — its last run exited 1","status":"open","issue_type":"decision","labels":["%s"],"updated_at":"2026-09-07T00:00:00Z"}\n' \
+    "${SPIRA_ASK_LABEL:-needs-operator}" | testdb_seed
 : > "$ASK_LOG"; rm -f "$RUN/landing.escalated"
 land_escalate "the landing worker will not start" "evidence" >/dev/null 2>&1
 is "and does not ask again while one is still open" "" "$(cat "$ASK_LOG")"
@@ -104,9 +108,8 @@ echo "closed-ask pass-through — a closed ask does NOT suppress a new escalatio
 # information. Without this half, an operator closing an ask silently mutes the escalation
 # forever — which is the exact failure ask_already_open's OPEN filter exists to prevent.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ask1","title":"Spira is landing nothing — its last run exited 1","status":"closed","issue_type":"decision","labels":["needs-ryan"],"updated_at":"2026-09-07T00:00:00Z"}
-JSONL
+printf '{"id":"sp-ask1","title":"Spira is landing nothing — its last run exited 1","status":"closed","issue_type":"decision","labels":["%s"],"updated_at":"2026-09-07T00:00:00Z"}\n' \
+    "${SPIRA_ASK_LABEL:-needs-operator}" | testdb_seed
 : > "$ASK_LOG"; rm -f "$RUN/landing.escalated"
 do_escalate >/dev/null 2>&1
 want "a closed ask does not suppress a new escalation" "Spira is landing nothing" "$(cat "$ASK_LOG")"

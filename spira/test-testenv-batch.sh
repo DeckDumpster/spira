@@ -565,6 +565,72 @@ if [ -n "$RD_B5c" ] && [ -f "$RD_B5c/test-fx-p.sh.result" ]; then
                                    "got '$_prod_b5c' (full record: $(cat "$RD_B5c/test-fx-p.sh.result"))"
 fi
 
+# ---------------------------------------------------------------------------
+# B6: MAXPAR DEFAULT FROM NPROC AND SPIRA_CONF OVERRIDE
+#
+# The binding resource for parallel suites is CPU, not PID budget. testenv-batch.sh
+# derives MAXPAR from nproc when SPIRA_BATCH_MAXPAR is unset.
+#
+# a. nproc default: a stub nproc on PATH returns 7; the log must show "maxpar: 7".
+#    Fails on origin/main where the code has the literal 32, not $(nproc).
+# b. spira.conf override: a config line SPIRA_BATCH_MAXPAR = 3 must appear in
+#    the log — overriding nproc. Fails on origin/main because SPIRA_BATCH_MAXPAR
+#    was not in SPIRA_CONF_KEYS, so the conf line is silently discarded there.
+# ---------------------------------------------------------------------------
+echo
+echo "B6: MAXPAR default from nproc and spira.conf override"
+
+SUITE_B6="$TMP/suites-B6"
+mkdir -p "$SUITE_B6"
+cp "$SUITE_B3/test-fx-ka.sh" "$SUITE_B6/"
+
+# Stub nproc: prepend a directory with a nproc script that echoes 7 onto PATH.
+STUB_BIN_B6="$TMP/stub-bin-b6"
+mkdir -p "$STUB_BIN_B6"
+printf '#!/bin/sh\necho 7\n' > "$STUB_BIN_B6/nproc"
+chmod +x "$STUB_BIN_B6/nproc"
+
+# B6a: nproc default. SPIRA_BATCH_MAXPAR is unset so the batch falls through to
+# $(nproc). The stubbed nproc returns 7; the log must record "maxpar: 7".
+#
+# conf.sh line 873 resets PATH to a fixed set, discarding any PATH the caller
+# prepended. SPIRA_PATH is prepended by conf.sh before that reset — so the stub
+# goes into SPIRA_PATH, not into PATH, to survive the reset.
+RESULTS_ROOT_B6a="$TMP/results-B6a"
+rc_b6a=0
+b6a_out="$(
+    env -u SPIRA_BATCH_MAXPAR \
+    SPIRA_PATH="$STUB_BIN_B6" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_BATCH_SUITE_DIR="$SUITE_B6" \
+    SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B6a" \
+    SPIRA_BATCH_SKIP_INSTALL=1 \
+    SPIRA_BATCH_INSTANCE="b6a-$$" \
+        bash "$BATCH" topic "$FIXTURE" 2>/dev/null
+)" || rc_b6a=$?
+iszero "B6a: batch exits 0 with stubbed nproc=7" "$rc_b6a"
+want "B6a: log shows maxpar: 7 (derived from stubbed nproc)" "maxpar: 7" "$b6a_out"
+
+# B6b: spira.conf override. A config file sets SPIRA_BATCH_MAXPAR=3, which must
+# appear in the log, overriding whatever nproc returns. SPIRA_BATCH_MAXPAR is
+# unset from the env so the conf value is the sole source.
+CONF_B6b="$TMP/spira-b6b.conf"
+printf 'SPIRA_BATCH_MAXPAR = 3\n' > "$CONF_B6b"
+
+RESULTS_ROOT_B6b="$TMP/results-B6b"
+rc_b6b=0
+b6b_out="$(
+    env -u SPIRA_BATCH_MAXPAR \
+    SPIRA_CONF="$CONF_B6b" \
+    SPIRA_BATCH_SUITE_DIR="$SUITE_B6" \
+    SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B6b" \
+    SPIRA_BATCH_SKIP_INSTALL=1 \
+    SPIRA_BATCH_INSTANCE="b6b-$$" \
+        bash "$BATCH" topic "$FIXTURE" 2>/dev/null
+)" || rc_b6b=$?
+iszero "B6b: batch exits 0 with SPIRA_BATCH_MAXPAR=3 from spira.conf" "$rc_b6b"
+want "B6b: log shows maxpar: 3 (from spira.conf)" "maxpar: 3" "$b6b_out"
+
 # ===========================================================================
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
