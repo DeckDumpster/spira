@@ -180,24 +180,25 @@ fi
 
 # ---- Part 6: structural — thrash check guarded by idle < STALL_BEATS ----------------
 echo
-echo "aeon.sh structural: thrash check in heartbeat is inside the idle < STALL_BEATS guard"
+echo "aeon.sh structural: thrash check in heartbeat is after the lease expiry guard"
 
 if [ ! -f "$AEON" ]; then
     bad "aeon.sh not found"
 else
-    # The thrash trip must sit inside the `if [ "$idle" -lt "$STALL_BEATS" ]` block so the
-    # heartbeat's own stall detection (idle ≥ STALL_BEATS) is the outer guard.
-    # Find the line of the STALL_BEATS guard and the line of the thrash fuse check.
-    stall_guard_line="$(grep -n 'idle.*STALL_BEATS\|STALL_BEATS.*idle' "$AEON" \
-        | grep '\-lt\|\-ge' | head -1 | cut -d: -f1)"
+    # The thrash trip must come AFTER the lease expiry check so that a silent (lapsed) aeon
+    # is killed by the lease path before the thrash fuse can fire. The old model used
+    # `idle < STALL_BEATS`; the current model uses `_now >= _deadline`. Either way the
+    # structural invariant is: lease/stall detection exits first, thrash follows.
+    lease_guard_line="$(grep -n '_now.*_deadline\|_deadline.*_now' "$AEON" \
+        | grep '\-ge\|\-lt' | head -1 | cut -d: -f1)"
     thrash_fuse_line="$(grep -n '_dfuse.*aeon_fuse_minutes\|aeon_fuse_minutes.*_dfuse' "$AEON" \
         | head -1 | cut -d: -f1)"
-    if [ -z "$stall_guard_line" ] || [ -z "$thrash_fuse_line" ]; then
-        bad "stall guard or thrash fuse line not found (guard=$stall_guard_line fuse=$thrash_fuse_line)"
-    elif [ "$thrash_fuse_line" -gt "$stall_guard_line" ]; then
-        ok "thrash fuse check (line $thrash_fuse_line) is inside the STALL_BEATS guard (line $stall_guard_line)"
+    if [ -z "$lease_guard_line" ] || [ -z "$thrash_fuse_line" ]; then
+        bad "lease expiry guard or thrash fuse line not found (guard=$lease_guard_line fuse=$thrash_fuse_line)"
+    elif [ "$thrash_fuse_line" -gt "$lease_guard_line" ]; then
+        ok "thrash fuse check (line $thrash_fuse_line) is after the lease expiry guard (line $lease_guard_line)"
     else
-        bad "thrash fuse check (line $thrash_fuse_line) must come after STALL_BEATS guard (line $stall_guard_line)"
+        bad "thrash fuse check (line $thrash_fuse_line) must come after lease expiry guard (line $lease_guard_line)"
     fi
 fi
 
