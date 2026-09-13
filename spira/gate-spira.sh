@@ -282,6 +282,9 @@ extra_suites=""
 if [ -f "${SPIRA_GATE_FILES:-}" ]; then
     # select.sh owns the selection algorithm; this script owns which suites are
     # already in the gated list. Deduplicate so each suite runs at most once.
+    # --files passes the pre-computed list from gate.sh directly rather than
+    # re-computing the diff — avoids double work and lets test fixtures supply
+    # the list without needing git refs.
     while IFS= read -r _s || [ -n "$_s" ]; do
         [ -n "$_s" ] || continue
         _cv_path="spira/$_s"
@@ -291,8 +294,7 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
             *) extra_suites="$extra_suites $_cv_path" ;;
         esac
     done < <(bash "$HERE/select.sh" \
-        --base "${SPIRA_GATE_BASE:-}" \
-        --head "${SPIRA_GATE_BRANCH:-}" \
+        --files "${SPIRA_GATE_FILES}" \
         2>/dev/null || true)
     _cv_n=0; for _cv_ts in $extra_suites; do _cv_n=$((_cv_n + 1)); done
     [ "$_cv_n" -gt 0 ] && say "coverage: selected $_cv_n non-gated suite(s)"

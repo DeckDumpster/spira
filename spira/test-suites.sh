@@ -556,7 +556,7 @@ echo "the landing gate reads the same file, and fails closed on a bad one:"
 GT="$TMP/gtree"
 mkdir -p "$GT/spira"
 git init -q -b main "$GT"
-cp "$HERE/gate-spira.sh" "$HERE/suite-covers.sh" "$GT/spira/"
+cp "$HERE/gate-spira.sh" "$HERE/suite-covers.sh" "$HERE/select.sh" "$GT/spira/"
 gate_fence_stubs "$GT/spira/gate-spira.sh" "$GT/spira"
 # sop.sh is checked by gate-spira.sh outside the fence loop, so gate_fence_stubs does not
 # create it; stub it separately so the gate reaches the suites section.

@@ -24,6 +24,13 @@
 #                             (those with no # covers: line). An unmapped file
 #                             (declared by no suite) triggers the all-suites
 #                             fallback (law-absence-needs-a-positive-control).
+#   --files <path>            file-list-derived: same algorithm as --base/--head
+#                             but the changed-file list is read from <path> (one
+#                             path per line) rather than computed via git diff.
+#                             gate.sh pre-computes this list; passing it here
+#                             avoids computing the diff twice and lets test
+#                             fixtures supply the list directly without needing
+#                             git refs.
 #
 # ENVIRONMENT (all optional)
 #   SPIRA_BATCH_SUITE_DIR     where to find test-*.sh; default: dir of this script
@@ -52,6 +59,7 @@ REPO="${SPIRA_REPO:-}"
 MODE_FILE=""
 _ARG_BASE=""
 _ARG_HEAD=""
+_ARG_FILES=""
 _ARG_ALL=0
 _ARG_NO_FALLBACK=0
 
@@ -69,6 +77,11 @@ while [ $# -gt 0 ]; do
             _ARG_HEAD="$2"; shift 2 ;;
         --head=*)
             _ARG_HEAD="${1#--head=}"; shift ;;
+        --files)
+            [ $# -ge 2 ] || { printf 'select: --files requires an argument\n' >&2; exit 2; }
+            _ARG_FILES="$2"; shift 2 ;;
+        --files=*)
+            _ARG_FILES="${1#--files=}"; shift ;;
         --repo)
             [ $# -ge 2 ] || { printf 'select: --repo requires an argument\n' >&2; exit 2; }
             REPO="$2"; shift 2 ;;
@@ -90,7 +103,7 @@ while [ $# -gt 0 ]; do
             shift; break ;;
         -*)
             printf 'select: unknown option: %s\n' "$1" >&2
-            printf 'usage: select.sh (--all | --base <ref> --head <ref>) [options]\n' >&2
+            printf 'usage: select.sh (--all | --base <ref> --head <ref> | --files <path>) [options]\n' >&2
             exit 2 ;;
         *)
             printf 'select: unexpected argument: %s\n' "$1" >&2
@@ -98,17 +111,22 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Validate mode
+# Validate mode — exactly one of: --all, --base/--head, --files
 if [ "$_ARG_ALL" -eq 1 ]; then
-    [ -z "$_ARG_BASE" ] && [ -z "$_ARG_HEAD" ] || {
-        printf 'select: --all and --base/--head are mutually exclusive\n' >&2; exit 2
+    { [ -z "$_ARG_BASE" ] && [ -z "$_ARG_HEAD" ] && [ -z "$_ARG_FILES" ]; } || {
+        printf 'select: --all is mutually exclusive with --base/--head and --files\n' >&2; exit 2
     }
+elif [ -n "$_ARG_FILES" ]; then
+    { [ -z "$_ARG_BASE" ] && [ -z "$_ARG_HEAD" ]; } || {
+        printf 'select: --files is mutually exclusive with --base/--head\n' >&2; exit 2
+    }
+    [ -r "$_ARG_FILES" ] || { printf 'select: --files: %s: not readable\n' "$_ARG_FILES" >&2; exit 2; }
 elif [ -n "$_ARG_BASE" ] && [ -n "$_ARG_HEAD" ]; then
-    : # diff mode
+    : # diff mode via git
 elif [ -n "$_ARG_BASE" ] || [ -n "$_ARG_HEAD" ]; then
     printf 'select: --base and --head must be given together\n' >&2; exit 2
 else
-    printf 'usage: select.sh (--all | --base <ref> --head <ref>) [options]\n' >&2; exit 2
+    printf 'usage: select.sh (--all | --base <ref> --head <ref> | --files <path>) [options]\n' >&2; exit 2
 fi
 
 # Default REPO to parent of SUITE_DIR when not otherwise set
@@ -132,12 +150,21 @@ if [ "$_ARG_ALL" -eq 1 ]; then
     exit 0
 fi
 
-# --base/--head mode: diff-derived selection
+# --base/--head or --files mode: build the changed-file list
 _cv_changed=""
-while IFS= read -r _cv_f || [ -n "$_cv_f" ]; do
-    [ -n "$_cv_f" ] || continue
-    _cv_changed="$_cv_changed $_cv_f"
-done < <(git -C "$REPO" diff --name-only "${_ARG_BASE}...${_ARG_HEAD}" 2>/dev/null || true)
+if [ -n "$_ARG_FILES" ]; then
+    # Pre-computed file list — read it directly (avoids git diff and lets test
+    # fixtures supply the list without git refs).
+    while IFS= read -r _cv_f || [ -n "$_cv_f" ]; do
+        [ -n "$_cv_f" ] || continue
+        _cv_changed="$_cv_changed $_cv_f"
+    done < "$_ARG_FILES"
+else
+    while IFS= read -r _cv_f || [ -n "$_cv_f" ]; do
+        [ -n "$_cv_f" ] || continue
+        _cv_changed="$_cv_changed $_cv_f"
+    done < <(git -C "$REPO" diff --name-only "${_ARG_BASE}...${_ARG_HEAD}" 2>/dev/null || true)
+fi
 
 if [ -z "$_cv_changed" ]; then
     # No changed files: only always-run (no # covers:) suites.

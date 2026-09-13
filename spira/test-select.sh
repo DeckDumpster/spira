@@ -194,10 +194,18 @@ _n="$(grep -c 'no-all-fallback' "$HERE/testenv-batch.sh" 2>/dev/null || true)"
 _n="$(grep -c 'no-all-fallback' "$HERE/gate-spira.sh" 2>/dev/null || true)"
 iseq "E6: gate-spira.sh does not use --no-all-fallback (keeps full fallback)" "${_n:-0}" "0"
 
+# E7: gate-spira.sh calls select.sh with --files (uses pre-computed list from gate.sh,
+#     not --base/--head). This keeps the interface compatible with test fixtures that
+#     supply SPIRA_GATE_FILES without git refs.
+_n="$(grep -c -- '--files' "$HERE/gate-spira.sh" 2>/dev/null || true)"
+[ "${_n:-0}" -ge 1 ] && ok "E7: gate-spira.sh calls select.sh with --files" \
+    || bad "E7: gate-spira.sh calls select.sh with --files" "no reference found"
+
 # ---------------------------------------------------------------------------
 echo
 echo "Part F: --no-all-fallback mode — unmapped file does not trigger all-suites"
 # ---------------------------------------------------------------------------
+# (Note: F tests use --base/--head; G tests mirror them with --files)
 
 # F1: unmapped change with --no-all-fallback: only covered+nocov suites, not all
 out="$(bash "$SELECT" --base "$BASE" --head "$HEAD_UNMAPPED" \
@@ -214,6 +222,55 @@ bash "$SELECT" --base "$BASE" --head "$HEAD_UNMAPPED" \
     --repo "$REPO" --suite-dir "$SD" --no-all-fallback \
     --mode-file "$mf" >/dev/null 2>&1
 iseq "F2: --no-all-fallback writes mode=diff" "$(cat "$mf" 2>/dev/null)" "diff"
+
+# ---------------------------------------------------------------------------
+echo
+echo "Part G: --files mode — pre-computed file list replaces git diff"
+# ---------------------------------------------------------------------------
+# G tests mirror B and C but supply the file list via --files instead of
+# --base/--head. The selection result must be identical, proving that the
+# two input forms are interchangeable.
+
+# POSITIVE CONTROL: the same file that B proved selects suite A.
+FLIST_COVERED="$TMP/flist-covered"
+printf 'covered.sh\n' > "$FLIST_COVERED"
+
+out="$(bash "$SELECT" --files "$FLIST_COVERED" --suite-dir "$SD" 2>/dev/null)"
+rc=$?
+iszero  "G1: --files covered exits 0"          "$rc"
+want    "G1: covering suite A selected"         "test-fx-a.sh" "$out"
+want    "G1: always-run suite C selected"       "test-fx-c.sh" "$out"
+notwant "G1: unrelated suite B not selected"    "test-fx-b.sh" "$out"
+
+# UNMAPPED FILE: mirrors C — triggers all-suites fallback.
+FLIST_UNMAPPED="$TMP/flist-unmapped"
+printf 'no-suite-owns-this.txt\n' > "$FLIST_UNMAPPED"
+
+out="$(bash "$SELECT" --files "$FLIST_UNMAPPED" --suite-dir "$SD" 2>/dev/null)"
+rc=$?
+iszero "G2: --files unmapped fallback exits 0" "$rc"
+want   "G2: fallback includes test-fx-a.sh"    "test-fx-a.sh" "$out"
+want   "G2: fallback includes test-fx-b.sh"    "test-fx-b.sh" "$out"
+want   "G2: fallback includes test-fx-c.sh"    "test-fx-c.sh" "$out"
+
+# --no-all-fallback with --files: unmapped file does not expand selection.
+out="$(bash "$SELECT" --files "$FLIST_UNMAPPED" --suite-dir "$SD" --no-all-fallback 2>/dev/null)"
+rc=$?
+iszero  "G3: --files --no-all-fallback exits 0"           "$rc"
+notwant "G3: suite A not selected (not covered)"          "test-fx-a.sh" "$out"
+notwant "G3: suite B not selected (not covered)"          "test-fx-b.sh" "$out"
+want    "G3: always-run suite C still selected"           "test-fx-c.sh" "$out"
+
+# mode-file with --files: covered → "diff", unmapped fallback → "all"
+mf="$TMP/mode-g-covered"
+bash "$SELECT" --files "$FLIST_COVERED" --suite-dir "$SD" \
+    --mode-file "$mf" >/dev/null 2>&1
+iseq "G4: --files covered writes mode=diff" "$(cat "$mf" 2>/dev/null)" "diff"
+
+mf="$TMP/mode-g-unmapped"
+bash "$SELECT" --files "$FLIST_UNMAPPED" --suite-dir "$SD" \
+    --mode-file "$mf" >/dev/null 2>&1
+iseq "G5: --files unmapped writes mode=all" "$(cat "$mf" 2>/dev/null)" "all"
 
 # ---------------------------------------------------------------------------
 echo
