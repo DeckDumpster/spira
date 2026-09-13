@@ -98,6 +98,40 @@ for cls, n in c.most_common():
     print(n, cls)
 EOF
 
+# Python: merge all-time and since-watermark counts, rank by since-watermark.
+# Reads two "N class" files; outputs "N class (M all-time)" ranked by N descending.
+cat > "$_TMPDIR/merge.py" <<'EOF'
+import sys
+
+def read_counts(path):
+    counts = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(None, 1)
+                if len(parts) == 2:
+                    try:
+                        counts[parts[1]] = int(parts[0])
+                    except ValueError:
+                        pass
+    except Exception:
+        pass
+    return counts
+
+all_time = read_counts(sys.argv[1])
+since_wm = read_counts(sys.argv[2])
+all_classes = set(all_time) | set(since_wm)
+
+ranked = sorted(all_classes, key=lambda c: (-since_wm.get(c, 0), all_time.get(c, 0)))
+for cls in ranked:
+    n_since = since_wm.get(cls, 0)
+    n_all   = all_time.get(cls, 0)
+    print('{} {} ({} all-time)'.format(n_since, cls, n_all))
+EOF
+
 # Python: extract covered classes from open remedy beads → one class per line.
 cat > "$_TMPDIR/covers.py" <<'EOF'
 import sys, json
@@ -120,6 +154,35 @@ _census_raw() {
     census_events_run_sql | python3 "$_TMPDIR/count.py"
 }
 
+# READ WATERMARK. $SPIRA_RUN/maechen.watermark holds a Unix epoch integer written by
+# maechen-trigger.sh. When present and valid, census ranks by since-watermark count and
+# shows both counts: "N class (M all-time)". When absent or unreadable, fall back to
+# all-time counts (same format as before) and say so on stderr so the caller knows the
+# ranking is all-time rather than since-watermark.
+_watermark_ts=0
+_watermark_file="${SPIRA_RUN}/maechen.watermark"
+if [ -f "$_watermark_file" ]; then
+    _wm_raw="$(cat "$_watermark_file" 2>/dev/null | tr -d '[:space:]' || true)"
+    case "${_wm_raw:-}" in
+        ''|*[!0-9]*)
+            printf 'census.sh: watermark at %s is unreadable; falling back to all-time counts\n' \
+                "$_watermark_file" >&2 ;;
+        *) _watermark_ts="$_wm_raw" ;;
+    esac
+else
+    printf 'census.sh: no watermark file at %s; reporting all-time counts\n' \
+        "$_watermark_file" >&2
+fi
+
+# Build the ranked census: since-watermark when watermark is valid, all-time otherwise.
+_census_raw > "$_TMPDIR/all_time.txt"
+if [ "$_watermark_ts" -gt 0 ] 2>/dev/null; then
+    census_events_run_sql "$_watermark_ts" | python3 "$_TMPDIR/count.py" > "$_TMPDIR/since_wm.txt"
+    _RANKED="$(python3 "$_TMPDIR/merge.py" "$_TMPDIR/all_time.txt" "$_TMPDIR/since_wm.txt")"
+else
+    _RANKED="$(cat "$_TMPDIR/all_time.txt")"
+fi
+
 # Collect classes already covered by an open remedy bead.
 _suppressed_classes() {
     bdq list --status open --label "$REMEDY_LABEL" --json 2>/dev/null \
@@ -130,10 +193,13 @@ _suppressed_classes() {
 _suppressed_classes > "$_TMPDIR/suppressed.txt"
 
 # Emit the ranked census, suppressing (or annotating) remedy-covered classes.
-while IFS=' ' read -r count class; do
+# IFS=' ' with read -r splits "N class (M all-time)" into: count, class, rest.
+while IFS=' ' read -r count class rest; do
+    [ -n "$class" ] || continue
     if grep -qxF "$class" "$_TMPDIR/suppressed.txt" 2>/dev/null; then
-        [ "$WITH_SUPPRESSED" -eq 1 ] && printf '%s %s [suppressed]\n' "$count" "$class"
+        [ "$WITH_SUPPRESSED" -eq 1 ] && printf '%s %s%s [suppressed]\n' \
+            "$count" "$class" "${rest:+ $rest}"
     else
-        printf '%s %s\n' "$count" "$class"
+        printf '%s %s%s\n' "$count" "$class" "${rest:+ $rest}"
     fi
-done < <(_census_raw)
+done <<< "$_RANKED"

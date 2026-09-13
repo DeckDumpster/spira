@@ -1573,12 +1573,19 @@ recurs_of()   { _counter_events_query "${1:-}" recurred;  }
 # CENSUS SQL — the query and two-path runner used by census.sh to aggregate failure
 # classes. Kept in lib.sh so that tests can call it directly without parsing census.sh.
 # --------------------------------------------------------------------------------------
-_census_events_sql() {
-    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(*) AS n FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred') GROUP BY event_type, new_value ORDER BY n DESC"
+_census_events_sql() {   # _census_events_sql [since_epoch_s]
+    # An optional Unix epoch lower bound adds "AND created_at > FROM_UNIXTIME(ts)" so
+    # callers can distinguish events since a watermark from all-time totals. Zero or absent
+    # means all-time.
+    local since_clause=""
+    if [ -n "${1:-}" ] && [ "${1:-0}" -gt 0 ] 2>/dev/null; then
+        since_clause=" AND created_at > FROM_UNIXTIME(${1})"
+    fi
+    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(*) AS n FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred')%s GROUP BY event_type, new_value ORDER BY n DESC" "$since_clause"
 }
-census_events_run_sql() {   # census_events_run_sql -> tabular output (both modes)
+census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output (both modes)
     local q
-    q="$(_census_events_sql)"
+    q="$(_census_events_sql "${1:-}")"
     local out
     if out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>/dev/null)" && [ -n "$out" ]; then
         printf '%s\n' "$out"; return 0
