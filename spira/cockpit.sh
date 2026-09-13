@@ -1072,7 +1072,7 @@ unsent_keys() {
         if _brs="$(git -C "$_p" for-each-ref --format='%(refname:short) %(committerdate:unix)' 'refs/heads/spira/*' 2>/dev/null)"; then
             while read -r _b _ts; do
                 [ -n "$_b" ] || continue
-                _st="$(bdjson show "${_b#spira/}" 2>/dev/null | python3 -c '
+                _st="$(timeout 2 bdjson show "${_b#spira/}" 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin); print((d if isinstance(d, list) else [d])[0].get("status", ""))
 except Exception: print("")' 2>/dev/null)"
