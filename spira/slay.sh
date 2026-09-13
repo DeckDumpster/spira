@@ -2,10 +2,19 @@
 #
 # slay.sh — stop one aeon cleanly and make its bead say what is true.
 #
-#   slay.sh <bead-id>                      stop it, release the bead (open, unassigned), nuke its work
+#   slay.sh <bead-id>                      stop it, release the bead (open, unassigned), retire its work
 #   slay.sh <bead-id> --close "<reason>"   ...and close the bead with that reason instead of reopening
 #   slay.sh <bead-id> --keep-work          ...but leave its branch and worktree in place
 #   slay.sh <bead-id> --why "<text>"       what the note on the bead says the operator's reason was
+#
+# "RETIRE", NOT "NUKE" — the default does not lose work, and the old one-word summary saying
+# it did caused an operator to reach for --keep-work in an incident and pass the reason as a
+# second positional to get it (2026-09-13). What the default does, in step 5: uncommitted
+# work is salvaged to $SPIRA_RUN/reaped, a branch carrying commits the base does not have is
+# parked at refs/slain/<id> (a real ref, survives gc), and the deletion is REFUSED outright
+# if that parking fails. Only a branch with nothing the base lacks is simply removed. Use
+# --keep-work when you want the branch to stay claimable-looking in refs/heads; do not use
+# it out of fear of losing the commits.
 #
 # WHAT "CLEANLY" MEANS, in order, because each step is the one the next depends on:
 #   1. A MARKER FIRST, so the aeon's own exit path knows it was slain. aeon.sh charges an
@@ -46,13 +55,42 @@ while [ $# -gt 0 ]; do
         --why)       WHY="${2:?--why needs text}"; shift ;;
         -h|--help)   sed -n '2,12p' "$0"; exit 0 ;;
         -*)          echo "slay.sh: unknown flag $1" >&2; exit 2 ;;
-        *)           ID="$1" ;;
+        # ONE POSITIONAL ONLY. This was `ID="$1"`, so a second positional silently REPLACED
+        # the bead id and the run proceeded against whatever came last. `slay.sh sp-gjpc
+        # "blocked on the P0 fixes"` therefore operated on a bead named after the sentence,
+        # found nothing, and reported success (2026-09-13). The reason belongs to --why.
+        *)           [ -z "$ID" ] || {
+                         printf 'slay.sh: two bead ids given (%s, %s) — a reason goes in --why "<text>"\n' \
+                             "$ID" "$1" >&2; exit 2; }
+                     ID="$1" ;;
     esac
     shift
 done
 [ -n "$ID" ] || { echo "usage: slay.sh <bead-id> [--close \"<reason>\"] [--keep-work] [--why \"<text>\"]" >&2; exit 2; }
 fail=0
 say() { printf '%s\n' "$*"; }
+
+# ---- 0. THE BEAD MUST EXIST ------------------------------------------------------------
+# Step 6 says this script exits non-zero on anything it could not do. It did not: given an id
+# no bead carries, it wrote a .slain marker, reported `bead: None status=None`, printed
+# `slain: <id>` and exited 0 (2026-09-13). A destructive operator tool that reports success
+# for a target it never found is the failure mode every other fence here exists to prevent.
+#
+# COMPARE THE ID THAT COMES BACK, never just `bd show`'s exit status: `bd show sp-ofeb`
+# resolves an orphaned child `sp-ofeb.1` by PREFIX and answers as though the parent existed.
+_slay_found="$(bdq show "$ID" --json 2>/dev/null | python3 -c '
+import json,sys
+try:
+    d = json.load(sys.stdin)
+    d = d[0] if isinstance(d, list) else d
+    print(d.get("id",""))
+except Exception:
+    print("")' 2>/dev/null)"
+[ "$_slay_found" = "$ID" ] || {
+    printf 'slay.sh: no bead %s in %s — refusing to act\n' "$ID" "${SPIRA_DB:-?}" >&2
+    [ -n "$_slay_found" ] && printf 'slay.sh: the store answered with %s instead (prefix match)\n' "$_slay_found" >&2
+    exit 2
+}
 
 # ---- 1. the marker ---------------------------------------------------------------------
 printf '%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$WHY" > "$SPIRA_RUN/$ID.slain"

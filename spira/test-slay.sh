@@ -239,6 +239,42 @@ rc=$?
 is "slay --close on closed bead exits 0" 0      "$rc"
 is "bead is still closed"                closed "$(status_of sp-s7)"
 
+
+# ======================================================================================
+# REFUSALS — a destructive tool must fail closed on a target it never found.
+#
+# Both of these were real and both fired on the same command on 2026-09-13:
+#   bash slay.sh sp-gjpc "blocked on the P0 fixes"
+# The second positional silently REPLACED the bead id, the run proceeded against a bead
+# named after the sentence, found nothing, printed "slain: <sentence>" and exited 0.
+# Nothing was slain and the operator was told three times that something had been.
+# ======================================================================================
+echo
+echo "refusals:"
+
+# --- a bead id no bead carries -----------------------------------------------------
+out="$(bash "$SLAY" sp-nosuchbead9 --why probe 2>&1)"; rc=$?
+is   "bogus id exits 2"                    2 "$rc"
+want "bogus id names the store"            "refusing to act" "$out"
+nowant "bogus id does not report a slaying" "slain: sp-nosuchbead9" "$out"
+is   "bogus id leaves no .slain marker"    no \
+     "$([ -f "$SPIRA_RUN/sp-nosuchbead9.slain" ] && echo yes || echo no)"
+
+# --- a reason passed where the id goes ---------------------------------------------
+seed sp-s8
+out="$(bash "$SLAY" sp-s8 "blocked on the P0 fixes" 2>&1)"; rc=$?
+is   "two positionals exit 2"              2 "$rc"
+want "names both ids"                      "two bead ids given" "$out"
+want "points at the right flag"            '--why' "$out"
+is   "the real bead was NOT touched"       in_progress "$(status_of sp-s8)"
+
+# --- POSITIVE CONTROL --------------------------------------------------------------
+# Without this, a slay.sh that refused EVERYTHING would pass both cases above.
+out="$(bash "$SLAY" sp-s8 --keep-work --why "positive control" 2>&1)"; rc=$?
+is   "a real id with a --why still slays"  0    "$rc"
+is   "and the bead is released"            open "$(status_of sp-s8)"
+teardown sp-s8
+
 # ======================================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
