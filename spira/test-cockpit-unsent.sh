@@ -17,6 +17,7 @@
 #
 # defect: sp-884p
 # covers: spira/cockpit.sh
+# scar: SP_BRANCH_DONE was overwritten per-repo so only the first repository's zero survived; SP_UNSENT counted every ref under refs/heads/spira/* regardless of whether the suffix resolved to a bead.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"
@@ -32,6 +33,9 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# Git identity for fixture commits — required in the container (no ~/.gitconfig).
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
+export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 BASE_PATH="$PATH"
 # conf.sh (sourced by testdb.sh) knows where bd lives; pass it through so the probe can find it.
 BD_PATH="${SPIRA_PATH:-}"

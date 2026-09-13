@@ -16,6 +16,7 @@
 # suspicion that would catch a real one (law-alerts-must-be-actionable).
 #
 # covers: spira/cockpit.sh cockpit/health.sh
+# scar: the worked/landed row counted all-time under a 24h header, producing nonsense against scoped counts; and never-landed falsely flagged healthy landing queues as irrecoverable.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # RUNNER-EXPORTED VARIABLES. conf.sh exports SPIRA_DB pointing at the runner's production
@@ -38,6 +39,9 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# Git identity for fixture commits — required in the container (no ~/.gitconfig).
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
+export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 BASE_PATH="$PATH"
 BD_PATH="${SPIRA_PATH:-}"
 REAL_BD="$(PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" command -v bd)"

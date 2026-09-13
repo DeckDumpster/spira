@@ -17,6 +17,7 @@
 #
 # defect: sp-a5ga
 # covers: spira/cockpit.sh cockpit/health.sh
+# scar: closed beads with a branch not yet on the base were invisible on the health pane; the queue between "aeon closed it" and "commit on the base branch" was missing.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"
@@ -32,6 +33,9 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# Git identity for fixture commits — required in the container (no ~/.gitconfig).
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
+export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 BASE_PATH="$PATH"
 BD_PATH="${SPIRA_PATH:-}"
 REAL_BD="$(PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" command -v bd)"
