@@ -116,7 +116,26 @@ want "and reports how many files it checked"               "clean" "$out"
 # ---------------------------------------------------------------------------------------
 # THE SHIPPED TREE. Read through the control above, this now means something.
 # ---------------------------------------------------------------------------------------
+# In the gate container the worktree's .git FILE contains a gitdir: line that resolves
+# to the host — a path that is not bind-mounted inside the container. git exits non-zero
+# and literal-lint.sh exits 3 ("not a git repository"). Build a portable mirror from the
+# real files, replacing the unreachable worktree gitdir with a plain git repo, and run
+# lint_at against that instead. The set of files is identical; only the git plumbing
+# differs.
 out="$(lint)"; rc=$?
+if [ "$rc" = 3 ]; then
+    MIRROR="$TMP/shipped-mirror"
+    mkdir -p "$MIRROR"
+    SHIPPED="$(cd "$HERE/.." && pwd -P)"
+    cp -a "$SHIPPED/." "$MIRROR/"
+    rm -rf "$MIRROR/.git"
+    git init -q -b main "$MIRROR"
+    git -C "$MIRROR" config user.email t@t
+    git -C "$MIRROR" config user.name t
+    git -C "$MIRROR" add .
+    git -C "$MIRROR" commit -q -m mirror
+    out="$(lint_at "$MIRROR")"; rc=$?
+fi
 is   "every shipped file passes" "0" "$rc"
 [ "$rc" = 0 ] || printf '%s\n' "$out"
 
