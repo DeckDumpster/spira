@@ -51,6 +51,11 @@
 #                             need installed units will skip (exit 77)
 #   SPIRA_VERDICTS          verdict-cache directory (shared with gate.sh)
 #   SPIRA_VERDICT_TTL       cache TTL in seconds; 0 = disabled (default: 0)
+#   SPIRA_SUITE_TIMEOUT     per-suite wall-clock limit in seconds; 0 = disabled
+#                           (default: 600). A suite that exceeds this limit is
+#                           recorded as "timeout" and the corpus continues. This
+#                           mirrors gate-spira.sh's per-suite watchdog so neither
+#                           runner can be held indefinitely by one runaway suite.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -482,6 +487,11 @@ log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE)"
 _batch_red=0
 _batch_container_dead=0
 
+# Per-suite timeout: 0 disables; default 600 seconds, mirroring gate-spira.sh.
+# The `timeout` command exits 124 when the limit fires; we map that to status=timeout
+# in the result file so callers can distinguish a runaway from a genuine red.
+_suite_timeout="${SPIRA_SUITE_TIMEOUT:-600}"
+
 if [ "$MODE" = serial ]; then
 
     # Serial: one suite at a time. Suites share SPIRA_RUN inside the container.
@@ -493,15 +503,30 @@ if [ "$MODE" = serial ]; then
         res_file="$RESULTS/$s.result"
 
         _rc=0
-        podman exec --user "$_SPIRA_USER" \
-            -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
-            -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
-            -e "CARGO_HOME=${_CONTAINER_CARGO}" \
-            -e "TESTDB_SHARED=0" \
-            -e "TESTDB_NAME=" \
-            -e "TESTDB_DIR=" \
-            -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
-            "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" >"$_batch_tmp" 2>&1 || _rc=$?
+        # Wrap with `timeout` when the limit is non-zero. On timeout, `timeout`
+        # kills the podman exec client (rc=124) and we record status=timeout rather
+        # than red so the two failure kinds stay distinguishable.
+        if [ "${_suite_timeout:-0}" -gt 0 ] 2>/dev/null; then
+            timeout "$_suite_timeout" podman exec --user "$_SPIRA_USER" \
+                -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
+                -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
+                -e "CARGO_HOME=${_CONTAINER_CARGO}" \
+                -e "TESTDB_SHARED=0" \
+                -e "TESTDB_NAME=" \
+                -e "TESTDB_DIR=" \
+                -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
+                "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" >"$_batch_tmp" 2>&1 || _rc=$?
+        else
+            podman exec --user "$_SPIRA_USER" \
+                -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
+                -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
+                -e "CARGO_HOME=${_CONTAINER_CARGO}" \
+                -e "TESTDB_SHARED=0" \
+                -e "TESTDB_NAME=" \
+                -e "TESTDB_DIR=" \
+                -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
+                "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" >"$_batch_tmp" 2>&1 || _rc=$?
+        fi
 
         out="$(cat "$_batch_tmp")" || true
         secs=$(( $(date +%s) - t0 ))
@@ -540,6 +565,12 @@ if [ "$MODE" = serial ]; then
                     "$_result_extra" > "$res_file"
                 printf '  %-32s SKIPPED\n' "$s"
                 ;;
+            124)
+                printf '%s %s %s %s %s%s\n' timeout "$(date +%s)" "$secs" "timeout:$s" "$MODE" \
+                    "$_result_extra" > "$res_file"
+                _batch_red=$(( _batch_red + 1 ))
+                printf '  %-32s TIMEOUT after %ss\n' "$s" "$secs"
+                ;;
             *)
                 _fp_val="$(_fp "$_rc" "$out")"
                 printf '%s %s %s %s %s%s\n' red "$(date +%s)" "$secs" "$_fp_val" "$MODE" \
@@ -575,17 +606,31 @@ else
         # changes them, but each subshell has the snapshot from this iteration.
         (
             _inner_rc=0
-            podman exec --user "$_SPIRA_USER" \
-                -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
-                -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
-                -e "CARGO_HOME=${_CONTAINER_CARGO}" \
-                -e "TESTDB_SHARED=0" \
-                -e "TESTDB_NAME=" \
-                -e "TESTDB_DIR=" \
-                -e "SPIRA_INSTANCE=${_suite_instance}" \
-                -e "SPIRA_RUN=${_suite_run}" \
-                "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" \
-                >"$_par_tmp/$s.rawout" 2>&1 || _inner_rc=$?
+            if [ "${_suite_timeout:-0}" -gt 0 ] 2>/dev/null; then
+                timeout "$_suite_timeout" podman exec --user "$_SPIRA_USER" \
+                    -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
+                    -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
+                    -e "CARGO_HOME=${_CONTAINER_CARGO}" \
+                    -e "TESTDB_SHARED=0" \
+                    -e "TESTDB_NAME=" \
+                    -e "TESTDB_DIR=" \
+                    -e "SPIRA_INSTANCE=${_suite_instance}" \
+                    -e "SPIRA_RUN=${_suite_run}" \
+                    "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" \
+                    >"$_par_tmp/$s.rawout" 2>&1 || _inner_rc=$?
+            else
+                podman exec --user "$_SPIRA_USER" \
+                    -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
+                    -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
+                    -e "CARGO_HOME=${_CONTAINER_CARGO}" \
+                    -e "TESTDB_SHARED=0" \
+                    -e "TESTDB_NAME=" \
+                    -e "TESTDB_DIR=" \
+                    -e "SPIRA_INSTANCE=${_suite_instance}" \
+                    -e "SPIRA_RUN=${_suite_run}" \
+                    "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" \
+                    >"$_par_tmp/$s.rawout" 2>&1 || _inner_rc=$?
+            fi
 
             _secs=$(( $(date +%s) - _t0 ))
             _out="$(cat "$_par_tmp/$s.rawout" 2>/dev/null || true)"
@@ -605,6 +650,11 @@ else
                     printf '%s %s %s %s %s%s\n' skip "$(date +%s)" "$_secs" - "$MODE" \
                         "$_par_extra" > "$RESULTS/$s.result"
                     printf '  %-32s SKIPPED\n' "$s"
+                    ;;
+                124)
+                    printf '%s %s %s %s %s%s\n' timeout "$(date +%s)" "$_secs" "timeout:$s" "$MODE" \
+                        "$_par_extra" > "$RESULTS/$s.result"
+                    printf '  %-32s TIMEOUT after %ss\n' "$s" "$_secs"
                     ;;
                 *)
                     _fp_val="$(_fp "$_inner_rc" "$_out")"
