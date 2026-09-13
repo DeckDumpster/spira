@@ -357,6 +357,61 @@ sys.exit(0 if os.environ["SOP_KEY"] in d else 1)' <<< "$raw"; then
         fi
     fi
 
+    # METRIC ENFORCEMENT. A SOP that declares METRIC: <KEY> <SUBCMD> verifies that the named
+    # cockpit metric has reached 0 before held=yes can be recorded. Re-reading the metric via
+    # the detector that triggered the incident is the only way to confirm the fix held: a CHECK
+    # that implements its own scope in prose can look in the wrong place, find zero, and record
+    # held=yes for an unchanged metric — which is exactly what produced 17 false held=yes
+    # entries for sop-unadopted-refs-stale-db (sp-gt7k). The rule: held=yes is only recordable
+    # when the detector's own number has actually changed; otherwise held=unknown.
+    #
+    # SOP_METRIC_COCKPIT overrides the cockpit script path, which is the seam a test drives so
+    # that the probe returns a controlled value rather than walking real git repositories.
+    #
+    # A METRIC FIELD IS OPT-IN. SOPs that do not declare METRIC are unaffected: held=yes passes
+    # through as before. The enforcement only fires when the SOP author said "verify this number."
+    #
+    # IF THE SHELF IS UNREADABLE, the METRIC cannot be extracted and enforcement is skipped.
+    # Recording held=yes when the database is down is better than refusing to record anything,
+    # because the day the harness is broken is the day a record is worth most.
+    #
+    # law-absence-needs-a-positive-control: a metric that cannot be read is not reporting zero.
+    _metric_note=""
+    if [ "$held" = yes ] && [ "$shelf_state" = ok ]; then
+        _metric_spec="$(SOP_KEY="$key" python3 -c '
+import sys, json, re, os
+try: d = json.load(sys.stdin)
+except Exception: sys.exit()
+text = d.get(os.environ.get("SOP_KEY", ""), "")
+m = re.search(r"^\s*METRIC:\s*(.+)$", text, re.M)
+if m: print(m.group(1).strip())
+' <<< "$raw" 2>/dev/null || true)"
+        if [ -n "$_metric_spec" ]; then
+            _metric_key="${_metric_spec%% *}"
+            _metric_subcmd="${_metric_spec#* }"
+            # A single-token METRIC has no subcommand — malformed; skip enforcement so the
+            # lint error is what the author sees, not a silent pass.
+            if [ -n "$_metric_key" ] && [ -n "$_metric_subcmd" ] && [ "$_metric_key" != "$_metric_subcmd" ]; then
+                _cockpit_path="${SOP_METRIC_COCKPIT:-$HERE/cockpit.sh}"
+                _metric_raw="$(timeout 30 bash "$_cockpit_path" "$_metric_subcmd" 2>/dev/null \
+                    | grep "^${_metric_key}=" | sed "s/^${_metric_key}=//" | head -1)" \
+                    || _metric_raw=""
+                _metric_fixed="$(METRIC_V="$_metric_raw" python3 -c '
+import os
+v = os.environ.get("METRIC_V", "")
+print("yes" if v.isdigit() and int(v) == 0 else "no")
+' 2>/dev/null || echo no)"
+                if [ "$_metric_fixed" = yes ]; then
+                    _metric_note="METRIC ${_metric_key}=0: fix confirmed by cockpit.sh ${_metric_subcmd}."
+                else
+                    held=unknown
+                    _raw_display="${_metric_raw:-?}"
+                    _metric_note="METRIC ${_metric_key}=${_raw_display} (still nonzero or unreadable); held downgraded from yes to unknown — the fix has not cleared the metric that triggered this incident."
+                fi
+            fi
+        fi
+    fi
+
     # ONE CLOCK READ, not two. Separate `date` calls can straddle a second boundary and put a
     # timestamp and an epoch that disagree onto the same line, which is the sort of thing
     # nobody notices until they are reconciling two records a year later.
@@ -381,6 +436,7 @@ sys.exit(0 if os.environ["SOP_KEY"] in d else 1)' <<< "$raw"; then
         note_state="ok"
         {
             printf 'SOP %s applied — CHECK %s, held=%s.\n\n%s\n' "$key" "$check" "$held" "$verdict"
+            [ -n "${_metric_note:-}" ] && printf '\n%s\n' "$_metric_note"
             [ -n "${why//[[:space:]]/}" ] && printf '\n%s\n' "$why"
             printf '\nRecorded %s by %s. Ledger: %s\n' "$ts" "$actor" "$LEDGER"
         } | bdq note "$bead" --stdin >/dev/null 2>&1 || note_state="failed"
@@ -621,7 +677,7 @@ if not isinstance(sops, dict):
     sys.exit("sop-synth: refusing — the shelf did not parse; the page is left alone")
 
 def field(v, name):
-    m = re.search(rf"^\s*{name}:\s*(.*?)(?=^\s*(?:MATCH|SYMPTOM|CHECK|FIX|ESCALATE|REF):|\Z)",
+    m = re.search(rf"^\s*{name}:\s*(.*?)(?=^\s*(?:MATCH|SYMPTOM|CHECK|METRIC|FIX|ESCALATE|REF):|\Z)",
                   v, re.M | re.S)
     return m.group(1).strip() if m else ""
 
@@ -651,8 +707,8 @@ if not sops:
     b += ["*Empty.* The first incident to be resolved fills it.", ""]
 for k, v in sops.items():
     b += [f"### {k[len('sop-'):].replace('-', ' ').capitalize()}", "", f"`{k}`", ""]
-    for name, label in (("SYMPTOM", "Symptom"), ("CHECK", "Check"), ("FIX", "Fix"),
-                        ("ESCALATE", "Escalate"), ("REF", "Reference")):
+    for name, label in (("SYMPTOM", "Symptom"), ("CHECK", "Check"), ("METRIC", "Metric"),
+                        ("FIX", "Fix"), ("ESCALATE", "Escalate"), ("REF", "Reference")):
         val = field(v, name)
         if not val:
             continue
@@ -712,6 +768,20 @@ for key, text in sorted(sops.items()):
                 re.compile(pat)
             except re.error:
                 reasons.append("MATCH is not a valid extended regex: " + pat)
+        # METRIC is optional. If present, it must be exactly two tokens: an uppercase metric
+        # key (SP_SOMETHING) and a lowercase cockpit subcommand (unsent, sops, …). A single
+        # token has no subcommand and cannot be used by applied to re-read the metric; a key
+        # with lowercase or a subcommand with uppercase signals the fields were swapped.
+        m_metric = re.search(r"^\s*METRIC:\s*(.+)$", text, re.M)
+        if m_metric:
+            parts = m_metric.group(1).strip().split()
+            if len(parts) != 2 \
+               or not re.match(r"^[A-Z][A-Z0-9_]*$", parts[0]) \
+               or not re.match(r"^[a-z][a-z0-9_-]*$", parts[1]):
+                reasons.append(
+                    "METRIC must be KEY SUBCMD — uppercase cockpit key then lowercase "
+                    "cockpit subcommand (e.g. SP_UNADOPTED unsent); got: "
+                    + m_metric.group(1).strip())
         words = len(text.split())
         if words > cap:
             reasons.append("%d words, cap is %d" % (words, cap))

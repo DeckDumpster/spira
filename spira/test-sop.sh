@@ -490,5 +490,136 @@ want "disk-full fires on its own payload (positive control for the negative)" "s
 nowant "disk-full does not fire on a sweep payload" "sop-disk-full" "$sweep_match"
 
 echo
+echo "--- METRIC: held=yes is only allowed when the metric has cleared"
+
+# THE MECHANIC UNDER TEST. A SOP with METRIC: <KEY> <SUBCMD> declares that the named
+# cockpit metric must reach 0 before held=yes can be recorded. sop.sh applied re-reads
+# the metric via cockpit.sh <SUBCMD> on every held=yes attempt; if the value is still
+# nonzero or unreadable, held is downgraded to unknown automatically.
+#
+# This is the enforcement that prevents the ledger from recording held=yes for a fix that
+# did not clear the metric (sp-gt7k): a CHECK that returned zero because it looked in the
+# wrong place could not trigger a downgrade because sop.sh never re-read the real number.
+#
+# THE MOCK COCKPIT stands in for cockpit.sh in the clean test environment. It outputs
+# SP_UNADOPTED=$MOCK_UNADOPTED for the "unsent" subcommand and nothing for others.
+# SOP_METRIC_COCKPIT overrides which binary sop.sh calls; the default ($HERE/cockpit.sh)
+# would not run in env -i without SPIRA_HOME and friends, so every METRIC test uses sop_m.
+MOCK_COCKPIT="$TMP/mock-cockpit"
+cat > "$MOCK_COCKPIT" << 'MOCK'
+#!/usr/bin/env bash
+case "${1:-}" in
+    unsent) printf 'SP_UNADOPTED=%s\n' "${MOCK_UNADOPTED:-0}" ;;
+    *) true ;;
+esac
+MOCK
+chmod +x "$MOCK_COCKPIT"
+
+sop_m() {   # like sop() but with SOP_METRIC_COCKPIT — defaults to the mock, overridable.
+    # The outer SOP_METRIC_COCKPIT variable overrides $MOCK_COCKPIT so that individual tests
+    # can substitute a different cockpit (e.g. a silent one) without changing $MOCK_COCKPIT.
+    env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
+        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_RUN="$RUN" \
+        SPIRA_DB="${SPIRA_DB_OVERRIDE:-$SPIRA_DB}" \
+        SPIRA_SOP_LEDGER="${LEDGER_OVERRIDE:-$LEDGER}" SOP_WHY_CAP="$WHY_CAP" \
+        BEADS_ACTOR="aeon-testops" BEADS_NO_AUTO_IMPORT=1 \
+        SOP_METRIC_COCKPIT="${SOP_METRIC_COCKPIT:-$MOCK_COCKPIT}" \
+        MOCK_UNADOPTED="${MOCK_UNADOPTED:-0}" \
+        timeout 120 bash "$HERE/sop.sh" "$@" 2>&1
+}
+sop_m_rc() { sop_m "$@" >/dev/null 2>&1; printf '%s' "$?"; }
+
+# Write a SOP that declares METRIC: SP_UNADOPTED unsent. The CHECK already calls the
+# detector; the METRIC field tells applied which number to re-confirm before held=yes.
+sop write metric-sop - <<'SOP' >/dev/null 2>&1
+MATCH: SP_UNADOPTED.*nonzero|unadopted refs
+SYMPTOM: unadopted refs remain after cleanup
+CHECK: bash $SPIRA_HOME/cockpit.sh unsent 2>/dev/null | grep "^SP_UNADOPTED="
+METRIC: SP_UNADOPTED unsent
+FIX: remove the stray branches with git -C <repo> branch -D <branch>
+SOP
+
+want "the metric SOP is on the shelf" "sop-metric-sop" "$(sop list)"
+
+# POSITIVE CONTROL: verify the mock itself works before trusting the downgrade tests.
+# A broken mock that outputs nothing every time would make every "held=unknown" test
+# pass for the wrong reason (the cockpit returned nothing → unknown, regardless of the fix).
+mock_out="$(MOCK_UNADOPTED=3 bash "$MOCK_COCKPIT" unsent)"
+is "mock cockpit outputs the configured value" "SP_UNADOPTED=3" "$mock_out"
+
+# WITH METRIC NONZERO: held=yes must be downgraded to unknown automatically.
+# This is the defect this bead closes: 17 held=yes entries while SP_UNADOPTED was still 1.
+MOCK_UNADOPTED=1 sop_m applied metric-sop --bead sp-t1 --check pass --held yes >/dev/null 2>&1
+heldval="$(python3 -c '
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+last = [r for r in rows if r.get("sop")=="sop-metric-sop" and r.get("bead")=="sp-t1"]
+print(last[-1]["held"] if last else "none")
+' "$LEDGER" 2>/dev/null)"
+is "held=yes downgraded to unknown when SP_UNADOPTED=1" "unknown" "$heldval"
+
+# WITH METRIC ZERO: held=yes is allowed — the fix genuinely cleared the metric.
+MOCK_UNADOPTED=0 sop_m applied metric-sop --bead sp-t2 --check pass --held yes >/dev/null 2>&1
+heldval2="$(python3 -c '
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+last = [r for r in rows if r.get("sop")=="sop-metric-sop" and r.get("bead")=="sp-t2"]
+print(last[-1]["held"] if last else "none")
+' "$LEDGER" 2>/dev/null)"
+is "held=yes allowed when SP_UNADOPTED=0" "yes" "$heldval2"
+
+# COCKPIT RETURNS ?: held=yes becomes unknown — cannot confirm from a failed probe.
+MOCK_UNADOPTED='?' sop_m applied metric-sop --bead sp-t1 --check pass --held yes >/dev/null 2>&1
+heldval3="$(python3 -c '
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+last = [r for r in rows if r.get("sop")=="sop-metric-sop" and r.get("bead")=="sp-t1"]
+print(last[-1]["held"] if last else "none")
+' "$LEDGER" 2>/dev/null)"
+is "held=yes is unknown when cockpit returns ?" "unknown" "$heldval3"
+
+# COCKPIT UNAVAILABLE (empty output): held=yes becomes unknown.
+cat > "$TMP/silent-cockpit" << 'SILENT'
+#!/usr/bin/env bash
+true
+SILENT
+chmod +x "$TMP/silent-cockpit"
+SOP_METRIC_COCKPIT="$TMP/silent-cockpit" MOCK_UNADOPTED=0 sop_m applied metric-sop --bead sp-t1 --check pass --held yes >/dev/null 2>&1
+heldval4="$(python3 -c '
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+last = [r for r in rows if r.get("sop")=="sop-metric-sop" and r.get("bead")=="sp-t1"]
+print(last[-1]["held"] if last else "none")
+' "$LEDGER" 2>/dev/null)"
+is "held=yes is unknown when cockpit returns nothing" "unknown" "$heldval4"
+
+# SOPs WITHOUT METRIC: held=yes is still allowed normally — METRIC is opt-in.
+is "held=yes unaffected on SOP without METRIC" "0" \
+   "$(sop_rc applied disk-full --bead sp-t2 --check pass --held yes)"
+
+# THE BEAD NOTE EXPLAINS THE DOWNGRADE. A human reading the incident bead should see
+# why held was not yes — the metric value and what it means.
+note_sp_t1="$(notes sp-t1)"
+want "note explains downgrade: names the METRIC key" "METRIC" "$note_sp_t1"
+
+# LINT ACCEPTS A WELL-FORMED METRIC FIELD and catches a bad one written via the back door.
+# `sop write` does not yet validate METRIC format; `lint` is what closes the gap.
+sop write good-metric - <<'SOP' >/dev/null 2>&1
+SYMPTOM: test
+CHECK: check
+FIX: fix
+METRIC: SP_UNADOPTED unsent
+SOP
+is "lint accepts a well-formed METRIC field" "0" "$(sop_rc lint)"
+
+# Write a malformed METRIC via the back door (bypassing `sop write`) — the same route
+# that could produce a broken SOP in production.  Lint must name it.
+bdt remember --key sop-bad-metric "$(printf 'SYMPTOM: t\nCHECK: c\nFIX: f\nMETRIC: notakey notasubcmd123$')" >/dev/null 2>&1
+is  "lint catches a malformed METRIC via the back door" "1" "$(sop_rc lint)"
+want "lint names METRIC as the problem"               "METRIC" "$(sop lint)"
+bdt forget sop-bad-metric >/dev/null 2>&1
+is  "lint is clean after removing the bad METRIC sop" "0"     "$(sop_rc lint)"
+
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
