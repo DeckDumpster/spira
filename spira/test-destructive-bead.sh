@@ -26,6 +26,14 @@ nowant(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]
 
 echo "test-destructive-bead.sh"
 
+# Source conf.sh to read SPIRA_ASK_LABEL rather than hardcoding a value — the shipped default
+# (needs-operator) differs from a configured installation, so a hardcoded label never matches
+# the fence's check and the bypass test fails on a clean environment. Capture it before the
+# env -i helpers drop it from the environment.
+# shellcheck source=spira/conf.sh
+. "$HERE/conf.sh" 2>/dev/null || true
+ASK_LABEL="${SPIRA_ASK_LABEL:-needs-operator}"
+
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # A stub bd that records its call and exits 0, so passing cases reach it.
@@ -38,6 +46,7 @@ check_title() {  # check_title <title> <labels> -> combined stdout+stderr
     env -i PATH="$PATH" HOME="$TMP" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/nomap" SPIRA_BD="$STUB_BD" \
+        SPIRA_ASK_LABEL="$ASK_LABEL" \
         bash -c '. "$1/lib.sh"; _bdq_check_destructive create "$2" --labels "$3"' \
             -- "$HERE" "$1" "$2" 2>&1
 }
@@ -47,6 +56,7 @@ check_desc() {  # check_desc <desc> <labels> -> combined stdout+stderr
     env -i PATH="$PATH" HOME="$TMP" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/nomap" SPIRA_BD="$STUB_BD" \
+        SPIRA_ASK_LABEL="$ASK_LABEL" \
         bash -c '. "$1/lib.sh"; _bdq_check_destructive create "clean title" -d "$2" --labels "$3"' \
             -- "$HERE" "$1" "$2" 2>&1
 }
@@ -56,6 +66,7 @@ run_bdq() {  # run_bdq <title> <labels> -> combined stdout+stderr
     env -i PATH="$PATH" HOME="$TMP" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP/norepo" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/nomap" SPIRA_BD="$STUB_BD" BD_TIMEOUT=10 \
+        SPIRA_ASK_LABEL="$ASK_LABEL" \
         bash -c '. "$1/lib.sh"; bdq create "$2" --labels "$3"' \
             -- "$HERE" "$1" "$2" 2>&1
 }
@@ -117,13 +128,13 @@ want "destructive desc: names the phrase"  "world.sh"    "$out"
 
 # ==========================================================================
 echo
-echo "needs-ryan label bypasses the fence:"
+echo "ask label bypasses the fence:"
 # ==========================================================================
 
-out="$(check_title "$SP6YLZ" "spira,plan,needs-ryan" 2>&1)" || true
+out="$(check_title "$SP6YLZ" "spira,plan,$ASK_LABEL" 2>&1)" || true
 nowant "needs-ryan: not refused"  "needs-ryan label" "$out"
 
-out="$(check_title "Run world.sh stop" "needs-ryan" 2>&1)" || true
+out="$(check_title "Run world.sh stop" "$ASK_LABEL" 2>&1)" || true
 nowant "needs-ryan only label: not refused"  "needs-ryan label" "$out"
 
 # ==========================================================================
@@ -155,7 +166,7 @@ e2e_bad="$(run_bdq "Run world.sh stop to apply config" "spira,plan" || true)"
 want   "bdq: refused"         "needs-ryan"  "$e2e_bad"
 nowant "bdq: bd not called"   "bd-called"   "$e2e_bad"
 
-e2e_ok="$(run_bdq "Run world.sh stop with approval" "spira,plan,needs-ryan" 2>&1)" || true
+e2e_ok="$(run_bdq "Run world.sh stop with approval" "spira,plan,$ASK_LABEL" 2>&1)" || true
 want "bdq with needs-ryan: bd called"  "bd-called"  "$e2e_ok"
 
 # ==========================================================================
