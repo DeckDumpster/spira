@@ -532,7 +532,7 @@ wt_refs_multi() {   # wt_refs_multi [VAR=val ...] -> appends SPIRA_INCIDENT_REF 
 fresh
 mkdir -p "$TMP/run/landstate"
 printf '2026-09-08 20:02:00 UTC\nsummons gated.\n' > "$TMP/run/world.draining"
-touch -d "@$(( NOW - 600 ))" "$TMP/run/world.draining" 2>/dev/null || true   # 10m < 15m threshold
+touch -d "@$(( $(date +%s) - 600 ))" "$TMP/run/world.draining" 2>/dev/null || true   # 10m < 15m threshold; use live clock, not $NOW (sp-c0lz scar)
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
 wt_file_multi SPIRA_DRAIN_WARN_MINS=15
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
