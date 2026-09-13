@@ -37,6 +37,15 @@ testdb_require test-census
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up census || { echo "test-census: could not build a fixture database"; exit 1; }
 
+# Source lib.sh for bump_recur/bump_requeue/bump_reclaim. These write 'recurred',
+# 'requeued', 'reclaimed' event rows to the events table — what census.sh reads.
+# Adding labels via 'bd label add sp-recur-N-cause' only creates 'label_added' events,
+# which census never queries. Protect SPIRA_DB since lib.sh re-sources conf.sh.
+_PRE_LIB_SPIRA_DB="$SPIRA_DB"
+# shellcheck disable=SC1090
+. "$HERE/lib.sh"
+SPIRA_DB="$_PRE_LIB_SPIRA_DB"; unset _PRE_LIB_SPIRA_DB
+
 CENSUS="$HERE/census.sh"
 B() { bd -C "$SPIRA_DB" "$@"; }
 REMEDY_LABEL=maechen-remedy
@@ -65,44 +74,51 @@ echo "test-census.sh"
 
 # ==============================================================================
 echo
-echo "POSITIVE CONTROL: empty database → census runs, emits nothing"
+echo "POSITIVE CONTROL: seeded database → census reports the seeded class"
 # ==============================================================================
-# Proves the query executes and can reach the database; an empty result here means
-# census.sh found nothing, not that it crashed or read the wrong store.
+# Seeds one bead with one recurrence label and asserts census emits the expected class.
+# An empty or absent database produces no output and fails this assertion, making the
+# difference between a broken store and a correctly-seeded one visible rather than
+# indistinguishable — which was the original "empty → no output" control's flaw.
 testdb_reset
-out="$(run_census)"
-is "empty database → no output" "" "$out"
+pc_bid="$(plant_bead "positive-control-bead")"
+[ -n "$pc_bid" ] \
+    || { bad "positive control bead created" "create failed"; printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
+bump_recur "$pc_bid" positive-control
+
+out_pc="$(run_census)"
+want "seeded class appears in census output" "sp-recur-positive-control" "$out_pc"
 
 # ==============================================================================
 echo
 echo "1. Known label distribution → correct ranked class list"
 # ==============================================================================
-# Fixture distribution (one sp-recur-N-cause label = one occurrence):
-#   sp-recur-suite-red:    5  (bead-A has 3 labels, bead-B has 2 labels)
-#   sp-requeue-prod-dirty: 3  (bead-C: 3 labels — three requeueings)
-#   sp-reclaim:            2  (bead-D: 2 labels — reclaimed twice)
-#   sp-recur-unrecorded:   1  (bead-E: 1 label)
+# Fixture distribution (one bump_recur/requeue/reclaim call = one event row):
+#   sp-recur-suite-red:    5  (bead-A: 3 events, bead-B: 2 events)
+#   sp-requeue-prod-dirty: 3  (bead-C: 3 events — three requeueings)
+#   sp-reclaim:            2  (bead-D: 2 events — reclaimed twice)
+#   sp-recur-unrecorded:   1  (bead-E: 1 event)
 #
-# Each label is one recurrence event, so three sp-recur-N-suite-red labels on one
-# bead count as three occurrences of sp-recur-suite-red.
+# Each bump_* call inserts one row into the events table. Three bump_recur calls for
+# suite-red on bead-A count as three occurrences of sp-recur-suite-red.
 testdb_reset
 
 bid_a="$(plant_bead "bead-a")"
 [ -n "$bid_a" ] \
     || { bad "bead-a created" "create failed"; printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
-add_labels "$bid_a" sp-recur-1-suite-red sp-recur-2-suite-red sp-recur-3-suite-red
+bump_recur "$bid_a" suite-red; bump_recur "$bid_a" suite-red; bump_recur "$bid_a" suite-red
 
 bid_b="$(plant_bead "bead-b")"
-add_labels "$bid_b" sp-recur-1-suite-red sp-recur-2-suite-red
+bump_recur "$bid_b" suite-red; bump_recur "$bid_b" suite-red
 
 bid_c="$(plant_bead "bead-c")"
-add_labels "$bid_c" sp-requeue-1-prod-dirty sp-requeue-2-prod-dirty sp-requeue-3-prod-dirty
+bump_requeue "$bid_c" prod-dirty; bump_requeue "$bid_c" prod-dirty; bump_requeue "$bid_c" prod-dirty
 
 bid_d="$(plant_bead "bead-d")"
-add_labels "$bid_d" sp-reclaim-1 sp-reclaim-2
+bump_reclaim "$bid_d"; bump_reclaim "$bid_d"
 
 bid_e="$(plant_bead "bead-e")"
-add_labels "$bid_e" sp-recur-1-unrecorded
+bump_recur "$bid_e" unrecorded
 
 out1="$(run_census)"
 

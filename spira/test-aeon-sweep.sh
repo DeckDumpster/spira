@@ -112,13 +112,44 @@ for r in rows:
 sys.exit(1)' 2>/dev/null
 }
 
-# Create a bead in the fixture database that the testsweep fayth can claim.
+# Create the positive-control bead first. The positive control must run BEFORE any
+# assertion it backs — a control placed after the assertion it supports cannot validate
+# it; if it fails last, the preceding 'no attempt label' assertion has already been
+# accepted as meaningful when it is not.
+BID_PC="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "positive control bead" --type task \
+    -l "$FAYTH_LABELS_T,repo:fixture" 2>/dev/null \
+    | grep -oE 'sp-[a-z0-9]+' | head -1)"
+[ -n "$BID_PC" ] || { printf 'test-aeon-sweep: could not create positive control bead\n' >&2; exit 1; }
+
+echo "test-aeon-sweep.sh"
+
+# ======================================================================================
+echo
+echo "POSITIVE CONTROL — without --sweep a bead IS claimed and an attempt IS charged:"
+# ======================================================================================
+# Claims BID_PC with a non-sweep aeon. The mock exits without closing the bead so
+# teardown charges an attempt (sp-attempt-N). This proves the machinery that would add an
+# attempt label to BID below — if the aeon actually claimed it — is operational. Without
+# this confirmed first, the 'no attempt label on sweep bead' assertion below cannot
+# distinguish correct sweep behaviour from a broken attempt-charging path.
+aeon testsweep
+
+# sp-attempt-N labels are no longer written (sp-lzt); the events trail records claims.
+# The discriminating fact is the 'branch:' state-label: aeon.sh calls
+# 'bdq set-state <id> branch=spira/<id>' when it takes the branch, which bd turns into
+# a 'branch:spira/<id>' label that persists through teardown. Sweep never claims, so
+# the sweep bead never gets a branch label — that is the assertion below.
+labels_pc="$(bead_labels "$BID_PC" 2>/dev/null || true)"
+[[ "$labels_pc" == *"branch:"* ]] \
+    && ok  "without --sweep a branch label IS added ($(printf '%s' "$labels_pc" | grep -oE 'branch:[^,]*' | head -1))" \
+    || bad "without --sweep a branch label IS added" "none found on BID_PC labels=[$labels_pc]"
+
+# BID_PC now carries a branch label. Sweep assertions below are scoped to BID
+# (not the whole database) because BID_PC's labels would otherwise confound them.
 BID="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "sweep test incident" --type task \
     -l "$FAYTH_LABELS_T,repo:fixture" 2>/dev/null \
     | grep -oE 'sp-[a-z0-9]+' | head -1)"
 [ -n "$BID" ] || { printf 'test-aeon-sweep: could not create bead\n' >&2; exit 1; }
-
-echo "test-aeon-sweep.sh"
 
 # ======================================================================================
 echo
@@ -134,16 +165,18 @@ want "done sweep line"    "done testsweep sweep"  "$(cat "$LEDGER" 2>/dev/null)"
 
 # ======================================================================================
 echo
-echo "--sweep: no bead is claimed and no attempt label is produced:"
+echo "--sweep: no bead is claimed and no branch label is set:"
 # ======================================================================================
 # THE CLAIM CHECK: the bead must still be open. An aeon that claimed it would move it to
-# in_progress, then release it on teardown — but the attempt label is written before release.
+# in_progress, then release it on teardown — and set the branch label (which persists).
 is "bead stays open after sweep"  "open" "$(bead_status "$BID")"
 
-# THE ATTEMPT CHECK: no sp-attempt label on any bead. This is the assertion that fails
-# when the mode is NOT reverted (i.e., --sweep is correctly skipping the claim path).
-attempt_label="$(any_attempt 2>/dev/null || true)"
-is "no attempt label after sweep" "" "$attempt_label"
+# THE BRANCH-LABEL CHECK: sweep must not set a branch label on BID. Scoped to BID
+# (not any_attempt across all beads) because BID_PC carries a branch label from the
+# positive control above. If sweep incorrectly claimed BID, it would set 'branch:spira/<id>'
+# — proving the positive control's discriminating fact is what this catches.
+labels_bid="$(bead_labels "$BID" 2>/dev/null || true)"
+nowant "no branch label on sweep bead" "branch:" "$labels_bid"
 
 # ======================================================================================
 echo
@@ -191,25 +224,6 @@ rm -f "$TMP/sweep-prompt"
 printf 'stdin sweep prompt content' | aeon testsweep --sweep -
 want "stdin prompt reached model" "stdin sweep prompt content" \
      "$(cat "$TMP/sweep-prompt" 2>/dev/null)"
-
-# ======================================================================================
-echo
-echo "POSITIVE CONTROL — without --sweep a bead IS claimed and an attempt IS charged:"
-# ======================================================================================
-# THE POSITIVE CONTROL THAT MAKES THE ASSERTION ABOVE MEANINGFUL. Run the same fayth
-# WITHOUT --sweep: the aeon claims the bead, the mock session runs and exits without
-# closing the bead, the teardown charges an attempt and adds the sp-attempt label. If
-# this assertion fails, the test above cannot distinguish claimed from unclaimed and
-# is meaningless.
-#
-# The bead was left open (never claimed) by the sweep. Now let an aeon claim it.
-aeon testsweep
-
-# The teardown's attempt charge persists on the bead.
-attempt_label="$(any_attempt 2>/dev/null || true)"
-[ -n "$attempt_label" ] \
-    && ok  "without --sweep an attempt label IS added ($attempt_label)" \
-    || bad "without --sweep an attempt label IS added" "none found — positive control broken"
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
