@@ -54,8 +54,6 @@ printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$SPIRA_HOME/"
-cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
@@ -115,7 +113,7 @@ seed() {
 }
 run_aeon() {
     rm -rf "$SPIRA_RUN/worktree"
-    "$SPIRA_HOME/aeon.sh" builder > "$TMP/out" 2>&1
+    "$HERE/aeon.sh" builder > "$TMP/out" 2>&1
     echo $?
 }
 field() {
@@ -188,7 +186,7 @@ SHIM2
 chmod +x "$BIN/claude"
 
 printf 1 > "$TMP/shim-rc"
-sweep_rc="$("$SPIRA_HOME/aeon.sh" sweeper --sweep --prompt "check pipeline" > "$TMP/sweep-out" 2>&1; echo $?)"
+sweep_rc="$("$HERE/aeon.sh" sweeper --sweep --prompt "check pipeline" > "$TMP/sweep-out" 2>&1; echo $?)"
 is "sweep with claude rc=1 exits 0" "0" "$sweep_rc"
 
 # ======================================================================================
@@ -207,7 +205,7 @@ SHIM3
 chmod +x "$BIN/claude"
 
 printf 1 > "$TMP/shim-rc"
-refused_rc="$("$SPIRA_HOME/aeon.sh" sweeper --sweep --prompt "check pipeline" > "$TMP/refused-out" 2>&1; echo $?)"
+refused_rc="$("$HERE/aeon.sh" sweeper --sweep --prompt "check pipeline" > "$TMP/refused-out" 2>&1; echo $?)"
 is "refused sweep exits non-zero" "1" "$refused_rc"
 
 echo
