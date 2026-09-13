@@ -140,6 +140,7 @@ fi
 echo
 echo "an exempt ref does NOT reach SIN:"
 # ======================================================================================
+# Same SIN_AT+1 total filings as the positive control, to reach recurs_of == SIN_AT.
 testdb_reset
 : > "$ASK_LOG"
 ref="incident:test-exempt-sin"
