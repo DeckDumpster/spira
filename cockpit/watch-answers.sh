@@ -41,7 +41,7 @@ set -uo pipefail
 # WHERE IT LIVES IS CONFIGURATION. The path is known here and in the assertion that reads it,
 # and those two disagreeing is a permanent DEGRADED against a watcher working perfectly.
 # ANSWER_STATE stays ahead of it so a test can hand this script a scratch file.
-WITNESS="${ANSWER_STATE:-${SPIRA_ANSWER_STATE:-$(dirname "$0")/.runtime/answered-seen.json}}"
+WITNESS="${ANSWER_STATE:-${SPIRA_ANSWER_STATE}}"
 INTERVAL="${ANSWER_POLL:-45}"
 
 # TWO MARKS, because a close and a comment are ordered by different clocks: a comment does NOT
@@ -73,7 +73,7 @@ emit() {
         "operator=${SPIRA_OPERATOR:-the operator}" \
         "verdict_cursor=$VERDICT_CURSOR" "comment_cursor=$COMMENT_CURSOR" \
         "witness=$WITNESS" \
-        "self_closed=${SELF_CLOSED:-$(dirname "$0")/.runtime/self-closed}" \
+        "self_closed=${SELF_CLOSED:-${SPIRA_SELF_CLOSED}}" \
         format=monitor
 }
 

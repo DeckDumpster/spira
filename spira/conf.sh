@@ -53,7 +53,7 @@ SPIRA_CONF_LOADED=1
 SPIRA_CONF_KEYS="
 SPIRA_HOME_REPO SPIRA_DB SPIRA_RUN SPIRA_GOAL
 SPIRA_PATH SPIRA_WORKSPACES SPIRA_REPO_MAP SPIRA_PREFIX_MAP SPIRA_CHAMBER SPIRA_WATCHERS
-SPIRA_ACTIONABLE SPIRA_ID_PREFIX SPIRA_HEALTH_TIMEOUT SPIRA_ANSWER_STATE SPIRA_NOTIFY_AGE
+SPIRA_ACTIONABLE SPIRA_ID_PREFIX SPIRA_HEALTH_TIMEOUT SPIRA_ANSWER_STATE SPIRA_ANSWER_MARK SPIRA_ANSWER_COMMENT_MARK SPIRA_SELF_CLOSED SPIRA_NOTIFY_AGE
 SPIRA_CLIENT_SETTINGS SPIRA_HOOK_LINES SPIRA_CTRL
 SPIRA_COCKPIT SPIRA_COCKPIT_TRACE_LINES SPIRA_NOTIFY SPIRA_PANEL SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_RECLAIM_SKIP_LABEL
 SPIRA_CI_LABEL SPIRA_CI_PARK_MAX SPIRA_WORLD_STOP_LABEL
@@ -242,7 +242,11 @@ spira_conf_defaults() {
     # filesystem root (/workspace in every container run); derivation sites use _spira_join
     # so they never produce double slashes regardless of what SPIRA_WORKSPACES contains.
     : "${SPIRA_WORKSPACES:=$(dirname "$SPIRA_REPO")}"
-    : "${SPIRA_PREFIX_MAP:=$SPIRA_HOME/prefix-map}"
+    # OPERATOR-OWNED CONFIGURATION THAT BELONGS BESIDE THE REPO-MAP, not inside the harness
+    # tree. An operator whose harness lives in a repository they did not write would otherwise
+    # have to keep this file in the checkout — where a push might share it — or remember to
+    # set SPIRA_PREFIX_MAP on every box. ~/.config/spira is where repo-map already lives.
+    : "${SPIRA_PREFIX_MAP:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/prefix-map}"
     : "${SPIRA_CHAMBER:=$SPIRA_HOME/chamber}"
     # THE ONE LIST OF WHAT SHOULD BE WATCHING. One `daemon` row is one systemd unit, so this
     # file decides what `install.sh` enables; pointing the key elsewhere is how an operator
@@ -331,8 +335,18 @@ spira_conf_defaults() {
     # WHERE THE ANSWER WATCHER KEEPS WHAT IT HAS ALREADY SEEN. One key rather than two
     # literals: the watcher writes this file and its health assertion reads it, and those two
     # disagreeing is a permanent DEGRADED against a watcher that is working perfectly — a
-    # false alarm, which is the expensive kind (law-alerts-must-be-actionable).
-    : "${SPIRA_ANSWER_STATE:=$SPIRA_COCKPIT/.runtime/answered-seen.json}"
+    # false alarm, which is the expensive kind (law-alerts-must-be-actionable). Under SPIRA_RUN
+    # so the harness tree stays read-only; install.sh migrates any existing file on upgrade.
+    : "${SPIRA_ANSWER_STATE:=$SPIRA_RUN/answered-seen.json}"
+    # THE MARKS answered-since.sh WRITES — one per answer leg, kept separate because a comment
+    # does not bump the bead's updated_at and a single cursor over closes cannot track how far
+    # the comment leg has read. Both live under SPIRA_RUN for the same reason as SPIRA_ANSWER_STATE.
+    : "${SPIRA_ANSWER_MARK:=$SPIRA_RUN/answered-mark}"
+    : "${SPIRA_ANSWER_COMMENT_MARK:=$SPIRA_RUN/answered-comment-mark}"
+    # WHERE THE HARNESS RECORDS BEADS IT CLOSED ITSELF. watch-answers.sh and answered-since.sh
+    # filter these ids so a harness-initiated close is not announced as an operator verdict.
+    # Under SPIRA_RUN so the harness tree stays read-only; install.sh migrates any existing file.
+    : "${SPIRA_SELF_CLOSED:=$SPIRA_RUN/self-closed}"
     # THE LABEL THAT MEANS "WAITING ON THE OPERATOR". It is the one the escalation gate defers
     # on, the one every persona's predicate excludes, and the one the attention panel reads,
     # so all of those must agree on it — which is why it is one key and not five literals.

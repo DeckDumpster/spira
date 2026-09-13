@@ -164,8 +164,19 @@
 # Where the answer watcher keeps what it has already seen. One key rather than two literals,
 # because the watcher writes this file and the health assertion pointed at it reads the same
 # path — the two disagreeing renders a permanent DEGRADED against a watcher that is working.
-# Default: `.runtime/answered-seen.json` under the cockpit.
+# Default: answered-seen.json under SPIRA_RUN.
 # SPIRA_ANSWER_STATE = /var/lib/spira/answered-seen.json
+
+# The two cursor files answered-since.sh writes — one per answer leg. Both default under
+# SPIRA_RUN; override here only if you want them somewhere else.
+# Default: answered-mark and answered-comment-mark under SPIRA_RUN.
+# SPIRA_ANSWER_MARK = /var/lib/spira/answered-mark
+# SPIRA_ANSWER_COMMENT_MARK = /var/lib/spira/answered-comment-mark
+
+# Where the harness records which beads it closed itself, so its own closes are not
+# announced back as operator verdicts by watch-answers.sh and answered-since.sh.
+# Default: self-closed under SPIRA_RUN.
+# SPIRA_SELF_CLOSED = /var/lib/spira/self-closed
 
 # ---- the session hook ---------------------------------------------------------------------
 # The coding agent's OWN settings file — the one the client reads, not one of ours. The session

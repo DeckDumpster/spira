@@ -22,7 +22,7 @@
 set -uo pipefail
 
 . "$(dirname "$0")/db.sh"
-SELF="${SELF_CLOSED:-$(dirname "$0")/.runtime/self-closed}"
+SELF="${SELF_CLOSED:-${SPIRA_SELF_CLOSED}}"
 
 id="${1:-}"; reason="${2:-}"
 if [ -z "$id" ] || [ -z "$reason" ]; then

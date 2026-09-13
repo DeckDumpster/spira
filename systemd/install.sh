@@ -617,6 +617,38 @@ _migrate_legacy() {
 }
 _migrate_legacy
 
+# MIGRATE COCKPIT STATE FROM THE OLD .runtime LOCATION TO SPIRA_RUN.
+# Before sp-ie1n the cockpit scripts wrote answered-seen.json and self-closed inside the
+# harness tree under cockpit/.runtime. That blocks making the harness read-only. The files
+# move to SPIRA_RUN; this migration carries them on upgrade so the operator is not re-shown
+# answers already acknowledged and the self-closed filter does not forget what it closed.
+# Only moves when the old file exists and the new location is empty — never overwrites.
+_migrate_cockpit_state() {
+    local old_dir new_dir f old new moved=0
+    old_dir="${SPIRA_COCKPIT}/.runtime"
+    new_dir="${SPIRA_RUN}"
+    [ -d "$old_dir" ] || return 0
+    mkdir -p "$new_dir"
+    for f in answered-seen.json self-closed; do
+        old="$old_dir/$f"
+        new="$new_dir/$f"
+        [ -f "$old" ] || continue
+        if [ -f "$new" ]; then
+            printf 'install: cockpit state %s already at new location — skipping\n' "$f"
+            continue
+        fi
+        if cp "$old" "$new"; then
+            printf 'install: migrated cockpit state %s → %s\n' "$old" "$new"
+            moved=$((moved+1))
+        else
+            printf 'install: warning — could not migrate cockpit state %s\n' "$f" >&2
+        fi
+    done
+    [ "$moved" -gt 0 ] && \
+        printf 'install: migrated %d cockpit state file(s) to %s\n' "$moved" "$new_dir"
+}
+_migrate_cockpit_state
+
 # Wait for a running oneshot service to finish before restarting it.
 # A long-running service is not drained — we restart it directly.
 # SPIRA_DRAIN_INTERVAL overrides the 2-second poll interval (set to 0 in tests).
