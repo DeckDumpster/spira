@@ -493,6 +493,71 @@ if [ -z "${SPIRA_BATCH_SKIP_INSTALL:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# REQUIREMENTS CHECK — suites declaring # requires: tokens are pre-checked
+# inside the container. An unmet requirement records skip-req (distinct from
+# exit-77 self-skip) with the missing token named in the fingerprint field.
+# The suite is removed from the run list, so it is never "unreached".
+#
+# Each unique token is checked exactly once via `command -v` inside the
+# container; the result is cached so a token shared by several suites costs
+# one podman exec, not one per suite.
+# ---------------------------------------------------------------------------
+_req_all_tokens=""
+for _rs in $SELECTED; do
+    _reqs="$(suite_requires_of "$SUITE_DIR/$_rs")"
+    for _tok in $_reqs; do
+        [ -n "$_tok" ] || continue
+        case " $_req_all_tokens " in
+            *" $_tok "*) ;;
+            *) _req_all_tokens="$_req_all_tokens $_tok" ;;
+        esac
+    done
+done
+
+_req_unmet=""
+if [ -n "$_req_all_tokens" ]; then
+    for _tok in $_req_all_tokens; do
+        if podman exec --user "$_SPIRA_USER" \
+               -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
+               "$CNAME" bash -c "command -v '$_tok' >/dev/null 2>&1"; then
+            : # met — not listed in _req_unmet
+        else
+            _req_unmet="$_req_unmet $_tok"
+            log "batch: requirement not met in container: $_tok"
+        fi
+    done
+fi
+
+_SELECTED_RUNNABLE=""
+for _rs in $SELECTED; do
+    _reqs="$(suite_requires_of "$SUITE_DIR/$_rs")"
+    if [ -z "$_reqs" ]; then
+        _SELECTED_RUNNABLE="$_SELECTED_RUNNABLE $_rs"
+        continue
+    fi
+    _missing=""
+    for _tok in $_reqs; do
+        [ -n "$_tok" ] || continue
+        case " $_req_unmet " in
+            *" $_tok "*) _missing="${_missing:+$_missing,}$_tok" ;;
+        esac
+    done
+    if [ -n "$_missing" ]; then
+        printf '%s %s %s %s %s%s\n' skip-req "$(date +%s)" 0 "requires:$_missing" "$MODE" \
+            " $_SELECTION_TYPE" > "$RESULTS/$_rs.result"
+        : > "$RESULTS/$_rs.out"
+        printf '  %-32s SKIP-REQ requires:%s\n' "$_rs" "$_missing"
+    else
+        _SELECTED_RUNNABLE="$_SELECTED_RUNNABLE $_rs"
+    fi
+done
+SELECTED="$(echo $_SELECTED_RUNNABLE)"
+if [ -z "$SELECTED" ]; then
+    log "batch: all suites pre-empted by unmet requirements — nothing to run"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # RUN SUITES — serial or parallel, per --mode.
 #
 # MODE is recorded as the 5th field of every result file: a green under serial
