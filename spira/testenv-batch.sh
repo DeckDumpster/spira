@@ -721,6 +721,13 @@ else
     _n=0
 
     for s in $SELECTED; do
+        # Throttle: wait for a slot before launching the next suite.
+        if [ "${_maxpar:-0}" -gt 0 ] 2>/dev/null; then
+            while [ "$(jobs -rp | wc -l)" -ge "$_maxpar" ]; do
+                wait -n 2>/dev/null || true
+            done
+        fi
+
         _n=$((_n+1))
         _suite_instance="${INSTANCE}-${_n}"
         _suite_run="/tmp/spira-batch-${INSTANCE}-${_n}"
