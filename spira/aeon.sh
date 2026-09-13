@@ -637,7 +637,6 @@ cleanup() {
         unset _hb_kids
     fi
     fixture_drop
-    rm -f "$PIDFILE" "${PIDFILE%.pid}.name"
     rm -f "$SPIRA_RUN/aeon/$BEAD_ID.lease"
     # RESTORE THE WORLD if this aeon stopped it. Runs here, after the heartbeat and fixture
     # but before any bead operations, so it fires on every exit path — a world halted for a
@@ -825,6 +824,11 @@ print(d[0].get("status","") if d else "")' 2>/dev/null)"
         bdq note "$BEAD_ID" "Closed by the session while its landing gate was still running — $gate_why. The close carries no gate verdict; the landing pass gates this branch again and reopens the bead if it fails." >/dev/null 2>&1
         log "$FAYTH: $BEAD_ID closed with its gate still running ($gate_why)"
     fi
+    # PIDFILE IS REMOVED HERE, after all bead operations, so holder_alive stays true for the
+    # entire teardown. strand-classify.py requires BOTH witnesses absent before classifying a
+    # bead ghost: removing the pidfile early caused a bead whose aeon was mid-teardown to be
+    # ghost-reclaimed when its lease expired during a long fixture_drop. (sp-nc74)
+    rm -f "$PIDFILE" "${PIDFILE%.pid}.name"
     ledger_done "${SESSION_RC:-$rc}" "${st:-?}"
     # A CLOSED BEAD IS A SUCCEEDED TASK. SESSION_RC is the claude CLI's exit code, held
     # separately because `rc=$?` at trap time reflects the verdict block's LAST COMMAND —
