@@ -287,7 +287,9 @@ done
 # `suites.sh status` is a glob and a read per suite: no database, no network, nothing that
 # can hang. A pass that cannot produce it prints why rather than an empty section, because a
 # menu with nothing on it and a menu that could not be built read identically otherwise.
-SUITES="$(dirname "$0")/suites.sh"
+# SPIRA_SUITES_SH overrides the path so test suites can inject a mock without paying the
+# host-check.sh walk on every watchtower.sh invocation. Same seam as SPIRA_INCIDENT_SH.
+SUITES="${SPIRA_SUITES_SH:-$(dirname "$0")/suites.sh}"
 suites_block="  (unavailable — $SUITES is missing, so nothing knows which suites run nowhere)"
 if [ -r "$SUITES" ]; then
     suites_block="$(bash "$SUITES" status 2>/dev/null)"

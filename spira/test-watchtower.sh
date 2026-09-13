@@ -55,12 +55,24 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 NOW="$(date +%s)"
 GATE_WINDOW=3600         # deliberately not the shipped 21600
 
+# FAST MOCK FOR suites.sh status. suites.sh status calls host-check.sh twice (~3.5s each),
+# and every wt() / wt_file_multi() call invokes watchtower.sh which calls suites.sh status.
+# At ~40 total invocations that is ~280s before any actual test logic runs. The mock returns
+# a minimal but structurally valid block in under 1ms so the suite completes in a few minutes
+# instead of running into the per-suite gate timeout. It still says "suites in the tree"
+# so the assertion at line 350 ("carries its cheap figures") passes.
+MOCK_SUITES="$TMP/mock-suites.sh"
+printf '#!/usr/bin/env bash\nprintf "  suites in the tree                  0   (0 gated, 0 timed)\\n"\n' \
+    > "$MOCK_SUITES"
+chmod +x "$MOCK_SUITES"
+
 # The program under test, in an environment holding nothing but what it needs. `--show`
 # gathers and prints and touches nothing, so nothing here can reach a database or file a bead.
 wt() {                   # wt [VAR=val ...] -> the snapshot
     env -i PATH="$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" \
         "$@" bash "$HERE/watchtower.sh" --show 2>/dev/null
 }
 # THE LABEL IS MATCHED LITERALLY, never with a `.*`. The value is separated from the label
@@ -510,6 +522,7 @@ wt_file_multi() {   # wt_file_multi [VAR=val ...] -> appends incident subjects t
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_INCIDENT_SH="$mock" \
         "$@" bash "$HERE/watchtower.sh" 2>/dev/null
 }
@@ -525,6 +538,7 @@ wt_refs_multi() {   # wt_refs_multi [VAR=val ...] -> appends SPIRA_INCIDENT_REF 
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_INCIDENT_SH="$mock" \
         "$@" bash "$HERE/watchtower.sh" 2>/dev/null
 }
