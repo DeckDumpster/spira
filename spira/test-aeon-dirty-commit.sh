@@ -19,10 +19,31 @@
 # is what enforces the rule; testing via aeon.sh would test that the harness invoked a
 # model, not that the guard actually fires.
 #
+# CONTAINER. Real git in an isolated container guards against ambient gitconfig on the host.
+# When invoked on the host (IN_TESTENV unset), this script starts testenv, re-runs itself
+# inside (IN_TESTENV=1), then tears the container down. Inside the container the block is
+# skipped and the assertions run directly.
+#
 # covers: spira/aeon.sh spira/pre-commit-guard.sh
 # defect: sp-rbxr
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+if [ "${IN_TESTENV:-}" != "1" ]; then
+    command -v podman >/dev/null 2>&1 || {
+        printf 'SKIP test-aeon-dirty-commit.sh: podman not found on PATH\n' >&2
+        exit 77
+    }
+    TESTENV="$HERE/testenv.sh"
+    CNAME="spira-testenv-dc-$$"
+    bash "$TESTENV" up --name "$CNAME" >&2
+    rc=0
+    bash "$TESTENV" exec --name "$CNAME" -- \
+        env IN_TESTENV=1 bash /workspace/spira/test-aeon-dirty-commit.sh || rc=$?
+    bash "$TESTENV" down --name "$CNAME" >/dev/null 2>&1 || true
+    exit "$rc"
+fi
+
 pass=0; fail=0
 ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
@@ -65,8 +86,9 @@ SNAP="$WGD/spira-dirty-before"
 } | sort -u > "$SNAP"
 
 # Install the hook into the worktree-specific dir and point the worktree at it.
+# A wrapper that calls the live script (not a copy) so the test exercises the current guard.
 HOOK_DIR="$WGD/hooks"; mkdir -p "$HOOK_DIR"
-cp "$HERE/pre-commit-guard.sh" "$HOOK_DIR/pre-commit"
+printf '#!/usr/bin/env bash\nexec bash "%s/pre-commit-guard.sh"\n' "$HERE" > "$HOOK_DIR/pre-commit"
 chmod +x "$HOOK_DIR/pre-commit"
 git -C "$WORK" config --worktree core.hooksPath "$HOOK_DIR"
 
