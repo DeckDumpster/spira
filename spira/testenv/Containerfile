@@ -12,7 +12,49 @@
 #
 # BUILD CONTEXT. The build context is spira/ (the harness root), set by
 # testenv.sh's -f flag. COPY paths below are relative to that root.
+#
+# MULTI-STAGE. bd is a Go binary built with CGO_ENABLED=1. The build requires
+# the Go toolchain (~245 MB), the source clone, and both the module cache and
+# the build cache (~3 GB combined). None of these are used at runtime. The
+# builder stage is discarded whole; only the compiled binary crosses into the
+# runtime stage. rm -rf in a later layer never shrinks an image — only not
+# writing the bytes does.
 
+# ── Stage 1: build bd ─────────────────────────────────────────────────────────
+FROM docker.io/library/ubuntu:24.04 AS bd-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+ARG GO_VERSION=1.26.5
+ARG BD_TAG=v1.2.1
+ARG BD_REPO=https://github.com/steveyegge/beads.git
+
+# Minimal toolchain for the build: curl+ca-certificates to download Go,
+# git to clone the source, build-essential for CGO_ENABLED=1 (gcc).
+RUN apt-get update -q && \
+    apt-get install -yq --no-install-recommends \
+        curl \
+        ca-certificates \
+        git \
+        build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL -o /tmp/go.tar.gz \
+    "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" && \
+    tar -C /usr/local -xzf /tmp/go.tar.gz && \
+    rm /tmp/go.tar.gz
+
+# CGO_ENABLED=1: embedded Dolt is opened through cgo; a pure-Go build refuses
+# at runtime. -tags gms_pure_go: avoids ICU linking failures via go-mysql-server.
+# /out/bd is the only artifact that crosses into the runtime stage. The Go
+# toolchain, source clone, module cache, and build cache are all discarded with
+# this builder stage.
+RUN mkdir /out && \
+    git clone --depth 1 --branch "${BD_TAG}" "${BD_REPO}" /tmp/bd-src && \
+    cd /tmp/bd-src && \
+    CGO_ENABLED=1 /usr/local/go/bin/go build -tags gms_pure_go -o /out/bd ./cmd/bd
+
+# ── Stage 2: runtime image ────────────────────────────────────────────────────
 FROM docker.io/library/ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -26,7 +68,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # nodejs: gate the browser page's view model; test-loom-page.sh exits 0 with SKIP
 #         when node is absent, making syntax errors in loom/static/ permanently
 #         invisible. This is the hard argument for including it.
-# build-essential: gcc for CGO_ENABLED=1 when building bd from source.
+# build-essential: gcc for cargo's C linker when compiling Rust crates.
 # curl+ca-certificates: download gh and dolt release archives.
 RUN apt-get update -q && \
     apt-get install -yq --no-install-recommends \
@@ -71,29 +113,12 @@ RUN curl -fsSL -o /tmp/dolt.tar.gz \
     install -m 0755 /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt && \
     rm -rf /tmp/dolt.tar.gz /tmp/dolt-linux-amd64
 
-# ── Go toolchain — used only to build bd; removed after ───────────────────
-# build-bd.sh on this host uses go1.26.5. The beads project requires CGO_ENABLED=1
-# and -tags gms_pure_go (see build-bd.sh header for why both are required and why
-# both were got wrong once each). Ubuntu 24.04's golang-go (1.22) may lack newer
-# standard library additions the project uses; download the matching version.
-ARG GO_VERSION=1.26.5
-RUN curl -fsSL -o /tmp/go.tar.gz \
-    "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" && \
-    tar -C /usr/local -xzf /tmp/go.tar.gz && \
-    rm /tmp/go.tar.gz
-
-# ── bd — the beads issue tracker, built from source ────────────────────────
-# CGO_ENABLED=1: embedded Dolt is opened through cgo; a pure-Go build refuses
-# at runtime. -tags gms_pure_go: avoids ICU linking failures via go-mysql-server.
-# The tag is pinned here; build-bd.sh on the host uses the same tag.
+# ── bd — copied from builder stage ────────────────────────────────────────
+# The bd-builder stage compiled bd and was then discarded: Go toolchain,
+# source clone, and both Go caches (~3 GB combined) never appear in this layer.
 # Both bd and bd-embedded are installed: testdb.sh checks for bd-embedded by name.
-ARG BD_TAG=v1.2.1
-ARG BD_REPO=https://github.com/steveyegge/beads.git
-RUN git clone --depth 1 --branch "${BD_TAG}" "${BD_REPO}" /tmp/bd-src && \
-    cd /tmp/bd-src && \
-    CGO_ENABLED=1 /usr/local/go/bin/go build -tags gms_pure_go -o /usr/local/bin/bd ./cmd/bd && \
-    install -m 0755 /usr/local/bin/bd /usr/local/bin/bd-embedded && \
-    rm -rf /tmp/bd-src /usr/local/go
+COPY --from=bd-builder /out/bd /usr/local/bin/bd
+RUN install -m 0755 /usr/local/bin/bd /usr/local/bin/bd-embedded
 
 # ── doctor-check: image is verified, not asserted ─────────────────────────
 # COPY doctor.sh and the check script into a scratch location. Run the check
