@@ -94,6 +94,11 @@ echo "PER-INSTANCE NAMING — install.sh test writes spira-*-test.* to DEST:"
 WATCHERS="$TMP/watchers"
 printf '# empty\n' > "$WATCHERS"
 
+# Snapshot DEST before any test writes so comm -23 below can identify only what
+# the render+install adds, ignoring the batch's own pre-existing units.
+_pre_snap="$TMP/dest-before.txt"
+( cd "$DEST" && ls -1 spira-* 2>/dev/null | sort ) > "$_pre_snap" || true
+
 # Seed DEST via --render so unit files exist before the full install compares.
 rendered="$(SCTL_LOG="$SCTL_LOG" SPIRA_PATH="$TMP/bin" SPIRA_CONF=/nonexistent \
     SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
@@ -121,8 +126,11 @@ clean_log="$(cat "$SCTL_LOG")"
 
 iszero "naming: install.sh test exits 0" "$clean_rc"
 
-bad_files="$(cd "$DEST" && ls -1 spira-* 2>/dev/null \
-              | grep -v '^spira-.*-test\.' || true)"
+# Only flag files that the render+install step itself ADDED (comm -23 gives lines
+# in file1 not in file2 = newly added since snapshot). Batch pre-installed its own
+# units before this test ran; those are in _pre_snap and thus excluded here.
+bad_files="$( { cd "$DEST" && ls -1 spira-* 2>/dev/null | sort; } | \
+    comm -23 - "$_pre_snap" | grep -v '^spira-.*-test\.' || true)"
 [ -z "$bad_files" ] \
     && ok "naming: no spira-* file without -test suffix in DEST" \
     || bad "naming: spira-* files without -test suffix found: $bad_files" ""
