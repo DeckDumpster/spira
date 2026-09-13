@@ -20,12 +20,15 @@
 # trigger as the correct steady state.
 #
 # WATERMARK. $SPIRA_RUN/maechen.watermark holds a single integer: the Unix epoch
-# timestamp when the last trigger fired. A missing or empty file means epoch 0 (never
-# fired), which guarantees the time trigger fires on the very first run. The trigger
-# writes the new watermark atomically (write to .new, mv into place) BEFORE filing the
-# bead. A crash between the write and the bead leaves the watermark advanced but no
-# bead; the next run files the bead immediately because the dedup finds nothing open and
-# the conditions are still satisfied, which is the correct recovery path.
+# timestamp of the last window the Maechen pass examined. A missing or empty file means
+# epoch 0 (never fired), which guarantees the time trigger fires on the very first run.
+# The trigger does NOT advance the watermark — the Maechen PASS advances it in its
+# final step, after running census.sh. This ordering is load-bearing: census.sh reads
+# the watermark to bound its since-watermark query, so an advance before the census
+# would cause census to examine a window starting after the events that fired the
+# trigger — reporting 0 classes while the trigger window held the offenders. The dedup
+# guard (above) already covers the crash-between-trigger-and-bead case: a crash leaves
+# the watermark unchanged and no bead open; the next run re-fires and re-files.
 #
 # LANDING COUNT. Counts commits on the remote-tracking base ref of each managed repo
 # whose SUBJECT begins with the bead id prefix (SPIRA_ID_PREFIX, default "sp"). The
@@ -161,13 +164,6 @@ if [ "$time_trigger" = 0 ] && [ "$landing_trigger" = 0 ]; then
     log "no trigger: ${landing_count} landings (threshold: ${SPIRA_MAECHEN_LANDING_INTERVAL:-25}), ${elapsed}s elapsed (threshold: ${SPIRA_MAECHEN_MAX_GAP_SECONDS:-10800}s)"
     exit 0
 fi
-
-# ADVANCE THE WATERMARK before filing the bead. See the file-level comment for why
-# this ordering matters.
-mkdir -p "${SPIRA_RUN}"
-printf '%d\n' "$now_ts" > "${WATERMARK_FILE}.new" \
-    && mv "${WATERMARK_FILE}.new" "$WATERMARK_FILE" \
-    || { log "ERROR: failed to write watermark — refusing to file trigger bead"; exit 1; }
 
 # BUILD THE TRIGGER REASON for the bead title and description.
 trigger_reason=""

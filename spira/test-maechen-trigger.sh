@@ -20,7 +20,9 @@
 #   b. Landing trigger fires when the landing count threshold is reached.
 #   c. Dedup: when an open trigger bead exists, no second bead is filed.
 #   d. No trigger: when neither condition is met, no bead is filed.
-#   e. The watermark is advanced (file written) before the bead is filed.
+#   e. The watermark is NOT advanced by the trigger — the Maechen PASS advances it in
+#      Step 5 after running census.sh, so census sees the events that caused the trigger.
+#      (sp-pyzp: advancing in the trigger caused census to miss the trigger's window.)
 #   f. The labels used match SPIRA_SCOPE_LABEL + SPIRA_MAECHEN_LABEL so the fayth
 #      predicate finds the trigger bead.
 #   g. Both triggers firing at once produce ONE bead, not two (shared watermark).
@@ -154,11 +156,12 @@ want "labels include scope label"       "spira"  "$(cat "$BD_LOG")"
 want "labels include maechen-sweep"     "maechen-sweep" "$(cat "$BD_LOG")"
 want "reason mentions elapsed"          "elapsed" "$out"
 
-# Watermark must have been advanced (written to file with a timestamp near now).
+# The trigger must NOT advance the watermark — the Maechen pass does that in Step 5,
+# after census.sh runs, so census can see the events that caused the trigger to fire.
+# sp-pyzp: advancing before the bead caused census to read a watermark past the
+# trigger's window and report 0 classes while the window held the offenders.
 new_wm="$(cat "$WATERMARK_FILE" 2>/dev/null | tr -d '[:space:]' || true)"
-is "watermark is non-empty after fire" "1" "$([ -n "$new_wm" ] && echo 1 || echo 0)"
-[ "${new_wm:-0}" -ge "$now_ts" ] && ok "watermark is >= trigger start time" \
-    || bad "watermark is >= trigger start time" "got $new_wm expected >= $now_ts"
+is "watermark not advanced by trigger (still 0)" "0" "${new_wm:-0}"
 
 # ==========================================================================================
 echo

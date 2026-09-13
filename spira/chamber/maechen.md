@@ -118,6 +118,14 @@ suppression — it must be the exact class key (e.g., `covers:sp-recur-suite-red
 a guideline. Silence is indistinguishable from a pass pointed at the wrong thing, and that
 shape is exactly what this rule exists to surface (`law-absence-needs-a-positive-control`).
 
+**Advance the watermark.** The trigger deliberately left the watermark at its pre-trigger
+value so census.sh could see the events that caused the trigger to fire. Now that the census
+is complete, advance it to the current time — atomically, so a crash here leaves either the
+old value or the new one, never a partial write:
+
+    printf '%d\n' "$(date +%s)" > "${SPIRA_RUN}/maechen.watermark.new" \
+        && mv "${SPIRA_RUN}/maechen.watermark.new" "${SPIRA_RUN}/maechen.watermark"
+
 Write the closing entry to the Maechen log:
 
     printf 'Maechen pass done: census=%d classes ranked, threshold_met=%s, beads_cut=%d. Watermark advanced to %s.\n' \
