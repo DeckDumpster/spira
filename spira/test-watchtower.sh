@@ -346,7 +346,7 @@ echo "the sweep NAMES the scans rather than running them:"
 # own budget on it. The name is asserted because a menu naming nothing is a scan that runs
 # nowhere, which is the defect the runner was written to end.
 want "the sweep names the timed suite run"      "suites.sh run" "$snap"
-want "and says what the runner covers"          "the landing gate does NOT run" "$snap"
+want "and says the run is suspended"            "SUSPENDED" "$snap"
 want "and carries its cheap figures, not its output" "suites in the tree" "$snap"
 # It must not have RUN anything: `--show` touches nothing, and a suite executed here would
 # have written a result under the scratch runtime directory.
