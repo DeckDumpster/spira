@@ -13,12 +13,19 @@
 # BUILD CONTEXT. The build context is spira/ (the harness root), set by
 # testenv.sh's -f flag. COPY paths below are relative to that root.
 #
-# MULTI-STAGE. bd is a Go binary built with CGO_ENABLED=1. The build requires
-# the Go toolchain (~245 MB), the source clone, and both the module cache and
-# the build cache (~3 GB combined). None of these are used at runtime. The
-# builder stage is discarded whole; only the compiled binary crosses into the
-# runtime stage. rm -rf in a later layer never shrinks an image — only not
-# writing the bytes does.
+# MULTI-STAGE. Two builder stages keep heavy build dependencies out of the
+# runtime image.
+#
+# bd-builder: Go toolchain (~245 MB), source clone, module cache and build
+#   cache (~3 GB combined). None are used at runtime; only the compiled binary
+#   crosses into the runtime stage. rm -rf in a later layer never shrinks an
+#   image — only not writing the bytes does.
+#
+# rust-builder: rustup installer and any download cache. The toolchain itself
+#   must survive into the runtime image because build.sh compiles
+#   $SPIRA_REPO/loom at runtime from a bind-mounted candidate branch and the
+#   source does not exist at image-build time. So the builder stage is used for
+#   ACQUISITION only — installer and caches are discarded, toolchain is copied.
 
 # ── Stage 1: build bd ─────────────────────────────────────────────────────────
 FROM docker.io/library/ubuntu:24.04 AS bd-builder
@@ -54,16 +61,48 @@ RUN mkdir /out && \
     cd /tmp/bd-src && \
     CGO_ENABLED=1 /usr/local/go/bin/go build -tags gms_pure_go -o /out/bd ./cmd/bd
 
-# ── Stage 2: runtime image ────────────────────────────────────────────────────
+# ── Stage 2: acquire Rust toolchain via rustup ────────────────────────────────
+# ACQUISITION ONLY. The rustup installer, its download cache, and the registry
+# cache are discarded by the cleanup step and never reach the runtime image.
+#
+# The toolchain must survive into the runtime image — build.sh compiles
+# $SPIRA_REPO/loom at runtime from a bind-mounted candidate branch and the
+# source does not exist at image-build time. This differs from the bd-builder
+# stage, which is discarded whole because bd is compiled once from a pinned
+# tag and only the binary is needed afterwards.
+FROM docker.io/library/ubuntu:24.04 AS rust-builder
+ARG RUST_VERSION=1.96.0
+RUN apt-get update -q && \
+    apt-get install -yq --no-install-recommends curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain "$RUST_VERSION" \
+                     --no-modify-path && \
+    rm -rf /root/.cargo/registry /root/.rustup/downloads
+
+# ── Stage 3: runtime image ────────────────────────────────────────────────────
 FROM docker.io/library/ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+
+# ── Rust toolchain from the builder stage ──────────────────────────────────
+# /usr/local/cargo: rustup bin shims (cargo, rustc, rustup, …).
+# /usr/local/rustup: compiler toolchains; RUSTUP_HOME points here so every
+#   rustup proxy resolves to the correct version.
+# CARGO_HOME (set below to /var/spira/cargo) is a separate path used for
+#   project-level crate registries and build artefacts — it is not where the
+#   toolchain binaries live, and no apt cargo or rustc is installed alongside.
+COPY --from=rust-builder /root/.cargo /usr/local/cargo
+COPY --from=rust-builder /root/.rustup /usr/local/rustup
+ENV RUSTUP_HOME=/usr/local/rustup \
+    PATH=/usr/local/cargo/bin:$PATH
 
 # ── Base: system init, session bus, core tools ─────────────────────────────
 # All from the distro archive; no external download scripts.
 # python3 and git: required by install.sh (template rendering, repo root detection).
 # flock: serialises writers sharing one path — landing gate per-repository tree.
-# cargo+rustc: build spira's loom binary inside the container.
+# Rust is provided above via rustup; cargo and rustc are NOT installed from apt
+#   so that only one compiler exists on PATH.
 # tmux: cockpit panes; doctor.sh WARN.
 # nodejs: gate the browser page's view model; test-loom-page.sh exits 0 with SKIP
 #         when node is absent, making syntax errors in loom/static/ permanently
@@ -77,8 +116,6 @@ RUN apt-get update -q && \
         dbus \
         dbus-user-session \
         sudo \
-        cargo \
-        rustc \
         python3 \
         git \
         curl \
