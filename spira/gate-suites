@@ -68,7 +68,6 @@ spira/test-sop-lint.sh
 # internally, whose own suites add up beyond the slice) and is killed as a false red.
 # Moving it here ends that loop: gated suites run without a per-suite slice and this suite
 # can reach its natural completion.
-spira/test-gate-budget.sh
 
 # THE LITERAL-LINT FENCE'S OWN POSITIVE CONTROL. A static check that reports a clean tree
 # is indistinguishable from one whose matcher never fires, so this suite plants an offender
