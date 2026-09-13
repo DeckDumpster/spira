@@ -177,10 +177,12 @@ echo
 echo "LANDING TRIGGER: fires when landing count reaches threshold"
 # ==========================================================================================
 # Add enough bead-naming commits to exceed a threshold of 2.
-# Watermark = 0 so --after=@0 catches all commits (all current timestamps > 0).
+# Watermark is set just before the commits so --after=@<wm> includes them.
+# git --after='@N' treats N as a Unix timestamp only for N >= 100000000; for N=0 or
+# other small values approxidate falls back to 'now', silently finding no commits.
+printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
 add_landing "sp-aaa1: first landing"
 add_landing "sp-bbb2: second landing"
-printf '0\n' > "$WATERMARK_FILE"
 SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
     out="$(run_trigger)"; rc=$?
@@ -347,6 +349,12 @@ echo "REGRESSION sp-b4t: log() stdout capture — no-origin repo followed by cou
 # Before fix: "value too great for base" appears in the combined output.
 # After fix:  no error; COUNTED_REPO's landings are cleanly tallied.
 
+# Watermark is recorded before the landing commits are made. git --after='@N' only treats N
+# as a Unix timestamp when N >= 100000000 (9 digits); smaller values are parsed as
+# approximate/relative dates and resolve to ~now, finding no commits. Using the current
+# timestamp avoids that, and the elapsed time (~seconds) is far below MAX_GAP=9999999999.
+printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
+
 NOREMOTE_B4T="$T/noremote-b4t"
 git init -q "$NOREMOTE_B4T"
 git -C "$NOREMOTE_B4T" config user.email "test@example.com"
@@ -375,8 +383,6 @@ git -C "$HOME_B4T" rev-parse HEAD > "$HOME_B4T/.git/refs/remotes/origin/main"
 REPOMAP_B4T="$T/repomap-b4t"
 # no-origin repo listed before the counted repo — the problematic ordering.
 printf 'noremote|%s|\ncounted|%s|\n' "$NOREMOTE_B4T" "$COUNTED_B4T" > "$REPOMAP_B4T"
-
-printf '0\n' > "$WATERMARK_FILE"
 : > "$BD_LOG"
 out_b4t="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_CONF="$NONE" \
@@ -415,6 +421,10 @@ echo "REGRESSION sp-3ljk: non-origin remote — landings must be counted"
 # Setup: a local bare repo acts as the 'gitea' remote so that spira_landref's
 # `git remote set-head gitea --auto` resolves without network access.
 
+# Watermark is recorded before any landing commits are made so --after=@<wm> finds them.
+# See the sp-b4t watermark comment above for why @0 does not work here.
+printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
+
 BARE_3LJK="$T/bare-3ljk"
 git init -q --bare "$BARE_3LJK"
 git -C "$BARE_3LJK" symbolic-ref HEAD refs/heads/master
@@ -444,8 +454,6 @@ git -C "$HOME_3LJK" rev-parse HEAD > "$HOME_3LJK/.git/refs/remotes/origin/main"
 
 REPOMAP_3LJK="$T/repomap-3ljk"
 printf 'gitea-repo|%s|\n' "$GITEA_REPO" > "$REPOMAP_3LJK"
-
-printf '0\n' > "$WATERMARK_FILE"
 : > "$BD_LOG"
 out_3ljk="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:/usr/lib/git-core" \
     SPIRA_CONF="$NONE" \
