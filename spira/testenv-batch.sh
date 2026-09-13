@@ -163,18 +163,6 @@ if [ -z "$BASE" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# CHANGED FILES — the release unit is the full diff against the base ref.
-# Skipped when --suites is given: explicit selection does not need the diff.
-# ---------------------------------------------------------------------------
-_cv_changed=""
-if [ -z "$SUITES_EXPLICIT" ]; then
-    while IFS= read -r _f || [ -n "$_f" ]; do
-        [ -n "$_f" ] || continue
-        _cv_changed="$_cv_changed $_f"
-    done < <(git -C "$REPO" diff --name-only "$BASE...$BR" 2>/dev/null || true)
-fi
-
-# ---------------------------------------------------------------------------
 # SUITE DIRECTORY — where to find test-*.sh on the host.
 # ---------------------------------------------------------------------------
 SUITE_DIR="${SPIRA_BATCH_SUITE_DIR:-$HERE}"
@@ -184,18 +172,12 @@ SUITE_DIR="${SPIRA_BATCH_SUITE_DIR:-$HERE}"
 #   --suites <list>  comma-separated names: validate each, use the list directly.
 #   --suites -       stdin: read newline-separated names; blank lines ignored.
 #                    Empty stdin means "nothing to run" — exit 0, not an error.
-#   (default)        diff-derived: same logic as gate-spira.sh coverage selection.
-#                    A file declared by no suite triggers the fallback: all run.
+#   (default)        diff-derived: delegated to select.sh (the one selector).
+#                    Unmapped files do NOT expand to all suites here — the gate
+#                    stays cheap; gate-spira.sh (timed run) handles that fallback.
 #                    A suite with no # covers: line always runs.
 # --suites bypasses diff-derived entirely; only one --suites is accepted.
 # ---------------------------------------------------------------------------
-
-# Corpus of all known suites — used for validation and for diff-derived selection.
-_cv_all=""
-for _cv_f in "$SUITE_DIR"/test-*.sh; do
-    [ -r "$_cv_f" ] || continue
-    _cv_all="$_cv_all $(basename "$_cv_f")"
-done
 
 SELECTED=""
 _SELECTION_TYPE=diff
@@ -256,79 +238,21 @@ if [ -n "$SUITES_EXPLICIT" ]; then
     fi
 
 else
-    # Diff-derived selection.
-    if [ -n "$_cv_changed" ] && [ -n "$_cv_all" ]; then
-        _cv_nocov=""
-        for _cv_s in $_cv_all; do
-            _cv_cov="$(suite_covers_of "$SUITE_DIR/$_cv_s")"
-            [ -z "$_cv_cov" ] && _cv_nocov="$_cv_nocov $_cv_s"
-        done
-
-        _cv_unmapped=""
-        _cv_sel=""
-        for _cv_f in $_cv_changed; do
-            _cv_hit=0
-            for _cv_s in $_cv_all; do
-                _cv_cov="$(suite_covers_of "$SUITE_DIR/$_cv_s")"
-                [ -z "$_cv_cov" ] && continue
-                set -f
-                for _cv_pat in $_cv_cov; do
-                    case "$_cv_f" in
-                        $_cv_pat)
-                            _cv_hit=1
-                            case " $_cv_sel " in
-                                *" $_cv_s "*) ;;
-                                *) _cv_sel="$_cv_sel $_cv_s" ;;
-                            esac ;;
-                    esac
-                done
-                set +f
-            done
-            [ "$_cv_hit" -eq 0 ] && _cv_unmapped="$_cv_unmapped $_cv_f"
-        done
-
-        if [ -n "$_cv_unmapped" ]; then
-            # Unmapped files do not trigger the all-suites fallback. Running everything for
-            # a documentation or config file that no suite declares defeats the fast-gate
-            # property the timed runner (gate-spira.sh) is designed to complement: that
-            # runner keeps the all-suites fallback; this one keeps the gate cheap.
-            # Covered files in the same diff still select their own suites; unmapped ones
-            # contribute nothing beyond the always-run (no # covers:) set.
-            log "batch: unmapped file(s):$(printf ' %s' $_cv_unmapped) — not expanding to all suites; running covered and unconditional"
-            _cv_deduped=""
-            for _cv_s in $_cv_sel $_cv_nocov; do
-                case " $_cv_deduped " in
-                    *" $_cv_s "*) ;;
-                    *) _cv_deduped="$_cv_deduped $_cv_s" ;;
-                esac
-            done
-            SELECTED="$_cv_deduped"
-            _n=0; for _cv_s in $_cv_deduped; do _n=$((_n + 1)); done
-            log "batch: selected $_n suite(s) (unmapped files skipped)"
-        else
-            _cv_deduped=""
-            for _cv_s in $_cv_sel $_cv_nocov; do
-                case " $_cv_deduped " in
-                    *" $_cv_s "*) ;;
-                    *) _cv_deduped="$_cv_deduped $_cv_s" ;;
-                esac
-            done
-            SELECTED="$_cv_deduped"
-            _n=0; for _cv_s in $_cv_deduped; do _n=$((_n + 1)); done
-            log "batch: selected $_n suite(s)"
-        fi
-    elif [ -z "$_cv_changed" ]; then
-        # No changed files: run only the always-run (no-covers) suites.
-        _cv_nocov=""
-        for _cv_s in $_cv_all; do
-            _cv_cov="$(suite_covers_of "$SUITE_DIR/$_cv_s")"
-            [ -z "$_cv_cov" ] && _cv_nocov="$_cv_nocov $_cv_s"
-        done
-        SELECTED="$_cv_nocov"
-        log "batch: no changed files — running only unconditional suites"
-    fi
-    SELECTED="$(echo $SELECTED)"  # normalise whitespace
-
+    # Diff-derived selection — delegated to select.sh (the one selector).
+    # --no-all-fallback: unmapped files do not expand the selection to all suites.
+    # The timed runner (gate-spira.sh) omits this flag and keeps the full fallback;
+    # this gate stays cheap (law-absence-needs-a-positive-control covers the timed run).
+    _mf="$(mktemp)"
+    _sel="$(bash "$HERE/select.sh" \
+        --base "$BASE" \
+        --head "$BR" \
+        --repo "$REPO" \
+        --no-all-fallback \
+        --mode-file "$_mf" \
+        2>/dev/null || true)"
+    _SELECTION_TYPE="$(cat "$_mf" 2>/dev/null || echo diff)"
+    rm -f "$_mf"
+    SELECTED="$(echo $_sel)"
 fi
 
 if [ -z "$SELECTED" ]; then
@@ -350,7 +274,7 @@ _batch_key() {
     local tree sel_h harness_h
     tree="$(git -C "$REPO" rev-parse --verify -q "$BR^{tree}" 2>/dev/null)" || return 1
     sel_h="$(printf '%s\n' $SELECTED | sort | sha256sum | cut -d' ' -f1)"
-    harness_h="$(cat "$0" "$HERE/suite-covers.sh" 2>/dev/null | sha256sum | cut -d' ' -f1)"
+    harness_h="$(cat "$0" "$HERE/suite-covers.sh" "$HERE/select.sh" 2>/dev/null | sha256sum | cut -d' ' -f1)"
     [ -n "$harness_h" ] || return 1
     # MODE and _SELECTION_TYPE are included: a serial-green must not replay for a
     # parallel run; a partial-selection green must not replay for an all-corpus run.

@@ -49,9 +49,6 @@
 # It fails CLOSED, and a check that could not run is not a pass.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# Shared # covers: accessor — must not be reimplemented inline (sp-dt8u).
-[ -r "$HERE/suite-covers.sh" ] || { printf 'gate: suite-covers.sh is missing\n' >&2; exit 1; }
-. "$HERE/suite-covers.sh"
 # IT JUDGES THE TREE IT IS PART OF, and it finds that tree from its own path. This read
 # `cd "${SPIRA_GATE_REPO:-.}"`, and the gate sets SPIRA_GATE_REPO to the INSTALLED CHECKOUT
 # while extracting the branch to a scratch worktree and running the command there — so this
@@ -270,92 +267,35 @@ done < "$SUITE_LIST"
 # verdict a gate must never reach by accident.
 [ -n "$suites" ] || { say "$SUITE_LIST names no suite — refusing to report a pass on nothing"; exit 1; }
 
-# COVERAGE-BASED SELECTION OF NON-GATED SUITES.
-# When SPIRA_GATE_FILES names a readable file (set by gate.sh when calling a repository's
-# own gate command), non-gated suites whose `# covers:` globs intersect the branch diff are
-# run in addition to the gated list. A suite with no `# covers:` line is never skipped —
-# it runs alongside any selection. A changed file that no suite explicitly declares triggers
-# a fallback: all non-gated suites run (law-absence-needs-a-positive-control: absence of a
-# declaration must not read as a pass on the changed file).
+# COVERAGE-BASED SELECTION OF NON-GATED SUITES via select.sh.
+# When SPIRA_GATE_FILES names a readable file (set by gate.sh when calling a
+# repository's own gate command), select.sh is asked for the diff-derived suite
+# set. Results that duplicate a gated suite are skipped; the gated list always
+# runs regardless of diff.
 #
-# When SPIRA_GATE_FILES is not set — a direct invocation, or an inner call from a test
-# fixture such as test-gate-budget.sh — only the gated list runs. This is deliberate: an
-# inner invocation that inherited the full non-gated set would re-enter test-gate-budget.sh
-# itself and exceed the 602s per-suite watchdog on every timed pass.
+# When SPIRA_GATE_FILES is not set — a direct invocation, or an inner call from
+# a test fixture such as test-gate-budget.sh — only the gated list runs. This
+# is deliberate: an inner invocation that inherited the full non-gated set would
+# re-enter test-gate-budget.sh itself and exceed the 602s per-suite watchdog on
+# every timed pass.
 extra_suites=""
 if [ -f "${SPIRA_GATE_FILES:-}" ]; then
-    # Read the changed-file list the caller supplied.
-    _cv_changed=""
-    while IFS= read -r _cv_f || [ -n "$_cv_f" ]; do
-        [ -n "$_cv_f" ] || continue
-        _cv_changed="$_cv_changed $_cv_f"
-    done < "$SPIRA_GATE_FILES"
-
-    if [ -n "$_cv_changed" ]; then
-        # Collect every non-gated suite (the glob complement of gate-suites).
-        _cv_all=""
-        for _cv_ts in spira/test-*.sh; do
-            [ -r "$_cv_ts" ] || continue
-            _cv_base="$(basename "$_cv_ts")"
-            # Skip any suite already in the gated list.
-            case " $suites " in
-                *" spira/$_cv_base "*|*" $_cv_ts "*) continue ;;
-            esac
-            _cv_all="$_cv_all $_cv_ts"
-        done
-
-        if [ -n "$_cv_all" ]; then
-            # Separate suites with no # covers: line — they always run, never skipped.
-            _cv_nocov=""
-            for _cv_ts in $_cv_all; do
-                _cv_cov="$(suite_covers_of "$_cv_ts")"
-                [ -z "$_cv_cov" ] && _cv_nocov="$_cv_nocov $_cv_ts"
-            done
-
-            # For each changed file, find suites whose # covers: globs match.
-            _cv_unmapped=""
-            _cv_selected=""
-            for _cv_f in $_cv_changed; do
-                _cv_hit=0
-                for _cv_ts in $_cv_all; do
-                    _cv_cov="$(suite_covers_of "$_cv_ts")"
-                    [ -z "$_cv_cov" ] && continue
-                    for _cv_pat in $_cv_cov; do
-                        case "$_cv_f" in
-                            $_cv_pat)
-                                _cv_hit=1
-                                case " $_cv_selected " in
-                                    *" $_cv_ts "*) ;;
-                                    *) _cv_selected="$_cv_selected $_cv_ts" ;;
-                                esac
-                                ;;
-                        esac
-                    done
-                done
-                [ "$_cv_hit" -eq 0 ] && _cv_unmapped="$_cv_unmapped $_cv_f"
-            done
-
-            if [ -n "$_cv_unmapped" ]; then
-                # Fallback: at least one file is declared by no suite — run everything.
-                say "coverage: unmapped file(s):$(printf ' %s' $_cv_unmapped)"
-                say "coverage: no suite declares these — running all non-gated suites"
-                extra_suites="$_cv_all"
-            else
-                # Merge selected suites with the always-run no-covers set; deduplicate.
-                _cv_deduped=""
-                for _cv_ts in $_cv_selected $_cv_nocov; do
-                    case " $_cv_deduped " in
-                        *" $_cv_ts "*) ;;
-                        *) _cv_deduped="$_cv_deduped $_cv_ts" ;;
-                    esac
-                done
-                extra_suites="$_cv_deduped"
-                _cv_n=0
-                for _cv_ts in $_cv_deduped; do _cv_n=$((_cv_n + 1)); done
-                say "coverage: selected $_cv_n non-gated suite(s)"
-            fi
-        fi
-    fi
+    # select.sh owns the selection algorithm; this script owns which suites are
+    # already in the gated list. Deduplicate so each suite runs at most once.
+    while IFS= read -r _s || [ -n "$_s" ]; do
+        [ -n "$_s" ] || continue
+        _cv_path="spira/$_s"
+        # Skip any suite already in the gated list.
+        case " $suites " in
+            *" $_cv_path "*) ;;
+            *) extra_suites="$extra_suites $_cv_path" ;;
+        esac
+    done < <(bash "$HERE/select.sh" \
+        --base "${SPIRA_GATE_BASE:-}" \
+        --head "${SPIRA_GATE_BRANCH:-}" \
+        2>/dev/null || true)
+    _cv_n=0; for _cv_ts in $extra_suites; do _cv_n=$((_cv_n + 1)); done
+    [ "$_cv_n" -gt 0 ] && say "coverage: selected $_cv_n non-gated suite(s)"
 fi
 
 for s in $suites $extra_suites; do
