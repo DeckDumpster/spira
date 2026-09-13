@@ -285,6 +285,7 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
     # --files passes the pre-computed list from gate.sh directly rather than
     # re-computing the diff — avoids double work and lets test fixtures supply
     # the list without needing git refs.
+    _cv_mode_file="$(mktemp)"
     while IFS= read -r _s || [ -n "$_s" ]; do
         [ -n "$_s" ] || continue
         _cv_path="spira/$_s"
@@ -295,9 +296,15 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
         esac
     done < <(bash "$HERE/select.sh" \
         --files "${SPIRA_GATE_FILES}" \
+        --mode-file "$_cv_mode_file" \
         2>/dev/null || true)
+    _cv_mode="$(cat "$_cv_mode_file" 2>/dev/null || true)"; rm -f "$_cv_mode_file"
     _cv_n=0; for _cv_ts in $extra_suites; do _cv_n=$((_cv_n + 1)); done
-    [ "$_cv_n" -gt 0 ] && say "coverage: selected $_cv_n non-gated suite(s)"
+    if [ "$_cv_mode" = all ]; then
+        say "coverage: unmapped file(s) in diff — running all non-gated suites"
+    elif [ "$_cv_n" -gt 0 ]; then
+        say "coverage: selected $_cv_n non-gated suite(s)"
+    fi
 fi
 
 for s in $suites $extra_suites; do
