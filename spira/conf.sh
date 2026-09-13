@@ -198,6 +198,11 @@ spira_conf_read() {
     done < "$file"
 }
 
+# _spira_join <base> <rel> — join a base path and a relative segment without doubling
+# slashes. Strips any trailing slash from base before appending "/rel", so a base of "/"
+# (dirname of a repo at the filesystem root) produces "/rel" rather than "//rel".
+_spira_join() { local _b="${1%/}"; printf '%s/%s' "$_b" "$2"; }
+
 # spira_conf_defaults — fill in whatever is still unset. Ordered: later defaults refer to
 # earlier ones.
 spira_conf_defaults() {
@@ -233,11 +238,10 @@ spira_conf_defaults() {
     : "${SPIRA_CTRL:=$SPIRA_RUN/control}"
     : "${SPIRA_GOAL:=sp-spira}"
     : "${SPIRA_PATH:=}"
-    # NORMALISED SO DERIVED PATHS DO NOT DOUBLE THE SLASH. dirname returns "/" for a
-    # checkout mounted at the filesystem root (/workspace in every container run), and
-    # "$SPIRA_WORKSPACES/beads-test" then yields //beads-test, which mkdir refuses.
+    # DERIVED FROM SPIRA_REPO's parent. dirname returns "/" for a repo mounted at the
+    # filesystem root (/workspace in every container run); derivation sites use _spira_join
+    # so they never produce double slashes regardless of what SPIRA_WORKSPACES contains.
     : "${SPIRA_WORKSPACES:=$(dirname "$SPIRA_REPO")}"
-    SPIRA_WORKSPACES="${SPIRA_WORKSPACES%/}"; : "${SPIRA_WORKSPACES:=/}"
     : "${SPIRA_PREFIX_MAP:=$SPIRA_HOME/prefix-map}"
     : "${SPIRA_CHAMBER:=$SPIRA_HOME/chamber}"
     # THE ONE LIST OF WHAT SHOULD BE WATCHING. One `daemon` row is one systemd unit, so this
@@ -370,7 +374,7 @@ spira_conf_defaults() {
     # inventory.sh, which gate-spira.sh runs FIRST and independently of the suites — so
     # one literal default made origin/main refuse every branch, including the branches
     # that would have removed it (sp-2p7o, landed 14:15, blocked everything until 15:0x).
-    : "${SPIRA_TESTDB_DATA:=$SPIRA_WORKSPACES/beads-test}"
+    : "${SPIRA_TESTDB_DATA:=$(_spira_join "$SPIRA_WORKSPACES" beads-test)}"
     : "${SPIRA_TESTDB_PORT:=3308}"
     # HOW LONG A REPOSITORY'S OWN GATE COMMAND MAY RUN, in seconds. gate.sh wraps the command
     # under `timeout` at this budget. A gate killed at the deadline exits 124 and is reported
@@ -773,7 +777,7 @@ spira_conf_defaults() {
     # on the ExecStart fence — set SPIRA_PROD explicitly or create the checkout.
     # NO-COLON FORM: := fills on unset OR empty, so SPIRA_PROD= in spira.conf would have been
     # silently replaced by the derived default, making "I want no split" unexpressible.
-    : "${SPIRA_PROD=$SPIRA_WORKSPACES/${SPIRA_HOME_REPO}-prod/$(basename "$SPIRA_HOME")}"
+    : "${SPIRA_PROD=$(_spira_join "$SPIRA_WORKSPACES" "${SPIRA_HOME_REPO}-prod/$(basename "$SPIRA_HOME")")}"
 
     # ---- THE REVIEWER: ADVERSARIAL REVIEW AT THE RELEASE-UNIT BOUNDARY -------------------
     # THE MODEL IS STRONG BY DESIGN. The reviewer looks for intent violations, cross-commit

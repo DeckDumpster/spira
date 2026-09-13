@@ -161,5 +161,23 @@ want "SPIRA_INSTANCE is exported" "SPIRA_INSTANCE=" "$exported"
 
 # ==========================================================================
 echo
+echo "root workspace — SPIRA_REPO at filesystem root produces no double slashes:"
+# ==========================================================================
+# When the repo is bind-mounted at /workspace, dirname gives "/" and a naive
+# "$SPIRA_WORKSPACES/foo" yields "//foo". Verify both derivation sites clean.
+# Positive control: with a normal path, the derivation must produce something.
+testdb_normal="$(conf_val SPIRA_TESTDB_DATA SPIRA_WORKSPACES="$TMP/workspaces")"
+want "SPIRA_TESTDB_DATA is set with normal SPIRA_WORKSPACES" "$TMP/workspaces" "$testdb_normal"
+
+testdb_root="$(conf_val SPIRA_TESTDB_DATA SPIRA_REPO=/workspace)"
+nowant "SPIRA_TESTDB_DATA has no double slash when SPIRA_REPO=/workspace" "//" "$testdb_root"
+want   "SPIRA_TESTDB_DATA starts with /beads-test when SPIRA_REPO=/workspace" "/beads-test" "$testdb_root"
+
+prod_root="$(conf_val SPIRA_PROD SPIRA_REPO=/workspace)"
+nowant "SPIRA_PROD has no double slash when SPIRA_REPO=/workspace" "//" "$prod_root"
+want   "SPIRA_PROD is non-empty when SPIRA_REPO=/workspace" "/" "$prod_root"
+
+# ==========================================================================
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
