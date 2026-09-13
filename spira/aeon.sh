@@ -1394,6 +1394,11 @@ PROMPT="$(sed -e "s|{{BEAD_ID}}|$BEAD_ID|g" -e "s|{{BRANCH}}|$BRANCH|g" \
               -e "s|{{SOP}}|$SPIRA_HOME/sop.sh|g" -e "s|{{INCIDENT}}|$SPIRA_HOME/incident.sh|g" \
               -e "s|{{ASK}}|$SPIRA_NOTIFY|g" -e "s|{{SUITES}}|$SPIRA_HOME/suites.sh|g" \
               -e "s|{{GROOM}}|$SPIRA_HOME/groomer.sh|g" \
+              -e "s|{{SPIRA_HOME}}|$SPIRA_HOME|g" \
+              -e "s|{{RUN}}|$SPIRA_RUN|g" \
+              -e "s|{{MAX_BEADS}}|$SPIRA_MAECHEN_MAX_BEADS|g" \
+              -e "s|{{REMEDY_LABEL}}|$SPIRA_MAECHEN_REMEDY_LABEL|g" \
+              -e "s|{{SCOPE}}|${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}|g" \
               "$SPIRA_HOME/chamber/$FAYTH.md")"
 # PARAMETER EXPANSION, NOT sed, for the multi-line substitutions. `s|{{X}}|<many lines>|`
 # is not a thing sed will do, and a brief that silently rendered as the literal `{{PARK}}`

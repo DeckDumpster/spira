@@ -177,8 +177,28 @@ want "brief requires occurrence count"        "occurrence count"   "$brief"
 echo
 echo "maechen.md — encodes the per-pass output bound"
 # ==========================================================================================
-want "brief references SPIRA_MAECHEN_MAX_BEADS" "SPIRA_MAECHEN_MAX_BEADS" "$brief"
-want "brief explains flooding consequence"      "flooded"                  "$brief"
+want "brief references {{MAX_BEADS}} placeholder" "{{MAX_BEADS}}" "$brief"
+want "brief explains flooding consequence"        "flooded"        "$brief"
+
+# ==========================================================================================
+echo
+echo "maechen.md — no unresolved shell variable references"
+# ==========================================================================================
+# POSITIVE CONTROL: grep must catch a planted shell variable reference.
+# Asserted in an env where those names are unset — if the brief still expands them,
+# a rendered Maechen prompt will contain unresolved shell variables.
+BRIEF_WITH_OFFENDER="$(printf '%s\n$SPIRA_FAKE_VAR extra line' "$brief")"
+if grep -qE '\$(SPIRA_[A-Z_]+|BEAD_ID)' <<< "$BRIEF_WITH_OFFENDER"; then
+    ok "no-shell-var check: positive control fires on a planted reference"
+else
+    bad "no-shell-var check: positive control failed — grep missed the planted variable"
+fi
+unresolved="$(grep -nE '\$(SPIRA_[A-Z_]+|BEAD_ID)' "$BRIEF" 2>/dev/null)"
+if [ -z "$unresolved" ]; then
+    ok "maechen.md has no unresolved shell variable references"
+else
+    bad "maechen.md has unresolved shell variable references" "$unresolved"
+fi
 
 # ==========================================================================================
 echo
