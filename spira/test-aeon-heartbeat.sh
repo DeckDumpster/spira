@@ -12,10 +12,31 @@
 #
 # No database, no network, under a second.
 #
+# CONTAINER. An isolated PID namespace prevents ambient flock processes from interfering
+# with the subtree_has_flock cases. When invoked on the host (IN_TESTENV unset), this
+# script starts testenv, re-runs itself inside (IN_TESTENV=1), then tears the container
+# down. Inside the container the block is skipped and the assertions run directly.
+#
 # defect: sp-q697
 # covers: spira/lib.sh spira/aeon.sh
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+if [ "${IN_TESTENV:-}" != "1" ]; then
+    command -v podman >/dev/null 2>&1 || {
+        printf 'SKIP test-aeon-heartbeat.sh: podman not found on PATH\n' >&2
+        exit 77
+    }
+    TESTENV="$HERE/testenv.sh"
+    CNAME="spira-testenv-hb-$$"
+    bash "$TESTENV" up --name "$CNAME" >&2
+    rc=0
+    bash "$TESTENV" exec --name "$CNAME" -- \
+        env IN_TESTENV=1 bash /workspace/spira/test-aeon-heartbeat.sh || rc=$?
+    bash "$TESTENV" down --name "$CNAME" >/dev/null 2>&1 || true
+    exit "$rc"
+fi
+
 pass=0; fail=0
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 _bg_pids=()   # all background PIDs spawned here; checked for cleanup at suite exit
