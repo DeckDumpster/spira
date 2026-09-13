@@ -246,6 +246,40 @@ CMD="$(repo_gate "$REPO_NAME")"
 # VERDICT= line exist — a caller must never have to tell "passed" from "exited early".
 [ -n "$CMD" ] || verdict 0 syntax-only ""
 
+# PREFLIGHT: every `bash <path>` word in CMD must exist on the base tree.
+#
+# A CMD naming a file absent from the base fails every branch: the branch trial exits 127
+# if the branch also lacks the file, and even when the branch adds it the base trial exits
+# 127 — both of which gate.sh has reported as BASE_FAIL ("the base fails its own gate"),
+# pointing diagnosis at a non-existent failing suite. This is a gate configuration error:
+# the operator wired a file into the CMD before that file existed on the base.
+#
+# The preflight resolves only `bash <path>` words that are relative paths (containing a
+# slash but not starting with one); bare words, absolute paths, quoted shell expansions and
+# `-c` flags are skipped. Only relative paths can be git tree entries. A path absent from
+# the base returns NO_VERDICT with a reason slug distinct from base-red, naming the missing
+# file, so the landing pass does not charge the branch an attempt and the operator sees the
+# real cause.
+#
+# Scar: scratch-fence.sh was added to the spira repo-map gate command before the file
+# existed on origin/main, resulting in 22 branches held with 0 movement in one landing
+# pass (sp-lkzl).
+while IFS= read -r _cmd_path; do
+    [ -n "$_cmd_path" ] || continue
+    if ! git -C "$REPO" ls-tree --name-only "$BASE" "$_cmd_path" 2>/dev/null \
+            | grep -qF "$_cmd_path"; then
+        verdict "$NV" cmd-missing-file \
+"gate: $REPO_NAME's gate command names 'bash $_cmd_path' but $_cmd_path is absent from $BASE.
+gate: command: $CMD
+gate: this is a gate configuration error, not a fault in any branch.
+gate: land $_cmd_path on the base before wiring it into the gate command, or remove it."
+    fi
+done < <(printf '%s\n' "$CMD" \
+    | grep -oE '\bbash [^[:space:];|&(){}$"]+' \
+    | awk '{print $2}' \
+    | grep '/' \
+    | grep -v '^/')
+
 # =======================================================================================
 # D1 — THE VERDICT IS COMPUTED ONCE AND KEYED BY WHAT IT JUDGED.
 #

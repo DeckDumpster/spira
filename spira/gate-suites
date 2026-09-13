@@ -84,6 +84,15 @@ spira/test-literal-lint.sh
 # a clean tree.
 spira/test-scratch-fence.sh
 
+# THE MISSING-CMD PREFLIGHT'S OWN POSITIVE CONTROL. gate.sh resolves every bash <path>
+# in the repo-map gate command against the base tree before running any trial; a path absent
+# from the base returns a distinct config-error verdict rather than BASE_FAIL. This class of
+# defect (gate command naming a file not yet on the base) blocked 22 branches with a
+# misleading verdict (sp-lkzl). This suite plants an absent path (SEEN RED), requires the
+# named file to appear in the output, and confirms the verdict is not BASE_FAIL. The positive
+# control adds the file to the base and requires the gate to reach the suites.
+spira/test-gate-missing-cmd.sh
+
 # NOT IN THE GATE (budget): test-watchtower, test-soak, test-owned, test-uninstall, test-ready,
 # test-install-conflicts, test-configure, test-build. test-watchtower (~263s) was moved to the
 # timed set to bring the gate under SPIRA_GATE_BUDGET (sp-6ceo); the pipeline-stall detection
