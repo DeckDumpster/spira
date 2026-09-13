@@ -22,6 +22,7 @@
 # production checkout while spira-aeon-* units for the current instance are active.
 #
 # covers: spira/promote.sh spira/lib.sh spira/conf.sh
+# scar: promote.sh silently exited 0 in single-checkout mode (SPIRA_PROD inside SPIRA_REPO) instead of naming the condition and exiting non-zero.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0
@@ -31,6 +32,9 @@ want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 
 echo "test-promote.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# Git identity for fixture commits — required in the container (no ~/.gitconfig).
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
+export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 # A minimal git repo doubles as both SPIRA_REPO and a fake SPIRA_PROD parent.
 REPO="$TMP/repo"
