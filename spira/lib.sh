@@ -1616,39 +1616,56 @@ _census_events_sql() {   # _census_events_sql [since_epoch_s]
     fi
     printf "SELECT event_type, COALESCE(new_value, ''), COUNT(*) AS n FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred')%s GROUP BY event_type, new_value ORDER BY n DESC" "$since_clause"
 }
-census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output (both modes)
+census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output (both modes); exits non-zero when both paths refuse
     local q
     q="$(_census_events_sql "${1:-}")"
-    local out
-    if out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>/dev/null)" && [ -n "$out" ]; then
+    local out bd_rc=0
+    # bd sql works in server mode; bd-embedded refuses this subcommand (exits non-zero).
+    out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>/dev/null)" || bd_rc=$?
+    if [ "$bd_rc" -eq 0 ] && [ -n "$out" ]; then
         printf '%s\n' "$out"; return 0
     fi
     local doltdb="${SPIRA_DB}/.beads/embeddeddolt"
-    if [ -d "$doltdb" ] && command -v dolt >/dev/null 2>&1; then
-        local dbname
-        dbname="$(ls "$doltdb" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" || dbname="sp"
-        [ -n "$dbname" ] || dbname="sp"
-        dolt --data-dir "$doltdb" sql -q "use $dbname; $q;" 2>/dev/null || true
-        return 0
-    fi
-    # File fallback: aggregate events.log into the tabular format census.sh's count.py expects:
-    # "| event_type | new_value | count |" — one row per (event_type, cause) pair.
-    # The since_epoch_s filter matches the SQL: events with epoch > since are included.
-    local elog="${SPIRA_DB}/events.log"
-    if [ -d "$doltdb" ] && [ -f "$elog" ]; then
-        local since="${1:-0}"
-        awk -F'\t' -v since="$since" \
-            'NF>=4 && ($3=="requeued" || $3=="reclaimed" || $3=="recurred") &&
-             (since+0 == 0 || $1+0 > since+0) {
-                 key = $3 SUBSEP $4; counts[key]++
-             }
-             END {
-                 for (k in counts) {
-                     split(k, a, SUBSEP)
-                     printf "| %s | %s | %s |\n", a[1], a[2], counts[k]
+    if [ -d "$doltdb" ]; then
+        # Embedded store: dolt is the authoritative reader of the events table.
+        if command -v dolt >/dev/null 2>&1; then
+            local dbname
+            dbname="$(ls "$doltdb" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" || dbname="sp"
+            [ -n "$dbname" ] || dbname="sp"
+            dolt --data-dir "$doltdb" sql -q "use $dbname; $q;" 2>/dev/null || true
+            return 0
+        fi
+        # File fallback: aggregate events.log into the tabular format census.sh's count.py expects:
+        # "| event_type | new_value | count |" — one row per (event_type, cause) pair.
+        # The since_epoch_s filter matches the SQL: events with epoch > since are included.
+        local elog="${SPIRA_DB}/events.log"
+        if [ -f "$elog" ]; then
+            local since="${1:-0}"
+            awk -F'\t' -v since="$since" \
+                'NF>=4 && ($3=="requeued" || $3=="reclaimed" || $3=="recurred") &&
+                 (since+0 == 0 || $1+0 > since+0) {
+                     key = $3 SUBSEP $4; counts[key]++
                  }
-             }' "$elog" 2>/dev/null || true
+                 END {
+                     for (k in counts) {
+                         split(k, a, SUBSEP)
+                         printf "| %s | %s | %s |\n", a[1], a[2], counts[k]
+                     }
+                 }' "$elog" 2>/dev/null || true
+            return 0
+        fi
+        # embeddeddolt directory exists but neither dolt nor the events.log fallback is
+        # available — all readers of the embedded events table are unavailable. bd sql is
+        # also refused in embedded mode, so all access paths have failed. Return non-zero
+        # to distinguish this from an empty table: a pass reading this silence as "nothing
+        # found" would be wrong.
+        return 1
     fi
+    # Server mode, no embedded store. bd sql is the sole path.
+    # Exit 0 with empty output means the events table is genuinely empty (valid).
+    # Exit non-zero means the server is down and the substrate cannot be reached.
+    [ "$bd_rc" -eq 0 ] || return 1
+    return 0
 }
 
 # counter_of, counter_label, counter_causes, bump_counter, attempt_causes, requeue_causes,

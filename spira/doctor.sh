@@ -58,10 +58,23 @@ for b in bd git python3 flock; do
     else FAIL "$b is not on PATH — $(spira_bin_purpose "$b")" \
               "PATH is $PATH. If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."; fi
 done
+# dolt: FAIL on embedded stores, where the embeddeddolt directory marks the store and
+# dolt is the only reader of the events table. WARN on server-mode installs, where it
+# is genuinely optional — the SQL server handles reads in that case.
+if command -v dolt >/dev/null 2>&1; then
+    OK "dolt — $(command -v dolt)"
+elif [ -d "${SPIRA_DB}/.beads/embeddeddolt" ]; then
+    FAIL "dolt is not on PATH — the events substrate on an embedded store is unreadable without it" \
+         "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."
+else
+    WARN "dolt is not on PATH — $(spira_bin_purpose dolt)" \
+         "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."
+fi
+
 # WARN: each disables one feature, named, rather than the loop.
 # SPIRA_AGENT is used here rather than a literal: an operator who sets it to a different
 # binary name gets a useful message about that binary, not about a product they did not install.
-for b in dolt gh "${SPIRA_AGENT:-claude}" tmux node; do
+for b in gh "${SPIRA_AGENT:-claude}" tmux node; do
     if command -v "$b" >/dev/null 2>&1; then OK "$b — $(command -v "$b")"
     else WARN "$b is not on PATH — $(spira_bin_purpose "$b")" \
               "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."; fi

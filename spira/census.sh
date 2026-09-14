@@ -175,9 +175,19 @@ else
 fi
 
 # Build the ranked census: since-watermark when watermark is valid, all-time otherwise.
-_census_raw > "$_TMPDIR/all_time.txt"
+# _census_raw exits non-zero when census_events_run_sql signals that both access paths
+# (bd sql and embedded dolt) are unavailable. Treat that as a hard failure: a census
+# that cannot read its source must say so rather than report zero classes, because a
+# pass that reads silence as "nothing found" is indistinguishable from a blind one.
+if ! _census_raw > "$_TMPDIR/all_time.txt"; then
+    printf 'census.sh: events substrate is unreachable — cannot produce a census\n' >&2
+    exit 1
+fi
 if [ "$_watermark_ts" -gt 0 ] 2>/dev/null; then
-    census_events_run_sql "$_watermark_ts" | python3 "$_TMPDIR/count.py" > "$_TMPDIR/since_wm.txt"
+    if ! census_events_run_sql "$_watermark_ts" | python3 "$_TMPDIR/count.py" > "$_TMPDIR/since_wm.txt"; then
+        printf 'census.sh: events substrate is unreachable — cannot produce a census\n' >&2
+        exit 1
+    fi
     _RANKED="$(python3 "$_TMPDIR/merge.py" "$_TMPDIR/all_time.txt" "$_TMPDIR/since_wm.txt")"
 else
     _RANKED="$(cat "$_TMPDIR/all_time.txt")"
