@@ -14,8 +14,10 @@
 # A missing `cargo` is a warning: the loop runs fine without the attention panel. A missing
 # `bd` is fatal, because beads is the substrate.
 #
-# IT IS READ-ONLY. It creates nothing and starts nothing, so it is safe to run on a box you
-# are unsure about — which is the box you would want to run it on.
+# ONE WRITE. The events substrate probe (in the "events substrate" section below) writes a
+# single sentinel event to the store and reads it back. That one write cannot collide with
+# production state: the sentinel id is reserved and matches no real bead. Every other check
+# here is read-only.
 set -uo pipefail
 # Tell conf.sh not to exit on schema mismatch so the "bd schema" section below can
 # report it cleanly. Without this, conf.sh exits before doctor.sh prints any FAIL line.
@@ -58,14 +60,13 @@ for b in bd git python3 flock; do
     else FAIL "$b is not on PATH — $(spira_bin_purpose "$b")" \
               "PATH is $PATH. If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."; fi
 done
-# dolt: FAIL on embedded stores, where the embeddeddolt directory marks the store and
-# dolt is the only reader of the events table. WARN on server-mode installs, where it
-# is genuinely optional — the SQL server handles reads in that case.
+# dolt: WARN only. The file fallback (db-wx4) handles events reads and writes on an embedded
+# store when dolt is absent, so the missing-binary check cannot detect a broken write path.
+# Whether the path works is verified by the round-trip probe in the "events substrate" section
+# below. This line names which path is in use so the probe failure message is not the first
+# mention of dolt.
 if command -v dolt >/dev/null 2>&1; then
     OK "dolt — $(command -v dolt)"
-elif [ -d "${SPIRA_DB}/.beads/embeddeddolt" ]; then
-    FAIL "dolt is not on PATH — the events substrate on an embedded store is unreadable without it" \
-         "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."
 else
     WARN "dolt is not on PATH — $(spira_bin_purpose dolt)" \
          "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."
@@ -201,6 +202,50 @@ if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
     fi
 else
     OK "SPIRA_DOLT_DATA is empty — dolt server is managed independently"
+fi
+
+echo
+echo "events substrate"
+# ROUND-TRIP PROBE. Write one sentinel event and read it back. This is the positive control
+# the dolt-on-PATH proxy (removed by db-9dh) could not provide: it passes exactly when the
+# write path works, and fails when writes vanish silently. The file fallback introduced by
+# db-wx4 means embedded-store installs without dolt still have a working events path, and the
+# dolt-on-PATH check would have FAILed those correctly-configured boxes for four days.
+#
+# The sentinel id is "__doctor_probe__" — it cannot match a real bead id and accumulates no
+# production state. Repeated runs append another probe row; the count grows but the check
+# only needs count > 0.
+#
+# lib.sh is sourced here rather than at the top because loading it sooner would require
+# making the repo-map conditional unconditional, or duplicating the source. The events
+# functions are self-contained: they need only SPIRA_DB and SPIRA_BD (set by conf.sh).
+if [ -d "$SPIRA_DB/.beads" ]; then
+    . "$SPIRA_HOME/lib.sh"
+    _probe_id="__doctor_probe__"
+    _probe_etype="probed"
+    _bump_write_event "$_probe_id" "$_probe_etype" "doctor"
+    _probe_count="$(_counter_events_query "$_probe_id" "$_probe_etype")"
+    if [ "${_probe_count:-0}" -gt 0 ]; then
+        OK "events write/read round trip"
+    else
+        # Name the expected write path so the operator knows where to look.
+        _probe_doltdb="${SPIRA_DB}/.beads/embeddeddolt"
+        if [ -d "$_probe_doltdb" ]; then
+            if command -v dolt >/dev/null 2>&1; then
+                _probe_path="dolt embedded (${_probe_doltdb})"
+            else
+                _probe_path="file fallback (${SPIRA_DB}/events.log)"
+            fi
+        else
+            _probe_path="bd sql (server mode at ${SPIRA_DB})"
+        fi
+        FAIL "events write/read round trip failed — writes via ${_probe_path} are discarded" \
+             "Check that the events path is writable. On an embedded store without dolt,
+        ${SPIRA_DB}/events.log must be writable by the harness process."
+    fi
+    unset _probe_id _probe_etype _probe_count _probe_doltdb _probe_path
+else
+    WARN "cannot probe events substrate — no database yet"
 fi
 
 echo
