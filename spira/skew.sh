@@ -174,6 +174,88 @@ copies() {
 }
 
 # =======================================================================================
+# harness_root_of_path <path> -> repo root if the path is inside a harness tree, else non-zero.
+#
+# Does NOT require a .git directory: the signature is three files in the same directory
+# (boundary, gate.sh, lib.sh), and the root is the parent of that directory. A release tree
+# extracted to a plain directory has no .git but still carries those files, and this is how
+# the exec-tree audit finds it without the .git requirement that made harness_in() blind to it.
+# =======================================================================================
+harness_root_of_path() {
+    local p; p="$(readlink -f "${1:-}" 2>/dev/null)" || p="${1:-}"
+    local d; d="$(dirname "$p" 2>/dev/null)"
+    while [ -n "$d" ] && [ "$d" != "/" ] && [ "$d" != "." ]; do
+        if [ -f "$d/boundary" ] && [ -f "$d/gate.sh" ] && [ -f "$d/lib.sh" ]; then
+            dirname "$d"; return 0
+        fi
+        d="$(dirname "$d" 2>/dev/null)"
+    done
+    return 1
+}
+
+# =======================================================================================
+# exec_trees -> harness roots that the installed systemd units actually execute, one per line.
+#
+# Reads ExecStart= from the installed unit files rather than from conf.sh, because the unit
+# files are the ground truth: they are what systemd runs. SPIRA_REPO (the git checkout) is
+# excluded — it is already audited by the BEHIND/DIRTY checks. Everything else is a candidate
+# for the exec-tree content comparison.
+#
+# SPIRA_UNIT_DIR overrides the default unit directory so test fixtures can supply their own
+# units without writing to the operator's real service manager.
+# =======================================================================================
+exec_trees() {
+    local unit_dir="${SPIRA_UNIT_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user}"
+    [ -d "$unit_dir" ] || return 0
+    local line path root seen=""
+    while IFS= read -r line; do
+        # ExecStart=[-]<path> [args...] — strip the directive name, optional leading -, and args.
+        path="${line#ExecStart=}"
+        path="${path#-}"
+        path="${path%% *}"
+        [ -n "$path" ] && [ -f "$path" ] || continue
+        root="$(harness_root_of_path "$path")" || continue
+        [ -n "$root" ] || continue
+        # Skip the git checkout: its currency is already checked by BEHIND/DIRTY.
+        spira_same_repo "$root" "$SPIRA_REPO" 2>/dev/null && continue
+        # Deduplicate: many units share one release tree.
+        case "$seen" in *"|${root}|"*) continue ;; esac
+        seen="${seen}|${root}|"
+        printf '%s\n' "$root"
+    done < <(grep -h '^ExecStart=' "$unit_dir"/spira-*.service 2>/dev/null)
+}
+
+# =======================================================================================
+# _exec_tree_stale <exec-root> <git-repo> <base-ref> -> stale files, one per line.
+#
+# Compares every file tracked in base-ref against the corresponding file in exec-root, using
+# git hash-object to compute the same blob hash git would store. Works without a .git
+# directory in exec-root: git hash-object runs on any file regardless of its repo membership.
+#
+# Prints "    MISSING <path>" or "    CHANGED <path>" for each discrepancy. Empty output
+# means the executing tree matches the ref exactly.
+# =======================================================================================
+_exec_tree_stale() {
+    local exec_root="$1" git_repo="$2" base_ref="$3"
+    local stale="" line oid path exec_path exec_oid
+    while IFS= read -r line; do
+        # ls-tree -r format: "<mode> <type> <sha1>\t<path>"
+        # mode=6 chars, space, type=4 chars "blob", space, sha1=40 chars, tab, then path.
+        [ "${line:7:4}" = "blob" ] || continue   # skip submodule commits
+        oid="${line:12:40}"
+        path="${line:53}"
+        exec_path="$exec_root/$path"
+        if [ ! -f "$exec_path" ]; then
+            stale="${stale}    MISSING $path"$'\n'
+            continue
+        fi
+        exec_oid="$(git hash-object "$exec_path" 2>/dev/null)" || continue
+        [ "$exec_oid" = "$oid" ] || stale="${stale}    CHANGED $path"$'\n'
+    done < <(git -C "$git_repo" ls-tree -r "$base_ref" 2>/dev/null)
+    printf '%s' "$stale"
+}
+
+# =======================================================================================
 # check — the standing audit.
 #
 # Read-only by default: it reports findings to stdout and exits 0/1/3 but does NOT file an
@@ -190,7 +272,7 @@ check() {
     done
 
     local findings="" hard=0 base remote behind dirty control c_name c_path c_dir c_kind
-    local cond_behind=0 cond_dirty=0 cond_copy=0 cond_stale=0 cond_ctrl=0
+    local cond_behind=0 cond_dirty=0 cond_copy=0 cond_stale=0 cond_ctrl=0 cond_exec_stale=0
 
     # THE POSITIVE CONTROL, FIRST AND UNCONDITIONALLY. Every finding below is an absence
     # claim resting on one matcher, and a matcher that has stopped matching reports a clean
@@ -361,6 +443,27 @@ $(printf '%s\n' "$ctrl_div_out" | sed 's/^/    /')
         fi
     fi
 
+    # ---------------------------------------------------------------- EXEC-TREE
+    # The executing trees — paths systemd actually runs — may not be the git checkout. In
+    # split-checkout mode the release tree is a plain directory with no .git; "is it current?"
+    # cannot be answered by rev-list and must be answered by content: do the files the installed
+    # units execute match the files on the base ref?
+    #
+    # exec_trees() reads ExecStart= from installed unit files rather than from conf.sh: the
+    # unit files are the ground truth. SPIRA_REPO (already checked above) is excluded. Each
+    # remaining root is compared file-by-file via git hash-object, which needs no .git in the
+    # executing tree.
+    local exec_root exec_stale_files
+    while IFS= read -r exec_root; do
+        [ -n "$exec_root" ] || continue
+        exec_stale_files="$(_exec_tree_stale "$exec_root" "$SPIRA_REPO" "${base:-HEAD}" 2>/dev/null)"
+        if [ -n "$exec_stale_files" ]; then
+            hard=1; cond_exec_stale=1
+            findings="${findings}EXEC-TREE-STALE $exec_root does not match ${base:-HEAD}
+$exec_stale_files"
+        fi
+    done < <(exec_trees 2>/dev/null)
+
     if [ -z "$findings" ]; then
         printf 'skew: in effect — %s is %s, clean, the only harness the map names, and units match\n' \
             "$SPIRA_REPO" "${base:-its base ref}"
@@ -382,7 +485,7 @@ $(printf '%s\n' "$ctrl_div_out" | sed 's/^/    /')
         # the condition stays constant, which produced a new ask every hour as the repo fell
         # further behind (sp-624f). The condition key is versioned so a stamp written by the
         # old scheme (a bare cksum) cannot match and causes one re-escalation on upgrade.
-        local condition_key="v2:BEHIND=${cond_behind} DIRTY=${cond_dirty} COPY=${cond_copy} STALE=${cond_stale} CTRL=${cond_ctrl}"
+        local condition_key="v2:BEHIND=${cond_behind} DIRTY=${cond_dirty} COPY=${cond_copy} STALE=${cond_stale} CTRL=${cond_ctrl} EXEC=${cond_exec_stale}"
         escalate "$condition_key" "$findings"
     fi
     return 1
