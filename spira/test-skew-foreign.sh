@@ -189,5 +189,30 @@ out="$("$SKEW" foreign "$WS/plain" main adds-harness 2>&1)"; rc=$?
 is   "a branch that ADDS a second harness is refused"            1 "$rc"
 want "and the refusal names the directory being added"           "vendor/spira" "$out"
 
+# =======================================================================================
+# Initialization failure — conf.sh exits 1 (e.g., bd migrate schema fails due to a
+# database lock). skew.sh must exit 3 ("could not check"), never 1 ("foreign found"),
+# so gate.sh classifies it as a machinery fault rather than a foreign-harness refusal.
+# (class: sp-gate-conf-fail-as-foreign-harness)
+# =======================================================================================
+echo
+echo "foreign — conf.sh init failure exits 3, not 1:"
+
+# A fixture spira directory with a conf.sh that calls exit 1, simulating the path that
+# fires when bd migrate schema fails due to a database lock. lib.sh sources conf.sh, so
+# conf.sh calling exit 1 exits the skew.sh process with status 1 — exactly the failure
+# mode this fix exists to reclassify as exit 3.
+mkdir -p "$TMP/broken-spira"
+cp "$HERE/lib.sh" "$HERE/exclude.sh" "$HERE/skew.sh" "$TMP/broken-spira/"
+# suite-covers.sh is sourced by lib.sh; provide an empty stub.
+: > "$TMP/broken-spira/suite-covers.sh"
+printf '# broken conf.sh — simulates bd migrate schema failure\nexit 1\n' \
+    > "$TMP/broken-spira/conf.sh"
+SPIRA_CONF=/nonexistent-spira-conf \
+SPIRA_HOME="$TMP/broken-spira" SPIRA_RUN="$RUN" SPIRA_DB=/nonexistent-spira-db \
+SPIRA_REPO="$WS/home" SPIRA_HOME_REPO=home \
+    bash "$TMP/broken-spira/skew.sh" foreign "$WS/guest" main touches-harness >/dev/null 2>&1
+is "an init failure (conf.sh exit 1) exits 3, not 1" 3 "$?"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

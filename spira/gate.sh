@@ -221,7 +221,19 @@ fi
 # It fails CLOSED on its own absence, and skew.sh fails closed on its own confusion.
 SKEW="$(dirname "$0")/skew.sh"
 [ -r "$SKEW" ] || verdict "$NV" missing-skew "gate: $SKEW is missing — refusing to land unchecked"
-skewout="$(bash "$SKEW" foreign "$REPO" "$BASE" "$BR" 2>&1)" || verdict 1 foreign-harness \
+# CAPTURED FROM THE ASSIGNMENT so the exit code survives the subshell. skew.sh foreign
+# distinguishes two non-zero exits: 1 means a genuine foreign-harness violation was found;
+# 3 means skew.sh could not initialize (conf.sh or bd migrate schema failed). Exit 3 is a
+# machinery fault — nothing landed, nothing was checked, the branch is not at fault — and
+# must not be reported as a foreign-harness refusal. (class: sp-gate-conf-fail-as-foreign-harness)
+skewout="$(bash "$SKEW" foreign "$REPO" "$BASE" "$BR" 2>&1)"; skew_rc=$?
+if [ "$skew_rc" = 3 ]; then
+    verdict "$NV" skew-init-fault \
+        "gate: skew.sh could not initialize — conf.sh or the database may be unavailable.
+gate: the foreign-harness check did not run; this is a machinery fault, not a branch fault.
+$skewout"
+fi
+[ "$skew_rc" = 0 ] || verdict 1 foreign-harness \
     "gate: $BR belongs in the harness's own repository, not $REPO_NAME.
 $skewout"
 

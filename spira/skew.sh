@@ -45,7 +45,19 @@
 #        3  could not check — said out loud, never a silent pass
 #              (law-absence-needs-a-positive-control)
 set -uo pipefail
+# AN INITIALIZATION FAILURE IS "COULD NOT CHECK", EXIT 3, NOT A FOREIGN-HARNESS VERDICT.
+# conf.sh calls `exit 1` when `bd migrate schema` fails (e.g., database locked). gate.sh
+# calls this script as `skew.sh foreign` and treats any non-zero exit as a foreign-harness
+# refusal — so a database lock produced the message "branch belongs in the harness's own
+# repository" with the actual cause buried in the captured output. The fence fails closed
+# on its own confusion (stated at line 78), but it must name the confusion, not announce
+# a violation that never happened. Exit 3 is the documented "could not check" code; the
+# trap is removed once lib.sh has been sourced successfully so it cannot mask later exits.
+_skew_init_done=0
+trap '[ "$_skew_init_done" = 0 ] && exit 3' EXIT
 . "$(dirname "$0")/lib.sh"
+_skew_init_done=1
+trap - EXIT
 
 EXCLUDE="$(dirname "$0")/exclude.sh"
 
