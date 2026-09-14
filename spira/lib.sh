@@ -1654,11 +1654,23 @@ census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular o
                  }' "$elog" 2>/dev/null || true
             return 0
         fi
-        # embeddeddolt directory exists but neither dolt nor the events.log fallback is
-        # available — all readers of the embedded events table are unavailable. bd sql is
-        # also refused in embedded mode, so all access paths have failed. Return non-zero
-        # to distinguish this from an empty table: a pass reading this silence as "nothing
-        # found" would be wrong.
+        # embeddeddolt exists but neither dolt nor events.log is available. Two distinct
+        # states reach this point:
+        #   A. Database directory is empty: bd init created it but dolt never ran here,
+        #      so path 3 (events.log) was always the active write path. An absent
+        #      events.log means nothing has been written yet — the store is genuinely
+        #      empty, not unreachable. Return 0 with no output.
+        #   B. Database directory has content: dolt was the write path at some point,
+        #      events exist in the dolt table, but no reader can reach them now.
+        #      Return 1 — the substrate is unreachable (db-ur7 fail-closed preserved).
+        # Distinguish by whether the dolt database directory contains anything.
+        local _dbname_r
+        _dbname_r="$(ls "$doltdb" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" \
+            || _dbname_r=""
+        [ -n "$_dbname_r" ] || _dbname_r="sp"
+        if [ -z "$(ls -A "$doltdb/$_dbname_r" 2>/dev/null)" ]; then
+            return 0
+        fi
         return 1
     fi
     # Server mode, no embedded store. bd sql is the sole path.
