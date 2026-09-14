@@ -942,7 +942,9 @@ for i in d:
         # this branch allowed to land at all") and it must be asked first, because the gate
         # is the expensive half and there is nothing to learn from running it on a branch
         # that is going back either way. A bead that is not a spike passes through untouched.
-        if ! gate_out="$("$SPIRA_HOME/confine.sh" "$id" "$br" "$repo" "$base" "${bead_labels:-}" 2>&1)"; then
+        gate_out="$("$SPIRA_HOME/confine.sh" "$id" "$br" "$repo" "$base" "${bead_labels:-}" 2>&1)"
+        confine_rc=$?
+        if [ "$confine_rc" = 1 ]; then
             bead_reopen "$id" "Reopened by sentinel: $gate_out"
             progress "reopened $id — spike branch is not confined to its document"
             log "CHECK6 $id: $(printf '%s' "$gate_out" | head -1)"
@@ -953,6 +955,13 @@ for i in d:
             # the middle of it is exactly the case that record exists to make visible.
             land_mark "$id" RED "$tip" confine
             unset 'judged[$br]'
+            continue
+        elif [ "$confine_rc" != 0 ]; then
+            # confine.sh could not complete its evaluation — library load failure, database
+            # unreachable, or similar infrastructure fault. Same treatment as a live aeon still
+            # holding the branch (above): log the cause and defer to the next pass. The branch
+            # has NOT been found in violation; do not reopen and do not mark RED.
+            log "CHECK6 $id: $br — confine.sh could not evaluate: $(printf '%s' "$gate_out" | head -1)"
             continue
         fi
 

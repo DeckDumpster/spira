@@ -4,7 +4,12 @@
 #
 #   confine.sh <bead-id> <branch> <repo-path> <base-ref>
 #
-# Exits 0 if this branch is allowed to land, and 1 having printed WHICH paths are why not.
+# Exits:
+#   0  — allowed to land (not a spike, or spike is confined to allowed paths)
+#   1  — real confinement violation (spike changes files outside allowed trees)
+#   2  — inconclusive: evaluation could not complete (library load failed, database
+#        unreachable, etc.) — the caller must NOT treat this as a violation
+#
 # Run by landing.sh immediately before the repository's own gate, for every branch of every
 # persona — a bead that is not a spike is allowed through untouched, which is what makes this
 # safe to put on the shared path rather than on the spike's own.
@@ -29,13 +34,12 @@
 # wants a spike to land more than a document says so in SPIRA_SPIKE_PATHS rather than deleting
 # this. The override is configuration, which is the form a fence's override should take.
 set -uo pipefail
-. "$(dirname "$0")/lib.sh"
 
 ID="${1:-}"; BR="${2:-}"; REPO="${3:-}"; BASE="${4:-}"; labels="${5:-}"
 [ -n "$ID" ] && [ -n "$BR" ] && [ -n "$REPO" ] && [ -n "$BASE" ] \
-    || die "usage: confine.sh <bead-id> <branch> <repo-path> <base-ref> [labels]"
+    || { printf 'usage: confine.sh <bead-id> <branch> <repo-path> <base-ref> [labels]\n' >&2; exit 2; }
 
-# ---- is this a spike at all? ----------------------------------------------------------
+# ---- is this a spike at all? (BEFORE library load) ------------------------------------
 # Asked of the BEAD, never of the branch name. A branch is a string an aeon chose and a
 # successor bead may inherit; the label is what the harness dispatched on, so it is the only
 # thing that answers "was this worked by the persona whose deliverable is a document".
@@ -44,11 +48,35 @@ ID="${1:-}"; BR="${2:-}"; REPO="${3:-}"; BASE="${4:-}"; labels="${5:-}"
 # stands between finished work and its base, so a bd that times out must not become a harness
 # that silently stops landing everything. The confinement is a discipline on one persona, not
 # a security boundary.
+#
+# THIS CHECK RUNS BEFORE THE LIBRARY LOADS. In production, landing.sh passes labels as arg 5
+# and has already run conf.sh, so SPIRA_SPIKE_LABEL is already in the inherited environment.
+# The library (conf.sh) exits 1 on transient database failures including lock contention; a
+# non-spike must not be convicted of confinement by a database error that has nothing to do
+# with its branch. Moving this check first means the common case needs no database at all.
+#
 # THE LABELS MAY BE HANDED IN, and the landing worker hands them in because it already has
 # the bead's JSON open for its status and its repository. This runs once per closed branch per
 # repository every two minutes; a second query for a fact the caller is already holding is
 # thousands of round trips a day to learn nothing. Asking for itself is what keeps the script
 # runnable by hand and testable without a caller.
+if [ -n "$labels" ]; then
+    case " $labels " in
+        *" ${SPIRA_SPIKE_LABEL:-spike} "*) ;;
+        *) exit 0 ;;
+    esac
+fi
+
+# Load the library: needed either to resolve labels (standalone invocation, no arg 5) or to
+# run the git diff check (confirmed spike). conf.sh can exit 1 on transient database faults;
+# an EXIT trap catches that and remaps it to exit 2 (inconclusive), so a database failure
+# cannot be read by the caller as a confinement verdict.
+_lib_loaded=0
+trap '[ "$_lib_loaded" = 1 ] || { printf "confine.sh: could not evaluate — library load failed\n" >&2; exit 2; }' EXIT
+. "$(dirname "$0")/lib.sh"
+_lib_loaded=1
+trap - EXIT
+
 if [ -z "$labels" ]; then
     labels="$(bdjson show "$ID" 2>/dev/null | python3 -c '
 import sys, json
