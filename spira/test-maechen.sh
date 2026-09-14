@@ -189,6 +189,23 @@ want "brief outlaws silence"             "Silence is what"  "$brief"
 
 # ==========================================================================================
 echo
+echo "maechen.md — watermark advance is conditional on census exit code (sp-maechen-watermark-advances-blind)"
+# ==========================================================================================
+# The fix for sp-maechen-watermark-advances-blind: Step 5 must not advance the watermark
+# unconditionally. The brief must capture census_rc in Step 1 and condition the advance on
+# it in Step 5. A pass that follows these instructions literally cannot advance blind.
+#
+# POSITIVE CONTROL: each grep would fail if the brief were reverted to the unconditional
+# form. "census_rc" does not appear in a brief that always advances; "HELD" does not appear
+# in one that only logs "Watermark advanced to".
+want "brief captures census_rc"                              "census_rc"          "$brief"
+want "brief conditions advance on census success"            "only when the census succeeded" "$brief"
+want "brief has HELD log format for failed census"           "Watermark HELD at"  "$brief"
+want "brief has Watermark advanced log format for success"   "Watermark advanced to" "$brief"
+want "brief says leave watermark when census fails"          "leave the watermark where it is" "$brief"
+
+# ==========================================================================================
+echo
 echo "maechen.md — all \$SPIRA_HOME paths resolve to existing files"
 # ==========================================================================================
 # POSITIVE CONTROL: plant a doubled segment (e.g. spira/spira/census.sh) and this fails.

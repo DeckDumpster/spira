@@ -20,6 +20,11 @@ indistinguishable from one that did not happen.
 Aggregate failure events and rank by **since-watermark count** with open-remedy suppression:
 
     bash "$SPIRA_HOME/census.sh" --with-suppressed
+    census_rc=$?
+
+Capture `census_rc` before reading the output — it decides whether the watermark advances
+in Step 5. A census that exits non-zero means the substrate was unreachable; the output is
+not a ranking and must not be treated as one.
 
 `census.sh` queries the events table and outputs one line per class:
 
@@ -118,18 +123,31 @@ suppression — it must be the exact class key (e.g., `covers:sp-recur-suite-red
 a guideline. Silence is indistinguishable from a pass pointed at the wrong thing, and that
 shape is exactly what this rule exists to surface (`law-absence-needs-a-positive-control`).
 
-**Advance the watermark.** The trigger deliberately left the watermark at its pre-trigger
-value so census.sh could see the events that caused the trigger to fire. Now that the census
-is complete, advance it to the current time — atomically, so a crash here leaves either the
-old value or the new one, never a partial write:
+**Advance the watermark only when the census succeeded.** The trigger deliberately left the
+watermark at its pre-trigger value so census.sh could see the events that caused the trigger
+to fire. Whether the watermark now moves depends on Step 1's `census_rc`:
 
-    printf '%d\n' "$(date +%s)" > "${SPIRA_RUN}/maechen.watermark.new" \
-        && mv "${SPIRA_RUN}/maechen.watermark.new" "${SPIRA_RUN}/maechen.watermark"
+- When `census_rc` is 0 (census succeeded): advance the watermark atomically, so a crash
+  here leaves either the old value or the new one, never a partial write:
 
-Write the closing entry to the Maechen log:
+      printf '%d\n' "$(date +%s)" > "${SPIRA_RUN}/maechen.watermark.new" \
+          && mv "${SPIRA_RUN}/maechen.watermark.new" "${SPIRA_RUN}/maechen.watermark"
 
-    printf 'Maechen pass done: census=%d classes ranked, threshold_met=%s, beads_cut=%d. Watermark advanced to %s.\n' \
+- When `census_rc` is non-zero (census failed): leave the watermark where it is. A retained
+  watermark costs one duplicate count in the next pass; an advanced one costs the window
+  forever. Prefer the recoverable error.
+
+Write the closing entry to the Maechen log. The log line must record the outcome so the pass
+is auditable — two formats, one per outcome:
+
+    # When census succeeded (census_rc=0):
+    printf 'Maechen pass done: census=%d classes ranked (instrument rc=0), threshold_met=%s, beads_cut=%d. Watermark advanced to %s.\n' \
         N "yes|no" N "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        >> "$SPIRA_RUN/maechen.log"
+
+    # When census failed (census_rc non-zero):
+    printf 'Maechen pass done: census failed (instrument rc=%d). Watermark HELD at %s (census could not run).\n' \
+        "$census_rc" "$(cat "${SPIRA_RUN}/maechen.watermark" 2>/dev/null || printf 'none')" \
         >> "$SPIRA_RUN/maechen.log"
 
 Name the counts. An entry missing counts is indistinguishable from a pass that was not run.
