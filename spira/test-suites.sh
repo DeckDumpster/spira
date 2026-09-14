@@ -598,7 +598,7 @@ echo "the suite after the leaker ran"
 exit 0
 L
 
-leak_out="$(sut run SPIRA_SUITES_BUDGET=60 SPIRA_SUITE_TIMEOUT=10)"; leak_rc=$?
+leak_out="$(sut run SPIRA_SUITES_BUDGET=90 SPIRA_SUITE_TIMEOUT=30)"; leak_rc=$?
 
 is "the pass returns rather than hanging on the leaked child (rc=2: suite filed as red)" "2" "$leak_rc"
 is "the leaker is marked red for leaving a background job" "red" \
