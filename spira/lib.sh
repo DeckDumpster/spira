@@ -1642,7 +1642,7 @@ census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular o
         if [ -f "$elog" ]; then
             local since="${1:-0}"
             awk -F'\t' -v since="$since" \
-                'NF>=4 && ($3=="requeued" || $3=="reclaimed" || $3=="recurred") &&
+                'NF>=4 && ($3=="requeued" || $3=="reclaimed" || $3=="recurred" || $3=="lapsed") &&
                  (since+0 == 0 || $1+0 > since+0) {
                      key = $3 SUBSEP $4; counts[key]++
                  }

@@ -62,6 +62,7 @@ trap 'rm -rf "$_TMPDIR"' EXIT INT TERM
 #   recurred  + <cause>           → sp-recur-<cause>
 #   reclaimed + (empty/unrecorded)→ sp-reclaim
 #   reclaimed + <named-cause>     → sp-reclaim-<named-cause>
+#   lapsed    + <cause>           → sp-lapsed-<cause>
 cat > "$_TMPDIR/count.py" <<'EOF'
 import sys, collections
 
@@ -91,6 +92,8 @@ for line in sys.stdin:
             cls = 'sp-reclaim-' + cause
         else:
             cls = 'sp-reclaim'
+    elif event_type == 'lapsed':
+        cls = 'sp-lapsed-' + (cause or 'unrecorded')
     else:
         continue
     c[cls] += count

@@ -132,6 +132,11 @@ is "reclaims_of reads 2" "2" "$(reclaims_of sp-nd-3)"
 bump_requeue "sp-nd-4" gate-red
 is "requeues_of reads 1" "1" "$(requeues_of sp-nd-4)"
 
+bump_requeue "sp-nd-5" thrash
+is "requeues_of for thrash cause reads 1 (db-ipo)" "1" "$(requeues_of sp-nd-5)"
+
+bump_lapsed "sp-nd-6" lease-expired
+
 # ======================================================================================
 echo
 echo "census_events_run_sql — file fallback output is parseable by census.sh count.py"
@@ -141,6 +146,7 @@ want "output contains event_type 'recurred'" "recurred"    "$_craw"
 want "output contains cause 'suite-red'"     "suite-red"   "$_craw"
 want "output contains count 3"               "| 3 |"       "$_craw"
 want "output contains 'reclaimed'"           "reclaimed"   "$_craw"
+want "output contains 'lapsed' (db-ipo filter fix)" "lapsed" "$_craw"
 
 # ======================================================================================
 echo
@@ -166,6 +172,10 @@ want "census reports 3 sp-recur-suite-red (db-wx4 acceptance criterion)" \
     "3 sp-recur-suite-red" "$_cens"
 want "census reports 2 sp-recur-merge-conflict" "2 sp-recur-merge-conflict" "$_cens"
 want "census reports 2 sp-reclaim-timeout"      "2 sp-reclaim-timeout"      "$_cens"
+want "census reports 1 sp-requeue-thrash (db-ipo acceptance criterion)" \
+    "1 sp-requeue-thrash" "$_cens"
+want "census reports 1 sp-lapsed-lease-expired (db-ipo lapsed filter fix)" \
+    "1 sp-lapsed-lease-expired" "$_cens"
 
 printf '\ntest-events-nodolt.sh: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
