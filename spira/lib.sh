@@ -1654,24 +1654,21 @@ census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular o
                  }' "$elog" 2>/dev/null || true
             return 0
         fi
-        # embeddeddolt exists but neither dolt nor events.log is available. Two distinct
-        # states reach this point:
-        #   A. Database directory is empty: bd init created it but dolt never ran here,
-        #      so path 3 (events.log) was always the active write path. An absent
-        #      events.log means nothing has been written yet — the store is genuinely
-        #      empty, not unreachable. Return 0 with no output.
-        #   B. Database directory has content: dolt was the write path at some point,
-        #      events exist in the dolt table, but no reader can reach them now.
-        #      Return 1 — the substrate is unreachable (db-ur7 fail-closed preserved).
-        # Distinguish by whether the dolt database directory contains anything.
-        local _dbname_r
-        _dbname_r="$(ls "$doltdb" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" \
-            || _dbname_r=""
-        [ -n "$_dbname_r" ] || _dbname_r="sp"
-        if [ -z "$(ls -A "$doltdb/$_dbname_r" 2>/dev/null)" ]; then
-            return 0
-        fi
-        return 1
+        # embeddeddolt exists but neither dolt nor events.log is available.
+        # When dolt is absent, path 3 (events.log) was always the active write path.
+        # An absent events.log means nothing has been written yet — the store is
+        # genuinely empty, not unreachable. Return 0 with no output.
+        #
+        # The alternative (return 1 here) would be correct only for the rare case where
+        # dolt was the write path and was then removed: events exist in the dolt table
+        # but no reader can reach them. That case is indistinguishable here from the
+        # common "fresh embedded install" case — bd migrate schema populates the dolt
+        # directory with schema data even when no event has ever been written, so the
+        # directory's content cannot distinguish schema-only from schema-plus-events.
+        # Returning 0 accepts a rare false "empty" on dolt-was-removed boxes in exchange
+        # for a correct "empty" on every fresh embedded-no-dolt install (db-ur7's
+        # fail-closed preserved for the reachable-but-missing-reader case above).
+        return 0
     fi
     # Server mode, no embedded store. bd sql is the sole path.
     # Exit 0 with empty output means the events table is genuinely empty (valid).

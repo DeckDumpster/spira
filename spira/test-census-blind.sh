@@ -13,16 +13,16 @@
 # "zero classes ranked" — identical output to a genuinely clean corpus. Six Maechen
 # passes completed against a blind census and none recorded an outcome.
 #
-# Before db-7on, census_events_run_sql returned exit 1 (unreachable) when the dolt
-# database directory was empty and events.log had never been created. An empty dolt
-# database directory means bd init created it but dolt never ran on it, so path 3
-# (events.log) was always the active write path. An absent events.log on a path-3
-# install means "nothing written yet" — genuinely empty, not unreachable. Every
-# fresh embedded-no-dolt install hit this on its first Maechen pass.
+# Before db-7on, census_events_run_sql returned exit 1 (unreachable) when dolt was
+# absent and events.log had never been created. When dolt is absent, path 3
+# (events.log) is always the active write path; an absent events.log means nothing
+# has been written yet — genuinely empty, not unreachable. Every fresh
+# embedded-no-dolt install hit this on its first Maechen pass.
 #
 # FOUR ACCEPTANCE CRITERIA:
 #   1. EMPTY-SUBSTRATE (no dolt needed). census.sh exits 0 with no output on an
-#      embedded store whose dolt database directory is empty and events.log absent.
+#      embedded store with dolt absent and events.log absent, whether the dolt
+#      database directory is empty or has schema data from bd migrate schema.
 #   2. POSITIVE CONTROL (requires dolt). With dolt on PATH, census.sh exits 0 and
 #      reports seeded events. Required before trusting "unreachable" result.
 #   3. UNREACHABLE (requires dolt). With dolt stripped from PATH (events in dolt
@@ -106,6 +106,28 @@ _emp_out="$(env -i \
     bash "$CENSUS" --with-suppressed 2>/dev/null)" || _emp_rc=$?
 is "empty embedded store: census exits 0 (no events yet)" "0" "$_emp_rc"
 is "empty embedded store: no output (empty store, not unreachable)" "" "$_emp_out"
+
+# bd migrate schema populates the dolt directory with schema data even when no
+# event has ever been written, so a fresh embedded install typically has a
+# non-empty embeddeddolt/<db> directory. The fix must return 0 in that state
+# too, not just when the directory is completely empty.
+_SCHEMA_DB="$TMP/schema-db"
+_SCHEMA_RUN="$TMP/schema-run"
+mkdir -p "$_SCHEMA_DB/.beads/embeddeddolt/db/.dolt/noms" "$_SCHEMA_RUN"
+printf 'schema\n' > "$_SCHEMA_DB/.beads/embeddeddolt/db/.dolt/noms/manifest"
+_schema_rc=0
+_schema_out="$(env -i \
+    HOME="$TMP/home" \
+    SPIRA_PATH="$_EMPTY_BIN" \
+    SPIRA_BD="$_BD_FAKE" \
+    SPIRA_DB="$_SCHEMA_DB" \
+    SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy \
+    SPIRA_CONF="$TMP/no-conf" \
+    SPIRA_HOME="$HERE" \
+    SPIRA_RUN="$_SCHEMA_RUN" \
+    bash "$CENSUS" --with-suppressed 2>/dev/null)" || _schema_rc=$?
+is "schema-populated doltdb, no events.log: census exits 0" "0" "$_schema_rc"
+is "schema-populated doltdb, no events.log: no output" "" "$_schema_out"
 
 # Positive control: seed one row directly to events.log; the file-substrate
 # reader must report the class (case C from the db-7on bead description).
