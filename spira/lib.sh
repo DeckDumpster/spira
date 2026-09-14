@@ -3023,7 +3023,7 @@ for bead in beads:
                   bid, pref_str, ", ".join(sorted(pref)), "; ".join(reasons)))
     else:
         print("UNCLAIMABLE %s — spira with no matching partition; "
-              "no persona's partition labels are all present; "
+              "no persona'\''s partition labels are all present; "
               "add one of: %s" % (bid, ", ".join(partition_labels)))
 ' 2>/dev/null
 }
