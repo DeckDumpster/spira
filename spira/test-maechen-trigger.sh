@@ -12,11 +12,16 @@
 #   1. LANDING TRIGGER: commits naming a bead id on managed repos' base branches
 #      have accumulated to SPIRA_MAECHEN_LANDING_INTERVAL since the watermark.
 #
-#   2. TIME TRIGGER: SPIRA_MAECHEN_MAX_GAP_SECONDS have elapsed since the watermark.
+#   2. TIME TRIGGER: SPIRA_MAECHEN_MAX_GAP_SECONDS have elapsed since the last
+#      completed pass ($SPIRA_RUN/maechen.lastpass), NOT since the watermark.
+#      The watermark bounds the census query window; the time trigger cadence is
+#      governed by when a pass last ran. When the census substrate is unreadable
+#      every pass holds the watermark, so gating the time trigger on the watermark
+#      would make it fire on every subsequent tick forever (db-l85n).
 #
 # Properties guarded here:
 #
-#   a. Time trigger fires when the gap threshold is exceeded.
+#   a. Time trigger fires when the gap threshold is exceeded since lastpass.
 #   b. Landing trigger fires when the landing count threshold is reached.
 #   c. Dedup: when an open trigger bead exists, no second bead is filed.
 #   d. No trigger: when neither condition is met, no bead is filed.
@@ -27,6 +32,8 @@
 #      predicate finds the trigger bead.
 #   g. Both triggers firing at once produce ONE bead, not two (shared watermark).
 #   h. bd create failure is reported and exits 1.
+#   i. Held watermark + recent lastpass → time trigger does NOT fire (db-l85n fix).
+#      Positive control: held watermark + old lastpass → time trigger fires.
 #
 # POSITIVE CONTROLS (law-absence-needs-a-positive-control)
 # ---------------------------------------------------------
@@ -105,6 +112,7 @@ add_landing() {
 RUNDIR="$T/run"
 mkdir -p "$RUNDIR"
 WATERMARK_FILE="$RUNDIR/maechen.watermark"
+LASTPASS_FILE="$RUNDIR/maechen.lastpass"
 
 now_ts="$(date +%s)"
 
@@ -128,11 +136,13 @@ run_trigger() {
 
 # ==========================================================================================
 echo
-echo "TIME TRIGGER: no-trigger control — watermark is 'now', gap threshold is large"
+echo "TIME TRIGGER: no-trigger control — lastpass is 'now', gap threshold is large"
 # ==========================================================================================
 # POSITIVE CONTROL: show the trigger does NOT fire when conditions are not met.
-# Watermark is the current time; no time has elapsed; gap threshold is huge.
+# The time trigger reads lastpass, not the watermark. Set lastpass to now so no time
+# has elapsed since the last pass. Gap threshold and landing threshold are both huge.
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
+printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 : > "$BD_LOG"
 SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
 SPIRA_MAECHEN_LANDING_INTERVAL=999 \
@@ -143,10 +153,12 @@ want   "no-trigger logs 'no trigger'" "no trigger" "$out"
 
 # ==========================================================================================
 echo
-echo "TIME TRIGGER: fires when SPIRA_MAECHEN_MAX_GAP_SECONDS elapsed"
+echo "TIME TRIGGER: fires when SPIRA_MAECHEN_MAX_GAP_SECONDS elapsed since lastpass"
 # ==========================================================================================
-# Watermark = 0 (epoch zero); elapsed = now, which far exceeds any threshold.
+# Absent lastpass file → lastpass_ts=0 → elapsed = now (~epoch 1.79B) >> threshold.
+# Watermark is set to 0 but is irrelevant to the time trigger (it bounds census only).
 printf '0\n' > "$WATERMARK_FILE"
+rm -f "$LASTPASS_FILE"
 SPIRA_MAECHEN_MAX_GAP_SECONDS=60 \
 SPIRA_MAECHEN_LANDING_INTERVAL=999 \
     out="$(run_trigger)"; rc=$?
@@ -165,11 +177,46 @@ is "watermark not advanced by trigger (still 0)" "0" "${new_wm:-0}"
 
 # ==========================================================================================
 echo
+echo "TIME TRIGGER: db-l85n fix — held watermark + recent lastpass = no fire"
+# ==========================================================================================
+# ACCEPTANCE CRITERIA (db-l85n): when the census substrate is unreadable, every Maechen
+# pass holds the watermark (db-93g). Before this fix, the time trigger read the watermark
+# and would fire on every subsequent tick because elapsed-since-watermark grew without
+# bound. The fix: time trigger reads lastpass, not watermark.
+#
+# This case asserts the fix: watermark is arbitrarily old (0), but lastpass was written
+# recently (now). The time trigger must NOT fire — elapsed since lastpass is ~0s.
+printf '0\n' > "$WATERMARK_FILE"
+printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
+: > "$BD_LOG"
+SPIRA_MAECHEN_MAX_GAP_SECONDS=10800 \
+SPIRA_MAECHEN_LANDING_INTERVAL=999 \
+    out="$(run_trigger)"; rc=$?
+is     "held watermark + recent lastpass exits 0"         0 "$rc"
+nowant "held watermark + recent lastpass does not create" "create" "$(cat "$BD_LOG")"
+want   "log mentions 'no trigger'"                        "no trigger" "$out"
+
+# POSITIVE CONTROL: same fixture but lastpass is old — time trigger MUST fire.
+# Without this check, a trigger that never fires also passes the no-fire assertion above.
+printf '0\n' > "$WATERMARK_FILE"
+printf '0\n' > "$LASTPASS_FILE"
+: > "$BD_LOG"
+SPIRA_MAECHEN_MAX_GAP_SECONDS=10800 \
+SPIRA_MAECHEN_LANDING_INTERVAL=999 \
+    out_pc="$(run_trigger)"; rc_pc=$?
+is   "held watermark + old lastpass exits 0"        0        "$rc_pc"
+want "held watermark + old lastpass fires trigger"  "create" "$(cat "$BD_LOG")"
+want "positive control log mentions elapsed"        "elapsed" "$out_pc"
+
+# ==========================================================================================
+echo
 echo "LANDING TRIGGER: no-trigger control — no bead-naming commits, high threshold"
 # ==========================================================================================
 # POSITIVE CONTROL: no commits with bead-id subjects exist; threshold is 999.
-# Watermark is current time so time trigger doesn't also fire.
+# Set lastpass=now so the time trigger does not fire independently (the time trigger reads
+# lastpass, not watermark; elapsed since lastpass must be below MAX_GAP=999999).
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
+printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
 SPIRA_MAECHEN_LANDING_INTERVAL=999 \
     out="$(run_trigger)"; rc=$?
@@ -184,7 +231,9 @@ echo "LANDING TRIGGER: fires when landing count reaches threshold"
 # Watermark is set just before the commits so --after=@<wm> includes them.
 # git --after='@N' treats N as a Unix timestamp only for N >= 100000000; for N=0 or
 # other small values approxidate falls back to 'now', silently finding no commits.
+# Set lastpass=now so the time trigger does not fire independently.
 printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
+printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 add_landing "sp-aaa1: first landing"
 add_landing "sp-bbb2: second landing"
 SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \

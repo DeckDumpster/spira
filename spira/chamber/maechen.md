@@ -123,6 +123,16 @@ suppression — it must be the exact class key (e.g., `covers:sp-recur-suite-red
 a guideline. Silence is indistinguishable from a pass pointed at the wrong thing, and that
 shape is exactly what this rule exists to surface (`law-absence-needs-a-positive-control`).
 
+**Write the lastpass stamp on every completed pass** (success or failure). The time trigger
+in `maechen-trigger.sh` reads `$SPIRA_RUN/maechen.lastpass` to decide whether enough time
+has elapsed since a pass last ran. It must not read the watermark for this purpose: when the
+census substrate is unreadable every pass holds the watermark, the elapsed-since-watermark
+grows without bound, and the time trigger fires on every subsequent tick (db-l85n). Write
+the stamp atomically before the watermark advance so a crash does not leave both missing:
+
+    printf '%d\n' "$(date +%s)" > "${SPIRA_RUN}/maechen.lastpass.new" \
+        && mv "${SPIRA_RUN}/maechen.lastpass.new" "${SPIRA_RUN}/maechen.lastpass"
+
 **Advance the watermark only when the census succeeded.** The trigger deliberately left the
 watermark at its pre-trigger value so census.sh could see the events that caused the trigger
 to fire. Whether the watermark now moves depends on Step 1's `census_rc`:

@@ -3,16 +3,23 @@
 # maechen-trigger.sh — evaluate the two Maechen trigger conditions and file a sweep
 # bead when either fires, with idempotent deduplication.
 #
-# Two conditions, one watermark. Both are measured from the same watermark so two
-# triggers that fire within seconds of each other produce one bead, not two.
-#
 #   LANDING TRIGGER: counts commits on every managed repo's base branch whose subject
 #     names a bead id, since the watermark timestamp. Fires when the count reaches
 #     SPIRA_MAECHEN_LANDING_INTERVAL. A landing is a commit whose SUBJECT names a bead
 #     id (law-landed-is-content). Bead status is never consulted.
 #
 #   TIME TRIGGER: fires when more than SPIRA_MAECHEN_MAX_GAP_SECONDS have elapsed since
-#     the watermark, even if the landing volume threshold has not been reached.
+#     the last completed pass ($SPIRA_RUN/maechen.lastpass), even if the landing volume
+#     threshold has not been reached.
+#
+# TWO CLOCKS, NOT ONE. The watermark ($SPIRA_RUN/maechen.watermark) bounds the census
+# query window — it tells census.sh how far back to look, and must not advance when a
+# pass cannot read the substrate (db-93g). The time trigger cadence must be governed
+# by when a pass last ran, not by whether the census could be read: if the substrate is
+# temporarily unreadable every pass holds the watermark, elapsed since watermark grows
+# without bound, and the fire condition becomes permanently true. maechen.lastpass is
+# written by the Maechen pass on every completion (success or failure), so the time
+# trigger gates on the pass cadence, not the census window.
 #
 # DEDUP. At most one open trigger bead at a time. maechen.fayth has
 # FAYTH_MAX_CONCURRENT=1; a second open trigger bead would wait forever behind the
@@ -48,6 +55,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 BD="${SPIRA_BD:-bd}"
 DB="${SPIRA_DB:-.}"
 WATERMARK_FILE="${SPIRA_RUN}/maechen.watermark"
+LASTPASS_FILE="${SPIRA_RUN}/maechen.lastpass"
 
 log() { printf '%s maechen-trigger: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 
@@ -84,14 +92,30 @@ if [ -f "$WATERMARK_FILE" ]; then
     esac
 fi
 
-now_ts="$(date +%s)"
-elapsed=$(( now_ts - watermark_ts ))
+# READ THE LAST-PASS STAMP. A missing or empty file yields epoch 0 (trigger fires
+# immediately on first run or after a pass has never completed). The pass writes this
+# file on every completion — success or failure — so the time trigger measures how long
+# ago a pass ran, independently of whether the census could read the substrate.
+lastpass_ts=0
+if [ -f "$LASTPASS_FILE" ]; then
+    _lp_raw="$(cat "$LASTPASS_FILE" 2>/dev/null | tr -d '[:space:]' || true)"
+    case "${_lp_raw:-}" in
+        ''|*[!0-9]*) lastpass_ts=0 ;;
+        *) lastpass_ts="$_lp_raw" ;;
+    esac
+fi
 
-# TIME TRIGGER. Fire when more than SPIRA_MAECHEN_MAX_GAP_SECONDS have elapsed.
+now_ts="$(date +%s)"
+elapsed=$(( now_ts - lastpass_ts ))
+
+# TIME TRIGGER. Fire when more than SPIRA_MAECHEN_MAX_GAP_SECONDS have elapsed since
+# the last pass. Reads lastpass, not the watermark — the watermark bounds census.sh's
+# query window and must not advance when the substrate is unreadable, but that must not
+# stop the time trigger from knowing that a pass happened.
 time_trigger=0
 if [ "$elapsed" -ge "${SPIRA_MAECHEN_MAX_GAP_SECONDS:-10800}" ]; then
     time_trigger=1
-    log "time trigger: ${elapsed}s elapsed since watermark (threshold: ${SPIRA_MAECHEN_MAX_GAP_SECONDS:-10800}s)"
+    log "time trigger: ${elapsed}s elapsed since last pass (threshold: ${SPIRA_MAECHEN_MAX_GAP_SECONDS:-10800}s)"
 fi
 
 # LANDING TRIGGER. Count commits naming a bead id since the watermark.
@@ -161,7 +185,7 @@ fi
 
 # NEITHER TRIGGER — nothing to do.
 if [ "$time_trigger" = 0 ] && [ "$landing_trigger" = 0 ]; then
-    log "no trigger: ${landing_count} landings (threshold: ${SPIRA_MAECHEN_LANDING_INTERVAL:-25}), ${elapsed}s elapsed (threshold: ${SPIRA_MAECHEN_MAX_GAP_SECONDS:-10800}s)"
+    log "no trigger: ${landing_count} landings (threshold: ${SPIRA_MAECHEN_LANDING_INTERVAL:-25}), ${elapsed}s since last pass (threshold: ${SPIRA_MAECHEN_MAX_GAP_SECONDS:-10800}s)"
     exit 0
 fi
 
@@ -175,7 +199,7 @@ if "$BD" -C "$DB" create \
     --type task \
     --label "$LABELS,delivers:note:${SPIRA_RUN}/maechen.log" \
     --priority 3 \
-    --description "Scheduled trigger: the Maechen persona will claim this bead, run a retrospective pass over the failure distribution, identify recurring failure classes, and cut at most ${SPIRA_MAECHEN_MAX_BEADS:-3} remedy beads. Trigger: ${trigger_reason} since watermark (ts=${watermark_ts}). See spira/chamber/maechen.md for the pass procedure." \
+    --description "Scheduled trigger: the Maechen persona will claim this bead, run a retrospective pass over the failure distribution, identify recurring failure classes, and cut at most ${SPIRA_MAECHEN_MAX_BEADS:-3} remedy beads. Trigger: ${trigger_reason} (lastpass ts=${lastpass_ts}, watermark ts=${watermark_ts}). See spira/chamber/maechen.md for the pass procedure." \
 ; then
     log "Maechen trigger bead filed (labels: $LABELS,delivers:note:${SPIRA_RUN}/maechen.log, reason: ${trigger_reason})"
 else
