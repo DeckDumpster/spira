@@ -892,7 +892,22 @@ export SPIRA_BD
 # is skipped entirely. bd's version string does not order against release tags — a dev build
 # knows MORE migrations than a tagged release — so pin by migration count, not version string.
 if [ -d "${SPIRA_DB:-}/.beads" ]; then
-    if ! _spira_bd_out="$(timeout 30 "$SPIRA_BD" -C "$SPIRA_DB" migrate schema 2>&1)"; then
+    # Lock contention from embedded dolt is transient — the lock is exclusive and several bd
+    # processes can race for it at the same time. A longer timeout does not help: the open is
+    # refused immediately, not after a wait. Retry with backoff before concluding the database
+    # is unreadable; a schema mismatch is not retried because the binary and database cursor
+    # will not agree any differently on the next attempt.
+    # SPIRA_BD_LOCK_SLEEP_UNIT scales the per-attempt backoff (default 1 second); set it to 0
+    # in test fixtures to skip the sleep without changing the retry logic.
+    _spira_bd_try=0
+    while true; do
+        _spira_bd_try=$((_spira_bd_try + 1))
+        _spira_bd_out="$(timeout 30 "$SPIRA_BD" -C "$SPIRA_DB" migrate schema 2>&1)" && break
+        if printf '%s\n' "$_spira_bd_out" | grep -q 'locked by another dolt process' \
+                && [ "$_spira_bd_try" -lt 5 ]; then
+            sleep "$(( _spira_bd_try * ${SPIRA_BD_LOCK_SLEEP_UNIT:-1} ))"
+            continue
+        fi
         _spira_bd_db="$(printf '%s\n' "$_spira_bd_out" | grep -oE 'database is at v[0-9]+' | grep -oE '[0-9]+')"
         _spira_bd_bin="$(printf '%s\n' "$_spira_bd_out" | grep -oE 'binary knows up to v[0-9]+' | grep -oE '[0-9]+')"
         # Report both versions, rendering ? when one cannot be read. A mismatch where only
@@ -903,18 +918,23 @@ if [ -d "${SPIRA_DB:-}/.beads" ]; then
                 "${_spira_bd_db:-?}" "$SPIRA_BD" "${_spira_bd_bin:-?}" >&2
             printf 'spira: rebuild bd at v%s or set SPIRA_BD in %s\n' \
                 "${_spira_bd_db:-?}" "${SPIRA_CONF_FILE:-spira.conf}" >&2
+        elif printf '%s\n' "$_spira_bd_out" | grep -q 'locked by another dolt process'; then
+            printf 'spira: bd database unreadable — locked by another dolt process (tried %d times)\n' \
+                "$_spira_bd_try" >&2
+            printf 'spira: bd is %s\n' "$SPIRA_BD" >&2
         else
             printf 'spira: bd migrate schema failed — %s\n' \
                 "$(printf '%s\n' "$_spira_bd_out" | head -1)" >&2
             printf 'spira: bd is %s\n' "$SPIRA_BD" >&2
         fi
-        unset _spira_bd_out _spira_bd_db _spira_bd_bin
+        unset _spira_bd_out _spira_bd_db _spira_bd_bin _spira_bd_try
         # SPIRA_DOCTOR=1 means doctor.sh is the caller. It suppresses stderr to print
         # its own structured FAIL, and it runs `bd migrate schema` itself in its schema
         # section — so conf.sh must not exit here or doctor.sh never reaches that check.
         [ -z "${SPIRA_DOCTOR:-}" ] && exit 1
-    fi
-    unset _spira_bd_out
+        break
+    done
+    unset _spira_bd_out _spira_bd_try
 fi
 
 # BD_IGNORE_SCHEMA_SKEW WAS EXPORTED HERE AND IS GONE, because the recovery it was waiting on
