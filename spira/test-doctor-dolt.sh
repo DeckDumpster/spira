@@ -70,6 +70,7 @@ case "\$*" in
     *"list-units"*"spira-watch"*) true ;;
     *"is-active"*) printf 'active\n' ;;
     *"list-timers"*) true ;;
+    *"is-enabled"*) printf 'enabled\n' ;;
 esac
 exit 0
 MOCK
@@ -80,7 +81,9 @@ MOCK
 # Helper: set up a minimal environment and run doctor.sh.
 # ---------------------------------------------------------------------------
 setup_db() {
-    mkdir -p "$TMP/db/.beads" "$TMP/run"
+    mkdir -p "$TMP/db/.beads" "$TMP/run" "$TMP/home"
+    # An empty regular file: watchd_rows requires test -f to pass; /dev/null is a char device.
+    touch "$TMP/watchers-empty"
 }
 
 run_doctor() {
@@ -93,11 +96,14 @@ run_doctor() {
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_PATH="$BIN" \
+        SPIRA_SYSTEMCTL="$BIN/systemctl" \
         SPIRA_DB="$TMP/db" \
         SPIRA_RUN="$TMP/run" \
+        SPIRA_INSTANCE=prod \
         SPIRA_BD_PIN="$TMP/run/bd-pin" \
         SPIRA_REPO_MAP=/nonexistent \
         SPIRA_NOTIFY=/nonexistent \
+        SPIRA_WATCHERS="$TMP/watchers-empty" \
         ${extra} \
         bash "$HERE/doctor.sh" 2>/dev/null
 }

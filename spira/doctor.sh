@@ -586,6 +586,58 @@ fi
 unset _dr_sc _dr_unit_dir _dr_dup_found _dr_f _dr_base _dr_ext _dr_stem _dr_inst_name
 
 echo
+echo "enabled units"
+# ENABLE-SET DRIFT. Every unit in the ENABLE set must be enabled in systemd unless the
+# control plane records a deliberate suspension. A disabled unit with no control-plane
+# entry is silent drift: nothing alerts, nothing fails, the feature it drives simply stops.
+#
+# Fail closed: if systemctl returns no output for a unit, the result is a FAIL rather than
+# a clean pass — a probe that says clean when it cannot see is the silence that hides the
+# outage (law-alerts-must-be-actionable).
+#
+# The ENABLE set is sourced from units.sh directly, not restated here. A second hand-
+# written list rots the way the gate's suite list did: units.sh grows, the copy here does
+# not, and the check passes on units it never knew to test.
+_dr_en_sc="${SPIRA_SYSTEMCTL:-systemctl}"
+_dr_en_bad=0
+_dr_en_units_sh="$SPIRA_REPO/systemd/units.sh"
+if [ -z "${_SPIRA_UNITS_LOADED:-}" ]; then
+    { . "$_dr_en_units_sh"; } 2>/dev/null \
+        || { FAIL "cannot source $_dr_en_units_sh — enabled-units check skipped" \
+                  "Check that $_dr_en_units_sh exists and SPIRA_REPO is set correctly."
+             _dr_en_bad=1; }
+fi
+if [ "${_dr_en_bad}" -eq 0 ]; then
+    for _dr_en_unit in "${ENABLE[@]}"; do
+        [ -n "$_dr_en_unit" ] || continue
+        _dr_en_state="$("$_dr_en_sc" --user is-enabled "$_dr_en_unit" 2>/dev/null || true)"
+        if [ -z "$_dr_en_state" ]; then
+            FAIL "$_dr_en_unit — systemctl returned no output; cannot verify enablement state" \
+                 "Check that the systemd user session is active: $_dr_en_sc --user status"
+            _dr_en_bad=$((_dr_en_bad + 1))
+            continue
+        fi
+        [ "$_dr_en_state" = "enabled" ] && continue
+        # Not enabled. Check the control plane before classifying as drift. The subject key
+        # is derived the same way ctrl.sh divergence derives it: strip the file extension,
+        # then strip the per-instance suffix.
+        _dr_en_base="${_dr_en_unit%.*}"
+        _dr_en_subj="${_dr_en_base%-${SPIRA_INSTANCE:-prod}}"
+        if "$SPIRA_HOME/ctrl.sh" check "$_dr_en_subj" 2>/dev/null; then
+            : # deliberately suspended — control-plane decision, not drift
+        else
+            FAIL "$_dr_en_unit is $_dr_en_state but has no control-plane suspension" \
+                 "Enable it:   $_dr_en_sc --user enable $_dr_en_unit
+        Suspend it:  $SPIRA_HOME/ctrl.sh suspend $_dr_en_subj --reason <why> --owner <bead>"
+            _dr_en_bad=$((_dr_en_bad + 1))
+        fi
+    done
+    [ "$_dr_en_bad" -eq 0 ] \
+        && OK "all ${#ENABLE[@]} ENABLE units are enabled or suspended via ctrl.sh"
+fi
+unset _dr_en_sc _dr_en_bad _dr_en_units_sh _dr_en_unit _dr_en_state _dr_en_base _dr_en_subj
+
+echo
 echo "writable state"
 if mkdir -p "$SPIRA_RUN" 2>/dev/null && [ -w "$SPIRA_RUN" ]; then OK "runtime directory $SPIRA_RUN"
 else FAIL "cannot write $SPIRA_RUN" "Leases, logs and worktrees live here. Set SPIRA_RUN in ${CONF:-spira.conf}."; fi
