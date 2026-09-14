@@ -43,18 +43,22 @@ mkdir -p "$TMP/.runtime" "$TMP/fake/cockpit"
 printf '#!/usr/bin/env bash\nsleep 600\n' > "$TMP/fake/cockpit/health.sh"
 chmod +x "$TMP/fake/cockpit/health.sh"
 
-# The impostor: an ordinary program whose ARGUMENT mentions the dashboard, as an agent's
-# --append-system-prompt does. bash -c keeps a shell as the pane process with the impostor
-# as its child, the same shape as a login shell running an agent.
-IMPOSTOR="sleep 600 'tools: $COCKPIT_DIR/health.sh once and cockpit/health.sh loop'"
-tmux new-session -d -s cockpit -x 200 -y 50 "bash -c \"$IMPOSTOR; :\""
+# The impostor: an ordinary process whose ARGUMENTS mention the dashboard, as an agent's
+# --append-system-prompt does. The mention rides in bash's $0 slot so the pane stays alive
+# (an unknown extra argument to `sleep` itself would exit at once and take the server with it).
+MENTION="tools: $COCKPIT_DIR/health.sh once and cockpit/health.sh loop"
+tmux new-session -d -s cockpit -x 200 -y 50 "bash -c 'sleep 600 & wait' '$MENTION'"
 SESS=$(tmux list-panes -t cockpit:0 -F '#{pane_id}' | head -1)
 HEALTH=$(tmux split-window -P -F '#{pane_id}' -d -h -t "$SESS" "bash $TMP/fake/cockpit/health.sh loop")
 sleep 0.5
 
 # Prove the impostor really carries the string the old matcher looked for, or the suite would
 # pass against a fixture that could never have tripped it.
-spid=$(tmux display -p -t "$SESS" '#{pane_pid}')
+spid=$(tmux display -p -t "$SESS" '#{pane_pid}' 2>/dev/null)
+if [ -z "$spid" ] || [ -z "$HEALTH" ]; then
+    echo "fixture: tmux server did not hold the panes (session=[$SESS] health=[$HEALTH])" >&2
+    exit 1
+fi
 cl="$(tr '\0' ' ' </proc/"$spid"/cmdline 2>/dev/null)"
 for c in $(pgrep -P "$spid"); do cl="$cl $(tr '\0' ' ' </proc/"$c"/cmdline 2>/dev/null)"; done
 [[ "$cl" == *cockpit/health.sh* ]] && ok "fixture: session pane argv mentions cockpit/health.sh" \
