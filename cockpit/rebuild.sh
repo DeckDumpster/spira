@@ -54,7 +54,11 @@ done
 # Configuration, never a hardcoded path (law: every harness path comes from spira.conf).
 # Sourced with `set +u` because conf.sh is written for callers that have not set -u.
 { set +u; . "$HERE/../spira/conf.sh" 2>/dev/null; set -u; } || true
+# The installed symlink is the normal path. If neither SPIRA_VIEW nor the installed
+# symlink exists — as in a fresh container before the harness is fully wired — fall back
+# to the copy shipped in this repo. The symlink would point here anyway.
 VIEW="${SPIRA_VIEW:-$HOME/.local/bin/cockpit-remote}"
+[ -x "$VIEW" ] || VIEW="$HERE/remote/cockpit-remote"
 LAYOUT="$HERE/layout.sh"
 # COCKPIT_CWD is derived in conf.sh as ${SPIRA_WIKI:-$SPIRA_REPO}: the wiki when one is
 # configured, the harness root otherwise. It is the right default for tmux sessions because
