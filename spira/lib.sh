@@ -1614,7 +1614,7 @@ _census_events_sql() {   # _census_events_sql [since_epoch_s]
     if [ -n "${1:-}" ] && [ "${1:-0}" -gt 0 ] 2>/dev/null; then
         since_clause=" AND created_at > FROM_UNIXTIME(${1})"
     fi
-    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(*) AS n FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred')%s GROUP BY event_type, new_value ORDER BY n DESC" "$since_clause"
+    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(*) AS n FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed')%s GROUP BY event_type, new_value ORDER BY n DESC" "$since_clause"
 }
 census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output (both modes); exits non-zero when both paths refuse
     local q

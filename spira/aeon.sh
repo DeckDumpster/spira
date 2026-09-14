@@ -698,6 +698,7 @@ print(d[0].get("status","") if d else "")' 2>/dev/null)"
             _thrash_note="$(cat "$SPIRA_RUN/$BEAD_ID.thrash" 2>/dev/null)"
             rm -f "$SPIRA_RUN/$BEAD_ID.thrash"
             release_own_claim "$BEAD_ID"
+            bump_requeue "$BEAD_ID" thrash
             bdq note "$BEAD_ID" "Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m while turns advanced. Last action: ${_thrash_note:-?}. No attempt charged — the next aeon should start from this sticking point." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID thrash-requeued — no attempt charged (last: ${_thrash_note:-?})"
             ledger_done "$rc" "requeue-thrash"
