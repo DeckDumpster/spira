@@ -93,3 +93,13 @@ legacy       | /srv/checkouts/legacy      | pr   | origin/master |              
 # the remote-tracking ref is still the right base, because "landed" means "reached what
 # everything else pulls from".
 vendor       | /srv/checkouts/vendor      | hold | upstream/master |               |
+
+# A push repository whose gate has multiple fast fences before an expensive suite runner.
+# ORDER MATTERS. Fast checks (fences) run first — no container started, no flock
+# contended — and fail immediately when they find a violation. The suite runner follows
+# only if the fences pass. All files named in the gate command must exist on the base
+# before you wire them in; gate.sh returns NO_VERDICT until they do, holding every
+# branch (law-seen-red-must-be-seen-in-ci). The exit-code mapping translates harness
+# faults (container start failure → 2; configure failure → 3) to NO_VERDICT (75) so
+# the bead is not charged an attempt for the harness's own failure.
+platform     | /srv/checkouts/platform    | push | origin/main   |                 | bash .claude/fence-a.sh && bash .claude/fence-b.sh && { _b=0; bash .claude/testenv-batch.sh "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }
