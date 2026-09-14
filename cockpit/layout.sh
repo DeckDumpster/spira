@@ -140,35 +140,55 @@ tag_pane()   { tmux set-option -p -t "$1" @cockpit "$2" 2>/dev/null; }
 # "health.sh loop" — both dashboards ended up tagged `health`, `tagged health` resolved
 # to the wrong pane, and the real health pane could die unnoticed. Read the pane's
 # process and its children instead.
+#
+# AND READ THEM BY ARGV POSITION, NEVER AS A SUBSTRING OF THE WHOLE COMMAND LINE. A glob over
+# the joined argv matches any process that merely MENTIONS a dashboard: an agent session
+# launched with a system prompt listing `cockpit/health.sh` among its tools was tagged
+# `health`, so the next ensure found no untagged pane, declared the session pane gone, and
+# `up` killed the live session along with the dashboards — every other minute. The executable
+# is argv[0]; when that is a shell, the script it runs is argv[1].
+pane_role() {   # pane_role <pid> -> panel|health on stdout, nothing when neither
+    local pid="$1" q exe script
+    local -a argv
+    for q in "$pid" $(pgrep -P "$pid" 2>/dev/null); do
+        mapfile -d '' -t argv < "/proc/$q/cmdline" 2>/dev/null || continue
+        [ "${#argv[@]}" -gt 0 ] || continue
+        exe="${argv[0]}"; script=""
+        case "${exe##*/}" in
+            bash|sh|dash) [ "${#argv[@]}" -gt 1 ] && [ "${argv[1]#-}" = "${argv[1]}" ] && script="${argv[1]}" ;;
+        esac
+        if [ "$exe" = "${SPIRA_PANEL:-}" ] || [[ "$exe" == */release/panel ]] \
+            || [[ "$script" == */cockpit/panel-run.sh ]]; then
+            echo panel; return 0
+        fi
+        if [[ "$exe" == */cockpit/health.sh ]] || [[ "$script" == */cockpit/health.sh ]]; then
+            echo health; return 0
+        fi
+    done
+}
+
 adopt_untagged() {
     tmux list-panes -t "$WINDOW" -F '#{@cockpit}|#{pane_id}|#{pane_pid}' 2>/dev/null \
     | while IFS='|' read -r tag id pid; do
         [ -n "$tag" ] && continue
-        local cl=""
-        cl=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
-        for c in $(pgrep -P "$pid" 2>/dev/null); do
-            cl="$cl $(tr '\0' ' ' < "/proc/$c/cmdline" 2>/dev/null)"
-        done
-        case "$cl" in
-            *release/panel*) tag_pane "$id" panel ;;
-            *cockpit/health.sh*) tag_pane "$id" health ;;
-        esac
+        local role; role=$(pane_role "$pid")
+        [ -n "$role" ] && tag_pane "$id" "$role"
       done
 }
 
-# Re-derive every dashboard tag from the running process, correcting stale ones.
+# Re-derive every dashboard tag from the running process, correcting stale ones — including
+# a tag on a live pane that runs no dashboard at all, which is otherwise permanent: `up` kills
+# every tagged pane, so a wrongly tagged session pane is killed on the next repair.
 retag_dashboards() {
-    tmux list-panes -t "$WINDOW" -F '#{pane_id}|#{pane_pid}' 2>/dev/null \
-    | while IFS='|' read -r id pid; do
-        local cl=""
-        cl=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
-        for c in $(pgrep -P "$pid" 2>/dev/null); do
-            cl="$cl $(tr '\0' ' ' < "/proc/$c/cmdline" 2>/dev/null)"
-        done
-        case "$cl" in
-            *release/panel*) tag_pane "$id" panel ;;
-            *cockpit/health.sh*) tag_pane "$id" health ;;
-        esac
+    tmux list-panes -t "$WINDOW" -F '#{pane_id}|#{pane_pid}|#{pane_dead}|#{@cockpit}' 2>/dev/null \
+    | while IFS='|' read -r id pid dead tag; do
+        local role; role=$(pane_role "$pid")
+        if [ -n "$role" ]; then
+            [ "$role" = "$tag" ] || tag_pane "$id" "$role"
+        elif [ -n "$tag" ] && [ "$dead" != 1 ]; then
+            heal_log "$WINDOW: $id is tagged $tag but runs no dashboard — clearing the tag"
+            tmux set-option -p -u -t "$id" @cockpit 2>/dev/null || true
+        fi
       done
 }
 
@@ -550,6 +570,9 @@ case "$ACTION" in
 up)
     tmux has-session -t "${WINDOW%%:*}" 2>/dev/null || { echo "no tmux session for '$WINDOW'" >&2; exit 1; }
     adopt_untagged
+    # Before `kill-pane` runs over every tagged pane: a tag on a pane that runs no dashboard
+    # would make that pane — usually the session — one of the ones killed.
+    retag_dashboards
 
     sess="$(session_pane)"
     if [ -z "$sess" ]; then
@@ -588,6 +611,7 @@ up)
 
 down)
     adopt_untagged
+    retag_dashboards
     sess="$(session_pane)"
     if [ -z "$sess" ]; then
         # Refuse rather than empty the window — `down` promises a full-height session pane,
