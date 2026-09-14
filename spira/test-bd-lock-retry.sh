@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# test-bd-lock-retry.sh — conf.sh retries a transient dolt lock-contention error and
-#   aborts with a lock-specific message when retries are exhausted; a schema mismatch
-#   is not retried.
+# test-bd-lock-retry.sh — conf.sh retries a transient dolt lock-contention error; when
+#   retries are exhausted and the only failure was lock contention, conf.sh continues with
+#   a warning (the lock-holder's presence implies schema compatibility). A schema mismatch
+#   aborts on the first attempt without retry.
 #
-# POSITIVE CONTROL (law-absence-needs-a-positive-control): before the retry cases run,
-# prove the test infrastructure can detect an abort: a bd stub that always returns a
-# lock error must leave REACHED-PAST-GUARD absent and must produce the lock-contention
-# message. Only then does it mean anything that the retry case produces REACHED-PAST-GUARD.
+# POSITIVE CONTROL (law-absence-needs-a-positive-control): a schema mismatch bd stub runs
+#   FIRST to prove the test harness can detect an abort (REACHED-PAST-GUARD absent). Only
+#   then does it mean anything when the lock-only exhaustion case produces REACHED-PAST-GUARD.
 #
 # covers: spira/conf.sh
 set -uo pipefail
@@ -96,16 +96,15 @@ source_conf() {
 
 # ==========================================================================
 echo
-echo "positive control — always-locked bd aborts and names lock contention:"
+echo "positive control — schema mismatch aborts, REACHED-PAST-GUARD is absent:"
 # ==========================================================================
-# Proves the test infrastructure can detect an abort: REACHED-PAST-GUARD must be absent
-# and the output must name lock contention. A test that never asserts absence cannot
-# distinguish "retry worked" from "harness is broken".
-make_lock_bd
+# Proves the test harness can detect an abort: REACHED-PAST-GUARD must be absent
+# and the schema mismatch message must appear. Only then does it mean anything that
+# the lock-only exhaustion case below produces REACHED-PAST-GUARD.
+make_counting_mismatch_bd
 ctrl_out="$(source_conf 2>&1 || true)"
-nowant "positive control: REACHED-PAST-GUARD absent"        "REACHED-PAST-GUARD"           "$ctrl_out"
-want   "positive control: lock message present"             "locked by another dolt process" "$ctrl_out"
-nowant "positive control: no 'migrate schema failed'"       "migrate schema failed"          "$ctrl_out"
+nowant "positive control: REACHED-PAST-GUARD absent"  "REACHED-PAST-GUARD" "$ctrl_out"
+want   "positive control: schema mismatch message"    "schema mismatch"    "$ctrl_out"
 
 # ==========================================================================
 echo
@@ -123,13 +122,18 @@ fi
 
 # ==========================================================================
 echo
-echo "exhaustion — lock that persists through all retries aborts with lock message:"
+echo "lock-only exhaustion — all retries locked, conf.sh continues with warning:"
 # ==========================================================================
+# When every retry fails with lock contention only (no schema mismatch), the process
+# holding the lock opened the database successfully — schema is compatible. Exiting
+# here would block callers that do not need database access (e.g. skew.sh foreign)
+# whenever collect.sh holds the embedded dolt lock for its 180s probes.
 make_lock_bd
-exhaust_out="$(source_conf 2>&1 || true)"
-nowant "exhausted: REACHED-PAST-GUARD absent"          "REACHED-PAST-GUARD"           "$exhaust_out"
-want   "exhausted: lock message names contention"      "locked by another dolt process" "$exhaust_out"
-nowant "exhausted: no 'migrate schema failed'"         "migrate schema failed"          "$exhaust_out"
+exhaust_out="$(source_conf 2>&1)"
+want   "exhausted: REACHED-PAST-GUARD present (conf.sh continues)"  "REACHED-PAST-GUARD"           "$exhaust_out"
+want   "exhausted: lock warning is printed"                          "locked"                        "$exhaust_out"
+nowant "exhausted: no 'migrate schema failed'"                       "migrate schema failed"         "$exhaust_out"
+nowant "exhausted: no 'schema mismatch'"                             "schema mismatch"               "$exhaust_out"
 
 # ==========================================================================
 echo

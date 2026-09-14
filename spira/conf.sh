@@ -895,8 +895,8 @@ if [ -d "${SPIRA_DB:-}/.beads" ]; then
     # Lock contention from embedded dolt is transient — the lock is exclusive and several bd
     # processes can race for it at the same time. A longer timeout does not help: the open is
     # refused immediately, not after a wait. Retry with backoff before concluding the database
-    # is unreadable; a schema mismatch is not retried because the binary and database cursor
-    # will not agree any differently on the next attempt.
+    # is locked. A schema mismatch is not retried because the binary and database cursor will
+    # not agree any differently on the next attempt.
     # SPIRA_BD_LOCK_SLEEP_UNIT scales the per-attempt backoff (default 1 second); set it to 0
     # in test fixtures to skip the sleep without changing the retry logic.
     _spira_bd_try=0
@@ -918,21 +918,29 @@ if [ -d "${SPIRA_DB:-}/.beads" ]; then
                 "${_spira_bd_db:-?}" "$SPIRA_BD" "${_spira_bd_bin:-?}" >&2
             printf 'spira: rebuild bd at v%s or set SPIRA_BD in %s\n' \
                 "${_spira_bd_db:-?}" "${SPIRA_CONF_FILE:-spira.conf}" >&2
+            unset _spira_bd_out _spira_bd_db _spira_bd_bin _spira_bd_try
+            # SPIRA_DOCTOR=1 means doctor.sh is the caller. It suppresses stderr to print
+            # its own structured FAIL, and it runs `bd migrate schema` itself in its schema
+            # section — so conf.sh must not exit here or doctor.sh never reaches that check.
+            [ -z "${SPIRA_DOCTOR:-}" ] && exit 1
+            break
         elif printf '%s\n' "$_spira_bd_out" | grep -q 'locked by another dolt process'; then
-            printf 'spira: bd database unreadable — locked by another dolt process (tried %d times)\n' \
+            # All retries failed with lock contention only. The process holding the lock
+            # opened the database successfully, meaning schema is compatible with the running
+            # binary. Exiting here would block callers that do not need database access (e.g.
+            # skew.sh foreign) whenever collect.sh holds the embedded dolt lock. Continue
+            # with a warning; the next conf.sh initialization will verify schema again.
+            printf 'spira: bd locked after %d attempts — another process holds the database; schema assumed current\n' \
                 "$_spira_bd_try" >&2
-            printf 'spira: bd is %s\n' "$SPIRA_BD" >&2
+            break
         else
             printf 'spira: bd migrate schema failed — %s\n' \
                 "$(printf '%s\n' "$_spira_bd_out" | head -1)" >&2
             printf 'spira: bd is %s\n' "$SPIRA_BD" >&2
+            unset _spira_bd_out _spira_bd_db _spira_bd_bin _spira_bd_try
+            [ -z "${SPIRA_DOCTOR:-}" ] && exit 1
+            break
         fi
-        unset _spira_bd_out _spira_bd_db _spira_bd_bin _spira_bd_try
-        # SPIRA_DOCTOR=1 means doctor.sh is the caller. It suppresses stderr to print
-        # its own structured FAIL, and it runs `bd migrate schema` itself in its schema
-        # section — so conf.sh must not exit here or doctor.sh never reaches that check.
-        [ -z "${SPIRA_DOCTOR:-}" ] && exit 1
-        break
     done
     unset _spira_bd_out _spira_bd_try
 fi
