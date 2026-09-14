@@ -19,9 +19,12 @@ FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
 # for production incidents would push the statutes it actually needs off the context budget.
 FAYTH_MEMORY_PREFIXES="law-"
 
-# NO FAYTH_REPO. The repository comes from the BEAD — a `repo:spira` label resolved
-# through .claude/spira/repo-map. The sweep bead carries repo:spira, which is the home
-# repo, because Maechen's failure record is the harness's own.
+# NO FAYTH_REPO. The repository comes from the BEAD — a `repo:<name>` label resolved
+# through repo-map. The sweep bead carries no repo: label, so aeon.sh falls back to
+# spira_home_repo(), which is the harness's own home checkout. Maechen works on the
+# harness — its failure record is local — so that fallback is correct. Remedy beads that
+# Maechen cuts use `repo:${SPIRA_HOME_REPO}` (from the brief) so the name is derived,
+# not hardcoded, and resolves on any install.
 
 # OPUS 5. The census step is recognition and enumeration, which a small model handles.
 # But diagnosing a mechanism and writing a design is not — it requires understanding

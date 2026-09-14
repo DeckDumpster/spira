@@ -22,8 +22,8 @@ FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
 FAYTH_MEMORY_PREFIXES="law-"
 
 # NO FAYTH_REPO. The repository comes from the BEAD — a `repo:<name>` label resolved
-# through .claude/spira/repo-map. The sweep bead carries repo:spira, which is the home
-# repo, because QA's scar record is the harness's own.
+# through repo-map. The sweep bead carries no repo: label, so aeon.sh falls back to
+# spira_home_repo(), which is the harness's own home checkout.
 
 # HAIKU. QA is recognition and enumeration rather than construction — it reads a small,
 # well-defined scar record, classifies each entry, and proposes a bead. This is exactly the
