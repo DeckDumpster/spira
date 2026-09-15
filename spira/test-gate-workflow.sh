@@ -191,5 +191,27 @@ want "the push group is keyed on the commit"             "github.sha" "$CONC"
 want "a pull request still supersedes itself"            "cancel-in-progress" "$CONC"
 
 echo
+echo "the gate job is bounded, because it holds a real machine:"
+# Without timeout-minutes the job inherits GitHub's 360-minute default and a wedge
+# holds a provisioned VM for six hours. Read from the parsed YAML rather than by
+# grepping the file: a `timeout-minutes` under any OTHER job would satisfy a grep
+# while the gate job stayed unbounded, which is the only case that matters.
+_t="$(python3 -c "import yaml,sys; d=yaml.safe_load(open('$GATE_YML')); print(d['jobs']['gate'].get('timeout-minutes') or '')" 2>/dev/null)"
+if [ -n "$_t" ]; then
+    ok "the gate job sets timeout-minutes ($_t)"
+else
+    bad "the gate job sets timeout-minutes" "unset; the job inherits GitHub's 360-minute default and a wedge holds a provisioned VM for six hours"
+fi
+# Bigger than one measured pass (24 min) and smaller than the default it replaces.
+case "$_t" in
+    ''|*[!0-9]*) bad "the timeout is a sane bound" "not a number: [$_t]" ;;
+    *) if [ "$_t" -gt 24 ] && [ "$_t" -lt 360 ]; then
+           ok "the timeout is a sane bound"
+       else
+           bad "the timeout is a sane bound" "$_t minutes: a full pass measured 24, and 360 is the default this exists to replace"
+       fi ;;
+esac
+
+echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

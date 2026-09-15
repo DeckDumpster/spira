@@ -110,6 +110,21 @@ jobs:
   gate:
     needs: provision
     runs-on: [self-hosted, "${{ needs.provision.outputs.label }}"]
+    # BOUNDED, BECAUSE THIS JOB HOLDS A REAL MACHINE. Without it the job inherits
+    # GitHub's 360-minute default, and a wedged suite would hold a provisioned
+    # Proxmox VM for six hours before anything noticed. Pushes no longer cancel one
+    # another either, so several could stack up behind a single wedge.
+    #
+    # 45 is roughly double the only measured pass: the first full run took 24
+    # minutes for all 276 suites. Tight enough that a wedge is caught within the
+    # hour, loose enough not to red a merely slow run. Revisit once there are
+    # several completed runs to size from -- one observation is a number, not a
+    # distribution.
+    #
+    # This bounds the JOB. testenv-batch already bounds each SUITE at
+    # SPIRA_SUITE_TIMEOUT (600s default), so one hung suite is caught long before
+    # this fires; what this catches is the case that never reaches a suite at all.
+    timeout-minutes: 45
     permissions:
       contents: read
       # To pull the test image. The package inherits the repository's visibility,
