@@ -62,7 +62,7 @@ SPIRA_LOOM_ADDR SPIRA_LOOM_BUDGET_MS SPIRA_LOOM_CACHE_S SPIRA_LOOM_BIN
 SPIRA_SPIKE_LABEL SPIRA_SPIKE_DIR SPIRA_SPIKE_PATHS
 SPIRA_GROOMER_LABEL SPIRA_SCOPE_LABEL SPIRA_PLAN_LABEL SPIRA_INCIDENT_LABEL
 SPIRA_MAECHEN_LABEL SPIRA_MAECHEN_LANDING_INTERVAL SPIRA_MAECHEN_MAX_GAP_SECONDS SPIRA_MAECHEN_MAX_BEADS SPIRA_MAECHEN_REMEDY_LABEL
-COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_RIGHT_PCT COCKPIT_CWD COCKPIT_SESSIONS COCKPIT_HOST
+COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_RIGHT_PCT COCKPIT_MOUSE COCKPIT_CWD COCKPIT_SESSIONS COCKPIT_HOST
 SPIRA_TOWN SPIRA_MIRROR SPIRA_EXPORTER SPIRA_DESIGN SPIRA_WIKI SPIRA_WIKI_HOOK SPIRA_DOLT_DATA
 SPIRA_VIEW SPIRA_VIEW_SESSION
 SPIRA_ALERT_GLOB
@@ -638,6 +638,18 @@ spira_conf_defaults() {
     # touches it. A column is what lets each section grow to the space it can use instead
     # of every one of them being cut to a single row.
     : "${COCKPIT_RIGHT_PCT:=33}"
+
+    # MOUSE MODE, ON BY DEFAULT. The cockpit is panes the operator clicks into --
+    # the attention panel especially -- and with mouse off a click does nothing at
+    # all: no error, no focus change, so it reads as a dead panel rather than as a
+    # setting. tmux defaults it off and there need not be a ~/.tmux.conf on the box,
+    # so the cockpit sets it itself rather than depending on one.
+    #
+    # THE TRADE IT MAKES. With mouse on, dragging selects into tmux's copy-mode
+    # instead of the terminal's own selection, so a terminal-native copy needs Shift
+    # held down. That is the whole cost, it is per-operator, and it is why this is a
+    # key and not a constant: set COCKPIT_MOUSE = off to keep native selection.
+    : "${COCKPIT_MOUSE:=on}"
     # WHERE THE COCKPIT'S PANES OPEN. The top pane holds the operator's own session, so its
     # working directory decides which project's instructions that session loads — not a
     # cosmetic choice. It defaults to the wiki when one is configured, because an operator
@@ -1174,7 +1186,7 @@ spira_gate_blames_branch() {   # spira_gate_blames_branch <status> -> 0 if the b
 
 # --------------------------------------------------------------------------------------
 export SPIRA_INSTANCE \
-       SPIRA_DB COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_RIGHT_PCT COCKPIT_CWD COCKPIT_CLIENT_IDLE_SECS SPIRA_PATH SPIRA_GOAL \
+       SPIRA_DB COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_RIGHT_PCT COCKPIT_MOUSE COCKPIT_CWD COCKPIT_CLIENT_IDLE_SECS SPIRA_PATH SPIRA_GOAL \
        SPIRA_WORKSPACES SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_RECLAIM_SKIP_LABEL \
        SPIRA_CI_LABEL SPIRA_CI_PARK_MAX \
        SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO \

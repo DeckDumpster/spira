@@ -131,6 +131,31 @@ done
 
 tag_pane()   { tmux set-option -p -t "$1" @cockpit "$2" 2>/dev/null; }
 
+# apply_mouse_mode — make the panes clickable, on this server, now.
+#
+# WITHOUT IT A CLICK DOES NOTHING AND SAYS NOTHING. tmux defaults mouse off, and a
+# box need not have a ~/.tmux.conf at all, so the attention panel reads as a dead
+# region rather than as an unset option -- the operator concludes the panel is
+# broken. The cockpit therefore sets this itself instead of depending on the
+# operator's dotfiles, which is the same reasoning as window-size largest below.
+#
+# SERVER-WIDE ON PURPOSE. `mouse` is a session option, and the cockpit is one
+# session among several on this server that the operator moves between; setting it
+# only on the cockpit session would leave the others dead to the mouse and produce
+# exactly the inconsistency that reads as a bug. -g covers sessions that already
+# exist and any created later.
+#
+# Never fails the caller: an unclickable cockpit is a degraded cockpit, not a
+# broken one, and layout.sh is called from a timer that must not start failing over
+# a cosmetic option.
+apply_mouse_mode() {
+    local want="${COCKPIT_MOUSE:-on}"
+    case "$want" in
+        off|no|0) return 0 ;;   # the operator keeps terminal-native drag-select
+    esac
+    tmux set-option -g mouse on 2>/dev/null || true
+}
+
 # An untagged pane is indistinguishable from the session pane — which is how the first
 # repair run picked the ORPHANED decisions pane as the session and split it. So tag it.
 #
@@ -605,6 +630,7 @@ up)
     # window height regardless of which client was most recently active. See detach_idle_clients
     # for the full rationale.
     tmux set-option -t "${WINDOW%%:*}" window-size largest 2>/dev/null || true
+    apply_mouse_mode
     # ALWAYS hand focus back to the session pane: hunk-open sends keys to the active pane.
     tmux select-pane -t "$sess" 2>/dev/null || true
     ;;
@@ -644,6 +670,10 @@ ensure)
     # cockpit windows — so ghosts are cleared even on a server where ensure has never seen a
     # cockpit pane yet.
     detach_idle_clients
+    # Re-applied here, not only in `up`: a tmux server restarted by hand comes back
+    # with mouse off and `up` may never run again on it, so a cockpit that has been
+    # merely `ensure`d would stay unclickable.
+    apply_mouse_mode
     # Defence in depth: ensure window-size largest is set for every session hosting a cockpit
     # window. This survives a ghost that reconnects between two ensure runs.
     for w in $(cockpit_windows); do
