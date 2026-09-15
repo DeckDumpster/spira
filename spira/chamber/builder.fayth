@@ -26,6 +26,13 @@ FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL,qa-proposed"
 # budget. Ops reads "law-,sop-".
 FAYTH_MEMORY_PREFIXES="law-"
 
+# STATUTES THAT RENDER IN FULL EVERY SESSION. law-tests-run-only-through-testenv-batch
+# was absent from this list, so it rendered only as a bare slug in the index rather than
+# as its full text — and 21 of the last 23 bead sessions contained direct host suite runs.
+# A statute the aeon cannot read cannot be followed; the full text is what makes the
+# rule legible rather than a slug a reader must separately look up (sp-23ev).
+FAYTH_STATUTE_CORE="law-tests-run-only-through-testenv-batch"
+
 # NO FAYTH_REPO. The repository comes from the BEAD — a `repo:<name>` label resolved
 # through .claude/spira/repo-map — because a repository pinned per persona is a
 # persona that can only ever work one of them, and every fayth here named the same
