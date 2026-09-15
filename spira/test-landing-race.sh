@@ -175,6 +175,33 @@ is     "and no movement is posted for the duplicate"     ""  "$(mailbox)"
 drop_branch sp-race
 
 # --------------------------------------------------------------------------------------
+# A PUSH THAT IS REJECTED WITHOUT THE BASE MOVING IS NOT A RACE. The retry loop was
+# written for the case where a concurrent pusher advanced the base; it does not help
+# when the base has not moved. Before this fix every failed push was logged as "the base
+# moved" regardless of what actually happened, and the pass retried indefinitely.
+#
+# This case is also the one that costs a debugging session: "push rejected, origin/main
+# moved" sends the reader hunting for a concurrent pusher that does not exist. The fix
+# is to verify the base moved (one rev-parse after the fetch) before calling it a race.
+# --------------------------------------------------------------------------------------
+cat > "$REMOTE/hooks/pre-receive" <<'HOOK'
+#!/usr/bin/env bash
+# Reject every push without moving the base — simulates a protected branch, a failing
+# pre-receive hook, or any other persistent non-race rejection. The keyword "rejected"
+# appears in git's own output, so the old code would have called this a lost race.
+printf 'error: push rejected by hook\n' >&2
+exit 1
+HOOK
+chmod +x "$REMOTE/hooks/pre-receive"
+seed; branch sp-stuck; out="$(landing)"
+rm -f "$REMOTE/hooks/pre-receive"
+nowant "a rejection where the base did not move is not called a race" "push rejected, " "$out"
+want   "and is reported with the base-unchanged fact"                 "did not move"    "$out"
+nowant "and the bead is not reopened"                                 "reopened sp-stuck" "$out"
+is     "and the bead stays closed"                                    closed "$(status_of sp-stuck)"
+drop_branch sp-stuck
+
+# --------------------------------------------------------------------------------------
 # A LANDING WORKTREE THAT IS NOT THERE IS NOT A CONFLICT. Falling through to the merge with
 # no tree to merge in fails, and the failure arm reopens finished work with a reason that is
 # about the branch — a lie about a bead, and one that costs it an attempt toward poison.

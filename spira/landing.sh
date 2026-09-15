@@ -1195,7 +1195,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 log "CHECK6 $id: no landing worktree at $land — leaving $br to the next pass"
                 continue
             fi
-            merged=0; pushed=0; nothing=0; wedged=0; norebase=''
+            merged=0; pushed=0; nothing=0; wedged=0; norebase=''; push_blocked=''
             for attempt in 1 2 3; do
                 # A landing worktree that will not check the base out is a broken worktree,
                 # not a branch that conflicts — same reason as the guard above, and the same
@@ -1219,11 +1219,39 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                     merged=0; nothing=1; break
                 fi
                 merged=1
-                if git -C "$land" push -q "$base_remote" "landing:$base_branch" 2>/dev/null; then pushed=1; break; fi
+                # CAPTURE STDERR; do not assert a cause that was not checked. The push fails
+                # for auth, network, hooks, and protected branches as well as for
+                # non-fast-forward, and every failure used to reach the log as "the base
+                # moved" — the one case this loop handles. Classify first; take the retry
+                # path only when the evidence matches the diagnosis.
+                _push_err="$(mktemp)"
+                if git -C "$land" push -q "$base_remote" "landing:$base_branch" 2>"$_push_err"; then
+                    pushed=1; rm -f "$_push_err"; break
+                fi
+                _push_msg="$(cat "$_push_err"; rm -f "$_push_err")"
+                _push_first="$(printf '%s' "$_push_msg" | head -1)"
+                case "$_push_msg" in
+                    *non-fast-forward*|*"fetch first"*|*rejected*) ;;
+                    *)
+                        log "landing: push failed for $br: ${_push_first:-unknown}"
+                        push_blocked="${_push_first:-unknown}"; break ;;
+                esac
+                # Looks like a non-fast-forward rejection — but a keyword is not proof of a
+                # lost race (law-a-pattern-match-is-not-an-identity-check). Fetch, then verify
+                # the base actually moved. If it did not, this is a different failure: the
+                # push was blocked for a reason unrelated to our tip being behind, and
+                # retrying the same push against the same base will fail the same way.
+                _base_before="$(git -C "$repo" rev-parse "refs/remotes/$base_remote/$base_branch" 2>/dev/null || true)"
                 # Rejected: someone else advanced the base between our fetch and our push.
                 # Fetch it, replay the BRANCH onto it, and build the landing again from there.
                 git -C "$repo" fetch -q --no-write-fetch-head "$base_remote" 2>/dev/null
+                _base_after="$(git -C "$repo" rev-parse "refs/remotes/$base_remote/$base_branch" 2>/dev/null || true)"
+                if [ "$_base_before" = "$_base_after" ]; then
+                    log "landing: push failed for $br — rejected but $base did not move (${_push_first:-unknown})"
+                    push_blocked="${_push_first:-unknown}"; break
+                fi
                 log "landing: push rejected, $base moved — retry $attempt"
+                sleep "$attempt"
                 # THE SAME RULE ON THE RETRY PATH. This arm falls through to "branch
                 # conflicts with $base", so a ref reaped between the losing push and the
                 # replay is reported as a disagreement that never happened — the identical
@@ -1280,10 +1308,18 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 [ "${#judged[@]}" -gt 0 ] \
                     && rebase_survivors "$repo" "$name" "$base" "$br" "${!judged[@]}"
             elif [ "$merged" = 1 ]; then
-                # Merged fine, could not push after three rebases. Nothing is wrong with the
-                # work; leave the bead closed and let the next pass land it.
+                # Merged fine, could not push. Nothing is wrong with the work; leave the bead
+                # closed and let the next pass land it. Two distinct reasons reach here:
+                # (a) push_blocked — a non-race push failure (auth, hook, network) already
+                #     logged with its actual cause; the message here is for the operator's
+                #     summary view, not a repeat of the detail.
+                # (b) three genuine race retries exhausted — the race-retry message below.
                 git -C "$land" reset -q --hard "$base" 2>/dev/null
-                log "landing: $br merges clean but push kept losing the race — retrying next pass"
+                if [ -n "$push_blocked" ]; then
+                    log "landing: $br merges clean but push failed — leaving closed"
+                else
+                    log "landing: $br merges clean but push kept losing the race — retrying next pass"
+                fi
             else
                 git -C "$land" merge --abort 2>/dev/null
                 # ALREADY LANDED? ASK THE COMMIT GRAPH BEFORE REOPENING.

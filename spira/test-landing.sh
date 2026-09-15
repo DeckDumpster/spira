@@ -331,20 +331,30 @@ drop_branch sp-bbb
 # --------------------------------------------------------------------------------------
 cat > "$REMOTE/hooks/pre-receive" <<HOOK
 #!/usr/bin/env bash
-# Reject the first push only, and remove the branch behind the pusher's back as it goes —
-# the Sending running on its own timer, arriving in the one window this arm occupies.
+# Reject the first push only, advancing the base and removing the branch — simulating a
+# concurrent commit (genuine race) and the Sending arriving in the one window this arm
+# occupies. The base MUST move so the classification guard introduced by sp-utvi treats
+# this as a real race rather than a non-race push failure (law-a-pattern-match-is-not-
+# an-identity-check). Without a moved base the guard correctly stops before the retry, and
+# the no-branch case the test exercises is never reached.
 #
 # OUTSIDE THE QUARANTINE. A pre-receive hook runs with GIT_QUARANTINE_PATH set and git
 # refuses to touch refs from inside it, so a hook that does not clear the environment
 # changes nothing and the case passes against the bug it is written for.
+#
+# PATH EMBEDDING: $REPO, $REMOTE, $RUN are shell-expanded at heredoc creation time and
+# written as double-quoted literals in this script. The \$_prev etc. are runtime variables
+# and must NOT expand at heredoc time; they are written as literal '$' via \$ escaping.
 [ -f "\$GIT_DIR/rejected-once" ] && exit 0
 : > "\$GIT_DIR/rejected-once"
-env -u GIT_QUARANTINE_PATH -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_DIR \\
-    bash -c '
-      git -C "$REPO" worktree remove --force "$RUN/worktree/sp-raced" >/dev/null 2>&1
-      git -C "$REPO" branch -D spira/sp-raced >/dev/null 2>&1
-    ' >&2 || echo "the hook could not remove the branch" >&2
-echo "rejected once, on purpose" >&2
+unset GIT_QUARANTINE_PATH GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_DIR
+git -C "$REPO" worktree remove --force "$RUN/worktree/sp-raced" >/dev/null 2>&1
+git -C "$REPO" branch -D spira/sp-raced >/dev/null 2>&1
+_prev=\$(git -C "$REMOTE" rev-parse HEAD 2>/dev/null)
+_tree=\$(git -C "$REMOTE" rev-parse "HEAD^{tree}" 2>/dev/null)
+_tip=\$(GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t git -C "$REMOTE" commit-tree -p "\$_prev" -m "race" "\$_tree" 2>/dev/null)
+git -C "$REMOTE" update-ref refs/heads/main "\$_tip" 2>/dev/null
+echo "rejected: non-fast-forward" >&2
 exit 1
 HOOK
 chmod +x "$REMOTE/hooks/pre-receive"
