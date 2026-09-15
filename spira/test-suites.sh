@@ -302,6 +302,18 @@ want "recorded as a recurrence on it"                    "$id" \
 
 # THE POSITIVE CONTROL FOR THAT SILENCE. A dedupe that swallowed everything would pass the
 # case above just as well, so the same suite is made to fail DIFFERENTLY and must be heard.
+#
+# WHAT "HEARD" MEANS CHANGED WHEN THE KEY DID. The incident ref for a red suite used to be
+# suite:<name>:<fingerprint>, so a changed failure was a different incident and filed a
+# SECOND bead — which is what this control used to assert. That key fragmented one broken
+# suite across a bead per distinct failure text and produced a flood. The ref is now
+# suite:<name>: one bead per suite, for as long as that suite is red.
+#
+# The property this control exists to defend is unchanged and is still worth pinning: new
+# information must not be SWALLOWED. Under the new key it arrives as a recurrence note on
+# the existing bead rather than as a new bead, so that is what is asserted — still one bead,
+# and the new failure text is on it. That is strictly stronger than counting beads, which
+# passed as long as a second bead appeared whether or not it said anything.
 plant test-fx-red.sh <<'S'
 #!/usr/bin/env bash
 # covers: spira/nothing.sh
@@ -309,8 +321,10 @@ echo "  FAIL  an entirely different assertion: wanted [q] got [z]"
 exit 1
 S
 sut run >/dev/null
-is "a failure that changes is new information and files again" "2" \
+is "a failure that changes does not fork a second bead" "1" \
    "$(count "$(beads 'test-fx-red.sh')")"
+want "and the changed failure text reaches the bead it deduped onto" \
+     "an entirely different assertion" "$(B show "$id" 2>&1)"
 
 # ======================================================================================
 echo
@@ -338,9 +352,11 @@ is "a second run at a later timestamp is still one bead" "1" "$(count "$(beads '
 want "recorded as a recurrence on the same bead" "${ts_id:-none}" \
      "$(grep ' recurred ' "$RUN/incident.log" 2>/dev/null || true)"
 
-# NEGATIVE CONTROL. A genuinely different failure must still file a fresh bead even when the
-# only FAIL line it shares with the first is the timestamp token — the normaliser must not
-# widen to the point that every timestamped failure looks the same.
+# NEGATIVE CONTROL. A genuinely different failure must still be HEARD — the dedupe must not
+# be so wide that changed output vanishes. It no longer files a fresh bead, because the ref
+# for a red suite is suite:<name> and no longer carries the fingerprint; it lands as a
+# recurrence note on the one bead that suite owns. Asserting the note is what keeps this a
+# control: a dedupe that dropped the new output entirely would still leave exactly one bead.
 plant test-fx-timestamped.sh <<'S'
 #!/usr/bin/env bash
 # covers: spira/nothing.sh
@@ -349,8 +365,10 @@ echo "  detail: [$(date -u '+%Y-%m-%dT%H:%M:%SZ') spira: state: goal=stopped]"
 exit 1
 S
 sut run >/dev/null
-is "a genuinely different timestamped failure files a new bead" "2" \
+is "a genuinely different timestamped failure stays on one bead" "1" \
    "$(count "$(beads 'test-fx-timestamped.sh')")"
+want "and its text reaches that bead" \
+     "goal=stopped" "$(B show "${ts_id:-none}" 2>&1)"
 
 rm -f "$SH/test-fx-timestamped.sh"
 

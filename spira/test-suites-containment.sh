@@ -144,6 +144,38 @@ else
         "suites.sh does not refuse a batch that produced no results"
 fi
 
+# ======================================================================================
+echo
+echo "the batch verdict words map onto the right exit codes:"
+# ======================================================================================
+# testenv-batch.sh writes two different skip words and they mean different things: `skip` is
+# the suite exiting 77 for itself, `skip-req` is the runner refusing to start it because a
+# `# requires:` token is absent from the image. Both are a suite that correctly declined to
+# run. The first batch-mode pass mapped only `skip` and let `skip-req` fall through to the
+# default arm, which is rc=1 — so every requires-gated suite was filed as a red bead
+# (law-alerts-must-be-actionable). Asserted on the source because the mapping only executes
+# with a real container behind it, and a source check that cannot fail is worth nothing: the
+# control below plants the pre-fix text and requires the matcher to reject it.
+_map="$(sed -n '/case "\$_br_status" in/,/esac/p' "$HERE/suites.sh")"
+if [ -z "$_map" ]; then
+    bad "the batch status mapping is readable" "no case block on _br_status in suites.sh"
+else
+    if printf '%s' "$_map" | grep -qE '^\s*skip\|skip-req\)'; then
+        ok "skip and skip-req both map to 77"
+    else
+        bad "skip and skip-req both map to 77" \
+            "skip-req is not on the skip arm — it falls through to the default and reads as a failure"
+    fi
+    # POSITIVE CONTROL: the same matcher against the text as it stood before the fix must
+    # say no. Without this, a matcher broken into always-true would report the mapping fixed.
+    if printf '%s' '            skip)     rc=77 ;;' | grep -qE '^\s*skip\|skip-req\)'; then
+        bad "control — the pre-fix mapping is rejected" \
+            "the matcher accepted the old skip-only arm; it cannot tell the two apart"
+    else
+        ok "control — the pre-fix skip-only arm is rejected by the same matcher"
+    fi
+fi
+
 echo
 echo "test-suites-containment.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

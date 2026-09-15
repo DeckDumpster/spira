@@ -819,7 +819,14 @@ cmd_run() {
         # runner produced the verdict.
         case "$_br_status" in
             ok)       rc=0 ;;
-            skip)     rc=77 ;;
+            # Both forms of skip are a skip. `skip` is the suite exiting 77 for itself;
+            # `skip-req` is testenv-batch refusing to start it because a `# requires:`
+            # token is absent from the image. They arrive as different words because the
+            # REASON differs and the fingerprint field names the missing token — but a
+            # suite that correctly declined to run is not a failure, and mapping skip-req
+            # onto the default arm filed a red bead against every such suite
+            # (law-alerts-must-be-actionable: a false alert is a real cost).
+            skip|skip-req) rc=77 ;;
             timeout)  rc=124 ;;
             *)        rc=1 ;;
         esac
