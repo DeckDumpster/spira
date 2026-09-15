@@ -255,6 +255,47 @@ start)
     for t in "${TIMERS[@]}"; do
         "$SC" --user start "$t" 2>/dev/null && printf '  started %s\n' "$t"
     done
+
+    # START WHAT `stop --hard` STOPPED. The watchers are long-running SERVICES, not
+    # timers, so the loop above never touched them and for a long time `start` left
+    # them exactly as `stop --hard` had: dead.
+    #
+    # Restart=always does not cover this and cannot. systemd deliberately does not
+    # revive a unit an operator stopped on purpose -- the unit reports
+    # Result=success and stays inactive -- so the policy that looks like a safety
+    # net here is inert precisely on the path that needs it. watch-refresh.sh skips
+    # inactive units for the same reason and says so in a comment, which means
+    # nothing in the system was going to bring these back.
+    #
+    # THE COST IS SILENT AND IT IS THE WORST KIND. The answers watcher is the leg
+    # that carries the operator's verdict back out of the cockpit. With it dead the
+    # operator answers, the bead closes, and no session ever learns of it: they
+    # believe they have replied and the work does not move. Nine answers sat
+    # undelivered for eight hours this way. An escalation whose reply reaches nobody
+    # is worse than an unanswered one (law-answers-need-a-delivery-path).
+    #
+    # Queried from systemd rather than from a list here, matching how `stop` finds
+    # them, so a watcher added later cannot escape being restarted. Enabled-but-
+    # inactive is the state we are repairing; --state is therefore not filtered.
+    for u in $(
+        {
+            "$SC" --user list-unit-files 'spira-watch@*' --no-legend 2>/dev/null
+            "$SC" --user list-unit-files \
+                  "spira-watch-*${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}.service" \
+                  --no-legend 2>/dev/null
+        } | awk '{print $1}' | sort -u
+    ); do
+        # SKIP THE ONESHOTS BY TYPE, NEVER BY NAME. The timer-driven watchers
+        # (refresh, notify) are Type=oneshot and their TIMERS are already in the
+        # loop above; starting the service directly would fire one pass out of
+        # band. Naming them here instead would be a second hand-written list that
+        # a watcher added later escapes silently -- which is the shape of the bug
+        # this whole block exists to fix.
+        [ "$("$SC" --user show "$u" -p Type --value 2>/dev/null)" = oneshot ] && continue
+        [ "$("$SC" --user is-active "$u" 2>/dev/null)" = active ] && continue
+        "$SC" --user start "$u" 2>/dev/null && printf '  started %s\n' "$u"
+    done
+
     rm -f "$STAMP"
     echo "spira: RUNNING"
     ;;
