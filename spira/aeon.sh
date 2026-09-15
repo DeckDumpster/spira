@@ -1151,7 +1151,7 @@ unset _wt_gitdir _dirty_snapshot _dirty_hook_dir _dirty_list
 # THE COST IS ONE BUILD PER SESSION, PAID EVEN BY A BEAD THAT RUNS NO TESTS, and the log
 # line below is the meter that says when that stops being a good trade (the number to watch
 # is this build against the count of suite runs in the session's own trace).
-unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_BIN
+unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_BIN TESTDB_SERVER_INIT_HASH
 fixture_ms=0
 if [ -f "$WORK/$SPIRA_TESTDB_LIB" ]; then
     fixture_err="$(mktemp)"
@@ -1168,16 +1168,18 @@ if [ -f "$WORK/$SPIRA_TESTDB_LIB" ]; then
     # reason for a failure that had none.
     fixture_out="$( {
         . "$WORK/$SPIRA_TESTDB_LIB" && testdb_up "aeon${BEAD_ID//[^a-zA-Z0-9]/}" >&2 &&
-        printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
+        printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
             "$TESTDB_NAME" "$TESTDB_DIR" "$TESTDB_BASELINE" "${TESTDB_BIN:-}" \
-            "${TESTDB_STARTED_SERVICE:-0}" "${TESTDB_MODE:-embedded}"
+            "${TESTDB_STARTED_SERVICE:-0}" "${TESTDB_MODE:-embedded}" \
+            "${TESTDB_SERVER_INIT_HASH:-}"
     } 2>"$fixture_err" )"
     fixture_ms=$(( $(date +%s%3N) - fixture_t0 ))
     if [ -n "$fixture_out" ]; then
         { read -r TESTDB_NAME; read -r TESTDB_DIR; read -r TESTDB_BASELINE; read -r TESTDB_BIN
-          read -r TESTDB_STARTED_SERVICE; read -r TESTDB_MODE; } <<< "$fixture_out"
+          read -r TESTDB_STARTED_SERVICE; read -r TESTDB_MODE
+          read -r TESTDB_SERVER_INIT_HASH; } <<< "$fixture_out"
         export TESTDB_SHARED=1 TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_BIN \
-               TESTDB_STARTED_SERVICE TESTDB_MODE
+               TESTDB_STARTED_SERVICE TESTDB_MODE TESTDB_SERVER_INIT_HASH
         # PATH IS DELIBERATELY NOT TOUCHED, and this is the fix for the v53/v61 scar.
         # Prepending TESTDB_BIN here put a tempdir symlink `bd -> bd-embedded` (a tagged
         # release that knows 53 migrations) first on the PATH of the aeon's OWN shell, for

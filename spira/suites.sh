@@ -672,7 +672,8 @@ cmd_run() {
         local _td_had_spath; [ -n "${SPIRA_PATH+x}" ] && _td_had_spath=1 || _td_had_spath=0
         if testdb_up suites 2>/dev/null; then
             export TESTDB_SHARED=1 TESTDB_NAME TESTDB_DIR TESTDB_BASELINE \
-                   TESTDB_BIN TESTDB_MODE TESTDB_BD TESTDB_STARTED_SERVICE
+                   TESTDB_BIN TESTDB_MODE TESTDB_BD TESTDB_STARTED_SERVICE \
+                   TESTDB_SERVER_INIT_HASH
             # Restore production vars — the fixture is for suite subprocesses, not us.
             SPIRA_DB="$_td_real_db"; export SPIRA_DB
             PATH="$_td_real_path"; export PATH
