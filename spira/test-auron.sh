@@ -324,6 +324,25 @@ try: d = json.load(sys.stdin)
 except Exception: d = []
 print(len(d if isinstance(d, list) else [d]))'
 }
+n_probe_beads() {   # open + closed auron:probe beads
+    bd -C "$SPIRA_DB" list --all --limit 0 --label auron:probe --json 2>/dev/null \
+        | sed -n '/^[[{]/,$p' | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: d = []
+print(len(d if isinstance(d, list) else [d]))'
+}
+create_probe() {    # create_probe -> id on stdout
+    bd -C "$SPIRA_DB" create --title "Auron write probe" --type event -p 0 \
+        --labels "auron:probe,overseer" \
+        --body "write-path probe — updated on every Auron pass" --json 2>/dev/null \
+        | python3 -c '
+import sys, json
+t = sys.stdin.read(); i = t.find("{")
+if i >= 0:
+    try: print(json.loads(t[i:])["id"])
+    except Exception: pass' 2>/dev/null
+}
 # A REALISTIC WEDGE: passes completed normally until an hour ago, then kept starting and
 # stopped finishing. A log with no completed pass ANYWHERE cannot distinguish a wedged
 # loop from a box where Auron came up first, and the floor deliberately reads it as the
@@ -504,6 +523,95 @@ grep -q 'SP_AURON_DB_WRITE=ok' "$RUN/auron.status" \
 [ ! -e "$RUN/auron.alerts.json" ] \
     && ok "write probe: fallback file removed once writes succeed again" \
     || bad "write probe fallback removal" "fallback file survived the database recovering"
+
+echo
+echo "auron.sh — write probe: failed re-derive does not create a bead (Fix 1):"
+
+# A shim that passes the alert-list read through (so db_reachable=1) but fails the
+# probe re-derive. Without Fix 1 the code created a new P0 bead every time the re-derive
+# failed, because a failed call and an empty result were indistinguishable.
+REDERIVE_FAIL_BD="$TMP/rederive-fail-bd"
+{
+    printf '#!/usr/bin/env bash\n'
+    # The alert probe uses --label alert; the re-derive uses --label auron:probe.
+    # Pass alert reads to the real binary so db_reachable stays 1; fail probe reads.
+    printf 'for a in "$@"; do case "$a" in\n'
+    printf '    "auron:probe") printf "rederive-fail-bd: probe list refused\\n" >&2; exit 1 ;;\n'
+    printf 'esac; done\n'
+    printf 'exec %q "$@"\n' "$TESTDB_BD"
+} > "$REDERIVE_FAIL_BD"
+chmod +x "$REDERIVE_FAIL_BD"
+
+heal; rm -f "$RUN/auron.state"   # empty state: PROBE_ID empty, re-derive will run
+_n_probes_before="$(n_probe_beads)"
+SPIRA_BD="$REDERIVE_FAIL_BD" auron >/dev/null
+_n_probes_after="$(n_probe_beads)"
+[ "$_n_probes_after" = "$_n_probes_before" ] \
+    && ok "re-derive fail: no probe bead created when re-derive fails" \
+    || bad "re-derive fail" "probe bead was leaked when re-derive failed (before=$_n_probes_before after=$_n_probes_after)"
+unset _n_probes_before _n_probes_after
+grep -q 'SP_AURON_DB_WRITE=down' "$RUN/auron.status" \
+    && ok "re-derive fail: write reported as down when re-derive fails" \
+    || bad "re-derive fail write status" "SP_AURON_DB_WRITE should be down when re-derive failed"
+
+echo
+echo "auron.sh — write probe: extras closed on re-derive (Fix 3):"
+
+# Pre-populate three probe beads (simulating the debris from past contention episodes).
+# After one run with empty state, all but the first should be closed.
+heal; rm -f "$RUN/auron.state"
+_extras_before="$(n_probe_beads)"   # track pre-existing probes; test counts relative to this
+_p1="$(create_probe)"; _p2="$(create_probe)"; _p3="$(create_probe)"
+if [ -z "$_p1" ] || [ -z "$_p2" ] || [ -z "$_p3" ]; then
+    bad "extras setup" "could not create three probe beads for extras test"
+else
+    SPIRA_BD="$TESTDB_BD" auron >/dev/null
+    # Exactly 1 probe bead should be open; all others (pre-existing + 2 of the 3 new ones)
+    # should be closed rather than deleted.
+    n_open="$(bd -C "$SPIRA_DB" list --limit 0 --label auron:probe --json 2>/dev/null \
+        | sed -n '/^[[{]/,$p' | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: d = []
+print(len(d if isinstance(d, list) else [d]))')"
+    [ "$n_open" = 1 ] \
+        && ok "extras: only one probe bead is open after adoption" \
+        || bad "extras" "expected 1 open probe bead, got [$n_open]"
+    _expected_total=$(( _extras_before + 3 ))
+    [ "$(n_probe_beads)" = "$_expected_total" ] \
+        && ok "extras: all beads still exist (closed, not deleted)" \
+        || bad "extras count" "expected $_expected_total total, got [$(n_probe_beads)]"
+    grep -q 'SP_AURON_DB_WRITE=ok' "$RUN/auron.status" \
+        && ok "extras: probe update succeeds after adoption" \
+        || bad "extras write" "SP_AURON_DB_WRITE not ok after adoption"
+fi
+unset _p1 _p2 _p3 n_open _extras_before _expected_total
+
+echo
+echo "auron.sh — write probe: lock-timeout reported as saturated, not down (Fix 5):"
+
+# A shim that exits 124 (the timeout exit code) for all calls. This simulates the lock
+# contention that drove half of all passes to report DB_READ=down on a healthy database.
+TIMEOUT_BD="$TMP/timeout-bd"
+{
+    printf '#!/usr/bin/env bash\n'
+    printf 'exit 124\n'
+} > "$TIMEOUT_BD"
+chmod +x "$TIMEOUT_BD"
+
+heal; rm -f "$RUN/auron.state"
+AURON_DB=/nonexistent-spira-db SPIRA_BD="$TIMEOUT_BD" auron >/dev/null
+grep -q 'SP_AURON_DB_READ=saturated' "$RUN/auron.status" \
+    && ok "saturation: timeout on read probe reports DB_READ=saturated" \
+    || bad "saturation read" "expected SP_AURON_DB_READ=saturated, got $(grep SP_AURON_DB_READ "$RUN/auron.status" 2>/dev/null || echo none)"
+grep -q 'SP_AURON_DB_SATURATED=1' "$RUN/auron.status" \
+    && ok "saturation: SP_AURON_DB_SATURATED=1 when timed out" \
+    || bad "saturation flag" "SP_AURON_DB_SATURATED not 1"
+# A timeout is still unreachable as far as the rest of the pass is concerned, so the
+# fallback file should still be written (same as the db-down case).
+[ -r "$RUN/auron.alerts.json" ] \
+    && ok "saturation: fallback file written on timeout" \
+    || bad "saturation fallback" "no fallback file on timeout"
 
 testdb_drop >/dev/null 2>&1
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"

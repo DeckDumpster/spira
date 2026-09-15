@@ -204,11 +204,27 @@ fi
 # across a lost state file — so asking a second, separate "is the database readable"
 # question would be a second thing to get out of step with the first. An empty list is
 # trustworthy only because this same call is what proved the database could answer.
-alerts_raw="$(bdq list --all --limit 0 --label alert --json 2>/dev/null | json_only)"
+#
+# THE EXIT STATUS DISTINGUISHES CONTENTION FROM FAILURE. A call that times out (exit 124
+# from `timeout`) means another dolt process held the lock longer than BD_TIMEOUT; a call
+# that errors means the database is actually unreachable. Conflating them made half of all
+# passes classify the database as DOWN when it was merely busy.
+db_saturated=0    # 1 if any bd call this pass timed out (lock contention, not unavailability)
+_read_rc=0
+_alerts_json="$(bdq list --all --limit 0 --label alert --json 2>/dev/null)" || _read_rc=$?
+alerts_raw="$(printf '%s' "$_alerts_json" | json_only)"
+unset _alerts_json
 db_reachable=1; db_error=""
 if [ -z "$alerts_raw" ]; then
-    db_reachable=0; db_error="bd list --label alert returned nothing parseable within ${BD_TIMEOUT}s"
+    db_reachable=0
+    if [ "$_read_rc" = 124 ]; then
+        db_saturated=1
+        db_error="bd list --label alert timed out after ${BD_TIMEOUT}s (lock contention)"
+    else
+        db_error="bd list --label alert returned nothing parseable within ${BD_TIMEOUT}s"
+    fi
 fi
+unset _read_rc
 
 # THE WRITE PROBE. db_reachable proves the READ path is up, not the write path. When
 # writes fail but reads do not — for example when a schema-cursor rollback leaves the
@@ -222,20 +238,101 @@ fi
 # and the database is mirrored to git. A bead Auron already owns costs one row update
 # per pass and leaves no debris. PROBE_ID is persisted in the state file; a failed
 # update clears it so the next pass re-derives and retries via create.
+#
+# FIVE PROPERTIES THE PROBE MUST HOLD:
+#   1. A failed re-derive does not create. The failure that clears PROBE_ID (a failed
+#      update) and the failure that makes re-derive return empty (lock contention) are
+#      strongly correlated, so the pair reliably produced a leaked P0 bead per episode.
+#   2. Create is idempotent: the probe re-queries before creating and adopts any existing
+#      bead rather than adding a duplicate.
+#   3. Extras are closed on adoption: one probe bead is the invariant; when re-derive or
+#      the pre-create check finds multiples, all but the first are closed immediately.
+#   4. A create that follows a failed update is a recovery, not a healthy write. The pass
+#      that created a replacement bead reported db_write_ok=1 and hid the fault.
+#   5. A timeout is contention, not unavailability. Exit code 124 from `timeout` is
+#      reported as saturated rather than down so the two failure modes are distinguishable.
 db_write_ok="?"    # unknown until attempted; ? published in the heartbeat if read failed
 if [ "$db_reachable" = 1 ]; then
+    _probe_had="${PROBE_ID:-}"   # non-empty means an update succeeded before; a create now
+                                  # is a recovery (Fix 4), not a first-run healthy write
     # Re-derive PROBE_ID if the state lost it (first pass, state cleared, prior failure).
     if [ -z "$PROBE_ID" ]; then
-        PROBE_ID="$(bdq list --all --limit 1 --label auron:probe --json 2>/dev/null \
-                    | json_only | python3 -c '
+        _probe_rc=0
+        _probe_json="$(bdq list --all --limit 0 --label auron:probe --json 2>/dev/null)" \
+            || _probe_rc=$?
+        if [ "$_probe_rc" = 0 ]; then
+            PROBE_ID="$(printf '%s' "$_probe_json" | json_only | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
 except Exception: d = []
 items = d if isinstance(d, list) else ([d] if d else [])
 print((items[0] if items else {}).get("id", ""))' 2>/dev/null)"
+            # CLOSE EXTRAS. One probe bead is the invariant; close all but the first
+            # immediately rather than waiting for the groomer, whose cadence is hours.
+            _probe_extras="$(printf '%s' "$_probe_json" | json_only | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: d = []
+items = d if isinstance(d, list) else ([d] if d else [])
+for it in items[1:]: print(it.get("id", ""))' 2>/dev/null)"
+            for _eid in $_probe_extras; do
+                [ -n "$_eid" ] || continue
+                bdq close "$_eid" --reason-file - <<'REASON' >/dev/null 2>&1 || true
+Duplicate Auron write probe bead closed automatically.
+The probe is a one-bead invariant; this bead was created during a transient contention
+episode and superseded by an earlier probe that was re-derived on recovery.
+REASON
+            done
+            unset _probe_extras _eid
+        else
+            # Failed re-derive: do not create. The failure that cleared PROBE_ID and the
+            # failure that makes re-derive empty are strongly correlated (both are lock
+            # contention); creating unconditionally here produced a leaked P0 per episode.
+            [ "$_probe_rc" = 124 ] && db_saturated=1
+            db_write_ok=0
+        fi
+        unset _probe_json _probe_rc
     fi
-    if [ -z "$PROBE_ID" ]; then
-        # No probe bead yet: CREATE it. The create is itself the write probe for this pass.
+
+    # IDEMPOTENT BACKSTOP: re-query immediately before creating and adopt any existing probe
+    # rather than adding a duplicate. Guards the narrow window between a successful empty
+    # re-derive and the create, and cleans up any extras found here as well.
+    if [ -z "$PROBE_ID" ] && [ "$db_write_ok" = "?" ]; then
+        _pre_rc=0
+        _pre_json="$(bdq list --all --limit 0 --label auron:probe --json 2>/dev/null)" \
+            || _pre_rc=$?
+        if [ "$_pre_rc" = 0 ]; then
+            _adopt="$(printf '%s' "$_pre_json" | json_only | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: d = []
+items = d if isinstance(d, list) else ([d] if d else [])
+print((items[0] if items else {}).get("id", ""))' 2>/dev/null)"
+            if [ -n "$_adopt" ]; then
+                PROBE_ID="$_adopt"
+                _pre_extras="$(printf '%s' "$_pre_json" | json_only | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: d = []
+items = d if isinstance(d, list) else ([d] if d else [])
+for it in items[1:]: print(it.get("id", ""))' 2>/dev/null)"
+                for _eid in $_pre_extras; do
+                    [ -n "$_eid" ] || continue
+                    bdq close "$_eid" --reason-file - <<'REASON' >/dev/null 2>&1 || true
+Duplicate Auron write probe bead closed automatically.
+The probe is a one-bead invariant; this bead was created during a transient contention
+episode and superseded by an earlier probe that was re-derived on recovery.
+REASON
+                done
+                unset _pre_extras _eid
+            fi
+        fi
+        unset _pre_json _pre_rc _adopt
+    fi
+
+    if [ -z "$PROBE_ID" ] && [ "$db_write_ok" = "?" ]; then
+        # No probe bead found after re-derive and idempotent check: CREATE it.
+        # The create is itself the write probe for this pass.
         probe_out="$(bdq create --title "Auron write probe" --type event -p 0 \
                        --labels "auron:probe,overseer" \
                        --body "write-path probe — updated on every Auron pass" \
@@ -246,17 +343,30 @@ t = sys.stdin.read(); i = t.find("{")
 if i >= 0:
     try: print(json.loads(t[i:])["id"])
     except Exception: pass' 2>/dev/null)"
-        db_write_ok="$([ -n "$PROBE_ID" ] && echo 1 || echo 0)"
-    else
+        if [ -n "$PROBE_ID" ]; then
+            # A fresh install create is healthy; a create after a failed update (_probe_had
+            # was non-empty) is a recovery — the write path was broken last pass.
+            [ -n "$_probe_had" ] && db_write_ok=0 || db_write_ok=1
+        else
+            db_write_ok=0
+        fi
+    fi
+
+    if [ -n "$PROBE_ID" ] && [ "$db_write_ok" = "?" ]; then
         # Probe bead exists: UPDATE its body with the current timestamp.
-        if bdq update "$PROBE_ID" --body "$(date +%s)" >/dev/null 2>&1; then
+        _upd_rc=0
+        bdq update "$PROBE_ID" --body "$(date +%s)" >/dev/null 2>&1 || _upd_rc=$?
+        if [ "$_upd_rc" = 0 ]; then
             db_write_ok=1
         else
             # Clear PROBE_ID. A failed update could mean the bead was deleted or writes
-            # are broken; the next pass will try to create and discover which.
+            # are broken; the next pass will re-derive and discover which.
+            [ "$_upd_rc" = 124 ] && db_saturated=1
             PROBE_ID=""; db_write_ok=0
         fi
+        unset _upd_rc
     fi
+    unset _probe_had
 fi
 
 # key -> id and key -> status, from the labels. Never from a title and never from a grep
@@ -547,18 +657,22 @@ state_save
 # of this file and marks it stale rather than omitting it.
 # ======================================================================================
 n_firing=0; for k in $firing_keys; do n_firing=$((n_firing+1)); done
-# SP_AURON_DB_WRITE uses the probe result directly: ok, down, or ? when unprobed.
-# A probe that could not run renders ? — never ok (which would hide a failure) and
-# never 0 (which would look like a metric rather than an unknown).
+# SP_AURON_DB_WRITE uses the probe result: ok, down, saturated, or ? when unprobed.
+# `saturated` means a bd call timed out (lock contention), not a true write failure —
+# distinguishable from `down` so the cockpit can render the right diagnosis.
+# A probe that could not run renders ? — never ok (which would hide a failure).
 db_write_status="$(case "$db_write_ok" in 1) echo ok ;; 0) echo down ;; *) echo '?' ;; esac)"
+[ "$db_saturated" = 1 ] && [ "$db_write_status" = down ] && db_write_status=saturated
+db_read_status="$([ "$db_reachable" = 1 ] && echo ok || { [ "$db_saturated" = 1 ] && echo saturated || echo down; })"
 {
     printf 'SP_AURON_AT=%s\n'          "$NOW"
     printf 'SP_AURON_FIRING=%s\n'      "$n_firing"
     printf "SP_AURON_KEYS='%s'\n"      "$(printf '%s' "${firing_keys# }" | tr ' ' ',')"
-    printf 'SP_AURON_DB_READ=%s\n'     "$([ "$db_reachable" = 1 ] && echo ok || echo down)"
+    printf 'SP_AURON_DB_READ=%s\n'     "$db_read_status"
     printf 'SP_AURON_DB_WRITE=%s\n'    "$db_write_status"
+    printf 'SP_AURON_DB_SATURATED=%s\n' "$db_saturated"
     printf 'SP_AURON_FALLBACK=%s\n'    "$fallback"
     printf 'SP_AURON_ACTED=%s\n'       "$acted"
 } > "$STATUS.tmp.$$" 2>/dev/null && mv -f "$STATUS.tmp.$$" "$STATUS"
 
-log "auron: $n_firing firing [${firing_keys# }], $acted change(s), db_read=$([ "$db_reachable" = 1 ] && echo ok || echo DOWN) db_write=$db_write_status"
+log "auron: $n_firing firing [${firing_keys# }], $acted change(s), db_read=$db_read_status db_write=$db_write_status"
