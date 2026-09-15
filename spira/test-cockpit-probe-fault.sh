@@ -103,7 +103,7 @@ base_snap() {
         [ "$omit" = SP_PEND_N      ] || printf 'SP_PEND_N=0\nSP_PEND_OLDEST=0\n'
         [ "$omit" = SP_WAITING     ] || printf 'SP_WAITING=1\n'
         [ "$omit" = SP_UNANSWERED  ] || printf 'SP_UNANSWERED=0\n'
-        [ "$omit" = SP_UNSENT      ] || printf 'SP_UNSENT=2\nSP_UNSENT_OLDEST_H=1\nSP_BRANCH_DONE=1\nSP_UNADOPTED=0\n'
+        [ "$omit" = SP_UNSENT      ] || printf 'SP_UNSENT=2\nSP_UNSENT_OLDEST_H=1\nSP_BRANCH_DONE=1\nSP_UNADOPTED=0\nSP_ORPHAN_WORK=0\n'
         [ "$omit" = SP_CLOSED_24H  ] || printf 'SP_CLOSED_24H=5\n'
         [ "$omit" = SP_OPENED_24H  ] || printf 'SP_OPENED_24H=3\n'
         # BEADS_LANDED_24H and the spark series.
@@ -486,7 +486,7 @@ echo "end-to-end: collector ? propagates to pane ?"
     printf 'SP_AT=%d\n' "$(date +%s)"
     printf 'SP_AEON_N=0\nSP_NEXT_N=0\nSP_INFLOW_N=0\nSP_INFLOW_WIN=60\nSP_INFLOW_DEFECT=0\nSP_INFLOW_KINDS=-\n'
     printf 'SP_AWAITING_N=0\nSP_PEND_N=0\nSP_WAITING=0\nSP_UNANSWERED=0\n'
-    printf 'SP_UNSENT=0\nSP_BRANCH_DONE=0\nSP_UNSENT_OLDEST_H=0\nSP_UNADOPTED=0\n'
+    printf 'SP_UNSENT=0\nSP_BRANCH_DONE=0\nSP_UNSENT_OLDEST_H=0\nSP_UNADOPTED=0\nSP_ORPHAN_WORK=0\n'
     printf 'SP_CLOSED_24H=0\nSP_OPENED_24H=0\nSP_BEADS_LANDED_24H=0\n'
     printf 'SP_BEADS_SPARK_OPENED=▁▁▁▁▁▁▁▁\nSP_BEADS_SPARK_CLOSED=▁▁▁▁▁▁▁▁\n'
     printf 'SP_BEADS_SPARK_LANDED=▁▁▁▁▁▁▁▁\nSP_CLOSED_KINDS=-\n'

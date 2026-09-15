@@ -287,7 +287,9 @@ done
 # `suites.sh status` is a glob and a read per suite: no database, no network, nothing that
 # can hang. A pass that cannot produce it prints why rather than an empty section, because a
 # menu with nothing on it and a menu that could not be built read identically otherwise.
-SUITES="$(dirname "$0")/suites.sh"
+# SPIRA_SUITES_SH overrides the path so test suites can inject a mock without paying the
+# host-check.sh walk on every watchtower.sh invocation. Same seam as SPIRA_INCIDENT_SH.
+SUITES="${SPIRA_SUITES_SH:-$(dirname "$0")/suites.sh}"
 suites_block="  (unavailable — $SUITES is missing, so nothing knows which suites run nowhere)"
 if [ -r "$SUITES" ]; then
     suites_block="$(bash "$SUITES" status 2>/dev/null)"
@@ -434,13 +436,15 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
 ### The Sending — are finished branches leaving?
 
   An unsent branch belonging to a live in_progress bead is work in flight, not backlog;
-  the raw count alone is not a fault. An unadopted ref (a spira/* branch whose suffix
-  resolves to no bead) can never be reaped by any rite and is a permanent +1 on a figure
-  whose purpose is to trend to zero.
+  the raw count alone is not a fault. A no-bead branch splits into two kinds: one whose
+  commits are already on the base (SP_UNADOPTED — safe to delete, no aeon holds it) and
+  one whose commits are absent from the base (SP_ORPHAN_WORK — unlanded work, needs human
+  attention; deletion would destroy commits). Only SP_UNADOPTED triggers the reap escalation.
 
   unsent branches                     $(g SP_UNSENT)
   oldest unsent (hours)               $(g SP_UNSENT_OLDEST_H)
-  unadopted refs (no bead, permanent) $(g SP_UNADOPTED)
+  strays (no bead, commits on base)   $(g SP_UNADOPTED)
+  orphan work (no bead, has commits)  $(g SP_ORPHAN_WORK)
   fiends (FAILED deletes, came back)  $(g SP_SENT_FAILED)
 
 ### The gate — is it buying anything?
@@ -487,6 +491,8 @@ A sweep is not only a set of numbers to read. These are the scans that are worth
 before anything else, because each answers a question the numbers above cannot.
 
   (the timed suite run is SUSPENDED — do not run it)
+
+    suites.sh run covers every spira/test-*.sh the landing gate does NOT run.
 
     Per Ryan, 2026-09-12: the timed suite run is suspended while the suite-red backlog is
     cleaned up. spira-suites-prod.timer is stopped and disabled, and this menu entry is
@@ -628,10 +634,13 @@ fi
 # bead is a branch nobody is about to send, and the rite that should reap it has failed
 # or not run. Filed only when SP_UNSENT_OLDEST_H is numeric and at or above the threshold.
 #
-# UNADOPTED. A spira/* branch whose suffix resolves to no bead can never be reaped by any
-# rite — the reaper checks the bead, finds nothing, and skips. It is a permanent +1 on a
-# figure whose purpose is to trend to zero. Filed whenever SP_UNADOPTED is nonzero, using
-# incident.sh dedup so repeated sweeps bump a recurrence rather than filing duplicates.
+# UNADOPTED. A spira/* branch whose suffix resolves to no bead AND whose commits are all
+# already on the base branch is a true stray — the reaper checks the bead, finds nothing,
+# and skips, so it is a permanent +1 until removed by hand. Filed whenever SP_UNADOPTED is
+# nonzero, using incident.sh dedup so repeated sweeps bump a recurrence rather than filing
+# duplicates. SP_ORPHAN_WORK (no bead but commits absent from base) is deliberately excluded:
+# deleting orphan work would destroy unlanded commits, so it is not a reapable stray and must
+# never be filed as one. (sp-doh5)
 #
 # ONLY WHEN NUMERIC. A `?` means the probe failed; filing an escalation on an unreadable
 # probe would sound the alarm without evidence (law-absence-needs-a-positive-control).

@@ -199,24 +199,25 @@ if [ -n "$RD_B1" ]; then
     nofile  "B1: s3 has NO result file (not in --suites list)" \
             "$RD_B1/test-fx-s3.sh.result"
 
-    # The 6th field of each result file must be "subset".
+    # The 6th field of each result file must be "explicit" (producer=explicit,
+    # matching test-testenv-batch.sh B5b and test-testenv-stdin.sh C).
     if [ -f "$RD_B1/test-fx-s1.sh.result" ]; then
         _marker_s1="$(awk '{print $6}' "$RD_B1/test-fx-s1.sh.result")"
-        [ "$_marker_s1" = subset ] \
-            && ok "B1: s1 result 6th field is 'subset'" \
-            || bad "B1: s1 result 6th field is 'subset'" "got '$_marker_s1'"
+        [ "$_marker_s1" = explicit ] \
+            && ok "B1: s1 result 6th field is 'explicit'" \
+            || bad "B1: s1 result 6th field is 'explicit'" "got '$_marker_s1'"
     fi
     if [ -f "$RD_B1/test-fx-s2.sh.result" ]; then
         _marker_s2="$(awk '{print $6}' "$RD_B1/test-fx-s2.sh.result")"
-        [ "$_marker_s2" = subset ] \
-            && ok "B1: s2 result 6th field is 'subset'" \
-            || bad "B1: s2 result 6th field is 'subset'" "got '$_marker_s2'"
+        [ "$_marker_s2" = explicit ] \
+            && ok "B1: s2 result 6th field is 'explicit'" \
+            || bad "B1: s2 result 6th field is 'explicit'" "got '$_marker_s2'"
     fi
 
-    # batch.meta must record selection=subset.
+    # batch.meta must record selection=explicit.
     isfile "B1: batch.meta written" "$RD_B1/batch.meta"
     if [ -f "$RD_B1/batch.meta" ]; then
-        want "B1: batch.meta has selection=subset" "selection=subset" "$(cat "$RD_B1/batch.meta")"
+        want "B1: batch.meta has selection=explicit" "selection=explicit" "$(cat "$RD_B1/batch.meta")"
     fi
 fi
 
@@ -255,22 +256,22 @@ if [ -n "$RD_B2" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# C: SUBSET MARKER IS ABSENT FROM A FULL RUN'S RESULT FILES.
+# C: DIFF-DERIVED RUN'S RESULT FILES HAVE PRODUCER=diff IN THE 6TH FIELD.
 # ---------------------------------------------------------------------------
 echo
-echo "C: subset marker absent from full (diff-derived) run result files"
+echo "C: diff-derived run result files record producer=diff in 6th field"
 
 if [ -n "${RD_B2:-}" ] && [ -f "$RD_B2/test-fx-s1.sh.result" ]; then
     _marker_full="$(awk '{print $6}' "$RD_B2/test-fx-s1.sh.result")"
-    [ -z "$_marker_full" ] \
-        && ok "C: full-run result file has no 6th field (subset marker absent)" \
-        || bad "C: full-run result file has no 6th field" \
-               "got '$_marker_full' — subset marker must be absent from a full run"
+    [ "$_marker_full" = diff ] \
+        && ok "C: full-run result file has 6th field 'diff'" \
+        || bad "C: full-run result file has 6th field 'diff'" \
+               "got '$_marker_full'"
 
-    # batch.meta must record selection=full.
+    # batch.meta must record selection=diff (matching test-testenv-batch.sh B5a).
     if [ -f "$RD_B2/batch.meta" ]; then
-        want "C: full run batch.meta has selection=full" \
-            "selection=full" "$(cat "$RD_B2/batch.meta")"
+        want "C: full run batch.meta has selection=diff" \
+            "selection=diff" "$(cat "$RD_B2/batch.meta")"
     fi
 fi
 

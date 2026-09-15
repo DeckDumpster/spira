@@ -210,6 +210,7 @@ quiet_col() {   # quiet_col <seconds> -> the colour code the quiet field was pai
       printf 'SP_AEON0_ACT=Bash x\nSP_AEON0_QUIET=%s\nSP_NEXT_N=0\nSP_AWAITING_N=0\n' "$1"; } | snap
     env -i PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
         SPIRA_CONF="$PD/no.conf" SPIRA_REPO="$PD/repo" SPIRA_RUN="$PD/repo/.runtime/spira" \
+        SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
         bash "$PANE" once 0 96 2>/dev/null \
       | python3 -c '
 # THE WHOLE RUN OF ESCAPES IMMEDIATELY BEFORE THE WORD, not the last one. A colour here is

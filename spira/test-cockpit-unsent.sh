@@ -59,8 +59,8 @@ done
 MAP="$TMP/repo-map"
 cat > "$MAP" <<MAP
 # name | path | land | base | format | gate
-alpha | $ALPHA | push | origin/main | |
-beta  | $BETA  | push | origin/main | |
+alpha | $ALPHA | push | | |
+beta  | $BETA  | push | | |
 MAP
 RUN="$TMP/run"; mkdir -p "$RUN"
 
@@ -76,10 +76,18 @@ git -C "$BETA" checkout -q -b spira/sp-bbb
 git -C "$BETA" commit --allow-empty -m "sp-bbb work" -q
 git -C "$BETA" checkout -q main 2>/dev/null || git -C "$BETA" checkout -q master
 
-# A non-bead branch in alpha — its suffix resolves to no bead.
+# A non-bead branch in alpha whose tip is NOT on the base branch — it carries unlanded work
+# and must not be treated as a disposable stray. This is the class that triggered the
+# unadopted-refs incident on every 30-minute watchtower pass: the SOP said "git branch -D"
+# but the branch held commits absent from the repo's base. (sp-doh5)
 git -C "$ALPHA" checkout -q -b spira/tmp-stray
 git -C "$ALPHA" commit --allow-empty -m "stray" -q
 git -C "$ALPHA" checkout -q main 2>/dev/null || git -C "$ALPHA" checkout -q master
+
+# A non-bead branch in alpha whose tip IS already on the base branch — a true unadopted stray.
+# No extra commits beyond main: merge-base --is-ancestor succeeds, so this is safe to delete.
+# Positive control for SP_UNADOPTED: the detector must count this one.
+git -C "$ALPHA" branch spira/sp-true-stray   # same commit as main; no new work
 
 # Run the probe in a minimal environment. cockpit.sh once without INVOCATION_ID prints keys
 # to stdout rather than writing a snapshot, which is what we want to parse.
@@ -107,8 +115,12 @@ is "SP_BRANCH_DONE counts across repos" "1" "$(val SP_BRANCH_DONE)"
 # a bead). Total bead-backed unsent: 2.
 is "SP_UNSENT counts only bead-backed branches" "2" "$(val SP_UNSENT)"
 
-# The stray is reported separately.
-is "SP_UNADOPTED counts non-bead branches" "1" "$(val SP_UNADOPTED)"
+# ======================================================================================
+# DEFECT 3 (sp-doh5): a no-bead branch with UNLANDED commits is NOT a reapable stray.
+# spira/tmp-stray has 1 commit not on the base — that is orphan work, not a disposable ref.
+# spira/sp-true-stray has no commits beyond main — that IS a true stray, safe to delete.
+is "SP_ORPHAN_WORK counts no-bead branches with unlanded commits" "1" "$(val SP_ORPHAN_WORK)"
+is "SP_UNADOPTED counts no-bead branches whose tip is already on base" "1" "$(val SP_UNADOPTED)"
 
 # ======================================================================================
 # THE POSITIVE CONTROL: the probe found SOMETHING. An empty output would pass all the

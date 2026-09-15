@@ -55,12 +55,24 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 NOW="$(date +%s)"
 GATE_WINDOW=3600         # deliberately not the shipped 21600
 
+# FAST MOCK FOR suites.sh status. suites.sh status calls host-check.sh twice (~3.5s each),
+# and every wt() / wt_file_multi() call invokes watchtower.sh which calls suites.sh status.
+# At ~40 total invocations that is ~280s before any actual test logic runs. The mock returns
+# a minimal but structurally valid block in under 1ms so the suite completes in a few minutes
+# instead of running into the per-suite gate timeout. It still says "suites in the tree"
+# so the assertion at line 350 ("carries its cheap figures") passes.
+MOCK_SUITES="$TMP/mock-suites.sh"
+printf '#!/usr/bin/env bash\nprintf "  suites in the tree                  0   (0 gated, 0 timed)\\n"\n' \
+    > "$MOCK_SUITES"
+chmod +x "$MOCK_SUITES"
+
 # The program under test, in an environment holding nothing but what it needs. `--show`
 # gathers and prints and touches nothing, so nothing here can reach a database or file a bead.
 wt() {                   # wt [VAR=val ...] -> the snapshot
     env -i PATH="$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" \
         "$@" bash "$HERE/watchtower.sh" --show 2>/dev/null
 }
 # THE LABEL IS MATCHED LITERALLY, never with a `.*`. The value is separated from the label
@@ -510,6 +522,7 @@ wt_file_multi() {   # wt_file_multi [VAR=val ...] -> appends incident subjects t
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_INCIDENT_SH="$mock" \
         "$@" bash "$HERE/watchtower.sh" 2>/dev/null
 }
@@ -525,6 +538,7 @@ wt_refs_multi() {   # wt_refs_multi [VAR=val ...] -> appends SPIRA_INCIDENT_REF 
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_INCIDENT_SH="$mock" \
         "$@" bash "$HERE/watchtower.sh" 2>/dev/null
 }
@@ -627,14 +641,15 @@ echo "the Sending vital signs render from cockpit.env:"
 # only a fixture with real numbers can prove it is actually reading the keys.
 fresh
 mkdir -p "$TMP/run"
-printf "SP_UNSENT=9\nSP_UNSENT_OLDEST_H=72\nSP_UNADOPTED=1\nSP_SENT_FAILED=17\n" \
+printf "SP_UNSENT=9\nSP_UNSENT_OLDEST_H=72\nSP_UNADOPTED=1\nSP_ORPHAN_WORK=2\nSP_SENT_FAILED=17\n" \
     > "$TMP/run/cockpit.env"
 snap="$(wt)"
 want "SP_UNSENT renders in the Sending section"        "unsent branches"             "$snap"
 want "SP_UNSENT value renders"                         "unsent branches                     9" "$snap"
 want "SP_UNSENT_OLDEST_H renders"                      "oldest unsent (hours)               72" "$snap"
-want "SP_UNADOPTED renders"                            "unadopted refs"              "$snap"
-want "SP_UNADOPTED value renders"                      "unadopted refs (no bead, permanent) 1" "$snap"
+want "SP_UNADOPTED renders"                            "strays (no bead"              "$snap"
+want "SP_UNADOPTED value renders"                      "strays (no bead, commits on base)   1" "$snap"
+want "SP_ORPHAN_WORK renders"                          "orphan work (no bead, has commits)  2" "$snap"
 want "SP_SENT_FAILED renders"                          "fiends (FAILED"              "$snap"
 want "SP_SENT_FAILED value renders"                    "fiends (FAILED deletes, came back)  17" "$snap"
 
@@ -645,18 +660,20 @@ printf "SP_OPEN=5\n" > "$TMP/run/cockpit.env"   # no SP_UNSENT/SP_UNADOPTED/SP_S
 snap="$(wt)"
 want "missing SP_UNSENT renders ?"           "unsent branches                     ?" "$snap"
 want "missing SP_UNSENT_OLDEST_H renders ?"  "oldest unsent (hours)               ?" "$snap"
-want "missing SP_UNADOPTED renders ?"        "unadopted refs (no bead, permanent) ?" "$snap"
+want "missing SP_UNADOPTED renders ?"        "strays (no bead, commits on base)   ?" "$snap"
+want "missing SP_ORPHAN_WORK renders ?"      "orphan work (no bead, has commits)  ?" "$snap"
 want "missing SP_SENT_FAILED renders ?"      "fiends (FAILED deletes, came back)  ?" "$snap"
 
 # ZERO IS A VALID MEASUREMENT. A clean Sending should render 0, not ?.
 fresh
 mkdir -p "$TMP/run"
-printf "SP_UNSENT=0\nSP_UNSENT_OLDEST_H=0\nSP_UNADOPTED=0\nSP_SENT_FAILED=0\n" \
+printf "SP_UNSENT=0\nSP_UNSENT_OLDEST_H=0\nSP_UNADOPTED=0\nSP_ORPHAN_WORK=0\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 snap="$(wt)"
 want "SP_UNSENT=0 renders as 0, not ?"          "unsent branches                     0" "$snap"
 want "SP_UNSENT_OLDEST_H=0 renders as 0, not ?" "oldest unsent (hours)               0" "$snap"
-want "SP_UNADOPTED=0 renders as 0, not ?"        "unadopted refs (no bead, permanent) 0" "$snap"
+want "SP_UNADOPTED=0 renders as 0, not ?"        "strays (no bead, commits on base)   0" "$snap"
+want "SP_ORPHAN_WORK=0 renders as 0, not ?"      "orphan work (no bead, has commits)  0" "$snap"
 want "SP_SENT_FAILED=0 renders as 0, not ?"      "fiends (FAILED deletes, came back)  0" "$snap"
 nowant "and SP_UNSENT=0 is not disguised as ?"   "unsent branches                     ?" "$snap"
 

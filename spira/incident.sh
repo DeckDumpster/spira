@@ -273,13 +273,14 @@ file_one() {
     # DEDUP QUERY — two passes (open first, closed second if needed). If the database is
     # unreachable, _dedup_incident prints nothing; id stays empty and the probe below catches
     # it. The probe is skipped on the recurrence path because a result from _dedup_incident
-    # proves the database is reachable. The recurrence count comes from the JSON labels,
-    # so no separate bdq label list call is needed on the common recurrence path.
+    # proves the database is reachable. The recurrence count comes from the events table
+    # (sp-lzt removed sp-recur-N label writes; _dedup_incident's label-extracted count
+    # is always 0 and is overridden by recurs_of immediately after the id is known).
     _hit="$(_dedup_incident "$ref")"
     id="" _was_closed=0 _recur_n=0
     case "$_hit" in
-        "open "*)   _rest="${_hit#open }";   id="${_rest%% *}"; _recur_n="${_rest##* }" ;;
-        "closed "*) _rest="${_hit#closed }"; id="${_rest%% *}"; _recur_n="${_rest##* }"; _was_closed=1 ;;
+        "open "*)   _rest="${_hit#open }";   id="${_rest%% *}"; _was_closed=0 ;;
+        "closed "*) _rest="${_hit#closed }"; id="${_rest%% *}"; _was_closed=1 ;;
     esac
     if [ -n "${id:-}" ]; then
         # THE COUNT COMES FROM THE EVENT HISTORY. sp-recur-N labels stopped being written
@@ -403,17 +404,17 @@ $(head -c 2000 "$pf")" >/dev/null 2>&1
     # mechanically rather than trusting the brief alone.
     _sop_ledger="${SPIRA_SOP_LEDGER:-${SPIRA_RUN}/sop/applied.jsonl}"
     bdq label add "$id" "delivers:note:${_sop_ledger}" >/dev/null 2>&1
-    # THE INITIAL FILING IS OCCURRENCE 1. Without this the dedup counter starts at 0 on the
-    # first recurrence, so the Nth total filing produces n=N-1 and the SIN fires one interval
-    # late. At SIN_AT=5 (10-minute sweep) that is 60 min rather than the 50 min the comment
-    # promises. The label makes the initial bead indistinguishable from a recurrence in the
-    # counter, so N filings reliably produce sp-recur-N and the SIN fires on the Nth.
-    # sp-recur-1-<cause> label is no longer written; recurrence count comes from the
-    # events trail (sp-lzt). The initial filing is still occurrence 1; see note below.
     # LABEL THE REF HASH so future dedup queries take the O(1) label-keyed path instead of
     # scanning all open incident beads. Added at creation so every new bead carries it from
     # the start; the backfill-ref-labels subcommand labels beads filed before this was added.
     bdq label add "$id" "ref:$(_ref_hash "$ref")" >/dev/null 2>&1
+    # NO bump_recur ON FIRST FILING. The recurrence counter (recurs_of) counts events of
+    # type "recurred", which are written ONLY on second-and-later filings. The first filing
+    # is creation, not a recurrence. SIN fires at the (SIN_AT+1)-th total filing: first
+    # creates the bead, then SIN_AT recurrences accumulate before the escalation triggers.
+    # The old behaviour (bump_recur on first filing) was removed because it made recurs_of
+    # return 1 for a fresh bead, contradicting the semantic that recurs_of counts
+    # recurrences, not total filings (sp-doh5).
     # AN UNDECLARED REPO STAYS VISIBLE. Filed but labelled needs-repo-triage so an aeon
     # that would claim it in the home-repo fallback is stopped by its own confusion rather
     # than silently working in the wrong checkout. Escalated once so the operator can
