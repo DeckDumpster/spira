@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+#
+# test-suites-containment.sh — a timed pass cannot reach the host it was launched from
+#
+#   ./test-suites-containment.sh
+#
+# THE DEFECT THIS SUITE GUARDS AGAINST. law-tests-run-only-through-testenv-batch has been in
+# force while nothing obeyed it: suites.sh ran every suite as `bash "$HERE/$s"` on the host,
+# and so did the gate. testenv-batch.sh existed, was 40KB, was fully tested, and had no
+# production caller at all — every caller was a suite testing testenv-batch itself.
+#
+# What that cost: a timed pass launched from inside a tmux pane. Suites isolate their tmux
+# server with TMUX_TMPDIR, but tmux resolves $TMUX ahead of it, so test-cockpit-rebuild.sh
+# drove rebuild.sh against the operator's live server and destroyed their cockpit mid-session;
+# test-uninstall.sh was still queued behind it. In a container none of that is reachable
+# whatever $TMUX says, which is the entire point of the statute.
+#
+# WHY A SENTINEL FILE AND NOT AN ASSERTION ABOUT THE RUNNER. "suites.sh calls testenv-batch.sh"
+# is a claim about the source; it stays true while a later edit adds a fallback that quietly
+# runs on the host when the container will not start. The property worth holding is not which
+# program is invoked, it is that a suite in the pass CANNOT SEE THE HOST. So this plants a
+# file on the host, plants a suite that looks for it, and requires the pass to report that
+# suite green — green meaning the suite could not find it.
+#
+# POSITIVE CONTROL IS FIRST AND IS NOT OPTIONAL (law-absence-needs-a-positive-control). A
+# suite that cannot see a host file and a suite that never ran produce the same verdict from
+# outside, and the wrong one reads as containment. So the same planted suite is first run on
+# the host, where it MUST find the sentinel and fail. Only once the probe has been seen to
+# fail does its passing inside the pass mean anything.
+#
+# covers: spira/suites.sh spira/testenv-batch.sh
+set -uo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+pass=0; fail=0
+ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
+bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+
+echo "test-suites-containment.sh"
+
+# A container is the whole subject of this suite. Without podman there is nothing to assert,
+# and asserting nothing must not read as a pass.
+command -v podman >/dev/null 2>&1 || {
+    printf 'SKIP test-suites-containment.sh: podman not available — containment cannot be tested\n' >&2
+    exit 77
+}
+
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+
+# The sentinel lives somewhere a container does not mount. /tmp is bind-mounted in some
+# testenv layouts, so the operator's run directory is the honest choice: if a suite can read
+# this path, it is reading the real box.
+SENTINEL="$TMP/host-sentinel-$$"
+printf 'if a suite can read this, it is on the host\n' > "$SENTINEL"
+[ -r "$SENTINEL" ] || { echo "test-suites-containment: could not plant the sentinel"; exit 1; }
+
+# The probe suite: exits 1 when it can see the host sentinel, 0 when it cannot.
+PROBE="$TMP/test-containment-probe.sh"
+cat > "$PROBE" <<EOF
+#!/usr/bin/env bash
+# covers: spira/suites.sh
+set -uo pipefail
+if [ -r "$SENTINEL" ]; then
+    echo "FAIL  the host sentinel is readable — this suite is running on the host"
+    echo "ASSERTIONS 1"
+    exit 1
+fi
+echo "ok    the host sentinel is not readable"
+echo "ASSERTIONS 1"
+exit 0
+EOF
+chmod +x "$PROBE"
+
+# ======================================================================================
+echo
+echo "POSITIVE CONTROL — the probe must FAIL when it really is on the host:"
+# ======================================================================================
+# If this passes, the probe cannot tell host from container and every assertion below is
+# meaningless — it would report containment against a check that never looks at anything.
+bash "$PROBE" >/dev/null 2>&1
+_host_rc=$?
+if [ "$_host_rc" -ne 0 ]; then
+    ok "the probe sees the sentinel on the host (rc=$_host_rc)"
+else
+    bad "the probe sees the sentinel on the host" \
+        "it exited 0 on the host — the probe cannot distinguish host from container"
+fi
+
+# ======================================================================================
+echo
+echo "the same probe, run through testenv-batch.sh, cannot see it:"
+# ======================================================================================
+# The probe has to live in the suite directory for the runner to find it by name, so it is
+# copied in and removed again. A stray test-*.sh left in spira/ would join every later pass
+# by existing, which is how suites are discovered here.
+_installed="$HERE/test-containment-probe.sh"
+cp "$PROBE" "$_installed"
+trap 'rm -f "$_installed"; rm -rf "$TMP"' EXIT INT TERM
+
+_batch_root="$TMP/batch-results"
+printf 'test-containment-probe.sh\n' \
+    | SPIRA_BATCH_RESULTS="$_batch_root" \
+      bash "$HERE/testenv-batch.sh" --suites - HEAD > "$TMP/batch.log" 2>&1
+_batch_rc=$?
+
+_res_dir="$(find "$_batch_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)"
+if [ -z "$_res_dir" ]; then
+    bad "the batch produced a results directory" \
+        "none under $_batch_root (rc=$_batch_rc) — see $TMP/batch.log; containment is UNTESTED, not proven"
+else
+    _res="$_res_dir/test-containment-probe.sh.result"
+    if [ ! -r "$_res" ]; then
+        # A selected suite with no result was not reached. That is not a pass.
+        bad "the probe produced a result" "no result file at $_res — the suite never ran"
+    else
+        _status="$(awk '{print $1}' "$_res" 2>/dev/null)"
+        if [ "$_status" = ok ]; then
+            ok "the probe cannot read the host sentinel from inside the container"
+        else
+            bad "the probe cannot read the host sentinel from inside the container" \
+                "status=[$_status]; $(head -3 "$_res_dir/test-containment-probe.sh.out" 2>/dev/null | tr '\n' ' ')"
+        fi
+    fi
+fi
+
+# ======================================================================================
+echo
+echo "suites.sh delegates rather than running on the host:"
+# ======================================================================================
+# Weaker than the sentinel assertions above and deliberately kept alongside them: this one
+# names the mechanism, so a change that removes delegation is reported as itself rather than
+# only as a containment failure somewhere downstream.
+if grep -q 'testenv-batch.sh" --suites -' "$HERE/suites.sh" 2>/dev/null; then
+    ok "suites.sh hands its selection to testenv-batch.sh"
+else
+    bad "suites.sh hands its selection to testenv-batch.sh" "no --suites - invocation in suites.sh"
+fi
+
+# The inline escape must remain exactly that — an escape for passes that are already
+# contained, never a fallback taken when the container fails to start.
+if grep -q 'no results directory' "$HERE/suites.sh" 2>/dev/null; then
+    ok "a missing results directory fails the pass rather than reading as green"
+else
+    bad "a missing results directory fails the pass rather than reading as green" \
+        "suites.sh does not refuse a batch that produced no results"
+fi
+
+echo
+echo "test-suites-containment.sh: $pass passed, $fail failed"
+[ "$fail" -eq 0 ]

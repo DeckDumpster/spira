@@ -64,6 +64,13 @@ chmod +x "$TOOLPATH/bd"
 # rationale: no runner-var wrapping overhead and no shared-fixture build per sut call.
 sut() {
     local cmd="$1"; shift
+    # SPIRA_SUITES_INLINE=1 — run the planted suites HERE, not in a container.
+    # suites.sh now delegates its pass to testenv-batch.sh (law-tests-run-only-through-
+    # testenv-batch). This suite is testing suites.sh's OWN logic against fake suites it
+    # planted in a scratch tree, so a container would have to be started per invocation to
+    # run code that exists only to be counted. Containment is not being waived: this suite
+    # is itself run inside a container by the timed pass, so the planted suites are already
+    # contained by it.
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF="$TMP/no-such.conf" \
         SPIRA_HOME="$SH" SPIRA_REPO="$TMP/repo" SPIRA_HOME_REPO="$REPONAME" \
@@ -73,6 +80,7 @@ sut() {
         SPIRA_SUITES_STALE="$STALE" SPIRA_SUITES_PRIORITY="$PRIO" \
         SPIRA_PATH="$TOOLPATH" SPIRA_SUITES_RUNNER_VARS="" SPIRA_INCIDENT_LOCK_WAIT="60" \
         SPIRA_SUITES_SKIP_TESTDB=1 \
+        SPIRA_SUITES_INLINE=1 \
         "$@" bash "$SH/suites.sh" "$cmd" 2>&1
 }
 plant() { cat > "$SH/$1"; chmod +x "$SH/$1"; }

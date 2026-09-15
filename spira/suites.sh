@@ -590,6 +590,25 @@ cmd_run() {
     # by cause_fp and filed as one bead per group (law-count-things-not-log-lines).
     local _cfp_dir="" _deferred_red_count=0 _cluster_suppressed=0
     local _setup_fault_count=0
+    # --------------------------------------------------------------------------------
+    # WHERE THE SUITES ACTUALLY RUN.
+    #
+    # Default: in a container, via testenv-batch.sh (law-tests-run-only-through-testenv-
+    # batch). A suite run on the host proves nothing about the candidate and can reach the
+    # real box — a pass launched from inside a tmux pane once drove rebuild.sh against the
+    # operator's live server and destroyed their cockpit mid-session.
+    #
+    # Two cases run inline instead, and both are already contained:
+    #   SPIRA_IN_TESTENV=1   this pass is ITSELF inside a testenv container (set by
+    #                        testenv-batch.sh on every suite it execs). Delegating again
+    #                        would try to start a container inside one.
+    #   SPIRA_SUITES_INLINE=1  a suite that drives suites.sh in a scratch tree to test the
+    #                        runner's own logic. Containment comes from the container that
+    #                        suite is running in, not from a second one nested inside it.
+    local BATCH=1
+    [ -n "${SPIRA_IN_TESTENV:-}" ] && BATCH=0
+    [ -n "${SPIRA_SUITES_INLINE:-}" ] && BATCH=0
+    local BATCH_RESULTS=""
     started="$(date +%s)"; deadline=$(( started + BUDGET ))
     mkdir -p "$STATE" 2>/dev/null
 
@@ -665,7 +684,10 @@ cmd_run() {
     # a fixture nobody borrows. Set this flag in that context to skip the build; fixture
     # suites that need testdb must build their own.
     # --------------------------------------------------------------------------------------
-    if [ -z "${SPIRA_SUITES_SKIP_TESTDB:-}" ] && \
+    # Skipped entirely in batch mode: each suite builds its own fixture inside the
+    # container, and a host fixture would be both unreachable from there and a second
+    # writer against the test database.
+    if [ "$BATCH" != 1 ] && [ -z "${SPIRA_SUITES_SKIP_TESTDB:-}" ] && \
        . "$HERE/testdb.sh" 2>/dev/null && testdb_available 2>/dev/null; then
         local _td_real_db="$SPIRA_DB"
         local _td_real_bd="${SPIRA_BD:-}"
@@ -717,11 +739,95 @@ cmd_run() {
     done
     unset _senv_rv
 
+    # --------------------------------------------------------------------------------
+    # RUN THE WHOLE SELECTION IN ONE CONTAINER.
+    #
+    # suites.sh decides WHICH suites run; testenv-batch.sh runs them. That split is
+    # law-a-runner-takes-a-list: a runner takes an explicit list, and whatever derives the
+    # list is a separate producer. `cmd_names` is that producer for a timed pass; here the
+    # cursor rotation is applied on top and the result handed over as $order.
+    #
+    # ONE BATCH, NOT ONE CONTAINER PER SUITE. Standing a container up costs ~10s; 260 of
+    # them would cost more than the pass. testenv-batch.sh brings up one container, installs
+    # the candidate once, and runs the selection inside it.
+    #
+    # PER-SUITE BUDGET SLICING IS GONE IN THIS MODE. It existed to ration a 30-minute host
+    # run; in a container the corpus measured ~4.4s/suite, so the whole set fits an ordinary
+    # budget and the machinery that skipped suites which "would not fit" no longer earns its
+    # complexity. testenv-batch.sh still applies SPIRA_SUITE_TIMEOUT per suite, so one
+    # runaway suite cannot hold the pass.
+    #
+    # THE CURSOR SURVIVES, and is now derived rather than predicted: any suite in $order for
+    # which the batch produced no result was not reached, and the first of them is where the
+    # next pass starts. That is a fact about what happened, where the old cursor was a
+    # forecast made before each suite ran.
+    #
+    # A PRIVATE RESULTS ROOT. testenv-batch.sh names its results directory after a hash of
+    # the tree and selection and never prints the path, so a caller cannot ask where they
+    # went. Pointing SPIRA_BATCH_RESULTS at an empty directory of our own makes the answer
+    # unambiguous: whatever single subdirectory appears is this batch's.
+    if [ "$BATCH" = 1 ]; then
+        local _b_root _b_list _b_rc
+        _b_root="$(mktemp -d)" || return 1
+        _b_list="$(printf '%s\n' $order)"
+        printf 'running %s suite(s) in a container via testenv-batch.sh\n' \
+            "$(set -- $order; echo $#)"
+        printf '%s\n' "$_b_list" \
+            | SPIRA_BATCH_RESULTS="$_b_root" \
+              SPIRA_SUITE_TIMEOUT="${SPIRA_SUITE_TIMEOUT:-$PER_SUITE}" \
+              bash "$HERE/testenv-batch.sh" --suites - "${SPIRA_SUITES_BRANCH:-HEAD}" 2>&1 \
+            | sed 's/^/  /'
+        # The batch runner's status, not sed's (law-status-after-a-pipe-is-the-last-command).
+        _b_rc=${PIPESTATUS[1]}
+        BATCH_RESULTS="$(find "$_b_root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)"
+        if [ -z "$BATCH_RESULTS" ]; then
+            # NO RESULTS DIRECTORY IS A HARNESS FAULT, NOT A GREEN PASS. An empty scan and a
+            # clean corpus are the same output otherwise, and the wrong one reads as all-clear
+            # (law-absence-needs-a-positive-control).
+            log "suites: testenv-batch produced no results directory (rc=$_b_rc) — not treating that as a pass"
+            rm -rf "$_b_root"
+            return 1
+        fi
+    fi
+
     local ran=0 red=0 skipped=0 unreached=""
     local _fixture_fault_count=0 _fixture_faulted=""
     # Instrument: track which suites got results, and write unreached for any that didn't.
     local suites_with_results=""
     for s in $order; do
+      if [ "$BATCH" = 1 ]; then
+        # ---- the suite already ran, in the container. Read its verdict. ----------------
+        # testenv-batch.sh writes <results>/<suite>.result as
+        #   <status> <epoch> <seconds> <fingerprint> <mode> <producer>
+        # and <results>/<suite>.out. A SELECTED SUITE WITH NO RESULT FILE IS UNREACHED,
+        # never green — the batch was cut short, the container died, or the suite never
+        # started. Recording it as a pass is the failure this whole program exists to end.
+        local _br_file="$BATCH_RESULTS/$s.result"
+        if [ ! -r "$_br_file" ]; then
+            unreached="$unreached $s"
+            next_cursor="${next_cursor:-$s}"
+            continue
+        fi
+        local _br_status _br_secs
+        _br_status="$(awk '{print $1}' "$_br_file" 2>/dev/null)"
+        _br_secs="$(awk '{print $3}' "$_br_file" 2>/dev/null)"
+        case "$_br_secs" in ''|*[!0-9]*) _br_secs=0 ;; esac
+        out="$(cat "$BATCH_RESULTS/$s.out" 2>/dev/null || true)"
+        secs="$_br_secs"
+        # Map the batch runner's status back onto the exit code the classification below is
+        # written against, so one set of rules decides what gets filed regardless of which
+        # runner produced the verdict.
+        case "$_br_status" in
+            ok)       rc=0 ;;
+            skip)     rc=77 ;;
+            timeout)  rc=124 ;;
+            *)        rc=1 ;;
+        esac
+        # Referenced by the timeout and confirming-run branches below. There is no per-suite
+        # slice in batch mode, so the full per-suite timeout is the truthful value.
+        declared_to="$(timeout_of "$s")"
+        slice="${declared_to:-$PER_SUITE}"
+      else
         left=$(( deadline - $(date +%s) ))
         if [ "$left" -le 5 ]; then
             unreached="$unreached $s"
@@ -800,6 +906,7 @@ cmd_run() {
         out="$(cat "$tmp")" || true
         rm -f "$tmp"
         secs=$(( $(date +%s) - t0 ))
+      fi
         ran=$(( ran + 1 ))
         suites_with_results="$suites_with_results $s"
         unreached_clear "$s"
@@ -882,6 +989,16 @@ cmd_run() {
                 left=$(( deadline - $(date +%s) ))
                 local _rv _rv_set confirm_env confirm_differing _cfp
                 confirm_env="env"; confirm_differing=""
+                # NO CONFIRMING RUN IN BATCH MODE, and not merely because it would execute on
+                # the host — the question it answers is already answered. The confirming run
+                # re-runs a red without the runner's injected variables, to tell "red because
+                # of the environment this runner imposes" from "red because the suite is
+                # broken". testenv-batch.sh execs each suite in a container with an explicit
+                # environment that carries none of them, so a red from there has already been
+                # produced in the clean environment. Leaving confirm_differing empty takes the
+                # deferred-clustering path below, which is the correct one for a red that needs
+                # no further disambiguation.
+                if [ "$BATCH" != 1 ]; then
                 for _rv in $RUNNER_VARS; do
                     _rv_set="${!_rv+x}"
                     if [ -n "$_rv_set" ]; then
@@ -889,6 +1006,7 @@ cmd_run() {
                         confirm_differing="${confirm_differing:+$confirm_differing }$_rv"
                     fi
                 done
+                fi
                 if [ -z "$confirm_differing" ]; then
                     # No runner variables are set — defer for post-loop cause clustering.
                     record_write "$s" red "$secs" "$fp"
@@ -1134,9 +1252,36 @@ cmd_status() {
     fi
 }
 
+# --------------------------------------------------------------------------------------
+# cmd_names — THE SELECTOR. One suite name per line on stdout and nothing else, so it can be
+# piped straight into a runner that takes a list (law-a-runner-takes-a-list):
+#
+#     suites.sh names | testenv-batch.sh --suites - <branch>
+#
+# Deciding WHICH suites run is a producer; RUNNING them is a runner. Keeping the two in one
+# program is what left no way to name a single suite and made fixing one red cost 65 minutes.
+# cmd_run uses this same set, then applies the cursor rotation on top — the cursor is a
+# property of a timed pass, not of the selection, so it does not belong in this output.
+#
+# Empty output with exit 0 means "nothing to run" and is not an error.
+# --------------------------------------------------------------------------------------
+cmd_names() {
+    local GATED s
+    if ! GATED="$(gated_suites)"; then
+        log "suites: $GATE_LIST is unreadable — refusing to guess which suites the gate runs"
+        return 1
+    fi
+    GATED=" $(echo $GATED) "
+    for s in $(all_suites); do
+        is_gated "$s" && continue
+        printf '%s\n' "$s"
+    done
+}
+
 case "${1:-list}" in
     run)    cmd_run ;;
+    names)  cmd_names ;;
     list)   cmd_list ;;
     status) cmd_status ;;
-    *) printf 'usage: suites.sh [list|run|status]\n' >&2; exit 2 ;;
+    *) printf 'usage: suites.sh [list|names|run|status]\n' >&2; exit 2 ;;
 esac
