@@ -1563,16 +1563,20 @@ _bump_write_event() {
         q="INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', '$actor', '$cause', NOW())"
         # Path 1: server mode (standard bd binary supports bd sql).
         if "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" >/dev/null 2>&1; then return 0; fi
-        # Path 2: embedded mode with dolt CLI.
+        # Path 2: embedded mode with dolt CLI. Only return here when dolt succeeds; a
+        # failing dolt (wrong DB version, uninitialised data-dir) falls through to
+        # path 3 so events are not silently lost on a partially-initialised store.
         if [ -d "$doltdb" ] && command -v dolt >/dev/null 2>&1; then
             local dbname
             dbname="$(ls "$doltdb" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" || dbname="sp"
             [ -n "$dbname" ] || dbname="sp"
-            dolt --data-dir "$doltdb" sql -q "use $dbname; $q;" >/dev/null 2>&1 || true
-            return 0
+            if dolt --data-dir "$doltdb" sql -q "use $dbname; $q;" >/dev/null 2>&1; then
+                return 0
+            fi
         fi
     fi
-    # Path 3: file fallback — embedded store with no dolt CLI and no bd sql support.
+    # Path 3: file fallback — embedded store with no dolt CLI, no bd sql support, or
+    # dolt present but unable to write (uninitialised store, version mismatch).
     if [ -d "$doltdb" ]; then
         local ts; ts="$(date +%s 2>/dev/null)" || ts="0"
         printf '%s\t%s\t%s\t%s\n' "$ts" "$id" "$etype" "$cause" \
@@ -1655,13 +1659,18 @@ census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular o
     fi
     local doltdb="${SPIRA_DB}/.beads/embeddeddolt"
     if [ -d "$doltdb" ]; then
-        # Embedded store: dolt is the authoritative reader of the events table.
+        # Embedded store: dolt is the preferred reader of the events table.
+        # Only return here when dolt exits 0; a failing dolt (uninitialised data-dir,
+        # version mismatch) falls through to the events.log file fallback so that events
+        # written via path 3 are still readable when dolt is present but non-functional.
         if command -v dolt >/dev/null 2>&1; then
-            local dbname
+            local dbname dolt_rc=0
             dbname="$(ls "$doltdb" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" || dbname="sp"
             [ -n "$dbname" ] || dbname="sp"
-            dolt --data-dir "$doltdb" sql -q "use $dbname; $q;" 2>/dev/null || true
-            return 0
+            out="$(dolt --data-dir "$doltdb" sql -q "use $dbname; $q;" 2>/dev/null)" || dolt_rc=$?
+            if [ "$dolt_rc" -eq 0 ]; then
+                printf '%s\n' "$out"; return 0
+            fi
         fi
         # File fallback: aggregate events.log into the tabular format census.sh's count.py expects:
         # "| event_type | new_value | count |" — one row per (event_type, cause) pair.

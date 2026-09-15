@@ -71,12 +71,14 @@ for _d in "${_pathdirs[@]}"; do
     _SAFE_PATH="${_SAFE_PATH}:${_d}"
 done
 
-export PATH="$_SAFE_PATH"
 export SPIRA_BD="$TMP/bd-nosql"
 export SPIRA_DB="$FAKE_DB"
 
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
+# conf.sh (sourced inside lib.sh) resets PATH to include /usr/local/bin where dolt lives.
+# Re-apply the no-dolt restriction AFTER lib.sh so the file-fallback path is exercised.
+export PATH="$_SAFE_PATH"
 
 echo "test-events-nodolt.sh"
 
