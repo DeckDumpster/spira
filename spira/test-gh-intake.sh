@@ -182,6 +182,12 @@ if grep -q 'create' "$BDLOG"; then ok "beads are created"
 else bad "beads are created" "no create call"; fi
 if grep -qE 'labels spira,plan|--labels spira,plan' "$BDLOG"; then ok "the live partition labels are applied at creation"
 else bad "the live partition labels are applied at creation" "no spira,plan on the create"; fi
+# A BEAD WITH NO repo: LABEL IS PARKED ON FIRST CLAIM. aeon.sh resolves repo:<name>
+# through the repo-map, and a bead that names none is labelled needs-ryan and left
+# for a human -- the livelock the harness itself defines. Ingesting without it
+# files work that is guaranteed to stall at the moment an aeon picks it up.
+if grep -qE 'repo:spira' "$BDLOG"; then ok "the bead names a repository"
+else bad "the bead names a repository" "no repo: label on the create"; fi
 if grep -q 'external-ref github:DeckDumpster/spira#1' "$BDLOG"; then ok "the external ref is the join key"
 else bad "the external ref is the join key" "no external-ref on the create"; fi
 # The pull request in the feed must not have become a bead.

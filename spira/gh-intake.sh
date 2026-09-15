@@ -41,6 +41,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/conf.sh"
+. "$HERE/lib.sh"
 
 DRY=0
 while [ $# -gt 0 ]; do
@@ -56,12 +57,33 @@ DB="${SPIRA_DB:?SPIRA_DB is not set}"
 REPO="${SPIRA_GH_INTAKE_REPO:-}"
 SCOPE="${SPIRA_SCOPE_LABEL:-spira}"
 LANE="${SPIRA_PLAN_LABEL:-plan}"
+# WHICH REPOSITORY THE WORK IS IN. aeon.sh resolves a bead's repo:<name> label
+# through the repo-map to decide where to cut a worktree. A bead that names none,
+# or names one the map cannot resolve, is labelled needs-ryan and parked on first
+# claim — it sits open and unclaimable until a human fixes it by hand. Ingesting
+# without this files work guaranteed to stall at the moment it is picked up, once
+# per issue. The default is the tracker's own repository name, which is right
+# whenever the issues are about the code they are filed against.
+BEAD_REPO="${SPIRA_GH_INTAKE_BEAD_REPO:-${REPO##*/}}"
 API="${SPIRA_GH_INTAKE_API:-https://api.github.com}"
 
 die() { printf 'gh-intake: %s\n' "$1" >&2; exit 1; }
 log() { printf 'gh-intake: %s\n' "$1"; }
 
 [ -n "$REPO" ] || die "SPIRA_GH_INTAKE_REPO is not set — nothing says which tracker to ingest from"
+
+# RESOLVED BEFORE ANYTHING IS CREATED, not discovered by an aeon later. This is the
+# one precondition whose failure is invisible at ingest time and expensive after:
+# the beads are filed, they look correct, and each one parks the first time an aeon
+# reaches it.
+_rr="$(repo_root "$BEAD_REPO" 2>/dev/null)" || _rr=""
+if [ -z "$_rr" ] || [ ! -e "$_rr/.git" ]; then
+    die "repo:$BEAD_REPO does not resolve to a checkout through $SPIRA_REPO_MAP.
+       Every ingested bead would be parked by aeon.sh on first claim and left for a
+       human. Add $BEAD_REPO to the repo-map, or set SPIRA_GH_INTAKE_BEAD_REPO to a
+       name that resolves."
+fi
+log "beads will be filed against repo:$BEAD_REPO ($_rr)"
 
 # ── what the store already holds ─────────────────────────────────────────────
 # Matching on the external ref rather than on a title is what makes a re-run
@@ -164,7 +186,7 @@ d=json.load(sys.stdin)
 print("Ingested from %s\n\n%s" % (d["ref"], d["body"]))' \
       | "$BD" -C "$DB" create "$title" \
             --external-ref "$ref" \
-            --labels "$SCOPE,$LANE" \
+            --labels "$SCOPE,$LANE,repo:$BEAD_REPO" \
             -t bug \
             --body-file - >/dev/null 2>&1 \
         && created=$((created+1)) \
