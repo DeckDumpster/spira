@@ -1,0 +1,83 @@
+# testenv-image.yml — publish the container image the suites run inside.
+#
+# WHY THIS EXISTS. The image is around 1.8 GB and building it downloads a Go
+# toolchain, compiles bd from source and installs a Rust toolchain. A machine that
+# keeps the image between runs pays that once. The gate runs on a machine created
+# for one run and destroyed afterwards, which has no layer cache at all, so
+# without a published image every gate pays the full build and it dominates the
+# wall clock.
+#
+# THE TAG IS THE HASH OF THE BUILD CLOSURE — the Containerfile, the bd pin, and
+# doctor.sh's declared program lists — so pulling a tag is exactly as safe as
+# building it: an image built from different inputs has a different name, and a
+# stale one is unreachable rather than merely unlikely. Nothing floating is ever
+# published, because a second name for the same image would destroy that property
+# in one pull.
+#
+# WHY IT RUNS ON EVERY PUSH AND NOT ON A PATH FILTER. The closure is computed by
+# testenv.sh from several files, and a path filter is a second, hand-written copy
+# of that list. When the two disagree the workflow does not fail — it silently
+# publishes nothing, and the gate discovers the gap by paying for a build. So this
+# runs unconditionally and asks the registry whether the tag is already there,
+# which cannot drift because it is the same function the gate will call.
+#
+# THE OWNER IS LOWERCASED. A registry path must be lowercase; the organisation
+# name reaches this workflow spelled as it was typed. Pushing an uppercase path
+# fails with an error about authorisation rather than about case, which sends the
+# reader to the token.
+
+name: Test image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One publish at a time. Two runs racing on the same tag would push identical
+# bytes twice; harmless, but it buys nothing and both pay the build.
+concurrency:
+  group: testenv-image
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve the registry path
+        id: reg
+        run: |
+          owner="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          printf 'registry=ghcr.io/%s\n' "$owner" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to the registry
+        run: |
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" \
+            | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Publish the image if this closure has not been published
+        env:
+          SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
+        run: |
+          set -uo pipefail
+          tag="$(bash spira/testenv.sh tag)" || {
+            printf 'publish: could not compute the build closure hash\n' >&2; exit 1; }
+          [ -n "$tag" ] || { printf 'publish: empty closure hash\n' >&2; exit 1; }
+          ref="${SPIRA_TESTENV_REGISTRY}/spira-testenv:${tag}"
+
+          # ASK THE REGISTRY, DO NOT PULL. `manifest inspect` reads the manifest
+          # over the API; pulling to find out would move the whole image to decide
+          # it was not needed.
+          if podman manifest inspect "$ref" >/dev/null 2>&1; then
+            printf 'publish: %s is already published — nothing to do\n' "$ref"
+            exit 0
+          fi
+
+          printf 'publish: %s is not published yet — building\n' "$ref"
+          bash spira/testenv.sh publish

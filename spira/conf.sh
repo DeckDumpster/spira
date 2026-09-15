@@ -73,6 +73,7 @@ SPIRA_ARCHIVE
 SPIRA_ARCHIVIST_EVERY SPIRA_ARCHIVIST_IDLE SPIRA_ARCHIVIST_MODEL SPIRA_ARCHIVIST_TIMEOUT
 SPIRA_ARCHIVIST_PER_PASS
 SPIRA_TESTDB_LIB SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT
+SPIRA_TESTENV_REGISTRY
 SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET
 SPIRA_GATE_SUITES SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
 SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE
@@ -391,6 +392,21 @@ spira_conf_defaults() {
     # that would have removed it (sp-2p7o, landed 14:15, blocked everything until 15:0x).
     : "${SPIRA_TESTDB_DATA:=$(_spira_join "$SPIRA_WORKSPACES" beads-test)}"
     : "${SPIRA_TESTDB_PORT:=3308}"
+    # WHERE THE TEST IMAGE IS PUBLISHED, if anywhere. Empty means build it locally and
+    # never reach the network, which is the right default: the registry is somebody's
+    # account, and a harness that reached for one by default would fail on every machine
+    # whose operator has not got that account.
+    #
+    # WHY THIS IS WORTH CONFIGURING. The image is ~1.8 GB and its build downloads a Go
+    # toolchain, compiles bd from source and installs a Rust toolchain. A machine that
+    # keeps the image between runs pays that once. A machine created for a single CI run
+    # and destroyed afterwards pays it every run, which is most of the wall clock.
+    #
+    # PULLING IS AS SAFE AS BUILDING, and for the same reason: the tag is the hash of the
+    # build closure, so an image built from different inputs has a different name and a
+    # stale one is unreachable rather than merely unlikely. Set this to the repository
+    # prefix only -- the tag comes from the closure and is never written by hand.
+    : "${SPIRA_TESTENV_REGISTRY:=}"
     # HOW LONG A REPOSITORY'S OWN GATE COMMAND MAY RUN, in seconds. gate.sh wraps the command
     # under `timeout` at this budget. A gate killed at the deadline exits 124 and is reported
     # as a timeout (NO_VERDICT), not a branch fault — but the bead note is empty and the next
@@ -1128,7 +1144,7 @@ export SPIRA_INSTANCE \
        SPIRA_DB COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_RIGHT_PCT COCKPIT_CWD COCKPIT_CLIENT_IDLE_SECS SPIRA_PATH SPIRA_GOAL \
        SPIRA_WORKSPACES SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_RECLAIM_SKIP_LABEL \
        SPIRA_CI_LABEL SPIRA_CI_PARK_MAX \
-       SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT \
+       SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT SPIRA_TESTENV_REGISTRY \
        SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE \
        SPIRA_LOOM_ADDR SPIRA_LOOM_BUDGET_MS SPIRA_LOOM_CACHE_S SPIRA_LOOM_BIN SPIRA_RUN SPIRA_SYSTEMCTL \
        SPIRA_SPIKE_LABEL SPIRA_SPIKE_DIR SPIRA_SPIKE_PATHS SPIRA_SCOPE_LABEL \

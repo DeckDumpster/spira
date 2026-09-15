@@ -101,6 +101,11 @@ jobs:
   gate:
     needs: provision
     runs-on: [self-hosted, "${{ needs.provision.outputs.label }}"]
+    permissions:
+      contents: read
+      # To pull the test image. The package inherits the repository's visibility,
+      # so this is what makes the pull work while it is private.
+      packages: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -124,6 +129,33 @@ jobs:
         # a rootless container, rather than inferring it from a package list.
         run: bash spira/runner-deps.sh
 
+      - name: Resolve the registry path
+        id: reg
+        # A registry path must be lowercase; the organisation name arrives spelled
+        # as it was typed. An uppercase path fails at pull time with an error about
+        # authorisation rather than about case, which sends the reader to the token.
+        run: |
+          owner="$(printf '%s' "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          printf 'registry=ghcr.io/%s\n' "$owner" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to the registry
+        run: |
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" \
+            | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Acquire the test image
+        # SEPARATE FROM THE SUITES STEP ON PURPOSE. This is the expensive part on a
+        # machine with no layer cache, and attributing it here means a slow gate
+        # reads as a slow image acquisition rather than as slow tests.
+        #
+        # A MISS IS NOT A FAILURE. testenv.sh builds when the registry has no image
+        # for this closure, which is exactly what happens on the first run after any
+        # change to the Containerfile, the bd pin or doctor.sh's program lists. The
+        # gate is slower in that case and still correct.
+        env:
+          SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
+        run: bash spira/testenv.sh image
+
       - name: Lints
         # Cheap, pure bash, and they fail on the things no suite can see: operator
         # infrastructure named in a public repo, configured names written as
@@ -137,6 +169,11 @@ jobs:
         # The exit-code mapping matches the repo-map's gate command exactly. Keep
         # them in step: two gates that disagree about what 75 means is how a
         # harness fault comes to read as a branch failure.
+        env:
+          # The step above has already acquired the image under this closure's tag,
+          # so testenv.sh finds it locally. Naming the registry here as well keeps
+          # the two steps agreeing about which image the gate is entitled to use.
+          SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
         run: |
           set -uo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then

@@ -41,6 +41,7 @@
 #      tags, which makes every cut look like the first one.
 #
 # covers: .github/workflows/gate.yml .github/workflows/release.yml
+# covers: .github/workflows/testenv-image.yml
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -138,6 +139,37 @@ echo "10. the VM is given what the suites need before they run:"
 # dependency reports as a harness fault forever rather than as the one-line fix
 # it is. The dependency list is executable and lives in the repository.
 want "host dependencies are installed" "runner-deps.sh"                                "$G"
+
+echo
+echo "11. the gate acquires the test image rather than building it:"
+# The image is ~1.8 GB and its build downloads a Go toolchain, compiles bd from
+# source and installs a Rust toolchain. A machine created for one run has no
+# layer cache, so an unconfigured gate pays that build on every single run and it
+# dominates the wall clock. Pointing SPIRA_TESTENV_REGISTRY at a registry turns
+# that build into a pull; testenv.sh falls back to building on a miss, so this is
+# a cost control and never a correctness one.
+want "the gate names a registry"     "SPIRA_TESTENV_REGISTRY" "$G"
+want "the gate authenticates to it"  "podman login"           "$G"
+
+echo
+echo "12. the image is published, and only under the closure hash:"
+IMG_YML="$ROOT/.github/workflows/testenv-image.yml"
+if [ -r "$IMG_YML" ]; then
+    ok "testenv-image.yml exists"
+    I="$(cat "$IMG_YML")"
+    want   "positive control: the file has a name" "name:"                  "$I"
+    want   "it publishes through testenv.sh"       "testenv.sh publish"     "$I"
+    # An existing tag must not be rebuilt. Without that check every push to the
+    # base branch pays the full build to republish bytes that are already there.
+    want   "an already-published tag is skipped"   "manifest inspect"       "$I"
+    # GHCR rejects an uppercase path. The owner reaches this as-typed, so a repo
+    # under a capitalised organisation fails at push time with an error that
+    # names authentication rather than case.
+    want   "the registry path is lowercased"       "tr '[:upper:]' '[:lower:]'" "$I"
+    nowant "no floating tag is published"          ":latest"                "$I"
+else
+    bad "testenv-image.yml exists" "not found at .github/workflows/testenv-image.yml"
+fi
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"

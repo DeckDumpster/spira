@@ -121,5 +121,23 @@ cp "$HERE/doctor.sh" "$FIXTURE/doctor.sh"   # restore
 
 # ──────────────────────────────────────────────────────────────────────────────
 echo
+echo "the tag is a property of the content, not of where the checkout sits:"
+# ──────────────────────────────────────────────────────────────────────────────
+# `sha256sum FILE` prints "<hash>  <path>", and hashing that output puts the path
+# into the tag. Two checkouts of the same commit then compute different tags,
+# which is silent and expensive in both directions: every worktree rebuilds its
+# own 1.8 GB image, and an image published from one checkout can never be pulled
+# by another. Nothing reports a fault — the build simply always runs.
+OTHER="$TMP/elsewhere/spira"
+mkdir -p "$OTHER/testenv"
+cp "$FIXTURE/testenv.sh"            "$OTHER/testenv.sh"
+cp "$FIXTURE/doctor.sh"             "$OTHER/doctor.sh"
+cp "$FIXTURE/conf.sh"               "$OTHER/conf.sh"
+cp "$FIXTURE/testenv/Containerfile" "$OTHER/testenv/Containerfile"
+tag_elsewhere="$(SPIRA_BD_PIN="$PIN" bash "$OTHER/testenv.sh" tag 2>/dev/null)"
+same "same content at another path gives the same tag" "$tag_base" "$tag_elsewhere"
+
+# ──────────────────────────────────────────────────────────────────────────────
+echo
 printf '%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

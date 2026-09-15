@@ -63,8 +63,15 @@ _image_tag() {
     [ -z "${SPIRA_CONF_LOADED:-}" ] && . "$HERE/conf.sh"
     local _pin="${SPIRA_BD_PIN:-}"
     {
+        # CONTENT, NOT PATHS. `sha256sum FILE` prints "<hash>  <path>", and hashing
+        # that puts the checkout's location into the tag: two checkouts of the same
+        # commit then compute different tags, so every worktree rebuilds its own
+        # copy of a 1.8 GB image and an image published from one checkout can never
+        # be pulled by another. Nothing reports a fault — the build simply always
+        # runs. Redirecting from stdin makes sha256sum print "-" instead.
+        #
         # Containerfile: the recipe for the image itself.
-        sha256sum "$TESTENV_DIR/Containerfile" 2>/dev/null || true
+        sha256sum < "$TESTENV_DIR/Containerfile" 2>/dev/null || true
         # bd pin: migration count and build flags for the installed bd binary. A rebuild that
         # changes the migration count may invalidate schema expectations in the test suites, so
         # the image must be rebuilt when the pin changes.
@@ -80,8 +87,57 @@ cmd_tag() {
     printf '%s\n' "$(_image_tag)"
 }
 
+# Acquire the image and print the local ref. Useful on its own: it is how a cold
+# machine warms itself before a batch, so the acquisition cost is attributed to a
+# step that says that is what it is doing rather than to the first suite.
+cmd_image() {
+    local img; img="$(_ensure_image)" || return 1
+    printf '%s\n' "$img"
+}
+
+# Publish the image under the closure hash.
+#
+# NOTHING FLOATING IS EVER PUSHED. A :latest would be a second name for an image
+# whose whole safety property is that its name is derived from its inputs — one
+# pull of it would silently substitute an image built from a different
+# Containerfile, which is the failure the tag scheme exists to make impossible.
+cmd_publish() {
+    local remote
+    remote="$(_remote_ref)" || {
+        printf 'testenv publish: SPIRA_TESTENV_REGISTRY is unset — nowhere to publish to\n' >&2
+        return 1
+    }
+    local img; img="$(_ensure_image)" || return 1
+    podman tag "$img" "$remote" || {
+        printf 'testenv publish: could not tag %s as %s\n' "$img" "$remote" >&2
+        return 1
+    }
+    printf 'testenv: pushing %s\n' "$remote" >&2
+    podman push "$remote" >&2 || {
+        printf 'testenv publish: push failed\n' >&2
+        return 1
+    }
+    printf '%s\n' "$remote"
+}
+
 _image_ref() {
     printf 'localhost/spira-testenv:%s' "$(_image_tag)"
+}
+
+# Where that same image lives in a registry, if one is configured. Returns
+# non-zero when none is, which is the signal to build rather than an error.
+#
+# THE REF IS ASSEMBLED, NEVER WRITTEN DOWN. Only the repository prefix is
+# configured; the tag is the build-closure hash, so a published image cannot be
+# given a name that disagrees with what is inside it.
+_remote_ref() {
+    # conf.sh's own guard makes a second source a no-op. It has to happen in this
+    # function's scope: _image_tag sources it inside a command substitution, where
+    # the assignments do not survive.
+    [ -z "${SPIRA_CONF_LOADED:-}" ] && . "$HERE/conf.sh"
+    local reg="${SPIRA_TESTENV_REGISTRY:-}"
+    [ -n "$reg" ] || return 1
+    printf '%s/spira-testenv:%s' "${reg%/}" "$(_image_tag)"
 }
 
 # Build the image if the computed tag is not present. Prints the image ref on stdout
@@ -92,15 +148,46 @@ _image_ref() {
 # and a file outside the build context cannot be COPY'd. Using HERE as context with -f
 # pointing at the Containerfile satisfies both: podman resolves COPY paths relative to
 # the context root (HERE), and the Containerfile itself is specified explicitly.
+#
+# ACQUIRE, THEN BUILD. A configured registry is consulted before building, because
+# building is the expensive path: a Go toolchain downloaded, bd compiled from
+# source, a Rust toolchain installed. A machine that keeps the image between runs
+# pays that once; a machine created for one CI run and destroyed afterwards pays
+# it every run, and it dominates the wall clock.
+#
+# A MISS IS SLOW, NEVER FATAL. An empty registry, an unreachable one, a machine
+# with no credentials — all fall through to the build. They must: the first run
+# after any change to the closure necessarily misses, because the tag it would
+# pull has never been published. A registry that went down would otherwise stop
+# every gate rather than slow it.
+#
+# THE LOCAL REF IS WHAT CALLERS GET, whichever way it arrived. A pulled image is
+# retagged to the same localhost name a built one would have, so nothing
+# downstream has to know or care which happened.
 _ensure_image() {
     local img; img="$(_image_ref)"
-    if ! podman image exists "$img" 2>/dev/null; then
-        printf 'testenv: building image %s\n' "$img" >&2
-        podman build -q -t "$img" -f "$TESTENV_DIR/Containerfile" "$HERE" >&2 || {
-            printf 'testenv: image build failed — check Containerfile in %s\n' "$TESTENV_DIR" >&2
-            return 1
-        }
+    if podman image exists "$img" 2>/dev/null; then
+        printf '%s' "$img"
+        return 0
     fi
+
+    local remote
+    if remote="$(_remote_ref)"; then
+        printf 'testenv: trying %s\n' "$remote" >&2
+        if podman pull -q "$remote" >/dev/null 2>&1 \
+           && podman tag "$remote" "$img" 2>/dev/null; then
+            printf 'testenv: pulled %s\n' "$remote" >&2
+            printf '%s' "$img"
+            return 0
+        fi
+        printf 'testenv: %s is not in the registry — building it\n' "$remote" >&2
+    fi
+
+    printf 'testenv: building image %s\n' "$img" >&2
+    podman build -q -t "$img" -f "$TESTENV_DIR/Containerfile" "$HERE" >&2 || {
+        printf 'testenv: image build failed — check Containerfile in %s\n' "$TESTENV_DIR" >&2
+        return 1
+    }
     printf '%s' "$img"
 }
 
@@ -380,8 +467,10 @@ case "${1:-}" in
     scratch) shift; cmd_scratch "$@" ;;
     shell)   shift; cmd_shell   "$@" ;;
     tag)     shift; cmd_tag              ;;
+    image)   shift; cmd_image            ;;
+    publish) shift; cmd_publish          ;;
     *)
-        printf 'usage: testenv.sh up|down|exec|probe|scratch|shell|tag [OPTIONS]\n' >&2
+        printf 'usage: testenv.sh up|down|exec|probe|scratch|shell|tag|image|publish [OPTIONS]\n' >&2
         printf '  up      [--name NAME] [--checkout PATH]\n' >&2
         printf '  down    [--name NAME] [--volumes]\n' >&2
         printf '  exec    [--name NAME] [--user USER] CMD ARGS...\n' >&2
@@ -389,5 +478,7 @@ case "${1:-}" in
         printf '  scratch          # print a throwaway SPIRA_DB path; caller cleans up\n' >&2
         printf '  shell            # subshell with SPIRA_DB/RUN/SPOOL on throwaway paths\n' >&2
         printf '  tag              # print the computed image tag (the build closure hash)\n' >&2
+        printf '  image            # acquire the image (pull if configured, else build); print its ref\n' >&2
+        printf '  publish          # push the image to SPIRA_TESTENV_REGISTRY under that tag\n' >&2
         exit 1 ;;
 esac
