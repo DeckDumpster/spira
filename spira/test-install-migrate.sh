@@ -109,7 +109,7 @@ case "$*" in
                 && mv "${_ENABLED}.tmp" "$_ENABLED" 2>/dev/null || true
             /usr/bin/systemctl "$@" 2>/dev/null || true; exit 0
         fi
-        exec /usr/bin/systemctl "$@" ;;
+        exit 1 ;;
     *) exec /usr/bin/systemctl "$@" ;;
 esac
 SCTL
