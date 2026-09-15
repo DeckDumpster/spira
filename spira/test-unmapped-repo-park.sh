@@ -1,23 +1,31 @@
 #!/usr/bin/env bash
 #
 # test-unmapped-repo-park.sh — a bead with an unmapped repo: label is parked by adding the
-#   ask label, so bd ready --exclude-label $SPIRA_ASK_LABEL never returns it again.
+#   ask label AND overseer, so bd ready --exclude-label $SPIRA_ASK_LABEL never returns it
+#   again, and the decisions pane (which selects on overseer) can surface it to the operator.
 #
 #   ./test-unmapped-repo-park.sh
 #
-# THE DEFECT THIS PREVENTS. aeon.sh refused an unmapped repo: label correctly, but called
-# release_own_claim without first adding the ask label, returning the bead to the ready queue.
-# The sentinel re-summoned an aeon within two minutes — an infinite loop. The fix adds
+# THE DEFECT THIS PREVENTS (sp-4l0d). aeon.sh refused an unmapped repo: label correctly, but
+# called release_own_claim without first adding the ask label, returning the bead to the ready
+# queue. The sentinel re-summoned an aeon within two minutes — an infinite loop. The fix adds
 # SPIRA_ASK_LABEL to the bead before releasing; every fayth's FAYTH_EXCLUDE_LABELS contains
 # $SPIRA_ASK_LABEL, so bd ready --exclude-label ... skips it until a human corrects the label
 # or the repo-map and removes the ask label. Scar: sp-nlhy accumulated four identical notes,
-# one per summon. (sp-4l0d)
+# one per summon.
 #
-# THREE CASES:
+# THE LIVELOCK THIS ALSO PREVENTS (sp-foi7). cockpit/ask.sh pairs the ask label with overseer
+# at every creation site; without overseer the bead carries needs-ryan but lacks the label the
+# decisions pane selects on — invisible to the loop AND to the operator
+# (detect_livelocked: needs-ryan-no-overseer). The park path must apply both labels.
+#
+# FOUR CASES:
 #   1. POSITIVE CONTROL — without ask label, bead IS in bd ready --exclude-label output.
 #      Without this, a "park everything" implementation reads as correct.
-#   2. PARKED — after adding ask label, bead is NOT in bd ready --exclude-label output.
-#   3. UNPARKED — after removing ask label, bead returns to bd ready output.
+#   2. PARKED — after adding ask+overseer labels, bead is NOT in bd ready --exclude-label output.
+#   3. OVERSEER PRESENT — the overseer label is on the bead alongside the ask label, so the
+#      decisions pane can show it to the operator.
+#   4. UNPARKED — after removing ask label, bead returns to bd ready output.
 #
 # defect: sp-4l0d
 # covers: spira/aeon.sh spira/lib.sh
@@ -72,14 +80,16 @@ has "before park: bead appears in bd ready" "$ID" "$before"
 
 # --------------------------------------------------------------------------
 echo
-echo "PARKED: after adding ask label, bd ready skips the bead:"
+echo "PARKED: after adding ask+overseer labels, bd ready skips the bead:"
 # --------------------------------------------------------------------------
 
-B label add "$ID" "$ASK" >/dev/null 2>&1
+B label add "$ID" "$ASK"      >/dev/null 2>&1
+B label add "$ID" "overseer"  >/dev/null 2>&1
 
-# Confirm the label is on the bead.
+# Confirm both labels are on the bead.
 labels_out="$(B label list "$ID" 2>/dev/null || true)"
-has "ask label is on the bead" "$ASK" "$labels_out"
+has "ask label is on the bead"      "$ASK"      "$labels_out"
+has "overseer label is on the bead" "overseer"  "$labels_out"
 
 after="$(ready_ids)"
 lacks "after park: bead absent from bd ready --exclude-label $ASK" "$ID" "$after"
@@ -89,7 +99,8 @@ echo
 echo "UNPARKED: removing ask label returns bead to bd ready:"
 # --------------------------------------------------------------------------
 
-B label remove "$ID" "$ASK" >/dev/null 2>&1
+B label remove "$ID" "$ASK"      >/dev/null 2>&1
+B label remove "$ID" "overseer"  >/dev/null 2>&1
 
 restored="$(ready_ids)"
 has "after remove: bead returns to bd ready" "$ID" "$restored"
