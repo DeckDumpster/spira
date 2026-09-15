@@ -1125,6 +1125,34 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining]
                 done
             fi
         fi
+        # LANE LAST-SLOT RESERVATION. A lane fayth may not consume the last fleet slot
+        # while any task fayth has ready work. Lane fayths draw from their own
+        # FAYTH_MAX_CONCURRENT rather than from SPIRA_MAX_AEONS, so a full task pool alone
+        # cannot block them — the fleet ceiling is their only shared constraint with task work.
+        # Without this check the lane loop runs first, takes the last slot, and task beads
+        # wait for the lane aeon to exit — which for a persistent lane is unbounded.
+        #
+        # SCOPE. Binds only the last slot (slots_free == 1). With two or more free slots the
+        # lane fayth is unaffected. Task personas are never refused by this rule.
+        # SPIRA_MAX_LIVE_AEONS unset means no ceiling and today's behaviour exactly.
+        #
+        # COST. One fayth_ready per task persona, but only when slots_free == 1 and the
+        # persona being evaluated is a lane fayth. The common case — fleet well below its
+        # ceiling — pays a subtraction and a comparison and nothing else.
+        if [ -n "$(fayth_get "$f" FAYTH_LANE "")" ]; then
+            local lane_slots_free
+            lane_slots_free=$(( SPIRA_MAX_LIVE_AEONS - ${live_all:-0} ))
+            if [ "${lane_slots_free:-0}" -eq 1 ] 2>/dev/null; then
+                local tf tf_r
+                for tf in $(spira_task_fayths); do
+                    tf_r="$(fayth_ready "$tf" 2>/dev/null)" || continue
+                    if [ "${tf_r:-0}" -gt 0 ] 2>/dev/null; then
+                        log "CHECK7 $f: 1 fleet slot remaining, held back for task work"
+                        return 1
+                    fi
+                done
+            fi
+        fi
     fi
     r="$(fayth_ready "$f")" || { log "CHECK7 $f: no fayth in the chamber — skipped"; return 1; }
     if [ "${r:-0}" -eq 0 ]; then log "CHECK7 $f: nothing ready in its partition"; return 1; fi
