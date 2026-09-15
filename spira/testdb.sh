@@ -331,9 +331,13 @@ testdb_up() {            # testdb_up <tag>
     cp -rp "$TESTDB_DIR/.beads" "$TESTDB_BASELINE/.beads" 2>/dev/null || {
         rm -rf "$TESTDB_BASELINE"; TESTDB_BASELINE=""
     }
+    # Use length()==32 rather than {32} so the pattern works on mawk (no interval exprs).
     TESTDB_SERVER_INIT_HASH="$("$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
         "SELECT commit_hash FROM dolt_log LIMIT 1" 2>/dev/null \
-        | awk 'NF==1 && /^[a-z0-9]{32}$/' | head -1)"
+        | awk 'NF==1 && length($0)==32 && $0 ~ /^[a-z0-9]+$/' | head -1)"
+    [ -n "$TESTDB_SERVER_INIT_HASH" ] || \
+        printf 'testdb: warning: could not capture init hash for %s; reset will be slow\n' \
+            "$TESTDB_NAME" >&2
     TESTDB_BIN=""
     export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="$TESTDB_SERVER_BD"
     return 0
