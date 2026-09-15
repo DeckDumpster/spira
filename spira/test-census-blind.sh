@@ -204,7 +204,7 @@ JSONL
             SPIRA_CONF="$TMP/no-conf" \
             SPIRA_HOME="$HERE" \
             SPIRA_RUN="$TMP/run" \
-            bash "$CENSUS" 2>&1 >/dev/null
+            bash "$CENSUS" 2>/dev/null
     }
 
     # ==========================================================================
@@ -225,12 +225,21 @@ JSONL
     # schema-only from schema-plus-events after bd migrate schema runs. The failing-stub
     # dolt simulates this: events exist in the real dolt table, but the stub fails and
     # events.log is absent (path-3 was never the write path here), so census returns 0.
-    unreach_out=""
-    unreach_rc=0
-    unreach_out="$(run_census_no_dolt 2>/dev/null)" || unreach_rc=$?
+    #
+    # SERVER MODE SKIP. In server mode, _bump_write_event uses bd sql (path 1) as the
+    # write path, not dolt. Replacing dolt with a failing stub does not affect path 1,
+    # so census still reads events via bd sql and cannot return empty. The scenario
+    # ("dolt was the write path and is now absent") does not arise in server mode.
+    if [ "${TESTDB_MODE:-}" = server ]; then
+        printf '  skip  (unreachable: server mode uses bd sql as read path; scenario does not apply)\n'
+    else
+        unreach_out=""
+        unreach_rc=0
+        unreach_out="$(run_census_no_dolt 2>/dev/null)" || unreach_rc=$?
 
-    is   "census exits 0 with inaccessible dolt (db-7on false-empty tradeoff)" "0" "$unreach_rc"
-    is   "census output is empty (events in dolt are unreachable)" "" "$unreach_out"
+        is   "census exits 0 with inaccessible dolt (db-7on false-empty tradeoff)" "0" "$unreach_rc"
+        is   "census output is empty (events in dolt are unreachable)" "" "$unreach_out"
+    fi
 fi
 
 # ==============================================================================
