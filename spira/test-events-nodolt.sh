@@ -56,6 +56,10 @@ for arg in "\$@"; do
         printf '[]\n'
         exit 0
     fi
+    if [ "\$arg" = "migrate" ]; then
+        printf '✓ Schema already at v61\n'
+        exit 0
+    fi
 done
 exec "$BD_REAL" "\$@"
 WRAPPER
