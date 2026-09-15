@@ -507,6 +507,20 @@ ${guard_block}
 
   collector snapshot age              ${snap_age}s   (stale above ${SNAP_AGE_MAX}s)
   sentinel timer                      $(g SP_SENTINEL_TIMER)   last pass $(g SP_SENTINEL_AGE)s ago
+
+## Your task
+
+Read the vital signs above and decide whether anything needs attention.
+
+If the pipeline is nominal: print one line saying so and exit. No bead is needed. Silence is
+not acceptable — a session that found nothing must still say so, because silence and a greeting
+are indistinguishable in the log.
+
+If something needs attention: file one bead per finding with its evidence. Name what is wrong,
+the number that was anomalous, and what it means. A '?' field means this sweep could not read
+it — investigate why before filing a bead on the absence alone.
+
+Run the scans named in the menu above if you have wall time remaining.
 EOF
 }
 
@@ -521,6 +535,44 @@ if [ -n "$halt_since" ]; then
 fi
 
 # ---------------------------------------------------------------------------------------
+# SKIP WHEN NOMINAL. Every signal computed above is a positive measurement; '?' means a
+# probe failed. Nominal requires all four: no lapses since the last pass (lapsed_count=0),
+# a fresh readable snapshot (snap_age is numeric and below its limit), no stuck no-verdict
+# branches (nv_worst=0), and no drain in force. A single '?' or a nonzero count anywhere
+# in that set means not-nominal — the model session is reserved for conditions the cheap
+# checks can see but cannot resolve.
+#
+# When nominal: write a SWEEP:NOMINAL marker so the ops service can skip the model call
+# rather than paying a full context to confirm a green report is green. The marker line
+# carries the counts that satisfied the check so the log is self-explaining.
+#
+# THE MARKER ADVANCES HERE regardless of whether a full sweep runs. If it did not, the next
+# pass would see the same lapse records again and report lapsed_count > 0, making the
+# pipeline look unhealthy on the very first sweep after a nominal one.
+# ---------------------------------------------------------------------------------------
+nominal=0
+if [ "$lapsed_count" = "0" ] && \
+   [ "$snap_age" != "?" ] && [ "$snap_age" -lt "$SNAP_AGE_MAX" ] 2>/dev/null && \
+   [ "$nv_worst" = "0" ] && \
+   [ -z "$drain_since" ]; then
+    nominal=1
+fi
+
+# SPIRA_INCIDENT_SH overrides the path so test suites can inject a mock without reaching
+# a real database. Same seam sentinel.sh carries for systemctl.
+INC="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
+PROMPT_FILE="${SPIRA_WATCH_PROMPT_FILE:-$SPIRA_RUN/ops-sweep-prompt.txt}"
+
+if [ "$nominal" = "1" ]; then
+    printf 'SWEEP:NOMINAL lapsed=%s snap_age=%ss nv_worst=%s\n' \
+        "$lapsed_count" "$snap_age" "$nv_worst" > "${PROMPT_FILE}.tmp" 2>/dev/null && \
+        mv -f "${PROMPT_FILE}.tmp" "$PROMPT_FILE" || true
+    printf '%s\n' "$_lapsed_now" > "$LAPSED_MARKER" 2>/dev/null || true
+    log "watchtower: nominal — no sweep needed (lapsed=${lapsed_count} snap_age=${snap_age}s nv_worst=${nv_worst})"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------------------
 # WRITE THE SNAPSHOT AS THE SWEEP PROMPT. The ops unit hands this file to `aeon.sh --sweep`
 # so Ops starts with the current pipeline picture rather than gathering it again minutes
 # later. Written atomically (tmp + mv) so the reader never sees a partial file.
@@ -529,10 +581,6 @@ fi
 # starts without context gathers the same data a few minutes later — describing a slightly
 # different stall during an outage when the data is changing fastest.
 # ---------------------------------------------------------------------------------------
-# SPIRA_INCIDENT_SH overrides the path so test suites can inject a mock without reaching
-# a real database. Same seam sentinel.sh carries for systemctl.
-INC="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
-PROMPT_FILE="${SPIRA_WATCH_PROMPT_FILE:-$SPIRA_RUN/ops-sweep-prompt.txt}"
 if snapshot > "${PROMPT_FILE}.tmp" 2>/dev/null && mv -f "${PROMPT_FILE}.tmp" "$PROMPT_FILE"; then
     # THE MARKER ADVANCES ONLY HERE — after a successful write. A failed write leaves the
     # marker where it was so the next sweep sees the same records rather than losing them.

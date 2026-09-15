@@ -334,6 +334,7 @@ for section in 'The far end' 'The Sending' 'The workers' 'The graph' 'The menu' 
     want "the snapshot still carries: $section" "$section" "$snap"
 done
 want "and still warns that ? is not a zero" "never treat it as a zero" "$snap"
+want "and ends with the ops directive"       "Your task"               "$snap"
 
 # ======================================================================================
 echo
@@ -851,6 +852,76 @@ refs="$(cat "$TMP/inc-refs" 2>/dev/null || echo "")"
 unique_ref_count="$(printf '%s\n' "$refs" | sort -u | grep -c .)"
 is "two passes with different dup counts produce one dedupe key" "1" "$unique_ref_count"
 want "and the key is the stable dedup-meter-nonzero ref" "dedup-meter-nonzero" "$refs"
+
+# ======================================================================================
+echo
+echo "nominal pipeline skips the model session:"
+# ======================================================================================
+# THE DEFECT THIS COVERS. When every signal is green the snapshot is still ~22k tokens,
+# and the sweep still paid a full context to have the model say hello. The fix: when the
+# set of locally-evaluable signals are all nominal, write SWEEP:NOMINAL to the prompt
+# file so the ops service can skip the model call without opening a session at all.
+#
+# POSITIVE CONTROL FIRST: plant a lapse and assert the skip does NOT fire. Without this,
+# a nominal check that always skips passes every assertion below — the green-light trap
+# the rest of this suite exists to prevent (law-absence-needs-a-positive-control).
+LAPSE_TS="$(date -u +%Y%m%dT%H%M%SZ)"
+fresh
+mkdir -p "$TMP/run/landstate" "$TMP/run/lapsed"
+printf "SP_AT=%s\n" "$NOW" > "$TMP/run/cockpit.env"
+printf 'aeon lapsed — lease expired\n' > "$TMP/run/lapsed/sp-pos1-${LAPSE_TS}"
+rm -f "$TMP/ops-prompt"
+wt_file
+want   "positive control: lapse makes state non-nominal (full snapshot written)" \
+       "N workers pull" "$(cat "$TMP/ops-prompt" 2>/dev/null || echo "")"
+nowant "positive control: skip marker absent when lapse is present" \
+       "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
+
+# THE NOMINAL CASE. Fresh cockpit.env (SP_AT=NOW), no lapses, no noverdict dir, no drain.
+# Every signal the check evaluates is green; the skip marker must be the first line.
+fresh
+mkdir -p "$TMP/run/landstate"
+printf "SP_AT=%s\n" "$NOW" > "$TMP/run/cockpit.env"
+rm -f "$TMP/ops-prompt"
+wt_file
+is   "nominal pipeline writes the prompt file" "1" \
+     "$([ -f "$TMP/ops-prompt" ] && echo 1 || echo 0)"
+want "nominal pipeline writes the skip marker as the first line" \
+     "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
+nowant "nominal pipeline does not write the full snapshot" \
+       "N workers pull" "$(cat "$TMP/ops-prompt" 2>/dev/null || echo "")"
+
+# A DRAIN PREVENTS NOMINAL. The drain escalation still fires when the threshold is
+# exceeded, and the sweep is still needed to show the drain state to Ops.
+fresh
+mkdir -p "$TMP/run/landstate"
+printf "SP_AT=%s\n" "$NOW" > "$TMP/run/cockpit.env"
+printf '2026-09-08 20:02:00 UTC\nsummons gated.\n' > "$TMP/run/world.draining"
+rm -f "$TMP/ops-prompt"
+wt_file
+nowant "drain prevents nominal skip" \
+       "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
+
+# A STALE SNAPSHOT PREVENTS NOMINAL. snap_age >= SNAP_AGE_MAX means the collector has
+# not run recently; the pipeline picture is too old to trust as an all-clear.
+# Use 700s which exceeds the 600s SPIRA_WATCH_SNAP_MAX default shipped in watchtower.sh.
+fresh
+mkdir -p "$TMP/run/landstate"
+printf "SP_AT=%s\n" "$(( NOW - 700 ))" > "$TMP/run/cockpit.env"
+rm -f "$TMP/ops-prompt"
+wt_file
+nowant "stale snapshot prevents nominal skip" \
+       "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
+
+# A MISSING COCKPIT.ENV PREVENTS NOMINAL. snap_age='?' when the file cannot be read.
+# A '?' is not an all-clear; an unreadable probe may be the one that was wrong.
+fresh
+mkdir -p "$TMP/run/landstate"
+# No cockpit.env written.
+rm -f "$TMP/ops-prompt"
+wt_file
+nowant "unreadable snapshot prevents nominal skip" \
+       "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"

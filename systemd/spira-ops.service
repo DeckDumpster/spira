@@ -22,6 +22,14 @@ Type=oneshot
 # timer sits silent and starts working by itself the moment the file is there. No step for
 # anyone to remember.
 ExecCondition=/usr/bin/test -f @SPIRA_PROD@/chamber/ops.fayth
+# SKIP WHEN NOMINAL. watchtower.sh writes SWEEP:NOMINAL as the first line of the prompt
+# file when every measurable signal is green: no lapses, fresh snapshot, no stuck
+# no-verdict branches, no drain. A model session reading a nominal snapshot costs ~22k
+# tokens to say hello — the expensive way to run an if. When the first line is that
+# marker, this ExecCondition exits 1 (skipped, not failed) after logging the reason,
+# and the ExecStart below never runs. The file must exist (the preceding ExecCondition
+# guarantees it ran at least once) so the absence case remains a genuine error.
+ExecCondition=/bin/bash -c 'f=@SPIRA_RUN@/ops-sweep-prompt.txt; l=$(head -1 "$f" 2>/dev/null); case "$l" in SWEEP:NOMINAL*) printf "%s ops: %s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$l"; exit 1 ;; esac; exit 0'
 # Repair the wiring on every pass. A new store gets a new alert template that an install
 # run months ago never saw; this is idempotent, costs a find and a diff, and is the
 # cockpit-ensure lesson — repair from systemd, not from a session that may be dead.
