@@ -587,6 +587,9 @@ if [ "${SPIRA_SKIP_CLOSED_CHECK:-0}" != 1 ]; then
 #   printf 'a\tb\t\tc\n' | while IFS=$'\t' read -r w x y z; do echo "[$y]"; done   -> [c]
 while IFS=$'\x1f' read -r id r_name superseded dropped sentcontent delivers started_at; do
     [ -n "$id" ] || continue
+    # Carried from the delivers branch to the commit-naming check below, so a bead that
+    # fails both is reopened once, naming both reasons.
+    _c5_delivers_fail=""
     # Only beads an aeon worked — anything closed by hand has its own evidence.
     [ -f "$SPIRA_RUN/$id.log" ] || continue
     # A SUPERSEDED BEAD WILL NEVER HAVE A COMMIT NAMING IT, and that is correct: its work
@@ -716,13 +719,28 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
         if [ "$_delivers_ok" = 1 ]; then
             log "CHECK5 $id: delivers ($delivers) verified — not reopened"
             continue
-        else
-            # Counter labels (sp-attempt-N) no longer written; the events trail records
-            # this claim as an attempt when the bead transitions to in_progress (sp-lzt).
-            bead_reopen "$id" "Reopened by sentinel: ${_delivers_fail}. Set delivers:TYPE labels that match the evidence actually produced and present."
-            progress "reopened $id — delivers not verified: $_delivers_fail"
-            continue
         fi
+        # FALL THROUGH TO THE COMMIT-NAMING CHECK. Do not reopen here.
+        #
+        # delivers: and a commit are alternatives, not a replacement. incident.sh says so
+        # where it writes the label: "When an Ops session commits code naming the bead, the
+        # commit-naming check accepts the close and this label is never consulted." Reopening
+        # here made the label authoritative instead, and the bead never reached the check
+        # that would have accepted it.
+        #
+        # THE TOLERANCE IS THE POINT. The commit path leaves a bead closed while its branch
+        # is merely ahead of the base — "work exists; CHECK 6 lands it" — because landing is
+        # the Sending's job and takes minutes. This branch had no such tolerance, so a bead
+        # that had done its work and was waiting to land was reopened and the work redone.
+        #
+        # SCAR: a bead closed with its fix committed, carrying a delivers:note: path nothing
+        # had written because the fix was code and not a runbook application, was reopened 45
+        # seconds after each close — three times, at $1.39, $0.23 and $0.67. The work was
+        # correct every time and landed unchanged. At a fleet ceiling of one aeon it owned the
+        # only slot for an hour. Fourteen open beads carried an unsatisfiable delivers: path
+        # at the time, so the loop sat under every one of them.
+        log "CHECK5 $id: delivers not verified ($_delivers_fail) — falling through to the commit check"
+        _c5_delivers_fail="$_delivers_fail"
     fi
     r_path="$(repo_root "${r_name:-}")" || {
         log "CHECK5 $id: repo:$r_name is not in repo-map — cannot say whether it landed"
@@ -769,7 +787,7 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
         # has been charged yet and this is genuinely a failed attempt at the work.
         # Counter labels (sp-attempt-N) no longer written; the events trail records
         # this reopening as a future attempt when the bead is next claimed (sp-lzt).
-        bead_reopen "$id" "Reopened by sentinel: closed, but no commit on ${subj_base:-the base} or on spira/$id names it in $r_name. Closed is not landed; the next claim counts toward the poison threshold via the events trail. If this bead was closed because another bead did the work, record it with: bd supersede $id --with <successor> — a close reason alone is not read by this check."
+        bead_reopen "$id" "Reopened by sentinel:${_c5_delivers_fail:+ ${_c5_delivers_fail}, and} closed, but no commit on ${subj_base:-the base} or on spira/$id names it in $r_name. Closed is not landed; the next claim counts toward the poison threshold via the events trail. If this bead was closed because another bead did the work, record it with: bd supersede $id --with <successor> — a close reason alone is not read by this check."
         progress "reopened $id — closed without landing"
     fi
 done < <(
