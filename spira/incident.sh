@@ -282,6 +282,20 @@ file_one() {
         "closed "*) _rest="${_hit#closed }"; id="${_rest%% *}"; _recur_n="${_rest##* }"; _was_closed=1 ;;
     esac
     if [ -n "${id:-}" ]; then
+        # THE COUNT COMES FROM THE EVENT HISTORY. sp-recur-N labels stopped being written
+        # when recurrences became events (sp-lzt), and _dedup_incident still derives its
+        # third field by parsing those labels out of the bead JSON — so _recur_n was 0 on
+        # every recurrence and n was 1 every time. The log read "recurred (1)" forever, the
+        # threshold below was never reached, and the SIN escalation could not fire at all:
+        # an incident that keeps coming back looked identical to one seen for the second
+        # time (law-a-rename-repoints-no-reader — the write moved and the reader did not).
+        #
+        # recurs_of is lib.sh's reader for the same counter and handles all three storage
+        # paths. The larger of the two is taken so a bead filed by older code, which really
+        # does carry sp-recur-N labels and may have no events, still counts correctly.
+        _ev_n="$(recurs_of "$id" 2>/dev/null)"
+        case "$_ev_n" in ''|*[!0-9]*) _ev_n=0 ;; esac
+        [ "$_ev_n" -gt "$_recur_n" ] && _recur_n="$_ev_n"
         n=$((_recur_n + 1))
         if [ "$_was_closed" = 1 ]; then
             bead_reopen "$id" "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ) — same failure fingerprint, dedup within ${DEDUP_LOOKBACK_DAYS}-day window"

@@ -58,10 +58,25 @@ import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(" ".join(d[0].get("labels") or []))'; }
 has_label() { [[ " $(labels_of "$1") " == *" $2 "* ]]; }
-# recur_max: highest sp-recur-N value on a bead, regardless of cause suffix.
-# sp-recur-3 and sp-recur-3-unrecorded both yield 3; an empty result yields 0.
-recur_max() { B label list "$1" 2>/dev/null | grep -oE 'sp-recur-[0-9]+' \
-    | grep -oE '[0-9]+$' | sort -n | tail -1 || echo 0; }
+# recur_max: how many recurrences the store has recorded against a bead.
+#
+# THIS USED TO READ sp-recur-N LABELS, AND THEY ARE NOT WRITTEN ANY MORE (sp-lzt). incident.sh
+# records a recurrence as an `recurred` EVENT and says so in its own comment; the labels went
+# away with it. The label read kept working — it found nothing, returned 0, and every
+# assertion here compared 0 against the expected count, so five FAILs pointed at the sin
+# escalation while the thing they were reading had simply moved. test-suites.sh was updated
+# for the same change; this suite was missed.
+#
+# recurs_of is lib.sh's own reader for that counter and handles all three storage paths
+# (bd sql in server mode, the dolt CLI in embedded mode, and the events.log file fallback).
+# Using it rather than a private query is also what keeps this suite honest when the storage
+# moves again.
+# shellcheck disable=SC1090
+. "$HERE/lib.sh" 2>/dev/null || true
+recur_max() {
+    local _n; _n="$(recurs_of "$1" 2>/dev/null)"
+    case "$_n" in ''|*[!0-9]*) echo 0 ;; *) echo "$_n" ;; esac
+}
 
 # file_incident <ref> <title> <payload> [VAR=val ...]
 # Runs incident.sh file once with the given ref and title on stdin.
@@ -82,13 +97,18 @@ echo "test-sin-exempt.sh"
 echo
 echo "the positive control — a non-exempt ref reaches SIN:"
 # ======================================================================================
-# File the same ref SIN_AT times. The first creates the bead; subsequent calls recur.
+# File the same ref SIN_AT + 1 times. SIN_AT counts RECURRENCES, not sightings — incident.sh
+# escalates "past SIN_AT recurrences" and its counter starts at zero on the filing that
+# CREATES the bead. So reaching a count of SIN_AT takes one create plus SIN_AT recurring
+# filings. Filing SIN_AT times left the counter at SIN_AT - 1, one short of the threshold, so
+# the sin label was correctly withheld and this positive control asserted against a state the
+# loop never produced.
 testdb_reset
 : > "$ASK_LOG"
 SIN_AT=3
 ref="incident:test-nonexempt-sin"
 title="non-exempt incident"
-for i in $(seq 1 "$SIN_AT"); do
+for i in $(seq 1 "$(( SIN_AT + 1 ))"); do
     file_incident "$ref" "$title" "payload $i" SPIRA_SIN_AT="$SIN_AT" >/dev/null
 done
 
@@ -120,7 +140,7 @@ testdb_reset
 : > "$ASK_LOG"
 ref="incident:test-exempt-sin"
 title="exempt incident"
-for i in $(seq 1 "$SIN_AT"); do
+for i in $(seq 1 "$(( SIN_AT + 1 ))"); do
     file_incident "$ref" "$title" "payload $i" SPIRA_SIN_AT="$SIN_AT" SPIRA_SIN_EXEMPT=1 >/dev/null
 done
 
