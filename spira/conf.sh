@@ -511,10 +511,17 @@ spira_conf_defaults() {
     # than by viewer, so ten open tabs cost one query instead of ten. It is a cache and not a
     # background job: nothing runs when nobody is looking, and 0 disables it.
     : "${SPIRA_LOOM_CACHE_S:=15}"
-    # The compiled Loom binary. The default is under the harness checkout so a fresh clone
-    # runs after a `cargo build --release` in the loom/ directory. An operator who installs
-    # the binary elsewhere — or who runs it from a path-visible location — sets this key.
-    : "${SPIRA_LOOM_BIN:=$SPIRA_REPO/loom/target/release/loom}"
+    # The compiled Loom binary. A release tarball places it at bin/loom inside the release
+    # directory; a source checkout places it at loom/target/release/loom after a cargo build.
+    # Check the tarball layout first so an operator who activates a tarball does not need to
+    # set this key explicitly and does not need cargo on PATH.
+    if [ -z "${SPIRA_LOOM_BIN:-}" ]; then
+        if [ -f "$SPIRA_REPO/bin/loom" ]; then
+            SPIRA_LOOM_BIN="$SPIRA_REPO/bin/loom"
+        else
+            SPIRA_LOOM_BIN="$SPIRA_REPO/loom/target/release/loom"
+        fi
+    fi
     # THE SPIKE PARTITION, in one place because it is read in four: the spike fayth's
     # predicate, the brief handed to a spike aeon, the confinement check the landing worker
     # runs, and whatever files the bead. A literal in four files is how four programs come to
@@ -585,7 +592,13 @@ spira_conf_defaults() {
     # a reply of theirs from a reply of the agent's. Both write into the same thread, and a
     # panel that cannot separate them announces the agent's own comment back to it as an answer.
     : "${SPIRA_OPERATOR_ACTOR:=operator}"
-    : "${SPIRA_PANEL:=$SPIRA_COCKPIT/panel/target/release/panel}"
+    if [ -z "${SPIRA_PANEL:-}" ]; then
+        if [ -f "$SPIRA_REPO/bin/panel" ]; then
+            SPIRA_PANEL="$SPIRA_REPO/bin/panel"
+        else
+            SPIRA_PANEL="$SPIRA_COCKPIT/panel/target/release/panel"
+        fi
+    fi
     : "${SPIRA_OPERATOR:=the operator}"
     # The timezone dates are written in. Empty means the host's own, which is right until
     # the host is a server in one zone and the operator reads its output in another — the
