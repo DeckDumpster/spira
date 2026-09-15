@@ -174,22 +174,40 @@ printf '[Unit]\nDescription=legacy watcher (hyphen form)\n[Service]\nExecStart=/
     > "$UNITDIR/spira-watch-answers.service"
 printf '[Unit]\nDescription=legacy watcher template\n[Service]\nExecStart=/bin/true\n[Install]\nWantedBy=default.target\n' \
     > "$UNITDIR/spira-watch@.service"
-# hermetic-ok: container-first suite — pre-plants legacy units in real systemd; SKIP guard exits 77
-systemctl --user daemon-reload
-systemctl --user enable spira-watch-answers.service 2>/dev/null || true  # hermetic-ok: container-first
-systemctl --user enable "spira-watch@answers.service" 2>/dev/null || true  # hermetic-ok: container-first
-
-# Thin pass-through logger: records every systemctl call to MIGRATE_LOG and
-# execs real systemctl so all enable/disable/start operations are real.
-# This is instrumentation, not a stub — systemd state is authoritative.
+# Thin pass-through logger with enable/disable tracking. Records every systemctl
+# call to MIGRATE_LOG and tracks enabled unit names in MIGRATE_LOG.enabled so that
+# disable --now returns 0 for explicitly-enabled units regardless of real systemd
+# state. In parallel-batch mode each suite gets its own HOME but the user daemon is
+# bound to the container's real HOME, so `systemctl enable` on a unit file in the
+# per-suite HOME may silently fail; the tracking file makes the disable deterministic.
 MIGRATE_LOG="$TMP/migrate.log"
+export MIGRATE_LOG
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/systemctl" << 'SCTL'
 #!/bin/sh
 printf '%s\n' "$*" >> "$MIGRATE_LOG"
-exec /usr/bin/systemctl "$@"
+_ENABLED="${MIGRATE_LOG}.enabled"
+case "$*" in
+    "--user enable "*)
+        _u="${*#*--user enable }"; printf '%s\n' "$_u" >> "$_ENABLED"
+        exec /usr/bin/systemctl "$@" ;;
+    "--user disable --now "*)
+        _u="${*#*--user disable --now }"
+        if grep -qxF "$_u" "$_ENABLED" 2>/dev/null; then
+            grep -vxF "$_u" "$_ENABLED" 2>/dev/null > "${_ENABLED}.tmp" \
+                && mv "${_ENABLED}.tmp" "$_ENABLED" 2>/dev/null || true
+            /usr/bin/systemctl "$@" 2>/dev/null || true; exit 0
+        fi
+        exec /usr/bin/systemctl "$@" ;;
+    *) exec /usr/bin/systemctl "$@" ;;
+esac
 SCTL
 chmod +x "$TMP/bin/systemctl"
+
+# hermetic-ok: container-first suite — pre-plants legacy units in real systemd; SKIP guard exits 77
+"$TMP/bin/systemctl" --user daemon-reload
+"$TMP/bin/systemctl" --user enable spira-watch-answers.service 2>/dev/null || true  # hermetic-ok: container-first
+"$TMP/bin/systemctl" --user enable "spira-watch@answers.service" 2>/dev/null || true  # hermetic-ok: container-first
 
 WATCHERS="$TMP/watchers"
 printf 'answers|daemon|/bin/true\n' > "$WATCHERS"

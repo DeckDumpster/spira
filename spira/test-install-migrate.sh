@@ -85,6 +85,7 @@ _INST="mig"
 
 # Thin pass-through logger.
 SCTL_LOG="$TMP/systemctl.log"
+export SCTL_LOG
 mkdir -p "$TMP/bin"
 cat > "$TMP/bin/systemctl" << 'SCTL'
 #!/bin/sh
