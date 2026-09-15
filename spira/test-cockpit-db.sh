@@ -37,6 +37,30 @@ DB="$SPIRA_DB"
 export COCKPIT_DB="$DB"
 BD="${TESTDB_BD:-bd}"
 
+# THE ASK LABEL IS CONFIGURED, AND THIS FIXTURE USED TO WRITE IT AS A LITERAL. conf.sh
+# defaults SPIRA_ASK_LABEL to "needs-operator"; the box this was written on sets "needs-ryan"
+# in its spira.conf, so seeding the literal "needs-ryan" matched on that box and nowhere else.
+# Inside a container there is no operator config, unanswered.sh looked for "needs-operator",
+# and every seeded thread was invisible: "no threads are waiting on a reply" — the reassuring
+# answer, from a fixture that had built four threads it could not see.
+#
+# PINNED TO A NON-DEFAULT ON PURPOSE. Seeding the default would pass just as well against
+# code with the literal written in, which is the thing the key exists to stop (CLAUDE.md).
+# This value is neither the shipped default nor the one this box happens to use, so both
+# failures are visible here.
+export SPIRA_ASK_LABEL="fixture-owes-a-reply"
+
+# THE OPERATOR'S ACTOR NAME IS CONFIGURED TOO, and this fixture used to write it as the
+# literal "ryan". unanswered.sh decides whose turn it is by comparing each comment's author
+# to SPIRA_OPERATOR_ACTOR, whose shipped default is "operator" — so on the box this was
+# written on the seeded author matched, and in a container it matched nothing: every thread
+# looked like one the human had never spoken in, and none of them was waiting on a reply.
+# Same failure, same silence, same reassuring output as the label above.
+#
+# Pinned to a non-default for the same reason: seeding "operator" would pass against code
+# with the default written in.
+export SPIRA_OPERATOR_ACTOR="fixture-human"
+
 bead() {   # bead <id> <labels-csv> <status> <description>
     printf '{"id":"%s","title":"t %s","description":"%s","status":"%s","issue_type":"task","labels":[%s],"updated_at":"2026-09-05T00:00:00Z"}\n' \
       "$1" "$1" "$4" "$3" "$(printf '"%s",' ${2//,/ } | sed 's/,$//')"
@@ -60,13 +84,14 @@ comment() {  # comment <bead> <author> <stamp>
 }
 convo() {    # convo <id> <comment-json...>  -> one import row
     printf '{"id":"%s","title":"t %s","description":"d","status":"open","issue_type":"task",' "$1" "$1"
-    printf '"labels":["needs-ryan","overseer"],"updated_at":"2026-09-05T00:00:00Z","comments":[%s]}\n' "${2%,}"
+    printf '"labels":["%s","overseer"],"updated_at":"2026-09-05T00:00:00Z","comments":[%s]}\n' \
+        "$SPIRA_ASK_LABEL" "${2%,}"
 }
 testdb_seed <<EOF
-$(convo sp-tie   "$(comment sp-tie   claude 2026-09-06T10:00:00Z)$(comment sp-tie   ryan   2026-09-06T10:00:00Z)")
-$(convo sp-flip  "$(comment sp-flip  ryan   2026-09-06T10:00:00Z)$(comment sp-flip  claude 2026-09-06T10:00:00Z)")
-$(convo sp-rev   "$(comment sp-rev   ryan   2026-09-06T12:00:00Z)$(comment sp-rev   claude 2026-09-06T09:00:00Z)")
-$(convo sp-done2 "$(comment sp-done2 ryan   2026-09-06T09:00:00Z)$(comment sp-done2 claude 2026-09-06T12:00:00Z)")
+$(convo sp-tie   "$(comment sp-tie   claude 2026-09-06T10:00:00Z)$(comment sp-tie   "$SPIRA_OPERATOR_ACTOR" 2026-09-06T10:00:00Z)")
+$(convo sp-flip  "$(comment sp-flip  "$SPIRA_OPERATOR_ACTOR"   2026-09-06T10:00:00Z)$(comment sp-flip  claude 2026-09-06T10:00:00Z)")
+$(convo sp-rev   "$(comment sp-rev   "$SPIRA_OPERATOR_ACTOR" 2026-09-06T12:00:00Z)$(comment sp-rev   claude 2026-09-06T09:00:00Z)")
+$(convo sp-done2 "$(comment sp-done2 "$SPIRA_OPERATOR_ACTOR"   2026-09-06T09:00:00Z)$(comment sp-done2 claude 2026-09-06T12:00:00Z)")
 EOF
 out="$("$COCKPIT/unanswered.sh" 2>&1)"
 
@@ -129,7 +154,7 @@ want   "it says nothing is owed"             "Nothing is owed" "$body"
 # AN EMITTED EVENT IS NOT CLAIMABLE. This is the property, checked through the sentinel's
 # own predicate rather than by reasoning about it: `bd ready` with the plan's labels.
 ready="$("$BD" -C "$DB" ready --limit 0 --exclude-type epic --label spira,plan \
-          --exclude-label spira-poison,needs-ryan --json 2>/dev/null | sed -n '/^[[{]/,$p')"
+          --exclude-label "spira-poison,$SPIRA_ASK_LABEL" --json 2>/dev/null | sed -n '/^[[{]/,$p')"
 nowant "an emitted event is not returned by the sentinel's ready predicate" \
        "$(one id)" "${ready:-[]}"
 # ...and the check could have found something: a bead that IS claimable shows up in it.
@@ -137,7 +162,7 @@ testdb_seed <<'JSONL'
 {"id":"sp-work","title":"real work","description":"d","status":"open","issue_type":"task","labels":["spira","plan"]}
 JSONL
 ready="$("$BD" -C "$DB" ready --limit 0 --exclude-type epic --label spira,plan \
-          --exclude-label spira-poison,needs-ryan --json 2>/dev/null | sed -n '/^[[{]/,$p')"
+          --exclude-label "spira-poison,$SPIRA_ASK_LABEL" --json 2>/dev/null | sed -n '/^[[{]/,$p')"
 want "and that predicate does return claimable work, so its silence means something" \
      "sp-work" "${ready:-[]}"
 

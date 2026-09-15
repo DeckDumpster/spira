@@ -312,6 +312,38 @@ _wd_filter() {
 
 _wd_trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
 
+# _wd_stream_awk -> the awk invocation that LINE-BUFFERS its stdout on this box, in _WD_AWK.
+#
+# THE DEFECT THIS EXISTS FOR. `tail -F <log> | awk '{ print; fflush() }'` delivers nothing at
+# all under mawk, which is the default `awk` on Debian and Ubuntu. Measured on mawk 1.3.4:
+# neither fflush() nor fflush("") flushes stdout when it is a pipe or a file — only the
+# -W interactive flag, which selects line buffering, does. The stream therefore stayed silent
+# forever: `watchd.sh tail` took its reader lock, reported itself as the holder, and
+# delivered not one line, which is the reassuring shape — a watcher that is running and blind.
+# Every check above the stream passed, because they all look at the lock rather than the data.
+#
+# stdbuf -oL does NOT fix it: mawk buffers internally rather than through libc, so the
+# LD_PRELOAD stdbuf relies on never sees the writes. Verified.
+#
+# gawk is preferred where present because fflush() is reliable there and the flag is not
+# portable; mawk gets -W interactive, which gawk would reject as an unknown option.
+_WD_AWK=()
+_wd_stream_awk() {
+    [ "${#_WD_AWK[@]}" -gt 0 ] && return 0
+    if command -v gawk >/dev/null 2>&1; then
+        _WD_AWK=(gawk)
+    elif awk -W interactive 'BEGIN { exit 0 }' </dev/null >/dev/null 2>&1; then
+        _WD_AWK=(awk -W interactive)
+    else
+        # Neither: fall back to plain awk and rely on fflush(). If this box's awk is a third
+        # implementation that also ignores fflush, the stream is silent and the operator has
+        # no way to tell — so say so once, on stderr, rather than let it look healthy.
+        _WD_AWK=(awk)
+        echo "watchd: this box's awk is neither gawk nor mawk; if the stream stays silent," >&2
+        echo "  its output buffering is the first thing to check." >&2
+    fi
+}
+
 # _wd_expand <string> -> 0 and the expansion in _wd_out, or 1 and the reason in _wd_err.
 #
 # The iteration cap is not paranoia about a hostile file: a value that itself contains an
@@ -879,12 +911,13 @@ cmd_tail() {
     # shellcheck disable=SC2064
     trap "_wd_tail_stop '$pidf'" TERM INT HUP EXIT
 
+    _wd_stream_awk
     if [ -n "$_wd_all" ]; then
         { tail -n +$(( pos + 1 )) -F "$lf" & [ -n "$pidf" ] && echo $! > "$pidf"; wait; } \
-            | awk -v c="$cf" -v p="$pos" '{ n=p+NR; print; fflush(); print n > c; close(c) }' &
+            | "${_WD_AWK[@]}" -v c="$cf" -v p="$pos" '{ n=p+NR; print; fflush(); print n > c; close(c) }' &
     else
         { tail -n +$(( pos + 1 )) -F "$lf" & [ -n "$pidf" ] && echo $! > "$pidf"; wait; } \
-            | awk -v c="$cf" -v p="$pos" -v re="$re" \
+            | "${_WD_AWK[@]}" -v c="$cf" -v p="$pos" -v re="$re" \
                 '{ n=p+NR; if ($0 ~ re) { print; fflush() } print n > c; close(c) }' &
     fi
     _wd_tail_pipe=$!
