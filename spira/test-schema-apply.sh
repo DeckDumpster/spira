@@ -128,10 +128,17 @@ echo "apply makes a bare store correct, and a second apply changes nothing"
 # program. It is also not nothing: the gap is stated loudly on stderr, which suites.sh carries
 # into the bead body, so what did not get covered is on the record rather than implied by a
 # count (law-alerts-must-be-actionable, law-absence-needs-a-positive-control).
+# NOT IN A COMMAND SUBSTITUTION. testdb_up EXPORTS SPIRA_DB, and `$( ... )` runs it in a
+# subshell where that export dies with the subshell — leaving SPIRA_DB pointing at the
+# embedded fixture the section above already dropped, so every statement below failed with
+# "cannot use -C directory ...: no such file or directory". Its stderr goes to a file
+# instead, which is the only thing the substitution was buying.
 _srv_err=""
+_srv_log="$T/server-fixture.log"
 if [ -z "${SPIRA_TESTDB_DATA:-}" ]; then
     _srv_err="SPIRA_TESTDB_DATA is unset — there is no server-mode fixture on this box"
-elif ! _srv_err="$(SPIRA_TESTDB_MODE=server testdb_up schema-apply-server 2>&1 >/dev/null)"; then
+elif ! SPIRA_TESTDB_MODE=server testdb_up schema-apply-server >/dev/null 2>"$_srv_log"; then
+    _srv_err="$(cat "$_srv_log" 2>/dev/null)"
     _srv_err="${_srv_err:-testdb_up failed with no output}"
 fi
 if [ -n "$_srv_err" ]; then

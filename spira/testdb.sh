@@ -338,6 +338,20 @@ testdb_up() {            # testdb_up <tag>
         printf '%s\n' "$init_out" | sed 's/^/testdb:   /' >&2
         rm -rf "$TESTDB_DIR"; TESTDB_DIR=""; TESTDB_NAME=""; return 1
     }
+    # PURGE WHAT EARLIER FIXTURES DROPPED. Dolt's DROP DATABASE is a MOVE: the data goes to
+    # .dolt_dropped_databases under the server's data root so it can be restored, and nothing
+    # removes it. One day of fixtures left 26MB on a data root the unit file itself calls
+    # "disposable; never holds real data", and a fixture is never worth restoring.
+    #
+    # PURGING HERE AND NOT IN testdb_drop, WHICH IS WHERE IT BELONGS BY SYMMETRY. Measured:
+    # a purge issued immediately after DROP DATABASE in the same session reclaims nothing —
+    # the drop has not materialised yet — and three build/drop cycles still grew the
+    # directory from 2MB to 8MB. By the time the NEXT fixture is built, every earlier drop
+    # has settled, so one statement here reclaims all of them. Best-effort: an older Dolt
+    # without the procedure fails and the fixture is unaffected.
+    "$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
+        "CALL DOLT_PURGE_DROPPED_DATABASES()" >/dev/null 2>&1 || true
+
     # Save baseline and the init commit hash for SQL-based reset (sp-f342). Unlike embedded
     # mode, copy-swap does not apply to the server-side database, but .beads is still local
     # and can be restored. The init hash lets testdb_reset use CALL DOLT_RESET('--hard',
@@ -383,6 +397,7 @@ testdb_reset() {
             # drop to TESTDB_NAME leaves concurrent fixtures untouched and needs no restart.
             "$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
                 "DROP DATABASE IF EXISTS \`$TESTDB_NAME\`" >/dev/null 2>&1 || true
+
             rm -rf "$TESTDB_DIR/.beads"
             local init_out init_rc
             init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
