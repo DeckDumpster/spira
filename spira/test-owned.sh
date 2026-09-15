@@ -147,6 +147,7 @@ render_units() {
     env -i \
         "PATH=$PATH" \
         "HOME=$FAKE_HOME" \
+        "SPIRA_HOME=$HERE" \
         "SPIRA_CONF=/nonexistent" \
         "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
         "SPIRA_DOLT_DATA=$DOLT_DIR" \
