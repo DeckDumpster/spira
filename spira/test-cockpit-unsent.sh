@@ -117,6 +117,47 @@ is "SP_UNADOPTED counts non-bead branches" "1" "$(val SP_UNADOPTED)"
 want "output contains SP_AT" "SP_AT=" "$out"
 want "output contains SP_UNSENT" "SP_UNSENT=" "$out"
 
+# ======================================================================================
+echo
+echo "no shell function is invoked through timeout(1):"
+# ======================================================================================
+# `timeout` is an external binary. It execs its argument, so it cannot run a shell function
+# — `timeout 2 bdjson show X` died with rc=127 and "timeout: failed to execute process" on
+# every branch in every repository, and 2>/dev/null swallowed it. The empty result took the
+# unadopted path, so SP_UNSENT and SP_BRANCH_DONE both read 0 (the reassuring answer, which
+# is the whole reason this suite exists) while SP_UNADOPTED read the total.
+#
+# The seam is BD_TIMEOUT: bdq already wraps bd in `timeout "${BD_TIMEOUT:-180}"`, so a caller
+# that wants a short bound sets that rather than wrapping the function. This is a tree-wide
+# grep because the failure mode is silent wherever it appears, not only here.
+_tf_funcs='bdjson|bdq|ghq|json_only|log|die|say|ilog|bead_reopen|bump_recur'
+# This suite is excluded from its own scan: it carries the offending shape twice on purpose,
+# once as the planted control below and once quoted in the message that reports a match.
+_tf_self="$(basename "$0")"
+_tf_hits="$(grep -rnE "timeout +[\"'\$]*[0-9\$][^ ]* +($_tf_funcs)\b" \
+            --include='*.sh' "$HERE" 2>/dev/null \
+          | grep -vE '^[^:]+:[0-9]+: *#' \
+          | grep -v "/$_tf_self:" || true)"
+if [ -z "$_tf_hits" ]; then
+    ok "no timeout(1) call wraps a shell function"
+else
+    bad "no timeout(1) call wraps a shell function" \
+        "$(printf '%s' "$_tf_hits" | head -4 | tr '\n' ' ')"
+fi
+
+# POSITIVE CONTROL. A grep that matches nothing and a grep pointed at the wrong place give
+# the same silence, and the silence is the reassuring reading
+# (law-absence-needs-a-positive-control). Plant the exact shape that shipped and require the
+# matcher to name it.
+_tf_plant="$TMP/planted-timeout.sh"
+printf '%s\n' '_st="$(timeout 2 bdjson show "${_b#spira/}" 2>/dev/null)"' > "$_tf_plant"
+if grep -qnE "timeout +[\"'\$]*[0-9\$][^ ]* +($_tf_funcs)\b" "$_tf_plant" 2>/dev/null; then
+    ok "control — the matcher names the shape that shipped"
+else
+    bad "control — the matcher names the shape that shipped" \
+        "the planted 'timeout 2 bdjson' was not matched; the silence above proves nothing"
+fi
+
 echo
 printf 'test-cockpit-unsent: %d ok, %d fail\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -1072,7 +1072,17 @@ unsent_keys() {
         if _brs="$(git -C "$_p" for-each-ref --format='%(refname:short) %(committerdate:unix)' 'refs/heads/spira/*' 2>/dev/null)"; then
             while read -r _b _ts; do
                 [ -n "$_b" ] || continue
-                _st="$(timeout 2 bdjson show "${_b#spira/}" 2>/dev/null | python3 -c '
+                # BD_TIMEOUT, NOT `timeout 2`. bdjson is a SHELL FUNCTION, and timeout is an
+                # external binary that cannot execute one: `timeout 2 bdjson ...` died with
+                # "timeout: failed to execute process: No such file or directory" and rc=127
+                # on EVERY branch, with the error swallowed by 2>/dev/null. An empty status
+                # is the unadopted branch of the test below, so every branch in every
+                # repository was counted as a stray: SP_UNSENT and SP_BRANCH_DONE read 0 —
+                # the reassuring answer — and SP_UNADOPTED read the total. bdq already wraps
+                # bd in `timeout "${BD_TIMEOUT:-180}"`, so BD_TIMEOUT is the seam that gives
+                # this loop the short bound it wanted, through the function rather than
+                # around it.
+                _st="$(BD_TIMEOUT=2 bdjson show "${_b#spira/}" 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin); print((d if isinstance(d, list) else [d])[0].get("status", ""))
 except Exception: print("")' 2>/dev/null)"
