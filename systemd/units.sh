@@ -59,7 +59,6 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
        spira-auron.service spira-auron.timer
        spira-watchtower.service spira-watchtower.timer
        spira-skew.service spira-skew.timer
-       spira-promote.service spira-promote.timer
        spira-archivist.service spira-archivist.timer
        spira-cockpit.service
        spira-loom.service
@@ -83,7 +82,7 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
 # Template names mapped through inst_name so the enabled unit matches its installed name.
 _ENABLE_TMPL=(cockpit-ensure.timer concierge.timer spira-watch-refresh.timer
               beads-push.timer spira-sentinel.timer spira-ops.timer spira-auron.timer
-              spira-watchtower.timer spira-skew.timer spira-promote.timer
+              spira-watchtower.timer spira-skew.timer
               spira-archive.timer spira-suites.timer
               spira-archivist.timer spira-watch-notify.timer
               spira-groom.timer
@@ -102,6 +101,21 @@ unset _t _ENABLE_TMPL
 # listed it" — otherwise the check that exists to catch a forgotten unit cries wolf on every
 # box without a Dolt server, and a check that is always red is a check nobody reads.
 OPTIONAL=()
+
+# promote.sh carries commits from the development checkout to a separate production
+# checkout. In single-checkout mode there is no second checkout and its source and
+# destination are the same directory, so the unit cannot do anything but fail. Installing
+# it anyway put an un-suspendable fatal in every doctor run on such a box, for a unit
+# whose absence was correct — and a check that is always red is a check nobody reads.
+#
+# The predicate is spira_single_checkout from conf.sh, shared with doctor, so the manifest
+# and the diagnosis cannot reach different conclusions about the same box.
+if declare -F spira_single_checkout >/dev/null 2>&1 && spira_single_checkout; then
+    OPTIONAL+=(spira-promote.service spira-promote.timer)
+else
+    UNITS+=(spira-promote.service spira-promote.timer)
+    ENABLE+=("$(inst_name spira-promote.timer)")
+fi
 
 # dolt-beads.service supervises the Dolt server itself, which is only this harness's business
 # when the operator says so. Empty SPIRA_DOLT_DATA means they run the server their own way,

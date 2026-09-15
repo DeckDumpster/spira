@@ -68,6 +68,24 @@ echo "Parse units.sh — extract UNITS and _ENABLE_TMPL:"
 units_block="$(awk '/^UNITS=\(/{found=1} found{print} found && /\)/{found=0}' "$UNITS_SH")"
 enable_block="$(awk '/_ENABLE_TMPL=\(/{found=1} found{print} found && /\)/{found=0}' "$UNITS_SH")"
 
+# CONDITIONAL UNITS ARE STILL INSTALLED UNITS. Some units belong on a box only in a
+# particular shape — promote.sh has nothing to do where development and production are
+# one checkout — so units.sh appends them with UNITS+=/ENABLE+= inside an if, and records
+# the declined case in OPTIONAL+=. The static blocks above cannot see those lines, and a
+# parser that stops at the literal array would report a correctly conditional timer as
+# missing, which is the same cry-wolf this suite exists to prevent.
+#
+# So the membership test reads the appends too, and a timer that is ONLY conditional must
+# ALSO appear in an OPTIONAL+= line. That keeps the original invariant intact — a unit is
+# never silently absent — while letting a box decline one on purpose and say so.
+units_appends="$(grep -E '^[[:space:]]*UNITS\+=\(' "$UNITS_SH")"
+enable_appends="$(grep -E '^[[:space:]]*ENABLE\+=\(' "$UNITS_SH")"
+optional_block="$(grep -E '^[[:space:]]*OPTIONAL\+=\(' "$UNITS_SH")"
+units_all="$units_block
+$units_appends"
+enable_all="$enable_block
+$enable_appends"
+
 if [ -z "$units_block" ]; then
     bad "UNITS block parseable" "awk found nothing — remaining checks are invalid"
     printf '\n%d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skip"
@@ -113,9 +131,17 @@ for tmr in "$UNIT_DIR"/*.timer; do
     [ -e "$tmr" ] || continue
     name="$(basename "$tmr")"
     timer_count=$((timer_count+1))
-    case "$units_block" in
+    case "$units_all" in
         *"$name"*)
-            ok "UNITS: $name" ;;
+            case "$units_block" in
+                *"$name"*) ok "UNITS: $name" ;;
+                *)
+                    # Conditional: permitted, but the declined case must be recorded.
+                    case "$optional_block" in
+                        *"$name"*) ok "UNITS: $name (conditional, declined case in OPTIONAL)" ;;
+                        *) bad "UNITS: $name" "added conditionally but never recorded in OPTIONAL — a box that declines it cannot tell 'not installed here' from 'nobody listed it'" ;;
+                    esac ;;
+            esac ;;
         *)
             bad "UNITS: $name" "absent from UNITS — install.sh will not write it to disk on a fresh install" ;;
     esac
@@ -135,7 +161,7 @@ echo "Every .timer template in systemd/ is in _ENABLE_TMPL (will be enabled):"
 for tmr in "$UNIT_DIR"/*.timer; do
     [ -e "$tmr" ] || continue
     name="$(basename "$tmr")"
-    case "$enable_block" in
+    case "$enable_all" in
         *"$name"*)
             ok "_ENABLE_TMPL: $name" ;;
         *)

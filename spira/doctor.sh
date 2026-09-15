@@ -772,34 +772,36 @@ else FAIL "cannot write $SPIRA_RUN" "Leases, logs and worktrees live here. Set S
 
 echo
 echo "promote"
-# SPLIT-CHECKOUT IS THE EXPECTED MODEL. SPIRA_PROD must resolve to a directory outside
-# SPIRA_REPO. promote.sh carries commits from the dev checkout to a separate production
-# clone on a timer; a dirty or mid-landing SPIRA_REPO does not reach the executing copy.
+# TWO SUPPORTED MODELS, AND ONE ERROR. The mode comes from spira_single_checkout in
+# conf.sh so that this check and the unit manifest cannot reach different answers about
+# one box; they did, and the box reported an un-suspended fatal for a promote unit that
+# was correctly absent.
 #
-# SINGLE-CHECKOUT (SPIRA_PROD inside SPIRA_REPO) is a FAIL: promote.sh exits non-zero,
-# skew.sh incorrectly classifies the dev checkout as a second copy, and an in-progress
-# landing can swap code under a live session. Fix: set SPIRA_PROD in spira.conf to a
-# path outside SPIRA_REPO and run install.sh.
-_dr_prod_norm="$(cd "${SPIRA_PROD:-/nonexistent}" 2>/dev/null && pwd -P || printf '%s' "${SPIRA_PROD:-}")"
-_dr_repo_norm="$(cd "$SPIRA_REPO" 2>/dev/null && pwd -P || printf '%s' "$SPIRA_REPO")"
-case "$_dr_prod_norm/" in
-    "$_dr_repo_norm/"*)
-        FAIL "single-checkout mode: SPIRA_PROD ($SPIRA_PROD) is inside SPIRA_REPO" \
-             "Set SPIRA_PROD in ${CONF:-spira.conf} to a path outside SPIRA_REPO and run install.sh."
-        ;;
-    *)
-        if [ -z "${SPIRA_PROD:-}" ]; then
-            FAIL "SPIRA_PROD is not set — promote.sh will refuse to run" \
-                 "Set SPIRA_PROD in ${CONF:-spira.conf} to the harness subdir inside the production clone."
-        elif [ -d "$SPIRA_PROD" ]; then
-            OK "split-checkout mode: production at $SPIRA_PROD"
-        else
-            WARN "SPIRA_PROD ($SPIRA_PROD) does not exist yet" \
-                 "The first call to promote.sh will clone from $SPIRA_REPO."
-        fi
-        ;;
-esac
-unset _dr_prod_norm _dr_repo_norm
+# SPLIT-CHECKOUT. SPIRA_PROD outside SPIRA_REPO. promote.sh carries commits from the dev
+# checkout to a separate production clone on a timer; a dirty or mid-landing SPIRA_REPO
+# does not reach the executing copy.
+#
+# SINGLE-CHECKOUT. SPIRA_PROD inside SPIRA_REPO — one tree, developed and executed. This
+# was a FAIL, which made the mode unusable while spira-skew.service's own comment called
+# it supported. Two of the three reasons that FAIL gave have since dissolved: promote.sh
+# has no caller here at all (the manifest omits its units in this mode), and skew's
+# two-checkout question is a separate defect. The third is real and survives as the body
+# of this warning — an edit is live the moment it is saved, with no gate in between. That
+# is a cost to state plainly, not a reason to refuse: a box whose production lives on
+# another machine, reached through a tagged release, has no second checkout to promote
+# into and cannot satisfy a rule demanding one.
+if spira_single_checkout; then
+    WARN "single-checkout mode: SPIRA_PROD ($SPIRA_PROD) is inside SPIRA_REPO" \
+         "Edits here are live immediately — no promote step stands between saving and running. Commit or restore before you stop."
+elif [ -z "${SPIRA_PROD:-}" ]; then
+    FAIL "SPIRA_PROD is not set — nothing says what systemd should execute" \
+         "Set SPIRA_PROD in ${CONF:-spira.conf} to the harness subdir inside the production clone, or to \$SPIRA_HOME for single-checkout mode."
+elif [ -d "$SPIRA_PROD" ]; then
+    OK "split-checkout mode: production at $SPIRA_PROD"
+else
+    WARN "SPIRA_PROD ($SPIRA_PROD) does not exist yet" \
+         "The first call to promote.sh will clone from $SPIRA_REPO."
+fi
 
 echo
 if [ "$fatal" -gt 0 ]; then

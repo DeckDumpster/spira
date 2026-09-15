@@ -900,6 +900,35 @@ spira_conf_defaults() {
     fi
 }
 
+# --------------------------------------------------------------------------------------
+# CHECKOUT MODE. SPIRA_PROD is the tree systemd executes; SPIRA_REPO is the tree being
+# developed. Their relation decides what several programs may assume, and they must all
+# decide it the same way — doctor and the unit manifest disagreeing about this is how a
+# box ends up reporting a fatal for a unit that is correctly absent.
+#
+#   split-checkout   SPIRA_PROD outside SPIRA_REPO. promote.sh carries commits from one
+#                    to the other, so a dirty or mid-landing dev tree never executes.
+#   single-checkout  SPIRA_PROD inside SPIRA_REPO. One tree, developed and executed.
+#                    Supported, and the only sane shape on a box whose production lives
+#                    on another machine and is reached through a tagged release. It costs
+#                    what it obviously costs: an edit is live the moment it is saved.
+#
+# Returns 0 for single-checkout, 1 for split-checkout AND for an empty SPIRA_PROD — an
+# unset production directory is its own error, reported where it is diagnosed rather than
+# folded into this answer.
+spira_single_checkout() {
+    [ -n "${SPIRA_PROD:-}" ] || return 1
+    local _p _r
+    _p="$(cd "$SPIRA_PROD" 2>/dev/null && pwd -P)" || _p=""
+    [ -n "$_p" ] || _p="$SPIRA_PROD"
+    _r="$(cd "${SPIRA_REPO:-}" 2>/dev/null && pwd -P)" || _r=""
+    [ -n "$_r" ] || _r="${SPIRA_REPO:-}"
+    [ -n "$_r" ] || return 1
+    # Strip the trailing slash before interpolating: when _r is "/" the unstripped form
+    # produces "//*", which a case statement never matches.
+    case "$_p/" in "${_r%/}/"*) return 0 ;; *) return 1 ;; esac
+}
+
 SPIRA_CONF_FILE="$(spira_conf_file)"
 [ -n "$SPIRA_CONF_FILE" ] && spira_conf_read "$SPIRA_CONF_FILE"
 spira_conf_defaults
