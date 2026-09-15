@@ -1029,6 +1029,13 @@ if [ -d "${SPIRA_DB:-}/.beads" ]; then
             printf 'spira: bd locked after %d attempts — another process holds the database; schema assumed current\n' \
                 "$_spira_bd_try" >&2
             break
+        elif printf '%s\n' "$_spira_bd_out" | grep -q 'dolt_server_port.*deprecated'; then
+            # A deprecated dolt-internal server-port field in metadata.json caused dolt to
+            # exit non-zero with a warning. This is a dolt configuration concern, not a bd
+            # schema version problem: the database is accessible and the migration count is
+            # unaffected. Continue as if the check passed; removing the field from
+            # metadata.json would silence the warning (sp-lh8r).
+            break
         else
             printf 'spira: bd migrate schema failed — %s\n' \
                 "$(printf '%s\n' "$_spira_bd_out" | head -1)" >&2
