@@ -53,6 +53,14 @@ if [ -z "$CARGO_BIN" ]; then
     echo "SKIP test-pane-fyi: cargo not found — install Rust at https://rustup.rs/" >&2
     exit 77
 fi
+# RUSTC MUST BE ON PATH TOO, NOT JUST CARGO. cargo execs `rustc` BY NAME, so capturing
+# cargo's absolute path is only half the job: conf.sh replaces PATH with the harness's own
+# tool directories, and the toolchain directory is not among them. In a container that left
+# cargo resolvable and rustc not, and the suite died with
+#   error: could not execute process `rustc -vV` (never executed)
+# which reads as a broken crate rather than a broken PATH. Putting cargo's own directory
+# back on PATH is what makes the toolchain self-consistent.
+PATH="$(dirname "$CARGO_BIN"):$PATH"; export PATH
 
 if [ ! -d "$PANEL_ROOT" ]; then
     echo "SKIP test-pane-fyi: panel directory not found at $PANEL_ROOT" >&2

@@ -452,6 +452,7 @@ if [ -z "${SPIRA_BATCH_SKIP_INSTALL:-}" ]; then
         -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
         -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
         -e "CARGO_HOME=${_CONTAINER_CARGO}" \
+        -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
         -e "CONFIGURE_PROD=${_CONTAINER_WORKSPACE}/spira" \
         -e "CONFIGURE_MAX_AEONS=1" \
         -e "CONFIGURE_MAX_LIVE_AEONS=1" \
@@ -483,6 +484,7 @@ if [ -z "${SPIRA_BATCH_SKIP_INSTALL:-}" ]; then
         -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
         -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
         -e "CARGO_HOME=${_CONTAINER_CARGO}" \
+        -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
         -e "SPIRA_INSTALL_FORCE=1" \
         -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
         -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
@@ -626,6 +628,7 @@ if [ "$MODE" = serial ]; then
                 -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
                 -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
                 -e "CARGO_HOME=${_CONTAINER_CARGO}" \
+                -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                 -e "TESTDB_SHARED=0" \
                 -e "TESTDB_NAME=" \
                 -e "TESTDB_DIR=" \
@@ -636,6 +639,7 @@ if [ "$MODE" = serial ]; then
                 -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
                 -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
                 -e "CARGO_HOME=${_CONTAINER_CARGO}" \
+                -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                 -e "TESTDB_SHARED=0" \
                 -e "TESTDB_NAME=" \
                 -e "TESTDB_DIR=" \
@@ -748,6 +752,7 @@ else
                     -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
                     -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
                     -e "CARGO_HOME=${_CONTAINER_CARGO}" \
+                    -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                     -e "SPIRA_IN_TESTENV=1" \
                     -e "TESTDB_SHARED=0" \
                     -e "TESTDB_NAME=" \
@@ -762,6 +767,7 @@ else
                     -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
                     -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
                     -e "CARGO_HOME=${_CONTAINER_CARGO}" \
+                    -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                     -e "SPIRA_IN_TESTENV=1" \
                     -e "TESTDB_SHARED=0" \
                     -e "TESTDB_NAME=" \

@@ -38,6 +38,15 @@ _SPIRA_USER="spirauser"
 _SPIRA_UID=1001
 _CONTAINER_CHECKOUT="/workspace"
 _CONTAINER_CARGO="/var/spira/cargo"
+# CARGO'S BUILD OUTPUT MUST NOT GO INTO THE BIND MOUNT. cargo defaults CARGO_TARGET_DIR to
+# <crate>/target, which inside the container is under the bind-mounted checkout. That tree is
+# owned by the HOST uid, not spirauser, so the build died with
+#   error: failed to create directory `/workspace/cockpit/panel/target/debug`
+#   Caused by: Permission denied (os error 13)
+# and it would be wrong even if it succeeded: a container build would leave artifacts in the
+# operator's own working tree. Pointing it under CARGO_HOME puts it on the named volume, which
+# is writable, survives `down`, and makes the second build of a crate fast.
+_CONTAINER_CARGO_TARGET="/var/spira/cargo/target"
 _USER_RUNTIME="/run/user/${_SPIRA_UID}"
 _DEFAULT_NAME="spira-testenv"
 
@@ -169,6 +178,29 @@ cmd_up() {
     podman exec "$name" git config --system --add safe.directory "$_CONTAINER_CHECKOUT" \
         >/dev/null 2>&1 || true
 
+    # CARGO CACHE OWNERSHIP. The registry and git sources are named volumes mounted BELOW
+    # CARGO_HOME, and podman creates an empty volume's mountpoint as root:root when the
+    # image carries no directory at that path to seed the ownership from. Suites run as
+    # spirauser, so cargo's first write died with
+    #   error: failed to create directory `/var/spira/cargo/registry/cache/...`
+    #   Caused by: Permission denied (os error 13)
+    # and every Rust suite went red — test-panel and test-pane-fyi in the timed pass, with
+    # pane-fyi then reporting "0 tests matched" because cargo never got far enough to list
+    # any. test-artifact-install.sh had already met this and worked around it privately by
+    # pointing CARGO_HOME at a temp directory of its own, which is why it stayed green and
+    # the defect stayed hidden.
+    #
+    # Chowning after the mount is what makes the volume usable whether it is fresh or being
+    # reused, and whether or not the image happens to carry the directory. The owner is
+    # checked first so the recursive repair runs once on a wrong-owned volume rather than
+    # walking a warm registry of thousands of crate files on every `up`.
+    podman exec "$name" bash -c '
+        mkdir -p "$1/target" 2>/dev/null
+            for d in "$1" "$1/registry" "$1/git" "$1/target"; do
+            [ -d "$d" ] || continue
+            [ "$(stat -c %u "$d" 2>/dev/null)" = "$2" ] || chown -R "$2:$2" "$d"
+        done' _ "$_CONTAINER_CARGO" "$_SPIRA_UID" >/dev/null 2>&1 || true
+
     # Wait for the user session manager to become active (~1-2s after enable-linger).
     if _wait_for 20 podman exec "$name" systemctl is-active "user@${_SPIRA_UID}.service"; then
         printf 'testenv: user@%s.service active; systemctl --user ready\n' "$_SPIRA_UID" >&2
@@ -220,6 +252,7 @@ cmd_exec() {
             -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
             -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
             -e "CARGO_HOME=${_CONTAINER_CARGO}" \
+            -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
             "$name" "$@"
     else
         podman exec --user "$user" "$name" "$@"

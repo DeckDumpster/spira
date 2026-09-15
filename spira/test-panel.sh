@@ -33,7 +33,25 @@ fi
 # Run the full panel suite. Output goes to the terminal; a failure exits non-zero
 # and the runner captures it as a red. There is no point in suppressing cargo's
 # output here — the test names say what broke.
-if cargo test --manifest-path "$MANIFEST" 2>&1; then
+# RESOLVE THE TOOLCHAIN EXPLICITLY, AND SKIP RATHER THAN FAIL WHEN IT IS ABSENT. This suite
+# used to call bare `cargo`, which meant two things: on a box with no Rust it reported a RED
+# for a toolchain the box never claimed to have, and where cargo was reachable but its own
+# directory was not on PATH, cargo's exec of `rustc` — which it looks up BY NAME — failed
+# with "could not execute process `rustc -vV`", which reads as a broken crate rather than a
+# broken PATH. Prepending cargo's directory keeps the toolchain self-consistent however this
+# suite was invoked. A missing toolchain is a skip, not a failure
+# (law-alerts-must-be-actionable).
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+    CARGO_BIN="$HOME/.cargo/bin/cargo"
+fi
+if [ -z "$CARGO_BIN" ]; then
+    echo "SKIP test-panel: cargo not found on PATH or at ~/.cargo/bin — install Rust: https://rustup.rs/" >&2
+    exit 77
+fi
+PATH="$(dirname "$CARGO_BIN"):$PATH"; export PATH
+
+if "$CARGO_BIN" test --manifest-path "$MANIFEST" 2>&1; then
     ok "panel cargo test suite"
 else
     bad "panel cargo test suite" "cargo test exited non-zero — see above"
