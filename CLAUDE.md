@@ -77,10 +77,22 @@ the key exists to stop.
 
 ## Prose
 
-The comments are long on purpose. Each one exists because something failed in a way that was
-not obvious from the code, and the next reader is entitled to know which. Keep them; strip
-only what identifies whose machine it happened on.
+**Prefer no comment.** Almost everything the comments here say belongs in a name, a guard or
+a test — put it there, where something runs it. A comment is the weakest place to keep a
+fact: nothing executes it, nothing fails when it goes stale, and it is believed anyway.
 
-Write for someone who has the code in front of them and not the history: state the rule first,
-then the one clause of why. Never leave a correction on top of a wrong statement — say the
-thing as it now stands.
+Write one only for what the code genuinely cannot state — why a guard fails closed, why the
+obvious simplification is wrong — and keep it to a line or two.
+
+**Long comments have cost real money here.** They restate the mechanism in prose, so a matcher
+looking for the mechanism finds the explanation and passes against code it was deleted from
+(`law-a-matcher-reads-code-not-prose`); and an agent reading a file weighs a confident
+paragraph against the code and sometimes believes the paragraph.
+
+State the rule, not the incident. The scars live in the statute book, which is queryable and
+versioned and cannot silently rot next to code that moved on; cite a slug if it helps, but do
+not retell the case. Never leave a correction on top of a wrong statement — say the thing as
+it now stands.
+
+The comments already in the tree are far longer than this. Shorten what you touch; do not
+open a sweep.

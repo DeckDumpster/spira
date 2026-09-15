@@ -8,8 +8,8 @@
 #
 # incident.sh stamped delivers:note:$SPIRA_RUN/sop/applied.jsonl on EVERY bead it filed,
 # and nothing ever created that directory. Eleven open beads carried it. Two more carried
-# an absolute path belonging to a DIFFERENT install (/workspaces/...), having travelled
-# between machines, and no session on this box could ever satisfy those.
+# an absolute path belonging to a DIFFERENT install, having travelled between machines,
+# and no session here could ever satisfy those.
 #
 # THE RULE IS SCHEMA-ON-WRITE, not repair-on-read: a criterion nobody can satisfy must not
 # be recorded in the first place. Patching the labels afterwards leaves the writer free to
@@ -54,8 +54,8 @@ else
     bad "the ledger's directory is created, so the path is reachable" "nothing creates it; the first close is reopened and every one after it"
 fi
 
-# A path outside this install can never be written by a session here. Beads travel between
-# machines carrying absolute paths, which is how /workspaces/... arrived on this box.
+# A path outside this install can never be written by a session here, and beads travel
+# between machines carrying absolute paths.
 if has 'SPIRA_RUN' && has 'case .*_sop_ledger|\[\[ .*_sop_ledger|\$\{_sop_ledger#'; then
     ok "a path outside this install's run directory is refused"
 else
