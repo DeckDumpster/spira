@@ -54,13 +54,20 @@ if [ -z "$CARGO_BIN" ]; then
     exit 77
 fi
 # RUSTC MUST BE ON PATH TOO, NOT JUST CARGO. cargo execs `rustc` BY NAME, so capturing
-# cargo's absolute path is only half the job: conf.sh replaces PATH with the harness's own
-# tool directories, and the toolchain directory is not among them. In a container that left
-# cargo resolvable and rustc not, and the suite died with
+# cargo's absolute path is only half the job: conf.sh replaces PATH wholesale with the
+# harness's own tool directories, and the toolchain directory is not among them. In a
+# container that left cargo resolvable and rustc not, and the suite died with
 #   error: could not execute process `rustc -vV` (never executed)
-# which reads as a broken crate rather than a broken PATH. Putting cargo's own directory
-# back on PATH is what makes the toolchain self-consistent.
-PATH="$(dirname "$CARGO_BIN"):$PATH"; export PATH
+# which reads as a broken crate rather than a broken PATH.
+#
+# SPIRA_PATH AND NOT JUST PATH. conf.sh is sourced BELOW (testdb.sh pulls it in), and it
+# rebuilds PATH from SPIRA_PATH plus a fixed list — so assigning PATH here alone is undone a
+# few lines later, which is how the first attempt at this fix changed nothing. SPIRA_PATH is
+# the seam conf.sh honours, and testdb.sh already uses it for exactly this purpose when it
+# puts the fixture's bd on PATH. Both are set so the order of what follows cannot matter.
+_CARGO_DIR="$(dirname "$CARGO_BIN")"
+export SPIRA_PATH="$_CARGO_DIR${SPIRA_PATH:+:$SPIRA_PATH}"
+export PATH="$_CARGO_DIR:$PATH"
 
 if [ ! -d "$PANEL_ROOT" ]; then
     echo "SKIP test-pane-fyi: panel directory not found at $PANEL_ROOT" >&2

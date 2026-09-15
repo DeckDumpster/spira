@@ -633,5 +633,69 @@ want "B6b: log shows maxpar: 3 (from spira.conf)" "maxpar: 3" "$b6b_out"
 
 # ===========================================================================
 echo
+echo "C: the constants testenv-batch.sh mirrors from testenv.sh still agree"
+# ===========================================================================
+# testenv-batch.sh does not source testenv.sh; it re-declares the container constants under
+# a comment that says they must agree. Nothing enforced that, and adding CARGO_TARGET_DIR to
+# testenv.sh alone made every batch run die at its first exec with
+#   testenv-batch.sh: line 451: _CONTAINER_CARGO_TARGET: unbound variable
+# — the whole runner down, from a one-line addition to a different file. Comparing the two
+# declarations is what turns the next divergence into a named failure here instead
+# (CLAUDE.md: a literal in five files is how five programs come to disagree).
+#
+# Every _CONTAINER_*/_SPIRA_* constant testenv.sh declares must exist in testenv-batch.sh
+# with the same value. The reverse is not required: the batch runner may have constants of
+# its own that the lifecycle script has no use for.
+_consts_of() {
+    grep -hoE '^(_SPIRA_(USER|UID)|_CONTAINER_[A-Z_]+)="?[^"]*"?' "$1" \
+        | sed 's/"//g' | sort -u
+}
+_tenv="$(dirname "$BATCH")/testenv.sh"
+_mirrored=0 _diverged=""
+while IFS= read -r _line; do
+    [ -n "$_line" ] || continue
+    _k="${_line%%=*}"
+    _mine="$(_consts_of "$BATCH" | grep "^${_k}=" || true)"
+    # Only constants testenv-batch.sh also declares are in scope; it declares a subset.
+    [ -n "$_mine" ] || continue
+    _mirrored=$((_mirrored + 1))
+    [ "$_mine" = "$_line" ] || _diverged="$_diverged $_k(testenv=${_line#*=} batch=${_mine#*=})"
+done <<< "$(_consts_of "$_tenv")"
+
+# POSITIVE CONTROL: if the extractor matched nothing, "no divergence" means "I did not look"
+# (law-absence-needs-a-positive-control). Four is what the two files share today:
+# _SPIRA_USER, _SPIRA_UID, _CONTAINER_CARGO and _CONTAINER_CARGO_TARGET. The checkout path
+# is shared in VALUE but not in NAME — testenv.sh calls it _CONTAINER_CHECKOUT and
+# testenv-batch.sh calls it _CONTAINER_WORKSPACE, both "/workspace" — so a change to one is
+# invisible to the other and to this check. Renaming is the real fix and is not done here;
+# until it is, that pair is the one divergence this suite cannot see.
+if [ "$_mirrored" -ge 4 ]; then
+    ok "C1: the constant extractor found $_mirrored mirrored constants to compare"
+else
+    bad "C1: the constant extractor found constants to compare" \
+        "only $_mirrored matched — the comparison below proves nothing"
+fi
+if [ -z "$_diverged" ]; then
+    ok "C2: every constant testenv-batch.sh mirrors has testenv.sh's value"
+else
+    bad "C2: every constant testenv-batch.sh mirrors has testenv.sh's value" \
+        "diverged:$_diverged"
+fi
+
+# And every constant the batch runner USES must be one it declares — the unbound-variable
+# failure above was a use with no declaration, which the value comparison cannot see.
+_undeclared=""
+for _u in $(grep -oE '\$\{_CONTAINER_[A-Z_]+\}' "$BATCH" | tr -d '${}' | sort -u); do
+    grep -qE "^${_u}=" "$BATCH" || _undeclared="$_undeclared $_u"
+done
+if [ -z "$_undeclared" ]; then
+    ok "C3: every _CONTAINER_* the batch runner expands is declared in it"
+else
+    bad "C3: every _CONTAINER_* the batch runner expands is declared in it" \
+        "used but never set:$_undeclared"
+fi
+
+# ===========================================================================
+echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1

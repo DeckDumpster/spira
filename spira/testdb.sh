@@ -207,7 +207,25 @@ testdb_up() {            # testdb_up <tag>
     fi
 
     # ---- FRESH FIXTURE: CHOOSE MODE ----
-    if _testdb_embedded_check; then
+    # SPIRA_TESTDB_MODE IS THE REQUEST; TESTDB_MODE IS THE REPORT. They are deliberately two
+    # names. TESTDB_MODE is assigned by this function to say which engine it ended up on, so
+    # a caller that set it as an input would be overwritten on the first call and would then
+    # be reading its own stale answer on the second. A suite asks with SPIRA_TESTDB_MODE and
+    # reads the result from TESTDB_MODE.
+    #
+    # WHY ANY SUITE WOULD ASK. Embedded is preferred because it needs no service, but bd in
+    # embedded mode answers every `bd sql` with "not yet supported in embedded mode" — so a
+    # suite covering the SQL half of the model (the _is_work generated column, the
+    # spira_priority_range CHECK) cannot use it and, before this, had no way to say so. It
+    # got an embedded fixture, every statement was refused, and the failure read as schema
+    # drift. An unsatisfiable request fails rather than silently downgrading, because a
+    # silent downgrade is how that read as drift in the first place.
+    if [ "${SPIRA_TESTDB_MODE:-}" = server ]; then
+        if [ -z "${SPIRA_TESTDB_DATA:-}" ]; then
+            printf 'testdb: SPIRA_TESTDB_MODE=server but SPIRA_TESTDB_DATA is not set\n' >&2
+            return 1
+        fi
+    elif _testdb_embedded_check; then
         # EMBEDDED MODE: private tmpdir, cleanup is rm -rf.
         TESTDB_MODE=embedded
         TESTDB_NAME="sptest_${tag}_$(date +%s)_$$"

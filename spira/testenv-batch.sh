@@ -78,6 +78,7 @@ _SPIRA_USER="spirauser"
 _SPIRA_UID=1001
 _USER_RUNTIME="/run/user/${_SPIRA_UID}"
 _CONTAINER_CARGO="/var/spira/cargo"
+_CONTAINER_CARGO_TARGET="/var/spira/cargo/target"
 _CONTAINER_WORKSPACE="/workspace"
 
 # ---------------------------------------------------------------------------

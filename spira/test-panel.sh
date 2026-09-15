@@ -49,7 +49,9 @@ if [ -z "$CARGO_BIN" ]; then
     echo "SKIP test-panel: cargo not found on PATH or at ~/.cargo/bin — install Rust: https://rustup.rs/" >&2
     exit 77
 fi
-PATH="$(dirname "$CARGO_BIN"):$PATH"; export PATH
+_CARGO_DIR="$(dirname "$CARGO_BIN")"
+export SPIRA_PATH="$_CARGO_DIR${SPIRA_PATH:+:$SPIRA_PATH}"
+export PATH="$_CARGO_DIR:$PATH"
 
 if "$CARGO_BIN" test --manifest-path "$MANIFEST" 2>&1; then
     ok "panel cargo test suite"

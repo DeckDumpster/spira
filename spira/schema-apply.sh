@@ -36,9 +36,49 @@ DB="${SPIRA_DB:?SPIRA_DB is unset — source conf.sh}"
 DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
 
 say()  { printf 'schema-apply: %s\n' "$*"; }
-run()  { if [ "$DRY" = 1 ]; then printf 'schema-apply: WOULD RUN: %s\n' "$*"; else eval "$@"; fi; }
+
+# A FAILED DDL USED TO BE SILENT, AND THAT IS THE WORST THING THIS SCRIPT COULD DO. `run` was
+# `eval "$@"` with the caller appending >/dev/null, and `sql` folded stderr into stdout — so a
+# rejected `alter table` had its error discarded and its exit status ignored, and the script
+# went on to print "applied". The only thing that noticed was the schema.sh check at the end,
+# which reported the column as MISSING with no hint that adding it had been attempted and
+# refused. A constraint that silently failed to apply is indistinguishable from one that was
+# never asked for, and every tool above it stops guarding what it no longer does.
+#
+# `run` now propagates the status and `_FAILED` accumulates what went wrong, so the exit code
+# and the final message tell the truth.
+_FAILED=""
+run()  {
+    if [ "$DRY" = 1 ]; then printf 'schema-apply: WOULD RUN: %s\n' "$*"; return 0; fi
+    local _out _rc
+    _out="$(eval "$@" 2>&1)"; _rc=$?
+    if [ "$_rc" != 0 ]; then
+        printf 'schema-apply: FAILED (rc=%s): %s\n' "$_rc" "$*" >&2
+        [ -n "$_out" ] && printf '  %s\n' "$_out" >&2
+        _FAILED="$_FAILED
+  $*"
+    fi
+    return "$_rc"
+}
 sql()  { bd -C "$DB" sql "$1" 2>&1; }
 sqlq() { sql "$1" | sed -n '3p' | tr -d ' '; }
+
+# THE ENGINE MUST BE ABLE TO CARRY THE SQL HALF AT ALL. bd in embedded mode answers
+#   Error: 'bd sql' is not yet supported in embedded mode
+# to every query, so the two existence probes below come back empty, both DDL statements are
+# attempted, both are refused, and the run ends reporting the column and constraint MISSING —
+# which reads as schema drift rather than as an engine that cannot be asked. Probing once, up
+# front, is what turns that into a sentence the reader can act on.
+if [ "$DRY" != 1 ]; then
+    _probe="$(sql "select 1;")"
+    if [ -n "$_probe" ] && printf '%s' "$_probe" | grep -qi 'not yet supported in embedded mode'; then
+        say "this store is open in EMBEDDED mode, where 'bd sql' is unsupported."
+        say "The config half (custom types and statuses) can be applied; the SQL half"
+        say "(_is_work and spira_priority_range) cannot be applied or verified here."
+        say "Point SPIRA_DB at a server-mode store to apply the full model."
+        exit 3
+    fi
+fi
 
 # ---- 1. custom types -------------------------------------------------------------------
 # EXHAUSTIVE, and that is what retires the Gas Town types. Registration is the line between a
@@ -86,5 +126,9 @@ else
 fi
 
 [ "$DRY" = 1 ] && { say "dry run — nothing changed"; exit 0; }
+if [ -n "$_FAILED" ]; then
+    say "NOT applied — one or more statements failed:$_FAILED"
+    exit 1
+fi
 say "applied. verifying with schema.sh check"
 "$HERE/schema.sh" check
