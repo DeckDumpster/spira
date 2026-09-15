@@ -77,6 +77,7 @@ SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET
 SPIRA_GATE_SUITES SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
 SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE
 SPIRA_PROD SPIRA_INSTANCE
+SPIRA_RELEASES SPIRA_RELEASES_KEEP
 SPIRA_REVIEWER_MODEL SPIRA_REVIEWER_VERDICTS SPIRA_REVIEWER_TIMEOUT SPIRA_REVIEWER_DIFF_LIMIT
 SPIRA_REVIEW_LABEL
 SPIRA_SELF_WINDOW
@@ -793,6 +794,21 @@ spira_conf_defaults() {
     # silently replaced by the derived default, making "I want no split" unexpressible.
     : "${SPIRA_PROD=$(_spira_join "$SPIRA_WORKSPACES" "${SPIRA_HOME_REPO}-prod/$(basename "$SPIRA_HOME")")}"
 
+    # ---- RELEASE ACTIVATION (activate.sh) -----------------------------------------------
+    # WHERE RELEASE TARBALLS ARE UNPACKED. Each activation unpacks a tarball into a
+    # timestamped subdirectory here and swaps the 'current' symlink atomically. systemd units
+    # render ExecStart= paths through 'current', so a swap is a deployment. The disk holding
+    # SPIRA_WORKSPACES is the right place: it is the large, nearly-empty volume that exists
+    # specifically to avoid competing with / for rollback depth.
+    # DERIVED FROM SPIRA_WORKSPACES; _spira_join prevents double slashes when SPIRA_WORKSPACES
+    # is "/" (a container root).
+    : "${SPIRA_RELEASES:=$(_spira_join "$SPIRA_WORKSPACES" spira-releases)}"
+    # HOW MANY RELEASES TO KEEP. Old releases beyond this count are pruned after each
+    # activation (best-effort; a prune failure never fails the activation). Each release
+    # directory is the unpacked contents of one tarball — about 1.4 MB — so 100 releases
+    # total roughly 140 MB. Per Ryan: "They're tiny. make it 100."
+    : "${SPIRA_RELEASES_KEEP:=100}"
+
     # ---- THE REVIEWER: ADVERSARIAL REVIEW AT THE RELEASE-UNIT BOUNDARY -------------------
     # THE MODEL IS STRONG BY DESIGN. The reviewer looks for intent violations, cross-commit
     # interactions, and irreversible changes — the class of defect per-change review is worst
@@ -1079,6 +1095,7 @@ export SPIRA_INSTANCE \
        SPIRA_ALERT_GLOB \
        SPIRA_GATE_NOVERDICT SPIRA_GATE_BASEFAIL \
        SPIRA_BD SPIRA_CONF_FILE SPIRA_PROD SPIRA_CTRL \
+       SPIRA_RELEASES \
        SPIRA_REVIEWER_VERDICTS SPIRA_REVIEWER_MODEL SPIRA_REVIEW_LABEL
 
 # --------------------------------------------------------------------------------------
