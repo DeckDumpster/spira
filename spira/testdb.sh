@@ -6,7 +6,7 @@
 #   testdb_up fayth               # creates the database, exports SPIRA_DB
 #   trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 #   testdb_seed <<'JSONL' ... JSONL
-#   testdb_reset                  # back to empty, in ~6ms (embedded) or ~6s (server)
+#   testdb_reset                  # back to empty, in ~6ms (embedded) or ~2s (server)
 #
 # WHY NOT A STUB. `.claude/spira/testbin/bd` modelled 16 of bd's 118 subcommands, and its
 # fidelity was wrong twice in one day in ways that made CALLERS look broken: `list` ignored
@@ -54,6 +54,10 @@ TESTDB_MODE="${TESTDB_MODE:-}"
 # Used in testdb_drop to know whether to stop the service. Exported so fixture_drop in
 # aeon.sh (which runs testdb_drop in a subshell) sees the correct value.
 export TESTDB_STARTED_SERVICE="${TESTDB_STARTED_SERVICE:-0}"
+# TESTDB_SERVER_INIT_HASH: the Dolt commit hash captured right after bd init in server mode.
+# testdb_reset uses CALL DOLT_RESET('--hard', hash) to restore version-controlled tables to
+# their post-init state without stopping or restarting the dolt service (sp-f342).
+TESTDB_SERVER_INIT_HASH="${TESTDB_SERVER_INIT_HASH:-}"
 
 # _testdb_sc <subcommand> [args...] — run "systemctl --user" with XDG_RUNTIME_DIR fallback.
 # gate.sh runs suites under env -i without XDG_RUNTIME_DIR; without it, systemctl --user
@@ -319,8 +323,17 @@ testdb_up() {            # testdb_up <tag>
         printf '%s\n' "$init_out" | sed 's/^/testdb:   /' >&2
         rm -rf "$TESTDB_DIR"; TESTDB_DIR=""; TESTDB_NAME=""; return 1
     }
-    # Server mode: no baseline (copy-swap does not apply to server databases).
-    TESTDB_BASELINE=""
+    # Save baseline and the init commit hash for SQL-based reset (sp-f342). Unlike embedded
+    # mode, copy-swap does not apply to the server-side database, but .beads is still local
+    # and can be restored. The init hash lets testdb_reset use CALL DOLT_RESET('--hard',
+    # hash) to restore version-controlled tables without stopping the dolt service.
+    TESTDB_BASELINE="$(mktemp -d)"
+    cp -rp "$TESTDB_DIR/.beads" "$TESTDB_BASELINE/.beads" 2>/dev/null || {
+        rm -rf "$TESTDB_BASELINE"; TESTDB_BASELINE=""
+    }
+    TESTDB_SERVER_INIT_HASH="$("$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
+        "SELECT commit_hash FROM dolt_log LIMIT 1" 2>/dev/null \
+        | awk 'NF==1 && /^[a-z0-9]{32}$/' | head -1)"
     TESTDB_BIN=""
     export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="$TESTDB_SERVER_BD"
     return 0
@@ -329,29 +342,61 @@ testdb_up() {            # testdb_up <tag>
 # Back to an empty database. For embedded mode: a directory swap rather than a table wipe.
 # bd writes across multiple tables and a wipe that misses one leaves state no test asked for.
 # The swap is 6ms and is guaranteed complete.
-# For server mode: drops the server-side database and reinitialises it (~6s).
+# For server mode: CALL DOLT_RESET to the init hash (clears version-controlled tables) plus
+# DELETE from dolt_ignored tables; no service stop/restart (~2s instead of ~6s, sp-f342).
 testdb_reset() {
     [ -n "$TESTDB_NAME" ] || return 1
     if [ "${TESTDB_MODE:-embedded}" = server ]; then
         [ -d "${TESTDB_DIR:-}" ] || return 1
-        # Stop the service, remove server-side sp, restart, and reinitialise from scratch.
-        # --reinit-local alone creates a new project_id without touching the server-side sp,
-        # so the local .beads and server always diverge. A stop+rm+start+fresh-init pair
-        # creates matching project_ids on both sides (sp-f342).
-        _testdb_server_clean_sp 1 || return 1
-        rm -rf "$TESTDB_DIR/.beads"
-        local init_out init_rc
-        init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
-            BD_NON_INTERACTIVE=1 \
-            "$TESTDB_SERVER_BD" init --non-interactive --prefix sp --skip-agents \
-            --skip-hooks --server --server-host 127.0.0.1 \
-            --server-port "${SPIRA_TESTDB_PORT:-3308}" --external -q 2>&1 )"
-        init_rc=$?
-        if [ $init_rc -ne 0 ]; then
-            printf 'testdb: server reset failed (rc=%s) for %s\n' "$init_rc" "$TESTDB_NAME" >&2
-            printf '%s\n' "$init_out" | sed 's/^/testdb:   /' >&2
+        # SQL-based reset: no service stop/restart needed. CALL DOLT_RESET('--hard', hash)
+        # restores all version-controlled tables (issues, dependencies, labels, …) to their
+        # state at init time. Tables in dolt_ignore (events, bd_events_journal, leases, …)
+        # are unaffected by DOLT_RESET and must be cleared with DELETE (sp-f342).
+        #
+        # Fallback: if TESTDB_SERVER_INIT_HASH is empty (shared fixture from a pre-sp-f342
+        # caller), drop and recreate via stop+restart as before.
+        if [ -z "${TESTDB_SERVER_INIT_HASH:-}" ]; then
+            _testdb_server_clean_sp 1 || return 1
+            rm -rf "$TESTDB_DIR/.beads"
+            local init_out init_rc
+            init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
+                BD_NON_INTERACTIVE=1 \
+                "$TESTDB_SERVER_BD" init --non-interactive --prefix sp --skip-agents \
+                --skip-hooks --server --server-host 127.0.0.1 \
+                --server-port "${SPIRA_TESTDB_PORT:-3308}" --external -q 2>&1 )"
+            init_rc=$?
+            if [ $init_rc -ne 0 ]; then
+                printf 'testdb: server reset (fallback) failed (rc=%s) for %s\n' \
+                    "$init_rc" "$TESTDB_NAME" >&2
+                printf '%s\n' "$init_out" | sed 's/^/testdb:   /' >&2
+                return 1
+            fi
+            return 0
+        fi
+        local reset_out reset_rc
+        reset_out="$("$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
+            "CALL DOLT_RESET('--hard', '$TESTDB_SERVER_INIT_HASH')" 2>&1)"
+        reset_rc=$?
+        if [ $reset_rc -ne 0 ]; then
+            printf 'testdb: server dolt_reset failed (rc=%s) for %s: %s\n' \
+                "$reset_rc" "$TESTDB_NAME" "$reset_out" >&2
             return 1
         fi
+        # Clear dolt_ignored tables that accumulate test data. ignored_schema_migrations
+        # and local_metadata are excluded (migration state and project_id linkage).
+        "$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
+            "DELETE FROM events" 2>/dev/null || true
+        "$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
+            "DELETE FROM bd_events_journal" 2>/dev/null || true
+        # Restore local .beads (project_id, sequence counters) from the init baseline.
+        [ -d "${TESTDB_BASELINE:-}/.beads" ] || return 1
+        local _new; _new="$TESTDB_DIR/.beads.new"
+        local _old; _old="$TESTDB_DIR/.beads.old"
+        rm -rf "$_new" "$_old"
+        cp -rp "$TESTDB_BASELINE/.beads" "$_new" || { rm -rf "$_new"; return 1; }
+        mv "$TESTDB_DIR/.beads" "$_old" 2>/dev/null || true
+        mv "$_new" "$TESTDB_DIR/.beads"            || return 1
+        rm -rf "$_old" 2>/dev/null || true
         return 0
     fi
     # Embedded mode: directory swap using rename rather than rm-then-cp.
