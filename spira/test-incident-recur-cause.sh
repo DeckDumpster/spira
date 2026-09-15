@@ -193,6 +193,57 @@ out2="$(SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$TMP/run" \
     bash "$INC" backfill-recur-causes 2>/dev/null)"
 want "second run reports 0 backfilled" "backfilled 0" "$out2"
 
+
+# ======================================================================================
+echo
+echo "5. Sin escalation fires at SIN_AT recurrences (events-trail count, not labels):"
+# ======================================================================================
+# sp-uq7r: recurrence count was always 1 after sp-lzt deleted sp-recur-N labels.
+# This section verifies that the events trail is used correctly so the count advances
+# and the Sin threshold is crossed.  SIN_AT is pinned to 3 (non-default; default is 5).
+# The ref is filed SIN_AT+1=4 times; the expected log sequence is recurred (1), (2), (3);
+# exactly one Sin ask must be recorded and the bead must carry the sin label.
+testdb_reset; mkdir -p "$TMP/run"; > "$ASK_LOG"
+rm -f "$TMP/run/incident.log"
+
+ref5="incident:test-sin-escalation"
+SIN_AT_PIN=3
+
+for _i in 1 2 3 4; do
+    file_incident "$ref5" "sin escalation test" "payload $_i" \
+        SPIRA_SIN_AT="$SIN_AT_PIN" SPIRA_INCIDENT_CAUSE=suite-red >/dev/null
+done
+
+# Resolve the bead id (the ask log does not carry it directly).
+bid5="$(B list --status open --limit 0 --label spira,incident --json 2>/dev/null \
+    | python3 -c '
+import json,sys
+target=sys.argv[1]
+try: d=json.load(sys.stdin)
+except: sys.exit(0)
+d=d if isinstance(d,list) else [d]
+for i in d:
+    if i.get("external_ref")==target: print(i["id"]); break
+' "$ref5" 2>/dev/null)"
+[ -n "$bid5" ] && ok "sin-escalation bead was created" \
+    || { bad "sin-escalation bead was created" "none found"; \
+         printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
+
+# (a) incident.log must show the advancing recurrence sequence.
+_ilog="$TMP/run/incident.log"
+want "incident.log contains recurred (2)" "recurred (2)" "$(cat "$_ilog" 2>/dev/null)"
+want "incident.log contains recurred (3)" "recurred (3)" "$(cat "$_ilog" 2>/dev/null)"
+
+# (b) exactly one Sin ask must have been recorded.
+_ask_count=0
+[ -f "$ASK_LOG" ] && _ask_count="$(grep -c 'recurred' "$ASK_LOG" 2>/dev/null || echo 0)"
+is "exactly one Sin ask recorded" "1" "$_ask_count"
+
+# (c) bead carries sin label.
+has_label_like "$bid5" "sin" \
+    && ok "bead carries sin label after escalation" \
+    || bad "bead carries sin label after escalation" "labels: $(B label list "$bid5" 2>/dev/null)"
+
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]

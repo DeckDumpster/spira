@@ -192,14 +192,12 @@ _dedup_incident() {      # _dedup_incident <ref> -> "open <id> <n>" | "closed <i
     # the configured database, not the auto-discovered one (law-address-the-store-with-spira-bd).
     _r="$(bdq list --status open,in_progress --limit 0 --label "$_ref_label" --json 2>/dev/null \
       | python3 -c '
-import sys, json, re
+import sys, json
 target = sys.argv[1]
 try:
     for bead in json.load(sys.stdin):
         if bead.get('"'"'external_ref'"'"') == target and bead.get('"'"'status'"'"') in ('"'"'open'"'"', '"'"'in_progress'"'"'):
-            ns = [int(m.group(1)) for lbl in (bead.get('"'"'labels'"'"') or [])
-                  for m in [re.match(r'"'"'^sp-recur-(\d+)(?:-|$)'"'"', lbl)] if m]
-            print('"'"'open'"'"', bead['"'"'id'"'"'], max(ns) if ns else 0); sys.exit(0)
+            print('"'"'open'"'"', bead['"'"'id'"'"']); sys.exit(0)
 except: pass
 ' "$ref" 2>/dev/null)"
     if [ -n "$_r" ]; then printf '%s' "$_r"; return; fi
@@ -211,15 +209,13 @@ except: pass
     # Once found here, file_one adds the label so this path is not needed again.
     _r="$(bdq list --status open,in_progress --limit 0 --json 2>/dev/null \
       | python3 -c '
-import sys, json, re
+import sys, json
 target = sys.argv[1]
 try:
     for bead in json.load(sys.stdin):
         if any(l.startswith('"'"'ref:'"'"') for l in (bead.get('"'"'labels'"'"') or [])): continue
         if bead.get('"'"'external_ref'"'"') == target and bead.get('"'"'status'"'"') in ('"'"'open'"'"', '"'"'in_progress'"'"'):
-            ns = [int(m.group(1)) for lbl in (bead.get('"'"'labels'"'"') or [])
-                  for m in [re.match(r'"'"'^sp-recur-(\d+)(?:-|$)'"'"', lbl)] if m]
-            print('"'"'open'"'"', bead['"'"'id'"'"'], max(ns) if ns else 0); sys.exit(0)
+            print('"'"'open'"'"', bead['"'"'id'"'"']); sys.exit(0)
 except: pass
 ' "$ref" 2>/dev/null)"
     if [ -n "$_r" ]; then printf '%s' "$_r"; return; fi
@@ -232,14 +228,12 @@ except: pass
     # Sub-path A for closed beads: label-keyed on ref:<hash> alone.
     _r="$(bdq list --status closed --closed-after "$_since" --limit 0 --label "$_ref_label" --json 2>/dev/null \
       | python3 -c '
-import sys, json, re
+import sys, json
 target = sys.argv[1]
 try:
     for bead in json.load(sys.stdin):
         if bead.get('"'"'external_ref'"'"') == target and bead.get('"'"'status'"'"') == '"'"'closed'"'"':
-            ns = [int(m.group(1)) for lbl in (bead.get('"'"'labels'"'"') or [])
-                  for m in [re.match(r'"'"'^sp-recur-(\d+)(?:-|$)'"'"', lbl)] if m]
-            print('"'"'closed'"'"', bead['"'"'id'"'"'], max(ns) if ns else 0); sys.exit(0)
+            print('"'"'closed'"'"', bead['"'"'id'"'"']); sys.exit(0)
 except: pass
 ' "$ref" 2>/dev/null)"
     if [ -n "$_r" ]; then printf '%s' "$_r"; return; fi
@@ -248,15 +242,13 @@ except: pass
     # same reason as the open-bead fallback above.
     bdq list --status closed --closed-after "$_since" --limit 0 --json 2>/dev/null \
       | python3 -c '
-import sys, json, re
+import sys, json
 target = sys.argv[1]
 try:
     for bead in json.load(sys.stdin):
         if any(l.startswith('"'"'ref:'"'"') for l in (bead.get('"'"'labels'"'"') or [])): continue
         if bead.get('"'"'external_ref'"'"') == target and bead.get('"'"'status'"'"') == '"'"'closed'"'"':
-            ns = [int(m.group(1)) for lbl in (bead.get('"'"'labels'"'"') or [])
-                  for m in [re.match(r'"'"'^sp-recur-(\d+)(?:-|$)'"'"', lbl)] if m]
-            print('"'"'closed'"'"', bead['"'"'id'"'"'], max(ns) if ns else 0); sys.exit(0)
+            print('"'"'closed'"'"', bead['"'"'id'"'"']); sys.exit(0)
 except: pass
 ' "$ref" 2>/dev/null
 }
@@ -267,7 +259,7 @@ except: pass
 # so a transient failure costs a retry rather than the event.
 # --------------------------------------------------------------------------------------
 file_one() {
-    local ref="$1" title="$2" pf="$3" id n _was_closed _reopen_note _log_suffix _hit _rest _recur_n _prov
+    local ref="$1" title="$2" pf="$3" id n _was_closed _reopen_note _log_suffix _hit _recur_n _prov
     # PROVENANCE: built once per filing so both ask-filing paths see the same string.
     # Derived here, inside file_one, so it reflects the current SPIRA_INCIDENT_UNIT and
     # SPIRA_INCIDENT_PATH — which drain_one shadows per spool entry (backward-compatible).
@@ -276,9 +268,8 @@ file_one() {
     # DEDUP QUERY — two passes (open first, closed second if needed). If the database is
     # unreachable, _dedup_incident prints nothing; id stays empty and the probe below catches
     # it. The probe is skipped on the recurrence path because a result from _dedup_incident
-    # proves the database is reachable. The recurrence count comes from the events table
-    # (sp-lzt removed sp-recur-N label writes; _dedup_incident's label-extracted count
-    # is always 0 and is overridden by recurs_of immediately after the id is known).
+    # proves the database is reachable. The recurrence count comes from the events trail
+    # (sp-lzt removed sp-recur-N label writes; recurs_of queries the events table instead).
     _hit="$(_dedup_incident "$ref")"
     id="" _was_closed=0 _recur_n=0
     case "$_hit" in
@@ -287,16 +278,10 @@ file_one() {
     esac
     if [ -n "${id:-}" ]; then
         # THE COUNT COMES FROM THE EVENT HISTORY. sp-recur-N labels stopped being written
-        # when recurrences became events (sp-lzt), and _dedup_incident still derives its
-        # third field by parsing those labels out of the bead JSON — so _recur_n was 0 on
-        # every recurrence and n was 1 every time. The log read "recurred (1)" forever, the
-        # threshold below was never reached, and the SIN escalation could not fire at all:
-        # an incident that keeps coming back looked identical to one seen for the second
-        # time (law-a-rename-repoints-no-reader — the write moved and the reader did not).
-        #
-        # recurs_of is lib.sh's reader for the same counter and handles all three storage
-        # paths. The larger of the two is taken so a bead filed by older code, which really
-        # does carry sp-recur-N labels and may have no events, still counts correctly.
+        # when recurrences became events (sp-lzt), and the reader did not move with them
+        # (law-a-rename-repoints-no-reader): _recur_n was 0 on every recurrence and n was 1
+        # every time. recurs_of queries the events table; the larger of the two is taken so
+        # a bead filed by older code that still carries sp-recur-N labels counts correctly.
         _ev_n="$(recurs_of "$id" 2>/dev/null)"
         case "$_ev_n" in ''|*[!0-9]*) _ev_n=0 ;; esac
         [ "$_ev_n" -gt "$_recur_n" ] && _recur_n="$_ev_n"
