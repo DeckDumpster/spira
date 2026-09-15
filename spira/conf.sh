@@ -81,6 +81,7 @@ SPIRA_PROD SPIRA_INSTANCE
 SPIRA_RELEASES SPIRA_RELEASES_KEEP
 SPIRA_REVIEWER_MODEL SPIRA_REVIEWER_VERDICTS SPIRA_REVIEWER_TIMEOUT SPIRA_REVIEWER_DIFF_LIMIT
 SPIRA_REVIEW_LABEL
+SPIRA_CAPACITY_PROBE_MODEL SPIRA_CAPACITY_PROBE_INTERVAL SPIRA_CAPACITY_PROBE_WINDOW SPIRA_CAPACITY_PROBE_TIMEOUT
 SPIRA_SELF_WINDOW
 SPIRA_AGENT
 SPIRA_STATUTE_CORE
@@ -897,6 +898,27 @@ spira_conf_defaults() {
     # THE LABEL APPLIED TO FINDING BEADS. The deployment controller (sp-gsmx.5) and the
     # groomer query on this label to find open findings for a release unit.
     : "${SPIRA_REVIEW_LABEL:=review-finding}"
+
+    # CAPACITY PROBE — while a pause is in force and its horizon is far out, the harness
+    # probes the account to detect early recovery. These keys gate that probe.
+    #
+    # PROBE_MODEL matches the builder persona's model: a probe that the builder's model
+    # cannot answer is evidence the account is genuinely out for builders. An operator
+    # whose pool uses a different model sets this key. Probe with the cheapest capable
+    # model — a refused probe costs nothing; a served one costs one minimal request.
+    : "${SPIRA_CAPACITY_PROBE_MODEL:=claude-sonnet-4-6}"
+    # PROBE_INTERVAL: minimum seconds between probes. One per hour is enough — the reset
+    # time from a refusal is typically several hours, so a probe that keeps the pause for
+    # an hour costs nothing and one that lifts it early unblocks the whole queue.
+    : "${SPIRA_CAPACITY_PROBE_INTERVAL:=3600}"
+    # PROBE_WINDOW: horizon threshold beyond which probing makes sense, in seconds.
+    # A pause with less than this remaining is likely about to expire on its own; probing
+    # it costs a request and saves at most a few minutes. Default is one five-hour window.
+    : "${SPIRA_CAPACITY_PROBE_WINDOW:=18000}"
+    # PROBE_TIMEOUT: seconds allowed for one probe request. A probe that times out is
+    # treated as refused — conservative, because a non-answering API is not evidence the
+    # account is open.
+    : "${SPIRA_CAPACITY_PROBE_TIMEOUT:=30}"
 
     # SELF-MONITORING WINDOW: how many minutes back cockpit-metrics.py looks when deciding
     # what is "repeating now" and whether a stillborn or stall alert is in force. Narrow

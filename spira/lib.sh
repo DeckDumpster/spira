@@ -1327,12 +1327,28 @@ capacity_pause_until() {  # -> the epoch a pause runs to, or 0 if none is record
 #
 # A pause that has run out is REMOVED here rather than merely ignored, so the file itself is
 # the answer to "is the harness paused" for anything reading it without this library.
+#
+# PROBE WHEN THE HORIZON IS FAR OUT. A single refusal can write a pause that runs for
+# days; the account may re-open hours earlier than the refusal message claimed. When the
+# remaining time exceeds SPIRA_CAPACITY_PROBE_WINDOW, capacity_probe_maybe is called:
+# a probe that receives a response lifts the pause early, a refused probe keeps it.
+# This is the only place that lifts a pause via a probe, and it only runs here, where
+# every summon check passes through — so the probe fires exactly when the queue is
+# blocked and no more often than SPIRA_CAPACITY_PROBE_INTERVAL allows.
 SPIRA_CAPACITY_LEFT=0
 capacity_paused() {
     local at now
     at="$(capacity_pause_until)"; now="$(date +%s)"
     if [ "$at" -gt "$now" ] 2>/dev/null; then
-        SPIRA_CAPACITY_LEFT=$(( at - now )); return 0
+        SPIRA_CAPACITY_LEFT=$(( at - now ))
+        if [ "$SPIRA_CAPACITY_LEFT" -gt "${SPIRA_CAPACITY_PROBE_WINDOW:-18000}" ] 2>/dev/null \
+           && capacity_probe_maybe; then
+            rm -f "$SPIRA_CAPACITY_PAUSE"
+            log "CAPACITY: probe served — pause lifted early (horizon was ${SPIRA_CAPACITY_LEFT}s out)"
+            SPIRA_CAPACITY_LEFT=0
+            return 1
+        fi
+        return 0
     fi
     SPIRA_CAPACITY_LEFT=0
     if [ -f "$SPIRA_CAPACITY_PAUSE" ]; then
@@ -1340,6 +1356,48 @@ capacity_paused() {
         log "CAPACITY: the window has reopened — summoning resumes"
     fi
     return 1
+}
+
+# Path for the probe-last timestamp. Lives beside the other capacity state files.
+SPIRA_CAPACITY_PROBE_LAST="${SPIRA_CAPACITY_PROBE_LAST:-$SPIRA_RUN/capacity-probe-last}"
+
+# capacity_probe_maybe -> rc 0 if the probe ran and the account responded, rc 1 otherwise.
+#
+# Returns 1 without probing when the interval has not elapsed since the last attempt. The
+# timestamp is written BEFORE the probe runs, not after: if the process is killed during a
+# hung probe the next call still respects the interval instead of looping immediately
+# (law-bound-the-rare-path).
+capacity_probe_maybe() {
+    local last now interval
+    interval="${SPIRA_CAPACITY_PROBE_INTERVAL:-3600}"
+    now="$(date +%s)"
+    last="$(awk 'NR==1{print $1}' "$SPIRA_CAPACITY_PROBE_LAST" 2>/dev/null)"
+    case "${last:-}" in ''|*[!0-9]*) last=0 ;; esac
+    [ "$(( now - last ))" -lt "$interval" ] 2>/dev/null && return 1
+    mkdir -p "$(dirname "$SPIRA_CAPACITY_PROBE_LAST")" 2>/dev/null
+    printf '%s %s\n' "$now" "$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" \
+        > "$SPIRA_CAPACITY_PROBE_LAST"
+    log "CAPACITY: probing the account (pause horizon ${SPIRA_CAPACITY_LEFT}s, interval ${interval}s)"
+    if capacity_probe; then
+        log "CAPACITY: probe served — account is open"
+        return 0
+    else
+        log "CAPACITY: probe refused — pause continues"
+        return 1
+    fi
+}
+
+# capacity_probe -> rc 0 if the account serves a minimal request, rc 1 otherwise.
+#
+# Uses SPIRA_AGENT (the configured agent CLI, default: claude) so tests drive it through
+# the same seam that aeon.sh uses for its own injections. Uses SPIRA_CAPACITY_PROBE_MODEL
+# so an operator whose pool runs a different model can match the probe to it. Timeouts are
+# treated as refusals — an API that does not answer in SPIRA_CAPACITY_PROBE_TIMEOUT seconds
+# is not evidence the account is open, and the conservative direction is to keep the pause.
+capacity_probe() {
+    printf 'ok' | timeout "${SPIRA_CAPACITY_PROBE_TIMEOUT:-30}" \
+        "${SPIRA_AGENT:-claude}" -p --model "${SPIRA_CAPACITY_PROBE_MODEL:-claude-sonnet-4-6}" \
+        >/dev/null 2>&1
 }
 
 capacity_pause_why() {   # -> what was being worked when the account ran out
