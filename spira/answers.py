@@ -393,20 +393,27 @@ def main():
         print("generalises, enact it as a statute in this session.")
         return 0
 
+    # Headlines open with the answer's own UTC time. Without it `watchd.sh notify` dates a
+    # backlog from first sighting, so answers given during an outage — the most overdue —
+    # all look new at recovery and get a fresh grace period. Fixed-width, so a reader sorts
+    # it as text; the actionable word stays on the line for SPIRA_ACTIONABLE.
+    def at(ts):
+        return "[%s] " % ts if ts else ""
+
     for ts, ident, title, reason, is_rejection, is_suit in vs:
         if is_rejection:
             why = reason[len("premise-rejected:"):].strip() if reason.startswith("premise-rejected:") else reason
-            print("%s REJECTED THE PREMISE %s — not his to decide; proceed on your default" % (who, ident), flush=True)
+            print("%sREJECTED THE PREMISE %s — not his to decide; proceed on your default" % (at(ts) + who + " ", ident), flush=True)
             if why:
                 print("  reason: %s" % why, flush=True)
         elif is_suit:
             label = _suit_label(reason)
-            print("%s %s (%s) — %s" % (who, label, ident, title), flush=True)
+            print("%s%s %s (%s) — %s" % (at(ts), who, label, ident, title), flush=True)
         else:
-            print("%s ANSWERED %s — %s" % (who, ident, title), flush=True)
+            print("%s%s ANSWERED %s — %s" % (at(ts), who, ident, title), flush=True)
             print("  verdict: %s" % reason, flush=True)
     for ts, ident, title, text, _ in cs:
-        print("%s COMMENTED ON %s — %s" % (who, ident, title), flush=True)
+        print("%s%s COMMENTED ON %s — %s" % (at(ts), who, ident, title), flush=True)
         for line in text.splitlines() or [""]:
             print("  %s" % line, flush=True)
     return 0

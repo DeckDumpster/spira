@@ -501,6 +501,57 @@ has "and enabled the notify timer"              "$log" "enable --now spira-watch
 hasnt "but not the service behind it"           "$log" "enable --now spira-watch-notify-prod.service"
 has "and the unit files are installed"          "$(ls "$IHOME/.config/systemd/user")" "spira-watch-notify-prod.timer"
 
+
+# =======================================================================================
+# THE PRODUCER'S OWN CLOCK. First sighting is the wrong clock for a backlog written all at
+# once when a dead watcher recovers: answers given during the outage are the most overdue
+# and would be handed a fresh grace period. A `[<ISO8601>]` prefix is believed instead.
+# =======================================================================================
+echo
+echo "a line that carries its own timestamp is dated by it, not by when it was seen"
+# ago <seconds> — a fixed-width UTC stamp that far in the past.
+ago() { date -u -d "@$(( $(date -u +%s) - $1 ))" +%Y-%m-%dT%H:%M:%SZ; }
+
+reset
+printf '[%s] %s answered while the watcher was down\n' "$(ago 7200)" "$FILTER" >> "$A"
+notify 3600; rc=$?
+is "a stamp already past the threshold escalates on FIRST sighting" "1" "$rc"
+is "and raises exactly one ask"                        "1" "$(asks)"
+has "and the age reported is the stamp's, not zero"    "$(cat "$TMP/out")" "2h"
+
+# THE FALSE-ALARM DIRECTION, which is the one worth a control: reading the stamp must not
+# collapse into "always fire on sight".
+reset
+printf '[%s] %s answered a moment ago\n' "$(ago 5)" "$FILTER" >> "$A"
+notify 3600; rc=$?
+is "a fresh stamp does not escalate"                   "0" "$rc"
+is "and asks nothing"                                  "0" "$(asks)"
+
+# The oldest standing stamp is the backlog's age; a newer line behind it cannot mask it.
+reset
+printf '[%s] %s the old one\n' "$(ago 7200)" "$FILTER" >> "$A"
+printf '[%s] %s the new one\n' "$(ago 5)" "$FILTER" >> "$A"
+notify 3600
+is "the oldest stamp decides, not the newest"          "1" "$(asks)"
+
+# THE FALLBACK SURVIVES. Unstamped watchers — a `log` row someone else writes — must still
+# be dated from first sighting, or every one of their events pages on sight.
+reset
+printf '%s no stamp at all\n' "$FILTER" >> "$A"
+notify 0; rc=$?
+is "an unstamped line still waits for a second sighting" "0" "$rc"
+is "and asks nothing yet"                              "0" "$(asks)"
+notify 0
+is "and escalates on the next pass, as before"         "1" "$(asks)"
+
+# A stamp that will not parse is not a stamp. Falling back beats trusting a junk date, in
+# either direction: `date` failing must not fire, and must not wedge the pass.
+reset
+printf '[not-a-timestamp] %s malformed\n' "$FILTER" >> "$A"
+notify 3600; rc=$?
+is "a malformed stamp falls back to first sighting"    "0" "$rc"
+is "and does not error"                                "" "$(cat "$TMP/err")"
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

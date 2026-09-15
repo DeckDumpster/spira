@@ -1203,6 +1203,7 @@ cmd_notify() {
     local now; printf -v now '%(%s)T' -1
 
     local name kind target health lf total pos chunk hit off line apos pend
+    local stamp_age oldest stamp_at
     local prev_pos prev_at age shown k report="" key="" stale=0
     while IFS='|' read -r name kind target health; do
         [ -n "$name" ] || continue
@@ -1242,6 +1243,18 @@ cmd_notify() {
         # clock rather than inheriting a matured one.
         if [ "$apos" = 0 ]; then rm -f "$pend" 2>/dev/null; continue; fi
 
+        # The producer's own clock, when it declared one: a `[<ISO8601>]` prefix. Oldest
+        # wins, and lexicographic order is chronological because the format is fixed-width
+        # UTC. Unstamped watchers fall through to first-sighting below.
+        stamp_age=""
+        oldest="$(printf '%s\n' "$shown" \
+                  | sed -n 's/^\[\([0-9][0-9-]\{9\}T[0-9:]\{8\}Z\)\].*/\1/p' | sort | head -1)"
+        if [ -n "$oldest" ]; then
+            stamp_at="$(date -u -d "$oldest" +%s 2>/dev/null)" || stamp_at=""
+            case "${stamp_at:-}" in ''|*[!0-9]*) stamp_at="" ;; esac
+            [ -n "$stamp_at" ] && stamp_age=$(( now - stamp_at ))
+        fi
+
         prev_pos=""; prev_at=""
         [ -r "$pend" ] && read -r prev_pos prev_at < "$pend" 2>/dev/null
         case "${prev_at:-}" in ''|*[!0-9]*) prev_at="" ;; esac
@@ -1255,10 +1268,12 @@ cmd_notify() {
         if [ -z "$prev_at" ] || [ "${prev_pos:-}" != "$apos" ]; then
             mkdir -p "$(watchd_dir)" 2>/dev/null
             printf '%s %s\n' "$apos" "$now" > "$pend"
-            continue
+            # A stamped backlog is not granted a grace period it has already spent, so the
+            # first sighting can fire. An unstamped one has no age yet and must wait.
+            [ -n "$stamp_age" ] || continue
         fi
 
-        age=$(( now - prev_at ))
+        if [ -n "$stamp_age" ]; then age="$stamp_age"; else age=$(( now - prev_at )); fi
         # A clock in the future is a clock that moved, not an event that is unusually old.
         [ "$age" -ge 0 ] || age=0
         [ "$age" -ge "$SPIRA_NOTIFY_AGE" ] || continue

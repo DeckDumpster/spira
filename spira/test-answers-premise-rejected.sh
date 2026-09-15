@@ -23,7 +23,7 @@
 # avoid testing.
 #
 # defect: sp-kw9bo
-# covers: spira/answers.py
+# covers: spira/answers.py spira/watchd.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"
@@ -113,6 +113,7 @@ run_answers() {  # run_answers <format> → stdout+stderr
         "operator=ryan" \
         "verdict_cursor=$TMP/vmark" "comment_cursor=$TMP/cmark" \
         "self_closed=$TMP/self-closed" \
+        ${ANSWERS_NOW:+"now=$ANSWERS_NOW"} \
         "format=$1" 2>&1
 }
 
@@ -152,6 +153,39 @@ want "monitor: rejection reason is in the output" \
     "not my call to make" "$out_mon"
 want "session: rejection reason is in the output" \
     "not my call to make" "$out_ses"
+
+echo
+echo "every monitor headline carries the answer's own clock, in the shape watchd parses"
+# `watchd.sh notify` dates an unread backlog from this stamp; without it, answers written
+# all at once when a dead watcher recovers all look new and get a grace period already spent.
+# The two sides are one contract, so the READING side's expression is lifted out of watchd.sh
+# and run here rather than restated — a copy would let them drift apart silently.
+#
+# NOTHING BELOW RUNS IF THAT LIFT FAILS. An empty expression falls back to `sed -n p`, which
+# echoes the whole line, and every assertion here then passes against output carrying no
+# stamp at all — seen, on the first version of this block.
+closed_at() {
+    bdc show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
+        | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("closed_at",""))' 2>/dev/null
+}
+STAMP_RE="$(sed -n "s/^[[:space:]]*| sed -n '\(.*\)' | sort | head -1)\"$/\1/p" "$HERE/watchd.sh")"
+if [ -z "$STAMP_RE" ]; then
+    bad "watchd.sh's own stamp matcher was located" \
+        "no stamp-extracting sed in watchd.sh — the contract below cannot be checked"
+else
+    ok "watchd.sh's own stamp matcher was located"
+    # PINNED TO A TIME THESE BEADS WERE NOT CLOSED AT. Otherwise the pass clock and the close
+    # clock share a second and a stamp reading `now` satisfies everything here.
+    out_stamped="$(ANSWERS_NOW=2001-01-01T00:00:00Z run_answers monitor)"
+    for _pair in "verdict:$VID:ANSWERED $VID" "rejection:$RID:REJECTED THE PREMISE $RID"; do
+        _what="${_pair%%:*}"; _rest="${_pair#*:}"; _id="${_rest%%:*}"; _grep="${_rest#*:}"
+        _line="$(printf '%s\n' "$out_stamped" | grep -F "$_grep" | head -1)"
+        _stamp="$(printf '%s\n' "$_line" | sed -n "$STAMP_RE")"
+        is "the $_what headline's stamp is the bead's close time, and watchd reads it" \
+           "$(closed_at "$_id")" "$_stamp"
+        nowant "the $_what stamp is the bead's clock, not the pass's" "2001-01-01" "$_stamp"
+    done
+fi
 
 echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
