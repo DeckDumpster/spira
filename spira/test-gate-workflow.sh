@@ -172,5 +172,24 @@ else
 fi
 
 echo
+echo "13. two pushes to the base branch cannot cancel one another:"
+# THE GROUP, NOT THE FLAG. cancel-in-progress was an expression meant to be false for a
+# push, and it did not hold: two pushes were each cancelled at the instant the next
+# arrived, so neither was gated and neither was cut. A release cut from a later run then
+# carries those commits as though they had passed a gate they never ran.
+#
+# Keying the group on the commit makes two push runs structurally incapable of sharing a
+# group, so cancellation is impossible regardless of how the flag coerces. A pull request
+# still keys on its ref, so a superseded run is still cancelled -- which is wanted there,
+# because no release is cut from it.
+# SCOPED TO THE CONCURRENCY BLOCK. github.sha appears in the Suites step too, so a
+# match over the whole file is satisfied by a line that has nothing to do with this and
+# reports a green the workflow has not earned.
+CONC="$(awk '/^concurrency:/{f=1} f{print} f&&/^[a-z]/&&!/^concurrency:/{exit}' "$GATE_YML")"
+want "positive control: the concurrency block was found" "group:" "$CONC"
+want "the push group is keyed on the commit"             "github.sha" "$CONC"
+want "a pull request still supersedes itself"            "cancel-in-progress" "$CONC"
+
+echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

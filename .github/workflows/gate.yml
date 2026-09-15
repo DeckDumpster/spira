@@ -56,11 +56,20 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# One gate per ref. A superseded pull-request run is cancelled; a push to main is
-# NOT, because cancelling it would skip the release cut for those commits and the
-# next cut would silently carry them under a later tag.
+# A superseded pull-request run is cancelled; a push to the base branch is never
+# cancelled, because a cancelled push is never gated — and the next cut then carries
+# those commits into a release as though they had passed a gate that never ran.
+#
+# THE GROUP CARRIES THAT, NOT THE FLAG. This was written as a fixed group with
+# cancel-in-progress set to an expression meant to be false on a push, and the
+# expression did not hold: two consecutive pushes were each cancelled at the instant
+# the next arrived, so neither was gated and neither was cut. Keying the group on the
+# commit makes two push runs structurally incapable of sharing a group, so there is
+# nothing for cancellation to act on however the flag is coerced. A pull request still
+# keys on its ref and still supersedes itself, which is wanted: no release is cut from
+# a pull-request run, so cancelling one costs nothing.
 concurrency:
-  group: gate-${{ github.ref }}
+  group: gate-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
