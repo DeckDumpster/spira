@@ -51,6 +51,13 @@ OK "harness at $SPIRA_HOME (in $SPIRA_REPO)"
 
 echo
 echo "programs"
+# ADDING A NAME TO EITHER `for b in` LOOP BELOW IS A CHANGE TO THE CONTAINER IMAGE.
+# spira/testenv/doctor-check.sh PARSES these two lines out of this file and fails the image
+# build for any program that is neither installed in the image nor listed in
+# spira/testenv/doctor-waivers with a reason. That is deliberate — it stops the image and the
+# harness drifting apart — but nothing here said so, and adding `jq` and `zstd` to the WARN
+# loop broke the image build, which took testenv-batch.sh down with it and left every suite
+# running on the host. Add the program to the Containerfile, or waive it with a reason.
 # FATAL: the loop cannot run without these. `flock` is one of them because the landing gate
 # serialises on the tree it extracts a branch into, and a gate that cannot take that lock
 # refuses rather than judging — so every branch would fail its gate and every finished bead
