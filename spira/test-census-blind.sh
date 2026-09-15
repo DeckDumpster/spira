@@ -303,7 +303,12 @@ _doctor_has_dolt=0
 for _p in "$FAKE_BIN" /usr/local/bin /usr/bin /bin; do [ -x "$_p/dolt" ] && _doctor_has_dolt=1 && break; done
 
 embed_out="$(run_doctor "$TMP/embedded-db")"
-embed_dolt_lines="$(printf '%s\n' "$embed_out" | grep -i 'dolt' || true)"
+embed_dolt_lines="$(printf '%s\n' "$embed_out" | grep -iE '^\s+(ok|warn|FAIL)\s+dolt' || true)"
+# The broad grep -i 'dolt' also captures events-probe FAIL lines that mention "dolt
+# embedded" in their path string (e.g. "FAIL  events write/read round trip failed —
+# writes via dolt embedded (...)"), which produces a false FAIL when dolt is installed
+# at /usr/local/bin. The precise pattern here matches only lines where the status label
+# is immediately followed by "dolt" — i.e. the dolt binary ok/warn/FAIL line itself.
 if [ "$_doctor_has_dolt" = 1 ]; then
     want   "embedded store, dolt present: ok line" "ok" "$embed_dolt_lines"
 else
@@ -312,7 +317,7 @@ fi
 nowant "embedded store: no FAIL for dolt" "FAIL" "$embed_dolt_lines"
 
 server_out="$(run_doctor "$TMP/server-db")"
-server_dolt_lines="$(printf '%s\n' "$server_out" | grep -i 'dolt' || true)"
+server_dolt_lines="$(printf '%s\n' "$server_out" | grep -iE '^\s+(ok|warn|FAIL)\s+dolt' || true)"
 if [ "$_doctor_has_dolt" = 1 ]; then
     want   "server-mode store, dolt present: ok line" "ok" "$server_dolt_lines"
 else
