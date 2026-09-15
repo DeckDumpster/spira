@@ -47,7 +47,14 @@ gap()  { printf 'runner-deps: MISSING %s\n' "$1" >&2; rc=1; }
 # it. uidmap supplies newuidmap/newgidmap, without which rootless refuses to map
 # anything; the network and storage helpers are what podman falls back to when the
 # kernel cannot give it a native path.
-PKGS=(podman uidmap fuse-overlayfs slirp4netns catatonit
+#
+# BOTH NETWORK HELPERS, NOT ONE. podman 5 defaults rootless networking to pasta and
+# does not fall back to slirp4netns when it is missing -- it aborts the container with
+# "could not find pasta, the network namespace can't be configured". The binary is
+# pasta; the package that carries it is passt. slirp4netns stays for older podman,
+# which defaults the other way. Installing both costs a few hundred kilobytes and
+# removes a whole class of run lost to a distro's choice of default.
+PKGS=(podman uidmap fuse-overlayfs slirp4netns passt catatonit
       git curl ca-certificates python3 jq)
 
 if [ "$CHECK_ONLY" -eq 0 ]; then

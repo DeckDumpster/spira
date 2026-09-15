@@ -134,5 +134,19 @@ else
 fi
 
 echo
+echo "rootless networking has a provider the installed podman will actually use:"
+# podman 5 defaults rootless networking to pasta, not slirp4netns, and falls back to
+# nothing: with pasta absent it aborts the container with
+#   Error: could not find pasta, the network namespace can't be configured
+# which testenv-batch reports as rc=2 and the gate attributes as a harness fault --
+# correct attribution, but the run is still lost. slirp4netns alone is not enough on
+# a distro shipping podman 5; the binary is called pasta and the package is passt.
+if grep -qE '^PKGS=\(|^ +' "$SCRIPT" && grep -qE '(^|[^a-z-])passt([^a-z-]|$)' "$SCRIPT"; then
+    ok "the package list provides pasta"
+else
+    bad "the package list provides pasta" "no passt in PKGS; podman 5 rootless cannot configure a netns"
+fi
+
+echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
