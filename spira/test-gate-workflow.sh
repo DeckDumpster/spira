@@ -48,6 +48,7 @@ pass=0; fail=0
 ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
 want() { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2]" ;; esac; }
+nowant() { case "$3" in *"$2"*) bad "$1" "must not contain [$2]" ;; *) ok "$1" ;; esac; }
 
 echo "test-gate-workflow.sh"
 
@@ -103,6 +104,40 @@ echo
 echo "6. history and tags are fetched:"
 want "fetch-depth is set"  "fetch-depth" "$G"
 want "tags are fetched"    "fetch-tags"  "$G"
+
+echo
+echo "7. the runner is provisioned per run, not a standing label:"
+# There is NO standing pool of general-purpose self-hosted runners. A runner
+# exists only because a provision job created it, and its label is unique to that
+# run. A job naming a fixed label waits for a runner that is never registered:
+# it queues forever, reports nothing, and looks exactly like a busy queue.
+want "the VM is provisioned"        "ephemeral-ci/provision@v1"                        "$G"
+want "the gate targets that VM"     'needs.provision.outputs.label'                    "$G"
+nowant "no fixed runner label"      "self-hosted, linux, x64"                          "$G"
+
+echo
+echo "8. the VM is destroyed whatever the outcome:"
+# if: always() is load-bearing. A cancelled or failed run otherwise leaves the VM
+# alive and the hourly reaper becomes the only thing that cleans up, which is a
+# backstop and not a plan. The gate cancels superseded pull-request runs by
+# design, so this is the common case here, not the rare one.
+want "teardown runs"                "ephemeral-ci/teardown@v1"                         "$G"
+want "teardown is unconditional"    "always()"                                         "$G"
+
+echo
+echo "9. the gate confirms which machine it landed on:"
+# A label collision or a stale registration would run the gate somewhere else
+# entirely, and every step would still report success. RUNNER_NAME is set by the
+# runner itself, so it is the one value the workflow cannot assert into being true.
+want "the runner identity is checked" "RUNNER_NAME"                                    "$G"
+
+echo
+echo "10. the VM is given what the suites need before they run:"
+# A cold VM has no podman, no image and no caches. testenv-batch.sh exits 2 when
+# the container does not come up, which this workflow maps to 75 -- so a missing
+# dependency reports as a harness fault forever rather than as the one-line fix
+# it is. The dependency list is executable and lives in the repository.
+want "host dependencies are installed" "runner-deps.sh"                                "$G"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"

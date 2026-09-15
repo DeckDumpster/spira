@@ -5,26 +5,47 @@
 # subset would produce a green that does not mean what a local green means, and
 # the whole point of gating here is that the two agree.
 #
-# WHY SELF-HOSTED. testenv-batch.sh stands up a rootless podman container with
-# system AND user systemd inside it, from a 1.81 GB image. A hosted runner would
-# rebuild or pull that image on every run. The self-hosted runners already keep it
-# warm, and the image tag is content-addressed (testenv.sh tag) so a stale one can
-# never be silently reused.
+# THE RUNNER DOES NOT EXIST UNTIL THIS WORKFLOW CREATES IT. There is no standing
+# pool of self-hosted machines. `provision` clones a virtual machine that has
+# never run anything else, registers it as a runner under a label unique to this
+# run, and `teardown` destroys it. So the gate job's `runs-on` is an expression,
+# not a fixed label: a job naming a fixed label would wait for a runner nobody
+# registers, which does not fail — it queues, silently, forever.
+#
+# WHY A FRESH MACHINE AND NOT A LONG-LIVED ONE. The suites install systemd user
+# units, start timers and drive a terminal multiplexer. On a shared runner that
+# is contamination in both directions: this repository's suites corrupting a
+# neighbour's run, and undeclared state left by a neighbour deciding this one's
+# verdict. A machine with no history is the only environment in which a green
+# means what it says.
 #
 # PULL REQUEST vs PUSH ARE DIFFERENT GATES, AND MUST BE.
 #   On a pull request, testenv-batch.sh derives the suite selection from the diff
 #   against the base ref. That is the right, fast answer for a branch.
-#   On a push to main that diff is EMPTY. Diff-derived selection would select
-#   nothing, exit 0, and cut a release off a gate that ran zero suites — a green
-#   that means "nothing was tested". So the push gate names the whole corpus
-#   explicitly (law-a-runner-takes-a-list), and that is the run a release is cut
-#   from.
+#   On a push to the base branch that diff is EMPTY. Diff-derived selection would
+#   select nothing, exit 0, and cut a release off a gate that ran zero suites — a
+#   green that means "nothing was tested". So the push gate names the whole
+#   corpus explicitly (law-a-runner-takes-a-list), and that is the run a release
+#   is cut from.
 #
 # EXIT 75 IS NOT A BRANCH FAILURE. testenv-batch exits 2 when the container never
 # came up and 3 when the install inside it failed. In both cases the branch was
 # never tested, so reporting it as tested-and-bad is a lie in the expensive
 # direction — someone goes looking for a defect that was never demonstrated. Those
-# map to 75, matching the repo-map's gate command, and the job says so.
+# map to 75, matching the repo-map's gate command, and the job says so. A missing
+# host dependency would land in that same bucket and read as "retry me" forever,
+# which is why runner-deps.sh runs first and fails with 1 on its own account.
+#
+# A FORK PULL REQUEST CANNOT RUN THIS. `provision` needs repository secrets and a
+# fork does not receive them, so the provision job fails and no runner is ever
+# created. That is the intended boundary, not a defect: it is what makes a
+# per-run machine safe to offer to a public repository at all.
+#
+# THE ACTION REFERENCES BELOW NAME THE OPERATOR'S OWN RUNNER INFRASTRUCTURE, which
+# is otherwise kept out of this repository. `uses:` cannot take an expression, so
+# there is no way to make it configurable; a clone replaces these two references
+# with its own, or deletes the provision and teardown jobs and points `runs-on` at
+# whatever it has.
 
 name: Gate
 
@@ -33,6 +54,7 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 # One gate per ref. A superseded pull-request run is cancelled; a push to main is
 # NOT, because cancelling it would skip the release cut for those commits and the
@@ -41,9 +63,44 @@ concurrency:
   group: gate-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # Create the machine the gate will run on.
+  # ---------------------------------------------------------------------------
+  provision:
+    runs-on: ubuntu-latest
+    outputs:
+      vmid:  ${{ steps.vm.outputs.vmid }}
+      label: ${{ steps.vm.outputs.label }}
+    steps:
+      - uses: DeckDumpster/ephemeral-ci/provision@v1
+        id: vm
+        with:
+          ts-oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          ts-oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          runner-reg-pat:     ${{ secrets.RUNNER_REG_PAT }}
+          pve-token-id:       ${{ secrets.PVE_TOKEN_ID }}
+          pve-token-secret:   ${{ secrets.PVE_TOKEN_SECRET }}
+          pve-api-host:       ${{ vars.PVE_API_HOST }}
+          pve-node:           ${{ vars.PVE_NODE }}
+          template-vmid:      ${{ vars.TEMPLATE_VMID }}
+
+  # ---------------------------------------------------------------------------
+  # The gate itself, on the machine provisioned above.
+  #
+  # THE JOB NAME IS A CONTRACT the moment a branch ruleset requires it. A required
+  # status check that never reports does not fail a pull request — it blocks the
+  # merge indefinitely with "the base branch policy prohibits the merge", while
+  # every job in the run is green and nothing looks wrong. Renaming this job is
+  # therefore a change to the branch policy and has to be made in both places or
+  # neither.
+  # ---------------------------------------------------------------------------
   gate:
-    runs-on: [self-hosted, linux, x64]
+    needs: provision
+    runs-on: [self-hosted, "${{ needs.provision.outputs.label }}"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,6 +110,19 @@ jobs:
           # selection would be empty and the gate would pass having run nothing.
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Confirm the job landed on the provisioned machine
+        # RUNNER_NAME is set by the runner process itself, so it is the one value
+        # this workflow cannot assert into being true. A stale registration or a
+        # label collision would otherwise run the whole gate somewhere else and
+        # report success.
+        run: test "$RUNNER_NAME" = "${{ needs.provision.outputs.label }}"
+
+      - name: Host dependencies
+        # A cold machine has no container runtime, no image and no caches. This
+        # installs what is missing and then proves the machine can actually start
+        # a rootless container, rather than inferring it from a package list.
+        run: bash spira/runner-deps.sh
 
       - name: Lints
         # Cheap, pure bash, and they fail on the things no suite can see: operator
@@ -69,16 +139,17 @@ jobs:
         # harness fault comes to read as a branch failure.
         run: |
           set -uo pipefail
-          if [ "${{ github.event_name }}" = "push" ]; then
-            # The release gate. Name every suite, because the diff is empty here.
-            printf 'gate: push to %s — running the whole corpus\n' "${{ github.ref_name }}"
-            _b=0
-            ls spira/test-*.sh | xargs -n1 basename \
-              | bash spira/testenv-batch.sh --suites - "${{ github.sha }}" || _b=$?
-          else
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
             printf 'gate: pull request — running the suites the diff selects\n'
             _b=0
             bash spira/testenv-batch.sh "${{ github.sha }}" || _b=$?
+          else
+            # The release gate. Name every suite, because the diff is empty here.
+            printf 'gate: %s on %s — running the whole corpus\n' \
+              "${{ github.event_name }}" "${{ github.ref_name }}"
+            _b=0
+            ls spira/test-*.sh | xargs -n1 basename \
+              | bash spira/testenv-batch.sh --suites - "${{ github.sha }}" || _b=$?
           fi
           case "$_b" in
             0) printf 'gate: pass\n' ;;
@@ -90,12 +161,45 @@ jobs:
           esac
 
   # ---------------------------------------------------------------------------
-  # Cut the release unit. Only from main, only from a gate that passed.
+  # Destroy the machine.
+  #
+  # if: always() is load-bearing, and this workflow cancels superseded pull-request
+  # runs by design, so the cancelled path is the common one here rather than the
+  # rare one. Without it a cancelled run leaves the machine alive and the periodic
+  # orphan sweep becomes the only thing that cleans up — which is a backstop, not
+  # a plan. No guard on an empty vmid: the teardown action skips the destroy
+  # itself when there is nothing to destroy, and it still has a runner
+  # registration to remove, which a provision that registered but never got a job
+  # scheduled onto it would otherwise leak.
+  # ---------------------------------------------------------------------------
+  teardown:
+    needs: [provision, gate]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: DeckDumpster/ephemeral-ci/teardown@v1
+        with:
+          vmid:  ${{ needs.provision.outputs.vmid }}
+          label: ${{ needs.provision.outputs.label }}
+          runner-reg-pat:     ${{ secrets.RUNNER_REG_PAT }}
+          ts-oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          ts-oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          pve-token-id:       ${{ secrets.PVE_TOKEN_ID }}
+          pve-token-secret:   ${{ secrets.PVE_TOKEN_SECRET }}
+          pve-api-host:       ${{ vars.PVE_API_HOST }}
+          pve-node:           ${{ vars.PVE_NODE }}
+
+  # ---------------------------------------------------------------------------
+  # Cut the release unit. Only from the base branch, only from a gate that passed.
+  #
+  # ON A HOSTED RUNNER, not the provisioned one: this needs git and release.sh and
+  # nothing else, and holding a machine open for it would keep a virtual machine
+  # alive through a job that does no work on it.
   # ---------------------------------------------------------------------------
   cut:
     needs: gate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
@@ -112,13 +216,29 @@ jobs:
 
       - name: Cut release tag
         id: cut
+        env:
+          # A RELEASE TAG IS ANNOTATED, AND AN ANNOTATED TAG NEEDS AN IDENTITY. A
+          # hosted runner has no git identity configured, so `git tag -a` fails
+          # with "Committer identity unknown" and the cut dies after the tag name
+          # has already been computed. The domain is the harness's own synthetic
+          # one, the same shape aeons commit under: this tag was made by a machine
+          # and should say so rather than borrow a person's address.
+          GIT_AUTHOR_NAME: Spira Gate
+          GIT_AUTHOR_EMAIL: gate@spira.local
+          GIT_COMMITTER_NAME: Spira Gate
+          GIT_COMMITTER_EMAIL: gate@spira.local
         # release.sh exits 0 WITHOUT tagging when no bead landed since the last
         # release. That is the common case on a docs or workflow commit, and it is
         # success, not failure — so an empty tag output is normal and the publish
         # job below skips.
+        #
+        # THE CHECKOUT PATH IS PASSED EXPLICITLY. With no argument release.sh asks
+        # the repo-map to resolve the home repository to a checkout, and the
+        # repo-map describes an operator's own machine — in CI it resolves
+        # nothing and the cut refuses.
         run: |
           set -uo pipefail
-          tag="$(bash spira/release.sh cut)" || {
+          tag="$(bash spira/release.sh cut "$GITHUB_WORKSPACE")" || {
             printf 'cut: release.sh refused\n' >&2; exit 1; }
           if [ -z "$tag" ]; then
             printf 'cut: no beads landed since the last release — nothing to tag\n'
