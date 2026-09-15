@@ -75,11 +75,16 @@ fi
 # WARN: each disables one feature, named, rather than the loop.
 # SPIRA_AGENT is used here rather than a literal: an operator who sets it to a different
 # binary name gets a useful message about that binary, not about a product they did not install.
-for b in gh "${SPIRA_AGENT:-claude}" tmux node; do
+# jq and zstd each have a working fallback (python3 for JSON, gzip for archives), so their
+# absence is a warning about a slower or less convenient path, never about a broken one.
+# They are checked here because they are DECLARED — test-bin-manifest.sh fails if anything
+# in SPIRA_BINS is examined by nothing, which is how bd-embedded went a week unnoticed.
+for b in gh "${SPIRA_AGENT:-claude}" tmux node jq zstd; do
     if command -v "$b" >/dev/null 2>&1; then OK "$b — $(command -v "$b")"
     else WARN "$b is not on PATH — $(spira_bin_purpose "$b")" \
               "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."; fi
 done
+
 # CARGO VERSION CHECK. cargo absent is a WARN — the loop runs fine without the panel.
 # cargo present but below 1.78.0 is a FAIL: loom/Cargo.lock is version 4, which only
 # parses on rustc >= 1.78.0. A stale toolchain fails silently in build.sh with "lock file
@@ -112,6 +117,77 @@ fi
 # systemd unit and an aeon's confined environment. SPIRA_BD (set in conf.sh) is the pin that
 # makes them agree; the configured binary is labelled here so a mismatch in "bd schema" below
 # immediately names the offender (sp-s2zvn, scar from 2026-09-08).
+# --------------------------------------------------------------------------------------
+# DEVELOPMENT DEPENDENCIES — what it takes to TEST Spira, not to run it.
+#
+# Reported in their own section and never counted as faults, because a production box is
+# correct without any of them. `--dev` promotes a missing one to a warning; that is the mode
+# for a box where suites are expected to run.
+#
+# THE EXCEPTION IS A SILENT DOWNGRADE. A program whose absence changes behaviour rather than
+# stopping it gets its consequence printed in EVERY mode, including on a production box —
+# because "tests quietly run on a different and much worse engine" is not a fact an operator
+# can be expected to infer from a line that says a binary is missing. That is precisely how
+# bd-embedded went missing here for a week while every check reported healthy.
+# --------------------------------------------------------------------------------------
+_dr_dev_mode=0
+[ "${1:-}" = "--dev" ] && _dr_dev_mode=1
+echo
+echo "development dependencies (not needed to run the loop)"
+for b in $SPIRA_BINS; do
+    [ "$(spira_bin_tier "$b")" = dev ] || continue
+    # RESOLVE THE WAY THE CONSUMER RESOLVES IT. A dev tool is not always taken from PATH:
+    # build-bd.sh invokes $HOME/.local/go/bin/go directly, so a PATH-only check calls a box
+    # broken that is not. Each entry is looked for where the thing that needs it looks.
+    _dr_found=""
+    case "$b" in
+        go) for _c in "${GO:-}" "$HOME/.local/go/bin/go" "$(command -v go 2>/dev/null || true)"; do
+                [ -n "$_c" ] && [ -x "$_c" ] && { _dr_found="$_c"; break; }
+            done ;;
+        *)  _dr_found="$(command -v "$b" 2>/dev/null || true)" ;;
+    esac
+    if [ -n "$_dr_found" ]; then
+        OK "$b — $_dr_found"
+        continue
+    fi
+    _dr_absent="$(spira_bin_absent "$b")"
+    if [ "$_dr_dev_mode" = 1 ]; then
+        WARN "$b is not on PATH — $(spira_bin_purpose "$b")" "${_dr_absent:-}"
+    elif [ -n "$_dr_absent" ]; then
+        # Not a fault on this box, but its absence is doing something, so say what.
+        WARN "$b is not on PATH — $(spira_bin_purpose "$b")" "$_dr_absent"
+    else
+        printf '  info  %s is not on PATH — %s\n' "$b" "$(spira_bin_purpose "$b")"
+    fi
+done
+unset _dr_absent
+
+# A STRAY .beads ABOVE THE TEMP DIRECTORY DISABLES EMBEDDED FIXTURES SILENTLY.
+# bd walks UP from the working directory looking for a workspace. Every fixture builder —
+# testdb.sh's embedded probe, and build-bd.sh's own verification — works inside `mktemp -d`,
+# which lives under TMPDIR. One abandoned `.beads` there (a `bd init` that once ran with
+# cwd=/tmp) makes every one of them refuse with "legacy Dolt workspace detected".
+#
+# The consequence is not a visible failure. testdb.sh reads the refusal as "this box has no
+# embedded engine" and falls back to the shared Dolt server; build-bd.sh reads it as a bad
+# binary and declines to install a good one. Both are correct responses to a wrong answer.
+# An empty directory nobody could see cost a week of test failures that read as code defects.
+_dr_tmp="${TMPDIR:-/tmp}"
+_dr_stray=""
+_dr_d="$_dr_tmp"
+while [ -n "$_dr_d" ] && [ "$_dr_d" != / ]; do
+    [ -e "$_dr_d/.beads" ] && _dr_stray="$_dr_d/.beads"
+    _dr_d="$(dirname "$_dr_d")"
+done
+[ -e "/.beads" ] && _dr_stray="/.beads"
+if [ -n "$_dr_stray" ]; then
+    WARN "a beads workspace sits above the temp directory: $_dr_stray" \
+         "bd searches parent directories, so every fixture built in $_dr_tmp refuses with \"legacy Dolt workspace detected\". Embedded fixtures silently fall back to a shared Dolt server and build-bd.sh refuses to install a good binary. Remove it if nothing owns it."
+else
+    OK "no stray beads workspace above $_dr_tmp"
+fi
+unset _dr_tmp _dr_stray _dr_d
+
 echo
 echo "bd binaries on PATH"
 _spira_dr_bd_count=0

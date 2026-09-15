@@ -1132,9 +1132,69 @@ spira_require() {        # spira_require <bin> [<bin>...] -> 0, or 1 having name
     return 1
 }
 
+# --------------------------------------------------------------------------------------
+# THE DEPENDENCY MANIFEST — three functions over one list of programs.
+#
+#   spira_bin_purpose <bin>   what it is for
+#   spira_bin_tier    <bin>   runtime | optional | dev
+#   spira_bin_absent  <bin>   what actually happens on a box without it
+#
+# WHY A TIER. "Dependency" conflated two different things: what is needed to RUN the loop
+# and what is needed to DEVELOP it. Nothing recorded the difference, so the development set
+# was never checked anywhere — and a program that only the test path uses could go missing
+# on a box that looked, by every check that existed, completely healthy.
+#
+# WHY A THIRD FIELD FOR ABSENCE. `tier` says who needs it; it does not say what its absence
+# DOES, and those come apart in the case that matters. A missing program usually fails
+# loudly or turns one named feature off. But `bd-embedded` missing does neither: the fixture
+# builder silently falls back to a shared Dolt server, which is not "tests off" — it is
+# tests running on the architecture that was deleted for failing 5 of 6 concurrent builds.
+# A downgrade nobody announces is indistinguishable from health, and stayed that way here
+# for a week while it produced a hundred beads that read as ordinary test failures.
+#
+# So: anything whose absence CHANGES BEHAVIOUR rather than stopping it must say so here,
+# and doctor.sh prints that sentence rather than a generic "not found".
+# --------------------------------------------------------------------------------------
+
+# Every program the harness or its tests invoke, in one list. doctor.sh iterates this rather
+# than carrying its own copy — two lists is how the development set came to be checked by
+# nothing at all.
+SPIRA_BINS="${SPIRA_BINS:-bd git python3 flock dolt gh tmux node cargo jq zstd bd-embedded podman go}"
+
+spira_bin_tier() {
+    case "$1" in
+        # runtime: the loop cannot run at all.
+        bd|git|python3|flock)      echo runtime ;;
+        # optional: the loop runs; one named feature is off.
+        dolt|gh|tmux|node|cargo|jq|zstd) echo optional ;;
+        # dev: needed to DEVELOP or TEST Spira, never to run it. A production box is
+        # correct without any of these, which is why they are reported separately and
+        # never counted as faults outside `doctor.sh --dev`.
+        bd-embedded|podman|go)     echo dev ;;
+        *)                         echo optional ;;
+    esac
+}
+
+# What a box without this program actually does. Empty means the ordinary case — it fails
+# loudly, or the one feature named in spira_bin_purpose is simply off.
+spira_bin_absent() {
+    case "$1" in
+        bd-embedded)
+            echo "test fixtures fall back to a shared Dolt server instead of a private embedded store per fixture. Not a feature off: concurrent fixture builds contend on one schema lock, measured at 610s with 5 of 6 failing, against 25s with 0 failing on embedded. Suites fail in ways that read as defects in the code under test. Restore with build-bd.sh --install (needs a Go toolchain)." ;;
+        podman)
+            echo "every suite that builds a container fixture cannot run; testenv.sh and the suites that use it fail rather than skip." ;;
+        go)
+            echo "build-bd.sh cannot build bd, so a box whose bd is wrong or non-CGO cannot be repaired locally." ;;
+        *) echo "" ;;
+    esac
+}
+
 spira_bin_purpose() {
     case "$1" in
         bd)      echo "the beads issue tracker — the substrate; nothing runs without it" ;;
+        bd-embedded) echo "the CGO build of bd that opens an embedded Dolt store — the test fixture engine" ;;
+        podman)  echo "container fixtures for the suites that need a whole machine" ;;
+        go)      echo "building bd from source (build-bd.sh); never needed to run the loop" ;;
         dolt)    echo "the SQL server beads stores its database in" ;;
         git)     echo "every repository operation" ;;
         gh)      echo "opening and landing pull requests (repos whose land mode is 'pr')" ;;

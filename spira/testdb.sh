@@ -298,10 +298,13 @@ testdb_up() {            # testdb_up <tag>
     #          workspace sharing the database's name makes bd's own CREATE DATABASE fail
     #          with "database not available after CREATE DATABASE". A dot-prefixed parent
     #          is not scanned, so .ws/<name> is invisible to that sweep.
-    #        - A workspace outside the data root (mktemp -d in /tmp) makes bd refuse with
-    #          "legacy Dolt workspace detected"; it resolves part of its server-mode config
-    #          relative to the data root. Measured on all three layouts: /tmp fails,
-    #          <root>/<name>.ws and <root>/.ws/<name> both succeed.
+    #        - Keeping it out of /tmp is incidental, not a rule about bd. When this was
+    #          written a stray, empty `.beads` sat in /tmp; bd walks UP from the working
+    #          directory looking for a workspace, found that one, and refused any init
+    #          under /tmp with "legacy Dolt workspace detected". The stray directory was
+    #          the fault and has been removed. The data root remains the right home for a
+    #          server-mode workspace anyway — it keeps the fixture and its database
+    #          adjacent — but a workspace elsewhere is not wrong.
     TESTDB_DIR="$SPIRA_TESTDB_DATA/.ws/$TESTDB_NAME"
     mkdir -p "$TESTDB_DIR" || { printf 'testdb: mkdir %s failed\n' "$TESTDB_DIR" >&2; return 1; }
     local init_out init_rc
