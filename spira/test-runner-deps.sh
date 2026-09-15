@@ -25,6 +25,22 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 SCRIPT="$HERE/runner-deps.sh"
+# EVERY MATCHER IN THIS SUITE READS CODE, NOT PROSE.
+#
+# runner-deps.sh carries long comments by policy, and those comments NAME the very
+# mechanisms these checks look for -- "the package that carries it is passt",
+# "apt has had DPkg::Lock::Timeout since 1.9.11". A matcher run over the whole
+# file therefore matches the EXPLANATION of a fix just as happily as the fix, and
+# reports a script the mechanism was deleted from as green. That happened three
+# times here, once in a check that had already been landed and reported as
+# verified. Strip the comments once, up front, and match against that.
+#
+# _joined additionally folds line continuations, because a continued command puts
+# `apt-get install` and its argument on opposite sides of a backslash, where a
+# line-based matcher sees neither and calls a correct loop missing.
+_code="$(grep -vE '^[[:space:]]*#' "$SCRIPT")"
+_joined="$(printf '%s' "$_code" | sed -e :a -e '/\\$/N; s/\\\n//; ta')"
+
 pass=0; fail=0
 ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
@@ -141,10 +157,49 @@ echo "rootless networking has a provider the installed podman will actually use:
 # which testenv-batch reports as rc=2 and the gate attributes as a harness fault --
 # correct attribution, but the run is still lost. slirp4netns alone is not enough on
 # a distro shipping podman 5; the binary is called pasta and the package is passt.
-if grep -qE '^PKGS=\(|^ +' "$SCRIPT" && grep -qE '(^|[^a-z-])passt([^a-z-]|$)' "$SCRIPT"; then
+if printf '%s' "$_joined" | grep -qE '(^|[^a-z-])passt([^a-z-]|$)'; then
     ok "the package list provides pasta"
 else
     bad "the package list provides pasta" "no passt in PKGS; podman 5 rootless cannot configure a netns"
+fi
+
+echo
+echo "the install survives the two races a per-run VM actually loses:"
+# MATCH CODE, NOT PROSE, FOR EVERY CHECK BELOW. The comments in runner-deps.sh are
+# long by policy and they NAME the mechanisms these checks look for, so a matcher
+# run over the whole file is really searching the explanation of the fix rather
+# than the fix. Both checks here were seen green against a script the mechanism
+# had been deleted from, for exactly that reason. Strip comments once, and join
+# line continuations, because a continued command puts `apt-get install` and its
+# argument on opposite sides of a backslash where a line-based matcher sees
+# neither.
+# A per-run VM boots, systemd starts unattended-upgrades, and this script starts
+# installing -- in that order, seconds apart. The loser of that race gets
+#   E: Could not get lock /var/lib/dpkg/lock-frontend ... held by (unattended-upgr)
+# and gives up. It fails perhaps one run in several with a list that installed
+# cleanly either side, so it reads as a broken dependency list rather than a
+# timing bug. apt has had DPkg::Lock::Timeout since 1.9.11; waiting on the lock
+# beats a retry loop, which would race the same holder again.
+if printf '%s' "$_joined" | grep -qE 'DPkg::Lock::Timeout=[0-9]+'; then
+    ok "apt waits for the dpkg lock"
+else
+    bad "apt waits for the dpkg lock" "no DPkg::Lock::Timeout; a boot-time unattended-upgrade loses the run"
+fi
+# apt installs a list as ONE transaction, so a single name with no installation
+# candidate on this release aborts every other package alongside it. Retry
+# singly and let the re-check decide what is actually fatal.
+#
+# MATCH CODE, NOT PROSE. The first version of this check grepped the whole file
+# for /retry|individ/ and passed against a script with no retry path at all --
+# it had matched the word "retry" in a comment on an unrelated subject. The
+# comments here are long by policy, so any matcher run over the whole file is
+# really searching the prose. Strip comment lines first, then require the
+# structure: a loop that installs ONE package per apt-get call.
+if printf '%s' "$_joined" | grep -qE 'for [A-Za-z_]+ in "\$\{_missing\[@\]\}"' \
+   && printf '%s' "$_joined" | grep -qE 'apt-get install .*"\$p"'; then
+    ok "one uninstallable name does not take the list with it"
+else
+    bad "one uninstallable name does not take the list with it" "batch apt failure is fatal; no per-package retry loop in the code"
 fi
 
 echo

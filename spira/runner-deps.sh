@@ -65,10 +65,33 @@ if [ "$CHECK_ONLY" -eq 0 ]; then
     done
     if [ "${#_missing[@]}" -gt 0 ]; then
         note "installing: ${_missing[*]}"
-        sudo DEBIAN_FRONTEND=noninteractive apt-get update -q \
-            && sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends \
-                 "${_missing[@]}" \
-            || { printf 'runner-deps: apt-get failed\n' >&2; exit 1; }
+        # WAIT FOR THE DPKG LOCK RATHER THAN FAILING ON IT. A per-run VM boots,
+        # systemd starts unattended-upgrades, and this script starts installing --
+        # in that order, seconds apart. The loser of that race gets "Could not get
+        # lock /var/lib/dpkg/lock-frontend ... held by (unattended-upgr)" and, with
+        # no timeout, gives up at once. It is a RACE, so it fails perhaps one run in
+        # several with a list that installed cleanly on the runs either side, which
+        # reads as a broken dependency list rather than a timing bug -- and the first
+        # thing anyone does is re-run, which works. apt has had DPkg::Lock::Timeout
+        # since 1.9.11. Waiting on the lock beats a retry loop, which would only race
+        # the same holder again. Unquoted on purpose: it must expand to two words, or
+        # to nothing on an apt too old to know the option.
+        _aptlock="-o DPkg::Lock::Timeout=600"
+        sudo DEBIAN_FRONTEND=noninteractive apt-get update -q $_aptlock
+        if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq $_aptlock \
+                  --no-install-recommends "${_missing[@]}"; then
+            # ONE BAD NAME MUST NOT COST THE OTHER TEN. apt installs a list as a
+            # single transaction, so a package with no installation candidate on
+            # this release aborts every other package alongside it. Retry singly
+            # and let the verification below decide what is actually fatal -- this
+            # cannot rescue a lock failure, which is what $_aptlock above is for.
+            note "batch install failed — retrying one at a time"
+            for p in "${_missing[@]}"; do
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq $_aptlock \
+                     --no-install-recommends "$p" \
+                    || note "could not install $p"
+            done
+        fi
     else
         note "packages already present"
     fi
