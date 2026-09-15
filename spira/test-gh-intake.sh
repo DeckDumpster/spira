@@ -102,11 +102,28 @@ chmod +x "$TMP/bin/curl"
 # SPIRA_PATH IS HOW THE STUBS SURVIVE. gh-intake.sh sources conf.sh, which
 # rebuilds PATH from SPIRA_PATH — a stub directory merely prepended to PATH is
 # discarded, and the suite would drive the real bd against the real store.
+# THE BEAD REPOSITORY IS A FIXTURE, NOT THIS BOX. gh-intake.sh refuses to file
+# beads against a repo: label that does not resolve to a checkout through the
+# repo-map -- correctly, because every bead it filed would otherwise park. Taking
+# the default meant BEAD_REPO became "spira", which resolves on a developer's box
+# and nowhere else: this suite passed on the host and went red in the container
+# and in CI, asserting against one machine's layout rather than against the code.
+#
+# So the suite brings its own map and its own checkout, and names the repository
+# something the shipped default could never produce. A fixture pinned to a
+# NON-DEFAULT value is what makes the repo: label below evidence: asserting
+# "spira" would pass just as well against a literal written into the script.
+FIXTURE_REPO=gh-intake-fixture
+mkdir -p "$TMP/checkout"
+git -C "$TMP/checkout" init -q 2>/dev/null
+printf '%s | %s | push | origin/main | | true\n' "$FIXTURE_REPO" "$TMP/checkout" > "$TMP/repo-map"
+
 run() {   # run <open-issue-count> [args...]
     printf '%s' "$1" > "$STATE/phase"; shift
     : > "$BDLOG"; : > "$CURLLOG"
     PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" BDLOG="$BDLOG" CURLLOG="$CURLLOG" STATE="$STATE" \
     SPIRA_BD=bd SPIRA_GH_INTAKE_REPO=DeckDumpster/spira \
+    SPIRA_GH_INTAKE_BEAD_REPO="$FIXTURE_REPO" SPIRA_REPO_MAP="$TMP/repo-map" \
     SPIRA_GH_INTAKE_API=https://api.github.com \
         bash "$SCRIPT" "$@" 2>&1
 }
@@ -186,8 +203,11 @@ else bad "the live partition labels are applied at creation" "no spira,plan on t
 # through the repo-map, and a bead that names none is labelled needs-ryan and left
 # for a human -- the livelock the harness itself defines. Ingesting without it
 # files work that is guaranteed to stall at the moment an aeon picks it up.
-if grep -qE 'repo:spira' "$BDLOG"; then ok "the bead names a repository"
-else bad "the bead names a repository" "no repo: label on the create"; fi
+# Matched against the FIXTURE's name, not "spira". The label must come from the
+# resolved repository, and asserting the shipped default would pass equally well
+# against a literal written into the script.
+if grep -qE "repo:$FIXTURE_REPO" "$BDLOG"; then ok "the bead names the resolved repository"
+else bad "the bead names the resolved repository" "no repo:$FIXTURE_REPO label on the create"; fi
 if grep -q 'external-ref github:DeckDumpster/spira#1' "$BDLOG"; then ok "the external ref is the join key"
 else bad "the external ref is the join key" "no external-ref on the create"; fi
 # The pull request in the feed must not have become a bead.
