@@ -76,7 +76,7 @@ SPIRA_TESTDB_LIB SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT
 SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO
 SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET
 SPIRA_GATE_SUITES SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
-SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE
+SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST
 SPIRA_PROD SPIRA_INSTANCE
 SPIRA_RELEASES SPIRA_RELEASES_KEEP
 SPIRA_REVIEWER_MODEL SPIRA_REVIEWER_VERDICTS SPIRA_REVIEWER_TIMEOUT SPIRA_REVIEWER_DIFF_LIMIT
@@ -819,6 +819,24 @@ spira_conf_defaults() {
     # a runner that has stopped are the same silence from outside. Longer than the interval at
     # which the sweep names the scan, so an ordinary quiet hour does not read as a fault.
     : "${SPIRA_SUITES_STALE:=21600}"
+    # WHETHER THIS INSTALLATION RUNS ITS OWN TEST SUITES on a timer. On by default when
+    # SPIRA_REPO is a git checkout (development mode — the operator can land changes); off
+    # when it is not (a consumer installation from a release tarball, where SPIRA_REPO has
+    # no .git directory). A consumer has no reason to self-test: the suites assert against
+    # the harness source, and a consumer installation carries a read-only release snapshot
+    # that will never change between installs. The beads those suites file are noise that
+    # competes with the operator's own work queue and cannot be worked (the bead carries a
+    # repo: label that resolves to nothing in the consumer's repo-map).
+    #
+    # Set to 0 to disable; set to 1 to enable even on a non-development installation.
+    # Empty or absent means "derive from the checkout": detect .git in SPIRA_REPO_DERIVED.
+    if [ -z "${SPIRA_SELF_TEST:-}" ]; then
+        if [ -d "${SPIRA_REPO_DERIVED:-}/.git" ] || [ -f "${SPIRA_REPO_DERIVED:-}/.git" ]; then
+            SPIRA_SELF_TEST=1
+        else
+            SPIRA_SELF_TEST=0
+        fi
+    fi
 
     # THE PRODUCTION CHECKOUT — the ONLY directory systemd executes. Landing a change on
     # the development checkout (SPIRA_REPO) does not alter production until promote.sh carries

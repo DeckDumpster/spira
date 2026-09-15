@@ -69,7 +69,6 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
        concierge.service concierge.timer
        beads-push.service beads-push.timer
        spira-archive.service spira-archive.timer
-       spira-suites.service spira-suites.timer
        spira-groom.service spira-groom.timer
        spira-maechen.service spira-maechen.timer
        spira-moot-sweep.service spira-moot-sweep.timer
@@ -83,7 +82,7 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
 _ENABLE_TMPL=(cockpit-ensure.timer concierge.timer spira-watch-refresh.timer
               beads-push.timer spira-sentinel.timer spira-ops.timer spira-auron.timer
               spira-watchtower.timer spira-skew.timer
-              spira-archive.timer spira-suites.timer
+              spira-archive.timer
               spira-archivist.timer spira-watch-notify.timer
               spira-groom.timer
               spira-maechen.timer
@@ -115,6 +114,26 @@ if declare -F spira_single_checkout >/dev/null 2>&1 && spira_single_checkout; th
 else
     UNITS+=(spira-promote.service spira-promote.timer)
     ENABLE+=("$(inst_name spira-promote.timer)")
+fi
+
+# spira-suites.timer runs the timed suite set — every test-*.sh the landing gate does not
+# run — and files a bead per red. On a DEVELOPMENT installation this is correct: a new suite
+# is executed by existing, and a red is a genuine finding worth tracking. On a CONSUMER
+# installation (operator uses Spira as a tool but does not develop it) the suites assert
+# against the harness source the operator will never change, so every red is noise that
+# competes with their own work queue and cannot be worked (the bead carries repo: labels
+# that resolve to nothing in the consumer's repo-map).
+#
+# SPIRA_SELF_TEST=1: install and enable the timer (development mode or explicit opt-in).
+# SPIRA_SELF_TEST=0: the unit is OPTIONAL — not installed, never enabled, never a doctor
+#                    fault. An operator who already disabled it will not see it re-appear.
+#
+# The default is derived by conf.sh from whether SPIRA_REPO contains a .git directory.
+if [ "${SPIRA_SELF_TEST:-1}" != "0" ]; then
+    UNITS+=(spira-suites.service spira-suites.timer)
+    ENABLE+=("$(inst_name spira-suites.timer)")
+else
+    OPTIONAL+=(spira-suites.service spira-suites.timer)
 fi
 
 # dolt-beads.service supervises the Dolt server itself, which is only this harness's business
