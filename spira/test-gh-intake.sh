@@ -38,37 +38,36 @@ ok "gh-intake.sh is executable"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/bin" "$TMP/state"
-BDLOG="$TMP/bd.log"; STATE="$TMP/state"
+BDLOG="$TMP/bd.log"; CURLLOG="$TMP/curl.log"; STATE="$TMP/state"
 
-# bd stub. It MODELS the store rather than replaying a script: `update --labels`
-# records the id, and `list --json` reports that id as carrying the labels from
-# then on. Without that the post-check could never be exercised — the run would
-# look identical whether stamping worked or silently did nothing, which is the
-# failure this suite exists to catch.
+# bd stub. It MODELS the store: `create` records the external ref, and `list`
+# reports it from then on. Without that the post-check could never be exercised —
+# the run would look identical whether the labels stuck or silently did not,
+# which is the failure this suite exists to catch.
 #
-# STATE/phase   how many ingested beads the store holds
-# STATE/broken  when 1, `update` accepts and records nothing: a stamp that
-#               reports success and changes nothing, i.e. the real defect.
+# STATE/broken=1 makes `create` succeed and the bead come back WITHOUT labels:
+# a create that reports success and leaves the bead unclaimable, which is what a
+# renamed label or a rejected flag would look like.
 cat > "$TMP/bin/bd" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$BDLOG"
 case "$*" in
-    *"github sync"*) exit 0 ;;
-    *update*)
-        [ "$(cat "$STATE/broken" 2>/dev/null || echo 0)" = "1" ] && exit 0
-        for a in "$@"; do case "$a" in sp-gh*) printf '%s\n' "$a" >> "$STATE/stamped" ;; esac; done
+    *create*)
+        for a in "$@"; do case "$a" in github:*) printf '%s\n' "$a" >> "$STATE/created" ;; esac; done
+        cat >/dev/null 2>&1
         exit 0 ;;
     *list*)
-        n=$(cat "$STATE/phase" 2>/dev/null || echo 0)
-        printf '['
-        i=0; first=1
-        while [ "$i" -lt "$n" ]; do
-            id=$(printf 'sp-gh%02d' "$i")
-            if grep -qx "$id" "$STATE/stamped" 2>/dev/null; then lbl='"spira","plan"'; else lbl=''; fi
-            [ "$first" = 1 ] || printf ','
-            printf '{"id":"%s","external_ref":"github:DeckDumpster/spira#%d","labels":[%s]}' "$id" "$i" "$lbl"
-            first=0; i=$((i+1))
-        done
+        broken=$(cat "$STATE/broken" 2>/dev/null || echo 0)
+        # One non-github bead always present, so the store-is-empty guard is not
+        # what is being tested here.
+        printf '[{"id":"sp-native","external_ref":"","labels":["spira","plan"]}'
+        i=0
+        while IFS= read -r ref; do
+            [ -n "$ref" ] || continue
+            if [ "$broken" = "1" ]; then lbl=''; else lbl='"spira","plan"'; fi
+            printf ',{"id":"sp-gh%02d","external_ref":"%s","labels":[%s]}' "$i" "$ref" "$lbl"
+            i=$((i+1))
+        done < <(cat "$STATE/created" 2>/dev/null)
         printf ']'
         exit 0 ;;
 esac
@@ -76,59 +75,88 @@ exit 0
 STUB
 chmod +x "$TMP/bin/bd"
 
-# curl stub: serves the token write-probe only.
+# curl stub: serves the issues endpoint. STATE/phase is how many open issues the
+# tracker holds. One PULL REQUEST is always included, because the real endpoint
+# returns them and nothing but the pull_request key distinguishes one.
 cat > "$TMP/bin/curl" <<'STUB'
 #!/usr/bin/env bash
-if [ "${TOKEN_WRITABLE:-0}" = "1" ]; then printf 'x-oauth-scopes: repo, workflow\n'
-else printf 'x-oauth-scopes:\n'; fi
+printf '%s\n' "$*" >> "$CURLLOG"
+case "$*" in *"page=1"*) : ;; *) printf '[]'; exit 0 ;; esac
+n=$(cat "$STATE/phase" 2>/dev/null || echo 0)
+# PRETTY-PRINTED, AS THE REAL ENDPOINT IS. A page spans many lines. A reader that
+# parses the feed a line at a time finds no complete document and reports an
+# empty tracker, which is indistinguishable from a wrong repository name — it
+# cost a run before this fixture had newlines in it.
+printf '[\n'
+printf '  {"number":999,\n   "title":"a pull request",\n   "body":"x",\n   "pull_request":{"url":"u"}}'
+i=1
+while [ "$i" -le "$n" ]; do
+    printf ',\n  {"number":%d,\n   "title":"issue %d",\n   "body":"body %d"}' "$i" "$i" "$i"
+    i=$((i+1))
+done
+printf '\n]\n'
 exit 0
 STUB
 chmod +x "$TMP/bin/curl"
 
 # SPIRA_PATH IS HOW THE STUBS SURVIVE. gh-intake.sh sources conf.sh, which
-# rebuilds PATH from SPIRA_PATH — so a stub directory merely prepended to PATH is
-# discarded, and the suite would silently drive the real bd against the real
-# store. Going in through the configured seam is the only way that holds.
-run() {   # run <ingested-count> [args...]
+# rebuilds PATH from SPIRA_PATH — a stub directory merely prepended to PATH is
+# discarded, and the suite would drive the real bd against the real store.
+run() {   # run <open-issue-count> [args...]
     printf '%s' "$1" > "$STATE/phase"; shift
-    : > "$BDLOG"
-    PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" BDLOG="$BDLOG" STATE="$STATE" \
-    SPIRA_BD=bd GITHUB_TOKEN=fake-token SPIRA_GH_INTAKE_REPO=DeckDumpster/spira \
-    TOKEN_WRITABLE="${TOKEN_WRITABLE:-0}" \
+    : > "$BDLOG"; : > "$CURLLOG"
+    PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" BDLOG="$BDLOG" CURLLOG="$CURLLOG" STATE="$STATE" \
+    SPIRA_BD=bd SPIRA_GH_INTAKE_REPO=DeckDumpster/spira \
+    SPIRA_GH_INTAKE_API=https://api.github.com \
         bash "$SCRIPT" "$@" 2>&1
 }
-reset() { : > "$STATE/stamped"; printf '0' > "$STATE/broken"; }
+reset() { : > "$STATE/created"; printf '0' > "$STATE/broken"; }
 reset
 
 echo "1. it is one-way, and that is structural:"
-# THE PRIMARY MECHANISM is that no code path constructs a push. A flag that had
-# to be remembered would be a habit, and the statute is explicit that this must
-# be enforced rather than remembered.
-if grep -qE 'github (sync|push)[^|]*--push-only|github push' "$SCRIPT"; then
-    bad "no push is ever constructed" "the script contains a push invocation"
+# The primary mechanism is that no code path writes to GitHub at all — not a flag
+# that must be remembered. A push to a public tracker cannot be taken back.
+if grep -qE 'curl[^|]*-X *(POST|PATCH|PUT|DELETE)|--data|-d ' "$SCRIPT"; then
+    bad "no write to GitHub is constructed" "the script issues a mutating request"
 else
-    ok "no push is ever constructed"
+    ok "no write to GitHub is constructed"
 fi
-if grep -q -- '--pull-only' "$SCRIPT"; then ok "the sync is pinned to --pull-only"
-else bad "the sync is pinned to --pull-only" "no --pull-only in the script"; fi
-
 out="$(run 2)"
-if grep -q -- '--pull-only' "$BDLOG"; then ok "the run actually passed --pull-only"
-else bad "the run actually passed --pull-only" "bd was called without it"; fi
-if grep -qE 'push-only|github push' "$BDLOG"; then bad "no push was attempted" "bd log shows a push"
-else ok "no push was attempted"; fi
+if grep -qE '\-X *(POST|PATCH|PUT|DELETE)' "$CURLLOG" 2>/dev/null; then
+    bad "no write was attempted" "curl log shows a mutating request"
+else
+    ok "no write was attempted"
+fi
+
+echo "2. it needs no credential at all:"
+# THE SOURCE IS PUBLIC BY DEFINITION — it is an issue tracker anyone can read. A
+# token would exist only to satisfy a client library, and a credential on the box
+# is a credential the next caller can misuse. With none, "this bridge cannot
+# write to GitHub" stops being a property to probe and becomes a fact about the
+# machine (law-beads-is-never-public).
+if grep -qE 'GITHUB_TOKEN|github\.token|Authorization:' "$SCRIPT"; then
+    bad "no credential is read" "the script references a GitHub token"
+else
+    ok "no credential is read"
+fi
+out="$(run 2)"
+if grep -qE 'Authorization|token' "$TMP/curl.log" 2>/dev/null; then
+    bad "no credential is sent" "an Authorization header was sent"
+else
+    ok "no credential is sent"
+fi
+# Positive control: the fetch must actually have happened, or the assertion above
+# is satisfied by a script that made no request at all.
+if grep -q 'api.github.com' "$TMP/curl.log" 2>/dev/null; then ok "positive control: the API was actually called"
+else bad "positive control: the API was actually called" "curl log is empty"; fi
 
 echo
-echo "2. a token that can write is refused:"
-# Defence in depth. The script cannot push, but a writable token on the box is a
-# loaded gun for the next caller, so intake refuses to be the thing that
-# normalises having one.
-out="$(TOKEN_WRITABLE=1 run 2)"; rc=$?
-if [ "$rc" -ne 0 ]; then ok "a writable token is refused (rc=$rc)"
-else bad "a writable token is refused" "exited 0"; fi
-case "$out" in *[Ww]rit*) ok "it says why" ;; *) bad "it says why" "no mention of write access" ;; esac
+echo "2b. a pull request is not an issue:"
+# The issues endpoint returns pull requests too. Ingesting them files a bead for
+# every PR ever opened against the repository.
+if grep -q 'pull_request' "$SCRIPT"; then ok "pull requests are excluded"
+else bad "pull requests are excluded" "nothing filters pull_request"; fi
 
-echo
 echo "3. a stamp that changes nothing is a hard failure, not a quiet success:"
 # An ingested bead with no labels matches no fayth predicate, so no aeon can ever
 # claim it. Reporting success there files work nobody will do. The stub accepts
@@ -142,16 +170,30 @@ case "$out" in *"no fayth can claim"*) ok "it names the consequence" ;;
                *) bad "it names the consequence" "no mention of unclaimable beads" ;; esac
 reset
 
-echo "4. it stamps into a live partition:"
-out="$(run 2)"
-if grep -qE 'update' "$BDLOG"; then ok "beads are labelled after the pull"
-else bad "beads are labelled after the pull" "no update call in the bd log"; fi
-# The label pair must be one a fayth predicate actually selects; a bead labelled
-# with anything else is filed and unreachable.
-if grep -qE 'spira' "$BDLOG"; then ok "the scope label is applied"
-else bad "the scope label is applied" "no scope label in the update"; fi
+echo "4. beads are created directly into a live partition:"
+# Created WITH the labels, not created and then labelled: a bead that exists for
+# even one sentinel pass without them is one the loop has already declined.
+reset; out="$(run 2)"
+# The count is asserted explicitly: "created 0" is a pass for every assertion
+# below that only looks for absence.
+if grep -q 'fetched 2 open issue' <<<"$out"; then ok "the multi-line feed is parsed (2 issues, PR excluded)"
+else bad "the multi-line feed is parsed" "got: $(grep fetched <<<"$out")"; fi
+if grep -q 'create' "$BDLOG"; then ok "beads are created"
+else bad "beads are created" "no create call"; fi
+if grep -qE 'labels spira,plan|--labels spira,plan' "$BDLOG"; then ok "the live partition labels are applied at creation"
+else bad "the live partition labels are applied at creation" "no spira,plan on the create"; fi
+if grep -q 'external-ref github:DeckDumpster/spira#1' "$BDLOG"; then ok "the external ref is the join key"
+else bad "the external ref is the join key" "no external-ref on the create"; fi
+# The pull request in the feed must not have become a bead.
+if grep -q 'github:DeckDumpster/spira#999' "$BDLOG"; then bad "the pull request was not ingested" "PR #999 was created"
+else ok "the pull request was not ingested"; fi
 
 echo
+echo "4b. a second run ingests nothing twice:"
+out="$(run 2)"
+if grep -q 'already present 2' <<<"$out"; then ok "re-running is idempotent"
+else bad "re-running is idempotent" "expected 'already present 2', got: $(printf '%s' "$out" | tail -2 | tr '\n' ' ')"; fi
+
 echo "5. --dry-run changes nothing:"
 out="$(run 2 --dry-run)"
 if grep -qE '^update|update ' "$BDLOG"; then bad "dry-run does not write" "an update was issued"

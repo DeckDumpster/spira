@@ -1,42 +1,42 @@
 #!/usr/bin/env bash
 #
-# gh-intake.sh — ingest GitHub issues as beads, one way, into a live partition.
+# gh-intake.sh — ingest public GitHub issues as beads, one way, into a live partition.
 #
 #   gh-intake.sh [--dry-run]
 #
 # WHY THIS EXISTS. Issues filed against the public repository are reports from
-# somewhere else — another machine, another operator, a clean deploy that found
-# what a developed-on one cannot. They are worth working, and the loop only works
-# beads. This is the bridge, and it is the only sanctioned one.
+# somewhere else — another machine, a clean deploy that finds what a developed-on
+# one cannot. They are worth working, and the loop only works beads.
 #
-# ONE WAY, AND STRUCTURALLY SO. `bd github sync` is bidirectional by default. The
-# beads store holds internal working notes, agent memories and the overseer's own
-# judgement; publishing it to a public issue tracker is irreversible and is
-# precisely what law-beads-is-never-public forbids. Two things enforce that here
-# and neither is a habit: no code path in this file constructs a push, and a
-# token that carries write scopes is refused before anything runs. The second is
-# defence in depth — the script cannot push, but a writable token sitting on the
-# box is a loaded gun for the next caller, and intake declines to be the thing
-# that normalises having one.
+# NO CREDENTIAL, AND THAT IS THE POINT. The tracker is public: anyone may read it
+# without authenticating. A token here would exist only to satisfy a client
+# library, and a token on the box is one the next caller can misuse — a sync run
+# without --pull-only would publish internal working notes and the overseer's own
+# judgement to a public issue list, which law-beads-is-never-public forbids and
+# which cannot be undone. With no credential anywhere in this path, "the bridge
+# cannot write to GitHub" stops being a property to probe and becomes a fact
+# about the machine. That is why this talks to the API directly rather than
+# through a sync client that authenticates unconditionally.
 #
-# STAMPING IS THE POINT, NOT THE PULL. A pulled issue arrives with whatever
-# labels GitHub had, which is usually none. A bead with no labels matches no
-# fayth predicate, so no aeon can ever claim it: it is filed and unreachable,
-# which is neither of the two states a filed bead is permitted to be in
-# (law-filed-bead-queued-xor-escalated — 130 beads once sat in exactly that state
-# across three machines, including a bug the operator had hit himself). So every
-# ingested bead is stamped into a partition that a fayth actually selects, and
-# the run FAILS if any ingested bead is left outside one.
+# STAMPING IS THE POINT, NOT THE FETCH. A bead with no labels matches no fayth
+# predicate, so no aeon can ever claim it: filed and unreachable, which is
+# neither of the two states a filed bead may be in (law-filed-bead-queued-xor-
+# escalated — 130 beads once sat exactly there across three machines). Every
+# ingested bead is created directly into a partition a fayth selects, and the run
+# FAILS if any ingested bead is left outside one.
 #
-# THE POST-CHECK IS THE POSITIVE CONTROL. Reporting "nothing to do" is
-# indistinguishable from a broken query, a renamed label or a changed external-ref
-# format, and the broken version reads as all-clear. So the check is not "did we
-# stamp anything" but "is anything still unstamped" — an assertion that fails
-# loudly when the mechanism has quietly stopped working.
+# THE POST-CHECK ASSERTS WHAT REMAINS, not what was done. "Created zero" is what a
+# working run on an empty inbox looks like and equally what a broken query, a
+# renamed label or a changed ref format looks like — and the broken one reads as
+# all-clear. "Zero remain unstamped" is true only in the first case.
 #
-# WHAT IT DOES NOT DO. It never closes, comments on or otherwise writes to the
-# GitHub issue. The issues are an inbox; the bead is the work item. Keeping the
-# two in step in the other direction would need a write token, which is the thing
+# IDEMPOTENT BY EXTERNAL REF. Re-running ingests nothing twice: the ref
+# github:<owner>/<repo>#<number> is the join key, matched against the store
+# before anything is created.
+#
+# WHAT IT NEVER DOES. It does not close, comment on, label or otherwise write to
+# the GitHub issue. The tracker is an inbox; the bead is the work item. Keeping
+# them in step in the other direction would need a credential, which is the thing
 # this file exists to do without.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -46,7 +46,7 @@ DRY=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) DRY=1; shift ;;
-        -h|--help) sed -n '2,6p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,5p' "$0"; exit 0 ;;
         *) printf 'gh-intake: unknown argument: %s\n' "$1" >&2; exit 2 ;;
     esac
 done
@@ -54,40 +54,18 @@ done
 BD="${SPIRA_BD:-bd}"
 DB="${SPIRA_DB:?SPIRA_DB is not set}"
 REPO="${SPIRA_GH_INTAKE_REPO:-}"
-TOKEN="${GITHUB_TOKEN:-}"
 SCOPE="${SPIRA_SCOPE_LABEL:-spira}"
 LANE="${SPIRA_PLAN_LABEL:-plan}"
+API="${SPIRA_GH_INTAKE_API:-https://api.github.com}"
 
 die() { printf 'gh-intake: %s\n' "$1" >&2; exit 1; }
 log() { printf 'gh-intake: %s\n' "$1"; }
 
-[ -n "$REPO" ]  || die "SPIRA_GH_INTAKE_REPO is not set — nothing says which repository to ingest from"
-[ -n "$TOKEN" ] || die "GITHUB_TOKEN is not set — the API refuses even a public repository without one"
+[ -n "$REPO" ] || die "SPIRA_GH_INTAKE_REPO is not set — nothing says which tracker to ingest from"
 
-# ── the token must not be able to write ──────────────────────────────────────
-# A classic token advertises its scopes in a response header. A fine-grained one
-# does not, and there is no endpoint that will tell you what it may do; so when
-# the header is absent this cannot be proved either way and says so, rather than
-# reporting clean. It is not the load-bearing control — no push is constructed
-# below — but an unprovable answer is reported as unprovable.
-_probe="$(curl -sS -I -H "Authorization: Bearer $TOKEN" https://api.github.com/ 2>/dev/null \
-          | tr -d '\r' | grep -i '^x-oauth-scopes:' | cut -d: -f2- | tr -d ' ')"
-if [ -n "$_probe" ]; then
-    case ",$_probe," in
-        *,repo,*|*,public_repo,*|*write*|*,delete_repo,*)
-            die "the token carries write scopes ($_probe). Intake refuses a token that can
-            write to the tracker it reads. Use a fine-grained token with Issues: Read-only
-            on $REPO." ;;
-    esac
-    log "token: no write scopes advertised ($_probe)"
-else
-    log "token: scopes not advertised (fine-grained token) — write access could not be proved either way"
-fi
-
-# ── the store, before ────────────────────────────────────────────────────────
-# _ingested lists every bead this bridge is responsible for, as "<id> <labels>".
-# The external ref is written by bd's own github sync; matching on it rather than
-# on a label is what makes a re-run idempotent.
+# ── what the store already holds ─────────────────────────────────────────────
+# Matching on the external ref rather than on a title is what makes a re-run
+# ingest nothing twice: a title can be edited on either side, a ref cannot.
 _ingested() {
     "$BD" -C "$DB" list --json 2>/dev/null | python3 -c '
 import sys,json
@@ -96,8 +74,8 @@ except Exception: sys.exit(0)
 rows=d if isinstance(d,list) else d.get("issues",d.get("data",[]))
 for r in rows:
     ref=(r.get("external_ref") or "")
-    if "github" not in ref.lower(): continue
-    print(r.get("id",""), ",".join(r.get("labels") or []))
+    if not ref.lower().startswith("github:"): continue
+    print(r.get("id",""), ref, ",".join(r.get("labels") or []))
 '
 }
 _total() { "$BD" -C "$DB" list --json 2>/dev/null | python3 -c '
@@ -108,54 +86,102 @@ rows=d if isinstance(d,list) else d.get("issues",d.get("data",[]))
 print(len(rows))'; }
 
 before_total="$(_total)"
-before_n="$(_ingested | grep -c . || true)"
-log "store holds $before_total bead(s); $before_n already ingested from GitHub"
+[ "$before_total" -gt 0 ] || die "the store reports zero beads — the query is broken, not the store empty"
+known="$(_ingested | awk '{print $2}')"
+log "store holds $before_total bead(s); $(printf '%s' "$known" | grep -c . || true) already ingested"
 
-# ── pull ─────────────────────────────────────────────────────────────────────
-# --pull-only is the whole contract. It appears exactly once, here.
-sync_args=(-C "$DB" github sync --pull-only)
-[ "$DRY" -eq 1 ] && sync_args+=(--dry-run)
-GITHUB_OWNER="${REPO%%/*}" GITHUB_REPO="${REPO##*/}" GITHUB_TOKEN="$TOKEN" \
-    "$BD" "${sync_args[@]}" || die "bd github sync --pull-only failed"
+# ── fetch ────────────────────────────────────────────────────────────────────
+# Unauthenticated, which GitHub rate-limits to 60 requests an hour. An ingest
+# costs one request per hundred issues, so the limit is not a constraint — but a
+# 403 for exhausting it and a 403 for anything else look alike, so it is named
+# rather than folded into a generic failure.
+# ONE FILE PER PAGE, never one concatenated stream. The API pretty-prints its
+# JSON, so a page spans many lines; appending pages to a single file and parsing
+# it a line at a time finds no complete document and reports an empty tracker —
+# which is indistinguishable from a wrong repository name.
+FEED="$(mktemp -d)"; trap 'rm -rf "$FEED"' EXIT INT TERM
+page=1
+while :; do
+    body="$(curl -sS --max-time 30 \
+        "$API/repos/$REPO/issues?state=open&per_page=100&page=$page" 2>/dev/null)" || \
+        die "could not reach $API — no issues were read"
+    n="$(printf '%s' "$body" | python3 -c '
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception: print("ERR"); sys.exit(0)
+if isinstance(d,dict):
+    print("MSG:"+str(d.get("message",""))); sys.exit(0)
+print(len(d))' )"
+    case "$n" in
+        ERR)       die "the API returned something that is not JSON — refusing to guess at it" ;;
+        MSG:*)     die "the API refused: ${n#MSG:}" ;;
+    esac
+    printf '%s' "$body" > "$FEED/page-$page.json"
+    [ "$n" -ge 100 ] || break
+    page=$((page+1))
+    [ "$page" -le 20 ] || die "more than 2000 open issues — refusing to page further"
+done
 
-after_n="$(_ingested | grep -c . || true)"
-log "pulled: $((after_n - before_n)) new, $after_n ingested in total"
+# PULL REQUESTS ARE NOT ISSUES. The issues endpoint returns both; a pull request
+# carries a pull_request key and nothing else distinguishes it. Ingesting them
+# files a bead for every pull request ever opened.
+mapfile -t ROWS < <(python3 - "$FEED" "$REPO" <<'PY'
+import sys,json,os,glob
+feed,repo=sys.argv[1],sys.argv[2]
+out=[]
+for f in sorted(glob.glob(os.path.join(feed,"page-*.json"))):
+    try: d=json.load(open(f))
+    except Exception: continue
+    if not isinstance(d,list): continue
+    for i in d:
+        if "pull_request" in i: continue
+        out.append((i["number"], i.get("title") or "", i.get("body") or ""))
+for n,t,b in sorted(out):
+    print(json.dumps({"ref":"github:%s#%d"%(repo,n),"title":t,"body":b}))
+PY
+)
+log "fetched ${#ROWS[@]} open issue(s) from $REPO"
+[ "${#ROWS[@]}" -gt 0 ] || die "the tracker reported no open issues — that is possible, but it is also what a wrong repository name looks like. Check SPIRA_GH_INTAKE_REPO=$REPO"
 
-# ── stamp ────────────────────────────────────────────────────────────────────
-# An ingested bead with no scope label is unreachable by every fayth predicate.
-unstamped="$(_ingested | awk -v s="$SCOPE" '{ n=split($2,a,","); hit=0; for(i=1;i<=n;i++) if(a[i]==s) hit=1; if(!hit) print $1 }')"
-n_unstamped="$(printf '%s' "$unstamped" | grep -c . || true)"
-
-if [ "$n_unstamped" -gt 0 ]; then
-    log "stamping $n_unstamped bead(s) into ${SCOPE},${LANE}"
-    if [ "$DRY" -eq 1 ]; then
-        log "dry run — no labels written"
-    else
-        for id in $unstamped; do
-            "$BD" -C "$DB" update "$id" --labels "+${SCOPE},+${LANE}" >/dev/null 2>&1 \
-                || log "WARNING: could not label $id"
-        done
+# ── create what is missing ───────────────────────────────────────────────────
+created=0; skipped=0
+for row in "${ROWS[@]}"; do
+    ref="$(printf '%s' "$row" | python3 -c 'import sys,json;print(json.load(sys.stdin)["ref"])')"
+    if printf '%s\n' "$known" | grep -qxF "$ref"; then
+        skipped=$((skipped+1)); continue
     fi
-else
-    log "nothing to stamp"
-fi
+    title="$(printf '%s' "$row" | python3 -c 'import sys,json;print(json.load(sys.stdin)["title"])')"
+    if [ "$DRY" -eq 1 ]; then
+        printf '  would create: %s  %s\n' "$ref" "${title:0:70}"
+        created=$((created+1)); continue
+    fi
+    # CREATED INTO THE PARTITION, not created and then labelled. A bead that
+    # exists for even one sentinel pass without its labels is a bead the loop has
+    # already declined to claim.
+    printf '%s' "$row" | python3 -c '
+import sys,json
+d=json.load(sys.stdin)
+print("Ingested from %s\n\n%s" % (d["ref"], d["body"]))' \
+      | "$BD" -C "$DB" create "$title" \
+            --external-ref "$ref" \
+            --labels "$SCOPE,$LANE" \
+            -t bug \
+            --body-file - >/dev/null 2>&1 \
+        && created=$((created+1)) \
+        || log "WARNING: could not create a bead for $ref"
+done
+log "created $created, already present $skipped"
 
 # ── the post-check ───────────────────────────────────────────────────────────
-# THE ASSERTION IS ABOUT WHAT REMAINS, not about what was done. "Stamped zero" is
-# what a working run on an empty inbox looks like AND what a broken query looks
-# like; "zero remain unstamped" is true only in the first case.
 if [ "$DRY" -eq 0 ]; then
-    if [ "$before_total" -eq 0 ]; then
-        die "the store reports zero beads — the query is broken, not the inbox empty"
-    fi
-    left="$(_ingested | awk -v s="$SCOPE" '{ n=split($2,a,","); hit=0; for(i=1;i<=n;i++) if(a[i]==s) hit=1; if(!hit) print $1 }')"
+    left="$(_ingested | awk -v s="$SCOPE" '{ n=split($3,a,","); hit=0; for(i=1;i<=n;i++) if(a[i]==s) hit=1; if(!hit) print $1" "$2 }')"
     n_left="$(printf '%s' "$left" | grep -c . || true)"
     if [ "$n_left" -gt 0 ]; then
         printf 'gh-intake: %s ingested bead(s) carry no %s label and no fayth can claim them:\n' \
             "$n_left" "$SCOPE" >&2
-        printf '  %s\n' $left >&2
+        printf '%s\n' "$left" >&2
         die "ingest filed work that nothing will pick up"
     fi
 fi
 
-log "ok — $after_n bead(s) ingested from $REPO, all in ${SCOPE},${LANE}"
+log "ok — $REPO ingested into ${SCOPE},${LANE}"
