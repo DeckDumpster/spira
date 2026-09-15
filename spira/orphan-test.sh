@@ -79,8 +79,11 @@ fi
 # Pure alphanumeric tokens are skipped: they appear too commonly in prose, comments, and
 # shell syntax to serve as reliable search keys without a high false-positive rate.
 #
-# ONLY REMOVED LINES (starting with -) from non-test files are scanned. Added lines are
-# irrelevant — the question is whether the token still lives anywhere a test can find it.
+# A token is "removed" only when it appears on a - line but NOT on any + line of the same
+# diff (for non-test files). A token present on both sides was refactored — the content
+# changed but the identifier survived — and the test suites referencing it are not orphaned.
+# Without this, renaming a comment or wrapping a dolt call in an if-block flags every token
+# on the changed lines even when those same tokens appear on the replacement lines.
 extract_tokens() {
     git -C "$ROOT" diff "$SPIRA_GATE_BASE...HEAD" 2>/dev/null \
     | awk '
@@ -94,15 +97,22 @@ extract_tokens() {
         /^\+\+\+ / { next }
         /^diff --git / { in_test = 0; next }
 
-        # Removed lines from non-test files only.
-        /^-/ && !in_test && substr($0, 1, 3) != "---" {
+        # Collect tokens from removed (-) and added (+) lines of non-test files separately.
+        /^[-+]/ && !in_test && substr($0, 1, 3) != "---" && substr($0, 1, 3) != "+++" {
+            sign = (substr($0, 1, 1) == "-") ? 1 : 0
             line = substr($0, 2)
-            # Walk the line extracting every run of [a-zA-Z0-9_-] starting with a letter.
             while (match(line, /[a-zA-Z][a-zA-Z0-9_-]*/)) {
                 tok = substr(line, RSTART, RLENGTH)
                 line = substr(line, RSTART + RLENGTH)
-                # Must be ≥5 chars and contain at least one hyphen.
-                if (length(tok) >= 5 && tok ~ /-/) print tok
+                if (length(tok) >= 5 && tok ~ /-/) {
+                    if (sign) rem[tok] = 1
+                    else      add[tok] = 1
+                }
+            }
+        }
+        END {
+            for (tok in rem) {
+                if (!(tok in add)) print tok
             }
         }
     ' | sort -u

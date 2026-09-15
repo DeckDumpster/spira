@@ -195,7 +195,40 @@ is   "OVERRIDE CASE: annotated line is not refused" "0" "$rc5"
 want "says clean with override present"             "clean" "$out5"
 
 # ---------------------------------------------------------------------------------------
-# SUMMARY
+# REFACTORED-TOKEN CASE: token on both - and + lines of the same diff is NOT refused.
+#
+# SEEN RED: without the fix, the old code extracted every token from - lines regardless of
+# whether the same token appeared on + lines. Wrapping a call in an `if` block puts the
+# original line on - and an equivalent line on +; the token is not truly removed. The old
+# orphan-test flagged it as removed and refused the branch — the exact false positive this
+# fix closes. The test was seen to fail against the unfixed awk path (only checking -lines).
 # ---------------------------------------------------------------------------------------
+
+# Start from a fresh state: reset test-source.sh back to asserting sp-recur-.
+# The source file also needs sp-recur- on both - and + sides (refactored, not removed).
+git -C "$ROOT" checkout -q HEAD~1 -- spira/source.sh
+git -C "$ROOT" checkout -q HEAD~1 -- spira/test-source.sh
+
+# Commit a version where source.sh is modified so sp-recur- appears on BOTH - and + lines:
+# a wrapping change (add an if-block) that keeps the token present.
+cat > "$ROOT/spira/source.sh" <<'SRC3'
+#!/usr/bin/env bash
+# Source file — token refactored, not removed.
+LABEL_PREFIX="sp-recur-"
+incident_label() {
+    if true; then
+        printf '%s%d\n' "sp-recur-" "$1"
+    fi
+}
+SRC3
+git -C "$ROOT" add spira/source.sh
+git -C "$ROOT" commit -q -m "refactor: wrap sp-recur- call in if-block (token still present)"
+git -C "$ROOT" update-ref refs/remotes/origin/main "$(git -C "$ROOT" rev-parse HEAD~1)"
+
+out6="$(fence_at "$ROOT")"; rc6=$?
+is   "REFACTORED-TOKEN: token on - and + lines is not refused" "0" "$rc6"
+want "says clean for refactored token"                         "clean" "$out6"
+
+# SUMMARY
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1
