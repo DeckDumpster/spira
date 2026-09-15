@@ -105,8 +105,8 @@ case "$*" in
     "--user disable --now "*)
         _u="${*#*--user disable --now }"
         if grep -qxF "$_u" "$_ENABLED" 2>/dev/null; then
-            grep -vxF "$_u" "$_ENABLED" 2>/dev/null > "${_ENABLED}.tmp" \
-                && mv "${_ENABLED}.tmp" "$_ENABLED" 2>/dev/null || true
+            grep -vxF "$_u" "$_ENABLED" 2>/dev/null > "${_ENABLED}.tmp" || true
+            mv "${_ENABLED}.tmp" "$_ENABLED" 2>/dev/null || true
             /usr/bin/systemctl "$@" 2>/dev/null || true; exit 0
         fi
         exit 1 ;;
