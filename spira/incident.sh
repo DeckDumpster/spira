@@ -8,6 +8,9 @@
 #   incident.sh list                     open incidents
 #   incident.sh backfill-ref-labels      add ref:<hash> to older beads (one-time migration)
 #   incident.sh backfill-recur-causes    convert bare sp-recur-N to sp-recur-N-unrecorded
+#   incident.sh retire-unsatisfiable-delivers [--dry-run]
+#                                        drop delivers: labels naming a path this install
+#                                        can never write (one-time migration)
 #
 # THE INTAKE ALREADY EXISTED IN SHAPE
 # -----------------------------------
@@ -402,8 +405,39 @@ $(head -c 2000 "$pf")" >/dev/null 2>&1
     # applications ledger is updated, its mtime is after started_at, and the close stands.
     # A session that skips both sop.sh calls is re-summoned — enforcing the closing rule
     # mechanically rather than trusting the brief alone.
+    #
+    # SCHEMA ON WRITE: A CRITERION NOBODY CAN SATISFY IS NEVER RECORDED.
+    #
+    # This label used to be stamped unconditionally, and both ways it could be wrong
+    # were live at once. Eleven open beads named $SPIRA_RUN/sop/applied.jsonl, a file
+    # under a directory nothing ever created -- so `sop.sh applied` could not write it,
+    # the mtime check could never pass, and any close without a commit was reopened
+    # forever. Two more named an absolute path under another install's layout, having
+    # travelled between machines inside the bead: no session on this box could satisfy
+    # those at all.
+    #
+    # Repairing the labels afterwards leaves the writer free to mint more, so the check
+    # belongs here. Two conditions, and the label is written only when both hold:
+    #   - the path is under THIS install's run directory, so a session here can write it
+    #   - its parent directory exists, which we ensure rather than assume
+    #
+    # SKIPPING IS LOGGED. A criterion silently omitted is as hard to diagnose as one
+    # that cannot be met -- the bead simply closes on the commit rule and nobody knows
+    # a second rule was meant to apply.
     _sop_ledger="${SPIRA_SOP_LEDGER:-${SPIRA_RUN}/sop/applied.jsonl}"
-    bdq label add "$id" "delivers:note:${_sop_ledger}" >/dev/null 2>&1
+    _deliverable=1
+    case "$_sop_ledger" in
+        "${SPIRA_RUN}"/*) ;;
+        *) _deliverable=0
+           ilog "delivers: $id: ledger $_sop_ledger is outside $SPIRA_RUN — label not written (a session here could never satisfy it)" ;;
+    esac
+    if [ "$_deliverable" = 1 ] && ! mkdir -p "$(dirname "$_sop_ledger")" 2>/dev/null; then
+        _deliverable=0
+        ilog "delivers: $id: cannot create $(dirname "$_sop_ledger") — label not written"
+    fi
+    if [ "$_deliverable" = 1 ]; then
+        bdq label add "$id" "delivers:note:${_sop_ledger}" >/dev/null 2>&1
+    fi
     # LABEL THE REF HASH so future dedup queries take the O(1) label-keyed path instead of
     # scanning all open incident beads. Added at creation so every new bead carries it from
     # the start; the backfill-ref-labels subcommand labels beads filed before this was added.
@@ -649,6 +683,71 @@ except: pass
 ')
     printf 'backfilled %d, skipped (already labelled) — rerun %s list to confirm\n' "$n" "$0"
     [ "$e" -eq 0 ] || printf 'errors on %d beads — check %s\n' "$e" "$ILOG"
+    ;;
+
+retire-unsatisfiable-delivers)
+    # MIGRATION PASS — removes delivers: labels that name a path no session on THIS install
+    # could ever write. A delivers: label is a CLOSING CRITERION: the sentinel reopens a
+    # bead closed without a commit unless the named path was written during the session. So
+    # an unreachable path is not a stale annotation, it is a bead that cannot be closed by
+    # the route the label describes.
+    #
+    # Two ways they got here, both live at once before this ran. Beads filed when the writer
+    # stamped the ledger unconditionally named a file under a directory nothing created.
+    # Beads that travelled between machines carried an ABSOLUTE path belonging to another
+    # install's layout, which no session here can satisfy at all.
+    #
+    # The writer is fixed (see the delivers block in file_incident) so this does not need to
+    # run again; it exists because a closed incident bead is REOPENED by dedup rather than
+    # refiled, which would otherwise resurrect the bad label along with the bead.
+    #
+    # ONLY UNREACHABLE ONES. A delivers: label under this install's run directory is a
+    # working criterion and is left exactly alone — the point is to retire what cannot be
+    # met, never to make beads look tidy.
+    shift
+    _dry=0; [ "${1:-}" = "--dry-run" ] && _dry=1
+    n=0; k=0
+    while IFS=$'\t' read -r bid lab; do
+        [ -n "$bid" ] && [ -n "$lab" ] || continue
+        _path="${lab#delivers:note:}"
+        case "$_path" in
+            "${SPIRA_RUN}"/*)
+                # Under this install AND its directory already there: a session here can
+                # write it, so the criterion works and is left alone.
+                #
+                # THIS BRANCH ONLY ASKS. Two earlier versions ran mkdir -p here and both
+                # were wrong. It made --dry-run mutate, so the dry run created the
+                # directories and then reported every label reachable — and the real run
+                # then retired nothing while the dry run had promised six, which is the
+                # worst thing a migration can do. And the repair itself was a mirage: the
+                # sentinel requires the ledger's MTIME to move during the session, so an
+                # empty directory satisfies nothing. Creating it belongs in the writer,
+                # where a session that runs sop.sh can actually fill it.
+                [ -d "$(dirname "$_path")" ] && { k=$((k+1)); continue; } ;;
+        esac
+        if [ "$_dry" = 1 ]; then
+            printf '  would drop %-9s %s\n' "$bid" "$lab"
+        else
+            bdq label remove "$bid" "$lab" >/dev/null 2>&1 \
+                && ilog "delivers: $bid: retired unsatisfiable $lab"
+        fi
+        n=$((n+1))
+    done < <(bdq list --status open,in_progress --limit 0 --json 2>/dev/null \
+      | python3 -c '
+import sys, json
+try:
+    for b in json.load(sys.stdin):
+        for l in (b.get("labels") or []):
+            if l.startswith("delivers:note:"):
+                print(b.get("id",""), l, sep="\t")
+except Exception:
+    pass
+')
+    if [ "$_dry" = 1 ]; then
+        printf 'would retire %d label(s); %d already reachable and left alone\n' "$n" "$k"
+    else
+        printf 'retired %d unsatisfiable label(s); %d already reachable and left alone\n' "$n" "$k"
+    fi
     ;;
 
 backfill-recur-causes)
