@@ -194,8 +194,12 @@ testdb_up() {            # testdb_up <tag>
     unset SPIRA_DB SPIRA_BD
 
     # ---- SHARED FIXTURE: EMBEDDED (has TESTDB_BASELINE) ----
+    # Server mode sets TESTDB_BASELINE too (for .beads restoration), but must NOT take this
+    # branch: the embedded path exports SPIRA_BD="$TESTDB_BD" (bd-embedded), which is the
+    # wrong binary for a server-mode fixture. Server mode falls through to the SERVER branch
+    # below, which exports SPIRA_BD="$TESTDB_SERVER_BD" (bd) (sp-f342).
     if [ "${TESTDB_SHARED:-0}" = 1 ] && [ -n "${TESTDB_NAME:-}" ] && \
-       [ -n "${TESTDB_BASELINE:-}" ]; then
+       [ -n "${TESTDB_BASELINE:-}" ] && [ "${TESTDB_MODE:-}" != server ]; then
         testdb_reset || {
             printf 'testdb: could not reset shared fixture %s\n' "$TESTDB_NAME" >&2
             # A borrower that cannot start the shared fixture is not a failing suite.
@@ -331,10 +335,12 @@ testdb_up() {            # testdb_up <tag>
     cp -rp "$TESTDB_DIR/.beads" "$TESTDB_BASELINE/.beads" 2>/dev/null || {
         rm -rf "$TESTDB_BASELINE"; TESTDB_BASELINE=""
     }
-    # Use length()==32 rather than {32} so the pattern works on mawk (no interval exprs).
+    # Strip all whitespace from each line before matching: handles trailing-space padding in
+    # some bd sql output formats without changing the NF==1 invariant after strip. Dashes in
+    # the separator line and pipes in MySQL-style table format do not match /^[a-z0-9]+$/.
     TESTDB_SERVER_INIT_HASH="$("$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
         "SELECT commit_hash FROM dolt_log LIMIT 1" 2>/dev/null \
-        | awk 'NF==1 && length($0)==32 && $0 ~ /^[a-z0-9]+$/' | head -1)"
+        | awk '{ gsub(/[[:space:]]/, ""); } length($0)==32 && /^[a-z0-9]+$/' | head -1)"
     [ -n "$TESTDB_SERVER_INIT_HASH" ] || \
         printf 'testdb: warning: could not capture init hash for %s; reset will be slow\n' \
             "$TESTDB_NAME" >&2
@@ -375,6 +381,16 @@ testdb_reset() {
                 printf '%s\n' "$init_out" | sed 's/^/testdb:   /' >&2
                 return 1
             fi
+            # Capture the new init hash and update TESTDB_BASELINE so subsequent resets
+            # can use the fast SQL path instead of stop/restart again (sp-f342).
+            if [ -d "${TESTDB_BASELINE:-}" ]; then
+                rm -rf "$TESTDB_BASELINE/.beads"
+                cp -rp "$TESTDB_DIR/.beads" "$TESTDB_BASELINE/.beads" 2>/dev/null || true
+            fi
+            TESTDB_SERVER_INIT_HASH="$("$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
+                "SELECT commit_hash FROM dolt_log LIMIT 1" 2>/dev/null \
+                | awk '{ gsub(/[[:space:]]/, ""); } length($0)==32 && /^[a-z0-9]+$/' \
+                | head -1)"
             return 0
         fi
         local reset_out reset_rc
