@@ -176,6 +176,54 @@ else
     fi
 fi
 
+# ======================================================================================
+echo
+echo "every suite that EXECUTES suites.sh declares the inline escape:"
+# ======================================================================================
+# suites.sh delegates its pass to a container unless SPIRA_SUITES_INLINE=1 is set. A suite
+# that drives suites.sh against fake suites in a scratch tree must set it, or the run it is
+# asserting about never happens: the containerized pass runs a different tree, files nothing
+# into the fixture database, and every "a bead was filed" assertion reads 0 — which is how
+# test-output-visibility.sh and test-watchtower.sh went red when the delegation landed. The
+# escape was added to the nine suites matching test-suites-*.sh and missed everything else,
+# because the set was chosen by NAME rather than by what the file actually calls.
+#
+# So the set is derived here from the call, not from a list (law-a-runner-takes-a-list: the
+# list is what goes stale). A suite qualifies when a NON-COMMENT line EXECUTES suites.sh and
+# the subcommand is either run/once or a variable — the wrappers in these suites are
+# `sut() { local cmd="$1"; ... bash "$SH/suites.sh" "$cmd"; }`, so matching a literal "run"
+# next to the path finds none of them.
+#
+# Three things are deliberately NOT matched, each of which a looser pattern caught wrongly
+# on the way to this one: `suites.sh status` (read-only, starts nothing), the string
+# "suites.sh run" inside an assertion about a systemd unit's ExecStart, and a bare mention
+# in a for-loop list of filenames. All three would be reported as suites needing an escape
+# they have no use for.
+_esc_missing=""
+_esc_checked=0
+for _f in "$HERE"/test-*.sh; do
+    grep -vE '^[[:space:]]*#' "$_f" 2>/dev/null \
+        | grep -qE '(bash|exec)[[:space:]]+"[^"]*suites\.sh"[[:space:]]+("\$|\$\{?[A-Za-z_]|run\b|once\b)' \
+        || continue
+    _esc_checked=$((_esc_checked + 1))
+    grep -q 'SPIRA_SUITES_INLINE' "$_f" || _esc_missing="$_esc_missing $(basename "$_f")"
+done
+
+# POSITIVE CONTROL: the detector must have found the suites that do this. Zero would mean
+# the matcher, not the tree, is clean — and would report every suite as compliant.
+if [ "$_esc_checked" -ge 9 ]; then
+    ok "the detector found $_esc_checked suites that execute suites.sh"
+else
+    bad "the detector found suites that execute suites.sh" \
+        "only $_esc_checked matched — the compliance check below proves nothing"
+fi
+if [ -z "$_esc_missing" ]; then
+    ok "all of them set SPIRA_SUITES_INLINE"
+else
+    bad "all of them set SPIRA_SUITES_INLINE" \
+        "missing the escape, so their pass runs in a container against a different tree:$_esc_missing"
+fi
+
 echo
 echo "test-suites-containment.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

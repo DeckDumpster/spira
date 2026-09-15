@@ -61,7 +61,13 @@ chmod +x "$TOOLPATH/bd"
 
 sut() {
     local cmd="$1"; shift
-    env -i PATH="$PATH" HOME="$TMP/home" \
+    # SPIRA_SUITES_INLINE=1 — run the planted suites HERE, not in a container.
+    # suites.sh delegates its pass to testenv-batch.sh (law-tests-run-only-through-testenv-
+    # batch). This suite drives suites.sh's OWN logic against fake suites it planted in a
+    # scratch tree, so a container would have to be started per invocation to run code that
+    # exists only to be counted. Containment is not being waived: this suite is itself run
+    # inside a container by the timed pass, so the planted suites are already contained by it.
+    env -i SPIRA_SUITES_INLINE=1 PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF="$TMP/no-such.conf" \
         SPIRA_HOME="$SH" SPIRA_REPO="$TMP/repo" SPIRA_HOME_REPO="$REPONAME" \
         SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$RUN" \
