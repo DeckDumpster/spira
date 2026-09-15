@@ -295,12 +295,16 @@ mkdir -p "$TMP/run"
 # the file fallback (db-wx4) handles events when dolt is absent, so the binary's
 # absence alone cannot signal a broken write path.
 #
-# conf.sh prepends SPIRA_PATH before /usr/local/bin when building PATH, so dolt in
-# /usr/local/bin is always visible unless FAKE_BIN shadows it. When dolt IS present,
-# doctor says "ok" rather than "warn"; adapt the assertion to handle both cases.
+# run_doctor uses PATH="/usr/local/bin:/usr/bin:/bin" with HOME="$TMP/home", so dolt
+# is found only when it is installed at /usr/local/bin, /usr/bin, or /bin. On most
+# setups dolt lives in ~/.local/bin and is invisible inside run_doctor regardless of
+# whether it is installed on the host. Check the doctor-visible paths specifically.
+_doctor_has_dolt=0
+for _p in "$FAKE_BIN" /usr/local/bin /usr/bin /bin; do [ -x "$_p/dolt" ] && _doctor_has_dolt=1 && break; done
+
 embed_out="$(run_doctor "$TMP/embedded-db")"
 embed_dolt_lines="$(printf '%s\n' "$embed_out" | grep -i 'dolt' || true)"
-if command -v dolt >/dev/null 2>&1; then
+if [ "$_doctor_has_dolt" = 1 ]; then
     want   "embedded store, dolt present: ok line" "ok" "$embed_dolt_lines"
 else
     want   "embedded store, missing dolt: warn line" "warn" "$embed_dolt_lines"
@@ -309,7 +313,7 @@ nowant "embedded store: no FAIL for dolt" "FAIL" "$embed_dolt_lines"
 
 server_out="$(run_doctor "$TMP/server-db")"
 server_dolt_lines="$(printf '%s\n' "$server_out" | grep -i 'dolt' || true)"
-if command -v dolt >/dev/null 2>&1; then
+if [ "$_doctor_has_dolt" = 1 ]; then
     want   "server-mode store, dolt present: ok line" "ok" "$server_dolt_lines"
 else
     want   "server-mode store, missing dolt: warn line" "warn" "$server_dolt_lines"
