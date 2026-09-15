@@ -55,6 +55,41 @@ TESTDB_MODE="${TESTDB_MODE:-}"
 # aeon.sh (which runs testdb_drop in a subshell) sees the correct value.
 export TESTDB_STARTED_SERVICE="${TESTDB_STARTED_SERVICE:-0}"
 
+# _testdb_sc <subcommand> [args...] — run "systemctl --user" with XDG_RUNTIME_DIR fallback.
+# gate.sh runs suites under env -i without XDG_RUNTIME_DIR; without it, systemctl --user
+# cannot connect to the session bus. Setting XDG_RUNTIME_DIR=/run/user/$(id -u) gives the
+# single-user fallback path that works from the gate environment (sp-f342).
+_testdb_sc() {
+    local sc="${SPIRA_SYSTEMCTL:-systemctl}"
+    "$sc" --user "$@" 2>/dev/null && return 0
+    XDG_RUNTIME_DIR="/run/user/$(id -u)" "$sc" --user "$@"
+}
+
+# _testdb_server_clean_sp <restart:0|1>
+# Stop dolt-beads-test.service, remove the server-side sp database directory, and (when
+# restart=1) start the service again and wait for its port. Must be called before any bd
+# init that uses --prefix sp --server --external: a surviving sp directory from a prior run
+# holds the old project_id, and the new bd init creates a fresh local project_id, giving a
+# PROJECT IDENTITY MISMATCH that blocks all subsequent bd operations (sp-f342).
+_testdb_server_clean_sp() {
+    local do_restart="${1:-0}"
+    [ -n "${SPIRA_TESTDB_DATA:-}" ] || return 0
+    _testdb_sc stop dolt-beads-test.service 2>/dev/null || true
+    rm -rf "${SPIRA_TESTDB_DATA:?}/sp"
+    [ "$do_restart" = 1 ] || return 0
+    _testdb_sc start dolt-beads-test.service 2>/dev/null || {
+        printf 'testdb: dolt-beads-test.service failed to start after sp cleanup\n' >&2
+        return 1
+    }
+    local port="${SPIRA_TESTDB_PORT:-3308}" i=0
+    while [ $i -lt 30 ]; do
+        echo -n "" >/dev/tcp/127.0.0.1/"$port" 2>/dev/null && return 0
+        sleep 0.5; i=$((i+1))
+    done
+    printf 'testdb: dolt-beads-test.service did not become ready on port %s\n' "$port" >&2
+    return 1
+}
+
 # Cached result of the embedded-engine check: "yes", "no", or "" (not yet checked).
 # The check itself is slow (it runs bd init), so the result is memoised for the session.
 _TESTDB_EMBEDDED_RESULT=""
@@ -107,10 +142,9 @@ testdb_require() {       # testdb_require <suite-name>
 # can stop it). Waits for the port to be ready before returning.
 testdb_server_ensure() {
     [ -n "${SPIRA_TESTDB_DATA:-}" ] || return 1
-    local sc; sc="${SPIRA_SYSTEMCTL:-systemctl}"
     # Already running: do not start, do not take ownership of the lifecycle.
-    "$sc" --user is-active dolt-beads-test.service >/dev/null 2>&1 && return 0
-    "$sc" --user start dolt-beads-test.service 2>/dev/null || {
+    _testdb_sc is-active dolt-beads-test.service >/dev/null 2>&1 && return 0
+    _testdb_sc start dolt-beads-test.service 2>/dev/null || {
         printf 'testdb: systemctl start dolt-beads-test.service failed\n' >&2
         return 1
     }
@@ -261,6 +295,13 @@ testdb_up() {            # testdb_up <tag>
     TESTDB_NAME="sptest_${tag}_$(date +%s)_$$"
     TESTDB_DIR="$SPIRA_TESTDB_DATA/$TESTDB_NAME"
     mkdir -p "$TESTDB_DIR" || { printf 'testdb: mkdir %s failed\n' "$TESTDB_DIR" >&2; return 1; }
+    # Remove any surviving server-side sp from a prior run before init. A leftover sp carries
+    # the old project_id; the new bd init creates a fresh one; the mismatch then blocks every
+    # subsequent bd operation with PROJECT IDENTITY MISMATCH (sp-f342).
+    _testdb_server_clean_sp 1 || {
+        printf 'testdb: failed to clean server-side sp before init\n' >&2
+        rm -rf "$TESTDB_DIR"; TESTDB_DIR=""; TESTDB_NAME=""; return 1
+    }
     local init_out init_rc
     init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
         BD_NON_INTERACTIVE=1 \
@@ -289,16 +330,18 @@ testdb_reset() {
     [ -n "$TESTDB_NAME" ] || return 1
     if [ "${TESTDB_MODE:-embedded}" = server ]; then
         [ -d "${TESTDB_DIR:-}" ] || return 1
-        # Remove the database directory and reinitialise. The Dolt server scans data_dir
-        # dynamically, so rm -rf effectively drops the database from the server's view.
+        # Stop the service, remove server-side sp, restart, and reinitialise from scratch.
+        # --reinit-local alone creates a new project_id without touching the server-side sp,
+        # so the local .beads and server always diverge. A stop+rm+start+fresh-init pair
+        # creates matching project_ids on both sides (sp-f342).
+        _testdb_server_clean_sp 1 || return 1
         rm -rf "$TESTDB_DIR/.beads"
         local init_out init_rc
         init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
             BD_NON_INTERACTIVE=1 \
             "$TESTDB_SERVER_BD" init --non-interactive --prefix sp --skip-agents \
             --skip-hooks --server --server-host 127.0.0.1 \
-            --server-port "${SPIRA_TESTDB_PORT:-3308}" --external \
-            --reinit-local -q 2>&1 )"
+            --server-port "${SPIRA_TESTDB_PORT:-3308}" --external -q 2>&1 )"
         init_rc=$?
         if [ $init_rc -ne 0 ]; then
             printf 'testdb: server reset failed (rc=%s) for %s\n' "$init_rc" "$TESTDB_NAME" >&2
@@ -351,11 +394,14 @@ testdb_drop() {
     [ "${TESTDB_SHARED:-0}" = 1 ] && return 0
     [ -n "${TESTDB_NAME:-}" ] || return 0
     rm -rf "${TESTDB_DIR:-}" "${TESTDB_BASELINE:-}" "${TESTDB_BIN:-}"
-    # Server mode: stop the service if THIS process started it. TESTDB_STARTED_SERVICE=1
-    # is set by testdb_server_ensure and exported, so a subshell running testdb_drop (as
-    # aeon.sh's fixture_drop does) sees the correct value and does not double-stop.
-    if [ "${TESTDB_MODE:-}" = server ] && [ "${TESTDB_STARTED_SERVICE:-0}" = 1 ]; then
-        "${SPIRA_SYSTEMCTL:-systemctl}" --user stop dolt-beads-test.service 2>/dev/null || true
+    # Server mode: clean up the server-side sp so the next testdb_up finds a fresh server.
+    # If this process did NOT start the service (TESTDB_STARTED_SERVICE=0) the service was
+    # already running when we arrived, so restart it after removing sp. If we started it
+    # (TESTDB_STARTED_SERVICE=1), leave it stopped — that restores the pre-test state.
+    if [ "${TESTDB_MODE:-}" = server ]; then
+        local _drop_restart=1
+        [ "${TESTDB_STARTED_SERVICE:-0}" = 1 ] && _drop_restart=0
+        _testdb_server_clean_sp "$_drop_restart" || true
         TESTDB_STARTED_SERVICE=0
         export TESTDB_STARTED_SERVICE
     fi
