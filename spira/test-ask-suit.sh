@@ -36,7 +36,22 @@ BD="${TESTDB_BD:-bd}"
 
 bdt()  { "$BD" -C "$SPIRA_DB" "$@"; }
 ask()  { COCKPIT_DB="$SPIRA_DB" bash "$COCKPIT/ask.sh" "$@"; }
-rule() { SPIRA_DB="$SPIRA_DB" bash "$REPO/rule.sh" "$@"; }
+# rule.sh REFUSES TO REPORT SUCCESS WITHOUT A WIKI HOOK, and it is right to: enacting a
+# statute that never reaches the wiki page leaves the operator told "Statute is live" while
+# the page sits stale (sp-p0xyt). With SPIRA_WIKI_HOOK unset it writes the statute, says so,
+# and exits 1 — so every `rule enact` in this suite reported "rule.sh enact failed" while the
+# assertions immediately after it confirmed the statute was in force. Seven FAILs, none of
+# them about ask.sh.
+#
+# A STUB, NOT A TOLERATED NON-ZERO EXIT. Accepting rc=1 here would also accept a genuine
+# enact failure, which is the one thing these fixtures must not do. The stub makes the hook
+# succeed so the exit code still means what it says. Whether rule.sh correctly REFUSES on a
+# bad or missing hook is test-statute-projection.sh's subject, and is asserted there against
+# the real law-synth.sh; this suite's subject is ask.sh suit.
+WIKI_HOOK_STUB="$TMP/law-synth-stub.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$WIKI_HOOK_STUB"
+chmod +x "$WIKI_HOOK_STUB"
+rule() { SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$WIKI_HOOK_STUB" bash "$REPO/rule.sh" "$@"; }
 
 count_beads() {
     "$BD" -C "$SPIRA_DB" list --all --limit 0 --json 2>/dev/null \
