@@ -68,6 +68,12 @@
 
 answers|daemon|@SPIRA_COCKPIT@/watch-answers.sh|@SPIRA_HOME@/watchd.sh health-ids @SPIRA_ANSWER_STATE@
 
+# PR-NOTIFY is a log watcher: the timer-driven pr-notify.sh appends findings to this file
+# and the watchd system surfaces unread ones. A log row has no unit of its own — the timer
+# service (spira-pr-notify) does the writing. `watchd drain pr-notify` delivers queued
+# findings; `watchd notify` escalates them past SPIRA_NOTIFY_AGE.
+pr-notify|log|@SPIRA_RUN@/watchd/pr-notify.log
+
 # THE VIEW FOLLOWER is the highest-consequence watcher here — it decides which window the
 # operator is looking at — and it is the hardest one to catch failing, because it acts on
 # TRANSITIONS ONLY. A process that is not running misses transitions silently, so a stopped

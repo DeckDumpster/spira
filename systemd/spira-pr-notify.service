@@ -1,0 +1,23 @@
+[Unit]
+Description=Spira PR notifier — report green/unmerged and red PRs, branches with no PR
+Documentation=file://@SPIRA_HOME@/pr-notify.sh
+After=default.target
+
+[Service]
+Type=oneshot
+ExecStart=@SPIRA_PROD@/pr-notify.sh
+# CPU-fenced like every other loop on this box (law-fence-loops-on-shared-hardware).
+# The script calls `gh` (a network round-trip per repo) and `git fetch`; the quota keeps
+# it from monopolising the CPU while those calls are in flight.
+CPUQuota=20%
+Nice=10
+TimeoutStartSec=120
+Environment=SPIRA_HOME=@SPIRA_PROD@
+Environment=SPIRA_RUN=@SPIRA_RUN@
+# APPENDS TO THE WATCHER LOG, not a separate file. The pr-notify row in `watchers` points
+# at this path; watchd.sh tracks the cursor and surfaces unread findings on demand.
+StandardOutput=append:@SPIRA_RUN@/watchd/pr-notify.log
+StandardError=append:@SPIRA_RUN@/pr-notify.err.log
+
+[Install]
+WantedBy=default.target
