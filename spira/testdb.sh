@@ -69,30 +69,6 @@ _testdb_sc() {
     XDG_RUNTIME_DIR="/run/user/$(id -u)" "$sc" --user "$@"
 }
 
-# _testdb_server_clean_sp <restart:0|1>
-# Stop dolt-beads-test.service, remove the server-side sp database directory, and (when
-# restart=1) start the service again and wait for its port. Must be called before any bd
-# init that uses --prefix sp --server --external: a surviving sp directory from a prior run
-# holds the old project_id, and the new bd init creates a fresh local project_id, giving a
-# PROJECT IDENTITY MISMATCH that blocks all subsequent bd operations (sp-f342).
-_testdb_server_clean_sp() {
-    local do_restart="${1:-0}"
-    [ -n "${SPIRA_TESTDB_DATA:-}" ] || return 0
-    _testdb_sc stop dolt-beads-test.service 2>/dev/null || true
-    rm -rf "${SPIRA_TESTDB_DATA:?}/sp"
-    [ "$do_restart" = 1 ] || return 0
-    _testdb_sc start dolt-beads-test.service 2>/dev/null || {
-        printf 'testdb: dolt-beads-test.service failed to start after sp cleanup\n' >&2
-        return 1
-    }
-    local port="${SPIRA_TESTDB_PORT:-3308}" i=0
-    while [ $i -lt 30 ]; do
-        echo -n "" >/dev/tcp/127.0.0.1/"$port" 2>/dev/null && return 0
-        sleep 0.5; i=$((i+1))
-    done
-    printf 'testdb: dolt-beads-test.service did not become ready on port %s\n' "$port" >&2
-    return 1
-}
 
 # Cached result of the embedded-engine check: "yes", "no", or "" (not yet checked).
 # The check itself is slow (it runs bd init), so the result is memoised for the session.
@@ -301,25 +277,39 @@ testdb_up() {            # testdb_up <tag>
     }
     TESTDB_MODE=server
     TESTDB_NAME="sptest_${tag}_$(date +%s)_$$"
-    TESTDB_DIR="$SPIRA_TESTDB_DATA/$TESTDB_NAME"
+    # THE SERVER-SIDE DATABASE IS NAMED PER FIXTURE, AND THE WORKSPACE LIVES OUTSIDE THE
+    # SERVER'S DATA ROOT. Both halves matter, and getting either wrong destroys other
+    # people's fixtures:
+    #
+    #   1. `bd init --server` with no --database creates a database literally called `sp`.
+    #      EVERY server-mode fixture therefore shared ONE database no matter how unique its
+    #      directory name was, so a second testdb_up silently emptied the first: the earlier
+    #      fixture's reads started returning [] mid-suite. Worse, the old cleanup below
+    #      stopped dolt-beads-test.service and rm -rf'd that shared `sp` on every build, so
+    #      a concurrent borrower lost the server under its feet as well as its data. This is
+    #      the "shared fixture collapsed" fault: one timed run had 85 of ~150 suites unable
+    #      to start because an aeon built its own fixture while the run was borrowing one.
+    #      --database gives each fixture its own server-side database and they stop colliding.
+    #
+    #   2. The workspace goes in a HIDDEN directory under the server's data root, never at
+    #      $SPIRA_TESTDB_DATA/$TESTDB_NAME and never in /tmp. Two constraints pin it there
+    #      and only this shape satisfies both:
+    #        - Dolt treats every visible directory in its data root as a database, so a
+    #          workspace sharing the database's name makes bd's own CREATE DATABASE fail
+    #          with "database not available after CREATE DATABASE". A dot-prefixed parent
+    #          is not scanned, so .ws/<name> is invisible to that sweep.
+    #        - A workspace outside the data root (mktemp -d in /tmp) makes bd refuse with
+    #          "legacy Dolt workspace detected"; it resolves part of its server-mode config
+    #          relative to the data root. Measured on all three layouts: /tmp fails,
+    #          <root>/<name>.ws and <root>/.ws/<name> both succeed.
+    TESTDB_DIR="$SPIRA_TESTDB_DATA/.ws/$TESTDB_NAME"
     mkdir -p "$TESTDB_DIR" || { printf 'testdb: mkdir %s failed\n' "$TESTDB_DIR" >&2; return 1; }
-    # Remove any surviving server-side sp from a prior run before init. A leftover sp carries
-    # the old project_id; the new bd init creates a fresh one; the mismatch then blocks every
-    # subsequent bd operation with PROJECT IDENTITY MISMATCH (sp-f342). Skip when sp is
-    # absent (fresh container, previous testdb_drop succeeded) — the stop/restart adds latency
-    # and is unreliable when the service was just started by testdb_server_ensure above.
-    if [ -d "${SPIRA_TESTDB_DATA}/sp" ]; then
-        _testdb_server_clean_sp 1 || {
-            printf 'testdb: failed to clean server-side sp before init\n' >&2
-            rm -rf "$TESTDB_DIR"; TESTDB_DIR=""; TESTDB_NAME=""; return 1
-        }
-    fi
     local init_out init_rc
     init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
         BD_NON_INTERACTIVE=1 \
         "$TESTDB_SERVER_BD" init --non-interactive --prefix sp --skip-agents --skip-hooks \
         --server --server-host 127.0.0.1 --server-port "${SPIRA_TESTDB_PORT:-3308}" \
-        --external -q 2>&1 )"
+        --database "$TESTDB_NAME" --external -q 2>&1 )"
     init_rc=$?
     [ $init_rc -eq 0 ] || {
         printf 'testdb: bd init (server) failed (rc=%s) for %s\n' \
@@ -366,14 +356,20 @@ testdb_reset() {
         # Fallback: if TESTDB_SERVER_INIT_HASH is empty (shared fixture from a pre-sp-f342
         # caller), drop and recreate via stop+restart as before.
         if [ -z "${TESTDB_SERVER_INIT_HASH:-}" ]; then
-            _testdb_server_clean_sp 1 || return 1
+            # DROP ONLY THIS FIXTURE'S DATABASE. This used to stop the whole dolt service
+            # and delete the shared `sp` database — taking every other borrower's fixture
+            # with it, and bouncing the server under their open connections. Scoping the
+            # drop to TESTDB_NAME leaves concurrent fixtures untouched and needs no restart.
+            "$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
+                "DROP DATABASE IF EXISTS \`$TESTDB_NAME\`" >/dev/null 2>&1 || true
             rm -rf "$TESTDB_DIR/.beads"
             local init_out init_rc
             init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
                 BD_NON_INTERACTIVE=1 \
                 "$TESTDB_SERVER_BD" init --non-interactive --prefix sp --skip-agents \
                 --skip-hooks --server --server-host 127.0.0.1 \
-                --server-port "${SPIRA_TESTDB_PORT:-3308}" --external -q 2>&1 )"
+                --server-port "${SPIRA_TESTDB_PORT:-3308}" \
+                --database "$TESTDB_NAME" --external -q 2>&1 )"
             init_rc=$?
             if [ $init_rc -ne 0 ]; then
                 printf 'testdb: server reset (fallback) failed (rc=%s) for %s\n' \
@@ -462,18 +458,28 @@ testdb_seed() {          # testdb_seed  < JSONL on stdin
 testdb_drop() {
     [ "${TESTDB_SHARED:-0}" = 1 ] && return 0
     [ -n "${TESTDB_NAME:-}" ] || return 0
-    rm -rf "${TESTDB_DIR:-}" "${TESTDB_BASELINE:-}" "${TESTDB_BIN:-}"
-    # Server mode: clean up the server-side sp so the next testdb_up finds a fresh server.
-    # If this process did NOT start the service (TESTDB_STARTED_SERVICE=0) the service was
-    # already running when we arrived, so restart it after removing sp. If we started it
-    # (TESTDB_STARTED_SERVICE=1), leave it stopped — that restores the pre-test state.
-    if [ "${TESTDB_MODE:-}" = server ]; then
-        local _drop_restart=1
-        [ "${TESTDB_STARTED_SERVICE:-0}" = 1 ] && _drop_restart=0
-        _testdb_server_clean_sp "$_drop_restart" || true
+    # Server mode: drop THIS fixture's own database and nothing else.
+    #
+    # This used to stop dolt-beads-test.service, rm -rf the shared `sp` directory and
+    # restart the service. Because every server
+    # fixture used to share that one `sp`, a suite finishing its run destroyed the fixture
+    # any concurrently running suite or aeon was still borrowing — and bounced the server
+    # under its open connections for good measure. Each fixture now owns a database named
+    # after it, so a scoped DROP is both sufficient and safe to run while others are live.
+    #
+    # The drop runs BEFORE the workspace is removed: it needs .beads to find the server.
+    if [ "${TESTDB_MODE:-}" = server ] && [ -n "${TESTDB_NAME:-}" ]; then
+        "$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
+            "DROP DATABASE IF EXISTS \`$TESTDB_NAME\`" >/dev/null 2>&1 || true
+        # Only stop the service if THIS process started it; never restart one we found
+        # running, because a restart is what used to break other borrowers.
+        if [ "${TESTDB_STARTED_SERVICE:-0}" = 1 ]; then
+            _testdb_sc stop dolt-beads-test.service 2>/dev/null || true
+        fi
         TESTDB_STARTED_SERVICE=0
         export TESTDB_STARTED_SERVICE
     fi
+    rm -rf "${TESTDB_DIR:-}" "${TESTDB_BASELINE:-}" "${TESTDB_BIN:-}"
     TESTDB_NAME=""; TESTDB_DIR=""; TESTDB_BASELINE=""; TESTDB_BIN=""
     TESTDB_MODE=""
     return 0

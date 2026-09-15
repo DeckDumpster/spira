@@ -281,7 +281,8 @@ file_red() {             # file_red <basename> <status> <rc> <seconds> <fp> <out
           SPIRA_INCIDENT_ACTOR=suites \
           SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" \
           SPIRA_INCIDENT_REPO="$SPIRA_HOME_REPO" \
-          SPIRA_INCIDENT_REF="suite:$s:$fp" \
+          SPIRA_INCIDENT_REF="suite:$s" \
+          SPIRA_SIN_EXEMPT=1 \
           SPIRA_INCIDENT_PATH="$HERE/$s" \
           SPIRA_INCIDENT_CAUSE=suite-red \
           SPIRA_DB="$SPIRA_DB" \
@@ -296,9 +297,11 @@ branch, so the fix lands as ordinary work.
   fingerprint      $fp
   reproduce        bash spira/$s
 
-The fingerprint is over the suite's FAIL lines with scratch paths and numbers normalised out,
-and it is half the dedupe key: an identical failure next cycle bumps a recurrence on this
-bead rather than filing another, and a failure that CHANGES files a new one.
+The fingerprint is over the suite's FAIL lines with scratch paths and numbers normalised out.
+It is recorded here but is NOT part of the dedupe key, which is the suite alone: every later
+failure of this suite bumps a recurrence on this bead rather than opening another, whether or
+not the symptom changed. A changed fingerprint between recurrences is worth reading — it says
+the suite broke a second way — but it is not a second piece of work.
 
 --- output ---------------------------------------------------------------------------
 $(printf '%s\n' "$out" | tail -c 6000)
