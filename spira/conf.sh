@@ -73,7 +73,7 @@ SPIRA_ARCHIVE
 SPIRA_ARCHIVIST_EVERY SPIRA_ARCHIVIST_IDLE SPIRA_ARCHIVIST_MODEL SPIRA_ARCHIVIST_TIMEOUT
 SPIRA_ARCHIVIST_PER_PASS
 SPIRA_TESTDB_LIB SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT
-SPIRA_TESTENV_REGISTRY
+SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO
 SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET
 SPIRA_GATE_SUITES SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
 SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE
@@ -407,6 +407,14 @@ spira_conf_defaults() {
     # stale one is unreachable rather than merely unlikely. Set this to the repository
     # prefix only -- the tag comes from the closure and is never written by hand.
     : "${SPIRA_TESTENV_REGISTRY:=}"
+    # WHICH TRACKER gh-intake.sh ingests from, as "owner/repo". Empty means there is
+    # no inbox and intake refuses to guess: a default pointing at somebody else's
+    # repository would quietly file their reports into this operator's graph.
+    #
+    # THE BRIDGE IS ONE WAY. Nothing here ever writes to that tracker, and the token
+    # it uses should be scoped so that it could not — the store holds internal notes
+    # and judgement that must not reach a public issue list (law-beads-is-never-public).
+    : "${SPIRA_GH_INTAKE_REPO:=}"
     # HOW LONG A REPOSITORY'S OWN GATE COMMAND MAY RUN, in seconds. gate.sh wraps the command
     # under `timeout` at this budget. A gate killed at the deadline exits 124 and is reported
     # as a timeout (NO_VERDICT), not a branch fault — but the bead note is empty and the next
@@ -1144,7 +1152,7 @@ export SPIRA_INSTANCE \
        SPIRA_DB COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_RIGHT_PCT COCKPIT_CWD COCKPIT_CLIENT_IDLE_SECS SPIRA_PATH SPIRA_GOAL \
        SPIRA_WORKSPACES SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_RECLAIM_SKIP_LABEL \
        SPIRA_CI_LABEL SPIRA_CI_PARK_MAX \
-       SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT SPIRA_TESTENV_REGISTRY \
+       SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO \
        SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE \
        SPIRA_LOOM_ADDR SPIRA_LOOM_BUDGET_MS SPIRA_LOOM_CACHE_S SPIRA_LOOM_BIN SPIRA_RUN SPIRA_SYSTEMCTL \
        SPIRA_SPIKE_LABEL SPIRA_SPIKE_DIR SPIRA_SPIKE_PATHS SPIRA_SCOPE_LABEL \
