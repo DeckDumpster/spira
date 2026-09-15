@@ -1,0 +1,149 @@
+# gate.yml — run the landing gate in CI, and cut a release from a gate that passed.
+#
+# This is the same gate the harness runs locally: the three lints, then the suite
+# corpus inside a container via testenv-batch.sh. A CI job that ran a cheaper
+# subset would produce a green that does not mean what a local green means, and
+# the whole point of gating here is that the two agree.
+#
+# WHY SELF-HOSTED. testenv-batch.sh stands up a rootless podman container with
+# system AND user systemd inside it, from a 1.81 GB image. A hosted runner would
+# rebuild or pull that image on every run. The self-hosted runners already keep it
+# warm, and the image tag is content-addressed (testenv.sh tag) so a stale one can
+# never be silently reused.
+#
+# PULL REQUEST vs PUSH ARE DIFFERENT GATES, AND MUST BE.
+#   On a pull request, testenv-batch.sh derives the suite selection from the diff
+#   against the base ref. That is the right, fast answer for a branch.
+#   On a push to main that diff is EMPTY. Diff-derived selection would select
+#   nothing, exit 0, and cut a release off a gate that ran zero suites — a green
+#   that means "nothing was tested". So the push gate names the whole corpus
+#   explicitly (law-a-runner-takes-a-list), and that is the run a release is cut
+#   from.
+#
+# EXIT 75 IS NOT A BRANCH FAILURE. testenv-batch exits 2 when the container never
+# came up and 3 when the install inside it failed. In both cases the branch was
+# never tested, so reporting it as tested-and-bad is a lie in the expensive
+# direction — someone goes looking for a defect that was never demonstrated. Those
+# map to 75, matching the repo-map's gate command, and the job says so.
+
+name: Gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# One gate per ref. A superseded pull-request run is cancelled; a push to main is
+# NOT, because cancelling it would skip the release cut for those commits and the
+# next cut would silently carry them under a later tag.
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gate:
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # spira_landref resolves the base ref from the repository, and the suite
+          # selection diffs against it. Depth 1 has no base to diff against, so the
+          # selection would be empty and the gate would pass having run nothing.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Lints
+        # Cheap, pure bash, and they fail on the things no suite can see: operator
+        # infrastructure named in a public repo, configured names written as
+        # literals, and scratch paths escaping into tracked files.
+        run: |
+          bash spira/inventory.sh
+          bash spira/literal-lint.sh
+          bash spira/scratch-fence.sh
+
+      - name: Suites
+        # The exit-code mapping matches the repo-map's gate command exactly. Keep
+        # them in step: two gates that disagree about what 75 means is how a
+        # harness fault comes to read as a branch failure.
+        run: |
+          set -uo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # The release gate. Name every suite, because the diff is empty here.
+            printf 'gate: push to %s — running the whole corpus\n' "${{ github.ref_name }}"
+            _b=0
+            ls spira/test-*.sh | xargs -n1 basename \
+              | bash spira/testenv-batch.sh --suites - "${{ github.sha }}" || _b=$?
+          else
+            printf 'gate: pull request — running the suites the diff selects\n'
+            _b=0
+            bash spira/testenv-batch.sh "${{ github.sha }}" || _b=$?
+          fi
+          case "$_b" in
+            0) printf 'gate: pass\n' ;;
+            2|3)
+              printf 'gate: HARNESS FAULT (batch rc=%s) — the container did not come up, or the install inside it failed.\n' "$_b" >&2
+              printf 'gate: this branch was NOT tested. Do not read this as a code failure; re-run the job.\n' >&2
+              exit 75 ;;
+            *) printf 'gate: suites failed (batch rc=%s)\n' "$_b" >&2; exit "$_b" ;;
+          esac
+
+  # ---------------------------------------------------------------------------
+  # Cut the release unit. Only from main, only from a gate that passed.
+  # ---------------------------------------------------------------------------
+  cut:
+    needs: gate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64]
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.cut.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # release.sh names every bead landed since the PREVIOUS release tag.
+          # Without the tags it cannot find the previous one and every cut looks
+          # like the first.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Cut release tag
+        id: cut
+        # release.sh exits 0 WITHOUT tagging when no bead landed since the last
+        # release. That is the common case on a docs or workflow commit, and it is
+        # success, not failure — so an empty tag output is normal and the publish
+        # job below skips.
+        run: |
+          set -uo pipefail
+          tag="$(bash spira/release.sh cut)" || {
+            printf 'cut: release.sh refused\n' >&2; exit 1; }
+          if [ -z "$tag" ]; then
+            printf 'cut: no beads landed since the last release — nothing to tag\n'
+            printf 'tag=\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf 'cut: %s\n' "$tag"
+          git push origin "refs/tags/$tag"
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # Publish. Invoked DIRECTLY, never left to release.yml's tag trigger.
+  #
+  # GitHub does not start a workflow for a tag pushed with GITHUB_TOKEN. That is a
+  # deliberate anti-recursion rule, and it is silent: the tag appears, the release
+  # never does, and nothing reports a failure. Calling release.yml as a reusable
+  # workflow makes the publish a dependency of the cut rather than a hoped-for
+  # side effect of it. release.yml keeps its tag trigger as well, so a tag pushed
+  # by hand still publishes.
+  # ---------------------------------------------------------------------------
+  publish:
+    needs: cut
+    if: needs.cut.outputs.tag != ''
+    uses: ./.github/workflows/release.yml
+    permissions:
+      contents: write
+    with:
+      tag: ${{ needs.cut.outputs.tag }}

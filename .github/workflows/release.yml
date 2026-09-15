@@ -17,12 +17,24 @@
 # non-zero fails the job and the publish step never runs. A build that fails
 # silently publishes a broken binary; this workflow publishes nothing instead.
 
+# TWO WAYS IN, ONE BUILD. The tag trigger stays for a tag pushed by hand. gate.yml
+# calls this workflow directly after it cuts a tag, because GitHub does not start a
+# workflow for a tag pushed with GITHUB_TOKEN — a deliberate anti-recursion rule,
+# and a silent one: the tag appears, the release never does, and nothing reports a
+# failure. Relying on the trigger there would produce tags with no releases forever.
+
 name: Release
 
 on:
   push:
     tags:
       - 'spira-release-*'
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag to build and publish'
+        required: true
+        type: string
 
 jobs:
   release:
@@ -33,6 +45,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # The called path must build the TAG, not the branch the caller ran on.
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Install Rust 1.82.0
         uses: dtolnay/rust-toolchain@master
@@ -71,6 +88,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "${{ github.ref_name }}" \
+          tag="${{ inputs.tag || github.ref_name }}"
+          gh release create "$tag" \
+            --title "$tag" \
             "${{ steps.tarball.outputs.path }}"
