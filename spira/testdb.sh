@@ -297,11 +297,15 @@ testdb_up() {            # testdb_up <tag>
     mkdir -p "$TESTDB_DIR" || { printf 'testdb: mkdir %s failed\n' "$TESTDB_DIR" >&2; return 1; }
     # Remove any surviving server-side sp from a prior run before init. A leftover sp carries
     # the old project_id; the new bd init creates a fresh one; the mismatch then blocks every
-    # subsequent bd operation with PROJECT IDENTITY MISMATCH (sp-f342).
-    _testdb_server_clean_sp 1 || {
-        printf 'testdb: failed to clean server-side sp before init\n' >&2
-        rm -rf "$TESTDB_DIR"; TESTDB_DIR=""; TESTDB_NAME=""; return 1
-    }
+    # subsequent bd operation with PROJECT IDENTITY MISMATCH (sp-f342). Skip when sp is
+    # absent (fresh container, previous testdb_drop succeeded) — the stop/restart adds latency
+    # and is unreliable when the service was just started by testdb_server_ensure above.
+    if [ -d "${SPIRA_TESTDB_DATA}/sp" ]; then
+        _testdb_server_clean_sp 1 || {
+            printf 'testdb: failed to clean server-side sp before init\n' >&2
+            rm -rf "$TESTDB_DIR"; TESTDB_DIR=""; TESTDB_NAME=""; return 1
+        }
+    fi
     local init_out init_rc
     init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
         BD_NON_INTERACTIVE=1 \
