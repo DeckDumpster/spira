@@ -35,7 +35,11 @@ CHECK_ONLY=0
 _u="$(id -un)"
 _uid="$(id -u)"
 rc=0
-note() { printf 'runner-deps: %s\n' "$1"; }
+# BOTH ON ONE STREAM. note() on stdout and gap() on stderr interleave unpredictably
+# once a CI runner merges them: the first ephemeral run printed "podman rootless ok"
+# AFTER "this machine cannot run the suites", which reads as a contradiction and sends
+# the reader to the wrong half of the script.
+note() { printf 'runner-deps: %s\n' "$1" >&2; }
 gap()  { printf 'runner-deps: MISSING %s\n' "$1" >&2; rc=1; }
 
 # ROOTLESS PODMAN IS THE SUBSTRATE. testenv.sh runs the image with --systemd=true,
@@ -75,11 +79,30 @@ if [ "$CHECK_ONLY" -eq 0 ]; then
         sudo usermod --add-subgids 100000-165535 "$_u" || true
     fi
 
-    # LINGERING, AND THE RUNTIME DIRECTORY IT CREATES. The CI runner is a service,
-    # not a login session, so /run/user/<uid> need not exist and XDG_RUNTIME_DIR
-    # need not be set. Rootless podman keeps its own state there. enable-linger
-    # makes systemd create and keep the directory for a user with no session.
-    loginctl enable-linger "$_u" >/dev/null 2>&1 || true
+    # LINGERING, AND THE RUNTIME DIRECTORY IT CREATES. The CI runner is a service, not
+    # a login session, so /run/user/<uid> does not exist and XDG_RUNTIME_DIR is unset.
+    # Rootless podman keeps its own state there. enable-linger makes systemd create and
+    # maintain that directory for a user with no session.
+    #
+    # IT NEEDS ROOT. Called unprivileged it fails, and swallowing that failure moved the
+    # symptom two checks downstream, where a missing /run/user/<uid> reads like a podman
+    # problem rather than a missing enable-linger. Observed on the first ephemeral run.
+    #
+    # logind CREATES THE DIRECTORY ASYNCHRONOUSLY, so checking for it on the next line
+    # races the thing that makes it. Wait, bounded: a box where it never appears has a
+    # real fault and must fail rather than hang.
+    if [ ! -d "/run/user/${_uid}" ]; then
+        sudo loginctl enable-linger "$_u" >/dev/null 2>&1 \
+            || loginctl enable-linger "$_u" >/dev/null 2>&1 \
+            || note "could not enable lingering for ${_u}"
+        _w=0
+        while [ ! -d "/run/user/${_uid}" ] && [ "$_w" -lt 30 ]; do
+            sleep 1; _w=$((_w+1))
+        done
+        [ -d "/run/user/${_uid}" ] \
+            && note "lingering enabled; /run/user/${_uid} appeared after ${_w}s" \
+            || note "waited ${_w}s and /run/user/${_uid} never appeared"
+    fi
 fi
 
 # ── assertions ───────────────────────────────────────────────────────────────

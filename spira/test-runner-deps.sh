@@ -102,5 +102,37 @@ else
 fi
 
 echo
+echo "lingering is requested with elevation, and waited for:"
+# THE RUNNER IS A SERVICE, NOT A LOGIN SESSION, so /run/user/<uid> does not exist and
+# rootless podman has nowhere to keep its state. enable-linger is what makes systemd
+# create and maintain that directory for a user with no session -- and it needs root,
+# so calling it unprivileged fails silently and the gap surfaces two checks later as
+# something that reads like a podman problem. Observed on the first ephemeral run:
+#   runner-deps: MISSING /run/user/1001 does not exist
+if grep -qE '^[^#]*sudo[^#]*loginctl[^#]*enable-linger' "$SCRIPT"; then
+    ok "enable-linger is called with elevation"
+else
+    bad "enable-linger is called with elevation" "loginctl enable-linger is called unprivileged"
+fi
+# logind creates the directory asynchronously; checking immediately races it.
+if grep -qE 'for .*in .*seq|while .*\[ .*-lt |sleep ' "$SCRIPT"; then
+    ok "it waits for the runtime directory to appear"
+else
+    bad "it waits for the runtime directory to appear" "no bounded wait after enable-linger"
+fi
+
+echo
+echo "the log reads in the order things happened:"
+# note() on stdout and gap() on stderr interleave unpredictably in a CI log: the first
+# run printed "podman rootless ok" AFTER "this machine cannot run the suites", which
+# reads as a contradiction and sends the reader to the wrong half of the script.
+_nstream="$(grep -cE '^note\(\) *\{.*>&2' "$SCRIPT")"
+if [ "${_nstream:-0}" -ge 1 ]; then
+    ok "progress and gaps share one stream"
+else
+    bad "progress and gaps share one stream" "note() writes to stdout while gap() writes to stderr"
+fi
+
+echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
