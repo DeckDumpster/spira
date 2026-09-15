@@ -295,38 +295,82 @@ echo "events substrate"
 # db-wx4 means embedded-store installs without dolt still have a working events path, and the
 # dolt-on-PATH check would have FAILed those correctly-configured boxes for four days.
 #
-# The sentinel id is "__doctor_probe__" — it cannot match a real bead id and accumulates no
-# production state. Repeated runs append another probe row; the count grows but the check
-# only needs count > 0.
+# THE PROBE MUST ANCHOR TO A REAL BEAD. A server-mode store carries fk_events_issue
+# (events.issue_id -> issues.id), so a sentinel issue_id matching no bead is REFUSED with
+# Error 1452 and the round trip can never complete. This probe used "__doctor_probe__" as
+# the issue id and therefore reported "writes are discarded" on every run of every
+# correctly-working server-mode box, while real event writes against real bead ids worked
+# the whole time. A positive control that cannot pass is worse than none: it is a permanent
+# red, and a check that is always red is a check nobody reads.
+#
+# So the sentinel moves from the issue_id to the EVENT TYPE, and the row is anchored to an
+# issue that actually exists. The embedded file fallback has no foreign key and no issues
+# table to ask, so it keeps the old sentinel and the old behaviour.
+#
+# Repeated runs append another probe row; the count grows but the check only needs > 0.
 #
 # lib.sh is sourced here rather than at the top because loading it sooner would require
 # making the repo-map conditional unconditional, or duplicating the source. The events
 # functions are self-contained: they need only SPIRA_DB and SPIRA_BD (set by conf.sh).
 if [ -d "$SPIRA_DB/.beads" ]; then
     . "$SPIRA_HOME/lib.sh"
-    _probe_id="__doctor_probe__"
-    _probe_etype="probed"
-    _bump_write_event "$_probe_id" "$_probe_etype" "doctor"
-    _probe_count="$(_counter_events_query "$_probe_id" "$_probe_etype")"
-    if [ "${_probe_count:-0}" -gt 0 ]; then
-        OK "events write/read round trip"
+    _probe_etype="__doctor_probe__"
+    _probe_doltdb="${SPIRA_DB}/.beads/embeddeddolt"
+    _probe_id="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --limit 1 --json 2>/dev/null \
+        | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    rows = d if isinstance(d, list) else [d]
+    print(rows[0].get("id", "") if rows else "")
+except Exception:
+    print("")
+' 2>/dev/null)"
+
+    if [ -z "$_probe_id" ] && [ ! -d "$_probe_doltdb" ]; then
+        # A SQL-backed store with no issues at all. The foreign key leaves nothing to
+        # anchor to, so the round trip cannot be performed. Honest ignorance beats a
+        # failure the operator cannot act on (law-alerts-must-be-actionable).
+        WARN "cannot probe events substrate — the store holds no issue to anchor a probe event to" \
+             "This is expected on a store that has not been used yet. The probe resumes once a bead exists."
     else
-        # Name the expected write path so the operator knows where to look.
-        _probe_doltdb="${SPIRA_DB}/.beads/embeddeddolt"
-        if [ -d "$_probe_doltdb" ]; then
-            if command -v dolt >/dev/null 2>&1; then
-                _probe_path="dolt embedded (${_probe_doltdb})"
-            else
-                _probe_path="file fallback (${SPIRA_DB}/events.log)"
-            fi
+        [ -n "$_probe_id" ] || _probe_id="__doctor_probe__"
+        if _bump_write_event_try "$_probe_id" "$_probe_etype" "doctor" >/dev/null 2>&1; then
+            _probe_wrote=1
         else
-            _probe_path="bd sql (server mode at ${SPIRA_DB})"
+            _probe_wrote=0
         fi
-        FAIL "events write/read round trip failed — writes via ${_probe_path} are discarded" \
-             "Check that the events path is writable. On an embedded store without dolt,
-        ${SPIRA_DB}/events.log must be writable by the harness process."
+        _probe_count="$(_counter_events_query "$_probe_id" "$_probe_etype")"
+        if [ "${_probe_count:-0}" -gt 0 ]; then
+            OK "events write/read round trip"
+        else
+            # Name the expected write path so the operator knows where to look.
+            if [ -d "$_probe_doltdb" ]; then
+                if command -v dolt >/dev/null 2>&1; then
+                    _probe_path="dolt embedded (${_probe_doltdb})"
+                else
+                    _probe_path="file fallback (${SPIRA_DB}/events.log)"
+                fi
+            else
+                _probe_path="bd sql (server mode at ${SPIRA_DB})"
+            fi
+            # REFUSED AND DISCARDED ARE DIFFERENT FAULTS. A rejected write names a
+            # constraint or a permission; a write that returns success and then cannot be
+            # read back names a store that is not persisting. Calling the first a discard
+            # sends the reader to check permissions on a path that was never the problem.
+            if [ "$_probe_wrote" -eq 0 ]; then
+                FAIL "events write/read round trip failed — the write via ${_probe_path} was refused (anchor bead: ${_probe_id})" \
+                     "Every write path rejected the event. Run the INSERT by hand to see the error;
+        a foreign-key refusal means the anchor bead no longer exists, a permission error means
+        ${SPIRA_DB} is not writable by the harness process."
+            else
+                FAIL "events write/read round trip failed — writes via ${_probe_path} are discarded" \
+                     "The write reported success and did not come back. Check that the events path is writable.
+        On an embedded store without dolt, ${SPIRA_DB}/events.log must be writable by the harness process."
+            fi
+        fi
     fi
-    unset _probe_id _probe_etype _probe_count _probe_doltdb _probe_path
+    unset _probe_id _probe_etype _probe_count _probe_doltdb _probe_path _probe_wrote
 else
     WARN "cannot probe events substrate — no database yet"
 fi

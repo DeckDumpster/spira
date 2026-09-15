@@ -1550,7 +1550,15 @@ attempts_of() {          # attempts_of <id> -> count of in_progress status-chang
 # and test-check4-events.sh criterion 1 (no label writes) holds.
 #
 # _bump_write_event <id> <event_type> <cause> — inserts one event row.
-_bump_write_event() {
+# _bump_write_event_try — the real write, reporting whether ANY path accepted it.
+#
+# WHY THE STATUS LIVES IN A SEPARATE NAME. _bump_write_event must keep returning 0 no
+# matter what: aeon.sh runs under `set -e` and calls bump_requeue bare on its thrash and
+# lapse paths, so a failing return there would kill a live aeon in the middle of requeuing
+# its own bead. Event recording is diagnostic; it must never be able to end the work it is
+# describing. Callers that genuinely need to know — the doctor probe — ask for the status
+# explicitly, and everything else keeps the fire-and-forget contract it was written against.
+_bump_write_event_try() {
     local id="${1:-}" etype="${2:-}" cause="${3:-unrecorded}"
     [ -n "$id" ] && [ -n "$etype" ] || return 0
     local actor="${BEADS_ACTOR:-harness}"
@@ -1580,9 +1588,13 @@ _bump_write_event() {
     if [ -d "$doltdb" ]; then
         local ts; ts="$(date +%s 2>/dev/null)" || ts="0"
         printf '%s\t%s\t%s\t%s\n' "$ts" "$id" "$etype" "$cause" \
-            >> "${SPIRA_DB}/events.log" 2>/dev/null || true
+            >> "${SPIRA_DB}/events.log" 2>/dev/null && return 0
     fi
+    # No path accepted the write. Reported here, swallowed by _bump_write_event.
+    return 1
 }
+
+_bump_write_event() { _bump_write_event_try "$@" >/dev/null 2>&1; return 0; }
 bump_attempt() { return 0; }
 bump_reclaim() { _bump_write_event "${1:-}" reclaimed "${2:-unrecorded}"; }
 bump_requeue() { _bump_write_event "${1:-}" requeued  "${2:-unrecorded}"; }
