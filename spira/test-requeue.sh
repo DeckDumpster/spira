@@ -141,9 +141,9 @@ want   "and the log says why"                  "REOPENED — closed behind" "$(c
 is     "NO attempt is charged"                 "0" "$(count_of sp-rq-1)"
 nowant "so it carries no attempt rung"         "sp-attempt-1" "$(labels sp-rq-1)"
 is     "it is counted as a requeue instead"    "1" "$(requeue_of sp-rq-1)"
-want   "and that rung names its cause"         "sp-requeue-1-rebase-conflict" "$(labels sp-rq-1)"
+want   "and the note names the cause"          "rebase-conflict" "$(notes sp-rq-1 | tr -s ' ')"
 want   "the teardown says no attempt was charged" "no attempt charged" "$(cat "$TMP/out")"
-want   "the bead carries the decision"         "Requeue 1 (rebase-conflict)" "$(notes sp-rq-1 | tr -s ' ')"
+want   "the bead carries the decision"         "Requeued (rebase-conflict)" "$(notes sp-rq-1 | tr -s ' ')"
 want   "and the ledger carries the outcome"    "status=requeue-rebase-conflict" \
        "$(cat "$SPIRA_RUN/aeon-ledger.log")"
 # THE BRANCH SURVIVES THE REQUEUE. The aeon committed before closing; the rebase failed
@@ -157,7 +157,7 @@ echo "the session did not close the bead at all — that IS an attempt, and stil
 testdb_reset; seed sp-rq-2; shim 0 0; run_aeon
 is   "the bead is open"                        open "$(field sp-rq-2 status)"
 is   "and one attempt is charged"              "1" "$(count_of sp-rq-2)"
-want "the rung names the outcome"              "sp-attempt-1-unlanded" "$(labels sp-rq-2)"
+want "the note records the outcome"            "Unlanded" "$(notes sp-rq-2 | tr -s ' ')"
 is   "with nothing on the requeue counter"     "0" "$(requeue_of sp-rq-2)"
 
 echo
@@ -205,7 +205,7 @@ want "so the poison still stands"              "spira-poison" "$(labels sp-rq-s)
 out="$(sweep --apply)"
 want   "the sweep lifts it"                    "RESTORED sp-rq-s" "$out"
 nowant "and the label is gone"                 "spira-poison" "$(labels sp-rq-s)"
-is     "the rungs are left standing as the record" "3" "$(count_of sp-rq-s)"
+is     "the rungs are left standing as the record" "3" "$(lib "counter_of sp-rq-s sp-attempt")"
 want   "the bead records why"                  "Poison lifted by attempts.sh deadlocked" "$(notes sp-rq-s | tr -s ' ')"
 want   "the bead that really failed keeps its poison" "spira-poison" "$(labels sp-rq-k)"
 

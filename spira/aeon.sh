@@ -779,8 +779,11 @@ print(d[0].get("status","") if d else "")' 2>/dev/null)"
         # different question.
         if [ -n "$REQUEUE_CAUSE" ]; then
             # Counter labels (sp-requeue-N) are no longer written; the events trail records
-            # each claim. The note preserves the cause for diagnostic reading (sp-lzt).
+            # each claim via bump_requeue. The note preserves the cause for diagnostic reading
+            # (sp-lzt). db-ipo added bump_requeue to the thrash path but missed this path;
+            # without it requeues_of returned 0 for every rebase-conflict requeue.
             bdq note "$BEAD_ID" "Requeued ($REQUEUE_CAUSE): $REQUEUE_WHY The session did the work and closed the bead; the harness put it back. NO attempt was charged and nothing about the work is implied." >/dev/null 2>&1
+            bump_requeue "$BEAD_ID" "$REQUEUE_CAUSE"
             log "$FAYTH: $BEAD_ID requeued by the harness ($REQUEUE_CAUSE) — no attempt charged"
             release_own_claim "$BEAD_ID"
             ledger_done "$rc" "requeue-$REQUEUE_CAUSE"
