@@ -35,6 +35,13 @@
 #
 # WHY THE CHECK IS HERE AND NOT A CALL TO `layout.sh ensure`. `ensure` exits 0 whether it healed
 # a cockpit or found no session at all, so its exit code cannot decide anything.
+#
+# THE CONCIERGE IS PART OF "THE COCKPIT" AND LIVES ON A DIFFERENT SOCKET. concierge.sh runs
+# `tmux -L <socket>`, so the concierge session is invisible to `tmux list-sessions` and to
+# every check in rebuild.sh — which is why rebuilding the cockpit used to leave the operator
+# to start it by hand, having just run the one command that was supposed to restore
+# everything. `concierge.sh start` is idempotent and scrubs its own environment, so it is
+# simply run at the end of both paths.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -102,9 +109,19 @@ cockpit_intact() {
     return 0
 }
 
+# The concierge session, on its own `tmux -L` socket. Idempotent: it prints "already running"
+# and changes nothing when it is up. Run on both paths, because a cockpit without it is the
+# state the operator just had to fix by hand.
+ensure_concierge() {
+    local c="$HERE/concierge.sh"
+    [ -x "$c" ] || { echo "  concierge: no concierge.sh at $c" >&2; return 0; }
+    bash "$c" start 2>&1 | sed 's/^/  /'
+}
+
 if [ "$FORCE" != 1 ] && cockpit_intact; then
     echo "cockpit: already up — healing in place (no panes respawned)"
     bash "$HERE/cockpit/layout.sh" ensure 2>&1 | sed 's/^/  /'
+    ensure_concierge
     echo "cockpit: attach with  tmux attach -t cockpit"
     exit 0
 fi
@@ -115,4 +132,8 @@ fi
 # other reason this delegates rather than reimplementing the steps.
 _ck_args=()
 [ "$FORCE" = 1 ] && _ck_args+=(--force)
-exec bash "$REBUILD" "${_ck_args[@]}"
+bash "$REBUILD" "${_ck_args[@]}"; _ck_rc=$?
+# Not `exec`: the concierge still has to be started, and it is the half of "the cockpit" that
+# rebuild.sh cannot see.
+ensure_concierge
+exit "$_ck_rc"
