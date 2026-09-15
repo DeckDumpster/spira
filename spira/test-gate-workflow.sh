@@ -196,7 +196,21 @@ echo "the gate job is bounded, because it holds a real machine:"
 # holds a provisioned VM for six hours. Read from the parsed YAML rather than by
 # grepping the file: a `timeout-minutes` under any OTHER job would satisfy a grep
 # while the gate job stayed unbounded, which is the only case that matters.
-_t="$(python3 -c "import yaml,sys; d=yaml.safe_load(open('$GATE_YML')); print(d['jobs']['gate'].get('timeout-minutes') or '')" 2>/dev/null)"
+#
+# NO PyYAML. The first version of this asked python3 for the parsed document and
+# the test image has no yaml module, so the import died, 2>/dev/null swallowed it,
+# and the check reported "timeout unset" against a workflow that sets it -- a false
+# RED carrying an actively misleading message. Scoped awk instead: take the gate
+# job's block only, from `  gate:` to the next key at the same indent.
+_gate_block="$(awk '/^  gate:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
+# A block that came back empty would make the assertion below vacuous, and the
+# message would again blame the workflow for the matcher's fault.
+if [ -z "$_gate_block" ]; then
+    bad "the gate job block was located (positive control)" "awk extracted nothing; the two assertions below would be vacuous"
+else
+    ok "the gate job block was located (positive control)"
+fi
+_t="$(printf '%s' "$_gate_block" | sed -n 's/^[[:space:]]*timeout-minutes:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
 if [ -n "$_t" ]; then
     ok "the gate job sets timeout-minutes ($_t)"
 else
