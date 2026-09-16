@@ -34,6 +34,10 @@ case "$rc" in
         printf 'gate-retry: flaky, not failing: %s\n' "$reds"
         exit 0 ;;
     2|3) exit "$rc" ;;
-    *)  printf 'gate-retry: red twice: %s\n' "$(red_in "$ROOT-retry")" >&2
+    *)  _reds_retry="$(red_in "$ROOT-retry")"
+        printf 'gate-retry: red twice: %s\n' "$_reds_retry" >&2
+        for _s in $_reds_retry; do
+            printf '::error title=red-twice suite::%s\n' "$_s"
+        done
         exit 1 ;;
 esac

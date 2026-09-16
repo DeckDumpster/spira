@@ -42,6 +42,7 @@ first "$TMP/r" a.sh=ok b.sh=red
 run red 1; rc=$?
 is  "red twice fails"                             "1" "$rc"
 has "and names what stayed red"                   "$(cat "$TMP/out")" "red twice: b.sh"
+has "and emits a red-twice annotation for CI"     "$(cat "$TMP/out")" "::error title=red-twice suite::b.sh"
 
 first "$TMP/r" b.sh=red
 run ok 3; rc=$?

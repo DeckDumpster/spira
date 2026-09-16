@@ -170,3 +170,89 @@ except Exception:
     done < <(gh run list --repo "$SPIRA_FLAKY_GH_REPO" --status completed --limit 20 \
         --json databaseId --jq '.[].databaseId' 2>/dev/null || true)
 fi
+
+# STEP 4: RED-TWICE SUITE BEADS — scan recently completed FAILED main-branch runs for
+# "red-twice suite" annotations (filed by gate-retry.sh); file ONE P1 bead per broken
+# suite through bead.sh. Deduplicated on the suite while a bead for it is open: a
+# pre-existing open bead at lower priority is raised to P1 with evidence added rather
+# than duplicated.
+#
+# Only push-to-main runs carry the full corpus; the "red twice" verdict only appears there.
+# Limiting to --branch main keeps this from reacting to PR runs that share the repo.
+if [ -n "${SPIRA_FLAKY_GH_REPO:-}" ] && command -v gh >/dev/null 2>&1; then
+    _rt_repo="$SPIRA_FLAKY_GH_REPO"
+    _rt_home_repo="$(spira_home_repo 2>/dev/null || true)"
+    _rt_git_root="$(repo_root "$_rt_home_repo" 2>/dev/null || true)"
+    _rt_seen=""
+    _rt_last_green="$(gh run list --repo "$_rt_repo" --branch main --status success \
+        --limit 1 --json headSha --jq '.[0].headSha' 2>/dev/null || true)"
+    while IFS=$'\t' read -r _rt_run_id _rt_sha; do
+        [ -n "$_rt_run_id" ] || continue
+        while IFS= read -r _rt_job_id; do
+            [ -n "$_rt_job_id" ] || continue
+            while IFS= read -r _rt_suite; do
+                [ -n "$_rt_suite" ] || continue
+                case " $_rt_seen " in *" $_rt_suite "*) continue ;; esac
+                _rt_seen="$_rt_seen $_rt_suite"
+                _rt_existing="$(bdq list --json 2>/dev/null | python3 -c "
+import json, sys
+try:
+    beads = json.load(sys.stdin)
+    if not isinstance(beads, list): beads = []
+    title = 'suite red on main: ' + sys.argv[1]
+    for b in beads:
+        if b.get('status') in ('open', 'in_progress') and b.get('title') == title:
+            print(b['id'] + '\t' + str(b.get('priority', 2)))
+            break
+except Exception:
+    pass
+" "$_rt_suite" 2>/dev/null)" || true
+                if [ -n "${_rt_existing:-}" ]; then
+                    _rt_bid="${_rt_existing%%	*}"
+                    _rt_bpri="${_rt_existing##*	}"
+                    [ "${_rt_bpri:-2}" -le 1 ] && continue
+                    bdq priority "$_rt_bid" 1 >/dev/null 2>&1 || true
+                    bdq note "$_rt_bid" \
+                        "Raised to P1: $_rt_suite still red on main (run $_rt_run_id, commit ${_rt_sha:-?})" \
+                        >/dev/null 2>&1 || true
+                    continue
+                fi
+                _rt_fail_lines="$(gh run view "$_rt_run_id" --repo "$_rt_repo" --log-failed \
+                    2>/dev/null | grep 'FAIL' | sed 's/^[^\t]*\t[^\t]*\t//' | head -10 || true)"
+                _rt_commits=""
+                if [ -n "${_rt_git_root:-}" ] && [ -n "${_rt_last_green:-}" ] \
+                   && [ -n "${_rt_sha:-}" ] && [ "$_rt_last_green" != "$_rt_sha" ]; then
+                    _rt_commits="$(git -C "$_rt_git_root" log --oneline \
+                        "${_rt_last_green}..${_rt_sha}" 2>/dev/null || true)"
+                fi
+                printf '%s is red on main and blocks the release.\n\nRun: %s\nFirst red commit: %s\nLast green commit: %s\n\nFailing assertions:\n%s\n\nCommits in range:\n%s\n' \
+                    "$_rt_suite" "$_rt_run_id" "${_rt_sha:-?}" \
+                    "${_rt_last_green:-(unknown)}" \
+                    "${_rt_fail_lines:-(none captured)}" \
+                    "${_rt_commits:-(range unknown)}" \
+                    | bash "$HERE/bead.sh" file "suite red on main: $_rt_suite" \
+                        --for builder --repo "$_rt_home_repo" \
+                        -p 1 --body-file - 2>/dev/null || true
+            done < <(gh api "repos/$_rt_repo/check-runs/$_rt_job_id/annotations" \
+                2>/dev/null | python3 -c '
+import json, sys
+try:
+    for a in json.load(sys.stdin):
+        if a.get("annotation_level") == "failure" and a.get("title") == "red-twice suite":
+            print(a.get("message", ""))
+except Exception:
+    pass
+' 2>/dev/null || true)
+        done < <(gh api "repos/$_rt_repo/actions/runs/$_rt_run_id/jobs" \
+            2>/dev/null | python3 -c '
+import json, sys
+try:
+    for j in json.load(sys.stdin).get("jobs", []):
+        print(j["id"])
+except Exception:
+    pass
+' 2>/dev/null || true)
+    done < <(gh run list --repo "$_rt_repo" --branch main --status failure --limit 10 \
+        --json databaseId,headSha \
+        --jq '.[] | [(.databaseId|tostring), .headSha] | @tsv' 2>/dev/null || true)
+fi
