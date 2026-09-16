@@ -141,6 +141,15 @@ if [ -n "$BRIEF" ] && [ -f "$BRIEF" ]; then
     nowant "no placeholder survives rendering"  "{{"          "$B"
     want   "the brief names the ask path"       "ask.sh add"  "$B"
     want   "and the bead contract"              "bead.sh file" "$B"
+    # THE FILE, NOT THE STRING. The string check above is the positive control: the path
+    # must be named for the grep below to find it. The assertion with teeth is this one —
+    # a path that is named but absent passes the string check and fails here.
+    bead_path="$(printf '%s\n' "$B" | grep -oE '[^ ]+bead\.sh' | head -1)"
+    if [ -n "$bead_path" ] && [ -x "$bead_path" ]; then
+        pass=$((pass+1)); printf '  ok    bead tool path in brief exists and is executable: %s\n' "$bead_path"
+    else
+        fail=$((fail+1)); printf '  FAIL  bead tool path in brief does not exist or is not executable: [%s]\n' "${bead_path:-<not found>}"
+    fi
     want   "and carries the statute book"       "# Memories in force" "$B"
     # THE STATUTES THIS ROLE IS ACTUALLY HELD TO, IN FULL TEXT — not as index slugs. This is
     # the whole reason FAYTH_STATUTE_CORE exists: the shipped core set is builder-shaped, and
