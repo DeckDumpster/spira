@@ -131,23 +131,8 @@ done
 
 tag_pane()   { tmux set-option -p -t "$1" @cockpit "$2" 2>/dev/null; }
 
-# apply_mouse_mode — make the panes clickable, on this server, now.
-#
-# WITHOUT IT A CLICK DOES NOTHING AND SAYS NOTHING. tmux defaults mouse off, and a
-# box need not have a ~/.tmux.conf at all, so the attention panel reads as a dead
-# region rather than as an unset option -- the operator concludes the panel is
-# broken. The cockpit therefore sets this itself instead of depending on the
-# operator's dotfiles, which is the same reasoning as window-size largest below.
-#
-# SERVER-WIDE ON PURPOSE. `mouse` is a session option, and the cockpit is one
-# session among several on this server that the operator moves between; setting it
-# only on the cockpit session would leave the others dead to the mouse and produce
-# exactly the inconsistency that reads as a bug. -g covers sessions that already
-# exist and any created later.
-#
-# Never fails the caller: an unclickable cockpit is a degraded cockpit, not a
-# broken one, and layout.sh is called from a timer that must not start failing over
-# a cosmetic option.
+# -g rather than per-session: the cockpit is one session among several; scope to it alone
+# leaves the others dead to the mouse, which is the inconsistency that reads as a bug.
 apply_mouse_mode() {
     local want="${COCKPIT_MOUSE:-on}"
     case "$want" in
