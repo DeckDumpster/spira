@@ -50,6 +50,7 @@ _usage() {
     printf '  ctrl.sh suspend <subject> --reason <text> --owner <bead>\n' >&2
     printf '  ctrl.sh resume  <subject>\n' >&2
     printf '  ctrl.sh check   <subject>\n' >&2
+    printf '  ctrl.sh reason  <subject>\n' >&2
     printf '  ctrl.sh list\n' >&2
     printf '  ctrl.sh divergence\n' >&2
     exit 1
@@ -141,6 +142,24 @@ PY
         WAS_SUSPENDED) printf 'ctrl: resumed %s\n' "$subject" ;;
         *)             printf 'ctrl: %s was not suspended\n' "$subject" ;;
     esac
+}
+
+# reason <subject> -> prints the suspension reason, or nothing if not suspended.
+do_reason() {
+    local subject="${1:-}"
+    [ -n "$subject" ] || { printf 'ctrl: reason requires a subject\n' >&2; exit 1; }
+    [ -f "${SPIRA_CTRL}" ] || return 0
+    python3 - "${SPIRA_CTRL}" "$subject" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+    reason = data.get(sys.argv[2], {}).get('suspend', {}).get('reason', '')
+    if reason:
+        print(reason)
+except Exception:
+    pass
+PY
 }
 
 # check <subject> -> exits 0 if suspended, 1 if not (silent).
@@ -280,6 +299,7 @@ case "$cmd" in
     suspend)    do_suspend "$@" ;;
     resume)     do_resume  "$@" ;;
     check)      do_check   "$@" ;;
+    reason)     do_reason  "$@" ;;
     list)       do_list ;;
     divergence) do_divergence ;;
     *)          _usage ;;

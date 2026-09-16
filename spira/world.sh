@@ -253,6 +253,25 @@ stop)
 start)
     echo "spira: starting the loop"
     for t in "${TIMERS[@]}"; do
+        # Derive the subject: strip .timer, then the instance suffix if set.
+        # ctrl.sh and systemd both record by subject (e.g. spira-ops), not by
+        # unit name (spira-ops-prod.timer).
+        _subj="${t%.timer}"
+        [ -n "${SPIRA_INSTANCE:-}" ] && _subj="${_subj%-$SPIRA_INSTANCE}"
+        # A ctrl-suspended timer: the operator recorded a reason not to run it.
+        # start is the one command most likely to run in the middle of a recovery,
+        # and silently reversing a recorded decision there is the defect (sp-cqyfy).
+        if "$SPIRA_HOME/ctrl.sh" check "$_subj" 2>/dev/null; then
+            _reason="$("$SPIRA_HOME/ctrl.sh" reason "$_subj" 2>/dev/null)"
+            printf '  skipped %s (suspended%s)\n' "$t" "${_reason:+: $_reason}"
+            continue
+        fi
+        # A disabled timer was removed from the loop deliberately. start restores
+        # the loop; a disabled timer was never part of it.
+        if [ "$("$SC" --user is-enabled "$t" 2>/dev/null)" = "disabled" ]; then
+            printf '  skipped %s (disabled)\n' "$t"
+            continue
+        fi
         "$SC" --user start "$t" 2>/dev/null && printf '  started %s\n' "$t"
     done
 
