@@ -193,6 +193,9 @@ echo "--sweep: capacity-paused sweeps are rejected (capacity still applies):"
 CAP_FILE="${SPIRA_RUN}/capacity-pause"
 printf '9999999999\n' > "$CAP_FILE"
 export SPIRA_CAPACITY_PAUSE_FILE="$CAP_FILE"
+# The stub agent exits 0, so a live probe would lift this pause. Mark the probe
+# interval as just-run so the interval guard blocks the probe for this case.
+printf '%s\n' "$(date +%s)" > "$SPIRA_RUN/capacity-probe-last"
 rm -f "$LEDGER"
 
 aeon testsweep --sweep --prompt "should not run"
