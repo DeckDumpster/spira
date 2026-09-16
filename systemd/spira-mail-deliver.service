@@ -1,5 +1,5 @@
 [Unit]
-Description=Spira mail delivery daemon — wake the concierge on new concierge mail
+Description=Spira mail delivery daemon — wake registered readers on new mail
 Documentation=file://@SPIRA_HOME@/spira-mail-deliver.sh
 After=default.target
 # Restart bounds: five restarts over 120s before giving up.  inotifywait exits
