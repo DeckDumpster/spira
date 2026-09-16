@@ -255,6 +255,41 @@ load_snapshot() {
     set -u
 }
 
+# SNAP_ABSENT_BANNER — emitted by header_line when SPIRA_SNAP cannot be found at the
+# computed path. Distinguishes the two causes a `?`-for-every-row frame could have:
+#
+#   PATH MISMATCH — cockpit.env exists at the other derivation of SPIRA_RUN. conf.sh derives
+#     SPIRA_RUN from whether SPIRA_REPO is writable; a service installed from a writable repo
+#     writes to $REPO/.runtime/spira while a reader invoked from a read-only release tree
+#     derives $XDG_DATA_HOME/.../run instead. The snapshot is present but invisible here
+#     (law-absence-needs-a-positive-control).
+#
+#   NO SNAPSHOT — no cockpit.env at any known derivation. cockpit.sh has not yet run, or the
+#     service is not running on this instance.
+snap_absent_banner() {
+    [ -f "$SPIRA_SNAP" ] && return 0
+    local _inst_sfx=""
+    [ "${SPIRA_INSTANCE:-prod}" = "prod" ] || _inst_sfx="-${SPIRA_INSTANCE}"
+    local _run_repo="${SPIRA_REPO}/.runtime/spira${_inst_sfx}"
+    local _run_xdg="${XDG_DATA_HOME:-$HOME/.local/share}/spira${_inst_sfx}/run"
+    local _alt
+    for _alt in "$_run_repo" "$_run_xdg"; do
+        [ "$_alt" = "$SPIRA_RUN" ] && continue
+        if [ -f "$_alt/cockpit.env" ]; then
+            printf '%s%s ■ PATH MISMATCH%s %s— SPIRA_RUN differs for writer and reader%s\n' \
+                "$C_B" "$C_WARN" "$C_RST" "$C_DIM" "$C_RST"
+            fit "$_alt" $(( COLS - 12 ))
+            printf '  %sexists at%s %s\n' "$C_DIM" "$C_RST" "$FIT"
+            fit "$SPIRA_RUN" $(( COLS - 12 ))
+            printf '  %sreader at%s %s\n' "$C_DIM" "$C_RST" "$FIT"
+            return 0
+        fi
+    done
+    fit "$SPIRA_RUN" $(( COLS - 28 ))
+    printf '%s  no snapshot — cockpit not yet run at %s%s\n' \
+        "$C_DIM" "$FIT" "$C_RST"
+}
+
 # A LABELLED SECTION PER QUESTION. The old single line read
 # "open 25 ready 17 working 1 aeons 1 poison 1 asks 0 fiends 0" — beads, sessions and
 # asks in one undifferentiated row, so nothing could be read at a glance and the counts
@@ -390,6 +425,8 @@ header_line() {
             printf ' %sPROBE%s  %s%stimed out%s: %s\n' \
                 "$C_DIM" "$C_RST" "$C_BAD" "$C_B" "$C_RST" "$_faulted"
         fi
+    else
+        snap_absent_banner
     fi
 }
 
