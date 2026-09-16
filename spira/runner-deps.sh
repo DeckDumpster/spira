@@ -55,7 +55,7 @@ gap()  { printf 'runner-deps: MISSING %s\n' "$1" >&2; rc=1; }
 # which defaults the other way. Installing both costs a few hundred kilobytes and
 # removes a whole class of run lost to a distro's choice of default.
 PKGS=(podman uidmap fuse-overlayfs slirp4netns passt catatonit
-      git curl ca-certificates python3 jq)
+      git curl ca-certificates python3 jq build-essential pkg-config)
 
 if [ "$CHECK_ONLY" -eq 0 ]; then
     _missing=()

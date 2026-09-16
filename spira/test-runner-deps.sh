@@ -164,6 +164,18 @@ else
 fi
 
 echo
+echo "the package list includes a C compiler:"
+# Rust, cgo, and native Python wheels all shell out to `cc` to link. The failure
+# reads as a broken toolchain rather than a missing package. build-essential is a
+# machine property, not a language dependency: it belongs in every runner, not in
+# each consumer's own list.
+if printf '%s' "$_code" | grep -qE '(^|[[:space:]])build-essential([^a-z-]|$)'; then
+    ok "build-essential is in the package list"
+else
+    bad "build-essential is in the package list" "absent; a linker 'cc' not found failure reads as a broken toolchain"
+fi
+
+echo
 echo "the install survives the two races a per-run VM actually loses:"
 # MATCH CODE, NOT PROSE, FOR EVERY CHECK BELOW. The comments in runner-deps.sh are
 # long by policy and they NAME the mechanisms these checks look for, so a matcher
