@@ -245,7 +245,7 @@ else
     _mf="$(mktemp)"
     _sel="$(bash "$HERE/select.sh" \
         --base "$BASE" \
-        --head "$BR" \
+        --head "${SPIRA_GATE_SELECT_HEAD:-$BR}" \
         --repo "$REPO" \
         --no-all-fallback \
         --mode-file "$_mf" \

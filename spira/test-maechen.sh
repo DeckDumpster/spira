@@ -150,9 +150,9 @@ want "brief contains Record step"   "Record"   "$brief"
 
 # ==========================================================================================
 echo
-echo "maechen.md — encodes the three-occurrence threshold"
+echo "maechen.md — encodes the three-bead threshold"
 # ==========================================================================================
-want "brief names the three-occurrence threshold" "three or more occurrences" "$brief"
+want "brief names the three-bead threshold" "three or more distinct beads" "$brief"
 want "brief explains two is a coincidence"        "coincidence"                "$brief"
 
 # ==========================================================================================
