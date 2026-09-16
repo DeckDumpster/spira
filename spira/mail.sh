@@ -8,7 +8,7 @@
 #   mail.sh read <mailbox> [<message>]   prints, moves new -> cur
 #   mail.sh count <mailbox>              number of unread messages
 #   mail.sh unread-age <mailbox>         seconds since oldest unread; empty if none
-#   mail.sh sendmail                     RFC 5322 on stdin (separate bead)
+#   mail.sh sendmail                     RFC 5322 on stdin; closes tracking bead on reply
 #
 # Send refuses a message that is missing From, missing Subject, has a Subject
 # that is or leads with a bead id, has a body mentioning a bead id without enough
@@ -164,6 +164,7 @@ cmd_send() {
         [ -n "$bead" ]    && printf 'X-Spira-Bead: %s\n' "$bead"
         [ -n "${SPIRA_MAIL_LINT_CONSIDERED:-}" ] && printf 'X-Spira-Lint-Override: %s\n' "${SPIRA_MAIL_LINT_CONSIDERED}"
         printf 'Date: %s\n' "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"
+        printf 'Message-ID: <%s@spira>\n' "$msgid"
         printf '\n'
         printf '%s\n' "$body"
     } > "$dir/tmp/$msgid"
@@ -261,6 +262,97 @@ cmd_unread_age() {
     printf '%s\n' "$(( $(date +%s) - oldest_t ))"
 }
 
+_find_message_by_id() {
+    local msgid="${1#<}"; msgid="${msgid%>}"
+    [ -z "$msgid" ] && return 1
+    local d f fid
+    for d in "$SPIRA_MAIL"/*/new "$SPIRA_MAIL"/*/cur; do
+        [ -d "$d" ] || continue
+        for f in "$d"/*; do
+            [ -f "$f" ] || continue
+            fid="$(awk '/^[[:space:]]*$/ { exit }
+                tolower($0) ~ /^message-id:/ { sub(/^[^:]*:[[:space:]]*/, ""); gsub(/[<>]/, ""); print; exit }
+            ' "$f")"
+            [ "$fid" = "$msgid" ] && { printf '%s' "$f"; return 0; }
+        done
+    done
+    return 1
+}
+
+_reply_mailbox() {
+    local from="$1" localpart=""
+    if [[ "$from" =~ \<([^@>]+)@ ]]; then
+        localpart="${BASH_REMATCH[1]}"
+    elif [[ "$from" =~ ^([^@[:space:]]+)@ ]]; then
+        localpart="${BASH_REMATCH[1]}"
+    fi
+    if [ -n "$localpart" ] && [ -d "$(_mail_dir "$localpart")" ]; then
+        printf '%s' "$localpart"
+    else
+        printf 'concierge'
+    fi
+}
+
+_sendmail_close_bead() {
+    local bead="$1" kind="$2" first_para="$3"
+    [ -n "${SPIRA_DB:-}" ] || return 0
+    local reason="$first_para"
+    if [ "$kind" = "suit" ]; then
+        local lc="${first_para,,}"
+        if [[ "$lc" =~ ^uphold ]]; then
+            reason="upheld"
+        elif [[ "$lc" =~ ^retire ]]; then
+            reason="retired"
+        elif [[ "$lc" =~ ^amend ]]; then
+            reason="$(printf '%s' "$first_para" | sed 's/^[Aa][Mm][Ee][Nn][Dd][: ]*//')"
+            [ -z "$reason" ] && reason="amended"
+        fi
+    fi
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$bead" --reason-file - <<< "$reason" >/dev/null 2>&1 || true
+}
+
+cmd_sendmail() {
+    local raw; raw="$(cat)"
+
+    local in_reply_to
+    in_reply_to="$(printf '%s\n' "$raw" | awk '
+        /^[[:space:]]*$/ { exit }
+        tolower($0) ~ /^in-reply-to:/ { sub(/^[^:]*:[[:space:]]*/, ""); gsub(/[<>]/, ""); print; exit }
+    ')"
+
+    local first_para
+    first_para="$(printf '%s\n' "$raw" | awk '
+        /^[[:space:]]*$/ { if (!body) body=1; else if (found) exit; next }
+        body { found=1; print }
+    ')"
+
+    local orig_file="" orig_bead="" orig_kind="" orig_from="" dest_mailbox="concierge"
+
+    if [ -n "$in_reply_to" ]; then
+        orig_file="$(_find_message_by_id "$in_reply_to")" || orig_file=""
+        if [ -n "$orig_file" ]; then
+            orig_bead="$(awk '/^[[:space:]]*$/ { exit }
+                tolower($0) ~ /^x-spira-bead:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }
+            ' "$orig_file")"
+            orig_kind="$(awk '/^[[:space:]]*$/ { exit }
+                tolower($0) ~ /^x-spira-kind:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }
+            ' "$orig_file")"
+            orig_from="$(awk '/^[[:space:]]*$/ { exit }
+                tolower($0) ~ /^from:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }
+            ' "$orig_file")"
+            dest_mailbox="$(_reply_mailbox "$orig_from")"
+        fi
+    fi
+
+    [ -n "${orig_bead:-}" ] && _sendmail_close_bead "$orig_bead" "${orig_kind:-}" "$first_para"
+
+    _mail_ensure "$dest_mailbox"
+    local dir; dir="$(_mail_dir "$dest_mailbox")"
+    local msgid; msgid="$(_mail_msgid)"
+    printf '%s\n' "$raw" > "$dir/tmp/$msgid"
+    mv "$dir/tmp/$msgid" "$dir/new/$msgid"
+}
+
 case "${1:-}" in
     send)       shift; cmd_send "$@" ;;
     template)   shift; cmd_template "$@" ;;
@@ -268,6 +360,6 @@ case "${1:-}" in
     read)       shift; cmd_read "$@" ;;
     count)      shift; cmd_count "$@" ;;
     unread-age) shift; cmd_unread_age "$@" ;;
-    sendmail)   printf 'mail.sh sendmail: not yet implemented\n' >&2; exit 1 ;;
+    sendmail)   shift; cmd_sendmail "$@" ;;
     *)          printf 'mail.sh: unknown command: %s\n' "${1:-}" >&2; exit 1 ;;
 esac
