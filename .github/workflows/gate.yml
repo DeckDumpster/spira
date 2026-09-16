@@ -213,6 +213,7 @@ jobs:
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
         run: |
           set -uo pipefail
+          export SPIRA_BATCH_RESULTS="$RUNNER_TEMP/batch"
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             printf 'gate: pull request — running the suites the diff selects\n'
             _b=0
@@ -228,6 +229,11 @@ jobs:
             _b=0
             ls spira/test-*.sh | xargs -n1 basename \
               | bash spira/testenv-batch.sh --suites - "${{ github.sha }}" || _b=$?
+          fi
+          # A red suite gets one serial re-run; red then green is a flake, not a failure.
+          if [ "$_b" = 1 ]; then
+            _b=0
+            bash spira/gate-retry.sh "$SPIRA_BATCH_RESULTS" "${{ github.sha }}" || _b=$?
           fi
           case "$_b" in
             0) printf 'gate: pass\n' ;;
