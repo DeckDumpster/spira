@@ -6,8 +6,6 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/../spira/conf.sh"
-_conf="$(spira_conf_file)"; [ -n "$_conf" ] && spira_conf_read "$_conf"
-spira_conf_defaults
 
 msg="$(cat)"
 
