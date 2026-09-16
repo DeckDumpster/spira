@@ -455,7 +455,7 @@ tokens_section() {
         "$C_B" "$(tok "${SP_TOK_WIN:-?}")" "$C_RST" \
         "$C_ACC" "$(spark tok_win $(( COLS > 46 ? (COLS - 34 > 24 ? 24 : COLS - 34) : 0 )))" "$C_RST"
     local half
-    for half in AEON:aeons SESS:session; do
+    for half in AEON:aeons ARC:archivist SESS:session; do
         eval "local w=\${SP_TOK_${half%%:*}_WIN:-?} t=\${SP_TOK_${half%%:*}_TURNS:-?} c=\${SP_TOK_${half%%:*}_CTX:-?}"
         # Fitted like every other variable-length field: on a narrow column the tail is what
         # the terminal would cut, and here the tail is the context-per-turn — half of the

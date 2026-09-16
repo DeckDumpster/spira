@@ -1015,9 +1015,11 @@ PY
     # here would make the instrument cost more than the thing it measures. Do not "simplify"
     # that away by calling `report`.
     "$HERE/tokens.sh" env 2>/dev/null \
-      || { for k in SP_TOK_WINDOW_H SP_TOK_AEON_WIN SP_TOK_SESS_WIN SP_TOK_WIN \
-                    SP_TOK_AEON_TURNS SP_TOK_SESS_TURNS SP_TOK_AEON_CTX SP_TOK_SESS_CTX \
-                    SP_TOK_AEON_OUT SP_TOK_SESS_OUT SP_TOK_AEON_RECENT SP_TOK_SESS_RECENT; do
+      || { for k in SP_TOK_WINDOW_H SP_TOK_AEON_WIN SP_TOK_ARC_WIN SP_TOK_SESS_WIN SP_TOK_WIN \
+                    SP_TOK_AEON_TURNS SP_TOK_ARC_TURNS SP_TOK_SESS_TURNS \
+                    SP_TOK_AEON_CTX SP_TOK_ARC_CTX SP_TOK_SESS_CTX \
+                    SP_TOK_AEON_OUT SP_TOK_ARC_OUT SP_TOK_SESS_OUT \
+                    SP_TOK_AEON_RECENT SP_TOK_ARC_RECENT SP_TOK_SESS_RECENT; do
                echo "$k=?"
            done; }
 

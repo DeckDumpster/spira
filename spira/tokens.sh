@@ -15,13 +15,13 @@
 # file; counting per file inflated this corpus by 11,600 turns. The id is the API call, so it is
 # the unit that was actually billed.
 #
-# TWO HALVES, THREE INPUTS, because the point is to attribute:
-#   aeons    $SPIRA_RUN/*.log + worktree transcripts — every aeon session
-#   session  the remaining transcripts                — the interactive sessions
-# Aeons run in worktrees under $SPIRA_RUN, and the client writes their transcripts
-# into $SPIRA_TOKEN_PROJECTS too. A transcript whose project directory encodes a
-# path under $SPIRA_RUN/worktree belongs to aeons. Message ids are deduped across
-# all inputs so a turn is counted once.
+# THREE BUCKETS, THREE INPUTS, because the point is to attribute:
+#   aeons      $SPIRA_RUN/*.log + worktree transcripts — every aeon session
+#   archivist  $SPIRA_RUN/archivist/cwd transcripts   — automated archive sweeps
+#   session    the remaining transcripts               — the interactive sessions
+# Aeons and the archivist are identified by the encoded working directory they run from;
+# session is a positive test for the rest, not an else-branch. Message ids are deduped
+# across all inputs so a turn is counted once.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh" >/dev/null 2>&1
@@ -40,12 +40,11 @@ now = dt.datetime.now(dt.timezone.utc)
 cut = now - dt.timedelta(hours=window_h)
 KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens")
 
-# Aeons run in worktrees under $SPIRA_RUN/worktree. The client writes transcripts
-# for those sessions into $SPIRA_TOKEN_PROJECTS too, so without attribution they
-# appear in both halves of the split. Identify them by encoding the worktree root
-# the way the client encodes project directories: every / and . becomes -.
+# The client encodes project directories: every / and . becomes -.
 wt_root = os.path.normpath(os.path.join(run, "worktree"))
 wt_prefix = wt_root.replace("/", "-").replace(".", "-") + "-"
+arc_cwd = os.path.normpath(os.path.join(run, "archivist", "cwd"))
+arc_prefix = arc_cwd.replace("/", "-").replace(".", "-")
 
 def scan(paths, want_assistant_only, seen, window_only=False):
     """-> (all_time, in_window) counters. Dedupes on message id via the caller's seen set.
@@ -88,8 +87,11 @@ def scan(paths, want_assistant_only, seen, window_only=False):
 
 AEON_FILES = sorted(glob.glob(os.path.join(run, "*.log")))
 ALL_SESS = sorted(glob.glob(os.path.join(projects, "*", "*.jsonl")))
-WT_SESS = [f for f in ALL_SESS if os.path.basename(os.path.dirname(f)).startswith(wt_prefix)]
-SESS_FILES = [f for f in ALL_SESS if not os.path.basename(os.path.dirname(f)).startswith(wt_prefix)]
+WT_SESS    = [f for f in ALL_SESS if os.path.basename(os.path.dirname(f)).startswith(wt_prefix)]
+ARC_SESS   = [f for f in ALL_SESS if os.path.basename(os.path.dirname(f)) == arc_prefix]
+SESS_FILES = [f for f in ALL_SESS
+              if not os.path.basename(os.path.dirname(f)).startswith(wt_prefix)
+              and os.path.basename(os.path.dirname(f)) != arc_prefix]
 # env mode is the collector's path and runs constantly, so it reads only what the window can
 # touch. report mode is a human asking once, and reads everything.
 WIN_ONLY = (mode == "env")
@@ -98,6 +100,7 @@ aeon_tot, aeon_win = scan(AEON_FILES, True, seen, WIN_ONLY)
 wt_tot, wt_win = scan(WT_SESS, False, seen, WIN_ONLY)
 aeon_tot += wt_tot
 aeon_win += wt_win
+arc_tot, arc_win = scan(ARC_SESS, False, seen, WIN_ONLY)
 sess_tot, sess_win = scan(SESS_FILES, False, seen, WIN_ONLY)
 
 def ctx(c): return c["cache_read_input_tokens"] // c["turns"] if c["turns"] else 0
@@ -108,18 +111,23 @@ if mode == "env":
     out = {
         "SP_TOK_WINDOW_H":   int(window_h),
         "SP_TOK_AEON_WIN":   billed(aeon_win),
+        "SP_TOK_ARC_WIN":    billed(arc_win),
         "SP_TOK_SESS_WIN":   billed(sess_win),
-        "SP_TOK_WIN":        billed(aeon_win) + billed(sess_win),
+        "SP_TOK_WIN":        billed(aeon_win) + billed(arc_win) + billed(sess_win),
         "SP_TOK_AEON_TURNS": aeon_win["turns"],
+        "SP_TOK_ARC_TURNS":  arc_win["turns"],
         "SP_TOK_SESS_TURNS": sess_win["turns"],
         "SP_TOK_AEON_CTX":   ctx(aeon_win) or ctx(aeon_tot),
+        "SP_TOK_ARC_CTX":    ctx(arc_win) or ctx(arc_tot),
         "SP_TOK_SESS_CTX":   ctx(sess_win) or ctx(sess_tot),
         "SP_TOK_AEON_OUT":   aeon_win["output_tokens"],
+        "SP_TOK_ARC_OUT":    arc_win["output_tokens"],
         "SP_TOK_SESS_OUT":   sess_win["output_tokens"],
         # NOT all-time: env mode reads only files touched inside the window, so these are
         # "billed by files still being written", which is the honest thing the fast path knows.
         # A pane wanting a true total must call `tokens.sh report` (seconds, not milliseconds).
         "SP_TOK_AEON_RECENT": billed(aeon_tot),
+        "SP_TOK_ARC_RECENT":  billed(arc_tot),
         "SP_TOK_SESS_RECENT": billed(sess_tot),
     }
     for k, v in out.items(): print(f"{k}={v}")
@@ -127,9 +135,9 @@ else:
     def row(name, c):
         print(f"  {name:<10}{c['turns']:>7,} turns  {billed(c):>16,} billed  "
               f"{ctx(c):>9,} ctx/turn  {c['output_tokens']:>10,} out")
-    print(f"=== last {window_h:g}h ===");  row("aeons", aeon_win); row("session", sess_win)
-    print("=== all time ===");             row("aeons", aeon_tot); row("session", sess_tot)
-    t = billed(aeon_tot) + billed(sess_tot)
+    print(f"=== last {window_h:g}h ==="); row("aeons", aeon_win); row("archivist", arc_win); row("session", sess_win)
+    print("=== all time ===");            row("aeons", aeon_tot); row("archivist", arc_tot); row("session", sess_tot)
+    t = billed(aeon_tot) + billed(arc_tot) + billed(sess_tot)
     if t:
         print(f"\n  session share of all tokens: {billed(sess_tot)*100//t}%")
 PY

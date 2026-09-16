@@ -971,7 +971,7 @@ function drawOps(){
   /* TOKENS / CTX / WIN */
   const tw=q('SP_TOK_WIN'),twh=sq('SP_TOK_WINDOW_H')||'?';
   h+=row(`TOKENS/${twh}h`, bold(tok(tw))+' billed');
-  for(const[k,name]of[['AEON','aeons'],['SESS','session']]){
+  for(const[k,name]of[['AEON','aeons'],['ARC','archivist'],['SESS','session']]){
     const w=q(`SP_TOK_${k}_WIN`),t=q(`SP_TOK_${k}_TURNS`),c=q(`SP_TOK_${k}_CTX`);
     const pct=(w!==null&&tw&&parseInt(tw,10)>0)?Math.round(parseInt(w,10)*100/parseInt(tw,10))+'%':'?';
     h+=sub(`${E(name)} ${pct}  ${t!==null?E(String(t)):'?'}t · ${tok(c)} ctx/t`);
