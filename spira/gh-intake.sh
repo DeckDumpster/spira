@@ -96,7 +96,7 @@ log "beads will be filed against repo:$BEAD_REPO ($_rr)"
 # Matching on the external ref rather than on a title is what makes a re-run
 # ingest nothing twice: a title can be edited on either side, a ref cannot.
 _ingested() {
-    "$BD" -C "$DB" list --json 2>/dev/null | python3 -c '
+    "$BD" -C "$DB" list --all --limit 0 --json 2>/dev/null | python3 -c '
 import sys,json
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(0)
@@ -107,7 +107,7 @@ for r in rows:
     print(r.get("id",""), ref, ",".join(r.get("labels") or []))
 '
 }
-_total() { "$BD" -C "$DB" list --json 2>/dev/null | python3 -c '
+_total() { "$BD" -C "$DB" list --all --limit 0 --json 2>/dev/null | python3 -c '
 import sys,json
 try: d=json.load(sys.stdin)
 except Exception: print(0); sys.exit(0)

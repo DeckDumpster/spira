@@ -62,8 +62,10 @@ case "$*" in
         # what is being tested here.
         printf '[{"id":"sp-native","external_ref":"","labels":["spira","plan"]}'
         i=0
+        closed=$(cat "$STATE/closed" 2>/dev/null || echo 0)
         while IFS= read -r ref; do
             [ -n "$ref" ] || continue
+            case " $* " in *" --all "*) : ;; *) [ "$closed" = "1" ] && continue ;; esac
             if [ "$broken" = "1" ]; then lbl=''; else lbl='"spira","plan"'; fi
             printf ',{"id":"sp-gh%02d","external_ref":"%s","labels":[%s]}' "$i" "$ref" "$lbl"
             i=$((i+1))
@@ -223,6 +225,15 @@ echo "4b. a second run ingests nothing twice:"
 out="$(run 2)"
 if grep -q 'already present 2' <<<"$out"; then ok "re-running is idempotent"
 else bad "re-running is idempotent" "expected 'already present 2', got: $(printf '%s' "$out" | tail -2 | tr '\n' ' ')"; fi
+
+echo "4c. an ingested issue whose bead is closed is not ingested again:"
+# bd list returns only open beads unless asked for all, so a closed bead's ref was invisible to
+# the join and every worked issue would be filed a second time.
+printf '1' > "$STATE/closed"
+out="$(run 2)"
+if grep -q 'already present 2' <<<"$out"; then ok "closed ingested beads are found"
+else bad "closed ingested beads are found" "expected 'already present 2', got: $(printf '%s' "$out" | tail -2 | tr '\n' ' ')"; fi
+rm -f "$STATE/closed"
 
 echo "5. --dry-run changes nothing:"
 out="$(run 2 --dry-run)"
