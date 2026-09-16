@@ -692,15 +692,15 @@ cmd_status() {
         # in the table.
         if [ -n "${mtime["$lf"]-}" ]; then age="$(_wd_age "$(( now - ${mtime["$lf"]} ))")"; else age="-"; fi
 
-        # A DAEMON WHOSE UNIT IS NOT ACTIVE IS A DEAD WRITER, AND HEALTH MUST SAY SO. The
-        # probe answers "can the watcher see what it watches?", but a watcher that is not
-        # running cannot see anything. Skipping the probe when the unit is down avoids a
-        # false OK from a probe that reads a file the dead watcher last wrote hours ago
-        # (law-absence-needs-a-positive-control). The UNIT column already shows the state;
-        # HEALTH names the condition in terms a Monitor-attaching session needs to act on.
+        # THE PROBE IS SKIPPED WHEN THE UNIT IS DOWN: a dead watcher's stale files would
+        # return false OK (law-absence-needs-a-positive-control). HALTED when the world was
+        # deliberately stopped, DEGRADED otherwise — the two must be distinguishable.
         if [ "${wkind[$i]}" = daemon ] && [ "$state" != "active" ]; then
-            _wd_hstate="DEGRADED"
-            _wd_hwhy="unit is $state — no writer"
+            if [ -f "$SPIRA_RUN/world.halted" ]; then
+                _wd_hstate="HALTED"; _wd_hwhy=""
+            else
+                _wd_hstate="DEGRADED"; _wd_hwhy="unit is $state — no writer"
+            fi
         else
             _wd_probe "${whealth[$i]}"
         fi
@@ -1243,6 +1243,9 @@ _wd_notify_health() {
         [ -n "$state" ] || continue
 
         if [ "$state" != active ]; then
+            if [ -f "$SPIRA_RUN/world.halted" ]; then
+                rm -f "$(_wd_unhealthyfile "$n")" 2>/dev/null; continue
+            fi
             _wd_hstate=DEGRADED; _wd_hwhy="unit is $state — no writer"
         else
             _wd_probe "${uhealth[$i]}"
