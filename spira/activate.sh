@@ -119,50 +119,41 @@ if [ "$DRY_RUN" = 1 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Refuse if the release is already present.
+# Unpack unless this release is already installed; rollback skips to the swap.
 # ---------------------------------------------------------------------------
 if [ -e "$RELEASE_DIR" ]; then
-    printf 'activate: release already present: %s\n' "$RELEASE_DIR" >&2
-    printf 'activate: to re-activate this tarball, remove the directory first.\n' >&2
-    exit 1
+    log "activate: $RELEASE_NAME already present — skipping unpack"
+else
+    mkdir -p "$RELEASES" || {
+        printf 'activate: cannot create release directory: %s\n' "$RELEASES" >&2
+        exit 1
+    }
+
+    UNPACK_TMP="$RELEASES/.unpack.$$"
+    _cleanup_unpack() { rm -rf "$UNPACK_TMP" 2>/dev/null || true; }
+    trap '_cleanup_unpack' EXIT INT TERM
+
+    mkdir -p "$UNPACK_TMP"
+
+    log "activate: unpacking $BASENAME"
+    tar -xzf "$TARBALL" -C "$UNPACK_TMP" || {
+        printf 'activate: failed to unpack tarball: %s\n' "$TARBALL" >&2
+        exit 1
+    }
+
+    if [ ! -d "$UNPACK_TMP/$RELEASE_NAME" ]; then
+        printf 'activate: tarball did not produce expected directory %s/\n' "$RELEASE_NAME" >&2
+        printf 'activate: (searched in %s)\n' "$UNPACK_TMP" >&2
+        exit 1
+    fi
+
+    mv "$UNPACK_TMP/$RELEASE_NAME" "$RELEASE_DIR"
+    rmdir "$UNPACK_TMP" 2>/dev/null || true
+    trap - EXIT INT TERM
+
+    chmod -R a-w "$RELEASE_DIR" \
+        || log "activate: WARN: could not make $RELEASE_DIR read-only"
 fi
-
-mkdir -p "$RELEASES" || {
-    printf 'activate: cannot create release directory: %s\n' "$RELEASES" >&2
-    exit 1
-}
-
-# ---------------------------------------------------------------------------
-# Unpack to a staging directory so a partial unpack never appears as the release.
-# ---------------------------------------------------------------------------
-UNPACK_TMP="$RELEASES/.unpack.$$"
-_cleanup_unpack() { rm -rf "$UNPACK_TMP" 2>/dev/null || true; }
-trap '_cleanup_unpack' EXIT INT TERM
-
-mkdir -p "$UNPACK_TMP"
-
-log "activate: unpacking $BASENAME"
-tar -xzf "$TARBALL" -C "$UNPACK_TMP" || {
-    printf 'activate: failed to unpack tarball: %s\n' "$TARBALL" >&2
-    exit 1
-}
-
-if [ ! -d "$UNPACK_TMP/$RELEASE_NAME" ]; then
-    printf 'activate: tarball did not produce expected directory %s/\n' "$RELEASE_NAME" >&2
-    printf 'activate: (searched in %s)\n' "$UNPACK_TMP" >&2
-    exit 1
-fi
-
-# Move the completed directory to its final location.
-mv "$UNPACK_TMP/$RELEASE_NAME" "$RELEASE_DIR"
-rmdir "$UNPACK_TMP" 2>/dev/null || true
-trap - EXIT INT TERM
-
-# ---------------------------------------------------------------------------
-# Make the release directory read-only.
-# ---------------------------------------------------------------------------
-chmod -R a-w "$RELEASE_DIR" \
-    || log "activate: WARN: could not make $RELEASE_DIR read-only"
 
 # ---------------------------------------------------------------------------
 # Atomically swap the current symlink via rename(2).
