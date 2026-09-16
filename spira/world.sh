@@ -374,7 +374,14 @@ status)
     if [ -f "$STAMP" ]; then printf 'spira: HALTED since %s\n' "$(head -1 "$STAMP")"; sed -n 2p "$STAMP"
     else echo "spira: not halted by world.sh"; fi
     for t in "${TIMERS[@]}"; do
-        printf '  %-26s %s\n' "$t" "$("$SC" --user is-active "$t" 2>/dev/null)"
+        timer_state="$("$SC" --user is-active "$t" 2>/dev/null)"
+        svc="${t%.timer}.service"
+        svc_result="$("$SC" --user show "$svc" -p Result --value 2>/dev/null)"
+        if [ -n "$svc_result" ] && [ "$svc_result" != "success" ]; then
+            printf '  %-26s %s (svc: %s)\n' "$t" "$timer_state" "$svc_result"
+        else
+            printf '  %-26s %s\n' "$t" "$timer_state"
+        fi
     done
     printf '  %-26s %s\n' "dolt-beads.service" "$("$SC" --user is-active dolt-beads.service 2>/dev/null)"
     printf '  %-26s %s\n' "dolt-beads-test.service" "$("$SC" --user is-active dolt-beads-test.service 2>/dev/null)"
