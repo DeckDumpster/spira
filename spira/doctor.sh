@@ -790,6 +790,9 @@ if [ "${_dr_en_bad}" -eq 0 ]; then
             continue
         fi
         [ "$_dr_en_state" = "enabled" ] && continue
+        # not-found means the unit file does not exist yet — a fresh install has none.
+        # That is not drift; drift is a unit whose file IS installed but not enabled.
+        [ "$_dr_en_state" = "not-found" ] && continue
         # Not enabled. Check the control plane before classifying as drift. The subject key
         # is derived the same way ctrl.sh divergence derives it: strip the file extension,
         # then strip the per-instance suffix.

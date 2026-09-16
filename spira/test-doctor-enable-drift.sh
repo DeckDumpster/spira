@@ -82,6 +82,9 @@ MOCK
     if [ "$disabled_pat" = "SILENT" ]; then
         # Produce no output — the fail-closed test.
         printf '            *) exit 0 ;;\n' >> "$path"
+    elif [ "$disabled_pat" = "NOTFOUND" ]; then
+        # Return "not-found" for every unit — simulates a fresh install with no unit files.
+        printf '            *) printf "not-found\\n"; exit 1 ;;\n' >> "$path"
     elif [ -n "$disabled_pat" ]; then
         printf '            *"%s"*) printf "disabled\\n"; exit 1 ;;\n' \
             "$disabled_pat" >> "$path"
@@ -233,6 +236,19 @@ want   "fail-closed: error message mentions enablement state" \
     "cannot verify enablement state" "$silent_out"
 nowant "fail-closed: no OK for enabled units" \
     "ENABLE units are enabled" "$silent_out"
+
+# ===========================================================================
+echo
+echo "not-found — fresh install, no unit files installed: must not fail preflight:"
+# ===========================================================================
+# On a fresh host, units have not been installed yet. systemctl returns
+# "not-found" for every unit. This is not drift — the unit simply has not
+# been installed. The bead that prompted this: sp-jcb1.
+write_sc "$BIN/sc-notfound" "NOTFOUND"
+notfound_out="$(run_doctor "$BIN/sc-notfound")"
+nowant "not-found: no FAIL in enabled-units section" "  FAIL  " \
+    "$(printf '%s\n' "$notfound_out" | grep -A 100 'enabled units' || true)"
+want "not-found: OK line present" "ENABLE units are enabled" "$notfound_out"
 
 # ===========================================================================
 echo

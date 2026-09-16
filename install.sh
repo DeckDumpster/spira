@@ -447,6 +447,21 @@ fi
 # ---------------------------------------------------------------------------
 phase_start "phase 4: units"
 
+# SPIRA_PROD must exist before systemd/install.sh renders units: it checks that every
+# ExecStart target is executable, so a non-existent prod checkout fails every unit on a
+# fresh install. promote.sh creates the clone when absent; skip in single-checkout mode
+# (SPIRA_PROD inside SPIRA_REPO) where promote.sh refuses and nothing needs cloning.
+if ! spira_single_checkout && [ -n "${SPIRA_PROD:-}" ] && [ ! -d "$SPIRA_PROD" ]; then
+    if [ "$_dry" = 1 ]; then
+        phase_info "would run: spira/promote.sh HEAD (SPIRA_PROD does not exist yet)"
+    else
+        phase_info "creating production checkout at $SPIRA_PROD"
+        "$SPIRA_HOME/promote.sh" HEAD \
+            || _phase_fail "units" "promote.sh failed to create $SPIRA_PROD"
+        _changes=$((_changes+1))
+    fi
+fi
+
 _unit_args=("${SPIRA_INSTANCE:-prod}")
 [ "$_laptop" = 1 ] && _unit_args+=("--laptop")
 
