@@ -54,6 +54,15 @@ on:
     branches: [main]
   push:
     branches: [main]
+  # merge_group fires when GitHub's merge queue groups commits before landing.
+  # It replaces N per-push full gates with one batched gate. See: branch
+  # protection → merge queue → required status checks must name "gate" to
+  # match the job name below (law-a-documented-control-must-exist).
+  #
+  # SEQUENCING: do not enable the queue in branch protection until at least
+  # one push gate has completed green. A queue in front of a gate that has
+  # never passed blocks every merge indefinitely.
+  merge_group:
   workflow_dispatch:
 
 # A superseded pull-request run is cancelled; a push to the base branch is never
@@ -68,8 +77,12 @@ on:
 # nothing for cancellation to act on however the flag is coerced. A pull request still
 # keys on its ref and still supersedes itself, which is wanted: no release is cut from
 # a pull-request run, so cancelling one costs nothing.
+#
+# merge_group behaves like push: each entry has a unique SHA, so keying on the SHA
+# prevents cancellation between distinct queue entries. A re-run of the same entry
+# would share a group and cancel the old run, which is wanted.
 concurrency:
-  group: gate-${{ github.event_name == 'push' && github.sha || github.ref }}
+  group: gate-${{ (github.event_name == 'push' || github.event_name == 'merge_group') && github.sha || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -205,7 +218,11 @@ jobs:
             _b=0
             bash spira/testenv-batch.sh "${{ github.sha }}" || _b=$?
           else
-            # The release gate. Name every suite, because the diff is empty here.
+            # Full corpus for push, merge_group, and workflow_dispatch.
+            # On push the diff against the base is empty. On merge_group the
+            # diff is the PR's commits, but these are about to land so the
+            # full gate is the right check — the PR gate already ran the diff
+            # selection; this is the final pass before main.
             printf 'gate: %s on %s — running the whole corpus\n' \
               "${{ github.event_name }}" "${{ github.ref_name }}"
             _b=0
