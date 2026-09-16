@@ -3052,7 +3052,7 @@ for i in (d if isinstance(d, list) else [d]):
 # OUTPUT NAMES THE BEAD, ITS PREFERENCE AND THE REJECTION REASON so the fix is one label.
 # Format: UNCLAIMABLE <id> — <reason>
 detect_unclaimable_ready() {
-    local parts="" f inc exc
+    local parts="" all_parts="" f inc exc
     for f in $(spira_fayths); do
         inc="$(fayth_get "$f" FAYTH_LABELS)"
         exc="$(fayth_get "$f" FAYTH_EXCLUDE_LABELS)"
@@ -3060,8 +3060,17 @@ detect_unclaimable_ready() {
     done
     [ -n "$parts" ] || return 0
 
+    # ALL_PARTS: the full chamber, including fayths the active roster omits. Used to
+    # distinguish a parked partition (bead claimable by a chamber fayth not in SPIRA_FAYTHS)
+    # from a real mislabelling (bead claimable by nobody, full chamber included).
+    for f in $(fayth_names); do
+        inc="$(fayth_get "$f" FAYTH_LABELS)"
+        exc="$(fayth_get "$f" FAYTH_EXCLUDE_LABELS)"
+        [ -n "$inc" ] && all_parts="${all_parts}${f}|${inc}|${exc}"$'\n'
+    done
+
     bdjson "${READY_ARGS[@]}" 2>/dev/null \
-    | PARTS="$parts" python3 -c '
+    | PARTS="$parts" ALL_PARTS="$all_parts" python3 -c '
 import json, os, sys
 
 try:
@@ -3070,14 +3079,19 @@ except Exception:
     sys.exit(0)
 beads = d if isinstance(d, list) else [d]
 
-parts = {}
-for line in os.environ["PARTS"].splitlines():
-    line = line.strip()
-    if not line:
-        continue
-    name, inc_str, exc_str = line.split("|", 2)
-    parts[name] = (set(filter(None, inc_str.split(","))),
-                   set(filter(None, exc_str.split(","))))
+def parse_parts(env_key):
+    result = {}
+    for line in os.environ.get(env_key, "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        name, inc_str, exc_str = line.split("|", 2)
+        result[name] = (set(filter(None, inc_str.split(","))),
+                        set(filter(None, exc_str.split(","))))
+    return result
+
+parts = parse_parts("PARTS")
+all_parts = parse_parts("ALL_PARTS")
 
 # sp-d906p: READY_ARGS now carries --label SPIRA_SCOPE_LABEL when the key is non-empty, so
 # bd ready itself excludes out-of-scope beads before they reach this function. The check
@@ -3085,7 +3099,7 @@ for line in os.environ["PARTS"].splitlines():
 # an operator who has disabled scope restriction still benefits from seeing which beads no
 # persona can claim, and the message correctly names the missing label in that case too.
 scope_label = os.environ.get("SPIRA_SCOPE_LABEL", "spira")
-partition_labels = sorted({lab for inc, _ in parts.values() for lab in inc if lab != scope_label})
+partition_labels = sorted({lab for inc, _ in all_parts.values() for lab in inc if lab != scope_label})
 ci_label = os.environ.get("SPIRA_CI_LABEL", "awaiting-ci")  # literal-ok: Python fallback for direct invocation without conf.sh
 ask_label = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
 
@@ -3138,18 +3152,30 @@ for bead in beads:
     if claimers:
         continue
 
-    # Build a diagnostic naming the preference and why each named persona was rejected
+    # A bead whose partition belongs to a parked fayth (defined in the chamber but absent
+    # from the active roster because SPIRA_FAYTHS was narrowed) is WAITING, not UNCLAIMABLE.
+    # The roster is a deliberate operator choice; UNCLAIMABLE is reserved for labels that
+    # match no persona in the full chamber — the only case where "add one of: ..." is sound.
+    if any(
+        inc <= L and not (L & exc) and (not pref or name in pref)
+        for name, (inc, exc) in all_parts.items()
+        if name not in parts
+    ):
+        continue
+
+    # Build a diagnostic naming the preference and why each named persona was rejected.
+    # Lookup uses all_parts so parked personas are named correctly in the fayth: case.
     if pref:
         reasons = []
         for p in sorted(pref):
-            if p not in parts:
+            if p not in all_parts:
                 reasons.append("%s (not in chamber)" % p)
-            elif not parts[p][0] <= L:
-                missing = sorted(parts[p][0] - L)
+            elif not all_parts[p][0] <= L:
+                missing = sorted(all_parts[p][0] - L)
                 reasons.append("%s (partition %s, missing %s)" % (
-                    p, sorted(parts[p][0]), missing))
-            elif L & parts[p][1]:
-                blocked = sorted(L & parts[p][1])
+                    p, sorted(all_parts[p][0]), missing))
+            elif L & all_parts[p][1]:
+                blocked = sorted(L & all_parts[p][1])
                 reasons.append("%s (excluded by own labels %s)" % (p, blocked))
             else:
                 reasons.append("%s (unknown reason)" % p)

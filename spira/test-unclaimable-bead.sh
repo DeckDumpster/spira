@@ -222,6 +222,52 @@ SPIRA_INCIDENT_SH="$TMP/mock-incident9.sh" file_unclaimable_incidents "$unc"
 inc9_out="$(cat "$INC_LOG9")"
 is "no incident for claimable bead" "" "$inc9_out"
 
+# ==========================================================================================
+echo
+echo "case 10 — parked partition: bead claimable by a parked fayth is silent (not UNCLAIMABLE)"
+# ==========================================================================================
+# When SPIRA_FAYTHS narrows the active roster (e.g., builder only), beads whose partition
+# belongs to a parked persona (ops, groomer, maechen) are WAITING — the operator narrowed
+# the roster deliberately. They must not produce UNCLAIMABLE output or file incidents.
+# That advice ("add one of: plan, spike") would relabel the bead into the wrong partition.
+#
+# POSITIVE CONTROL: a truly unclaimable bead (no partition label) still fires.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-unc10a","title":"parked: ops partition (spira,incident)","status":"open","issue_type":"task","labels":["incident","repo:spira","spira"]}
+{"id":"sp-unc10b","title":"parked: maechen partition (spira,maechen-sweep)","status":"open","issue_type":"task","labels":["maechen-sweep","repo:spira","spira"]}
+{"id":"sp-unc10c","title":"truly unclaimable: spira only, no partition","status":"open","issue_type":"task","labels":["repo:spira","spira"]}
+JSONL
+
+out="$(SPIRA_FAYTHS="builder spike" detect_unclaimable_ready 2>/dev/null)"
+lacks "parked ops bead not reported UNCLAIMABLE"    "sp-unc10a" "$out"
+lacks "parked maechen bead not reported UNCLAIMABLE" "sp-unc10b" "$out"
+has   "truly unclaimable bead still reported"       "UNCLAIMABLE sp-unc10c" "$out"
+
+# ==========================================================================================
+echo
+echo "case 11 — parked partition: no incident filed for a parked bead"
+# ==========================================================================================
+# file_unclaimable_incidents must be silent for a parked bead. An incident relabelled into
+# the wrong partition is claimed by the wrong persona and that advice does damage.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-unc11a","title":"parked: ops partition","status":"open","issue_type":"task","labels":["incident","repo:spira","spira"]}
+JSONL
+
+INC_LOG11="$TMP/inc11.log"
+: > "$INC_LOG11"
+cat > "$TMP/mock-incident11.sh" <<MOCK
+#!/usr/bin/env bash
+printf 'file %s\n' "\$*" >> "$INC_LOG11"
+MOCK
+chmod +x "$TMP/mock-incident11.sh"
+
+unc="$(SPIRA_FAYTHS="builder spike" detect_unclaimable_ready 2>/dev/null)"
+SPIRA_INCIDENT_SH="$TMP/mock-incident11.sh" file_unclaimable_incidents "$unc"
+inc11_out="$(cat "$INC_LOG11")"
+is "no incident for parked bead" "" "$inc11_out"
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
