@@ -2,12 +2,11 @@
 #
 # test-cockpit-layout-conf.sh — SPIRA_CONF propagates to pane commands in layout.sh up.
 #
-# THE FAILURE THIS SUITE EXISTS FOR. layout.sh spawns health.sh and panel-run.sh in tmux
-# panes. tmux gives each new pane the server's environment, which is set once at server
-# start and does not carry per-invocation env vars. An operator running
-# `SPIRA_CONF=/test.conf layout.sh up` expects test panes; without this fix the panes
-# respawn with no SPIRA_CONF and read the prod config instead — the wrong runtime tree,
-# silently, with no visible error.
+# THE FAILURE THIS SUITE EXISTS FOR. layout.sh spawns health.sh in a tmux pane. tmux gives
+# each new pane the server's environment, which is set once at server start and does not
+# carry per-invocation env vars. An operator running `SPIRA_CONF=/test.conf layout.sh up`
+# expects a test pane; without this fix the pane respawns with no SPIRA_CONF and reads the
+# prod config instead — the wrong runtime tree, silently, with no visible error.
 #
 # covers: cockpit/layout.sh
 set -uo pipefail
@@ -43,19 +42,12 @@ cleanup() {
 trap cleanup EXIT
 
 # ── Fake cockpit scripts ────────────────────────────────────────────────────
-# health.sh and panel-run.sh just sleep so the pane stays alive for inspection.
-# The test only needs to read pane_start_command; the scripts need not do anything.
+# health.sh just sleeps so the pane stays alive for inspection.
+# The test only needs to read pane_start_command; the script need not do anything.
 FAKE_COCK="$TMP/cockpit"
 mkdir -p "$FAKE_COCK"
 printf '#!/usr/bin/env bash\nsleep 60\n' > "$FAKE_COCK/health.sh"
-printf '#!/usr/bin/env bash\nsleep 60\n' > "$FAKE_COCK/panel-run.sh"
-chmod +x "$FAKE_COCK/health.sh" "$FAKE_COCK/panel-run.sh"
-
-# A fake SPIRA_PANEL binary (panel-run.sh exec's it; it must exist to avoid an error, but
-# here panel-run.sh is replaced entirely so it need not do anything real).
-mkdir -p "$FAKE_COCK/panel/target/release"
-printf '#!/usr/bin/env bash\nsleep 60\n' > "$FAKE_COCK/panel/target/release/panel"
-chmod +x "$FAKE_COCK/panel/target/release/panel"
+chmod +x "$FAKE_COCK/health.sh"
 
 # ── Fixture tmux server ─────────────────────────────────────────────────────
 export TMUX_TMPDIR="$TMUXDIR"
@@ -80,7 +72,7 @@ COCKPIT_CWD="$TMP" \
 # Allow panes a moment to start.
 sleep 0.3
 
-# ── Read what commands the panes were given ──────────────────────────────────
+# ── Read what command the pane was given ─────────────────────────────────────
 # #{pane_start_command} is the full command string passed to split-window; it survives
 # respawn as the command tmux would reuse, so it is the canonical record of what
 # SPIRA_CONF will be set to on every restart.
@@ -88,15 +80,9 @@ health_cmd=$(TMUX_TMPDIR="$TMUXDIR" \
     tmux list-panes -t cockpit:0 \
     -F '#{@cockpit}|#{pane_start_command}' 2>/dev/null \
     | awk -F'|' '$1=="health"{print $2; exit}')
-panel_cmd=$(TMUX_TMPDIR="$TMUXDIR" \
-    tmux list-panes -t cockpit:0 \
-    -F '#{@cockpit}|#{pane_start_command}' 2>/dev/null \
-    | awk -F'|' '$1=="panel"{print $2; exit}')
 
 want "health pane command carries SPIRA_CONF" "SPIRA_CONF=" "$health_cmd"
 want "health pane command carries the conf path" "$CONF_PATH" "$health_cmd"
-want "panel pane command carries SPIRA_CONF" "SPIRA_CONF=" "$panel_cmd"
-want "panel pane command carries the conf path" "$CONF_PATH" "$panel_cmd"
 
 # ── Verify the absence case: no SPIRA_CONF → no prefix in the command ───────
 TMUX_TMPDIR="$TMUXDIR" tmux kill-server 2>/dev/null || true
@@ -118,20 +104,12 @@ health_cmd2=$(TMUX_TMPDIR="$TMUXDIR" \
     tmux list-panes -t cockpit2:0 \
     -F '#{@cockpit}|#{pane_start_command}' 2>/dev/null \
     | awk -F'|' '$1=="health"{print $2; exit}')
-panel_cmd2=$(TMUX_TMPDIR="$TMUXDIR" \
-    tmux list-panes -t cockpit2:0 \
-    -F '#{@cockpit}|#{pane_start_command}' 2>/dev/null \
-    | awk -F'|' '$1=="panel"{print $2; exit}')
 
-# WITHOUT SPIRA_CONF: commands must not contain a SPIRA_CONF= prefix.
+# WITHOUT SPIRA_CONF: command must not contain a SPIRA_CONF= prefix.
 [[ "${health_cmd2:-}" != *"SPIRA_CONF="* ]] \
     && ok "health pane command has no SPIRA_CONF when var is unset" \
     || bad "health pane command has no SPIRA_CONF when var is unset" \
            "got [$health_cmd2]"
-[[ "${panel_cmd2:-}" != *"SPIRA_CONF="* ]] \
-    && ok "panel pane command has no SPIRA_CONF when var is unset" \
-    || bad "panel pane command has no SPIRA_CONF when var is unset" \
-           "got [$panel_cmd2]"
 
 printf '\ntest-cockpit-layout-conf: %d ok, %d fail\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

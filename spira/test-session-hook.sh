@@ -143,33 +143,15 @@ out2="$(hook SessionStart clear)"
 has "and a second session sees the same 300"     "$out2" "30 actionable of 300 new"
 
 echo
-echo "the latch command, for every row"
-# ON THE `Monitor:` PREFIX, not on the command alone: `watchd.sh tail <name>` also appears in
-# the note naming what the cap withheld, so a bare match on it passes with the latch block
-# entirely deleted — which it did, until this suite was driven red with exactly that edit.
-has "the daemon row is latchable"   "$out" "Monitor: $CLONE/spira/watchd.sh tail answers"
-# A `log` ROW IS LATCHABLE TOO. Something else writes that file, but reading it is the same
-# two-file contract, and a row a session is never told about is a row nobody reads.
-has "and so is the log row"         "$out" "Monitor: $CLONE/spira/watchd.sh tail cron"
-is  "one latch line per row, and no more" "2" \
-    "$(printf '%s\n' "$out" | grep -c 'Monitor: ' || true)"
-has "the hook says why it cannot latch itself" "$out" "cannot attach"
-
-echo
-echo "a watcher that wakes its reader is not offered as a latch"
-wout="$(WAKE=/bin/true hook SessionStart startup)"
-nothas() { case "$2" in *"$3"*) bad "$1" "found [$3]" ;; *) ok "$1" ;; esac; }
-nothas "the waking row is not latched"      "$wout" "Monitor: $CLONE/spira/watchd.sh tail answers"
-has    "the other row still is"             "$wout" "Monitor: $CLONE/spira/watchd.sh tail cron"
-has "and that nothing was consumed" "$out" "Nothing above was marked read"
-# IT NEVER SENDS THE READER TO ListAgents. That was the instruction here, and asserting it
-# is how a control nobody could follow survived in a green suite: ListAgents enumerates agents
-# and sessions and no tool enumerates a session's own Monitors, so "attach only the streams not
-# already listed there" reported nothing attached every time. A cleared session ended up with
-# four tails on one watcher. Deduplication is the lock's job now (test-watchd-tail.sh), and the
-# only thing asserted here is that the unfollowable instruction is gone (sp-vv4p, superseded).
+echo "no Monitor instructions are printed"
+# THE HOOK PRINTS NO LATCH COMMANDS. Delivery and replies now handle operator communication
+# through mail; the Monitor latch is retired.
+hasnt "no Monitor instruction is emitted"         "$out" "Monitor:"
+hasnt "no resume-from-cursor text"                "$out" "Nothing above was marked read"
+# IT NEVER SENDS THE READER TO ListAgents. ListAgents enumerates agents and sessions and no
+# tool enumerates a session's own Monitors, so "attach only the streams not already listed
+# there" reported nothing attached every time (sp-vv4p, superseded).
 hasnt "it does not send the reader to ListAgents" "$out" "ListAgents"
-has  "it says a duplicate tail refuses itself"    "$out" "refuses itself"
 
 echo
 echo "the newest lines are the ones kept"
@@ -277,25 +259,17 @@ has "silence from it is called out"           "$dout" "not good news"
 has "and it carries the probe's own reason"   "$dout" "no local ids in the state file"
 has "attributed to the watcher that earned it" "$dout" "answers:"
 
-# THE LATCH BLOCK NAMES WATCHERS AND NOTHING ELSE. This is the assertion the planted table
-# could not make. Every `tail` command must name a row of the manifest; the defect emitted
-# `tail DEGRADED` and `tail answers:` from the call-out's own lines, in the one block whose
-# whole purpose is to be pasted and run.
-latch="$(printf '%s\n' "$dout" | grep -o 'watchd.sh tail [^ ]*' | sed 's/.*tail //' | sort -u)"
-is  "one latch command per watcher, and no others" "answers
-cron" "$(printf '%s\n' "$latch" | sort)"
+hasnt "no Monitor instruction in DEGRADED case"   "$dout" "Monitor:"
 
 # AND THE SECTION APPEARS ONCE. Printing the status whole and then adding a call-out rendered
 # the same reason twice, which reads as two faults.
 is  "the reason is printed exactly once"      "1" \
     "$(printf '%s\n' "$dout" | grep -c 'no local ids in the state file' || true)"
 
-# THE POSITIVE CONTROL FOR THE ABSENCE. Without this the section could be missing because the
-# matcher never works, and the healthy case would pass for the wrong reason.
 hout="$(dhook "$DOK")"
 hasnt "a healthy manifest raises no such section" "$hout" "running and blind"
 has  "but the table is still printed"             "$hout" "answers"
-has  "and the latch commands survive"             "$hout" "watchd.sh tail cron"
+hasnt "no Monitor instruction in healthy case"    "$hout" "Monitor:"
 
 echo
 echo "a watcher this installation has not got is shown, and never latched"
@@ -330,13 +304,10 @@ ohook() { hook SessionStart startup SPIRA_RUN="$ORUN" SPIRA_WATCHERS="$OMANIFEST
 # fixture never produced a `view` watcher at all (law-absence-needs-a-positive-control).
 oout="$(ohook SPIRA_VIEW=/bin/true)"
 has "a configured optional row is a watcher like any other" "$oout" "view"
-has "and it is latchable"                                   "$oout" "Monitor: $CLONE/spira/watchd.sh tail view"
 
 offout="$(ohook)"
 has  "an unconfigured one is still named in the table"  "$offout" "view"
-hasnt "but it is never offered as a latch"              "$offout" "tail view"
-latch="$(printf '%s\n' "$offout" | grep -o 'watchd.sh tail [^ ]*' | sed 's/.*tail //' | sort -u)"
-is   "the latch block names only what has a log"        "answers" "$latch"
+hasnt "no Monitor latch is emitted for it"              "$offout" "tail view"
 
 has  "the degraded watcher still gets its section"      "$offout" "DEGRADED — running and blind"
 has  "and its reason"                                   "$offout" "no local ids in the state file"
@@ -346,16 +317,14 @@ hasnt "the section stops before what is merely not installed" "$offout" "NOT INS
 hasnt "so an unconfigured watcher is never called blind"      "$offout" "is not set in"
 
 echo
-echo "nothing to latch means no latch block"
+echo "unconfigured-only manifest: table prints, no Monitor block"
 # A manifest of nothing BUT unconfigured rows still has a table to print — the row is how an
-# operator learns the watcher exists — but there is nothing to run, and a heading over an
-# empty list is an instruction that cannot be followed.
+# operator learns the watcher exists.
 NMANIFEST="$TMP/elsewhere/watchers.none-on"
 printf '?view|daemon|@SPIRA_VIEW@ watch|true\n' > "$NMANIFEST"
 nout="$(hook SessionStart startup SPIRA_RUN="$ORUN" SPIRA_WATCHERS="$NMANIFEST")"
 has  "the table still says the watcher exists" "$nout" "view"
-hasnt "no latch command is printed"            "$nout" "Monitor:"
-hasnt "and no resume is promised"              "$nout" "Nothing above was marked read"
+hasnt "no Monitor command is printed"          "$nout" "Monitor:"
 
 echo
 echo "mail count line in the session hook"
@@ -389,8 +358,7 @@ hasnt "and no list command either"   "$mout3" "mail.sh list concierge --unread"
 printf 'From: Gate <gate@spira>\nSubject: X\nDate: Mon, 01 Jan 2024 00:00:00 +0000\n\nX.\n' \
     > "$MAIL_DIR/concierge/new/3.msg"
 mnout="$(hook SessionStart startup)"
-# The two watcher Monitor lines from the main test still hold; mail adds none.
-is "mail adds no Monitor instruction" "2" \
+is "no Monitor instruction is printed" "0" \
     "$(printf '%s\n' "$mnout" | grep -c 'Monitor: ' || true)"
 rm "$MAIL_DIR/concierge/new/3.msg"
 
@@ -525,19 +493,15 @@ has "that unit is fenced with a CPU quota" \
 
 echo
 echo "an aeon session is told nothing"
-# AN AEON THAT SEES THE LATCH BLOCK OBEYS IT: it attaches a persistent Monitor, holds its
-# session open past the work, blocks landing for the life of the lease, and advances the
-# operator's cursor — consuming verdicts addressed to the brain session. SPIRA_AEON is
-# exported by aeon.sh into every session it summons and is the definitive marker.
+# AN AEON THAT SEES THE HOOK OUTPUT COULD OBEY THE WATCHER TABLE. SPIRA_AEON is exported by
+# aeon.sh into every session it summons and is the definitive marker.
 aout="$(hook SessionStart startup SPIRA_AEON=mindy)"
 is  "an aeon session gets no output at all"     "" "$aout"
-is  "and no Monitor command"                    "0" \
-    "$(printf '%s\n' "$aout" | grep -c 'Monitor:' || true)"
-# THE POSITIVE CONTROL: the same fixture without SPIRA_AEON still produces the latch block,
+# THE POSITIVE CONTROL: the same fixture without SPIRA_AEON still produces the status table,
 # so the silence above is about the guard and not about the fixture
 # (law-absence-needs-a-positive-control).
 pout="$(hook SessionStart startup)"
-has "an operator session still gets the latch"  "$pout" "Monitor:"
+has "an operator session still gets the status table" "$pout" "## Spira watchers"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

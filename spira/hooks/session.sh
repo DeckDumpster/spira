@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
 #
-# session.sh — the coding agent's SessionStart hook: what is watching, what is unread, and
-# how to latch onto it. Registered by `install-session-hook.sh`.
+# session.sh — the coding agent's SessionStart hook: what is watching, what is unread,
+# and unread mail. Registered by `install-session-hook.sh`.
 #
 # WHY A HOOK CAN ONLY PRINT. A command hook communicates with the client through stdout,
-# stderr and an exit code, and through nothing else — it cannot call a tool, so it cannot
-# attach the Monitor that would deliver a watcher's events. The split that follows is the
-# whole design: the OUTER HARNESS owns the watcher processes, systemd keeps them alive, and
-# this prints the few facts a fresh context needs plus the command that re-latches. The
-# processes are the part that matters; re-latching is ergonomics, and nothing is lost in the
-# gap, because the cursor is a file and the log is append-only.
+# stderr and an exit code only — it cannot call a tool. The OUTER HARNESS owns the watcher
+# processes; systemd keeps them alive.
 #
 # IT PRINTS A SUMMARY, NEVER A REPLAY. Everything here lands in a context window that has
 # just opened, which is the most expensive place text in this harness can go. An earlier
@@ -148,42 +144,6 @@ fi
 # section here whose entire value is that everything in it is a fault.
 degraded="$(printf '%s\n' "$status" | awk '/^DEGRADED$/ { f=1; next } f && /^[[:space:]]*$/ { exit } f')"
 
-# WHAT MAY BE LATCHED ONTO IS ASKED OF `manifest`, NOT READ OUT OF THE TABLE. The latch block
-# is a list of commands to be pasted and run, and `manifest` is the machine-readable contract
-# — `name|kind|target|health` — whose second field says whether there is anything to read.
-# The table is a rendering, and its second column is a unit state; inferring a kind from it
-# would be guessing at a fact that is stated plainly one command away.
-#
-# A ROW OF KIND `off` IS NOT LATCHABLE. It names a watcher this installation has not
-# configured, so nothing will ever write its log: `watchd.sh tail` refuses it, and a hand-run
-# `tail -F` would wait forever on a file with no writer, which from a Monitor is
-# indistinguishable from a watcher that is running and quiet.
-latchable="$("$WATCHD" manifest 2>/dev/null | awk -F'|' '$1 != "" && $2 != "off" { print $1 }')"
-
-# AND A WATCHER SOMEBODY IS ALREADY TAILING IS NOT OFFERED. This is the half that was missing,
-# and its absence is what made every context reset expensive.
-#
-# A Monitor SURVIVES a clear, a compact and a fork — the process keeps running and keeps
-# delivering into the rebuilt context. So the honest instruction after a reset is usually
-# "attach nothing"; what stood here instead was "run ListAgents first, and attach only the
-# streams not already listed there", which cannot be done: ListAgents enumerates agents and
-# sessions, and no tool at all enumerates a session's own Monitors. The check therefore
-# reported "none attached" every single time, and a session cleared four times ended up
-# holding four tails on `answers` — Ryan's verdicts arriving in quadruplicate, in the one
-# place in this harness where a duplicated line costs the most.
-#
-# THE LOCK IS THE FACT, so it is what is asked. `watchd.sh tailers` reports the watchers a live
-# reader holds, from the kernel rather than from a pid file, so a holder that has died since is
-# reported as free rather than blocking the offer forever.
-held="$("$WATCHD" tailers 2>/dev/null | awk -F'|' '$1 != "" { print $1 }')"
-if [ -n "$held" ]; then
-    latchable="$(printf '%s\n' "$latchable" | grep -Fxv -f <(printf '%s\n' "$held") || true)"
-fi
-
-if [ -n "${SPIRA_WAKE:-}" ] && [ -n "${SPIRA_WAKE_WATCHERS:-}" ]; then
-    latchable="$(printf '%s\n' "$latchable" | grep -Fxv -f <(printf '%s\n' $SPIRA_WAKE_WATCHERS) || true)"
-fi
-
 budget="${SPIRA_HOOK_LINES:-40}"
 case "$budget" in ''|*[!0-9]*) budget=40 ;; esac
 
@@ -209,44 +169,10 @@ trap 'rm -rf "$TMP"' EXIT
     fi
 } > "$TMP/head"
 
-# A `log` ROW IS LATCHED ONTO LIKE ANY OTHER: something else writes that file, but reading it
-# is the same two-file contract, and a row a session is never told about is a row nobody reads.
-#
-# NO BLOCK AT ALL WHEN THERE IS NOTHING TO RUN. A heading over an empty list is an instruction
-# that cannot be followed, and the sentences under it promise a resume this hook would not be
-# able to give.
 : > "$TMP/tail"
-if [ -n "$latchable" ]; then
-{   echo "Latch onto these so new events arrive without being asked. A hook cannot attach a"
-    echo "Monitor itself — it may only print — so this is yours to run:"
-    echo
-    printf '%s\n' "$latchable" | awk -v w="$WATCHD" '{ printf "    Monitor: %s tail %s\n", w, $1 }'
-    echo
-    # THE DEDUPLICATION IS NOT ASKED OF THE READER. Every watcher already being tailed has
-    # been removed from the list above, and `tail` itself refuses a second reader, so this
-    # block never names a stream that is already arriving and obeying it cannot duplicate one.
-    # What stood here was an instruction to check with ListAgents, which lists no Monitors.
-    echo "\`tail\` resumes from the cursor, so it replays what was missed and then streams."
-    echo "Nothing above was marked read. Anything already being tailed is omitted from that"
-    echo "list, and a second tail on one watcher refuses itself, so just run what is listed."
-} > "$TMP/tail"
-fi
 
-# WHAT IS ALREADY ARRIVING IS SAID OUT LOUD, and not merely left off the list. A fresh context
-# has no way to know an event stream is still being delivered into it; told nothing, it reads
-# the absence as "not watching" and goes looking for a way to attach one — which is the same
-# duplicate arriving by reasoning instead of by instruction.
-if [ -n "$held" ]; then
-{   echo "Already streaming into this context from before the reset — do NOT re-attach:"
-    printf '%s\n' "$held" | sed 's/^/    /'
-    echo
-} >> "$TMP/tail"
-fi
-
-# THE PREVIEW GETS WHAT IS LEFT, MEASURED. The table and the latch commands are printed whole
-# — a watcher hidden to save a line is a watcher nobody knows exists, and a truncated latch
-# command is the one thing here that recovers everything else — so the elastic section is the
-# preview and only the preview.
+# THE PREVIEW GETS WHAT IS LEFT, MEASURED. The table is printed whole — a watcher hidden to
+# save a line is a watcher nobody knows exists — so the elastic section is the preview only.
 allowance=0
 if [ "$budget" = 0 ]; then
     allowance=-1                                    # no budget; peek is uncapped

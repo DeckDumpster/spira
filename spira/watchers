@@ -66,8 +66,6 @@
 # <file>` asks the question that discriminates: does this state name a single bead of OUR
 # prefix. Point it at whatever file the watcher keeps its own memory in.
 
-answers|daemon|@SPIRA_COCKPIT@/watch-answers.sh|@SPIRA_HOME@/watchd.sh health-ids @SPIRA_ANSWER_STATE@
-
 # PR-NOTIFY is a log watcher: the timer-driven pr-notify.sh appends findings to this file
 # and the watchd system surfaces unread ones. A log row has no unit of its own — the timer
 # service (spira-pr-notify) does the writing. `watchd drain pr-notify` delivers queued

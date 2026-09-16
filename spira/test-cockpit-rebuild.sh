@@ -14,7 +14,7 @@
 # Building the layout in a new cockpit window produces something that renders correctly, looks
 # right at a glance, and is not the cockpit; the view watcher goes DEGRADED because the window
 # it steers is not the window it is looking at. So the suite asserts the LINKS, not merely that
-# three panes exist somewhere.
+# two panes exist somewhere.
 #
 # AN ISOLATED TMUX SERVER, NOT A MOCK. TMUX_TMPDIR gives this suite its own server, and every
 # tmux invocation below and inside rebuild.sh inherits it — so it drives the real layout.sh and
@@ -90,10 +90,9 @@ if [ "$rc" -ne 0 ]; then printf '%s\n' "$out" | sed 's/^/      /'; fi
 for s in brain hunk chat cockpit; do
     if TMUX_TMPDIR=$T tmux has-session -t "=$s" 2>/dev/null; then ok "session $s exists"; else bad "session $s exists" "absent"; fi
 done
-is "brain:0 holds three panes" "3" "$(TMUX_TMPDIR=$T tmux list-panes -t brain:0 2>/dev/null | wc -l | tr -d ' ')"
+is "brain:0 holds two panes" "2" "$(TMUX_TMPDIR=$T tmux list-panes -t brain:0 2>/dev/null | wc -l | tr -d ' ')"
 
 tags="$(TMUX_TMPDIR=$T tmux list-panes -t brain:0 -F '#{@cockpit}' 2>/dev/null | sort | tr '\n' ' ')"
-want "a pane is tagged panel"  "panel"  "$tags"
 want "a pane is tagged health" "health" "$tags"
 
 # THE LINK ASSERTION. Same window ID in two sessions is what makes it a link rather than a
@@ -104,8 +103,7 @@ cwins="$(TMUX_TMPDIR=$T tmux list-windows -t '=cockpit' -F '#{window_id}' 2>/dev
 want "cockpit links brain's window" "$bwin" "$cwins"
 want "cockpit links hunk's window"  "$hwin" "$cwins"
 
-want "it reports its own verification" "ok    panel pane renders content" "$out"
-want "and health too"                  "ok    health pane renders content" "$out"
+want "it reports its own verification" "ok    health pane renders content" "$out"
 want "and the session pane too"        "ok    session pane carries composed brief" "$out"
 
 # ======================================================================================
@@ -120,7 +118,7 @@ after="$(TMUX_TMPDIR=$T tmux display-message -p '#{pid}' 2>/dev/null)"
 is   "second run exits 0"                  "0" "$rc2"
 want "it says it left the server alone"    "answering — leaving it alone" "$out2"
 is   "the server was NOT restarted"        "$before" "$after"
-is   "still three panes in brain:0"        "3" "$(TMUX_TMPDIR=$T tmux list-panes -t brain:0 2>/dev/null | wc -l | tr -d ' ')"
+is   "still two panes in brain:0"          "2" "$(TMUX_TMPDIR=$T tmux list-panes -t brain:0 2>/dev/null | wc -l | tr -d ' ')"
 
 # ======================================================================================
 echo
@@ -149,7 +147,7 @@ echo "5. positive control: verify reports FAIL when session pane has no composed
 # then rebuild with a concierge that also starts bare. The verify block must say FAIL.
 sess_p5="$(TMUX_TMPDIR=$T tmux list-panes -t brain:0 \
     -F '#{@cockpit} #{pane_id}' 2>/dev/null \
-    | awk '{ if (NF==1) print $1; else if ($1!="panel" && $1!="health") print $2 }' | head -1)"
+    | awk '{ if (NF==1) print $1; else if ($1!="health") print $2 }' | head -1)"
 if [ -z "$sess_p5" ]; then
     bad "positive control: session pane not found in brain:0" ""
 else

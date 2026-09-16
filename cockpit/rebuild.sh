@@ -252,13 +252,13 @@ if ! bash "$LAYOUT" up --window brain:0 2>&1 | sed 's/^/  /'; then
 fi
 
 # --- 3b. session pane -----------------------------------------------------------------------
-# layout.sh up respawns the two tagged panes; the untagged session pane is not touched and
+# layout.sh up respawns the tagged health pane; the untagged session pane is not touched and
 # is whatever the tmux server already had running — possibly a bare claude with no persona.
 # Launch concierge.sh here so the operator's pane is composed like every other session on
 # this box. Skip if already running a composed session (idempotent).
 step "session pane"
 sess_p="$(tmux list-panes -t brain:0 -F '#{@cockpit} #{pane_id}' 2>/dev/null \
-    | awk '{ if (NF==1) print $1; else if ($1!="panel" && $1!="health") print $2 }' | head -1)"
+    | awk '{ if (NF==1) print $1; else if ($1!="health") print $2 }' | head -1)"
 if [ -z "$sess_p" ]; then
     warn "session pane not found in brain:0 — skipping launch"
 else
@@ -298,17 +298,14 @@ chk() { if eval "$2" >/dev/null 2>&1; then printf '  ok    %s\n' "$1"; else prin
 
 chk "the server answers"                 'tmux list-sessions'
 for s in $SESSIONS cockpit; do chk "session $s exists" "tmux has-session -t '=$s'"; done
-chk "brain:0 holds three panes"          '[ "$(tmux list-panes -t brain:0 2>/dev/null | wc -l)" -eq 3 ]'
-chk "a pane is tagged panel"             'tmux list-panes -t brain:0 -F "#{@cockpit}" | grep -qx panel'
+chk "brain:0 holds two panes"            '[ "$(tmux list-panes -t brain:0 2>/dev/null | wc -l)" -eq 2 ]'
 chk "a pane is tagged health"            'tmux list-panes -t brain:0 -F "#{@cockpit}" | grep -qx health'
 chk "cockpit links brain:0"              'tmux list-windows -t "=cockpit" -F "#{window_id}" | grep -qx "$(tmux list-windows -t "=brain" -F "#{window_id}" | head -1)"'
 chk "cockpit links hunk:0"               'tmux list-windows -t "=cockpit" -F "#{window_id}" | grep -qx "$(tmux list-windows -t "=hunk" -F "#{window_id}" | head -1)"'
 
-# The dashboards must RENDER, not merely exist. Given a moment to paint first: the panel is a
-# binary that opens a database, and asserting on an unpainted pane would fail for the wrong
-# reason.
+# The dashboard must RENDER, not merely exist. Given a moment to paint first.
 sleep 3
-for role in panel health; do
+for role in health; do
     pid_pane="$(tmux list-panes -t brain:0 -F '#{pane_id} #{@cockpit}' 2>/dev/null | awk -v r="$role" '$2==r{print $1}')"
     if [ -z "$pid_pane" ]; then
         printf '  FAIL  %s pane renders content\n' "$role"; fail=$((fail+1))
@@ -320,10 +317,10 @@ for role in panel health; do
 done
 
 # The session pane must carry a composed brief. An unwrapped claude is indistinguishable
-# from a working one from outside — the same positive control the panel and health panes
-# already get (law-absence-needs-a-positive-control).
+# from a working one from outside — the same positive control the health pane already gets
+# (law-absence-needs-a-positive-control).
 sess_p="$(tmux list-panes -t brain:0 -F '#{@cockpit} #{pane_id}' 2>/dev/null \
-    | awk '{ if (NF==1) print $1; else if ($1!="panel" && $1!="health") print $2 }' | head -1)"
+    | awk '{ if (NF==1) print $1; else if ($1!="health") print $2 }' | head -1)"
 if [ -z "$sess_p" ]; then
     printf '  FAIL  session pane not found in brain:0\n'; fail=$((fail+1))
 else
