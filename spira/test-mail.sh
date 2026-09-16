@@ -169,7 +169,8 @@ isnz "SEEN RED: decision without default is refused"    "$rc"
 want "refusal names the rule"    "rule"    "$out"
 want "refusal mentions default"  "default" "$out"
 
-out="$(echo "body" | run send lint-dec --from "Gate <g@g>" --subject "Enable feature?" --kind decision --default "yes" 2>&1)"; rc=$?
+_decision_body="$(printf '## Decision\n\nApprove.\n\n## Default\n\nYes.\n\n## What is blocked\n\nNothing.\n\n## Cost of the wrong choice\n\nLow.\n')"
+out="$(printf '%s' "$_decision_body" | run send lint-dec --from "Gate <g@g>" --subject "Enable feature?" --kind decision --default "yes" 2>&1)"; rc=$?
 isz  "SEEN GREEN: decision with default is accepted" "$rc"
 
 echo
@@ -178,7 +179,8 @@ echo "lint: question with no default (SEEN RED then SEEN GREEN)"
 out="$(echo "body" | run send lint-q --from "Gate <g@g>" --subject "When to start?" --kind question 2>&1)"; rc=$?
 isnz "SEEN RED: question without default is refused" "$rc"
 
-out="$(echo "body" | run send lint-q --from "Gate <g@g>" --subject "When to start?" --kind question --default "now" 2>&1)"; rc=$?
+_question_body="$(printf '## Question\n\nWhen to start?\n\n## Default\n\nNow.\n')"
+out="$(printf '%s' "$_question_body" | run send lint-q --from "Gate <g@g>" --subject "When to start?" --kind question --default "now" 2>&1)"; rc=$?
 isz  "SEEN GREEN: question with default is accepted" "$rc"
 
 # ==========================================================================
