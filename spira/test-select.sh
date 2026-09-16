@@ -274,5 +274,85 @@ iseq "G5: --files unmapped writes mode=all" "$(cat "$mf" 2>/dev/null)" "all"
 
 # ---------------------------------------------------------------------------
 echo
+echo "Part H: --report-file — unclaimed and unplaced reporting"
+# ---------------------------------------------------------------------------
+
+# Shared fixture: two source files, one covered, one not.
+# This is the positive control for unclaimed detection (law-absence-needs-a-positive-control).
+SD_H="$TMP/suites-h"
+REPO_H="$TMP/repo-h"
+mkdir -p "$SD_H"
+git init -q --initial-branch=main "$REPO_H"
+git -C "$REPO_H" config user.email "test@spira.local"
+git -C "$REPO_H" config user.name "Spira Test"
+printf '#!/bin/bash\necho covered\n' > "$REPO_H/util.sh"
+printf '#!/bin/bash\necho orphan\n' > "$REPO_H/orphan.sh"
+git -C "$REPO_H" add util.sh orphan.sh
+git -C "$REPO_H" commit -q -m "add source files"
+
+# Suite that covers util.sh but NOT orphan.sh.
+cat > "$SD_H/test-fx-h.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: util.sh
+exit 0
+EOF
+chmod +x "$SD_H/test-fx-h.sh"
+
+# H1: Fixture with an unclaimed source file — report is non-empty.
+RF_H1="$TMP/report-h1"
+bash "$SELECT" --all --suite-dir "$SD_H" --repo "$REPO_H" \
+    --report-file "$RF_H1" >/dev/null 2>&1
+rc=$?
+iszero "H1: fixture with unclaimed file exits 0" "$rc"
+_n="$(grep -c 'unclaimed:' "$RF_H1" 2>/dev/null || true)"
+[ "${_n:-0}" -ge 1 ] && ok "H1: unclaimed source file appears in report" \
+    || bad "H1: unclaimed source file appears in report" \
+           "expected >=1 unclaimed, got ${_n:-0}"
+want "H1: orphan.sh named as unclaimed" "unclaimed:orphan.sh" \
+    "$(cat "$RF_H1" 2>/dev/null)"
+
+# H2: Same fixture but with orphan.sh covered — report is empty.
+cat > "$SD_H/test-fx-h2.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: orphan.sh
+exit 0
+EOF
+chmod +x "$SD_H/test-fx-h2.sh"
+
+RF_H2="$TMP/report-h2"
+bash "$SELECT" --all --suite-dir "$SD_H" --repo "$REPO_H" \
+    --report-file "$RF_H2" >/dev/null 2>&1
+rc=$?
+iszero "H2: fixture all-covered exits 0" "$rc"
+_n="$(grep -c 'unclaimed:' "$RF_H2" 2>/dev/null || true)"
+iseq "H2: fixture all-covered has no unclaimed entries" "${_n:-0}" "0"
+
+# POSITIVE CONTROL: remove the second suite — orphan.sh becomes unclaimed again.
+rm "$SD_H/test-fx-h2.sh"
+RF_H2B="$TMP/report-h2b"
+bash "$SELECT" --all --suite-dir "$SD_H" --repo "$REPO_H" \
+    --report-file "$RF_H2B" >/dev/null 2>&1
+_n="$(grep -c 'unclaimed:' "$RF_H2B" 2>/dev/null || true)"
+[ "${_n:-0}" -ge 1 ] && ok "H2-ctrl: removing coverage adds unclaimed entry" \
+    || bad "H2-ctrl: removing coverage adds unclaimed entry" \
+           "expected >=1 unclaimed, got ${_n:-0}"
+
+# H3: Unplaced changed file appears as unplaced: entry in the report.
+# FLIST_UNMAPPED (no-suite-owns-this.txt) is from Part G; SD has no suite covering it.
+# Use --no-all-fallback so selection still exits 0 without running everything.
+RF_H3="$TMP/report-h3"
+bash "$SELECT" --files "$FLIST_UNMAPPED" --suite-dir "$SD" --no-all-fallback \
+    --report-file "$RF_H3" >/dev/null 2>&1
+rc=$?
+iszero "H3: unplaced file exits 0" "$rc"
+want "H3: unplaced file named in report" "no-suite-owns-this.txt" \
+    "$(cat "$RF_H3" 2>/dev/null)"
+
+# H4: --report-file not given — exits 0 with no side effects.
+bash "$SELECT" --all --suite-dir "$SD" >/dev/null 2>&1
+iszero "H4: no --report-file exits 0" "$?"
+
+# ---------------------------------------------------------------------------
+echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1

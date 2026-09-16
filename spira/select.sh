@@ -41,6 +41,12 @@
 #   --suite-dir <dir>         override SPIRA_BATCH_SUITE_DIR for this invocation
 #   --mode-file <path>        write the selection mode ("diff" or "all") to this file
 #                             so callers can record how suites were chosen
+#   --report-file <path>      write the placement/coverage report to <path>.
+#                             Format: one entry per line, prefixed with type:
+#                               unplaced:<file>   changed file matched by no suite
+#                               unclaimed:<file>  source file claimed by no suite
+#                             File is empty when all changed files are placed and
+#                             all source files are claimed.
 #   --no-all-fallback         suppress the all-suites fallback for unmapped files;
 #                             unmapped files then contribute nothing beyond the
 #                             already-covered and always-run suites (use this for
@@ -57,11 +63,51 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SUITE_DIR="${SPIRA_BATCH_SUITE_DIR:-$HERE}"
 REPO="${SPIRA_REPO:-}"
 MODE_FILE=""
+REPORT_FILE=""
 _ARG_BASE=""
 _ARG_HEAD=""
 _ARG_FILES=""
 _ARG_ALL=0
 _ARG_NO_FALLBACK=0
+_all=""
+_cv_unmapped=""
+_report_ready=0
+
+# On exit: write unplaced changed files and unclaimed source files to REPORT_FILE.
+# Runs only after _all is built (_report_ready=1); no-ops on early exits.
+_trap_report() {
+    [ -n "$REPORT_FILE" ] || return 0
+    [ "$_report_ready" -eq 1 ] || return 0
+    > "$REPORT_FILE" 2>/dev/null || return 0
+    set -f
+    for _rp_f in $_cv_unmapped; do
+        printf 'unplaced:%s\n' "$_rp_f" >> "$REPORT_FILE"
+    done
+    [ -n "$REPO" ] || { set +f; return 0; }
+    _rp_allpat=""
+    for _rp_s in $_all; do
+        _rp_cov="$(suite_covers_of "$SUITE_DIR/$_rp_s")"
+        [ -z "$_rp_cov" ] && continue
+        _rp_allpat="$_rp_allpat $_rp_cov"
+    done
+    while IFS= read -r _rp_f || [ -n "$_rp_f" ]; do
+        [ -n "$_rp_f" ] || continue
+        case "$_rp_f" in
+            */test-*.sh|test-*.sh) continue ;;
+            *.sh|*.py) ;;
+            *) continue ;;
+        esac
+        _rp_hit=0
+        for _rp_pat in $_rp_allpat; do
+            case "$_rp_f" in
+                $_rp_pat) _rp_hit=1; break ;;
+            esac
+        done
+        [ "$_rp_hit" -eq 0 ] && printf 'unclaimed:%s\n' "$_rp_f" >> "$REPORT_FILE"
+    done < <(git -C "$REPO" ls-files 2>/dev/null || true)
+    set +f
+}
+trap '_trap_report' EXIT
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -97,6 +143,11 @@ while [ $# -gt 0 ]; do
             MODE_FILE="$2"; shift 2 ;;
         --mode-file=*)
             MODE_FILE="${1#--mode-file=}"; shift ;;
+        --report-file)
+            [ $# -ge 2 ] || { printf 'select: --report-file requires an argument\n' >&2; exit 2; }
+            REPORT_FILE="$2"; shift 2 ;;
+        --report-file=*)
+            REPORT_FILE="${1#--report-file=}"; shift ;;
         --no-all-fallback)
             _ARG_NO_FALLBACK=1; shift ;;
         --)
@@ -133,11 +184,11 @@ fi
 [ -n "$REPO" ] || REPO="$(cd "$SUITE_DIR/.." && pwd -P 2>/dev/null)" || REPO=""
 
 # Build the suite corpus
-_all=""
 for _f in "$SUITE_DIR"/test-*.sh; do
     [ -r "$_f" ] || continue
     _all="$_all $(basename "$_f")"
 done
+_report_ready=1
 
 _write_mode() {   # _write_mode diff|all
     [ -n "$MODE_FILE" ] && printf '%s\n' "$1" > "$MODE_FILE" || true
