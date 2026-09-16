@@ -4638,9 +4638,10 @@ EOF
 # --------------------------------------------------------------------------------------
 REBASE_CONFLICTS=""
 REBASE_FAILURE=""
+REBASE_REFUSED_REASON=""
 rebase_branch() {
     local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" wt scratch rc=0
-    REBASE_CONFLICTS=""; REBASE_FAILURE=""
+    REBASE_CONFLICTS=""; REBASE_FAILURE=""; REBASE_REFUSED_REASON=""
     # The repo NAME, for the formatter that runs on the result. Derived from the path only
     # when the caller did not supply it — both real callers hold it already, having read it
     # off the bead, and a derived value is a convention that breaks the moment two names
@@ -4691,12 +4692,22 @@ rebase_branch() {
         git -C "$wt" reset -q --hard HEAD 2>/dev/null
     fi
 
-    if ! git -C "$wt" rebase -q "$onto" >/dev/null 2>&1; then
+    local _rebase_err
+    _rebase_err="$(mktemp)"
+    if ! git -C "$wt" rebase -q "$onto" >/dev/null 2>"$_rebase_err"; then
         # Name the collisions BEFORE aborting; after the abort there is nothing to read.
         REBASE_CONFLICTS="$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
         REBASE_CONFLICTS="${REBASE_CONFLICTS% }"
         git -C "$wt" rebase --abort >/dev/null 2>&1
-        REBASE_FAILURE=conflict
+        # A non-zero rebase with no unmerged files is not a content conflict — git refused
+        # outright (untracked file collision, locked index, etc.). Only a real content conflict
+        # may reopen a finished bead; a refusal is the pass failing to ask the question.
+        if [ -n "$REBASE_CONFLICTS" ]; then
+            REBASE_FAILURE=conflict
+        else
+            REBASE_FAILURE=rebase-refused
+            REBASE_REFUSED_REASON="$(head -1 "$_rebase_err" 2>/dev/null)"
+        fi
         rc=1
     else
         # THE REBASE ACTUALLY REPLAYED COMMITS, so the tree is machine-produced and nobody
@@ -4705,6 +4716,7 @@ rebase_branch() {
         # rewrote would be a diff the harness invented.
         format_rebased "$br" "$onto" "$wt" "$name"
     fi
+    rm -f "$_rebase_err"
 
     # Let go of the branch. A scratch tree still holding it is not inert: `git branch -D`
     # refuses a branch a worktree has checked out, which is exactly the defect sending.sh

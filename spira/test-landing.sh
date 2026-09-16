@@ -476,6 +476,48 @@ git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
 is "and a real disagreement is named conflict" conflict "$(classify spira/sp-kindclash origin/main)"
 drop_branch sp-kindclash
 
+# THE REFUSED CASE: git declines to rebase (untracked file would be overwritten) without
+# leaving any unmerged file. A non-conflict rebase failure must not reopen a finished bead,
+# so it needs a name that is not "conflict". The fix sets REBASE_FAILURE=rebase-refused and
+# captures git's first stderr line in REBASE_REFUSED_REASON.
+#
+# POSITIVE CONTROL: on the unfixed code this fixture prints REBASE_FAILURE=conflict with an
+# empty REBASE_CONFLICTS — the new assertions below must fail before the fix is applied.
+classify_ext() {   # classify_ext <branch> <onto> -> "failure|reason|conflicts"
+    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
+    SPIRA_REPO_MAP="$SH/repo-map" \
+    bash -c '. "$1/lib.sh" >/dev/null 2>&1
+             rebase_branch "$2" "$3" "$4" fixture >/dev/null 2>&1
+             printf "%s|%s|%s" \
+                 "${REBASE_FAILURE:-unset}" \
+                 "${REBASE_REFUSED_REASON:-}" \
+                 "${REBASE_CONFLICTS:-}"' \
+        _ "$SH" "$1" "$2" "$REPO" 2>/dev/null
+}
+
+seed; branch sp-refused
+printf 'base version\n' > "$REPO/blocked.txt"
+git -C "$REPO" add blocked.txt
+git -C "$REPO" commit -q -m "base adds blocked.txt"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+printf 'untracked\n' > "$RUN/worktree/sp-refused/blocked.txt"
+_ext="$(classify_ext spira/sp-refused origin/main)"
+_ext_fail="${_ext%%|*}"; _ext_rest="${_ext#*|}"; _ext_reason="${_ext_rest%%|*}"; _ext_conflicts="${_ext_rest#*|}"
+is   "a rebase blocked by an untracked file is named rebase-refused" rebase-refused "$_ext_fail"
+want "and git's refusal message is captured in REBASE_REFUSED_REASON" "untracked" "$_ext_reason"
+is   "and REBASE_CONFLICTS is empty for a non-conflict failure" "" "$_ext_conflicts"
+drop_branch sp-refused
+
+seed; branch sp-kindconflicts shared2.txt "from the branch"
+printf '%s\n' "base disagrees" > "$REPO/shared2.txt"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base writes shared2.txt"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+_ext="$(classify_ext spira/sp-kindconflicts origin/main)"
+_ext_fail="${_ext%%|*}"; _ext_rest="${_ext#*|}"; _ext_conflicts="${_ext_rest#*|}"
+is   "a real content conflict still produces REBASE_FAILURE=conflict"    conflict "$(classify spira/sp-kindconflicts origin/main)"
+want "and REBASE_CONFLICTS names the colliding file"                      "shared2.txt" "$_ext_conflicts"
+drop_branch sp-kindconflicts
+
 # THE FENCE. Every route from a rebase failure to a reopen lives in landing.sh and must read
 # the classification first; the two above are the ones that exist today and a third would
 # arrive silently. It requires each `! rebase_branch` arm to mention REBASE_FAILURE within
