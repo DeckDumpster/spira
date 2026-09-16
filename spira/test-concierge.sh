@@ -277,7 +277,12 @@ echo
 echo "the ensure unit leaves the tmux server it starts alive"
 svc="$(sed -n '/^\[Service\]/,/^\[/p' "$HARNESS/systemd/concierge.service" | grep -v '^\s*#')"
 want "the unit is a oneshot, whose cgroup is reaped when start returns" "Type=oneshot" "$svc"
-want "so it kills only its main process"                               "KillMode=process" "$svc"
+# THE MECHANISM IS IN THE SCRIPT, not the unit: concierge.sh start wraps tmux new-session
+# with systemd-run --remain-after-exit, putting the server in its own transient cgroup that
+# outlives the oneshot. A KillMode=process guard in the unit file was the previous approach;
+# this assert confirms the mechanism is visible in the script where maintainers look.
+want "start escapes the oneshot cgroup via systemd-run --remain-after-exit" \
+    "remain-after-exit" "$(cat "$HARNESS/concierge.sh")"
 
 echo
 echo "concierge self-test: $pass passed, $fail failed"
