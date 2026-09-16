@@ -265,6 +265,7 @@ cat > "$FAKE_BIN/systemctl" <<'FAKESCRIPT'
 case "$*" in
     *"is-active"*"--quiet"*) exit 0 ;;
     *"is-active"*) printf 'active\n' ;;
+    *"is-enabled"*) printf 'enabled\n' ;;
     *"list-units"*|*"list-unit-files"*|*"list-timers"*) true ;;
 esac
 exit 0
