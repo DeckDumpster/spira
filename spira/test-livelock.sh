@@ -30,11 +30,11 @@
 #
 #   UNFILED-FOLLOW       closed bead whose close reason implies follow-on work exists
 #                        (contains a phrase like "builders should", "the real fix",
-#                        "follow-up", "upstream", "at scale") but names no bead id.
-#                        A reason that cites a bead id has handed off correctly; one that
-#                        does not has left work unfiled. "workaround" is NOT a flag — a
-#                        workaround can be complete and landed; the word does not
-#                        discriminate whether the work is done.
+#                        "follow-up", "at scale") but names no tracking reference (a bead
+#                        id in the form PREFIX-id, an owner/repo#N GitHub reference, or an
+#                        https:// URL). "upstream" is not a trigger — it names a
+#                        destination, not an unfinished remainder. "workaround" is NOT a
+#                        flag — a workaround can be complete and landed.
 #
 # EVERY CASE IS A PAIR (law-absence-needs-a-positive-control). The negative half proves
 # the check can read a true zero; the positive half proves it reads the real fault.
@@ -248,7 +248,7 @@ echo "POSITIVE CONTROL — UNFILED-FOLLOW: follow-on phrase with no bead id:"
 # INVALID-CLOSED so the two family counts mean different things on the dashboard).
 testdb_reset
 testdb_seed <<'JSONL'
-{"id":"sp-ll-uf","title":"unfiled follow-on","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Upstream Escalation: Builders should add external_ref to bd list --json output."}
+{"id":"sp-ll-uf","title":"unfiled follow-on","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Builders should add external_ref to bd list --json output."}
 JSONL
 out="$(run_ll)"
 want  "unfiled-follow: UNFILED-FOLLOW row"  "UNFILED-FOLLOW"  "$out"
@@ -264,15 +264,71 @@ echo
 echo "NEGATIVE CONTROL — UNFILED-FOLLOW: follow-on phrase WITH a bead id is not flagged:"
 # ==========================================================================================
 # A close reason that says "builders should add X, tracked as sp-foo" has handed off
-# correctly — the work is filed. The bead id exempts it from UNFILED-FOLLOW.
+# correctly — the work is filed. The bead id acquits the follow-on phrase.
 testdb_reset
 testdb_seed <<'JSONL'
-{"id":"sp-ll-uf2","title":"follow-on filed","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Upstream Escalation: Builders should add external_ref to bd list --json. Tracked as sp-80br6."}
+{"id":"sp-ll-uf2","title":"follow-on filed","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Builders should add external_ref to bd list --json. Tracked as sp-80br6."}
 JSONL
 out="$(run_ll)"
 nowant "unfiled-follow filed: no UNFILED-FOLLOW row" "UNFILED-FOLLOW" "$out"
 nowant "unfiled-follow filed: no INVALID-CLOSED row" "INVALID-CLOSED" "$out"
 is "unfiled-follow filed: SP_UNFILED_FOLLOW=0" "0" \
+   "$(printf '%s\n' "$out" | sed -n 's/^SP_UNFILED_FOLLOW=//p' | head -1)"
+
+# ==========================================================================================
+echo
+echo "NEGATIVE CONTROL — UNFILED-FOLLOW: follow-on phrase WITH a GitHub issue is not flagged:"
+# ==========================================================================================
+# A close reason citing owner/repo#N has handed off to a tracked external issue.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-ll-uf3","title":"follow-on github issue","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Builders should add external_ref to bd list --json. Filed as owner/repo#42."}
+JSONL
+out="$(run_ll)"
+nowant "unfiled-follow github: no UNFILED-FOLLOW row" "UNFILED-FOLLOW" "$out"
+is "unfiled-follow github: SP_UNFILED_FOLLOW=0" "0" \
+   "$(printf '%s\n' "$out" | sed -n 's/^SP_UNFILED_FOLLOW=//p' | head -1)"
+
+# ==========================================================================================
+echo
+echo "NEGATIVE CONTROL — UNFILED-FOLLOW: follow-on phrase WITH an https:// URL is not flagged:"
+# ==========================================================================================
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-ll-uf4","title":"follow-on url","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"The real fix is tracked at https://github.com/owner/repo/issues/42."}
+JSONL
+out="$(run_ll)"
+nowant "unfiled-follow url: no UNFILED-FOLLOW row" "UNFILED-FOLLOW" "$out"
+is "unfiled-follow url: SP_UNFILED_FOLLOW=0" "0" \
+   "$(printf '%s\n' "$out" | sed -n 's/^SP_UNFILED_FOLLOW=//p' | head -1)"
+
+# ==========================================================================================
+echo
+echo "NEGATIVE CONTROL — UNFILED-FOLLOW: non-default prefix bead id acquits:"
+# ==========================================================================================
+# SPIRA_ID_PREFIX=tt means tt-xxxx is a valid bead id; the hardcoded sp- would miss it.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"tt-ll-uf5","title":"follow-on non-default prefix","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Builders should fix the schema. Tracked as tt-abc1."}
+JSONL
+out="$(run_ll SPIRA_ID_PREFIX=tt SPIRA_GOAL=tt-goal)"
+nowant "non-default prefix: no UNFILED-FOLLOW row" "UNFILED-FOLLOW" "$out"
+is "non-default prefix: SP_UNFILED_FOLLOW=0" "0" \
+   "$(printf '%s\n' "$out" | sed -n 's/^SP_UNFILED_FOLLOW=//p' | head -1)"
+
+# ==========================================================================================
+echo
+echo "NEGATIVE CONTROL — UNFILED-FOLLOW: 'upstream' alone does not trigger:"
+# ==========================================================================================
+# "upstream" names a destination, not an unfinished remainder. A close reason that says
+# "filed upstream" without any other follow-on phrase must not be flagged.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-ll-up","title":"filed upstream","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Moot upstream — the sentinel already handles this. Closed."}
+JSONL
+out="$(run_ll)"
+nowant "upstream alone: no UNFILED-FOLLOW row" "UNFILED-FOLLOW" "$out"
+is "upstream alone: SP_UNFILED_FOLLOW=0" "0" \
    "$(printf '%s\n' "$out" | sed -n 's/^SP_UNFILED_FOLLOW=//p' | head -1)"
 
 # ==========================================================================================

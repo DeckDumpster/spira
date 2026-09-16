@@ -3374,8 +3374,9 @@ for i in (d if isinstance(d, list) else [d]):
 # "mitigated-only", "TODO"). The statute is prospective; this finds the ones already closed.
 #
 # UNFILED-FOLLOW: the close reason implies follow-on work exists (contains a phrase like
-# "builders should", "the real fix", "follow-up") but names no bead id (sp-XXXX). A reason
-# that references a bead id has handed off correctly; one that does not has left work unfiled.
+# "builders should", "the real fix", "follow-up") but names no tracking reference (a bead id
+# in the form PREFIX-id, an owner/repo#N GitHub reference, or an https:// URL). A reason
+# with a tracking reference has handed off correctly; one without has left work unfiled.
 # The word "workaround" is NOT a proxy for either — a workaround can be complete, verified
 # and landed. Measure the property (remainder exists and has no tracking), not the word.
 #
@@ -3384,8 +3385,8 @@ detect_invalid_closed() {
     local _closed_raw
     _closed_raw="$(bdjson list --status closed --label spira --limit 0 2>/dev/null)"
     [ -n "$_closed_raw" ] || return 0
-    printf '%s\n' "$_closed_raw" | python3 -c '
-import sys, json, re
+    printf '%s\n' "$_closed_raw" | SPIRA_ID_PREFIX="${SPIRA_ID_PREFIX:-sp}" python3 -c '
+import sys, json, re, os
 
 # Phrases the statute names explicitly. Case-insensitive substring match.
 RED_FLAGS = [
@@ -3396,16 +3397,22 @@ RED_FLAGS = [
     "temporary",
 ]
 
-# Phrases that imply a follow-on obligation. Only a violation when no bead id is cited.
+# Phrases that imply a follow-on obligation. Only a violation when no tracking reference
+# is cited. "upstream" names a destination, not an unfinished remainder, so it is not here.
 FOLLOW_ON = [
     "builders should",
     "at scale",
     "the real fix",
     "follow-up",
-    "upstream",
 ]
 
-BEAD_ID_RE = re.compile(r"\bsp-[a-z0-9]+\b", re.IGNORECASE)
+_prefix = re.escape(os.environ.get("SPIRA_ID_PREFIX", "sp"))
+TRACKING_RE = re.compile(
+    r"(?:\b" + _prefix + r"-[a-z0-9]+"
+    r"|[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*#\d+"
+    r"|https?://\S+)",
+    re.IGNORECASE
+)
 
 try: d = json.load(sys.stdin)
 except Exception: raise SystemExit
@@ -3421,8 +3428,8 @@ for i in (d if isinstance(d, list) else [d]):
         continue
 
     follow_hit = next((f for f in FOLLOW_ON if f.lower() in reason.lower()), None)
-    if follow_hit and not BEAD_ID_RE.search(reason):
-        print("UNFILED-FOLLOW %s — follow-on phrase %r without a bead id: %s. title: %s" % (
+    if follow_hit and not TRACKING_RE.search(reason):
+        print("UNFILED-FOLLOW %s — follow-on phrase %r without a tracking reference: %s. title: %s" % (
             i["id"], follow_hit, reason_short, title))
 ' 2>/dev/null
 }
