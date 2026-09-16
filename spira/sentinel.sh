@@ -91,6 +91,22 @@ fi
 fi
 
 # ======================================================================================
+# GOAL BEAD CHECK. A SPIRA_GOAL that names no bead makes the completion test vacuously
+# true: goal_open_children returns nothing, n_open=0, and every pass announces "goal
+# reached" against a dangling reference (sp-ejf3). Refuse to proceed when the goal
+# cannot be read so the signal cannot fire against nothing.
+#
+# Inside the same SPIRA_SKIP_RECLAIM guard as the state queries: fixtures that set it
+# also skip the completion path, so they do not need a goal bead in the fixture store.
+# ======================================================================================
+if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ]; then
+if [ -z "$(bdjson show "$SPIRA_GOAL" | head -c 1)" ]; then
+    log "GOAL UNRESOLVABLE — $SPIRA_GOAL names no bead in $SPIRA_DB; this pass cannot assess completion"
+    exit 1
+fi
+fi
+
+# ======================================================================================
 # STATE
 # ======================================================================================
 # SPIRA_SKIP_RECLAIM=1: skip goal_open_children, plan_ready, and plan_inprog. These

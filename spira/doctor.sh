@@ -437,6 +437,23 @@ else
 fi
 
 echo
+echo "goal bead"
+# A DANGLING SPIRA_GOAL IS A SILENT FAULT. When the configured goal bead does not exist,
+# goal_open_children returns nothing, n_open=0, and the sentinel announces "goal reached"
+# on every pass regardless of actual state (sp-ejf3). Every correct completion signal is
+# indistinguishable from this broken one, so the signal is worthless until the goal is real.
+if [ -d "$SPIRA_DB/.beads" ]; then
+    if [ -n "$(timeout 10 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$SPIRA_GOAL" --json 2>/dev/null | sed -n '/^[[{]/,$p' | head -c 1)" ]; then
+        OK "goal bead $SPIRA_GOAL exists"
+    else
+        FAIL "SPIRA_GOAL=$SPIRA_GOAL names no bead in $SPIRA_DB — sentinel will announce 'goal reached' on every pass" \
+             "Create the goal bead, point SPIRA_GOAL at an existing one in ${CONF:-spira.conf}, or treat an absent goal as an explicit supported state."
+    fi
+else
+    WARN "cannot check goal bead — no database yet"
+fi
+
+echo
 echo "repositories"
 if [ ! -f "$SPIRA_REPO_MAP" ]; then
     FAIL "no repo-map at $SPIRA_REPO_MAP" \
