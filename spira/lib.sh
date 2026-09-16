@@ -562,15 +562,33 @@ spira_lane_fayths() {
     printf '%s' "${out# }"
 }
 
-# A NARROWED ROSTER SAYS SO, EVERY PASS. SPIRA_FAYTHS is a legitimate host override — which
-# personas a HOST runs is deployment configuration — but it is also the exact shape of the
-# defect this section exists under: a fayth present in the chamber and absent from the roster
-# is a persona that landed complete and will never run, and nothing about that looks wrong
-# from the outside. It went unnoticed for a day. Name it instead.
+SPIRA_ROSTER_WARN_STAMP="${SPIRA_ROSTER_WARN_STAMP:-$SPIRA_RUN/roster-warn.stamp}"
+
+# A NARROWED ROSTER SAYS SO. SPIRA_FAYTHS is a legitimate host override — which personas a
+# HOST runs is deployment configuration — but it is also the exact shape of the defect this
+# section exists under: a fayth present in the chamber and absent from the roster is a persona
+# that landed complete and will never run, and nothing about that looks wrong from the outside.
+# It went unnoticed for a day. Name it instead.
+#
+# The warning fires once per change to the exclusion set, not once per pass. A warning that
+# fires every pass on a deliberate configuration trains operators to skip the log
+# (law-alerts-must-be-actionable).
 roster_warnings() {      # roster_warnings <roster> -> a WARN line per fayth left out
-    local roster=" $1 " f
+    local roster=" $1 " f excluded stamp
+    excluded=""
     for f in $(fayth_names); do
         grep -qw -- "$f" <<< "$roster" && continue
+        excluded="$excluded $f"
+    done
+    excluded="${excluded# }"
+    if [ -z "$excluded" ]; then
+        rm -f "$SPIRA_ROSTER_WARN_STAMP"
+        return 0
+    fi
+    stamp="$(printf '%s' "$excluded" | tr ' ' '\n' | sort | tr '\n' ' ')"
+    [ "$(cat "$SPIRA_ROSTER_WARN_STAMP" 2>/dev/null)" = "$stamp" ] && return 0
+    printf '%s' "$stamp" > "$SPIRA_ROSTER_WARN_STAMP"
+    for f in $excluded; do
         log "WARN $f.fayth is in the chamber but not in SPIRA_FAYTHS — that persona will never be summoned here"
     done
     return 0

@@ -131,7 +131,7 @@ live=0; for f in $FAYTHS; do live=$((live + $(aeon_count "$f"))); done
 
 log "state: goal=$SPIRA_GOAL open=$n_open plan_ready=$plan_ready in_progress=$plan_inprog aeons=$live fayths=[$FAYTHS]"
 
-# A NARROWED ROSTER SAYS SO, EVERY PASS (roster_warnings, in lib.sh).
+# A NARROWED ROSTER SAYS SO (roster_warnings, in lib.sh).
 roster_warnings "$FAYTHS"
 
 if [ "$REPORT" = 1 ]; then
