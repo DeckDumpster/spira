@@ -1301,14 +1301,14 @@ spira_require() {        # spira_require <bin> [<bin>...] -> 0, or 1 having name
 # Every program the harness or its tests invoke, in one list. doctor.sh iterates this rather
 # than carrying its own copy — two lists is how the development set came to be checked by
 # nothing at all.
-SPIRA_BINS="${SPIRA_BINS:-bd git python3 flock dolt gh tmux node cargo jq zstd bd-embedded podman go inotifywait aerc}"
+SPIRA_BINS="${SPIRA_BINS:-bd git python3 flock dolt gh tmux node cargo jq zstd bd-embedded podman go inotifywait aerc hunk}"
 
 spira_bin_tier() {
     case "$1" in
         # runtime: the loop cannot run at all.
         bd|git|python3|flock)      echo runtime ;;
         # optional: the loop runs; one named feature is off.
-        dolt|gh|tmux|node|cargo|jq|zstd|inotifywait|aerc) echo optional ;;
+        dolt|gh|tmux|node|cargo|jq|zstd|inotifywait|aerc|hunk) echo optional ;;
         # dev: needed to DEVELOP or TEST Spira, never to run it. A production box is
         # correct without any of these, which is why they are reported separately and
         # never counted as faults outside `doctor.sh --dev`.
@@ -1349,6 +1349,7 @@ spira_bin_purpose() {
         flock)   echo "serialising writers that share one path — the transcript archive, and the landing gate's per-repository tree" ;;
         zstd)    echo "compressing archived transcripts; gzip is used when it is absent" ;;
         inotifywait) echo "delivering mail the moment it arrives (inotify-tools); without it mail waits for the next session start" ;;
+        hunk)    echo "the review pane: designs and diffs are read and commented on in hunk (npm hunkdiff, needs node)" ;;
         aerc)    echo "the operator's mail client for reading and answering; any Maildir client works" ;;
         *)       echo "required by the harness" ;;
     esac

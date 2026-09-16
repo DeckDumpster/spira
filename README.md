@@ -355,6 +355,7 @@ You need `bd`, `git`, `flock`, `python3`, and whichever coding-agent CLI your pe
 | `node` | gates the browser page's view model | that one suite skips |
 | `inotifywait` | delivers mail the moment it arrives (`inotify-tools`) | mail waits for the next session start |
 | `aerc` | the operator's mail client | read the Maildir with any other client |
+| `hunk` | the review pane (`npm i -g hunkdiff`, needs `node`) | designs are not reviewed inline |
 
 ```sh
 git clone <this repo> spira-harness && cd spira-harness
