@@ -105,7 +105,7 @@ PY
 hook() {
     local ev="$1" src="$2"; shift 2
     printf '{"hook_event_name":"%s","source":"%s"}' "$ev" "$src" \
-      | env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" "$@" \
+      | env -i HOME="$TMP/home" PATH="$TMP/bin:$PATH" SPIRA_CONF="$CONF" SPIRA_WAKE="${WAKE-}" "$@" \
         bash "$CLONE/spira/hooks/session.sh"
 }
 
@@ -150,6 +150,13 @@ has "and so is the log row"         "$out" "Monitor: $CLONE/spira/watchd.sh tail
 is  "one latch line per row, and no more" "2" \
     "$(printf '%s\n' "$out" | grep -c 'Monitor: ' || true)"
 has "the hook says why it cannot latch itself" "$out" "cannot attach"
+
+echo
+echo "a watcher that wakes its reader is not offered as a latch"
+wout="$(WAKE=/bin/true hook SessionStart startup)"
+nothas() { case "$2" in *"$3"*) bad "$1" "found [$3]" ;; *) ok "$1" ;; esac; }
+nothas "the waking row is not latched"      "$wout" "Monitor: $CLONE/spira/watchd.sh tail answers"
+has    "the other row still is"             "$wout" "Monitor: $CLONE/spira/watchd.sh tail cron"
 has "and that nothing was consumed" "$out" "Nothing above was marked read"
 # IT NEVER SENDS THE READER TO ListAgents. That was the instruction here, and asserting it
 # is how a control nobody could follow survived in a green suite: ListAgents enumerates agents

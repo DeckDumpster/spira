@@ -77,8 +77,22 @@ emit() {
         format=monitor
 }
 
+# The reader's only delivery path: a Monitor lease expires, a typed prompt does not.
+wake() {
+    [ -n "${SPIRA_WAKE:-}" ] || return 0
+    # shellcheck disable=SC2086  # SPIRA_WAKE is a command line, split on purpose
+    $SPIRA_WAKE "New answers from ${SPIRA_OPERATOR:-the operator}. Run $(cd "$(dirname "$0")/../spira" && pwd -P)/watchd.sh drain answers and act on every verdict it prints." >/dev/null 2>&1 \
+        || echo "watch-answers: SPIRA_WAKE refused — these answers reach no reader until the page" >&2
+}
+
 case "${1:-loop}" in
     once) emit ;;
-    loop) while true; do emit || exit 1; sleep "$INTERVAL"; done ;;
+    loop) while true; do
+              out="$(emit)" || exit 1
+              [ -n "$out" ] || { sleep "$INTERVAL"; continue; }
+              printf '%s\n' "$out"
+              wake
+              sleep "$INTERVAL"
+          done ;;
     *) echo "usage: watch-answers.sh [once|loop]" >&2; exit 2 ;;
 esac

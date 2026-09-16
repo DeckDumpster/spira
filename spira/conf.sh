@@ -53,7 +53,7 @@ SPIRA_CONF_LOADED=1
 SPIRA_CONF_KEYS="
 SPIRA_HOME_REPO SPIRA_DB SPIRA_RUN SPIRA_GOAL
 SPIRA_PATH SPIRA_WORKSPACES SPIRA_REPO_MAP SPIRA_PREFIX_MAP SPIRA_CHAMBER SPIRA_WATCHERS
-SPIRA_ACTIONABLE SPIRA_ID_PREFIX SPIRA_HEALTH_TIMEOUT SPIRA_ANSWER_STATE SPIRA_ANSWER_MARK SPIRA_ANSWER_COMMENT_MARK SPIRA_SELF_CLOSED SPIRA_NOTIFY_AGE SPIRA_WAKE SPIRA_WAKE_AGE
+SPIRA_ACTIONABLE SPIRA_ID_PREFIX SPIRA_HEALTH_TIMEOUT SPIRA_ANSWER_STATE SPIRA_ANSWER_MARK SPIRA_ANSWER_COMMENT_MARK SPIRA_SELF_CLOSED SPIRA_NOTIFY_AGE SPIRA_WAKE SPIRA_WAKE_WATCHERS
 SPIRA_CLIENT_SETTINGS SPIRA_HOOK_LINES SPIRA_CTRL
 SPIRA_COCKPIT SPIRA_COCKPIT_TRACE_LINES SPIRA_COCKPIT_STALE_S SPIRA_NOTIFY SPIRA_PANEL SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_RECLAIM_SKIP_LABEL
 SPIRA_CI_LABEL SPIRA_CI_PARK_MAX SPIRA_WORLD_STOP_LABEL
@@ -344,10 +344,11 @@ spira_conf_defaults() {
     # running interval actually lasts. Half an hour is between those, and it is a key rather
     # than a literal because which one an operator's watchers deserve is theirs to say.
     : "${SPIRA_NOTIFY_AGE:=1800}"
-    # The command that prompts the reading session when events sit unread; empty disables it.
+    # The command a watcher runs to prompt the reading session; empty disables waking.
     [ -x "$SPIRA_REPO/concierge.sh" ] && : "${SPIRA_WAKE=$SPIRA_REPO/concierge.sh wake}"
     : "${SPIRA_WAKE:=}"
-    : "${SPIRA_WAKE_AGE:=120}"
+    # Watchers that deliver by waking the reader, so no session is told to hold a Monitor on them.
+    : "${SPIRA_WAKE_WATCHERS:=answers}"
     # WHERE THE ANSWER WATCHER KEEPS WHAT IT HAS ALREADY SEEN. One key rather than two
     # literals: the watcher writes this file and its health assertion reads it, and those two
     # disagreeing is a permanent DEGRADED against a watcher that is working perfectly — a

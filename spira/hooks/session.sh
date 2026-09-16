@@ -169,6 +169,10 @@ if [ -n "$held" ]; then
     latchable="$(printf '%s\n' "$latchable" | grep -Fxv -f <(printf '%s\n' "$held") || true)"
 fi
 
+if [ -n "${SPIRA_WAKE:-}" ] && [ -n "${SPIRA_WAKE_WATCHERS:-}" ]; then
+    latchable="$(printf '%s\n' "$latchable" | grep -Fxv -f <(printf '%s\n' $SPIRA_WAKE_WATCHERS) || true)"
+fi
+
 budget="${SPIRA_HOOK_LINES:-40}"
 case "$budget" in ''|*[!0-9]*) budget=40 ;; esac
 

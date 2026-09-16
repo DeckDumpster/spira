@@ -1308,7 +1308,7 @@ cmd_notify() {
 
     local name kind target health lf total pos chunk hit off line apos pend
     local stamp_age oldest stamp_at
-    local prev_pos prev_at age shown k report="" key="" stale=0 wake="" wakenames=""
+    local prev_pos prev_at age shown k report="" key="" stale=0
     while IFS='|' read -r name kind target health; do
         [ -n "$name" ] || continue
         # A WATCHER THIS INSTALLATION HAS NOT GOT CANNOT HAVE A BACKLOG. Nothing writes a log
@@ -1380,11 +1380,6 @@ cmd_notify() {
         if [ -n "$stamp_age" ]; then age="$stamp_age"; else age=$(( now - prev_at )); fi
         # A clock in the future is a clock that moved, not an event that is unusually old.
         [ "$age" -ge 0 ] || age=0
-        if [ -n "${SPIRA_WAKE:-}" ] && [ "$age" -ge "${SPIRA_WAKE_AGE:-0}" ]; then
-            wake="$wake$name|$apos|$line
-"
-            wakenames="$wakenames $name"
-        fi
         [ "$age" -ge "$SPIRA_NOTIFY_AGE" ] || continue
 
         stale=$(( stale + 1 ))
@@ -1405,14 +1400,6 @@ $(printf '%s\n' "$shown" | head -"$WD_NOTIFY_MAX" | sed 's/^/    /')"
         report="$report
 "
     done <<< "$rows"
-
-    # A reader's lease on its stream expires and nothing inside the session reliably renews
-    # it, so the reader is woken from outside before the operator is paged about it.
-    if [ -z "$wake" ]; then
-        rm -f "$(watchd_dir)/notify.woken" 2>/dev/null
-    else
-        _wd_wake "$wake" "${wakenames# }"
-    fi
 
     local found=0
     if [ "$stale" = 0 ]; then
@@ -1476,24 +1463,6 @@ _wd_ask() {
     mkdir -p "$(watchd_dir)" 2>/dev/null
     printf '%s' "$fp" > "$stamp"
     return 0
-}
-
-# _wd_wake <key> <names> — prompt the reading session once per distinct backlog.
-_wd_wake() {
-    local stamp fp prev="" n cmds="" self
-    stamp="$(watchd_dir)/notify.woken"
-    fp="$(printf '%s' "$1" | cksum | tr -d ' ')"
-    [ -f "$stamp" ] && prev="$(cat "$stamp" 2>/dev/null)"
-    [ "$fp" = "$prev" ] && return 0
-    self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/watchd.sh"
-    for n in $2; do cmds="$cmds; $self tail $n --takeover"; done
-    # shellcheck disable=SC2086  # SPIRA_WAKE is a command line, split on purpose
-    if ! $SPIRA_WAKE "Unread watcher events with no reader: $2. Arm a Monitor on each:${cmds#;} — then act on what it replays." >/dev/null 2>&1; then
-        echo "watchd: SPIRA_WAKE refused — nothing woke a reader for: $2" >&2
-        return 1
-    fi
-    mkdir -p "$(watchd_dir)" 2>/dev/null
-    printf '%s' "$fp" > "$stamp"
 }
 
 _wd_escalate() {

@@ -23,7 +23,7 @@
 # avoid testing.
 #
 # defect: sp-kw9bo
-# covers: spira/answers.py spira/watchd.sh
+# covers: spira/answers.py spira/watchd.sh cockpit/watch-answers.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"
@@ -186,6 +186,30 @@ else
         nowant "the $_what stamp is the bead's clock, not the pass's" "2001-01-01" "$_stamp"
     done
 fi
+
+echo
+echo "the watcher wakes the reader once per pass that found answers"
+WAKES="$TMP/wakes"; : > "$WAKES"
+cat > "$TMP/wake" <<W
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >> "$WAKES"
+W
+chmod +x "$TMP/wake"
+run_watcher() {  # run_watcher <wake-cmd> → watcher stdout
+    reset_marks
+    timeout 6 env SPIRA_DB="$SPIRA_DB" COCKPIT_DB="$SPIRA_DB" BD_BIN="$STUB_BD" \
+        SPIRA_RUN="$TMP/wrun" SPIRA_ASK_LABEL="$ASK_LABEL" SPIRA_OPERATOR_ACTOR="$OPERATOR_ACTOR" \
+        ANSWER_STATE="$TMP/wrun/witness" VERDICT_CURSOR="$TMP/vmark" COMMENT_CURSOR="$TMP/cmark" \
+        SELF_CLOSED="$TMP/self-closed" ANSWER_POLL=1 SPIRA_WAKE="$1" \
+        bash "$HERE/../cockpit/watch-answers.sh" loop 2>/dev/null
+}
+wout="$(run_watcher "$TMP/wake")"
+want "the watcher printed the verdict"            "ANSWERED" "$wout"
+wn="$(grep -c 'drain answers' "$WAKES" 2>/dev/null)" || wn=0
+is   "it woke the reader exactly once"            "1" "$wn"
+: > "$WAKES"
+run_watcher "" >/dev/null
+is   "an empty SPIRA_WAKE wakes nobody"           "" "$(cat "$WAKES")"
 
 echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

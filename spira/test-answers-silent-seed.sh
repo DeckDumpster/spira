@@ -131,6 +131,7 @@ timeout 5 bash -c "
     export SPIRA_ASK_LABEL='$ASK_LABEL'
     export ANSWER_STATE='$FAIL_WITNESS'
     export ANSWER_POLL=0
+    export SPIRA_WAKE=''
     exec '$WATCH_SCRIPT' loop
 " 2>/dev/null || loop_rc=$?
 [ "$loop_rc" -eq 1 ] \
