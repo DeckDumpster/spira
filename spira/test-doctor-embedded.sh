@@ -8,8 +8,10 @@
 # ---------------
 # 1. POSITIVE CONTROL. A store with dolt_mode=embedded in .beads/metadata.json must
 #    trigger a FAIL before the passing case can be trusted (law-a-matcher-reads-code-not-prose).
-# 2. SERVER MODE. With dolt_mode=server, no embedded FAIL is emitted.
-# 3. CONTENT OF FAIL. The FAIL names the cost (serialised lock) and the remedy (SPIRA_DOLT_DATA).
+# 2. SERVER MODE, SERVER ANSWERING. With dolt_mode=server and a live listener, no FAIL is emitted.
+# 3. CONTENT OF EMBEDDED FAIL. The FAIL names the cost (serialised lock) and the remedy.
+# 4. UNMANAGED SERVER NOT ANSWERING. When SPIRA_DOLT_DATA is empty and the configured port has
+#    no listener, doctor FAILs naming the host:port — "managed independently" is checked, not assumed.
 #
 # covers: spira/doctor.sh
 # covers: spira/conf.sh
@@ -22,7 +24,8 @@ want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in output"; 
 nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in output"; }
 
 echo "test-doctor-embedded.sh"
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+SRV_PID=""
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "$SRV_PID" ] && kill "$SRV_PID" 2>/dev/null; true' EXIT INT TERM
 
 BIN="$TMP/bin"
 mkdir -p "$BIN" "$TMP/db/.beads" "$TMP/run" "$TMP/home"
@@ -85,14 +88,46 @@ want "FAIL names the remedy: SPIRA_DOLT_DATA" "SPIRA_DOLT_DATA" "$embedded_out"
 
 # ==========================================================================
 echo
-echo "server mode — no embedded FAIL:"
+echo "server mode — server answering — no FAIL:"
 # ==========================================================================
-printf '{"dolt_mode":"server","dolt_database":"db","dolt_server_port":3307,"project_id":"test-ec2t"}\n' \
-    > "$TMP/db/.beads/metadata.json"
+# Start a listener so the port check passes; proves the OK fires only when a
+# server is actually present (positive control for the pass case).
+mkfifo "$TMP/srv-port"
+python3 -c "
+import socket
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', 0))
+s.listen(5)
+with open('$TMP/srv-port', 'w') as f:
+    f.write(str(s.getsockname()[1]))
+while True:
+    c,_ = s.accept(); c.close()
+" &
+SRV_PID=$!
+SRV_PORT=$(cat "$TMP/srv-port")
+printf '{"dolt_mode":"server","dolt_database":"db","dolt_server_host":"127.0.0.1","dolt_server_port":%d,"project_id":"test-ec2t"}\n' \
+    "$SRV_PORT" > "$TMP/db/.beads/metadata.json"
 
 server_out="$(run_doctor || true)"
-nowant "server mode: no embedded FAIL line" "embedded" \
+nowant "server answering: no embedded FAIL" "embedded" \
     "$(printf '%s\n' "$server_out" | grep 'FAIL' || true)"
+want "server answering: OK line names the port" "server answering on" "$server_out"
+kill "$SRV_PID" 2>/dev/null; wait "$SRV_PID" 2>/dev/null; SRV_PID=""
+
+# ==========================================================================
+echo
+echo "unmanaged server, not answering — FAIL:"
+# ==========================================================================
+# Use a port that was never opened; the TCP probe must FAIL (positive control:
+# proves the check actually fires and does not silently pass).
+printf '{"dolt_mode":"server","dolt_database":"db","dolt_server_host":"127.0.0.1","dolt_server_port":59998,"project_id":"test-ec2t"}\n' \
+    > "$TMP/db/.beads/metadata.json"
+
+unmanaged_out="$(run_doctor || true)"
+want "not answering: FAIL emitted" "FAIL" \
+    "$(printf '%s\n' "$unmanaged_out" | grep -i 'no server answers' || true)"
+want "not answering: FAIL names the host and port" "127.0.0.1:59998" "$unmanaged_out"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"

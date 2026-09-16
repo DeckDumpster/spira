@@ -276,14 +276,9 @@ esac
 echo
 echo "the dolt server"
 # SPIRA_DOLT_DATA is either set (this installation manages the Dolt server) or empty
-# (the operator runs it another way). Empty is documented and not a fault — `bd -C` points
-# at the database project directory, not the server data directory, and a server someone else
-# starts is fine.
-#
-# WHEN SET, the server MUST be active. The database is unreachable without it, and every
-# diagnostic below — including "bd can read it" — fails without naming the server as the
-# cause. Naming the service here is the one moment when the right culprit is obvious from
-# context rather than buried in journal output.
+# (the operator runs it another way). When set, verify the service is active. When
+# empty and metadata names a port, verify a server is answering — "managed
+# independently" is a claim to check, not a pass.
 if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
     if [ -d "$SPIRA_DOLT_DATA" ]; then
         OK "dolt data directory at $SPIRA_DOLT_DATA"
@@ -307,7 +302,35 @@ if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
         Or run install.sh to enable and start it."
     fi
 else
-    OK "SPIRA_DOLT_DATA is empty — dolt server is managed independently"
+    _dr_meta_srv="$SPIRA_DB/.beads/metadata.json"
+    if [ -f "$_dr_meta_srv" ]; then
+        _dr_srv_host="$(python3 -c '
+import json,sys
+try: print(json.load(open(sys.argv[1])).get("dolt_server_host","127.0.0.1"))
+except Exception: print("127.0.0.1")
+' "$_dr_meta_srv" 2>/dev/null || echo "127.0.0.1")"
+        _dr_srv_port="$(python3 -c '
+import json,sys
+try:
+    v=json.load(open(sys.argv[1])).get("dolt_server_port",""); print(v)
+except Exception: print("")
+' "$_dr_meta_srv" 2>/dev/null || true)"
+        if [ -n "$_dr_srv_port" ]; then
+            if (timeout 2 bash -c "(echo > /dev/tcp/${_dr_srv_host}/${_dr_srv_port}) 2>/dev/null") 2>/dev/null; then
+                OK "dolt server answering on ${_dr_srv_host}:${_dr_srv_port}"
+            else
+                FAIL "SPIRA_DOLT_DATA is empty but no server answers on ${_dr_srv_host}:${_dr_srv_port}" \
+                     "Start the dolt server, or set SPIRA_DOLT_DATA in ${CONF:-spira.conf} so
+        install.sh can manage it."
+            fi
+        else
+            OK "SPIRA_DOLT_DATA is empty — dolt server is managed independently"
+        fi
+        unset _dr_srv_host _dr_srv_port
+    else
+        OK "SPIRA_DOLT_DATA is empty — dolt server is managed independently"
+    fi
+    unset _dr_meta_srv
 fi
 
 echo
