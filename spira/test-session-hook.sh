@@ -32,7 +32,7 @@
 # the operator's own configuration or their live client settings file.
 #
 # defect: sp-4vp
-# covers: spira/install-session-hook.sh spira/watchd.sh systemd/install.sh systemd/cockpit-ensure.service
+# covers: spira/install-session-hook.sh spira/hooks/session.sh spira/watchd.sh spira/mail.sh systemd/install.sh systemd/cockpit-ensure.service
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
@@ -52,7 +52,7 @@ mkdir -p "$TMP/home" "$TMP/bin"
 # earn.
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira/hooks"
-cp "$HERE/conf.sh" "$HERE/watchd.sh" "$HERE/install-session-hook.sh" "$CLONE/spira/"
+cp "$HERE/conf.sh" "$HERE/watchd.sh" "$HERE/install-session-hook.sh" "$HERE/mail.sh" "$CLONE/spira/"
 cp "$HERE/hooks/session.sh" "$CLONE/spira/hooks/"
 
 # `status` asks systemd about every daemon row. A stub answers instead, so this suite says
@@ -70,6 +70,8 @@ chmod +x "$TMP/bin/systemctl"
 RUN="$TMP/elsewhere/run"; mkdir -p "$RUN/watchd"
 MANIFEST="$TMP/elsewhere/watchers"
 BUDGET=26
+MAIL_DIR="$TMP/elsewhere/mail"
+mkdir -p "$MAIL_DIR/concierge/new" "$MAIL_DIR/concierge/cur" "$MAIL_DIR/concierge/tmp"
 CONF="$TMP/spira.conf"
 cat > "$CONF" <<EOF
 # THE FIXTURE DECLARES ITSELF IN FORCE. The hook refuses to print from a harness that is not
@@ -80,6 +82,8 @@ SPIRA_RUN = $RUN
 SPIRA_WATCHERS = $MANIFEST
 SPIRA_HOOK_LINES = $BUDGET
 SPIRA_CLIENT_SETTINGS = $TMP/elsewhere/settings.json
+SPIRA_MAIL = $MAIL_DIR
+SPIRA_MAIL_SESSION_MAILBOX = concierge
 EOF
 
 cat > "$MANIFEST" <<'EOF'
@@ -352,6 +356,43 @@ nout="$(hook SessionStart startup SPIRA_RUN="$ORUN" SPIRA_WATCHERS="$NMANIFEST")
 has  "the table still says the watcher exists" "$nout" "view"
 hasnt "no latch command is printed"            "$nout" "Monitor:"
 hasnt "and no resume is promised"              "$nout" "Nothing above was marked read"
+
+echo
+echo "mail count line in the session hook"
+# A CHECK THAT FINDS NOTHING MUST FIRST PROVE IT COULD HAVE FOUND SOMETHING. Plant one
+# message and verify the line appears before believing silence on an empty mailbox.
+printf 'From: Gate <gate@spira>\nSubject: A gate passed\nDate: Mon, 01 Jan 2024 00:00:00 +0000\n\nBody text here.\n' \
+    > "$MAIL_DIR/concierge/new/1.msg"
+
+mout="$(hook SessionStart startup)"
+has "the mail count line is printed"   "$mout" "You have 1 unread"
+has "and carries the list command"     "$mout" "mail.sh list concierge --unread"
+hasnt "no message body is printed"    "$mout" "Body text here"
+hasnt "no subject is printed"         "$mout" "A gate passed"
+# NOTHING MOVES TO cur/. The hook peeks, it does not read.
+is "nothing moved to cur/" "" "$(ls "$MAIL_DIR/concierge/cur/" | head -1)"
+
+# COUNT CARRIES THE REAL NUMBER. Plant a second message and verify.
+printf 'From: Gate <gate@spira>\nSubject: Another\nDate: Mon, 01 Jan 2024 00:00:01 +0000\n\nSecond body.\n' \
+    > "$MAIL_DIR/concierge/new/2.msg"
+mout2="$(hook SessionStart startup)"
+has "count grows with more messages" "$mout2" "You have 2 unread"
+
+# ZERO MEANS SILENCE. Remove the messages; the line must not appear.
+rm "$MAIL_DIR/concierge/new/1.msg" "$MAIL_DIR/concierge/new/2.msg"
+mout3="$(hook SessionStart startup)"
+hasnt "zero unread: no mail line"    "$mout3" "You have 0 unread"
+hasnt "and no list command either"   "$mout3" "mail.sh list concierge --unread"
+
+# NO MONITOR INSTRUCTION FOR MAIL. The count line is informational; the reader opens their
+# mail client themselves.
+printf 'From: Gate <gate@spira>\nSubject: X\nDate: Mon, 01 Jan 2024 00:00:00 +0000\n\nX.\n' \
+    > "$MAIL_DIR/concierge/new/3.msg"
+mnout="$(hook SessionStart startup)"
+# The two watcher Monitor lines from the main test still hold; mail adds none.
+is "mail adds no Monitor instruction" "2" \
+    "$(printf '%s\n' "$mnout" | grep -c 'Monitor: ' || true)"
+rm "$MAIL_DIR/concierge/new/3.msg"
 
 echo
 echo "the registration in the client's settings file"

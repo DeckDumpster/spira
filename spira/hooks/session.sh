@@ -69,6 +69,7 @@ set -uo pipefail
 
 WATCHD="$SPIRA_HOME/watchd.sh"
 [ -x "$WATCHD" ] || exit 0
+MAIL="$SPIRA_HOME/mail.sh"
 
 # THE PAYLOAD IS READ ONLY IF SOMETHING SENT ONE. The client pipes a JSON object in; a person
 # running this by hand has a terminal on stdin, and a bare `cat` there blocks forever, holding
@@ -121,6 +122,16 @@ status="$("$WATCHD" status 2>/dev/null)" || status=""
 header="$(printf '%s\n' "$status" | head -n 1)"
 rows="$(printf '%s\n' "$status" | awk 'NR==1 { next } /^[[:space:]]*$/ { exit } { print }')"
 [ -n "$rows" ] || exit 0
+
+# ONE LINE FOR THE SESSION MAILBOX — count only; marks nothing read; no Monitor instruction.
+mail_line=""
+if [ -x "$MAIL" ] && [ -n "${SPIRA_MAIL_SESSION_MAILBOX:-}" ]; then
+    _mn="$("$MAIL" count "$SPIRA_MAIL_SESSION_MAILBOX" 2>/dev/null)" || _mn=0
+    case "${_mn:-}" in *[!0-9]*|"") _mn=0 ;; esac
+    if [ "$_mn" -gt 0 ]; then
+        mail_line="You have $_mn unread messages — $MAIL list $SPIRA_MAIL_SESSION_MAILBOX --unread"
+    fi
+fi
 
 # THE DEGRADED SECTION IS TAKEN FROM `status`, NOT RE-DERIVED FROM THE TABLE. A watcher
 # reading the wrong database is silent in exactly the way a watcher with nothing to say is
@@ -190,6 +201,10 @@ trap 'rm -rf "$TMP"' EXIT
     if [ -n "$degraded" ]; then
         echo "DEGRADED — running and blind. Silence from these is not good news:"
         printf '%s\n' "$degraded"
+        echo
+    fi
+    if [ -n "$mail_line" ]; then
+        printf '%s\n' "$mail_line"
         echo
     fi
 } > "$TMP/head"
