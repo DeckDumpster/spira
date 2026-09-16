@@ -59,7 +59,7 @@ set -uo pipefail
 HARNESS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SESSION="${CONCIERGE_SESSION:-concierge}"
 SOCKET="${CONCIERGE_SOCKET:-concierge}"
-BRAIN="$SPIRA_REPO"
+BRAIN="${SPIRA_WIKI:-$SPIRA_REPO}"
 FAYTH="${CONCIERGE_FAYTH:-concierge}"
 spira_require claude tmux || exit 1
 
@@ -86,6 +86,9 @@ TM="tmux -L $SOCKET"
 # from outside, and the way anybody finds out is the next violated statute.
 compose_brief() {
     local md="$SPIRA_HOME/chamber/$FAYTH.md" out statutes n
+    local bead_tool="$SPIRA_HOME/bead.sh"
+    local wiki_clause=""
+    [ -n "${SPIRA_WIKI:-}" ] && wiki_clause=" It is the brain wiki — read its \`CLAUDE.md\` first; it governs over anything here that disagrees. Brain carries no copy of the harness."
     [ -f "$md" ] || { echo "concierge: no brief at $md" >&2; return 1; }
 
     # `law-` unless the fayth says otherwise — the same key builder and ops declare, read the
@@ -115,6 +118,8 @@ compose_brief() {
             -e "s|{{DB}}|$SPIRA_DB|g" \
             -e "s|{{STATUTE_COUNT}}|$n|g" \
             -e "s|{{DEADLINE}}||g" \
+            -e "s|{{BEAD}}|$bead_tool|g" \
+            -e "s|{{WIKI_CLAUSE}}|$wiki_clause|g" \
             "$md"
         printf '\n# Memories in force\n\n%s\n' "$statutes"
     } > "$out" || return 1

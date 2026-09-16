@@ -20,7 +20,7 @@
 # No database for the roster half, no network, under a second.
 #
 # defect: sp-u4x
-# covers: spira/lib.sh concierge.sh spira/chamber/concierge.fayth spira/chamber/concierge.md
+# covers: spira/lib.sh concierge.sh spira/bead.sh spira/chamber/concierge.fayth spira/chamber/concierge.md
 # hermetic-ok: fixture chamber, no systemd or database for the roster checks
 # requires: claude
 # host-reason: the brief section invokes concierge.sh which requires claude and tmux on PATH (operator tools not available in the container)
@@ -189,6 +189,31 @@ fi
 # THE COUNT MUST BE THE BRIEF'S OWN, not a constant that happens to look plausible.
 is "and it matches the rendered brief" \
    "$(grep -c '^## law-' "$(bash "$HARNESS/concierge.sh" brief)" 2>/dev/null)" "$n_sum"
+
+
+echo
+echo "the brief — no-wiki install (SPIRA_WIKI unset)"
+
+# SPIRA_WIKI UNSET: every path the brief names must be a file that exists on this host.
+# The filing tool ships in the harness (spira/bead.sh) and is referenced via {{BEAD}}, so
+# its rendered path must exist regardless of whether a wiki is configured.
+# THE POSITIVE CONTROL: the brief must still name the bead tool; absence of .claude/bead.sh
+# alone would pass just as well against a brief that named nothing at all.
+BRIEF_NW="$(SPIRA_WIKI= bash "$HARNESS/concierge.sh" brief 2>"$TMP/err_nw")"
+if [ -n "$BRIEF_NW" ] && [ -f "$BRIEF_NW" ]; then
+    pass=$((pass+1)); printf '  ok    no-wiki brief renders\n'
+    BNW="$(cat "$BRIEF_NW")"
+    nowant "no-wiki brief does not name the wiki-relative tool"  ".claude/bead.sh" "$BNW"
+    want   "no-wiki brief still names the harness bead tool"     "bead.sh file"    "$BNW"
+    bead_path="$(printf '%s\n' "$BNW" | grep -oE '[^ ]+bead\.sh' | head -1)"
+    if [ -n "$bead_path" ] && [ -f "$bead_path" ]; then
+        pass=$((pass+1)); printf '  ok    bead tool path in brief exists: %s\n' "$bead_path"
+    else
+        fail=$((fail+1)); printf '  FAIL  bead tool path in brief does not exist: [%s]\n' "${bead_path:-<not found>}"
+    fi
+else
+    fail=$((fail+1)); printf '  FAIL  no-wiki brief failed:\n%s\n' "$(cat "$TMP/err_nw")"
+fi
 
 fi  # statute book guard
 
