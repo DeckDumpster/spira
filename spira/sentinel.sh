@@ -1087,6 +1087,12 @@ fi
 # whose run has completed. The bespoke sweep that operated here (CHECK 6c) is removed, not
 # left dormant; its logic was replaced by bd's own gate primitives.
 
+# CHECK 3b — queue-mode dep wait. A ready bead whose closed blocker has a CERTIFIED or
+# BATCHED landstate has not yet landed on base. mark_queue_waiters applies
+# SPIRA_QUEUE_WAIT_LABEL so fayth_ready excludes it; removes the label once the blocker
+# reaches LANDED.
+mark_queue_waiters 2>/dev/null || true
+
 # CHECK 7 — idle capacity. Ready work and a free aeon is the whole point of the system.
 #
 # EVERY FAYTH IS ASKED ITS OWN PREDICATE, AND EVERY FAYTH IS ASKED. This whole block used

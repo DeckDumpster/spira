@@ -783,6 +783,7 @@ for item in (d if isinstance(d, list) else [d]):
 fayth_exclude() {        # fayth_exclude <fayth> -> comma-separated exclusions
     local me="$1" own="${2:-}" f out
     out="$own"
+    [ -n "${SPIRA_QUEUE_WAIT_LABEL:-}" ] && out="${out:+$out,}${SPIRA_QUEUE_WAIT_LABEL}"
     for f in $(spira_fayths 2>/dev/null); do
         [ "$f" = "$me" ] && continue
         out="${out:+$out,}fayth:$f"
@@ -796,6 +797,90 @@ fayth_ready() {          # fayth_ready <fayth> -> claimable beads under ITS OWN 
     # shellcheck disable=SC1090
     ( . "$F" 2>/dev/null
       ready_count "${FAYTH_LABELS:-}" "$(fayth_exclude "$f" "${FAYTH_EXCLUDE_LABELS:-}")" )
+}
+
+# mark_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on beads whose closed blocker
+# is in the queue pipeline (CERTIFIED or BATCHED) and has not yet reached LANDED.
+#
+# bd considers a dep resolved once the blocker is closed, so the dependent appears in
+# `bd ready`. In queue mode, CLOSED ≠ LANDED — the work is not yet on base. This label
+# keeps fayth_ready from counting those beads until the blocker's landstate reaches LANDED.
+mark_queue_waiters() {
+    local label="${SPIRA_QUEUE_WAIT_LABEL:-}"
+    [ -n "$label" ] || return 0
+    local landstate_dir="$SPIRA_RUN/landstate"
+    local sf id state qblockers="" still ready_json
+
+    # Build the set of active queue blockers: closed beads with CERTIFIED or BATCHED
+    # landstate. These states are written only by the queue arm of landing.sh.
+    if [ -d "$landstate_dir" ]; then
+        for sf in "$landstate_dir/"*; do
+            [ -f "$sf" ] || continue
+            id="$(basename "$sf")"
+            state="$(awk 'NR==1{print $1}' "$sf" 2>/dev/null)"
+            case "$state" in CERTIFIED|BATCHED) qblockers="${qblockers}${id} " ;; esac
+        done
+    fi
+
+    # Release the label from beads whose blocker has reached LANDED (no longer in qblockers).
+    while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        still=0
+        if [ -n "$qblockers" ]; then
+            bdjson show "$id" 2>/dev/null \
+            | QUEUE_BLOCKERS="$qblockers" python3 -c '
+import json, sys, os
+active = set(os.environ["QUEUE_BLOCKERS"].split())
+try: d = json.load(sys.stdin)
+except: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+deps = (d[0].get("dependencies") or []) if d else []
+sys.exit(0 if any(
+    (dep.get("dependency_type") or dep.get("type")) == "blocks"
+    and dep.get("depends_on_id") in active
+    for dep in deps) else 1)
+' 2>/dev/null && still=1
+        fi
+        [ "$still" = 1 ] || {
+            bdq label remove "$id" "$label" >/dev/null 2>&1 || true
+            log "mark_queue_waiters: $id — blocker landed, cleared"
+        }
+    done < <(bdjson list --status open --label "$label" --limit 0 2>/dev/null \
+        | python3 -c '
+import json, sys
+try: d = json.load(sys.stdin)
+except: sys.exit(0)
+for i in (d if isinstance(d, list) else [d]):
+    i.get("id") and print(i["id"])
+' 2>/dev/null || true)
+
+    [ -n "$qblockers" ] || return 0
+
+    # Apply the label to ready beads whose dep is still in the queue pipeline.
+    ready_json="$(bdjson "${READY_ARGS[@]}" 2>/dev/null)" || ready_json=""
+    [ -n "$ready_json" ] || return 0
+    while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        bdq label add "$id" "$label" >/dev/null 2>&1 || true
+        log "mark_queue_waiters: $id — queue-wait applied"
+    done < <(QUEUE_BLOCKERS="$qblockers" QUEUE_LABEL="$label" python3 -c '
+import json, sys, os
+active = set(os.environ["QUEUE_BLOCKERS"].split())
+lab = os.environ["QUEUE_LABEL"]
+try: d = json.load(sys.stdin)
+except: sys.exit(0)
+d = d if isinstance(d, list) else [d]
+for bead in d:
+    if lab in (bead.get("labels") or []):
+        continue
+    deps = bead.get("dependencies") or []
+    if any(
+        (dep.get("dependency_type") or dep.get("type")) == "blocks"
+        and dep.get("depends_on_id") in active
+        for dep in deps
+    ):
+        print(bead.get("id"))
+' <<< "$ready_json" 2>/dev/null || true)
 }
 
 # bead_reopen <id> <note> — hand a bead back to the graph so the NEXT aeon can claim it.
