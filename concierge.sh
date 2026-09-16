@@ -6,6 +6,7 @@
 #   concierge.sh here      run it in the FOREGROUND, at this terminal; args pass to claude
 #   concierge.sh attach    attach locally
 #   concierge.sh brief     render the system prompt and print its path; change nothing
+#     overlay without cd:  claude ... --append-system-prompt-file "$(concierge.sh brief)"
 #   concierge.sh status    is it up
 #   concierge.sh stop      kill it
 #
@@ -70,9 +71,9 @@ TM="tmux -L $SOCKET"
 # The same two-part shape aeon.sh uses: the persona's markdown with `{{...}}` placeholders
 # substituted, then the statute book appended whole.
 #
-# IT PASSES THE TEXT VIA `--append-system-prompt`, not `--append-system-prompt-file`. The
-# `-file` variant appears in help text for another flag and is silently accepted by
-# claude 2.1.270 but not honoured — a session launched with it receives no system prompt.
+# THE LAUNCHERS PASS THE CONTENT VIA `--append-system-prompt`, not `--append-system-prompt-file`.
+# `--append-system-prompt-file` was not honoured by earlier versions; the launchers keep the
+# content form so they are not coupled to which version fixed it. For manual use, see usage.
 #
 # The statute book is tens of kilobytes. For `here`, the brief passes as "$(cat "$BRIEF")":
 # bash expands it before exec, so the content arrives as a single argument without a shell
@@ -262,7 +263,13 @@ here)
 # is easy to get wrong and impossible to see from outside once it has started, so it has a
 # seam of its own: `brief` is what the suite drives and what the operator reads before
 # deciding the persona says what he meant.
-brief)   b="$(compose_brief)" || exit 1; echo "$b"; ;;
+brief)
+    [ $# -gt 1 ] && {
+        printf 'concierge: brief takes no arguments\n' >&2
+        printf '  to use the overlay without cd: claude ... --append-system-prompt-file "$(concierge.sh brief)"\n' >&2
+        exit 2
+    }
+    b="$(compose_brief)" || exit 1; echo "$b"; ;;
 
 status)
     if $TM has-session -t "$SESSION" 2>/dev/null; then

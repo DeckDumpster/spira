@@ -106,6 +106,23 @@ want   "the shipped concierge IS an operator persona"    "concierge" "$(ship spi
 want   "and the other personas are still summonable"     "builder"   "$(ship spira_task_fayths)"
 
 echo
+echo "the brief — argument handling"
+
+# BRIEF REJECTS EXTRA ARGUMENTS: 'brief --resume' exits 2 and names the working composition.
+# An operator who types it expects an error, not silent success with the flag dropped.
+out="$(bash "$HARNESS/concierge.sh" brief --resume 2>&1)"; rc=$?
+is   "brief --resume exits 2"              2 "$rc"
+want "and names the working composition"   "append-system-prompt" "$out"
+# POSITIVE CONTROL: without extra arguments the exit code is not 2, confirming the check
+# fires on the flag and not on something unrelated.
+rc_plain=0; bash "$HARNESS/concierge.sh" brief 2>/dev/null >/dev/null || rc_plain=$?
+if [ "$rc_plain" -ne 2 ]; then
+    pass=$((pass+1)); printf '  ok    brief without args does not exit 2\n'
+else
+    fail=$((fail+1)); printf '  FAIL  brief without args exited 2 — positive control broken\n'
+fi
+
+echo
 echo "the brief — composed, or refused"
 
 # Brief rendering requires statutes in the rule database. A fresh container has none,
