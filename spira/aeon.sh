@@ -217,6 +217,15 @@ if [ "$have" -ge "${FAYTH_MAX_CONCURRENT:-1}" ]; then
     exit 0
 fi
 
+# ---- halted ---------------------------------------------------------------------------
+# Same reasoning as draining below — aeons launched directly by ExecStart bypass
+# summon_fayth, so this guard must live here too (law-guard-binds-the-caller).
+if [ -f "${SPIRA_RUN:-}/world.halted" ]; then
+    log "$FAYTH: halted — claiming nothing (world.sh start to lift)"
+    ledger "awake $FAYTH halted"
+    exit 0
+fi
+
 # ---- draining -------------------------------------------------------------------------
 # BOUND HERE FOR THE REASON THE PARAGRAPH BELOW ALREADY GIVES, and it is here because that
 # paragraph was not read closely enough the first time. The drain gate went into

@@ -277,6 +277,12 @@ if [ -d "$HARNESS/systemd" ]; then
     grep -q 'world.draining' "$HARNESS/spira/lib.sh" \
         && ok "summon_fayth also carries it (cheaper: never starts the unit)" \
         || bad "summon_fayth carries the drain gate" "no world.draining check in lib.sh"
+    grep -q 'world.halted' "$HARNESS/spira/aeon.sh" \
+        && ok "aeon.sh carries the halt gate" \
+        || bad "aeon.sh carries the halt gate" "no world.halted check in aeon.sh"
+    grep -q 'world.halted' "$HARNESS/spira/lib.sh" \
+        && ok "summon_fayth carries the halt gate" \
+        || bad "summon_fayth carries the halt gate" "no world.halted check in lib.sh"
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

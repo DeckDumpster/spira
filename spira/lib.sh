@@ -1020,6 +1020,12 @@ fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partitio
 # least.
 summon_fayth() {         # summon_fayth <fayth> [pool-remaining]
     local f="$1" pool="${2:-}" r free
+    # HALTED — world.sh stop writes this stamp; only world.sh start removes it.
+    # Checked before drain: halt is indefinite and requires explicit operator action.
+    if [ -f "${SPIRA_RUN:-}/world.halted" ]; then
+        log "CHECK7 $f: halted — not summoning (world.sh start to lift)"
+        return 1
+    fi
     # DRAINING — the operator asked for an empty pool and is waiting on it. Checked FIRST,
     # ahead of capacity and readiness, because it is the only condition here a person is
     # actively blocked on: a rollout that must not kill work in flight — install.sh, a schema
