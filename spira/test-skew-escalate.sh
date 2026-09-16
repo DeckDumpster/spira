@@ -19,10 +19,10 @@
 # always claims "escalation failed" would pass every subsequent assertion without
 # proving the path was exercised.
 #
-# THE FIXTURE IS A REAL GIT REPO with the harness signature files (boundary,
-# gate.sh, lib.sh) committed and one tracked file modified, so check() reaches
-# the DIRTY path and calls escalate(). No shared state with the installed harness
-# is used (law-gates-run-in-a-clean-environment).
+# THE FIXTURE IS A REAL GIT REPO with release tags, and a releases directory where
+# the activated release is not the latest, so check() reaches the NOT-LATEST path
+# and calls escalate(). No shared state with the installed harness is used
+# (law-gates-run-in-a-clean-environment).
 #
 # covers: spira/skew.sh
 set -uo pipefail
@@ -39,45 +39,41 @@ echo "test-skew-escalate.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 # ---------------------------------------------------------------------------
-# Fixture: a minimal git repo that passes harness_in's positive control.
-#
-# harness_in() requires files named boundary, gate.sh, and lib.sh in the same
-# directory (scope_from_paths in exclude.sh checks for exactly those three).
-# We commit them, then modify one so check() reaches the DIRTY path and calls
-# escalate(). A fake install.sh is added so the STALE check does not produce a
-# CANNOT-DIFF soft finding (which would otherwise hide whether hard=1 was set).
+# Fixture: a git repo with two release tags so check() finds NOT-LATEST and
+# calls escalate() when the older release is activated.
 # ---------------------------------------------------------------------------
 REPO="$TMP/repo"
 git init -q "$REPO"
 git -C "$REPO" config user.email "test@test"
 git -C "$REPO" config user.name "test"
-mkdir -p "$REPO/spira" "$REPO/systemd"
-
-# Harness signature files. scope_from_paths needs all three in the same dir.
-printf '# harness boundary\n'  > "$REPO/spira/boundary"
+mkdir -p "$REPO/spira"
+printf '# boundary\n'        > "$REPO/spira/boundary"
 printf '#!/usr/bin/env bash\n' > "$REPO/spira/gate.sh"
 printf '#!/usr/bin/env bash\n' > "$REPO/spira/lib.sh"
+git -C "$REPO" add spira/
+git -C "$REPO" commit -q -m "base"
+COMMIT1="$(git -C "$REPO" rev-parse HEAD)"
 
-# A stub install.sh that always says "units match". Prevents CANNOT-DIFF from
-# adding a soft finding that would suppress the escalation call.
-cat > "$REPO/systemd/install.sh" <<'EOF'
-#!/usr/bin/env bash
-[ "${1:-}" = "--diff" ] && { echo "stub: installed units match what this box renders"; exit 0; }
-echo "stub install.sh"; exit 0
-EOF
-chmod +x "$REPO/systemd/install.sh"
+printf '# v2\n' >> "$REPO/spira/lib.sh"
+git -C "$REPO" add spira/lib.sh
+git -C "$REPO" commit -q -m "advance"
+COMMIT2="$(git -C "$REPO" rev-parse HEAD)"
 
-git -C "$REPO" add spira/ systemd/
-git -C "$REPO" commit -q -m "fixture: harness signature"
+TS1="20260912T100000Z"
+TS2="20260912T120000Z"
+git -C "$REPO" tag -a "spira-release-spira-${TS1}" "$COMMIT1" -m "release v1"
+git -C "$REPO" tag -a "spira-release-spira-${TS2}" "$COMMIT2" -m "release v2"
 
-# Make the repo dirty: modify a tracked file so check() finds a DIRTY finding
-# and calls escalate().
-printf '# modified\n' >> "$REPO/spira/lib.sh"
+RELEASES="$TMP/releases"
+mkdir -p "$RELEASES/spira-${TS1}" "$RELEASES/spira-${TS2}"
+printf 'commit %s\ntimestamp %s\n' "$COMMIT1" "$TS1" > "$RELEASES/spira-${TS1}/MANIFEST"
+printf 'commit %s\ntimestamp %s\n' "$COMMIT2" "$TS2" > "$RELEASES/spira-${TS2}/MANIFEST"
+# Activate the older release so check() finds NOT-LATEST and calls escalate().
+ln -s "spira-${TS1}" "$RELEASES/current"
 
 # A skew.sh runner with an explicit minimal environment. Each call uses its own
-# SPIRA_RUN directory (created with mktemp) so the dedupe stamp never suppresses
-# a second escalation in the same test run. HOME is required by conf.sh for the
-# SPIRA_DB default.
+# SPIRA_RUN directory so the dedupe stamp never suppresses a second escalation
+# in the same test run. HOME is required by conf.sh for the SPIRA_DB default.
 #
 # run_skew <env-var=val>...        — check --escalate (escalation mode)
 # run_skew_ro <env-var=val>...     — check alone (read-only mode; must not call SPIRA_NOTIFY)
@@ -93,6 +89,7 @@ run_skew() {
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
+        SPIRA_RELEASES="$RELEASES" \
         "${@}" \
         bash "$HERE/skew.sh" check --escalate 2>&1
     return "${PIPESTATUS[0]:-$?}"
@@ -109,6 +106,7 @@ run_skew_ro() {
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
+        SPIRA_RELEASES="$RELEASES" \
         "${@}" \
         bash "$HERE/skew.sh" check 2>&1
     return "${PIPESTATUS[0]:-$?}"
@@ -124,6 +122,7 @@ run_skew_shared() {
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
+        SPIRA_RELEASES="$RELEASES" \
         "${@}" \
         bash "$HERE/skew.sh" check --escalate 2>&1
     return "${PIPESTATUS[0]:-$?}"
@@ -142,7 +141,7 @@ EOF
 chmod +x "$GOOD_NOTIFY"
 
 good_out="$(run_skew SPIRA_NOTIFY="$GOOD_NOTIFY")"; good_rc=$?
-# Divergence was found (DIRTY); exit 1 is correct.
+# NOT-LATEST was found; exit 1 is correct.
 is  "positive control exits 1 (divergence found)" "1" "$good_rc"
 # The escalation confirmation must appear on stdout so skew.log has it.
 want "positive control: escalation noted on stdout" "escalated" "$good_out"
@@ -151,16 +150,10 @@ want "positive control: escalation noted on stdout" "escalated" "$good_out"
 echo
 echo "no escalation path — warning appears on stdout, not silently dropped:"
 # ===========================================================================
-# SPIRA_NOTIFY is a non-executable path. The finding must reach stdout so
-# skew.log (which captures stdout) records it and the operator can see it.
 no_path_out="$(run_skew SPIRA_NOTIFY=/nonexistent/ask.sh)"; no_path_rc=$?
 is  "no-path exits 1 (divergence found)" "1" "$no_path_rc"
 want "no-path warning appears on stdout" "no escalation path" "$no_path_out"
 want "no-path output names the bad path" "/nonexistent/ask.sh" "$no_path_out"
-# The old code returned 0 (silently) when no path was found. A failed escalation
-# must not be treated as "escalation succeeded and everything is fine."
-# This is enforced by check() itself: exit 1 means divergence found, regardless
-# of whether the escalation worked.
 
 # ===========================================================================
 echo
@@ -178,16 +171,12 @@ fail_out="$(run_skew SPIRA_NOTIFY="$BAD_NOTIFY")"; fail_rc=$?
 is  "failing notify exits 1" "1" "$fail_rc"
 want "failing notify message on stdout"  "escalation failed" "$fail_out"
 want "failing notify rc included"        "rc=1"              "$fail_out"
-# The notify's own stderr must appear in the output — not swallowed.
 want "failing notify output included"    "simulated failure" "$fail_out"
 
 # ===========================================================================
 echo
 echo "read-only mode — check without --escalate must not call SPIRA_NOTIFY:"
 # ===========================================================================
-# A bare 'skew.sh check' (no --escalate) is a read: it prints findings and exits,
-# but must not call SPIRA_NOTIFY. We verify this by pointing SPIRA_NOTIFY at a
-# script that writes a sentinel file; the file must not exist after the call.
 SENTINEL_DIR="$(mktemp -d "$TMP/sentinel-XXXXX")"
 SENTINEL_NOTIFY="$TMP/sentinel-notify.sh"
 cat > "$SENTINEL_NOTIFY" <<EOF
@@ -198,29 +187,20 @@ EOF
 chmod +x "$SENTINEL_NOTIFY"
 
 ro_out="$(run_skew_ro SPIRA_NOTIFY="$SENTINEL_NOTIFY")"; ro_rc=$?
-# Divergence was still found; exit 1 is correct.
 is  "read-only exits 1 (divergence found)" "1" "$ro_rc"
-# The sentinel file must not have been written — SPIRA_NOTIFY was not called.
 [ ! -f "$SENTINEL_DIR/fired" ] && ok "read-only: SPIRA_NOTIFY not called" \
     || bad "read-only: SPIRA_NOTIFY not called" "sentinel file was created"
-# The DIRTY finding must still appear on stdout (read-only still reports).
-want "read-only: DIRTY finding still printed" "DIRTY" "$ro_out"
-nowant "read-only: no 'escalated' line" "escalated" "$ro_out"
-nowant "read-only: no 'no escalation path' line" "no escalation path" "$ro_out"
+want   "read-only: NOT-LATEST finding still printed" "NOT-LATEST" "$ro_out"
+nowant "read-only: no 'escalated' line"              "escalated"  "$ro_out"
+nowant "read-only: no 'no escalation path' line"     "no escalation path" "$ro_out"
 
 # ===========================================================================
 echo
-echo "condition-keyed dedupe — same condition, different commit count, files not re-escalated:"
+echo "condition-keyed dedupe — same condition, same run dir, not re-escalated:"
 # ===========================================================================
-# This exercises the core of the bug: a DIRTY condition whose findings text drifts
-# (because the file list or commit count can grow) must not produce a new ask on
-# each pass. We reuse the same SPIRA_RUN across two calls; the second must be
-# silent even though the calls are separate processes.
 DEDUPE_NOTIFY="$TMP/dedupe-notify.sh"
 DEDUPE_COUNT="$TMP/dedupe-count"
 printf '0' > "$DEDUPE_COUNT"
-# Path is embedded directly (double-quoted heredoc) so the script does not need
-# DEDUPE_COUNT from its environment — run_skew_shared uses env -i.
 cat > "$DEDUPE_NOTIFY" <<EOFN
 #!/usr/bin/env bash
 count=\$(cat "$DEDUPE_COUNT" 2>/dev/null || echo 0)
@@ -232,13 +212,11 @@ chmod +x "$DEDUPE_NOTIFY"
 
 DEDUPE_RUN="$(mktemp -d "$TMP/dedup-run-XXXXX")"
 
-# First call: new condition; must escalate.
 first_out="$(run_skew_shared "$DEDUPE_RUN" SPIRA_NOTIFY="$DEDUPE_NOTIFY")"; first_rc=$?
 is  "dedupe first call exits 1 (divergence)" "1" "$first_rc"
 want "dedupe first call: escalated" "escalated" "$first_out"
 is  "dedupe first call: notify fired once" "1" "$(cat "$DEDUPE_COUNT")"
 
-# Second call: same SPIRA_RUN, same condition (DIRTY only). Must NOT re-escalate.
 second_out="$(run_skew_shared "$DEDUPE_RUN" SPIRA_NOTIFY="$DEDUPE_NOTIFY")"; second_rc=$?
 is  "dedupe second call exits 1 (divergence still present)" "1" "$second_rc"
 nowant "dedupe second call: no re-escalation" "escalated" "$second_out"
