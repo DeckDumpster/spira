@@ -590,9 +590,14 @@ fi
 # follows when it reports a failing suite by filename — a filename immediately followed by
 # FAILED or by having been killed. Anything else leaves `-`: the reason slug is a true
 # attribution and a guessed suite name is not.
-GATE_SUITE="$(printf '%s\n' "$out" \
-    | sed -n 's/.*[[:space:]]\([A-Za-z0-9._-]*\.sh\)[[:space:]]\(FAILED\|was killed\).*/\1/p' \
-    | head -1)"
+red_suites() {           # red_suites <gate output> -> one suite per line, as the batch runner reports them
+    printf '%s\n' "$1" | awk '{
+        for (i = 1; i < NF; i++)
+            if ($i ~ /\.sh$/ && ($(i+1) ~ /^(RED|TIMEOUT|FAILED)$/ || ($(i+1) == "was" && $(i+2) == "killed")))
+                if (!seen[$i]++) print $i
+    }'
+}
+GATE_SUITE="$(red_suites "$out" | head -1)"
 [ -n "$GATE_SUITE" ] || GATE_SUITE=-
 
 if [ "$gate_rc_branch" -eq 124 ]; then
@@ -640,10 +645,28 @@ fi
 gate_at "$BR" >/dev/null 2>&1
 
 if [ "$base_ran" = 1 ] && [ "$base_rc" -ne 0 ]; then
-    verdict "$SPIRA_GATE_BASEFAIL" base-red \
-        "gate: $REPO_NAME's own gate failed: $CMD
+    # A red base excuses only the suites that are red on it too; a suite red on the branch alone
+    # is still the branch's.
+    base_reds="$(red_suites "$base_out")"
+    branch_only="$(red_suites "$out" | grep -vxF -f <(printf '%s\n' "$base_reds") || true)"
+    if [ -n "$base_reds" ] && [ -n "$branch_only" ]; then
+        GATE_SUITE="$(printf '%s\n' "$branch_only" | head -1)"
+        verdict 1 branch-red \
+            "gate: $REPO_NAME's own gate failed: $CMD
 $out
-gate: it fails against $BASE too — this branch did not cause it.
+gate: red on this branch and not on $BASE: $(printf '%s' "$branch_only" | tr '\n' ' ')
+gate: $BASE is red too, on: $(printf '%s' "$base_reds" | tr '\n' ' ')"
+    fi
+    GATE_SUITE="$(printf '%s\n' "$base_reds" | head -1)"
+    [ -n "$GATE_SUITE" ] || GATE_SUITE=-
+    verdict "$SPIRA_GATE_BASEFAIL" base-red \
+        "gate: $REPO_NAME's own gate fails against $BASE — this branch did not cause it.
+gate: command: $CMD
+gate: red on $BASE: ${base_reds:-(no suite named; read the output)}
+--- $BASE's own output ---
+$(printf '%s\n' "$base_out" | tail -c 8000)
+--- this branch's output ---
+$(printf '%s\n' "$out" | tail -c 4000)
 gate: fix the repository, or clear that command from $SPIRA_REPO_MAP."
 fi
 if [ "$base_ran" = 0 ]; then
