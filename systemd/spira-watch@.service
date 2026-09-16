@@ -10,6 +10,13 @@
 Description=Spira watcher %i
 Documentation=file://@SPIRA_HOME@/watchd.sh
 After=default.target
+# THE BURST LIMITER HAS TO BE REACHABLE. Five starts at RestartSec=15 span at least 60s, so
+# systemd's default 10s window can never hold five and the limiter never fires — a target
+# that exits on every start loops forever instead of landing in failed. Keep this above
+# RestartSec * (StartLimitBurst - 1); test-watch-unit-restart.sh asserts the relationship,
+# not the numbers. These belong in [Unit]: systemd ignores them under [Service].
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 Type=simple
