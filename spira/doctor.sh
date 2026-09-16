@@ -263,7 +263,7 @@ else
              "Set SPIRA_DB in ${CONF:-spira.conf} if this path is wrong."
     else
         FAIL "$SPIRA_DB has no .beads — the harness refuses to guess a database" \
-             "Set SPIRA_DB in ${CONF:-spira.conf}, or create it with: bd -C $SPIRA_DB init"
+             "Set SPIRA_DB in ${CONF:-spira.conf} and run install.sh to create it."
     fi
 fi
 case "$SPIRA_DB" in
