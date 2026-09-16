@@ -21,10 +21,10 @@
 # written by the Maechen pass on every completion (success or failure), so the time
 # trigger gates on the pass cadence, not the census window.
 #
-# DEDUP. At most one open trigger bead at a time. maechen.fayth has
-# FAYTH_MAX_CONCURRENT=1; a second open trigger bead would wait forever behind the
-# first, building an ever-growing backlog of no-op passes. This guard enforces one open
-# trigger as the correct steady state.
+# DEDUP. At most one open-or-in-progress trigger bead at a time. maechen.fayth has
+# FAYTH_MAX_CONCURRENT=1; a second trigger bead would wait forever behind the first,
+# building an ever-growing backlog of no-op passes. This guard enforces one open or
+# in-progress trigger as the correct steady state.
 #
 # WATERMARK. $SPIRA_RUN/maechen.watermark holds a single integer: the Unix epoch
 # timestamp of the last window the Maechen pass examined. A missing or empty file means
@@ -68,17 +68,18 @@ else
     LABELS="${SPIRA_MAECHEN_LABEL}"
 fi
 
-# DEDUP — at most one open trigger bead at a time. Query uses the same labels as
-# maechen.fayth's predicate; a bead present here is one Maechen will claim.
+# DEDUP — at most one open-or-in-progress trigger bead at a time. Query uses the same
+# labels as maechen.fayth's predicate. in_progress is included because a claimed bead
+# leaves --status open and the guard would file a duplicate on the next tick (sp-mp9s).
 open_count=0
-open_json="$("$BD" -C "$DB" list --status open --label "$LABELS" --json 2>/dev/null)" || open_json="[]"
+open_json="$("$BD" -C "$DB" list --status open,in_progress --label "$LABELS" --json 2>/dev/null)" || open_json="[]"
 [ -z "$open_json" ] && open_json="[]"
 open_count="$(printf '%s\n' "$open_json" \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null)" \
     || open_count=0
 
 if [ "${open_count:-0}" -gt 0 ] 2>/dev/null; then
-    log "trigger already open (${open_count} bead(s) with labels [$LABELS]) — skipping"
+    log "trigger already open or in_progress (${open_count} bead(s) with labels [$LABELS]) — skipping"
     exit 0
 fi
 

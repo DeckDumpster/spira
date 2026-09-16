@@ -41,16 +41,21 @@
 # the condition NOT met (watermark=now, count=0) before testing the presence case.
 # The dedup check is verified by an explicit open-bead response that blocks a `create`.
 #
-# STUB BD (law-gates-run-in-a-clean-environment)
+# BD STUBS AND REAL FIXTURE
 # -----------------------------------------------
-# bd calls are stubbed so no database is needed. Real git is used for landing-count
-# tests against throwaway repos (law-prefer-the-real-dependency).
+# Most bd calls are stubbed so no database is needed. The dedup-in-progress case uses
+# a real fixture database: the stub returns BD_LIST_OUTPUT unconditionally and cannot
+# exercise the --status filter (law-prefer-the-real-dependency). Real git is used for
+# landing-count tests against throwaway repos.
 #
 # covers: spira/maechen-trigger.sh spira/conf.sh
 # hermetic-ok: stub bd, real git with throwaway repos
 # scar: unrecorded
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+# shellcheck disable=SC1090
+. "$HERE/testdb.sh"
+testdb_require test-maechen-trigger
 pass=0; fail=0
 ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
@@ -59,7 +64,7 @@ want()   { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in [$3]"; es
 nowant() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$1" ;; esac; }
 
 TRIGSH="$HERE/maechen-trigger.sh"
-T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
+T="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 
 # ---------------------------------------------------------------------------
@@ -296,6 +301,50 @@ is     "dedup exits 0"               0           "$rc"
 nowant "dedup does not create"       "create"    "$(cat "$BD_LOG")"
 want   "dedup logs skipping"         "skipping"  "$out"
 want   "list IS called for dedup"    "list"      "$(cat "$BD_LOG")"
+
+# ==========================================================================================
+echo
+echo "DEDUP: in_progress trigger bead — no second bead is filed (real fixture db)"
+# ==========================================================================================
+# REGRESSION (sp-mp9s): the guard queried --status open only. Once Maechen claims the
+# trigger bead its status becomes in_progress, --status open returns [], the guard fires,
+# and a duplicate pass is filed on the next timer tick. Proven RED below against the
+# unfixed code before the fix was applied.
+#
+# The stub above cannot catch this: it returns BD_LIST_OUTPUT regardless of --status.
+# A real fixture database is required so the filter is exercised as maechen-trigger.sh
+# actually calls it.
+testdb_up maechen_trigger_dedup || { bad "in_progress dedup: fixture setup failed" ""; }
+
+DEDUP_IP_SCOPE="sptest-dedup-scope"
+DEDUP_IP_MAECHEN="sptest-dedup-maechen"
+DEDUP_IP_ID="$("$SPIRA_BD" -C "$SPIRA_DB" create "Maechen pass — dedup fixture" \
+    --type task --label "$DEDUP_IP_SCOPE,$DEDUP_IP_MAECHEN" --priority 3 2>/dev/null \
+    | grep -oE 'sp-[a-z0-9]+')"
+[ -n "$DEDUP_IP_ID" ] || { bad "in_progress dedup: could not create fixture bead" ""; }
+"$SPIRA_BD" -C "$SPIRA_DB" update "$DEDUP_IP_ID" --status in_progress --force 2>/dev/null || true
+
+printf '0\n' > "$WATERMARK_FILE"
+dedup_ip_out="$(env -i HOME="$T" \
+    PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin" \
+    SPIRA_CONF="$NONE" \
+    SPIRA_BD="$SPIRA_BD" \
+    SPIRA_DB="$SPIRA_DB" \
+    SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO="$TESTREPO" \
+    SPIRA_MAECHEN_LABEL="$DEDUP_IP_MAECHEN" \
+    SPIRA_SCOPE_LABEL="$DEDUP_IP_SCOPE" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
+    SPIRA_MAECHEN_LANDING_INTERVAL=0 \
+    bash "$TRIGSH" 2>&1)"; dedup_ip_rc=$?
+is     "in_progress dedup exits 0"       0           "$dedup_ip_rc"
+want   "in_progress dedup logs skipping" "skipping"  "$dedup_ip_out"
+# With UNFIXED code a new open bead would appear; with FIXED code the count stays 0.
+dedup_ip_open="$("$SPIRA_BD" -C "$SPIRA_DB" list \
+    --label "$DEDUP_IP_SCOPE,$DEDUP_IP_MAECHEN" --status open --json 2>/dev/null \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null \
+    || echo 0)"
+is     "in_progress dedup: no new bead created"  "0"  "${dedup_ip_open:-0}"
 
 # ==========================================================================================
 echo
