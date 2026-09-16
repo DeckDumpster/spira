@@ -1,0 +1,17 @@
+name: Spike gate needs
+on:
+  push:
+    branches: ['spira/spike-src-20260916200933b-*']
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - run: exit 1
+  gate:
+    needs: provision
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - if: needs.provision.result != 'success'
+        run: exit 75
+      - run: exit 0

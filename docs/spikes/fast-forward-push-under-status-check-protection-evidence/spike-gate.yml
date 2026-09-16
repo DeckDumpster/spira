@@ -1,0 +1,14 @@
+name: Spike gate
+on:
+  push:
+    branches: ['spira/spike-src-*']
+  pull_request:
+    branches: ['spira/spike-protect-*']
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          v=$(cat verdict)
+          case "$v" in pass) exit 0 ;; slow) sleep 300 ;; *) exit 1 ;; esac
