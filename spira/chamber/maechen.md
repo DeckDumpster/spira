@@ -102,7 +102,7 @@ suppression — it must be the exact class key (e.g., `covers:sp-recur-suite-red
     cls="sp-recur-suite-red"   # replace with the actual class from census output
     bd -C "{{DB}}" create "<failure class: one-line title>" \
         --type task --priority 2 \
-        -l "{{SCOPE}}plan,repo:spira" \
+        -l "{{SCOPE}}plan,repo:{{REPO_NAME}}" \
         -l "{{REMEDY_LABEL}},covers:$cls" \
         --description - <<'DESC'
     Class: <label, e.g. sp-requeue-N-prod-dirty>
