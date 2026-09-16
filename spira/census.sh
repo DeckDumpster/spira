@@ -4,26 +4,22 @@
 #
 #   census.sh [--with-suppressed]
 #
-# Output: one line per class, "<count> <class>", ranked by frequency, highest first.
-# A class with an open remedy bead (carrying labels "$SPIRA_MAECHEN_REMEDY_LABEL" AND
-# "covers:<class>") is suppressed: omitted by default, annotated "[suppressed]" when
-# --with-suppressed is given.
+# Output: one line per class, "<distinct-beads> <class> (<events> detections)", ranked by
+# distinct-bead count. A class with an open remedy bead (carrying labels
+# "$SPIRA_MAECHEN_REMEDY_LABEL" AND "covers:<class>") is suppressed: omitted by default,
+# annotated "[suppressed]" when --with-suppressed is given.
 #
-# WHAT COUNTS AS A FAILURE LABEL
-#   sp-recur-N-<cause>    an incident bead recurred N times with <cause>
-#   sp-requeue-N-<cause>  a bead was requeued N times with <cause>
-#   sp-reclaim-N          a bead was reclaimed N times (no cause by design)
-#   sp-reclaim-N-<cause>  reclaim with cause (forward-compatible)
+# CLASS EXTRACTION — event_type + new_value map to a class name:
+#   recurred  + suite-red    → sp-recur-suite-red
+#   recurred  + unrecorded   → sp-recur-unrecorded
+#   requeued  + prod-dirty   → sp-requeue-prod-dirty
+#   reclaimed + (empty)      → sp-reclaim
 #
-# CLASS EXTRACTION — the monotonic N is stripped; prefix and cause are kept.
-#   sp-recur-3-suite-red     → sp-recur-suite-red
-#   sp-recur-1-unrecorded    → sp-recur-unrecorded
-#   sp-requeue-4-prod-dirty  → sp-requeue-prod-dirty
-#   sp-reclaim-2             → sp-reclaim
-#
-# Each sp-recur-N-<cause> label IS one occurrence. A bead with three such labels
-# (sp-recur-1-*, sp-recur-2-*, sp-recur-3-*) contributes three to the class count —
-# that is three recurrences of the same cause, not one bead counted once.
+# The first number on each output line is DISTINCT BEADS — the count of unique incident
+# beads that produced events of that class. A single condition re-detected by a timer
+# writes many event rows for one bead; those count as one, not many. The detection count
+# (total event rows) appears in parentheses and is the right instrument for measuring
+# how long a condition went unresolved.
 #
 # REMEDY SUPPRESSION — a remedy bead carries "covers:<class>" alongside
 # "$SPIRA_MAECHEN_REMEDY_LABEL". census.sh suppresses any class whose covers-label
@@ -66,20 +62,25 @@ trap 'rm -rf "$_TMPDIR"' EXIT INT TERM
 cat > "$_TMPDIR/count.py" <<'EOF'
 import sys, collections
 
-c = collections.Counter()
+bc = collections.Counter()
+ec = collections.Counter()
 for line in sys.stdin:
     line = line.rstrip('\n').strip()
     if not line or line.startswith('+') or line.startswith('('):
         continue
     parts = [p.strip() for p in line.split('|')]
     parts = [p for p in parts if p]
-    if len(parts) != 3:
+    if len(parts) == 4:
+        event_type, new_value, n_beads, n_events = parts[0], parts[1], parts[2], parts[3]
+    elif len(parts) == 3:
+        event_type, new_value, n_beads = parts[0], parts[1], parts[2]
+        n_events = n_beads
+    else:
         continue
-    event_type, new_value, n = parts[0], parts[1], parts[2]
     if event_type == 'event_type' or 'COALESCE' in event_type:
         continue
     try:
-        count = int(n)
+        nb, ne = int(n_beads), int(n_events)
     except ValueError:
         continue
     cause = new_value.strip()
@@ -96,9 +97,10 @@ for line in sys.stdin:
         cls = 'sp-lapsed-' + (cause or 'unrecorded')
     else:
         continue
-    c[cls] += count
-for cls, n in c.most_common():
-    print(n, cls)
+    bc[cls] += nb
+    ec[cls] += ne
+for cls, beads in bc.most_common():
+    print(beads, ec[cls], cls)
 EOF
 
 # Python: merge all-time and since-watermark counts, rank by since-watermark.
@@ -107,32 +109,35 @@ cat > "$_TMPDIR/merge.py" <<'EOF'
 import sys
 
 def read_counts(path):
-    counts = {}
+    beads = {}
+    events = {}
     try:
         with open(path) as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
-                parts = line.split(None, 1)
-                if len(parts) == 2:
+                parts = line.split(None, 2)
+                if len(parts) == 3:
                     try:
-                        counts[parts[1]] = int(parts[0])
+                        beads[parts[2]] = int(parts[0])
+                        events[parts[2]] = int(parts[1])
                     except ValueError:
                         pass
     except Exception:
         pass
-    return counts
+    return beads, events
 
-all_time = read_counts(sys.argv[1])
-since_wm = read_counts(sys.argv[2])
-all_classes = set(all_time) | set(since_wm)
+all_beads, all_events = read_counts(sys.argv[1])
+wm_beads,  wm_events  = read_counts(sys.argv[2])
+all_classes = set(all_beads) | set(wm_beads)
 
-ranked = sorted(all_classes, key=lambda c: (-since_wm.get(c, 0), all_time.get(c, 0)))
+ranked = sorted(all_classes, key=lambda c: (-wm_beads.get(c, 0), -wm_events.get(c, 0)))
 for cls in ranked:
-    n_since = since_wm.get(cls, 0)
-    n_all   = all_time.get(cls, 0)
-    print('{} {} ({} all-time)'.format(n_since, cls, n_all))
+    b_since = wm_beads.get(cls, 0)
+    e_since = wm_events.get(cls, 0)
+    b_all   = all_beads.get(cls, 0)
+    print('{} {} ({} detections, {} all-time)'.format(b_since, cls, e_since, b_all))
 EOF
 
 # Python: extract covered classes from open remedy beads → one class per line.
@@ -193,7 +198,7 @@ if [ "$_watermark_ts" -gt 0 ] 2>/dev/null; then
     fi
     _RANKED="$(python3 "$_TMPDIR/merge.py" "$_TMPDIR/all_time.txt" "$_TMPDIR/since_wm.txt")"
 else
-    _RANKED="$(cat "$_TMPDIR/all_time.txt")"
+    _RANKED="$(awk '{print $1, $3, "(" $2 " detections)"}' "$_TMPDIR/all_time.txt")"
 fi
 
 # Collect classes already covered by an open remedy bead.

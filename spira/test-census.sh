@@ -122,14 +122,14 @@ bump_recur "$bid_e" unrecorded
 
 out1="$(run_census)"
 
-want "sp-recur-suite-red present with count 5"    "5 sp-recur-suite-red"    "$out1"
-want "sp-requeue-prod-dirty present with count 3" "3 sp-requeue-prod-dirty" "$out1"
-want "sp-reclaim present with count 2"            "2 sp-reclaim"            "$out1"
-want "sp-recur-unrecorded present with count 1"   "1 sp-recur-unrecorded"   "$out1"
+want "sp-recur-suite-red: 2 distinct beads, 5 detections"    "2 sp-recur-suite-red (5"    "$out1"
+want "sp-requeue-prod-dirty: 1 distinct bead, 3 detections"  "1 sp-requeue-prod-dirty (3" "$out1"
+want "sp-reclaim: 1 distinct bead, 2 detections"             "1 sp-reclaim (2"            "$out1"
+want "sp-recur-unrecorded: 1 distinct bead, 1 detection"     "1 sp-recur-unrecorded (1"   "$out1"
 
-# Ranking: sp-recur-suite-red (5) must appear before sp-requeue-prod-dirty (3)
+# Ranking: sp-recur-suite-red (2 beads) must appear before sp-requeue-prod-dirty (1 bead)
 first_class="$(printf '%s\n' "$out1" | head -1 | awk '{print $2}')"
-is "highest-frequency class is first" "sp-recur-suite-red" "$first_class"
+is "highest-bead-count class is first" "sp-recur-suite-red" "$first_class"
 
 # Negative: no labels that were not planted
 lack "sp-recur-merge-conflict not in output (not planted)"  "sp-recur-merge-conflict"  "$out1"
@@ -198,8 +198,33 @@ echo "4. Two distinct classes, both below threshold — both counted correctly"
 # ==============================================================================
 # The Maechen SELECT threshold (three or more) lives in the brief, not in census.sh.
 # census.sh reports all classes including those below threshold; Maechen decides.
-want "sp-reclaim (count 2) present in census"        "2 sp-reclaim"        "$out3"
-want "sp-recur-unrecorded (count 1) present in census" "1 sp-recur-unrecorded" "$out3"
+want "sp-reclaim: 1 distinct bead, 2 detections present"         "1 sp-reclaim (2"        "$out3"
+want "sp-recur-unrecorded: 1 distinct bead, 1 detection present" "1 sp-recur-unrecorded (1" "$out3"
+
+# ==============================================================================
+echo
+echo "5. RANKING: three-bead class outranks single-bead class with more events"
+# ==============================================================================
+# Positive control (law-a-regression-test-must-be-seen-to-fail):
+# Before the fix, census ranks by event count: sp-recur-alpha (5 events) > sp-recur-beta (3).
+# After the fix, census ranks by distinct beads: sp-recur-beta (3 beads) > sp-recur-alpha (1).
+testdb_reset
+bid_one="$(plant_bead "single-bead-many-events")"
+bump_recur "$bid_one" alpha
+bump_recur "$bid_one" alpha
+bump_recur "$bid_one" alpha
+bump_recur "$bid_one" alpha
+bump_recur "$bid_one" alpha
+
+for ri in 1 2 3; do
+    rb="$(plant_bead "multi-bead-$ri")"
+    bump_recur "$rb" beta
+done
+
+out5="$(run_census)"
+first5="$(printf '%s\n' "$out5" | head -1 | awk '{print $2}')"
+is "three-bead class (sp-recur-beta) ranks above single-bead class with more events" \
+    "sp-recur-beta" "$first5"
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"

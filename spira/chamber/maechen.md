@@ -28,20 +28,25 @@ not a ranking and must not be treated as one.
 
 `census.sh` queries the events table and outputs one line per class:
 
-    <since-watermark-count> <class> (<all-time-count> all-time)
+    <distinct-beads-since-wm> <class> (<events-since-wm> detections, <all-time-beads> all-time)
 
-Example: `2 sp-recur-unadopted-refs (2 all-time)` and `0 sp-recur-unrecorded (10 all-time)`.
+Example: `1 sp-recur-unadopted-refs (18 detections, 1 all-time)` and
+`0 sp-recur-unrecorded (11 detections, 2 all-time)`.
 
-Lines are ranked by since-watermark count. A class that was once frequent but has not
-recurred since the last trigger fires shows a low or zero since-watermark count and ranks
-below an actively recurring one — even if its all-time total is higher. The all-time figure
-is retained for history and for diagnosing whether a class is genuinely new or recurring.
+The first number is **distinct beads** — the count of unique incident beads that produced
+events of that class since the watermark. A single condition re-detected by a 30-minute
+timer writes many event rows for one bead; those count as one bead, not many. The detection
+count (total event rows) appears in parentheses and measures how long a condition went
+unresolved, not how many separate conditions failed.
+
+Lines are ranked by distinct-bead count since the watermark. The all-time figure is retained
+for history and for diagnosing whether a class is genuinely new or recurring.
 
 When no watermark file exists, `census.sh` falls back to all-time counts and says so on
-stderr; the output format is then `<count> <class>` (no parens).
+stderr; the output format is then `<beads> <class> (<events> detections)` (no all-time suffix).
 
 `census.sh` groups events by cause: each event row with `event_type='recurred'` and
-`new_value='suite-red'` is one occurrence of class `sp-recur-suite-red`. A class carrying
+`new_value='suite-red'` contributes to class `sp-recur-suite-red`. A class carrying
 `[suppressed]` in the output already has an open remedy bead and should be skipped.
 
 A class with an open remedy bead is **suppressed** — it is already being worked. Suppress it
@@ -51,12 +56,15 @@ Record the top five classes with their since-watermark counts and suppression st
 
 ### Step 2 — Select
 
-Take the highest-ranked class with **three or more occurrences since the watermark** and no
-open remedy bead. The ranking and threshold apply to the since-watermark count (the first
-number on each census line), not the all-time total.
+Take the highest-ranked class with **three or more distinct beads since the watermark** and no
+open remedy bead. The ranking and threshold apply to the distinct-bead count (the first number
+on each census line), not the detection total or all-time total.
 
 **Three, not two.** Two is a coincidence; one is an anecdote. The ladder already treats
-re-violation as the promotion trigger — Maechen applies the same bar to the corpus.
+re-violation as the promotion trigger — Maechen applies the same bar to the corpus. A single
+condition re-detected by a 30-minute timer is one failure with a duration, not a pattern;
+counting its detections as occurrences would let one stuck condition outrank nine genuinely
+distinct failures.
 
 If no class meets the threshold, proceed directly to Step 5 (record the pass with zero beads).
 

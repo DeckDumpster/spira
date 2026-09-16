@@ -1763,7 +1763,7 @@ _census_events_sql() {   # _census_events_sql [since_epoch_s]
     if [ -n "${1:-}" ] && [ "${1:-0}" -gt 0 ] 2>/dev/null; then
         since_clause=" AND created_at > FROM_UNIXTIME(${1})"
     fi
-    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(*) AS n FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed')%s GROUP BY event_type, new_value ORDER BY n DESC" "$since_clause"
+    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed')%s GROUP BY event_type, new_value ORDER BY beads DESC" "$since_clause"
 }
 census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output (both modes); exits non-zero when both paths refuse
     local q
@@ -1798,12 +1798,14 @@ census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular o
             awk -F'\t' -v since="$since" \
                 'NF>=4 && ($3=="requeued" || $3=="reclaimed" || $3=="recurred" || $3=="lapsed") &&
                  (since+0 == 0 || $1+0 > since+0) {
-                     key = $3 SUBSEP $4; counts[key]++
+                     key = $3 SUBSEP $4; total[key]++
+                     bkey = key SUBSEP $2
+                     if (!(bkey in seen)) { seen[bkey]=1; beads[key]++ }
                  }
                  END {
-                     for (k in counts) {
+                     for (k in total) {
                          split(k, a, SUBSEP)
-                         printf "| %s | %s | %s |\n", a[1], a[2], counts[k]
+                         printf "| %s | %s | %s | %s |\n", a[1], a[2], beads[k], total[k]
                      }
                  }' "$elog" 2>/dev/null || true
             return 0
