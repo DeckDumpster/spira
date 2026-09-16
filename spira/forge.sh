@@ -59,8 +59,8 @@ except Exception:
 " 2>/dev/null)"
         status="${status:-pending}"
         printf '%s\n' "$status"
-        [ "$status" = "green" ] || exit 0
-        # Green: fetch flaky-suite annotations from the check run.
+        [ "$status" = "green" ] || [ "$status" = "red" ] || exit 0
+        # Green or red: extract the CI run id to fetch annotations.
         run_id="$(printf '%s\n' "${rollup_json:-{}}" | python3 -c "
 import json, sys, re
 try:
@@ -90,11 +90,15 @@ except Exception:
 import json, sys
 try:
     for a in json.load(sys.stdin):
-        if a.get('annotation_level') == 'warning' and a.get('title') == 'flaky suite':
-            msg = a.get('message', '')
+        lvl = a.get('annotation_level', '')
+        title = a.get('title', '')
+        msg = a.get('message', '')
+        if lvl == 'warning' and title == 'flaky suite':
             idx = msg.find(' was red')
             if idx > 0:
                 print('flaky: ' + msg[:idx])
+        elif lvl == 'error' and title == 'red-twice suite':
+            print('red-suite: ' + msg)
 except Exception:
     pass
 " 2>/dev/null || true

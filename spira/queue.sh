@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# queue.sh — submit a branch into the merge queue.
+# queue.sh — submit a branch into the merge queue; report queue meter stats.
 #
 #   queue.sh submit <branch>
+#   queue.sh stats
 #
-# Certifies any branch by running the repository's gate. In a queue-mode
+# submit: certifies any branch by running the repository's gate. In a queue-mode
 # repository, a green branch is recorded CERTIFIED for the batch builder.
 # In push mode the branch is fast-forward merged to the base; in pr or
 # hold mode it is certified and left for landing.sh. A branch with no
 # associated bead may be submitted.
+#
+# stats: reads QUEUE lines from landing.log and prints caught/escaped/cost totals.
 #
 # covers: spira/queue.sh spira/suites.sh spira/conf.sh
 set -uo pipefail
@@ -43,7 +46,8 @@ cmd_submit() {
     id="${br#spira/}"
 
     # Certify: run the gate.
-    local gate_out gate_rc
+    local gate_out gate_rc gate_start
+    gate_start="$(date +%s)"
     gate_out="$(SPIRA_GATE_BEAD="$id" "$HERE/gate.sh" "$br" "$name" 2>&1)"
     gate_rc=$?
 
@@ -53,8 +57,14 @@ cmd_submit() {
     if [ "$gate_rc" -ne 0 ]; then
         printf 'queue.sh submit: %s failed the gate (%s)\n' "$br" "$gate_outcome" >&2
         printf '%s\n' "$gate_out" >&2
+        printf 'QUEUE CAUGHT %s branch=%s\n' "$(date +%s)" "$id" \
+            >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
         return 1
     fi
+
+    local gate_cost=$(( $(date +%s) - gate_start ))
+    printf 'QUEUE GATE_COST %s branch=%s seconds=%d\n' "$(date +%s)" "$id" "$gate_cost" \
+        >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
 
     case "$mode" in
     queue)
@@ -92,7 +102,52 @@ cmd_submit() {
     esac
 }
 
+cmd_stats() {
+    local log="$SPIRA_RUN/landing.log"
+    local caught=0 escaped=0 batches=0 total_members=0 total_cost=0
+
+    if [ -r "$log" ]; then
+        while IFS= read -r _line; do
+            case "$_line" in
+                "QUEUE CAUGHT "*)
+                    caught=$(( caught + 1 ))
+                    ;;
+                "QUEUE ESCAPED "*)
+                    escaped=$(( escaped + 1 ))
+                    ;;
+                "QUEUE BATCH "*)
+                    batches=$(( batches + 1 ))
+                    local _m _e _c
+                    _m="$(printf '%s' "$_line" | sed 's/.*members=\([0-9]*\).*/\1/')"
+                    _e="$(printf '%s' "$_line" | sed 's/.*escaped=\([0-9]*\).*/\1/')"
+                    _c="$(printf '%s' "$_line" | sed 's/.*cost=\([0-9]*\)s.*/\1/')"
+                    case "${_m:-}" in ''|*[!0-9]*) _m=0 ;; esac
+                    case "${_e:-}" in ''|*[!0-9]*) _e=0 ;; esac
+                    case "${_c:-}" in ''|*[!0-9]*) _c=0 ;; esac
+                    total_members=$(( total_members + _m ))
+                    total_cost=$(( total_cost + _c ))
+                    ;;
+                "QUEUE GATE_COST "*)
+                    local _s
+                    _s="$(printf '%s' "$_line" | sed 's/.*seconds=\([0-9]*\).*/\1/')"
+                    case "${_s:-}" in ''|*[!0-9]*) _s=0 ;; esac
+                    total_cost=$(( total_cost + _s ))
+                    ;;
+            esac
+        done < "$log"
+    fi
+
+    local avg_cost=0
+    [ "$total_members" -gt 0 ] && avg_cost=$(( total_cost / total_members ))
+
+    printf 'caught:   %d\n' "$caught"
+    printf 'escaped:  %d\n' "$escaped"
+    printf 'batches:  %d (%d members)\n' "$batches" "$total_members"
+    printf 'cost:     %ds avg per branch\n' "$avg_cost"
+}
+
 case "${1:-}" in
     submit) shift; cmd_submit "$@" ;;
-    *) printf 'usage: queue.sh submit <branch>\n' >&2; exit 2 ;;
+    stats)  cmd_stats ;;
+    *) printf 'usage: queue.sh submit <branch> | queue.sh stats\n' >&2; exit 2 ;;
 esac
