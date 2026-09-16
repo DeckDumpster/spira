@@ -92,13 +92,28 @@ main() {
 
     local certs
     certs="$(_certified_list "$repo")"
-    [ -n "${certs:-}" ] || return 0
+    if [ -z "${certs:-}" ]; then
+        rm -f "$SPIRA_RUN/queue-stuck-$name" 2>/dev/null || true
+        return 0
+    fi
 
     local count now oldest_epoch age triggered=
     count="$(printf '%s\n' "$certs" | grep -c .)"
     now="$(date +%s)"
     oldest_epoch="$(printf '%s\n' "$certs" | awk '{print $3}' | sort -n | head -1)"
     age=$(( now - oldest_epoch ))
+
+    local _stuck_flag="$SPIRA_RUN/queue-stuck-$name"
+    if [ "$age" -ge "${SPIRA_QUEUE_STUCK_AGE:-7200}" ] && [ ! -f "$_stuck_flag" ]; then
+        printf '## Note\nThe oldest certified branch in %s has been waiting %ds (threshold %ds).\n\nQueue depth: %d branch(es). This may indicate a conflict loop or a stalled batch builder.\n' \
+            "$name" "$age" "${SPIRA_QUEUE_STUCK_AGE:-7200}" "$count" \
+        | bash "$HERE/mail.sh" send operator \
+            --from "Spira Queue <queue@spira>" \
+            --subject "Merge queue: $name queue stuck (${age}s)" \
+            2>/dev/null && touch "$_stuck_flag" 2>/dev/null || true
+        [ -f "$_stuck_flag" ] && \
+            printf 'batch %s: mailed operator about stuck queue (age %ds)\n' "$name" "$age"
+    fi
 
     [ "$count" -ge "${SPIRA_QUEUE_BATCH_MAX:-8}" ] && triggered=1
     [ "$age"   -ge "${SPIRA_QUEUE_BATCH_WAIT:-1800}" ] && triggered=1
@@ -226,6 +241,7 @@ print(r[0].get('priority', 9) if r else 9)" 2>/dev/null || printf '9'
         _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
         land_mark "$_mid" BATCHED "$_mtip"
     done
+    rm -f "$SPIRA_RUN/queue-stuck-$name" 2>/dev/null || true
 
     printf 'batch %s: PR %s opened — %d branches (%s)\n' \
         "$name" "$pr_n" "${#members[@]}" "$batch_br"

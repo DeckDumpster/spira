@@ -100,6 +100,7 @@ probe() {
     core_detail_keys
     core_counts_keys
     unsent_keys
+    queue_keys
     sphere_keys
     repo_label_keys
     strand_keys
@@ -1303,6 +1304,19 @@ for i in awaiting_ids:
             # ---- PENDING LANDING: individual beads with a branch, not yet on the base ----
             local _pend_n=0 _pend_oldest_age="" _pend_now
             _pend_now="$(date +%s)"
+            # Build bead→PR map from open batch files so BATCHED entries show their PR.
+            local _batched_pr_map=""
+            local _bmf _bpr _bmems _bmm _bqdir
+            _bqdir="${SPIRA_QUEUE_DIR:-$SPIRA_RUN/queue}"
+            for _bmf in "$_bqdir"/*/open; do
+                [ -f "$_bmf" ] || continue
+                _bpr="$(grep '^pr=' "$_bmf" 2>/dev/null | cut -d= -f2-)" || continue
+                _bmems="$(grep '^members=' "$_bmf" 2>/dev/null | cut -d= -f2-)" || continue
+                [ -n "${_bpr:-}" ] || continue
+                for _bmm in $_bmems; do
+                    _batched_pr_map="$_batched_pr_map ${_bmm%%:*}:${_bpr}"
+                done
+            done
             while IFS=$'\t' read -r _ul_id _ul_pri _ul_cat _ul_title; do
                 [ -n "$_ul_id" ] || continue
                 local _ul_age="?"
@@ -1318,7 +1332,20 @@ for i in awaiting_ids:
                         [ -z "$_pend_oldest_age" ] && _pend_oldest_age="$_ul_age"
                     fi
                 fi
-                printf 'SP_PEND%d=P%s %s %s %s\n' "$_pend_n" "${_ul_pri:-?}" "$_ul_id" "$_ul_age" "${_ul_title:--}"
+                local _ul_state="" _ul_tag=""
+                { read -r _ul_state _ < "$SPIRA_RUN/landstate/$_ul_id"; } 2>/dev/null || true
+                case "${_ul_state:-}" in
+                    CERTIFIED) _ul_tag="[queued] " ;;
+                    BATCHED)
+                        local _ul_bpr="" _ul_bme
+                        for _ul_bme in $_batched_pr_map; do
+                            case "$_ul_bme" in "${_ul_id}:"*) _ul_bpr="${_ul_bme#*:}"; break ;; esac
+                        done
+                        _ul_tag="[batch${_ul_bpr:+ #${_ul_bpr}}] "
+                        ;;
+                    EJECTED) _ul_tag="[ejected] " ;;
+                esac
+                printf 'SP_PEND%d=P%s %s %s %s%s\n' "$_pend_n" "${_ul_pri:-?}" "$_ul_id" "$_ul_age" "$_ul_tag" "${_ul_title:--}"
                 _pend_n=$((_pend_n + 1))
                 [ "$_pend_n" -ge 20 ] && break
             done < <(printf '%s\n' "$_land_out" | sed -n 's/^_AWAITING=//p')
@@ -1362,6 +1389,49 @@ for i in awaiting_ids:
         done < "$SPIRA_RUN/landing.progress"
     fi
     echo "SP_LANDPROG_N=$lp_n"
+}
+
+# Queue-state summary keys: queue depth, open batch, quarantined suites.
+queue_keys() {
+    local depth=0 _f _st
+    if [ -d "$SPIRA_RUN/landstate" ]; then
+        for _f in "$SPIRA_RUN/landstate/"*; do
+            [ -f "$_f" ] || continue
+            { read -r _st _ < "$_f"; } 2>/dev/null || continue
+            [ "$_st" = "CERTIFIED" ] && depth=$(( depth + 1 ))
+        done
+    fi
+    echo "SP_QUEUE_DEPTH=$depth"
+
+    local batch_pr=0 batch_age="0"
+    local _bf _pr _opened _age_secs _now _qdir
+    _now="$(date +%s)"
+    _qdir="${SPIRA_QUEUE_DIR:-$SPIRA_RUN/queue}"
+    for _bf in "$_qdir"/*/open; do
+        [ -f "$_bf" ] || continue
+        _pr="$(grep '^pr=' "$_bf" 2>/dev/null | cut -d= -f2-)" || continue
+        _opened="$(grep '^opened=' "$_bf" 2>/dev/null | cut -d= -f2-)" || continue
+        [ -n "${_pr:-}" ] || continue
+        batch_pr="$_pr"
+        _age_secs=$(( _now - ${_opened:-_now} ))
+        if [ "$_age_secs" -lt 90 ]; then batch_age="${_age_secs}s"
+        elif [ "$_age_secs" -lt 5400 ]; then batch_age="$(( _age_secs / 60 ))m"
+        elif [ "$_age_secs" -lt 172800 ]; then batch_age="$(( _age_secs / 3600 ))h"
+        else batch_age="$(( _age_secs / 86400 ))d"; fi
+        break
+    done
+    echo "SP_QUEUE_BATCH_PR=$batch_pr"
+    echo "SP_QUEUE_BATCH_AGE=$batch_age"
+
+    local quarantine_n=0 _rname _rp _sf _n
+    for _rname in $(spira_repos 2>/dev/null); do
+        _rp="$(repo_root "$_rname" 2>/dev/null)" || continue
+        _sf="$_rp/${SPIRA_SUITE_STATE:-spira/suite-state}"
+        [ -f "$_sf" ] || continue
+        _n="$(grep -c ' | quarantined |' "$_sf" 2>/dev/null)" || _n=0
+        quarantine_n=$(( quarantine_n + _n ))
+    done
+    echo "SP_QUEUE_QUARANTINE_N=$quarantine_n"
 }
 
 # The sphere-grid keys: plan-bead counts (open, in-progress, needs-op) and the poison count.

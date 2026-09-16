@@ -1377,6 +1377,13 @@ _suite_auto_quarantine() {
     suite_state_write "$statefile" "$suite" quarantined "${bead_id:-}" "$reason" || return 1
     cleanruns_reset "$suite"
     printf 'auto-quarantine: %s quarantined (bead: %s)\n' "$suite" "${bead_id:-(none filed)}"
+    printf '## Note\n%s was automatically quarantined.\n\nReason: %s\nBead: %s\n' \
+        "$suite" "$reason" "${bead_id:-(none filed)}" \
+    | SPIRA_MAIL_LINT_CONSIDERED="auto-quarantine" \
+      bash "$HERE/mail.sh" send operator \
+        --from "Suite hygiene <hygiene@spira>" \
+        --subject "$suite quarantined: $reason" \
+        2>/dev/null || true
 }
 
 # cmd_observe_flake — record one flake observation; quarantine when threshold is reached.
@@ -1434,6 +1441,13 @@ except Exception:
                     rm -f "$(cleanruns_file "$s")" "$(maxage_mailed_file "$s")" 2>/dev/null || true
                     printf 'hygiene: %s reactivated (bead %s LANDED, %d clean runs)\n' \
                         "$s" "$bead" "$cr"
+                    printf '## Note\n%s was reactivated after bead %s LANDED with %d consecutive clean runs.\n' \
+                        "$s" "$bead" "$cr" \
+                    | SPIRA_MAIL_LINT_CONSIDERED="suite-reactivated" \
+                      bash "$HERE/mail.sh" send operator \
+                        --from "Suite hygiene <hygiene@spira>" \
+                        --subject "$s reactivated" \
+                        2>/dev/null || true
                     activated=$(( activated + 1 ))
                     continue
                 fi

@@ -95,6 +95,13 @@ _attr_eject() {  # _attr_eject <id> <tip> <suites-csv> <pr-n> <name>
     land_mark "$id" EJECTED "$tip"
     printf 'QUEUE ESCAPED %s branch=%s\n' "$(date +%s)" "$id" \
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+    printf '## Note\n%s was ejected from the merge queue after reproducing CI failures in PR %s (%s).\n\nFailing suites: %s\n\nRun those suites against spira/%s to reproduce.\n' \
+        "$id" "$pr_n" "$name" "$suites" "$id" \
+    | SPIRA_MAIL_LINT_CONSIDERED="queue-ejection" \
+      bash "$HERE/mail.sh" send operator \
+        --from "Spira Queue <queue@spira>" \
+        --subject "Merge queue: $id ejected from $name" \
+        2>/dev/null || true
     printf 'verdict %s: ejected %s (suites: %s)\n' "$name" "$id" "$suites"
 }
 

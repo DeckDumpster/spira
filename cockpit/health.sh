@@ -1058,6 +1058,10 @@ unlanded_section() {
     if [ "${SP_PEND_N}" -eq 0 ] 2>/dev/null; then
         printf ' %sUNLND%s  %snothing waiting to land%s\n' \
             "$C_DIM" "$C_RST" "$C_DIM" "$C_RST"
+        # Still show queue summary if relevant (quarantined suites even with empty queue).
+        local _qn="${SP_QUEUE_QUARANTINE_N:-0}"
+        [ "$_qn" != "0" ] && [ "$_qn" != "?" ] && \
+            printf '        %s%s quarantined suite(s)%s\n' "$C_WARN" "$_qn" "$C_RST"
         return
     fi
     local age_col="$C_DIM"
@@ -1065,6 +1069,17 @@ unlanded_section() {
     printf ' %sUNLND%s  %s%s closed, not on base%s %s— oldest%s %s%s%s\n' \
         "$C_DIM" "$C_RST" "$C_B" "${SP_PEND_N}" "$C_RST" \
         "$C_DIM" "$C_RST" "$age_col" "${SP_PEND_OLDEST:-?}" "$C_RST"
+    # Queue summary: depth, open batch, quarantined suites.
+    local _qdepth="${SP_QUEUE_DEPTH:-0}" _qbpr="${SP_QUEUE_BATCH_PR:-0}"
+    local _qbage="${SP_QUEUE_BATCH_AGE:-0}" _qqn="${SP_QUEUE_QUARANTINE_N:-0}"
+    if [ "$_qdepth" != "0" ] || [ "$_qbpr" != "0" ] || [ "$_qqn" != "0" ]; then
+        local _qline=""
+        [ "$_qdepth" != "0" ] && _qline="${_qline}${_qline:+  }depth ${_qdepth}"
+        [ "$_qbpr" != "0" ] && _qline="${_qline}${_qline:+  }batch #${_qbpr} (${_qbage})"
+        [ "$_qqn" != "0" ] && [ "$_qqn" != "?" ] && \
+            _qline="${_qline}${_qline:+  }${_qqn} quarantined"
+        [ -n "$_qline" ] && printf '        %s%s%s\n' "$C_DIM" "$_qline" "$C_RST"
+    fi
     local i=0 raw
     while [ "$i" -lt "$MAX_SECTION_ROWS" ]; do
         eval "raw=\${SP_PEND$i:-}"
