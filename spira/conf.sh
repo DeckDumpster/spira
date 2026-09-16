@@ -79,6 +79,7 @@ SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET
 SPIRA_GATE_SUITES SPIRA_SUITE_STATE SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
 SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST SPIRA_INCIDENT_PRIORITY
 SPIRA_FLAKE_QUARANTINE_AT SPIRA_FLAKE_WINDOW SPIRA_QUARANTINE_CLEAN_RUNS SPIRA_QUARANTINE_MAX_AGE
+SPIRA_QUEUE_BATCH_MAX SPIRA_QUEUE_BATCH_WAIT SPIRA_QUEUE_CI_MAXSEC SPIRA_QUEUE_INFRA_RETRIES SPIRA_QUEUE_STUCK_AGE SPIRA_QUEUE_DIR
 SPIRA_AURON_RESTARTS SPIRA_AURON_RESTART_WINDOW
 SPIRA_PROD SPIRA_INSTANCE
 SPIRA_RELEASES SPIRA_RELEASES_KEEP
@@ -907,6 +908,23 @@ spira_conf_defaults() {
     # long a quarantine may stand before the operator is mailed.
     : "${SPIRA_QUARANTINE_CLEAN_RUNS:=10}"
     : "${SPIRA_QUARANTINE_MAX_AGE:=604800}"
+    # ---- MERGE QUEUE (queue land mode) -------------------------------------------------
+    # HOW MANY CERTIFIED BRANCHES FIT IN ONE BATCH. The batch builder (sp-h3g55) collects
+    # certified branches up to this limit or until SPIRA_QUEUE_BATCH_WAIT seconds have
+    # passed since the oldest was certified.
+    : "${SPIRA_QUEUE_BATCH_MAX:=8}"
+    # HOW LONG THE BATCH BUILDER WAITS FOR MORE BRANCHES before closing a batch with
+    # fewer than SPIRA_QUEUE_BATCH_MAX. In seconds.
+    : "${SPIRA_QUEUE_BATCH_WAIT:=1800}"
+    # HOW LONG A BATCH MAY STAY IN CI before it is treated as a hung workflow.
+    : "${SPIRA_QUEUE_CI_MAXSEC:=3600}"
+    # HOW MANY TIMES THE BATCH BUILDER RE-RUNS A WORKFLOW before mailing the operator.
+    : "${SPIRA_QUEUE_INFRA_RETRIES:=2}"
+    # HOW OLD THE OLDEST CERTIFIED BRANCH MAY BE before the batch builder is considered
+    # stuck and an alert is filed.
+    : "${SPIRA_QUEUE_STUCK_AGE:=7200}"
+    # WHERE OPEN-BATCH RECORDS ARE KEPT — one file per open batch.
+    : "${SPIRA_QUEUE_DIR:=$SPIRA_RUN/queue}"
     # WHETHER THIS INSTALLATION RUNS ITS OWN TEST SUITES on a timer. On by default when
     # SPIRA_REPO is a git checkout (development mode — the operator can land changes); off
     # when it is not (a consumer installation from a release tarball, where SPIRA_REPO has

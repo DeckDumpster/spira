@@ -3696,7 +3696,7 @@ _spira_gitstore() {      # _spira_gitstore <path> -> its shared git directory, a
     printf '%s' "$d"
 }
 
-repo_land() {            # repo_land <name> -> push | pr | hold
+repo_land() {            # repo_land <name> -> push | pr | hold | queue
     local m; m="$(repo_field "${1:-}" land)"
     printf '%s' "${m:-push}"
 }

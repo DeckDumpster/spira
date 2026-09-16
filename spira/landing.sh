@@ -1162,6 +1162,15 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
             mark_submitted "$id" "$tip" hold
             act "gated and held $br in $name — nothing here advances $base"
             ;;
+        queue)
+            # CERTIFIED: the gate passed; the tip is recorded, nothing is pushed. The batch
+            # builder (sp-h3g55) picks certified branches up and lands them together. A
+            # certified branch whose tip moves is not reused — submitted() keys on the tip, so
+            # a changed tip re-gates on the next pass and produces a fresh record.
+            land_mark "$id" CERTIFIED "$tip"
+            mark_submitted "$id" "$tip" certified
+            progress "certified $br in $name — queued"
+            ;;
         *)
             # A MERGE CONFLICT AND A REJECTED PUSH ARE NOT THE SAME FAILURE. The first is a
             # real disagreement the next aeon must resolve; the second only means the base
