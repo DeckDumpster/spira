@@ -87,7 +87,7 @@ FILTER="WAKEME"
 
 # notify <age> [manifest] -> rc; stdout in $TMP/out, stderr in $TMP/err
 notify() {
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WAKE="${WAKE-}" SPIRA_WAKE="${WAKE-}" \
         SPIRA_WATCHERS="${2:-$MAN}" SPIRA_ACTIONABLE="${FILTER_OVERRIDE-$FILTER}" \
         SPIRA_NOTIFY="$TMP/notify.sh" SPIRA_NOTIFY_AGE="$1" \
         NOTIFY_LOG="$ASKS" ${NOTIFY_REFUSE:+NOTIFY_REFUSE=1} \
@@ -95,7 +95,7 @@ notify() {
 }
 # wd <args...> — any other watchd command, in the same environment.
 wd() {
-    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" \
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WAKE="${WAKE-}" SPIRA_WAKE="${WAKE-}" \
         SPIRA_WATCHERS="$MAN" SPIRA_ACTIONABLE="$FILTER" \
         bash "$CLONE/spira/watchd.sh" "$@"
 }
@@ -372,14 +372,14 @@ is "and the event finally reaches somebody"            "1" "$(asks)"
 has "carrying what it was holding all along"           "$(cat "$ASKS")" "the channel is down"
 
 reset
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WAKE="${WAKE-}" SPIRA_WAKE="${WAKE-}" SPIRA_WATCHERS="$MAN" \
     SPIRA_ACTIONABLE="$FILTER" SPIRA_NOTIFY="$TMP/nothing-here" SPIRA_NOTIFY_AGE=0 \
     bash "$CLONE/spira/watchd.sh" notify >/dev/null 2>"$TMP/err"
 printf '%s nobody to tell\n' "$FILTER" >> "$A"
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WAKE="${WAKE-}" SPIRA_WAKE="${WAKE-}" SPIRA_WATCHERS="$MAN" \
     SPIRA_ACTIONABLE="$FILTER" SPIRA_NOTIFY="$TMP/nothing-here" SPIRA_NOTIFY_AGE=0 \
     bash "$CLONE/spira/watchd.sh" notify >/dev/null 2>"$TMP/err"
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WAKE="${WAKE-}" SPIRA_WAKE="${WAKE-}" SPIRA_WATCHERS="$MAN" \
     SPIRA_ACTIONABLE="$FILTER" SPIRA_NOTIFY="$TMP/nothing-here" SPIRA_NOTIFY_AGE=0 \
     bash "$CLONE/spira/watchd.sh" notify >/dev/null 2>"$TMP/err"; rc=$?
 is "no escalation path at all is a broken mechanism too" "3" "$rc"
@@ -391,7 +391,7 @@ has "and it says the events reach nobody"              "$(cat "$TMP/err")" "reac
 # =======================================================================================
 echo
 echo "the verb takes no arguments"
-env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WAKE="${WAKE-}" SPIRA_WAKE="${WAKE-}" SPIRA_WATCHERS="$MAN" \
     SPIRA_ACTIONABLE="$FILTER" SPIRA_NOTIFY="$TMP/notify.sh" NOTIFY_LOG="$ASKS" \
     bash "$CLONE/spira/watchd.sh" notify --all >/dev/null 2>"$TMP/err"
 is "an unexpected argument is refused"                 "3" "$?"
@@ -687,6 +687,42 @@ is "an unread backlog and a dead watcher both escalate" "1" "$rc"
 is "as two asks, not one"                              "2" "$(asks)"
 is "from two separate suppression stamps"              "1" \
    "$(ls "$RUN/watchd/notify.escalated" "$RUN/watchd/notify-health.escalated" >/dev/null 2>&1 && echo 1 || echo 0)"
+
+# =======================================================================================
+# THE READER IS WOKEN BEFORE THE OPERATOR IS PAGED. A session's lease on a stream expires,
+# so the backstop must reach the session itself, once per backlog, below the paging age.
+# =======================================================================================
+echo
+echo "an unread backlog wakes the reader, once"
+WAKES="$TMP/wakes.log"; : > "$WAKES"
+cat > "$TMP/wake.sh" <<W
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >> "$WAKES"
+W
+chmod +x "$TMP/wake.sh"
+wakes() { local n; n="$(grep -c 'no reader' "$WAKES" 2>/dev/null)" || n=0; printf '%s' "$n"; }
+
+reset; : > "$WAKES"
+printf '%s unread\n' "$FILTER" >> "$A"
+WAKE="$TMP/wake.sh" notify 99999
+is "a first sighting wakes nobody"                      "0" "$(wakes)"
+mature_pending
+WAKE="$TMP/wake.sh" notify 99999
+is "a matured backlog wakes the reader"                 "1" "$(wakes)"
+is "without paging the operator below the notify age"   "0" "$(asks)"
+has "and names the watcher to latch"                    "$(cat "$WAKES")" "tail alpha --takeover"
+WAKE="$TMP/wake.sh" notify 99999
+is "a standing backlog wakes once"                      "1" "$(wakes)"
+printf '%s another\n' "$FILTER" >> "$B"
+WAKE="$TMP/wake.sh" notify 99999; mature_pending
+WAKE="$TMP/wake.sh" notify 99999
+is "a new backlog wakes again"                          "2" "$(wakes)"
+wd drain --all >/dev/null 2>&1
+WAKE="$TMP/wake.sh" notify 99999
+is "a drained stream wakes nobody"                      "2" "$(wakes)"
+reset; printf '%s unread\n' "$FILTER" >> "$A"
+WAKE="$TMP/nothing-here" notify 99999; mature_pending; WAKE="$TMP/nothing-here" notify 99999
+has "a wake that cannot run says so"                    "$(cat "$TMP/err")" "SPIRA_WAKE refused"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

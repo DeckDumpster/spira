@@ -8,6 +8,7 @@
 #   concierge.sh brief     render the system prompt and print its path; change nothing
 #     overlay without cd:  claude ... --append-system-prompt-file "$(concierge.sh brief)"
 #   concierge.sh status    is it up
+#   concierge.sh wake "<text>"  type a prompt into the session; fails if it is not up
 #   concierge.sh stop      kill it
 #
 # WHY ONE SESSION AND NOT SEVERAL
@@ -212,6 +213,13 @@ start)
     ;;
 
 attach)  exec $TM attach -t "$SESSION" ;;
+
+wake)
+    [ -n "${2:-}" ] || { echo "usage: concierge.sh wake \"<text>\"" >&2; exit 2; }
+    $TM has-session -t "$SESSION" 2>/dev/null || { echo "concierge: not running" >&2; exit 1; }
+    # -l sends the text literally; Enter is a separate key so a prompt mid-turn is queued, not split.
+    $TM send-keys -t "$SESSION" -l -- "$2" && $TM send-keys -t "$SESSION" Enter
+    ;;
 
 # THE SAME PERSONA, AT THE OPERATOR'S OWN TERMINAL. `start` launches the detached Remote
 # Control session the phone reaches; this one runs in the foreground, attached to the TTY it
