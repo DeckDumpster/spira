@@ -1054,13 +1054,21 @@ cmd_restart() {
 cmd_health_ids() {
     local f="${1:-}"
     [ -n "$f" ] || { echo "usage: watchd.sh health-ids <file>" >&2; return 2; }
-    local p="${SPIRA_ID_PREFIX:-}"
+    # DERIVE THE PREFIX FROM THE DATABASE, not from the goal bead. The witness is a list of
+    # ids that came out of bd; the database is what issues them and is the only source that
+    # cannot drift from the ids actually in the file. SPIRA_ID_PREFIX is the fallback for
+    # when the database is not reachable — explicit config wins over derivation.
+    local p=""
+    if [ -n "${SPIRA_BD:-}" ] && [ -n "${SPIRA_DB:-}" ]; then
+        p="$("$SPIRA_BD" -C "$SPIRA_DB" config get issue_prefix 2>/dev/null)" || p=""
+    fi
+    [ -n "$p" ] || p="${SPIRA_ID_PREFIX:-}"
     # REFUSED RATHER THAN GUESSED. An unusable prefix cannot be turned into a verdict either
     # way, and a health check that answers OK when it could not run is the failure this
     # command was written to end. Exit 2 so it is distinguishable from a real DEGRADED.
     case "$p" in
         ''|*[!A-Za-z0-9]*)
-            echo "watchd: SPIRA_ID_PREFIX is '$p' — it must be letters and digits, with no hyphen" >&2
+            echo "watchd: database prefix is '$p' — set SPIRA_BD and SPIRA_DB, or SPIRA_ID_PREFIX in ${SPIRA_CONF_FILE:-spira.conf}" >&2
             return 2 ;;
     esac
     if [ ! -f "$f" ]; then
