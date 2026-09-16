@@ -1303,6 +1303,19 @@ cmd_names() {
     done
 }
 
+# cmd_corpus — every suite that is not disabled (active + quarantined), for queue-PR CI.
+# Quarantined suites still run so a flake does not permanently escape the corpus.
+# Disabled suites are excluded: they were deliberately removed from all automated runs.
+cmd_corpus() {
+    local sf s st
+    sf="$(suite_state_file "$HERE/..")"
+    for s in $(all_suites); do
+        st="$(suite_state_of "$sf" "$s" 2>/dev/null)"
+        [ "${st:-active}" = "disabled" ] && continue
+        printf '%s\n' "$s"
+    done
+}
+
 # --------------------------------------------------------------------------------------
 # FLAKE OBSERVATIONS, CLEAN-RUN COUNTERS, AND QUARANTINE HYGIENE.
 #
@@ -1504,6 +1517,7 @@ cmd_activate()   { _sts_transition active      "$1"; }
 case "${1:-list}" in
     run)            cmd_run ;;
     names)          cmd_names ;;
+    corpus)         cmd_corpus ;;
     list)           cmd_list ;;
     status)         cmd_status ;;
     hygiene)        cmd_hygiene ;;
@@ -1511,5 +1525,5 @@ case "${1:-list}" in
     quarantine)     shift; cmd_quarantine "$@" ;;
     disable)        shift; cmd_disable    "$@" ;;
     activate)       shift; cmd_activate   "$@" ;;
-    *) printf 'usage: suites.sh [list|names|run|status|hygiene|observe-flake|quarantine|disable|activate]\n' >&2; exit 2 ;;
+    *) printf 'usage: suites.sh [list|names|corpus|run|status|hygiene|observe-flake|quarantine|disable|activate]\n' >&2; exit 2 ;;
 esac

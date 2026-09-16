@@ -78,10 +78,13 @@ want "scratch-fence.sh"  "spira/scratch-fence.sh" "$G"
 want "testenv-batch.sh"  "spira/testenv-batch.sh" "$G"
 
 echo
-echo "2. a push to the base branch names the corpus explicitly:"
-# --suites is how a caller names what to run; without it the base-branch diff is
-# empty and the gate would pass having run nothing.
-want "the corpus is named with --suites" "--suites" "$G"
+echo "2. queue PRs pipe the non-disabled corpus explicitly (law-a-runner-takes-a-list):"
+# Queue PRs run every non-disabled suite via suites.sh corpus piped into
+# testenv-batch.sh --suites -. Without --suites, diff selection would pick only
+# the changed files — missing interactions between the batched branches.
+want "the corpus is piped via --suites" "--suites" "$G"
+want "queue PRs use suites.sh corpus"   "corpus"   "$G"
+want "queue PRs match spira/queue/"     'spira/queue/' "$G"
 
 echo
 echo "3. an infrastructure fault is distinguished from a branch failure:"
@@ -225,6 +228,38 @@ case "$_t" in
            bad "the timeout is a sane bound" "$_t minutes: a full pass measured 24, and 360 is the default this exists to replace"
        fi ;;
 esac
+
+echo
+echo "14. push to main runs no suites:"
+# The corpus runs on the queue PR. Re-running it on the push that fast-forwarded
+# main would test the same commit twice and hold the provisioned VM open for no
+# new information. The cut job asserts that the PR gate exists before tagging.
+_suites_block="$(awk '/^      - name: Suites/{f=1;next} f&&/^      - name:/{exit} f{print}' "$GATE_YML")"
+if [ -z "$_suites_block" ]; then
+    bad "the Suites step block was located (positive control)" "awk extracted nothing"
+else
+    ok "the Suites step block was located (positive control)"
+fi
+want "push case is detected"          '"push"'      "$_suites_block"
+want "push path carries no suites"    "no suites"   "$_suites_block"
+want "queue PRs run the corpus"       'spira/queue/'                        "$_suites_block"
+want "corpus selection uses corpus"   "suites.sh corpus"                    "$_suites_block"
+
+echo
+echo "15. the cut job asserts a green gate check before tagging:"
+# The SHA on main is the queue PR head. Assert a check-run named 'gate' with
+# conclusion=success and at least one associated pull request exists. A direct
+# push to main (bypassing the queue) has no such run, and the cut refuses.
+_cut_block="$(awk '/^  cut:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
+if [ -z "$_cut_block" ]; then
+    bad "the cut job block was located (positive control)" "awk extracted nothing"
+else
+    ok "the cut job block was located (positive control)"
+fi
+want "cut queries check-runs for the SHA"      "check-runs"         "$_cut_block"
+want "cut filters on the gate check name"      '"gate"'             "$_cut_block"
+want "cut requires a green PR-associated run"  "pull_requests"      "$_cut_block"
+want "release.sh cut receives the workspace"   "release.sh cut"     "$_cut_block"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"

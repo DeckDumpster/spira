@@ -33,10 +33,21 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
 
 # ---------------------------------------------------------------------------
-# cut — create a release tag over beads landed since the previous one.
+# cut — create a release tag whenever the land ref moved since the last tag.
 # ---------------------------------------------------------------------------
 do_cut() {
-    local arg="${1:-}"
+    # First positional arg is the repo name or path (optional); remaining are flags.
+    local arg="${1:-}"; shift 2>/dev/null || true
+    local pr="" branches=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --pr)         pr="${2:-}"; shift 2 ;;
+            --pr=*)       pr="${1#--pr=}"; shift ;;
+            --branches)   branches="${2:-}"; shift 2 ;;
+            --branches=*) branches="${1#--branches=}"; shift ;;
+            *) printf 'release: unknown argument: %s\n' "$1" >&2; exit 2 ;;
+        esac
+    done
 
     # Resolve repo path and name from the argument (name, path, or default).
     local name="" repo=""
@@ -70,27 +81,35 @@ do_cut() {
     local prev_tag
     prev_tag="$(git -C "$repo" tag -l "${tag_prefix}*" | sort | tail -1)"
 
-    # Collect commit subjects since the previous tag (or from the beginning).
+    # Cut when the land ref moved — even without bead ids. A batch of workflow or
+    # docs commits is still a released state and deserves a tag so revert has a
+    # unit to point at. Zero-landed means zero COMMITS, not zero bead ids.
+    local commit_range
+    if [ -n "$prev_tag" ]; then
+        commit_range="${prev_tag}..${base}"
+    else
+        commit_range="$base"
+    fi
+    local commit_count
+    commit_count="$(git -C "$repo" rev-list --count "$commit_range" 2>/dev/null)" || commit_count=0
+    if [ "$commit_count" -eq 0 ]; then
+        printf 'release: no commits since %s — no tag created\n' \
+            "${prev_tag:-(none)}" >&2
+        exit 0
+    fi
+
+    # Collect commit subjects and extract bead ids.
     local subjects
     if [ -n "$prev_tag" ]; then
         subjects="$(git -C "$repo" log --format='%s' "${prev_tag}..${base}" 2>/dev/null)" || subjects=""
     else
         subjects="$(git -C "$repo" log --format='%s' "$base" 2>/dev/null)" || subjects=""
     fi
-
-    # Extract bead ids. The id prefix comes from the harness configuration so
-    # a colleague with a different prefix does not need to patch this script.
     local id_prefix="${SPIRA_ID_PREFIX:-sp}"
     local ids
     ids="$(printf '%s\n' "$subjects" \
         | grep -oE "${id_prefix}-[a-z0-9]+(\.[0-9]+)?" \
         | sort -u)" || ids=""
-
-    if [ -z "$ids" ]; then
-        printf 'release: no beads landed since %s — no tag created\n' \
-            "${prev_tag:-(none)}" >&2
-        exit 0
-    fi
 
     # Generate a timestamp-based tag name; handle the rare same-second collision.
     local ts; ts="$(date -u '+%Y%m%dT%H%M%SZ')"
@@ -101,15 +120,25 @@ do_cut() {
         tagname="${tag_prefix}${ts}-${n}"
     done
 
-    # Build the tag message. One 'bead:' line per id so show can grep it.
+    # Build the tag message. PR and branch lines let show reconstruct the batch.
+    # Bead lines may be absent for workflow or docs commits.
     {
         printf 'spira release: %s\n' "$name"
         printf 'base: %s (%s)\n' "$base" "$sha"
         printf 'prev: %s\n' "${prev_tag:-(none)}"
+        if [ -n "$pr" ]; then printf 'pr: %s\n' "$pr"; fi
+        if [ -n "$branches" ]; then
+            printf '%s' "$branches" | tr ',' '\n' | while IFS= read -r _b; do
+                _b="${_b#"${_b%%[![:space:]]*}"}"; _b="${_b%"${_b##*[![:space:]]}"}"
+                if [ -n "$_b" ]; then printf 'branch: %s\n' "$_b"; fi
+            done
+        fi
         printf '\n'
-        printf '%s\n' "$ids" | while IFS= read -r id; do
-            printf 'bead: %s\n' "$id"
-        done
+        if [ -n "$ids" ]; then
+            printf '%s\n' "$ids" | while IFS= read -r id; do
+                printf 'bead: %s\n' "$id"
+            done
+        fi
     } | git -C "$repo" tag -a "$tagname" "$sha" -F - || {
         printf 'release: could not create tag %s\n' "$tagname" >&2
         exit 1

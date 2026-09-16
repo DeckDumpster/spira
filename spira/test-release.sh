@@ -165,7 +165,7 @@ rc_empty=$?
 new_count="$(git -C "$REPO" tag -l 'spira-release-fixture-*' | wc -l | tr -d ' ')"
 is "cut exits 0 with nothing to tag"  0   "$rc_empty"
 is "no new tag created"               "$existing_count" "$new_count"
-want "says nothing to tag" "no beads landed" "$out_empty"
+want "says nothing to tag" "no commits since" "$out_empty"
 
 # ======================================================================================
 echo
@@ -191,7 +191,46 @@ want "base line names origin/trunk" "base: origin/trunk" \
 
 # ======================================================================================
 echo
-echo "6. SUITE SELF-CHECK — suite fails without release.sh"
+echo "6. BEAD-LESS MOVEMENT — commits without bead ids still create a tag"
+# ======================================================================================
+# Every landed batch cuts a release. A batch may carry workflow or docs commits
+# whose subjects contain no bead id — the tag is still created so that revert
+# has a unit to point at.
+printf 'no-bead\n' >> "$REPO/f"; git -C "$REPO" add f
+git -C "$REPO" commit -qm "fix typo in documentation"
+git -C "$REPO" push -q origin trunk 2>/dev/null
+
+tag_nobead="$(run_cut fixture 2>&1)"
+rc_nobead=$?
+is "bead-less cut exits 0"                  0 "$rc_nobead"
+want "a tag was created for bead-less commit" "spira-release-fixture-" "$tag_nobead"
+# The tag message should note the previous tag as the boundary.
+want "prev field names second tag" "prev: $tag2" \
+    "$(git -C "$REPO" tag -l --format='%(contents)' "$tag_nobead" 2>/dev/null)"
+
+# ======================================================================================
+echo
+echo "7. PR LISTING — --pr argument appears in the tag message"
+# ======================================================================================
+# Every batch landing is a queue PR. release.sh cut records the PR number when
+# given --pr so that show and audits can trace the tag back to the CI run.
+printf 'another\n' >> "$REPO/f"; git -C "$REPO" add f
+git -C "$REPO" commit -qm "sp-zzz — a bead commit"
+git -C "$REPO" push -q origin trunk 2>/dev/null
+
+tag_pr="$(run_cut fixture --pr 42 2>&1)"
+rc_pr=$?
+is "cut with --pr exits 0" 0 "$rc_pr"
+want "tag was created"     "spira-release-fixture-" "$tag_pr"
+want "pr: line in tag"     "pr: 42" \
+    "$(git -C "$REPO" tag -l --format='%(contents)' "$tag_pr" 2>/dev/null)"
+# The bead id from the commit also appears.
+want "bead id still recorded" "sp-zzz" \
+    "$(git -C "$REPO" tag -l --format='%(contents)' "$tag_pr" 2>/dev/null)"
+
+# ======================================================================================
+echo
+echo "8. SUITE SELF-CHECK — suite fails without release.sh"
 # ======================================================================================
 rm -f "$SH/release.sh"
 out_absent="$(run_cut fixture 2>&1 || true)"

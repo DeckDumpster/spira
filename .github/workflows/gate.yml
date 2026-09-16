@@ -206,6 +206,14 @@ jobs:
         # The exit-code mapping matches the repo-map's gate command exactly. Keep
         # them in step: two gates that disagree about what 75 means is how a
         # harness fault comes to read as a branch failure.
+        #
+        # THREE PATHS, IN ORDER OF PRECEDENCE.
+        #   push to main: no suites. The corpus ran on the queue PR that produced
+        #     this SHA; the cut job asserts that run exists before tagging.
+        #   pull_request from spira/queue/*: every non-disabled suite via
+        #     suites.sh corpus, then gate-retry.sh. The full corpus catches
+        #     interactions between batched branches; diff selection would miss them.
+        #   other pull_request: diff-selected suites, as before.
         env:
           # The step above has already acquired the image under this closure's tag,
           # so testenv.sh finds it locally. Naming the registry here as well keeps
@@ -214,19 +222,24 @@ jobs:
         run: |
           set -uo pipefail
           export SPIRA_BATCH_RESULTS="$RUNNER_TEMP/batch"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "${{ github.event_name }}" = "push" ]; then
+            printf 'gate: push to %s — no suites; corpus ran on the queue PR\n' \
+              "${{ github.ref_name }}"
+            exit 0
+          fi
+          _b=0
+          if [ "${{ github.event_name }}" = "pull_request" ] \
+             && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/queue/'; then
+            printf 'gate: queue PR — running every non-disabled suite\n'
+            bash spira/suites.sh corpus \
+              | bash spira/testenv-batch.sh --suites - "${{ github.sha }}" || _b=$?
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
             printf 'gate: pull request — running the suites the diff selects\n'
-            _b=0
             bash spira/testenv-batch.sh "${{ github.sha }}" || _b=$?
           else
-            # Full corpus for push, merge_group, and workflow_dispatch.
-            # On push the diff against the base is empty. On merge_group the
-            # diff is the PR's commits, but these are about to land so the
-            # full gate is the right check — the PR gate already ran the diff
-            # selection; this is the final pass before main.
+            # Full corpus for merge_group and workflow_dispatch.
             printf 'gate: %s on %s — running the whole corpus\n' \
               "${{ github.event_name }}" "${{ github.ref_name }}"
-            _b=0
             ls spira/test-*.sh | xargs -n1 basename \
               | bash spira/testenv-batch.sh --suites - "${{ github.sha }}" || _b=$?
           fi
@@ -286,6 +299,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      checks: read
+      pull-requests: read
     outputs:
       tag: ${{ steps.cut.outputs.tag }}
     steps:
@@ -298,9 +313,28 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Assert gate check
+        # The SHA on main came from a fast-forward merge of a queue PR whose gate
+        # ran the full corpus. Assert that check-run exists before cutting a tag.
+        # A push that bypassed the queue has no such run, and this step refuses.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          _n="$(gh api \
+            "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/check-runs" \
+            --jq '[.check_runs[] | select(.name == "gate" and .conclusion == "success" and (.pull_requests | length > 0))] | length' \
+            2>/dev/null || echo 0)"
+          [ "${_n:-0}" -gt 0 ] || {
+            printf 'cut: SHA %s has no green gate check from a queue PR\n' \
+              "${{ github.sha }}" >&2
+            exit 1
+          }
+
       - name: Cut release tag
         id: cut
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # A RELEASE TAG IS ANNOTATED, AND AN ANNOTATED TAG NEEDS AN IDENTITY. A
           # hosted runner has no git identity configured, so `git tag -a` fails
           # with "Committer identity unknown" and the cut dies after the tag name
@@ -311,21 +345,34 @@ jobs:
           GIT_AUTHOR_EMAIL: gate@spira.local
           GIT_COMMITTER_NAME: Spira Gate
           GIT_COMMITTER_EMAIL: gate@spira.local
-        # release.sh exits 0 WITHOUT tagging when no bead landed since the last
-        # release. That is the common case on a docs or workflow commit, and it is
-        # success, not failure — so an empty tag output is normal and the publish
-        # job below skips.
+        # release.sh exits 0 WITHOUT tagging when no commits landed since the last
+        # tag (the land ref did not move). That is the common case on a docs or
+        # workflow commit that touches only the workflow itself, and it is success,
+        # not failure — so an empty tag output is normal and the publish job skips.
         #
         # THE CHECKOUT PATH IS PASSED EXPLICITLY. With no argument release.sh asks
         # the repo-map to resolve the home repository to a checkout, and the
         # repo-map describes an operator's own machine — in CI it resolves
         # nothing and the cut refuses.
+        #
+        # PR AND BRANCHES come from the queue PR that merged this SHA. On a
+        # fast-forward merge the PR's head SHA is the SHA now on main, so the
+        # commits/pulls API returns the queue PR directly.
         run: |
           set -uo pipefail
-          tag="$(bash spira/release.sh cut "$GITHUB_WORKSPACE")" || {
+          _pr="$(gh api \
+            "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/pulls" \
+            --jq '.[0].number // ""' 2>/dev/null || true)"
+          _branch="$(gh api \
+            "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/pulls" \
+            --jq '.[0].head.ref // ""' 2>/dev/null || true)"
+          _args=""
+          [ -n "${_pr:-}" ]     && _args="$_args --pr $_pr"
+          [ -n "${_branch:-}" ] && _args="$_args --branches $_branch"
+          tag="$(bash spira/release.sh cut "$GITHUB_WORKSPACE" $_args)" || {
             printf 'cut: release.sh refused\n' >&2; exit 1; }
           if [ -z "$tag" ]; then
-            printf 'cut: no beads landed since the last release — nothing to tag\n'
+            printf 'cut: land ref did not move since last tag — nothing to tag\n'
             printf 'tag=\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
