@@ -241,6 +241,36 @@ else
     fail=$((fail+1)); printf '  FAIL  no-wiki brief failed:\n%s\n' "$(cat "$TMP/err_nw")"
 fi
 
+echo
+echo "start — session survives the oneshot's cgroup teardown"
+
+# THE PROPERTY UNDER TEST. concierge.service is Type=oneshot/KillMode=control-group:
+# the server shared the service's cgroup and died when start exited. We simulate the
+# oneshot with systemd-run --wait (which kills its cgroup on exit) and assert the
+# session still exists. Without the fix, the session dies with the cgroup.
+if ! systemctl --user status >/dev/null 2>&1 || ! command -v systemd-run >/dev/null 2>&1; then
+    printf '  skip  (no systemd user session — cgroup survival test requires it)\n'
+else
+    SOCK="test-concierge-$$"
+    tmux -L "$SOCK" kill-server 2>/dev/null || true  # clear any leftover from a prior run
+
+    rc_start=0
+    systemd-run --user --wait --collect --quiet -- \
+        env CONCIERGE_SOCKET="$SOCK" CONCIERGE_SESSION="$SOCK" \
+        bash "$HARNESS/concierge.sh" start 2>>"$TMP/err" || rc_start=$?
+
+    is "start exits 0 under a simulated oneshot" 0 "$rc_start"
+
+    alive=0
+    tmux -L "$SOCK" has-session -t "$SOCK" 2>/dev/null && alive=1
+    is "session survives after the oneshot cgroup is torn down" 1 "$alive"
+
+    # THE POSITIVE CONTROL: if start never started tmux (e.g. compose_brief failed),
+    # alive would be 0 for a different reason. rc_start catches that case above.
+
+    tmux -L "$SOCK" kill-server 2>/dev/null || true  # drains the nested transient unit
+fi
+
 fi  # statute book guard
 
 echo

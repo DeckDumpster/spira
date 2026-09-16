@@ -199,7 +199,15 @@ start)
         printf -- '--append-system-prompt %q\n' "$(cat "$BRIEF")"
     } > "$LAUNCHER"
     chmod +x "$LAUNCHER"
-    $TM new-session -d -s "$SESSION" -c "$BRAIN" "$LAUNCHER"
+    # concierge.service is Type=oneshot/KillMode=control-group: when start exits, systemd
+    # kills the whole cgroup — the tmux server with it. A transient unit gives the server
+    # its own cgroup that outlives the oneshot. Same trap and fix as lib.sh (aeon summon).
+    # --remain-after-exit keeps the unit active after tmux new-session daemonizes and exits,
+    # preventing the KillMode cleanup until the server itself stops.
+    # PATH and HOME are the minimum the launcher needs: PATH to find claude, HOME for config.
+    systemd-run --user --collect --quiet --remain-after-exit \
+        --setenv=PATH="$PATH" --setenv=HOME="$HOME" -- \
+        tmux -L "$SOCKET" new-session -d -s "$SESSION" -c "$BRAIN" "$LAUNCHER"
     sleep 3
     if $TM has-session -t "$SESSION" 2>/dev/null; then
         echo "concierge: started as Remote Control session '$SESSION'"
