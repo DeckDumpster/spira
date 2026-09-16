@@ -400,6 +400,10 @@ nowant "loom-unkn: no FAIL"                     "  FAIL  loom"                 "
 echo ""
 echo "--- agent ---"
 
+# Snapshot must exist so the cockpit freshness check does not emit a FAIL that
+# would trip the broad nowant "  FAIL" assertions below.
+printf 'SP_AT=0\n' > "$RUN/cockpit.env"
+
 # POSITIVE CONTROL: agent absent → WARN with "absent" before trusting present case.
 echo "positive control: agent absent"
 out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
@@ -422,10 +426,56 @@ want "agent-present: names the agent"           "fake-agent"                   "
 nowant "agent-present: no pass line for agent"  "  pass  agent"                "$out"
 
 # ===========================================================================
-# COCKPIT
+# COCKPIT — snapshot freshness
 # ===========================================================================
 echo ""
-echo "--- cockpit ---"
+echo "--- cockpit snapshot freshness ---"
+
+# POSITIVE CONTROL: snapshot absent → FAIL before trusting the present/fresh case.
+echo "positive control: snapshot absent"
+rm -f "$RUN/cockpit.env"
+out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
+                 "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
+                 "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
+                 "FAKE_TMUX_PANES=panel %1
+health %2" -- || true)"
+want "snap-absent: FAIL for missing snapshot"   "  FAIL  no cockpit snapshot"          "$out"
+nowant "snap-absent: no pass for snapshot"      "  pass  cockpit snapshot fresh"        "$out"
+
+# Snapshot stale → FAIL.
+echo "snapshot stale"
+printf 'SP_AT=0\n' > "$RUN/cockpit.env"
+touch -d "300 seconds ago" "$RUN/cockpit.env"
+out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
+                 "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
+                 "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
+                 "SPIRA_COCKPIT_STALE_S=120" \
+                 "FAKE_TMUX_PANES=panel %1
+health %2" -- || true)"
+want "snap-stale: FAIL for stale snapshot"      "  FAIL  cockpit snapshot stale"        "$out"
+want "snap-stale: age shown"                    "s ago"                                 "$out"
+nowant "snap-stale: no pass for snapshot"       "  pass  cockpit snapshot fresh"         "$out"
+
+# Snapshot fresh → pass.
+echo "snapshot fresh"
+printf 'SP_AT=0\n' > "$RUN/cockpit.env"
+out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
+                 "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
+                 "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
+                 "SPIRA_COCKPIT_STALE_S=120" \
+                 "FAKE_TMUX_PANES=panel %1
+health %2" --)"
+want "snap-fresh: pass for fresh snapshot"      "  pass  cockpit snapshot fresh"         "$out"
+nowant "snap-fresh: no FAIL"                    "  FAIL  cockpit snapshot"               "$out"
+
+# ===========================================================================
+# COCKPIT — panes
+# ===========================================================================
+echo ""
+echo "--- cockpit panes ---"
+
+# Ensure snapshot exists for all remaining cockpit tests.
+printf 'SP_AT=0\n' > "$RUN/cockpit.env"
 
 # POSITIVE CONTROL: both panes absent → WARN before trusting present case.
 echo "positive control: cockpit panes absent"

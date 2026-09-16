@@ -36,7 +36,7 @@ want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+trap 'chmod -R +w "$TMP" 2>/dev/null || true; rm -rf "$TMP"' EXIT
 FRAG_DIR="$TMP/cockpit.d"
 SNAP="$TMP/cockpit.env"
 mkdir -p "$FRAG_DIR"
@@ -267,6 +267,144 @@ want "_probe_body_test/timeout: _PROBE_STATUS=timeout in fragment" "_PROBE_STATU
 tout_msg="$(cat "$tout_log" 2>/dev/null)"
 want "_probe_body_test/timeout: journal line mentions probe name" "tprobe3" "$tout_msg"
 want "_probe_body_test/timeout: journal line mentions timeout" "timeout" "$tout_msg"
+
+# ============================================================
+echo
+echo "9. exit on consecutive merge failures (positive control first):"
+
+# POSITIVE CONTROL: merge succeeds (SPIRA_RUN writable) → loop keeps running.
+# Run the loop in the background for a short time; it must NOT exit prematurely.
+LOOP_RUN="$TMP/loop_run"
+mkdir -p "$LOOP_RUN"
+LOOP_FRAG="$LOOP_RUN/cockpit.d"
+mkdir -p "$LOOP_FRAG"
+BASE_PATH="$PATH"
+timeout 3 env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$LOOP_RUN" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_COCKPIT="$TMP" \
+    SPIRA_COCKPIT_FORCE=1 \
+    SPIRA_COCKPIT_TICK=0 \
+    SPIRA_COCKPIT_MERGE_FAIL_MAX=2 \
+    FRAG_DIR="$LOOP_FRAG" \
+    bash "$HERE/collect.sh" loop >/dev/null 2>&1 || _ec=$?
+# timeout exits 124 when the process was still running; that is the passing case here.
+if [ "${_ec:-0}" -eq 124 ]; then
+    ok "loop keeps running when merge succeeds (not killed prematurely)"
+else
+    bad "loop exited ${_ec:-?} while merge should succeed" "wanted timeout (124)"
+fi
+
+# FAILURE CASE: merge always fails because SPIRA_RUN is read-only.
+# The loop must exit non-zero after _MERGE_FAIL_MAX consecutive failures.
+LOOP_READONLY="$TMP/loop_readonly"
+mkdir -p "$LOOP_READONLY"
+LOOP_READONLY_FRAG="$LOOP_READONLY/cockpit.d"
+mkdir -p "$LOOP_READONLY_FRAG"
+# Create the never-fragments so _write_never_frag does not need to write anything.
+for _pn in now sphere repo_labels strands ratelim core core_detail sops livelock dup_refs unsent; do
+    printf '_PROBE_AT=0\n_PROBE_STATUS=never\n' > "$LOOP_READONLY_FRAG/${_pn}.env"
+done
+# Make SPIRA_RUN (not FRAG_DIR) read-only so mktemp "$SPIRA_RUN/.cockpit.XXXXXX" fails.
+chmod 555 "$LOOP_READONLY"
+_loop_rc=0
+timeout 5 env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$LOOP_READONLY" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_COCKPIT="$TMP" \
+    SPIRA_COCKPIT_FORCE=1 \
+    SPIRA_COCKPIT_TICK=0 \
+    SPIRA_COCKPIT_MERGE_FAIL_MAX=2 \
+    FRAG_DIR="$LOOP_READONLY_FRAG" \
+    bash "$HERE/collect.sh" loop >/dev/null 2>&1 || _loop_rc=$?
+chmod 755 "$LOOP_READONLY"
+if [ "$_loop_rc" -eq 1 ]; then
+    ok "loop exits 1 after consecutive merge failures"
+else
+    bad "loop should exit 1 on merge failures" "got exit code ${_loop_rc}"
+fi
+
+# Verify the exit message is written to stderr.
+_loop_err=""
+chmod 555 "$LOOP_READONLY"
+timeout 5 env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$LOOP_READONLY" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_COCKPIT="$TMP" \
+    SPIRA_COCKPIT_FORCE=1 \
+    SPIRA_COCKPIT_TICK=0 \
+    SPIRA_COCKPIT_MERGE_FAIL_MAX=2 \
+    FRAG_DIR="$LOOP_READONLY_FRAG" \
+    bash "$HERE/collect.sh" loop >/dev/null 2>"$TMP/loop_merge_err.log" || true
+chmod 755 "$LOOP_READONLY"
+_loop_err="$(cat "$TMP/loop_merge_err.log" 2>/dev/null)"
+want "loop exit message names merge failures" "consecutive merge failures" "$_loop_err"
+
+# ============================================================
+echo
+echo "10. exit on config file change (positive control first):"
+
+# POSITIVE CONTROL: config file unchanged → loop keeps running.
+LOOP_CONF_RUN="$TMP/loop_conf_run"
+mkdir -p "$LOOP_CONF_RUN"
+LOOP_CONF_FRAG="$LOOP_CONF_RUN/cockpit.d"
+mkdir -p "$LOOP_CONF_FRAG"
+CONF_FILE="$TMP/test.conf"
+printf '# test config\n' > "$CONF_FILE"
+_ec_conf=0
+timeout 3 env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$CONF_FILE" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$LOOP_CONF_RUN" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_COCKPIT="$TMP" \
+    SPIRA_COCKPIT_FORCE=1 \
+    SPIRA_COCKPIT_TICK=0 \
+    FRAG_DIR="$LOOP_CONF_FRAG" \
+    bash "$HERE/collect.sh" loop >/dev/null 2>&1 || _ec_conf=$?
+if [ "${_ec_conf:-0}" -eq 124 ]; then
+    ok "loop keeps running when config is unchanged"
+else
+    bad "loop exited ${_ec_conf:-?} while config was not changed" "wanted timeout (124)"
+fi
+
+# CHANGE CASE: touch the config file while the loop is running → loop must exit 0.
+LOOP_CONF2_RUN="$TMP/loop_conf2_run"
+mkdir -p "$LOOP_CONF2_RUN"
+LOOP_CONF2_FRAG="$LOOP_CONF2_RUN/cockpit.d"
+mkdir -p "$LOOP_CONF2_FRAG"
+for _pn in now sphere repo_labels strands ratelim core core_detail sops livelock dup_refs unsent; do
+    printf '_PROBE_AT=0\n_PROBE_STATUS=never\n' > "$LOOP_CONF2_FRAG/${_pn}.env"
+done
+CONF_FILE2="$TMP/test2.conf"
+# Pre-date the config to ensure mtime changes when we touch it.
+printf '# test config\n' > "$CONF_FILE2"
+touch -d "5 seconds ago" "$CONF_FILE2"
+(
+    sleep 1
+    touch "$CONF_FILE2"
+) &
+_touch_pid=$!
+_ec_change=0
+timeout 5 env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$CONF_FILE2" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$LOOP_CONF2_RUN" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_COCKPIT="$TMP" \
+    SPIRA_COCKPIT_FORCE=1 \
+    SPIRA_COCKPIT_TICK=0 \
+    FRAG_DIR="$LOOP_CONF2_FRAG" \
+    bash "$HERE/collect.sh" loop >/dev/null 2>"$TMP/loop_conf_err.log" || _ec_change=$?
+wait "$_touch_pid" 2>/dev/null || true
+if [ "$_ec_change" -eq 0 ]; then
+    ok "loop exits 0 on config change"
+else
+    bad "loop exited ${_ec_change} on config change" "wanted 0"
+fi
+_conf_err="$(cat "$TMP/loop_conf_err.log" 2>/dev/null)"
+want "loop config-change message present" "config changed" "$_conf_err"
 
 # ============================================================
 echo

@@ -13,6 +13,8 @@ Type=simple
 ExecStart=@SPIRA_PROD@/collect.sh loop
 Restart=always
 RestartSec=15
+WatchdogSec=30
+NotifyAccess=main
 # A pass shells out to bd and git several times. This box also runs prod, so it is fenced
 # (law-fence-loops-on-shared-hardware).
 CPUQuota=35%

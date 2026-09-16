@@ -232,6 +232,26 @@ fi
 echo ""
 echo "cockpit"
 # =============================================================================
+# SNAPSHOT FRESHNESS. A missing or stale cockpit.env means the collector is not
+# writing — the exact condition that went undetected for 71 minutes while every
+# other health surface reported OK (sp-itsy). Check before the pane checks because
+# a pane that cannot read any snapshot is useless even if the pane itself exists.
+_rdy_snap="$SPIRA_RUN/cockpit.env"
+_rdy_stale_s="${SPIRA_COCKPIT_STALE_S:-120}"
+if [ ! -f "$_rdy_snap" ]; then
+    FAIL "no cockpit snapshot at $_rdy_snap — collector has not written yet" \
+         "Check: systemctl --user status $(spira_unit cockpit service)"
+else
+    _rdy_snap_age=$(( $(date +%s) - $(stat --format='%Y' "$_rdy_snap" 2>/dev/null || echo 0) ))
+    if [ "$_rdy_snap_age" -gt "$_rdy_stale_s" ]; then
+        FAIL "cockpit snapshot stale — last written ${_rdy_snap_age}s ago (limit ${_rdy_stale_s}s)" \
+             "The collector is not writing. Check: systemctl --user status $(spira_unit cockpit service)"
+    else
+        PASS "cockpit snapshot fresh — $_rdy_snap (${_rdy_snap_age}s old)"
+    fi
+fi
+unset _rdy_snap _rdy_snap_age _rdy_stale_s
+
 # Check for the two tagged panes (panel, health) that layout.sh creates. Each carries
 # the tmux pane-scoped option @cockpit set to its role.
 if ! command -v tmux >/dev/null 2>&1; then

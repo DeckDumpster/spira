@@ -47,9 +47,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SNAP="$SPIRA_RUN/cockpit.env"
 # FRAG_DIR may be overridden from the environment for testing.
 : "${FRAG_DIR:=$SPIRA_RUN/cockpit.d}"
-TICK=5                           # seconds between supervisor ticks
+TICK="${SPIRA_COCKPIT_TICK:-5}"
 
 WINDOW_HOURS="${SPIRA_COCKPIT_WINDOW_HOURS:-24}"
+
+_MERGE_FAIL_MAX="${SPIRA_COCKPIT_MERGE_FAIL_MAX:-3}"
 
 # PROBE REGISTRY: "name:interval_s:timeout_s:subcommand"
 # Interval classifies tier (fast=5, medium=60, slow=600).
@@ -215,10 +217,31 @@ _supervisor_loop() {
         _write_never_frag "$name"
     done
 
+    # Record config file mtime at startup; exit cleanly when it changes so the
+    # restart re-reads the updated config (law-long-lived-processes-pin-their-config).
+    local _conf_file="${SPIRA_CONF_FILE:-}"
+    local _conf_mtime_0
+    _conf_mtime_0="$(stat --format='%Y' "$_conf_file" 2>/dev/null || echo 0)"
+
     declare -A PROBE_PID=()
     declare -A PROBE_LAST=()
+    local _merge_fail=0
 
     while :; do
+        # Watchdog heartbeat: keeps systemd from killing a live supervisor between ticks.
+        # Requires WatchdogSec= and NotifyAccess=main in the unit.
+        [ -n "${NOTIFY_SOCKET:-}" ] && systemd-notify --watchdog 2>/dev/null || true
+
+        # Config-change check: exit cleanly so the restart picks up the new config.
+        if [ -n "$_conf_file" ]; then
+            local _conf_mtime_now
+            _conf_mtime_now="$(stat --format='%Y' "$_conf_file" 2>/dev/null || echo 0)"
+            if [ "$_conf_mtime_now" != "$_conf_mtime_0" ]; then
+                printf 'collect.sh: config changed — exiting for restart\n' >&2
+                exit 0
+            fi
+        fi
+
         local _now; _now=$(date +%s)
         local slow_running=0
 
@@ -261,7 +284,16 @@ _supervisor_loop() {
             [ "$interval" -ge 600 ] && slow_running=$((slow_running+1))
         done
 
-        _merge_fragments
+        if _merge_fragments; then
+            _merge_fail=0
+        else
+            _merge_fail=$((_merge_fail + 1))
+            if [ "$_merge_fail" -ge "$_MERGE_FAIL_MAX" ]; then
+                printf 'collect.sh: %d consecutive merge failures — exiting for restart\n' \
+                    "$_MERGE_FAIL_MAX" >&2
+                exit 1
+            fi
+        fi
 
         sleep "$TICK"
     done
