@@ -320,19 +320,11 @@ escalate() {
         return 1
 fi
 
-    # The installer sits beside the harness directory, not inside it, so it is derived
-    # rather than written — the two layouts put it in different places and a hardcoded one
-    # would be wrong in whichever the reader is standing in.
-    local installer; installer="$(cd "$SPIRA_HOME/../systemd" 2>/dev/null && pwd -P)/install.sh"
-
-    # The default action depends on which conditions are blocking. When DIRTY accompanies
-    # BEHIND, the automatic repair has been declining every pass; name what to clear first
-    # so the operator is told what to DO rather than just what is wrong.
     local default_action
-    if [[ "$condition_key" == *"BEHIND=1"* ]] && [[ "$condition_key" == *"DIRTY=1"* ]]; then
-        default_action="clear the dirty tracked files first — paths byte-identical to the base ref can be restored with 'git -C $SPIRA_REPO checkout -- <path>'; genuine changes must be committed or stashed — then pull; install.sh also refuses while spira-aeon-*.service units are active, pass SPIRA_INSTALL_FORCE=1 to override; if a second harness is named below, delete that copy"
+    if [[ "$condition_key" == *"MANIFEST-MISMATCH=1"* ]]; then
+        default_action="the release artifact and its git tag disagree — verify the release was built from the correct commit; rebuild and re-activate if not"
     else
-        default_action="pull $SPIRA_REPO onto its base ref; install.sh now also refuses when the checkout is behind — wait for any live aeons to finish (install.sh refuses while spira-aeon-*.service units are active too), then re-run $installer; pass SPIRA_INSTALL_FORCE=1 to override both refusals; if a second harness is named below, delete that copy so the repository it sits in carries none"
+        default_action="activate the latest published release — download the latest tarball and run activate.sh with it"
     fi
     local notify_out notify_rc
     notify_out="$("$SPIRA_NOTIFY" add \
