@@ -30,7 +30,7 @@ file_incident() {
     local ref="$1" title="$2" payload="$3"; shift 3
     printf '%s' "$payload" | \
         env SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
-        SPIRA_INCIDENT_REF="$ref" SPIRA_ASK="$NOOP" SPIRA_NOTIFY="$NOOP" \
+        SPIRA_INCIDENT_REF="$ref" SPIRA_NOTIFY="$NOOP" \
         SPIRA_INCIDENT_LOCK="$TMP/run/recur-bounded-test.lock" \
         SPIRA_INCIDENT_CAUSE=suite-red \
         SPIRA_INCIDENT_REPO= \

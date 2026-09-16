@@ -22,7 +22,7 @@
 # PAIRS (law-absence-needs-a-positive-control): every negative assertion is paired with a
 # positive one so a broken path that produces nothing still looks like a test failure.
 #
-# covers: cockpit/ask.sh cockpit/panel/src/model.rs cockpit/panel/src/store.rs
+# covers: cockpit/panel/src/model.rs cockpit/panel/src/store.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 COCKPIT="$(cd "$HERE/../cockpit" && pwd -P)"

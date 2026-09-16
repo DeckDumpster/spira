@@ -55,13 +55,13 @@ act() { acted=$((acted+1)); }
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 
-export ASK_LOG="$TMP/ask.log"
-cat > "$TMP/ask.sh" <<'ASKSH'
+export MAIL_LOG="$TMP/mail.log"
+cat > "$TMP/mail.sh" <<'MAILSH'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$ASK_LOG"
-ASKSH
-chmod +x "$TMP/ask.sh"
-export SPIRA_NOTIFY="$TMP/ask.sh"
+printf '%s\n' "$*" >> "$MAIL_LOG"
+cat >/dev/null
+MAILSH
+chmod +x "$TMP/mail.sh"
 export SPIRA_HOME="$TMP"
 
 # Run land_escalate with the clock suppressed so only ask_already_open governs the decision.
@@ -77,9 +77,9 @@ echo
 echo "positive control — land_escalate reaches the operator when no ask is open:"
 # ======================================================================================
 testdb_reset
-: > "$ASK_LOG"; rm -f "$RUN/landing.escalated"
+: > "$MAIL_LOG"; rm -f "$RUN/landing.escalated"
 do_escalate >/dev/null 2>&1
-want "and reaches the operator" "Spira is landing nothing" "$(cat "$ASK_LOG")"
+want "and reaches the operator" "Spira is landing nothing" "$(cat "$MAIL_LOG")"
 
 # ======================================================================================
 echo
@@ -96,9 +96,9 @@ testdb_reset
 # Hardcoding either value broke the other environment; use the live variable.
 printf '{"id":"sp-ask1","title":"Spira is landing nothing — its last run exited 1","status":"open","issue_type":"decision","labels":["%s"],"updated_at":"2026-09-07T00:00:00Z"}\n' \
     "${SPIRA_ASK_LABEL:-needs-operator}" | testdb_seed
-: > "$ASK_LOG"; rm -f "$RUN/landing.escalated"
+: > "$MAIL_LOG"; rm -f "$RUN/landing.escalated"
 land_escalate "the landing worker will not start" "evidence" >/dev/null 2>&1
-is "and does not ask again while one is still open" "" "$(cat "$ASK_LOG")"
+is "and does not ask again while one is still open" "" "$(cat "$MAIL_LOG")"
 
 # ======================================================================================
 echo
@@ -110,9 +110,9 @@ echo "closed-ask pass-through — a closed ask does NOT suppress a new escalatio
 testdb_reset
 printf '{"id":"sp-ask1","title":"Spira is landing nothing — its last run exited 1","status":"closed","issue_type":"decision","labels":["%s"],"updated_at":"2026-09-07T00:00:00Z"}\n' \
     "${SPIRA_ASK_LABEL:-needs-operator}" | testdb_seed
-: > "$ASK_LOG"; rm -f "$RUN/landing.escalated"
+: > "$MAIL_LOG"; rm -f "$RUN/landing.escalated"
 do_escalate >/dev/null 2>&1
-want "a closed ask does not suppress a new escalation" "Spira is landing nothing" "$(cat "$ASK_LOG")"
+want "a closed ask does not suppress a new escalation" "Spira is landing nothing" "$(cat "$MAIL_LOG")"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -60,14 +60,14 @@ stub sending.sh    'printf "%s" "${SENDING_OUT:-}"'
 stub governor.sh   'exit 0'
 stub gate.sh       'exit ${GATE_RC:-0}'
 stub reflect.sh    'touch "$SPIRA_RUN/reflect.fired"'
-stub ask.sh        'printf "%s\n" "$*" >> "$ASK_LOG"; true'
+stub mail.sh       'printf "%s\n" "$*" >> "$MAIL_LOG"; cat >/dev/null'
 
 # TWO PERSONAS to prove the check is not hardcoded to one partition.
 printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/t.fayth"
 printf 'FAYTH_LABELS="spira,incident"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/tinc.fayth"
 
 B() { bd -C "$SPIRA_DB" "$@"; }
-export ASK_LOG="$TMP/ask.log"; : > "$ASK_LOG"
+export MAIL_LOG="$TMP/mail.log"; : > "$MAIL_LOG"
 cat > "$TMP/launch" <<'L'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$LAUNCH_LOG"
@@ -85,7 +85,6 @@ sentinel() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_REPO="$REPO" \
     SPIRA_GOAL=sp-goal SPIRA_FAYTHS="${ROSTER:-t}" SPIRA_INFERENCE_EVERY=0 \
-    SPIRA_NOTIFY="$SH/ask.sh" \
     SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
     SPIRA_SUMMON="$TMP/launch" \
     SPIRA_SKIP_RECLAIM=1 \
@@ -105,7 +104,7 @@ print(" ".join(d[0].get("labels") or []))'; }
 seed_bead() {   # seed_bead <id>
     testdb_reset
     rm -rf "$RUN/requeue-asked" "$RUN/reclaim-asked" "$RUN/poison-asked"
-    rm -f "$ASK_LOG"; : > "$ASK_LOG"
+    rm -f "$MAIL_LOG"; : > "$MAIL_LOG"
     testdb_seed <<JSONL
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-11T00:00:00Z"}
 {"id":"$1","title":"test bead","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-11T00:00:00Z"}
@@ -143,15 +142,15 @@ seed_bead sp-rq-below
 reopen_cycle sp-rq-below 2
 sentinel >/dev/null 2>&1 || true
 nowant "2 reopens (below cap 3) fires no requeue escalation" \
-       "completed and requeued" "$(cat "$ASK_LOG" 2>/dev/null || true)"
+       "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
 
 seed_bead sp-rq-at
 reopen_cycle sp-rq-at 3
 sentinel >/dev/null 2>&1 || true
 want "3 reopens (at cap 3) fires the requeue escalation" \
-     "completed and requeued" "$(cat "$ASK_LOG" 2>/dev/null || true)"
+     "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
 want "the escalation names the reopen count" \
-     "requeued 3 times" "$(cat "$ASK_LOG" 2>/dev/null || true)"
+     "requeued 3 times" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
 nowant "requeue thrash does not add spira-poison" \
        "spira-poison" "$(labels_of sp-rq-at)"
 

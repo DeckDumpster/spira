@@ -49,29 +49,31 @@ printf 'starved\t-\tescalate\t0 ready beads, 0 live aeons — nothing can move\t
 
 echo "sentinel ok" > "$TMP/run/sentinel.log"
 
-# COUNT_FILE: each call to our ask.sh stub atomically increments it.
+# COUNT_FILE: each call to our mail.sh stub atomically increments it.
 COUNT_FILE="$TMP/count"
 echo 0 > "$COUNT_FILE"
 
-# ask.sh stub: records "add" invocations. sleep 0.2 before recording widens the race
+# mail.sh stub: records "send" invocations. sleep 0.2 before recording widens the race
 # window between state_apply (read) and state_mark (write) so both concurrent runners
 # have time to read was_escalated=0 before either writes escalated=1 — reliably
 # reproducing the lost-update on the unfixed tree.
-cat > "$TMP/ask.sh" <<STUB
+mkdir -p "$TMP/strand-home"
+cat > "$TMP/strand-home/mail.sh" <<STUB
 #!/usr/bin/env bash
-[ "\${1:-}" = add ] || exit 0
+[ "\${1:-}" = send ] || exit 0
 sleep 0.2
 ( flock -x 9; n=\$(cat "$COUNT_FILE"); echo \$((n + 1)) > "$COUNT_FILE" ) 9>"$COUNT_FILE.lock"
+cat >/dev/null
 STUB
-chmod +x "$TMP/ask.sh"
+chmod +x "$TMP/strand-home/mail.sh"
 
-# strand.sh check environment: SPIRA_RUN controls STATE path; SPIRA_NOTIFY is the ask stub;
-# SPIRA_STRAND_GRACE=0 disables the 15-minute grace window so the escalation fires immediately.
+# strand.sh check environment: SPIRA_RUN controls STATE path; SPIRA_HOME points to the
+# mail.sh stub; SPIRA_STRAND_GRACE=0 disables the 15-minute grace window.
 CHECK_ENV=(
     SPIRA_RUN="$TMP/run"
     SPIRA_STRAND_GRACE=0
     SPIRA_LABELS=-
-    SPIRA_NOTIFY="$TMP/ask.sh"
+    SPIRA_HOME="$TMP/strand-home"
 )
 
 run_check() {

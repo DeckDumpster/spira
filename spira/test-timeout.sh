@@ -126,15 +126,15 @@ is "and leaves no timeout counter"                0 "$(num "$(timeouts_of sp-t2)
 
 # SPIRA_ASK_TIMEOUT_LOOP DEDUPLICATES ON (id, count).
 seed sp-t3
-ASK_LOG="$TMP/ask.log"; : > "$ASK_LOG"
-NOTIFY_SH="$TMP/notify.sh"
-printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$ASK_LOG" > "$NOTIFY_SH"
-chmod +x "$NOTIFY_SH"
-export SPIRA_NOTIFY="$NOTIFY_SH"
+MAIL_LOG="$TMP/mail.log"; : > "$MAIL_LOG"
+MAIL_HOME="$TMP/mail-home"; mkdir -p "$MAIL_HOME"
+printf '#!/usr/bin/env bash\n[ "${1:-}" = send ] || exit 0\nprintf "%%s\\n" "$@" >> "%s"\ncat >>"%s"\n' "$MAIL_LOG" "$MAIL_LOG" > "$MAIL_HOME/mail.sh"
+chmod +x "$MAIL_HOME/mail.sh"
+export SPIRA_HOME="$MAIL_HOME"
 
 spira_ask_timeout_loop sp-t3 spira/sp-t3 ops 480 2 >/dev/null 2>&1
-isge "at-limit call produces an ask" 1 "$(grep -c 'sp-t3' "$ASK_LOG" || echo 0)"
-want "the ask says 'timed out' not 'change the approach'" "timed out" "$(cat "$ASK_LOG")"
+isge "at-limit call produces an ask" 1 "$(grep -c 'sp-t3' "$MAIL_LOG" || echo 0)"
+want "the ask says 'timed out' not 'change the approach'" "timed out" "$(cat "$MAIL_LOG")"
 
 # A second call with the SAME count is suppressed (already open in the db? — not yet, since
 # this test doesn't actually file it in beads. The function calls $SPIRA_NOTIFY; test that

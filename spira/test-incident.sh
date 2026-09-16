@@ -61,10 +61,6 @@ testdb_up incident || { echo "test-incident: could not build a fixture database"
 REPO_MAP="$TMP/repo-map"
 printf 'brain|%s\n' "$SPIRA_DB" > "$REPO_MAP"
 
-# A no-op notifier so the SIN escalation path does not reach the real cockpit.
-NOOP="$TMP/noop.sh"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$NOOP"; chmod +x "$NOOP"
-
 RUN="$TMP/run"; mkdir -p "$RUN"
 SPOOL="$RUN/spool"
 LOCK="$RUN/incident.lock"
@@ -83,8 +79,8 @@ inc() {
         SPIRA_INCIDENT_LOG="$ILOG" \
         SPIRA_INCIDENT_LOCK="$LOCK" \
         SPIRA_RUN="$RUN" \
-        SPIRA_NOTIFY="$NOOP" \
-        SPIRA_ASK="$NOOP" \
+        SPIRA_HOME="$HERE" \
+        SPIRA_MAIL="$TMP/mail" \
         "$@" bash "$HERE/incident.sh" file "the test sweep" -
 }
 
@@ -240,8 +236,8 @@ inc_env() {
         SPIRA_INCIDENT_LOG="$ILOG" \
         SPIRA_INCIDENT_LOCK="$LOCK" \
         SPIRA_RUN="$RUN" \
-        SPIRA_NOTIFY="$NOOP" \
-        SPIRA_ASK="$NOOP" \
+        SPIRA_HOME="$HERE" \
+        SPIRA_MAIL="$TMP/mail" \
         "$@" \
         bash "$HERE/incident.sh" file "harness repo test" - >/dev/null 2>&1
 }
@@ -330,8 +326,8 @@ _cross_env() {
         SPIRA_INCIDENT_LOG="$ILOG" \
         SPIRA_INCIDENT_LOCK="$LOCK" \
         SPIRA_RUN="$RUN" \
-        SPIRA_NOTIFY="$NOOP" \
-        SPIRA_ASK="$NOOP" \
+        SPIRA_HOME="$HERE" \
+        SPIRA_MAIL="$TMP/mail" \
         "$@" \
         bash "$HERE/incident.sh" file "$_cross_title" - >/dev/null 2>&1
 }
@@ -357,45 +353,10 @@ mkdir -p "$RUN"
 
 # ======================================================================================
 echo
-echo "undeclared-repo ask dedupe — multiple incidents for the same ref produce ONE ask:"
+echo "undeclared-repo escalation — a mail is sent when repo is not declared:"
 # ======================================================================================
-# THE BLEED THIS SUITE EXERCISES. 21 distinct test files produced 57 open asks by 16:07
-# on 2026-09-09 (sp-k4de0, sp-unpyd). Each test suite pass filed a fresh ask rather than
-# bumping the existing one, because the filing used the incident TITLE (which varies — it
-# embeds the new bead id) rather than the EXTERNAL REF (which is stable across incidents
-# from the same source).
-#
-# The fix: dedupe on the ref, within the intake flock that already serialises drain_one.
-# Two concurrent filers both hold the lock before checking, so the second always finds the
-# ask the first just created.
-#
-# A REAL ASK TOOL IS NEEDED TO TEST THIS. A noop mock never writes to the database, so the
-# dedupe check always sees "no open ask" and always files — which passes a broken check and
-# breaks a working one identically. The mock below creates real decision beads with the
-# correct label in the test fixture, so the second call can find and comment on the first.
-MOCK_ASK="$TMP/mock-ask.sh"
-cat > "$MOCK_ASK" <<'MOCK'
-#!/usr/bin/env bash
-# Minimal ask.sh stand-in: 'add' creates a decision bead in the test database.
-# Anything else is a no-op so SIN escalations do not interfere with the count.
-set -uo pipefail
-DB="${COCKPIT_DB:-${SPIRA_DB:-}}"
-[ -n "$DB" ] || exit 0
-case "${1:-}" in
-    add)
-        title="${2:-}"
-        bd -C "$DB" create "$title" \
-            --type decision \
-            --labels "${SPIRA_ASK_LABEL:-needs-operator},overseer,ask-question" \
-            --silent >/dev/null 2>&1 || true
-        ;;
-    *) exit 0 ;;
-esac
-MOCK
-chmod +x "$MOCK_ASK"
-
-# inc_ask: like inc_env but uses the real-enough mock ask for the dedupe tests.
-inc_ask() {
+NOREP_MAIL="$TMP/norep-mail"
+inc_norep() {
     env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_CONF="$TMP/nonexistent.conf" \
         SPIRA_DB="$SPIRA_DB" \
@@ -403,138 +364,43 @@ inc_ask() {
         SPIRA_INCIDENT_LOG="$ILOG" \
         SPIRA_INCIDENT_LOCK="$LOCK" \
         SPIRA_RUN="$RUN" \
-        SPIRA_ASK="$MOCK_ASK" \
+        SPIRA_HOME="$HERE" \
+        SPIRA_MAIL="$NOREP_MAIL" \
         "$@" bash "$HERE/incident.sh" file "undeclared repo test" - >/dev/null 2>&1
 }
+n_norep_mails() { ls "$NOREP_MAIL/operator/new/" 2>/dev/null | wc -l | tr -d ' '; }
+norep_mail_content() { cat "$NOREP_MAIL/operator/new/"* 2>/dev/null; }
 
-# Count open asks whose title contains the stable key for this ref.
-# Filters on issue_type=decision rather than the ask label: the label value comes from
-# SPIRA_ASK_LABEL which the outer shell reads from the real spira.conf, while the
-# mock's subprocess uses only what was passed through env -i (the default needs-operator).
-# issue_type=decision is stable, set at create time, and unambiguous: incidents are bugs.
-count_undeclared_asks() {   # count_undeclared_asks <ref> -> integer
-    local key="undeclared repo: $(printf '%s' "$1" | cut -c1-72)"
-    bd -C "$SPIRA_DB" list --status open --limit 0 --json 2>/dev/null \
-      | python3 -c '
-import sys, json
-want = sys.argv[1]
-try: d = json.load(sys.stdin)
-except Exception: print(0); raise SystemExit(0)
-rows = d if isinstance(d, list) else [d]
-print(sum(1 for r in rows if want in (r.get("title") or "") and r.get("issue_type") == "decision"))
-' "$key"
-}
-
-# The dedupe ref that incident.sh derives from the title "undeclared repo test".
-NOREP_REF="incident:undeclared-repo-test"
-
-# -------
 echo
-echo "  positive control — single filing creates one ask:"
-printf 'first payload\n' | inc_ask >/dev/null
-n="$(count_undeclared_asks "$NOREP_REF")"
-is "single undeclared-repo incident creates exactly one ask" "1" "$n"
-
-testdb_reset; mkdir -p "$RUN"; > "$ILOG"
-
-# -------
-echo
-echo "  sequential dedupe — second filing produces no new ask after incident resolves:"
-# THE BLEED, REPRODUCED. An incident closes (operator said it was fixed); the next run
-# of the same test file (same ref) formerly created a new incident AND a new ask.
-# sp-jvlrs fixed the ask side (dedup on ref, not title).
-# sp-srgr6 fixed the incident side: the closed bead is found in the lookback window and
-# REOPENED rather than a new bead being filed. When the bead is reopened, the code never
-# reaches the "file new bead" path and the ask count stays at 1.
-# A second valid path: a new bead IS filed but the ask is found and commented on. Both
-# produce exactly one ask — the test asserts on that invariant, not on the internal path.
-# Step 1: file the first incident (creates incident-1 + ask-A).
-printf 'payload 1\n' | inc_ask >/dev/null
-# Extract the incident bead id from the log ("filed <id> for incident:...").
-_seq_id="$(grep 'incident: filed .* for incident:undeclared-repo-test' "$ILOG" \
-    | awk '{print $4}' | head -1)"
-# Close the incident so the bead-dedup lookback is exercised on the second filing.
-[ -n "${_seq_id:-}" ] && \
-    bd -C "$SPIRA_DB" close "$_seq_id" --reason "resolved in test" >/dev/null 2>&1 || true
-# Step 2: same test still has no repo — new run. Must not create a second ask.
-> "$ILOG"
-printf 'payload 2\n' | inc_ask >/dev/null
-n="$(count_undeclared_asks "$NOREP_REF")"
-is "two incidents (close in between) produce one ask" "1" "$n"
-# The recurrence path is "reopened from closed" (bead-level dedup) or "ask already open"
-# (ask-level dedup). Either proves no fresh ask was filed — accept both.
-recur_log="$(grep -cE 'reopened from closed|undeclared-repo ask already open' "$ILOG" 2>/dev/null || true)"
-is "second filing after close was a recurrence (no new ask or new bead)" "1" "$recur_log"
-
-testdb_reset; mkdir -p "$RUN"; > "$ILOG"
-
-# -------
-echo
-echo "  concurrent dedupe — two simultaneous filers create exactly one ask:"
-# TWO FILERS, NO SLEEP BETWEEN THEM. The intake flock serialises drain_one; the second
-# filer waits, then re-checks inside the lock and finds the ask the first just created.
-printf 'concurrent A\n' | inc_ask >/dev/null &
-pid_a=$!
-printf 'concurrent B\n' | inc_ask >/dev/null &
-pid_b=$!
-wait "$pid_a" || true
-wait "$pid_b" || true
-n="$(count_undeclared_asks "$NOREP_REF")"
-is "two concurrent undeclared-repo filers produce one ask" "1" "$n"
+echo "  positive control — single filing sends one mail:"
+printf 'first payload\n' | inc_norep
+n="$(n_norep_mails)"
+is "single undeclared-repo incident sends exactly one mail" "1" "$n"
 
 testdb_reset; mkdir -p "$RUN"; > "$ILOG"
 
 # ======================================================================================
 echo
-echo "provenance — undeclared-repo ask leads with unit+host+path, not the ref slug:"
+echo "provenance — undeclared-repo mail leads with unit+host+path, not the ref slug:"
 # ======================================================================================
 # THE REJECTED ASKS (sp-fzxk9, sp-dmjge). Four escalations in one hour were rejected as
 # unreadable. The leading line was the external_ref slug — a dedupe key, not a sentence.
-# "is this from a test container?" was asked three times. This test verifies the fix:
-# the ask title now leads with "<unit> on <host>: <path>", making the origin unmistakable.
-#
-# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail). Against the unfixed code,
-# the ask title starts with "undeclared repo: incident:..." — assertions 1 and 3 below
-# would fail. After the fix, the title starts with unit+host+path and the path appears.
-#
-# SPIRA_INCIDENT_PATH is passed explicitly so the path component is checkable; without it
-# the path renders ? (which is correct, but untestable for a specific value).
-
-# get_ask_title: return the title of the decision bead for this ref (the ask filed by
-# the undeclared-repo escalation). The search key is the stable ref substring, which
-# remains in the new title format as a substring (not the prefix).
-get_ask_title() {   # get_ask_title <ref> -> title of the filed ask
-    local key="undeclared repo: $(printf '%s' "$1" | cut -c1-72)"
-    bd -C "$SPIRA_DB" list --status open --limit 0 --json 2>/dev/null \
-      | python3 -c '
-import sys, json
-want = sys.argv[1]
-try: d = json.load(sys.stdin)
-except Exception: print(""); raise SystemExit(0)
-rows = d if isinstance(d, list) else [d]
-for r in rows:
-    if want in (r.get("title") or "") and r.get("issue_type") == "decision":
-        print(r.get("title", "")); break
-' "$key"
-}
-
-PROV_REF="incident:undeclared-repo-test"
-printf 'provenance payload\n' | inc_ask SPIRA_INCIDENT_PATH="$HERE/test-incident.sh" >/dev/null
-_ask_title="$(get_ask_title "$PROV_REF")"
-# The title must NOT start with the ref slug — that was the unreadable form.
-case "$_ask_title" in
-    "undeclared repo:"*) bad "provenance: ask title starts with ref slug (not provenance)" "got: $_ask_title" ;;
-    *)                   ok "provenance: ask title does not start with ref slug" ;;
+# "is this from a test container?" was asked three times. This verifies the fix:
+# the mail subject now leads with "<unit> on <host>: <path>", making the origin unmistakable.
+rm -rf "$NOREP_MAIL"
+printf 'provenance payload\n' | inc_norep SPIRA_INCIDENT_PATH="$HERE/test-incident.sh"
+_mail_subj="$(norep_mail_content | sed -n 's/^Subject:[[:space:]]*//p' | head -1)"
+case "$_mail_subj" in
+    "undeclared repo:"*) bad "provenance: mail subject starts with ref slug (not provenance)" "got: $_mail_subj" ;;
+    *)                   ok "provenance: mail subject does not start with ref slug" ;;
 esac
-# The title must contain ' on ' — the provenance format is '<unit> on <host>: <path>'.
-case "$_ask_title" in
-    *" on "*) ok "provenance: ask title contains provenance marker ' on '" ;;
-    *)        bad "provenance: ask title must contain ' on '" "got: $_ask_title" ;;
+case "$_mail_subj" in
+    *" on "*) ok "provenance: mail subject contains provenance marker ' on '" ;;
+    *)        bad "provenance: mail subject must contain ' on '" "got: $_mail_subj" ;;
 esac
-# The declared SPIRA_INCIDENT_PATH must appear — proving it reached the ask title.
-case "$_ask_title" in
-    *"test-incident.sh"*) ok "provenance: ask title contains the declared SPIRA_INCIDENT_PATH" ;;
-    *)  bad "provenance: declared path (test-incident.sh) must appear in ask title" "got: $_ask_title" ;;
+case "$_mail_subj" in
+    *"test-incident.sh"*) ok "provenance: mail subject contains the declared SPIRA_INCIDENT_PATH" ;;
+    *)  bad "provenance: declared path (test-incident.sh) must appear in mail subject" "got: $_mail_subj" ;;
 esac
 
 testdb_reset; mkdir -p "$RUN"; > "$ILOG"

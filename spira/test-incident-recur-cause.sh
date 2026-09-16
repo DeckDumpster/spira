@@ -48,19 +48,23 @@ INC="$HERE/incident.sh"
 B() { bd -C "$SPIRA_DB" "$@"; }
 mkdir -p "$TMP/run"
 
-# Stub the ask path so no real escalation fires.
-cat > "$TMP/ask.sh" <<'A'
+# Stub mail.sh so no real escalation fires but sends are recorded.
+mkdir -p "$TMP/inc-home"
+export MAIL_LOG="$TMP/mail.log"
+cat > "$TMP/inc-home/mail.sh" <<'M'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$ASK_LOG"
-A
-chmod +x "$TMP/ask.sh"
-export ASK_LOG="$TMP/ask.log"
+[ "${1:-}" = send ] || exit 0
+printf '%s\n' "$*" >> "$MAIL_LOG"
+cat >> "$MAIL_LOG"
+M
+chmod +x "$TMP/inc-home/mail.sh"
 
 file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
     local ref="$1" title="$2" payload="$3"; shift 3
     printf '%s' "$payload" | \
         env SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
-        SPIRA_INCIDENT_REF="$ref" SPIRA_ASK="$TMP/ask.sh" \
+        SPIRA_HOME="$TMP/inc-home" \
+        SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/rc-cause-test.lock" \
         SPIRA_INCIDENT_REPO= \
         "$@" \
@@ -113,7 +117,7 @@ is "first filing has no recurrence event (only recurrences write events)" "0" "$
 echo
 echo "2. named cause (suite-red) — bead created, second filing produces one recurrence event:"
 # ======================================================================================
-testdb_reset; mkdir -p "$TMP/run"; > "$ASK_LOG"
+testdb_reset; mkdir -p "$TMP/run"; > "$MAIL_LOG"
 ref2="incident:test-named-cause"
 file_incident "$ref2" "named cause test" "payload 1" SPIRA_INCIDENT_CAUSE=suite-red >/dev/null
 file_incident "$ref2" "named cause test" "payload 2" SPIRA_INCIDENT_CAUSE=suite-red >/dev/null
@@ -203,7 +207,7 @@ echo "5. Sin escalation fires at SIN_AT recurrences (events-trail count, not lab
 # and the Sin threshold is crossed.  SIN_AT is pinned to 3 (non-default; default is 5).
 # The ref is filed SIN_AT+1=4 times; the expected log sequence is recurred (1), (2), (3);
 # exactly one Sin ask must be recorded and the bead must carry the sin label.
-testdb_reset; mkdir -p "$TMP/run"; > "$ASK_LOG"
+testdb_reset; mkdir -p "$TMP/run"; > "$MAIL_LOG"
 rm -f "$TMP/run/incident.log"
 
 ref5="incident:test-sin-escalation"
@@ -235,8 +239,10 @@ want "incident.log contains recurred (2)" "recurred (2)" "$(cat "$_ilog" 2>/dev/
 want "incident.log contains recurred (3)" "recurred (3)" "$(cat "$_ilog" 2>/dev/null)"
 
 # (b) exactly one Sin ask must have been recorded.
+# Count only the args line (starts with 'send') to avoid double-counting body lines that
+# repeat the subject.
 _ask_count=0
-[ -f "$ASK_LOG" ] && _ask_count="$(grep -c 'recurred' "$ASK_LOG" 2>/dev/null || echo 0)"
+[ -f "$MAIL_LOG" ] && _ask_count="$(grep -cE '^send.*recurred' "$MAIL_LOG" 2>/dev/null || echo 0)"
 is "exactly one Sin ask recorded" "1" "$_ask_count"
 
 # (c) bead carries sin label.

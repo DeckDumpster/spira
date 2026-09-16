@@ -489,9 +489,8 @@ if ! REPO="$(repo_root "$REPO_NAME")" || [ ! -e "$REPO/.git" ]; then
     # bead sits open but unclaimed until a human corrects the label or the repo-map. Scar:
     # sp-nlhy accumulated four identical notes, one per summon, before a keyboard session
     # fixed the label by hand. (sp-4l0d)
-    # overseer is paired with the ask label at every creation site in cockpit/ask.sh; without
-    # it the bead lands in the needs-ryan-no-overseer livelock: excluded from every fayth
-    # predicate and absent from the decisions pane — invisible to both the loop and the operator.
+    # overseer keeps the bead visible in the decisions pane; without it the bead is excluded
+    # from every fayth predicate and invisible to the operator.
     bdq label add "$BEAD_ID" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
     bdq label add "$BEAD_ID" "overseer"          >/dev/null 2>&1 || true
     bdq note "$BEAD_ID" "Parked by aeon.sh: this bead carries repo:$REPO_NAME, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Labeled $SPIRA_ASK_LABEL and overseer — no aeon will claim it again until a human corrects the label or adds the repo to the map and removes that label. Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." >/dev/null 2>&1
@@ -1408,7 +1407,7 @@ PROMPT="$(sed -e "s|{{BEAD_ID}}|$BEAD_ID|g" -e "s|{{BRANCH}}|$BRANCH|g" \
               -e "s|{{LANDING}}|$LANDING_BRIEF|g" -e "s|{{DB}}|$SPIRA_DB|g" \
               -e "s|{{SPIKE_DIR}}|$SPIRA_SPIKE_DIR|g" -e "s|{{SPIKE_PATHS}}|$SPIRA_SPIKE_PATHS|g" \
               -e "s|{{SOP}}|$SPIRA_HOME/sop.sh|g" -e "s|{{INCIDENT}}|$SPIRA_HOME/incident.sh|g" \
-              -e "s|{{ASK}}|$SPIRA_NOTIFY|g" -e "s|{{SUITES}}|$SPIRA_HOME/suites.sh|g" \
+              -e "s|{{ASK}}|$SPIRA_HOME/mail.sh|g" -e "s|{{SUITES}}|$SPIRA_HOME/suites.sh|g" \
               -e "s|{{GROOM}}|$SPIRA_HOME/groomer.sh|g" \
               -e "s|{{SPIRA_HOME}}|$SPIRA_HOME|g" \
               -e "s|{{RUN}}|$SPIRA_RUN|g" \

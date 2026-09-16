@@ -163,8 +163,7 @@ stub sending.sh    'printf "%s" "${SENDING_OUT:-}"'
 stub governor.sh   'exit 0'
 stub gate.sh       'exit ${GATE_RC:-0}'
 stub reflect.sh    'true'
-stub ask.sh        'printf "%s\n" "$*" >> "$ASK_LOG"; true'
-export ASK_LOG="$TMP/ask.log"; : > "$ASK_LOG"
+stub mail.sh       '[ "${1:-}" = send ] || exit 0'
 
 cat > "$TMP/launch" <<'L'
 #!/usr/bin/env bash
@@ -185,7 +184,6 @@ sentinel() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_REPO="$REPO" \
     SPIRA_GOAL=sp-goal SPIRA_FAYTHS="t" SPIRA_INFERENCE_EVERY=0 \
-    SPIRA_NOTIFY="$SH/ask.sh" \
     SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
     SPIRA_SUMMON="$TMP/launch" \
     SPIRA_SKIP_RECLAIM=1 \

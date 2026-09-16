@@ -56,6 +56,10 @@ mkdir -p "$TMP/home"
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira" "$CLONE/cockpit"
 cp "$HERE/conf.sh" "$HERE/watchd.sh" "$HERE/mail-health.sh" "$CLONE/spira/"
+# NOMAIL: a clone without mail.sh — used for the "no delivery path" test case.
+NOMAIL="$TMP/nomail"
+mkdir -p "$NOMAIL"
+cp "$HERE/conf.sh" "$HERE/watchd.sh" "$NOMAIL/"
 cp -r "$ROOT/systemd" "$CLONE/systemd"
 
 # EVERY CONFIGURED VALUE IS PINNED TO A NON-DEFAULT. SPIRA_RUN would derive to
@@ -66,15 +70,16 @@ mkdir -p "$RUN" "$COCKPIT"
 CONF="$TMP/spira.conf"
 printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\n' "$RUN" "$COCKPIT" > "$CONF"
 
-# The escalation seam, stubbed to a log. What is asserted here is that an ask is RAISED, once,
-# and that it carries the event as its evidence — never what the cockpit does with it after.
+# The escalation seam, stubbed to a log. What is asserted here is that a mail is SENT, once,
+# and that it carries the event as its evidence — never what the mailbox does with it after.
 ASKS="$TMP/asks.log"; : > "$ASKS"
-cat > "$TMP/notify.sh" <<'N'
+cat > "$CLONE/spira/mail.sh" <<'MAILSH'
 #!/usr/bin/env bash
+[ "${1:-}" = send ] || exit 0
 [ -n "${NOTIFY_REFUSE:-}" ] && exit 1
-{ printf '=== ask\n'; printf '%s\n' "$@"; } >> "$NOTIFY_LOG"
-N
-chmod +x "$TMP/notify.sh"
+{ printf '=== ask\n'; printf '%s\n' "$@"; printf '\n'; cat; printf '\n'; } >> "$NOTIFY_LOG"
+MAILSH
+chmod +x "$CLONE/spira/mail.sh"
 
 # The two watchers. Both are `log` rows: something else writes the file, which is exactly what
 # this suite wants — a watcher whose events it can author line by line, with no unit to start.
@@ -89,7 +94,7 @@ FILTER="WAKEME"
 notify() {
     env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" \
         SPIRA_WATCHERS="${2:-$MAN}" SPIRA_ACTIONABLE="${FILTER_OVERRIDE-$FILTER}" \
-        SPIRA_NOTIFY="$TMP/notify.sh" SPIRA_NOTIFY_AGE="$1" \
+        SPIRA_NOTIFY_AGE="$1" \
         NOTIFY_LOG="$ASKS" ${NOTIFY_REFUSE:+NOTIFY_REFUSE=1} \
         bash "$CLONE/spira/watchd.sh" notify > "$TMP/out" 2> "$TMP/err"
 }
@@ -373,15 +378,15 @@ has "carrying what it was holding all along"           "$(cat "$ASKS")" "the cha
 
 reset
 env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
-    SPIRA_ACTIONABLE="$FILTER" SPIRA_NOTIFY="$TMP/nothing-here" SPIRA_NOTIFY_AGE=0 \
-    bash "$CLONE/spira/watchd.sh" notify >/dev/null 2>"$TMP/err"
+    SPIRA_ACTIONABLE="$FILTER" SPIRA_NOTIFY_AGE=0 \
+    bash "$NOMAIL/watchd.sh" notify >/dev/null 2>"$TMP/err"
 printf '%s nobody to tell\n' "$FILTER" >> "$A"
 env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
-    SPIRA_ACTIONABLE="$FILTER" SPIRA_NOTIFY="$TMP/nothing-here" SPIRA_NOTIFY_AGE=0 \
-    bash "$CLONE/spira/watchd.sh" notify >/dev/null 2>"$TMP/err"
+    SPIRA_ACTIONABLE="$FILTER" SPIRA_NOTIFY_AGE=0 \
+    bash "$NOMAIL/watchd.sh" notify >/dev/null 2>"$TMP/err"
 env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
-    SPIRA_ACTIONABLE="$FILTER" SPIRA_NOTIFY="$TMP/nothing-here" SPIRA_NOTIFY_AGE=0 \
-    bash "$CLONE/spira/watchd.sh" notify >/dev/null 2>"$TMP/err"; rc=$?
+    SPIRA_ACTIONABLE="$FILTER" SPIRA_NOTIFY_AGE=0 \
+    bash "$NOMAIL/watchd.sh" notify >/dev/null 2>"$TMP/err"; rc=$?
 is "no escalation path at all is a broken mechanism too" "3" "$rc"
 has "and it says the events reach nobody"              "$(cat "$TMP/err")" "reach nobody"
 
@@ -392,7 +397,7 @@ has "and it says the events reach nobody"              "$(cat "$TMP/err")" "reac
 echo
 echo "the verb takes no arguments"
 env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
-    SPIRA_ACTIONABLE="$FILTER" SPIRA_NOTIFY="$TMP/notify.sh" NOTIFY_LOG="$ASKS" \
+    SPIRA_ACTIONABLE="$FILTER" NOTIFY_LOG="$ASKS" \
     bash "$CLONE/spira/watchd.sh" notify --all >/dev/null 2>"$TMP/err"
 is "an unexpected argument is refused"                 "3" "$?"
 has "with the usage"                                   "$(cat "$TMP/err")" "usage: watchd.sh notify"

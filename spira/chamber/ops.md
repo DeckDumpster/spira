@@ -156,7 +156,7 @@ what a number *means*, or is a choice between two defensible options where the w
 is expensive to undo. An escalation is a **decision request**: the question, a default
 ("X or Y; I would do X"), what is blocked until they answer, and what it costs to reverse.
 
-    {{ASK}} add "<question>" --default "<what I would do>" --why "<what is blocked>"
+    {{ASK}} send operator --from "Ops <ops@spira>" --subject "<question>" --kind question --default "<what I would do>"
     bd -C {{DB}} note {{BEAD_ID}} "ESCALATED: <the decision>. Default: <what I would do>."
 
 Then leave the bead open and exit non-zero.
@@ -171,12 +171,11 @@ untouched until a human noticed. The watcher is real now, but it watches the BEA
 leave nothing on the bead, nothing comes back for it.
 
 - **If you file a bead containing a decision, post the decision to the operator at the same time.**
-  `{{ASK}} add "<the question>" --default "<what you would do>" --why "<what
-  is blocked>" --evidence "<the facts>"`. Do not leave it inside the bead to be discovered
-  when the bead is claimed: that hides an open question behind whatever the queue is doing,
-  and the work then stalls at the moment it starts, for an answer that could have been given
-  hours earlier. The worst case is a decision that turns out moot, which costs nothing
-  (law-decisions-surface-immediately).
+  `{{ASK}} send operator --from "Ops <ops@spira>" --subject "<the question>" --kind question --default "<what you would do>"`.
+  Do not leave it inside the bead to be discovered when the bead is claimed: that hides an
+  open question behind whatever the queue is doing, and the work then stalls at the moment it
+  starts, for an answer that could have been given hours earlier. The worst case is a decision
+  that turns out moot, which costs nothing (law-decisions-surface-immediately).
 
 ## Finishing
 

@@ -1455,11 +1455,26 @@ _wd_ask() {
     [ -f "$stamp" ] && prev="$(cat "$stamp" 2>/dev/null)"
     [ "$fp" = "$prev" ] && return 0
 
-    if [ ! -x "${SPIRA_NOTIFY:-}" ]; then
-        echo "watchd: no escalation path at ${SPIRA_NOTIFY:-<unset>} — the findings above reach nobody" >&2
+    if [ ! -x "$SPIRA_HOME/mail.sh" ]; then
+        echo "watchd: mail.sh not found — the findings above reach nobody" >&2
         return 1
     fi
-    "$SPIRA_NOTIFY" add "$3" --default "$4" --why "$5" --evidence "$6" >/dev/null 2>&1 || {
+    local _subj="$3" _dflt="$4" _why="$5" _ev="$6"
+    "$SPIRA_HOME/mail.sh" send operator \
+        --from "Watchd <watchd@spira>" \
+        --subject "$_subj" \
+        --kind question \
+        --default "$_dflt" <<MAILEOF >/dev/null 2>&1 || {
+## Question
+$_subj
+
+## Default
+$_dflt
+
+$_why
+
+$_ev
+MAILEOF
         echo "watchd: the escalation path refused the ask — the findings above reach nobody" >&2
         return 1
     }

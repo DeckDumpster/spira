@@ -1,28 +1,15 @@
 #!/usr/bin/env bash
 #
-# test-pilgrimage.sh — a completed pilgrimage announces itself as an EVENT.
+# test-pilgrimage.sh — a completed pilgrimage announces itself via mail.sh.
 #
 #   ./test-pilgrimage.sh
-#
-# The announcement leg had no suite at all, which is how it spent a day writing the wrong
-# kind of bead: `PILGRIMAGE COMPLETE — <id>: <title>` went out as `ask.sh insight`, and two
-# of the eleven beads in the insights queue were outcomes wearing an insight's label
-# (sp-94h, hq-5enm). An insight is what an agent LEARNED and might become law; an outcome is
-# what HAPPENED. They are read by different people for different reasons and they now have
-# different bins.
-#
-# So this is not a test of pilgrimage detection — `bd epic status` already answers that. It
-# is a test of what the notice IS, end to end through the real ask.sh onto a real bd, and of
-# the two properties that make it safe to emit at all: it is created CLOSED, and it carries
-# no labels, so it can never be claimed by an aeon as work.
 #
 # EVERY CASE HAS ITS NEGATIVE. An epic with an open child must emit NOTHING, and the suite
 # proves the check could have seen something by running the positive first — an assertion of
 # absence from a probe that was never pointed at anything is indistinguishable from a pass
 # (law-absence-needs-a-positive-control).
 # defect: sp-obd sp-1wzp
-# covers: spira/pilgrimage.sh cockpit/ask.sh
-# scar: a completed pilgrimage was filed as ask.sh insight rather than a closed event bead; outcomes and insights are read by different people for different reasons.
+# covers: spira/pilgrimage.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -50,13 +37,15 @@ child() {   # child <id> <status> <parent>
     printf '{"id":"%s","title":"child %s","description":"d","status":"%s","issue_type":"task","labels":["spira","plan"],"dependencies":[{"issue_id":"%s","depends_on_id":"%s","type":"parent-child"}]}\n' \
         "$1" "$1" "$2" "$1" "$3"
 }
-events() { "$BD" -C "$DB" list --all --limit 0 -t event --json 2>/dev/null | sed -n '/^[[{]/,$p'; }
-field()  { events | python3 -c 'import json,sys;r=json.load(sys.stdin);print((r[0] if r else {}).get(sys.argv[1]) or "")' "$1"; }
-n_events() { events | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))'; }
 status_of() { "$BD" -C "$DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
     | python3 -c 'import json,sys;d=json.load(sys.stdin);print((d[0] if isinstance(d,list) else d).get("status") or "")'; }
 
-run() { SPIRA_DB="$DB" SPIRA_NOTIFY="$HERE/../cockpit/ask.sh" "$HERE/pilgrimage.sh" check 2>&1; }
+MAILDIR="$TMP/maildir"
+mail_reset() { rm -rf "$MAILDIR"; }
+n_mails() { ls "$MAILDIR/operator/new/" 2>/dev/null | wc -l | tr -d ' '; }
+mail_content() { cat "$MAILDIR/operator/new/"* 2>/dev/null; }
+
+run() { SPIRA_DB="$DB" SPIRA_MAIL="$MAILDIR" "$HERE/pilgrimage.sh" check 2>&1; }
 
 # ======================================================================================
 echo "a complete pilgrimage — the notice is an event"
@@ -68,34 +57,17 @@ $(child sp-d2 closed sp-done)
 JSONL
 
 out="$(run)"
-want "the run announces it"        "PILGRIMAGE COMPLETE" "$out"
-eq   "and wrote exactly one event" "1" "$(n_events)"
-eq   "of kind pilgrimage.complete" "pilgrimage.complete" "$(field event_kind)"
-# The epic id lives in `event_target`, not only spelled into the title, so a reader can
-# filter the stream on the thing the outcome happened TO.
-eq   "targeted at the epic"        "sp-done" "$(field target)"
-want "titled with what happened"   "PILGRIMAGE COMPLETE — sp-done" "$(field title)"
-want "and carrying which children closed" "sp-d1" "$(field description)"
-
-# THE TWO PROPERTIES THAT MAKE IT SAFE TO EMIT. An OPEN event carrying the plan's labels is
-# claimable by an aeon, which would put a completion notice in front of a worker as work.
-eq "it is created closed" "closed" "$(field status)"
-eq "carrying no labels at all" "[]" \
-   "$(events | python3 -c 'import json,sys;r=json.load(sys.stdin);print(json.dumps((r[0] if r else {}).get("labels") or []))')"
-labels="$(events | python3 -c 'import json,sys;r=json.load(sys.stdin);print(",".join((r[0] if r else {}).get("labels") or []))')"
-# Not a grep over the row: `created_by` is `overseer` on everything this harness writes.
-nowant "never labelled insight — that queue is for what was LEARNED" "insight" ",$labels,"
-nowant "never labelled overseer — that label is what DECISIONS matches" "overseer" ",$labels,"
-
-ready="$("$BD" -C "$DB" ready --limit 0 --exclude-type epic --label spira,plan \
-          --exclude-label spira-poison,needs-ryan --json 2>/dev/null | sed -n '/^[[{]/,$p')"
-nowant "the sentinel's ready predicate cannot see it" "$(field id)" "${ready:-[]}"
+want "the run announces it"                   "PILGRIMAGE COMPLETE" "$out"
+eq   "and sent exactly one notification"       "1"       "$(n_mails)"
+want "notification names the epic"             "PILGRIMAGE COMPLETE — sp-done" "$(mail_content)"
+want "notification carries the target"         "target: sp-done"  "$(mail_content)"
+want "and carries which children closed"       "sp-d1"            "$(mail_content)"
 
 eq "and the epic itself is closed once the notice is out" "closed" "$(status_of sp-done)"
 
 out="$(run)"
 nowant "a second pass announces nothing — the marker holds" "PILGRIMAGE COMPLETE" "$out"
-eq    "and writes no second event" "1" "$(n_events)"
+eq    "and sends no second notification"       "1"       "$(n_mails)"
 
 # ======================================================================================
 echo
@@ -108,23 +80,24 @@ $(child sp-p1 closed sp-part)
 $(child sp-p2 open   sp-part)
 JSONL
 
+mail_reset
 out="$(run)"
 nowant "no notice while a child is open" "PILGRIMAGE COMPLETE" "$out"
-eq     "and no event"                    "0" "$(n_events)"
+eq     "and no notification sent"         "0" "$(n_mails)"
 eq     "the epic stays open"             "open" "$(status_of sp-part)"
 
 # ======================================================================================
 echo
 echo "an epic outside Spira's partition is not ours to announce"
 
-testdb_reset
+testdb_reset; mail_reset
 testdb_seed <<JSONL
 {"id":"sp-alien","title":"someone else's epic","description":"d","status":"open","issue_type":"epic","labels":["repo:town"]}
 $(child sp-a1 closed sp-alien)
 JSONL
 out="$(run)"
 nowant "an epic without the spira label is skipped" "PILGRIMAGE COMPLETE" "$out"
-eq     "and nothing is written about it"            "0" "$(n_events)"
+eq     "and nothing is written about it"            "0" "$(n_mails)"
 eq     "it is left open for whoever owns it"        "open" "$(status_of sp-alien)"
 
 # ======================================================================================
@@ -161,8 +134,9 @@ printf 'lrepo | %s | push | origin/main | |\n' "$git_work" > "$LMAP"
 export SPIRA_RUN="$TMP/lrun"; mkdir -p "$SPIRA_RUN/landstate"
 
 run_repo() {
-    SPIRA_DB="$DB" SPIRA_NOTIFY="$HERE/../cockpit/ask.sh" \
+    SPIRA_DB="$DB" \
     SPIRA_HOME="$HERE" \
+    SPIRA_MAIL="$MAILDIR" \
     SPIRA_HOME_REPO=lrepo \
     SPIRA_REPO="$git_work" \
     SPIRA_REPO_MAP="$LMAP" \
@@ -219,8 +193,8 @@ git -C "$TMP/lrun/wt-pr-c1" add -A
 git -C "$TMP/lrun/wt-pr-c1" commit -q -m "feat: sp-pr-c1 — work"
 # No landstate entry for sp-pr-c1.
 rm -f "$SPIRA_RUN/landstate/sp-pr-c1"
-out="$(SPIRA_DB="$DB" SPIRA_NOTIFY="$HERE/../cockpit/ask.sh" \
-       SPIRA_HOME="$HERE" SPIRA_HOME_REPO=lrepo \
+out="$(SPIRA_DB="$DB" \
+       SPIRA_HOME="$HERE" SPIRA_MAIL="$MAILDIR" SPIRA_HOME_REPO=lrepo \
        SPIRA_REPO="$git_work" SPIRA_REPO_MAP="$PRMAP" SPIRA_RUN="$TMP/lrun" \
        "$HERE/pilgrimage.sh" check 2>&1)"
 want "a pr-mode branch is not checked — the epic closes regardless" "PILGRIMAGE COMPLETE" "$out"

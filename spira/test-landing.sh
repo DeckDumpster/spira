@@ -76,12 +76,11 @@ mkdir -p "$RUN/worktree" "$SH"
 cp "$HERE"/*.sh "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
-# THE OUTCOME STREAM IS RECORDED, NOT MERELY SWALLOWED, and it is stubbed EXPLICITLY. Left to
-# conf.sh's default this resolves to `$(dirname $SPIRA_HOME)/cockpit/ask.sh`, which is absent
-# under $TMP and so happens to be inert — a suite writing into the operator's live database
-# on a box where that path DOES resolve is not a risk worth leaving to a coincidence of where
-# the fixture was built (law-gates-run-in-a-clean-environment).
-stub ask.sh 'printf "%s\n" "$*" >> "$EMITTED"'
+# THE OUTCOME STREAM IS RECORDED, NOT MERELY SWALLOWED, and it is stubbed EXPLICITLY. Without
+# a stub, mail.sh would write to $SPIRA_MAIL on the host — a suite writing into the operator's
+# live mailbox is not a risk worth leaving to an unset variable
+# (law-gates-run-in-a-clean-environment).
+stub mail.sh '[ "${1:-}" = send ] || exit 0; printf "%s\n" "$*" >> "$EMITTED"; cat >> "$EMITTED"; printf "\n" >> "$EMITTED"'
 export EMITTED="$TMP/events"; : > "$EMITTED"
 events() { cat "$EMITTED" 2>/dev/null; }
 
@@ -173,7 +172,6 @@ landing() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
-    SPIRA_NOTIFY="$SH/ask.sh" SPIRA_ASK="$SH/ask.sh" \
         bash "$SH/landing.sh" 2>&1
 }
 notes_of() { B show "$1" 2>/dev/null; }
@@ -223,8 +221,8 @@ want "the same pass also advances the checkout humans read" "skew: refreshed to"
 # scrolls off the health pane below the fourth row; the event is the only record still
 # answerable tomorrow. It is emitted AFTER the push, so what it asserts is the ancestry just
 # proved rather than the close that preceded it (law-closed-is-not-landed).
-want "the land is recorded as an event"  "--kind bead.landed"   "$(events)"
-want "against the bead that landed"      "--target sp-plain"    "$(events)"
+want "the land is recorded as an event"  "kind: bead.landed"   "$(events)"
+want "against the bead that landed"      "target: sp-plain"    "$(events)"
 drop_branch sp-plain
 
 # A GATE FAILURE ALSO RECORDS AN EVENT, and the negative is the landing above: a gate that
@@ -233,8 +231,8 @@ drop_branch sp-plain
 stub gate.sh 'echo "gate: VERDICT=FAIL reason=stub-fail branch=$1 repo=${2:-?}" >&2; exit 1'
 seed; branch sp-gfail; out="$(landing)"
 want "a failed gate reopens the bead"          "reopened sp-gfail — failed the gate" "$out"
-want "and the reopen is recorded as an event"  "--kind bead.reopened" "$(events)"
-want "against the bead that was reopened"      "--target sp-gfail"    "$(events)"
+want "and the reopen is recorded as an event"  "kind: bead.reopened" "$(events)"
+want "against the bead that was reopened"      "target: sp-gfail"    "$(events)"
 drop_branch sp-gfail
 cp "$TMP/gate-full.sh" "$SH/gate.sh"   # restore for the tests that follow
 
@@ -971,21 +969,14 @@ exit 1
 GH
 chmod +x "$SH/ghpr"
 
-# landing_pr — runs a pass over the pr-mode repository with a live ask stub.
-export ASK_LOG="$TMP/ask.log"
-cat > "$TMP/ask.sh" <<'ASKSH'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$ASK_LOG"
-ASKSH
-chmod +x "$TMP/ask.sh"
+# landing_pr — runs a pass over the pr-mode repository; mail.sh stub captures notifications.
 
 landing_pr() {
     rm -f "$RUN/landing.progress"
-    : > "$ASK_LOG"
+    : > "$EMITTED"
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/ghpr" \
-    SPIRA_NOTIFY="$TMP/ask.sh" SPIRA_ASK="$TMP/ask.sh" \
         bash "$SH/landing.sh" 2>&1
 }
 
@@ -1095,45 +1086,43 @@ mkrepo2 eight
 cat > "$SH/repo-map" <<MAP
 eight | $TMP/eight | pr | |
 MAP
-rm -f "$GH_STATE"; : > "$GH_LOG"; : > "$ASK_LOG"
+rm -f "$GH_STATE"; : > "$GH_LOG"; : > "$EMITTED"
 seed; branch_in "$TMP/eight" sp-rot eight
 out="$(landing_pr)"
 want "the bounded case opens its pull request first" "opened a pull request for spira/sp-rot" "$out"
 
 advance_pr "$TMP/eight"
+: > "$EMITTED"
 out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/ghpr" \
-    SPIRA_NOTIFY="$TMP/ask.sh" SPIRA_ASK="$TMP/ask.sh" \
     SPIRA_PR_REFRESH_MAX=1 bash "$SH/landing.sh" 2>&1)"
 want "the first refresh is spent"    "refreshed spira/sp-rot" "$out"
-is   "and nothing is escalated yet"  "" "$(cat "$ASK_LOG")"
+is   "and nothing is escalated yet"  "" "$(cat "$EMITTED")"
 
 advance_pr "$TMP/eight"
 before="$(git -C "$TMP/eight" rev-parse spira/sp-rot)"
-: > "$ASK_LOG"; : > "$RUN/landing.progress"
+: > "$EMITTED"; : > "$RUN/landing.progress"
 out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/ghpr" \
-    SPIRA_NOTIFY="$TMP/ask.sh" SPIRA_ASK="$TMP/ask.sh" \
     SPIRA_PR_REFRESH_MAX=1 bash "$SH/landing.sh" 2>&1)"
 nowant "a branch past its cap is not rebased again"  "refreshed spira/sp-rot" "$out"
 is     "and its tip is left where it was"            "$before" "$(git -C "$TMP/eight" rev-parse spira/sp-rot)"
 want   "and it is escalated instead"                 "escalated sp-rot" "$out"
-want   "and the ask carries a default Ryan can take" "reopen sp-rot at P0" "$(cat "$ASK_LOG")"
-want   "and names the branch and its repository"     "spira/sp-rot in eight" "$(cat "$ASK_LOG")"
-want   "and leads with what the bead was for"        "WHAT THIS BEAD IS FOR" "$(cat "$ASK_LOG")"
+want   "and the ask carries a default Ryan can take" "reopen sp-rot at P0" "$(cat "$EMITTED")"
+want   "and names the branch and its repository"     "spira/sp-rot in eight" "$(cat "$EMITTED")"
+want   "and leads with what the bead was for"        "WHAT THIS BEAD IS FOR" "$(cat "$EMITTED")"
 is     "and an escalation is not a movement either"  "" "$(mailbox_pr)"
 
 # ONCE, NOT EVERY PASS. A stuck branch stays stuck until someone decides about it, and a
 # check that says so every two minutes is a check Ryan learns to scroll past
 # (law-alerts-must-be-actionable). The marker's state is what remembers.
 advance_pr "$TMP/eight"
-: > "$ASK_LOG"
+: > "$EMITTED"
 out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/ghpr" \
-    SPIRA_NOTIFY="$TMP/ask.sh" SPIRA_ASK="$TMP/ask.sh" \
     SPIRA_PR_REFRESH_MAX=1 bash "$SH/landing.sh" 2>&1)"
 want "an escalated branch says so rather than escalating again" "already escalated" "$out"
-is   "and Ryan is not paged a second time"                      "" "$(cat "$ASK_LOG")"
+is   "and Ryan is not paged a second time"                      "" "$(cat "$EMITTED")"
 
 # Restore repo-map to the fixture push-mode repo for any tests that follow.
 cat > "$SH/repo-map" <<MAP

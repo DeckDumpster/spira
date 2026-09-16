@@ -344,7 +344,6 @@ spira_conf_defaults() {
     # row it gave back is what INFLOW is built on.
     : "${SPIRA_COCKPIT_TRACE_LINES:=2}"
     : "${SPIRA_COCKPIT_STALE_S:=120}"
-    : "${SPIRA_NOTIFY:=$SPIRA_COCKPIT/ask.sh}"
     # HOW LONG AN ACTIONABLE EVENT MAY WAIT WITH NO READER before it is escalated through a
     # channel that needs no session, in seconds. `watchd.sh notify` is what enforces it.
     #

@@ -55,7 +55,7 @@ mkdir -p "$RUN/worktree" "$SH/chamber"
 
 # The program under test, run out of its own directory so it sources the real lib.sh but
 # finds stubbed sub-programs beside it.
-cp "$HERE/sentinel.sh" "$HERE/lib.sh" "$HERE/landing.sh" "$HERE/conf.sh" "$SH/"
+cp "$HERE/sentinel.sh" "$HERE/lib.sh" "$HERE/landing.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'printf "%s" "${PILGRIMAGE_OUT:-}"'
 stub strand.sh     'printf "%s" "${STRAND_OUT:-}"'
@@ -63,16 +63,17 @@ stub sending.sh    'printf "%s" "${SENDING_OUT:-}"'
 stub governor.sh   'exit 0'
 stub gate.sh       'exit ${GATE_RC:-0}'
 stub reflect.sh    'touch "$SPIRA_RUN/reflect.fired"'
-# The ask is RECORDED, not merely swallowed: half of what poisoning must do is reach the
-# operator, and an ask.sh that exits 0 without a trace would pass whether or not it ran.
+# mail.sh is RECORDED, not merely swallowed: half of what poisoning must do is reach the
+# operator, and a stub that exits 0 without a trace would pass whether or not it ran.
 # ASK_CLOSES is the seam that stages a race no fixture can otherwise produce: a bead that is
 # dispatchable when the pass snapshots the set and CLOSED by the time the loop reaches it. The
-# stub closes the named bead the first time it is asked about any OTHER bead, which is exactly
+# stub closes the named bead the first time it is called about any OTHER bead, which is exactly
 # a landing finishing mid-pass.
-stub ask.sh        'printf "%s\n" "$*" >> "$ASK_LOG"
+stub mail.sh       '[ "${1:-}" = send ] || exit 0
+printf "%s\n" "$*" >> "$MAIL_LOG"
+cat >> "$MAIL_LOG"
 if [ -n "${ASK_CLOSES:-}" ]; then case "$*" in *"$ASK_CLOSES"*) ;;
-    *) bd -C "$SPIRA_DB" close "$ASK_CLOSES" --reason landed >/dev/null 2>&1 ;; esac; fi
-true'
+    *) bd -C "$SPIRA_DB" close "$ASK_CLOSES" --reason landed >/dev/null 2>&1 ;; esac; fi'
 
 # TWO PERSONAS, EACH WITH A PARTITION OF ITS OWN, because a single-persona chamber cannot
 # tell a valve that sweeps THE CHAMBER apart from one that sweeps a hardcoded partition —
@@ -85,7 +86,7 @@ printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK
 printf 'FAYTH_LABELS="spira,incident"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/tinc.fayth"
 
 B() { bd -C "$SPIRA_DB" "$@"; }
-export ASK_LOG="$TMP/ask.log"; : > "$ASK_LOG"
+export MAIL_LOG="$TMP/mail.log"; : > "$MAIL_LOG"
 cat > "$TMP/launch" <<'L'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$LAUNCH_LOG"
@@ -105,7 +106,6 @@ sentinel() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_REPO="$REPO" \
     SPIRA_GOAL=sp-goal SPIRA_FAYTHS="${ROSTER:-t tinc}" SPIRA_INFERENCE_EVERY=0 \
-    SPIRA_NOTIFY="$SH/ask.sh" \
     SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
     SPIRA_SUMMON="$TMP/launch" \
     SPIRA_SKIP_RECLAIM=1 \
@@ -201,18 +201,18 @@ ispoisoned  "a dispatchable bead at the threshold is poisoned"  sp-orphan
 want        "and the pass says so"          "poisoned sp-orphan after 3 attempts" "$out"
 # sp-attempt-N labels removed (sp-lzt); sentinel no longer reports per-cause breakdown.
 # deleted: "unrecorded x3 (3 attempts)" — old label-derived cause summary in ask title.
-want        "and the operator is asked what to do about it"  "3 in_progress transition(s) without landing (3 attempts)" "$(cat "$ASK_LOG")"
+want        "and the operator is asked what to do about it"  "3 in_progress transition(s) without landing (3 attempts)" "$(cat "$MAIL_LOG")"
 # THE POISONING IS RECORDED AS AN EVENT, separate from the ask. The ask is read and answered;
 # the event is an outcome, recorded by the machinery, moved on from. The transition fires once
 # — on entry to poisoned; the label is now on the bead, so every later pass takes the other
 # branch. This is the first half of the rate limiting the sentinel enforces; spira_event's own
 # cooldown is the second.
-want "and the poisoning is recorded as an event" "--kind bead.poisoned" "$(cat "$ASK_LOG")"
-want "against the bead that poisoned"            "--target sp-orphan"   "$(cat "$ASK_LOG")"
+want "and the poisoning is recorded as an event" "kind: bead.poisoned" "$(cat "$MAIL_LOG")"
+want "against the bead that poisoned"            "target: sp-orphan"   "$(cat "$MAIL_LOG")"
 # AND ONLY ON THE TRANSITION. The next pass sees spira-poison on the bead and takes the `;;`
 # branch — the spira_event call is never reached.
-: > "$ASK_LOG"; out="$(sentinel)"
-nowant "an already-poisoned bead emits nothing" "--kind bead.poisoned" "$(cat "$ASK_LOG")"
+: > "$MAIL_LOG"; out="$(sentinel)"
+nowant "an already-poisoned bead emits nothing" "kind: bead.poisoned" "$(cat "$MAIL_LOG")"
 ispoisoned  "a goal child at the threshold is poisoned too"    sp-kid
 notpoisoned "and a bead below the threshold is left alone"     sp-young
 want        "the check names the size of the set it examined"  "CHECK4 examining" "$out"
@@ -304,12 +304,12 @@ want   "the same bead unpoisoned is ready for its fayth" "t: 1 ready" "$out"
 # remedy is for, and the only way back onto the board, since every partition excludes
 # spira-poison — and must NOT re-arm the ask.
 # --------------------------------------------------------------------------------------
-seed_poison; : > "$ASK_LOG"; out="$(sentinel)"
+seed_poison; : > "$MAIL_LOG"; out="$(sentinel)"
 is "the first pass over the threshold asks exactly once" "1" \
-   "$(grep -cE 'sp-orphan.*3 attempts' "$ASK_LOG")"
+   "$(grep -cE '^send.*Spira bead sp-orphan.*3 attempts' "$MAIL_LOG")"
 out="$(sentinel)"
 is "a second pass over the same count asks nothing more" "1" \
-   "$(grep -cE 'sp-orphan.*3 attempts' "$ASK_LOG")"
+   "$(grep -cE '^send.*Spira bead sp-orphan.*3 attempts' "$MAIL_LOG")"
 
 # THE REMEDY IS APPLIED, exactly as the ask instructs. Nothing else changes: the count still
 # stands, which is the state the old code re-asked from on every pass.
@@ -317,7 +317,7 @@ B label remove sp-orphan spira-poison >/dev/null 2>&1
 out="$(sentinel)"
 ispoisoned "the bead is poisoned again, because it is still over the threshold" sp-orphan
 is "but clearing the label did NOT re-arm the ask" "1" \
-   "$(grep -cE 'sp-orphan.*3 attempts' "$ASK_LOG")"
+   "$(grep -cE '^send.*Spira bead sp-orphan.*3 attempts' "$MAIL_LOG")"
 
 # ...and a genuinely NEW failure does ask again, which is the positive control on all of the
 # above: a suppression that never lifts is indistinguishable from an ask that never fires.
@@ -326,7 +326,7 @@ B label remove sp-orphan spira-poison >/dev/null 2>&1
 cycle sp-orphan 1
 out="$(sentinel)"
 is "a fourth attempt is a new fact and asks again" "1" \
-   "$(grep -cE 'sp-orphan.*4 attempts' "$ASK_LOG")"
+   "$(grep -cE '^send.*Spira bead sp-orphan.*4 attempts' "$MAIL_LOG")"
 
 # --------------------------------------------------------------------------------------
 # A CLOSED BEAD NEVER POISONS AND NEVER ASKS. dispatchable_open excludes closed beads, but it
@@ -338,7 +338,7 @@ is "a fourth attempt is a new fact and asks again" "1" \
 # dispatchable_open iterates the roster in order, so the builder's bead is asked about first
 # and the incident bead is still ahead of the loop when the stub closes it.
 # --------------------------------------------------------------------------------------
-seed_poison; : > "$ASK_LOG"
+seed_poison; : > "$MAIL_LOG"
 testdb_seed <<'JSONL'
 {"id":"sp-late","title":"closed while the pass ran","status":"open","issue_type":"task","labels":["spira","incident"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
@@ -348,7 +348,7 @@ out="$(ASK_CLOSES=sp-late sentinel)"
 is          "the fixture really did close it mid-pass" "closed" "$(status_of sp-late)"
 ispoisoned  "the bead that was still open is poisoned" sp-orphan
 notpoisoned "the one that closed mid-pass is not"      sp-late
-nowant "and the operator is not asked to drop landed work" "Spira bead sp-late" "$(cat "$ASK_LOG")"
+nowant "and the operator is not asked to drop landed work" "Spira bead sp-late" "$(cat "$MAIL_LOG")"
 # sp-lzt: attempts_of() subtracts the close event; sp-late's count drops to 2 (<POISON_AT=3)
 # when the bead closes mid-pass, so sentinel silently skips it rather than printing a
 # "closed while this pass ran" message. The core property still holds: not poisoned, not asked.
@@ -371,7 +371,7 @@ want "and says no bead is being examined" "no bead is dispatchable" "$out"
 # The repo fixture has origin/main set up from the test preamble. spira_landref resolves it
 # for the commit-count check.
 # --------------------------------------------------------------------------------------
-seed_poison; rm -rf "$RUN/poison-asked"; : > "$ASK_LOG"
+seed_poison; rm -rf "$RUN/poison-asked"; : > "$MAIL_LOG"
 # Create the branch with no commits ahead of main.
 git -C "$REPO" checkout -q -b "spira/sp-orphan" 2>/dev/null
 git -C "$REPO" checkout -q main 2>/dev/null
@@ -379,13 +379,13 @@ out="$(sentinel)"
 # sp-attempt-N labels retired (sp-lzt); sentinel no longer derives per-cause summary.
 # deleted: "unrecorded x3 (3 attempts)" — old label-derived charge_summary format.
 want "ask title shows attempt count not 'failed'" \
-     "3 in_progress transition(s) without landing (3 attempts)" "$(cat "$ASK_LOG")"
+     "3 in_progress transition(s) without landing (3 attempts)" "$(cat "$MAIL_LOG")"
 nowant "title does not contain 'failed N times'" \
-       "failed 3 times" "$(cat "$ASK_LOG")"
+       "failed 3 times" "$(cat "$MAIL_LOG")"
 want "BRANCH line says no commits when branch is empty" \
-     "no commits" "$(cat "$ASK_LOG")"
+     "no commits" "$(cat "$MAIL_LOG")"
 nowant "BRANCH line does not claim work exists" \
-       "with work on it" "$(cat "$ASK_LOG")"
+       "with work on it" "$(cat "$MAIL_LOG")"
 
 # Positive control: a branch with one commit shows the count, not "no commits".
 # seed_poison resets the database so sp-orphan loses spira-poison and is again dispatchable.
@@ -393,9 +393,9 @@ git -C "$REPO" checkout -q "spira/sp-orphan" 2>/dev/null
 git -C "$REPO" commit -q --allow-empty -m "one unit of work" 2>/dev/null
 git -C "$REPO" checkout -q main 2>/dev/null
 seed_poison; rm -rf "$RUN/poison-asked"
-: > "$ASK_LOG"; out="$(sentinel)"
-want "branch with one commit reports its count" "1 commit" "$(cat "$ASK_LOG")"
-nowant "and does not say no commits" "no commits" "$(cat "$ASK_LOG")"
+: > "$MAIL_LOG"; out="$(sentinel)"
+want "branch with one commit reports its count" "1 commit" "$(cat "$MAIL_LOG")"
+nowant "and does not say no commits" "no commits" "$(cat "$MAIL_LOG")"
 git -C "$REPO" branch -D "spira/sp-orphan" 2>/dev/null || true
 
 # --------------------------------------------------------------------------------------

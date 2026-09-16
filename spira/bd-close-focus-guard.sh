@@ -294,7 +294,7 @@ fi
 
 printf 'Before closing, file a bead that will surface the finding:\n\n' >&2
 printf '  Insight (a record, created closed — no action required):\n' >&2
-printf '    cockpit/ask.sh insight "<what was found>" --why "<why it matters>"\n\n' >&2
+printf '    "$SPIRA_HOME/mail.sh" send operator --from "<you>" --subject "<what was found>" --kind note\n\n' >&2
 printf '  Open or deferred bead (work to be done later):\n' >&2
 printf '    bd -C "$SPIRA_DB" create --title "<finding>" ...\n\n' >&2
 printf 'Then include the bead id in the close reason.\n\n' >&2

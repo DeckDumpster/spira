@@ -26,7 +26,7 @@
 # (law-gates-run-in-a-clean-environment). Both ask.sh (which writes the label) and
 # verify-asks.sh (which reads it) source conf.sh, which honours the exported value.
 #
-# covers: cockpit/verify-asks.sh cockpit/ask.sh
+# covers: cockpit/verify-asks.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 COCKPIT="$(cd "$HERE/../cockpit" && pwd -P)"

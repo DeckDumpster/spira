@@ -80,7 +80,6 @@ inc() {
         SPIRA_INCIDENT_LOCK="$LOCK" \
         SPIRA_RUN="$RUN" \
         SPIRA_NOTIFY="$NOOP" \
-        SPIRA_ASK="$NOOP" \
         "$@" bash "$HERE/incident.sh" file "dedup test incident" -
 }
 

@@ -62,7 +62,6 @@ landing() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
-    SPIRA_NOTIFY="$TMP/no-such-ask.sh" SPIRA_ASK="$TMP/no-such-ask.sh" \
         bash "$SH/landing.sh" 2>&1
 }
 

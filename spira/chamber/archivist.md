@@ -66,8 +66,8 @@ was worth doing. So the taxonomy is not "make a bead" — it is this:
 | intention the session stated but no evidence it was executed | a **note on the relevant bead** as an outstanding obligation; if no bead exists, a new bead — never filed as a result |
 
 ```sh
-{{NOTIFY}} add "<the question>" --default "<what I would do>" --why "<what is blocked>" --evidence "<the facts>"
-{{NOTIFY}} insight "<what was learned>" --why "<why it matters>" --from "the archivist from session {{SESSION}}"
+{{NOTIFY}} send operator --from "Archivist <archivist@spira>" --subject "<the question>" --kind question --default "<what I would do>"
+{{NOTIFY}} send operator --from "Archivist <archivist@spira>" --subject "<what was learned>" --kind note
 bd -C {{DB}} note <bead-id> --stdin <<'NOTE'
 <what was in flight, and where it was left>
 NOTE
@@ -148,7 +148,7 @@ If the evidence *was* in the transcript — if the session ran the command and p
 Insight: brain session ran sweep check at turn 52 and reported: "0 beads filed, exit 0".
 [Source: turn 52 output. Recorded by archivist from session brain]
 ```
-Filed with: `{{NOTIFY}} insight "..." --from "the archivist from session {{SESSION}}"`
+Filed with: `{{NOTIFY}} send operator --from "Archivist <archivist@spira>" --subject "..." --kind note`
 
 The difference is not whether the claim is true. The difference is whether **you observed the evidence**. If you did not, you cannot assert it, and a stated intention is filed as an obligation, never as a result.
 

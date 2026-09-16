@@ -49,13 +49,16 @@ INC="$HERE/incident.sh"
 B() { bd -C "$SPIRA_DB" "$@"; }
 mkdir -p "$TMP/run"
 
-# The ask stub records calls rather than reaching a real escalation path.
-cat > "$TMP/ask.sh" <<'A'
+# mail.sh stub records sends rather than reaching a real escalation path.
+mkdir -p "$TMP/sinex-home"
+export MAIL_LOG="$TMP/mail.log"
+cat > "$TMP/sinex-home/mail.sh" <<'M'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$ASK_LOG"
-A
-chmod +x "$TMP/ask.sh"
-export ASK_LOG="$TMP/ask.log"
+[ "${1:-}" = send ] || exit 0
+printf '%s\n' "$*" >> "$MAIL_LOG"
+cat >> "$MAIL_LOG"
+M
+chmod +x "$TMP/sinex-home/mail.sh"
 
 labels_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
@@ -88,7 +91,8 @@ file_incident() {
     local ref="$1" title="$2" payload="$3"; shift 3
     printf '%s' "$payload" | \
         env SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
-        SPIRA_INCIDENT_REF="$ref" SPIRA_ASK="$TMP/ask.sh" \
+        SPIRA_HOME="$TMP/sinex-home" \
+        SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/sinex-test.lock" \
         SPIRA_INCIDENT_REPO= \
         "$@" \
@@ -108,7 +112,7 @@ echo "the positive control — a non-exempt ref reaches SIN:"
 # the sin label was correctly withheld and this positive control asserted against a state the
 # loop never produced.
 testdb_reset
-: > "$ASK_LOG"
+: > "$MAIL_LOG"
 SIN_AT=3
 ref="incident:test-nonexempt-sin"
 title="non-exempt incident"
@@ -133,7 +137,7 @@ if [ -n "$bid" ]; then
     has_label "$bid" sin && ok "the non-exempt bead gets the sin label" \
         || bad "the non-exempt bead gets the sin label" "labels: $(labels_of "$bid")"
     is "the recurrence counter reached $SIN_AT" "$SIN_AT" "$(recur_max "$bid")"
-    want "the ask was filed" "recurred" "$(cat "$ASK_LOG" 2>/dev/null)"
+    want "the ask was filed" "recurred" "$(cat "$MAIL_LOG" 2>/dev/null)"
 fi
 
 # ======================================================================================
@@ -142,7 +146,7 @@ echo "an exempt ref does NOT reach SIN:"
 # ======================================================================================
 # Same SIN_AT+1 total filings as the positive control, to reach recurs_of == SIN_AT.
 testdb_reset
-: > "$ASK_LOG"
+: > "$MAIL_LOG"
 ref="incident:test-exempt-sin"
 title="exempt incident"
 for i in $(seq 1 "$(( SIN_AT + 1 ))"); do
@@ -165,7 +169,7 @@ if [ -n "$bid" ]; then
     has_label "$bid" sin && bad "the exempt bead does NOT get the sin label" "labels: $(labels_of "$bid")" \
         || ok "the exempt bead does NOT get the sin label"
     is "the recurrence counter still advances" "$SIN_AT" "$(recur_max "$bid")"
-    is "the ask was NOT filed" "" "$(cat "$ASK_LOG" 2>/dev/null | tr -d '[:space:]')"
+    is "the ask was NOT filed" "" "$(cat "$MAIL_LOG" 2>/dev/null | tr -d '[:space:]')"
 fi
 
 # ======================================================================================

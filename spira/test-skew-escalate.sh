@@ -84,7 +84,6 @@ run_skew() {
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_HOME="$REPO/spira" \
         SPIRA_REPO="$REPO" \
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
@@ -101,7 +100,6 @@ run_skew_ro() {
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_HOME="$REPO/spira" \
         SPIRA_REPO="$REPO" \
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
@@ -117,7 +115,6 @@ run_skew_shared() {
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_HOME="$REPO/spira" \
         SPIRA_REPO="$REPO" \
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
@@ -132,15 +129,17 @@ run_skew_shared() {
 echo
 echo "positive control — successful notify appears on stdout:"
 # ===========================================================================
-GOOD_NOTIFY="$TMP/good-notify.sh"
-cat > "$GOOD_NOTIFY" <<'EOF'
+GOOD_HOME="$TMP/good-home"
+mkdir -p "$GOOD_HOME"
+cat > "$GOOD_HOME/mail.sh" <<'EOF'
 #!/usr/bin/env bash
-echo "sp-xxxx"
-exit 0
+[ "${1:-}" = send ] || exit 0
+echo "mail sent"
+cat >/dev/null
 EOF
-chmod +x "$GOOD_NOTIFY"
+chmod +x "$GOOD_HOME/mail.sh"
 
-good_out="$(run_skew SPIRA_NOTIFY="$GOOD_NOTIFY")"; good_rc=$?
+good_out="$(run_skew SPIRA_HOME="$GOOD_HOME")"; good_rc=$?
 # NOT-LATEST was found; exit 1 is correct.
 is  "positive control exits 1 (divergence found)" "1" "$good_rc"
 # The escalation confirmation must appear on stdout so skew.log has it.
@@ -150,24 +149,28 @@ want "positive control: escalation noted on stdout" "escalated" "$good_out"
 echo
 echo "no escalation path — warning appears on stdout, not silently dropped:"
 # ===========================================================================
-no_path_out="$(run_skew SPIRA_NOTIFY=/nonexistent/ask.sh)"; no_path_rc=$?
+NO_HOME="$TMP/no-home"
+mkdir -p "$NO_HOME"
+# no mail.sh in NO_HOME
+
+no_path_out="$(run_skew SPIRA_HOME="$NO_HOME")"; no_path_rc=$?
 is  "no-path exits 1 (divergence found)" "1" "$no_path_rc"
-want "no-path warning appears on stdout" "no escalation path" "$no_path_out"
-want "no-path output names the bad path" "/nonexistent/ask.sh" "$no_path_out"
+want "no-path warning appears on stdout" "mail.sh not found" "$no_path_out"
 
 # ===========================================================================
 echo
 echo "failing notify — failure message appears on stdout, returns non-zero:"
 # ===========================================================================
-BAD_NOTIFY="$TMP/bad-notify.sh"
-cat > "$BAD_NOTIFY" <<'EOF'
+BAD_HOME="$TMP/bad-home"
+mkdir -p "$BAD_HOME"
+cat > "$BAD_HOME/mail.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "bad-notify: simulated failure from test fixture" >&2
 exit 1
 EOF
-chmod +x "$BAD_NOTIFY"
+chmod +x "$BAD_HOME/mail.sh"
 
-fail_out="$(run_skew SPIRA_NOTIFY="$BAD_NOTIFY")"; fail_rc=$?
+fail_out="$(run_skew SPIRA_HOME="$BAD_HOME")"; fail_rc=$?
 is  "failing notify exits 1" "1" "$fail_rc"
 want "failing notify message on stdout"  "escalation failed" "$fail_out"
 want "failing notify rc included"        "rc=1"              "$fail_out"
@@ -175,49 +178,52 @@ want "failing notify output included"    "simulated failure" "$fail_out"
 
 # ===========================================================================
 echo
-echo "read-only mode — check without --escalate must not call SPIRA_NOTIFY:"
+echo "read-only mode — check without --escalate must not call mail.sh:"
 # ===========================================================================
 SENTINEL_DIR="$(mktemp -d "$TMP/sentinel-XXXXX")"
-SENTINEL_NOTIFY="$TMP/sentinel-notify.sh"
-cat > "$SENTINEL_NOTIFY" <<EOF
+SENTINEL_HOME="$TMP/sentinel-home"
+mkdir -p "$SENTINEL_HOME"
+cat > "$SENTINEL_HOME/mail.sh" <<EOF
 #!/usr/bin/env bash
 touch "$SENTINEL_DIR/fired"
 exit 0
 EOF
-chmod +x "$SENTINEL_NOTIFY"
+chmod +x "$SENTINEL_HOME/mail.sh"
 
-ro_out="$(run_skew_ro SPIRA_NOTIFY="$SENTINEL_NOTIFY")"; ro_rc=$?
+ro_out="$(run_skew_ro SPIRA_HOME="$SENTINEL_HOME")"; ro_rc=$?
 is  "read-only exits 1 (divergence found)" "1" "$ro_rc"
-[ ! -f "$SENTINEL_DIR/fired" ] && ok "read-only: SPIRA_NOTIFY not called" \
-    || bad "read-only: SPIRA_NOTIFY not called" "sentinel file was created"
+[ ! -f "$SENTINEL_DIR/fired" ] && ok "read-only: mail.sh not called" \
+    || bad "read-only: mail.sh not called" "sentinel file was created"
 want   "read-only: NOT-LATEST finding still printed" "NOT-LATEST" "$ro_out"
 nowant "read-only: no 'escalated' line"              "escalated"  "$ro_out"
-nowant "read-only: no 'no escalation path' line"     "no escalation path" "$ro_out"
+nowant "read-only: no 'mail.sh not found' line"      "mail.sh not found" "$ro_out"
 
 # ===========================================================================
 echo
 echo "condition-keyed dedupe — same condition, same run dir, not re-escalated:"
 # ===========================================================================
-DEDUPE_NOTIFY="$TMP/dedupe-notify.sh"
+DEDUPE_HOME="$TMP/dedupe-home"
 DEDUPE_COUNT="$TMP/dedupe-count"
 printf '0' > "$DEDUPE_COUNT"
-cat > "$DEDUPE_NOTIFY" <<EOFN
+mkdir -p "$DEDUPE_HOME"
+cat > "$DEDUPE_HOME/mail.sh" <<EOFN
 #!/usr/bin/env bash
+[ "\${1:-}" = send ] || exit 0
 count=\$(cat "$DEDUPE_COUNT" 2>/dev/null || echo 0)
 printf '%d' \$((count+1)) > "$DEDUPE_COUNT"
-echo "sp-deduped"
-exit 0
+echo "mail sent"
+cat >/dev/null
 EOFN
-chmod +x "$DEDUPE_NOTIFY"
+chmod +x "$DEDUPE_HOME/mail.sh"
 
 DEDUPE_RUN="$(mktemp -d "$TMP/dedup-run-XXXXX")"
 
-first_out="$(run_skew_shared "$DEDUPE_RUN" SPIRA_NOTIFY="$DEDUPE_NOTIFY")"; first_rc=$?
+first_out="$(run_skew_shared "$DEDUPE_RUN" SPIRA_HOME="$DEDUPE_HOME")"; first_rc=$?
 is  "dedupe first call exits 1 (divergence)" "1" "$first_rc"
 want "dedupe first call: escalated" "escalated" "$first_out"
 is  "dedupe first call: notify fired once" "1" "$(cat "$DEDUPE_COUNT")"
 
-second_out="$(run_skew_shared "$DEDUPE_RUN" SPIRA_NOTIFY="$DEDUPE_NOTIFY")"; second_rc=$?
+second_out="$(run_skew_shared "$DEDUPE_RUN" SPIRA_HOME="$DEDUPE_HOME")"; second_rc=$?
 is  "dedupe second call exits 1 (divergence still present)" "1" "$second_rc"
 nowant "dedupe second call: no re-escalation" "escalated" "$second_out"
 is  "dedupe second call: notify still fired exactly once total" "1" "$(cat "$DEDUPE_COUNT")"

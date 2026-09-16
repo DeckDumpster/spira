@@ -100,7 +100,6 @@ SIN_EXEMPT="${SPIRA_SIN_EXEMPT:-0}"
 INCIDENT_CAUSE="${SPIRA_INCIDENT_CAUSE:-unrecorded}"
 INCIDENT_CAUSE="$(printf '%s' "$INCIDENT_CAUSE" | tr -c 'a-zA-Z0-9-' '-' | sed 's/-\{2,\}/-/g;s/^-//;s/-$//')"
 [ -n "$INCIDENT_CAUSE" ] || INCIDENT_CAUSE="unrecorded"
-ASK="${SPIRA_ASK:-$SPIRA_NOTIFY}"
 mkdir -p "$SPOOL" "$(dirname "$ILOG")"
 
 ilog() { printf '%s incident: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$ILOG"; }
@@ -346,16 +345,27 @@ $(head -c 2000 "$pf")" >/dev/null 2>&1
                 secs=$(( $(date -u +%s) - $(date -u -d "$first" +%s 2>/dev/null || echo 0) ))
                 [ "$secs" -gt 0 ] && age=" over $(( secs / 3600 ))h $(( (secs % 3600) / 60 ))m"
             fi
-            # The vital signs are at the HEAD of the payload and --evidence-file keeps the
-            # TAIL, so hand it a head-trimmed copy rather than the whole body.
-            evf="$(mktemp)"; head -c 2000 "$pf" > "$evf" 2>/dev/null || true
-            [ -x "$ASK" ] && "$ASK" add \
-                "$_prov — recurred $n times$age with no fix holding. Mute it, or keep paging?" \
-                --default "mute this alert and leave $id open for Ops to work unpaged; keep paging only if you want a decision on every recurrence" \
-                --why "$id is \"$title\". It has fired $n times$age and each recurrence pages you while filing nothing new. Its current vital signs are below — if they show nothing you must act on, muting is the right answer." \
-                --evidence-file "$evf" \
-                >/dev/null 2>&1
-            rm -f "$evf"
+            # The vital signs are at the HEAD of the payload; trim to 2000 bytes so the mail body stays bounded.
+            local _sin_subj="$_prov — recurred $n times$age with no fix holding. Mute it, or keep paging?"
+            local _sin_dflt="mute this alert and leave $id open for Ops to work unpaged; keep paging only if you want a decision on every recurrence"
+            local _sin_ev; _sin_ev="$(head -c 2000 "$pf" 2>/dev/null || true)"
+            if [ -x "$SPIRA_HOME/mail.sh" ]; then
+                "$SPIRA_HOME/mail.sh" send operator \
+                    --from "Incident <incident@spira>" \
+                    --subject "$_sin_subj" \
+                    --kind question \
+                    --default "$_sin_dflt" <<MAILEOF >/dev/null 2>&1
+## Question
+$_sin_subj
+
+## Default
+$_sin_dflt
+
+$id is "$title". It has fired $n times$age and each recurrence pages you while filing nothing new. Its current vital signs are below — if they show nothing you must act on, muting is the right answer.
+
+$_sin_ev
+MAILEOF
+            fi
             ilog "$ref is a SIN at $n recurrences — escalated once"
         fi
         printf '%s' "$id"
@@ -454,56 +464,22 @@ $(head -c 2000 "$pf")" >/dev/null 2>&1
         bdq label add "$id" "needs-repo-triage" >/dev/null 2>&1
         bdq note "$id" "Repository not declared — SPIRA_INCIDENT_REPO was not set. An aeon claiming this bead works it in the home-repo fallback, which may be the wrong checkout. Set the repo dimension with: bd set-state $id repo=<name>." >/dev/null 2>&1
         if [ "${SIN_EXEMPT:-0}" != 1 ]; then
-            # DEDUPE: the ref is the stable key — not the title, which embeds the incident bead
-            # id in some code paths and would produce a distinct ask per incident of the same
-            # test file. Two concurrent filers reaching this point are already serialised by
-            # drain_one's flock, so the check-and-create pair is atomic.
-            #
-            # TITLE VS SEARCH KEY. The ask title leads with provenance so the operator
-            # immediately knows which unit, host and path filed it — the leading ref slug was
-            # rejected as unreadable four times in one hour (sp-fzxk9, sp-dmjge). The dedup
-            # search key (_ask_subj) is still a substring of the new title, so existing asks
-            # are found and commented on rather than creating duplicates.
-            _ask_subj="undeclared repo: $(printf '%s' "$ref" | cut -c1-72)"
-            _ask_title="$_prov — $_ask_subj"
-            _ask_db="${COCKPIT_DB:-$SPIRA_DB}"
-            _ask_open="$(bd -C "$_ask_db" list --status open \
-                --label "$SPIRA_ASK_LABEL" --limit 0 --json 2>/dev/null \
-              | json_only \
-              | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit(0)
-rows = d if isinstance(d, list) else [d]
-want = sys.argv[1]
-for r in rows:
-    if want in (r.get("title") or ""):
-        print(r["id"]); break
-' "$_ask_subj" 2>/dev/null)"
-            if [ -n "${_ask_open:-}" ]; then
-                bd -C "$_ask_db" comments add "$_ask_open" \
-                    "Seen again at $(date -u +%Y-%m-%dT%H:%M:%SZ): $id ($ref). Add a repo: label before an aeon claims it." \
-                    >/dev/null 2>&1
-                ilog "$ref undeclared-repo ask already open as $_ask_open — noted recurrence"
-            elif [ -x "$ASK" ]; then
-                # THE PREDICATE EXITS 0 WHEN THE INCIDENT BEAD GETS A repo: LABEL OR IS CLOSED.
-                # $id is expanded NOW (the ask records the specific bead to watch); $COCKPIT_DB
-                # expands at sweep time in moot-sweep.sh. An empty response from bd show signals
-                # that the database is unreachable: the predicate exits non-zero and the ask stays
-                # open rather than silently reading as cleared
-                # (law-absence-needs-a-positive-control).
-                local _moot_pred
-                _moot_pred=$(cat <<MOOTEOF
-_d=\$(bd -C "\$COCKPIT_DB" show $id --json 2>/dev/null); [ -n "\$_d" ] || { echo 'probe: no output from bd show — database may be unreachable'; exit 1; }; printf '%s\n' "\$_d" | python3 -c 'import json,sys; t=sys.stdin.read().strip(); d=(json.loads(t) if t else []); r=(d[0] if isinstance(d,list) and d else (d if isinstance(d,dict) and d else None)); valid=r is not None and "id" in r; s=r.get("status","?") if valid else "?"; ll=(r.get("labels") or []) if valid else []; rp=[x for x in ll if x.startswith("repo:")]; ok=valid and (s!="open" or bool(rp)); msg=("cleared: "+(rp[0] if rp else "bead "+s)) if ok else ("live: status="+s+", no repo: label") if valid else "probe failed: bd show returned error or no valid bead"; print(msg); sys.exit(0 if ok else 1)'
-MOOTEOF
-)
-                "$ASK" add \
-                    "$_ask_title" \
-                    --default "add repo:<name> to $id once you know which checkout owns the code this incident is about" \
-                    --why "$id was filed without a repo: label. Without one an aeon works it in the home-repo fallback, which has not held the harness since sp-9tal." \
-                    --moot-when "$_moot_pred" \
-                    >/dev/null 2>&1
-            fi
+            local _ask_subj="undeclared repo: $(printf '%s' "$ref" | cut -c1-72)"
+            local _ask_title="$_prov — $_ask_subj"
+            local _ask_dflt="add repo:<name> to $id once you know which checkout owns the code this incident is about"
+            [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
+                --from "Incident <incident@spira>" \
+                --subject "$_ask_title" \
+                --kind question \
+                --default "$_ask_dflt" <<MAILEOF >/dev/null 2>&1
+## Question
+$_ask_title
+
+## Default
+$_ask_dflt
+
+$id was filed without a repo: label. Without one an aeon works it in the home-repo fallback, which may be the wrong checkout.
+MAILEOF
         fi
         ilog "$ref labelled needs-repo-triage — repo undeclared"
     fi

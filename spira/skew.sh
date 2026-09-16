@@ -289,25 +289,17 @@ check() {
 # fell further behind (sp-624f). The condition key is versioned (v2:) so a stamp written by
 # an older scheme cannot match and causes one re-escalation on upgrade.
 #
-# The key is passed to ask.sh as --ref, which checks whether an open bead already carries
-# that external_ref. A match bumps the recurrence count on the open bead rather than filing
-# a new one; a new condition or a returning condition (ask was closed/answered) files fresh.
-# This is the mechanism that makes the timer comment above the service unit accurate:
-# BEHIND=1 and DIRTY=1 are distinct keys, so closing the BEHIND ask does not suppress the
-# DIRTY one and vice versa.
+# Each condition key is a stable, versioned identifier. BEHIND=1 and DIRTY=1 are distinct
+# keys, so a mail about one condition does not suppress the other.
 # =======================================================================================
 escalate() {
     local condition_key="$1" findings="$2"
 
     # Check whether this condition has already been escalated in this run. The condition
     # key is versioned and stable, so a repeated call with the same key in the same
-    # SPIRA_RUN should not fire SPIRA_NOTIFY again — ask.sh will bump a recurrence count
-    # if the condition persists across runs, but within one run we escalate once.
+    # SPIRA_RUN should not fire again — within one run we escalate once.
     local escalate_stamp="$SPIRA_RUN/skew.escalated-$(printf '%s' "$condition_key" | cksum | cut -d' ' -f1)"
     if [ -f "$escalate_stamp" ]; then
-        # Already reported this condition in this run. The finding text may have changed
-        # (commit count, file list), but the condition itself — which TYPES of findings —
-        # has not, so do not re-call ask.sh.
         echo "skew: condition already reported — $(cat "$escalate_stamp" 2>/dev/null || echo "$condition_key")"
         return 0
     fi
@@ -315,10 +307,10 @@ escalate() {
     # Stdout goes to skew.log under the service unit. Stderr does too (both streams are
     # captured), but everything below writes to stdout so the delivery path is explicit and
     # does not depend on StandardError being redirected — which has changed once already.
-    if [ ! -x "${SPIRA_NOTIFY:-}" ]; then
-        echo "skew: no escalation path at ${SPIRA_NOTIFY:-(unset)} — the finding above reaches nobody"
+    if [ ! -x "$SPIRA_HOME/mail.sh" ]; then
+        echo "skew: mail.sh not found — the finding above reaches nobody"
         return 1
-fi
+    fi
 
     local default_action
     if [[ "$condition_key" == *"MANIFEST-MISMATCH=1"* ]]; then
@@ -326,13 +318,23 @@ fi
     else
         default_action="activate the latest published release — download the latest tarball and run activate.sh with it"
     fi
+    local _subj="The Spira copy in force is not the code that landed"
     local notify_out notify_rc
-    notify_out="$("$SPIRA_NOTIFY" add \
-        "The Spira copy in force is not the code that landed" \
-        --ref "skew:${condition_key}" \
-        --default "$default_action" \
-        --why "beads can be closed, gated and merged while the behaviour they changed never takes effect — the tree that was edited is self-consistent, so nothing downstream reports a fault" \
-        --evidence "$findings" 2>&1)"; notify_rc=$?
+    notify_out="$("$SPIRA_HOME/mail.sh" send operator \
+        --from "Skew check <skew@spira>" \
+        --subject "$_subj" \
+        --kind question \
+        --default "$default_action" <<MAILEOF 2>&1)"; notify_rc=$?
+## Question
+$_subj
+
+## Default
+$default_action
+
+beads can be closed, gated and merged while the behaviour they changed never takes effect — the tree that was edited is self-consistent, so nothing downstream reports a fault
+
+$findings
+MAILEOF
 
     if [ "$notify_rc" != 0 ]; then
         echo "skew: escalation failed (rc=$notify_rc): $notify_out"
@@ -340,8 +342,8 @@ fi
     fi
     # Write the stamp so subsequent calls in this run do not re-escalate the same condition.
     mkdir -p "$SPIRA_RUN" 2>/dev/null || true
-    printf '%s' "$notify_out" > "$escalate_stamp" 2>/dev/null || true
-    echo "skew: escalated — $notify_out"
+    printf '%s' "$condition_key" > "$escalate_stamp" 2>/dev/null || true
+    echo "skew: escalated — $condition_key"
 }
 
 # =======================================================================================

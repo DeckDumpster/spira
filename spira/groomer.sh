@@ -170,7 +170,7 @@ case "$cmd" in
     # policy (law-escalate-decisions-not-problems). This refusal is in the code, not in
     # a sentence in the brief.
     printf 'groomer: REFUSED — closing a bead as unwanted is a product decision, not a hygiene operation.\n' >&2
-    printf 'groomer: escalate to Ryan: cockpit/ask.sh add "<question>" --default "close <id> as unwanted" --why "<reason>"\n' >&2
+    printf 'groomer: escalate to Ryan: "$SPIRA_HOME/mail.sh" send operator --from "<sender>" --subject "<question>" --kind question --default "close <id> as unwanted"\n' >&2
     exit 2
     ;;
 

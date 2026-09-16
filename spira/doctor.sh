@@ -645,10 +645,9 @@ else
     fi
 fi
 unset _dr_snap _dr_snap_age
-[ -x "$SPIRA_NOTIFY" ] && OK "escalations deliver through $SPIRA_NOTIFY" \
-    || FAIL "no escalation path at $SPIRA_NOTIFY" \
-            "An ask that reaches nobody is worse than an unanswered question
-        (law-answers-need-a-delivery-path). Set SPIRA_NOTIFY in ${CONF:-spira.conf}."
+[ -x "$SPIRA_HOME/mail.sh" ] && OK "mail delivery path ready at $SPIRA_HOME/mail.sh" \
+    || FAIL "mail.sh not found at $SPIRA_HOME/mail.sh" \
+            "A mail that reaches nobody is worse than an unanswered question (law-answers-need-a-delivery-path)."
 # THE VIEW FOLLOWER is optional — empty means no follower — but WHEN SET, it must exist and
 # be executable, or a manifest row silently renders as `off` while the operator believes it is
 # configured. The contract: `<prog> watch` loops forever (the unit starts it), `<prog> status`

@@ -192,7 +192,7 @@ Stop and escalate when:
 
 An escalation is a decision request: the question, a default, and what is blocked.
 
-    {{ASK}} add "<question>" --default "<what I would do>" --why "<what is blocked>"
+    {{ASK}} send operator --from "Maechen <maechen@spira>" --subject "<question>" --kind question --default "<what I would do>"
 
 Then write the closing log entry (Step 5) and exit non-zero.
 

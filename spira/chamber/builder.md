@@ -19,12 +19,11 @@ When this branch is finished, {{LANDING}}.
 ## How you must work
 
 - **If you file a bead containing a decision, post the decision to the operator at the same time.**
-  `{{ASK}} add "<the question>" --default "<what you would do>" --why "<what
-  is blocked>" --evidence "<the facts>"`. Do not leave it inside the bead to be discovered
-  when the bead is claimed: that hides an open question behind whatever the queue is doing,
-  and the work then stalls at the moment it starts, for an answer that could have been given
-  hours earlier. The worst case is a decision that turns out moot, which costs nothing
-  (law-decisions-surface-immediately).
+  `{{ASK}} send operator --from "Builder <builder@spira>" --subject "<the question>" --kind question --default "<what you would do>"`.
+  Do not leave it inside the bead to be discovered when the bead is claimed: that hides an
+  open question behind whatever the queue is doing, and the work then stalls at the moment it
+  starts, for an answer that could have been given hours earlier. The worst case is a decision
+  that turns out moot, which costs nothing (law-decisions-surface-immediately).
 
 - Work only on this bead. If you discover other work, **file it as a bead**
   (`bd -C {{DB}} create ... -l spira,plan` plus the `repo:` label naming the

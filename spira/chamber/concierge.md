@@ -47,20 +47,18 @@ Reading anything is unrestricted — go straight to `bd`. Everything below is fo
 
 `--for <persona>` is the whole design: partition labels come from that persona's own
 predicate, so they can never disagree. A `PreToolUse` fence refuses a hand-rolled
-`bd create`; the override is `BEAD_CONTRACT_CONSIDERED`, and wanting it usually means you
-wanted `ask.sh`.
+`bd create`; the override is `BEAD_CONTRACT_CONSIDERED`.
 
 Three things are deliberately outside it: reading, Ops working an incident, and anything
-addressed to Ryan — which goes through the cockpit, because that path carries the channel
+addressed to Ryan — which goes through mail, because that path carries the channel
 his answer comes back on.
 
 ```
-{{ASK}} add "<question>"     --default "<what I would do>" --why "<what is blocked>"
-{{ASK}} decide "<the choice>" --default ... --why ...
-{{ASK}} insight "<what was learned>" --why "<why it matters>"
-{{ASK}} suit "<statute-slug>" --why "<evidence>"
-{{ASK}} list [needs-you|insights|events|all]
-{{ASK}} answered <id> "<verdict>"
+{{ASK}} send operator --from "Concierge <concierge@spira>" --subject "<question>" --kind question --default "<what I would do>"
+{{ASK}} send operator --from "Concierge <concierge@spira>" --subject "<what was learned>" --kind note
+{{ASK}} send operator --from "Concierge <concierge@spira>" --subject "<suit subject>" --kind suit
+{{ASK}} list operator
+{{ASK}} read operator/<id>
 {{COCKPIT}}/reply.sh <id> "<text>"      answer him in the bead's own thread
 {{COCKPIT}}/resolve.sh <id>             close something you established yourself; do not page him
 ```

@@ -146,32 +146,35 @@ printf 'starved\t-\tescalate\t1 bead(s) ready and no live aeon; 0 of 3 aeon slot
     > "$TMP/fixture_b.tsv"
 echo "sentinel ok" > "$TMP/run/sentinel.log"
 
-ARGS_A="$TMP/ask-args-a"; ARGS_B="$TMP/ask-args-b"
-# Unquoted heredoc so $ARGS_A/$ARGS_B expand now; \${1:-} escapes the script content.
-cat > "$TMP/ask_a.sh" <<STUB
+ARGS_A="$TMP/mail-args-a"; ARGS_B="$TMP/mail-args-b"
+mkdir -p "$TMP/home-a" "$TMP/home-b"
+# Unquoted heredoc so $ARGS_A/$ARGS_B expand now; \${1:-} and \$@ escape as script literals.
+cat > "$TMP/home-a/mail.sh" <<STUB
 #!/usr/bin/env bash
-[ "\${1:-}" = add ] || exit 0
+[ "\${1:-}" = send ] || exit 0
 printf '%s\n' "\$@" >> "$ARGS_A"
+cat >> "$ARGS_A"
 STUB
-cat > "$TMP/ask_b.sh" <<STUB
+cat > "$TMP/home-b/mail.sh" <<STUB
 #!/usr/bin/env bash
-[ "\${1:-}" = add ] || exit 0
+[ "\${1:-}" = send ] || exit 0
 printf '%s\n' "\$@" >> "$ARGS_B"
+cat >> "$ARGS_B"
 STUB
-chmod +x "$TMP/ask_a.sh" "$TMP/ask_b.sh"
+chmod +x "$TMP/home-a/mail.sh" "$TMP/home-b/mail.sh"
 
 env \
     SPIRA_RUN="$TMP/run" \
     SPIRA_STRAND_GRACE=0 \
     SPIRA_LABELS=spira,plan \
-    SPIRA_NOTIFY="$TMP/ask_a.sh" \
+    SPIRA_HOME="$TMP/home-a" \
     bash "$HERE/strand.sh" check --from "$TMP/fixture_a.tsv" >/dev/null 2>&1
 
 env \
     SPIRA_RUN="$TMP/run" \
     SPIRA_STRAND_GRACE=0 \
     SPIRA_LABELS=spira,incident \
-    SPIRA_NOTIFY="$TMP/ask_b.sh" \
+    SPIRA_HOME="$TMP/home-b" \
     bash "$HERE/strand.sh" check --from "$TMP/fixture_b.tsv" >/dev/null 2>&1
 
 args_a="$(cat "$ARGS_A" 2>/dev/null || true)"

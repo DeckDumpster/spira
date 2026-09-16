@@ -258,13 +258,27 @@ print(sum(1 for i in rows if want in (i.get("title") or "")))' "$subject" 2>/dev
 # put nine identical decisions in his pane in one day.
 spira_ask_machinery() {  # <bead> <branch> <repo> <outcome> <reason> <count> <gate output>
     local id="$1" br="$2" repo="$3" outcome="$4" reason="$5" n="$6" out="$7"
-    [ -n "${SPIRA_NOTIFY:-}" ] && [ -x "${SPIRA_NOTIFY:-/nonexistent}" ] || return 0
+    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     ask_already_open "$br cannot be judged" && return 0
-    "$SPIRA_NOTIFY" add \
-        "$br cannot be judged: $outcome x$n in a row ($reason)" \
-        --default "raise the budget or clear the contention this reason names, then let the next pass take it; if it is not obvious, run \`$SPIRA_HOME/gate.sh $br $repo\` by hand and read the whole output" \
-        --why "$outcome means the machinery could not reach a verdict — the branch has NOT been judged and has NOT been charged, and $id is not at fault. It has now failed to be judged $n times, so this is no longer a queue clearing itself. Nothing on $br can land until a verdict is reached, and every other branch of $repo is behind the same fault." \
-        --evidence "$(printf '%s' "$out" | tail -20)" >/dev/null 2>&1
+    local _subj="$br cannot be judged: $outcome x$n in a row ($reason)"
+    local _dflt="raise the budget or clear the contention this reason names, then let the next pass take it; if it is not obvious, run \`$SPIRA_HOME/gate.sh $br $repo\` by hand and read the whole output"
+    local _why="$outcome means the machinery could not reach a verdict — the branch has NOT been judged and has NOT been charged, and $id is not at fault. It has now failed to be judged $n times, so this is no longer a queue clearing itself. Nothing on $br can land until a verdict is reached, and every other branch of $repo is behind the same fault."
+    local _ev; _ev="$(printf '%s' "$out" | tail -20)"
+    "$SPIRA_HOME/mail.sh" send operator \
+        --from "Landing gate <gate@spira>" \
+        --subject "$_subj" \
+        --kind question \
+        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
+## Question
+$_subj
+
+## Default
+$_dflt
+
+$_why
+
+$_ev
+MAILEOF
 }
 
 # spira_ask_rebase_loop — escalate a bead whose rebase keeps failing.
@@ -275,15 +289,25 @@ spira_ask_machinery() {  # <bead> <branch> <repo> <outcome> <reason> <count> <ga
 # machinery cycling on itself (law-alerts-must-be-actionable at the machinery level).
 spira_ask_rebase_loop() {  # <bead> <branch> <repo-name> <requeue-count> <conflicts> <other-beads>
     local id="$1" br="$2" name="$3" n="$4" conflicts="$5" others="$6"
-    [ -n "${SPIRA_NOTIFY:-}" ] && [ -x "${SPIRA_NOTIFY:-/nonexistent}" ] || return 0
+    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     ask_already_open "$br rebase loop" && return 0
     local ctx=""
     [ -n "$others" ] && ctx=" The conflicted files were also changed on the base by $others."
-    "$SPIRA_NOTIFY" add \
-        "$br rebase loop: $n rebase failures on $id in $name" \
-        --default "check whether $br is a duplicate of $others and close it if so; if the work is genuinely new, rebase by hand and push" \
-        --why "$id has been reopened for a rebase conflict $n times and the loop is not converging. Conflicts in: ${conflicts:-unknown}.$ctx" \
-        >/dev/null 2>&1
+    local _subj="$br rebase loop: $n rebase failures on $id in $name"
+    local _dflt="check whether $br is a duplicate of $others and close it if so; if the work is genuinely new, rebase by hand and push"
+    "$SPIRA_HOME/mail.sh" send operator \
+        --from "Landing gate <gate@spira>" \
+        --subject "$_subj" \
+        --kind question \
+        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
+## Question
+$_subj
+
+## Default
+$_dflt
+
+$id has been reopened for a rebase conflict $n times and the loop is not converging. Conflicts in: ${conflicts:-unknown}.$ctx
+MAILEOF
 }
 
 # spira_ask_refresh_loop — escalate a pr-mode branch that will not merge despite being
@@ -300,16 +324,29 @@ spira_ask_rebase_loop() {  # <bead> <branch> <repo-name> <requeue-count> <confli
 # which is the failure law-alerts-must-be-actionable names.
 spira_ask_refresh_loop() {  # <repo> <repo-name> <branch> <bead> <base> <n>
     local repo="$1" name="$2" br="$3" id="$4" base="$5" n="$6" behind
-    [ -n "${SPIRA_NOTIFY:-}" ] && [ -x "${SPIRA_NOTIFY:-/nonexistent}" ] || return 0
+    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     ask_already_open "$id refresh cap" && return 0
     behind="$(git -C "$repo" rev-list --count "$br..$base" 2>/dev/null)" || behind="?"
-    "$SPIRA_NOTIFY" add \
-        "Spira: $id's pull request has been rebased $n time(s) and still has not merged" \
-        --default "reopen $id at P0 so an aeon owns the pull request's own failure, and leave the branch alone until it does" \
-        --why "the bead is closed and its aeon is gone, so nothing is watching this pull request. Spira has been dragging $br back onto $base every time the base moved, and $n rebases have not got it merged — which means the obstacle is not staleness. Nothing else is blocked; every other branch lands normally. But this deliverable is not in $name and the board says it is done." \
-        --evidence "$(printf 'BRANCH    %s in %s\nBASE      %s, %s commit(s) ahead of the branch\nREFRESHED %s time(s); the cap is %s\n\n%s\n' \
-             "$br" "$name" "$base" "$behind" "$n" "${SPIRA_PR_REFRESH_MAX:-5}" "$(bead_context "$id")")" \
-        >/dev/null 2>&1
+    local _subj="Spira: $id's pull request has been rebased $n time(s) and still has not merged"
+    local _dflt="reopen $id at P0 so an aeon owns the pull request's own failure, and leave the branch alone until it does"
+    local _ev; _ev="$(printf 'BRANCH    %s in %s\nBASE      %s, %s commit(s) ahead of the branch\nREFRESHED %s time(s); the cap is %s\n\n%s\n' \
+         "$br" "$name" "$base" "$behind" "$n" "${SPIRA_PR_REFRESH_MAX:-5}" "$(bead_context "$id")")"
+    "$SPIRA_HOME/mail.sh" send operator \
+        --from "Landing gate <gate@spira>" \
+        --subject "$_subj" \
+        --kind question \
+        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
+## Question
+$_subj
+
+## Default
+$_dflt
+
+the bead is closed and its aeon is gone, so nothing is watching this pull request. Spira has been dragging $br back onto $base every time the base moved, and $n rebases have not got it merged — which means the obstacle is not staleness.
+
+WHAT THIS BEAD IS FOR:
+$_ev
+MAILEOF
 }
 
 # spira_ask_timeout_loop — escalate a bead that keeps timing out in a capped lane.
@@ -323,13 +360,23 @@ spira_ask_refresh_loop() {  # <repo> <repo-name> <branch> <bead> <base> <n>
 # information even if a previous ask about the same bead was already closed.
 spira_ask_timeout_loop() {  # <bead> <branch> <fayth> <cap-seconds> <timeout-count>
     local id="$1" br="$2" fayth="$3" cap="$4" n="$5"
-    [ -n "${SPIRA_NOTIFY:-}" ] && [ -x "${SPIRA_NOTIFY:-/nonexistent}" ] || return 0
+    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     ask_already_open "$id timed out $n" && return 0
-    "$SPIRA_NOTIFY" add \
-        "$id timed out $n times in the $fayth lane (${cap}s cap)" \
-        --default "move the bead to a persona with no cap (e.g. a builder) by replacing the 'incident' label with 'plan', or split the work into pieces that fit the lane" \
-        --why "$br has been killed by the ${cap}s cap $n times without committing anything. This is the lane routing the bead to a wall it cannot finish inside, not a verdict about the approach. The work is neither wrong nor charged; it is stuck in a lane too short for it." \
-        >/dev/null 2>&1
+    local _subj="$id timed out $n times in the $fayth lane (${cap}s cap)"
+    local _dflt="move the bead to a persona with no cap (e.g. a builder) by replacing the 'incident' label with 'plan', or split the work into pieces that fit the lane"
+    "$SPIRA_HOME/mail.sh" send operator \
+        --from "Landing gate <gate@spira>" \
+        --subject "$_subj" \
+        --kind question \
+        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
+## Question
+$_subj
+
+## Default
+$_dflt
+
+$br has been killed by the ${cap}s cap $n times without committing anything. This is the lane routing the bead to a wall it cannot finish inside, not a verdict about the approach. The work is neither wrong nor charged; it is stuck in a lane too short for it.
+MAILEOF
 }
 
 # land_log_tail — last N lines of landing.log for escalation evidence.
@@ -361,12 +408,25 @@ land_escalate() {        # land_escalate <subject-tail> <evidence>
     now="$(date +%s)"; last=0
     [ -f "$cd" ] && last="$(cat "$cd" 2>/dev/null || echo 0)"
     [ $(( now - last )) -lt "${SPIRA_LAND_ESCALATE_EVERY:-3600}" ] && return 0
+    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     echo "$now" > "$cd"
-    "$SPIRA_NOTIFY" add \
-        "Spira is landing nothing — $why" \
-        --default "run \`$SPIRA_HOME/landing.sh\` by hand to see the failure, then file the fix as a bead" \
-        --why "every finished branch in every repository is standing unlanded until this is fixed; aeons go on working and closing beads, so the board will read as healthy while nothing reaches a base branch" \
-        --evidence "$ev" >/dev/null 2>&1
+    local _subj="Spira is landing nothing — $why"
+    local _dflt="run \`$SPIRA_HOME/landing.sh\` by hand to see the failure, then file the fix as a bead"
+    "$SPIRA_HOME/mail.sh" send operator \
+        --from "Landing gate <gate@spira>" \
+        --subject "$_subj" \
+        --kind question \
+        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
+## Question
+$_subj
+
+## Default
+$_dflt
+
+every finished branch in every repository is standing unlanded until this is fixed; aeons go on working and closing beads, so the board will read as healthy while nothing reaches a base branch
+
+$ev
+MAILEOF
     # An escalation is a write, never a movement. Counting a report of paralysis as progress
     # would mute the one check that notices paralysis.
     act "escalated: the landing leg is not running"
@@ -4218,16 +4278,11 @@ SPIRA_EVENT_COOLDOWN="${SPIRA_EVENT_COOLDOWN:-3600}"
 spira_event() {          # spira_event <kind> <target|-> <title> [detail]
     local kind="${1:-}" target="${2:--}" title="${3:-}" detail="${4:-}"
     local dir="$SPIRA_RUN/events" key f now last=0 supp=0 out
-    local -a extra=()
     [ -n "$kind" ] && [ -n "$title" ] || return 1
     [ "$target" = "-" ] && target=""
 
-    # NAME THE MISSING DELIVERY PATH. A silent return here is how an emitter converted
-    # today records nothing for a month: `ask.sh note` either exists or it does not, and
-    # the difference must be visible in the log that every other outcome is already written
-    # to (law-absence-needs-a-positive-control).
-    if [ ! -x "${SPIRA_NOTIFY:-}" ]; then
-        log "event: $kind on ${target:-the plan} not recorded — no emitter at ${SPIRA_NOTIFY:-(unset)}"
+    if [ ! -x "$SPIRA_HOME/mail.sh" ]; then
+        log "event: $kind on ${target:-the plan} not recorded — mail.sh not found"
         return 1
     fi
 
@@ -4235,16 +4290,12 @@ spira_event() {          # spira_event <kind> <target|-> <title> [detail]
     key="$(printf '%s@%s' "$kind" "${target:-plan}" | tr -c 'a-zA-Z0-9._@-' '_')"
     f="$dir/$key"
     now="$(date -u +%s)"
-    # Two windows of quiet and the pair is not in a storm any more, so its counter is
-    # meaningless — collect it rather than let one file per (kind, bead) accumulate forever.
     find "$dir" -maxdepth 1 -type f -mmin +"$(( (SPIRA_EVENT_COOLDOWN * 2) / 60 + 1 ))" -delete 2>/dev/null
     [ -s "$f" ] && read -r last supp < "$f"
     case "${last:-}" in ''|*[!0-9]*) last=0 ;; esac
     case "${supp:-}" in ''|*[!0-9]*) supp=0 ;; esac
 
     if [ "$last" -gt 0 ] && [ "$(( now - last ))" -lt "$SPIRA_EVENT_COOLDOWN" ]; then
-        # The window belongs to the FIRST emission, not the last suppression: refreshing
-        # `last` on every repeat is how a fast enough loop goes permanently silent.
         printf '%s %s\n' "$last" "$(( supp + 1 ))" > "$f"
         return 0
     fi
@@ -4252,12 +4303,24 @@ spira_event() {          # spira_event <kind> <target|-> <title> [detail]
         && title="$title (+$supp more since $(date -u -d "@$last" +%H:%MZ 2>/dev/null || echo 'the last one'))"
     printf '%s 0\n' "$now" > "$f"
 
-    [ -n "$target" ] && extra+=(--target "$target")
-    [ -n "$detail" ] && extra+=(--why "$detail")
-    # Bounded: a hung `bd` must not hold a landing pass open. The pass's own work is already
-    # done by the time this runs, so a failure here is worth a line and nothing more.
+    local _body="## Note
+$title
+
+kind: $kind"
+    [ -n "$target" ] && _body+="
+
+target: $target"
+    [ -n "$detail" ] && _body+="
+
+$detail"
+
+    # Bounded: a hung mail.sh must not hold a landing pass open.
     if ! out="$(timeout "${SPIRA_EVENT_TIMEOUT:-60}" \
-                    "$SPIRA_NOTIFY" note "$title" --kind "$kind" ${extra+"${extra[@]}"} 2>&1)"; then
+                    "$SPIRA_HOME/mail.sh" send operator \
+                        --from "Spira event <event@spira>" \
+                        --subject "$title" \
+                        --kind note \
+                        <<< "$_body" 2>&1)"; then
         log "event: $kind on ${target:-the plan} could not be recorded — $(printf '%s' "$out" | tail -1)"
         return 1
     fi

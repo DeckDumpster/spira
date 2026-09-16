@@ -270,7 +270,7 @@ archive() {              # archive <session> <transcript> <at_turn> <ctx> <why> 
         prompt="${prompt//\{\{WHY\}\}/$why}"
         prompt="${prompt//\{\{LINEAGE\}\}/$(lineage_brief "$sid" "$tp")}"
         prompt="${prompt//\{\{ARCHIVIST\}\}/$HERE/archivist.sh}"
-        prompt="${prompt//\{\{NOTIFY\}\}/$SPIRA_NOTIFY}"
+        prompt="${prompt//\{\{NOTIFY\}\}/$SPIRA_HOME/mail.sh}"
         # EMPTY IS "YOU HAVE NO WIKI", NEVER A GUESS, and it substitutes a whole paragraph
         # rather than a path — a brief that rendered as a bare empty string would leave the
         # agent with a sentence pointing at nowhere, which is worse than no sentence. A
@@ -486,10 +486,16 @@ for i in sorted(range(len(drifts)), key=lambda i: drifts[i], reverse=True):
         filed="$(state_key "$sid" items_filed)"; filed="${filed:-0}"
         [ "$filed" -gt 0 ] 2>/dev/null || continue
         : > "$ARC/$sid.notified"
-        [ -x "$SPIRA_NOTIFY" ] && "$SPIRA_NOTIFY" insight \
-            "A session at the keyboard is carrying $ctx tokens; its unfinished business is now saved ($filed item(s)) and it is safe to clear" \
-            --why "Every further turn re-reads all of it. The archivist swept it at turn $turns; anything said since is not covered." \
-            >/dev/null 2>&1
+        local _arc_subj="A session at the keyboard is carrying $ctx tokens; its unfinished business is now saved ($filed item(s)) and it is safe to clear"
+        [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
+            --from "Archivist <archivist@spira>" \
+            --subject "$_arc_subj" \
+            --kind note <<MAILEOF >/dev/null 2>&1
+## Note
+$_arc_subj
+
+Every further turn re-reads all of it. The archivist swept it at turn $turns; anything said since is not covered.
+MAILEOF
     done <<< "$sorted_idx"
 
     # CLEAR THE SWEEP STATE on a normal pass, so a stale "skipped" does not linger.

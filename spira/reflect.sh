@@ -66,11 +66,22 @@ printf '%s\n' "$out"
 # is the same as no answer.
 if grep -q '^ESCALATE:' <<< "$out"; then
     q="$(grep -m1 '^ESCALATE:' <<< "$out" | sed 's/^ESCALATE: *//')"
-    # The diagnosis IS the evidence, and it already exists in $out. Naming reflect.log
-    # instead made the operator open a file to find out what was being asked of them.
-    "$SPIRA_NOTIFY" add "$q" \
-        --default "$(grep -m1 '^CHECK:' <<< "$out" | sed 's/^CHECK: *//' || echo 'read the diagnosis and decide')" \
-        --why "the Spira DAG is stalled with open work and nothing ready" \
-        --evidence "$out" >/dev/null 2>&1 \
+    _dflt="$(grep -m1 '^CHECK:' <<< "$out" | sed 's/^CHECK: *//' || echo 'read the diagnosis and decide')"
+    # The diagnosis IS the evidence, and it already exists in $out.
+    [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
+        --from "Reflect <reflect@spira>" \
+        --subject "$q" \
+        --kind question \
+        --default "$_dflt" <<MAILEOF >/dev/null 2>&1 \
         && log "reflect: escalated to the cockpit"
+## Question
+$q
+
+## Default
+$_dflt
+
+the Spira DAG is stalled with open work and nothing ready
+
+$out
+MAILEOF
 fi

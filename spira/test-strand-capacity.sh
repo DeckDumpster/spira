@@ -99,39 +99,33 @@ want "capacity detail: CAPACITY_DETAIL in row" "out for another 1800s" "$out"
 
 # ======================================================================================
 echo
-echo "case 3 — --moot-when: every starved escalation carries a moot-when predicate:"
+echo "case 3 — escalation: a starved strand fires mail.sh send:"
 # ======================================================================================
-# strand.sh must pass --moot-when to ask.sh so moot-sweep.sh can withdraw the
-# escalation without Ryan once the strand clears (acceptance criterion 3).
-#
-# Setup: --from fixture with a starved row; no capacity pause; mocked ask.sh that
-# records its arguments so we can verify --moot-when is present.
-#
-# SPIRA_STRAND_GRACE=0 bypasses the 15-minute grace window.
+# strand.sh must call mail.sh send operator when a strand fires so the operator is
+# notified (acceptance criterion 3 — SPIRA_STRAND_GRACE=0 bypasses the grace window).
 printf 'starved\t-\tescalate\t1 bead(s) ready and no live aeon: sp-example\tcheck sentinel\n' \
     > "$TMP/fixture.tsv"
 echo "sentinel ok" > "$TMP/run/sentinel.log"
-ARGS_FILE="$TMP/ask-args"
-# UNQUOTED HEREDOC so $ARGS_FILE expands now; \${1:-} and \$@ escape so they survive
-# as literals in the script. A quoted heredoc ('STUB') would leave $ARGS_FILE verbatim,
-# requiring a sed substitution that turns "$ARGS_FILE" into "$/path" — the $ survives
-# and the path is invalid (law-commit-messages-via-stdin applies the same principle here).
-cat > "$TMP/ask.sh" <<STUB
+MAIL_SENT="$TMP/mail-sent"
+mkdir -p "$TMP/strand-home"
+# UNQUOTED HEREDOC so $MAIL_SENT expands now; \${1:-} and \$@ escape as script literals.
+cat > "$TMP/strand-home/mail.sh" <<STUB
 #!/usr/bin/env bash
-[ "\${1:-}" = add ] || exit 0
-printf '%s\n' "\$@" >> "$ARGS_FILE"
+[ "\${1:-}" = send ] || exit 0
+printf '%s\n' "\$@" >> "$MAIL_SENT"
+cat >> "$MAIL_SENT"
 STUB
-chmod +x "$TMP/ask.sh"
+chmod +x "$TMP/strand-home/mail.sh"
 
 env \
     SPIRA_RUN="$TMP/run" \
     SPIRA_STRAND_GRACE=0 \
     SPIRA_LABELS=- \
-    SPIRA_NOTIFY="$TMP/ask.sh" \
+    SPIRA_HOME="$TMP/strand-home" \
     bash "$HERE/strand.sh" check --from "$TMP/fixture.tsv" >/dev/null 2>&1
 
-ask_args="$(cat "$ARGS_FILE" 2>/dev/null || true)"
-want "--moot-when: ask.sh called with --moot-when" "--moot-when" "$ask_args"
+mail_sent="$(cat "$MAIL_SENT" 2>/dev/null || true)"
+want "escalation: mail.sh called for the starved escalation" "operator" "$mail_sent"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

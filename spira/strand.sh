@@ -88,7 +88,6 @@ STRAND_GRACE="${SPIRA_STRAND_GRACE:-900}"
 # the bead — the work may still be perfectly good.
 RECLAIM_AT="${SPIRA_RECLAIM_AT:-5}"
 STATE="$SPIRA_RUN/strands.json"
-ASK="$SPIRA_NOTIFY"
 SENTINEL_LOG="$SPIRA_RUN/sentinel.log"
 
 MODE=report; JSON=0; DRY=0; FROM=
@@ -435,28 +434,22 @@ $(tail -n 12 "$SENTINEL_LOG" 2>/dev/null || echo '(sentinel log unreadable)')"
     # the same defect as a pager that cries wolf (law-alerts-must-be-actionable).
     local why="$detail — nothing in the plan below it can move until this clears"
     [ "$kind" = reclaim-ceiling ] && why="$detail — the bead is still claimable and nothing below it is blocked"
-    # MOOT-WHEN: the condition that fired this escalation is checked by moot-sweep.sh on
-    # a timer. Exit 0 when the strand of this kind/id is no longer present for this
-    # partition; exit 1 while it persists; exit non-0 (via the empty-response guard) when
-    # the probe itself fails. A predicate that errors must never read as "cleared"
-    # (law-absence-needs-a-positive-control). $part/$kind/$id are expanded at heredoc
-    # evaluation time; \$_r escapes so it survives as a literal in the predicate string
-    # run later by moot-sweep.sh under bash -c.
-    local _moot_pred
-    _moot_pred=$(cat <<MOOTEOF
-_r=\$(SPIRA_LABELS='$part' '$HERE/strand.sh' report --json 2>/dev/null); [ -n "\$_r" ] || { printf 'probe: strand.sh report returned nothing\n'; exit 1; }; printf '%s' "\$_r" | python3 -c 'import json,sys; d=json.load(sys.stdin); exit(0 if not any(s.get("kind")=="$kind" and s.get("id")=="$id" for s in d.get("strands",[])) else 1)'
-MOOTEOF
-)
-    # --ref keys on partition + kind + id: a starved-plan ask and a starved-incident ask
-    # are different conditions and must not dedupe onto each other. ask.sh uses the ref
-    # to bump a recurrence count rather than filing a new bead when the same strand
-    # persists across passes (law-a-documented-control-must-exist).
-    "$ASK" add "$title" \
-        --ref "strand:$part:$kind:$id" \
-        --default "$action" \
-        --why "$why" \
-        --evidence "$ctx" \
-        --moot-when "$_moot_pred" >/dev/null 2>&1
+    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
+    "$SPIRA_HOME/mail.sh" send operator \
+        --from "Strand check <strand@spira>" \
+        --subject "$title" \
+        --kind question \
+        --default "$action" <<MAILEOF >/dev/null 2>&1
+## Question
+$title
+
+## Default
+$action
+
+$why
+
+$ctx
+MAILEOF
 }
 
 cmd_check() {

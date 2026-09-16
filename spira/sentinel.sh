@@ -325,32 +325,33 @@ for id in $dispatchable; do
     # each time because the branch could not rebase onto a base that had moved. The work may
     # be correct; the queue cannot get it to land. Distinct from poison: no poison label is
     # added, no attempt is charged — the problem is the queue, not the work.
-    # DEDUP VIA --ref IN ask.sh. ask.sh bumps a recurrence count on the existing open ask
-    # rather than filing a duplicate when the same key is presented again. The count must not
-    # appear in the ref — that is what made the old spool-file guard useless.
     if [ "$_requeues" -ge "$REQUEUE_AT" ]; then
         _rq_causes="$(printf '%s' "$_labels" | sed -n 's/^ *- //p' \
             | grep -E '^sp-requeue-[0-9]+(-|$)' \
             | sed -E 's/^sp-requeue-([0-9]+)$/\1 unrecorded/;s/^sp-requeue-([0-9]+)-(.*)$/\1 \2/' \
             | sort -n | awk '{printf "%s%s x%s", sep, $2, $1; sep=", "} END{printf "\n"}')" || true
         _rq_causes="${_rq_causes:-unrecorded}"
-        # MOOT WHEN THE BEAD IS NO LONGER OPEN. $id expands now; \$COCKPIT_DB expands at
-        # sweep time. A failed probe (empty output) exits 1 so the ask is NOT auto-resolved
-        # on a broken probe (law-absence-needs-a-positive-control).
-        _rq_moot_pred=$(cat <<MOOTEOF
-_d=\$(bd -C "\$COCKPIT_DB" show $id --json 2>/dev/null); [ -n "\$_d" ] || { printf 'probe: bd show returned nothing\n'; exit 1; }; printf '%s\n' "\$_d" | python3 -c 'import json,sys; d=json.load(sys.stdin); r=(d[0] if isinstance(d,list) else d); s=r.get("status","?") if r else "?"; sys.exit(0 if s != "open" else 1)'
-MOOTEOF
-)
-        if "$SPIRA_NOTIFY" add \
-              "Spira bead $id — completed and requeued $_requeues times, never landed (${_rq_causes}) — the harness cannot land it" \
-              --ref "escalation:requeue:$id" \
-              --default "check whether the branch has commits ahead of the base (git log origin/main..spira/$id), resolve the rebase conflict by hand and push, or close the bead if the work already landed under a different id" \
-              --why "$id has been closed by an aeon and reopened by the harness $_requeues times without landing. The work may be correct; something about the queue is preventing it from reaching the base. Every requeue is a full aeon session redone from scratch, spending the account window that limits all throughput." \
-              --evidence "$(bead_context "$id" 2>/dev/null || printf '(could not read %s)' "$id")
+        _rq_subj="Spira bead $id — completed and requeued $_requeues times, never landed (${_rq_causes}) — the harness cannot land it"
+        _rq_dflt="check whether the branch has commits ahead of the base (git log origin/main..spira/$id), resolve the rebase conflict by hand and push, or close the bead if the work already landed under a different id"
+        _rq_ev="$(bead_context "$id" 2>/dev/null || printf '(could not read %s)' "$id")
 
 REQUEUES  $_requeues (cap $REQUEUE_AT) — causes: ${_rq_causes}
-ATTEMPTS  $n — distinct from requeues; a requeue is not a failed attempt and was not charged" \
-              --moot-when "$_rq_moot_pred" >/dev/null 2>&1; then
+ATTEMPTS  $n — distinct from requeues; a requeue is not a failed attempt and was not charged"
+        if [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
+              --from "Sentinel <sentinel@spira>" \
+              --subject "$_rq_subj" \
+              --kind question \
+              --default "$_rq_dflt" <<MAILEOF >/dev/null 2>&1; then
+## Question
+$_rq_subj
+
+## Default
+$_rq_dflt
+
+$id has been closed by an aeon and reopened by the harness $_requeues times without landing. The work may be correct; something about the queue is preventing it from reaching the base. Every requeue is a full aeon session redone from scratch, spending the account window that limits all throughput.
+
+$_rq_ev
+MAILEOF
             :
         else
             log "CHECK4 $id: requeue escalation path refused the ask — retries next pass"
@@ -361,27 +362,33 @@ ATTEMPTS  $n — distinct from requeues; a requeue is not a failed attempt and w
     # sessions never judged the work; the infrastructure killed them. Different from a cycling
     # requeue: the issue is the box, not the queue. No poison label is added — the work is not
     # at fault.
-    # DEDUP VIA --ref IN ask.sh (same mechanism as the requeue cap above).
     if [ "$_reclaims" -ge "$RECLAIM_AT" ]; then
         _rc_causes="$(printf '%s' "$_labels" | sed -n 's/^ *- //p' \
             | grep -E '^sp-reclaim-[0-9]+(-|$)' \
             | sed -E 's/^sp-reclaim-([0-9]+)$/\1 unrecorded/;s/^sp-reclaim-([0-9]+)-(.*)$/\1 \2/' \
             | sort -n | awk '{printf "%s%s x%s", sep, $2, $1; sep=", "} END{printf "\n"}')" || true
         _rc_causes="${_rc_causes:-unrecorded}"
-        _rc_moot_pred=$(cat <<MOOTEOF
-_d=\$(bd -C "\$COCKPIT_DB" show $id --json 2>/dev/null); [ -n "\$_d" ] || { printf 'probe: bd show returned nothing\n'; exit 1; }; printf '%s\n' "\$_d" | python3 -c 'import json,sys; d=json.load(sys.stdin); r=(d[0] if isinstance(d,list) else d); s=r.get("status","?") if r else "?"; sys.exit(0 if s != "open" else 1)'
-MOOTEOF
-)
-        if "$SPIRA_NOTIFY" add \
-              "Spira bead $id — $_reclaims aeons died holding it, work never judged (${_rc_causes}) — the box cannot run it" \
-              --ref "escalation:reclaim:$id" \
-              --default "check systemd resource limits and cgroup configuration; if the box is healthy, look for a per-bead crash at $SPIRA_RUN/$id.log and decide whether to label it for a different lane or split the work" \
-              --why "$id has had its lease reclaimed $_reclaims times after the aeon died holding it. The work was never started — the infrastructure killed the workers before they could act. This is a fact about the box, not the work." \
-              --evidence "$(bead_context "$id" 2>/dev/null || printf '(could not read %s)' "$id")
+        _rc_subj="Spira bead $id — $_reclaims aeons died holding it, work never judged (${_rc_causes}) — the box cannot run it"
+        _rc_dflt="check systemd resource limits and cgroup configuration; if the box is healthy, look for a per-bead crash at $SPIRA_RUN/$id.log and decide whether to label it for a different lane or split the work"
+        _rc_ev="$(bead_context "$id" 2>/dev/null || printf '(could not read %s)' "$id")
 
 RECLAIMS  $_reclaims (cap $RECLAIM_AT) — causes: ${_rc_causes}
-ATTEMPTS  $n — distinct from reclaims; no attempt was ever charged" \
-              --moot-when "$_rc_moot_pred" >/dev/null 2>&1; then
+ATTEMPTS  $n — distinct from reclaims; no attempt was ever charged"
+        if [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
+              --from "Sentinel <sentinel@spira>" \
+              --subject "$_rc_subj" \
+              --kind question \
+              --default "$_rc_dflt" <<MAILEOF >/dev/null 2>&1; then
+## Question
+$_rc_subj
+
+## Default
+$_rc_dflt
+
+$id has had its lease reclaimed $_reclaims times after the aeon died holding it. The work was never started — the infrastructure killed the workers before they could act. This is a fact about the box, not the work.
+
+$_rc_ev
+MAILEOF
             :
         else
             log "CHECK4 $id: reclaim escalation path refused the ask — retries next pass"
@@ -520,22 +527,25 @@ BRANCH    $branch_info
 
 --- last session log (tail) ---
 $(trace_tail "$SPIRA_RUN/$id.log" 25)"
-    # MARKED ONLY IF THE ASK WAS ACCEPTED. Stamping first would let an escalation path that
-    # is down silently swallow the one notification this count will ever produce.
-    # --ref keys on bead id only (not the attempt count): ask.sh dedupes repeated escalations
-    # for the same bead so the pane does not fill with duplicates when attempts mount.
-    # --moot-when auto-resolves once the bead is closed so the ask does not outlive its subject.
-    _po_moot_pred=$(cat <<MOOTEOF
-_d=\$(bd -C "\$COCKPIT_DB" show $id --json 2>/dev/null); [ -n "\$_d" ] || { printf 'probe: bd show returned nothing\n'; exit 1; }; printf '%s\n' "\$_d" | python3 -c 'import json,sys; d=json.load(sys.stdin); r=(d[0] if isinstance(d,list) else d); s=r.get("status","?") if r else "?"; sys.exit(0 if s != "open" else 1)'
-MOOTEOF
-)
-    if "$SPIRA_NOTIFY" add \
-          "Spira bead $id — ${charge_summary} without landing (${n} attempts) — change the approach or drop it?" \
-          --ref "escalation:poison:$id" \
-          --default "if the work is correct, re-label or split the bead and clear spira-poison; if it is not worth doing, close it" \
-          --why "nothing downstream of it can proceed, and no aeon will take it again while it is poisoned" \
-          --evidence "$ev" \
-          --moot-when "$_po_moot_pred" >/dev/null 2>&1; then
+    # MARKED ONLY IF THE MAIL WAS ACCEPTED. Stamping first would let mail.sh being absent
+    # silently swallow the one notification this count will ever produce.
+    _po_subj="Spira bead $id — ${charge_summary} without landing (${n} attempts) — change the approach or drop it?"
+    _po_dflt="if the work is correct, re-label or split the bead and clear spira-poison; if it is not worth doing, close it"
+    if [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
+          --from "Sentinel <sentinel@spira>" \
+          --subject "$_po_subj" \
+          --kind question \
+          --default "$_po_dflt" <<MAILEOF >/dev/null 2>&1; then
+## Question
+$_po_subj
+
+## Default
+$_po_dflt
+
+nothing downstream of it can proceed, and no aeon will take it again while it is poisoned
+
+$ev
+MAILEOF
         poison_asked_mark "$id" "$n"
     else
         log "CHECK4 $id: the escalation path refused the ask — it stands, and the next pass retries it"

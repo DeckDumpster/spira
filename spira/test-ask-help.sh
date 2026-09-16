@@ -15,7 +15,7 @@
 # fact (law-absence-needs-a-positive-control).
 #
 # defect: sp-7r21
-# covers: cockpit/ask.sh
+# covers: cockpit/verify-asks.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 COCKPIT="$(cd "$HERE/../cockpit" && pwd -P)"

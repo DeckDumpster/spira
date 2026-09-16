@@ -17,11 +17,11 @@
 # the positive ones, and both must hold at once: a suppressor with no counter would pass the
 # storm case by recording nothing at all.
 #
-# NO DATABASE. The emitter's contract is what it hands to `$SPIRA_NOTIFY`, and what
-# `ask.sh note` then writes is test-cockpit-db.sh's question, against a real `bd`. Splitting
+# NO DATABASE. The emitter's contract is what it hands to `mail.sh send`, and what
+# `mail.sh` then delivers is test-mail-delivery.sh's question. Splitting
 # them keeps this suite fast enough to be the one that always runs.
 # defect: sp-gvm
-# covers: spira/lib.sh spira/aeon.sh spira/landing.sh spira/sentinel.sh spira/strand.sh spira/gate-check.sh cockpit/ask.sh
+# covers: spira/lib.sh spira/aeon.sh spira/landing.sh spira/sentinel.sh spira/strand.sh spira/gate-check.sh spira/mail.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -38,12 +38,14 @@ cp "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
 
 # THE EMITTER IS A RECORDER, NOT A SWALLOWER. A stub that exits 0 without a trace would pass
 # every positive case here whether or not it was ever called.
-cat > "$TMP/ask.sh" <<'ASK'
+cat > "$SH/mail.sh" <<'MAIL'
 #!/usr/bin/env bash
+[ "${1:-}" = send ] || exit 0
 printf '%s\n' "$*" >> "$EMITTED"
-exit "${ASK_RC:-0}"
-ASK
-chmod +x "$TMP/ask.sh"
+cat >> "$EMITTED"
+exit "${MAIL_RC:-0}"
+MAIL
+chmod +x "$SH/mail.sh"
 
 # In a subshell, never sourced here: lib.sh overwrites PATH outright, as it must to run under
 # systemd, and a suite that inherited that would be testing the harness's PATH as well.
@@ -58,15 +60,16 @@ chmod +x "$TMP/emit"
 # SPIRA_CONF=/nonexistent: this suite asserts what the code does, and the operator's own
 # configuration is not part of that (law-gates-run-in-a-clean-environment).
 emit() {   # emit <kind> <target|-> <title> [detail]
-    SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_REPO="$TMP" SPIRA_RUN="$RUN" \
-    SPIRA_DB=/nonexistent-spira-db SPIRA_NOTIFY="${EMITTER:-$TMP/ask.sh}" \
-    SPIRA_EVENT_COOLDOWN="${COOLDOWN:-3600}" EMITTED="$TMP/emitted" ASK_RC="${ASK_RC:-0}" \
+    SPIRA_CONF=/nonexistent SPIRA_HOME="${HOME_OVERRIDE:-$SH}" SPIRA_REPO="$TMP" SPIRA_RUN="$RUN" \
+    SPIRA_DB=/nonexistent-spira-db \
+    SPIRA_EVENT_COOLDOWN="${COOLDOWN:-3600}" EMITTED="$TMP/emitted" MAIL_RC="${MAIL_RC:-0}" \
         bash "$TMP/emit" "$@" 2>&1
 }
 emitted()  { cat "$TMP/emitted" 2>/dev/null; }
 # `grep -c` prints 0 AND exits 1 on no match, so an `|| echo 0` fallback prints TWO zeros
 # and every count comparison fails against a number that looks right in the message.
-rows()     { grep -c . "$TMP/emitted" 2>/dev/null || true; }
+# Count lines that start with "send " — one per mail.sh invocation.
+rows()     { grep -c '^send ' "$TMP/emitted" 2>/dev/null || true; }
 fresh()    { rm -rf "$RUN/events"; : > "$TMP/emitted"; }
 
 echo "test-event.sh"
@@ -78,18 +81,18 @@ echo "the positive control — an outcome reaches the emitter whole"
 fresh
 out="$(emit bead.landed sp-x "landed spira/sp-x on brain's main" "merged as abc1234")"
 is   "a first outcome is recorded"        "1"            "$(rows)"
-want "with the kind the panel badges"     "--kind bead.landed" "$(emitted)"
-want "the bead it happened to, in its own column" "--target sp-x" "$(emitted)"
+want "with the kind the panel badges"     "kind: bead.landed" "$(emitted)"
+want "the bead it happened to, in its own column" "target: sp-x" "$(emitted)"
 want "the title as written"               "landed spira/sp-x on brain's main" "$(emitted)"
 want "and the detail beside it"           "merged as abc1234" "$(emitted)"
-want "through the note verb, not insight" "note "        "$(emitted)"
+want "through --kind note, not insight"   "--kind note"  "$(emitted)"
 nowant "and never as an insight"          "insight"      "$(emitted)"
 
-# An outcome about the plan rather than a bead carries no --target at all, rather than a
+# An outcome about the plan rather than a bead carries no target field at all, rather than a
 # literal "-" that would filter as if it were a bead id.
 fresh
 emit spira.note - "the plan moved" >/dev/null
-nowant "a plan-level outcome carries no target" "--target" "$(emitted)"
+nowant "a plan-level outcome carries no target" "target:" "$(emitted)"
 
 # --------------------------------------------------------------------------------------
 echo
@@ -150,13 +153,16 @@ echo "a broken delivery path is named, never silent"
 # An emitter that returns quietly when there is nowhere to send is how a converted site
 # records nothing for a month (law-absence-needs-a-positive-control).
 fresh
-out="$(EMITTER="$TMP/no-such-emitter" emit bead.landed sp-x "landed sp-x")"; rc=$?
+# A home that has lib.sh + conf.sh but no mail.sh — spira_event can load but has nowhere to send.
+mkdir -p "$TMP/no-mail-home"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$TMP/no-mail-home/"
+out="$(HOME_OVERRIDE="$TMP/no-mail-home" emit bead.landed sp-x "landed sp-x")"; rc=$?
 is   "a missing emitter fails loudly"  "1"                "$rc"
-want "and names what is missing"       "no-such-emitter"  "$out"
+want "and names what is missing"       "mail.sh not found" "$out"
 want "and says which outcome was lost" "bead.landed"      "$out"
 
 fresh
-out="$(ASK_RC=1 emit bead.landed sp-x "landed sp-x")"; rc=$?
+out="$(MAIL_RC=1 emit bead.landed sp-x "landed sp-x")"; rc=$?
 is   "an emitter that refuses is reported"   "1"           "$rc"
 want "naming the outcome it could not record" "bead.landed" "$out"
 
@@ -172,19 +178,16 @@ is "and nothing is written for it either" "0" "$(rows)"
 echo
 echo "the taxonomy — every kind the harness emits is one the emitter accepts"
 # --------------------------------------------------------------------------------------
-# A typo'd kind is REFUSED by ask.sh at write time, which means it fails where nobody is
-# reading: one log line, on a two-minute timer, in the file the outcome was supposed to
-# rescue us from having to grep. Catching it at the gate is the difference between a
-# taxonomy and free text, so the vocabulary is declared here and every call site checked
+# A typo'd kind is refused at send time. Catching it at the gate is the difference between
+# a taxonomy and free text, so the vocabulary is declared here and every call site checked
 # against it — adding a kind is then a deliberate act, which is what a taxonomy is.
 KINDS="aeon.claimed bead.landed bead.poisoned bead.reopened branch.reclaimed ci.failed"
 KINDS="$KINDS pilgrimage.complete note"
 
-sites="$(grep -rhE '[^#](spira_event|note "[^"]*" --kind) [a-z0-9.]+' "$HERE"/*.sh \
-           "$HERE/../cockpit"/*.sh 2>/dev/null \
+sites="$(grep -rhE '[^#]spira_event [a-z0-9.]+' "$HERE"/*.sh 2>/dev/null \
          | grep -v '^\s*#' \
-         | grep -oE '(spira_event|note "[^"]*" --kind) [a-z0-9.]+' \
-         | sed -E 's/.* //' | sort -u | grep -v '^spira_event$')"
+         | grep -oE 'spira_event [a-z0-9.]+' \
+         | sed -E 's/.* //' | sort -u)"
 [ -n "$sites" ] && ok "the call sites can be found at all" \
                 || bad "the call sites can be found at all" "the grep matched nothing — it is measuring itself, not the harness"
 
@@ -197,12 +200,11 @@ for k in $sites; do
 done
 case "$sites" in *bead.landed*) ok "the emitted kinds are all declared" ;; esac
 
-# Each one must survive ask.sh's own validator, whose rules are: lowercase dotted segments,
-# nothing else, and no longer than event_kind's 32 characters.
+# Each kind must be lowercase dotted segments, no longer than 32 characters (the db column).
 for k in $KINDS; do
     case "$k" in
-        *[!a-z0-9.]*|.*|*.|*..*) bad "kind '$k' is a taxonomy ask.sh will accept" "not lowercase dotted segments" ;;
-        *) [ "${#k}" -le 32 ] || bad "kind '$k' fits event_kind" "${#k} chars, the column holds 32" ;;
+        *[!a-z0-9.]*|.*|*.|*..*) bad "kind '$k' is valid" "not lowercase dotted segments" ;;
+        *) [ "${#k}" -le 32 ] || bad "kind '$k' fits 32-char limit" "${#k} chars" ;;
     esac
 done
 ok "every declared kind is lowercase dotted and fits the column"

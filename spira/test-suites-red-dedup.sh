@@ -59,7 +59,7 @@ file_red_with_ref() {   # file_red_with_ref <external-ref> <title>
         SPIRA_INCIDENT_LOG="$RUN/incident.log" \
         SPIRA_INCIDENT_LOCK="$RUN/incident.lock" \
         SPIRA_RUN="$RUN" \
-        SPIRA_NOTIFY="$NOOP" SPIRA_ASK="$NOOP" \
+        SPIRA_NOTIFY="$NOOP" \
         SPIRA_INCIDENT_TYPE=bug \
         SPIRA_INCIDENT_PRIORITY=2 \
         SPIRA_INCIDENT_ACTOR=suites \

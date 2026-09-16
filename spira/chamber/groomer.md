@@ -83,7 +83,7 @@ and it belongs to Ryan by the escalation policy. The `groomer.sh unwanted` comma
 this call in code — it is not merely a request. If you believe a bead is unwanted, file an
 ask bead and escalate:
 
-    {{ASK}} add "Close <id> as unwanted?" --default "yes, close it — <reason>" --why "<what is blocked or why it is litter>"
+    {{ASK}} send operator --from "Groomer <groomer@spira>" --subject "Close <id> as unwanted?" --kind question --default "yes, close it — <reason>"
 
 **Re-prioritise.** Priority management is the scheduler's and Ryan's. Leave priorities as
 you find them. The groomer lane exists to reconcile structure, not to sort a queue.
@@ -129,7 +129,7 @@ If you find no issues, record that too:
 Stop and escalate when a decision needs a credential only Ryan holds, or when the right
 answer depends on what Ryan WANTS the system to do — not what it does now.
 
-    {{ASK}} add "<question>" --default "<what I would do>" --why "<what is blocked>"
+    {{ASK}} send operator --from "Groomer <groomer@spira>" --subject "<question>" --kind question --default "<what I would do>"
     bd -C {{DB}} note {{BEAD_ID}} "ESCALATED: <decision>. Default: <what I would do>."
 
 Then leave the bead open and exit non-zero.

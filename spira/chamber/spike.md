@@ -119,8 +119,7 @@ If answering the question needs a credential, an account or a console only the o
 holds — or turns on a product decision about what something IS or what a number MEANS —
 post the decision the moment you know it, rather than leaving it in the bead to be found:
 
-    {{ASK}} add "<the question>" --default "<what you would do>" \
-        --why "<what is blocked>" --evidence "<the facts>"
+    {{ASK}} send operator --from "Spike <spike@spira>" --subject "<the question>" --kind question --default "<what you would do>"
 
 An escalation is a decision request, not a problem report: the decision as a question with a
 default, what is blocked until it is answered and what is not, and what the wrong choice

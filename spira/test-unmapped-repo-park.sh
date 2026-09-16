@@ -14,7 +14,7 @@
 # or the repo-map and removes the ask label. Scar: sp-nlhy accumulated four identical notes,
 # one per summon.
 #
-# THE LIVELOCK THIS ALSO PREVENTS (sp-foi7). cockpit/ask.sh pairs the ask label with overseer
+# THE LIVELOCK THIS ALSO PREVENTS (sp-foi7). The ask label must be paired with overseer
 # at every creation site; without overseer the bead carries needs-ryan but lacks the label the
 # decisions pane selects on — invisible to the loop AND to the operator
 # (detect_livelocked: needs-ryan-no-overseer). The park path must apply both labels.

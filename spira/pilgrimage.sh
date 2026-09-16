@@ -172,8 +172,17 @@ deliver() {   # deliver <addr> <epic-id> <subject> <body>
     case "$addr" in
         "$SPIRA_OPERATOR_ACTOR"|operator|cockpit)
             [ "$DRY" = 1 ] && { log "  would notify $SPIRA_OPERATOR: $subject"; return 0; }
-            "$SPIRA_NOTIFY" note "$subject" --kind pilgrimage.complete \
-                --target "$id" --why "$body" >/dev/null 2>&1
+            "$SPIRA_HOME/mail.sh" send operator \
+                --from "Pilgrimage <pilgrimage@spira>" \
+                --subject "$subject" \
+                --kind note <<MAILEOF >/dev/null 2>&1
+## Note
+$subject
+
+target: $id
+
+$body
+MAILEOF
             ;;
         bead:*)
             [ "$DRY" = 1 ] && { log "  would note ${addr#bead:}: $subject"; return 0; }
