@@ -20,7 +20,7 @@
 # No database for the roster half, no network, under a second.
 #
 # defect: sp-u4x
-# covers: spira/lib.sh concierge.sh spira/bead.sh spira/chamber/concierge.fayth spira/chamber/concierge.md
+# covers: spira/lib.sh concierge.sh systemd/concierge.service spira/bead.sh spira/chamber/concierge.fayth spira/chamber/concierge.md
 # hermetic-ok: fixture chamber, no systemd or database for the roster checks
 # requires: claude
 # host-reason: the brief section invokes concierge.sh which requires claude and tmux on PATH (operator tools not available in the container)
@@ -242,6 +242,12 @@ else
 fi
 
 fi  # statute book guard
+
+echo
+echo "the ensure unit leaves the tmux server it starts alive"
+svc="$(sed -n '/^\[Service\]/,/^\[/p' "$HARNESS/systemd/concierge.service" | grep -v '^\s*#')"
+want "the unit is a oneshot, whose cgroup is reaped when start returns" "Type=oneshot" "$svc"
+want "so it kills only its main process"                               "KillMode=process" "$svc"
 
 echo
 echo "concierge self-test: $pass passed, $fail failed"
