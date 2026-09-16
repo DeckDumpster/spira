@@ -47,6 +47,7 @@ run_render() {
     SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \
     SPIRA_HOME="$HERE" \
     SPIRA_STATUTE_CORE="$core_csv" \
+    SPIRA_MEMORIES_CACHE="" \
     bash -c ". \"$LIB_SH\" && render_memories \"$prefixes\" \"$budget\""
 }
 
@@ -179,6 +180,58 @@ want  "full core: alpha body present" "Alpha statute body" "$out_full_core"
 want  "full core: beta body present"  "Beta statute body"  "$out_full_core"
 # No index tier heading when nothing goes there.
 nowant "full core: no index heading" "Statutes in force" "$out_full_core"
+
+# ==========================================================================
+echo
+echo "=== cache: hit, miss, and write ==="
+# ==========================================================================
+
+# run_render_cached uses a temp cache file instead of disabling caching, so we can
+# verify the cache is read on a hit and bypassed on a miss (stale or absent).
+CACHE_FILE="$TMP/test-memories-cache.json"
+run_render_cached() {
+    local core_csv="$1" prefixes="${2:-law-rm-}" age="${3:-300}"
+    SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \
+    SPIRA_HOME="$HERE" \
+    SPIRA_STATUTE_CORE="$core_csv" \
+    SPIRA_MEMORIES_CACHE="$CACHE_FILE" \
+    SPIRA_MEMORIES_CACHE_AGE="$age" \
+    bash -c ". \"$LIB_SH\" && render_memories \"$prefixes\""
+}
+
+# CACHE MISS → CACHE WRITE. No cache file exists; live read must happen and the file
+# must be written. The positive control for the write check below.
+rm -f "$CACHE_FILE"
+out_miss="$(run_render_cached "law-rm-alpha" "law-rm-")"
+want "cache miss: live read renders alpha" "Alpha statute body" "$out_miss"
+if [ -f "$CACHE_FILE" ]; then
+    ok "cache miss: cache file written after live read"
+else
+    bad "cache miss: cache file written after live read" "file absent: $CACHE_FILE"
+fi
+
+# CACHE HIT: write a cache file with a DISTINCT body ("CACHED") so we can tell which
+# source render_memories used. The db has "Alpha statute body"; the cache has "CACHED
+# alpha body". If the cache is read, the render returns the cache body; if the live
+# db is read, it returns the db body. conf.sh's bd migrate schema check still runs
+# (it uses the real $SPIRA_BD and $SPIRA_DB), so bd is never absent.
+printf '{"law-rm-alpha": "CACHED alpha body", "law-rm-beta": "Beta statute body."}\n' > "$CACHE_FILE"
+touch "$CACHE_FILE"  # reset mtime so age check sees a fresh file
+# POSITIVE CONTROL: the cache file must hold the distinct marker for this to prove anything.
+if grep -q "CACHED alpha body" "$CACHE_FILE"; then
+    ok "cache hit: positive control — cache holds distinct marker"
+    out_hit="$(run_render_cached "law-rm-alpha")"
+    want   "cache hit: renders CACHED body from cache" "CACHED alpha body" "$out_hit"
+    nowant "cache hit: does not render db body"         "Alpha statute body" "$out_hit"
+else
+    bad "cache hit: positive control" "marker not in cache file"
+fi
+
+# STALE CACHE (age=0) → LIVE READ. With age=0, every cache is expired. The live db
+# returns the real body; the stale file must be ignored.
+out_stale="$(run_render_cached "law-rm-alpha" "law-rm-" "0")"
+want   "stale cache: live read returns db body"      "Alpha statute body" "$out_stale"
+nowant "stale cache: does not return cached body"    "CACHED alpha body"  "$out_stale"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

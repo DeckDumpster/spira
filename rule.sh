@@ -80,6 +80,7 @@ enact)
     fi
     bd -C "$DB" remember --key "$key" "$text" >/dev/null || {
         echo "rule: failed to write $key to the statute book at $DB" >&2; exit 1; }
+    rm -f "${SPIRA_MEMORIES_CACHE:-}" 2>/dev/null || true
     echo "enacted $key (${words} words)"
     if synth; then
         echo
@@ -100,6 +101,7 @@ retire)
       | python3 -c 'import json,sys;d=json.load(sys.stdin);sys.exit(0 if sys.argv[1] in d else 1)' "$key" || {
         echo "rule: no statute '$key' in the statute book at $DB" >&2; exit 1; }
     bd -C "$DB" forget "$key" >/dev/null 2>&1 && echo "forgot $key"
+    rm -f "${SPIRA_MEMORIES_CACHE:-}" 2>/dev/null || true
     if synth; then
         echo
         echo "Retired. Do not leave a retired statute standing with a correction attached —"

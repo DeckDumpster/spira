@@ -2945,7 +2945,19 @@ other_beads_on_conflicts() {
 render_memories() {      # render_memories <prefix-csv> [char-budget] [core-csv]
     local prefixes="${1:-law-}" budget="${2:-120000}"
     local core_csv="${3:-${SPIRA_STATUTE_CORE:-}}" harness="${SPIRA_REPO:-<harness>}"
-    bdjson memories 2>/dev/null | python3 -c '
+    local cache="${SPIRA_MEMORIES_CACHE:-}" age="${SPIRA_MEMORIES_CACHE_AGE:-300}"
+    local mem_json="" now mtime
+    if [ -n "$cache" ] && [ -f "$cache" ]; then
+        now="$(date +%s)"
+        mtime="$(stat -c %Y "$cache" 2>/dev/null || printf 0)"
+        [ "$(( now - mtime ))" -lt "$age" ] && mem_json="$(cat "$cache" 2>/dev/null)"
+    fi
+    if [ -z "$mem_json" ]; then
+        mem_json="$(bdjson memories 2>/dev/null)"
+        [ -n "$cache" ] && [ -n "$mem_json" ] \
+            && { mkdir -p "$(dirname "$cache")" 2>/dev/null; printf '%s\n' "$mem_json" > "$cache" 2>/dev/null || true; }
+    fi
+    printf '%s\n' "$mem_json" | python3 -c '
 import sys, json, os
 prefixes = [p for p in sys.argv[1].split(",") if p]
 budget   = int(sys.argv[2])

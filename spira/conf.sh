@@ -247,6 +247,12 @@ spira_conf_defaults() {
     # An operator who wants it elsewhere (e.g. truly outside the repository directory)
     # sets this key.
     : "${SPIRA_CTRL:=$SPIRA_RUN/control}"
+    # MEMORIES CACHE. render_memories writes the memories JSON here on a live read so
+    # subsequent calls (concierge launch, aeon summon) hit local disk. rule.sh enact/retire
+    # delete it so the next render sees fresh data. Empty (not unset) disables caching,
+    # which is why this key uses `=` not `:=` — an explicitly empty value is an answer.
+    : "${SPIRA_MEMORIES_CACHE=$SPIRA_RUN/memories-cache.json}"
+    : "${SPIRA_MEMORIES_CACHE_AGE:=300}"
     : "${SPIRA_GOAL:=sp-spira}"
     : "${SPIRA_PATH:=}"
     # DERIVED FROM SPIRA_REPO's parent. dirname returns "/" for a repo mounted at the
