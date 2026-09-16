@@ -557,6 +557,7 @@ if [ "$MODE" = serial ]; then
                 -e "TESTDB_SHARED=0" \
                 -e "TESTDB_NAME=" \
                 -e "TESTDB_DIR=" \
+                -e "TMUX=" \
                 -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
                 "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" >"$_batch_tmp" 2>&1 || _rc=$?
         else
@@ -568,6 +569,7 @@ if [ "$MODE" = serial ]; then
                 -e "TESTDB_SHARED=0" \
                 -e "TESTDB_NAME=" \
                 -e "TESTDB_DIR=" \
+                -e "TMUX=" \
                 -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
                 "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" >"$_batch_tmp" 2>&1 || _rc=$?
         fi
@@ -689,6 +691,7 @@ else
                     -e "TESTDB_SHARED=0" \
                     -e "TESTDB_NAME=" \
                     -e "TESTDB_DIR=" \
+                    -e "TMUX=" \
                     -e "SPIRA_INSTANCE=${_suite_instance}" \
                     -e "SPIRA_RUN=${_suite_run}" \
                     "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" \
@@ -704,6 +707,7 @@ else
                     -e "TESTDB_SHARED=0" \
                     -e "TESTDB_NAME=" \
                     -e "TESTDB_DIR=" \
+                    -e "TMUX=" \
                     -e "SPIRA_INSTANCE=${_suite_instance}" \
                     -e "SPIRA_RUN=${_suite_run}" \
                     "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" \

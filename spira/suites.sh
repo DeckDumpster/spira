@@ -738,6 +738,7 @@ cmd_run() {
         [ -n "${!_senv_rv+x}" ] && _suite_env="$_suite_env -u $_senv_rv"
     done
     unset _senv_rv
+    _suite_env="$_suite_env -u TMUX"
 
     # --------------------------------------------------------------------------------
     # RUN THE WHOLE SELECTION IN ONE CONTAINER.
