@@ -13,9 +13,6 @@ Type=simple
 ExecStart=@SPIRA_PROD@/collect.sh loop
 Restart=always
 RestartSec=15
-WatchdogSec=30
-# The heartbeat is sent by systemd-notify, a child of the loop; `main` rejects it and the watchdog kills every pass.
-NotifyAccess=all
 # A pass shells out to bd and git several times. This box also runs prod, so it is fenced
 # (law-fence-loops-on-shared-hardware).
 CPUQuota=35%
