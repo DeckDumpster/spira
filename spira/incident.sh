@@ -301,8 +301,20 @@ file_one() {
 Reopened by dedup — same external ref seen again within ${DEDUP_LOOKBACK_DAYS} days of close."
             _log_suffix=" (reopened from closed)"
         fi
-        bdq note "$id" "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ).${_reopen_note}
+        # Write the full payload only when it differs from the last stored hash — an
+        # unchanged base-suite red otherwise grows the bead ~1.3KB per recurrence (sp-obwc).
+        _ph="$(sha256sum "$pf" 2>/dev/null | cut -c1-16)"
+        _prev_ph="$(bdq label list "$id" 2>/dev/null | grep -o 'payload-hash:[0-9a-f]*' | head -1 || true)"
+        if [ -n "$_ph" ] && [ "payload-hash:${_ph}" = "${_prev_ph:-}" ] && [ "$_was_closed" = 0 ]; then
+            bdq note "$id" "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ).${_reopen_note}" >/dev/null 2>&1
+        else
+            bdq note "$id" "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ).${_reopen_note}
 $(head -c 2000 "$pf")" >/dev/null 2>&1
+            if [ -n "$_ph" ]; then
+                [ -n "${_prev_ph:-}" ] && bdq label remove "$id" "$_prev_ph" >/dev/null 2>&1
+                bdq label add "$id" "payload-hash:${_ph}" >/dev/null 2>&1
+            fi
+        fi
         bump_recur "$id" "$INCIDENT_CAUSE" >/dev/null 2>&1
         ilog "$ref recurred ($n) — $id${_log_suffix}"
         # A Sin: it keeps coming back because nothing has broken the cycle. Escalated once,
