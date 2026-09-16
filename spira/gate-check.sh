@@ -59,17 +59,31 @@ done < <(repo_names)
 check_out="$(bdq gate check --type=gh:run 2>&1 || true)"
 printf '%s\n' "$check_out"
 
+# COUNT STUCK GATES — those with no await_id that bd cannot resolve. These are not
+# errors by bd's reckoning (they produce no ESCALATE line), but they will never progress,
+# so they must be counted separately. Without a distinct count, "0 resolved" is ambiguous
+# between "nothing to do" and "every gate is permanently wedged".
+stuck=0
+while IFS= read -r _line; do
+    case "$_line" in *"no run ID specified"*) stuck=$((stuck+1)) ;; esac
+done < <(printf '%s\n' "$check_out")
+[ "$stuck" -gt 0 ] && printf '%d stuck: no await_id — cannot resolve\n' "$stuck"
+
 # FOR EACH FAILED CI RUN: extract the gate id, find the blocked bead, resolve the gate
 # so the bead re-enters the queue, and emit ci.failed so the event feed records it.
+#
+# GATE_ID EXTRACTION: parse the id from the ESCALATE line format "⚠ GATE_ID: ESCALATE ..."
+# without assuming any prefix — a prefix literal here breaks any installation whose
+# SPIRA_ID_PREFIX is not the shipped default (law-never-derive-an-id-from-output).
 while IFS= read -r esc; do
-    gate_id="$(printf '%s' "$esc" | grep -oE 'sp-[a-z0-9]+' | head -1)" || continue
+    gate_id="$(printf '%s' "$esc" | grep -oE '[a-z][a-z0-9]*-[a-z0-9][a-z0-9]*' | head -1)" || continue
     [ -n "${gate_id:-}" ] || continue
     blocked="$(bdq show "$gate_id" --json 2>/dev/null | python3 -c '
 import json, sys, re
 try:
     d = json.load(sys.stdin)
     d = d if isinstance(d, list) else [d]
-    m = re.search(r"blocking (sp-\w+)", d[0].get("description", ""))
+    m = re.search(r"blocking ([a-z]+-\w+)", d[0].get("description", ""))
     print(m.group(1) if m else "")
 except Exception:
     pass
