@@ -134,5 +134,44 @@ else
 fi
 
 echo
+echo "losing the lock is reported as a failure, not as a clean finish"
+# `watch` under systemd is Restart=always, so a unit whose copy loses the lock is respawned
+# forever. Exiting 0 made systemd record Result=success on every one of those passes, so the
+# journal agreed with the loop rather than contradicting it, and the unit read as fine for
+# hours. Asserted by RUNNING the contention path, not by grepping for an exit code.
+CR="$REMOTE_DIR/cockpit-remote"
+if [ ! -x "$CR" ]; then
+    bad "cockpit-remote is executable" "not found at $CR"
+else
+    LOCKD="$(mktemp -d)"
+    # A holder that keeps the lock for the life of the subshell. `watch_loop` is never
+    # entered by either process here: the incumbent is this flock, and the script under test
+    # is expected to refuse before it starts doing anything.
+    ( flock 9; touch "$LOCKD/held"; sleep 10 ) 9>"$LOCKD/cockpit-watch.lock" &
+    _holder=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -e "$LOCKD/held" ] && break; sleep 0.2; done
+
+    # THE PRECONDITION, PROVED. If the lock were not actually held, the refusal below would
+    # be attributable to anything at all and the assertion would pass for free.
+    if ( flock -n 9 ) 9>"$LOCKD/cockpit-watch.lock" 2>/dev/null; then
+        bad "the fixture holds the lock (positive control)" "a second flock still succeeded"
+    else
+        ok "the fixture holds the lock (positive control)"
+    fi
+
+    out="$(TMPDIR="$LOCKD" timeout 10 bash "$CR" watch 2>&1)"; rc=$?
+    if [ "$rc" = 0 ]; then
+        bad "a copy that loses the lock exits non-zero" "exited 0 — systemd records Result=success and the loop looks healthy"
+    else
+        ok "a copy that loses the lock exits non-zero (rc=$rc)"
+    fi
+    is "and it does not hang waiting for the lock" "1" "$([ "$rc" = 124 ] && echo 0 || echo 1)"
+    want "and it says which copy is in the way" "already running" "$out"
+
+    kill "$_holder" 2>/dev/null; wait "$_holder" 2>/dev/null
+    rm -rf "$LOCKD"
+fi
+
+echo
 printf 'test-cockpit-remote.sh: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

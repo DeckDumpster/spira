@@ -320,7 +320,10 @@ case "${1:-attach}" in
   keys)   set_keybindings ;;
   watch)
     exec 9>"$LOCK"
-    flock -n 9 || { echo "cockpit watcher already running" >&2; exit 0; }
+    # Losing the lock is a failure to start, not a clean finish. Exiting 0 here made systemd
+    # report Result=success on every pass of a unit it had respawned 108 times, so the
+    # journal agreed with the loop instead of contradicting it.
+    flock -n 9 || { echo "cockpit watcher already running" >&2; exit 75; }
     watch_loop
     ;;
   status) cmd_status ;;
