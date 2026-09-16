@@ -232,7 +232,15 @@ spira_conf_defaults() {
     # INSTANCE-QUALIFIED: each instance writes its own runtime tree — pid files, the aeon
     # ledger, the cockpit state — so a test instance cannot overwrite prod's working state.
     # For prod the suffix is empty; the path is unchanged.
-    : "${SPIRA_RUN:=$SPIRA_REPO/.runtime/spira${_spira_inst_sfx}}"
+    # A read-only SPIRA_REPO (release tarball) cannot grow .runtime; fall back to
+    # XDG_DATA_HOME so mkdir on first use succeeds.
+    if [ -z "${SPIRA_RUN:-}" ]; then
+        if [ -w "$SPIRA_REPO" ]; then
+            SPIRA_RUN="$SPIRA_REPO/.runtime/spira${_spira_inst_sfx}"
+        else
+            SPIRA_RUN="${XDG_DATA_HOME:-$HOME/.local/share}/spira${_spira_inst_sfx}/run"
+        fi
+    fi
     # THE OPERATIONAL CONTROL PLANE FILE. Durable state — suspensions, pauses, drains —
     # that lives outside source control and survives install.sh, pull, and reset.
     # Defaults to the gitignored runtime directory so no git operation ever touches it.

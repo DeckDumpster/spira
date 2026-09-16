@@ -161,6 +161,26 @@ want "SPIRA_INSTANCE is exported" "SPIRA_INSTANCE=" "$exported"
 
 # ==========================================================================
 echo
+echo "read-only SPIRA_REPO — SPIRA_RUN falls back to XDG_DATA_HOME:"
+# ==========================================================================
+# Positive control: a writable SPIRA_REPO produces a .runtime path inside it.
+WRITABLE_REPO="$TMP/writable-repo"
+mkdir -p "$WRITABLE_REPO"
+run_writable="$(conf_val SPIRA_RUN SPIRA_REPO="$WRITABLE_REPO" XDG_DATA_HOME="$TMP/xdg-data")"
+want "writable SPIRA_REPO: SPIRA_RUN is inside repo" "$WRITABLE_REPO" "$run_writable"
+want "writable SPIRA_REPO: SPIRA_RUN contains .runtime" ".runtime" "$run_writable"
+
+# With a read-only SPIRA_REPO, SPIRA_RUN must fall back to XDG_DATA_HOME.
+READONLY_REPO="$TMP/readonly-repo"
+mkdir -p "$READONLY_REPO"
+chmod a-w "$READONLY_REPO"
+run_readonly="$(conf_val SPIRA_RUN SPIRA_REPO="$READONLY_REPO" XDG_DATA_HOME="$TMP/xdg-data")"
+chmod u+w "$READONLY_REPO"
+nowant "read-only SPIRA_REPO: SPIRA_RUN not inside repo" "$READONLY_REPO" "$run_readonly"
+want   "read-only SPIRA_REPO: SPIRA_RUN uses XDG fallback" "$TMP/xdg-data" "$run_readonly"
+
+# ==========================================================================
+echo
 echo "root workspace — SPIRA_REPO at filesystem root produces no double slashes:"
 # ==========================================================================
 # When the repo is bind-mounted at /workspace, dirname gives "/" and a naive
