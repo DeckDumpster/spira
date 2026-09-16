@@ -65,19 +65,36 @@ _bead_contract() {
 }
 
 _bead_lint() {
-    local rc=0 n=0 bad=0 id labels
+    local rc=0 n=0 bad=0 id labels show_out show_rc
     local ids=""
     if [ "${1:-}" = "--all" ] || [ $# -eq 0 ]; then
-        ids="$(bdq list 2>/dev/null | awk 'NR>1{print $1}' | grep -v '^$' || true)"
+        ids="$(bdq list --all --limit 0 --json 2>/dev/null \
+            | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for d in (data if isinstance(data, list) else [data]):
+    print(d["id"])
+' 2>/dev/null || true)"
     else
         ids="$*"
     fi
     for id in $ids; do
         [ -z "$id" ] && continue
         n=$((n+1))
-        labels="$(bdq get "$id" 2>/dev/null | grep '^labels:' | sed 's/^labels://' || true)"
-        case ",$labels," in
-            *,repo:*,*) ;;
+        show_out="$(bdq show "$id" --json 2>/dev/null)"
+        show_rc=$?
+        if [ "$show_rc" -ne 0 ] || [ -z "$show_out" ]; then
+            printf 'bead: %s: unreadable (bd show failed)\n' "$id" >&2
+            bad=$((bad+1)); rc=1; continue
+        fi
+        labels="$(printf '%s\n' "$show_out" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+d = data[0] if isinstance(data, list) else data
+print(" ".join(d.get("labels") or []))
+' 2>/dev/null || true)"
+        case " $labels " in
+            *" repo:"*) ;;
             *) printf 'bead: %s: no repo: label\n' "$id" >&2; bad=$((bad+1)); rc=1 ;;
         esac
     done
