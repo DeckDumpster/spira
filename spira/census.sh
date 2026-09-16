@@ -99,7 +99,7 @@ for line in sys.stdin:
         continue
     bc[cls] += nb
     ec[cls] += ne
-for cls, beads in bc.most_common():
+for cls, beads in sorted(bc.items(), key=lambda x: (-x[1], -ec.get(x[0], 0))):
     print(beads, ec[cls], cls)
 EOF
 

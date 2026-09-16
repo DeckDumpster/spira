@@ -64,14 +64,15 @@ echo "sp-2lk acceptance criteria — bump_requeue and bump_recur produce census 
 # ======================================================================================
 # The exact positive control from the bead:
 #   bump_requeue "$id" merge-conflict (twice) + bump_recur "$id" suite-red (once)
-#   → census must output: 2 sp-requeue-merge-conflict  and  1 sp-recur-suite-red
+#   → census must output: 1 sp-requeue-merge-conflict (2 detections)  and  1 sp-recur-suite-red (1 detections)
 seed_bead "sp-c1"
 bump_requeue "sp-c1" merge-conflict
 bump_requeue "sp-c1" merge-conflict
 bump_recur   "sp-c1" suite-red
 
 out="$(census_out)"
-want "census reports 2 sp-requeue-merge-conflict" "2 sp-requeue-merge-conflict" "$out"
+want "census reports 1 distinct bead sp-requeue-merge-conflict (sp-2lk)" "1 sp-requeue-merge-conflict" "$out"
+want "census shows 2 detections for sp-requeue-merge-conflict" "sp-requeue-merge-conflict (2 detections" "$out"
 want "census reports 1 sp-recur-suite-red"        "1 sp-recur-suite-red"        "$out"
 
 # ======================================================================================
@@ -83,7 +84,7 @@ bump_reclaim "sp-c2"
 bump_reclaim "sp-c2"
 
 out="$(census_out)"
-want "census reports 2 sp-reclaim" "2 sp-reclaim" "$out"
+want "census reports sp-reclaim with 2 detections (1 bead)" "sp-reclaim (2 detections" "$out"
 
 # ======================================================================================
 echo
@@ -95,8 +96,8 @@ bump_reclaim "sp-c3" timeout
 bump_reclaim "sp-c3" timeout
 
 out="$(census_out)"
-want "census reports 3 sp-reclaim-timeout" "3 sp-reclaim-timeout" "$out"
-nowant "no bare sp-reclaim" "3 sp-reclaim " "$out"
+want "census reports sp-reclaim-timeout with 3 detections (1 bead)" "sp-reclaim-timeout (3 detections" "$out"
+nowant "no bare sp-reclaim" "sp-reclaim " "$out"
 
 # ======================================================================================
 echo
@@ -113,7 +114,8 @@ bump_requeue "sp-d2" merge-conflict
 bump_requeue "sp-d2" merge-conflict
 
 out="$(census_out)"
-want "cross-bead class count is 3" "3 sp-requeue-merge-conflict" "$out"
+want "cross-bead: 2 distinct beads for sp-requeue-merge-conflict" "2 sp-requeue-merge-conflict" "$out"
+want "cross-bead: 3 total event detections shown" "sp-requeue-merge-conflict (3 detections" "$out"
 
 # ======================================================================================
 echo

@@ -174,10 +174,12 @@ echo "census.sh end-to-end — db-wx4 acceptance criterion"
 mkdir -p "$TMP/run"
 _cens="$(SPIRA_DB="$FAKE_DB" SPIRA_BD="$TMP/bd-nosql" SPIRA_RUN="$TMP/run" \
     bash "$HERE/census.sh" --with-suppressed 2>/dev/null)"
-want "census reports 3 sp-recur-suite-red (db-wx4 acceptance criterion)" \
-    "3 sp-recur-suite-red" "$_cens"
-want "census reports 2 sp-recur-merge-conflict" "2 sp-recur-merge-conflict" "$_cens"
-want "census reports 2 sp-reclaim-timeout"      "2 sp-reclaim-timeout"      "$_cens"
+want "census reports sp-recur-suite-red with 3 detections (db-wx4 acceptance criterion)" \
+    "sp-recur-suite-red (3 detections" "$_cens"
+want "census reports sp-recur-merge-conflict with 2 detections" \
+    "sp-recur-merge-conflict (2 detections" "$_cens"
+want "census reports sp-reclaim-timeout with 2 detections" \
+    "sp-reclaim-timeout (2 detections" "$_cens"
 want "census reports 1 sp-requeue-thrash (db-ipo acceptance criterion)" \
     "1 sp-requeue-thrash" "$_cens"
 want "census reports 1 sp-lapsed-lease-expired (db-ipo lapsed filter fix)" \

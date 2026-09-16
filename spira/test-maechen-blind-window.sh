@@ -165,7 +165,7 @@ echo "POSITIVE CONTROL: all-time census (no watermark) sees the 3 events"
 # ==============================================================================
 # Confirms the events reached the database. If this fails, the fixture is broken.
 out_alltime="$(run_census)"
-want "all 3 events visible all-time" "3 sp-recur-blind-window-test" "$out_alltime"
+want "all events visible all-time (3 detections for 1 bead)" "sp-recur-blind-window-test (3 detections" "$out_alltime"
 
 # ==============================================================================
 echo
@@ -193,8 +193,8 @@ out="$(run_census)"
 # THE KEY ASSERTION: census must report the 3 events that caused the trigger to fire.
 # UNFIXED: census reads the advanced watermark (current time), sees 0 events.
 # FIXED:   census reads the original watermark (T), sees 3 events.
-want "census sees events from trigger window (3 sp-recur-blind-window-test)" \
-    "3 sp-recur-blind-window-test" "$out"
+want "census sees 3 detections from trigger window (1 distinct bead)" \
+    "sp-recur-blind-window-test (3 detections" "$out"
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"

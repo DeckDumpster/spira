@@ -125,11 +125,12 @@ echo "POSITIVE CONTROL: all-time census sees both classes"
 # watermark filter is applied. An empty result here means census cannot see anything,
 # so a later 'since-watermark = 0' is evidence of absence, not a census failure.
 out_alltime="$(run_census_no_wm)"
-want "stale class visible all-time (2 events)" "2 sp-recur-old-class" "$out_alltime"
-want "live class visible all-time (1 event)"   "1 sp-recur-new-class" "$out_alltime"
+want "stale class visible all-time (1 distinct bead)" "1 sp-recur-old-class" "$out_alltime"
+want "stale class: 2 event detections shown all-time" "sp-recur-old-class (2 detections" "$out_alltime"
+want "live class visible all-time (1 distinct bead)"   "1 sp-recur-new-class" "$out_alltime"
 
 first_alltime="$(printf '%s\n' "$out_alltime" | head -1 | awk '{print $2}')"
-is "all-time: stale class (2) ranks above live class (1)" "sp-recur-old-class" "$first_alltime"
+is "all-time: stale class (2 events) outranks live class (1 event) by tie-break" "sp-recur-old-class" "$first_alltime"
 
 # ==============================================================================
 echo
@@ -148,11 +149,11 @@ is "live class ranks first (since-watermark)" "sp-recur-new-class" "$first_class
 # Stale class shows 0 new since watermark
 want "stale class shows 0 new since watermark" "0 sp-recur-old-class" "$out"
 
-# Stale class all-time count (2) appears in parentheses
-want "stale class all-time count in parens" "0 sp-recur-old-class (2 all-time)" "$out"
+# Stale class: 0 detections since watermark, 1 all-time bead (2 events buried in history)
+want "stale class: 0 since-watermark, 1 all-time bead" "0 sp-recur-old-class (0 detections, 1 all-time)" "$out"
 
-# Live class shows 1 new since watermark with all-time in parens
-want "live class shows 1 new since watermark" "1 sp-recur-new-class (1 all-time)" "$out"
+# Live class shows 1 bead since watermark with detection count and all-time bead count
+want "live class shows 1 bead since watermark with detections" "1 sp-recur-new-class (1 detections, 1 all-time)" "$out"
 
 # ==============================================================================
 echo
@@ -168,7 +169,8 @@ stderr_out="$(env SPIRA_DB="$SPIRA_DB" \
 want "missing watermark: stderr notice" "watermark" "$stderr_out"
 
 out_fallback="$(run_census_no_wm)"
-want "missing watermark: stale class ranked by all-time" "2 sp-recur-old-class" "$out_fallback"
+want "missing watermark: stale class ranked by all-time (1 bead, 2 detections)" "1 sp-recur-old-class" "$out_fallback"
+want "missing watermark: stale class shows 2 event detections" "sp-recur-old-class (2 detections" "$out_fallback"
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
