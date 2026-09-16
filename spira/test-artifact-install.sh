@@ -306,10 +306,13 @@ fi
 #   world:      no world.halted stamp in SPIRA_RUN
 #   database:   testdb_up created a readable bd database
 #   loom:       running from tarball bin/loom on LOOM_ADDR; SPIRA_LOOM_BIN set
-#   agent/cockpit: WARN (no real claude or cockpit panel; do not fail)
+#   cockpit:    stub snapshot present so freshness check passes; panes WARN (no tmux)
+#   agent:      WARN (no real claude on PATH in tarball install test)
 # ---------------------------------------------------------------------------
 SPIRA_RUN_DIR="$SCRATCH/spira-run"
 mkdir -p "$SPIRA_RUN_DIR"
+# Stub snapshot so ready.sh cockpit freshness check passes (collector not running here).
+printf 'SP_AT=0\n' > "$SPIRA_RUN_DIR/cockpit.env"
 
 # A probe script so ready.sh calls our running loom rather than the installed one.
 PROBE="$SCRATCH/loom-probe"
