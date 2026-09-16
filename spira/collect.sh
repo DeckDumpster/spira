@@ -227,6 +227,15 @@ _supervisor_loop() {
     declare -A PROBE_LAST=()
     local _merge_fail=0
 
+    trap '
+        local _k
+        for _k in "${!PROBE_PID[@]}"; do
+            kill "${PROBE_PID[$_k]}" 2>/dev/null || true
+        done
+        wait 2>/dev/null || true
+    ' EXIT
+    trap 'exit' TERM INT
+
     while :; do
         # Watchdog heartbeat: keeps systemd from killing a live supervisor between ticks.
         # Requires WatchdogSec= and NotifyAccess=main in the unit.
