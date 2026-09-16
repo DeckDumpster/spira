@@ -552,6 +552,142 @@ notify 3600; rc=$?
 is "a malformed stamp falls back to first sighting"    "0" "$rc"
 is "and does not error"                                "" "$(cat "$TMP/err")"
 
+# =======================================================================================
+# THE OTHER HALF: A WATCHER THAT HAS STOPPED PRODUCING. The events half reports lines that
+# WERE written, so it is blind by construction to the failure that stops writing. A unit
+# systemd respawned 108 times reached nobody for hours while `status` said DEGRADED.
+# =======================================================================================
+echo
+echo "a watcher that has been unwell too long is escalated"
+
+# A daemon row, and a stub systemd that answers for it. State, restart count and silence are
+# read from files so a test can move them without rebuilding the stub.
+GTARGET="$TMP/gamma-watcher"; printf '#!/bin/sh\nsleep 99\n' > "$GTARGET"; chmod +x "$GTARGET"
+GHEALTH="$TMP/gamma-health"; printf 'exit 0\n' > "$GHEALTH"
+MAND="$TMP/watchers-daemon"
+printf 'gamma|daemon|%s|bash %s\n' "$GTARGET" "$GHEALTH" > "$MAND"
+
+# INJECTED THROUGH SPIRA_PATH, NOT PATH. conf.sh rebuilds PATH from SPIRA_PATH plus a fixed
+# tail, so a stub merely prepended to PATH is discarded and the box's real systemctl answers
+# instead — which under `env -i` has no bus, returns nothing, and makes "no unwell watcher"
+# pass for a reason that has nothing to do with the code.
+STUBBIN="$TMP/stubbin"; mkdir -p "$STUBBIN"
+SC_STATE="$TMP/sc-state"; SC_NR="$TMP/sc-nr"; SC_SILENT="$TMP/sc-silent"
+printf 'active\n' > "$SC_STATE"; printf '0\n' > "$SC_NR"; : > "$SC_SILENT"
+cat > "$STUBBIN/systemctl" <<'SC'
+#!/usr/bin/env bash
+[ -s "$SC_SILENT" ] && exit 1
+state="$(cat "$SC_STATE" 2>/dev/null)"; [ -n "$state" ] || state=active
+nr="$(cat "$SC_NR" 2>/dev/null)"; [ -n "$nr" ] || nr=0
+units=(); for a in "$@"; do case "$a" in *.service) units+=("$a") ;; esac; done
+for a in "$@"; do
+  case "$a" in
+    show) for u in "${units[@]}"; do printf 'Id=%s\nActiveState=%s\nNRestarts=%s\n\n' "$u" "$state" "$nr"; done; exit 0 ;;
+  esac
+done
+exit 0
+SC
+chmod +x "$STUBBIN/systemctl"
+
+# notify_d <age> — the same command over the daemon manifest. SPIRA_ACTIONABLE stays pinned
+# so the events half cannot match a line by accident and answer for the health half.
+notify_d() {
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_PATH="$STUBBIN" SPIRA_CONF="$CONF" \
+        SPIRA_WATCHERS="$MAND" SPIRA_ACTIONABLE="$FILTER" \
+        SPIRA_NOTIFY="$TMP/notify.sh" SPIRA_NOTIFY_AGE="$1" \
+        SC_STATE="$SC_STATE" SC_NR="$SC_NR" SC_SILENT="$SC_SILENT" \
+        NOTIFY_LOG="$ASKS" \
+        bash "$CLONE/spira/watchd.sh" notify > "$TMP/out" 2> "$TMP/err"
+}
+mature_unhealthy() {
+    local f at
+    for f in "$RUN/watchd/"*.unhealthy; do
+        [ -f "$f" ] || continue
+        read -r at < "$f"; printf '%s\n' "$(( at - 3600 ))" > "$f"
+    done
+}
+gamma_says() { mkdir -p "$RUN/watchd"; printf '%s\n' "$1" >> "$RUN/watchd/gamma.log"; }
+
+# THE POSITIVE CONTROL. A healthy daemon must escalate nothing, or every assertion below is
+# satisfied by a command that pages about everything.
+reset
+printf 'active\n' > "$SC_STATE"
+notify_d 3600; rc=$?
+is "a healthy daemon escalates nothing"                "0" "$rc"
+is "and asks nothing"                                  "0" "$(asks)"
+is "with no error"                                     "" "$(cat "$TMP/err")"
+
+# Now the same watcher, dead. The first sighting only starts the clock: a unit restarting for
+# ten seconds is not yet a fault, and paging on sight is the false-alarm direction.
+reset
+printf 'activating\n' > "$SC_STATE"; printf '108\n' > "$SC_NR"
+gamma_says 'cockpit watcher already running'
+notify_d 3600; rc=$?
+is "a watcher just gone unwell is not escalated yet"   "0" "$rc"
+is "and asks nothing"                                  "0" "$(asks)"
+is "but the clock has started"                         "1" \
+   "$(ls "$RUN/watchd/gamma.unhealthy" >/dev/null 2>&1 && echo 1 || echo 0)"
+
+mature_unhealthy
+notify_d 3600; rc=$?
+is "once it has been unwell for the threshold, it escalates" "1" "$rc"
+is "exactly once"                                      "1" "$(asks)"
+# THE DISCRIMINATING FACTS. The RESTARTS column counts only the restarts watch-refresh makes
+# for a code change, so a unit systemd is respawning shows a still number there; the ask has
+# to carry systemd's own count. The last line written is what named the copy in the way.
+has "and the ask carries systemd's restart count"      "$(cat "$ASKS")" "108 time(s)"
+has "and the last line the watcher wrote"              "$(cat "$ASKS")" "already running"
+has "and a default that says what to do"               "$(cat "$ASKS")" "--default"
+has "which names the second-copy case"                 "$(cat "$ASKS")" "second copy"
+
+sleep 1
+notify_d 3600
+is "a standing fault does not ask again"               "1" "$(asks)"
+
+# RECOVERY CLEARS THE CLOCK, and a recurrence is heard. Suppression that outlived its
+# condition would swallow the second outage entirely.
+printf 'active\n' > "$SC_STATE"
+notify_d 3600; rc=$?
+is "a recovered watcher escalates nothing"             "0" "$rc"
+is "and its clock is cleared"                          "0" \
+   "$(ls "$RUN/watchd/gamma.unhealthy" >/dev/null 2>&1 && echo 1 || echo 0)"
+printf 'failed\n' > "$SC_STATE"
+notify_d 3600; mature_unhealthy; notify_d 3600
+is "a second outage is heard"                          "2" "$(asks)"
+
+# AN ACTIVE UNIT STILL FAILS ITS OWN PROBE. Unit state is not health: the blind watcher that
+# prompted the health column was running perfectly and reading a database retired underneath
+# it. Without this the whole half collapses to `is-active`.
+reset
+printf 'active\n' > "$SC_STATE"
+printf 'echo the state file names no bead of ours >&2; exit 1\n' > "$GHEALTH"   # a probe's reason is its STDERR
+notify_d 3600; mature_unhealthy; notify_d 3600
+is "an active unit that fails its probe is escalated"  "1" "$(asks)"
+has "and the ask carries the probe's own words"        "$(cat "$ASKS")" "no bead of ours"
+printf 'exit 0\n' > "$GHEALTH"
+
+# NO ANSWER FROM systemd IS NOT A FAULT IN THE WATCHER. Without a user manager at all every
+# watcher would otherwise be reported dead (law-absence-needs-a-positive-control).
+reset
+printf 'x\n' > "$SC_SILENT"
+notify_d 0; notify_d 0
+is "a box with no systemd answer reports no unwell watcher" "0" "$(asks)"
+is "and starts no clock it cannot justify"             "0" \
+   "$(ls "$RUN/watchd/gamma.unhealthy" >/dev/null 2>&1 && echo 1 || echo 0)"
+: > "$SC_SILENT"
+
+# THE TWO HALVES ARE INDEPENDENT. They share a timer and nothing else: one stamp file would
+# let whichever escalated last erase the other's fingerprint, and a noisy watcher would hide
+# a dead one for as long as it kept talking.
+reset
+printf 'activating\n' > "$SC_STATE"
+gamma_says "$FILTER an unread event"
+notify_d 0; mature_pending; mature_unhealthy; notify_d 0; rc=$?
+is "an unread backlog and a dead watcher both escalate" "1" "$rc"
+is "as two asks, not one"                              "2" "$(asks)"
+is "from two separate suppression stamps"              "1" \
+   "$(ls "$RUN/watchd/notify.escalated" "$RUN/watchd/notify-health.escalated" >/dev/null 2>&1 && echo 1 || echo 0)"
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

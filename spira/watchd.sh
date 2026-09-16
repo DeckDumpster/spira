@@ -17,7 +17,8 @@
 #                                   --takeover is given, which ends the incumbent first
 #   watchd.sh tailers               name|pid|since for every watcher being tailed now
 #   watchd.sh restart [name]        restart the unit behind a watcher
-#   watchd.sh notify                escalate events nobody has drained; for a timer
+#   watchd.sh notify                escalate events nobody has drained, and watchers that
+#                                   have been unwell too long; for a timer
 #   watchd.sh health-ids <file>     assert a state file names at least one of our own beads
 #   watchd.sh health-view <prog> <session>
 #                                   assert the view a follower steers matches the one it wants
@@ -189,6 +190,10 @@ _wd_setpos() {
 # fact and are not in this number; a watcher dying and being revived shows in UNIT and in
 # LAST-EVENT, which is where it belongs.
 _wd_restartfile() { printf '%s/%s.restarts' "$(watchd_dir)" "$1"; }
+# How long this watcher has been unwell. Keyed on DEGRADED itself and not on the reason: a
+# watcher flapping between two faults is unwell throughout, and restarting the clock on each
+# new reason is how such a thing escalates never.
+_wd_unhealthyfile() { printf '%s/%s.unhealthy' "$(watchd_dir)" "$1"; }
 
 # NEITHER OF THESE MAY RUN A PROGRAM. `_wd_restarts` is called once per watcher by `status`,
 # and `_wd_bump` sits on the path a timer takes every minute, whose whole contract is a fixed
@@ -1188,6 +1193,94 @@ cmd_health_view() {
 # in full and the drain command is named, so nothing is hidden, only deferred.
 WD_NOTIFY_MAX=12
 
+# _wd_notify_health — escalate a watcher that has been DEGRADED for longer than the threshold.
+#
+# `notify`'s other half reports events that WERE produced, so it is blind by construction to
+# the failure that stops production. The RESTARTS column is no help either: it counts only
+# the restarts watch-refresh makes for a code change, so a unit systemd is respawning in a
+# loop shows a still number there. systemd's own NRestarts is the fact that discriminates.
+_wd_notify_health() {
+    local rows; rows="$(watchd_rows)" || return 3
+    local now; printf -v now '%(%s)T' -1
+
+    local name kind target health
+    local -a units=() unames=() utarget=() uhealth=()
+    while IFS='|' read -r name kind target health; do
+        [ -n "$name" ] || continue
+        [ "$kind" = daemon ] || continue
+        unames+=("$name"); units+=("$(watch_unit_name "$name")")
+        utarget+=("$target"); uhealth+=("$health")
+    done <<< "$rows"
+    [ "${#units[@]}" -gt 0 ] || return 0
+
+    # One exec for every unit (law-fence-loops-on-shared-hardware). `show` answers in blocks
+    # keyed by Id, so a unit that has gone cannot shift the answers onto its neighbour.
+    local -A ustate=() urestarts=()
+    local _id="" _k _v
+    while IFS='=' read -r _k _v; do
+        case "$_k" in
+            Id)          _id="$_v" ;;
+            ActiveState) [ -n "$_id" ] && ustate["$_id"]="$_v" ;;
+            NRestarts)   [ -n "$_id" ] && urestarts["$_id"]="$_v" ;;
+        esac
+    done < <(systemctl --user show "${units[@]}" -p Id -p ActiveState -p NRestarts --no-pager 2>/dev/null)
+
+    local i n u state nr lf uf prev_at age last report="" key="" stale=0
+    for ((i=0; i<${#unames[@]}; i++)); do
+        n="${unames[$i]}"; u="${units[$i]}"
+        # NO ANSWER IS NOT A FAULT. systemd may not be running here at all, and reporting that
+        # as an unwell watcher pages somebody about the probe rather than about the watcher
+        # (law-absence-needs-a-positive-control).
+        state="${ustate[$u]:-}"
+        [ -n "$state" ] || continue
+
+        if [ "$state" != active ]; then
+            _wd_hstate=DEGRADED; _wd_hwhy="unit is $state — no writer"
+        else
+            _wd_probe "${uhealth[$i]}"
+        fi
+
+        uf="$(_wd_unhealthyfile "$n")"
+        if [ "$_wd_hstate" != DEGRADED ]; then rm -f "$uf" 2>/dev/null; continue; fi
+
+        prev_at=""
+        [ -r "$uf" ] && read -r prev_at < "$uf" 2>/dev/null
+        case "${prev_at:-}" in ''|*[!0-9]*) prev_at="" ;; esac
+        if [ -z "$prev_at" ]; then
+            mkdir -p "$(watchd_dir)" 2>/dev/null
+            printf '%s\n' "$now" > "$uf"
+            continue
+        fi
+        age=$(( now - prev_at )); [ "$age" -ge 0 ] || age=0
+        [ "$age" -ge "$SPIRA_NOTIFY_AGE" ] || continue
+
+        stale=$(( stale + 1 ))
+        nr="${urestarts[$u]:-?}"
+        lf="$(_wd_logfile "$n" daemon "${utarget[$i]}")"
+        last="$(tail -n 1 "$lf" 2>/dev/null)"
+        key="$key$n|$_wd_hwhy
+"
+        report="$report
+$n — DEGRADED for $(_wd_age "$age"): $_wd_hwhy
+  $u, restarted $nr time(s) by systemd
+  last line written: ${last:-(nothing)}
+  $lf
+"
+    done
+
+    if [ "$stale" = 0 ]; then
+        rm -f "$(watchd_dir)/notify-health.escalated" 2>/dev/null
+        return 0
+    fi
+    printf '%s\n' "$report"
+    _wd_ask notify-health.escalated "$key" \
+        "A watcher has stopped producing events" \
+        "restart it with \`watchd.sh restart <name>\`, then read the last line above. A unit that restarts without ever becoming active is usually a second copy started by hand holding its lock — retiring that copy is the fix, and \`Restart=always\` respawns on a clean exit too, so the loop never ends on its own. If the watcher is meant to be stopped, take its row out of the manifest instead of leaving a unit systemd will respawn forever." \
+        "a watcher that is not running produces no events, and a watcher producing no events is indistinguishable from one with nothing to say. Nothing else escalates this: the other half of \`notify\` reports events that WERE produced, so the failure that stops production is exactly the one it cannot see." \
+        "$report" || return 3
+    return 1
+}
+
 cmd_notify() {
     [ $# -eq 0 ] || { echo "usage: watchd.sh notify" >&2; return 3; }
     # A THRESHOLD THAT CANNOT BE READ IS REFUSED. Left to `[ x -ge junk ]` it would fail every
@@ -1297,16 +1390,27 @@ $(printf '%s\n' "$shown" | head -"$WD_NOTIFY_MAX" | sed 's/^/    /')"
 "
     done <<< "$rows"
 
+    local found=0
     if [ "$stale" = 0 ]; then
         # THE CONDITION IS OVER, SO THE SUPPRESSION IS TOO. Without this a backlog that was
         # escalated, drained, and then recurred identically would be silently swallowed —
         # the fingerprint would still match, and the second occurrence would reach nobody.
         rm -f "$(watchd_dir)/notify.escalated" 2>/dev/null
-        return 0
+    else
+        printf '%s\n' "$report"
+        _wd_escalate "$key" "$report" || return 3
+        found=1
     fi
-    printf '%s\n' "$report"
-    _wd_escalate "$key" "$report" || return 3
-    return 1
+
+    # BOTH HALVES RUN, WHATEVER THE FIRST FOUND. An unread backlog and a dead watcher are
+    # opposite symptoms — one watcher producing into nobody's hands, another producing
+    # nothing at all — and returning early on the first would let a noisy watcher hide a
+    # dead one for as long as it kept talking.
+    _wd_notify_health; local hrc=$?
+    [ "$hrc" = 3 ] && return 3
+    [ "$hrc" = 1 ] && found=1
+    [ "$found" = 1 ] && return 1
+    return 0
 }
 
 # _wd_escalate <key> <report> — raise the ask once per distinct backlog, never once per pass.
@@ -1325,28 +1429,37 @@ $(printf '%s\n' "$shown" | head -"$WD_NOTIFY_MAX" | sed 's/^/    /')"
 # broken escalation path silently consumed the one notification this backlog will ever
 # produce: the finding would be marked delivered, and the retry that would have carried it
 # once the path was repaired never happens.
-_wd_escalate() {
+# _wd_ask <stamp-name> <key> <title> <default> <why> <evidence>
+#
+# Suppressed while <key> is unchanged, so a standing condition asks once rather than once per
+# pass. Each caller names its own stamp: one shared stamp would let whichever kind escalated
+# last erase the other's fingerprint and ask again.
+_wd_ask() {
     local stamp fp prev=""
-    stamp="$(watchd_dir)/notify.escalated"
-    fp="$(printf '%s' "$1" | cksum | tr -d ' ')"
+    stamp="$(watchd_dir)/$1"
+    fp="$(printf '%s' "$2" | cksum | tr -d ' ')"
     [ -f "$stamp" ] && prev="$(cat "$stamp" 2>/dev/null)"
     [ "$fp" = "$prev" ] && return 0
 
     if [ ! -x "${SPIRA_NOTIFY:-}" ]; then
-        echo "watchd: no escalation path at ${SPIRA_NOTIFY:-<unset>} — the events above reach nobody" >&2
+        echo "watchd: no escalation path at ${SPIRA_NOTIFY:-<unset>} — the findings above reach nobody" >&2
         return 1
     fi
-    "$SPIRA_NOTIFY" add \
-        "Events a watcher produced have reached no reader" \
-        --default "read them below and act on them here — nothing has been marked read, so the next session to latch still gets them; if a line of this kind is never worth waking anyone for, narrow SPIRA_ACTIONABLE rather than lengthening SPIRA_NOTIFY_AGE" \
-        --why "delivery of a watcher's events otherwise depends on a session existing to drain them, and a session hook fires at a session boundary — so an event produced while nothing is running waits for the next session to open, which for a headless agent never comes. Nothing else will surface these." \
-        --evidence "$2" >/dev/null 2>&1 || {
-            echo "watchd: the escalation path refused the ask — the events above reach nobody" >&2
-            return 1
-        }
+    "$SPIRA_NOTIFY" add "$3" --default "$4" --why "$5" --evidence "$6" >/dev/null 2>&1 || {
+        echo "watchd: the escalation path refused the ask — the findings above reach nobody" >&2
+        return 1
+    }
     mkdir -p "$(watchd_dir)" 2>/dev/null
     printf '%s' "$fp" > "$stamp"
     return 0
+}
+
+_wd_escalate() {
+    _wd_ask notify.escalated "$1" \
+        "Events a watcher produced have reached no reader" \
+        "read them below and act on them here — nothing has been marked read, so the next session to latch still gets them; if a line of this kind is never worth waking anyone for, narrow SPIRA_ACTIONABLE rather than lengthening SPIRA_NOTIFY_AGE" \
+        "delivery of a watcher's events otherwise depends on a session existing to drain them, and a session hook fires at a session boundary — so an event produced while nothing is running waits for the next session to open, which for a headless agent never comes. Nothing else will surface these." \
+        "$2"
 }
 
 # SOURCEABLE, AND SILENT WHEN IT IS. `watch-refresh.sh` reads the manifest and restarts a
