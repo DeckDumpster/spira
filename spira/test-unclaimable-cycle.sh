@@ -17,7 +17,7 @@
 # CASE 1 IS THE POSITIVE CONTROL and matters as much as the guard: a genuinely unclaimable
 # bead must still be reported. A detector that reports nothing passes every other case here.
 #
-# covers: spira/lib.sh (detect_unclaimable_ready)
+# covers: spira/lib.sh
 # hermetic-ok: drives the detector's own python body against fixture JSON; no database,
 # hermetic-ok: no systemd, no network
 # timeout: 60
