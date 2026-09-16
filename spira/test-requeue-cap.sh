@@ -122,19 +122,38 @@ cycle() {   # cycle <id> <n> — create n status_changed(in_progress) events via
 
 echo "test-requeue-cap.sh"
 
-# sp-requeue-N and sp-reclaim-N counter labels are no longer written (sp-lzt); sentinel CHECK4
-# hardcodes _requeues=0 and _reclaims=0 pending an events-based implementation of those caps.
-# The following assertions have been removed because the escalation they tested no longer fires:
-#   deleted: "bead at the requeue cap is escalated" (sentinel _requeues hardcoded to 0)
-#   deleted: "the count appears in the subject" for requeue (cap not evaluated)
-#   deleted: "the subject says it never landed" for requeue (cap not evaluated)
-#   deleted: "the cause distribution is named" for requeue (cap not evaluated)
-#   deleted: "a higher requeue count fires a new ask" (cap not evaluated)
-#   deleted: "bead at the reclaim cap is escalated" (sentinel _reclaims hardcoded to 0)
-#   deleted: "the count appears in the subject" for reclaim (cap not evaluated)
-#   deleted: "the subject says work was never judged" (cap not evaluated)
-# The "counters do not conflate" property still holds: attempt events (not requeue/reclaim
-# events) drive the poison decision, so a bead with no attempt events is never poisoned.
+reopen_cycle() {   # reopen_cycle <id> <n> — n close/reopen cycles; creates n reopened events
+    local id="$1" n="$2" i=0
+    while [ "$i" -lt "$n" ]; do
+        B close "$id" --reason "done" >/dev/null 2>&1 || true
+        B reopen "$id" >/dev/null 2>&1 || true
+        i=$((i+1))
+    done
+}
+
+# --------------------------------------------------------------------------------------
+# REQUEUE CAP VIA REOPENED EVENTS. reopens_of() counts event_type='reopened' rows;
+# sentinel CHECK4 reads it into _requeues (sp-6bop). Pairs: below-cap first proves
+# absence is detectable, then at-cap proves the escalation fires.
+# REQUEUE_AT is pinned to 3 in the sentinel() wrapper — non-default (default is 5).
+# --------------------------------------------------------------------------------------
+echo
+echo "requeue cap via reopened events:"
+seed_bead sp-rq-below
+reopen_cycle sp-rq-below 2
+sentinel >/dev/null 2>&1 || true
+nowant "2 reopens (below cap 3) fires no requeue escalation" \
+       "completed and requeued" "$(cat "$ASK_LOG" 2>/dev/null || true)"
+
+seed_bead sp-rq-at
+reopen_cycle sp-rq-at 3
+sentinel >/dev/null 2>&1 || true
+want "3 reopens (at cap 3) fires the requeue escalation" \
+     "completed and requeued" "$(cat "$ASK_LOG" 2>/dev/null || true)"
+want "the escalation names the reopen count" \
+     "requeued 3 times" "$(cat "$ASK_LOG" 2>/dev/null || true)"
+nowant "requeue thrash does not add spira-poison" \
+       "spira-poison" "$(labels_of sp-rq-at)"
 
 # --------------------------------------------------------------------------------------
 # COUNTERS DO NOT CONFLATE: a bead with no attempt events is not poisoned.

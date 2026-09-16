@@ -1586,6 +1586,29 @@ attempts_of() {          # attempts_of <id> -> count of in_progress status-chang
     printf '0'
 }
 
+reopens_of() {         # reopens_of <id> -> count of reopened events
+    local id="$1" q result=""
+    q="$(printf "select count(*) from events where issue_id='%s' and event_type='reopened'" "$id")"
+    if result="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>/dev/null | sed -n '3p' \
+                  | tr -d ' ')" && [ -n "$result" ] \
+       && printf '%d' "$result" >/dev/null 2>&1; then
+        printf '%d' "$result"; return 0
+    fi
+    local doltdb="${SPIRA_DB}/.beads/embeddeddolt"
+    if [ -d "$doltdb" ] && command -v dolt >/dev/null 2>&1; then
+        local dbname
+        dbname="$(ls "$doltdb" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" \
+            || dbname="sp"
+        [ -n "$dbname" ] || dbname="sp"
+        result="$(dolt --data-dir "$doltdb" sql -q "use $dbname; $q;" 2>/dev/null \
+                  | sed -n '4p' | tr -d '| ')" || result=""
+        if [ -n "$result" ] && printf '%d' "$result" >/dev/null 2>&1; then
+            printf '%d' "$result"; return 0
+        fi
+    fi
+    printf '0'
+}
+
 # BUMP FUNCTIONS. bump_attempt and bump_timeout are no-ops (attempts are counted via
 # status_changed events that bd writes natively; timeouts have no census role). The
 # remaining three — bump_reclaim, bump_requeue, bump_recur — write a typed event row so

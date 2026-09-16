@@ -297,12 +297,12 @@ for id in $dispatchable; do
     # ATTEMPTS FROM THE EVENTS TRAIL; labels for poison, repo, and partition exclusions.
     # Counter labels (sp-attempt-N, sp-reclaim-N, sp-requeue-N) are no longer written
     # (sp-lzt). The attempt count comes from status_changed events in the bd events table;
-    # reclaim and requeue caps are not evaluated here because they have no event-based
-    # implementation yet — cap escalation is a future deliverable.
+    # requeue cap is driven by reopened events (sp-6bop); reclaim cap has no event-based
+    # implementation yet.
     _labels="$(bdq label list "$id" 2>/dev/null)" || _labels=""
     n="$(attempts_of "$id")"; n="${n:-0}"
     _reclaims=0
-    _requeues=0
+    _requeues="$(reopens_of "$id")"; _requeues="${_requeues:-0}"
 
     # REQUEUE CAP. A bead completed and requeued past the cap is stuck in a loop the harness
     # is causing: the session finished the work, closed the bead, and the harness put it back
