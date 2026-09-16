@@ -79,6 +79,7 @@ HIT="$(GUARD_PAYLOAD="$PAYLOAD" \
   SPIRA_HOME="${SPIRA_HOME:-$HERE}" \
   SPIRA_DB="${SPIRA_DB:-}" \
   SPIRA_BD="${SPIRA_BD:-}" \
+  SPIRA_ID_PREFIX="${SPIRA_ID_PREFIX:-sp}" \
   python3 << 'PYEOF'
 import json, os, re, subprocess, sys
 
@@ -225,8 +226,9 @@ if not reason:
 if not reason:
     sys.exit(0)
 
-# Check for sp-[a-z0-9]+ pattern in the reason.
-sp_ids = re.findall(r"\bsp-[a-z0-9]+\b", reason)
+_id_prefix = re.escape(os.environ.get("SPIRA_ID_PREFIX", "sp"))
+_ID_RE = re.compile(r"\b" + _id_prefix + r"-[a-z0-9]+\b")
+sp_ids = _ID_RE.findall(reason)
 
 if sp_ids:
     # Verify the cited id exists and is not closed (unless it is an insight).
