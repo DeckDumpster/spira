@@ -125,7 +125,7 @@ sweep_pid=$!
 # A fixed sleep is unreliable because sourcing lib.sh and conf.sh can take longer than any
 # constant; the probe that follows sweep is slow enough that killing after the count drops is safe.
 for _ in $(seq 1 200); do
-    [ "$(temps)" -lt 2 ] && break
+    [ "$(temps)" -lt 1 ] && break
     kill -0 "$sweep_pid" 2>/dev/null || break
     sleep 0.1
 done
