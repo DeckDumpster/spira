@@ -416,6 +416,18 @@ fi
 
 # Database init — run bd init if no .beads yet.
 if [ -d "${SPIRA_DB:-}/.beads" ]; then
+    _meta="${SPIRA_DB}/.beads/metadata.json"
+    if [ -f "$_meta" ]; then
+        _stored_mode="$(python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("dolt_mode",""))' \
+            < "$_meta" 2>/dev/null || true)"
+        if [ "${_stored_mode:-}" = "embedded" ]; then
+            _phase_fail "database" \
+                "existing store at $SPIRA_DB is embedded (one lock, all clients queue); set SPIRA_DOLT_DATA in spira.conf and re-run install.sh"
+        fi
+        unset _stored_mode
+    fi
+    unset _meta
     _bead_count="$(timeout 10 "$SPIRA_BD" -C "$SPIRA_DB" list --limit 0 --json 2>/dev/null \
         | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo '?')"
     phase_skip "database exists at $SPIRA_DB ($_bead_count bead(s))"
