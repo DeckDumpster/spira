@@ -123,6 +123,41 @@ else
 fi
 
 echo
+echo "resume — session continuity"
+
+# concierge_resume_id is tested through the internal _resume-id subcommand.
+# SPIRA_WIKI is pinned to a non-default value so BRAIN inside concierge.sh is predictable
+# and the session file can be written with the matching value.
+FAKE_BRAIN="$TMP/fakebrain"; mkdir -p "$FAKE_BRAIN"
+SID_FILE="$TMP/concierge-session"
+
+# WITHOUT A SESSION FILE: no id returned (first run starts empty).
+rm -f "$SID_FILE"
+rid="$(SPIRA_RUN="$TMP" SPIRA_WIKI="$FAKE_BRAIN" SPIRA_CONF="$TMP/no.conf" \
+    bash "$HARNESS/concierge.sh" _resume-id 2>/dev/null)"
+is "no id when session file absent"    ""  "$rid"
+
+# WITH A MATCHING CWD: the stored id is returned.
+printf 'session-abc-123\n%s\n' "$FAKE_BRAIN" > "$SID_FILE"
+rid="$(SPIRA_RUN="$TMP" SPIRA_WIKI="$FAKE_BRAIN" SPIRA_CONF="$TMP/no.conf" \
+    bash "$HARNESS/concierge.sh" _resume-id 2>/dev/null)"
+is "id returned when cwd matches"      "session-abc-123"  "$rid"
+
+# POSITIVE CONTROL: if the cwd field in the file is changed to something else, the id must
+# NOT be returned — otherwise this test passes regardless of whether the check exists.
+printf 'session-abc-123\n/old/path/that/differs\n' > "$SID_FILE"
+rid="$(SPIRA_RUN="$TMP" SPIRA_WIKI="$FAKE_BRAIN" SPIRA_CONF="$TMP/no.conf" \
+    bash "$HARNESS/concierge.sh" _resume-id 2>"$TMP/err_resume")"
+is "empty when cwd mismatch"           ""  "$rid"
+want "and warns about the orphaned session" "starting empty" "$(cat "$TMP/err_resume")"
+
+# Restore match so subsequent tests get a clean file.
+printf 'session-abc-123\n%s\n' "$FAKE_BRAIN" > "$SID_FILE"
+rid2="$(SPIRA_RUN="$TMP" SPIRA_WIKI="$FAKE_BRAIN" SPIRA_CONF="$TMP/no.conf" \
+    bash "$HARNESS/concierge.sh" _resume-id 2>/dev/null)"
+is "id returned again after cwd is restored"  "session-abc-123"  "$rid2"
+
+echo
 echo "the brief — composed, or refused"
 
 # Brief rendering requires statutes in the rule database. A fresh container has none,
@@ -269,6 +304,58 @@ else
     # alive would be 0 for a different reason. rc_start catches that case above.
 
     tmux -L "$SOCK" kill-server 2>/dev/null || true  # drains the nested transient unit
+fi
+
+echo
+echo "resume — launcher carries the resume flag"
+
+# THE PROPERTY UNDER TEST. When $SPIRA_RUN/concierge-session holds an id whose cwd matches
+# BRAIN, the launcher script must carry --resume <id>. Without the recorded id it must not.
+#
+# POSITIVE CONTROL: a launcher with no session file MUST NOT carry --resume, so if the check
+# were absent the "resume present" assertion below would pass against a launcher that adds it
+# unconditionally.
+if ! systemctl --user status >/dev/null 2>&1 || ! command -v systemd-run >/dev/null 2>&1; then
+    printf '  skip  (no systemd user session — launcher resume test requires it)\n'
+else
+    TMP_RUN="$TMP/run-resume"; mkdir -p "$TMP_RUN"
+    FAKE_SID_R="resume-launcher-test-$(date +%s)"
+
+    # First: no session file → launcher must NOT carry --resume.
+    rm -f "$TMP_RUN/concierge-session"
+    SOCK_NR="test-concierge-noresume-$$"
+    tmux -L "$SOCK_NR" kill-server 2>/dev/null || true
+    SPIRA_RUN="$TMP_RUN" CONCIERGE_SOCKET="$SOCK_NR" CONCIERGE_SESSION="$SOCK_NR" \
+        systemd-run --user --wait --collect --quiet -- \
+        env SPIRA_RUN="$TMP_RUN" CONCIERGE_SOCKET="$SOCK_NR" CONCIERGE_SESSION="$SOCK_NR" \
+        bash "$HARNESS/concierge.sh" start 2>>"$TMP/err" || true
+    tmux -L "$SOCK_NR" kill-server 2>/dev/null || true
+    if [ -f "$TMP_RUN/concierge-launch.sh" ]; then
+        nowant "launcher has no --resume when no session file" "--resume" \
+            "$(cat "$TMP_RUN/concierge-launch.sh")"
+    else
+        fail=$((fail+1)); printf '  FAIL  start did not write launcher (no-session case)\n'
+    fi
+
+    # Second: session file with matching cwd → launcher must carry --resume <id>.
+    # BRAIN inside concierge.sh is SPIRA_WIKI when set, so we pin it to TMP_RUN for a
+    # predictable, non-default value that the session file can match.
+    printf '%s\n%s\n' "$FAKE_SID_R" "$TMP_RUN" > "$TMP_RUN/concierge-session"
+    SOCK_R="test-concierge-resume2-$$"
+    tmux -L "$SOCK_R" kill-server 2>/dev/null || true
+    SPIRA_RUN="$TMP_RUN" SPIRA_WIKI="$TMP_RUN" CONCIERGE_SOCKET="$SOCK_R" CONCIERGE_SESSION="$SOCK_R" \
+        systemd-run --user --wait --collect --quiet -- \
+        env SPIRA_RUN="$TMP_RUN" SPIRA_WIKI="$TMP_RUN" \
+            CONCIERGE_SOCKET="$SOCK_R" CONCIERGE_SESSION="$SOCK_R" \
+        bash "$HARNESS/concierge.sh" start 2>>"$TMP/err" || true
+    tmux -L "$SOCK_R" kill-server 2>/dev/null || true
+    if [ -f "$TMP_RUN/concierge-launch.sh" ]; then
+        lnch="$(cat "$TMP_RUN/concierge-launch.sh")"
+        want "launcher carries --resume when session file exists" "--resume"    "$lnch"
+        want "launcher carries the specific session id"           "$FAKE_SID_R" "$lnch"
+    else
+        fail=$((fail+1)); printf '  FAIL  start did not write launcher (resume case)\n'
+    fi
 fi
 
 fi  # statute book guard

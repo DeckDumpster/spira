@@ -162,6 +162,39 @@ brief_summary() {
         "${2:+, $2}"
 }
 
+# concierge_resume_id -> the recorded session id when BRAIN matches, else empty.
+# Warns to stderr when a file exists but the cwd changed (orphaned conversation).
+concierge_resume_id() {
+    local sf="$SPIRA_RUN/concierge-session" stored_id stored_cwd
+    [ -f "$sf" ] || return 0
+    { IFS= read -r stored_id && IFS= read -r stored_cwd; } < "$sf" || return 0
+    [ -n "$stored_id" ] || return 0
+    if [ "$stored_cwd" != "$BRAIN" ]; then
+        printf 'concierge: last session was in %s (now %s) — starting empty\n' \
+            "$stored_cwd" "$BRAIN" >&2
+        return 0
+    fi
+    printf '%s' "$stored_id"
+}
+
+# concierge_record_session — persist the id of the most recent transcript in BRAIN's project
+# directory. Only acts on a transcript written within the last 30 seconds (not from --help etc.).
+# The transcript filename IS the session id (client convention: <id>.jsonl).
+concierge_record_session() {
+    local proj_dir newest sid mtime now
+    proj_dir="${SPIRA_TOKEN_PROJECTS:-$HOME/.claude/projects}/$(printf '%s' "$BRAIN" | sed 's/[^A-Za-z0-9]/-/g')"
+    [ -d "$proj_dir" ] || return 0
+    newest="$(ls -t "$proj_dir"/*.jsonl 2>/dev/null | head -1 || true)"
+    [ -n "$newest" ] || return 0
+    mtime="$(stat -c %Y "$newest" 2>/dev/null)" || return 0
+    now="$(date +%s)"
+    [ $(( now - mtime )) -le 30 ] || return 0
+    sid="${newest##*/}"; sid="${sid%.jsonl}"
+    [ -n "$sid" ] || return 0
+    mkdir -p "$SPIRA_RUN"
+    printf '%s\n%s\n' "$sid" "$BRAIN" > "$SPIRA_RUN/concierge-session"
+}
+
 case "${1:-status}" in
 
 start)
@@ -181,6 +214,7 @@ start)
     BRIEF="$(compose_brief)" || exit 1
     MODEL="$(fayth_get "$FAYTH" FAYTH_MODEL "")"
     brief_summary "$BRIEF" "$MODEL"
+    RESUME_ID="$(concierge_resume_id)"
 
     # NO --allowedTools. For an interactive session under bypassed permissions that flag can
     # only SUBTRACT, and the persona's remit is unbounded — see concierge.fayth, where the
@@ -196,6 +230,7 @@ start)
         printf '#!/usr/bin/env bash\n'
         printf 'exec claude --remote-control %q --dangerously-skip-permissions ' "$SESSION"
         [ -n "$MODEL" ] && printf -- '--model %q ' "$MODEL"
+        [ -n "$RESUME_ID" ] && printf -- '--resume %q ' "$RESUME_ID"
         printf -- '--append-system-prompt %q\n' "$(cat "$BRIEF")"
     } > "$LAUNCHER"
     chmod +x "$LAUNCHER"
@@ -213,6 +248,7 @@ start)
         echo "concierge: started as Remote Control session '$SESSION'"
         echo "  attach locally:  tmux -L $SOCKET attach -t $SESSION"
         echo "  on the phone:    Claude app -> Remote Control -> $SESSION"
+        concierge_record_session || true
     else
         echo "concierge: failed to stay up — run it in the foreground to see why:" >&2
         echo "  cd $BRAIN && claude --remote-control $SESSION" >&2
@@ -229,22 +265,19 @@ wake)
     $TM send-keys -t "$SESSION" -l -- "$2" && $TM send-keys -t "$SESSION" Enter
     ;;
 
-# THE SAME PERSONA, AT THE OPERATOR'S OWN TERMINAL. `start` launches the detached Remote
-# Control session the phone reaches; this one runs in the foreground, attached to the TTY it
-# was invoked from, and replaces this shell.
+# THE SAME PERSONA, AT THE OPERATOR'S OWN TERMINAL. `start` is the detached Remote Control
+# session; this one runs in the foreground at the calling terminal.
 #
 # WHY IT IS A VERB HERE AND NOT ITS OWN SCRIPT. `compose_brief` is the single place that
-# knows how a concierge is assembled — which brief, which statute core, which refusals. A
-# second launcher would be a second copy of that knowledge, and the copy stays right until
-# somebody edits one of them. The operator types one command either way.
+# knows how a concierge is assembled. A second launcher would be a second copy of that
+# knowledge, and the copy stays right until somebody edits one of them.
 #
 # NO --remote-control. That flag registers the session under a name the phone selects, and
 # exactly one session may hold the name `concierge`; a terminal session claiming it would
-# either collide with the tmux one or quietly take the phone's ingress away. This is the
-# keyboard's concierge, and the phone's is `start`.
+# either collide with the tmux one or quietly take the phone's ingress away.
 #
-# EVERYTHING AFTER `here` IS PASSED TO claude, so `--resume`, `--continue`, `-p "..."` and a
-# one-shot prompt all work without this script needing to know about any of them.
+# EVERYTHING AFTER `here` IS PASSED TO claude, so `-p "..."` and one-shot prompts work.
+# User-supplied flags come after ours on the command line and win.
 here)
     shift
     command -v claude >/dev/null || { echo "concierge: claude not on PATH" >&2; exit 1; }
@@ -262,17 +295,21 @@ here)
     unset $(bash "$_tmuxenv" names) 2>/dev/null || true
 
     brief_summary "$BRIEF" "$MODEL" >&2
+    RESUME_ID="$(concierge_resume_id)"
 
     # `cd`, NOT --add-dir. The working directory is what decides which CLAUDE.md, which hooks
     # and which project memory the client loads, and the whole point of this persona is that
     # it gets the operator's own conventions and guards.
     cd "$BRAIN" || exit 1
-    # PERMISSION MODE IS THE CALLER'S. Bypass is the default because it is what every other
-    # session on this box runs and a concierge stopping to ask about `bd list` is a concierge
-    # nobody uses — but a caller who passes their own --permission-mode gets it, because the
-    # flag they wrote comes after ours on the command line and wins.
-    exec claude --dangerously-skip-permissions \
-        ${MODEL:+--model "$MODEL"} --append-system-prompt "$(cat "$BRIEF")" "$@"
+    # NOT exec — so we can record the session id after claude exits and resume it next time.
+    # PERMISSION MODE IS THE CALLER'S; the flag they write comes after ours and wins.
+    claude --dangerously-skip-permissions \
+        ${MODEL:+--model "$MODEL"} \
+        ${RESUME_ID:+--resume "$RESUME_ID"} \
+        --append-system-prompt "$(cat "$BRIEF")" "$@"
+    _here_rc=$?
+    concierge_record_session || true
+    exit $_here_rc
     ;;
 
 # RENDER IT AND PRINT THE PATH, CHANGING NOTHING. The brief is the part of this session that
@@ -300,6 +337,8 @@ status)
     ;;
 
 stop)    $TM kill-session -t "$SESSION" 2>/dev/null && echo "concierge: stopped" ;;
+
+_resume-id)  concierge_resume_id ;;  # internal: used by test suite
 
 *)       sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
