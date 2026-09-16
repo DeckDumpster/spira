@@ -1262,6 +1262,7 @@ What makes that safe is the gate, not your memory of it. Before you exit:
    \`\`\`
    GATE_ID=\$(bd gate create --type=gh:run --blocks \$BEAD_ID -r \"waiting for CI\" | grep -oP 'sp-\\w+')
    bd update \$GATE_ID --set-metadata \"repo=\$(gh repo view --json nameWithOwner -q .nameWithOwner)\"
+   bd update \$GATE_ID --set-metadata \"branch=\$(git rev-parse --abbrev-ref HEAD)\"
    \`\`\`
 
 3. leave the bead OPEN with a note saying what state it is in
@@ -1274,9 +1275,11 @@ Green: the gate resolves, the bead returns to ready, and the sentinel lands it.
 Red: \`bd gate check\` escalates the gate; the bead returns to the queue at its own priority
 so the next aeon can fix it — same bead, same recorded branch, all your commits.
 
-**Set metadata.repo** on the gate (step 2 above). The check command uses it to call
-\`gh run view --repo <org/repo>\`, which is what prevents a run from the wrong repository
-from resolving this gate."
+**Set metadata.repo and metadata.branch** on the gate (step 2 above). The check command
+uses metadata.repo to call \`gh run view --repo <org/repo>\`, preventing a run from the
+wrong repository from resolving this gate. gate-check's discover step uses metadata.branch
+to query only that branch's CI runs, preventing a deployment run on the base branch from
+resolving the gate via time proximity."
 else
     PARK_BRIEF="## Your lifetime: do the work, then exit
 

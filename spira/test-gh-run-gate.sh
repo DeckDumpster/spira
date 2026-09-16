@@ -190,11 +190,19 @@ MAP
 # SPIRA_BD IS THE INJECTION POINT. conf.sh resets $PATH but honours a pre-set SPIRA_BD,
 # which gate-check.sh uses via `${SPIRA_BD:-bd}`. Setting it here bypasses PATH entirely
 # so the stub receives every bd call regardless of conf.sh's PATH rebuild.
+#
+# The stub returns one open unbound gate with metadata.branch so gate-check's discover
+# loop has a branch to pass. Without this the loop emits nothing (no unbound gates)
+# and the discover call would never happen — which would silence the positive control.
 BD_LOG="$TMP/bd-calls.log"
 mkdir -p "$TMP/sbin"
 cat > "$TMP/sbin/bd" <<'BDSTUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$BD_LOG"
+case "$*" in
+    *"gate list"*"--json"*|*"gate list --json"*)
+        printf '[{"id":"sp-g1","await_type":"gh:run","metadata":{"branch":"spira/pr-branch","repo":"org/repo"}}]\n' ;;
+esac
 BDSTUB
 chmod +x "$TMP/sbin/bd"
 export BD_LOG
@@ -203,16 +211,16 @@ SH="$TMP/spira"; mkdir -p "$SH"
 cp "$HERE/gate-check.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
 
 # The positive control for pr-repo discover: the stub bd will see a gate discover call
-# from within $PR_REPO.
+# with the branch from the gate's metadata.
 : > "$BD_LOG"
 SPIRA_HOME="$SH" SPIRA_REPO="$PR_REPO" SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" \
 SPIRA_REPO_MAP="$MAP" SPIRA_CONF="$TMP/no.conf" SPIRA_BD="$TMP/sbin/bd" \
     bash "$SH/gate-check.sh" 2>/dev/null
 
 bd_calls="$(cat "$BD_LOG" 2>/dev/null)"
-want   "gate discover is called"            "gate discover"     "$bd_calls"
-want   "gate check --type=gh:run is called" "gate check"        "$bd_calls"
-nowant "discover not called for push repo"  "$PUSH_REPO"        "$(grep discover "$BD_LOG" 2>/dev/null)"
+want   "gate discover is called with branch"  "gate discover --branch spira/pr-branch" "$bd_calls"
+want   "gate check --type=gh:run is called"   "gate check"                             "$bd_calls"
+nowant "discover not called for push repo"    "$PUSH_REPO"                             "$(grep discover "$BD_LOG" 2>/dev/null)"
 
 # ======================================================================================
 # PART 4: the systemd timer for gate-check exists.

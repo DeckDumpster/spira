@@ -8,9 +8,11 @@
 #
 # 1. DISCOVER: for every pr-mode repository in the repo-map, call `bd gate discover`
 #    from within that repository's directory. discover calls `gh run list` using the
-#    repository's own remote, so it queries the right GitHub account and matches on the
-#    correct branch and commit SHA — not on this harness's runs. A gate whose branch
-#    does not exist in the repository is not matched.
+#    repository's own remote. One discover call per branch stored in open gates'
+#    metadata.branch: without an explicit --branch, discover defaults to the repository's
+#    current branch (usually the base), and a deployment run on the base branch can
+#    satisfy a gate via time proximity alone. Passing the gate's own branch keeps the
+#    query scope to that branch's CI runs only.
 #
 #    A push- or hold-mode repository never opens a pull request, so no CI run exists to
 #    discover for it. Calling discover there wastes a gh round-trip and risks matching a
@@ -33,17 +35,33 @@ spira_conf
 
 bdq() { "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 
-# STEP 1: DISCOVER — iterate pr-mode repositories and call discover from within each one.
+# STEP 1: DISCOVER — iterate pr-mode repositories, then call discover once per branch
+# recorded in open unbound gates.
 #
-# ONLY PR-MODE REPOS. push merges directly and hold leaves the branch for a human; in both
-# cases the landing gate is the only gate and no CI run exists to discover. Running discover
-# against those repos would query the wrong GitHub context.
+# ONLY PR-MODE REPOS. push merges directly and hold leaves the branch for a human; in
+# both cases the landing gate is the only gate and no CI run exists to discover.
 while IFS= read -r name; do
     [ "$(repo_land "$name")" = pr ] || continue
     repo="$(repo_root "$name" 2>/dev/null)" || continue
     [ -d "$repo/.git" ] || continue
-    # Call discover from within the repository so gh run list uses its remote.
-    ( cd "$repo" && bdq gate discover ) 2>/dev/null || true
+    while IFS= read -r branch; do
+        [ -n "$branch" ] || continue
+        ( cd "$repo" && bdq gate discover --branch "$branch" ) 2>/dev/null || true
+    done < <(bdq gate list --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    gates = json.load(sys.stdin)
+    if not isinstance(gates, list): gates = [] if gates is None else [gates]
+    seen = set()
+    for g in (gates or []):
+        if g and g.get("await_type") == "gh:run" and not g.get("await_id"):
+            b = (g.get("metadata") or {}).get("branch", "")
+            if b and b not in seen:
+                seen.add(b)
+                print(b)
+except Exception:
+    pass
+' 2>/dev/null)
 done < <(repo_names)
 
 # STEP 2: CHECK — evaluate all open gh:run gates.
