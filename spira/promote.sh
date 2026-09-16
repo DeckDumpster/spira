@@ -94,6 +94,8 @@ if [ ! -d "$PROD_REPO/.git" ]; then
         mkdir -p "$(dirname "$PROD_REPO")"
         git clone --local "$SPIRA_REPO" "$PROD_REPO" 2>&1 \
             | while IFS= read -r line; do log "promote: clone: $line"; done
+        clone_status=${PIPESTATUS[0]}
+        [ "$clone_status" -eq 0 ] || { log "promote: clone failed (exit $clone_status)"; exit 1; }
         git -C "$PROD_REPO" checkout --detach "$RESOLVED" >/dev/null 2>&1
         log "promote: production checkout created at $PROD_REPO"
         log "promote: production is now at $RESOLVED"

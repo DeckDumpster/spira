@@ -408,6 +408,73 @@ fi
 
 # ==========================================================================
 echo
+echo "clone failure — positive control: pre-fix promote.sh exits 0 when clone fails:"
+# ==========================================================================
+# Without the PIPESTATUS[0] check, a failed git clone exits the pipeline non-zero
+# but the script (which lacks set -e) continues unconditionally, logs success, and
+# exits 0. The positive control strips the clone_status check from the fixed script
+# to reproduce that silent-failure behaviour, then asserts it exits 0.
+CLN_SRC="$TMP/cln-src"
+mkdir -p "$CLN_SRC/spira"
+git -C "$CLN_SRC" init -q
+git -C "$CLN_SRC" commit --allow-empty -m "cln-init" -q
+ln -sf "$HERE/lib.sh"  "$CLN_SRC/spira/lib.sh"
+ln -sf "$HERE/conf.sh" "$CLN_SRC/spira/conf.sh"
+printf '# empty\n' > "$CLN_SRC/spira/repo-map.example"
+printf '# empty\n' > "$CLN_SRC/spira/watchers"
+
+# A non-empty target directory causes git clone to fail (not empty).
+CLN_TARGET="$TMP/cln-target"
+mkdir -p "$CLN_TARGET"
+touch "$CLN_TARGET/.notempty"
+
+CLN_OLD="$TMP/cln-old-promote.sh"
+sed '/clone_status=/d; /clone_status.*-eq 0/d' "$HERE/promote.sh" > "$CLN_OLD"
+chmod +x "$CLN_OLD"
+
+cln_old_rc=0
+env -i PATH="$PATH" HOME="$TMP/home" \
+    SPIRA_HOME="$CLN_SRC/spira" \
+    SPIRA_REPO="$CLN_SRC" \
+    SPIRA_PROD="$CLN_TARGET/spira" \
+    SPIRA_RUN="$TMP/run" \
+    SPIRA_DB="$TMP/db" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_WATCHERS="$CLN_SRC/spira/watchers" \
+    bash "$CLN_OLD" HEAD 2>/dev/null || cln_old_rc=$?
+
+if [ "$cln_old_rc" -eq 0 ]; then
+    ok "positive control: pre-fix promote.sh exits 0 when clone fails (this is the bug)"
+else
+    bad "positive control: pre-fix promote.sh exits 0 when clone fails" \
+        "expected rc=0 (no status check), got rc=$cln_old_rc"
+fi
+
+# ==========================================================================
+echo
+echo "clone failure — fixed promote.sh exits non-zero when clone fails:"
+# ==========================================================================
+cln_out="" cln_rc=0
+cln_out="$(env -i PATH="$PATH" HOME="$TMP/home" \
+    SPIRA_HOME="$CLN_SRC/spira" \
+    SPIRA_REPO="$CLN_SRC" \
+    SPIRA_PROD="$CLN_TARGET/spira" \
+    SPIRA_RUN="$TMP/run" \
+    SPIRA_DB="$TMP/db" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_WATCHERS="$CLN_SRC/spira/watchers" \
+    bash "$HERE/promote.sh" HEAD 2>&1)" || cln_rc=$?
+
+if [ "$cln_rc" -ne 0 ]; then
+    ok "clone failure: promote.sh exits non-zero when clone fails (rc=$cln_rc)"
+else
+    bad "clone failure: promote.sh exits non-zero when clone fails" \
+        "exited 0 — clone failure was silent"
+fi
+want "clone failure: error names 'clone failed'" "clone failed" "$cln_out"
+
+# ==========================================================================
+echo
 echo "summary"
 # ==========================================================================
 printf '  %d passed, %d failed\n' "$pass" "$fail"
