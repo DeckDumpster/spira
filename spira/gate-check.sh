@@ -111,3 +111,62 @@ except Exception:
     spira_event ci.failed "$blocked" "CI red — $blocked returned to queue" \
         "$(printf '%s' "$esc")" || true
 done < <(printf '%s\n' "$check_out" | grep 'ESCALATE' 2>/dev/null || true)
+
+# STEP 3: FLAKY SUITE BEADS — scan recently completed runs in SPIRA_FLAKY_GH_REPO for
+# "flaky suite" annotations; file a P2 bead per suite, deduplicated on the open bead
+# for that suite. A suite stays quiet once a bead is open: no second bead until that
+# one closes.
+#
+# Two gh calls per run: one for job ids, one per job for annotations. Both silently
+# no-op on network error (|| true) so a missing credential never fails the timer.
+if [ -n "${SPIRA_FLAKY_GH_REPO:-}" ] && command -v gh >/dev/null 2>&1; then
+    while IFS= read -r _run_id; do
+        [ -n "$_run_id" ] || continue
+        while IFS= read -r _job_id; do
+            [ -n "$_job_id" ] || continue
+            while IFS= read -r _suite; do
+                [ -n "$_suite" ] || continue
+                # Skip if an open bead already exists for this suite.
+                _exists="$(bdq list --json 2>/dev/null | python3 -c "
+import json, sys
+try:
+    beads = json.load(sys.stdin)
+    if not isinstance(beads, list): beads = []
+    title = 'flaky suite: ' + sys.argv[1]
+    found = any(b.get('status') in ('open', 'in_progress') and b.get('title') == title
+                for b in beads)
+    print('yes' if found else '')
+except Exception:
+    pass
+" "$_suite" 2>/dev/null)" || true
+                [ -z "${_exists:-}" ] || continue
+                printf 'Flaky suite in run %s.\n\n%s was red on a parallel run then green on a serial re-run.\n' \
+                    "$_run_id" "$_suite" \
+                    | bash "$HERE/bead.sh" file "flaky suite: $_suite" \
+                        --for builder --repo "$(spira_home_repo)" \
+                        -p 2 --body-file - 2>/dev/null || true
+            done < <(gh api "repos/$SPIRA_FLAKY_GH_REPO/check-runs/$_job_id/annotations" \
+                2>/dev/null | python3 -c '
+import json, sys
+try:
+    for a in json.load(sys.stdin):
+        if a.get("annotation_level") == "warning" and a.get("title") == "flaky suite":
+            msg = a.get("message", "")
+            idx = msg.find(" was red")
+            if idx > 0:
+                print(msg[:idx])
+except Exception:
+    pass
+' 2>/dev/null || true)
+        done < <(gh api "repos/$SPIRA_FLAKY_GH_REPO/actions/runs/$_run_id/jobs" \
+            2>/dev/null | python3 -c '
+import json, sys
+try:
+    for j in json.load(sys.stdin).get("jobs", []):
+        print(j["id"])
+except Exception:
+    pass
+' 2>/dev/null || true)
+    done < <(gh run list --repo "$SPIRA_FLAKY_GH_REPO" --status completed --limit 20 \
+        --json databaseId --jq '.[].databaseId' 2>/dev/null || true)
+fi
