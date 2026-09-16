@@ -79,6 +79,6 @@ emit() {
 
 case "${1:-loop}" in
     once) emit ;;
-    loop) while true; do emit; sleep "$INTERVAL"; done ;;
+    loop) while true; do emit || exit 1; sleep "$INTERVAL"; done ;;
     *) echo "usage: watch-answers.sh [once|loop]" >&2; exit 2 ;;
 esac

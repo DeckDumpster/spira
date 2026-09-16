@@ -323,6 +323,11 @@ def main():
 
     rows = rows_of(json_only(sys.stdin.read()), "issues")
 
+    # Capture existence BEFORE write_witness creates or overwrites the file.
+    # A cold start has no witness; write_witness would create it here, so
+    # checking after the call would make every cold start look like recovery.
+    witness_existed = bool(args.get("witness") and os.path.exists(args["witness"]))
+
     if args.get("witness"):
         write_witness(args["witness"], rows)
 
@@ -336,6 +341,27 @@ def main():
             vmark.adopt(cmark.ts)
         elif cmark.fresh() and not vmark.fresh():
             cmark.adopt(vmark.ts)
+
+    # BOTH FRESH WITH A WITNESS IS RECOVERY, NOT COLD START. A cold start has no witness; a
+    # crash clears the cursors but cannot reach back to remove the one the prior pass wrote.
+    both_fresh = (vmark is not None and vmark.fresh() and
+                  cmark is not None and cmark.fresh())
+    if both_fresh and witness_existed:
+        ask = cfg["ask_label"]
+        mine = self_closed_ids(cfg.get("self_closed"))
+        missed = 0
+        for r in rows:
+            lbls = set(r.get("labels") or [])
+            if ((r.get("status") or "") == "closed"
+                    and "insight" not in lbls
+                    and ({ask, "overseer"} & lbls)
+                    and (r.get("id") or "") not in mine):
+                missed += 1
+            elif ({"insight", ask, "overseer"} & lbls
+                  and (r.get("comment_count") or 0) > 0):
+                missed += 1
+        print("SEEDED AT %s — %d answer(s) already waiting were not reported" % (now, missed),
+              flush=True)
 
     # FIRST RUN SEEDS SILENTLY -- a first run being both marks absent, after the line above.
     # Without this, arming a watcher replays every historical answer as though it had just
