@@ -165,12 +165,12 @@ echo "REGRESSION (sp-xrkuu class): schema_name fails closed on undeclared keys"
 schema_out="$(SPIRA_HOME="$HERE" SPIRA_CONF="$T/no.conf" \
     bash "$HERE/schema.sh" name no-such-partition-xyz 2>&1)" && schema_exit=0 || schema_exit=$?
 
-if [ "$schema_exit" -ne 0 ]; then
-    ok "schema_name: undeclared key exits non-zero (schema_exit=$schema_exit)"
+if [ "$schema_exit" -eq 2 ] && [[ "$schema_out" == *"no-such-partition-xyz"* ]]; then
+    ok "schema_name: undeclared key exits 2 and names the missing key"
 else
-    bad "schema_name: undeclared key must exit non-zero, not 0" "exit was 0"
+    bad "schema_name: undeclared key must exit 2 and name the missing key" \
+        "exit=$schema_exit, output='$schema_out'"
 fi
-want "schema_name: error message names the missing key" "no-such-partition-xyz" "$schema_out"
 
 # plan and incident must be declared — a partition the fayth uses must be one schema_name
 # can hand to a caller by validated name (not just by default fallback in the variable form).

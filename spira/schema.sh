@@ -34,7 +34,7 @@
 set -uo pipefail
 SCHEMA_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=/dev/null
-. "$SCHEMA_HOME/conf.sh" 2>/dev/null || true
+. "$SCHEMA_HOME/conf.sh" || true
 # shellcheck source=/dev/null
 . "$SCHEMA_HOME/lib.sh" 2>/dev/null || true
 
