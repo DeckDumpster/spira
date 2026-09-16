@@ -32,10 +32,10 @@ out="$(LIBSH="$HERE/lib.sh" python3 - <<'PY'
 import json,subprocess,os,sys
 src=open(os.environ["LIBSH"]).read()
 seg=src.split("detect_unclaimable_ready() {",1)[1]
-body=seg.split('| PARTS="$parts" python3 -c \'',1)[1].split("\n' 2>/dev/null",1)[0]
+body=seg.split('| PARTS="$parts" ALL_PARTS="$all_parts" python3 -c \'',1)[1].split("\n' 2>/dev/null",1)[0]
 body=body.replace("'\\''","'")
 def run(beads):
-    env=dict(os.environ); env["PARTS"]="builder|spira,plan|spira-poison\n"; env["SPIRA_SCOPE_LABEL"]="spira"
+    env=dict(os.environ); env["PARTS"]="builder|spira,plan|spira-poison\n"; env["ALL_PARTS"]="builder|spira,plan|spira-poison\n"; env["SPIRA_SCOPE_LABEL"]="spira"
     p=subprocess.run([sys.executable,"-c",body],input=json.dumps(beads),capture_output=True,text=True,env=env)
     if p.returncode!=0:
         print("HARNESS %s" % p.stderr.strip().splitlines()[-1] if p.stderr else "HARNESS unknown"); return None
