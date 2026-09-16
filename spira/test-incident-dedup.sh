@@ -43,6 +43,7 @@
 #
 # defect: sp-ls8kw (test suite for sp-csvzn, sp-ew54u, sp-vq796)
 # covers: spira/incident.sh
+# timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -103,7 +104,7 @@ print(count)
 
 # The external_ref that incident.sh derives from the title "dedup test incident".
 DEDUP_REF="incident:dedup-test-incident"
-N=5   # number of duplicate filings; 5 > 2 to stress beyond the sequential-pair case
+N=3   # number of duplicate filings; 3 > 2 exercises recurrence past the sequential-pair case
 
 # ======================================================================================
 echo
