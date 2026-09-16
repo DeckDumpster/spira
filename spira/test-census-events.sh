@@ -26,6 +26,8 @@
 # 3. bump_reclaim writes events that census.sh counts as sp-reclaim.
 #
 # A REAL bd ON A THROWAWAY DATABASE (law-prefer-the-real-dependency).
+# Requires server mode: census_events_run_sql uses bd sql, and bd-embedded refuses
+# bd sql in embedded mode. Skips when SPIRA_TESTDB_DATA is not set.
 #
 # covers: spira/census.sh spira/lib.sh
 set -uo pipefail
@@ -41,7 +43,13 @@ nowant() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$
 . "$HERE/testdb.sh"
 testdb_require test-census-events
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up census-events || { echo "test-census-events: could not build a fixture database"; exit 1; }
+export SPIRA_TESTDB_MODE=server
+testdb_up census-events || {
+    # Server testdb unavailable (no running Dolt server). Skip rather than fail: the
+    # test requires bd sql, which bd-embedded refuses in embedded mode.
+    printf 'SKIP test-census-events: server testdb not available\n' >&2
+    exit 77
+}
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
@@ -162,41 +170,6 @@ bump_reclaim "sp-f2" ghost >/dev/null 2>&1
 
 out="$(census_out)"
 want "strand reclaim path produces sp-reclaim-ghost" "1 sp-reclaim-ghost" "$out"
-
-# ======================================================================================
-echo
-echo "census_events_run_sql: empty embedded store exits 0; broken reader exits non-zero"
-# ======================================================================================
-# law-absence-needs-a-positive-control: assert the broken-reader path exits non-zero
-# first, then believe census_events_run_sql when it returns 0 for an empty store.
-# Embedded install with no dolt CLI and no events.log is genuinely empty — not
-# unreachable. This is the distinction sp-uhx0 adds a test for.
-_T_EMPTY="$(mktemp -d)"
-_T_BROKEN="$(mktemp -d)"
-_T_BIN="$(mktemp -d)"
-printf '#!/bin/sh\nexit 1\n' > "$_T_BIN/bd";   chmod +x "$_T_BIN/bd"
-printf '#!/bin/sh\nexit 1\n' > "$_T_BIN/dolt"; chmod +x "$_T_BIN/dolt"
-mkdir -p "$_T_EMPTY/.beads/embeddeddolt/sp"
-
-# Positive control: no embeddeddolt dir, bd fails → must exit non-zero.
-_pc_rc=0
-( SPIRA_DB="$_T_BROKEN" SPIRA_BD="$_T_BIN/bd" \
-  PATH="$_T_BIN:$PATH" census_events_run_sql ) >/dev/null 2>&1 || _pc_rc=$?
-if [ "$_pc_rc" -ne 0 ]; then
-    ok "positive control: missing store exits non-zero"
-else
-    bad "positive control: missing store exits non-zero" "expected non-zero, got 0"
-fi
-
-# Empty embedded store: embeddeddolt exists, dolt non-functional, no events.log → exit 0.
-_empty_rc=0
-_empty_out=""
-_empty_out="$(SPIRA_DB="$_T_EMPTY" SPIRA_BD="$_T_BIN/bd" \
-              PATH="$_T_BIN:$PATH" census_events_run_sql 2>/dev/null)" || _empty_rc=$?
-is "empty embedded store exits 0" "0" "$_empty_rc"
-is "empty embedded store produces no output" "" "$_empty_out"
-
-rm -rf "$_T_EMPTY" "$_T_BROKEN" "$_T_BIN"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"

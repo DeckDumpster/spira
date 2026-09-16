@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 #
-# test-bd-lock-retry.sh — conf.sh retries a transient dolt lock-contention error; when
-#   retries are exhausted and the only failure was lock contention, conf.sh continues with
-#   a warning (the lock-holder's presence implies schema compatibility). A schema mismatch
-#   aborts on the first attempt without retry.
+# test-bd-lock-retry.sh — conf.sh refuses lock-contention errors immediately.
 #
-# POSITIVE CONTROL (law-absence-needs-a-positive-control): a schema mismatch bd stub runs
-#   FIRST to prove the test harness can detect an abort (REACHED-PAST-GUARD absent). Only
-#   then does it mean anything when the lock-only exhaustion case produces REACHED-PAST-GUARD.
+# Lock contention means the store is in embedded mode (one exclusive lock, all
+# callers serialise). Embedded mode is refused by doctor.sh (sp-a9nr1); conf.sh
+# must treat lock contention as a configuration error and exit immediately,
+# not retry or continue.
+#
+# POSITIVE CONTROL: schema mismatch bd stub runs first to prove the harness can
+# detect an abort (REACHED-PAST-GUARD absent). Only then does it mean something
+# when the lock-contention case also produces no REACHED-PAST-GUARD.
 #
 # covers: spira/conf.sh
 set -uo pipefail
@@ -33,7 +35,6 @@ mkdir -p "$TESTDB/.beads"
 
 LOCK_MSG='Error: failed to open database: embeddeddolt: init schema: embeddeddolt: open db: failed to load database "db": the database is locked by another dolt process'
 
-# Write a bd stub that always exits 1 with the lock error.
 make_lock_bd() {
     mkdir -p "$TMP/bin"
     printf '#!/usr/bin/env bash\nprintf '"'"'%s\n'"'"' "%s" >&2\nexit 1\n' \
@@ -41,35 +42,10 @@ make_lock_bd() {
     chmod +x "$TMP/bin/bd"
 }
 
-# Write a counting bd that emits the lock error for the first FAIL_TIMES calls, then exits 0.
-make_counting_lock_bd() {
-    local fail_times="$1"
+make_mismatch_bd() {
     mkdir -p "$TMP/bin"
-    rm -f "$TMP/bd-calls"
-    cat > "$TMP/bin/bd" <<STUB
+    cat > "$TMP/bin/bd" <<'STUB'
 #!/usr/bin/env bash
-COUNT=\$(cat "$TMP/bd-calls" 2>/dev/null || printf '0')
-COUNT=\$((COUNT+1))
-printf '%d\n' "\$COUNT" > "$TMP/bd-calls"
-if [ "\$COUNT" -le $fail_times ]; then
-    printf 'Error: failed to open database: embeddeddolt: init schema: embeddeddolt: open db: failed to load database "db": the database is locked by another dolt process\n' >&2
-    exit 1
-fi
-printf '✓ Schema already at v61\n'
-exit 0
-STUB
-    chmod +x "$TMP/bin/bd"
-}
-
-# Write a counting bd that always exits 1 with a schema-mismatch error.
-make_counting_mismatch_bd() {
-    mkdir -p "$TMP/bin"
-    rm -f "$TMP/bd-calls2"
-    cat > "$TMP/bin/bd" <<STUB
-#!/usr/bin/env bash
-COUNT=\$(cat "$TMP/bd-calls2" 2>/dev/null || printf '0')
-COUNT=\$((COUNT+1))
-printf '%d\n' "\$COUNT" > "$TMP/bd-calls2"
 printf 'database is at v61\nbinary knows up to v53\n' >&2
 exit 1
 STUB
@@ -87,7 +63,6 @@ source_conf() {
         SPIRA_WATCHERS="$HARNESS/spira/watchers" \
         SPIRA_BD="$TMP/bin/bd" \
         SPIRA_DB="$TESTDB" \
-        SPIRA_BD_LOCK_SLEEP_UNIT=0 \
         "$@" \
         bash -c ". '$HARNESS/spira/conf.sh'; printf 'REACHED-PAST-GUARD\n'" 2>&1) || rc=$?
     printf '%s' "$out"
@@ -96,59 +71,35 @@ source_conf() {
 
 # ==========================================================================
 echo
-echo "positive control — schema mismatch aborts, REACHED-PAST-GUARD is absent:"
+echo "positive control — schema mismatch aborts, REACHED-PAST-GUARD absent:"
 # ==========================================================================
-# Proves the test harness can detect an abort: REACHED-PAST-GUARD must be absent
-# and the schema mismatch message must appear. Only then does it mean anything that
-# the lock-only exhaustion case below produces REACHED-PAST-GUARD.
-make_counting_mismatch_bd
+# Prove the harness can detect an abort before trusting the lock-contention result.
+make_mismatch_bd
 ctrl_out="$(source_conf 2>&1 || true)"
 nowant "positive control: REACHED-PAST-GUARD absent"  "REACHED-PAST-GUARD" "$ctrl_out"
 want   "positive control: schema mismatch message"    "schema mismatch"    "$ctrl_out"
 
 # ==========================================================================
 echo
-echo "retry — transient lock (fails once, then succeeds) does not abort:"
+echo "lock contention — refuses immediately; REACHED-PAST-GUARD absent:"
 # ==========================================================================
-make_counting_lock_bd 1
-retry_out="$(source_conf 2>&1)"
-want "retry: REACHED-PAST-GUARD present" "REACHED-PAST-GUARD" "$retry_out"
-calls="$(cat "$TMP/bd-calls" 2>/dev/null || printf '0')"
-if [ "${calls:-0}" -gt 1 ]; then
-    ok "retry: bd was called more than once (called $calls times)"
-else
-    bad "retry: bd was called more than once" "called ${calls:-0} times"
-fi
-
-# ==========================================================================
-echo
-echo "lock-only exhaustion — all retries locked, conf.sh continues with warning:"
-# ==========================================================================
-# When every retry fails with lock contention only (no schema mismatch), the process
-# holding the lock opened the database successfully — schema is compatible. Exiting
-# here would block callers that do not need database access (e.g. skew.sh foreign)
-# whenever collect.sh holds the embedded dolt lock for its 180s probes.
+# A locked store means embedded mode. conf.sh must refuse, not retry or continue.
 make_lock_bd
-exhaust_out="$(source_conf 2>&1)"
-want   "exhausted: REACHED-PAST-GUARD present (conf.sh continues)"  "REACHED-PAST-GUARD"           "$exhaust_out"
-want   "exhausted: lock warning is printed"                          "locked"                        "$exhaust_out"
-nowant "exhausted: no 'migrate schema failed'"                       "migrate schema failed"         "$exhaust_out"
-nowant "exhausted: no 'schema mismatch'"                             "schema mismatch"               "$exhaust_out"
+lock_out="$(source_conf 2>&1 || true)"
+nowant "lock: REACHED-PAST-GUARD absent (conf.sh refuses)"  "REACHED-PAST-GUARD"  "$lock_out"
+want   "lock: message names embedded mode"                  "embedded"            "$lock_out"
+want   "lock: message names dolt_mode"                      "dolt_mode"           "$lock_out"
+want   "lock: message directs user to doctor.sh"            "doctor.sh"           "$lock_out"
 
 # ==========================================================================
 echo
-echo "schema mismatch — real mismatch aborts on the first attempt without retry:"
+echo "SPIRA_DOCTOR=1 — lock contention continues past guard:"
 # ==========================================================================
-make_counting_mismatch_bd
-mismatch_out="$(source_conf 2>&1 || true)"
-nowant "mismatch: REACHED-PAST-GUARD absent"   "REACHED-PAST-GUARD" "$mismatch_out"
-want   "mismatch: schema mismatch message"     "schema mismatch"    "$mismatch_out"
-calls2="$(cat "$TMP/bd-calls2" 2>/dev/null || printf '0')"
-if [ "${calls2:-0}" -eq 1 ]; then
-    ok "mismatch: bd called exactly once (not retried)"
-else
-    bad "mismatch: bd called exactly once" "called ${calls2:-0} times"
-fi
+# doctor.sh sets SPIRA_DOCTOR=1 so conf.sh does not exit before doctor can
+# collect all FAILs and report them together.
+make_lock_bd
+doctor_out="$(source_conf SPIRA_DOCTOR=1 2>&1)"
+want "doctor mode: REACHED-PAST-GUARD present" "REACHED-PAST-GUARD" "$doctor_out"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"

@@ -6,21 +6,11 @@
 # ----------------
 # db-9dh replaced the dolt-on-PATH proxy in doctor.sh with a write/read round trip:
 # write one sentinel event via _bump_write_event, read it back via _counter_events_query,
-# FAIL naming the write path when it does not return. Without this, seven consecutive
-# Maechen passes reported census=0; every call to bump_requeue/recur/reclaim had been
-# silently discarded and the dolt check reported OK.
+# FAIL naming the write path when it does not return.
 #
-# Two properties are tested:
-#
-#   1. POSITIVE CONTROL. An embedded store where events.log is unwritable (chmod 0444)
-#      must FAIL, naming the file-fallback write path. Without this the fix has nothing
-#      to confirm — a probe that silently passes a broken write path is no probe at all.
-#
-#   2. HAPPY PATH. An embedded store with no dolt and a writable SPIRA_DB must report
-#      "events write/read round trip" as OK (the file fallback introduced by db-wx4 works).
-#
-# The positive control was run against the unfixed tree (lines 64-72 before db-9dh):
-# doctor.sh printed no "events" line at all — the probe was never performed.
+# The server-mode events table enforces fk_events_issue (events.issue_id -> issues.id),
+# so a sentinel id that matches no bead is refused with Error 1452. The probe must pick
+# a real bead id from bd list — a sentinel against a random uuid always fails.
 #
 # covers: spira/doctor.sh spira/lib.sh
 set -uo pipefail
@@ -40,24 +30,6 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 BIN="$TMP/bin"
 mkdir -p "$BIN"
 
-# bd: refuse "sql" (simulates the CGO_ENABLED=0 embedded binary), pass "list" and
-# "migrate schema" so the database and schema sections of doctor.sh do not FAIL.
-cat > "$BIN/bd" <<'FAKESCRIPT'
-#!/usr/bin/env bash
-for arg in "$@"; do
-    if [ "$arg" = "sql" ]; then
-        printf "Error: 'bd sql' is not yet supported in embedded mode\n" >&2
-        exit 1
-    fi
-done
-case "$*" in
-    *"migrate schema"*) printf '✓ Schema already at v61\n'; exit 0 ;;
-    *"list"*)           printf '[]\n'; exit 0 ;;
-    *)                  exit 0 ;;
-esac
-FAKESCRIPT
-chmod +x "$BIN/bd"
-
 # systemctl: all units active/enabled so the systemd sections do not FAIL.
 cat > "$BIN/systemctl" <<'FAKESCRIPT'
 #!/usr/bin/env bash
@@ -73,97 +45,17 @@ exit 0
 FAKESCRIPT
 chmod +x "$BIN/systemctl"
 
-# Build a PATH without dolt so both test cases run in the file-fallback path.
-_SAFE_PATH="$BIN"
-IFS=: read -ra _pathdirs <<< "${PATH:-/usr/local/bin:/usr/bin:/bin}"
-for _d in "${_pathdirs[@]}"; do
-    [ -n "$_d" ] || continue
-    [ -x "$_d/dolt" ] && continue
-    _SAFE_PATH="${_SAFE_PATH}:${_d}"
-done
-
-touch "$TMP/watchers-empty"
-
-# run_doctor <extra_env_assignments...>
-# Runs doctor.sh under env -i so no ambient spira.conf can sneak in.
-run_doctor() {
-    local extra="${1:-}"
-    env -i \
-        PATH="$_SAFE_PATH" \
-        HOME="$TMP/home" \
-        SPIRA_CONF=/nonexistent \
-        SPIRA_PATH="$BIN" \
-        SPIRA_SYSTEMCTL="$BIN/systemctl" \
-        SPIRA_BD="$BIN/bd" \
-        SPIRA_DB="$TMP/db" \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_INSTANCE=prod \
-        SPIRA_BD_PIN="$TMP/run/bd-pin" \
-        SPIRA_REPO_MAP=/nonexistent \
-        SPIRA_NOTIFY=/nonexistent \
-        SPIRA_WATCHERS="$TMP/watchers-empty" \
-        ${extra} \
-        bash "$HERE/doctor.sh" 2>/dev/null
-}
-
-# ==========================================================================
-echo
-echo "positive control — unwritable events.log must FAIL:"
-# ==========================================================================
-# Create the embedded store directories, seed events.log as unwritable so
-# _bump_write_event's file-fallback silently discards the write, and the
-# read-back returns 0, triggering the FAIL path.
-mkdir -p "$TMP/db/.beads/embeddeddolt" "$TMP/run" "$TMP/home"
-touch "$TMP/db/events.log"
-chmod 0444 "$TMP/db/events.log"
-
-ctrl_out="$(run_doctor || true)"
-# READ THE EVENTS SECTION, NOT THE WHOLE REPORT. Searching all of doctor's output for
-# "FAIL" let an unrelated section's failure satisfy this control, so the probe could stop
-# working without the control noticing — which is the exact fault this suite exists to
-# catch, one level up.
-ctrl_events="$(printf '%s\n' "$ctrl_out" | sed -n '/^events substrate$/,/^$/p')"
-# Confirm doctor.sh mentioned events at all — required before trusting the passing case.
-want "positive control: events section appears" "events substrate" "$ctrl_out"
-# The probe must FAIL: no write path can accept the event.
-want "positive control: FAIL line appears"      "FAIL"             "$ctrl_events"
-# The failure message must name the write path it actually tried, so the operator knows
-# where to look. NOT specifically events.log: which of the two embedded paths is named
-# depends on whether the dolt CLI is on PATH, and this fixture cannot guarantee it is not
-# — conf.sh rebuilds PATH from SPIRA_PATH, so a dolt installed in the image reappears
-# after the fixture has carefully excluded it. Both correct answers name the store.
-want "positive control: the attempted write path is named" "$TMP/db" "$ctrl_events"
-
-# Restore write permission for cleanup and subsequent case.
-chmod 0644 "$TMP/db/events.log"
-
-# ==========================================================================
-echo
-echo "happy path — file fallback, no dolt: events round trip must be OK:"
-# ==========================================================================
-rm -rf "$TMP/db"
-mkdir -p "$TMP/db/.beads/embeddeddolt" "$TMP/run" "$TMP/home"
-# No events.log pre-created; _bump_write_event creates it on first write.
-
-happy_out="$(run_doctor || true)"
-
-want   "happy path: events round trip OK"  "events write/read round trip"  "$happy_out"
-nowant "happy path: no FAIL for events"    "FAIL" \
-       "$(printf '%s\n' "$happy_out" | grep -i 'events' || true)"
-# The section header must appear regardless of outcome.
-want   "happy path: section header present" "events substrate" "$happy_out"
+_SAFE_PATH="$BIN:$PATH"
 
 # ==========================================================================
 echo
 echo "server mode — the events table enforces fk_events_issue:"
 # ==========================================================================
-# THE GAP THAT LET THE DEFECT SHIP. Every case above is an embedded store using the
-# events.log fallback, which has no foreign key and accepts any issue_id. A server-mode
-# store carries fk_events_issue (events.issue_id -> issues.id), so a sentinel id that
-# matches no bead is REFUSED with Error 1452 and the probe can never pass. It reported
-# "writes ... are discarded" on every run of every correctly-working server-mode box,
-# while real event writes against real bead ids worked the whole time. A positive control
-# that cannot pass is worse than no control: it is a permanent red that trains the reader
+# THE GAP THAT LET THE DEFECT SHIP. A server-mode store carries fk_events_issue
+# (events.issue_id -> issues.id), so a sentinel id that matches no bead is REFUSED
+# with Error 1452 and the probe can never pass. It reported "writes ... are discarded"
+# on every run of every correctly-working server-mode box. A positive control that
+# cannot pass is worse than no control: it is a permanent red that trains the reader
 # to skip the section.
 SRV="$TMP/srv"
 mkdir -p "$SRV/bin"
@@ -229,6 +121,8 @@ run_doctor_srv() {
 
 # A server-mode store: .beads exists, but NO embeddeddolt directory.
 rm -rf "$SRV/db"; mkdir -p "$SRV/db/.beads"
+touch "$TMP/watchers-empty"
+mkdir -p "$TMP/run" "$TMP/home"
 
 srv_state reject_all no; srv_state inserted 0; srv_state issues yes
 srv_out="$(run_doctor_srv || true)"
@@ -240,8 +134,7 @@ want   "server mode: round trip OK against a real bead id" \
 nowant "server mode: no FAIL"  "FAIL" "$srv_events"
 
 # POSITIVE CONTROL. A store that refuses every write must still be caught — and named
-# as REFUSED, not as silently discarded. The two are different faults with different
-# fixes, and calling a rejection a discard sends the reader to look at permissions.
+# as REFUSED, not as silently discarded.
 srv_state reject_all yes; srv_state inserted 0
 rej_out="$(run_doctor_srv || true)"
 rej_events="$(printf '%s\n' "$rej_out" | sed -n '/^events substrate$/,/^$/p')"

@@ -52,7 +52,7 @@ _TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$_TMPDIR"' EXIT INT TERM
 
 # Python: aggregate failure events → <count> <class> lines, ranked highest first.
-# Reads tabular SQL output from census_events_run_sql (server and embedded formats).
+# Reads tabular SQL output from census_events_run_sql.
 # Maps event_type + new_value to the class name used throughout the census pipeline:
 #   requeued  + <cause>           → sp-requeue-<cause>
 #   recurred  + <cause>           → sp-recur-<cause>
@@ -157,7 +157,7 @@ EOF
 
 # Aggregate failure events across the whole store, output <count> <class> ranked.
 # census_events_run_sql is defined in lib.sh (sourced above); it queries the events
-# table in both server and embedded modes (sp-2lk).
+# table via bd sql (sp-2lk).
 _census_raw() {
     census_events_run_sql | python3 "$_TMPDIR/count.py"
 }
@@ -183,10 +183,8 @@ else
 fi
 
 # Build the ranked census: since-watermark when watermark is valid, all-time otherwise.
-# _census_raw exits non-zero when census_events_run_sql signals that both access paths
-# (bd sql and embedded dolt) are unavailable. Treat that as a hard failure: a census
-# that cannot read its source must say so rather than report zero classes, because a
-# pass that reads silence as "nothing found" is indistinguishable from a blind one.
+# _census_raw exits non-zero when the events substrate is unreachable; fail closed rather
+# than report zero classes — a blind census is indistinguishable from a clean one.
 if ! _census_raw > "$_TMPDIR/all_time.txt"; then
     printf 'census.sh: events substrate is unreachable — cannot produce a census\n' >&2
     exit 1
