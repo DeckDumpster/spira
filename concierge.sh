@@ -115,7 +115,7 @@ compose_brief() {
         sed -e "s|{{CWD}}|$BRAIN|g" \
             -e "s|{{SPIRA_HOME}}|$SPIRA_HOME|g" \
             -e "s|{{COCKPIT}}|$SPIRA_COCKPIT|g" \
-            -e "s|{{ASK}}|$SPIRA_NOTIFY|g" \
+            -e "s|{{ASK}}|$SPIRA_HOME/mail.sh|g" \
             -e "s|{{RULE}}|$HARNESS/rule.sh|g" \
             -e "s|{{DB}}|$SPIRA_DB|g" \
             -e "s|{{STATUTE_COUNT}}|$n|g" \

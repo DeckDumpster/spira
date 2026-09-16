@@ -174,7 +174,13 @@ if [ -n "$BRIEF" ] && [ -f "$BRIEF" ]; then
     # EVERY PLACEHOLDER, because an unsubstituted one is a command line the session will try
     # to run. The failure arrives hours later as "the concierge does not escalate anything".
     nowant "no placeholder survives rendering"  "{{"          "$B"
-    want   "the brief names the ask path"       "ask.sh add"  "$B"
+    want   "the brief names the mail path"      "mail.sh send operator"  "$B"
+    mail_path="$(printf '%s\n' "$B" | grep -oE '[^ `]+mail\.sh' | head -1)"
+    if [ -n "$mail_path" ] && [ -x "$mail_path" ]; then
+        pass=$((pass+1)); printf '  ok    mail path in brief exists and is executable: %s\n' "$mail_path"
+    else
+        fail=$((fail+1)); printf '  FAIL  mail path in brief does not exist or is not executable: [%s]\n' "${mail_path:-<not found>}"
+    fi
     want   "and the bead contract"              "bead.sh file" "$B"
     # THE FILE, NOT THE STRING. The string check above is the positive control: the path
     # must be named for the grep below to find it. The assertion with teeth is this one —
