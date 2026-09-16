@@ -140,9 +140,10 @@ _ask() {
 
 if [ -z "$_prod_given" ]; then
     _prod="$(_ask \
-        "SPIRA_PROD — the production checkout's harness subdir.
-  systemd executes scripts from this directory. The derived default below
-  often does not exist on a fresh clone; install.sh will refuse it if absent." \
+        "SPIRA_PROD — the activated release directory systemd executes from.
+  The default resolves to SPIRA_RELEASES/current, the symlink activate.sh
+  swaps on each deployment. No release is activated on a fresh install;
+  run activate.sh before re-running install.sh." \
         SPIRA_PROD "$(_def SPIRA_PROD)")"
 fi
 
@@ -210,10 +211,9 @@ HEADER
 
     # SPIRA_PROD
     cat <<PROD_COMMENT
-# SPIRA_PROD: the production checkout's harness subdir. systemd executes
-# every unit's ExecStart from this path; install.sh refuses to write units
-# when it does not exist. The derived default often points at a path that
-# does not exist on a fresh clone.
+# SPIRA_PROD: the activated release directory. systemd executes every unit's
+# ExecStart from this path. The default is SPIRA_RELEASES/current; install.sh
+# refuses until a release is activated with activate.sh.
 PROD_COMMENT
     printf 'SPIRA_PROD = %s\n\n' "$_prod"
 

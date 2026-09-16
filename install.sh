@@ -447,11 +447,43 @@ fi
 # ---------------------------------------------------------------------------
 phase_start "phase 4: units"
 
+# REFUSE a SPIRA_PROD that is inside a git checkout — a git pull would be a silent
+# deploy with no audit trail. The release model requires SPIRA_PROD to resolve through
+# SPIRA_RELEASES/current, the symlink activate.sh swaps atomically on each deployment.
+# Override: SPIRA_INSTALL_PROD_GIT_CONSIDERED=1
+if [ -z "${SPIRA_INSTALL_PROD_GIT_CONSIDERED:-}" ] && [ -n "${SPIRA_PROD:-}" ] && [ -e "$SPIRA_PROD" ]; then
+    _prod_walk="$SPIRA_PROD"
+    _prod_in_git=0
+    while [ "$_prod_walk" != "/" ] && [ -n "$_prod_walk" ]; do
+        if [ -d "$_prod_walk/.git" ] || [ -f "$_prod_walk/.git" ]; then
+            _prod_in_git=1; break
+        fi
+        _prod_walk="$(dirname "$_prod_walk")"
+    done
+    if [ "$_prod_in_git" = 1 ]; then
+        printf 'install: REFUSING — SPIRA_PROD (%s) is a git checkout\n' \
+            "$SPIRA_PROD" >&2
+        printf 'install:   The release model requires SPIRA_PROD to resolve through\n' >&2
+        printf 'install:   %s/current (the symlink activate.sh swaps on each deploy).\n' \
+            "$SPIRA_RELEASES" >&2
+        printf 'install:   Activate a release tarball first: bash spira/activate.sh <tarball>\n' >&2
+        printf 'install:   Override: SPIRA_INSTALL_PROD_GIT_CONSIDERED=1\n' >&2
+        exit 2
+    fi
+    unset _prod_walk _prod_in_git
+fi
+
 # SPIRA_PROD must exist before systemd/install.sh renders units: it checks that every
-# ExecStart target is executable, so a non-existent prod checkout fails every unit on a
-# fresh install. promote.sh creates the clone when absent; skip in single-checkout mode
-# (SPIRA_PROD inside SPIRA_REPO) where promote.sh refuses and nothing needs cloning.
+# ExecStart target is executable. When SPIRA_PROD is under SPIRA_RELEASES (the release
+# path), a missing directory means no release has been activated yet — promote.sh cannot
+# create it. For a non-release SPIRA_PROD, promote.sh creates the checkout.
 if ! spira_single_checkout && [ -n "${SPIRA_PROD:-}" ] && [ ! -d "$SPIRA_PROD" ]; then
+    _prod_parent="$(dirname "$SPIRA_PROD" 2>/dev/null)"
+    if [ "$_prod_parent" = "$SPIRA_RELEASES" ]; then
+        _phase_fail "units" \
+            "SPIRA_PROD ($SPIRA_PROD) does not exist — no release activated; run: bash spira/activate.sh <tarball>"
+    fi
+    unset _prod_parent
     if [ "$_dry" = 1 ]; then
         phase_info "would run: spira/promote.sh HEAD (SPIRA_PROD does not exist yet)"
     else

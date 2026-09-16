@@ -851,17 +851,6 @@ spira_conf_defaults() {
         fi
     fi
 
-    # THE PRODUCTION CHECKOUT — the ONLY directory systemd executes. Landing a change on
-    # the development checkout (SPIRA_REPO) does not alter production until promote.sh carries
-    # it here. The default derives from the development checkout's location: append "-prod" to
-    # the repo name and land in the same parent directory, keeping the same harness subdir name.
-    # A colleague whose prod checkout lives elsewhere sets this key. A fresh clone has no prod
-    # checkout, so the default resolves to a path that does not exist; install.sh will refuse
-    # on the ExecStart fence — set SPIRA_PROD explicitly or create the checkout.
-    # NO-COLON FORM: := fills on unset OR empty, so SPIRA_PROD= in spira.conf would have been
-    # silently replaced by the derived default, making "I want no split" unexpressible.
-    : "${SPIRA_PROD=$(_spira_join "$SPIRA_WORKSPACES" "${SPIRA_HOME_REPO}-prod/$(basename "$SPIRA_HOME")")}"
-
     # ---- RELEASE ACTIVATION (activate.sh) -----------------------------------------------
     # WHERE RELEASE TARBALLS ARE UNPACKED. Each activation unpacks a tarball into a
     # timestamped subdirectory here and swaps the 'current' symlink atomically. systemd units
@@ -876,6 +865,13 @@ spira_conf_defaults() {
     # directory is the unpacked contents of one tarball — about 1.4 MB — so 100 releases
     # total roughly 140 MB. Per Ryan: "They're tiny. make it 100."
     : "${SPIRA_RELEASES_KEEP:=100}"
+
+    # THE ACTIVATED RELEASE — the ONLY directory systemd executes. activate.sh swaps
+    # the 'current' symlink here atomically on each deployment; ExecStart= paths resolve
+    # through it so a swap is a deploy. A missing symlink means no release has been
+    # activated yet; install.sh refuses until activate.sh runs at least once.
+    # NO-COLON FORM preserves SPIRA_PROD= for single-checkout mode.
+    : "${SPIRA_PROD=$(_spira_join "$SPIRA_RELEASES" current)}"
 
     # ---- THE REVIEWER: ADVERSARIAL REVIEW AT THE RELEASE-UNIT BOUNDARY -------------------
     # THE MODEL IS STRONG BY DESIGN. The reviewer looks for intent violations, cross-commit
