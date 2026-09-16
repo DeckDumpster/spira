@@ -263,9 +263,29 @@ print("\n".join(r["id"] for r in rows if r.get("status") == "in_progress"))' 2>/
     # 0 means "unconfigured — do not suppress based on fleet occupancy".
     local _total_live
     _total_live="$(aeons_live_total)"
+    # DID THE LAST PASS EVALUATE THIS PARTITION? Find "not evaluated (pass budget
+    # exhausted)" in the most recent sentinel pass for any fayth whose partition is
+    # $labels. If present, "starved" is wrong — the pass never reached this partition.
+    local _truncated=0
+    if [ -f "$SENTINEL_LOG" ]; then
+        local _fayths_for_part _pf _last_start
+        _fayths_for_part="$(fayths_for_labels "$labels" 2>/dev/null | tr '\n' ' ')" || true
+        [ -n "${_fayths_for_part// /}" ] || _fayths_for_part="$(spira_fayths 2>/dev/null)" || true
+        _last_start="$(grep -n ': state: goal=' "$SENTINEL_LOG" 2>/dev/null \
+            | tail -1 | cut -d: -f1)" || true
+        if [ -n "$_last_start" ] && [ -n "${_fayths_for_part// /}" ]; then
+            for _pf in $_fayths_for_part; do
+                if tail -n +"$_last_start" "$SENTINEL_LOG" 2>/dev/null \
+                   | grep -F "CHECK7 $_pf: not evaluated" >/dev/null 2>&1; then
+                    _truncated=1; break
+                fi
+            done
+        fi
+    fi
     BEADS_FILE="$tmp/beads.json" READY_FILE="$tmp/ready.json" HOLDERS="$holders" LIVE="$live" \
     TOTAL_LIVE="$_total_live" MAX_AEONS="${SPIRA_MAX_LIVE_AEONS:-0}" \
     GHOST_GRACE="$GHOST_GRACE" CAPACITY_PAUSED="$_cap_paused" CAPACITY_DETAIL="$_cap_detail" \
+    PASS_TRUNCATED="$_truncated" \
     python3 "$HERE/strand-classify.py"
     local rc=$?
     rm -rf "$tmp"

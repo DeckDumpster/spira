@@ -1136,7 +1136,17 @@ fi
 # operator's own sessions. A lane takes the NEXT slot; it does not add one.
 LANE_FAYTHS="$(spira_lane_fayths)"
 [ -n "$LANE_FAYTHS" ] && log "CHECK7 lanes (${SPIRA_LANES:-none} declared): $LANE_FAYTHS"
+# WHEN INDIVIDUAL BD CALLS ARE SLOW, a partition the pass did not reach is absent from
+# the log — absent looks identical to "nothing ready" in strand.sh. Track elapsed time
+# and log remaining fayths as not-evaluated when the budget runs out so strand.sh can
+# prefer "pass-truncated" over "starved".
+_ck7_start="$(date +%s)"
+_ck7_budget="${SPIRA_SENTINEL_PASS_BUDGET_SECS:-90}"
 for f in $LANE_FAYTHS; do
+    if [ $(( $(date +%s) - _ck7_start )) -ge "$_ck7_budget" ]; then
+        log "CHECK7 $f: not evaluated (pass budget exhausted)"
+        continue
+    fi
     if summon_fayth "$f"; then
         act "summoned a $f lane aeon"
     fi
@@ -1145,6 +1155,10 @@ done
 # THE POOL DRAWS ON WHAT IS LEFT. Recomputed after the lanes, because a lane summoned above
 # consumes a slot the fleet ceiling counts, and a pool figure read before that is stale.
 for f in $TASK_FAYTHS; do
+    if [ $(( $(date +%s) - _ck7_start )) -ge "$_ck7_budget" ]; then
+        log "CHECK7 $f: not evaluated (pass budget exhausted)"
+        continue
+    fi
     if summon_fayth "$f" "$pool"; then
         act "summoned a $f aeon"
         [ -n "$pool" ] && pool=$(( pool > 0 ? pool - 1 : 0 ))

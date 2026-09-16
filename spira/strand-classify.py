@@ -69,6 +69,10 @@ now = datetime.now(timezone.utc).timestamp()
 # names the reset time rather than recommending a check that would find nothing wrong.
 _cap_paused = os.environ.get("CAPACITY_PAUSED", "0") == "1"
 _cap_detail = os.environ.get("CAPACITY_DETAIL", "the account is out of capacity")
+# PASS_TRUNCATED=1 means the last sentinel pass logged "not evaluated (pass budget
+# exhausted)" for a fayth that works this partition. Ready beads exist but the pass
+# simply never reached them — this is not starvation.
+_pass_truncated = os.environ.get("PASS_TRUNCATED", "0") == "1"
 
 # FLEET SLOT AWARENESS. A starved partition under a saturated fleet is queue ordering,
 # not starvation — every slot is held by another persona doing real work. Escalating it
@@ -162,6 +166,11 @@ if ready and live == 0:
             "no aeon summoned: %s — %d bead(s) will be claimed when capacity reopens: %s" % (
                 _cap_detail, len(ready), " ".join(sorted(ready)[:6])),
             "none — the sentinel will summon when the account is open again")
+    elif _pass_truncated:
+        row("pass-truncated", "-", "info",
+            "%d bead(s) ready but the last sentinel pass was truncated before evaluating this partition: %s" % (
+                len(ready), " ".join(sorted(ready)[:6])),
+            "the pass was slow — check bd lock contention; this partition will be evaluated next pass")
     elif _max_aeons > 0 and _total_live >= _max_aeons:
         # Every slot is held by another partition. This is queue ordering, not a fault;
         # do not page the operator. The row is still emitted (as info) so strand.sh report
