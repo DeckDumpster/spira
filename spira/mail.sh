@@ -1,30 +1,64 @@
 #!/usr/bin/env bash
 # mail.sh — Maildir mailboxes for operator/concierge messages.
 #
-#   mail.sh send <mailbox> --from "<s>" --subject "<s>" [--kind K] [--default D] [--bead ID] < body
+#   mail.sh send <mailbox> --from "<s>" --subject "<s>" [--kind K] [--urgent]
+#                          [--default D] [--bead ID] < body
+#   mail.sh template <kind>              print the kind's body skeleton
 #   mail.sh list <mailbox> [--unread]
 #   mail.sh read <mailbox> [<message>]   prints, moves new -> cur
+#   mail.sh count <mailbox>              number of unread messages
 #   mail.sh unread-age <mailbox>         seconds since oldest unread; empty if none
 #   mail.sh sendmail                     RFC 5322 on stdin (separate bead)
 #
 # Send refuses a message that is missing From, missing Subject, has a Subject
 # that is or leads with a bead id, has a body mentioning a bead id without enough
-# context to say what the work is, or is a decision/question with no default.
-# Each refusal names the rule.  Override: SPIRA_MAIL_LINT_CONSIDERED=1.
+# context to say what the work is, has an unknown kind, is missing a header the
+# kind requires, has an empty required section, or is urgent without
+# "## Why it is urgent".  Each refusal names the rule.
+# Override: SPIRA_MAIL_LINT_CONSIDERED=<reason>, recorded in X-Spira-Lint-Override.
 
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh"
 
-# Bead id pattern for the configured installation (e.g. sp-[a-z0-9]{4,}).
 _bead_id_re="${SPIRA_ID_PREFIX:-sp}-[a-z0-9]{4,}"
 
 _mail_dir()    { printf '%s/%s' "${SPIRA_MAIL}" "$1"; }
 _mail_ensure() { local d; d="$(_mail_dir "$1")"; mkdir -p "$d/tmp" "$d/new" "$d/cur"; }
 _mail_msgid()  { printf '%s.%s.%s' "$(date +%s)" "$RANDOM" "$$"; }
 
+_kind_file()    { printf '%s/%s.md' "${SPIRA_MAIL_KINDS}" "$1"; }
+_kind_exists()  { [ -f "$(_kind_file "$1")" ]; }
+
+_kind_requires() {
+    awk '/^---$/ { delim++; next }
+         delim == 1 && /^requires:/ { line=$0; sub(/^requires:[[:space:]]*/, "", line); print line }
+         delim >= 2 { exit }' "$(_kind_file "$1")"
+}
+
+_kind_sections() {
+    awk '/^---$/ { delim++; next }
+         delim >= 2 && /^## / { print substr($0, 4) }' "$(_kind_file "$1")"
+}
+
+_kind_template() {
+    awk '/^---$/ { delim++; next } delim >= 2' "$(_kind_file "$1")"
+}
+
+_section_empty() {
+    # Returns 0 (true) if section is missing or has no non-whitespace content.
+    local section="$1" body="$2"
+    local result
+    result="$(printf '%s\n' "$body" | awk -v sec="## $section" '
+        $0 == sec { found=1; next }
+        found && /^##/ { exit }
+        found && /[^[:space:]]/ { print "x"; exit }
+    ')"
+    [ -z "$result" ]
+}
+
 _lint_check() {
-    local from="$1" subject="$2" kind="$3" default="$4" body="$5"
-    [ "${SPIRA_MAIL_LINT_CONSIDERED:-}" = "1" ] && return 0
+    local from="$1" subject="$2" kind="$3" default="$4" urgent="$5" body="$6"
+    [ -n "${SPIRA_MAIL_LINT_CONSIDERED:-}" ] && return 0
     local fail=0
 
     if [ -z "$from" ]; then
@@ -42,7 +76,6 @@ _lint_check() {
         fi
     fi
 
-    # A bead id in the body must be surrounded by enough words to say what the work is.
     if printf '%s' "$body" | grep -qE "${_bead_id_re}"; then
         local line stripped wc_val
         while IFS= read -r line; do
@@ -57,9 +90,42 @@ _lint_check() {
         done <<< "$body"
     fi
 
-    if [ "$kind" = "decision" ] || [ "$kind" = "question" ]; then
-        if [ -z "$default" ]; then
-            printf 'mail: lint: %s with no default — rule: decision and question mail must carry X-Spira-Default\n' "$kind" >&2
+    if [ -n "$kind" ]; then
+        if ! _kind_exists "$kind"; then
+            printf 'mail: lint: unknown kind %s — rule: kind must be a file in %s\n' "$kind" "${SPIRA_MAIL_KINDS}" >&2
+            fail=1
+        else
+            local req h
+            req="$(_kind_requires "$kind")"
+            for h in $req; do
+                case "$h" in
+                    X-Spira-Default)
+                        [ -z "$default" ] && {
+                            printf 'mail: lint: kind %s requires X-Spira-Default — rule: supply --default\n' "$kind" >&2
+                            fail=1
+                        } ;;
+                    X-Spira-Urgent)
+                        [ -z "$urgent" ] && {
+                            printf 'mail: lint: kind %s requires X-Spira-Urgent — rule: supply --urgent\n' "$kind" >&2
+                            fail=1
+                        } ;;
+                esac
+            done
+
+            local section
+            while IFS= read -r section; do
+                [ -z "$section" ] && continue
+                if _section_empty "$section" "$body"; then
+                    printf 'mail: lint: section "%s" is empty — rule: every %s section must be filled\n' "$section" "$kind" >&2
+                    fail=1
+                fi
+            done < <(_kind_sections "$kind")
+        fi
+    fi
+
+    if [ -n "$urgent" ]; then
+        if _section_empty "Why it is urgent" "$body"; then
+            printf 'mail: lint: urgent message missing "## Why it is urgent" — rule: urgent messages must explain urgency\n' >&2
             fail=1
         fi
     fi
@@ -69,7 +135,7 @@ _lint_check() {
 
 cmd_send() {
     local mailbox="$1"; shift
-    local from="" subject="" kind="" default="" bead=""
+    local from="" subject="" kind="" default="" bead="" urgent=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --from)    from="$2";    shift 2 ;;
@@ -77,12 +143,13 @@ cmd_send() {
             --kind)    kind="$2";    shift 2 ;;
             --default) default="$2"; shift 2 ;;
             --bead)    bead="$2";    shift 2 ;;
+            --urgent)  urgent=1;     shift ;;
             *) printf 'mail.sh send: unknown option: %s\n' "$1" >&2; return 1 ;;
         esac
     done
 
     local body; body="$(cat)"
-    _lint_check "$from" "$subject" "${kind:-}" "${default:-}" "$body" || return 1
+    _lint_check "$from" "$subject" "${kind:-}" "${default:-}" "${urgent:-}" "$body" || return 1
 
     _mail_ensure "$mailbox"
     local dir; dir="$(_mail_dir "$mailbox")"
@@ -93,13 +160,25 @@ cmd_send() {
         printf 'Subject: %s\n' "$subject"
         [ -n "$kind" ]    && printf 'X-Spira-Kind: %s\n' "$kind"
         [ -n "$default" ] && printf 'X-Spira-Default: %s\n' "$default"
+        [ -n "$urgent" ]  && printf 'X-Spira-Urgent: yes\n'
         [ -n "$bead" ]    && printf 'X-Spira-Bead: %s\n' "$bead"
+        [ -n "${SPIRA_MAIL_LINT_CONSIDERED:-}" ] && printf 'X-Spira-Lint-Override: %s\n' "${SPIRA_MAIL_LINT_CONSIDERED}"
         printf 'Date: %s\n' "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"
         printf '\n'
         printf '%s\n' "$body"
     } > "$dir/tmp/$msgid"
 
     mv "$dir/tmp/$msgid" "$dir/new/$msgid"
+}
+
+cmd_template() {
+    local kind="${1:-}"
+    [ -z "$kind" ] && { printf 'mail.sh template: kind required\n' >&2; return 1; }
+    if ! _kind_exists "$kind"; then
+        printf 'mail.sh template: unknown kind: %s\n' "$kind" >&2
+        return 1
+    fi
+    _kind_template "$kind"
 }
 
 cmd_list() {
@@ -155,6 +234,17 @@ cmd_read() {
     [[ "$f" == "$dir/new/"* ]] && mv "$f" "$dir/cur/$(basename "$f")"
 }
 
+cmd_count() {
+    local mailbox="$1"
+    _mail_ensure "$mailbox"
+    local dir; dir="$(_mail_dir "$mailbox")"
+    local count=0 f
+    for f in "$dir/new"/*; do
+        [ -f "$f" ] && count=$((count+1))
+    done
+    printf '%d\n' "$count"
+}
+
 cmd_unread_age() {
     local mailbox="$1"
     _mail_ensure "$mailbox"
@@ -173,8 +263,10 @@ cmd_unread_age() {
 
 case "${1:-}" in
     send)       shift; cmd_send "$@" ;;
+    template)   shift; cmd_template "$@" ;;
     list)       shift; cmd_list "$@" ;;
     read)       shift; cmd_read "$@" ;;
+    count)      shift; cmd_count "$@" ;;
     unread-age) shift; cmd_unread_age "$@" ;;
     sendmail)   printf 'mail.sh sendmail: not yet implemented\n' >&2; exit 1 ;;
     *)          printf 'mail.sh: unknown command: %s\n' "${1:-}" >&2; exit 1 ;;
