@@ -542,6 +542,20 @@ wt_refs_multi() {   # wt_refs_multi [VAR=val ...] -> appends SPIRA_INCIDENT_REF 
         SPIRA_INCIDENT_SH="$mock" \
         "$@" bash "$HERE/watchtower.sh" 2>/dev/null
 }
+wt_body_unadopted() {  # wt_body_unadopted [VAR=val ...] -> writes unadopted escalation body to $TMP/inc-unadopted-body
+    local mock="$TMP/mock-inc-unadopted-body.sh"
+    # Capture stdin only for the unadopted escalation (SPIRA_INCIDENT_CAUSE=unadopted-refs).
+    printf '#!/usr/bin/env bash\n[ "${SPIRA_INCIDENT_CAUSE:-}" = unadopted-refs ] && cat >> "%s" || cat > /dev/null\n' \
+        "$TMP/inc-unadopted-body" > "$mock"
+    chmod +x "$mock"
+    env -i PATH="$PATH" HOME="$TMP" \
+        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
+        SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" \
+        SPIRA_INCIDENT_SH="$mock" \
+        "$@" bash "$HERE/watchtower.sh" 2>/dev/null
+}
 
 # Below threshold: the prompt file is written, but no drain escalation incident is filed.
 fresh
@@ -786,6 +800,46 @@ refs="$(cat "$TMP/inc-refs" 2>/dev/null || echo "")"
 unique_ref_count="$(printf '%s\n' "$refs" | sort -u | grep -c .)"
 is "two passes with different counts produce one dedupe key"     "1" "$unique_ref_count"
 want "and the key is the stable sending-unadopted-refs ref"      "sending-unadopted-refs" "$refs"
+
+# ======================================================================================
+echo
+echo "unadopted escalation body names the branches from SP_UNADOPTED_NAMES:"
+# ======================================================================================
+# THE SEAM THIS COVERS. The original body carried a listing command using the tag-dereference
+# form %(*refname:short) which appends ^{} to every branch name, and `bd show` without
+# -C SPIRA_DB — two independent defects each producing 100% false positives (sp-gjpc).
+# The collector (cockpit.sh) already knows which branches are unadopted when it counts
+# SP_UNADOPTED; those names are now emitted as SP_UNADOPTED_NAMES. The body must report
+# what the collector measured, not re-derive it from a separate command.
+#
+# POSITIVE CONTROL FIRST. Set SP_UNADOPTED=1 and SP_UNADOPTED_NAMES='sp-stray'. The
+# assertion that the body contains 'sp-stray' FAILS against the old code (which did not
+# read SP_UNADOPTED_NAMES and instead emitted a broken listing command) and PASSES after
+# the fix. A body that always prints '(unavailable)' would also fail — the sp-stray control
+# proves the reader is actually using the value.
+fresh
+mkdir -p "$TMP/run/landstate"
+printf "SP_UNSENT=0\nSP_UNSENT_OLDEST_H=0\nSP_UNADOPTED=1\nSP_UNADOPTED_NAMES='sp-stray'\nSP_SENT_FAILED=0\n" \
+    > "$TMP/run/cockpit.env"
+rm -f "$TMP/inc-unadopted-body"
+wt_body_unadopted SPIRA_UNSENT_WARN_H=24
+body="$(cat "$TMP/inc-unadopted-body" 2>/dev/null || echo "")"
+want "body is non-empty (escalation fired)"           "Unadopted"  "$body"
+want "body names the stray branch from SP_UNADOPTED_NAMES" "sp-stray"   "$body"
+nowant "body does not embed the broken tag-dereference format" "%(*refname" "$body"
+
+# When SP_UNADOPTED=1 but SP_UNADOPTED_NAMES is absent (old cockpit.env without the key),
+# the body must still fire and show '(unavailable)' rather than crashing or silently
+# omitting the names section.
+fresh
+mkdir -p "$TMP/run/landstate"
+printf "SP_UNSENT=0\nSP_UNSENT_OLDEST_H=0\nSP_UNADOPTED=1\nSP_SENT_FAILED=0\n" \
+    > "$TMP/run/cockpit.env"
+rm -f "$TMP/inc-unadopted-body"
+wt_body_unadopted SPIRA_UNSENT_WARN_H=24
+body="$(cat "$TMP/inc-unadopted-body" 2>/dev/null || echo "")"
+want "body fires even without SP_UNADOPTED_NAMES"    "Unadopted"     "$body"
+want "body falls back to (unavailable) when key absent" "unavailable" "$body"
 
 # ======================================================================================
 echo

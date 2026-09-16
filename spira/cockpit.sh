@@ -1063,7 +1063,7 @@ unsent_keys() {
     # the home repo's branches would report "no unsent work" while another repository's
     # branches aged forever — the reassuring answer, produced by looking in the wrong place.
     # Refs are a local read, so this costs nothing per repository; no fetch happens here.
-    _fail=0; _n=0; _o=""; _done=0; _unadopted=0; _orphan_work=0
+    _fail=0; _n=0; _o=""; _done=0; _unadopted=0; _orphan_work=0; _unadopted_names=""
     for _r in $(spira_repos); do
         _p="$(repo_root "$_r")" || continue
         [ -e "$_p/.git" ] || continue
@@ -1104,6 +1104,7 @@ except Exception: print("")' 2>/dev/null)"
                     # it is safer to over-report work than to misclassify unlanded commits as strays.
                     if [ -n "$_base" ] && git -C "$_p" merge-base --is-ancestor "$_b" "$_base" 2>/dev/null; then
                         _unadopted=$((_unadopted+1))
+                        _unadopted_names="${_unadopted_names:+$_unadopted_names }${_b#spira/}"
                     else
                         _orphan_work=$((_orphan_work+1))
                     fi
@@ -1121,6 +1122,7 @@ except Exception: print("")' 2>/dev/null)"
     done
     echo "SP_BRANCH_DONE=$_done"
     echo "SP_UNADOPTED=$_unadopted"
+    echo "SP_UNADOPTED_NAMES='$_unadopted_names'"
     echo "SP_ORPHAN_WORK=$_orphan_work"
     if [ "$_fail" = 1 ]; then
         echo "SP_UNSENT=?"

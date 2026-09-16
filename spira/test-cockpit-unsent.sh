@@ -121,6 +121,8 @@ is "SP_UNSENT counts only bead-backed branches" "2" "$(val SP_UNSENT)"
 # spira/sp-true-stray has no commits beyond main — that IS a true stray, safe to delete.
 is "SP_ORPHAN_WORK counts no-bead branches with unlanded commits" "1" "$(val SP_ORPHAN_WORK)"
 is "SP_UNADOPTED counts no-bead branches whose tip is already on base" "1" "$(val SP_UNADOPTED)"
+want "SP_UNADOPTED_NAMES names the stray branch" "sp-true-stray" "$(val SP_UNADOPTED_NAMES)"
+nowant "SP_UNADOPTED_NAMES excludes orphan work" "tmp-stray" "$(val SP_UNADOPTED_NAMES)"
 
 # ======================================================================================
 # THE POSITIVE CONTROL: the probe found SOMETHING. An empty output would pass all the

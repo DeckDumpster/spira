@@ -668,8 +668,8 @@ fi
 
 if [ "$_unadopted" != "?" ] && [ "$_unadopted" -gt 0 ] 2>/dev/null; then
     if [ -x "$INC" ] || [ -r "$INC" ]; then
-        printf 'Unadopted refs: %s\n\nA spira/* branch whose suffix resolves to no bead can never be reaped by any rite.\nEach one is a permanent +1 on SP_UNADOPTED until removed by hand.\n\nList with: git -C <repo> for-each-ref --format="%%(*refname:short)" refs/heads/spira/ | while read b; do bd show "${b#spira/}" 2>/dev/null || echo "UNADOPTED: $b"; done\nDelete safely: git -C <repo> branch -D <branch> (no bead, no aeon holds it)\n' \
-            "$_unadopted" | \
+        printf 'Unadopted refs: %s\n\nA spira/* branch whose suffix resolves to no bead can never be reaped by any rite.\nEach one is a permanent +1 on SP_UNADOPTED until removed by hand.\n\nBranches (spira/ prefix omitted): %s\nDelete safely: git -C %s branch -D spira/<id> (no bead, no aeon holds it)\n' \
+            "$_unadopted" "${SP_UNADOPTED_NAMES:-(unavailable)}" "$SPIRA_REPO" | \
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_INCIDENT_TYPE=task \
         SPIRA_INCIDENT_PRIORITY=2 \
