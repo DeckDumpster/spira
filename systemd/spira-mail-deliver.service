@@ -1,0 +1,23 @@
+[Unit]
+Description=Spira mail delivery daemon — wake the concierge on new concierge mail
+Documentation=file://@SPIRA_HOME@/spira-mail-deliver.sh
+After=default.target
+# Restart bounds: five restarts over 120s before giving up.  inotifywait exits
+# immediately if the watch path is missing; the daemon recreates it before
+# exec so ordinary restarts do not count toward the limit.
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=@SPIRA_PROD@/spira-mail-deliver.sh
+Restart=always
+RestartSec=15
+# inotifywait is a poll-on-event; one wakeup per delivery, negligible CPU.
+CPUQuota=5%
+Nice=10
+StandardOutput=append:@SPIRA_RUN@/mail-deliver.log
+StandardError=append:@SPIRA_RUN@/mail-deliver.log
+
+[Install]
+WantedBy=default.target

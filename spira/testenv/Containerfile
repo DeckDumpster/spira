@@ -111,6 +111,8 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 # build-essential: gcc for cargo's C linker when compiling Rust crates.
 # curl+ca-certificates: download gh and dolt release archives.
 # locales: locale-gen; suites need a UTF-8 locale for string operations.
+# inotify-tools: provides inotifywait for the mail delivery daemon; doctor.sh WARN.
+# aerc: operator mail client; doctor.sh WARN.
 RUN apt-get update -q && \
     apt-get install -yq --no-install-recommends \
         systemd \
@@ -129,6 +131,8 @@ RUN apt-get update -q && \
         aerc \
         nodejs \
         locales \
+        inotify-tools \
+        aerc \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Locale — suites need a UTF-8 locale for string operations ─────────────

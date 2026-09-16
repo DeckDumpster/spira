@@ -93,8 +93,13 @@ On an arrival it waits `SPIRA_MAIL_SETTLE` (default 2s) for a burst to finish, t
 mailbox's wake command with one line: **"You have N unread messages — mail.sh list <mailbox>
 --unread"**. If the reader is not running the wake fails quietly; the mail stays unread.
 
-Fresh context: the session hook prints the same one line for its mailbox, marks nothing read,
-and prints no Monitor instructions. Subjects and bodies are read only on request.
+`SPIRA_WAKE` types the text into the concierge's tmux pane. If the operator is locally
+attached and typing at that moment, the injected text can mix into their half-written line.
+Typing from the phone is not affected. The daemon inherits this from the shared wake path and
+does not attempt to solve it.
+
+Fresh context: the session hook prints the concierge's unread mail (bounded by
+`SPIRA_HOOK_LINES`) and marks nothing read. It prints no Monitor instructions.
 
 ## Health
 
