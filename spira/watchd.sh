@@ -1420,6 +1420,9 @@ $(printf '%s\n' "$shown" | head -"$WD_NOTIFY_MAX" | sed 's/^/    /')"
     _wd_notify_health; local hrc=$?
     [ "$hrc" = 3 ] && return 3
     [ "$hrc" = 1 ] && found=1
+    bash "$SPIRA_HOME/mail-health.sh"; local mhrc=$?
+    [ "$mhrc" = 3 ] && return 3
+    [ "$mhrc" = 1 ] && found=1
     [ "$found" = 1 ] && return 1
     return 0
 }
