@@ -239,9 +239,32 @@ if [ -d "$SPIRA_DB/.beads" ]; then
         FAIL "bd cannot read $SPIRA_DB" "$(printf '%s' "$out" | head -2)
         A Dolt server may be down. Try: bd -C $SPIRA_DB dolt start"
     fi
+    # EMBEDDED-MODE STORE. An embedded store holds one connection at a time; every bd call
+    # waits in a line. Under this harness's concurrency, reads have taken minutes.
+    _dr_meta="$SPIRA_DB/.beads/metadata.json"
+    if [ -f "$_dr_meta" ]; then
+        _dr_dolt_mode="$(python3 -c '
+import json,sys
+try: print(json.load(open(sys.argv[1])).get("dolt_mode",""))
+except Exception: print("")
+' "$_dr_meta" 2>/dev/null || true)"
+        if [ "${_dr_dolt_mode:-}" = embedded ]; then
+            FAIL "store is in embedded mode — one client at a time, every bd call serialises on one lock" \
+                 "Set SPIRA_DOLT_DATA in ${CONF:-spira.conf} and re-run install.sh to migrate to server mode."
+        else
+            OK "store mode: ${_dr_dolt_mode:-unknown}"
+        fi
+        unset _dr_dolt_mode
+    fi
+    unset _dr_meta
 else
-    FAIL "$SPIRA_DB has no .beads — the harness refuses to guess a database" \
-         "Set SPIRA_DB in ${CONF:-spira.conf}, or create it with: bd -C $SPIRA_DB init"
+    if [ -n "${SPIRA_DOCTOR_INSTALLING:-}" ]; then
+        WARN "$SPIRA_DB has no .beads yet — install.sh will create it in phase 3" \
+             "Set SPIRA_DB in ${CONF:-spira.conf} if this path is wrong."
+    else
+        FAIL "$SPIRA_DB has no .beads — the harness refuses to guess a database" \
+             "Set SPIRA_DB in ${CONF:-spira.conf}, or create it with: bd -C $SPIRA_DB init"
+    fi
 fi
 case "$SPIRA_DB" in
     "$SPIRA_REPO"/*|"$SPIRA_REPO")

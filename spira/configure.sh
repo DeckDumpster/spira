@@ -21,8 +21,9 @@
 #                      credential check. The default is safe, but it is the kind of
 #                      value operators change without realising the consequence.
 #
-#   SPIRA_DOLT_DATA    Empty means "I manage the Dolt server myself; do not install
-#                      dolt-beads.service." Setting it installs and enables the unit.
+#   SPIRA_DOLT_DATA    Dolt server data directory. install.sh creates it, writes
+#                      dolt-server.yaml, and starts dolt-beads.service. Leave empty
+#                      only if you run the Dolt server yourself.
 #
 # USAGE
 #   configure.sh [--out PATH] [--prod PATH] [--max-aeons N]
@@ -174,9 +175,9 @@ fi
 if [ -z "$_dolt_given" ]; then
     _dolt="$(_ask \
         "SPIRA_DOLT_DATA — the Dolt server's data directory.
-  Empty means you manage the Dolt server yourself; install.sh will not install
-  dolt-beads.service. Set it to a directory if you want this harness to start
-  and supervise the server." \
+  install.sh creates this directory, writes dolt-server.yaml, and starts
+  dolt-beads.service to manage the server. Leave empty only if you run
+  the Dolt server yourself and handle the data directory manually." \
         SPIRA_DOLT_DATA "$(_def SPIRA_DOLT_DATA)")"
 fi
 
@@ -242,9 +243,9 @@ LOOM_COMMENT
 
     # SPIRA_DOLT_DATA
     cat <<DOLT_COMMENT
-# SPIRA_DOLT_DATA: the Dolt server's own data directory. Empty means you run
-# the server yourself; install.sh will not install dolt-beads.service. Set it
-# to a directory to have this harness supervise the server.
+# SPIRA_DOLT_DATA: the Dolt server's own data directory. install.sh creates
+# this directory, writes dolt-server.yaml, and starts dolt-beads.service.
+# Leave empty only if you run the Dolt server yourself.
 DOLT_COMMENT
     printf 'SPIRA_DOLT_DATA = %s\n' "$_dolt"
 

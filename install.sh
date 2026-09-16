@@ -127,7 +127,7 @@ _conflict() {
 # PHASE 0 — PREFLIGHT (doctor.sh)
 # ---------------------------------------------------------------------------
 phase_start "phase 0: preflight"
-_doctor_out="$("$SPIRA_HOME/doctor.sh" 2>&1)"
+_doctor_out="$(SPIRA_DOCTOR_INSTALLING=1 "$SPIRA_HOME/doctor.sh" 2>&1)"
 _doctor_rc=$?
 printf '%s\n' "$_doctor_out" | sed 's/^/  /'
 if [ "$_doctor_rc" != 0 ]; then
@@ -421,11 +421,56 @@ if [ -d "${SPIRA_DB:-}/.beads" ]; then
     phase_skip "database exists at $SPIRA_DB ($_bead_count bead(s))"
 else
     if [ "$_dry" = 1 ]; then
-        phase_info "would run: bd -C $SPIRA_DB init"
+        if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
+            phase_info "would start dolt server and run: bd -C $SPIRA_DB init --server --external"
+        else
+            phase_info "would run: bd -C $SPIRA_DB init"
+        fi
     else
         phase_info "initialising database at $SPIRA_DB"
         mkdir -p "$SPIRA_DB"
-        "$SPIRA_BD" -C "$SPIRA_DB" init || _phase_fail "database" "bd init failed"
+        if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
+            # SERVER MODE: start a temporary dolt, init in server mode, stop it.
+            # Phase 4 installs and starts dolt-beads.service to manage it going forward.
+            _dolt_port=3307
+            _dolt_yaml="$SPIRA_DOLT_DATA/dolt-server.yaml"
+            if [ -f "$_dolt_yaml" ]; then
+                _p="$(grep -E '^\s*port\s*:' "$_dolt_yaml" 2>/dev/null | head -1 \
+                    | sed 's/.*:\s*//' | tr -d ' ')"
+                [ -n "$_p" ] && [ "$_p" -gt 0 ] 2>/dev/null && _dolt_port="$_p"
+                unset _p
+            fi
+            _dolt_dbname="$(basename "$SPIRA_DB")"
+            _dolt_bg_pid=""
+            if ! (echo -n "" >/dev/tcp/127.0.0.1/"$_dolt_port") 2>/dev/null; then
+                command -v dolt >/dev/null 2>&1 \
+                    || _phase_fail "database" "dolt is not on PATH — required to start the server for bd init"
+                phase_info "starting dolt server on port $_dolt_port for database init"
+                dolt sql-server --config "$_dolt_yaml" </dev/null >/dev/null 2>&1 &
+                _dolt_bg_pid=$!
+                _dolt_wait=0
+                while [ "$_dolt_wait" -lt 30 ]; do
+                    (echo -n "" >/dev/tcp/127.0.0.1/"$_dolt_port") 2>/dev/null && break
+                    sleep 1
+                    _dolt_wait=$((_dolt_wait + 1))
+                done
+                if ! (echo -n "" >/dev/tcp/127.0.0.1/"$_dolt_port") 2>/dev/null; then
+                    [ -n "$_dolt_bg_pid" ] && kill "$_dolt_bg_pid" 2>/dev/null || true
+                    _phase_fail "database" "dolt server did not start on port $_dolt_port within 30s"
+                fi
+            fi
+            BD_NON_INTERACTIVE=1 \
+                "$SPIRA_BD" -C "$SPIRA_DB" init --non-interactive --prefix sp \
+                --skip-agents --skip-hooks \
+                --server --server-host 127.0.0.1 --server-port "$_dolt_port" \
+                --database "$_dolt_dbname" --external -q \
+                || { [ -n "$_dolt_bg_pid" ] && kill "$_dolt_bg_pid" 2>/dev/null || true
+                     _phase_fail "database" "bd init (server mode) failed"; }
+            [ -n "$_dolt_bg_pid" ] && kill "$_dolt_bg_pid" 2>/dev/null || true
+            unset _dolt_port _dolt_yaml _dolt_dbname _dolt_bg_pid _dolt_wait
+        else
+            "$SPIRA_BD" -C "$SPIRA_DB" init || _phase_fail "database" "bd init failed"
+        fi
         _changes=$((_changes+1))
     fi
 fi

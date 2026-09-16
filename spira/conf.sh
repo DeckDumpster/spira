@@ -721,9 +721,12 @@ spira_conf_defaults() {
     : "${COCKPIT_HOST:=}"
     # The Dolt server's own data directory, which is NOT the beads project directory: `bd -C`
     # is pointed at the latter, and the former is where the server keeps every database it
-    # serves. Empty means this installation does not manage the server, and the unit that
-    # would supervise it is not installed.
-    : "${SPIRA_DOLT_DATA:=}"
+    # serves. Empty means this installation does not manage the server (dolt is run another
+    # way). The default is a derived path so a fresh install gets server mode by default;
+    # set explicitly to empty only if you run dolt yourself.
+    # NO-COLON FORM: an explicit empty value from a config file or env is preserved as-is —
+    # the colon form would replace it with the derived default, defeating the opt-out.
+    : "${SPIRA_DOLT_DATA=${XDG_DATA_HOME:-$HOME/.local/share}/spira/dolt}"
     # The alert units whose failure should be filed as an incident bead, as a find(1) name
     # pattern. Empty means none: these are the operator's own unit names and nothing here can
     # guess them, so install-intake.sh says so rather than wiring whatever matches.
@@ -1076,64 +1079,85 @@ export SPIRA_BD
 # is skipped entirely. bd's version string does not order against release tags — a dev build
 # knows MORE migrations than a tagged release — so pin by migration count, not version string.
 if [ -d "${SPIRA_DB:-}/.beads" ]; then
-    # Lock contention from embedded dolt is transient — the lock is exclusive and several bd
-    # processes can race for it at the same time. A longer timeout does not help: the open is
-    # refused immediately, not after a wait. Retry with backoff before concluding the database
-    # is locked. A schema mismatch is not retried because the binary and database cursor will
-    # not agree any differently on the next attempt.
-    # SPIRA_BD_LOCK_SLEEP_UNIT scales the per-attempt backoff (default 1 second); set it to 0
-    # in test fixtures to skip the sleep without changing the retry logic.
-    _spira_bd_try=0
-    while true; do
-        _spira_bd_try=$((_spira_bd_try + 1))
-        _spira_bd_out="$(timeout 30 "$SPIRA_BD" -C "$SPIRA_DB" migrate schema 2>&1)" && break
-        if printf '%s\n' "$_spira_bd_out" | grep -q 'locked by another dolt process' \
-                && [ "$_spira_bd_try" -lt 5 ]; then
-            sleep "$(( _spira_bd_try * ${SPIRA_BD_LOCK_SLEEP_UNIT:-1} ))"
-            continue
+    # SCHEMA CHECK CACHE. Running `bd migrate schema` on every conf.sh source opens the
+    # store once before any actual work — doubling the load. The check is cached by the
+    # bd binary's mtime and size: if neither has changed since the last successful pass,
+    # the cursor cannot have moved (migrations are applied by bd, not by the database alone).
+    # Both fields are required: mtime alone has second-level resolution, so two distinct
+    # binaries built in the same second but with different content share a mtime but differ
+    # in size. The stamp file lives in SPIRA_RUN so it is instance-qualified.
+    _spira_schema_stamp="${SPIRA_RUN}/bd-schema-stamp"
+    _spira_bd_mtime="$(stat -c '%Y %s' "$SPIRA_BD" 2>/dev/null || true)"
+    _spira_schema_cached=0
+    if [ -n "$_spira_bd_mtime" ] && [ -f "$_spira_schema_stamp" ]; then
+        _spira_stamp_val="$(cat "$_spira_schema_stamp" 2>/dev/null || true)"
+        [ "$_spira_stamp_val" = "$_spira_bd_mtime" ] && _spira_schema_cached=1
+    fi
+    if [ "$_spira_schema_cached" = 0 ]; then
+        # Lock contention from embedded dolt is transient — the lock is exclusive and several bd
+        # processes can race for it at the same time. A longer timeout does not help: the open is
+        # refused immediately, not after a wait. Retry with backoff before concluding the database
+        # is locked. A schema mismatch is not retried because the binary and database cursor will
+        # not agree any differently on the next attempt.
+        # SPIRA_BD_LOCK_SLEEP_UNIT scales the per-attempt backoff (default 1 second); set it to 0
+        # in test fixtures to skip the sleep without changing the retry logic.
+        _spira_bd_try=0
+        while true; do
+            _spira_bd_try=$((_spira_bd_try + 1))
+            _spira_bd_out="$(timeout 30 "$SPIRA_BD" -C "$SPIRA_DB" migrate schema 2>&1)" && break
+            if printf '%s\n' "$_spira_bd_out" | grep -q 'locked by another dolt process' \
+                    && [ "$_spira_bd_try" -lt 5 ]; then
+                sleep "$(( _spira_bd_try * ${SPIRA_BD_LOCK_SLEEP_UNIT:-1} ))"
+                continue
+            fi
+            _spira_bd_db="$(printf '%s\n' "$_spira_bd_out" | grep -oE 'database is at v[0-9]+' | grep -oE '[0-9]+')"
+            _spira_bd_bin="$(printf '%s\n' "$_spira_bd_out" | grep -oE 'binary knows up to v[0-9]+' | grep -oE '[0-9]+')"
+            # Report both versions, rendering ? when one cannot be read. A mismatch where only
+            # the database cursor is parseable ("database is at vN" without "binary knows up to")
+            # still names the database side so the operator knows what to rebuild toward. (sp-1khst)
+            if [ -n "${_spira_bd_db:-}" ] || [ -n "${_spira_bd_bin:-}" ]; then
+                printf 'spira: bd schema mismatch — database is at v%s, %s knows up to v%s\n' \
+                    "${_spira_bd_db:-?}" "$SPIRA_BD" "${_spira_bd_bin:-?}" >&2
+                printf 'spira: rebuild bd at v%s or set SPIRA_BD in %s\n' \
+                    "${_spira_bd_db:-?}" "${SPIRA_CONF_FILE:-spira.conf}" >&2
+                unset _spira_bd_out _spira_bd_db _spira_bd_bin _spira_bd_try
+                # SPIRA_DOCTOR=1 means doctor.sh is the caller. It suppresses stderr to print
+                # its own structured FAIL, and it runs `bd migrate schema` itself in its schema
+                # section — so conf.sh must not exit here or doctor.sh never reaches that check.
+                [ -z "${SPIRA_DOCTOR:-}" ] && exit 1
+                break
+            elif printf '%s\n' "$_spira_bd_out" | grep -q 'locked by another dolt process'; then
+                # All retries failed with lock contention only. The process holding the lock
+                # opened the database successfully, meaning schema is compatible with the running
+                # binary. Exiting here would block callers that do not need database access (e.g.
+                # skew.sh foreign) whenever collect.sh holds the embedded dolt lock. Continue
+                # with a warning; the next conf.sh initialization will verify schema again.
+                printf 'spira: bd locked after %d attempts — another process holds the database; schema assumed current\n' \
+                    "$_spira_bd_try" >&2
+                break
+            elif printf '%s\n' "$_spira_bd_out" | grep -q 'dolt_server_port.*deprecated'; then
+                # A deprecated dolt-internal server-port field in metadata.json caused dolt to
+                # exit non-zero with a warning. This is a dolt configuration concern, not a bd
+                # schema version problem: the database is accessible and the migration count is
+                # unaffected. Continue as if the check passed; removing the field from
+                # metadata.json would silence the warning (sp-lh8r).
+                break
+            else
+                printf 'spira: bd migrate schema failed — %s\n' \
+                    "$(printf '%s\n' "$_spira_bd_out" | head -1)" >&2
+                printf 'spira: bd is %s\n' "$SPIRA_BD" >&2
+                unset _spira_bd_out _spira_bd_db _spira_bd_bin _spira_bd_try
+                [ -z "${SPIRA_DOCTOR:-}" ] && exit 1
+                break
+            fi
+        done
+        unset _spira_bd_out _spira_bd_try
+        # Write the stamp only after a successful check (best-effort; failure is silent).
+        if [ -n "$_spira_bd_mtime" ] && mkdir -p "$SPIRA_RUN" 2>/dev/null; then
+            printf '%s\n' "$_spira_bd_mtime" > "$_spira_schema_stamp" 2>/dev/null || true
         fi
-        _spira_bd_db="$(printf '%s\n' "$_spira_bd_out" | grep -oE 'database is at v[0-9]+' | grep -oE '[0-9]+')"
-        _spira_bd_bin="$(printf '%s\n' "$_spira_bd_out" | grep -oE 'binary knows up to v[0-9]+' | grep -oE '[0-9]+')"
-        # Report both versions, rendering ? when one cannot be read. A mismatch where only
-        # the database cursor is parseable ("database is at vN" without "binary knows up to")
-        # still names the database side so the operator knows what to rebuild toward. (sp-1khst)
-        if [ -n "${_spira_bd_db:-}" ] || [ -n "${_spira_bd_bin:-}" ]; then
-            printf 'spira: bd schema mismatch — database is at v%s, %s knows up to v%s\n' \
-                "${_spira_bd_db:-?}" "$SPIRA_BD" "${_spira_bd_bin:-?}" >&2
-            printf 'spira: rebuild bd at v%s or set SPIRA_BD in %s\n' \
-                "${_spira_bd_db:-?}" "${SPIRA_CONF_FILE:-spira.conf}" >&2
-            unset _spira_bd_out _spira_bd_db _spira_bd_bin _spira_bd_try
-            # SPIRA_DOCTOR=1 means doctor.sh is the caller. It suppresses stderr to print
-            # its own structured FAIL, and it runs `bd migrate schema` itself in its schema
-            # section — so conf.sh must not exit here or doctor.sh never reaches that check.
-            [ -z "${SPIRA_DOCTOR:-}" ] && exit 1
-            break
-        elif printf '%s\n' "$_spira_bd_out" | grep -q 'locked by another dolt process'; then
-            # All retries failed with lock contention only. The process holding the lock
-            # opened the database successfully, meaning schema is compatible with the running
-            # binary. Exiting here would block callers that do not need database access (e.g.
-            # skew.sh foreign) whenever collect.sh holds the embedded dolt lock. Continue
-            # with a warning; the next conf.sh initialization will verify schema again.
-            printf 'spira: bd locked after %d attempts — another process holds the database; schema assumed current\n' \
-                "$_spira_bd_try" >&2
-            break
-        elif printf '%s\n' "$_spira_bd_out" | grep -q 'dolt_server_port.*deprecated'; then
-            # A deprecated dolt-internal server-port field in metadata.json caused dolt to
-            # exit non-zero with a warning. This is a dolt configuration concern, not a bd
-            # schema version problem: the database is accessible and the migration count is
-            # unaffected. Continue as if the check passed; removing the field from
-            # metadata.json would silence the warning (sp-lh8r).
-            break
-        else
-            printf 'spira: bd migrate schema failed — %s\n' \
-                "$(printf '%s\n' "$_spira_bd_out" | head -1)" >&2
-            printf 'spira: bd is %s\n' "$SPIRA_BD" >&2
-            unset _spira_bd_out _spira_bd_db _spira_bd_bin _spira_bd_try
-            [ -z "${SPIRA_DOCTOR:-}" ] && exit 1
-            break
-        fi
-    done
-    unset _spira_bd_out _spira_bd_try
+    fi
+    unset _spira_schema_stamp _spira_bd_mtime _spira_schema_cached _spira_stamp_val
 fi
 
 # BD_IGNORE_SCHEMA_SKEW WAS EXPORTED HERE AND IS GONE, because the recovery it was waiting on
