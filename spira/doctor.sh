@@ -420,6 +420,45 @@ if [ -d "$SPIRA_DB/.beads" ]; then
 else
     WARN "cannot check bd schema — no database yet"
 fi
+# BD VERSION TAG CHECK. Migration count proves binary and database are in step; tag proves
+# the binary is the one the harness decided on. A binary whose schema matches but whose tag
+# does not may lack commands or change semantics silently (the v1.2.2/v1.2.1 incident:
+# newer number, older code, --all quietly not meaning all).
+_bdtag_out="$(timeout 5 "$SPIRA_BD" version 2>/dev/null | head -1 || true)"
+_bdtag_ver="$(printf '%s\n' "$_bdtag_out" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+_bdtag_pin="${SPIRA_BD_TAG#v}"
+if [ -z "${_bdtag_ver:-}" ]; then
+    WARN "cannot read version from '$SPIRA_BD version' — tag pin is ${SPIRA_BD_TAG:-<unset>}" \
+         "Output: $_bdtag_out"
+elif [ "$_bdtag_ver" = "$_bdtag_pin" ]; then
+    OK "bd version matches tag pin ($SPIRA_BD_TAG)"
+else
+    # Distinguish ahead (installed is newer) from behind (installed is older). A version
+    # that is AHEAD of the pin may have migrated the store past what other tooling can read
+    # — and a migration is one-way. BEHIND means missing commands or silent semantic changes.
+    _bdtag_skew="$(awk -v a="$_bdtag_ver" -v b="$_bdtag_pin" 'BEGIN{
+        split(a,av,"."); split(b,bv,".")
+        for(i=1;i<=3;i++){av[i]+=0;bv[i]+=0
+            if(av[i]<bv[i]){print "BEHIND"; exit}
+            if(av[i]>bv[i]){print "AHEAD";  exit}
+        }
+        print "MISMATCH"
+    }')"
+    if [ "$_bdtag_skew" = AHEAD ]; then
+        FAIL "bd version mismatch — installed v$_bdtag_ver is AHEAD of pin $SPIRA_BD_TAG" \
+             "A binary ahead of the pin may have migrated the store past what other tooling
+        can read; migration is one-way. Install the pinned version:
+        $SPIRA_HOME/build-bd.sh --install
+        or: $SPIRA_HOME/build-bd.sh --from-release --install"
+    else
+        FAIL "bd version mismatch — installed v$_bdtag_ver is BEHIND pin $SPIRA_BD_TAG" \
+             "The harness expects $SPIRA_BD_TAG; a binary behind the pin may lack commands
+        or change semantics silently. Install the pinned version:
+        $SPIRA_HOME/build-bd.sh --install
+        or: $SPIRA_HOME/build-bd.sh --from-release --install"
+    fi
+fi
+unset _bdtag_out _bdtag_ver _bdtag_pin _bdtag_skew
 
 echo
 echo "statutes"

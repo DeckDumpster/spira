@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 #
-# build-bd.sh — build the one bd binary this box runs, from a RELEASE TAG, and install it.
+# build-bd.sh — build or download the one bd binary this box runs, from a RELEASE TAG,
+# and install it.
 #
-#   build-bd.sh [--tag <tag>] [--probe] [--install]
+#   build-bd.sh [--tag <tag>] [--probe] [--install] [--from-release]
 #
-#     --probe    build and verify; install nothing (default).
-#     --install  install after every check passes.
-#     --tag      override the pin below. You almost never want this.
+#     --probe         build and verify; install nothing (default).
+#     --install       install after every check passes.
+#     --tag           override the pin below. You almost never want this.
+#     --from-release  download a prebuilt release tarball instead of building from source.
+#                     Requires curl. The tag is the same pin; BD_RELEASE_URL overrides the
+#                     derived URL if the upstream naming convention differs.
 #
 # THE PIN IS A TAG, NOT A COMMIT AND NOT main.
 BD_TAG_PIN="v1.2.1"
@@ -43,42 +47,77 @@ set -uo pipefail
 SRC="${BD_SRC:-$HOME/.cache/beads-src}"
 REPO="https://github.com/steveyegge/beads.git"
 GO="${GO:-$HOME/.local/go/bin/go}"
-TAG="$BD_TAG_PIN"; MODE=probe
+# THE TAG COMES FROM SPIRA_BD_TAG IF THE ENVIRONMENT CARRIES IT, and falls back to the
+# hardcoded value above. conf.sh exposes the same key so doctor.sh reads the same pin
+# without this script having to source conf.sh. Changing the default tag means changing
+# both BD_TAG_PIN and the default in conf.sh's spira_conf_defaults.
+TAG="${SPIRA_BD_TAG:-$BD_TAG_PIN}"; MODE=probe; RELEASE_MODE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --tag)     TAG="${2:?--tag needs a value}"; shift 2 ;;
-        --probe)   MODE=probe;   shift ;;
-        --install) MODE=install; shift ;;
+        --tag)          TAG="${2:?--tag needs a value}"; shift 2 ;;
+        --probe)        MODE=probe;   shift ;;
+        --install)      MODE=install; shift ;;
+        --from-release) MODE=install; RELEASE_MODE=1; shift ;;
         *) echo "build-bd.sh: unknown argument '$1'" >&2; exit 2 ;;
     esac
 done
 
-command -v "$GO" >/dev/null 2>&1 || { echo "build-bd.sh: no go toolchain at $GO" >&2; exit 1; }
-command -v gcc  >/dev/null 2>&1 || { echo "build-bd.sh: CGO_ENABLED=1 needs gcc; none found" >&2; exit 1; }
-
-if [ -d "$SRC/.git" ]; then
-    git -C "$SRC" fetch -q --tags origin || { echo "build-bd.sh: fetch failed" >&2; exit 1; }
+if [ "$RELEASE_MODE" = 1 ]; then
+    # Download and install a prebuilt release tarball rather than building from source.
+    # Upstream publishes tarballs at github.com/steveyegge/beads/releases for each tag;
+    # the linux_amd64 tarball for the pinned tag passes every check this script performs.
+    command -v curl >/dev/null 2>&1 || { echo "build-bd.sh: --from-release needs curl" >&2; exit 1; }
+    _rel_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    _rel_arch="$(uname -m)"
+    case "$_rel_arch" in
+        x86_64)  _rel_arch=amd64 ;;
+        aarch64) _rel_arch=arm64 ;;
+        *) echo "build-bd.sh: --from-release: unsupported architecture: $_rel_arch" >&2; exit 1 ;;
+    esac
+    _rel_url="${BD_RELEASE_URL:-https://github.com/steveyegge/beads/releases/download/$TAG/bd_${_rel_os}_${_rel_arch}.tar.gz}"
+    _rel_tmp="$(mktemp -d)"
+    echo "build-bd.sh: downloading $TAG from $_rel_url" >&2
+    if ! curl -fsSL --retry 3 -o "$_rel_tmp/bd.tar.gz" "$_rel_url"; then
+        echo "build-bd.sh: download failed — $_rel_url" >&2
+        rm -rf "$_rel_tmp"
+        exit 1
+    fi
+    tar -xzf "$_rel_tmp/bd.tar.gz" -C "$_rel_tmp" || {
+        echo "build-bd.sh: failed to unpack $_rel_tmp/bd.tar.gz" >&2; rm -rf "$_rel_tmp"; exit 1; }
+    # The tarball may place the binary in a subdirectory; find it.
+    OUT="$(find "$_rel_tmp" -maxdepth 2 -name bd -perm /111 | head -1)"
+    if [ -z "${OUT:-}" ]; then
+        echo "build-bd.sh: no bd binary found in tarball" >&2; rm -rf "$_rel_tmp"; exit 1; fi
+    echo "build-bd.sh: downloaded $TAG to $OUT" >&2
+    # Fall through to the verification block below; skip the source build.
 else
-    mkdir -p "$(dirname "$SRC")"
-    git clone -q "$REPO" "$SRC" || { echo "build-bd.sh: clone failed" >&2; exit 1; }
-fi
-# A TAG THAT IS NOT ON THE main LINEAGE IS REFUSED. This is the v1.2.2 trap, mechanised: a
-# release cut from a stale fork looks like an upgrade and is a downgrade.
-git -C "$SRC" rev-parse -q --verify "refs/tags/$TAG" >/dev/null || {
-    echo "build-bd.sh: no such tag: $TAG" >&2; exit 1; }
-if ! git -C "$SRC" merge-base --is-ancestor "$TAG" origin/main 2>/dev/null; then
-    echo "build-bd.sh: refusing — $TAG is not an ancestor of origin/main." >&2
-    echo "  It was cut from a fork and may be older in capability than its number suggests." >&2
-    echo "  merge-base with main: $(git -C "$SRC" merge-base "$TAG" origin/main 2>/dev/null)" >&2
-    exit 1
-fi
-git -C "$SRC" checkout -q "$TAG"
+    command -v "$GO" >/dev/null 2>&1 || { echo "build-bd.sh: no go toolchain at $GO" >&2; exit 1; }
+    command -v gcc  >/dev/null 2>&1 || { echo "build-bd.sh: CGO_ENABLED=1 needs gcc; none found" >&2; exit 1; }
 
-OUT="$(mktemp -d)/bd"
-echo "build-bd.sh: building $TAG (CGO_ENABLED=1 -tags gms_pure_go) — several minutes" >&2
-( cd "$SRC" && CGO_ENABLED=1 "$GO" build -tags gms_pure_go -o "$OUT" ./cmd/bd ) || {
-    echo "build-bd.sh: build failed" >&2; exit 1; }
+    if [ -d "$SRC/.git" ]; then
+        git -C "$SRC" fetch -q --tags origin || { echo "build-bd.sh: fetch failed" >&2; exit 1; }
+    else
+        mkdir -p "$(dirname "$SRC")"
+        git clone -q "$REPO" "$SRC" || { echo "build-bd.sh: clone failed" >&2; exit 1; }
+    fi
+    # A TAG THAT IS NOT ON THE main LINEAGE IS REFUSED. This is the v1.2.2 trap, mechanised: a
+    # release cut from a stale fork looks like an upgrade and is a downgrade.
+    git -C "$SRC" rev-parse -q --verify "refs/tags/$TAG" >/dev/null || {
+        echo "build-bd.sh: no such tag: $TAG" >&2; exit 1; }
+    if ! git -C "$SRC" merge-base --is-ancestor "$TAG" origin/main 2>/dev/null; then
+        echo "build-bd.sh: refusing — $TAG is not an ancestor of origin/main." >&2
+        echo "  It was cut from a fork and may be older in capability than its number suggests." >&2
+        echo "  merge-base with main: $(git -C "$SRC" merge-base "$TAG" origin/main 2>/dev/null)" >&2
+        exit 1
+    fi
+    git -C "$SRC" checkout -q "$TAG"
+
+    OUT="$(mktemp -d)/bd"
+    echo "build-bd.sh: building $TAG (CGO_ENABLED=1 -tags gms_pure_go) — several minutes" >&2
+    ( cd "$SRC" && CGO_ENABLED=1 "$GO" build -tags gms_pure_go -o "$OUT" ./cmd/bd ) || {
+        echo "build-bd.sh: build failed" >&2; exit 1; }
+fi
 
 # ---- verify BEFORE installing -----------------------------------------------
 fail=0

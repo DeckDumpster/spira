@@ -66,7 +66,7 @@ COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_RIGHT_PCT COCKPIT_MOUSE COCKPIT_CWD COCKPI
 SPIRA_TOWN SPIRA_MIRROR SPIRA_EXPORTER SPIRA_DESIGN SPIRA_WIKI SPIRA_WIKI_HOOK SPIRA_DOLT_DATA
 SPIRA_VIEW SPIRA_VIEW_SESSION
 SPIRA_ALERT_GLOB
-SPIRA_BD SPIRA_BD_PIN
+SPIRA_BD SPIRA_BD_PIN SPIRA_BD_TAG
 SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_QA_DEPTH SPIRA_THRASH_MINUTES
 SPIRA_TOKEN_WINDOW_H SPIRA_TOKEN_PROJECTS SPIRA_CTX_WARN SPIRA_CTX_HIGH SPIRA_CTX_LIMIT
 SPIRA_ARCHIVE
@@ -750,6 +750,11 @@ spira_conf_defaults() {
     # machine-local (under SPIRA_RUN, which is gitignored), not in the harness tree.
     # Populate it after every bd install with: spira/bd-pin.sh write
     : "${SPIRA_BD_PIN:=$SPIRA_RUN/bd-pin}"
+    # THE RELEASE TAG THIS HARNESS EXPECTS TO BE RUNNING. Both build-bd.sh (which builds
+    # or downloads the binary) and doctor.sh (which checks the running binary) read this
+    # value, so the two cannot disagree about which version is correct. Changing it here
+    # changes what doctor.sh refuses and what build-bd.sh targets.
+    : "${SPIRA_BD_TAG:=v1.2.1}"
 
     # ---- THE ARCHIVIST: WHEN A FULL SESSION GETS ITS UNFINISHED BUSINESS RESCUED ---------
     # HOW MANY TURNS BETWEEN SWEEPS. The timer fires every five minutes; on each pass, a
