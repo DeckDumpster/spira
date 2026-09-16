@@ -1,0 +1,13 @@
+# suite-state — per-suite lifecycle state for this repository.
+#
+# One line per suite that is not in the default (active) state.
+# Format: <suite> | <state> | <since UTC> | <bead> | <reason>
+#
+# States
+#   active       default; not stored here — a suite absent from this file is active.
+#   quarantined  runs everywhere; a red does not block the queue; bead is required.
+#   disabled     not run; recorded as skip in every pass.
+#
+# This file is read from the TREE UNDER TEST, not from the installed harness,
+# so testenv-batch.sh, CI and the hourly run each judge the tree they carry.
+# Transitions are written by: suites.sh quarantine|disable|activate.

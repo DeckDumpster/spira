@@ -76,8 +76,9 @@ SPIRA_ARCHIVIST_PER_PASS
 SPIRA_TESTDB_LIB SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT
 SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY SPIRA_FLAKY_GH_REPO
 SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET
-SPIRA_GATE_SUITES SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
+SPIRA_GATE_SUITES SPIRA_SUITE_STATE SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
 SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST SPIRA_INCIDENT_PRIORITY
+SPIRA_FLAKE_QUARANTINE_AT SPIRA_FLAKE_WINDOW SPIRA_QUARANTINE_CLEAN_RUNS SPIRA_QUARANTINE_MAX_AGE
 SPIRA_AURON_RESTARTS SPIRA_AURON_RESTART_WINDOW
 SPIRA_PROD SPIRA_INSTANCE
 SPIRA_RELEASES SPIRA_RELEASES_KEEP
@@ -893,6 +894,19 @@ spira_conf_defaults() {
     # a runner that has stopped are the same silence from outside. Longer than the interval at
     # which the sweep names the scan, so an ordinary quiet hour does not read as a fault.
     : "${SPIRA_SUITES_STALE:=21600}"
+    # THE SUITE LIFECYCLE STATE FILE — path relative to the repository root.
+    # Read from the TREE UNDER TEST so the gate, CI and the hourly run judge the
+    # tree they carry rather than the installed copy. Transitions are written by
+    # suites.sh quarantine|disable|activate, which commit the file on a branch.
+    : "${SPIRA_SUITE_STATE:=spira/suite-state}"
+    # AUTOMATIC-QUARANTINE THRESHOLDS. The queue quarantines a suite once it has
+    # SPIRA_FLAKE_QUARANTINE_AT flake observations within SPIRA_FLAKE_WINDOW seconds.
+    : "${SPIRA_FLAKE_QUARANTINE_AT:=2}"
+    : "${SPIRA_FLAKE_WINDOW:=604800}"
+    # HOW MANY CONSECUTIVE CLEAN HOURLY RUNS lift an automatic quarantine, and how
+    # long a quarantine may stand before the operator is mailed.
+    : "${SPIRA_QUARANTINE_CLEAN_RUNS:=10}"
+    : "${SPIRA_QUARANTINE_MAX_AGE:=604800}"
     # WHETHER THIS INSTALLATION RUNS ITS OWN TEST SUITES on a timer. On by default when
     # SPIRA_REPO is a git checkout (development mode — the operator can land changes); off
     # when it is not (a consumer installation from a release tarball, where SPIRA_REPO has

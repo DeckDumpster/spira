@@ -44,6 +44,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/lib.sh"
+. "$HERE/suite-state.sh"
 
 STATE="${SPIRA_SUITES_STATE:-$SPIRA_RUN/suites}"
 BUDGET="${SPIRA_SUITES_BUDGET:-420}"
@@ -822,12 +823,14 @@ cmd_run() {
             ok)       rc=0 ;;
             # Both forms of skip are a skip. `skip` is the suite exiting 77 for itself;
             # `skip-req` is testenv-batch refusing to start it because a `# requires:`
-            # token is absent from the image. They arrive as different words because the
-            # REASON differs and the fingerprint field names the missing token — but a
-            # suite that correctly declined to run is not a failure, and mapping skip-req
-            # onto the default arm filed a red bead against every such suite
+            # token is absent from the image. `disabled` means the suite's lifecycle
+            # state is disabled — it is not a failure, and not a suite defect.
             # (law-alerts-must-be-actionable: a false alert is a real cost).
-            skip|skip-req) rc=77 ;;
+            skip|skip-req|disabled) rc=77 ;;
+            # quarantined-red: testenv-batch ran the suite, it failed, but the suite is
+            # quarantined so the failure is not blocking. Map to 77 (skip) here so this
+            # runner does not file a bead — testenv-batch has already logged it.
+            quarantined-red) rc=77 ;;
             timeout)  rc=124 ;;
             *)        rc=1 ;;
         esac
@@ -1165,37 +1168,33 @@ cmd_run() {
 # ask before: which suites in this tree are executed by nothing.
 # --------------------------------------------------------------------------------------
 cmd_list() {
-    local s where rec st at secs age reach gated_ok=1
+    local s where rec st at secs age reach gated_ok=1 _sts_file _lifecycle
     GATED="$(gated_suites)" || gated_ok=0
     GATED=" $(echo ${GATED:-}) "
-    printf '%-26s %-7s %-9s %-8s %-7s %s\n' SUITE RUNS LAST AGE REACH COVERS
+    _sts_file="$(suite_state_file "$(cd "$HERE/.." && pwd -P)")"
+    printf '%-26s %-12s %-7s %-9s %-8s %-7s %s\n' SUITE STATE RUNS LAST AGE REACH COVERS
     for s in $(all_suites); do
         if [ "$gated_ok" = 0 ]; then where='?'
         elif is_gated "$s"; then where=gate
         else where=timed; fi
+        _lifecycle="$(suite_state_of "$_sts_file" "$s")"
         rec="$(record_read "$s" || true)"
         if [ -n "$rec" ]; then
             read -r st at secs _ <<< "$rec"
             age="$(( ( $(date +%s) - at ) / 60 ))m"
         else
-            # NEVER RUN AND RUN-BUT-UNRECORDED ARE THE SAME THING HERE, and both print `-`
-            # rather than a status: this file is the only evidence either way, and inventing
-            # a friendlier word for "no evidence" is how the original defect read as fine.
             st=-; age=-
         fi
         if [ "$where" = gate ]; then
             st=-; age=-; reach=-
         elif [ -f "$STATE/$s.unreached" ]; then
-            # Not reached in the most recent pass that scheduled this suite. The previous
-            # verdict is preserved in .result; show it alongside the "not reached" indicator
-            # so both facts are visible and "red, not reached" cannot render as green.
             reach="—"
         elif [ -n "$rec" ]; then
             reach=ok
         else
             reach=-
         fi
-        printf '%-26s %-7s %-9s %-8s %-7s %s\n' "$s" "$where" "$st" "$age" "$reach" \
+        printf '%-26s %-12s %-7s %-9s %-8s %-7s %s\n' "$s" "$_lifecycle" "$where" "$st" "$age" "$reach" \
             "$(suite_covers_of "$HERE/$s")"
     done
     [ "$gated_ok" = 1 ] || printf '\n%s is unreadable — which suites the gate runs is unknown\n' "$GATE_LIST"
@@ -1286,10 +1285,59 @@ cmd_names() {
     done
 }
 
+# --------------------------------------------------------------------------------------
+# LIFECYCLE TRANSITIONS. Each command creates a branch, writes the state file,
+# commits, and prints the branch name. Pushing is handled by queue.sh submit
+# (a later bead). All three validate the suite exists and the reason is given.
+# --------------------------------------------------------------------------------------
+_sts_transition() {  # _sts_transition <state> <suite> [<bead>] [<reason>]
+    local state="$1" suite="${2:-}" bead="${3:-}" reason="${4:-}"
+    local repo; repo="$(cd "$HERE/.." && pwd -P)"
+    local statefile; statefile="$(suite_state_file "$repo")"
+    [ -n "$suite" ] || { printf 'suites %s: suite name required\n' "$state" >&2; return 2; }
+    [ -r "$HERE/$suite" ] || { printf 'suites %s: no such suite: %s\n' "$state" "$suite" >&2; return 2; }
+    if [ "$state" = "quarantined" ]; then
+        [ -n "$bead" ] || { printf 'suites quarantine: bead id required\n' >&2; return 2; }
+    fi
+    if [ "$state" != "active" ]; then
+        [ -n "$reason" ] || { printf 'suites %s: reason required\n' "$state" >&2; return 2; }
+    fi
+    local stamp; stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    local branch="spira/suite-state/${suite%.sh}-${stamp}"
+    git -C "$repo" checkout -b "$branch" >/dev/null 2>&1 || {
+        printf 'suites %s: cannot create branch %s\n' "$state" "$branch" >&2; return 1
+    }
+    if [ "$state" = "active" ]; then
+        suite_state_clear "$statefile" "$suite" || {
+            git -C "$repo" checkout - >/dev/null 2>&1 || true
+            printf 'suites activate: failed to update state file\n' >&2; return 1
+        }
+    else
+        suite_state_write "$statefile" "$suite" "$state" "$bead" "$reason" || {
+            git -C "$repo" checkout - >/dev/null 2>&1 || true
+            printf 'suites %s: failed to update state file\n' "$state" >&2; return 1
+        }
+    fi
+    git -C "$repo" add "${SPIRA_SUITE_STATE:-spira/suite-state}" >/dev/null 2>&1
+    git -C "$repo" commit -m "suite-state: $suite -> $state  sp-emvlk" \
+        --no-gpg-sign >/dev/null 2>&1 || {
+        git -C "$repo" checkout - >/dev/null 2>&1 || true
+        printf 'suites %s: commit failed\n' "$state" >&2; return 1
+    }
+    printf '%s\n' "$branch"
+}
+
+cmd_quarantine() { _sts_transition quarantined "$@"; }
+cmd_disable()    { _sts_transition disabled    "$1" "" "${2:-}"; }
+cmd_activate()   { _sts_transition active      "$1"; }
+
 case "${1:-list}" in
-    run)    cmd_run ;;
-    names)  cmd_names ;;
-    list)   cmd_list ;;
-    status) cmd_status ;;
-    *) printf 'usage: suites.sh [list|names|run|status]\n' >&2; exit 2 ;;
+    run)         cmd_run ;;
+    names)       cmd_names ;;
+    list)        cmd_list ;;
+    status)      cmd_status ;;
+    quarantine)  shift; cmd_quarantine "$@" ;;
+    disable)     shift; cmd_disable    "$@" ;;
+    activate)    shift; cmd_activate   "$@" ;;
+    *) printf 'usage: suites.sh [list|names|run|status|quarantine|disable|activate]\n' >&2; exit 2 ;;
 esac

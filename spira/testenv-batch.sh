@@ -69,6 +69,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/lib.sh"
 . "$HERE/suite-covers.sh"
+. "$HERE/suite-state.sh"
 TESTENV="$HERE/testenv.sh"
 
 # ---------------------------------------------------------------------------
@@ -292,6 +293,43 @@ else
     RESULTS="$RESULTS_ROOT/$(date +%s)-$$"
 fi
 mkdir -p "$RESULTS"
+
+# ---------------------------------------------------------------------------
+# SUITE STATE — read from the candidate tree, never from the installed harness.
+# Disabled suites are pre-empted here (before the container starts); their
+# result files carry status=disabled. Quarantined suites run normally but a
+# non-zero exit is recorded as quarantined-red rather than red and does not
+# increment _batch_red. Fail-closed: an absent or unreadable state file means
+# every suite is active (blocking).
+# ---------------------------------------------------------------------------
+_STS_TMP="$(mktemp)"
+_STS_QUARANTINED=""
+git -C "$REPO" show "${BR}:${SPIRA_SUITE_STATE:-spira/suite-state}" > "$_STS_TMP" 2>/dev/null || true
+_SELECTED_ACTIVE=""
+for _sts_s in $SELECTED; do
+    case "$(suite_state_of "$_STS_TMP" "$_sts_s")" in
+        disabled)
+            printf '%s %s %s %s %s%s\n' disabled "$(date +%s)" 0 - "$MODE" \
+                " $_SELECTION_TYPE" > "$RESULTS/$_sts_s.result"
+            : > "$RESULTS/$_sts_s.out"
+            printf '  %-32s DISABLED\n' "$_sts_s"
+            ;;
+        quarantined)
+            _STS_QUARANTINED="$_STS_QUARANTINED $_sts_s"
+            _SELECTED_ACTIVE="$_SELECTED_ACTIVE $_sts_s"
+            ;;
+        *)
+            _SELECTED_ACTIVE="$_SELECTED_ACTIVE $_sts_s"
+            ;;
+    esac
+done
+rm -f "$_STS_TMP"; unset _STS_TMP
+SELECTED="$(echo $_SELECTED_ACTIVE)"
+unset _SELECTED_ACTIVE _sts_s
+if [ -z "$SELECTED" ]; then
+    log "batch: all suites pre-empted by lifecycle state — nothing to run"
+    exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # VERDICT CACHE — check before starting the container.
@@ -527,6 +565,7 @@ else
 fi
 
 _batch_red=0
+_batch_quarantined_red=0
 _batch_container_dead=0
 
 # Per-suite timeout: 0 disables; default 600 seconds, mirroring gate-spira.sh.
@@ -600,6 +639,8 @@ if [ "$MODE" = serial ]; then
         # diff / all). Same reasoning as the MODE field: a weaker claim must not
         # conflate with a stronger one.
         _result_extra=" $_SELECTION_TYPE"
+        _s_quarantined=0
+        case " ${_STS_QUARANTINED:-} " in *" $s "*) _s_quarantined=1 ;; esac
         case "$_rc" in
             0)
                 printf '%s %s %s %s %s%s\n' ok "$(date +%s)" "$secs" - "$MODE" \
@@ -619,10 +660,17 @@ if [ "$MODE" = serial ]; then
                 ;;
             *)
                 _fp_val="$(_fp "$_rc" "$out")"
-                printf '%s %s %s %s %s%s\n' red "$(date +%s)" "$secs" "$_fp_val" "$MODE" \
-                    "$_result_extra" > "$res_file"
-                _batch_red=$(( _batch_red + 1 ))
-                printf '  %-32s RED     rc=%s after %ss\n' "$s" "$_rc" "$secs"
+                if [ "$_s_quarantined" = 1 ]; then
+                    printf '%s %s %s %s %s%s\n' quarantined-red "$(date +%s)" "$secs" \
+                        "$_fp_val" "$MODE" "$_result_extra" > "$res_file"
+                    _batch_quarantined_red=$(( _batch_quarantined_red + 1 ))
+                    printf '  %-32s QUARANTINED-RED  rc=%s after %ss\n' "$s" "$_rc" "$secs"
+                else
+                    printf '%s %s %s %s %s%s\n' red "$(date +%s)" "$secs" "$_fp_val" "$MODE" \
+                        "$_result_extra" > "$res_file"
+                    _batch_red=$(( _batch_red + 1 ))
+                    printf '  %-32s RED     rc=%s after %ss\n' "$s" "$_rc" "$secs"
+                fi
                 ;;
         esac
     done
@@ -720,8 +768,10 @@ else
             # Write output before result — same ordering guarantee as serial.
             printf '%s\n' "$_out" > "$RESULTS/$s.out"
 
-            # _SELECTION_TYPE is captured by value at fork time (subshell inherits it).
+            # _SELECTION_TYPE and _STS_QUARANTINED are captured by value at fork time.
             _par_extra=" $_SELECTION_TYPE"
+            _par_quarantined=0
+            case " ${_STS_QUARANTINED:-} " in *" $s "*) _par_quarantined=1 ;; esac
             case "$_inner_rc" in
                 0)
                     printf '%s %s %s %s %s%s\n' ok "$(date +%s)" "$_secs" - "$MODE" \
@@ -740,9 +790,15 @@ else
                     ;;
                 *)
                     _fp_val="$(_fp "$_inner_rc" "$_out")"
-                    printf '%s %s %s %s %s%s\n' red "$(date +%s)" "$_secs" "$_fp_val" "$MODE" \
-                        "$_par_extra" > "$RESULTS/$s.result"
-                    printf '  %-32s RED     rc=%s after %ss\n' "$s" "$_inner_rc" "$_secs"
+                    if [ "$_par_quarantined" = 1 ]; then
+                        printf '%s %s %s %s %s%s\n' quarantined-red "$(date +%s)" "$_secs" \
+                            "$_fp_val" "$MODE" "$_par_extra" > "$RESULTS/$s.result"
+                        printf '  %-32s QUARANTINED-RED  rc=%s after %ss\n' "$s" "$_inner_rc" "$_secs"
+                    else
+                        printf '%s %s %s %s %s%s\n' red "$(date +%s)" "$_secs" "$_fp_val" "$MODE" \
+                            "$_par_extra" > "$RESULTS/$s.result"
+                        printf '  %-32s RED     rc=%s after %ss\n' "$s" "$_inner_rc" "$_secs"
+                    fi
                     ;;
             esac
 
@@ -766,13 +822,19 @@ else
 
     # Count reds from the signal files. Suites with no .rc file were never
     # reached (e.g., the bash process was killed before all subshells launched);
-    # the unreached loop below handles those.
+    # the unreached loop below handles those. Quarantined suites are not counted
+    # as blocking reds (their result file says quarantined-red).
     for s in $SELECTED; do
         [ -f "$_par_tmp/$s.rc" ] || continue
         _par_rc="$(cat "$_par_tmp/$s.rc")"
         case "$_par_rc" in
             0|77) ;;
-            *) _batch_red=$((_batch_red+1)) ;;
+            *)
+                case " ${_STS_QUARANTINED:-} " in
+                    *" $s "*)
+                        _batch_quarantined_red=$((_batch_quarantined_red+1)) ;;
+                    *) _batch_red=$((_batch_red+1)) ;;
+                esac ;;
         esac
     done
 
@@ -810,6 +872,17 @@ printf 'image_tag=%s\nbranch=%s\nbase=%s\nkey=%s\nmode=%s\nselection=%s\n' \
 if [ "$_batch_container_dead" = 1 ]; then
     log "batch: harness fault — container died mid-batch"
     exit 2
+fi
+
+if [ "$_batch_quarantined_red" -gt 0 ]; then
+    _qr_names=""
+    for s in ${_STS_QUARANTINED:-}; do
+        [ -r "$RESULTS/$s.result" ] || continue
+        case "$(awk '{print $1}' "$RESULTS/$s.result" 2>/dev/null)" in
+            quarantined-red) _qr_names="${_qr_names:+$_qr_names, }$s" ;;
+        esac
+    done
+    log "batch: quarantined red (not blocking): ${_qr_names:-$_batch_quarantined_red suite(s)}"
 fi
 
 if [ "$_batch_red" -gt 0 ]; then
