@@ -353,6 +353,8 @@ You need `bd`, `git`, `flock`, `python3`, and whichever coding-agent CLI your pe
 | `tmux` | the cockpit panes | no attention surface |
 | `cargo` | builds Loom and the cockpit panel | no panel, no Loom; the loop is unaffected |
 | `node` | gates the browser page's view model | that one suite skips |
+| `inotifywait` | delivers mail the moment it arrives (`inotify-tools`) | mail waits for the next session start |
+| `aerc` | the operator's mail client | read the Maildir with any other client |
 
 ```sh
 git clone <this repo> spira-harness && cd spira-harness

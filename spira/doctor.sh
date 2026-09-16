@@ -86,7 +86,7 @@ fi
 # absence is a warning about a slower or less convenient path, never about a broken one.
 # They are checked here because they are DECLARED — test-bin-manifest.sh fails if anything
 # in SPIRA_BINS is examined by nothing, which is how bd-embedded went a week unnoticed.
-for b in gh "${SPIRA_AGENT:-claude}" tmux node jq zstd; do
+for b in gh "${SPIRA_AGENT:-claude}" tmux node jq zstd inotifywait aerc; do
     if command -v "$b" >/dev/null 2>&1; then OK "$b — $(command -v "$b")"
     else WARN "$b is not on PATH — $(spira_bin_purpose "$b")" \
               "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."; fi
