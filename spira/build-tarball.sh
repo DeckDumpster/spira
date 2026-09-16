@@ -108,7 +108,7 @@ do_build() {
     local tmp; tmp="$(mktemp -d)"
     # Clean temp dir on any exit — placed before the first write so it fires even
     # if git archive fails.
-    trap 'rm -rf "$tmp"' EXIT INT TERM
+    trap "rm -rf '$tmp'" EXIT INT TERM
 
     local stage="$tmp/$name"
     mkdir -p "$stage/bin"
