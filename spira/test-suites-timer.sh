@@ -149,18 +149,33 @@ else
                 "not found — the parser may be broken" ;;
     esac
 
-    # THE PROPERTY. A timer absent from this list is installed but never enabled:
-    # systemd will not start it at login, and it will never fire.
-    case "$enable_block" in
-        *spira-suites.timer*)
-            ok "spira-suites.timer is in install.sh's _ENABLE_TMPL list" ;;
-        *)
-            bad "spira-suites.timer is in install.sh's _ENABLE_TMPL list" \
-                "absent — install will not enable the timer; it will never fire" ;;
+fi
+
+# spira-suites.timer is conditionally added (SPIRA_SELF_TEST path), not in _ENABLE_TMPL.
+# Check comment-stripped source for the conditional ENABLE+= and UNITS+= lines.
+units_code="$(sed 's/#.*//; /^[[:space:]]*$/d' "$UNITS_SH" 2>/dev/null)"
+if [ -z "$units_code" ]; then
+    bad "units.sh code is readable (positive control)" "sed found nothing"
+else
+    ok "units.sh code is readable (${#units_code} bytes)"
+
+    # POSITIVE CONTROL: spira-promote.timer is also conditionally added to ENABLE.
+    promote_in_enable="$(printf '%s\n' "$units_code" | grep 'spira-promote.timer' | grep 'ENABLE')"
+    case "$promote_in_enable" in
+        ?*) ok "positive control: spira-promote.timer has a conditional ENABLE+= line" ;;
+        *)  bad "positive control: spira-promote.timer conditional ENABLE+= line" \
+                "not found — the grep may be broken" ;;
+    esac
+
+    suites_in_enable="$(printf '%s\n' "$units_code" | grep 'spira-suites.timer' | grep 'ENABLE')"
+    case "$suites_in_enable" in
+        ?*) ok "spira-suites.timer is added to ENABLE in SPIRA_SELF_TEST path" ;;
+        *)  bad "spira-suites.timer added to ENABLE in SPIRA_SELF_TEST path" \
+                "no ENABLE+= line — timer will not be enabled in development mode" ;;
     esac
 fi
 
-# A unit in _ENABLE_TMPL must also be in UNITS (the install set). Enabled means nothing
+# A unit in the enable path must also be in UNITS. Enabled means nothing
 # if the file is never written to ~/.config/systemd/user in the first place.
 units_block="$(awk '/^UNITS=\(/{found=1} found{print} found && /\)/{found=0}' \
     "$UNITS_SH" 2>/dev/null)"
@@ -176,19 +191,27 @@ else
                 "not found — the parser may be broken" ;;
     esac
 
-    case "$units_block" in
-        *spira-suites.timer*)
-            ok "spira-suites.timer is in install.sh's UNITS list (will be written to disk)" ;;
-        *)
-            bad "spira-suites.timer is in install.sh's UNITS list (will be written to disk)" \
-                "absent — install will not write the timer unit file" ;;
+    # spira-suites.timer and .service are added via UNITS+=, not the static UNITS=().
+    # POSITIVE CONTROL: spira-promote.timer is also conditionally added to UNITS.
+    promote_in_units="$(printf '%s\n' "$units_code" | grep 'spira-promote.timer' | grep 'UNITS')"
+    case "$promote_in_units" in
+        ?*) ok "positive control: spira-promote.timer has a conditional UNITS+= line" ;;
+        *)  bad "positive control: spira-promote.timer conditional UNITS+= line" \
+                "not found — the grep may be broken" ;;
     esac
-    case "$units_block" in
-        *spira-suites.service*)
-            ok "spira-suites.service is in install.sh's UNITS list" ;;
-        *)
-            bad "spira-suites.service is in install.sh's UNITS list" \
-                "absent — install will not write the service unit file" ;;
+
+    suites_in_units="$(printf '%s\n' "$units_code" | grep 'spira-suites.timer' | grep 'UNITS')"
+    case "$suites_in_units" in
+        ?*) ok "spira-suites.timer is added to UNITS in SPIRA_SELF_TEST path" ;;
+        *)  bad "spira-suites.timer added to UNITS in SPIRA_SELF_TEST path" \
+                "no UNITS+= line — install will not write the timer file" ;;
+    esac
+
+    suites_svc_in_units="$(printf '%s\n' "$units_code" | grep 'spira-suites.service' | grep 'UNITS')"
+    case "$suites_svc_in_units" in
+        ?*) ok "spira-suites.service is added to UNITS in SPIRA_SELF_TEST path" ;;
+        *)  bad "spira-suites.service added to UNITS in SPIRA_SELF_TEST path" \
+                "no UNITS+= line — install will not write the service file" ;;
     esac
 fi
 
