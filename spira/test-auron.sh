@@ -30,7 +30,7 @@
 # server, this suite exits 77 — the automake skip convention, which gate-brain.sh names in
 # the gate's output — but ONLY if everything that did run passed. A skip must never be able
 # to swallow a failure.
-# covers: spira/auron.sh spira/auron-classify.py spira/testdata/sentinel-healthy.log spira/testdata/sentinel-pre-check7.log
+# covers: spira/auron.sh spira/auron-classify.py spira/conf.sh spira/testdata/sentinel-healthy.log spira/testdata/sentinel-pre-check7.log
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DATA="$HERE/testdata"
@@ -273,6 +273,61 @@ check "the older state-line spelling still parses" summon-starved "$(obs "$TMP/o
 { echo "Auto-merging spira/sentinel.sh"; echo "REAPED sp-x  branch and worktree";
   cat "$TMP/healthy.log"; } > "$TMP/noise.log"
 check "untimestamped lines are skipped, not misparsed" - "$(obs "$TMP/noise.log")"
+
+echo
+echo "auron-classify — unit restart loops:"
+
+# obs_r <restart-alerts-json> [json-overrides] -> observations with restart_alerts
+obs_r() {
+    OVER="${2:-{\}}" NOW="$NOW" RA="$1" python3 -c '
+import json, os, sys
+o = {"now": int(os.environ["NOW"]), "auron_first": int(os.environ["NOW"]),
+     "sentinel_log": "", "sentinel_log_readable": True, "sentinel_log_error": "",
+     "sentinel_log_mtime": int(os.environ["NOW"]) - 30,
+     "sentinel_log_path": "/run/sentinel.log", "sentinel_timer": "active",
+     "db_reachable": True, "db_error": "", "db_path": "/db", "fallback_path": "/run/a.json",
+     "mirror": {"configured": False}, "strands": {},
+     "restart_alerts": json.loads(os.environ["RA"]),
+     "thresholds": {"pass_stale": 600, "starve_passes": 5,
+                    "mirror_stale": 90000, "ghost_stale": 1800,
+                    "restart_threshold": 5, "restart_window": 3600}}
+o.update(json.loads(os.environ["OVER"]))
+json.dump(o, sys.stdout)' 2>/dev/null
+}
+
+# A unit whose restart count rose past the threshold fires.
+_ra='[{"unit":"spira-cockpit-prod.service","current":255,"baseline":0,"delta":255,"window":3600,"journal":"last line"}]'
+check "restart count above threshold fires" "restart-loop:spira-cockpit-prod.service" \
+    "$(obs_r "$_ra")"
+ev="$(evidence_of "$(obs_r "$_ra")" "restart-loop:spira-cockpit-prod.service")"
+case "$ev" in *"255"*) ok "evidence carries the restart count" ;;
+    *) bad "evidence carries the restart count" "count 255 not in evidence" ;; esac
+case "$ev" in *"spira-cockpit-prod.service"*) ok "evidence names the unit" ;;
+    *) bad "evidence names the unit" "unit name not in evidence" ;; esac
+case "$ev" in *"incident intake misses it"*) ok "evidence explains why incident intake misses this" ;;
+    *) bad "evidence explains why incident intake misses this" "explanation absent" ;; esac
+
+# A count below the threshold does not fire.
+_ra_low='[{"unit":"spira-cockpit-prod.service","current":3,"baseline":0,"delta":3,"window":3600,"journal":""}]'
+check "restart count below threshold fires nothing" - "$(obs_r "$_ra_low")"
+
+# An empty restart_alerts list fires nothing.
+check "no restart alerts fires nothing" - "$(obs_r '[]')"
+
+# Two units simultaneously: two distinct keys.
+_ra_two='[{"unit":"spira-cockpit-prod.service","current":50,"baseline":0,"delta":50,"window":3600,"journal":""},
+           {"unit":"spira-sentinel-prod.service","current":20,"baseline":0,"delta":20,"window":3600,"journal":""}]'
+got_two="$(keys_of "$(obs_r "$_ra_two")")"
+case ",$got_two," in
+    *,restart-loop:spira-cockpit-prod.service,*) ok "first unit fires" ;;
+    *) bad "first unit fires" "cockpit not in [$got_two]" ;;
+esac
+case ",$got_two," in
+    *,restart-loop:spira-sentinel-prod.service,*) ok "second unit fires independently" ;;
+    *) bad "second unit fires independently" "sentinel not in [$got_two]" ;;
+esac
+
+unset _ra _ra_low _ra_two got_two ev
 
 # ======================================================================================
 # PART 2 — the reconciler, against a real bd.
@@ -612,6 +667,107 @@ grep -q 'SP_AURON_DB_SATURATED=1' "$RUN/auron.status" \
 [ -r "$RUN/auron.alerts.json" ] \
     && ok "saturation: fallback file written on timeout" \
     || bad "saturation fallback" "no fallback file on timeout"
+
+echo
+echo "auron.sh — restart loop detection via stub systemctl:"
+
+# Build a stub systemctl that serves list-units and show responses so auron.sh sees
+# a unit with a rising NRestarts count. RESTARTS_THRESHOLD is set to 3 so a count
+# of 5 (above) and 2 (below) cleanly straddle the threshold.
+RESTART_SC="$TMP/restart-sc"
+{
+    printf '#!/usr/bin/env bash\n'
+    # Return a fixed count stored in a file so the test can change it between runs.
+    printf 'COUNT_FILE=%q\n' "$TMP/restart-count"
+    printf 'case "${*}" in\n'
+    # list-units: return one spira service
+    printf '  *"list-units"*)\n'
+    printf '    printf "spira-cockpit-prod.service loaded active running\\n"\n'
+    printf '    exit 0 ;;\n'
+    # show --property=Id,NRestarts: return Id and current count
+    printf '  *"show"*)\n'
+    printf '    cnt=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)\n'
+    printf '    printf "Id=spira-cockpit-prod.service\\nNRestarts=%%s\\n\\n" "$cnt"\n'
+    printf '    exit 0 ;;\n'
+    # is-active (for sentinel timer): not active
+    printf '  *) exit 0 ;;\n'
+    printf 'esac\n'
+} > "$RESTART_SC"
+chmod +x "$RESTART_SC"
+
+auron_restart() {
+    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="${AURON_DB:-$SPIRA_DB}" \
+    SPIRA_REPO="$TMP/repo" SPIRA_EXPORTER="" \
+    SPIRA_SYSTEMCTL="$RESTART_SC" \
+    SPIRA_AURON_SENTINEL_LOG="$RUN/sentinel.log" \
+    SPIRA_AURON_RESTARTS=3 SPIRA_AURON_RESTART_WINDOW=3600 \
+        "$SH/auron.sh" "$@" 2>&1
+}
+restart_alert_status() {
+    bd -C "$SPIRA_DB" list --all --limit 0 --label alert --json 2>/dev/null \
+        | sed -n '/^[[{]/,$p' | python3 -c '
+import sys, os, json
+key = "restart-loop:spira-cockpit-prod.service"
+try: d = json.load(sys.stdin)
+except Exception: d = []
+for i in (d if isinstance(d, list) else [d]):
+    if "alert:" + key in (i.get("labels") or []):
+        print("%s %s" % (i["id"], i.get("status"))); break
+else:
+    print("-")'
+}
+
+heal  # healthy sentinel log so sentinel-stalled does not interfere
+rm -f "$RUN/auron.state"
+
+# Count below threshold: no alert.
+printf '2\n' > "$TMP/restart-count"
+auron_restart >/dev/null
+[ "$(restart_alert_status)" = "-" ] \
+    && ok "restart: count below threshold fires nothing" \
+    || bad "restart below threshold" "alert raised when count was below threshold"
+
+# Count above threshold but only one sighting: CONFIRM requires two.
+printf '10\n' > "$TMP/restart-count"
+auron_restart >/dev/null
+[ "$(restart_alert_status)" = "-" ] \
+    && ok "restart: one sighting does not fire — a condition must be confirmed" \
+    || bad "restart confirm" "alert raised on first sighting above threshold"
+
+# Second sighting: alert raised.
+auron_restart >/dev/null
+_rst="$(restart_alert_status)"
+case "$_rst" in *" open") ok "restart: confirmed condition raises an open alert bead" ;;
+    *) bad "restart raise" "expected an open bead, got [$_rst]" ;; esac
+_rst_id="${_rst%% *}"
+
+# Third pass on the same standing loop: no duplicate bead.
+auron_restart >/dev/null
+_rst_n="$(bd -C "$SPIRA_DB" list --all --limit 0 --label "alert:restart-loop:spira-cockpit-prod.service" --json 2>/dev/null \
+    | sed -n '/^[[{]/,$p' | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: d = []
+print(len(d if isinstance(d, list) else [d]))')"
+[ "$_rst_n" = 1 ] \
+    && ok "restart: a second pass on the same standing loop does not raise a duplicate" \
+    || bad "restart duplicate" "expected 1 alert bead, got [$_rst_n]"
+
+# Count goes DOWN (daemon-reload): no new alert; baseline resets.
+printf '0\n' > "$TMP/restart-count"
+auron_restart >/dev/null; auron_restart >/dev/null
+[ "$(restart_alert_status)" = "$_rst_id closed" ] \
+    && ok "restart: alert cleared after restart count went down" \
+    || bad "restart reset" "expected [$_rst_id closed] got [$(restart_alert_status)]"
+
+# Count rises again above threshold: alert reopened.
+printf '8\n' > "$TMP/restart-count"
+auron_restart >/dev/null; auron_restart >/dev/null
+[ "$(restart_alert_status)" = "$_rst_id open" ] \
+    && ok "restart: count rising again reopens the same bead" \
+    || bad "restart reopen" "expected [$_rst_id open] got [$(restart_alert_status)]"
+
+unset _rst _rst_id _rst_n
 
 testdb_drop >/dev/null 2>&1
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"

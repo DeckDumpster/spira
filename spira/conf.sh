@@ -78,6 +78,7 @@ SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY SPIRA_FLAKY
 SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET
 SPIRA_GATE_SUITES SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
 SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST SPIRA_INCIDENT_PRIORITY
+SPIRA_AURON_RESTARTS SPIRA_AURON_RESTART_WINDOW
 SPIRA_PROD SPIRA_INSTANCE
 SPIRA_RELEASES SPIRA_RELEASES_KEEP
 SPIRA_REVIEWER_MODEL SPIRA_REVIEWER_VERDICTS SPIRA_REVIEWER_TIMEOUT SPIRA_REVIEWER_DIFF_LIMIT
@@ -880,6 +881,13 @@ spira_conf_defaults() {
     # canary, a wedged landing, the watchtower's blockage checks — say so on the call, and are
     # unaffected. What moves is everything that never chose, which is what filled the band.
     : "${SPIRA_INCIDENT_PRIORITY:=3}"
+    # AURON RESTART-LOOP DETECTION thresholds. A Restart=always unit never reaches
+    # 'failed', so incident intake misses it; Auron detects it by watching NRestarts.
+    # RESTARTS: how many restarts within the window trigger an alert.
+    # RESTART_WINDOW: the measurement window in seconds; the baseline resets at expiry
+    # so a loop that stopped more than this long ago does not continue to fire.
+    : "${SPIRA_AURON_RESTARTS:=5}"
+    : "${SPIRA_AURON_RESTART_WINDOW:=3600}"
     # HOW OLD A SUITE'S RESULT MAY BE BEFORE IT IS NO LONGER EVIDENCE, in seconds. Past this
     # the watchtower reports the suite as unrun rather than as green, because a stale pass and
     # a runner that has stopped are the same silence from outside. Longer than the interval at

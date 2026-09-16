@@ -322,6 +322,31 @@ def main():
               "everything downstream of it stays blocked.\n\n"
               "--- ghosts ---\n%s" % (fmt_age(ghost_stale), rows))
 
+    # -- unit restart loops ---------------------------------------------------------------
+    # A Restart=always unit never reaches 'failed' so incident intake misses it. Auron
+    # detects it by comparing NRestarts to the baseline recorded at the window start.
+    # The threshold and window arrive pre-computed from bash (baseline management lives
+    # there because it is stateful across passes). The classifier's job here is only to
+    # format the evidence and emit the alert key.
+    restart_threshold = int(th.get("restart_threshold", 5))
+    for ra in (o.get("restart_alerts") or []):
+        unit = ra.get("unit") or "?"
+        delta = int(ra.get("delta") or 0)
+        if delta <= restart_threshold:
+            continue
+        current = int(ra.get("current") or 0)
+        window = int(ra.get("window") or 3600)
+        journal = (ra.get("journal") or "").strip()
+        key = "restart-loop:" + unit
+        alert(key,
+              "%s restarted %d time(s) in the last %s" % (unit, delta, fmt_age(window)),
+              "UNIT      %s\n"
+              "RESTARTS  %d in this %s window (running total %d, threshold %d)\n\n"
+              "A Restart=always unit never reaches 'failed' — incident intake misses it.\n"
+              "This is Auron's notification of an active restart loop.\n\n"
+              "--- last journal lines ---\n%s"
+              % (unit, delta, fmt_age(window), current, restart_threshold, journal))
+
     for a in out:
         sys.stdout.write(json.dumps(a, sort_keys=True) + "\n")
     return 0

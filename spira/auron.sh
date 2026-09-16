@@ -133,6 +133,9 @@ NOW="$(date +%s)"
 # derived like strand.sh's episode state.
 # ======================================================================================
 declare -A S_STATE S_SEEN S_UNSEEN S_SINCE S_FIRST S_FLAPS S_BEAD S_REFRESHED
+# Per-unit restart baseline: R_BASELINE[unit]=count at window start,
+# R_BASELINE_AT[unit]=epoch of window start, R_LAST[unit]=count from previous pass.
+declare -A R_BASELINE R_BASELINE_AT R_LAST
 FIRST_RUN=0
 PROBE_ID=""    # id of the write-probe bead; re-derived if missing, persisted in state
 if [ -r "$STATE" ]; then
@@ -140,6 +143,7 @@ if [ -r "$STATE" ]; then
         case "$k" in
             '#first_run') FIRST_RUN="${a:-0}"; continue ;;
             '#probe_id')  PROBE_ID="${a:-}"; continue ;;
+            '#restart')   R_BASELINE[$a]="${b:-0}"; R_BASELINE_AT[$a]="${c:-$NOW}"; R_LAST[$a]="${d:-0}"; continue ;;
             ''|'#'*)      continue ;;
         esac
         S_STATE[$k]="${a:-clear}";  S_SEEN[$k]="${b:-0}";      S_UNSEEN[$k]="${c:-0}"
@@ -160,6 +164,10 @@ state_save() {
           printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$k" \
               "${S_STATE[$k]}" "${S_SEEN[$k]}" "${S_UNSEEN[$k]}" "${S_SINCE[$k]}" \
               "${S_FIRST[$k]}" "${S_FLAPS[$k]}" "${S_BEAD[$k]}" "${S_REFRESHED[$k]}"
+      done
+      for k in "${!R_LAST[@]}"; do
+          printf '#restart\t%s\t%s\t%s\t%s\n' "$k" \
+              "${R_BASELINE[$k]:-0}" "${R_BASELINE_AT[$k]:-$NOW}" "${R_LAST[$k]:-0}"
       done
     } > "$tmp" 2>/dev/null && mv -f "$tmp" "$STATE"
 }
@@ -198,6 +206,87 @@ if [ -n "${SPIRA_EXPORTER:-}" ]; then
         mirror_exists=1; mirror_mtime="$(stat -c %Y "$MIRROR" 2>/dev/null || echo 0)"
     fi
 fi
+
+# UNIT RESTART COUNTS. One `systemctl show` call reads NRestarts for every loaded Spira
+# service. No systemd answer is not a fault — a stub, a timeout, or a non-systemd box all
+# produce empty output and the check is skipped. Short timeout: a systemd that does not
+# answer in 5s is not available as far as a watchdog pass is concerned.
+RESTARTS_THRESHOLD="${SPIRA_AURON_RESTARTS:-5}"
+RESTART_WINDOW_S="${SPIRA_AURON_RESTART_WINDOW:-3600}"
+declare -A CUR_RESTARTS
+_sc_unit_list=""
+_raw_sc_units="$(timeout 5 "$SYSTEMCTL" --user list-units \
+    --type=service --all --plain --no-legend 2>/dev/null || true)"
+if [ -n "$_raw_sc_units" ]; then
+    _sc_unit_list="$(printf '%s' "$_raw_sc_units" \
+        | awk '$1 ~ /^spira-/ {print $1}' | tr '\n' ' ')"
+    _sc_unit_list="${_sc_unit_list% }"
+fi
+if [ -n "$_sc_unit_list" ]; then
+    _raw_sc_show="$(timeout 5 "$SYSTEMCTL" --user show \
+        --property=Id,NRestarts -- $_sc_unit_list 2>/dev/null || true)"
+    if [ -n "$_raw_sc_show" ]; then
+        _rid=""
+        while IFS= read -r _rline; do
+            case "$_rline" in
+                Id=*)        _rid="${_rline#Id=}" ;;
+                NRestarts=*) [ -n "$_rid" ] && CUR_RESTARTS["$_rid"]="${_rline#NRestarts=}"; _rid="" ;;
+                '')          _rid="" ;;
+            esac
+        done <<< "$_raw_sc_show"
+    fi
+    unset _raw_sc_show
+fi
+unset _sc_unit_list _raw_sc_units _rid _rline
+
+# Compute deltas, update baselines, and build the restart alerts JSON (one call per pass).
+# A count that went DOWN (daemon-reload, reinstall) resets the baseline — not an alert.
+# A window that expired slides forward so stale data does not keep a unit in alert.
+_ra_tsv=""
+for _u in "${!CUR_RESTARTS[@]}"; do
+    _cur="${CUR_RESTARTS[$_u]}"
+    _base="${R_BASELINE[$_u]:-$_cur}"
+    _base_at="${R_BASELINE_AT[$_u]:-$NOW}"
+    _last="${R_LAST[$_u]:-$_cur}"
+
+    if [ "$_cur" -lt "$_last" ] 2>/dev/null; then
+        _base="$_cur"; _base_at="$NOW"
+    elif [ "$(( NOW - _base_at ))" -ge "$RESTART_WINDOW_S" ]; then
+        _base="$_cur"; _base_at="$NOW"
+    fi
+    R_BASELINE[$_u]="$_base"; R_BASELINE_AT[$_u]="$_base_at"; R_LAST[$_u]="$_cur"
+
+    _rdelta="$(( _cur - _base ))"
+    if [ "$_rdelta" -gt "$RESTARTS_THRESHOLD" ] 2>/dev/null; then
+        _rjb64="$(timeout 5 journalctl --user --no-pager -n 10 --unit="$_u" 2>/dev/null \
+            | python3 -c 'import sys,base64; print(base64.b64encode(sys.stdin.buffer.read()).decode())' \
+            || true)"
+        _ra_tsv="${_ra_tsv}${_u}	${_cur}	${_base}	${_rdelta}	${RESTART_WINDOW_S}	${_rjb64}
+"
+    fi
+done
+unset _u _cur _base _base_at _last _rdelta _rjb64
+
+_restart_alerts_json="$(printf '%s' "$_ra_tsv" | python3 -c '
+import sys, json, base64
+alerts = []
+for line in sys.stdin:
+    line = line.rstrip("\n")
+    if not line:
+        continue
+    parts = line.split("\t", 5)
+    if len(parts) < 5:
+        continue
+    u, cur, base, delta, window = parts[0], int(parts[1]), int(parts[2]), int(parts[3]), int(parts[4])
+    jb64 = parts[5] if len(parts) > 5 else ""
+    try:
+        journal = base64.b64decode(jb64).decode(errors="replace")
+    except Exception:
+        journal = ""
+    alerts.append({"unit": u, "current": cur, "baseline": base, "delta": delta,
+                   "window": window, "journal": journal})
+print(json.dumps(alerts))' 2>/dev/null || printf '[]')"
+unset _ra_tsv
 
 # THE ALERT QUERY IS ALSO THE READ PROBE, and deliberately so. Auron needs the open and
 # closed alert beads on every run anyway — that is how one bead per cause is enforced
@@ -399,6 +488,8 @@ MIRROR="$MIRROR" MIRROR_CONFIGURED="$mirror_configured" MIRROR_EXISTS="$mirror_e
 MIRROR_MTIME="$mirror_mtime" EXPORTER="${SPIRA_EXPORTER:-}" STRANDS="$STRANDS" \
 T_PASS="${SPIRA_AURON_PASS_STALE:-600}" T_STARVE="${SPIRA_AURON_STARVE_PASSES:-5}" \
 T_MIRROR="${SPIRA_AURON_MIRROR_STALE:-90000}" T_GHOST="${SPIRA_AURON_GHOST_STALE:-1800}" \
+RESTART_ALERTS="$_restart_alerts_json" \
+T_RESTARTS="$RESTARTS_THRESHOLD" T_RESTART_WINDOW="$RESTART_WINDOW_S" \
 python3 - > "$LOG_TAIL.obs" <<'PY'
 import json, os, sys
 def n(k, d=0):
@@ -413,6 +504,11 @@ try:
     with open(os.environ["LOG_TAIL"], errors="replace") as fh: text = fh.read()
 except Exception:
     text = ""
+try:
+    restart_alerts = json.loads(os.environ.get("RESTART_ALERTS") or "[]")
+    if not isinstance(restart_alerts, list): restart_alerts = []
+except Exception:
+    restart_alerts = []
 json.dump({
     "now": n("NOW"), "auron_first": n("FIRST_RUN"),
     "sentinel_log": text,
@@ -431,8 +527,11 @@ json.dump({
                "path": os.environ.get("MIRROR") or "",
                "exporter": os.environ.get("EXPORTER") or ""},
     "strands": strands,
+    "restart_alerts": restart_alerts,
     "thresholds": {"pass_stale": n("T_PASS", 600), "starve_passes": n("T_STARVE", 5),
-                   "mirror_stale": n("T_MIRROR", 90000), "ghost_stale": n("T_GHOST", 1800)},
+                   "mirror_stale": n("T_MIRROR", 90000), "ghost_stale": n("T_GHOST", 1800),
+                   "restart_threshold": n("T_RESTARTS", 5),
+                   "restart_window": n("T_RESTART_WINDOW", 3600)},
 }, sys.stdout)
 PY
 
