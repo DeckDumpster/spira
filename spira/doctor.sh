@@ -875,6 +875,25 @@ fi
 [ "$_dr_dup_found" -eq 0 ] && OK "no duplicate plain/instance unit pairs"
 unset _dr_sc _dr_unit_dir _dr_dup_found _dr_f _dr_base _dr_ext _dr_stem _dr_inst_name
 
+# EMPTY EXECSTART EXECUTABLE. A unit with ExecStart= followed by a space has no
+# executable — systemd accepts it and fails with 203/EXEC on every start. The common
+# cause is dolt absent when units were rendered; install.sh refuses at render time now,
+# but this catches units installed before that guard.
+_dr_eexec_dir="${HOME}/.config/systemd/user"
+_dr_eexec_n=0
+if [ -d "$_dr_eexec_dir" ]; then
+    for _dr_eexec_f in "$_dr_eexec_dir"/*.service; do
+        [ -f "$_dr_eexec_f" ] || continue
+        if grep -E '^ExecStart= ' "$_dr_eexec_f" >/dev/null 2>&1; then
+            FAIL "$(basename "$_dr_eexec_f"): ExecStart has an empty executable — systemd will fail with 203/EXEC" \
+                 "Re-run install.sh after ensuring the missing program (e.g., dolt) is on PATH."
+            _dr_eexec_n=$((_dr_eexec_n + 1))
+        fi
+    done
+fi
+[ "$_dr_eexec_n" -eq 0 ] && OK "no installed unit has an empty ExecStart executable"
+unset _dr_eexec_dir _dr_eexec_n _dr_eexec_f
+
 echo
 echo "enabled units"
 # ENABLE-SET DRIFT. Every unit in the ENABLE set must be enabled in systemd unless the

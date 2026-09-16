@@ -109,6 +109,10 @@ watcher_name = sys.argv[13] if len(sys.argv) > 13 else ""
 if not m["SPIRA_PROD"]:
     m["SPIRA_PROD"] = m["SPIRA_HOME"]
 text = open(sys.argv[1]).read()
+if not m["DOLT"] and "@DOLT@" in text:
+    sys.stderr.write("install: %s: dolt is not on PATH; install dolt before rendering units that need it\n"
+                     % os.path.basename(sys.argv[1]))
+    raise SystemExit(1)
 out = re.sub(r"@([A-Z_]+)@", lambda x: m.get(x.group(1), x.group(0)), text)
 # Substitute %i with the watcher name for templates that use systemd's instance
 # specifier. Under per-instance naming there is no systemd @-template; %i is
