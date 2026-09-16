@@ -1590,11 +1590,9 @@ d=d if isinstance(d,list) else [d]
 if not d: print("\t0\t"); sys.exit()
 sup = 1 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
                for x in (d[0].get("dependencies") or [])) else 0
-# delivers:TYPE labels the aeon set on close — semicolon-separated list of the values after
-# "delivers:". The aeon checks these here (and the sentinel re-checks in CHECK5) so a bead
-# that declared its output is never reopened for lacking a commit, provided the output exists.
-# This supersedes no-payload (sp-ail7): no-payload exempted without verifying, so a sweep
-# that failed silently was indistinguishable from one that filed twenty beads.
+# delivers:TYPE labels stamped by incident.sh on filing — the aeon verifies each here
+# (and the sentinel re-checks in CHECK5) so a closed bead with satisfied evidence is not
+# reopened for lacking a commit.
 lab = d[0].get("labels") or []
 delivers = ";".join(l[len("delivers:"):] for l in lab if l.startswith("delivers:"))
 print("%s\t%s\t%s" % (d[0].get("status",""), sup, delivers))' 2>/dev/null)"
