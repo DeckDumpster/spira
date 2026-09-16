@@ -55,7 +55,7 @@ mkdir -p "$TMP/home"
 # configuration and report a pass it did not earn.
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira" "$CLONE/cockpit"
-cp "$HERE/conf.sh" "$HERE/watchd.sh" "$CLONE/spira/"
+cp "$HERE/conf.sh" "$HERE/watchd.sh" "$HERE/mail-health.sh" "$CLONE/spira/"
 cp -r "$ROOT/systemd" "$CLONE/systemd"
 
 # EVERY CONFIGURED VALUE IS PINNED TO A NON-DEFAULT. SPIRA_RUN would derive to
