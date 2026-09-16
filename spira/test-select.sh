@@ -15,7 +15,7 @@
 #   • B: suite A is the planted offender that must appear to trust the selection
 #   • C: all three suites are the planted offenders for unmapped fallback
 #
-# covers: spira/select.sh spira/gate-spira.sh spira/testenv-batch.sh
+# covers: spira/select.sh spira/select-globs.sh spira/gate-spira.sh spira/testenv-batch.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -55,8 +55,8 @@ HEAD_COVERED="$(git -C "$REPO" rev-parse HEAD)"
 # Branch that changes a file no suite declares.
 git -C "$REPO" checkout -q main
 git -C "$REPO" checkout -q -b topic-unmapped
-printf 'changed\n' > "$REPO/no-suite-owns-this.txt"
-git -C "$REPO" add no-suite-owns-this.txt
+printf 'changed\n' > "$REPO/no-suite-owns-this.go"
+git -C "$REPO" add no-suite-owns-this.go
 git -C "$REPO" commit -q -m "change unmapped file"
 HEAD_UNMAPPED="$(git -C "$REPO" rev-parse HEAD)"
 
@@ -244,7 +244,7 @@ notwant "G1: unrelated suite B not selected"    "test-fx-b.sh" "$out"
 
 # UNMAPPED FILE: mirrors C — triggers all-suites fallback.
 FLIST_UNMAPPED="$TMP/flist-unmapped"
-printf 'no-suite-owns-this.txt\n' > "$FLIST_UNMAPPED"
+printf 'no-suite-owns-this.go\n' > "$FLIST_UNMAPPED"
 
 out="$(bash "$SELECT" --files "$FLIST_UNMAPPED" --suite-dir "$SD" 2>/dev/null)"
 rc=$?
@@ -345,12 +345,108 @@ bash "$SELECT" --files "$FLIST_UNMAPPED" --suite-dir "$SD" --no-all-fallback \
     --report-file "$RF_H3" >/dev/null 2>&1
 rc=$?
 iszero "H3: unplaced file exits 0" "$rc"
-want "H3: unplaced file named in report" "no-suite-owns-this.txt" \
+want "H3: unplaced file named in report" "no-suite-owns-this.go" \
     "$(cat "$RF_H3" 2>/dev/null)"
 
 # H4: --report-file not given — exits 0 with no side effects.
 bash "$SELECT" --all --suite-dir "$SD" >/dev/null 2>&1
 iszero "H4: no --report-file exits 0" "$?"
+
+# ---------------------------------------------------------------------------
+echo
+echo "Part I: inert file classification — inert changes select nothing"
+# ---------------------------------------------------------------------------
+# Fixture: one suite covers some.sh; the changed file is README.md (inert).
+SD_I="$TMP/suites-i"
+mkdir -p "$SD_I"
+cat > "$SD_I/test-fx-i.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: some.sh
+exit 0
+EOF
+chmod +x "$SD_I/test-fx-i.sh"
+
+FLIST_INERT="$TMP/flist-inert"
+printf 'README.md\n' > "$FLIST_INERT"
+
+# POSITIVE CONTROL: without SPIRA_SELECT_INERT suppressing *.md, README.md is
+# unmapped and triggers the all-suites fallback — this proves the file is noticed.
+out_ctrl="$(SPIRA_SELECT_INERT='__none__' bash "$SELECT" \
+    --files "$FLIST_INERT" --suite-dir "$SD_I" 2>/dev/null)"
+want "I0-ctrl: without SELECT_INERT, README.md triggers fallback (test-fx-i.sh appears)" \
+    "test-fx-i.sh" "$out_ctrl"
+
+# I1: README.md declared inert → nothing selected (no suites, not even always-run).
+out="$(SPIRA_SELECT_INERT='*.md *.txt' bash "$SELECT" \
+    --files "$FLIST_INERT" --suite-dir "$SD_I" 2>/dev/null)"
+rc=$?
+iszero "I1: inert file exits 0"         "$rc"
+iseq   "I1: inert file selects nothing" "$out" ""
+
+# I2: *.txt also inert — CHANGES.txt selects nothing.
+printf 'CHANGES.txt\n' > "$TMP/flist-txt"
+out="$(SPIRA_SELECT_INERT='*.md *.txt' bash "$SELECT" \
+    --files "$TMP/flist-txt" --suite-dir "$SD_I" 2>/dev/null)"
+rc=$?
+iszero "I2: .txt file exits 0"         "$rc"
+iseq   "I2: .txt file selects nothing" "$out" ""
+
+# ---------------------------------------------------------------------------
+echo
+echo "Part J: unclaimed source file — exits non-zero and names the file"
+# ---------------------------------------------------------------------------
+# Fixture: one suite covers other.sh; the changed file is new.sh (source, unclaimed).
+SD_J="$TMP/suites-j"
+mkdir -p "$SD_J"
+cat > "$SD_J/test-fx-j.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: other.sh
+exit 0
+EOF
+chmod +x "$SD_J/test-fx-j.sh"
+
+FLIST_SRC="$TMP/flist-src"
+printf 'new.sh\n' > "$FLIST_SRC"
+
+# POSITIVE CONTROL: without SELECT_SOURCE matching *.sh, new.sh is just an
+# unknown unmapped file and triggers the all-suites fallback at exit 0 — this
+# proves the file is in scope before the source check fires.
+out_ctrl="$(SPIRA_SELECT_SOURCE='__none__' bash "$SELECT" \
+    --files "$FLIST_SRC" --suite-dir "$SD_J" 2>/dev/null)"
+rc_ctrl=$?
+iszero "J0-ctrl: without SELECT_SOURCE, unclaimed .sh exits 0" "$rc_ctrl"
+want   "J0-ctrl: without SELECT_SOURCE, fallback selects test-fx-j.sh" \
+    "test-fx-j.sh" "$out_ctrl"
+
+# J1: new.sh declared as source → exits non-zero and names the file.
+err="$(SPIRA_SELECT_SOURCE='*.sh' bash "$SELECT" \
+    --files "$FLIST_SRC" --suite-dir "$SD_J" 2>&1 >/dev/null)"
+rc=$?
+[ "$rc" -ne 0 ] && ok "J1: unclaimed source file exits non-zero" \
+    || bad "J1: unclaimed source file exits non-zero" "got exit $rc"
+want "J1: error names the unclaimed file" "new.sh" "$err"
+
+# J2: add a suite that claims new.sh → exits 0.
+cat > "$SD_J/test-fx-j2.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: new.sh
+exit 0
+EOF
+chmod +x "$SD_J/test-fx-j2.sh"
+
+out="$(SPIRA_SELECT_SOURCE='*.sh' bash "$SELECT" \
+    --files "$FLIST_SRC" --suite-dir "$SD_J" 2>/dev/null)"
+rc=$?
+iszero "J2: claimed source file exits 0" "$rc"
+want   "J2: claiming suite selected"     "test-fx-j2.sh" "$out"
+
+# J2-ctrl: remove the claiming suite → error returns.
+rm "$SD_J/test-fx-j2.sh"
+SPIRA_SELECT_SOURCE='*.sh' bash "$SELECT" \
+    --files "$FLIST_SRC" --suite-dir "$SD_J" >/dev/null 2>/dev/null
+rc=$?
+[ "$rc" -ne 0 ] && ok "J2-ctrl: removing coverage triggers error again" \
+    || bad "J2-ctrl: removing coverage triggers error again" "got exit $rc"
 
 # ---------------------------------------------------------------------------
 echo

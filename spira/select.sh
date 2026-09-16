@@ -54,11 +54,18 @@
 #                             coverage — law-absence-needs-a-positive-control still
 #                             governs the timed run)
 #
-# covers: spira/suite-covers.sh spira/gate-spira.sh spira/testenv-batch.sh
+# FILE BUCKETS (select-globs.sh, overridable via SPIRA_SELECT_INERT / SPIRA_SELECT_SOURCE)
+#   inert   matches SELECT_INERT  → skipped; selects nothing, no fallback
+#   source  matches SELECT_SOURCE → must be claimed; unclaimed exits 1 and names the file
+#   unknown everything else       → all-suites fallback when unclaimed (today's behaviour)
+#
+# covers: spira/suite-covers.sh spira/select-globs.sh spira/gate-spira.sh spira/testenv-batch.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 [ -r "$HERE/suite-covers.sh" ] || { printf 'select: suite-covers.sh is missing\n' >&2; exit 1; }
 . "$HERE/suite-covers.sh"
+[ -r "$HERE/select-globs.sh" ] || { printf 'select: select-globs.sh is missing\n' >&2; exit 1; }
+. "$HERE/select-globs.sh"
 
 SUITE_DIR="${SPIRA_BATCH_SUITE_DIR:-$HERE}"
 REPO="${SPIRA_REPO:-}"
@@ -227,6 +234,23 @@ if [ -z "$_cv_changed" ]; then
     exit 0
 fi
 
+# Strip inert files — they select nothing and do not trigger the fallback.
+_cv_live=""
+set -f
+for _cv_f in $_cv_changed; do
+    _cv_is_inert=0
+    for _cv_pat in $SELECT_INERT; do
+        case "$_cv_f" in $_cv_pat) _cv_is_inert=1; break ;; esac
+    done
+    [ "$_cv_is_inert" -eq 0 ] && _cv_live="$_cv_live $_cv_f"
+done
+set +f
+if [ -z "$_cv_live" ]; then
+    _write_mode diff
+    exit 0
+fi
+_cv_changed="$_cv_live"
+
 # Collect always-run (no # covers:) suites.
 _cv_nocov=""
 for _s in $_all; do
@@ -257,6 +281,31 @@ for _cv_f in $_cv_changed; do
     set +f
     [ "$_cv_hit" -eq 0 ] && _cv_unmapped="$_cv_unmapped $_cv_f"
 done
+
+# Partition unmapped files: source (must be claimed → error) vs unknown (fallback).
+# _cv_unmapped is updated before the potential exit so _trap_report sees only unknowns.
+_cv_unclaimed_src=""
+_cv_unmapped_unk=""
+set -f
+for _cv_f in $_cv_unmapped; do
+    _cv_is_src=0
+    for _cv_pat in $SELECT_SOURCE; do
+        case "$_cv_f" in $_cv_pat) _cv_is_src=1; break ;; esac
+    done
+    if [ "$_cv_is_src" -eq 1 ]; then
+        _cv_unclaimed_src="$_cv_unclaimed_src $_cv_f"
+    else
+        _cv_unmapped_unk="$_cv_unmapped_unk $_cv_f"
+    fi
+done
+set +f
+_cv_unmapped="$_cv_unmapped_unk"
+if [ -n "$_cv_unclaimed_src" ]; then
+    for _cv_f in $_cv_unclaimed_src; do
+        printf 'select: unclaimed source file: %s\n' "$_cv_f" >&2
+    done
+    exit 1
+fi
 
 if [ -n "$_cv_unmapped" ] && [ "$_ARG_NO_FALLBACK" -eq 0 ]; then
     # UNMAPPED FILE FALLBACK. At least one changed file is claimed by no suite.
