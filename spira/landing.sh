@@ -1403,6 +1403,13 @@ for repo_name in $(spira_repos); do
     land_repo "$repo_name"
 done
 
+# After all certification passes, run the batch builder for queue-mode repos.
+for repo_name in $(spira_repos); do
+    [ "$(repo_land "$repo_name")" = queue ] || continue
+    bash "$SPIRA_HOME/batch.sh" "$repo_name" 2>&1 \
+        | while IFS= read -r _bl; do log "$_bl"; done || true
+done
+
 # ======================================================================================
 # ADVANCE THE CHECKOUT HUMANS READ — UNCONDITIONALLY, not only when a branch merged this
 # pass. Landing pushes the base branch from a worktree and nothing else pulls the home
