@@ -1488,6 +1488,12 @@ _sts_transition() {  # _sts_transition <state> <suite> [<bead>] [<reason>]
         git -C "$repo" checkout - >/dev/null 2>&1 || true
         printf 'suites %s: commit failed\n' "$state" >&2; return 1
     }
+    # Submit to the queue so the change lands with no further step.
+    bash "$HERE/queue.sh" submit "$branch" >&2 || {
+        printf 'suites %s: queue.sh submit failed for %s — branch exists but is not certified\n' \
+            "$state" "$branch" >&2
+        return 1
+    }
     printf '%s\n' "$branch"
 }
 
