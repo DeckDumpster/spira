@@ -591,6 +591,9 @@ cmd_run() {
     # by cause_fp and filed as one bead per group (law-count-things-not-log-lines).
     local _cfp_dir="" _deferred_red_count=0 _cluster_suppressed=0
     local _setup_fault_count=0
+    # Suite lifecycle state file — read once; used for clean-runs tracking and hygiene.
+    local _sts_file
+    _sts_file="$(suite_state_file "$(cd "$HERE/.." && pwd -P)")"
     # --------------------------------------------------------------------------------
     # WHERE THE SUITES ACTUALLY RUN.
     #
@@ -1072,6 +1075,20 @@ cmd_run() {
                     fi
                 fi ;;
         esac
+        # Clean-runs counter: increment for a quarantined suite that ran green; reset on red.
+        # In BATCH mode _br_status is the authoritative verdict; inline mode uses rc.
+        if [ "$(suite_state_of "$_sts_file" "$s" 2>/dev/null)" = "quarantined" ]; then
+            if [ "$BATCH" = 1 ]; then
+                case "${_br_status:-}" in
+                    ok)             cleanruns_inc   "$s" ;;
+                    quarantined-red) cleanruns_reset "$s" ;;
+                esac
+            else
+                [ "$rc" -eq 0 ]  && cleanruns_inc   "$s"
+                [ "$rc" -ne 0 ] && [ "$rc" -ne 77 ] && cleanruns_reset "$s"
+                true
+            fi
+        fi
     done
 
     # Drop the shared fixture this shell owns; borrowers (suites) already no-op'd their drop.
@@ -1156,6 +1173,7 @@ cmd_run() {
     # a hopeful one. Print it even when zero so the line is parseable on every pass.
     printf '%s ran, %s red (%s env-mismatch, %s suppressed by clustering), %s skipped, %s fixture-fault, %s setup-fault, %ss\n' \
         "$ran" "$red" "$env_mismatch" "$_cluster_suppressed" "$skipped" "$_fixture_fault_count" "$_setup_fault_count" "$(( $(date +%s) - started ))"
+    cmd_hygiene 2>/dev/null || true
     # Exit 2 when suites are red, a fixture fault, or a setup-fault was filed: incidents were
     # filed, the pass completed normally. Exit 1 is reserved for errors that abort before any
     # suite runs (gate-suites unreadable). The unit carries SuccessExitStatus=2 so systemd
@@ -1286,6 +1304,152 @@ cmd_names() {
 }
 
 # --------------------------------------------------------------------------------------
+# FLAKE OBSERVATIONS, CLEAN-RUN COUNTERS, AND QUARANTINE HYGIENE.
+#
+# Flake observations: per-suite files at $STATE/<suite>.flakeobs, one Unix epoch per
+# line. observe-flake records one observation and quarantines when the count within
+# SPIRA_FLAKE_WINDOW reaches SPIRA_FLAKE_QUARANTINE_AT.
+#
+# Clean-run counters: $STATE/<suite>.clean-runs, incremented by cmd_run each time a
+# quarantined suite runs green, reset on red. cmd_hygiene reactivates when the bead
+# is LANDED and the count reaches SPIRA_QUARANTINE_CLEAN_RUNS.
+#
+# Max-age mail: $STATE/<suite>.maxage-mailed is written after the first mail; its
+# presence suppresses further mails for the same quarantine period.
+# --------------------------------------------------------------------------------------
+flakeobs_file()      { printf '%s/%s.flakeobs'      "$STATE" "$1"; }
+cleanruns_file()     { printf '%s/%s.clean-runs'    "$STATE" "$1"; }
+maxage_mailed_file() { printf '%s/%s.maxage-mailed' "$STATE" "$1"; }
+
+flakeobs_record() {    # flakeobs_record <suite>
+    mkdir -p "$STATE" 2>/dev/null
+    printf '%s\n' "$(date +%s)" >> "$(flakeobs_file "$1")"
+}
+
+flakeobs_in_window() {  # flakeobs_in_window <suite> -> count
+    local f; f="$(flakeobs_file "$1")"
+    [ -r "$f" ] || { printf '0'; return 0; }
+    local cutoff count=0 ts
+    cutoff=$(( $(date +%s) - ${SPIRA_FLAKE_WINDOW:-604800} ))
+    while IFS= read -r ts || [ -n "$ts" ]; do
+        case "$ts" in ''|*[!0-9]*) continue ;; esac
+        [ "$ts" -ge "$cutoff" ] && count=$(( count + 1 ))
+    done < "$f"
+    printf '%d' "$count"
+}
+
+cleanruns_get() {    # cleanruns_get <suite> -> count
+    local n; n="$(cat "$(cleanruns_file "$1")" 2>/dev/null || echo 0)"
+    case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    printf '%d' "$n"
+}
+cleanruns_inc()   { printf '%d\n' $(( $(cleanruns_get "$1") + 1 )) > "$(cleanruns_file "$1")"; }
+cleanruns_reset() { mkdir -p "$STATE" 2>/dev/null; printf '0\n' > "$(cleanruns_file "$1")"; }
+
+# _suite_auto_quarantine <suite> <reason>
+# Writes suite-state and tries to file a bead. Fails closed: write fails → suite stays active.
+_suite_auto_quarantine() {
+    local suite="$1" reason="$2"
+    local repo; repo="$(cd "$HERE/.." && pwd -P)"
+    local statefile; statefile="$(suite_state_file "$repo")"
+    local bead_id=""
+    if [ -r "$HERE/bead.sh" ]; then
+        bead_id="$(printf '%s is auto-quarantined.\n\nReason: %s\n\nReproduce: bash spira/%s\n' \
+            "$suite" "$reason" "$suite" \
+            | bash "$HERE/bead.sh" file "fix $suite: flaky" \
+                --for builder --repo "$(spira_home_repo)" -p 2 --body-file - 2>/dev/null \
+            | tail -1 | tr -d '[:space:]')" || bead_id=""
+        case "${bead_id:-}" in ''|*[!A-Za-z0-9-]*|-*|*-) bead_id="" ;; esac
+    fi
+    suite_state_write "$statefile" "$suite" quarantined "${bead_id:-}" "$reason" || return 1
+    cleanruns_reset "$suite"
+    printf 'auto-quarantine: %s quarantined (bead: %s)\n' "$suite" "${bead_id:-(none filed)}"
+}
+
+# cmd_observe_flake — record one flake observation; quarantine when threshold is reached.
+cmd_observe_flake() {
+    local suite="${1:-}"
+    [ -n "$suite" ] || { printf 'suites observe-flake: suite name required\n' >&2; return 2; }
+    flakeobs_record "$suite"
+    local count threshold
+    count="$(flakeobs_in_window "$suite")"
+    threshold="${SPIRA_FLAKE_QUARANTINE_AT:-2}"
+    printf 'observe-flake: %s: %s observation(s) in window (threshold %s)\n' \
+        "$suite" "$count" "$threshold"
+    [ "$count" -ge "$threshold" ] || return 0
+    local repo; repo="$(cd "$HERE/.." && pwd -P)"
+    local statefile; statefile="$(suite_state_file "$repo")"
+    if [ "$(suite_state_of "$statefile" "$suite")" = "quarantined" ]; then
+        printf 'observe-flake: %s is already quarantined\n' "$suite"
+    else
+        _suite_auto_quarantine "$suite" "auto: $count flake observations in the window"
+    fi
+}
+
+# cmd_hygiene — reactivation and max-age checks for all quarantined suites.
+# Reactivates when: bead is LANDED and clean-run count >= SPIRA_QUARANTINE_CLEAN_RUNS.
+# Mails once when: quarantine age >= SPIRA_QUARANTINE_MAX_AGE.
+cmd_hygiene() {
+    local repo; repo="$(cd "$HERE/.." && pwd -P)"
+    local statefile; statefile="$(suite_state_file "$repo")"
+    local BDCMD="${SPIRA_BD:-bd}"
+    local clean_threshold="${SPIRA_QUARANTINE_CLEAN_RUNS:-10}"
+    local max_age="${SPIRA_QUARANTINE_MAX_AGE:-604800}"
+    local now; now="$(date +%s)"
+    local activated=0 mailed=0
+    while IFS=$'\t' read -r s st since bead _reason; do
+        [ "$st" = "quarantined" ] || continue
+        # -- reactivation --
+        if [ -n "$bead" ]; then
+            local land_state=""
+            land_state="$("$BDCMD" -C "$SPIRA_DB" show "$bead" --json 2>/dev/null \
+                | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    d = d[0] if isinstance(d, list) else d
+    lbls = d.get("labels") or []
+    if "land_state:LANDED" in lbls:
+        print("LANDED")
+except Exception:
+    pass
+' 2>/dev/null)" || land_state=""
+            if [ "${land_state:-}" = "LANDED" ]; then
+                local cr; cr="$(cleanruns_get "$s")"
+                if [ "$cr" -ge "$clean_threshold" ]; then
+                    suite_state_clear "$statefile" "$s"
+                    rm -f "$(cleanruns_file "$s")" "$(maxage_mailed_file "$s")" 2>/dev/null || true
+                    printf 'hygiene: %s reactivated (bead %s LANDED, %d clean runs)\n' \
+                        "$s" "$bead" "$cr"
+                    activated=$(( activated + 1 ))
+                    continue
+                fi
+            fi
+        fi
+        # -- max-age --
+        local since_epoch="" since_age mailed_flag
+        mailed_flag="$(maxage_mailed_file "$s")"
+        since_epoch="$(date -u -d "$since" +%s 2>/dev/null || true)"
+        [ -n "${since_epoch:-}" ] || continue
+        since_age=$(( now - since_epoch ))
+        if [ "$since_age" -ge "$max_age" ] && [ ! -f "$mailed_flag" ]; then
+            printf 'quarantine for %s exceeds %d days.\n\nBead: %s\nSince: %s\n' \
+                "$s" $(( max_age / 86400 )) "${bead:-(unknown)}" "$since" \
+                | SPIRA_MAIL_LINT_CONSIDERED="suites-hygiene automated" \
+                  bash "$HERE/mail.sh" send operator \
+                    --from "Suite hygiene <hygiene@spira>" \
+                    --subject "$s quarantine exceeds $(( max_age / 86400 ))d" \
+                    2>/dev/null && touch "$mailed_flag" 2>/dev/null || true
+            if [ -f "$mailed_flag" ]; then
+                printf 'hygiene: mailed operator about %s (age %ds)\n' "$s" "$since_age"
+                mailed=$(( mailed + 1 ))
+            fi
+        fi
+    done < <(suite_state_parse "$statefile" 2>/dev/null)
+    printf 'hygiene: %d reactivated, %d max-age mailed\n' "$activated" "$mailed"
+}
+
+# --------------------------------------------------------------------------------------
 # LIFECYCLE TRANSITIONS. Each command creates a branch, writes the state file,
 # commits, and prints the branch name. Pushing is handled by queue.sh submit
 # (a later bead). All three validate the suite exists and the reason is given.
@@ -1332,12 +1496,14 @@ cmd_disable()    { _sts_transition disabled    "$1" "" "${2:-}"; }
 cmd_activate()   { _sts_transition active      "$1"; }
 
 case "${1:-list}" in
-    run)         cmd_run ;;
-    names)       cmd_names ;;
-    list)        cmd_list ;;
-    status)      cmd_status ;;
-    quarantine)  shift; cmd_quarantine "$@" ;;
-    disable)     shift; cmd_disable    "$@" ;;
-    activate)    shift; cmd_activate   "$@" ;;
-    *) printf 'usage: suites.sh [list|names|run|status|quarantine|disable|activate]\n' >&2; exit 2 ;;
+    run)            cmd_run ;;
+    names)          cmd_names ;;
+    list)           cmd_list ;;
+    status)         cmd_status ;;
+    hygiene)        cmd_hygiene ;;
+    observe-flake)  shift; cmd_observe_flake "$@" ;;
+    quarantine)     shift; cmd_quarantine "$@" ;;
+    disable)        shift; cmd_disable    "$@" ;;
+    activate)       shift; cmd_activate   "$@" ;;
+    *) printf 'usage: suites.sh [list|names|run|status|hygiene|observe-flake|quarantine|disable|activate]\n' >&2; exit 2 ;;
 esac
