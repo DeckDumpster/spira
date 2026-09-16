@@ -80,6 +80,8 @@ _lint_check() {
         local line stripped wc_val
         while IFS= read -r line; do
             [[ "$line" =~ ${_bead_id_re} ]] || continue
+            # A metadata key-value line (^key: ...) names a bead id in context.
+            [[ "$line" =~ ^[a-z_-]+:[[:space:]] ]] && continue
             stripped="$(printf '%s' "$line" | sed -E "s/${_bead_id_re}//g")"
             wc_val="$(printf '%s' "$stripped" | wc -w)"
             if [ "${wc_val}" -lt 4 ]; then

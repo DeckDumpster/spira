@@ -39,8 +39,6 @@ mkdir -p "$RUN/worktree" "$SH"
 cp "$HERE"/*.sh "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
-stub ask.sh 'printf "%s\n" "$*" >> "$EMITTED"'
-export EMITTED="$TMP/events"; : > "$EMITTED"
 
 # THE GATE IS ALSO THE COUNTER. Each invocation appends the branch name so the
 # suite can assert it was (or was not) called, which is the positive control every
@@ -76,7 +74,6 @@ landing() {
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_NOTIFY="$SH/ask.sh" SPIRA_ASK="$SH/ask.sh" \
         bash "$SH/landing.sh" 2>&1
 }
 

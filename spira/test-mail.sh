@@ -158,6 +158,9 @@ out="$(printf 'Implemented Maildir mail delivery with atomic send and lint in sp
     run send lint-bid --from "Gate <g@g>" --subject "Summary" 2>&1)"; rc=$?
 isz  "SEEN GREEN: body with sufficient bead id context is accepted" "$rc"
 
+out="$(printf 'target: sp-q0k3k' | run send lint-bid --from "Gate <g@g>" --subject "Result" 2>&1)"; rc=$?
+isz  "SEEN GREEN: key-value metadata line with bead id is accepted" "$rc"
+
 # ==========================================================================
 # LINT: decision/question with no default  (SEEN RED then SEEN GREEN)
 # ==========================================================================
