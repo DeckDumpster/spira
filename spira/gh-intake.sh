@@ -65,6 +65,13 @@ LANE="${SPIRA_PLAN_LABEL:-plan}"
 # per issue. The default is the tracker's own repository name, which is right
 # whenever the issues are about the code they are filed against.
 BEAD_REPO="${SPIRA_GH_INTAKE_BEAD_REPO:-${REPO##*/}}"
+# A report from outside outranks what the harness notices about itself. A malformed value is
+# refused rather than passed to `bd`, which would fail the create and lose the finding.
+INTAKE_PRIORITY="${SPIRA_GH_INTAKE_PRIORITY:-2}"
+case "$INTAKE_PRIORITY" in
+    [0-4]) ;;
+    *) printf 'gh-intake: SPIRA_GH_INTAKE_PRIORITY is %s — it must be 0-4\n' "$INTAKE_PRIORITY" >&2; exit 2 ;;
+esac
 API="${SPIRA_GH_INTAKE_API:-https://api.github.com}"
 
 die() { printf 'gh-intake: %s\n' "$1" >&2; exit 1; }
@@ -188,6 +195,7 @@ print("Ingested from %s\n\n%s" % (d["ref"], d["body"]))' \
             --external-ref "$ref" \
             --labels "$SCOPE,$LANE,repo:$BEAD_REPO" \
             -t bug \
+            -p "$INTAKE_PRIORITY" \
             --body-file - >/dev/null 2>&1 \
         && created=$((created+1)) \
         || log "WARNING: could not create a bead for $ref"

@@ -73,10 +73,10 @@ SPIRA_ARCHIVE
 SPIRA_ARCHIVIST_EVERY SPIRA_ARCHIVIST_IDLE SPIRA_ARCHIVIST_MODEL SPIRA_ARCHIVIST_TIMEOUT
 SPIRA_ARCHIVIST_PER_PASS
 SPIRA_TESTDB_LIB SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT
-SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO
+SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY
 SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET
 SPIRA_GATE_SUITES SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
-SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST
+SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST SPIRA_INCIDENT_PRIORITY
 SPIRA_PROD SPIRA_INSTANCE
 SPIRA_RELEASES SPIRA_RELEASES_KEEP
 SPIRA_REVIEWER_MODEL SPIRA_REVIEWER_VERDICTS SPIRA_REVIEWER_TIMEOUT SPIRA_REVIEWER_DIFF_LIMIT
@@ -416,6 +416,11 @@ spira_conf_defaults() {
     # it uses should be scoped so that it could not — the store holds internal notes
     # and judgement that must not reach a public issue list (law-beads-is-never-public).
     : "${SPIRA_GH_INTAKE_REPO:=}"
+    # WHAT AN INGESTED ISSUE IS WORTH. A report from outside names something broken for
+    # somebody who is not this machine, so it enters ABOVE the band the harness files its own
+    # findings in. Left at the tracker default it entered below them, and the loop — which
+    # takes work in priority order — reached every self-observed defect first, indefinitely.
+    : "${SPIRA_GH_INTAKE_PRIORITY:=2}"
     # HOW LONG A REPOSITORY'S OWN GATE COMMAND MAY RUN, in seconds. gate.sh wraps the command
     # under `timeout` at this budget. A gate killed at the deadline exits 124 and is reported
     # as a timeout (NO_VERDICT), not a branch fault — but the bead note is empty and the next
@@ -826,7 +831,17 @@ spira_conf_defaults() {
     # something where that is not true says so ITSELF, with a `# priority: N` line beside its
     # `# covers:` line — the priority of what a suite covers is a claim only the suite's author
     # can make, and a central table of it would be a second list to keep in step with the glob.
-    : "${SPIRA_SUITES_PRIORITY:=2}"
+    # ROUTINE IS P3, NOT P2. A red suite is the harness reporting on itself, and self-reported
+    # defects filed above the band that outside bug reports arrive in is a priority inversion:
+    # with one aeon, 123 P2 suite reds in three days kept 22 reported bugs from ever being
+    # reached. A suite whose subject genuinely outranks a user's bug says so itself.
+    : "${SPIRA_SUITES_PRIORITY:=3}"
+    # WHAT A MACHINE-OBSERVED INCIDENT IS WORTH BY DEFAULT. This was a bare 1 inside
+    # incident.sh: every condition the harness noticed about itself opened at the most urgent
+    # band, whether or not anything was broken for anyone. The callers that mean P1 — a dead
+    # canary, a wedged landing, the watchtower's blockage checks — say so on the call, and are
+    # unaffected. What moves is everything that never chose, which is what filled the band.
+    : "${SPIRA_INCIDENT_PRIORITY:=3}"
     # HOW OLD A SUITE'S RESULT MAY BE BEFORE IT IS NO LONGER EVIDENCE, in seconds. Past this
     # the watchtower reports the suite as unrun rather than as green, because a stale pass and
     # a runner that has stopped are the same silence from outside. Longer than the interval at
@@ -1207,7 +1222,7 @@ export SPIRA_INSTANCE \
        SPIRA_DB COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_RIGHT_PCT COCKPIT_MOUSE COCKPIT_CWD COCKPIT_CLIENT_IDLE_SECS SPIRA_PATH SPIRA_GOAL \
        SPIRA_WORKSPACES SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_RECLAIM_SKIP_LABEL \
        SPIRA_CI_LABEL SPIRA_CI_PARK_MAX \
-       SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO \
+       SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT SPIRA_INCIDENT_PRIORITY SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY \
        SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE \
        SPIRA_LOOM_ADDR SPIRA_LOOM_BUDGET_MS SPIRA_LOOM_CACHE_S SPIRA_LOOM_BIN SPIRA_RUN SPIRA_SYSTEMCTL \
        SPIRA_SPIKE_LABEL SPIRA_SPIKE_DIR SPIRA_SPIKE_PATHS SPIRA_SCOPE_LABEL \

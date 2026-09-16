@@ -125,8 +125,12 @@ run() {   # run <open-issue-count> [args...]
     SPIRA_BD=bd SPIRA_GH_INTAKE_REPO=DeckDumpster/spira \
     SPIRA_GH_INTAKE_BEAD_REPO="$FIXTURE_REPO" SPIRA_REPO_MAP="$TMP/repo-map" \
     SPIRA_GH_INTAKE_API=https://api.github.com \
+    SPIRA_GH_INTAKE_PRIORITY="${INTAKE_PRIORITY_OVERRIDE-$FIXTURE_PRIORITY}" \
         bash "$SCRIPT" "$@" 2>&1
 }
+# PINNED TO A NON-DEFAULT. Asserting against the shipped 2 passes just as well if the value
+# were written into the code, which is the thing the key exists to stop.
+FIXTURE_PRIORITY=1
 reset() { : > "$STATE/created"; printf '0' > "$STATE/broken"; }
 reset
 
@@ -228,6 +232,33 @@ if grep -q -- 'github sync' "$BDLOG"; then
     if grep -q -- '--dry-run' "$BDLOG"; then ok "dry-run is passed through to the sync"
     else bad "dry-run is passed through to the sync" "sync ran for real"; fi
 else ok "dry-run does not sync"; fi
+
+echo "6. an ingested issue outranks what the harness files about itself:"
+# A report from outside names something broken for somebody who is not this machine. Filed at
+# the tracker's default it entered BELOW the band the harness files its own findings in, and
+# the loop takes work in priority order — so with one aeon, 22 reported bugs sat behind every
+# self-observed defect indefinitely.
+reset
+out="$(run 2)"
+# THE POSITIVE CONTROL: creates were issued at all. Every assertion below is satisfied by a
+# run that created nothing.
+if grep -q 'create' "$BDLOG"; then ok "creates were issued (positive control)"
+else bad "creates were issued (positive control)" "no create in the bd log"; fi
+if grep -qE -- '-p +'"$FIXTURE_PRIORITY"'( |$)' "$BDLOG"; then
+    ok "the configured priority reaches the create"
+else
+    bad "the configured priority reaches the create" \
+        "no '-p $FIXTURE_PRIORITY' in: $(grep -m1 create "$BDLOG")"
+fi
+# A malformed value must be refused, not handed to `bd` — a failed create loses the finding
+# and the run reports the issue as ingested.
+out="$(INTAKE_PRIORITY_OVERRIDE=nine run 2)"; rc=$?
+if [ "$rc" = 0 ]; then bad "a malformed priority is refused" "exited 0"
+else ok "a malformed priority is refused (rc=$rc)"; fi
+case "$out" in
+    *SPIRA_GH_INTAKE_PRIORITY*) ok "and it names the key" ;;
+    *) bad "and it names the key" "$out" ;;
+esac
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"

@@ -378,7 +378,7 @@ $(head -c 2000 "$pf")" >/dev/null 2>&1
     # the systemd path files exactly as it always did.
     id="$(BEADS_ACTOR="${SPIRA_INCIDENT_ACTOR:-${BEADS_ACTOR:-}}" \
           bdq create "$title" --type "${SPIRA_INCIDENT_TYPE:-bug}" \
-            --priority "${SPIRA_INCIDENT_PRIORITY:-1}" \
+            --priority "$SPIRA_INCIDENT_PRIORITY" \
             --labels "$LABELS" --external-ref "$ref" \
             --body-file "$pf" --silent 2>/dev/null | tr -d '[:space:]')"
     if [ -z "${id:-}" ]; then
