@@ -69,6 +69,10 @@ CWD="${COCKPIT_CWD:-$SPIRA_REPO}"
 # COCKPIT_SESSIONS in spira.conf to add or remove sessions; the default covers the common
 # three-session layout (brain, hunk, and an operator's working session).
 SESSIONS="${COCKPIT_SESSIONS:-brain hunk chat}"
+# COCKPIT_CONCIERGE lets a caller (typically a test) substitute a different script. The
+# default is the concierge.sh that ships beside the harness; conf.sh cannot point there
+# because SPIRA_HOME is derived from conf.sh's own location and is not settable externally.
+CONC="${COCKPIT_CONCIERGE:-${SPIRA_HOME:-$HERE/..}/concierge.sh}"
 
 # THE SERVER THIS SCRIPT IS ABOUT TO FORK INHERITS THIS PROCESS'S ENVIRONMENT, AND KEEPS IT
 # FOR LIFE. tmux hands every new pane the environment the server was started with, so running
@@ -82,6 +86,18 @@ unset $(bash "$HERE/tmux-env.sh" names) 2>/dev/null || true
 say()  { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
 warn() { printf 'rebuild: %s\n' "$*" >&2; }
+
+# Does the pane's process tree carry --append-system-prompt?
+# Returns 0 when found in any cmdline in the direct process tree, 1 otherwise.
+pane_has_brief() {
+    local pid="$1" q cmdline
+    [ -n "$pid" ] || return 1
+    for q in "$pid" $(pgrep -P "$pid" 2>/dev/null); do
+        cmdline="$(tr '\0' '\n' < "/proc/$q/cmdline" 2>/dev/null)" || continue
+        [[ "$cmdline" == *"--append-system-prompt"* ]] && return 0
+    done
+    return 1
+}
 
 # --- the probe ----------------------------------------------------------------------------
 # DOES THE SERVER ANSWER? Not "is there a process", not "is there a socket file" — both were
@@ -235,6 +251,31 @@ if ! bash "$LAYOUT" up --window brain:0 2>&1 | sed 's/^/  /'; then
     warn "layout.sh up failed"; exit 1
 fi
 
+# --- 3b. session pane -----------------------------------------------------------------------
+# layout.sh up respawns the two tagged panes; the untagged session pane is not touched and
+# is whatever the tmux server already had running — possibly a bare claude with no persona.
+# Launch concierge.sh here so the operator's pane is composed like every other session on
+# this box. Skip if already running a composed session (idempotent).
+step "session pane"
+sess_p="$(tmux list-panes -t brain:0 -F '#{@cockpit} #{pane_id}' 2>/dev/null \
+    | awk '{ if (NF==1) print $1; else if ($1!="panel" && $1!="health") print $2 }' | head -1)"
+if [ -z "$sess_p" ]; then
+    warn "session pane not found in brain:0 — skipping launch"
+else
+    sess_pid="$(tmux list-panes -t brain:0 -F '#{pane_id} #{pane_pid}' 2>/dev/null \
+        | awk -v p="$sess_p" '$1==p{print $2; exit}')"
+    if pane_has_brief "$sess_pid"; then
+        say "  already running a composed session"
+    elif [ -x "$CONC" ]; then
+        say "  bare session pane — launching concierge.sh here"
+        tmux respawn-pane -k -t "$sess_p" "$CONC here" 2>/dev/null \
+            && say "  launched" \
+            || warn "launch failed — verify will detect the result"
+    else
+        warn "concierge.sh not found at $CONC — session pane will remain unwrapped"
+    fi
+fi
+
 # --- 4. link them into the cockpit ----------------------------------------------------------
 step "cockpit"
 if [ -x "$VIEW" ]; then
@@ -277,6 +318,24 @@ for role in panel health; do
         else printf '  FAIL  %s pane is BLANK\n' "$role"; fail=$((fail+1)); fi
     fi
 done
+
+# The session pane must carry a composed brief. An unwrapped claude is indistinguishable
+# from a working one from outside — the same positive control the panel and health panes
+# already get (law-absence-needs-a-positive-control).
+sess_p="$(tmux list-panes -t brain:0 -F '#{@cockpit} #{pane_id}' 2>/dev/null \
+    | awk '{ if (NF==1) print $1; else if ($1!="panel" && $1!="health") print $2 }' | head -1)"
+if [ -z "$sess_p" ]; then
+    printf '  FAIL  session pane not found in brain:0\n'; fail=$((fail+1))
+else
+    sess_pid="$(tmux list-panes -t brain:0 -F '#{pane_id} #{pane_pid}' 2>/dev/null \
+        | awk -v p="$sess_p" '$1==p{print $2; exit}')"
+    if pane_has_brief "$sess_pid"; then
+        printf '  ok    session pane carries composed brief\n'
+    else
+        printf '  FAIL  session pane has no composed brief (bare claude or plain shell)\n'
+        fail=$((fail+1))
+    fi
+fi
 
 step "watchers"
 if [ -x "$SPIRA_HOME/watchd.sh" ]; then

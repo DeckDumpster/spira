@@ -46,7 +46,27 @@ cleanup() {
 trap cleanup EXIT
 trap 'cleanup; exit 130' INT TERM
 
-rebuild() { TMUX_TMPDIR="$T" bash "$COCKPIT/rebuild.sh" "$@" 2>&1; }
+# FAKE CONCIERGE — keeps the session pane alive with --append-system-prompt visible
+# in its process cmdline. Avoids the real concierge.sh's dependency on claude and the db.
+FAKE_CONC="$T/concierge.sh"
+cat > "$FAKE_CONC" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = "here" ] || exit 0
+exec bash -c 'while true; do sleep 1; done' -- --append-system-prompt
+SH
+chmod +x "$FAKE_CONC"
+
+# BARE FAKE CONCIERGE — keeps the pane alive WITHOUT --append-system-prompt.
+# Used by the positive-control case to verify the check can detect an unwrapped pane.
+FAKE_CONC_BARE="$T/concierge-bare.sh"
+cat > "$FAKE_CONC_BARE" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" = "here" ] || exit 0
+exec sleep 60
+SH
+chmod +x "$FAKE_CONC_BARE"
+
+rebuild() { TMUX_TMPDIR="$T" COCKPIT_CONCIERGE="$FAKE_CONC" bash "$COCKPIT/rebuild.sh" "$@" 2>&1; }
 
 echo "test-cockpit-rebuild.sh"
 
@@ -86,6 +106,7 @@ want "cockpit links hunk's window"  "$hwin" "$cwins"
 
 want "it reports its own verification" "ok    panel pane renders content" "$out"
 want "and health too"                  "ok    health pane renders content" "$out"
+want "and the session pane too"        "ok    session pane carries composed brief" "$out"
 
 # ======================================================================================
 echo
@@ -117,6 +138,28 @@ else
     # Some filesystems refuse the directory outright; that is not this assertion's business.
     if [[ "$out3" == *"absent"* ]]; then ok "an over-long socket path is called unusable (env refused the dir; absent is acceptable)"
     else bad "an over-long socket path is called unusable" "got: $(printf '%s' "$out3" | head -3 | tr '\n' ' ')"; fi
+fi
+
+# ======================================================================================
+echo
+echo "5. positive control: verify reports FAIL when session pane has no composed brief:"
+# ======================================================================================
+# LAW: a check that finds nothing must first prove it could have found something.
+# Replace the session pane's process with a bare sleep (no --append-system-prompt),
+# then rebuild with a concierge that also starts bare. The verify block must say FAIL.
+sess_p5="$(TMUX_TMPDIR=$T tmux list-panes -t brain:0 \
+    -F '#{@cockpit} #{pane_id}' 2>/dev/null \
+    | awk '{ if (NF==1) print $1; else if ($1!="panel" && $1!="health") print $2 }' | head -1)"
+if [ -z "$sess_p5" ]; then
+    bad "positive control: session pane not found in brain:0" ""
+else
+    TMUX_TMPDIR=$T tmux respawn-pane -k -t "$sess_p5" "sleep 60" 2>/dev/null
+    sleep 1
+    out5="$(TMUX_TMPDIR=$T COCKPIT_CONCIERGE="$FAKE_CONC_BARE" \
+        bash "$COCKPIT/rebuild.sh" 2>&1)"; rc5=$?
+    is   "positive control: rebuild fails when session pane has no brief" "1" "$rc5"
+    want "positive control: verify names the session pane as the failure" \
+         "FAIL  session pane" "$out5"
 fi
 
 echo
