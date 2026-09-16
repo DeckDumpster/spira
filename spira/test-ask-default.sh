@@ -182,6 +182,21 @@ else
     bad "rejected shows count"             "skipped" "bead creation failed"
 fi
 
+# ======================================================================================
+echo
+echo "--priority sets the bead's priority; the unflagged default is unchanged"
+# ======================================================================================
+prio_of() { "$BD" -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print(d.get("priority",""))' 2>/dev/null; }
+pid="$(ask add "priority-flagged question" --default "d" --priority 3 2>&1 | grep -oE '\[[a-z]+-[a-z0-9]+\]' | tr -d '[]' | head -1)"
+did="$(ask add "priority-unflagged question" --default "d" 2>&1 | grep -oE '\[[a-z]+-[a-z0-9]+\]' | tr -d '[]' | head -1)"
+is "--priority 3 reaches the bead" "3" "$(prio_of "$pid")"
+is "no flag keeps P1"              "1" "$(prio_of "$did")"
+before="$(count_beads)"
+out="$(ask add "bad priority question" --default "d" --priority 7 2>&1)"; rc=$?
+[ "$rc" -ne 0 ] && ok "--priority 7 is refused" || bad "--priority 7 is refused" "rc=$rc"
+is "a refused priority files nothing" "$before" "$(count_beads)"
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -429,7 +429,7 @@ spira_conf_defaults() {
     # somebody who is not this machine, so it enters ABOVE the band the harness files its own
     # findings in. Left at the tracker default it entered below them, and the loop — which
     # takes work in priority order — reached every self-observed defect first, indefinitely.
-    : "${SPIRA_GH_INTAKE_PRIORITY:=2}"
+    : "${SPIRA_GH_INTAKE_PRIORITY:=1}"
     # HOW LONG A REPOSITORY'S OWN GATE COMMAND MAY RUN, in seconds. gate.sh wraps the command
     # under `timeout` at this budget. A gate killed at the deadline exits 124 and is reported
     # as a timeout (NO_VERDICT), not a branch fault — but the bead note is empty and the next

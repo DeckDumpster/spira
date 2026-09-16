@@ -67,7 +67,7 @@ LANE="${SPIRA_PLAN_LABEL:-plan}"
 BEAD_REPO="${SPIRA_GH_INTAKE_BEAD_REPO:-${REPO##*/}}"
 # A report from outside outranks what the harness notices about itself. A malformed value is
 # refused rather than passed to `bd`, which would fail the create and lose the finding.
-INTAKE_PRIORITY="${SPIRA_GH_INTAKE_PRIORITY:-2}"
+INTAKE_PRIORITY="${SPIRA_GH_INTAKE_PRIORITY:-1}"
 case "$INTAKE_PRIORITY" in
     [0-4]) ;;
     *) printf 'gh-intake: SPIRA_GH_INTAKE_PRIORITY is %s — it must be 0-4\n' "$INTAKE_PRIORITY" >&2; exit 2 ;;

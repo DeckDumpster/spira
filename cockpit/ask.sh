@@ -2,7 +2,7 @@
 #
 # ask — put a question, decision, insight or event in front of the operator, stored as a bead.
 #
-#   ask.sh add "<question>"        --default "<what I'd do>" [--why "<what is blocked>"] [--moot-when "<cmd>"]
+#   ask.sh add "<question>"        --default "<what I'd do>" [--why "<what is blocked>"] [--moot-when "<cmd>"] [--priority 0-4]
 #   ask.sh decide "<the choice>"   --default "<what I'd do>" [--why ...]
 #   ask.sh law "<slug>: <statute text>"                       [--why "<context>"]
 #   ask.sh insight "<what was learned>" [--why "<why it matters>"] [--from "<who is recording>"]
@@ -200,7 +200,7 @@ compose() { # kind why default evidence from
 
 create() { # type text why default labels
     local type="$1" text="$2" why="$3" dflt="$4" labels="$5" out id kind=ask
-    local prio=1; local -a extra=()
+    local prio="${PRIO:-1}"; local -a extra=()
     : "${EV:=}"
     if [ "$type" = event ]; then
         kind=event
@@ -276,7 +276,7 @@ for line in t.splitlines():
 }
 
 parse_opts() { # sets WHY / DFLT / KIND / TARGET / MOOT_WHEN / FROM / REF from remaining args
-    WHY=""; DFLT=""; EV=""; KIND=""; TARGET=""; MOOT_WHEN=""; FROM=""; REF=""
+    WHY=""; DFLT=""; EV=""; KIND=""; TARGET=""; MOOT_WHEN=""; FROM=""; REF=""; PRIO=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --why)     WHY="${2:-}"; shift 2 ;;
@@ -305,6 +305,10 @@ parse_opts() { # sets WHY / DFLT / KIND / TARGET / MOOT_WHEN / FROM / REF from r
             # The archivist uses this to sign as "the archivist from session <name>" rather
             # than appearing to be the session it swept.
             --from)    FROM="${2:-}"; shift 2 ;;
+            --priority)
+                case "${2:-}" in [0-4]) PRIO="$2" ;;
+                    *) echo "ask: --priority must be 0-4, got '${2:-}'" >&2; exit 2 ;; esac
+                shift 2 ;;
             *) shift ;;
         esac
     done

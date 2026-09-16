@@ -130,7 +130,7 @@ run() {   # run <open-issue-count> [args...]
 }
 # PINNED TO A NON-DEFAULT. Asserting against the shipped 2 passes just as well if the value
 # were written into the code, which is the thing the key exists to stop.
-FIXTURE_PRIORITY=1
+FIXTURE_PRIORITY=3
 reset() { : > "$STATE/created"; printf '0' > "$STATE/broken"; }
 reset
 
