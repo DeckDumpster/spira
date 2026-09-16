@@ -3420,13 +3420,14 @@ detect_invalid_closed() {
     printf '%s\n' "$_closed_raw" | SPIRA_ID_PREFIX="${SPIRA_ID_PREFIX:-sp}" python3 -c '
 import sys, json, re, os
 
-# Phrases the statute names explicitly. Case-insensitive substring match.
+# The statute phrases, matched as claims about the fix: a bare "temporary" also names
+# things that were removed or never were the deliverable, and those closes are complete.
 RED_FLAGS = [
-    "PERMANENT FIX NEEDED",
-    "mitigated-only",
-    "mitigated only",
-    "TODO",
-    "temporary",
+    (r"PERMANENT FIX NEEDED", re.I),
+    (r"\bmitigated[- ]only\b", re.I),
+    (r"\bTODO\b", 0),
+    (r"\btemporar(?:y|ily)\s+(?:fix|workaround|mitigation|patch|hack|solution)", re.I),
+    (r"\btemporarily\s+(?:fixed|mitigated|patched|worked around)", re.I),
 ]
 
 # Phrases that imply a follow-on obligation. Only a violation when no tracking reference
@@ -3453,7 +3454,7 @@ for i in (d if isinstance(d, list) else [d]):
     title = re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:60]
     reason_short = re.sub(r"\s+", " ", reason.strip())[:120]
 
-    hit = next((f for f in RED_FLAGS if f.lower() in reason.lower()), None)
+    hit = next((m.group(0) for m in (re.search(f, reason, fl) for f, fl in RED_FLAGS) if m), None)
     if hit:
         print("INVALID-CLOSED %s — close reason contains %r: %s. title: %s" % (
             i["id"], hit, reason_short, title))

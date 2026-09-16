@@ -24,7 +24,7 @@
 #   ci-stuck             awaiting-ci on a push-mode repo; no run will ever report.
 #
 #   INVALID-CLOSED       closed bead whose close reason contains a statute phrase
-#                        ("PERMANENT FIX NEEDED", "temporary", "mitigated-only", "TODO");
+#                        ("PERMANENT FIX NEEDED", a temporary fix, "mitigated-only", "TODO");
 #                        law-no-close-reason-admits-unfinished forbids this prospectively,
 #                        nothing detected the ones already in the store.
 #
@@ -219,6 +219,32 @@ out="$(run_ll)"
 is "clean close reason: SP_INVALID_CLOSED=0" "0" \
    "$(printf '%s\n' "$out" | sed -n 's/^SP_INVALID_CLOSED=//p' | head -1)"
 nowant "clean close: no INVALID-CLOSED row" "INVALID-CLOSED" "$out"
+
+# ==========================================================================================
+echo
+echo "POSITIVE CONTROL — INVALID-CLOSED: a temporary fix is flagged:"
+# ==========================================================================================
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-ll-tmp","title":"temporary fix closed","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Applied a temporary workaround in the unit drop-in; landed."}
+JSONL
+out="$(run_ll)"
+want  "temporary workaround: INVALID-CLOSED row" "INVALID-CLOSED" "$out"
+want  "temporary workaround: bead id"            "sp-ll-tmp"      "$out"
+
+# ==========================================================================================
+echo
+echo "NEGATIVE CONTROL — 'temporary' describing something other than the fix is NOT flagged:"
+# ==========================================================================================
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-ll-tmp2","title":"stopgap removed","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Default derived from nproc and landed. The drop-in was a temporary measure and is removed."}
+{"id":"sp-ll-tmp3","title":"groom pass","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Groom pass complete. Closed a temporary worker bead with no purpose."}
+JSONL
+out="$(run_ll)"
+nowant "temporary measure removed: no INVALID-CLOSED row" "INVALID-CLOSED" "$out"
+is "temporary described: SP_INVALID_CLOSED=0" "0" \
+   "$(printf '%s\n' "$out" | sed -n 's/^SP_INVALID_CLOSED=//p' | head -1)"
 
 # ==========================================================================================
 echo
