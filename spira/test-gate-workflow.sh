@@ -194,30 +194,30 @@ want "the push group is keyed on the commit"             "github.sha" "$CONC"
 want "a pull request still supersedes itself"            "cancel-in-progress" "$CONC"
 
 echo
-echo "the gate job is bounded, because it holds a real machine:"
+echo "the suites job is bounded, because it holds a real machine:"
 # Without timeout-minutes the job inherits GitHub's 360-minute default and a wedge
 # holds a provisioned VM for six hours. Read from the parsed YAML rather than by
 # grepping the file: a `timeout-minutes` under any OTHER job would satisfy a grep
-# while the gate job stayed unbounded, which is the only case that matters.
+# while the suites job stayed unbounded, which is the only case that matters.
 #
 # NO PyYAML. The first version of this asked python3 for the parsed document and
 # the test image has no yaml module, so the import died, 2>/dev/null swallowed it,
 # and the check reported "timeout unset" against a workflow that sets it -- a false
-# RED carrying an actively misleading message. Scoped awk instead: take the gate
-# job's block only, from `  gate:` to the next key at the same indent.
-_gate_block="$(awk '/^  gate:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
+# RED carrying an actively misleading message. Scoped awk instead: take the suites
+# job's block only, from `  suites:` to the next key at the same indent.
+_suites_job_block="$(awk '/^  suites:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
 # A block that came back empty would make the assertion below vacuous, and the
 # message would again blame the workflow for the matcher's fault.
-if [ -z "$_gate_block" ]; then
-    bad "the gate job block was located (positive control)" "awk extracted nothing; the two assertions below would be vacuous"
+if [ -z "$_suites_job_block" ]; then
+    bad "the suites job block was located (positive control)" "awk extracted nothing; the two assertions below would be vacuous"
 else
-    ok "the gate job block was located (positive control)"
+    ok "the suites job block was located (positive control)"
 fi
-_t="$(printf '%s' "$_gate_block" | sed -n 's/^[[:space:]]*timeout-minutes:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
+_t="$(printf '%s' "$_suites_job_block" | sed -n 's/^[[:space:]]*timeout-minutes:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1)"
 if [ -n "$_t" ]; then
-    ok "the gate job sets timeout-minutes ($_t)"
+    ok "the suites job sets timeout-minutes ($_t)"
 else
-    bad "the gate job sets timeout-minutes" "unset; the job inherits GitHub's 360-minute default and a wedge holds a provisioned VM for six hours"
+    bad "the suites job sets timeout-minutes" "unset; the job inherits GitHub's 360-minute default and a wedge holds a provisioned VM for six hours"
 fi
 # Bigger than one measured pass (24 min) and smaller than the default it replaces.
 case "$_t" in
@@ -260,6 +260,27 @@ want "cut queries check-runs for the SHA"      "check-runs"         "$_cut_block
 want "cut filters on the gate check name"      '"gate"'             "$_cut_block"
 want "cut requires a green PR-associated run"  "pull_requests"      "$_cut_block"
 want "release.sh cut receives the workspace"   "release.sh cut"     "$_cut_block"
+
+echo
+echo "16. a failed provision leaves the gate check failing, not skipped:"
+# When provision fails the suites job is skipped (it depends on provision with no
+# if:). Without a gate job that runs unconditionally, the check named 'gate' would
+# conclude 'skipped'. GitHub branch protection treats skipped as passing, so the
+# push is admitted. The gate job runs under !cancelled() — true for push events,
+# whose concurrency group is per-SHA — and exits 75 (harness fault) when provision
+# failed, so branch protection sees 'failure' and refuses the push.
+_gate_verdict_block="$(awk '/^  gate:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
+if [ -z "$_gate_verdict_block" ]; then
+    bad "the gate verdict job block was located (positive control)" "awk extracted nothing; the assertions below would be vacuous"
+else
+    ok "the gate verdict job block was located (positive control)"
+fi
+want "gate needs both provision and suites" "provision, suites"  "$_gate_verdict_block"
+want "gate runs even when needs failed"     "!cancelled()"       "$_gate_verdict_block"
+want "gate runs on a hosted runner"         "ubuntu-latest"      "$_gate_verdict_block"
+want "gate exits 75 on provision fault"     "75"                 "$_gate_verdict_block"
+want "gate checks provision.result"         "provision.result"   "$_gate_verdict_block"
+want "gate checks suites.result"            "suites.result"      "$_gate_verdict_block"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"

@@ -111,16 +111,10 @@ jobs:
           template-vmid:      ${{ vars.TEMPLATE_VMID }}
 
   # ---------------------------------------------------------------------------
-  # The gate itself, on the machine provisioned above.
-  #
-  # THE JOB NAME IS A CONTRACT the moment a branch ruleset requires it. A required
-  # status check that never reports does not fail a pull request — it blocks the
-  # merge indefinitely with "the base branch policy prohibits the merge", while
-  # every job in the run is green and nothing looks wrong. Renaming this job is
-  # therefore a change to the branch policy and has to be made in both places or
-  # neither.
+  # The suites themselves, on the machine provisioned above. Skipped when
+  # provision fails; the gate job below catches that and reports failure.
   # ---------------------------------------------------------------------------
-  gate:
+  suites:
     needs: provision
     runs-on: [self-hosted, "${{ needs.provision.outputs.label }}"]
     # BOUNDED, BECAUSE THIS JOB HOLDS A REAL MACHINE. Without it the job inherits
@@ -258,6 +252,33 @@ jobs:
           esac
 
   # ---------------------------------------------------------------------------
+  # Authoritative verdict, on a hosted runner so it executes even when
+  # provision fails. THE JOB NAME IS A CONTRACT the moment a branch ruleset
+  # requires it: renaming it is a change to the branch policy and has to be
+  # made in both places or neither.
+  #
+  # if: !cancelled() runs this job even when provision or suites failed or was
+  # skipped. Push runs are never cancelled (concurrency group is per-SHA), so
+  # branch protection always sees a real conclusion — never 'skipped' — on a
+  # push event. A skipped gate admits a push; a failed one refuses.
+  # ---------------------------------------------------------------------------
+  gate:
+    needs: [provision, suites]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verdict
+        run: |
+          if [ "${{ needs.provision.result }}" != 'success' ]; then
+            printf 'gate: provision failed — branch was not tested\n' >&2
+            exit 75
+          fi
+          if [ "${{ needs.suites.result }}" != 'success' ]; then
+            printf 'gate: suites concluded %s\n' "${{ needs.suites.result }}" >&2
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------------
   # Destroy the machine.
   #
   # if: always() is load-bearing, and this workflow cancels superseded pull-request
@@ -270,7 +291,7 @@ jobs:
   # scheduled onto it would otherwise leak.
   # ---------------------------------------------------------------------------
   teardown:
-    needs: [provision, gate]
+    needs: [provision, suites]
     if: always()
     runs-on: ubuntu-latest
     steps:
