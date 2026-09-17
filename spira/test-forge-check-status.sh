@@ -32,7 +32,7 @@ chmod +x "$TMP/gh"
 ANNOTATIONS=""
 
 rollup() {   # rollup <gate status> <gate conclusion>
-    printf '{"statusCheckRollup":[{"__typename":"CheckRun","name":"suites","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://example.invalid/actions/runs/1/job/2"},{"__typename":"CheckRun","name":"gate","status":"%s","conclusion":"%s","detailsUrl":"https://example.invalid/actions/runs/1/job/3"}]}\n' "$1" "$2" > "$TMP/rollup.json"
+    printf '{"headRefOid":"abc123def456abc123def456abc123def456abc123","statusCheckRollup":[{"__typename":"CheckRun","name":"suites","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://example.invalid/actions/runs/1/job/2"},{"__typename":"CheckRun","name":"gate","status":"%s","conclusion":"%s","detailsUrl":"https://example.invalid/actions/runs/1/job/3"}]}\n' "$1" "$2" > "$TMP/rollup.json"
 }
 status() {
     env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
@@ -82,6 +82,22 @@ printf '%s\n' "$_out2" | grep -qF "red-suite:" \
     && bad "non-test path not emitted as red-suite" "found red-suite in: [$_out2]" \
     || ok "non-test path not emitted as red-suite"
 ANNOTATIONS=""
+
+echo
+echo "headRefOid is reported as head-sha line:"
+rollup COMPLETED SUCCESS
+_out3="$(status_all)"
+printf '%s\n' "$_out3" | grep -qF "head-sha: abc123def456abc123def456abc123def456abc123" \
+    && ok "head-sha line present when headRefOid in rollup" \
+    || bad "head-sha line present when headRefOid in rollup" "not in output: [$_out3]"
+
+echo "positive control — no head-sha line when headRefOid absent:"
+printf '{"statusCheckRollup":[{"__typename":"CheckRun","name":"gate","status":"IN_PROGRESS","conclusion":"","detailsUrl":"https://example.invalid/actions/runs/1/job/3"}]}\n' \
+    > "$TMP/rollup.json"
+_out4="$(status_all)"
+printf '%s\n' "$_out4" | grep -qF "head-sha:" \
+    && bad "no head-sha when headRefOid absent" "found head-sha in: [$_out4]" \
+    || ok "no head-sha when headRefOid absent"
 
 echo
 echo "test-forge-check-status.sh: $pass passed, $fail failed"

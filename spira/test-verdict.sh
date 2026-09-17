@@ -2,7 +2,7 @@
 #
 # test-verdict.sh — merge-queue verdict: fast-forward landing pass.
 #
-# Eight cases:
+# Eleven cases:
 #   1. No open batch → forge is never reached.
 #   2. Pending within CI max → nothing happens.
 #   3. Pending past CI max → treated as harness fault, re-run called.
@@ -12,6 +12,10 @@
 #      flake observed; batch record removed.
 #   7. Green, base moved → PR closed; members returned to CERTIFIED; batch removed.
 #   8. Red → no push; batch stays open.
+#   9. Batch branch cleanup: branch deleted after green fast-forward.
+#  10. Green, CI head SHA mismatches sealed batch head → no push; members CERTIFIED;
+#      PR closed; operator mailed. (positive control for SHA mismatch detection)
+#  11. Green, CI head SHA matches sealed batch head → normal fast-forward landing.
 #
 # The forge seam is a local fixture; no network is reached.
 # mail.sh and suites.sh are stubbed to capture calls.
@@ -351,6 +355,44 @@ is "9. cleanup: batch branch gone locally" "0" \
     "$(git -C "$REPO" show-ref --verify "refs/heads/spira/queue/test9" >/dev/null 2>&1 && echo 1 || echo 0)"
 is "9. cleanup: batch branch gone from remote" "0" \
     "$(git -C "$REMOTE" show-ref --verify "refs/heads/spira/queue/test9" >/dev/null 2>&1 && echo 1 || echo 0)"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 10. GREEN, CI HEAD SHA MISMATCH — verdict refuses to land.
+#     Positive control: plant a wrong SHA first; the mismatch check must fire
+#     before we trust case 11's silence (matching SHA → proceeds normally).
+# =============================================================================
+batch_head10="$(build_batch sp-vd-s1 sp-vd-s2)"
+printf 'green\nhead-sha: deadbeef1234567890abcdef1234567890abcdef\n' > "$FORGE_STATUS_FILE"
+before_main10="$(remote_main)"
+out="$(verdict "$REPONAME")"
+is   "10. sha-mismatch: no push"            "$before_main10" "$(remote_main)"
+want "10. sha-mismatch: pr-close called"    "close"          "$(cat "$FORGE_LOG")"
+case "$(landstate sp-vd-s1)" in CERTIFIED*) ok "10. sha-mismatch: sp-vd-s1 CERTIFIED" ;;
+    *) bad "10. sha-mismatch: sp-vd-s1 CERTIFIED" "got: $(landstate sp-vd-s1)" ;; esac
+case "$(landstate sp-vd-s2)" in CERTIFIED*) ok "10. sha-mismatch: sp-vd-s2 CERTIFIED" ;;
+    *) bad "10. sha-mismatch: sp-vd-s2 CERTIFIED" "got: $(landstate sp-vd-s2)" ;; esac
+is   "10. sha-mismatch: batch record removed" "0" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+want "10. sha-mismatch: mail sent"          "send operator" "$(cat "$MAIL_LOG")"
+want "10. sha-mismatch: mismatch reported"  "mismatch"      "$out"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 11. GREEN, CI HEAD SHA MATCHES SEALED HEAD — normal fast-forward landing.
+#     Verifies no false positive when the SHA matches.
+# =============================================================================
+batch_head11="$(build_batch sp-vd-t1 sp-vd-t2)"
+printf 'green\nhead-sha: %s\n' "$batch_head11" > "$FORGE_STATUS_FILE"
+out="$(verdict "$REPONAME")"
+is   "11. sha-match: remote main advanced"  "$batch_head11" "$(remote_main)"
+case "$(landstate sp-vd-t1)" in LANDED*) ok "11. sha-match: sp-vd-t1 LANDED" ;;
+    *) bad "11. sha-match: sp-vd-t1 LANDED" "got: $(landstate sp-vd-t1)" ;; esac
+case "$(landstate sp-vd-t2)" in LANDED*) ok "11. sha-match: sp-vd-t2 LANDED" ;;
+    *) bad "11. sha-match: sp-vd-t2 LANDED" "got: $(landstate sp-vd-t2)" ;; esac
+is   "11. sha-match: batch record removed"  "0" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+want "11. sha-match: landed reported"       "landed by fast-forward" "$out"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
