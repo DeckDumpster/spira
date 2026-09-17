@@ -1419,13 +1419,14 @@ done
 # landing — was never picked up; skew.sh noticed an hour later and escalated rather than
 # repairing. Now it is one pass behind at most.
 #
-# ONLY PUSH-MODE REPOS HAVE A CHECKOUT TO ADVANCE. A pr-mode repository's checkout is not
-# where work lands; GitHub advances its base when a PR merges.
+# PUSH AND QUEUE BOTH ADVANCE THE BASE THROUGH SPIRA. pr leaves it to GitHub; hold leaves it
+# to a human. Only those two have a checkout to advance.
 # ======================================================================================
 for repo_name in $(spira_repos); do
     _rfsh_repo="$(repo_root "$repo_name" 2>/dev/null)" || continue
     [ -e "$_rfsh_repo/.git" ] || continue
-    [ "$(repo_land "$repo_name" 2>/dev/null)" = push ] || continue
+    _rfsh_mode="$(repo_land "$repo_name" 2>/dev/null)"
+    [ "$_rfsh_mode" = push ] || [ "$_rfsh_mode" = queue ] || continue
     _rfsh_out="$("$SPIRA_HOME/skew.sh" refresh "$_rfsh_repo" 2>&1)" || true
     [ -n "${_rfsh_out:-}" ] && log "$_rfsh_out"
 done
