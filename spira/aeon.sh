@@ -757,6 +757,28 @@ print(d[0].get("status","") if d else "")' 2>/dev/null)"
             ledger_done "$rc" gate-unfinished
             exit $rc
         fi
+        # BLOCKED ON OPERATOR DECISION. An aeon that filed a question/decision bead as a
+        # blocker and exited correctly — there is nothing it can do until the operator
+        # replies. The exit is not a verdict about the work; no attempt is charged toward
+        # poison. The bead becomes ready when the decision bead is closed by the reply.
+        if ! bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
+import sys, json, os
+ask = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+d = d if isinstance(d, list) else [d]
+if not d: sys.exit(0)
+deps = d[0].get("dependencies") or []
+open_ask = [x for x in deps
+            if x.get("status") != "closed" and ask in (x.get("labels") or [])]
+if open_ask: sys.exit(1)
+sys.exit(0)' 2>/dev/null; then
+            release_own_claim "$BEAD_ID"
+            bdq note "$BEAD_ID" "Released by aeon.sh: blocked on an open decision bead (${SPIRA_ASK_LABEL:-needs-operator} label) — waiting for operator input. No attempt charged; the bead becomes ready when the decision is resolved." >/dev/null 2>&1  # literal-ok: human-readable note, not a label predicate
+            log "$FAYTH: $BEAD_ID has open decision blocker — released, no attempt charged"
+            ledger_done "$rc" decision-blocked
+            exit $rc
+        fi
         # THE LANE CAP KILLING THE SESSION IS NOT A VERDICT ABOUT THE WORK. rc=124 is
         # `timeout`'s own exit code for a process it killed. Combined with nothing committed,
         # this is the harness's clock ending the turn — the work was mid-flight, not wrong.

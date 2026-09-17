@@ -168,13 +168,31 @@ cmd_send() {
     local dir; dir="$(_mail_dir "$mailbox")"
     local msgid; msgid="$(_mail_msgid)"
 
+    # For question/decision kinds with a work bead and a live database: file a blocking
+    # decision bead so the operator's reply closes it — not the work bead — and the work
+    # bead is blocked (not ready) while the question is open.
+    local x_bead="$bead"
+    if [ -n "$bead" ] && { [ "$kind" = "question" ] || [ "$kind" = "decision" ]; } \
+            && [ -n "${SPIRA_DB:-}" ]; then
+        local dec_bead="" _ask_label
+        _ask_label="${SPIRA_ASK_LABEL:-needs-operator}"  # literal-ok: bash fallback; SPIRA_ASK_LABEL set by conf.sh
+        dec_bead="$(printf '%s\n' "$body" \
+            | "${SPIRA_BD:-bd}" -C "$SPIRA_DB" create "$subject" \
+                -l "$_ask_label,overseer" \
+                --type decision \
+                --deps "blocks:$bead" \
+                --body-file - \
+                --silent 2>/dev/null)" || dec_bead=""
+        [ -n "$dec_bead" ] && x_bead="$dec_bead"
+    fi
+
     {
         printf 'From: %s\n' "$from"
         printf 'Subject: %s\n' "$subject"
         [ -n "$kind" ]    && printf 'X-Spira-Kind: %s\n' "$kind"
         [ -n "$default" ] && printf 'X-Spira-Default: %s\n' "$default"
         [ -n "$urgent" ]  && printf 'X-Spira-Urgent: yes\n'
-        [ -n "$bead" ]    && printf 'X-Spira-Bead: %s\n' "$bead"
+        [ -n "$x_bead" ]  && printf 'X-Spira-Bead: %s\n' "$x_bead"
         [ -n "${SPIRA_MAIL_LINT_CONSIDERED:-}" ] && printf 'X-Spira-Lint-Override: %s\n' "${SPIRA_MAIL_LINT_CONSIDERED}"
         printf 'Date: %s\n' "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"
         printf 'Message-ID: <%s@spira>\n' "$msgid"
@@ -299,6 +317,12 @@ _reply_mailbox() {
     elif [[ "$from" =~ ^([^@[:space:]]+)@ ]]; then
         localpart="${BASH_REMATCH[1]}"
     fi
+    # A reply to an aeon persona goes to concierge — the persona is transient and its
+    # mailbox would have no reader. Personas are identified by their .md file in chamber/.
+    if [ -n "$localpart" ] && [ -f "${SPIRA_HOME:-}/chamber/$localpart.md" ]; then
+        printf 'concierge'
+        return
+    fi
     if [ -n "$localpart" ] && [ -d "$(_mail_dir "$localpart")" ]; then
         printf '%s' "$localpart"
     else
@@ -322,6 +346,25 @@ _sendmail_close_bead() {
         fi
     fi
     "${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$bead" --reason-file - <<< "$reason" >/dev/null 2>&1 || true
+    # For decision/question kinds: surface the verdict as a note on each blocked work bead.
+    if [ "$kind" = "question" ] || [ "$kind" = "decision" ]; then
+        local work_ids
+        work_ids="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep list "$bead" --direction=up --json 2>/dev/null \
+            | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+d = d if isinstance(d, list) else [d]
+for x in d:
+    wid = x.get("id")
+    if wid: print(wid)' 2>/dev/null)" || work_ids=""
+        local wid
+        while IFS= read -r wid; do
+            [ -n "$wid" ] || continue
+            "${SPIRA_BD:-bd}" -C "$SPIRA_DB" note "$wid" \
+                "Operator verdict on decision bead $bead: $reason" >/dev/null 2>&1 || true
+        done <<< "$work_ids"
+    fi
 }
 
 cmd_sendmail() {
