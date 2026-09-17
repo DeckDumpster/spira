@@ -297,5 +297,56 @@ planted2="$(bare_fetch_in "$PLANT2")"
 want 'the fence catches a bare fetch in landing.sh' "landing.sh" "$planted2"
 want 'and a bare fetch in skew.sh'                  "skew.sh"    "$planted2"
 
+# --------------------------------------------------------------------------------------
+# QUEUE-MODE REPOS ADVANCE THEIR CHECKOUT TOO. The refresh loop ran for `push` only;
+# verdict.sh advances queue-mode repos' base via fast-forward push, so their checkout
+# lagged origin/<base> until the hourly skew timer caught up (sp-yu0r1).
+#
+# THE POSITIVE CONTROL IS THE CONSTRUCTION. origin/main is advanced by one commit while
+# the queue repo's checkout stays behind; the pass must close that gap. A false-clean
+# result — QUEUE_OLD == QUEUE_NEW before the pass — is impossible because the extra commit
+# is added explicitly, so silence means the refresh did not run.
+# --------------------------------------------------------------------------------------
+QREMOTE="$TMP/qremote.git"; QREPO="$TMP/qrepo"
+git init -q --bare -b main "$QREMOTE"
+git init -q -b main "$QREPO"
+git -C "$QREPO" commit -q --allow-empty -m "queue base"
+git -C "$QREPO" remote add origin "$QREMOTE"
+git -C "$QREPO" push -q origin main
+git -C "$QREPO" fetch -q origin
+git -C "$QREPO" remote set-head origin --auto 2>/dev/null
+
+# Advance origin/main while the checkout stays behind.
+_QTMP="$(mktemp -d)"
+git clone -q "$QREMOTE" "$_QTMP/clone"
+git -C "$_QTMP/clone" commit -q --allow-empty -m "origin advances"
+git -C "$_QTMP/clone" push -q origin main
+rm -rf "$_QTMP"
+git -C "$QREPO" fetch -q origin
+
+QUEUE_NEW="$(git -C "$QREPO" rev-parse origin/main)"
+# Guard: a gap must exist, or the assertion below is vacuous.
+[ "$(git -C "$QREPO" rev-parse HEAD)" != "$QUEUE_NEW" ] \
+    || { bad "queue-mode refresh setup" "checkout is already at origin/main before the pass"; }
+
+# Install the real skew.sh: the stub (exit 0) would hide the fast-forward and let the
+# checkout-at-origin/main assertion pass vacuously against a broken selector.
+cp "$HERE/skew.sh" "$SH/skew.sh"
+
+cat > "$SH/repo-map" <<MAP
+$(basename "$REPO") | $REPO | push | |
+qfixture | $QREPO | queue | |
+MAP
+
+q_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
+    SPIRA_REPO_MAP="$SH/repo-map" \
+    bash "$SH/landing.sh" 2>&1)"
+
+QUEUE_AFTER="$(git -C "$QREPO" rev-parse HEAD)"
+[ "$QUEUE_AFTER" = "$QUEUE_NEW" ] \
+    && ok  "a queue-mode repo's checkout is advanced to origin/main by the landing pass" \
+    || bad "queue-mode refresh" "checkout at $(git -C "$QREPO" rev-parse --short HEAD), expected $(printf '%.7s' "$QUEUE_NEW")"
+want "and the pass reports the refresh" "skew: refreshed to" "$q_out"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
