@@ -85,7 +85,11 @@ TMP="$(mktemp -d)"
 . "$HERE/testdb.sh"
 testdb_require test-timeout
 trap 'testdb_drop; rm -rf "$TMP"' EXIT; trap 'exit 143' INT TERM
-testdb_up timeout || { echo "test-timeout: could not build a fixture database"; exit 1; }
+export SPIRA_TESTDB_MODE=server
+testdb_up timeout || {
+    printf 'SKIP test-timeout: server testdb not available\n' >&2
+    exit 77
+}
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 

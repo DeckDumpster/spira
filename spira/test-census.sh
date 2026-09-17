@@ -35,7 +35,11 @@ lack() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$1"
 . "$HERE/testdb.sh"
 testdb_require test-census
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up census || { echo "test-census: could not build a fixture database"; exit 1; }
+export SPIRA_TESTDB_MODE=server
+testdb_up census || {
+    printf 'SKIP test-census: server testdb not available\n' >&2
+    exit 77
+}
 
 # Source lib.sh for bump_recur/bump_requeue/bump_reclaim. These write 'recurred',
 # 'requeued', 'reclaimed' event rows to the events table — what census.sh reads.

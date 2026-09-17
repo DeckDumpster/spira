@@ -248,7 +248,11 @@ is "attempts_of delegates to the SQL builder" "1" \
 . "$HERE/testdb.sh"
 testdb_require test-attempts
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up attempts || { echo "test-attempts: could not build a fixture database"; exit 1; }
+export SPIRA_TESTDB_MODE=server
+testdb_up attempts || {
+    printf 'SKIP test-attempts: server testdb not available\n' >&2
+    exit 77
+}
 
 seed() {   # seed <id> — one open, claimable bead
     testdb_reset

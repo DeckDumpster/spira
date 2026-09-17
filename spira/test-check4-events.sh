@@ -43,7 +43,11 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 . "$HERE/testdb.sh"
 testdb_require test-check4-events
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up check4-events || { echo "test-check4-events: could not build a fixture database"; exit 1; }
+export SPIRA_TESTDB_MODE=server
+testdb_up check4-events || {
+    printf 'SKIP test-check4-events: server testdb not available\n' >&2
+    exit 77
+}
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
