@@ -5,15 +5,15 @@
 #   ./test-cockpit-queue.sh
 #
 # THREE SHAPES:
-#   sp-q1  closed, branch exists, landstate CERTIFIED  → SP_PEND shows [queued]
-#   sp-q2  closed, branch exists, landstate BATCHED    → SP_PEND shows [batch #42]
-#   sp-q3  closed, branch exists, no landstate         → SP_PEND shows no tag
+#   sp-q1  closed, branch exists, landstate CERTIFIED → SP_QUEUE_NEXT (depth)
+#   sp-q2  closed, branch exists, landstate BATCHED   → SP_QUEUE_BATCH (active batch)
+#   sp-q3  closed, branch exists, no landstate        → SP_UNLANDED_N anomaly
 #
 # Also verifies:
 #   SP_QUEUE_DEPTH counts CERTIFIED entries
-#   SP_QUEUE_BATCH_PR/SP_QUEUE_BATCH_AGE read the open batch file
+#   SP_QUEUE_BATCH_PR/SP_QUEUE_BATCH_AGE/SP_QUEUE_BATCH_N read the open batch file
 #   SP_QUEUE_QUARANTINE_N counts quarantined suites in suite-state
-#   Health panel renders queue summary line
+#   Health panel renders QUEUE section (not UNLND)
 #
 # covers: spira/cockpit.sh cockpit/health.sh spira/conf.sh spira/suite-state.sh
 set -uo pipefail
@@ -67,15 +67,14 @@ testdb_seed <<JSONL
 {"id":"sp-q3","title":"no landstate","status":"closed","priority":1,"closed_at":"$AGO5","labels":["spira","plan","repo:alpha"]}
 JSONL
 
-# Landstate files: sp-q1 CERTIFIED, sp-q2 BATCHED, sp-q3 absent.
 mkdir -p "$RUN/landstate"
 TIP_Q1="$(git -C "$REPO" rev-parse spira/sp-q1)"
 TIP_Q2="$(git -C "$REPO" rev-parse spira/sp-q2)"
 NOW_EPOCH="$(date +%s)"
 printf 'CERTIFIED %s %s\n' "$TIP_Q1" "$NOW_EPOCH" > "$RUN/landstate/sp-q1"
 printf 'BATCHED %s %s\n'   "$TIP_Q2" "$NOW_EPOCH" > "$RUN/landstate/sp-q2"
+# sp-q3 intentionally has no landstate → anomaly
 
-# Open batch file: PR 42, opened 3 minutes ago.
 OPENED_EPOCH=$(( NOW_EPOCH - 180 ))
 BATCH_DIR="$TMP/queue/alpha"
 mkdir -p "$BATCH_DIR"
@@ -88,7 +87,6 @@ opened=$OPENED_EPOCH
 branch=spira/queue/test
 BATCHEOF
 
-# Suite-state with one quarantined suite.
 mkdir -p "$REPO/spira"
 printf 'test-foo.sh | quarantined | 2026-01-01T00:00:00Z | sp-abc | flaky dns\n' \
     > "$REPO/spira/suite-state-test"
@@ -106,36 +104,22 @@ out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
 val() { printf '%s' "$out" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 
 echo "queue keys:"
-
-# SP_QUEUE_DEPTH counts CERTIFIED landstate entries.
-is "SP_QUEUE_DEPTH is 1" "1" "$(val SP_QUEUE_DEPTH)"
-
-# SP_QUEUE_BATCH_PR reads the batch file.
+is "SP_QUEUE_DEPTH is 1 (sp-q1 CERTIFIED)" "1" "$(val SP_QUEUE_DEPTH)"
 is "SP_QUEUE_BATCH_PR is 42" "42" "$(val SP_QUEUE_BATCH_PR)"
-
-# SP_QUEUE_BATCH_AGE is set (batch is ~3m old).
+is "SP_QUEUE_BATCH_N is 1 (sp-q2)" "1" "$(val SP_QUEUE_BATCH_N)"
 _age="$(val SP_QUEUE_BATCH_AGE)"
 [ -n "$_age" ] && [ "$_age" != "0" ] && [ "$_age" != "?" ] \
     && ok "SP_QUEUE_BATCH_AGE is non-zero" \
     || bad "SP_QUEUE_BATCH_AGE is non-zero" "got [$_age]"
-
-# SP_QUEUE_QUARANTINE_N counts the quarantined suite.
 is "SP_QUEUE_QUARANTINE_N is 1" "1" "$(val SP_QUEUE_QUARANTINE_N)"
 
-echo "SP_PEND row queue tags:"
+echo "batch and next rows:"
+want "SP_QUEUE_BATCH0 contains sp-q2" "sp-q2" "$(val SP_QUEUE_BATCH0)"
+is "SP_QUEUE_NEXT_N is 1 (sp-q1)" "1" "$(val SP_QUEUE_NEXT_N)"
+want "SP_QUEUE_NEXT0 contains sp-q1" "sp-q1" "$(val SP_QUEUE_NEXT0)"
 
-# SP_PEND rows carry queue state tags.
-# sp-q1 (CERTIFIED, oldest) should be first (oldest closed_at).
-# sp-q2 (BATCHED) second, sp-q3 (no landstate) third.
-want "SP_PEND0 contains sp-q1" "sp-q1" "$(val SP_PEND0)"
-want "SP_PEND0 shows [queued]" "[queued]" "$(val SP_PEND0)"
-
-want "SP_PEND1 contains sp-q2" "sp-q2" "$(val SP_PEND1)"
-want "SP_PEND1 shows batch #42" "[batch #42]" "$(val SP_PEND1)"
-
-want "SP_PEND2 contains sp-q3" "sp-q3" "$(val SP_PEND2)"
-nowant "SP_PEND2 shows no queue tag" "[queued]" "$(val SP_PEND2)"
-nowant "SP_PEND2 shows no batch tag" "[batch" "$(val SP_PEND2)"
+echo "anomaly:"
+is "SP_UNLANDED_N is 1 (sp-q3 has branch, no landstate)" "1" "$(val SP_UNLANDED_N)"
 
 echo "positive controls:"
 want "output contains SP_QUEUE_DEPTH" "SP_QUEUE_DEPTH=" "$out"
@@ -163,13 +147,12 @@ pane="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
     bash "$PANE" once 0 120 2>/dev/null)"
 
-want "pane renders UNLND section" "UNLND" "$pane"
-want "pane shows queue depth in summary" "depth 1" "$pane"
-want "pane shows batch PR in summary" "batch #42" "$pane"
-want "pane shows quarantined count in summary" "quarantined" "$pane"
-want "pane renders sp-q1" "sp-q1" "$pane"
-want "pane shows [queued] for sp-q1" "[queued]" "$pane"
-want "pane renders sp-q2" "sp-q2" "$pane"
+want "pane renders QUEUE section" "QUEUE" "$pane"
+nowant "pane does not render old UNLND label" "UNLND" "$pane"
+want "pane shows batch #42" "batch #42" "$pane"
+want "pane shows quarantined in footer" "quarantined" "$pane"
+want "pane renders sp-q1 (CERTIFIED/next)" "sp-q1" "$pane"
+want "pane renders sp-q2 (BATCHED/batch)" "sp-q2" "$pane"
 
 echo
 printf 'test-cockpit-queue: %d ok, %d fail\n' "$pass" "$fail"
