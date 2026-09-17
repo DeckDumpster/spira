@@ -947,16 +947,13 @@ next_row() {
 # "P1 sp-id 12m Title..." -> next_row's format plus an age since close, coloured by threshold.
 # Age past hours is the actionable signal; the count alone is the normal healthy state of a
 # working system, and colouring it would make this section wallpaper within a day.
-unlanded_row() {
-    local raw="$1" pri id age rest
-    pri="${raw%% *}"; rest="${raw#* }"; id="${rest%% *}"; rest="${rest#* }"; age="${rest%% *}"; rest="${rest#* }"
-    local age_col="$C_DIM"
-    case "$age" in *h|*d) age_col="$C_WARN" ;; esac
-    local aw=${#age}; [ "$aw" -lt 4 ] && aw=4
-    fit "$rest" $(( COLS - 12 - ${#pri} - (${#id} > 14 ? ${#id} : 14) - aw ))
-    printf '        %s%s%s %s%-14s%s %s%-4s%s %s%s%s\n' \
+queue_row() {           # queue_row "P<pri> <id> <title>"
+    local raw="$1" pri id rest
+    pri="${raw%% *}"; rest="${raw#* }"; id="${rest%% *}"; rest="${rest#* }"
+    fit "$rest" $(( COLS - 10 - ${#pri} - (${#id} > 14 ? ${#id} : 14) ))
+    printf '        %s%s%s %s%-14s%s %s%s%s\n' \
         "$(pri_colour "$pri")" "$pri" "$C_RST" "$C_ACC" "$id" "$C_RST" \
-        "$age_col" "$age" "$C_RST" "$C_DIM" "$FIT" "$C_RST"
+        "$C_DIM" "$FIT" "$C_RST"
 }
 
 # RECENT rows arrive as `<age> <actor> <verb> <bead> <title...>` and are printed in the
@@ -1056,43 +1053,55 @@ next_section() {
 # on the base branch names it" there is a queue that was previously invisible. A non-zero
 # count is the normal healthy state of a working system; age past a threshold is the
 # actionable signal (law-alerts-must-be-actionable).
-unlanded_section() {
-    if [ -z "${SP_PEND_N:-}" ] || [ "${SP_PEND_N:-}" = "?" ]; then
-        unread_row UNLND "cannot read the unlanded queue"
+queue_section() {
+    local _bpr="${SP_QUEUE_BATCH_PR:-0}" _bn="${SP_QUEUE_BATCH_N:-0}"
+    local _nn="${SP_QUEUE_NEXT_N:-0}" _uln="${SP_UNLANDED_N:-0}"
+    local _nm="${SP_QUEUE_NEXT_MAX:-0}" _qqn="${SP_QUEUE_QUARANTINE_N:-0}"
+    if [ "${SP_QUEUE_DEPTH:-?}" = "?" ] && [ "$_bpr" = "0" ] && [ "$_nn" = "0" ]; then
+        unread_row QUEUE "cannot read the queue"
         return
     fi
-    if [ "${SP_PEND_N}" -eq 0 ] 2>/dev/null; then
-        printf ' %sUNLND%s  %snothing waiting to land%s\n' \
-            "$C_DIM" "$C_RST" "$C_DIM" "$C_RST"
-        # Still show queue summary if relevant (quarantined suites even with empty queue).
-        local _qn="${SP_QUEUE_QUARANTINE_N:-0}"
-        [ "$_qn" != "0" ] && [ "$_qn" != "?" ] && \
-            printf '        %s%s quarantined suite(s)%s\n' "$C_WARN" "$_qn" "$C_RST"
-        return
+    if [ "$_bpr" != "0" ] && [ "$_bpr" != "?" ]; then
+        printf ' %sQUEUE%s  %sbatch #%s%s %s(%s member(s))%s\n' \
+            "$C_DIM" "$C_RST" "$C_B" "$_bpr" "$C_RST" \
+            "$C_DIM" "$_bn" "$C_RST"
+        local i=0 raw
+        while [ "$i" -lt "$MAX_SECTION_ROWS" ]; do
+            eval "raw=\${SP_QUEUE_BATCH$i:-}"
+            [ -n "$raw" ] || break
+            queue_row "$raw"
+            i=$((i+1))
+        done
     fi
-    local age_col="$C_DIM"
-    case "${SP_PEND_OLDEST:-}" in *h|*d) age_col="$C_WARN" ;; esac
-    printf ' %sUNLND%s  %s%s closed, not on base%s %s— oldest%s %s%s%s\n' \
-        "$C_DIM" "$C_RST" "$C_B" "${SP_PEND_N}" "$C_RST" \
-        "$C_DIM" "$C_RST" "$age_col" "${SP_PEND_OLDEST:-?}" "$C_RST"
-    # Queue summary: depth, open batch, quarantined suites.
-    local _qdepth="${SP_QUEUE_DEPTH:-0}" _qbpr="${SP_QUEUE_BATCH_PR:-0}"
-    local _qbage="${SP_QUEUE_BATCH_AGE:-0}" _qqn="${SP_QUEUE_QUARANTINE_N:-0}"
-    if [ "$_qdepth" != "0" ] || [ "$_qbpr" != "0" ] || [ "$_qqn" != "0" ]; then
-        local _qline=""
-        [ "$_qdepth" != "0" ] && _qline="${_qline}${_qline:+  }depth ${_qdepth}"
-        [ "$_qbpr" != "0" ] && _qline="${_qline}${_qline:+  }batch #${_qbpr} (${_qbage})"
-        [ "$_qqn" != "0" ] && [ "$_qqn" != "?" ] && \
-            _qline="${_qline}${_qline:+  }${_qqn} quarantined"
-        [ -n "$_qline" ] && printf '        %s%s%s\n' "$C_DIM" "$_qline" "$C_RST"
+    if [ "$_nn" != "0" ] && [ "$_nn" != "?" ]; then
+        if [ "$_bpr" != "0" ] && [ "$_bpr" != "?" ]; then
+            printf '        %snext →%s\n' "$C_DIM" "$C_RST"
+        else
+            printf ' %sQUEUE%s  %s%s certified%s\n' \
+                "$C_DIM" "$C_RST" "$C_B" "$_nn" "$C_RST"
+        fi
+        local i=0 raw shown=0
+        while [ "$i" -lt "$MAX_SECTION_ROWS" ]; do
+            eval "raw=\${SP_QUEUE_NEXT$i:-}"
+            [ -n "$raw" ] || break
+            [ "$_nm" != "0" ] && [ "$shown" -eq "$_nm" ] && \
+                printf '        %s· · ·%s\n' "$C_DIM" "$C_RST"
+            queue_row "$raw"
+            shown=$((shown+1))
+            i=$((i+1))
+        done
     fi
-    local i=0 raw
-    while [ "$i" -lt "$MAX_SECTION_ROWS" ]; do
-        eval "raw=\${SP_PEND$i:-}"
-        [ -n "$raw" ] || break
-        unlanded_row "$raw"
-        i=$((i+1))
-    done
+    if [ "$_bpr" = "0" ] && [ "$_nn" = "0" ]; then
+        printf ' %sQUEUE%s  %snothing queued%s\n' "$C_DIM" "$C_RST" "$C_DIM" "$C_RST"
+    fi
+    local _ej="${SP_QUEUE_EJECTED:-0}" _rd="${SP_QUEUE_RED:-0}" _footer=""
+    [ "$_ej" != "0" ] && [ "$_ej" != "?" ] && _footer="${_footer}${_footer:+  }${_ej} ejected"
+    [ "$_rd" != "0" ] && [ "$_rd" != "?" ] && _footer="${_footer}${_footer:+  }${_rd} red"
+    [ "$_qqn" != "0" ] && [ "$_qqn" != "?" ] && _footer="${_footer}${_footer:+  }${_qqn} quarantined"
+    [ -n "$_footer" ] && printf '        %s%s%s\n' "$C_WARN" "$_footer" "$C_RST"
+    if [ "$_uln" != "0" ] && [ "$_uln" != "?" ]; then
+        printf '        %s%s anomaly%s\n' "$C_WARN" "$_uln" "$C_RST"
+    fi
 }
 
 # RECENT — what the harness did, newest first. The label shares the first row with the
@@ -1327,11 +1336,11 @@ standing_lines() {
     # THE ROW STATES ITS OWN WINDOW. Previously it inherited "24h" from the header while its
     # population was all-time, so comparing it against the 24h closed/opened counts above
     # produced nonsense — 59% of the row was outside its header's window.
-    printf '        %s24h worked %s:%s %s landed · %s%s awaiting%s · %s%s never landed%s\n' \
+    printf '        %s24h worked %s:%s %s landed · %s%s queued%s · %s%s anomaly%s\n' \
         "$C_DIM" "${SP_CLOSED:-?}" "$C_RST" "${SP_LANDED:-?}" \
-        "$C_DIM" "${SP_AWAITING_LAND:-?}" "$C_RST" \
-        "$( [ "${SP_UNLANDED:-0}" = 0 ] && printf '%s' "$C_OK" || printf '%s' "$C_BAD$C_B")" "${SP_UNLANDED:-?}" "$C_RST"
-    fit "never landed = closed, no commit names it, no branch" $(( COLS - 8 ))
+        "$C_DIM" "${SP_QUEUE_DEPTH:-?}" "$C_RST" \
+        "$( [ "${SP_UNLANDED_N:-0}" = 0 ] && printf '%s' "$C_OK" || printf '%s' "$C_BAD$C_B")" "${SP_UNLANDED_N:-?}" "$C_RST"
+    fit "anomaly = closed, has branch, no landstate" $(( COLS - 8 ))
     printf '        %s%s%s\n' "$C_DIM" "$FIT" "$C_RST"
 
     # LAND — the DONE-to-LANDED stretch. The operator (2026-09-07): "there's currently a
@@ -1698,7 +1707,7 @@ frame() {
     mapfile -t TOKENS   < <(tokens_section)
     mapfile -t NOW      < <(now_section)
     mapfile -t NEXT     < <(next_section)
-    mapfile -t UNLANDED < <(unlanded_section)
+    mapfile -t UNLANDED < <(queue_section)
     mapfile -t RECENT   < <(recent_section)
     mapfile -t INFLOW   < <(inflow_section)
     mapfile -t CI       < <(ci_section)

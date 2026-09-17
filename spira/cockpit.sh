@@ -1183,19 +1183,13 @@ except Exception: print("")' 2>/dev/null)"
     # A `<id>.log` in the run directory is the evidence that a session ran. The 24h filter
     # uses the bead's closed_at timestamp.
     #
-    # THREE STATES, NOT TWO. A closed bead with no commit naming it is not necessarily lost:
-    # if its branch still exists it is awaiting landing — a healthy, normally non-zero state.
-    # Only a bead with no commit AND no branch is irrecoverable (law-alerts-must-be-actionable).
-    #
     # ONE `git log` plus ONE `for-each-ref` per repo, then membership tests per id.
     local closed_ids subjects branches
     # THE BEAD'S REPOSITORY COMES OUT OF THE SAME QUERY AS ITS ID, because reading the wrong
     # repository's commit graph is wrong confidently in both directions: another repository's bead
     # that landed perfectly reads as unlanded in brain, and a panel that reports finished
     # work as lost is the same false alert as one that reports lost work as finished.
-    # TAB-SEPARATED: id, repo, priority, closed_at, title. The extra fields feed the PEND
-    # section below without a second walk of the database. The first two fields serve the
-    # existing landing check; the rest serve the unlanded-queue detail rows.
+    # TAB-SEPARATED: id, repo, priority, closed_at, title.
     #
     # bdjson is a pipeline ending in sed (json_only), so it exits 0 even when bd refuses and
     # produces nothing. Call bdq directly and gate on emptiness before parsing: an empty
@@ -1204,8 +1198,7 @@ except Exception: print("")' 2>/dev/null)"
     _closed_raw="$(bdq list --status closed --limit 0 --label "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" --json 2>/dev/null)"
     [ -n "$_closed_raw" ] || _closed_read=0
     if [ "$_closed_read" = 0 ]; then
-        echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_AWAITING_LAND=?"; echo "SP_UNLANDED=?"
-        echo "SP_PEND_N=?"; echo "SP_PEND_OLDEST=?"
+        echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"
     else
     closed_pairs="$(printf '%s\n' "$_closed_raw" | json_only | python3 -c '
 import sys, json, os, re, datetime
@@ -1227,8 +1220,7 @@ for i in (d if isinstance(d, list) else [d]):
             print("%s\t%s\t%s\t%s\t%s" % (i["id"], repo, pri, cat, title))' "$SPIRA_RUN" "$(spira_home_repo)" 2>/dev/null)"
     closed_ids="$(printf '%s\n' "$closed_pairs" | awk -F'\t' 'NF{print $1}')"
     if [ -z "$closed_ids" ]; then
-        echo "SP_CLOSED=0"; echo "SP_LANDED=0"; echo "SP_AWAITING_LAND=0"; echo "SP_UNLANDED=0"
-        echo "SP_PEND_N=0"; echo "SP_PEND_OLDEST=0"
+        echo "SP_CLOSED=0"; echo "SP_LANDED=0"; echo "SP_UNLANDED_N=0"
     else
     # ONE FETCH PER REPOSITORY THAT ACTUALLY HAS A CLOSED BEAD IN IT, and none at all for the
     # rest. This runs on the collector loop; fetching every registered repository each pass
@@ -1252,110 +1244,47 @@ for i in (d if isinstance(d, list) else [d]):
         if _rem="$(ref_remote "${_refs%% *}")"; then git -C "$_p" fetch -q "$_rem" 2>/dev/null; fi
         # shellcheck disable=SC2086
         subjects="$subjects
-$(git -C "$_p" log --format='%s%n%b' -n 2000 $_refs 2>/dev/null)"
+$(git -C "$_p" log --format='%s' -n 2000 $_refs 2>/dev/null)"
         branches="$branches
 $(git -C "$_p" for-each-ref --format='%(refname:short)' 'refs/heads/spira/' 'refs/remotes/*/spira/' 2>/dev/null)"
     done
     if [ -z "$subjects" ] && [ -z "$branches" ]; then
-        echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_AWAITING_LAND=?"; echo "SP_UNLANDED=?"
-        echo "SP_PEND_N=?"; echo "SP_PEND_OLDEST=?"
+        echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"
     else
-        # Subjects on stdin, branches as argv[2], closed_pairs metadata as argv[3].
-        # A `---` line in a commit body would split a stdin separator, and commit messages
-        # do contain freeform text.
-        #
-        # _AWAITING lines carry the metadata the PEND section needs, sorted oldest-first by
-        # closed_at so the shell loop below emits rows in age order with no second sort.
+        # Subjects only (no bodies). Landed = subject is "spira: land <id>" or "<id>: <desc>"
+        # (law-aeon-commits-name-their-bead). Body mentions do not count as landing.
+        # SP_UNLANDED_N: closed beads with a branch but no landstate entry (queue anomaly).
         local _land_out
         _land_out="$(printf '%s' "$subjects" | python3 -c '
-import sys, re, datetime
+import sys, re, os
 ids = [i for i in sys.argv[1].split() if i]
 br_lines = sys.argv[2].split("\n") if len(sys.argv) > 2 and sys.argv[2] else []
-meta = {}
-if len(sys.argv) > 3:
-    for line in sys.argv[3].split("\n"):
-        parts = line.strip().split("\t")
-        if len(parts) >= 5:
-            meta[parts[0]] = {"pri": parts[2], "cat": parts[3], "title": parts[4]}
-text = sys.stdin.read()
-landed_set = set(); awaiting_ids = []; never = 0
+landstate_dir = sys.argv[3] if len(sys.argv) > 3 else ""
+subjects = sys.stdin.read().splitlines()
+landed_set = set()
 for i in ids:
-    if re.search(r"(?<![\w-])%s(?![\w-])" % re.escape(i), text):
-        landed_set.add(i)
-    elif any(b.rstrip().endswith("/" + i) for b in br_lines if b.strip()):
-        awaiting_ids.append(i)
-    else:
-        never += 1
-def cat_key(bid):
-    m = meta.get(bid, {})
-    try: return datetime.datetime.fromisoformat(m.get("cat", "").replace("Z", "+00:00"))
-    except Exception: return datetime.datetime.max.replace(tzinfo=datetime.timezone.utc)
-awaiting_ids.sort(key=cat_key)
-print("SP_CLOSED=%d"        % len(ids))
-print("SP_LANDED=%d"        % len(landed_set))
-print("SP_AWAITING_LAND=%d" % len(awaiting_ids))
-print("SP_UNLANDED=%d"      % never)
-for i in awaiting_ids:
-    m = meta.get(i, {})
-    print("_AWAITING=%s\t%s\t%s\t%s" % (i, m.get("pri", ""), m.get("cat", ""), m.get("title", "")))
-' "$closed_ids" "$branches" "$closed_pairs" 2>/dev/null)"
+    for s in subjects:
+        s = s.strip()
+        if s.startswith("spira: land " + i) or s.startswith(i + ": "):
+            landed_set.add(i)
+            break
+anomaly = 0
+for i in ids:
+    if i in landed_set:
+        continue
+    has_br = any(b.rstrip().endswith("/" + i) for b in br_lines if b.strip())
+    if has_br:
+        ls_file = os.path.join(landstate_dir, i) if landstate_dir else ""
+        if not (ls_file and os.path.exists(ls_file)):
+            anomaly += 1
+print("SP_CLOSED=%d"      % len(ids))
+print("SP_LANDED=%d"      % len(landed_set))
+print("SP_UNLANDED_N=%d"  % anomaly)
+' "$closed_ids" "$branches" "$SPIRA_RUN/landstate" 2>/dev/null)"
         if [ -n "$_land_out" ]; then
-            printf '%s\n' "$_land_out" | grep '^SP_'
-
-            # ---- PENDING LANDING: individual beads with a branch, not yet on the base ----
-            local _pend_n=0 _pend_oldest_age="" _pend_now
-            _pend_now="$(date +%s)"
-            # Build bead→PR map from open batch files so BATCHED entries show their PR.
-            local _batched_pr_map=""
-            local _bmf _bpr _bmems _bmm _bqdir
-            _bqdir="${SPIRA_QUEUE_DIR:-$SPIRA_RUN/queue}"
-            for _bmf in "$_bqdir"/*/open; do
-                [ -f "$_bmf" ] || continue
-                _bpr="$(grep '^pr=' "$_bmf" 2>/dev/null | cut -d= -f2-)" || continue
-                _bmems="$(grep '^members=' "$_bmf" 2>/dev/null | cut -d= -f2-)" || continue
-                [ -n "${_bpr:-}" ] || continue
-                for _bmm in $_bmems; do
-                    _batched_pr_map="$_batched_pr_map ${_bmm%%:*}:${_bpr}"
-                done
-            done
-            while IFS=$'\t' read -r _ul_id _ul_pri _ul_cat _ul_title; do
-                [ -n "$_ul_id" ] || continue
-                local _ul_age="?"
-                if [ -n "$_ul_cat" ]; then
-                    local _ul_epoch
-                    _ul_epoch="$(date -d "$_ul_cat" +%s 2>/dev/null)" || _ul_epoch=""
-                    if [ -n "$_ul_epoch" ]; then
-                        local _ul_secs=$(( _pend_now - _ul_epoch ))
-                        if [ "$_ul_secs" -lt 90 ]; then _ul_age="${_ul_secs}s"
-                        elif [ "$_ul_secs" -lt 5400 ]; then _ul_age="$(( _ul_secs / 60 ))m"
-                        elif [ "$_ul_secs" -lt 172800 ]; then _ul_age="$(( _ul_secs / 3600 ))h"
-                        else _ul_age="$(( _ul_secs / 86400 ))d"; fi
-                        [ -z "$_pend_oldest_age" ] && _pend_oldest_age="$_ul_age"
-                    fi
-                fi
-                local _ul_state="" _ul_tag=""
-                { read -r _ul_state _ < "$SPIRA_RUN/landstate/$_ul_id"; } 2>/dev/null || true
-                case "${_ul_state:-}" in
-                    CERTIFIED) _ul_tag="[queued] " ;;
-                    BATCHED)
-                        local _ul_bpr="" _ul_bme
-                        for _ul_bme in $_batched_pr_map; do
-                            case "$_ul_bme" in "${_ul_id}:"*) _ul_bpr="${_ul_bme#*:}"; break ;; esac
-                        done
-                        _ul_tag="[batch${_ul_bpr:+ #${_ul_bpr}}] "
-                        ;;
-                    EJECTED) _ul_tag="[ejected] " ;;
-                    LOST)    _ul_tag="[lost] " ;;
-                esac
-                printf 'SP_PEND%d=P%s %s %s %s%s\n' "$_pend_n" "${_ul_pri:-?}" "$_ul_id" "$_ul_age" "$_ul_tag" "${_ul_title:--}"
-                _pend_n=$((_pend_n + 1))
-                [ "$_pend_n" -ge 20 ] && break
-            done < <(printf '%s\n' "$_land_out" | sed -n 's/^_AWAITING=//p')
-            echo "SP_PEND_N=$_pend_n"
-            echo "SP_PEND_OLDEST=${_pend_oldest_age:-0}"
+            printf '%s\n' "$_land_out"
         else
-            echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_AWAITING_LAND=?"; echo "SP_UNLANDED=?"
-            echo "SP_PEND_N=?"; echo "SP_PEND_OLDEST=?"
+            echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"
         fi
     fi
     fi
@@ -1395,43 +1324,138 @@ for i in awaiting_ids:
 
 # Queue-state summary keys: queue depth, open batch, quarantined suites.
 queue_keys() {
-    local depth=0 _f _st
+    local _qdir="${SPIRA_QUEUE_DIR:-$SPIRA_RUN/queue}"
+    local _now; _now="$(date +%s)"
+
+    # --- Landstate summary: CERTIFIED depth, EJECTED, RED counts ---
+    local depth=0 _qejected=0 _qred=0 _f _st
     if [ -d "$SPIRA_RUN/landstate" ]; then
         for _f in "$SPIRA_RUN/landstate/"*; do
             [ -f "$_f" ] || continue
             { read -r _st _ < "$_f"; } 2>/dev/null || continue
-            [ "$_st" = "CERTIFIED" ] && depth=$(( depth + 1 ))
+            case "$_st" in
+                CERTIFIED) depth=$(( depth + 1 )) ;;
+                EJECTED)   _qejected=$(( _qejected + 1 )) ;;
+                RED)       _qred=$(( _qred + 1 )) ;;
+            esac
         done
     fi
     echo "SP_QUEUE_DEPTH=$depth"
+    echo "SP_QUEUE_EJECTED=$_qejected"
+    echo "SP_QUEUE_RED=$_qred"
 
-    local batch_pr=0 batch_age="0"
-    local _bf _pr _opened _age_secs _now _qdir
-    _now="$(date +%s)"
-    _qdir="${SPIRA_QUEUE_DIR:-$SPIRA_RUN/queue}"
+    # --- Active batch: read members and age from batch open files ---
+    local batch_pr=0 batch_age="0" batch_n=0 _batch_member_ids=""
+    local _bf _bf_pr _bf_opened _bf_mems _bf_age_secs _bf_mem _bf_mem_id
     for _bf in "$_qdir"/*/open; do
         [ -f "$_bf" ] || continue
-        _pr="$(grep '^pr=' "$_bf" 2>/dev/null | cut -d= -f2-)" || continue
-        _opened="$(grep '^opened=' "$_bf" 2>/dev/null | cut -d= -f2-)" || continue
-        [ -n "${_pr:-}" ] || continue
-        batch_pr="$_pr"
-        _age_secs=$(( _now - ${_opened:-_now} ))
-        if [ "$_age_secs" -lt 90 ]; then batch_age="${_age_secs}s"
-        elif [ "$_age_secs" -lt 5400 ]; then batch_age="$(( _age_secs / 60 ))m"
-        elif [ "$_age_secs" -lt 172800 ]; then batch_age="$(( _age_secs / 3600 ))h"
-        else batch_age="$(( _age_secs / 86400 ))d"; fi
+        _bf_pr="$(grep '^pr=' "$_bf" 2>/dev/null | cut -d= -f2-)" || continue
+        _bf_opened="$(grep '^opened=' "$_bf" 2>/dev/null | cut -d= -f2-)" || continue
+        _bf_mems="$(grep '^members=' "$_bf" 2>/dev/null | cut -d= -f2-)" || continue
+        [ -n "${_bf_pr:-}" ] || continue
+        batch_pr="$_bf_pr"
+        _bf_age_secs=$(( _now - ${_bf_opened:-$_now} ))
+        if [ "$_bf_age_secs" -lt 90 ]; then batch_age="${_bf_age_secs}s"
+        elif [ "$_bf_age_secs" -lt 5400 ]; then batch_age="$(( _bf_age_secs / 60 ))m"
+        elif [ "$_bf_age_secs" -lt 172800 ]; then batch_age="$(( _bf_age_secs / 3600 ))h"
+        else batch_age="$(( _bf_age_secs / 86400 ))d"; fi
+        for _bf_mem in $_bf_mems; do
+            _bf_mem_id="${_bf_mem%%:*}"
+            _batch_member_ids="${_batch_member_ids}${_batch_member_ids:+ }$_bf_mem_id"
+            batch_n=$(( batch_n + 1 ))
+        done
         break
     done
     echo "SP_QUEUE_BATCH_PR=$batch_pr"
     echo "SP_QUEUE_BATCH_AGE=$batch_age"
+    echo "SP_QUEUE_BATCH_N=$batch_n"
 
-    local quarantine_n=0 _rname _rp _sf _n
+    # Emit batch member rows: P<pri> <id> <title>
+    if [ "$batch_n" -gt 0 ]; then
+        local _bm_pj _bmi=0 _bm_id _bm_data _bm_pri _bm_title
+        # shellcheck disable=SC2086
+        _bm_pj="$(bdjson show $_batch_member_ids 2>/dev/null)" || _bm_pj="[]"
+        for _bm_id in $_batch_member_ids; do
+            _bm_data="$(printf '%s\n' "$_bm_pj" | python3 -c "
+import sys, json, re
+try: d = json.load(sys.stdin)
+except: d = []
+d = d if isinstance(d, list) else [d]
+r = [x for x in d if x.get('id') == '$_bm_id']
+if r:
+    pri = str(r[0].get('priority', '?'))
+    title = re.sub(r'[^ A-Za-z0-9._/:,()#+-]', ' ', (r[0].get('title') or ''))[:60]
+    print(pri + '\t' + title)
+else:
+    print('?\t')" 2>/dev/null)"
+            _bm_pri="${_bm_data%%$'\t'*}"
+            _bm_title="${_bm_data#*$'\t'}"
+            printf 'SP_QUEUE_BATCH%d=P%s %s %s\n' "$_bmi" "${_bm_pri:-?}" "$_bm_id" "${_bm_title:--}"
+            _bmi=$(( _bmi + 1 ))
+        done
+    fi
+
+    # --- Next items: CERTIFIED entries sorted by batcher order, not in current batch ---
+    # queue_sort_rows (lib.sh) is the canonical sort shared with batch.sh so the two agree.
+    local _next_n=0 _next_max="${SPIRA_QUEUE_BATCH_MAX:-8}"
+    local _rname _rp _rbase _rbase_sha _cert _cert_ids _pj _sorted _srow _nid _ndata _npri _ntitle
     for _rname in $(spira_repos 2>/dev/null); do
         _rp="$(repo_root "$_rname" 2>/dev/null)" || continue
-        _sf="$_rp/${SPIRA_SUITE_STATE:-spira/suite-state}"
+        [ "$(repo_land "$_rname" 2>/dev/null)" = "queue" ] || continue
+        _rbase="$(spira_landref "$_rp" 2>/dev/null)" || continue
+        _rbase_sha="$(git -C "$_rp" rev-parse "$_rbase" 2>/dev/null)" || continue
+        _cert="$(queue_certified_list "$_rp")"
+        [ -n "${_cert:-}" ] || continue
+        # Filter out IDs already in the active batch.
+        _cert_ids=""
+        while IFS= read -r _cl; do
+            [ -n "$_cl" ] || continue
+            _cid="${_cl%% *}"
+            case " $_batch_member_ids " in *" $_cid "*) continue ;; esac
+            _cert_ids="${_cert_ids}${_cert_ids:+ }$_cid"
+        done <<< "$_cert"
+        [ -n "${_cert_ids:-}" ] || continue
+        # shellcheck disable=SC2086
+        _pj="$(bdjson show $_cert_ids 2>/dev/null)" || _pj="[]"
+        # Sort and emit rows. Each sort row: "<flag> <prio_pad> <epoch_pad> <id> <tip>"
+        while IFS= read -r _srow && [ "$_next_n" -lt 20 ]; do
+            [ -n "$_srow" ] || continue
+            read -r _ _ _ _nid _ <<< "$_srow"
+            [ -n "$_nid" ] || continue
+            _ndata="$(printf '%s\n' "$_pj" | python3 -c "
+import sys, json, re
+try: d = json.load(sys.stdin)
+except: d = []
+d = d if isinstance(d, list) else [d]
+r = [x for x in d if x.get('id') == '$_nid']
+if r:
+    pri = str(r[0].get('priority', '?'))
+    title = re.sub(r'[^ A-Za-z0-9._/:,()#+-]', ' ', (r[0].get('title') or ''))[:60]
+    print(pri + '\t' + title)
+else:
+    print('?\t')" 2>/dev/null)"
+            _npri="${_ndata%%$'\t'*}"
+            _ntitle="${_ndata#*$'\t'}"
+            printf 'SP_QUEUE_NEXT%d=P%s %s %s\n' "$_next_n" "${_npri:-?}" "$_nid" "${_ntitle:--}"
+            _next_n=$(( _next_n + 1 ))
+        done < <(printf '%s\n' "$_cert" | while IFS= read -r _cl; do
+            [ -n "$_cl" ] || continue
+            _cid="${_cl%% *}"
+            case " $_batch_member_ids " in *" $_cid "*) continue ;; esac
+            printf '%s\n' "$_cl"
+        done | PRIO_JSON="$_pj" queue_sort_rows "$_rp" "$_rbase_sha")
+    done
+    echo "SP_QUEUE_NEXT_N=$_next_n"
+    echo "SP_QUEUE_NEXT_MAX=$_next_max"
+
+    # --- Quarantine count (unchanged) ---
+    local quarantine_n=0 _rname2 _rp2 _sf _sfn
+    for _rname2 in $(spira_repos 2>/dev/null); do
+        _rp2="$(repo_root "$_rname2" 2>/dev/null)" || continue
+        _sf="$_rp2/${SPIRA_SUITE_STATE:-spira/suite-state}"
         [ -f "$_sf" ] || continue
-        _n="$(grep -c ' | quarantined |' "$_sf" 2>/dev/null)" || _n=0
-        quarantine_n=$(( quarantine_n + _n ))
+        _sfn="$(grep -c ' | quarantined |' "$_sf" 2>/dev/null)" || _sfn=0
+        quarantine_n=$(( quarantine_n + _sfn ))
     done
     echo "SP_QUEUE_QUARANTINE_N=$quarantine_n"
 }
