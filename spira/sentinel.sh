@@ -793,6 +793,24 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
     if [ -z "$subj_refs" ]; then
         log "CHECK5 $id: cannot resolve the ref $r_name lands on — not judging whether it landed"
     elif ! grep -qF "$id" <<< "$subjects"; then
+        # LANDSTATE CHECK. Read the pipeline record before deciding to reopen.
+        _c5_ls_state=""; _c5_ls_tip=""
+        if [ -r "$SPIRA_RUN/landstate/$id" ]; then
+            read -r _c5_ls_state _c5_ls_tip _ < "$SPIRA_RUN/landstate/$id" 2>/dev/null || true
+        fi
+        # BATCHED/GATED/REBASED: a PR or the landing pass holds this work; don't reopen.
+        case "${_c5_ls_state:-}" in
+            BATCHED|GATED|REBASED)
+                log "CHECK5 $id: landstate=$_c5_ls_state — pipeline handling it; not reopening"
+                continue ;;
+        esac
+        # LANDED tip is an ancestor of the base: reached base via squash, amend, or content merge.
+        if [ "${_c5_ls_state:-}" = LANDED ] && [ -n "${_c5_ls_tip:-}" ] \
+               && [ "$_c5_ls_tip" != none ] && [ -n "${subj_base:-}" ] \
+               && git -C "$r_path" merge-base --is-ancestor "$_c5_ls_tip" "$subj_base" 2>/dev/null; then
+            log "CHECK5 $id: landstate LANDED, tip $_c5_ls_tip is ancestor of $subj_base — not reopening"
+            continue
+        fi
         if git -C "$r_path" show-ref --verify -q "refs/heads/spira/$id"; then
             # ZERO COMMITS AHEAD IS NOT WORK ON A BRANCH. An empty branch kept by the
             # Sending (content_landed now returns non-zero for zero-ahead) looks like "work
@@ -802,6 +820,31 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
             _c5_ahead="$(git -C "$r_path" rev-list --count \
                 "${_c5_base:+${_c5_base}..}spira/$id" 2>/dev/null)" || _c5_ahead=0
             [ "${_c5_ahead:-0}" -gt 0 ] 2>/dev/null && continue  # work exists; CHECK 6 lands it
+        else
+            # BRANCH MISSING. Restore from the landstate tip or remote tracking ref so
+            # landing.sh can pick it up — a deleted ref is not evidence of unlanded work
+            # when the tip object still exists.
+            _c5_restore_tip=""
+            if [ -n "${_c5_ls_tip:-}" ] && [ "$_c5_ls_tip" != none ] \
+                   && git -C "$r_path" cat-file -e "$_c5_ls_tip" 2>/dev/null; then
+                _c5_restore_tip="$_c5_ls_tip"
+            elif git -C "$r_path" show-ref --verify -q "refs/remotes/origin/spira/$id" 2>/dev/null; then
+                _c5_restore_tip="$(git -C "$r_path" rev-parse "refs/remotes/origin/spira/$id" 2>/dev/null)" || true
+            fi
+            if [ -n "${_c5_restore_tip:-}" ]; then
+                git -C "$r_path" update-ref "refs/heads/spira/$id" "$_c5_restore_tip" 2>/dev/null \
+                    && log "CHECK5 $id: branch restored to $_c5_restore_tip (${_c5_ls_state:-unknown} landstate) — CHECK 6 will land it" \
+                    || log "CHECK5 $id: branch restore failed"
+                _c5_base="${subj_base:-}"
+                _c5_ahead="$(git -C "$r_path" rev-list --count \
+                    "${_c5_base:+${_c5_base}..}spira/$id" 2>/dev/null)" || _c5_ahead=0
+                [ "${_c5_ahead:-0}" -gt 0 ] 2>/dev/null && continue
+            elif [ "${_c5_ls_state:-}" = CERTIFIED ]; then
+                # CERTIFIED but branch and tip are gone — can't restore; don't reopen.
+                # The queue will skip it; a hand-recovery or a new aeon is needed.
+                log "CHECK5 $id: landstate CERTIFIED, branch and tip gone — not reopening"
+                continue
+            fi
         fi
         # COUNT IT. A bead that closes itself without committing a working change is
         # reopened here, becomes ready, is claimed, and closes itself again — a loop

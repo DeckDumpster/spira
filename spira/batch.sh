@@ -183,8 +183,8 @@ main() {
                     && { _anyrn=1; break; }
             done
             [ "$_anyrn" = 1 ] && continue
-            land_mark "$_lid" LANDED "${_ltip:-none}" branch-gone
-            printf 'batch %s: %s has no branch — LANDED (branch-gone)\n' "$name" "$_lid"
+            land_mark "$_lid" LOST "${_ltip:-none}" branch-gone
+            printf 'batch %s: %s has no branch — LOST (branch-gone)\n' "$name" "$_lid"
         done
     fi
 

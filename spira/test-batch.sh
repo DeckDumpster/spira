@@ -444,11 +444,11 @@ clean_case
 
 # =============================================================================
 # 8. BRANCH-GONE: a CERTIFIED landstate record with no branch anywhere is
-#    marked LANDED (branch-gone). It does not count toward the stuck-queue age,
-#    and no stuck-queue mail is sent on its behalf.
+#    marked LOST (branch-gone), NOT LANDED. It does not count toward the
+#    stuck-queue age, and no stuck-queue mail is sent on its behalf.
 #
 #    POSITIVE CONTROL: without the branch-gone marking, the ghost record stays
-#    CERTIFIED after batch runs; the is-LANDED assertion below would fail.
+#    CERTIFIED after batch runs; the is-LOST assertion below would fail.
 # =============================================================================
 clean_case
 seed
@@ -463,8 +463,8 @@ branch "sp-bt8-live" "$(date +%s)"
 
 MAIL_LOG8="$TMP/mail8"
 out8="$(batch "$REPONAME" 2>&1)"
-is "8. branch-gone: ghost LANDED" "1" \
-    "$([ "$(awk '{print $1}' "$LANDSTATE/sp-bt8-ghost" 2>/dev/null)" = "LANDED" ] && echo 1 || echo 0)"
+is "8. branch-gone: ghost is LOST (not LANDED)" "1" \
+    "$([ "$(awk '{print $1}' "$LANDSTATE/sp-bt8-ghost" 2>/dev/null)" = "LOST" ] && echo 1 || echo 0)"
 is "8. branch-gone: ghost reason is branch-gone" "branch-gone" \
     "$(awk '{print $4}' "$LANDSTATE/sp-bt8-ghost" 2>/dev/null)"
 # The ghost's old epoch should not have triggered a stuck-queue mail:
