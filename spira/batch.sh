@@ -43,7 +43,7 @@ _certified_list() {
         id="${br#spira/}"
         f="$LANDSTATE/$id"
         [ -f "$f" ] || continue
-        { read -r st tip epoch _ < "$f"; } 2>/dev/null || continue
+        st=""; { read -r st tip epoch _ < "$f"; } 2>/dev/null || [ -n "$st" ] || continue
         [ "$st" = "CERTIFIED" ] || continue
         printf '%s %s %s\n' "$id" "$tip" "$epoch"
     done
