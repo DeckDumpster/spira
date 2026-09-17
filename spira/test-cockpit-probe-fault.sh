@@ -15,12 +15,6 @@
 # refuse by one of these mechanisms and asserts health.sh shows '?' or a named error, never 0
 # (law-absence-needs-a-positive-control).
 #
-# THE SUITE IS EXPECTED TO FAIL AGAINST THE UNFIXED CODE ON SP_AWAITING_LAND:
-#   - health.sh uses ${SP_AWAITING_LAND:-0} so an absent key renders 0, not ?
-#   - cockpit.sh unsent_keys() emits SP_AWAITING_LAND=0 when bdjson returns nothing because
-#     it cannot distinguish "bd produced an empty JSON array" from "bd refused entirely"
-# Both are fixed in this commit; the pre-fix failure text is recorded in the commit message.
-#
 # defect: sp-cof
 # covers: cockpit/health.sh spira/cockpit.sh
 set -uo pipefail
