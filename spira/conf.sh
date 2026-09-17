@@ -68,7 +68,7 @@ SPIRA_TOWN SPIRA_MIRROR SPIRA_EXPORTER SPIRA_DESIGN SPIRA_WIKI SPIRA_WIKI_HOOK S
 SPIRA_VIEW SPIRA_VIEW_SESSION
 SPIRA_ALERT_GLOB
 SPIRA_BD SPIRA_BD_PIN SPIRA_BD_TAG
-SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_QA_DEPTH SPIRA_THRASH_MINUTES
+SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_LANES_MAX_LIVE SPIRA_QA_DEPTH SPIRA_THRASH_MINUTES
 SPIRA_TOKEN_WINDOW_H SPIRA_TOKEN_PROJECTS SPIRA_CTX_WARN SPIRA_CTX_HIGH SPIRA_CTX_LIMIT
 SPIRA_ARCHIVE
 SPIRA_ARCHIVIST_EVERY SPIRA_ARCHIVIST_IDLE SPIRA_ARCHIVIST_MODEL SPIRA_ARCHIVIST_TIMEOUT
@@ -535,6 +535,11 @@ spira_conf_defaults() {
     # EMPTY BY DEFAULT, meaning no ceiling and exactly the behaviour that shipped: a host
     # constrained by cores rather than by an account must not acquire this by upgrading.
     : "${SPIRA_MAX_LIVE_AEONS:=}"
+    # THE COLLECTIVE LANE CAP — how many fleet slots lanes may hold at once.
+    # When set with SPIRA_MAX_LIVE_AEONS, the last fleet slot prefers a lane: a task fayth
+    # is held back when any lane has ready work and lanes are below this cap. Empty by
+    # default: no collective cap and no preference rule.
+    : "${SPIRA_LANES_MAX_LIVE:=}"
     # HOW LONG THE DELIVERABLE-PROGRESS WALL GIVES AN AEON BEFORE REQUEUEING IT. The wall
     # trips when the aeon's deliverable (commits ahead of the base ref + file writes in its
     # worktree) has not moved for this many minutes while turns still advance. 20 minutes is

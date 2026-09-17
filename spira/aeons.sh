@@ -89,6 +89,7 @@ conf_set() {
 
 status() {
     local ceiling="${SPIRA_MAX_LIVE_AEONS:-}" pool="${SPIRA_MAX_AEONS:-?}"
+    local lanes_cap="${SPIRA_LANES_MAX_LIVE:-}"
     local lt ld live; read -r lt ld <<< "$(lane_caps)"; live="$(live_now)"
     printf '  live now          %s\n' "$live"
     if [ -n "$ceiling" ]; then
@@ -98,6 +99,11 @@ status() {
     fi
     printf '  task pool         %s   (SPIRA_MAX_AEONS — builders and other task fayths)\n' "$pool"
     printf '  lanes             %s   (%s — each draws OUTSIDE the pool)\n' "$lt" "$ld"
+    if [ -n "$lanes_cap" ]; then
+        printf '  lane cap          %s   (SPIRA_LANES_MAX_LIVE — lanes share this many fleet slots)\n' "$lanes_cap"
+        local task_min; task_min=$(( ${pool:-0} > ${lanes_cap:-0} ? ${pool:-0} - ${lanes_cap:-0} : 0 ))
+        printf '  effective split   builders %s-%s, lanes 0-%s\n' "$task_min" "${pool:-0}" "$lanes_cap"
+    fi
     # THE SUM IS THE POINT. Without a fleet ceiling the real limit is pool + lanes, and that
     # number appears nowhere in the config — which is exactly why "set the pool to 1" reads
     # as "run one aeon" and is not.
