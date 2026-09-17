@@ -4,6 +4,8 @@
 Description=Loom — a read endpoint over the live beads graph
 Documentation=file://@SPIRA_HOME@/loom.sh
 After=default.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
