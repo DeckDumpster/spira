@@ -95,12 +95,15 @@ try:
         lvl = a.get('annotation_level', '')
         title = a.get('title', '')
         msg = a.get('message', '')
+        path = a.get('path', '')
         if lvl == 'warning' and title == 'flaky suite':
             idx = msg.find(' was red')
             if idx > 0:
                 print('flaky: ' + msg[:idx])
         elif lvl == 'error' and title == 'red-twice suite':
             print('red-suite: ' + msg)
+        elif lvl == 'failure' and path.startswith('spira/test-') and path.endswith('.sh'):
+            print('red-suite: ' + path.split('/')[-1])
 except Exception:
     pass
 " 2>/dev/null || true
