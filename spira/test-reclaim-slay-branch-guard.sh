@@ -83,7 +83,7 @@ slain_ref_exists() { git -C "$REPO" show-ref --verify -q "refs/slain/$1" 2>/dev/
 
 seed() {
     local id="$1" st="${2:-open}" as="${3:-}"
-    testdb_reset
+    testdb_reset || { printf 'fixture: testdb_reset failed for %s\n' "$id" >&2; exit 1; }
     local line; line="{\"id\":\"$id\",\"title\":\"test bead\",\"status\":\"$st\",\"issue_type\":\"task\",\"labels\":[\"spira\",\"plan\"]"
     [ -n "$as" ] && line="$line,\"assignee\":\"$as\""
     line="$line,\"updated_at\":\"2026-09-09T00:00:00Z\"}"
@@ -107,10 +107,12 @@ make_branch() {
 make_work() {
     local id="$1" br="spira/$1" wt="$SPIRA_RUN/worktree/$1"
     git -C "$REPO" branch -q "$br" main 2>/dev/null || true
-    git -C "$REPO" worktree add -q "$wt" "$br" 2>/dev/null
+    git -C "$REPO" worktree add -q "$wt" "$br" \
+        || { printf 'fixture: worktree add failed for %s\n' "$id" >&2; exit 1; }
     printf '%s\n' "$id" > "$wt/$id.txt"
     git -C "$wt" add "$id.txt"
-    git -C "$wt" commit -q -m "sp-$id: work"
+    git -C "$wt" commit -q -m "sp-$id: work" \
+        || { printf 'fixture: commit failed for %s\n' "$id" >&2; exit 1; }
 }
 
 land() {
