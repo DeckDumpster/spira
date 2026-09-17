@@ -135,6 +135,8 @@ send_branch() {
     # verification is inside spira_destroy_branch, which re-reads the ref after the delete.
     SPIRA_DESTROY_ERR=""
     if ! spira_destroy_branch "$id" "$br" "$REPO" "landed in $LANDREF" sending; then
+        [ "${SPIRA_DESTROY_ERR:-}" = "certified-queued" ] \
+            && { say "SKIP   $id  CERTIFIED/BATCHED — waiting for verdict"; return 0; }
         say "FAILED $id  branch $br survived deletion: ${SPIRA_DESTROY_ERR:-refused, see $SPIRA_REAPLOG}"
         failed=$((failed+1)); return 1
     fi
