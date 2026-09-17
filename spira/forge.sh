@@ -38,7 +38,7 @@ case "$cmd" in
     check-status)
         pr_n="${1:-}"
         rollup_json="$( cd "$repo" && ghq pr view "$pr_n" \
-            --json statusCheckRollup 2>/dev/null )" || rollup_json="{}"
+            --json statusCheckRollup,headRefOid 2>/dev/null )" || rollup_json="{}"
         status="$(printf '%s\n' "${rollup_json:-"{}"}" | python3 -c "
 import json, sys
 try:
@@ -61,6 +61,12 @@ except Exception:
 " 2>/dev/null)"
         status="${status:-pending}"
         printf '%s\n' "$status"
+        head_sha="$(printf '%s\n' "${rollup_json:-"{}"}" | python3 -c "
+import json, sys
+try: print(json.load(sys.stdin).get('headRefOid', ''))
+except: pass
+" 2>/dev/null)"
+        [ -n "${head_sha:-}" ] && printf 'head-sha: %s\n' "$head_sha"
         [ "$status" = "green" ] || [ "$status" = "red" ] || exit 0
         # Green or red: extract the CI run id to fetch annotations.
         run_id="$(printf '%s\n' "${rollup_json:-"{}"}" | python3 -c "
