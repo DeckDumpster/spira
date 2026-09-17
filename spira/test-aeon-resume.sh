@@ -207,5 +207,37 @@ branch_base="$(git -C "$REPO" merge-base "spira/sp-ar-stalebase" origin/main 2>/
     || bad "stale-local-base: branch is cut from fresh origin/main, not stale local main" \
        "merge-base is [$branch_base], wanted fresh origin/main [$fresh_origin]"
 
+# ======================================================================================
+echo
+echo "SLAIN WIP COMMIT — SLAIN_BRIEF must appear when the last commit is a slay wip:"
+# ======================================================================================
+# Plant a normal commit and then a wip salvage commit (the shape slay.sh produces),
+# simulating a bead whose prior session was slain with uncommitted work.
+testdb_reset; seed sp-ar-slain
+bd -C "$SPIRA_DB" set-state sp-ar-slain "branch=spira/sp-ar-slain" >/dev/null 2>&1 || true
+git -C "$REPO" fetch -q origin main 2>/dev/null
+git -C "$REPO" checkout -q -B spira/sp-ar-slain origin/main
+printf 'real work\n' >> "$REPO/f"; git -C "$REPO" commit -qam "sp-ar-slain — the real work"
+printf 'dirty state\n' >> "$REPO/f"
+git -C "$REPO" commit -qam "sp-ar-slain: wip — salvaged at slay (operator halted the session)"
+git -C "$REPO" checkout -q main
+run_aeon
+want "slain: SLAIN_BRIEF present"     "A previous attempt was slain"   "$(cat "$TMP/prompt")"
+want "slain: why in brief"            "operator halted the session"     "$(cat "$TMP/prompt")"
+want "slain: wip review instruction"  "salvaged wip commit"             "$(cat "$TMP/prompt")"
+want "slain: transcript path present" ".log"                            "$(cat "$TMP/prompt")"
+want "slain: commit count in brief"   "commit(s) beyond"                "$(cat "$TMP/prompt")"
+
+# PAIR: a regular prior commit must NOT show SLAIN_BRIEF.
+testdb_reset; seed sp-ar-noslain
+bd -C "$SPIRA_DB" set-state sp-ar-noslain "branch=spira/sp-ar-noslain" >/dev/null 2>&1 || true
+git -C "$REPO" fetch -q origin main 2>/dev/null
+git -C "$REPO" checkout -q -B spira/sp-ar-noslain origin/main
+printf 'normal work\n' >> "$REPO/f"; git -C "$REPO" commit -qam "sp-ar-noslain — normal commit"
+git -C "$REPO" checkout -q main
+run_aeon
+nowant "regular commit: SLAIN_BRIEF absent" \
+    "A previous attempt was slain" "$(cat "$TMP/prompt")"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
