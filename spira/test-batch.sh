@@ -259,5 +259,20 @@ printf 'pr=99\nhead=abc\nbase=%s\nmembers=\nopened=0\nbranch=spira/queue/fake\n'
 batch "$REPONAME" > /dev/null
 is "open batch blocks second" "99" "$(batch_pr)"
 
+# =============================================================================
+# 6. LANDING'S RECORD SHAPE: landing.sh certifies with no trailing newline, and
+# read returns non-zero at EOF even after filling its variables. Every branch
+# landing certified was skipped while only queue.sh submit's lines were seen.
+# =============================================================================
+clean_case
+seed
+for i in $(seq 1 8); do
+    branch "sp-bt6-$i"
+    printf '%s %s %s %s' CERTIFIED "$(git -C "$REPO" rev-parse "spira/sp-bt6-$i")" "$(date +%s)" "" \
+        > "$LANDSTATE/sp-bt6-$i"
+done
+batch "$REPONAME" > /dev/null
+is "landing-shaped records: PR opened" "1" "$(batch_pr)"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
