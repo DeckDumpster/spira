@@ -35,15 +35,15 @@ reason=""
 
 for _script in landing.sh batch.sh verdict.sh slay.sh world.sh deploy.sh activate.sh promote.sh; do
     case "$cmd" in
-        *"$_script"*) reason="aeons may not call $_script (sp-kz8ob: landing and batch handle forge writes; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"; break ;;
+        *"/$_script"*) reason="aeons may not call $_script (sp-kz8ob: landing and batch handle forge writes; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"; break ;;
     esac
 done
 
 if [ -z "$reason" ]; then
     case "$cmd" in
-        *"queue.sh"*)
+        *"/queue.sh"*)
             case "$cmd" in
-                *"queue.sh stats"*) ;;
+                *"/queue.sh stats"*) ;;
                 *) reason="aeons may not operate the queue (sp-kz8ob: queue.sh stats is the only read-only subcommand; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
             esac ;;
     esac
