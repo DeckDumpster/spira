@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# layout.sh — build the cockpit: session left (full height), health down the right.
+# layout.sh — build the cockpit: session top-left, mail bottom-left, health down the right.
 #
 #   layout.sh up       create/repair the dashboard pane (idempotent)
 #   layout.sh down     remove it, leaving the session pane full-height
@@ -10,11 +10,11 @@
 #   layout.sh up --window <target>   apply to a different tmux window
 #
 #                +------------------------------------------+---------------+
+#                |   claude session                         |               |
+#                |   (flips to hunk for review)             |  ops health   |
 #                |                                          |               |
-#                |   claude session                         |  ops health   |
-#                |   (flips to hunk for review)             |               |
-#                |   full height                            |  full height  |
-#                |                                          |  ~33% wide    |
+#                +------------------------------------------+  full height  |
+#                |   mail (COCKPIT_MAIL), COCKPIT_BOTTOM_PCT |  ~33% wide    |
 #                +------------------------------------------+---------------+
 #                 <-------- 100% - COCKPIT_RIGHT_PCT -------> <-- RIGHT_PCT ->
 #
@@ -93,6 +93,12 @@ _CONF_PREFIX=""
 CWD="$COCKPIT_CWD"
 # COCKPIT_RIGHT_PCT controls how wide the full-height ops column is, as a % of the window.
 RIGHT_PCT="$COCKPIT_RIGHT_PCT"
+BOTTOM_PCT="$COCKPIT_BOTTOM_PCT"
+# The mail pane exists only when its client does: a pane whose program is missing dies at once,
+# and ensure would respawn it every minute.
+MAIL_CMD="${COCKPIT_MAIL:-}"
+MAIL_EXE="${MAIL_CMD%% *}"
+[ -n "$MAIL_EXE" ] && command -v "$MAIL_EXE" >/dev/null 2>&1 || MAIL_CMD=""
 mkdir -p "$RUN"
 
 # Default to the window this script was invoked from; fall back to the claude window.
@@ -149,7 +155,7 @@ apply_mouse_mode() {
 # `health`, so the next ensure found no untagged pane, declared the session pane gone, and
 # `up` killed the live session along with the dashboards — every other minute. The executable
 # is argv[0]; when that is a shell, the script it runs is argv[1].
-pane_role() {   # pane_role <pid> -> health on stdout, nothing when neither
+pane_role() {   # pane_role <pid> -> health|mail on stdout, nothing when neither
     local pid="$1" q exe script
     local -a argv
     for q in "$pid" $(pgrep -P "$pid" 2>/dev/null); do
@@ -161,6 +167,9 @@ pane_role() {   # pane_role <pid> -> health on stdout, nothing when neither
         esac
         if [[ "$exe" == */cockpit/health.sh ]] || [[ "$script" == */cockpit/health.sh ]]; then
             echo health; return 0
+        fi
+        if [ -n "$MAIL_CMD" ] && [ "${exe##*/}" = "${MAIL_EXE##*/}" ]; then
+            echo mail; return 0
         fi
     done
 }
@@ -196,11 +205,11 @@ tagged()     { tmux list-panes -t "$WINDOW" -F '#{@cockpit} #{pane_id}' 2>/dev/n
 
 # every tagged dashboard pane id, one per line (catches duplicates from a bad run).
 all_tagged() { tmux list-panes -t "$WINDOW" -F '#{@cockpit} #{pane_id}' 2>/dev/null \
-                 | awk 'NF==2 && $1=="health" {print $2}'; }
+                 | awk 'NF==2 && ($1=="health" || $1=="mail") {print $2}'; }
 
 # untagged panes — the session pane, plus anything the operator split off himself.
 untagged()   { tmux list-panes -t "$WINDOW" -F '#{@cockpit} #{pane_id}' 2>/dev/null \
-                 | awk '{ if (NF==1) print $1; else if ($1!="health") print $2 }'; }
+                 | awk '{ if (NF==1) print $1; else if ($1!="health" && $1!="mail") print $2 }'; }
 
 # The session pane: this script's own pane when it is in this window (an agent running
 # `up` from the cockpit is the normal case), else the first untagged pane.
@@ -227,7 +236,7 @@ heal_log() {
 # find the break twice and repair it twice.
 cockpit_windows() {
     tmux list-panes -a -F '#{window_id}|#{session_name}:#{window_index}|#{@cockpit}' 2>/dev/null \
-        | awk -F'|' '$3=="health" { if (!seen[$1]++) print $2 }'
+        | awk -F'|' '$3=="health" || $3=="mail" { if (!seen[$1]++) print $2 }'
 }
 
 # A repair that fails repeatedly must not be retried on every poll.
@@ -405,6 +414,12 @@ split_health() {   # split_health <any pane in the left column> -> pane id on st
         "${_CONF_PREFIX}$COCK/health.sh loop"
 }
 
+# The mail pane is cut from the session pane, AFTER health, so health keeps the full height.
+split_mail() {     # split_mail <session pane> -> pane id on stdout
+    tmux split-window -P -F '#{pane_id}' -d -v -l "${BOTTOM_PCT}%" -t "$1" -c "$CWD" \
+        "${_CONF_PREFIX}$MAIL_CMD"
+}
+
 geom() { tmux display-message -p -t "$1" "$2" 2>/dev/null; }
 
 # HEALTH MUST BE FULL WINDOW HEIGHT. A half-height health pane is on the right, the right
@@ -443,14 +458,18 @@ repair_dashboards() {
         tmux kill-pane -t "$p" 2>/dev/null || true
     done
 
-    local h
+    local h m
     h="$(tagged health)"
-    [ -n "$h" ] && { normalize_geometry; return 0; }
-
-    heal_log "$WINDOW: health pane gone — respawning as the full-height right column"
-    h="$(split_health "$sess")" || return 1
-    [ -n "$h" ] && tag_pane "$h" health
+    if [ -z "$h" ]; then
+        heal_log "$WINDOW: health pane gone — respawning as the full-height right column"
+        h="$(split_health "$sess")" || return 1
+        [ -n "$h" ] && tag_pane "$h" health
+    fi
     normalize_geometry
+    if [ -n "$MAIL_CMD" ] && [ -z "$(tagged mail)" ]; then
+        heal_log "$WINDOW: mail pane gone — respawning under the session"
+        m="$(split_mail "$sess")" && [ -n "$m" ] && tag_pane "$m" mail
+    fi
     tmux select-pane -t "$sess" 2>/dev/null || true
 }
 
@@ -490,8 +509,13 @@ up)
     hea=$(split_health "$sess") \
         || { echo "cockpit: health split failed" >&2; exit 1; }
     tag_pane "$hea" health
+    mai=""
+    if [ -n "$MAIL_CMD" ]; then
+        mai=$(split_mail "$sess") || { echo "cockpit: mail split failed" >&2; exit 1; }
+        tag_pane "$mai" mail
+    fi
 
-    echo "cockpit: up in $WINDOW (session $sess · health $hea)"
+    echo "cockpit: up in $WINDOW (session $sess · health $hea${mai:+ · mail $mai})"
     # window-size largest so the operator's terminal (always the tallest) governs the cockpit
     # window height regardless of which client was most recently active. See detach_idle_clients
     # for the full rationale.
@@ -594,6 +618,9 @@ status)
     echo "session:   ${sess:-MISSING — run 'layout.sh up' to restore it}"
     p="$(tagged health)"
     printf '%-10s %s\n' "health:" "${p:-absent}"
+    p="$(tagged mail)"
+    if [ -z "$MAIL_CMD" ]; then p="off (COCKPIT_MAIL is empty or not on PATH)"; fi
+    printf '%-10s %s\n' "mail:" "${p:-absent}"
     # The collector is not this script's to report on: systemctl is the authority,
     # and a second opinion here would drift. FROM $SPIRA_RUN, NOT DERIVED — the same
     # reason health.sh reads it from there.
