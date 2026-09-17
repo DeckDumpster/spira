@@ -1361,6 +1361,7 @@ cleanruns_reset() { mkdir -p "$STATE" 2>/dev/null; printf '0\n' > "$(cleanruns_f
 
 # _suite_auto_quarantine <suite> <reason>
 # Writes suite-state and tries to file a bead. Fails closed: write fails → suite stays active.
+# CRITICAL: fails if bead cannot be filed (sp-zmd3u: quarantine without accountability is forbidden).
 _suite_auto_quarantine() {
     local suite="$1" reason="$2"
     local repo; repo="$(cd "$HERE/.." && pwd -P)"
@@ -1374,11 +1375,15 @@ _suite_auto_quarantine() {
             | tail -1 | tr -d '[:space:]')" || bead_id=""
         case "${bead_id:-}" in ''|*[!A-Za-z0-9-]*|-*|*-) bead_id="" ;; esac
     fi
+    [ -n "${bead_id:-}" ] || {
+        printf 'auto-quarantine: %s quarantine failed: no bead filed\n' "$suite" >&2
+        return 1
+    }
     suite_state_write "$statefile" "$suite" quarantined "${bead_id:-}" "$reason" || return 1
     cleanruns_reset "$suite"
-    printf 'auto-quarantine: %s quarantined (bead: %s)\n' "$suite" "${bead_id:-(none filed)}"
+    printf 'auto-quarantine: %s quarantined (bead: %s)\n' "$suite" "$bead_id"
     printf '## Note\n%s was automatically quarantined.\n\nReason: %s\nBead: %s\n' \
-        "$suite" "$reason" "${bead_id:-(none filed)}" \
+        "$suite" "$reason" "$bead_id" \
     | SPIRA_MAIL_LINT_CONSIDERED="auto-quarantine" \
       bash "$HERE/mail.sh" send operator \
         --from "Suite hygiene <hygiene@spira>" \
@@ -1394,6 +1399,11 @@ cmd_observe_flake() {
     local count threshold
     count="$(flakeobs_in_window "$suite")"
     threshold="${SPIRA_FLAKE_QUARANTINE_AT:-2}"
+    [ "$threshold" -gt 1 ] || {
+        printf 'observe-flake: %s: threshold %s <= 1 is forbidden (sp-zmd3u: quarantine requires real evidence)\n' \
+            "$suite" "$threshold" >&2
+        return 1
+    }
     printf 'observe-flake: %s: %s observation(s) in window (threshold %s)\n' \
         "$suite" "$count" "$threshold"
     [ "$count" -ge "$threshold" ] || return 0
@@ -1402,7 +1412,7 @@ cmd_observe_flake() {
     if [ "$(suite_state_of "$statefile" "$suite")" = "quarantined" ]; then
         printf 'observe-flake: %s is already quarantined\n' "$suite"
     else
-        _suite_auto_quarantine "$suite" "auto: $count flake observations in the window"
+        _suite_auto_quarantine "$suite" "auto: $count flake observations in the window" || return 1
     fi
 }
 
