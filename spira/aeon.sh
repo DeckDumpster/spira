@@ -828,6 +828,7 @@ print(d[0].get("status","") if d else "")' 2>/dev/null)"
     # bead ghost: removing the pidfile early caused a bead whose aeon was mid-teardown to be
     # ghost-reclaimed when its lease expired during a long fixture_drop. (sp-nc74)
     rm -f "$PIDFILE" "${PIDFILE%.pid}.name"
+    rm -rf "${SPIRA_MAIL:-}/aeon-${BEAD_ID:-}" 2>/dev/null || true
     ledger_done "${SESSION_RC:-$rc}" "${st:-?}"
     # A CLOSED BEAD IS A SUCCEEDED TASK. SESSION_RC is the claude CLI's exit code, held
     # separately because `rc=$?` at trap time reflects the verdict block's LAST COMMAND —
@@ -856,6 +857,15 @@ REQUEUE_CAUSE=""; REQUEUE_WHY=""
 # captures the session and is the only witness to rc=124 in the teardown.
 SESSION_RC=0
 trap cleanup EXIT INT TERM
+
+# Create the aeon's per-claim mailbox for mid-run messages, and export the vars the
+# PostToolUse hook needs to address it.
+if [ -n "${SPIRA_MAIL:-}" ]; then
+    mkdir -p "$SPIRA_MAIL/aeon-$BEAD_ID/new" \
+             "$SPIRA_MAIL/aeon-$BEAD_ID/cur" \
+             "$SPIRA_MAIL/aeon-$BEAD_ID/tmp"
+fi
+export BEAD_ID SPIRA_MAIL="${SPIRA_MAIL:-}"
 
 # ---- heartbeat: LIVENESS LEASE -------------------------------------------------------
 # A fixed 10-minute lease. The trace file growing — even by one byte — renews it in full.
@@ -1571,11 +1581,17 @@ cd "$WORK" || die "worktree missing: $WORK"
 # that puts a fake first on PATH runs the real model against the operator's account,
 # silently and at full cost. That is not hypothetical; it is how this line came to be
 # written. A test overrides SPIRA_AGENT.
+_AEON_SETTINGS="$(python3 -c "
+import json, os
+cmd = os.path.join('$SPIRA_HOME', 'hooks', 'aeon-mail-deliver.sh')
+print(json.dumps({'hooks':{'PostToolUse':[{'hooks':[{'type':'command','command':cmd,'timeout':5}]}]}}))
+" 2>/dev/null)" || _AEON_SETTINGS=""
 printf '%s' "$FULL" | ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
     "${SPIRA_AGENT:-claude}" -p --output-format stream-json --verbose --include-partial-messages \
            --model "${FAYTH_MODEL:-claude-opus-5}" \
            --allowedTools "${FAYTH_TOOLS:-Bash,Read,Edit,Write,Glob,Grep}" \
            --dangerously-skip-permissions \
+           ${_AEON_SETTINGS:+--settings "$_AEON_SETTINGS"} \
     >> "$LOGF" 2>&1
 rc=$?
 SESSION_RC=$rc   # held for cleanup, which sees only $? at the time the trap fires
