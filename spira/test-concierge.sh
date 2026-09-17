@@ -521,6 +521,121 @@ fi
 fi  # systemd guard
 
 echo
+echo "convergence — start and here attach to the live session (acceptance b)"
+
+# (b) start, here, and cockpit.sh while one process holds the id produce no second claude.
+# A mock tmux records every call: TMUX_LOG captures all subcommand args.
+# SEEN TO FAIL FIRST: old code printed "refusing" and exited 1; new code prints "converging"
+# and calls tmux attach.
+
+CONV_TMP="$TMP/conv"; mkdir -p "$CONV_TMP/bin"
+CONV_SID="converge-test-$(date +%s)"
+CONV_SOCK="test-conv-$$"
+printf '%s\n%s\n' "$CONV_SID" "$CONV_TMP" > "$CONV_TMP/concierge-session"
+
+TMUX_LOG="$CONV_TMP/tmux.log"
+cat > "$CONV_TMP/bin/tmux" <<'TMUXEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TMUX_LOG"
+case " $* " in
+    *" has-session "*)   exit 0 ;;
+    *" attach "*)        exit 0 ;;
+    *" kill-server"*)    exit 0 ;;
+    *) /usr/bin/tmux "$@" 2>/dev/null; exit $? ;;
+esac
+TMUXEOF
+chmod +x "$CONV_TMP/bin/tmux"
+
+# POSITIVE CONTROL: no live process → start must NOT converge; tmux attach must NOT appear.
+# SPIRA_PATH prepends the mock directory so conf.sh's PATH reset still finds the mock tmux.
+TMUX_LOG="$CONV_TMP/tmux-no-proc.log" SPIRA_PATH="$CONV_TMP/bin" \
+    PATH="$CONV_TMP/bin:$PATH" SPIRA_RUN="$CONV_TMP" SPIRA_WIKI="$CONV_TMP" \
+    CONCIERGE_SOCKET="$CONV_SOCK" CONCIERGE_SESSION="$CONV_SOCK" SPIRA_CONF="$TMP/no.conf" \
+    bash "$HARNESS/concierge.sh" start 2>/dev/null 1>/dev/null || true
+nowant "without a live process start does not converge" "attach" \
+    "$(cat "$CONV_TMP/tmux-no-proc.log" 2>/dev/null)"
+
+# THE PROPERTY: live process holds the id → start converges.
+bash -c "exec -a claude-resume-${CONV_SID} sleep 30" &
+CONV_PID=$!
+trap 'kill "$CONV_PID" 2>/dev/null; rm -rf "$TMP"' EXIT
+
+CONV_OUT=""
+CONV_OUT="$(TMUX_LOG="$CONV_TMP/tmux.log" SPIRA_PATH="$CONV_TMP/bin" \
+    PATH="$CONV_TMP/bin:$PATH" SPIRA_RUN="$CONV_TMP" SPIRA_WIKI="$CONV_TMP" \
+    CONCIERGE_SOCKET="$CONV_SOCK" CONCIERGE_SESSION="$CONV_SOCK" SPIRA_CONF="$TMP/no.conf" \
+    bash "$HARNESS/concierge.sh" start 2>&1)"
+nowant "start with live pid does not say 'refusing'"  "refusing"   "$CONV_OUT"
+want   "start with live pid says 'converging'"        "converging" "$CONV_OUT"
+want   "and tmux attach was called"                   "attach"     \
+    "$(cat "$CONV_TMP/tmux.log" 2>/dev/null)"
+
+# `here` convergence: live pid → attach, never a second claude.
+# Convergence in `here` is checked before compose_brief, so it runs even without a
+# statute book. SPIRA_PATH ensures the mock tmux survives conf.sh's PATH reset.
+: > "$CONV_TMP/tmux-here.log"
+HERE_OUT=""
+HERE_OUT="$(TMUX_LOG="$CONV_TMP/tmux-here.log" SPIRA_PATH="$CONV_TMP/bin" \
+    PATH="$CONV_TMP/bin:$PATH" SPIRA_RUN="$CONV_TMP" SPIRA_WIKI="$CONV_TMP" \
+    CONCIERGE_SOCKET="$CONV_SOCK" CONCIERGE_SESSION="$CONV_SOCK" SPIRA_CONF="$TMP/no.conf" \
+    bash "$HARNESS/concierge.sh" here 2>&1)"
+nowant "here with live pid does not say 'refusing'"  "refusing"   "$HERE_OUT"
+want   "here with live pid says 'converging'"        "converging" "$HERE_OUT"
+want   "and here called tmux attach"                 "attach"     \
+    "$(cat "$CONV_TMP/tmux-here.log" 2>/dev/null)"
+
+kill "$CONV_PID" 2>/dev/null; wait "$CONV_PID" 2>/dev/null || true
+trap 'rm -rf "$TMP"' EXIT
+
+echo
+echo "cockpit.sh from the session pane shows the concierge (acceptance d)"
+
+# (d) the cockpit session pane shows the concierge after cockpit.sh from nothing.
+# The old behaviour: TMUX set caused "cannot attach from inside a tmux pane" and exit 1.
+# The new behaviour: TMUX set causes a nested attach via concierge.sh attach.
+#
+# A mock concierge.sh records what subcommands were called.
+# SEEN TO FAIL FIRST: the old code exited 1 with "cannot attach" when TMUX was set.
+# After the fix the mock concierge.sh is called with "attach" and cockpit.sh exits 0.
+
+CPANE_TMP="$TMP/cpane"; mkdir -p "$CPANE_TMP"
+CPANE_LOG="$CPANE_TMP/conc.log"
+cat > "$CPANE_TMP/concierge.sh" <<'CONCEOF'
+#!/usr/bin/env bash
+printf 'concierge.sh %s\n' "$1" >> "$CONC_LOG"
+case "${1:-}" in
+    status) exit 0 ;;
+    attach) exit 0 ;;
+    *)      exit 0 ;;
+esac
+CONCEOF
+chmod +x "$CPANE_TMP/concierge.sh"
+
+# Build a minimal conf for cockpit.sh to source. SPIRA_PROD must match SPIRA_HOME so the
+# in-force guard passes. SPIRA_REPO cannot be set via conf file (deliberately absent from
+# conf.sh's settable list), so it is passed as an env var instead.
+CPANE_CONF="$CPANE_TMP/spira.conf"
+cat > "$CPANE_CONF" <<EOF
+SPIRA_PROD = $HERE
+SPIRA_RUN = $CPANE_TMP/run
+SPIRA_WATCHERS = $CPANE_TMP/no-watchers
+EOF
+mkdir -p "$CPANE_TMP/run"
+: > "$CPANE_TMP/no-watchers"
+
+# POSITIVE CONTROL (seen to fail with old code): TMUX set must NOT produce
+# "cannot attach" with the new cockpit.sh. The old code exited 1 here.
+# SPIRA_REPO cannot be set via conf file, so pass it as env var so cockpit.sh
+# finds the mock concierge.sh instead of the real one.
+CPANE_OUT=""; CPANE_RC=0
+CPANE_OUT="$(TMUX=fake_tmux_pane CONC_LOG="$CPANE_LOG" SPIRA_CONF="$CPANE_CONF" \
+    SPIRA_REPO="$CPANE_TMP" bash "$HERE/cockpit.sh" 2>&1)" || CPANE_RC=$?
+nowant "cockpit.sh from pane does not say 'cannot attach'" "cannot attach" "$CPANE_OUT"
+is    "cockpit.sh from pane exits 0"                       0               "$CPANE_RC"
+want  "cockpit.sh from pane calls concierge.sh attach"     "attach"        \
+    "$(cat "$CPANE_LOG" 2>/dev/null)"
+
+echo
 echo "the launcher exports SPIRA_CONCIERGE=1"
 # Verify the launcher the test-startup case wrote (from the "resume — launcher carries the
 # resume flag" section) also exports the concierge flag, without re-running start.

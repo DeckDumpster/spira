@@ -2224,20 +2224,23 @@ case "${1:-}" in
         probe 2>/dev/null
         echo "spira cockpit: keys printed to stdout (not the supervised process)" >&2
     fi
-    # NO-ARGS INVOCATION: attach the operator to the concierge after collecting.
-    # The timer and collect.sh always pass a subcommand, so this path is for the operator.
-    # SPIRA_COCKPIT_NO_ATTACH=1 skips the attach for scripted callers.
-    # A nested attach from inside a tmux pane would leave the operator outside the outer
-    # session — refuse with a clear message rather than silently breaking the session tree.
+    # NO-ARGS INVOCATION: the cockpit session pane IS the concierge. On a plain terminal
+    # (TMUX unset), exec replaces this process with the attach — clean, no shell left behind.
+    # Inside the cockpit session pane (TMUX set), nested tmux is used instead — the outer C-b
+    # still reaches the cockpit server; C-b C-b reaches the concierge session. The operator
+    # types text prompts rather than tmux bindings, so the double-prefix is not the
+    # unusable-pane case. The pane's shell returns when the operator detaches. The concierge
+    # keeps its own tmux socket so the phone's Remote Control address is stable regardless of
+    # which way the operator entered. SPIRA_COCKPIT_NO_ATTACH=1 skips for scripted callers.
     if [ -z "${1:-}" ] && [ -z "${SPIRA_COCKPIT_NO_ATTACH:-}" ]; then
-        if [ -n "${TMUX:-}" ]; then
-            printf 'cockpit: cannot attach from inside a tmux pane — run from a plain terminal\n' >&2
-            exit 1
-        fi
         _concierge="${SPIRA_REPO}/concierge.sh"
         if [ -x "$_concierge" ]; then
             "$_concierge" status >/dev/null 2>&1 || "$_concierge" start || exit 1
-            exec "$_concierge" attach
+            if [ -n "${TMUX:-}" ]; then
+                "$_concierge" attach   # nested: no exec, pane shell survives detach
+            else
+                exec "$_concierge" attach
+            fi
         fi
     fi
     ;;
