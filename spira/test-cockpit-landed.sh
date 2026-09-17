@@ -1,19 +1,9 @@
 #!/usr/bin/env bash
 #
-# test-cockpit-landed.sh — the worked/landed row is 24h, and never-landed means irrecoverable.
+# test-cockpit-landed.sh — the worked/landed row is 24h-scoped; anomaly = closed, branch,
+# no landstate; landing detection uses subject forms only (law-aeon-commits-name-their-bead).
 #
 #   ./test-cockpit-landed.sh
-#
-# THE FAILURE THIS SUITE EXISTS FOR. The "of the N an aeon worked" row was all-time under a
-# "24h" header, so comparing it against the 24h closed/opened counts produced nonsense. And
-# "never landed" counted every closed bead whose id did not appear in a commit, including
-# ones whose branch was still present and queued to land — reporting a healthy landing queue
-# as data loss.
-#
-# THREE STATES, NOT TWO. A closed bead without a commit is awaiting landing if its branch is
-# still present, and never landed only when no commit AND no branch carries it. The latter is
-# the irrecoverable case the figure exists for, and a false alarm on the former displaces the
-# suspicion that would catch a real one (law-alerts-must-be-actionable).
 #
 # covers: spira/cockpit.sh cockpit/health.sh
 # scar: the worked/landed row counted all-time under a 24h header, producing nonsense against scoped counts; and never-landed falsely flagged healthy landing queues as irrecoverable.
@@ -87,9 +77,9 @@ for _id in sp-land sp-wait sp-gone sp-oldd; do
     touch "$RUN/$_id.log"
 done
 
-# sp-land: a commit on the base branch names it → landed.
+# sp-land: a commit on the base branch names it → landed (using <id>: prefix form).
 git -C "$REPO" checkout -q "$BASE_BR"
-git -C "$REPO" commit --allow-empty -m "sp-land fix" -q   # hermetic-ok: fixture commit
+git -C "$REPO" commit --allow-empty -m "sp-land: fix" -q   # hermetic-ok: fixture commit
 
 # sp-wait: a branch exists but no commit on the base branch names it → awaiting landing.
 git -C "$REPO" checkout -q -b spira/sp-wait
@@ -124,14 +114,13 @@ val() { printf '%s' "$out" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 # --- the 24h scoping: sp-oldd is excluded, so 3 beads not 4 ---
 is "SP_CLOSED is 24h-scoped" "3" "$(val SP_CLOSED)"
 
-# --- the three-way classification ---
+# --- landed vs anomaly ---
 is "SP_LANDED counts committed work"              "1" "$(val SP_LANDED)"
-is "SP_AWAITING_LAND counts branch-present work"   "1" "$(val SP_AWAITING_LAND)"
-is "SP_UNLANDED counts irrecoverable only"         "1" "$(val SP_UNLANDED)"
+is "SP_UNLANDED_N counts anomalies only"          "1" "$(val SP_UNLANDED_N)"
 
 # --- positive control: the probe found something ---
 want "output contains SP_AT"             "SP_AT=" "$out"
-want "output contains SP_AWAITING_LAND"  "SP_AWAITING_LAND=" "$out"
+want "output contains SP_UNLANDED_N"     "SP_UNLANDED_N=" "$out"
 
 echo
 printf 'test-cockpit-landed: %d ok, %d fail\n' "$pass" "$fail"

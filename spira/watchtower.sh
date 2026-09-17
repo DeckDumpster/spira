@@ -428,7 +428,7 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
 ### The far end — is anything coming out?
 
   minutes since the last landing      ${since_land}      (last: ${last_land_id:-none recorded})
-  branches finished but not landed    $(g SP_UNLANDED)
+  branches finished but not landed    $(g SP_UNLANDED_N)
   branches done and waiting           $(g SP_BRANCH_DONE)
   $(printf '%-36s' "longest gate wait, $gate_win_label")${gate_wait_disp}   ${oldest_br:-}
   worst no-verdict streak             ${nv_worst}       ${nv_worst_key:-none}
@@ -591,7 +591,7 @@ if snapshot > "${PROMPT_FILE}.tmp" 2>/dev/null && mv -f "${PROMPT_FILE}.tmp" "$P
     # THE MARKER ADVANCES ONLY HERE — after a successful write. A failed write leaves the
     # marker where it was so the next sweep sees the same records rather than losing them.
     printf '%s\n' "$_lapsed_now" > "$LAPSED_MARKER" 2>/dev/null || true
-    log "watchtower: swept — ${since_land}m since the last landing, $(g SP_UNLANDED) unlanded, ${aeons_live} aeons, ${lapsed_count} lapsed"
+    log "watchtower: swept — ${since_land}m since the last landing, $(g SP_UNLANDED_N) unlanded, ${aeons_live} aeons, ${lapsed_count} lapsed"
 else
     rm -f "${PROMPT_FILE}.tmp"
     log "watchtower: could not write the prompt file ($PROMPT_FILE)"
