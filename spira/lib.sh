@@ -4455,6 +4455,32 @@ salvage() {              # salvage <label> <worktree-path> -> 0 saved or nothing
 }
 
 # --------------------------------------------------------------------------------------
+# slain_attempt_brief <repo> <branch> <base-ref> <bead-id> <spira-run> <work-dir>
+# Prints a brief section when the branch's most recent commit is a wip commit from
+# slay.sh. Empty output when no wip commit exists. Called by aeon.sh to tell the next
+# attempt what it is resuming from and where the prior transcript lives.
+# --------------------------------------------------------------------------------------
+slain_attempt_brief() {
+    local repo="$1" branch="$2" base="$3" id="$4" run="$5" work="$6"
+    local last_subj
+    last_subj="$(git -C "$repo" log --format='%s' -n 1 "$branch" 2>/dev/null)" || return 0
+    case "$last_subj" in *": wip — salvaged at slay ("*) ;; *) return 0 ;; esac
+    local slay_why n_prior diffstat slay_time
+    slay_why="${last_subj##*\(}"; slay_why="${slay_why%\)}"
+    n_prior="$(git -C "$repo" rev-list --count "$base..$branch" 2>/dev/null)" || n_prior="?"
+    diffstat="$(git -C "$repo" diff --stat "$base..$branch" 2>/dev/null)"
+    slay_time="$(git -C "$repo" log --format='%ai' -n 1 "$branch" 2>/dev/null)"
+    printf '%s\n\n' "## Prior attempt was slain"
+    printf 'A previous attempt was slain at %s (%s); the branch carries **%s** commit(s) beyond `%s`:\n\n' \
+        "${slay_time:-?}" "${slay_why:-?}" "${n_prior:-?}" "$base"
+    printf '```\n%s\n```\n\n' "${diffstat:-(no changes)}"
+    printf 'The last commit is a salvaged wip commit — review it before building on it:\n\n'
+    printf '    git -C %s log --oneline -1\n\n' "$work"
+    printf 'Prior attempt transcript (read on demand, do not inline):\n\n'
+    printf '    %s/%s.log\n' "$run" "$id"
+}
+
+# --------------------------------------------------------------------------------------
 # spira_destroy_worktree <id> <path> <repo> <why> -> 0 removed or nothing to remove
 # --------------------------------------------------------------------------------------
 spira_destroy_worktree() {

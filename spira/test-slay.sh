@@ -6,8 +6,9 @@
 #   ./test-slay.sh
 #
 # THE PROPERTY UNDER TEST. An operator kills an aeon and the harness must
-# reflect what actually happened: the bead is released, the branch is deleted
-# or parked, uncommitted work is salvaged, and no attempt is charged. Every
+# reflect what actually happened: the bead is released, any uncommitted work is
+# committed as a wip and left on the branch in refs/heads (mode=reopen), and no
+# attempt is charged. The next aeon's brief names the slain attempt. Every
 # absence assertion has a presence assertion beside it so an empty result cannot
 # be mistaken for correct behaviour (law-absence-needs-a-positive-control).
 #
@@ -134,7 +135,7 @@ is  "slay exits 0"             0    "$rc"
 is  "bead is now open"         open "$(status_of sp-s1)"
 is  "bead is unassigned"       ""   "$(assignee_of sp-s1)"
 is  "worktree is gone"         no   "$([ -d "$SPIRA_RUN/worktree/sp-s1" ] && echo yes || echo no)"
-is  "branch is gone"           1    "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-s1 2>/dev/null; echo $?)"
+is  "branch stays in refs/heads" 0  "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-s1 2>/dev/null; echo $?)"
 is  "marker is cleaned up"     no   "$([ -f "$SPIRA_RUN/sp-s1.slain" ] && echo yes || echo no)"
 want "reports slain"            "slain: sp-s1" "$out"
 teardown sp-s1
@@ -195,6 +196,10 @@ is "slay with dirty worktree exits 0" 0 "$rc"
 salvaged="$(ls "$SPIRA_RUN/reaped"/sp-s4.*.patch 2>/dev/null | head -1)"
 if [ -n "$salvaged" ]; then ok "uncommitted changes salvaged to a patch"
 else bad "uncommitted changes salvaged to a patch" "no patch found in $SPIRA_RUN/reaped/"; fi
+_wip_msg="$(git -C "$REPO" log --format='%s' -n 1 spira/sp-s4 2>/dev/null)"
+want "dirty worktree produces wip commit" "wip — salvaged at slay" "$_wip_msg"
+is   "branch stays in refs/heads after dirty slay" 0 \
+     "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-s4 2>/dev/null; echo $?)"
 teardown sp-s4
 
 # ======================================================================================
@@ -209,18 +214,22 @@ seed sp-s5
 make_work sp-s5
 
 out="$(bash "$SLAY" --bead sp-s5 2>&1)"
-is   "branch with unique work is parked" 0 \
+is   "branch with unique work stays in refs/heads" 0 \
+     "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-s5 2>/dev/null; echo $?)"
+is   "branch with unique work is not parked at refs/slain" 1 \
      "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-s5 2>/dev/null; echo $?)"
-want "reports parking"                    "parked" "$out"
+want "reports branch kept"  "kept" "$out"
 teardown sp-s5
 
-# THE PAIR: a branch at main carries nothing worth keeping.
+# THE PAIR: a branch at main carries nothing worth keeping — it is deleted, not kept.
 seed sp-s6
 git -C "$REPO" branch -q spira/sp-s6 main 2>/dev/null
 git -C "$REPO" worktree add -q "$SPIRA_RUN/worktree/sp-s6" spira/sp-s6 2>/dev/null
 
 out="$(bash "$SLAY" --bead sp-s6 2>&1)"
-is     "branch on main is NOT parked" 1 \
+is     "zero-ahead branch is deleted"  1 \
+       "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-s6 2>/dev/null; echo $?)"
+is     "zero-ahead branch is not parked" 1 \
        "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-s6 2>/dev/null; echo $?)"
 nowant "does not report parking"       "parked" "$out"
 teardown sp-s6
@@ -294,6 +303,79 @@ out="$(bash "$SLAY" --bead sp-s8 --keep-work --why "positive control" 2>&1)"; rc
 is   "a real id with a --why still slays"  0    "$rc"
 is   "and the bead is released"            open "$(status_of sp-s8)"
 teardown sp-s8
+
+# ======================================================================================
+# WIP COMMIT — dirty worktree leaves a wip commit on the branch in refs/heads.
+# acceptance (a): slay of a dirty worktree leaves a wip commit on spira/<id> in
+# refs/heads and the bead open.
+# acceptance (c): clean worktree produces no wip commit.
+# ======================================================================================
+echo
+echo "wip commit (dirty worktree — acceptance a):"
+
+seed sp-wip1
+git -C "$REPO" branch -q spira/sp-wip1 main 2>/dev/null || true
+git -C "$REPO" worktree add -q "$SPIRA_RUN/worktree/sp-wip1" spira/sp-wip1 2>/dev/null
+echo "uncommitted" > "$SPIRA_RUN/worktree/sp-wip1/dirty.txt"
+
+out="$(bash "$SLAY" --bead sp-wip1 2>&1)"; rc=$?
+is "slay dirty exits 0"                  0    "$rc"
+is "bead is open"                        open "$(status_of sp-wip1)"
+is "branch stays in refs/heads"          0    "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-wip1 2>/dev/null; echo $?)"
+_wip="$(git -C "$REPO" log --format='%s' -n 1 spira/sp-wip1 2>/dev/null)"
+want "last commit is wip"                "wip — salvaged at slay" "$_wip"
+is   "worktree is gone"                  no   "$([ -d "$SPIRA_RUN/worktree/sp-wip1" ] && echo yes || echo no)"
+teardown sp-wip1
+
+echo
+echo "no wip commit (clean worktree — acceptance c):"
+
+seed sp-wip2
+make_work sp-wip2
+
+out="$(bash "$SLAY" --bead sp-wip2 2>&1)"; rc=$?
+is "slay clean exits 0"                  0    "$rc"
+is "bead is open"                        open "$(status_of sp-wip2)"
+is "branch stays in refs/heads"          0    "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-wip2 2>/dev/null; echo $?)"
+_clean="$(git -C "$REPO" log --format='%s' -n 1 spira/sp-wip2 2>/dev/null)"
+nowant "no wip commit on clean worktree" "wip — salvaged at slay" "$_clean"
+teardown sp-wip2
+
+# ======================================================================================
+# SLAIN BRIEF (acceptance b) — the next summon's brief contains the slain-attempt
+# section with the diffstat and the transcript path.
+# Tests slain_attempt_brief() from lib.sh, which aeon.sh calls on each summon.
+# ======================================================================================
+echo
+echo "slain brief (next summon — acceptance b):"
+
+seed sp-wip3
+git -C "$REPO" branch -q spira/sp-wip3 main 2>/dev/null || true
+git -C "$REPO" worktree add -q "$SPIRA_RUN/worktree/sp-wip3" spira/sp-wip3 2>/dev/null
+echo "some work" > "$SPIRA_RUN/worktree/sp-wip3/work.txt"
+git -C "$SPIRA_RUN/worktree/sp-wip3" add work.txt
+git -C "$SPIRA_RUN/worktree/sp-wip3" commit -q -m "sp-wip3: real work"
+echo "unfinished" > "$SPIRA_RUN/worktree/sp-wip3/dirty.txt"
+
+bash "$SLAY" --bead sp-wip3 >/dev/null 2>&1  # leaves wip commit on branch
+
+_brief="$(slain_attempt_brief "$REPO" spira/sp-wip3 origin/main sp-wip3 "$SPIRA_RUN" "$SPIRA_RUN/worktree/sp-wip3")"
+if [ -n "$_brief" ]; then ok "brief is non-empty after a slain dirty worktree"
+else bad "brief is non-empty after a slain dirty worktree" "slain_attempt_brief returned nothing"; fi
+want "brief contains slain-attempt heading" "Prior attempt was slain" "$_brief"
+want "brief contains diffstat"              "work.txt"                "$_brief"
+want "brief contains wip note"             "salvaged wip commit"      "$_brief"
+want "brief contains transcript path"       "sp-wip3.log"             "$_brief"
+teardown sp-wip3
+
+# PAIR: no wip commit means no slain brief.
+seed sp-wip4
+make_work sp-wip4
+bash "$SLAY" --bead sp-wip4 >/dev/null 2>&1
+_brief2="$(slain_attempt_brief "$REPO" spira/sp-wip4 origin/main sp-wip4 "$SPIRA_RUN" "$SPIRA_RUN/worktree/sp-wip4")"
+if [ -z "$_brief2" ]; then ok "no slain brief when last commit is not a wip"
+else bad "no slain brief when last commit is not a wip" "brief was non-empty: $_brief2"; fi
+teardown sp-wip4
 
 # ======================================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
