@@ -29,7 +29,7 @@ land_mark() {   # land_mark <id> <state> <tip> [reason]
 
 land_mark_at() {   # land_mark_at <id> <state> <tip> <epoch>
     mkdir -p "$LANDSTATE" 2>/dev/null || return 0
-    printf '%s %s %s' "$2" "${3:-none}" "$4" \
+    printf '%s %s %s\n' "$2" "${3:-none}" "$4" \
         > "$LANDSTATE/$1.$$" 2>/dev/null \
         && mv -f "$LANDSTATE/$1.$$" "$LANDSTATE/$1" 2>/dev/null
 }
