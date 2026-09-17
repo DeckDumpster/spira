@@ -19,6 +19,8 @@
 #   watchd.sh restart [name]        restart the unit behind a watcher
 #   watchd.sh notify                escalate events nobody has drained, and watchers that
 #                                   have been unwell too long; for a timer
+#   watchd.sh prune                 remove lock, cursor and pending files for names not in
+#                                   the manifest; run after retiring a row
 #   watchd.sh health-ids <file>     assert a state file names at least one of our own beads
 #   watchd.sh health-view <prog> <session>
 #                                   assert the view a follower steers matches the one it wants
@@ -1491,6 +1493,52 @@ _wd_escalate() {
         "$2"
 }
 
+# cmd_prune — remove lock, cursor and pending files for names not in the manifest.
+#
+# A retired watcher row leaves these files behind in $SPIRA_RUN/watchd/, and any guard that
+# iterates *.tail.lock rather than reading the manifest then reads the stale lock as a live
+# watcher whose unit is down. Removing them on retirement closes that trap permanently.
+#
+# THE LOG IS NOT PRUNED. It is a record of what the watcher saw — evidence, not state. The
+# three files removed here are the mechanism files: the reader lock, the delivery cursor,
+# and the backlog clock. None of them carry history worth keeping.
+#
+# A MALFORMED MANIFEST IS REFUSED. Pruning on a broken parse could remove files for a watcher
+# that is valid but unreadable from this call; the noise from refusal costs nothing and pruning
+# the wrong things costs a re-latch from the beginning.
+cmd_prune() {
+    local d; d="$(watchd_dir)"
+    if [ ! -d "$d" ]; then
+        echo "watchd: $d does not exist — nothing to prune" >&2
+        return 0
+    fi
+
+    local rows; rows="$(watchd_rows)" || return 1
+    local known=" " name kind rest
+    while IFS='|' read -r name kind rest; do
+        [ -n "$name" ] && known="$known$name "
+    done <<< "$rows"
+
+    local f b n removed=0
+    for f in "$d"/*; do
+        [ -e "$f" ] || continue
+        b="${f##*/}"
+        case "$b" in
+            *.tail.lock) n="${b%.tail.lock}" ;;
+            *.cursor)    n="${b%.cursor}" ;;
+            *.pending)   n="${b%.pending}" ;;
+            *) continue ;;
+        esac
+        case "$known" in *" $n "*) continue ;; esac
+        rm -f "$f"
+        printf 'pruned: %s\n' "$f"
+        removed=$((removed+1))
+    done
+
+    [ "$removed" -gt 0 ] || echo "watchd: prune: nothing to remove"
+    return 0
+}
+
 # SOURCEABLE, AND SILENT WHEN IT IS. `watch-refresh.sh` reads the manifest and restarts a
 # unit through the functions above rather than by running this script, because its whole
 # contract is that a steady pass costs two execs and a fork to parse a file it could parse
@@ -1510,9 +1558,10 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
         tailers)  cmd_tailers ;;
         restart)  shift; cmd_restart "${1:-}" ;;
         notify)   shift; cmd_notify "$@" ;;
+        prune)    cmd_prune ;;
         health-ids) shift; cmd_health_ids "${1:-}" ;;
         health-view) shift; cmd_health_view "${1:-}" "${2:-}" ;;
-        *) echo "usage: watchd.sh manifest|units|keys|exec <name>|status|drain [name] [--all]|peek [name] [--all] [--limit N]|tail <name> [--all] [--takeover]|tailers|restart [name]|notify|health-ids <file>|health-view <program> <session>" >&2
+        *) echo "usage: watchd.sh manifest|units|keys|exec <name>|status|drain [name] [--all]|peek [name] [--all] [--limit N]|tail <name> [--all] [--takeover]|tailers|restart [name]|notify|prune|health-ids <file>|health-view <program> <session>" >&2
            exit 2 ;;
     esac
 fi
