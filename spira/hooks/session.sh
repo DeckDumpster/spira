@@ -95,6 +95,26 @@ if [ "$source" = "clear" ] && [ -x "$SPIRA_HOME/archivist.sh" ]; then
     "$SPIRA_HOME/archivist.sh" now </dev/null >/dev/null 2>&1 &
 fi
 
+# RECORD THE CONCIERGE'S OWN SESSION ID. The launcher sets SPIRA_CONCIERGE=1 so that no other
+# brain session's context reset overwrites the file. Every clear, compact or fork mints a new
+# session id; this hook is the only place the client names it reliably.
+if [ -n "${SPIRA_CONCIERGE:-}" ]; then
+    _hook_record="$(printf '%s' "$payload" | python3 -c '
+import json,sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get("session_id",""))
+    print(d.get("cwd",""))
+except Exception: pass
+' 2>/dev/null)"
+    _csid="$(printf '%s\n' "$_hook_record" | sed -n '1p')"
+    _ccwd="$(printf '%s\n' "$_hook_record" | sed -n '2p')"
+    if [ -n "$_csid" ] && [ -n "$_ccwd" ]; then
+        mkdir -p "$SPIRA_RUN" 2>/dev/null
+        printf '%s\n%s\n' "$_csid" "$_ccwd" > "$SPIRA_RUN/concierge-session" 2>/dev/null || true
+    fi
+fi
+
 # THE SOURCE IS NOT BRANCHED ON FOR THE STATUS OUTPUT, and that is deliberate. A SessionStart
 # carries a `source` of `startup`, `resume`, `clear`, `compact` or `fork`, and every one of
 # them is a context window that has just opened with no Monitor attached — which is the only

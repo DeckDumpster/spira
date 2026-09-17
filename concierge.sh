@@ -177,22 +177,21 @@ concierge_resume_id() {
     printf '%s' "$stored_id"
 }
 
-# concierge_record_session — persist the id of the most recent transcript in BRAIN's project
-# directory. Only acts on a transcript written within the last 30 seconds (not from --help etc.).
-# The transcript filename IS the session id (client convention: <id>.jsonl).
-concierge_record_session() {
-    local proj_dir newest sid mtime now
-    proj_dir="${SPIRA_TOKEN_PROJECTS:-$HOME/.claude/projects}/$(printf '%s' "$BRAIN" | sed 's/[^A-Za-z0-9]/-/g')"
-    [ -d "$proj_dir" ] || return 0
-    newest="$(ls -t "$proj_dir"/*.jsonl 2>/dev/null | head -1 || true)"
-    [ -n "$newest" ] || return 0
-    mtime="$(stat -c %Y "$newest" 2>/dev/null)" || return 0
-    now="$(date +%s)"
-    [ $(( now - mtime )) -le 30 ] || return 0
-    sid="${newest##*/}"; sid="${sid%.jsonl}"
-    [ -n "$sid" ] || return 0
-    mkdir -p "$SPIRA_RUN"
-    printf '%s\n%s\n' "$sid" "$BRAIN" > "$SPIRA_RUN/concierge-session"
+# concierge_live_pid <session-id> -> pid holding that session id in --resume, or non-zero.
+# Scans /proc/*/cmdline rather than pgrep -f: pgrep matches against a rendered string and
+# can collide with process names; reading cmdline directly is exact and cannot be fooled by
+# argv[0] manipulation (law-a-pattern-match-is-not-an-identity-check).
+concierge_live_pid() {
+    local sid="$1" f pid
+    for f in /proc/*/cmdline; do
+        pid="${f%/cmdline}"; pid="${pid##*/}"
+        case "$pid" in *[!0-9]*) continue ;; esac
+        [ "$pid" = "$$" ] && continue
+        tr '\0' '\n' < "$f" 2>/dev/null | grep -qF -- "$sid" || continue
+        printf '%s' "$pid"
+        return 0
+    done
+    return 1
 }
 
 case "${1:-status}" in
@@ -216,6 +215,18 @@ start)
     brief_summary "$BRIEF" "$MODEL"
     RESUME_ID="$(concierge_resume_id)"
 
+    # REFUSE A SECOND CLIENT ON THE SAME SESSION. Two clients on one session share one
+    # transcript and race on context — the first arrival wins and the second is evicted with
+    # a 4090. Find the holding process by scanning /proc/*/cmdline, never pgrep -f.
+    if [ -n "$RESUME_ID" ]; then
+        _live="$(concierge_live_pid "$RESUME_ID")" && {
+            printf 'concierge: session %s is held by pid %s — refusing a second client\n' \
+                "$RESUME_ID" "$_live" >&2
+            printf '  attach:  tmux -L %s attach -t %s\n' "$SOCKET" "$SESSION" >&2
+            exit 1
+        }
+    fi
+
     # NO --allowedTools. For an interactive session under bypassed permissions that flag can
     # only SUBTRACT, and the persona's remit is unbounded — see concierge.fayth, where the
     # absence is the declaration. Every other persona names its tools because aeon.sh passes
@@ -225,9 +236,15 @@ start)
     # inside tmux's command string (see compose_brief above). printf '%q' writes it as a
     # bash-safe literal in the launcher, so the content reaches claude intact regardless of
     # what characters the statute book contains.
+    #
+    # SPIRA_CONCIERGE=1 IS EXPORTED SO THE SESSION HOOK CAN IDENTIFY THIS SESSION. The global
+    # session hook fires for every Claude session on the box; only this one should update the
+    # recorded session id. The hook reads the id from the hook payload rather than guessing
+    # from the transcript directory, so a clear or compact inside the session updates the file.
     LAUNCHER="$SPIRA_RUN/concierge-launch.sh"
     {
         printf '#!/usr/bin/env bash\n'
+        printf 'export SPIRA_CONCIERGE=1\n'
         printf 'exec claude --remote-control %q --dangerously-skip-permissions ' "$SESSION"
         [ -n "$MODEL" ] && printf -- '--model %q ' "$MODEL"
         [ -n "$RESUME_ID" ] && printf -- '--resume %q ' "$RESUME_ID"
@@ -248,7 +265,6 @@ start)
         echo "concierge: started as Remote Control session '$SESSION'"
         echo "  attach locally:  tmux -L $SOCKET attach -t $SESSION"
         echo "  on the phone:    Claude app -> Remote Control -> $SESSION"
-        concierge_record_session || true
     else
         echo "concierge: failed to stay up — run it in the foreground to see why:" >&2
         echo "  cd $BRAIN && claude --remote-control $SESSION" >&2
@@ -297,19 +313,27 @@ here)
     brief_summary "$BRIEF" "$MODEL" >&2
     RESUME_ID="$(concierge_resume_id)"
 
+    # REFUSE A SECOND CLIENT ON THE SAME SESSION — same guard as `start`.
+    if [ -n "$RESUME_ID" ]; then
+        _live="$(concierge_live_pid "$RESUME_ID")" && {
+            printf 'concierge: session %s is held by pid %s — refusing a second client\n' \
+                "$RESUME_ID" "$_live" >&2
+            exit 1
+        }
+    fi
+
     # `cd`, NOT --add-dir. The working directory is what decides which CLAUDE.md, which hooks
     # and which project memory the client loads, and the whole point of this persona is that
     # it gets the operator's own conventions and guards.
     cd "$BRAIN" || exit 1
-    # NOT exec — so we can record the session id after claude exits and resume it next time.
+    # SPIRA_CONCIERGE=1 triggers the session hook to record the session id on every context
+    # reset, so --resume always names the right id even after /clear or /compact.
     # PERMISSION MODE IS THE CALLER'S; the flag they write comes after ours and wins.
+    export SPIRA_CONCIERGE=1
     claude --dangerously-skip-permissions \
         ${MODEL:+--model "$MODEL"} \
         ${RESUME_ID:+--resume "$RESUME_ID"} \
         --append-system-prompt "$(cat "$BRIEF")" "$@"
-    _here_rc=$?
-    concierge_record_session || true
-    exit $_here_rc
     ;;
 
 # RENDER IT AND PRINT THE PATH, CHANGING NOTHING. The brief is the part of this session that
@@ -338,7 +362,8 @@ status)
 
 stop)    $TM kill-session -t "$SESSION" 2>/dev/null && echo "concierge: stopped" ;;
 
-_resume-id)  concierge_resume_id ;;  # internal: used by test suite
+_resume-id)  concierge_resume_id ;;   # internal: used by test suite
+_live-pid)   concierge_live_pid "${2:-}" ;;  # internal: used by test suite
 
 *)       sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

@@ -2,7 +2,8 @@
 #
 # cockpit.sh — gather Spira health into .runtime/spira/cockpit.env for the cockpit pane.
 #
-#   cockpit.sh          one pass, write the snapshot, append a history row, exit
+#   cockpit.sh          collect once, then attach to the concierge (SPIRA_COCKPIT_NO_ATTACH=1 skips)
+#   cockpit.sh once     one pass, write the snapshot, append a history row, exit
 #   cockpit.sh loop     forever, every INTERVAL seconds
 #   cockpit.sh history  append one history row from the snapshot already on disk
 #
@@ -2213,8 +2214,8 @@ sweep_stale_tmps() {
     return 0
 }
 
-case "${1:-once}" in
-once)
+case "${1:-}" in
+""|once)
     if cockpit_may_write; then
         sweep_stale_tmps
         write_snapshot
@@ -2222,6 +2223,22 @@ once)
     else
         probe 2>/dev/null
         echo "spira cockpit: keys printed to stdout (not the supervised process)" >&2
+    fi
+    # NO-ARGS INVOCATION: attach the operator to the concierge after collecting.
+    # The timer and collect.sh always pass a subcommand, so this path is for the operator.
+    # SPIRA_COCKPIT_NO_ATTACH=1 skips the attach for scripted callers.
+    # A nested attach from inside a tmux pane would leave the operator outside the outer
+    # session — refuse with a clear message rather than silently breaking the session tree.
+    if [ -z "${1:-}" ] && [ -z "${SPIRA_COCKPIT_NO_ATTACH:-}" ]; then
+        if [ -n "${TMUX:-}" ]; then
+            printf 'cockpit: cannot attach from inside a tmux pane — run from a plain terminal\n' >&2
+            exit 1
+        fi
+        _concierge="${SPIRA_REPO}/concierge.sh"
+        if [ -x "$_concierge" ]; then
+            "$_concierge" status >/dev/null 2>&1 || "$_concierge" start || exit 1
+            exec "$_concierge" attach
+        fi
     fi
     ;;
 # Appends from the snapshot ALREADY ON DISK, taking no fresh reading. It is how the series is
@@ -2296,5 +2313,7 @@ unsent)
 statute)
     statute_keys
     ;;
-*) echo "usage: cockpit.sh [once|loop|history|now|core|core_detail|unsent|strands|sops|ratelim|sphere|repo_labels|livelock|dup_refs|statute]" >&2; exit 1 ;;
+*) echo "usage: cockpit.sh [once|loop|history|now|core|core_detail|unsent|strands|sops|ratelim|sphere|repo_labels|livelock|dup_refs|statute]" >&2
+   echo "  (no args: collect once then attach to the concierge; SPIRA_COCKPIT_NO_ATTACH=1 skips the attach)" >&2
+   exit 1 ;;
 esac
