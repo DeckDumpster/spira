@@ -63,7 +63,7 @@ SPIRA_LOOM_ADDR SPIRA_LOOM_BUDGET_MS SPIRA_LOOM_CACHE_S SPIRA_LOOM_BIN
 SPIRA_SPIKE_LABEL SPIRA_SPIKE_DIR SPIRA_SPIKE_PATHS
 SPIRA_GROOMER_LABEL SPIRA_SCOPE_LABEL SPIRA_PLAN_LABEL SPIRA_INCIDENT_LABEL
 SPIRA_MAECHEN_LABEL SPIRA_MAECHEN_LANDING_INTERVAL SPIRA_MAECHEN_MAX_GAP_SECONDS SPIRA_MAECHEN_MAX_BEADS SPIRA_MAECHEN_REMEDY_LABEL
-COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_RIGHT_PCT COCKPIT_MOUSE COCKPIT_CWD COCKPIT_SESSIONS COCKPIT_HOST
+COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_MAIL COCKPIT_RIGHT_PCT COCKPIT_MOUSE COCKPIT_CWD COCKPIT_SESSIONS COCKPIT_HOST
 SPIRA_TOWN SPIRA_MIRROR SPIRA_EXPORTER SPIRA_DESIGN SPIRA_WIKI SPIRA_WIKI_HOOK SPIRA_DOLT_DATA
 SPIRA_VIEW SPIRA_VIEW_SESSION
 SPIRA_ALERT_GLOB
@@ -670,11 +670,11 @@ spira_conf_defaults() {
     : "${SPIRA_WIKI:=}"
     : "${COCKPIT_DB:=$SPIRA_DB}"
     : "${COCKPIT_BOTTOM_PCT:=28}"
+    # The mail client in the cockpit's bottom-left pane; empty, or not on PATH, means no pane.
+    : "${COCKPIT_MAIL=aerc}"
     # How wide the ops column is, as a percentage of the window. The dashboard is a
     # FULL-HEIGHT right column, so this is the only dimension it has; COCKPIT_BOTTOM_PCT
-    # divides the left column between the session and the attention panel and no longer
-    # touches it. A column is what lets each section grow to the space it can use instead
-    # of every one of them being cut to a single row.
+    # divides the left column between the session and the mail pane and no longer touches it.
     : "${COCKPIT_RIGHT_PCT:=33}"
 
     # MOUSE MODE, ON BY DEFAULT. The cockpit is panes the operator clicks into --
@@ -1305,7 +1305,7 @@ spira_gate_blames_branch() {   # spira_gate_blames_branch <status> -> 0 if the b
 
 # --------------------------------------------------------------------------------------
 export SPIRA_INSTANCE \
-       SPIRA_DB COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_RIGHT_PCT COCKPIT_MOUSE COCKPIT_CWD COCKPIT_CLIENT_IDLE_SECS SPIRA_PATH SPIRA_GOAL \
+       SPIRA_DB COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_MAIL COCKPIT_RIGHT_PCT COCKPIT_MOUSE COCKPIT_CWD COCKPIT_CLIENT_IDLE_SECS SPIRA_PATH SPIRA_GOAL \
        SPIRA_WORKSPACES SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_RECLAIM_SKIP_LABEL \
        SPIRA_CI_LABEL SPIRA_CI_PARK_MAX \
        SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT SPIRA_INCIDENT_PRIORITY SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY SPIRA_FLAKY_GH_REPO \
