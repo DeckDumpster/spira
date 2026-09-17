@@ -520,7 +520,18 @@ testdb_drop() {
         TESTDB_STARTED_SERVICE=0
         export TESTDB_STARTED_SERVICE
     fi
-    rm -rf "${TESTDB_DIR:-}" "${TESTDB_BASELINE:-}" "${TESTDB_BIN:-}"
+    # Rename first; rm -rf on overlay2 whiteouts blocks ~19s and pushes past Podman's exec timeout.
+    local _d _gone
+    for _d in "${TESTDB_DIR:-}" "${TESTDB_BASELINE:-}" "${TESTDB_BIN:-}"; do
+        [ -n "$_d" ] || continue
+        [ -e "$_d" ]  || continue
+        _gone="${_d}.del-$$"
+        if mv "$_d" "$_gone" 2>/dev/null; then
+            rm -rf "$_gone" &
+        else
+            rm -rf "$_d" &
+        fi
+    done
     TESTDB_NAME=""; TESTDB_DIR=""; TESTDB_BASELINE=""; TESTDB_BIN=""
     TESTDB_MODE=""
     return 0
