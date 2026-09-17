@@ -4,6 +4,7 @@
 #   queue.sh submit <branch>
 #   queue.sh protect [<repo>]
 #   queue.sh stats
+#   queue.sh flush [<repo>]
 #
 # submit: certifies any branch by running the repository's gate. In a queue-mode
 # repository, a green branch is recorded CERTIFIED for the batch builder.
@@ -15,6 +16,9 @@
 # queue-mode repo's base branch via the forge seam (SPIRA_FORGE), then writes a
 # receipt under SPIRA_RUN that doctor.sh checks. Defaults to the home repo.
 #
+# flush: opens a batch now from whatever is CERTIFIED, instead of waiting for
+# SPIRA_QUEUE_BATCH_WAIT or SPIRA_QUEUE_BATCH_MAX. The batch builder's own rules
+# otherwise hold: one open batch per repository, conflicts skipped.
 # stats: reads QUEUE lines from landing.log and prints caught/escaped/cost totals.
 #
 # covers: spira/queue.sh spira/suites.sh spira/conf.sh
@@ -179,9 +183,23 @@ cmd_protect() {
     printf 'queue.sh protect: protection set for repo:%s (branch: %s)\n' "$name" "$base_branch"
 }
 
+cmd_flush() {
+    local name="${1:-}"
+    [ -n "$name" ] || name="$(spira_home_repo)"
+    repo_root "$name" >/dev/null 2>&1 || {
+        printf 'queue.sh flush: no such repo: %s\n' "$name" >&2; return 1
+    }
+    local mode; mode="$(repo_land "$name")"
+    [ "$mode" = queue ] || {
+        printf 'queue.sh flush: repo is not in queue mode (mode=%s)\n' "$mode" >&2; return 1
+    }
+    SPIRA_QUEUE_BATCH_WAIT=0 bash "$HERE/batch.sh" "$name"
+}
+
 case "${1:-}" in
     submit)  shift; cmd_submit "$@" ;;
     protect) shift; cmd_protect "$@" ;;
     stats)   cmd_stats ;;
-    *) printf 'usage: queue.sh submit <branch> | queue.sh protect [<repo>] | queue.sh stats\n' >&2; exit 2 ;;
+    flush)   shift; cmd_flush "$@" ;;
+    *) printf 'usage: queue.sh submit <branch> | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>]\n' >&2; exit 2 ;;
 esac
