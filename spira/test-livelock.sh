@@ -287,6 +287,22 @@ is "unfiled-follow: SP_INVALID_CLOSED=0" "0" \
 
 # ==========================================================================================
 echo
+echo "POSITIVE CONTROL — UNFILED-FOLLOW: 'follow-up' phrase triggers without tracking ref:"
+# ==========================================================================================
+# A second trigger phrase exercises each detector independently; a suite that fires on one
+# phrase only does not catch a regression where another phrase is deleted from the list.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-ll-fu2","title":"follow-up unfiled","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"A follow-up is needed to handle edge cases in large deployments."}
+JSONL
+out="$(run_ll)"
+want  "follow-up phrase: UNFILED-FOLLOW row" "UNFILED-FOLLOW" "$out"
+want  "follow-up phrase: bead id in row"     "sp-ll-fu2"      "$out"
+is "follow-up phrase: SP_UNFILED_FOLLOW=1" "1" \
+   "$(printf '%s\n' "$out" | sed -n 's/^SP_UNFILED_FOLLOW=//p' | head -1)"
+
+# ==========================================================================================
+echo
 echo "NEGATIVE CONTROL — UNFILED-FOLLOW: follow-on phrase WITH a bead id is not flagged:"
 # ==========================================================================================
 # A close reason that says "builders should add X, tracked as sp-foo" has handed off
