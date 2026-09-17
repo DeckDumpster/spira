@@ -1195,6 +1195,20 @@ fi
 # operator's own sessions. A lane takes the NEXT slot; it does not add one.
 LANE_FAYTHS="$(spira_lane_fayths)"
 [ -n "$LANE_FAYTHS" ] && log "CHECK7 lanes (${SPIRA_LANES:-none} declared): $LANE_FAYTHS"
+# LANE ROTATION: rotate the evaluation order so all lanes get equal access to the
+# collective cap over successive passes. State: the last summoned lane fayth name.
+_lane_rr="$SPIRA_RUN/lane-round-robin"
+_lane_last="$(cat "$_lane_rr" 2>/dev/null)"
+if [ -n "$_lane_last" ] && [ -n "$LANE_FAYTHS" ]; then
+    _lbefore="" _lafter="" _lfound=0
+    for _lf in $LANE_FAYTHS; do
+        if [ "$_lfound" = 1 ]; then _lafter="$_lafter $_lf"
+        elif [ "$_lf" = "$_lane_last" ]; then _lbefore="$_lbefore $_lf"; _lfound=1
+        else _lbefore="$_lbefore $_lf"
+        fi
+    done
+    LANE_FAYTHS="${_lafter# }${_lbefore:+ }${_lbefore# }"
+fi
 # WHEN INDIVIDUAL BD CALLS ARE SLOW, a partition the pass did not reach is absent from
 # the log — absent looks identical to "nothing ready" in strand.sh. Track elapsed time
 # and log remaining fayths as not-evaluated when the budget runs out so strand.sh can
@@ -1208,6 +1222,7 @@ for f in $LANE_FAYTHS; do
     fi
     if summon_fayth "$f"; then
         act "summoned a $f lane aeon"
+        printf '%s' "$f" > "$_lane_rr"
     fi
 done
 
