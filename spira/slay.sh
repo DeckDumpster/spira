@@ -221,7 +221,7 @@ bdq update "$ID" --assignee "" --force >/dev/null 2>&1 || bdq update "$ID" --ass
 # uncommitted work in it, at the moment that aeon has just been killed.
 repo_name="$(bead_repo "$ID" 2>/dev/null)"; repo=""
 [ -n "$repo_name" ] && repo="$(repo_root "$repo_name" 2>/dev/null)"
-br="spira/$ID"; wt="$SPIRA_RUN/worktree/$ID"; tip=""; nuked=""; saved=""
+br="spira/$ID"; wt="$SPIRA_RUN/worktree/$ID"; tip=""; nuked=""; saved=""; kept_msg=""; branch_kept=0
 if [ -n "$repo" ] && git -C "$repo" show-ref --verify -q "refs/heads/$br"; then
     tip="$(git -C "$repo" rev-parse --short "$br")"
 fi
@@ -241,6 +241,23 @@ elif [ -n "$repo" ]; then
         else
             say "work: could not salvage $wt — leaving it in place"; fail=1
         fi
+        # WIP COMMIT: commit any remaining uncommitted work onto the branch before the
+        # worktree goes. The patch above is the belt-and-braces copy; the commit is the
+        # primary record — it is part of the git history and named in the next aeon's brief.
+        # Runs regardless of salvage outcome so the commit is independent of the patch.
+        if git -C "$wt" status --porcelain 2>/dev/null | grep -q .; then
+            git -C "$wt" add -A >/dev/null 2>&1 || true
+            if GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-spira-slay}" \
+               GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-slay@spira.local}" \
+               GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-spira-slay}" \
+               GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-slay@spira.local}" \
+               git -C "$wt" commit -q -m "$ID: wip — salvaged at slay ($WHY)" >/dev/null 2>&1; then
+                tip="$(git -C "$repo" rev-parse --short "$br" 2>/dev/null || echo ?)"
+                say "work: uncommitted changes committed as wip on $br (now at ${tip:-?})"
+            else
+                say "work: could not make wip commit on $br — the patch is the backup"
+            fi
+        fi
         if [ "$fail" = 0 ]; then
             if spira_destroy_worktree "$ID" "$wt" "$repo" "slain: $WHY"; then
                 say "work: worktree $wt removed"
@@ -250,41 +267,39 @@ elif [ -n "$repo" ]; then
         fi
     fi
     if [ -n "$tip" ] && [ "$fail" = 0 ]; then
-        # PARK THE TIP UNDER A REAL REF BEFORE DELETING THE BRANCH, whenever it carries work
-        # the base does not already have. "The reflog keeps it ~30 days" was true and was not
-        # enough: on 2026-09-07 slaying sp-ee4 left commit 4557385 — a finished feature, 758
-        # insertions across 8 files with its own suite — reachable from nothing but the
-        # reflog, which no tool in this harness reads, no `git log --all` shows, and `gc`
-        # eventually collects. It was recovered only because an Ops aeon went looking at
-        # unlanded branches an hour later and noticed a dangling commit.
-        #
-        # refs/slain/<id> is a real ref: it survives gc, `git branch -a --contains` finds it,
-        # and it is out of refs/heads so nothing here mistakes it for live work. Deleting it
-        # is then a deliberate act by someone who has looked, which is the whole point.
-        #
-        # ONLY WHEN THERE IS SOMETHING TO KEEP. A branch whose commits are already on the base
-        # is exactly what the Sending reaps every pass; parking those would fill the namespace
-        # with refs nobody will ever read and teach everyone to ignore it.
         parked=""
         if base="$(spira_landref "$repo" 2>/dev/null)"; then
-            # A zero-ahead branch shares its tip with the base and has nothing to preserve.
-            # content_landed returns non-zero for zero-ahead (law-absence-needs-a-positive-control),
-            # so without this check a branch at main would be incorrectly parked (sp-ru7e5).
             ahead="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo 0)"
-            if [ "${ahead:-0}" -gt 0 ] && ! content_landed "$repo" "$br" "$base" 2>/dev/null; then
-                if git -C "$repo" update-ref "refs/slain/$ID" "$br" 2>/dev/null; then
-                    parked="refs/slain/$ID"
-                    say "work: $br carries work $base does not — parked at $parked"
-                else
-                    # A parking failure is not a licence to delete: the ref is the only durable
-                    # copy, so without it the deletion is the loss this block exists to prevent.
-                    say "work: could not park $br at refs/slain/$ID — REFUSING to delete it"
-                    fail=1
+            if [ "$MODE" = reopen ] && [ "${ahead:-0}" -gt 0 ]; then
+                # Branch has commits the base does not — leave it in refs/heads so the next
+                # attempt resumes from it rather than starting from the base. The wip commit
+                # (if any) is part of that history and the next aeon's brief names it.
+                kept_msg="branch $br kept in refs/heads at $tip for the next attempt"
+                say "work: $kept_msg"
+                branch_kept=1
+            else
+                # mode=close, OR branch is zero-ahead (nothing to resume). Park unique work
+                # first so refs/slain holds the history before we delete refs/heads.
+                if [ "${ahead:-0}" -gt 0 ] && ! content_landed "$repo" "$br" "$base" 2>/dev/null; then
+                    # refs/slain/<id> survives gc and is out of refs/heads so nothing treats
+                    # it as live work. Deletion without it is the loss this block prevents.
+                    if git -C "$repo" update-ref "refs/slain/$ID" "$br" 2>/dev/null; then
+                        parked="refs/slain/$ID"
+                        say "work: $br carries work $base does not — parked at $parked"
+                    else
+                        say "work: could not park $br at refs/slain/$ID — REFUSING to delete it"
+                        fail=1
+                    fi
                 fi
             fi
+        elif [ "$MODE" = reopen ] && [ -n "$tip" ]; then
+            # Cannot determine ahead count — default to keeping rather than deleting.
+            kept_msg="branch $br kept in refs/heads at $tip (cannot check ahead count)"
+            say "work: $kept_msg"
+            branch_kept=1
         fi
     fi
-    if [ -n "$tip" ] && [ "$fail" = 0 ]; then
+    if [ "$branch_kept" = 0 ] && [ -n "$tip" ] && [ "$fail" = 0 ]; then
         if spira_destroy_branch "$ID" "$br" "$repo" "slain: $WHY" slain; then
             nuked="branch $br deleted at $tip${parked:+, kept at $parked}"; say "work: $nuked"
         else
@@ -297,7 +312,7 @@ fi
 
 # ---- 4b. the rest of the bead ------------------------------------------------------------
 if [ -n "$nuked" ]; then bdq label remove "$ID" "branch:$br" >/dev/null 2>&1 || true; fi
-note="Slain by the operator: $WHY. Aeon ${name:-?}${pid:+ (pid $pid)} stopped${unit:+ via $unit}. ${nuked:-work kept}${saved:+; uncommitted changes salvaged to $saved}. No attempt charged."
+note="Slain by the operator: $WHY. Aeon ${name:-?}${pid:+ (pid $pid)} stopped${unit:+ via $unit}. ${nuked:-${kept_msg:-work kept}}${saved:+; uncommitted changes salvaged to $saved}. No attempt charged."
 st="$(status_of)"
 case "$MODE" in
     close)  # MARK THE DROP BEFORE CLOSING. An operator close means "this work is not going to
@@ -333,6 +348,6 @@ print("bead: %s status=%s assignee=%s labels=%s" % (b.get("id"), b.get("status")
 # ---- 6. verify -------------------------------------------------------------------------
 [ -z "$pid" ] || [ ! -d "/proc/$pid" ] || fail=1
 ls "$SPIRA_RUN"/aeon-*-"$ID".pid >/dev/null 2>&1 && { say "verify: a pid file for $ID remains"; fail=1; }
-[ "$KEEP" = 1 ] || [ -z "$repo" ] || ! git -C "$repo" show-ref --verify -q "refs/heads/$br" || { say "verify: $br still exists"; fail=1; }
+[ "$KEEP" = 1 ] || [ -z "$repo" ] || [ "$branch_kept" = 1 ] || ! git -C "$repo" show-ref --verify -q "refs/heads/$br" || { say "verify: $br still exists"; fail=1; }
 [ "$fail" = 0 ] && say "slain: $ID" || say "slay: INCOMPLETE for $ID — see above"
 exit "$fail"

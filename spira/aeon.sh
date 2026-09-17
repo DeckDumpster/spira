@@ -1080,6 +1080,11 @@ specific problem — do not redo work that is already committed."
 esac
 unset _n_prior _prior_log
 
+# SLAIN_BRIEF — when the last commit on the branch is a wip from slay.sh, tell the
+# model explicitly so it knows the prior attempt was stopped by the operator, not by
+# a work failure. The transcript path is for on-demand reading; it must never be inlined.
+SLAIN_BRIEF="$(slain_attempt_brief "$REPO" "$BRANCH" "$BASE" "$BEAD_ID" "$SPIRA_RUN" "$WORK")"
+
 # ---- the assigned worktree, exported for the commit guard ----------------------------
 # SPIRA_WORK is the canonical path of this aeon's worktree. Exported HERE, after the
 # worktree path is fully settled (WORK may be redirected above when a branch is already
@@ -1501,6 +1506,7 @@ $STATUTES
 $PROMPT
 $DIRTY_BRIEF
 $RESUME_BRIEF
+$SLAIN_BRIEF
 $ALREADY_DONE_BRIEF
 $CLOSE_BRIEF
 $REBASE_BRIEF"
