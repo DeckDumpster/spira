@@ -423,7 +423,7 @@ REASON
         # No probe bead found after re-derive and idempotent check: CREATE it.
         # The create is itself the write probe for this pass.
         probe_out="$(bdq create --title "Auron write probe" --type event -p 0 \
-                       --labels "auron:probe,overseer" \
+                       --labels "auron:probe,overseer,${SPIRA_INCIDENT_LABEL:=incident}" \
                        --body "write-path probe — updated on every Auron pass" \
                        --json 2>&1)"
         PROBE_ID="$(printf '%s' "$probe_out" | python3 -c '
@@ -612,7 +612,7 @@ alert_write() {   # alert_write <key> — create or update the bead. 0 on succes
         # title before the id, so the first id-shaped token in human output is whatever
         # the title happens to contain (law-never-derive-an-id-from-output).
         out="$(bdq create --title "${F_TITLE[$k]}" --type event -p 1 \
-                 --labels "alert,overseer,alert:$k,flaps:${S_FLAPS[$k]}" \
+                 --labels "alert,overseer,alert:$k,flaps:${S_FLAPS[$k]},${SPIRA_INCIDENT_LABEL:=incident}" \
                  --body-file "$LOG_TAIL.body" --json 2>&1)"
         id="$(printf '%s' "$out" | python3 -c '
 import sys, json
