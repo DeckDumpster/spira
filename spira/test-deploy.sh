@@ -1,333 +1,355 @@
 #!/usr/bin/env bash
 #
-# test-deploy.sh — deploy.sh: deployment controller reviews a release unit and deploys
-# or blocks it; landing.sh may never call promote.sh.
+# test-deploy.sh — deploy.sh: fetch release, drain, activate, re-render, health check,
+#                             rollback on failure, --dry-run
 #
-#   ./test-deploy.sh
+# PROPERTIES
+#   1. Self-check: deploy.sh must exist.
+#   2. (a) Basic deploy: latest tag resolves; gh fetches tarball; current points at release.
+#   3. (a) Already-current: refuses (exit 1) if the release is already active.
+#   4. (b) Drain refuses: non-zero drain exit blocks deploy without killing aeons.
+#   5. (c) Rollback: failed health check restores the prior release.
+#   6. (d) Unit re-render: install.sh is called with SPIRA_PROD=$SPIRA_RELEASES/current.
+#   7. (e) Dry-run: --dry-run leaves the releases dir untouched.
 #
-# WHAT THIS SUITE IS FOR
-# ----------------------
-# deploy.sh is the only component that advances the production checkout. Four
-# properties are checked:
+# FAIL-FIRST (law-absence-needs-a-positive-control)
+# Each detector is shown to fire before it is trusted as silent.
 #
-#   1. SELF-CHANGE GUARD: a unit whose diff includes spira/deploy.sh is refused
-#      (exit 1) and production is not advanced.
-#   2. BLOCK: a reviewer verdict of BLOCK is refused (exit 1) and production is
-#      not advanced.
-#   3. SHIP: a reviewer verdict of SHIP results in promotion (exit 0); the
-#      production checkout advances to the release tag.
-#   4. DRY RUN: --dry-run with a SHIP verdict does not advance production.
-#   5. PUBLICATION INVARIANT: landing.sh contains no call to promote.sh or
-#      deploy.sh, so the two-publisher state is unreachable. Asserted against
-#      the code path (grep), not by inspection.
-#
-# POSITIVE CONTROL (law-absence-needs-a-positive-control)
-# -------------------------------------------------------
-# The fake claude shim is verified reachable before the BLOCK and SHIP tests.
-# The systemctl shim is verified reachable before the SHIP test.
-# The self-change check is verified to fire on a unit that contains deploy.sh
-# before the no-self-change path is trusted.
-#
-# FAKE CLAUDE (law-gates-run-in-a-clean-environment)
-# --------------------------------------------------
-# A real claude call is prohibited: it draws on the operator's account and costs
-# money on every run. The fake claude reads FAKE_REVIEW_VERDICT and emits a
-# valid compact stream-json response, identical to the one in test-review.sh.
-#
-# defect: sp-gsmx.5
-# covers: spira/deploy.sh spira/review.sh spira/promote.sh spira/landing.sh
-# covers: spira/release.sh spira/conf.sh spira/lib.sh
+# covers: spira/deploy.sh spira/conf.sh
+# host-reason: mock components in isolated temp dirs; no real systemd, database, or network
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
-
-# ---- test database (real bd, throwaway database) ----------------------------
-# shellcheck disable=SC1090
-. "$HERE/testdb.sh"
-testdb_require test-deploy
-TMP="$(mktemp -d)"
-trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up deploy || { echo "test-deploy: could not build fixture database"; exit 1; }
-
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
-export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-
-# ---- git fixture ------------------------------------------------------------
-# A bare remote with 'trunk' as its default branch (deliberate: a hardcoded
-# 'main' in any reviewed script fails here immediately).
-ORIGIN="$TMP/origin.git"
-REPO="$TMP/repo"
-git init -q --bare -b trunk "$ORIGIN"
-git clone -q "$ORIGIN" "$REPO" 2>/dev/null
-git -C "$REPO" config user.email t@t
-git -C "$REPO" config user.name t
-
-# Initial base commit — BASE_SHA is where production starts.
-printf 'base\n' > "$REPO/f"
-git -C "$REPO" add f
-git -C "$REPO" commit -qm "initial commit"
-git -C "$REPO" push -q origin trunk 2>/dev/null
-BASE_SHA="$(git -C "$REPO" rev-parse HEAD)"
-
-# ---- harness fixture --------------------------------------------------------
-# The harness scripts live in $SH ($TMP/spira). basename "$SH" = "spira", so
-# deploy.sh will compute SELF_PATH = "spira/deploy.sh" — matching the path that
-# the self-change commit adds to the git fixture repo.
-SH="$TMP/spira"
-mkdir -p "$SH"
-for f in deploy.sh review.sh release.sh promote.sh lib.sh conf.sh; do
-    [ -f "$HERE/$f" ] && cp "$HERE/$f" "$SH/"
-done
-chmod +x "$SH/deploy.sh" "$SH/review.sh" "$SH/release.sh" "$SH/promote.sh"
-
-REPO_MAP="$TMP/repo-map"
-# Columns: name | path | land-mode | base | prefix | format
-printf 'fixture | %s | push | origin/trunk | sp | |\n' "$REPO" > "$REPO_MAP"
-
-VERDICTS="$TMP/verdicts"
-mkdir -p "$VERDICTS" "$TMP/run"
-
-# ---- fake claude ------------------------------------------------------------
-# Compact stream-json: '"type":"result"' must appear literally.
-# Python default json.dumps adds spaces after ':', breaking the substring check.
-FAKE_CLAUDE="$TMP/fake-claude"
-cat > "$FAKE_CLAUDE" <<'FAKEEOF'
-#!/usr/bin/env python3
-import json, os, sys
-sys.stdin.read()  # consume the prompt
-verdict = os.environ.get("FAKE_REVIEW_VERDICT", "ship")
-if verdict == "block":
-    result_text = (
-        "VERDICT: BLOCK\n"
-        "FINDING: test-finding in fixture\n"
-        "Synthetic blocking finding for the test suite.\n"
-        "---\n"
-    )
-else:
-    result_text = "VERDICT: SHIP"
-events = [
-    {"type":"system","subtype":"init","session_id":"test",
-     "tools":[],"mcp_servers":[]},
-    {"type":"result","subtype":"success","is_error":False,
-     "result":result_text,"session_id":"test",
-     "total_cost_usd":0.0042,
-     "duration_ms":100,"duration_api_ms":80,"num_turns":1,
-     "usage":{"input_tokens":512,"output_tokens":18,
-              "cache_read_input_tokens":0}},
-]
-for e in events:
-    print(json.dumps(e, separators=(',', ':')))
-FAKEEOF
-chmod +x "$FAKE_CLAUDE"
-
-# ---- fake systemctl ---------------------------------------------------------
-# Records every call; the SHIP test confirms restarts happened (positive control
-# on promote.sh's unit-restart path).
-SCTL_LOG="$TMP/systemctl.log"
-mkdir -p "$TMP/bin"
-printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\n' "$SCTL_LOG" > "$TMP/bin/systemctl"
-chmod +x "$TMP/bin/systemctl"
-
-# ---- helpers ----------------------------------------------------------------
-run_release() {
-    # Stdout: tag name (or nothing). Stderr: "no beads landed" when there is nothing to tag.
-    env -i PATH="$PATH" HOME="$HOME" \
-        SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_REPO_MAP="$REPO_MAP" \
-        SPIRA_REPO="$REPO" \
-        SPIRA_HOME="$SH" \
-        SPIRA_GOAL=sp-goal \
-        SPIRA_ID_PREFIX=sp \
-        bash "$SH/release.sh" "$@"
+ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
+bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+is0()     { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
+not0()    { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero, got 0"; }
+islink()  {
+    if [ -L "$2" ] && [ "$(readlink "$2")" = "$3" ]; then
+        ok "$1"
+    else
+        bad "$1" "wanted symlink $2 -> $3 (got: $(readlink "$2" 2>/dev/null || echo '(missing)'))"
+    fi
 }
 
-# SPIRA_REPO=$REPO so promote.sh can resolve release tags inside the fixture git repo.
-# SPIRA_HOME=$SH so conf.sh knows where the harness scripts live.
-# SPIRA_SYSTEMCTL is the fake so promote.sh's restart calls are captured, not executed.
-run_deploy() {
-    env -i PATH="$PATH" HOME="$HOME" \
-        SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_REPO_MAP="$REPO_MAP" \
-        SPIRA_REPO="$REPO" \
-        SPIRA_HOME="$SH" \
-        SPIRA_HOME_REPO=fixture \
-        SPIRA_GOAL=sp-goal \
-        SPIRA_ID_PREFIX=sp \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_BD="$SPIRA_BD" \
-        SPIRA_AGENT="$FAKE_CLAUDE" \
-        SPIRA_REVIEWER_VERDICTS="$VERDICTS" \
-        SPIRA_REVIEWER_MODEL=claude-test-model \
-        SPIRA_REVIEWER_TIMEOUT=30 \
-        SPIRA_REVIEW_LABEL=review-finding \
-        SPIRA_PROD="$PROD_HOME" \
-        SPIRA_SYSTEMCTL="$TMP/bin/systemctl" \
-        FAKE_REVIEW_VERDICT="${FAKE_REVIEW_VERDICT:-ship}" \
-        bash "$SH/deploy.sh" "$@" 2>&1
-}
+echo "test-deploy.sh"
 
-# ---- build the commit history and cut tags in the right order ---------------
-# SELF_TAG must be cut BEFORE sp-ccc is pushed, so that:
-#   - SELF_TAG's diff includes spira/deploy.sh (the self-change guard)
-#   - SHIP_TAG's diff is ONLY sp-ccc (no deploy.sh)
-printf 'a\n' >> "$REPO/f"; git -C "$REPO" add f
-git -C "$REPO" commit -qm "sp-aaa — first bead"
-printf 'b\n' >> "$REPO/f"; git -C "$REPO" add f
-git -C "$REPO" commit -qm "sp-bbb — second bead"
-mkdir -p "$REPO/spira"
-printf '#!/bin/sh\necho deploy-v1\n' > "$REPO/spira/deploy.sh"
-git -C "$REPO" add spira/deploy.sh
-git -C "$REPO" commit -qm "sp-self — change the deployment controller"
-git -C "$REPO" push -q origin trunk 2>/dev/null
+DEPLOY="$HERE/deploy.sh"
 
-# Cut SELF_TAG now: trunk tip = sp-self commit, includes spira/deploy.sh.
-SELF_TAG="$(run_release cut fixture 2>/dev/null)"
-[ -n "$SELF_TAG" ] || { echo "SETUP FAILED: could not cut self-change release tag"; exit 1; }
-
-# Now push sp-ccc; SHIP_TAG will cover only this commit.
-printf 'c\n' >> "$REPO/f"; git -C "$REPO" add f
-git -C "$REPO" commit -qm "sp-ccc — third bead"
-git -C "$REPO" push -q origin trunk 2>/dev/null
-SHIP_SHA="$(git -C "$REPO" rev-parse HEAD)"
-
-# Cut SHIP_TAG: trunk tip = sp-ccc commit, no deploy.sh change in this diff.
-SHIP_TAG="$(run_release cut fixture 2>/dev/null)"
-[ -n "$SHIP_TAG" ] || { echo "SETUP FAILED: could not cut ship release tag"; exit 1; }
-
-# ---- production checkout ----------------------------------------------------
-# Clone production from REPO and detach at BASE_SHA so promote.sh can
-# fast-forward from a known ancestor to the release tag's commit.
-PROD_ROOT="$TMP/prod"
-PROD_HOME="$PROD_ROOT/spira"   # SPIRA_PROD — a subdir of the git root
-git clone -q "$REPO" "$PROD_ROOT" 2>/dev/null
-git -C "$PROD_ROOT" checkout --detach "$BASE_SHA" >/dev/null 2>&1
-mkdir -p "$PROD_HOME"
-
-prod_head() { git -C "$PROD_ROOT" rev-parse HEAD 2>/dev/null; }
-
-# ======================================================================================
-echo
-echo "positive control — fake claude and systemctl shims are reachable"
-# ======================================================================================
-"$FAKE_CLAUDE" <<< "" | grep -q '"type":"result"' \
-    && ok "fake-claude: emits stream-json" \
-    || bad "fake-claude: emits stream-json" "did not find type:result"
-"$TMP/bin/systemctl" --user restart spira-canary.service 2>/dev/null || true
-want "systemctl shim: records calls" "spira-canary.service" "$(cat "$SCTL_LOG")"
-
-# ======================================================================================
-echo
-echo "1. SELF-CHANGE GUARD — unit containing spira/deploy.sh is refused"
-# ======================================================================================
-prod_before="$(prod_head)"
-out_self="$(run_deploy "$SELF_TAG" 2>&1)" || true
-rc_self=0; run_deploy "$SELF_TAG" >/dev/null 2>&1 || rc_self=$?
-
-want "self-change: refuses with message"        "must not deploy itself"  "$out_self"
-want "self-change: names the changed path"      "deploy.sh"               "$out_self"
-is   "self-change: exits 1"                     "1"                       "$rc_self"
-is   "self-change: production unchanged"        "$prod_before"            "$(prod_head)"
-
-# ======================================================================================
-echo
-echo "2. BLOCK — reviewer returns BLOCK; production is not advanced"
-# ======================================================================================
-prod_before="$(prod_head)"
-> "$SCTL_LOG"
-out_block=""; block_rc=0
-out_block="$(FAKE_REVIEW_VERDICT=block run_deploy "$SHIP_TAG" 2>&1)" || true
-FAKE_REVIEW_VERDICT=block run_deploy "$SHIP_TAG" >/dev/null 2>&1 || block_rc=$?
-
-# Clear the BLOCK verdict so later tests start fresh.
-rm -f "$VERDICTS/$SHIP_TAG.verdict"
-
-is   "block: exits 1"                           "1"                       "$block_rc"
-want "block: says BLOCKED"                      "BLOCKED"                 "$out_block"
-is   "block: production not advanced"           "$prod_before"            "$(prod_head)"
-is   "block: systemctl not called"              ""                        "$(cat "$SCTL_LOG")"
-
-# A finding bead must have been filed (review.sh files findings on BLOCK).
-bead_count="$(env -i PATH="$PATH" HOME="$HOME" \
-    SPIRA_CONF=/nonexistent \
-    SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="$SPIRA_BD" \
-    SPIRA_HOME_REPO=fixture \
-    SPIRA_ID_PREFIX=sp \
-    bash -c '. '"$SH/lib.sh"'; bdjson list --status open --label review-finding --limit 0 2>/dev/null | python3 -c "
-import json,sys
-try:
-    d=json.load(sys.stdin)
-    print(len(d) if isinstance(d,list) else (1 if d else 0))
-except: print(0)
-"')"
-[ "${bead_count:-0}" -ge 1 ] \
-    && ok "block: finding bead filed (count=$bead_count)" \
-    || bad "block: finding bead filed" "got count=${bead_count:-0}, want >=1"
-
-# ======================================================================================
-echo
-echo "3. SHIP — reviewer returns SHIP; production is advanced to the release tag"
-# ======================================================================================
-> "$SCTL_LOG"
-out_ship=""; ship_rc=0
-out_ship="$(FAKE_REVIEW_VERDICT=ship run_deploy "$SHIP_TAG" 2>&1)" || true
-FAKE_REVIEW_VERDICT=ship run_deploy "$SHIP_TAG" >/dev/null 2>&1 || ship_rc=$?
-
-tag_commit="$(git -C "$REPO" rev-parse "${SHIP_TAG}^{commit}" 2>/dev/null)"
-is   "ship: exits 0"                            "0"                       "$ship_rc"
-want "ship: stdout contains ship"               "ship"                    "$out_ship"
-is   "ship: production advanced to tag commit"  "$tag_commit"             "$(prod_head)"
-
-# ======================================================================================
-echo
-echo "4. DRY RUN — --dry-run with SHIP does not advance production"
-# ======================================================================================
-# Reset production to BASE_SHA for this test.
-git -C "$PROD_ROOT" checkout --detach "$BASE_SHA" >/dev/null 2>&1
-rm -f "$VERDICTS/$SHIP_TAG.verdict"
-> "$SCTL_LOG"
-dry_rc=0
-out_dry="$(FAKE_REVIEW_VERDICT=ship run_deploy --dry-run "$SHIP_TAG" 2>&1)" || dry_rc=$?
-
-is   "dry-run: exits 0"                         "0"                       "$dry_rc"
-want "dry-run: reports would promote"           "would promote"           "$out_dry"
-is   "dry-run: production unchanged"            "$BASE_SHA"               "$(prod_head)"
-is   "dry-run: systemctl not called"            ""                        "$(cat "$SCTL_LOG")"
-
-# ======================================================================================
-echo
-echo "5. PUBLICATION INVARIANT — landing.sh has no call to promote.sh or deploy.sh"
-# ======================================================================================
-# This is the code-path assertion. The two-publisher state is unreachable because
-# no call to promote.sh or deploy.sh exists in landing.sh's code. Grepped against
-# the installed landing.sh (not a fixture copy) because the invariant must hold in
-# the code that actually runs (law-a-documented-control-must-exist: the check must
-# be able to fire against something real).
-if grep -qE '\bpromote\.sh\b|\bdeploy\.sh\b' "$HERE/landing.sh" 2>/dev/null; then
-    bad "publication invariant" \
-        "landing.sh contains a call to promote.sh or deploy.sh — two-publisher state reachable"
-else
-    ok "publication invariant: landing.sh has no promote.sh/deploy.sh call"
+# --- PROPERTY 1: self-check ---------------------------------------------------
+if [ ! -x "$DEPLOY" ]; then
+    bad "self-check: deploy.sh must exist and be executable" "missing"
+    printf '\n%d passed, %d failed\n' "$pass" "$fail"; exit 1
 fi
 
-# ======================================================================================
-echo
-echo "6. SUITE SELF-CHECK — suite fails without deploy.sh"
-# ======================================================================================
-rm -f "$SH/deploy.sh"
-rm -f "$VERDICTS/$SHIP_TAG.verdict"
-absent_rc=0; run_deploy "$SHIP_TAG" >/dev/null 2>&1 || absent_rc=$?
-[ "$absent_rc" -ne 0 ] \
-    && ok "self-check: deploy.sh absent causes failure" \
-    || bad "self-check: deploy.sh absent causes failure" "got exit 0, want non-zero"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 
-# ======================================================================================
+RELEASES="$TMP/releases"
+RUN_DIR="$TMP/run"
+BIN="$TMP/bin"
+CALL_LOG="$TMP/calls.log"
+SC_LOG="$TMP/sc.log"
+mkdir -p "$RELEASES" "$RUN_DIR" "$BIN"
+
+NEW_RELEASE="spira-20260917T053803Z"
+NEW_TAG="spira-release-$NEW_RELEASE"
+PRIOR_RELEASE="spira-20260901T000000Z"
+
+# Fake git repo with release tag for "latest" resolution.
+FAKE_REPO="$TMP/repo"
+git init -q "$FAKE_REPO" 2>/dev/null || true
+git -C "$FAKE_REPO" -c user.email=t@t -c user.name=t \
+    commit --allow-empty -q -m "init" 2>/dev/null || true
+git -C "$FAKE_REPO" tag "$NEW_TAG" 2>/dev/null || true
+
+# Mock gh: records calls; creates the tarball file in --dir.
+cat > "$BIN/gh" <<'GHEOF'
+#!/usr/bin/env bash
+printf 'gh %s\n' "$*" >> "${CALL_LOG:-/dev/null}"
+[ "${GH_EXIT:-0}" = "0" ] || exit "${GH_EXIT}"
+_dir=""; _pat=""
+while [ $# -gt 0 ]; do
+    case "$1" in --dir) _dir="$2"; shift 2 ;; --pattern) _pat="$2"; shift 2 ;; *) shift ;; esac
+done
+[ -n "$_dir" ] || exit 1
+mkdir -p "$_dir"
+_name="${_pat%.tar.gz}"
+mkdir -p "$_dir/.stage/$_name/spira"
+printf '# stub\n' > "$_dir/.stage/$_name/spira/sentinel.sh"
+tar -czf "$_dir/$_pat" -C "$_dir/.stage" "$_name" 2>/dev/null
+rm -rf "$_dir/.stage"
+GHEOF
+chmod +x "$BIN/gh"
+
+# Mock world.sh: records calls; exit codes configurable via env.
+cat > "$BIN/world.sh" <<'WEOF'
+#!/usr/bin/env bash
+printf 'world %s\n' "$*" >> "${CALL_LOG:-/dev/null}"
+case "${1:-}" in
+    drain)  exit "${WORLD_DRAIN_EXIT:-0}" ;;
+    resume) exit 0 ;;
+    status) exit "${WORLD_STATUS_EXIT:-0}" ;;
+    *)      exit 0 ;;
+esac
+WEOF
+chmod +x "$BIN/world.sh"
+
+# Mock activate.sh: creates release dir and swaps current symlink.
+cat > "$BIN/activate.sh" <<'AEOF'
+#!/usr/bin/env bash
+printf 'activate %s\n' "$*" >> "${CALL_LOG:-/dev/null}"
+[ "${ACTIVATE_EXIT:-0}" = "0" ] || exit "${ACTIVATE_EXIT}"
+tarball="${*: -1}"
+release_name="$(basename "$tarball" .tar.gz)"
+releases="${SPIRA_RELEASES:?}"
+mkdir -p "$releases/$release_name"
+_tmp="$releases/.current.new.$$"
+ln -s "$release_name" "$_tmp" && mv -T "$_tmp" "$releases/current"
+AEOF
+chmod +x "$BIN/activate.sh"
+
+# Mock install.sh: records SPIRA_PROD value at call time.
+cat > "$BIN/install.sh" <<'IEOF'
+#!/usr/bin/env bash
+printf 'install SPIRA_PROD=%s\n' "${SPIRA_PROD:-UNSET}" >> "${CALL_LOG:-/dev/null}"
+exit "${INSTALL_EXIT:-0}"
+IEOF
+chmod +x "$BIN/install.sh"
+
+# Mock cockpit layout.sh: no-op.
+cat > "$BIN/layout.sh" <<'LEOF'
+#!/usr/bin/env bash
+printf 'layout %s\n' "$*" >> "${CALL_LOG:-/dev/null}"
+exit 0
+LEOF
+chmod +x "$BIN/layout.sh"
+
+# Mock doctor.sh: configurable exit.
+cat > "$BIN/doctor.sh" <<'DEOF'
+#!/usr/bin/env bash
+printf 'doctor\n' >> "${CALL_LOG:-/dev/null}"
+exit "${DOCTOR_EXIT:-0}"
+DEOF
+chmod +x "$BIN/doctor.sh"
+
+# Mock skew.sh: configurable exit.
+cat > "$BIN/skew.sh" <<'SEOF'
+#!/usr/bin/env bash
+printf 'skew %s\n' "$*" >> "${CALL_LOG:-/dev/null}"
+exit "${SKEW_EXIT:-0}"
+SEOF
+chmod +x "$BIN/skew.sh"
+
+# Mock systemctl: records calls; returns a dummy unit for list-units.
+cat > "$BIN/systemctl" <<'SCEOF'
+#!/usr/bin/env bash
+printf 'SC %s\n' "$*" >> "${SC_LOG:-/dev/null}"
+case "$*" in *list-units*) printf 'spira-sentinel-prod.service loaded active running\n' ;; esac
+exit 0
+SCEOF
+chmod +x "$BIN/systemctl"
+
+# ---------------------------------------------------------------------------
+# run_deploy [env-pairs...] -- [deploy args...]
+# ---------------------------------------------------------------------------
+run_deploy() {
+    local extra_env=() deploy_args=() in_args=0
+    for _a in "$@"; do
+        [ "$_a" = "--" ] && { in_args=1; continue; }
+        [ "$in_args" = 1 ] && { deploy_args+=("$_a"); continue; }
+        extra_env+=("$_a")
+    done
+    unset _a in_args
+    > "$CALL_LOG" 2>/dev/null; > "$SC_LOG" 2>/dev/null
+    env -i \
+        "PATH=$BIN:$PATH" \
+        "SPIRA_PATH=$BIN" \
+        "HOME=$HOME" \
+        "SPIRA_HOME=$HERE" \
+        "SPIRA_DB=/nonexistent-spira-db" \
+        "SPIRA_RUN=$RUN_DIR" \
+        "SPIRA_CONF=/nonexistent" \
+        "SPIRA_RELEASES=$RELEASES" \
+        "SPIRA_REPO=$FAKE_REPO" \
+        "SPIRA_INSTANCE=prod" \
+        "SPIRA_DOCTOR=1" \
+        "SPIRA_SYSTEMCTL=$BIN/systemctl" \
+        "SPIRA_WORLD_SH=$BIN/world.sh" \
+        "SPIRA_ACTIVATE_SH=$BIN/activate.sh" \
+        "SPIRA_INSTALL_SH=$BIN/install.sh" \
+        "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
+        "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
+        "SPIRA_SKEW_SH=$BIN/skew.sh" \
+        "CALL_LOG=$CALL_LOG" \
+        "SC_LOG=$SC_LOG" \
+        "GIT_CONFIG_NOSYSTEM=1" \
+        "GIT_AUTHOR_NAME=test" \
+        "GIT_AUTHOR_EMAIL=test@t" \
+        "GIT_COMMITTER_NAME=test" \
+        "GIT_COMMITTER_EMAIL=test@t" \
+        "${extra_env[@]+"${extra_env[@]}"}" \
+        bash "$DEPLOY" "${deploy_args[@]+"${deploy_args[@]}"}" 2>&1
+}
+
+# ==========================================================================
+echo
+echo "PROPERTY 2: basic deploy — latest resolves, gh fetches, current points at release"
+# ==========================================================================
+# FAIL-FIRST: without the tag, "latest" must fail.
+_empty="$TMP/empty-repo"
+git init -q "$_empty" 2>/dev/null || true
+git -C "$_empty" -c user.email=t@t -c user.name=t \
+    commit --allow-empty -q -m "init" 2>/dev/null || true
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_out="$(run_deploy "SPIRA_REPO=$_empty" -- latest 2>&1)"
+_rc=$?
+not0 "fail-first: latest fails with no tags" "$_rc"
+want "fail-first: mentions no tags"         "no spira-release-" "$_out"
+
+# Happy path: deploy latest.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_out="$(run_deploy -- latest 2>&1)"
+_rc=$?
+is0    "latest: exits 0"                "$_rc"
+islink "latest: current -> $NEW_RELEASE" "$RELEASES/current" "$NEW_RELEASE"
+want   "latest: gh download called"     "gh release download" "$(cat "$CALL_LOG")"
+want   "latest: activate called"        "activate"            "$(cat "$CALL_LOG")"
+
+# ==========================================================================
+echo
+echo "PROPERTY 3: already-current refuses without re-activating"
+# ==========================================================================
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$NEW_RELEASE"
+ln -s "$NEW_RELEASE" "$RELEASES/current"
+
+_out="$(run_deploy -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0    "already-current: exits non-zero" "$_rc"
+want    "already-current: says already current" "already current" "$_out"
+islink  "already-current: current unchanged" "$RELEASES/current" "$NEW_RELEASE"
+notwant "already-current: gh not called"    "gh release download" "$(cat "$CALL_LOG")"
+
+# ==========================================================================
+echo
+echo "PROPERTY 4: drain refuses — live aeons are not killed"
+# ==========================================================================
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$PRIOR_RELEASE"
+ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+
+# FAIL-FIRST: verify the SC log detects a stop-aeon call if it happens.
+printf 'SC --user stop spira-aeon-abc-prod.service\n' > "$SC_LOG"
+if grep -q 'stop spira-aeon-' "$SC_LOG"; then
+    ok "fail-first: SC log detects stop-aeon"
+else
+    bad "fail-first: SC log detects stop-aeon" "grep missed it"
+fi
+> "$SC_LOG"
+
+_out="$(run_deploy "WORLD_DRAIN_EXIT=1" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0    "drain-refuses: exits non-zero"           "$_rc"
+want    "drain-refuses: mentions drain"           "drain" "$_out"
+notwant "drain-refuses: no aeon stopped"          "stop spira-aeon-" "$(cat "$SC_LOG")"
+islink  "drain-refuses: current unchanged"        "$RELEASES/current" "$PRIOR_RELEASE"
+
+# ==========================================================================
+echo
+echo "PROPERTY 5: failed health check rolls current back to prior release"
+# ==========================================================================
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$PRIOR_RELEASE"
+ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+
+# FAIL-FIRST: without health failure, current moves to new release.
+_out="$(run_deploy -- "$NEW_TAG" 2>&1)"
+if [ -L "$RELEASES/current" ] && [ "$(readlink "$RELEASES/current")" = "$NEW_RELEASE" ]; then
+    ok "fail-first: healthy deploy moves current to new release"
+else
+    bad "fail-first: healthy deploy moves current to new release" \
+        "current=$(readlink "$RELEASES/current" 2>/dev/null || echo '(missing)')"
+fi
+
+# With doctor failure: current must be restored to the prior release.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$PRIOR_RELEASE"
+ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+
+_out="$(run_deploy "DOCTOR_EXIT=1" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0   "rollback: exits non-zero on health failure" "$_rc"
+want   "rollback: mentions ROLLBACK"                "ROLLBACK" "$_out"
+want   "rollback: names the failure"                "doctor"   "$_out"
+islink "rollback: current restored to prior"        "$RELEASES/current" "$PRIOR_RELEASE"
+
+# With skew failure: same behaviour.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$PRIOR_RELEASE"
+ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+
+_out="$(run_deploy "SKEW_EXIT=1" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0   "rollback-skew: exits non-zero" "$_rc"
+islink "rollback-skew: current restored to prior" "$RELEASES/current" "$PRIOR_RELEASE"
+
+# ==========================================================================
+echo
+echo "PROPERTY 6: re-render calls install.sh with SPIRA_PROD=\$SPIRA_RELEASES/current"
+# ==========================================================================
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+
+_out="$(run_deploy -- "$NEW_TAG" 2>&1)"
+_rc=$?
+is0 "re-render: deploy exits 0" "$_rc"
+
+if grep -q 'install SPIRA_PROD=' "$CALL_LOG" 2>/dev/null; then
+    ok "re-render: install.sh was called"
+else
+    bad "re-render: install.sh was called" "not in call log"
+fi
+
+_got_prod="$(grep 'install SPIRA_PROD=' "$CALL_LOG" 2>/dev/null | head -1 | sed 's/^install SPIRA_PROD=//')"
+if [ "$_got_prod" = "$RELEASES/current" ]; then
+    ok "re-render: SPIRA_PROD=$RELEASES/current"
+else
+    bad "re-render: SPIRA_PROD=$RELEASES/current" "got [$_got_prod]"
+fi
+
+# ==========================================================================
+echo
+echo "PROPERTY 7: --dry-run touches nothing"
+# ==========================================================================
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+> "$CALL_LOG"
+
+# FAIL-FIRST: without --dry-run, current IS created.
+_out="$(run_deploy -- "$NEW_TAG" 2>&1)"
+if [ -L "$RELEASES/current" ]; then
+    ok "fail-first: normal deploy creates current"
+else
+    bad "fail-first: normal deploy creates current" "current not created"
+fi
+
+# With --dry-run: nothing changes.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+> "$CALL_LOG"
+_out="$(run_deploy -- --dry-run "$NEW_TAG" 2>&1)"
+_rc=$?
+is0     "dry-run: exits 0"              "$_rc"
+want    "dry-run: says dry-run"         "dry-run"           "$_out"
+if [ ! -e "$RELEASES/current" ]; then
+    ok  "dry-run: current not created"
+else
+    bad "dry-run: current not created"  "current exists after --dry-run"
+fi
+notwant "dry-run: gh not called"        "gh release download" "$(cat "$CALL_LOG")"
+notwant "dry-run: activate not called"  "activate"            "$(cat "$CALL_LOG")"
+
+# ==========================================================================
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
