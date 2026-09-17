@@ -102,11 +102,50 @@ print(" ".join(d.get("labels") or []))
     return "$rc"
 }
 
+_bead_amend() {
+    local id="${1:-}"; shift || true
+    [ -n "$id" ] || { printf 'bead: amend: id required\n' >&2; return 2; }
+    local note="" body_file=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --note)       shift; note="${1:-}" ;;
+            --body-file)  shift; body_file="${1:-}" ;;
+            *) printf 'bead: amend: unknown option: %s\n' "$1" >&2; return 2 ;;
+        esac
+        shift
+    done
+    [ -n "$note" ] || [ -n "$body_file" ] || {
+        printf 'bead: amend: --note or --body-file required\n' >&2; return 2; }
+
+    local changed=""
+    if [ -n "$note" ]; then
+        bdq note "$id" "$note"
+        changed="$note"
+    fi
+    if [ -n "$body_file" ]; then
+        bdq update "$id" --body-file "$body_file"
+        changed="${changed:+$changed$'\n\n'}Description updated."
+    fi
+
+    # Notify the live aeon if one is working this bead.
+    local pf
+    for pf in "$SPIRA_RUN"/aeon-*-"$id".pid; do
+        [ -f "$pf" ] && aeon_alive "$pf" || continue
+        [ -d "${SPIRA_MAIL:-}/aeon-$id/new" ] || break
+        SPIRA_MAIL_LINT_CONSIDERED=1 "$BEAD_HOME/mail.sh" send "aeon-$id" \
+            --from "amend <amend@spira>" \
+            --subject "Update while you work" <<< "$changed" 2>/dev/null || true
+        break
+    done
+}
+
 case "${1:-}" in
     file)     shift; _bead_file "$@" ;;
+    amend)    shift; _bead_amend "$@" ;;
     contract) _bead_contract ;;
     lint)     shift; _bead_lint "$@" ;;
     *) printf 'usage: bead.sh file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F]\n' >&2
+       printf '       bead.sh amend <id> [--note "<text>"] [--body-file F]\n' >&2
        printf '       bead.sh lint [--all|<id>...]\n' >&2
        printf '       bead.sh contract\n' >&2
        exit 2 ;;
