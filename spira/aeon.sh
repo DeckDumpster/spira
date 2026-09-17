@@ -1110,6 +1110,27 @@ before doing any work. The notes record why the previous session did not land. F
 specific problem — do not redo work that is already committed."
         ;;
 esac
+
+# SLAIN_BRIEF — when the last commit is a wip salvage from a slain session, the next aeon
+# needs to know so it reviews it before building on it rather than assuming it is finished.
+SLAIN_BRIEF=""
+if [ "${_n_prior:-0}" -gt 0 ] 2>/dev/null; then
+    _last_subject="$(git -C "$REPO" log --format='%s' -1 "$BRANCH" 2>/dev/null)"
+    case "$_last_subject" in
+        *": wip — salvaged at slay ("*)
+            _slay_when="$(git -C "$REPO" log --format='%ci' -1 "$BRANCH" 2>/dev/null)"
+            _slay_why="${_last_subject##*salvaged at slay (}"
+            _slay_why="${_slay_why%)}"
+            _wip_diffstat="$(git -C "$REPO" diff --stat "$BASE" "$BRANCH" 2>/dev/null | tail -1)"
+            SLAIN_BRIEF="## A previous attempt was slain
+
+A prior session was slain at ${_slay_when:-unknown time} (${_slay_why:-unknown reason}). The branch carries **$_n_prior** commit(s) beyond \`$BASE\`${_wip_diffstat:+ ($_wip_diffstat)}; the last is a salvaged wip commit — review it before building on it.
+
+Prior transcript (do not inline; read only if needed): \`$LOGF\`"
+            ;;
+    esac
+    unset _last_subject _slay_when _slay_why _wip_diffstat
+fi
 unset _n_prior _prior_log
 
 # ---- the assigned worktree, exported for the commit guard ----------------------------
@@ -1533,6 +1554,7 @@ $STATUTES
 $PROMPT
 $DIRTY_BRIEF
 $RESUME_BRIEF
+$SLAIN_BRIEF
 $ALREADY_DONE_BRIEF
 $CLOSE_BRIEF
 $REBASE_BRIEF"
