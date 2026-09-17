@@ -64,7 +64,7 @@ echo "every declared program has a tier and a purpose:"
 _untiered=""; _unpurposed=""
 for _b in ${MANIFEST:-}; do
     _k="${_b//-/_}"; _t="TIER_$_k"; _p="PURPOSE_$_k"
-    case "${!_t:-}" in runtime|optional|dev) ;; *) _untiered="$_untiered $_b" ;; esac
+    case "${!_t:-}" in runtime|optional|dev|operator) ;; *) _untiered="$_untiered $_b" ;; esac
     case "${!_p:-}" in ''|'required by the harness') _unpurposed="$_unpurposed $_b" ;; esac
 done
 is "every program has a valid tier"  "" "$_untiered"
@@ -119,6 +119,81 @@ esac
 grep -q 'spira_bin_absent' "$HERE/doctor.sh" \
     && ok "doctor.sh prints the absence consequence" \
     || bad "doctor.sh prints the absence consequence" "doctor.sh never calls spira_bin_absent"
+
+# ======================================================================================
+echo
+echo "operator tier — four tools that are FAIL when absent on an operated instance:"
+# ======================================================================================
+# POSITIVE CONTROL (law-absence-needs-a-positive-control). hunk is not installed in the
+# testenv container (it is waived in doctor-waivers as an operator tool that no suite
+# invokes). Running doctor.sh in this environment with SPIRA_OPERATED=1 and hunk in
+# COCKPIT_SESSIONS must produce FAIL output, not 'warn'. Before this fix, hunk was in the
+# WARN loop and produced 'warn' — the test was red, which is the required state before a
+# regression fix (law-a-regression-test-must-be-seen-to-fail).
+#
+# inotifywait is installed in this container (test-mail-deliver.sh uses the real binary),
+# so the positive control uses hunk, and the tier check covers the others.
+
+# Tier: all four operator tools
+for _b in inotifywait aerc hunk go; do
+    _k="${_b//-/_}"
+    _t_var="TIER_$_k"
+    is "$_b is operator tier" "operator" "${!_t_var:-}"
+done
+
+# SPIRA_OPERATED setting: 1 is the default (operated instance).
+_op_default="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/none.conf" bash -c \
+    ". $HERE/conf.sh 2>/dev/null; printf '%s' \"\${SPIRA_OPERATED}\"" 2>/dev/null)"
+is "SPIRA_OPERATED defaults to 1" "1" "$_op_default"
+
+# Stub PATH for hunk positive control: prepend $TMP so a stub 'hunk' we create there
+# takes precedence over anything installed.
+
+# POSITIVE CONTROL: with hunk on PATH, operator section says ok.
+# Uses $HOME/.local/bin which conf.sh hardcodes into PATH, so no SPIRA_PATH tricks needed.
+# Stub is a minimal shell script (not a symlink): `command -v true` returns the builtin
+# name, not an absolute path, so a symlink to it would be broken.
+mkdir -p "$HOME/.local/bin"
+printf '#!/bin/sh\n' > "$HOME/.local/bin/hunk" && chmod +x "$HOME/.local/bin/hunk"
+_pc_out="$(SPIRA_CONF="$TMP/none.conf" SPIRA_DOCTOR_INSTALLING=1 \
+    SPIRA_OPERATED=1 COCKPIT_SESSIONS="brain hunk chat" \
+    bash "$HERE/doctor.sh" 2>&1 || true)"
+rm -f "$HOME/.local/bin/hunk"
+printf '%s\n' "$_pc_out" | grep -q 'ok.*hunk' \
+    && ok "POSITIVE CONTROL: hunk stub present → ok" \
+    || bad "POSITIVE CONTROL: hunk stub present → ok" \
+           "$(printf '%s\n' "$_pc_out" | grep -i hunk | head -2)"
+
+# hunk absent, SPIRA_OPERATED=1 → FAIL (not warn).
+_op_out="$(SPIRA_CONF="$TMP/none.conf" SPIRA_DOCTOR_INSTALLING=1 \
+    SPIRA_OPERATED=1 COCKPIT_SESSIONS="brain hunk chat" \
+    bash "$HERE/doctor.sh" 2>&1 || true)"
+printf '%s\n' "$_op_out" | grep -q 'FAIL.*hunk' \
+    && ok "hunk absent with SPIRA_OPERATED=1 → FAIL" \
+    || bad "hunk absent with SPIRA_OPERATED=1 → FAIL" \
+           "$(printf '%s\n' "$_op_out" | grep -i hunk | head -2)"
+
+# hunk absent, SPIRA_OPERATED=0 → warn (not FAIL).
+_op_out2="$(SPIRA_CONF="$TMP/none.conf" SPIRA_DOCTOR_INSTALLING=1 \
+    SPIRA_OPERATED=0 COCKPIT_SESSIONS="brain hunk chat" \
+    bash "$HERE/doctor.sh" 2>&1 || true)"
+printf '%s\n' "$_op_out2" | grep -q '  warn  hunk' \
+    && ok "hunk absent with SPIRA_OPERATED=0 → warn" \
+    || bad "hunk absent with SPIRA_OPERATED=0 → warn" \
+           "$(printf '%s\n' "$_op_out2" | grep -i hunk | head -2)"
+
+# COCKPIT_MAIL: checked as configured client, not literally aerc.
+# With COCKPIT_MAIL=mutt and mutt present, aerc absence must not produce FAIL.
+mkdir -p "$HOME/.local/bin"
+printf '#!/bin/sh\n' > "$HOME/.local/bin/mutt" && chmod +x "$HOME/.local/bin/mutt"
+_mail_out="$(SPIRA_CONF="$TMP/none.conf" SPIRA_DOCTOR_INSTALLING=1 \
+    SPIRA_OPERATED=1 COCKPIT_MAIL=mutt \
+    bash "$HERE/doctor.sh" 2>&1 || true)"
+rm -f "$HOME/.local/bin/mutt"
+printf '%s\n' "$_mail_out" | grep -q 'FAIL.*aerc' \
+    && bad "COCKPIT_MAIL=mutt present: aerc absence should not be FAIL" \
+           "got: $(printf '%s\n' "$_mail_out" | grep aerc | head -2)" \
+    || ok "COCKPIT_MAIL=mutt present: aerc absence is not flagged"
 
 echo
 echo "test-bin-manifest.sh: $pass passed, $fail failed"

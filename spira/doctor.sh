@@ -83,11 +83,61 @@ fi
 # absence is a warning about a slower or less convenient path, never about a broken one.
 # They are checked here because they are DECLARED — test-bin-manifest.sh fails if anything
 # in SPIRA_BINS is examined by nothing, which is how bd-embedded went a week unnoticed.
-for b in gh "${SPIRA_AGENT:-claude}" tmux node jq zstd inotifywait aerc hunk; do
+for b in gh "${SPIRA_AGENT:-claude}" tmux node jq zstd; do
     if command -v "$b" >/dev/null 2>&1; then OK "$b — $(command -v "$b")"
     else WARN "$b is not on PATH — $(spira_bin_purpose "$b")" \
               "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."; fi
 done
+
+# OPERATOR TOOLS. inotifywait, the configured mail client (COCKPIT_MAIL), hunk, and go
+# are needed on an operated instance. SPIRA_OPERATED=0 in spira.conf downgrades these
+# to WARN for a headless box where no operator is reading the cockpit.
+_dr_op_level=FAIL; [ "${SPIRA_OPERATED:-1}" = 0 ] && _dr_op_level=WARN
+
+if command -v inotifywait >/dev/null 2>&1; then OK "inotifywait — $(command -v inotifywait)"
+else "$_dr_op_level" "inotifywait is not on PATH — no mail reaches you until a session starts" \
+                     "Install: apt install inotify-tools"; fi
+
+# aerc is the default COCKPIT_MAIL — the check uses the configured client, not the literal name.
+_dr_mail_bin="${COCKPIT_MAIL:-}"
+if [ -n "$_dr_mail_bin" ]; then
+    if command -v "$_dr_mail_bin" >/dev/null 2>&1; then OK "$_dr_mail_bin (COCKPIT_MAIL) — $(command -v "$_dr_mail_bin")"
+    else "$_dr_op_level" "$_dr_mail_bin (COCKPIT_MAIL) is not on PATH — the cockpit mail pane is dead; escalations have no delivery path" \
+                         "Install $COCKPIT_MAIL, or set COCKPIT_MAIL in ${CONF:-spira.conf} to a mail client that is present."; fi
+fi
+unset _dr_mail_bin
+
+case " ${COCKPIT_SESSIONS:-} " in
+    *" hunk "*)
+        if command -v hunk >/dev/null 2>&1; then OK "hunk — $(command -v hunk)"
+        else "$_dr_op_level" "hunk is not on PATH — the cockpit review pane is unavailable; rebuild.sh creates a hunk session with no program behind it" \
+                             "Install: npm install -g --prefix ~/.local hunkdiff (bin lands at ~/.local/bin/hunk; ensure ~/.local/bin is in SPIRA_PATH in ${CONF:-spira.conf})"; fi ;;
+esac
+
+_dr_go_found=""
+for _c in "${GO:-}" "$HOME/.local/go/bin/go" "$(command -v go 2>/dev/null || true)"; do
+    [ -n "$_c" ] && [ -x "$_c" ] && { _dr_go_found="$_c"; break; }
+done
+if [ -n "$_dr_go_found" ]; then OK "go — $_dr_go_found"
+else
+    _dr_go_bd_ok=0
+    _dr_go_bd_ver="$(timeout 5 "$SPIRA_BD" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    [ "${_dr_go_bd_ver:-}" = "${SPIRA_BD_TAG#v}" ] && _dr_go_bd_ok=1
+    _dr_go_arch="$(uname -m)"
+    _dr_go_prebuilt=0
+    case "$_dr_go_arch" in x86_64|aarch64) _dr_go_prebuilt=1 ;; esac
+    if [ "$_dr_go_bd_ok" -eq 0 ] && [ "$_dr_go_prebuilt" -eq 0 ]; then
+        "$_dr_op_level" "go is not on PATH — $(spira_bin_purpose go)" \
+                        "bd is mismatched ($SPIRA_BD_TAG required) and no prebuilt exists for $_dr_go_arch. Install Go: https://go.dev/dl/ or $HOME/.local/go/bin/go"
+    else
+        printf '  ok    go absent — bd %s; prebuilt %s for %s\n' \
+            "$( [ "$_dr_go_bd_ok"    -eq 1 ] && echo "current"     || echo "mismatched" )" \
+            "$( [ "$_dr_go_prebuilt" -eq 1 ] && echo "available"   || echo "unavailable" )" \
+            "$_dr_go_arch"
+    fi
+    unset _dr_go_bd_ok _dr_go_bd_ver _dr_go_arch _dr_go_prebuilt
+fi
+unset _dr_go_found _c _dr_op_level
 
 # CARGO VERSION CHECK. cargo absent is a WARN — the loop runs fine without the panel.
 # cargo present but below 1.78.0 is a FAIL: loom/Cargo.lock is version 4, which only
@@ -140,16 +190,7 @@ echo
 echo "development dependencies (not needed to run the loop)"
 for b in $SPIRA_BINS; do
     [ "$(spira_bin_tier "$b")" = dev ] || continue
-    # RESOLVE THE WAY THE CONSUMER RESOLVES IT. A dev tool is not always taken from PATH:
-    # build-bd.sh invokes $HOME/.local/go/bin/go directly, so a PATH-only check calls a box
-    # broken that is not. Each entry is looked for where the thing that needs it looks.
-    _dr_found=""
-    case "$b" in
-        go) for _c in "${GO:-}" "$HOME/.local/go/bin/go" "$(command -v go 2>/dev/null || true)"; do
-                [ -n "$_c" ] && [ -x "$_c" ] && { _dr_found="$_c"; break; }
-            done ;;
-        *)  _dr_found="$(command -v "$b" 2>/dev/null || true)" ;;
-    esac
+    _dr_found="$(command -v "$b" 2>/dev/null || true)"
     if [ -n "$_dr_found" ]; then
         OK "$b — $_dr_found"
         continue
