@@ -221,7 +221,7 @@ bdq update "$ID" --assignee "" --force >/dev/null 2>&1 || bdq update "$ID" --ass
 # uncommitted work in it, at the moment that aeon has just been killed.
 repo_name="$(bead_repo "$ID" 2>/dev/null)"; repo=""
 [ -n "$repo_name" ] && repo="$(repo_root "$repo_name" 2>/dev/null)"
-br="spira/$ID"; wt="$SPIRA_RUN/worktree/$ID"; tip=""; nuked=""; saved=""
+br="spira/$ID"; wt="$SPIRA_RUN/worktree/$ID"; tip=""; nuked=""; saved=""; WIP_COMMITTED=0
 if [ -n "$repo" ] && git -C "$repo" show-ref --verify -q "refs/heads/$br"; then
     tip="$(git -C "$repo" rev-parse --short "$br")"
 fi
@@ -237,7 +237,25 @@ elif [ -n "$repo" ]; then
         # taken now or it is lost.
         if salvage "$ID" "$wt"; then
             saved="${SALVAGED:-}"
-            [ -n "$saved" ] && say "work: uncommitted changes salvaged to $saved"
+            if [ -n "$saved" ]; then
+                say "work: uncommitted changes salvaged to $saved"
+                # Commit the dirty state onto the branch so the next aeon can resume from it.
+                # The patch above is the belt-and-braces copy. SPIRA_ALLOW_DIRTY_STAGE bypasses
+                # the pre-commit hook, which guards aeon model commits, not harness salvage ones.
+                if git -C "$wt" add -A >/dev/null 2>&1 \
+                    && SPIRA_ALLOW_DIRTY_STAGE=1 \
+                       git -C "$wt" \
+                           -c user.name=slay \
+                           -c user.email=slay@spira.local \
+                           -c commit.gpgsign=false \
+                           commit -m "$ID: wip — salvaged at slay ($WHY)" >/dev/null 2>&1; then
+                    WIP_COMMITTED=1
+                    tip="$(git -C "$repo" rev-parse --short "$br" 2>/dev/null || echo "${tip:-?}")"
+                    say "work: wip committed to $br at $tip — branch stays in refs/heads"
+                else
+                    say "work: could not make wip commit — patch is the only copy"
+                fi
+            fi
         else
             say "work: could not salvage $wt — leaving it in place"; fail=1
         fi
@@ -249,7 +267,9 @@ elif [ -n "$repo" ]; then
             fi
         fi
     fi
-    if [ -n "$tip" ] && [ "$fail" = 0 ]; then
+    # When a wip commit was made the branch stays in refs/heads so the next aeon sees it;
+    # only park and delete when there was no uncommitted work to carry forward.
+    if [ -n "$tip" ] && [ "$fail" = 0 ] && [ "$WIP_COMMITTED" = 0 ]; then
         # PARK THE TIP UNDER A REAL REF BEFORE DELETING THE BRANCH, whenever it carries work
         # the base does not already have. "The reflog keeps it ~30 days" was true and was not
         # enough: on 2026-09-07 slaying sp-ee4 left commit 4557385 — a finished feature, 758
@@ -284,7 +304,7 @@ elif [ -n "$repo" ]; then
             fi
         fi
     fi
-    if [ -n "$tip" ] && [ "$fail" = 0 ]; then
+    if [ -n "$tip" ] && [ "$fail" = 0 ] && [ "$WIP_COMMITTED" = 0 ]; then
         if spira_destroy_branch "$ID" "$br" "$repo" "slain: $WHY" slain; then
             nuked="branch $br deleted at $tip${parked:+, kept at $parked}"; say "work: $nuked"
         else
@@ -297,7 +317,9 @@ fi
 
 # ---- 4b. the rest of the bead ------------------------------------------------------------
 if [ -n "$nuked" ]; then bdq label remove "$ID" "branch:$br" >/dev/null 2>&1 || true; fi
-note="Slain by the operator: $WHY. Aeon ${name:-?}${pid:+ (pid $pid)} stopped${unit:+ via $unit}. ${nuked:-work kept}${saved:+; uncommitted changes salvaged to $saved}. No attempt charged."
+_work_msg="${nuked:-work kept}${saved:+; uncommitted changes salvaged to $saved}"
+[ "$WIP_COMMITTED" = 1 ] && _work_msg="wip committed to $br; branch kept in refs/heads; patch at $saved"
+note="Slain by the operator: $WHY. Aeon ${name:-?}${pid:+ (pid $pid)} stopped${unit:+ via $unit}. ${_work_msg}. No attempt charged."
 st="$(status_of)"
 case "$MODE" in
     close)  # MARK THE DROP BEFORE CLOSING. An operator close means "this work is not going to
@@ -333,6 +355,6 @@ print("bead: %s status=%s assignee=%s labels=%s" % (b.get("id"), b.get("status")
 # ---- 6. verify -------------------------------------------------------------------------
 [ -z "$pid" ] || [ ! -d "/proc/$pid" ] || fail=1
 ls "$SPIRA_RUN"/aeon-*-"$ID".pid >/dev/null 2>&1 && { say "verify: a pid file for $ID remains"; fail=1; }
-[ "$KEEP" = 1 ] || [ -z "$repo" ] || ! git -C "$repo" show-ref --verify -q "refs/heads/$br" || { say "verify: $br still exists"; fail=1; }
+[ "$KEEP" = 1 ] || [ "$WIP_COMMITTED" = 1 ] || [ -z "$repo" ] || ! git -C "$repo" show-ref --verify -q "refs/heads/$br" || { say "verify: $br still exists"; fail=1; }
 [ "$fail" = 0 ] && say "slain: $ID" || say "slay: INCOMPLETE for $ID — see above"
 exit "$fail"
