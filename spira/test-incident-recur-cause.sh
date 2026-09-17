@@ -39,7 +39,11 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 . "$HERE/testdb.sh"
 testdb_require test-incident-recur-cause
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up rc_cause || { echo "test-incident-recur-cause: could not build a fixture database"; exit 1; }
+export SPIRA_TESTDB_MODE=server
+testdb_up rc_cause || {
+    printf 'SKIP test-incident-recur-cause: server testdb not available\n' >&2
+    exit 77
+}
 
 # lib.sh is sourced for counter_of / counter_causes / recur_causes.
 # shellcheck disable=SC1090

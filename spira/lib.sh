@@ -1710,9 +1710,7 @@ capacity_withdrawn_mark() {
 # the events trail, and a wrong value refused at write time is better than a truthful
 # empty result at read time.
 #
-# TWO QUERY PATHS: bd sql (server mode) and dolt --data-dir (embedded mode). The embedded
-# binary refuses 'bd sql'; dolt can read the same storage directly. The two paths produce
-# the same result; the distinction is operational, not semantic.
+# Query path: bd sql (server mode only).
 #
 # THREE CONSTRAINTS, VERIFIED IN sp-lzt AND RECORDED HERE SO NO ONE REDISCOVERS THEM:
 #   1. bd query cannot express it — no events field. bd sql is the right tool.
@@ -1743,25 +1741,10 @@ _attempts_sql_query() {   # _attempts_sql_query <id> -> the SQL that counts atte
 attempts_of() {          # attempts_of <id> -> count of in_progress status-change events
     local id="$1" q result=""
     q="$(_attempts_sql_query "$id")"
-    # Server mode: bd sql is supported and returns a table; the count is on line 3.
     if result="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>/dev/null | sed -n '3p' \
                   | tr -d ' ')" && [ -n "$result" ] \
        && printf '%d' "$result" >/dev/null 2>&1; then
         printf '%d' "$result"; return 0
-    fi
-    # Embedded mode: dolt reads the local storage directly. The database name is the
-    # first subdirectory of the embeddeddolt directory (always the bd prefix, e.g. 'sp').
-    local doltdb="${SPIRA_DB}/.beads/embeddeddolt"
-    if [ -d "$doltdb" ] && command -v dolt >/dev/null 2>&1; then
-        local dbname
-        dbname="$(ls "$doltdb" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" \
-            || dbname="sp"
-        [ -n "$dbname" ] || dbname="sp"
-        result="$(dolt --data-dir "$doltdb" sql -q "use $dbname; $q;" 2>/dev/null \
-                  | sed -n '4p' | tr -d '| ')" || result=""
-        if [ -n "$result" ] && printf '%d' "$result" >/dev/null 2>&1; then
-            printf '%d' "$result"; return 0
-        fi
     fi
     printf '0'
 }
@@ -1774,18 +1757,6 @@ reopens_of() {         # reopens_of <id> -> count of reopened events
        && printf '%d' "$result" >/dev/null 2>&1; then
         printf '%d' "$result"; return 0
     fi
-    local doltdb="${SPIRA_DB}/.beads/embeddeddolt"
-    if [ -d "$doltdb" ] && command -v dolt >/dev/null 2>&1; then
-        local dbname
-        dbname="$(ls "$doltdb" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" \
-            || dbname="sp"
-        [ -n "$dbname" ] || dbname="sp"
-        result="$(dolt --data-dir "$doltdb" sql -q "use $dbname; $q;" 2>/dev/null \
-                  | sed -n '4p' | tr -d '| ')" || result=""
-        if [ -n "$result" ] && printf '%d' "$result" >/dev/null 2>&1; then
-            printf '%d' "$result"; return 0
-        fi
-    fi
     printf '0'
 }
 
@@ -1794,64 +1765,21 @@ reopens_of() {         # reopens_of <id> -> count of reopened events
 # remaining three — bump_reclaim, bump_requeue, bump_recur — write a typed event row so
 # that census.sh can aggregate failure classes across the whole store (sp-2lk).
 #
-# EVENT WRITE PATH: three paths tried in order (db-wx4).
-#
-#   1. bd sql — works on server-mode installs and on embedded installs with bd-embedded
-#      (the CGO build). The standard CGO_ENABLED=0 binary refuses it in embedded mode.
-#   2. dolt --data-dir — reads the embedded Dolt store directly. Requires the dolt CLI,
-#      which is not a hard dependency of the harness.
-#   3. events.log file — an append-only TSV beside the store, written when neither SQL
-#      path is available. Lines: <epoch_s>\t<id>\t<event_type>\t<cause>. Read by
-#      _counter_events_query and census_events_run_sql when both SQL paths are also
-#      unavailable. Only written when the embeddeddolt directory exists (so the file
-#      never appears beside a SQLite or server-mode store).
-#
 # Failure is silent — a missed counter is acceptable; a crash in a caller is not.
 # bump_attempt and bump_timeout remain no-ops so that callers compile without change
 # and test-check4-events.sh criterion 1 (no label writes) holds.
 #
-# _bump_write_event <id> <event_type> <cause> — inserts one event row.
-# _bump_write_event_try — the real write, reporting whether ANY path accepted it.
-#
-# WHY THE STATUS LIVES IN A SEPARATE NAME. _bump_write_event must keep returning 0 no
-# matter what: aeon.sh runs under `set -e` and calls bump_requeue bare on its thrash and
-# lapse paths, so a failing return there would kill a live aeon in the middle of requeuing
-# its own bead. Event recording is diagnostic; it must never be able to end the work it is
-# describing. Callers that genuinely need to know — the doctor probe — ask for the status
-# explicitly, and everything else keeps the fire-and-forget contract it was written against.
+# _bump_write_event_try — the real write, reporting whether bd sql accepted it.
+# _bump_write_event must keep returning 0: aeon.sh runs under `set -e` and calls
+# bump_requeue bare, so a failing return would kill a live aeon mid-requeue.
 _bump_write_event_try() {
     local id="${1:-}" etype="${2:-}" cause="${3:-unrecorded}"
     [ -n "$id" ] && [ -n "$etype" ] || return 0
     local actor="${BEADS_ACTOR:-harness}"
-    local doltdb="${SPIRA_DB}/.beads/embeddeddolt"
-    # SQL paths need a UUID; generate it before the attempts. If python3 is absent
-    # (a server install without it) skip the SQL paths and fall to the file fallback.
     local uuid q
-    uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || uuid=""
-    if [ -n "$uuid" ]; then
-        q="INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', '$actor', '$cause', NOW())"
-        # Path 1: server mode (standard bd binary supports bd sql).
-        if "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" >/dev/null 2>&1; then return 0; fi
-        # Path 2: embedded mode with dolt CLI. Only return here when dolt succeeds; a
-        # failing dolt (wrong DB version, uninitialised data-dir) falls through to
-        # path 3 so events are not silently lost on a partially-initialised store.
-        if [ -d "$doltdb" ] && command -v dolt >/dev/null 2>&1; then
-            local dbname
-            dbname="$(ls "$doltdb" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" || dbname="sp"
-            [ -n "$dbname" ] || dbname="sp"
-            if dolt --data-dir "$doltdb" sql -q "use $dbname; $q;" >/dev/null 2>&1; then
-                return 0
-            fi
-        fi
-    fi
-    # Path 3: file fallback — embedded store with no dolt CLI, no bd sql support, or
-    # dolt present but unable to write (uninitialised store, version mismatch).
-    if [ -d "$doltdb" ]; then
-        local ts; ts="$(date +%s 2>/dev/null)" || ts="0"
-        printf '%s\t%s\t%s\t%s\n' "$ts" "$id" "$etype" "$cause" \
-            >> "${SPIRA_DB}/events.log" 2>/dev/null && return 0
-    fi
-    # No path accepted the write. Reported here, swallowed by _bump_write_event.
+    uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 1
+    q="INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', '$actor', '$cause', NOW())"
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" >/dev/null 2>&1 && return 0
     return 1
 }
 
@@ -1863,10 +1791,9 @@ bump_timeout() { return 0; }
 bump_recur()   { _bump_write_event "${1:-}" recurred  "${2:-unrecorded}"; }
 bump_lapsed()  { _bump_write_event "${1:-}" lapsed    "${2:-unrecorded}"; }
 
-# DIAGNOSTIC ACCESSORS — requeue/reclaim/recur counters are now read from the events
-# table (sp-2lk). Three paths, matching _bump_write_event: bd sql, dolt --data-dir,
-# then the events.log file fallback (db-wx4). timeouts_of returns 0 (no census role;
-# events-based timeout detection is a separate future deliverable).
+# DIAGNOSTIC ACCESSORS — requeue/reclaim/recur counters are read from the events
+# table via bd sql (sp-2lk). timeouts_of returns 0 (no census role; events-based
+# timeout detection is a separate future deliverable).
 # --------------------------------------------------------------------------------------
 # _counter_events_sql <id> <event_type> — SQL that returns a single integer count.
 _counter_events_sql() {
@@ -1880,26 +1807,6 @@ _counter_events_query() {   # _counter_events_query <id> <event_type> -> count
        && printf '%d' "$result" >/dev/null 2>&1; then
         printf '%d' "$result"; return 0
     fi
-    local doltdb="${SPIRA_DB}/.beads/embeddeddolt"
-    if [ -d "$doltdb" ] && command -v dolt >/dev/null 2>&1; then
-        local dbname
-        dbname="$(ls "$doltdb" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" || dbname="sp"
-        [ -n "$dbname" ] || dbname="sp"
-        result="$(dolt --data-dir "$doltdb" sql -q "use $dbname; $q;" 2>/dev/null \
-                  | sed -n '4p' | tr -d '| ')" || result=""
-        if [ -n "$result" ] && printf '%d' "$result" >/dev/null 2>&1; then
-            printf '%d' "$result"; return 0
-        fi
-    fi
-    # File fallback: count matching lines in events.log (written by path 3 of _bump_write_event).
-    local elog="${SPIRA_DB}/events.log"
-    if [ -d "$doltdb" ] && [ -f "$elog" ]; then
-        result="$(awk -F'\t' -v id="$id" -v etype="$etype" \
-            'NF>=4 && $2==id && $3==etype {n++} END {print n+0}' "$elog" 2>/dev/null)" || result=""
-        if [ -n "$result" ] && printf '%d' "$result" >/dev/null 2>&1; then
-            printf '%d' "$result"; return 0
-        fi
-    fi
     printf '0'
 }
 reclaims_of() { _counter_events_query "${1:-}" reclaimed; }
@@ -1907,9 +1814,8 @@ requeues_of() { _counter_events_query "${1:-}" requeued;  }
 timeouts_of() { printf '0'; }
 recurs_of()   { _counter_events_query "${1:-}" recurred;  }
 
-# CENSUS SQL — the query and three-path runner used by census.sh to aggregate failure
-# classes. Kept in lib.sh so that tests can call it directly without parsing census.sh.
-# Three paths match _bump_write_event: bd sql, dolt --data-dir, events.log (db-wx4).
+# CENSUS SQL — the query and runner used by census.sh to aggregate failure classes.
+# Kept in lib.sh so that tests can call it directly without parsing census.sh.
 # --------------------------------------------------------------------------------------
 _census_events_sql() {   # _census_events_sql [since_epoch_s]
     # An optional Unix epoch lower bound adds "AND created_at > FROM_UNIXTIME(ts)" so
@@ -1921,71 +1827,13 @@ _census_events_sql() {   # _census_events_sql [since_epoch_s]
     fi
     printf "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopened')%s GROUP BY event_type, new_value ORDER BY beads DESC" "$since_clause"
 }
-census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output (both modes); exits non-zero when both paths refuse
+census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output; exits non-zero when unreachable
     local q
     q="$(_census_events_sql "${1:-}")"
     local out bd_rc=0
-    # bd sql works in server mode; bd-embedded refuses this subcommand (exits non-zero).
     out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>/dev/null)" || bd_rc=$?
-    if [ "$bd_rc" -eq 0 ] && [ -n "$out" ]; then
-        printf '%s\n' "$out"; return 0
-    fi
-    local doltdb="${SPIRA_DB}/.beads/embeddeddolt"
-    if [ -d "$doltdb" ]; then
-        # Embedded store: dolt is the preferred reader of the events table.
-        # Only return here when dolt exits 0; a failing dolt (uninitialised data-dir,
-        # version mismatch) falls through to the events.log file fallback so that events
-        # written via path 3 are still readable when dolt is present but non-functional.
-        if command -v dolt >/dev/null 2>&1; then
-            local dbname dolt_rc=0
-            dbname="$(ls "$doltdb" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" || dbname="sp"
-            [ -n "$dbname" ] || dbname="sp"
-            out="$(dolt --data-dir "$doltdb" sql -q "use $dbname; $q;" 2>/dev/null)" || dolt_rc=$?
-            if [ "$dolt_rc" -eq 0 ]; then
-                printf '%s\n' "$out"; return 0
-            fi
-        fi
-        # File fallback: aggregate events.log into the tabular format census.sh's count.py expects:
-        # "| event_type | new_value | count |" — one row per (event_type, cause) pair.
-        # The since_epoch_s filter matches the SQL: events with epoch > since are included.
-        local elog="${SPIRA_DB}/events.log"
-        if [ -f "$elog" ]; then
-            local since="${1:-0}"
-            awk -F'\t' -v since="$since" \
-                'NF>=4 && ($3=="requeued" || $3=="reclaimed" || $3=="recurred" || $3=="lapsed") &&
-                 (since+0 == 0 || $1+0 > since+0) {
-                     key = $3 SUBSEP $4; total[key]++
-                     bkey = key SUBSEP $2
-                     if (!(bkey in seen)) { seen[bkey]=1; beads[key]++ }
-                 }
-                 END {
-                     for (k in total) {
-                         split(k, a, SUBSEP)
-                         printf "| %s | %s | %s | %s |\n", a[1], a[2], beads[k], total[k]
-                     }
-                 }' "$elog" 2>/dev/null || true
-            return 0
-        fi
-        # embeddeddolt exists but neither dolt nor events.log is available.
-        # When dolt is absent, path 3 (events.log) was always the active write path.
-        # An absent events.log means nothing has been written yet — the store is
-        # genuinely empty, not unreachable. Return 0 with no output.
-        #
-        # The alternative (return 1 here) would be correct only for the rare case where
-        # dolt was the write path and was then removed: events exist in the dolt table
-        # but no reader can reach them. That case is indistinguishable here from the
-        # common "fresh embedded install" case — bd migrate schema populates the dolt
-        # directory with schema data even when no event has ever been written, so the
-        # directory's content cannot distinguish schema-only from schema-plus-events.
-        # Returning 0 accepts a rare false "empty" on dolt-was-removed boxes in exchange
-        # for a correct "empty" on every fresh embedded-no-dolt install (db-ur7's
-        # fail-closed preserved for the reachable-but-missing-reader case above).
-        return 0
-    fi
-    # Server mode, no embedded store. bd sql is the sole path.
-    # Exit 0 with empty output means the events table is genuinely empty (valid).
-    # Exit non-zero means the server is down and the substrate cannot be reached.
-    [ "$bd_rc" -eq 0 ] || return 1
+    [ "$bd_rc" -ne 0 ] && return 1
+    printf '%s\n' "$out"
     return 0
 }
 
