@@ -239,7 +239,7 @@ land_state() {           # land_state <id> -> "<state> <tip> <at>" or empty
 }
 land_mark() {            # land_mark <id> <state> <tip> [reason]
     mkdir -p "$LANDSTATE" 2>/dev/null || return 0
-    printf '%s %s %s %s' "$2" "${3:-none}" "$(date +%s)" "${4:-}" > "$LANDSTATE/$1.$$" 2>/dev/null \
+    printf '%s %s %s %s\n' "$2" "${3:-none}" "$(date +%s)" "${4:-}" > "$LANDSTATE/$1.$$" 2>/dev/null \
         && mv -f "$LANDSTATE/$1.$$" "$LANDSTATE/$1" 2>/dev/null
 }
 # THE RECORD IS USED IN TWO WAYS. The first guard written — "do not reopen a commit this
