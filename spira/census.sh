@@ -95,6 +95,8 @@ for line in sys.stdin:
             cls = 'sp-reclaim'
     elif event_type == 'lapsed':
         cls = 'sp-lapsed-' + (cause or 'unrecorded')
+    elif event_type == 'reopened':
+        cls = 'sp-reopen'
     else:
         continue
     bc[cls] += nb

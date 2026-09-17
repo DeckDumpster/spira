@@ -171,6 +171,31 @@ bump_reclaim "sp-f2" ghost >/dev/null 2>&1
 out="$(census_out)"
 want "strand reclaim path produces sp-reclaim-ghost" "1 sp-reclaim-ghost" "$out"
 
+# ======================================================================================
+echo
+echo "bead_reopen alone — census counts harness reopens without a separate bump_requeue (sp-df8qo)"
+# ======================================================================================
+# bead_reopen calls bdq reopen, which writes event_type='reopened' to the events table.
+# Before this fix, _census_events_sql excluded 'reopened' from its IN clause, so harness
+# reopens produced no census output.
+# POSITIVE CONTROL first (law-absence-needs-a-positive-control): verify absence is detectable.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-g0","title":"no-reopen control","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
+JSONL
+_pc_out="$(census_out)"
+is "positive control: no bead_reopen produces no sp-reopen" "" "$(printf '%s' "$_pc_out" | grep sp-reopen || true)"
+
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-g1","title":"reopen test","status":"closed","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
+JSONL
+bead_reopen "sp-g1" "Reopened by test: sp-df8qo" >/dev/null 2>&1
+
+out="$(census_out)"
+want "bead_reopen alone produces sp-reopen in census" "sp-reopen" "$out"
+want "sp-reopen shows 1 distinct bead" "1 sp-reopen" "$out"
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
