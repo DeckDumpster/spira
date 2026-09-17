@@ -645,11 +645,11 @@ spira_conf_defaults() {
     # say "plan bead" all read the same value. A literal in multiple files is how those
     # multiple programs come to disagree (law-schema-over-code). The default is "plan" — the
     # value the store has always used — so upgrading a clean install changes nothing.
-    : "${SPIRA_PLAN_LABEL:=plan}"
+    : "${SPIRA_PLAN_LABEL:=partition:plan}"
     # THE INCIDENT PARTITION LABEL — the label that marks a bead as a production event for
     # the ops persona. Filed by incident.sh from systemd OnFailure handlers. Same reason as
     # SPIRA_PLAN_LABEL: one configurable name, never a literal in reader code.
-    : "${SPIRA_INCIDENT_LABEL:=incident}"
+    : "${SPIRA_INCIDENT_LABEL:=partition:incident}"
     # The name the operator's OWN comments are recorded under, so the attention panel can tell
     # a reply of theirs from a reply of the agent's. Both write into the same thread, and a
     # panel that cannot separate them announces the agent's own comment back to it as an answer.
