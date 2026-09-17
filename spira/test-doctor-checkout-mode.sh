@@ -140,7 +140,7 @@ nowant "and is not fatal"                          "FAIL" "$absent_out"
 
 # ===========================================================================
 echo
-echo "the manifest offers promote only where promote can work:"
+echo "promote is retired — always in OPTIONAL, never in UNITS or ENABLE:"
 # ===========================================================================
 # units.sh is a library: source it and read the arrays it defines.
 manifest() {
@@ -160,21 +160,23 @@ manifest() {
 }
 
 # EACH ARRAY IS READ ON ITS OWN LINE. Asserting against the whole blob would let the
-# OPTIONAL line — which names promote on purpose — satisfy a search meant for UNITS, and
-# the test would pass without the change it exists to check.
+# OPTIONAL line satisfy a search meant for UNITS, and the test would pass without the
+# change it exists to check.
 man_line() { printf '%s\n' "$2" | sed -n "s/^$1://p"; }
 split_man="$(manifest "$TMP/prod/spira")"
-want   "split-checkout installs promote" "spira-promote.timer" \
+nowant "split-checkout does not install promote"    "spira-promote.timer" \
        "$(man_line UNITS "$split_man")"
-want   "split-checkout enables promote"  "spira-promote-prod.timer" \
+nowant "split-checkout does not enable promote"     "spira-promote-prod.timer" \
        "$(man_line ENABLE "$split_man")"
+want   "split-checkout records promote as retired"  "spira-promote.timer" \
+       "$(man_line OPTIONAL "$split_man")"
 
 single_man="$(manifest "$HERE")"
-nowant "single-checkout installs no promote unit" "spira-promote.service" \
+nowant "single-checkout does not install promote"   "spira-promote.service" \
        "$(man_line UNITS "$single_man")"
-nowant "single-checkout enables no promote timer" "spira-promote-prod.timer" \
+nowant "single-checkout does not enable promote"    "spira-promote-prod.timer" \
        "$(man_line ENABLE "$single_man")"
-want   "and records it as deliberately declined"  "spira-promote.timer" \
+want   "single-checkout records promote as retired" "spira-promote.timer" \
        "$(man_line OPTIONAL "$single_man")"
 
 echo

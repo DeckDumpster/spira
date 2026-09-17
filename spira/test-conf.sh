@@ -21,13 +21,12 @@
 # 4. The default for SPIRA_PROD derives from other configuration keys (SPIRA_WORKSPACES,
 #    SPIRA_HOME_REPO) — it is not a literal — verified by asserting that changing
 #    SPIRA_WORKSPACES changes the default.
-# 5. promote.sh contains no hardcoded absolute path for the production checkout.
-# 6. SPIRA_INSTANCE defaults to 'prod' when unset.
-# 7. SPIRA_DB and SPIRA_RUN are instance-qualified: prod gets the unqualified path
+# 5. SPIRA_INSTANCE defaults to 'prod' when unset.
+# 6. SPIRA_DB and SPIRA_RUN are instance-qualified: prod gets the unqualified path
 #    (backwards-compatible), a named instance gets a distinct sidecar path.
 #
 # defect: sp-gsmx.2, sp-0v26
-# covers: spira/conf.sh spira/promote.sh
+# covers: spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0
@@ -100,25 +99,6 @@ override="$TMP/env-overrides/spira"
 got="$(env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF="$CONF_FILE" SPIRA_PROD="$override" \
     bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\${SPIRA_PROD:-}\"" 2>/dev/null)"
 is "env wins over config file" "$override" "$got"
-
-# ==========================================================================
-echo
-echo "no hardcoded path — promote.sh does not contain a literal SPIRA_PROD value:"
-# ==========================================================================
-# Inventory.sh already checks for operator-specific path prefixes in tracked files, so
-# this is a belt-and-braces check: verify that promote.sh itself has no hardcoded
-# production path. The positive control: verify promote.sh IS readable before asserting.
-[ -f "$HERE/promote.sh" ] && ok "promote.sh is present" || {
-    bad "promote.sh is present" "file not found at $HERE/promote.sh"; }
-
-# grep for any literal path that looks like a fixed production directory —
-# something like /path/to/something-prod — which would be an inventory.sh violation anyway,
-# but this makes the specific property explicit. We look for a hard string of "-prod/"
-# NOT derived from a variable expansion, which means it is on a line with no $ before it.
-# A simple structural check: no line in promote.sh starts with a path literal.
-hardcoded="$(grep -nE "^[^#'\"]*[^$]['\"]?/[a-z][a-z0-9_-]+-prod/" "$HERE/promote.sh" 2>/dev/null || true)"
-[ -z "$hardcoded" ] && ok "promote.sh has no hardcoded prod-path literal" \
-    || bad "promote.sh has no hardcoded prod-path literal" "found: $hardcoded"
 
 # ==========================================================================
 echo
