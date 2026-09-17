@@ -35,7 +35,7 @@ cp "$TMP/bin/bead.sh" "$HERE/../bin/bead.sh.test"
 
 # Test 1: When bead.sh is not available (or fails), quarantine should fail
 # Set a threshold that will trigger quarantine
-out="$(SPIRA_FLAKE_QUARANTINE_AT=2 $SUT observe-flake test-dummy.sh 2>&1; true)" || rc=$?
+out="$(SPIRA_FLAKE_QUARANTINE_AT=2 $SUT observe-flake test-dummy.sh 2>&1)" || rc=$?
 [ -z "${rc:-}" ] && rc=0
 echo "Output: $out"
 echo "RC: $rc"
@@ -43,7 +43,7 @@ echo "RC: $rc"
 # If bead filing fails, the quarantine should fail
 case "$out" in
     *"no bead filed"*) printf 'PASS: quarantine correctly failed due to bead failure\n' ;;
-    *) printf 'Output did not indicate bead failure: %s\n' "$out" >&2 ;;
+    *) printf 'Output did not indicate bead failure: %s\n' "$out" >&2; exit 1 ;;
 esac
 
 printf 'test-observe-flake-bead-required.sh: PASS\n'

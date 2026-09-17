@@ -11,13 +11,13 @@ trap "rm -rf '$TMP'" EXIT
 export SPIRA_SUITES_STATE="$TMP"
 
 # Verify the check catches threshold <= 1 and rejects it
-out="$($SUT observe-flake test-dummy.sh 2>&1; true)" || rc=$?
+out="$($SUT observe-flake test-dummy.sh 2>&1)" || rc=$?
 [ -z "${rc:-}" ] && rc=0
 echo "Threshold 2 (default): rc=$rc, output=$out"
 [ "$rc" -eq 0 ] || { printf 'FAIL: default threshold should be accepted\n' >&2; exit 1; }
 
 # Test with threshold 1 — must be rejected
-out2="$(SPIRA_FLAKE_QUARANTINE_AT=1 $SUT observe-flake test-dummy.sh 2>&1; true)" || rc2=$?
+out2="$(SPIRA_FLAKE_QUARANTINE_AT=1 $SUT observe-flake test-dummy.sh 2>&1)" || rc2=$?
 [ -z "${rc2:-}" ] && rc2=0
 echo "Threshold 1: rc=$rc2, output=$out2"
 case "$out2" in
