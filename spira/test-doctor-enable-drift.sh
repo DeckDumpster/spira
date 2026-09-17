@@ -151,7 +151,7 @@ case "$*" in
     *"is-enabled"*)
         case "$*" in
             *"spira-ops-prod.timer"*)      printf 'disabled\n'; exit 1 ;;
-            *"spira-promote-prod.timer"*)  printf 'disabled\n'; exit 1 ;;
+            *"spira-skew-prod.timer"*)      printf 'disabled\n'; exit 1 ;;
             *"spira-suites-prod.timer"*)   printf 'disabled\n'; exit 1 ;;
             *"spira-watchtower-prod.timer"*) printf 'disabled\n'; exit 1 ;;
             *) printf 'enabled\n'; exit 0 ;;
@@ -164,12 +164,12 @@ chmod +x "$BIN/sc-four-disabled"
 
 four_out="$(run_doctor "$BIN/sc-four-disabled")"
 want "drift: ops timer reported"        "spira-ops-prod.timer"        "$four_out"
-want "drift: promote timer reported"    "spira-promote-prod.timer"    "$four_out"
+want "drift: skew timer reported"       "spira-skew-prod.timer"       "$four_out"
 want "drift: suites timer reported"     "spira-suites-prod.timer"     "$four_out"
 want "drift: watchtower timer reported" "spira-watchtower-prod.timer" "$four_out"
 # Each must produce a FAIL line (not just appear in a hint line).
 want "drift: ops FAIL line"        "  FAIL  spira-ops-prod.timer"        "$four_out"
-want "drift: promote FAIL line"    "  FAIL  spira-promote-prod.timer"    "$four_out"
+want "drift: skew FAIL line"       "  FAIL  spira-skew-prod.timer"       "$four_out"
 want "drift: suites FAIL line"     "  FAIL  spira-suites-prod.timer"     "$four_out"
 want "drift: watchtower FAIL line" "  FAIL  spira-watchtower-prod.timer" "$four_out"
 nowant "drift: no OK line when units are broken" \
@@ -177,7 +177,7 @@ nowant "drift: no OK line when units are broken" \
 
 # Count matches for the four-timer pattern (acceptance-criteria check).
 drift_count="$(printf '%s\n' "$four_out" \
-    | grep -cE 'spira-(ops|promote|suites|watchtower)-prod\.timer' || true)"
+    | grep -cE 'spira-(ops|skew|suites|watchtower)-prod\.timer' || true)"
 [ "$drift_count" -ge 4 ] \
     && ok "drift: at least 4 lines name the four disabled timers (count=$drift_count)" \
     || bad "drift: expected >=4 lines naming the four timers, got $drift_count"
@@ -204,7 +204,7 @@ JSON
 
 susp_out="$(run_doctor "$BIN/sc-four-disabled")"
 want   "suspension: ops still reported"        "spira-ops-prod.timer"        "$susp_out"
-want   "suspension: promote still reported"    "spira-promote-prod.timer"    "$susp_out"
+want   "suspension: skew still reported"        "spira-skew-prod.timer"       "$susp_out"
 want   "suspension: watchtower still reported" "spira-watchtower-prod.timer" "$susp_out"
 nowant "suspension: suites NOT reported (it is suspended)" \
     "  FAIL  spira-suites-prod.timer" "$susp_out"

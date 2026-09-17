@@ -159,11 +159,11 @@ if [ -z "$units_code" ]; then
 else
     ok "units.sh code is readable (${#units_code} bytes)"
 
-    # POSITIVE CONTROL: spira-promote.timer is also conditionally added to ENABLE.
-    promote_in_enable="$(printf '%s\n' "$units_code" | grep 'spira-promote.timer' | grep 'ENABLE')"
-    case "$promote_in_enable" in
-        ?*) ok "positive control: spira-promote.timer has a conditional ENABLE+= line" ;;
-        *)  bad "positive control: spira-promote.timer conditional ENABLE+= line" \
+    # POSITIVE CONTROL: dolt-beads.service is conditionally added to ENABLE.
+    _pc_enable="$(printf '%s\n' "$units_code" | grep 'dolt-beads.service' | grep 'ENABLE')"
+    case "$_pc_enable" in
+        ?*) ok "positive control: dolt-beads.service has a conditional ENABLE+= line" ;;
+        *)  bad "positive control: dolt-beads.service conditional ENABLE+= line" \
                 "not found — the grep may be broken" ;;
     esac
 
@@ -192,11 +192,11 @@ else
     esac
 
     # spira-suites.timer and .service are added via UNITS+=, not the static UNITS=().
-    # POSITIVE CONTROL: spira-promote.timer is also conditionally added to UNITS.
-    promote_in_units="$(printf '%s\n' "$units_code" | grep 'spira-promote.timer' | grep 'UNITS')"
-    case "$promote_in_units" in
-        ?*) ok "positive control: spira-promote.timer has a conditional UNITS+= line" ;;
-        *)  bad "positive control: spira-promote.timer conditional UNITS+= line" \
+    # POSITIVE CONTROL: dolt-beads.service is conditionally added to UNITS.
+    _pc_units="$(printf '%s\n' "$units_code" | grep 'dolt-beads.service' | grep 'UNITS')"
+    case "$_pc_units" in
+        ?*) ok "positive control: dolt-beads.service has a conditional UNITS+= line" ;;
+        *)  bad "positive control: dolt-beads.service conditional UNITS+= line" \
                 "not found — the grep may be broken" ;;
     esac
 

@@ -1,153 +1,186 @@
 #!/usr/bin/env bash
 #
-# deploy.sh — deployment controller: review a release unit and deploy it to production.
+# deploy.sh — operator-run release deploy.
 #
-#   deploy.sh [--dry-run] <release-tag>
-#
-# PURPOSE
-# -------
-# deploy.sh is the ONLY component that may advance the production checkout.
-# landing.sh lands work onto the development base branch and stops there.
-# deploy.sh reviews a release unit and, if the reviewer clears it, promotes it
-# to production via promote.sh. Exactly one publisher exists because exactly one
-# component calls promote.sh in the automated pipeline.
-#
-# THE BOOTSTRAP CONSTRAINT (load-bearing)
-# ----------------------------------------
-# deploy.sh must not deploy itself. A controller that ships a broken controller
-# cannot un-ship it — the thing that would have noticed is the thing that broke,
-# and the failure is silent. If the release unit's aggregate diff touches this
-# file (spira/deploy.sh), the unit is refused and a human must promote it.
-# Small, boring, and rarely changed is what makes the bootstrap constraint hold.
+#   deploy.sh [--dry-run] <tag|latest>
 #
 # FLOW
-#   1. Validate the release tag and resolve its managed repository.
-#   2. Compute the unit's aggregate diff and check for changes to deploy.sh.
-#      Refuse (exit 1) if found.
-#   3. Invoke review.sh <tag> for the verdict.
-#      - SHIP (exit 0): call promote.sh <tag> to advance the production checkout.
-#      - BLOCK (exit 1): refuse; findings are already filed as beads by review.sh.
-#      - FATAL (exit 2): refuse; the unit is treated as unreviewed.
+#   1. Resolve "latest" to the newest spira-release-* tag.
+#   2. Refuse if the named release is already current.
+#   3. Fetch the release tarball from the forge.
+#   4. Stop the promote timer (retired by this command).
+#   5. world.sh drain — wait for live aeons to finish; refuse if they do not.
+#   6. activate.sh — unpack, atomic symlink swap, daemon-reload, restart units.
+#   7. systemd/install.sh — re-render unit files with SPIRA_PROD=$SPIRA_RELEASES/current.
+#   8. cockpit/layout.sh ensure.
+#   9. world.sh resume.
+#  10. Health check: world.sh status, doctor.sh, skew.sh check.
+#      On failure: swap current back, restart, resume, exit 1 naming what failed.
 #
-# REVERSIBILITY
-# -------------
-# A deploy is reversed by running: deploy.sh <previous-tag>
-# The previous tag is recorded in the unit's tag message (prev: field).
-# promote.sh enforces the fast-forward rule, so reversal is a two-step: resolve
-# the previous SHA and pass it directly to promote.sh.
-#
-# DRY RUN
-# -------
-# --dry-run reports what would happen without touching the production checkout.
-# review.sh is still invoked (and still files beads for BLOCK findings) so the
-# review record is accurate even in a dry run.
-#
-# EXIT   0  deployed (or DRY RUN: would deploy)
-#        1  refused — BLOCK verdict, or unit contains changes to deploy.sh itself
-#        2  fatal — reviewer failed, usage error, or tag not found
+# EXIT
+#   0  deployed
+#   1  refused (already current, drain timeout, or health-check rollback)
+#   2  fatal (usage error, fetch failed, activation error)
+# covers: spira/deploy.sh spira/activate.sh spira/world.sh cockpit/layout.sh
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/conf.sh"
 . "$HERE/lib.sh"
 
-DRY_RUN=0
-if [ "${1:-}" = "--dry-run" ]; then DRY_RUN=1; shift; fi
-TAG="${1:-}"
-[ -n "$TAG" ] || { printf 'usage: deploy.sh [--dry-run] <release-tag>\n' >&2; exit 2; }
+_SC="${SPIRA_SYSTEMCTL:-systemctl}"
+_WORLD="${SPIRA_WORLD_SH:-$HERE/world.sh}"
+_ACTIVATE="${SPIRA_ACTIVATE_SH:-$HERE/activate.sh}"
+_INSTALL="${SPIRA_INSTALL_SH:-$HERE/../systemd/install.sh}"
+_COCKPIT="${SPIRA_COCKPIT_LAYOUT_SH:-$HERE/../cockpit/layout.sh}"
+_DOCTOR="${SPIRA_DOCTOR_SH:-$HERE/doctor.sh}"
+_SKEW="${SPIRA_SKEW_SH:-$HERE/skew.sh}"
 
-REVIEW_SH="$HERE/review.sh"
-PROMOTE_SH="$HERE/promote.sh"
-[ -x "$REVIEW_SH" ] || { printf 'deploy: review.sh not found at %s\n' "$REVIEW_SH" >&2; exit 2; }
-[ -x "$PROMOTE_SH" ] || { printf 'deploy: promote.sh not found at %s\n' "$PROMOTE_SH" >&2; exit 2; }
-
-# --- resolve the tag to its managed repository ---
-repo=""; name=""
-for n in $(spira_repos); do
-    r="$(repo_root "$n" 2>/dev/null)" || continue
-    if git -C "$r" rev-parse --verify "refs/tags/$TAG" >/dev/null 2>&1; then
-        repo="$r"; name="$n"; break
-    fi
+dry_run=0
+tag=""
+for _a in "$@"; do
+    case "$_a" in
+        --dry-run) dry_run=1 ;;
+        -*) printf 'deploy: unknown option: %s\n' "$_a" >&2; exit 2 ;;
+        *)  [ -z "$tag" ] && tag="$_a" \
+                || { printf 'deploy: too many arguments\n' >&2; exit 2; } ;;
+    esac
 done
-[ -n "$repo" ] || {
-    printf 'deploy: tag %s not found in any managed repository\n' "$TAG" >&2
+unset _a
+[ -n "$tag" ] || { printf 'usage: deploy.sh [--dry-run] <tag|latest>\n' >&2; exit 2; }
+
+# Resolve "latest" to the newest spira-release-* tag.
+if [ "$tag" = "latest" ]; then
+    git -C "$SPIRA_REPO" fetch --tags --quiet 2>/dev/null || true
+    tag="$(git -C "$SPIRA_REPO" tag --list 'spira-release-*' \
+            --sort=-version:refname 2>/dev/null | head -1)"
+    [ -n "$tag" ] || {
+        printf 'deploy: no spira-release-* tags found\n' >&2; exit 2
+    }
+    log "deploy: latest = $tag"
+fi
+
+# Derive the release directory name from the tag (spira-release-<stem> → <stem>).
+release_stem="${tag#spira-release-}"
+[ -n "$release_stem" ] && [ "$release_stem" != "$tag" ] || {
+    printf 'deploy: tag %s does not match spira-release-<stem> format\n' "$tag" >&2
     exit 2
 }
 
-# Read the tag message to locate the previous release unit.
-msg="$(git -C "$repo" tag -l --format='%(contents)' "$TAG" 2>/dev/null)"
-[ -n "$msg" ] || {
-    printf 'deploy: %s has no embedded message — is this a release tag?\n' "$TAG" >&2
-    exit 2
+[ -n "${SPIRA_RELEASES:-}" ] || {
+    printf 'deploy: SPIRA_RELEASES is not set\n' >&2; exit 2
 }
 
-prev_tag="$(printf '%s\n' "$msg" | grep '^prev: ' | head -1 | sed 's/^prev: //')"
-tag_sha="$(git -C "$repo" rev-parse "${TAG}^{commit}" 2>/dev/null)" || {
-    printf 'deploy: cannot resolve commit for %s\n' "$TAG" >&2; exit 2
-}
-
-# ---- THE BOOTSTRAP CONSTRAINT -----------------------------------------------
-# HOME_SUB is the harness subdir name (e.g. "spira"). SELF_PATH is the path of
-# this script within the repository as it appears in `git diff --name-only`.
-# Checking by path survives rebases and renames of the tag itself.
-HOME_SUB="$(basename "$HERE")"
-SELF_PATH="${HOME_SUB}/deploy.sh"
-
-_self_in_diff=0
-if [ -n "${prev_tag:-}" ] && [ "$prev_tag" != "(none)" ] \
-   && git -C "$repo" rev-parse --verify "refs/tags/$prev_tag" >/dev/null 2>&1; then
-    prev_sha="$(git -C "$repo" rev-parse "${prev_tag}^{commit}" 2>/dev/null)"
-    git -C "$repo" diff --name-only "${prev_sha}..${tag_sha}" 2>/dev/null \
-        | grep -qF "$SELF_PATH" && _self_in_diff=1 || true
-else
-    # No prior unit: compare against the empty tree — the well-known constant SHA.
-    _empty_tree="$(git hash-object -t tree /dev/null 2>/dev/null \
-                   || printf '4b825dc642cb6eb9a060e54bf8d69288fbee4904')"
-    git -C "$repo" diff --name-only "${_empty_tree}..${tag_sha}" 2>/dev/null \
-        | grep -qF "$SELF_PATH" && _self_in_diff=1 || true
+# Refuse if this release is already current.
+prev_release=""
+if [ -L "$SPIRA_RELEASES/current" ]; then
+    _current="$(readlink "$SPIRA_RELEASES/current")"
+    if [ "$_current" = "$release_stem" ]; then
+        printf 'deploy: %s is already current — nothing to do\n' "$release_stem" >&2
+        exit 1
+    fi
+    prev_release="$_current"
 fi
+unset _current
 
-if [ "$_self_in_diff" = 1 ]; then
-    printf 'deploy: %s contains changes to %s\n' "$TAG" "$SELF_PATH" >&2
-    printf 'deploy: the deployment controller must not deploy itself\n' >&2
-    printf 'deploy: this unit requires a human to promote — run: promote.sh %s\n' "$TAG" >&2
-    exit 1
-fi
+log "deploy: target $release_stem (prev: ${prev_release:-none})"
 
-# ---- INVOKE THE REVIEWER ----------------------------------------------------
-log "deploy: reviewing release unit $TAG"
-
-REVIEW_RC=0
-verdict_raw="$("$REVIEW_SH" "$TAG" 2>/dev/null)" || REVIEW_RC=$?
-# review.sh logs to stdout (lib.sh log() is intentionally stdout for the sentinel).
-# The verdict line is always last; extract it to avoid matching log lines in the case
-# statement below.
-verdict="$(printf '%s\n' "$verdict_raw" | tail -1)"
-
-if [ "$REVIEW_RC" = 2 ]; then
-    printf 'deploy: reviewer failed for %s (exit %d) — unit NOT deployed\n' "$TAG" "$REVIEW_RC" >&2
-    exit 2
-fi
-
-# review.sh prints one line: "ship" or "block". Anything else is treated as block.
-case "${verdict:-}" in ship) ;; *) verdict="block" ;; esac
-
-log "deploy: $TAG verdict=$verdict"
-
-if [ "$verdict" = "block" ]; then
-    printf 'deploy: %s is BLOCKED by the reviewer\n' "$TAG" >&2
-    printf 'deploy: resolve findings (label: %s) and re-run: review.sh %s\n' \
-        "$SPIRA_REVIEW_LABEL" "$TAG" >&2
-    printf 'deploy: then re-run: deploy.sh %s\n' "$TAG" >&2
-    exit 1
-fi
-
-# ---- PROMOTE TO PRODUCTION --------------------------------------------------
-if [ "$DRY_RUN" = 1 ]; then
-    log "deploy: DRY RUN: $TAG is clean — would promote to production via promote.sh"
-    printf '%s\n' "$verdict"
+if [ "$dry_run" = 1 ]; then
+    printf 'deploy: --dry-run — nothing will be changed\n'
+    printf 'deploy: would fetch %s from forge\n' "$tag"
+    printf 'deploy: would world.sh drain\n'
+    printf 'deploy: would activate.sh %s.tar.gz\n' "$release_stem"
+    printf 'deploy: would systemd/install.sh (re-render units)\n'
+    printf 'deploy: would cockpit/layout.sh ensure\n'
+    printf 'deploy: would world.sh resume\n'
+    printf 'deploy: would run health checks\n'
     exit 0
 fi
 
-log "deploy: $TAG is clean — promoting to production"
-"$PROMOTE_SH" "$TAG"
-log "deploy: $TAG deployed to production"
-printf '%s\n' "$verdict"
+# Fetch the tarball from the forge.
+mkdir -p "$SPIRA_RUN"
+_deploy_tmp="$(mktemp -d "$SPIRA_RUN/deploy-XXXXXXXX")"
+trap 'rm -rf "$_deploy_tmp"' EXIT
+
+log "deploy: fetching $tag"
+(cd "$SPIRA_REPO" && gh release download "$tag" \
+    --pattern "${release_stem}.tar.gz" \
+    --dir "$_deploy_tmp") || {
+    printf 'deploy: fetch failed\n' >&2; exit 2
+}
+_tarball="$_deploy_tmp/${release_stem}.tar.gz"
+[ -f "$_tarball" ] || {
+    printf 'deploy: tarball not found after download: %s\n' "$_tarball" >&2; exit 2
+}
+
+# Retire the promote timer before draining; it is superseded by this command.
+_promo_tmr="spira-promote-${SPIRA_INSTANCE}.timer"
+_promo_svc="spira-promote-${SPIRA_INSTANCE}.service"
+"$_SC" --user stop "$_promo_tmr" 2>/dev/null || true
+"$_SC" --user disable "$_promo_tmr" 2>/dev/null || true
+"$_SC" --user stop "$_promo_svc" 2>/dev/null || true
+
+# Drain: wait for live aeons to finish; refuse if they do not.
+log "deploy: draining"
+"$_WORLD" drain || {
+    printf 'deploy: drain refused — live aeons did not finish in time\n' >&2
+    exit 1
+}
+
+# Rollback: swap current back to the prior release, restart, resume.
+# Called after activate.sh has already swapped current; direct symlink swap
+# avoids activate.sh's live-aeon guard (aeons are drained at this point).
+_rollback() {
+    local _why="$1"
+    printf 'deploy: ROLLBACK — %s\n' "$_why" >&2
+    if [ -n "$prev_release" ] && [ -d "$SPIRA_RELEASES/$prev_release" ]; then
+        local _tmp="$SPIRA_RELEASES/.current.rollback.$$"
+        ln -s "$prev_release" "$_tmp" && mv -T "$_tmp" "$SPIRA_RELEASES/current" || {
+            printf 'deploy: rollback: symlink swap failed\n' >&2
+        }
+        "$_SC" --user daemon-reload 2>/dev/null || true
+        "$_SC" --user list-units "spira-*-${SPIRA_INSTANCE}.service" \
+            --state=active --no-legend 2>/dev/null \
+            | awk '{print $1}' | grep -v "spira-aeon-" \
+            | xargs -r "$_SC" --user restart 2>/dev/null || true
+        "$_WORLD" resume 2>/dev/null || true
+        printf 'deploy: restored %s\n' "$prev_release" >&2
+    else
+        printf 'deploy: no prior release to restore\n' >&2
+    fi
+    exit 1
+}
+
+# Activate the tarball.
+log "deploy: activating"
+"$_ACTIVATE" "$_tarball" || { _rollback "activate.sh failed"; }
+
+# Re-render unit files so ExecStart paths point at $SPIRA_RELEASES/current.
+# One-time cutover if SPIRA_PROD was previously set to the checkout; idempotent thereafter.
+log "deploy: re-rendering units"
+SPIRA_PROD="$SPIRA_RELEASES/current" SPIRA_INSTALL_FORCE=1 bash "$_INSTALL" || {
+    _rollback "unit re-render failed"
+}
+
+# Ensure cockpit layout is current.
+log "deploy: ensuring cockpit"
+"$_COCKPIT" ensure 2>/dev/null || true
+
+# Remove the drain stamp so aeons can be summoned again.
+log "deploy: resuming"
+"$_WORLD" resume
+
+# Health check: verify the activated release is up and healthy.
+log "deploy: health check"
+_deploy_failed=""
+"$_WORLD" status >/dev/null 2>&1 \
+    || _deploy_failed="${_deploy_failed:+$_deploy_failed, }world status"
+SPIRA_DOCTOR=1 "$_DOCTOR" >/dev/null 2>&1 \
+    || _deploy_failed="${_deploy_failed:+$_deploy_failed, }doctor"
+"$_SKEW" check >/dev/null 2>&1
+_skew_exit=$?
+[ "$_skew_exit" -eq 0 ] \
+    || _deploy_failed="${_deploy_failed:+$_deploy_failed, }skew (exit $_skew_exit)"
+
+[ -z "$_deploy_failed" ] || { _rollback "$_deploy_failed"; }
+
+log "deploy: $release_stem active"

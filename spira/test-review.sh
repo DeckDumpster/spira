@@ -16,8 +16,6 @@
 #   3. VERDICT COMMAND: review.sh verdict <tag> reads the stored verdict file.
 #   4. DEDUPLICATION: re-running a review for the same unit does not file the
 #      same finding twice.
-#   5. PROMOTE GATE: promote.sh refuses to promote a release tag whose stored
-#      verdict is block.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control)
 # --------------------------------------------------------
@@ -35,9 +33,7 @@
 # Python parser in review.sh searches for the literal '"type":"result"'.
 #
 # defect: sp-gsmx.4
-# covers: spira/review.sh spira/promote.sh spira/conf.sh spira/lib.sh
-# covers: spira/release.sh
-# scar: review.sh had no suite; a missing or broken reviewer produced no verdict and promote would not gate on it.
+# covers: spira/review.sh spira/conf.sh spira/lib.sh spira/release.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -270,79 +266,7 @@ is "dedup: count unchanged after re-review"  "$bead_count"  "$bead_count2"
 
 # ======================================================================================
 echo
-echo "5. PROMOTE GATE — promote.sh refuses a BLOCK-verdicted release tag"
-# ======================================================================================
-# Set up a dedicated git fixture for the promote gate test. We need a prod
-# checkout that already exists so promote.sh skips the initial-clone path and
-# reaches the reviewer gate. The fixture uses two commits: prod starts at the
-# first, and we try to promote to the second (which has a BLOCK verdict tag).
-PT="$TMP/pt"
-mkdir -p "$PT"
-PORIGIN="$PT/origin.git"
-PREPO="$PT/repo"
-PPROD_ROOT="$PT/prod"     # git root of production checkout
-PPROD="$PPROD_ROOT/spira" # SPIRA_PROD (one level inside the git root)
-
-git init -q --bare -b main "$PORIGIN"
-git clone -q "$PORIGIN" "$PREPO" 2>/dev/null
-git -C "$PREPO" config user.email t@t; git -C "$PREPO" config user.name t
-
-printf '1\n' > "$PREPO/g"; git -C "$PREPO" add g
-git -C "$PREPO" commit -qm "base"; git -C "$PREPO" push -q origin main 2>/dev/null
-BASE_SHA="$(git -C "$PREPO" rev-parse HEAD)"
-
-printf '2\n' >> "$PREPO/g"; git -C "$PREPO" add g
-git -C "$PREPO" commit -qm "sp-ptest — change to review"
-git -C "$PREPO" push -q origin main 2>/dev/null
-NEW_SHA="$(git -C "$PREPO" rev-parse HEAD)"
-
-# Create an annotated release tag at NEW_SHA (used by promote.sh's gate).
-PTAG="spira-release-ptest-20260908T000000Z"
-git -C "$PREPO" tag -a "$PTAG" "$NEW_SHA" -m "spira release: ptest
-base: main ($NEW_SHA)
-prev: (none)
-
-bead: sp-ptest"
-
-# Pre-create the production checkout at BASE_SHA so promote.sh skips the
-# initial-clone path and reaches the reviewer gate on the first call.
-git clone -q "$PREPO" "$PPROD_ROOT" 2>/dev/null
-git -C "$PPROD_ROOT" checkout --detach "$BASE_SHA" >/dev/null 2>&1
-mkdir -p "$PPROD"   # SPIRA_PROD must be a subdir of the git root
-
-run_promote() {
-    env -i PATH="$PATH" HOME="$HOME" \
-        SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_REPO="$PREPO" \
-        SPIRA_HOME_REPO=ptest-harness \
-        SPIRA_PROD="$PPROD" \
-        SPIRA_REVIEWER_VERDICTS="$VERDICTS" \
-        SPIRA_REVIEW_LABEL=review-finding \
-        bash "$HERE/promote.sh" "$@" 2>&1 || true
-}
-
-# Write a BLOCK verdict for the release tag.
-printf 'tag: %s\nverdict: block\nmodel: test\ntimestamp: 2026-09-08T00:00:00Z\ncost_usd: 0.0000\nin_tok: 0\nout_tok: 0\nfindings: 1\n' \
-    "$PTAG" > "$VERDICTS/$PTAG.verdict"
-
-pout_block="$(run_promote "$PTAG" 2>&1 || true)"
-want "promote: BLOCK verdict is refused"   "BLOCK verdict" "$pout_block"
-
-# With a SHIP verdict, the gate passes (promote proceeds or fails for unrelated reasons,
-# but must not say "BLOCK verdict").
-sed 's/^verdict: block/verdict: ship/' "$VERDICTS/$PTAG.verdict" > "$VERDICTS/$PTAG.verdict.ship"
-mv "$VERDICTS/$PTAG.verdict.ship" "$VERDICTS/$PTAG.verdict"
-pout_ship="$(run_promote "$PTAG" 2>&1 || true)"
-nowant "promote: SHIP verdict is not refused"  "BLOCK verdict"  "$pout_ship"
-
-# Also verify: a ref that has no release tag at all is not blocked.
-pout_bare="$(run_promote "$BASE_SHA" 2>&1 || true)"
-nowant "promote: bare SHA (no release tag) is not blocked"  "BLOCK verdict"  "$pout_bare"
-
-# ======================================================================================
-echo
-echo "6. SUITE SELF-CHECK — suite fails without review.sh"
+echo "5. SUITE SELF-CHECK — suite fails without review.sh"
 # ======================================================================================
 rm -f "$SH/review.sh"
 out_absent="$(run_review "$TAG" 2>&1 || true)"
