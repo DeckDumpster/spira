@@ -540,6 +540,19 @@ else
     for n in $(repo_names); do
         p="$(repo_field "$n" path)"
         b="$(repo_field "$n" base)"
+        # QUEUE-MODE PROTECTION. queue.sh protect sets the required check, no force push
+        # and no deletion on the base branch, then writes a receipt under SPIRA_RUN.
+        # A missing receipt means protect was never run; the branch accepts any push.
+        if [ "$(repo_land "$n" 2>/dev/null)" = queue ]; then
+            _dr_qp="$SPIRA_RUN/queue-protected-$n"
+            if [ -f "$_dr_qp" ]; then
+                OK "repo:$n — queue mode: base branch protection record present"
+            else
+                WARN "repo:$n — queue mode: base branch has no protection record" \
+                     "Run: $SPIRA_HOME/queue.sh protect $n"
+            fi
+            unset _dr_qp
+        fi
         if [ ! -e "$p/.git" ]; then
             WARN "repo:$n — $p is not a checkout" "Another machine's row, or a path that has moved."
             continue

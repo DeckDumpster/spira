@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# queue.sh — submit a branch into the merge queue; report queue meter stats.
+# queue.sh — submit a branch into the merge queue; protect the base branch; report stats.
 #
 #   queue.sh submit <branch>
+#   queue.sh protect [<repo>]
 #   queue.sh stats
 #
 # submit: certifies any branch by running the repository's gate. In a queue-mode
@@ -9,6 +10,10 @@
 # In push mode the branch is fast-forward merged to the base; in pr or
 # hold mode it is certified and left for landing.sh. A branch with no
 # associated bead may be submitted.
+#
+# protect: sets the required gate check, disallows force-push and deletion on the
+# queue-mode repo's base branch via the forge seam (SPIRA_FORGE), then writes a
+# receipt under SPIRA_RUN that doctor.sh checks. Defaults to the home repo.
 #
 # stats: reads QUEUE lines from landing.log and prints caught/escaped/cost totals.
 #
@@ -146,8 +151,37 @@ cmd_stats() {
     printf 'cost:     %ds avg per branch\n' "$avg_cost"
 }
 
+cmd_protect() {
+    local name="${1:-}"
+    [ -n "$name" ] || name="$(spira_home_repo)"
+
+    local repo mode base base_branch
+    repo="$(repo_root "$name" 2>/dev/null)" || {
+        printf 'queue.sh protect: no such repo: %s\n' "$name" >&2; return 1
+    }
+    mode="$(repo_land "$name")"
+    [ "$mode" = queue ] || {
+        printf 'queue.sh protect: repo is not in queue mode (mode=%s)\n' "$mode" >&2; return 1
+    }
+
+    base="$(spira_landref "$name" 2>/dev/null)" || {
+        printf 'queue.sh protect: cannot resolve base ref for %s\n' "$name" >&2; return 1
+    }
+    base_branch="$(ref_branch "$base")"
+
+    "$SPIRA_FORGE" branch-protect "$repo" "$base_branch" || {
+        printf 'queue.sh protect: forge branch-protect failed\n' >&2; return 1
+    }
+
+    local receipt="$SPIRA_RUN/queue-protected-$name"
+    mkdir -p "$SPIRA_RUN" 2>/dev/null || true
+    printf '%s\n' "$base_branch" > "$receipt"
+    printf 'queue.sh protect: protection set for repo:%s (branch: %s)\n' "$name" "$base_branch"
+}
+
 case "${1:-}" in
-    submit) shift; cmd_submit "$@" ;;
-    stats)  cmd_stats ;;
-    *) printf 'usage: queue.sh submit <branch> | queue.sh stats\n' >&2; exit 2 ;;
+    submit)  shift; cmd_submit "$@" ;;
+    protect) shift; cmd_protect "$@" ;;
+    stats)   cmd_stats ;;
+    *) printf 'usage: queue.sh submit <branch> | queue.sh protect [<repo>] | queue.sh stats\n' >&2; exit 2 ;;
 esac

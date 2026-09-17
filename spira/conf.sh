@@ -79,7 +79,7 @@ SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET
 SPIRA_GATE_SUITES SPIRA_SUITE_STATE SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
 SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST SPIRA_INCIDENT_PRIORITY
 SPIRA_FLAKE_QUARANTINE_AT SPIRA_FLAKE_WINDOW SPIRA_QUARANTINE_CLEAN_RUNS SPIRA_QUARANTINE_MAX_AGE
-SPIRA_QUEUE_BATCH_MAX SPIRA_QUEUE_BATCH_WAIT SPIRA_QUEUE_CI_MAXSEC SPIRA_QUEUE_INFRA_RETRIES SPIRA_QUEUE_STUCK_AGE SPIRA_QUEUE_DIR SPIRA_FORGE SPIRA_QUEUE_WAIT_LABEL
+SPIRA_QUEUE_BATCH_MAX SPIRA_QUEUE_BATCH_WAIT SPIRA_QUEUE_CI_MAXSEC SPIRA_QUEUE_INFRA_RETRIES SPIRA_QUEUE_STUCK_AGE SPIRA_QUEUE_DIR SPIRA_FORGE SPIRA_QUEUE_WAIT_LABEL SPIRA_QUEUE_ACTIONS_APP_ID
 SPIRA_AURON_RESTARTS SPIRA_AURON_RESTART_WINDOW
 SPIRA_PROD SPIRA_INSTANCE
 SPIRA_RELEASES SPIRA_RELEASES_KEEP
@@ -932,6 +932,11 @@ spira_conf_defaults() {
     # REPOSITORY WHOSE LANDSTATE HAS NOT YET REACHED LANDED. Excludes the bead from
     # fayth_ready so it is not summoned until the blocker's change is pushed to base.
     : "${SPIRA_QUEUE_WAIT_LABEL:=spira-queue-waiting}"
+    # THE GITHUB ACTIONS APP ID used in the required-status-checks rule set by queue.sh
+    # protect. Omitting it (or setting it to -1) lets the source be inferred from history,
+    # which admits a hand-posted commit status that bypasses gate enforcement. 15368 is the
+    # GitHub Actions app. Must be a non-negative integer.
+    : "${SPIRA_QUEUE_ACTIONS_APP_ID:=15368}"
     # WHETHER THIS INSTALLATION RUNS ITS OWN TEST SUITES on a timer. On by default when
     # SPIRA_REPO is a git checkout (development mode — the operator can land changes); off
     # when it is not (a consumer installation from a release tarball, where SPIRA_REPO has

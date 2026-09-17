@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# forge.sh — forge seam: open and query pull requests.
+# forge.sh — forge seam: open and query pull requests; set branch protection.
 # SPIRA_FORGE may point to a substitute when a fixture replaces the real forge.
 #
 # pr-create <repo-dir> <head> <base> <title>   body on stdin; prints PR number
@@ -9,6 +9,8 @@
 # run-id <repo-dir> <branch>                   prints the latest CI run ID for the branch
 # workflow-rerun <repo-dir> <run-id>           re-queues a failed workflow run
 # pr-close <repo-dir> <pr-number>              closes the PR without merging
+# branch-protect <repo-dir> <branch>           set: required gate check, no force-push, no delete
+# branch-protection-status <repo-dir> <branch> prints: protected | unprotected
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -117,6 +119,31 @@ except Exception:
     pr-close)
         pr_n="${1:-}"
         ( cd "$repo" && ghq pr close "$pr_n" ) 2>/dev/null
+        ;;
+    branch-protect)
+        base="${1:-}"
+        [ -n "$base" ] || { printf 'forge.sh: branch-protect: base branch required\n' >&2; exit 1; }
+        # enforce_admins=true so an admin token cannot push an unchecked SHA as a bypass.
+        # app_id pins the source to the Actions app; -1 or omission admits a hand-posted status.
+        # No required_pull_request_reviews: the fast-forward push in queue mode is not a PR.
+        printf '{"required_status_checks":{"strict":false,"checks":[{"context":"gate","app_id":%d}]},"enforce_admins":true,"required_pull_request_reviews":null,"restrictions":null,"allow_force_pushes":false,"allow_deletions":false,"block_creations":false}\n' \
+            "${SPIRA_QUEUE_ACTIONS_APP_ID:-15368}" \
+        | ( cd "$repo" && ghq api "repos/{owner}/{repo}/branches/$base/protection" \
+              --method PUT --input - ) 2>&1
+        ;;
+    branch-protection-status)
+        base="${1:-}"
+        [ -n "$base" ] || { printf 'unprotected\n'; exit 0; }
+        result="$( cd "$repo" && ghq api "repos/{owner}/{repo}/branches/$base" 2>/dev/null \
+            | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print("protected" if d.get("protected") else "unprotected")
+except Exception:
+    print("unprotected")
+' 2>/dev/null )" || result="unprotected"
+        printf '%s\n' "${result:-unprotected}"
         ;;
     *)
         printf 'forge.sh: unknown command: %s\n' "$cmd" >&2
