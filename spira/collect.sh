@@ -213,6 +213,10 @@ PY
 
 # The supervisor loop: tick every TICK seconds, start due probes, merge fragments.
 _supervisor_loop() {
+    # Ping before any setup so the WatchdogSec timer is reset immediately on entry,
+    # covering the window between service start and the first in-loop ping.
+    [ -n "${NOTIFY_SOCKET:-}" ] && systemd-notify --watchdog 2>/dev/null || true
+
     mkdir -p "$FRAG_DIR"
     local entry name
     for entry in "${PROBES[@]}"; do
@@ -241,7 +245,7 @@ _supervisor_loop() {
 
     while :; do
         # Watchdog heartbeat: keeps systemd from killing a live supervisor between ticks.
-        # Requires WatchdogSec= and NotifyAccess=main in the unit.
+        # Requires WatchdogSec= and NotifyAccess=all (systemd-notify is a child process).
         [ -n "${NOTIFY_SOCKET:-}" ] && systemd-notify --watchdog 2>/dev/null || true
 
         # Config-change check: exit cleanly so the restart picks up the new config.
