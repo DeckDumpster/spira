@@ -364,6 +364,12 @@ MAILEOF
 # =======================================================================================
 refresh() {
     local repo="${1:-$SPIRA_REPO}" base base_branch remote behind dirty current
+    # In release mode the checkout is not what systemd executes; fast-forwarding it would
+    # advance code that nothing runs and is not the release that is in force.
+    if [ -n "${SPIRA_RELEASES:-}" ] && [ -L "$SPIRA_RELEASES/current" ]; then
+        echo "skew: refresh skipped — release mode is active ($SPIRA_RELEASES/current)"
+        return 0
+    fi
     [ -e "$repo/.git" ] || {
         echo "skew: refresh: $repo is not a git checkout"; return 1; }
     base="$(spira_landref "$repo")" || {

@@ -1005,6 +1005,23 @@ else
          "The first call to promote.sh will clone from $SPIRA_REPO."
 fi
 
+# CONF/UNIT DISAGREEMENT. After deploy.sh activates a release, spira.conf is updated so that
+# conf-sourced scripts (sentinel, skew, doctor) agree with the units about which tree is in
+# force. A release active at $SPIRA_RELEASES/current while conf still names the checkout means
+# the two halves of the system are running different code.
+if [ -n "${SPIRA_RELEASES:-}" ] && [ -L "$SPIRA_RELEASES/current" ]; then
+    _releases_current="$SPIRA_RELEASES/current"
+    case "${SPIRA_PROD:-}" in
+        "$SPIRA_RELEASES"*)
+            OK "release mode: SPIRA_PROD matches activated release ($SPIRA_PROD)" ;;
+        *)
+            FAIL "conf/unit disagreement: release is active at $_releases_current but SPIRA_PROD=$SPIRA_PROD" \
+                 "After deploy.sh activates a release it writes SPIRA_PROD to spira.conf.
+        If that write was skipped, set: SPIRA_PROD = $_releases_current in ${CONF:-spira.conf}" ;;
+    esac
+    unset _releases_current
+fi
+
 echo
 if [ "$fatal" -gt 0 ]; then
     printf '%d fatal, %d warnings — the harness will not run until the fatals are fixed.\n' "$fatal" "$warn"
