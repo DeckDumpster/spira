@@ -82,6 +82,8 @@ printf '=== ask\n' >> "$NOTIFY_LOG"
 NOTIFY
 chmod +x "$MOCK_BIN/notify.sh"
 
+MAIL="$TMP/mail"
+
 # Halt stamp path matches what world.sh writes.
 STAMP="$RUN/world.halted"
 
@@ -97,6 +99,7 @@ BASE_ENV=(
     SPIRA_RUN="$RUN"
     SPIRA_INSTANCE=test
     SPIRA_WATCHERS="$MAN"
+    SPIRA_MAIL="$MAIL"
 )
 
 run_status() {
@@ -112,8 +115,9 @@ run_notify() {
         bash "$WATCHD" notify 2>/dev/null
 }
 
-asks()      { local n; n="$(grep -c '=== ask' "$ASKS" 2>/dev/null)" || n=0; printf '%s' "$n"; }
-reset_run() { : > "$ASKS"; rm -f "$WDIR/"*.unhealthy "$WDIR/"notify-health.escalated 2>/dev/null; }
+# An escalation is a message in the operator's mailbox; SPIRA_NOTIFY was retired for mail.sh.
+asks()      { find "$MAIL/operator/new" -type f 2>/dev/null | wc -l | tr -d ' '; }
+reset_run() { rm -rf "$MAIL"; rm -f "$WDIR/"*.unhealthy "$WDIR/"notify-health.escalated 2>/dev/null; }
 # Backdate a file by one hour so age > SPIRA_NOTIFY_AGE=0 on the first pass.
 backdate()  { printf '%s\n' "$(( $(date +%s) - 3600 ))" > "$1"; }
 
