@@ -30,7 +30,6 @@
 #
 # defect: sp-gsmx.3
 # covers: spira/release.sh spira/lib.sh
-# covers: spira/promote.sh
 # scar: release.sh used the Spira id prefix as the base branch name instead of calling spira_landref; a repo with any non-prefix default branch silently cut tags against an empty history.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
