@@ -30,6 +30,28 @@ land_mark() {            # land_mark <id> <state> <tip> [reason]
         && mv -f "$LANDSTATE/$1.$$" "$LANDSTATE/$1" 2>/dev/null
 }
 
+# SPIRA_QUEUE_REPRO_BATCH: seam for per-member reproduction in tests.
+: "${SPIRA_QUEUE_REPRO_BATCH:=$HERE/testenv-batch.sh}"
+
+_lg_repro_is_red() {   # _lg_repro_is_red <suites-csv> <repo-dir> <branch> -> 0 if red
+    local suites="$1" repo="$2" br="$3" tmp rc
+    tmp="$(mktemp -d)"
+    SPIRA_BATCH_RESULTS="$tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
+        --mode serial --suites "$suites" "$br" >/dev/null 2>&1
+    rc=$?
+    rm -rf "$tmp"
+    [ "$rc" -eq 1 ]
+}
+
+_lg_red_suites() {   # _lg_red_suites <gate-output> -> comma-separated suite names
+    printf '%s\n' "$1" | awk '{
+        for (i = 1; i < NF; i++)
+            if ($i ~ /\.sh$/ && ($(i+1) ~ /^(RED|TIMEOUT|FAILED)$/ ||
+                ($(i+1) == "was" && $(i+2) == "killed")))
+                if (!seen[$i]++) print $i
+    }' | tr '\n' ',' | sed 's/,$//'
+}
+
 _batch_open_file() { printf '%s/%s/open' "${SPIRA_QUEUE_DIR:?}" "$1"; }
 
 _batch_is_open() { [ -f "$(_batch_open_file "$1")" ]; }
@@ -272,12 +294,110 @@ print(r[0].get('priority', 9) if r else 9)" 2>/dev/null || printf '9'
     batch_br="spira/queue/$stamp"
     batch_head="$(git -C "$wt" rev-parse HEAD 2>/dev/null)"
 
+    # LOCAL GATE: run the gate on the combined batch before opening a PR.
+    # Green → push + open PR. Red → attribute, eject, rebuild, gate again.
+    local lg_out lg_rc lg_start lg_cost
+    lg_start="$(date +%s)"
+    git -C "$repo" branch -f "$batch_br" "$batch_head" 2>/dev/null || true
+    lg_out="$(SPIRA_GATE_BEAD="batch-$stamp" bash "$HERE/gate.sh" "$batch_br" "$name" 2>&1)"
+    lg_rc=$?
+    lg_cost=$(( $(date +%s) - lg_start ))
+
+    if [ "$lg_rc" -ne 0 ] && spira_gate_blames_branch "$lg_rc"; then
+        local lg_attr_start lg_attr_cost lg_ejected lg_suites_csv
+        lg_attr_start="$(date +%s)"
+        lg_ejected=""
+        lg_suites_csv="$(_lg_red_suites "$lg_out")"
+
+        local lg_survivors=() lg_ejected_arr=() _lmm _lmid _lmtip
+        for _lmm in "${members[@]}"; do
+            _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
+            if _lg_repro_is_red "${lg_suites_csv:-}" "$repo" "spira/$_lmid"; then
+                lg_ejected_arr+=("$_lmm")
+            else
+                lg_survivors+=("$_lmm")
+            fi
+        done
+
+        for _lmm in "${lg_ejected_arr[@]:-}"; do
+            [ -n "$_lmm" ] || continue
+            _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
+            bead_reopen "$_lmid" \
+                "Ejected by local batch gate: spira/$_lmid reproduced failure in $name." \
+                >/dev/null 2>&1 || true
+            land_mark "$_lmid" EJECTED "$_lmtip"
+            printf 'QUEUE CAUGHT %s branch=%s\n' "$(date +%s)" "$_lmid" \
+                >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+            lg_ejected="$lg_ejected${lg_ejected:+ }$_lmid"
+            printf 'batch %s: ejected %s — reproduced local gate failure\n' "$name" "$_lmid"
+        done
+
+        lg_attr_cost=$(( $(date +%s) - lg_attr_start ))
+        printf 'QUEUE BATCH %s repo=%s members=%d gate_seconds=%d verdict=red attr_seconds=%d ejected=%s\n' \
+            "$(date +%s)" "$name" "${#members[@]}" "$lg_cost" "$lg_attr_cost" \
+            "${lg_ejected:--}" \
+            >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+
+        if [ "${#lg_survivors[@]}" -eq 0 ]; then
+            git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+            return 0
+        fi
+
+        # Rebuild batch from survivors.
+        members=(); member_ids=()
+        git -C "$wt" reset -q --hard "$base_sha" 2>/dev/null
+        git -C "$wt" clean -qfd 2>/dev/null || true
+        for _lmm in "${lg_survivors[@]}"; do
+            _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
+            if git -C "$wt" merge --no-edit --no-ff -m "spira: land $_lmid" "$_lmtip" \
+                   >/dev/null 2>&1; then
+                members+=("$_lmid:$_lmtip")
+                member_ids+=("$_lmid")
+            fi
+        done
+
+        if [ "${#members[@]}" -eq 0 ]; then
+            git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+            return 0
+        fi
+
+        # Delete old batch branch; new stamp for the rebuilt batch.
+        git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+        batch_head="$(git -C "$wt" rev-parse HEAD 2>/dev/null)"
+        stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+        batch_br="spira/queue/$stamp"
+
+        # Gate the rebuilt batch.
+        lg_start="$(date +%s)"
+        git -C "$repo" branch -f "$batch_br" "$batch_head" 2>/dev/null || true
+        lg_out="$(SPIRA_GATE_BEAD="batch-$stamp" bash "$HERE/gate.sh" "$batch_br" "$name" 2>&1)"
+        lg_rc=$?
+        lg_cost=$(( $(date +%s) - lg_start ))
+
+        if [ "$lg_rc" -ne 0 ] && spira_gate_blames_branch "$lg_rc"; then
+            for _lmm in "${lg_survivors[@]}"; do
+                _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
+                land_mark "$_lmid" CERTIFIED "$_lmtip"
+            done
+            git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+            printf 'QUEUE BATCH %s repo=%s members=%d gate_seconds=%d verdict=red\n' \
+                "$(date +%s)" "$name" "${#members[@]}" "$lg_cost" \
+                >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+            printf 'batch %s: rebuilt batch also red — no PR opened\n' "$name"
+            return 0
+        fi
+    fi
+
+    # GREEN: log the batch meter line, push, open PR.
+    printf 'QUEUE BATCH %s repo=%s members=%d gate_seconds=%d verdict=green\n' \
+        "$(date +%s)" "$name" "${#members[@]}" "${lg_cost:-0}" \
+        >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+
     if ! git -C "$repo" push -q "$remote" \
            "${batch_head}:refs/heads/${batch_br}" 2>/dev/null; then
         printf 'batch %s: could not push %s\n' "$name" "$batch_br" >&2
         return 1
     fi
-    git -C "$repo" branch -f "$batch_br" "$batch_head" 2>/dev/null || true
 
     # Open PR via forge seam.
     local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
