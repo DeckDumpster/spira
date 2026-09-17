@@ -20,7 +20,7 @@
 # No database for the roster half, no network, under a second.
 #
 # defect: sp-u4x
-# covers: spira/lib.sh concierge.sh systemd/concierge.service spira/bead.sh spira/chamber/concierge.fayth spira/chamber/concierge.md spira/hooks/session.sh spira/cockpit.sh
+# covers: spira/lib.sh concierge.sh systemd/concierge.service spira/bead.sh spira/chamber/concierge.fayth spira/chamber/concierge.md spira/hooks/session.sh spira/cockpit.sh cockpit/layout.sh
 # hermetic-ok: fixture chamber, no systemd or database for the roster checks
 # requires: claude
 # host-reason: the brief section invokes concierge.sh which requires claude and tmux on PATH (operator tools not available in the container)
@@ -237,25 +237,6 @@ out="$(SPIRA_HOME="$FX" CONCIERGE_FAYTH=typo bash "$HARNESS/concierge.sh" brief 
 is   "one real slug composes a brief"       0 "$rc"
 want "and renders that statute in full"     "## law-closed-is-not-landed" "$(cat "$out" 2>/dev/null)"
 
-# THE SUMMARY LINE IS READ BY THE OPERATOR AND BY NOBODY ELSE, which is exactly why it needs
-# an assertion: `here` grew its own inline count, the quoting came out wrong, and it reported
-# "0 statutes in full" about a brief holding twenty. A launcher reporting on itself is the
-# reading nobody goes behind.
-#
-# AND IT IS PARSED, NOT SUBSTRING-MATCHED. The first version of this check asserted that the
-# line does not CONTAIN "0 statutes" and failed against the correct output, because "20
-# statutes" contains it. A count is a number; compare it as one.
-sum="$(bash "$HARNESS/concierge.sh" here --help 2>&1 >/dev/null | head -1)"
-want "the summary names a count and a size" "statutes in full," "$sum"
-n_sum="$(sed -n 's/^concierge: \([0-9]*\) statutes in full.*/\1/p' <<<"$sum")"
-if [ -n "$n_sum" ] && [ "$n_sum" -gt 0 ] 2>/dev/null; then
-    pass=$((pass+1)); printf '  ok    and the count is %s, not zero\n' "$n_sum"
-else
-    fail=$((fail+1)); printf '  FAIL  the summary reported [%s] statutes: %s\n' "$n_sum" "$sum"
-fi
-# THE COUNT MUST BE THE BRIEF'S OWN, not a constant that happens to look plausible.
-is "and it matches the rendered brief" \
-   "$(grep -c '^## law-' "$(bash "$HARNESS/concierge.sh" brief)" 2>/dev/null)" "$n_sum"
 
 
 echo
@@ -466,6 +447,51 @@ is "pid is gone after the process exits" "" "$(lp "$LP_SID")"
 trap 'rm -rf "$TMP"' EXIT  # restore trap without the kill
 
 echo
+echo "convergence — start exits 0 (no second client) when process holds the id"
+
+# SEEN TO FAIL FIRST: the old behavior was exit 1 (refusal). The new behavior is exit 0
+# (convergence: it is running, no second needed). Verify:
+#   (i)  start exits 0 when a process holds the recorded session id
+#   (ii) no new tmux session is created (the process is not duplicated)
+#
+# POSITIVE CONTROL: the check fires on the id match, not always. A non-matching id with
+# no tmux session proceeds to compose_brief (which would fail here without a statute book,
+# but the live-pid check is before that). We test with a matching id to isolate the guard.
+CONV_SID="conv-test-$(date +%s)"
+CONV_BRAIN="$TMP/convbrain"; mkdir -p "$CONV_BRAIN"
+printf '%s\n%s\n' "$CONV_SID" "$CONV_BRAIN" > "$TMP/concierge-session"
+bash -c "exec -a claude-resume-${CONV_SID} sleep 10" &
+CONV_PID=$!
+trap 'kill "$CONV_PID" 2>/dev/null; rm -rf "$TMP"' EXIT
+CONV_SOCK="conv-no-second-$$"
+tmux -L "$CONV_SOCK" kill-server 2>/dev/null || true
+
+rc_conv=0
+SPIRA_RUN="$TMP" SPIRA_WIKI="$CONV_BRAIN" SPIRA_CONF="$TMP/no.conf" \
+    CONCIERGE_SOCKET="$CONV_SOCK" CONCIERGE_SESSION="$CONV_SOCK" \
+    bash "$HARNESS/concierge.sh" start 2>/dev/null || rc_conv=$?
+tmux_up=0; tmux -L "$CONV_SOCK" has-session -t "$CONV_SOCK" 2>/dev/null && tmux_up=1
+
+is "start exits 0 (convergence) when process holds the id" 0 "$rc_conv"
+is "and does not create a tmux session (no second client)"  0 "$tmux_up"
+
+# POSITIVE CONTROL: without a live pid the convergence check is skipped and start
+# proceeds to compose_brief. SPIRA_HOME points at an empty dir (no chamber/) so
+# compose_brief fails with "no brief at..." regardless of the statute book on this host.
+rm -f "$TMP/concierge-session"
+rc_no=0
+SPIRA_HOME="$CONV_BRAIN" SPIRA_RUN="$TMP" SPIRA_WIKI="$CONV_BRAIN" SPIRA_CONF="$TMP/no.conf" \
+    CONCIERGE_SOCKET="$CONV_SOCK" CONCIERGE_SESSION="$CONV_SOCK" \
+    bash "$HARNESS/concierge.sh" start 2>/dev/null || rc_no=$?
+is "start does not short-circuit without a live pid (proceeds to compose_brief)" 1 "$rc_no"
+# Restore session file.
+printf '%s\n%s\n' "$CONV_SID" "$CONV_BRAIN" > "$TMP/concierge-session"
+
+kill "$CONV_PID" 2>/dev/null; wait "$CONV_PID" 2>/dev/null || true
+trap 'rm -rf "$TMP"' EXIT  # restore trap without the kill
+tmux -L "$CONV_SOCK" kill-server 2>/dev/null || true
+
+echo
 echo "cockpit.sh attaches the operator (acceptance c)"
 
 # (c) cockpit.sh after killing the concierge tmux server comes back on the same session id.
@@ -528,6 +554,88 @@ echo "the launcher exports SPIRA_CONCIERGE=1"
 # it has it; if not we check the source to verify the line is present.
 want "the launcher source contains SPIRA_CONCIERGE export" \
     "SPIRA_CONCIERGE=1" "$(cat "$HARNESS/concierge.sh")"
+
+echo
+echo "here — convergence: attach when session exists; start-then-attach otherwise"
+
+# SEEN TO FAIL FIRST: old `here` composed a brief and launched a standalone claude in every
+# path. New `here` attaches when the session exists (no brief composed), and calls start
+# when it does not. The discriminating fact: compose_brief outputs "N statutes in full" to
+# stderr; a path that skips it produces no such line.
+HERE_SOCK="test-here-conv-$$"
+tmux -L "$HERE_SOCK" kill-server 2>/dev/null || true
+
+# POSITIVE CONTROL: with no session, here calls start → compose_brief → fails (no statute
+# book). The failure message contains "statute"; this confirms the code path reaches start.
+here_nostart="$(SPIRA_RUN="$TMP" SPIRA_WIKI="$TMP/fakebrain" SPIRA_CONF="$TMP/no.conf" \
+    CONCIERGE_SOCKET="$HERE_SOCK" CONCIERGE_SESSION="$HERE_SOCK" \
+    bash "$HARNESS/concierge.sh" here 2>&1)" || true
+want "here calls start when no session (statute-book error visible)" "statute" "$here_nostart"
+
+# THE PROPERTY: when the session exists, here exec-attaches — no brief is composed.
+tmux -L "$HERE_SOCK" new-session -d -s "$HERE_SOCK" 2>/dev/null
+here_out="$(SPIRA_RUN="$TMP" SPIRA_WIKI="$TMP/fakebrain" SPIRA_CONF="$TMP/no.conf" \
+    CONCIERGE_SOCKET="$HERE_SOCK" CONCIERGE_SESSION="$HERE_SOCK" \
+    bash "$HARNESS/concierge.sh" here 2>&1)" || true
+nowant "here does not compose brief when session exists (no second client)" \
+    "statutes in full" "$here_out"
+
+tmux -L "$HERE_SOCK" kill-server 2>/dev/null || true
+
+echo
+echo "acceptance (d): layout.sh up builds session pane from concierge.sh here"
+
+# SEEN TO FAIL FIRST: before this change, layout.sh up created a session pane with a plain
+# shell (no explicit command). After, the pane command contains concierge.sh here.
+#
+# FIXTURE DESIGN. layout.sh uses bare `tmux` (no -L), so all bare calls are redirected to
+# the fixture via TMUX_TMPDIR. We start health.sh loop in the only pane so pane_role()
+# identifies it as health — a manually-forced tag would be cleared by retag_dashboards.
+# With all panes tagged, session_pane() returns empty and up creates the concierge pane.
+LAYOUT_SH="$HARNESS/cockpit/layout.sh"
+if [ ! -x "$LAYOUT_SH" ]; then
+    printf '  skip  (layout.sh not found at %s)\n' "$LAYOUT_SH"
+elif ! command -v tmux >/dev/null 2>&1; then
+    printf '  skip  (acceptance d: requires tmux)\n'
+else
+    LTMP="$TMP/layout-d"; mkdir -p "$LTMP"
+    LDIR="$LTMP/tmux"; mkdir -p "$LDIR"
+    LSESS="cockpit-d"
+    LCONF="$LTMP/spira.conf"
+    printf 'SPIRA_PROD = %s\nSPIRA_RUN = %s\n' "$HERE" "$LTMP/run" > "$LCONF"
+    mkdir -p "$LTMP/run"
+
+    TMUX_TMPDIR="$LDIR" tmux start-server
+    TMUX_TMPDIR="$LDIR" tmux new-session -d -s "$LSESS" -x 200 -y 50
+
+    # Run health.sh loop in the only pane. pane_role() inspects /proc/PID/cmdline and
+    # matches */cockpit/health.sh; adopt_untagged then tags it, leaving no session pane.
+    FIRST_PANE=$(TMUX_TMPDIR="$LDIR" tmux list-panes -t "$LSESS" -F '#{pane_id}')
+    TMUX_TMPDIR="$LDIR" tmux respawn-pane -k -t "$FIRST_PANE" \
+        "SPIRA_RUN=$LTMP/run SPIRA_CONF=$LCONF bash $HARNESS/cockpit/health.sh loop"
+    sleep 0.5
+
+    TMUX="" TMUX_TMPDIR="$LDIR" SPIRA_CONF="$LCONF" SPIRA_REPO="$HARNESS" \
+        COCKPIT_RIGHT_PCT=33 COCKPIT_BOTTOM_PCT=30 COCKPIT_CWD="$LTMP" \
+        COCKPIT_MAIL="" COCKPIT_MOUSE=off COCKPIT_CLIENT_IDLE_SECS=0 \
+        bash "$LAYOUT_SH" up --window "$LSESS:0" 2>/dev/null || true
+
+    # Find the untagged (session) pane created by up; read pane_start_command.
+    new_cmd=""
+    while IFS='|' read -r tag pid; do
+        [ -z "$tag" ] || continue
+        new_cmd="$(TMUX_TMPDIR="$LDIR" tmux list-panes -t "$LSESS:0" \
+            -F '#{@cockpit}|#{pane_id}|#{pane_start_command}' 2>/dev/null \
+            | awk -F'|' -v p="$pid" '$2==p{print $3}')"
+        break
+    done < <(TMUX_TMPDIR="$LDIR" tmux list-panes -t "$LSESS:0" \
+             -F '#{@cockpit}|#{pane_id}' 2>/dev/null \
+             | awk -F'|' '$1==""')
+
+    want "session pane is started with concierge.sh here" "concierge.sh here" "${new_cmd:-}"
+
+    TMUX_TMPDIR="$LDIR" tmux kill-server 2>/dev/null || true
+fi
 
 echo
 echo "concierge self-test: $pass passed, $fail failed"
