@@ -313,53 +313,82 @@ main() {
             "${lg_ejected:--}" \
             >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
 
-        if [ "${#lg_survivors[@]}" -eq 0 ]; then
-            git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
-            return 0
-        fi
-
-        # Rebuild batch from survivors.
-        members=(); member_ids=()
-        git -C "$wt" reset -q --hard "$base_sha" 2>/dev/null
-        git -C "$wt" clean -qfd 2>/dev/null || true
-        for _lmm in "${lg_survivors[@]}"; do
-            _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
-            if git -C "$wt" merge --no-edit --no-ff -m "spira: land $_lmid" "$_lmtip" \
-                   >/dev/null 2>&1; then
-                members+=("$_lmid:$_lmtip")
-                member_ids+=("$_lmid")
+        # ATTRIBUTION FOUND NOBODY — OPEN THE PR ANYWAY.
+        #
+        # Everything below rebuilds the batch from the survivors and gates it
+        # again. When nothing was ejected, survivors IS members, so the "rebuilt"
+        # batch re-merges the same commits onto the same base and produces a tree
+        # byte-identical to the one that just failed. Gating it again is a
+        # guaranteed-identical result, and at the end the members are marked
+        # CERTIFIED and the branch deleted — so the next pass assembles exactly the
+        # same batch and does it all over. On 2026-09-17 that ran two full gates
+        # (~380s) per landing pass, indefinitely, while the queue drained nothing:
+        # every batch logged `ejected=-` and no pull request was ever opened.
+        #
+        # AND A RED NOBODY REPRODUCES IS NOT EVIDENCE AGAINST ANY MEMBER. CI is the
+        # authority for a batch (law-green-prs-merge-themselves); this gate buys
+        # latency, not coverage (law-local-gates-buy-latency-not-coverage), and
+        # leaving it able to veto means a failure it cannot attribute kills a batch
+        # CI never sees. Let CI adjudicate.
+        #
+        # This is deliberately not a fix for sp-2f51e, which is WHY attribution
+        # finds nobody — testenv-batch.sh runs against the production checkout
+        # rather than the branch it is given, so every member reproduces
+        # identically. This guard is correct on its own terms and stays correct
+        # once that lands: with working attribution, a red the members genuinely do
+        # not carry still belongs to CI.
+        if [ "${#lg_ejected_arr[@]}" -eq 0 ]; then
+            printf 'batch %s: local gate red (%s) but no member reproduced it — opening the PR; CI is the authority\n' \
+                "$name" "${lg_suites_csv:-unattributed}"
+        else
+            if [ "${#lg_survivors[@]}" -eq 0 ]; then
+                git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+                return 0
             fi
-        done
 
-        if [ "${#members[@]}" -eq 0 ]; then
-            git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
-            return 0
-        fi
-
-        # Delete old batch branch; new stamp for the rebuilt batch.
-        git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
-        batch_head="$(git -C "$wt" rev-parse HEAD 2>/dev/null)"
-        stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-        batch_br="spira/queue/$stamp"
-
-        # Gate the rebuilt batch.
-        lg_start="$(date +%s)"
-        git -C "$repo" branch -f "$batch_br" "$batch_head" 2>/dev/null || true
-        lg_out="$(SPIRA_GATE_BEAD="batch-$stamp" bash "$HERE/gate.sh" "$batch_br" "$name" 2>&1)"
-        lg_rc=$?
-        lg_cost=$(( $(date +%s) - lg_start ))
-
-        if [ "$lg_rc" -ne 0 ] && spira_gate_blames_branch "$lg_rc"; then
+            # Rebuild batch from survivors.
+            members=(); member_ids=()
+            git -C "$wt" reset -q --hard "$base_sha" 2>/dev/null
+            git -C "$wt" clean -qfd 2>/dev/null || true
             for _lmm in "${lg_survivors[@]}"; do
                 _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
-                land_mark "$_lmid" CERTIFIED "$_lmtip"
+                if git -C "$wt" merge --no-edit --no-ff -m "spira: land $_lmid" "$_lmtip" \
+                       >/dev/null 2>&1; then
+                    members+=("$_lmid:$_lmtip")
+                    member_ids+=("$_lmid")
+                fi
             done
+
+            if [ "${#members[@]}" -eq 0 ]; then
+                git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+                return 0
+            fi
+
+            # Delete old batch branch; new stamp for the rebuilt batch.
             git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
-            printf 'QUEUE BATCH %s repo=%s members=%d gate_seconds=%d verdict=red\n' \
-                "$(date +%s)" "$name" "${#members[@]}" "$lg_cost" \
-                >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-            printf 'batch %s: rebuilt batch also red — no PR opened\n' "$name"
-            return 0
+            batch_head="$(git -C "$wt" rev-parse HEAD 2>/dev/null)"
+            stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+            batch_br="spira/queue/$stamp"
+
+            # Gate the rebuilt batch.
+            lg_start="$(date +%s)"
+            git -C "$repo" branch -f "$batch_br" "$batch_head" 2>/dev/null || true
+            lg_out="$(SPIRA_GATE_BEAD="batch-$stamp" bash "$HERE/gate.sh" "$batch_br" "$name" 2>&1)"
+            lg_rc=$?
+            lg_cost=$(( $(date +%s) - lg_start ))
+
+            if [ "$lg_rc" -ne 0 ] && spira_gate_blames_branch "$lg_rc"; then
+                for _lmm in "${lg_survivors[@]}"; do
+                    _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
+                    land_mark "$_lmid" CERTIFIED "$_lmtip"
+                done
+                git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+                printf 'QUEUE BATCH %s repo=%s members=%d gate_seconds=%d verdict=red\n' \
+                    "$(date +%s)" "$name" "${#members[@]}" "$lg_cost" \
+                    >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+                printf 'batch %s: rebuilt batch also red — no PR opened\n' "$name"
+                return 0
+            fi
         fi
     fi
 
