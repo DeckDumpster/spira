@@ -327,5 +327,32 @@ is   "8. red: batch stays open" "1"            "$([ -f "$(batch_file)" ] && echo
 want "8. red: reported"         "red"          "$out"
 clean_case
 
+# =============================================================================
+# 9. BATCH BRANCH CLEANUP: after a green fast-forward, the batch branch is
+#    deleted locally and on the remote.
+#
+#    POSITIVE CONTROL: without the deletion code in verdict.sh, the branch
+#    remains in refs/heads after landing; the is-gone assertions below fail.
+# =============================================================================
+batch_head9="$(build_batch sp-vd-b1 sp-vd-b2)"
+# Create the batch branch as batch.sh does.
+git -C "$REPO" branch -f "spira/queue/test9" "$batch_head9"
+git -C "$REPO" push -q origin "spira/queue/test9"
+git -C "$REPO" fetch -q origin
+# Update the open batch record to name this branch.
+{
+    grep -v '^branch=' "$(batch_file)"
+    printf 'branch=spira/queue/test9\n'
+} > "$(batch_file).$$" && mv -f "$(batch_file).$$" "$(batch_file)"
+
+printf 'green\n' > "$FORGE_STATUS_FILE"
+verdict "$REPONAME" > /dev/null
+is "9. cleanup: batch branch gone locally" "0" \
+    "$(git -C "$REPO" show-ref --verify "refs/heads/spira/queue/test9" >/dev/null 2>&1 && echo 1 || echo 0)"
+is "9. cleanup: batch branch gone from remote" "0" \
+    "$(git -C "$REMOTE" show-ref --verify "refs/heads/spira/queue/test9" >/dev/null 2>&1 && echo 1 || echo 0)"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

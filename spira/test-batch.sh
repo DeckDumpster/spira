@@ -274,5 +274,77 @@ done
 batch "$REPONAME" > /dev/null
 is "landing-shaped records: PR opened" "1" "$(batch_pr)"
 
+# =============================================================================
+# 7. ALREADY-IN-BASE: 8 certified branches whose tips are already in the land
+#    ref are marked LANDED (already-in-base) and do not consume batch slots.
+#    The 1 branch with a real commit is the only member.
+#
+#    POSITIVE CONTROL: without the already-in-base filter, the 8 no-ops (sorted
+#    earlier by epoch) fill SPIRA_QUEUE_BATCH_MAX and the real branch is never
+#    included in the batch.
+# =============================================================================
+clean_case
+seed
+NOW7="$(date +%s)"
+OLD7=$(( NOW7 - 1800 - 2 ))
+BASE_SHA7="$(git -C "$REPO" rev-parse origin/main)"
+
+# 8 branches whose certified tips equal the base (already in the land ref).
+for i in $(seq 1 8); do
+    plant_bead "sp-bt7-noop-$i"
+    git -C "$REPO" branch "spira/sp-bt7-noop-$i" main 2>/dev/null || true
+    # Tip = base sha; epoch older than real branch so they sort first.
+    printf 'CERTIFIED %s %s\n' "$BASE_SHA7" $(( OLD7 - 1 )) > "$LANDSTATE/sp-bt7-noop-$i"
+done
+
+# 1 real branch with a commit not in the base; old enough to trigger a batch.
+branch "sp-bt7-real" "$OLD7"
+
+out7="$(batch "$REPONAME")"
+is "7. already-in-base: PR opened (1 real member)" "1" "$(batch_pr)"
+# The only member in the batch should be the real branch.
+_members7="$(grep '^members=' "$(open_batch_file)" 2>/dev/null | cut -d= -f2)"
+is "7. already-in-base: batch member is sp-bt7-real" "1" \
+    "$(printf '%s\n' "$_members7" | tr ' ' '\n' | grep -c 'sp-bt7-real:')"
+# All 8 no-ops must be LANDED with reason already-in-base.
+_all7=1
+for i in $(seq 1 8); do
+    _st7="" _rs7=""
+    read -r _st7 _ _ _rs7 < "$LANDSTATE/sp-bt7-noop-$i" 2>/dev/null || true
+    [ "$_st7" = "LANDED" ] && [ "$_rs7" = "already-in-base" ] || { _all7=0; break; }
+done
+is "7. already-in-base: 8 no-ops LANDED already-in-base" "1" "$_all7"
+clean_case
+
+# =============================================================================
+# 8. BRANCH-GONE: a CERTIFIED landstate record with no branch anywhere is
+#    marked LANDED (branch-gone). It does not count toward the stuck-queue age,
+#    and no stuck-queue mail is sent on its behalf.
+#
+#    POSITIVE CONTROL: without the branch-gone marking, the ghost record stays
+#    CERTIFIED after batch runs; the is-LANDED assertion below would fail.
+# =============================================================================
+clean_case
+seed
+
+# Ghost: a CERTIFIED record with no branch in any repo, old enough to trigger
+# the stuck-queue threshold if it were counted.
+printf 'CERTIFIED fakeshafakeshafakeshafakeshafakeshafakeshafakeshafakes %s\n' \
+    $(( $(date +%s) - 7201 )) > "$LANDSTATE/sp-bt8-ghost"
+
+# A live CERTIFIED branch (not yet old enough to trigger stuck-queue on its own).
+branch "sp-bt8-live" "$(date +%s)"
+
+MAIL_LOG8="$TMP/mail8"
+out8="$(batch "$REPONAME" 2>&1)"
+is "8. branch-gone: ghost LANDED" "1" \
+    "$([ "$(awk '{print $1}' "$LANDSTATE/sp-bt8-ghost" 2>/dev/null)" = "LANDED" ] && echo 1 || echo 0)"
+is "8. branch-gone: ghost reason is branch-gone" "branch-gone" \
+    "$(awk '{print $4}' "$LANDSTATE/sp-bt8-ghost" 2>/dev/null)"
+# The ghost's old epoch should not have triggered a stuck-queue mail:
+# only the live branch is in _certified_list, and it is not old enough.
+nowant "8. branch-gone: no stuck-queue mail" "stuck" "$out8"
+clean_case
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
