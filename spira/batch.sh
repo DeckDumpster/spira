@@ -114,6 +114,15 @@ main() {
     mode="$(repo_land "$name")"
     [ "$mode" = "queue" ] || return 0
 
+    local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
+    mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
+    exec 9>"$lockfile" 2>/dev/null \
+        || { printf 'batch %s: cannot open lock file\n' "$name" >&2; return 1; }
+    if ! flock -n 9; then
+        printf 'batch %s: another queue operation holds the lock\n' "$name"
+        return 0
+    fi
+
     base="$(spira_landref "$repo")" \
         || { printf 'batch %s: cannot resolve base ref\n' "$name" >&2; return 1; }
     base_sha="$(git -C "$repo" rev-parse "$base" 2>/dev/null)" \
@@ -393,6 +402,24 @@ print(r[0].get('priority', 9) if r else 9)" 2>/dev/null || printf '9'
         "$(date +%s)" "$name" "${#members[@]}" "${lg_cost:-0}" \
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
 
+    local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
+
+    local _oqprs
+    _oqprs="$("$forge" pr-list-queue "$repo" 2>/dev/null)" || _oqprs=""
+    if [ -n "${_oqprs:-}" ]; then
+        local _oqflag="$SPIRA_RUN/queue-unrecorded-pr-$name"
+        if [ ! -f "$_oqflag" ]; then
+            printf '## Note\nAn open spira/queue/* PR exists for %s that is not in the batch record.\n\nThis indicates concurrent batch builds raced. Inspect and close any orphan queue PR for %s.\n' \
+                "$name" "$name" \
+            | bash "$HERE/mail.sh" send operator \
+                --from "Spira Queue <queue@spira>" \
+                --subject "Merge queue: $name — unrecorded open queue PR" \
+                2>/dev/null && touch "$_oqflag" 2>/dev/null || true
+        fi
+        printf 'batch %s: open queue PR not in batch record — skipping\n' "$name"
+        return 0
+    fi
+
     if ! git -C "$repo" push -q "$remote" \
            "${batch_head}:refs/heads/${batch_br}" 2>/dev/null; then
         printf 'batch %s: could not push %s\n' "$name" "$batch_br" >&2
@@ -400,7 +427,6 @@ print(r[0].get('priority', 9) if r else 9)" 2>/dev/null || printf '9'
     fi
 
     # Open PR via forge seam.
-    local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
     local pr_body pr_n
     pr_body="$(
         printf 'queue: %d branch(es)\n\n' "${#members[@]}"

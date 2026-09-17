@@ -35,6 +35,19 @@ case "$cmd" in
         n="$( cd "$repo" && ghq pr view "$head" --json number -q .number 2>/dev/null )"
         printf '%s\n' "${n:-}"
         ;;
+    pr-list-queue)
+        ( cd "$repo" && ghq pr list --state open \
+            --json number,headRefName 2>/dev/null ) | python3 -c "
+import json, sys
+try:
+    for pr in json.load(sys.stdin):
+        h = pr.get('headRefName', '')
+        if h.startswith('spira/queue/'):
+            print(pr['number'])
+except Exception:
+    pass
+" 2>/dev/null
+        ;;
     check-status)
         pr_n="${1:-}"
         rollup_json="$( cd "$repo" && ghq pr view "$pr_n" \
