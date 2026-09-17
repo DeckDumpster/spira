@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # test-certify.sh — queue land mode: certify without pushing.
 #
-# Four cases: a green branch is CERTIFIED and the remote's main is unchanged;
-# a red branch is reopened; moving the tip clears the record so the next pass
-# re-gates; a push-mode fixture in the same repo-map still pushes.
+# Cases: a branch is CERTIFIED at entry with no gate call; a branch whose rebase
+# fails is reopened; moving the tip clears the record so the next pass re-certifies;
+# a push-mode fixture in the same repo-map still pushes.
 #
-# gate.sh and confine.sh are stubs; the real db is testdb.sh with an embedded
-# engine. The bare remote is real git so ancestry checks are real.
+# The gate is a stub counter. Every silence below depends on the positive control
+# showing the counter works: the push-mode fixture must increment it.
+#
+# confine.sh is a stub; the real db is testdb.sh with an embedded engine.
+# The bare remote is real git so ancestry checks are real.
 #
 # covers: spira/landing.sh spira/conf.sh
 # timeout: 300
@@ -101,14 +104,12 @@ gate_n()    { [ -f "$GATE_COUNT" ] && wc -l < "$GATE_COUNT" || echo 0; }
 echo "test-certify.sh"
 
 # -----------------------------------------------------------------------------------------
-# POSITIVE CONTROL: the gate is reached. Without this every assertion about "nothing
-# pushed" passes just as well against a landing.sh that drops into the queue arm without
-# running the gate at all.
+# QUEUE-MODE ENTRY: branch is CERTIFIED without calling the gate.
 # -----------------------------------------------------------------------------------------
 seed; branch sp-cert-green
 before="$(main_tip)"
 out="$(landing)"
-is   "gate was invoked for green branch"     "1"        "$(gate_n)"
+is   "gate NOT called at queue-mode entry"   "0"        "$(gate_n)"
 want "certify is reported"                   "certified spira/sp-cert-green" "$out"
 is   "remote main is unchanged"              "$before"  "$(main_tip)"
 case "$(landstate sp-cert-green)" in
@@ -118,32 +119,34 @@ esac
 is   "bead stays closed after certify"       "closed"   "$(status_of sp-cert-green)"
 
 # -----------------------------------------------------------------------------------------
-# SECOND PASS ON THE SAME TIP: the gate must NOT run again; the certification stands.
+# SECOND PASS ON THE SAME TIP: still no gate; the certification stands.
 # -----------------------------------------------------------------------------------------
 out2="$(landing)"
-is   "gate skipped on second pass (same tip)" "0"        "$(gate_n)"
-nowant "no second certify message"            "certified spira/sp-cert-green" "$out2"
+is   "gate still not called on second pass"  "0"        "$(gate_n)"
+nowant "no second certify message"           "certified spira/sp-cert-green" "$out2"
 
 # -----------------------------------------------------------------------------------------
-# RED BRANCH: a failed gate reopens the bead, same as push mode.
+# CONFLICT AT ENTRY: a branch that does not rebase onto base is reopened and not
+# certified. This is the positive control: it proves landing.sh's rebase check is live.
 # -----------------------------------------------------------------------------------------
-stub gate.sh '
-printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
-printf "gate: VERDICT=FAIL reason=stub-fail branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-exit 1'
-seed; branch sp-cert-red
+seed; branch sp-cert-conflict
+# Advance the base so sp-cert-conflict's file conflicts.
+printf 'base-change\n' > "$REPO/sp-cert-conflict.txt"
+git -C "$REPO" add -A
+git -C "$REPO" commit -q -m "base: conflict with sp-cert-conflict"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
 out="$(landing)"
-want "red branch is reopened"        "reopened sp-cert-red — failed the gate" "$out"
-is   "reopened bead is open"         "open"          "$(status_of sp-cert-red)"
-# Restore passing gate.
-stub gate.sh '
-printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
-printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
-exit 0'
+want "conflicting branch is reopened"    "reopened sp-cert-conflict" "$out"
+is   "reopened bead is open"             "open"   "$(status_of sp-cert-conflict)"
+case "$(landstate sp-cert-conflict)" in
+    RED*) ok "landstate says RED for conflict" ;;
+    *)    bad "landstate says RED for conflict" "got: $(landstate sp-cert-conflict)" ;;
+esac
 
 # -----------------------------------------------------------------------------------------
 # TIP MOVE: moving the branch tip after certification clears the record. The next pass
-# must re-gate rather than reuse the old certification.
+# must re-certify (still with no gate) the new tip.
 # -----------------------------------------------------------------------------------------
 seed; branch sp-cert-move
 landing > /dev/null   # first pass: certify
@@ -152,9 +155,9 @@ printf 'v2\n' > "$RUN/worktree/sp-cert-move/sp-cert-move.txt"
 git -C "$RUN/worktree/sp-cert-move" add -A
 git -C "$RUN/worktree/sp-cert-move" commit -q -m "sp-cert-move sp-1fm88 — second commit"
 new_tip="$(git -C "$REPO" rev-parse spira/sp-cert-move 2>/dev/null)"
-out="$(landing)"   # second pass: must re-gate the new tip
-is   "gate re-run after tip move"  "1"  "$(gate_n)"
-want "second certify reported"     "certified spira/sp-cert-move" "$out"
+out="$(landing)"   # second pass: re-certifies the new tip
+is   "gate NOT called after tip move"  "0"  "$(gate_n)"
+want "second certify reported"         "certified spira/sp-cert-move" "$out"
 case "$(landstate sp-cert-move)" in
     *"$new_tip"*) ok "landstate updated to new tip" ;;
     *)            bad "landstate updated to new tip" "expected [$new_tip] in [$(landstate sp-cert-move)]" ;;
@@ -162,7 +165,7 @@ esac
 
 # -----------------------------------------------------------------------------------------
 # PUSH MODE STILL PUSHES: a push-mode repo in the same repo-map lands normally.
-# This is the other half of the positive control: the queue arm does not break push.
+# Queue-mode changes must not break the push path.
 # -----------------------------------------------------------------------------------------
 PUSHREMOTE="$TMP/push-remote.git"
 git init -q --bare -b main "$PUSHREMOTE"
