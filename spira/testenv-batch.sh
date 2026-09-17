@@ -57,10 +57,12 @@
 #                           mirrors gate-spira.sh's per-suite watchdog so neither
 #                           runner can be held indefinitely by one runaway suite.
 #   SPIRA_BATCH_MAXPAR      max parallel suites in --mode parallel.
-#                           Default: nproc (the number of available CPU cores). CPU is
-#                           the binding resource: on a 4-core host, 37 concurrent suites
-#                           drove CPU pressure to 97% and produced fork-EAGAIN errors the
-#                           gate blamed on the branch rather than the load. The PID budget
+#                           Default: nproc (quota-aware: honours CPUQuota of the calling
+#                           unit, not the host's physical count; this is intentional — the
+#                           suite pool runs within the unit's own allocation). CPU is the
+#                           binding resource: on a 4-core host, 37 concurrent suites drove
+#                           CPU pressure to 97% and produced fork-EAGAIN errors the gate
+#                           blamed on the branch rather than the load. The PID budget
 #                           (container pids-limit 8 192) is a ceiling, not the sizing
 #                           input — at nproc=4 the peak is far below it. Set to 0 for
 #                           unlimited (useful for small explicit selections or stress tests).

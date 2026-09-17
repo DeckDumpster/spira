@@ -62,7 +62,7 @@ MODE="${SPIRA_GOVERNOR_MODE:-measure}"
 MIN_FREE_MB="${SPIRA_MIN_FREE_MB:-1500}"
 MIN_DISK_PCT="${SPIRA_MIN_DISK_PCT:-10}"
 
-cores=$(nproc 2>/dev/null || echo 1)
+cores=$(host_cores)
 load1=$(awk '{print $1}' /proc/loadavg 2>/dev/null || echo "?")
 
 # TWO READINGS OF /proc/stat. The cumulative counters, held over to the next pass through

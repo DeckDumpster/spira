@@ -208,6 +208,17 @@ ghq() { timeout "${GH_TIMEOUT:-120}" "${SPIRA_GH:-gh}" "$@"; }
 log() { printf '%s spira: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 die() { log "FATAL $*" >&2; exit 1; }
 
+# getconf ignores cgroup quota; nproc returns fewer than physical cores when called from
+# a unit with CPUQuota set.
+host_cores() {
+    local n
+    n="$(getconf _NPROCESSORS_ONLN 2>/dev/null)"
+    { [ -n "$n" ] && [ "$n" -gt 0 ]; } 2>/dev/null && { printf '%s' "$n"; return; }
+    n="$(ls -d /sys/devices/system/cpu/cpu[0-9]* 2>/dev/null | wc -l)"
+    [ "${n:-0}" -gt 0 ] 2>/dev/null && { printf '%s' "$n"; return; }
+    printf '1'
+}
+
 # `bd --json` can print warnings on stdout before the payload, so never pipe it straight
 # into a parser. This strips anything before the first JSON token.
 json_only() { sed -n '/^[[{]/,$p'; }
