@@ -93,6 +93,7 @@ BUDGET_SNAP="$SPIRA_RUN/budget.env"
 # SPIRA'S OWN SERIES, beside its own snapshot: a pane drawing trends from a file nothing
 # appends to draws a flat line, and a flat line reads as calm rather than absent.
 HIST="$SPIRA_RUN/cockpit-history.csv"
+_RENDERER_REV="$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --short HEAD 2>/dev/null || true)"
 
 C_RST=$'\e[0m'; C_DIM=$'\e[2m'; C_B=$'\e[1m'
 C_OK=$'\e[32m'; C_WARN=$'\e[33m'; C_BAD=$'\e[31m'; C_ACC=$'\e[36m'
@@ -454,16 +455,21 @@ tokens_section() {
         "$C_DIM" "${SP_TOK_WINDOW_H:-?}" "$C_RST" \
         "$C_B" "$(tok "${SP_TOK_WIN:-?}")" "$C_RST" \
         "$C_ACC" "$(spark tok_win $(( COLS > 46 ? (COLS - 34 > 24 ? 24 : COLS - 34) : 0 )))" "$C_RST"
+    local _coll_rev="${SP_COLLECTOR_REV:-}"
     local half
     for half in AEON:aeons ARC:archivist SESS:session; do
         eval "local w=\${SP_TOK_${half%%:*}_WIN:-?} t=\${SP_TOK_${half%%:*}_TURNS:-?} c=\${SP_TOK_${half%%:*}_CTX:-?}"
-        # Fitted like every other variable-length field: on a narrow column the tail is what
-        # the terminal would cut, and here the tail is the context-per-turn — half of the
-        # product this row exists to show.
-        fit "${t}t · $(tok "$c") ctx/turn" $(( COLS - 22 ))
-        printf '        %s%-8s%s %-4s %s%s%s\n' \
-            "$C_DIM" "${half#*:}" "$C_RST" "$(pct "$w" "${SP_TOK_WIN:-?}")" \
-            "$C_DIM" "$FIT" "$C_RST"
+        if [ "$w" = "?" ] && [ -n "$_coll_rev" ] && [ "$_coll_rev" != "$_RENDERER_REV" ]; then
+            printf '        %s%-8s%s %scoll %s%s\n' \
+                "$C_DIM" "${half#*:}" "$C_RST" "$C_DIM" "$_coll_rev" "$C_RST"
+        else
+            # Fitted like every other variable-length field: on a narrow column the tail is
+            # what the terminal would cut, and here the tail is the context-per-turn.
+            fit "${t}t · $(tok "$c") ctx/turn" $(( COLS - 22 ))
+            printf '        %s%-8s%s %-4s %s%s%s\n' \
+                "$C_DIM" "${half#*:}" "$C_RST" "$(pct "$w" "${SP_TOK_WIN:-?}")" \
+                "$C_DIM" "$FIT" "$C_RST"
+        fi
     done
 
     # CTX — the session in front of the operator, and how close it is to the edge.

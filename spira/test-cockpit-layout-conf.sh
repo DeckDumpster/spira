@@ -111,5 +111,60 @@ health_cmd2=$(TMUX_TMPDIR="$TMUXDIR" \
     || bad "health pane command has no SPIRA_CONF when var is unset" \
            "got [$health_cmd2]"
 
+# ── Test 3: split-checkout mode uses SPIRA_PROD/cockpit, not this checkout ──
+# When SPIRA_PROD is set and lies outside SPIRA_REPO, layout.sh must spawn the pane
+# from $SPIRA_PROD/cockpit/health.sh so the renderer and collector come from the same
+# release and agree on the snapshot schema (the defect in sp-00dv9).
+FAKE_PROD="$TMP/prodroot"
+mkdir -p "$FAKE_PROD/cockpit"
+printf '#!/usr/bin/env bash\nsleep 60\n' > "$FAKE_PROD/cockpit/health.sh"
+chmod +x "$FAKE_PROD/cockpit/health.sh"
+
+FAKE_DEV_REPO="$TMP/devrepo"
+mkdir -p "$FAKE_DEV_REPO"
+
+TMUX_TMPDIR="$TMUXDIR" tmux new-session -d -s cockpit3 -x 214 -y 53
+
+SPIRA_COCKPIT="$FAKE_COCK" \
+SPIRA_REPO="$FAKE_DEV_REPO" \
+SPIRA_HOME="$HERE" \
+SPIRA_PROD="$FAKE_PROD" \
+COCKPIT_CWD="$TMP" \
+    bash "$LAYOUT" up --window cockpit3:0 2>/dev/null || true
+
+sleep 0.3
+
+health_cmd3=$(TMUX_TMPDIR="$TMUXDIR" \
+    tmux list-panes -t cockpit3:0 \
+    -F '#{@cockpit}|#{pane_start_command}' 2>/dev/null \
+    | awk -F'|' '$1=="health"{print $2; exit}')
+
+want "split-checkout: pane command uses SPIRA_PROD cockpit" "$FAKE_PROD/cockpit/health.sh" "$health_cmd3"
+if [[ "${health_cmd3:-}" != *"$FAKE_COCK"* ]]; then
+    ok "split-checkout: pane command does not use dev checkout cockpit"
+else
+    bad "split-checkout: pane command used dev checkout cockpit instead of prod" "got [$health_cmd3]"
+fi
+
+# Dev opt-out: SPIRA_DEV_RENDERER=1 must keep the dev checkout's renderer.
+TMUX_TMPDIR="$TMUXDIR" tmux new-session -d -s cockpit4 -x 214 -y 53
+
+SPIRA_COCKPIT="$FAKE_COCK" \
+SPIRA_REPO="$FAKE_DEV_REPO" \
+SPIRA_HOME="$HERE" \
+SPIRA_PROD="$FAKE_PROD" \
+SPIRA_DEV_RENDERER=1 \
+COCKPIT_CWD="$TMP" \
+    bash "$LAYOUT" up --window cockpit4:0 2>/dev/null || true
+
+sleep 0.3
+
+health_cmd4=$(TMUX_TMPDIR="$TMUXDIR" \
+    tmux list-panes -t cockpit4:0 \
+    -F '#{@cockpit}|#{pane_start_command}' 2>/dev/null \
+    | awk -F'|' '$1=="health"{print $2; exit}')
+
+want "dev opt-out: SPIRA_DEV_RENDERER=1 keeps dev cockpit" "$FAKE_COCK/health.sh" "$health_cmd4"
+
 printf '\ntest-cockpit-layout-conf: %d ok, %d fail\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

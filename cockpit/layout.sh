@@ -72,6 +72,13 @@ set -uo pipefail
 # away because the cockpit ships beside the harness, not inside it.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/../spira" && pwd -P)/conf.sh"
 COCK="$SPIRA_COCKPIT"
+# In split-checkout mode the renderer must come from the same release the collector reads
+# so reader and writer agree on the snapshot schema. SPIRA_DEV_RENDERER=1 opts back in to
+# this checkout's health.sh, e.g. when developing the renderer itself.
+if [ -z "${SPIRA_DEV_RENDERER:-}" ] && [ -n "${SPIRA_PROD:-}" ] && ! spira_single_checkout; then
+    _prod_cock="$SPIRA_PROD/cockpit"
+    [ -d "$_prod_cock" ] && COCK="$_prod_cock"
+fi
 RUN="$SPIRA_REPO/.runtime"
 
 # SPIRA_CONF, when set, points to the config file for this instance. Pane commands carry it

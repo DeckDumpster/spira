@@ -510,5 +510,38 @@ else
 fi
 
 echo
+echo "Part 3: collector skew — absent key with SP_COLLECTOR_REV renders 'coll <rev>', not ?"
+echo
+
+# POSITIVE CONTROL: SP_TOK_ARC_WIN present → archivist row shows the real value, no skew marker.
+base_snap __none__
+printf "SP_TOK_ARC_WIN='10000'\nSP_TOK_ARC_TURNS='2'\nSP_TOK_ARC_CTX='25000'\n" >> "$SNAPF"
+p_arc_pos="$(pane 0)"
+arc_pos_line="$(printf '%s\n' "$p_arc_pos" | grep archivist)"
+if [[ "${arc_pos_line:-}" != *"coll "* ]]; then
+    ok "collector skew/positive control: archivist row renders normally (no coll marker)"
+else
+    bad "collector skew/positive control: archivist row shows coll marker when ARC keys present: $arc_pos_line"
+fi
+
+# SKEW CASE: absent SP_TOK_ARC_WIN with SP_COLLECTOR_REV set to a known-old rev.
+# The row must show 'coll <rev>' instead of '?' so the operator can distinguish a schema
+# gap from a probe failure.
+base_snap __none__
+printf "SP_COLLECTOR_REV='a1b2c3d'\n" >> "$SNAPF"
+p_skew="$(pane 0)"
+arc_skew_line="$(printf '%s\n' "$p_skew" | grep archivist)"
+if [[ "${arc_skew_line:-}" == *"coll a1b2c3d"* ]]; then
+    ok "collector skew: archivist row shows 'coll a1b2c3d'"
+else
+    bad "collector skew: archivist row did not show 'coll a1b2c3d': ${arc_skew_line:-<no archivist line>}"
+fi
+if [[ "${arc_skew_line:-}" == *"?"* ]]; then
+    bad "collector skew: archivist row showed '?' — indistinguishable from probe failure"
+else
+    ok "collector skew: archivist row did not show '?'"
+fi
+
+echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

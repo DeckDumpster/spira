@@ -205,6 +205,9 @@ with open(snap_tmp, "w") as f:
     for k, v in value_lines:
         f.write("%s=%s\n" % (k, shq(v)))
 PY
+    local _rev
+    _rev="$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || true)"
+    printf "SP_COLLECTOR_REV='%s'\n" "${_rev:-unknown}" >> "$snap_tmp" 2>/dev/null || true
     mv "$snap_tmp" "$SNAP" 2>/dev/null
 }
 

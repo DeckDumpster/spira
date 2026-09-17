@@ -408,5 +408,29 @@ want "loop config-change message present" "config changed" "$_conf_err"
 
 # ============================================================
 echo
+echo "11. SP_COLLECTOR_REV stamped in merged snapshot:"
+
+# POSITIVE CONTROL: a probe with ok status contributes values so the merge ran at all.
+rm -f "$FRAG_DIR"/*.env
+printf '_PROBE_AT=1\n_PROBE_STATUS=ok\nSP_AT=1\n' > "$FRAG_DIR/now.env"
+BASE_PATH="$PATH"
+env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_COCKPIT="$TMP" FRAG_DIR="$FRAG_DIR" \
+    bash "$HERE/collect.sh" merge 2>/dev/null
+snap="$(cat "$SNAP" 2>/dev/null)"
+want "SP_COLLECTOR_REV: positive control — SP_AT still present (merge worked)" "SP_AT=" "$snap"
+want "SP_COLLECTOR_REV: present in snapshot" "SP_COLLECTOR_REV=" "$snap"
+# The value must not be blank (git failures produce 'unknown', not '').
+if [[ "$snap" != *"SP_COLLECTOR_REV=''"* ]]; then
+    ok "SP_COLLECTOR_REV: value is non-empty"
+else
+    bad "SP_COLLECTOR_REV: blank value" "wanted a rev or 'unknown', got empty string"
+fi
+
+# ============================================================
+echo
 printf 'test-cockpit-tiered-collector: %d ok, %d fail\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
