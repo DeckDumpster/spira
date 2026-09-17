@@ -103,20 +103,8 @@ unset _t _ENABLE_TMPL
 # box without a Dolt server, and a check that is always red is a check nobody reads.
 OPTIONAL=()
 
-# promote.sh carries commits from the development checkout to a separate production
-# checkout. In single-checkout mode there is no second checkout and its source and
-# destination are the same directory, so the unit cannot do anything but fail. Installing
-# it anyway put an un-suspendable fatal in every doctor run on such a box, for a unit
-# whose absence was correct — and a check that is always red is a check nobody reads.
-#
-# The predicate is spira_single_checkout from conf.sh, shared with doctor, so the manifest
-# and the diagnosis cannot reach different conclusions about the same box.
-if declare -F spira_single_checkout >/dev/null 2>&1 && spira_single_checkout; then
-    OPTIONAL+=(spira-promote.service spira-promote.timer)
-else
-    UNITS+=(spira-promote.service spira-promote.timer)
-    ENABLE+=("$(inst_name spira-promote.timer)")
-fi
+# promote.sh and its timer are retired — deploy.sh replaced the split-checkout model.
+OPTIONAL+=(spira-promote.service spira-promote.timer)
 
 # spira-suites.timer runs the timed suite set — every test-*.sh the landing gate does not
 # run — and files a bead per red. On a DEVELOPMENT installation this is correct: a new suite
