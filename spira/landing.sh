@@ -936,6 +936,15 @@ for i in d:
         tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
         judged["$br"]=1
 
+        # ENTRY FOR QUEUE MODE: a clean rebase is the whole check at entry.
+        # The batch gate runs once on the combined diff when the batch is due.
+        if [ "$mode" = queue ]; then
+            land_mark "$id" CERTIFIED "$tip"
+            mark_submitted "$id" "$tip" certified
+            progress "certified $br in $name — queued"
+            continue
+        fi
+
         # CONFINEMENT COMES BEFORE THE GATE. A spike's branch may pass every test in the
         # repository and still be the wrong thing to merge — its experiment compiles, which
         # is the point of an experiment. This asks a different question from the gate ("is
@@ -1161,15 +1170,6 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
             bdq note "$id" "Gated and held: $br passed $name's landing gate. Spira does not advance $name's $base_branch. Merge it by hand when you are ready — nothing else will." >/dev/null 2>&1
             mark_submitted "$id" "$tip" hold
             act "gated and held $br in $name — nothing here advances $base"
-            ;;
-        queue)
-            # CERTIFIED: the gate passed; the tip is recorded, nothing is pushed. The batch
-            # builder (sp-h3g55) picks certified branches up and lands them together. A
-            # certified branch whose tip moves is not reused — submitted() keys on the tip, so
-            # a changed tip re-gates on the next pass and produces a fresh record.
-            land_mark "$id" CERTIFIED "$tip"
-            mark_submitted "$id" "$tip" certified
-            progress "certified $br in $name — queued"
             ;;
         *)
             # A MERGE CONFLICT AND A REJECTED PUSH ARE NOT THE SAME FAILURE. The first is a

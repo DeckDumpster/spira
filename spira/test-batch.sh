@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 # test-batch.sh — merge-queue batch builder.
 #
-# Five cases:
+# Eight cases:
 #   1. 8 certified branches trigger a batch at once.
 #   2. 3 certified branches trigger a batch only after the planted wait.
 #   3. A suite-state transition branch is ordered before regular branches.
 #   4. A branch that conflicts with a prior batch member is skipped (stays CERTIFIED).
 #   5. An open batch record prevents a second batch from opening.
+#   b. Local gate passes: gate called once, PR opened.
+#   c. Local gate red, one member reproduces: ejected, rebuilt batch gated and PR opened.
+#   d. Meter line written for (b) and (c); queue.sh stats reports local_red_rate.
 #
 # The forge seam is a local fixture that records pr-create calls and returns
 # incrementing PR numbers; no network is reached.
+# The gate is a stub (always pass for cases 1-5; controlled for b/c).
+# SPIRA_QUEUE_REPRO_BATCH is a stub that returns red only for planted branches.
 #
-# covers: spira/batch.sh spira/forge.sh spira/conf.sh spira/landing.sh
+# covers: spira/batch.sh spira/forge.sh spira/conf.sh spira/landing.sh spira/queue.sh
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -46,6 +51,34 @@ git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 
 cp "$HERE"/*.sh "$SH/"
+
+# Gate stub: always pass, count calls. Tests that need a different gate overwrite this.
+GATE_COUNT="$TMP/gate-count"
+: > "$GATE_COUNT"
+cat > "$SH/gate.sh" <<GSTUB
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >> "$GATE_COUNT"
+printf 'gate: VERDICT=PASS reason=stub branch=%s repo=%s suite=none\n' "\$1" "\${2:-?}" >&2
+exit 0
+GSTUB
+chmod +x "$SH/gate.sh"
+
+# Repro stub: always green (no branch reproduces by default).
+# Tests that need a red member write the branch name to REPRO_FAIL_FILE.
+REPRO_FAIL_FILE="$TMP/repro-fail-file"
+: > "$REPRO_FAIL_FILE"
+export REPRO_FAIL_FILE
+cat > "$SH/repro-stub.sh" <<'REPRO'
+#!/usr/bin/env bash
+br=""
+while [ $# -gt 0 ]; do
+    case "$1" in --mode|--suites) shift 2 ;; *) br="$1"; shift ;; esac
+done
+fail_list="$(cat "${REPRO_FAIL_FILE}" 2>/dev/null || true)"
+for f in $fail_list; do [ "$f" = "$br" ] && exit 1; done
+exit 0
+REPRO
+chmod +x "$SH/repro-stub.sh"
 
 # Forge fixture: log every pr-create call, return incrementing PR numbers.
 # A real forge is never reached in this suite.
@@ -86,6 +119,7 @@ batch() {
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
     SPIRA_SUITE_STATE="spira/suite-state" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
+    SPIRA_QUEUE_REPRO_BATCH="$SH/repro-stub.sh" \
         bash "$SH/batch.sh" "$@" 2>&1
 }
 
@@ -121,11 +155,17 @@ open_batch_file() { printf '%s/%s/open' "$QUEUEDIR" "$REPONAME"; }
 batch_pr()        { grep '^pr=' "$(open_batch_file)" 2>/dev/null | cut -d= -f2; }
 is_batched()      { grep -q '^BATCHED' "$LANDSTATE/${1:-}" 2>/dev/null; }
 is_certified()    { awk '{print $1}' "$LANDSTATE/${1:-}" 2>/dev/null | grep -q '^CERTIFIED$'; }
+is_ejected()      { awk '{print $1}' "$LANDSTATE/${1:-}" 2>/dev/null | grep -q '^EJECTED$'; }
+gate_n()          { wc -l < "$GATE_COUNT" 2>/dev/null | tr -d ' ' || printf '0'; }
+landing_log()     { cat "$RUN/landing.log" 2>/dev/null || true; }
 
 # clean_case — remove all landstate entries and spira/* branches between test cases
 clean_case() {
     rm -f "$QUEUEDIR/$REPONAME/open"
+    rm -f "$RUN/landing.log"
     : > "$FORGE_LOG"
+    : > "$GATE_COUNT"
+    : > "$REPRO_FAIL_FILE"
     find "$LANDSTATE" -maxdepth 1 -type f 2>/dev/null -delete
     # Remove the batch worktree cleanly first (unregisters AND deletes the dir).
     local wt="$RUN/worktree/.batch-$(basename "$REPO")"
@@ -258,6 +298,91 @@ printf 'pr=99\nhead=abc\nbase=%s\nmembers=\nopened=0\nbranch=spira/queue/fake\n'
 
 batch "$REPONAME" > /dev/null
 is "open batch blocks second" "99" "$(batch_pr)"
+
+# =============================================================================
+# b. LOCAL GATE GREEN: gate runs exactly once on the combined batch; PR opens.
+# =============================================================================
+seed
+NOW="$(date +%s)"; OLD_B=$(( NOW - 1800 - 1 ))
+for i in 1 2 3; do branch "sp-btb-$i" "$OLD_B"; done
+out="$(batch "$REPONAME")"
+is   "b: gate called exactly once"   "1"  "$(gate_n)"
+is   "b: PR opened"                  "1"  "$(batch_pr)"
+want "b: QUEUE BATCH meter written"  "QUEUE BATCH"   "$(landing_log)"
+want "b: meter verdict=green"        "verdict=green" "$(landing_log)"
+want "b: meter members=3"            "members=3"     "$(landing_log)"
+clean_case
+
+# =============================================================================
+# c. LOCAL GATE RED WITH ONE REPRODUCER: ejected, rebuilt batch PR opened.
+#
+# Gate fails on its first call (batch of 3), passes on its second (rebuilt batch
+# of 2). The repro stub identifies sp-btc-red as the reproducing member.
+# =============================================================================
+seed
+NOW="$(date +%s)"; OLD_C=$(( NOW - 1800 - 1 ))
+for id in sp-btc-1 sp-btc-2 sp-btc-red; do branch "$id" "$OLD_C"; done
+
+# Gate stub: fails on first call, passes thereafter.
+cat > "$SH/gate.sh" <<GSTUB2
+#!/usr/bin/env bash
+n=\$(wc -l < "$GATE_COUNT" 2>/dev/null | tr -d ' ' || printf 0)
+printf '%s\n' "\$1" >> "$GATE_COUNT"
+if [ "\${n:-0}" -eq 0 ]; then
+    printf 'gate: VERDICT=FAIL reason=red test-btc.sh FAILED branch=%s repo=%s suite=test-btc.sh\n' "\$1" "\${2:-?}" >&2
+    exit 1
+fi
+printf 'gate: VERDICT=PASS reason=stub branch=%s repo=%s suite=none\n' "\$1" "\${2:-?}" >&2
+exit 0
+GSTUB2
+chmod +x "$SH/gate.sh"
+
+# Repro stub: sp-btc-red reproduces; sp-btc-1 and sp-btc-2 do not.
+printf 'spira/sp-btc-red\n' > "$REPRO_FAIL_FILE"
+
+out="$(batch "$REPONAME")"
+is   "c: gate called twice (full + rebuilt)"  "2"  "$(gate_n)"
+is   "c: PR opened (rebuilt batch)"           "1"  "$(batch_pr)"
+is   "c: sp-btc-red ejected"    "1" "$(is_ejected "sp-btc-red" && echo 1 || echo 0)"
+is   "c: sp-btc-1 batched"      "1" "$(is_batched "sp-btc-1"   && echo 1 || echo 0)"
+is   "c: sp-btc-2 batched"      "1" "$(is_batched "sp-btc-2"   && echo 1 || echo 0)"
+want "c: CAUGHT line for ejected"  "QUEUE CAUGHT"    "$(landing_log)"
+want "c: branch=sp-btc-red in CAUGHT" "branch=sp-btc-red" "$(landing_log)"
+want "c: red BATCH meter line"   "verdict=red"      "$(landing_log)"
+want "c: green BATCH meter line" "verdict=green"    "$(landing_log)"
+want "c: ejected field in log"   "ejected=sp-btc-red" "$(landing_log)"
+
+# Restore default always-pass gate stub.
+cat > "$SH/gate.sh" <<GSTUB
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >> "$GATE_COUNT"
+printf 'gate: VERDICT=PASS reason=stub branch=%s repo=%s suite=none\n' "\$1" "\${2:-?}" >&2
+exit 0
+GSTUB
+chmod +x "$SH/gate.sh"
+clean_case
+
+# =============================================================================
+# d. METER STATS: queue.sh stats reads local_red_rate and cost from BATCH lines.
+#    Plant one green BATCH line and one red BATCH line in landing.log.
+# =============================================================================
+seed
+NOW="$(date +%s)"
+# Green batch: members=3, gate_seconds=5, verdict=green.
+printf 'QUEUE BATCH %s repo=%s members=3 gate_seconds=5 verdict=green\n' \
+    "$NOW" "$REPONAME" >> "$RUN/landing.log"
+# Red batch: members=3, gate_seconds=8, verdict=red, attr_seconds=2, ejected=sp-d1.
+printf 'QUEUE BATCH %s repo=%s members=3 gate_seconds=8 verdict=red attr_seconds=2 ejected=sp-d1\n' \
+    "$NOW" "$REPONAME" >> "$RUN/landing.log"
+
+stats_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$SH/repo-map" \
+    bash "$SH/queue.sh" stats 2>&1)"
+want "d: local_red_rate 1/2 in stats" "1/2"   "$stats_out"
+want "d: batches=2 in stats"          "batches:         2" "$stats_out"
+want "d: members=6 in stats"          "6 members"       "$stats_out"
+# cost = (5+8)/6 = 2s avg
+want "d: cost per branch in stats"    "cost:"            "$stats_out"
+clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -325,40 +325,15 @@ want "4b. unrep-2: reported ejected"   "ejected"    "$out2"
 clean_case
 
 # =============================================================================
-# 5. METER — queue.sh submit failure writes CAUGHT; attribution writes ESCAPED;
-#    queue.sh stats reports both.
-#    For ESCAPED: plant a member that reproduces red → attribution writes ESCAPED.
-#    For CAUGHT: plant a gate failure in queue.sh submit.
+# 5. METER — CAUGHT written directly (batch.sh attribution now produces it);
+#    ESCAPED written by verdict attribution; queue.sh stats reports both.
 # =============================================================================
 testdb_reset
-# Plant a branch in a push-mode context to trigger a submit CAUGHT via gate failure.
-# We stub gate.sh to exit 1 (red), which makes queue.sh submit write a CAUGHT line.
-cat > "$SH/gate.sh" <<'GATESTUB'
-#!/usr/bin/env bash
-exit 1
-GATESTUB
-chmod +x "$SH/gate.sh"
+# Write a CAUGHT line directly — testing that stats reads it, not how it is written.
+printf 'QUEUE CAUGHT %s branch=sp-at-caught\n' "$(date +%s)" \
+    >> "$RUN/landing.log" 2>/dev/null
 
-# Create a test branch and run queue.sh submit (which will fail the gate).
-git -C "$REPO" checkout -q -B spira/sp-at-caught origin/main
-printf 'caught\n' > "$REPO/caught.txt"
-git -C "$REPO" add caught.txt
-git -C "$REPO" commit -q -m "sp-at-caught: work"
-
-SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-SPIRA_REPO_MAP="$SH/repo-map" \
-SPIRA_QUEUE_DIR="$QUEUEDIR" \
-SPIRA_REPO="$REPO" \
-    bash "$SH/queue.sh" submit spira/sp-at-caught >/dev/null 2>&1 || true
-
-git -C "$REPO" checkout -q main 2>/dev/null || true
-git -C "$REPO" branch -D spira/sp-at-caught 2>/dev/null || true
-
-# Restore gate.sh.
-cp "$HERE/gate.sh" "$SH/gate.sh"
-
-# Now run a verdict with a member that reproduces (ESCAPED).
+# Run a verdict with a member that reproduces (ESCAPED).
 build_members sp-at-meter > /dev/null
 plant_bead sp-at-meter
 printf 'spira/sp-at-meter\n' > "$REPRO_FAIL_FILE"
@@ -367,8 +342,8 @@ verdict "$REPONAME" > /dev/null
 # Check stats.
 stats_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$SH/repo-map" \
     bash "$SH/queue.sh" stats 2>&1)"
-want "5. meter: caught=1 in stats"    "caught:   1" "$stats_out"
-want "5. meter: escaped=1 in stats"   "escaped:  1" "$stats_out"
+want "5. meter: caught=1 in stats"    "caught:          1" "$stats_out"
+want "5. meter: escaped=1 in stats"   "escaped:         1" "$stats_out"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"

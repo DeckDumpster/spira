@@ -118,6 +118,7 @@ cmd_submit() {
 cmd_stats() {
     local log="$SPIRA_RUN/landing.log"
     local caught=0 escaped=0 batches=0 total_members=0 total_cost=0
+    local local_batches=0 local_red=0
 
     if [ -r "$log" ]; then
         while IFS= read -r _line; do
@@ -130,15 +131,23 @@ cmd_stats() {
                     ;;
                 "QUEUE BATCH "*)
                     batches=$(( batches + 1 ))
-                    local _m _e _c
+                    local _m _c _v _gs
                     _m="$(printf '%s' "$_line" | sed 's/.*members=\([0-9]*\).*/\1/')"
-                    _e="$(printf '%s' "$_line" | sed 's/.*escaped=\([0-9]*\).*/\1/')"
-                    _c="$(printf '%s' "$_line" | sed 's/.*cost=\([0-9]*\)s.*/\1/')"
+                    _v="$(printf '%s' "$_line" | sed -n 's/.*verdict=\([a-z]*\).*/\1/p')"
+                    _gs="$(printf '%s' "$_line" | sed -n 's/.*gate_seconds=\([0-9]*\).*/\1/p')"
+                    _c="$(printf '%s' "$_line" | sed -n 's/.*cost=\([0-9]*\)s.*/\1/p')"
                     case "${_m:-}" in ''|*[!0-9]*) _m=0 ;; esac
-                    case "${_e:-}" in ''|*[!0-9]*) _e=0 ;; esac
+                    case "${_gs:-}" in ''|*[!0-9]*) _gs=0 ;; esac
                     case "${_c:-}" in ''|*[!0-9]*) _c=0 ;; esac
                     total_members=$(( total_members + _m ))
-                    total_cost=$(( total_cost + _c ))
+                    # Local-gate lines carry verdict=; CI lines carry cost=.
+                    if [ -n "${_v:-}" ]; then
+                        local_batches=$(( local_batches + 1 ))
+                        [ "$_v" = red ] && local_red=$(( local_red + 1 ))
+                        total_cost=$(( total_cost + _gs ))
+                    else
+                        total_cost=$(( total_cost + _c ))
+                    fi
                     ;;
                 "QUEUE GATE_COST "*)
                     local _s
@@ -153,10 +162,14 @@ cmd_stats() {
     local avg_cost=0
     [ "$total_members" -gt 0 ] && avg_cost=$(( total_cost / total_members ))
 
-    printf 'caught:   %d\n' "$caught"
-    printf 'escaped:  %d\n' "$escaped"
-    printf 'batches:  %d (%d members)\n' "$batches" "$total_members"
-    printf 'cost:     %ds avg per branch\n' "$avg_cost"
+    local red_pct=0
+    [ "$local_batches" -gt 0 ] && red_pct=$(( local_red * 100 / local_batches ))
+
+    printf 'caught:          %d\n' "$caught"
+    printf 'escaped:         %d\n' "$escaped"
+    printf 'batches:         %d (%d members)\n' "$batches" "$total_members"
+    printf 'local_red_rate:  %d/%d (%d%%)\n' "$local_red" "$local_batches" "$red_pct"
+    printf 'cost:            %ds avg per branch\n' "$avg_cost"
 }
 
 cmd_protect() {
