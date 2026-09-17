@@ -336,17 +336,25 @@ jobs:
 
       - name: Assert gate check
         # The SHA on main came from a fast-forward merge of a queue PR whose gate
-        # ran the full corpus. Assert that check-run exists before cutting a tag.
-        # A push that bypassed the queue has no such run, and this step refuses.
+        # ran the full corpus. Assert both halves before cutting a tag: a queue PR
+        # whose head is this SHA, and a green gate check on it. A push that bypassed
+        # the queue has no such PR, and this step refuses.
+        # THE PR IS FOUND FROM THE COMMIT, NOT FROM THE CHECK RUN. A check run's
+        # pull_requests list is emptied once its PR is merged and the head branch
+        # deleted, which is always the case by the time main is pushed.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
+          _pr="$(gh api \
+            "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/pulls" \
+            --jq '[.[] | select(.head.sha == "${{ github.sha }}" and (.head.ref | startswith("spira/queue/")))] | length' \
+            2>/dev/null || echo 0)"
           _n="$(gh api \
             "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/check-runs" \
-            --jq '[.check_runs[] | select(.name == "gate" and .conclusion == "success" and (.pull_requests | length > 0))] | length' \
+            --jq '[.check_runs[] | select(.name == "gate" and .conclusion == "success")] | length' \
             2>/dev/null || echo 0)"
-          [ "${_n:-0}" -gt 0 ] || {
+          [ "${_pr:-0}" -gt 0 ] && [ "${_n:-0}" -gt 0 ] || {
             printf 'cut: SHA %s has no green gate check from a queue PR\n' \
               "${{ github.sha }}" >&2
             exit 1
