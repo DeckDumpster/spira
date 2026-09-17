@@ -29,14 +29,22 @@
 #                   repository this harness has no business advancing — one whose checkout is
 #                   owned by something else, where rewriting a branch under someone's working
 #                   tree is not ours to do.
+#            queue  certify the branch via the gate and record it CERTIFIED for the batch
+#                   builder. The batch builder (batch.sh) collects certified branches into one
+#                   pull request; CI runs the full corpus on it; a green batch fast-forwards
+#                   onto the base branch; every landed batch cuts a release. Base branch
+#                   protection is required — run `queue.sh protect` after switching. A bead in
+#                   queue mode must NOT park on CI: the batch PR is opened by the batch
+#                   builder, not by the individual branch landing, and there is no run for a
+#                   bead to wait for.
 #
 #          THIS COLUMN ALSO DECIDES WHETHER THERE IS A CI RUN TO WAIT FOR. Only `pr` opens a
-#          pull request, so only `pr` has one — under `push` and `hold` the landing gate is
-#          the whole gate, and a bead parked on CI in one of those waits for an event that
-#          cannot occur. Because the park label is excluded from every persona's predicate
-#          AND from the stranded-work report, that wait is invisible as well as endless. The
-#          sweep strips such a park and the aeon's brief tells it not to apply one, but the
-#          fact both of those read is this column.
+#          pull request, so only `pr` has one — under `push`, `hold`, and `queue` the landing
+#          gate is the whole gate for the individual branch, and a bead parked on CI in any of
+#          those waits for an event that cannot occur. Because the park label is excluded from
+#          every persona's predicate AND from the stranded-work report, that wait is invisible
+#          as well as endless. The sweep strips such a park and the aeon's brief tells it not
+#          to apply one, but the fact both of those read is this column.
 #   base   the ref every branch in that repository is cut from and judged against, written as
 #          git resolves it — `origin/main`, `origin/master`, a differently-named remote, or a
 #          bare local branch for a repository nothing pushes. DO NOT ASSUME `main`: on the box
@@ -103,3 +111,11 @@ vendor       | /srv/checkouts/vendor      | hold | upstream/master |            
 # faults (container start failure → 2; configure failure → 3) to NO_VERDICT (75) so
 # the bead is not charged an attempt for the harness's own failure.
 platform     | /srv/checkouts/platform    | push | origin/main   |                 | bash .claude/fence-a.sh && bash .claude/fence-b.sh && { _b=0; bash .claude/testenv-batch.sh "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }
+
+# A queue-mode repository. Branches are individually certified by their gate, then
+# batched by batch.sh into one pull request. CI runs the full corpus on the batch PR
+# and fast-forwards it to the base branch on green. Every landing cuts a release.
+# Run `queue.sh protect <name>` once after switching to set the required check,
+# disallow force-push, and disallow deletion on the base branch — doctor.sh warns
+# for any queue-mode repo whose base branch has no protection record.
+harness      | /srv/checkouts/harness     | queue | origin/main  |                 | bash spira/inventory.sh && bash spira/literal-lint.sh && bash spira/scratch-fence.sh && { _b=0; bash spira/testenv-batch.sh "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }

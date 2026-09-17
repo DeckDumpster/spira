@@ -24,7 +24,7 @@ case "$cmd" in
     pr-create)
         head="${1:-}" base="${2:-}" title="${3:-}"
         if ! ( cd "$repo" && ghq pr create --head "$head" --base "$base" \
-                 --title "$title" --body-file - ) 2>/dev/null; then
+                 --title "$title" --body-file - ) >/dev/null 2>&1; then
             exit 1
         fi
         n="$( cd "$repo" && ghq pr view "$head" --json number -q .number 2>/dev/null )"
@@ -39,7 +39,7 @@ case "$cmd" in
         pr_n="${1:-}"
         rollup_json="$( cd "$repo" && ghq pr view "$pr_n" \
             --json statusCheckRollup 2>/dev/null )" || rollup_json="{}"
-        status="$(printf '%s\n' "${rollup_json:-{}}" | python3 -c "
+        status="$(printf '%s\n' "${rollup_json:-"{}"}" | python3 -c "
 import json, sys
 try:
     checks = (json.load(sys.stdin).get('statusCheckRollup') or [])
@@ -63,7 +63,7 @@ except Exception:
         printf '%s\n' "$status"
         [ "$status" = "green" ] || [ "$status" = "red" ] || exit 0
         # Green or red: extract the CI run id to fetch annotations.
-        run_id="$(printf '%s\n' "${rollup_json:-{}}" | python3 -c "
+        run_id="$(printf '%s\n' "${rollup_json:-"{}"}" | python3 -c "
 import json, sys, re
 try:
     checks = (json.load(sys.stdin).get('statusCheckRollup') or [])

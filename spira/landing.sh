@@ -1403,10 +1403,10 @@ for repo_name in $(spira_repos); do
     land_repo "$repo_name"
 done
 
-# After all certification passes, run the batch builder for queue-mode repos.
+# After all certification passes, settle each queue-mode repo's open batch and open the next.
 for repo_name in $(spira_repos); do
     [ "$(repo_land "$repo_name")" = queue ] || continue
-    bash "$SPIRA_HOME/batch.sh" "$repo_name" 2>&1 \
+    bash "$SPIRA_HOME/queue.sh" step "$repo_name" 2>&1 \
         | while IFS= read -r _bl; do log "$_bl"; done || true
 done
 
