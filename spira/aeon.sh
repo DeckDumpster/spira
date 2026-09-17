@@ -1603,10 +1603,22 @@ cd "$WORK" || die "worktree missing: $WORK"
 # that puts a fake first on PATH runs the real model against the operator's account,
 # silently and at full cost. That is not hypothetical; it is how this line came to be
 # written. A test overrides SPIRA_AGENT.
+_AEON_GH_EMPTY="$SPIRA_RUN/aeon-empty-gh"
+mkdir -p "$_AEON_GH_EMPTY" 2>/dev/null || true
+export GH_CONFIG_DIR="$_AEON_GH_EMPTY"
+unset GH_TOKEN GITHUB_TOKEN
+export GIT_SSH_COMMAND="echo 'aeon: no SSH credentials — landing.sh and batch.sh handle forge writes' >&2; exit 1"
+export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false
 _AEON_SETTINGS="$(python3 -c "
 import json, os
-cmd = os.path.join('$SPIRA_HOME', 'hooks', 'aeon-mail-deliver.sh')
-print(json.dumps({'hooks':{'PostToolUse':[{'hooks':[{'type':'command','command':cmd,'timeout':5}]}]}}))
+spira_home = '$SPIRA_HOME'
+hooks = {}
+mail = os.path.join(spira_home, 'hooks', 'aeon-mail-deliver.sh')
+hooks['PostToolUse'] = [{'hooks': [{'type': 'command', 'command': mail, 'timeout': 5}]}]
+fence = os.path.join(spira_home, 'hooks', 'aeon-fence.sh')
+if os.access(fence, os.X_OK):
+    hooks['PreToolUse'] = [{'hooks': [{'type': 'command', 'command': fence, 'timeout': 5}]}]
+print(json.dumps({'hooks': hooks}))
 " 2>/dev/null)" || _AEON_SETTINGS=""
 printf '%s' "$FULL" | ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
     "${SPIRA_AGENT:-claude}" -p --output-format stream-json --verbose --include-partial-messages \
