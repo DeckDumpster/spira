@@ -92,6 +92,47 @@ main() {
 
     local certs
     certs="$(_certified_list "$repo")"
+
+    # Mark already-in-base certified tips LANDED so they do not consume batch slots
+    # or inflate the wait trigger.
+    if [ -n "${certs:-}" ]; then
+        local _filt="" _cid _ctip _cepoch
+        while IFS= read -r _cl; do
+            [ -n "$_cl" ] || continue
+            read -r _cid _ctip _cepoch <<< "$_cl"
+            if git -C "$repo" merge-base --is-ancestor "$_ctip" "$base_sha" 2>/dev/null; then
+                land_mark "$_cid" LANDED "$_ctip" already-in-base
+                printf 'batch %s: %s tip already in %s — LANDED (already-in-base)\n' \
+                    "$name" "$_cid" "$base"
+            else
+                _filt="${_filt}${_cl}"$'\n'
+            fi
+        done <<< "$certs"
+        certs="${_filt%$'\n'}"
+    fi
+
+    # Mark CERTIFIED records whose branches are gone so they drop from the queue view.
+    if [ -d "$LANDSTATE" ]; then
+        local _lf _lid _lst _ltip _anyrn _rn _rp
+        for _lf in "$LANDSTATE"/*; do
+            [ -f "$_lf" ] || continue
+            _lid="$(basename "$_lf")"
+            # Skip entries that are not bead IDs (no slashes, no leading dot).
+            case "$_lid" in .*|*/*) continue ;; esac
+            { read -r _lst _ltip _ < "$_lf"; } 2>/dev/null || continue
+            [ "$_lst" = "CERTIFIED" ] || continue
+            _anyrn=0
+            for _rn in $(spira_repos); do
+                _rp="$(repo_root "$_rn" 2>/dev/null)" || continue
+                git -C "$_rp" show-ref --verify --quiet "refs/heads/spira/$_lid" 2>/dev/null \
+                    && { _anyrn=1; break; }
+            done
+            [ "$_anyrn" = 1 ] && continue
+            land_mark "$_lid" LANDED "${_ltip:-none}" branch-gone
+            printf 'batch %s: %s has no branch — LANDED (branch-gone)\n' "$name" "$_lid"
+        done
+    fi
+
     if [ -z "${certs:-}" ]; then
         rm -f "$SPIRA_RUN/queue-stuck-$name" 2>/dev/null || true
         return 0

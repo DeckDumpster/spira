@@ -326,6 +326,12 @@ main() {
                         esac
                     done <<< "$status_out"
                     rm -f "$batch_file"
+                    # Delete the batch branch now that the base has advanced past it.
+                    if [ -n "${branch_name:-}" ]; then
+                        git -C "$repo" push -q "$remote" --delete "$branch_name" 2>/dev/null || true
+                        git -C "$repo" branch -D "$branch_name" 2>/dev/null || true
+                        printf 'verdict %s: deleted batch branch %s\n' "$name" "$branch_name"
+                    fi
                 else
                     printf 'verdict %s: PR %s fast-forward push failed\n' "$name" "$pr_n" >&2
                     return 1
