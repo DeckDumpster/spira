@@ -251,6 +251,30 @@ jobs:
             *) printf 'gate: suites failed (batch rc=%s)\n' "$_b" >&2; exit "$_b" ;;
           esac
 
+      - name: Diagnostics
+        # Print failing lines, annotations, and step summary for every red suite.
+        # Runs after both passes so the retry verdict (red-red / red-green) is known.
+        # Runs whether or not the Suites step succeeded so a failed run always has output.
+        if: always()
+        env:
+          SPIRA_BATCH_TAIL_LINES: ${{ vars.SPIRA_BATCH_TAIL_LINES || 50 }}
+        run: |
+          batch="$RUNNER_TEMP/batch"
+          [ -d "$batch" ] || exit 0
+          bash spira/gate-diag.sh "$batch"
+
+      - name: Upload batch results
+        # Upload every .result and .out from both the parallel pass and the serial
+        # re-run. Runs whether or not the Suites step succeeded so a failing run
+        # always has an artifact to inspect.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: batch-results-${{ github.run_id }}
+          path: ${{ runner.temp }}/batch*
+          retention-days: ${{ vars.SPIRA_BATCH_ARTIFACT_DAYS || 7 }}
+          if-no-files-found: warn
+
   # ---------------------------------------------------------------------------
   # Authoritative verdict, on a hosted runner so it executes even when
   # provision fails. THE JOB NAME IS A CONTRACT the moment a branch ruleset

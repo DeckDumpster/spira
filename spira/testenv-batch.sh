@@ -12,7 +12,7 @@
 # master-base fixture case is an acceptance criterion, not an afterthought.
 #
 # RESULT PROTOCOL. Each suite writes <results>/<suite>.result and <results>/<suite>.out.
-# Result format: <status> <epoch> <seconds> <fingerprint> <mode> <producer>.
+# Result format: <status> <epoch> <seconds> <fingerprint> <mode> <producer> <rc>.
 # A selected suite with no result file is unreached, never green. unreached never
 # overwrites a completed status (law-absence-needs-a-positive-control; sp-u1g would
 # have overwritten here — that defect is why this protocol exists).
@@ -311,7 +311,7 @@ _SELECTED_ACTIVE=""
 for _sts_s in $SELECTED; do
     case "$(suite_state_of "$_STS_TMP" "$_sts_s")" in
         disabled)
-            printf '%s %s %s %s %s%s\n' disabled "$(date +%s)" 0 - "$MODE" \
+            printf '%s %s %s %s %s%s -\n' disabled "$(date +%s)" 0 - "$MODE" \
                 " $_SELECTION_TYPE" > "$RESULTS/$_sts_s.result"
             : > "$RESULTS/$_sts_s.out"
             printf '  %-32s DISABLED\n' "$_sts_s"
@@ -510,7 +510,7 @@ for _rs in $SELECTED; do
         esac
     done
     if [ -n "$_missing" ]; then
-        printf '%s %s %s %s %s%s\n' skip-req "$(date +%s)" 0 "requires:$_missing" "$MODE" \
+        printf '%s %s %s %s %s%s -\n' skip-req "$(date +%s)" 0 "requires:$_missing" "$MODE" \
             " $_SELECTION_TYPE" > "$RESULTS/$_rs.result"
         : > "$RESULTS/$_rs.out"
         printf '  %-32s SKIP-REQ requires:%s\n' "$_rs" "$_missing"
@@ -645,17 +645,17 @@ if [ "$MODE" = serial ]; then
         case " ${_STS_QUARANTINED:-} " in *" $s "*) _s_quarantined=1 ;; esac
         case "$_rc" in
             0)
-                printf '%s %s %s %s %s%s\n' ok "$(date +%s)" "$secs" - "$MODE" \
+                printf '%s %s %s %s %s%s 0\n' ok "$(date +%s)" "$secs" - "$MODE" \
                     "$_result_extra" > "$res_file"
                 printf '  %-32s ok      %ss\n' "$s" "$secs"
                 ;;
             77)
-                printf '%s %s %s %s %s%s\n' skip "$(date +%s)" "$secs" - "$MODE" \
+                printf '%s %s %s %s %s%s 77\n' skip "$(date +%s)" "$secs" - "$MODE" \
                     "$_result_extra" > "$res_file"
                 printf '  %-32s SKIPPED\n' "$s"
                 ;;
             124)
-                printf '%s %s %s %s %s%s\n' timeout "$(date +%s)" "$secs" "timeout:$s" "$MODE" \
+                printf '%s %s %s %s %s%s 124\n' timeout "$(date +%s)" "$secs" "timeout:$s" "$MODE" \
                     "$_result_extra" > "$res_file"
                 _batch_red=$(( _batch_red + 1 ))
                 printf '  %-32s TIMEOUT after %ss\n' "$s" "$secs"
@@ -663,13 +663,13 @@ if [ "$MODE" = serial ]; then
             *)
                 _fp_val="$(_fp "$_rc" "$out")"
                 if [ "$_s_quarantined" = 1 ]; then
-                    printf '%s %s %s %s %s%s\n' quarantined-red "$(date +%s)" "$secs" \
-                        "$_fp_val" "$MODE" "$_result_extra" > "$res_file"
+                    printf '%s %s %s %s %s%s %s\n' quarantined-red "$(date +%s)" "$secs" \
+                        "$_fp_val" "$MODE" "$_result_extra" "$_rc" > "$res_file"
                     _batch_quarantined_red=$(( _batch_quarantined_red + 1 ))
                     printf '  %-32s QUARANTINED-RED  rc=%s after %ss\n' "$s" "$_rc" "$secs"
                 else
-                    printf '%s %s %s %s %s%s\n' red "$(date +%s)" "$secs" "$_fp_val" "$MODE" \
-                        "$_result_extra" > "$res_file"
+                    printf '%s %s %s %s %s%s %s\n' red "$(date +%s)" "$secs" "$_fp_val" "$MODE" \
+                        "$_result_extra" "$_rc" > "$res_file"
                     _batch_red=$(( _batch_red + 1 ))
                     printf '  %-32s RED     rc=%s after %ss\n' "$s" "$_rc" "$secs"
                 fi
@@ -776,29 +776,29 @@ else
             case " ${_STS_QUARANTINED:-} " in *" $s "*) _par_quarantined=1 ;; esac
             case "$_inner_rc" in
                 0)
-                    printf '%s %s %s %s %s%s\n' ok "$(date +%s)" "$_secs" - "$MODE" \
+                    printf '%s %s %s %s %s%s 0\n' ok "$(date +%s)" "$_secs" - "$MODE" \
                         "$_par_extra" > "$RESULTS/$s.result"
                     printf '  %-32s ok      %ss\n' "$s" "$_secs"
                     ;;
                 77)
-                    printf '%s %s %s %s %s%s\n' skip "$(date +%s)" "$_secs" - "$MODE" \
+                    printf '%s %s %s %s %s%s 77\n' skip "$(date +%s)" "$_secs" - "$MODE" \
                         "$_par_extra" > "$RESULTS/$s.result"
                     printf '  %-32s SKIPPED\n' "$s"
                     ;;
                 124)
-                    printf '%s %s %s %s %s%s\n' timeout "$(date +%s)" "$_secs" "timeout:$s" "$MODE" \
+                    printf '%s %s %s %s %s%s 124\n' timeout "$(date +%s)" "$_secs" "timeout:$s" "$MODE" \
                         "$_par_extra" > "$RESULTS/$s.result"
                     printf '  %-32s TIMEOUT after %ss\n' "$s" "$_secs"
                     ;;
                 *)
                     _fp_val="$(_fp "$_inner_rc" "$_out")"
                     if [ "$_par_quarantined" = 1 ]; then
-                        printf '%s %s %s %s %s%s\n' quarantined-red "$(date +%s)" "$_secs" \
-                            "$_fp_val" "$MODE" "$_par_extra" > "$RESULTS/$s.result"
+                        printf '%s %s %s %s %s%s %s\n' quarantined-red "$(date +%s)" "$_secs" \
+                            "$_fp_val" "$MODE" "$_par_extra" "$_inner_rc" > "$RESULTS/$s.result"
                         printf '  %-32s QUARANTINED-RED  rc=%s after %ss\n' "$s" "$_inner_rc" "$_secs"
                     else
-                        printf '%s %s %s %s %s%s\n' red "$(date +%s)" "$_secs" "$_fp_val" "$MODE" \
-                            "$_par_extra" > "$RESULTS/$s.result"
+                        printf '%s %s %s %s %s%s %s\n' red "$(date +%s)" "$_secs" "$_fp_val" "$MODE" \
+                            "$_par_extra" "$_inner_rc" > "$RESULTS/$s.result"
                         printf '  %-32s RED     rc=%s after %ss\n' "$s" "$_inner_rc" "$_secs"
                     fi
                     ;;
@@ -889,6 +889,8 @@ fi
 
 if [ "$_batch_red" -gt 0 ]; then
     log "batch: $_batch_red suite(s) red"
+    _diag="$HERE/gate-diag.sh"
+    [ -r "$_diag" ] && bash "$_diag" "$RESULTS" || true
     exit 1
 fi
 

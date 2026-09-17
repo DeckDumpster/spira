@@ -803,7 +803,7 @@ cmd_run() {
       if [ "$BATCH" = 1 ]; then
         # ---- the suite already ran, in the container. Read its verdict. ----------------
         # testenv-batch.sh writes <results>/<suite>.result as
-        #   <status> <epoch> <seconds> <fingerprint> <mode> <producer>
+        #   <status> <epoch> <seconds> <fingerprint> <mode> <producer> <rc>
         # and <results>/<suite>.out. A SELECTED SUITE WITH NO RESULT FILE IS UNREACHED,
         # never green — the batch was cut short, the container died, or the suite never
         # started. Recording it as a pass is the failure this whole program exists to end.
