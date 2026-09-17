@@ -459,6 +459,8 @@ repair_dashboards() {
     local sess; sess="$(session_pane)"
     [ -n "$sess" ] || return 0
 
+    local active_pane; active_pane="$(tmux display-message -t "$WINDOW" -p '#{pane_id}' 2>/dev/null)"
+
     # DUPLICATES FIRST. A respawn racing this repair could produce two health panes.
     local seen p
     seen=""
@@ -481,7 +483,11 @@ repair_dashboards() {
         heal_log "$WINDOW: mail pane gone — respawning under the session"
         m="$(split_mail "$sess")" && [ -n "$m" ] && tag_pane "$m" mail
     fi
-    tmux select-pane -t "$sess" 2>/dev/null || true
+    if tmux list-panes -t "$WINDOW" -F '#{pane_id}' 2>/dev/null | grep -q "^${active_pane}$"; then
+        tmux select-pane -t "$active_pane" 2>/dev/null || true
+    else
+        tmux select-pane -t "$sess" 2>/dev/null || true
+    fi
 }
 
 # EVERY PANE THIS SCRIPT OPENS TAKES THE SERVER'S ENVIRONMENT, not this process's, and the
