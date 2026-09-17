@@ -2221,7 +2221,7 @@ case "${1:-}" in
         write_snapshot
         echo "spira cockpit: $SNAP ($(wc -l < "$SNAP") keys)"
     else
-        probe 2>/dev/null
+        probe 2>/dev/null || true
         echo "spira cockpit: keys printed to stdout (not the supervised process)" >&2
     fi
     # NO-ARGS INVOCATION: the cockpit session pane IS the concierge. On a plain terminal
