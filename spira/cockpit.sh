@@ -2237,7 +2237,7 @@ case "${1:-}" in
         fi
         _concierge="${SPIRA_REPO}/concierge.sh"
         if [ -x "$_concierge" ]; then
-            "$_concierge" status >/dev/null 2>&1 || "$_concierge" start || exit 1
+            "$_concierge" start || exit 1
             exec "$_concierge" attach
         fi
     fi

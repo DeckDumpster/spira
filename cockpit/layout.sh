@@ -52,11 +52,22 @@
 # one: a probe pass costs seconds, and a pane that shelled out would stall on every repaint.
 # Layout repair and metric collection are separate concerns under separate units.
 #
+# THE SESSION PANE IS THE CONCIERGE
+# ----------------------------------
+# Option A: when `up` creates a fresh session pane it runs `concierge.sh here`, which starts
+# the concierge in its own tmux socket (tmux -L concierge) if it is not running, then
+# exec-attaches to it. The result is nested tmux: the cockpit pane shows the concierge
+# session. Both layers use Ctrl-b; Ctrl-b Ctrl-b sends the prefix to the outer cockpit when
+# the operator is inside the inner concierge session. The concierge keeps its own socket so
+# its Remote Control name (`--remote-control concierge`) is independent of the cockpit
+# layout and it can be killed and restarted without touching the dashboard.
+#
 # `ensure` — WHAT THE WATCHER CALLS
 # ---------------------------------
 # `cockpit-remote watch` calls this on its poll loop so the layout self-heals: the session
-# pane holds a shell the operator can exit, and nothing else notices when they do. It repairs only
-# a cockpit that is ALREADY UP — a window with `@cockpit` panes but no session pane left.
+# pane runs the concierge and exits when it detaches; `ensure` reopens it with the same
+# command so the desk view is always the concierge. It repairs only a cockpit that is ALREADY
+# UP — a window with `@cockpit` panes but no session pane left.
 #
 # The absence of any `@cockpit` pane means `down` was run, and `ensure` must leave that
 # alone. An unattended process that rebuilds the dashboards the operator just dismissed is not a fence,
@@ -497,9 +508,18 @@ up)
         # Every pane is a dashboard: the session pane died and the dashboards inherited the
         # window. Open its replacement FIRST — killing the dashboards to make room would
         # empty the window, and an empty window is a destroyed window.
-        sess=$(tmux split-window -P -F '#{pane_id}' -b -v -l 60% -t "$(all_tagged | head -1)" -c "$CWD") \
-            || { echo "cockpit: could not restore the session pane" >&2; exit 1; }
-        echo "cockpit: session pane was gone — opened a shell at $sess"
+        # THE SESSION PANE RUNS THE CONCIERGE. See header comment for the choice rationale.
+        _conc="${SPIRA_REPO}/concierge.sh"
+        if [ -x "$_conc" ]; then
+            sess=$(tmux split-window -P -F '#{pane_id}' -b -v -l 60% -t "$(all_tagged | head -1)" -c "$CWD" \
+                "${_CONF_PREFIX}${_conc} here") \
+                || { echo "cockpit: could not restore the session pane" >&2; exit 1; }
+            echo "cockpit: session pane was gone — opened concierge.sh here at $sess"
+        else
+            sess=$(tmux split-window -P -F '#{pane_id}' -b -v -l 60% -t "$(all_tagged | head -1)" -c "$CWD") \
+                || { echo "cockpit: could not restore the session pane" >&2; exit 1; }
+            echo "cockpit: session pane was gone — opened a shell at $sess (concierge.sh not found)"
+        fi
     fi
 
     # Rebuild the dashboard from scratch. Killing first is what makes `up` a repair: a duplicate

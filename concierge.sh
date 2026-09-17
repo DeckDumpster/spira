@@ -2,8 +2,8 @@
 #
 # concierge.sh — the single Remote Control session the operator talks to from their phone.
 #
-#   concierge.sh start     launch it in tmux for the phone (idempotent)
-#   concierge.sh here      run it in the FOREGROUND, at this terminal; args pass to claude
+#   concierge.sh start     launch it in tmux for the phone (idempotent; converges if running)
+#   concierge.sh here      attach to the running session (start first if needed)
 #   concierge.sh attach    attach locally
 #   concierge.sh brief     render the system prompt and print its path; change nothing
 #     overlay without cd:  claude ... --append-system-prompt-file "$(concierge.sh brief)"
@@ -32,6 +32,16 @@
 # ----------------------------------
 # The cwd decides which CLAUDE.md, which hooks and which project memory it loads. From
 # there it gets the operator's own conventions, their session-start list and their guards.
+#
+# THE COCKPIT SESSION PANE
+# ------------------------
+# The cockpit's session pane (top-left) shows the concierge via Option A: a pane running
+# `concierge.sh here`, which does `start` then `exec tmux -L concierge attach`. The inner
+# (concierge) tmux sits on its own socket; the outer (cockpit) tmux is the layout server.
+# Both use the same Ctrl-b prefix — Ctrl-b Ctrl-b sends prefix to the outer session when
+# the operator is interacting with the inner. This is standard nested-tmux and the pane
+# is fully usable. The concierge keeping its own socket preserves the Remote Control name
+# (`--remote-control concierge`) and the kill/restart lifecycle independently of the layout.
 #
 # WHY IT IS COMPOSED FROM A FAYTH
 # -------------------------------
@@ -201,6 +211,18 @@ start)
         echo "concierge: already running (tmux -L $SOCKET attach -t $SESSION)"
         exit 0
     fi
+    # CONVERGENCE CHECK BEFORE BRIEF. A live process holding the recorded session id means
+    # the concierge is already up (possibly on a different socket). Starting a second claude
+    # on the same session causes a 4090 eviction race. Exit 0 — it is running, no second
+    # is needed. Find by scanning /proc/*/cmdline, never pgrep -f.
+    RESUME_ID="$(concierge_resume_id)"
+    if [ -n "$RESUME_ID" ]; then
+        _live="$(concierge_live_pid "$RESUME_ID")" && {
+            printf 'concierge: session %s is already held by pid %s\n' "$RESUME_ID" "$_live"
+            printf '  attach:  tmux -L %s attach -t %s\n' "$SOCKET" "$SESSION"
+            exit 0
+        }
+    fi
     command -v claude >/dev/null || { echo "concierge: claude not on PATH" >&2; exit 1; }
     # THE SERVER BELOW INHERITS THIS PROCESS'S ENVIRONMENT AND KEEPS IT FOR LIFE. Started from
     # inside another Claude session — which is exactly how it gets started — it would hand that
@@ -213,19 +235,6 @@ start)
     BRIEF="$(compose_brief)" || exit 1
     MODEL="$(fayth_get "$FAYTH" FAYTH_MODEL "")"
     brief_summary "$BRIEF" "$MODEL"
-    RESUME_ID="$(concierge_resume_id)"
-
-    # REFUSE A SECOND CLIENT ON THE SAME SESSION. Two clients on one session share one
-    # transcript and race on context — the first arrival wins and the second is evicted with
-    # a 4090. Find the holding process by scanning /proc/*/cmdline, never pgrep -f.
-    if [ -n "$RESUME_ID" ]; then
-        _live="$(concierge_live_pid "$RESUME_ID")" && {
-            printf 'concierge: session %s is held by pid %s — refusing a second client\n' \
-                "$RESUME_ID" "$_live" >&2
-            printf '  attach:  tmux -L %s attach -t %s\n' "$SOCKET" "$SESSION" >&2
-            exit 1
-        }
-    fi
 
     # NO --allowedTools. For an interactive session under bypassed permissions that flag can
     # only SUBTRACT, and the persona's remit is unbounded — see concierge.fayth, where the
@@ -281,59 +290,15 @@ wake)
     $TM send-keys -t "$SESSION" -l -- "$2" && $TM send-keys -t "$SESSION" Enter
     ;;
 
-# THE SAME PERSONA, AT THE OPERATOR'S OWN TERMINAL. `start` is the detached Remote Control
-# session; this one runs in the foreground at the calling terminal.
-#
-# WHY IT IS A VERB HERE AND NOT ITS OWN SCRIPT. `compose_brief` is the single place that
-# knows how a concierge is assembled. A second launcher would be a second copy of that
-# knowledge, and the copy stays right until somebody edits one of them.
-#
-# NO --remote-control. That flag registers the session under a name the phone selects, and
-# exactly one session may hold the name `concierge`; a terminal session claiming it would
-# either collide with the tmux one or quietly take the phone's ingress away.
-#
-# EVERYTHING AFTER `here` IS PASSED TO claude, so `-p "..."` and one-shot prompts work.
-# User-supplied flags come after ours on the command line and win.
+# CONVERGENCE ENTRY POINT. `here` is how the operator and the cockpit session pane join the
+# one concierge process. It starts the concierge if it is not running, then attaches. A
+# second standalone foreground claude is the defect, not a mode.
 here)
-    shift
-    command -v claude >/dev/null || { echo "concierge: claude not on PATH" >&2; exit 1; }
-    BRIEF="$(compose_brief)" || exit 1
-    MODEL="$(fayth_get "$FAYTH" FAYTH_MODEL "")"
-
-    # THE SAME SCRUB `start` DOES, AND FOR A SHARPER REASON. This is usually invoked from
-    # inside another Claude session — that is what "give me a session like this one" means —
-    # and a client that inherits CLAUDE_CODE_CHILD_SESSION believes it is a subagent and
-    # DOES NOT WRITE A TRANSCRIPT. No transcript means ctx-meter.sh reports "no session at
-    # the keyboard" and the token meters read the wrong session, with nothing naming the
-    # cause. There is no correct value for any of these in a new session; absent is the only
-    # right answer, and a real client sets its own on startup (cockpit/tmux-env.sh).
-    _tmuxenv="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/cockpit/tmux-env.sh"
-    unset $(bash "$_tmuxenv" names) 2>/dev/null || true
-
-    brief_summary "$BRIEF" "$MODEL" >&2
-    RESUME_ID="$(concierge_resume_id)"
-
-    # REFUSE A SECOND CLIENT ON THE SAME SESSION — same guard as `start`.
-    if [ -n "$RESUME_ID" ]; then
-        _live="$(concierge_live_pid "$RESUME_ID")" && {
-            printf 'concierge: session %s is held by pid %s — refusing a second client\n' \
-                "$RESUME_ID" "$_live" >&2
-            exit 1
-        }
+    if $TM has-session -t "$SESSION" 2>/dev/null; then
+        exec $TM attach -t "$SESSION"
     fi
-
-    # `cd`, NOT --add-dir. The working directory is what decides which CLAUDE.md, which hooks
-    # and which project memory the client loads, and the whole point of this persona is that
-    # it gets the operator's own conventions and guards.
-    cd "$BRAIN" || exit 1
-    # SPIRA_CONCIERGE=1 triggers the session hook to record the session id on every context
-    # reset, so --resume always names the right id even after /clear or /compact.
-    # PERMISSION MODE IS THE CALLER'S; the flag they write comes after ours and wins.
-    export SPIRA_CONCIERGE=1
-    claude --dangerously-skip-permissions \
-        ${MODEL:+--model "$MODEL"} \
-        ${RESUME_ID:+--resume "$RESUME_ID"} \
-        --append-system-prompt "$(cat "$BRIEF")" "$@"
+    bash "$0" start || exit 1
+    exec $TM attach -t "$SESSION"
     ;;
 
 # RENDER IT AND PRINT THE PATH, CHANGING NOTHING. The brief is the part of this session that
