@@ -4,6 +4,7 @@
 #
 # pr-create <repo-dir> <head> <base> <title>   body on stdin; prints PR number
 # pr-number <repo-dir> <head>                  prints the open PR number, or empty
+# pr-list-queue <repo-dir>                     prints PR numbers with head spira/queue/*, one per line
 # check-status <repo-dir> <pr-number>          prints: pending | green | red | harness_fault
 #                                              then "flaky: <suite>" for each flaky annotation
 # run-id <repo-dir> <branch>                   prints the latest CI run ID for the branch
@@ -34,6 +35,19 @@ case "$cmd" in
         head="${1:-}"
         n="$( cd "$repo" && ghq pr view "$head" --json number -q .number 2>/dev/null )"
         printf '%s\n' "${n:-}"
+        ;;
+    pr-list-queue)
+        ( cd "$repo" && ghq pr list --state open \
+            --json number,headRefName 2>/dev/null ) | python3 -c "
+import json, sys
+try:
+    for pr in json.load(sys.stdin):
+        h = pr.get('headRefName', '')
+        if h.startswith('spira/queue/'):
+            print(pr['number'])
+except Exception:
+    pass
+" 2>/dev/null
         ;;
     check-status)
         pr_n="${1:-}"

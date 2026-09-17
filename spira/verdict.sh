@@ -235,6 +235,15 @@ main() {
     mode="$(repo_land "$name")"
     [ "$mode" = "queue" ] || return 0
 
+    local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
+    mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
+    exec 9>"$lockfile" 2>/dev/null \
+        || { printf 'verdict %s: cannot open lock file\n' "$name" >&2; return 1; }
+    if ! flock -n 9; then
+        printf 'verdict %s: another queue operation holds the lock\n' "$name"
+        return 0
+    fi
+
     local batch_file
     batch_file="$(_batch_open_file "$name")"
     [ -f "$batch_file" ] || return 0
