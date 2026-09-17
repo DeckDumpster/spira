@@ -98,6 +98,23 @@ want "C1: refusal mentions operator or Ops session"     "operator" "$out_c1"
 
 # ===========================================================================
 echo
+echo "E — test runner: suites whose names contain a blocked script name pass through:"
+# ===========================================================================
+# POSITIVE CONTROL: the direct call is still blocked (pattern requires preceding /).
+out="$(fence_run "bash spira/verdict.sh push spira" SPIRA_AEON=test-aeon)"
+want "E0 POSITIVE: spira/verdict.sh directly still blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "bash spira/testenv-batch.sh --suites test-verdict.sh spira/sp-x" SPIRA_AEON=test-aeon)"
+refuse "E1: testenv-batch with test-verdict.sh not blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "bash spira/testenv-batch.sh --suites test-batch.sh spira/sp-x" SPIRA_AEON=test-aeon)"
+refuse "E2: testenv-batch with test-batch.sh not blocked"   '"decision":"block"' "$out"
+
+out="$(fence_run "bash spira/testenv-batch.sh spira/sp-x" SPIRA_AEON=test-aeon)"
+refuse "E3: testenv-batch.sh itself not blocked"            '"decision":"block"' "$out"
+
+# ===========================================================================
+echo
 echo "D — archivist.md prohibits filing production-operation beads:"
 # ===========================================================================
 ARCHIVIST="$HERE/chamber/archivist.md"
