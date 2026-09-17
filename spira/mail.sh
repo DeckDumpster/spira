@@ -137,6 +137,17 @@ _lint_check() {
 
 cmd_send() {
     local mailbox="$1"; shift
+    # aeon:<id> routes to the aeon's per-claim mailbox; refuse if no live mailbox exists.
+    case "$mailbox" in
+        aeon:*)
+            local _bid="${mailbox#aeon:}"
+            mailbox="aeon-$_bid"
+            if [ ! -d "$(_mail_dir "$mailbox")/new" ]; then
+                printf 'mail: aeon:%s: no live mailbox — bead is not claimed by a live aeon\n' "$_bid" >&2
+                return 1
+            fi
+            ;;
+    esac
     local from="" subject="" kind="" default="" bead="" urgent=""
     while [ $# -gt 0 ]; do
         case "$1" in
