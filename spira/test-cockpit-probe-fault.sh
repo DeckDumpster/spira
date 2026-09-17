@@ -100,7 +100,11 @@ base_snap() {
         [ "$omit" = SP_NEXT_N      ] || printf 'SP_NEXT_N=2\n'
         [ "$omit" = SP_INFLOW_N    ] || printf 'SP_INFLOW_N=3\nSP_INFLOW_WIN=60\nSP_INFLOW_DEFECT=0\nSP_INFLOW_KINDS=task 3\n'
         [ "$omit" = SP_AWAITING_N  ] || printf 'SP_AWAITING_N=0\n'
-        [ "$omit" = SP_PEND_N      ] || printf 'SP_PEND_N=0\nSP_PEND_OLDEST=0\n'
+        # QUEUE section guard: batch=0, next=0 so omitting SP_QUEUE_DEPTH triggers unread_row QUEUE.
+        [ "$omit" = SP_QUEUE_DEPTH ] || printf 'SP_QUEUE_DEPTH=5\n'
+        printf 'SP_QUEUE_EJECTED=0\nSP_QUEUE_RED=0\n'
+        printf 'SP_QUEUE_BATCH_PR=0\nSP_QUEUE_BATCH_AGE=0\nSP_QUEUE_BATCH_N=0\n'
+        printf 'SP_QUEUE_NEXT_N=0\nSP_QUEUE_NEXT_MAX=8\nSP_QUEUE_QUARANTINE_N=0\n'
         [ "$omit" = SP_WAITING     ] || printf 'SP_WAITING=1\n'
         [ "$omit" = SP_UNANSWERED  ] || printf 'SP_UNANSWERED=0\n'
         [ "$omit" = SP_UNSENT      ] || printf 'SP_UNSENT=2\nSP_UNSENT_OLDEST_H=1\nSP_BRANCH_DONE=1\nSP_UNADOPTED=0\nSP_ORPHAN_WORK=0\n'
@@ -111,10 +115,9 @@ base_snap() {
         printf 'SP_BEADS_SPARK_OPENED=▁▂▁▃▁▂▁▃\nSP_BEADS_SPARK_CLOSED=▁▂▁▃▁▂▁▃\n'
         printf 'SP_BEADS_SPARK_LANDED=▁▂▁▃▁▂▁▃\n'
         printf 'SP_CLOSED_KINDS=task 5\n'
-        # 24h landing row — three separate keys.
+        # 24h worked row — three separate keys: SP_LANDED, SP_QUEUE_DEPTH (above), SP_UNLANDED_N.
         [ "$omit" = SP_LANDED      ] || printf 'SP_LANDED=4\n'
-        [ "$omit" = SP_AWAITING_LAND ] || printf 'SP_AWAITING_LAND=1\n'
-        [ "$omit" = SP_UNLANDED    ] || printf 'SP_UNLANDED=0\n'
+        [ "$omit" = SP_UNLANDED_N  ] || printf 'SP_UNLANDED_N=1\n'
         printf 'SP_CLOSED=5\n'
         # LAND section keys.
         printf 'SP_LAND_AT=%d\nSP_LAND_RC=0\nSP_LAND_BRANCHES=0\nSP_LAND_MOVED=0\n' "$(date +%s)"
@@ -188,20 +191,20 @@ else
     bad "SP_AWAITING_N: absent key did not render '?': $(printf '%s\n' "$p" | grep ' CI ')"
 fi
 
-# SP_PEND_N — unlanded queue count, guarded by unread_row UNLND
+# SP_QUEUE_DEPTH — queue depth, QUEUE section guard (absent + batch=0 + next=0 → unread_row QUEUE)
 base_snap __none__
 p="$(pane 0)"
-if grep -qF 'UNLND' <<< "$p"; then
-    ok "SP_PEND_N positive control: UNLND section renders"
+if grep -qF 'QUEUE' <<< "$p"; then
+    ok "SP_QUEUE_DEPTH positive control: QUEUE section renders"
 else
-    bad "SP_PEND_N positive control: UNLND section absent (cannot test fault)"
+    bad "SP_QUEUE_DEPTH positive control: QUEUE section absent (cannot test fault)"
 fi
-base_snap SP_PEND_N
+base_snap SP_QUEUE_DEPTH
 p="$(pane 0)"
-if grep -q 'UNLND.*?' <<< "$p"; then
-    ok "SP_PEND_N: absent key renders '?' (cannot read the unlanded queue)"
+if grep -q 'QUEUE.*?' <<< "$p"; then
+    ok "SP_QUEUE_DEPTH: absent key renders '?' (cannot read the queue)"
 else
-    bad "SP_PEND_N: absent key did not render '?': $(printf '%s\n' "$p" | grep -i unlnd)"
+    bad "SP_QUEUE_DEPTH: absent key did not render '?': $(printf '%s\n' "$p" | grep -i queue)"
 fi
 
 # SP_WAITING — operator attention count, rendered with ${SP_WAITING:-?}
@@ -315,42 +318,44 @@ else
     bad "SP_LANDED: absent key did not render '?': $worked_line"
 fi
 
-# SP_AWAITING_LAND — awaiting-land count on the 24h-worked row.
-# THE FAILURE CASE THAT PROVES THE STATUTE WAS VIOLATED: health.sh uses
-# ${SP_AWAITING_LAND:-0}, so an absent key renders "0 awaiting", not "? awaiting".
-# This case is expected to FAIL against the unfixed renderer (pre-fix of sp-cof).
+# SP_QUEUE_DEPTH — queued count on the 24h-worked row, rendered with ${SP_QUEUE_DEPTH:-?}
 base_snap __none__
 p="$(pane 0)"
-# Positive control: SP_AWAITING_LAND=1 in the base snapshot → "1 awaiting" appears.
-if grep -q '1 awaiting' <<< "$p"; then
-    ok "SP_AWAITING_LAND positive control: '1 awaiting' renders"
+# Positive control: SP_QUEUE_DEPTH=5 in the base snapshot → "5 queued" appears.
+if grep -q '5 queued' <<< "$p"; then
+    ok "SP_QUEUE_DEPTH positive control: '5 queued' renders on 24h worked row"
 else
-    bad "SP_AWAITING_LAND positive control: '1 awaiting' absent from frame (cannot test fault)"
+    bad "SP_QUEUE_DEPTH positive control: '5 queued' absent from 24h worked row (cannot test fault)"
 fi
-base_snap SP_AWAITING_LAND
+base_snap SP_QUEUE_DEPTH
 p="$(pane 0)"
 worked_line="$(printf '%s\n' "$p" | grep '24h worked')"
-# THE ASSERTION: absent key must render '?' not '0'.
-if printf '%s\n' "$worked_line" | grep -q '[?] awaiting'; then
-    ok "SP_AWAITING_LAND: absent key renders '?' awaiting"
+if printf '%s\n' "$worked_line" | grep -q '[?] queued'; then
+    ok "SP_QUEUE_DEPTH: absent key renders '? queued'"
 else
-    bad "SP_AWAITING_LAND: absent key did not render '? awaiting': $worked_line"
+    bad "SP_QUEUE_DEPTH: absent key did not render '? queued': $worked_line"
 fi
-# THE INVERSE: must not show '0 awaiting' (the all-clear a broken probe must never produce).
-if printf '%s\n' "$worked_line" | grep -q '0 awaiting'; then
-    bad "SP_AWAITING_LAND: absent key rendered '0 awaiting' — all-clear from broken probe"
+if printf '%s\n' "$worked_line" | grep -q '0 queued'; then
+    bad "SP_QUEUE_DEPTH: absent key rendered '0 queued' — all-clear from broken probe"
 else
-    ok "SP_AWAITING_LAND: absent key did not render '0 awaiting'"
+    ok "SP_QUEUE_DEPTH: absent key did not render '0 queued'"
 fi
 
-# SP_UNLANDED — never-landed count on the 24h-worked row, rendered with ${SP_UNLANDED:-?}
-base_snap SP_UNLANDED
+# SP_UNLANDED_N — anomaly count on the 24h-worked row, rendered with ${SP_UNLANDED_N:-?}
+base_snap __none__
+p="$(pane 0)"
+if grep -q '1 anomaly' <<< "$p"; then
+    ok "SP_UNLANDED_N positive control: '1 anomaly' renders on 24h worked row"
+else
+    bad "SP_UNLANDED_N positive control: '1 anomaly' absent from 24h worked row (cannot test fault)"
+fi
+base_snap SP_UNLANDED_N
 p="$(pane 0)"
 worked_line="$(printf '%s\n' "$p" | grep '24h worked')"
-if printf '%s\n' "$worked_line" | grep -q '[?] never landed'; then
-    ok "SP_UNLANDED: absent key renders '?'"
+if printf '%s\n' "$worked_line" | grep -q '[?] anomaly'; then
+    ok "SP_UNLANDED_N: absent key renders '?'"
 else
-    bad "SP_UNLANDED: absent key did not render '?': $worked_line"
+    bad "SP_UNLANDED_N: absent key did not render '?': $worked_line"
 fi
 
 echo
@@ -445,31 +450,25 @@ else
     ok "SP_INFLOW_N: bdjson-exits-0-emits-nothing did not render SP_INFLOW_N=0"
 fi
 
-# ---- SP_AWAITING_LAND: unsent_keys, bdjson exits 0 emits nothing --------------------
-# THE REMAINING COLLECTOR BUG THAT SP-COF FIXES: when bdjson list --status closed exits 0
-# but emits nothing, closed_pairs is empty. The original code treated empty-from-refusal
-# and empty-from-no-beads the same way — both emitted SP_CLOSED=0 SP_AWAITING_LAND=0.
-# After the fix, an empty output (bd produced nothing) emits SP_AWAITING_LAND=? while a
-# genuine empty list (bd produced "[]") still emits SP_AWAITING_LAND=0.
-#
-# POSITIVE CONTROL: run with bd-fail (exits non-zero) — the bdjson pipeline's Python exits 1,
-# closed_pairs is empty, and the fix must detect the refusal and emit ?.
+# ---- SP_UNLANDED_N: unsent_keys, bdjson exits 0 emits nothing -----------------------
+# When bdjson list --status closed exits 0 but emits nothing, closed_pairs is empty.
+# An empty response means the probe refused: SP_UNLANDED_N=? not SP_UNLANDED_N=0.
 echo
-echo "SP_AWAITING_LAND — unsent_keys (bdjson exits 0, emits nothing)"
+echo "SP_UNLANDED_N — unsent_keys (bdjson exits 0, emits nothing)"
 out_unsent_empty="$(run_probe unsent bd-zero-empty)"
-if grep -q '^SP_AWAITING_LAND=?' <<< "$out_unsent_empty"; then
-    ok "SP_AWAITING_LAND: bdjson-exits-0-emits-nothing renders SP_AWAITING_LAND=?"
+if grep -q '^SP_UNLANDED_N=?' <<< "$out_unsent_empty"; then
+    ok "SP_UNLANDED_N: bdjson-exits-0-emits-nothing renders SP_UNLANDED_N=?"
 else
-    bad "SP_AWAITING_LAND: bdjson-exits-0-emits-nothing did not render SP_AWAITING_LAND=?: $(grep SP_AWAITING_LAND <<< "$out_unsent_empty" | head -1)"
+    bad "SP_UNLANDED_N: bdjson-exits-0-emits-nothing did not render SP_UNLANDED_N=?: $(grep SP_UNLANDED_N <<< "$out_unsent_empty" | head -1)"
 fi
-if grep -q '^SP_AWAITING_LAND=0' <<< "$out_unsent_empty"; then
-    bad "SP_AWAITING_LAND: bdjson-exits-0-emits-nothing rendered SP_AWAITING_LAND=0 — all-clear from broken probe"
+if grep -q '^SP_UNLANDED_N=0' <<< "$out_unsent_empty"; then
+    bad "SP_UNLANDED_N: bdjson-exits-0-emits-nothing rendered SP_UNLANDED_N=0 — all-clear from broken probe"
 else
-    ok "SP_AWAITING_LAND: bdjson-exits-0-emits-nothing did not render SP_AWAITING_LAND=0"
+    ok "SP_UNLANDED_N: bdjson-exits-0-emits-nothing did not render SP_UNLANDED_N=0"
 fi
 
 # Also check the other keys emitted by the same failing probe section.
-for _k in SP_CLOSED SP_LANDED SP_UNLANDED SP_PEND_N; do
+for _k in SP_CLOSED SP_LANDED SP_UNLANDED_N; do
     if grep -q "^${_k}=?" <<< "$out_unsent_empty"; then
         ok "$_k: bdjson-exits-0-emits-nothing renders ${_k}=?"
     else
@@ -478,35 +477,37 @@ for _k in SP_CLOSED SP_LANDED SP_UNLANDED SP_PEND_N; do
 done
 
 # ---- Part 2 summary: collector output feeds the pane --------------------------------
-# Take the collector output that correctly contains SP_AWAITING_LAND=? and verify the pane
+# Take the collector output that correctly contains SP_UNLANDED_N=? and verify the pane
 # renders it as ? rather than 0 — closing the end-to-end chain.
 echo
 echo "end-to-end: collector ? propagates to pane ?"
 {
     printf 'SP_AT=%d\n' "$(date +%s)"
     printf 'SP_AEON_N=0\nSP_NEXT_N=0\nSP_INFLOW_N=0\nSP_INFLOW_WIN=60\nSP_INFLOW_DEFECT=0\nSP_INFLOW_KINDS=-\n'
-    printf 'SP_AWAITING_N=0\nSP_PEND_N=0\nSP_WAITING=0\nSP_UNANSWERED=0\n'
+    printf 'SP_AWAITING_N=0\nSP_WAITING=0\nSP_UNANSWERED=0\n'
     printf 'SP_UNSENT=0\nSP_BRANCH_DONE=0\nSP_UNSENT_OLDEST_H=0\nSP_UNADOPTED=0\nSP_ORPHAN_WORK=0\n'
     printf 'SP_CLOSED_24H=0\nSP_OPENED_24H=0\nSP_BEADS_LANDED_24H=0\n'
     printf 'SP_BEADS_SPARK_OPENED=▁▁▁▁▁▁▁▁\nSP_BEADS_SPARK_CLOSED=▁▁▁▁▁▁▁▁\n'
     printf 'SP_BEADS_SPARK_LANDED=▁▁▁▁▁▁▁▁\nSP_CLOSED_KINDS=-\n'
     # THE PROPAGATION CASE: what the fixed collector emits when bdjson returns nothing.
-    printf 'SP_CLOSED=?\nSP_LANDED=?\nSP_AWAITING_LAND=?\nSP_UNLANDED=?\nSP_PEND_N=?\nSP_PEND_OLDEST=?\n'
+    printf 'SP_CLOSED=?\nSP_LANDED=?\nSP_UNLANDED_N=?\n'
+    printf 'SP_QUEUE_DEPTH=?\nSP_QUEUE_EJECTED=0\nSP_QUEUE_RED=0\n'
+    printf 'SP_QUEUE_BATCH_PR=0\nSP_QUEUE_BATCH_N=0\nSP_QUEUE_NEXT_N=0\nSP_QUEUE_NEXT_MAX=8\nSP_QUEUE_QUARANTINE_N=0\n'
     printf 'SP_SENTINEL_TIMER=1\nSP_SENTINEL_AGE=30\nSP_OPS_TIMER=1\nSP_OPS_AGE=30\n'
     printf 'SP_AURON_TIMER=1\nSP_AURON_AGE=30\nSP_AURON_FIRING=0\nSP_AURON_KEYS=\n'
     printf 'SP_GATE_N=0\nSP_GATE_LIVE=0\nSP_CAPACITY_PAUSED=0\n'
 } | snap
 e2e_pane="$(pane 0)"
 e2e_worked="$(printf '%s\n' "$e2e_pane" | grep '24h worked')"
-if printf '%s\n' "$e2e_worked" | grep -q '[?] awaiting'; then
-    ok "end-to-end: collector SP_AWAITING_LAND=? propagates to pane '? awaiting'"
+if printf '%s\n' "$e2e_worked" | grep -q '[?] anomaly'; then
+    ok "end-to-end: collector SP_UNLANDED_N=? propagates to pane '? anomaly'"
 else
-    bad "end-to-end: collector SP_AWAITING_LAND=? did not propagate to pane '? awaiting': $e2e_worked"
+    bad "end-to-end: collector SP_UNLANDED_N=? did not propagate to pane '? anomaly': $e2e_worked"
 fi
-if printf '%s\n' "$e2e_worked" | grep -q '0 awaiting'; then
-    bad "end-to-end: pane rendered '0 awaiting' despite SP_AWAITING_LAND=?"
+if printf '%s\n' "$e2e_worked" | grep -q '0 anomaly'; then
+    bad "end-to-end: pane rendered '0 anomaly' despite SP_UNLANDED_N=?"
 else
-    ok "end-to-end: pane did not render '0 awaiting'"
+    ok "end-to-end: pane did not render '0 anomaly'"
 fi
 
 echo
