@@ -627,12 +627,12 @@ mkdir -p "$CPANE_TMP/run"
 # "cannot attach" with the new cockpit.sh. The old code exited 1 here.
 # SPIRA_REPO cannot be set via conf file, so pass it as env var so cockpit.sh
 # finds the mock concierge.sh instead of the real one.
-# SPIRA_IN_TESTENV= clears the flag inherited from the testenv-batch.sh env:
-# the containment check fires against the batch's installed paths, which are
-# outside $TMP, and halts cockpit.sh before it reaches the attach block.
+# SPIRA_IN_TESTENV= clears the batch flag. SPIRA_INSTANCE= resets the per-suite
+# instance (e.g. 7eaac62db8b4-1) injected in parallel mode — spira_containment_check
+# exits 1 when SPIRA_INSTANCE is non-prod and repo-map entries fall outside SPIRA_WORKSPACES.
 CPANE_OUT=""; CPANE_RC=0
 CPANE_OUT="$(TMUX=fake_tmux_pane CONC_LOG="$CPANE_LOG" SPIRA_CONF="$CPANE_CONF" \
-    SPIRA_REPO="$CPANE_TMP" SPIRA_IN_TESTENV= bash "$HERE/cockpit.sh" 2>&1)" || CPANE_RC=$?
+    SPIRA_REPO="$CPANE_TMP" SPIRA_IN_TESTENV= SPIRA_INSTANCE= bash "$HERE/cockpit.sh" 2>&1)" || CPANE_RC=$?
 nowant "cockpit.sh from pane does not say 'cannot attach'" "cannot attach" "$CPANE_OUT"
 is    "cockpit.sh from pane exits 0"                       0               "$CPANE_RC"
 want  "cockpit.sh from pane calls concierge.sh attach"     "attach"        \
