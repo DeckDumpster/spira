@@ -70,26 +70,9 @@ _certified_orphans() {
     done
 }
 
-# _certified_list <repo-path> — print "<id> <tip> <epoch>" for each CERTIFIED branch
-_certified_list() {
-    local br id f st tip epoch
-    git -C "$1" for-each-ref --format='%(refname:short) %(objectname)' 'refs/heads/spira/*' \
-        2>/dev/null \
-    | while read -r br _; do
-        id="${br#spira/}"
-        f="$LANDSTATE/$id"
-        [ -f "$f" ] || continue
-        st=""; { read -r st tip epoch _ < "$f"; } 2>/dev/null || [ -n "$st" ] || continue
-        [ "$st" = "CERTIFIED" ] || continue
-        printf '%s %s %s\n' "$id" "$tip" "$epoch"
-    done
-}
-
-# _is_suite_transition <repo> <tip> <base-sha> — 0 if branch modifies SPIRA_SUITE_STATE
-_is_suite_transition() {
-    git -C "$1" diff --name-only "$3" "$2" 2>/dev/null \
-        | grep -qF "${SPIRA_SUITE_STATE:-spira/suite-state}"
-}
+# _certified_list <repo-path> — delegates to queue_certified_list in lib.sh.
+# Kept as a local alias so callers inside this file do not need updating.
+_certified_list() { queue_certified_list "$@"; }
 
 # _base_conflict <repo> <base-sha> <tip>
 # 0 when tip conflicts with base alone (branch must be reopened).
@@ -221,30 +204,13 @@ main() {
     local prio_json
     prio_json="$(bdjson show "${all_ids[@]}" 2>/dev/null)" || prio_json="[]"
 
-    _prio_of() {
-        local _pid="$1"
-        printf '%s\n' "$prio_json" | python3 -c "
-import sys, json
-try: d = json.load(sys.stdin)
-except: d = []
-d = d if isinstance(d, list) else [d]
-r = [x for x in d if x.get('id') == '$_pid']
-print(r[0].get('priority', 9) if r else 9)" 2>/dev/null || printf '9'
-    }
-
-    # Sort: transition flag (0=trans), priority (asc), epoch (asc).
+    # Sort: suite-transition first, then priority asc, then epoch asc.
+    # queue_sort_rows (lib.sh) is the canonical implementation shared with the cockpit.
     local sortfile; sortfile="$(mktemp)"
     # shellcheck disable=SC2064
     trap "rm -f '$sortfile'" RETURN
-
-    local _sid _stip _sepoch _is_trans _prio
-    while read -r _sid _stip _sepoch; do
-        _is_trans=0
-        _is_suite_transition "$repo" "$_stip" "$base_sha" && _is_trans=1 || true
-        _prio="$(_prio_of "$_sid")"
-        printf '%d %09d %010d %s %s\n' \
-            "$((1 - _is_trans))" "$_prio" "$_sepoch" "$_sid" "$_stip"
-    done <<< "$certs" | sort -n > "$sortfile"
+    PRIO_JSON="$prio_json" queue_sort_rows "$repo" "$base_sha" \
+        < <(printf '%s\n' "$certs") > "$sortfile"
 
     # Build batch in a worktree starting at the land ref.
     local wt

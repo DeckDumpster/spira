@@ -4806,3 +4806,61 @@ spira_live_aeons() {
         | tr -s ' \t' '\n\n' \
         | grep -E "^spira-aeon-[^[:space:]]+-${SPIRA_INSTANCE}\.service$" | sort -u || true
 }
+
+# queue_certified_list <repo-path>
+# Print "<id> <tip> <epoch>" for each CERTIFIED branch with a live ref.
+# Reads $SPIRA_RUN/landstate/<id>.
+queue_certified_list() {
+    local br id f st tip epoch
+    git -C "$1" for-each-ref --format='%(refname:short) %(objectname)' 'refs/heads/spira/*' \
+        2>/dev/null \
+    | while read -r br _; do
+        id="${br#spira/}"
+        f="$SPIRA_RUN/landstate/$id"
+        [ -f "$f" ] || continue
+        st=""; { read -r st tip epoch _ < "$f"; } 2>/dev/null || [ -n "$st" ] || continue
+        [ "$st" = "CERTIFIED" ] || continue
+        printf '%s %s %s\n' "$id" "$tip" "$epoch"
+    done
+}
+
+# queue_is_suite_transition <repo-path> <tip> <base-sha>
+# 0 if the tip modifies SPIRA_SUITE_STATE relative to base-sha.
+queue_is_suite_transition() {
+    git -C "$1" diff --name-only "$3" "$2" 2>/dev/null \
+        | grep -qF "${SPIRA_SUITE_STATE:-spira/suite-state}"
+}
+
+# queue_sort_rows <repo-path> <base-sha>
+# Read "<id> <tip> <epoch>" lines from stdin; write sort-key rows sorted by batcher order:
+#   "<trans_flag> <prio_pad> <epoch_pad> <id> <tip>"
+# Set PRIO_JSON env to a bdjson array for priority lookups (defaults to []).
+# Sort order: suite-transition first (flag=0), then priority asc, then epoch asc.
+# This is the canonical batcher sort used by both batch.sh and the cockpit.
+queue_sort_rows() {
+    local repo="$1" base_sha="$2"
+    local _id _tip _epoch _is_trans _buf=""
+    while read -r _id _tip _epoch; do
+        _is_trans=0
+        queue_is_suite_transition "$repo" "$_tip" "$base_sha" && _is_trans=1 || true
+        _buf="${_buf}${_id} ${_tip} ${_epoch} ${_is_trans}"$'\n'
+    done
+    printf '%s' "$_buf" | python3 -c "
+import sys, json, os
+prio_json = os.environ.get('PRIO_JSON', '[]')
+try: prios = json.loads(prio_json)
+except: prios = []
+prios = prios if isinstance(prios, list) else [prios]
+prio_map = {x.get('id'): int(x.get('priority', 9)) for x in prios if x.get('id')}
+rows = []
+for line in sys.stdin:
+    parts = line.strip().split()
+    if len(parts) < 4: continue
+    bid, tip, epoch, is_trans = parts[0], parts[1], int(parts[2]), int(parts[3])
+    prio = prio_map.get(bid, 9)
+    rows.append((1 - is_trans, prio, epoch, bid, tip))
+rows.sort()
+for r in rows:
+    print('%d %09d %010d %s %s' % r)
+" 2>/dev/null
+}
