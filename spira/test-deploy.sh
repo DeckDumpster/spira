@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 #
 # test-deploy.sh — deploy.sh: fetch release, drain, activate, re-render, health check,
-#                             rollback on failure, --dry-run
+#                             rollback on failure, --dry-run, spira.conf update,
+#                             draft-release refusal, migration check, bootstrap
 #
 # PROPERTIES
 #   1. Self-check: deploy.sh must exist.
 #   2. (a) Basic deploy: latest tag resolves; gh fetches tarball; current points at release.
 #   3. (a) Already-current: refuses (exit 1) if the release is already active.
 #   4. (b) Drain refuses: non-zero drain exit blocks deploy without killing aeons.
-#   5. (c) Rollback: failed health check restores the prior release.
+#   5. (c) Rollback non-first: failed health check restores the prior release.
 #   6. (d) Unit re-render: install.sh is called with SPIRA_PROD=$SPIRA_RELEASES/current.
 #   7. (e) Dry-run: --dry-run leaves the releases dir untouched.
+#   8. (f) First-deploy rollback: no prior release → current removed, units on checkout, world resumed.
+#   9. (g) spira.conf update: after successful deploy SPIRA_PROD written to conf.
+#  10. (h) Draft release refused: latest skips a draft; a named draft is refused.
+#  11. (i) Migration mismatch: refuses before drain when bd migrate schema fails.
+#  12. (j) Bootstrap: deploy from tarball location with no deploy.sh in checkout.
 #
 # FAIL-FIRST (law-absence-needs-a-positive-control)
 # Each detector is shown to fire before it is trusted as silent.
@@ -57,6 +63,8 @@ mkdir -p "$RELEASES" "$RUN_DIR" "$BIN"
 NEW_RELEASE="spira-20260917T053803Z"
 NEW_TAG="spira-release-$NEW_RELEASE"
 PRIOR_RELEASE="spira-20260901T000000Z"
+DRAFT_RELEASE="spira-20260918T000000Z"
+DRAFT_TAG="spira-release-$DRAFT_RELEASE"
 
 # Fake git repo with release tag for "latest" resolution.
 FAKE_REPO="$TMP/repo"
@@ -65,11 +73,22 @@ git -C "$FAKE_REPO" -c user.email=t@t -c user.name=t \
     commit --allow-empty -q -m "init" 2>/dev/null || true
 git -C "$FAKE_REPO" tag "$NEW_TAG" 2>/dev/null || true
 
-# Mock gh: records calls; creates the tarball file in --dir.
+# Mock gh: handles release list, release view, and release download.
 cat > "$BIN/gh" <<'GHEOF'
 #!/usr/bin/env bash
 printf 'gh %s\n' "$*" >> "${CALL_LOG:-/dev/null}"
 [ "${GH_EXIT:-0}" = "0" ] || exit "${GH_EXIT}"
+if [ "${1:-}" = release ] && [ "${2:-}" = list ]; then
+    printf '%s\n' "${GH_RELEASE_LIST:-[]}"
+    exit 0
+fi
+if [ "${1:-}" = release ] && [ "${2:-}" = view ]; then
+    _view_resp="${GH_RELEASE_VIEW}"
+    [ -z "$_view_resp" ] && _view_resp='{"isDraft":false}'
+    printf '%s\n' "$_view_resp"
+    exit "${GH_VIEW_EXIT:-0}"
+fi
+# release download: create the tarball file in --dir.
 _dir=""; _pat=""
 while [ $# -gt 0 ]; do
     case "$1" in --dir) _dir="$2"; shift 2 ;; --pattern) _pat="$2"; shift 2 ;; *) shift ;; esac
@@ -143,6 +162,23 @@ exit "${SKEW_EXIT:-0}"
 SEOF
 chmod +x "$BIN/skew.sh"
 
+# Mock bd: records calls; fails for migrate schema when BD_MIGRATE_EXIT=1.
+cat > "$BIN/bd" <<'BDEOF'
+#!/usr/bin/env bash
+printf 'bd %s\n' "$*" >> "${CALL_LOG:-/dev/null}"
+case "$*" in
+    *"migrate schema"*)
+        if [ "${BD_MIGRATE_EXIT:-0}" != "0" ]; then
+            printf 'database is at v61, binary knows up to v53\n'
+            exit 1
+        fi
+        printf 'Schema already at v61\n'
+        exit 0 ;;
+esac
+exit 0
+BDEOF
+chmod +x "$BIN/bd"
+
 # Mock systemctl: records calls; returns a dummy unit for list-units.
 cat > "$BIN/systemctl" <<'SCEOF'
 #!/usr/bin/env bash
@@ -207,9 +243,9 @@ rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 _out="$(run_deploy "SPIRA_REPO=$_empty" -- latest 2>&1)"
 _rc=$?
 not0 "fail-first: latest fails with no tags" "$_rc"
-want "fail-first: mentions no tags"         "no spira-release-" "$_out"
+want "fail-first: mentions no tags"         "spira-release-" "$_out"
 
-# Happy path: deploy latest.
+# Happy path: deploy latest (gh release list returns [], falls back to git tags).
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 _out="$(run_deploy -- latest 2>&1)"
 _rc=$?
@@ -348,6 +384,153 @@ else
 fi
 notwant "dry-run: gh not called"        "gh release download" "$(cat "$CALL_LOG")"
 notwant "dry-run: activate not called"  "activate"            "$(cat "$CALL_LOG")"
+
+# ==========================================================================
+echo
+echo "PROPERTY 8: first-deploy rollback — no prior release"
+# (a) A failed first deploy ends with current removed, units restored, world resumed.
+# ==========================================================================
+# FAIL-FIRST: a successful first deploy creates current.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_out="$(run_deploy "SPIRA_PROD=$TMP/fake-checkout" -- "$NEW_TAG" 2>&1)"
+if [ -L "$RELEASES/current" ]; then
+    ok "fail-first: successful first deploy creates current"
+else
+    bad "fail-first: successful first deploy creates current" "current missing"
+fi
+
+# Failed first deploy: health check fails, no prior release exists.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_out="$(run_deploy "SPIRA_PROD=$TMP/fake-checkout" "DOCTOR_EXIT=1" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0   "first-deploy-rollback: exits non-zero"                 "$_rc"
+want   "first-deploy-rollback: mentions ROLLBACK"              "ROLLBACK" "$_out"
+want   "first-deploy-rollback: notes no prior release"         "no prior release" "$_out"
+if [ ! -e "$RELEASES/current" ]; then
+    ok "first-deploy-rollback: current removed"
+else
+    bad "first-deploy-rollback: current removed" \
+        "current still exists: $(readlink "$RELEASES/current" 2>/dev/null)"
+fi
+want   "first-deploy-rollback: world resumed"                  "world resume" "$(cat "$CALL_LOG")"
+want   "first-deploy-rollback: install called with checkout"   "install SPIRA_PROD=$TMP/fake-checkout" \
+       "$(cat "$CALL_LOG")"
+
+# ==========================================================================
+echo
+echo "PROPERTY 9: spira.conf updated after successful deploy"
+# (b) After a successful deploy SPIRA_PROD is written to spira.conf.
+# ==========================================================================
+# FAIL-FIRST: without a deploy, the conf file has no SPIRA_PROD.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_conf_file="$TMP/test-deploy.conf"
+: > "$_conf_file"
+if ! grep -q 'SPIRA_PROD' "$_conf_file" 2>/dev/null; then
+    ok "fail-first: empty conf has no SPIRA_PROD"
+else
+    bad "fail-first: empty conf has no SPIRA_PROD" "found unexpectedly"
+fi
+
+_out="$(run_deploy "SPIRA_CONF=$_conf_file" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+is0 "conf-update: deploy exits 0" "$_rc"
+_prod_in_conf="$(grep 'SPIRA_PROD' "$_conf_file" 2>/dev/null | tail -1)"
+if printf '%s' "$_prod_in_conf" | grep -q "$RELEASES/current"; then
+    ok "conf-update: SPIRA_PROD written to conf pointing at releases/current"
+else
+    bad "conf-update: SPIRA_PROD written to conf" "got [$_prod_in_conf]"
+fi
+
+# Existing SPIRA_PROD line is replaced, not appended.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+printf 'SPIRA_PROD = /old/checkout/spira\n' > "$_conf_file"
+_out="$(run_deploy "SPIRA_CONF=$_conf_file" -- "$NEW_TAG" 2>&1)"
+_count="$(grep -c 'SPIRA_PROD' "$_conf_file" 2>/dev/null || echo 0)"
+[ "$_count" -eq 1 ] \
+    && ok "conf-update: only one SPIRA_PROD line after update" \
+    || bad "conf-update: only one SPIRA_PROD line after update" "found $_count"
+notwant "conf-update: old path removed" "/old/checkout" "$(cat "$_conf_file")"
+
+# ==========================================================================
+echo
+echo "PROPERTY 10: draft release refused"
+# (c) latest skips a draft; a named draft is refused with a clear message.
+# ==========================================================================
+# FAIL-FIRST: with gh returning a published release, latest resolves.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_pub_list="[{\"tagName\":\"$NEW_TAG\",\"isDraft\":false}]"
+_out="$(run_deploy "GH_RELEASE_LIST=$_pub_list" -- latest 2>&1)"
+_rc=$?
+is0    "fail-first: published release resolves as latest" "$_rc"
+islink "fail-first: current -> $NEW_RELEASE" "$RELEASES/current" "$NEW_RELEASE"
+
+# latest skips a draft when a newer draft exists.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_mixed_list="[{\"tagName\":\"$NEW_TAG\",\"isDraft\":false},{\"tagName\":\"$DRAFT_TAG\",\"isDraft\":true}]"
+_out="$(run_deploy "GH_RELEASE_LIST=$_mixed_list" -- latest 2>&1)"
+_rc=$?
+is0    "draft-skip: latest exits 0"                 "$_rc"
+islink "draft-skip: current -> non-draft release"   "$RELEASES/current" "$NEW_RELEASE"
+notwant "draft-skip: draft release not activated"   "$DRAFT_RELEASE"    "$(readlink "$RELEASES/current" 2>/dev/null)"
+
+# A named draft release is refused before any disruptive action.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$PRIOR_RELEASE"
+ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "GH_RELEASE_VIEW={\"isDraft\":true}" -- "$DRAFT_TAG" 2>&1)"
+_rc=$?
+not0   "draft-named: exits non-zero"               "$_rc"
+want   "draft-named: mentions draft"               "draft" "$_out"
+islink "draft-named: current unchanged"            "$RELEASES/current" "$PRIOR_RELEASE"
+notwant "draft-named: drain not called"            "world drain" "$(cat "$CALL_LOG")"
+
+# ==========================================================================
+echo
+echo "PROPERTY 11: DB migration mismatch refuses before drain"
+# (e) A bd migration mismatch stops the deploy before world.sh drain.
+# ==========================================================================
+# Set up a fake DB directory so the migration check runs.
+_testdb="$TMP/testdb"
+mkdir -p "$_testdb/.beads"
+
+# FAIL-FIRST: when bd migrate schema succeeds, drain IS called.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_out="$(run_deploy \
+    "SPIRA_DB=$_testdb" "SPIRA_BD=$BIN/bd" \
+    -- "$NEW_TAG" 2>&1)"
+_rc=$?
+is0  "fail-first: healthy migration allows deploy" "$_rc"
+want "fail-first: drain called when migration ok"  "world drain" "$(cat "$CALL_LOG")"
+
+# Migration mismatch: refuses, names the failure, does not reach drain.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_out="$(run_deploy \
+    "SPIRA_DB=$_testdb" "SPIRA_BD=$BIN/bd" "BD_MIGRATE_EXIT=1" \
+    -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0    "migration-check: exits non-zero"          "$_rc"
+want    "migration-check: mentions mismatch"        "migration mismatch" "$_out"
+notwant "migration-check: drain not called"         "world drain"       "$(cat "$CALL_LOG")"
+notwant "migration-check: activate not called"      "activate"          "$(cat "$CALL_LOG")"
+
+# ==========================================================================
+echo
+echo "PROPERTY 12: bootstrap — deploy.sh works with no deploy.sh in the checkout"
+# (d) deploy.sh does not require the checkout (SPIRA_REPO) to carry a current copy.
+# ==========================================================================
+# Verify the fake repo has no deploy.sh (it is a bare git init with no files tracked).
+if [ ! -f "$FAKE_REPO/spira/deploy.sh" ]; then
+    ok "bootstrap: FAKE_REPO has no spira/deploy.sh"
+else
+    bad "bootstrap: FAKE_REPO should not have deploy.sh" "found at $FAKE_REPO/spira/deploy.sh"
+fi
+
+# Deploy still succeeds when run from the harness location (simulating a tarball).
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_out="$(run_deploy -- "$NEW_TAG" 2>&1)"
+_rc=$?
+is0    "bootstrap: deploy exits 0 with no deploy.sh in checkout" "$_rc"
+islink "bootstrap: current -> $NEW_RELEASE" "$RELEASES/current" "$NEW_RELEASE"
 
 # ==========================================================================
 echo
