@@ -4531,6 +4531,21 @@ spira_destroy_worktree() {
 spira_destroy_branch() {
     local id="$1" br="$2" repo="$3" why="${4:-}" caller="${5:-}" held wt err base
     git -C "$repo" show-ref --verify -q "refs/heads/$br" || return 0
+    # CERTIFIED/BATCHED GUARD. A branch whose landstate is CERTIFIED or BATCHED is in the
+    # merge queue. batch.sh selects by ref; deleting the ref drops the branch from the next
+    # batch with no log line. No caller bypass: even the Sending must not race verdict.sh's
+    # LANDED write.
+    local _ls_file="${SPIRA_RUN:-}/landstate/$id"
+    if [ -r "$_ls_file" ]; then
+        local _lstate
+        read -r _lstate _ < "$_ls_file" 2>/dev/null || _lstate=""
+        case "${_lstate:-}" in
+            CERTIFIED|BATCHED)
+                SPIRA_DESTROY_ERR="certified-queued"
+                spira_reaplog REFUSED "$id" "branch $br — landstate is $_lstate; not deleting a queued branch"
+                return 1 ;;
+        esac
+    fi
     if held="$(spira_holder_witnesses "$id")"; then
         spira_reaplog REFUSED "$id" "branch $br — $held"
         return 1
