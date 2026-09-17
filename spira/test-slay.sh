@@ -198,6 +198,54 @@ else bad "uncommitted changes salvaged to a patch" "no patch found in $SPIRA_RUN
 teardown sp-s4
 
 # ======================================================================================
+# WIP COMMIT — a dirty worktree produces a wip commit on the branch in refs/heads;
+# a clean worktree produces no wip commit and the branch goes to refs/slain as before.
+#
+# The pair (law-absence-needs-a-positive-control): the dirty case proves the commit is
+# made and the branch survives; the clean case proves neither happens when there is no
+# uncommitted work.
+# ======================================================================================
+echo
+echo "wip commit (dirty worktree → commit + branch kept; clean → no commit):"
+
+# --- DIRTY: wip commit lands on the branch in refs/heads ---
+seed sp-wip1
+make_work sp-wip1
+echo "uncommitted work" > "$SPIRA_RUN/worktree/sp-wip1/dirty.txt"
+
+out="$(bash "$SLAY" --bead sp-wip1 --why "operator halted it" 2>&1)"
+rc=$?
+is  "dirty slay exits 0"               0    "$rc"
+is  "bead is open"                     open "$(status_of sp-wip1)"
+is  "branch stays in refs/heads"       0    \
+    "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-wip1 2>/dev/null; echo $?)"
+is  "branch is NOT in refs/slain"      1    \
+    "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-wip1 2>/dev/null; echo $?)"
+is  "worktree is removed"              no   \
+    "$([ -d "$SPIRA_RUN/worktree/sp-wip1" ] && echo yes || echo no)"
+_last_msg="$(git -C "$REPO" log --format='%s' -1 spira/sp-wip1 2>/dev/null)"
+want "last commit is the wip commit"   "wip — salvaged at slay" "$_last_msg"
+want "wip commit names the bead"       "sp-wip1" "$_last_msg"
+want "wip commit carries the why"      "operator halted it" "$_last_msg"
+want "reports wip committed"           "wip committed" "$out"
+salvaged_wip="$(ls "$SPIRA_RUN/reaped"/sp-wip1.*.patch 2>/dev/null | head -1)"
+if [ -n "$salvaged_wip" ]; then ok "patch saved as belt-and-braces"
+else bad "patch saved as belt-and-braces" "no patch found in $SPIRA_RUN/reaped/"; fi
+teardown sp-wip1
+
+# --- CLEAN: committed work only → branch goes to refs/slain as before ---
+seed sp-wip2
+make_work sp-wip2
+
+out="$(bash "$SLAY" --bead sp-wip2 2>&1)"
+is  "clean slay: branch goes to refs/slain" 0 \
+    "$(git -C "$REPO" show-ref --verify -q refs/slain/sp-wip2 2>/dev/null; echo $?)"
+is  "clean slay: branch removed from refs/heads" 1 \
+    "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-wip2 2>/dev/null; echo $?)"
+nowant "clean slay: no wip in output" "wip committed" "$out"
+teardown sp-wip2
+
+# ======================================================================================
 # PARKING — a branch with unique work is parked at refs/slain/<id> so that a gc cannot
 # collect it. The pair: a branch whose commits are already on main is NOT parked, because
 # parking those would fill the namespace with refs nobody will ever read.
