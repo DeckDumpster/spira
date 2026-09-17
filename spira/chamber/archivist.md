@@ -162,6 +162,9 @@ The difference is not whether the claim is true. The difference is whether **you
   finished. You are the record, not the next worker.
 - **Do not file the routine.** A session that talked through a problem and solved it has
   nothing loose in it. Filing zero items is a real and common outcome, and a correct one.
+- **Do not file a bead whose deliverable is operating production.** "Land PR N",
+  "flush the queue", "confirm it drains" — not work items you may create. If the session
+  identified a code defect, file the code defect. Otherwise file nothing.
 
 ## Committing what you write
 

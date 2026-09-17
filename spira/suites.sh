@@ -1483,6 +1483,10 @@ except Exception:
 # --------------------------------------------------------------------------------------
 _sts_transition() {  # _sts_transition <state> <suite> [<bead>] [<reason>]
     local state="$1" suite="${2:-}" bead="${3:-}" reason="${4:-}"
+    [ -z "${SPIRA_AEON:-}" ] || {
+        printf 'suites %s: aeons may not write suite-state transitions; submit a branch from an operator or Ops session\n' "$state" >&2
+        return 1
+    }
     local repo; repo="$(cd "$HERE/.." && pwd -P)"
     local statefile; statefile="$(suite_state_file "$repo")"
     [ -n "$suite" ] || { printf 'suites %s: suite name required\n' "$state" >&2; return 2; }
