@@ -187,7 +187,7 @@ concierge_live_pid() {
         pid="${f%/cmdline}"; pid="${pid##*/}"
         case "$pid" in *[!0-9]*) continue ;; esac
         [ "$pid" = "$$" ] && continue
-        tr '\0' '\n' < "$f" 2>/dev/null | grep -qF -- "$sid" || continue
+        tr '\0' '\n' 2>/dev/null < "$f" | grep -qF -- "$sid" || continue
         printf '%s' "$pid"
         return 0
     done
@@ -197,6 +197,14 @@ concierge_live_pid() {
 case "${1:-status}" in
 
 start)
+    # CONVERGENCE: if a live process holds the recorded session id, attach — that IS the one
+    # session. A second claude on the same session races on context and loses with a 4090.
+    RESUME_ID="$(concierge_resume_id)"
+    if [ -n "$RESUME_ID" ] && _live="$(concierge_live_pid "$RESUME_ID")"; then
+        printf 'concierge: converging — session %s is live (pid %s)\n' "$RESUME_ID" "$_live"
+        exec $TM attach -t "$SESSION"
+    fi
+
     if $TM has-session -t "$SESSION" 2>/dev/null; then
         echo "concierge: already running (tmux -L $SOCKET attach -t $SESSION)"
         exit 0
@@ -213,19 +221,6 @@ start)
     BRIEF="$(compose_brief)" || exit 1
     MODEL="$(fayth_get "$FAYTH" FAYTH_MODEL "")"
     brief_summary "$BRIEF" "$MODEL"
-    RESUME_ID="$(concierge_resume_id)"
-
-    # REFUSE A SECOND CLIENT ON THE SAME SESSION. Two clients on one session share one
-    # transcript and race on context — the first arrival wins and the second is evicted with
-    # a 4090. Find the holding process by scanning /proc/*/cmdline, never pgrep -f.
-    if [ -n "$RESUME_ID" ]; then
-        _live="$(concierge_live_pid "$RESUME_ID")" && {
-            printf 'concierge: session %s is held by pid %s — refusing a second client\n' \
-                "$RESUME_ID" "$_live" >&2
-            printf '  attach:  tmux -L %s attach -t %s\n' "$SOCKET" "$SESSION" >&2
-            exit 1
-        }
-    fi
 
     # NO --allowedTools. For an interactive session under bypassed permissions that flag can
     # only SUBTRACT, and the persona's remit is unbounded — see concierge.fayth, where the
@@ -272,7 +267,13 @@ start)
     fi
     ;;
 
-attach)  exec $TM attach -t "$SESSION" ;;
+attach)
+    if [ -n "${TMUX:-}" ]; then
+        $TM attach -t "$SESSION"   # nested: no exec, caller's shell returns on detach
+    else
+        exec $TM attach -t "$SESSION"
+    fi
+    ;;
 
 wake)
     [ -n "${2:-}" ] || { echo "usage: concierge.sh wake \"<text>\"" >&2; exit 2; }
@@ -297,8 +298,6 @@ wake)
 here)
     shift
     command -v claude >/dev/null || { echo "concierge: claude not on PATH" >&2; exit 1; }
-    BRIEF="$(compose_brief)" || exit 1
-    MODEL="$(fayth_get "$FAYTH" FAYTH_MODEL "")"
 
     # THE SAME SCRUB `start` DOES, AND FOR A SHARPER REASON. This is usually invoked from
     # inside another Claude session — that is what "give me a session like this one" means —
@@ -310,17 +309,19 @@ here)
     _tmuxenv="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/cockpit/tmux-env.sh"
     unset $(bash "$_tmuxenv" names) 2>/dev/null || true
 
-    brief_summary "$BRIEF" "$MODEL" >&2
     RESUME_ID="$(concierge_resume_id)"
 
-    # REFUSE A SECOND CLIENT ON THE SAME SESSION — same guard as `start`.
-    if [ -n "$RESUME_ID" ]; then
-        _live="$(concierge_live_pid "$RESUME_ID")" && {
-            printf 'concierge: session %s is held by pid %s — refusing a second client\n' \
-                "$RESUME_ID" "$_live" >&2
-            exit 1
-        }
+    # CONVERGENCE: `here` is a view of the one session, not a second entry point. Attach to
+    # the live process rather than starting a second claude. Checked before compose_brief so
+    # convergence skips the expensive statute render.
+    if [ -n "$RESUME_ID" ] && _live="$(concierge_live_pid "$RESUME_ID")"; then
+        printf 'concierge: converging — session %s is live (pid %s)\n' "$RESUME_ID" "$_live" >&2
+        exec $TM attach -t "$SESSION"
     fi
+
+    BRIEF="$(compose_brief)" || exit 1
+    MODEL="$(fayth_get "$FAYTH" FAYTH_MODEL "")"
+    brief_summary "$BRIEF" "$MODEL" >&2
 
     # `cd`, NOT --add-dir. The working directory is what decides which CLAUDE.md, which hooks
     # and which project memory the client loads, and the whole point of this persona is that
