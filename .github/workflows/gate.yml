@@ -134,9 +134,15 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      # To pull the test image. The package inherits the repository's visibility,
-      # so this is what makes the pull work while it is private.
-      packages: read
+      # To pull the test image, AND to push it back. The package inherits the
+      # repository's visibility, so this is what makes the pull work while it is
+      # private. It was `read` alone until 2026-09-17, which meant the registry
+      # could never be populated: every run consulted it, missed, rebuilt the
+      # identical 1.8 GB image from scratch and destroyed it with the VM. Three
+      # consecutive runs asked for the same tag, 6c48554d8425, and all three built
+      # it — 11m22s of one 16m50s job, 67% of the wall clock, on a step whose whole
+      # purpose is to avoid that cost.
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -186,6 +192,33 @@ jobs:
         env:
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
         run: bash spira/testenv.sh image
+
+      - name: Publish the test image
+        # THE STEP ABOVE CONSULTS A REGISTRY NOTHING EVER WROTE TO. Without this,
+        # the acquire path can only ever miss: it looks up the closure tag, does not
+        # find it, builds 1.8 GB from scratch, and the VM is destroyed forty seconds
+        # after the suites end, taking the image with it. Every run paid the full
+        # build for an image byte-identical to the one the previous run threw away.
+        #
+        # SAFE FROM ANY BRANCH, BY CONSTRUCTION. The tag is a content hash of the
+        # Containerfile, the bd pin and doctor.sh's program lists, so a branch that
+        # changes any of them publishes under a DIFFERENT tag and cannot overwrite
+        # another closure's image. Nothing floating is ever pushed — there is no
+        # :latest to substitute an image built from a different recipe. A fork
+        # cannot reach this step at all, because provision needs secrets a fork is
+        # not given.
+        #
+        # NEVER FAILS THE GATE. A registry that is down, or credentials that are
+        # missing, must slow the next run down, not fail this one — the same
+        # reasoning the acquire step above is written under. An unconditional push
+        # is deliberate: on a hit the layers already exist remotely and the push
+        # settles in seconds, and the alternative is matching on the acquire step's
+        # prose to decide whether it built, which is exactly what
+        # law-a-matcher-reads-code-not-prose forbids.
+        continue-on-error: true
+        env:
+          SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
+        run: bash spira/testenv.sh publish
 
       - name: Lints
         # Cheap, pure bash, and they fail on the things no suite can see: operator
