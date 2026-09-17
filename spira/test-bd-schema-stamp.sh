@@ -72,6 +72,7 @@ source_conf() {
         SPIRA_BD="$TMP/bin/bd" \
         SPIRA_DB="$TESTDB" \
         SPIRA_RUN="$SPIRA_RUN_DIR" \
+        SPIRA_BD_LOCK_SLEEP_UNIT=0 \
         bash -c ". '$HARNESS/spira/conf.sh'; printf 'REACHED-PAST-GUARD\n'" 2>&1) || rc=$?
     printf '%s' "$out"
     return "$rc"

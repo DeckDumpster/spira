@@ -47,6 +47,10 @@ has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "$2" ;; esac; }
 TMP="$(mktemp -d)"; trap 'cleanup' EXIT
 RUN="$TMP/run"; mkdir -p "$RUN/watchd"
 LOG="$RUN/watchd/answers.log"
+# The watcher under test is declared here, not borrowed from the shipped manifest: a row
+# retired there left this suite tailing a name watchd no longer knows.
+printf 'answers|log|%s\n' "$LOG" > "$TMP/watchers"
+export SPIRA_WATCHERS="$TMP/watchers"
 
 kids=""
 cleanup() { for k in $kids; do kill -TERM "$k" 2>/dev/null; done; sleep 1; rm -rf "$TMP"; }

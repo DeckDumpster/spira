@@ -515,11 +515,7 @@ testdb_drop() {
         TESTDB_STARTED_SERVICE=0
         export TESTDB_STARTED_SERVICE
     fi
-    # Inside a testenv container (SPIRA_IN_TESTENV=1) the filesystem is
-    # destroyed with the container; rm -rf here costs overlay2 I/O under
-    # parallel load and can delay bash's exit past Podman's exec timeout.
-    [ "${SPIRA_IN_TESTENV:-}" != 1 ] && \
-        rm -rf "${TESTDB_DIR:-}" "${TESTDB_BASELINE:-}" "${TESTDB_BIN:-}"
+    rm -rf "${TESTDB_DIR:-}" "${TESTDB_BASELINE:-}" "${TESTDB_BIN:-}"
     TESTDB_NAME=""; TESTDB_DIR=""; TESTDB_BASELINE=""; TESTDB_BIN=""
     TESTDB_MODE=""
     return 0
