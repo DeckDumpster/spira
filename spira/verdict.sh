@@ -73,12 +73,6 @@ _any_suite_in_selection() {  # _any_suite_in_selection <suites-spacesep> <repo> 
     return 1
 }
 
-_quarantine_suites() {  # _quarantine_suites <suites-spacesep>
-    local s; for s in $1; do
-        SPIRA_FLAKE_QUARANTINE_AT=1 bash "$HERE/suites.sh" observe-flake "$s" 2>/dev/null || true
-    done
-}
-
 _meter_write() {  # _meter_write <repo> <members> <caught> <escaped> <start-epoch>
     local name="$1" members="$2" caught="$3" escaped="$4" start="$5"
     local cost=$(( $(date +%s) - start ))
@@ -147,10 +141,9 @@ _q_attribute() {
                 escaped=$(( escaped + 1 ))
                 rm -f "$_unrep_f" 2>/dev/null || true
             else
-                # First unreproduced red → record, quarantine suites, requeue.
+                # First unreproduced red → record and requeue.
                 mkdir -p "$_unrep_dir"
                 printf '%s\n' "$_mtip" > "$_unrep_f"
-                _quarantine_suites "$red_suites"
                 survivors+=("$_mm")
             fi
         fi
@@ -187,8 +180,7 @@ _q_attribute() {
                 _meter_write "$name" "$mc" 0 0 "$attr_start"
                 return 0
             else
-                # Flake — quarantine suites, requeue all.
-                _quarantine_suites "$red_suites"
+                # Unreproduced — requeue all.
                 for _mm in "${members_arr[@]}"; do survivors+=("$_mm"); done
             fi
         else
