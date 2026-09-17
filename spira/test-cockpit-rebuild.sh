@@ -38,10 +38,12 @@ is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 
 T="$(mktemp -d)"
+TM="$(mktemp -d)"
 export TMUX_TMPDIR="$T"
 cleanup() {
     TMUX_TMPDIR="$T" tmux kill-server 2>/dev/null || true
-    rm -rf "$T"
+    TMUX_TMPDIR="$TM" tmux kill-server 2>/dev/null || true
+    rm -rf "$T" "$TM"
 }
 trap cleanup EXIT
 trap 'cleanup; exit 130' INT TERM
@@ -66,7 +68,14 @@ exec sleep 60
 SH
 chmod +x "$FAKE_CONC_BARE"
 
-rebuild() { TMUX_TMPDIR="$T" COCKPIT_CONCIERGE="$FAKE_CONC" bash "$COCKPIT/rebuild.sh" "$@" 2>&1; }
+# FAKE MAIL CLIENT — keeps the mail pane alive without aerc installed.
+FAKE_MAIL="$T/bin/fakemail"
+mkdir -p "$T/bin"
+printf '#!/usr/bin/env bash\nexec sleep 300\n' > "$FAKE_MAIL"
+chmod +x "$FAKE_MAIL"
+
+rebuild()      { TMUX_TMPDIR="$T"  COCKPIT_CONCIERGE="$FAKE_CONC" COCKPIT_MAIL="" bash "$COCKPIT/rebuild.sh" "$@" 2>&1; }
+rebuild_mail() { TMUX_TMPDIR="$TM" COCKPIT_CONCIERGE="$FAKE_CONC" COCKPIT_MAIL="$FAKE_MAIL" bash "$COCKPIT/rebuild.sh" "$@" 2>&1; }
 
 echo "test-cockpit-rebuild.sh"
 
@@ -90,7 +99,8 @@ if [ "$rc" -ne 0 ]; then printf '%s\n' "$out" | sed 's/^/      /'; fi
 for s in brain hunk chat cockpit; do
     if TMUX_TMPDIR=$T tmux has-session -t "=$s" 2>/dev/null; then ok "session $s exists"; else bad "session $s exists" "absent"; fi
 done
-is "brain:0 holds two panes" "2" "$(TMUX_TMPDIR=$T tmux list-panes -t brain:0 2>/dev/null | wc -l | tr -d ' ')"
+sess_cnt2="$(TMUX_TMPDIR=$T tmux list-panes -t brain:0 -F '#{@cockpit}' 2>/dev/null | grep -c "^$")" || sess_cnt2=0
+is "brain:0 has a session pane" "1" "$sess_cnt2"
 
 tags="$(TMUX_TMPDIR=$T tmux list-panes -t brain:0 -F '#{@cockpit}' 2>/dev/null | sort | tr '\n' ' ')"
 want "a pane is tagged health" "health" "$tags"
@@ -118,7 +128,8 @@ after="$(TMUX_TMPDIR=$T tmux display-message -p '#{pid}' 2>/dev/null)"
 is   "second run exits 0"                  "0" "$rc2"
 want "it says it left the server alone"    "answering — leaving it alone" "$out2"
 is   "the server was NOT restarted"        "$before" "$after"
-is   "still two panes in brain:0"          "2" "$(TMUX_TMPDIR=$T tmux list-panes -t brain:0 2>/dev/null | wc -l | tr -d ' ')"
+sess_cnt3="$(TMUX_TMPDIR=$T tmux list-panes -t brain:0 -F '#{@cockpit}' 2>/dev/null | grep -c "^$")" || sess_cnt3=0
+is   "still a session pane in brain:0"     "1" "$sess_cnt3"
 
 # ======================================================================================
 echo
@@ -147,7 +158,7 @@ echo "5. positive control: verify reports FAIL when session pane has no composed
 # then rebuild with a concierge that also starts bare. The verify block must say FAIL.
 sess_p5="$(TMUX_TMPDIR=$T tmux list-panes -t brain:0 \
     -F '#{@cockpit} #{pane_id}' 2>/dev/null \
-    | awk '{ if (NF==1) print $1; else if ($1!="health") print $2 }' | head -1)"
+    | awk '{ if (NF==1) print $1; else if ($1!="health" && $1!="mail") print $2 }' | head -1)"
 if [ -z "$sess_p5" ]; then
     bad "positive control: session pane not found in brain:0" ""
 else
@@ -159,6 +170,21 @@ else
     want "positive control: verify names the session pane as the failure" \
          "FAIL  session pane" "$out5"
 fi
+
+# ======================================================================================
+echo
+echo "6. a rebuild with COCKPIT_MAIL set produces session, health, and mail panes:"
+# ======================================================================================
+out6="$(rebuild_mail)"; rc6=$?
+is "mail rebuild exits 0" "0" "$rc6"
+if [ "$rc6" -ne 0 ]; then printf '%s\n' "$out6" | sed 's/^/      /'; fi
+
+tags6="$(TMUX_TMPDIR=$TM tmux list-panes -t brain:0 -F '#{@cockpit}' 2>/dev/null | sort | tr '\n' ' ')"
+want "mail build: a pane is tagged health" "health" "$tags6"
+want "mail build: a pane is tagged mail"   "mail"   "$tags6"
+sess_cnt6="$(TMUX_TMPDIR=$TM tmux list-panes -t brain:0 -F '#{@cockpit}' 2>/dev/null | grep -c "^$")" || sess_cnt6=0
+is   "mail build: brain:0 has a session pane" "1" "$sess_cnt6"
+want "mail build: verify reports mail pane ok" "ok    brain:0 has a mail pane" "$out6"
 
 echo
 printf 'test-cockpit-rebuild.sh: %d passed, %d failed\n' "$pass" "$fail"

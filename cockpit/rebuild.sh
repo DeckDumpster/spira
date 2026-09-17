@@ -258,7 +258,7 @@ fi
 # this box. Skip if already running a composed session (idempotent).
 step "session pane"
 sess_p="$(tmux list-panes -t brain:0 -F '#{@cockpit} #{pane_id}' 2>/dev/null \
-    | awk '{ if (NF==1) print $1; else if ($1!="health") print $2 }' | head -1)"
+    | awk '{ if (NF==1) print $1; else if ($1!="health" && $1!="mail") print $2 }' | head -1)"
 if [ -z "$sess_p" ]; then
     warn "session pane not found in brain:0 — skipping launch"
 else
@@ -298,8 +298,13 @@ chk() { if eval "$2" >/dev/null 2>&1; then printf '  ok    %s\n' "$1"; else prin
 
 chk "the server answers"                 'tmux list-sessions'
 for s in $SESSIONS cockpit; do chk "session $s exists" "tmux has-session -t '=$s'"; done
-chk "brain:0 holds two panes"            '[ "$(tmux list-panes -t brain:0 2>/dev/null | wc -l)" -eq 2 ]'
+chk "brain:0 has a session pane"         '[ "$(tmux list-panes -t brain:0 -F "#{@cockpit}" 2>/dev/null | grep -c "^$")" -gt 0 ]'
 chk "a pane is tagged health"            'tmux list-panes -t brain:0 -F "#{@cockpit}" | grep -qx health'
+_rck_mail="${COCKPIT_MAIL:-}"; _rck_exe="${_rck_mail%% *}"
+{ [ -n "$_rck_exe" ] && command -v "$_rck_exe" >/dev/null 2>&1; } || _rck_mail=""
+if [ -n "$_rck_mail" ]; then
+    chk "brain:0 has a mail pane"        'tmux list-panes -t brain:0 -F "#{@cockpit}" | grep -qx mail'
+fi
 chk "cockpit links brain:0"              'tmux list-windows -t "=cockpit" -F "#{window_id}" | grep -qx "$(tmux list-windows -t "=brain" -F "#{window_id}" | head -1)"'
 chk "cockpit links hunk:0"               'tmux list-windows -t "=cockpit" -F "#{window_id}" | grep -qx "$(tmux list-windows -t "=hunk" -F "#{window_id}" | head -1)"'
 
@@ -320,7 +325,7 @@ done
 # from a working one from outside — the same positive control the health pane already gets
 # (law-absence-needs-a-positive-control).
 sess_p="$(tmux list-panes -t brain:0 -F '#{@cockpit} #{pane_id}' 2>/dev/null \
-    | awk '{ if (NF==1) print $1; else if ($1!="health") print $2 }' | head -1)"
+    | awk '{ if (NF==1) print $1; else if ($1!="health" && $1!="mail") print $2 }' | head -1)"
 if [ -z "$sess_p" ]; then
     printf '  FAIL  session pane not found in brain:0\n'; fail=$((fail+1))
 else
