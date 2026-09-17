@@ -56,7 +56,7 @@ SPIRA_PATH SPIRA_WORKSPACES SPIRA_REPO_MAP SPIRA_PREFIX_MAP SPIRA_CHAMBER SPIRA_
 SPIRA_ACTIONABLE SPIRA_ID_PREFIX SPIRA_HEALTH_TIMEOUT SPIRA_ANSWER_STATE SPIRA_ANSWER_MARK SPIRA_ANSWER_COMMENT_MARK SPIRA_SELF_CLOSED SPIRA_NOTIFY_AGE SPIRA_WAKE SPIRA_WAKE_WATCHERS
 SPIRA_CLIENT_SETTINGS SPIRA_HOOK_LINES SPIRA_CTRL
 SPIRA_MAIL SPIRA_MAIL_KINDS SPIRA_MAIL_READERS SPIRA_MAIL_UNREAD_AGE SPIRA_MAIL_SETTLE SPIRA_MAIL_SESSION_MAILBOX
-SPIRA_COCKPIT SPIRA_COCKPIT_TRACE_LINES SPIRA_COCKPIT_STALE_S SPIRA_NOTIFY SPIRA_PANEL SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_RECLAIM_SKIP_LABEL
+SPIRA_COCKPIT SPIRA_COCKPIT_TRACE_LINES SPIRA_COCKPIT_STALE_S SPIRA_NOTIFY SPIRA_PANEL SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_RECLAIM_SKIP_LABEL SPIRA_OPERATED
 SPIRA_CI_LABEL SPIRA_CI_PARK_MAX SPIRA_WORLD_STOP_LABEL
 SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE SPIRA_VERDICT_TTL SPIRA_REBASE_ESCALATE_AT SPIRA_VERDICT_WINDOW
 SPIRA_LOOM_ADDR SPIRA_LOOM_BUDGET_MS SPIRA_LOOM_CACHE_S SPIRA_LOOM_BIN
@@ -671,6 +671,10 @@ spira_conf_defaults() {
     : "${SPIRA_WIKI:=}"
     : "${COCKPIT_DB:=$SPIRA_DB}"
     : "${COCKPIT_BOTTOM_PCT:=28}"
+    # Whether an operator is present. 1 (default) means the cockpit is staffed; doctor.sh
+    # treats missing operator tools as FAIL. Set to 0 in spira.conf for a headless fixture
+    # or a CI box where no operator is reading escalations; doctor.sh downgrades to WARN.
+    : "${SPIRA_OPERATED:=1}"
     # The mail client in the cockpit's bottom-left pane; empty, or not on PATH, means no pane.
     : "${COCKPIT_MAIL=aerc}"
     # How wide the ops column is, as a percentage of the window. The dashboard is a
@@ -1376,11 +1380,12 @@ spira_bin_tier() {
         # runtime: the loop cannot run at all.
         bd|git|python3|flock)      echo runtime ;;
         # optional: the loop runs; one named feature is off.
-        dolt|gh|tmux|node|cargo|jq|zstd|inotifywait|aerc|hunk) echo optional ;;
-        # dev: needed to DEVELOP or TEST Spira, never to run it. A production box is
-        # correct without any of these, which is why they are reported separately and
-        # never counted as faults outside `doctor.sh --dev`.
-        bd-embedded|podman|go)     echo dev ;;
+        dolt|gh|tmux|node|cargo|jq|zstd) echo optional ;;
+        # operator: needed on an operated instance (SPIRA_OPERATED=1). doctor.sh FAILs
+        # when these are missing; SPIRA_OPERATED=0 downgrades to WARN for headless boxes.
+        inotifywait|aerc|hunk|go)  echo operator ;;
+        # dev: needed to DEVELOP or TEST Spira, never to run it.
+        bd-embedded|podman)        echo dev ;;
         *)                         echo optional ;;
     esac
 }
@@ -1393,8 +1398,8 @@ spira_bin_absent() {
             echo "test fixtures fall back to a shared Dolt server instead of a private embedded store per fixture. Not a feature off: concurrent fixture builds contend on one schema lock, measured at 610s with 5 of 6 failing, against 25s with 0 failing on embedded. Suites fail in ways that read as defects in the code under test. Restore with build-bd.sh --install (needs a Go toolchain)." ;;
         podman)
             echo "every suite that builds a container fixture cannot run; testenv.sh and the suites that use it fail rather than skip." ;;
-        go)
-            echo "build-bd.sh cannot build bd, so a box whose bd is wrong or non-CGO cannot be repaired locally." ;;
+        inotifywait)
+            echo "no mail is delivered to registered readers mid-session — escalations and verdict replies wait for the next session start." ;;
         *) echo "" ;;
     esac
 }
@@ -1404,7 +1409,7 @@ spira_bin_purpose() {
         bd)      echo "the beads issue tracker — the substrate; nothing runs without it" ;;
         bd-embedded) echo "the CGO build of bd that opens an embedded Dolt store — the test fixture engine" ;;
         podman)  echo "container fixtures for the suites that need a whole machine" ;;
-        go)      echo "building bd from source (build-bd.sh); never needed to run the loop" ;;
+        go)      echo "building the pinned bd from source when no prebuilt exists for this platform; without it a bd mismatch cannot be recovered locally" ;;
         dolt)    echo "the SQL server beads stores its database in" ;;
         git)     echo "every repository operation" ;;
         gh)      echo "opening and landing pull requests (repos whose land mode is 'pr')" ;;

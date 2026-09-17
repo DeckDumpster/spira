@@ -104,15 +104,15 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 # Rust is provided above via rustup; cargo and rustc are NOT installed from apt
 #   so that only one compiler exists on PATH.
 # tmux: cockpit panes; doctor.sh WARN.
-# inotify-tools, aerc: mail delivery and the operator's mail client; doctor.sh WARN.
+# inotify-tools: provides inotifywait; test-mail-deliver.sh exercises the real binary.
+# aerc: test-mail-deliver.sh and related suites use it as a stub target.
 # nodejs: gate the browser page's view model; test-loom-page.sh exits 0 with SKIP
 #         when node is absent, making syntax errors in loom/static/ permanently
 #         invisible. This is the hard argument for including it.
 # build-essential: gcc for cargo's C linker when compiling Rust crates.
 # curl+ca-certificates: download gh and dolt release archives.
 # locales: locale-gen; suites need a UTF-8 locale for string operations.
-# inotify-tools: provides inotifywait for the mail delivery daemon; doctor.sh WARN.
-# aerc: operator mail client; doctor.sh WARN.
+# inotify-tools/aerc: installed above; comments updated there.
 RUN apt-get update -q && \
     apt-get install -yq --no-install-recommends \
         systemd \
