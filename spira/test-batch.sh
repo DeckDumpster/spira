@@ -298,6 +298,7 @@ printf 'pr=99\nhead=abc\nbase=%s\nmembers=\nopened=0\nbranch=spira/queue/fake\n'
 
 batch "$REPONAME" > /dev/null
 is "open batch blocks second" "99" "$(batch_pr)"
+clean_case
 
 # =============================================================================
 # b. LOCAL GATE GREEN: gate runs exactly once on the combined batch; PR opens.
