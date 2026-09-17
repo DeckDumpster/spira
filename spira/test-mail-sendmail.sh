@@ -204,25 +204,40 @@ conc_post="$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
 is "no-reply message routes to concierge" "$((conc_pre + 1))" "$conc_post"
 
 echo
-echo "accept-default — the client's accept key closes the bead with the message's default"
+echo "accept-default — the client's accept key closes the decision bead with the message's default"
 
 BEAD_ID="sp-smtest-accept"
 seed_bead "$BEAD_ID" || { echo "test-mail-sendmail: could not seed test bead"; exit 1; }
 is "SEEN RED: bead is open before accept" "open" "$(bead_status "$BEAD_ID")"
 SPIRA_MAIL_LINT_CONSIDERED="test" run send operator --from "Gate <gate@spira>" --subject "Accept test" \
     --kind decision --default "take the accept-test default" --bead "$BEAD_ID" <<< "body" >/dev/null 2>&1
-accept_msg="$(grep -l "X-Spira-Bead: $BEAD_ID" "$SPIRA_MAIL/operator/new/"* 2>/dev/null | head -1)"
-[ -n "$accept_msg" ] || { echo "test-mail-sendmail: could not send accept test message"; exit 1; }
+# The send now creates a DECISION BEAD and X-Spira-Bead names it, not the work bead.
+# Find the newest message in operator/new (the decision bead question).
+accept_msg="$(ls -t "$SPIRA_MAIL/operator/new/" 2>/dev/null | head -1)"
+accept_msg="${accept_msg:+$SPIRA_MAIL/operator/new/$accept_msg}"
+[ -n "$accept_msg" ] && [ -f "$accept_msg" ] \
+    || { echo "test-mail-sendmail: could not send accept test message"; exit 1; }
+# The X-Spira-Bead in this message is the decision bead id.
+dec_bead_accept="$(awk '/^[[:space:]]*$/ { exit }
+    tolower($0) ~ /^x-spira-bead:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }
+' "$accept_msg")"
+is "SEEN RED: decision bead is open before accept-default" "open" "$(bead_status "${dec_bead_accept:-none}")"
 # A real config file, because the client runs the script with one present.
 printf 'SPIRA_MAIL_UNREAD_AGE = 4242\n' > "$TMP/accept.conf"
 accept_out="$(SPIRA_CONF="$TMP/accept.conf" bash "$HERE/../aerc/accept-default.sh" < "$accept_msg" 2>&1)"; rc=$?
 isz "accept-default exits 0 with a config file present" "$rc"
-is "accept-default closes the tracking bead" "closed" "$(bead_status "$BEAD_ID")"
-accept_reason="$(bd -C "$SPIRA_DB" show "$BEAD_ID" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
+is "accept-default closes the decision bead (not the work bead)" "closed" "$(bead_status "${dec_bead_accept:-none}")"
+is "work bead stays open (decision bead was closed, not work bead)" "open" "$(bead_status "$BEAD_ID")"
+accept_reason="$(bd -C "$SPIRA_DB" show "${dec_bead_accept:-none}" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys, json
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("close_reason") or "")' 2>/dev/null)"
 want "the verdict is the message's default" "take the accept-test default" "$accept_reason"
+work_notes_accept="$(bd -C "$SPIRA_DB" show "$BEAD_ID" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
+import sys, json
+d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
+print(d[0].get("notes") or "")' 2>/dev/null)"
+want "work bead note contains the operator verdict" "take the accept-test default" "$work_notes_accept"
 [ "$rc" = 0 ] || printf '    %s\n' "$accept_out"
 
 echo
