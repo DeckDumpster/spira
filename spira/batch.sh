@@ -34,6 +34,20 @@ _batch_open_file() { printf '%s/%s/open' "${SPIRA_QUEUE_DIR:?}" "$1"; }
 
 _batch_is_open() { [ -f "$(_batch_open_file "$1")" ]; }
 
+# _certified_orphans <repo-path> — print id for each CERTIFIED landstate with no branch ref
+_certified_orphans() {
+    local f id st
+    [ -d "$LANDSTATE" ] || return 0
+    for f in "$LANDSTATE/"*; do
+        [ -f "$f" ] || continue
+        id="$(basename "$f")"
+        { read -r st _ < "$f"; } 2>/dev/null || continue
+        [ "$st" = "CERTIFIED" ] || continue
+        git -C "$1" show-ref --verify -q "refs/heads/spira/$id" 2>/dev/null && continue
+        printf '%s\n' "$id"
+    done
+}
+
 # _certified_list <repo-path> — print "<id> <tip> <epoch>" for each CERTIFIED branch
 _certified_list() {
     local br id f st tip epoch
@@ -84,6 +98,25 @@ main() {
         || { printf 'batch %s: cannot resolve %s\n' "$name" "$base" >&2; return 1; }
     remote="$(ref_remote "$base")"
     base_branch="$(ref_branch "$base")"
+
+    # CERTIFIED landstate records with no branch ref were deleted while queued.
+    # batch.sh would skip them silently; log and mail the operator instead.
+    local _orphan _orphans _orphan_list=""
+    _orphans="$(_certified_orphans "$repo")"
+    if [ -n "${_orphans:-}" ]; then
+        while IFS= read -r _orphan; do
+            [ -n "$_orphan" ] || continue
+            printf 'batch %s: WARN certified-orphan %s — CERTIFIED landstate but branch spira/%s is gone\n' \
+                "$name" "$_orphan" "$_orphan"
+            _orphan_list="${_orphan_list}- ${_orphan}\n"
+        done <<< "$_orphans"
+        printf '## Note\nBranch(es) were CERTIFIED in the merge queue for %s but their refs are gone:\n\n%b\nThe next batch will not include them. Check the reap log for what deleted the ref.\n' \
+            "$name" "$_orphan_list" \
+        | bash "$HERE/mail.sh" send operator \
+            --from "Spira Queue <queue@spira>" \
+            --subject "Merge queue: $name — CERTIFIED branch(es) missing" \
+            2>/dev/null || true
+    fi
 
     if _batch_is_open "$name"; then
         printf 'batch %s: open batch exists — skipping\n' "$name"
