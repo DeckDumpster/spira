@@ -1345,6 +1345,7 @@ for i in awaiting_ids:
                         _ul_tag="[batch${_ul_bpr:+ #${_ul_bpr}}] "
                         ;;
                     EJECTED) _ul_tag="[ejected] " ;;
+                    LOST)    _ul_tag="[lost] " ;;
                 esac
                 printf 'SP_PEND%d=P%s %s %s %s%s\n' "$_pend_n" "${_ul_pri:-?}" "$_ul_id" "$_ul_age" "$_ul_tag" "${_ul_title:--}"
                 _pend_n=$((_pend_n + 1))
