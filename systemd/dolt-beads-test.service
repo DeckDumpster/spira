@@ -44,8 +44,8 @@ TimeoutStopSec=120
 # and the operator's session (law-fence-loops-on-shared-hardware).
 CPUQuota=50%
 Nice=10
-StandardOutput=append:@SPIRA_REPO@/.runtime/dolt-beads-test.log
-StandardError=append:@SPIRA_REPO@/.runtime/dolt-beads-test.log
+StandardOutput=append:@SPIRA_RUN@/dolt-beads-test.log
+StandardError=append:@SPIRA_RUN@/dolt-beads-test.log
 
 [Install]
 # Intentionally empty: this unit is installed (so systemctl start works) but never enabled

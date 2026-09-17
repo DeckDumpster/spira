@@ -54,8 +54,11 @@ lack() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$1"
 testdb_require test-maechen-blind-window
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up maechen-blind-window \
-    || { echo "test-maechen-blind-window: could not build fixture database"; exit 1; }
+export SPIRA_TESTDB_MODE=server
+testdb_up maechen-blind-window || {
+    printf 'SKIP test-maechen-blind-window: server testdb not available\n' >&2
+    exit 77
+}
 
 # Source lib.sh for bump_recur. Protect SPIRA_DB since lib.sh re-sources conf.sh.
 _PRE_LIB_SPIRA_DB="$SPIRA_DB"
@@ -86,24 +89,13 @@ esac
 STUB
 chmod +x "$STUB_BD"
 
-# ---------------------------------------------------------------------------
-# EMBEDDED DB path — needed for direct SQL inserts.
-# Mirrors the pattern in test-census-watermark.sh.
-# ---------------------------------------------------------------------------
-DOLTDB="${SPIRA_DB}/.beads/embeddeddolt"
-DBNAME="$(ls "$DOLTDB" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" || DBNAME="sp"
-[ -n "$DBNAME" ] || DBNAME="sp"
-
 # Insert a recurred event with a specific timestamp.
 _insert_event_at() {   # _insert_event_at <bead_id> <cause> <unix_ts>
     local id="$1" cause="$2" ts="$3"
     local uuid
     uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 1
     local q="INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'recurred', 'test', '$cause', FROM_UNIXTIME(${ts}))"
-    if "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" >/dev/null 2>&1; then return 0; fi
-    if [ -d "$DOLTDB" ] && command -v dolt >/dev/null 2>&1; then
-        dolt --data-dir "$DOLTDB" sql -q "use $DBNAME; $q;" >/dev/null 2>&1 || true
-    fi
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" >/dev/null 2>&1
 }
 
 run_census() {
