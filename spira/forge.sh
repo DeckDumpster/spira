@@ -24,7 +24,7 @@ case "$cmd" in
     pr-create)
         head="${1:-}" base="${2:-}" title="${3:-}"
         if ! ( cd "$repo" && ghq pr create --head "$head" --base "$base" \
-                 --title "$title" --body-file - ) 2>/dev/null; then
+                 --title "$title" --body-file - ) >/dev/null 2>&1; then
             exit 1
         fi
         n="$( cd "$repo" && ghq pr view "$head" --json number -q .number 2>/dev/null )"

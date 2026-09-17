@@ -5,6 +5,7 @@
 #   queue.sh protect [<repo>]
 #   queue.sh stats
 #   queue.sh flush [<repo>]
+#   queue.sh step <repo>
 #
 # submit: certifies any branch by running the repository's gate. In a queue-mode
 # repository, a green branch is recorded CERTIFIED for the batch builder.
@@ -19,6 +20,9 @@
 # flush: opens a batch now from whatever is CERTIFIED, instead of waiting for
 # SPIRA_QUEUE_BATCH_WAIT or SPIRA_QUEUE_BATCH_MAX. The batch builder's own rules
 # otherwise hold: one open batch per repository, conflicts skipped.
+# step: one landing pass over a queue-mode repository — settle the open batch from its
+# CI result, then open the next one if due. Settling first is what lets a landed batch be
+# followed by a new one in the same pass.
 # stats: reads QUEUE lines from landing.log and prints caught/escaped/cost totals.
 #
 # covers: spira/queue.sh spira/suites.sh spira/conf.sh
@@ -196,10 +200,17 @@ cmd_flush() {
     SPIRA_QUEUE_BATCH_WAIT=0 bash "$HERE/batch.sh" "$name"
 }
 
+cmd_step() {
+    local name="${1:?queue.sh step: repo required}"
+    bash "$HERE/verdict.sh" "$name"
+    bash "$HERE/batch.sh" "$name"
+}
+
 case "${1:-}" in
     submit)  shift; cmd_submit "$@" ;;
     protect) shift; cmd_protect "$@" ;;
     stats)   cmd_stats ;;
     flush)   shift; cmd_flush "$@" ;;
-    *) printf 'usage: queue.sh submit <branch> | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>]\n' >&2; exit 2 ;;
+    step)    shift; cmd_step "$@" ;;
+    *) printf 'usage: queue.sh submit <branch> | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo>\n' >&2; exit 2 ;;
 esac

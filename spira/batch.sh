@@ -210,7 +210,7 @@ print(r[0].get('priority', 9) if r else 9)" 2>/dev/null || printf '9'
     local pr_body pr_n
     pr_body="$(
         printf 'queue: %d branch(es)\n\n' "${#members[@]}"
-        for mid in "${member_ids[@]}"; do printf '- %s\n' "$mid"; done
+        for mid in "${member_ids[@]}"; do printf -- '- %s\n' "$mid"; done
     )"
     pr_n="$(printf '%s' "$pr_body" \
             | "$forge" pr-create "$repo" "$batch_br" "$base_branch" \
