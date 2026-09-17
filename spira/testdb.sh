@@ -174,8 +174,11 @@ testdb_up() {            # testdb_up <tag>
     # branch: the embedded path exports SPIRA_BD="$TESTDB_BD" (bd-embedded), which is the
     # wrong binary for a server-mode fixture. Server mode falls through to the SERVER branch
     # below, which exports SPIRA_BD="$TESTDB_SERVER_BD" (bd) (sp-f342).
+    # A suite requesting server mode also bypasses this branch: bd-embedded refuses bd sql,
+    # so the suite must build its own fresh server fixture or skip.
     if [ "${TESTDB_SHARED:-0}" = 1 ] && [ -n "${TESTDB_NAME:-}" ] && \
-       [ -n "${TESTDB_BASELINE:-}" ] && [ "${TESTDB_MODE:-}" != server ]; then
+       [ -n "${TESTDB_BASELINE:-}" ] && [ "${TESTDB_MODE:-}" != server ] && \
+       [ "${SPIRA_TESTDB_MODE:-}" != server ]; then
         testdb_reset || {
             printf 'testdb: could not reset shared fixture %s\n' "$TESTDB_NAME" >&2
             # A borrower that cannot start the shared fixture is not a failing suite.
@@ -509,7 +512,9 @@ testdb_drop() {
             "DROP DATABASE IF EXISTS \`$TESTDB_NAME\`" >/dev/null 2>&1 || true
         # Only stop the service if THIS process started it; never restart one we found
         # running, because a restart is what used to break other borrowers.
-        if [ "${TESTDB_STARTED_SERVICE:-0}" = 1 ]; then
+        # In testenv the container is ephemeral; stopping here races any concurrent
+        # suite still using the server, so skip the stop and let the container die.
+        if [ "${TESTDB_STARTED_SERVICE:-0}" = 1 ] && [ "${SPIRA_IN_TESTENV:-}" != 1 ]; then
             _testdb_sc stop dolt-beads-test.service 2>/dev/null || true
         fi
         TESTDB_STARTED_SERVICE=0

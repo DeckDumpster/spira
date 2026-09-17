@@ -45,19 +45,18 @@ want() { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in [$3]"; esac
 testdb_require test-census-watermark
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up census-watermark || { echo "test-census-watermark: could not build fixture database"; exit 1; }
+export SPIRA_TESTDB_MODE=server
+testdb_up census-watermark || {
+    printf 'SKIP test-census-watermark: server testdb not available\n' >&2
+    exit 77
+}
 
 CENSUS="$HERE/census.sh"
-DOLTDB="${SPIRA_DB}/.beads/embeddeddolt"
-DBNAME="$(ls "$DOLTDB" 2>/dev/null | grep -v '^\.' | grep -v '^\.lock$' | head -1)" || DBNAME="sp"
-[ -n "$DBNAME" ] || DBNAME="sp"
 
 echo "test-census-watermark.sh"
 
 # --------------------------------------------------------
 # Insert an event with an explicit past timestamp (2001).
-# The two-path logic matches _bump_write_event in lib.sh: bd sql is not available in
-# embedded mode, so fall through to dolt.
 # BEFORE_TS=1000000000  (2001-09-09 01:46:40 UTC — before any plausible watermark)
 # --------------------------------------------------------
 _insert_past_event() {   # _insert_past_event <bead_id> <cause>
@@ -65,10 +64,7 @@ _insert_past_event() {   # _insert_past_event <bead_id> <cause>
     local uuid
     uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 1
     local q="INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'recurred', 'test', '$cause', FROM_UNIXTIME(1000000000))"
-    if "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" >/dev/null 2>&1; then return 0; fi
-    if [ -d "$DOLTDB" ] && command -v dolt >/dev/null 2>&1; then
-        dolt --data-dir "$DOLTDB" sql -q "use $DBNAME; $q;" >/dev/null 2>&1 || true
-    fi
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" >/dev/null 2>&1
 }
 
 # --------------------------------------------------------

@@ -39,7 +39,11 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 . "$HERE/testdb.sh"
 testdb_require test-sin-exempt
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up sinex || { echo "test-sin-exempt: could not build a fixture database"; exit 1; }
+export SPIRA_TESTDB_MODE=server
+testdb_up sinex || {
+    printf 'SKIP test-sin-exempt: server testdb not available\n' >&2
+    exit 77
+}
 # lib.sh provides recurs_of for event-based recurrence counting (sp-recur-N labels
 # are no longer written; sp-lzt moved the count to the events table).
 # shellcheck disable=SC1090
@@ -74,8 +78,7 @@ has_label() { [[ " $(labels_of "$1") " == *" $2 "* ]]; }
 # escalation while the thing they were reading had simply moved. test-suites.sh was updated
 # for the same change; this suite was missed.
 #
-# recurs_of is lib.sh's own reader for that counter and handles all three storage paths
-# (bd sql in server mode, the dolt CLI in embedded mode, and the events.log file fallback).
+# recurs_of is lib.sh's own reader for that counter (bd sql against the events table).
 # Using it rather than a private query is also what keeps this suite honest when the storage
 # moves again.
 # shellcheck disable=SC1090

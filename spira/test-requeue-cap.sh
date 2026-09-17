@@ -40,7 +40,11 @@ is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 . "$HERE/testdb.sh"
 testdb_require test-requeue-cap
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up requeue-cap || { echo "test-requeue-cap: could not build a fixture database"; exit 1; }
+export SPIRA_TESTDB_MODE=server
+testdb_up requeue-cap || {
+    printf 'SKIP test-requeue-cap: server testdb not available\n' >&2
+    exit 77
+}
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 REPO="$TMP/repo"; RUN="$TMP/run"; REMOTE="$TMP/remote.git"; SH="$TMP/spira"
