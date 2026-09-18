@@ -99,7 +99,7 @@ main() {
 
     local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
     mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
-    exec 9>"$lockfile" 2>/dev/null \
+    { exec 9>"$lockfile"; } 2>/dev/null \
         || { printf 'batch %s: cannot open lock file\n' "$name" >&2; return 1; }
     if ! flock -n 9; then
         printf 'batch %s: another queue operation holds the lock\n' "$name"
