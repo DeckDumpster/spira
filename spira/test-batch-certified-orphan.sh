@@ -116,6 +116,11 @@ printf 'CERTIFIED %s %s\n' "$_good_tip" "$(date +%s)" > "$LANDSTATE/sp-good"
 # Plant only the landstate file; no refs/heads/spira/sp-gone exists.
 printf 'CERTIFIED fakeshafakeshabrakeshabrakebrakefakeshabrakebra %s\n' "$(date +%s)" > "$LANDSTATE/sp-gone"
 
+# ─── Fixture: sp-in-base — CERTIFIED orphan whose tip is already in origin/main ─
+# Represents a member whose batch PR was merged before verdict.sh ran.
+_base_tip="$(git -C "$REPO" rev-parse origin/main)"
+printf 'CERTIFIED %s %s\n' "$_base_tip" "$(date +%s)" > "$LANDSTATE/sp-in-base"
+
 echo "test-batch-certified-orphan.sh"
 
 # =============================================================================
@@ -142,6 +147,24 @@ want "batch logs WARN for certified-orphan sp-gone" \
 want "mail.sh was called with the missing-branch subject" \
     "CERTIFIED branch" "$(cat "$MAIL_LOG" 2>/dev/null)"
 nowant "sp-gone is not in the open batch"         "sp-gone" "$(cat "$QUEUEDIR/$REPONAME/open" 2>/dev/null)"
+
+# =============================================================================
+# LANDED VS LOST — orphan whose tip is in the base gets LANDED, not LOST.
+#   POSITIVE CONTROL: sp-gone (fake tip, not in base) must be LOST; this proves
+#   the ancestry check fires and would catch a code path that always writes LANDED.
+# =============================================================================
+echo
+echo "LANDED vs LOST — orphan cleanup distinguishes tip-in-base from tip-gone:"
+
+case "$(cat "$LANDSTATE/sp-in-base" 2>/dev/null)" in LANDED*)
+    ok "orphan-in-base: sp-in-base marked LANDED" ;;
+    *) bad "orphan-in-base: sp-in-base marked LANDED" \
+           "got: $(cat "$LANDSTATE/sp-in-base" 2>/dev/null)" ;; esac
+
+case "$(cat "$LANDSTATE/sp-gone" 2>/dev/null)" in LOST*)
+    ok "orphan-not-in-base: sp-gone marked LOST" ;;
+    *) bad "orphan-not-in-base: sp-gone marked LOST" \
+           "got: $(cat "$LANDSTATE/sp-gone" 2>/dev/null)" ;; esac
 
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]

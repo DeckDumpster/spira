@@ -443,7 +443,19 @@ main() {
                 local _mm _mid _mtip
                 for _mm in $members_str; do
                     _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
-                    land_mark "$_mid" CERTIFIED "$_mtip"
+                    # If the member's tip is already an ancestor of the new base, the batch
+                    # PR was merged externally before this verdict pass ran. Mark LANDED
+                    # rather than re-queuing: re-queuing creates an orphaned CERTIFIED
+                    # record once sending.sh reaps the now-landed branch.
+                    if [ -n "${current_base:-}" ] && \
+                       git -C "$repo" merge-base --is-ancestor "$_mtip" "$current_base" \
+                           2>/dev/null; then
+                        land_mark "$_mid" LANDED "$_mtip" already-in-base
+                        printf 'verdict %s: %s already in moved base — LANDED\n' \
+                            "$name" "$_mid"
+                    else
+                        land_mark "$_mid" CERTIFIED "$_mtip"
+                    fi
                 done
                 rm -f "$batch_file"
             fi
