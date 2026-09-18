@@ -108,7 +108,7 @@ BODY
 # ---------------------------------------------------------------------------------------
 # 1. THE FENCES — first, and independently of everything below.
 # ---------------------------------------------------------------------------------------
-for fence in spira/exclude.sh spira/inventory.sh spira/scratch-fence.sh spira/literal-lint.sh spira/orphan-test.sh; do
+for fence in spira/exclude.sh spira/inventory.sh spira/scratch-fence.sh spira/literal-lint.sh spira/suite-state-fence.sh spira/orphan-test.sh; do
     [ -r "$fence" ] || { say "$fence is missing — refusing to land unchecked"; exit 1; }
 done
 
@@ -163,6 +163,17 @@ if ! lit="$(bash spira/literal-lint.sh 2>&1)"; then
     printf '%s\n' "$lit" >&2
     exit 1
 fi
+
+# SUITE-STATE FENCE. A quarantine entry that names a CLOSED bead has no exit path —
+# suites.sh hygiene requires land_state:LANDED, which CLOSED never satisfies. The check
+# also applies suite_state_lint: unknown state, missing reason, bead-less quarantine,
+# named suite that does not exist in the tree.
+[ -r spira/suite-state-fence.sh ] || { say "spira/suite-state-fence.sh is missing — refusing to land unchecked"; exit 1; }
+if ! ssf="$(bash spira/suite-state-fence.sh 2>&1)"; then
+    printf '%s\n' "$ssf" >&2
+    exit 1
+fi
+printf '%s\n' "$ssf" >&2
 
 # ORPHAN-TEST FENCE. A diff that removes a hyphenated token from a non-test source file
 # while a test suite that is NOT in the same diff still asserts on that token orphans that

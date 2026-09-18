@@ -84,6 +84,13 @@ spira/test-literal-lint.sh
 # a clean tree.
 spira/test-scratch-fence.sh
 
+# THE SUITE-STATE FENCE'S OWN POSITIVE CONTROL. suite-state-fence.sh refuses a landing
+# that carries a malformed lifecycle entry or a quarantine against a CLOSED bead (which
+# has no exit path — hygiene requires LANDED, which CLOSED never satisfies). This suite
+# plants each class of offender (SEEN RED), withdraws it (SEEN GREEN), and confirms that
+# gate-spira.sh is wired to call the fence (law-a-documented-control-must-exist).
+spira/test-suite-state-fence.sh
+
 # THE MISSING-CMD PREFLIGHT'S OWN POSITIVE CONTROL. gate.sh resolves every bash <path>
 # in the repo-map gate command against the base tree before running any trial; a path absent
 # from the base returns a distinct config-error verdict rather than BASE_FAIL. This class of
