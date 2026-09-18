@@ -37,9 +37,11 @@
 # guard (above) already covers the crash-between-trigger-and-bead case: a crash leaves
 # the watermark unchanged and no bead open; the next run re-fires and re-files.
 #
-# LANDING COUNT. Counts commits on the remote-tracking base ref of each managed repo
-# whose SUBJECT begins with the bead id prefix (SPIRA_ID_PREFIX, default "sp"). The
-# home repo is always counted; additional repos are read from SPIRA_REPO_MAP. A repo
+# LANDING COUNT. Counts distinct bead ids that appear in any of the three commit forms
+# the harness writes for a landing (spira: land <id>; Merge branch 'spira/<id>';
+# Merge pull request #N from .../spira/<id>) plus the aeon commit prefix form (<id>:).
+# A merge and its landing commit for the same bead count as one landing.
+# Home repo is always included; additional repos are read from SPIRA_REPO_MAP. A repo
 # whose base ref cannot be resolved is skipped with a log line.
 #
 # EXIT:
@@ -119,32 +121,41 @@ if [ "$elapsed" -ge "${SPIRA_MAECHEN_MAX_GAP_SECONDS:-10800}" ]; then
     log "time trigger: ${elapsed}s elapsed since last pass (threshold: ${SPIRA_MAECHEN_MAX_GAP_SECONDS:-10800}s)"
 fi
 
-# LANDING TRIGGER. Count commits naming a bead id since the watermark.
-#
-# PATTERN: subjects beginning with ${SPIRA_ID_PREFIX}-[a-z0-9]. Anchored at the start
-# of the subject so a description like "add sp-notation" does not count as a landing.
-#
-# PER-REPO: home repo is always included. Additional repos are read from the repo-map.
-# Process substitution (<(...)) avoids pipefail propagating grep's exit 1 on no matches;
-# the bash `case` pattern match always exits 0.
+# LANDING TRIGGER. Count distinct bead ids that landed since the watermark.
+# Recognises the three commit forms the harness writes plus the aeon commit prefix form.
+# Deduplicates by bead id so a merge plus its landing commit counts as one.
 landing_count=0
-id_prefix="${SPIRA_ID_PREFIX:-sp}"
 
 _count_landings() {   # _count_landings <repo_path> <since_ts>
-    local rp="$1" ts="$2" base_ref="" n=0 subject
-    # Resolve the remote-tracking base ref via spira_landref — handles any remote name.
-    # The old inline implementation hardcoded 'origin', silently zeroing counts for repos
-    # whose remote has a different name (sp-3ljk). spira_landref resolves the remote name
-    # dynamically: declared base in the repo-map, then the remote's own symbolic HEAD, then
-    # by asking the remote once and caching the answer.
+    local rp="$1" ts="$2" base_ref="" n=0
     base_ref="$(spira_landref "$rp" 2>/dev/null)" || base_ref=""
     if [ -z "$base_ref" ]; then
         log "landing count: cannot resolve base ref for $rp — skipped"
         printf '0'; return 0
     fi
-    while IFS= read -r subject; do
-        case "$subject" in "${id_prefix}-"*) n=$(( n + 1 )) ;; esac
-    done < <(git -C "$rp" log --format='%s' --after="@${ts}" "$base_ref" 2>/dev/null || true)
+    n="$(git -C "$rp" log --format='%s' --after="@${ts}" "$base_ref" 2>/dev/null \
+        | awk '
+            /^spira: land / {
+                rest=substr($0,13)
+                if (match(rest,/^[a-z0-9]+-[a-z0-9]+/)) {
+                    id=substr(rest,RSTART,RLENGTH); if (!seen[id]++) print id
+                }
+                next
+            }
+            /spira\// {
+                if (match($0,/spira\/[a-z0-9]+-[a-z0-9]+/)) {
+                    id=substr($0,RSTART+6,RLENGTH-6); if (!seen[id]++) print id
+                }
+                next
+            }
+            /^[a-z0-9]+-[a-z0-9]+:/ {
+                if (match($0,/^[a-z0-9]+-[a-z0-9]+/)) {
+                    id=substr($0,RSTART,RLENGTH); if (!seen[id]++) print id
+                }
+            }
+        ' \
+        | wc -l \
+        | tr -d '[:space:]')" || n=0
     printf '%d' "$n"
 }
 
