@@ -325,10 +325,13 @@ DEDUP_IP_ID="$("$SPIRA_BD" -C "$SPIRA_DB" create "Maechen pass — dedup fixture
 "$SPIRA_BD" -C "$SPIRA_DB" update "$DEDUP_IP_ID" --status in_progress --force 2>/dev/null || true
 
 printf '0\n' > "$WATERMARK_FILE"
+# Resolve to a full path — testdb_up may set SPIRA_BD to a bare name ("bd-embedded")
+# that is not in the env -i restricted PATH.
+_dedup_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
 dedup_ip_out="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$SPIRA_BD" \
+    SPIRA_BD="$_dedup_bd" \
     SPIRA_DB="$SPIRA_DB" \
     SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO="$TESTREPO" \
