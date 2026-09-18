@@ -1319,9 +1319,9 @@ cmd_corpus() {
 # --------------------------------------------------------------------------------------
 # FLAKE OBSERVATIONS, CLEAN-RUN COUNTERS, AND QUARANTINE HYGIENE.
 #
-# Flake observations: per-suite files at $STATE/<suite>.flakeobs, one Unix epoch per
-# line. observe-flake records one observation and quarantines when the count within
-# SPIRA_FLAKE_WINDOW reaches SPIRA_FLAKE_QUARANTINE_AT.
+# Flake observations: per-suite files at $STATE/<suite>.flakeobs, one "<epoch> <run_id>"
+# per line. observe-flake deduplicates on (suite, run_id); the count is distinct run_ids
+# within SPIRA_FLAKE_WINDOW. Quarantines when count reaches SPIRA_FLAKE_QUARANTINE_AT.
 #
 # Clean-run counters: $STATE/<suite>.clean-runs, incremented by cmd_run each time a
 # quarantined suite runs green, reset on red. cmd_hygiene reactivates when the bead
@@ -1334,19 +1334,31 @@ flakeobs_file()      { printf '%s/%s.flakeobs'      "$STATE" "$1"; }
 cleanruns_file()     { printf '%s/%s.clean-runs'    "$STATE" "$1"; }
 maxage_mailed_file() { printf '%s/%s.maxage-mailed' "$STATE" "$1"; }
 
-flakeobs_record() {    # flakeobs_record <suite>
+flakeobs_record() {    # flakeobs_record <suite> <run_id>
+    local suite="$1" run_id="$2"
     mkdir -p "$STATE" 2>/dev/null
-    printf '%s\n' "$(date +%s)" >> "$(flakeobs_file "$1")"
+    local f; f="$(flakeobs_file "$suite")"
+    if [ -r "$f" ]; then
+        local _ts _rid
+        while IFS=' ' read -r _ts _rid || [ -n "$_ts" ]; do
+            [ "${_rid:-}" = "$run_id" ] && return 0
+        done < "$f"
+    fi
+    printf '%s %s\n' "$(date +%s)" "$run_id" >> "$f"
 }
 
-flakeobs_in_window() {  # flakeobs_in_window <suite> -> count
+flakeobs_in_window() {  # flakeobs_in_window <suite> -> count of distinct runs in window
     local f; f="$(flakeobs_file "$1")"
     [ -r "$f" ] || { printf '0'; return 0; }
-    local cutoff count=0 ts
-    cutoff=$(( $(date +%s) - ${SPIRA_FLAKE_WINDOW:-604800} ))
-    while IFS= read -r ts || [ -n "$ts" ]; do
-        case "$ts" in ''|*[!0-9]*) continue ;; esac
-        [ "$ts" -ge "$cutoff" ] && count=$(( count + 1 ))
+    local cutoff; cutoff=$(( $(date +%s) - ${SPIRA_FLAKE_WINDOW:-604800} ))
+    local _ts _rid seen="" count=0
+    while IFS=' ' read -r _ts _rid || [ -n "$_ts" ]; do
+        case "${_ts:-}" in ''|*[!0-9]*) continue ;; esac
+        [ "$_ts" -ge "$cutoff" ] || continue
+        [ -n "${_rid:-}" ] || continue
+        case ":${seen}:" in *":${_rid}:"*) continue ;; esac
+        seen="${seen}:${_rid}"
+        count=$(( count + 1 ))
     done < "$f"
     printf '%d' "$count"
 }
@@ -1404,13 +1416,14 @@ PAYLOAD
 
 # cmd_observe_flake — record one flake observation; quarantine when threshold is reached.
 cmd_observe_flake() {
-    local suite="${1:-}"
-    [ -n "$suite" ] || { printf 'suites observe-flake: suite name required\n' >&2; return 2; }
+    local suite="${1:-}" run_id="${2:-}"
+    [ -n "$suite" ]  || { printf 'suites observe-flake: suite name required\n' >&2; return 2; }
+    [ -n "$run_id" ] || { printf 'suites observe-flake: run id required\n' >&2; return 2; }
     [ -r "$HERE/$suite" ] || {
         printf 'suites observe-flake: no such suite: %s\n' "$suite" >&2
         return 2
     }
-    flakeobs_record "$suite"
+    flakeobs_record "$suite" "$run_id"
     local count threshold
     count="$(flakeobs_in_window "$suite")"
     threshold="${SPIRA_FLAKE_QUARANTINE_AT:-2}"
