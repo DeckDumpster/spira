@@ -31,10 +31,13 @@ except Exception: print("")' 2>/dev/null)"
 
 [ -n "$cmd" ] || exit 0
 
+# Check only the first line: heredoc bodies are data, not commands to execute.
+_cmd1="${cmd%%$'\n'*}"
+
 reason=""
 
 for _script in landing.sh batch.sh verdict.sh slay.sh world.sh deploy.sh activate.sh promote.sh; do
-    case "$cmd" in
+    case "$_cmd1" in
         *"/$_script"*) reason="aeons may not call $_script (sp-kz8ob: landing and batch handle forge writes; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"; break ;;
     esac
 done
@@ -74,7 +77,8 @@ if [ -z "$reason" ] && [ -n "${SPIRA_RUN:-}" ]; then
 fi
 
 if [ -z "$reason" ] && [ -n "${SPIRA_PROD:-}" ]; then
-    case "$cmd" in
+    case "$_cmd1" in
+        *"${SPIRA_PROD}/census.sh"*) ;;  # read-only query; not a write
         *"${SPIRA_PROD}"*)
             # Execution of the tools the Ops brief renders ({{SOP}}, {{INCIDENT}}, {{ASK}},
             # {{SUITES}}, {{GROOM}}) is allowed even when SPIRA_HOME == SPIRA_PROD (sp-x5f0l).
