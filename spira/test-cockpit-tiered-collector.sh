@@ -432,5 +432,143 @@ fi
 
 # ============================================================
 echo
+echo "12. temp cleanup: external kill leaves no temp in cockpit.d:"
+
+# POSITIVE CONTROL: a slow probe in a subshell creates a temp before being killed.
+# Kill it and verify the temp is gone.
+KILL_FRAG="$TMP/kill_frag"
+mkdir -p "$KILL_FRAG"
+MOCK_COCK2="$TMP/mock-cockpit2.sh"
+printf '#!/usr/bin/env bash\ncase "$1" in slow) exec sleep 300 ;; esac\n' \
+    > "$MOCK_COCK2" && chmod +x "$MOCK_COCK2"
+# Start the probe in a subshell so we can observe mid-run state and kill it.
+(
+    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+        SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
+        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_COCKPIT="$TMP" \
+        FRAG_DIR="$KILL_FRAG" COCK="$MOCK_COCK2" \
+        bash "$HERE/collect.sh" _probe_body_test killtest 30 slow 2>/dev/null
+) &
+kill_pid=$!
+
+# Positive control: wait for the temp to appear.
+kill_seen=0
+for _ in $(seq 1 100); do
+    if [ "$(find "$KILL_FRAG" -maxdepth 1 -name '.*' | wc -l)" -gt 0 ]; then
+        kill_seen=1; break
+    fi
+    kill -0 "$kill_pid" 2>/dev/null || break
+    sleep 0.1
+done
+if [ "$kill_seen" -eq 1 ]; then
+    ok "12/kill: temp present mid-probe (positive control)"
+else
+    bad "12/kill: temp never appeared — probe did not create it" "cannot test cleanup"
+fi
+
+kill -TERM "$kill_pid" 2>/dev/null; wait "$kill_pid" 2>/dev/null || true
+n_kill_tmps="$(find "$KILL_FRAG" -maxdepth 1 -name '.*' | wc -l)"
+[ "$n_kill_tmps" -eq 0 ] && ok "12/kill: no temp left after SIGTERM" \
+    || bad "12/kill: $n_kill_tmps temp(s) remained after SIGTERM" "EXIT trap failed"
+
+# ============================================================
+echo
+echo "13. killed counter: timeout increments _PROBE_KILLED, success resets to 0:"
+
+KILLED_FRAG="$TMP/killed_frag"
+mkdir -p "$KILLED_FRAG"
+printf '_PROBE_AT=0\n_PROBE_STATUS=never\n_PROBE_KILLED=0\n' > "$KILLED_FRAG/ktest.env"
+# First timeout: probe sleeps, 1s timeout fires.
+env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_COCKPIT="$TMP" \
+    FRAG_DIR="$KILLED_FRAG" COCK="$MOCK_COCK" \
+    bash "$HERE/collect.sh" _probe_body_test ktest 1 slow 2>/dev/null || true
+frag_k1="$(cat "$KILLED_FRAG/ktest.env" 2>/dev/null)"
+want "13/first timeout: _PROBE_KILLED=1" "_PROBE_KILLED=1" "$frag_k1"
+# Verify no temp file remains after the timeout.
+n_k1_tmps="$(find "$KILLED_FRAG" -maxdepth 1 -name '.*' | wc -l)"
+[ "$n_k1_tmps" -eq 0 ] && ok "13/first timeout: no temp left" \
+    || bad "13/first timeout: $n_k1_tmps temp(s) left" "EXIT trap failed"
+
+# Second timeout: counter increments again.
+env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_COCKPIT="$TMP" \
+    FRAG_DIR="$KILLED_FRAG" COCK="$MOCK_COCK" \
+    bash "$HERE/collect.sh" _probe_body_test ktest 1 slow 2>/dev/null || true
+frag_k2="$(cat "$KILLED_FRAG/ktest.env" 2>/dev/null)"
+want "13/second timeout: _PROBE_KILLED=2" "_PROBE_KILLED=2" "$frag_k2"
+
+# Success resets counter to 0.
+env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_COCKPIT="$TMP" \
+    FRAG_DIR="$KILLED_FRAG" COCK="$MOCK_COCK" \
+    bash "$HERE/collect.sh" _probe_body_test ktest 10 succeed 2>/dev/null || true
+frag_k3="$(cat "$KILLED_FRAG/ktest.env" 2>/dev/null)"
+want "13/success: _PROBE_KILLED=0" "_PROBE_KILLED=0" "$frag_k3"
+
+# ============================================================
+echo
+echo "14. startup sweep: old temps in cockpit.d removed on loop start:"
+
+SWEEP_RUN="$TMP/sweep_run"
+mkdir -p "$SWEEP_RUN"
+SWEEP_FRAG="$SWEEP_RUN/cockpit.d"
+mkdir -p "$SWEEP_FRAG"
+# Create a temp file whose mtime is well past the max probe timeout (900s).
+touch -d "1100 seconds ago" "$SWEEP_FRAG/.old_orphan.AbCdEf" 2>/dev/null \
+    || { touch "$SWEEP_FRAG/.old_orphan.AbCdEf"; touch -t "$(date -d '1100 seconds ago' +%Y%m%d%H%M.%S 2>/dev/null || date +%Y%m%d%H%M.%S)" "$SWEEP_FRAG/.old_orphan.AbCdEf" 2>/dev/null; }
+# Positive control: the file exists before the loop starts.
+if [ -f "$SWEEP_FRAG/.old_orphan.AbCdEf" ]; then
+    ok "14/sweep: old temp exists before loop (positive control)"
+else
+    bad "14/sweep: could not create old temp for positive control" "skip sweep test"
+fi
+for _pn in now sphere repo_labels strands ratelim core queue core_detail sops livelock dup_refs unsent; do
+    printf '_PROBE_AT=0\n_PROBE_STATUS=never\n_PROBE_KILLED=0\n' > "$SWEEP_FRAG/${_pn}.env"
+done
+_sweep_ec=0
+timeout 3 env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$SWEEP_RUN" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_COCKPIT="$TMP" \
+    SPIRA_COCKPIT_FORCE=1 \
+    SPIRA_COCKPIT_TICK=0 \
+    FRAG_DIR="$SWEEP_FRAG" \
+    bash "$HERE/collect.sh" loop >/dev/null 2>/dev/null || _sweep_ec=$?
+if [ -f "$SWEEP_FRAG/.old_orphan.AbCdEf" ]; then
+    bad "14/sweep: old temp still present after loop start" "sweep did not run"
+else
+    ok "14/sweep: old temp removed by startup sweep"
+fi
+
+# ============================================================
+echo
+echo "15. SP_PROBE_KILLED_<name> appears in merged snapshot:"
+
+rm -f "$FRAG_DIR"/*.env
+printf '_PROBE_AT=1\n_PROBE_STATUS=timeout\n_PROBE_KILLED=3\n' > "$FRAG_DIR/core.env"
+env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_COCKPIT="$TMP" FRAG_DIR="$FRAG_DIR" \
+    bash "$HERE/collect.sh" merge 2>/dev/null
+snap="$(cat "$SNAP" 2>/dev/null)"
+want "15/killed: SP_PROBE_KILLED_core=3 in snapshot" "SP_PROBE_KILLED_core='3'" "$snap"
+
+# ============================================================
+echo
 printf 'test-cockpit-tiered-collector: %d ok, %d fail\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
