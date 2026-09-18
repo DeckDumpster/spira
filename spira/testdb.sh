@@ -283,7 +283,9 @@ testdb_up() {            # testdb_up <tag>
             export SPIRA_PATH="$TESTDB_BIN${SPIRA_PATH:+:$SPIRA_PATH}"
         fi
 
-        export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="$TESTDB_BD"
+        # Full path: conf.sh rebuilds PATH from SPIRA_PATH + $HOME/.local/bin; a bare name
+        # unreachable after that rebuild (e.g. private HOME in a parallel gate suite) fails.
+        export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="${_bd_real:-$TESTDB_BD}"
         return 0
     fi
 
