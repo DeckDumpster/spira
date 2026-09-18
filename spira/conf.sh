@@ -92,6 +92,7 @@ SPIRA_CAPACITY_PROBE_MODEL SPIRA_CAPACITY_PROBE_INTERVAL SPIRA_CAPACITY_PROBE_WI
 SPIRA_SELF_WINDOW
 SPIRA_AGENT
 SPIRA_STATUTE_CORE
+SPIRA_GIT_NAME SPIRA_GIT_EMAIL
 "
 
 # --------------------------------------------------------------------------------------
@@ -511,6 +512,9 @@ spira_conf_defaults() {
     # cycles the machinery while an aeon session is spent on every turn. At this threshold the
     # landing pass labels the bead needs-operator and asks rather than reopening again.
     : "${SPIRA_REBASE_ESCALATE_AT:=3}"
+    # .invalid: not a real domain. @spira.local trips is_aeon_email in branch-guard.sh.
+    : "${SPIRA_GIT_NAME:=spira}"
+    : "${SPIRA_GIT_EMAIL:=spira@spira.invalid}"
     # HOW MANY COMMITS BACK aeon.sh AND sentinel CHECK5 WALK when asking "is there a commit
     # that names this bead?" The bound must be the same in both places: aeon.sh walks the
     # branch (and the landing refs when the branch walk finds nothing); the sentinel walks

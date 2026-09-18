@@ -520,6 +520,54 @@ is   "a real content conflict still produces REBASE_FAILURE=conflict"    conflic
 want "and REBASE_CONFLICTS names the colliding file"                      "shared2.txt" "$_ext_conflicts"
 drop_branch sp-kindconflicts
 
+# THE IDENTITY FIX. The landing pass runs without an ambient git identity (no GIT_COMMITTER_*,
+# no ~/.gitconfig); git refuses any rebase that must replay a commit. After the fix, the
+# harness passes -c user.name/user.email from SPIRA_GIT_NAME and SPIRA_GIT_EMAIL.
+# Run under env -i with a fresh HOME so ambient config cannot satisfy the assertion.
+# Identity keys pinned to non-defaults so the assertion fails if the literal is written in.
+# POSITIVE CONTROL: on the unfixed tree (no -c flags, no conf.sh defaults for these keys)
+# the call below returns rc=1 REBASE_FAILURE=rebase-refused.
+rebase_id_classify() {   # rebase_id_classify <branch> <onto> -> "rc|committer-name|committer-email|failure"
+    local _home; _home="$(mktemp -d)"
+    local _out
+    _out="$(env -i \
+        HOME="$_home" \
+        PATH="$PATH" \
+        SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_REPO="$REPO" SPIRA_REPO_MAP="$SH/repo-map" \
+        SPIRA_GIT_NAME=testharness SPIRA_GIT_EMAIL=testharness@test.invalid \
+        bash -c '. "$1/lib.sh" >/dev/null 2>&1
+                 rebase_branch "$2" "$3" "$4" fixture >/dev/null 2>&1; _rc=$?
+                 _cn="$(git -C "$4" log -1 --format=%cn "$2" 2>/dev/null)"
+                 _ce="$(git -C "$4" log -1 --format=%ce "$2" 2>/dev/null)"
+                 printf "%s|%s|%s|%s" "$_rc" "$_cn" "$_ce" "${REBASE_FAILURE:-}"' \
+        _ "$SH" "$1" "$2" "$REPO" 2>/dev/null)"
+    rm -rf "$_home"
+    printf '%s' "$_out"
+}
+
+seed; branch sp-ident
+printf 'base step\n' > "$REPO/ident-base.txt"
+git -C "$REPO" add ident-base.txt
+git -C "$REPO" commit -q -m "base adds ident-base.txt"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+_ri="$(rebase_id_classify spira/sp-ident origin/main)"
+_ri_rc="${_ri%%|*}"; _ri_rest="${_ri#*|}"; _ri_cn="${_ri_rest%%|*}"; _ri_rest2="${_ri_rest#*|}"; _ri_ce="${_ri_rest2%%|*}"
+is   "rebase succeeds in a clean env when SPIRA_GIT_NAME and SPIRA_GIT_EMAIL are set" "0" "$_ri_rc"
+is   "the rebased commit's committer name is taken from SPIRA_GIT_NAME"  "testharness" "$_ri_cn"
+is   "the rebased commit's committer email is taken from SPIRA_GIT_EMAIL" "testharness@test.invalid" "$_ri_ce"
+drop_branch sp-ident
+
+seed; branch sp-ident-clash shared-ic.txt "branch content"
+printf 'base content\n' > "$REPO/shared-ic.txt"
+git -C "$REPO" add shared-ic.txt
+git -C "$REPO" commit -q -m "base also writes shared-ic.txt"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+_ri_clash="$(rebase_id_classify spira/sp-ident-clash origin/main)"
+_ri_clash_fail="${_ri_clash##*|}"
+is "a real conflict returns REBASE_FAILURE=conflict even with identity set" "conflict" "$_ri_clash_fail"
+drop_branch sp-ident-clash
+
 # THE FENCE. Every route from a rebase failure to a reopen lives in landing.sh and must read
 # the classification first; the two above are the ones that exist today and a third would
 # arrive silently. It requires each `! rebase_branch` arm to mention REBASE_FAILURE within
