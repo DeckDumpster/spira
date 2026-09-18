@@ -342,7 +342,7 @@ main() {
                 "$name" "${lg_suites_csv:-unattributed}"
         else
             if [ "${#lg_survivors[@]}" -eq 0 ]; then
-                git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+                SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
                 return 0
             fi
 
@@ -360,12 +360,12 @@ main() {
             done
 
             if [ "${#members[@]}" -eq 0 ]; then
-                git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+                SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
                 return 0
             fi
 
             # Delete old batch branch; new stamp for the rebuilt batch.
-            git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+            SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
             batch_head="$(git -C "$wt" rev-parse HEAD 2>/dev/null)"
             stamp="$(date -u +%Y%m%dT%H%M%SZ)"
             batch_br="spira/queue/$stamp"
@@ -382,7 +382,7 @@ main() {
                     _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
                     land_mark "$_lmid" CERTIFIED "$_lmtip"
                 done
-                git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+                SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
                 printf 'QUEUE BATCH %s repo=%s members=%d gate_seconds=%d verdict=red\n' \
                     "$(date +%s)" "$name" "${#members[@]}" "$lg_cost" \
                     >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
