@@ -20,7 +20,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 _pdir="$TMP/positive-repo"
 mkdir -p "$_pdir/spira"
 git init -q "$_pdir"
-git -C "$_pdir" config user.email "t@t.example"
+git -C "$_pdir" config user.email "flake-suite@example.invalid"
 git -C "$_pdir" config user.name "Test"
 : > "$_pdir/spira/suite-state"
 git -C "$_pdir" add spira/suite-state
@@ -42,7 +42,7 @@ _home="$TMP/home"
 mkdir -p "$_sh" "$_state" "$_run" "$_home"
 
 git init -q "$_repo"
-git -C "$_repo" config user.email "t@t.example"
+git -C "$_repo" config user.email "flake-suite@example.invalid"
 git -C "$_repo" config user.name "Test"
 
 for _f in suites.sh lib.sh conf.sh suite-state.sh suite-covers.sh; do
