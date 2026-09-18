@@ -76,7 +76,15 @@ fi
 if [ -z "$reason" ] && [ -n "${SPIRA_PROD:-}" ]; then
     case "$cmd" in
         *"${SPIRA_PROD}"*)
-            reason="aeons may not write to the production checkout \$SPIRA_PROD (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
+            # Execution of the tools the Ops brief renders ({{SOP}}, {{INCIDENT}}, {{ASK}},
+            # {{SUITES}}, {{GROOM}}) is allowed even when SPIRA_HOME == SPIRA_PROD (sp-x5f0l).
+            # A write INTO the checkout (rm, redirect, cp, etc.) is still refused.
+            case "$cmd" in
+                *"${SPIRA_PROD}/sop.sh"*|*"${SPIRA_PROD}/incident.sh"*|\
+                *"${SPIRA_PROD}/mail.sh"*|*"${SPIRA_PROD}/suites.sh"*|\
+                *"${SPIRA_PROD}/groomer.sh"*) ;;
+                *) reason="aeons may not write to the production checkout \$SPIRA_PROD (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 to override)" ;;
+            esac ;;
     esac
 fi
 

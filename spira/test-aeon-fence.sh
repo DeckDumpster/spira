@@ -130,5 +130,30 @@ want "D3: prohibition names 'flush the queue'"      "flush the queue"      "$arc
 
 # ===========================================================================
 echo
+echo "F — Ops brief tool invocations are allowed when SPIRA_HOME == SPIRA_PROD (sp-x5f0l):"
+# ===========================================================================
+# POSITIVE CONTROL: a non-tool path into SPIRA_PROD is still refused, proving the guard
+# is still active and the allowances below are not a broken check.
+out="$(fence_run "echo x > ${FAKE_PROD}/foo" SPIRA_AEON=test-aeon)"
+want "F0 POSITIVE: non-tool write into SPIRA_PROD still blocked" '"decision":"block"' "$out"
+
+# aeon.sh:1470-1472 renders {{SOP}}/{{INCIDENT}}/{{ASK}}/{{SUITES}}/{{GROOM}} as
+# $SPIRA_HOME/<tool>.sh. On a production instance SPIRA_HOME == SPIRA_PROD, so each
+# rendered command contains SPIRA_PROD. All must pass the fence without SPIRA_AEON_OVERRIDE.
+for _cmd in \
+    "${FAKE_PROD}/sop.sh match /tmp/sp-x.payload" \
+    "${FAKE_PROD}/sop.sh applied disk-full --bead sp-x --check pass --held unknown" \
+    "${FAKE_PROD}/sop.sh write brand-new -" \
+    "${FAKE_PROD}/incident.sh list" \
+    "${FAKE_PROD}/incident.sh file thing -" \
+    "${FAKE_PROD}/mail.sh send operator --from Ops --subject q --kind question --default x" \
+    "${FAKE_PROD}/suites.sh run" \
+    "${FAKE_PROD}/groomer.sh run"; do
+    out="$(fence_run "$_cmd" SPIRA_AEON=test-aeon)"
+    refuse "F: ${_cmd##*/}: rendered brief command allowed" '"decision":"block"' "$out"
+done
+
+# ===========================================================================
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
