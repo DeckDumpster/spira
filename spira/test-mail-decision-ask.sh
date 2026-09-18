@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
 # test-mail-decision-ask.sh — mail.sh send --kind question|decision --bead <work>
-#   creates a blocking decision bead; operator reply closes the decision bead and
-#   surfaces the verdict to the work bead; persona replies route to concierge.
+#   files a decision bead and wires a relates_to link (NOT a blocking dep) to the cited
+#   work bead. SPIRA_MAIL_ALLOW_BLOCKING=1 restores blocking for deliberate gates.
+#   (sp-aybfy: a question never blocks a work bead by default.)
 #
-# Acceptance criteria from sp-egge2:
-#   (a) a question with --bead leaves the work bead blocked and not ready
-#   (b) a reply closes the decision bead, work bead becomes ready with verdict visible
-#   (c) a reply to an aeon persona's message lands in concierge
+# Acceptance criteria:
+#   (a) a question with --bead on a task bead does NOT block the work bead; the guard
+#       logs its refusal; decision bead is still filed; relates_to link is wired
+#   (b) reply closes the decision bead; work bead stays open (was never blocked)
+#   (c) reply to an aeon persona's message lands in concierge
+#   (d) SPIRA_MAIL_ALLOW_BLOCKING=1 blocks the work bead; reply unblocks it and
+#       surfaces the verdict note
 #
 # SEEN RED (law-absence-needs-a-positive-control):
-#   (a) work bead confirmed open+unblocked before send, then confirmed blocked after
-#   (b) decision bead confirmed open before reply, then confirmed closed; work bead
-#       confirmed still open with verdict note
-#   (c) persona mailbox confirmed empty before reply, then confirmed message in concierge
+#   (a) work bead confirmed 0 blocking-deps before send; confirmed still 0 after send
+#   (b) decision bead confirmed open before reply, then confirmed closed
+#   (c) persona mailbox confirmed empty before reply
+#   (d) work bead confirmed 0 blocking-deps before send; confirmed 1 after override send
 #
 # covers: spira/mail.sh spira/conf.sh
 set -uo pipefail
@@ -53,14 +57,14 @@ d = d if isinstance(d, list) else [d]
 print(d[0].get("status") or "")' 2>/dev/null
 }
 
-bead_open_deps() {   # bead_open_deps <id> — number of open blocking deps
+bead_open_deps() {   # count open BLOCKING deps only; relates-to links are not blockers
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
 d = json.load(sys.stdin)
 d = d if isinstance(d, list) else [d]
 deps = d[0].get("dependencies") or []
-print(len([x for x in deps if x.get("status") != "closed"]))' 2>/dev/null
+print(len([x for x in deps if x.get("status") != "closed" and x.get("dependency_type") == "blocks"]))' 2>/dev/null
 }
 
 bead_notes() {
@@ -77,7 +81,7 @@ seed_bead() {
         "$1" "$1" | testdb_seed >/dev/null 2>&1
 }
 
-# Helper: send a question mail and return the Message-ID of the filed message.
+# Helper: send a question mail; returns Message-ID.
 send_question() {
     local mailbox="$1" work_bead="$2"
     SPIRA_MAIL_LINT_CONSIDERED="test" run send "$mailbox" \
@@ -94,7 +98,32 @@ Should I proceed with option A or wait?
 
 proceed with option A
 BODY
-    # Find the newest message in the mailbox and return its Message-ID.
+    local newest
+    newest="$(ls -t "$SPIRA_MAIL/$mailbox/new/" 2>/dev/null | head -1)"
+    [ -z "$newest" ] && return 1
+    awk '/^[[:space:]]*$/ { exit }
+        tolower($0) ~ /^message-id:/ { sub(/^[^:]*:[[:space:]]*/, ""); gsub(/[<>]/, ""); print; exit }
+    ' "$SPIRA_MAIL/$mailbox/new/$newest"
+}
+
+# Helper: send a question with SPIRA_MAIL_ALLOW_BLOCKING=1; returns Message-ID.
+send_question_blocking() {
+    local mailbox="$1" work_bead="$2"
+    SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_ALLOW_BLOCKING=1 \
+        run send "$mailbox" \
+        --from "Builder <builder@spira>" \
+        --subject "Should I proceed (blocking)?" \
+        --kind question \
+        --default "proceed" \
+        --bead "$work_bead" <<'BODY' >/dev/null 2>&1
+## Question
+
+Should I proceed?
+
+## Default
+
+proceed
+BODY
     local newest
     newest="$(ls -t "$SPIRA_MAIL/$mailbox/new/" 2>/dev/null | head -1)"
     [ -z "$newest" ] && return 1
@@ -114,16 +143,16 @@ compose_reply() {
 }
 
 # ==========================================================================
-# (a) QUESTION WITH --bead LEAVES WORK BEAD BLOCKED
+# (a) QUESTION WITH --bead DOES NOT BLOCK THE WORK BEAD (default)
 # ==========================================================================
 echo
-echo "(a) question with --bead blocks the work bead"
+echo "(a) question with --bead does not block the work bead (default non-blocking)"
 
 WORK_A="sp-da-work"
 seed_bead "$WORK_A" || { echo "test-mail-decision-ask: could not seed work bead"; exit 1; }
 
 open_deps_before="$(bead_open_deps "$WORK_A")"
-is "SEEN RED: work bead has no open deps before send" "0" "$open_deps_before"
+is "SEEN RED: work bead has 0 open blocking-deps before send" "0" "$open_deps_before"
 
 MSGID_A="$(send_question operator "$WORK_A")"
 [ -n "$MSGID_A" ] || { echo "test-mail-decision-ask: could not send question"; exit 1; }
@@ -137,7 +166,7 @@ lacks "X-Spira-Bead is not the work bead (it is the decision bead)" "$WORK_A" "$
 is "decision bead id is present" "0" "$([ -n "$x_bead_a" ] && echo 0 || echo 1)"
 
 open_deps_after="$(bead_open_deps "$WORK_A")"
-is "work bead has one open dep after send" "1" "$open_deps_after"
+is "work bead has 0 open blocking-deps after send (guard prevented blocking)" "0" "$open_deps_after"
 
 work_status_a="$(bead_status "$WORK_A")"
 is "work bead is still open (not closed)" "open" "$work_status_a"
@@ -146,10 +175,10 @@ dec_status_a="$(bead_status "$x_bead_a")"
 is "decision bead is open (waiting for reply)" "open" "$dec_status_a"
 
 # ==========================================================================
-# (b) REPLY CLOSES DECISION BEAD, NOT WORK BEAD; VERDICT VISIBLE ON WORK BEAD
+# (b) REPLY CLOSES DECISION BEAD; WORK BEAD (NOT BLOCKED) STAYS OPEN
 # ==========================================================================
 echo
-echo "(b) reply closes decision bead, work bead gets verdict note"
+echo "(b) reply closes decision bead; work bead stays open"
 
 compose_reply "$MSGID_A" "Yes, proceed with option A." | run sendmail 2>&1; rc=$?
 isz "sendmail exits 0 on reply" "$rc"
@@ -161,11 +190,7 @@ work_status_b="$(bead_status "$WORK_A")"
 is "work bead is still open (reply did not close it)" "open" "$work_status_b"
 
 open_deps_b="$(bead_open_deps "$WORK_A")"
-is "work bead has no open deps after reply (unblocked)" "0" "$open_deps_b"
-
-notes_b="$(bead_notes "$WORK_A")"
-want "work bead note contains operator verdict" "Operator verdict on decision bead $x_bead_a" "$notes_b"
-want "verdict note includes the reply body" "Yes, proceed with option A." "$notes_b"
+is "work bead still has 0 open blocking-deps after reply" "0" "$open_deps_b"
 
 # ==========================================================================
 # (c) REPLY TO AEON PERSONA LANDS IN CONCIERGE
@@ -173,7 +198,6 @@ want "verdict note includes the reply body" "Yes, proceed with option A." "$note
 echo
 echo "(c) reply to aeon persona message lands in concierge"
 
-# Create a builder persona file so the test matches the real persona detection.
 printf '# builder persona\n' > "$SPIRA_HOME/chamber/builder.md"
 
 WORK_C="sp-dc-work"
@@ -187,7 +211,6 @@ x_bead_c="$(awk '/^[[:space:]]*$/ { exit }
     tolower($0) ~ /^x-spira-bead:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }
 ' "$SPIRA_MAIL/operator/new/$newest_c")"
 
-# Create a mailbox for builder to confirm routing does NOT go there.
 mkdir -p "$SPIRA_MAIL/builder/new" "$SPIRA_MAIL/builder/tmp" "$SPIRA_MAIL/builder/cur"
 mkdir -p "$SPIRA_MAIL/concierge/new" "$SPIRA_MAIL/concierge/tmp" "$SPIRA_MAIL/concierge/cur"
 
@@ -201,6 +224,42 @@ conc_after="$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
 
 is "SEEN RED: builder mailbox did not grow" "$builder_before" "$builder_after"
 is "reply to aeon persona (builder) routes to concierge" "$((conc_before + 1))" "$conc_after"
+
+# ==========================================================================
+# (d) SPIRA_MAIL_ALLOW_BLOCKING=1 BLOCKS THE WORK BEAD; VERDICT PROPAGATED
+# ==========================================================================
+echo
+echo "(d) SPIRA_MAIL_ALLOW_BLOCKING=1: work bead blocked; verdict note on reply"
+
+WORK_D="sp-dd-work"
+seed_bead "$WORK_D"
+
+open_deps_d_before="$(bead_open_deps "$WORK_D")"
+is "SEEN RED: work bead has 0 blocking-deps before override send" "0" "$open_deps_d_before"
+
+MSGID_D="$(send_question_blocking operator "$WORK_D")"
+[ -n "$MSGID_D" ] || { echo "test-mail-decision-ask: could not send blocking question"; exit 1; }
+
+newest_d="$(ls -t "$SPIRA_MAIL/operator/new/" 2>/dev/null | head -1)"
+x_bead_d="$(awk '/^[[:space:]]*$/ { exit }
+    tolower($0) ~ /^x-spira-bead:/ { sub(/^[^:]*:[[:space:]]*/, ""); print; exit }
+' "$SPIRA_MAIL/operator/new/$newest_d")"
+
+open_deps_d_after="$(bead_open_deps "$WORK_D")"
+is "with override, work bead IS blocked (1 open blocking-dep)" "1" "$open_deps_d_after"
+
+compose_reply "$MSGID_D" "Yes, proceed." | run sendmail 2>&1; rc=$?
+isz "sendmail exits 0 on blocking reply" "$rc"
+
+dec_status_d="$(bead_status "$x_bead_d")"
+is "blocking decision bead is closed after reply" "closed" "$dec_status_d"
+
+open_deps_d_reply="$(bead_open_deps "$WORK_D")"
+is "work bead unblocked after reply (0 open blocking-deps)" "0" "$open_deps_d_reply"
+
+notes_d="$(bead_notes "$WORK_D")"
+want "work bead note contains operator verdict" "Operator verdict on decision bead $x_bead_d" "$notes_d"
+want "verdict note includes the reply body" "Yes, proceed." "$notes_d"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

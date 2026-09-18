@@ -76,6 +76,11 @@ bd -C {{DB}} create "<title>" --body-file - -l spira,plan,repo:<name> <<'BODY'
 BODY
 ```
 
+When an ask or proposed statute cites a specific bead, pass `--bead <id>` to the `{{NOTIFY}}`
+call. This creates a non-blocking reference (a relates_to link): the cited bead stays
+ready and claimable. An ask is never a gate on the work it references; the guard in
+`mail.sh` enforces this and will refuse any attempt to wire a blocking edge.
+
 Prose goes in on **stdin**, never in a quoted argument: backticks and `$( )` inside double
 quotes are command substitution, and a bead comment has already silently lost the very command
 names it was explaining.
