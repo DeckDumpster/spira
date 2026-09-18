@@ -4441,7 +4441,12 @@ spira_destroy_branch() {
         fi
     fi
     spira_reaplog REMOVING "$id" "branch $br ($why)"
-    err="$(git -C "$repo" branch -D "$br" 2>&1)"
+    # SPIRA_REF_SANCTIONED is what the reference-transaction hook reads. Set it ONLY
+    # here and on this one command: every guard that makes a deletion safe — the
+    # content_landed check above, the worktree check, the reaplog entry — has already
+    # run by this line. Exporting it any wider would hand the override to the callers
+    # the hook exists to stop.
+    err="$(SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$br" 2>&1)"
     if git -C "$repo" show-ref --verify -q "refs/heads/$br"; then
         spira_reaplog FAILED "$id" "branch $br survived deletion: $(head -1 <<< "$err")"
         SPIRA_DESTROY_ERR="$(head -1 <<< "$err")"
