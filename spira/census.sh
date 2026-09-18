@@ -69,7 +69,10 @@ for line in sys.stdin:
     if not line or line.startswith('+') or line.startswith('('):
         continue
     parts = [p.strip() for p in line.split('|')]
-    parts = [p for p in parts if p]
+    while parts and not parts[0]:
+        parts.pop(0)
+    while parts and not parts[-1]:
+        parts.pop()
     if len(parts) == 4:
         event_type, new_value, n_beads, n_events = parts[0], parts[1], parts[2], parts[3]
     elif len(parts) == 3:
