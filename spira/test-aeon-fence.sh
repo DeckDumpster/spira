@@ -19,11 +19,13 @@ FAKE_PROD="$TMP/prod"
 mkdir -p "$FAKE_RUN" "$FAKE_PROD"
 
 # fence_run <cmd> [VAR=val ...]: pipe a Bash-tool JSON payload to the fence.
+# Uses python3 json.dumps so the payload is valid for any command, including
+# those with newlines (heredocs) or embedded quotes.
 # Extra positional args are env-var assignments passed to env(1).
 fence_run() {
     local cmd="$1"; shift
     local payload
-    payload="$(printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$cmd")"
+    payload="$(printf '%s' "$cmd" | python3 -c 'import json, sys; cmd = sys.stdin.read(); print(json.dumps({"tool_name":"Bash","tool_input":{"command":cmd}}))')"
     printf '%s' "$payload" | env -i PATH="$PATH" HOME="$TMP" \
         SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$FAKE_PROD" "$@" \
         bash "$FENCE" 2>/dev/null
@@ -112,6 +114,27 @@ refuse "E2: testenv-batch with test-batch.sh not blocked"   '"decision":"block"'
 
 out="$(fence_run "bash spira/testenv-batch.sh spira/sp-x" SPIRA_AEON=test-aeon)"
 refuse "E3: testenv-batch.sh itself not blocked"            '"decision":"block"' "$out"
+
+# ===========================================================================
+echo
+echo "F — prod-path and fenced-name appearing as prose (data) do not block:"
+# ===========================================================================
+# POSITIVE CONTROL: actual writes and direct invocations are still blocked.
+out="$(fence_run "rm -rf ${FAKE_PROD}/releases" SPIRA_AEON=test-aeon)"
+want "F0 POSITIVE: write to SPIRA_PROD still blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "bash spira/verdict.sh push spira" SPIRA_AEON=test-aeon)"
+want "F1 POSITIVE: direct forge-script still blocked" '"decision":"block"' "$out"
+
+# census.sh is a read-only events query; aeons may invoke it from SPIRA_PROD.
+out="$(fence_run "bash \"${FAKE_PROD}/census.sh\" --with-suppressed" SPIRA_AEON=test-aeon)"
+refuse "F2: census.sh from SPIRA_PROD NOT blocked" '"decision":"block"' "$out"
+
+# A bead create passes description text via heredoc.  The prod path and a
+# fenced script name in that body are data, not commands to execute.
+_bd_cmd="$(printf 'bd -C /db create title --description - <<\047DESC\047\nbash "%s/census.sh" and /verdict.sh are mentioned\nDESC' "${FAKE_PROD}")"
+out="$(fence_run "$_bd_cmd" SPIRA_AEON=test-aeon)"
+refuse "F3: bd create with prod-path and fenced-name in heredoc NOT blocked" '"decision":"block"' "$out"
 
 # ===========================================================================
 echo
