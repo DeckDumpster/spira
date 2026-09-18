@@ -1164,12 +1164,20 @@ if [ -n "$_wt_gitdir" ]; then
       git -C "$WORK" ls-files --others --exclude-standard 2>/dev/null
     } | sort -u >"$_dirty_snapshot"
 
-    # Hook lives in a directory the worktree owns: the worktree-specific git dir.
-    _dirty_hook_dir="$_wt_gitdir/hooks"
-    mkdir -p "$_dirty_hook_dir"
-    cp "$SPIRA_HOME/pre-commit-guard.sh" "$_dirty_hook_dir/pre-commit" 2>/dev/null || true
-    chmod +x "$_dirty_hook_dir/pre-commit" 2>/dev/null || true
-    git -C "$WORK" config --worktree core.hooksPath "$_dirty_hook_dir" 2>/dev/null || true
+    # EVERY HOOK, NOT JUST THIS ONE. This used to copy pre-commit-guard.sh in as the
+    # worktree's only hook and point core.hooksPath at it. Because a per-worktree
+    # hooksPath OVERRIDES the repo-level one, that silently disarmed every OTHER hook in
+    # the repository for every aeon worktree — including the reference-transaction guard
+    # written after an Ops aeon deleted 24 peers' unlanded branches from inside one, and
+    # including the canonical pre-commit's own fences. The guard was verified by a live
+    # probe in the main checkout, which is the one place an aeon never works (sp-urifb,
+    # law-guard-proved-where-the-offender-runs).
+    #
+    # worktree-hooks.sh composes the directory from the canonical set rather than from a
+    # list here, so a hook added to spira/hooks tomorrow is armed in worktrees without
+    # anyone remembering this line exists. It is a separate script so the property can be
+    # asserted without summoning an aeon; test-ref-guard.sh calls it directly.
+    SPIRA_HOME="$SPIRA_HOME" bash "$SPIRA_HOME/worktree-hooks.sh" install "$WORK" >/dev/null 2>&1 || true
 fi
 
 DIRTY_BRIEF=""
