@@ -21,7 +21,7 @@
 #   6. Stop the promote timer (retired by this command).
 #   7. world.sh drain — wait for live aeons to finish; refuse if they do not.
 #   8. activate.sh — unpack, atomic symlink swap, daemon-reload, restart units.
-#   9. systemd/install.sh — re-render unit files with SPIRA_PROD=$SPIRA_RELEASES/current.
+#   9. systemd/install.sh — re-render unit files with SPIRA_PROD=$SPIRA_RELEASES/current/spira.
 #  10. cockpit/layout.sh ensure.
 #  11. world.sh resume.
 #  12. Health check: world.sh status, doctor.sh, skew.sh check.
@@ -92,12 +92,13 @@ except Exception:
     log "deploy: latest = $tag"
 fi
 
-# Derive the release directory name from the tag (spira-release-<stem> → <stem>).
-release_stem="${tag#spira-release-}"
-[ -n "$release_stem" ] && [ "$release_stem" != "$tag" ] || {
+# Validate tag format before any remote calls.
+_tag_stem="${tag#spira-release-}"
+[ -n "$_tag_stem" ] && [ "$_tag_stem" != "$tag" ] || {
     printf 'deploy: tag %s does not match spira-release-<stem> format\n' "$tag" >&2
     exit 2
 }
+unset _tag_stem
 
 [ -n "${SPIRA_RELEASES:-}" ] || {
     printf 'deploy: SPIRA_RELEASES is not set\n' >&2; exit 2
@@ -116,15 +117,61 @@ if [ -n "$_draft_info" ]; then
 fi
 unset _draft_info _is_draft
 
-# Refuse if this release is already current.
+# Resolve the asset from the release. The tarball timestamp may differ from the tag
+# timestamp; the asset name is authoritative. Refuse if there is not exactly one match.
+_assets_json="$(cd "$SPIRA_REPO" && gh release view "$tag" --json assets 2>/dev/null)" \
+    || _assets_json=""
+_asset_name="$(printf '%s' "${_assets_json:-}" | python3 -c '
+import json,sys
+try:
+    assets = json.load(sys.stdin).get("assets", [])
+    spira = [a["name"] for a in assets
+             if a["name"].startswith("spira-") and a["name"].endswith(".tar.gz")]
+    print(spira[0] if len(spira) == 1 else "")
+except Exception:
+    pass
+' 2>/dev/null)" || _asset_name=""
+[ -n "${_asset_name:-}" ] || {
+    printf 'deploy: no unique spira-*.tar.gz asset found in release %s\n' "$tag" >&2; exit 2
+}
+release_stem="${_asset_name%.tar.gz}"
+unset _assets_json _asset_name
+
+# Bootstrap: if current is absent and SPIRA_PROD resolves inside SPIRA_RELEASES, this is
+# a release-mode instance that has never been deployed through deploy.sh. Create
+# current -> that release so the rest of the flow has a consistent prev_release to roll back to.
 prev_release=""
+if [ ! -L "$SPIRA_RELEASES/current" ] && [ -n "${SPIRA_PROD:-}" ]; then
+    _prod_parent="$(dirname "${SPIRA_PROD}")"
+    _rel_canon="$(cd "$SPIRA_RELEASES" 2>/dev/null && pwd -P)" || _rel_canon="$SPIRA_RELEASES"
+    case "$_prod_parent/" in
+        "$_rel_canon/"*)
+            _boot_rel="${_prod_parent#$_rel_canon/}"
+            case "$_boot_rel" in
+                */*) : ;;
+                *)
+                    if [ -n "$_boot_rel" ] && [ -d "$SPIRA_RELEASES/$_boot_rel" ]; then
+                        _tmp="$SPIRA_RELEASES/.current.bootstrap.$$"
+                        ln -s "$_boot_rel" "$_tmp" \
+                            && mv -T "$_tmp" "$SPIRA_RELEASES/current" \
+                            && log "deploy: bootstrap: current -> $_boot_rel" \
+                            || true
+                    fi
+                    ;;
+            esac
+            ;;
+    esac
+    unset _prod_parent _rel_canon _boot_rel _tmp
+fi
+
+# Refuse if this release is already current; in dry-run fall through to report.
 if [ -L "$SPIRA_RELEASES/current" ]; then
     _current="$(readlink "$SPIRA_RELEASES/current")"
-    if [ "$_current" = "$release_stem" ]; then
+    if [ "$_current" = "$release_stem" ] && [ "$dry_run" != 1 ]; then
         printf 'deploy: %s is already current — nothing to do\n' "$release_stem" >&2
         exit 1
     fi
-    prev_release="$_current"
+    prev_release="${_current:-}"
 fi
 unset _current
 
@@ -132,15 +179,28 @@ log "deploy: target $release_stem (prev: ${prev_release:-none})"
 
 if [ "$dry_run" = 1 ]; then
     printf 'deploy: --dry-run — nothing will be changed\n'
-    printf 'deploy: would fetch %s from forge\n' "$tag"
+    printf 'deploy: would install asset: %s.tar.gz\n' "$release_stem"
     printf 'deploy: would check DB migration compatibility\n'
     printf 'deploy: would world.sh drain\n'
     printf 'deploy: would activate.sh %s.tar.gz\n' "$release_stem"
-    printf 'deploy: would systemd/install.sh (re-render units)\n'
+    # When a current release is active, verify the ExecStart target that install.sh would
+    # render is executable. This catches a wrong SPIRA_PROD before any disruptive action.
+    if [ -L "$SPIRA_RELEASES/current" ]; then
+        _dry_exec="$SPIRA_RELEASES/current/spira/sentinel.sh"
+        printf 'deploy: ExecStart=%s\n' "$_dry_exec"
+        if [ ! -x "$_dry_exec" ]; then
+            printf 'deploy: dry-run: ExecStart target is not executable: %s\n' \
+                "$_dry_exec" >&2
+            exit 1
+        fi
+        unset _dry_exec
+    fi
+    printf 'deploy: would systemd/install.sh (re-render units with SPIRA_PROD=%s/current/spira)\n' \
+        "$SPIRA_RELEASES"
     printf 'deploy: would cockpit/layout.sh ensure\n'
     printf 'deploy: would world.sh resume\n'
     printf 'deploy: would run health checks\n'
-    printf 'deploy: would update spira.conf SPIRA_PROD\n'
+    printf 'deploy: would update spira.conf: SPIRA_PROD=%s/current/spira\n' "$SPIRA_RELEASES"
     exit 0
 fi
 
@@ -222,10 +282,13 @@ _rollback() {
 log "deploy: activating"
 "$_ACTIVATE" "$_tarball" || { _rollback "activate.sh failed"; }
 
-# Re-render unit files so ExecStart paths point at $SPIRA_RELEASES/current.
+# Record the release tag beside the release directory so skew.sh can map directory to tag.
+printf '%s\n' "$tag" > "$SPIRA_RELEASES/$release_stem/.tag" 2>/dev/null || true
+
+# Re-render unit files so ExecStart paths point at $SPIRA_RELEASES/current/spira.
 # One-time cutover if SPIRA_PROD was previously set to the checkout; idempotent thereafter.
 log "deploy: re-rendering units"
-SPIRA_PROD="$SPIRA_RELEASES/current" SPIRA_INSTALL_FORCE=1 bash "$_INSTALL" || {
+SPIRA_PROD="$SPIRA_RELEASES/current/spira" SPIRA_INSTALL_FORCE=1 bash "$_INSTALL" || {
     _rollback "unit re-render failed"
 }
 
@@ -262,9 +325,9 @@ if [ -f "$_conf_path" ]; then
 else
     :> "${_conf_path}.new.$$"
 fi
-printf 'SPIRA_PROD = %s/current\n' "$SPIRA_RELEASES" >> "${_conf_path}.new.$$"
+printf 'SPIRA_PROD = %s/current/spira\n' "$SPIRA_RELEASES" >> "${_conf_path}.new.$$"
 mv "${_conf_path}.new.$$" "$_conf_path" \
     || log "deploy: WARN: could not write SPIRA_PROD to $_conf_path — fix manually"
-log "deploy: spira.conf updated — SPIRA_PROD = $SPIRA_RELEASES/current"
+log "deploy: spira.conf updated — SPIRA_PROD = $SPIRA_RELEASES/current/spira"
 
 log "deploy: $release_stem active"
