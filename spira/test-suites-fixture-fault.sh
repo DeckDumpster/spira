@@ -44,6 +44,9 @@ echo "test-suites-fixture-fault.sh"
 . "$HERE/testdb.sh"
 testdb_require test-suites-fixture-fault
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# Capture before testdb_up prepends the bd-embedded shim to PATH; used in sut so the
+# server-mode fallback finds the real bd, not the wrapper.
+_BD_REAL="$(command -v bd 2>/dev/null || true)"
 testdb_up fixture-fault || { echo "test-suites-fixture-fault: could not build a fixture database"; exit 1; }
 
 SH="$TMP/spira"; RUN="$TMP/run"; STATE="$TMP/state"; GATEF="$TMP/gate-suites"
@@ -71,11 +74,12 @@ chmod +x "$TOOLPATH/bd"
 
 # sut: run suites.sh in a clean environment.
 #
-# HOME IS THE REAL HOME here, unlike the test-suites.sh parent which uses a scratch home.
-# The difference: this test needs suites.sh to call testdb_up and build a fresh shared
-# fixture, which calls bd-embedded init with env -i HOME="$HOME". With a scratch HOME that
-# init fails, _td_shared stays 0, and the fixture-fault path is never reached. The spira
-# config is isolated by SPIRA_CONF pointing to a nonexistent file.
+# HOME: real — bd-embedded init needs the invoking user's HOME; a scratch HOME causes
+# testdb_up to fail, _td_shared=0, and the fixture-fault path is never reached.
+# SPIRA_TESTDB_DATA + TESTDB_SERVER_BD: passed through when set, giving the nested
+# testdb_up a server-mode fallback when bd-embedded fails transiently. Without them,
+# testdb_available returns 1 on transient failure and _td_shared stays 0. TESTDB_SERVER_BD
+# is pre-testdb_up bd so the fallback uses the real bd, not the bd-embedded wrapper.
 sut() {
     local cmd="$1"; shift
     # SPIRA_SUITES_INLINE=1 — run the planted suites HERE, not in a container.
@@ -94,6 +98,9 @@ sut() {
         SPIRA_SUITES_STALE="$STALE" SPIRA_SUITES_PRIORITY="$PRIO" \
         SPIRA_PATH="$TOOLPATH" \
         SPIRA_SUITES_INLINE=1 \
+        ${SPIRA_TESTDB_DATA:+SPIRA_TESTDB_DATA=$SPIRA_TESTDB_DATA} \
+        ${SPIRA_TESTDB_DATA:+TESTDB_SERVER_BD=${_BD_REAL:-bd}} \
+        ${SPIRA_TESTDB_PORT:+SPIRA_TESTDB_PORT=$SPIRA_TESTDB_PORT} \
         "$@" bash "$SH/suites.sh" "$cmd" 2>&1
 }
 plant() { cat > "$SH/$1"; chmod +x "$SH/$1"; }
