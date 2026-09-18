@@ -121,9 +121,12 @@ FORGE
 chmod +x "$SH/forge-fixture.sh"
 
 # ─── mail.sh stub ─────────────────────────────────────────────────────────────
+# Capture both command line and stdin body
 cat > "$SH/mail.sh" <<'MAIL'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$MAIL_LOG"
+# Also capture stdin body for test verification
+cat >> "$MAIL_LOG"
 MAIL
 chmod +x "$SH/mail.sh"
 
@@ -385,6 +388,66 @@ is   "8. red-no-suite: retries=1"     "1" \
      "$(grep '^retries=' "$(batch_file)" | cut -d= -f2)"
 want "8. red-no-suite: says why"      "not judged"   "$out"
 nowant "8. red-no-suite: not held"    "leaving batch open" "$out"
+clean_case
+
+# =============================================================================
+# 8.5 TOGETHER-ONLY RED — multiple members, red only when batched, all
+#     members requeued, PR closed, batch removed, and notification sent.
+#
+#     POSITIVE CONTROL: a red-repro mock that fails on batch head but passes
+#     on individual members — verifies the together-only condition triggers.
+#     NOTIFICATION CONTROL: verify _attr_notify_red is called with the right
+#     decision text ("together-only red") and recipient email is sent.
+# =============================================================================
+# Create a mock testenv-batch.sh that:
+#   - Fails (exit 1) when called for the batch HEAD or batch branches
+#   - Succeeds (exit 0) when called for individual member branches
+# Signature: testenv-batch --mode serial --suites <suites> <branch>
+cat > "$SH/repro-together-only.sh" <<'REPROMOCK'
+#!/usr/bin/env bash
+# Mock: fail only for batch head or 'spira/queue/*' branches; pass for individuals
+# Args: --mode serial --suites <suites> <branch>
+shift 2  # skip --mode serial
+shift 2  # skip --suites <suites>
+branch="${1:-}"
+if [[ "$branch" == "spira/queue"* ]]; then
+    exit 1  # Batch head is red (together-only)
+else
+    exit 0  # Individual member branches are green
+fi
+REPROMOCK
+chmod +x "$SH/repro-together-only.sh"
+
+batch_head85="$(build_batch sp-vd-t85-1 sp-vd-t85-2)"
+# Name the batch branch
+{
+    grep -v '^branch=' "$(batch_file)"
+    printf 'branch=spira/queue/test85\n'
+} > "$(batch_file).$$" && mv -f "$(batch_file).$$" "$(batch_file)"
+
+printf 'red\nred-suite: test-suite-together-only.sh\n' > "$FORGE_STATUS_FILE"
+before_main85="$(remote_main)"
+
+out="$( \
+    SPIRA_QUEUE_REPRO_BATCH="$SH/repro-together-only.sh" \
+    verdict "$REPONAME" \
+)"
+
+# Verify: batch stays open (no push to main)
+is   "8.5 together-only: no push"          "$before_main85" "$(remote_main)"
+# Verify: batch record removed (verdict closes it)
+is   "8.5 together-only: batch removed"    "0" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+# Verify: both members marked CERTIFIED (halved, not ejected)
+case "$(landstate sp-vd-t85-1)" in CERTIFIED*) ok "8.5 together-only: sp-vd-t85-1 CERTIFIED" ;;
+    *) bad "8.5 together-only: sp-vd-t85-1 CERTIFIED" "got: $(landstate sp-vd-t85-1)" ;; esac
+case "$(landstate sp-vd-t85-2)" in CERTIFIED*) ok "8.5 together-only: sp-vd-t85-2 CERTIFIED" ;;
+    *) bad "8.5 together-only: sp-vd-t85-2 CERTIFIED" "got: $(landstate sp-vd-t85-2)" ;; esac
+# Verify: decision text mentions together-only in output
+want "8.5 together-only: reported as together-only" "together-only" "$out"
+# Verify: mail notification sent with together-only decision
+want "8.5 together-only: mail notification sent"    "send operator"  "$(cat "$MAIL_LOG")"
+want "8.5 together-only: notification mentions decision" "Together-only red" "$(cat "$MAIL_LOG")"
+
 clean_case
 
 # =============================================================================
