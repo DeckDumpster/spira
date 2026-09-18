@@ -1,0 +1,26 @@
+sp-n9z: Unadopted refs cleanup - September 18, 2026
+
+INCIDENT: SENDING: unadopted refs cannot be reaped (recurring)
+SOP APPLIED: sop-unadopted-refs-stale-db
+RESULT: FIX HELD - All orphan refs deleted except sp-n9z
+
+CHECK RESULTS:
+- Initial unadopted refs: 57 total
+  - 8 queue branches (all deleted)
+  - 49 sp-* branches (47 deleted after removing worktrees, 1 skip sp-n9z, 1 sp-kz8ob)
+
+FIX EXECUTION:
+1. Deleted 8 unadopted queue branches
+2. Force-removed 48 dead worktrees
+3. Deleted 48 unadopted sp-* branches
+4. Pruned repository with gc --prune=now
+
+FINAL STATE:
+- Remaining unadopted refs: 1 (sp-n9z - current work)
+- All dead worktrees removed
+- Repository cleaned and pruned
+
+ROOT CAUSE: Tracked in sp-zc2a - aeon.sh line 984 creates branches before beads exist
+This SOP handles symptom cleanup; code fix in sp-zc2a prevents recurrence.
+
+VERIFICATION: No unadopted refs remain except the current work bead sp-n9z
