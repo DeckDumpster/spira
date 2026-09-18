@@ -634,6 +634,56 @@ is "A. stale-cert: live tip in landstate" "$LIVE_TIP_A" "$_tipA"
 want "A. stale-cert: stale-certification logged" "stale-certification" "$out_a"
 want "A. stale-cert: certified sha in log" "${BASE_SHA_A:0:8}" "$out_a"
 want "A. stale-cert: live sha in log"      "${LIVE_TIP_A:0:8}"  "$out_a"
+
+# =============================================================================
+# g. BASE-CONFLICT STAMP: a branch that conflicts with origin/main is reopened
+#    AND stamped merge-conflict via bump_requeue, matching landing.sh:624/922.
+#
+#    POSITIVE CONTROL: on the pre-fix tree, bump_requeue is never called from
+#    the base-conflict branch in batch.sh; the spy file stays empty and the
+#    assertion reads "1" against "0".
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"; OLD_G=$(( NOW - 1800 - 1 ))
+
+# Branch spira/sp-btg: edits conflict.txt = "branch-ver" on top of current main.
+git -C "$REPO" worktree add -q -b "spira/sp-btg" \
+    "$RUN/worktree/sp-btg" main 2>/dev/null || true
+printf 'branch-ver\n' > "$RUN/worktree/sp-btg/conflict.txt"
+git -C "$RUN/worktree/sp-btg" add -A
+git -C "$RUN/worktree/sp-btg" commit -q -m "sp-btg: work"
+tip_g="$(git -C "$REPO" rev-parse "spira/sp-btg")"
+printf 'CERTIFIED %s %s\n' "$tip_g" "$OLD_G" > "$LANDSTATE/sp-btg"
+plant_bead "sp-btg"
+
+# Push conflict.txt = "main-ver" to origin/main after the branch exists;
+# spira/sp-btg now conflicts with the new base.
+printf 'main-ver\n' > "$REPO/conflict.txt"
+git -C "$REPO" add conflict.txt
+git -C "$REPO" commit -q -m "main: set conflict.txt"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+
+# Spy: append a bump_requeue override to the lib.sh copy; bash uses the last
+# definition, so this replaces the original for this batch() call.
+# The path to REQUEUE_SPY_G is expanded now; ${1:-} etc. are escaped for runtime.
+REQUEUE_SPY_G="$TMP/rq-spy-g"
+: > "$REQUEUE_SPY_G"
+cat >> "$SH/lib.sh" << LIBSPY
+
+bump_requeue() {
+    printf '%s %s\n' "\${1:-}" "\${2:-}" >> "$REQUEUE_SPY_G"
+    _bump_write_event "\${1:-}" requeued "\${2:-unrecorded}"
+}
+LIBSPY
+
+out_g="$(batch "$REPONAME" 2>&1)"
+want "g: base-conflict: reopened message"            "conflicts with"   "$out_g"
+is   "g: base-conflict: bump_requeue merge-conflict" "1" \
+    "$(grep -c "^sp-btg merge-conflict$" "$REQUEUE_SPY_G" 2>/dev/null || echo 0)"
+
+cp "$HERE/lib.sh" "$SH/lib.sh"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"

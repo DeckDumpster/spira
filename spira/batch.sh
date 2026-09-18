@@ -285,6 +285,7 @@ main() {
             git -C "$wt" merge --abort 2>/dev/null || true
             if _base_conflict "$repo" "$base_sha" "$_btip"; then
                 # Conflict with the land ref itself — reopen the bead.
+                bump_requeue "$_bid" merge-conflict >/dev/null 2>&1 || true
                 bead_reopen "$_bid" \
                     "Reopened by batch builder: branch spira/$_bid conflicts with $base in $name." \
                     >/dev/null 2>&1 || true
