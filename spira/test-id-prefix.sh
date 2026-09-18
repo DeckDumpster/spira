@@ -60,17 +60,18 @@ result="$(
     bash -c '. "$1/lib.sh"; other_beads_on_conflicts "$2" "spira/tt-own" "$3" "f.txt"' \
         -- "$HERE" "$TMP_REPO" "$BASE"
 )"
-want   "custom-prefix id found when SPIRA_ID_PREFIX matches"       "tt-abc123" "$result"
+want   "custom-prefix id found when branch prefix matches"          "tt-abc123" "$result"
 nowant "own bead excluded from conflict result"                     "tt-own"    "$result"
 
-# NEGATIVE CONTROL: SPIRA_ID_PREFIX=sp must not match tt- ids.
+# NEGATIVE CONTROL: a branch with sp- prefix must not match tt- ids on the base.
+# The prefix is derived from the branch's own id, not SPIRA_ID_PREFIX.
 result_sp="$(
-    export SPIRA_ID_PREFIX="sp" SPIRA_HOME="$HERE" SPIRA_RUN="$TMP_DIR/run"
+    export SPIRA_HOME="$HERE" SPIRA_RUN="$TMP_DIR/run"
     export SPIRA_DB="$TMP_DIR/db"
-    bash -c '. "$1/lib.sh"; other_beads_on_conflicts "$2" "spira/tt-own" "$3" "f.txt"' \
+    bash -c '. "$1/lib.sh"; other_beads_on_conflicts "$2" "spira/sp-own" "$3" "f.txt"' \
         -- "$HERE" "$TMP_REPO" "$BASE"
 )"
-nowant "default sp- prefix does not match custom-prefix ids"        "tt-abc123" "$result_sp"
+nowant "sp-prefix branch does not match tt- ids on base"            "tt-abc123" "$result_sp"
 
 # ============================================================================
 echo
