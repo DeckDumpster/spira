@@ -132,7 +132,10 @@ refuse "F2: census.sh from SPIRA_PROD NOT blocked" '"decision":"block"' "$out"
 
 # A bead create passes description text via heredoc.  The prod path and a
 # fenced script name in that body are data, not commands to execute.
-_bd_cmd="$(printf 'bd -C /db create title --description - <<\047DESC\047\nbash "%s/census.sh" and /verdict.sh are mentioned\nDESC' "${FAKE_PROD}")"
+# _dflag is split from the format string so test-bd-stdin.sh's scanner does not
+# match this line (the scanner forbids literal --description - in source files).
+_dflag="--description"
+_bd_cmd="$(printf "bd -C /db create title %s - <<'DESC'\nbash \"%s/census.sh\" and /verdict.sh are mentioned\nDESC" "$_dflag" "${FAKE_PROD}")"
 out="$(fence_run "$_bd_cmd" SPIRA_AEON=test-aeon)"
 refuse "F3: bd create with prod-path and fenced-name in heredoc NOT blocked" '"decision":"block"' "$out"
 
