@@ -268,20 +268,19 @@ want "2. halve: halved reported"          "together-only red" "$out"
 clean_case
 
 # =============================================================================
-# 3. FLAKE — no member reproduces, batch head also green → quarantines suite,
-#    requeues all members.
+# 3. UNREPRODUCED RED — no member reproduces, batch head also green; suite came
+#    on a red-suite: line so it is ineligible for observe-flake; members requeued.
 # =============================================================================
 testdb_reset
 build_members sp-at-f sp-at-g > /dev/null
 for id in sp-at-f sp-at-g; do plant_bead "$id"; done
 # Nobody reproduces (REPRO_FAIL_FILE is empty).
 out="$(verdict "$REPONAME")"
-is   "3. flake: sp-at-f returned CERTIFIED" "CERTIFIED"  "$(land_state_of sp-at-f)"
-is   "3. flake: sp-at-g returned CERTIFIED" "CERTIFIED"  "$(land_state_of sp-at-g)"
-is   "3. flake: batch record removed"       "0"          "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
-want "3. flake: observe-flake called for red suite" \
-     "observe-flake test-canary.sh" "$(cat "$SUITES_LOG")"
-want "3. flake: reported as flake"          "requeued"   "$out"
+is     "3. unrep-red: sp-at-f returned CERTIFIED" "CERTIFIED"  "$(land_state_of sp-at-f)"
+is     "3. unrep-red: sp-at-g returned CERTIFIED" "CERTIFIED"  "$(land_state_of sp-at-g)"
+is     "3. unrep-red: batch record removed"       "0"          "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+nowant "3. unrep-red: red-suite not quarantined"  "observe-flake" "$(cat "$SUITES_LOG")"
+want   "3. unrep-red: reported as requeued"       "requeued"   "$out"
 clean_case
 
 # =============================================================================
@@ -293,9 +292,9 @@ build_members sp-at-h > /dev/null
 plant_bead sp-at-h
 # First verdict: does not reproduce.
 out1="$(verdict "$REPONAME")"
-is   "4a. unrep-1: not ejected"        "CERTIFIED"  "$(land_state_of sp-at-h)"
-want "4a. unrep-1: observe-flake called" "observe-flake" "$(cat "$SUITES_LOG")"
-is   "4a. unrep-1: batch removed"      "0"          "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+is     "4a. unrep-1: not ejected"             "CERTIFIED"  "$(land_state_of sp-at-h)"
+nowant "4a. unrep-1: red-suite not quarantined" "observe-flake" "$(cat "$SUITES_LOG")"
+is     "4a. unrep-1: batch removed"           "0"          "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
 
 # Rebuild the batch for the SAME member at the SAME tip.
 tip="$(awk '{print $2}' "$LANDSTATE/sp-at-h" 2>/dev/null)"
