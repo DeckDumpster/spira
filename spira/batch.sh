@@ -274,9 +274,17 @@ main() {
     local lg_out lg_rc lg_start lg_cost
     lg_start="$(date +%s)"
     git -C "$repo" branch -f "$batch_br" "$batch_head" 2>/dev/null || true
-    lg_out="$(SPIRA_GATE_BEAD="batch-$stamp" bash "$HERE/gate.sh" "$batch_br" "$name" 2>&1)"
-    lg_rc=$?
-    lg_cost=$(( $(date +%s) - lg_start ))
+    # SPIRA_QUEUE_LOCAL_GATE=0 opens the PR without the local gate. The gate runs inside
+    # the landing pass, so every batch paid 30-45 min of it -- with no verdict, no other
+    # batch and no landing moving -- before CI ran the same corpus (sp-hrkwa).
+    if [ "${SPIRA_QUEUE_LOCAL_GATE:-1}" = 0 ]; then
+        lg_out=""; lg_rc=0; lg_cost=0
+        printf 'batch %s: local gate skipped (SPIRA_QUEUE_LOCAL_GATE=0) — CI is the authority\n' "$name"
+    else
+        lg_out="$(SPIRA_GATE_BEAD="batch-$stamp" bash "$HERE/gate.sh" "$batch_br" "$name" 2>&1)"
+        lg_rc=$?
+        lg_cost=$(( $(date +%s) - lg_start ))
+    fi
 
     if [ "$lg_rc" -ne 0 ] && spira_gate_blames_branch "$lg_rc"; then
         local lg_attr_start lg_attr_cost lg_ejected lg_suites_csv
