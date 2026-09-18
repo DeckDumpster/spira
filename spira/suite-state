@@ -12,3 +12,4 @@
 # so testenv-batch.sh, CI and the hourly run each judge the tree they carry.
 # Transitions are written by: suites.sh quarantine|disable|activate.
 test-dummy.sh | quarantined | 2026-09-17T00:00:00Z | sp-40a5p | auto: 3 flake observations in the window
+test-cockpit-mouse.sh | quarantined | 2026-09-18T00:00:00Z | sp-1j7ez | auto: 4 flake observations in the window
