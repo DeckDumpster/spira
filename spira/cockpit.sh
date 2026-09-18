@@ -1066,6 +1066,7 @@ unsent_keys() {
     # branches aged forever — the reassuring answer, produced by looking in the wrong place.
     # Refs are a local read, so this costs nothing per repository; no fetch happens here.
     _fail=0; _n=0; _o=""; _done=0; _unadopted=0; _orphan_work=0; _unadopted_names=""
+    _protected=0; _protected_names=""
     for _r in $(spira_repos); do
         _p="$(repo_root "$_r")" || continue
         [ -e "$_p/.git" ] || continue
@@ -1121,11 +1122,37 @@ except Exception: print("")' 2>/dev/null)"
         else
             _fail=1
         fi
+        # Harness-owned namespaces: enumerate explicitly and count as SP_PROTECTED.
+        # queue/* and suite-state/* are never bead-named; the probe must not consider
+        # them unadopted (sp-ctag9: an aeon deleted a live queue branch mid-CI).
+        for _ns in "refs/heads/spira/queue/" "refs/heads/spira/suite-state/"; do
+            while read -r _pb; do
+                [ -n "$_pb" ] || continue
+                _protected=$((_protected+1))
+                _protected_names="${_protected_names:+$_protected_names }${_pb#spira/}"
+            done < <(git -C "$_p" for-each-ref --format='%(refname:short)' "$_ns" 2>/dev/null || true)
+        done
+        # Belt-and-suspenders: the open batch branch is never an orphan, whatever its name.
+        _open_f="${SPIRA_QUEUE_DIR:-$SPIRA_RUN/queue}/$_r/open"
+        if [ -f "$_open_f" ]; then
+            _ob="$(grep '^branch=' "$_open_f" 2>/dev/null | cut -d= -f2- | head -1)" || true
+            if [ -n "${_ob:-}" ]; then
+                case " $_protected_names " in
+                    *" ${_ob#spira/} "*) ;;
+                    *)
+                        _protected=$((_protected+1))
+                        _protected_names="${_protected_names:+$_protected_names }${_ob#spira/}"
+                        ;;
+                esac
+            fi
+        fi
     done
     echo "SP_BRANCH_DONE=$_done"
     echo "SP_UNADOPTED=$_unadopted"
     echo "SP_UNADOPTED_NAMES='$_unadopted_names'"
     echo "SP_ORPHAN_WORK=$_orphan_work"
+    echo "SP_PROTECTED=$_protected"
+    echo "SP_PROTECTED_NAMES='$_protected_names'"
     if [ "$_fail" = 1 ]; then
         echo "SP_UNSENT=?"
         echo "SP_UNSENT_OLDEST_H=?"
