@@ -31,15 +31,15 @@ echo "test-cockpit-mouse.sh"
 echo
 
 echo "the key exists and is on by default:"
-if printf '%s' "$CONF_CODE" | grep -qE '\$\{COCKPIT_MOUSE:=on\}'; then
+if grep -qE '\$\{COCKPIT_MOUSE:=on\}' <<< "$CONF_CODE"; then
     ok "COCKPIT_MOUSE defaults to on"
 else
     bad "COCKPIT_MOUSE defaults to on" "no :=on default in conf.sh; a fresh box gets an unclickable cockpit"
 fi
 # A key absent from the allowlist is silently ignored when set in spira.conf --
 # the failure the allowlist exists to prevent happening to a typo.
-if printf '%s' "$CONF_CODE" | grep -q 'COCKPIT_MOUSE'; then
-    _n="$(printf '%s' "$CONF_CODE" | grep -c 'COCKPIT_MOUSE')"
+if grep -q 'COCKPIT_MOUSE' <<< "$CONF_CODE"; then
+    _n="$(grep -c 'COCKPIT_MOUSE' <<< "$CONF_CODE")"
     if [ "${_n:-0}" -ge 3 ]; then
         ok "COCKPIT_MOUSE is in the manifest, the defaults and the export list"
     else
@@ -52,7 +52,7 @@ fi
 
 echo
 echo "layout.sh turns it on itself, rather than trusting the operator's dotfiles:"
-if printf '%s' "$LAYOUT_CODE" | grep -qE 'set-option +-g +mouse +on'; then
+if grep -qE 'set-option +-g +mouse +on' <<< "$LAYOUT_CODE"; then
     ok "layout.sh sets mouse on"
 else
     bad "layout.sh sets mouse on" "no 'set-option -g mouse on'; the cockpit depends on a ~/.tmux.conf that need not exist"
@@ -62,9 +62,9 @@ fi
 # mouse off, and `up` may never run on it again -- so a cockpit that has only been
 # ensured would stay unclickable forever.
 for verb in up ensure; do
-    if printf '%s' "$LAYOUT_CODE" \
-        | awk -v v="$verb" '$0 ~ "^"v"\\)" {f=1} f {print} f && /^    ;;/ {exit}' \
-        | grep -q 'apply_mouse_mode'; then
+    _block="$(awk -v v="$verb" '$0 ~ "^"v"\\)" {f=1} f {print} f && /^    ;;/ {exit}' \
+        <<< "$LAYOUT_CODE")"
+    if grep -q 'apply_mouse_mode' <<< "$_block"; then
         ok "the $verb path applies it"
     else
         bad "the $verb path applies it" "apply_mouse_mode is not called from $verb"
@@ -73,14 +73,14 @@ done
 
 echo
 echo "the operator can still refuse it:"
-if printf '%s' "$LAYOUT_CODE" | grep -qE 'off\|no\|0\)'; then
+if grep -qE 'off\|no\|0\)' <<< "$LAYOUT_CODE"; then
     ok "COCKPIT_MOUSE=off opts out"
 else
     bad "COCKPIT_MOUSE=off opts out" "no opt-out branch; mouse mode costs terminal-native drag-select and that is per-operator"
 fi
 
 # It is called from a timer. A cosmetic option must never fail the caller.
-if printf '%s' "$LAYOUT_CODE" | grep -qE 'set-option +-g +mouse +on[^|]*\|\| *true'; then
+if grep -qE 'set-option +-g +mouse +on[^|]*\|\| *true' <<< "$LAYOUT_CODE"; then
     ok "it never fails the caller"
 else
     bad "it never fails the caller" "an unclickable cockpit is degraded, not broken; layout.sh runs from a timer"
