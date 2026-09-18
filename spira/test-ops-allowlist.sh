@@ -109,15 +109,15 @@ ops_allows "grep -r 'error' /var/log/spira/" \
     && ok  "grep allowed" \
     || bad "grep NOT allowed" "Ops cannot search logs"
 
-ops_allows "ls -la /home/ryan/spira/run/worktree" \
+ops_allows "ls -la /srv/spira/run/worktree" \
     && ok  "ls allowed" \
     || bad "ls NOT allowed" "Ops cannot list directories"
 
-ops_allows "bd -C /home/ryan/spira/db show sp-xyz" \
+ops_allows "bd -C /srv/spira/db show sp-xyz" \
     && ok  "bd show allowed" \
     || bad "bd show NOT allowed" "Ops cannot read beads"
 
-ops_allows "bd -C /home/ryan/spira/db note sp-xyz 'diagnosis'" \
+ops_allows "bd -C /srv/spira/db note sp-xyz 'diagnosis'" \
     && ok  "bd note allowed" \
     || bad "bd note NOT allowed" "Ops cannot write diagnostic notes"
 
@@ -125,7 +125,7 @@ ops_allows "git log --oneline -10" \
     && ok  "git log allowed" \
     || bad "git log NOT allowed" "Ops cannot read git history"
 
-ops_allows "git -C /home/ryan/spira/harness log --oneline -5" \
+ops_allows "git -C /srv/spira/harness log --oneline -5" \
     && ok  "git -C ... log allowed" \
     || bad "git -C ... log NOT allowed" "Ops cannot read git history with -C"
 
@@ -137,7 +137,7 @@ ops_allows "git status" \
 echo
 echo "writes and mutations are refused"
 # ==========================================================================================
-ops_allows "rm -rf /home/ryan/spira/run/worktree" \
+ops_allows "rm -rf /srv/spira/run/worktree" \
     && bad "rm refused" "rm was allowed — must not be" \
     || ok  "rm refused"
 
