@@ -46,6 +46,13 @@ _batch_set_retries() {  # _batch_set_retries <file> <n>
         && mv -f "$f.$$" "$f"
 }
 
+_batch_reseal() {   # _batch_reseal <file> <new_head> <new_members>
+    local f="$1" new_head="$2" new_members="$3"
+    { grep -vE '^(head|members|retries)=' "$f"
+      printf 'head=%s\nretries=0\nmembers=%s\n' "$new_head" "$new_members"; } \
+        > "$f.$$" && mv -f "$f.$$" "$f"
+}
+
 # ---------------------------------------------------------------------------
 # ATTRIBUTION — local per-member reproduction on a red batch.
 # ---------------------------------------------------------------------------
@@ -102,7 +109,7 @@ _attr_eject() {  # _attr_eject <id> <tip> <suites-csv> <pr-n> <name>
 _q_attribute() {
     local name="$1" repo="$2" pr_n="$3" batch_file="$4" branch_name="$5"
     local batch_head="$6" base_sha="$7" forge="$8" status_out="$9"
-    local members_str="${10}"
+    local members_str="${10}" remote="${11:-}" base_ref="${12:-}"
 
     local attr_start; attr_start="$(date +%s)"
 
@@ -199,17 +206,54 @@ _q_attribute() {
         _attr_eject "$_mid" "$_mtip" "$suites_csv" "$pr_n" "$name"
     done
 
-    # Return survivors to CERTIFIED.
-    for _mm in "${survivors[@]}"; do
-        _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
-        land_mark "$_mid" CERTIFIED "$_mtip"
-    done
+    # When ejection leaves survivors, rebuild on the same base and re-push to
+    # the same branch so CI re-runs the survivors without a new local gate pass
+    # (law-local-gates-buy-latency-not-coverage). Fall back if the base moved or
+    # the survivors no longer merge cleanly.
+    local _repushed=0
+    if [ "${#ejected[@]}" -gt 0 ] && [ "${#survivors[@]}" -gt 0 ] \
+            && [ -n "${branch_name:-}" ] && [ -n "${remote:-}" ]; then
+        local _cur_base
+        _cur_base="$(git -C "$repo" rev-parse "${base_ref}" 2>/dev/null)" || _cur_base=""
+        if [ "${_cur_base:-}" = "$base_sha" ]; then
+            local _rwt="${SPIRA_RUN}/worktree/.batch-$(basename "$repo")-reb$$"
+            git -C "$repo" worktree remove -f "$_rwt" 2>/dev/null || true
+            if git -C "$repo" worktree add -q --detach "$_rwt" "$base_sha" 2>/dev/null; then
+                local _rok=1 _rmm _rmid _rmtip _new_head=""
+                for _rmm in "${survivors[@]}"; do
+                    _rmid="${_rmm%%:*}"; _rmtip="${_rmm##*:}"
+                    if ! git -C "$_rwt" merge -q --no-edit --no-ff \
+                            -m "spira: land $_rmid" "$_rmtip" >/dev/null 2>&1; then
+                        git -C "$_rwt" merge --abort 2>/dev/null || true
+                        _rok=0; break
+                    fi
+                done
+                [ "$_rok" -eq 1 ] && _new_head="$(git -C "$_rwt" rev-parse HEAD)"
+                git -C "$repo" worktree remove -f "$_rwt" 2>/dev/null || true
+                if [ "$_rok" -eq 1 ] && [ -n "$_new_head" ]; then
+                    if git -C "$repo" push -f "$remote" \
+                            "${_new_head}:refs/heads/${branch_name}" 2>/dev/null; then
+                        _batch_reseal "$batch_file" "$_new_head" "${survivors[*]}"
+                        _repushed=1
+                        printf 'verdict %s: PR %s — ejected %d, survivors re-pushed to same PR (head %s)\n' \
+                            "$name" "$pr_n" "${#ejected[@]}" "$_new_head"
+                    fi
+                fi
+            fi
+        fi
+    fi
 
-    if [ "${#ejected[@]}" -gt 0 ] || [ "${#survivors[@]}" -gt 0 ]; then
-        "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
-        rm -f "$batch_file"
-        printf 'verdict %s: PR %s — ejected %d, requeued %d\n' \
-            "$name" "$pr_n" "${#ejected[@]}" "${#survivors[@]}"
+    if [ "$_repushed" -eq 0 ]; then
+        for _mm in "${survivors[@]}"; do
+            _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
+            land_mark "$_mid" CERTIFIED "$_mtip"
+        done
+        if [ "${#ejected[@]}" -gt 0 ] || [ "${#survivors[@]}" -gt 0 ]; then
+            "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
+            rm -f "$batch_file"
+            printf 'verdict %s: PR %s — ejected %d, requeued %d\n' \
+                "$name" "$pr_n" "${#ejected[@]}" "${#survivors[@]}"
+        fi
     fi
 
     _meter_write "$name" "$mc" "$caught" "$escaped" "$attr_start"
@@ -373,7 +417,8 @@ main() {
             ;;
         red)
             _q_attribute "$name" "$repo" "$pr_n" "$batch_file" "$branch_name" \
-                "$batch_head" "$base_sha" "$forge" "$status_out" "$members_str"
+                "$batch_head" "$base_sha" "$forge" "$status_out" "$members_str" \
+                "$remote" "$base"
             ;;
         *)
             printf 'verdict %s: PR %s unknown check status: %s\n' "$name" "$pr_n" "$status" >&2
