@@ -4866,30 +4866,63 @@ queue_is_suite_transition() {
 # Set PRIO_JSON env to a bdjson array for priority lookups (defaults to []).
 # Sort order: suite-transition first (flag=0), then priority asc, then epoch asc.
 # This is the canonical batcher sort used by both batch.sh and the cockpit.
+#
+# PRIO_JSON NEVER REACHES A CHILD PROCESS. Callers pass the full `bd show --json` of every
+# certified bead, and at 40 beads that was 266 KiB -- past Linux's 128 KiB limit on a single
+# environment string. Every exec in here then failed E2BIG, the sort ran under 2>/dev/null,
+# and it returned zero rows: batch.sh cut nothing and the cockpit showed an empty queue for
+# nine hours with 40 branches waiting. A cliff that the stall itself pushes the backlog
+# further over (sp-m5iq3). So the payload goes to a file and is unset before the first exec,
+# here in the callee, where no caller can reintroduce it.
+#
+# AND THE SORT FAILS OPEN. Ranking is an optimisation; dropping every row is the
+# catastrophic outcome. If ranking breaks the rows come out unranked, and it says so.
 queue_sort_rows() {
     local repo="$1" base_sha="$2"
+    # Copied into an unexported local and unset BEFORE anything forks: mktemp is an exec
+    # too, and the first version of this fix called it first and died of the same E2BIG.
+    local _pj="${PRIO_JSON:-[]}" _pjf _out _rc
+    unset PRIO_JSON
+    _pjf="$(mktemp)" || return 1
+    printf '%s' "$_pj" > "$_pjf"
+    _pj=""
+
     local _id _tip _epoch _is_trans _buf=""
     while read -r _id _tip _epoch; do
         _is_trans=0
         queue_is_suite_transition "$repo" "$_tip" "$base_sha" && _is_trans=1 || true
-        _buf="${_buf}${_id} ${_tip} ${_epoch} ${_is_trans}"$'\n'
+        _buf="${_buf}${_id} ${_tip} ${_epoch%% *} ${_is_trans}"$'\n'
     done
-    printf '%s' "$_buf" | python3 -c "
+
+    _out="$(printf '%s' "$_buf" | PRIO_FILE="$_pjf" python3 -c "
 import sys, json, os
-prio_json = os.environ.get('PRIO_JSON', '[]')
-try: prios = json.loads(prio_json)
-except: prios = []
+try:
+    with open(os.environ['PRIO_FILE']) as f: prios = json.load(f)
+except Exception: prios = []
 prios = prios if isinstance(prios, list) else [prios]
-prio_map = {x.get('id'): int(x.get('priority', 9)) for x in prios if x.get('id')}
+prio_map = {}
+for x in prios:
+    if not isinstance(x, dict) or not x.get('id'): continue
+    try: prio_map[x['id']] = int(x.get('priority', 9))
+    except (TypeError, ValueError): prio_map[x['id']] = 9
 rows = []
 for line in sys.stdin:
     parts = line.strip().split()
     if len(parts) < 4: continue
     bid, tip, epoch, is_trans = parts[0], parts[1], int(parts[2]), int(parts[3])
-    prio = prio_map.get(bid, 9)
-    rows.append((1 - is_trans, prio, epoch, bid, tip))
+    rows.append((1 - is_trans, prio_map.get(bid, 9), epoch, bid, tip))
 rows.sort()
 for r in rows:
     print('%d %09d %010d %s %s' % r)
-" 2>/dev/null
+")"
+    _rc=$?
+    rm -f "$_pjf"
+
+    if [ "$_rc" -ne 0 ] || { [ -z "$_out" ] && [ -n "$_buf" ]; }; then
+        printf 'queue_sort_rows: ranking failed (rc=%s) -- returning rows unranked\n' "$_rc" >&2
+        printf '%s' "$_buf" | awk 'NF >= 4 { printf "%d %09d %010d %s %s\n", 1 - $4, 9, $3, $1, $2 }'
+        return 0
+    fi
+    [ -n "$_out" ] && printf '%s\n' "$_out"
+    return 0
 }
