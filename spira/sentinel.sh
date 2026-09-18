@@ -324,7 +324,7 @@ for id in $dispatchable; do
     # is causing: the session finished the work, closed the bead, and the harness put it back
     # each time because the branch could not rebase onto a base that had moved. The work may
     # be correct; the queue cannot get it to land. Distinct from poison: no poison label is
-    # added, no attempt is charged — the problem is the queue, not the work.
+    # added; the close cancels the claim in attempts_of so no attempt is charged.
     if [ "$_requeues" -ge "$REQUEUE_AT" ]; then
         _rq_causes="$(printf '%s' "$_labels" | sed -n 's/^ *- //p' \
             | grep -E '^sp-requeue-[0-9]+(-|$)' \

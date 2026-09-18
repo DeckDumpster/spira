@@ -1753,13 +1753,12 @@ _attempts_sql_query() {   # _attempts_sql_query <id> -> the SQL that counts atte
     # bead was poisoned for it. Three completed groom passes, one poisoned bead, nothing
     # wrong with the work.
     #
-    # The old label counters carried a cause and exempted requeues; sp-lzt deleted them and
-    # the exemption went with them unnoticed, because attempts_of was returning 0 for
-    # everything at the time and nothing could be poisoned at all.
+    # The old label counters exempted thrash requeues; sp-lzt deleted them; the exemption is
+    # restored here: requeued/thrash events are subtracted so a thrash claim is net-zero.
     #
     # GREATEST(...,0) because a bead can carry more closes than claims — an operator closing
     # a bead by hand adds one with no claim behind it.
-    printf "select greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end), 0) from events where issue_id='%s'" "$1"
+    printf "select greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and new_value='thrash' then 1 else 0 end), 0) from events where issue_id='%s'" "$1"
 }
 
 attempts_of() {          # attempts_of <id> -> count of in_progress status-change events

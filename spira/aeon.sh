@@ -700,11 +700,9 @@ print(d[0].get("status","") if d else "")' 2>/dev/null)"
             ledger_done "$rc" slain
             exit $rc
         fi
-        # THRASH IS NOT FAILURE. The heartbeat writes this file when the deliverable
-        # has not moved for SPIRA_THRASH_MINUTES while turns still advance, then sends
-        # TERM to this process. The file carries the last action — the sticking point —
-        # so the next aeon does not spend its first pass rediscovering it. No attempt is
-        # charged; the bead's requeue note names the cause and the handoff explicitly.
+        # THRASH IS NOT FAILURE. attempts_of subtracts requeued/thrash events, so the
+        # claim that preceded the thrash is net-zero. The .thrash file carries the last
+        # action for the next aeon.
         if [ -f "$SPIRA_RUN/$BEAD_ID.thrash" ]; then
             _thrash_note="$(cat "$SPIRA_RUN/$BEAD_ID.thrash" 2>/dev/null)"
             rm -f "$SPIRA_RUN/$BEAD_ID.thrash"
