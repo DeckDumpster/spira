@@ -47,6 +47,7 @@ TESTDB_NAME="${TESTDB_NAME:-}"
 TESTDB_DIR="${TESTDB_DIR:-}"
 TESTDB_BASELINE="${TESTDB_BASELINE:-}"
 TESTDB_BIN="${TESTDB_BIN:-}"
+TESTDB_PRIVATE_DIR="${TESTDB_PRIVATE_DIR:-}"
 # TESTDB_MODE: "embedded" when using the embedded engine, "server" when using
 # dolt-beads-test.service. Empty before testdb_up is first called.
 TESTDB_MODE="${TESTDB_MODE:-}"
@@ -179,16 +180,18 @@ testdb_up() {            # testdb_up <tag>
     if [ "${TESTDB_SHARED:-0}" = 1 ] && [ -n "${TESTDB_NAME:-}" ] && \
        [ -n "${TESTDB_BASELINE:-}" ] && [ "${TESTDB_MODE:-}" != server ] && \
        [ "${SPIRA_TESTDB_MODE:-}" != server ]; then
-        testdb_reset || {
-            printf 'testdb: could not reset shared fixture %s\n' "$TESTDB_NAME" >&2
-            # A borrower that cannot start the shared fixture is not a failing suite.
-            # Exit with TESTDB_FAULT_EXIT so the runner (suites.sh) classifies this
-            # suite as a pass-level fixture fault and files one bead for the collapse
-            # rather than one per borrower. Running this suite individually against a
-            # healthy fixture will pass.
+        TESTDB_PRIVATE_DIR="$(mktemp -d)"
+        cp -rp "$TESTDB_BASELINE/.beads" "$TESTDB_PRIVATE_DIR/.beads" 2>/dev/null || {
+            rm -rf "$TESTDB_PRIVATE_DIR"; TESTDB_PRIVATE_DIR=""
+            printf 'testdb: could not copy baseline for shared fixture %s\n' "$TESTDB_NAME" >&2
             exit "${TESTDB_FAULT_EXIT:-75}"
         }
-        export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="$TESTDB_BD"
+        [ -d "$TESTDB_PRIVATE_DIR/.beads" ] || {
+            rm -rf "$TESTDB_PRIVATE_DIR"; TESTDB_PRIVATE_DIR=""
+            printf 'testdb: shared fixture baseline is empty — fixture collapsed\n' >&2
+            exit "${TESTDB_FAULT_EXIT:-75}"
+        }
+        export SPIRA_DB="$TESTDB_PRIVATE_DIR" SPIRA_BD="$TESTDB_BD"
         # conf.sh resets PATH from SPIRA_PATH; add TESTDB_BIN to both so child processes
         # that re-source conf.sh still find the embedded binary.
         if [ -n "${TESTDB_BIN:-}" ]; then
@@ -471,12 +474,13 @@ testdb_reset() {
     # way, rename new into place. Only the final cleanup rm can still fail, and
     # by that point the live database is already in the correct state.
     [ -d "$TESTDB_BASELINE/.beads" ] || return 1
-    local _new; _new="$TESTDB_DIR/.beads.new"
-    local _old; _old="$TESTDB_DIR/.beads.old"
+    local _td; _td="${TESTDB_PRIVATE_DIR:-$TESTDB_DIR}"
+    local _new; _new="$_td/.beads.new"
+    local _old; _old="$_td/.beads.old"
     rm -rf "$_new" "$_old"   # clean up any leftovers from a previous interrupted reset
     cp -rp "$TESTDB_BASELINE/.beads" "$_new" || { rm -rf "$_new"; return 1; }
-    mv "$TESTDB_DIR/.beads" "$_old" 2>/dev/null || true   # no-op when .beads absent
-    mv "$_new" "$TESTDB_DIR/.beads"                       || return 1
+    mv "$_td/.beads" "$_old" 2>/dev/null || true   # no-op when .beads absent
+    mv "$_new" "$_td/.beads"                       || return 1
     rm -rf "$_old" 2>/dev/null || true
 }
 
@@ -490,12 +494,13 @@ testdb_seed() {          # testdb_seed  < JSONL on stdin
     return $rc
 }
 
-# THE BORROWER DOES NOT DROP. Suites trap testdb_drop on EXIT; with a shared fixture the
-# first suite to finish would delete the directories the rest are still using. Only the
-# process that created it owns it, and it drops by clearing TESTDB_SHARED first (as
-# aeon.sh's fixture_drop does: TESTDB_SHARED=0 before sourcing and calling testdb_drop).
+# Borrowers remove only their own private copy; shared dirs belong to the owner.
 testdb_drop() {
-    [ "${TESTDB_SHARED:-0}" = 1 ] && return 0
+    if [ "${TESTDB_SHARED:-0}" = 1 ]; then
+        [ -n "${TESTDB_PRIVATE_DIR:-}" ] && rm -rf "$TESTDB_PRIVATE_DIR"
+        TESTDB_PRIVATE_DIR=""
+        return 0
+    fi
     [ -n "${TESTDB_NAME:-}" ] || return 0
     # Server mode: drop THIS fixture's own database and nothing else.
     #
@@ -522,6 +527,6 @@ testdb_drop() {
     fi
     rm -rf "${TESTDB_DIR:-}" "${TESTDB_BASELINE:-}" "${TESTDB_BIN:-}"
     TESTDB_NAME=""; TESTDB_DIR=""; TESTDB_BASELINE=""; TESTDB_BIN=""
-    TESTDB_MODE=""
+    TESTDB_MODE=""; TESTDB_PRIVATE_DIR=""
     return 0
 }
