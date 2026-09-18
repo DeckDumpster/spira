@@ -155,5 +155,21 @@ done
 
 # ===========================================================================
 echo
+echo "G — Maechen census.sh is allowed when SPIRA_HOME == SPIRA_PROD (sp-5oaur):"
+# ===========================================================================
+# POSITIVE CONTROL: a write into SPIRA_PROD is still refused, proving the guard
+# is active. Pre-fix output: {"decision":"block","reason":"aeons may not write
+# to the production checkout $SPIRA_PROD (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1
+# to override)"}
+out="$(fence_run "rm ${FAKE_PROD}/census.sh" SPIRA_AEON=test-aeon)"
+want "G0 POSITIVE: rm \$SPIRA_PROD/census.sh still blocked" '"decision":"block"' "$out"
+
+# census.sh is rendered by Maechen as bash {{SPIRA_HOME}}/census.sh. When
+# SPIRA_HOME == SPIRA_PROD the pre-fix fence blocked it as a write.
+out="$(fence_run "bash ${FAKE_PROD}/census.sh --with-suppressed" SPIRA_AEON=test-aeon)"
+refuse "G1: bash \$SPIRA_PROD/census.sh --with-suppressed not blocked" '"decision":"block"' "$out"
+
+# ===========================================================================
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

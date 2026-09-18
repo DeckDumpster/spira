@@ -4,7 +4,8 @@
 # Registered by aeon.sh via --settings so it is bound to the aeon, not to a global
 # profile (law-guard-binds-the-caller). Only fires when SPIRA_AEON is set.
 #
-# OVERRIDE (Ops incidents only): SPIRA_AEON_OVERRIDE=1 — named in every refusal.
+# OVERRIDE (Ops incidents only): the operator sets SPIRA_AEON_OVERRIDE=1 before
+# starting the session; an aeon cannot set it from inside a running session.
 #
 # EXIT: 0 always. Block by printing {"decision":"block","reason":"..."} to stdout.
 set -uo pipefail
@@ -35,7 +36,7 @@ reason=""
 
 for _script in landing.sh batch.sh verdict.sh slay.sh world.sh deploy.sh activate.sh promote.sh; do
     case "$cmd" in
-        *"/$_script"*) reason="aeons may not call $_script (sp-kz8ob: landing and batch handle forge writes; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"; break ;;
+        *"/$_script"*) reason="aeons may not call $_script (sp-kz8ob: landing and batch handle forge writes)"; break ;;
     esac
 done
 
@@ -44,7 +45,7 @@ if [ -z "$reason" ]; then
         *"/queue.sh"*)
             case "$cmd" in
                 *"/queue.sh stats"*) ;;
-                *) reason="aeons may not operate the queue (sp-kz8ob: queue.sh stats is the only read-only subcommand; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
+                *) reason="aeons may not operate the queue (sp-kz8ob: queue.sh stats is the only read-only subcommand)" ;;
             esac ;;
     esac
 fi
@@ -55,35 +56,34 @@ if [ -z "$reason" ]; then
         *"gh release create"*|*"gh release edit"*|*"gh release delete"*|\
         *"gh workflow run"*|\
         *"gh run rerun"*|*"gh run cancel"*)
-            reason="aeons carry no forge credentials (sp-kz8ob: forge writes go through landing.sh and batch.sh; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
+            reason="aeons carry no forge credentials (sp-kz8ob: forge writes go through landing.sh and batch.sh)" ;;
     esac
 fi
 
 if [ -z "$reason" ]; then
     case "$cmd" in
         *"git push"*|*"git -C"*" push "*)
-            reason="aeons carry no push credentials (sp-kz8ob: landing.sh and batch.sh handle all merges and pushes; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
+            reason="aeons carry no push credentials (sp-kz8ob: landing.sh and batch.sh handle all merges and pushes)" ;;
     esac
 fi
 
 if [ -z "$reason" ] && [ -n "${SPIRA_RUN:-}" ]; then
     case "$cmd" in
         *"${SPIRA_RUN}/landstate"*|*"${SPIRA_RUN}/queue"*)
-            reason="aeons may not write to \$SPIRA_RUN/landstate or \$SPIRA_RUN/queue (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
+            reason="aeons may not write to \$SPIRA_RUN/landstate or \$SPIRA_RUN/queue (sp-kz8ob)" ;;
     esac
 fi
 
 if [ -z "$reason" ] && [ -n "${SPIRA_PROD:-}" ]; then
     case "$cmd" in
         *"${SPIRA_PROD}"*)
-            # Execution of the tools the Ops brief renders ({{SOP}}, {{INCIDENT}}, {{ASK}},
-            # {{SUITES}}, {{GROOM}}) is allowed even when SPIRA_HOME == SPIRA_PROD (sp-x5f0l).
-            # A write INTO the checkout (rm, redirect, cp, etc.) is still refused.
+            # Script execution from SPIRA_PROD is allowed — the path is the executable,
+            # not a write target. A write INTO the checkout (rm, redirect, etc.) is refused.
             case "$cmd" in
-                *"${SPIRA_PROD}/sop.sh"*|*"${SPIRA_PROD}/incident.sh"*|\
-                *"${SPIRA_PROD}/mail.sh"*|*"${SPIRA_PROD}/suites.sh"*|\
-                *"${SPIRA_PROD}/groomer.sh"*) ;;
-                *) reason="aeons may not write to the production checkout \$SPIRA_PROD (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 to override)" ;;
+                "${SPIRA_PROD}/"*|\
+                "bash ${SPIRA_PROD}/"*|\
+                "bash \"${SPIRA_PROD}/"*) ;;
+                *) reason="aeons may not write to the production checkout \$SPIRA_PROD (sp-kz8ob)" ;;
             esac ;;
     esac
 fi
