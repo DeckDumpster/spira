@@ -274,13 +274,46 @@ main() {
 
     case "$status" in
         pending)
-            local age=$(( now - ${opened:-0} ))
-            if [ "$age" -lt "${SPIRA_QUEUE_CI_MAXSEC:-3600}" ]; then
-                printf 'verdict %s: PR %s pending (%ds old)\n' "$name" "$pr_n" "$age"
+            local run_id run_started=0 run_last_act=0 _ml
+            run_id="$("$forge" run-id "$repo" "${branch_name:-}" 2>/dev/null)" || run_id=""
+            if [ -n "${run_id:-}" ]; then
+                local _run_meta
+                _run_meta="$("$forge" run-metadata "$repo" "$run_id" 2>/dev/null)" || _run_meta=""
+                while IFS= read -r _ml; do
+                    case "$_ml" in
+                        "started-at: "*) run_started="${_ml#started-at: }" ;;
+                        "last-activity: "*) run_last_act="${_ml#last-activity: }" ;;
+                    esac
+                done <<< "$_run_meta"
+            fi
+
+            local run_age
+            if [ "${run_started:-0}" -gt 0 ]; then
+                run_age=$(( now - run_started ))
+            elif [ -z "${run_id:-}" ]; then
+                run_age=$(( now - ${opened:-0} ))
+            else
+                # Have a run but could not determine when it started — don't cancel.
+                printf 'verdict %s: PR %s pending (run %s age unknown)\n' \
+                    "$name" "$pr_n" "$run_id"
                 return 0
             fi
-            printf 'verdict %s: PR %s pending too long (%ds) — treating as harness fault\n' \
-                "$name" "$pr_n" "$age"
+
+            if [ "$run_age" -lt "${SPIRA_QUEUE_CI_MAXSEC:-3600}" ]; then
+                printf 'verdict %s: PR %s pending (run age %ds)\n' "$name" "$pr_n" "$run_age"
+                return 0
+            fi
+
+            local _idle=$(( now - ${run_last_act:-0} ))
+            if [ "${run_last_act:-0}" -gt 0 ] && \
+               [ "$_idle" -lt "${SPIRA_QUEUE_CI_IDLE_SEC:-600}" ]; then
+                printf 'verdict %s: PR %s run %s progressing (last activity %ds ago)\n' \
+                    "$name" "$pr_n" "${run_id:-?}" "$_idle"
+                return 0
+            fi
+
+            printf 'verdict %s: PR %s queue cancelled run %s (no activity for %ds)\n' \
+                "$name" "$pr_n" "${run_id:-unknown}" "$_idle"
             status="harness_fault"
             ;&
         harness_fault)

@@ -135,6 +135,47 @@ except Exception:
             --json databaseId --limit 1 -q '.[0].databaseId' 2>/dev/null )" || run_id=""
         printf '%s\n' "${run_id:-}"
         ;;
+    run-metadata)
+        run_id="${1:-}"
+        [ -n "$run_id" ] || exit 1
+        run_json="$( cd "$repo" && ghq api "repos/{owner}/{repo}/actions/runs/$run_id" \
+            2>/dev/null )" || run_json="{}"
+        printf '%s\n' "$run_json" | python3 -c "
+import json, sys, calendar, datetime
+def epoch(t):
+    if not t: return 0
+    try:
+        dt = datetime.datetime.strptime(t.rstrip('Z'), '%Y-%m-%dT%H:%M:%S')
+        return calendar.timegm(dt.timetuple())
+    except: return 0
+try:
+    d = json.load(sys.stdin)
+    e = epoch(d.get('run_started_at') or d.get('created_at') or '')
+    if e: print('started-at: ' + str(e))
+except Exception: pass
+" 2>/dev/null
+        jobs_json="$( cd "$repo" && ghq api \
+            "repos/{owner}/{repo}/actions/runs/$run_id/jobs" 2>/dev/null )" || jobs_json="{}"
+        printf '%s\n' "$jobs_json" | python3 -c "
+import json, sys, calendar, datetime
+def epoch(t):
+    if not t: return 0
+    try:
+        dt = datetime.datetime.strptime(t.rstrip('Z'), '%Y-%m-%dT%H:%M:%S')
+        return calendar.timegm(dt.timetuple())
+    except: return 0
+try:
+    latest = 0
+    for j in json.load(sys.stdin).get('jobs', []):
+        for f in ('started_at', 'completed_at'):
+            e = epoch(j.get(f) or ''); latest = max(latest, e)
+        for s in j.get('steps', []):
+            for f in ('started_at', 'completed_at'):
+                e = epoch(s.get(f) or ''); latest = max(latest, e)
+    if latest: print('last-activity: ' + str(latest))
+except Exception: pass
+" 2>/dev/null
+        ;;
     workflow-rerun)
         run_id="${1:-}"
         ( cd "$repo" && ghq run rerun "$run_id" --failed ) 2>/dev/null
