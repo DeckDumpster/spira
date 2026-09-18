@@ -314,6 +314,16 @@ main() {
     status="$(printf '%s\n' "$status_out" | head -1)"
     status="${status:-pending}"
 
+    # A red that names no suite did not judge the branch: CI died around the suites (a
+    # runner kill, a cold image, a base ref it could not resolve). Attribution has nobody
+    # to eject and would hold the queue's only slot forever (sp-swux6), so it takes the
+    # harness-fault path: bounded re-runs, then the operator.
+    if [ "$status" = red ] && ! grep -q '^red-suite: ' <<< "$status_out"; then
+        printf 'verdict %s: PR %s red with no red suite — the branch was not judged; treating as a harness fault\n' \
+            "$name" "$pr_n"
+        status=harness_fault
+    fi
+
     local now; now="$(date +%s)"
 
     case "$status" in
