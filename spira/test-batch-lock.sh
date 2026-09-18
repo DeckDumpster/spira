@@ -254,5 +254,44 @@ want "c: holds the lock message"     "holds the lock" "$vout"
 exec 8>&-
 clean_case
 
+# =============================================================================
+# d. STDERR PRESERVED (batch.sh): a >&2 write after lock acquisition must
+#    reach the caller.  Uses a repo-map whose landref does not resolve, so
+#    batch.sh reaches "cannot resolve base ref" (written >&2) after the lock.
+#    SEEN RED WITHOUT THE FIX: exec 9>file 2>/dev/null permanently silences fd
+#    2, so the message is lost and the want assertion fails.
+# =============================================================================
+clean_case
+
+BROKEN_MAP="$TMP/broken-map"
+BROKEN_QDIR="$TMP/broken-queue"
+mkdir -p "$BROKEN_QDIR/$REPONAME"
+printf '%s | %s | queue | origin/nonexistent | | |\n' "$REPONAME" "$REPO" > "$BROKEN_MAP"
+
+dout="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    SPIRA_REPO_MAP="$BROKEN_MAP" \
+    SPIRA_QUEUE_DIR="$BROKEN_QDIR" \
+    SPIRA_QUEUE_BATCH_MAX=8 \
+    SPIRA_QUEUE_BATCH_WAIT=0 \
+    SPIRA_FORGE="$SH/forge-fixture.sh" \
+        bash "$SH/batch.sh" "$REPONAME" 2>&1)"
+want "d: batch stderr after lock reaches caller" "cannot resolve base ref" "$dout"
+
+# =============================================================================
+# e. STDERR PRESERVED (verdict.sh): a >&2 write after lock acquisition must
+#    reach the caller.  A malformed open-batch file (no pr= field) triggers
+#    "malformed batch record" (written >&2) after the lock.
+#    SEEN RED WITHOUT THE FIX: exec 9>file 2>/dev/null permanently silences fd
+#    2, so the message is lost and the want assertion fails.
+# =============================================================================
+clean_case
+mkdir -p "$QUEUEDIR/$REPONAME"
+printf 'branch=test\n' > "$QUEUEDIR/$REPONAME/open"
+
+eout="$(verdict_run "$REPONAME")"
+want "e: verdict stderr after lock reaches caller" "malformed batch record" "$eout"
+clean_case
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
