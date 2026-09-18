@@ -396,10 +396,11 @@ if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ] && \
                     [ -n "$_repeat_reason" ] && \
                         log "batch: SPIRA_VERDICT_REPEAT_CONSIDERED must be a sentence (min 10 chars)"
                     log "batch: repeat attempt refused — prior red at ${_cached_when:-unknown} — key batch-$BATCH_KEY — red suites: ${_cached_red_suites:-(unknown)}"
-                    if [ -r "$HERE/bead.sh" ] && [ -n "${SPIRA_DB:-}" ]; then
+                    _bead_cmd="${SPIRA_BATCH_BEAD_CMD:-$HERE/bead.sh}"
+                    if [ -r "$_bead_cmd" ] && [ -n "${SPIRA_DB:-}" ]; then
                         printf '%s\n' \
                             "Repeat attempt refused. Prior red at ${_cached_when:-unknown}. Key: batch-$BATCH_KEY. Red suites: ${_cached_red_suites:-(unknown)}. Branch: $BR." \
-                            | bash "$HERE/bead.sh" file \
+                            | bash "$_bead_cmd" file \
                                 "repeat attempt: no change — $BR" \
                                 --for builder \
                                 --repo "$(spira_home_repo 2>/dev/null)" \
