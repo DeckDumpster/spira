@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-batch.sh — merge-queue batch builder.
 #
-# Eight cases:
+# Ten cases:
 #   1. 8 certified branches trigger a batch at once.
 #   2. 3 certified branches trigger a batch only after the planted wait.
 #   3. A suite-state transition branch is ordered before regular branches.
@@ -9,6 +9,8 @@
 #   5. An open batch record prevents a second batch from opening.
 #   b. Local gate passes: gate called once, PR opened.
 #   c. Local gate red, one member reproduces: ejected, rebuilt batch gated and PR opened.
+#   e. Local gate red, no member reproduces: PR IS opened; CI adjudicates.
+#   f. Local gate red, one member reproduces: rebuild happens (ejection path not bypassed).
 #   d. Meter line written for (b) and (c); queue.sh stats reports local_red_rate.
 #
 # The forge seam is a local fixture that records pr-create calls and returns
@@ -361,6 +363,103 @@ printf 'gate: VERDICT=PASS reason=stub branch=%s repo=%s suite=none\n' "\$1" "\$
 exit 0
 GSTUB
 chmod +x "$SH/gate.sh"
+clean_case
+
+# =============================================================================
+# e. UNATTRIBUTABLE LOCAL-GATE RED: gate red, no member reproduces —
+#    PR IS opened; CI adjudicates (law-local-gates-buy-latency-not-coverage).
+#
+# POSITIVE CONTROL: gate_n starts at 0 before this case (clean_case zeros it);
+# batch_pr reads from the forge fixture, which is only written when pr-create is
+# called — an empty return proves the forge was never reached.
+#
+# Against pre-fix batch.sh this case fails: no PR is opened and the batch
+# rebuilds the same tree, running the gate a second time (gate_n would be 2).
+# =============================================================================
+seed
+NOW="$(date +%s)"; OLD_E=$(( NOW - 1800 - 1 ))
+for id in sp-bte-1 sp-bte-2 sp-bte-3; do branch "$id" "$OLD_E"; done
+
+# Gate red on first call; would pass on a second call — but with the fix, the
+# second call never happens when ejected_arr is empty.
+cat > "$SH/gate.sh" <<GSTUB_E
+#!/usr/bin/env bash
+n=\$(wc -l < "$GATE_COUNT" 2>/dev/null | tr -d ' ' || printf 0)
+printf '%s\n' "\$1" >> "$GATE_COUNT"
+if [ "\${n:-0}" -eq 0 ]; then
+    printf 'gate: VERDICT=FAIL reason=red test-bte.sh FAILED branch=%s repo=%s suite=test-bte.sh\n' "\$1" "\${2:-?}" >&2
+    exit 1
+fi
+printf 'gate: VERDICT=PASS reason=stub branch=%s repo=%s suite=none\n' "\$1" "\${2:-?}" >&2
+exit 0
+GSTUB_E
+chmod +x "$SH/gate.sh"
+
+# No member reproduces (repro stub default: all green).
+: > "$REPRO_FAIL_FILE"
+
+out_e="$(batch "$REPONAME")"
+is   "e: gate called exactly once (no re-gate)"   "1"  "$(gate_n)"
+is   "e: PR IS opened (unattributable red)"        "1"  "$(batch_pr)"
+want "e: no-member-reproduced log line"            "no member reproduced" "$out_e"
+want "e: ejected=- in landing log"                 "ejected=-"            "$(landing_log)"
+
+# Restore default always-pass gate stub.
+cat > "$SH/gate.sh" <<GSTUB
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >> "$GATE_COUNT"
+printf 'gate: VERDICT=PASS reason=stub branch=%s repo=%s suite=none\n' "\$1" "\${2:-?}" >&2
+exit 0
+GSTUB
+chmod +x "$SH/gate.sh"
+clean_case
+
+# =============================================================================
+# f. GENUINE EJECTION STILL REBUILDS: gate red, one member reproduces —
+#    ejected, rebuilt batch opened; the unattributable-red path is NOT taken.
+#
+# This guards against an over-broad fix that always falls through to open the
+# PR regardless of ejections. With such a fix: gate_n would be 1 (re-gate
+# skipped), sp-btf-red would not be ejected, and the batch would contain all
+# three members — the three assertions below would all fail.
+# =============================================================================
+seed
+NOW="$(date +%s)"; OLD_F=$(( NOW - 1800 - 1 ))
+for id in sp-btf-1 sp-btf-2 sp-btf-red; do branch "$id" "$OLD_F"; done
+
+# Gate fails on first call (batch of 3), passes on second (rebuilt batch of 2).
+cat > "$SH/gate.sh" <<GSTUB_F
+#!/usr/bin/env bash
+n=\$(wc -l < "$GATE_COUNT" 2>/dev/null | tr -d ' ' || printf 0)
+printf '%s\n' "\$1" >> "$GATE_COUNT"
+if [ "\${n:-0}" -eq 0 ]; then
+    printf 'gate: VERDICT=FAIL reason=red test-btf.sh FAILED branch=%s repo=%s suite=test-btf.sh\n' "\$1" "\${2:-?}" >&2
+    exit 1
+fi
+printf 'gate: VERDICT=PASS reason=stub branch=%s repo=%s suite=none\n' "\$1" "\${2:-?}" >&2
+exit 0
+GSTUB_F
+chmod +x "$SH/gate.sh"
+
+# sp-btf-red reproduces; sp-btf-1 and sp-btf-2 do not.
+printf 'spira/sp-btf-red\n' > "$REPRO_FAIL_FILE"
+
+batch "$REPONAME" > /dev/null
+is   "f: gate called twice (full + rebuilt)"   "2"  "$(gate_n)"
+is   "f: sp-btf-red ejected"                   "1"  "$(is_ejected "sp-btf-red" && echo 1 || echo 0)"
+is   "f: PR IS opened (rebuilt batch)"         "1"  "$(batch_pr)"
+_f_members="$(grep '^members=' "$(open_batch_file)" 2>/dev/null | cut -d= -f2)"
+nowant "f: sp-btf-red not in batch members"   "sp-btf-red" "$_f_members"
+
+# Restore default always-pass gate stub.
+cat > "$SH/gate.sh" <<GSTUB
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >> "$GATE_COUNT"
+printf 'gate: VERDICT=PASS reason=stub branch=%s repo=%s suite=none\n' "\$1" "\${2:-?}" >&2
+exit 0
+GSTUB
+chmod +x "$SH/gate.sh"
+: > "$REPRO_FAIL_FILE"
 clean_case
 
 # =============================================================================
