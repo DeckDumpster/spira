@@ -117,6 +117,30 @@ _meter_write() {  # _meter_write <repo> <members> <caught> <escaped> <start-epoc
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
 }
 
+_attr_notify_red() {  # _attr_notify_red <pr-n> <name> <suites-csv> <decision> <ejected-ids> <requeued-ids>
+    local pr_n="$1" name="$2" suites="$3" decision="$4" ejected_ids="$5" requeued_ids="$6"
+    local body="## Note
+Merge queue batch for $name failed CI and was processed.
+
+PR: $pr_n
+Red suites: $suites
+Decision: $decision
+"
+    if [ -n "$ejected_ids" ]; then
+        body="$body
+Ejected branches: $ejected_ids"
+    fi
+    if [ -n "$requeued_ids" ]; then
+        body="$body
+Requeued branches: $requeued_ids"
+    fi
+    printf '%s' "$body" \
+    | bash "$HERE/mail.sh" send operator \
+        --from "Spira Queue <queue@spira>" \
+        --subject "Merge queue: $name red in PR $pr_n" \
+        2>/dev/null || true
+}
+
 _attr_eject() {  # _attr_eject <id> <tip> <suites-csv> <pr-n> <name> [fail-lines]
     local id="$1" tip="$2" suites="$3" pr_n="$4" name="$5" fail_lines="${6:-}"
     local _note="Ejected by merge-queue attribution: spira/$id reproduced failure ($suites) from PR $pr_n in $name."
@@ -282,6 +306,9 @@ _q_attribute() {
                 rm -f "$batch_file"
                 printf 'verdict %s: PR %s together-only red — halved (%d+%d)\n' \
                     "$name" "$pr_n" "$half" "$(( mc - half ))"
+                # Notify on together-only red
+                local all_ids="$(printf '%s\n' "${members_arr[@]}" | cut -d: -f1 | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
+                _attr_notify_red "$pr_n" "$name" "$suites_csv" "Together-only red: batch halved, all members requeued" "" "$all_ids"
                 _meter_write "$name" "$mc" 0 0 "$attr_start"
                 rm -rf "$_eject_fail_dir" 2>/dev/null || true
                 return 0
@@ -370,6 +397,25 @@ _q_attribute() {
             fi
         fi
     fi
+
+    # Notify on every red verdict
+    local ejected_ids="" requeued_ids="" decision_text=""
+    if [ "${#ejected[@]}" -gt 0 ]; then
+        ejected_ids="$(printf '%s\n' "${ejected[@]}" | cut -d: -f1 | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
+    fi
+    if [ "${#survivors[@]}" -gt 0 ]; then
+        requeued_ids="$(printf '%s\n' "${survivors[@]}" | cut -d: -f1 | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
+    fi
+    if [ "$mc" -eq 1 ] && [ "${#ejected[@]}" -eq 1 ]; then
+        decision_text="Single member: reproduced and ejected"
+    elif [ "$mc" -gt 1 ] && [ "${#ejected[@]}" -eq 0 ] && [ "${#survivors[@]}" -eq "$mc" ]; then
+        decision_text="Together-only red: batch halved, members requeued"
+    elif [ "${#ejected[@]}" -gt 0 ] && [ "${#survivors[@]}" -gt 0 ]; then
+        decision_text="Partial reproduction: ${#ejected[@]} ejected, ${#survivors[@]} requeued"
+    elif [ "${#ejected[@]}" -eq 0 ] && [ "${#survivors[@]}" -gt 0 ]; then
+        decision_text="Flake: suites quarantined, all members requeued"
+    fi
+    _attr_notify_red "$pr_n" "$name" "$suites_csv" "$decision_text" "$ejected_ids" "$requeued_ids"
 
     _meter_write "$name" "$mc" "$caught" "$escaped" "$attr_start"
     rm -rf "$_eject_fail_dir" 2>/dev/null || true
