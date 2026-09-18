@@ -160,6 +160,20 @@ jobs:
         # report success.
         run: test "$RUNNER_NAME" = "${{ needs.provision.outputs.label }}"
 
+      - name: Stop apt automation
+        # The runner template ships apt-daily and apt-daily-upgrade enabled. On a fresh
+        # clone the persistent timer fires within the first hour, the upgrade restarts
+        # services, and the runner is SIGTERMed mid-suite: "The runner has received a
+        # shutdown signal". The guest journal showed apt-daily-upgrade starting 30-64s
+        # before each of the three kills on 2026-09-18 (sp-hu3bk). `stop` lets an
+        # upgrade already running finish its current package rather than leave dpkg
+        # half-configured. The durable fix is in the template and provisioning (sp-vp0me).
+        run: |
+          sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service
+          sudo systemctl stop apt-daily-upgrade.service apt-daily.service unattended-upgrades.service || true
+          sudo dpkg --configure -a || true
+          systemctl is-enabled apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service || true
+
       - name: Host dependencies
         # A cold machine has no container runtime, no image and no caches. This
         # installs what is missing and then proves the machine can actually start
