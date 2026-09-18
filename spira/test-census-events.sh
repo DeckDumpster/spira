@@ -149,7 +149,7 @@ testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-f1","title":"landing test","status":"in_progress","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
 JSONL
-bead_reopen "sp-f1" "rebase conflict test" >/dev/null 2>&1
+bead_reopen "sp-f1" rebase-conflict "rebase conflict test" >/dev/null 2>&1
 bump_requeue "sp-f1" merge-conflict >/dev/null 2>&1
 
 out="$(census_out)"
@@ -173,11 +173,10 @@ want "strand reclaim path produces sp-reclaim-ghost" "1 sp-reclaim-ghost" "$out"
 
 # ======================================================================================
 echo
-echo "bead_reopen alone — census counts harness reopens without a separate bump_requeue (sp-df8qo)"
+echo "bead_reopen cause — census classifies harness reopens as sp-reopen-<cause> (sp-0wwcn)"
 # ======================================================================================
-# bead_reopen calls bdq reopen, which writes event_type='reopened' to the events table.
-# Before this fix, _census_events_sql excluded 'reopened' from its IN clause, so harness
-# reopens produced no census output.
+# bead_reopen <id> <cause> <note> writes event_type='reopen' with new_value=<cause>.
+# census.sh must report sp-reopen-<cause> with the correct distinct-bead count.
 # POSITIVE CONTROL first (law-absence-needs-a-positive-control): verify absence is detectable.
 testdb_reset
 testdb_seed <<'JSONL'
@@ -190,11 +189,35 @@ testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-g1","title":"reopen test","status":"closed","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
 JSONL
-bead_reopen "sp-g1" "Reopened by test: sp-df8qo" >/dev/null 2>&1
+bead_reopen "sp-g1" gate-red "Reopened by test: sp-0wwcn" >/dev/null 2>&1
 
 out="$(census_out)"
-want "bead_reopen alone produces sp-reopen in census" "sp-reopen" "$out"
-want "sp-reopen shows 1 distinct bead" "1 sp-reopen" "$out"
+want "bead_reopen produces sp-reopen-gate-red in census" "sp-reopen-gate-red" "$out"
+want "sp-reopen-gate-red shows 1 distinct bead" "1 sp-reopen-gate-red" "$out"
+nowant "no bare sp-reopen class" "sp-reopen " "$out"
+
+# Two different beads, same cause — distinct-bead count is 2.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-g2","title":"reopen multi 1","status":"closed","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
+{"id":"sp-g3","title":"reopen multi 2","status":"closed","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
+JSONL
+bead_reopen "sp-g2" gate-red "first gate failure" >/dev/null 2>&1
+bead_reopen "sp-g3" gate-red "second gate failure" >/dev/null 2>&1
+
+out="$(census_out)"
+want "two beads with same cause: 2 distinct beads" "2 sp-reopen-gate-red" "$out"
+
+# Verify the cause is recorded in the events table as event_type='reopen'.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-g4","title":"cause row test","status":"closed","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
+JSONL
+bead_reopen "sp-g4" rebase-conflict "Reopened: conflict" >/dev/null 2>&1
+_ev_cause="$("${SPIRA_BD:-bd}" -C "$TESTDB_DIR" sql \
+    "SELECT COALESCE(new_value,'') FROM events WHERE issue_id='sp-g4' AND event_type='reopen'" \
+    2>/dev/null | sed -n '3p' | tr -d ' ')"
+is "bead_reopen writes event_type=reopen with cause in new_value" "rebase-conflict" "$_ev_cause"
 
 
 # ======================================================================================

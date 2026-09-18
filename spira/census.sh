@@ -87,8 +87,10 @@ for line in sys.stdin:
             cls = 'sp-reclaim'
     elif event_type == 'lapsed':
         cls = 'sp-lapsed-' + (cause or 'unrecorded')
+    elif event_type == 'reopen':
+        cls = 'sp-reopen-' + (cause or 'unrecorded')
     elif event_type == 'reopened':
-        cls = 'sp-reopen'
+        cls = 'sp-reopen-' + (cause or 'unrecorded')
     else:
         continue
     beads[cls].add(issue_id)

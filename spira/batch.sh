@@ -286,7 +286,7 @@ main() {
             if _base_conflict "$repo" "$base_sha" "$_btip"; then
                 # Conflict with the land ref itself — reopen the bead.
                 bump_requeue "$_bid" merge-conflict >/dev/null 2>&1 || true
-                bead_reopen "$_bid" \
+                bead_reopen "$_bid" rebase-conflict \
                     "Reopened by batch builder: branch spira/$_bid conflicts with $base in $name." \
                     >/dev/null 2>&1 || true
                 land_mark "$_bid" RED "$_btip" conflicts-with-base
@@ -341,7 +341,7 @@ main() {
         for _lmm in "${lg_ejected_arr[@]:-}"; do
             [ -n "$_lmm" ] || continue
             _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
-            bead_reopen "$_lmid" \
+            bead_reopen "$_lmid" batch-eject \
                 "Ejected by local batch gate: spira/$_lmid reproduced failure in $name." \
                 >/dev/null 2>&1 || true
             land_mark "$_lmid" EJECTED "$_lmtip"
