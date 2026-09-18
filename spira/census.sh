@@ -23,8 +23,8 @@
 #
 # REMEDY SUPPRESSION — a remedy bead carries "covers:<class>" alongside
 # "$SPIRA_MAECHEN_REMEDY_LABEL". census.sh suppresses any class whose covers-label
-# appears on an open remedy bead. Closing or deleting the remedy bead lifts the
-# suppression immediately on the next census run.
+# appears on an open remedy bead, or on a closed remedy bead whose branch has not yet
+# landed on the base branch. Suppression lifts when the fix lands, not when it closes.
 #
 # WHY THE COVERS LABEL, NOT THE TITLE OR DESCRIPTION
 # A label is a machine-readable primary key. A title is human prose and may drift from
@@ -157,6 +157,24 @@ for b in data:
             print(lbl[len("covers:"):])
 EOF
 
+# Python: extract (branch, covers-class) pairs from closed remedy beads → TSV.
+cat > "$_TMPDIR/closed_covers.py" <<'EOF'
+import sys, json
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+if not isinstance(data, list):
+    data = [data]
+for b in data:
+    labels = b.get("labels") or []
+    covers = [l[len("covers:"):] for l in labels if l.startswith("covers:")]
+    branches = [l[len("branch:"):] for l in labels if l.startswith("branch:")]
+    for br in branches:
+        for c in covers:
+            print(br + "\t" + c)
+EOF
+
 # Aggregate failure events across the whole store, output <count> <class> ranked.
 # census_events_run_sql is defined in lib.sh (sourced above); it queries the events
 # table via bd sql (sp-2lk).
@@ -201,10 +219,29 @@ else
     _RANKED="$(awk '{print $1, $3, "(" $2 " detections)"}' "$_TMPDIR/all_time.txt")"
 fi
 
-# Collect classes already covered by an open remedy bead.
+# Collect classes covered by an open remedy bead, or a closed one whose branch has not
+# yet landed on the base branch (law-closed-is-not-landed).
 _suppressed_classes() {
     bdq list --status open,in_progress,blocked,deferred --label "$REMEDY_LABEL" --json 2>/dev/null \
         | python3 "$_TMPDIR/covers.py"
+
+    local _closed_json _base _ref _cls
+    _closed_json="$(bdq list --status closed --label "$REMEDY_LABEL" --json 2>/dev/null)" || return 0
+    case "${_closed_json:-}" in ''|'[]'|'null') return 0 ;; esac
+
+    _base="$(spira_landref "$SPIRA_REPO" 2>/dev/null)" || return 0
+    git -C "$SPIRA_REPO" fetch -q 2>/dev/null || true
+
+    printf '%s\n' "$_closed_json" \
+        | python3 "$_TMPDIR/closed_covers.py" \
+        > "$_TMPDIR/closed_pairs.txt" 2>/dev/null || true
+
+    while IFS=$'\t' read -r _ref _cls; do
+        [ -n "$_ref" ] && [ -n "$_cls" ] || continue
+        if ! git -C "$SPIRA_REPO" merge-base --is-ancestor "$_ref" "$_base" 2>/dev/null; then
+            printf '%s\n' "$_cls"
+        fi
+    done < "$_TMPDIR/closed_pairs.txt"
 }
 
 # Build suppressed set as a newline-delimited file for grep -xF membership tests.

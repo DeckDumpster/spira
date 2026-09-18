@@ -62,6 +62,43 @@ run_census() {
         bash "$CENSUS" "$@" 2>/dev/null
 }
 
+run_census_repo() {  # run_census_repo <repo-path> [census-args...]
+    local _rp="$1"; shift
+    env SPIRA_DB="$SPIRA_DB" \
+        SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
+        SPIRA_CONF="$TMP/no-conf" \
+        SPIRA_HOME="$HERE" \
+        SPIRA_REPO="$_rp" \
+        bash "$CENSUS" "$@" 2>/dev/null
+}
+
+# Git fixture for closed-but-unlanded suppression (tests 6 and 7).
+# Push one commit to the bare remote before cloning so origin/HEAD resolves;
+# cloning an empty remote leaves origin/HEAD unset and spira_landref falls to
+# rung 4 (HEAD), which is wrong in a worktree where HEAD is not on main.
+REMEDY_REMOTE="$TMP/remote.git"
+REMEDY_REPO="$TMP/workrepo"
+REMEDY_SRC="$TMP/worksrc"
+git init -q --bare "$REMEDY_REMOTE"
+git -C "$REMEDY_REMOTE" symbolic-ref HEAD refs/heads/main
+git init -q -b main "$REMEDY_SRC"
+git -C "$REMEDY_SRC" config user.email "t@t"
+git -C "$REMEDY_SRC" config user.name "t"
+git -C "$REMEDY_SRC" remote add origin "$REMEDY_REMOTE"
+printf 'base\n' > "$REMEDY_SRC/f"
+git -C "$REMEDY_SRC" add f
+git -C "$REMEDY_SRC" commit -q -m "base"
+git -C "$REMEDY_SRC" push -q origin main
+git clone -q "$REMEDY_REMOTE" "$REMEDY_REPO"
+git -C "$REMEDY_REPO" config user.email "t@t"
+git -C "$REMEDY_REPO" config user.name "t"
+git -C "$REMEDY_REPO" checkout -q -b sp-fix-cls
+printf 'fix\n' >> "$REMEDY_REPO/f"
+git -C "$REMEDY_REPO" add f
+git -C "$REMEDY_REPO" commit -q -m "fix"
+git -C "$REMEDY_REPO" push -q origin sp-fix-cls
+git -C "$REMEDY_REPO" checkout -q main
+
 add_labels() {  # add_labels <bead-id> <label>...
     local id="$1"; shift
     for lbl in "$@"; do
@@ -229,6 +266,48 @@ out5="$(run_census)"
 first5="$(printf '%s\n' "$out5" | head -1 | awk '{print $2}')"
 is "three-bead class (sp-recur-beta) ranks above single-bead class with more events" \
     "sp-recur-beta" "$first5"
+
+# ==============================================================================
+echo
+echo "6. Closed remedy with unlanded branch → class still suppressed"
+# ==============================================================================
+# Positive control (law-absence-needs-a-positive-control): plants the offender
+# (a closed remedy whose branch tip is NOT on origin/main) and verifies census
+# suppresses the class. On main before this fix, census printed the line without
+# [suppressed] because it only checked open beads.
+testdb_reset
+bid_u="$(plant_bead "unlanded-fix-bead")"
+bump_recur "$bid_u" unlanded-cls
+
+closed_remedy_id="$(B create "Fix sp-recur-unlanded-cls" --type task --priority 2 \
+    --labels "spira,plan,${REMEDY_LABEL},covers:sp-recur-unlanded-cls,branch:sp-fix-cls" \
+    --silent 2>/dev/null | tr -d '[:space:]')"
+[ -n "$closed_remedy_id" ] \
+    || { bad "closed remedy bead created" "create failed"; printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
+B close "$closed_remedy_id" --reason "test: closed but not landed" --force >/dev/null 2>&1
+
+out6="$(run_census_repo "$REMEDY_REPO")"
+lack "sp-recur-unlanded-cls excluded when remedy is closed-but-unlanded" \
+    "sp-recur-unlanded-cls" "$out6"
+
+out6s="$(run_census_repo "$REMEDY_REPO" --with-suppressed)"
+want "closed-unlanded remedy: class appears with --with-suppressed" \
+    "sp-recur-unlanded-cls" "$out6s"
+want "closed-unlanded remedy: annotated [suppressed]" "[suppressed]" "$out6s"
+
+# ==============================================================================
+echo
+echo "7. CONTROL: closed remedy with landed branch → class unsuppressed"
+# ==============================================================================
+# Merge the fix branch into main and push so origin/main has the commit.
+# census.sh must no longer suppress the class.
+git -C "$REMEDY_REPO" merge -q --no-edit sp-fix-cls >/dev/null 2>&1
+git -C "$REMEDY_REPO" push -q origin main >/dev/null 2>&1
+
+out7="$(run_census_repo "$REMEDY_REPO")"
+want "sp-recur-unlanded-cls reappears after fix branch lands on base" \
+    "sp-recur-unlanded-cls" "$out7"
+lack "no [suppressed] annotation after branch lands" "[suppressed]" "$out7"
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
