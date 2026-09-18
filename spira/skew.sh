@@ -226,25 +226,39 @@ check() {
     local latest_tag findings="" hard=0 cond_not_latest=0 cond_mismatch=0
     latest_tag="$(printf '%s\n' "$all_tags" | tail -1)"
 
-    # activated_ts: the timestamp embedded in the release directory name (spira-<ts>).
-    local activated_ts="${activated_name#spira-}"
+    # Read the .tag sidecar written by deploy.sh. It maps the release directory to the
+    # release tag without relying on timestamps matching between the tarball and the tag.
+    local release_tag=""
+    local tag_sidecar="$SPIRA_RELEASES/$activated_name/.tag"
+    if [ -f "$tag_sidecar" ]; then
+        release_tag="$(tr -d '\n' < "$tag_sidecar" 2>/dev/null)"
+    fi
 
     # ---------------------------------------------------------------- NOT-LATEST
-    local latest_ts="${latest_tag##*-}"
-    if [ "$activated_ts" != "$latest_ts" ]; then
-        hard=1; cond_not_latest=1
-        findings="${findings}NOT-LATEST activated $activated_name is not the latest published release $latest_tag
+    # Compare by tag when the sidecar is present; fall back to timestamp suffix otherwise.
+    local activated_ts="${activated_name#spira-}"
+    if [ -n "$release_tag" ]; then
+        if [ "$release_tag" != "$latest_tag" ]; then
+            hard=1; cond_not_latest=1
+            findings="${findings}NOT-LATEST activated $activated_name is not the latest published release $latest_tag
 "
+        fi
+    else
+        local latest_ts="${latest_tag##*-}"
+        if [ "$activated_ts" != "$latest_ts" ]; then
+            hard=1; cond_not_latest=1
+            findings="${findings}NOT-LATEST activated $activated_name is not the latest published release $latest_tag
+"
+        fi
     fi
 
     # ---------------------------------------------------------------- MANIFEST-MISMATCH
-    # Find the release tag whose timestamp suffix matches this release. The tarball and its
-    # tag are created together and share a timestamp (build-tarball.sh and release.sh both
-    # use YYYYMMDDTHHMMSSZ format so the names each other).
-    local release_tag=""
-    while IFS= read -r t; do
-        case "$t" in *"-${activated_ts}") release_tag="$t"; break ;; esac
-    done <<< "$all_tags"
+    # Use the sidecar tag when available; fall back to timestamp suffix matching.
+    if [ -z "$release_tag" ]; then
+        while IFS= read -r t; do
+            case "$t" in *"-${activated_ts}") release_tag="$t"; break ;; esac
+        done <<< "$all_tags"
+    fi
 
     if [ -n "$release_tag" ]; then
         local tag_commit

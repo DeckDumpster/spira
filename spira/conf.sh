@@ -987,8 +987,10 @@ spira_conf_defaults() {
     # the 'current' symlink here atomically on each deployment; ExecStart= paths resolve
     # through it so a swap is a deploy. A missing symlink means no release has been
     # activated yet; install.sh refuses until activate.sh runs at least once.
+    # The harness lives under spira/ inside the release directory, so the executable path
+    # is current/spira/sentinel.sh, not current/sentinel.sh.
     # NO-COLON FORM preserves SPIRA_PROD= for single-checkout mode.
-    : "${SPIRA_PROD=$(_spira_join "$SPIRA_RELEASES" current)}"
+    : "${SPIRA_PROD=$(_spira_join "$SPIRA_RELEASES" current/spira)}"
 
     # ---- THE REVIEWER: ADVERSARIAL REVIEW AT THE RELEASE-UNIT BOUNDARY -------------------
     # THE MODEL IS STRONG BY DESIGN. The reviewer looks for intent violations, cross-commit
