@@ -262,6 +262,26 @@ first5="$(printf '%s\n' "$out5" | head -1 | awk '{print $2}')"
 is "three-bead class (sp-recur-beta) ranks above single-bead class with more events" \
     "sp-recur-beta" "$first5"
 
+# ==============================================================================
+echo
+echo "6. Empty cause (reopened): distinct bead count is not event count (sp-79jtq)"
+# ==============================================================================
+# Regression for sp-79jtq: count.py dropped empty fields by value, collapsing the
+# 4-column row to 3 when new_value is empty; the len==3 branch then read the event
+# count as the bead count. Discriminating fixture: 2 beads, 3 events — broken code
+# would report "3 sp-reopen" (event count), fixed code reports "2 sp-reopen".
+testdb_reset
+reopen_a="$(plant_bead "reopen-bead-a")"
+reopen_b="$(plant_bead "reopen-bead-b")"
+bump_reopen "$reopen_a"
+bump_reopen "$reopen_a"
+bump_reopen "$reopen_b"
+
+out6="$(run_census)"
+want "sp-reopen: 2 distinct beads"               "2 sp-reopen"    "$out6"
+want "sp-reopen: 3 detections"                   "(3 detections"  "$out6"
+lack "sp-reopen not reported as 3 beads (broken would read event count)" "3 sp-reopen" "$out6"
+
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]
