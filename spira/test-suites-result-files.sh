@@ -30,10 +30,14 @@
 #     because a runner that produced no records at all would show every assertion as
 #     "no result file", including the one meant to catch a different failure.
 #
-# BUDGET AND PERSUITE ARE PINNED SO THE UNREACHED CASE IS RELIABLE. With BUDGET=12 and
-# PERSUITE=8, the hung suite consumes 8s of budget; the suite alphabetically after it
-# finds left ≈ 4 ≤ 5 and goes to unreached. Even on a slow machine (2s per-step overhead),
-# the margin leaves left ≤ 5 for the last suite.
+# BUDGET AND PERSUITE ARE PINNED SO BOTH CASES ARE RELIABLE.
+#
+# For zzz.sh to be unreached: BUDGET-PERSUITE must be ≤ 5. With BUDGET=20, PERSUITE=16,
+# BUDGET-PERSUITE=4, left_after_slow≈4≤5 even at zero overhead. ✓
+#
+# For slow.sh to START (not be unreached itself): overhead before slow.sh must be
+# less than BUDGET-5=15 seconds. Process-spawn overhead in a loaded container is at
+# most a few seconds; 15s gives ample headroom against transient system load.
 #
 # THE INTAKE IS THE REAL ONE on a throwaway database (law-prefer-the-real-dependency).
 # EVERY CONFIGURED VALUE IS PINNED TO A NON-DEFAULT (law-gates-run-in-a-clean-environment).
@@ -64,7 +68,7 @@ mkdir -p "$SH" "$RUN" "$STATE" "$TMP/home" "$TMP/repo"
 cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$SH/"
 
 # Knobs, every one pinned away from the shipped default.
-BUDGET=12; PERSUITE=8; STALE=3600; PRIO=3; REPONAME=result-files-fixture
+BUDGET=20; PERSUITE=16; STALE=3600; PRIO=3; REPONAME=result-files-fixture
 
 # Repo map for incident.sh's bdq create when a red or timeout is filed.
 printf '%s | %s | push | main | : | :\n' "$REPONAME" "$TMP/repo" > "$SH/repo-map"
@@ -119,8 +123,8 @@ plant test-fx-aaa.sh <<'S'
 # covers: spira/suites.sh
 echo "  ok    passes immediately"
 S
-# test-fx-slow.sh hangs; the per-suite watchdog kills it after PERSUITE=8s.
-# After it is killed, left ≈ 12-8 = 4 ≤ 5, so test-fx-zzz.sh cannot start.
+# test-fx-slow.sh hangs; the per-suite watchdog kills it after PERSUITE=16s.
+# After it is killed, left ≈ 20-16 = 4 ≤ 5, so test-fx-zzz.sh cannot start.
 plant test-fx-slow.sh <<'S'
 #!/usr/bin/env bash
 # covers: spira/suites.sh
