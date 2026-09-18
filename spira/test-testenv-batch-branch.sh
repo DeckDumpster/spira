@@ -110,6 +110,7 @@ rc_d1=0
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_D1" \
 SPIRA_BATCH_INSTANCE="d1-$$" \
+SPIRA_VERDICT_TTL=0 \
     bash "$BATCH" --suites test-target.sh breaks-it "$FIXTURE" || rc_d1=$?
 
 isexit1 "D1: running against breaks-it gives rc=1 (branch suite is red)" "$rc_d1"
@@ -124,6 +125,7 @@ rc_d2=0
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_D2" \
 SPIRA_BATCH_INSTANCE="d2-$$" \
+SPIRA_VERDICT_TTL=0 \
     bash "$BATCH" --suites test-target.sh main "$FIXTURE" || rc_d2=$?
 
 iszero "D2: running against main gives rc=0 even though working tree is on breaks-it" "$rc_d2"
