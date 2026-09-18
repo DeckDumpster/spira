@@ -361,7 +361,7 @@ clean_case
 
 # =============================================================================
 # 6. DIFF-BASED ATTRIBUTION — repro unavailable but one member's diff contains
-#    the red suite; that member is ejected, the other returned to CERTIFIED.
+#    the red suite; that member is ejected, the survivor re-pushed to same PR.
 #    Simulates container failure: repro stub returns green for all branches.
 # =============================================================================
 testdb_reset
@@ -406,10 +406,18 @@ printf 'BATCHED %s %s\n' "$tip_dc" "$(date +%s)" > "$LANDSTATE/sp-at-dc"
 # Repro stub returns green for all (simulates container startup failure).
 : > "$REPRO_FAIL_FILE"
 out="$(verdict "$REPONAME")"
-is   "6. diff-attr: sp-at-dg ejected (diff has red suite)"  "EJECTED"   "$(land_state_of sp-at-dg)"
-is   "6. diff-attr: sp-at-dc returned CERTIFIED"            "CERTIFIED"  "$(land_state_of sp-at-dc)"
-is   "6. diff-attr: batch record removed"                   "0"          "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
-want "6. diff-attr: ejection reported"                      "ejected 1"  "$out"
+is   "6. diff-attr: sp-at-dg ejected (diff has red suite)"  "EJECTED"  "$(land_state_of sp-at-dg)"
+is   "6. diff-attr: sp-at-dc stays BATCHED"                  "BATCHED"  "$(land_state_of sp-at-dc)"
+is   "6. diff-attr: same PR number"                          "44"       "$(grep '^pr=' "$(batch_file)" | cut -d= -f2)"
+is   "6. diff-attr: batch record kept"                       "1"        "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+nowant "6. diff-attr: PR not closed"                         "close"    "$(cat "$FORGE_LOG")"
+want "6. diff-attr: re-push reported"                        "re-pushed to same PR" "$out"
+_new_head6="$(grep '^head=' "$(batch_file)" | cut -d= -f2)"
+_remote_head6="$(git -C "$REMOTE" rev-parse "$batch_br6" 2>/dev/null || echo none)"
+is   "6. diff-attr: head resealed"                           "$_new_head6" "$_remote_head6"
+[ "${_new_head6:-}" != "${batch_head6:-}" ] \
+    && ok "6. diff-attr: new head differs from old" \
+    || bad "6. diff-attr: new head differs from old" "head unchanged: ${_new_head6:-}"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
