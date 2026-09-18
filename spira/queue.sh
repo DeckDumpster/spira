@@ -30,15 +30,6 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/lib.sh"
 
-LANDSTATE="${SPIRA_RUN}/landstate"
-
-_q_land_mark() {  # _q_land_mark <id> <state> <tip>
-    local id="$1" state="$2" tip="${3:-none}"
-    mkdir -p "$LANDSTATE/$(dirname "$id")" 2>/dev/null || true
-    printf '%s %s %s\n' "$state" "$tip" "$(date +%s)" \
-        > "$LANDSTATE/$id.$$" 2>/dev/null \
-        && mv -f "$LANDSTATE/$id.$$" "$LANDSTATE/$id" 2>/dev/null
-}
 
 cmd_submit() {
     local br="${1:-}"
@@ -81,7 +72,7 @@ cmd_submit() {
 
     case "$mode" in
     queue)
-        _q_land_mark "$id" CERTIFIED "$tip"
+        land_mark "$id" CERTIFIED "$tip"
         mkdir -p "$SPIRA_QUEUE_DIR" 2>/dev/null
         printf 'CERTIFIED %s %s\n' "$tip" "$(date +%s)" > "$SPIRA_QUEUE_DIR/$id"
         printf 'queue.sh submit: certified %s\n' "$br"
@@ -105,11 +96,11 @@ cmd_submit() {
             printf 'queue.sh submit: push of %s to %s failed\n' "$br" "$base_branch" >&2
             return 1
         }
-        _q_land_mark "$id" LANDED "$tip"
+        land_mark "$id" LANDED "$tip"
         printf 'queue.sh submit: landed %s (push)\n' "$br"
         ;;
     pr|hold)
-        _q_land_mark "$id" CERTIFIED "$tip"
+        land_mark "$id" CERTIFIED "$tip"
         printf 'queue.sh submit: certified %s (%s)\n' "$br" "$mode"
         ;;
     esac

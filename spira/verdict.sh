@@ -18,21 +18,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$HERE/lib.sh"
 
-LANDSTATE="$SPIRA_RUN/landstate"
-
-land_mark() {   # land_mark <id> <state> <tip> [reason]
-    mkdir -p "$LANDSTATE" 2>/dev/null || return 0
-    printf '%s %s %s %s' "$2" "${3:-none}" "$(date +%s)" "${4:-}" \
-        > "$LANDSTATE/$1.$$" 2>/dev/null \
-        && mv -f "$LANDSTATE/$1.$$" "$LANDSTATE/$1" 2>/dev/null
-}
-
-land_mark_at() {   # land_mark_at <id> <state> <tip> <epoch>
-    mkdir -p "$LANDSTATE" 2>/dev/null || return 0
-    printf '%s %s %s' "$2" "${3:-none}" "$4" \
-        > "$LANDSTATE/$1.$$" 2>/dev/null \
-        && mv -f "$LANDSTATE/$1.$$" "$LANDSTATE/$1" 2>/dev/null
-}
 
 _batch_open_file() { printf '%s/%s/open' "${SPIRA_QUEUE_DIR:?}" "$1"; }
 

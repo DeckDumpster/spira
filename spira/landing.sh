@@ -1,48 +1,42 @@
 #!/usr/bin/env bash
+# landing.sh — CHECK 6, the landing pass over every repository.
 #
-# landing.sh — CHECK 6, moved out of the reconcile loop and into its own process.
+# RESPONSIBILITY MAP
+# land_repo (below): per-branch pipeline per mode
 #
-#   landing.sh          one landing pass over every repository
+#   step                             push   pr    hold  queue
+#   ──────────────────────────────── ─────  ────  ────  ─────
+#   rebase_branch onto base           ✓      ✓     ✓     ✓
+#   confine.sh check                  ✓      ✓     ✓
+#   gate.sh                           ✓      ✓     ✓
+#   land_mark CERTIFIED                                   ✓
+#   merge + push to base              ✓
+#   land_pr (open pull request)              ✓
+#   note bead, hold for hand                       ✓
+#   rebase_survivors after landing    ✓
 #
-# WHY THIS IS NOT IN THE SENTINEL ANY MORE
-# ----------------------------------------
-# The sentinel is a reconcile loop and every other check in it is a handful of bead queries
-# and a `git for-each-ref`. Landing is not: it fetches, rebases, runs the repository's whole
-# landing gate and pushes. Measured, an ordinary pass took 21s and the one pass
-# that landed a branch took 5m30s — and because CHECK 7 (summon an aeon for ready work) sat
-# BELOW it, a free aeon slot with 15 beads ready stayed empty for those five and a half
-# minutes. systemd will not start a second instance of a oneshot that is already running, so
-# the long pass also swallowed the three timer ticks behind it.
+# land-modes: push pr hold queue
 #
-# That inverts the tenet the harness is built on: cheap deterministic work must not queue
-# behind expensive work. Summoning costs about a second and is pure dispatch; gating runs a
-# repository's whole test suite. Reordering the two checks was the one-line version and it
-# was rejected on purpose — it recovers the free slot but a long landing still swallows the
-# ticks behind it, so the loop's period would still be set by its most expensive step.
+# After land_repo loops (this file):
+#   queue.sh step (verdict.sh + batch.sh) — queue mode only
+#   skew.sh refresh (advance checkout)    — push and queue
 #
-# THE UNIT NAME IS THE MUTEX. The sentinel launches this as a transient unit with a FIXED
-# name (`spira-landing`), fire and forget, the same shape lib.sh already uses to summon an
-# aeon. systemd refuses to start a unit that is already active, so a pass arriving while a
-# landing is still in flight declines and moves on — the wanted behaviour, and it costs no
-# lockfile and no pid file to get. `--collect` is load-bearing rather than tidiness: without
-# it a FAILED unit stays loaded and every later `systemd-run --unit=spira-landing` would be
-# refused forever, which is a landing leg that stops dead and says nothing.
+# queue.sh step (called from here, queue mode only):
+#   verdict.sh: read CI status; fast-forward or requeue or attribute red
+#   batch.sh:   open next batch when count or age threshold is met
 #
-# FIRE AND FORGET NEEDS A POSITIVE CONTROL, because "nothing landed" and "the landing worker
-# never ran" look identical from the sentinel's pane (law-absence-needs-a-positive-control).
-# So this writes two things the sentinel reads on its next pass:
+# sentinel CHECK6 hand-off: launched as transient unit `spira-landing`.
+#   Unit name is the mutex; --collect ensures a FAILED unit does not block later runs.
+#   Writes landing.status (key=value, rewritten each run) and landing.progress
+#   (append-only, drained by the sentinel) back across the seam.
 #
-#   landing.status    — key=value, rewritten whole every run: when it finished, its exit
-#                       status, how many spira/* branches it actually SAW. A run that saw
-#                       branches and landed none is a different fact from a run that saw
-#                       none, and a leg that has not completed a run in half an hour is a
-#                       third.
-#   landing.progress  — an append-only mailbox, one line per movement of the DAG. The
-#                       sentinel drains it (by rename, so a line is counted once and only
-#                       once) and replays each line through its own `progress`, which is
-#                       what keeps landings visible in the sentinel log and counted against
-#                       the judgement tier. Landing does not get to count its own actions
-#                       into a pass it is no longer part of.
+# skew.sh refresh (push, queue): advances home checkout to current base.
+#
+# deploy.sh (operator-run, mode-independent):
+#   Drain, swap SPIRA_PROD symlink, restart units, health-check, rollback on failure.
+#
+# Certifying (queue mode) requires bead status = closed.
+# Poisoned/unclaimable beads have status != closed and are already excluded.
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 
@@ -231,17 +225,6 @@ find "${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}" -maxdepth 1 -type f \
 # skip work it has already done; if the file is missing, deleted or unreadable, the pass
 # behaves exactly as it did before, which is why $SPIRA_RUN can still be wiped at any time.
 # =======================================================================================
-LANDSTATE="$SPIRA_RUN/landstate"
-land_state() {           # land_state <id> -> "<state> <tip> <at>" or empty
-    local f="$LANDSTATE/$1"
-    [ -r "$f" ] || return 1
-    tr -d '\n' < "$f" 2>/dev/null
-}
-land_mark() {            # land_mark <id> <state> <tip> [reason]
-    mkdir -p "$LANDSTATE" 2>/dev/null || return 0
-    printf '%s %s %s %s' "$2" "${3:-none}" "$(date +%s)" "${4:-}" > "$LANDSTATE/$1.$$" 2>/dev/null \
-        && mv -f "$LANDSTATE/$1.$$" "$LANDSTATE/$1" 2>/dev/null
-}
 # THE RECORD IS USED IN TWO WAYS. The first guard written — "do not reopen a commit this
 # pass already landed" — was written, then proved UNREACHABLE: a landed tip that has not
 # moved is an ancestor of the base, so `content_landed` returns true and the pass never

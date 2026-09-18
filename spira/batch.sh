@@ -16,19 +16,6 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$HERE/lib.sh"
 
-LANDSTATE="$SPIRA_RUN/landstate"
-
-land_state() {           # land_state <id> -> "<state> <tip> <at>" or empty
-    local f="$LANDSTATE/$1"
-    [ -r "$f" ] || return 1
-    tr -d '\n' < "$f" 2>/dev/null
-}
-land_mark() {            # land_mark <id> <state> <tip> [reason]
-    mkdir -p "$LANDSTATE" 2>/dev/null || return 0
-    printf '%s %s %s %s' "$2" "${3:-none}" "$(date +%s)" "${4:-}" \
-        > "$LANDSTATE/$1.$$" 2>/dev/null \
-        && mv -f "$LANDSTATE/$1.$$" "$LANDSTATE/$1" 2>/dev/null
-}
 
 # SPIRA_QUEUE_REPRO_BATCH: seam for per-member reproduction in tests.
 : "${SPIRA_QUEUE_REPRO_BATCH:=$HERE/testenv-batch.sh}"
