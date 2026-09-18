@@ -576,6 +576,81 @@ nowant "no 'cannot resolve base ref' for gitea-remote repo" \
 is   "landing trigger fires for gitea-remote repo" 0 "$rc_3ljk"
 want "bd create called for gitea-remote repo" "create" "$(cat "$BD_LOG")"
 
+# ==========================================================================================
+echo
+echo "REGRESSION db-wpjm: home repo counted via name/map, not SPIRA_REPO path"
+# ==========================================================================================
+# Before fix: _count_landings("$SPIRA_REPO") — when SPIRA_REPO is a non-checkout release
+# dir, spira_landref fails and logs "cannot resolve base ref" on every run.
+# After fix:  _count_landings(spira_home_repo()) — name resolved via repo-map → correct count.
+#
+# Fixture: SPIRA_HOME_REPO="home-wpjm"; map maps "home-wpjm" → a throwaway checkout with
+# 2 landings. No explicit SPIRA_REPO so conf.sh derives it from SPIRA_HOME (the worktree),
+# making repo_root fall through to the map for the home-repo lookup (SPIRA_REPO ==
+# SPIRA_REPO_DERIVED → not an override).
+#
+# Double-count guard: home-wpjm appears in the map AND in the home-repo block. Old dedup
+# compared paths ($SPIRA_REPO vs map path); under prod those never matched. New dedup
+# compares names ($_nm vs $_home_repo). Verified: threshold=3 with 2 landings must not fire
+# (fires if double-counted: 4≥3; silent if counted once: 2<3).
+
+HOMEREPO_WPJM="$T/homerepo-wpjm"
+git init -q "$HOMEREPO_WPJM"
+git -C "$HOMEREPO_WPJM" config user.email "test@example.com"
+git -C "$HOMEREPO_WPJM" config user.name "Test"
+git -C "$HOMEREPO_WPJM" commit --allow-empty -q -m "initial"
+git -C "$HOMEREPO_WPJM" commit --allow-empty -q -m "sp-wpjm1: first"
+git -C "$HOMEREPO_WPJM" commit --allow-empty -q -m "sp-wpjm2: second"
+mkdir -p "$HOMEREPO_WPJM/.git/refs/remotes/origin"
+git -C "$HOMEREPO_WPJM" rev-parse HEAD > "$HOMEREPO_WPJM/.git/refs/remotes/origin/main"
+
+REPOMAP_WPJM="$T/repomap-wpjm"
+printf 'home-wpjm|%s|\n' "$HOMEREPO_WPJM" > "$REPOMAP_WPJM"
+
+# Run 1: threshold=2, time trigger disabled — must fire (proves landings are counted).
+printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
+printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
+: > "$BD_LOG"
+out_wpjm="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    SPIRA_CONF="$NONE" \
+    SPIRA_BD="$STUB_BD" \
+    BD_LOG_PATH="$BD_LOG" \
+    BD_LIST_OUTPUT="[]" \
+    SPIRA_DB="$T/fixture.db" \
+    SPIRA_RUN="$RUNDIR" \
+    SPIRA_HOME_REPO="home-wpjm" \
+    SPIRA_REPO_MAP="$REPOMAP_WPJM" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" \
+    SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 \
+    SPIRA_MAECHEN_LANDING_INTERVAL=2 \
+    bash "$TRIGSH" 2>&1)"; rc_wpjm=$?
+nowant "no 'cannot resolve base ref' when home repo resolved via map" \
+    "cannot resolve base ref" "$out_wpjm"
+is   "landing trigger fires — home repo landings counted via map" 0 "$rc_wpjm"
+want "bd create called"  "create" "$(cat "$BD_LOG")"
+
+# Run 2: threshold=3 (above 2 landings, below 4) — must NOT fire, proving no double-count.
+printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
+: > "$BD_LOG"
+out_wpjm2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    SPIRA_CONF="$NONE" \
+    SPIRA_BD="$STUB_BD" \
+    BD_LOG_PATH="$BD_LOG" \
+    BD_LIST_OUTPUT="[]" \
+    SPIRA_DB="$T/fixture.db" \
+    SPIRA_RUN="$RUNDIR" \
+    SPIRA_HOME_REPO="home-wpjm" \
+    SPIRA_REPO_MAP="$REPOMAP_WPJM" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" \
+    SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 \
+    SPIRA_MAECHEN_LANDING_INTERVAL=3 \
+    bash "$TRIGSH" 2>&1)"; rc_wpjm2=$?
+is     "threshold=3 exits 0 — home repo not double-counted" 0 "$rc_wpjm2"
+nowant "no create at threshold=3 — exactly 2 landings, not 4" \
+    "create" "$(cat "$BD_LOG")"
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

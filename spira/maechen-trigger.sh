@@ -130,21 +130,20 @@ fi
 landing_count=0
 id_prefix="${SPIRA_ID_PREFIX:-sp}"
 
-_count_landings() {   # _count_landings <repo_path> <since_ts>
-    local rp="$1" ts="$2" base_ref="" n=0 subject
-    # Resolve the remote-tracking base ref via spira_landref — handles any remote name.
-    # The old inline implementation hardcoded 'origin', silently zeroing counts for repos
-    # whose remote has a different name (sp-3ljk). spira_landref resolves the remote name
-    # dynamically: declared base in the repo-map, then the remote's own symbolic HEAD, then
-    # by asking the remote once and caching the answer.
+_count_landings() {   # _count_landings <repo_path_or_name> <since_ts>
+    local rp="$1" ts="$2" base_ref="" rpath="" n=0 subject
     base_ref="$(spira_landref "$rp" 2>/dev/null)" || base_ref=""
     if [ -z "$base_ref" ]; then
         log "landing count: cannot resolve base ref for $rp — skipped"
         printf '0'; return 0
     fi
+    case "$rp" in
+        */*) rpath="$rp" ;;
+        *)   rpath="$(repo_root "$rp" 2>/dev/null)" || rpath="" ;;
+    esac
     while IFS= read -r subject; do
         case "$subject" in "${id_prefix}-"*) n=$(( n + 1 )) ;; esac
-    done < <(git -C "$rp" log --format='%s' --after="@${ts}" "$base_ref" 2>/dev/null || true)
+    done < <(git -C "$rpath" log --format='%s' --after="@${ts}" "$base_ref" 2>/dev/null || true)
     printf '%d' "$n"
 }
 
@@ -158,8 +157,10 @@ _add_landings() {
 }
 
 # Home repo — always present.
-if [ -d "${SPIRA_REPO:-}" ]; then
-    _n="$(_count_landings "$SPIRA_REPO" "$watermark_ts")"
+_home_repo="$(spira_home_repo)"
+_home_path="$(repo_root "$_home_repo" 2>/dev/null)" || _home_path=""
+if [ -d "${_home_path:-}" ]; then
+    _n="$(_count_landings "$_home_repo" "$watermark_ts")"
     _add_landings "$_n"
 fi
 
@@ -171,7 +172,7 @@ if [ -f "${SPIRA_REPO_MAP:-}" ]; then
         _rp="${_rp#"${_rp%%[![:space:]]*}"}"; _rp="${_rp%"${_rp##*[![:space:]]}"}"
         case "${_nm:-}" in ''|'#'*) continue ;; esac
         [ -n "$_rp" ] || continue
-        [ "$_rp" = "${SPIRA_REPO:-}" ] && continue   # already counted
+        [ "$_nm" = "$_home_repo" ] && continue   # already counted
         [ -d "$_rp" ] || continue
         _n="$(_count_landings "$_rp" "$watermark_ts")"
         _add_landings "$_n"
