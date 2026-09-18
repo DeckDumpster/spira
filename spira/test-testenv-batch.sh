@@ -328,6 +328,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_B1" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B1" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b1-$$" \
+SPIRA_VERDICT_TTL=0 \
     bash "$BATCH" topic "$FIXTURE" || rc_b1=$?
 
 iszero "B1: batch exits 0 (all green)" "$rc_b1"
@@ -378,6 +379,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_B2" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B2" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b2-$$" \
+SPIRA_VERDICT_TTL=0 \
     bash "$BATCH" topic "$FIXTURE" || rc_b2=$?
 
 isexit1 "B2: batch exits 1 (red suites — branch fault, distinguishable from harness fault)" \
@@ -433,6 +435,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_B3" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B3" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="$KILL_INSTANCE" \
+SPIRA_VERDICT_TTL=0 \
     bash "$BATCH" --mode serial topic "$FIXTURE" &
 BATCH_PID=$!
 
@@ -511,6 +514,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_B4" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B4" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b4-$$" \
+SPIRA_VERDICT_TTL=0 \
     bash "$BATCH" topic "$FIXTURE" || rc_b4=$?
 
 iszero "B4: exits 0 with no spira.conf (SPIRA_CONF=/nonexistent)" "$rc_b4"
@@ -556,6 +560,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_B5b" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B5b" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b5b-$$" \
+SPIRA_VERDICT_TTL=0 \
     bash "$BATCH" --suites test-fx-ka.sh topic "$FIXTURE" || rc_b5b=$?
 iszero "B5b: --suites run exits 0" "$rc_b5b"
 
@@ -585,6 +590,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_B5c" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B5c" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b5c-$$" \
+SPIRA_VERDICT_TTL=0 \
     bash "$BATCH" topic "$FIXTURE" || rc_b5c=$?
 iszero "B5c: all-fallback run exits 0" "$rc_b5c"
 
@@ -637,6 +643,7 @@ b6a_out="$(
     SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B6a" \
     SPIRA_BATCH_SKIP_INSTALL=1 \
     SPIRA_BATCH_INSTANCE="b6a-$$" \
+    SPIRA_VERDICT_TTL=0 \
         bash "$BATCH" topic "$FIXTURE" 2>/dev/null
 )" || rc_b6a=$?
 iszero "B6a: batch exits 0 with stubbed nproc=7" "$rc_b6a"
@@ -657,6 +664,7 @@ b6b_out="$(
     SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B6b" \
     SPIRA_BATCH_SKIP_INSTALL=1 \
     SPIRA_BATCH_INSTANCE="b6b-$$" \
+    SPIRA_VERDICT_TTL=0 \
         bash "$BATCH" topic "$FIXTURE" 2>/dev/null
 )" || rc_b6b=$?
 iszero "B6b: batch exits 0 with SPIRA_BATCH_MAXPAR=3 from spira.conf" "$rc_b6b"

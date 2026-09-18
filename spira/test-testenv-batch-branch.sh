@@ -91,8 +91,6 @@ EOF
 chmod +x "$FIXTURE/spira/test-target.sh"
 git -C "$FIXTURE" add spira/
 git -C "$FIXTURE" commit -q -m "main: target suite passes"
-git -C "$FIXTURE" push -q origin main
-git -C "$FIXTURE" fetch -q origin
 
 # breaks-it: same suite name, exits 1
 git -C "$FIXTURE" checkout -q -b breaks-it

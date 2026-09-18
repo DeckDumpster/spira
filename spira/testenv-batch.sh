@@ -375,7 +375,7 @@ if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ] && \
    [ -r "$VERDICT_DIR/batch-$BATCH_KEY" ]; then
     _cached_at="" _cached_when="" _cached_by="" _cached_verdict="" _cached_red_suites=""
     # shellcheck disable=SC1090
-    eval "$(sed -n 's/^\(when\|by\|at\|verdict\|red_suites\)=\(.*\)$/cached_\1="\2"/p' \
+    eval "$(sed -n 's/^\(when\|by\|at\|verdict\|red_suites\)=\(.*\)$/_cached_\1="\2"/p' \
         "$VERDICT_DIR/batch-$BATCH_KEY" 2>/dev/null)"
     _age=-1
     case "${_cached_at:-}" in ''|*[!0-9]*) : ;; *) _age=$(( $(date +%s) - _cached_at )) ;; esac
