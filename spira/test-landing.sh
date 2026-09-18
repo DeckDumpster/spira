@@ -795,8 +795,8 @@ rm -rf "$REPO/untracked-notes"
     || bad "an untracked file does not block the refresh" "checkout did not move"
 want "and the refresh is reported" "skew: refreshed to" "$out"
 
-# A MODIFIED TRACKED FILE STILL BLOCKS, and the decline NAMES what blocked it. The fixture
-# starts with only an empty commit and no tracked files, so create one on origin first.
+# A MODIFIED TRACKED FILE IS STASHED SO THE ADVANCE CAN PROCEED. The fixture starts with
+# only an empty commit and no tracked files, so create one on origin first.
 seed; reset_repo
 printf 'clean\n' > "$REPO/tracked.txt"
 git -C "$REPO" add tracked.txt
@@ -808,19 +808,11 @@ printf 'dirty\n' >> "$REPO/tracked.txt"
 before="$(checkout_current)"
 out="$(landing)"
 after="$(checkout_current)"
-git -C "$REPO" checkout -q -- . 2>/dev/null
-[ "$before" = "$after" ] \
-    && ok "a modified tracked file blocks the refresh" \
-    || bad "a modified tracked file blocks the refresh" "checkout moved anyway"
-want "and the decline names the condition" "tracked files are modified" "$out"
-
-# THE DECLINE IS NOT A GIVE-UP. A dirty checkout when a pass runs is just a busy session;
-# the next pass, once it is clean, must pick up what the dirty one deferred. The session
-# cleaned up above (checkout -q -- .) and $REPO is still behind origin/main.
-out="$(landing)"
-[ "$(checkout_current)" != "$before" ] \
-    && ok "the next pass advances the checkout once the session is clean" \
-    || bad "the next pass advances the checkout once the session is clean" "checkout did not move"
+git -C "$REPO" stash drop >/dev/null 2>&1 || true
+[ "$before" != "$after" ] \
+    && ok "a modified tracked file is stashed and the advance proceeds" \
+    || bad "a modified tracked file is stashed and the advance proceeds" "checkout did not move"
+want "and the refresh reports the stash" "stashed dirty tracked files" "$out"
 want "and reports the refresh" "skew: refreshed to" "$out"
 
 # A BASE THAT MOVED WITH NO BRANCH LANDING IS PICKED UP WITHIN ONE PASS.
