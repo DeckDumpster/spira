@@ -196,6 +196,34 @@ out="$(census_out)"
 want "bead_reopen alone produces sp-reopen in census" "sp-reopen" "$out"
 want "sp-reopen shows 1 distinct bead" "1 sp-reopen" "$out"
 
+
+# ======================================================================================
+echo
+echo "sp-vtyo9: NULL-cause reopens — 2 distinct beads, 8 events → 2 sp-reopen (8 detections)"
+# ======================================================================================
+# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail):
+# Run against unfixed census.sh (origin/main before sp-vtyo9):
+#   FAIL  2 sp-reopen for 2-bead fixture: wanted [2 sp-reopen] in [8 sp-reopen (8 detections, 8 all-time)]
+# Empty COALESCE cell shrinks the 4-column row to 3; the 3-column branch reads
+# n_beads as n_events (both 8), inflating distinct-bead count to event count.
+_write_reopen() {
+    local id="$1"
+    local uuid
+    uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 1
+    bdq sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'reopened', 'harness', NULL, NOW())" >/dev/null 2>&1 || true
+}
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-h1","title":"reopen bead 1","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-17T00:00:00Z"}
+{"id":"sp-h2","title":"reopen bead 2","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-17T00:00:00Z"}
+JSONL
+_write_reopen sp-h1; _write_reopen sp-h1; _write_reopen sp-h1; _write_reopen sp-h1
+_write_reopen sp-h2; _write_reopen sp-h2; _write_reopen sp-h2; _write_reopen sp-h2
+
+out="$(census_out)"
+want "2 sp-reopen for 2-bead fixture" "2 sp-reopen" "$out"
+want "sp-reopen (8 detections" "sp-reopen (8 detections" "$out"
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
