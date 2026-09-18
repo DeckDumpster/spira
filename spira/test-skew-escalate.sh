@@ -130,13 +130,14 @@ echo
 echo "positive control — successful notify appears on stdout:"
 # ===========================================================================
 GOOD_HOME="$TMP/good-home"
+GOOD_BODY="$TMP/good-body"
 mkdir -p "$GOOD_HOME"
-cat > "$GOOD_HOME/mail.sh" <<'EOF'
+cat > "$GOOD_HOME/mail.sh" <<EOFM
 #!/usr/bin/env bash
-[ "${1:-}" = send ] || exit 0
+[ "\${1:-}" = send ] || exit 0
 echo "mail sent"
-cat >/dev/null
-EOF
+cat > "$GOOD_BODY"
+EOFM
 chmod +x "$GOOD_HOME/mail.sh"
 
 good_out="$(run_skew SPIRA_HOME="$GOOD_HOME")"; good_rc=$?
@@ -144,6 +145,12 @@ good_out="$(run_skew SPIRA_HOME="$GOOD_HOME")"; good_rc=$?
 is  "positive control exits 1 (divergence found)" "1" "$good_rc"
 # The escalation confirmation must appear on stdout so skew.log has it.
 want "positive control: escalation noted on stdout" "escalated" "$good_out"
+# Body must be non-empty — an empty body is indistinguishable from a correct one
+# by exit code alone (law-absence-needs-a-positive-control).
+[ -s "$GOOD_BODY" ] && ok "body is non-empty" \
+    || bad "body is non-empty" "mail.sh received an empty body"
+want "body contains ## Question" "## Question" "$(cat "$GOOD_BODY")"
+want "body contains ## Default"  "## Default"  "$(cat "$GOOD_BODY")"
 
 # ===========================================================================
 echo
