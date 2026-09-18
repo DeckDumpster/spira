@@ -50,7 +50,13 @@
 #   SPIRA_BATCH_SKIP_INSTALL  if non-empty, skip configure+install; suites that
 #                             need installed units will skip (exit 77)
 #   SPIRA_VERDICTS          verdict-cache directory (shared with gate.sh)
-#   SPIRA_VERDICT_TTL       cache TTL in seconds; 0 = disabled (default: 0)
+#   SPIRA_VERDICT_TTL       cache TTL in seconds; 0 = disabled (default: 86400)
+#   SPIRA_VERDICT_REPEAT_CONSIDERED  override when a prior verdict (green or red)
+#                                    already exists for this key. Must be a sentence
+#                                    of at least 10 characters — a bare flag is refused.
+#                                    Use when the prior result was wrong for a cause
+#                                    outside the key (e.g., runner destroyed). Recorded
+#                                    in the verdict file so a later reader can weigh it.
 #   SPIRA_SUITE_TIMEOUT     per-suite wall-clock limit in seconds; 0 = disabled
 #                           (default: 600). A suite that exceeds this limit is
 #                           recorded as "timeout" and the corpus continues. This
@@ -337,20 +343,48 @@ fi
 # VERDICT CACHE — check before starting the container.
 # ---------------------------------------------------------------------------
 VERDICT_DIR="${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}"
-verdict_ttl="${SPIRA_VERDICT_TTL:-0}"
+verdict_ttl="${SPIRA_VERDICT_TTL:-86400}"
+_verdict_override_reason=""
 case "$verdict_ttl" in ''|*[!0-9]*) verdict_ttl=0 ;; esac
 
 if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ] && \
    [ -r "$VERDICT_DIR/batch-$BATCH_KEY" ]; then
-    _cached_at="" _cached_when="" _cached_by=""
+    _cached_at="" _cached_when="" _cached_by="" _cached_verdict="" _cached_red_suites=""
     # shellcheck disable=SC1090
-    eval "$(sed -n 's/^\(when\|by\|at\)=\(.*\)$/cached_\1="\2"/p' \
+    eval "$(sed -n 's/^\(when\|by\|at\|verdict\|red_suites\)=\(.*\)$/cached_\1="\2"/p' \
         "$VERDICT_DIR/batch-$BATCH_KEY" 2>/dev/null)"
     _age=-1
     case "${_cached_at:-}" in ''|*[!0-9]*) : ;; *) _age=$(( $(date +%s) - _cached_at )) ;; esac
     if [ "$_age" -ge 0 ] && [ "$_age" -lt "$verdict_ttl" ]; then
-        log "batch: tree already passed at ${_cached_when:-unknown} — key batch-$BATCH_KEY"
-        exit 0
+        # Absent verdict field means an old green-only file — treat as green.
+        case "${_cached_verdict:-green}" in
+            green)
+                log "batch: tree already passed at ${_cached_when:-unknown} — key batch-$BATCH_KEY"
+                exit 0
+                ;;
+            red)
+                _repeat_reason="${SPIRA_VERDICT_REPEAT_CONSIDERED:-}"
+                if [ -n "$_repeat_reason" ] && [ "${#_repeat_reason}" -ge 10 ]; then
+                    log "batch: repeat allowed — reason: $_repeat_reason"
+                    # Store for inclusion in the new verdict written after the run.
+                    _verdict_override_reason="$_repeat_reason"
+                else
+                    [ -n "$_repeat_reason" ] && \
+                        log "batch: SPIRA_VERDICT_REPEAT_CONSIDERED must be a sentence (min 10 chars)"
+                    log "batch: repeat attempt refused — prior red at ${_cached_when:-unknown} — key batch-$BATCH_KEY — red suites: ${_cached_red_suites:-(unknown)}"
+                    if [ -r "$HERE/bead.sh" ] && [ -n "${SPIRA_DB:-}" ]; then
+                        printf '%s\n' \
+                            "Repeat attempt refused. Prior red at ${_cached_when:-unknown}. Key: batch-$BATCH_KEY. Red suites: ${_cached_red_suites:-(unknown)}. Branch: $BR." \
+                            | bash "$HERE/bead.sh" file \
+                                "repeat attempt: no change — $BR" \
+                                --for builder \
+                                --repo "$(spira_home_repo 2>/dev/null)" \
+                                --body-file - 2>/dev/null || true
+                    fi
+                    exit 2
+                fi
+                ;;
+        esac
     fi
 fi
 
@@ -895,15 +929,35 @@ if [ "$_batch_red" -gt 0 ]; then
     log "batch: $_batch_red suite(s) red"
     _diag="$HERE/gate-diag.sh"
     [ -r "$_diag" ] && bash "$_diag" "$RESULTS" || true
+    if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ]; then
+        mkdir -p "$VERDICT_DIR"
+        _red_names=""
+        for _rv_s in $SELECTED; do
+            [ -r "$RESULTS/$_rv_s.result" ] || continue
+            case "$(awk '{print $1}' "$RESULTS/$_rv_s.result" 2>/dev/null)" in
+                red|timeout) _red_names="${_red_names:+$_red_names }$_rv_s" ;;
+            esac
+        done
+        printf 'verdict=red\nwhen=%s\nby=%s\nat=%s\nred_suites=%s\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "testenv-batch" "$(date +%s)" \
+            "${_red_names:-unknown}" \
+            > "$VERDICT_DIR/batch-$BATCH_KEY"
+        [ -n "${_verdict_override_reason:-}" ] && \
+            printf 'override_reason=%s\n' "$_verdict_override_reason" \
+                >> "$VERDICT_DIR/batch-$BATCH_KEY"
+    fi
     exit 1
 fi
 
 # All suites passed or skipped — cache the verdict so the same tree skips next time.
 if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ]; then
     mkdir -p "$VERDICT_DIR"
-    printf 'when=%s\nby=%s\nat=%s\n' \
+    printf 'verdict=green\nwhen=%s\nby=%s\nat=%s\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "testenv-batch" "$(date +%s)" \
         > "$VERDICT_DIR/batch-$BATCH_KEY"
+    [ -n "${_verdict_override_reason:-}" ] && \
+        printf 'override_reason=%s\n' "$_verdict_override_reason" \
+            >> "$VERDICT_DIR/batch-$BATCH_KEY"
 fi
 
 log "batch: all suites passed"

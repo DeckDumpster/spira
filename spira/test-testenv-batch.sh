@@ -631,6 +631,131 @@ b6b_out="$(
 iszero "B6b: batch exits 0 with SPIRA_BATCH_MAXPAR=3 from spira.conf" "$rc_b6b"
 want "B6b: log shows maxpar: 3 (from spira.conf)" "maxpar: 3" "$b6b_out"
 
+# ---------------------------------------------------------------------------
+# B7: VERDICT REPEAT DETECTION
+#
+# A retry that changes nothing is a loop. testenv-batch.sh now records red
+# verdicts and refuses a repeat attempt against the same key.
+#
+# REGRESSION (law-a-regression-test-must-be-seen-to-fail): against origin/main —
+#   B7a fails: old code never writes verdict=red
+#   B7b fails: old code exits 1 on a repeat (runs), not 2 (refused)
+#   B7d fails: old code never logs "repeat allowed"
+#   B7e fails: old code exits 1 on bare-flag override (runs), not 2
+# B7c is the positive control and passes against old code too — old code never
+# refuses — proving a guard that refuses everything looks identical to one that
+# works (law-absence-needs-a-positive-control).
+# ---------------------------------------------------------------------------
+echo
+echo "B7: verdict repeat detection"
+
+SUITE_B7="$TMP/suites-B7"
+VERDICTS_B7="$TMP/verdicts-B7"
+mkdir -p "$SUITE_B7" "$VERDICTS_B7"
+cp "$SUITE_B2/test-fx-red.sh" "$SUITE_B7/"
+
+# B7a: red verdict is recorded against the key after a red run.
+RESULTS_ROOT_B7a="$TMP/results-B7a"
+rc_b7a=0
+b7a_out="$(
+SPIRA_BATCH_SUITE_DIR="$SUITE_B7" \
+SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B7a" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_BATCH_INSTANCE="b7a-$$" \
+SPIRA_VERDICTS="$VERDICTS_B7" \
+SPIRA_VERDICT_TTL=86400 \
+    bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null
+)" || rc_b7a=$?
+
+isexit1 "B7a: first run exits 1 (red suite)" "$rc_b7a"
+_b7_verdict_file="$(ls "$VERDICTS_B7"/batch-* 2>/dev/null | head -1)"
+[ -n "$_b7_verdict_file" ] \
+    && ok "B7a: verdict file created in SPIRA_VERDICTS" \
+    || bad "B7a: verdict file created" "none found in $VERDICTS_B7"
+
+if [ -n "$_b7_verdict_file" ]; then
+    _b7_vf="$(cat "$_b7_verdict_file")"
+    want "B7a: verdict file has verdict=red"  "verdict=red"  "$_b7_vf"
+    want "B7a: verdict file has red_suites="  "red_suites="  "$_b7_vf"
+fi
+
+# B7b: second attempt at the same key is refused before the container starts.
+RESULTS_ROOT_B7b="$TMP/results-B7b"
+rc_b7b=0
+b7b_out="$(
+SPIRA_BATCH_SUITE_DIR="$SUITE_B7" \
+SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B7b" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_BATCH_INSTANCE="b7b-$$" \
+SPIRA_VERDICTS="$VERDICTS_B7" \
+SPIRA_VERDICT_TTL=86400 \
+    bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null
+)" || rc_b7b=$?
+
+isexit2 "B7b: second attempt exits 2 (refused — same key as prior red)" "$rc_b7b"
+want "B7b: output names the refusal"    "repeat attempt refused" "$b7b_out"
+want "B7b: output names the batch key" "batch-"                  "$b7b_out"
+
+# B7c: POSITIVE CONTROL — different MODE produces a different key; the prior
+# parallel-red verdict does NOT refuse this serial run.
+# Old code also passes (it never refuses), which is the correct positive-control
+# property: a guard that over-refuses is indistinguishable from one that works.
+RESULTS_ROOT_B7c="$TMP/results-B7c"
+rc_b7c=0
+SPIRA_BATCH_SUITE_DIR="$SUITE_B7" \
+SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B7c" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_BATCH_INSTANCE="b7c-$$" \
+SPIRA_VERDICTS="$VERDICTS_B7" \
+SPIRA_VERDICT_TTL=86400 \
+    bash "$BATCH" --mode serial --suites test-fx-red.sh topic "$FIXTURE" || rc_b7c=$?
+[ "$rc_b7c" -ne 2 ] \
+    && ok "B7c: positive-control: different MODE not refused (exit $rc_b7c, not 2)" \
+    || bad "B7c: positive-control: different MODE not refused" \
+           "got exit 2 — guard is over-refusing"
+
+# B7d: override with a complete reason proceeds; reason is retrievable.
+RESULTS_ROOT_B7d="$TMP/results-B7d"
+rc_b7d=0
+b7d_out="$(
+SPIRA_BATCH_SUITE_DIR="$SUITE_B7" \
+SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B7d" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_BATCH_INSTANCE="b7d-$$" \
+SPIRA_VERDICTS="$VERDICTS_B7" \
+SPIRA_VERDICT_TTL=86400 \
+SPIRA_VERDICT_REPEAT_CONSIDERED="runner host was destroyed by hypervisor OOM, not a code defect" \
+    bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null
+)" || rc_b7d=$?
+
+want  "B7d: output records that override was accepted" "repeat allowed" "$b7d_out"
+[ "$rc_b7d" -ne 2 ] \
+    && ok "B7d: override proceeds (exit $rc_b7d, not 2)" \
+    || bad "B7d: override proceeds" "got exit 2 — override not accepted"
+if [ -n "$_b7_verdict_file" ] && [ -f "$_b7_verdict_file" ]; then
+    _b7d_or="$(grep '^override_reason=' "$_b7_verdict_file" | cut -d= -f2-)"
+    [ -n "$_b7d_or" ] \
+        && ok "B7d: override reason is retrievable from verdict file" \
+        || bad "B7d: override reason retrievable" "override_reason= line absent"
+fi
+
+# B7e: bare flag (too short) override is refused.
+RESULTS_ROOT_B7e="$TMP/results-B7e"
+rc_b7e=0
+b7e_out="$(
+SPIRA_BATCH_SUITE_DIR="$SUITE_B7" \
+SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B7e" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_BATCH_INSTANCE="b7e-$$" \
+SPIRA_VERDICTS="$VERDICTS_B7" \
+SPIRA_VERDICT_TTL=86400 \
+SPIRA_VERDICT_REPEAT_CONSIDERED="1" \
+    bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null
+)" || rc_b7e=$?
+
+isexit2 "B7e: bare-flag override refused (exit 2)" "$rc_b7e"
+want   "B7e: output names the override requirement" "min 10 chars" "$b7e_out"
+
 # ===========================================================================
 echo
 echo "C: the constants testenv-batch.sh mirrors from testenv.sh still agree"
