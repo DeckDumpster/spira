@@ -119,15 +119,22 @@ kill "$SRV_PID" 2>/dev/null; wait "$SRV_PID" 2>/dev/null; SRV_PID=""
 echo
 echo "unmanaged server, not answering — FAIL:"
 # ==========================================================================
-# Use a port that was never opened; the TCP probe must FAIL (positive control:
-# proves the check actually fires and does not silently pass).
-printf '{"dolt_mode":"server","dolt_database":"db","dolt_server_host":"127.0.0.1","dolt_server_port":59998,"project_id":"test-ec2t"}\n' \
-    > "$TMP/db/.beads/metadata.json"
+# Bind to port 0 to get a free port from the OS, then close immediately.
+# A hardcoded port is the observed source of flakiness: if something on the
+# host is listening there, doctor prints OK and the FAIL assertion fails.
+DEAD_PORT="$(python3 -c "
+import socket; s = socket.socket()
+s.bind(('127.0.0.1', 0))
+print(s.getsockname()[1])
+s.close()
+")"
+printf '{"dolt_mode":"server","dolt_database":"db","dolt_server_host":"127.0.0.1","dolt_server_port":%s,"project_id":"test-ec2t"}\n' \
+    "$DEAD_PORT" > "$TMP/db/.beads/metadata.json"
 
 unmanaged_out="$(run_doctor || true)"
 want "not answering: FAIL emitted" "FAIL" \
     "$(printf '%s\n' "$unmanaged_out" | grep -i 'no server answers' || true)"
-want "not answering: FAIL names the host and port" "127.0.0.1:59998" "$unmanaged_out"
+want "not answering: FAIL names the host and port" "127.0.0.1:$DEAD_PORT" "$unmanaged_out"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
