@@ -134,9 +134,15 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      # To pull the test image. The package inherits the repository's visibility,
-      # so this is what makes the pull work while it is private.
-      packages: read
+      # To pull the test image, AND to push it back. The package inherits the
+      # repository's visibility, so this is what makes the pull work while it is
+      # private. It was `read` alone until 2026-09-17, which meant the registry
+      # could never be populated: every run consulted it, missed, rebuilt the
+      # identical 1.8 GB image from scratch and destroyed it with the VM. Three
+      # consecutive runs asked for the same tag, 6c48554d8425, and all three built
+      # it — 11m22s of one 16m50s job, 67% of the wall clock, on a step whose whole
+      # purpose is to avoid that cost.
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -187,6 +193,33 @@ jobs:
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
         run: bash spira/testenv.sh image
 
+      - name: Publish the test image
+        # THE STEP ABOVE CONSULTS A REGISTRY NOTHING EVER WROTE TO. Without this,
+        # the acquire path can only ever miss: it looks up the closure tag, does not
+        # find it, builds 1.8 GB from scratch, and the VM is destroyed forty seconds
+        # after the suites end, taking the image with it. Every run paid the full
+        # build for an image byte-identical to the one the previous run threw away.
+        #
+        # SAFE FROM ANY BRANCH, BY CONSTRUCTION. The tag is a content hash of the
+        # Containerfile, the bd pin and doctor.sh's program lists, so a branch that
+        # changes any of them publishes under a DIFFERENT tag and cannot overwrite
+        # another closure's image. Nothing floating is ever pushed — there is no
+        # :latest to substitute an image built from a different recipe. A fork
+        # cannot reach this step at all, because provision needs secrets a fork is
+        # not given.
+        #
+        # NEVER FAILS THE GATE. A registry that is down, or credentials that are
+        # missing, must slow the next run down, not fail this one — the same
+        # reasoning the acquire step above is written under. An unconditional push
+        # is deliberate: on a hit the layers already exist remotely and the push
+        # settles in seconds, and the alternative is matching on the acquire step's
+        # prose to decide whether it built, which is exactly what
+        # law-a-matcher-reads-code-not-prose forbids.
+        continue-on-error: true
+        env:
+          SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
+        run: bash spira/testenv.sh publish
+
       - name: Lints
         # Cheap, pure bash, and they fail on the things no suite can see: operator
         # infrastructure named in a public repo, configured names written as
@@ -213,9 +246,81 @@ jobs:
           # so testenv.sh finds it locally. Naming the registry here as well keeps
           # the two steps agreeing about which image the gate is entitled to use.
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
+          # MEMORY IS THE BINDING RESOURCE IN THE GUEST, NOT CPU. testenv-batch.sh
+          # defaults maxpar to nproc, which is the right answer on a developer box
+          # where cores are what run out. Here each parallel suite is a whole
+          # systemd container, and at nproc=8 the guest exhausts its RAM partway
+          # through the 338-suite corpus. The kernel then takes the runner process
+          # with it, and GitHub reports that as a bare "The operation was canceled"
+          # with no cause attached anywhere in the annotation — three consecutive
+          # queue PRs died that way on 2026-09-17 with every suite passing at the
+          # moment of the kill. Wall-clock is the cheaper resource to spend.
+          # Raise this only against the vitals output below, never by guessing.
+          SPIRA_BATCH_MAXPAR: ${{ vars.SPIRA_BATCH_MAXPAR || 4 }}
         run: |
           set -uo pipefail
           export SPIRA_BATCH_RESULTS="$RUNNER_TEMP/batch"
+
+          # THE LOG IS THE ONLY ARTIFACT THAT SURVIVES THE MACHINE.
+          #
+          # The Diagnostics and Upload steps below are both `if: always()`, and
+          # always() does not cover the runner being shut down underneath the job.
+          # So when the guest dies — the one failure those steps exist to explain —
+          # the evidence dies with it and the job reports a cancellation with no
+          # cause. Job logs are streamed to GitHub as they are written, so a line
+          # printed before the kill is still there afterwards. That makes stdout the
+          # only place guest vitals can be recorded and still be readable.
+          #
+          # Sampled, not summarised: a single reading after the fact cannot show a
+          # climb, and the climb is the thing being diagnosed.
+          # WHAT SHUTS THE GUEST DOWN. Every suites run longer than about fifteen
+          # minutes since 2026-09-18T00:16Z has ended with "The runner has received
+          # a shutdown signal", while the vitals below showed the guest idle and
+          # memory pressure at 0.00 for the whole run — 1.7 of 11.4 GiB used one
+          # second before the kill. The Proxmox task log shows no API stop between
+          # the clone and teardown's own, so the shutdown came from INSIDE the
+          # guest. start-runner.sh then runs `sudo poweroff` and teardown purges the
+          # disk, so the journal that would name the cause is destroyed every time.
+          # These two blocks put that evidence on stdout, for the same reason the
+          # vitals are there: it is the only channel that outlives the runner
+          # (sp-hu3bk).
+          #
+          # One shot: what is scheduled to run inside a machine that is supposed to
+          # live twenty minutes and do nothing but this job. A timer firing on a
+          # randomised post-boot delay would explain both the kill and why it lands
+          # anywhere between fifteen and twenty-one minutes.
+          printf 'guestdiag: uptime %s\n' "$(uptime -p 2>&1 || true)"
+          printf 'guestdiag: unattended-upgrades=%s apt-daily=%s apt-daily-upgrade=%s\n' \
+            "$(systemctl is-enabled unattended-upgrades.service 2>&1 || true)" \
+            "$(systemctl is-enabled apt-daily.timer 2>&1 || true)" \
+            "$(systemctl is-enabled apt-daily-upgrade.timer 2>&1 || true)"
+          systemctl list-timers --all --no-pager 2>&1 | sed 's/^/guestdiag: /' || true
+
+          # Streamed, for the same reason the vitals are sampled rather than
+          # summarised: the interesting lines are the last ones, and the step never
+          # reaches an exit at which it could collect them.
+          ( sudo journalctl -f -o short-precise --no-pager 2>&1 | sed 's/^/guestjournal: /' ) &
+          _gjournal=$!
+
+          (
+            while :; do
+              printf 'vitals %s %s | pressure %s | containers %s\n' \
+                "$(date -u +%H:%M:%S)" \
+                "$(free -m | awk '/^Mem:/{printf "mem %s/%sMiB used, %sMiB avail", $3, $2, $7}')" \
+                "$(awk '/^some/{print $2}' /proc/pressure/memory 2>/dev/null || echo 'n/a')" \
+                "$(pgrep -c conmon 2>/dev/null || :)"
+              sleep 30
+            done
+          ) &
+          _vitals=$!
+          # Stops the loop on every exit path, including the `exit 0` for a push
+          # below. The in-flight `sleep` is reparented to init rather than killed:
+          # a background subshell in a non-interactive shell shares the STEP's
+          # process group, so `kill -- -$PGID` — the textbook way to take the
+          # child with it — would kill the runner's own step process. The stray
+          # sleep costs nothing and the runner reaps it with the other orphans.
+          trap 'kill "$_vitals" "$_gjournal" 2>/dev/null || true' EXIT
+
           if [ "${{ github.event_name }}" = "push" ]; then
             printf 'gate: push to %s — no suites; corpus ran on the queue PR\n' \
               "${{ github.ref_name }}"
