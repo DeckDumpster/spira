@@ -191,16 +191,34 @@ main() {
     oldest_epoch="$(printf '%s\n' "$certs" | awk '{print $3}' | sort -n | head -1)"
     age=$(( now - oldest_epoch ))
 
+    # Measure time since the queue last made progress (BATCHED or LANDED), not the
+    # age of the oldest waiting branch. A deep but draining queue has old certs
+    # yet recent movement; measuring the cert age alone fires on depth, not stall.
+    local last_moved=0 _mf _ms _mt _me
+    if [ -d "$LANDSTATE" ]; then
+        for _mf in "$LANDSTATE"/*; do
+            [ -f "$_mf" ] || continue
+            { read -r _ms _mt _me _ < "$_mf"; } 2>/dev/null || continue
+            case "$_ms" in BATCHED|LANDED) : ;; *) continue ;; esac
+            [ "${_me:-0}" -gt "$last_moved" ] && last_moved="$_me"
+        done
+    fi
+    [ "$last_moved" -eq 0 ] && last_moved="$oldest_epoch"
+    local stuck_age
+    stuck_age=$(( now - last_moved ))
+
     local _stuck_flag="$SPIRA_RUN/queue-stuck-$name"
-    if [ "$age" -ge "${SPIRA_QUEUE_STUCK_AGE:-7200}" ] && [ ! -f "$_stuck_flag" ]; then
-        printf '## Note\nThe oldest certified branch in %s has been waiting %ds (threshold %ds).\n\nQueue depth: %d branch(es). This may indicate a conflict loop or a stalled batch builder.\n' \
-            "$name" "$age" "${SPIRA_QUEUE_STUCK_AGE:-7200}" "$count" \
+    if [ "$stuck_age" -lt "${SPIRA_QUEUE_STUCK_AGE:-7200}" ]; then
+        rm -f "$_stuck_flag" 2>/dev/null || true
+    elif [ ! -f "$_stuck_flag" ]; then
+        printf '## Note\nThe merge queue for %s has not made progress in %ds (threshold %ds).\n\nQueue depth: %d branch(es). This may indicate a conflict loop or a stalled batch builder.\n' \
+            "$name" "$stuck_age" "${SPIRA_QUEUE_STUCK_AGE:-7200}" "$count" \
         | bash "$HERE/mail.sh" send operator \
             --from "Spira Queue <queue@spira>" \
-            --subject "Merge queue: $name queue stuck (${age}s)" \
+            --subject "Merge queue: $name queue stuck (${stuck_age}s)" \
             2>/dev/null && touch "$_stuck_flag" 2>/dev/null || true
         [ -f "$_stuck_flag" ] && \
-            printf 'batch %s: mailed operator about stuck queue (age %ds)\n' "$name" "$age"
+            printf 'batch %s: mailed operator about stuck queue (stuck_age %ds)\n' "$name" "$stuck_age"
     fi
 
     [ "$count" -ge "${SPIRA_QUEUE_BATCH_MAX:-8}" ] && triggered=1
