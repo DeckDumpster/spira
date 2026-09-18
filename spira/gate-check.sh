@@ -145,7 +145,7 @@ except Exception:
                     | bash "$HERE/bead.sh" file "flaky suite: $_suite" \
                         --for builder --repo "$(spira_home_repo)" \
                         -p 2 --body-file - 2>/dev/null || true
-                bash "$HERE/suites.sh" observe-flake "$_suite" 2>/dev/null || true
+                bash "$HERE/suites.sh" observe-flake "$_suite" "$_run_id" 2>/dev/null || true
             done < <(gh api "repos/$SPIRA_FLAKY_GH_REPO/check-runs/$_job_id/annotations" \
                 2>/dev/null | python3 -c '
 import json, sys
