@@ -879,6 +879,11 @@ nowant "and does NOT mention other beads"    "check whether" "$notes"
 drop_branch sp-mine
 
 # REPEATED REBASE FAILURES ESCALATE INSTEAD OF REOPENING AGAIN.
+# TIP MUST MOVE BETWEEN PASSES. The guard added by db-91ox suppresses duplicate bumps
+# when (tip, base) are unchanged — which is the right behaviour because in real usage
+# an aeon works the reopened bead and pushes new commits. These commits change the tip,
+# so the guard fires only on genuine repeated conflicts, not on re-encounters with the
+# same (tip, base) pair. The empty commits below simulate aeon work.
 seed; branch sp-loop shared.txt "from the branch"
 printf '%s\n' "from sp-other on the base" > "$REPO/shared.txt"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "sp-other — change shared.txt"
@@ -887,11 +892,13 @@ git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
 out="$(SPIRA_REBASE_ESCALATE_AT=3 landing)"
 want "first rebase failure reopens"   "reopened sp-loop" "$out"
 is   "bead is open after first"       open "$(status_of sp-loop)"
-# Close the bead again so landing will see it.
+# Close the bead and advance the tip (simulating aeon work) so landing will see it.
 B close sp-loop --reason "try again" >/dev/null 2>&1
+git -C "$RUN/worktree/sp-loop" commit -q --allow-empty -m "sp-loop aeon attempt 1"
 out="$(SPIRA_REBASE_ESCALATE_AT=3 landing)"
 want "second rebase failure reopens"  "reopened sp-loop" "$out"
 B close sp-loop --reason "try again" >/dev/null 2>&1
+git -C "$RUN/worktree/sp-loop" commit -q --allow-empty -m "sp-loop aeon attempt 2"
 out="$(SPIRA_REBASE_ESCALATE_AT=3 landing)"
 want "third rebase failure escalates" "escalated sp-loop" "$out"
 nowant "and does not reopen"          "reopened sp-loop" "$out"
@@ -1124,6 +1131,44 @@ is   "and Ryan is not paged a second time"                      "" "$(cat "$EMIT
 cat > "$SH/repo-map" <<MAP
 $REPONAME | $REPO | push | |
 MAP
+
+# --------------------------------------------------------------------------------------
+# DUPLICATE MERGE-CONFLICT BUMP SUPPRESSION (db-91ox)
+#
+# An escalated branch whose tip and base have not moved since the last RED mark must
+# produce exactly one requeued/merge-conflict event however many passes run against it.
+# A base that advances is new evidence and must still bump.
+#
+# POSITIVE CONTROL (verified against origin/main 421485a before the fix):
+# Two passes on an unchanged tip+base produced 2 events with the unfixed code —
+# the second-pass assertion below failed with "wanted [1] got [2]".
+# --------------------------------------------------------------------------------------
+mc_of() {  # requeued/merge-conflict event count for bead $1
+    B sql "SELECT COUNT(*) FROM events WHERE issue_id='$1' AND event_type='requeued' AND new_value='merge-conflict'" 2>/dev/null \
+    | sed -n '3p' | tr -d ' '
+}
+
+seed; branch sp-nodupe shared.txt "from the branch"
+printf '%s\n' "from the base" > "$REPO/shared.txt"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base writes shared.txt"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+
+out="$(SPIRA_REBASE_ESCALATE_AT=1 landing)"
+want "first pass detects the conflict and escalates"     "escalated sp-nodupe" "$out"
+is   "and writes exactly one merge-conflict event"       1 "$(mc_of sp-nodupe)"
+
+# Second pass: tip and base unchanged — guard suppresses the duplicate bump.
+out2="$(SPIRA_REBASE_ESCALATE_AT=1 landing)"
+is   "a second pass with unchanged tip and base writes no new event" 1 "$(mc_of sp-nodupe)"
+want "and the log names the reason it skipped" "tip and base unchanged since last RED" "$out2"
+
+# Third pass after the base advances: new evidence, new event.
+printf '%s\n' "another base commit" >> "$REPO/shared.txt"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base advances"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+out3="$(SPIRA_REBASE_ESCALATE_AT=1 landing)"
+is   "after base moves, a new event is written" 2 "$(mc_of sp-nodupe)"
+drop_branch sp-nodupe
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
