@@ -1,0 +1,211 @@
+# Source: bead sp-2f51e, read from the Spira beads store with 'bd show sp-2f51e' on 2026-09-18.
+# Preserved because the beads store is not public. Home-directory paths rewritten to $HOME;
+# nothing else edited.
+
+○ sp-2f51e · testenv-batch.sh never checks out the branch it is given — it tests the production checkout, so merge-queue attribution can never eject anything and quarantines the honest suites instead   [P0 · OPEN]
+Owner: overseer · Type: task
+Created: 2026-09-17 · Started: 2026-09-17 · Updated: 2026-09-17
+
+DESCRIPTION
+
+  ## Intent                                                                   
+                                                                              
+  testenv-batch.sh <branch> never tests that branch. It mounts the production 
+  checkout as it currently sits — on the landref — so every local suite run   
+  judges main, whatever branch it was asked about. The merge queue's blame    
+  attribution is built on this call, which is why it has never ejected        
+  anything.                                                                   
+                                                                              
+  ## The code                                                                 
+                                                                              
+  spira/testenv-batch.sh:                                                     
+                                                                              
+    BR="${1:-}"                                                               
+    ...                                                                       
+    log "batch: starting container $CNAME (checkout $REPO)"                   
+    bash "$TESTENV" up --name "$CNAME" --checkout "$REPO" >&2              
+                                                                              
+  $REPO is the repository path (the production harness checkout, currently on 
+  main at 8537809). $BR is never checked out. Every use of $BR in the file is 
+  metadata:                                                                   
+                                                                              
+    251:  --head "${SPIRA_GATE_SELECT_HEAD:-$BR}"      suite SELECTION from   
+  changed files                                                               
+    278:  git rev-parse --verify -q "$BR^{tree}"        cache key             
+    309:  git show "${BR}:spira/suite-state"            quarantine state from 
+  the branch                                                                  
+    872:  "$IMG_TAG" "$BR" "$BASE" ...                  results record        
+                                                                              
+  The suites themselves are read from SUITE_DIR="${SPIRA_BATCH_SUITE_DIR:-    
+  $HERE}" — the harness directory this script lives in, again the checkout,   
+  not the branch.                                                             
+                                                                              
+  When a caller passes --suites explicitly, selection is bypassed too, so $BR 
+  contributes nothing at all beyond a cache key.                              
+                                                                              
+  ## Consequence: the merge queue cannot attribute a failure                  
+                                                                              
+  verdict.sh attributes a red batch with:                                     
+                                                                              
+    _repro_is_red() { ... bash "$SPIRA_QUEUE_REPRO_BATCH" --mode serial --    
+  suites "$suites" "$br" ... [ "$rc" -eq 1 ]; }                               
+                                                                              
+  It runs this per member and then against the batch head. Every one of those 
+  calls tests main. main is green by construction — it is the landed base. So 
+  no member ever reproduces, the batch head never reproduces, and control     
+  always reaches the last branch of the logic:                                
+                                                                              
+    else                                                                      
+        # Flake — quarantine suites, requeue all.                             
+        _quarantine_suites "$red_suites"                                      
+                                                                              
+  ejected 0, requeued N is not a coincidence or a hard case. It is the only   
+  outcome this code can produce, for any branch, ever. And the failure mode is
+  not merely inaction: the verdict concludes the suites are flaky and         
+  quarantines them — so the checks that correctly caught the defect are       
+  disarmed, and a later batch carrying the same branch can pass. That is the  
+  source of the auto-quarantine ... (bead: (none filed)) entries for test-    
+  cockpit-landed.sh and test-cockpit-probe-fault.sh (see sp-zmd3u).           
+                                                                              
+  ## Evidence — two runs, opposite content, identical answer                  
+                                                                              
+    spira/sp-d0j1g            @ ec12af2 (suites FIXED)    -> all ok, rc=0  
+    concierge-repro-52850af   @ 52850af (suites BROKEN)   -> all ok, rc=0  
+                                                                              
+  52850af is the exact tip CI rejected twice, red on the serial retry both    
+  times, in PR 56 and PR 57. Locally it passes. The same answer for opposite  
+  content is the signature of a run that is not reading the content at all.   
+                                                                              
+  Observed cost: PRs 56, 57 and 58 — three consecutive batches, six branches  
+  each, every one requeued whole because the one guilty branch could not be   
+  named.                                                                      
+                                                                              
+  ## Likely the same root cause                                               
+                                                                              
+  batch.sh's pre-flight gate reports gate_seconds=184 verdict=green and       
+  gate_seconds=202 verdict=green for batches CI then failed in seventeen      
+  minutes. Check whether that path tests the queue branch or the checkout; if 
+  it is the latter, it is this bug and fixing it here fixes both. Do not      
+  assume — read it.                                                           
+                                                                              
+  ## The fix                                                                  
+                                                                              
+  The container must test the tree under test. Create a worktree at $BR (under
+  the sanctioned worktree root, law-worktrees-in-the-sanctioned-root) and     
+  mount that, or check the branch out inside the container. The suites must   
+  come from the same tree, not from $HERE, or a branch that changes a suite is
+  tested with the old copy of it.                                             
+                                                                              
+  Beware the ordering trap this replaces: whatever is mounted must be the     
+  MERGE of the branch with the base when the caller is judging a queue batch, 
+  and the branch alone when it is judging a member. verdict.sh needs both and 
+  today gets neither.                                                         
+                                                                              
+  ## Acceptance                                                               
+                                                                              
+  • Positive control first, and it is the whole point of this bead: a test    
+  that runs a deliberately failing suite against a branch that breaks it and  
+  asserts rc=1, beside one that runs the same suite against a branch that     
+  fixes it and asserts rc=0. Today both return 0. Seen red first.             
+  • _repro_is_red against a member that breaks a suite returns red, and       
+  verdict.sh ejects it. Drive it from a fixture batch with one guilty member  
+  and assert ejected 1.                                                       
+  • No path in testenv-batch.sh reads suite scripts or code under test from   
+  $HERE when a branch was named.                                              
+
+
+
+NOTES
+
+  Not judged (refused): the worker did not survive to judge this bead, so NO  
+  attempt was charged and nothing about the work is implied. See              
+  $HOME/spira/run/sp-2f51e.log.                                          
+  ARCHIVIST NOTE (swept from brain session 80831135, turn 567 — stated in     
+  conversation, filed nowhere else).                                          
+                                                                              
+  The overseer read batch.sh at turns 564-565 and found that this bug is wider
+  than                                                                        
+  the bead's title says. batch.sh ALREADY HAS per-member ejection on a red    
+  LOCAL                                                                       
+  pre-flight gate: it calls _lg_repro_is_red per member, logs "QUEUE CAUGHT", 
+  and                                                                         
+  calls land_mark EJECTED. That path can never fire, because the reproduction 
+  it                                                                          
+  calls is the same one this bead is about — it tests the production checkout 
+  instead of the member branch, so no member is ever reproduced red and no    
+  member                                                                      
+  is ever ejected.                                                            
+                                                                              
+  So both ejection paths are dead for this one reason:                        
+                                                                              
+  • the post-CI verdict path (what this bead was filed about), and            
+  • the local pre-flight gate path in batch.sh.                               
+                                                                              
+  The accurate statement of the defect is therefore "nothing in the merge     
+  queue can                                                                   
+  eject anything", not "the verdict cannot eject". Whoever picks this up      
+  should                                                                      
+  check both call sites when fixing the reproduction, and should expect the   
+  local                                                                       
+  gate's ejection to start firing for the first time — it has never run to a  
+  real                                                                        
+  verdict, so it is unproven code, not merely dormant code.                   
+                                                                              
+  This is also why a red batch settles with "ejected 0" (see sp-2r8sa) and why
+  the                                                                         
+  2026-09-17 stall could not name its own bad member.                         
+
+
+
+LABELS: incident, repo:spira, spira
+
+DEPENDS ON
+  → ○ sp-5h902: Until the local-run defect lands, every local green is a statement about main — law, or a broadcast that expires? P2
+
+CHILDREN
+  ↳ ✓ sp-2f51e.1: State change: branch → spira/sp-2f51e P4
+
+BLOCKS
+  ← ○ sp-zfcfo: DESIGN: the merge queue needs a czar — deterministic calls in the queue, its states in watchtower, and a stall path that does not queue behind feature work P1
+  ← ○ sp-urvtn: czar persona: the fayth, the authority table, the summoning latency budget, and how it learns it was wrong P1
+
+COMMENTS
+  2026-09-17 21:51 overseer
+    
+      THE CONSEQUENCE IS BIGGER THAN ATTRIBUTION — NO AEON CAN VERIFY ITS OWN WORK
+      (concierge, 2026-09-17T21:55Z).                                             
+                                                                                  
+      This bead was filed because the merge queue cannot eject anything. That is  
+      the second-order effect. The first-order effect is that every local suite   
+      run in this harness reports on main, whatever branch it was asked about —   
+      and aeons run suites locally before they close a bead.                      
+                                                                                  
+      Two beads shipped broken today for exactly this reason, and neither aeon did
+      anything wrong:                                                             
+                                                                                  
+      sp-d0j1g  removed SP_AWAITING_LAND / SP_UNLANDED / SP_PEND_* and left two   
+      suites asserting                                                            
+      them. Red in CI in PR 56 and PR 57. Two separate aeons closed it.           
+      sp-zmd3u  raised the flake quarantine threshold above 1 and left test-      
+      suites-hygiene.sh                                                           
+      asserting that a second observation still quarantines. Red twice in PR 59.  
+                                                                                  
+      In both cases the aeon almost certainly ran the suites, saw green, and      
+      closed the bead in good faith. It was reading main. main was green. The     
+      branch was not.                                                             
+                                                                                  
+      So the real cost of this defect is: every bead that changes a behaviour     
+      covered by a suite the aeon did not think to update ships broken, gets      
+      discovered only in CI fifteen to twenty minutes later, takes a whole batch  
+      down with it, and returns as a requeue. That is most of today's queue churn,
+      and it explains the requeue counts (4, 6 and 8 members) better than any     
+      other cause.                                                                
+                                                                                  
+      Raise the stakes accordingly when sequencing: until this lands, CI is the   
+      ONLY authority on whether any branch works, aeon self-verification is noise,
+      and every bead comment that says 'verified locally' — including ones written
+      by the operator's session earlier today — is worthless.                     
+                                                                                  
+      When it is fixed, say so loudly enough that the aeons' own instructions     
+      change with it.                                                             
+

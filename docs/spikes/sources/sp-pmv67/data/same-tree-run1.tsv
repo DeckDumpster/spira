@@ -1,0 +1,494 @@
+# Lines starting '# literal-ok:' annotate the next row for spira/literal-lint.sh; drop them with grep -v '^# literal-ok'.
+test-aeon-lease.sh	ok	no lease file renders ?
+test-aeon-lease.sh	ok	a future deadline renders positive minutes
+test-aeon-lease.sh	ok	a Ns future deadline renders ~10m
+test-aeon-lease.sh	ok	a past deadline renders negative minutes
+test-aeon-lease.sh	ok	an empty lease file renders ?
+test-aeon-lease.sh	ok	a non-numeric lease file renders ?
+test-aeon-lease.sh	ok	an empty bead id renders ?
+test-aeon-lease.sh	ok	unchanged trace with future deadline is ok
+test-aeon-lease.sh	ok	trace grew → renewed
+test-aeon-lease.sh	ok	lease file written on renewal
+test-aeon-lease.sh	ok	silent trace with past deadline → lapsed
+test-aeon-lease.sh	ok	.lapsed marker written on lapse
+test-aeon-lease.sh	ok	trailing result line + silent trace → lapsed (not acting)
+test-aeon-lease.sh	ok	lapsed marker quiet field is numeric: 0
+test-aeon-lease.sh	ok	lapsed marker last field is non-empty
+test-aeon-worktree-guard.sh	ok	case 1: commit in worktree is allowed
+test-aeon-worktree-guard.sh	ok	case 2: commit in production checkout is refused
+test-aeon-worktree-guard.sh	ok	case 2: refusal names the production checkout path
+test-aeon-worktree-guard.sh	ok	case 2: refusal names SPIRA_WORK
+test-aeon-worktree-guard.sh	ok	case 2: refusal message identifies branch-guard.sh
+test-aeon-worktree-guard.sh	ok	case 3: commit with no SPIRA_WORK is allowed
+test-aeon-worktree-guard.sh	ok	case 4: operator commit in production checkout is allowed
+test-batch-maxpar.sh	ok	A0: _maxpar= assignment found in batch script
+test-batch-maxpar.sh	ok	A1: default equals nproc output (stub→7)
+test-batch-maxpar.sh	ok	A1-pos: explicit SPIRA_BATCH_MAXPAR overrides nproc
+test-batch-maxpar.sh	ok	B1: SPIRA_BATCH_MAXPAR in SPIRA_CONF_KEYS
+test-batch-maxpar.sh	ok	B1-pos: SPIRA_BATCH_NOEXIST absent from SPIRA_CONF_KEYS (positive control)
+test-batch-maxpar.sh	ok	B2: spira.conf line sets SPIRA_BATCH_MAXPAR
+test-bd-lock-retry.sh	ok	positive control: REACHED-PAST-GUARD absent
+test-bd-lock-retry.sh	ok	positive control: schema mismatch message
+test-bd-lock-retry.sh	ok	lock: REACHED-PAST-GUARD absent (conf.sh refuses)
+test-bd-lock-retry.sh	ok	lock: message names embedded mode
+test-bd-lock-retry.sh	ok	lock: message names dolt_mode
+test-bd-lock-retry.sh	ok	lock: message directs user to doctor.sh
+test-bd-lock-retry.sh	ok	doctor mode: REACHED-PAST-GUARD present
+test-bd-resolve.sh	ok	schema mismatch causes conf.sh to refuse (exit 1)
+test-bd-resolve.sh	ok	with matching SPIRA_BD set, conf.sh succeeds despite mismatched binary on PATH
+test-bd-resolve.sh	ok	SPIRA_BD resolves to first bd on SPIRA_PATH
+test-bd-resolve.sh	ok	SPIRA_BD resolves to the PATH-first binary when unset
+test-bd-resolve.sh	ok	env-set SPIRA_BD survives unchanged (env wins over PATH-first)
+test-bd-resolve.sh	ok	config-file SPIRA_BD wins over PATH-derived default
+test-bd-resolve.sh	ok	env wins over config file for SPIRA_BD
+test-bd-resolve.sh	ok	SPIRA_BD appears in the exported environment
+test-bd-schema-stamp.sh	ok	positive control: bd called once on first source
+test-bd-schema-stamp.sh	ok	positive control: conf.sh continues past schema check
+test-bd-schema-stamp.sh	ok	positive control: stamp file written
+test-bd-schema-stamp.sh	ok	cache hit: bd not called on second source
+test-bd-schema-stamp.sh	ok	cache hit: conf.sh continues normally
+test-bd-schema-stamp.sh	ok	cache hit: bd not called on third source
+test-bd-schema-stamp.sh	ok	cache hit: conf.sh continues on third source
+test-bd-schema-stamp.sh	ok	binary swap: bd called again after binary replaced
+test-bd-schema-stamp.sh	ok	binary swap: REACHED-PAST-GUARD absent (mismatch exits conf.sh)
+test-bd-schema-stamp.sh	ok	binary swap: schema mismatch reported
+test-bd-stdin.sh	ok	scanner catches bare-dash note in synthetic file
+test-bd-stdin.sh	ok	scanner catches bare-dash create in synthetic file
+test-bd-stdin.sh	ok	scanner is silent on --stdin usage
+test-bd-stdin.sh	ok	scanner is silent on --body-file usage
+test-bd-stdin.sh	ok	no bare-dash bd note in sources
+test-bd-stdin.sh	ok	no bare-dash bd create in sources
+test-beads-push-verify.sh	ok	clean+matching remote exits 0
+test-beads-push-verify.sh	ok	and says so
+test-beads-push-verify.sh	ok	broken probe exits non-zero
+test-beads-push-verify.sh	ok	and never claims success
+test-beads-push-verify.sh	ok	and names what it could not do
+test-beads-push-verify.sh	ok	dirty store commits then pushes
+test-beads-push-verify.sh	ok	and reports what it committed
+test-beads-push-verify.sh	ok	a commit that clears nothing fails
+test-beads-push-verify.sh	ok	and never claims success
+test-beads-push-verify.sh	ok	remote behind local is a failure
+test-beads-push-verify.sh	ok	and never claims success
+test-beads-push-verify.sh	ok	and names the disagreement
+test-bin-manifest.sh	ok	manifest loaded (17 programs)
+test-bin-manifest.sh	ok	every program has a valid tier
+test-bin-manifest.sh	ok	every program states a purpose
+test-bin-manifest.sh	ok	an undeclared program falls back to 'optional'
+test-bin-manifest.sh	ok	an undeclared program has no real purpose
+test-bin-manifest.sh	ok	no declared program is unchecked by doctor.sh
+test-bin-manifest.sh	ok	bd-embedded declares its absence consequence
+test-bin-manifest.sh	ok	the consequence names the engine it falls back to
+test-bin-manifest.sh	ok	doctor.sh prints the absence consequence
+test-bin-manifest.sh	ok	inotifywait is operator tier
+test-bin-manifest.sh	ok	aerc is operator tier
+test-bin-manifest.sh	ok	hunk is operator tier
+test-bin-manifest.sh	ok	go is operator tier
+test-bin-manifest.sh	ok	SPIRA_OPERATED defaults to 1
+test-bin-manifest.sh	ok	POSITIVE CONTROL: hunk stub present → ok
+test-bin-manifest.sh	ok	hunk absent with SPIRA_OPERATED=1 → FAIL
+test-bin-manifest.sh	ok	hunk absent with SPIRA_OPERATED=0 → warn
+test-bin-manifest.sh	ok	COCKPIT_MAIL=mutt present: aerc absence is not flagged
+test-boundary.sh	ok	SEEN RED: nonexistent path fails check
+test-boundary.sh	ok	and names the missing path
+test-boundary.sh	ok	prose in a brain row is not checked against the filesystem
+test-boundary.sh	ok	and no 'does not exist' error appears for it
+test-boundary.sh	ok	existing path does not trigger a filesystem error
+test-boundary.sh	ok	but check still fails because README is stale
+test-boundary.sh	ok	GREEN: existing path + fresh README passes check
+test-boundary.sh	ok	the shipped tree passes check
+test-branch-guard.sh	ok	aeon on base branch: guard exits 1
+test-branch-guard.sh	ok	aeon on base branch: names the committer email
+test-branch-guard.sh	ok	aeon on base branch: names the branch
+test-branch-guard.sh	ok	aeon on base branch: names the override
+test-branch-guard.sh	ok	operator on base branch: guard exits 0
+test-branch-guard.sh	ok	aeon on non-base branch: guard exits 0
+test-branch-guard.sh	ok	check: exits 1 when aeon tip and ahead-of-remote
+test-branch-guard.sh	ok	check: reports AEON COMMIT ON
+test-branch-guard.sh	ok	check: reports SHARED CHECKOUT AHEAD
+test-branch-guard.sh	ok	check: still exits 1 (aeon is still the tip)
+test-branch-guard.sh	ok	check: still reports AEON COMMIT ON
+test-branch-guard.sh	ok	check: SHARED CHECKOUT AHEAD gone after push
+test-branch-guard.sh	ok	check: exits 0 after operator commit
+test-branch-guard.sh	ok	check: reports clean
+test-budget-drift.sh	ok	spira-suites.service has TimeoutStartSec=N
+test-budget-drift.sh	ok	SPIRA_SUITES_MAXSEC is injected and matches TimeoutStartSec
+test-budget-drift.sh	ok	SPIRA_SUITES_BUDGET default (N) is under TimeoutStartSec (N)
+test-builder-qa-proposed.sh	ok	builder FAYTH_EXCLUDE_LABELS contains qa-proposed
+test-builder-qa-proposed.sh	ok	builder FAYTH_LABELS contains plan
+test-builder-qa-proposed.sh	ok	fayth_ready builder passes qa-proposed in the exclude arg
+test-builder-qa-proposed.sh	ok	ops FAYTH_EXCLUDE_LABELS does not contain qa-proposed (distinct from builder)
+test-capacity-probe.sh	ok	no pause: rc=1 (not paused)
+test-capacity-probe.sh	ok	no pause: probe NOT called
+test-capacity-probe.sh	ok	probe served: rc=1 (not paused)
+test-capacity-probe.sh	ok	probe served: pause file gone
+test-capacity-probe.sh	ok	probe served: probe WAS called
+test-capacity-probe.sh	ok	probe refused: rc=0 (still paused)
+test-capacity-probe.sh	ok	probe refused: pause file still present
+test-capacity-probe.sh	ok	probe refused: probe WAS called
+test-capacity-probe.sh	ok	close horizon: rc=0 (still paused)
+test-capacity-probe.sh	ok	close horizon: probe NOT called
+test-capacity-probe.sh	ok	close horizon: pause file still present
+test-chamber-repo-labels.sh	ok	positive control: bare repo: literal is detected
+test-chamber-repo-labels.sh	ok	positive control names the literal
+test-chamber-repo-labels.sh	ok	positive control names the file
+test-chamber-repo-labels.sh	ok	no bare repo: literals in chamber files
+test-chamber-repo-labels.sh	ok	positive control: repo_root rejects unknown repo names
+test-chamber-repo-labels.sh	ok	bead sp-hu3bk: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-urifb: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-39pqw: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-q27cp: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-3c19p: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-stN: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-duj1y: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-eafmi: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-7zzni: repo:ephemeral-ci resolves
+test-chamber-repo-labels.sh	ok	bead sp-7f4f9: repo:ephemeral-ci resolves
+test-chamber-repo-labels.sh	ok	bead sp-swux6: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-2f51e: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-zmd3u: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-3q0cz: repo:ephemeral-ci resolves
+test-chamber-repo-labels.sh	ok	bead sp-9wdji: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-wy2yl: repo:ephemeral-ci resolves
+test-chamber-repo-labels.sh	ok	bead sp-17gjf: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-x5f0l: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-r33t5: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-y8bxp: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-k2ovh: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-l7z8a: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-tNk: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-66q0p: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-pi3ez: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-sv34w: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-g9pn9: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-urvtn: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-wbany: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-Nzs: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-wfqha: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-sggv8: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-t8tmq: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-h7zzx: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-zfcfo: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-ctag9: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-mcvts: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-2d14d: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-1z50d: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-uu8oy.2: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-iavci: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-1j7ez: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-jfzus: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-2es5u: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-weu5v: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-1tu9d: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-Ngp: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-dvp22: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-5cnem: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-9qmwu: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-fckrr: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-w5kto: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-uu8oy: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-j1w7b: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-h78b4: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-nlkrc: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-tdm02: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-vtyo9: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-72xlb: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-qc58n: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-cabrq: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-87d28: repo:spira resolves
+test-chamber-repo-labels.sh	fail	bead sp-Ne5
+test-chamber-repo-labels.sh	ok	bead sp-xbdnk: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-79jtq: repo:spira resolves
+test-chamber-repo-labels.sh	ok	bead sp-4dhqg: repo:spira resolves
+test-cockpit-collector-watchdog.sh	ok	stale collector: restart is requested
+test-cockpit-collector-watchdog.sh	ok	stale collector: instance-qualified unit (prod)
+test-cockpit-collector-watchdog.sh	ok	fresh collector: no restart
+test-cockpit-collector-watchdog.sh	ok	inactive plain unit: restart still fires
+test-cockpit-collector-watchdog.sh	ok	no active unit: no restart attempted
+test-cockpit-mouse.sh	ok	COCKPIT_MOUSE defaults to on
+test-cockpit-mouse.sh	ok	COCKPIT_MOUSE is in the manifest, the defaults and the export list
+test-cockpit-mouse.sh	ok	layout.sh sets mouse on
+test-cockpit-mouse.sh	ok	the up path applies it
+test-cockpit-mouse.sh	ok	the ensure path applies it
+test-cockpit-mouse.sh	ok	COCKPIT_MOUSE=off opts out
+test-cockpit-mouse.sh	ok	it never fails the caller
+test-cockpit-remote.sh	ok	cockpit dialer is executable
+test-cockpit-remote.sh	ok	cockpit-remote is executable
+test-cockpit-remote.sh	ok	cockpit names the missing variable in its error
+test-cockpit-remote.sh	ok	cockpit refuses and names COCKPIT_HOST when the variable is absent
+test-cockpit-remote.sh	ok	positive control: inventory.sh catches workspace paths
+test-cockpit-remote.sh	ok	cockpit dialer passes inventory.sh
+test-cockpit-remote.sh	ok	cockpit-remote passes inventory.sh
+test-cockpit-remote.sh	ok	cockpit-remote no longer sources layout.sh via brain harness
+test-cockpit-remote.sh	ok	rebuild.sh uses COCKPIT_SESSIONS
+test-cockpit-remote.sh	ok	rebuild.sh does not hardcode the session list
+test-cockpit-remote.sh	ok	the fixture holds the lock (positive control)
+test-cockpit-remote.sh	ok	a copy that loses the lock exits non-zero (rc=75)
+test-cockpit-remote.sh	ok	and it does not hang waiting for the lock
+test-cockpit-remote.sh	ok	and it says which copy is in the way
+test-cockpit-runtime-path.sh	ok	SPIRA_RUN default is non-empty
+test-cockpit-runtime-path.sh	ok	positive control: a value not under SPIRA_RUN is detected as wrong
+test-cockpit-runtime-path.sh	ok	SPIRA_ANSWER_STATE default is under SPIRA_RUN
+test-cockpit-runtime-path.sh	ok	SPIRA_ANSWER_MARK default is under SPIRA_RUN
+test-cockpit-runtime-path.sh	ok	SPIRA_ANSWER_COMMENT_MARK default is under SPIRA_RUN
+test-cockpit-runtime-path.sh	ok	SPIRA_SELF_CLOSED default is under SPIRA_RUN
+test-cockpit-runtime-path.sh	ok	positive control: harness-dir path correctly excluded from .config/spira check
+test-cockpit-runtime-path.sh	ok	SPIRA_PREFIX_MAP default is under .config/spira
+test-cockpit-snap-absent.sh	ok	absent snap fires a diagnostic
+test-cockpit-snap-absent.sh	ok	no cockpit.env anywhere renders a 'no snapshot' notice
+test-cockpit-snap-absent.sh	ok	no-snap case does not falsely report PATH MISMATCH
+test-cockpit-snap-absent.sh	ok	cockpit.env at XDG path fires PATH MISMATCH when SPIRA_RUN is the repo path
+test-cockpit-snap-absent.sh	ok	PATH MISMATCH names the alternative path
+test-cockpit-snap-absent.sh	ok	PATH MISMATCH names the reader path
+test-cockpit-snap-absent.sh	ok	no absent-snap diagnostic when cockpit.env exists at SPIRA_RUN
+test-cockpit-unit-notify.sh	ok	spira-cockpit.service: NotifyAccess=all
+test-cockpit-unit-notify.sh	ok	pc NotifyAccess: bad unit is detected
+test-cockpit-unit-notify.sh	ok	at least one watchdog unit was examined
+test-cockpit-unit-notify.sh	ok	_supervisor_loop found in collect.sh
+test-cockpit-unit-notify.sh	ok	early ping precedes init (line 4 < 10)
+test-cockpit-unit-notify.sh	ok	pc early ping: loop-only variant is detected as too late
+test-conf.sh	ok	SPIRA_PROD default is non-empty
+test-conf.sh	ok	env-set SPIRA_PROD wins
+test-conf.sh	ok	default changes with SPIRA_WORKSPACES
+test-conf.sh	ok	default includes SPIRA_WORKSPACES path
+test-conf.sh	ok	default includes SPIRA_WORKSPACES path
+test-conf.sh	ok	config-file SPIRA_PROD wins over derived default
+test-conf.sh	ok	env wins over config file
+test-conf.sh	ok	SPIRA_INSTANCE default is 'prod'
+test-conf.sh	ok	env-set SPIRA_INSTANCE wins
+test-conf.sh	ok	prod SPIRA_DB has no instance suffix
+test-conf.sh	ok	prod SPIRA_DB contains 'spira'
+test-conf.sh	ok	test SPIRA_DB differs from prod SPIRA_DB
+test-conf.sh	ok	test SPIRA_DB is instance-qualified
+test-conf.sh	ok	prod SPIRA_RUN has no instance suffix
+test-conf.sh	ok	test SPIRA_RUN differs from prod SPIRA_RUN
+test-conf.sh	ok	test SPIRA_RUN is instance-qualified
+test-conf.sh	ok	SPIRA_INSTANCE is exported
+test-conf.sh	ok	writable SPIRA_REPO: SPIRA_RUN is inside repo
+test-conf.sh	ok	writable SPIRA_REPO: SPIRA_RUN contains .runtime
+test-conf.sh	ok	read-only SPIRA_REPO: SPIRA_RUN not inside repo
+test-conf.sh	ok	read-only SPIRA_REPO: SPIRA_RUN uses XDG fallback
+test-conf.sh	ok	SPIRA_TESTDB_DATA is set with normal SPIRA_WORKSPACES
+test-conf.sh	ok	SPIRA_TESTDB_DATA has no double slash when SPIRA_REPO=/workspace
+test-conf.sh	ok	SPIRA_TESTDB_DATA starts with /beads-test when SPIRA_REPO=/workspace
+test-conf.sh	ok	SPIRA_PROD has no double slash when SPIRA_REPO=/workspace
+test-conf.sh	ok	SPIRA_PROD is non-empty when SPIRA_REPO=/workspace
+test-containment.sh	ok	good map loads (rc=0)
+test-containment.sh	ok	good map prints 'loaded'
+test-containment.sh	ok	outside-path map exits non-zero
+test-containment.sh	ok	error names the repo entry
+test-containment.sh	ok	error mentions containment
+test-containment.sh	ok	error mentions the instance
+test-containment.sh	ok	real-remote map exits non-zero
+test-containment.sh	ok	error names the repo entry
+test-containment.sh	ok	error mentions the remote URL
+test-containment.sh	ok	error mentions containment
+test-containment.sh	ok	prod loads map with outside paths (rc=0)
+test-containment.sh	ok	prod map prints 'loaded'
+test-containment.sh	ok	prod loads map with real remote (rc=0)
+test-containment.sh	ok	prod real-remote map prints 'loaded'
+test-containment.sh	ok	unset SPIRA_INSTANCE behaves like prod (rc=0)
+test-containment.sh	ok	unset-instance map prints 'loaded'
+test-containment.sh	ok	D0: workspace=/tmp/X: repos under it pass containment (rc=0)
+test-containment.sh	ok	D0: workspace=/tmp/X prints 'loaded'
+test-containment.sh	ok	D1: workspace=/: absolute paths pass containment (rc=0)
+test-containment.sh	ok	D1: workspace=/ prints 'loaded'
+test-containment.sh	ok	D2: ws=/ still refuses a clone with a real remote
+test-containment.sh	ok	D2: ws=/ refusal mentions containment
+test-doctor-missing-store.sh	ok	positive control: FAIL line present
+test-doctor-missing-store.sh	ok	installing: WARN references phase 3
+test-doctor-missing-store.sh	ok	installing: no FAIL for missing store
+test-doctor-missing-store.sh	ok	remedy: no bare bd init
+test-drain-banner.sh	ok	a drain stamp makes DRAINING appear
+test-drain-banner.sh	ok	and shows the lift instruction
+test-drain-banner.sh	ok	drain banner includes a time figure
+test-drain-banner.sh	ok	no stamp produces no drain banner
+test-drain-banner.sh	ok	and no lift instruction
+test-drain-banner.sh	ok	both STOPPED and DRAINING appear when both stamps exist
+test-drain-banner.sh	ok	both STOPPED and DRAINING appear when both stamps exist
+test-drain-banner.sh	ok	drain-only shows DRAINING
+test-drain-banner.sh	ok	but not STOPPED
+test-drain-banner.sh	ok	halt-only shows STOPPED
+test-drain-banner.sh	ok	but not DRAINING
+test-elastic-ceiling.sh	ok	positive: elastic succeeds with 2 free slots (anchor also ready)
+test-elastic-ceiling.sh	ok	criterion 1: elastic refused when last slot and non-elastic has ready work
+test-elastic-ceiling.sh	ok	log names 'held back'
+test-elastic-ceiling.sh	ok	log names the reserved fayth
+test-elastic-ceiling.sh	ok	log says 'at concurrency cap'
+test-elastic-ceiling.sh	ok	criterion 2: elastic succeeds when no non-elastic has work (positive control)
+test-elastic-ceiling.sh	ok	criterion 3: elastic succeeds with 2 free slots despite non-elastic ready work
+test-elastic-ceiling.sh	ok	criterion 4: non-elastic persona succeeds with 1 slot free
+test-elastic-ceiling.sh	ok	cost: refused case makes exactly 1 fayth_ready call (anchor reservation only)
+test-elastic-ceiling.sh	ok	cost: that call was for anchor
+test-elastic-ceiling.sh	ok	cost: 2-free-slot path makes 1 fayth_ready call (stretchy only, no reservation)
+test-elastic-ceiling.sh	ok	cost: that call was for stretchy (not anchor)
+test-elastic-ceiling.sh	ok	no ceiling: elastic succeeds when SPIRA_MAX_LIVE_AEONS is unset
+test-fayth-free.sh	ok	n=0, pool=3 -> free=3
+test-fayth-free.sh	ok	n=1, pool=2 -> free=2
+test-fayth-free.sh	ok	n=2, pool=1 -> free=1
+test-fayth-free.sh	ok	n=3, pool=0 -> free=0
+test-fayth-free.sh	ok	no pool, n=0 -> free=3 (cap=3)
+test-fayth-free.sh	ok	no pool, n=1 -> free=2 (cap=3)
+test-fayth-free.sh	ok	ops, pool=10, n=0 -> free=1
+test-fayth-free.sh	ok	ops, pool=10, n=1 -> free=0
+test-fayth-free.sh	ok	buggy n=1 would return 1, not 2
+test-fayth-free.sh	ok	buggy n=2 would return 0, not 1
+test-fayth.sh	ok	builder appears in roster
+test-fayth.sh	ok	ops appears in roster
+test-fayth.sh	ok	ops FAYTH_LABELS is not the builder's spira,plan
+test-fayth.sh	ok	ops FAYTH_LABELS contains its own partition
+test-fayth.sh	ok	ops did NOT ask for spira,plan beads
+test-fayth.sh	ok	ops asked for its own incident beads
+test-fayth.sh	ok	builder asked for spira,plan beads
+test-fayth.sh	ok	old code: plan_ready=0 (no plan work)
+test-fayth.sh	ok	ops predicate was asked even when plan_ready=0
+test-forge-check-status.sh	ok	in-progress gate reads pending
+test-forge-check-status.sh	ok	successful gate reads green
+test-forge-check-status.sh	ok	failed gate reads red
+test-forge-check-status.sh	ok	skipped gate reads harness_fault
+test-forge-check-status.sh	ok	overall status is still red
+test-forge-check-status.sh	ok	red-suite line extracted from annotation path
+test-forge-check-status.sh	ok	non-test path not emitted as red-suite
+test-forge-check-status.sh	ok	head-sha line present when headRefOid in rollup
+test-forge-check-status.sh	ok	no head-sha when headRefOid absent
+test-gate-base-selection.sh	ok	both trials ran
+test-gate-base-selection.sh	ok	a command red on both is charged to the base
+test-gate-base-selection.sh	ok	the branch trial selects from the branch
+test-gate-base-selection.sh	ok	the second trial ran at the base
+test-gate-base-selection.sh	ok	and the base trial also selects from the branch
+test-gate-discover-branch.sh	ok	discover called with correct branch
+test-gate-discover-branch.sh	ok	gate check is still called
+test-gate-discover-branch.sh	ok	no bare gate discover call
+test-gate-discover-branch.sh	ok	positive control: part 1 DID call discover
+test-gate-discover-branch.sh	ok	no discover call when no branches
+test-gate-retry.sh	ok	red then green passes
+test-gate-retry.sh	ok	only the red and timed-out suites are re-run
+test-gate-retry.sh	ok	serially
+test-gate-retry.sh	ok	against the same revision
+test-gate-retry.sh	ok	each flake is announced to CI
+test-gate-retry.sh	ok	red twice fails
+test-gate-retry.sh	ok	and names what stayed red
+test-gate-retry.sh	ok	and emits a red-twice annotation for CI
+test-gate-retry.sh	ok	a harness fault on the re-run passes through
+test-gate-retry.sh	ok	no red suite recorded: fail without retrying
+test-gate-retry.sh	ok	and the batch is never called
+test-gate-sweep.sh	ok	orphan is registered before sweep
+test-gate-sweep.sh	ok	orphan is deregistered after sweep
+test-gate-sweep.sh	ok	orphan directory is removed after sweep
+test-gate-sweep.sh	ok	locked worktree is not removed by sweep
+test-gate-sweep.sh	ok	sweep reports that the lock is held
+test-gate-sweep.sh	ok	a young worktree is kept by sweep
+test-gate-touched.sh	ok	on the branch: added and changed suites, nothing else
+test-gate-touched.sh	ok	on the base tree: a suite the branch adds is absent
+test-gate-touched.sh	ok	a branch touching no suite selects nothing
+test-gate-workflow.sh	ok	gate.yml exists at .github/workflows/gate.yml
+test-gate-workflow.sh	ok	positive control: the file has a name
+test-gate-workflow.sh	ok	inventory.sh
+test-gate-workflow.sh	ok	literal-lint.sh
+test-gate-workflow.sh	ok	scratch-fence.sh
+test-gate-workflow.sh	ok	testenv-batch.sh
+test-gate-workflow.sh	ok	the corpus is piped via --suites
+test-gate-workflow.sh	ok	queue PRs use suites.sh corpus
+test-gate-workflow.sh	ok	queue PRs match spira/queue/
+test-gate-workflow.sh	ok	the harness-fault exit code is handled
+test-gate-workflow.sh	ok	a job depends on the gate
+test-gate-workflow.sh	ok	release.sh cut is what tags
+test-gate-workflow.sh	ok	restricted to push events
+test-gate-workflow.sh	ok	restricted to the base branch
+test-gate-workflow.sh	ok	release.yml is invoked directly
+test-gate-workflow.sh	ok	release.yml accepts being called
+test-gate-workflow.sh	ok	fetch-depth is set
+test-gate-workflow.sh	ok	tags are fetched
+test-gate-workflow.sh	ok	the VM is provisioned
+test-gate-workflow.sh	ok	the gate targets that VM
+test-gate-workflow.sh	ok	no fixed runner label
+test-gate-workflow.sh	ok	teardown runs
+test-gate-workflow.sh	ok	teardown is unconditional
+test-gate-workflow.sh	ok	the runner identity is checked
+test-gate-workflow.sh	ok	host dependencies are installed
+test-gate-workflow.sh	ok	the gate names a registry
+test-gate-workflow.sh	ok	the gate authenticates to it
+test-gate-workflow.sh	ok	testenv-image.yml exists
+test-gate-workflow.sh	ok	positive control: the file has a name
+test-gate-workflow.sh	ok	it publishes through testenv.sh
+test-gate-workflow.sh	ok	an already-published tag is skipped
+test-gate-workflow.sh	ok	the registry path is lowercased
+test-gate-workflow.sh	ok	no floating tag is published
+test-gate-workflow.sh	ok	positive control: the concurrency block was found
+test-gate-workflow.sh	ok	the push group is keyed on the commit
+test-gate-workflow.sh	ok	a pull request still supersedes itself
+test-gate-workflow.sh	ok	the suites job block was located (positive control)
+test-gate-workflow.sh	ok	the suites job sets timeout-minutes (45)
+test-gate-workflow.sh	ok	the timeout is a sane bound
+test-gate-workflow.sh	ok	the Suites step block was located (positive control)
+test-gate-workflow.sh	ok	push case is detected
+test-gate-workflow.sh	ok	push path carries no suites
+test-gate-workflow.sh	ok	queue PRs run the corpus
+test-gate-workflow.sh	ok	corpus selection uses corpus
+test-gate-workflow.sh	ok	the cut job block was located (positive control)
+test-gate-workflow.sh	ok	cut queries check-runs for the SHA
+test-gate-workflow.sh	ok	cut filters on the gate check name
+test-gate-workflow.sh	ok	cut requires a green PR-associated run
+test-gate-workflow.sh	ok	release.sh cut receives the workspace
+test-gate-workflow.sh	ok	the gate verdict job block was located (positive control)
+test-gate-workflow.sh	ok	gate needs both provision and suites
+test-gate-workflow.sh	ok	gate runs even when needs failed
+test-gate-workflow.sh	ok	gate runs on a hosted runner
+test-gate-workflow.sh	ok	gate exits 75 on provision fault
+test-gate-workflow.sh	ok	gate checks provision.result
+test-gate-workflow.sh	ok	gate checks suites.result
+test-groom-trigger.sh	ok	filing exits 0
+test-groom-trigger.sh	ok	bd create is called
+test-groom-trigger.sh	ok	create args include scope label
+test-groom-trigger.sh	ok	create args include groom label
+test-groom-trigger.sh	ok	dedup exits 0
+test-groom-trigger.sh	ok	bd create NOT called
+test-groom-trigger.sh	ok	list IS called for dedup
+test-groom-trigger.sh	ok	dedup log mentions skipping
+test-groom-trigger.sh	ok	create failure exits 1
+test-groom-trigger.sh	ok	failure log mentions ERROR
+test-groom-trigger.sh	ok	custom labels exits 0
+test-groom-trigger.sh	ok	custom scope label in create args
+test-groom-trigger.sh	ok	custom groomer label in create args
+test-groom-trigger.sh	ok	default scope label not in --label
+test-groom-trigger.sh	ok	default groom label not in --label
+test-groom-trigger.sh	ok	empty scope exits 0
+test-groom-trigger.sh	ok	no leading comma in labels
+test-groom-trigger.sh	ok	groomer label present without scope
+# literal-ok: measurement data; the configured name is part of a suite FILENAME harvested from this tree, not a label read here.
+test-reclaim-needs-ryan.sh	ok	plain dead worker: ghost raised
+# literal-ok: measurement data; the configured name is part of a suite FILENAME harvested from this tree, not a label read here.
+test-reclaim-needs-ryan.sh	ok	plain dead worker: bead named
+# literal-ok: measurement data; the configured name is part of a suite FILENAME harvested from this tree, not a label read here.
+test-reclaim-needs-ryan.sh	ok	ask-labeled bead: ghost NOT raised
+# literal-ok: measurement data; the configured name is part of a suite FILENAME harvested from this tree, not a label read here.
+test-reclaim-needs-ryan.sh	ok	ask-labeled bead: bead NOT named
+# literal-ok: measurement data; the configured name is part of a suite FILENAME harvested from this tree, not a label read here.
+test-reclaim-needs-ryan.sh	ok	skip-labeled bead: ghost NOT raised
+# literal-ok: measurement data; the configured name is part of a suite FILENAME harvested from this tree, not a label read here.
+test-reclaim-needs-ryan.sh	ok	skip-labeled bead: bead NOT named
+test-watchd-prune.sh	ok	retired lock exists before prune
+test-watchd-prune.sh	ok	retired cursor exists before prune
+test-watchd-prune.sh	ok	retired pending exists before prune
+test-watchd-prune.sh	ok	prune exits 0
+test-watchd-prune.sh	ok	retired lock removed
+test-watchd-prune.sh	ok	retired cursor removed
+test-watchd-prune.sh	ok	retired pending removed
+test-watchd-prune.sh	ok	active lock preserved
+test-watchd-prune.sh	ok	active cursor preserved
+test-watchd-prune.sh	ok	active pending preserved
+test-watchd-prune.sh	ok	bad manifest exits non-zero
+test-watchd-prune.sh	ok	stale lock untouched after bad-manifest prune
+test-watchd-prune.sh	ok	absent dir exits 0
+test-wire-token.sh	ok	sending.sh emits SENT
+test-wire-token.sh	ok	sending.sh does not emit REAPED
+test-wire-token.sh	ok	sentinel.sh greps ^SENT
+test-wire-token.sh	ok	sentinel.sh does not grep ^REAPED
+test-wire-token.sh	ok	cockpit-metrics.py startswith("SENT")
+test-wire-token.sh	ok	cockpit-metrics.py does not startswith("REAPED")
+test-world-start-revives-watchers.sh	ok	the start branch was located (positive control)
+test-world-start-revives-watchers.sh	ok	start acts on the watcher units
+test-world-start-revives-watchers.sh	ok	the units are queried from systemd, not hand-listed
+test-world-start-revives-watchers.sh	ok	the instance-qualified unit names are matched
+test-world-start-revives-watchers.sh	ok	oneshot units are skipped by type
+test-world-start-revives-watchers.sh	ok	no watcher is excluded by name
+test-world-start-revives-watchers.sh	ok	an already-running watcher is left alone

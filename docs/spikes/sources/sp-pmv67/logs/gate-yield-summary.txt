@@ -1,0 +1,27 @@
+# The gate yield ledger ($SPIRA_RUN/gate-yield/, one key=value file per gate red), 2026-09-18.
+# Tabulated: count | outcome | reason | suite | verdict | by
+     25 FAIL|branch-red|-|DEFECT|auto:changed-then-passed
+     11 FAIL|branch-red|test-testdb-concurrent.sh|UNKNOWN|
+      9 BASE_FAIL|base-red|-|GATE_FAULT|auto:BASE_FAIL
+      3 FAIL|branch-red|-|UNKNOWN|
+      2 NO_VERDICT|tree-unidentified|-|GATE_FAULT|auto:NO_VERDICT
+      2 NO_VERDICT|no-diff|-|GATE_FAULT|auto:NO_VERDICT
+      2 FAIL|branch-red|test-deploy.sh|UNKNOWN|
+      1 NO_VERDICT|harness-fault|-|GATE_FAULT|auto:NO_VERDICT
+      1 FAIL|branch-red|test-batch.sh|DEFECT|auto:changed-then-passed
+      1 FAIL|branch-red|test-ask-law.sh|DEFECT|auto:changed-then-passed
+
+# One record verbatim:
+at=1789690793
+last=1789690793
+seen=1
+repo=spira
+branch=spira/queue/20260918T001653Z
+bead=batch-20260918T001653Z
+tree=cf9c8d925d636726928fc21efb98768039491ee7
+outcome=FAIL
+reason=branch-red
+suite=test-testdb-concurrent.sh
+verdict=UNKNOWN
+by=
+why=

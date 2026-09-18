@@ -1,0 +1,86 @@
+# Source: bead sp-6zw2p, read from the Spira beads store with 'bd show sp-6zw2p' on 2026-09-18.
+# Preserved because the beads store is not public. Home-directory paths rewritten to $HOME;
+# nothing else edited.
+
+✓ sp-6zw2p · the merge-queue quarantines, at threshold 1, exactly the suites the gate declared NOT flaky   [P1 · CLOSED]
+Owner: aeon-sandy · Assignee: aeon-cindy · Type: task
+Created: 2026-09-17 · Started: 2026-09-17 · Updated: 2026-09-17
+
+CLOSE REASON
+
+  Removed _quarantine_suites and its two call sites from the attribution path.
+  Suites arriving on red-suite: lines are classified by the gate as NOT flaky 
+  (failed twice under changed conditions); calling observe-flake on them with 
+  SPIRA_FLAKE_QUARANTINE_AT=1 was the inversion. The green landing path       
+  already handles flaky: lines at the configured threshold and is correct.    
+                                                                              
+  test-attribution.sh cases 3 (unreproduced multi-member) and 4a (unreproduced
+  single-member first occurrence) now assert that observe-flake is NOT called 
+  for suites arriving on red-suite: lines. Both assertions confirmed to fail  
+  against the buggy code and pass after the fix.                              
+                                                                              
+  Ran test-attribution.sh and test-verdict.sh in container via the test       
+  runner. Both green.                                                         
+                                                                              
+  Side: filed sp-a3ltv for fence substring-match bug discovered while running 
+  tests.                                                                      
+
+DESCRIPTION
+
+  ## What is wrong                                                            
+                                                                              
+  spira/forge.sh already distinguishes the two cases, from the gate's own CI  
+  annotations (forge.sh:99-106):                                              
+                                                                              
+    warning / "flaky suite"      ->  prints  flaky: <suite>          
+    error   / "red-twice suite"  ->  prints  red-suite: <suite>      
+                                                                              
+  spira/gate-retry.sh produces those annotations by re-running the batch's red
+  suites SERIALLY and comparing (gate-retry.sh:33-42). red-twice means: re-run
+  under a changed condition, red both times. That is the gate stating, in its 
+  own                                                                         
+  output, that this is not a flake.                                           
+                                                                              
+  The merge-queue verdict then parses only the red-suite: lines into          
+  $red_suites (spira/verdict.sh:117-120) and, when local reproduction finds   
+  nothing, calls:                                                             
+                                                                              
+    _quarantine_suites "$red_suites"                       (:153 and :191)    
+    SPIRA_FLAKE_QUARANTINE_AT=1 suites.sh observe-flake     (:78)             
+                                                                              
+  So the set the gate explicitly classified as NOT flaky is precisely the set 
+  that                                                                        
+  gets quarantined as flaky — on a single observation, with the configured    
+  threshold of 2 overridden at the call site.                                 
+                                                                              
+  The green path is correct: it forwards the flaky: lines at the default      
+  threshold (:320-327). Only the red path inverts the classification.         
+                                                                              
+  ## Why it is not already fixed                                              
+                                                                              
+  sp-zmd3u named this as its defect 1 and closed with it explicitly out of    
+  scope:                                                                      
+  "Defect 1 (red-red suite detection) remains out of scope, requires gate     
+  integration". That bead is CLOSED, so nothing carries the remaining work.   
+                                                                              
+  ## What to do                                                               
+                                                                              
+  Read the classification that already exists rather than re-deriving it: a   
+  suite                                                                       
+  arriving on a red-suite: line is ineligible for observe-flake by            
+  construction. Remove the SPIRA_FLAKE_QUARANTINE_AT=1 override — one sighting
+  is not a threshold, and the configured default is 2.                        
+                                                                              
+  A regression test must be seen to fail first: feed the attribution path a   
+  red-suite: line and require that no quarantine is written.                  
+                                                                              
+  Found by the sp-pmv67 spike; see docs/spikes/test-identity-lifecycle-and-   
+  trust.md.                                                                   
+
+
+
+LABELS: branch:spira/sp-6zw2p, plan, repo:spira, spira
+
+CHILDREN
+  ↳ ✓ sp-6zw2p.1: State change: branch → spira/sp-6zw2p P4
+
