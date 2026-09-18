@@ -395,10 +395,15 @@ main() {
                 return 0
             fi
 
-            printf 'verdict %s: PR %s queue cancelled run %s (no activity for %ds)\n' \
-                "$name" "$pr_n" "${run_id:-unknown}" "$_idle"
-            status="harness_fault"
-            ;&
+            # Run is stuck. Cancel it explicitly so the shutdown is logged, not an
+            # unexplained runner signal. Next verdict pass handles the cancelled run
+            # as harness_fault and retries then.
+            if [ -n "${run_id:-}" ]; then
+                "$forge" run-cancel "$repo" "$run_id" 2>/dev/null || true
+            fi
+            printf 'verdict %s: PR %s run stuck (%ds, idle %ds) — cancelled; will retry on next pass\n' \
+                "$name" "$pr_n" "$run_age" "$_idle"
+            ;;
         harness_fault)
             local max_retries="${SPIRA_QUEUE_INFRA_RETRIES:-2}"
             if [ "$run_retries" -lt "$max_retries" ]; then

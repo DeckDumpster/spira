@@ -2,10 +2,10 @@
 #
 # test-verdict.sh — merge-queue verdict: fast-forward landing pass.
 #
-# Thirteen cases:
+# Fourteen cases:
 #   1. No open batch → forge is never reached.
 #   2. Pending within CI max → nothing happens.
-#   3. Pending, run old and stuck → treated as harness fault, re-run called.
+#   3. Pending, run old and stuck → run cancelled explicitly; no workflow-rerun.
 #   4. Harness fault, retries remaining → re-run called, counter bumped.
 #   5. Harness fault, retries exhausted → mail sent to operator.
 #   6. Green, base unchanged, flaky annotation → fast-forward push; members LANDED;
@@ -23,6 +23,7 @@
 #  13. Green, base moved, member tips already in new base → members LANDED, not
 #      re-queued. Positive control with case 7: case 7 proves CERTIFIED when tips
 #      are NOT in the new base; this proves LANDED when they ARE.
+#  14. PR old, run old, but last-activity recent → run still progressing; no cancel.
 #
 # The forge seam is a local fixture; no network is reached.
 # mail.sh and suites.sh are stubbed to capture calls.
@@ -84,7 +85,7 @@ printf 'pending\n' > "$FORGE_STATUS_FILE"
 
 # ─── Forge fixture ────────────────────────────────────────────────────────────
 # check-status reads FORGE_STATUS_FILE; run-metadata reads FORGE_RUN_METADATA_FILE;
-# workflow-rerun and pr-close append to FORGE_LOG. All vars are exported above.
+# run-cancel, workflow-rerun and pr-close append to FORGE_LOG. All vars exported above.
 # Pinned to a non-default SPIRA_FORGE so an assertion passing against "used gh"
 # fails rather than passing vacuously.
 cat > "$SH/forge-fixture.sh" <<'FORGE'
@@ -99,6 +100,9 @@ case "$cmd" in
         ;;
     run-metadata)
         cat "${FORGE_RUN_METADATA_FILE}" 2>/dev/null || true
+        ;;
+    run-cancel)
+        printf '%s\tcancel\n' "${1:-}" >> "$FORGE_LOG"
         ;;
     workflow-rerun)
         printf '%s\trerun\n' "${1:-}" >> "$FORGE_LOG"
@@ -260,21 +264,20 @@ want "2. pending: reported"     "pending"      "$out"
 clean_case
 
 # =============================================================================
-# 3. PENDING, RUN OLD AND STUCK — treated as harness fault; re-run is requested.
-#    The run started 3601s ago with no job activity since, so it is stuck.
-#    Positive control: run metadata has old started-at; without the activity check,
-#    a freshly-started run would also trigger (case 12 is that positive control).
+# 3. PENDING, RUN OLD AND STUCK — run cancelled explicitly; no workflow-rerun.
+#    Run started 3601s ago with no last-activity → stuck. Cancel is called so
+#    the shutdown is logged explicitly, not seen as an unexplained runner signal.
+#    Positive control for case 12: fresh run on the same old PR is NOT cancelled.
 # =============================================================================
 build_batch sp-vd-q1 sp-vd-q2 > /dev/null
 printf 'started-at: %s\n' "$(( $(date +%s) - 3601 ))" > "$FORGE_RUN_METADATA_FILE"
 printf 'pending\n' > "$FORGE_STATUS_FILE"
 before_main="$(remote_main)"
 out="$(verdict "$REPONAME")"
-is   "3. pending-past-max: no push"   "$before_main" "$(remote_main)"
-want "3. pending-past-max: rerun"     "rerun"        "$(cat "$FORGE_LOG")"
-want "3. pending-past-max: reported"  "harness fault" "$out"
-is   "3. pending-past-max: retries=1" "1" \
-     "$(grep '^retries=' "$(batch_file)" | cut -d= -f2)"
+is   "3. pending-past-max: no push"     "$before_main" "$(remote_main)"
+want "3. pending-past-max: cancel"      "cancel"       "$(cat "$FORGE_LOG")"
+nowant "3. pending-past-max: no rerun"  "rerun"        "$(cat "$FORGE_LOG")"
+want "3. pending-past-max: stuck reported" "stuck"     "$out"
 clean_case
 
 # =============================================================================
@@ -449,9 +452,10 @@ printf 'started-at: %s\n' "$(( $(date +%s) - 60 ))" > "$FORGE_RUN_METADATA_FILE"
 printf 'pending\n' > "$FORGE_STATUS_FILE"
 before_main12="$(remote_main)"
 out="$(verdict "$REPONAME")"
-is   "12. fresh-run: no push"    "$before_main12" "$(remote_main)"
-nowant "12. fresh-run: no rerun" "rerun"          "$(cat "$FORGE_LOG")"
-want "12. fresh-run: reported"   "pending"        "$out"
+is     "12. fresh-run: no push"         "$before_main12" "$(remote_main)"
+nowant "12. fresh-run: no cancel"       "cancel"         "$(cat "$FORGE_LOG")"
+nowant "12. fresh-run: no rerun"        "rerun"          "$(cat "$FORGE_LOG")"
+want   "12. fresh-run: reported"        "pending"        "$out"
 clean_case
 
 # =============================================================================
@@ -476,6 +480,28 @@ want "13. moved-in-base: base-moved reported"    "base moved"         "$out"
 want "13. moved-in-base: already-in-base logged" "already in moved base" "$out"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 14. PR OLD, RUN OLD, LAST-ACTIVITY RECENT — run still progressing; no cancel.
+#     Positive control for the activity guard: cancelling a progressing run
+#     would surface as an unexplained runner shutdown with cancel-in-progress.
+#     The run started 3700s ago (past MAXSEC), but a step completed 30s ago.
+# =============================================================================
+build_batch sp-vd-v1 sp-vd-v2 > /dev/null
+{
+    grep -v '^opened=' "$(batch_file)"
+    printf 'opened=%s\n' "$(( $(date +%s) - 7200 ))"
+} > "$(batch_file).$$" && mv -f "$(batch_file).$$" "$(batch_file)"
+printf 'started-at: %s\nlast-activity: %s\n' \
+    "$(( $(date +%s) - 3700 ))" "$(( $(date +%s) - 30 ))" > "$FORGE_RUN_METADATA_FILE"
+printf 'pending\n' > "$FORGE_STATUS_FILE"
+before_main14="$(remote_main)"
+out="$(verdict "$REPONAME")"
+is     "14. progressing: no push"       "$before_main14" "$(remote_main)"
+nowant "14. progressing: no cancel"     "cancel"         "$(cat "$FORGE_LOG")"
+nowant "14. progressing: no rerun"      "rerun"          "$(cat "$FORGE_LOG")"
+want   "14. progressing: reported"      "progressing"    "$out"
+clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
