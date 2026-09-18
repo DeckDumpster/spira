@@ -710,6 +710,7 @@ SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b7a-$$" \
 SPIRA_VERDICTS="$VERDICTS_B7" \
 SPIRA_VERDICT_TTL=86400 \
+SPIRA_DB= \
     bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null
 )" || rc_b7a=$?
 
@@ -736,7 +737,7 @@ SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b7b-$$" \
 SPIRA_VERDICTS="$VERDICTS_B7" \
 SPIRA_VERDICT_TTL=86400 \
-SPIRA_DB="$TMP/no-bead-db" \
+SPIRA_DB= \
     bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null
 )" || rc_b7b=$?
 
@@ -756,6 +757,7 @@ SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b7c-$$" \
 SPIRA_VERDICTS="$VERDICTS_B7" \
 SPIRA_VERDICT_TTL=86400 \
+SPIRA_DB= \
     bash "$BATCH" --mode serial --suites test-fx-red.sh topic "$FIXTURE" || rc_b7c=$?
 [ "$rc_b7c" -ne 2 ] \
     && ok "B7c: positive-control: different MODE not refused (exit $rc_b7c, not 2)" \
@@ -773,6 +775,7 @@ SPIRA_BATCH_INSTANCE="b7d-$$" \
 SPIRA_VERDICTS="$VERDICTS_B7" \
 SPIRA_VERDICT_TTL=86400 \
 SPIRA_VERDICT_REPEAT_CONSIDERED="runner host was destroyed by hypervisor OOM, not a code defect" \
+SPIRA_DB= \
     bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null
 )" || rc_b7d=$?
 
@@ -799,7 +802,7 @@ SPIRA_BATCH_INSTANCE="b7e-$$" \
 SPIRA_VERDICTS="$VERDICTS_B7" \
 SPIRA_VERDICT_TTL=86400 \
 SPIRA_VERDICT_REPEAT_CONSIDERED="1" \
-SPIRA_DB="$TMP/no-bead-db" \
+SPIRA_DB= \
     bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null
 )" || rc_b7e=$?
 
