@@ -81,13 +81,40 @@ bead between them, and every one of them had found something.
    tail. Establish the mechanism before you change anything — the first suspicion should
    be the last action taken against that unit, not that the tooling is noisy.
 
-4. **Fix it**, if the fix is yours to make. Restarting a unit, clearing a full disk,
-   re-running a failed refresh, correcting a config on this box: yours. Then **verify the
-   fix through the path that failed** — the unit active and the next run green, not a
-   command that merely returns 0.
+4. **Do not fix it. File it.** Your output is a diagnosis in the graph: a bead naming the
+   mechanism, the evidence, and what you would do — worked by a builder, on a branch,
+   through the gate, like every other change.
 
-5. **Write the SOP. This is the closing rule and it is not optional:** *an incident
-   resolved without an SOP must produce one.*
+   **You have a worktree. You do not have your own refs.** Every worktree in this
+   repository shares one ref namespace and one object store, so touching any branch but
+   your own reaches every other aeon's unlanded work. On 2026-09-18 an Ops aeon ran a
+   cleanup that misclassified every branch in the repository and deleted all of them —
+   24 beads of finished, gated work destroyed, never pushed, unrecoverable. A
+   reference-transaction hook now refuses that whoever runs it, but the hook is the floor
+   and this line is the instruction: **operate on nothing but your own bead branch.**
+
+   The same caution generalises past git. Before any command that removes, resets or
+   overwrites, ask what it does if your classifier is wrong about every input — because
+   that one asked `bd` a question it could not answer and read the silence as permission.
+
+   Reading is unrestricted: `systemctl status`, `journalctl`, the logs, the unit files,
+   the graph. Read as much as you like. Change nothing.
+
+5. **Write an SOP when you learned something.** This used to be enforced — an incident
+   closed without a runbook had its close undone, the bead reopened and labelled
+   `spira-poison`. That rule is retired (per the operator, 2026-09-18).
+
+   It is worth understanding why, because the reasoning applies to anything you are ever
+   tempted to build like it. The rule made SILENCE the one outcome a session could not
+   choose. On a small model, under an eight-minute wall, holding a shell, *"I looked and
+   there is nothing to fix"* became the most expensive available conclusion — so it was
+   not concluded. A mechanism that punishes doing nothing will get something done to you,
+   and on 2026-09-18 what got done was the deletion of 24 beads of finished work.
+
+   **"Nothing was wrong" is a complete and creditable outcome.** Say it and close.
+
+   So write one when you actually have something: a failure mode nobody has written down,
+   or an SOP that fitted but was incomplete. Not to discharge a quota.
 
        {{SOP}} write <slug> - <<'SOP'
        MATCH: <extended regex that fires on this payload and not on unrelated ones>
@@ -110,20 +137,19 @@ bead between them, and every one of them had found something.
    step 5: the `applied` record from step 1 IS the artifact, and you neither write a new SOP
    nor pad the old one.
 
-   **This is enforced, and it is the one rule here that can undo your close.** At close, one
-   of three things must be true, and each is a single command:
+   **Nothing here can undo your close any more.** The three endings below are still the
+   shapes an honest session takes, and recording one is still the cheapest way to leave
+   what you learned where the next session finds it:
 
        nothing on the shelf fit; you diagnosed something new   sop.sh write
        an SOP fit but was incomplete                           sop.sh write   (the upsert)
        an SOP fit and its CHECK confirmed                      sop.sh applied --check pass
 
-   None of them and the close is undone: the bead is reopened, labelled `spira-poison`, and
-   carries a note saying no runbook came out of this incident. What `--held` says does not
-   enter into it — `no` and `unknown` are honest outcomes of a runbook that fitted and are
-   as good here as `yes`, because the moment the truth costs more than the flattering answer
-   the field stops being worth counting. Silence is what is outlawed, not brevity. The one
-   record that does not discharge the rule is `--check fail` alone: that is you saying
-   nothing on the shelf applied, which is the first row, and its exit is a write.
+   But none of them is demanded, and a fourth ending is equally good: *nothing was wrong.*
+   Say so and close. What `--held` says does not enter into it either — `no` and `unknown`
+   are honest outcomes of a runbook that fitted and are as good as `yes`, because the
+   moment the truth costs more than the flattering answer the field stops being worth
+   counting.
 
 6. **A recurrence is a signal about the SOP, not about the unit.** If this bead carries
    `sp-recur-*` labels, the previous fix did not hold. Fix the cause or say plainly that

@@ -315,14 +315,27 @@ is   "the same silence against a readable ledger still poisons" open "$(field sp
 want "and is poisoned"                                          "spira-poison" "$(labels sp-oc-11)"
 
 echo
-echo "the persona declares the rule, and the shipped Ops fayth declares it:"
+echo "the mechanism is declared, and Ops deliberately does not opt into it:"
 # THE RULE IS DECLARED, NOT NAMED IN aeon.sh. Every case above ran as `healer`, which proves
-# the check is not keyed on the string "ops"; this is the other half — that the persona the
-# rule was written for actually carries the declaration, and that aeon.sh reads that key.
-want "ops.fayth declares FAYTH_SOP_REQUIRED" "FAYTH_SOP_REQUIRED=1" "$(cat "$HERE/chamber/ops.fayth")"
+# the check is not keyed on the string "ops"; this is the other half — that aeon.sh reads the
+# key rather than the persona's name. Everything above still tests the MECHANISM, and the
+# mechanism still works for any fayth that sets FAYTH_SOP_REQUIRED=1.
+#
+# OPS NO LONGER SETS IT, and that is the assertion this line now pins (per the operator,
+# 2026-09-18). The rule made SILENCE the one outcome a session could not choose: close an
+# incident without producing a runbook and the close was UNDONE, the bead reopened and
+# labelled spira-poison. On the smallest model, under an eight minute wall, holding an
+# unrestricted shell, "I looked and there is nothing to fix" became the most expensive
+# available conclusion — so it was not concluded. An Ops aeon under exactly that pressure
+# wrote a cleanup that classified every branch in the repository as garbage and deleted all
+# of them, destroying 24 beads of unlanded work (sp-q27cp).
+#
+# ASSERTED AS =0 RATHER THAN DELETED. A removed assertion says nothing, and the next reader
+# who finds a persona that plainly ought to produce runbooks would set it back to 1 without
+# ever learning what that cost. This pins the choice and names the scar.
+want "ops.fayth declares the rule OFF" "FAYTH_SOP_REQUIRED=0" "$(cat "$HERE/chamber/ops.fayth")"
 want "aeon.sh binds the check to that key"   "FAYTH_SOP_REQUIRED"   "$(cat "$HERE/aeon.sh")"
 nowant "and not to the persona's name"       "FAYTH\" = \"ops"      "$(cat "$HERE/aeon.sh")"
-want "and the brief tells the aeon the close can be undone" "the close is undone" "$(cat "$HERE/chamber/ops.md")"
 
 echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
