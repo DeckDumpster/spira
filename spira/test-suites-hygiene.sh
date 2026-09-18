@@ -2,10 +2,11 @@
 #
 # test-suites-hygiene.sh — quarantine hygiene: flake observations, reactivation, max-age.
 #
-# THREE PROPERTIES VERIFIED.
+# FOUR PROPERTIES VERIFIED.
 #
-# 1. FLAKE THRESHOLD: two observations inside the window quarantine; one does not;
-#    two observations whose timestamps fall outside the window do not.
+# 1. FLAKE THRESHOLD: two distinct runs inside the window quarantine; one does not;
+#    two runs whose timestamps fall outside the window do not. Same run_id twice counts
+#    as one (dedup).
 #
 # 2. REACTIVATION: a quarantined suite whose bead is LANDED and whose clean-run count
 #    reaches SPIRA_QUARANTINE_CLEAN_RUNS is activated; either condition alone is not enough.
@@ -123,34 +124,46 @@ echo
 echo "SEEN RED: non-existent suite → rejected:"
 reset_statefile; reset_state
 
-out_ne="$(sut observe-flake no-such-suite.sh 2>&1)"; rc_ne=$?
+out_ne="$(sut observe-flake no-such-suite.sh run-1 2>&1)"; rc_ne=$?
 isnz "non-existent suite: non-zero exit" "$rc_ne"
 want "non-existent suite: error names the suite" "no such suite" "$out_ne"
 
-# -- positive control: two observations inside the window quarantine --
+# -- positive control: two runs inside the window quarantine --
 echo
-echo "two observations inside window → quarantined:"
+echo "two runs inside window → quarantined:"
 reset_statefile; reset_state
 
-# First call: count=1, below threshold=2, no quarantine.
-out1="$(sut observe-flake test-hygiene-foo.sh 2>&1)"
+# First call (run-1): count=1, below threshold=2, no quarantine.
+out1="$(sut observe-flake test-hygiene-foo.sh run-1 2>&1)"
 st1="$(state_of test-hygiene-foo.sh)"
-is "SEEN RED: first obs: 1 in window, not quarantined yet" "active" "$st1"
+is "SEEN RED: first run: 1 in window, not quarantined yet" "active" "$st1"
 
-# Second call: count=2 = threshold, quarantine triggered.
-out2="$(sut observe-flake test-hygiene-foo.sh 2>&1)"
+# Second call (run-2, different run id): count=2 = threshold, quarantine triggered.
+out2="$(sut observe-flake test-hygiene-foo.sh run-2 2>&1)"
 st2="$(state_of test-hygiene-foo.sh)"
-is "second obs reaches threshold: suite quarantined" "quarantined" "$st2"
+is "second run reaches threshold: suite quarantined" "quarantined" "$st2"
 want "auto-quarantine message emitted" "auto-quarantine" "$out2"
 bid_after_quarantine="$(bead_of_state test-hygiene-foo.sh)"
 isnz "auto-quarantine: state carries non-empty bead id" "${#bid_after_quarantine}"
+
+# -- same run_id twice: dedup fires, only one observation recorded --
+echo
+echo "same run_id twice → one observation, not quarantined:"
+reset_statefile; reset_state
+
+sut observe-flake test-hygiene-foo.sh run-dedup >/dev/null 2>&1
+sut observe-flake test-hygiene-foo.sh run-dedup >/dev/null 2>&1
+st_dedup="$(state_of test-hygiene-foo.sh)"
+obs_dedup="$(obs_count test-hygiene-foo.sh)"
+is "same run twice: suite stays active (dedup)"     "active" "$st_dedup"
+is "same run twice: exactly one line in ledger"     "1"      "$obs_dedup"
 
 # -- one observation: stays active --
 echo
 echo "one observation → not quarantined:"
 reset_statefile; reset_state
 
-sut observe-flake test-hygiene-foo.sh >/dev/null 2>&1
+sut observe-flake test-hygiene-foo.sh run-1 >/dev/null 2>&1
 st3="$(state_of test-hygiene-foo.sh)"
 is "one obs below threshold: suite stays active" "active" "$st3"
 
@@ -161,10 +174,10 @@ reset_statefile; reset_state
 
 # Plant two old observations (outside FLAKE_WIN=3600s) directly in the file.
 old_epoch=$(( $(date +%s) - FLAKE_WIN - 100 ))
-printf '%s\n%s\n' "$old_epoch" "$old_epoch" > "$STATE/test-hygiene-foo.sh.flakeobs"
+printf '%s run-old\n%s run-old\n' "$old_epoch" "$old_epoch" > "$STATE/test-hygiene-foo.sh.flakeobs"
 
-# One new observation adds count-in-window=1; still below threshold.
-sut observe-flake test-hygiene-foo.sh >/dev/null 2>&1
+# One new observation (distinct run) adds count-in-window=1; still below threshold.
+sut observe-flake test-hygiene-foo.sh run-new >/dev/null 2>&1
 st4="$(state_of test-hygiene-foo.sh)"
 is "two old obs + one new = 1 in window: not quarantined" "active" "$st4"
 
