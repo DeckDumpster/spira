@@ -291,6 +291,7 @@ rc_b1=0
 SPIRA_BATCH_SUITE_DIR="$SUITE_B1" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B1" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_VERDICT_TTL=0 \
 SPIRA_BATCH_INSTANCE="b1-$$" \
     bash "$BATCH" topic "$FIXTURE" || rc_b1=$?
 
@@ -342,6 +343,7 @@ rc_b2=0
 SPIRA_BATCH_SUITE_DIR="$SUITE_B2" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B2" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_VERDICT_TTL=0 \
 SPIRA_BATCH_INSTANCE="b2-$$" \
     bash "$BATCH" topic "$FIXTURE" || rc_b2=$?
 
@@ -478,6 +480,7 @@ SPIRA_CONF=/nonexistent \
 SPIRA_BATCH_SUITE_DIR="$SUITE_B4" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B4" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_VERDICT_TTL=0 \
 SPIRA_BATCH_INSTANCE="b4-$$" \
     bash "$BATCH" topic "$FIXTURE" || rc_b4=$?
 
@@ -523,6 +526,7 @@ rc_b5b=0
 SPIRA_BATCH_SUITE_DIR="$SUITE_B5b" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B5b" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_VERDICT_TTL=0 \
 SPIRA_BATCH_INSTANCE="b5b-$$" \
     bash "$BATCH" --suites test-fx-ka.sh topic "$FIXTURE" || rc_b5b=$?
 iszero "B5b: --suites run exits 0" "$rc_b5b"
@@ -553,6 +557,7 @@ rc_b5c=0
 SPIRA_BATCH_SUITE_DIR="$SUITE_B5c" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B5c" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_VERDICT_TTL=0 \
 SPIRA_BATCH_INSTANCE="b5c-$$" \
     bash "$BATCH" topic "$FIXTURE" || rc_b5c=$?
 iszero "B5c: all-fallback run exits 0" "$rc_b5c"
@@ -605,6 +610,7 @@ b6a_out="$(
     SPIRA_BATCH_SUITE_DIR="$SUITE_B6" \
     SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B6a" \
     SPIRA_BATCH_SKIP_INSTALL=1 \
+    SPIRA_VERDICT_TTL=0 \
     SPIRA_BATCH_INSTANCE="b6a-$$" \
         bash "$BATCH" topic "$FIXTURE" 2>/dev/null
 )" || rc_b6a=$?
@@ -625,6 +631,7 @@ b6b_out="$(
     SPIRA_BATCH_SUITE_DIR="$SUITE_B6" \
     SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B6b" \
     SPIRA_BATCH_SKIP_INSTALL=1 \
+    SPIRA_VERDICT_TTL=0 \
     SPIRA_BATCH_INSTANCE="b6b-$$" \
         bash "$BATCH" topic "$FIXTURE" 2>/dev/null
 )" || rc_b6b=$?
