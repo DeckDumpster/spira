@@ -80,10 +80,14 @@ esac
 git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1 || {
     echo "inventory: $ROOT is not a git repository — nothing to scan" >&2; exit 3; }
 
-# THE INDEX, not the worktree: what the next commit ships is what matters, and an operator's
-# untracked notes beside the code are their own business.
-mapfile -t files < <(git -C "$ROOT" ls-files)
-[ "${#files[@]}" -gt 0 ] || { echo "inventory: nothing is tracked — refusing to report clean" >&2; exit 3; }
+mapfile -t tracked < <(git -C "$ROOT" ls-files)
+[ "${#tracked[@]}" -gt 0 ] || { echo "inventory: nothing is tracked — refusing to report clean" >&2; exit 3; }
+# Tracked files plus untracked non-ignored files: a violation in a file not yet
+# committed is still a violation (sp-hm2vw).
+mapfile -t files < <(
+    printf '%s\n' "${tracked[@]}"
+    git -C "$ROOT" ls-files --others --exclude-standard
+)
 
 bad=0
 for f in "${files[@]}"; do

@@ -241,6 +241,16 @@ main() {
 
     while IFS= read -r _line && [ "$taken" -lt "$max" ]; do
         read -r _ _ _ _bid _btip <<< "$_line"
+        # Warn when the branch head has moved past the certified tip (sp-hm2vw). The
+        # batch uses the certified tip; commits pushed after certification are not included
+        # until the branch is re-certified.
+        local _bcur
+        _bcur="$(git -C "$repo" rev-parse "refs/heads/spira/$_bid" 2>/dev/null || true)"
+        if [ -n "${_bcur:-}" ] && [ "$_bcur" != "$_btip" ]; then
+            printf 'batch %s: WARN %s tip has moved since certification — certified=%s head=%s — using certified tip\n' \
+                "$name" "$_bid" "${_btip:0:8}" "${_bcur:0:8}"
+        fi
+        unset _bcur
         if git -C "$wt" merge --no-edit --no-ff -m "spira: land $_bid" "$_btip" \
                >/dev/null 2>&1; then
             members+=("$_bid:$_btip")

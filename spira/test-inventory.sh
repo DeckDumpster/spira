@@ -61,6 +61,22 @@ out="$(inv_at "$ROOT")"; rc=$?
 is   "SEEN GREEN: clean after withdrawal" "0" "$rc"
 
 # ---------------------------------------------------------------------------------------
+# SEEN RED: violation in an untracked (not yet committed) file — sp-hm2vw.
+# The positive control is the planted-and-caught test above; this proves the fix that
+# added --others --exclude-standard works, because git ls-files alone misses it.
+# ---------------------------------------------------------------------------------------
+printf '# config at /home/testuser/config.conf\n' > "$ROOT/spira/untracked-violation.sh"
+# File is intentionally NOT staged or committed — left untracked.
+
+out="$(inv_at "$ROOT")"; rc=$?
+is   "SEEN RED: untracked violation is caught" "1" "$rc"
+want "names the untracked file"               "spira/untracked-violation.sh" "$out"
+
+rm -f "$ROOT/spira/untracked-violation.sh"
+out="$(inv_at "$ROOT")"; rc=$?
+is   "SEEN GREEN: clean once untracked file removed" "0" "$rc"
+
+# ---------------------------------------------------------------------------------------
 # SEEN RED: /workspaces/ path.
 # ---------------------------------------------------------------------------------------
 printf '# repo lives at /workspaces/myproject\n' > "$ROOT/spira/ws.sh"
