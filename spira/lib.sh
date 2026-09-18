@@ -2931,7 +2931,7 @@ other_beads_on_conflicts() {
     # shellcheck disable=SC2086
     subjects="$(git -C "$repo" log --format='%s' "$mb..$base" -- $files 2>/dev/null)" || return 0
     [ -n "$subjects" ] || return 0
-    ids="$(grep -oE "${SPIRA_ID_PREFIX:-sp}-[a-z0-9]+" <<< "$subjects" | sort -u)" || return 0
+    ids="$(grep -oE "${own_id%%-*}-[a-z0-9]+" <<< "$subjects" | sort -u)" || return 0
     ids="$(grep -vxF "$own_id" <<< "$ids")" || return 0
     printf '%s' "$ids" | tr '\n' ' ' | sed 's/ $//'
 }

@@ -1454,8 +1454,15 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 # spurious reopen is a fact to read rather than a sequence to reconstruct
                 # from timestamps across two logs.
                 log "landing: $br genuinely conflicts with $base (ancestor=$_anc, commits-ahead=$_rn_merge)"
-                bead_reopen "$id" "Reopened by sentinel: branch $br conflicts with $base. The branch carries $_rn_merge commit(s) from the previous session — rebase onto $base, resolve the conflict, and finish. A merge conflict is not an escalation."
-                unset _rn_merge _anc
+                local _merge_other _merge_note
+                _merge_other="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
+                if [ -n "$_merge_other" ]; then
+                    _merge_note="Reopened by sentinel: branch $br conflicts with $base. The branch carries $_rn_merge commit(s) from the previous session. Those files were changed on $base by $_merge_other — check whether this work is already landed before resolving."
+                else
+                    _merge_note="Reopened by sentinel: branch $br conflicts with $base. The branch carries $_rn_merge commit(s) from the previous session — rebase onto $base, resolve the conflict, and finish. A merge conflict is not an escalation."
+                fi
+                bead_reopen "$id" "$_merge_note"
+                unset _rn_merge _anc _merge_other _merge_note
                 # Counter labels (sp-requeue-N) no longer written (sp-lzt).
                 progress "reopened $id — branch conflicts with $base"
                 spira_event bead.reopened "$id" "reopened $id — $br conflicts with $name's $base" \
