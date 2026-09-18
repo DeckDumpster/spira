@@ -289,7 +289,7 @@ main() {
                 local run_id
                 run_id="$("$forge" run-id "$repo" "${branch_name:-}" 2>/dev/null)" || run_id=""
                 if [ -n "${run_id:-}" ]; then
-                    "$forge" workflow-rerun "$repo" "$run_id" 2>/dev/null || true
+                    "$forge" workflow-rerun "$repo" "$run_id" || true
                 fi
                 printf 'verdict %s: PR %s harness fault — re-running (attempt %d/%d)\n' \
                     "$name" "$pr_n" "$(( run_retries + 1 ))" "$max_retries"

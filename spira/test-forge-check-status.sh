@@ -100,5 +100,47 @@ printf '%s\n' "$_out4" | grep -qF "head-sha:" \
     || ok "no head-sha when headRefOid absent"
 
 echo
+echo "workflow-rerun: no --failed in rerun argv; cancels in_progress runs first:"
+RERUN_LOG="$TMP/rerun-log"
+: > "$RERUN_LOG"
+# gh stand-in: records all calls; answers run-view with $RUN_STATUS.
+cat > "$TMP/gh-rr" <<'GHRR'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$RERUN_LOG"
+case "$*" in *run\ view*) printf '%s\n' "${RUN_STATUS:-completed}" ;; esac
+GHRR
+chmod +x "$TMP/gh-rr"
+
+# Positive control: verify the detector can find --failed when planted.
+printf 'run rerun 99 --failed\n' > "$RERUN_LOG"
+grep -q -- '--failed' "$RERUN_LOG" \
+    && ok  "rerun: positive control detects --failed" \
+    || bad "rerun: positive control detects --failed" "planted --failed not found"
+
+# Test: completed run → rerun with no --failed, no cancel.
+: > "$RERUN_LOG"
+env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+    SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh-rr" RERUN_LOG="$RERUN_LOG" RUN_STATUS=completed \
+    bash "$HERE/forge.sh" workflow-rerun "$TMP/repo" 99 2>/dev/null
+grep -q -- '--failed' "$RERUN_LOG" \
+    && bad "rerun: no --failed when run completed" "found --failed in: $(cat "$RERUN_LOG")" \
+    || ok  "rerun: no --failed when run completed"
+grep -q 'run cancel' "$RERUN_LOG" \
+    && bad "rerun: no cancel when run is completed" "found cancel in: $(cat "$RERUN_LOG")" \
+    || ok  "rerun: no cancel when run is completed"
+
+# Test: in_progress run → cancel called before rerun, still no --failed.
+: > "$RERUN_LOG"
+env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+    SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh-rr" RERUN_LOG="$RERUN_LOG" RUN_STATUS=in_progress \
+    bash "$HERE/forge.sh" workflow-rerun "$TMP/repo" 99 2>/dev/null
+grep -q 'run cancel' "$RERUN_LOG" \
+    && ok  "rerun: cancel called when in_progress" \
+    || bad "rerun: cancel called when in_progress" "no cancel in: $(cat "$RERUN_LOG")"
+grep -q -- '--failed' "$RERUN_LOG" \
+    && bad "rerun: no --failed when in_progress" "found --failed in: $(cat "$RERUN_LOG")" \
+    || ok  "rerun: no --failed when in_progress"
+
+echo
 echo "test-forge-check-status.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
