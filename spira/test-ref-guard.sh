@@ -33,7 +33,7 @@ trap 'rm -rf "$TR"' EXIT
 cd "$TR" || exit 1
 
 git init -q repo && cd repo || exit 1
-git config user.email t@spira.test
+git config user.email guard-suite@example.invalid
 git config user.name  "ref guard suite"
 mkdir -p hooks && cp "$HOOK" hooks/ && chmod +x hooks/reference-transaction
 echo seed > seed.txt
