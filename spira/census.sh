@@ -14,6 +14,8 @@
 #   recurred  + unrecorded   → sp-recur-unrecorded
 #   requeued  + prod-dirty   → sp-requeue-prod-dirty
 #   reclaimed + (empty)      → sp-reclaim
+#   reopened  + merge-conflict → sp-reopen-merge-conflict
+#   reopened  + (empty)      → sp-reopen-unrecorded
 #
 # The first number on each output line is DISTINCT BEADS — the count of unique incident
 # beads that produced events of that class. A single condition re-detected by a timer
@@ -59,6 +61,7 @@ trap 'rm -rf "$_TMPDIR"' EXIT INT TERM
 #   reclaimed + (empty/unrecorded)→ sp-reclaim
 #   reclaimed + <named-cause>     → sp-reclaim-<named-cause>
 #   lapsed    + <cause>           → sp-lapsed-<cause>
+#   reopened  + <cause>           → sp-reopen-<cause>
 cat > "$_TMPDIR/count.py" <<'EOF'
 import sys, collections
 
@@ -96,7 +99,7 @@ for line in sys.stdin:
     elif event_type == 'lapsed':
         cls = 'sp-lapsed-' + (cause or 'unrecorded')
     elif event_type == 'reopened':
-        cls = 'sp-reopen'
+        cls = 'sp-reopen-' + (cause or 'unrecorded')
     else:
         continue
     bc[cls] += nb

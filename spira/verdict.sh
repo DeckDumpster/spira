@@ -83,7 +83,7 @@ _meter_write() {  # _meter_write <repo> <members> <caught> <escaped> <start-epoc
 
 _attr_eject() {  # _attr_eject <id> <tip> <suites-csv> <pr-n> <name>
     local id="$1" tip="$2" suites="$3" pr_n="$4" name="$5"
-    bead_reopen "$id" \
+    bead_reopen "$id" gate-red \
         "Ejected by merge-queue attribution: spira/$id reproduced failure ($suites) from PR $pr_n in $name. Run those suites against this branch to reproduce." \
         >/dev/null 2>&1 || true
     land_mark "$id" EJECTED "$tip"

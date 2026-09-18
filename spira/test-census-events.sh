@@ -149,7 +149,7 @@ testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-f1","title":"landing test","status":"in_progress","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
 JSONL
-bead_reopen "sp-f1" "rebase conflict test" >/dev/null 2>&1
+bead_reopen "sp-f1" merge-conflict "rebase conflict test" >/dev/null 2>&1
 bump_requeue "sp-f1" merge-conflict >/dev/null 2>&1
 
 out="$(census_out)"
@@ -173,28 +173,30 @@ want "strand reclaim path produces sp-reclaim-ghost" "1 sp-reclaim-ghost" "$out"
 
 # ======================================================================================
 echo
-echo "bead_reopen alone — census counts harness reopens without a separate bump_requeue (sp-df8qo)"
+echo "bead_reopen cause — events carry cause in new_value; census splits by cause (sp-xbdnk)"
 # ======================================================================================
-# bead_reopen calls bdq reopen, which writes event_type='reopened' to the events table.
-# Before this fix, _census_events_sql excluded 'reopened' from its IN clause, so harness
-# reopens produced no census output.
-# POSITIVE CONTROL first (law-absence-needs-a-positive-control): verify absence is detectable.
+# POSITIVE CONTROL first (law-absence-needs-a-positive-control, law-a-regression-test-must-be-seen-to-fail):
+# no bead_reopen → no sp-reopen-* class in census.
 testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-g0","title":"no-reopen control","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
 JSONL
 _pc_out="$(census_out)"
-is "positive control: no bead_reopen produces no sp-reopen" "" "$(printf '%s' "$_pc_out" | grep sp-reopen || true)"
+is "positive control: no bead_reopen produces no sp-reopen-*" "" "$(printf '%s' "$_pc_out" | grep sp-reopen || true)"
 
 testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-g1","title":"reopen test","status":"closed","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
 JSONL
-bead_reopen "sp-g1" "Reopened by test: sp-df8qo" >/dev/null 2>&1
+bead_reopen "sp-g1" test-cause "prose note for sp-g1" >/dev/null 2>&1
+
+_ev_cause="$(bd -C "$TESTDB_DIR" sql "SELECT new_value FROM events WHERE issue_id='sp-g1' AND event_type='reopened' ORDER BY created_at DESC LIMIT 1" 2>/dev/null | tail -2 | head -1 | xargs)"
+is "bead_reopen writes cause to events.new_value" "test-cause" "$_ev_cause"
 
 out="$(census_out)"
-want "bead_reopen alone produces sp-reopen in census" "sp-reopen" "$out"
-want "sp-reopen shows 1 distinct bead" "1 sp-reopen" "$out"
+want "bead_reopen with cause produces sp-reopen-test-cause in census" "sp-reopen-test-cause" "$out"
+want "sp-reopen-test-cause shows 1 distinct bead" "1 sp-reopen-test-cause" "$out"
+nowant "no bare sp-reopen class" "sp-reopen " "$out"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"

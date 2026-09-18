@@ -286,7 +286,7 @@ file_one() {
         [ "$_ev_n" -gt "$_recur_n" ] && _recur_n="$_ev_n"
         n=$((_recur_n + 1))
         if [ "$_was_closed" = 1 ]; then
-            bead_reopen "$id" "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ) — same failure fingerprint, dedup within ${DEDUP_LOOKBACK_DAYS}-day window"
+            bead_reopen "$id" recurrence "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ) — same failure fingerprint, dedup within ${DEDUP_LOOKBACK_DAYS}-day window"
         fi
         # sp-recur-N-<cause> labels are no longer written; recurrence count is derived
         # from event history. The note below records the recurrence (sp-lzt).
