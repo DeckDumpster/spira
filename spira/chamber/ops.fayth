@@ -161,12 +161,7 @@ FAYTH_STALL_BEATS=6
 # That is how 24 beads were destroyed (sp-q27cp), and the reference-transaction hook
 # now refuses it whoever runs it.
 #
-# BASH IS STILL HERE AND STILL WIDE, and that is the remaining gap rather than the
-# intent. Ops genuinely needs a shell — systemctl status, journalctl, reading logs and
-# unit files are its whole job — and removing it would leave the persona unable to
-# diagnose anything. But a shell can write a file as easily as Write can, so dropping
-# Edit and Write narrows the intent without yet enforcing it. What enforces it today
-# is the ref guard; what would enforce it properly is a command allowlist for this
-# persona, which is filed separately. Do not read this line as "Ops is now safe" —
-# read it as "Ops is now aimed correctly, with one mechanism behind it and one owed."
-FAYTH_TOOLS="Bash,Read,Glob,Grep,TodoWrite"
+# Bash is restricted to a diagnostic allowlist (sp-39pqw): reads the machine and
+# records findings in the graph. Not in the list: rm, git write operations, systemd
+# mutations. The ref guard (sp-q27cp) remains the floor for git refs.
+FAYTH_TOOLS="Bash(systemctl status*),Bash(systemctl show*),Bash(systemctl list-*),Bash(systemctl is-*),Bash(systemctl cat*),Bash(journalctl*),Bash(ls*),Bash(cat *),Bash(head *),Bash(tail *),Bash(grep *),Bash(awk *),Bash(find *),Bash(wc *),Bash(sort *),Bash(uniq *),Bash(sed *),Bash(python3 *),Bash(echo *),Bash(printf *),Bash(date*),Bash(basename *),Bash(dirname *),Bash(bd *),Bash(git log*),Bash(git show*),Bash(git status*),Bash(git diff*),Bash(git fetch*),Bash(git for-each-ref*),Bash(git rev-parse*),Bash(git -C * log*),Bash(git -C * show*),Bash(git -C * status*),Bash(git -C * diff*),Bash(git -C * fetch*),Bash(git -C * for-each-ref*),Bash(git -C * rev-parse*),Bash(*sop.sh*),Bash(*incident.sh*),Bash(*mail.sh*),Bash(*suites.sh*),Bash(*testenv-batch.sh*),Read,Glob,Grep,TodoWrite"
