@@ -213,9 +213,52 @@ jobs:
           # so testenv.sh finds it locally. Naming the registry here as well keeps
           # the two steps agreeing about which image the gate is entitled to use.
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
+          # MEMORY IS THE BINDING RESOURCE IN THE GUEST, NOT CPU. testenv-batch.sh
+          # defaults maxpar to nproc, which is the right answer on a developer box
+          # where cores are what run out. Here each parallel suite is a whole
+          # systemd container, and at nproc=8 the guest exhausts its RAM partway
+          # through the 338-suite corpus. The kernel then takes the runner process
+          # with it, and GitHub reports that as a bare "The operation was canceled"
+          # with no cause attached anywhere in the annotation — three consecutive
+          # queue PRs died that way on 2026-09-17 with every suite passing at the
+          # moment of the kill. Wall-clock is the cheaper resource to spend.
+          # Raise this only against the vitals output below, never by guessing.
+          SPIRA_BATCH_MAXPAR: ${{ vars.SPIRA_BATCH_MAXPAR || 4 }}
         run: |
           set -uo pipefail
           export SPIRA_BATCH_RESULTS="$RUNNER_TEMP/batch"
+
+          # THE LOG IS THE ONLY ARTIFACT THAT SURVIVES THE MACHINE.
+          #
+          # The Diagnostics and Upload steps below are both `if: always()`, and
+          # always() does not cover the runner being shut down underneath the job.
+          # So when the guest dies — the one failure those steps exist to explain —
+          # the evidence dies with it and the job reports a cancellation with no
+          # cause. Job logs are streamed to GitHub as they are written, so a line
+          # printed before the kill is still there afterwards. That makes stdout the
+          # only place guest vitals can be recorded and still be readable.
+          #
+          # Sampled, not summarised: a single reading after the fact cannot show a
+          # climb, and the climb is the thing being diagnosed.
+          (
+            while :; do
+              printf 'vitals %s %s | pressure %s | containers %s\n' \
+                "$(date -u +%H:%M:%S)" \
+                "$(free -m | awk '/^Mem:/{printf "mem %s/%sMiB used, %sMiB avail", $3, $2, $7}')" \
+                "$(awk '/^some/{print $2}' /proc/pressure/memory 2>/dev/null || echo 'n/a')" \
+                "$(pgrep -c conmon 2>/dev/null || :)"
+              sleep 30
+            done
+          ) &
+          _vitals=$!
+          # Stops the loop on every exit path, including the `exit 0` for a push
+          # below. The in-flight `sleep` is reparented to init rather than killed:
+          # a background subshell in a non-interactive shell shares the STEP's
+          # process group, so `kill -- -$PGID` — the textbook way to take the
+          # child with it — would kill the runner's own step process. The stray
+          # sleep costs nothing and the runner reaps it with the other orphans.
+          trap 'kill "$_vitals" 2>/dev/null || true' EXIT
+
           if [ "${{ github.event_name }}" = "push" ]; then
             printf 'gate: push to %s — no suites; corpus ran on the queue PR\n' \
               "${{ github.ref_name }}"
