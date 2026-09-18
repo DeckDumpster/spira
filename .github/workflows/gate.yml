@@ -273,6 +273,35 @@ jobs:
           #
           # Sampled, not summarised: a single reading after the fact cannot show a
           # climb, and the climb is the thing being diagnosed.
+          # WHAT SHUTS THE GUEST DOWN. Every suites run longer than about fifteen
+          # minutes since 2026-09-18T00:16Z has ended with "The runner has received
+          # a shutdown signal", while the vitals below showed the guest idle and
+          # memory pressure at 0.00 for the whole run — 1.7 of 11.4 GiB used one
+          # second before the kill. The Proxmox task log shows no API stop between
+          # the clone and teardown's own, so the shutdown came from INSIDE the
+          # guest. start-runner.sh then runs `sudo poweroff` and teardown purges the
+          # disk, so the journal that would name the cause is destroyed every time.
+          # These two blocks put that evidence on stdout, for the same reason the
+          # vitals are there: it is the only channel that outlives the runner
+          # (sp-hu3bk).
+          #
+          # One shot: what is scheduled to run inside a machine that is supposed to
+          # live twenty minutes and do nothing but this job. A timer firing on a
+          # randomised post-boot delay would explain both the kill and why it lands
+          # anywhere between fifteen and twenty-one minutes.
+          printf 'guestdiag: uptime %s\n' "$(uptime -p 2>&1 || true)"
+          printf 'guestdiag: unattended-upgrades=%s apt-daily=%s apt-daily-upgrade=%s\n' \
+            "$(systemctl is-enabled unattended-upgrades.service 2>&1 || true)" \
+            "$(systemctl is-enabled apt-daily.timer 2>&1 || true)" \
+            "$(systemctl is-enabled apt-daily-upgrade.timer 2>&1 || true)"
+          systemctl list-timers --all --no-pager 2>&1 | sed 's/^/guestdiag: /' || true
+
+          # Streamed, for the same reason the vitals are sampled rather than
+          # summarised: the interesting lines are the last ones, and the step never
+          # reaches an exit at which it could collect them.
+          ( sudo journalctl -f -o short-precise --no-pager 2>&1 | sed 's/^/guestjournal: /' ) &
+          _gjournal=$!
+
           (
             while :; do
               printf 'vitals %s %s | pressure %s | containers %s\n' \
@@ -290,7 +319,7 @@ jobs:
           # process group, so `kill -- -$PGID` — the textbook way to take the
           # child with it — would kill the runner's own step process. The stray
           # sleep costs nothing and the runner reaps it with the other orphans.
-          trap 'kill "$_vitals" 2>/dev/null || true' EXIT
+          trap 'kill "$_vitals" "$_gjournal" 2>/dev/null || true' EXIT
 
           if [ "${{ github.event_name }}" = "push" ]; then
             printf 'gate: push to %s — no suites; corpus ran on the queue PR\n' \
