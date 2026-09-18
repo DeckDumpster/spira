@@ -735,9 +735,16 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
                         _delivers_fail="delivers:check: command exited non-zero: $_dval"
                     fi
                     ;;
+                action)
+                    # The bead's work was done by action on the box, not by committing code.
+                    # The close reason carries the evidence; no machine check is run here.
+                    # Filed at bead creation time by the producer (e.g. watchtower.sh), not
+                    # chosen by the aeon, so the criterion cannot be gamed by picking a check
+                    # that is already satisfied (law-a-regression-test-must-be-seen-to-fail shape).
+                    ;;
                 *)
                     _delivers_ok=0
-                    _delivers_fail="delivers:$_dtype is not a recognised type (beads, note, report, check)"
+                    _delivers_fail="delivers:$_dtype is not a recognised type (beads, note, report, check, action)"
                     ;;
             esac
             [ "$_delivers_ok" = 1 ] || break

@@ -678,6 +678,7 @@ if [ "$_unadopted" != "?" ] && [ "$_unadopted" -gt 0 ] 2>/dev/null; then
         SPIRA_INCIDENT_REPO=spira \
         SPIRA_INCIDENT_REF=incident:sending-unadopted-refs \
         SPIRA_INCIDENT_CAUSE=unadopted-refs \
+        SPIRA_INCIDENT_DELIVERS=action \
         bash "$INC" file "SENDING: unadopted refs cannot be reaped" - >/dev/null || true
         log "watchtower: unadopted escalation filed (${_unadopted} unadopted refs)"
     else
