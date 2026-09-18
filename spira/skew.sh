@@ -5,6 +5,7 @@
 #   skew.sh check [--escalate]             audit this box; escalate on findings (only with --escalate)
 #   skew.sh units                          are the installed units what the templates render?
 #   skew.sh refresh [repo]                 fast-forward the checkout to its base ref
+#   skew.sh gap [repo]                     report commits between HEAD and the base ref
 #   skew.sh copies                         every mapped repository carrying a harness copy
 #   skew.sh foreign <repo> <base> <ref>    may this branch land? — the landing gate's fence
 #
@@ -395,14 +396,36 @@ refresh() {
     behind="$(git -C "$repo" rev-list --count "HEAD..$base" 2>/dev/null || echo 0)"
     [ "${behind:-0}" -gt 0 ] || return 0
 
+    # LIVE LEASE CHECK. A whole-repo fast-forward rewrites .sh files in place; bash reads by
+    # byte offset, so an aeon mid-execution would see a split byte stream
+    # (law-replace-running-scripts-atomically). Refuse while any aeon holds a live lease.
+    local _live_holders="" _lf _lid _ldl _now_ts
+    _now_ts="$(date +%s)"
+    for _lf in "$SPIRA_RUN"/aeon/*.lease; do
+        [ -e "$_lf" ] || continue
+        _lid="${_lf##*/}"; _lid="${_lid%.lease}"
+        _ldl="$(cat "$_lf" 2>/dev/null)"
+        [ "${_ldl:-0}" -gt "$_now_ts" ] || continue
+        _live_holders="${_live_holders}${_lid} "
+    done
+    if [ -n "$_live_holders" ]; then
+        echo "skew: refresh declined — aeon(s) hold a live lease: ${_live_holders% }"; return 1; fi
+
     dirty="$(git -C "$repo" status --porcelain --untracked-files=no 2>/dev/null)"
     if [ -n "$dirty" ]; then
-        # Write a stamp so the decline is countable without reading the log — watchtower
-        # and check() can read it without tailing skew.log (law-detection-outranks-rejection).
+        # Salvage rather than refuse (law-production-is-not-a-working-tree): stash the drift
+        # so it is recoverable and advance anyway. Write the stamp so watchtower can see it.
         mkdir -p "$SPIRA_RUN" 2>/dev/null || true
         { printf 'tracked files are modified\n'; printf '%s\n' "$dirty"; } \
             > "$SPIRA_RUN/skew.refresh-declined" 2>/dev/null || true
-        echo "skew: refresh declined — tracked files are modified"; return 1; fi
+        local _stash_tag="skew-refresh-$(date +%Y%m%dT%H%M%SZ)"
+        local _stash_out _stash_rc
+        _stash_out="$(git -C "$repo" stash push -m "$_stash_tag" 2>&1)"; _stash_rc=$?
+        if [ "$_stash_rc" != 0 ]; then
+            echo "skew: refresh declined — tracked files are modified and stash failed: $_stash_out"; return 1; fi
+        echo "skew: refresh: stashed dirty tracked files (tag: $_stash_tag):"
+        printf '%s\n' "$dirty"
+    fi
 
     current="$(git -C "$repo" branch --show-current 2>/dev/null)"
     if [ "$current" != "$base_branch" ]; then
@@ -415,6 +438,43 @@ refresh() {
     rm -f "$SPIRA_RUN/skew.refresh-declined" 2>/dev/null || true
     echo "skew: refreshed to $base ($behind commit(s))"
     return 0
+}
+
+# =======================================================================================
+# gap — how far is the running checkout behind its base ref?
+#
+# Exit   0  HEAD is at the base ref — 0 commits behind
+#        1  HEAD is behind the base ref — the count is on stdout
+#        3  cannot answer — remote unreachable, ref unresolvable, or no remote configured
+#
+# POSITIVE CONTROL: the ref must be resolvable after a fetch. "0 commits behind" and
+# "I looked at the wrong ref" are indistinguishable — if we cannot prove the ref exists,
+# we exit 3 rather than claiming currency (law-absence-needs-a-positive-control).
+# =======================================================================================
+gap() {
+    local repo="${1:-$SPIRA_REPO}" base base_branch remote behind current base_short
+    [ -e "$repo/.git" ] || { echo "skew: gap: $repo is not a git checkout" >&2; return 3; }
+    base="$(spira_landref "$repo")" || {
+        echo "skew: gap: cannot resolve the ref $repo lands on" >&2; return 3; }
+    base_branch="$(ref_branch "$base")"
+    remote="$(ref_remote "$base" 2>/dev/null)" || remote=""
+    if [ -n "$remote" ]; then
+        git -C "$repo" fetch -q --no-write-fetch-head "$remote" 2>/dev/null || {
+            echo "skew: gap: cannot fetch from $remote — gap is unknown" >&2; return 3; }
+    fi
+    git -C "$repo" rev-parse --verify -q "$base" >/dev/null 2>&1 || {
+        echo "skew: gap: ref $base does not resolve — cannot report gap" >&2; return 3; }
+    behind="$(git -C "$repo" rev-list --count "HEAD..$base" 2>/dev/null)" || {
+        echo "skew: gap: cannot count commits between HEAD and $base" >&2; return 3; }
+    current="$(git -C "$repo" rev-parse --short HEAD 2>/dev/null)"
+    base_short="$(git -C "$repo" rev-parse --short "$base" 2>/dev/null)"
+    if [ "${behind:-0}" = 0 ]; then
+        printf 'skew: gap: HEAD (%s) is at %s — 0 commits behind\n' "$current" "$base"
+        return 0
+    fi
+    printf 'skew: gap: HEAD (%s) is %s commit(s) behind %s (%s)\n' \
+        "$current" "$behind" "$base" "$base_short"
+    return 1
 }
 
 # =======================================================================================
@@ -447,7 +507,8 @@ case "${1:-check}" in
     check)   [ "${1:-}" = check ] && shift; check "$@" ;;
     units)   units ;;
     refresh) shift; refresh "$@" ;;
+    gap)     shift; gap "$@" ;;
     copies)  copies || { echo "skew: no mapped repository carries a harness — the map or the matcher is wrong" >&2; exit 3; } ;;
     foreign) shift; foreign "$@" ;;
-    *)       sed -n '3,9p' "$0" >&2; exit 2 ;;
+    *)       sed -n '3,10p' "$0" >&2; exit 2 ;;
 esac
