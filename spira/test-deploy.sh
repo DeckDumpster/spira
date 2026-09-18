@@ -74,6 +74,8 @@ git -C "$FAKE_REPO" -c user.email=t@t -c user.name=t \
 git -C "$FAKE_REPO" tag "$NEW_TAG" 2>/dev/null || true
 
 # Mock gh: handles release list, release view, and release download.
+# GH_RELEASE_ASSET_NAME controls the asset returned by "release view --json assets".
+# GH_RELEASE_VIEW overrides the entire "release view" response when set.
 cat > "$BIN/gh" <<'GHEOF'
 #!/usr/bin/env bash
 printf 'gh %s\n' "$*" >> "${CALL_LOG:-/dev/null}"
@@ -83,9 +85,21 @@ if [ "${1:-}" = release ] && [ "${2:-}" = list ]; then
     exit 0
 fi
 if [ "${1:-}" = release ] && [ "${2:-}" = view ]; then
-    _view_resp="${GH_RELEASE_VIEW}"
-    [ -z "$_view_resp" ] && _view_resp='{"isDraft":false}'
-    printf '%s\n' "$_view_resp"
+    if [ -n "${GH_RELEASE_VIEW:-}" ]; then
+        printf '%s\n' "$GH_RELEASE_VIEW"
+        exit "${GH_VIEW_EXIT:-0}"
+    fi
+    # Dispatch on the --json fields requested.
+    if printf '%s' "$*" | grep -q 'assets'; then
+        _aname="${GH_RELEASE_ASSET_NAME:-}"
+        if [ -n "$_aname" ]; then
+            printf '{"assets":[{"name":"%s"}]}\n' "$_aname"
+        else
+            printf '{"assets":[]}\n'
+        fi
+    else
+        printf '{"isDraft":false}\n'
+    fi
     exit "${GH_VIEW_EXIT:-0}"
 fi
 # release download: create the tarball file in --dir.
@@ -221,6 +235,7 @@ run_deploy() {
         "SPIRA_SKEW_SH=$BIN/skew.sh" \
         "CALL_LOG=$CALL_LOG" \
         "SC_LOG=$SC_LOG" \
+        "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" \
         "GIT_CONFIG_NOSYSTEM=1" \
         "GIT_AUTHOR_NAME=test" \
         "GIT_AUTHOR_EMAIL=test@t" \
@@ -349,10 +364,10 @@ else
 fi
 
 _got_prod="$(grep 'install SPIRA_PROD=' "$CALL_LOG" 2>/dev/null | head -1 | sed 's/^install SPIRA_PROD=//')"
-if [ "$_got_prod" = "$RELEASES/current" ]; then
-    ok "re-render: SPIRA_PROD=$RELEASES/current"
+if [ "$_got_prod" = "$RELEASES/current/spira" ]; then
+    ok "re-render: SPIRA_PROD=$RELEASES/current/spira"
 else
-    bad "re-render: SPIRA_PROD=$RELEASES/current" "got [$_got_prod]"
+    bad "re-render: SPIRA_PROD=$RELEASES/current/spira" "got [$_got_prod]"
 fi
 
 # ==========================================================================
@@ -435,8 +450,8 @@ _out="$(run_deploy "SPIRA_CONF=$_conf_file" -- "$NEW_TAG" 2>&1)"
 _rc=$?
 is0 "conf-update: deploy exits 0" "$_rc"
 _prod_in_conf="$(grep 'SPIRA_PROD' "$_conf_file" 2>/dev/null | tail -1)"
-if printf '%s' "$_prod_in_conf" | grep -q "$RELEASES/current"; then
-    ok "conf-update: SPIRA_PROD written to conf pointing at releases/current"
+if printf '%s' "$_prod_in_conf" | grep -q "$RELEASES/current/spira"; then
+    ok "conf-update: SPIRA_PROD written to conf pointing at releases/current/spira"
 else
     bad "conf-update: SPIRA_PROD written to conf" "got [$_prod_in_conf]"
 fi
@@ -512,6 +527,89 @@ not0    "migration-check: exits non-zero"          "$_rc"
 want    "migration-check: mentions mismatch"        "migration mismatch" "$_out"
 notwant "migration-check: drain not called"         "world drain"       "$(cat "$CALL_LOG")"
 notwant "migration-check: activate not called"      "activate"          "$(cat "$CALL_LOG")"
+
+# ==========================================================================
+echo
+echo "PROPERTY 13: asset stamp differs from tag stamp — asset name is authoritative"
+# (a) When the release tarball stamp differs from the tag stamp, deploy uses the asset
+# name (from gh release view --json assets) for the release directory, not the tag.
+# FAIL-FIRST: with no assets returned, deploy refuses.
+# ==========================================================================
+DIFF_RELEASE="spira-20260917T999999Z"
+DIFF_TAG="spira-release-$DIFF_RELEASE"
+
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_out="$(run_deploy "GH_RELEASE_ASSET_NAME=" -- "$DIFF_TAG" 2>&1)"
+_rc=$?
+not0 "asset-mismatch/fail-first: exits non-zero when no asset" "$_rc"
+want "asset-mismatch/fail-first: mentions asset" "asset" "$_out"
+
+# Happy path: tag stamp (from DIFF_TAG) differs from asset stamp ($NEW_RELEASE).
+# Deploy must create current -> $NEW_RELEASE (from the asset), not DIFF_RELEASE (from tag).
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+git -C "$FAKE_REPO" tag "$DIFF_TAG" 2>/dev/null || true
+_out="$(run_deploy "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" -- "$DIFF_TAG" 2>&1)"
+_rc=$?
+is0    "asset-mismatch: exits 0"                             "$_rc"
+islink "asset-mismatch: current -> asset release, not tag"   "$RELEASES/current" "$NEW_RELEASE"
+notwant "asset-mismatch: tag-derived name not used"          "$DIFF_RELEASE" \
+        "$(readlink "$RELEASES/current" 2>/dev/null)"
+
+# ==========================================================================
+echo
+echo "PROPERTY 14: release-mode bootstrap — no current symlink, SPIRA_PROD inside SPIRA_RELEASES"
+# (c) An instance whose spira.conf sets SPIRA_PROD to a release dir directly (no current
+# symlink) gets current created as prev_release so rollback works on failure.
+# ==========================================================================
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$PRIOR_RELEASE"
+
+# FAIL-FIRST: without the bootstrap the rollback would have no prev_release.
+# Verify the doctor-failure path actually restores current when prev_release is set.
+_out="$(run_deploy "SPIRA_PROD=$RELEASES/$PRIOR_RELEASE/spira" "DOCTOR_EXIT=1" \
+    -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0   "bootstrap-rollback: exits non-zero on health failure"      "$_rc"
+want   "bootstrap-rollback: mentions ROLLBACK"                     "ROLLBACK" "$_out"
+islink "bootstrap-rollback: current restored to bootstrap release" \
+    "$RELEASES/current" "$PRIOR_RELEASE"
+
+# Without health failure: current ends at the new release, prev_release was the old one.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$PRIOR_RELEASE"
+_out="$(run_deploy "SPIRA_PROD=$RELEASES/$PRIOR_RELEASE/spira" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+is0    "bootstrap-ok: exits 0"                             "$_rc"
+islink "bootstrap-ok: current -> new release"              "$RELEASES/current" "$NEW_RELEASE"
+
+# ==========================================================================
+echo
+echo "PROPERTY 15: --dry-run ExecStart check"
+# (d) --dry-run resolves the asset and checks ExecStart target executability
+# when a current release is active. Fails if target is not executable.
+# ==========================================================================
+# FAIL-FIRST: dry-run with a non-executable ExecStart target exits non-zero and names ExecStart.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$NEW_RELEASE"        # release dir exists but no sentinel.sh
+ln -s "$NEW_RELEASE" "$RELEASES/current"
+_out="$(run_deploy -- --dry-run "$NEW_TAG" 2>&1)"
+_rc=$?
+not0 "dry-run/bad-exec: exits non-zero"    "$_rc"
+want "dry-run/bad-exec: mentions ExecStart" "ExecStart" "$_out"
+
+# Happy path: with an executable sentinel.sh in place, dry-run exits 0 and says dry-run.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$NEW_RELEASE/spira"
+printf '#!/bin/sh\n' > "$RELEASES/$NEW_RELEASE/spira/sentinel.sh"
+chmod +x "$RELEASES/$NEW_RELEASE/spira/sentinel.sh"
+ln -s "$NEW_RELEASE" "$RELEASES/current"
+> "$CALL_LOG"
+_out="$(run_deploy -- --dry-run "$NEW_TAG" 2>&1)"
+_rc=$?
+is0  "dry-run/good-exec: exits 0"       "$_rc"
+want "dry-run/good-exec: says dry-run"  "dry-run" "$_out"
+want "dry-run/good-exec: mentions ExecStart" "ExecStart" "$_out"
+notwant "dry-run/good-exec: activate not called" "activate" "$(cat "$CALL_LOG")"
 
 # ==========================================================================
 echo
