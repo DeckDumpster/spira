@@ -22,7 +22,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 SCRIPT_UT="$HERE/incident.sh"
 CODE="$(grep -vE '^[[:space:]]*#' "$SCRIPT_UT")"
 JOINED="$(printf '%s' "$CODE" | sed -e :a -e '/\\$/N; s/\\\n//; ta')"
-has() { printf '%s' "$JOINED" | grep -qE "$1"; }
+has() { grep -qE "$1" <<< "$JOINED"; }
 
 pass=0; fail=0
 ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
@@ -83,7 +83,7 @@ if [ -n "$_mig" ]; then
 else
     bad "the migration block was located (positive control)" "not found; the checks below are vacuous"
 fi
-if printf '%s' "$_mig" | grep -q 'mkdir'; then
+if grep -q 'mkdir' <<< "$_mig"; then
     bad "the migration only asks, never repairs" "it calls mkdir: --dry-run mutates, and the two modes disagree about what will happen"
 else
     ok "the migration only asks, never repairs"
@@ -91,7 +91,7 @@ fi
 # Creating the directory was a mirage anyway: the sentinel needs the ledger's MTIME
 # to move during the session, so an empty directory satisfies nothing. Ensuring it
 # belongs in the writer, where a session running sop.sh can actually fill it.
-if printf '%s' "$JOINED" | grep -q 'mkdir -p .*_sop_ledger'; then
+if grep -q 'mkdir -p .*_sop_ledger' <<< "$JOINED"; then
     ok "the writer is where the directory is ensured"
 else
     bad "the writer is where the directory is ensured" "nothing creates it at write time"

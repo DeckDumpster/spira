@@ -29,7 +29,7 @@ START_BLOCK="$(printf '%s' "$CODE" | awk '/^start\)/{f=1} f{print} f&&/^    ;;/{
 pass=0; fail=0
 ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-inblock() { printf '%s' "$START_BLOCK" | grep -qE "$1"; }
+inblock() { grep -qE "$1" <<< "$START_BLOCK"; }
 
 echo "test-world-start-revives-watchers.sh"
 echo

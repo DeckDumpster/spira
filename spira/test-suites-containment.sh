@@ -160,7 +160,7 @@ _map="$(sed -n '/case "\$_br_status" in/,/esac/p' "$HERE/suites.sh")"
 if [ -z "$_map" ]; then
     bad "the batch status mapping is readable" "no case block on _br_status in suites.sh"
 else
-    if printf '%s' "$_map" | grep -qE '^\s*skip\|skip-req\)'; then
+    if grep -qE '^\s*skip\|skip-req\)' <<< "$_map"; then
         ok "skip and skip-req both map to 77"
     else
         bad "skip and skip-req both map to 77" \
