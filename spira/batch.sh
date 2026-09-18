@@ -276,7 +276,7 @@ main() {
                 "$name" "$_bid" "${_btip:0:8}" "${_bcur:0:8}"
         fi
         unset _bcur
-        if git -C "$wt" merge --no-edit --no-ff -m "spira: land $_bid" "$_btip" \
+        if git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" merge --no-edit --no-ff -m "spira: land $_bid" "$_btip" \
                >/dev/null 2>&1; then
             members+=("$_bid:$_btip")
             member_ids+=("$_bid")
@@ -407,7 +407,7 @@ main() {
             git -C "$wt" clean -qfd 2>/dev/null || true
             for _lmm in "${lg_survivors[@]}"; do
                 _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
-                if git -C "$wt" merge --no-edit --no-ff -m "spira: land $_lmid" "$_lmtip" \
+                if git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" merge --no-edit --no-ff -m "spira: land $_lmid" "$_lmtip" \
                        >/dev/null 2>&1; then
                     members+=("$_lmid:$_lmtip")
                     member_ids+=("$_lmid")

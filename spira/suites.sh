@@ -1581,7 +1581,7 @@ _sts_transition() {  # _sts_transition <state> <suite> [<bead>] [<reason>]
         }
     fi
     git -C "$repo" add "${SPIRA_SUITE_STATE:-spira/suite-state}" >/dev/null 2>&1
-    git -C "$repo" commit -m "suite-state: $suite -> $state  sp-emvlk" \
+    git -C "$repo" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" commit -m "suite-state: $suite -> $state  sp-emvlk" \
         --no-gpg-sign >/dev/null 2>&1 || {
         git -C "$repo" checkout - >/dev/null 2>&1 || true
         printf 'suites %s: commit failed\n' "$state" >&2; return 1

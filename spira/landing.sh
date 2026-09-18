@@ -757,6 +757,8 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
             # a finished bead as "conflicts in unknown" and costs it an attempt toward poison.
             if [ "${REBASE_FAILURE:-}" != conflict ]; then
                 log "CHECK6 $id: could not attempt a rebase of $br onto $base after landing $landed (${REBASE_FAILURE:-unknown}) — not a conflict, leaving the bead closed"
+                [ "${REBASE_FAILURE:-}" = rebase-refused ] && \
+                    spira_ask_rebase_refused "$id" "$br" "$name" "${REBASE_REFUSED_REASON:-unknown}"
                 continue
             fi
             # The squash-and-amend case the content test above cannot see. Only a repository
@@ -1057,6 +1059,8 @@ for i in d:
             # nothing to rebase, and counts against the bead toward poison.
             if [ "${REBASE_FAILURE:-}" != conflict ]; then
                 log "CHECK6 $id: could not attempt a rebase of $br onto $base (${REBASE_FAILURE:-unknown}) — not a conflict, leaving the bead closed"
+                [ "${REBASE_FAILURE:-}" = rebase-refused ] && \
+                    spira_ask_rebase_refused "$id" "$br" "$name" "${REBASE_REFUSED_REASON:-unknown}"
                 continue
             fi
             # "DOES NOT REBASE" IS NOT EVIDENCE OF UNLANDED WORK ON ITS OWN. content_landed
@@ -1447,7 +1451,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 # cost if it is allowed to fall through to the merge.
                 git -C "$land" checkout -q -B landing "$base" 2>/dev/null || { wedged=1; break; }
                 _pre_merge="$(git -C "$land" rev-parse HEAD 2>/dev/null)"
-                if ! git -C "$land" merge --no-edit -q -m "spira: land $id" "$br" 2>/dev/null; then
+                if ! git -C "$land" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" merge --no-edit -q -m "spira: land $id" "$br" 2>/dev/null; then
                     git -C "$land" merge --abort 2>/dev/null
                     merged=0; break
                 fi

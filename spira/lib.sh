@@ -321,6 +321,31 @@ $id has been reopened for a rebase conflict $n times and the loop is not converg
 MAILEOF
 }
 
+# spira_ask_rebase_refused — one deduplicated ask per closed bead the harness cannot rebase.
+# A refusal is an infrastructure fault, not the work's fault — the bead stays closed.
+spira_ask_rebase_refused() {  # <bead> <branch> <repo-name> <reason>
+    local id="$1" br="$2" name="$3" reason="$4"
+    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
+    ask_already_open "$br rebase refused" && return 0
+    local _subj="$br rebase refused in $name: $reason"
+    local _dflt="fix the infrastructure; $id stays closed and its branch will land on the next pass"
+    "$SPIRA_HOME/mail.sh" send operator \
+        --from "Landing gate <gate@spira>" \
+        --subject "$_subj" \
+        --kind question \
+        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
+## Question
+$_subj
+
+## Default
+$_dflt
+
+$id is closed; its branch $br cannot be rebased onto the base in $name.
+The failure is not a merge conflict — the work is not being reopened.
+Reason: $reason.
+MAILEOF
+}
+
 # spira_ask_refresh_loop — escalate a pr-mode branch that will not merge despite being
 # repeatedly refreshed onto the base.
 #
@@ -4690,7 +4715,7 @@ format_rebased() {
     # (law-aeon-commits-name-their-bead). Through stdin, never an argument: a formatter
     # command containing backticks or $( ) would otherwise be executed by the very quoting
     # that was meant to quote it (law-commit-messages-via-stdin).
-    git -C "$wt" commit -q -F - <<EOF 2>/dev/null
+    git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" commit -q -F - <<EOF 2>/dev/null
 spira: re-format ${br##*/} after rebase onto $onto
 
 The rebase replayed cleanly and nothing re-ran $name's formatter on the result, so
@@ -4805,7 +4830,7 @@ rebase_branch() {
 
     local _rebase_err
     _rebase_err="$(mktemp)"
-    if ! git -C "$wt" rebase -q "$onto" >/dev/null 2>"$_rebase_err"; then
+    if ! git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" rebase -q "$onto" >/dev/null 2>"$_rebase_err"; then
         # Name the collisions BEFORE aborting; after the abort there is nothing to read.
         REBASE_CONFLICTS="$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
         REBASE_CONFLICTS="${REBASE_CONFLICTS% }"
