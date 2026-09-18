@@ -936,9 +936,82 @@ for i in d:
         tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
         judged["$br"]=1
 
-        # ENTRY FOR QUEUE MODE: a clean rebase is the whole check at entry.
-        # The batch gate runs once on the combined diff when the batch is due.
+        # QUEUE MODE: gate before certifying so fence violations are caught per-branch
+        # and never reach a batch PR or CI where they are unattributable (sp-hm2vw).
         if [ "$mode" = queue ]; then
+            if ! gate_fits; then
+                log "landing: $(( LAND_MAXSEC - ($(date +%s) - PASS_START) ))s left in this pass — not certifying $name's $id; the next pass takes it"
+                return 0
+            fi
+            gate_out="$(SPIRA_GATE_LOCK_WAIT="$(gate_lock_wait)" SPIRA_GATE_BEAD="$id" \
+                "$SPIRA_HOME/gate.sh" "$br" "$name" 2>&1)"
+            gate_rc=$?
+            gate_outcome="$(spira_gate_outcome "$gate_rc")"
+            gate_reason="$(printf '%s' "$gate_out" \
+                | sed -n 's/^gate: VERDICT=[A-Z_]* reason=\([^ ]*\).*$/\1/p' | tail -1)"
+            gate_suite="$(printf '%s' "$gate_out" \
+                | sed -n 's/^gate: VERDICT=.* suite=\([^ ]*\).*$/\1/p' | tail -1)"
+            [ -n "$gate_suite" ] || gate_suite=-
+            if [ "$gate_rc" -ne 0 ]; then
+                log "CHECK6 $id: certification gate $gate_outcome on $br in $name (${gate_reason:-unspecified})"
+                land_mark "$id" GATED "$tip" "$gate_outcome:${gate_reason:-unspecified}"
+                if [ "$gate_rc" = "$SPIRA_GATE_BASEFAIL" ]; then
+                    log "CHECK6 $id: held — the base fails its own gate (suite $gate_suite)"
+                    if [ "${basefail_filed:-}" != 1 ]; then
+                        basefail_filed=1
+                        base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
+                                      "$br" "$base" "$gate_out"
+                    fi
+                    continue
+                fi
+                if ! spira_gate_blames_branch "$gate_rc"; then
+                    nv_key="$(printf '%s' "$br-${gate_reason:-unspecified}" | tr -c 'A-Za-z0-9._-' '-')"
+                    nv_file="$SPIRA_RUN/noverdict/$nv_key"
+                    mkdir -p "$SPIRA_RUN/noverdict"
+                    nv_n=$(( $(cat "$nv_file" 2>/dev/null || echo 0) + 1 ))
+                    printf '%s\n' "$nv_n" > "$nv_file"
+                    if [ "$nv_n" -ge "${SPIRA_NOVERDICT_MAX:-3}" ] && [ ! -e "$nv_file.asked" ]; then
+                        : > "$nv_file.asked"
+                        spira_ask_machinery "$id" "$br" "$name" "$gate_outcome" "$gate_reason" "$nv_n" "$gate_out"
+                        progress "escalated $id — $gate_outcome x$nv_n on $br"
+                    fi
+                    continue
+                fi
+                _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys,json
+try:d=json.load(sys.stdin)
+except:raise SystemExit
+d=d if isinstance(d,list) else [d]
+print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                if [ "${_cur_st:-}" != "closed" ]; then
+                    log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not reopening $br"
+                    continue
+                fi
+                local _rn_cert
+                _rn_cert="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
+                bead_reopen "$id" "Reopened by sentinel: branch $br failed $name's certification gate. The branch carries $_rn_cert commit(s) from the previous session — the next aeon should resume from the existing work, not restart.
+
+$(printf '%s' "$gate_out" | tail -20)"
+                unset _rn_cert
+                progress "reopened $id — failed the certification gate"
+                spira_event bead.reopened "$id" "reopened $id — $br failed $name's certification gate" \
+                    "$(printf '%s' "$gate_out" | tail -3)" || true
+                land_mark "$id" RED "$tip" gate
+                continue
+            fi
+            [ "${gate_reason:-}" = cached ] \
+                && log "CHECK6 $id: certification PASS on $br in $name — this tree had already passed"
+            rm -f "$SPIRA_RUN/noverdict/$(printf '%s' "$br" | tr -c 'A-Za-z0-9._-' '-')"* 2>/dev/null
+            _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys,json
+try:d=json.load(sys.stdin)
+except:raise SystemExit
+d=d if isinstance(d,list) else [d]
+print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+            if [ "${_cur_st:-}" != "closed" ]; then
+                log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not certifying $br"
+                continue
+            fi
             land_mark "$id" CERTIFIED "$tip"
             mark_submitted "$id" "$tip" certified
             progress "certified $br in $name — queued"

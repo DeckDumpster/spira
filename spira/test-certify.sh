@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# test-certify.sh — queue land mode: certify without pushing.
+# test-certify.sh — queue land mode: certify only after the gate passes.
 #
-# Cases: a branch is CERTIFIED at entry with no gate call; a branch whose rebase
-# fails is reopened; moving the tip clears the record so the next pass re-certifies;
-# a push-mode fixture in the same repo-map still pushes.
+# Cases: a branch is CERTIFIED after the gate passes; a branch whose gate fails is
+# reopened; a branch whose rebase fails is reopened; moving the tip clears the
+# record so the next pass re-certifies; a push-mode fixture in the same repo-map
+# still pushes.
 #
 # The gate is a stub counter. Every silence below depends on the positive control
 # showing the counter works: the push-mode fixture must increment it.
@@ -104,12 +105,12 @@ gate_n()    { [ -f "$GATE_COUNT" ] && wc -l < "$GATE_COUNT" || echo 0; }
 echo "test-certify.sh"
 
 # -----------------------------------------------------------------------------------------
-# QUEUE-MODE ENTRY: branch is CERTIFIED without calling the gate.
+# QUEUE-MODE ENTRY: branch is CERTIFIED after the gate passes.
 # -----------------------------------------------------------------------------------------
 seed; branch sp-cert-green
 before="$(main_tip)"
 out="$(landing)"
-is   "gate NOT called at queue-mode entry"   "0"        "$(gate_n)"
+is   "gate called at queue-mode entry"       "1"        "$(gate_n)"
 want "certify is reported"                   "certified spira/sp-cert-green" "$out"
 is   "remote main is unchanged"              "$before"  "$(main_tip)"
 case "$(landstate sp-cert-green)" in
@@ -119,11 +120,42 @@ esac
 is   "bead stays closed after certify"       "closed"   "$(status_of sp-cert-green)"
 
 # -----------------------------------------------------------------------------------------
-# SECOND PASS ON THE SAME TIP: still no gate; the certification stands.
+# SECOND PASS ON THE SAME TIP: gate not called again; the certification stands.
 # -----------------------------------------------------------------------------------------
 out2="$(landing)"
-is   "gate still not called on second pass"  "0"        "$(gate_n)"
+is   "gate not called again on second pass"  "0"        "$(gate_n)"
 nowant "no second certify message"           "certified spira/sp-cert-green" "$out2"
+
+# -----------------------------------------------------------------------------------------
+# GATE FAILURE AT CERTIFICATION: a branch whose gate fails is reopened, not certified.
+# The gate stub is replaced with one that exits 1 (FAIL) for this branch, then restored.
+# This is the positive control for sp-hm2vw: a fence violation caught at certification
+# must reopen the bead and leave main unchanged.
+# -----------------------------------------------------------------------------------------
+seed; branch sp-cert-red
+stub gate.sh '
+printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
+if printf "%s" "$1" | grep -q "sp-cert-red"; then
+    printf "gate: VERDICT=FAIL reason=inventory branch=%s repo=%s\n" "$1" "${2:-?}" >&2
+    exit 1
+fi
+printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
+exit 0'
+before="$(main_tip)"
+out="$(landing)"
+is   "gate called for failing branch"        "1"        "$(gate_n)"
+want "failing branch is reopened"            "reopened sp-cert-red" "$out"
+is   "reopened bead is open"                 "open"     "$(status_of sp-cert-red)"
+is   "remote main is unchanged"              "$before"  "$(main_tip)"
+case "$(landstate sp-cert-red)" in
+    RED*) ok "landstate says RED for gate failure" ;;
+    *)    bad "landstate says RED for gate failure" "got: $(landstate sp-cert-red)" ;;
+esac
+# Restore the passing stub for subsequent tests.
+stub gate.sh '
+printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
+printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
+exit 0'
 
 # -----------------------------------------------------------------------------------------
 # CONFLICT AT ENTRY: a branch that does not rebase onto base is reopened and not
@@ -146,7 +178,7 @@ esac
 
 # -----------------------------------------------------------------------------------------
 # TIP MOVE: moving the branch tip after certification clears the record. The next pass
-# must re-certify (still with no gate) the new tip.
+# must re-certify the new tip, calling the gate again.
 # -----------------------------------------------------------------------------------------
 seed; branch sp-cert-move
 landing > /dev/null   # first pass: certify
@@ -156,8 +188,8 @@ git -C "$RUN/worktree/sp-cert-move" add -A
 git -C "$RUN/worktree/sp-cert-move" commit -q -m "sp-cert-move sp-1fm88 — second commit"
 new_tip="$(git -C "$REPO" rev-parse spira/sp-cert-move 2>/dev/null)"
 out="$(landing)"   # second pass: re-certifies the new tip
-is   "gate NOT called after tip move"  "0"  "$(gate_n)"
-want "second certify reported"         "certified spira/sp-cert-move" "$out"
+is   "gate called after tip move"  "1"  "$(gate_n)"
+want "second certify reported"     "certified spira/sp-cert-move" "$out"
 case "$(landstate sp-cert-move)" in
     *"$new_tip"*) ok "landstate updated to new tip" ;;
     *)            bad "landstate updated to new tip" "expected [$new_tip] in [$(landstate sp-cert-move)]" ;;
