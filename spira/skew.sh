@@ -334,12 +334,8 @@ escalate() {
         default_action="activate the latest published release — download the latest tarball and run activate.sh with it"
     fi
     local _subj="The Spira copy in force is not the code that landed"
-    local notify_out notify_rc
-    notify_out="$("$SPIRA_HOME/mail.sh" send operator \
-        --from "Skew check <skew@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$default_action" <<MAILEOF 2>&1)"; notify_rc=$?
+    local _body
+    _body="$(cat <<MAILEOF
 ## Question
 $_subj
 
@@ -350,6 +346,13 @@ beads can be closed, gated and merged while the behaviour they changed never tak
 
 $findings
 MAILEOF
+)"
+    local notify_out notify_rc
+    notify_out="$(printf '%s\n' "$_body" | "$SPIRA_HOME/mail.sh" send operator \
+        --from "Skew check <skew@spira>" \
+        --subject "$_subj" \
+        --kind question \
+        --default "$default_action" 2>&1)"; notify_rc=$?
 
     if [ "$notify_rc" != 0 ]; then
         echo "skew: escalation failed (rc=$notify_rc): $notify_out"
