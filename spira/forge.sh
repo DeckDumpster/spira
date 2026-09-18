@@ -178,7 +178,13 @@ except Exception: pass
         ;;
     workflow-rerun)
         run_id="${1:-}"
-        ( cd "$repo" && ghq run rerun "$run_id" --failed ) 2>/dev/null
+        st="$( cd "$repo" && ghq run view "$run_id" --json status -q .status 2>/dev/null )" || st=""
+        case "${st:-}" in
+            in_progress|queued)
+                ( cd "$repo" && ghq run cancel "$run_id" ) 2>/dev/null || true
+                ;;
+        esac
+        ( cd "$repo" && ghq run rerun "$run_id" )
         ;;
     pr-close)
         pr_n="${1:-}"
