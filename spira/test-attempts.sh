@@ -222,7 +222,16 @@ insert into events values
  ('b3','claimed',null),('b3','closed',null),
  ('b3','claimed',null),('b3','closed',null),
  -- b4: three claims, never closed. A genuinely failing bead. Expect 3.
- ('b4','claimed',null),('b4','claimed',null),('b4','claimed',null);" >/dev/null 2>&1
+ ('b4','claimed',null),('b4','claimed',null),('b4','claimed',null),
+ -- b5: THREE claim+thrash pairs — the class sp-requeue-thrash reports. Expect 0.
+ -- Against the unfixed tree this returns 3, proving the fix is necessary.
+ ('b5','claimed',null),('b5','requeued','thrash'),
+ ('b5','claimed',null),('b5','requeued','thrash'),
+ ('b5','claimed',null),('b5','requeued','thrash'),
+ -- b6: two thrash pairs then one real failure. Expect 1.
+ ('b6','claimed',null),('b6','requeued','thrash'),
+ ('b6','claimed',null),('b6','requeued','thrash'),
+ ('b6','claimed',null);" >/dev/null 2>&1
 # THE FIXTURE MUST RUN THE SHIPPED QUERY, NOT A COPY OF IT. The first version of this block
 # built its own `mk()` with the correct SQL inlined, so reverting lib.sh to the broken
 # predicate left it passing — a fixture that tests a string the test itself wrote proves
@@ -237,6 +246,10 @@ got_b3="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b3)" 2>/dev/null | sed -n '
 got_b4="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b4)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
 is "three claims each closed successfully = 0 attempts (a requeue is not an attempt)" "0" "$got_b3"
 is "CONTROL: three claims and never closed = 3 attempts" "3" "$got_b4"
+got_b5="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b5)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
+got_b6="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b6)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
+is "three claim+thrash pairs = 0 attempts (thrash is not a failure)" "0" "$got_b5"
+is "CONTROL: two thrash + one real failure = 1 attempt" "1" "$got_b6"
 body_attempts="$(sed -n '/^attempts_of()/,/^}/p' "$HERE/lib.sh" 2>/dev/null)"
 is "attempts_of delegates to the SQL builder" "1" \
    "$(grep -c '_attempts_sql_query' <<<"$body_attempts" || true)"

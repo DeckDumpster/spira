@@ -430,5 +430,35 @@ notpoisoned "a poisoned bead with count below threshold has its label cleared"  
 ispoisoned  "a poisoned bead with count at threshold keeps its label"           sp-live
 want        "the pass records the stale clear" "stale poison cleared" "$out"
 
+# --------------------------------------------------------------------------------------
+# THRASH REQUEUES DO NOT POISON (sp-pi3ez). A thrash requeue precedes a claim that writes
+# an in_progress event; before this fix attempts_of counted that claim, so three thrash
+# requeues reached POISON_AT and sent "change the approach" to the operator about work
+# that had never been attempted. The fix: attempts_of subtracts requeued/thrash events.
+#
+# PAIR: three thrash requeues must not poison; three real failures must still poison.
+# --------------------------------------------------------------------------------------
+thrash_event() {   # thrash_event <id> — write one requeued/thrash event the way bump_requeue does
+    local id="$1" uuid
+    uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"
+    B sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'requeued', 'harness', 'thrash', NOW())" >/dev/null 2>&1
+}
+seed; rm -rf "$RUN/poison-asked"
+testdb_seed <<'JSONL'
+{"id":"sp-thrash","title":"thrash-only","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-real","title":"real failures","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+# Three claim+thrash pairs: each B update writes a status_changed(in_progress) event;
+# thrash_event writes the requeued/thrash that attempts_of must subtract.
+for i in 1 2 3; do
+    B update sp-thrash --status in_progress >/dev/null 2>&1
+    thrash_event sp-thrash
+    B update sp-thrash --status open >/dev/null 2>&1
+done
+cycle sp-real 3
+out="$(sentinel)"
+notpoisoned "three thrash requeues do not poison the bead"  sp-thrash
+ispoisoned  "CONTROL: three real failures still poison"     sp-real
+
 printf '\ntest-poison.sh: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
