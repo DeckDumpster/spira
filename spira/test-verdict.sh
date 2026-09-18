@@ -2,10 +2,10 @@
 #
 # test-verdict.sh — merge-queue verdict: fast-forward landing pass.
 #
-# Eleven cases:
+# Twelve cases:
 #   1. No open batch → forge is never reached.
 #   2. Pending within CI max → nothing happens.
-#   3. Pending past CI max → treated as harness fault, re-run called.
+#   3. Pending, run old and stuck → treated as harness fault, re-run called.
 #   4. Harness fault, retries remaining → re-run called, counter bumped.
 #   5. Harness fault, retries exhausted → mail sent to operator.
 #   6. Green, base unchanged, flaky annotation → fast-forward push; members LANDED;
@@ -16,6 +16,9 @@
 #  10. Green, CI head SHA mismatches sealed batch head → no push; members CERTIFIED;
 #      PR closed; operator mailed. (positive control for SHA mismatch detection)
 #  11. Green, CI head SHA matches sealed batch head → normal fast-forward landing.
+#  12. PR old, run freshly started → no cancellation. Regression: verdict was ageing
+#      the PR instead of the run; healthy CI was cancelled when opened exceeded the
+#      threshold, regardless of whether the current run was making progress.
 #
 # The forge seam is a local fixture; no network is reached.
 # mail.sh and suites.sh are stubbed to capture calls.
@@ -64,18 +67,20 @@ RMAP
 # ─── Shared log paths — EXPORTED so all subprocess scripts can read them ──────
 FORGE_LOG="$TMP/forge-log"
 FORGE_STATUS_FILE="$TMP/forge-status"
+FORGE_RUN_METADATA_FILE="$TMP/forge-run-metadata"
 MAIL_LOG="$TMP/mail-log"
 SUITES_LOG="$TMP/suites-log"
-export FORGE_LOG FORGE_STATUS_FILE MAIL_LOG SUITES_LOG
+export FORGE_LOG FORGE_STATUS_FILE FORGE_RUN_METADATA_FILE MAIL_LOG SUITES_LOG
 
 printf 'pending\n' > "$FORGE_STATUS_FILE"
 : > "$FORGE_LOG"
+: > "$FORGE_RUN_METADATA_FILE"
 : > "$MAIL_LOG"
 : > "$SUITES_LOG"
 
 # ─── Forge fixture ────────────────────────────────────────────────────────────
-# check-status reads FORGE_STATUS_FILE; workflow-rerun and pr-close append to
-# FORGE_LOG. Both vars are exported above and available in the subprocess.
+# check-status reads FORGE_STATUS_FILE; run-metadata reads FORGE_RUN_METADATA_FILE;
+# workflow-rerun and pr-close append to FORGE_LOG. All vars are exported above.
 # Pinned to a non-default SPIRA_FORGE so an assertion passing against "used gh"
 # fails rather than passing vacuously.
 cat > "$SH/forge-fixture.sh" <<'FORGE'
@@ -87,6 +92,9 @@ case "$cmd" in
         ;;
     run-id)
         printf 'run-99\n'
+        ;;
+    run-metadata)
+        cat "${FORGE_RUN_METADATA_FILE}" 2>/dev/null || true
         ;;
     workflow-rerun)
         printf '%s\trerun\n' "${1:-}" >> "$FORGE_LOG"
@@ -121,6 +129,7 @@ verdict() {
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
     SPIRA_QUEUE_CI_MAXSEC=3600 \
+    SPIRA_QUEUE_CI_IDLE_SEC=600 \
     SPIRA_QUEUE_INFRA_RETRIES=2 \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
         bash "$SH/verdict.sh" "$@" 2>&1
@@ -186,6 +195,7 @@ build_batch() {
 clean_case() {
     rm -f "$(batch_file)"
     : > "$FORGE_LOG"
+    : > "$FORGE_RUN_METADATA_FILE"
     : > "$MAIL_LOG"
     : > "$SUITES_LOG"
     printf 'pending\n' > "$FORGE_STATUS_FILE"
@@ -231,13 +241,13 @@ want "2. pending: reported"     "pending"      "$out"
 clean_case
 
 # =============================================================================
-# 3. PENDING PAST CI MAX — treated as harness fault; re-run is requested.
+# 3. PENDING, RUN OLD AND STUCK — treated as harness fault; re-run is requested.
+#    The run started 3601s ago with no job activity since, so it is stuck.
+#    Positive control: run metadata has old started-at; without the activity check,
+#    a freshly-started run would also trigger (case 12 is that positive control).
 # =============================================================================
 build_batch sp-vd-q1 sp-vd-q2 > /dev/null
-{
-    grep -v '^opened=' "$(batch_file)"
-    printf 'opened=%s\n' "$(( $(date +%s) - 3601 ))"
-} > "$(batch_file).$$" && mv -f "$(batch_file).$$" "$(batch_file)"
+printf 'started-at: %s\n' "$(( $(date +%s) - 3601 ))" > "$FORGE_RUN_METADATA_FILE"
 printf 'pending\n' > "$FORGE_STATUS_FILE"
 before_main="$(remote_main)"
 out="$(verdict "$REPONAME")"
@@ -395,6 +405,29 @@ is   "11. sha-match: batch record removed"  "0" "$([ -f "$(batch_file)" ] && ech
 want "11. sha-match: landed reported"       "landed by fast-forward" "$out"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 12. PR OLD, RUN FRESHLY STARTED — no cancellation.
+#     Regression: verdict was using PR opened time instead of run start time.
+#     A batch PR is always older than CI_MAXSEC (pre-flight alone takes 14-40m),
+#     so every pending PR was cancelled by the old code regardless of run health.
+#     Positive control: case 3 verifies a genuinely old, stuck run IS cancelled.
+#     This case verifies that a fresh run on an old PR is NOT cancelled.
+# =============================================================================
+build_batch sp-vd-u1 sp-vd-u2 > /dev/null
+{
+    grep -v '^opened=' "$(batch_file)"
+    printf 'opened=%s\n' "$(( $(date +%s) - 7200 ))"
+} > "$(batch_file).$$" && mv -f "$(batch_file).$$" "$(batch_file)"
+# Run started 60s ago — well within CI_MAXSEC=3600.
+printf 'started-at: %s\n' "$(( $(date +%s) - 60 ))" > "$FORGE_RUN_METADATA_FILE"
+printf 'pending\n' > "$FORGE_STATUS_FILE"
+before_main12="$(remote_main)"
+out="$(verdict "$REPONAME")"
+is   "12. fresh-run: no push"    "$before_main12" "$(remote_main)"
+nowant "12. fresh-run: no rerun" "rerun"          "$(cat "$FORGE_LOG")"
+want "12. fresh-run: reported"   "pending"        "$out"
+clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
