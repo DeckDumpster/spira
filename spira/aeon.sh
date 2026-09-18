@@ -916,6 +916,7 @@ export BEAD_ID SPIRA_MAIL="${SPIRA_MAIL:-}"
     _lease_file="$_lease_dir/$BEAD_ID.lease"
     _prev_mtime="$(stat -c %Y "$LOGF" 2>/dev/null || echo 0)"
     _now="$(date +%s)"
+    _session_start="$_now"
     _deadline=$((_now + _lease_dur))
     mkdir -p "$_lease_dir"
     # WRITE BESIDE AND RENAME so readers never see a partial file.
@@ -946,15 +947,20 @@ export BEAD_ID SPIRA_MAIL="${SPIRA_MAIL:-}"
         # lease renews) while commits and worktree writes do not. Orthogonal to the lease:
         # the lease catches silence, the wall catches motion-without-progress.
         #
+        # BOTH the fuse AND the session's own elapsed time must exceed the wall. A bead
+        # reclaimed after sitting idle has a stale fuse — the session cannot have stalled
+        # for longer than it has been alive. sp-sv34w.
+        #
         # `$$` IS THE PARENT AEON'S PID INSIDE THIS SUBSHELL. kill -TERM $$ reaches only
         # the parent bash process; the parent's TERM trap then fires cleanup(), which sees
         # the .thrash file and requeues with no attempt charged.
         _dfuse="$(aeon_fuse_minutes "$BEAD_ID" "$SPIRA_RUN/worktree/$BEAD_ID" "$REPO_NAME" 2>/dev/null)"
         _dwall="${SPIRA_THRASH_MINUTES:-20}"
-        if [[ "${_dfuse:-?}" =~ ^[0-9]+$ ]] && [ "$_dfuse" -ge "$_dwall" ] 2>/dev/null; then
+        _dsess=$(( (_now - _session_start) / 60 ))
+        if [[ "${_dfuse:-?}" =~ ^[0-9]+$ ]] && [ "$_dfuse" -ge "$_dwall" ] && [ "$_dsess" -ge "$_dwall" ] 2>/dev/null; then
             _dlast="$(trace_last "$LOGF" 2>/dev/null | head -c 300)"
             printf '%s\n' "${_dlast:-no last action}" > "$SPIRA_RUN/$BEAD_ID.thrash"
-            log "$FAYTH: $BEAD_ID deliverable stalled ${_dfuse}m (wall ${_dwall}m) — requeueing for thrash"
+            log "$FAYTH: $BEAD_ID deliverable stalled ${_dfuse}m session ${_dsess}m (wall ${_dwall}m) — requeueing for thrash"
             kill -TERM $$ 2>/dev/null
             exit 0
         fi
