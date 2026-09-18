@@ -193,15 +193,17 @@ rm -f "$SH/test-cx-always-red.sh" "$SH/test-cx-env-sensitive.sh"
 plant test-cx-budget-red.sh <<'S'
 #!/usr/bin/env bash
 # covers: spira/nothing.sh
-sleep 3
+sleep 5
 printf '  FAIL  this suite always fails (budget exhaustion test)\n'
 exit 1
 S
 
-# BUDGET=7: suite starts (left=7 > 5), runs for 3s, exits. left ≈ 4 ≤ 5.
-# SPIRA_HOME is set in sut()'s environment, so confirm_differing is non-empty; the
-# budget check fires before the confirming run starts → red-unconfirmed.
-BUDGET=7
+# BUDGET=sleep+5=10: suite starts (left=10 > 5), runs for 5s, exits. left ≤ 5.
+# Startup overhead up to 4 integer seconds is tolerated: left_before = 10-overhead > 5,
+# left_after = 5-overhead ≤ 5 for any overhead < 5. SPIRA_HOME is set in sut()'s
+# environment, so confirm_differing is non-empty; the budget check fires before the
+# confirming run starts → red-unconfirmed.
+BUDGET=10
 rm -f "$STATE/test-cx-budget-red.sh.result"
 out3="$(sut run)"
 BUDGET=120
