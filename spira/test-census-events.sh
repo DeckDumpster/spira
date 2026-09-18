@@ -183,7 +183,7 @@ testdb_seed <<'JSONL'
 {"id":"sp-g0","title":"no-reopen control","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
 JSONL
 _pc_out="$(census_out)"
-is "positive control: no bead_reopen produces no sp-reopen" "" "$(printf '%s' "$_pc_out" | grep sp-reopen || true)"
+is "positive control: no bead_reopen produces no sp-reopen-*" "" "$(printf '%s' "$_pc_out" | grep sp-reopen || true)"
 
 testdb_reset
 testdb_seed <<'JSONL'
