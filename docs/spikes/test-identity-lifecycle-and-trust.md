@@ -836,6 +836,7 @@ that the scar was a trustworthy input.
 |---|---|
 | **sp-2wx6v** (filed, P2) | `suite_state_lint` is called by nothing, and `origin/main` ships a quarantine of `test-dummy.sh`, a suite created to satisfy a phantom flake bead |
 | **sp-skk5k** (filed, P2) | `test-chamber-repo-labels.sh` reads the production beads store, names assertions after live beads, and is red because a test bead leaked into production |
+| **sp-p1huc** (decision, to the operator) | adopt §7: delete the automatic quarantine path, then file B2-B6. Default: file B1 as P1 now and the rest behind it |
 | note on **sp-5cnem** | the duplicate and "(none filed)" beads have one cause: the id is taken from the last line of `bd create` output (§4.4) |
 | note on **sp-t600k** | answered by this document |
 | already open, not re-filed | sp-2f51e (wrong tree), sp-iaxck (per-annotation counting), sp-y8bxp / sp-9wdji (the concurrent suite's own defect; sp-4f0oe's fix is not on main) |
