@@ -224,20 +224,34 @@ is "positive-control: ejected member lands in EJECTED state" "EJECTED" "$(land_s
 clean_case
 
 # =============================================================================
-# 1. THREE MEMBERS, ONE BREAKER — ejects exactly the breaker; survivors CERTIFIED.
+# 1. THREE MEMBERS, ONE BREAKER — ejects the breaker; survivors re-pushed to
+#    the SAME PR branch so CI re-runs without a new local gate pass.
+#
+#    POSITIVE CONTROL: the test is seen to fail on the current verdict.sh,
+#    which returns survivors to CERTIFIED and closes the PR. The new assertions
+#    require BATCHED state, a resealed batch file, and the remote branch updated.
 # =============================================================================
 testdb_reset
 build_members sp-at-a sp-at-b sp-at-c > /dev/null
 for id in sp-at-a sp-at-b sp-at-c; do plant_bead "$id"; done
+_old_head1="$(grep '^head=' "$(batch_file)" | cut -d= -f2)"
+_batch_br1="$(grep '^branch=' "$(batch_file)" | cut -d= -f2)"
 # Only sp-at-b reproduces the red.
 printf 'spira/sp-at-b\n' > "$REPRO_FAIL_FILE"
 out="$(verdict "$REPONAME")"
-is   "1. breaker: sp-at-b ejected"        "EJECTED"    "$(land_state_of sp-at-b)"
-is   "1. breaker: sp-at-a returned CERTIFIED" "CERTIFIED" "$(land_state_of sp-at-a)"
-is   "1. breaker: sp-at-c returned CERTIFIED" "CERTIFIED" "$(land_state_of sp-at-c)"
-is   "1. breaker: batch record removed"   "0"          "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
-want "1. breaker: PR closed"              "close"      "$(cat "$FORGE_LOG")"
-want "1. breaker: ejection reported"      "ejected 1"  "$out"
+is   "1. breaker: sp-at-b ejected"               "EJECTED"  "$(land_state_of sp-at-b)"
+is   "1. breaker: sp-at-a stays BATCHED"          "BATCHED"  "$(land_state_of sp-at-a)"
+is   "1. breaker: sp-at-c stays BATCHED"          "BATCHED"  "$(land_state_of sp-at-c)"
+is   "1. breaker: same PR number"                 "42"       "$(grep '^pr=' "$(batch_file)" | cut -d= -f2)"
+is   "1. breaker: batch record kept"              "1"        "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+nowant "1. breaker: PR not closed"                "close"    "$(cat "$FORGE_LOG")"
+want "1. breaker: re-push reported"               "re-pushed to same PR" "$out"
+_new_head1="$(grep '^head=' "$(batch_file)" | cut -d= -f2)"
+_remote_head1="$(git -C "$REMOTE" rev-parse "$_batch_br1" 2>/dev/null || echo none)"
+is   "1. breaker: head resealed"                  "$_new_head1" "$_remote_head1"
+[ "${_new_head1:-}" != "${_old_head1:-}" ] \
+    && ok "1. breaker: new head differs from old" \
+    || bad "1. breaker: new head differs from old" "head unchanged: ${_new_head1:-}"
 clean_case
 
 # =============================================================================
