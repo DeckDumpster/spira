@@ -97,7 +97,7 @@ collect_may_write() {
 _write_never_frag() {
     local name="$1" frag="$FRAG_DIR/${name}.env"
     [ -f "$frag" ] && return 0
-    printf '_PROBE_AT=0\n_PROBE_STATUS=never\n' > "${frag}.tmp.$$" \
+    printf '_PROBE_AT=0\n_PROBE_STATUS=never\n_PROBE_KILLED=0\n' > "${frag}.tmp.$$" \
         && mv "${frag}.tmp.$$" "$frag" || rm -f "${frag}.tmp.$$"
 }
 
@@ -108,25 +108,31 @@ _write_never_frag() {
 # On failure: keep the previous fragment's values but set _PROBE_STATUS=stale
 #   so the pane still renders last-known-good values with their age annotated.
 #   A probe whose previous status was 'never' stays 'never' — no good values to keep.
+#
+# Temp files follow the pattern ".${name}.XXXXXX" (hidden files in FRAG_DIR). The
+# EXIT trap removes all of them so external kills (supervisor restart) leave no debris.
 _run_probe_body() {
     local name="$1" timeout_s="$2" cmd="$3"
     local frag="$FRAG_DIR/${name}.env"
     local now; now=$(date +%s)
+    trap 'rm -f "$FRAG_DIR"/."$name".* 2>/dev/null' EXIT
     local out_tmp; out_tmp="$(mktemp "$FRAG_DIR/.${name}.XXXXXX")" || return 1
 
     if timeout "$timeout_s" bash "$COCK" "$cmd" > "$out_tmp" 2>/dev/null; then
         local hdr_tmp; hdr_tmp="$(mktemp "$FRAG_DIR/.${name}.XXXXXX")" || { rm -f "$out_tmp"; return 1; }
-        { printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n' "$now"; cat "$out_tmp"; } > "$hdr_tmp" \
+        { printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\n' "$now"; cat "$out_tmp"; } > "$hdr_tmp" \
             && mv "$hdr_tmp" "$frag"
         rm -f "$out_tmp"
     else
         local rc=$?
         rm -f "$out_tmp"
-        local prev_at="0" prev_status="never"
+        local prev_at="0" prev_status="never" prev_killed="0"
         if [ -f "$frag" ]; then
             prev_at="$(awk -F= '/^_PROBE_AT=/{print $2; exit}' "$frag" 2>/dev/null)" || prev_at="0"
             prev_status="$(awk -F= '/^_PROBE_STATUS=/{print $2; exit}' "$frag" 2>/dev/null)" || prev_status="never"
+            prev_killed="$(awk -F= '/^_PROBE_KILLED=/{print $2; exit}' "$frag" 2>/dev/null)" || prev_killed="0"
         fi
+        local new_killed=$(( ${prev_killed:-0} + 1 ))
         if [ "${prev_status:-never}" = "never" ]; then
             # First-run failure: write a fault fragment so the pane can distinguish
             # "has not run yet" (never) from "was killed before producing output"
@@ -135,17 +141,41 @@ _run_probe_body() {
             [ "$rc" -eq 124 ] && fault_status="timeout"
             printf 'collect.sh: probe %s %s after %ss\n' "$name" "$fault_status" "$timeout_s" >&2
             local fault_tmp; fault_tmp="$(mktemp "$FRAG_DIR/.${name}.XXXXXX")" || return "$rc"
-            printf '_PROBE_AT=%s\n_PROBE_STATUS=%s\n' "${prev_at:-0}" "$fault_status" \
+            printf '_PROBE_AT=%s\n_PROBE_STATUS=%s\n_PROBE_KILLED=%s\n' \
+                "${prev_at:-0}" "$fault_status" "$new_killed" \
                 > "$fault_tmp" && mv "$fault_tmp" "$frag" || rm -f "$fault_tmp"
             return "$rc"
         fi
         local stale_tmp; stale_tmp="$(mktemp "$FRAG_DIR/.${name}.XXXXXX")" || return "$rc"
         {
-            printf '_PROBE_AT=%s\n_PROBE_STATUS=stale\n' "${prev_at:-0}"
-            grep -v '^_PROBE_AT=\|^_PROBE_STATUS=' "$frag" 2>/dev/null
+            printf '_PROBE_AT=%s\n_PROBE_STATUS=stale\n_PROBE_KILLED=%s\n' "${prev_at:-0}" "$new_killed"
+            # grep exits 1 when no lines survive the filter (probe with no value keys);
+            # that must not prevent the mv — the header lines were written successfully.
+            grep -v '^_PROBE_AT=\|^_PROBE_STATUS=\|^_PROBE_KILLED=' "$frag" 2>/dev/null || true
         } > "$stale_tmp" && mv "$stale_tmp" "$frag" || rm -f "$stale_tmp"
         return "$rc"
     fi
+}
+
+# Remove hidden temp files in cockpit.d that are older than the longest probe timeout.
+# These are orphans from a previous unclean exit where the EXIT trap could not run
+# (e.g., SIGKILL). Safe: the fragment files are named "${name}.env" (no leading dot).
+_sweep_probe_tmps() {
+    local max_timeout=0 entry rest timeout_s
+    for entry in "${PROBES[@]}"; do
+        rest="${entry#*:}"; timeout_s="${rest%%:*}"
+        [ "${timeout_s:-0}" -gt "$max_timeout" ] 2>/dev/null && max_timeout=$timeout_s
+    done
+    [ "$max_timeout" -le 0 ] && max_timeout=900
+    local _now; _now=$(date +%s)
+    local _f _n=0 _mtime
+    for _f in "$FRAG_DIR"/.*; do
+        [ -f "$_f" ] || continue
+        _mtime="$(stat --format='%Y' "$_f" 2>/dev/null)" || continue
+        [ "$(( _now - _mtime ))" -ge "$max_timeout" ] || continue
+        rm -f -- "$_f" && _n=$((_n+1))
+    done
+    [ "$_n" -gt 0 ] && printf 'collect.sh: swept %d stale probe temp(s) from cockpit.d\n' "$_n" >&2 || true
 }
 
 # Merge all cockpit.d/*.env fragments into cockpit.env.
@@ -176,6 +206,7 @@ for frag_path in sorted(glob.glob(os.path.join(frag_dir, "*.env"))):
     name = os.path.basename(frag_path)[:-4]
     probe_at     = "0"
     probe_status = "never"
+    probe_killed = "0"
     val_pairs = []
     try:
         for line in open(frag_path, errors="replace"):
@@ -188,12 +219,15 @@ for frag_path in sorted(glob.glob(os.path.join(frag_dir, "*.env"))):
                 probe_at = v
             elif k == "_PROBE_STATUS":
                 probe_status = v
+            elif k == "_PROBE_KILLED":
+                probe_killed = v
             elif k and (k[0].isalpha() or k[0] == "_"):
                 val_pairs.append((k, v))
     except OSError:
         pass
     meta_lines.append("_PROBE_AT_%s=%s"     % (name, probe_at))
     meta_lines.append("_PROBE_STATUS_%s=%s" % (name, probe_status))
+    meta_lines.append("SP_PROBE_KILLED_%s=%s" % (name, probe_killed))
     if probe_status not in ("never", "timeout", "error"):
         for k, v in val_pairs:
             if k not in value_seen:
@@ -223,6 +257,7 @@ _supervisor_loop() {
     [ -n "${NOTIFY_SOCKET:-}" ] && systemd-notify --watchdog 2>/dev/null || true
 
     mkdir -p "$FRAG_DIR"
+    _sweep_probe_tmps
     local entry name
     for entry in "${PROBES[@]}"; do
         name="${entry%%:*}"
