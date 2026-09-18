@@ -80,6 +80,15 @@ printf '%s %s %s\n' "$(git rev-parse HEAD)" "00000000000000000000000000000000000
     | "$HOOK" committed >/dev/null 2>&1
 is "hook exits 0 in the committed phase" "0" "$?"
 
+# 6a. LARGE STDIN. A single-line stdin fits the pipe buffer so the race is not
+#     reliable. A stdin that overflows the buffer (>64 KB) causes SIGPIPE
+#     deterministically if the hook exits without draining.
+#     SEEN TO FAIL: change the hook's early-exit to a bare "exit 0".
+(set -eo pipefail
+ printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0000000000000000000000000000000000000000 refs/heads/spira/sp-x\n%.0s' \
+     {1..700}) | "$HOOK" committed >/dev/null 2>&1
+is "hook drains large committed-phase stdin without SIGPIPE" "0" "$?"
+
 # 7. THE CASE THE FIRST SIX COULD NOT SEE. Every case above runs in a repository with one
 #    hooks directory, so they cannot tell "the hook is armed everywhere" from "the hook is
 #    armed in the one place this test looks". aeon.sh gives each worktree its OWN

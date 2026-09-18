@@ -46,10 +46,10 @@ set -uo pipefail
 
 phase="${1:-}"
 
-# Only "prepared" can abort. "committed" and "aborted" are notifications and a
-# non-zero exit there is ignored, so refusing then would be a guard that reports
-# success while doing nothing.
-[ "$phase" = "prepared" ] || exit 0
+# Only "prepared" can abort; non-zero from committed/aborted is ignored.
+# Drain stdin before exiting: leaving data unread sends SIGPIPE to the caller's
+# pipeline (law-no-grep-q-under-pipefail).
+[ "$phase" = "prepared" ] || { cat >/dev/null; exit 0; }
 
 # The sanctioned path. Set by lib.sh's spira_destroy_branch and by batch.sh when it
 # removes a queue branch it just created.
