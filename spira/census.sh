@@ -62,31 +62,21 @@ trap 'rm -rf "$_TMPDIR"' EXIT INT TERM
 cat > "$_TMPDIR/count.py" <<'EOF'
 import sys, collections
 
-bc = collections.Counter()
+beads = collections.defaultdict(set)
 ec = collections.Counter()
 for line in sys.stdin:
     line = line.rstrip('\n').strip()
     if not line or line.startswith('+') or line.startswith('('):
         continue
     parts = [p.strip() for p in line.split('|')]
-    while parts and not parts[0]:
-        parts.pop(0)
-    while parts and not parts[-1]:
-        parts.pop()
-    if len(parts) == 4:
-        event_type, new_value, n_beads, n_events = parts[0], parts[1], parts[2], parts[3]
-    elif len(parts) == 3:
-        event_type, new_value, n_beads = parts[0], parts[1], parts[2]
-        n_events = n_beads
-    else:
+    if len(parts) != 3:
         continue
+    event_type, new_value, issue_id = parts[0], parts[1], parts[2]
     if event_type == 'event_type' or 'COALESCE' in event_type:
         continue
-    try:
-        nb, ne = int(n_beads), int(n_events)
-    except ValueError:
+    if not issue_id:
         continue
-    cause = new_value.strip()
+    cause = new_value
     if event_type == 'requeued':
         cls = 'sp-requeue-' + (cause or 'unrecorded')
     elif event_type == 'recurred':
@@ -102,10 +92,12 @@ for line in sys.stdin:
         cls = 'sp-reopen'
     else:
         continue
-    bc[cls] += nb
-    ec[cls] += ne
-for cls, beads in sorted(bc.items(), key=lambda x: (-x[1], -ec.get(x[0], 0))):
-    print(beads, ec[cls], cls)
+    beads[cls].add(issue_id)
+    ec[cls] += 1
+
+bc = {cls: len(ids) for cls, ids in beads.items()}
+for cls, nb in sorted(bc.items(), key=lambda x: (-x[1], -ec.get(x[0], 0))):
+    print(nb, ec[cls], cls)
 EOF
 
 # Python: merge all-time and since-watermark counts, rank by since-watermark.

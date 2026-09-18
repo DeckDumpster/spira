@@ -1848,7 +1848,7 @@ _census_events_sql() {   # _census_events_sql [since_epoch_s]
     if [ -n "${1:-}" ] && [ "${1:-0}" -gt 0 ] 2>/dev/null; then
         since_clause=" AND created_at > FROM_UNIXTIME(${1})"
     fi
-    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopened')%s GROUP BY event_type, new_value ORDER BY beads DESC" "$since_clause"
+    printf "SELECT event_type, COALESCE(new_value, ''), issue_id FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopened')%s" "$since_clause"
 }
 census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output; exits non-zero when unreachable
     local q
