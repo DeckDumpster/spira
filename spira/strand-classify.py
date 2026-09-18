@@ -73,6 +73,11 @@ _cap_detail = os.environ.get("CAPACITY_DETAIL", "the account is out of capacity"
 # exhausted)" for a fayth that works this partition. Ready beads exist but the pass
 # simply never reached them — this is not starvation.
 _pass_truncated = os.environ.get("PASS_TRUNCATED", "0") == "1"
+# POOL AWARENESS. When the operator sets the task pool to zero (SPIRA_MAX_AEONS=0),
+# no aeon can ever be summoned for this partition — that is the operator's intent, not a
+# fault. POOL_PAUSED=1 is set by classify_one() in strand.sh; injectable so tests can
+# exercise this path directly.
+_pool_paused = os.environ.get("POOL_PAUSED", "0") == "1"
 
 # FLEET SLOT AWARENESS. A starved partition under a saturated fleet is queue ordering,
 # not starvation — every slot is held by another persona doing real work. Escalating it
@@ -166,6 +171,11 @@ if ready and live == 0:
             "no aeon summoned: %s — %d bead(s) will be claimed when capacity reopens: %s" % (
                 _cap_detail, len(ready), " ".join(sorted(ready)[:6])),
             "none — the sentinel will summon when the account is open again")
+    elif _pool_paused:
+        row("pool-paused", "-", "info",
+            "%d bead(s) ready but the task pool is set to zero — no aeon can be summoned: %s" % (
+                len(ready), " ".join(sorted(ready)[:6])),
+            "none — raise the task pool (aeons.sh pool <n>) when ready to resume")
     elif _pass_truncated:
         row("pass-truncated", "-", "info",
             "%d bead(s) ready but the last sentinel pass was truncated before evaluating this partition: %s" % (
