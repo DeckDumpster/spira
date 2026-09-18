@@ -1,0 +1,70 @@
+# Source: bead sp-9wdji, read from the Spira beads store with 'bd show sp-9wdji' on 2026-09-18.
+# Preserved because the beads store is not public. Home-directory paths rewritten to $HOME;
+# nothing else edited.
+
+○ sp-9wdji · sp-4f0oe's new suite test-testdb-concurrent.sh fails against its own change — ejected from the queue   [P1 · OPEN]
+Owner: overseer · Type: task
+Created: 2026-09-18 · Updated: 2026-09-18
+
+DESCRIPTION
+
+  sp-4f0oe was ejected from the merge queue on 2026-09-18. Its work is NOT    
+  lost:                                                                       
+  the commit is a4628b5 ("testdb: give each shared-fixture borrower a private 
+  baseline copy"), reachable from the closed PR #68 branch                    
+  spira/queue/20260918T013531Z on origin. Start from that commit, do not redo 
+  it.                                                                         
+                                                                              
+  ## Why it was ejected                                                       
+                                                                              
+  The suite it adds, spira/test-testdb-concurrent.sh, fails against its own   
+  change. Red twice, so not a flake:                                          
+                                                                              
+    test-testdb-concurrent.sh   RED  rc=1 after 8s      (parallel)            
+    gate-retry: re-running serially: test-testdb-concurrent.sh                
+    test-testdb-concurrent.sh   RED  rc=1 after 7s      (serial)              
+                                                                              
+  The assertion, at test-testdb-concurrent.sh:95:                             
+                                                                              
+    FAIL  gone baseline must exit fixture-fault (75): got rc=[empty]          
+                                                                              
+  got rc=[empty] is the interesting half. The test expects the "gone baseline"
+  path to exit 75 (fixture-fault) and instead captured NO exit status at all. 
+  An                                                                          
+  empty rc usually means the command under test was never run, or its status  
+  was                                                                         
+  lost through a pipe or a subshell, rather than that it exited with the wrong
+  code — so check how detect_rc is captured before assuming testdb.sh returns 
+  the wrong value (law-status-after-a-pipe-is-the-last-command).              
+                                                                              
+  ## What it blocked                                                          
+                                                                              
+  PR #68 carried six beads and could not land because of this one. Five were  
+  re-batched as PR #70 and are unaffected. sp-4f0oe touched only              
+  spira/test-testdb-concurrent.sh and spira/testdb.sh, and no other member    
+  touches either file, so the ejection was clean and nothing else needs       
+  redoing.                                                                    
+                                                                              
+  ## Done means                                                               
+                                                                              
+  The suite passes through the gate, in a batch, and the bead lands. A green  
+  local run is not sufficient evidence here: this suite is new, has never once
+  passed in CI, and the only two observations of it are both red.             
+
+
+
+NOTES
+
+  Archivist, 2026-09-18: DUPLICATE of sp-y8bxp (P1, open). An earlier         
+  archivist sweep filed that bead on 2026-09-17 for the same suite and the    
+  same got rc=[empty] failure, with the diagnosis already worked out: the exit
+  status of testdb_up is carried out of a subshell through a file written on  
+  the next line, so a testdb_up that exits rather than returns kills the      
+  subshell before the printf. sp-9wdji adds the ejection record (commit       
+  a4628b5 on the closed PR 68 branch spira/queue/20260918T013531Z). Merge the 
+  two; do not work both.                                                      
+
+
+
+LABELS: plan, repo:spira, spira
+

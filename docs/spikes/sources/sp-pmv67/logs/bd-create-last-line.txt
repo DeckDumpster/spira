@@ -1,0 +1,10 @@
+# What 'bd create' prints, captured on this session's fixture 2026-09-18 with cat -A so the last
+# line is visible. suites.sh _suite_auto_quarantine takes 'tail -1 | tr -d [:space:]' of this output
+# (via bead.sh file -> bdq create) and requires the result to match [A-Za-z0-9-].
+M-bM-^\M-^S Created issue: sp-b44 M-bM-^@M-^T probe title two$
+  Priority: P2$
+  Status: open$
+
+# suites.sh lines that parse it:
+1374:            | tail -1 | tr -d '[:space:]')" || bead_id=""
+1375:        case "${bead_id:-}" in ''|*[!A-Za-z0-9-]*|-*|*-) bead_id="" ;; esac

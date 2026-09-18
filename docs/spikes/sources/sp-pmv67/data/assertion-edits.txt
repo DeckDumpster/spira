@@ -1,0 +1,6 @@
+commits scanned 1054; (commit,suite) pairs changing an existing suite's assertion lines: 470
+    389  suite created
+    307  covered code also changed  (65% of edits to existing suites)
+     96  no covers line  (20% of edits to existing suites)
+     67  ONLY the suite (no covered file)  (14% of edits to existing suites)
+  of the suite-only edits, 11 removed more assertion lines than they added

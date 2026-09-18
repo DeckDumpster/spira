@@ -1,0 +1,114 @@
+# Source: bead sp-4f0oe, read from the Spira beads store with 'bd show sp-4f0oe' on 2026-09-18.
+# Preserved because the beads store is not public. Home-directory paths rewritten to $HOME;
+# nothing else edited.
+
+✓ sp-4f0oe · concurrent borrowers of the shared test fixture reset it under each other, producing reds that look like suite defects   [P1 · CLOSED]
+Owner: aeon-sandy · Assignee: aeon-mindy · Type: task
+Created: 2026-09-17 · Started: 2026-09-17 · Updated: 2026-09-17
+
+CLOSE REASON
+
+  Landed as a4628b5 on spira/sp-4f0oe.                                        
+                                                                              
+  Root cause: with TESTDB_SHARED=1, every borrower's testdb_up called         
+  testdb_reset                                                                
+  on the shared TESTDB_DIR. Concurrent callers raced the directory swap: one  
+  suite's                                                                     
+  reset emptied the store another was asserting against mid-pass.             
+                                                                              
+  Fix (option 3 — private copy per borrower):                                 
+                                                                              
+  • testdb_up now copies TESTDB_BASELINE/.beads into a fresh mktemp dir       
+  (TESTDB_PRIVATE_DIR) for each embedded-mode borrower. SPIRA_DB points there.
+  Concurrent resets are independent; suites cannot see each other's state.    
+  • testdb_reset targets TESTDB_PRIVATE_DIR when set, falling back to         
+  TESTDB_DIR,                                                                 
+  so mid-suite resets hit the borrower's own store.                           
+  • testdb_drop removes TESTDB_PRIVATE_DIR for borrowers; shared dirs belong  
+  to                                                                          
+  the owner and are only dropped when TESTDB_SHARED=0.                        
+  • cp failure exits TESTDB_FAULT_EXIT (75) before any assertion runs         
+  (law-detection-outranks-rejection).                                         
+                                                                              
+  Verification: test-testdb-concurrent.sh — positive control asserts that two 
+  concurrent borrowers get distinct SPIRA_DBs (old code fails this); also     
+  verifies                                                                    
+  testdb_drop removes the private dir and that a gone baseline exits 75. Gate 
+  will                                                                        
+  run the suite on merge. Fence bug sp-dvp22 blocked in-session testenv-batch 
+  run.                                                                        
+
+DESCRIPTION
+
+  ## The measurement                                                          
+                                                                              
+  test-cockpit-landed.sh, run three ways against one byte-identical tree      
+  (8537809), on 2026-09-17:                                                   
+                                                                              
+   condition        | fixture                  | … | result                   
+  ------------------|--------------------------|---|--------------------------
+   serial           | shared (TESTDB_SHARED=1) | … | 10 x 6 ok, 0 fail, rc=0  
+   6-way concurrent | shared                   | 6 | 5 x rc=75 (fixture faul… 
+   6-way concurrent | private (TESTDB_SHARED=… | 6 | 6 x 6 ok, 0 fail, rc=0   
+                                                                              
+  One variable changed between rows two and three. The content under test was 
+  identical in all three. The four failures under contention are the four     
+  assertions that read counts out of the fixture store; all four returned 0:  
+                                                                              
+    FAIL  SP_CLOSED is 24h-scoped: wanted [3] got [0]                         
+    FAIL  SP_LANDED counts committed work: wanted [1] got [0]                 
+    FAIL  SP_AWAITING_LAND counts branch-present work: wanted [1] got [0]     
+    FAIL  SP_UNLANDED counts irrecoverable only: wanted [1] got [0]           
+                                                                              
+  2 ok, 4 fail is the exact signature recorded in the sp-pmv67 incident.      
+                                                                              
+  ## Why it matters                                                           
+                                                                              
+  A borrower of the shared fixture calls testdb_up (which resets it) and      
+  testdb_drop on its own trap. Two borrowers running at once reset and drop   
+  the                                                                         
+  store under each other. Five of six saw the store gone and exited           
+  TESTDB_FAULT_EXIT; one saw it empty and read four zeroes.                   
+                                                                              
+  suites.sh cmd_run already classifies exit 75 as fixture-fault rather than   
+  red                                                                         
+  when it owns a shared fixture. The sixth case — a borrower that survives to 
+  run                                                                         
+  assertions against an EMPTIED store — has no such classification, and is    
+  indistinguishable from a real red at the file level. It is distinguishable  
+  at the                                                                      
+  assertion level: every assertion that reads the store fails, and every      
+  assertion                                                                   
+  that does not, passes.                                                      
+                                                                              
+  ## What to do                                                               
+                                                                              
+  Decide which of these it is, and it is a product decision, not a bug fix:   
+                                                                              
+  1. Borrowers of a shared fixture must not run concurrently — serialise them,
+  or                                                                          
+  2. testdb_up on a borrowed fixture must not reset it, or                    
+  3. a suite that needs an exclusive store must declare so and get a private  
+  one.                                                                        
+                                                                              
+  Whichever is chosen, the case must be detectable rather than merely         
+  prevented                                                                   
+  (law-detection-outranks-rejection): a borrower that finds an emptied store  
+  should exit fixture-fault, not fail its assertions.                         
+                                                                              
+  Reproduce: run any testdb.sh-using suite six ways concurrently with         
+  TESTDB_SHARED=1 and one TESTDB_NAME.                                        
+                                                                              
+  Found by the sp-pmv67 spike; see docs/spikes/test-identity-lifecycle-and-   
+  trust.md.                                                                   
+
+
+
+LABELS: branch:spira/sp-4f0oe, plan, repo:spira, spira
+
+CHILDREN
+  ↳ ✓ sp-4f0oe.1: State change: branch → spira/sp-4f0oe P4
+
+RELATED
+  ↔ ○ sp-dvp22: (BUG) aeon-fence: forge-runner pattern also matches the test-runner script P2
+

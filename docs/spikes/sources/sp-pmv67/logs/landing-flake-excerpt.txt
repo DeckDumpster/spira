@@ -1,0 +1,140 @@
+# Excerpt of the harness landing log ($SPIRA_RUN/landing.log), 2026-09-17..18: every line mentioning
+# observe-flake, auto-quarantine, a verdict's ejected/requeued count, or a local-gate red. Verbatim.
+QUEUE BATCH 1789660185 repo=spira members=8 caught=0 escaped=0 cost=338s
+2026-09-17T15:51:32Z spira: observe-flake: test-reclaim-slay-branch-guard.sh: 4 observation(s) in window (threshold 1)
+2026-09-17T15:51:32Z spira: observe-flake: test-reclaim-slay-branch-guard.sh is already quarantined
+2026-09-17T15:51:33Z spira: observe-flake: test-reclaim-slay-branch-guard.sh: 5 observation(s) in window (threshold 1)
+2026-09-17T15:51:33Z spira: observe-flake: test-reclaim-slay-branch-guard.sh is already quarantined
+2026-09-17T15:51:33Z spira: observe-flake: test-reclaim-slay-branch-guard.sh: 6 observation(s) in window (threshold 1)
+2026-09-17T15:51:33Z spira: observe-flake: test-reclaim-slay-branch-guard.sh is already quarantined
+2026-09-17T15:51:34Z spira: verdict spira: PR 46 — ejected 0, requeued 8
+QUEUE BATCH 1789660294 repo=spira members=8 caught=0 escaped=0 cost=372s
+2026-09-17T16:28:37Z spira: observe-flake: test-released-defects.sh: 2 observation(s) in window (threshold 2)
+2026-09-17T16:28:39Z spira: auto-quarantine: test-released-defects.sh quarantined (bead: (none filed))
+2026-09-17T16:28:40Z spira: observe-flake: test-reclaim-escalated.sh: 1 observation(s) in window (threshold 2)
+QUEUE BATCH 1789663345 repo=spira members=1 gate_seconds=451 verdict=green
+2026-09-17T17:00:45Z spira: observe-flake: test-suites-fixture-fault.sh: 2 observation(s) in window (threshold 2)
+2026-09-17T17:00:46Z spira: auto-quarantine: test-suites-fixture-fault.sh quarantined (bead: (none filed))
+QUEUE BATCH 1789665056 repo=spira members=5 gate_seconds=125 verdict=green
+QUEUE BATCH 1789666561 repo=spira members=4 gate_seconds=177 verdict=green
+2026-09-17T18:00:12Z spira: observe-flake: test-suites-result-files.sh: 1 observation(s) in window (threshold 1)
+2026-09-17T18:00:13Z spira: auto-quarantine: test-suites-result-files.sh quarantined (bead: (none filed))
+2026-09-17T18:00:14Z spira: observe-flake: test-doctor-embedded.sh: 1 observation(s) in window (threshold 1)
+2026-09-17T18:00:15Z spira: auto-quarantine: test-doctor-embedded.sh quarantined (bead: (none filed))
+2026-09-17T18:00:15Z spira: observe-flake: test-cockpit-probe-fault.sh: 1 observation(s) in window (threshold 1)
+2026-09-17T18:00:17Z spira: auto-quarantine: test-cockpit-probe-fault.sh quarantined (bead: (none filed))
+2026-09-17T18:00:17Z spira: observe-flake: test-cockpit-mouse.sh: 2 observation(s) in window (threshold 1)
+2026-09-17T18:00:18Z spira: auto-quarantine: test-cockpit-mouse.sh quarantined (bead: (none filed))
+2026-09-17T18:00:19Z spira: observe-flake: test-cockpit-landed.sh: 1 observation(s) in window (threshold 1)
+2026-09-17T18:00:20Z spira: auto-quarantine: test-cockpit-landed.sh quarantined (bead: (none filed))
+2026-09-17T18:00:21Z spira: observe-flake: test-cockpit-probe-fault.sh: 2 observation(s) in window (threshold 1)
+2026-09-17T18:00:21Z spira: observe-flake: test-cockpit-probe-fault.sh is already quarantined
+2026-09-17T18:00:21Z spira: observe-flake: test-cockpit-landed.sh: 2 observation(s) in window (threshold 1)
+2026-09-17T18:00:21Z spira: observe-flake: test-cockpit-landed.sh is already quarantined
+2026-09-17T18:00:22Z spira: observe-flake: test-suites-result-files.sh: 2 observation(s) in window (threshold 1)
+2026-09-17T18:00:22Z spira: observe-flake: test-suites-result-files.sh is already quarantined
+2026-09-17T18:00:22Z spira: observe-flake: test-doctor-embedded.sh: 2 observation(s) in window (threshold 1)
+2026-09-17T18:00:22Z spira: observe-flake: test-doctor-embedded.sh is already quarantined
+2026-09-17T18:00:23Z spira: observe-flake: test-cockpit-probe-fault.sh: 3 observation(s) in window (threshold 1)
+2026-09-17T18:00:23Z spira: observe-flake: test-cockpit-probe-fault.sh is already quarantined
+2026-09-17T18:00:23Z spira: observe-flake: test-cockpit-mouse.sh: 3 observation(s) in window (threshold 1)
+2026-09-17T18:00:23Z spira: observe-flake: test-cockpit-mouse.sh is already quarantined
+2026-09-17T18:00:24Z spira: observe-flake: test-cockpit-landed.sh: 3 observation(s) in window (threshold 1)
+2026-09-17T18:00:24Z spira: observe-flake: test-cockpit-landed.sh is already quarantined
+2026-09-17T18:00:26Z spira: verdict spira: PR 56 — ejected 0, requeued 4
+QUEUE BATCH 1789668026 repo=spira members=4 caught=0 escaped=0 cost=335s
+QUEUE BATCH 1789668220 repo=spira members=6 gate_seconds=184 verdict=green
+2026-09-17T18:28:14Z spira: observe-flake: test-suites-confirm-red.sh: 1 observation(s) in window (threshold 1)
+2026-09-17T18:28:15Z spira: auto-quarantine: test-suites-confirm-red.sh quarantined (bead: (none filed))
+2026-09-17T18:28:15Z spira: observe-flake: test-cockpit-probe-fault.sh: 4 observation(s) in window (threshold 1)
+2026-09-17T18:28:17Z spira: auto-quarantine: test-cockpit-probe-fault.sh quarantined (bead: (none filed))
+2026-09-17T18:28:17Z spira: observe-flake: test-cockpit-landed.sh: 4 observation(s) in window (threshold 1)
+2026-09-17T18:28:18Z spira: auto-quarantine: test-cockpit-landed.sh quarantined (bead: (none filed))
+2026-09-17T18:28:19Z spira: observe-flake: test-cockpit-probe-fault.sh: 5 observation(s) in window (threshold 1)
+2026-09-17T18:28:19Z spira: observe-flake: test-cockpit-probe-fault.sh is already quarantined
+2026-09-17T18:28:19Z spira: observe-flake: test-cockpit-landed.sh: 5 observation(s) in window (threshold 1)
+2026-09-17T18:28:19Z spira: observe-flake: test-cockpit-landed.sh is already quarantined
+2026-09-17T18:28:20Z spira: observe-flake: test-suites-confirm-red.sh: 2 observation(s) in window (threshold 1)
+2026-09-17T18:28:20Z spira: observe-flake: test-suites-confirm-red.sh is already quarantined
+2026-09-17T18:28:20Z spira: observe-flake: test-cockpit-probe-fault.sh: 6 observation(s) in window (threshold 1)
+2026-09-17T18:28:20Z spira: observe-flake: test-cockpit-probe-fault.sh is already quarantined
+2026-09-17T18:28:20Z spira: observe-flake: test-cockpit-landed.sh: 6 observation(s) in window (threshold 1)
+2026-09-17T18:28:21Z spira: observe-flake: test-cockpit-landed.sh is already quarantined
+2026-09-17T18:28:23Z spira: verdict spira: PR 57 — ejected 0, requeued 6
+QUEUE BATCH 1789669703 repo=spira members=6 caught=0 escaped=0 cost=434s
+QUEUE BATCH 1789669912 repo=spira members=6 gate_seconds=202 verdict=green
+QUEUE BATCH 1789671728 repo=spira members=6 gate_seconds=349 verdict=red attr_seconds=125 ejected=-
+QUEUE BATCH 1789672102 repo=spira members=6 gate_seconds=373 verdict=red
+2026-09-17T21:50:42Z spira: observe-flake: test-suites-hygiene.sh: 1 observation(s) in window (threshold 1)
+2026-09-17T21:50:43Z spira: auto-quarantine: test-suites-hygiene.sh quarantined (bead: (none filed))
+2026-09-17T21:50:43Z spira: observe-flake: test-suites-hygiene.sh: 2 observation(s) in window (threshold 1)
+2026-09-17T21:50:43Z spira: observe-flake: test-suites-hygiene.sh is already quarantined
+2026-09-17T21:50:44Z spira: observe-flake: test-suites-hygiene.sh: 3 observation(s) in window (threshold 1)
+2026-09-17T21:50:44Z spira: observe-flake: test-suites-hygiene.sh is already quarantined
+2026-09-17T21:50:46Z spira: verdict spira: PR 59 — ejected 0, requeued 6
+QUEUE BATCH 1789681846 repo=spira members=6 caught=0 escaped=0 cost=226s
+2026-09-17T22:48:31Z spira: observe-flake: test-suites-confirm-red.sh: 3 observation(s) in window (threshold 2)
+2026-09-17T22:48:32Z spira: auto-quarantine: test-suites-confirm-red.sh quarantined (bead: (none filed))
+QUEUE BATCH 1789685505 repo=spira members=6 gate_seconds=177 verdict=green
+2026-09-17T23:26:58Z spira: observe-flake: test-suites-fixture-fault.sh: 3 observation(s) in window (threshold 2)
+2026-09-17T23:26:59Z spira: auto-quarantine: test-suites-fixture-fault.sh quarantined (bead: (none filed))
+2026-09-17T23:26:59Z spira: observe-flake: test-cockpit-mouse.sh: 4 observation(s) in window (threshold 2)
+2026-09-17T23:27:01Z spira: auto-quarantine: test-cockpit-mouse.sh quarantined (bead: (none filed))
+QUEUE BATCH 1789687831 repo=spira members=6 gate_seconds=190 verdict=red attr_seconds=2 ejected=-
+QUEUE BATCH 1789688027 repo=spira members=6 gate_seconds=196 verdict=red
+QUEUE BATCH 1789688279 repo=spira members=6 gate_seconds=194 verdict=red attr_seconds=2 ejected=-
+QUEUE BATCH 1789688459 repo=spira members=6 gate_seconds=179 verdict=red
+QUEUE BATCH 1789688705 repo=spira members=6 gate_seconds=202 verdict=red attr_seconds=2 ejected=-
+QUEUE BATCH 1789688876 repo=spira members=6 gate_seconds=171 verdict=red
+QUEUE BATCH 1789689114 repo=spira members=6 gate_seconds=169 verdict=red attr_seconds=2 ejected=-
+QUEUE BATCH 1789689114 repo=spira members=6 gate_seconds=169 verdict=green
+2026-09-17T23:51:54Z spira: batch spira: local gate red (test-testdb-concurrent.sh) but no member reproduced it — opening the PR; CI is the authority
+2026-09-18T00:16:41Z spira: observe-flake: test-testdb-concurrent.sh: 1 observation(s) in window (threshold 1)
+2026-09-18T00:16:42Z spira: auto-quarantine: test-testdb-concurrent.sh quarantined (bead: (none filed))
+2026-09-18T00:16:42Z spira: observe-flake: test-testdb-concurrent.sh: 2 observation(s) in window (threshold 1)
+2026-09-18T00:16:42Z spira: observe-flake: test-testdb-concurrent.sh is already quarantined
+2026-09-18T00:16:43Z spira: observe-flake: test-testdb-concurrent.sh: 3 observation(s) in window (threshold 1)
+2026-09-18T00:16:43Z spira: observe-flake: test-testdb-concurrent.sh is already quarantined
+2026-09-18T00:16:45Z spira: verdict spira: PR 63 — ejected 0, requeued 6
+QUEUE BATCH 1789690605 repo=spira members=6 caught=0 escaped=0 cost=7s
+QUEUE BATCH 1789690795 repo=spira members=6 gate_seconds=180 verdict=red attr_seconds=2 ejected=-
+2026-09-18T00:19:55Z spira: batch spira: local gate red (test-testdb-concurrent.sh) but no member reproduced it — opening the PR; CI is the authority
+QUEUE BATCH 1789690795 repo=spira members=6 gate_seconds=180 verdict=green
+2026-09-18T00:42:35Z spira: observe-flake: test-testdb-concurrent.sh: 4 observation(s) in window (threshold 1)
+2026-09-18T00:42:35Z spira: observe-flake: test-testdb-concurrent.sh is already quarantined
+2026-09-18T00:42:35Z spira: observe-flake: test-testdb-concurrent.sh: 5 observation(s) in window (threshold 1)
+2026-09-18T00:42:35Z spira: observe-flake: test-testdb-concurrent.sh is already quarantined
+2026-09-18T00:42:36Z spira: observe-flake: test-testdb-concurrent.sh: 6 observation(s) in window (threshold 1)
+2026-09-18T00:42:36Z spira: observe-flake: test-testdb-concurrent.sh is already quarantined
+2026-09-18T00:42:37Z spira: verdict spira: PR 65 — ejected 0, requeued 6
+QUEUE BATCH 1789692157 repo=spira members=6 caught=0 escaped=0 cost=4s
+QUEUE BATCH 1789692333 repo=spira members=6 gate_seconds=166 verdict=red attr_seconds=2 ejected=-
+2026-09-18T00:45:33Z spira: batch spira: local gate red (test-testdb-concurrent.sh) but no member reproduced it — opening the PR; CI is the authority
+QUEUE BATCH 1789692333 repo=spira members=6 gate_seconds=166 verdict=green
+2026-09-18T01:08:18Z spira: observe-flake: test-testdb-concurrent.sh: 7 observation(s) in window (threshold 1)
+2026-09-18T01:08:18Z spira: observe-flake: test-testdb-concurrent.sh is already quarantined
+2026-09-18T01:08:18Z spira: observe-flake: test-testdb-concurrent.sh: 8 observation(s) in window (threshold 1)
+2026-09-18T01:08:18Z spira: observe-flake: test-testdb-concurrent.sh is already quarantined
+2026-09-18T01:08:19Z spira: observe-flake: test-testdb-concurrent.sh: 9 observation(s) in window (threshold 1)
+2026-09-18T01:08:19Z spira: observe-flake: test-testdb-concurrent.sh is already quarantined
+2026-09-18T01:08:21Z spira: verdict spira: PR 66 — ejected 0, requeued 6
+QUEUE BATCH 1789693701 repo=spira members=6 caught=0 escaped=0 cost=5s
+QUEUE BATCH 1789693890 repo=spira members=6 gate_seconds=180 verdict=red attr_seconds=2 ejected=-
+2026-09-18T01:11:30Z spira: batch spira: local gate red (test-testdb-concurrent.sh) but no member reproduced it — opening the PR; CI is the authority
+QUEUE BATCH 1789693890 repo=spira members=6 gate_seconds=180 verdict=green
+2026-09-18T01:35:20Z spira: observe-flake: test-testdb-concurrent.sh: 10 observation(s) in window (threshold 1)
+2026-09-18T01:35:20Z spira: observe-flake: test-testdb-concurrent.sh is already quarantined
+2026-09-18T01:35:21Z spira: observe-flake: test-testdb-concurrent.sh: 11 observation(s) in window (threshold 1)
+2026-09-18T01:35:21Z spira: observe-flake: test-testdb-concurrent.sh is already quarantined
+2026-09-18T01:35:21Z spira: observe-flake: test-testdb-concurrent.sh: 12 observation(s) in window (threshold 1)
+2026-09-18T01:35:21Z spira: observe-flake: test-testdb-concurrent.sh is already quarantined
+2026-09-18T01:35:23Z spira: verdict spira: PR 67 — ejected 0, requeued 6
+QUEUE BATCH 1789695323 repo=spira members=6 caught=0 escaped=0 cost=5s
+QUEUE BATCH 1789695508 repo=spira members=6 gate_seconds=176 verdict=red attr_seconds=1 ejected=-
+QUEUE BATCH 1789695508 repo=spira members=6 gate_seconds=176 verdict=green
+2026-09-18T01:38:28Z spira: batch spira: local gate red (test-testdb-concurrent.sh) but no member reproduced it — opening the PR; CI is the authority
+2026-09-18T05:31:32Z spira: verdict spira: PR 68 — ejected 0, requeued 6
+QUEUE BATCH 1789709492 repo=spira members=6 caught=0 escaped=0 cost=3s
+QUEUE BATCH 1789709747 repo=spira members=2 gate_seconds=102 verdict=red attr_seconds=146 ejected=-
+2026-09-18T05:35:47Z spira: batch spira: local gate red (unattributed) but no member reproduced it — opening the PR; CI is the authority
+QUEUE BATCH 1789709747 repo=spira members=2 gate_seconds=102 verdict=green

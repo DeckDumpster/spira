@@ -1,0 +1,165 @@
+# Produced by scripts/trust-harvest.sh from the runs in experiment-concurrency.txt, 2026-09-18.
+# Newline-delimited JSON, one record per assertion per run. Not named .jsonl: .gitignore
+# excludes *.jsonl to keep beads exports out of the repository. Read with: grep -v '^#'
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710505,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"serial"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-private"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc-shared"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc-shared"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-shared"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-shared"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-shared"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-shared"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-shared"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-shared"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-shared"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-shared"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-shared"}
+{"t":1789710506,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710507,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":0,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"SP_CLOSED is 24h-scoped","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"SP_LANDED counts committed work","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"SP_UNLANDED_N counts anomalies only","v":"fail","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"output contains SP_AT","v":"ok","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":"output contains SP_UNLANDED_N","v":"ok","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}
+{"t":1789710508,"suite":"test-cockpit-landed.sh","assert":null,"v":"no-assertions","rc":1,"secs":0,"sha":"c26bd5b","cond":"conc12-shared"}

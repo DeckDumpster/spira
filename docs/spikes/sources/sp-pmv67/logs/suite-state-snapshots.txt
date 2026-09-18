@@ -1,0 +1,18 @@
+# spira/suite-state at origin/main c26bd5b (non-comment lines), and the diff the concierge salvaged
+# when restoring the installed copy by hand after the 2026-09-17T18:00Z quarantines.
+## non-comment lines at c26bd5b
+test-dummy.sh | quarantined | 2026-09-17T00:00:00Z | sp-40a5p | auto: 3 flake observations in the window
+## salvaged diff ($SPIRA_RUN/reaped/quarantine-20260917T1800/suite-state.diff)
+diff --git a/spira/suite-state b/spira/suite-state
+index e17b3b0..9a8eb53 100644
+--- a/spira/suite-state
++++ b/spira/suite-state
+@@ -11,3 +11,8 @@
+ # This file is read from the TREE UNDER TEST, not from the installed harness,
+ # so testenv-batch.sh, CI and the hourly run each judge the tree they carry.
+ # Transitions are written by: suites.sh quarantine|disable|activate.
++test-suites-result-files.sh | quarantined | 2026-09-17T18:00:13Z |  | auto: 1 flake observations in the window
++test-doctor-embedded.sh | quarantined | 2026-09-17T18:00:15Z |  | auto: 1 flake observations in the window
++test-cockpit-probe-fault.sh | quarantined | 2026-09-17T18:00:17Z |  | auto: 1 flake observations in the window
++test-cockpit-mouse.sh | quarantined | 2026-09-17T18:00:18Z |  | auto: 2 flake observations in the window
++test-cockpit-landed.sh | quarantined | 2026-09-17T18:00:20Z |  | auto: 1 flake observations in the window

@@ -1,0 +1,29 @@
+# Source: bead sp-1vn7j, read from the Spira beads store with 'bd show sp-1vn7j' on 2026-09-18.
+# Preserved because the beads store is not public. Home-directory paths rewritten to $HOME;
+# nothing else edited.
+
+✓ sp-1vn7j · fix test-cockpit-landed.sh: flaky   [P2 · CLOSED]
+Owner: Ryan Gantt · Type: task
+Created: 2026-09-17 · Updated: 2026-09-17
+
+CLOSE REASON
+
+  Not flaky — closed by concierge. test-cockpit-landed.sh is correctly        
+  detecting a real regression in sp-d0j1g, which removes SP_AWAITING_LAND /   
+  SP_UNLANDED / SP_PEND_* without updating this suite. The gate re-ran it     
+  serially and it was red twice (run 35253735873), which is the opposite of a 
+  flake. Acting on this bead would mean weakening a check that is working     
+  (law-never-disarm-a-check-to-proceed). The real work is tracked on sp-d0j1g.
+
+DESCRIPTION
+
+  test-cockpit-landed.sh is auto-quarantined.                                 
+                                                                              
+  Reason: auto: 1 flake observations in the window                            
+                                                                              
+  Reproduce: bash spira/test-cockpit-landed.sh                                
+
+
+
+LABELS: plan, repo:spira, spira
+
