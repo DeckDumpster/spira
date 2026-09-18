@@ -2333,6 +2333,20 @@ core_detail)
 unsent)
     unsent_keys
     ;;
+# Queue state — depth, the open batch and its members. Medium tier: it reads the
+# landstate files and one small queue record, so it is filesystem-only and cheap.
+#
+# THIS ARM IS WHY THE PANE COULD NOT READ THE QUEUE. queue_keys has always existed
+# and always worked, and probe() has always called it — but probe() is the
+# backward-compat serial pass that only `cockpit.sh once|loop` takes. The running
+# collector is collect.sh, which drives each probe as its own `cockpit.sh <cmd>`
+# subcommand, and there was no `queue` subcommand to name. So the keys were
+# produced by a code path nothing in production executes, health.sh found
+# SP_QUEUE_DEPTH absent, and the pane rendered '? cannot read the queue' — honestly,
+# and for weeks (law-units-build-what-they-exec).
+queue)
+    queue_keys
+    ;;
 # The statute projection keys alone, taking no other reading. This is the seam the suite drives:
 # it is the same function probe calls, so what is tested is what runs.
 statute)
