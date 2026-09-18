@@ -39,12 +39,16 @@ _exec_ctx() {
     python3 -c '
 import sys, re
 script = sys.argv[1]; cmd = sys.argv[2]
-for sub in re.split(r"&&|\|\||[;\n]", cmd):
+pat = "/" + script
+EXEC = {"bash", "sh", "ksh", "zsh", "dash", "source", "."}
+for sub in re.split(r"&&|\|\||;", cmd):
     sub = sub.strip()
-    if ("/" + script) not in sub: continue
+    if pat not in sub: continue
     toks = sub.split()
-    if not toks or toks[0] == "git": continue
-    print("1"); break
+    if not toks: continue
+    t = toks[0]
+    if t in EXEC or t.startswith("/") or t.startswith("./") or pat in t:
+        print("1"); break
 ' "$1" "$2" 2>/dev/null
 }
 
