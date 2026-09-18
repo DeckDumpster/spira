@@ -571,5 +571,34 @@ is "8. branch-gone: ghost reason is branch-gone" "branch-gone" \
 nowant "8. branch-gone: no stuck-queue mail" "stuck" "$out8"
 clean_case
 
+# =============================================================================
+# 9. SPIRA_QUEUE_LOCAL_GATE=0: the PR opens without the local gate (sp-hrkwa).
+#    The gate stub fails, so a PR can only open if the gate was never called.
+# =============================================================================
+seed
+NOW="$(date +%s)"; OLD_9=$(( NOW - 1800 - 1 ))
+branch "sp-bt9-a" "$OLD_9"
+: > "$GATE_COUNT"
+cat > "$SH/gate.sh" <<GSTUB9
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >> "$GATE_COUNT"
+printf 'gate: VERDICT=FAIL reason=red test-x.sh FAILED branch=%s repo=%s suite=test-x.sh\n' "\$1" "\${2:-?}" >&2
+exit 1
+GSTUB9
+chmod +x "$SH/gate.sh"
+out9="$(SPIRA_QUEUE_LOCAL_GATE=0 batch "$REPONAME")"
+is   "9. skip: gate never called"      "0" "$(gate_n)"
+is   "9. skip: PR opened"              "1" "$(batch_pr)"
+is   "9. skip: member batched"         "1" "$(is_batched "sp-bt9-a" && echo 1 || echo 0)"
+want "9. skip: says so in its output"  "local gate skipped" "$out9"
+cat > "$SH/gate.sh" <<GSTUB
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >> "$GATE_COUNT"
+printf 'gate: VERDICT=PASS reason=stub branch=%s repo=%s suite=none\n' "\$1" "\${2:-?}" >&2
+exit 0
+GSTUB
+chmod +x "$SH/gate.sh"
+clean_case
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
