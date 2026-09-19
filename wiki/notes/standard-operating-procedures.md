@@ -116,11 +116,13 @@ git log --oneline origin/main | grep -E '(sp-c8w16|sp-74gwk)' | wc -l | grep -qE
 
 **Check** — Verify two things: (1) SP_UNSENT_OLDEST_H < 24, and (2) the bead owning the oldest unsent branch is not CLOSED+STRANDED. A CLOSED bead with landstate=BATCHED and no open batch_id means it's stuck: closed but never reached the queue to land. Use: bd show <bead> | grep -E "^(CLOSE REASON|batch_id)" and check if batch_id exists or if the bead is queued.
 
-**Fix** — If oldest unsent is below 24h AND the owning bead is either in_progress, queued, or landed — normal. If the owning bead is CLOSED+STRANDED (no batch holding it), escalate or manually re-queue it via batch.sh. Branches are held while beads are in_progress, kept if they haven't landed, or retained if deletion would lose work.
+**Fix** — If oldest unsent is below 24h AND the owning bead is either in_progress, queued, or landed — normal. If the owning bead is CLOSED+STRANDED (no batch holding it), escalate or manually re-queue it via batch.sh. Branches are held while beads are in_progress, kept if they haven't landed, or retained if deletion would lose work. 
 
-**Escalate** — If a CLOSED bead owns the oldest unsent branch but is not in any open batch and has not landed — the bead is stranded and needs operator to re-queue or unblock manually.
+⚠️ CRITICAL: Prior escalations (sp-3tnua for sp-zmd3u, sp-rl5ve re-escalation, and sp-vnjhj recurrence notice) show escalation beads being CLOSED by queue/batch WITHOUT re-queuing or landing the stranded beads. This breaks the escalation mechanism and allows the alert to recur (63+ times since 2026-09-15). Escalation beads must include an EXPLICIT REQUIREMENT that queue/batch must confirm in the close reason that the stranded bead has been re-queued, landed, or explicitly rejected with justification.
 
-**Reference** — wiki/notes/sending.md, incident:sp-8jany-stranded-batched
+**Escalate** — If a CLOSED bead owns the oldest unsent branch but is not in any open batch and has not landed — the bead is stranded and needs queue/batch to explicitly re-queue or land it. File escalation with requirement that CLOSE REASON must include: (1) stranded bead re-queued with new batch_id, OR (2) stranded bead manually landed to origin/main with commit SHA, OR (3) stranded bead rejected as wont-do with explicit justification. Do NOT accept escalation close without evidence of action on the stranded bead itself.
+
+**Reference** — wiki/notes/sending.md, incident:sp-8jany-stranded-batched, sp-vnjhj-escalation-failure-systemic, sp-kogm-recurrence-63-times
 
 **Matches** `sending.*oldest unsent branch.*threshold`
 
