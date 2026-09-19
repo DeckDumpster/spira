@@ -157,7 +157,7 @@ echo "rootless networking has a provider the installed podman will actually use:
 # which testenv-batch reports as rc=2 and the gate attributes as a harness fault --
 # correct attribution, but the run is still lost. slirp4netns alone is not enough on
 # a distro shipping podman 5; the binary is called pasta and the package is passt.
-if printf '%s' "$_joined" | grep -qE '(^|[^a-z-])passt([^a-z-]|$)'; then
+if grep -qE '(^|[^a-z-])passt([^a-z-]|$)' <<< "$_joined"; then
     ok "the package list provides pasta"
 else
     bad "the package list provides pasta" "no passt in PKGS; podman 5 rootless cannot configure a netns"
@@ -169,7 +169,7 @@ echo "the package list includes a C compiler:"
 # reads as a broken toolchain rather than a missing package. build-essential is a
 # machine property, not a language dependency: it belongs in every runner, not in
 # each consumer's own list.
-if printf '%s' "$_code" | grep -qE '(^|[[:space:]])build-essential([^a-z-]|$)'; then
+if grep -qE '(^|[[:space:]])build-essential([^a-z-]|$)' <<< "$_code"; then
     ok "build-essential is in the package list"
 else
     bad "build-essential is in the package list" "absent; a linker 'cc' not found failure reads as a broken toolchain"
@@ -192,7 +192,7 @@ echo "the install survives the two races a per-run VM actually loses:"
 # cleanly either side, so it reads as a broken dependency list rather than a
 # timing bug. apt has had DPkg::Lock::Timeout since 1.9.11; waiting on the lock
 # beats a retry loop, which would race the same holder again.
-if printf '%s' "$_joined" | grep -qE 'DPkg::Lock::Timeout=[0-9]+'; then
+if grep -qE 'DPkg::Lock::Timeout=[0-9]+' <<< "$_joined"; then
     ok "apt waits for the dpkg lock"
 else
     bad "apt waits for the dpkg lock" "no DPkg::Lock::Timeout; a boot-time unattended-upgrade loses the run"
@@ -207,8 +207,8 @@ fi
 # comments here are long by policy, so any matcher run over the whole file is
 # really searching the prose. Strip comment lines first, then require the
 # structure: a loop that installs ONE package per apt-get call.
-if printf '%s' "$_joined" | grep -qE 'for [A-Za-z_]+ in "\$\{_missing\[@\]\}"' \
-   && printf '%s' "$_joined" | grep -qE 'apt-get install .*"\$p"'; then
+if grep -qE 'for [A-Za-z_]+ in "\$\{_missing\[@\]\}"' <<< "$_joined" \
+   && grep -qE 'apt-get install .*"\$p"' <<< "$_joined"; then
     ok "one uninstallable name does not take the list with it"
 else
     bad "one uninstallable name does not take the list with it" "batch apt failure is fatal; no per-package retry loop in the code"
