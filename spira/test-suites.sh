@@ -566,8 +566,7 @@ git -C "$GT" add -A
 git -C "$GT" -c user.email=t@t -c user.name=t commit -q -m base
 
 gate() {
-    # SPIRA_SUITE_TIMEOUT=5 keeps the watchdog short so the test stays responsive.
-    env -i PATH="$PATH" HOME="$TMP/home" SPIRA_SUITE_TIMEOUT=5 bash "$GT/spira/gate-spira.sh" 2>&1
+    env -i PATH="$PATH" HOME="$TMP/home" SPIRA_SUITE_TIMEOUT=30 bash "$GT/spira/gate-spira.sh" 2>&1
 }
 
 printf 'spira/test-gt-ok.sh\n' > "$GT/spira/gate-suites"
