@@ -274,6 +274,185 @@ unique="$(printf '%s\n' "$refs" | sort -u | grep -c . 2>/dev/null || echo 0)"
 is   "deadlock: two separate occurrences produce the same ref" "1" "$unique"
 want "deadlock ref names the class" "queue-deadlock-batch-open" "$refs"
 
+# Helper for CI-STALLED and STARVED tests that need extra seams.
+# Sets up a mock forge script returning the given queued-since epoch (or empty).
+mock_forge() {   # mock_forge <epoch-or-empty>
+    local epoch="$1"
+    if [ -n "$epoch" ]; then
+        printf '#!/usr/bin/env bash\ncase "$1" in queued-since) printf "%%s\n" "%s" ;; esac\n' \
+            "$epoch" > "$TMP/mock-forge.sh"
+    else
+        printf '#!/usr/bin/env bash\n: # queued-since returns nothing\n' > "$TMP/mock-forge.sh"
+    fi
+    chmod +x "$TMP/mock-forge.sh"
+}
+
+# Runs watchtower --queue-checks with CI-STALLED and STARVED seams applied.
+wt_qc_ext() {   # wt_qc_ext [VAR=val ...]
+    local mock="$TMP/mock-inc.sh"
+    printf '#!/usr/bin/env bash\nprintf "%%s\n" "$2" >> "%s"\ncat > /dev/null\n' \
+        "$TMP/inc-subjects" > "$mock"
+    chmod +x "$mock"
+    env -i PATH="$PATH" HOME="$TMP" \
+        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_QUEUE_LOG="$TMP/run/landing.log" \
+        SPIRA_QUEUE_CHECK_MARKER="$TMP/run/queue-check.swept" \
+        SPIRA_INCIDENT_SH="$mock" \
+        SPIRA_REPO_MAP="$TMP/repo-map" \
+        SPIRA_FORGE="$TMP/mock-forge.sh" \
+        "$@" bash "$HERE/watchtower.sh" --queue-checks 2>/dev/null
+}
+
+# Set up the fake repo-map once (used by CI-STALLED tests via repo_root).
+mkdir -p "$TMP/repo"
+printf 'spira | %s | refs/heads/main | refs/heads/main\n' "$TMP/repo" > "$TMP/repo-map"
+
+# ======================================================================================
+echo
+echo "positive control — CI-STALLED must fire on its fixture:"
+# ======================================================================================
+# THE FIXTURE FAILS AGAINST THE CURRENT WATCHTOWER. Before sp-t5gfe, --queue-checks
+# had no CI-STALLED detector; the positive control below would produce no subjects.
+# After adding the detector, it fires exactly once per open batch repo.
+
+fresh
+mkdir -p "$TMP/run/queue/spira"
+printf 'pr=99\nhead=abc123\nmembers=sp-test1:abc\nbranch=spira/queue/sp-batch-1\n' \
+    > "$TMP/run/queue/spira/open"
+mock_forge "$(( NOW - 700 ))"   # 700s in the past, threshold 600s
+wt_qc_ext SPIRA_CI_QUEUED_MAX_SECS=600
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+want "CI-STALLED: fires when job queued 700s (threshold 600s)" "QUEUE: CI job queued" "$subjects"
+want "CI-STALLED: subject names the repo" "spira" "$subjects"
+
+# ======================================================================================
+echo
+echo "CI-STALLED — job queued with no runner:"
+# ======================================================================================
+
+# No open batch: no incident
+fresh
+mock_forge "$(( NOW - 700 ))"
+wt_qc_ext SPIRA_CI_QUEUED_MAX_SECS=600
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+nowant "CI-STALLED absent when no open batch" "QUEUE: CI job queued" "$subjects"
+
+# Queued time below threshold: no incident
+fresh
+mkdir -p "$TMP/run/queue/spira"
+printf 'pr=99\nhead=abc123\nmembers=sp-test1:abc\nbranch=spira/queue/sp-batch-1\n' \
+    > "$TMP/run/queue/spira/open"
+mock_forge "$(( NOW - 100 ))"   # 100s in the past, threshold 600s
+wt_qc_ext SPIRA_CI_QUEUED_MAX_SECS=600
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+nowant "CI-STALLED absent when queued only 100s (threshold 600s)" "QUEUE: CI job queued" "$subjects"
+
+# No queued jobs (forge returns empty): no incident
+fresh
+mkdir -p "$TMP/run/queue/spira"
+printf 'pr=99\nhead=abc123\nmembers=sp-test1:abc\nbranch=spira/queue/sp-batch-1\n' \
+    > "$TMP/run/queue/spira/open"
+mock_forge ""   # no queued jobs
+wt_qc_ext SPIRA_CI_QUEUED_MAX_SECS=600
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+nowant "CI-STALLED absent when forge returns empty (no queued jobs)" "QUEUE: CI job queued" "$subjects"
+
+# Open batch with no branch= field: no incident (malformed open file)
+fresh
+mkdir -p "$TMP/run/queue/spira"
+printf 'pr=99\nhead=abc123\nmembers=sp-test1:abc\n' \
+    > "$TMP/run/queue/spira/open"
+mock_forge "$(( NOW - 700 ))"
+wt_qc_ext SPIRA_CI_QUEUED_MAX_SECS=600
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+nowant "CI-STALLED absent when open file has no branch= field" "QUEUE: CI job queued" "$subjects"
+
+# CI-STALLED ref is stable across runs
+fresh
+mkdir -p "$TMP/run/queue/spira"
+printf 'pr=99\nhead=abc123\nmembers=sp-test1:abc\nbranch=spira/queue/sp-batch-1\n' \
+    > "$TMP/run/queue/spira/open"
+mock_forge "$(( NOW - 700 ))"
+rm -f "$TMP/inc-refs"
+wt_qc_refs_ext() {
+    local mock="$TMP/mock-inc-refs.sh"
+    printf '#!/usr/bin/env bash\nprintf "%%s\n" "${SPIRA_INCIDENT_REF:-}" >> "%s"\ncat > /dev/null\n' \
+        "$TMP/inc-refs" > "$mock"
+    chmod +x "$mock"
+    env -i PATH="$PATH" HOME="$TMP" \
+        SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_QUEUE_LOG="$TMP/run/landing.log" \
+        SPIRA_QUEUE_CHECK_MARKER="$TMP/run/queue-check.swept" \
+        SPIRA_INCIDENT_SH="$mock" \
+        SPIRA_REPO_MAP="$TMP/repo-map" \
+        SPIRA_FORGE="$TMP/mock-forge.sh" \
+        "$@" bash "$HERE/watchtower.sh" --queue-checks 2>/dev/null
+}
+wt_qc_refs_ext SPIRA_CI_QUEUED_MAX_SECS=600
+rm -f "$TMP/run/queue-check.swept"
+wt_qc_refs_ext SPIRA_CI_QUEUED_MAX_SECS=600
+refs="$(cat "$TMP/inc-refs" 2>/dev/null || echo "")"
+unique="$(printf '%s\n' "$refs" | sort -u | grep -c . 2>/dev/null || echo 0)"
+is   "ci-stalled: two runs produce the same ref" "1" "$unique"
+want "ci-stalled ref names the class and repo"   "queue-ci-stalled-spira" "$refs"
+
+# ======================================================================================
+echo
+echo "positive control — STARVED must fire on its fixture:"
+# ======================================================================================
+# THE FIXTURE FAILS AGAINST THE CURRENT WATCHTOWER. Before sp-t5gfe, --queue-checks
+# had no STARVED detector; the positive control below would produce no subjects.
+
+fresh
+STARVED_FIRST_OLD="$(( NOW - 1500 ))"   # 25 minutes, threshold 20m (1200s)
+printf '{"plan,spira:starved:-":{"first":%s,"acted":0,"escalated":0}}\n' \
+    "$STARVED_FIRST_OLD" > "$TMP/run/strands.json"
+wt_qc SPIRA_STRANDS_STATE="$TMP/run/strands.json" SPIRA_STARVED_MAX_MINS=20
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+want "STARVED: fires when partition starved 25m (threshold 20m)" "QUEUE:" "$subjects"
+want "STARVED: subject names the partition"                       "plan,spira" "$subjects"
+
+# ======================================================================================
+echo
+echo "STARVED — ready work with no serving aeons:"
+# ======================================================================================
+
+# Below threshold: no incident
+fresh
+STARVED_FIRST_RECENT="$(( NOW - 300 ))"   # 5 minutes, threshold 20m
+printf '{"plan,spira:starved:-":{"first":%s,"acted":0,"escalated":0}}\n' \
+    "$STARVED_FIRST_RECENT" > "$TMP/run/strands.json"
+wt_qc SPIRA_STRANDS_STATE="$TMP/run/strands.json" SPIRA_STARVED_MAX_MINS=20
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+nowant "STARVED absent when starved only 5m (threshold 20m)" "QUEUE:" "$subjects"
+
+# Wrong kind (ghost, not starved): no incident
+fresh
+printf '{"plan,spira:ghost:sp-123":{"first":%s,"acted":0,"escalated":0}}\n' \
+    "$STARVED_FIRST_OLD" > "$TMP/run/strands.json"
+wt_qc SPIRA_STRANDS_STATE="$TMP/run/strands.json" SPIRA_STARVED_MAX_MINS=20
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+nowant "STARVED absent when only ghost entries (not starved)" "QUEUE:" "$subjects"
+
+# No strands.json: no incident
+fresh
+wt_qc SPIRA_STRANDS_STATE="$TMP/run/strands.json" SPIRA_STARVED_MAX_MINS=20
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+nowant "STARVED absent when strands.json does not exist" "QUEUE:" "$subjects"
+
+# STARVED ref is stable across runs with different measured ages
+fresh
+printf '{"plan,spira:starved:-":{"first":%s,"acted":0,"escalated":0}}\n' \
+    "$STARVED_FIRST_OLD" > "$TMP/run/strands.json"
+rm -f "$TMP/inc-refs"
+wt_qc_refs SPIRA_STRANDS_STATE="$TMP/run/strands.json" SPIRA_STARVED_MAX_MINS=20
+rm -f "$TMP/run/queue-check.swept"
+wt_qc_refs SPIRA_STRANDS_STATE="$TMP/run/strands.json" SPIRA_STARVED_MAX_MINS=20
+refs="$(cat "$TMP/inc-refs" 2>/dev/null || echo "")"
+unique="$(printf '%s\n' "$refs" | sort -u | grep -c . 2>/dev/null || echo 0)"
+is   "starved: two runs produce the same ref" "1" "$unique"
+want "starved ref names the class and partition" "queue-starved-plan-spira" "$refs"
+
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]

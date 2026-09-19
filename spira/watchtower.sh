@@ -41,12 +41,12 @@ set -uo pipefail
 
 # --queue-checks: merge-queue stall detectors, called by sentinel.sh on every pass
 # (landing cadence, ~2 min). Reads landing.log since the previous check; files one
-# incident per stall class via incident.sh. Fast: file reads only, no network.
+# incident per stall class via incident.sh.
 #
 # DETECTORS PORTED FROM THE CONCIERGE'S QUEUE SUPERVISOR (sp-5z7cw). Two classes
-# are omitted: SELF-RERUN and RETRIES-EXHAUSTED (root cause sp-m3med landed); and
-# CI-STALLED (requires live GitHub API — does not fit the deterministic/cheap
-# contract this program holds).
+# are omitted: SELF-RERUN and RETRIES-EXHAUSTED (root cause sp-m3med landed).
+# CI-STALLED and STARVED were omitted initially (sp-t5gfe adds them here); the
+# concierge supervisor is retired once this lands.
 if [ "${1:-}" = "--queue-checks" ]; then
     [ -f "$SPIRA_RUN/world.halted" ] && {
         log "watchtower: queue-checks skipped — world is halted"
@@ -134,6 +134,71 @@ if [ "${1:-}" = "--queue-checks" ]; then
                 "$(printf 'No landing: pass complete in the last %ds (threshold: %ds).\nLast completed pass: %s\n\nCheck: systemctl --user status spira-landing\nSee: %s\n' \
                     "$_qc_age" "$_qc_stall_secs" "$_qc_last_ts" "$_qc_log")"
         fi
+    fi
+
+    # CI-STALLED — open batch CI job queued with no runner for longer than
+    # SPIRA_CI_QUEUED_MAX_SECS. A job stuck in queued status has no runner assigned and
+    # will never start; the remedy is to cancel the run and re-dispatch the whole
+    # workflow (never rerun --failed — that strands the run on the torn-down VM label).
+    # Detection: for each open batch, call forge queued-since to get the earliest epoch
+    # when a queued job was created. File once per repo via the stable ci-stalled ref.
+    _qc_ci_queued_max="${SPIRA_CI_QUEUED_MAX_SECS:-600}"
+    _qc_queue_dir="${SPIRA_QUEUE_DIR:-$SPIRA_RUN/queue}"
+    _qc_forge="${SPIRA_FORGE:-$(dirname "$0")/forge.sh}"
+    if [ -d "$_qc_queue_dir" ] && [ -r "$_qc_forge" ]; then
+        while IFS= read -r _qc_open; do
+            [ -r "$_qc_open" ] || continue
+            _qc_batch_repo="$(basename "$(dirname "$_qc_open")")"
+            _qc_batch_branch="$(grep '^branch=' "$_qc_open" 2>/dev/null | head -1)"
+            _qc_batch_branch="${_qc_batch_branch#branch=}"
+            [ -n "$_qc_batch_branch" ] || continue
+            _qc_repo_path="$(repo_root "$_qc_batch_repo" 2>/dev/null)" || true
+            [ -n "$_qc_repo_path" ] || continue
+            _qc_queued_since="$(bash "$_qc_forge" queued-since "$_qc_repo_path" "$_qc_batch_branch" 2>/dev/null)" || true
+            case "${_qc_queued_since:-}" in ''|*[!0-9]*) continue ;; esac
+            _qc_stalled_secs=$(( $(date +%s) - _qc_queued_since ))
+            if [ "$_qc_stalled_secs" -gt "$_qc_ci_queued_max" ] 2>/dev/null; then
+                _qc_file "ci-stalled" "ci-stalled-${_qc_batch_repo}" \
+                    "QUEUE: CI job queued with no runner for ${_qc_stalled_secs}s (${_qc_batch_repo})" \
+                    "$(printf 'A CI job for the open batch in %s has been queued for %ds with no runner assigned (threshold: %ds).\nBranch: %s\n\nCancel the stuck run and re-dispatch the whole workflow.\nNever rerun --failed: that strands the run on the torn-down VM label.\n\nAction: queue.sh step %s\n' \
+                        "$_qc_batch_repo" "$_qc_stalled_secs" "$_qc_ci_queued_max" \
+                        "$_qc_batch_branch" "$_qc_batch_repo")"
+            fi
+        done < <(find "$_qc_queue_dir" -maxdepth 2 -name "open" -type f 2>/dev/null)
+    fi
+
+    # STARVED — a partition has had ready work with no serving aeons for longer than
+    # SPIRA_STARVED_MAX_MINS. strand.sh detects starvation and records first-seen in
+    # strands.json; when the condition persists past the threshold, file a czar-trigger
+    # bead with the partition name and the time starved, so the czar can read CHECK7
+    # for the reason (throttle, cap, suspended lane, or poison) and fix or escalate.
+    _qc_strands_state="${SPIRA_STRANDS_STATE:-$SPIRA_RUN/strands.json}"
+    _qc_starved_max_s=$(( ${SPIRA_STARVED_MAX_MINS:-20} * 60 ))
+    if [ -r "$_qc_strands_state" ]; then
+        while IFS=$'\t' read -r _qc_sv_part _qc_sv_first; do
+            [ -n "$_qc_sv_part" ] || continue
+            case "$_qc_sv_first" in ''|*[!0-9]*) continue ;; esac
+            _qc_sv_age=$(( $(date +%s) - _qc_sv_first ))
+            if [ "$_qc_sv_age" -gt "$_qc_starved_max_s" ] 2>/dev/null; then
+                _qc_sv_safe="${_qc_sv_part//,/-}"
+                _qc_sv_safe="${_qc_sv_safe// /-}"
+                _qc_file "starved" "starved-${_qc_sv_safe}" \
+                    "QUEUE: partition [${_qc_sv_part}] starved for $(( _qc_sv_age / 60 ))m" \
+                    "$(printf 'Ready work in partition [%s] has had no serving aeons for %dm (threshold: %dm).\n\nCheck CHECK7 in sentinel.log for the stated reason:\n  throttle    admission stamp holds builders at 0 — queue not advancing\n  cap         account capacity paused — clears automatically\n  suspended   SPIRA_MAX_AEONS=0 (deliberate) — escalate to operator\n  poison      all ready beads are poisoned or need-operator — name each one\n\nFix the stated reason, or escalate once with it.\n' \
+                        "$_qc_sv_part" "$(( _qc_sv_age / 60 ))" "$(( _qc_starved_max_s / 60 ))")"
+            fi
+        done < <(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1]) as fh: st = json.load(fh)
+    for key, val in st.items():
+        parts = key.split(':', 2)
+        if len(parts) == 3 and parts[1] == 'starved':
+            first = val.get('first')
+            if first:
+                print(parts[0] + '\t' + str(int(first)))
+except Exception: pass
+" "$_qc_strands_state" 2>/dev/null)
     fi
 
     printf '%s\n' "$_qc_now" > "$_qc_marker" 2>/dev/null || true

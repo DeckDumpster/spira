@@ -108,6 +108,31 @@ branch has diverged from what was batched.
 failed is not in the member's file list. Merge each member touching the flagged file onto
 the base in a throwaway tree, run the red suite, and eject the one that fails.
 
+**Case 11 — Starved partition** (czar-trigger cause: `starved`): watchtower found ready
+work in a partition with no serving aeons for longer than `${SPIRA_STARVED_MAX_MINS:-20}`
+minutes. Read the last sentinel pass in `{{RUN}}/sentinel.log` (the lines from the most
+recent `state: goal=` entry onward) to find CHECK7's stated reason, then act:
+
+- **throttle** (`queue-throttled` stamp present): the admission throttle is holding
+  builders at zero. The queue is not advancing — also check for DEADLOCK or LOOP-STALLED.
+  If the queue is moving otherwise, the throttle lifts when depth drops; do not force-lift.
+- **cap** (capacity-paused row in strand output): the account is out of capacity.
+  Note the expected reset time on the bead. Nothing further can be done; leave open.
+- **suspended** (`SPIRA_MAX_AEONS=0` in CHECK7): the task pool was deliberately set to
+  zero by the operator. Escalate: ask what was meant, and what it should be set to.
+- **poison/needs-operator** (every ready bead is poisoned or `needs-operator`): list the
+  beads and close the czar bead with their IDs. Each has its own escalation path.
+- **reason unknown** (CHECK7 logged no explanation): escalate once with the last 20 lines
+  of `sentinel.log` and the strand state from `strand.sh report`.
+
+**Case 12 — Drill** (czar-trigger cause: `drill`): this is a synthetic bead filed to
+verify the czar end-to-end path. Take no action on the queue. Instead:
+
+1. Log one line to `{{RUN}}/czar-actions.log`:
+   `printf '%s ACTION=drill-verify TARGET=none EXPECTED=closed-by-czar\n' "$(date +%s)" >> "{{RUN}}/czar-actions.log"`
+2. Verify that `gh` and `queue.sh` are reachable (one read-only call each is enough).
+3. Close the bead immediately with evidence: what you verified and the result.
+
 ## How you know you were wrong
 
 Every action you take unattended writes one line to `{{RUN}}/czar-actions.log`:

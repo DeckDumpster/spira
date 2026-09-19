@@ -138,6 +138,35 @@ except Exception:
             --json databaseId --limit 1 -q '.[0].databaseId' 2>/dev/null )" || run_id=""
         printf '%s\n' "${run_id:-}"
         ;;
+    queued-since)
+        # queued-since <repo-dir> <branch> → epoch seconds when the earliest queued job was
+        # created, or empty if no jobs are in queued status. A queued job has no runner
+        # assigned and will never start on its own; cancel the run and re-dispatch.
+        branch="${1:-}"
+        run_id="$( cd "$repo" && ghq run list --branch "$branch" \
+            --json databaseId --limit 1 -q '.[0].databaseId' 2>/dev/null )" || run_id=""
+        [ -n "$run_id" ] || exit 0
+        jobs_json="$( cd "$repo" && ghq api \
+            "repos/{owner}/{repo}/actions/runs/$run_id/jobs" 2>/dev/null )" || exit 0
+        printf '%s\n' "$jobs_json" | python3 -c "
+import json, sys, calendar, datetime
+def epoch(t):
+    if not t: return 0
+    try:
+        dt = datetime.datetime.strptime(t.rstrip('Z'), '%Y-%m-%dT%H:%M:%S')
+        return calendar.timegm(dt.timetuple())
+    except: return 0
+try:
+    earliest = 0
+    for j in json.load(sys.stdin).get('jobs', []):
+        if j.get('status') == 'queued':
+            e = epoch(j.get('created_at') or '')
+            if e and (earliest == 0 or e < earliest):
+                earliest = e
+    if earliest: print(earliest)
+except Exception: pass
+" 2>/dev/null
+        ;;
     run-metadata)
         run_id="${1:-}"
         [ -n "$run_id" ] || exit 1
