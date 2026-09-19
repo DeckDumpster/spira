@@ -405,9 +405,16 @@ main() {
                     "$name" "$pr_n" "$(( run_retries + 1 ))" "$max_retries"
                 _batch_set_retries "$batch_file" "$(( run_retries + 1 ))"
             else
-                printf 'verdict %s: PR %s harness fault — retries exhausted; mailing operator\n' \
+                printf 'verdict %s: PR %s harness fault — retries exhausted; closing batch\n' \
                     "$name" "$pr_n"
-                printf '## Note\nMerge queue batch for %s has not been tested after %d CI run attempts.\n\nPR %s (head %s) cannot advance until the CI issue is resolved.\n' \
+                "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
+                local _mm _mid _mtip
+                for _mm in $members_str; do
+                    _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
+                    land_mark "$_mid" CERTIFIED "$_mtip"
+                done
+                rm -f "$batch_file"
+                printf '## Note\nMerge queue batch for %s closed after %d failed CI run attempts.\n\nPR %s (head %s) has been closed. Members returned to CERTIFIED.\n' \
                     "$name" "$(( run_retries + 1 ))" "$pr_n" "$batch_head" \
                 | bash "$HERE/mail.sh" send operator \
                     --from "Spira Queue <queue@spira>" \
