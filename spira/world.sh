@@ -315,6 +315,30 @@ start)
         "$SC" --user start "$u" 2>/dev/null && printf '  started %s\n' "$u"
     done
 
+    # START WHAT a system halt stopped. spira-mail-deliver is not a watcher unit and is not
+    # stopped by `world.sh stop`, but a system halt's SIGTERM leaves it inactive (not failed,
+    # because SuccessExitStatus=143 is set in the unit) and nothing else restores it.
+    for u in $(
+        {
+            "$SC" --user list-unit-files \
+                  "spira-mail-deliver${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}.service" \
+                  --no-legend 2>/dev/null
+            "$SC" --user list-unit-files "spira-mail-deliver.service" \
+                  --no-legend 2>/dev/null
+        } | awk '{print $1}' | sort -u
+    ); do
+        _subj="${u%.service}"; _subj="${_subj%.timer}"
+        [ -n "${SPIRA_INSTANCE:-}" ] && _subj="${_subj%-$SPIRA_INSTANCE}"
+        if "$SPIRA_HOME/ctrl.sh" check "$_subj" 2>/dev/null; then
+            _reason="$("$SPIRA_HOME/ctrl.sh" reason "$_subj" 2>/dev/null)"
+            printf '  skipped %s (suspended%s)\n' "$u" "${_reason:+: $_reason}"
+            continue
+        fi
+        [ "$("$SC" --user is-enabled "$u" 2>/dev/null)" = "disabled" ] && continue
+        [ "$("$SC" --user is-active  "$u" 2>/dev/null)" = "active"   ] && continue
+        "$SC" --user start "$u" 2>/dev/null && printf '  started %s\n' "$u"
+    done
+
     rm -f "$STAMP"
     echo "spira: RUNNING"
     ;;

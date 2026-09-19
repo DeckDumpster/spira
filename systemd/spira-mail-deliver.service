@@ -13,6 +13,8 @@ Type=simple
 ExecStart=@SPIRA_PROD@/spira-mail-deliver.sh
 Restart=always
 RestartSec=15
+# A halt's SIGTERM exits 143; without this the unit lands 'failed', not 'inactive'.
+SuccessExitStatus=143
 # inotifywait is a poll-on-event; one wakeup per delivery, negligible CPU.
 CPUQuota=5%
 Nice=10

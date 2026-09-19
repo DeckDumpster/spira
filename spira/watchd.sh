@@ -430,8 +430,8 @@ watchd_rows() {
             faults=1; continue ;;
         esac
         case "$kind" in
-            daemon|log) ;;
-            *) echo "watchd: $file:$n: '$kind' is not a kind (daemon: we run it; log: something else writes it)" >&2
+            daemon|log|extern) ;;
+            *) echo "watchd: $file:$n: '$kind' is not a kind (daemon: we run it; log: something else writes it; extern: an existing unit we monitor)" >&2
                faults=1; continue ;;
         esac
         if [ -z "$target" ]; then
@@ -456,13 +456,15 @@ watchd_rows() {
             faults=1; continue
         fi
         target="$_wd_out"
-        # ABSOLUTE, ALWAYS. A unit is started with no working directory worth the name, so a
-        # relative target resolves against `/` — which either fails at the worst moment or
-        # finds something else entirely.
-        case "$target" in /*) ;;
-            *) echo "watchd: $file:$n: '$name': target must be an absolute path, got '$target'" >&2
-               faults=1; continue ;;
-        esac
+        # ABSOLUTE, ALWAYS for daemon and log. A unit is started with no working directory
+        # worth the name, so a relative target resolves against `/`. An extern target is a
+        # service base name (e.g. mail-deliver), not a path — no slash required.
+        if [ "$kind" != extern ]; then
+            case "$target" in /*) ;;
+                *) echo "watchd: $file:$n: '$name': target must be an absolute path, got '$target'" >&2
+                   faults=1; continue ;;
+            esac
+        fi
         if [ -n "$health" ] && ! _wd_expand "$health"; then
             if [ -n "$optional" ] && [ -n "$_wd_empty" ]; then
                 seen="$seen$name "
@@ -629,6 +631,7 @@ cmd_status() {
         wname+=("$name"); wkind+=("$kind"); wtarget+=("$target"); whealth+=("$health")
         wlog+=("$(_wd_logfile "$name" "$kind" "$target")")
         [ "$kind" = daemon ] && units+=("$(watch_unit_name "$name")")
+        [ "$kind" = extern ] && units+=("$(spira_unit "$target" service)")
     done <<< "$rows"
 
     # ONE EXEC FOR EVERY UNIT. `systemctl is-active` takes any number of units and answers one
@@ -673,7 +676,7 @@ cmd_status() {
         lf="${wlog[$i]}"
         total="$(_wd_total "$lf")"
         pos="$(_wd_pos "${wname[$i]}" "$total")"
-        if [ "${wkind[$i]}" = daemon ]; then
+        if [ "${wkind[$i]}" = daemon ] || [ "${wkind[$i]}" = extern ]; then
             # AN ANSWER WE DID NOT GET RENDERS `?`, NEVER `inactive`. systemd may not be
             # running at all — a container, a box without a user manager — and a failed probe
             # displayed as a state is a broken check reported as a finding about the watcher
@@ -697,7 +700,7 @@ cmd_status() {
         # THE PROBE IS SKIPPED WHEN THE UNIT IS DOWN: a dead watcher's stale files would
         # return false OK (law-absence-needs-a-positive-control). HALTED when the world was
         # deliberately stopped, DEGRADED otherwise — the two must be distinguishable.
-        if [ "${wkind[$i]}" = daemon ] && [ "$state" != "active" ]; then
+        if ( [ "${wkind[$i]}" = daemon ] || [ "${wkind[$i]}" = extern ] ) && [ "$state" != "active" ]; then
             if [ -f "$SPIRA_RUN/world.halted" ]; then
                 _wd_hstate="HALTED"; _wd_hwhy=""
             else
@@ -1000,6 +1003,15 @@ cmd_restart() {
             fi
             continue
         fi
+        if [ "$kind" = extern ]; then
+            # The unit is not owned by watchd — restart it directly with systemctl.
+            if [ -n "$only" ]; then
+                printf 'watchd: %s is an extern row — use: systemctl --user restart %s\n' \
+                    "$name" "$(spira_unit "$target" service)" >&2
+                return 2
+            fi
+            continue
+        fi
         if [ "$kind" != daemon ]; then
             # There is no unit, so there is nothing to restart — and restarting whatever writes
             # that log is not this harness's business.
@@ -1242,11 +1254,16 @@ _wd_notify_health() {
     local now; printf -v now '%(%s)T' -1
 
     local name kind target health
-    local -a units=() unames=() utarget=() uhealth=()
+    local -a units=() unames=() ukind=() utarget=() uhealth=()
     while IFS='|' read -r name kind target health; do
         [ -n "$name" ] || continue
-        [ "$kind" = daemon ] || continue
-        unames+=("$name"); units+=("$(watch_unit_name "$name")")
+        [ "$kind" = daemon ] || [ "$kind" = extern ] || continue
+        unames+=("$name"); ukind+=("$kind")
+        if [ "$kind" = daemon ]; then
+            units+=("$(watch_unit_name "$name")")
+        else
+            units+=("$(spira_unit "$target" service)")
+        fi
         utarget+=("$target"); uhealth+=("$health")
     done <<< "$rows"
     [ "${#units[@]}" -gt 0 ] || return 0
@@ -1276,7 +1293,26 @@ _wd_notify_health() {
             if [ -f "$SPIRA_RUN/world.halted" ]; then
                 rm -f "$(_wd_unhealthyfile "$n")" 2>/dev/null; continue
             fi
-            _wd_hstate=DEGRADED; _wd_hwhy="unit is $state — no writer"
+            if [ "${ukind[$i]}" = extern ] && [ -n "${uhealth[$i]}" ]; then
+                # COMPOUND CONDITION: extern unit inactive + health command has output.
+                # For mail-deliver the health command is `mail.sh unread-age <mailbox>`;
+                # empty output means the mailbox is clear and no escalation is needed —
+                # a stopped delivery daemon with nothing waiting is not yet urgent.
+                local _cond _tmo
+                _tmo="$(command -v timeout 2>/dev/null)" || _tmo=""
+                if [ -n "$_tmo" ]; then
+                    _cond="$("$_tmo" "${SPIRA_HEALTH_TIMEOUT:-10}" bash -c "${uhealth[$i]}" 2>/dev/null)"
+                else
+                    _cond="$(bash -c "${uhealth[$i]}" 2>/dev/null)"
+                fi
+                case "${_cond:-}" in
+                    ''|*[!0-9]*) rm -f "$(_wd_unhealthyfile "$n")" 2>/dev/null; continue ;;
+                esac
+                [ "$_cond" -ge "$SPIRA_NOTIFY_AGE" ] || { rm -f "$(_wd_unhealthyfile "$n")" 2>/dev/null; continue; }
+                _wd_hstate=DEGRADED; _wd_hwhy="unit is $state; unread reply pending"
+            else
+                _wd_hstate=DEGRADED; _wd_hwhy="unit is $state — no writer"
+            fi
         else
             _wd_probe "${uhealth[$i]}"
         fi
@@ -1297,7 +1333,7 @@ _wd_notify_health() {
 
         stale=$(( stale + 1 ))
         nr="${urestarts[$u]:-?}"
-        lf="$(_wd_logfile "$n" daemon "${utarget[$i]}")"
+        lf="$(_wd_logfile "$n" "${ukind[$i]}" "${utarget[$i]}")"
         last="$(tail -n 1 "$lf" 2>/dev/null)"
         lock_line=""
         [ "$state" != active ] && lock_line="$(_wd_orphan_lock "${utarget[$i]}" 2>/dev/null)" || true

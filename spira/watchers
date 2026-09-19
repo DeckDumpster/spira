@@ -84,3 +84,10 @@ pr-notify|log|@SPIRA_RUN@/watchd/pr-notify.log
 # surface it steers is the operator's own: SPIRA_VIEW names the program and is empty until it
 # is set.
 ?view|daemon|@SPIRA_VIEW@ watch|@SPIRA_HOME@/watchd.sh health-view @SPIRA_VIEW@ @SPIRA_VIEW_SESSION@
+
+# MAIL-DELIVER monitors the delivery daemon that wakes registered readers on new mail.
+# It is not owned by watchd (it has its own unit), so the kind is `extern`. The health
+# command is the compound condition: when the daemon is inactive AND there are unread
+# concierge replies older than SPIRA_NOTIFY_AGE, notify escalates once
+# (law-answers-need-a-delivery-path).
+mail-deliver|extern|mail-deliver|@SPIRA_HOME@/mail.sh unread-age concierge
