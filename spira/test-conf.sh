@@ -179,5 +179,21 @@ want   "SPIRA_PROD is non-empty when SPIRA_REPO=/workspace" "/" "$prod_root"
 
 # ==========================================================================
 echo
+echo "artifact deployment — SPIRA_WORKSPACES is grandparent of SPIRA_REPO, not parent:"
+# ==========================================================================
+# In artifact mode SPIRA_REPO is a release dir inside spira-releases; the correct
+# workspaces directory is two levels up, not one. Without the fix, SPIRA_WORKSPACES
+# would be the releases directory, causing SPIRA_RELEASES to double.
+# Positive control: with old (one-level) derivation, SPIRA_WORKSPACES would include
+# "spira-releases" in the path; the fix must not.
+ART_RELEASES="$TMP/art-releases"
+ART_RELEASE="$ART_RELEASES/spira-20260912T120000Z"
+mkdir -p "$ART_RELEASE"
+ws_art="$(conf_val SPIRA_WORKSPACES SPIRA_REPO="$ART_RELEASE")"
+is    "artifact: SPIRA_WORKSPACES is workspaces grandparent" "$TMP" "$ws_art"
+nowant "artifact: SPIRA_WORKSPACES excludes releases subdir"  "art-releases" "$ws_art"
+
+# ==========================================================================
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

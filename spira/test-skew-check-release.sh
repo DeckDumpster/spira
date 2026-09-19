@@ -176,6 +176,96 @@ ln -s "spira-${TS2}" "$no_manifest_dir/current"
 no_manifest_out="$(run_skew SPIRA_RELEASES="$no_manifest_dir")"; no_manifest_rc=$?
 is "no MANIFEST: exits 3" "3" "$no_manifest_rc"
 
+
+# ---------------------------------------------------------------------------
+# Artifact mode: SPIRA_REPO has no .git — tags must come from gh release list.
+# ---------------------------------------------------------------------------
+
+# Mock gh: outputs GH_RELEASE_LIST when called with "release list"; else fails.
+MOCK_BIN="$TMP/mock-bin"
+mkdir -p "$MOCK_BIN"
+cat > "$MOCK_BIN/gh" <<'GHEOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = release ] && [ "${2:-}" = list ]; then
+    printf '%s\n' "${GH_RELEASE_LIST:-[]}"
+    exit 0
+fi
+exit 1
+GHEOF
+chmod +x "$MOCK_BIN/gh"
+
+# Non-git directory simulating an unpacked release tarball.
+ARTIFACT_REPO="$TMP/artifact-repo"
+mkdir -p "$ARTIFACT_REPO"
+
+run_skew_artifact() {
+    local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    env -i PATH="$MOCK_BIN:$PATH" \
+        HOME="$TMP/home" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_HOME="$REPO/spira" \
+        SPIRA_REPO="$ARTIFACT_REPO" \
+        SPIRA_RUN="$run_dir" \
+        SPIRA_DOLT_DATA="" \
+        SPIRA_TESTDB_DATA="" \
+        SPIRA_RELEASES="$RELEASES" \
+        "${@}" \
+        bash "$HERE/skew.sh" check 2>&1
+    return "${PIPESTATUS[0]:-$?}"
+}
+
+GH_LIST='[{"tagName":"spira-release-spira-'"$TS1"'","isDraft":false},{"tagName":"spira-release-spira-'"$TS2"'","isDraft":false}]'
+
+# ===========================================================================
+echo
+echo "artifact positive control — NOT-LATEST reported via gh release list:"
+# (sidecar present so activated release is identified; gh returns both tags)
+# ===========================================================================
+rm -f "$RELEASES/current"
+ln -s "spira-${TS1}" "$RELEASES/current"
+mkdir -p "$RELEASES/.tags"
+printf 'spira-release-spira-%s\n' "$TS1" > "$RELEASES/.tags/spira-${TS1}"
+printf 'commit %s\ntimestamp %s\n' "$COMMIT1" "$TS1" > "$REL1_DIR/MANIFEST"
+
+art_stale_out="$(run_skew_artifact \
+    SPIRA_GH_INTAKE_REPO=test/repo \
+    GH_RELEASE_LIST="$GH_LIST")"; art_stale_rc=$?
+is   "artifact-not-latest: exits 1"             "1"                          "$art_stale_rc"
+want "artifact-not-latest: NOT-LATEST reported" "NOT-LATEST"                 "$art_stale_out"
+want "artifact-not-latest: names latest tag"    "spira-release-spira-${TS2}" "$art_stale_out"
+
+# ===========================================================================
+echo
+echo "artifact mode — no SPIRA_GH_INTAKE_REPO → exits 3 (no fallback path):"
+# ===========================================================================
+art_no_intake_out="$(run_skew_artifact)"; art_no_intake_rc=$?
+is "artifact-no-intake: exits 3" "3" "$art_no_intake_rc"
+
+# ===========================================================================
+echo
+echo "artifact mode — gh returns no releases → exits 3:"
+# ===========================================================================
+# GH_RELEASE_LIST defaults to [] in the mock, giving no tags; exit 3 is expected.
+art_empty_out="$(run_skew_artifact SPIRA_GH_INTAKE_REPO=test/repo)"; art_empty_rc=$?
+is "artifact-gh-empty: exits 3 when gh returns no tags" "3" "$art_empty_rc"
+
+# ===========================================================================
+echo
+echo "artifact mode — activated is latest → exits 0:"
+# ===========================================================================
+rm -f "$RELEASES/current"
+ln -s "spira-${TS2}" "$RELEASES/current"
+mkdir -p "$RELEASES/.tags"
+printf 'spira-release-spira-%s\n' "$TS2" > "$RELEASES/.tags/spira-${TS2}"
+printf 'commit %s\ntimestamp %s\n' "$COMMIT2" "$TS2" > "$REL2_DIR/MANIFEST"
+
+art_clean_out="$(run_skew_artifact \
+    SPIRA_GH_INTAKE_REPO=test/repo \
+    GH_RELEASE_LIST="$GH_LIST")"; art_clean_rc=$?
+is     "artifact-clean: exits 0"           "0"          "$art_clean_rc"
+want   "artifact-clean: in effect message" "in effect"  "$art_clean_out"
+nowant "artifact-clean: no NOT-LATEST"     "NOT-LATEST" "$art_clean_out"
+
 echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

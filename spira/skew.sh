@@ -217,10 +217,31 @@ check() {
 
     # THE POSITIVE CONTROL: at least one release tag must exist before the check can claim
     # anything is current. No tags means the check cannot prove currency or detect a mismatch.
-    local all_tags
+    # Artifact mode: SPIRA_REPO has no .git; fall back to gh release list when
+    # SPIRA_GH_INTAKE_REPO is set (the same repo where published releases live).
+    local all_tags=""
     all_tags="$(git -C "$SPIRA_REPO" tag -l 'spira-release-*' 2>/dev/null | sort)"
+    if [ -z "$all_tags" ] && [ -n "${SPIRA_GH_INTAKE_REPO:-}" ]; then
+        local _rel_json=""
+        _rel_json="$(gh release list --repo "$SPIRA_GH_INTAKE_REPO" --json tagName,isDraft 2>/dev/null)" \
+            || _rel_json=""
+        if [ -n "$_rel_json" ]; then
+            all_tags="$(printf '%s' "$_rel_json" | python3 -c '
+import json, sys
+try:
+    releases = json.load(sys.stdin)
+    pub = [r["tagName"] for r in releases
+           if not r.get("isDraft", True)
+           and r["tagName"].startswith("spira-release-")]
+    pub.sort()
+    for t in pub: print(t)
+except Exception:
+    pass
+' 2>/dev/null)"
+        fi
+    fi
     if [ -z "$all_tags" ]; then
-        echo "skew: no release tags found in $SPIRA_REPO — cannot determine release currency" >&2
+        echo "skew: no release tags found — cannot determine release currency" >&2
         return 3
     fi
 
