@@ -62,16 +62,13 @@ PROBES=(
     "strands:60:90:strands"
     "ratelim:60:90:ratelim"
     "core:60:150:core"
-    # Medium tier: landstate files plus one small queue record — filesystem only,
-    # no database and no git. Registered 2026-09-18 because this collector replaced
-    # `cockpit.sh loop` without carrying the queue probe across, so SP_QUEUE_* was
-    # never written and the pane rendered '? cannot read the queue'.
     "queue:60:90:queue"
     "core_detail:600:900:core_detail"
     "sops:600:300:sops"
     "livelock:600:300:livelock"
     "dup_refs:600:300:dup_refs"
     "unsent:600:300:unsent"
+    "statute:600:300:statute"
 )
 
 # Maximum concurrent slow-tier (interval>=600) probes. The service CPUQuota caps the
