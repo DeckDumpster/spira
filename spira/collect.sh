@@ -64,6 +64,7 @@ PROBES=(
     "core:60:150:core"
     "queue:60:90:queue"
     "core_detail:600:900:core_detail"
+    "mail:60:90:mail"
     "sops:600:300:sops"
     "livelock:600:300:livelock"
     "dup_refs:600:300:dup_refs"

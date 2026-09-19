@@ -472,79 +472,6 @@ tokens_section() {
         fi
     done
 
-    # CTX — the session in front of the operator, and how close it is to the edge.
-    #
-    # A TOTAL SAYS WHAT WAS SPENT; ONLY THE PROXIMITY SAYS WHETHER TO ACT NOW, and acting is
-    # the thing the operator can actually do about any of this. Headroom is quoted to the NEXT
-    # threshold rather than to the ceiling — "874k to the limit" is true and useless when what
-    # happens next is crossing into the band where clearing pays. Turns-to-threshold is the
-    # same fact in the unit the decision is made in, and it appears only while the session is
-    # growing: a flat session is approaching nothing, and a fabricated rate would be a number
-    # where there is no measurement.
-    # THREE STATES, AND THEY MUST NOT COLLAPSE INTO TWO. `-` is "no session is running", which
-    # is true and useful; an unset or `?` key is a probe that did not run, which is a fault and
-    # says so. Reading the second as the first would report a broken meter as a quiet keyboard
-    # — an all-clear that displaces the suspicion that would have prompted a look
-    # (law-absence-needs-a-positive-control).
-    case "${SP_CTX_NOW:-?}" in
-        '-') printf ' %sCTX%s    %sno session at the keyboard%s\n' "$C_DIM" "$C_RST" "$C_DIM" "$C_RST"
-             return ;;
-        ''|'?'|*[!0-9]*) unread_row CTX "cannot read the live session"; return ;;
-    esac
-    local ctx_col="$C_OK"
-    case "${SP_CTX_NEXT:-}" in
-        high)             ctx_col="$C_WARN" ;;
-        limit|over|'?')   ctx_col="$C_BAD$C_B" ;;
-    esac
-    local rest=""
-    [ "${SP_CTX_GROWTH:-0}" -gt 0 ] 2>/dev/null && rest=" · +$(tok "$SP_CTX_GROWTH")/turn"
-    case "${SP_CTX_NEXT:-}" in
-        warn|high|limit)
-            rest="$rest · $(tok "${SP_CTX_HEADROOM:-?}") to ${SP_CTX_NEXT}"
-            [ "${SP_CTX_TURNS_LEFT:--}" = "-" ] || rest="$rest (~${SP_CTX_TURNS_LEFT}t)" ;;
-        over) rest="$rest · past every threshold" ;;
-    esac
-    fit "$rest" $(( COLS - 18 ))
-    printf ' %sCTX%s    %s%s%s %s/%st%s%s\n' \
-        "$C_DIM" "$C_RST" "$ctx_col" "$(tok "${SP_CTX_NOW:-?}")" "$C_RST" \
-        "$C_DIM" "${SP_CTX_TURNS:-?}" "$FIT" "$C_RST"
-
-    # The archivist is what makes a full context recoverable rather than merely lost, so its
-    # state belongs beside the number that says the context is full — and so does the age of
-    # the transcript this was read from. The collector has no status-line hook and takes the
-    # newest transcript on disk; with nobody at the keyboard that is a session which ended
-    # hours ago, and presenting a dead session's context as live is the confident wrong number
-    # this pane exists to avoid. The row is emitted only when one of them has something to
-    # say, because a row that always reads the same becomes wallpaper.
-    local note=""
-    case "${SP_CTX_ARCHIVIST:-}" in
-        none)               [ "${SP_CTX_NEXT:-}" = warn ] || note="${C_DIM}· not archived${C_RST}" ;;
-        # HOW MANY ITEMS, not merely that it finished. "Safe to clear" alone cannot distinguish
-        # a session with nothing left to save from one whose fourteen loose ends are now beads,
-        # and those are the two readings the operator is actually deciding between.
-        safe)               f=""
-                            case "${SP_CTX_ARCHIVIST_FILED:-}" in
-                                ''|'-'|'?'|*[!0-9]*) ;;
-                                *) f=" ${C_DIM}(${SP_CTX_ARCHIVIST_FILED} filed)${C_RST}" ;;
-                            esac
-                            if [ "${SP_CTX_ARCHIVIST_BEHIND:-0}" -le 2 ] 2>/dev/null
-                            then note="${C_OK}✓ safe to clear${C_RST}$f"
-                            else note="${C_WARN}✓ safe as of ${SP_CTX_ARCHIVIST_BEHIND}t ago${C_RST}$f"; fi ;;
-        sweeping|archiving) note="${C_ACC}⟳ ${SP_CTX_ARCHIVIST}${C_RST}" ;;
-        failed)             note="${C_BAD}! archive failed${C_RST}" ;;
-        # DEFERRED, NOT BROKEN — the sweep retries once the window reopens, so this is amber
-        # and names the cause. Red here would be a false alarm the operator cannot act on.
-        capacity)           note="${C_WARN}⏸ archive deferred (capacity)${C_RST}" ;;
-        ''|'-')             ;;
-        *)                  note="${C_BAD}${C_B}archivist ?${C_RST}" ;;
-    esac
-    case "${SP_CTX_AGE:-}" in
-        ''|'-'|'?') ;;
-        *) [ "${SP_CTX_AGE}" -ge 300 ] 2>/dev/null \
-               && note="${note:+$note  }${C_DIM}idle $(( SP_CTX_AGE / 60 ))m${C_RST}" ;;
-    esac
-    [ -n "$note" ] && printf '        %s\n' "$note"
-
     # RATE LIMIT WINDOWS. The two windows that end a working day when full, now visible before
     # that happens. SP_RATELIM_5H_PCT / _7D_PCT are 0–100 integers from the newest
     # rate_limit_event across live aeon traces. SP_RATELIM_*_MIN is minutes until reset.
@@ -1505,108 +1432,56 @@ standing_lines() {
     printf '        %scost%s %s solo · %s with another gate overlapping %s(median)%s\n' \
         "$C_DIM" "$C_RST" "$solo" "$conc" "$C_DIM" "$C_RST"
 
-    # HEALTH — the harness watching itself.
-    #
-    # THREE INDEPENDENT SIGNALS. Each is rendered only when it has something actionable to say:
-    #
-    # REPEATING: an ACT text that appeared in consecutive passes ending at the most recent one
-    # within SPIRA_SELF_WINDOW (default 60 min). A 24h burst that stopped before the window
-    # produces nothing here — "repeating now" means the last pass also had the act. Nothing
-    # repeating → no SELF row (law-alerts-must-be-actionable; the same rule that moved the
-    # #ryan list: a row that always reads the same becomes wallpaper).
-    #
-    # BIRTH / STALL: regression tripwires for two fixed bugs. 0 is their correct value and a
-    # row that always reads 0 is wallpaper. They appear only when non-zero within the window,
-    # in the BAD colour, with the count and the last occurrence time.
-    #
-    # JUDGE: passes since the judgement tier fired — always shown, because "never fired" and
-    # "fired 40 passes ago" look identical from outside and mean opposite things.
-    local judge="${SP_SINCE_JUDGEMENT:-?}" judge_str
-    case "$judge" in
-        '?')      judge_str="${C_BAD}${C_B}?${C_RST}" ;;
-        'n/a')    judge_str="${C_DIM}not needed${C_RST}" ;;
-        'NEVER'*) judge_str="${C_BAD}${C_B}${judge}${C_RST}" ;;
-        *)        judge_str="${C_DIM}${judge} passes ago${C_RST}" ;;
-    esac
-
-    # REPEATING rows: one per distinct active repeating pattern.
-    local srep="${SP_SELF_REPEATING_N:-0}" srep_i=0
-    while [ "$srep_i" -lt "${srep:-0}" ] 2>/dev/null; do
-        eval "local srtxt=\${SP_SELF_REPEATING${srep_i}:-}"
-        if [ -n "$srtxt" ]; then
-            fit "$srtxt" $(( COLS - 20 ))
-            if [ "$srep_i" -eq 0 ]; then
-                printf ' %sSELF%s   %s%sREPEATING%s  %s%s%s\n' \
-                    "$C_DIM" "$C_RST" "$C_BAD" "$C_B" "$C_RST" "$C_DIM" "$FIT" "$C_RST"
-            else
-                printf '        %s%sREPEATING%s  %s%s%s\n' \
-                    "$C_BAD" "$C_B" "$C_RST" "$C_DIM" "$FIT" "$C_RST"
-            fi
-        fi
-        srep_i=$(( srep_i + 1 ))
-    done
-
-    # BIRTH alert: aeons that died at birth within the short window.
-    local sb="${SP_SELF_STILLBORN_W:-0}"
-    if [ "$sb" != "?" ] && [ "$sb" -gt 0 ] 2>/dev/null; then
-        printf ' %sBIRTH%s  %s%s%s%s died at birth%s %s· last %s%s\n' \
-            "$C_BAD" "$C_RST" \
-            "$C_BAD" "$C_B" "$sb" "$C_RST" \
-            "$C_DIM" "$C_RST" "${SP_SELF_STILLBORN_LAST:-?}" "$C_RST"
-    fi
-
-    # STALL alert: stalled passes (open work, nothing ready, nothing running) in the window.
-    local sv="${SP_SELF_STARVED_W:-0}"
-    if [ "$sv" != "?" ] && [ "$sv" -gt 0 ] 2>/dev/null; then
-        printf ' %sSTALL%s  %s%s%s%s stalled passes%s %s· last %s%s\n' \
-            "$C_BAD" "$C_RST" \
-            "$C_BAD" "$C_B" "$sv" "$C_RST" \
-            "$C_DIM" "$C_RST" "${SP_SELF_STARVED_LAST:-?}" "$C_RST"
-    fi
-
-    # THRASH alert: aeons requeued because their deliverable did not move while turns
-    # advanced. "?" means the probe broke (law-absence-needs-a-positive-control); show it
-    # so the missing row cannot be read as "no thrashes happened".
-    local _thrash="${SP_AEON_THRASH:-?}"
-    if [ "$_thrash" = "?" ]; then
-        printf ' %sTHRSH%s  %s?%s cannot read thrash count\n' \
-            "$C_BAD" "$C_RST" "$C_BAD$C_B" "$C_RST"
-    elif [ "$_thrash" -gt 0 ] 2>/dev/null; then
-        printf ' %sTHRSH%s  %s%s%s thrash-requeued%s %s(deliverable stalled while turning)%s\n' \
-            "$C_WARN" "$C_RST" \
-            "$C_WARN$C_B" "$_thrash" "$C_RST" \
-            "$C_DIM" "$C_DIM" "$C_RST"
-    fi
-
-    # JUDGE: always shown. Distinguishes "never fired" from "fired 40 passes ago".
-    printf ' %sSELF%s   %sjudgement%s %s\n' "$C_DIM" "$C_RST" "$C_DIM" "$C_RST" "$judge_str"
     printf ' %sBOX%s    %sdisk%s / %s  %sworkspaces%s %s  %scpu%s %s%% idle  %sload%s %s\n' \
         "$C_DIM" "$C_RST" \
         "$C_DIM" "$C_RST" "$(num "${SP_DISK_ROOT_PCT:-?}" 85 '%')" \
         "$C_DIM" "$C_RST" "$(num "${SP_DISK_WS_PCT:-?}" 85 '%')" \
         "$C_DIM" "$C_RST" "${SP_CPU_IDLE:-?}" \
         "$C_DIM" "$C_RST" "${SP_LOAD1:-?}"
-    # THE ACCOUNT OUTRANKS THE BOX on this line. The governor withholds over CPU, memory and
-    # disk; a capacity pause is the API refusing to answer at all, and while one is in force
-    # the governor's verdict is not the reason nothing is moving. Reported on the same row
-    # rather than a line of its own because the GOV row already answers "why is the harness
-    # withholding", and this is now the commonest answer.
-    if [ "${SP_CAPACITY_PAUSED:-0}" = 1 ]; then
-        printf ' %sGOV%s    %s%sACCOUNT OUT OF CAPACITY%s until %s%s%s %s(%sm)%s  %ssummoning paused%s\n' \
-            "$C_DIM" "$C_RST" "$C_BAD" "$C_B" "$C_RST" \
-            "$C_B" "${SP_CAPACITY_AT:-?}" "$C_RST" \
-            "$C_DIM" "$(( ${SP_CAPACITY_LEFT:-0} / 60 ))" "$C_RST" \
-            "$C_DIM" "$C_RST"
+
+    # MAIL — concierge mailbox: unread count and per-message state.
+    _mail_dur() {   # <seconds> <varname> — human age: 90s → 1m, 3661s → 1h, 90000s → 1d
+        local _s="$1" _v="$2"
+        case "$_s" in ''|'?'|'-'|*[!0-9]*) printf -v "$_v" '%s' "${_s:-?}"; return ;; esac
+        if   [ "$_s" -lt 120 ];   then printf -v "$_v" '%ds' "$_s"
+        elif [ "$_s" -lt 7200 ];  then printf -v "$_v" '%dm' $(( _s / 60 ))
+        elif [ "$_s" -lt 86400 ]; then printf -v "$_v" '%dh' $(( _s / 3600 ))
+        else                           printf -v "$_v" '%dd' $(( _s / 86400 )); fi
+    }
+    local m_unread="${SP_MAIL_UNREAD:-?}" m_oldest="${SP_MAIL_OLDEST_AGE:--}"
+    if [ "$m_unread" = "?" ]; then
+        printf ' %sMAIL%s   %s? cannot read mailbox%s\n' "$C_DIM" "$C_RST" "$C_BAD$C_B" "$C_RST"
     else
-        # HEADROOM, not the total: "3 affordable" beside three running said nothing. A
-        # snapshot from before the governor reported headroom falls back to its budget.
-        # The withholding reason already carries the average; only the affordable line adds it.
-        printf ' %sGOV%s    %s%s mode%s  %s\n' \
-            "$C_DIM" "$C_RST" "$C_B" "${SP_GOVERNOR_MODE:-?}" "$C_RST" \
-            "$( [ "${SP_HEADROOM:-${SP_BUDGET:-0}}" = 0 ] \
-                 && printf '%swould withhold — %s%s' "$C_WARN" "${SP_BUDGET_REASON:-no headroom}" "$C_RST" \
-                 || printf '%s%s more aeon(s) affordable%s %s(idle avg %s%%)%s' "$C_OK" "${SP_HEADROOM:-${SP_BUDGET:-?}}" "$C_RST" \
-                           "$C_DIM" "${SP_CPU_IDLE_AVG:-?}" "$C_RST")"
+        local m_age_sfx="" m_dur_tmp
+        if [ "$m_oldest" != "-" ] && [ "${m_unread:-0}" != 0 ] 2>/dev/null; then
+            _mail_dur "$m_oldest" m_dur_tmp
+            m_age_sfx="  ${C_DIM}oldest ${m_dur_tmp}${C_RST}"
+        fi
+        local m_col; [ "${m_unread:-0}" = 0 ] && m_col="$C_DIM" || m_col="${C_WARN}${C_B}"
+        printf ' %sMAIL%s   %s%s unread%s%s\n' \
+            "$C_DIM" "$C_RST" "$m_col" "$m_unread" "$C_RST" "$m_age_sfx"
+        local mi=0 mn="${SP_MAIL_N:-0}"
+        while [ "$mi" -lt "${mn:-0}" ] 2>/dev/null && [ "$mi" -lt 5 ]; do
+            eval "local mrow=\${SP_MAIL${mi}:-}"
+            if [ -n "$mrow" ]; then
+                local m_age_raw m_state m_subj m_dur
+                IFS=$'\t' read -r m_age_raw m_state m_subj <<< "$mrow"
+                _mail_dur "${m_age_raw:-0}" m_dur
+                local st_col
+                case "$m_state" in
+                    NEW)  st_col="${C_WARN}${C_B}" ;;
+                    READ) st_col="$C_ACC"          ;;
+                    DONE) st_col="$C_DIM"          ;;
+                    *)    st_col="$C_BAD"          ;;
+                esac
+                fit "${m_subj:-}" $(( COLS - 22 ))
+                printf '        %s%4s%s  %s%-4s%s  %s%s%s\n' \
+                    "$C_DIM" "$m_dur" "$C_RST" \
+                    "$st_col" "$m_state" "$C_RST" \
+                    "$C_DIM" "$FIT" "$C_RST"
+            fi
+            mi=$(( mi + 1 ))
+        done
     fi
 
     # OPS — the SOP shelf. Which runbooks have never been exercised (dead weight in context),
