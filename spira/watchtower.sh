@@ -39,6 +39,104 @@
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 
+# --queue-checks: merge-queue stall detectors, called by sentinel.sh on every pass
+# (landing cadence, ~2 min). Reads landing.log since the previous check; files one
+# incident per stall class via incident.sh. Fast: file reads only, no network.
+#
+# DETECTORS PORTED FROM THE CONCIERGE'S QUEUE SUPERVISOR (sp-5z7cw). Two classes
+# are omitted: SELF-RERUN and RETRIES-EXHAUSTED (root cause sp-m3med landed); and
+# CI-STALLED (requires live GitHub API — does not fit the deterministic/cheap
+# contract this program holds).
+if [ "${1:-}" = "--queue-checks" ]; then
+    [ -f "$SPIRA_RUN/world.halted" ] && {
+        log "watchtower: queue-checks skipped — world is halted"
+        exit 0
+    }
+
+    _qc_log="${SPIRA_QUEUE_LOG:-$SPIRA_RUN/landing.log}"
+    _qc_marker="${SPIRA_QUEUE_CHECK_MARKER:-$SPIRA_RUN/queue-check.swept}"
+    _qc_inc="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
+    _qc_stall_secs="${SPIRA_LOOP_STALL_SECS:-3000}"
+
+    [ -r "$_qc_inc" ] || {
+        log "watchtower: queue-checks skipped — $_qc_inc not readable"
+        exit 0
+    }
+
+    _qc_prev="$(cat "$_qc_marker" 2>/dev/null || true)"
+    _qc_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    _qc_new=""
+    if [ -r "$_qc_log" ]; then
+        if [ -n "$_qc_prev" ]; then
+            _qc_new="$(awk -v s="$_qc_prev" '$1 > s' "$_qc_log" 2>/dev/null || true)"
+        else
+            _qc_new="$(cat "$_qc_log" 2>/dev/null || true)"
+        fi
+    fi
+
+    _qc_file() {
+        local cause="$1" ref="$2" subj="$3" body="$4"
+        printf '%s\n' "$body" | \
+        SPIRA_DB="$SPIRA_DB" \
+        SPIRA_INCIDENT_TYPE=task \
+        SPIRA_INCIDENT_PRIORITY=1 \
+        SPIRA_INCIDENT_ACTOR=watchtower \
+        SPIRA_SIN_EXEMPT=1 \
+        SPIRA_INCIDENT_REPO=spira \
+        SPIRA_INCIDENT_REF="incident:queue-${ref}" \
+        SPIRA_INCIDENT_CAUSE="$cause" \
+        bash "$_qc_inc" file "$subj" - >/dev/null || true
+        log "watchtower: queue-check filed ${cause}"
+    }
+
+    # DEADLOCK — verdict left the batch PR open after a red with no attributable suite.
+    # The queue cannot advance until the batch is closed or requeued by hand. sp-qzw8b.
+    if printf '%s' "$_qc_new" | grep -q 'no suites identified; leaving batch open'; then
+        _ctx="$(printf '%s' "$_qc_new" | grep 'no suites identified; leaving batch open' | tail -3)"
+        _qc_file "deadlock" "deadlock-batch-open" \
+            "QUEUE: batch open — no suites identified (DEADLOCK)" \
+            "$(printf 'verdict left the batch PR open after a red with no attributable suite.\nThe queue cannot advance until the batch is closed or requeued by hand.\n\nRecent log lines:\n%s\n' "$_ctx")"
+    fi
+
+    # ATTRIBUTION-FAILED — ejected 0 survivors; whole batch requeued with the
+    # failing member still in it. Will keep failing until isolated by hand. sp-owjmv.
+    if printf '%s' "$_qc_new" | grep -qE 'ejected 0, requeued [1-9]'; then
+        _ctx="$(printf '%s' "$_qc_new" | grep -E 'ejected 0, requeued [1-9]' | tail -3)"
+        _qc_file "attribution-failed" "attribution-failed-requeue" \
+            "QUEUE: attribution ejected 0, requeued whole batch" \
+            "$(printf 'Attribution found no branch to isolate the offender.\nThe entire batch was requeued with the failing member still in it; this loops.\n\nRecent log lines:\n%s\n' "$_ctx")"
+    fi
+
+    # SORT-FAILED — queue_sort_rows fell back to unranked; priority ordering suspended.
+    if printf '%s' "$_qc_new" | grep -q 'queue_sort_rows: ranking failed'; then
+        _ctx="$(printf '%s' "$_qc_new" | grep 'queue_sort_rows: ranking failed' | tail -3)"
+        _qc_file "sort-failed" "sort-failed-ranking" \
+            "QUEUE: queue_sort_rows ranking failed" \
+            "$(printf 'The queue sorter failed and fell back to unranked order.\nPriority ordering is suspended until the sorter recovers.\n\nRecent log lines:\n%s\n' "$_ctx")"
+    fi
+
+    # LOOP-STALLED — no landing pass completed within SPIRA_LOOP_STALL_SECS (default 3000s,
+    # above the 2700s local-gate timeout so an ordinary batch gate does not trigger it).
+    # Reads the full log (not filtered by marker) to find the most recent pass ever.
+    _qc_last_ts=""
+    [ -r "$_qc_log" ] && \
+        _qc_last_ts="$(grep 'landing: pass complete' "$_qc_log" 2>/dev/null | tail -1 | cut -c1-20)"
+    if [ -n "$_qc_last_ts" ]; then
+        _qc_age=$(( $(date -u +%s) - $(date -u -d "$_qc_last_ts" +%s 2>/dev/null || echo 0) ))
+        if [ "$_qc_age" -gt "$_qc_stall_secs" ] 2>/dev/null; then
+            _qc_file "loop-stalled" "loop-stalled" \
+                "QUEUE: landing loop stalled — no pass for ${_qc_age}s" \
+                "$(printf 'No landing: pass complete in the last %ds (threshold: %ds).\nLast completed pass: %s\n\nCheck: systemctl --user status spira-landing\nSee: %s\n' \
+                    "$_qc_age" "$_qc_stall_secs" "$_qc_last_ts" "$_qc_log")"
+        fi
+    fi
+
+    printf '%s\n' "$_qc_now" > "$_qc_marker" 2>/dev/null || true
+    log "watchtower: queue-checks complete"
+    exit 0
+fi
+
 SNAP_AGE_MAX="${SPIRA_WATCH_SNAP_MAX:-600}"
 now="$(date +%s)"
 

@@ -1005,6 +1005,12 @@ land_drain() {
 
 land_drain
 
+# QUEUE STALL CHECKS — run on every sentinel pass (the landing cadence). Wired through
+# watchtower.sh --queue-checks so the detectors live beside the rest of the pipeline
+# health checks. Fast: reads landing.log and existing files only, no network.
+[ -r "${SPIRA_HOME}/watchtower.sh" ] && \
+    bash "${SPIRA_HOME}/watchtower.sh" --queue-checks 2>/dev/null || true
+
 # THE POSITIVE CONTROL, read before anything is launched so it describes a completed run
 # rather than the one this pass is about to start.
 land_age=-1
