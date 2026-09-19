@@ -1999,20 +1999,29 @@ if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ -z "$SOP_SILENT" ]; the
         log "$FAYTH: $BEAD_ID closed behind $BASE — rebased by the harness after close (the session did not)"
         bdq note "$BEAD_ID" "Rebased onto $BASE by aeon.sh after the session closed the bead without doing so. The replay was clean; the landing gate judges the rebased tree." >/dev/null 2>&1 || true
     else
-        _other_beads="$(other_beads_on_conflicts "$REPO" "$BRANCH" "$BASE" "${REBASE_CONFLICTS:-}")"
-        _reopen_note="Reopened by aeon.sh: closed behind $BASE and $BRANCH does not rebase onto it — conflicts in ${REBASE_CONFLICTS:-unknown}. The brief asked for this rebase before closing."
-        if [ -n "$_other_beads" ]; then
-            _reopen_note="$_reopen_note Those files were changed on $BASE by $_other_beads — check whether this work is already landed before resolving."
+        _cited_sha="$(bead_cited_commit_on_base "$BEAD_ID" "$REPO" "$BASE" 2>/dev/null)" || _cited_sha=""
+        if [ -n "$_cited_sha" ]; then
+            log "$FAYTH: $BEAD_ID closed behind $BASE but notes cite $_cited_sha on $BASE — retiring as landed"
+            land_mark "$BEAD_ID" LANDED "$_cited_sha" "cited-on-main"
+            spira_destroy_branch "$BEAD_ID" "$BRANCH" "$REPO" \
+                "fix on $BASE cited in notes as $_cited_sha" "cited-landed" \
+                || log "$FAYTH: $BEAD_ID branch retire failed"
         else
-            _reopen_note="$_reopen_note A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it."
+            _other_beads="$(other_beads_on_conflicts "$REPO" "$BRANCH" "$BASE" "${REBASE_CONFLICTS:-}")"
+            _reopen_note="Reopened by aeon.sh: closed behind $BASE and $BRANCH does not rebase onto it — conflicts in ${REBASE_CONFLICTS:-unknown}. The brief asked for this rebase before closing."
+            if [ -n "$_other_beads" ]; then
+                _reopen_note="$_reopen_note Those files were changed on $BASE by $_other_beads — check whether this work is already landed before resolving."
+            else
+                _reopen_note="$_reopen_note A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it."
+            fi
+            bead_reopen "$BEAD_ID" rebase-conflict "$_reopen_note"
+            # THE TEARDOWN MUST NOT READ THIS BACK AS A FAILURE OF THE WORK. The work is committed
+            # and the session closed on it; what is missing is a rebase over commits that landed
+            # while it ran, which is a fact about the queue. Charging it made the busiest branches
+            # the likeliest to poison.
+            REQUEUE_CAUSE="rebase-conflict"
+            REQUEUE_WHY="$BRANCH would not rebase onto $BASE (conflicts in ${REBASE_CONFLICTS:-unknown}); the next aeon is handed the rebase."
+            log "$FAYTH: $BEAD_ID REOPENED — closed behind $BASE, conflicts in ${REBASE_CONFLICTS:-unknown}"
         fi
-        bead_reopen "$BEAD_ID" rebase-conflict "$_reopen_note"
-        # THE TEARDOWN MUST NOT READ THIS BACK AS A FAILURE OF THE WORK. The work is committed
-        # and the session closed on it; what is missing is a rebase over commits that landed
-        # while it ran, which is a fact about the queue. Charging it made the busiest branches
-        # the likeliest to poison.
-        REQUEUE_CAUSE="rebase-conflict"
-        REQUEUE_WHY="$BRANCH would not rebase onto $BASE (conflicts in ${REBASE_CONFLICTS:-unknown}); the next aeon is handed the rebase."
-        log "$FAYTH: $BEAD_ID REOPENED — closed behind $BASE, conflicts in ${REBASE_CONFLICTS:-unknown}"
     fi
 fi
