@@ -64,10 +64,19 @@ is "dedup: ejected suite in diff appears only once" \
     "test-batch.sh" "$(touched 'test-batch.sh')"
 
 # ---------------------------------------------------------------------------
-# ABSENT SUITE: an ejected suite that no longer exists in the tree is skipped.
+# ABSENT SUITE: an ejected suite that no longer exists in the tree is skipped
+# (use a fresh branch that touches no test file).
 # ---------------------------------------------------------------------------
+git -C "$R" checkout -q -b spira/sp-y main 2>/dev/null
+printf 'z\n' >> "$R/spira/batch.sh"
+git -C "$R" add -A; git -C "$R" commit -q -m "fix batch y"
+absent() {
+    SPIRA_GATE_EJECTED_SUITES="${1:-}" SPIRA_GATE_REPO="$R" \
+        bash "$HERE/gate-touched.sh" main spira/sp-y 2>/dev/null \
+        | sort | tr '\n' ' ' | sed 's/ $//'
+}
 is "absent ejected suite is silently skipped" \
-    "" "$(touched 'test-gone.sh')"
+    "" "$(absent 'test-gone.sh')"
 
 # ---------------------------------------------------------------------------
 # LANDSTATE FORMAT: _attr_eject stores the suites CSV in the EJECTED record
