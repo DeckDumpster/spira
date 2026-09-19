@@ -31,22 +31,57 @@ echo "test-watchtower-throttle.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 NOW="$(date +%s)"
 
-# Write a CERTIFIED landstate file for the given id.
-certified() { printf 'CERTIFIED fakeshafakeshafakeshafakeshafakeshafake %s\n' "$NOW" \
-                  > "$TMP/run/landstate/$1"; }
+# Git repo used by SPIRA_TC_REPO so the throttle-check's branch/ancestry filters run
+# against a controlled fixture rather than the real harness checkout.
+GIT_REPO="$TMP/git"
+git init -q -b main "$GIT_REPO" 2>/dev/null || { git init -q "$GIT_REPO"; git -C "$GIT_REPO" checkout -q -b main 2>/dev/null; }
+git -C "$GIT_REPO" config user.email t@t
+git -C "$GIT_REPO" config user.name t
+git -C "$GIT_REPO" commit -q --allow-empty -m init
+GIT_BASE="$(git -C "$GIT_REPO" rev-parse HEAD)"
+
+# Write a CERTIFIED landstate file AND create a branch with a commit NOT on main.
+# Branch exists + tip not on main → throttle counts this as live queue depth.
+certified() {
+    local id="$1"
+    git -C "$GIT_REPO" checkout -q --detach "$GIT_BASE" 2>/dev/null
+    git -C "$GIT_REPO" commit -q --allow-empty -m "$id"
+    local sha; sha="$(git -C "$GIT_REPO" rev-parse HEAD)"
+    git -C "$GIT_REPO" branch -f "spira/$id" HEAD 2>/dev/null
+    git -C "$GIT_REPO" checkout -q main 2>/dev/null
+    printf 'CERTIFIED %s %s\n' "$sha" "$NOW" > "$TMP/run/landstate/$id"
+}
+
+# CERTIFIED landstate with tip ON main — ancestry check filters it (landed, stale record).
+certified_landed() {
+    local id="$1"
+    git -C "$GIT_REPO" branch -f "spira/$id" "$GIT_BASE" 2>/dev/null
+    printf 'CERTIFIED %s %s\n' "$GIT_BASE" "$NOW" > "$TMP/run/landstate/$id"
+}
+
+# CERTIFIED landstate with NO branch — branch-existence check filters it (dropped/superseded).
+certified_gone() {
+    local id="$1"
+    printf 'CERTIFIED fakeshafakeshafakeshafakeshafakeshafake %s\n' "$NOW" \
+        > "$TMP/run/landstate/$id"
+}
 
 # Write a LANDED landstate file with a given age in seconds.
-landed() {    printf 'LANDED fakeshafakeshafakeshafakeshafakeshafake %s\n' \
-                  "$(( NOW - ${2:-60} ))" > "$TMP/run/landstate/$1"; }
+landed() { printf 'LANDED fakeshafakeshafakeshafakeshafakeshafake %s\n' \
+               "$(( NOW - ${2:-60} ))" > "$TMP/run/landstate/$1"; }
 
 fresh() {
     rm -rf "$TMP/run"
     mkdir -p "$TMP/run/landstate"
     rm -f "$TMP/inc-subjects" "$TMP/inc-refs" "$TMP/inc-causes"
+    while IFS= read -r _br; do
+        git -C "$GIT_REPO" branch -D "$_br" 2>/dev/null || true
+    done < <(git -C "$GIT_REPO" for-each-ref --format='%(refname:short)' 'refs/heads/spira/*' 2>/dev/null)
 }
 
 # Run --throttle-check in an isolated environment.
-# Incident subjects written to $TMP/inc-subjects; causes to $TMP/inc-causes.
+# SPIRA_TC_REPO and SPIRA_TC_LAND_REF route the git branch/ancestry filters to the
+# test fixture repo. Override either with VAR="" to disable git filtering (old behavior).
 wt_tc() {   # wt_tc [VAR=val ...]
     local mock="$TMP/mock-inc.sh"
     cat > "$mock" <<'MOCK'
@@ -62,6 +97,8 @@ MOCK
         SPIRA_RUN="$TMP/run" \
         SPIRA_THROTTLE_STAMP="$TMP/run/queue-throttled" \
         SPIRA_INCIDENT_SH="$mock" \
+        SPIRA_TC_REPO="$GIT_REPO" \
+        SPIRA_TC_LAND_REF="refs/heads/main" \
         INC_SUBJECTS="$TMP/inc-subjects" \
         INC_CAUSES="$TMP/inc-causes" \
         INC_REFS="$TMP/inc-refs" \
@@ -220,6 +257,45 @@ wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=16 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
 refs="$(cat "$TMP/inc-refs" 2>/dev/null || true)"
 engage_refs="$(printf '%s\n' "$refs" | grep 'throttle-engaged' | sort -u | grep -c . 2>/dev/null || echo 0)"
 is   "engage ref is stable: single unique ref across two calls" "1" "$engage_refs"
+
+# ======================================================================================
+echo
+echo "stale CERTIFIED records: only live branches count toward depth:"
+# ======================================================================================
+# Fixture: 7 landed (branch tip on main), 1 rebased-landed (no branch, tip off main),
+# 2 superseded (no branch), 1 genuinely live (branch exists, tip off main).
+# Correct live depth: 1. Without the git branch/ancestry filter it would be 11.
+#
+# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail): disable the git
+# filters (SPIRA_TC_REPO="") to reproduce old behavior — all 11 count as depth.
+# The test below must FAIL against unfixed watchtower.sh code.
+fresh
+for _id in tc-land-1 tc-land-2 tc-land-3 tc-land-4 tc-land-5 tc-land-6 tc-land-7; do
+    certified_landed "$_id"
+done
+certified_gone "tc-rebase-1"      # landed after rebase — tip not on main, branch gone
+certified_gone "tc-super-1"       # superseded — no branch
+certified_gone "tc-super-2"       # superseded — no branch
+certified "tc-live-1"             # genuinely waiting — branch exists, tip not on main
+landed "tc-prev-land" 30          # drain active (30s ago)
+wt_tc SPIRA_TC_REPO="" SPIRA_TC_LAND_REF="" \
+      SPIRA_QUEUE_THROTTLE_DEPTH_AT=2 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
+is   "stale-filter positive control: without filter, 11 CERTIFIED → depth>=2 → stamp" \
+     "yes" "$(stamp_exists)"
+
+# With git filters: stale records excluded → depth=1 < threshold=2 → no stamp.
+rm -f "$TMP/run/queue-throttled"
+wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=2 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
+is   "11-record fixture: only live branch counts → depth=1 < threshold=2 → no stamp" \
+     "no" "$(stamp_exists)"
+
+# Verify the live branch DOES engage when above threshold (filter fires, not gate).
+fresh
+certified "tc-live-only"
+landed "tc-prev-land" 30
+wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=1 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
+is   "1 live cert at threshold=1 → stamp written (positive control for filter)" \
+     "yes" "$(stamp_exists)"
 
 # ======================================================================================
 echo

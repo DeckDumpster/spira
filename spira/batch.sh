@@ -119,6 +119,42 @@ main() {
             2>/dev/null || true
     fi
 
+    # Mark CERTIFIED records whose branches are gone so they drop from the queue view.
+    # This runs before the open-batch guard so stale records are converged even while a
+    # batch PR is pending — without this, a long CI run leaves them accumulating
+    # indefinitely (the guard returned early before this block ever ran).
+    if [ -d "$LANDSTATE" ]; then
+        local _lf _lid _lst _ltip _anyrn _rn _rp
+        for _lf in "$LANDSTATE"/*; do
+            [ -f "$_lf" ] || continue
+            _lid="$(basename "$_lf")"
+            # Skip entries that are not bead IDs (no slashes, no leading dot).
+            case "$_lid" in .*|*/*) continue ;; esac
+            { read -r _lst _ltip _ < "$_lf"; } 2>/dev/null || continue
+            [ "$_lst" = "CERTIFIED" ] || continue
+            _anyrn=0
+            for _rn in $(spira_repos); do
+                _rp="$(repo_root "$_rn" 2>/dev/null)" || continue
+                git -C "$_rp" show-ref --verify --quiet "refs/heads/spira/$_lid" 2>/dev/null \
+                    && { _anyrn=1; break; }
+            done
+            [ "$_anyrn" = 1 ] && continue
+            # Tip already in base: the branch landed (via external merge before verdict.sh
+            # ran). Mark LANDED rather than LOST so the queue view and queue-wait logic
+            # both see it as done — LOST drops it from the view but does not unblock
+            # queue-waiters that tested for CERTIFIED reaching LANDED.
+            if git -C "$repo" merge-base --is-ancestor "${_ltip:-none}" "$base_sha" \
+                   2>/dev/null; then
+                land_mark "$_lid" LANDED "${_ltip:-none}" already-in-base-orphan
+                printf 'batch %s: %s tip already in %s (orphan) — LANDED\n' \
+                    "$name" "$_lid" "$base"
+            else
+                land_mark "$_lid" LOST "${_ltip:-none}" branch-gone
+                printf 'batch %s: %s has no branch — LOST (branch-gone)\n' "$name" "$_lid"
+            fi
+        done
+    fi
+
     if _batch_is_open "$name"; then
         printf 'batch %s: open batch exists — skipping\n' "$name"
         return 0
@@ -152,39 +188,6 @@ main() {
             fi
         done <<< "$certs"
         certs="${_filt%$'\n'}"
-    fi
-
-    # Mark CERTIFIED records whose branches are gone so they drop from the queue view.
-    if [ -d "$LANDSTATE" ]; then
-        local _lf _lid _lst _ltip _anyrn _rn _rp
-        for _lf in "$LANDSTATE"/*; do
-            [ -f "$_lf" ] || continue
-            _lid="$(basename "$_lf")"
-            # Skip entries that are not bead IDs (no slashes, no leading dot).
-            case "$_lid" in .*|*/*) continue ;; esac
-            { read -r _lst _ltip _ < "$_lf"; } 2>/dev/null || continue
-            [ "$_lst" = "CERTIFIED" ] || continue
-            _anyrn=0
-            for _rn in $(spira_repos); do
-                _rp="$(repo_root "$_rn" 2>/dev/null)" || continue
-                git -C "$_rp" show-ref --verify --quiet "refs/heads/spira/$_lid" 2>/dev/null \
-                    && { _anyrn=1; break; }
-            done
-            [ "$_anyrn" = 1 ] && continue
-            # Tip already in base: the branch landed (via external merge before verdict.sh
-            # ran). Mark LANDED rather than LOST so the queue view and queue-wait logic
-            # both see it as done — LOST drops it from the view but does not unblock
-            # queue-waiters that tested for CERTIFIED reaching LANDED.
-            if git -C "$repo" merge-base --is-ancestor "${_ltip:-none}" "$base_sha" \
-                   2>/dev/null; then
-                land_mark "$_lid" LANDED "${_ltip:-none}" already-in-base-orphan
-                printf 'batch %s: %s tip already in %s (orphan) — LANDED\n' \
-                    "$name" "$_lid" "$base"
-            else
-                land_mark "$_lid" LOST "${_ltip:-none}" branch-gone
-                printf 'batch %s: %s has no branch — LOST (branch-gone)\n' "$name" "$_lid"
-            fi
-        done
     fi
 
     if [ -z "${certs:-}" ]; then
