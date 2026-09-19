@@ -39,10 +39,12 @@ is_gt() {
 }
 
 # Helper: run aeon_lease_minutes in a clean environment.
+# Optional third arg: a pinned unix timestamp passed as SPIRA_NOW to fix the clock.
 alm() {
-    local bead="$1" run_dir="$2"
+    local bead="$1" run_dir="$2" now_arg="${3:-}"
     SPIRA_RUN="$run_dir" env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$run_dir" \
+        ${now_arg:+SPIRA_NOW="$now_arg"} \
         bash -c '. "$1"/lib.sh; aeon_lease_minutes "$2"' _ "$HERE" "$bead" 2>/dev/null
 }
 
@@ -57,9 +59,11 @@ result="$(alm "$BEAD" "$RUN")"
 is "no lease file renders ?" "?" "$result"
 
 # Case 2: a future deadline → positive countdown
-future=$(( $(date +%s) + 600 ))
+# Pin now so deadline - now = 600 exactly, regardless of subshell timing.
+pinned_now=$(date +%s)
+future=$(( pinned_now + 600 ))
 printf '%s' "$future" > "$RUN/aeon/$BEAD.lease"
-result="$(alm "$BEAD" "$RUN")"
+result="$(alm "$BEAD" "$RUN" "$pinned_now")"
 is_gt "a future deadline renders positive minutes" "$result" 0
 is "a 600s future deadline renders ~10m" "$result" "10"
 
