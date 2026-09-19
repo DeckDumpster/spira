@@ -61,7 +61,7 @@ SPIRA_CI_LABEL SPIRA_CI_PARK_MAX SPIRA_WORLD_STOP_LABEL
 SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE SPIRA_VERDICT_TTL SPIRA_REBASE_ESCALATE_AT SPIRA_VERDICT_WINDOW SPIRA_REMEDY_WINDOW
 SPIRA_LOOM_ADDR SPIRA_LOOM_BUDGET_MS SPIRA_LOOM_CACHE_S SPIRA_LOOM_BIN
 SPIRA_SPIKE_LABEL SPIRA_SPIKE_DIR SPIRA_SPIKE_PATHS
-SPIRA_GROOMER_LABEL SPIRA_SCOPE_LABEL SPIRA_PLAN_LABEL SPIRA_INCIDENT_LABEL
+SPIRA_GROOMER_LABEL SPIRA_SCOPE_LABEL SPIRA_PLAN_LABEL SPIRA_INCIDENT_LABEL SPIRA_CZAR_LABEL
 SPIRA_MAECHEN_LABEL SPIRA_MAECHEN_LANDING_INTERVAL SPIRA_MAECHEN_MAX_GAP_SECONDS SPIRA_MAECHEN_MAX_BEADS SPIRA_MAECHEN_REMEDY_LABEL
 COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_MAIL COCKPIT_RIGHT_PCT COCKPIT_MOUSE COCKPIT_CWD COCKPIT_SESSIONS COCKPIT_HOST
 SPIRA_TOWN SPIRA_MIRROR SPIRA_EXPORTER SPIRA_DESIGN SPIRA_WIKI SPIRA_WIKI_HOOK SPIRA_DOLT_DATA
@@ -524,10 +524,11 @@ spira_conf_defaults() {
     # The ops and groomer lanes are declared by default because ops.fayth and groomer.fayth
     # ship using them. The qa lane is declared alongside them because qa.fayth ships using it.
     # The maechen lane is declared because maechen.fayth ships using it.
+    # The czar lane is declared because czar.fayth ships using it.
     # A lane fayth still functions if its lane name is absent from this list (the mechanism is
     # FAYTH_LANE set, not membership here), but the declaration makes it visible to operators
     # reading SPIRA_LANES for the list of scheduled partitions.
-    : "${SPIRA_LANES:=ops groomer qa maechen}"
+    : "${SPIRA_LANES:=ops groomer qa maechen czar}"
     # THE WHOLE-FLEET CEILING — how many aeons may exist at once, counting lane fayths.
     # SPIRA_MAX_AEONS is the task pool and a lane draws outside it, so the two of them
     # together are the box's real ceiling (pool + one per lane) and neither one alone is the
@@ -659,6 +660,13 @@ spira_conf_defaults() {
     # the ops persona. Filed by incident.sh from systemd OnFailure handlers. Same reason as
     # SPIRA_PLAN_LABEL: one configurable name, never a literal in reader code.
     : "${SPIRA_INCIDENT_LABEL:=incident}"
+    # THE CZAR PARTITION LABEL — the label on queue-state escalation beads. Watchtower
+    # attaches this label instead of SPIRA_INCIDENT_LABEL to the queue-check incidents it
+    # files, routing them to the czar rather than to ops. One definition keeps czar.fayth,
+    # watchtower, and any other reader in agreement on which label means "queue event for the
+    # czar" (law-schema-over-code). The labels are mutually exclusive by design: a bead that
+    # carries both would be claimable by both ops and czar, which is a race condition.
+    : "${SPIRA_CZAR_LABEL:=czar-trigger}"
     # The name the operator's OWN comments are recorded under, so the attention panel can tell
     # a reply of theirs from a reply of the agent's. Both write into the same thread, and a
     # panel that cannot separate them announces the agent's own comment back to it as an answer.

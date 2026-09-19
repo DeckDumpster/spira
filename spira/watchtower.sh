@@ -77,8 +77,12 @@ if [ "${1:-}" = "--queue-checks" ]; then
 
     _qc_file() {
         local cause="$1" ref="$2" subj="$3" body="$4"
+        # CZAR LABEL, NOT INCIDENT LABEL. Queue-state beads must carry only the czar
+        # partition label so the czar has exclusive ownership — a bead that carries both
+        # would match both ops and czar, producing a race on every queue event.
         printf '%s\n' "$body" | \
         SPIRA_DB="$SPIRA_DB" \
+        SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_CZAR_LABEL}" \
         SPIRA_INCIDENT_TYPE=task \
         SPIRA_INCIDENT_PRIORITY=1 \
         SPIRA_INCIDENT_ACTOR=watchtower \

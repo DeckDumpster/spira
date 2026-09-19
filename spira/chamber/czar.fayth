@@ -1,0 +1,89 @@
+# czar.fayth — the Czar: acts on queue-state escalations without prompting.
+#
+# A fayth is a persona DEFINITION; an aeon is one summoned instance of it. Four things:
+# a predicate carving its partition out of the graph, the memories it must read, the tools
+# it may use, and what wakes it.
+#
+# law-one-supervised-pass-before-you-arm: the operator must review one czar run before
+# unattended operation is trusted. Use escape.sh to summon the czar for its first bead
+# and watch the transcript before treating this lane as autonomous.
+
+FAYTH_NAME=czar
+FAYTH_DESC="Czar — the queue sovereign: claims queue-state escalations and acts on the merge queue without prompting"
+
+# THE PARTITION. The czar claims beads labelled with SPIRA_CZAR_LABEL — the queue-state
+# escalations watchtower files via _qc_file. It must not be dispatchable for plan beads
+# (that makes it a second builder that stops watching) or general incidents (that duplicates
+# ops). SPIRA_CZAR_LABEL, not the literal "czar-trigger": a literal cannot be changed at
+# runtime and cannot be validated at write time (law-schema-over-code).
+#
+# Watchtower's _qc_file sets SPIRA_INCIDENT_LABELS to carry SPIRA_CZAR_LABEL and NOT
+# SPIRA_INCIDENT_LABEL, so the two partitions are mutually exclusive. A fixture must prove
+# that ordinary plan beads are not dispatchable here and that czar-trigger beads are
+# (law-absence-needs-a-positive-control).
+FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_CZAR_LABEL"
+FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+
+# Statutes only. The czar executes no runbook from the SOP shelf.
+FAYTH_MEMORY_PREFIXES="law-"
+
+# THE STATUTE CORE — the laws whose violation by this persona is most expensive.
+# law-closed-is-not-landed: a batch PR merged is not a branch that landed.
+# law-never-disarm-a-check-to-proceed: skipping the gate is not the same as passing it.
+# law-absence-needs-a-positive-control: a check that finds nothing must prove it could.
+# law-local-gates-buy-latency-not-coverage: the local gate is not the authority on CI.
+# law-a-hand-fix-names-its-root-cause: every action names the cause it addresses.
+# law-repeating-conditions-escalate-once: a recurring fault is escalated, not re-worked.
+# law-one-supervised-pass-before-you-arm: the operator reviews one pass before the czar
+#   acts alone; failure to respect this is the condition that produced duplicate PRs 49/50.
+FAYTH_STATUTE_CORE="law-closed-is-not-landed,law-never-disarm-a-check-to-proceed,law-absence-needs-a-positive-control,law-local-gates-buy-latency-not-coverage,law-a-hand-fix-names-its-root-cause,law-repeating-conditions-escalate-once,law-one-supervised-pass-before-you-arm"
+
+# NO FAYTH_REPO. The czar operates on the queue, which belongs to the home repo. The
+# trigger bead carries no repo: label; aeon.sh falls back to spira_home_repo().
+
+# SONNET. The czar acts on a live queue: eject or keep, re-run or abandon, halt or proceed.
+# These are judgement calls on well-defined cases, not procedure. Sonnet handles the
+# ten acceptance cases reliably and is faster than Opus within an 8-minute wall — more
+# turns to collect state, form a verdict, and call the right tool.
+#
+# VERIFIED: claude --model claude-sonnet-4-6 -p ... answers on this box (2026-09-19).
+FAYTH_MODEL=claude-sonnet-4-6
+FAYTH_MAX_CONCURRENT=1
+
+# THE CZAR LANE — draws from its own capacity so a full builder pool cannot starve the
+# queue. A stuck queue costs the whole project; a czar that waits behind three builders
+# for a slot is a historian. Declared in SPIRA_LANES so it is visible to operators reading
+# that key for the list of scheduled partitions.
+FAYTH_LANE=czar
+
+# SUMMONING LATENCY BUDGET. A czar summoned late is a historian — the queue stalled while
+# it waited. Target: first action within 5 minutes of the triggering event. The
+# sentinel's 2-minute cadence and the czar's lane slot make this achievable. Each trigger
+# bead carries its filing timestamp; the czar notes at start how far behind it arrived.
+#
+# WHAT "MISSING THE BUDGET" LOOKS LIKE. A czar bead that goes unclaimed for more than
+# 5 minutes while a queue event is open is a symptom of lane starvation, a summoning
+# error, or a rate-limit pause. Note the gap on the bead; don't silently absorb it.
+
+# SESSION BUDGET. Eight minutes is the wall, enforced by systemd at FAYTH_TIMEOUT_SECONDS.
+# The czar must stop at 90 seconds remaining and write a handoff note: what it established,
+# what it was about to do, and what the correct next action is. Silence at the wall is the
+# defect this rule closes: four consecutive kills lost their state entirely.
+#
+# THE BOUND IS A FEATURE. The czar cannot finish every case inside 8 minutes, and it is
+# not supposed to — it advances the queue one step and exits. The watchtower's
+# queue-checks re-trigger if the problem persists; the czar returns for the next step.
+FAYTH_TIMEOUT_SECONDS=480
+FAYTH_LEASE_MINUTES=10
+FAYTH_HEARTBEAT_SECONDS=30
+FAYTH_LEASE_SECONDS=600
+FAYTH_STALL_BEATS=8
+
+# TOOLS. The czar reads the queue and invokes the queue toolkit. No Edit, no Write:
+# the "escalate first" row of the authority table (changing fayth count, throttle, or
+# production configs) is enforced here — those require file writes the czar cannot make.
+# The ref-transaction hook (sp-q27cp) enforces the "never rewrite shared history" row for
+# git; the aeon fence enforces "never touch production checkouts". What remains for the
+# tool list is what the czar IS permitted to do: read state, invoke queue commands, file
+# beads, and send escalation mail.
+FAYTH_TOOLS="Bash(*queue.sh*),Bash(*landing.sh halt*),Bash(*testenv-batch.sh*),Bash(*mail.sh*),Bash(*incident.sh*),Bash(bd *),Bash(git log*),Bash(git show*),Bash(git status*),Bash(git diff*),Bash(git fetch*),Bash(git for-each-ref*),Bash(git rev-parse*),Bash(git -C * log*),Bash(git -C * show*),Bash(git -C * status*),Bash(git -C * diff*),Bash(git -C * fetch*),Bash(git -C * for-each-ref*),Bash(git -C * rev-parse*),Bash(cat *),Bash(head *),Bash(tail *),Bash(ls*),Bash(grep *),Bash(awk *),Bash(find *),Bash(wc *),Bash(sort *),Bash(printf *),Bash(echo *),Bash(date*),Read,Glob,Grep,TodoWrite"
