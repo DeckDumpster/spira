@@ -15,11 +15,12 @@ suite_covers_of() {  # suite_covers_of <file-path> -> the # covers: globs, or em
     # Empty return means "covers everything" — callers must treat it as "run always",
     # never as "no declaration means skip".
     # Malformed (prefix present but empty rest): also returns empty, same rule.
-    sed -n 's/^# *covers: *//p' "$1" 2>/dev/null | head -1
+    # || true: sed exits non-zero on SIGPIPE or missing file; callers check output only.
+    sed -n 's/^# *covers: *//p' "$1" 2>/dev/null | head -1 || true
 }
 
 suite_requires_of() {  # suite_requires_of <file-path> -> space-separated requirement tokens, or empty
     # Commas are treated as delimiters so both "claude, bd" and "claude bd" work.
     # Empty return means no declared requirements — the suite runs unconditionally.
-    sed -n 's/^# *requires: *//p' "$1" 2>/dev/null | head -1 | tr ',' ' '
+    sed -n 's/^# *requires: *//p' "$1" 2>/dev/null | head -1 | tr ',' ' ' || true
 }
