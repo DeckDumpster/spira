@@ -210,7 +210,8 @@ echo "accept-default — the client's accept key closes the decision bead with t
 BEAD_ID="sp-smtest-accept"
 seed_bead "$BEAD_ID" || { echo "test-mail-sendmail: could not seed test bead"; exit 1; }
 is "SEEN RED: bead is open before accept" "open" "$(bead_status "$BEAD_ID")"
-SPIRA_MAIL_LINT_CONSIDERED="test" run send operator --from "Gate <gate@spira>" --subject "Accept test" \
+SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" \
+    run send operator --from "Gate <gate@spira>" --subject "Accept test" \
     --kind decision --default "take the accept-test default" --bead "$BEAD_ID" <<< "body" >/dev/null 2>&1
 # The send now creates a DECISION BEAD and X-Spira-Bead names it, not the work bead.
 # Find the newest message in operator/new (the decision bead question).
