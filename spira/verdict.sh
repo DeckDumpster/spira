@@ -125,7 +125,7 @@ _q_attribute() {
         return 0
     fi
 
-    local suites_csv; suites_csv="$(printf '%s\n' $red_suites | tr '\n' ',' | sed 's/,$//')"
+    local suites_csv; suites_csv="$(printf '%s\n' $red_suites | awk '!seen[$0]++' | tr '\n' ',' | sed 's/,$//')"
     local members_arr=(); read -ra members_arr <<< "$members_str"
     local mc="${#members_arr[@]}"
     local caught=0 escaped=0
@@ -161,13 +161,26 @@ _q_attribute() {
             fi
         fi
     else
-        # Per-member reproduction.
+        # Per-member reproduction: each member tested only on the failing suites
+        # its own diff selects. A member whose diff touches none of those suites
+        # cannot have caused the failure and is skipped here — the diff-based and
+        # together-only paths below remain as fallbacks.
+        local _mf _msel _mcsv _rs
         for _mm in "${members_arr[@]}"; do
             _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
-            if _repro_is_red "$suites_csv" "$repo" "spira/$_mid"; then
-                ejected+=("$_mm")
-                _any_suite_in_selection "$red_suites" "$repo" "$base_sha" "$_mtip" \
-                    && caught=$(( caught + 1 )) || escaped=$(( escaped + 1 ))
+            _mf="$(mktemp)"
+            git -C "$repo" diff --name-only "$base_sha...$_mtip" 2>/dev/null > "$_mf" || true
+            _msel="$(bash "$HERE/select.sh" --files "$_mf" --repo "$repo" --no-all-fallback 2>/dev/null)"
+            rm -f "$_mf"
+            _mcsv=""
+            for _rs in $red_suites; do
+                printf '%s\n' "$_msel" | grep -qxF "$_rs" || continue
+                case ",$_mcsv," in *",$_rs,"*) ;; *) _mcsv="${_mcsv:+$_mcsv,}$_rs" ;; esac
+            done
+            [ -n "$_mcsv" ] || continue
+            if _repro_is_red "$_mcsv" "$repo" "spira/$_mid"; then
+                ejected+=("$_mid|$_mtip|$_mcsv")
+                caught=$(( caught + 1 ))
             fi
         done
 
@@ -210,7 +223,8 @@ _q_attribute() {
             fi
         else
             # Some ejected (repro or diff) — collect non-ejected survivors.
-            local ejected_set=" $(printf '%s\n' "${ejected[@]}" | sed 's/:.*//' | tr '\n' ' ')"
+            # ejected entries may be id|tip|csv (repro path) or id:tip (diff path).
+            local ejected_set=" $(printf '%s\n' "${ejected[@]}" | sed 's/[:|].*//' | tr '\n' ' ')"
             for _mm in "${members_arr[@]}"; do
                 _mid="${_mm%%:*}"
                 case "$ejected_set" in *" $_mid "*) ;; *) survivors+=("$_mm") ;; esac
@@ -219,9 +233,17 @@ _q_attribute() {
     fi
 
     # Eject guilty members.
-    for _mm in "${ejected[@]}"; do
-        _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
-        _attr_eject "$_mid" "$_mtip" "$suites_csv" "$pr_n" "$name"
+    local _ej _ej_id _ej_tip _ej_csv _ej_rest
+    for _ej in "${ejected[@]}"; do
+        case "$_ej" in
+            *"|"*)
+                _ej_id="${_ej%%|*}"; _ej_rest="${_ej#*|}"; _ej_tip="${_ej_rest%%|*}"; _ej_csv="${_ej_rest#*|}"
+                ;;
+            *)
+                _ej_id="${_ej%%:*}"; _ej_tip="${_ej##*:}"; _ej_csv="$suites_csv"
+                ;;
+        esac
+        _attr_eject "$_ej_id" "$_ej_tip" "$_ej_csv" "$pr_n" "$name"
     done
 
     # When ejection leaves survivors, rebuild on the same base and re-push to

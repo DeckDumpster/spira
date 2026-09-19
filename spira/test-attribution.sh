@@ -4,7 +4,7 @@
 # together-only reds, quarantine flaky suites, eject on second unreproduced red,
 # and verify the local-gate meter.
 #
-# Five cases (nine assertions):
+# Six cases (nineteen assertions):
 #   1. Three members with one planted breaker → that member ejected, two survivors
 #      returned to CERTIFIED, PR closed, batch removed.
 #   2. Two members that break only together → batch halved (first half
@@ -17,6 +17,8 @@
 #   6. Diff-based attribution ejects the member whose change touches the red suite.
 #   7. ...and reads only the member's own change: a member forked before the base
 #      advanced over the red suite is not blamed for the advance.
+#   8. Per-member filtering: guilty (covered diff + repro) ejected; innocent
+#      (inert diff + in REPRO_FAIL_FILE) skipped by selection, NOT ejected.
 #
 # The repro batch is stubbed via SPIRA_QUEUE_REPRO_BATCH; no container is used.
 # The forge is a local fixture; no network is reached.
@@ -209,6 +211,46 @@ clean_case() {
     testdb_reset
 }
 
+# make_branch <id> <file> — create branch spira/<id> with one specific file.
+make_branch() {
+    local id="$1" file="$2"
+    local bwt="$RUN/worktree/$id"
+    rm -rf "$bwt"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$bwt" origin/main 2>/dev/null || true
+    mkdir -p "$bwt/$(dirname "$file")"
+    printf '%s\n' "$id" > "$bwt/$file"
+    git -C "$bwt" add -A
+    git -C "$bwt" commit -q -m "$id: work"
+}
+
+# build_batch <id1> <id2> ... — merge pre-created branches and write open batch record.
+build_batch() {
+    local base_sha; base_sha="$(git -C "$REPO" rev-parse origin/main)"
+    local wt="$RUN/worktree/.batch-build"
+    git -C "$REPO" worktree remove -f "$wt" 2>/dev/null || true
+    git -C "$REPO" worktree add -q --detach "$wt" "$base_sha"
+    local members=() id tip
+    for id in "$@"; do
+        tip="$(git -C "$REPO" rev-parse "spira/$id")"
+        git -C "$wt" merge -q --no-edit --no-ff -m "spira: land $id" "$tip" >/dev/null 2>&1
+        members+=("$id:$tip")
+        printf 'BATCHED %s %s\n' "$tip" "$(date +%s)" > "$LANDSTATE/$id"
+    done
+    local batch_head; batch_head="$(git -C "$wt" rev-parse HEAD)"
+    local batch_br="spira/queue/test-$$"
+    git -C "$REPO" branch -f "$batch_br" "$batch_head" 2>/dev/null || true
+    git -C "$REPO" worktree remove -f "$wt" 2>/dev/null || true
+    {
+        printf 'pr=42\n'
+        printf 'head=%s\n' "$batch_head"
+        printf 'base=%s\n' "$base_sha"
+        printf 'members=%s\n' "${members[*]}"
+        printf 'opened=%s\n' "$(date +%s)"
+        printf 'branch=%s\n' "$batch_br"
+    } > "$(batch_file)"
+    printf '%s\n' "$batch_head"
+}
+
 echo "test-attribution.sh"
 
 # Seed the status file default for all red cases.
@@ -219,7 +261,8 @@ printf 'red\nred-suite: test-canary.sh\n' > "$FORGE_STATUS_FILE"
 # passes just as well against a verdict that errors before calling the stub.
 # =============================================================================
 testdb_reset
-build_members sp-at-ctrl > /dev/null
+make_branch sp-at-ctrl spira/canary.sh
+build_batch sp-at-ctrl > /dev/null
 plant_bead sp-at-ctrl
 printf 'spira/sp-at-ctrl\n' > "$REPRO_FAIL_FILE"
 verdict "$REPONAME" > /dev/null
@@ -235,7 +278,10 @@ clean_case
 #    require BATCHED state, a resealed batch file, and the remote branch updated.
 # =============================================================================
 testdb_reset
-build_members sp-at-a sp-at-b sp-at-c > /dev/null
+make_branch sp-at-a sp-at-a.txt
+make_branch sp-at-b spira/canary.sh
+make_branch sp-at-c sp-at-c.txt
+build_batch sp-at-a sp-at-b sp-at-c > /dev/null
 for id in sp-at-a sp-at-b sp-at-c; do plant_bead "$id"; done
 _old_head1="$(grep '^head=' "$(batch_file)" | cut -d= -f2)"
 _batch_br1="$(grep '^branch=' "$(batch_file)" | cut -d= -f2)"
@@ -425,9 +471,10 @@ clean_case
 
 # =============================================================================
 # 7. DIFF-BASED ATTRIBUTION READS THE MEMBER'S OWN CHANGE — both members forked
-#    before the base advanced, and the advance touched the red suite. Diffing the
-#    base against a member's tip shows that suite as changed by a member that never
-#    touched it; all six members of PR 87 were ejected that way (2026-09-19).
+#    before the base advanced, and the advance touched the suite that goes red.
+#    Diffing the base against a member's tip shows that suite as changed by a
+#    member that never touched it; all six members of PR 87 were ejected that way
+#    (2026-09-19).
 # =============================================================================
 testdb_reset
 wt_old="$RUN/worktree/sp-at-old"
@@ -478,6 +525,23 @@ out="$(verdict "$REPONAME")"
 nowant "7. own-change: sp-at-old not ejected for the base's advance"  "EJECTED" "$(land_state_of sp-at-old)"
 nowant "7. own-change: sp-at-old2 not ejected for the base's advance" "EJECTED" "$(land_state_of sp-at-old2)"
 nowant "7. own-change: no ejection reported"                          "ejected sp-at-old" "$out"
+clean_case
+
+# =============================================================================
+# 8. PER-MEMBER FILTERING — guilty (spira/suites.sh diff → test-suites-hygiene.sh
+#    selected + repro red) ejected; innocent (inert .txt diff, also in
+#    REPRO_FAIL_FILE) skipped by per-member selection, NOT ejected.
+# =============================================================================
+testdb_reset
+printf 'red\nred-suite: test-suites-hygiene.sh\n' > "$FORGE_STATUS_FILE"
+make_branch sp-at-guilty spira/suites.sh
+make_branch sp-at-innocent sp-at-innocent.txt
+build_batch sp-at-guilty sp-at-innocent > /dev/null
+for id in sp-at-guilty sp-at-innocent; do plant_bead "$id"; done
+printf 'spira/sp-at-guilty\nspira/sp-at-innocent\n' > "$REPRO_FAIL_FILE"
+verdict "$REPONAME" > /dev/null
+is   "8. per-member: sp-at-guilty ejected"          "EJECTED"  "$(land_state_of sp-at-guilty)"
+is   "8. per-member: sp-at-innocent stays BATCHED"   "BATCHED"  "$(land_state_of sp-at-innocent)"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
