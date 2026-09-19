@@ -8,6 +8,8 @@
 # check-status <repo-dir> <pr-number>          prints: pending | green | red | harness_fault
 #                                              then "flaky: <suite>" for each flaky annotation
 # run-id <repo-dir> <branch>                   prints the latest CI run ID for the branch
+# run-metadata <repo-dir> <run-id>             prints: started-at: <epoch>; last-activity: <epoch>
+# run-cancel <repo-dir> <run-id>               cancels an in-progress run
 # workflow-rerun <repo-dir> <run-id>           re-queues a failed workflow run
 # pr-close <repo-dir> <pr-number>              closes the PR without merging
 # branch-protect <repo-dir> <branch>           set: required gate check, no force-push, no delete
@@ -66,7 +68,7 @@ try:
         print('pending')
     elif c == 'SUCCESS':
         print('green')
-    elif c in ('SKIPPED','NEUTRAL','STALE'):
+    elif c in ('SKIPPED','NEUTRAL','STALE','CANCELLED'):
         print('harness_fault')
     else:
         print('red')
@@ -175,6 +177,10 @@ try:
     if latest: print('last-activity: ' + str(latest))
 except Exception: pass
 " 2>/dev/null
+        ;;
+    run-cancel)
+        run_id="${1:-}"
+        ( cd "$repo" && ghq run cancel "$run_id" ) 2>/dev/null
         ;;
     workflow-rerun)
         run_id="${1:-}"
