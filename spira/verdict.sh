@@ -444,7 +444,7 @@ main() {
                     while IFS= read -r _line; do
                         case "$_line" in
                             "flaky: "*)
-                                bash "$HERE/suites.sh" observe-flake "${_line#flaky: }" \
+                                bash "$HERE/suites.sh" observe-flake "${_line#flaky: }" "$batch_head" \
                                     2>/dev/null || true
                                 ;;
                         esac
