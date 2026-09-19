@@ -810,11 +810,11 @@ SPIRA_DB= \
 isexit2 "B7e: bare-flag override refused (exit 2)" "$rc_b7e"
 want   "B7e: output names the override requirement" "min 10 chars" "$b7e_out"
 
-# B7f: POSITIVE CONTROL — bead.sh is invoked when SPIRA_DB is set and a repeat
-# is refused. Exercises the code path B7b intentionally bypasses with SPIRA_DB=.
-# REGRESSION: the bead cmd was hardcoded to $HERE/bead.sh; SPIRA_BATCH_BEAD_CMD
+# B7f: POSITIVE CONTROL — incident.sh is invoked when SPIRA_DB is set and a
+# repeat is refused. Exercises the code path B7b intentionally bypasses with
+# SPIRA_DB=. REGRESSION: the filer was hardcoded to bead.sh; SPIRA_BATCH_INCIDENT_CMD
 # did not exist, so this test would not compile against old code.
-_stub_b7f="$TMP/stub-bead-b7f.sh"
+_stub_b7f="$TMP/stub-b7f.sh"
 _stub_called_b7f="$TMP/stub-called-b7f"
 cat > "$_stub_b7f" << 'EOF'
 #!/usr/bin/env bash
@@ -830,16 +830,119 @@ SPIRA_BATCH_INSTANCE="b7f-$$" \
 SPIRA_VERDICTS="$VERDICTS_B7" \
 SPIRA_VERDICT_TTL=86400 \
 SPIRA_DB="$TMP" \
-SPIRA_BATCH_BEAD_CMD="$_stub_b7f" \
+SPIRA_BATCH_INCIDENT_CMD="$_stub_b7f" \
 STUB_CALLED="$_stub_called_b7f" \
     bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null || rc_b7f=$?
 isexit2 "B7f: positive-control: refused with SPIRA_DB set exits 2" "$rc_b7f"
 [ -f "$_stub_called_b7f" ] \
-    && ok "B7f: bead stub was invoked (bead filing code path reached)" \
-    || bad "B7f: bead stub invoked" "stub file absent — bead-cmd not called"
+    && ok "B7f: incident stub was invoked (filing code path reached)" \
+    || bad "B7f: incident stub invoked" "stub file absent — incident-cmd not called"
 if [ -f "$_stub_called_b7f" ]; then
-    want "B7f: bead stub called with 'file'" "file" "$(cat "$_stub_called_b7f")"
-    want "B7f: bead stub called with repeat title" "repeat attempt: no change" "$(cat "$_stub_called_b7f")"
+    want "B7f: incident stub called with 'file'" "file" "$(cat "$_stub_called_b7f")"
+    want "B7f: incident stub called with repeat title" "repeat attempt: no change" "$(cat "$_stub_called_b7f")"
+fi
+
+# ---------------------------------------------------------------------------
+# B8: DEDUP — two refused repeats for the same branch yield one open bead.
+#
+# REGRESSION (law-a-regression-test-must-be-seen-to-fail):
+#   B8 positive control: a stub without dedup produces 2 beads, confirming the
+#   test can detect the pre-fix behavior (old code called bead.sh with no
+#   external_ref, so no dedup and a second bead on every refused repeat).
+#   B8 actual: real incident.sh with SPIRA_INCIDENT_REF=repeat-refused:<BR>
+#   dedupes to 1 bead; second call bumps recurrence instead.
+#
+# Driven through real incident.sh against a real testdb — the dedup is a
+# database read + conditional write; a stub cannot reproduce that fidelity
+# (law-prefer-the-real-dependency).
+# ---------------------------------------------------------------------------
+echo
+echo "B8: repeat-refused dedup (one bead per branch)"
+
+. "$HERE/testdb.sh"
+if ! testdb_available; then
+    printf 'SKIP B8: no bd engine — dedup test skipped\n' >&2
+else
+    testdb_up b8-testenv-batch || { bad "B8: testdb_up failed" ""; }
+    _b8_db="$SPIRA_DB"
+    _b8_run="$TMP/run-b8"; mkdir -p "$_b8_run"
+
+    _count_b8_ref() {   # _count_b8_ref <external-ref> -> integer
+        bd -C "$_b8_db" list --status open,in_progress --limit 0 --json 2>/dev/null \
+          | python3 -c '
+import sys, json
+target = sys.argv[1]; count = 0
+try: d = json.load(sys.stdin)
+except Exception: print(0); raise SystemExit(0)
+for i in (d if isinstance(d, list) else [d]):
+    if i.get("external_ref") == target: count += 1
+print(count)
+' "$1"
+    }
+
+    # B8 POSITIVE CONTROL — stub without dedup; expect 2 beads (pre-fix shape).
+    # Filed without external_ref so dedup cannot find them; count by title.
+    _stub_b8_pc="$TMP/stub-b8-pc.sh"
+    cat > "$_stub_b8_pc" << 'EOF'
+#!/usr/bin/env bash
+cat >/dev/null
+bd -C "$SPIRA_DB" create "${2:-repeat}" --type task \
+    --priority "${SPIRA_INCIDENT_PRIORITY:-3}" \
+    --labels "${SPIRA_INCIDENT_LABELS:-plan}" \
+    --body "stub-no-dedup" --silent 2>/dev/null || true
+exit 0
+EOF
+    chmod +x "$_stub_b8_pc"
+
+    for _b8_pc_i in b8pc1-$$ b8pc2-$$; do
+        SPIRA_BATCH_SUITE_DIR="$SUITE_B7" \
+        SPIRA_BATCH_RESULTS="$TMP/results-$_b8_pc_i" \
+        SPIRA_BATCH_SKIP_INSTALL=1 \
+        SPIRA_BATCH_INSTANCE="$_b8_pc_i" \
+        SPIRA_VERDICTS="$VERDICTS_B7" \
+        SPIRA_VERDICT_TTL=86400 \
+        SPIRA_DB="$_b8_db" \
+        SPIRA_RUN="$_b8_run" \
+        SPIRA_BATCH_INCIDENT_CMD="$_stub_b8_pc" \
+            bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null || true
+    done
+
+    _b8_pc_n="$(bd -C "$_b8_db" list --status open,in_progress --limit 0 --json 2>/dev/null \
+        | python3 -c '
+import sys, json; count = 0
+try: d = json.load(sys.stdin)
+except Exception: print(0); raise SystemExit(0)
+for i in (d if isinstance(d, list) else [d]):
+    if "repeat attempt: no change" in (i.get("title") or ""): count += 1
+print(count)
+' 2>/dev/null)"
+    [ "$_b8_pc_n" = 2 ] \
+        && ok "B8 positive-control: stub without dedup files 2 beads (pre-fix behavior visible)" \
+        || bad "B8 positive-control: stub without dedup files 2 beads" \
+               "got $_b8_pc_n — test cannot detect regression"
+
+    testdb_reset
+
+    # B8 ACTUAL TEST — real incident.sh with SPIRA_INCIDENT_REF dedupes to 1 bead.
+    for _b8_i in b8a-$$ b8b-$$; do
+        SPIRA_BATCH_SUITE_DIR="$SUITE_B7" \
+        SPIRA_BATCH_RESULTS="$TMP/results-$_b8_i" \
+        SPIRA_BATCH_SKIP_INSTALL=1 \
+        SPIRA_BATCH_INSTANCE="$_b8_i" \
+        SPIRA_VERDICTS="$VERDICTS_B7" \
+        SPIRA_VERDICT_TTL=86400 \
+        SPIRA_DB="$_b8_db" \
+        SPIRA_RUN="$_b8_run" \
+            bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null || true
+    done
+
+    _b8_n="$(_count_b8_ref "repeat-refused:topic")"
+    [ "$_b8_n" = 1 ] \
+        && ok "B8: two refused repeats yield exactly one open bead (deduped)" \
+        || bad "B8: two refused repeats yield exactly one open bead" \
+               "got $_b8_n open bead(s) for repeat-refused:topic"
+
+    testdb_drop
 fi
 
 # ===========================================================================
