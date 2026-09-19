@@ -294,7 +294,11 @@ for row in "${ROWS[@]}"; do
             || log "WARNING: could not record untrusted issue #$number"
     fi
 done
-log "created $created work bead(s), recorded $untrusted_created new untrusted, skipped $skipped"
+if [ "$DRY" -eq 1 ]; then
+    log "would create $created work bead(s), record $untrusted_created untrusted, skip $skipped"
+else
+    log "created $created work bead(s), recorded $untrusted_created new untrusted, skipped $skipped"
+fi
 
 # ── daily digest for new untrusted issues ────────────────────────────────────
 if [ "${#new_untrusted[@]}" -gt 0 ] && [ "$DRY" -eq 0 ]; then
