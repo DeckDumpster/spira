@@ -972,7 +972,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 fi
                 local _rn_cert
                 _rn_cert="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
-                bead_reopen "$id" "Reopened by sentinel: branch $br failed $name's certification gate. The branch carries $_rn_cert commit(s) from the previous session — the next aeon should resume from the existing work, not restart.
+                bead_reopen "$id" cert-gate-red "Reopened by sentinel: branch $br failed $name's certification gate. The branch carries $_rn_cert commit(s) from the previous session — the next aeon should resume from the existing work, not restart.
 
 $(printf '%s' "$gate_out" | tail -20)"
                 unset _rn_cert
