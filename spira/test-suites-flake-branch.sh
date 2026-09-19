@@ -106,7 +106,7 @@ _d="$(git -C "$_repo" status --porcelain -- spira/suite-state 2>/dev/null)"
     || fail "observe(2): production checkout dirty after quarantine: '$_d'"
 
 # A branch carrying the quarantine commit must exist.
-_branch="$(git -C "$_repo" branch --list 'spira/suite-state/auto-*' \
+_branch="$(git -C "$_repo" branch --list 'spira-suite-state/auto-*' \
     | head -1 | tr -d ' *')"
 [ -n "$_branch" ] && pass "observe(2): branch created for quarantine" \
     || fail "observe(2): no branch was created"

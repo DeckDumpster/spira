@@ -1403,7 +1403,7 @@ PAYLOAD
         fi
     fi
     local stamp; stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-    local branch="spira/suite-state/auto-${suite%.sh}-${stamp}"
+    local branch="spira-suite-state/auto-${suite%.sh}-${stamp}"
     # Use a subdirectory so git worktree add creates the leaf (it rejects an existing dir).
     local wt_parent; wt_parent="$(mktemp -d)" || {
         printf 'auto-quarantine: cannot create temp dir — %s stays active\n' "$suite"
@@ -1565,7 +1565,7 @@ _sts_transition() {  # _sts_transition <state> <suite> [<bead>] [<reason>]
         [ -n "$reason" ] || { printf 'suites %s: reason required\n' "$state" >&2; return 2; }
     fi
     local stamp; stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-    local branch="spira/suite-state/${suite%.sh}-${stamp}"
+    local branch="spira-suite-state/${suite%.sh}-${stamp}"
     git -C "$repo" checkout -b "$branch" >/dev/null 2>&1 || {
         printf 'suites %s: cannot create branch %s\n' "$state" "$branch" >&2; return 1
     }

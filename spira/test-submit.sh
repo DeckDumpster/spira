@@ -161,10 +161,10 @@ is "quarantine: gate was called" "1" "$(gate_n)"
 _qbr="$(printf '%s' "$out" | tail -1 | tr -d '[:space:]')"
 # Output is the branch name.
 case "$_qbr" in
-    spira/suite-state/*) ok "quarantine: branch name on stdout" ;;
+    spira-suite-state/*) ok "quarantine: branch name on stdout" ;;
     *) bad "quarantine: branch name on stdout" "got: [$_qbr]" ;;
 esac
-_qid="${_qbr#spira/}"
+_qid="$_qbr"
 case "$(landstate "$_qid")" in
     CERTIFIED*) ok "quarantine: transition branch certified" ;;
     *)          bad "quarantine: transition branch certified" "got: [$(landstate "$_qid")]" ;;
@@ -179,10 +179,10 @@ out="$(transition disable test-d.sh "unsafe in CI")"
 is "disable: gate was called" "1" "$(gate_n)"
 _dbr="$(printf '%s' "$out" | tail -1 | tr -d '[:space:]')"
 case "$_dbr" in
-    spira/suite-state/*) ok "disable: branch name on stdout" ;;
+    spira-suite-state/*) ok "disable: branch name on stdout" ;;
     *) bad "disable: branch name on stdout" "got: [$_dbr]" ;;
 esac
-_did="${_dbr#spira/}"
+_did="$_dbr"
 case "$(landstate "$_did")" in
     CERTIFIED*) ok "disable: transition branch certified" ;;
     *)          bad "disable: transition branch certified" "got: [$(landstate "$_did")]" ;;
@@ -201,10 +201,10 @@ out="$(transition activate test-a.sh)"
 is "activate: gate was called" "1" "$(gate_n)"
 _abr="$(printf '%s' "$out" | tail -1 | tr -d '[:space:]')"
 case "$_abr" in
-    spira/suite-state/*) ok "activate: branch name on stdout" ;;
+    spira-suite-state/*) ok "activate: branch name on stdout" ;;
     *) bad "activate: branch name on stdout" "got: [$_abr]" ;;
 esac
-_aid="${_abr#spira/}"
+_aid="$_abr"
 case "$(landstate "$_aid")" in
     CERTIFIED*) ok "activate: transition branch certified" ;;
     *)          bad "activate: transition branch certified" "got: [$(landstate "$_aid")]" ;;

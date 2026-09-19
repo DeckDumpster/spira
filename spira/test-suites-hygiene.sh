@@ -119,7 +119,7 @@ mail_count_op()  { SPIRA_MAIL="$MAIL" SPIRA_MAIL_KINDS="$SH/mail/kinds" bash "$S
 # Inspect the auto-quarantine branch for a suite (quarantine is no longer written to production checkout).
 branch_state_of() {
     local _br _tmp _r
-    _br="$(git -C "$TMP" branch --list "spira/suite-state/auto-${1%.sh}-*" 2>/dev/null \
+    _br="$(git -C "$TMP" branch --list "spira-suite-state/auto-${1%.sh}-*" 2>/dev/null \
         | tail -1 | tr -d ' *')"
     [ -n "$_br" ] || { printf ''; return 0; }
     _tmp="$(mktemp)"
@@ -130,7 +130,7 @@ branch_state_of() {
 }
 branch_bead_of() {
     local _br _tmp _bid
-    _br="$(git -C "$TMP" branch --list "spira/suite-state/auto-${1%.sh}-*" 2>/dev/null \
+    _br="$(git -C "$TMP" branch --list "spira-suite-state/auto-${1%.sh}-*" 2>/dev/null \
         | tail -1 | tr -d ' *')"
     [ -n "$_br" ] || { printf ''; return 0; }
     _tmp="$(mktemp)"

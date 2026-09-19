@@ -57,8 +57,8 @@ SUITE_BR="test-reclaim-slay-branch-guard-20260917T164605Z"
 # so the old probe would count it as SP_UNADOPTED. After the fix it must be SP_PROTECTED.
 git -C "$REPO" branch "spira/queue/$QSTAMP"
 
-# spira/suite-state/<name> — written by the quarantine path. Same shape: tip on main.
-git -C "$REPO" branch "spira/suite-state/$SUITE_BR"
+# spira-suite-state/<name> — written by the quarantine path. Same shape: tip on main.
+git -C "$REPO" branch "spira-suite-state/$SUITE_BR"
 
 # spira/sp-true-stray — a true bead-shaped ref with no bead and tip on main.
 # Positive control: the probe MUST count this as SP_UNADOPTED=1.
@@ -95,11 +95,11 @@ want "SP_UNADOPTED_NAMES names the true stray" "sp-true-stray" "$(val SP_UNADOPT
 
 # THE GUARD: queue and suite-state branches are not counted as orphans.
 nowant "SP_UNADOPTED_NAMES excludes queue branch"       "queue/"       "$(val SP_UNADOPTED_NAMES)"
-nowant "SP_UNADOPTED_NAMES excludes suite-state branch" "suite-state/" "$(val SP_UNADOPTED_NAMES)"
+nowant "SP_UNADOPTED_NAMES excludes suite-state branch" "spira-suite-state/" "$(val SP_UNADOPTED_NAMES)"
 
 # THE ACCOUNTING: protected refs are named.
 want "SP_PROTECTED_NAMES names the queue branch"       "queue/$QSTAMP"  "$(val SP_PROTECTED_NAMES)"
-want "SP_PROTECTED_NAMES names the suite-state branch" "suite-state/$SUITE_BR" "$(val SP_PROTECTED_NAMES)"
+want "SP_PROTECTED_NAMES names the suite-state branch" "spira-suite-state/$SUITE_BR" "$(val SP_PROTECTED_NAMES)"
 
 echo
 printf 'test-cockpit-unadopted-queue: %d ok, %d fail\n' "$pass" "$fail"
