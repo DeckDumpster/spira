@@ -79,7 +79,6 @@ fi
 
 if [ -z "$reason" ] && [ -n "${SPIRA_PROD:-}" ]; then
     case "$_cmd1" in
-        *"${SPIRA_PROD}/census.sh"*) ;;  # read-only query; not a write
         *"${SPIRA_PROD}"*)
             # Script execution from SPIRA_PROD is allowed — the path is the executable,
             # not a write target. A write INTO the checkout (rm, redirect, etc.) is refused.
@@ -87,7 +86,7 @@ if [ -z "$reason" ] && [ -n "${SPIRA_PROD:-}" ]; then
                 "${SPIRA_PROD}/"*|\
                 "bash ${SPIRA_PROD}/"*|\
                 "bash \"${SPIRA_PROD}/"*) ;;
-                *) reason="aeons may not write to the production checkout \$SPIRA_PROD (sp-kz8ob)" ;;
+                *) reason="aeons may not write to the production checkout \$SPIRA_PROD (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 to override)" ;;
             esac ;;
     esac
 fi
