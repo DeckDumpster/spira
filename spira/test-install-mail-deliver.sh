@@ -78,9 +78,23 @@ done
 printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_WITH/inotifywait"
 chmod +x "$MOCK_WITH/inotifywait"
 
-render() {  # render <mock-bin-dir>
+# PATH WITHOUT inotifywait. The container may have inotifywait at e.g. /usr/bin/inotifywait.
+# Compute a filtered PATH that excludes any directory containing it, so the negative test
+# case never finds the binary through the system PATH.
+_iw_dir=""
+_iw_bin="$(command -v inotifywait 2>/dev/null || true)"
+[ -n "$_iw_bin" ] && _iw_dir="$(dirname "$_iw_bin")"
+_path_no_iw=""
+while IFS= read -r _pd; do
+    [ -n "$_pd" ] || continue
+    [ "$_pd" = "$_iw_dir" ] && continue
+    _path_no_iw="${_path_no_iw:+${_path_no_iw}:}$_pd"
+done <<< "$(printf '%s' "$PATH" | tr ':' '\n')"
+unset _iw_bin _iw_dir _pd
+
+render() {  # render <mock-bin-dir> <path>
     env -i \
-        "PATH=$1:$PATH" \
+        "PATH=${2:-$PATH}" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_PATH=$1" \
@@ -100,7 +114,7 @@ render() {  # render <mock-bin-dir>
 echo
 echo "A: POSITIVE CONTROL — inotifywait present → mail-deliver unit is rendered:"
 # ==========================================================================
-pos_out="$(render "$MOCK_WITH")"; pos_rc=$?
+pos_out="$(render "$MOCK_WITH" "$MOCK_WITH:$PATH")"; pos_rc=$?
 is     "A: render exits 0 with inotifywait present"               "0" "$pos_rc"
 want   "A: mail-deliver service in rendered units" "spira-mail-deliver" "$pos_out"
 
@@ -108,7 +122,7 @@ want   "A: mail-deliver service in rendered units" "spira-mail-deliver" "$pos_ou
 echo
 echo "B: SKIP — inotifywait absent → no mail-deliver unit rendered:"
 # ==========================================================================
-neg_out="$(render "$MOCK_WITHOUT")"; neg_rc=$?
+neg_out="$(render "$MOCK_WITHOUT" "$MOCK_WITHOUT:$_path_no_iw")"; neg_rc=$?
 is     "B: render exits 0 with inotifywait absent"                    "0" "$neg_rc"
 nowant "B: mail-deliver absent when inotifywait not found" "spira-mail-deliver" "$neg_out"
 
