@@ -1395,7 +1395,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                     # paralysis, for exactly as long as a branch went on failing to merge.
                     act "refreshed $br onto $base in $name — rebased, re-gated and force-pushed"
                 else
-                    land_mark "$id" REBASED "$tip" pr-open
+                    land_mark "$id" REBASED "$tip" "pr-open:$name"
                     progress "opened a pull request for $br in $name"
                 fi
             else
