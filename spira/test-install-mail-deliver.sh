@@ -10,17 +10,16 @@
 #
 # TWO PROPERTIES are verified, both required for the fix to hold:
 #
-#   A  POSITIVE CONTROL: with inotifywait on PATH, install.sh --render includes
-#      spira-mail-deliver in the rendered output.
+#   A  POSITIVE CONTROL: with inotifywait on PATH, UNITS includes spira-mail-deliver.service
+#      and ENABLE includes the instance-qualified name.
 #
-#   B  SKIP: with inotifywait absent, install.sh --render produces no mail-deliver unit.
-#      Without this, the crash-loop defense is inert.
+#   B  SKIP: with inotifywait absent (simulated via command() shadow), spira-mail-deliver.service
+#      appears in OPTIONAL and is absent from UNITS.
 #
 # covers: systemd/units.sh systemd/install.sh systemd/spira-mail-deliver.service
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REAL_REPO="$(cd "$HERE/.." && pwd -P)"
-REAL_COCKPIT="$(cd "$HERE/../cockpit" && pwd -P)"
 pass=0; fail=0
 ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
@@ -32,99 +31,67 @@ echo "test-install-mail-deliver.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-# ---------------------------------------------------------------------------
-# Fixture: a minimal harness tree that install.sh --render can run against.
-# ---------------------------------------------------------------------------
-FIXTURE="$TMP/harness"
-mkdir -p "$FIXTURE/systemd" "$FIXTURE/spira"
-
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
-    [ -e "$f" ] || continue
-    ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
-done
-ln -s "$HERE/../systemd/install.sh" "$FIXTURE/systemd/install.sh"
-for f in conf.sh watchd.sh lib.sh; do
-    [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
-done
-
-printf '# empty — test fixture\n' > "$FIXTURE/spira/watchers"
-printf '# empty\n' > "$FIXTURE/spira/repo-map.example"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/spira/install-session-hook.sh"
-chmod +x "$FIXTURE/spira/install-session-hook.sh"
-
-DEST="$TMP/home/.config/systemd/user"
-SPIRA_RUN_DIR="$TMP/run"
-MOCK_BIN="$TMP/mock-bin"
-MOCK_WITH="$TMP/mock-with"    # has inotifywait
-MOCK_WITHOUT="$TMP/mock-without"    # no inotifywait
-mkdir -p "$DEST" "$SPIRA_RUN_DIR" "$MOCK_BIN" "$MOCK_WITH" "$MOCK_WITHOUT"
-
-for d in "$MOCK_BIN" "$MOCK_WITH" "$MOCK_WITHOUT"; do
-    cat > "$d/systemctl" <<'MOCK'
-#!/usr/bin/env bash
-case "$*" in
-    *is-active*)  printf 'active\n' ;;
-    *is-enabled*) printf 'enabled\n' ;;
-    *"list-unit-files"*|*"list-units"*|*"list-timers"*) : ;;
-esac
-exit 0
-MOCK
-    chmod +x "$d/systemctl"
-    printf '#!/usr/bin/env bash\nexit 0\n' > "$d/loginctl"
-    chmod +x "$d/loginctl"
-done
-
-# inotifywait stub present in MOCK_WITH only.
-printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_WITH/inotifywait"
-chmod +x "$MOCK_WITH/inotifywait"
-
-# PATH WITHOUT inotifywait. The container may have inotifywait at e.g. /usr/bin/inotifywait.
-# Compute a filtered PATH that excludes any directory containing it, so the negative test
-# case never finds the binary through the system PATH.
-_iw_dir=""
-_iw_bin="$(command -v inotifywait 2>/dev/null || true)"
-[ -n "$_iw_bin" ] && _iw_dir="$(dirname "$_iw_bin")"
-_path_no_iw=""
-while IFS= read -r _pd; do
-    [ -n "$_pd" ] || continue
-    [ "$_pd" = "$_iw_dir" ] && continue
-    _path_no_iw="${_path_no_iw:+${_path_no_iw}:}$_pd"
-done <<< "$(printf '%s' "$PATH" | tr ':' '\n')"
-unset _iw_bin _iw_dir _pd
-
-render() {  # render <mock-bin-dir> <path>
-    env -i \
-        "PATH=${2:-$PATH}" \
-        "HOME=$TMP/home" \
-        SPIRA_CONF=/nonexistent \
-        "SPIRA_PATH=$1" \
-        "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA= \
-        SPIRA_TESTDB_DATA= \
-        "SPIRA_RUN=$SPIRA_RUN_DIR" \
-        "SPIRA_HOME=$HERE" \
-        "SPIRA_PROD=$HERE" \
-        "SPIRA_REPO=$REAL_REPO" \
-        "SPIRA_COCKPIT=$REAL_COCKPIT" \
-        SPIRA_INSTALL_FORCE=1 \
-        bash "$FIXTURE/systemd/install.sh" --render 2>&1
+# query_units <with|without> — source units.sh in a subprocess, print its UNITS and
+# OPTIONAL arrays.  "with" uses the real command; "without" shadows the `command` builtin
+# so that `command -v inotifywait` returns 1, simulating the binary being absent.
+# conf.sh resets PATH to include /usr/bin regardless of the caller's PATH, so PATH
+# manipulation cannot hide a system-installed inotifywait — the function shadow is the
+# only reliable lever inside the sourcing context.
+query_units() {
+    local mode="$1"
+    bash - <<SUBSH
+set -uo pipefail
+$([ "$mode" = "without" ] && cat <<'SHADOW'
+# Shadow command so that `command -v inotifywait` returns 1.
+command() {
+    case "\$*" in
+        "-v inotifywait"|"--version inotifywait") return 1 ;;
+        *) builtin command "\$@" ;;
+    esac
+}
+SHADOW
+)
+SPIRA_HOME="$HERE"
+SPIRA_INSTANCE=prod
+SPIRA_DOLT_DATA=
+SPIRA_TESTDB_DATA=
+SPIRA_CONF=/nonexistent
+SPIRA_RUN="$TMP/run"
+export SPIRA_HOME SPIRA_INSTANCE SPIRA_DOLT_DATA SPIRA_TESTDB_DATA SPIRA_CONF SPIRA_RUN
+. "$HERE/../systemd/units.sh" 2>/dev/null
+printf 'UNITS: %s\n' "\${UNITS[*]}"
+printf 'OPTIONAL: %s\n' "\${OPTIONAL[*]}"
+printf 'ENABLE: %s\n' "\${ENABLE[*]}"
+SUBSH
 }
 
-# ==========================================================================
-echo
-echo "A: POSITIVE CONTROL — inotifywait present → mail-deliver unit is rendered:"
-# ==========================================================================
-pos_out="$(render "$MOCK_WITH" "$MOCK_WITH:$PATH")"; pos_rc=$?
-is     "A: render exits 0 with inotifywait present"               "0" "$pos_rc"
-want   "A: mail-deliver service in rendered units" "spira-mail-deliver" "$pos_out"
+mkdir -p "$TMP/run"
 
 # ==========================================================================
 echo
-echo "B: SKIP — inotifywait absent → no mail-deliver unit rendered:"
+echo "A: POSITIVE CONTROL — inotifywait present → mail-deliver in UNITS and ENABLE:"
 # ==========================================================================
-neg_out="$(render "$MOCK_WITHOUT" "$MOCK_WITHOUT:$_path_no_iw")"; neg_rc=$?
-is     "B: render exits 0 with inotifywait absent"                    "0" "$neg_rc"
-nowant "B: mail-deliver absent when inotifywait not found" "spira-mail-deliver" "$neg_out"
+pos_out="$(query_units with)"; pos_rc=$?
+is   "A: units.sh exits 0 with inotifywait present"                 "0" "$pos_rc"
+want "A: UNITS includes spira-mail-deliver.service"  "spira-mail-deliver.service" \
+     "$(printf '%s\n' "$pos_out" | grep '^UNITS:')"
+want "A: ENABLE includes spira-mail-deliver-prod.service"  "spira-mail-deliver-prod.service" \
+     "$(printf '%s\n' "$pos_out" | grep '^ENABLE:')"
+nowant "A: OPTIONAL does not include spira-mail-deliver"  "spira-mail-deliver" \
+       "$(printf '%s\n' "$pos_out" | grep '^OPTIONAL:')"
+
+# ==========================================================================
+echo
+echo "B: SKIP — inotifywait absent → mail-deliver in OPTIONAL, absent from UNITS:"
+# ==========================================================================
+neg_out="$(query_units without)"; neg_rc=$?
+is   "B: units.sh exits 0 with inotifywait absent"                  "0" "$neg_rc"
+nowant "B: UNITS does not include spira-mail-deliver.service" "spira-mail-deliver.service" \
+       "$(printf '%s\n' "$neg_out" | grep '^UNITS:')"
+nowant "B: ENABLE does not include spira-mail-deliver-prod.service" "spira-mail-deliver-prod.service" \
+       "$(printf '%s\n' "$neg_out" | grep '^ENABLE:')"
+want "B: OPTIONAL includes spira-mail-deliver.service" "spira-mail-deliver.service" \
+     "$(printf '%s\n' "$neg_out" | grep '^OPTIONAL:')"
 
 # ==========================================================================
 echo
