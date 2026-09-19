@@ -40,14 +40,16 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 
 echo "test-suites-fixture-fault.sh"
 
+# Capture before conf.sh rebuilds PATH from scratch HOME and drops bd-embedded from it.
+_REAL_HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || echo "$HOME")"
+_BD_EMBEDDED_REAL="$(command -v bd-embedded 2>/dev/null || true)"
+
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
 testdb_require test-suites-fixture-fault
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-# Capture before testdb_up prepends the bd-embedded shim to PATH; used in sut so the
-# server-mode fallback finds the real bd, not the wrapper.
+# Capture after conf.sh rebuilt PATH; used in sut for server-mode fallback.
 _BD_REAL="$(command -v bd 2>/dev/null || true)"
-testdb_up fixture-fault || { echo "test-suites-fixture-fault: could not build a fixture database"; exit 1; }
 
 SH="$TMP/spira"; RUN="$TMP/run"; STATE="$TMP/state"; GATEF="$TMP/gate-suites"
 mkdir -p "$SH" "$RUN" "$STATE" "$TMP/repo"
@@ -61,16 +63,16 @@ printf '# the gated one\nspira/test-ff-gated.sh\n' > "$GATEF"
 # Knobs, all away from the shipped default.
 BUDGET=120; PERSUITE=20; STALE=3600; PRIO=3; REPONAME=fixture-fault-repo
 
-# THE bd WRAPPER NEEDS THE REAL HOME. The embedded binary looks for its data dir under
-# the invoking user's HOME, and the test's scratch HOME would cause every bd call to fail.
-# The wrapper passes the real HOME to bd-embedded while the sut environment still uses a
-# scratch HOME for everything else (shell history, readline, etc.). Isolating the spira
-# config is SPIRA_CONF's job, not HOME's.
-#
-# type -P bd finds bd-embedded (TESTDB_BIN is prepended to PATH by testdb_up above).
+# THE bd WRAPPER NEEDS THE REAL HOME. testenv-batch.sh sets HOME to a private scratch
+# dir; conf.sh rebuilds PATH from it, dropping bd-embedded. Creating the wrapper before
+# testdb_up and setting TESTDB_BD to it lets _testdb_embedded_check succeed so the outer
+# fixture uses embedded mode rather than the dolt server (which fails under load).
 TOOLPATH="$TMP/bin"; mkdir -p "$TOOLPATH"
-printf '#!/usr/bin/env bash\nHOME=%s exec %s "$@"\n' "$HOME" "$(type -P bd)" > "$TOOLPATH/bd"
+printf '#!/usr/bin/env bash\nHOME=%s exec %s "$@"\n' \
+    "$_REAL_HOME" "${_BD_EMBEDDED_REAL:-${_BD_REAL:-bd}}" > "$TOOLPATH/bd"
 chmod +x "$TOOLPATH/bd"
+TESTDB_BD="$TOOLPATH/bd"
+testdb_up fixture-fault || { echo "test-suites-fixture-fault: could not build a fixture database"; exit 1; }
 
 # PRE-SEEDED SHARED FIXTURE FOR THE SUT.
 # The SUT's suites.sh must see _td_shared=1 so it can classify exit-75 as FIXTURE-FAULT.
