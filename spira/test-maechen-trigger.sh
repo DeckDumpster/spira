@@ -325,10 +325,13 @@ DEDUP_IP_ID="$("$SPIRA_BD" -C "$SPIRA_DB" create "Maechen pass — dedup fixture
 "$SPIRA_BD" -C "$SPIRA_DB" update "$DEDUP_IP_ID" --status in_progress --force 2>/dev/null || true
 
 printf '0\n' > "$WATERMARK_FILE"
+# Resolve to a full path — testdb_up may set SPIRA_BD to a bare name ("bd-embedded")
+# that is not in the env -i restricted PATH.
+_dedup_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
 dedup_ip_out="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin" \
     SPIRA_CONF="$NONE" \
-    SPIRA_BD="$SPIRA_BD" \
+    SPIRA_BD="$_dedup_bd" \
     SPIRA_DB="$SPIRA_DB" \
     SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO="$TESTREPO" \
@@ -575,6 +578,108 @@ nowant "no 'cannot resolve base ref' for gitea-remote repo" \
     "cannot resolve base ref" "$out_3ljk"
 is   "landing trigger fires for gitea-remote repo" 0 "$rc_3ljk"
 want "bd create called for gitea-remote repo" "create" "$(cat "$BD_LOG")"
+
+# ==========================================================================================
+echo
+echo "LANDING FORMS: 'spira: land <id>' commits are counted (db-7meh)"
+# ==========================================================================================
+# POSITIVE CONTROL: the landing pass writes "spira: land <id>" — this form was never
+# matched by the old prefix-anchored pattern and caused landing_count to stay 0 for
+# every real landing. Two such commits must reach a threshold of 2.
+printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
+printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
+
+LAND_FORM_REPO="$T/land-form"
+git init -q "$LAND_FORM_REPO"
+git -C "$LAND_FORM_REPO" config user.email "test@example.com"
+git -C "$LAND_FORM_REPO" config user.name "Test"
+git -C "$LAND_FORM_REPO" commit --allow-empty -q -m "initial"
+git -C "$LAND_FORM_REPO" commit --allow-empty -q -m "spira: land sp-aaa1"
+git -C "$LAND_FORM_REPO" commit --allow-empty -q -m "spira: land sp-bbb2"
+mkdir -p "$LAND_FORM_REPO/.git/refs/remotes/origin"
+git -C "$LAND_FORM_REPO" rev-parse HEAD > "$LAND_FORM_REPO/.git/refs/remotes/origin/main"
+
+: > "$BD_LOG"
+out_lf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
+    SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$LAND_FORM_REPO" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
+    bash "$TRIGSH" 2>&1)"; rc_lf=$?
+is   "spira:land form: exits 0"         0        "$rc_lf"
+want "spira:land form: bd create called" "create" "$(cat "$BD_LOG")"
+want "spira:land form: reason mentions landings" "landings" "$out_lf"
+
+# ==========================================================================================
+echo
+echo "LANDING FORMS: 'Merge branch spira/<id>' and 'Merge pull request' are counted (db-7meh)"
+# ==========================================================================================
+printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
+printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
+
+MERGE_FORM_REPO="$T/merge-form"
+git init -q "$MERGE_FORM_REPO"
+git -C "$MERGE_FORM_REPO" config user.email "test@example.com"
+git -C "$MERGE_FORM_REPO" config user.name "Test"
+git -C "$MERGE_FORM_REPO" commit --allow-empty -q -m "initial"
+git -C "$MERGE_FORM_REPO" commit --allow-empty -q -m "Merge branch 'spira/sp-ccc3' into HEAD"
+git -C "$MERGE_FORM_REPO" commit --allow-empty -q -m "Merge pull request #42 from org/spira/sp-ddd4"
+mkdir -p "$MERGE_FORM_REPO/.git/refs/remotes/origin"
+git -C "$MERGE_FORM_REPO" rev-parse HEAD > "$MERGE_FORM_REPO/.git/refs/remotes/origin/main"
+
+: > "$BD_LOG"
+out_mf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
+    SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$MERGE_FORM_REPO" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
+    bash "$TRIGSH" 2>&1)"; rc_mf=$?
+is   "merge forms: exits 0"              0        "$rc_mf"
+want "merge forms: bd create called"     "create" "$(cat "$BD_LOG")"
+
+# ==========================================================================================
+echo
+echo "LANDING FORMS: merge + landing commit for the same bead counts as one (db-7meh)"
+# ==========================================================================================
+# A branch landing produces both a merge commit and a 'spira: land <id>' commit.
+# The counter must deduplicate by bead id so the pair counts as one landing, not two.
+printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
+printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
+
+DEDUP_FORM_REPO="$T/dedup-form"
+git init -q "$DEDUP_FORM_REPO"
+git -C "$DEDUP_FORM_REPO" config user.email "test@example.com"
+git -C "$DEDUP_FORM_REPO" config user.name "Test"
+git -C "$DEDUP_FORM_REPO" commit --allow-empty -q -m "initial"
+# Two commits for the same bead — one merge form, one landing-pass form.
+git -C "$DEDUP_FORM_REPO" commit --allow-empty -q -m "Merge branch 'spira/sp-eee5' into HEAD"
+git -C "$DEDUP_FORM_REPO" commit --allow-empty -q -m "spira: land sp-eee5"
+mkdir -p "$DEDUP_FORM_REPO/.git/refs/remotes/origin"
+git -C "$DEDUP_FORM_REPO" rev-parse HEAD > "$DEDUP_FORM_REPO/.git/refs/remotes/origin/main"
+
+# Threshold=2: only 1 distinct bead landed — trigger must NOT fire.
+: > "$BD_LOG"
+out_dd="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
+    SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$DEDUP_FORM_REPO" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
+    bash "$TRIGSH" 2>&1)"; rc_dd=$?
+is     "dedup forms: same-bead merge+land: exits 0"       0 "$rc_dd"
+nowant "dedup forms: same-bead pair does not reach 2"    "create" "$(cat "$BD_LOG")"
+
+# Add a second distinct bead — now 2 unique ids, threshold=2, trigger must fire.
+git -C "$DEDUP_FORM_REPO" commit --allow-empty -q -m "spira: land sp-fff6"
+git -C "$DEDUP_FORM_REPO" rev-parse HEAD > "$DEDUP_FORM_REPO/.git/refs/remotes/origin/main"
+: > "$BD_LOG"
+out_dd2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
+    SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$DEDUP_FORM_REPO" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
+    bash "$TRIGSH" 2>&1)"; rc_dd2=$?
+is   "dedup forms: two distinct beads reach threshold 2" 0        "$rc_dd2"
+want "dedup forms: trigger fires at 2 distinct beads"    "create" "$(cat "$BD_LOG")"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
