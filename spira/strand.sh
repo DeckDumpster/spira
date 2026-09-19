@@ -222,7 +222,13 @@ classify_one() {   # classify_one <labels> <exclude-labels> -> the classifier's 
     # actionable"; a bead carrying a dead aeon's assignee is listed by a bare `bd ready` and
     # refused by `bd ready --claim`, so counting it here would answer yes about work nobody
     # can take and hide the strand this program exists to find.
-    ready="$(bdjson "${READY_ARGS[@]}" --label "$labels" --exclude-label "$exclude")"
+    #
+    # SPIRA_QUEUE_WAIT_LABEL is excluded for the same reason fayth_exclude adds it: a bead
+    # holding this label is waiting on a queue blocker and is not claimable, so counting it
+    # as "ready and unserved" produces a false strand escalation.
+    local _qw="${SPIRA_QUEUE_WAIT_LABEL:-}"
+    local _excl="${exclude}${_qw:+${exclude:+,}${_qw}}"
+    ready="$(bdjson "${READY_ARGS[@]}" --label "$labels" --exclude-label "$_excl")"
     live="$(live_aeons "$labels")"
 
     holders="$(printf '%s' "$beads" | python3 -c '
