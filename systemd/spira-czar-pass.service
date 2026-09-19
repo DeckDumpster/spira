@@ -1,0 +1,19 @@
+[Unit]
+Description=Spira czar fast pass — queue-stall detection with deterministic remedies
+Documentation=file://@SPIRA_HOME@/czar.sh
+After=default.target
+
+[Service]
+Type=oneshot
+ExecStart=@SPIRA_PROD@/czar.sh --pass
+# A pass reads local files and makes at most 2 gh API calls; 60 s is generous.
+TimeoutStartSec=60
+# Nice=10 is the fence (law-fence-loops-on-shared-hardware).
+Nice=10
+Environment=SPIRA_HOME=@SPIRA_PROD@
+Environment=SPIRA_RUN=@SPIRA_RUN@
+StandardOutput=append:@SPIRA_RUN@/czar.log
+StandardError=append:@SPIRA_RUN@/czar.log
+
+[Install]
+WantedBy=default.target
