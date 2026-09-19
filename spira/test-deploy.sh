@@ -677,5 +677,182 @@ rm -f "$_force_pf"
 
 # ==========================================================================
 echo
+echo "PROPERTY 17: read-only release dir — sidecar written to .tags/, deploy succeeds"
+# Acceptance test for issue #109: activate.sh makes the release dir read-only, so
+# the old deploy.sh silently failed to write .tag inside it, skew fell back to
+# timestamps, and every deploy rolled back.
+#
+# FAIL-FIRST: with activate.sh that chmod's the dir and a skew that reads .tag
+# from the OLD location (inside the release dir), the sidecar is missing, skew
+# gets CANNOT-VERIFY or a timestamp mismatch, and the test records this.
+# ==========================================================================
+
+# Release with intentionally mismatched timestamps: asset stem uses a NEWER time,
+# tag uses an OLDER time. The old timestamp fallback would see them differ → NOT-LATEST.
+RDONLY_TS_TAG="20260913T144935Z"      # tag timestamp (older)
+RDONLY_TS_ASSET="20260913T145022Z"    # asset/tarball timestamp (newer, from issue #51)
+RDONLY_RELEASE="spira-${RDONLY_TS_ASSET}"
+RDONLY_TAG="spira-release-spira-${RDONLY_TS_TAG}"
+
+# Set up a git repo with exactly one tag, pointing at a commit.
+RDONLY_REPO="$TMP/rdonly-repo"
+git init -q "$RDONLY_REPO"
+git -C "$RDONLY_REPO" config user.email "t@t"
+git -C "$RDONLY_REPO" config user.name "t"
+git -C "$RDONLY_REPO" commit --allow-empty -q -m "init"
+RDONLY_COMMIT="$(git -C "$RDONLY_REPO" rev-parse HEAD)"
+git -C "$RDONLY_REPO" tag -a "$RDONLY_TAG" HEAD \
+    -m "$(printf 'spira release\nbead: sp-test')"
+
+# activate.sh mock: creates release dir, chmod's it read-only, writes MANIFEST.
+# Crucially it does NOT create a .tag inside the release dir (the real one can't).
+RDONLY_ACTIVATE="$TMP/rdonly-activate.sh"
+cat > "$RDONLY_ACTIVATE" <<RAEOF
+#!/usr/bin/env bash
+printf 'activate %s\n' "\$*" >> "\${CALL_LOG:-/dev/null}"
+[ "\${ACTIVATE_EXIT:-0}" = "0" ] || exit "\${ACTIVATE_EXIT}"
+tarball="\${*: -1}"
+release_name="\$(basename "\$tarball" .tar.gz)"
+releases="\${SPIRA_RELEASES:?}"
+mkdir -p "\$releases/\$release_name"
+printf 'commit %s\ntimestamp %s\n' "\${RDONLY_COMMIT}" "\${RDONLY_TS_ASSET}" \
+    > "\$releases/\$release_name/MANIFEST"
+chmod -R a-w "\$releases/\$release_name"
+_tmp="\$releases/.current.new.\$\$"
+ln -s "\$release_name" "\$_tmp" && mv -T "\$_tmp" "\$releases/current"
+RAEOF
+chmod +x "$RDONLY_ACTIVATE"
+
+# FAIL-FIRST against old code: use a skew stub that reads from the OLD sidecar
+# location. Since the dir is read-only, the sidecar was never written there.
+# Skew falls back to timestamps: RDONLY_TS_ASSET != RDONLY_TS_TAG → NOT-LATEST.
+RDONLY_BIN_OLD="$TMP/rdonly-bin-old"
+mkdir -p "$RDONLY_BIN_OLD"
+# Copy standard mocks from BIN.
+for _f in gh world.sh install.sh layout.sh doctor.sh slay.sh bd systemctl; do
+    cp "$BIN/$_f" "$RDONLY_BIN_OLD/$_f" 2>/dev/null || true
+done
+# skew stub that reads from OLD location and uses timestamp fallback.
+cat > "$RDONLY_BIN_OLD/skew.sh" <<SKEWOLDEOF
+#!/usr/bin/env bash
+printf 'skew %s\n' "\$*" >> "\${CALL_LOG:-/dev/null}"
+case "\${1:-}" in check)
+    current_link="\${SPIRA_RELEASES}/current"
+    activated="\$(readlink "\$current_link" 2>/dev/null)" || exit 3
+    sidecar="\${SPIRA_RELEASES}/\${activated}/.tag"
+    if [ -f "\$sidecar" ]; then
+        release_tag="\$(tr -d '\n' < "\$sidecar")"
+    else
+        release_tag=""
+    fi
+    latest_tag="\$(git -C "\$SPIRA_REPO" tag -l 'spira-release-*' 2>/dev/null | sort | tail -1)"
+    if [ -n "\$release_tag" ]; then
+        [ "\$release_tag" = "\$latest_tag" ] || { echo "NOT-LATEST"; exit 1; }
+    else
+        activated_ts="\${activated#spira-}"
+        latest_ts="\${latest_tag##*-}"
+        [ "\$activated_ts" = "\$latest_ts" ] || { echo "NOT-LATEST (ts fallback)"; exit 1; }
+    fi
+    echo "skew: in effect"
+    exit 0
+    ;;
+esac
+exit 0
+SKEWOLDEOF
+chmod +x "$RDONLY_BIN_OLD/skew.sh"
+
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+> "$CALL_LOG"
+_ff_out="$(env -i \
+    "PATH=$RDONLY_BIN_OLD:$PATH" \
+    "SPIRA_PATH=$RDONLY_BIN_OLD" \
+    "HOME=$HOME" \
+    "SPIRA_HOME=$HERE" \
+    "SPIRA_DB=/nonexistent-spira-db" \
+    "SPIRA_RUN=$RUN_DIR" \
+    "SPIRA_CONF=/nonexistent" \
+    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_REPO=$RDONLY_REPO" \
+    "SPIRA_INSTANCE=prod" \
+    "SPIRA_DOCTOR=1" \
+    "SPIRA_SYSTEMCTL=$BIN/systemctl" \
+    "SPIRA_WORLD_SH=$BIN/world.sh" \
+    "SPIRA_ACTIVATE_SH=$RDONLY_ACTIVATE" \
+    "SPIRA_INSTALL_SH=$BIN/install.sh" \
+    "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
+    "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
+    "SPIRA_SKEW_SH=$RDONLY_BIN_OLD/skew.sh" \
+    "SPIRA_SLAY_SH=$BIN/slay.sh" \
+    "CALL_LOG=$CALL_LOG" \
+    "SC_LOG=$SC_LOG" \
+    "RDONLY_COMMIT=$RDONLY_COMMIT" \
+    "RDONLY_TS_ASSET=$RDONLY_TS_ASSET" \
+    "GH_RELEASE_ASSET_NAME=$RDONLY_RELEASE.tar.gz" \
+    "SLAY_LOG=$SLAY_LOG" \
+    "GIT_CONFIG_NOSYSTEM=1" \
+    "GIT_AUTHOR_NAME=test" \
+    "GIT_AUTHOR_EMAIL=test@t" \
+    "GIT_COMMITTER_NAME=test" \
+    "GIT_COMMITTER_EMAIL=test@t" \
+    bash "$DEPLOY" "$RDONLY_TAG" 2>&1)"
+_ff_rc=$?
+not0 "rdonly/fail-first: old sidecar location → NOT-LATEST → rollback (exits non-zero)" "$_ff_rc"
+want "rdonly/fail-first: rollback mentioned"   "ROLLBACK" "$_ff_out"
+want "rdonly/fail-first: skew triggered rollback" "skew" "$_ff_out"
+
+# HAPPY PATH: same setup, but deploy.sh writes sidecar to .tags/ (the fix).
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+> "$CALL_LOG"
+_rdonly_out="$(env -i \
+    "PATH=$BIN:$PATH" \
+    "SPIRA_PATH=$BIN" \
+    "HOME=$HOME" \
+    "SPIRA_HOME=$HERE" \
+    "SPIRA_DB=/nonexistent-spira-db" \
+    "SPIRA_RUN=$RUN_DIR" \
+    "SPIRA_CONF=/nonexistent" \
+    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_REPO=$RDONLY_REPO" \
+    "SPIRA_INSTANCE=prod" \
+    "SPIRA_DOCTOR=1" \
+    "SPIRA_SYSTEMCTL=$BIN/systemctl" \
+    "SPIRA_WORLD_SH=$BIN/world.sh" \
+    "SPIRA_ACTIVATE_SH=$RDONLY_ACTIVATE" \
+    "SPIRA_INSTALL_SH=$BIN/install.sh" \
+    "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
+    "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
+    "SPIRA_SKEW_SH=$HERE/skew.sh" \
+    "SPIRA_SLAY_SH=$BIN/slay.sh" \
+    "CALL_LOG=$CALL_LOG" \
+    "SC_LOG=$SC_LOG" \
+    "RDONLY_COMMIT=$RDONLY_COMMIT" \
+    "RDONLY_TS_ASSET=$RDONLY_TS_ASSET" \
+    "GH_RELEASE_ASSET_NAME=$RDONLY_RELEASE.tar.gz" \
+    "SLAY_LOG=$SLAY_LOG" \
+    "GIT_CONFIG_NOSYSTEM=1" \
+    "GIT_AUTHOR_NAME=test" \
+    "GIT_AUTHOR_EMAIL=test@t" \
+    "GIT_COMMITTER_NAME=test" \
+    "GIT_COMMITTER_EMAIL=test@t" \
+    bash "$DEPLOY" "$RDONLY_TAG" 2>&1)"
+_rdonly_rc=$?
+is0    "rdonly: deploy exits 0 (no rollback)"        "$_rdonly_rc"
+notwant "rdonly: no ROLLBACK"                        "ROLLBACK" "$_rdonly_out"
+islink "rdonly: current -> $RDONLY_RELEASE"          "$RELEASES/current" "$RDONLY_RELEASE"
+if [ -f "$RELEASES/.tags/$RDONLY_RELEASE" ]; then
+    ok "rdonly: sidecar written to .tags/$RDONLY_RELEASE"
+else
+    bad "rdonly: sidecar written to .tags/$RDONLY_RELEASE" "file missing"
+fi
+_sidecar_val="$(cat "$RELEASES/.tags/$RDONLY_RELEASE" 2>/dev/null | tr -d '\n')"
+is "rdonly: sidecar contains correct tag" "$RDONLY_TAG" "$_sidecar_val"
+if [ ! -w "$RELEASES/$RDONLY_RELEASE" ]; then
+    ok "rdonly: release dir is read-only (confirms chmod worked)"
+else
+    bad "rdonly: release dir is read-only" "dir is still writable"
+fi
+
+# ==========================================================================
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

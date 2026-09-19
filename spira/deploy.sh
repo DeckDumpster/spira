@@ -203,6 +203,16 @@ if [ "$dry_run" = 1 ]; then
         fi
         unset _dry_exec
     fi
+    # Verify the tag sidecar directory is or can be made writable before any disruptive action.
+    _dry_tags="$SPIRA_RELEASES/.tags"
+    mkdir -p "$_dry_tags" 2>/dev/null || true
+    _dry_probe="$_dry_tags/.probe.$$"
+    if ! printf '' > "$_dry_probe" 2>/dev/null; then
+        printf 'deploy: dry-run: tag sidecar directory not writable: %s\n' "$_dry_tags" >&2
+        exit 1
+    fi
+    rm -f "$_dry_probe"
+    unset _dry_tags _dry_probe
     printf 'deploy: would systemd/install.sh (re-render units with SPIRA_PROD=%s/current/spira)\n' \
         "$SPIRA_RELEASES"
     printf 'deploy: would cockpit/layout.sh ensure\n'
@@ -245,6 +255,19 @@ _promo_svc="spira-promote-${SPIRA_INSTANCE}.service"
 "$_SC" --user stop "$_promo_tmr" 2>/dev/null || true
 "$_SC" --user disable "$_promo_tmr" 2>/dev/null || true
 "$_SC" --user stop "$_promo_svc" 2>/dev/null || true
+
+# Ensure the tag sidecar directory exists and is writable before disrupting the instance.
+# The release dir is read-only after activate.sh; the sidecar goes beside it, not inside.
+_tags_dir="$SPIRA_RELEASES/.tags"
+mkdir -p "$_tags_dir" || {
+    printf 'deploy: cannot create tag sidecar directory %s\n' "$_tags_dir" >&2; exit 1
+}
+_tags_probe="$_tags_dir/.probe.$$"
+printf '' > "$_tags_probe" || {
+    printf 'deploy: tag sidecar directory %s is not writable\n' "$_tags_dir" >&2; exit 1
+}
+rm -f "$_tags_probe"
+unset _tags_dir _tags_probe
 
 # Drain: wait for live aeons to finish; refuse if they do not.
 # With --force: set the gate immediately, then slay any remaining aeons.
@@ -305,8 +328,10 @@ _rollback() {
 log "deploy: activating"
 "$_ACTIVATE" "$_tarball" || { _rollback "activate.sh failed"; }
 
-# Record the release tag beside the release directory so skew.sh can map directory to tag.
-printf '%s\n' "$tag" > "$SPIRA_RELEASES/$release_stem/.tag" 2>/dev/null || true
+# Record the release tag in .tags/ (beside the release dirs, not inside the read-only one).
+printf '%s\n' "$tag" > "$SPIRA_RELEASES/.tags/$release_stem" || {
+    _rollback "sidecar write failed: $SPIRA_RELEASES/.tags/$release_stem"
+}
 
 # Re-render unit files so ExecStart paths point at $SPIRA_RELEASES/current/spira.
 # One-time cutover if SPIRA_PROD was previously set to the checkout; idempotent thereafter.

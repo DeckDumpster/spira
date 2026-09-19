@@ -97,9 +97,11 @@ run_skew() {
 # ===========================================================================
 echo
 echo "positive control — activated is NOT latest → NOT-LATEST reported:"
+# (no sidecar — commit-based fallback must find the tag and report NOT-LATEST)
 # ===========================================================================
 rm -f "$RELEASES/current"
 ln -s "spira-${TS1}" "$RELEASES/current"
+rm -rf "$RELEASES/.tags"
 
 stale_out="$(run_skew)"; stale_rc=$?
 is   "not-latest: exits 1"                    "1"                         "$stale_rc"
@@ -109,10 +111,13 @@ want "not-latest: names latest tag"           "spira-release-spira-${TS2}" "$sta
 
 # ===========================================================================
 echo
-echo "positive control — MANIFEST commit does not match release tag:"
+echo "positive control — MANIFEST commit does not match release tag (sidecar present):"
+# (sidecar identifies the tag; MANIFEST disagrees with what that tag points at)
 # ===========================================================================
 rm -f "$RELEASES/current"
 ln -s "spira-${TS2}" "$RELEASES/current"
+mkdir -p "$RELEASES/.tags"
+printf 'spira-release-spira-%s\n' "$TS2" > "$RELEASES/.tags/spira-${TS2}"
 WRONG_COMMIT="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 printf 'commit %s\ntimestamp %s\n' "$WRONG_COMMIT" "$TS2" > "$REL2_DIR/MANIFEST"
 
@@ -122,18 +127,36 @@ want "manifest-mismatch: MANIFEST-MISMATCH finding present" "MANIFEST-MISMATCH" 
 want "manifest-mismatch: names the MANIFEST commit"        "$WRONG_COMMIT"        "$mismatch_out"
 want "manifest-mismatch: names the tag commit"             "$COMMIT2"             "$mismatch_out"
 
-# Restore MANIFEST to correct state.
+# Restore MANIFEST to correct state; remove sidecar.
 printf 'commit %s\ntimestamp %s\n' "$COMMIT2" "$TS2" > "$REL2_DIR/MANIFEST"
+rm -f "$RELEASES/.tags/spira-${TS2}"
 
 # ===========================================================================
 echo
-echo "silence when activated is latest and MANIFEST matches:"
+echo "silence when activated is latest and MANIFEST matches (via sidecar):"
 # ===========================================================================
+mkdir -p "$RELEASES/.tags"
+printf 'spira-release-spira-%s\n' "$TS2" > "$RELEASES/.tags/spira-${TS2}"
+
 clean_out="$(run_skew)"; clean_rc=$?
 is     "clean: exits 0"                   "0"                  "$clean_rc"
 want   "clean: 'in effect' message"       "in effect"          "$clean_out"
 nowant "clean: no NOT-LATEST"             "NOT-LATEST"         "$clean_out"
 nowant "clean: no MANIFEST-MISMATCH"      "MANIFEST-MISMATCH"  "$clean_out"
+
+rm -f "$RELEASES/.tags/spira-${TS2}"
+
+# ===========================================================================
+echo
+echo "silence when activated is latest and MANIFEST matches (commit fallback, no sidecar):"
+# ===========================================================================
+rm -rf "$RELEASES/.tags"
+
+clean_nosidecar_out="$(run_skew)"; clean_nosidecar_rc=$?
+is     "clean-nosidecar: exits 0"              "0"                 "$clean_nosidecar_rc"
+want   "clean-nosidecar: 'in effect' message"  "in effect"         "$clean_nosidecar_out"
+nowant "clean-nosidecar: no NOT-LATEST"        "NOT-LATEST"        "$clean_nosidecar_out"
+nowant "clean-nosidecar: no MANIFEST-MISMATCH" "MANIFEST-MISMATCH" "$clean_nosidecar_out"
 
 # ===========================================================================
 echo
