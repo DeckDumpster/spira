@@ -2148,6 +2148,30 @@ poison_asked_mark() {    # poison_asked_mark <id> <n>
     printf '%s\n' "$2" >> "$SPIRA_POISON_ASKED/$1"
 }
 
+SPIRA_REQUEUE_ASKED="${SPIRA_REQUEUE_ASKED:-$SPIRA_RUN/requeue-asked}"
+
+requeue_asked() {        # requeue_asked <id> <n> -> 0 if this exact (bead, count) already asked
+    local f="$SPIRA_REQUEUE_ASKED/$1"
+    [ -r "$f" ] && grep -qxF -- "$2" "$f" 2>/dev/null
+}
+
+requeue_asked_mark() {   # requeue_asked_mark <id> <n>
+    mkdir -p "$SPIRA_REQUEUE_ASKED" 2>/dev/null || return 1
+    printf '%s\n' "$2" >> "$SPIRA_REQUEUE_ASKED/$1"
+}
+
+SPIRA_RECLAIM_ASKED="${SPIRA_RECLAIM_ASKED:-$SPIRA_RUN/reclaim-asked}"
+
+reclaim_asked() {        # reclaim_asked <id> <n> -> 0 if this exact (bead, count) already asked
+    local f="$SPIRA_RECLAIM_ASKED/$1"
+    [ -r "$f" ] && grep -qxF -- "$2" "$f" 2>/dev/null
+}
+
+reclaim_asked_mark() {   # reclaim_asked_mark <id> <n>
+    mkdir -p "$SPIRA_RECLAIM_ASKED" 2>/dev/null || return 1
+    printf '%s\n' "$2" >> "$SPIRA_RECLAIM_ASKED/$1"
+}
+
 # --------------------------------------------------------------------------------------
 # Landing verification. CLOSED is not landed: a bead is only done when its work is in the
 # commit graph. Every aeon is required to name its bead id in the commit subject, which is

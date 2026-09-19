@@ -56,6 +56,53 @@ _section_empty() {
     [ -z "$result" ]
 }
 
+_repeat_check() {
+    # Refuses a repeat mail to the same recipient within SPIRA_MAIL_REPEAT_WINDOW.
+    # Fingerprint: (caller-script, normalized-subject, recipient). Normalization strips
+    # digits and SHA-like hex runs so "requeued 5 times" and "requeued 6 times" are the same
+    # escalation. Override: SPIRA_MAIL_REPEAT_CONSIDERED=<reason>, recorded and counted.
+    # Each refusal is counted under SPIRA_RUN/mail-repeat so audits are possible.
+    local mailbox="$1" subject="$2"
+    [ -n "${SPIRA_MAIL_REPEAT_CONSIDERED:-}" ] && return 0
+
+    local caller=""
+    caller="$(tr '\0' '\n' < "/proc/$PPID/cmdline" 2>/dev/null | head -1)" || caller=""
+    caller="$(basename "${caller:-unknown}")"
+
+    local norm_subj
+    norm_subj="$(printf '%s' "$subject" \
+        | sed -E 's/[0-9a-f]{7,}[0-9a-f]*//gI; s/[0-9]+//g' \
+        | tr -s ' ')"
+
+    local fp
+    fp="$(printf '%s|%s|%s' "$caller" "$norm_subj" "$mailbox" \
+        | sha256sum | cut -c1-48)"
+
+    local stamp_dir="${SPIRA_RUN:-/tmp}/mail-repeat"
+    local stamp_file="$stamp_dir/$fp"
+    local window="${SPIRA_MAIL_REPEAT_WINDOW:-14400}"
+
+    if [ -f "$stamp_file" ]; then
+        local stamp_time now elapsed
+        stamp_time="$(stat -c %Y "$stamp_file" 2>/dev/null || stat -f %m "$stamp_file" 2>/dev/null)" || stamp_time=0
+        now="$(date +%s)"
+        elapsed=$(( now - stamp_time ))
+        if [ "$elapsed" -lt "$window" ]; then
+            mkdir -p "$stamp_dir"
+            printf '1\n' >> "$stamp_dir/$fp.refused"
+            local nrefused
+            nrefused="$(wc -l < "$stamp_dir/$fp.refused" 2>/dev/null | tr -d ' ')"
+            printf 'mail: repeat refused — %s already sent to %s within %ss window (refusals: %s) — override: SPIRA_MAIL_REPEAT_CONSIDERED=<reason>\n' \
+                "$caller" "$mailbox" "$window" "${nrefused:-1}" >&2
+            return 1
+        fi
+    fi
+
+    mkdir -p "$stamp_dir"
+    touch "$stamp_file"
+    return 0
+}
+
 _lint_check() {
     local from="$1" subject="$2" kind="$3" default="$4" urgent="$5" body="$6"
     [ -n "${SPIRA_MAIL_LINT_CONSIDERED:-}" ] && return 0
@@ -162,6 +209,9 @@ cmd_send() {
     done
 
     local body; body="$(cat)"
+    if [ "$mailbox" = "operator" ]; then
+        _repeat_check "$mailbox" "$subject" || return 1
+    fi
     _lint_check "$from" "$subject" "${kind:-}" "${default:-}" "${urgent:-}" "$body" || return 1
 
     _mail_ensure "$mailbox"
@@ -214,6 +264,7 @@ cmd_send() {
         [ -n "$urgent" ]  && printf 'X-Spira-Urgent: yes\n'
         [ -n "$x_bead" ]  && printf 'X-Spira-Bead: %s\n' "$x_bead"
         [ -n "${SPIRA_MAIL_LINT_CONSIDERED:-}" ] && printf 'X-Spira-Lint-Override: %s\n' "${SPIRA_MAIL_LINT_CONSIDERED}"
+        [ -n "${SPIRA_MAIL_REPEAT_CONSIDERED:-}" ] && printf 'X-Spira-Repeat-Override: %s\n' "${SPIRA_MAIL_REPEAT_CONSIDERED}"
         printf 'Date: %s\n' "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"
         printf 'Message-ID: <%s@spira>\n' "$msgid"
         printf '\n'
