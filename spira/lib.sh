@@ -1001,7 +1001,7 @@ bead_reopen() {
     local id="$1" cause="${2:-unrecorded}" note="${3:-}" rc=0
     bdq reopen "$id" >/dev/null 2>&1 || rc=1
     release_claim "$id" || rc=1
-    _bump_write_event "$id" reopen "$cause"
+    _bump_write_event "$id" reopen "$cause" || rc=1
     [ -n "$note" ] && { bdq note "$id" "$note" >/dev/null 2>&1 || rc=1; }
     [ "$rc" = 0 ] || printf 'bead_reopen: %s — bd refused the reopen, the release or the note\n' "$id" >&2
     return 0
