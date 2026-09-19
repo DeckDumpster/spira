@@ -205,27 +205,33 @@ main() {
     if [ -d "$LANDSTATE" ]; then
         for _mf in "$LANDSTATE"/*; do
             [ -f "$_mf" ] || continue
-            { read -r _ms _mt _me _ < "$_mf"; } 2>/dev/null || continue
+            # land_mark omits trailing newline; read returns non-zero at EOF (watchtower.sh:218).
+            _ms=""; _mt=""; _me=""
+            read -r _ms _mt _me _ < "$_mf" 2>/dev/null || true
             case "$_ms" in BATCHED|LANDED) : ;; *) continue ;; esac
-            [ "${_me:-0}" -gt "$last_moved" ] && last_moved="$_me"
+            case "${_me:-}" in ''|*[!0-9]*) continue ;; esac
+            [ "$_me" -gt "$last_moved" ] && last_moved="$_me"
         done
     fi
-    [ "$last_moved" -eq 0 ] && last_moved="$oldest_epoch"
-    local stuck_age
-    stuck_age=$(( now - last_moved ))
 
     local _stuck_flag="$SPIRA_RUN/queue-stuck-$name"
-    if [ "$stuck_age" -lt "${SPIRA_QUEUE_STUCK_AGE:-7200}" ]; then
-        rm -f "$_stuck_flag" 2>/dev/null || true
-    elif [ ! -f "$_stuck_flag" ]; then
-        printf '## Note\nThe merge queue for %s has not made progress in %ds (threshold %ds).\n\nQueue depth: %d branch(es). This may indicate a conflict loop or a stalled batch builder.\n' \
-            "$name" "$stuck_age" "${SPIRA_QUEUE_STUCK_AGE:-7200}" "$count" \
-        | bash "$HERE/mail.sh" send operator \
-            --from "Spira Queue <queue@spira>" \
-            --subject "Merge queue: $name queue stuck (${stuck_age}s)" \
-            2>/dev/null && touch "$_stuck_flag" 2>/dev/null || true
-        [ -f "$_stuck_flag" ] && \
-            printf 'batch %s: mailed operator about stuck queue (stuck_age %ds)\n' "$name" "$stuck_age"
+    if [ "$last_moved" -eq 0 ]; then
+        printf 'batch %s: no BATCHED/LANDED record — stuck check skipped\n' "$name"
+    else
+        local stuck_age
+        stuck_age=$(( now - last_moved ))
+        if [ "$stuck_age" -lt "${SPIRA_QUEUE_STUCK_AGE:-7200}" ]; then
+            rm -f "$_stuck_flag" 2>/dev/null || true
+        elif [ ! -f "$_stuck_flag" ]; then
+            printf '## Note\nThe merge queue for %s has not made progress in %ds (threshold %ds).\n\nQueue depth: %d branch(es). This may indicate a conflict loop or a stalled batch builder.\n' \
+                "$name" "$stuck_age" "${SPIRA_QUEUE_STUCK_AGE:-7200}" "$count" \
+            | bash "$HERE/mail.sh" send operator \
+                --from "Spira Queue <queue@spira>" \
+                --subject "Merge queue: $name queue stuck (${stuck_age}s)" \
+                2>/dev/null && touch "$_stuck_flag" 2>/dev/null || true
+            [ -f "$_stuck_flag" ] && \
+                printf 'batch %s: mailed operator about stuck queue (stuck_age %ds)\n' "$name" "$stuck_age"
+        fi
     fi
 
     [ "$count" -ge "${SPIRA_QUEUE_BATCH_MAX:-8}" ] && triggered=1

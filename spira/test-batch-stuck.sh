@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
 # test-batch-stuck.sh — queue-stuck alert measures movement, not backlog depth.
 #
-# Two cases, each written to fail against the code that preceded this fix:
+# mark_moved writes without a trailing newline (matching land_mark in lib.sh).
+# Readers that use "|| continue" on the read skip every production record and
+# leave last_moved=0, triggering the fallback to oldest_epoch and false-positive
+# mail. Cases e and g fail against the unfixed reader (law-a-regression-test-must-be-seen-to-fail).
 #
-#   e. DEEP but MOVING queue: oldest cert is old, BATCHED entry is recent → no mail.
-#      Current (pre-fix) code mails because it checks cert age, not movement time.
-#      law-a-regression-test-must-be-seen-to-fail: assert NO mail; old code mails.
-#
-#   f. STALLED queue: old certs, no recent BATCHED/LANDED → mail sent.
-#      Sub-case f2: movement recorded → flag clears (queue still non-empty).
-#      Sub-case f3: queue stalls again → alert re-fires.
-#      Current (pre-fix) code: flag only clears when queue empties, so f3 is silent.
-#      law-a-regression-test-must-be-seen-to-fail: assert re-fire; old code is silent.
-#
-# Positive control: case f (stalled → mails) must pass on current code too; if the
-# mail stub never fires, "no mail" in case e is vacuous (law-absence-needs-a-positive-control).
+#   ctrl. Positive control: old BATCHED + old cert → mail fires (proves stub works).
+#   e.    DEEP but MOVING: old cert, recent BATCHED → no mail.
+#   f.    STALLED: old cert, old BATCHED (movement stopped long ago) → mail.
+#         f2. Recent BATCHED added → flag clears.
+#         f3. Recent BATCHED removed → re-fires.
+#   g.    Post-landing false positive (sp-wlt1r): recent LANDED + old cert → no mail.
+#         Fails pre-fix because the no-newline LANDED record is skipped, last_moved=0,
+#         fallback to oldest cert age fires the alert seconds after a landing.
+#   h.    Brand-new queue: no BATCHED/LANDED at all → stuck check skipped, no mail
+#         (law-a-control-that-cannot-check-must-refuse).
 #
 # covers: spira/batch.sh
 # timeout: 120
@@ -110,11 +111,11 @@ branch() {
 }
 
 # mark_moved <id> <state> <epoch> — write a BATCHED or LANDED record in landstate.
-# These have no git branch; queue_certified_list skips them.  The stuck-check
-# loop reads them to determine when the queue last made progress.
+# No trailing newline — matches land_mark in lib.sh.  A reader using "|| continue"
+# would skip this record (read returns non-zero at EOF-without-delimiter).
 mark_moved() {
     local id="$1" state="$2" epoch="$3"
-    printf '%s none %s\n' "$state" "$epoch" > "$LANDSTATE/$id"
+    printf '%s none %s' "$state" "$epoch" > "$LANDSTATE/$id"
 }
 
 clean_case() {
@@ -146,11 +147,12 @@ BATCH_WAIT=86400
 
 # ============================================================================
 # POSITIVE CONTROL — confirm the mail stub fires for a genuinely stalled queue.
-# If this fails the "no mail" assertion in case e is vacuous.
+# Old CERTIFIED cert + old BATCHED record (last movement ≥ threshold ago).
+# If this fails the "no mail" assertions below are vacuous.
 # ============================================================================
 seed
 branch "sp-ctrl" "$OLD"
-# No BATCHED/LANDED entries → stuck_age ≥ threshold.
+mark_moved "sp-ctrl-batched" BATCHED "$OLD"
 ctrl_out="$(SPIRA_QUEUE_STUCK_AGE=$STUCK_AGE SPIRA_QUEUE_BATCH_MAX=$BATCH_MAX \
     SPIRA_QUEUE_BATCH_WAIT=$BATCH_WAIT batch "$REPONAME" 2>&1)"
 want "ctrl: stalled queue sends mail" "mailed operator" "$ctrl_out"
@@ -175,16 +177,18 @@ is    "e. deep+moving: stuck flag absent" "0" \
 clean_case
 
 # ============================================================================
-# f. STALLED queue: old certs, no recent movement.
+# f. STALLED queue: old certs, last movement old (≥ threshold ago).
 #    Expected: mail sent, flag created.
-#    f2. After movement recorded: flag clears (queue still non-empty).
-#    f3. Movement gone again (another stall): alert re-fires.
-#    Before fix: flag never clears until queue empties, so f3 is silent.
+#    f2. Recent movement recorded: flag clears (queue still non-empty).
+#    f3. Recent movement removed (stall resumes, old BATCHED is the last record):
+#        alert re-fires.
+#    Before fix: no-newline records were skipped, last_moved=0, fallback to
+#    oldest_epoch; flag never cleared, so f3 was silent.
 # ============================================================================
 seed
 branch "sp-f1" "$OLD"
 branch "sp-f2" "$(( OLD + 60 ))"
-# No BATCHED/LANDED entries.
+mark_moved "sp-f-old" BATCHED "$OLD"
 
 outF="$(SPIRA_QUEUE_STUCK_AGE=$STUCK_AGE SPIRA_QUEUE_BATCH_MAX=$BATCH_MAX \
     SPIRA_QUEUE_BATCH_WAIT=$BATCH_WAIT batch "$REPONAME" 2>&1)"
@@ -200,13 +204,44 @@ is "f2. movement: flag cleared" "0" \
     "$([ -f "$RUN/queue-stuck-$REPONAME" ] && echo 1 || echo 0)"
 nowant "f2. movement: no duplicate mail" "mailed operator" "$outF2"
 
-# f3. Remove movement record (old stall resumes), call again → re-fires.
+# f3. Remove recent movement (old BATCHED sp-f-old remains) → re-fires.
 rm -f "$LANDSTATE/sp-f-moved"
 outF3="$(SPIRA_QUEUE_STUCK_AGE=$STUCK_AGE SPIRA_QUEUE_BATCH_MAX=$BATCH_MAX \
     SPIRA_QUEUE_BATCH_WAIT=$BATCH_WAIT batch "$REPONAME" 2>&1)"
 want "f3. re-stall: alert re-fires" "mailed operator" "$outF3"
 is   "f3. re-stall: flag re-created" "1" \
     "$([ -f "$RUN/queue-stuck-$REPONAME" ] && echo 1 || echo 0)"
+clean_case
+
+# ============================================================================
+# g. Post-landing false positive (sp-wlt1r recurrence): recent LANDED record
+#    (no trailing newline, land_mark format) + old CERTIFIED cert → no mail.
+#    Before fix: no-newline LANDED record skipped, last_moved=0, fallback to
+#    oldest cert epoch (~7200s), stuck mail fires seconds after a landing.
+# ============================================================================
+seed
+branch "sp-g1" "$OLD"
+mark_moved "sp-g-landed" LANDED "$RECENT"
+
+outG="$(SPIRA_QUEUE_STUCK_AGE=$STUCK_AGE SPIRA_QUEUE_BATCH_MAX=$BATCH_MAX \
+    SPIRA_QUEUE_BATCH_WAIT=$BATCH_WAIT batch "$REPONAME" 2>&1)"
+nowant "g. post-landing: no stuck mail" "mailed operator" "$outG"
+is    "g. post-landing: stuck flag absent" "0" \
+    "$([ -f "$RUN/queue-stuck-$REPONAME" ] && echo 1 || echo 0)"
+clean_case
+
+# ============================================================================
+# h. Brand-new queue: certified certs, no BATCHED/LANDED history.
+#    Cannot measure stall — stuck check skipped (law-a-control-that-cannot-check-must-refuse).
+#    Before fix: fell back to oldest cert age, mailed immediately on first batch run.
+# ============================================================================
+seed
+branch "sp-h1" "$OLD"
+
+outH="$(SPIRA_QUEUE_STUCK_AGE=$STUCK_AGE SPIRA_QUEUE_BATCH_MAX=$BATCH_MAX \
+    SPIRA_QUEUE_BATCH_WAIT=$BATCH_WAIT batch "$REPONAME" 2>&1)"
+nowant "h. no-history: no stuck mail" "mailed operator" "$outH"
+want   "h. no-history: skipped log"   "no BATCHED/LANDED record" "$outH"
 clean_case
 
 printf '\nresults: %d passed, %d failed\n' "$pass" "$fail"
