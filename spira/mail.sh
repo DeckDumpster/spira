@@ -507,7 +507,7 @@ cmd_tidy() {
         return 1
     fi
 
-    local ask_label="${SPIRA_ASK_LABEL:-needs-operator}"
+    local ask_label="$SPIRA_ASK_LABEL"
     local fresh_s="${SPIRA_MAIL_TIDY_FRESH:-86400}"
     local urgent_max_s=604800
     local now; now="$(date +%s)"
