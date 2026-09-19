@@ -686,5 +686,85 @@ is   "g: base-conflict: bump_requeue merge-conflict" "1" \
 cp "$HERE/lib.sh" "$SH/lib.sh"
 clean_case
 
+# =============================================================================
+# h. REBASE-CLEAN: a CERTIFIED branch whose base moved with a non-overlapping
+#    change is batched without a reopen.
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"; OLD_H=$(( NOW - 1800 - 1 ))
+
+# Branch sp-bth: edits clean.txt (no other branch touches this file).
+git -C "$REPO" worktree add -q -b "spira/sp-bth" \
+    "$RUN/worktree/sp-bth" main 2>/dev/null || true
+printf 'branch-value\n' > "$RUN/worktree/sp-bth/clean.txt"
+git -C "$RUN/worktree/sp-bth" add -A
+git -C "$RUN/worktree/sp-bth" commit -q -m "sp-bth: add clean.txt"
+tip_h="$(git -C "$REPO" rev-parse "spira/sp-bth")"
+printf 'CERTIFIED %s %s\n' "$tip_h" "$OLD_H" > "$LANDSTATE/sp-bth"
+plant_bead "sp-bth"
+
+# Advance main with a non-overlapping change (other.txt, not clean.txt).
+printf 'main-value\n' > "$REPO/other.txt"
+git -C "$REPO" add other.txt
+git -C "$REPO" commit -q -m "main: add other.txt"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+
+batch "$REPONAME" >/dev/null 2>&1
+is   "h. rebase-clean: sp-bth is BATCHED"       "1" "$(is_batched "sp-bth" && echo 1 || echo 0)"
+is   "h. rebase-clean: not reopened (no RED)"    "0" \
+    "$([ "$(awk '{print $1}' "$LANDSTATE/sp-bth" 2>/dev/null)" = "RED" ] && echo 1 || echo 0)"
+is   "h. rebase-clean: PR opened"                "1" "$(batch_pr)"
+clean_case
+
+# =============================================================================
+# i. REBASE-CONFLICT: a CERTIFIED branch with a true conflict against the new
+#    base is still reopened after a failed rebase attempt.
+#
+#    POSITIVE CONTROL: the spy file is empty before the run; the test would
+#    produce "0" against "1" if bump_requeue is never called.
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"; OLD_I=$(( NOW - 1800 - 1 ))
+
+# Branch sp-bti: edits conflict2.txt = "branch-ver".
+git -C "$REPO" worktree add -q -b "spira/sp-bti" \
+    "$RUN/worktree/sp-bti" main 2>/dev/null || true
+printf 'branch-ver\n' > "$RUN/worktree/sp-bti/conflict2.txt"
+git -C "$RUN/worktree/sp-bti" add -A
+git -C "$RUN/worktree/sp-bti" commit -q -m "sp-bti: set conflict2.txt"
+tip_i="$(git -C "$REPO" rev-parse "spira/sp-bti")"
+printf 'CERTIFIED %s %s\n' "$tip_i" "$OLD_I" > "$LANDSTATE/sp-bti"
+plant_bead "sp-bti"
+
+# Advance main with a conflicting change (same file, different content).
+printf 'main-ver\n' > "$REPO/conflict2.txt"
+git -C "$REPO" add conflict2.txt
+git -C "$REPO" commit -q -m "main: set conflict2.txt"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+
+REQUEUE_SPY_I="$TMP/rq-spy-i"
+: > "$REQUEUE_SPY_I"
+cat >> "$SH/lib.sh" << LIBSPY_I
+
+bump_requeue() {
+    printf '%s %s\n' "\${1:-}" "\${2:-}" >> "$REQUEUE_SPY_I"
+    _bump_write_event "\${1:-}" requeued "\${2:-unrecorded}"
+}
+LIBSPY_I
+
+out_i="$(batch "$REPONAME" 2>&1)"
+is   "i. rebase-conflict: sp-bti reopened (RED)"    "1" \
+    "$([ "$(awk '{print $1}' "$LANDSTATE/sp-bti" 2>/dev/null)" = "RED" ] && echo 1 || echo 0)"
+want "i. rebase-conflict: reopened message"          "conflicts with" "$out_i"
+is   "i. rebase-conflict: bump_requeue called"       "1" \
+    "$(grep -c "^sp-bti merge-conflict$" "$REQUEUE_SPY_I" 2>/dev/null || echo 0)"
+
+cp "$HERE/lib.sh" "$SH/lib.sh"
+clean_case
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

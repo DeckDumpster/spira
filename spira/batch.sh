@@ -294,13 +294,64 @@ main() {
                     printf 'batch %s: %s notes cite %s already on %s — marked landed, branch retired\n' \
                         "$name" "$_bid" "$_cited_sha" "$base"
                 else
-                    # Conflict with the land ref itself — reopen the bead.
-                    bump_requeue "$_bid" merge-conflict >/dev/null 2>&1 || true
-                    bead_reopen "$_bid" rebase-conflict \
-                        "Reopened by batch builder: branch spira/$_bid conflicts with $base in $name." \
-                        >/dev/null 2>&1 || true
-                    land_mark "$_bid" RED "$_btip" conflicts-with-base
-                    printf 'batch %s: %s conflicts with %s — reopened\n' "$name" "$_bid" "$base"
+                    # Attempt rebase onto base before reopening.
+                    local _rbwt _rbtip _rbtmp _rbrc _rbsrc _rbfp
+                    _rbwt="$SPIRA_RUN/worktree/.batch-rb-$$"
+                    _rbtip="" _rbrc=1
+                    if git -C "$repo" worktree add -q --detach "$_rbwt" "$_btip" 2>/dev/null; then
+                        _rbfp="$(git -C "$_rbwt" merge-base HEAD "$base_sha" 2>/dev/null)" || _rbfp=""
+                        if [ -n "$_rbfp" ]; then
+                            git -C "$_rbwt" rebase --onto "$base_sha" "$_rbfp" \
+                                >/dev/null 2>&1; _rbrc=$?
+                            [ "$_rbrc" -eq 0 ] \
+                                && _rbtip="$(git -C "$_rbwt" rev-parse HEAD 2>/dev/null)" \
+                                || git -C "$_rbwt" rebase --abort 2>/dev/null || true
+                        fi
+                        git -C "$repo" worktree remove -f "$_rbwt" 2>/dev/null || true
+                    fi
+                    if [ "$_rbrc" -eq 0 ] && [ -n "$_rbtip" ]; then
+                        git -C "$repo" branch -f "spira/$_bid" "$_rbtip" 2>/dev/null || true
+                        _rbtmp="$(mktemp -d)"
+                        SPIRA_BATCH_RESULTS="$_rbtmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
+                            --mode serial "spira/$_bid" >/dev/null 2>&1; _rbsrc=$?
+                        rm -rf "$_rbtmp"
+                        if [ "$_rbsrc" -eq 0 ]; then
+                            land_mark "$_bid" CERTIFIED "$_rbtip"
+                            if git -C "$wt" merge --no-edit --no-ff \
+                                   -m "spira: land $_bid" "$_rbtip" >/dev/null 2>&1; then
+                                members+=("$_bid:$_rbtip")
+                                member_ids+=("$_bid")
+                                taken=$(( taken + 1 ))
+                                printf 'batch %s: %s rebased onto %s — batched\n' \
+                                    "$name" "$_bid" "$base"
+                            else
+                                git -C "$wt" merge --abort 2>/dev/null || true
+                                bump_requeue "$_bid" merge-conflict >/dev/null 2>&1 || true
+                                bead_reopen "$_bid" rebase-conflict \
+                                    "Reopened by batch builder: branch spira/$_bid conflicts with $base in $name after rebase." \
+                                    >/dev/null 2>&1 || true
+                                land_mark "$_bid" RED "$_rbtip" conflicts-with-base
+                                printf 'batch %s: %s conflicts with %s after rebase — reopened\n' \
+                                    "$name" "$_bid" "$base"
+                            fi
+                        else
+                            bump_requeue "$_bid" merge-conflict >/dev/null 2>&1 || true
+                            bead_reopen "$_bid" rebase-conflict \
+                                "Reopened by batch builder: branch spira/$_bid failed suites after rebase in $name." \
+                                >/dev/null 2>&1 || true
+                            land_mark "$_bid" RED "$_rbtip" rebase-suite-red
+                            printf 'batch %s: %s suite-red after rebase — reopened\n' \
+                                "$name" "$_bid"
+                        fi
+                    else
+                        bump_requeue "$_bid" merge-conflict >/dev/null 2>&1 || true
+                        bead_reopen "$_bid" rebase-conflict \
+                            "Reopened by batch builder: branch spira/$_bid conflicts with $base in $name." \
+                            >/dev/null 2>&1 || true
+                        land_mark "$_bid" RED "$_btip" conflicts-with-base
+                        printf 'batch %s: %s conflicts with %s — reopened\n' "$name" "$_bid" "$base"
+                    fi
+                    unset _rbwt _rbtip _rbtmp _rbrc _rbsrc _rbfp
                 fi
             else
                 # Clean merge with the land ref: conflict is only with batch accumulation — skip.
