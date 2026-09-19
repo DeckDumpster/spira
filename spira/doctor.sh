@@ -856,6 +856,15 @@ else
 fi
 
 echo
+echo "broker"
+if [ -x "${SPIRA_BROKER_BIN:-}" ]; then
+    OK "broker binary built at $SPIRA_BROKER_BIN"
+else
+    WARN "broker binary not built at ${SPIRA_BROKER_BIN:-<unset>}" \
+         "Build it: cd $SPIRA_REPO/broker && cargo build --release"
+fi
+
+echo
 echo "installed units"
 # DUPLICATE UNIT DETECTION. Before per-instance naming, spira-* units were installed under
 # their plain names (e.g., spira-sentinel.service). install.sh migrates them: it disables the
