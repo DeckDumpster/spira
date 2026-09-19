@@ -1465,7 +1465,7 @@ standing_lines() {
             eval "local mrow=\${SP_MAIL${mi}:-}"
             if [ -n "$mrow" ]; then
                 local m_age_raw m_state m_subj m_dur
-                IFS=$'\t' read -r m_age_raw m_state m_subj <<< "$mrow"
+                IFS='|' read -r m_age_raw m_state m_subj <<< "$mrow"
                 _mail_dur "${m_age_raw:-0}" m_dur
                 local st_col
                 case "$m_state" in

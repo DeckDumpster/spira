@@ -2289,7 +2289,7 @@ for d, is_new in [(os.path.join(mdir, "new"), True), (os.path.join(mdir, "cur"),
 rows.sort(key=lambda r: r[0], reverse=True)
 for i, (mtime, state, subj) in enumerate(rows[:5]):
     age = now - mtime
-    print("SP_MAIL%d=%d\t%s\t%s" % (i, age, state, subj))
+    print("SP_MAIL%d='%d|%s|%s'" % (i, age, state, subj))
 print("SP_MAIL_N=%d" % min(len(rows), 5))
 PY
 }

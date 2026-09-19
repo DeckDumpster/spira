@@ -435,7 +435,9 @@ cmd_done() {
         dest="$dir/cur/${base}:2,R"
         mv "$f" "$dest" && f="$dest"
     fi
-    [ -n "$note" ] && printf '\n-- done: %s\n%s\n' "$(date -u '+%Y-%m-%d %H:%M UTC')" "$note" >> "$f"
+    if [ -n "$note" ]; then
+        printf '\n-- done: %s\n%s\n' "$(date -u '+%Y-%m-%d %H:%M UTC')" "$note" >> "$f"
+    fi
 }
 
 cmd_sendmail() {
