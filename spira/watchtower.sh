@@ -167,14 +167,32 @@ if [ "${1:-}" = "--throttle-check" ]; then
         exit 0
     fi
 
-    # Depth: count CERTIFIED landstate files directly (same source as cockpit queue_keys).
+    # Depth: CERTIFIED records whose branch still exists AND tip not yet on the land ref.
+    # Stale records (branch gone or tip already merged) inflate depth and can hold the pool
+    # past the throttle threshold when no work is actually waiting.
+    # SPIRA_TC_REPO and SPIRA_TC_LAND_REF are seams for test isolation (cf. SPIRA_INCIDENT_SH).
+    _tc_repo="${SPIRA_TC_REPO:-${SPIRA_REPO:-}}"
+    _tc_lref="${SPIRA_TC_LAND_REF:-}"
+    if [ -n "$_tc_repo" ] && [ -z "$_tc_lref" ]; then
+        _tc_lref="$(spira_landref "$_tc_repo" 2>/dev/null)" || true
+    fi
     _tc_depth=0
     if [ -d "$SPIRA_RUN/landstate" ]; then
         while IFS= read -r _tc_lsf; do
             [ -r "$_tc_lsf" ] || continue
-            _tc_st=""
-            read -r _tc_st _ < "$_tc_lsf" 2>/dev/null || true
-            [ "$_tc_st" = "CERTIFIED" ] && _tc_depth=$(( _tc_depth + 1 ))
+            _tc_st=""; _tc_tip=""
+            read -r _tc_st _tc_tip _ < "$_tc_lsf" 2>/dev/null || true
+            [ "$_tc_st" = "CERTIFIED" ] || continue
+            if [ -n "$_tc_repo" ]; then
+                _tc_id="$(basename "$_tc_lsf")"
+                git -C "$_tc_repo" rev-parse --verify --quiet \
+                    "refs/heads/spira/$_tc_id" >/dev/null 2>&1 || continue
+                if [ -n "$_tc_lref" ] && [ -n "$_tc_tip" ] && [ "$_tc_tip" != "none" ]; then
+                    git -C "$_tc_repo" merge-base --is-ancestor \
+                        "$_tc_tip" "$_tc_lref" 2>/dev/null && continue
+                fi
+            fi
+            _tc_depth=$(( _tc_depth + 1 ))
         done < <(find "$SPIRA_RUN/landstate" -maxdepth 1 -type f 2>/dev/null)
     fi
 
