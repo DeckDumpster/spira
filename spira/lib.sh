@@ -47,6 +47,16 @@ bdq() {
     # by escalation beads (which carry needs-ryan) three times; needs-ryan means "Ryan will
     # review" — it does not mean the SQL is correct. (sp-1khst)
     [ "${1:-}" = create ] && { _bdq_check_schema_delete "$@" || return 1; }
+    if [ "${SPIRA_FAYTH:-}" = czar ] && [ -n "${SPIRA_CZAR_CLASS:-}" ]; then
+        case "${1:-}" in
+            reopen)
+                bash "$(dirname "${BASH_SOURCE[0]}")/czar-fence.sh" "${SPIRA_CZAR_CLASS}" || return 1 ;;
+            update|close)
+                if [ "${2:-}" != "${SPIRA_CZAR_TRIGGER_BEAD:-__none__}" ]; then
+                    bash "$(dirname "${BASH_SOURCE[0]}")/czar-fence.sh" "${SPIRA_CZAR_CLASS}" || return 1
+                fi ;;
+        esac
+    fi
     timeout "${BD_TIMEOUT:-180}" "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"
 }
 

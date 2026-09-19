@@ -1145,6 +1145,18 @@ unset _n_prior _prior_log
 # hook it triggers — inherits the value. branch-guard.sh staged reads it to refuse commits
 # that happen outside this path (law-worktrees-in-the-sanctioned-root, rung 4).
 export SPIRA_WORK="$WORK"
+export SPIRA_FAYTH="$FAYTH"
+if [ "$FAYTH" = czar ]; then
+    SPIRA_CZAR_CLASS="$(printf '%s' "$claimed" | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+d = d if isinstance(d, list) else [d]
+if not d: sys.exit(0)
+print(next((l[11:] for l in (d[0].get("labels") or []) if l.startswith("czar-class:")), ""))' 2>/dev/null)"
+    export SPIRA_CZAR_CLASS
+    export SPIRA_CZAR_TRIGGER_BEAD="$BEAD_ID"
+fi
 
 # ---- pre-session dirty-files guard -----------------------------------------------
 # AN AEON THAT RUNS `git add -A` IN A SHARED CHECKOUT STAGES WHATEVER HAPPENS TO BE

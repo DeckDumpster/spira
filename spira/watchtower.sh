@@ -82,7 +82,7 @@ if [ "${1:-}" = "--queue-checks" ]; then
         # would match both ops and czar, producing a race on every queue event.
         printf '%s\n' "$body" | \
         SPIRA_DB="$SPIRA_DB" \
-        SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_CZAR_LABEL}" \
+        SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_CZAR_LABEL},czar-class:${cause}" \
         SPIRA_INCIDENT_TYPE=task \
         SPIRA_INCIDENT_PRIORITY=1 \
         SPIRA_INCIDENT_ACTOR=watchtower \
