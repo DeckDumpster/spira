@@ -231,7 +231,17 @@ insert into events values
  -- b6: two thrash pairs then one real failure. Expect 1.
  ('b6','claimed',null),('b6','requeued','thrash'),
  ('b6','claimed',null),('b6','requeued','thrash'),
- ('b6','claimed',null);" >/dev/null 2>&1
+ ('b6','claimed',null),
+ -- b7: THREE claims, each ended by a worker that died before judging (aeon.sh notes
+ -- 'Not judged ... NO attempt was charged'). sp-wfqha was poisoned this way on 2026-09-19
+ -- and re-poisoned six seconds after a hand clear. Expect 0.
+ ('b7','claimed',null),('b7','requeued','unjudged-refused'),
+ ('b7','claimed',null),('b7','requeued','unjudged-refused'),
+ ('b7','claimed',null),('b7','requeued','unjudged-no-trace'),
+ -- b8: two unjudged deaths then one real failure. Expect 1.
+ ('b8','claimed',null),('b8','requeued','unjudged-refused'),
+ ('b8','claimed',null),('b8','requeued','unjudged-refused'),
+ ('b8','claimed',null);" >/dev/null 2>&1
 # THE FIXTURE MUST RUN THE SHIPPED QUERY, NOT A COPY OF IT. The first version of this block
 # built its own `mk()` with the correct SQL inlined, so reverting lib.sh to the broken
 # predicate left it passing — a fixture that tests a string the test itself wrote proves
@@ -250,6 +260,14 @@ got_b5="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b5)" 2>/dev/null | sed -n '
 got_b6="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b6)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
 is "three claim+thrash pairs = 0 attempts (thrash is not a failure)" "0" "$got_b5"
 is "CONTROL: two thrash + one real failure = 1 attempt" "1" "$got_b6"
+got_b7="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b7)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
+got_b8="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b8)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
+is "three claims each ended unjudged = 0 attempts (a dead worker is not a verdict)" "0" "$got_b7"
+is "CONTROL: two unjudged + one real failure = 1 attempt" "1" "$got_b8"
+# The note says no attempt was charged; the counter reads events, so the branch must write one.
+body_unjudged="$(grep -n 'Not judged (' "$HERE/aeon.sh" | head -1 | cut -d: -f1)"
+is "aeon.sh's not-judged branch records an unjudged requeue event" "1" \
+   "$(sed -n "$(( ${body_unjudged:-1} - 6 )),${body_unjudged:-1}p" "$HERE/aeon.sh" | grep -c 'bump_requeue "\$BEAD_ID" "unjudged-' || true)"
 body_attempts="$(sed -n '/^attempts_of()/,/^}/p' "$HERE/lib.sh" 2>/dev/null)"
 is "attempts_of delegates to the SQL builder" "1" \
    "$(grep -c '_attempts_sql_query' <<<"$body_attempts" || true)"

@@ -828,8 +828,9 @@ sys.exit(0)' 2>/dev/null; then
             bdq note "$BEAD_ID" "Unlanded ($cause): the session ran to its own end and left this bead open. That is a verdict about the work; the next claim counts toward the poison threshold via the events trail." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID not closed ($cause), released"
         else
-            # Counter labels (sp-reclaim-N) are no longer written. The cause is noted for
-            # diagnostic reading; no attempt is charged (sp-lzt).
+            # Counter labels (sp-reclaim-N) are no longer written. The event cancels this
+            # claim in attempts_of; without it the note below was a promise the counter broke.
+            bump_requeue "$BEAD_ID" "unjudged-$cause"
             bdq note "$BEAD_ID" "Not judged ($cause): the worker did not survive to judge this bead, so NO attempt was charged and nothing about the work is implied. See $LOGF." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID never judged ($cause) — no attempt charged"
         fi
