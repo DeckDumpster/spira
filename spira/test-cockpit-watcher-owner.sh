@@ -277,10 +277,10 @@ esac
 SCTLEOF
 chmod +x "$MOCK_BIN/systemctl"
 
-# tmux stub: has-session → false so watch_loop exits immediately (avoids hanging).
+# tmux stub: always succeeds so watch_loop stays alive holding the lock.
 cat > "$MOCK_BIN/tmux" <<'TMUXEOF'
 #!/usr/bin/env bash
-case "$*" in has-session*) exit 1 ;; *) exit 0 ;; esac
+exit 0
 TMUXEOF
 chmod +x "$MOCK_BIN/tmux"
 
@@ -291,6 +291,7 @@ run_cr() {
         TMPDIR="$TMP" \
         SPIRA_HOME="$FAKE_HOME" \
         COCKPIT_SELF="$CR" \
+        COCKPIT_POLL=0 \
         CALLS_LOG="$CALLS_LOG" \
         CR_LOCK="$CR_LOCK" \
         UNIT_PID_FILE="$UNIT_PID_FILE" \
@@ -317,12 +318,16 @@ if lock_free "$CR_LOCK"; then
 else
     ok "pc: unit disabled → setsid orphan created (lock held)"
 fi
-start_calls="$(grep -c ' start ' "$CALLS_LOG" 2>/dev/null || echo 0)"
+start_calls="$(grep -c ' start ' "$CALLS_LOG" 2>/dev/null || true)"
 is "pc: unit disabled → systemctl start NOT called" "0" "$start_calls"
 
-# Clean up setsid orphan.
-orphan_pid="$(lock_pid "$CR_LOCK" 2>/dev/null || true)"
-[ -n "$orphan_pid" ] && kill "$orphan_pid" 2>/dev/null || true
+# Clean up setsid orphan and any children still holding the lock.
+if command -v fuser >/dev/null 2>&1; then
+    fuser -k "$CR_LOCK" 2>/dev/null || true
+else
+    orphan_pid="$(lock_pid "$CR_LOCK" 2>/dev/null || true)"
+    [ -n "$orphan_pid" ] && kill "$orphan_pid" 2>/dev/null || true
+fi
 wait_free "$CR_LOCK" || true
 
 # -- Unit enabled: systemctl start is called, lock holder = started pid --------------
@@ -348,8 +353,8 @@ rm -f "$CR_LOCK" "$UNIT_PID_FILE"; : > "$CALLS_LOG"
 run_cr start || true
 wait_locked "$CR_LOCK" || true
 
-start_calls="$(grep -c ' start ' "$CALLS_LOG" 2>/dev/null || echo 0)"
-if [ "$start_calls" -gt 0 ]; then
+start_calls="$(grep -c ' start ' "$CALLS_LOG" 2>/dev/null || true)"
+if [ "${start_calls:-0}" -gt 0 ]; then
     ok "unit enabled → systemctl start called"
 else
     bad "unit enabled → systemctl start called" \
