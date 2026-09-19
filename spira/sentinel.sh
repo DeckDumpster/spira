@@ -1042,6 +1042,11 @@ land_drain
 [ -r "${SPIRA_HOME}/watchtower.sh" ] && \
     bash "${SPIRA_HOME}/watchtower.sh" --czar-outcome-check 2>/dev/null || true
 
+# PR-MODE STALL CHECK — detect PRs that have been open past SPIRA_PR_STALL_MINS (default 60).
+# Reads landstate files; makes GitHub API calls only when stalled PRs are found.
+[ -r "${SPIRA_HOME}/watchtower.sh" ] && \
+    bash "${SPIRA_HOME}/watchtower.sh" --pr-stall-check 2>/dev/null || true
+
 # THE POSITIVE CONTROL, read before anything is launched so it describes a completed run
 # rather than the one this pass is about to start.
 land_age=-1

@@ -502,6 +502,93 @@ PYEOF
     exit 0
 fi
 
+# --pr-stall-check: PR-mode stall detector, called by sentinel.sh on every pass.
+#
+# Reads landstate files for REBASED pr-open:<repo> entries older than SPIRA_PR_STALL_MINS.
+# For each stalled bead:
+#   allow_auto_merge=false at repo level → escalate ONCE per repo via incident.sh (deduped).
+#   allow_auto_merge=true but PR not armed → arm auto-merge via gh pr merge --auto --squash.
+#
+# Unlike --queue-checks (file reads only), this makes GitHub API calls — but only when
+# stalled PRs exist, so the sentinel loop stays fast when the pipeline is moving normally.
+if [ "${1:-}" = "--pr-stall-check" ]; then
+    [ -f "$SPIRA_RUN/world.halted" ] && {
+        log "watchtower: pr-stall-check skipped — world is halted"
+        exit 0
+    }
+
+    _psc_stall_secs=$(( ${SPIRA_PR_STALL_MINS:-60} * 60 ))
+    _psc_now="$(date +%s)"
+    _psc_inc="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
+    _psc_gh="${SPIRA_GH:-gh}"
+
+    [ -r "$_psc_inc" ] || {
+        log "watchtower: pr-stall-check skipped — $_psc_inc not readable"
+        exit 0
+    }
+
+    if [ -d "$SPIRA_RUN/landstate" ]; then
+        while IFS= read -r _psc_f; do
+            [ -r "$_psc_f" ] || continue
+            _psc_st=""; _psc_tip=""; _psc_at=""; _psc_reason=""
+            read -r _psc_st _psc_tip _psc_at _psc_reason < "$_psc_f" 2>/dev/null || true
+            [ "$_psc_st" = "REBASED" ] || continue
+            case "${_psc_reason:-}" in pr-open:*) ;; *) continue ;; esac
+            case "${_psc_at:-}" in ''|*[!0-9]*) continue ;; esac
+            _psc_age=$(( _psc_now - _psc_at ))
+            [ "$_psc_age" -ge "$_psc_stall_secs" ] 2>/dev/null || continue
+
+            _psc_id="$(basename "$_psc_f")"
+            _psc_repo="${_psc_reason#pr-open:}"
+            [ -n "$_psc_repo" ] || continue
+            _psc_repo_path="$(repo_root "$_psc_repo" 2>/dev/null)" || continue
+            [ -e "${_psc_repo_path:-}/.git" ] || continue
+
+            _psc_aam="$(cd "$_psc_repo_path" && \
+                timeout "${GH_TIMEOUT:-120}" "$_psc_gh" repo view \
+                    --json allowAutoMerge --jq .allowAutoMerge 2>/dev/null || true)"
+
+            if [ "${_psc_aam:-}" = "false" ]; then
+                printf 'PR stall: bead %s in repo %s has been waiting %s minutes.\n\nThe repository has allow_auto_merge=false. Auto-merge can never fire until it is enabled.\n\nEnable it: GitHub → repository Settings → General → Allow auto-merge.\n\nBead %s will remain stalled until this is enabled.\n' \
+                    "$_psc_id" "$_psc_repo" "$(( _psc_age / 60 ))" "$_psc_id" | \
+                SPIRA_DB="$SPIRA_DB" \
+                SPIRA_INCIDENT_TYPE=task \
+                SPIRA_INCIDENT_PRIORITY=1 \
+                SPIRA_INCIDENT_ACTOR=watchtower \
+                SPIRA_SIN_EXEMPT=1 \
+                SPIRA_INCIDENT_REPO=spira \
+                SPIRA_INCIDENT_REF="incident:pr-stall-auto-merge-off:${_psc_repo}" \
+                SPIRA_INCIDENT_CAUSE=pr-stall-auto-merge-off \
+                bash "$_psc_inc" file \
+                    "PR STALL: ${_psc_repo} allow_auto_merge=false — enable it to unblock" \
+                    - >/dev/null || true
+                log "watchtower: pr-stall-check: ${_psc_repo} allow_auto_merge=false (bead ${_psc_id}, age ${_psc_age}s) — escalated"
+            else
+                # CONFLICTING PR: clear the landstate so landing.sh rebases and re-pushes on
+                # the next pass. landing.sh's needs_refresh detects a base that has moved out
+                # from under the PR branch and force-pushes a fresh rebase; removing the
+                # REBASED landstate unblocks CHECK 5's guard so the branch re-enters the pass.
+                _psc_mergeable="$(cd "$_psc_repo_path" && \
+                    timeout "${GH_TIMEOUT:-120}" "$_psc_gh" pr view "spira/$_psc_id" \
+                        --json mergeable --jq .mergeable 2>/dev/null || true)"
+                if [ "${_psc_mergeable:-}" = "CONFLICTING" ]; then
+                    rm -f "$_psc_f"
+                    log "watchtower: pr-stall-check: ${_psc_id} in ${_psc_repo} is CONFLICTING — cleared landstate to trigger rebase"
+                else
+                    ( cd "$_psc_repo_path" && \
+                        timeout "${GH_TIMEOUT:-120}" "$_psc_gh" pr merge --auto --squash \
+                            "spira/$_psc_id" >/dev/null 2>&1 ) \
+                        && log "watchtower: pr-stall-check: armed auto-merge for ${_psc_id} in ${_psc_repo}" \
+                        || log "watchtower: pr-stall-check: could not arm auto-merge for ${_psc_id} in ${_psc_repo} (age ${_psc_age}s)"
+                fi
+            fi
+        done < <(find "$SPIRA_RUN/landstate" -maxdepth 1 -type f 2>/dev/null)
+    fi
+
+    log "watchtower: pr-stall-check complete"
+    exit 0
+fi
+
 SNAP_AGE_MAX="${SPIRA_WATCH_SNAP_MAX:-600}"
 now="$(date +%s)"
 
