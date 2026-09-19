@@ -816,9 +816,11 @@ want   "B7e: output names the override requirement" "min 10 chars" "$b7e_out"
 # did not exist, so this test would not compile against old code.
 _stub_b7f="$TMP/stub-b7f.sh"
 _stub_called_b7f="$TMP/stub-called-b7f"
+_stub_body_b7f="$TMP/stub-body-b7f"
 cat > "$_stub_b7f" << 'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$STUB_CALLED"
+cat > "$STUB_BODY"
 exit 0
 EOF
 chmod +x "$_stub_b7f"
@@ -832,6 +834,7 @@ SPIRA_VERDICT_TTL=86400 \
 SPIRA_DB="$TMP" \
 SPIRA_BATCH_INCIDENT_CMD="$_stub_b7f" \
 STUB_CALLED="$_stub_called_b7f" \
+STUB_BODY="$_stub_body_b7f" \
     bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null || rc_b7f=$?
 isexit2 "B7f: positive-control: refused with SPIRA_DB set exits 2" "$rc_b7f"
 [ -f "$_stub_called_b7f" ] \
@@ -943,6 +946,11 @@ print(count)
                "got $_b8_n open bead(s) for repeat-refused:topic"
 
     testdb_drop
+fi
+# B7d set override_reason in the verdict; B7f runs against the same verdict dir, so the
+# body must surface that a prior override was already tried.
+if [ -f "$_stub_body_b7f" ]; then
+    want "B7f: bead body names the prior override attempt" "Prior override attempted" "$(cat "$_stub_body_b7f")"
 fi
 
 # ===========================================================================

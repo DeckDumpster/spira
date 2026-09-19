@@ -373,9 +373,9 @@ case "$verdict_ttl" in ''|*[!0-9]*) verdict_ttl=0 ;; esac
 
 if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ] && \
    [ -r "$VERDICT_DIR/batch-$BATCH_KEY" ]; then
-    _cached_at="" _cached_when="" _cached_by="" _cached_verdict="" _cached_red_suites=""
+    _cached_at="" _cached_when="" _cached_by="" _cached_verdict="" _cached_red_suites="" _cached_override_reason=""
     # shellcheck disable=SC1090
-    eval "$(sed -n 's/^\(when\|by\|at\|verdict\|red_suites\)=\(.*\)$/_cached_\1="\2"/p' \
+    eval "$(sed -n 's/^\(when\|by\|at\|verdict\|red_suites\|override_reason\)=\(.*\)$/_cached_\1="\2"/p' \
         "$VERDICT_DIR/batch-$BATCH_KEY" 2>/dev/null)"
     _age=-1
     case "${_cached_at:-}" in ''|*[!0-9]*) : ;; *) _age=$(( $(date +%s) - _cached_at )) ;; esac
@@ -396,20 +396,17 @@ if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ] && \
                     [ -n "$_repeat_reason" ] && \
                         log "batch: SPIRA_VERDICT_REPEAT_CONSIDERED must be a sentence (min 10 chars)"
                     log "batch: repeat attempt refused — prior red at ${_cached_when:-unknown} — key batch-$BATCH_KEY — red suites: ${_cached_red_suites:-(unknown)}"
-                    _incident_cmd="${SPIRA_BATCH_INCIDENT_CMD:-$HERE/incident.sh}"
-                    if [ -r "$_incident_cmd" ] && [ -n "${SPIRA_DB:-}" ] && \
-                       ! git -C "$REPO" merge-base --is-ancestor "$BR" "$BASE" 2>/dev/null; then
-                        printf '%s\n' \
-                            "Repeat attempt refused. Prior red at ${_cached_when:-unknown}. Key: batch-$BATCH_KEY. Red suites: ${_cached_red_suites:-(unknown)}. Branch: $BR." \
-                            | SPIRA_INCIDENT_REF="repeat-refused:$BR" \
-                              SPIRA_INCIDENT_CAUSE=repeat-refused \
-                              SPIRA_INCIDENT_TYPE=task \
-                              SPIRA_INCIDENT_ACTOR=builder \
-                              SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" \
-                              SPIRA_INCIDENT_REPO="$(spira_home_repo 2>/dev/null)" \
-                              bash "$_incident_cmd" file \
-                                  "repeat attempt: no change — $BR" \
-                                  - 2>/dev/null || true
+                    _bead_cmd="${SPIRA_BATCH_BEAD_CMD:-$HERE/bead.sh}"
+                    if [ -r "$_bead_cmd" ] && [ -n "${SPIRA_DB:-}" ]; then
+                        { printf '%s\n' \
+                            "Repeat attempt refused. Prior red at ${_cached_when:-unknown}. Key: batch-$BATCH_KEY. Red suites: ${_cached_red_suites:-(unknown)}. Branch: $BR."
+                          [ -n "${_cached_override_reason:-}" ] && \
+                            printf 'Prior override attempted: %s\n' "$_cached_override_reason"
+                        } | bash "$_bead_cmd" file \
+                                "repeat attempt: no change — $BR" \
+                                --for builder \
+                                --repo "$(spira_home_repo 2>/dev/null)" \
+                                --body-file - 2>/dev/null || true
                     fi
                     exit 2
                 fi
