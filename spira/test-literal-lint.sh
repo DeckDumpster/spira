@@ -177,6 +177,27 @@ want "--names includes review-finding"        "review-finding"        "$out"
 want "--names includes spira-waiting-operator" "spira-waiting-operator" "$out"
 
 # ---------------------------------------------------------------------------------------
+# EXPORTED LABELS DON'T MASK DEFAULTS. An aeon's environment may export SPIRA_ASK_LABEL
+# to a non-default value; the default must still appear in --names so a literal like
+# "${SPIRA_ASK_LABEL:-needs-operator}" is refused in that environment too.
+# ---------------------------------------------------------------------------------------
+lint_with_labels() {
+    SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=custom-ci \
+        bash "$HERE/literal-lint.sh" "$@" 2>&1
+}
+
+out="$(lint_with_labels --names)"
+want "SEEN RED: exported SPIRA_ASK_LABEL: defaults still in --names" "needs-operator" "$out"
+want "exported SPIRA_ASK_LABEL: configured value also in --names"    "needs-ryan"     "$out"
+want "exported SPIRA_CI_LABEL: default still in --names"             "awaiting-ci"    "$out"
+
+# A planted default literal must be refused even when SPIRA_ASK_LABEL is set to something
+# else — the gate runs without the aeon's env, so it refuses what the aeon sees as clean.
+printf '#!/usr/bin/env bash\nSOME="${SPIRA_ASK_LABEL:-needs-operator}"\n' > "$PROBE"
+out="$(lint_with_labels --scan "$PROBE")"
+want "SEEN RED: default literal refused with exported SPIRA_ASK_LABEL" "needs-operator" "$out"
+
+# ---------------------------------------------------------------------------------------
 # GATE INTEGRATION. A fence nothing invokes is a file; this is the one property no amount
 # of matcher testing can establish.
 # ---------------------------------------------------------------------------------------
