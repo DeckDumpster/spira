@@ -398,8 +398,10 @@ if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ] && \
                     log "batch: repeat attempt refused — prior red at ${_cached_when:-unknown} — key batch-$BATCH_KEY — red suites: ${_cached_red_suites:-(unknown)}"
                     _bead_cmd="${SPIRA_BATCH_BEAD_CMD:-$HERE/bead.sh}"
                     if [ -r "$_bead_cmd" ] && [ -n "${SPIRA_DB:-}" ]; then
-                        { printf '%s\n' \
-                            "Repeat attempt refused. Prior red at ${_cached_when:-unknown}. Key: batch-$BATCH_KEY. Red suites: ${_cached_red_suites:-(unknown)}. Branch: $BR."
+                        _suites_csv="${_cached_red_suites// /,}"
+                        { printf '%s\n\nFirst: bash spira/testenv-batch.sh --suites %s %s\nIf tests now pass, the fix was committed after the retry was refused — close with evidence. If they still fail, investigate.\n' \
+                            "Repeat attempt refused. Prior red at ${_cached_when:-unknown}. Key: batch-$BATCH_KEY. Red suites: ${_cached_red_suites:-(unknown)}. Branch: $BR." \
+                            "${_suites_csv:-(unknown)}" "$BR"
                           [ -n "${_cached_override_reason:-}" ] && \
                             printf 'Prior override attempted: %s\n' "$_cached_override_reason"
                         } | bash "$_bead_cmd" file \
