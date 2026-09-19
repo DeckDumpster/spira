@@ -173,8 +173,12 @@ landing() {
     # and PATH-resolution after that depends on TESTDB_BIN existing in PATH. Pinning here
     # removes the dependency: the pass always uses the binary testdb_up chose regardless of
     # what the counter-script section left in the environment.
+    # SPIRA_ID_PREFIX IS PINNED. A session running on a non-default-prefix harness hands
+    # other_beads_on_conflicts a pattern that does not match the sp- ids used in this
+    # fixture's commits, so the function returns empty and the parallel-duplicate note
+    # omits the bead name it is written to carry (law-gates-run-in-a-clean-environment).
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
+    SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
         bash "$SH/landing.sh" 2>&1
 }
