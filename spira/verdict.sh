@@ -58,7 +58,9 @@ _repro_is_red() {   # _repro_is_red <suites-csv> <repo-dir> <branch> -> 0 if red
 _any_suite_in_selection() {  # _any_suite_in_selection <suites-spacesep> <repo> <base-sha> <tip> -> 0 if any matches
     local suites="$1" repo="$2" base="$3" tip="$4" tmp sel s
     tmp="$(mktemp)"
-    git -C "$repo" diff --name-only "$base" "$tip" 2>/dev/null > "$tmp" || true
+    # Three dots: the member's own change since it forked. Two would add everything the base
+    # gained since, blaming a member for suites it never touched (PR 87 ejected all six).
+    git -C "$repo" diff --name-only "$base...$tip" 2>/dev/null > "$tmp" || true
     sel="$(bash "$HERE/select.sh" --files "$tmp" --repo "$repo" 2>/dev/null)"
     rm -f "$tmp"
     for s in $suites; do printf '%s\n' "$sel" | grep -qxF "$s" && return 0; done
@@ -68,7 +70,9 @@ _any_suite_in_selection() {  # _any_suite_in_selection <suites-spacesep> <repo> 
 _suite_directly_in_diff() {  # _suite_directly_in_diff <suites-spacesep> <repo> <base-sha> <tip> -> 0 if any suite file is in diff
     local suites="$1" repo="$2" base="$3" tip="$4" tmp s
     tmp="$(mktemp)"
-    git -C "$repo" diff --name-only "$base" "$tip" 2>/dev/null > "$tmp" || true
+    # Three dots: the member's own change since it forked. Two would add everything the base
+    # gained since, blaming a member for suites it never touched (PR 87 ejected all six).
+    git -C "$repo" diff --name-only "$base...$tip" 2>/dev/null > "$tmp" || true
     for s in $suites; do
         grep -qF "$s" "$tmp" 2>/dev/null && { rm -f "$tmp"; return 0; }
     done

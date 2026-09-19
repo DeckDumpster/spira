@@ -14,6 +14,9 @@
 #   4. Single member, second unreproduced red on same tip → ejected.
 #   5. Meter: CAUGHT written by queue.sh submit failure; ESCAPED written by
 #      attribution; queue.sh stats reports both correctly.
+#   6. Diff-based attribution ejects the member whose change touches the red suite.
+#   7. ...and reads only the member's own change: a member forked before the base
+#      advanced over the red suite is not blamed for the advance.
 #
 # The repro batch is stubbed via SPIRA_QUEUE_REPRO_BATCH; no container is used.
 # The forge is a local fixture; no network is reached.
@@ -418,6 +421,63 @@ is   "6. diff-attr: head resealed"                           "$_new_head6" "$_re
 [ "${_new_head6:-}" != "${batch_head6:-}" ] \
     && ok "6. diff-attr: new head differs from old" \
     || bad "6. diff-attr: new head differs from old" "head unchanged: ${_new_head6:-}"
+clean_case
+
+# =============================================================================
+# 7. DIFF-BASED ATTRIBUTION READS THE MEMBER'S OWN CHANGE — both members forked
+#    before the base advanced, and the advance touched the red suite. Diffing the
+#    base against a member's tip shows that suite as changed by a member that never
+#    touched it; all six members of PR 87 were ejected that way (2026-09-19).
+# =============================================================================
+testdb_reset
+wt_old="$RUN/worktree/sp-at-old"
+wt_old2="$RUN/worktree/sp-at-old2"
+git -C "$REPO" worktree add -q -b "spira/sp-at-old" "$wt_old" origin/main
+git -C "$REPO" worktree add -q -b "spira/sp-at-old2" "$wt_old2" origin/main
+printf 'unrelated\n' > "$wt_old/sp-at-old.txt"
+git -C "$wt_old" add -A && git -C "$wt_old" commit -q -m "sp-at-old: work"
+printf 'unrelated\n' > "$wt_old2/sp-at-old2.txt"
+git -C "$wt_old2" add -A && git -C "$wt_old2" commit -q -m "sp-at-old2: work"
+tip_old="$(git -C "$REPO" rev-parse spira/sp-at-old)"
+tip_old2="$(git -C "$REPO" rev-parse spira/sp-at-old2)"
+
+# The base advances past both fork points, touching the suite that goes red.
+wt_adv="$RUN/worktree/.advance-7"
+git -C "$REPO" worktree add -q --detach "$wt_adv" origin/main
+printf 'advanced\n' >> "$wt_adv/test-canary.sh"
+git -C "$wt_adv" add -A && git -C "$wt_adv" commit -q -m "base: touch test-canary.sh"
+git -C "$wt_adv" push -q origin HEAD:main
+git -C "$REPO" worktree remove -f "$wt_adv"
+git -C "$REPO" fetch -q origin
+base_sha_7="$(git -C "$REPO" rev-parse origin/main)"
+
+wt_build7="$RUN/worktree/.batch-build-7"
+git -C "$REPO" worktree add -q --detach "$wt_build7" "$base_sha_7"
+git -C "$wt_build7" merge -q --no-edit --no-ff -m "spira: land sp-at-old" "$tip_old" >/dev/null 2>&1
+git -C "$wt_build7" merge -q --no-edit --no-ff -m "spira: land sp-at-old2" "$tip_old2" >/dev/null 2>&1
+batch_head7="$(git -C "$wt_build7" rev-parse HEAD)"
+batch_br7="spira/queue/test7-$$"
+git -C "$REPO" branch -f "$batch_br7" "$batch_head7"
+git -C "$REPO" worktree remove -f "$wt_build7"
+
+for id in sp-at-old sp-at-old2; do plant_bead "$id"; done
+printf 'BATCHED %s %s\n' "$tip_old" "$(date +%s)" > "$LANDSTATE/sp-at-old"
+printf 'BATCHED %s %s\n' "$tip_old2" "$(date +%s)" > "$LANDSTATE/sp-at-old2"
+{
+    printf 'pr=45\n'
+    printf 'head=%s\n' "$batch_head7"
+    printf 'base=%s\n' "$base_sha_7"
+    printf 'members=sp-at-old:%s sp-at-old2:%s\n' "$tip_old" "$tip_old2"
+    printf 'opened=%s\n' "$(date +%s)"
+    printf 'branch=%s\n' "$batch_br7"
+} > "$(batch_file)"
+
+printf 'red\nred-suite: test-canary.sh\n' > "$FORGE_STATUS_FILE"
+: > "$REPRO_FAIL_FILE"
+out="$(verdict "$REPONAME")"
+nowant "7. own-change: sp-at-old not ejected for the base's advance"  "EJECTED" "$(land_state_of sp-at-old)"
+nowant "7. own-change: sp-at-old2 not ejected for the base's advance" "EJECTED" "$(land_state_of sp-at-old2)"
+nowant "7. own-change: no ejection reported"                          "ejected sp-at-old" "$out"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
