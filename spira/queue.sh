@@ -40,6 +40,22 @@ cmd_submit() {
     name="$(spira_home_repo)"
     mode="$(repo_land "$name")"
 
+    if [ "$mode" = "queue" ]; then
+        case "$br" in
+        spira/*) ;;
+        *)
+            printf 'queue.sh submit: %s: queue mode requires branch named spira/<id>\n' "$br" >&2
+            return 1
+            ;;
+        esac
+        case "${br#spira/}" in
+        */*)
+            printf 'queue.sh submit: %s: queue mode requires branch named spira/<id>\n' "$br" >&2
+            return 1
+            ;;
+        esac
+    fi
+
     git -C "$repo" show-ref --verify --quiet "refs/heads/$br" 2>/dev/null || {
         printf 'queue.sh submit: branch not found: %s\n' "$br" >&2
         return 1
@@ -74,7 +90,10 @@ cmd_submit() {
     queue)
         land_mark "$id" CERTIFIED "$tip"
         mkdir -p "$SPIRA_QUEUE_DIR" 2>/dev/null
-        printf 'CERTIFIED %s %s\n' "$tip" "$(date +%s)" > "$SPIRA_QUEUE_DIR/$id"
+        printf 'CERTIFIED %s %s\n' "$tip" "$(date +%s)" > "$SPIRA_QUEUE_DIR/$id" || {
+            printf 'queue.sh submit: failed to write queue entry for %s\n' "$br" >&2
+            return 1
+        }
         printf 'queue.sh submit: certified %s\n' "$br"
         ;;
     push)
