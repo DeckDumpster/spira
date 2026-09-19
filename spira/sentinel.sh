@@ -1025,6 +1025,12 @@ land_drain
 [ -r "${SPIRA_HOME}/watchtower.sh" ] && \
     bash "${SPIRA_HOME}/watchtower.sh" --queue-checks 2>/dev/null || true
 
+# ADMISSION THROTTLE — update the stamp file and escalate on transitions. Reads depth from
+# landstate and drain from LANDED records; writes $SPIRA_RUN/queue-throttled when active.
+# CHECK7 reads that stamp to hold the task pool at 0. Lanes are never gated here.
+[ -r "${SPIRA_HOME}/watchtower.sh" ] && \
+    bash "${SPIRA_HOME}/watchtower.sh" --throttle-check 2>/dev/null || true
+
 # THE POSITIVE CONTROL, read before anything is launched so it describes a completed run
 # rather than the one this pass is about to start.
 land_age=-1
@@ -1248,6 +1254,15 @@ done
 
 # THE POOL DRAWS ON WHAT IS LEFT. Recomputed after the lanes, because a lane summoned above
 # consumes a slot the fleet ceiling counts, and a pool figure read before that is stale.
+#
+# ADMISSION THROTTLE: if --throttle-check engaged the stamp, hold the task pool at 0.
+# Lane fayths are not affected — only builders draw from this pool, and the stamp says
+# the queue is over capacity, not that lane work is unneeded (sp-h7zzx).
+_tc_stamp_ck7="${SPIRA_THROTTLE_STAMP:-$SPIRA_RUN/queue-throttled}"
+if [ -f "$_tc_stamp_ck7" ] && [ "${SPIRA_QUEUE_THROTTLE_OVERRIDE:-}" != "off" ]; then
+    log "CHECK7 pool: throttle active ($(head -1 "$_tc_stamp_ck7" 2>/dev/null)) — task pool held at 0"
+    pool=0
+fi
 for f in $TASK_FAYTHS; do
     if [ $(( $(date +%s) - _ck7_start )) -ge "$_ck7_budget" ]; then
         log "CHECK7 $f: not evaluated (pass budget exhausted)"

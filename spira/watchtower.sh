@@ -141,6 +141,144 @@ if [ "${1:-}" = "--queue-checks" ]; then
     exit 0
 fi
 
+# --throttle-check: admission gate for the task pool, called by sentinel.sh on every pass.
+# Two inputs, two outputs:
+#   depth >= DEPTH_AT AND drain active  → write stamp (throttle engaged, pool held at 0)
+#   depth >= DEPTH_AT AND drain zero    → escalate WITHOUT writing stamp (stall, not capacity)
+# Throttling a stalled queue delays repairs rather than reducing load — wrong answer every time.
+# STAMP: $SPIRA_RUN/queue-throttled — sentinel.sh CHECK7 reads it before summing task fayths.
+# POSITIVE CONTROL: depth and drain are computed from landstate files, same source cockpit uses.
+if [ "${1:-}" = "--throttle-check" ]; then
+    [ -f "$SPIRA_RUN/world.halted" ] && {
+        log "watchtower: throttle-check skipped — world is halted"
+        exit 0
+    }
+
+    _tc_stamp="${SPIRA_THROTTLE_STAMP:-$SPIRA_RUN/queue-throttled}"
+    _tc_override="${SPIRA_QUEUE_THROTTLE_OVERRIDE:-}"
+    _tc_inc="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
+    _tc_depth_at="${SPIRA_QUEUE_THROTTLE_DEPTH_AT:-16}"
+    _tc_release_at="${SPIRA_QUEUE_THROTTLE_RELEASE_AT:-8}"
+    _tc_stall_mins="${SPIRA_QUEUE_THROTTLE_STALL_MINS:-50}"
+
+    if [ "$_tc_override" = "off" ]; then
+        rm -f "$_tc_stamp"
+        log "watchtower: throttle-check — override=off, admission not throttled"
+        exit 0
+    fi
+
+    # Depth: count CERTIFIED landstate files directly (same source as cockpit queue_keys).
+    _tc_depth=0
+    if [ -d "$SPIRA_RUN/landstate" ]; then
+        while IFS= read -r _tc_lsf; do
+            [ -r "$_tc_lsf" ] || continue
+            _tc_st=""
+            read -r _tc_st _ < "$_tc_lsf" 2>/dev/null || true
+            [ "$_tc_st" = "CERTIFIED" ] && _tc_depth=$(( _tc_depth + 1 ))
+        done < <(find "$SPIRA_RUN/landstate" -maxdepth 1 -type f 2>/dev/null)
+    fi
+
+    # Drain: minutes since the most recent LANDED landstate record.
+    # "?" means no LANDED record could be read — treated as stall (drain unknown = drain zero).
+    _tc_now_s="$(date +%s)"
+    _tc_last_landed="?"
+    if [ -d "$SPIRA_RUN/landstate" ]; then
+        while IFS= read -r _tc_lf; do
+            [ -r "$_tc_lf" ] || continue
+            _tc_lst=""; _tc_lat=""
+            read -r _tc_lst _ _tc_lat _ < "$_tc_lf" 2>/dev/null || true
+            [ "$_tc_lst" = "LANDED" ] || continue
+            case "$_tc_lat" in ''|*[!0-9]*) continue ;; esac
+            if [ "$_tc_last_landed" = "?" ] || [ "$_tc_lat" -gt "$_tc_last_landed" ]; then
+                _tc_last_landed="$_tc_lat"
+            fi
+        done < <(find "$SPIRA_RUN/landstate" -maxdepth 1 -type f 2>/dev/null)
+    fi
+    _tc_since_land="?"
+    [ "$_tc_last_landed" != "?" ] && \
+        _tc_since_land=$(( (_tc_now_s - _tc_last_landed) / 60 ))
+
+    _tc_throttled=0; [ -f "$_tc_stamp" ] && _tc_throttled=1
+
+    # Drain is "active" when since_land is numeric and below the stall threshold.
+    # A "?" or stall-length silence treats the queue as stalled: escalate, do not throttle.
+    _tc_drain_ok=0
+    if [ "$_tc_since_land" != "?" ] && \
+       [ "$_tc_since_land" -lt "$_tc_stall_mins" ] 2>/dev/null; then
+        _tc_drain_ok=1
+    fi
+
+    if [ "$_tc_depth" -ge "$_tc_depth_at" ] 2>/dev/null; then
+        if [ "$_tc_drain_ok" = "1" ]; then
+            if [ "$_tc_throttled" = "0" ]; then
+                # ENGAGE: depth high, drain active.
+                printf 'since=%s depth=%s since_land=%sm\n' \
+                    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$_tc_depth" "$_tc_since_land" \
+                    > "$_tc_stamp"
+                log "watchtower: throttle engaged — depth=${_tc_depth}>=${_tc_depth_at}, since_land=${_tc_since_land}m"
+                [ -r "$_tc_inc" ] && \
+                    printf 'Queue admission throttled: CERTIFIED depth %s (threshold: %s branches), last landing %sm ago.\n\nBuilders are held; Ops, groomer, and other lanes continue.\n\nEngages when depth >= %s AND drain active (< %sm since landing).\nLifts when depth < %s.\nOverride: SPIRA_QUEUE_THROTTLE_OVERRIDE=off in spira.conf\n' \
+                        "$_tc_depth" "$_tc_depth_at" "$_tc_since_land" \
+                        "$_tc_depth_at" "$_tc_stall_mins" "$_tc_release_at" | \
+                    SPIRA_DB="$SPIRA_DB" \
+                    SPIRA_INCIDENT_TYPE=task \
+                    SPIRA_INCIDENT_PRIORITY=2 \
+                    SPIRA_INCIDENT_ACTOR=watchtower \
+                    SPIRA_SIN_EXEMPT=1 \
+                    SPIRA_INCIDENT_REPO=spira \
+                    SPIRA_INCIDENT_REF=incident:queue-throttle-engaged \
+                    SPIRA_INCIDENT_CAUSE=throttle-engaged \
+                    bash "$_tc_inc" file \
+                        "QUEUE THROTTLED: depth ${_tc_depth}, drain ${_tc_since_land}m since landing" \
+                        - >/dev/null || true
+                log "watchtower: throttle-engage escalation filed"
+            else
+                log "watchtower: throttle-check — still throttled (depth=${_tc_depth}>=${_tc_depth_at})"
+            fi
+        else
+            # Drain is zero: FAULT, not capacity. Do not throttle; escalate once.
+            log "watchtower: throttle-check — depth=${_tc_depth}>=${_tc_depth_at} but since_land=${_tc_since_land}m>=${_tc_stall_mins}m stall — not throttling (fault)"
+            [ "$_tc_throttled" = "0" ] && [ -r "$_tc_inc" ] && \
+                printf 'Queue depth %s above throttle threshold (%s) but drain has been zero for %sm (stall threshold: %sm).\n\nThis is a QUEUE FAULT, not a capacity condition. Throttling builders delays repairs.\nInvestigate: landing loop, batch CI, gate status.\n' \
+                    "$_tc_depth" "$_tc_depth_at" "${_tc_since_land:-?}" "$_tc_stall_mins" | \
+                SPIRA_DB="$SPIRA_DB" \
+                SPIRA_INCIDENT_TYPE=task \
+                SPIRA_INCIDENT_PRIORITY=1 \
+                SPIRA_INCIDENT_ACTOR=watchtower \
+                SPIRA_SIN_EXEMPT=1 \
+                SPIRA_INCIDENT_REPO=spira \
+                SPIRA_INCIDENT_REF=incident:queue-throttle-stall \
+                SPIRA_INCIDENT_CAUSE=throttle-stall \
+                bash "$_tc_inc" file \
+                    "QUEUE: deep+stalled (depth ${_tc_depth}, no landings for ${_tc_since_land:-?}m)" \
+                    - >/dev/null || true
+        fi
+    elif [ "$_tc_throttled" = "1" ] && [ "$_tc_depth" -lt "$_tc_release_at" ] 2>/dev/null; then
+        # LIFT: depth below release threshold.
+        rm -f "$_tc_stamp"
+        log "watchtower: throttle lifted — depth=${_tc_depth}<${_tc_release_at}"
+        [ -r "$_tc_inc" ] && \
+            printf 'Queue throttle lifted: CERTIFIED depth now %s (below release threshold %s).\n\nBuilder admission is no longer throttled.\n' \
+                "$_tc_depth" "$_tc_release_at" | \
+            SPIRA_DB="$SPIRA_DB" \
+            SPIRA_INCIDENT_TYPE=task \
+            SPIRA_INCIDENT_PRIORITY=2 \
+            SPIRA_INCIDENT_ACTOR=watchtower \
+            SPIRA_SIN_EXEMPT=1 \
+            SPIRA_INCIDENT_REPO=spira \
+            SPIRA_INCIDENT_REF=incident:queue-throttle-lifted \
+            SPIRA_INCIDENT_CAUSE=throttle-lifted \
+            bash "$_tc_inc" file \
+                "QUEUE THROTTLE LIFTED: depth ${_tc_depth}" \
+                - >/dev/null || true
+        log "watchtower: throttle-lift escalation filed"
+    else
+        log "watchtower: throttle-check — $([ "$_tc_throttled" = "1" ] && echo "throttled" || echo "clear") (depth=${_tc_depth} since_land=${_tc_since_land}m)"
+    fi
+
+    exit 0
+fi
+
 SNAP_AGE_MAX="${SPIRA_WATCH_SNAP_MAX:-600}"
 now="$(date +%s)"
 
@@ -520,10 +658,33 @@ if [ -n "$drain_since" ]; then
 "
 fi
 
+# THROTTLE STATE — read from the stamp file written by --throttle-check (called each sentinel
+# pass). A throttled queue and an empty queue are indistinguishable from outside without this.
+# READ DIRECTLY, NOT FROM cockpit.env: the stamp is written on the sentinel cadence (~2m), so
+# it is at most one pass stale, while the snapshot may be up to the collector interval stale.
+THROTTLE_STAMP="${SPIRA_THROTTLE_STAMP:-$SPIRA_RUN/queue-throttled}"
+throttle_since=""; throttle_depth=""; throttle_drain=""
+if [ -f "$THROTTLE_STAMP" ]; then
+    _ts_line="$(head -1 "$THROTTLE_STAMP" 2>/dev/null)"
+    throttle_since="$(printf '%s' "$_ts_line" | grep -oE 'since=[^ ]+' | cut -d= -f2)"
+    throttle_depth="$(printf '%s' "$_ts_line" | grep -oE 'depth=[0-9]+' | cut -d= -f2)"
+    throttle_drain="$(printf '%s' "$_ts_line" | grep -oE 'since_land=[0-9]+m' | cut -d= -f2)"
+fi
+throttle_section=""
+if [ -n "$throttle_since" ]; then
+    throttle_section="!! THROTTLED since ${throttle_since}
+   Builder admission held (depth=${throttle_depth:-?}, drain was ${throttle_drain:-?} ago). Lifts automatically.
+   Override: SPIRA_QUEUE_THROTTLE_OVERRIDE=off in spira.conf
+"
+elif [ "${SPIRA_QUEUE_THROTTLE_OVERRIDE:-}" = "off" ]; then
+    throttle_section="   throttle: OVERRIDE OFF (SPIRA_QUEUE_THROTTLE_OVERRIDE=off)
+"
+fi
+
 snapshot() {
 cat <<EOF
 ## Spira pipeline, $(date -u +%Y-%m-%dT%H:%M:%SZ)
-${halt_section}${drain_section}
+${halt_section}${drain_section}${throttle_section}
 N workers pull from a DAG into a merge queue. These are that queue's vital signs. A field
 reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
 
@@ -564,6 +725,7 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
 
 ### The workers
 
+  throttle                            ${throttle_since:-clear}      (stamp: queue-throttled; depth at engage: ${throttle_depth:-—})
   draining since (? = cannot read)    ${drain_mins}      minutes   (stamp: world.draining)
   aeons alive                         ${aeons_live}      (counted now, not from the snapshot)
   beads in progress                   $(g SP_INPROG)
@@ -663,7 +825,8 @@ nominal=0
 if [ "$lapsed_count" = "0" ] && \
    [ "$snap_age" != "?" ] && [ "$snap_age" -lt "$SNAP_AGE_MAX" ] 2>/dev/null && \
    [ "$nv_worst" = "0" ] && \
-   [ -z "$drain_since" ]; then
+   [ -z "$drain_since" ] && \
+   [ -z "$throttle_since" ]; then
     nominal=1
 fi
 
