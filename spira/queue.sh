@@ -223,11 +223,95 @@ cmd_step() {
     bash "$HERE/batch.sh" "$name"
 }
 
+cmd_eject() {
+    local id="${1:-}" reason="" dry_run=0 name=""
+    [ -n "$id" ] || { printf 'queue.sh eject: bead id required\n' >&2; return 2; }
+    shift
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --reason)   shift; reason="${1:-}"; shift ;;
+        --reason=*) reason="${1#--reason=}"; shift ;;
+        --dry-run)  dry_run=1; shift ;;
+        -*)         printf 'queue.sh eject: unknown option: %s\n' "$1" >&2; return 2 ;;
+        *)          name="$1"; shift ;;
+        esac
+    done
+
+    [ -n "$name" ] || name="$(spira_home_repo)"
+    repo_root "$name" >/dev/null 2>&1 || {
+        printf 'queue.sh eject: no such repo: %s\n' "$name" >&2; return 1
+    }
+
+    local open_file="${SPIRA_QUEUE_DIR:?}/$name/open"
+    [ -f "$open_file" ] || {
+        printf 'queue.sh eject: no open batch for %s\n' "$name" >&2; return 1
+    }
+
+    local members_val tip="" found=0 new_members=""
+    members_val="$(grep '^members=' "$open_file" | head -1)"
+    members_val="${members_val#members=}"
+
+    local _m mid mtip
+    for _m in $members_val; do
+        mid="${_m%%:*}"; mtip="${_m##*:}"
+        if [ "$mid" = "$id" ]; then
+            found=1; tip="$mtip"
+        else
+            new_members="${new_members}${new_members:+ }$_m"
+        fi
+    done
+
+    if [ "$found" -eq 0 ]; then
+        printf 'queue.sh eject: %s is not a member of the open batch for %s\n' "$id" "$name" >&2
+        local _ids=""
+        for _m in $members_val; do _ids="${_ids}${_ids:+ }${_m%%:*}"; done
+        printf 'batch members: %s\n' "${_ids:-<none>}" >&2
+        return 1
+    fi
+
+    if [ "$dry_run" -eq 1 ]; then
+        printf 'dry-run: %s is in the open batch for %s (tip=%s)\n' "$id" "$name" "$tip"
+        printf 'dry-run: would write RED to %s/%s\n' "$LANDSTATE" "$id"
+        printf 'dry-run: would reopen bead %s and clear assignee\n' "$id"
+        printf 'dry-run: would post comment to %s\n' "$id"
+        printf 'dry-run: would rewrite batch members to: %s\n' "${new_members:-<empty>}"
+        bdq show "$id" >/dev/null 2>&1 || {
+            printf 'dry-run: ERROR: cannot resolve bead %s\n' "$id" >&2; return 1
+        }
+        return 0
+    fi
+
+    # Use RED, not EJECTED: EJECTED is the automated local-gate attribution state (batch.sh);
+    # RED is the operator's verdict on a manually identified failure.
+    land_mark "$id" RED "$tip" "${reason:-ejected}"
+
+    bead_reopen "$id" "eject"
+
+    local _comment
+    _comment="Ejected from open batch in $name.${reason:+$'\n\n'${reason}}"$'\n\n'"Landstate written as RED. Fix the failing issue and re-certify before rejoining the queue."
+    printf '%s' "$_comment" | bdq comment "$id" --stdin >/dev/null 2>&1 || true
+
+    local _tmp="$open_file.$$"
+    {
+        while IFS= read -r _line; do
+            case "$_line" in
+            members=*) printf 'members=%s\n' "$new_members" ;;
+            *)         printf '%s\n' "$_line" ;;
+            esac
+        done < "$open_file"
+    } > "$_tmp" && mv -f "$_tmp" "$open_file" \
+        || { rm -f "$_tmp" 2>/dev/null; printf 'queue.sh eject: failed to rewrite batch\n' >&2; return 1; }
+
+    printf 'queue.sh eject: ejected %s from %s batch (landstate=RED)\n' "$id" "$name"
+}
+
 case "${1:-}" in
     submit)  shift; cmd_submit "$@" ;;
     protect) shift; cmd_protect "$@" ;;
     stats)   cmd_stats ;;
     flush)   shift; cmd_flush "$@" ;;
     step)    shift; cmd_step "$@" ;;
-    *) printf 'usage: queue.sh submit <branch> | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo>\n' >&2; exit 2 ;;
+    eject)   shift; cmd_eject "$@" ;;
+    *) printf 'usage: queue.sh submit <branch> | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>]\n' >&2; exit 2 ;;
 esac
