@@ -156,6 +156,18 @@ _diff_out="$(git -C "$REPO" diff --name-only "$BASE...$BR" 2>&1)" || verdict "$N
 $_diff_out"
 files="$_diff_out"
 
+# EJECTED SUITES. A branch ejected by the merge queue has proven those suites red
+# against it. Re-certification must re-run them even when the branch diff does not
+# touch them (law-a-retry-must-change-an-input). The suites are stored in the
+# EJECTED landstate reason by verdict.sh and passed through to the gate command so
+# gate-touched.sh (or any gate that reads SPIRA_GATE_EJECTED_SUITES) adds them.
+ejected_suites=""
+if [ -n "${SPIRA_GATE_BEAD:-}" ] && [ -f "${LANDSTATE:-/nonexistent}/${SPIRA_GATE_BEAD}" ]; then
+    _ej_st="" _ej_tip="" _ej_epoch="" _ej_csv=""
+    { read -r _ej_st _ej_tip _ej_epoch _ej_csv < "$LANDSTATE/$SPIRA_GATE_BEAD"; } 2>/dev/null || true
+    [ "$_ej_st" = EJECTED ] && ejected_suites="${_ej_csv:-}"
+fi
+
 # ---------------------------------------------------------------------------------------
 # LAYER 1 — universal. Every changed shell script must parse.
 # ---------------------------------------------------------------------------------------
@@ -539,6 +551,7 @@ run_gate() {             # run_gate <ref-being-tested> -> the command's own stat
         SPIRA_GATE_REPO="$REPO" SPIRA_GATE_REPO_NAME="$REPO_NAME" \
         SPIRA_GATE_BRANCH="$1" SPIRA_GATE_BASE="$BASE" SPIRA_GATE_SELECT_HEAD="$BR" \
         SPIRA_GATE_FILES="$FILELIST" \
+        SPIRA_GATE_EJECTED_SUITES="${ejected_suites:-}" \
         SPIRA_GATE_ALL="${SPIRA_GATE_ALL:-0}" \
         SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
         timeout "${SPIRA_GATE_TIMEOUT:-2700}" bash -c "$CMD" 9>&- ) 2>&1
