@@ -2,7 +2,7 @@
 #
 # deploy.sh — operator-run release deploy.
 #
-#   deploy.sh [--dry-run] <tag|latest>
+#   deploy.sh [--dry-run] [--force] <tag|latest>
 #
 # BOOTSTRAP
 #   An instance whose checkout predates deploy.sh can bootstrap:
@@ -20,6 +20,7 @@
 #   5. Check DB migration compatibility before drain.
 #   6. Stop the promote timer (retired by this command).
 #   7. world.sh drain — wait for live aeons to finish; refuse if they do not.
+#      With --force: drain --timeout 0, then slay each live aeon (--keep-work --reopen).
 #   8. activate.sh — unpack, atomic symlink swap, daemon-reload, restart units.
 #   9. systemd/install.sh — re-render unit files with SPIRA_PROD=$SPIRA_RELEASES/current/spira.
 #  10. cockpit/layout.sh ensure.
@@ -30,7 +31,7 @@
 #
 # EXIT
 #   0  deployed
-#   1  refused (already current, drain timeout, migration mismatch, health-check rollback)
+#   1  refused (already current, drain timeout without --force, migration mismatch, health-check rollback)
 #   2  fatal (usage error, draft release, fetch failed, activation error)
 # covers: spira/deploy.sh spira/activate.sh spira/world.sh cockpit/layout.sh
 set -uo pipefail
@@ -45,22 +46,25 @@ _INSTALL="${SPIRA_INSTALL_SH:-$HERE/../systemd/install.sh}"
 _COCKPIT="${SPIRA_COCKPIT_LAYOUT_SH:-$HERE/../cockpit/layout.sh}"
 _DOCTOR="${SPIRA_DOCTOR_SH:-$HERE/doctor.sh}"
 _SKEW="${SPIRA_SKEW_SH:-$HERE/skew.sh}"
+_SLAY="${SPIRA_SLAY_SH:-$HERE/slay.sh}"
 
 # Save the pre-deploy production directory; first-deploy rollback restores units here.
 _orig_prod="${SPIRA_PROD:-$SPIRA_HOME}"
 
 dry_run=0
+force=0
 tag=""
 for _a in "$@"; do
     case "$_a" in
         --dry-run) dry_run=1 ;;
+        --force)   force=1 ;;
         -*) printf 'deploy: unknown option: %s\n' "$_a" >&2; exit 2 ;;
         *)  [ -z "$tag" ] && tag="$_a" \
                 || { printf 'deploy: too many arguments\n' >&2; exit 2; } ;;
     esac
 done
 unset _a
-[ -n "$tag" ] || { printf 'usage: deploy.sh [--dry-run] <tag|latest>\n' >&2; exit 2; }
+[ -n "$tag" ] || { printf 'usage: deploy.sh [--dry-run] [--force] <tag|latest>\n' >&2; exit 2; }
 
 # Resolve "latest" to the newest PUBLISHED (non-draft) spira-release-* release.
 # gh release list skips drafts by filtering isDraft; fall back to git tags if gh unavailable.
@@ -181,7 +185,11 @@ if [ "$dry_run" = 1 ]; then
     printf 'deploy: --dry-run — nothing will be changed\n'
     printf 'deploy: would install asset: %s.tar.gz\n' "$release_stem"
     printf 'deploy: would check DB migration compatibility\n'
-    printf 'deploy: would world.sh drain\n'
+    if [ "$force" = 1 ]; then
+        printf 'deploy: would world.sh drain --timeout 0, then slay live aeons (--force)\n'
+    else
+        printf 'deploy: would world.sh drain\n'
+    fi
     printf 'deploy: would activate.sh %s.tar.gz\n' "$release_stem"
     # When a current release is active, verify the ExecStart target that install.sh would
     # render is executable. This catches a wrong SPIRA_PROD before any disruptive action.
@@ -239,11 +247,26 @@ _promo_svc="spira-promote-${SPIRA_INSTANCE}.service"
 "$_SC" --user stop "$_promo_svc" 2>/dev/null || true
 
 # Drain: wait for live aeons to finish; refuse if they do not.
+# With --force: set the gate immediately, then slay any remaining aeons.
 log "deploy: draining"
-"$_WORLD" drain || {
-    printf 'deploy: drain refused — live aeons did not finish in time\n' >&2
-    exit 1
-}
+if [ "$force" = 1 ]; then
+    "$_WORLD" drain --timeout 0 2>/dev/null || true
+    for _pf in "$SPIRA_RUN"/aeon-*.pid; do
+        [ -e "$_pf" ] || continue
+        _apid="$(cat "$_pf" 2>/dev/null)"
+        [ -n "$_apid" ] && [ -d "/proc/$_apid" ] || { rm -f "$_pf"; continue; }
+        _abead="$(basename "$_pf" .pid)"; _abead="${_abead#aeon-}"; _abead="${_abead#*-}"
+        [ -n "$_abead" ] || continue
+        log "deploy: --force: slaying $_abead"
+        "$_SLAY" --bead "$_abead" --keep-work --reopen --why "deploy $tag" || true
+    done
+    unset _pf _apid _abead
+else
+    "$_WORLD" drain || {
+        printf 'deploy: drain refused — live aeons did not finish in time\n' >&2
+        exit 1
+    }
+fi
 
 # Rollback: restore prior state, restart, resume.
 # On a non-first deploy: swap current back to the prior release.

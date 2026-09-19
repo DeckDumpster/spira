@@ -17,6 +17,7 @@
 #  10. (h) Draft release refused: latest skips a draft; a named draft is refused.
 #  11. (i) Migration mismatch: refuses before drain when bd migrate schema fails.
 #  12. (j) Bootstrap: deploy from tarball location with no deploy.sh in checkout.
+#  16. (k) --force: slays live aeons (--keep-work --reopen --why "deploy <tag>") and proceeds.
 #
 # FAIL-FIRST (law-absence-needs-a-positive-control)
 # Each detector is shown to fire before it is trusted as silent.
@@ -176,6 +177,15 @@ exit "${SKEW_EXIT:-0}"
 SEOF
 chmod +x "$BIN/skew.sh"
 
+# Mock slay.sh: records calls; configurable exit.
+SLAY_LOG="$TMP/slay.log"
+cat > "$BIN/slay.sh" <<'SLAYEOF'
+#!/usr/bin/env bash
+printf 'slay %s\n' "$*" >> "${SLAY_LOG:-/dev/null}"
+exit "${SLAY_EXIT:-0}"
+SLAYEOF
+chmod +x "$BIN/slay.sh"
+
 # Mock bd: records calls; fails for migrate schema when BD_MIGRATE_EXIT=1.
 cat > "$BIN/bd" <<'BDEOF'
 #!/usr/bin/env bash
@@ -233,9 +243,11 @@ run_deploy() {
         "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
         "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
         "SPIRA_SKEW_SH=$BIN/skew.sh" \
+        "SPIRA_SLAY_SH=$BIN/slay.sh" \
         "CALL_LOG=$CALL_LOG" \
         "SC_LOG=$SC_LOG" \
         "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" \
+        "SLAY_LOG=$SLAY_LOG" \
         "GIT_CONFIG_NOSYSTEM=1" \
         "GIT_AUTHOR_NAME=test" \
         "GIT_AUTHOR_EMAIL=test@t" \
@@ -629,6 +641,39 @@ _out="$(run_deploy -- "$NEW_TAG" 2>&1)"
 _rc=$?
 is0    "bootstrap: deploy exits 0 with no deploy.sh in checkout" "$_rc"
 islink "bootstrap: current -> $NEW_RELEASE" "$RELEASES/current" "$NEW_RELEASE"
+
+# ==========================================================================
+echo
+echo "PROPERTY 16: --force slays live aeons and proceeds with deploy"
+# ==========================================================================
+FORCE_BEAD="sp-frce1"
+
+# FAIL-FIRST: without --force, a drain refusal blocks the deploy.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+> "$SLAY_LOG"
+_out="$(run_deploy "WORLD_DRAIN_EXIT=1" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0    "fail-first: drain refusal blocks without --force"  "$_rc"
+notwant "fail-first: slay not called without --force"       "slay --bead" "$(cat "$SLAY_LOG")"
+
+# Simulate a live aeon: pidfile pointing at the running test shell (process exists in /proc).
+_force_pf="$RUN_DIR/aeon-bahamut-$FORCE_BEAD.pid"
+printf '%s\n' "$$" > "$_force_pf"
+
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+> "$CALL_LOG"; > "$SLAY_LOG"
+_out="$(run_deploy -- --force "$NEW_TAG" 2>&1)"
+_rc=$?
+is0     "--force: deploy exits 0"                                "$_rc"
+islink  "--force: current -> $NEW_RELEASE"                       "$RELEASES/current" "$NEW_RELEASE"
+want    "--force: slay called"                                   "slay" "$(cat "$SLAY_LOG")"
+want    "--force: slay given --bead $FORCE_BEAD"                 "--bead $FORCE_BEAD" "$(cat "$SLAY_LOG")"
+want    "--force: slay given --keep-work"                        "--keep-work" "$(cat "$SLAY_LOG")"
+want    "--force: slay given --reopen"                           "--reopen" "$(cat "$SLAY_LOG")"
+want    "--force: slay given --why with tag"                     "--why deploy $NEW_TAG" "$(cat "$SLAY_LOG")"
+want    "--force: world drain called"                            "world drain" "$(cat "$CALL_LOG")"
+
+rm -f "$_force_pf"
 
 # ==========================================================================
 echo
