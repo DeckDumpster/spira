@@ -207,7 +207,7 @@ if [ "$st" = in_progress ]; then
     # THROUGH bead_reopen, LIKE EVERY OTHER REOPEN. bead_reopen clears the assignee as well
     # as changing the status, so the unclaim below is redundant but harmless; keeping it as
     # a belt-and-suspenders fallback costs nothing and the belt is already documented above.
-    bead_reopen "$ID"
+    bead_reopen "$ID" slain
     bdq unclaim "$ID" --force >/dev/null 2>&1 \
         || bdq update "$ID" --status open --assignee "" >/dev/null 2>&1 \
         || true
@@ -345,7 +345,7 @@ case "$MODE" in
     # makes a missed clearing invisible by construction — the bead really does go back to
     # open, and only the claim that never comes says otherwise. The helper is where that is
     # remembered; a slain aeon's name is the one that must not survive a reopen.
-    reopen) bead_reopen "$ID" "$note" ;;
+    reopen) bead_reopen "$ID" slain "$note" ;;
 esac
 bdjson show "$ID" | python3 -c '
 import sys,json

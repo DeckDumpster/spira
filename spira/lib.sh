@@ -976,7 +976,7 @@ for bead in d:
 ' <<< "$ready_json" 2>/dev/null || true)
 }
 
-# bead_reopen <id> <note> — hand a bead back to the graph so the NEXT aeon can claim it.
+# bead_reopen <id> <cause> [note] — hand a bead back to the graph so the NEXT aeon can claim it.
 #
 # REOPENING IS NOT ENOUGH. `bd reopen` keeps the assignee, and `bd ready --claim` skips any
 # bead that has one even though `bd ready` lists it — so a bead reopened by the landing
@@ -992,10 +992,16 @@ for bead in d:
 # bead and repeats whatever produced it. That is worse than not reopening at all. Each half
 # is guarded for the same reason, and bd's refusal is reported on stderr where the harness
 # log keeps it.
+#
+# <cause> is a stable slug (gate-red, rebase-conflict, closed-without-commit, …) written
+# as a harness event row so census.sh can break sp-reopen into classified subclasses.
+# It is written AFTER bd's own `reopened` event, under event_type='reopen', so the two
+# rows are distinct and the census never double-counts a harness reopen.
 bead_reopen() {
-    local id="$1" note="${2:-}" rc=0
+    local id="$1" cause="${2:-unrecorded}" note="${3:-}" rc=0
     bdq reopen "$id" >/dev/null 2>&1 || rc=1
     release_claim "$id" || rc=1
+    _bump_write_event "$id" reopen "$cause" || rc=1
     [ -n "$note" ] && { bdq note "$id" "$note" >/dev/null 2>&1 || rc=1; }
     [ "$rc" = 0 ] || printf 'bead_reopen: %s — bd refused the reopen, the release or the note\n' "$id" >&2
     return 0
@@ -1848,7 +1854,7 @@ _census_events_sql() {   # _census_events_sql [since_epoch_s]
     if [ -n "${1:-}" ] && [ "${1:-0}" -gt 0 ] 2>/dev/null; then
         since_clause=" AND created_at > FROM_UNIXTIME(${1})"
     fi
-    printf "SELECT event_type, COALESCE(new_value, ''), issue_id FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopened')%s" "$since_clause"
+    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen')%s GROUP BY event_type, new_value UNION ALL SELECT 'reopened', 'unrecorded', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE event_type = 'reopened'%s AND issue_id NOT IN (SELECT issue_id FROM events WHERE event_type = 'reopen') HAVING COUNT(DISTINCT issue_id) > 0 ORDER BY 3 DESC" "$since_clause" "$since_clause"
 }
 census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output; exits non-zero when unreachable
     local q

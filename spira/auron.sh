@@ -626,7 +626,7 @@ if i >= 0:
         return 0
     fi
     if [ "$st" = closed ]; then
-        bead_reopen "$id" "the condition returned"
+        bead_reopen "$id" alert-recur "the condition returned"
     fi
     bdq update "$id" --title "${F_TITLE[$k]}" --body-file "$LOG_TAIL.body" >/dev/null 2>&1 || return 1
     # THE FLAP COUNT IS A LABEL, and a count is a fact with exactly one current value — so

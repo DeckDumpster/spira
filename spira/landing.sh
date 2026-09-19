@@ -610,7 +610,7 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
                 spira_ask_rebase_loop "$id" "$br" "$name" "$_rq_n" "${REBASE_CONFLICTS:-unknown}" "$_other_beads"
                 progress "escalated $id — rebase conflict x${_rq_n} on $br"
             else
-                bead_reopen "$id" "$_reopen_note"
+                bead_reopen "$id" rebase-conflict "$_reopen_note"
                 progress "reopened $id — does not rebase onto $base"
                 spira_event bead.reopened "$id" "reopened $id — $br does not rebase onto $base in $name" \
                     "conflicts in ${REBASE_CONFLICTS:-unknown}; the next aeon is handed the rebase" || true
@@ -908,7 +908,7 @@ for i in d:
                 spira_ask_rebase_loop "$id" "$br" "$name" "$_rq_n" "${REBASE_CONFLICTS:-unknown}" "$_other_beads"
                 progress "escalated $id — rebase conflict x${_rq_n} on $br"
             else
-                bead_reopen "$id" "$_reopen_note"
+                bead_reopen "$id" rebase-conflict "$_reopen_note"
                 progress "reopened $id — does not rebase onto $base"
                 spira_event bead.reopened "$id" "reopened $id — $br does not rebase onto $base in $name" \
                     "conflicts in ${REBASE_CONFLICTS:-unknown}; the next aeon is handed the rebase" || true
@@ -972,7 +972,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 fi
                 local _rn_cert
                 _rn_cert="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
-                bead_reopen "$id" "Reopened by sentinel: branch $br failed $name's certification gate. The branch carries $_rn_cert commit(s) from the previous session — the next aeon should resume from the existing work, not restart.
+                bead_reopen "$id" cert-gate-red "Reopened by sentinel: branch $br failed $name's certification gate. The branch carries $_rn_cert commit(s) from the previous session — the next aeon should resume from the existing work, not restart.
 
 $(printf '%s' "$gate_out" | tail -20)"
                 unset _rn_cert
@@ -1010,7 +1010,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
         gate_out="$("$SPIRA_HOME/confine.sh" "$id" "$br" "$repo" "$base" "${bead_labels:-}" 2>&1)"
         confine_rc=$?
         if [ "$confine_rc" = 1 ]; then
-            bead_reopen "$id" "Reopened by sentinel: $gate_out"
+            bead_reopen "$id" confine-fail "Reopened by sentinel: $gate_out"
             progress "reopened $id — spike branch is not confined to its document"
             log "CHECK6 $id: $(printf '%s' "$gate_out" | head -1)"
             # RED, LIKE ANY OTHER FAULT OF THE BRANCH'S OWN. A refusal here is the branch
@@ -1164,7 +1164,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
             # THE BRANCH'S OWN FAULT — the only path that reopens and charges.
             local _rn_gate
             _rn_gate="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
-            bead_reopen "$id" "Reopened by sentinel: branch $br failed $name's landing gate. The branch carries $_rn_gate commit(s) from the previous session — the next aeon should resume from the existing work, not restart.
+            bead_reopen "$id" gate-red "Reopened by sentinel: branch $br failed $name's landing gate. The branch carries $_rn_gate commit(s) from the previous session — the next aeon should resume from the existing work, not restart.
 
 $(printf '%s' "$gate_out" | tail -20)"
             unset _rn_gate
@@ -1437,7 +1437,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 # spurious reopen is a fact to read rather than a sequence to reconstruct
                 # from timestamps across two logs.
                 log "landing: $br genuinely conflicts with $base (ancestor=$_anc, commits-ahead=$_rn_merge)"
-                bead_reopen "$id" "Reopened by sentinel: branch $br conflicts with $base. The branch carries $_rn_merge commit(s) from the previous session — rebase onto $base, resolve the conflict, and finish. A merge conflict is not an escalation."
+                bead_reopen "$id" rebase-conflict "Reopened by sentinel: branch $br conflicts with $base. The branch carries $_rn_merge commit(s) from the previous session — rebase onto $base, resolve the conflict, and finish. A merge conflict is not an escalation."
                 unset _rn_merge _anc
                 # Counter labels (sp-requeue-N) no longer written (sp-lzt).
                 progress "reopened $id — branch conflicts with $base"
