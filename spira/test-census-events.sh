@@ -245,7 +245,7 @@ _write_reopen sp-h2; _write_reopen sp-h2; _write_reopen sp-h2; _write_reopen sp-
 
 out="$(census_out)"
 want "2 sp-reopen for 2-bead fixture" "2 sp-reopen" "$out"
-want "sp-reopen (8 detections" "sp-reopen (8 detections" "$out"
+want "sp-reopen (8 detections" "sp-reopen-unrecorded (8 detections" "$out"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
