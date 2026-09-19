@@ -623,6 +623,7 @@ if [ "${SPIRA_SKIP_CLOSED_CHECK:-0}" != 1 ]; then
 # dropped; all eleven were false and were closed during the operational recovery (sp-dj19i).
 # \x1f is not IFS whitespace, so empty columns survive it. Verified directly:
 #   printf 'a\tb\t\tc\n' | while IFS=$'\t' read -r w x y z; do echo "[$y]"; done   -> [c]
+_c5_absent_repos=""
 while IFS=$'\x1f' read -r id r_name superseded dropped sentcontent delivers started_at; do
     [ -n "$id" ] || continue
     # Carried from the delivers branch to the commit-naming check below, so a bead that
@@ -788,7 +789,11 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
         _c5_delivers_fail="$_delivers_fail"
     fi
     r_path="$(repo_root "${r_name:-}")" || {
-        log "CHECK5 $id: repo:$r_name is not in repo-map — cannot say whether it landed"
+        case $'\n'"$_c5_absent_repos" in
+            *$'\n'"$r_name"$'\n'*) ;;
+            *) _c5_absent_repos+="${r_name}"$'\n'
+               log "CHECK5: repo:$r_name is not in repo-map — skipping its closed beads" ;;
+        esac
         continue; }
     # ONE `git log` PER REPO, not per bead. `landed` walks all commits on the base branch;
     # a 400-commit window caused beads older than that to be incorrectly marked unlanded and
