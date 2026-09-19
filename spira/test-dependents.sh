@@ -16,7 +16,7 @@
 # returns 0 for the dependent. When the blocker's landstate reaches LANDED, mark_queue_waiters
 # removes the label and the dependent becomes summonable.
 #
-# WHAT THIS SUITE CHECKS (10 assertions).
+# WHAT THIS SUITE CHECKS (14 assertions).
 #   1. POSITIVE CONTROL (label applied): mark_queue_waiters labels the dependent when the
 #      blocker has a CERTIFIED landstate. Without this, a sweep that labels nothing passes.
 #   2. State check: the queue-wait label is actually on the dependent in the db.
@@ -28,9 +28,14 @@
 #   8. No landstate = not labeled: a closed bead with no landstate file is not a queue blocker.
 #   9. GATED state (push-mode) does not trigger: push-mode intermediates are not queue blockers.
 #  10. fayth_exclude includes SPIRA_QUEUE_WAIT_LABEL in the exclude arg to ready_count.
+#  11. CERTIFIED tip=none: a commit-less closed bead (design/diagnosis) is not a queue blocker.
+#  12. Two-blocker apply: dep gets label when real blocker is CERTIFIED, commit-less is ignored.
+#  13. Two-blocker single-pass clear: when real blocker lands, label cleared in one pass
+#      (not cleared-then-reapplied for the commit-less blocker).
+#  14. Summon restored after two-blocker clear.
 #
-# defect: sp-v890d
-# covers: spira/lib.sh spira/sentinel.sh spira/conf.sh
+# defect: sp-v890d sp-ya5nk
+# covers: spira/lib.sh spira/sentinel.sh spira/conf.sh spira/strand.sh
 # hermetic-ok: uses a fixture database; mark_queue_waiters tested with real bd;
 #              assertion 10 uses stub ready_count (no db call needed for structural check)
 set -uo pipefail
@@ -172,6 +177,58 @@ fayth_ready builder >/dev/null 2>&1 || true
 observed_excl="$(cat "$EXCL_FILE" 2>/dev/null)"
 has "10: fayth_exclude passes SPIRA_QUEUE_WAIT_LABEL in exclude arg to ready_count" \
     "$WAIT" "$observed_excl"
+
+# =====================================================================================
+echo
+echo "assertion 11 — CERTIFIED with tip=none: commit-less blocker is not a queue blocker:"
+# =====================================================================================
+# POSITIVE CONTROL. A CERTIFIED landstate with tip="none" means no commit was recorded
+# (design, diagnosis, superseded bead). It will never reach LANDED by the queue path
+# and must not hold its dependents in queue-wait.
+seed
+printf 'CERTIFIED none %s\n' "$(date +%s)" > "$LANDSTATE/sp-blocker"
+
+mark_queue_waiters 2>/dev/null
+lacks "11: CERTIFIED tip=none — commit-less blocker does not label dependent" \
+      "$WAIT" "$(labels_of sp-dependent)"
+
+# =====================================================================================
+echo
+echo "assertions 12-14 — two-blocker scenario: one real, one commit-less:"
+# =====================================================================================
+# A dependent has two blockers: sp-blocker-real (CERTIFIED, real commit) and
+# sp-blocker-design (CERTIFIED, tip=none, a design bead). The design bead must not
+# keep the dependent labeled after sp-blocker-real lands; the label must be cleared
+# in a single pass (not cleared-then-reapplied for the design bead).
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-blocker-real","title":"real blocker","status":"closed","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-blocker-design","title":"design blocker","status":"closed","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-two","title":"two-blocker dependent","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-two","depends_on_id":"sp-blocker-real","type":"blocks"},{"issue_id":"sp-two","depends_on_id":"sp-blocker-design","type":"blocks"}]}
+JSONL
+rm -f "$LANDSTATE/sp-blocker-real" "$LANDSTATE/sp-blocker-design"
+printf 'CERTIFIED abc123 %s\n' "$(date +%s)" > "$LANDSTATE/sp-blocker-real"
+printf 'CERTIFIED none   %s\n' "$(date +%s)" > "$LANDSTATE/sp-blocker-design"
+
+mark_queue_waiters 2>/dev/null
+has   "12: real blocker CERTIFIED — queue-wait label applied" \
+      "$WAIT" "$(labels_of sp-two)"
+
+# Now sp-blocker-real reaches LANDED. sp-blocker-design is still CERTIFIED/none.
+# The label must be cleared in one pass — not cleared-for-real and reapplied-for-design.
+LOGGED="$TMP/mqw.log"
+log() { printf '%s\n' "$*" >> "$LOGGED"; }
+printf 'LANDED abc123 %s spira\n' "$(date +%s)" > "$LANDSTATE/sp-blocker-real"
+rm -f "$LOGGED"
+
+mark_queue_waiters 2>/dev/null
+log_out="$(cat "$LOGGED" 2>/dev/null)"
+log() { :; }   # restore quiet log
+
+lacks "13: single-pass clear — label not reapplied after clear in same pass" \
+      "queue-wait applied" "$log_out"
+lacks "14: sp-two no longer labeled after real blocker lands" \
+      "$WAIT" "$(labels_of sp-two)"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

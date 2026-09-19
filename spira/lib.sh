@@ -898,82 +898,96 @@ fayth_ready() {          # fayth_ready <fayth> -> claimable beads under ITS OWN 
 # bd considers a dep resolved once the blocker is closed, so the dependent appears in
 # `bd ready`. In queue mode, CLOSED ≠ LANDED — the work is not yet on base. This label
 # keeps fayth_ready from counting those beads until the blocker's landstate reaches LANDED.
+#
+# A closed blocker with tip="none" (design, diagnosis, superseded) has no commit and will
+# never reach LANDED via the queue path; it counts as satisfied regardless of landstate.
+#
+# All label decisions are made in a single pass over the union of labeled and ready beads
+# using consistent dep data, preventing the clear-then-apply flip-flop that occurs when
+# the release and apply steps disagree on which deps are visible.
 mark_queue_waiters() {
     local label="${SPIRA_QUEUE_WAIT_LABEL:-}"
     [ -n "$label" ] || return 0
     local landstate_dir="$SPIRA_RUN/landstate"
-    local sf id state qblockers="" still ready_json
+    local sf id state tip qblockers=""
 
-    # Build the set of active queue blockers: closed beads with CERTIFIED or BATCHED
-    # landstate. These states are written only by the queue arm of landing.sh.
+    # Active queue blockers: CERTIFIED or BATCHED beads with a real commit tip.
+    # tip="none" means no commit was recorded (design, diagnosis, superseded bead);
+    # such a bead will never reach LANDED and is treated as already satisfied.
     if [ -d "$landstate_dir" ]; then
         for sf in "$landstate_dir/"*; do
             [ -f "$sf" ] || continue
             id="$(basename "$sf")"
             state="$(awk 'NR==1{print $1}' "$sf" 2>/dev/null)"
-            case "$state" in CERTIFIED|BATCHED) qblockers="${qblockers}${id} " ;; esac
+            tip="$(awk   'NR==1{print $2}' "$sf" 2>/dev/null)"
+            case "$state" in
+                CERTIFIED|BATCHED)
+                    [ -n "$tip" ] && [ "$tip" != "none" ] \
+                        && qblockers="${qblockers}${id} "
+                    ;;
+            esac
         done
     fi
 
-    # Release the label from beads whose blocker has reached LANDED (no longer in qblockers).
-    while IFS= read -r id; do
-        [ -n "$id" ] || continue
-        still=0
-        if [ -n "$qblockers" ]; then
-            bdjson show "$id" 2>/dev/null \
-            | QUEUE_BLOCKERS="$qblockers" python3 -c '
-import json, sys, os
-active = set(os.environ["QUEUE_BLOCKERS"].split())
-try: d = json.load(sys.stdin)
-except: sys.exit(1)
-d = d if isinstance(d, list) else [d]
-deps = (d[0].get("dependencies") or []) if d else []
-sys.exit(0 if any(
-    (dep.get("dependency_type") or dep.get("type")) == "blocks"
-    and dep.get("depends_on_id") in active
-    for dep in deps) else 1)
-' 2>/dev/null && still=1
-        fi
-        [ "$still" = 1 ] || {
-            bdq label remove "$id" "$label" >/dev/null 2>&1 || true
-            log "mark_queue_waiters: $id — blocker landed, cleared"
-        }
-    done < <(bdjson list --status open --label "$label" --limit 0 2>/dev/null \
-        | python3 -c '
-import json, sys
-try: d = json.load(sys.stdin)
-except: sys.exit(0)
-for i in (d if isinstance(d, list) else [d]):
-    i.get("id") and print(i["id"])
-' 2>/dev/null || true)
+    # Collect labeled beads and ready beads, then decide each bead's label state
+    # once — no separate release and apply passes that can clear for one blocker
+    # and re-apply for another in the same run.
+    local labeled_json ready_json
+    labeled_json="$(bdjson list --status open --label "$label" --limit 0 2>/dev/null)" \
+        || labeled_json=""
+    ready_json=""
+    [ -n "$qblockers" ] \
+        && { ready_json="$(bdjson "${READY_ARGS[@]}" 2>/dev/null)" || ready_json=""; }
 
-    [ -n "$qblockers" ] || return 0
-
-    # Apply the label to ready beads whose dep is still in the queue pipeline.
-    ready_json="$(bdjson "${READY_ARGS[@]}" 2>/dev/null)" || ready_json=""
-    [ -n "$ready_json" ] || return 0
-    while IFS= read -r id; do
-        [ -n "$id" ] || continue
-        bdq label add "$id" "$label" >/dev/null 2>&1 || true
-        log "mark_queue_waiters: $id — queue-wait applied"
-    done < <(QUEUE_BLOCKERS="$qblockers" QUEUE_LABEL="$label" python3 -c '
+    # labeled_json goes through the environment (typically a small set of beads);
+    # ready_json goes through stdin to avoid the env-size ceiling on large partitions.
+    QUEUE_BLOCKERS="$qblockers" QUEUE_LABEL="$label" \
+    LABELED_JSON="${labeled_json:-[]}" python3 -c '
 import json, sys, os
-active = set(os.environ["QUEUE_BLOCKERS"].split())
-lab = os.environ["QUEUE_LABEL"]
-try: d = json.load(sys.stdin)
-except: sys.exit(0)
-d = d if isinstance(d, list) else [d]
-for bead in d:
-    if lab in (bead.get("labels") or []):
-        continue
-    deps = bead.get("dependencies") or []
-    if any(
+
+active = set(os.environ.get("QUEUE_BLOCKERS", "").split())
+label  = os.environ["QUEUE_LABEL"]
+
+def parse(s):
+    if not s: return []
+    try: d = json.loads(s); return d if isinstance(d, list) else [d]
+    except Exception: return []
+
+labeled = {b["id"]: b for b in parse(os.environ.get("LABELED_JSON", "")) if b.get("id")}
+ready   = {b["id"]: b for b in parse(sys.stdin.read()) if b.get("id")}
+
+def blocks_active(bead):
+    return any(
         (dep.get("dependency_type") or dep.get("type")) == "blocks"
         and dep.get("depends_on_id") in active
-        for dep in deps
-    ):
-        print(bead.get("id"))
-' <<< "$ready_json" 2>/dev/null || true)
+        for dep in (bead.get("dependencies") or [])
+    )
+
+# ready dep data is authoritative; labeled-only beads (in_progress, extra blockers)
+# get no dep check — removing the label is safe since the bead is not claimable.
+for bid, bead in ready.items():
+    currently = bid in labeled
+    want = bool(active) and blocks_active(bead)
+    if want and not currently: print("add", bid)
+    elif not want and currently: print("remove", bid)
+
+for bid in labeled:
+    if bid not in ready:
+        print("remove", bid)
+' <<< "${ready_json:-[]}" 2>/dev/null \
+    | while IFS=' ' read -r action id; do
+        [ -n "$id" ] || continue
+        case "$action" in
+            add)
+                bdq label add "$id" "$label" >/dev/null 2>&1 || true
+                log "mark_queue_waiters: $id — queue-wait applied"
+                ;;
+            remove)
+                bdq label remove "$id" "$label" >/dev/null 2>&1 || true
+                log "mark_queue_waiters: $id — blocker landed, cleared"
+                ;;
+        esac
+    done
 }
 
 # bead_reopen <id> <cause> [note] — hand a bead back to the graph so the NEXT aeon can claim it.
