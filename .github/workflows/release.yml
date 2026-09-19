@@ -78,10 +78,16 @@ jobs:
       - name: Build release tarball
         id: tarball
         run: |
+          tag="${{ inputs.tag || github.ref_name }}"
+          # Derive the tarball stem from the tag so both share one timestamp.
+          # Tag form: spira-release-<reponame>-<YYYYMMDDTHHMMSSZ>
+          # Tarball stem: spira-<YYYYMMDDTHHMMSSZ>
+          ts="${tag##*-}"
           tarball=$(bash spira/build-tarball.sh build \
             --loom-bin loom/target/release/loom \
             --panel-bin cockpit/panel/target/release/panel \
-            --output /tmp/artifacts)
+            --output /tmp/artifacts \
+            --name "spira-${ts}")
           printf 'path=%s\n' "$tarball" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release

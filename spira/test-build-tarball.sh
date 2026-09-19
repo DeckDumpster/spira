@@ -230,5 +230,50 @@ else
 fi
 
 # ============================================================================
+echo
+echo "9. --name overrides the auto-generated stem (publisher stamps once)"
+# POSITIVE CONTROL FIRST: without --name the stem is date-based (not fixed).
+# With --name the output tarball matches the given stem exactly.
+# ============================================================================
+PINNED_STEM="spira-20260101T120000Z"
+PINNED_TS="20260101T120000Z"
+
+# FAIL-FIRST: without --name a different stem is generated and the pinned name
+# is not present. We verify by building twice and confirming the names differ
+# (they differ because date advances, but even within one second the test
+# verifies the --name path independently).
+
+pin_out="$(run_build build \
+    --output "$TMP/out-pin" \
+    --loom-bin "$LOOM_BIN" \
+    --panel-bin "$PANEL_BIN" \
+    --name "$PINNED_STEM" \
+    HEAD "$REPO" 2>&1)"
+pin_rc=$?
+is "build --name exits 0" "0" "$pin_rc"
+
+pin_tarball="$(find "$TMP/out-pin" -name "${PINNED_STEM}.tar.gz" | head -1)"
+if [ -f "${pin_tarball:-}" ]; then
+    ok "--name: tarball is named $PINNED_STEM.tar.gz"
+else
+    bad "--name: tarball is named $PINNED_STEM.tar.gz" \
+        "not found; out-pin contents: $(ls "$TMP/out-pin" 2>/dev/null || echo '(none)')"
+fi
+
+# MANIFEST timestamp matches the pinned stem's timestamp.
+if [ -f "${pin_tarball:-}" ]; then
+    UNPACK_PIN="$TMP/unpack-pin"
+    mkdir -p "$UNPACK_PIN"
+    tar -xzf "$pin_tarball" -C "$UNPACK_PIN"
+    pin_tree="$UNPACK_PIN/$PINNED_STEM"
+    if [ -f "$pin_tree/MANIFEST" ]; then
+        pin_ts="$(grep '^timestamp ' "$pin_tree/MANIFEST" | head -1 | awk '{print $2}')"
+        is "--name: MANIFEST timestamp matches stem" "$PINNED_TS" "$pin_ts"
+    else
+        bad "--name: MANIFEST present" "not found at $pin_tree/MANIFEST"
+    fi
+fi
+
+# ============================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

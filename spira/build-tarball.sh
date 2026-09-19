@@ -51,13 +51,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # build — produce the tarball
 # ---------------------------------------------------------------------------
 do_build() {
-    local outdir="." loom_bin="" panel_bin="" commit="" repo=""
+    local outdir="." loom_bin="" panel_bin="" commit="" repo="" name_override=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --output)    outdir="$2";    shift 2 ;;
-            --loom-bin)  loom_bin="$2";  shift 2 ;;
-            --panel-bin) panel_bin="$2"; shift 2 ;;
+            --output)    outdir="$2";        shift 2 ;;
+            --loom-bin)  loom_bin="$2";      shift 2 ;;
+            --panel-bin) panel_bin="$2";     shift 2 ;;
+            --name)      name_override="$2"; shift 2 ;;
             -h|--help)   _usage; exit 0 ;;
             -*) printf 'build-tarball.sh: unknown option: %s\n' "$1" >&2; exit 2 ;;
             *)
@@ -97,9 +98,18 @@ do_build() {
         exit 1
     fi
 
-    # Generate timestamp (same format as release.sh tags).
+    # Generate name and timestamp. --name overrides auto-generation and pins the
+    # tarball stem to match the release tag, eliminating the stamp skew that
+    # occurs when the CI cuts the tag and builds the tarball in separate steps.
     local ts; ts="$(date -u '+%Y%m%dT%H%M%SZ')"
-    local name="spira-${ts}"
+    local name
+    if [ -n "$name_override" ]; then
+        name="$name_override"
+        local _name_ts="${name_override#spira-}"
+        [[ "$_name_ts" =~ ^[0-9]{8}T[0-9]{6}Z(-[0-9]+)?$ ]] && ts="$_name_ts"
+    else
+        name="spira-${ts}"
+    fi
 
     mkdir -p "$outdir"
     local outfile; outfile="$(cd "$outdir" && pwd -P)/${name}.tar.gz"

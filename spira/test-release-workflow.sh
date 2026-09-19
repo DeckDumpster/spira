@@ -37,8 +37,8 @@ WORKFLOW="$REPO_ROOT/.github/workflows/release.yml"
 pass=0; fail=0
 ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { grep -qF "$2" "$WORKFLOW" 2>/dev/null && ok "$1" || bad "$1" "not found in workflow: $2"; }
-nowant() { grep -qF "$2" "$WORKFLOW" 2>/dev/null && bad "$1" "found in workflow (should not be): $2" || ok "$1"; }
+want()   { grep -qF -- "$2" "$WORKFLOW" 2>/dev/null && ok "$1" || bad "$1" "not found in workflow: $2"; }
+nowant() { grep -qF -- "$2" "$WORKFLOW" 2>/dev/null && bad "$1" "found in workflow (should not be): $2" || ok "$1"; }
 
 echo "test-release-workflow.sh"
 
@@ -101,6 +101,17 @@ echo "5. Build steps do not suppress failure"
 # publishes nothing — the published artifact appears good. continue-on-error:
 # true on any step suppresses the failure the job would otherwise propagate.
 nowant "no continue-on-error: true" "continue-on-error: true"
+
+# ============================================================================
+echo
+echo "6. build-tarball.sh is called with --name to stamp once per release"
+# ============================================================================
+
+# The tarball stem must match the release tag stem so deploy.sh and skew.sh
+# can correlate them without a separate asset lookup or timestamp fallback.
+# Without --name, build-tarball.sh generates its own timestamp independently
+# of the tag, producing the mismatch that issue #51 describes.
+want "build-tarball.sh uses --name" "--name"
 
 # ============================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
