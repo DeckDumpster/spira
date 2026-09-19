@@ -44,13 +44,7 @@ cmd_submit() {
         case "$br" in
         spira/*) ;;
         *)
-            printf 'queue.sh submit: %s: queue mode requires branch named spira/<id>\n' "$br" >&2
-            return 1
-            ;;
-        esac
-        case "${br#spira/}" in
-        */*)
-            printf 'queue.sh submit: %s: queue mode requires branch named spira/<id>\n' "$br" >&2
+            printf 'queue.sh submit: %s: queue mode requires a branch under spira/\n' "$br" >&2
             return 1
             ;;
         esac
@@ -89,7 +83,7 @@ cmd_submit() {
     case "$mode" in
     queue)
         land_mark "$id" CERTIFIED "$tip"
-        mkdir -p "$SPIRA_QUEUE_DIR" 2>/dev/null
+        mkdir -p "$(dirname "$SPIRA_QUEUE_DIR/$id")" 2>/dev/null
         printf 'CERTIFIED %s %s\n' "$tip" "$(date +%s)" > "$SPIRA_QUEUE_DIR/$id" || {
             printf 'queue.sh submit: failed to write queue entry for %s\n' "$br" >&2
             return 1
