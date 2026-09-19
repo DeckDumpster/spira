@@ -72,23 +72,28 @@ TOOLPATH="$TMP/bin"; mkdir -p "$TOOLPATH"
 printf '#!/usr/bin/env bash\nHOME=%s exec %s "$@"\n' "$HOME" "$(type -P bd)" > "$TOOLPATH/bd"
 chmod +x "$TOOLPATH/bd"
 
-# sut: run suites.sh in a clean environment.
+# PRE-SEEDED SHARED FIXTURE FOR THE SUT.
+# The SUT's suites.sh must see _td_shared=1 so it can classify exit-75 as FIXTURE-FAULT.
+# Having the SUT build its own fixture via testdb_up requires either bd-embedded or a dolt
+# server — both can fail transiently when testenv-batch.sh overrides HOME to a private dir
+# (conf.sh then rebuilds PATH without the user's ~/.local/bin, leaving bd unreachable).
+# When embedded check fails and the server fallback also fails, _td_shared stays 0 and
+# exit-75 is misclassified as red.
 #
-# HOME: real — bd-embedded init needs the invoking user's HOME; a scratch HOME causes
-# testdb_up to fail, _td_shared=0, and the fixture-fault path is never reached.
-# SPIRA_TESTDB_DATA + TESTDB_SERVER_BD: passed through when set, giving the nested
-# testdb_up a server-mode fallback when bd-embedded fails transiently. Without them,
-# testdb_available returns 1 on transient failure and _td_shared stays 0. TESTDB_SERVER_BD
-# is pre-testdb_up bd so the fallback uses the real bd, not the bd-embedded wrapper.
+# The fast path in testdb_up — triggered when TESTDB_SHARED=1 and TESTDB_BASELINE is a
+# directory with a .beads subdir — copies the baseline and returns 0 without ever calling
+# bd or touching a server. Passing a fake baseline eliminates both failure modes.
+SUT_TESTDB_DIR="$TMP/sut-td-dir"
+SUT_TESTDB_BASELINE="$TMP/sut-td-baseline"
+mkdir -p "$SUT_TESTDB_DIR/.beads" "$SUT_TESTDB_BASELINE/.beads"
+
+# sut: run suites.sh in a clean environment.
+# SPIRA_SUITES_INLINE=1 — run the planted suites HERE, not in a container. suites.sh
+# delegates to testenv-batch.sh, but this suite tests suites.sh's own classification
+# logic against fake suites in a scratch tree; a container per invocation would be
+# wasteful. Containment is not waived: this suite itself runs inside a container.
 sut() {
     local cmd="$1"; shift
-    # SPIRA_SUITES_INLINE=1 — run the planted suites HERE, not in a container.
-    # suites.sh now delegates its pass to testenv-batch.sh (law-tests-run-only-through-
-    # testenv-batch). This suite is testing suites.sh's OWN logic against fake suites it
-    # planted in a scratch tree, so a container would have to be started per invocation to
-    # run code that exists only to be counted. Containment is not being waived: this suite
-    # is itself run inside a container by the timed pass, so the planted suites are already
-    # contained by it.
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF="$TMP/no-such.conf" \
         SPIRA_HOME="$SH" SPIRA_REPO="$TMP/repo" SPIRA_HOME_REPO="$REPONAME" \
@@ -101,6 +106,7 @@ sut() {
         ${SPIRA_TESTDB_DATA:+SPIRA_TESTDB_DATA=$SPIRA_TESTDB_DATA} \
         ${SPIRA_TESTDB_DATA:+TESTDB_SERVER_BD=${_BD_REAL:-bd}} \
         ${SPIRA_TESTDB_PORT:+SPIRA_TESTDB_PORT=$SPIRA_TESTDB_PORT} \
+        ${SPIRA_IN_TESTENV:+SPIRA_IN_TESTENV=$SPIRA_IN_TESTENV} \
         "$@" bash "$SH/suites.sh" "$cmd" 2>&1
 }
 plant() { cat > "$SH/$1"; chmod +x "$SH/$1"; }
@@ -181,7 +187,12 @@ printf '  FAIL  genuine assertion failed: wanted [ok] got [broken]\n'
 exit 1
 S
 
-out="$(sut run)"; rc_out=$?
+out="$(sut run \
+    TESTDB_SHARED=1 \
+    TESTDB_NAME=sut-fake-fixture \
+    "TESTDB_DIR=$SUT_TESTDB_DIR" \
+    "TESTDB_BASELINE=$SUT_TESTDB_BASELINE" \
+    TESTDB_MODE=embedded)"; rc_out=$?
 
 # The pass must exit 2 (something was filed) — not 0 (all green) and not 1 (critical error).
 is "a pass with fixture faults exits 2" "2" "$rc_out"
