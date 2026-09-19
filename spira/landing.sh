@@ -772,7 +772,15 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
                 continue
             fi
             n_swept_conflict=$(( n_swept_conflict + 1 ))
-            local _other_beads _reopen_note _rq_n _rn_sweep
+            local _other_beads _reopen_note _rq_n _rn_sweep _cur_br_tip _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason
+            _cur_br_tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
+            _cur_base_sha="$(git -C "$repo" rev-parse "$base" 2>/dev/null)"
+            read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
+            if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$_cur_br_tip" ] && \
+               [ "${_ls_reason:-}" = "no-rebase@${_cur_base_sha}" ]; then
+                log "CHECK6 $id: tip and base unchanged since last RED mark — skipping duplicate bump"
+                continue
+            fi
             _rn_sweep="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
             _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
             _reopen_note="Reopened by sentinel: $br does not rebase onto $base in $name after $landed landed; conflicts in ${REBASE_CONFLICTS:-unknown}. The branch carries $_rn_sweep commit(s) from the previous session — resume from the existing work."
@@ -792,7 +800,7 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
                 spira_event bead.reopened "$id" "reopened $id — $br does not rebase onto $base in $name" \
                     "conflicts in ${REBASE_CONFLICTS:-unknown}; the next aeon is handed the rebase" || true
             fi
-            land_mark "$id" RED "$(git -C "$repo" rev-parse "$br" 2>/dev/null)" no-rebase
+            land_mark "$id" RED "$_cur_br_tip" "no-rebase@${_cur_base_sha}"
             continue
         fi
         n_swept=$(( n_swept + 1 ))
@@ -1073,7 +1081,14 @@ for i in d:
                 log "CHECK6 $id: $br does not rebase onto $base, but its pull request is merged — landed, not stuck"
                 continue
             fi
-            local _other_beads _reopen_note _rq_n _rn_land
+            local _other_beads _reopen_note _rq_n _rn_land _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason
+            _cur_base_sha="$(git -C "$repo" rev-parse "$base" 2>/dev/null)"
+            read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
+            if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$tip" ] && \
+               [ "${_ls_reason:-}" = "no-rebase@${_cur_base_sha}" ]; then
+                log "CHECK6 $id: tip and base unchanged since last RED mark — skipping duplicate bump"
+                continue
+            fi
             _rn_land="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
             _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
             _reopen_note="Reopened by sentinel: $br does not rebase onto $base in $name; conflicts in ${REBASE_CONFLICTS:-unknown}. The branch carries $_rn_land commit(s) from the previous session — resume from the existing work."
@@ -1093,7 +1108,7 @@ for i in d:
                 spira_event bead.reopened "$id" "reopened $id — $br does not rebase onto $base in $name" \
                     "conflicts in ${REBASE_CONFLICTS:-unknown}; the next aeon is handed the rebase" || true
             fi
-            land_mark "$id" RED "$tip" no-rebase
+            land_mark "$id" RED "$tip" "no-rebase@${_cur_base_sha}"
             continue
         fi
         tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
