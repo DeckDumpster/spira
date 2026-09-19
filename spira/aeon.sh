@@ -1679,11 +1679,21 @@ _AEON_SETTINGS="$(python3 -c "
 import json, os
 spira_home = '$SPIRA_HOME'
 hooks = {}
-mail = os.path.join(spira_home, 'hooks', 'aeon-mail-deliver.sh')
-hooks['PostToolUse'] = [{'hooks': [{'type': 'command', 'command': mail, 'timeout': 5}]}]
+mail    = os.path.join(spira_home, 'hooks', 'aeon-mail-deliver.sh')
+deliver = os.path.join(spira_home, 'bd-unacked-comment-deliver.sh')
+post_hooks = [{'type': 'command', 'command': mail, 'timeout': 5}]
+if os.access(deliver, os.X_OK):
+    post_hooks.append({'type': 'command', 'command': deliver, 'timeout': 5})
+hooks['PostToolUse'] = [{'hooks': post_hooks}]
+pre_hooks = []
 fence = os.path.join(spira_home, 'hooks', 'aeon-fence.sh')
 if os.access(fence, os.X_OK):
-    hooks['PreToolUse'] = [{'hooks': [{'type': 'command', 'command': fence, 'timeout': 5}]}]
+    pre_hooks.append({'type': 'command', 'command': fence, 'timeout': 5})
+guard = os.path.join(spira_home, 'bd-close-unacked-guard.sh')
+if os.access(guard, os.X_OK):
+    pre_hooks.append({'type': 'command', 'command': guard, 'timeout': 5})
+if pre_hooks:
+    hooks['PreToolUse'] = [{'hooks': pre_hooks}]
 print(json.dumps({'hooks': hooks}))
 " 2>/dev/null)" || _AEON_SETTINGS=""
 printf '%s' "$FULL" | ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
