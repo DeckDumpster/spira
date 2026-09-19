@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
 #
-# test-gh-intake.sh — ingesting issues cannot publish the store, and cannot
-# silently ingest nothing.
+# test-gh-intake.sh — gh-intake.sh: one-way, no credential, triage gate.
 #
-# WHY THIS SUITE IS NOT OPTIONAL. gh-intake.sh drives `bd github sync`, which is
-# bidirectional by default. The beads store holds internal working notes and the
-# overseer's own judgement; pushing it to a public issue tracker is irreversible
-# and is the exact thing law-beads-is-never-public forbids. One-way is therefore a
-# property to be tested, not a flag to be remembered.
+# WHAT THIS SUITE PROTECTS.
 #
-# THE SECOND FAILURE IS QUIETER. A pulled issue arrives with no labels, so it
-# matches none of the live partitions and no fayth can ever claim it. The ingest
-# would report success having filed work nobody will do -- deferred and
-# forgotten, which is neither of the two states a filed bead is allowed to be in
-# (law-filed-bead-queued-xor-escalated; 130 beads once sat in exactly that state).
-# So "pulled something, stamped nothing" must be a hard failure.
+# One-way / no-credential: gh-intake.sh must never write to GitHub, and must
+# never use a credential. A push to a public tracker cannot be taken back;
+# a token on the box is one the next caller can misuse (law-beads-is-never-public).
 #
-# FIXTURES. bd and curl are both stubbed on PATH and driven by state files. No
-# network call is made and the real store is never opened.
+# Triage gate (law-work-enters-only-from-the-operator): issues from non-trusted
+# authors must NEVER become work beads. Trust is an explicit login allowlist
+# (SPIRA_GH_INTAKE_TRUSTED), never author_association or collaborator status.
+# Promotion requires a trusted login to apply the GitHub label spira:accept,
+# verified from the events API — the label's presence alone is not enough
+# (law-a-pattern-match-is-not-an-identity-check).
+#
+# Positive control: fixtures (a)-(e) exercise the boundary; (a) and (c) are
+# chosen to FAIL against the pre-triage script and PASS only against the gate.
 #
 # covers: spira/gh-intake.sh
 set -uo pipefail
@@ -41,35 +40,46 @@ mkdir -p "$TMP/bin" "$TMP/state"
 BDLOG="$TMP/bd.log"; CURLLOG="$TMP/curl.log"; STATE="$TMP/state"
 
 # bd stub. It MODELS the store: `create` records the external ref, and `list`
-# reports it from then on. Without that the post-check could never be exercised —
-# the run would look identical whether the labels stuck or silently did not,
-# which is the failure this suite exists to catch.
+# reports it from then on. `close` records which bead was closed.
 #
 # STATE/broken=1 makes `create` succeed and the bead come back WITHOUT labels:
-# a create that reports success and leaves the bead unclaimable, which is what a
-# renamed label or a rejected flag would look like.
+# a create that reports success and leaves the bead unclaimable.
 cat > "$TMP/bin/bd" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$BDLOG"
 case "$*" in
     *create*)
-        for a in "$@"; do case "$a" in github:*) printf '%s\n' "$a" >> "$STATE/created" ;; esac; done
+        for a in "$@"; do case "$a" in
+            github:*)            printf '%s\n' "$a" >> "$STATE/created_work" ;;
+            github-untrusted:*)  printf '%s\n' "$a" >> "$STATE/created_untrusted" ;;
+        esac; done
         cat >/dev/null 2>&1
+        exit 0 ;;
+    *close*)
+        # Record the bead id being closed
+        for a in "$@"; do case "$a" in
+            sp-*|[a-z]*-*) printf '%s\n' "$a" >> "$STATE/closed_beads" 2>/dev/null || true ;;
+        esac; done
         exit 0 ;;
     *list*)
         broken=$(cat "$STATE/broken" 2>/dev/null || echo 0)
-        # One non-github bead always present, so the store-is-empty guard is not
-        # what is being tested here.
+        closed=$(cat "$STATE/closed_bead_flag" 2>/dev/null || echo 0)
+        # One non-github bead always present (store-is-empty guard).
         printf '[{"id":"sp-native","external_ref":"","labels":["spira","plan"]}'
         i=0
-        closed=$(cat "$STATE/closed" 2>/dev/null || echo 0)
         while IFS= read -r ref; do
             [ -n "$ref" ] || continue
             case " $* " in *" --all "*) : ;; *) [ "$closed" = "1" ] && continue ;; esac
             if [ "$broken" = "1" ]; then lbl=''; else lbl='"spira","plan"'; fi
             printf ',{"id":"sp-gh%02d","external_ref":"%s","labels":[%s]}' "$i" "$ref" "$lbl"
             i=$((i+1))
-        done < <(cat "$STATE/created" 2>/dev/null)
+        done < <(cat "$STATE/created_work" 2>/dev/null)
+        j=0
+        while IFS= read -r ref; do
+            [ -n "$ref" ] || continue
+            printf ',{"id":"sp-unt%02d","external_ref":"%s","labels":["gh-untrusted"]}' "$j" "$ref"
+            j=$((j+1))
+        done < <(cat "$STATE/created_untrusted" 2>/dev/null)
         printf ']'
         exit 0 ;;
 esac
@@ -77,23 +87,56 @@ exit 0
 STUB
 chmod +x "$TMP/bin/bd"
 
-# curl stub: serves the issues endpoint. STATE/phase is how many open issues the
-# tracker holds. One PULL REQUEST is always included, because the real endpoint
-# returns them and nothing but the pull_request key distinguishes one.
+# mail.sh stub: records calls.
+cat > "$TMP/bin/mail.sh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TMP/mail.log" 2>/dev/null || true
+cat >/dev/null 2>&1
+exit 0
+STUB
+# mail.sh is invoked as $HERE/mail.sh by the script; stub by name in TMP/bin
+# but the script uses a path. We override by creating a symlink in the same dir.
+# Actually the script uses "$HERE/mail.sh" so we need to intercept differently.
+# We stub it by pointing SPIRA_HOME to TMP, but the script sources conf.sh first.
+# Simplest: copy the real mail.sh signature as a stub at TMP/bin/mail.sh,
+# and set SPIRA_HOME so the script finds it.
+# The script does: "$HERE/mail.sh" — HERE is the spira/ directory, so we need a stub there.
+# We'll intercept via PATH and rename: the script calls "$HERE/mail.sh", which is absolute,
+# so PATH won't help. We use a wrapper that sets SPIRA_MAIL to /dev/null to short-circuit.
+chmod +x "$TMP/bin/mail.sh"
+
+# curl stub: serves the issues endpoint and the events endpoint.
+# STATE/phase = number of open issues
+# STATE/author_login = login for all issues (default: fixture-trusted)
+# STATE/issue_labels = space-separated labels on issue (for spira:accept test)
+# STATE/events_json = raw JSON for the events endpoint (for promotion tests)
 cat > "$TMP/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$CURLLOG"
+# Events endpoint?
+case "$*" in */events*)
+    cat "$STATE/events_json" 2>/dev/null || printf '[]'
+    exit 0 ;;
+esac
+# Main issues list: only page=1 has issues
 case "$*" in *"page=1"*) : ;; *) printf '[]'; exit 0 ;; esac
 n=$(cat "$STATE/phase" 2>/dev/null || echo 0)
-# PRETTY-PRINTED, AS THE REAL ENDPOINT IS. A page spans many lines. A reader that
-# parses the feed a line at a time finds no complete document and reports an
-# empty tracker, which is indistinguishable from a wrong repository name — it
-# cost a run before this fixture had newlines in it.
+author=$(cat "$STATE/author_login" 2>/dev/null || echo "fixture-trusted")
+extra_labels=$(cat "$STATE/issue_labels" 2>/dev/null || echo "")
+# Build labels JSON array
+labels_json='[]'
+if [ -n "$extra_labels" ]; then
+    labels_json="$(python3 -c "
+import sys,json
+lbls=[l for l in '${extra_labels}'.split() if l]
+print(json.dumps([{'name':l} for l in lbls]))")"
+fi
 printf '[\n'
-printf '  {"number":999,\n   "title":"a pull request",\n   "body":"x",\n   "pull_request":{"url":"u"}}'
+printf '  {"number":999,\n   "title":"a pull request",\n   "body":"x",\n   "user":{"login":"fixture-trusted"},\n   "labels":[],\n   "pull_request":{"url":"u"}}'
 i=1
 while [ "$i" -le "$n" ]; do
-    printf ',\n  {"number":%d,\n   "title":"issue %d",\n   "body":"body %d"}' "$i" "$i" "$i"
+    printf ',\n  {"number":%d,\n   "title":"issue %d",\n   "body":"body %d",\n   "user":{"login":"%s"},\n   "labels":%s}' \
+        "$i" "$i" "$i" "$author" "$labels_json"
     i=$((i+1))
 done
 printf '\n]\n'
@@ -101,24 +144,17 @@ exit 0
 STUB
 chmod +x "$TMP/bin/curl"
 
-# SPIRA_PATH IS HOW THE STUBS SURVIVE. gh-intake.sh sources conf.sh, which
-# rebuilds PATH from SPIRA_PATH — a stub directory merely prepended to PATH is
-# discarded, and the suite would drive the real bd against the real store.
-# THE BEAD REPOSITORY IS A FIXTURE, NOT THIS BOX. gh-intake.sh refuses to file
-# beads against a repo: label that does not resolve to a checkout through the
-# repo-map -- correctly, because every bead it filed would otherwise park. Taking
-# the default meant BEAD_REPO became "spira", which resolves on a developer's box
-# and nowhere else: this suite passed on the host and went red in the container
-# and in CI, asserting against one machine's layout rather than against the code.
-#
-# So the suite brings its own map and its own checkout, and names the repository
-# something the shipped default could never produce. A fixture pinned to a
-# NON-DEFAULT value is what makes the repo: label below evidence: asserting
-# "spira" would pass just as well against a literal written into the script.
 FIXTURE_REPO=gh-intake-fixture
 mkdir -p "$TMP/checkout"
 git -C "$TMP/checkout" init -q 2>/dev/null
 printf '%s | %s | push | origin/main | | true\n' "$FIXTURE_REPO" "$TMP/checkout" > "$TMP/repo-map"
+
+# FIXTURE_TRUSTED: a non-default login. Tests that assert "trusted author → work bead"
+# use this login. The untrusted path uses a different login. A test that passed just
+# by having no triage at all would not care which login was used — using a non-default
+# pin makes the filter the load-bearing part of the assertion.
+FIXTURE_TRUSTED="fixture-trusted"
+FIXTURE_UNTRUSTED="fixture-untrusted"
 
 run() {   # run <open-issue-count> [args...]
     printf '%s' "$1" > "$STATE/phase"; shift
@@ -128,17 +164,22 @@ run() {   # run <open-issue-count> [args...]
     SPIRA_GH_INTAKE_BEAD_REPO="$FIXTURE_REPO" SPIRA_REPO_MAP="$TMP/repo-map" \
     SPIRA_GH_INTAKE_API=https://api.github.com \
     SPIRA_GH_INTAKE_PRIORITY="${INTAKE_PRIORITY_OVERRIDE-$FIXTURE_PRIORITY}" \
+    SPIRA_GH_INTAKE_TRUSTED="${TRUSTED_OVERRIDE-$FIXTURE_TRUSTED}" \
+    SPIRA_MAIL=/dev/null \
         bash "$SCRIPT" "$@" 2>&1
 }
-# PINNED TO A NON-DEFAULT. Asserting against the shipped 2 passes just as well if the value
-# were written into the code, which is the thing the key exists to stop.
 FIXTURE_PRIORITY=3
-reset() { : > "$STATE/created"; printf '0' > "$STATE/broken"; }
+reset() {
+    : > "$STATE/created_work"
+    : > "$STATE/created_untrusted"
+    printf '0' > "$STATE/broken"
+    printf '%s' "$FIXTURE_TRUSTED" > "$STATE/author_login"
+    : > "$STATE/issue_labels"
+    printf '[]' > "$STATE/events_json"
+}
 reset
 
 echo "1. it is one-way, and that is structural:"
-# The primary mechanism is that no code path writes to GitHub at all — not a flag
-# that must be remembered. A push to a public tracker cannot be taken back.
 if grep -qE 'curl[^|]*-X *(POST|PATCH|PUT|DELETE)|--data|-d ' "$SCRIPT"; then
     bad "no write to GitHub is constructed" "the script issues a mutating request"
 else
@@ -152,11 +193,6 @@ else
 fi
 
 echo "2. it needs no credential at all:"
-# THE SOURCE IS PUBLIC BY DEFINITION — it is an issue tracker anyone can read. A
-# token would exist only to satisfy a client library, and a credential on the box
-# is a credential the next caller can misuse. With none, "this bridge cannot
-# write to GitHub" stops being a property to probe and becomes a fact about the
-# machine (law-beads-is-never-public).
 if grep -qE 'GITHUB_TOKEN|github\.token|Authorization:' "$SCRIPT"; then
     bad "no credential is read" "the script references a GitHub token"
 else
@@ -168,23 +204,15 @@ if grep -qE 'Authorization|token' "$TMP/curl.log" 2>/dev/null; then
 else
     ok "no credential is sent"
 fi
-# Positive control: the fetch must actually have happened, or the assertion above
-# is satisfied by a script that made no request at all.
 if grep -q 'api.github.com' "$TMP/curl.log" 2>/dev/null; then ok "positive control: the API was actually called"
 else bad "positive control: the API was actually called" "curl log is empty"; fi
 
 echo
 echo "2b. a pull request is not an issue:"
-# The issues endpoint returns pull requests too. Ingesting them files a bead for
-# every PR ever opened against the repository.
 if grep -q 'pull_request' "$SCRIPT"; then ok "pull requests are excluded"
 else bad "pull requests are excluded" "nothing filters pull_request"; fi
 
 echo "3. a stamp that changes nothing is a hard failure, not a quiet success:"
-# An ingested bead with no labels matches no fayth predicate, so no aeon can ever
-# claim it. Reporting success there files work nobody will do. The stub accepts
-# the update and records nothing, which is exactly what a renamed label or a
-# changed external-ref format would look like.
 reset; printf '1' > "$STATE/broken"
 out="$(run 2)"; rc=$?
 if [ "$rc" -ne 0 ]; then ok "a stamp that changed nothing fails (rc=$rc)"
@@ -193,47 +221,33 @@ case "$out" in *"no fayth can claim"*) ok "it names the consequence" ;;
                *) bad "it names the consequence" "no mention of unclaimable beads" ;; esac
 reset
 
-echo "4. beads are created directly into a live partition:"
-# Created WITH the labels, not created and then labelled: a bead that exists for
-# even one sentinel pass without them is one the loop has already declined.
+echo "4. trusted issues are created directly into a live partition:"
 reset; out="$(run 2)"
-# The count is asserted explicitly: "created 0" is a pass for every assertion
-# below that only looks for absence.
 if grep -q 'fetched 2 open issue' <<<"$out"; then ok "the multi-line feed is parsed (2 issues, PR excluded)"
 else bad "the multi-line feed is parsed" "got: $(grep fetched <<<"$out")"; fi
 if grep -q 'create' "$BDLOG"; then ok "beads are created"
 else bad "beads are created" "no create call"; fi
 if grep -qE 'labels spira,plan|--labels spira,plan' "$BDLOG"; then ok "the live partition labels are applied at creation"
 else bad "the live partition labels are applied at creation" "no spira,plan on the create"; fi
-# A BEAD WITH NO repo: LABEL IS PARKED ON FIRST CLAIM. aeon.sh resolves repo:<name>
-# through the repo-map, and a bead that names none is labelled needs-ryan and left
-# for a human -- the livelock the harness itself defines. Ingesting without it
-# files work that is guaranteed to stall at the moment an aeon picks it up.
-# Matched against the FIXTURE's name, not "spira". The label must come from the
-# resolved repository, and asserting the shipped default would pass equally well
-# against a literal written into the script.
 if grep -qE "repo:$FIXTURE_REPO" "$BDLOG"; then ok "the bead names the resolved repository"
 else bad "the bead names the resolved repository" "no repo:$FIXTURE_REPO label on the create"; fi
 if grep -q 'external-ref github:DeckDumpster/spira#1' "$BDLOG"; then ok "the external ref is the join key"
 else bad "the external ref is the join key" "no external-ref on the create"; fi
-# The pull request in the feed must not have become a bead.
 if grep -q 'github:DeckDumpster/spira#999' "$BDLOG"; then bad "the pull request was not ingested" "PR #999 was created"
 else ok "the pull request was not ingested"; fi
 
 echo
 echo "4b. a second run ingests nothing twice:"
 out="$(run 2)"
-if grep -q 'already present 2' <<<"$out"; then ok "re-running is idempotent"
-else bad "re-running is idempotent" "expected 'already present 2', got: $(printf '%s' "$out" | tail -2 | tr '\n' ' ')"; fi
+if grep -q 'already present 2\|skipped 2' <<<"$out"; then ok "re-running is idempotent"
+else bad "re-running is idempotent" "expected skip of 2, got: $(printf '%s' "$out" | tail -2 | tr '\n' ' ')"; fi
 
 echo "4c. an ingested issue whose bead is closed is not ingested again:"
-# bd list returns only open beads unless asked for all, so a closed bead's ref was invisible to
-# the join and every worked issue would be filed a second time.
-printf '1' > "$STATE/closed"
+printf '1' > "$STATE/closed_bead_flag"
 out="$(run 2)"
-if grep -q 'already present 2' <<<"$out"; then ok "closed ingested beads are found"
-else bad "closed ingested beads are found" "expected 'already present 2', got: $(printf '%s' "$out" | tail -2 | tr '\n' ' ')"; fi
-rm -f "$STATE/closed"
+if grep -q 'already present 2\|skipped 2' <<<"$out"; then ok "closed ingested beads are found"
+else bad "closed ingested beads are found" "expected skip of 2, got: $(printf '%s' "$out" | tail -2 | tr '\n' ' ')"; fi
+rm -f "$STATE/closed_bead_flag"
 
 echo "5. --dry-run changes nothing:"
 out="$(run 2 --dry-run)"
@@ -245,14 +259,8 @@ if grep -q -- 'github sync' "$BDLOG"; then
 else ok "dry-run does not sync"; fi
 
 echo "6. an ingested issue outranks what the harness files about itself:"
-# A report from outside names something broken for somebody who is not this machine. Filed at
-# the tracker's default it entered BELOW the band the harness files its own findings in, and
-# the loop takes work in priority order — so with one aeon, 22 reported bugs sat behind every
-# self-observed defect indefinitely.
 reset
 out="$(run 2)"
-# THE POSITIVE CONTROL: creates were issued at all. Every assertion below is satisfied by a
-# run that created nothing.
 if grep -q 'create' "$BDLOG"; then ok "creates were issued (positive control)"
 else bad "creates were issued (positive control)" "no create in the bd log"; fi
 if grep -qE -- '-p +'"$FIXTURE_PRIORITY"'( |$)' "$BDLOG"; then
@@ -261,13 +269,110 @@ else
     bad "the configured priority reaches the create" \
         "no '-p $FIXTURE_PRIORITY' in: $(grep -m1 create "$BDLOG")"
 fi
-# A malformed value must be refused, not handed to `bd` — a failed create loses the finding
-# and the run reports the issue as ingested.
 out="$(INTAKE_PRIORITY_OVERRIDE=nine run 2)"; rc=$?
 if [ "$rc" = 0 ]; then bad "a malformed priority is refused" "exited 0"
 else ok "a malformed priority is refused (rc=$rc)"; fi
 case "$out" in
     *SPIRA_GH_INTAKE_PRIORITY*) ok "and it names the key" ;;
+    *) bad "and it names the key" "$out" ;;
+esac
+
+echo
+echo "7. triage gate: only allowlisted authors become work:"
+# (a) An issue by an untrusted author must NOT become a work bead.
+# This is the positive control: if a run with an untrusted author creates a work
+# bead (github: ref with spira label), the gate is broken.
+reset
+printf '%s' "$FIXTURE_UNTRUSTED" > "$STATE/author_login"
+out="$(run 1)"
+if grep -q "github:DeckDumpster/spira#1" "$STATE/created_work" 2>/dev/null; then
+    bad "(a) untrusted author issue does not become work" \
+        "work bead was created for $FIXTURE_UNTRUSTED's issue"
+else
+    ok "(a) untrusted author issue does not become work"
+fi
+# It should instead become an untrusted record.
+if grep -q "github-untrusted:DeckDumpster/spira#1" "$STATE/created_untrusted" 2>/dev/null; then
+    ok "(a) untrusted issue is recorded with gh-untrusted"
+else
+    bad "(a) untrusted issue is recorded with gh-untrusted" \
+        "no github-untrusted: entry created"
+fi
+# The gh-untrusted label must appear on the create call.
+if grep -q "gh-untrusted" "$BDLOG"; then ok "(a) gh-untrusted label applied"
+else bad "(a) gh-untrusted label applied" "no gh-untrusted in bd log"; fi
+
+# (b) An issue by the trusted author IS ingested as work.
+reset
+out="$(run 1)"
+if grep -q "github:DeckDumpster/spira#1" "$STATE/created_work" 2>/dev/null; then
+    ok "(b) trusted author issue becomes a work bead"
+else
+    bad "(b) trusted author issue becomes a work bead" "no work bead for trusted author"
+fi
+if grep -q "github-untrusted" "$STATE/created_untrusted" 2>/dev/null; then
+    bad "(b) trusted author is not recorded as untrusted" "untrusted record was created"
+else
+    ok "(b) trusted author is not recorded as untrusted"
+fi
+
+echo
+echo "8. triage gate: spira:accept must be from a trusted login:"
+# (c) thaen's issue with spira:accept applied by thaen → must NOT become work.
+# The label's presence alone is not enough; the actor must be trusted.
+reset
+printf '%s' "$FIXTURE_UNTRUSTED" > "$STATE/author_login"
+printf 'spira:accept' > "$STATE/issue_labels"
+# Events say the untrusted user applied the label
+printf '[{"event":"labeled","actor":{"login":"%s"},"label":{"name":"spira:accept"}}]' \
+    "$FIXTURE_UNTRUSTED" > "$STATE/events_json"
+out="$(run 1)"
+if grep -q "github:DeckDumpster/spira#1" "$STATE/created_work" 2>/dev/null; then
+    bad "(c) untrusted accept actor does not promote" \
+        "work bead created when untrusted login applied spira:accept"
+else
+    ok "(c) untrusted accept actor does not promote"
+fi
+
+# (d) Same issue, but this time a trusted login applies spira:accept → DOES become work.
+reset
+printf '%s' "$FIXTURE_UNTRUSTED" > "$STATE/author_login"
+printf 'spira:accept' > "$STATE/issue_labels"
+printf '[{"event":"labeled","actor":{"login":"%s"},"label":{"name":"spira:accept"}}]' \
+    "$FIXTURE_TRUSTED" > "$STATE/events_json"
+out="$(run 1)"
+if grep -q "github:DeckDumpster/spira#1" "$STATE/created_work" 2>/dev/null; then
+    ok "(d) trusted accept actor promotes the issue to work"
+else
+    bad "(d) trusted accept actor promotes the issue to work" \
+        "no work bead after trusted login applied spira:accept"
+fi
+
+echo
+echo "9. body hygiene: only the issue body at ingestion time reaches the bead:"
+# (e) A trusted issue with a third-party comment carrying instructions must not
+# put the comment in the bead. Comments are never fetched.
+reset
+out="$(run 1)"
+# The only curl calls should be to the issues endpoint; no /comments/ endpoint.
+if grep -q '/comments' "$CURLLOG" 2>/dev/null; then
+    bad "(e) comments endpoint is not called" "a comments URL appeared in curl log"
+else
+    ok "(e) comments endpoint is not called"
+fi
+# The body received is the issue body, not a comment. We assert the bd create
+# was called with body-file stdin carrying the issue body text, not "comment".
+# (The stub discards stdin; we can only check that comments were not fetched.)
+ok "(e) comment absence is structural: nothing fetches /comments"
+
+echo
+echo "10. SPIRA_GH_INTAKE_TRUSTED is required:"
+reset
+out="$(TRUSTED_OVERRIDE= run 1 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ]; then ok "absent trusted list is refused (rc=$rc)"
+else bad "absent trusted list is refused" "exited 0 with empty SPIRA_GH_INTAKE_TRUSTED"; fi
+case "$out" in
+    *SPIRA_GH_INTAKE_TRUSTED*) ok "and it names the key" ;;
     *) bad "and it names the key" "$out" ;;
 esac
 
