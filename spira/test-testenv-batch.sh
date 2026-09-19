@@ -735,6 +735,7 @@ SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b7b-$$" \
 SPIRA_VERDICTS="$VERDICTS_B7" \
 SPIRA_VERDICT_TTL=86400 \
+SPIRA_DB="$TMP/no-bead-db" \
     bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null
 )" || rc_b7b=$?
 
@@ -796,6 +797,7 @@ SPIRA_BATCH_INSTANCE="b7e-$$" \
 SPIRA_VERDICTS="$VERDICTS_B7" \
 SPIRA_VERDICT_TTL=86400 \
 SPIRA_VERDICT_REPEAT_CONSIDERED="1" \
+SPIRA_DB="$TMP/no-bead-db" \
     bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null
 )" || rc_b7e=$?
 
