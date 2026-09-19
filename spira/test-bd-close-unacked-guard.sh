@@ -115,7 +115,7 @@ echo "Failing-open baseline — same scenario, bd close without guard"
 # The close succeeds when the guard is not in the path. This is the current
 # (pre-guard) behaviour that sp-8ia4q exists to close.
 
-rc=0; "$BD" -C "$SPIRA_DB" close "$BID" --reason "done" >/dev/null 2>&1 || rc=$?
+rc=0; BEADS_ACTOR="$ACTOR" "$BD" -C "$SPIRA_DB" close "$BID" --reason "done" >/dev/null 2>&1 || rc=$?
 wantrc "bd close without guard succeeds (fails open)"         0                                   "$rc"
 
 # Reopen so subsequent tests can close the same bead.
@@ -279,7 +279,7 @@ echo "Deliver hook — new post-claim comment is delivered"
 BID6="$("$BD" -C "$SPIRA_DB" create --title "test-deliver" -l spira --type task \
          2>/dev/null | grep -oE 'sp-[a-z0-9]+' | head -1)"
 BEADS_ACTOR="$ACTOR" "$BD" -C "$SPIRA_DB" update "$BID6" --claim 2>/dev/null
-sleep 1
+sleep 2
 C6ID="$("$BD" -C "$SPIRA_DB" comment "$BID6" "please use method X" 2>/dev/null \
         | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)"
 if [ -z "$C6ID" ]; then
