@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 #
-# test-watchtower-queue.sh — queue stall detectors in watchtower --queue-checks
+# test-watchtower-queue.sh — queue stall detectors in czar.sh --pass
 #
 # WHAT THIS SUITE IS FOR
 # ----------------------
-# watchtower --queue-checks is the landing-cadence detector that reads landing.log
-# for patterns that block the merge queue and files one incident per class on first
-# occurrence. Each detector is verified with a positive control before any absence
-# assertion is believed (law-absence-needs-a-positive-control).
+# czar.sh --pass is the deterministic queue-stall detector that runs every 30 s on its
+# own timer. It reads landing.log for log-pattern-based detectors (DEADLOCK,
+# ATTRIBUTION-FAILED, SORT-FAILED, LOOP-STALLED) and reads runtime state for
+# resource-based detectors (CI-STALLED, STARVED). Each detector files one incident per
+# class on first occurrence via incident.sh (deduped by SPIRA_INCIDENT_REF).
+# All detectors are verified with a positive control before any absence assertion is
+# believed (law-absence-needs-a-positive-control).
 #
 # THE FIXTURE LANDING.LOG IS WRITTEN BY HAND. The log format is plain text
 # (ISO timestamp + prose), and the detectors are pure string matches. A hand-written
@@ -18,7 +21,7 @@
 # same SPIRA_INCIDENT_REF so incident.sh dedup bumps a recurrence rather than filing
 # a new bead on every sentinel tick (law-alerts-must-be-actionable).
 #
-# covers: spira/watchtower.sh spira/sentinel.sh
+# covers: spira/czar.sh spira/sentinel.sh spira/watchtower.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -35,6 +38,13 @@ NOW="$(date +%s)"
 NOW_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 PAST_TS="$(date -u -d "@$(( NOW - 7200 ))" +%Y-%m-%dT%H:%M:%SZ)"
 
+# Stub systemctl: is-failed returns non-zero → loop-stalled takes inference branch.
+printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP/stub-sc.sh"
+chmod +x "$TMP/stub-sc.sh"
+
+# SPIRA_DB stub directory (lib.sh may reference it; incident.sh is mocked so no real db needed).
+mkdir -p "$TMP/db"
+
 fresh() {
     rm -rf "$TMP/run"
     mkdir -p "$TMP/run"
@@ -46,7 +56,7 @@ log_line() {   # log_line <ts> <text>
     printf '%s spira: %s\n' "$1" "$2" >> "$TMP/run/landing.log"
 }
 
-# Run watchtower --queue-checks in a clean environment.
+# Run czar.sh --pass in a clean environment with all classes in act mode.
 # Incident subjects are appended to $TMP/inc-subjects.
 wt_qc() {   # wt_qc [VAR=val ...]
     local mock="$TMP/mock-inc.sh"
@@ -54,25 +64,45 @@ wt_qc() {   # wt_qc [VAR=val ...]
         "$TMP/inc-subjects" > "$mock"
     chmod +x "$mock"
     env -i PATH="$PATH" HOME="$TMP" \
+        SPIRA_HOME="$HERE" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_DB="$TMP/db" \
         SPIRA_QUEUE_LOG="$TMP/run/landing.log" \
-        SPIRA_QUEUE_CHECK_MARKER="$TMP/run/queue-check.swept" \
+        SPIRA_CZAR_PASS_MARKER="$TMP/run/czar-pass.swept" \
         SPIRA_INCIDENT_SH="$mock" \
-        "$@" bash "$HERE/watchtower.sh" --queue-checks 2>/dev/null
+        SPIRA_SYSTEMCTL="$TMP/stub-sc.sh" \
+        SPIRA_CZAR_STAGE_DEADLOCK=act \
+        SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED=act \
+        SPIRA_CZAR_STAGE_SORT_FAILED=act \
+        SPIRA_CZAR_STAGE_LOOP_STALLED=act \
+        SPIRA_CZAR_STAGE_CI_STALLED=act \
+        SPIRA_CZAR_STAGE_STARVED=act \
+        SPIRA_CZAR_STAGE_CI_RED=act \
+        "$@" bash "$HERE/czar.sh" --pass 2>/dev/null
 }
 
-# Run watchtower --queue-checks capturing SPIRA_INCIDENT_REF values to $TMP/inc-refs.
+# Run czar.sh --pass capturing SPIRA_INCIDENT_REF values to $TMP/inc-refs.
 wt_qc_refs() {   # wt_qc_refs [VAR=val ...]
     local mock="$TMP/mock-inc-refs.sh"
     printf '#!/usr/bin/env bash\nprintf "%%s\n" "${SPIRA_INCIDENT_REF:-}" >> "%s"\ncat > /dev/null\n' \
         "$TMP/inc-refs" > "$mock"
     chmod +x "$mock"
     env -i PATH="$PATH" HOME="$TMP" \
+        SPIRA_HOME="$HERE" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_DB="$TMP/db" \
         SPIRA_QUEUE_LOG="$TMP/run/landing.log" \
-        SPIRA_QUEUE_CHECK_MARKER="$TMP/run/queue-check.swept" \
+        SPIRA_CZAR_PASS_MARKER="$TMP/run/czar-pass.swept" \
         SPIRA_INCIDENT_SH="$mock" \
-        "$@" bash "$HERE/watchtower.sh" --queue-checks 2>/dev/null
+        SPIRA_SYSTEMCTL="$TMP/stub-sc.sh" \
+        SPIRA_CZAR_STAGE_DEADLOCK=act \
+        SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED=act \
+        SPIRA_CZAR_STAGE_SORT_FAILED=act \
+        SPIRA_CZAR_STAGE_LOOP_STALLED=act \
+        SPIRA_CZAR_STAGE_CI_STALLED=act \
+        SPIRA_CZAR_STAGE_STARVED=act \
+        SPIRA_CZAR_STAGE_CI_RED=act \
+        "$@" bash "$HERE/czar.sh" --pass 2>/dev/null
 }
 
 # ======================================================================================
@@ -80,7 +110,7 @@ echo
 echo "positive controls — each detector must fire on its fixture:"
 # ======================================================================================
 # THE FIRST THING THIS SUITE PROVES IS REACHABILITY. Every absence assertion below
-# could trivially pass if the whole --queue-checks branch were a no-op; these controls
+# could trivially pass if the whole --pass branch were a no-op; these controls
 # plant the exact fixture each detector is meant to find and require it to fire.
 
 # DEADLOCK
@@ -130,7 +160,7 @@ nowant "no 'no suites' line → no deadlock incident" "QUEUE: batch open" "$subj
 fresh
 log_line "$PAST_TS" "verdict spira: PR 72 red — no suites identified; leaving batch open"
 printf '%s\n' "$(date -u -d "@$(( NOW - 3600 ))" +%Y-%m-%dT%H:%M:%SZ)" \
-    > "$TMP/run/queue-check.swept"
+    > "$TMP/run/czar-pass.swept"
 wt_qc
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 nowant "line before marker not re-detected" "QUEUE: batch open" "$subjects"
@@ -253,7 +283,7 @@ OLD_TS="$(date -u -d "@$(( NOW - 4000 ))" +%Y-%m-%dT%H:%M:%SZ)"
 log_line "$OLD_TS" "landing: pass complete — 1 branch(es) seen, 0 movement(s)"
 rm -f "$TMP/inc-refs"
 wt_qc_refs SPIRA_LOOP_STALL_SECS=3000
-rm -f "$TMP/run/queue-check.swept"
+rm -f "$TMP/run/czar-pass.swept"
 wt_qc_refs SPIRA_LOOP_STALL_SECS=3000
 refs="$(cat "$TMP/inc-refs" 2>/dev/null || echo "")"
 unique="$(printf '%s\n' "$refs" | sort -u | grep -c . 2>/dev/null || echo 0)"
@@ -265,7 +295,7 @@ fresh
 rm -f "$TMP/inc-refs"
 log_line "$NOW_TS" "verdict spira: PR 72 red — no suites identified; leaving batch open"
 wt_qc_refs
-rm -f "$TMP/run/queue-check.swept"
+rm -f "$TMP/run/czar-pass.swept"
 log_line "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     "verdict spira: PR 73 red — no suites identified; leaving batch open"
 wt_qc_refs
@@ -275,32 +305,42 @@ is   "deadlock: two separate occurrences produce the same ref" "1" "$unique"
 want "deadlock ref names the class" "queue-deadlock-batch-open" "$refs"
 
 # Helper for CI-STALLED and STARVED tests that need extra seams.
-# Sets up a mock forge script returning the given queued-since epoch (or empty).
+# Sets up a mock forge script returning batch-ci-status output with the given queued-since epoch.
 mock_forge() {   # mock_forge <epoch-or-empty>
     local epoch="$1"
     if [ -n "$epoch" ]; then
-        printf '#!/usr/bin/env bash\ncase "$1" in queued-since) printf "%%s\n" "%s" ;; esac\n' \
+        printf '#!/usr/bin/env bash\ncase "$1" in batch-ci-status) printf "queued-since: %%s\n" "%s" ;; esac\n' \
             "$epoch" > "$TMP/mock-forge.sh"
     else
-        printf '#!/usr/bin/env bash\n: # queued-since returns nothing\n' > "$TMP/mock-forge.sh"
+        printf '#!/usr/bin/env bash\n: # batch-ci-status returns nothing\n' > "$TMP/mock-forge.sh"
     fi
     chmod +x "$TMP/mock-forge.sh"
 }
 
-# Runs watchtower --queue-checks with CI-STALLED and STARVED seams applied.
+# Runs czar.sh --pass with CI-STALLED and STARVED seams applied.
 wt_qc_ext() {   # wt_qc_ext [VAR=val ...]
     local mock="$TMP/mock-inc.sh"
     printf '#!/usr/bin/env bash\nprintf "%%s\n" "$2" >> "%s"\ncat > /dev/null\n' \
         "$TMP/inc-subjects" > "$mock"
     chmod +x "$mock"
     env -i PATH="$PATH" HOME="$TMP" \
+        SPIRA_HOME="$HERE" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_DB="$TMP/db" \
         SPIRA_QUEUE_LOG="$TMP/run/landing.log" \
-        SPIRA_QUEUE_CHECK_MARKER="$TMP/run/queue-check.swept" \
+        SPIRA_CZAR_PASS_MARKER="$TMP/run/czar-pass.swept" \
         SPIRA_INCIDENT_SH="$mock" \
+        SPIRA_SYSTEMCTL="$TMP/stub-sc.sh" \
         SPIRA_REPO_MAP="$TMP/repo-map" \
         SPIRA_FORGE="$TMP/mock-forge.sh" \
-        "$@" bash "$HERE/watchtower.sh" --queue-checks 2>/dev/null
+        SPIRA_CZAR_STAGE_DEADLOCK=act \
+        SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED=act \
+        SPIRA_CZAR_STAGE_SORT_FAILED=act \
+        SPIRA_CZAR_STAGE_LOOP_STALLED=act \
+        SPIRA_CZAR_STAGE_CI_STALLED=act \
+        SPIRA_CZAR_STAGE_STARVED=act \
+        SPIRA_CZAR_STAGE_CI_RED=act \
+        "$@" bash "$HERE/czar.sh" --pass 2>/dev/null
 }
 
 # Set up the fake repo-map once (used by CI-STALLED tests via repo_root).
@@ -311,9 +351,8 @@ printf 'spira | %s | refs/heads/main | refs/heads/main\n' "$TMP/repo" > "$TMP/re
 echo
 echo "positive control — CI-STALLED must fire on its fixture:"
 # ======================================================================================
-# THE FIXTURE FAILS AGAINST THE CURRENT WATCHTOWER. Before sp-t5gfe, --queue-checks
-# had no CI-STALLED detector; the positive control below would produce no subjects.
-# After adding the detector, it fires exactly once per open batch repo.
+# THE FIXTURE FAILS AGAINST THE PREVIOUS CODE (no czar.sh CI-STALLED detector);
+# after adding the detector, it fires exactly once per open batch repo.
 
 fresh
 mkdir -p "$TMP/run/queue/spira"
@@ -380,16 +419,26 @@ wt_qc_refs_ext() {
         "$TMP/inc-refs" > "$mock"
     chmod +x "$mock"
     env -i PATH="$PATH" HOME="$TMP" \
+        SPIRA_HOME="$HERE" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+        SPIRA_DB="$TMP/db" \
         SPIRA_QUEUE_LOG="$TMP/run/landing.log" \
-        SPIRA_QUEUE_CHECK_MARKER="$TMP/run/queue-check.swept" \
+        SPIRA_CZAR_PASS_MARKER="$TMP/run/czar-pass.swept" \
         SPIRA_INCIDENT_SH="$mock" \
+        SPIRA_SYSTEMCTL="$TMP/stub-sc.sh" \
         SPIRA_REPO_MAP="$TMP/repo-map" \
         SPIRA_FORGE="$TMP/mock-forge.sh" \
-        "$@" bash "$HERE/watchtower.sh" --queue-checks 2>/dev/null
+        SPIRA_CZAR_STAGE_DEADLOCK=act \
+        SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED=act \
+        SPIRA_CZAR_STAGE_SORT_FAILED=act \
+        SPIRA_CZAR_STAGE_LOOP_STALLED=act \
+        SPIRA_CZAR_STAGE_CI_STALLED=act \
+        SPIRA_CZAR_STAGE_STARVED=act \
+        SPIRA_CZAR_STAGE_CI_RED=act \
+        "$@" bash "$HERE/czar.sh" --pass 2>/dev/null
 }
 wt_qc_refs_ext SPIRA_CI_QUEUED_MAX_SECS=600
-rm -f "$TMP/run/queue-check.swept"
+rm -f "$TMP/run/czar-pass.swept"
 wt_qc_refs_ext SPIRA_CI_QUEUED_MAX_SECS=600
 refs="$(cat "$TMP/inc-refs" 2>/dev/null || echo "")"
 unique="$(printf '%s\n' "$refs" | sort -u | grep -c . 2>/dev/null || echo 0)"
@@ -400,8 +449,7 @@ want "ci-stalled ref names the class and repo"   "queue-ci-stalled-spira" "$refs
 echo
 echo "positive control — STARVED must fire on its fixture:"
 # ======================================================================================
-# THE FIXTURE FAILS AGAINST THE CURRENT WATCHTOWER. Before sp-t5gfe, --queue-checks
-# had no STARVED detector; the positive control below would produce no subjects.
+# THE FIXTURE FAILS AGAINST THE PREVIOUS CODE (no czar.sh STARVED detector).
 
 fresh
 STARVED_FIRST_OLD="$(( NOW - 1500 ))"   # 25 minutes, threshold 20m (1200s)
@@ -446,7 +494,7 @@ printf '{"plan,spira:starved:-":{"first":%s,"acted":0,"escalated":0}}\n' \
     "$STARVED_FIRST_OLD" > "$TMP/run/strands.json"
 rm -f "$TMP/inc-refs"
 wt_qc_refs SPIRA_STRANDS_STATE="$TMP/run/strands.json" SPIRA_STARVED_MAX_MINS=20
-rm -f "$TMP/run/queue-check.swept"
+rm -f "$TMP/run/czar-pass.swept"
 wt_qc_refs SPIRA_STRANDS_STATE="$TMP/run/strands.json" SPIRA_STARVED_MAX_MINS=20
 refs="$(cat "$TMP/inc-refs" 2>/dev/null || echo "")"
 unique="$(printf '%s\n' "$refs" | sort -u | grep -c . 2>/dev/null || echo 0)"
