@@ -19,6 +19,10 @@
 #      advanced over the red suite is not blamed for the advance.
 #   8. Per-member filtering: guilty (covered diff + repro) ejected; innocent
 #      (inert diff + in REPRO_FAIL_FILE) skipped by selection, NOT ejected.
+#   9. New-base suite: a suite that exists only on the advanced base is still
+#      reproduced when a single member breaks it.
+#  10. Whole-tree unselected: a member whose diff covers no file declared by the
+#      red suite is still ejected when that suite fails against its merged tree.
 #
 # The repro batch is stubbed via SPIRA_QUEUE_REPRO_BATCH; no container is used.
 # The forge is a local fixture; no network is reached.
@@ -582,6 +586,33 @@ printf 'spira/sp-at-nb\n' > "$REPRO_FAIL_FILE"
 verdict "$REPONAME" > /dev/null
 is "9. new-base suite: sp-at-nb ejected (suite present only on advanced base)" \
     "EJECTED" "$(land_state_of sp-at-nb)"
+clean_case
+
+# =============================================================================
+# 10. WHOLE-TREE UNSELECTED — a member whose diff touches no file covered by the
+#     red suite is still ejected when the suite fails against its merged tree.
+#     Per-member selection (--no-all-fallback) skips the member; without the
+#     unselected-suite fallback the system halves, which never converges on a
+#     member+base break.
+#     Real case: test-incident-cause.sh covers spira/incident.sh (and others)
+#     but not spira/testenv-batch.sh; a member that adds an undeclared site to
+#     testenv-batch.sh is invisible to per-member selection.
+# =============================================================================
+testdb_reset
+# test-incident-cause.sh covers spira/incident.sh (and a few others), not
+# spira/testenv-batch.sh — so sp-at-uns-a's diff will not select it.
+printf 'red\nred-suite: test-incident-cause.sh\n' > "$FORGE_STATUS_FILE"
+make_branch sp-at-uns-a spira/testenv-batch.sh
+make_branch sp-at-uns-b sp-at-uns-b.txt
+build_batch sp-at-uns-a sp-at-uns-b > /dev/null
+for id in sp-at-uns-a sp-at-uns-b; do plant_bead "$id"; done
+# sp-at-uns-a fails the suite when merged onto base; sp-at-uns-b does not.
+printf 'spira/sp-at-uns-a\n' > "$REPRO_FAIL_FILE"
+verdict "$REPONAME" > /dev/null
+is "10. unselected: sp-at-uns-a ejected (whole-tree suite, diff not mapped)" \
+    "EJECTED" "$(land_state_of sp-at-uns-a)"
+is "10. unselected: sp-at-uns-b stays BATCHED" \
+    "BATCHED" "$(land_state_of sp-at-uns-b)"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
