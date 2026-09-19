@@ -4,13 +4,19 @@
 #
 #   gh-intake.sh [--dry-run]
 #
-# TRIAGE GATE. Trust is an explicit login allowlist (SPIRA_GH_INTAKE_TRUSTED),
-# never author_association or collaborator status — a colleague is a collaborator
-# too. Trusted authors → work beads. Everyone else → untrusted records with label
-# gh-untrusted (no fayth can claim them) and a daily digest to the operator.
-# Promotion: an allowlisted login applies the GitHub label spira:accept. The
-# actor is verified from the issue's events API, not from the label's presence
-# alone (law-a-pattern-match-is-not-an-identity-check).
+# TRIAGE GATE (law-work-enters-only-from-the-operator). Trust is GitHub's own
+# access control: an issue is trusted when its author_association is OWNER,
+# MEMBER, or COLLABORATOR. Untrusted associations (CONTRIBUTOR,
+# FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, NONE) go to an untrusted record and a
+# digest; the operator revokes trust by removing the person from the org or
+# repo.
+#
+# Promotion: spira:accept counts only if the actor who applied it (from the
+# timeline/events API) currently has access. Access is checked at promotion
+# time via GET repos/{r}/collaborators/{login}/permission (admin, maintain or
+# write), falling back to org membership. The label's presence alone is not
+# enough (law-a-pattern-match-is-not-an-identity-check). Access check fails
+# closed: a request that returns 403 is not a promotion.
 #
 # BODY HYGIENE. The bead carries only the issue body as it stood at ingestion.
 # Its SHA256 is recorded in the bead; the text is quoted as data so the aeon
@@ -50,15 +56,12 @@ case "$INTAKE_PRIORITY" in
     *) printf 'gh-intake: SPIRA_GH_INTAKE_PRIORITY is %s — it must be 0-4\n' "$INTAKE_PRIORITY" >&2; exit 2 ;;
 esac
 API="${SPIRA_GH_INTAKE_API:-https://api.github.com}"
-# TRUSTED_LOGINS is the allowlist. Space-separated. If empty, nobody is trusted.
-TRUSTED_LOGINS="${SPIRA_GH_INTAKE_TRUSTED:-}"
 UNTRUSTED_LABEL="gh-untrusted"
 
 die() { printf 'gh-intake: %s\n' "$1" >&2; exit 1; }
 log() { printf 'gh-intake: %s\n' "$1"; }
 
 [ -n "$REPO" ] || die "SPIRA_GH_INTAKE_REPO is not set — nothing says which tracker to ingest from"
-[ -n "$TRUSTED_LOGINS" ] || die "SPIRA_GH_INTAKE_TRUSTED is not set — set it to the GitHub logins allowed to file work (e.g., the output of: gh api user --jq .login)"
 
 _rr="$(repo_root "$BEAD_REPO" 2>/dev/null)" || _rr=""
 if [ -z "$_rr" ] || [ ! -e "$_rr/.git" ]; then
@@ -68,14 +71,6 @@ if [ -z "$_rr" ] || [ ! -e "$_rr/.git" ]; then
        name that resolves."
 fi
 log "beads will be filed against repo:$BEAD_REPO ($_rr)"
-
-_is_trusted() {   # _is_trusted <login>
-    local login="$1" t
-    for t in $TRUSTED_LOGINS; do
-        [ "$t" = "$login" ] && return 0
-    done
-    return 1
-}
 
 # ── what the store already holds ─────────────────────────────────────────────
 _ingested() {
@@ -133,7 +128,7 @@ print(len(d))' )"
     [ "$page" -le 20 ] || die "more than 2000 open issues — refusing to page further"
 done
 
-# Extract issues with author login and current label list. Pull requests excluded.
+# Extract issues with author login, association, and current label list. Pull requests excluded.
 mapfile -t ROWS < <(python3 - "$FEED" "$REPO" <<'PY'
 import sys,json,os,glob
 feed,repo=sys.argv[1],sys.argv[2]
@@ -145,23 +140,24 @@ for f in sorted(glob.glob(os.path.join(feed,"page-*.json"))):
     for i in d:
         if "pull_request" in i: continue
         labels=[l.get("name","") for l in (i.get("labels") or [])]
+        assoc=i.get("author_association") or "NONE"
         out.append((i["number"],
                     i.get("title") or "",
                     i.get("body") or "",
                     (i.get("user") or {}).get("login") or "",
-                    labels))
-for n,t,b,login,lbls in sorted(out):
+                    labels,
+                    assoc))
+for n,t,b,login,lbls,assoc in sorted(out):
     print(json.dumps({"ref":"github:%s#%d"%(repo,n),"title":t,"body":b,
-                       "login":login,"labels":lbls,"number":n}))
+                       "login":login,"labels":lbls,"number":n,
+                       "author_association":assoc}))
 PY
 )
 log "fetched ${#ROWS[@]} open issue(s) from $REPO"
 [ "${#ROWS[@]}" -gt 0 ] || die "the tracker reported no open issues — that is possible, but it is also what a wrong repository name looks like. Check SPIRA_GH_INTAKE_REPO=$REPO"
 
 # ── verify who applied spira:accept ──────────────────────────────────────────
-# Checks the issue events endpoint; returns the login of the trusted actor who
-# most recently applied "spira:accept", or empty if none.
-_accept_actor() {   # _accept_actor <issue_number>
+_accept_actor() {   # _accept_actor <issue_number> → prints login or empty
     local num="$1"
     curl -sS --max-time 30 "$API/repos/$REPO/issues/$num/events" 2>/dev/null \
     | python3 -c '
@@ -169,7 +165,6 @@ import sys,json
 try: d=json.load(sys.stdin)
 except Exception: sys.exit(0)
 if not isinstance(d,list): sys.exit(0)
-# Walk in forward order; report the last trusted labeler
 actor=""
 for ev in d:
     if ev.get("event") != "labeled": continue
@@ -177,6 +172,25 @@ for ev in d:
     if lbl != "spira:accept": continue
     actor=(ev.get("actor") or {}).get("login","")
 print(actor)
+'
+}
+
+# ── verify current access at promotion time ───────────────────────────────────
+# Fail closed: 403 (auth required), network error, or non-admin/maintain/write
+# permission all return 1.
+_actor_has_access() {   # _actor_has_access <login>
+    local login="$1" org sc
+    org="${REPO%%/*}"
+    sc="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
+        "$API/orgs/$org/members/$login" 2>/dev/null)" || sc="000"
+    [ "$sc" = "204" ] && return 0
+    curl -sS --max-time 10 "$API/repos/$REPO/collaborators/$login/permission" 2>/dev/null \
+    | python3 -c '
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(1)
+p=d.get("permission","none")
+sys.exit(0 if p in ("admin","maintain","write") else 1)
 '
 }
 
@@ -221,6 +235,7 @@ for row in "${ROWS[@]}"; do
     title="$(printf '%s' "$row" | python3 -c 'import sys,json;print(json.load(sys.stdin)["title"])')"
     raw_body="$(printf '%s' "$row" | python3 -c 'import sys,json;print(json.load(sys.stdin)["body"])')"
     login="$(printf '%s' "$row" | python3 -c 'import sys,json;print(json.load(sys.stdin)["login"])')"
+    assoc="$(printf '%s' "$row" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("author_association","NONE"))')"
     gh_labels="$(printf '%s' "$row" | python3 -c 'import sys,json;print(" ".join(json.load(sys.stdin)["labels"]))')"
     uref="github-untrusted:$REPO#$number"
 
@@ -229,23 +244,25 @@ for row in "${ROWS[@]}"; do
         skipped=$((skipped+1)); continue
     fi
 
-    # Determine if this issue should become work:
-    # trusted author, OR untrusted author with spira:accept from a trusted login.
+    # Trusted when author_association is OWNER, MEMBER, or COLLABORATOR.
+    # Untrusted authors (CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, NONE)
+    # may be promoted via spira:accept, verified at promotion time via the
+    # collaborators/permission endpoint.
     becomes_work=0
     accept_actor=""
-    if _is_trusted "$login"; then
-        becomes_work=1
-    else
-        # Check for spira:accept label on the GitHub issue
-        case " $gh_labels " in
-            *" spira:accept "*)
-                accept_actor="$(_accept_actor "$number")"
-                if [ -n "$accept_actor" ] && _is_trusted "$accept_actor"; then
-                    becomes_work=1
-                fi
-                ;;
-        esac
-    fi
+    case "$assoc" in
+        OWNER|MEMBER|COLLABORATOR) becomes_work=1 ;;
+        *)
+            case " $gh_labels " in
+                *" spira:accept "*)
+                    accept_actor="$(_accept_actor "$number")"
+                    if [ -n "$accept_actor" ] && _actor_has_access "$accept_actor"; then
+                        becomes_work=1
+                    fi
+                    ;;
+            esac
+            ;;
+    esac
 
     if [ "$becomes_work" -eq 1 ]; then
         if [ "$DRY" -eq 1 ]; then
@@ -300,7 +317,7 @@ for num,login,title,preview in items:
     for line in preview.splitlines():
         print("> " + line)
     print()
-print("Default: ignore. To promote one, apply the label `spira:accept` from an allowlisted login.")
+print("Default: ignore. To promote one, apply the label `spira:accept` from an org member or collaborator with write access.")
 PY
 )"
     printf '%s\n' "$body_lines" \

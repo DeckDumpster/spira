@@ -8,15 +8,16 @@
 # never use a credential. A push to a public tracker cannot be taken back;
 # a token on the box is one the next caller can misuse (law-beads-is-never-public).
 #
-# Triage gate (law-work-enters-only-from-the-operator): issues from non-trusted
-# authors must NEVER become work beads. Trust is an explicit login allowlist
-# (SPIRA_GH_INTAKE_TRUSTED), never author_association or collaborator status.
-# Promotion requires a trusted login to apply the GitHub label spira:accept,
-# verified from the events API — the label's presence alone is not enough
+# Triage gate (law-work-enters-only-from-the-operator): trust is GitHub's own
+# access control — author_association OWNER/MEMBER/COLLABORATOR. Untrusted
+# associations go to a digest, never to a partition. Promotion requires the
+# actor who applied spira:accept to currently have admin/maintain/write access,
+# verified from the collaborators API — the label's presence alone is not enough
 # (law-a-pattern-match-is-not-an-identity-check).
 #
-# Positive control: fixtures (a)-(e) exercise the boundary; (a) and (c) are
-# chosen to FAIL against the pre-triage script and PASS only against the gate.
+# Positive control: fixtures (a)-(d) exercise the boundary; (a) and (c) are
+# chosen to FAIL against the pre-amendment (allowlist) script and PASS only
+# against the association-based gate.
 #
 # covers: spira/gh-intake.sh
 set -uo pipefail
@@ -56,7 +57,6 @@ case "$*" in
         cat >/dev/null 2>&1
         exit 0 ;;
     *close*)
-        # Record the bead id being closed
         for a in "$@"; do case "$a" in
             sp-*|[a-z]*-*) printf '%s\n' "$a" >> "$STATE/closed_beads" 2>/dev/null || true ;;
         esac; done
@@ -64,7 +64,6 @@ case "$*" in
     *list*)
         broken=$(cat "$STATE/broken" 2>/dev/null || echo 0)
         closed=$(cat "$STATE/closed_bead_flag" 2>/dev/null || echo 0)
-        # One non-github bead always present (store-is-empty guard).
         printf '[{"id":"sp-native","external_ref":"","labels":["spira","plan"]}'
         i=0
         while IFS= read -r ref; do
@@ -87,43 +86,40 @@ exit 0
 STUB
 chmod +x "$TMP/bin/bd"
 
-# mail.sh stub: records calls.
-cat > "$TMP/bin/mail.sh" <<'STUB'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$TMP/mail.log" 2>/dev/null || true
-cat >/dev/null 2>&1
-exit 0
-STUB
-# mail.sh is invoked as $HERE/mail.sh by the script; stub by name in TMP/bin
-# but the script uses a path. We override by creating a symlink in the same dir.
-# Actually the script uses "$HERE/mail.sh" so we need to intercept differently.
-# We stub it by pointing SPIRA_HOME to TMP, but the script sources conf.sh first.
-# Simplest: copy the real mail.sh signature as a stub at TMP/bin/mail.sh,
-# and set SPIRA_HOME so the script finds it.
-# The script does: "$HERE/mail.sh" — HERE is the spira/ directory, so we need a stub there.
-# We'll intercept via PATH and rename: the script calls "$HERE/mail.sh", which is absolute,
-# so PATH won't help. We use a wrapper that sets SPIRA_MAIL to /dev/null to short-circuit.
-chmod +x "$TMP/bin/mail.sh"
-
-# curl stub: serves the issues endpoint and the events endpoint.
-# STATE/phase = number of open issues
-# STATE/author_login = login for all issues (default: fixture-trusted)
-# STATE/issue_labels = space-separated labels on issue (for spira:accept test)
+# curl stub: serves issues, events, org-member, and collaborator-permission endpoints.
+#
+# STATE/phase = number of open issues (default 0)
+# STATE/author_association = GitHub author_association for all issues (default MEMBER)
+# STATE/issue_labels = space-separated GitHub labels on the issues (for spira:accept tests)
 # STATE/events_json = raw JSON for the events endpoint (for promotion tests)
+# STATE/org_member_code = HTTP status code for org members endpoint (204 or 404, default 404)
+# STATE/actor_permission = permission level for collaborators endpoint (default "none")
 cat > "$TMP/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$CURLLOG"
-# Events endpoint?
+# Events endpoint
 case "$*" in */events*)
     cat "$STATE/events_json" 2>/dev/null || printf '[]'
+    exit 0 ;;
+esac
+# Org member check: -w '%{http_code}' means print the status code
+case "$*" in *"/members/"*)
+    code=$(cat "$STATE/org_member_code" 2>/dev/null || echo "404")
+    printf '%s' "$code"
+    exit 0 ;;
+esac
+# Collaborator permission
+case "$*" in *"/collaborators/"*)
+    perm=$(cat "$STATE/actor_permission" 2>/dev/null || echo "none")
+    printf '{"permission":"%s","user":{"login":"x"}}' "$perm"
     exit 0 ;;
 esac
 # Main issues list: only page=1 has issues
 case "$*" in *"page=1"*) : ;; *) printf '[]'; exit 0 ;; esac
 n=$(cat "$STATE/phase" 2>/dev/null || echo 0)
-author=$(cat "$STATE/author_login" 2>/dev/null || echo "fixture-trusted")
+author=$(cat "$STATE/author_login" 2>/dev/null || echo "fixture-member")
+assoc=$(cat "$STATE/author_association" 2>/dev/null || echo "MEMBER")
 extra_labels=$(cat "$STATE/issue_labels" 2>/dev/null || echo "")
-# Build labels JSON array
 labels_json='[]'
 if [ -n "$extra_labels" ]; then
     labels_json="$(python3 -c "
@@ -132,11 +128,11 @@ lbls=[l for l in '${extra_labels}'.split() if l]
 print(json.dumps([{'name':l} for l in lbls]))")"
 fi
 printf '[\n'
-printf '  {"number":999,\n   "title":"a pull request",\n   "body":"x",\n   "user":{"login":"fixture-trusted"},\n   "labels":[],\n   "pull_request":{"url":"u"}}'
+printf '  {"number":999,\n   "title":"a pull request",\n   "body":"x",\n   "user":{"login":"fixture-member"},\n   "author_association":"MEMBER",\n   "labels":[],\n   "pull_request":{"url":"u"}}'
 i=1
 while [ "$i" -le "$n" ]; do
-    printf ',\n  {"number":%d,\n   "title":"issue %d",\n   "body":"body %d",\n   "user":{"login":"%s"},\n   "labels":%s}' \
-        "$i" "$i" "$i" "$author" "$labels_json"
+    printf ',\n  {"number":%d,\n   "title":"issue %d",\n   "body":"body %d",\n   "user":{"login":"%s"},\n   "author_association":"%s",\n   "labels":%s}' \
+        "$i" "$i" "$i" "$author" "$assoc" "$labels_json"
     i=$((i+1))
 done
 printf '\n]\n'
@@ -149,12 +145,13 @@ mkdir -p "$TMP/checkout"
 git -C "$TMP/checkout" init -q 2>/dev/null
 printf '%s | %s | push | origin/main | | true\n' "$FIXTURE_REPO" "$TMP/checkout" > "$TMP/repo-map"
 
-# FIXTURE_TRUSTED: a non-default login. Tests that assert "trusted author → work bead"
-# use this login. The untrusted path uses a different login. A test that passed just
-# by having no triage at all would not care which login was used — using a non-default
-# pin makes the filter the load-bearing part of the assertion.
-FIXTURE_TRUSTED="fixture-trusted"
-FIXTURE_UNTRUSTED="fixture-untrusted"
+# FIXTURE_MEMBER: login for trusted (MEMBER association) issues.
+# FIXTURE_CONTRIBUTOR: login for untrusted (CONTRIBUTOR association) issues.
+# Using non-default associations as fixture values pins the test to the
+# discriminating fact — a test that passed against no triage at all would not
+# distinguish MEMBER from CONTRIBUTOR.
+FIXTURE_MEMBER="fixture-member"
+FIXTURE_CONTRIBUTOR="fixture-contributor"
 
 run() {   # run <open-issue-count> [args...]
     printf '%s' "$1" > "$STATE/phase"; shift
@@ -164,7 +161,6 @@ run() {   # run <open-issue-count> [args...]
     SPIRA_GH_INTAKE_BEAD_REPO="$FIXTURE_REPO" SPIRA_REPO_MAP="$TMP/repo-map" \
     SPIRA_GH_INTAKE_API=https://api.github.com \
     SPIRA_GH_INTAKE_PRIORITY="${INTAKE_PRIORITY_OVERRIDE-$FIXTURE_PRIORITY}" \
-    SPIRA_GH_INTAKE_TRUSTED="${TRUSTED_OVERRIDE-$FIXTURE_TRUSTED}" \
     SPIRA_MAIL=/dev/null \
         bash "$SCRIPT" "$@" 2>&1
 }
@@ -173,9 +169,12 @@ reset() {
     : > "$STATE/created_work"
     : > "$STATE/created_untrusted"
     printf '0' > "$STATE/broken"
-    printf '%s' "$FIXTURE_TRUSTED" > "$STATE/author_login"
+    printf '%s' "$FIXTURE_MEMBER" > "$STATE/author_login"
+    printf 'MEMBER' > "$STATE/author_association"
     : > "$STATE/issue_labels"
     printf '[]' > "$STATE/events_json"
+    printf '404' > "$STATE/org_member_code"
+    printf 'none' > "$STATE/actor_permission"
 }
 reset
 
@@ -278,103 +277,98 @@ case "$out" in
 esac
 
 echo
-echo "7. triage gate: only allowlisted authors become work:"
-# (a) An issue by an untrusted author must NOT become a work bead.
-# This is the positive control: if a run with an untrusted author creates a work
-# bead (github: ref with spira label), the gate is broken.
+echo "7. triage gate: OWNER/MEMBER/COLLABORATOR become work; others do not:"
+# (a) CONTRIBUTOR-authored issue must NOT become a work bead.
+# This is the positive control: if a CONTRIBUTOR-authored issue creates a work
+# bead, the association check is missing. Against the pre-amendment (allowlist)
+# script this test would fail differently — the script would die on empty
+# SPIRA_GH_INTAKE_TRUSTED or ingest nothing.
 reset
-printf '%s' "$FIXTURE_UNTRUSTED" > "$STATE/author_login"
+printf '%s' "$FIXTURE_CONTRIBUTOR" > "$STATE/author_login"
+printf 'CONTRIBUTOR' > "$STATE/author_association"
 out="$(run 1)"
 if grep -q "github:DeckDumpster/spira#1" "$STATE/created_work" 2>/dev/null; then
-    bad "(a) untrusted author issue does not become work" \
-        "work bead was created for $FIXTURE_UNTRUSTED's issue"
+    bad "(a) CONTRIBUTOR issue does not become work" \
+        "work bead created for CONTRIBUTOR author"
 else
-    ok "(a) untrusted author issue does not become work"
+    ok "(a) CONTRIBUTOR issue does not become work"
 fi
-# It should instead become an untrusted record.
 if grep -q "github-untrusted:DeckDumpster/spira#1" "$STATE/created_untrusted" 2>/dev/null; then
-    ok "(a) untrusted issue is recorded with gh-untrusted"
+    ok "(a) CONTRIBUTOR issue is recorded as untrusted"
 else
-    bad "(a) untrusted issue is recorded with gh-untrusted" \
-        "no github-untrusted: entry created"
+    bad "(a) CONTRIBUTOR issue is recorded as untrusted" "no untrusted record created"
 fi
-# The gh-untrusted label must appear on the create call.
 if grep -q "gh-untrusted" "$BDLOG"; then ok "(a) gh-untrusted label applied"
 else bad "(a) gh-untrusted label applied" "no gh-untrusted in bd log"; fi
 
-# (b) An issue by the trusted author IS ingested as work.
+# (b) MEMBER-authored issue IS ingested as work.
 reset
 out="$(run 1)"
 if grep -q "github:DeckDumpster/spira#1" "$STATE/created_work" 2>/dev/null; then
-    ok "(b) trusted author issue becomes a work bead"
+    ok "(b) MEMBER issue becomes a work bead"
 else
-    bad "(b) trusted author issue becomes a work bead" "no work bead for trusted author"
+    bad "(b) MEMBER issue becomes a work bead" "no work bead for MEMBER author"
 fi
 if grep -q "github-untrusted" "$STATE/created_untrusted" 2>/dev/null; then
-    bad "(b) trusted author is not recorded as untrusted" "untrusted record was created"
+    bad "(b) MEMBER author is not recorded as untrusted" "untrusted record was created"
 else
-    ok "(b) trusted author is not recorded as untrusted"
+    ok "(b) MEMBER author is not recorded as untrusted"
 fi
 
 echo
-echo "8. triage gate: spira:accept must be from a trusted login:"
-# (c) thaen's issue with spira:accept applied by thaen → must NOT become work.
-# The label's presence alone is not enough; the actor must be trusted.
+echo "8. triage gate: spira:accept must be from a login with current access:"
+# (c) CONTRIBUTOR issue with spira:accept applied by another CONTRIBUTOR must
+# NOT become work. The actor check must be seen: if the permission check were
+# skipped entirely, any spira:accept would promote any issue.
 reset
-printf '%s' "$FIXTURE_UNTRUSTED" > "$STATE/author_login"
+printf '%s' "$FIXTURE_CONTRIBUTOR" > "$STATE/author_login"
+printf 'CONTRIBUTOR' > "$STATE/author_association"
 printf 'spira:accept' > "$STATE/issue_labels"
-# Events say the untrusted user applied the label
 printf '[{"event":"labeled","actor":{"login":"%s"},"label":{"name":"spira:accept"}}]' \
-    "$FIXTURE_UNTRUSTED" > "$STATE/events_json"
+    "$FIXTURE_CONTRIBUTOR" > "$STATE/events_json"
+printf '404' > "$STATE/org_member_code"
+printf 'read' > "$STATE/actor_permission"
 out="$(run 1)"
 if grep -q "github:DeckDumpster/spira#1" "$STATE/created_work" 2>/dev/null; then
-    bad "(c) untrusted accept actor does not promote" \
-        "work bead created when untrusted login applied spira:accept"
+    bad "(c) non-collaborator accept does not promote" \
+        "work bead created when actor lacks write access"
 else
-    ok "(c) untrusted accept actor does not promote"
+    ok "(c) non-collaborator accept does not promote"
+fi
+# Positive control: the permission endpoint was actually called.
+if grep -q '/collaborators/' "$CURLLOG" 2>/dev/null || grep -q '/members/' "$CURLLOG" 2>/dev/null; then
+    ok "(c) positive control: access endpoint was called"
+else
+    bad "(c) positive control: access endpoint was called" "no collaborators or members call in curl log"
 fi
 
-# (d) Same issue, but this time a trusted login applies spira:accept → DOES become work.
+# (d) Same CONTRIBUTOR issue, but actor has write access → promoted to work.
 reset
-printf '%s' "$FIXTURE_UNTRUSTED" > "$STATE/author_login"
+printf '%s' "$FIXTURE_CONTRIBUTOR" > "$STATE/author_login"
+printf 'CONTRIBUTOR' > "$STATE/author_association"
 printf 'spira:accept' > "$STATE/issue_labels"
 printf '[{"event":"labeled","actor":{"login":"%s"},"label":{"name":"spira:accept"}}]' \
-    "$FIXTURE_TRUSTED" > "$STATE/events_json"
+    "$FIXTURE_MEMBER" > "$STATE/events_json"
+printf '404' > "$STATE/org_member_code"
+printf 'write' > "$STATE/actor_permission"
 out="$(run 1)"
 if grep -q "github:DeckDumpster/spira#1" "$STATE/created_work" 2>/dev/null; then
-    ok "(d) trusted accept actor promotes the issue to work"
+    ok "(d) write-access actor promotes the issue to work"
 else
-    bad "(d) trusted accept actor promotes the issue to work" \
-        "no work bead after trusted login applied spira:accept"
+    bad "(d) write-access actor promotes the issue to work" \
+        "no work bead after write-access actor applied spira:accept"
 fi
 
 echo
 echo "9. body hygiene: only the issue body at ingestion time reaches the bead:"
-# (e) A trusted issue with a third-party comment carrying instructions must not
-# put the comment in the bead. Comments are never fetched.
 reset
 out="$(run 1)"
-# The only curl calls should be to the issues endpoint; no /comments/ endpoint.
 if grep -q '/comments' "$CURLLOG" 2>/dev/null; then
     bad "(e) comments endpoint is not called" "a comments URL appeared in curl log"
 else
     ok "(e) comments endpoint is not called"
 fi
-# The body received is the issue body, not a comment. We assert the bd create
-# was called with body-file stdin carrying the issue body text, not "comment".
-# (The stub discards stdin; we can only check that comments were not fetched.)
 ok "(e) comment absence is structural: nothing fetches /comments"
-
-echo
-echo "10. SPIRA_GH_INTAKE_TRUSTED is required:"
-reset
-out="$(TRUSTED_OVERRIDE= run 1 2>&1)"; rc=$?
-if [ "$rc" -ne 0 ]; then ok "absent trusted list is refused (rc=$rc)"
-else bad "absent trusted list is refused" "exited 0 with empty SPIRA_GH_INTAKE_TRUSTED"; fi
-case "$out" in
-    *SPIRA_GH_INTAKE_TRUSTED*) ok "and it names the key" ;;
-    *) bad "and it names the key" "$out" ;;
-esac
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
