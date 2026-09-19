@@ -98,5 +98,33 @@ else
 fi
 
 echo
+echo "SPIRA_INCIDENT_DELIVERS: callers can declare an explicit delivers type at filing time:"
+# Positive control: the handler must exist in the code, or the checks below are vacuous.
+if has 'SPIRA_INCIDENT_DELIVERS'; then
+    ok "SPIRA_INCIDENT_DELIVERS handler was located (positive control)"
+else
+    bad "SPIRA_INCIDENT_DELIVERS handler was located (positive control)" "not found in incident.sh; the checks below are vacuous"
+fi
+# An unknown type must not be silently stamped — it would create an unsatisfiable criterion.
+# The handler must validate before writing.
+if has 'SPIRA_INCIDENT_DELIVERS' && has 'case.*SPIRA_INCIDENT_DELIVERS|unrecognised.*SPIRA_INCIDENT_DELIVERS'; then
+    ok "unknown SPIRA_INCIDENT_DELIVERS types are rejected before writing"
+else
+    bad "unknown SPIRA_INCIDENT_DELIVERS types are rejected before writing" "an unvalidated env var could stamp a delivers: type the sentinel cannot verify"
+fi
+# Skipping is logged — same rule as the SOP ledger path.
+if has 'SPIRA_INCIDENT_DELIVERS' && has 'ilog.*SPIRA_INCIDENT_DELIVERS|ilog.*deliver.*SPIRA_INCIDENT'; then
+    ok "SPIRA_INCIDENT_DELIVERS writes are logged"
+else
+    bad "SPIRA_INCIDENT_DELIVERS writes are logged" "a silently-omitted or silently-written criterion is as hard to diagnose as an unsatisfiable one"
+fi
+# When set, it replaces the SOP ledger path — both must not apply to the same bead.
+if has 'SPIRA_INCIDENT_DELIVERS' && has 'else'; then
+    ok "SPIRA_INCIDENT_DELIVERS and the SOP ledger path are mutually exclusive (else branch)"
+else
+    bad "SPIRA_INCIDENT_DELIVERS and the SOP ledger path are mutually exclusive" "both paths could apply, creating a compound criterion the aeon must satisfy both parts of"
+fi
+
+echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

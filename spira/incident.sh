@@ -413,6 +413,13 @@ MAILEOF
     # A session that skips both sop.sh calls is re-summoned — enforcing the closing rule
     # mechanically rather than trusting the brief alone.
     #
+    # SPIRA_INCIDENT_DELIVERS: a caller that knows at filing time that no SOP and no commit
+    # will ever satisfy this bead can name the delivers type explicitly. Only recognised types
+    # are written — an unknown type is logged and omitted rather than recorded as a criterion
+    # nobody can satisfy. Currently recognised: action (close accepted; close reason is the
+    # evidence). When set, the SOP ledger path is skipped entirely, so the two do not combine
+    # into a criterion the aeon must satisfy both parts of.
+    #
     # SCHEMA ON WRITE: A CRITERION NOBODY CAN SATISFY IS NEVER RECORDED.
     #
     # This label used to be stamped unconditionally, and both ways it could be wrong
@@ -431,19 +438,29 @@ MAILEOF
     # SKIPPING IS LOGGED. A criterion silently omitted is as hard to diagnose as one
     # that cannot be met -- the bead simply closes on the commit rule and nobody knows
     # a second rule was meant to apply.
-    _sop_ledger="${SPIRA_SOP_LEDGER:-${SPIRA_RUN}/sop/applied.jsonl}"
-    _deliverable=1
-    case "$_sop_ledger" in
-        "${SPIRA_RUN}"/*) ;;
-        *) _deliverable=0
-           ilog "delivers: $id: ledger $_sop_ledger is outside $SPIRA_RUN — label not written (a session here could never satisfy it)" ;;
-    esac
-    if [ "$_deliverable" = 1 ] && ! mkdir -p "$(dirname "$_sop_ledger")" 2>/dev/null; then
-        _deliverable=0
-        ilog "delivers: $id: cannot create $(dirname "$_sop_ledger") — label not written"
-    fi
-    if [ "$_deliverable" = 1 ]; then
-        bdq label add "$id" "delivers:note:${_sop_ledger}" >/dev/null 2>&1
+    if [ -n "${SPIRA_INCIDENT_DELIVERS:-}" ]; then
+        case "${SPIRA_INCIDENT_DELIVERS}" in
+            action)
+                bdq label add "$id" "delivers:${SPIRA_INCIDENT_DELIVERS}" >/dev/null 2>&1
+                ilog "delivers: $id: delivers:${SPIRA_INCIDENT_DELIVERS} written (SPIRA_INCIDENT_DELIVERS set by caller)" ;;
+            *)
+                ilog "delivers: $id: unrecognised SPIRA_INCIDENT_DELIVERS='${SPIRA_INCIDENT_DELIVERS}' — label not written" ;;
+        esac
+    else
+        _sop_ledger="${SPIRA_SOP_LEDGER:-${SPIRA_RUN}/sop/applied.jsonl}"
+        _deliverable=1
+        case "$_sop_ledger" in
+            "${SPIRA_RUN}"/*) ;;
+            *) _deliverable=0
+               ilog "delivers: $id: ledger $_sop_ledger is outside $SPIRA_RUN — label not written (a session here could never satisfy it)" ;;
+        esac
+        if [ "$_deliverable" = 1 ] && ! mkdir -p "$(dirname "$_sop_ledger")" 2>/dev/null; then
+            _deliverable=0
+            ilog "delivers: $id: cannot create $(dirname "$_sop_ledger") — label not written"
+        fi
+        if [ "$_deliverable" = 1 ]; then
+            bdq label add "$id" "delivers:note:${_sop_ledger}" >/dev/null 2>&1
+        fi
     fi
     # LABEL THE REF HASH so future dedup queries take the O(1) label-keyed path instead of
     # scanning all open incident beads. Added at creation so every new bead carries it from
