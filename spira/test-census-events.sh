@@ -17,7 +17,7 @@
 # The suite was run against the unfixed tree before this commit; it produced
 # FAIL for both of the event-based assertions below (census output was empty
 # because bump_* wrote nothing and census read labels). The unfixed failure
-# text: "wanted [sp-requeue-merge-conflict] in []" and
+# text: "wanted [sp-reopen-rebase-conflict] in []" and
 # "wanted [sp-recur-suite-red] in []".
 #
 # THREE ACCEPTANCE CRITERIA:
@@ -72,15 +72,15 @@ echo "sp-2lk acceptance criteria — bump_requeue and bump_recur produce census 
 # ======================================================================================
 # The exact positive control from the bead:
 #   bump_requeue "$id" merge-conflict (twice) + bump_recur "$id" suite-red (once)
-#   → census must output: 1 sp-requeue-merge-conflict (2 detections)  and  1 sp-recur-suite-red (1 detections)
+#   → census must output: 1 sp-reopen-rebase-conflict (2 detections)  and  1 sp-recur-suite-red (1 detections)
 seed_bead "sp-c1"
 bump_requeue "sp-c1" merge-conflict
 bump_requeue "sp-c1" merge-conflict
 bump_recur   "sp-c1" suite-red
 
 out="$(census_out)"
-want "census reports 1 distinct bead sp-requeue-merge-conflict (sp-2lk)" "1 sp-requeue-merge-conflict" "$out"
-want "census shows 2 detections for sp-requeue-merge-conflict" "sp-requeue-merge-conflict (2 detections" "$out"
+want "census reports 1 distinct bead sp-reopen-rebase-conflict" "1 sp-reopen-rebase-conflict" "$out"
+want "census shows 2 detections for sp-reopen-rebase-conflict" "sp-reopen-rebase-conflict (2 detections" "$out"
 want "census reports 1 sp-recur-suite-red"        "1 sp-recur-suite-red"        "$out"
 
 # ======================================================================================
@@ -122,8 +122,8 @@ bump_requeue "sp-d2" merge-conflict
 bump_requeue "sp-d2" merge-conflict
 
 out="$(census_out)"
-want "cross-bead: 2 distinct beads for sp-requeue-merge-conflict" "2 sp-requeue-merge-conflict" "$out"
-want "cross-bead: 3 total event detections shown" "sp-requeue-merge-conflict (3 detections" "$out"
+want "cross-bead: 2 distinct beads for sp-reopen-rebase-conflict" "2 sp-reopen-rebase-conflict" "$out"
+want "cross-bead: 3 total event detections shown" "sp-reopen-rebase-conflict (3 detections" "$out"
 
 # ======================================================================================
 echo
@@ -153,7 +153,8 @@ bead_reopen "sp-f1" rebase-conflict "rebase conflict test" >/dev/null 2>&1
 bump_requeue "sp-f1" merge-conflict >/dev/null 2>&1
 
 out="$(census_out)"
-want "landing requeue path produces sp-requeue-merge-conflict" "1 sp-requeue-merge-conflict" "$out"
+want   "landing requeue path produces sp-reopen-rebase-conflict" "1 sp-reopen-rebase-conflict" "$out"
+nowant "landing requeue path: sp-requeue-merge-conflict absent" "sp-requeue-merge-conflict" "$out"
 
 # ======================================================================================
 echo
@@ -246,6 +247,30 @@ _write_reopen sp-h2; _write_reopen sp-h2; _write_reopen sp-h2; _write_reopen sp-
 out="$(census_out)"
 want "2 sp-reopen for 2-bead fixture" "2 sp-reopen" "$out"
 want "sp-reopen (8 detections" "sp-reopen-unrecorded (8 detections" "$out"
+
+# ======================================================================================
+echo
+echo "sp-9edq8: bump_requeue merge-conflict + bead_reopen rebase-conflict → one census class"
+# ======================================================================================
+# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail):
+# Unfixed: census prints two lines — one sp-requeue-merge-conflict, one sp-reopen-rebase-conflict.
+# Fixed: one line, sp-reopen-rebase-conflict with 1 bead. requeues_of still counts the requeue.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-z1","title":"conflict bead","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
+JSONL
+bump_requeue "sp-z1" merge-conflict >/dev/null 2>&1
+bead_reopen  "sp-z1" rebase-conflict "conflict test" >/dev/null 2>&1
+
+out="$(census_out)"
+nowant "sp-requeue-merge-conflict absent: folded into sp-reopen-rebase-conflict" "sp-requeue-merge-conflict" "$out"
+want   "sp-reopen-rebase-conflict present for the paired conflict events" "1 sp-reopen-rebase-conflict" "$out"
+_conf_lines="$(printf '%s\n' "$out" | grep -c 'rebase-conflict\|merge-conflict' || true)"
+is "exactly one conflict class line" "1" "$_conf_lines"
+_att="$(attempts_of "sp-z1")"
+is "no attempt charged for a conflict requeue" "0" "$_att"
+_rqn="$(requeues_of "sp-z1")"
+is "requeues_of still counts the requeue event" "1" "$_rqn"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
