@@ -600,5 +600,41 @@ GSTUB
 chmod +x "$SH/gate.sh"
 clean_case
 
+# =============================================================================
+# A. STALE-CERTIFICATION: a branch certified at the base tip then advanced
+#    must NOT be marked LANDED (already-in-base). The new commit must be either
+#    batched or re-certified.
+#
+#    POSITIVE CONTROL: without the fix the already-in-base filter compares the
+#    certified tip (= base sha) against the base, finds it an ancestor, and
+#    marks the bead LANDED — the "NOT LANDED" assertion below fails.
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"; OLD_A=$(( NOW - 1800 - 1 ))
+
+# Certify the branch at the base sha (tip equals the land ref).
+plant_bead "sp-btA-stale"
+BASE_SHA_A="$(git -C "$REPO" rev-parse origin/main)"
+git -C "$REPO" branch "spira/sp-btA-stale" main 2>/dev/null || true
+printf 'CERTIFIED %s %s\n' "$BASE_SHA_A" "$OLD_A" > "$LANDSTATE/sp-btA-stale"
+
+# Advance the branch: add a commit the base does not have.
+git -C "$REPO" worktree add -q "$RUN/worktree/sp-btA-stale" "spira/sp-btA-stale" 2>/dev/null || true
+printf 'stale-cert test\n' > "$RUN/worktree/sp-btA-stale/stale.txt"
+git -C "$RUN/worktree/sp-btA-stale" add -A
+git -C "$RUN/worktree/sp-btA-stale" commit -q -m "sp-btA-stale: work after certification"
+LIVE_TIP_A="$(git -C "$REPO" rev-parse "spira/sp-btA-stale")"
+
+out_a="$(batch "$REPONAME")"
+is "A. stale-cert: NOT marked LANDED" "0" \
+    "$([ "$(awk '{print $1}' "$LANDSTATE/sp-btA-stale" 2>/dev/null)" = "LANDED" ] && echo 1 || echo 0)"
+_tipA="$(awk '{print $2}' "$LANDSTATE/sp-btA-stale" 2>/dev/null)"
+is "A. stale-cert: live tip in landstate" "$LIVE_TIP_A" "$_tipA"
+want "A. stale-cert: stale-certification logged" "stale-certification" "$out_a"
+want "A. stale-cert: certified sha in log" "${BASE_SHA_A:0:8}" "$out_a"
+want "A. stale-cert: live sha in log"      "${LIVE_TIP_A:0:8}"  "$out_a"
+clean_case
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
