@@ -203,6 +203,35 @@ leave nothing on the bead, nothing comes back for it.
   starts, for an answer that could have been given hours earlier. The worst case is a decision
   that turns out moot, which costs nothing (law-decisions-surface-immediately).
 
+## Before closing a watcher-filed incident
+
+A bead whose `external_ref` starts with `incident:` was filed by a periodic watcher. The
+watcher fires on a fixed interval, so closing before the condition clears means the next tick
+re-files the same ref, incident.sh reopens the bead, and another aeon is summoned to repeat
+the diagnosis.
+
+**Before closing, re-read the value the watcher reads and verify it has cleared:**
+
+    grep -E 'SP_UNSENT_OLDEST_H|SP_UNADOPTED|SP_QUEUE_STALL' "$SPIRA_RUN/cockpit.env" 2>/dev/null
+
+Quote the current reading in the close reason. If the condition still holds:
+
+- **The cause is a peer bead (stranded branch, unlanded fix):** add the dependency and leave
+  this bead open without closing.
+
+      bd -C {{DB}} dep add {{BEAD_ID}} <root-bead-id>
+
+  A bead with an open blocker is skipped by `bd ready --claim`; the watcher's next filing
+  adds a note to the open bead rather than reopening it. Close this bead only after the
+  blocking bead lands and the condition clears on the next watcher tick.
+
+- **The cause is not a bead (infrastructure, config, deliberate state):** file a new bead
+  for the root cause, link it with `bd dep add`, and leave this bead open.
+
+- **The condition is a deliberate state** (gate in progress, known backlog): do not close and
+  do not add a dependency — file a bead against the watcher's predicate so it stops firing
+  while the state is legitimate. Leave this bead open pointing at that child.
+
 ## Finishing
 
 When the fix has landed and the SOP is committed:

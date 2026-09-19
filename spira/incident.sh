@@ -90,6 +90,10 @@ DEDUP_LOOKBACK_DAYS="${SPIRA_INCIDENT_DEDUP_LOOKBACK:-7}"
 # recurrences and a page, and closing the bead re-arms the cycle. $18/day of aeon cost to
 # re-derive "the pipeline is fine" (measured sp-kufh).
 SIN_EXEMPT="${SPIRA_SIN_EXEMPT:-0}"
+# WATCHER INTERVAL: a close within this many seconds of the next same-ref filing
+# is classified as closed-while-live rather than recurrence. Reads from conf.sh
+# (SPIRA_WATCHER_INTERVAL_S); env override keeps tests isolated.
+WATCHER_INTERVAL_S="${SPIRA_WATCHER_INTERVAL_S:-1800}"
 # THE CAUSE CARRIED BY EACH RECURRENCE RUNG. Callers that know the kind of event they are
 # filing set SPIRA_INCIDENT_CAUSE to a short slug (suite-red, systemd-fail, etc.). When not
 # set, the rung records unrecorded rather than omitting the cause field — a recurrence must
@@ -225,6 +229,8 @@ except: pass
     [ -z "$_since" ] && return
 
     # Sub-path A for closed beads: label-keyed on ref:<hash> alone.
+    # Prints "closed <id> <closed_at>" so the caller can compute how recently
+    # the bead was closed and classify the reopen as closed-while-live vs recurrence.
     _r="$(bdq list --status closed --closed-after "$_since" --limit 0 --label "$_ref_label" --json 2>/dev/null \
       | python3 -c '
 import sys, json
@@ -232,7 +238,7 @@ target = sys.argv[1]
 try:
     for bead in json.load(sys.stdin):
         if bead.get('"'"'external_ref'"'"') == target and bead.get('"'"'status'"'"') == '"'"'closed'"'"':
-            print('"'"'closed'"'"', bead['"'"'id'"'"']); sys.exit(0)
+            print('"'"'closed'"'"', bead['"'"'id'"'"'], bead.get('"'"'closed_at'"'"') or '"'"''"'"'); sys.exit(0)
 except: pass
 ' "$ref" 2>/dev/null)"
     if [ -n "$_r" ]; then printf '%s' "$_r"; return; fi
@@ -247,7 +253,7 @@ try:
     for bead in json.load(sys.stdin):
         if any(l.startswith('"'"'ref:'"'"') for l in (bead.get('"'"'labels'"'"') or [])): continue
         if bead.get('"'"'external_ref'"'"') == target and bead.get('"'"'status'"'"') == '"'"'closed'"'"':
-            print('"'"'closed'"'"', bead['"'"'id'"'"']); sys.exit(0)
+            print('"'"'closed'"'"', bead['"'"'id'"'"'], bead.get('"'"'closed_at'"'"') or '"'"''"'"'); sys.exit(0)
 except: pass
 ' "$ref" 2>/dev/null
 }
@@ -270,10 +276,12 @@ file_one() {
     # proves the database is reachable. The recurrence count comes from the events trail
     # (sp-lzt removed sp-recur-N label writes; recurs_of queries the events table instead).
     _hit="$(_dedup_incident "$ref")"
-    id="" _was_closed=0 _recur_n=0
+    id="" _was_closed=0 _recur_n=0 _closed_at_raw=""
     case "$_hit" in
         "open "*)   _rest="${_hit#open }";   id="${_rest%% *}"; _was_closed=0 ;;
-        "closed "*) _rest="${_hit#closed }"; id="${_rest%% *}"; _was_closed=1 ;;
+        "closed "*) _rest="${_hit#closed }"; id="${_rest%% *}"
+                    _closed_at_raw="${_rest#"$id"}"; _closed_at_raw="${_closed_at_raw# }"
+                    _was_closed=1 ;;
     esac
     if [ -n "${id:-}" ]; then
         # THE COUNT COMES FROM THE EVENT HISTORY. sp-recur-N labels stopped being written
@@ -286,7 +294,19 @@ file_one() {
         [ "$_ev_n" -gt "$_recur_n" ] && _recur_n="$_ev_n"
         n=$((_recur_n + 1))
         if [ "$_was_closed" = 1 ]; then
-            bead_reopen "$id" recurrence "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ) — same failure fingerprint, dedup within ${DEDUP_LOOKBACK_DAYS}-day window"
+            # CLASSIFY THE REOPEN. A bead closed within one watcher interval of the next
+            # same-ref filing was closed while the condition was still live — the aeon
+            # resolved it before the watcher confirmed the fix. Record that as its own
+            # class so census can distinguish it from genuine recurrences after a real fix.
+            _reopen_cause=recurrence
+            if [ -n "$_closed_at_raw" ]; then
+                _close_ts="$(date -u -d "$_closed_at_raw" +%s 2>/dev/null || true)"
+                if [ -n "$_close_ts" ]; then
+                    _now_ts="$(date -u +%s)"
+                    [ "$(( _now_ts - _close_ts ))" -lt "$WATCHER_INTERVAL_S" ] && _reopen_cause=closed-while-live
+                fi
+            fi
+            bead_reopen "$id" "$_reopen_cause" "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ) — same failure fingerprint, dedup within ${DEDUP_LOOKBACK_DAYS}-day window"
         fi
         # sp-recur-N-<cause> labels are no longer written; recurrence count is derived
         # from event history. The note below records the recurrence (sp-lzt).
