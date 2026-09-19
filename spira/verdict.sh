@@ -187,10 +187,9 @@ _q_attribute() {
         fi
     else
         # Per-member reproduction: each member tested only on the failing suites
-        # its own diff selects. A member whose diff touches none of those suites
-        # cannot have caused the failure and is skipped here — the diff-based and
-        # together-only paths below remain as fallbacks.
-        local _mf _msel _mcsv _rs
+        # its own diff selects. Suites no member's diff selects are tried against
+        # every member below before falling through to together-only.
+        local _mf _msel _mcsv _rs _covered_suites=""
         for _mm in "${members_arr[@]}"; do
             _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
             _mf="$(mktemp)"
@@ -200,6 +199,7 @@ _q_attribute() {
             _mcsv=""
             for _rs in $red_suites; do
                 printf '%s\n' "$_msel" | grep -qxF "$_rs" || continue
+                case " $_covered_suites " in *" $_rs "*) ;; *) _covered_suites="$_covered_suites $_rs" ;; esac
                 case ",$_mcsv," in *",$_rs,"*) ;; *) _mcsv="${_mcsv:+$_mcsv,}$_rs" ;; esac
             done
             [ -n "$_mcsv" ] || continue
@@ -209,6 +209,16 @@ _q_attribute() {
             fi
         done
 
+        # Suites that no member's diff selected (e.g. whole-tree lints): try each
+        # member against them. A member+base break on such a suite still warrants
+        # ejection rather than a together-only halve.
+        local _unselected_csv=""
+        for _rs in $red_suites; do
+            case " $_covered_suites " in *" $_rs "*) ;;
+                *) _unselected_csv="${_unselected_csv:+$_unselected_csv,}$_rs" ;;
+            esac
+        done
+
         if [ "${#ejected[@]}" -eq 0 ]; then
             # Repro found nothing. Try diff-based: eject members whose diff directly
             # contains a red suite — their change added or modified the failing suite.
@@ -216,6 +226,16 @@ _q_attribute() {
                 _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
                 if _suite_directly_in_diff "$red_suites" "$repo" "$base_sha" "$_mtip"; then
                     ejected+=("$_mm")
+                    caught=$(( caught + 1 ))
+                fi
+            done
+        fi
+
+        if [ "${#ejected[@]}" -eq 0 ] && [ -n "$_unselected_csv" ]; then
+            for _mm in "${members_arr[@]}"; do
+                _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
+                if _repro_is_red "$_unselected_csv" "$repo" "$base_sha" "$_mtip"; then
+                    ejected+=("$_mid|$_mtip|$_unselected_csv")
                     caught=$(( caught + 1 ))
                 fi
             done
