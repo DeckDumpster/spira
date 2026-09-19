@@ -245,5 +245,82 @@ fi
 
 # ==========================================================================
 echo
+echo "COCKPIT PATH — cockpit-ensure.service ExecStart uses dirname(SPIRA_PROD)/cockpit:"
+# ==========================================================================
+#
+# POSITIVE CONTROL FIRST. Pass a SPIRA_COCKPIT that differs from dirname(SPIRA_PROD)/cockpit.
+# If the ExecStart still uses SPIRA_COCKPIT, the check below would pass anyway and prove nothing.
+# Verify that the check CAN detect the wrong value before asserting the right one.
+#
+# Use a sentinel value for SPIRA_COCKPIT so any path containing it is clearly wrong.
+FAKE_COCKPIT="$TMP/fake-checkout-cockpit"
+FAKE_PROD="$TMP/fake-releases/current/spira"
+FAKE_PROD_COCK="$TMP/fake-releases/current/cockpit"
+mkdir -p "$FAKE_PROD" "$FAKE_PROD_COCK"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKE_PROD/sentinel.sh"
+chmod +x "$FAKE_PROD/sentinel.sh"
+for s in aeon.sh archive.sh archivist.sh cockpit.sh loom.sh skew.sh suites.sh watchd.sh watchtower.sh; do
+    cp "$FAKE_PROD/sentinel.sh" "$FAKE_PROD/$s"
+done
+for s in layout.sh verify-asks.sh moot-sweep.sh; do
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKE_PROD_COCK/$s"
+    chmod +x "$FAKE_PROD_COCK/$s"
+done
+
+cock_render="$(
+    env -i \
+        "PATH=$PATH" \
+        "HOME=$TMP/home" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
+        "SPIRA_RUN=$SPIRA_RUN_DIR" \
+        "SPIRA_HOME=$HERE" \
+        "SPIRA_PROD=$FAKE_PROD" \
+        "SPIRA_REPO=$REAL_REPO" \
+        "SPIRA_COCKPIT=$FAKE_COCKPIT" \
+        bash "$FIXTURE/systemd/install.sh" --render 2>&1
+)"
+cock_render_rc=$?
+
+iszero "cockpit path: --render exits 0 with split SPIRA_PROD" "$cock_render_rc"
+
+# Positive control: verify the check CAN detect FAKE_COCKPIT appearing in cockpit-ensure ExecStart.
+case "$cock_render" in
+    *"ExecStart=$FAKE_COCKPIT"*)
+        bad "cockpit path: positive control — ExecStart does NOT use FAKE_COCKPIT" \
+            "FAKE_COCKPIT appeared in ExecStart" ;;
+    *)  ok "cockpit path: positive control — ExecStart does not use FAKE_COCKPIT" ;;
+esac
+
+# The real assertion: ExecStart points at dirname(SPIRA_PROD)/cockpit.
+case "$cock_render" in
+    *"ExecStart=$FAKE_PROD_COCK/layout.sh ensure"*)
+        ok "cockpit path: cockpit-ensure ExecStart derived from dirname(SPIRA_PROD)/cockpit" ;;
+    *)  bad "cockpit path: cockpit-ensure ExecStart derived from dirname(SPIRA_PROD)/cockpit" \
+            "expected ExecStart=$FAKE_PROD_COCK/layout.sh ensure" ;;
+esac
+
+# ==========================================================================
+echo
+echo "COCKPIT HEAL LOG — cockpit-ensure.service StandardOutput uses SPIRA_RUN:"
+# ==========================================================================
+# Positive control: if SPIRA_REPO/.runtime appeared in StandardOutput, the check below
+# would be vacuously true when the fix is absent. Verify it is NOT present.
+case "$cock_render" in
+    *"StandardOutput=append:$REAL_REPO/.runtime"*)
+        bad "heal log: positive control — StandardOutput does NOT use SPIRA_REPO/.runtime" \
+            "SPIRA_REPO/.runtime appeared in StandardOutput" ;;
+    *)  ok "heal log: positive control — StandardOutput does not use SPIRA_REPO/.runtime" ;;
+esac
+
+case "$cock_render" in
+    *"StandardOutput=append:$SPIRA_RUN_DIR/cockpit-heal.log"*)
+        ok "heal log: cockpit-ensure StandardOutput uses SPIRA_RUN" ;;
+    *)  bad "heal log: cockpit-ensure StandardOutput uses SPIRA_RUN" \
+            "expected StandardOutput=append:$SPIRA_RUN_DIR/cockpit-heal.log" ;;
+esac
+
+# ==========================================================================
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

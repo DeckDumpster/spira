@@ -20,7 +20,7 @@ Type=oneshot
 # REFUSES while the hook's own file is absent — so between arming this and the branch that
 # adds the hook landing, the pass is a no-op rather than a registration pointing at nothing.
 ExecStartPre=-@SPIRA_PROD@/install-session-hook.sh install
-ExecStart=@SPIRA_COCKPIT@/layout.sh ensure
+ExecStart=@SPIRA_PROD_COCK@/layout.sh ensure
 TimeoutStartSec=60
 # This box may be running production on the same cores, and this fires every minute
 # (law-fence-loops-on-shared-hardware). Generous next to what a tmux repair and a JSON
