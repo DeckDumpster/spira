@@ -177,6 +177,7 @@ try:
     print("LANDED" if "land_state:LANDED" in lbls else "")
 except Exception: pass
 ' 2>/dev/null)" || land_state=""
+    is "reactivation setup: bead has land_state:LANDED" "LANDED" "${land_state:-NOT_LANDED}"
 
     # Write the suite as quarantined with this bead, since=now.
     since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
