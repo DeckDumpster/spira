@@ -66,8 +66,10 @@ _repeat_check() {
     [ -n "${SPIRA_MAIL_REPEAT_CONSIDERED:-}" ] && return 0
 
     local caller=""
-    caller="$(tr '\0' '\n' < "/proc/$PPID/cmdline" 2>/dev/null | head -1)" || caller=""
-    caller="$(basename "${caller:-unknown}")"
+    local _c0 _c1
+    _c0="$(tr '\0' '\n' < "/proc/$PPID/cmdline" 2>/dev/null | sed -n '1p')" || _c0=""
+    _c1="$(tr '\0' '\n' < "/proc/$PPID/cmdline" 2>/dev/null | sed -n '2p')" || _c1=""
+    caller="$(basename "${_c1:-${_c0:-unknown}}")"
 
     local norm_subj
     norm_subj="$(printf '%s' "$subject" \

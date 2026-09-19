@@ -338,7 +338,8 @@ for id in $dispatchable; do
 
 REQUEUES  $_requeues (cap $REQUEUE_AT) — causes: ${_rq_causes}
 ATTEMPTS  $n — distinct from requeues; a requeue is not a failed attempt and was not charged"
-        if [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
+        if [ -x "$SPIRA_HOME/mail.sh" ] && SPIRA_MAIL_REPEAT_CONSIDERED="sentinel-own-dedup" \
+              "$SPIRA_HOME/mail.sh" send operator \
               --from "Sentinel <sentinel@spira>" \
               --subject "$_rq_subj" \
               --kind question \
@@ -376,7 +377,8 @@ MAILEOF
 
 RECLAIMS  $_reclaims (cap $RECLAIM_AT) — causes: ${_rc_causes}
 ATTEMPTS  $n — distinct from reclaims; no attempt was ever charged"
-        if [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
+        if [ -x "$SPIRA_HOME/mail.sh" ] && SPIRA_MAIL_REPEAT_CONSIDERED="sentinel-own-dedup" \
+              "$SPIRA_HOME/mail.sh" send operator \
               --from "Sentinel <sentinel@spira>" \
               --subject "$_rc_subj" \
               --kind question \
