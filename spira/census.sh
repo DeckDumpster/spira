@@ -21,10 +21,9 @@
 # (total event rows) appears in parentheses and is the right instrument for measuring
 # how long a condition went unresolved.
 #
-# REMEDY SUPPRESSION — a remedy bead carries "covers:<class>" alongside
-# "$SPIRA_MAECHEN_REMEDY_LABEL". census.sh suppresses any class whose covers-label
-# appears on an open remedy bead. Closing or deleting the remedy bead lifts the
-# suppression immediately on the next census run.
+# REMEDY SUPPRESSION — a class is suppressed while its covers-label appears on an
+# open remedy bead, or a closed remedy bead whose commit is not yet on the base.
+# Closed remedies beyond SPIRA_REMEDY_WINDOW days are excluded from the check.
 #
 # WHY THE COVERS LABEL, NOT THE TITLE OR DESCRIPTION
 # A label is a machine-readable primary key. A title is human prose and may drift from
@@ -160,6 +159,35 @@ for b in data:
             print(lbl[len("covers:"):])
 EOF
 
+# Python: closed remedy beads → "<bead-id> <class>" within SPIRA_REMEDY_WINDOW days.
+cat > "$_TMPDIR/covers_closed.py" <<EOF
+import sys, json
+from datetime import datetime, timezone, timedelta
+window = ${SPIRA_REMEDY_WINDOW:-30}
+cutoff = datetime.now(timezone.utc) - timedelta(days=window)
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+if not isinstance(data, list):
+    data = [data]
+for b in data:
+    closed_at = b.get('closed_at') or ''
+    if closed_at:
+        try:
+            dt = datetime.fromisoformat(closed_at.replace('Z', '+00:00'))
+            if dt < cutoff:
+                continue
+        except Exception:
+            pass
+    bid = b.get('id') or ''
+    if not bid:
+        continue
+    for lbl in (b.get('labels') or []):
+        if lbl.startswith('covers:'):
+            print(bid, lbl[len('covers:'):])
+EOF
+
 # Aggregate failure events across the whole store, output <count> <class> ranked.
 # census_events_run_sql is defined in lib.sh (sourced above); it queries the events
 # table via bd sql (sp-2lk).
@@ -210,8 +238,25 @@ _suppressed_classes() {
         | python3 "$_TMPDIR/covers.py"
 }
 
-# Build suppressed set as a newline-delimited file for grep -xF membership tests.
+# Collect classes covered by a closed remedy bead whose commit is not yet on the base.
+_suppressed_closed_classes() {
+    local bead_id class rc
+    bdq list --status closed --label "$REMEDY_LABEL" --json 2>/dev/null \
+        | python3 "$_TMPDIR/covers_closed.py" \
+        | while IFS=' ' read -r bead_id class; do
+            landed "$bead_id"; rc=$?
+            case $rc in
+                1) printf '%s\n' "$class" ;;
+                2) printf 'census.sh: remedy %s: land ref unresolvable, keeping suppression for %s\n' \
+                       "$bead_id" "$class" >&2
+                   printf '%s\n' "$class" ;;
+            esac
+        done
+}
+
+# Build suppressed sets as newline-delimited files for grep -xF membership tests.
 _suppressed_classes > "$_TMPDIR/suppressed.txt"
+_suppressed_closed_classes > "$_TMPDIR/suppressed_closed.txt"
 
 # Emit the ranked census, suppressing (or annotating) remedy-covered classes.
 # IFS=' ' with read -r splits "N class (M all-time)" into: count, class, rest.
@@ -219,6 +264,9 @@ while IFS=' ' read -r count class rest; do
     [ -n "$class" ] || continue
     if grep -qxF "$class" "$_TMPDIR/suppressed.txt" 2>/dev/null; then
         [ "$WITH_SUPPRESSED" -eq 1 ] && printf '%s %s%s [suppressed]\n' \
+            "$count" "$class" "${rest:+ $rest}"
+    elif grep -qxF "$class" "$_TMPDIR/suppressed_closed.txt" 2>/dev/null; then
+        [ "$WITH_SUPPRESSED" -eq 1 ] && printf '%s %s%s [suppressed: remedy closed, not landed]\n' \
             "$count" "$class" "${rest:+ $rest}"
     else
         printf '%s %s%s\n' "$count" "$class" "${rest:+ $rest}"
