@@ -11,7 +11,8 @@
 #   6. Green, base unchanged, flaky annotation → fast-forward push; members LANDED;
 #      flake observed; batch record removed.
 #   7. Green, base moved → PR closed; members returned to CERTIFIED; batch removed.
-#   8. Red → no push; batch stays open.
+#   8. Red naming no suite → the branch was not judged: re-run as a harness fault,
+#      never held open (sp-swux6).
 #   9. Batch branch cleanup: branch deleted after green fast-forward.
 #  10. Green, CI head SHA mismatches sealed batch head → no push; members CERTIFIED;
 #      PR closed; operator mailed. (positive control for SHA mismatch detection)
@@ -330,15 +331,21 @@ clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
 # =============================================================================
-# 8. RED — no push; batch stays open.
+# 8. RED NAMING NO SUITE — CI never judged the branch (a runner kill, a cold image,
+#    an unresolvable base ref). Attribution has nothing to eject, so it used to leave
+#    the batch open with no next action and freeze the queue (sp-swux6). It must take
+#    the harness-fault path instead: re-run, count the attempt, push nothing.
 # =============================================================================
 build_batch sp-vd-r1 sp-vd-r2 > /dev/null
 printf 'red\n' > "$FORGE_STATUS_FILE"
 before_main="$(remote_main)"
 out="$(verdict "$REPONAME")"
-is   "8. red: no push"          "$before_main" "$(remote_main)"
-is   "8. red: batch stays open" "1"            "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
-want "8. red: reported"         "red"          "$out"
+is   "8. red-no-suite: no push"       "$before_main" "$(remote_main)"
+want "8. red-no-suite: rerun"         "rerun"        "$(cat "$FORGE_LOG")"
+is   "8. red-no-suite: retries=1"     "1" \
+     "$(grep '^retries=' "$(batch_file)" | cut -d= -f2)"
+want "8. red-no-suite: says why"      "not judged"   "$out"
+nowant "8. red-no-suite: not held"    "leaving batch open" "$out"
 clean_case
 
 # =============================================================================
