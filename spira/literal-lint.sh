@@ -140,6 +140,7 @@ mapfile -t files < <(git -C "$ROOT" ls-files)
     printf 'literal-lint: nothing is tracked — refusing to report clean\n' >&2; exit 3; }
 
 bad=0
+_offenders=()
 for f in "${files[@]}"; do
     case "$f" in
         # DECLARED IN: the canonical declaration and the operator env-var setter
@@ -165,7 +166,9 @@ for f in "${files[@]}"; do
     bad=1
     rel="${f#"$ROOT"/}"
     while IFS=: read -r ln text; do
-        printf '%s:%s: %s\n' "$rel" "$ln" "$(printf '%s' "$text" | sed 's/^[[:space:]]*//')"
+        _line="$(printf '%s:%s: %s' "$rel" "$ln" "$(printf '%s' "$text" | sed 's/^[[:space:]]*//')")"
+        printf '%s\n' "$_line"
+        _offenders+=("$_line")
     done <<< "$hits"
 done
 
@@ -193,4 +196,5 @@ If the use is genuinely correct — a test seeding a fixture, a Python fallback 
 
 The annotation must be on the offending line or immediately above it.
 WHY
+printf '%s\n' "${_offenders[@]}"
 exit 1

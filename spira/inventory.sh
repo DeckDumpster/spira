@@ -90,6 +90,7 @@ mapfile -t files < <(
 )
 
 bad=0
+_offenders=()
 for f in "${files[@]}"; do
     # Three files are exempt, and all three for the same reason: their content IS the
     # offender list. This file carries the patterns as string literals, the deny-list is
@@ -103,6 +104,7 @@ for f in "${files[@]}"; do
     hits="$(scan "$ROOT/$f")"
     [ -n "$hits" ] || continue
     bad=1
+    _offenders+=("$f")
     printf '%s\n' "$f"
     printf '%s\n' "$hits" | sed 's/^/    /'
 done
@@ -122,4 +124,5 @@ the date — to wherever your own notes live, and cite it from there.
 If a token above is genuinely generic, the deny-list and the pattern list are both editable;
 a fence is a polite refusal, not a wall.
 WHY
+printf '%s\n' "${_offenders[@]}"
 exit 1
