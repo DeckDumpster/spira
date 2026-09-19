@@ -76,5 +76,15 @@ nowant "never says certified" "certified"   "$out"
 rm -rf "$TMP/run"
 
 echo
+echo "submit allows a spira/suite-state/* transition branch:"
+mkdir -p "$TMP/run/queue" "$TMP/run/landstate"
+git -C "$REPO" branch "spira/suite-state/test-q.sh" main
+: > "$GATE_LOG"
+out="$(run submit spira/suite-state/test-q.sh)"; rc=$?
+want "exit 0 for transition branch" "certified" "$out"
+want "gate was called for transition branch" "gate-called" "$(cat "$GATE_LOG")"
+rm -rf "$TMP/run"
+
+echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
