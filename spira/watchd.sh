@@ -1210,8 +1210,7 @@ _wd_orphan_lock() {
     local target; target="${1%% *}"
     [ -n "$target" ] || return 1
     command -v pgrep >/dev/null 2>&1 || return 1
-    [ -r /proc/locks ] || return 1
-    local pid n arg found fd f ino
+    local pid n arg found fd f
     for pid in $(pgrep -f "$(basename "$target")" 2>/dev/null); do
         case "$pid" in ''|*[!0-9]*) continue ;; esac
         found=0; n=0
@@ -1225,13 +1224,8 @@ _wd_orphan_lock() {
             [ -e "$fd" ] || continue
             f="$(readlink "$fd" 2>/dev/null)" || continue
             case "$f" in /*) ;; *) continue ;; esac
-            ino="$(stat -c '%i' "$f" 2>/dev/null)" || continue
-            case "$ino" in ''|*[!0-9]*) continue ;; esac
-            if awk -v ino="$ino" \
-               'BEGIN{f=0} { n=split($6,a,":"); if(a[n]==ino){f=1} } END{exit !f}' \
-               /proc/locks 2>/dev/null; then
-                printf 'pid %s holds %s' "$pid" "$f"; return 0
-            fi
+            [ -f "$f" ] && [ -w "$f" ] || continue
+            ( flock -n 9 ) 9>>"$f" 2>/dev/null || { printf 'pid %s holds %s' "$pid" "$f"; return 0; }
         done
     done
     return 1

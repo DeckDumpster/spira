@@ -118,13 +118,18 @@ echo
 echo "PART 1 — _wd_orphan_lock: finds a process holding a lock"
 # ===========================================================================
 
-# A test binary with a unique name that acquires a lock on its first argument and sleeps.
+# A test binary with a unique name that acquires a lock on its first argument.
+# Uses trap+subshell pattern: the bash process holds fd 9 while a background
+# child runs WITHOUT fd 9 (closed before exec), so killing bash releases the
+# lock without leaving a child that still holds it.
 ORPHAN_BIN="$TMP/view-watcher-testfixture"
 cat > "$ORPHAN_BIN" <<'ORPHANEOF'
 #!/usr/bin/env bash
 exec 9>"${1:?need lock path}"
 flock -n 9 || { echo "lock already held" >&2; exit 75; }
-sleep 60
+trap 'exit 0' TERM INT
+( exec 9>&-; exec sleep 60 ) &
+wait
 ORPHANEOF
 chmod +x "$ORPHAN_BIN"
 
@@ -197,9 +202,11 @@ printf '%s\n' "$(( $(date +%s) - 7200 ))" > "$UF"
 run_notify() {
     rm -rf "$MAIL"; mkdir -p "$MAIL"
     rm -f "$WDIR/notify-health.escalated"
+    # SPIRA_PATH prepended so conf.sh's PATH rewrite keeps mock binaries in PATH.
     env -i \
         HOME="$TMP/home" \
         PATH="$MOCK_BIN:$PATH" \
+        SPIRA_PATH="$MOCK_BIN" \
         SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$RUN" \
         SPIRA_INSTANCE=test \
