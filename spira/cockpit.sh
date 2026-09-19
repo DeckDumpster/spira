@@ -102,6 +102,7 @@ probe() {
     core_counts_keys
     unsent_keys
     queue_keys
+    reachable_keys
     sphere_keys
     repo_label_keys
     strand_keys
@@ -1471,6 +1472,106 @@ else:
 #
 # Broken out as a function so the test suite can drive the exact code the collector runs —
 # the same reason strand_keys and sop_keys are functions, not inlined.
+reachable_keys() {
+    # SP_REACHABLE: open/in_progress beads the loop can reach by following blocks
+    # edges downstream from ready or in_progress seeds, transitively. SP_STRANDED:
+    # open/in_progress beads not reachable — their chain passes through a needs-operator
+    # ask, a spira-poison bead, or a suspended persona's partition.
+    # ONE bd list call for all of them: per-bead queries would make the probe proportional
+    # to queue depth, which is why the pane's probe budget is tight.
+    # A failed probe renders ?, never 0 (law-absence-needs-a-positive-control).
+    local _reach_raw
+    _reach_raw="$(bdjson list --status open,in_progress --limit 0 2>/dev/null)"
+    if [ -z "$_reach_raw" ]; then
+        echo "SP_REACHABLE=?"
+        echo "SP_STRANDED=?"
+        return
+    fi
+    printf '%s\n' "$_reach_raw" | SPIRA_CHAMBER="$HERE/chamber" python3 -c '
+import os, sys, json
+from collections import deque
+
+# literal-ok: Python os.environ.get fallback mirrors schema.sh shipped default; operator value arrives in SPIRA_ASK_LABEL at runtime
+ASK = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")
+CTRL = os.environ.get("SPIRA_CTRL", "")
+CHAMBER = os.environ.get("SPIRA_CHAMBER", "")
+
+# Suspended fayths: read ctrl file once, map each to its partition label set.
+# A bead is in a suspended partition when that fayth'"'"'s labels are all present.
+suspended_label_sets = []
+if CTRL and os.path.isfile(CTRL):
+    try:
+        ctrl = json.load(open(CTRL))
+        for subj, ops in ctrl.items():
+            if "suspend" not in ops:
+                continue
+            ff = os.path.join(CHAMBER, subj + ".fayth")
+            if not os.path.isfile(ff):
+                continue
+            for line in open(ff, errors="replace"):
+                if line.startswith("FAYTH_LABELS="):
+                    v = line.strip()[len("FAYTH_LABELS="):]
+                    ls = {l.strip() for l in v.split(",") if l.strip()}
+                    if ls:
+                        suspended_label_sets.append(ls)
+                    break
+    except Exception:
+        pass
+
+def is_stopper(labels):
+    ls = set(labels or [])
+    if ASK in ls or "spira-poison" in ls:
+        return True
+    return any(sl.issubset(ls) for sl in suspended_label_sets)
+
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("SP_REACHABLE=?"); print("SP_STRANDED=?"); raise SystemExit
+beads = d if isinstance(d, list) else [d]
+bead_by_id = {b["id"]: b for b in beads if b.get("id")}
+all_ids = set(bead_by_id)
+
+# blocker_of[X] = open deps blocking X; blocks[Y] = downstream beads Y directly blocks.
+blocker_of = {bid: set() for bid in all_ids}
+blocks = {bid: set() for bid in all_ids}
+for bead in beads:
+    for dep in (bead.get("dependencies") or []):
+        up, dn = dep.get("depends_on_id", ""), bead["id"]
+        if up in all_ids:
+            blocker_of[dn].add(up)
+            blocks[up].add(dn)
+
+# Seeds: in_progress beads + open beads with no open blockers, both excluding stoppers.
+seeds = set()
+for bead in beads:
+    bid = bead["id"]
+    if is_stopper(bead.get("labels")):
+        continue
+    st = bead.get("status", "")
+    if st == "in_progress" or (st == "open" and not blocker_of[bid]):
+        seeds.add(bid)
+
+# BFS: a downstream bead is reachable when all its open blockers are already reachable.
+reachable = set(seeds)
+q = deque(seeds)
+while q:
+    cur = q.popleft()
+    for dn in blocks.get(cur, set()):
+        if dn in reachable:
+            continue
+        dn_bead = bead_by_id[dn]
+        if is_stopper(dn_bead.get("labels")):
+            continue
+        if all(b in reachable for b in blocker_of[dn]):
+            reachable.add(dn)
+            q.append(dn)
+
+print("SP_REACHABLE=%d" % len(reachable))
+print("SP_STRANDED=%d" % (len(all_ids) - len(reachable)))
+' 2>/dev/null || { echo "SP_REACHABLE=?"; echo "SP_STRANDED=?"; }
+}
+
 sphere_keys() {
     # SP_POISON: non-closed beads carrying spira-poison, across ALL partitions.
     # A failed probe renders ?, never 0 (law-failed-probe-renders-question).
@@ -2351,6 +2452,11 @@ sops)
 ratelim)
     ratelim_keys
     ;;
+# The reachable/stranded counts alone, taking no other reading. This is the seam the suite
+# drives: it is the same function probe calls, so what is tested is what runs.
+reachable)
+    reachable_keys
+    ;;
 # The sphere-grid keys alone, taking no other reading. This is the seam the suite drives:
 # it is the same function probe calls, so what is tested is what runs.
 sphere)
@@ -2411,7 +2517,7 @@ statute)
 mail)
     mail_keys
     ;;
-*) echo "usage: cockpit.sh [once|loop|history|now|core|core_detail|unsent|strands|sops|ratelim|sphere|repo_labels|livelock|dup_refs|statute|mail]" >&2
+*) echo "usage: cockpit.sh [once|loop|history|now|core|core_detail|unsent|strands|sops|ratelim|reachable|sphere|repo_labels|livelock|dup_refs|statute|mail]" >&2
    echo "  (no args: collect once then attach to the concierge; SPIRA_COCKPIT_NO_ATTACH=1 skips the attach)" >&2
    exit 1 ;;
 esac
