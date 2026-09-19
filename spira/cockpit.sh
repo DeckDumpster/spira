@@ -1087,9 +1087,16 @@ except Exception: print("")' 2>/dev/null)"
                 fi
                 [ "$_st" = closed ] && _done=$((_done+1))
                 _n=$((_n+1))
-                if [ -n "$_ts" ]; then
-                    if [ -z "$_o" ] || [ "$_ts" -lt "$_o" ]; then _o="$_ts"; fi
-                fi
+                # Exclude queue/* branches from unsent-age measurement: queue branches are part of
+                # batch processing (30-40h cleanup time) and should not trigger an alert intended for stranded beads.
+                case "$_b" in
+                    spira/queue/*) ;;
+                    *)
+                        if [ -n "$_ts" ]; then
+                            if [ -z "$_o" ] || [ "$_ts" -lt "$_o" ]; then _o="$_ts"; fi
+                        fi
+                        ;;
+                esac
                 # BATCHED-STRANDED: a branch whose landstate is BATCHED but whose ID is absent
                 # from every open batch members= line is permanently skipped by sending.sh.
                 # Only check non-closed beads; a closed bead branch is already counted as done.
