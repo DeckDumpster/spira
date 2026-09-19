@@ -132,8 +132,11 @@ echo "positive control — NOT_CLEARED: condition returned after czar closed its
 fresh
 testdb_seed <<JSONL
 {"id":"sp-czoc2a","title":"CZAR: queue-attribution-failed-requeue","status":"closed","issue_type":"task","labels":["czar-trigger","spira"],"external_ref":"incident:queue-attribution-failed-requeue","created_at":"$AGO50","closed_at":"$AGO45"}
-{"id":"sp-czoc2b","title":"CZAR: queue-attribution-failed-requeue (recurrence)","status":"open","issue_type":"task","labels":["czar-trigger","spira"],"external_ref":"incident:queue-attribution-failed-requeue","created_at":"$AGO35"}
+{"id":"sp-czoc2b","title":"CZAR: queue-attribution-failed-requeue (recurrence)","status":"closed","issue_type":"task","labels":["czar-trigger","spira"],"external_ref":"incident:queue-attribution-failed-requeue","created_at":"$AGO35","closed_at":"$AGO15"}
 JSONL
+# sp-czoc2b must be closed so that the Python classifier does not file UNCLAIMED and
+# skip the NOT_CLEARED check — the `continue` fires unconditionally when the newest
+# bead is open/in_progress, regardless of the unclaimed threshold.
 
 wt_co SPIRA_CZAR_OUTCOME_MINS=30
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
