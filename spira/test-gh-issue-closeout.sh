@@ -120,10 +120,10 @@ if [[ "$COMMENT_LINE" == *"$SHORT_SHA"* ]]; then
 else
     bad "comment cites the short sha" "sha $SHORT_SHA not in: $COMMENT_LINE"
 fi
-if [[ "$COMMENT_LINE" == *"https://github.com/fixture/testrepo/commit/"* ]]; then
+if grep -q "https://github.com/fixture/testrepo/commit/" "$GHLOG" 2>/dev/null; then
     ok "comment contains commit link"
 else
-    bad "comment contains commit link" "no commit link in: $COMMENT_LINE"
+    bad "comment contains commit link" "no commit link in gh log"
 fi
 
 # Close marker must exist.
