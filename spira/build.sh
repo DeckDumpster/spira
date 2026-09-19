@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# build.sh — build the two Rust programs this harness ships.
+# build.sh — build the Rust programs this harness ships.
 #
 # Loom (the read endpoint over the beads graph) and the cockpit panel (the attention surface)
 # are both cargo projects. Nothing in install.sh or elsewhere builds them; a clone that skips
@@ -36,15 +36,17 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Where the two programs live. Both are derived from SPIRA_REPO and SPIRA_COCKPIT, which
-# conf.sh computed from where this file sits — no absolute path leaves this file.
+# Source directories derived from SPIRA_REPO and SPIRA_COCKPIT, which conf.sh computed
+# from where this file sits — no absolute path leaves this file.
 LOOM_DIR="$SPIRA_REPO/loom"
 PANEL_DIR="$SPIRA_COCKPIT/panel"
+BROKER_DIR="$SPIRA_REPO/broker"
 
 if [ "$skip_build" = 1 ]; then
     printf 'build.sh: --skip-build — prebuilt binaries expected at:\n'
-    printf '  loom:  %s\n' "$SPIRA_LOOM_BIN"
-    printf '  panel: %s\n' "$SPIRA_PANEL"
+    printf '  loom:   %s\n' "$SPIRA_LOOM_BIN"
+    printf '  panel:  %s\n' "$SPIRA_PANEL"
+    printf '  broker: %s\n' "$SPIRA_BROKER_BIN"
     exit 0
 fi
 
@@ -52,8 +54,8 @@ fi
 # of the harness keeps running. Name exactly what will not work so the operator knows why the
 # attention pane is empty and how to fix it.
 if ! command -v cargo >/dev/null 2>&1; then
-    printf 'build.sh: cargo not on PATH — loom and the cockpit panel will not be built\n' >&2
-    printf 'build.sh:   features lost: the Loom read endpoint and the attention panel\n' >&2
+    printf 'build.sh: cargo not on PATH — loom, the cockpit panel and the broker will not be built\n' >&2
+    printf 'build.sh:   features lost: the Loom read endpoint, the attention panel, and the forge-write broker\n' >&2
     printf 'build.sh:   to fix: install Rust (https://rustup.rs/) and re-run build.sh\n' >&2
     printf 'build.sh:   PATH is %s\n' "$PATH" >&2
     printf 'build.sh: the harness loop continues without them\n' >&2
@@ -86,6 +88,18 @@ printf 'build.sh: building panel (release)\n'
 ( cd "$PANEL_DIR" && cargo build --release ) || {
     printf 'build.sh: panel build failed\n' >&2; exit 1; }
 printf 'build.sh: panel built at %s\n' "$SPIRA_PANEL"
+
+# BROKER — the forge-write broker. Aeons submit intents; this credentialed executor validates
+# and runs them. Built third; its absence disables forge writes from aeons but does not stop
+# the loop.
+if [ ! -d "$BROKER_DIR" ]; then
+    printf 'build.sh: broker source directory not found at %s\n' "$BROKER_DIR" >&2
+    exit 1
+fi
+printf 'build.sh: building broker (release)\n'
+( cd "$BROKER_DIR" && cargo build --release ) || {
+    printf 'build.sh: broker build failed\n' >&2; exit 1; }
+printf 'build.sh: broker built at %s\n' "$SPIRA_BROKER_BIN"
 
 # BD — optional, only when --with-bd was given.
 if [ "$with_bd" = 1 ]; then

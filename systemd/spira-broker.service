@@ -1,0 +1,16 @@
+[Unit]
+Description=Spira broker — validate and execute queued forge-write intents
+Documentation=file://@SPIRA_HOME@/broker.sh
+After=default.target
+
+[Service]
+Type=oneshot
+ExecStart=@SPIRA_PROD@/broker.sh execute
+TimeoutStartSec=60
+CPUQuota=10%
+Nice=10
+StandardOutput=append:@SPIRA_RUN@/broker.log
+StandardError=append:@SPIRA_RUN@/broker.log
+
+[Install]
+WantedBy=default.target

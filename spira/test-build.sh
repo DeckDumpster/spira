@@ -57,10 +57,11 @@ printf '# empty\n' > "$HARNESS/repo-map.example"
 printf '# empty\n' > "$HARNESS/prefix-map"
 printf '# empty\n' > "$HARNESS/watchers"
 
-# Source directories build.sh will cd into (SPIRA_REPO/loom and SPIRA_COCKPIT/panel).
+# Source directories build.sh will cd into.
 LOOM_SRC="$TMP/repo/loom"
 PANEL_SRC="$TMP/cockpit/panel"
-mkdir -p "$LOOM_SRC" "$PANEL_SRC"
+BROKER_SRC="$TMP/repo/broker"
+mkdir -p "$LOOM_SRC" "$PANEL_SRC" "$BROKER_SRC"
 
 # Stub cargo: creates target/release/<dirname> relative to the caller's working directory,
 # which is what cargo build --release produces. The binary name comes from the directory
@@ -123,17 +124,18 @@ want "absent cargo says the loop continues" "loop" "$nocargo_out"
 
 # =========================================================================
 echo
-echo "normal run — both binaries produced, loom before panel:"
+echo "normal run — all three binaries produced, loom before panel before broker:"
 # =========================================================================
-rm -rf "$TMP/repo/loom/target" "$TMP/cockpit/panel/target"
+rm -rf "$TMP/repo/loom/target" "$TMP/cockpit/panel/target" "$TMP/repo/broker/target"
 
 normal_out="$(run_build 2>&1)"; normal_rc=$?
 
 is "normal run exits 0" "0" "$normal_rc"
 
-# Ordering: "building loom" must appear at an earlier line than "building panel".
+# Ordering: loom before panel before broker.
 loom_line="$(printf '%s\n' "$normal_out" | grep -n 'building loom' | head -1 | cut -d: -f1)"
 panel_line="$(printf '%s\n' "$normal_out" | grep -n 'building panel' | head -1 | cut -d: -f1)"
+broker_line="$(printf '%s\n' "$normal_out" | grep -n 'building broker' | head -1 | cut -d: -f1)"
 if [ -n "${loom_line:-}" ] && [ -n "${panel_line:-}" ] && \
    [ "$loom_line" -lt "$panel_line" ] 2>/dev/null; then
     ok "loom announced before panel (line $loom_line vs $panel_line)"
@@ -141,14 +143,24 @@ else
     bad "loom announced before panel" \
         "loom_line='$loom_line' panel_line='$panel_line' in output: $normal_out"
 fi
+if [ -n "${panel_line:-}" ] && [ -n "${broker_line:-}" ] && \
+   [ "$panel_line" -lt "$broker_line" ] 2>/dev/null; then
+    ok "panel announced before broker (line $panel_line vs $broker_line)"
+else
+    bad "panel announced before broker" \
+        "panel_line='$panel_line' broker_line='$broker_line' in output: $normal_out"
+fi
 
-# Both binaries exist at the paths build.sh derives from SPIRA_REPO and SPIRA_COCKPIT.
+# All three binaries exist at the paths build.sh derives from SPIRA_REPO and SPIRA_COCKPIT.
 LOOM_BIN="$TMP/repo/loom/target/release/loom"
 PANEL_BIN="$TMP/cockpit/panel/target/release/panel"
-[ -x "$LOOM_BIN" ]  && ok "loom binary exists at SPIRA_LOOM_BIN path" \
+BROKER_BIN="$TMP/repo/broker/target/release/broker"
+[ -x "$LOOM_BIN" ]   && ok "loom binary exists at SPIRA_LOOM_BIN path" \
     || bad "loom binary exists at SPIRA_LOOM_BIN path" "not found or not executable at $LOOM_BIN"
-[ -x "$PANEL_BIN" ] && ok "panel binary exists at SPIRA_PANEL path" \
+[ -x "$PANEL_BIN" ]  && ok "panel binary exists at SPIRA_PANEL path" \
     || bad "panel binary exists at SPIRA_PANEL path" "not found or not executable at $PANEL_BIN"
+[ -x "$BROKER_BIN" ] && ok "broker binary exists at SPIRA_BROKER_BIN path" \
+    || bad "broker binary exists at SPIRA_BROKER_BIN path" "not found or not executable at $BROKER_BIN"
 
 # =========================================================================
 echo
@@ -157,8 +169,9 @@ echo "idempotence — second run completes without error:"
 second_out="$(run_build 2>&1)"; second_rc=$?
 
 is "second run exits 0" "0" "$second_rc"
-want "second run mentions loom"  "loom"  "$second_out"
-want "second run mentions panel" "panel" "$second_out"
+want "second run mentions loom"   "loom"   "$second_out"
+want "second run mentions panel"  "panel"  "$second_out"
+want "second run mentions broker" "broker" "$second_out"
 
 # =========================================================================
 echo
@@ -174,9 +187,10 @@ chmod +x "$TMP/stub/cargo"
 
 skip_out="$(run_build --skip-build 2>&1)"; skip_rc=$?
 
-is "--skip-build exits 0"           "0" "$skip_rc"
-want "--skip-build prints loom path"  "loom"  "$skip_out"
-want "--skip-build prints panel path" "panel" "$skip_out"
+is "--skip-build exits 0"            "0" "$skip_rc"
+want "--skip-build prints loom path"   "loom"   "$skip_out"
+want "--skip-build prints panel path"  "panel"  "$skip_out"
+want "--skip-build prints broker path" "broker" "$skip_out"
 
 # =========================================================================
 echo
