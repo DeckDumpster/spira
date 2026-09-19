@@ -6,6 +6,7 @@
 #   queue.sh stats
 #   queue.sh flush [<repo>]
 #   queue.sh step <repo>
+#   queue.sh abandon [<repo>] [--reason <text>] [--dry-run]
 #
 # submit: certifies any branch by running the repository's gate. In a queue-mode
 # repository, a green branch is recorded CERTIFIED for the batch builder.
@@ -24,6 +25,9 @@
 # CI result, then open the next one if due. Settling first is what lets a landed batch be
 # followed by a new one in the same pass.
 # stats: reads QUEUE lines from landing.log and prints caught/escaped/cost totals.
+# abandon: closes the open batch PR, returns innocent members to CERTIFIED, archives
+# the record. RED and EJECTED members are left alone — abandon never re-certifies a
+# branch someone deliberately ejected.
 #
 # covers: spira/queue.sh spira/suites.sh spira/conf.sh
 set -uo pipefail
@@ -306,6 +310,97 @@ cmd_eject() {
     printf 'queue.sh eject: ejected %s from %s batch (landstate=RED)\n' "$id" "$name"
 }
 
+cmd_abandon() {
+    local name="" reason="" dry_run=0
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --reason)   shift; reason="${1:-}"; shift ;;
+        --reason=*) reason="${1#--reason=}"; shift ;;
+        --dry-run)  dry_run=1; shift ;;
+        -*)         printf 'queue.sh abandon: unknown option: %s\n' "$1" >&2; return 2 ;;
+        *)          name="$1"; shift ;;
+        esac
+    done
+
+    [ -n "$name" ] || name="$(spira_home_repo)"
+    repo_root "$name" >/dev/null 2>&1 || {
+        printf 'queue.sh abandon: no such repo: %s\n' "$name" >&2; return 1
+    }
+
+    # Take the per-repo lock — abandon racing a batch build produces the
+    # two-PRs-one-batch state that sp-qdtnw exists to prevent.
+    local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
+    mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
+    { exec 9>"$lockfile"; } 2>/dev/null \
+        || { printf 'queue.sh abandon: cannot open lock file for %s\n' "$name" >&2; return 1; }
+    if ! flock -n 9; then
+        printf 'queue.sh abandon: another queue operation holds the lock for %s\n' "$name" >&2
+        return 1
+    fi
+
+    local open_file="${SPIRA_QUEUE_DIR:?}/$name/open"
+    if [ ! -f "$open_file" ]; then
+        printf 'queue.sh abandon: no open batch for %s\n' "$name" >&2
+        return 1
+    fi
+
+    local pr_n members_val branch_val
+    pr_n="$(grep '^pr=' "$open_file" | head -1)"; pr_n="${pr_n#pr=}"
+    members_val="$(grep '^members=' "$open_file" | head -1)"; members_val="${members_val#members=}"
+    branch_val="$(grep '^branch=' "$open_file" | head -1)"; branch_val="${branch_val#branch=}"
+
+    local stamp; stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    local archive_name="closed-pr${pr_n}-${stamp}"
+    local archive_path="${SPIRA_QUEUE_DIR:?}/$name/$archive_name"
+
+    if [ "$dry_run" -eq 1 ]; then
+        printf 'dry-run: would close PR %s for %s\n' "$pr_n" "$name"
+        local _m mid mtip cur_state
+        for _m in $members_val; do
+            mid="${_m%%:*}"; mtip="${_m##*:}"
+            cur_state=""
+            [ -f "$LANDSTATE/$mid" ] && { read -r cur_state _ < "$LANDSTATE/$mid" 2>/dev/null || true; }
+            case "${cur_state:-}" in
+            RED|EJECTED) printf 'dry-run: %s: leave alone (%s)\n' "$mid" "$cur_state" ;;
+            *)           printf 'dry-run: %s: return to CERTIFIED at %s\n' "$mid" "$mtip" ;;
+            esac
+        done
+        printf 'dry-run: archive path: %s\n' "$archive_path"
+        return 0
+    fi
+
+    local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
+    local repo_dir; repo_dir="$(repo_root "$name")"
+    local comment_text="Batch abandoned.${reason:+ Reason: ${reason}}"
+    "$forge" pr-comment "$repo_dir" "$pr_n" "$comment_text" 2>/dev/null || true
+    "$forge" pr-close   "$repo_dir" "$pr_n" 2>/dev/null || true
+
+    # Return each member to CERTIFIED unless it was deliberately ejected.
+    # RED and EJECTED are operator/batch verdicts that must survive an abandon.
+    local _m mid mtip cur_state
+    for _m in $members_val; do
+        mid="${_m%%:*}"; mtip="${_m##*:}"
+        cur_state=""
+        [ -f "$LANDSTATE/$mid" ] && { read -r cur_state _ < "$LANDSTATE/$mid" 2>/dev/null || true; }
+        case "${cur_state:-}" in
+        RED|EJECTED)
+            printf 'queue.sh abandon: %s: left as %s\n' "$mid" "$cur_state"
+            ;;
+        *)
+            land_mark "$mid" CERTIFIED "$mtip"
+            printf 'queue.sh abandon: %s: returned to CERTIFIED\n' "$mid"
+            ;;
+        esac
+    done
+
+    mv "$open_file" "$archive_path" || {
+        printf 'queue.sh abandon: failed to archive open record\n' >&2; return 1
+    }
+
+    printf 'queue.sh abandon: PR %s closed, batch abandoned for %s\n' "$pr_n" "$name"
+}
+
 case "${1:-}" in
     submit)  shift; cmd_submit "$@" ;;
     protect) shift; cmd_protect "$@" ;;
@@ -313,5 +408,6 @@ case "${1:-}" in
     flush)   shift; cmd_flush "$@" ;;
     step)    shift; cmd_step "$@" ;;
     eject)   shift; cmd_eject "$@" ;;
-    *) printf 'usage: queue.sh submit <branch> | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>]\n' >&2; exit 2 ;;
+    abandon) shift; cmd_abandon "$@" ;;
+    *) printf 'usage: queue.sh submit <branch> | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] [--reason <text>] [--dry-run]\n' >&2; exit 2 ;;
 esac
