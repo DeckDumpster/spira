@@ -96,8 +96,8 @@ FORGE
 chmod +x "$SH/forge-fixture.sh"
 
 # ─── Repro batch stub ─────────────────────────────────────────────────────────
-# Returns exit 1 (red) if the branch name is listed in REPRO_FAIL_FILE,
-# else exit 0 (green). Receives the branch as the last positional argument.
+# Returns exit 1 (red) if any REPRO_FAIL_FILE entry matches the branch argument
+# exactly or is a git ancestor of it (handles merged-SHA callers from _repro_is_red).
 cat > "$SH/repro-stub.sh" <<'REPRO'
 #!/usr/bin/env bash
 br=""
@@ -107,6 +107,8 @@ done
 fail_list="$(cat "${REPRO_FAIL_FILE}" 2>/dev/null || true)"
 for f in $fail_list; do
     [ "$f" = "$br" ] && exit 1
+    [ -n "${SPIRA_REPO:-}" ] || continue
+    git -C "$SPIRA_REPO" merge-base --is-ancestor "$f" "$br" 2>/dev/null && exit 1 || true
 done
 exit 0
 REPRO
@@ -542,6 +544,44 @@ printf 'spira/sp-at-guilty\nspira/sp-at-innocent\n' > "$REPRO_FAIL_FILE"
 verdict "$REPONAME" > /dev/null
 is   "8. per-member: sp-at-guilty ejected"          "EJECTED"  "$(land_state_of sp-at-guilty)"
 is   "8. per-member: sp-at-innocent stays BATCHED"   "BATCHED"  "$(land_state_of sp-at-innocent)"
+clean_case
+
+# =============================================================================
+# 9. NEW-BASE SUITE — a suite that exists only on the advanced base (added after
+#    the member forked) is still reproduced when the member breaks it.
+#    Without the fix, testenv-batch exits 2 ("unknown suite") against the bare
+#    member tip, reads as not-reproduced, and the member escapes ejection.
+#    The fix merges the member onto the batch base before running repro, so the
+#    new suite is present and a genuine failure is caught.
+# =============================================================================
+testdb_reset
+# Create member branch forked from current origin/main (before the suite lands).
+wt_nb="$RUN/worktree/sp-at-nb"
+git -C "$REPO" worktree add -q -b "spira/sp-at-nb" "$wt_nb" origin/main
+printf 'unrelated\n' > "$wt_nb/sp-at-nb.txt"
+git -C "$wt_nb" add -A && git -C "$wt_nb" commit -q -m "sp-at-nb: work"
+
+# Advance origin/main to add a new suite that didn't exist when sp-at-nb forked.
+wt_adv9="$RUN/worktree/.advance-9"
+git -C "$REPO" worktree add -q --detach "$wt_adv9" origin/main
+printf '#!/usr/bin/env bash\nset -uo pipefail\n' > "$wt_adv9/test-sp-i981i-new.sh"
+git -C "$wt_adv9" add -A && git -C "$wt_adv9" commit -q -m "base: add test-sp-i981i-new.sh"
+git -C "$wt_adv9" push -q origin HEAD:main
+git -C "$REPO" worktree remove -f "$wt_adv9"
+git -C "$REPO" fetch -q origin
+
+# Build batch: base is now the advanced origin/main; sp-at-nb's tip is from before.
+build_batch sp-at-nb > /dev/null
+plant_bead sp-at-nb
+
+# Forge: the new suite (present only on the base, not in sp-at-nb's bare tree) is red.
+printf 'red\nred-suite: test-sp-i981i-new.sh\n' > "$FORGE_STATUS_FILE"
+# Repro: sp-at-nb breaks the new suite; matched by ancestry in the repro stub.
+printf 'spira/sp-at-nb\n' > "$REPRO_FAIL_FILE"
+
+verdict "$REPONAME" > /dev/null
+is "9. new-base suite: sp-at-nb ejected (suite present only on advanced base)" \
+    "EJECTED" "$(land_state_of sp-at-nb)"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"

@@ -45,14 +45,39 @@ _batch_reseal() {   # _batch_reseal <file> <new_head> <new_members>
 # SPIRA_QUEUE_REPRO_BATCH allows tests to substitute testenv-batch.sh.
 : "${SPIRA_QUEUE_REPRO_BATCH:=$HERE/testenv-batch.sh}"
 
-_repro_is_red() {   # _repro_is_red <suites-csv> <repo-dir> <branch> -> 0 if red
-    local suites="$1" repo="$2" br="$3" tmp rc
+_repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip>
+                    # Merges <tip> onto <base-sha> so suites added after the member
+                    # forked are present in the tested tree.
+                    # Empty <base-sha>: tests <tip> directly (batch-head path).
+                    # Returns 0 (red), 1 (green), 2 (could not judge — harness fault).
+    local suites="$1" repo="$2" base="$3" tip="$4"
+    local tmp rc test_ref wt
+    if [ -n "$base" ]; then
+        wt="$SPIRA_RUN/worktree/.repro-$$"
+        mkdir -p "$SPIRA_RUN/worktree" 2>/dev/null || true
+        git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
+        git -C "$repo" worktree add -q --detach "$wt" "$base" 2>/dev/null || return 2
+        git -C "$wt" merge -q --no-edit --no-ff "$tip" >/dev/null 2>&1 || {
+            git -C "$wt" merge --abort 2>/dev/null || true
+            git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
+            return 2
+        }
+        test_ref="$(git -C "$wt" rev-parse HEAD 2>/dev/null)" || {
+            git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
+            return 2
+        }
+        git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
+    else
+        test_ref="$tip"
+    fi
     tmp="$(mktemp -d)"
-    SPIRA_BATCH_RESULTS="$tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
-        --mode serial --suites "$suites" "$br" >/dev/null 2>&1
+    SPIRA_REPO="$repo" SPIRA_BATCH_RESULTS="$tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
+        --mode serial --suites "$suites" "$test_ref" >/dev/null 2>&1
     rc=$?
     rm -rf "$tmp"
-    [ "$rc" -eq 1 ]
+    [ "$rc" -eq 1 ] && return 0
+    [ "$rc" -eq 0 ] && return 1
+    return 2
 }
 
 _any_suite_in_selection() {  # _any_suite_in_selection <suites-spacesep> <repo> <base-sha> <tip> -> 0 if any matches
@@ -136,7 +161,7 @@ _q_attribute() {
         _mm="${members_arr[0]}"; _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
         local _unrep_dir="$SPIRA_QUEUE_DIR/$name/unreproduced"
         local _unrep_f="$_unrep_dir/$_mid"
-        if _repro_is_red "$suites_csv" "$repo" "spira/$_mid"; then
+        if _repro_is_red "$suites_csv" "$repo" "$base_sha" "$_mtip"; then
             ejected+=("$_mm")
             _any_suite_in_selection "$red_suites" "$repo" "$base_sha" "$_mtip" \
                 && caught=$(( caught + 1 )) || escaped=$(( escaped + 1 ))
@@ -178,7 +203,7 @@ _q_attribute() {
                 case ",$_mcsv," in *",$_rs,"*) ;; *) _mcsv="${_mcsv:+$_mcsv,}$_rs" ;; esac
             done
             [ -n "$_mcsv" ] || continue
-            if _repro_is_red "$_mcsv" "$repo" "spira/$_mid"; then
+            if _repro_is_red "$_mcsv" "$repo" "$base_sha" "$_mtip"; then
                 ejected+=("$_mid|$_mtip|$_mcsv")
                 caught=$(( caught + 1 ))
             fi
@@ -198,7 +223,7 @@ _q_attribute() {
 
         if [ "${#ejected[@]}" -eq 0 ]; then
             # Neither repro nor diff — test the batch head.
-            if _repro_is_red "$suites_csv" "$repo" "$branch_name"; then
+            if _repro_is_red "$suites_csv" "$repo" "" "$branch_name"; then
                 # Together-only break → halve: first half gets epoch=1 (batches immediately),
                 # second half gets epoch=now (waits for BATCH_WAIT).
                 local half=$(( mc / 2 )) i=0
