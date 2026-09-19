@@ -175,8 +175,19 @@ main() {
                     && { _anyrn=1; break; }
             done
             [ "$_anyrn" = 1 ] && continue
-            land_mark "$_lid" LOST "${_ltip:-none}" branch-gone
-            printf 'batch %s: %s has no branch — LOST (branch-gone)\n' "$name" "$_lid"
+            # Tip already in base: the branch landed (via external merge before verdict.sh
+            # ran). Mark LANDED rather than LOST so the queue view and queue-wait logic
+            # both see it as done — LOST drops it from the view but does not unblock
+            # queue-waiters that tested for CERTIFIED reaching LANDED.
+            if git -C "$repo" merge-base --is-ancestor "${_ltip:-none}" "$base_sha" \
+                   2>/dev/null; then
+                land_mark "$_lid" LANDED "${_ltip:-none}" already-in-base-orphan
+                printf 'batch %s: %s tip already in %s (orphan) — LANDED\n' \
+                    "$name" "$_lid" "$base"
+            else
+                land_mark "$_lid" LOST "${_ltip:-none}" branch-gone
+                printf 'batch %s: %s has no branch — LOST (branch-gone)\n' "$name" "$_lid"
+            fi
         done
     fi
 

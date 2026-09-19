@@ -2,7 +2,7 @@
 #
 # test-verdict.sh — merge-queue verdict: fast-forward landing pass.
 #
-# Twelve cases:
+# Thirteen cases:
 #   1. No open batch → forge is never reached.
 #   2. Pending within CI max → nothing happens.
 #   3. Pending, run old and stuck → treated as harness fault, re-run called.
@@ -20,6 +20,9 @@
 #  12. PR old, run freshly started → no cancellation. Regression: verdict was ageing
 #      the PR instead of the run; healthy CI was cancelled when opened exceeded the
 #      threshold, regardless of whether the current run was making progress.
+#  13. Green, base moved, member tips already in new base → members LANDED, not
+#      re-queued. Positive control with case 7: case 7 proves CERTIFIED when tips
+#      are NOT in the new base; this proves LANDED when they ARE.
 #
 # The forge seam is a local fixture; no network is reached.
 # mail.sh and suites.sh are stubbed to capture calls.
@@ -139,6 +142,21 @@ verdict() {
 batch_file() { printf '%s/%s/open' "$QUEUEDIR" "$REPONAME"; }
 remote_main() { git -C "$REMOTE" rev-parse main 2>/dev/null; }
 landstate()   { cat "$LANDSTATE/${1:-}" 2>/dev/null; }
+
+# merge_batch_externally — simulate GitHub auto-merging the open batch PR before
+# verdict.sh ran: creates a merge commit on origin/main whose second parent is
+# batch_head, so every member tip is reachable from the new main.
+merge_batch_externally() {
+    local batch_head="$1"
+    local bwt="$RUN/worktree/.merge-ext"
+    git -C "$REPO" worktree remove -f "$bwt" 2>/dev/null || true
+    git -C "$REPO" worktree add -q --detach "$bwt" origin/main
+    git -C "$bwt" merge --no-ff -q -m "Merge pull request: queue" "$batch_head" \
+        >/dev/null 2>&1
+    git -C "$bwt" push -q origin "HEAD:main"
+    git -C "$REPO" worktree remove -f "$bwt" 2>/dev/null || true
+    git -C "$REPO" fetch -q origin
+}
 
 # advance_base — land a throwaway commit directly on top of origin/main via a
 # detached-HEAD worktree so the push is always a fast-forward from remote's POV.
@@ -435,6 +453,29 @@ is   "12. fresh-run: no push"    "$before_main12" "$(remote_main)"
 nowant "12. fresh-run: no rerun" "rerun"          "$(cat "$FORGE_LOG")"
 want "12. fresh-run: reported"   "pending"        "$out"
 clean_case
+
+# =============================================================================
+# 13. GREEN, BASE MOVED, MEMBER TIPS ALREADY IN NEW BASE — members LANDED.
+#     Simulates a batch PR auto-merged by GitHub before verdict.sh ran.
+#     POSITIVE CONTROL (combined with case 7): case 7 proves that CERTIFIED is
+#     written when tips are NOT in the new base; this case proves LANDED when
+#     they ARE — without this case, silence in case 7 could hide a code path
+#     that always certifies rather than checking ancestry.
+# =============================================================================
+batch_head13="$(build_batch sp-vd-n1 sp-vd-n2)"
+merge_batch_externally "$batch_head13"
+printf 'green\n' > "$FORGE_STATUS_FILE"
+out="$(verdict "$REPONAME")"
+want "13. moved-in-base: pr-close called"        "close"   "$(cat "$FORGE_LOG")"
+case "$(landstate sp-vd-n1)" in LANDED*) ok "13. moved-in-base: sp-vd-n1 LANDED" ;;
+    *) bad "13. moved-in-base: sp-vd-n1 LANDED" "got: $(landstate sp-vd-n1)" ;; esac
+case "$(landstate sp-vd-n2)" in LANDED*) ok "13. moved-in-base: sp-vd-n2 LANDED" ;;
+    *) bad "13. moved-in-base: sp-vd-n2 LANDED" "got: $(landstate sp-vd-n2)" ;; esac
+is   "13. moved-in-base: batch record removed"   "0" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+want "13. moved-in-base: base-moved reported"    "base moved"         "$out"
+want "13. moved-in-base: already-in-base logged" "already in moved base" "$out"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
