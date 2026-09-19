@@ -536,6 +536,140 @@ cmd_sendmail() {
     mv "$dir/tmp/$msgid" "$dir/new/$msgid"
 }
 
+_is_unread() {
+    # new/ messages are always unread. cur/ messages with the S (Seen) flag are read.
+    [[ "$1" == */new/* ]] && return 0
+    case "$(basename "$1")" in *:2,*S*) return 1 ;; esac
+    return 0
+}
+
+cmd_tidy() {
+    local mailbox="${1:-}"
+    [ -z "$mailbox" ] && { printf 'mail.sh tidy: mailbox required\n' >&2; return 1; }
+    shift
+    local dry_run=0
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dry-run) dry_run=1; shift ;;
+            *) printf 'mail.sh tidy: unknown option: %s\n' "$1" >&2; return 1 ;;
+        esac
+    done
+
+    # GUARD: cannot verify ask status without a bead store (law-a-control-that-cannot-check-must-refuse)
+    if [ -z "${SPIRA_DB:-}" ]; then
+        printf 'tidy: bead store not configured — refusing to move any mail\n' >&2
+        return 1
+    fi
+
+    local ask_label="$SPIRA_ASK_LABEL"
+    local fresh_s="${SPIRA_MAIL_TIDY_FRESH:-86400}"
+    local urgent_max_s=604800
+    local now; now="$(date +%s)"
+
+    # Collect open ask-labelled bead IDs. Covers all non-closed states.
+    local ask_ids ask_rc=0
+    ask_ids="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" list \
+        --status open,in_progress,blocked,deferred \
+        --label "$ask_label" \
+        --limit 0 --brief --json 2>/dev/null \
+        | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+if isinstance(d, dict): d = [d]
+for x in d:
+    i = x.get("id", "")
+    if i: print(i)
+' 2>/dev/null)" || ask_rc=$?
+
+    if [ "$ask_rc" -ne 0 ]; then
+        printf 'tidy: bead store query failed — refusing to move any mail\n' >&2
+        return 1
+    fi
+
+    # Positive control: an empty result is only trusted if the store responds at all.
+    # A broken query returning empty would archive every live ask (law-absence-needs-a-positive-control).
+    if [ -z "$ask_ids" ]; then
+        local probe_rc=0
+        "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --limit 1 --brief --json >/dev/null 2>&1 \
+            || probe_rc=$?
+        if [ "$probe_rc" -ne 0 ]; then
+            printf 'tidy: positive control failed — bead store unreadable; refusing to move any mail\n' >&2
+            return 1
+        fi
+    fi
+
+    local inbox_dir; inbox_dir="$(_mail_dir "$mailbox")"
+    [ -d "$inbox_dir/cur" ] && [ -d "$inbox_dir/new" ] || {
+        printf 'tidy: %s: mailbox not found\n' "$mailbox" >&2; return 1
+    }
+
+    _mail_ensure "archive"
+    local archive_cur; archive_cur="$(_mail_dir archive)/cur"
+
+    # Collect messages sorted by mtime newest first, for dedup processing.
+    local sorted_msgs
+    sorted_msgs="$(
+        local f mt
+        for f in "$inbox_dir/new"/* "$inbox_dir/cur"/*; do
+            [ -f "$f" ] || continue
+            mt="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)" || mt=0
+            printf '%s\t%s\n' "$mt" "$f"
+        done | sort -rn
+    )"
+
+    local seen_subjects="" archived=0 kept=0
+    local mtime path subj bead_id keep age urgent_hdr
+
+    while IFS=$'\t' read -r mtime path; do
+        [ -f "$path" ] || continue
+        subj="$(sed -n 's/^Subject:[[:space:]]*//p' "$path" | head -1)"
+        keep=0
+
+        # Dedup: archive older copies of a repeated subject (newest processed first).
+        if [ -n "$seen_subjects" ] && printf '%s\n' "$seen_subjects" | grep -qxF "$subj" 2>/dev/null; then
+            keep=0
+        else
+            seen_subjects="${seen_subjects:+${seen_subjects}
+}${subj}"
+
+            # Rule 1: carries a bead ID for an open ask-labelled bead.
+            bead_id="$(sed -n 's/^X-Spira-Bead:[[:space:]]*//p' "$path" | head -1)"
+            if [ -z "$bead_id" ]; then
+                bead_id="$(awk '/^$/{body=1;next} body' "$path" \
+                    | grep -oE "${_bead_id_re}" | head -1)" || bead_id=""
+            fi
+            if [ -n "$bead_id" ] && printf '%s\n' "$ask_ids" | grep -qx "$bead_id"; then
+                keep=1
+            fi
+
+            # Rule 2: unread and younger than the fresh window.
+            if [ "$keep" -eq 0 ]; then
+                age=$(( now - mtime ))
+                if _is_unread "$path" && [ "$age" -lt "$fresh_s" ]; then keep=1; fi
+            fi
+
+            # Rule 3: urgent and younger than 7 days.
+            if [ "$keep" -eq 0 ]; then
+                urgent_hdr="$(sed -n 's/^X-Spira-Urgent:[[:space:]]*//p' "$path" | head -1)"
+                age=$(( now - mtime ))
+                if [ -n "$urgent_hdr" ] && [ "$age" -lt "$urgent_max_s" ]; then keep=1; fi
+            fi
+        fi
+
+        if [ "$keep" -eq 1 ]; then
+            kept=$(( kept + 1 ))
+        else
+            archived=$(( archived + 1 ))
+            [ "$dry_run" -eq 0 ] && mv "$path" "$archive_cur/$(basename "$path")"
+        fi
+    done <<< "$sorted_msgs"
+
+    printf 'tidy: archived %d, kept %d\n' "$archived" "$kept"
+}
+
 case "${1:-}" in
     send)       shift; cmd_send "$@" ;;
     template)   shift; cmd_template "$@" ;;
@@ -545,5 +679,6 @@ case "${1:-}" in
     unread-age) shift; cmd_unread_age "$@" ;;
     done)       shift; cmd_done "$@" ;;
     sendmail)   shift; cmd_sendmail "$@" ;;
+    tidy)       shift; cmd_tidy "$@" ;;
     *)          printf 'mail.sh: unknown command: %s\n' "${1:-}" >&2; exit 1 ;;
 esac

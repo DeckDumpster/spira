@@ -1,0 +1,12 @@
+[Unit]
+Description=Archive operator inbox mail every 15 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+AccuracySec=2min
+Persistent=true
+Unit=spira-mail-tidy.service
+
+[Install]
+WantedBy=timers.target
