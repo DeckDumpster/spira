@@ -229,7 +229,8 @@ echo "probe-fault — a failed bead lookup lands in SP_PROBE_FAIL, not SP_UNADOP
 # the same branch does NOT feed SP_UNADOPTED.
 
 FAIL_BD="$TMP/bd-fail-uat"
-printf '#!/bin/sh\nexit 1\n' > "$FAIL_BD"
+# Pass migrate so conf.sh's schema check succeeds; fail everything else (show, list, ...).
+printf '#!/bin/sh\nfor a; do [ "$a" = migrate ] && exit 0; done\nexit 1\n' > "$FAIL_BD"
 chmod +x "$FAIL_BD"
 
 out_fail="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
@@ -246,7 +247,7 @@ _pf="$(valf SP_PROBE_FAIL)"
 if [ "${_pf:-0}" -gt 0 ] 2>/dev/null; then
     ok "bd-fail: SP_PROBE_FAIL > 0 — failed lookups counted as probe faults"
 else
-    bad "bd-fail: SP_PROBE_FAIL not > 0: got '${_pf:-<absent>}'"
+    bad "bd-fail: SP_PROBE_FAIL not > 0" "got '${_pf:-<absent>}'"
 fi
 is "bd-fail: SP_UNADOPTED=0 — failed lookup never feeds unadopted count" "0" "$(valf SP_UNADOPTED)"
 
@@ -267,7 +268,7 @@ _pf2="$(valz SP_PROBE_FAIL)"
 if [ "${_pf2:-0}" -gt 0 ] 2>/dev/null; then
     ok "bd-zero-empty: SP_PROBE_FAIL > 0 — empty-output lookup counted as probe fault"
 else
-    bad "bd-zero-empty: SP_PROBE_FAIL not > 0: got '${_pf2:-<absent>}'"
+    bad "bd-zero-empty: SP_PROBE_FAIL not > 0" "got '${_pf2:-<absent>}'"
 fi
 is "bd-zero-empty: SP_UNADOPTED=0 — empty lookup never feeds unadopted count" "0" "$(valz SP_UNADOPTED)"
 
