@@ -235,7 +235,7 @@ git init -q "$FIXTURE_REPO" \
        GIT_COMMITTER_EMAIL=t@t \
        git -C "$FIXTURE_REPO" commit --allow-empty -q -m "initial" 2>/dev/null
 
-run_census_repo() {
+run_census_fixture() {
     env SPIRA_DB="$SPIRA_DB" \
         SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
         SPIRA_CONF="$TMP/no-conf" \
@@ -246,11 +246,11 @@ run_census_repo() {
 
 B close "$remedy_id" --reason "test: verify closed remedy still suppresses" --force >/dev/null 2>&1
 
-out3_pre="$(run_census_repo)"
+out3_pre="$(run_census_fixture)"
 lack "sp-recur-suite-red still suppressed after close, commit not on base" \
     "sp-recur-suite-red" "$out3_pre"
 
-out3_pre_s="$(run_census_repo --with-suppressed)"
+out3_pre_s="$(run_census_fixture --with-suppressed)"
 want "closed-unlanded remedy annotated [suppressed: remedy closed, not landed]" \
     "[suppressed: remedy closed, not landed]" "$out3_pre_s"
 want "suppressed class appears in annotated output" "sp-recur-suite-red" "$out3_pre_s"
@@ -260,7 +260,7 @@ GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=test GIT_COMMITTER_
     git -C "$FIXTURE_REPO" commit --allow-empty -q \
     -m "fix: $remedy_id closes sp-recur-suite-red" 2>/dev/null
 
-out3="$(run_census_repo)"
+out3="$(run_census_fixture)"
 want "sp-recur-suite-red reappears once remedy commit is on base" \
     "sp-recur-suite-red" "$out3"
 lack "no [suppressed] after remedy landed" "[suppressed]" "$out3"
@@ -349,9 +349,11 @@ want "closed-unlanded remedy: annotated [suppressed]" "[suppressed]" "$out7s"
 echo
 echo "8. CONTROL: closed remedy with landed branch → class unsuppressed (db-ista)"
 # ==============================================================================
-# Merge the fix branch into main and push so origin/main has the commit.
-# census.sh must no longer suppress the class.
-git -C "$REMEDY_REPO" merge -q --no-edit sp-fix-cls >/dev/null 2>&1
+# Add a landing commit naming the bead id and push to origin/main.
+# landed() searches commit subjects for the bead id — the same criterion the
+# harness uses when a branch is squash-merged with "spira: land <id>".
+GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=t@t \
+    git -C "$REMEDY_REPO" commit --allow-empty -q -m "spira: land $closed_remedy_id" 2>/dev/null
 git -C "$REMEDY_REPO" push -q origin main >/dev/null 2>&1
 
 out8="$(run_census_repo "$REMEDY_REPO")"
