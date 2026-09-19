@@ -61,6 +61,49 @@ touch "$REMOTE/placeholder"
 git -C "$REMOTE" add placeholder
 git -C "$REMOTE" commit -q -m "initial (master)"
 
+# Fixture suites committed to master so the topic branch inherits them.
+# That keeps the diff (topic vs origin/master) to just changed.sh: spira/*.sh
+# files are "source" in SELECT_SOURCE and would be unclaimed errors in the diff
+# if added only on topic.
+mkdir -p "$REMOTE/spira"
+cat > "$REMOTE/spira/test-fx-g.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: changed.sh
+printf '  ok    test-fx-g ran\n'; exit 0
+EOF
+cat > "$REMOTE/spira/test-fx-u.sh" << 'EOF'
+#!/usr/bin/env bash
+printf '  ok    test-fx-u ran\n'; exit 0
+EOF
+cat > "$REMOTE/spira/test-fx-red.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: changed.sh
+printf '  FAIL  test-fx-red: always red\n'; exit 1
+EOF
+cat > "$REMOTE/spira/test-fx-ka.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: changed.sh
+printf '  ok    test-fx-ka ran\n'; exit 0
+EOF
+cat > "$REMOTE/spira/test-fx-kb.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: changed.sh
+sleep 120; exit 0
+EOF
+cat > "$REMOTE/spira/test-fx-kc.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: changed.sh
+printf '  ok    test-fx-kc ran\n'; exit 0
+EOF
+cat > "$REMOTE/spira/test-fx-p.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: unreachable.sh
+printf '  ok    test-fx-p ran\n'; exit 0
+EOF
+chmod +x "$REMOTE/spira"/test-fx-*.sh
+git -C "$REMOTE" add spira/
+git -C "$REMOTE" commit -q -m "add fixture suites"
+
 git clone -q --local "$REMOTE" "$FIXTURE"
 git -C "$FIXTURE" config user.email "test@spira.local"
 git -C "$FIXTURE" config user.name "Spira Test"
@@ -257,11 +300,6 @@ fi
 bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
 ok "B0: pre-flight: container + user systemd available"
 
-# Suites that run inside the container live in $FIXTURE/spira/ because the
-# fixture repo is bind-mounted at /workspace; the batch executes them as
-# /workspace/spira/<name>.  We maintain copies in host SUITE dirs for selection.
-mkdir -p "$FIXTURE/spira"
-
 # ---------------------------------------------------------------------------
 # B1: GREEN — all selected suites pass; batch exits 0; batch.meta has image_tag.
 # ---------------------------------------------------------------------------
@@ -277,14 +315,12 @@ cat > "$SUITE_B1/test-fx-g.sh" << 'EOF'
 printf '  ok    test-fx-g ran\n'; exit 0
 EOF
 chmod +x "$SUITE_B1/test-fx-g.sh"
-cp "$SUITE_B1/test-fx-g.sh" "$FIXTURE/spira/test-fx-g.sh"
 
 cat > "$SUITE_B1/test-fx-u.sh" << 'EOF'
 #!/usr/bin/env bash
 printf '  ok    test-fx-u ran\n'; exit 0
 EOF
 chmod +x "$SUITE_B1/test-fx-u.sh"
-cp "$SUITE_B1/test-fx-u.sh" "$FIXTURE/spira/test-fx-u.sh"
 
 RESULTS_ROOT_B1="$TMP/results-B1"
 rc_b1=0
@@ -292,6 +328,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_B1" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B1" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b1-$$" \
+SPIRA_VERDICT_TTL=0 \
     bash "$BATCH" topic "$FIXTURE" || rc_b1=$?
 
 iszero "B1: batch exits 0 (all green)" "$rc_b1"
@@ -335,7 +372,6 @@ cat > "$SUITE_B2/test-fx-red.sh" << 'EOF'
 printf '  FAIL  test-fx-red: always red\n'; exit 1
 EOF
 chmod +x "$SUITE_B2/test-fx-red.sh"
-cp "$SUITE_B2/test-fx-red.sh" "$FIXTURE/spira/test-fx-red.sh"
 
 RESULTS_ROOT_B2="$TMP/results-B2"
 rc_b2=0
@@ -343,6 +379,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_B2" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B2" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b2-$$" \
+SPIRA_VERDICT_TTL=0 \
     bash "$BATCH" topic "$FIXTURE" || rc_b2=$?
 
 isexit1 "B2: batch exits 1 (red suites — branch fault, distinguishable from harness fault)" \
@@ -374,7 +411,6 @@ cat > "$SUITE_B3/test-fx-ka.sh" << 'EOF'
 printf '  ok    test-fx-ka ran\n'; exit 0
 EOF
 chmod +x "$SUITE_B3/test-fx-ka.sh"
-cp "$SUITE_B3/test-fx-ka.sh" "$FIXTURE/spira/test-fx-ka.sh"
 
 cat > "$SUITE_B3/test-fx-kb.sh" << 'EOF'
 #!/usr/bin/env bash
@@ -382,7 +418,6 @@ cat > "$SUITE_B3/test-fx-kb.sh" << 'EOF'
 sleep 120; exit 0
 EOF
 chmod +x "$SUITE_B3/test-fx-kb.sh"
-cp "$SUITE_B3/test-fx-kb.sh" "$FIXTURE/spira/test-fx-kb.sh"
 
 cat > "$SUITE_B3/test-fx-kc.sh" << 'EOF'
 #!/usr/bin/env bash
@@ -390,7 +425,6 @@ cat > "$SUITE_B3/test-fx-kc.sh" << 'EOF'
 printf '  ok    test-fx-kc ran\n'; exit 0
 EOF
 chmod +x "$SUITE_B3/test-fx-kc.sh"
-cp "$SUITE_B3/test-fx-kc.sh" "$FIXTURE/spira/test-fx-kc.sh"
 
 KILL_INSTANCE="b3k-$$"
 KILL_CNAME="spira-batch-${KILL_INSTANCE}"
@@ -401,6 +435,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_B3" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B3" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="$KILL_INSTANCE" \
+SPIRA_VERDICT_TTL=0 \
     bash "$BATCH" --mode serial topic "$FIXTURE" &
 BATCH_PID=$!
 
@@ -479,6 +514,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_B4" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B4" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b4-$$" \
+SPIRA_VERDICT_TTL=0 \
     bash "$BATCH" topic "$FIXTURE" || rc_b4=$?
 
 iszero "B4: exits 0 with no spira.conf (SPIRA_CONF=/nonexistent)" "$rc_b4"
@@ -524,6 +560,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_B5b" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B5b" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b5b-$$" \
+SPIRA_VERDICT_TTL=0 \
     bash "$BATCH" --suites test-fx-ka.sh topic "$FIXTURE" || rc_b5b=$?
 iszero "B5b: --suites run exits 0" "$rc_b5b"
 
@@ -546,7 +583,6 @@ cat > "$SUITE_B5c/test-fx-p.sh" << 'EOF'
 printf '  ok    test-fx-p ran\n'; exit 0
 EOF
 chmod +x "$SUITE_B5c/test-fx-p.sh"
-cp "$SUITE_B5c/test-fx-p.sh" "$FIXTURE/spira/test-fx-p.sh"
 
 RESULTS_ROOT_B5c="$TMP/results-B5c"
 rc_b5c=0
@@ -554,6 +590,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_B5c" \
 SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B5c" \
 SPIRA_BATCH_SKIP_INSTALL=1 \
 SPIRA_BATCH_INSTANCE="b5c-$$" \
+SPIRA_VERDICT_TTL=0 \
     bash "$BATCH" topic "$FIXTURE" || rc_b5c=$?
 iszero "B5c: all-fallback run exits 0" "$rc_b5c"
 
@@ -606,6 +643,7 @@ b6a_out="$(
     SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B6a" \
     SPIRA_BATCH_SKIP_INSTALL=1 \
     SPIRA_BATCH_INSTANCE="b6a-$$" \
+    SPIRA_VERDICT_TTL=0 \
         bash "$BATCH" topic "$FIXTURE" 2>/dev/null
 )" || rc_b6a=$?
 iszero "B6a: batch exits 0 with stubbed nproc=7" "$rc_b6a"
@@ -626,6 +664,7 @@ b6b_out="$(
     SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B6b" \
     SPIRA_BATCH_SKIP_INSTALL=1 \
     SPIRA_BATCH_INSTANCE="b6b-$$" \
+    SPIRA_VERDICT_TTL=0 \
         bash "$BATCH" topic "$FIXTURE" 2>/dev/null
 )" || rc_b6b=$?
 iszero "B6b: batch exits 0 with SPIRA_BATCH_MAXPAR=3 from spira.conf" "$rc_b6b"

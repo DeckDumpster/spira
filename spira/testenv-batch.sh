@@ -172,9 +172,32 @@ if [ -z "$BASE" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# SUITE DIRECTORY — where to find test-*.sh on the host.
+# BRANCH WORKTREE — test the branch, not the production checkout.
+# Created under the sanctioned root ($SPIRA_RUN/worktree); cleaned on exit.
+# Using $$ for uniqueness; a stale entry from a prior crash is pruned first.
 # ---------------------------------------------------------------------------
-SUITE_DIR="${SPIRA_BATCH_SUITE_DIR:-$HERE}"
+BRANCH_WT="$SPIRA_RUN/worktree/.testbatch-$$"
+mkdir -p "$SPIRA_RUN/worktree" 2>/dev/null || {
+    printf 'batch: cannot create worktree directory %s\n' "$SPIRA_RUN/worktree" >&2
+    exit 2
+}
+git -C "$REPO" worktree prune 2>/dev/null || true
+git -C "$REPO" worktree add -q --detach "$BRANCH_WT" "$BR" 2>/dev/null || {
+    printf 'batch: cannot create worktree for %s in %s\n' "$BR" "$REPO" >&2
+    exit 2
+}
+_wt_cleanup() {
+    git -C "$REPO" worktree remove -f "$BRANCH_WT" 2>/dev/null || true
+    rm -rf "$BRANCH_WT" 2>/dev/null || true
+}
+trap _wt_cleanup EXIT INT TERM
+
+# ---------------------------------------------------------------------------
+# SUITE DIRECTORY — where to find test-*.sh on the host.
+# Defaults to the branch worktree's spira/ dir so suite scripts and the code
+# under test both come from the same tree (the branch, not $HERE).
+# ---------------------------------------------------------------------------
+SUITE_DIR="${SPIRA_BATCH_SUITE_DIR:-$BRANCH_WT/spira}"
 
 # ---------------------------------------------------------------------------
 # SUITE SELECTION — a list from one source at a time:
@@ -256,6 +279,7 @@ else
         --base "$BASE" \
         --head "${SPIRA_GATE_SELECT_HEAD:-$BR}" \
         --repo "$REPO" \
+        --suite-dir "$SUITE_DIR" \
         --no-all-fallback \
         --mode-file "$_mf" \
         2>/dev/null || true)"
@@ -351,7 +375,7 @@ if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ] && \
    [ -r "$VERDICT_DIR/batch-$BATCH_KEY" ]; then
     _cached_at="" _cached_when="" _cached_by="" _cached_verdict="" _cached_red_suites=""
     # shellcheck disable=SC1090
-    eval "$(sed -n 's/^\(when\|by\|at\|verdict\|red_suites\)=\(.*\)$/cached_\1="\2"/p' \
+    eval "$(sed -n 's/^\(when\|by\|at\|verdict\|red_suites\)=\(.*\)$/_cached_\1="\2"/p' \
         "$VERDICT_DIR/batch-$BATCH_KEY" 2>/dev/null)"
     _age=-1
     case "${_cached_at:-}" in ''|*[!0-9]*) : ;; *) _age=$(( $(date +%s) - _cached_at )) ;; esac
@@ -421,6 +445,7 @@ _par_tmp=""  # set in parallel block; empty means serial mode was used
 
 _batch_cleanup() {
     bash "$TESTENV" down --name "$CNAME" >/dev/null 2>&1 || true
+    _wt_cleanup
     rm -f "$_batch_tmp"
     [ -n "$_par_tmp" ] && rm -rf "$_par_tmp" || true
 }
@@ -429,8 +454,8 @@ trap _batch_cleanup EXIT INT TERM
 # ---------------------------------------------------------------------------
 # CONTAINER UP
 # ---------------------------------------------------------------------------
-log "batch: starting container $CNAME (checkout $REPO)"
-bash "$TESTENV" up --name "$CNAME" --checkout "$REPO" >&2 || {
+log "batch: starting container $CNAME (branch $BR)"
+bash "$TESTENV" up --name "$CNAME" --checkout "$BRANCH_WT" >&2 || {
     log "batch: container $CNAME did not come up"
     exit 2
 }
