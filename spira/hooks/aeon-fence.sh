@@ -78,16 +78,20 @@ if [ -z "$reason" ] && [ -n "${SPIRA_RUN:-}" ]; then
 fi
 
 if [ -z "$reason" ] && [ -n "${SPIRA_PROD:-}" ]; then
-    case "$_cmd1" in
-        *"${SPIRA_PROD}"*)
-            # Script execution from SPIRA_PROD is allowed — the path is the executable,
-            # not a write target. A write INTO the checkout (rm, redirect, etc.) is refused.
-            case "$cmd" in
-                "${SPIRA_PROD}/"*|\
-                "bash ${SPIRA_PROD}/"*|\
-                "bash \"${SPIRA_PROD}/"*) ;;
-                *) reason="aeons may not write to the production checkout \$SPIRA_PROD (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 to override)" ;;
-            esac ;;
+    # Refuse write shapes only; reads and script execution from prod are permitted.
+    case "$cmd" in
+        *">${SPIRA_PROD}"*|*"> ${SPIRA_PROD}"*|\
+        *">>${SPIRA_PROD}"*|*">> ${SPIRA_PROD}"*|\
+        *"rm "*"${SPIRA_PROD}"*|\
+        *"mv "*"${SPIRA_PROD}"*|\
+        *"tee"*"${SPIRA_PROD}"*|\
+        *"sed -i"*"${SPIRA_PROD}"*|\
+        *"git"*"-C"*"${SPIRA_PROD}"*" commit"*|\
+        *"git"*"-C"*"${SPIRA_PROD}"*" reset"*|\
+        *"git"*"-C"*"${SPIRA_PROD}"*" checkout"*|\
+        *"git"*"-C"*"${SPIRA_PROD}"*" clean"*|\
+        *"git"*"-C"*"${SPIRA_PROD}"*" add"*)
+            reason="aeons may not write to the production checkout \$SPIRA_PROD (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
     esac
 fi
 

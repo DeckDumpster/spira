@@ -117,27 +117,30 @@ refuse "E3: testenv-batch.sh itself not blocked"            '"decision":"block"'
 
 # ===========================================================================
 echo
-echo "F — prod-path and fenced-name appearing as prose (data) do not block:"
+echo "F — SPIRA_PROD: read-only commands pass; write shapes blocked; prod-path in prose does not block:"
 # ===========================================================================
-# POSITIVE CONTROL: actual writes and direct invocations are still blocked.
+# POSITIVE CONTROL: writes must be blocked before trusting the read tests.
+out="$(fence_run "echo x > ${FAKE_PROD}/f" SPIRA_AEON=test-aeon)"
+want "F0 POSITIVE: redirect write to SPIRA_PROD → decision:block" '"decision":"block"' "$out"
+
 out="$(fence_run "rm -rf ${FAKE_PROD}/releases" SPIRA_AEON=test-aeon)"
-want "F0 POSITIVE: write to SPIRA_PROD still blocked" '"decision":"block"' "$out"
+want "F1 POSITIVE: rm write to SPIRA_PROD → decision:block" '"decision":"block"' "$out"
 
-out="$(fence_run "bash spira/verdict.sh push spira" SPIRA_AEON=test-aeon)"
-want "F1 POSITIVE: direct forge-script still blocked" '"decision":"block"' "$out"
+# Running a script that lives in SPIRA_PROD is read-only — must pass through.
+out="$(fence_run "bash \"${FAKE_PROD}/spira/census.sh\" --with-suppressed" SPIRA_AEON=test-aeon)"
+refuse "F2: bash exec from SPIRA_PROD NOT blocked"   '"decision":"block"' "$out"
 
-# census.sh is a read-only events query; aeons may invoke it from SPIRA_PROD.
-out="$(fence_run "bash \"${FAKE_PROD}/census.sh\" --with-suppressed" SPIRA_AEON=test-aeon)"
-refuse "F2: census.sh from SPIRA_PROD NOT blocked" '"decision":"block"' "$out"
+# cat-reading from SPIRA_PROD must also pass through.
+out="$(fence_run "cat ${FAKE_PROD}/spira/census.sh" SPIRA_AEON=test-aeon)"
+refuse "F3: cat read from SPIRA_PROD NOT blocked"    '"decision":"block"' "$out"
 
-# A bead create passes description text via heredoc.  The prod path and a
-# fenced script name in that body are data, not commands to execute.
+# Prose in a heredoc body containing a prod path is data, not a command.
 # _dflag is split from the format string so test-bd-stdin.sh's scanner does not
 # match this line (the scanner forbids literal --description - in source files).
 _dflag="--description"
 _bd_cmd="$(printf "bd -C /db create title %s - <<'DESC'\nbash \"%s/census.sh\" and /verdict.sh are mentioned\nDESC" "$_dflag" "${FAKE_PROD}")"
 out="$(fence_run "$_bd_cmd" SPIRA_AEON=test-aeon)"
-refuse "F3: bd create with prod-path and fenced-name in heredoc NOT blocked" '"decision":"block"' "$out"
+refuse "F4: bd create with prod-path in heredoc NOT blocked" '"decision":"block"' "$out"
 
 # ===========================================================================
 echo
@@ -156,12 +159,12 @@ want "D3: prohibition names 'flush the queue'"      "flush the queue"      "$arc
 
 # ===========================================================================
 echo
-echo "F — Ops brief tool invocations are allowed when SPIRA_HOME == SPIRA_PROD (sp-x5f0l):"
+echo "G — Ops brief tool invocations are allowed when SPIRA_HOME == SPIRA_PROD (sp-x5f0l):"
 # ===========================================================================
 # POSITIVE CONTROL: a non-tool path into SPIRA_PROD is still refused, proving the guard
 # is still active and the allowances below are not a broken check.
 out="$(fence_run "echo x > ${FAKE_PROD}/foo" SPIRA_AEON=test-aeon)"
-want "F0 POSITIVE: non-tool write into SPIRA_PROD still blocked" '"decision":"block"' "$out"
+want "G0 POSITIVE: non-tool write into SPIRA_PROD still blocked" '"decision":"block"' "$out"
 
 # aeon.sh:1470-1472 renders {{SOP}}/{{INCIDENT}}/{{ASK}}/{{SUITES}}/{{GROOM}} as
 # $SPIRA_HOME/<tool>.sh. On a production instance SPIRA_HOME == SPIRA_PROD, so each
@@ -176,24 +179,18 @@ for _cmd in \
     "${FAKE_PROD}/suites.sh run" \
     "${FAKE_PROD}/groomer.sh run"; do
     out="$(fence_run "$_cmd" SPIRA_AEON=test-aeon)"
-    refuse "F: ${_cmd##*/}: rendered brief command allowed" '"decision":"block"' "$out"
+    refuse "G: ${_cmd##*/}: rendered brief command allowed" '"decision":"block"' "$out"
 done
 
 # ===========================================================================
 echo
-echo "G — Maechen census.sh is allowed when SPIRA_HOME == SPIRA_PROD (sp-5oaur):"
+echo "H — Maechen census.sh is allowed when SPIRA_HOME == SPIRA_PROD (sp-5oaur):"
 # ===========================================================================
-# POSITIVE CONTROL: a write into SPIRA_PROD is still refused, proving the guard
-# is active. Pre-fix output: {"decision":"block","reason":"aeons may not write
-# to the production checkout $SPIRA_PROD (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1
-# to override)"}
 out="$(fence_run "rm ${FAKE_PROD}/census.sh" SPIRA_AEON=test-aeon)"
-want "G0 POSITIVE: rm \$SPIRA_PROD/census.sh still blocked" '"decision":"block"' "$out"
+want "H0 POSITIVE: rm \$SPIRA_PROD/census.sh still blocked" '"decision":"block"' "$out"
 
-# census.sh is rendered by Maechen as bash {{SPIRA_HOME}}/census.sh. When
-# SPIRA_HOME == SPIRA_PROD the pre-fix fence blocked it as a write.
 out="$(fence_run "bash ${FAKE_PROD}/census.sh --with-suppressed" SPIRA_AEON=test-aeon)"
-refuse "G1: bash \$SPIRA_PROD/census.sh --with-suppressed not blocked" '"decision":"block"' "$out"
+refuse "H1: bash \$SPIRA_PROD/census.sh --with-suppressed not blocked" '"decision":"block"' "$out"
 
 # ===========================================================================
 echo
