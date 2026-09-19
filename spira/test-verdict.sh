@@ -7,7 +7,8 @@
 #   2. Pending within CI max → nothing happens.
 #   3. Pending, run old and stuck → run cancelled explicitly; no workflow-rerun.
 #   4. Harness fault, retries remaining → re-run called, counter bumped.
-#   5. Harness fault, retries exhausted → mail sent to operator.
+#   5. Harness fault, retries exhausted → PR closed, members CERTIFIED, batch
+#      removed, mail sent once; second pass sends no second mail.
 #   6. Green, base unchanged, flaky annotation → fast-forward push; members LANDED;
 #      flake observed; batch record removed.
 #   7. Green, base moved → PR closed; members returned to CERTIFIED; batch removed.
@@ -296,16 +297,29 @@ is   "4. harness-fault: retries=2" "2" \
 clean_case
 
 # =============================================================================
-# 5. HARNESS FAULT, RETRIES EXHAUSTED — mail sent; no re-run.
+# 5. HARNESS FAULT, RETRIES EXHAUSTED — PR closed, members CERTIFIED, batch
+#    removed, mail sent once; a second verdict pass sends no second mail.
+#    POSITIVE CONTROL: case 4 proves the retry path increments the counter;
+#    this case proves the exhausted path clears the batch so no re-mail occurs.
 # =============================================================================
 build_batch sp-vd-e1 sp-vd-e2 > /dev/null
 { grep -v '^retries=' "$(batch_file)"; printf 'retries=2\n'; } \
     > "$(batch_file).$$" && mv -f "$(batch_file).$$" "$(batch_file)"
 printf 'harness_fault\n' > "$FORGE_STATUS_FILE"
 out="$(verdict "$REPONAME")"
-nowant "5. exhausted: no rerun"  "rerun"         "$(cat "$FORGE_LOG")"
-want "5. exhausted: mail sent"   "send operator" "$(cat "$MAIL_LOG")"
-want "5. exhausted: reported"    "retries exhausted" "$out"
+nowant "5. exhausted: no rerun"         "rerun"             "$(cat "$FORGE_LOG")"
+want "5. exhausted: mail sent"          "send operator"     "$(cat "$MAIL_LOG")"
+want "5. exhausted: pr-close called"    "close"             "$(cat "$FORGE_LOG")"
+is   "5. exhausted: batch record removed" "0" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+case "$(landstate sp-vd-e1)" in CERTIFIED*) ok "5. exhausted: sp-vd-e1 CERTIFIED" ;;
+    *) bad "5. exhausted: sp-vd-e1 CERTIFIED" "got: $(landstate sp-vd-e1)" ;; esac
+case "$(landstate sp-vd-e2)" in CERTIFIED*) ok "5. exhausted: sp-vd-e2 CERTIFIED" ;;
+    *) bad "5. exhausted: sp-vd-e2 CERTIFIED" "got: $(landstate sp-vd-e2)" ;; esac
+want "5. exhausted: reported"           "retries exhausted" "$out"
+# Second pass: batch is gone; no second mail.
+: > "$MAIL_LOG"
+verdict "$REPONAME" > /dev/null
+nowant "5. exhausted: no second mail"   "send operator"     "$(cat "$MAIL_LOG")"
 clean_case
 
 # =============================================================================
