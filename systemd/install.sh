@@ -837,8 +837,9 @@ for u in $({ systemctl --user list-unit-files --no-legend \
     case "$u" in spira-watch-*) continue ;; esac   # handled by the watcher prune above
     case "$u" in spira-aeon-*) continue ;; esac    # transient; not in UNITS
     case "$_expected_units" in *" $u "*) continue ;; esac
-    systemctl --user disable --now "$u" >/dev/null 2>&1 && \
-        { rm -f "$DEST/$u"; echo "pruned    $u (no longer in the manifest)"; }
+    systemctl --user disable --now "$u" >/dev/null 2>&1 || true
+    rm -f "$DEST/$u"
+    echo "pruned    $u (no longer in the manifest)"
 done
 unset _eu _expected_units
 

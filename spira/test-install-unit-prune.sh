@@ -128,11 +128,10 @@ EOF
 systemctl --user daemon-reload
 systemctl --user enable "$ORPHAN_UNIT" 2>/dev/null || true
 
-_pre="$(systemctl --user is-enabled "$ORPHAN_UNIT" 2>/dev/null || true)"
-if [ "$_pre" = "enabled" ]; then
-    ok "fail-first: orphan unit is enabled before prune"
+if [ -f "$DEST/$ORPHAN_UNIT" ]; then
+    ok "fail-first: orphan unit file is in DEST before prune"
 else
-    bad "fail-first: orphan unit is enabled before prune" "state=$_pre"
+    bad "fail-first: orphan unit file is in DEST before prune" "file not found"
 fi
 
 prune_out="$(inst)"
