@@ -86,6 +86,8 @@ case "$*" in
         # jq-extracted value, not the JSON object; that is what real gh outputs with --jq.
         printf '%s\n' "${GH_ALLOW_AUTO_MERGE:-true}"
         printf '%s\n' "${GH_ALLOW_AUTO_MERGE:-true}" > "${GH_AAM_OUT:-/dev/null}" ;;
+    *"pr view"*"--json mergeable"*)
+        printf '%s\n' "${GH_MERGEABLE:-MERGEABLE}" ;;
     *"pr merge"*"--auto"*)
         printf '%s\n' "$*" >> "${GH_PR_MERGE_LOG:-/dev/null}" ;;
     *) : ;;
@@ -117,6 +119,7 @@ psc() {  # psc [VAR=val...]
         SPIRA_GH="$GH_BIN" \
         GH_LOG="$TMP/gh.log" \
         GH_ALLOW_AUTO_MERGE="${GH_ALLOW_AUTO_MERGE:-false}" \
+        GH_MERGEABLE="${GH_MERGEABLE:-MERGEABLE}" \
         GH_AAM_OUT="$TMP/gh-aam-out" \
         GH_PR_MERGE_LOG="$GH_PR_MERGE_LOG" \
         INC_SUBJECTS="$INC_SUBJECTS" \
@@ -179,6 +182,20 @@ arm_log="$(cat "$GH_PR_MERGE_LOG" 2>/dev/null)"
 want   "arm command was called"            "pr merge"       "$arm_log"
 want   "arm command targets the bead branch" "spira/sp-test2" "$arm_log"
 nowant "no incident filed when arming"    "PR STALL"       "$(cat "$INC_SUBJECTS")"
+
+# ====================================================================================
+echo
+echo "allow_auto_merge=true + CONFLICTING: landstate cleared, arm not called"
+# POSITIVE CONTROL for the conflicting-PR path. A CONFLICTING PR will never merge
+# until rebased; arming auto-merge does not help. Clearing the landstate lets
+# landing.sh's needs_refresh trigger a rebase on the next pass.
+# ====================================================================================
+fresh
+plant_stale sp-testC
+GH_ALLOW_AUTO_MERGE=true GH_MERGEABLE=CONFLICTING psc
+is "landstate cleared for CONFLICTING"  "" "$([ -f "$TMP/run/landstate/sp-testC" ] && echo exists)"
+nowant "no arm call for CONFLICTING"    "pr merge" "$(cat "$GH_PR_MERGE_LOG")"
+nowant "no incident for CONFLICTING"    "PR STALL" "$(cat "$INC_SUBJECTS")"
 
 # ====================================================================================
 echo

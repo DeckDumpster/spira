@@ -564,11 +564,23 @@ if [ "${1:-}" = "--pr-stall-check" ]; then
                     - >/dev/null || true
                 log "watchtower: pr-stall-check: ${_psc_repo} allow_auto_merge=false (bead ${_psc_id}, age ${_psc_age}s) — escalated"
             else
-                ( cd "$_psc_repo_path" && \
-                    timeout "${GH_TIMEOUT:-120}" "$_psc_gh" pr merge --auto --squash \
-                        "spira/$_psc_id" >/dev/null 2>&1 ) \
-                    && log "watchtower: pr-stall-check: armed auto-merge for ${_psc_id} in ${_psc_repo}" \
-                    || log "watchtower: pr-stall-check: could not arm auto-merge for ${_psc_id} in ${_psc_repo} (age ${_psc_age}s)"
+                # CONFLICTING PR: clear the landstate so landing.sh rebases and re-pushes on
+                # the next pass. landing.sh's needs_refresh detects a base that has moved out
+                # from under the PR branch and force-pushes a fresh rebase; removing the
+                # REBASED landstate unblocks CHECK 5's guard so the branch re-enters the pass.
+                _psc_mergeable="$(cd "$_psc_repo_path" && \
+                    timeout "${GH_TIMEOUT:-120}" "$_psc_gh" pr view "spira/$_psc_id" \
+                        --json mergeable --jq .mergeable 2>/dev/null || true)"
+                if [ "${_psc_mergeable:-}" = "CONFLICTING" ]; then
+                    rm -f "$_psc_f"
+                    log "watchtower: pr-stall-check: ${_psc_id} in ${_psc_repo} is CONFLICTING — cleared landstate to trigger rebase"
+                else
+                    ( cd "$_psc_repo_path" && \
+                        timeout "${GH_TIMEOUT:-120}" "$_psc_gh" pr merge --auto --squash \
+                            "spira/$_psc_id" >/dev/null 2>&1 ) \
+                        && log "watchtower: pr-stall-check: armed auto-merge for ${_psc_id} in ${_psc_repo}" \
+                        || log "watchtower: pr-stall-check: could not arm auto-merge for ${_psc_id} in ${_psc_repo} (age ${_psc_age}s)"
+                fi
             fi
         done < <(find "$SPIRA_RUN/landstate" -maxdepth 1 -type f 2>/dev/null)
     fi
