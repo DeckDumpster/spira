@@ -959,13 +959,22 @@ next_section() {
         unread_row NEXT "cannot read the ready queue"
         return
     fi
+    # N ready · M reachable [· K stranded]: the three numbers that say whether the loop
+    # will drain everything on its own, or stall on something that needs a human.
+    # SP_REACHABLE=? means the probe failed — show ? rather than omitting the column.
+    # SP_STRANDED=0 or ? suppresses the stranded clause (0 is normal, ? is unread).
+    local _reach="${SP_REACHABLE:-?}" _strand="${SP_STRANDED:-?}"
+    local _count_line="${SP_NEXT_N} ready · ${_reach} reachable"
+    if [ "$_strand" != "?" ] && [ "$_strand" != "0" ] 2>/dev/null; then
+        _count_line="$_count_line · $_strand stranded"
+    fi
     if [ "${SP_NEXT_N}" -eq 0 ] 2>/dev/null; then
-        printf ' %sNEXT%s   %s0 ready%s %s— nothing to claim%s\n' \
-            "$C_DIM" "$C_RST" "$C_B" "$C_RST" "$C_DIM" "$C_RST"
+        printf ' %sNEXT%s   %s%s%s %s— nothing to claim%s\n' \
+            "$C_DIM" "$C_RST" "$C_B" "$_count_line" "$C_RST" "$C_DIM" "$C_RST"
         return
     fi
-    printf ' %sNEXT%s   %s%s ready%s %s— across all partitions:%s\n' "$C_DIM" "$C_RST" \
-        "$C_B" "${SP_NEXT_N}" "$C_RST" "$C_DIM" "$C_RST"
+    printf ' %sNEXT%s   %s%s%s %s— across all partitions:%s\n' "$C_DIM" "$C_RST" \
+        "$C_B" "$_count_line" "$C_RST" "$C_DIM" "$C_RST"
     local i=0 raw
     while [ "$i" -lt "$MAX_NEXT_ROWS" ]; do
         eval "raw=\${SP_NEXT$i:-}"
