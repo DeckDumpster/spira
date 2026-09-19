@@ -854,5 +854,111 @@ fi
 
 # ==========================================================================
 echo
+echo "PROPERTY 18: rollback converges on prior release unit set"
+# After a failed deploy, rollback must (a) call install.sh to render the prior
+# release's unit set (pruning units the new release added), and (b) re-enable
+# units that were enabled before the deploy but that the incoming release's
+# install disabled by pruning them from its manifest.
+# FAIL-FIRST: current _rollback() for the prev_release path does not call
+# install.sh and has no enable-state restore — both assertions catch the gap.
+# ==========================================================================
+
+UNIT_Y="spira-watch-answers-prod.service"   # enabled before deploy, dropped by B's install
+BIN_P18="$TMP/bin-p18"
+CALL_P18="$TMP/calls-p18.log"
+SC_P18_LOG="$TMP/sc-p18.log"
+mkdir -p "$BIN_P18"
+
+# Stateful mock systemctl for this property:
+#   list-unit-files --no-legend  → Y is enabled (pre-deploy snapshot)
+#   is-enabled Y                 → disabled (B's install pruned Y; rollback install leaves it)
+#   enable --now Y               → logged (deploy.sh restore step)
+#   list-units --state=active    → one sentinel unit (for the normal rollback restart path)
+cat > "$BIN_P18/systemctl" <<SCEOF
+#!/usr/bin/env bash
+printf 'SC %s\n' "\$*" >> "${SC_P18_LOG}"
+case "\$*" in
+    *"list-unit-files"*"--no-legend"*)
+        printf '%s enabled\n' "${UNIT_Y}"
+        ;;
+    *"is-enabled"*"${UNIT_Y}"*)
+        printf 'disabled\n'
+        ;;
+    *"list-units"*) printf 'spira-sentinel-prod.service loaded active running\n' ;;
+esac
+exit 0
+SCEOF
+chmod +x "$BIN_P18/systemctl"
+
+# Mock install.sh: logs the call but does not re-enable Y, simulating that rollback's
+# install.sh sees Y as operator-disabled and leaves it alone (the bug this bead fixes).
+cat > "$BIN_P18/install.sh" <<IEOF
+#!/usr/bin/env bash
+printf 'install SPIRA_PROD=%s\n' "\${SPIRA_PROD:-UNSET}" >> "${CALL_P18}"
+exit "\${INSTALL_EXIT:-0}"
+IEOF
+chmod +x "$BIN_P18/install.sh"
+
+# Symlink the other mocks from BIN into BIN_P18.
+for _m in world.sh activate.sh layout.sh doctor.sh skew.sh slay.sh gh bd; do
+    [ -f "$BIN/$_m" ] && ln -sf "$BIN/$_m" "$BIN_P18/$_m"
+done
+unset _m
+
+# FAIL-FIRST: without a health failure, no rollback occurs and install.sh is only called
+# once (for the deploy, not for rollback). Verify the positive control works.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$PRIOR_RELEASE"
+ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+> "$CALL_P18"; > "$SC_P18_LOG"
+
+_out="$(run_deploy \
+    "SPIRA_SYSTEMCTL=$BIN_P18/systemctl" \
+    "SPIRA_INSTALL_SH=$BIN_P18/install.sh" \
+    -- "$NEW_TAG" 2>&1)"
+_rc=$?
+is0 "p18/fail-first: healthy deploy exits 0" "$_rc"
+_p18_install_calls="$(grep -c '^install SPIRA_PROD=' "$CALL_P18" 2>/dev/null || echo 0)"
+if [ "$_p18_install_calls" -eq 1 ]; then
+    ok "p18/fail-first: install.sh called once on healthy deploy (positive control)"
+else
+    bad "p18/fail-first: install.sh called once on healthy deploy" \
+        "got $_p18_install_calls call(s)"
+fi
+
+# Now test the rollback path: health check fails → rollback triggered.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$PRIOR_RELEASE"
+ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+> "$CALL_P18"; > "$SC_P18_LOG"
+
+_out="$(run_deploy \
+    "SPIRA_SYSTEMCTL=$BIN_P18/systemctl" \
+    "SPIRA_INSTALL_SH=$BIN_P18/install.sh" \
+    "DOCTOR_EXIT=1" \
+    -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0 "p18: rollback exits non-zero" "$_rc"
+want "p18: mentions ROLLBACK" "ROLLBACK" "$_out"
+
+# install.sh must be called a second time during rollback (first call is the deploy render).
+_p18_install_calls="$(grep -c '^install SPIRA_PROD=' "$CALL_P18" 2>/dev/null || echo 0)"
+if [ "$_p18_install_calls" -ge 2 ]; then
+    ok "p18: install.sh called during rollback (unit-set convergence)"
+else
+    bad "p18: install.sh called during rollback" \
+        "only $_p18_install_calls install call(s) — rollback did not run install.sh"
+fi
+
+# The restore step must re-enable Y (it was enabled before deploy, disabled by B's install).
+if grep -qF "SC --user enable --now ${UNIT_Y}" "$SC_P18_LOG" 2>/dev/null; then
+    ok "p18: pre-deploy-enabled unit Y re-enabled after rollback"
+else
+    bad "p18: pre-deploy-enabled unit Y re-enabled after rollback" \
+        "no 'enable --now ${UNIT_Y}' in systemctl log — enable-state restore missing"
+fi
+
+# ==========================================================================
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

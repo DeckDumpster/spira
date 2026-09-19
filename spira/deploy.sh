@@ -269,6 +269,15 @@ printf '' > "$_tags_probe" || {
 rm -f "$_tags_probe"
 unset _tags_dir _tags_probe
 
+# Snapshot which spira units are currently enabled. Rollback uses this to restore units
+# that the incoming release drops from its manifest (they get pruned by the new install.sh
+# and left disabled, then the rollback's install.sh sees them as operator-disabled).
+_pre_deploy_unit_state="$SPIRA_RUN/pre-deploy-unit-state.$$"
+"$_SC" --user list-unit-files --no-legend \
+    "spira-*-${SPIRA_INSTANCE}.service" \
+    "spira-*-${SPIRA_INSTANCE}.timer" 2>/dev/null \
+    > "$_pre_deploy_unit_state" 2>/dev/null || true
+
 # Drain: wait for live aeons to finish; refuse if they do not.
 # With --force: set the gate immediately, then slay any remaining aeons.
 log "deploy: draining"
@@ -302,11 +311,23 @@ _rollback() {
         ln -s "$prev_release" "$_tmp" && mv -T "$_tmp" "$SPIRA_RELEASES/current" || {
             printf 'deploy: rollback: symlink swap failed\n' >&2
         }
-        "$_SC" --user daemon-reload 2>/dev/null || true
-        "$_SC" --user list-units "spira-*-${SPIRA_INSTANCE}.service" \
-            --state=active --no-legend 2>/dev/null \
-            | awk '{print $1}' | grep -v "spira-aeon-" \
-            | xargs -r "$_SC" --user restart 2>/dev/null || true
+        # Re-render units against the prior release, pruning units the newer release added.
+        SPIRA_PROD="$SPIRA_RELEASES/current/spira" SPIRA_INSTALL_FORCE=1 \
+            bash "$_INSTALL" 2>/dev/null || true
+        # Restore units that were enabled before the deploy but that the incoming release's
+        # install disabled (by pruning them from its manifest). install.sh treats a disabled
+        # unit as operator-disabled and leaves it alone, so we must restore from the snapshot.
+        if [ -f "${_pre_deploy_unit_state:-}" ]; then
+            while IFS= read -r _pdu_line; do
+                _pdu_u="${_pdu_line%% *}"
+                _pdu_s="${_pdu_line##* }"
+                [ "${_pdu_s}" = "enabled" ] || continue
+                _pdu_now="$("$_SC" --user is-enabled "$_pdu_u" 2>/dev/null || true)"
+                [ "$_pdu_now" = "disabled" ] || continue
+                "$_SC" --user enable --now "$_pdu_u" 2>/dev/null || true
+            done < "${_pre_deploy_unit_state}"
+            rm -f "${_pre_deploy_unit_state}" 2>/dev/null || true
+        fi
         "$_WORLD" resume 2>/dev/null || true
         printf 'deploy: restored %s\n' "$prev_release" >&2
     else
@@ -378,4 +399,5 @@ mv "${_conf_path}.new.$$" "$_conf_path" \
     || log "deploy: WARN: could not write SPIRA_PROD to $_conf_path — fix manually"
 log "deploy: spira.conf updated — SPIRA_PROD = $SPIRA_RELEASES/current/spira"
 
+rm -f "${_pre_deploy_unit_state:-}" 2>/dev/null || true
 log "deploy: $release_stem active"
