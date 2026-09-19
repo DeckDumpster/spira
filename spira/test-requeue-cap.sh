@@ -158,19 +158,58 @@ want "the escalation names the reopen count" \
 nowant "requeue thrash does not add spira-poison" \
        "spira-poison" "$(labels_of sp-rq-at)"
 
-# DEDUP — same count on a second pass must not re-mail (positive control: a new count does).
+# DEDUP — per-bead: once asked, no re-mail even at a new count (positive control below).
+# POSITIVE CONTROL: the first-ask assertion above proves the check can detect mail.
+# This section proves a new count does NOT re-mail — an assertion that FAILS against
+# the old per-(bead,count) requeue_asked, establishing it can distinguish old from new.
 echo
-echo "requeue dedup — same count does not re-mail; a new count does:"
+echo "requeue dedup — per-bead: once asked, never re-mailed for higher counts:"
 : > "$MAIL_LOG"
 sentinel >/dev/null 2>&1 || true
 nowant "second pass at count 3 sends no mail (dedup stamp)" \
        "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
 
-reopen_cycle sp-rq-at 1   # count advances to 4; stamp for count 3 must not block it
+reopen_cycle sp-rq-at 1   # count advances to 4
 : > "$MAIL_LOG"
 sentinel >/dev/null 2>&1 || true
-want "count 4 (new value) fires a new escalation" \
+nowant "count 4 (higher count) sends no mail — per-bead dedup, not per-count" \
+       "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+
+# ACCEPTANCE CASE: bead requeued at counts 10, 11, 12, 13 sends exactly one mail.
+# (The incident that filed this bead: four mails in 2h as Ops resumed, one per cycle.)
+echo
+echo "acceptance: counts 10..13 send exactly one mail total:"
+seed_bead sp-rq-multi
+reopen_cycle sp-rq-multi 10
+sentinel >/dev/null 2>&1 || true
+want "count 10 fires the first (and only) escalation" \
      "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+reopen_cycle sp-rq-multi 1; : > "$MAIL_LOG"; sentinel >/dev/null 2>&1 || true
+nowant "count 11 sends no mail (already asked per bead)" \
+       "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+reopen_cycle sp-rq-multi 1; : > "$MAIL_LOG"; sentinel >/dev/null 2>&1 || true
+nowant "count 12 sends no mail" \
+       "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+reopen_cycle sp-rq-multi 1; : > "$MAIL_LOG"; sentinel >/dev/null 2>&1 || true
+nowant "count 13 sends no mail" \
+       "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+
+# delivers:action EXEMPTION — bead whose deliverable is an action never triggers the
+# requeue cap, even when reopened past the threshold.
+echo
+echo "delivers:action — never triggers requeue cap:"
+seed_bead sp-rq-below   # reuse seed helper, then replace the bead with an action bead
+testdb_reset
+rm -rf "$RUN/requeue-asked" "$RUN/reclaim-asked" "$RUN/poison-asked"
+rm -f "$MAIL_LOG"; : > "$MAIL_LOG"
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-11T00:00:00Z"}
+{"id":"sp-rq-act","title":"action bead","status":"open","issue_type":"task","labels":["spira","plan","delivers:action"],"updated_at":"2026-09-11T00:00:00Z"}
+JSONL
+reopen_cycle sp-rq-act 10
+sentinel >/dev/null 2>&1 || true
+nowant "delivers:action bead with 10 reopens sends no requeue mail" \
+       "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
 
 # --------------------------------------------------------------------------------------
 # COUNTERS DO NOT CONFLATE: a bead with no attempt events is not poisoned.

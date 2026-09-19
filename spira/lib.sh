@@ -2177,9 +2177,8 @@ poison_asked_mark() {    # poison_asked_mark <id> <n>
 
 SPIRA_REQUEUE_ASKED="${SPIRA_REQUEUE_ASKED:-$SPIRA_RUN/requeue-asked}"
 
-requeue_asked() {        # requeue_asked <id> <n> -> 0 if this exact (bead, count) already asked
-    local f="$SPIRA_REQUEUE_ASKED/$1"
-    [ -r "$f" ] && grep -qxF -- "$2" "$f" 2>/dev/null
+requeue_asked() {        # requeue_asked <id> -> 0 if this bead already asked
+    [ -s "$SPIRA_REQUEUE_ASKED/$1" ]
 }
 
 requeue_asked_mark() {   # requeue_asked_mark <id> <n>
@@ -2189,9 +2188,8 @@ requeue_asked_mark() {   # requeue_asked_mark <id> <n>
 
 SPIRA_RECLAIM_ASKED="${SPIRA_RECLAIM_ASKED:-$SPIRA_RUN/reclaim-asked}"
 
-reclaim_asked() {        # reclaim_asked <id> <n> -> 0 if this exact (bead, count) already asked
-    local f="$SPIRA_RECLAIM_ASKED/$1"
-    [ -r "$f" ] && grep -qxF -- "$2" "$f" 2>/dev/null
+reclaim_asked() {        # reclaim_asked <id> -> 0 if this bead already asked
+    [ -s "$SPIRA_RECLAIM_ASKED/$1" ]
 }
 
 reclaim_asked_mark() {   # reclaim_asked_mark <id> <n>
