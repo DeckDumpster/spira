@@ -440,6 +440,9 @@ _inst_default="${BATCH_KEY:0:12}"
 [ -n "$_inst_default" ] || _inst_default="$(date +%s)-$$"
 INSTANCE="${SPIRA_BATCH_INSTANCE:-$_inst_default}"
 CNAME="spira-batch-${INSTANCE}"
+# Register with a landing pass so halt can tear us down by name.
+[ -n "${SPIRA_LANDING_CONTAINERS:-}" ] && \
+    printf '%s\n' "$CNAME" >> "$SPIRA_LANDING_CONTAINERS" 2>/dev/null || true
 
 _batch_tmp="$(mktemp)"
 _par_tmp=""  # set in parallel block; empty means serial mode was used
