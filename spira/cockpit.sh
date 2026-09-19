@@ -1558,22 +1558,36 @@ except Exception:
     print("SP_REACHABLE=?"); print("SP_STRANDED=?"); raise SystemExit
 beads = d if isinstance(d, list) else [d]
 bead_by_id = {b["id"]: b for b in beads if b.get("id")}
-all_ids = set(bead_by_id)
+# Work-only universe: ask beads and insights are not stuck work — they have their
+# own panes. Poison and suspended-partition beads stay; those are stuck work.
+INSIGHT = "insight"
+all_ids = {
+    bid for bid, b in bead_by_id.items()
+    if ASK not in (b.get("labels") or []) and INSIGHT not in (b.get("labels") or [])
+}
 
 # blocker_of[X] = open deps blocking X; blocks[Y] = downstream beads Y directly blocks.
+# Ask beads outside all_ids can still appear in blocker_of: a work bead blocked by
+# an ask is stranded until the ask is answered, so we track the edge.
 blocker_of = {bid: set() for bid in all_ids}
 blocks = {bid: set() for bid in all_ids}
 for bead in beads:
+    dn = bead.get("id", "")
+    if dn not in all_ids:
+        continue
     for dep in (bead.get("dependencies") or []):
-        up, dn = dep.get("depends_on_id", ""), bead["id"]
-        if up in all_ids:
+        up = dep.get("depends_on_id", "")
+        if up in bead_by_id:
             blocker_of[dn].add(up)
-            blocks[up].add(dn)
+            if up in all_ids:
+                blocks[up].add(dn)
 
 # Seeds: in_progress beads + open beads with no open blockers, both excluding stoppers.
 seeds = set()
 for bead in beads:
-    bid = bead["id"]
+    bid = bead.get("id", "")
+    if bid not in all_ids:
+        continue
     if is_stopper(bead.get("labels")):
         continue
     st = bead.get("status", "")
