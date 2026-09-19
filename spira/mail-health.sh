@@ -62,6 +62,7 @@ while IFS= read -r _line; do
     printf '## Note\n%s is not reading its mail (%s message(s), oldest %s minutes unread).\n' \
         "$_mb" "$count" "$age_m" \
     | SPIRA_MAIL_LINT_CONSIDERED="mail-health automated" \
+      SPIRA_MAIL_REPEAT_CONSIDERED="mail-health has own dedup" \
       bash "$_here/mail.sh" send operator \
         --from "Mail health <health@spira>" \
         --subject "$_mb is not reading its mail" \

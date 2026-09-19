@@ -158,6 +158,20 @@ want "the escalation names the reopen count" \
 nowant "requeue thrash does not add spira-poison" \
        "spira-poison" "$(labels_of sp-rq-at)"
 
+# DEDUP — same count on a second pass must not re-mail (positive control: a new count does).
+echo
+echo "requeue dedup — same count does not re-mail; a new count does:"
+: > "$MAIL_LOG"
+sentinel >/dev/null 2>&1 || true
+nowant "second pass at count 3 sends no mail (dedup stamp)" \
+       "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+
+reopen_cycle sp-rq-at 1   # count advances to 4; stamp for count 3 must not block it
+: > "$MAIL_LOG"
+sentinel >/dev/null 2>&1 || true
+want "count 4 (new value) fires a new escalation" \
+     "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+
 # --------------------------------------------------------------------------------------
 # COUNTERS DO NOT CONFLATE: a bead with no attempt events is not poisoned.
 # --------------------------------------------------------------------------------------

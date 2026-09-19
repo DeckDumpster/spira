@@ -326,18 +326,20 @@ for id in $dispatchable; do
     # be correct; the queue cannot get it to land. Distinct from poison: no poison label is
     # added; the close cancels the claim in attempts_of so no attempt is charged.
     if [ "$_requeues" -ge "$REQUEUE_AT" ]; then
+        requeue_asked "$id" "$_requeues" && continue
         _rq_causes="$(printf '%s' "$_labels" | sed -n 's/^ *- //p' \
             | grep -E '^sp-requeue-[0-9]+(-|$)' \
             | sed -E 's/^sp-requeue-([0-9]+)$/\1 unrecorded/;s/^sp-requeue-([0-9]+)-(.*)$/\1 \2/' \
             | sort -n | awk '{printf "%s%s x%s", sep, $2, $1; sep=", "} END{printf "\n"}')" || true
         _rq_causes="${_rq_causes:-unrecorded}"
         _rq_subj="Spira bead $id — completed and requeued $_requeues times, never landed (${_rq_causes}) — the harness cannot land it"
-        _rq_dflt="check whether the branch has commits ahead of the base (git log origin/main..spira/$id), resolve the rebase conflict by hand and push, or close the bead if the work already landed under a different id"
+        _rq_dflt="close the bead if its work has already landed under a different id or is no longer needed; file a harness-defect bead if the deliverable was not a commit; otherwise label it needs-rebase so an aeon can resolve the conflict"
         _rq_ev="$(bead_context "$id" 2>/dev/null || printf '(could not read %s)' "$id")
 
 REQUEUES  $_requeues (cap $REQUEUE_AT) — causes: ${_rq_causes}
 ATTEMPTS  $n — distinct from requeues; a requeue is not a failed attempt and was not charged"
-        if [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
+        if [ -x "$SPIRA_HOME/mail.sh" ] && SPIRA_MAIL_REPEAT_CONSIDERED="sentinel-own-dedup" \
+              "$SPIRA_HOME/mail.sh" send operator \
               --from "Sentinel <sentinel@spira>" \
               --subject "$_rq_subj" \
               --kind question \
@@ -348,11 +350,11 @@ $_rq_subj
 ## Default
 $_rq_dflt
 
-$id has been closed by an aeon and reopened by the harness $_requeues times without landing. The work may be correct; something about the queue is preventing it from reaching the base. Every requeue is a full aeon session redone from scratch, spending the account window that limits all throughput.
-
 $_rq_ev
+
+Every additional requeue costs one full aeon session and its context budget; no progress is made toward landing this work.
 MAILEOF
-            :
+            requeue_asked_mark "$id" "$_requeues"
         else
             log "CHECK4 $id: requeue escalation path refused the ask — retries next pass"
         fi
@@ -363,18 +365,20 @@ MAILEOF
     # requeue: the issue is the box, not the queue. No poison label is added — the work is not
     # at fault.
     if [ "$_reclaims" -ge "$RECLAIM_AT" ]; then
+        reclaim_asked "$id" "$_reclaims" && continue
         _rc_causes="$(printf '%s' "$_labels" | sed -n 's/^ *- //p' \
             | grep -E '^sp-reclaim-[0-9]+(-|$)' \
             | sed -E 's/^sp-reclaim-([0-9]+)$/\1 unrecorded/;s/^sp-reclaim-([0-9]+)-(.*)$/\1 \2/' \
             | sort -n | awk '{printf "%s%s x%s", sep, $2, $1; sep=", "} END{printf "\n"}')" || true
         _rc_causes="${_rc_causes:-unrecorded}"
         _rc_subj="Spira bead $id — $_reclaims aeons died holding it, work never judged (${_rc_causes}) — the box cannot run it"
-        _rc_dflt="check systemd resource limits and cgroup configuration; if the box is healthy, look for a per-bead crash at $SPIRA_RUN/$id.log and decide whether to label it for a different lane or split the work"
+        _rc_dflt="close the bead if the work is no longer relevant; move it to a healthier lane if this box consistently kills workers; otherwise check infrastructure and re-queue when the box is stable"
         _rc_ev="$(bead_context "$id" 2>/dev/null || printf '(could not read %s)' "$id")
 
 RECLAIMS  $_reclaims (cap $RECLAIM_AT) — causes: ${_rc_causes}
 ATTEMPTS  $n — distinct from reclaims; no attempt was ever charged"
-        if [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
+        if [ -x "$SPIRA_HOME/mail.sh" ] && SPIRA_MAIL_REPEAT_CONSIDERED="sentinel-own-dedup" \
+              "$SPIRA_HOME/mail.sh" send operator \
               --from "Sentinel <sentinel@spira>" \
               --subject "$_rc_subj" \
               --kind question \
@@ -385,11 +389,11 @@ $_rc_subj
 ## Default
 $_rc_dflt
 
-$id has had its lease reclaimed $_reclaims times after the aeon died holding it. The work was never started — the infrastructure killed the workers before they could act. This is a fact about the box, not the work.
-
 $_rc_ev
+
+The workers above were killed by the infrastructure before they could act. This is a fact about the box, not the work.
 MAILEOF
-            :
+            reclaim_asked_mark "$id" "$_reclaims"
         else
             log "CHECK4 $id: reclaim escalation path refused the ask — retries next pass"
         fi

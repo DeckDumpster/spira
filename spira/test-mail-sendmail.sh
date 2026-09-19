@@ -55,7 +55,8 @@ send_and_get_msgid() {
     local mailbox="$1" from="$2" bead="$3" kind="${4:-}"
     local send_args=(send "$mailbox" --from "$from" --subject "Test message" --bead "$bead")
     [ -n "$kind" ] && send_args+=(--kind "$kind")
-    SPIRA_MAIL_LINT_CONSIDERED="test" bash "$MAIL" "${send_args[@]}" <<< "body" >/dev/null 2>&1
+    SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="test" \
+        bash "$MAIL" "${send_args[@]}" <<< "body" >/dev/null 2>&1
     # Find the newest file in new/ and extract its Message-ID
     local newest
     newest="$(ls -t "$SPIRA_MAIL/$mailbox/new/" 2>/dev/null | head -1)"
