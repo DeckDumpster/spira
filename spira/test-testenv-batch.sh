@@ -953,6 +953,92 @@ if [ -f "$_stub_body_b7f" ]; then
     want "B7f: bead body names the prior override attempt" "Prior override attempted" "$(cat "$_stub_body_b7f")"
 fi
 
+# ---------------------------------------------------------------------------
+# B9: PARALLEL CONTAINER-DEATH RECLASSIFICATION
+#
+# When the container dies during a parallel batch, all in-flight podman exec
+# calls fail immediately with red+secs=0+empty output. Without reclassification,
+# gate-retry would treat these as genuine suite failures, emit flaky-suite
+# warnings, and auto-quarantine healthy suites. The container-death check must
+# reclassify them as unreached so the gate skips them on retry.
+#
+# POSITIVE CONTROL: the assertion that the container came up before the kill
+# proves the test could have reached the exec path. B2 separately proves a
+# legitimately failing suite (non-empty output) stays red — so the absence of
+# reds here is not vacuous silence.
+# ---------------------------------------------------------------------------
+echo
+echo "B9: parallel container-death reclassification"
+
+SUITE_B9="$TMP/suites-B9"
+mkdir -p "$SUITE_B9"
+
+for _b9_name in la lb lc; do
+    printf '#!/usr/bin/env bash\n# covers: changed.sh\nsleep 999; exit 0\n' \
+        > "$SUITE_B9/test-fx-${_b9_name}.sh"
+    chmod +x "$SUITE_B9/test-fx-${_b9_name}.sh"
+done
+
+B9_INSTANCE="b9k-$$"
+B9_CNAME="spira-batch-${B9_INSTANCE}"
+RESULTS_ROOT_B9="$TMP/results-B9"
+
+rc_b9=0
+SPIRA_BATCH_SUITE_DIR="$SUITE_B9" \
+SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B9" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_BATCH_INSTANCE="$B9_INSTANCE" \
+SPIRA_VERDICT_TTL=0 \
+    bash "$BATCH" --mode parallel \
+    --suites test-fx-la.sh,test-fx-lb.sh,test-fx-lc.sh \
+    topic "$FIXTURE" >/dev/null 2>&1 &
+BATCH_B9_PID=$!
+
+_b9_i=0
+while ! podman container inspect --format '{{.State.Running}}' "$B9_CNAME" \
+        2>/dev/null | grep -qx 'true'; do
+    _b9_i=$((_b9_i+1))
+    [ "$_b9_i" -lt 120 ] || break
+    sleep 0.5
+done
+
+if ! podman container inspect --format '{{.State.Running}}' "$B9_CNAME" \
+        2>/dev/null | grep -qx 'true'; then
+    bad "B9: positive-control: container came up for parallel batch" "never seen running"
+    kill "$BATCH_B9_PID" 2>/dev/null || true
+    wait "$BATCH_B9_PID" 2>/dev/null || true
+else
+    ok "B9: positive-control: container running before kill"
+
+    podman kill --signal KILL "$B9_CNAME" >/dev/null 2>&1 || true
+    wait "$BATCH_B9_PID" 2>/dev/null; rc_b9=$?
+
+    isexit2 "B9: parallel container-death exits 2 (harness fault, not branch fault)" "$rc_b9"
+
+    RD_B9="$(find_results_dir "$RESULTS_ROOT_B9")"
+    if [ -n "$RD_B9" ]; then
+        _b9_red=0; _b9_unreached=0
+        for _b9_s in la lb lc; do
+            _b9_f="$RD_B9/test-fx-${_b9_s}.sh.result"
+            _b9_st="$(awk '{print $1}' "$_b9_f" 2>/dev/null || true)"
+            case "$_b9_st" in
+                red)       _b9_red=$((_b9_red+1)) ;;
+                unreached) _b9_unreached=$((_b9_unreached+1)) ;;
+            esac
+        done
+        [ "$_b9_red" -eq 0 ] \
+            && ok "B9: no suite is red after parallel container death" \
+            || bad "B9: no suite is red after parallel container death" \
+                   "$_b9_red suite(s) still red — reclassification did not fire"
+        [ "$_b9_unreached" -gt 0 ] \
+            && ok "B9: at least one suite is unreached after parallel container death" \
+            || bad "B9: at least one suite is unreached" \
+                   "none found — reclassification may be silently skipping all results"
+    else
+        bad "B9: results directory found" "not found under $RESULTS_ROOT_B9"
+    fi
+fi
+
 # ===========================================================================
 echo
 echo "C: the constants testenv-batch.sh mirrors from testenv.sh still agree"

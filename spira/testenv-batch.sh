@@ -893,6 +893,24 @@ else
            | grep -qx 'true'; then
         _batch_container_dead=1
         log "batch: container died during parallel run"
+        # Reclassify suites that got red with 0 seconds and no output: podman exec
+        # returned immediately because the container was already dead when the
+        # subshell tried to connect. These are not suite defects; recording them as
+        # red feeds gate-retry's flake observer and quarantines healthy suites.
+        # Reclassifying as unreached lets the gate's retry logic skip them.
+        for _cd_s in $SELECTED; do
+            _cd_res="$RESULTS/$_cd_s.result"
+            [ -f "$_cd_res" ]                                           || continue
+            _cd_status="$(awk '{print $1}' "$_cd_res" 2>/dev/null)"
+            [ "$_cd_status" = "red" ]                                   || continue
+            _cd_secs="$(awk '{print $3}' "$_cd_res" 2>/dev/null)"
+            [ "${_cd_secs:-1}" = "0" ]                                  || continue
+            _cd_out="$(cat "$RESULTS/$_cd_s.out" 2>/dev/null | tr -d '[:space:]')"
+            [ -z "$_cd_out" ]                                           || continue
+            printf 'unreached %s 0 -\n' "$(date +%s)" > "$_cd_res"
+            : > "$RESULTS/$_cd_s.out"
+            rm -f "$_par_tmp/$_cd_s.rc"
+        done
     fi
 
     # Count reds from the signal files. Suites with no .rc file were never
