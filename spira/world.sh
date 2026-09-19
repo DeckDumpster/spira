@@ -327,6 +327,13 @@ start)
                   --no-legend 2>/dev/null
         } | awk '{print $1}' | sort -u
     ); do
+        _subj="${u%.service}"; _subj="${_subj%.timer}"
+        [ -n "${SPIRA_INSTANCE:-}" ] && _subj="${_subj%-$SPIRA_INSTANCE}"
+        if "$SPIRA_HOME/ctrl.sh" check "$_subj" 2>/dev/null; then
+            _reason="$("$SPIRA_HOME/ctrl.sh" reason "$_subj" 2>/dev/null)"
+            printf '  skipped %s (suspended%s)\n' "$u" "${_reason:+: $_reason}"
+            continue
+        fi
         [ "$("$SC" --user is-enabled "$u" 2>/dev/null)" = "disabled" ] && continue
         [ "$("$SC" --user is-active  "$u" 2>/dev/null)" = "active"   ] && continue
         "$SC" --user start "$u" 2>/dev/null && printf '  started %s\n' "$u"
