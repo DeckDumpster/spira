@@ -365,20 +365,20 @@ MAILEOF
 }
 
 # =======================================================================================
-# refresh — fast-forward a checkout to its base ref.
+# refresh — advance a checkout to its base ref via stage-and-swap.
 #
 # Called unconditionally by the landing pass, so a base ref that moved by ANY route — a
 # branch merged, a push from another box, a PR merged on GitHub, a hand-landing — is picked
 # up within one pass rather than waiting for `check` to escalate it an hour later.
 #
-# THE GUARDS ARE THE WHOLE POINT. ff-only, clean-tracked-tree, and on-the-base-branch: any
-# violation means something a mechanical advance must not override. A declined refresh names
-# which condition refused it, because a refresh that stopped happening is indistinguishable
-# in the log from one with nothing to do — the silence that cost eight hours on landing.sh.
+# STAGE-AND-SWAP, NOT ff-only. Each changed file is written beside the existing one and
+# atomically renamed into place (write + mv). A running aeon that opened the file by path
+# keeps its old inode; new invocations open the new inode. This lets refresh advance even
+# while aeons are active (law-replace-running-scripts-atomically).
 #
-# TRACKED FILES ONLY. An operator's untracked notes beside the code are their own business;
-# a MODIFIED tracked file is code in force that is on no branch. This is the same check as
-# `check` above, and the two must agree — --untracked-files=no in both.
+# ON-THE-BASE-BRANCH is still a hard guard — a detached HEAD or a feature branch means
+# something else is controlling the checkout. A declined refresh names the condition because
+# a refresh that stops is indistinguishable in the log from one with nothing to do.
 # =======================================================================================
 refresh() {
     local repo="${1:-$SPIRA_REPO}" base base_branch remote behind dirty current
@@ -398,21 +398,6 @@ refresh() {
 
     behind="$(git -C "$repo" rev-list --count "HEAD..$base" 2>/dev/null || echo 0)"
     [ "${behind:-0}" -gt 0 ] || return 0
-
-    # LIVE LEASE CHECK. A whole-repo fast-forward rewrites .sh files in place; bash reads by
-    # byte offset, so an aeon mid-execution would see a split byte stream
-    # (law-replace-running-scripts-atomically). Refuse while any aeon holds a live lease.
-    local _live_holders="" _lf _lid _ldl _now_ts
-    _now_ts="$(date +%s)"
-    for _lf in "$SPIRA_RUN"/aeon/*.lease; do
-        [ -e "$_lf" ] || continue
-        _lid="${_lf##*/}"; _lid="${_lid%.lease}"
-        _ldl="$(cat "$_lf" 2>/dev/null)"
-        [ "${_ldl:-0}" -gt "$_now_ts" ] || continue
-        _live_holders="${_live_holders}${_lid} "
-    done
-    if [ -n "$_live_holders" ]; then
-        echo "skew: refresh declined — aeon(s) hold a live lease: ${_live_holders% }"; return 1; fi
 
     dirty="$(git -C "$repo" status --porcelain --untracked-files=no 2>/dev/null)"
     if [ -n "$dirty" ]; then
@@ -434,8 +419,33 @@ refresh() {
     if [ "$current" != "$base_branch" ]; then
         echo "skew: refresh declined — checkout is on ${current:-a detached HEAD}, not $base_branch"; return 1; fi
 
-    if ! git -C "$repo" merge --ff-only -q "$base" 2>/dev/null; then
-        echo "skew: refresh declined — cannot fast-forward to $base"; return 1; fi
+    # Stage-and-swap each file that changed between HEAD and base.
+    local _f _mode _tmp _err=0
+    while IFS=$'\t' read -r _status _f; do
+        [ -n "$_f" ] || continue
+        case "$_status" in
+            M)  _tmp="$repo/$_f.spira-new"
+                if git -C "$repo" show "$base:$_f" > "$_tmp" 2>/dev/null; then
+                    _mode="$(git -C "$repo" ls-tree "$base" "$_f" 2>/dev/null | awk '{print $1}')"
+                    case "$_mode" in 100755) chmod 755 "$_tmp" ;; *) chmod 644 "$_tmp" ;; esac
+                    mv "$_tmp" "$repo/$_f"
+                else rm -f "$_tmp"; _err=$((_err+1)); fi
+                ;;
+            A)  mkdir -p "$repo/$(dirname "$_f")" 2>/dev/null || true
+                if git -C "$repo" show "$base:$_f" > "$repo/$_f" 2>/dev/null; then
+                    _mode="$(git -C "$repo" ls-tree "$base" "$_f" 2>/dev/null | awk '{print $1}')"
+                    case "$_mode" in 100755) chmod 755 "$repo/$_f" ;; *) chmod 644 "$repo/$_f" ;; esac
+                else _err=$((_err+1)); fi
+                ;;
+            D)  rm -f "$repo/$_f" ;;
+        esac
+    done < <(git -C "$repo" diff --diff-filter=MAD --name-status "HEAD..$base" 2>/dev/null)
+    if [ "$_err" -gt 0 ]; then
+        echo "skew: refresh: stage-and-swap failed for $_err file(s)"; return 1; fi
+
+    # Update HEAD and index to reflect the new state; working tree is already current.
+    git -C "$repo" reset --mixed -q "$base" 2>/dev/null || {
+        echo "skew: refresh: git reset --mixed failed after stage-and-swap"; return 1; }
 
     # Clear the dirty-decline stamp on a successful refresh so watchers see the recovery.
     rm -f "$SPIRA_RUN/skew.refresh-declined" 2>/dev/null || true
