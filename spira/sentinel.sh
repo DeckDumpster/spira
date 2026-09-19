@@ -863,7 +863,7 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
         # has been charged yet and this is genuinely a failed attempt at the work.
         # Counter labels (sp-attempt-N) no longer written; the events trail records
         # this reopening as a future attempt when the bead is next claimed (sp-lzt).
-        bead_reopen "$id" "Reopened by sentinel:${_c5_delivers_fail:+ ${_c5_delivers_fail}, and} closed, but no commit on ${subj_base:-the base} or on spira/$id names it in $r_name. Closed is not landed; the next claim counts toward the poison threshold via the events trail. If this bead was closed because another bead did the work, record it with: bd supersede $id --with <successor> — a close reason alone is not read by this check."
+        bead_reopen "$id" no-commit "Reopened by sentinel:${_c5_delivers_fail:+ ${_c5_delivers_fail}, and} closed, but no commit on ${subj_base:-the base} or on spira/$id names it in $r_name. Closed is not landed; the next claim counts toward the poison threshold via the events trail. If this bead was closed because another bead did the work, record it with: bd supersede $id --with <successor> — a close reason alone is not read by this check."
         progress "reopened $id — closed without landing"
     fi
 done < <(

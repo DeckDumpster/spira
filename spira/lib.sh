@@ -976,7 +976,7 @@ for bead in d:
 ' <<< "$ready_json" 2>/dev/null || true)
 }
 
-# bead_reopen <id> <note> — hand a bead back to the graph so the NEXT aeon can claim it.
+# bead_reopen <id> <cause> [note] — hand a bead back to the graph so the NEXT aeon can claim it.
 #
 # REOPENING IS NOT ENOUGH. `bd reopen` keeps the assignee, and `bd ready --claim` skips any
 # bead that has one even though `bd ready` lists it — so a bead reopened by the landing
@@ -993,8 +993,8 @@ for bead in d:
 # is guarded for the same reason, and bd's refusal is reported on stderr where the harness
 # log keeps it.
 bead_reopen() {
-    local id="$1" note="${2:-}" rc=0
-    bdq reopen "$id" >/dev/null 2>&1 || rc=1
+    local id="$1" cause="${2:-}" note="${3:-}" rc=0
+    bdq reopen "$id" ${cause:+--reason "$cause"} >/dev/null 2>&1 || rc=1
     release_claim "$id" || rc=1
     [ -n "$note" ] && { bdq note "$id" "$note" >/dev/null 2>&1 || rc=1; }
     [ "$rc" = 0 ] || printf 'bead_reopen: %s — bd refused the reopen, the release or the note\n' "$id" >&2

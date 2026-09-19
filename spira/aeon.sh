@@ -1805,11 +1805,11 @@ print(len([x for x in (d if isinstance(d,list) else [d])
             # SAID OUT LOUD. A silent decline is indistinguishable from the check never running.
             log "$FAYTH: $BEAD_ID closed with nothing committed and NOT reopened — delivers ($delivers) verified"
         else
-            bead_reopen "$BEAD_ID" "Reopened by aeon.sh: $_delivers_fail. Set delivers:TYPE labels that match the evidence actually produced."
+            bead_reopen "$BEAD_ID" delivers-unverified "Reopened by aeon.sh: $_delivers_fail. Set delivers:TYPE labels that match the evidence actually produced."
             log "$FAYTH: $BEAD_ID REOPENED — delivers not verified: $_delivers_fail"
         fi
     else
-        bead_reopen "$BEAD_ID" "Reopened by aeon.sh: closed without a commit naming $BEAD_ID on $BRANCH. Closed is not landed."
+        bead_reopen "$BEAD_ID" no-commit "Reopened by aeon.sh: closed without a commit naming $BEAD_ID on $BRANCH. Closed is not landed."
         log "$FAYTH: $BEAD_ID REOPENED — closed with nothing committed"
     fi
 elif [ "$st" = "closed" ] && [ "$committed" = "no" ] && [ "$superseded" = 1 ]; then
@@ -1871,7 +1871,7 @@ Remedy: git -C $WORK checkout -- $_spd_identical"
 
 Override (only when the modification is intentional and will be committed separately): SPIRA_ALLOW_PROD_DIRTY=1"
 
-        bead_reopen "$BEAD_ID" "$_spd_note"
+        bead_reopen "$BEAD_ID" prod-dirty "$_spd_note"
         # PREVENT DOUBLE-FIRING. The SOP check and rebase check below both test [ st=closed ].
         # Setting st here skips them: the bead is already reopened, and re-running those checks
         # against a bead this process just put back would produce contradicting notes.
@@ -1952,7 +1952,7 @@ if [ "$SOP_REQUIRED" = 1 ] && [ "$st" = "closed" ] && [ "$superseded" != 1 ]; th
         # runbook should have said. POISONED is in the log line on purpose — it is one of
         # the strings the operator's panes treat as actionable, so this reaches somebody
         # without a second notification path to build and forget.
-        bead_reopen "$BEAD_ID" "Reopened and poisoned by aeon.sh: this incident was closed and no runbook came out of it. The session recorded neither an SOP written or amended (sop.sh write) nor a runbook whose CHECK confirmed (sop.sh applied --check pass), so nothing on the shelf is any better for this incident having happened and the next occurrence costs exactly as much. The closing rule is not optional: an incident resolved without an SOP must produce one. To clear this, write the runbook this incident should have left — or, if one already fitted and held, record it — then remove the spira-poison label."
+        bead_reopen "$BEAD_ID" no-sop "Reopened and poisoned by aeon.sh: this incident was closed and no runbook came out of it. The session recorded neither an SOP written or amended (sop.sh write) nor a runbook whose CHECK confirmed (sop.sh applied --check pass), so nothing on the shelf is any better for this incident having happened and the next occurrence costs exactly as much. The closing rule is not optional: an incident resolved without an SOP must produce one. To clear this, write the runbook this incident should have left — or, if one already fitted and held, record it — then remove the spira-poison label."
         bdq label add "$BEAD_ID" spira-poison >/dev/null 2>&1
         printf '%s spira: %s: %s REOPENED and POISONED — closed with no runbook written and no SOP application recorded\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAYTH" "$BEAD_ID"
         SOP_SILENT=1
@@ -2006,7 +2006,7 @@ if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ -z "$SOP_SILENT" ]; the
         else
             _reopen_note="$_reopen_note A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it."
         fi
-        bead_reopen "$BEAD_ID" "$_reopen_note"
+        bead_reopen "$BEAD_ID" merge-conflict "$_reopen_note"
         # THE TEARDOWN MUST NOT READ THIS BACK AS A FAILURE OF THE WORK. The work is committed
         # and the session closed on it; what is missing is a rebase over commits that landed
         # while it ran, which is a fact about the queue. Charging it made the busiest branches

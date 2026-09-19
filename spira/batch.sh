@@ -285,7 +285,7 @@ main() {
             git -C "$wt" merge --abort 2>/dev/null || true
             if _base_conflict "$repo" "$base_sha" "$_btip"; then
                 # Conflict with the land ref itself — reopen the bead.
-                bead_reopen "$_bid" \
+                bead_reopen "$_bid" merge-conflict \
                     "Reopened by batch builder: branch spira/$_bid conflicts with $base in $name." \
                     >/dev/null 2>&1 || true
                 land_mark "$_bid" RED "$_btip" conflicts-with-base
@@ -340,7 +340,7 @@ main() {
         for _lmm in "${lg_ejected_arr[@]:-}"; do
             [ -n "$_lmm" ] || continue
             _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
-            bead_reopen "$_lmid" \
+            bead_reopen "$_lmid" gate-red \
                 "Ejected by local batch gate: spira/$_lmid reproduced failure in $name." \
                 >/dev/null 2>&1 || true
             land_mark "$_lmid" EJECTED "$_lmtip"
