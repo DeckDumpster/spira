@@ -138,6 +138,53 @@ except Exception:
             --json databaseId --limit 1 -q '.[0].databaseId' 2>/dev/null )" || run_id=""
         printf '%s\n' "${run_id:-}"
         ;;
+    batch-ci-status)
+        # batch-ci-status <repo-dir> <branch> → lines describing the current CI run:
+        #   run-id: <id>
+        #   run-conclusion: <conclusion>       (when run is completed)
+        #   queued-since: <epoch>              (when any job is in queued status)
+        # Uses 2 gh API calls: run list (run_id + conclusion) and jobs (queued-since).
+        # Both ci-stalled and ci-red detectors in czar.sh --pass share this output.
+        branch="${1:-}"
+        run_list="$( cd "$repo" && ghq run list --branch "$branch" \
+            --json databaseId,conclusion,status --limit 1 2>/dev/null )" || run_list="[]"
+        run_id="$(printf '%s\n' "$run_list" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    if d: print(d[0].get('databaseId', ''))
+except: pass
+" 2>/dev/null)"
+        [ -n "$run_id" ] || exit 0
+        printf 'run-id: %s\n' "$run_id"
+        printf '%s\n' "$run_list" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    if d and d[0].get('conclusion'): print('run-conclusion: ' + d[0]['conclusion'])
+except: pass
+" 2>/dev/null
+        jobs_json="$( cd "$repo" && ghq api \
+            "repos/{owner}/{repo}/actions/runs/$run_id/jobs" 2>/dev/null )" || exit 0
+        printf '%s\n' "$jobs_json" | python3 -c "
+import json, sys, calendar, datetime
+def epoch(t):
+    if not t: return 0
+    try:
+        dt = datetime.datetime.strptime(t.rstrip('Z'), '%Y-%m-%dT%H:%M:%S')
+        return calendar.timegm(dt.timetuple())
+    except: return 0
+try:
+    earliest = 0
+    for j in json.load(sys.stdin).get('jobs', []):
+        if j.get('status') == 'queued':
+            e = epoch(j.get('created_at') or '')
+            if e and (earliest == 0 or e < earliest):
+                earliest = e
+    if earliest: print('queued-since: ' + str(earliest))
+except Exception: pass
+" 2>/dev/null
+        ;;
     queued-since)
         # queued-since <repo-dir> <branch> → epoch seconds when the earliest queued job was
         # created, or empty if no jobs are in queued status. A queued job has no runner

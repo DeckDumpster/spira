@@ -81,7 +81,7 @@ SPIRA_GATE_SUITES SPIRA_SUITE_STATE SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA
 SPIRA_BATCH_ARTIFACT_DAYS SPIRA_BATCH_TAIL_LINES
 SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST SPIRA_INCIDENT_PRIORITY SPIRA_WATCHER_INTERVAL_S
 SPIRA_FLAKE_QUARANTINE_AT SPIRA_FLAKE_WINDOW SPIRA_QUARANTINE_CLEAN_RUNS SPIRA_QUARANTINE_MAX_AGE
-SPIRA_QUEUE_BATCH_MAX SPIRA_QUEUE_BATCH_WAIT SPIRA_QUEUE_CI_MAXSEC SPIRA_QUEUE_CI_IDLE_SEC SPIRA_CI_QUEUED_MAX_SECS SPIRA_STARVED_MAX_MINS SPIRA_QUEUE_LOCAL_GATE SPIRA_QUEUE_INFRA_RETRIES SPIRA_QUEUE_STUCK_AGE SPIRA_QUEUE_DIR SPIRA_FORGE SPIRA_QUEUE_WAIT_LABEL SPIRA_QUEUE_ACTIONS_APP_ID
+SPIRA_QUEUE_BATCH_MAX SPIRA_QUEUE_BATCH_WAIT SPIRA_QUEUE_CI_MAXSEC SPIRA_QUEUE_CI_IDLE_SEC SPIRA_CI_QUEUED_MAX_SECS SPIRA_STARVED_MAX_MINS SPIRA_LOOP_STALL_SECS SPIRA_CI_RED_MAX_SECS SPIRA_QUEUE_LOCAL_GATE SPIRA_QUEUE_INFRA_RETRIES SPIRA_QUEUE_STUCK_AGE SPIRA_QUEUE_DIR SPIRA_FORGE SPIRA_QUEUE_WAIT_LABEL SPIRA_QUEUE_ACTIONS_APP_ID
 SPIRA_QUEUE_THROTTLE_DEPTH_AT SPIRA_QUEUE_THROTTLE_RELEASE_AT SPIRA_QUEUE_THROTTLE_STALL_MINS SPIRA_QUEUE_THROTTLE_OVERRIDE
 SPIRA_AURON_RESTARTS SPIRA_AURON_RESTART_WINDOW
 SPIRA_PROD SPIRA_INSTANCE
@@ -967,14 +967,19 @@ spira_conf_defaults() {
     : "${SPIRA_QUEUE_CI_MAXSEC:=3600}"
     # HOW LONG WITH NO JOB ACTIVITY before a run is treated as hung and re-queued.
     : "${SPIRA_QUEUE_CI_IDLE_SEC:=600}"
-    # HOW LONG A CI JOB MAY BE IN QUEUED STATUS (no runner assigned) before the watchtower
-    # files a czar-trigger bead. A queued job with a torn-down VM label will never start;
-    # the czar cancels the stuck run and re-dispatches the whole workflow. In seconds.
+    # HOW LONG A CI JOB MAY BE IN QUEUED STATUS (no runner assigned) before czar.sh --pass
+    # fires ci-stalled. A queued job with a torn-down VM label will never start; the czar
+    # cancels the stuck run and re-dispatches the whole workflow. In seconds.
     : "${SPIRA_CI_QUEUED_MAX_SECS:=600}"
-    # HOW LONG A PARTITION MAY REMAIN STARVED (ready work, no serving aeons) before the
-    # watchtower files a czar-trigger bead. strand.sh detects the condition; this controls
-    # how long it must persist before escalating to the czar. In minutes.
+    # HOW LONG A PARTITION MAY REMAIN STARVED (ready work, no serving aeons) before czar.sh
+    # --pass fires the starved detector. In minutes.
     : "${SPIRA_STARVED_MAX_MINS:=20}"
+    # HOW LONG WITHOUT A LANDING PASS COMPLETING before czar.sh --pass fires loop-stalled.
+    # Above the 2700s local-gate timeout so an ordinary batch gate does not trigger it.
+    : "${SPIRA_LOOP_STALL_SECS:=3000}"
+    # HOW LONG A BATCH OPEN FILE MAY SIT AFTER ITS CI RUN COMPLETES RED before czar.sh
+    # --pass fires ci-red (verdict not acting on a red result). In seconds.
+    : "${SPIRA_CI_RED_MAX_SECS:=600}"
     # WHETHER A BATCH RUNS THE LOCAL GATE before its PR opens. 0 skips it; CI still runs.
     : "${SPIRA_QUEUE_LOCAL_GATE:=1}"
     # HOW MANY TIMES THE BATCH BUILDER RE-RUNS A WORKFLOW before mailing the operator.
