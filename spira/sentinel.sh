@@ -400,6 +400,9 @@ MAILEOF
     fi
 
     [ "$n" -ge "$POISON_AT" ] || continue
+    # A bead at the threshold with zero charged attempts means POISON_AT=0; nothing failed and
+    # there is nothing to report. Do not poison and do not ask.
+    [ "$n" -gt 0 ] || continue
 
     # A CLOSED BEAD NEVER POISONS AND NEVER ASKS. dispatchable_open excludes closed beads,
     # but it is a SNAPSHOT and this loop makes several bd calls per bead — so a bead the
@@ -446,7 +449,7 @@ print(d[0].get("status", "") if d else "")' 2>/dev/null)"
             # Inside the label guard, so it fires on the TRANSITION into poisoned and never
             # again — the bead keeps the label, and every later pass takes the other branch.
             spira_event bead.poisoned "$id" "poisoned $id after $n attempts" \
-                "not retried until a human changes the approach; the ask below carries the failure" || true
+                "not retried until a human changes the approach" || true
             ;;
     esac
 

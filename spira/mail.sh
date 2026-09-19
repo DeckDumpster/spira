@@ -181,6 +181,16 @@ _lint_check() {
         fi
     fi
 
+    # A mail body that promises "the ask below" or "the question below" but contains no
+    # ## Question or ## Decision section is lying. The ask must be in the same message or
+    # the promise must be removed.
+    if printf '%s' "$body" | grep -qiE '\bthe (ask|question|decision) below\b'; then
+        if ! printf '%s' "$body" | grep -qE '^## (Question|Decision)'; then
+            printf 'mail: lint: body promises an ask below but has no ## Question or ## Decision section — rule: carry the ask in this message or remove the promise\n' >&2
+            fail=1
+        fi
+    fi
+
     return "$fail"
 }
 

@@ -17,9 +17,10 @@
 # the positive ones, and both must hold at once: a suppressor with no counter would pass the
 # storm case by recording nothing at all.
 #
-# NO DATABASE. The emitter's contract is what it hands to `mail.sh send`, and what
-# `mail.sh` then delivers is test-mail-delivery.sh's question. Splitting
-# them keeps this suite fast enough to be the one that always runs.
+# Events are informational and go to events.log, not the operator mailbox. Operator asks
+# (question/decision mails) are sent directly by the callers that have the context to write
+# them properly (claims, reopens, landings belong in the log; the mailbox holds only decisions).
+#
 # defect: sp-gvm
 # covers: spira/*.sh
 set -uo pipefail
@@ -36,17 +37,6 @@ SH="$TMP/spira"; RUN="$TMP/run"; mkdir -p "$SH" "$RUN"
 # conf.sh travels with lib.sh, which refuses to run without it.
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
 
-# THE EMITTER IS A RECORDER, NOT A SWALLOWER. A stub that exits 0 without a trace would pass
-# every positive case here whether or not it was ever called.
-cat > "$SH/mail.sh" <<'MAIL'
-#!/usr/bin/env bash
-[ "${1:-}" = send ] || exit 0
-printf '%s\n' "$*" >> "$EMITTED"
-cat >> "$EMITTED"
-exit "${MAIL_RC:-0}"
-MAIL
-chmod +x "$SH/mail.sh"
-
 # In a subshell, never sourced here: lib.sh overwrites PATH outright, as it must to run under
 # systemd, and a suite that inherited that would be testing the harness's PATH as well.
 cat > "$TMP/emit" <<'E'
@@ -62,37 +52,34 @@ chmod +x "$TMP/emit"
 emit() {   # emit <kind> <target|-> <title> [detail]
     SPIRA_CONF=/nonexistent SPIRA_HOME="${HOME_OVERRIDE:-$SH}" SPIRA_REPO="$TMP" SPIRA_RUN="$RUN" \
     SPIRA_DB=/nonexistent-spira-db \
-    SPIRA_EVENT_COOLDOWN="${COOLDOWN:-3600}" EMITTED="$TMP/emitted" MAIL_RC="${MAIL_RC:-0}" \
+    SPIRA_EVENT_COOLDOWN="${COOLDOWN:-3600}" \
         bash "$TMP/emit" "$@" 2>&1
 }
-emitted()  { cat "$TMP/emitted" 2>/dev/null; }
-# `grep -c` prints 0 AND exits 1 on no match, so an `|| echo 0` fallback prints TWO zeros
-# and every count comparison fails against a number that looks right in the message.
-# Count lines that start with "send " — one per mail.sh invocation.
-rows()     { grep -c '^send ' "$TMP/emitted" 2>/dev/null || true; }
-fresh()    { rm -rf "$RUN/events"; : > "$TMP/emitted"; }
+emitted()  { cat "$RUN/events.log" 2>/dev/null; }
+# Count non-empty lines in events.log — one per recorded event.
+rows()     { grep -c '.' "$RUN/events.log" 2>/dev/null || true; }
+fresh()    { rm -rf "$RUN/events" "$RUN/events.log"; }
 
 echo "test-event.sh"
 
 # --------------------------------------------------------------------------------------
 echo
-echo "the positive control — an outcome reaches the emitter whole"
+echo "the positive control — an outcome reaches the log whole"
 # --------------------------------------------------------------------------------------
 fresh
 out="$(emit bead.landed sp-x "landed spira/sp-x on brain's main" "merged as abc1234")"
 is   "a first outcome is recorded"        "1"            "$(rows)"
-want "with the kind the panel badges"     "kind: bead.landed" "$(emitted)"
-want "the bead it happened to, in its own column" "target: sp-x" "$(emitted)"
+want "with the kind"                      "kind: bead.landed" "$(emitted)"
+want "the bead it happened to"            "target: sp-x" "$(emitted)"
 want "the title as written"               "landed spira/sp-x on brain's main" "$(emitted)"
 want "and the detail beside it"           "merged as abc1234" "$(emitted)"
-want "through --kind note, not insight"   "--kind note"  "$(emitted)"
-nowant "and never as an insight"          "insight"      "$(emitted)"
+nowant "and never as an email"            "mail.sh"      "$out"
 
-# An outcome about the plan rather than a bead carries no target field at all, rather than a
-# literal "-" that would filter as if it were a bead id.
+# An outcome about the plan rather than a bead carries "-" in the target column, not the
+# word "plan": the column is for bead ids only and a literal string would filter incorrectly.
 fresh
 emit spira.note - "the plan moved" >/dev/null
-nowant "a plan-level outcome carries no target" "target:" "$(emitted)"
+want "a plan-level outcome records a dash for target" "target: -" "$(emitted)"
 
 # --------------------------------------------------------------------------------------
 echo
@@ -148,24 +135,8 @@ for n in 2 3 4 5; do sleep 1; COOLDOWN=2 emit branch.reclaimed sp-hot "reclaimed
 
 # --------------------------------------------------------------------------------------
 echo
-echo "a broken delivery path is named, never silent"
+echo "bad inputs are refused — empty kind or title"
 # --------------------------------------------------------------------------------------
-# An emitter that returns quietly when there is nowhere to send is how a converted site
-# records nothing for a month (law-absence-needs-a-positive-control).
-fresh
-# A home that has lib.sh + conf.sh but no mail.sh — spira_event can load but has nowhere to send.
-mkdir -p "$TMP/no-mail-home"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$TMP/no-mail-home/"
-out="$(HOME_OVERRIDE="$TMP/no-mail-home" emit bead.landed sp-x "landed sp-x")"; rc=$?
-is   "a missing emitter fails loudly"  "1"                "$rc"
-want "and names what is missing"       "mail.sh not found" "$out"
-want "and says which outcome was lost" "bead.landed"      "$out"
-
-fresh
-out="$(MAIL_RC=1 emit bead.landed sp-x "landed sp-x")"; rc=$?
-is   "an emitter that refuses is reported"   "1"           "$rc"
-want "naming the outcome it could not record" "bead.landed" "$out"
-
 fresh
 out="$(emit "" sp-x "no kind")"; rc=$?
 is "an outcome with no kind is refused" "1" "$rc"

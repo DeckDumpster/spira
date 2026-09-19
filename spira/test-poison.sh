@@ -206,17 +206,24 @@ want        "and the pass says so"          "poisoned sp-orphan after 3 attempts
 # sp-attempt-N labels removed (sp-lzt); sentinel no longer reports per-cause breakdown.
 # deleted: "unrecorded x3 (3 attempts)" — old label-derived cause summary in ask title.
 want        "and the operator is asked what to do about it"  "3 in_progress transition(s) without landing (3 attempts)" "$(cat "$MAIL_LOG")"
-# THE POISONING IS RECORDED AS AN EVENT, separate from the ask. The ask is read and answered;
-# the event is an outcome, recorded by the machinery, moved on from. The transition fires once
-# — on entry to poisoned; the label is now on the bead, so every later pass takes the other
-# branch. This is the first half of the rate limiting the sentinel enforces; spira_event's own
-# cooldown is the second.
-want "and the poisoning is recorded as an event" "kind: bead.poisoned" "$(cat "$MAIL_LOG")"
-want "against the bead that poisoned"            "target: sp-orphan"   "$(cat "$MAIL_LOG")"
+# THE QUESTION MAIL CARRIES THE BEAD TITLE AND A DEFAULT LINE. The operator must be able to
+# act without opening a second pane: the title says what the work was for, and the default
+# says what to do if the right answer is not obvious.
+want "the question mail body has the bead title"   "TITLE"       "$(cat "$MAIL_LOG")"
+want "and a Default line the operator can follow"  "## Default"  "$(cat "$MAIL_LOG")"
+# THE POISONING IS RECORDED AS AN EVENT in events.log, not the operator mailbox. The ask is
+# the operator notification; the event log records the transition for audit. The transition
+# fires once — on entry to poisoned; the label is now on the bead, so every later pass takes
+# the other branch.
+want "and the poisoning is recorded as an event" "kind: bead.poisoned" "$(cat "$RUN/events.log" 2>/dev/null)"
+want "against the bead that poisoned"            "target: sp-orphan"   "$(cat "$RUN/events.log" 2>/dev/null)"
+# THE EVENT DOES NOT MAIL. The operator mailbox holds the question (the ask); the event log
+# holds the record of the transition. Neither must bleed into the other.
+nowant "the event mail is not in the operator mailbox" "kind: bead.poisoned" "$(cat "$MAIL_LOG")"
 # AND ONLY ON THE TRANSITION. The next pass sees spira-poison on the bead and takes the `;;`
 # branch — the spira_event call is never reached.
 : > "$MAIL_LOG"; out="$(sentinel)"
-nowant "an already-poisoned bead emits nothing" "kind: bead.poisoned" "$(cat "$MAIL_LOG")"
+nowant "an already-poisoned bead emits nothing new to mail" "3 in_progress" "$(cat "$MAIL_LOG")"
 ispoisoned  "a goal child at the threshold is poisoned too"    sp-kid
 notpoisoned "and a bead below the threshold is left alone"     sp-young
 want        "the check names the size of the set it examined"  "CHECK4 examining" "$out"
@@ -459,6 +466,28 @@ cycle sp-real 3
 out="$(sentinel)"
 notpoisoned "three thrash requeues do not poison the bead"  sp-thrash
 ispoisoned  "CONTROL: three real failures still poison"     sp-real
+
+# --------------------------------------------------------------------------------------
+# ZERO CHARGED ATTEMPTS SENDS NO MAIL (POISON_AT=0 EDGE CASE). When POISON_AT is zero
+# every bead is at or above the threshold before a single attempt is charged. The guard
+# must prevent both poisoning and asking in this degenerate configuration — nothing failed
+# and there is nothing to report.
+#
+# PAIR: a bead with n=0 and POISON_AT=0 must send no mail; a bead with n=1 and POISON_AT=0
+# must poison and ask. The control proves the guard is keyed on n, not on POISON_AT.
+# --------------------------------------------------------------------------------------
+seed; rm -rf "$RUN/poison-asked"; : > "$MAIL_LOG"
+testdb_seed <<'JSONL'
+{"id":"sp-zero","title":"zero attempts","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-one","title":"one attempt","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+# sp-one gets one in_progress cycle; sp-zero gets none.
+cycle sp-one 1
+out="$(SPIRA_POISON_AT=0 sentinel)"
+notpoisoned "a bead with zero attempts is not poisoned even at POISON_AT=0" sp-zero
+nowant      "and no mail is sent for it"                                    "sp-zero" "$(cat "$MAIL_LOG")"
+ispoisoned  "CONTROL: a bead with one attempt is poisoned at POISON_AT=0"  sp-one
+want        "and the operator is asked"                                     "sp-one"  "$(cat "$MAIL_LOG")"
 
 printf '\ntest-poison.sh: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
