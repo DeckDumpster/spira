@@ -71,14 +71,22 @@ for line in sys.stdin:
     if not line or line.startswith('+') or line.startswith('('):
         continue
     parts = [p.strip() for p in line.split('|')]
-    if len(parts) != 4:
+    while parts and parts[0] == '':
+        parts = parts[1:]
+    while parts and parts[-1] == '':
+        parts = parts[:-1]
+    if len(parts) == 4:
+        event_type, new_value, n_beads, n_events = parts[0], parts[1], parts[2], parts[3]
+    elif len(parts) == 3:
+        event_type, new_value, n_beads = parts[0], parts[1], parts[2]
+        n_events = n_beads
+    else:
         continue
-    event_type, new_value, beads_s, events_s = parts[0], parts[1], parts[2], parts[3]
     if event_type == 'event_type' or 'COALESCE' in event_type:
         continue
     try:
-        n_beads = int(beads_s)
-        n_events = int(events_s)
+        n_beads = int(n_beads)
+        n_events = int(n_events)
     except ValueError:
         continue
     if n_beads == 0:
