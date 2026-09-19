@@ -1036,6 +1036,12 @@ land_drain
 [ -r "${SPIRA_HOME}/watchtower.sh" ] && \
     bash "${SPIRA_HOME}/watchtower.sh" --throttle-check 2>/dev/null || true
 
+# CZAR OUTCOME CHECK — verify that czar-trigger beads are claimed promptly and that the
+# conditions they were filed for have cleared after closure. Uses bd to query bead state;
+# files one escalation per bead (deduped) when a bead is unclaimed or its condition returned.
+[ -r "${SPIRA_HOME}/watchtower.sh" ] && \
+    bash "${SPIRA_HOME}/watchtower.sh" --czar-outcome-check 2>/dev/null || true
+
 # THE POSITIVE CONTROL, read before anything is launched so it describes a completed run
 # rather than the one this pass is about to start.
 land_age=-1
