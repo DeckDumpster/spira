@@ -62,6 +62,43 @@ run_census() {
         bash "$CENSUS" "$@" 2>/dev/null
 }
 
+run_census_repo() {  # run_census_repo <repo-path> [census-args...]
+    local _rp="$1"; shift
+    env SPIRA_DB="$SPIRA_DB" \
+        SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
+        SPIRA_CONF="$TMP/no-conf" \
+        SPIRA_HOME="$HERE" \
+        SPIRA_REPO="$_rp" \
+        bash "$CENSUS" "$@" 2>/dev/null
+}
+
+# Git fixture for closed-but-unlanded suppression (tests 6 and 7).
+# Push one commit to the bare remote before cloning so origin/HEAD resolves;
+# cloning an empty remote leaves origin/HEAD unset and spira_landref falls to
+# rung 4 (HEAD), which is wrong in a worktree where HEAD is not on main.
+REMEDY_REMOTE="$TMP/remote.git"
+REMEDY_REPO="$TMP/workrepo"
+REMEDY_SRC="$TMP/worksrc"
+git init -q --bare "$REMEDY_REMOTE"
+git -C "$REMEDY_REMOTE" symbolic-ref HEAD refs/heads/main
+git init -q -b main "$REMEDY_SRC"
+git -C "$REMEDY_SRC" config user.email "t@t"
+git -C "$REMEDY_SRC" config user.name "t"
+git -C "$REMEDY_SRC" remote add origin "$REMEDY_REMOTE"
+printf 'base\n' > "$REMEDY_SRC/f"
+git -C "$REMEDY_SRC" add f
+git -C "$REMEDY_SRC" commit -q -m "base"
+git -C "$REMEDY_SRC" push -q origin main
+git clone -q "$REMEDY_REMOTE" "$REMEDY_REPO"
+git -C "$REMEDY_REPO" config user.email "t@t"
+git -C "$REMEDY_REPO" config user.name "t"
+git -C "$REMEDY_REPO" checkout -q -b sp-fix-cls
+printf 'fix\n' >> "$REMEDY_REPO/f"
+git -C "$REMEDY_REPO" add f
+git -C "$REMEDY_REPO" commit -q -m "fix"
+git -C "$REMEDY_REPO" push -q origin sp-fix-cls
+git -C "$REMEDY_REPO" checkout -q main
+
 add_labels() {  # add_labels <bead-id> <label>...
     local id="$1"; shift
     for lbl in "$@"; do
@@ -264,9 +301,9 @@ is "three-bead class (sp-recur-beta) ranks above single-bead class with more eve
 
 # ==============================================================================
 echo
-echo "6. Empty cause (reopened): distinct bead count is not event count (sp-79jtq)"
+echo "6. Empty cause (reopened): distinct bead count is not event count (db-i0jd)"
 # ==============================================================================
-# Regression for sp-79jtq: count.py dropped empty fields by value, collapsing the
+# Regression for db-i0jd: count.py dropped empty fields by value, collapsing the
 # 4-column row to 3 when new_value is empty; the len==3 branch then read the event
 # count as the bead count. Discriminating fixture: 2 beads, 3 events — broken code
 # would report "3 sp-reopen" (event count), fixed code reports "2 sp-reopen".
@@ -281,6 +318,46 @@ out6="$(run_census)"
 want "sp-reopen: 2 distinct beads"               "2 sp-reopen"    "$out6"
 want "sp-reopen: 3 detections"                   "(3 detections"  "$out6"
 lack "sp-reopen not reported as 3 beads (broken would read event count)" "3 sp-reopen" "$out6"
+
+# ==============================================================================
+echo
+echo "7. Closed remedy with unlanded branch → class still suppressed (db-ista)"
+# ==============================================================================
+# Positive control: a closed remedy whose branch tip is NOT yet on origin/main
+# must continue suppressing the class. Suppression lifts only when the fix lands.
+testdb_reset
+bid_u="$(plant_bead "unlanded-fix-bead")"
+bump_recur "$bid_u" unlanded-cls
+
+closed_remedy_id="$(B create "Fix sp-recur-unlanded-cls" --type task --priority 2 \
+    --labels "spira,plan,${REMEDY_LABEL},covers:sp-recur-unlanded-cls,branch:sp-fix-cls" \
+    --silent 2>/dev/null | tr -d '[:space:]')"
+[ -n "$closed_remedy_id" ] \
+    || { bad "closed remedy bead created" "create failed"; printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
+B close "$closed_remedy_id" --reason "test: closed but not landed" --force >/dev/null 2>&1
+
+out7="$(run_census_repo "$REMEDY_REPO")"
+lack "sp-recur-unlanded-cls excluded when remedy is closed-but-unlanded" \
+    "sp-recur-unlanded-cls" "$out7"
+
+out7s="$(run_census_repo "$REMEDY_REPO" --with-suppressed)"
+want "closed-unlanded remedy: class appears with --with-suppressed" \
+    "sp-recur-unlanded-cls" "$out7s"
+want "closed-unlanded remedy: annotated [suppressed]" "[suppressed]" "$out7s"
+
+# ==============================================================================
+echo
+echo "8. CONTROL: closed remedy with landed branch → class unsuppressed (db-ista)"
+# ==============================================================================
+# Merge the fix branch into main and push so origin/main has the commit.
+# census.sh must no longer suppress the class.
+git -C "$REMEDY_REPO" merge -q --no-edit sp-fix-cls >/dev/null 2>&1
+git -C "$REMEDY_REPO" push -q origin main >/dev/null 2>&1
+
+out8="$(run_census_repo "$REMEDY_REPO")"
+want "sp-recur-unlanded-cls reappears after fix branch lands on base" \
+    "sp-recur-unlanded-cls" "$out8"
+lack "no [suppressed] annotation after branch lands" "[suppressed]" "$out8"
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
