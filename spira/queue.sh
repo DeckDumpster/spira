@@ -46,9 +46,9 @@ cmd_submit() {
 
     if [ "$mode" = "queue" ]; then
         case "$br" in
-        spira/*) ;;
+        spira/*|spira-suite-state/*) ;;
         *)
-            printf 'queue.sh submit: %s: queue mode requires a branch under spira/\n' "$br" >&2
+            printf 'queue.sh submit: %s: queue mode requires a branch under spira/ or spira-suite-state/\n' "$br" >&2
             return 1
             ;;
         esac

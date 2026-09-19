@@ -1127,9 +1127,9 @@ except Exception: print("")' 2>/dev/null)"
             _fail=1
         fi
         # Harness-owned namespaces: enumerate explicitly and count as SP_PROTECTED.
-        # queue/* and suite-state/* are never bead-named; the probe must not consider
-        # them unadopted (sp-ctag9: an aeon deleted a live queue branch mid-CI).
-        for _ns in "refs/heads/spira/queue/" "refs/heads/spira/suite-state/"; do
+        # Neither spira/queue/* nor spira-suite-state/* are bead-named; the probe must
+        # not consider them unadopted (sp-ctag9).
+        for _ns in "refs/heads/spira/queue/" "refs/heads/spira-suite-state/"; do
             while read -r _pb; do
                 [ -n "$_pb" ] || continue
                 _protected=$((_protected+1))

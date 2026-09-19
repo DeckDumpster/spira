@@ -49,7 +49,7 @@ run() {
 }
 
 git -C "$REPO" branch "spira/sp-abc01" main
-git -C "$REPO" branch "spira/suite-state/test-foo-20260101000000" main
+git -C "$REPO" branch "spira-suite-state/test-foo-20260101000000" main
 
 echo
 echo "positive control — gate is reachable for a valid spira/<id> branch:"
@@ -61,10 +61,10 @@ want "exit 0 for valid branch" "certified" "$out"
 rm -rf "$TMP/run"
 
 echo
-echo "spira/suite-state/... transition branch is accepted (not refused like non-spira/):"
+echo "spira-suite-state/... transition branch is accepted (not refused like non-spira/):"
 mkdir -p "$TMP/run/queue" "$TMP/run/landstate"
 : > "$GATE_LOG"
-out="$(run submit spira/suite-state/test-foo-20260101000000)"; rc=$?
+out="$(run submit spira-suite-state/test-foo-20260101000000)"; rc=$?
 want "gate stub was called for suite-state branch" "gate-called" "$(cat "$GATE_LOG")"
 want "suite-state branch certified" "certified" "$out"
 [ "$rc" -eq 0 ] && ok "exit 0 for suite-state branch" || bad "exit 0 for suite-state branch" "got rc=$rc"
@@ -87,11 +87,11 @@ nowant "never says certified" "certified"   "$out"
 rm -rf "$TMP/run"
 
 echo
-echo "submit allows a spira/suite-state/* transition branch:"
+echo "submit allows a spira-suite-state/* transition branch:"
 mkdir -p "$TMP/run/queue" "$TMP/run/landstate"
-git -C "$REPO" branch "spira/suite-state/test-q.sh" main
+git -C "$REPO" branch "spira-suite-state/test-q.sh" main
 : > "$GATE_LOG"
-out="$(run submit spira/suite-state/test-q.sh)"; rc=$?
+out="$(run submit spira-suite-state/test-q.sh)"; rc=$?
 want "exit 0 for transition branch" "certified" "$out"
 want "gate was called for transition branch" "gate-called" "$(cat "$GATE_LOG")"
 rm -rf "$TMP/run"
