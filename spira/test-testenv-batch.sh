@@ -688,6 +688,7 @@ want "B6b: log shows maxpar: 3 (from spira.conf)" "maxpar: 3" "$b6b_out"
 #   B7b fails: old code exits 1 on a repeat (runs), not 2 (refused)
 #   B7d fails: old code never logs "repeat allowed"
 #   B7e fails: old code exits 1 on bare-flag override (runs), not 2
+#   B7f fails: SPIRA_BATCH_BEAD_CMD did not exist; stub not reachable
 # B7c is the positive control and passes against old code too — old code never
 # refuses — proving a guard that refuses everything looks identical to one that
 # works (law-absence-needs-a-positive-control).
@@ -808,6 +809,38 @@ SPIRA_DB= \
 
 isexit2 "B7e: bare-flag override refused (exit 2)" "$rc_b7e"
 want   "B7e: output names the override requirement" "min 10 chars" "$b7e_out"
+
+# B7f: POSITIVE CONTROL — bead.sh is invoked when SPIRA_DB is set and a repeat
+# is refused. Exercises the code path B7b intentionally bypasses with SPIRA_DB=.
+# REGRESSION: the bead cmd was hardcoded to $HERE/bead.sh; SPIRA_BATCH_BEAD_CMD
+# did not exist, so this test would not compile against old code.
+_stub_b7f="$TMP/stub-bead-b7f.sh"
+_stub_called_b7f="$TMP/stub-called-b7f"
+cat > "$_stub_b7f" << 'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$STUB_CALLED"
+exit 0
+EOF
+chmod +x "$_stub_b7f"
+rc_b7f=0
+SPIRA_BATCH_SUITE_DIR="$SUITE_B7" \
+SPIRA_BATCH_RESULTS="$TMP/results-B7f" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_BATCH_INSTANCE="b7f-$$" \
+SPIRA_VERDICTS="$VERDICTS_B7" \
+SPIRA_VERDICT_TTL=86400 \
+SPIRA_DB="$TMP" \
+SPIRA_BATCH_BEAD_CMD="$_stub_b7f" \
+STUB_CALLED="$_stub_called_b7f" \
+    bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null || rc_b7f=$?
+isexit2 "B7f: positive-control: refused with SPIRA_DB set exits 2" "$rc_b7f"
+[ -f "$_stub_called_b7f" ] \
+    && ok "B7f: bead stub was invoked (bead filing code path reached)" \
+    || bad "B7f: bead stub invoked" "stub file absent — bead-cmd not called"
+if [ -f "$_stub_called_b7f" ]; then
+    want "B7f: bead stub called with 'file'" "file" "$(cat "$_stub_called_b7f")"
+    want "B7f: bead stub called with repeat title" "repeat attempt: no change" "$(cat "$_stub_called_b7f")"
+fi
 
 # ===========================================================================
 echo
