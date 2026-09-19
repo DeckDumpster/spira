@@ -1,0 +1,44 @@
+# Concurrency differential on test-cockpit-landed.sh, one tree (c26bd5b), 2026-09-18.
+# Fixture: this session's embedded shared fixture (TESTDB_SHARED=1). 'private' = a cp -a copy of
+# the fixture directory per run, sharing the read-only baseline; no database was built.
+# Verdicts are read from each run's own summary line. The runner's rc capture was defective
+# (a command substitution preceded $? in the same echo), so rc is NOT reported here.
+# A run with no summary line died in testdb_up before any assertion ran; its tail is shown.
+
+== serial (10 runs)
+     10 test-cockpit-landed: 5 ok, 0 fail
+   no summary line (fixture collapsed before assertions): 0
+
+== conc-shared (6 runs)
+      2 test-cockpit-landed: 5 ok, 0 fail
+   no summary line (fixture collapsed before assertions): 4
+   -- tail of c-1.out:
+      cp: preserving times for '/tmp/X/.beads.new/embeddeddolt': No such file or directory
+      testdb: could not reset shared fixture sptest_X
+   -- tail of c-2.out:
+      mv: cannot stat '/tmp/X/.beads.new': No such file or directory
+      testdb: could not reset shared fixture sptest_X
+
+== conc-private (6 runs)
+      6 test-cockpit-landed: 5 ok, 0 fail
+   no summary line (fixture collapsed before assertions): 0
+
+== conc12-shared (36 runs)
+      4 test-cockpit-landed: 0 ok, 5 fail
+      1 test-cockpit-landed: 2 ok, 3 fail
+      3 test-cockpit-landed: 5 ok, 0 fail
+   no summary line (fixture collapsed before assertions): 28
+      1   FAIL  SP_CLOSED is 24h-scoped: wanted [3] got [?]
+      4   FAIL  SP_CLOSED is 24h-scoped: wanted [3] got []
+      1   FAIL  SP_LANDED counts committed work: wanted [1] got [?]
+      4   FAIL  SP_LANDED counts committed work: wanted [1] got []
+      1   FAIL  SP_UNLANDED_N counts anomalies only: wanted [1] got [?]
+      4   FAIL  SP_UNLANDED_N counts anomalies only: wanted [1] got []
+      4   FAIL  output contains SP_AT: wanted [SP_AT=] in []
+      4   FAIL  output contains SP_UNLANDED_N: wanted [SP_UNLANDED_N=] in []
+   -- tail of r1-c1.out:
+      cp: preserving times for '/tmp/X/.beads.new/.beads': No such file or directory
+      testdb: could not reset shared fixture sptest_X
+   -- tail of r1-c10.out:
+      cp: preserving permissions for ‘/tmp/X/.beads.new/.beads’: No such file or directory
+      testdb: could not reset shared fixture sptest_X

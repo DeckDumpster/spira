@@ -1,0 +1,104 @@
+# Source: bead sp-y8bxp, read from the Spira beads store with 'bd show sp-y8bxp' on 2026-09-18.
+# Preserved because the beads store is not public. Home-directory paths rewritten to $HOME;
+# nothing else edited.
+
+○ sp-y8bxp · test-testdb-concurrent.sh: the gone-baseline check records rc in a subshell testdb_up can abort, so an absent file reads as rc=[empty] and kills the whole batch   [P1 · OPEN]
+Owner: Ryan Gantt · Type: task
+Created: 2026-09-17 · Updated: 2026-09-17
+
+DESCRIPTION
+
+  At 2026-09-17T23:29Z merge-queue batch 1789687831 (repo=spira, 6 members,   
+  gate_seconds=190) went red on exactly one suite and was deleted three       
+  minutes                                                                     
+  after it opened. Nothing was ejected (ejected=-), so all six branches       
+  requeued. The red was not in any member's code — it was the suite's own     
+  instrumentation.                                                            
+                                                                              
+  Evidence, from                                                              
+  $SPIRA_RUN/batch-                                                           
+  results/8b26d2cec507482af01b3b6eb0cd00c5e69208ab724b203b1e29fc8603e08bfc/   
+  (batch.meta: image_tag=6c48554d8425, branch=spira/queue/20260917T232719Z,   
+  base=origin/main, mode=parallel):                                           
+                                                                              
+    ok   borrower1 testdb_up succeeded                                        
+    ok   borrower2 testdb_up succeeded                                        
+    ok   concurrent borrowers got distinct SPIRA_DBs (no shared state)        
+    ok   testdb_drop removes the borrower's private directory                 
+    FAIL gone baseline must exit fixture-fault (75): got rc=[empty]           
+    4 passed, 1 failed                                                        
+                                                                              
+  ## The defect                                                               
+                                                                              
+  The suite arrived with sp-4f0oe (closed, landed as a4628b5 on spira/sp-     
+  4f0oe;                                                                      
+  the file is not on main — it lives at                                       
+  $SPIRA_RUN/worktree/sp-4f0oe/spira/test-testdb-concurrent.sh and in         
+  .batch-harness). Lines 85-96:                                               
+                                                                              
+    (                                                                         
+        export TESTDB_BASELINE="$GONE_BL"   # directory does not exist; cp    
+  will fail                                                                   
+        . "$HERE/testdb.sh"                                                   
+        testdb_up detect 2>/dev/null                                       
+        printf '%s' "$?" > "$DETECT_FILE"                                  
+    ) 2>/dev/null                                                          
+    detect_rc="$(cat "$DETECT_FILE" 2>/dev/null || printf 'empty')"        
+    if [ "${detect_rc:-}" = "75" ]; then                                      
+        ok "gone baseline exits fixture-fault (75), not assertion failure"    
+    else                                                                      
+        bad "gone baseline must exit fixture-fault (75)" "got                 
+  rc=[${detect_rc}]"                                                          
+    fi                                                                        
+                                                                              
+  The exit status is carried out of the subshell through a file written on the
+  line *after* the call. The literal string empty is the cat fallback, so     
+  rc=[empty] means $DETECT_FILE did not exist at all — the subshell died      
+  before reaching the printf. That is what testdb_up doing exit 75 rather     
+  than return 75 looks like from outside, and it is indistinguishable here    
+  from                                                                        
+  testdb_up returning the wrong code. The assertion cannot tell "exited 75"   
+  from "never got to record anything", and reports the second as a failure of 
+  the                                                                         
+  first.                                                                      
+                                                                              
+  It is also silent about its own breakage: both 2>/dev/null redirections     
+  throw                                                                       
+  away whatever the subshell said on the way out.                             
+                                                                              
+  ## Why this is P1 rather than a flaky-suite bead                            
+                                                                              
+  A single misfiring suite takes a whole batch with it and ejects nobody, so  
+  six                                                                         
+  certified branches lose their place and the next pass rebuilds the same     
+  batch                                                                       
+  from the same set — it loops. This is the second batch tonight killed this  
+  way;                                                                        
+  test-suites-hygiene.sh did it earlier. Each loop also feeds the quarantine  
+  machinery, which burst-counts (sp-iaxck) and auto-quarantines with no bead  
+  (sp-pjc2x), dirtying the production checkout.                               
+                                                                              
+  Related but distinct: sp-2f51e (the gate mounts the production checkout     
+  rather                                                                      
+  than the branch, which is *why* ejected=- on every batch today) and sp-yz02e
+  (closed; same mechanism, batches 56/57/58).                                 
+                                                                              
+  ## What done looks like                                                     
+                                                                              
+  Capture the status without a file round-trip, or distinguish the two cases  
+  explicitly — e.g. write a sentinel into $DETECT_FILE before the subshell    
+  runs                                                                        
+  so "file absent/unchanged" is reported as "testdb_up aborted the subshell", 
+  not as a wrong exit code. Stop swallowing the subshell's stderr, or capture 
+  it                                                                          
+  and print it in the bad line, so the next failure diagnoses itself.         
+                                                                              
+  Verify the new assertion fails against today's code first                   
+  (law-a-regression-test-must-be-seen-to-fail): construct the aborting case   
+  and                                                                         
+  confirm it is reported as an abort rather than as rc=[empty].               
+
+
+
+LABELS: plan, repo:spira, spira
+

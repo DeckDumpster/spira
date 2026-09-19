@@ -1,0 +1,104 @@
+# Source: bead sp-5cnem, read from the Spira beads store with 'bd show sp-5cnem' on 2026-09-18.
+# Preserved because the beads store is not public. Home-directory paths rewritten to $HOME;
+# nothing else edited.
+
+○ sp-5cnem · the flake observer files duplicate beads, and files them for suites that do not exist   [P2 · OPEN]
+Owner: aeon-sandy · Type: task
+Created: 2026-09-17 · Started: 2026-09-17 · Updated: 2026-09-18
+
+DESCRIPTION
+
+  ## What is wrong                                                            
+                                                                              
+  suites.sh cmd_observe_flake files a bead per observation with no dedupe and 
+  no                                                                          
+  check that the suite exists.                                                
+                                                                              
+  **No existence check.** _sts_transition refuses a suite that is not in the  
+  tree (suites.sh: [ -r "$HERE/$suite" ] || ... no such suite). The automatic 
+  path has no such guard, so a suite name that reaches it from anywhere — a   
+  fixture name leaking out of a test, a deleted suite, a typo — is quarantined
+  and                                                                         
+  filed against.                                                              
+                                                                              
+  **No dedupe.** _suite_auto_quarantine calls bead.sh file unconditionally.   
+  The "already quarantined" short-circuit above it only covers the case where 
+  the                                                                         
+  state file write succeeded; when the bead id comes back empty the state line
+  is                                                                          
+  still written with an empty bead, so the next observation re-files.         
+                                                                              
+  ## Evidence, in the graph right now                                         
+                                                                              
+  Five open beads, all P2, all identical, one every six to seven minutes:     
+                                                                              
+    fix test-dummy.sh: flaky   x5                                             
+                                                                              
+    body: "test-dummy.sh is auto-quarantined.                                 
+           Reason: auto: 3 flake observations in the window                   
+           Reproduce: bash spira/test-dummy.sh"                               
+                                                                              
+  spira/test-dummy.sh does not exist and has never existed in this tree. Five 
+  beads instruct an aeon to reproduce a file that is not there — and the title
+  instructs it to "fix a flaky test", which an aeon satisfies by making a     
+  check                                                                       
+  stop failing (law-never-disarm-a-check-to-proceed, arriving as an           
+  instruction                                                                 
+  from the machine).                                                          
+                                                                              
+  ## What to do                                                               
+                                                                              
+  • Refuse to observe or quarantine a suite that is not readable in the suite 
+  directory, the same guard _sts_transition already has. Say so loudly: a     
+  name that reaches this path and is not a suite is itself a defect somewhere 
+  upstream.                                                                   
+  • Dedupe the filing on the suite, not the observation. incident.sh already  
+  dedupes on an external ref and bumps a recurrence instead of filing again;  
+  that is the intake to use, and it is what suites.sh cmd_run already uses for
+  reds.                                                                       
+  • The title is a work instruction. "fix <suite>: flaky" tells an aeon to    
+  make it                                                                     
+  pass. Title it for the measured cause, or — when the cause is not yet       
+  measured                                                                    
+  — for the question: "why does <suite> fail only under <condition>".         
+                                                                              
+  Found by the sp-pmv67 spike; see docs/spikes/test-identity-lifecycle-and-   
+  trust.md.                                                                   
+
+
+
+NOTES
+
+  REOPENED 2026-09-18 by the concierge. This bead's work was COMPLETE, gated  
+  and CERTIFIED, and its branch was destroyed before it landed.               
+                                                                              
+  At 02:05-02:07 on 2026-09-18 the Ops aeon holding sp-n9z ran an ad-hoc      
+  cleanup:                                                                    
+                                                                              
+    git for-each-ref --format='%(refname)' refs/heads/spira/ | while read b;  
+  do                                                                          
+      if ! bd show "${b#refs/heads/spira/}" 2>/dev/null >/dev/null; then ...
+  delete ...                                                                  
+                                                                              
+  bd was invoked with NO -C pointing at the store, so every lookup failed,    
+  every branch                                                                
+  read as 'unadopted', and the script deleted every branch and worktree in the
+  repo                                                                        
+  except its own. It bypassed spira_destroy_branch, so nothing reached        
+  reap.log and the                                                            
+  content_landed guard -- which exists precisely to refuse deleting a branch  
+  whose                                                                       
+  commits are not on the base -- never ran. The commits are unrecoverable: not
+  on                                                                          
+  origin, objects pruned.                                                     
+                                                                              
+  The work must be redone. Root cause and the mechanism that makes it         
+  impossible: sp-vf8c2.                                                       
+
+
+
+LABELS: plan, repo:spira, spira
+
+CHILDREN
+  ↳ ✓ sp-5cnem.1: State change: branch → spira/sp-5cnem P4
+

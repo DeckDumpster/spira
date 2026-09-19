@@ -1,0 +1,69 @@
+# scripts/trust-show.sh over data/poc-ledger.ndjson.txt, 2026-09-18.
+
+$ trust-show.sh 'test-cockpit-landed.sh'
+test-cockpit-landed.sh
+
+  catches  1   -- NOT a candidate for automatic disarming
+           the worked/landed row counted all-time under a 24h header, producing nonsense against scoped counts; and never-landed falsely flagged healthy landing 
+
+  record   162 observation(s), 1789710505..1789710508
+
+  verdict by condition -- the discriminating question is whether ANY of these disagree:
+    conc-private             n=30   ok=30
+    conc-shared              n=14   no-assertions=4 ok=10
+    conc12-shared            n=68   fail=23 no-assertions=28 ok=17
+    serial                   n=50   ok=50
+
+  VERDICT DEPENDS ON THE CONDITION, NOT ONLY ON THE CONTENT.
+    red under:   conc-shared conc12-shared
+    green under: conc-private serial
+    The difference between those conditions is the defect. It is not in the tree
+    under test, and it is not a reason to switch this assertion off.
+
+$ trust-show.sh 'test-cockpit-landed.sh::SP_LANDED counts committed work'
+test-cockpit-landed.sh::SP_LANDED counts committed work
+
+  catches  1   -- NOT a candidate for automatic disarming
+           the worked/landed row counted all-time under a 24h header, producing nonsense against scoped counts; and never-landed falsely flagged healthy landing 
+
+  record   26 observation(s), 1789710505..1789710508
+
+  verdict by condition -- the discriminating question is whether ANY of these disagree:
+    conc-private             n=6    ok=6
+    conc-shared              n=2    ok=2
+    conc12-shared            n=8    fail=5 ok=3
+    serial                   n=10   ok=10
+
+  VERDICT DEPENDS ON THE CONDITION, NOT ONLY ON THE CONTENT.
+    red under:   conc12-shared
+    green under: conc-private conc-shared serial
+    The difference between those conditions is the defect. It is not in the tree
+    under test, and it is not a reason to switch this assertion off.
+
+$ trust-show.sh 'test-cockpit-landed.sh::output contains SP_AT'
+test-cockpit-landed.sh::output contains SP_AT
+
+  catches  1   -- NOT a candidate for automatic disarming
+           the worked/landed row counted all-time under a 24h header, producing nonsense against scoped counts; and never-landed falsely flagged healthy landing 
+
+  record   26 observation(s), 1789710505..1789710508
+
+  verdict by condition -- the discriminating question is whether ANY of these disagree:
+    conc-private             n=6    ok=6
+    conc-shared              n=2    ok=2
+    conc12-shared            n=8    fail=4 ok=4
+    serial                   n=10   ok=10
+
+  VERDICT DEPENDS ON THE CONDITION, NOT ONLY ON THE CONTENT.
+    red under:   conc12-shared
+    green under: conc-private conc-shared serial
+    The difference between those conditions is the defect. It is not in the tree
+    under test, and it is not a reason to switch this assertion off.
+
+$ trust-show.sh 'test-conf.sh'
+test-conf.sh
+
+  catches  0   -- no recorded catch; that is an ABSENCE OF DATA, not a low score
+
+  record   none. This assertion has never been observed by the harvester.
+           Absence of failure is not evidence of reliability: no verdict here.

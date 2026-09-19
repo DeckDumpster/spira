@@ -1,0 +1,20 @@
+# Source: bead sp-iavci, read from the Spira beads store with 'bd show sp-iavci' on 2026-09-18.
+# Preserved because the beads store is not public. Home-directory paths rewritten to $HOME;
+# nothing else edited.
+
+○ sp-iavci · fix test-testdb-concurrent.sh: flaky   [P2 · OPEN]
+Owner: Ryan Gantt · Type: task
+Created: 2026-09-18 · Updated: 2026-09-18
+
+DESCRIPTION
+
+  test-testdb-concurrent.sh is auto-quarantined.                              
+                                                                              
+  Reason: auto: 1 flake observations in the window                            
+                                                                              
+  Reproduce: bash spira/test-testdb-concurrent.sh                             
+
+
+
+LABELS: plan, repo:spira, spira
+

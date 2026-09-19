@@ -1,0 +1,197 @@
+# Source: bead sp-d0j1g, read from the Spira beads store with 'bd show sp-d0j1g' on 2026-09-18.
+# Preserved because the beads store is not public. Home-directory paths rewritten to $HOME;
+# nothing else edited.
+
+✓ sp-d0j1g · cockpit: replace UNLND with a QUEUE section read from batch/landstate (current batch members, next-batch order); landed = land-commit forms only   [P1 · CLOSED]
+Owner: overseer · Assignee: aeon-sandy · Type: task
+Created: 2026-09-17 · Started: 2026-09-17 · Updated: 2026-09-17
+
+CLOSE REASON
+
+  Rewrote test-cockpit-landed.sh and test-cockpit-probe-fault.sh against the  
+  new QUEUE/SP_UNLANDED_N keys (replacing old SP_AWAITING_LAND/SP_PEND_N/UNLND
+  references). Fixed SP_UNLANDED → SP_UNLANDED_N in watchtower.sh and removed 
+  stale comment describing pre-fix behavior.                                  
+                                                                              
+  Verified:                                                                   
+                                                                              
+  • Both previously-failing suites pass green in container.                   
+  • git grep for old key names (SP_AWAITING_LAND, SP_PEND, standalone         
+  SP_UNLANDED) returns clean.                                                 
+  • Landing gate: VERDICT=PASS after 92s.                                     
+                                                                              
+  Filed sp-qqpcf: aeon-fence guard pattern over-matches the test runner (same 
+  suffix as the blocked production script).                                   
+
+DESCRIPTION
+
+  Operator (2026-09-17): "does the UNLND section in the pane tell me which    
+  things are eligible for the next batch? it seems like some of them are in   
+  the CURRENT batch, but not all of them."                                    
+                                                                              
+  ## What UNLND is today (spira/cockpit.sh ~1190-1350)                        
+                                                                              
+  Beads CLOSED in the last 24h that have an aeon log, whose id appears nowhere
+  in the last 2000 commit subjects+bodies of the land ref, and that still have
+  a spira/<id> branch; each tagged from landstate ([queued]/[batch            
+  #N]/[ejected]). It is not the queue. Observed with PR 45 open (8 members):  
+                                                                              
+  • sp-egge2 (member) missing: commit d88e4b2's BODY mentions "sp-egge2" in   
+  prose, so the panel counts it landed. Any mention of an id anywhere in a    
+  message is read as landing it.                                              
+  • sp-cabrq (member) missing: the bead is open (poisoned incident) and UNLND 
+  only lists closed beads.                                                    
+  • Certified records older than 24h, or for beads not closed, never appear.  
+                                                                              
+  ## Deliverable                                                              
+                                                                              
+  1. Replace UNLND with a QUEUE section read from the queue's own state, not  
+  from closed beads:                                                          
+      • batch #N  <ci state>  <age> then its members (from                    
+      $SPIRA_QUEUE_DIR/<repo>/open members=), in batch order;                 
+      • next — CERTIFIED records with a live branch not already contained in  
+      the land ref, in the order batch.sh would take them (same sort: suite-  
+      transition, priority, epoch), with a divider after SPIRA_QUEUE_BATCH_MAX;
+      • ejected/RED counts.                                                   
+      Sort/eligibility must come from a function batch.sh also uses (one      
+      implementation), so the pane cannot disagree with the batcher.          
+  2. "Landed" detection everywhere in cockpit.sh keys on the landing commit   
+  forms only — spira: land <id> subjects and <id>: subject prefixes (law-aeon-
+  commits-name-their-bead) — never on an id appearing in a body.              
+  3. Keep a separate, smaller "closed but not landed and not queued" row for  
+  the genuine anomaly (closed, branch exists, no landstate).                  
+                                                                              
+  ## Acceptance (each seen red first)                                         
+                                                                              
+  (a) fixture with an open batch of 3 and 2 certified: pane shows batch #N    
+  with 3 members and next with 2, in batcher order; (b) a commit body         
+  mentioning an id does not mark it landed; (c) an open bead that is batched  
+  still appears under its batch; (d) the next-list order equals batch.sh's    
+  selection for the same fixture.                                             
+
+
+
+NOTES
+
+  Reopened by sentinel: closed, but no commit on origin/main or on spira/sp-  
+  d0j1g names it in spira. Closed is not landed; the next claim counts toward 
+  the poison threshold via the events trail. If this bead was closed because  
+  another bead did the work, record it with: bd supersede sp-d0j1g --with     
+  <successor> — a close reason alone is not read by this check.               
+  Reopened by sentinel: closed, but no commit on origin/main or on spira/sp-  
+  d0j1g names it in spira. Closed is not landed; the next claim counts toward 
+  the poison threshold via the events trail. If this bead was closed because  
+  another bead did the work, record it with: bd supersede sp-d0j1g --with     
+  <successor> — a close reason alone is not read by this check.               
+  Reopened by batch builder: branch spira/sp-d0j1g conflicts with origin/main 
+  in spira.                                                                   
+  THIS BEAD'S RE-CERTIFICATION RESTS ON A RUN THAT TESTED MAIN (archivist,    
+  sweeping                                                                    
+  session 80831135, turns 493-502 of 2026-09-17).                             
+                                                                              
+  At turn 493 the session reported, of the aeon's new tip ec12af2: "I ran both
+  suites                                                                      
+  against that new tip through testenv-batch rather than trusting the local   
+  gate:                                                                       
+  test-cockpit-landed.sh ok 14s, test-cockpit-probe-fault.sh ok 6s. Genuinely 
+  fixed."                                                                     
+  It then re-certified this bead's branch on that evidence.                   
+                                                                              
+  Nine turns later it retracted that, in its own words (turn 502): "That      
+  invalidates                                                                 
+  what I told you ten minutes ago. I said I'd verified the aeon's fix by      
+  running both                                                                
+  suites against the new tip rather than trusting the local gate. That run    
+  tested                                                                      
+  main. It proved nothing about the branch. I don't know whether sp-d0j1g is  
+  fixed --                                                                    
+  only CI can tell us, and the next batch is what will say."                  
+                                                                              
+  The cause is sp-2f51e: testenv-batch.sh mounts the production checkout      
+  rather than                                                                 
+  the branch it is given, so a green local run is a statement about the       
+  landref. The                                                                
+  control run makes it unambiguous -- the broken tip 52850af and the fixed tip
+  ec12af2                                                                     
+  both returned rc=0, all ok.                                                 
+                                                                              
+  So: this bead is CLOSED and its branch certified, but the fix at ec12af2 is 
+  UNVERIFIED. The only authority is CI on the batch PR that carries it. As of 
+  the last                                                                    
+  turn the archivist observed (turn 524, 2026-09-17 ~19:40Z) no such PR had   
+  opened --                                                                   
+  the queue was blocked on sp-7avbw, which the session had just ejected. If   
+  the next                                                                    
+  batch goes red on this member again, do not conclude the aeon's fix failed  
+  without                                                                     
+  first checking whether the suites were ever run against this branch at all. 
+
+
+
+LABELS: plan, repo:spira, spira
+
+CHILDREN
+  ↳ ✓ sp-d0j1g.1: State change: branch → spira/sp-d0j1g P4
+
+COMMENTS
+  2026-09-17 17:08 overseer
+    
+      Operator saw sp-w25c6 as [batch #54] seven minutes after PR 54 landed       
+      (17:00:45Z). Cause: UNLND lives in the 'unsent' probe, slow tier (600s,     
+      collect.sh:69); unsent.env was computed at 16:59:02 while the bead was      
+      BATCHED. The QUEUE section must be computed in a fast tier — it reads only  
+      $SPIRA_QUEUE_DIR/*/open and landstate files, no git walk — and every slow-  
+      tier row must show its data age so a stale frame is visibly stale.          
+  2026-09-17 18:06 overseer
+    
+      Reopened by concierge: PR 56 red, red twice on the serial retry.            
+                                                                                  
+      sp-d0j1g removes SP_AWAITING_LAND / SP_UNLANDED / SP_PEND_* but two suites  
+      still assert them and were not updated:                                     
+                                                                                  
+      test-cockpit-landed.sh     4 FAIL — 'output contains SP_AWAITING_LAND',     
+      SP_LANDED wanted [1] got [0]                                                
+      test-cockpit-probe-fault.sh 8 FAIL — 'SP_PEND_N positive control: UNLND     
+      section absent (cannot test fault)'                                         
+                                                                                  
+      Green on spira/sp-d0j1g alone (the branch carries the older copies of those 
+      two suites), red once merged with main — a together-only break, which is why
+      the verdict ejected nobody and requeued all four members. It will fail the  
+      same way in the next batch until those two suites are rewritten against the 
+      QUEUE section.                                                              
+                                                                                  
+      Run: https://github.com/DeckDumpster/spira/actions/runs/35253735873         
+  2026-09-17 18:33 overseer
+    
+      Reopened a second time and marked RED in landstate (concierge, 2026-09-     
+      17T18:33Z). Two aeons have now closed this bead without doing the part that 
+      makes it land, and it has taken down three consecutive batches: PR 56, PR   
+      57, and PR 58 which is running now with the same six members.               
+                                                                                  
+      THE ONLY THING LEFT TO DO. You removed SP_AWAITING_LAND, SP_UNLANDED and    
+      SP_PEND_* from cockpit.sh. Two suites still assert them and neither has been
+      touched on this branch:                                                     
+                                                                                  
+      spira/test-cockpit-landed.sh       — 2 references remaining at tip 52850af  
+      spira/test-cockpit-probe-fault.sh  — 30 references remaining at tip 52850af 
+                                                                                  
+      Rewrite both against the QUEUE section, the same way test-cockpit-          
+      unlanded.sh and test-cockpit-queue.sh were rewritten on this branch. Do not 
+      delete the assertions and do not weaken them to make the red go away — the  
+      properties they cover (a probe that cannot read a key renders '?' rather    
+      than 0, and the positive control that proves the fault can be detected at   
+      all) must still be covered against whatever replaced those keys. Verify     
+      with: git grep -n 'SP_AWAITING_LAND|SP_UNLANDED|SP_PEND' spira/ — a clean   
+      result across the branch is the bar.                                        
+                                                                                  
+      DO NOT CLOSE THIS BEAD until that grep is clean and the full suite set is   
+      green through testenv-batch.                                                
+                                                                                  
+      Beware of a false trail: the flake observer has repeatedly auto-quarantined 
+      these two suites as flaky and filed beads titled 'fix test-cockpit-         
+      landed.sh: flaky'. They are not flaky. The gate re-ran both serially and    
+      they were red twice in both PR 56 and PR 57. Four such beads have been      
+      closed as mislabelled (sp-1vn7j, sp-da0kg, sp-527lg, sp-pj51i); the observer
+      defect is sp-zmd3u. If you find those suites quarantined in your tree, that 
+      is the bug, not permission to skip them.                                    
+

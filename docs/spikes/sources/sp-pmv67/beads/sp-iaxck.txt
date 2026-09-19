@@ -1,0 +1,139 @@
+# Source: bead sp-iaxck, read from the Spira beads store with 'bd show sp-iaxck' on 2026-09-18.
+# Preserved because the beads store is not public. Home-directory paths rewritten to $HOME;
+# nothing else edited.
+
+✓ sp-iaxck · The flake observer counts annotations, not runs: one flaky suite in one run crosses the quarantine threshold   [P0 · CLOSED]
+Owner: overseer · Assignee: aeon-mindy · Type: task
+Created: 2026-09-17 · Started: 2026-09-18 · Updated: 2026-09-18
+
+CLOSE REASON
+
+  Fixed observe-flake to deduplicate on (suite, run_id) instead of recording  
+  every annotation.                                                           
+                                                                              
+  Changes:                                                                    
+                                                                              
+  • suites.sh: flakeobs_record now takes run_id and refuses a duplicate (suite,
+  run_id) pair                                                                
+  before writing. Format changed from bare epoch to "<epoch> <run_id>" per    
+  line.                                                                       
+  flakeobs_in_window counts distinct run_ids in window; skips entries with    
+  empty run_id                                                                
+  (old-format entries, which are effectively zeroed by this change).          
+  cmd_observe_flake requires run_id as second argument.                       
+  • gate-check.sh: passes $_run_id (the GitHub Actions run id) to observe-    
+  flake.                                                                      
+  • verdict.sh: passes $batch_head (the batch commit SHA) to observe-flake.   
+  • test-suites-hygiene.sh: all observe-flake calls supply a run_id; added a  
+  dedup case                                                                  
+  (same run_id twice → one observation, suite stays active); positive control 
+  is the                                                                      
+  existing "two distinct runs → quarantine" test.                             
+                                                                              
+  Verified: test-suites-hygiene.sh and test-gate-check-flaky.sh both pass in  
+  testenv-batch.sh.                                                           
+                                                                              
+  Existing ledgers: old-format entries (bare epoch, no run_id) are parsed with
+  empty run_id                                                                
+  and skipped by flakeobs_in_window. Existing inflated counts are zeroed as of
+  this commit.                                                                
+  Suites that are currently quarantined on false observations remain          
+  quarantined until hygiene                                                   
+  reactivates them per SPIRA_QUARANTINE_CLEAN_RUNS (see sp-zmd3u).            
+
+DESCRIPTION
+
+  The flake observer counts ANNOTATIONS, not RUNS, so one flaky suite in one  
+  CI run                                                                      
+  records two or three observations seconds apart and crosses a threshold of 2
+  immediately. Every quarantine fired to date rests on this.                  
+                                                                              
+  ## The evidence                                                             
+                                                                              
+  $STATE/<suite>.flakeobs ledgers, read 2026-09-17T22:50Z. The window is 7    
+  days                                                                        
+  (SPIRA_FLAKE_WINDOW=604800) and the threshold is 2                          
+  (SPIRA_FLAKE_QUARANTINE_AT):                                                
+                                                                              
+    test-suites-hygiene.sh          21:50:42, 21:50:43, 21:50:44   3 in 2s    
+    test-cockpit-landed.sh          18:00:19, 18:00:21, 18:00:24   3 in 5s    
+                                    18:28:17, 18:28:19, 18:28:20   3 in 3s    
+    test-cockpit-probe-fault.sh     18:00:15, 18:00:21, 18:00:23   3 in 8s    
+                                    18:28:15, 18:28:19, 18:28:20   3 in 5s    
+    test-reclaim-slay-branch-guard  15:49:42, 15:49:43, 15:49:44   3 in 2s    
+                                    15:51:32, 15:51:33, 15:51:33   3 in 1s    
+    test-suites-confirm-red.sh      18:28:14, 18:28:19            2 in 5s     
+    test-doctor-embedded.sh         18:00:14, 18:00:22            2 in 8s     
+    test-suites-result-files.sh     18:00:12, 18:00:22            2 in 10s    
+    test-cockpit-mouse.sh           18:00:17, 18:00:23            2 in 6s     
+                                                                              
+  Bursts, not a week of independent flakes. Eight suites sit at or over       
+  threshold                                                                   
+  on data that represents at most one incident each.                          
+                                                                              
+  ## The mechanism                                                            
+                                                                              
+  gate-check.sh:125-148 iterates the annotations of a check-run and calls     
+  observe-flake once per annotation. GitHub repeats an annotation -- job      
+  105386245502 carried the identical "FAIL second obs reaches threshold"      
+  message                                                                     
+  three times -- so the loop fires N times for one suite in one run.          
+                                                                              
+  The loop does hold a dedup guard, but it is on the BEAD ("skip if an open   
+  bead                                                                        
+  titled 'flaky suite: <suite>' exists") and it is demonstrably not holding:  
+  the                                                                         
+  ledgers above were written with it in place. Whether bead.sh's write is not 
+  yet                                                                         
+  visible to the bdq list on the next iteration, or the filing failed silently
+  under                                                                       
+  its 2>/dev/null || true, the observation is recorded either way -- observe- 
+  flake                                                                       
+  is called after the guard, not protected by it.                             
+                                                                              
+  ## The unit is wrong                                                        
+                                                                              
+  An observation means "this suite was red on a parallel run and green on a   
+  serial                                                                      
+  re-run" -- a property of a RUN. The unit of record must therefore be (suite,
+  run_id), deduplicated on that pair, and it must be enforced at the point of 
+  recording rather than inferred from a bead query that can fail open.        
+                                                                              
+  ## Acceptance                                                               
+                                                                              
+  • observe-flake takes the run id and refuses a duplicate (suite, run) pair. 
+  • A suite that feeds two identical annotations from one run and asserts     
+  exactly                                                                     
+  ONE observation lands -- the positive control being that a genuine second   
+  run                                                                         
+  still records a second (law-absence-needs-a-positive-control).              
+  • Decide what to do with the existing ledgers: every entry was recorded     
+  under the                                                                   
+  wrong unit, so the counts cannot be repaired by arithmetic. See the note    
+  below.                                                                      
+                                                                              
+  ## Do not fix this by raising the threshold                                 
+                                                                              
+  law-alerts-must-be-actionable forbids it: the proxy is wrong, not the       
+  number.                                                                     
+  Raising SPIRA_FLAKE_QUARANTINE_AT would hide burst-counting rather than     
+  measure                                                                     
+  the property that matters.                                                  
+                                                                              
+  ## Related                                                                  
+                                                                              
+  • sp-pjc2x -- the observer writes quarantines into the production checkout. 
+  • sp-zmd3u -- quarantined suites the gate had judged red-red, filing no bead.
+  • sp-2f51e -- testenv-batch.sh tests the production checkout, not the branch,
+  so                                                                          
+  red-then-green is an expected artifact; while it stands, observations are   
+  not                                                                         
+  trustworthy even once the counting is fixed.                                
+
+
+
+LABELS: branch:spira/sp-iaxck, plan, repo:spira, spira
+
+CHILDREN
+  ↳ ✓ sp-iaxck.1: State change: branch → spira/sp-iaxck P4
+

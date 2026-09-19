@@ -1,0 +1,172 @@
+# Source: bead sp-pmv67, read from the Spira beads store with 'bd show sp-pmv67' on 2026-09-18.
+# Preserved because the beads store is not public. Home-directory paths rewritten to $HOME;
+# nothing else edited.
+
+◐ sp-pmv67 · SPIKE: tests need identity, lifecycle and a trust score — 'flaky' is currently one label applied by a counter that cannot tell a real failure from a false one   [P3 · IN_PROGRESS]
+Owner: overseer · Assignee: aeon-anima · Type: task
+Created: 2026-09-17 · Started: 2026-09-17 · Updated: 2026-09-18
+Lease: expires in 4 mins (heartbeat just now)
+
+DESCRIPTION
+
+  ## The ask (the operator, 2026-09-17)                                       
+                                                                              
+  Take a strong opinion about the structure of suites and tests. Individual   
+  tests should have an identity and we should be able to lifecycle them. When 
+  one is suspected flaky, there should be machinery that produces data about  
+  that rather than a label. Every test in the system should carry a TRUST     
+  SCORE built from its record: how many real problems it has halted, how many 
+  false failures it has produced, and so on.                                  
+                                                                              
+  This is a research spike. The deliverable is a written design, not an       
+  implementation.                                                             
+                                                                              
+  ## Why now — what today showed                                              
+                                                                              
+  Everything below happened on 2026-09-17 and is the evidence the design      
+  should be written against.                                                  
+                                                                              
+  **"Flaky" is currently one undifferentiated label applied by a counter.**   
+  suites.sh observe-flake quarantined five suites at threshold 1 — a single   
+  observation — and logged (bead: (none filed)) for each. One sighting        
+  disarmed five checks with nobody accountable for restoring them.            
+                                                                              
+  **The judgement had no idea what it was judging.** Two of those five, test- 
+  cockpit-landed.sh and test-cockpit-probe-fault.sh, were not flaky at all:   
+  the gate had re-run them serially and they were red BOTH times, in two      
+  consecutive PRs. They were correctly detecting a real regression. The       
+  machinery called them flaky because the code that attributes blame was      
+  reading the wrong tree entirely (sp-2f51e), so nothing ever reproduced and  
+  "flake" was the only conclusion left.                                       
+                                                                              
+  **The unit of quarantine is wrong.** test-cockpit-landed.sh reported 2 ok, 4
+  fail. Quarantining the FILE switched off the two assertions that were       
+  working in order to silence the four that were failing. The failures have   
+  names — "SP_LANDED counts committed work", "output contains                 
+  SP_AWAITING_LAND" — and those names are the natural identities. The suite   
+  file is a packaging decision, not a unit of trust.                          
+                                                                              
+  **The label propagates into work instructions.** The quarantine path files  
+  beads titled fix test-X.sh: flaky whose body is "Reason: auto: N flake      
+  observations in the window". Four of those were open against suites that    
+  were working correctly. An aeon handed "fix the flaky test" makes it stop   
+  failing — which is the thing law-never-disarm-a-check-to-proceed exists to  
+  prevent, arriving as an instruction from the machine. It also files one bead
+  per observation, so duplicates accumulate (three open for test-dummy.sh).   
+                                                                              
+  **There is no record to consult.** Nothing anywhere can answer "has this    
+  test ever caught a real defect?" — which is the single number that should   
+  have protected test-cockpit-landed.sh from being switched off.              
+                                                                              
+  ## What the spike should produce                                            
+                                                                              
+  Not code. A design that answers, with the reasoning visible:                
+                                                                              
+  1. **Identity.** What is the unit — the assertion, the case, the file? How  
+  is it named so the name survives a refactor, and what happens when an       
+  assertion is renamed or moved between files? A test whose identity is its   
+  line number has no history.                                                 
+  2. **Lifecycle.** The states a test can be in (proposed, active, suspect,   
+  quarantined, retired) and what evidence moves it between them. Today the    
+  only transition is a counter crossing a threshold, in one direction.        
+  3. **Evidence, not labels.** When a test is suspected flaky, what does the  
+  machinery DO to find out? Re-run under held-constant conditions, run against
+  a known-good and a known-bad tree, vary concurrency, bisect. The            
+  distinguishing question is whether the test's verdict depends on anything   
+  but the content under test — and that is answerable by experiment rather    
+  than by counting.                                                           
+  4. **The trust score.** What goes into it and how it is computed. Candidates
+  from today's evidence: real defects halted (the number that matters most and
+  that nothing currently records); false failures, split by cause — resource  
+  contention, ordering, shared fixture, a wrong path, an environment          
+  difference; red-then-green-on-retry rate; runtime variance; quarantine      
+  history and who restored it; age and how often it has been edited to make it
+  pass.                                                                       
+  5. **What the score is allowed to decide.** A low-trust test that fails     
+  might warn rather than block; a high-trust test that fails should never be  
+  auto-quarantined by any threshold. Be explicit that the score must never    
+  become a route to switching off a check that has caught things before — that
+  is the failure mode this whole bead is a reaction to.                       
+  6. **Where the data lives and who writes it.** Per-test records need a home 
+  that survives a branch, and a producer that stamps its own clock (law-      
+  producers-stamp-their-own-clock). Note that suite-state today lives in the  
+  tree under test, which is why a quarantine and the code it judges can       
+  disagree.                                                                   
+  7. **Migration.** ~145 suites exist. The design must say how they acquire   
+  identities and histories without a flag day, and what the first useful      
+  increment is.                                                               
+                                                                              
+  ## Constraints                                                              
+                                                                              
+  • A check that has ever caught a real defect is not a candidate for         
+  automatic disarming, whatever its score.                                    
+  • Absence of evidence is not evidence of reliability: a test that has never 
+  failed and has never been shown capable of failing has no trust, it has no  
+  data (law-absence-needs-a-positive-control).                                
+  • The design must be readable by an agent deciding what to do about one red 
+  test, not only by a person reading a dashboard.                             
+                                                                              
+  ## Related                                                                  
+                                                                              
+  sp-2f51e (attribution reads the wrong tree — why honest suites got labelled 
+  flaky), sp-zmd3u (the observer's threshold, missing beads, duplicate        
+  filings, misleading titles).                                                
+
+
+
+NOTES
+
+  Spike written up at docs/spikes/test-identity-lifecycle-and-trust.md (656   
+  lines), with every source and every measurement preserved under             
+  docs/spikes/sources/sp-pmv67/. POC on branch spike/sp-pmv67-poc (commit     
+  95e6db8), unmerged and LOCAL ONLY — aeons carry no push credentials, so that
+  branch exists only in the sp-pmv67 worktree's repository and will be lost   
+  when the worktree is reaped. Its two scripts are 120 lines total and are    
+  reproduced in section 11 of the document.                                   
+                                                                              
+  Filed while researching: sp-6zw2p (P1, the merge-queue quarantines exactly  
+  the suites the gate declared NOT flaky), sp-4f0oe (P1, concurrent borrowers 
+  of the shared test fixture reset it under each other — this reproduces the  
+  incident's exact 2 ok / 4 fail signature), sp-5cnem (P2, duplicate beads and
+  beads filed for suites that do not exist).                                  
+                                                                              
+  Branch confinement verified: git diff --name-only origin/main...HEAD touches
+  only docs/spikes/. inventory.sh, literal-lint.sh and scratch-fence.sh are   
+  all green, and all eight suites named in spira/gate-suites pass on this     
+  tree. 'git fetch origin' failed for want of credentials, so the rebase was  
+  against the local origin/main ref at 8537809; a docs-only branch adding a   
+  new directory should not conflict if the real base has moved.               
+  REOPENED 2026-09-18 by the concierge. This bead's work was COMPLETE, gated  
+  and CERTIFIED, and its branch was destroyed before it landed.               
+                                                                              
+  At 02:05-02:07 on 2026-09-18 the Ops aeon holding sp-n9z ran an ad-hoc      
+  cleanup:                                                                    
+                                                                              
+    git for-each-ref --format='%(refname)' refs/heads/spira/ | while read b;  
+  do                                                                          
+      if ! bd show "${b#refs/heads/spira/}" 2>/dev/null >/dev/null; then ...
+  delete ...                                                                  
+                                                                              
+  bd was invoked with NO -C pointing at the store, so every lookup failed,    
+  every branch                                                                
+  read as 'unadopted', and the script deleted every branch and worktree in the
+  repo                                                                        
+  except its own. It bypassed spira_destroy_branch, so nothing reached        
+  reap.log and the                                                            
+  content_landed guard -- which exists precisely to refuse deleting a branch  
+  whose                                                                       
+  commits are not on the base -- never ran. The commits are unrecoverable: not
+  on                                                                          
+  origin, objects pruned.                                                     
+                                                                              
+  The work must be redone. Root cause and the mechanism that makes it         
+  impossible: sp-vf8c2.                                                       
+
+
+
+LABELS: branch:spira/sp-pmv67, repo:spira, spike, spira
+
+CHILDREN
+  ↳ ✓ sp-pmv67.1: State change: branch → spira/sp-pmv67 P4
+  ↳ ✓ sp-pmv67.2: State change: branch → spira/sp-pmv67 P4
+

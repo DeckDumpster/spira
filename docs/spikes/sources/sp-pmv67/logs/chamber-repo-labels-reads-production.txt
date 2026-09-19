@@ -1,0 +1,41 @@
+# test-chamber-repo-labels.sh, run twice on c26bd5b in a minimal environment (env -i with HOME,
+# PATH, USER and the TESTDB_* fixture variables), 2026-09-18. Its FAIL line, verbatim:
+  FAIL  bead sp-114e5: repo:fixture-repo: does not resolve in repo-map — bead is permanently parked
+70 passed, 1 failed
+  FAIL  bead sp-114e5: repo:fixture-repo: does not resolve in repo-map — bead is permanently parked
+70 passed, 1 failed
+
+# The bead it names, from the production store:
+○ sp-114e5 · test bead   [P2 · OPEN]
+Owner: aeon-anima · Type: task
+Created: 2026-09-16 · Updated: 2026-09-17
+
+
+# The suite's own read of the store:
+else
+    ok "positive control: repo_root rejects unknown repo names"
+fi
+
+if [ -z "${SPIRA_DB:-}" ]; then
+    ok "bead check skipped: SPIRA_DB not set"
+elif ! command -v "${SPIRA_BD:-bd}" >/dev/null 2>&1; then
+    ok "bead check skipped: bd not in PATH"
+else
+    bead_fail=0
+    while IFS=$'\t' read -r bead_id repo_name; do
+        [ -n "$bead_id" ] && [ -n "$repo_name" ] || continue
+        if repo_root "$repo_name" >/dev/null 2>&1; then
+            ok "bead $bead_id: repo:$repo_name resolves"
+        else
+            bad "bead $bead_id: repo:$repo_name" \
+                "does not resolve in repo-map — bead is permanently parked"
+            bead_fail=$((bead_fail+1))
+        fi
+    done < <(
+        "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list \
+            --status open --flat --limit 0 2>/dev/null \
+        | while IFS= read -r line; do
+            bead="$(printf '%s' "$line" | awk '{print $2}')"
+            repo="$(printf '%s' "$line" \
+                | grep -oE 'repo:[a-z][a-z0-9-]+' | head -1 | cut -d: -f2)"
+            [ -n "$bead" ] && [ -n "$repo" ] \
