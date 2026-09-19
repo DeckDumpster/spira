@@ -343,7 +343,8 @@ lack "sp-recur-unlanded-cls excluded when remedy is closed-but-unlanded" \
 out7s="$(run_census_repo "$REMEDY_REPO" --with-suppressed)"
 want "closed-unlanded remedy: class appears with --with-suppressed" \
     "sp-recur-unlanded-cls" "$out7s"
-want "closed-unlanded remedy: annotated [suppressed]" "[suppressed]" "$out7s"
+want "closed-unlanded remedy: annotated [suppressed: remedy closed, not landed]" \
+    "[suppressed: remedy closed, not landed]" "$out7s"
 
 # ==============================================================================
 echo
