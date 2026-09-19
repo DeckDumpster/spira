@@ -9,7 +9,7 @@ After=default.target
 
 [Service]
 Type=oneshot
-ExecStart=@SPIRA_COCKPIT@/verify-asks.sh --apply
+ExecStart=@SPIRA_PROD_COCK@/verify-asks.sh --apply
 # 120s per verify command (script default). 600s covers up to five parallel checks
 # plus the mislabelled-epic scan on a queue with some depth.
 TimeoutStartSec=600
