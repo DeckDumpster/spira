@@ -568,7 +568,7 @@ is "8. branch-gone: ghost reason is branch-gone" "branch-gone" \
     "$(awk '{print $4}' "$LANDSTATE/sp-bt8-ghost" 2>/dev/null)"
 # The ghost's old epoch should not have triggered a stuck-queue mail:
 # only the live branch is in _certified_list, and it is not old enough.
-nowant "8. branch-gone: no stuck-queue mail" "stuck" "$out8"
+nowant "8. branch-gone: no stuck-queue mail" "mailed operator" "$out8"
 clean_case
 
 # =============================================================================
