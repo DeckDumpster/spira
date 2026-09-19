@@ -1037,6 +1037,7 @@ unsent_keys() {
     # branches aged forever — the reassuring answer, produced by looking in the wrong place.
     # Refs are a local read, so this costs nothing per repository; no fetch happens here.
     _fail=0; _n=0; _o=""; _done=0; _unadopted=0; _orphan_work=0; _unadopted_names=""
+    _probe_fail=0; _probe_fail_names=""
     _protected=0; _protected_names=""
     _batched_stranded=0; _batched_stranded_names=""
     for _r in $(spira_repos); do
@@ -1070,13 +1071,26 @@ unsent_keys() {
                 # around it.
                 _st="$(BD_TIMEOUT=2 bdjson show "${_b#spira/}" 2>/dev/null | python3 -c '
 import sys, json
-try: d = json.load(sys.stdin); print((d if isinstance(d, list) else [d])[0].get("status", ""))
-except Exception: print("")' 2>/dev/null)"
+data = sys.stdin.read()
+if not data.strip():
+    print("?")
+else:
+    try:
+        d = json.loads(data)
+        if isinstance(d, list):
+            print(d[0].get("status", "") if d else "")
+        elif isinstance(d, dict) and "error" in d:
+            print("")
+        else:
+            print("?")
+    except Exception:
+        print("?")' 2>/dev/null)"
+                if [ "$_st" = "?" ]; then
+                    _probe_fail=$((_probe_fail+1))
+                    _probe_fail_names="${_probe_fail_names:+$_probe_fail_names }${_b#spira/}"
+                    continue
+                fi
                 if [ -z "$_st" ]; then
-                    # No bead for this branch. Only count as an unadopted stray (safe to delete)
-                    # when the tip is confirmed to be already on the base branch. If the base is
-                    # unknown or the branch has commits absent from base, count as orphan work —
-                    # it is safer to over-report work than to misclassify unlanded commits as strays.
                     if [ -n "$_base" ] && git -C "$_p" merge-base --is-ancestor "$_b" "$_base" 2>/dev/null; then
                         _unadopted=$((_unadopted+1))
                         _unadopted_names="${_unadopted_names:+$_unadopted_names }${_b#spira/}"
@@ -1155,6 +1169,8 @@ except Exception: print("")' 2>/dev/null)"
     echo "SP_UNADOPTED=$_unadopted"
     echo "SP_UNADOPTED_NAMES='$_unadopted_names'"
     echo "SP_ORPHAN_WORK=$_orphan_work"
+    echo "SP_PROBE_FAIL=$_probe_fail"
+    echo "SP_PROBE_FAIL_NAMES='$_probe_fail_names'"
     echo "SP_PROTECTED=$_protected"
     echo "SP_PROTECTED_NAMES='$_protected_names'"
     echo "SP_BATCHED_STRANDED=$_batched_stranded"

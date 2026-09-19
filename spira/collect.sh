@@ -119,6 +119,10 @@ _run_probe_body() {
     local out_tmp; out_tmp="$(mktemp "$FRAG_DIR/.${name}.XXXXXX")" || return 1
 
     if timeout "$timeout_s" bash "$COCK" "$cmd" > "$out_tmp" 2>/dev/null; then
+        local _ex_at; _ex_at="$(awk -F= '/^_PROBE_AT=/{print $2; exit}' "$frag" 2>/dev/null)" || _ex_at="0"
+        if [ "${_ex_at:-0}" -gt "$now" ]; then
+            rm -f "$out_tmp"; return 0
+        fi
         local hdr_tmp; hdr_tmp="$(mktemp "$FRAG_DIR/.${name}.XXXXXX")" || { rm -f "$out_tmp"; return 1; }
         { printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\n' "$now"; cat "$out_tmp"; } > "$hdr_tmp" \
             && mv "$hdr_tmp" "$frag"
