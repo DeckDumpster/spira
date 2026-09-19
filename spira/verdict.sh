@@ -600,6 +600,7 @@ main() {
                     for _mm in $members_str; do
                         _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
                         land_mark "$_mid" LANDED "$_mtip"
+                        gh_issue_closeout "$_mid" "$batch_head" "$repo" || true
                     done
                     while IFS= read -r _line; do
                         case "$_line" in
@@ -635,6 +636,7 @@ main() {
                        git -C "$repo" merge-base --is-ancestor "$_mtip" "$current_base" \
                            2>/dev/null; then
                         land_mark "$_mid" LANDED "$_mtip" already-in-base
+                        gh_issue_closeout "$_mid" "${current_base}" "$repo" || true
                         printf 'verdict %s: %s already in moved base — LANDED\n' \
                             "$name" "$_mid"
                     else

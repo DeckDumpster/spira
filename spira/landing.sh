@@ -1541,6 +1541,8 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 # rather than before, so a push that never landed can never leave a memory
                 # saying it did (law-closed-is-not-landed, one layer in).
                 land_mark "$id" LANDED "$tip" "$name"
+                gh_issue_closeout "$id" \
+                    "$(git -C "$land" rev-parse HEAD 2>/dev/null)" "$repo" || true
                 # AFTER the push, never before it: the event says the commit is on the base
                 # branch, which is the one claim CLOSED does not make (law-closed-is-not-landed).
                 spira_event bead.landed "$id" "landed $br on $name's $base" \
@@ -1670,6 +1672,8 @@ done
 # The sweep's counters are appended only when it did something. A clause that reads
 # "0 rebased, 0 conflicted" on every quiet pass is noise, and this line is the one a reader
 # greps to see whether a pass moved anything at all.
+_gh_unlanded_scan || true
+
 sweep_note=""
 [ $(( n_swept + n_swept_conflict )) -gt 0 ] \
     && sweep_note=", $n_swept survivor(s) rebased after a landing, $n_swept_conflict conflicted"

@@ -5014,3 +5014,148 @@ for r in rows:
     [ -n "$_out" ] && printf '%s\n' "$_out"
     return 0
 }
+
+# gh_issue_closeout — comment and close the GitHub issue linked to a landed bead.
+#
+# The write-back complement to gh-intake.sh's one-way ingest. Intake holds no
+# credential; this runs only from the credentialed landing path. The comment
+# cites commit sha and subject — both public on the repo — and a link. No bead
+# notes, bodies or internal judgement reach the public tracker
+# (law-beads-is-never-public).
+#
+# Idempotent: a closed issue is recorded and skipped; $SPIRA_RUN/gh-closed/<id>
+# prevents a second attempt even if the issue is re-opened.
+gh_issue_closeout() {  # gh_issue_closeout <bead-id> <landed-sha> <repo-path>
+    local id="$1" sha="$2" repo_path="$3"
+    local ext_ref gh_part gh_repo issue_n sha_short subject comment_body st
+    local closed_mark="${SPIRA_RUN:?}/gh-closed/$id"
+
+    [ -e "$closed_mark" ] && return 0
+
+    ext_ref="$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: raise SystemExit(0)
+d = d if isinstance(d, list) else [d]
+if d: print(d[0].get("external_ref") or "")' 2>/dev/null)" || ext_ref=""
+
+    case "${ext_ref:-}" in github:*) ;; *) return 0 ;; esac
+
+    gh_part="${ext_ref#github:}"
+    gh_repo="${gh_part%%#*}"
+    issue_n="${gh_part##*#}"
+    case "$issue_n" in
+        ''|*[!0-9]*) log "gh-closeout $id: malformed external_ref $ext_ref — skipping"; return 0 ;;
+    esac
+
+    st="$(ghq issue view "$issue_n" --repo "$gh_repo" --json state -q .state 2>/dev/null)" \
+        || st=""
+    if [ "${st:-}" = CLOSED ]; then
+        mkdir -p "${SPIRA_RUN}/gh-closed" 2>/dev/null || true
+        : > "$closed_mark"
+        return 0
+    fi
+
+    sha_short="$(git -C "$repo_path" rev-parse --short "$sha" 2>/dev/null)" \
+        || sha_short="${sha:0:7}"
+    subject="$(git -C "$repo_path" log --format='%s' -1 "$sha" 2>/dev/null)" || subject=""
+
+    comment_body="$(printf 'Fixed in %s%s\n\nhttps://github.com/%s/commit/%s' \
+        "$sha_short" "${subject:+ ($subject)}" "$gh_repo" "$sha")"
+
+    if ghq issue comment "$issue_n" --repo "$gh_repo" --body "$comment_body" >/dev/null 2>&1 \
+    && ghq issue close   "$issue_n" --repo "$gh_repo"                        >/dev/null 2>&1
+    then
+        mkdir -p "${SPIRA_RUN}/gh-closed" 2>/dev/null || true
+        : > "$closed_mark"
+        log "gh-closeout $id: closed $ext_ref as $sha_short"
+    else
+        log "gh-closeout $id: could not comment or close $ext_ref"
+    fi
+}
+
+# gh_issue_ask_unlanded — ask the operator what to do about a GitHub issue whose
+# bead closed without a commit landing on the base branch.
+#
+# One ask per issue, deduped through ask_already_open.
+gh_issue_ask_unlanded() {  # gh_issue_ask_unlanded <bead-id> <external-ref> [draft]
+    local id="$1" ext_ref="$2" draft="${3:-}"
+    local _subj _dflt gh_part issue_n
+
+    gh_part="${ext_ref#github:}"
+    issue_n="${gh_part##*#}"
+    case "$issue_n" in ''|*[!0-9]*) return 0 ;; esac
+
+    [ -x "${SPIRA_HOME}/mail.sh" ] || return 0
+    _subj="Close GitHub issue $ext_ref for bead $id"
+    ask_already_open "$_subj" && return 0
+
+    _dflt="${draft:-post a comment explaining the resolution and close the issue}"
+
+    "${SPIRA_HOME}/mail.sh" send operator \
+        --from "Landing gate <gate@spira>" \
+        --subject "$_subj" \
+        --kind question \
+        --default "$_dflt" <<MAILEOF >/dev/null 2>&1 || true
+## Question
+$_subj
+
+## Default
+${_dflt}
+
+$id was closed without a commit landing on the base branch, but it links to GitHub issue $ext_ref which is still open.
+
+Suggested public reply: "${_dflt}"
+MAILEOF
+    log "gh-closeout $id: asked operator about $ext_ref"
+}
+
+# _gh_unlanded_scan — run at the end of a landing pass to ask about GitHub issues
+# whose beads closed without a landing. Called once per pass; one ask per issue
+# via ask_already_open.
+_gh_unlanded_scan() {
+    local _tmp _id _ext _superseder _ls_file _ls_st _sup_ls _sup_st _sup_sha _draft
+    _tmp="$(mktemp)" || return 0
+    bdjson list --all --limit 0 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: raise SystemExit(0)
+rows = d if isinstance(d, list) else [d]
+for r in rows:
+    if r.get("status") != "closed": continue
+    ext = r.get("external_ref") or ""
+    if not ext.startswith("github:"): continue
+    bid = r.get("id", "")
+    if not bid: continue
+    superseder = ""
+    for dep in (r.get("dependencies") or []):
+        if (dep.get("dependency_type") or dep.get("type")) == "supersedes":
+            superseder = dep.get("id") or dep.get("blocked_by") or ""
+            break
+    print(f"{bid}\t{ext}\t{superseder}")
+' 2>/dev/null > "$_tmp" || { rm -f "$_tmp"; return 0; }
+
+    while IFS=$'\t' read -r _id _ext _superseder; do
+        [ -n "$_id" ] || continue
+        [ -e "${SPIRA_RUN}/gh-closed/$_id" ] && continue
+
+        _ls_file="$SPIRA_RUN/landstate/$_id"
+        _ls_st=""
+        [ -r "$_ls_file" ] && { read -r _ls_st _ < "$_ls_file" 2>/dev/null || true; }
+        [ "${_ls_st:-}" = LANDED ] && continue
+
+        _draft=""
+        if [ -n "${_superseder:-}" ]; then
+            _sup_ls="$SPIRA_RUN/landstate/$_superseder"
+            if [ -r "$_sup_ls" ]; then
+                _sup_st=""; _sup_sha=""
+                read -r _sup_st _sup_sha _ < "$_sup_ls" 2>/dev/null || true
+                [ "${_sup_st:-}" = LANDED ] \
+                    && _draft="This issue was fixed by $_superseder (${_sup_sha:0:8})"
+            fi
+        fi
+
+        gh_issue_ask_unlanded "$_id" "$_ext" "${_draft:-}" || true
+    done < "$_tmp"
+    rm -f "$_tmp"
+}
