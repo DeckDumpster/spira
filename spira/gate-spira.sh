@@ -235,7 +235,7 @@ run() {                  # run <suite> — its output only when it matters; cost
     kill -- -"$killer" 2>/dev/null; wait "$killer" 2>/dev/null || true
     [ "$st" -ge 128 ] && st=124
     if kill -0 -- -"$suite_pid" 2>/dev/null; then
-        sleep 0.05
+        sleep 0.2
         if kill -0 -- -"$suite_pid" 2>/dev/null; then
             printf '\nFAIL: %s left background jobs after exit — killed by gate harness\n' "$name" >> "$tmp"
             kill -- -"$suite_pid" 2>/dev/null || true
