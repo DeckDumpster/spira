@@ -1260,7 +1260,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 log "CHECK6 $id: no landing worktree at $land — leaving $br to the next pass"
                 continue
             fi
-            merged=0; pushed=0; nothing=0; wedged=0; norebase=''; push_blocked=''
+            merged=0; pushed=0; nothing=0; wedged=0; norebase=''; push_blocked=''; _merge_conflicts=''
             for attempt in 1 2 3; do
                 # A landing worktree that will not check the base out is a broken worktree,
                 # not a branch that conflicts — same reason as the guard above, and the same
@@ -1268,6 +1268,8 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 git -C "$land" checkout -q -B landing "$base" 2>/dev/null || { wedged=1; break; }
                 _pre_merge="$(git -C "$land" rev-parse HEAD 2>/dev/null)"
                 if ! git -C "$land" merge --no-edit -q -m "spira: land $id" "$br" 2>/dev/null; then
+                    _merge_conflicts="$(git -C "$land" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
+                    _merge_conflicts="${_merge_conflicts% }"
                     git -C "$land" merge --abort 2>/dev/null
                     merged=0; break
                 fi
@@ -1438,14 +1440,14 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 # from timestamps across two logs.
                 log "landing: $br genuinely conflicts with $base (ancestor=$_anc, commits-ahead=$_rn_merge)"
                 local _merge_other _merge_note
-                _merge_other="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
+                _merge_other="$(other_beads_on_conflicts "$repo" "$br" "$base" "${_merge_conflicts:-${REBASE_CONFLICTS:-}}")"
                 if [ -n "$_merge_other" ]; then
                     _merge_note="Reopened by sentinel: branch $br conflicts with $base. The branch carries $_rn_merge commit(s) from the previous session. Those files were changed on $base by $_merge_other — check whether this work is already landed before resolving."
                 else
                     _merge_note="Reopened by sentinel: branch $br conflicts with $base. The branch carries $_rn_merge commit(s) from the previous session — rebase onto $base, resolve the conflict, and finish. A merge conflict is not an escalation."
                 fi
                 bead_reopen "$id" "$_merge_note"
-                unset _rn_merge _anc _merge_other _merge_note
+                unset _rn_merge _anc _merge_other _merge_note _merge_conflicts
                 # Counter labels (sp-requeue-N) no longer written (sp-lzt).
                 progress "reopened $id — branch conflicts with $base"
                 spira_event bead.reopened "$id" "reopened $id — $br conflicts with $name's $base" \
