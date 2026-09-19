@@ -57,7 +57,8 @@ emit() {   # emit <kind> <target|-> <title> [detail]
 }
 emitted()  { cat "$RUN/events.log" 2>/dev/null; }
 # Count non-empty lines in events.log — one per recorded event.
-rows()     { grep -c '.' "$RUN/events.log" 2>/dev/null || true; }
+# wc -l always exits 0; the || handles a missing file (grep would exit 2 with no output).
+rows()     { [ -f "$RUN/events.log" ] && wc -l < "$RUN/events.log" || echo 0; }
 fresh()    { rm -rf "$RUN/events" "$RUN/events.log"; }
 
 echo "test-event.sh"
