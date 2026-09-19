@@ -1281,7 +1281,7 @@ _wd_notify_health() {
                     ''|*[!0-9]*) rm -f "$(_wd_unhealthyfile "$n")" 2>/dev/null; continue ;;
                 esac
                 [ "$_cond" -ge "$SPIRA_NOTIFY_AGE" ] || { rm -f "$(_wd_unhealthyfile "$n")" 2>/dev/null; continue; }
-                _wd_hstate=DEGRADED; _wd_hwhy="unit is $state; unread reply is ${_cond}s old"
+                _wd_hstate=DEGRADED; _wd_hwhy="unit is $state; unread reply pending"
             else
                 _wd_hstate=DEGRADED; _wd_hwhy="unit is $state — no writer"
             fi
