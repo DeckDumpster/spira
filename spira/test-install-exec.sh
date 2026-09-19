@@ -208,5 +208,42 @@ want    "render fallback: sentinel ExecStart contains SPIRA_HOME" "ExecStart=$HE
 
 # ==========================================================================
 echo
+echo "TARBALL LAYOUT — SPIRA_PROD must be <release>/spira, not <release>:"
+# ==========================================================================
+#
+# deploy.sh sets SPIRA_PROD="$SPIRA_RELEASES/current/spira" when calling
+# install.sh. The release tarball unpacks as <stem>/<repo-tree>/ so the
+# harness scripts live at <stem>/spira/sentinel.sh etc., not <stem>/sentinel.sh.
+# If SPIRA_PROD were set to <releases>/current (missing /spira), install.sh
+# would look for sentinel.sh at the wrong path and refuse.
+#
+# This property is the test that would have caught the original bug; it uses a
+# real git archive so the executability of the scripts is real, not assumed.
+
+_tarball_tmp="$TMP/tarball-unpack"
+_tarball_stem="spira-20260901T000000Z"
+_tarball_root="$_tarball_tmp/$_tarball_stem"
+mkdir -p "$_tarball_root"
+if git -C "$REAL_REPO" archive HEAD | tar -x -C "$_tarball_root" 2>/dev/null; then
+    # FAIL-FIRST: wrong SPIRA_PROD (the release root, without /spira).
+    # install.sh looks for sentinel.sh in the wrong place and refuses.
+    _tb_fail="$(TEST_PROD="$_tarball_root" inst)"
+    _tb_fail_rc=$?
+    nonzero "tarball/fail-first: SPIRA_PROD=<release> (missing /spira) → exits non-zero" "$_tb_fail_rc"
+    want    "tarball/fail-first: output names the bad path" "$_tarball_root" "$_tb_fail"
+    want    "tarball/fail-first: output says not executable" "not executable" "$_tb_fail"
+
+    # Correct SPIRA_PROD — all scripts under <release>/spira/ are executable
+    # because git preserves the +x bit from the tree.
+    _tb_ok="$(TEST_PROD="$_tarball_root/spira" inst)"
+    _tb_ok_rc=$?
+    iszero  "tarball/correct: SPIRA_PROD=<release>/spira → install.sh exits 0" "$_tb_ok_rc"
+    nowant  "tarball/correct: no 'not executable' in output" "not executable" "$_tb_ok"
+else
+    bad "tarball/setup: git archive failed — cannot run tarball layout test" "git archive error"
+fi
+
+# ==========================================================================
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
