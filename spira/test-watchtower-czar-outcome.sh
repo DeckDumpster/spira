@@ -142,7 +142,7 @@ wt_co SPIRA_CZAR_OUTCOME_MINS=30
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 want "NOT_CLEARED: fires when condition returned after outcome window" "CZAR:" "$subjects"
 want "NOT_CLEARED: subject names the closed bead id"                  "sp-czoc2a" "$subjects"
-want "NOT_CLEARED: subject names the class"                           "not-cleared" "$subjects"
+want "NOT_CLEARED: subject names the class"                           "outcome not cleared" "$subjects"
 
 # ======================================================================================
 echo
