@@ -169,6 +169,8 @@ case "$(landstate "$_qid")" in
     CERTIFIED*) ok "quarantine: transition branch certified" ;;
     *)          bad "quarantine: transition branch certified" "got: [$(landstate "$_qid")]" ;;
 esac
+[ -f "$RUN/queue/$_qid" ] && ok "quarantine: queue record written" \
+    || bad "quarantine: queue record written" "file missing: $RUN/queue/$_qid"
 
 # 4. disable: same pattern.
 rm -f "$GATE_COUNT"
@@ -185,6 +187,8 @@ case "$(landstate "$_did")" in
     CERTIFIED*) ok "disable: transition branch certified" ;;
     *)          bad "disable: transition branch certified" "got: [$(landstate "$_did")]" ;;
 esac
+[ -f "$RUN/queue/$_did" ] && ok "disable: queue record written" \
+    || bad "disable: queue record written" "file missing: $RUN/queue/$_did"
 
 # 5. activate: same pattern.
 # Pre-populate a disabled entry so activate has something to clear and commit.
@@ -205,6 +209,8 @@ case "$(landstate "$_aid")" in
     CERTIFIED*) ok "activate: transition branch certified" ;;
     *)          bad "activate: transition branch certified" "got: [$(landstate "$_aid")]" ;;
 esac
+[ -f "$RUN/queue/$_aid" ] && ok "activate: queue record written" \
+    || bad "activate: queue record written" "file missing: $RUN/queue/$_aid"
 
 printf '\nASSERTIONS %s\n' "$((pass + fail))"
 printf '%s passed, %s failed\n' "$pass" "$fail"
