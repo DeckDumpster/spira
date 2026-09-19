@@ -111,6 +111,7 @@ probe() {
     sop_keys
     ratelim_keys
     statute_keys
+    czar_triggers_keys
     # SP_PASS_SECS: captures the total pass duration including all tier functions.
     echo "SP_PASS_SECS=$(( $(date +%s) - _probe_start ))"
 }
@@ -2146,6 +2147,88 @@ print("SP_STRAND_OTHER=%s" % (",".join(rest) or "none"))
     echo "SP_STRAND_GHOST=?"; echo "SP_STRAND_OTHER=?"
 }
 
+# Per-class czar-trigger outcome display. Four classes (deadlock, attribution-failed,
+# sort-failed, loop-stalled) each get three keys: last fired timestamp, handled-by assignee,
+# and outcome flag (- = never fired, pending = open, yes = closed no recurrence, no = closed
+# then condition returned).
+#
+# SP_CZAR_{CLASS}_FIRED:   created_at of the most recent bead for this class, or -
+# SP_CZAR_{CLASS}_BY:      assignee of the most recent bead, or -
+# SP_CZAR_{CLASS}_OUTCOME: - | pending | yes | no
+#
+# A FAILED PROBE RENDERS ? FOR ALL KEYS (law-absence-needs-a-positive-control). An unread
+# store looks like a clean board; conflating them hides the case where no czar has ever run.
+czar_triggers_keys() {
+    bdjson list --label "${SPIRA_CZAR_LABEL:-czar-trigger}" \
+        --all --limit 0 --brief 2>/dev/null | python3 -c '
+import sys, json
+from datetime import datetime, timezone
+
+CLASSES = [
+    ("incident:queue-deadlock-batch-open",        "DEADLOCK"),
+    ("incident:queue-attribution-failed-requeue", "ATTRIB"),
+    ("incident:queue-sort-failed-ranking",        "SORT"),
+    ("incident:queue-loop-stalled",               "STALL"),
+]
+
+def ts(s):
+    if not s: return None
+    try: return int(datetime.strptime(s.rstrip("Z"), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp())
+    except: return None
+
+try:
+    raw = sys.stdin.read()
+    data = json.loads(raw or "[]")
+    if not isinstance(data, list): data = [data]
+    if data and data[0].get("_refused"): raise ValueError("refused")
+except Exception:
+    for _, tag in CLASSES:
+        for sfx in ("FIRED", "BY", "OUTCOME"):
+            print("SP_CZAR_%s_%s=?" % (tag, sfx))
+    raise SystemExit
+
+by_ref = {}
+for b in data:
+    ref = b.get("external_ref") or ""
+    b["_ct"]  = ts(b.get("created_at"))
+    b["_cla"] = ts(b.get("closed_at"))
+    by_ref.setdefault(ref, []).append(b)
+
+for ref, tag in CLASSES:
+    beads = sorted(by_ref.get(ref, []), key=lambda b: b.get("_ct") or 0)
+    if not beads:
+        print("SP_CZAR_%s_FIRED=-" % tag)
+        print("SP_CZAR_%s_BY=-" % tag)
+        print("SP_CZAR_%s_OUTCOME=-" % tag)
+        continue
+    newest = beads[-1]
+    fired = (newest.get("created_at") or "-")[:16].rstrip("T") + "Z" if newest.get("created_at") else "-"
+    by = (newest.get("assignee") or "-").split()[0]  # first word only (safe for shell eval)
+    status = newest.get("status", "")
+    if status in ("open", "in_progress"):
+        outcome = "pending"
+    elif status == "closed":
+        # Was there any bead created AFTER the previous bead closed?
+        outcome = "yes"
+        for i, bead in enumerate(beads[:-1]):
+            cla = bead.get("_cla")
+            if cla and any(b.get("_ct") and b["_ct"] > cla for b in beads[i+1:]):
+                outcome = "no"
+                break
+    else:
+        outcome = "?"
+    print("SP_CZAR_%s_FIRED=%s" % (tag, fired))
+    print("SP_CZAR_%s_BY=%s" % (tag, by))
+    print("SP_CZAR_%s_OUTCOME=%s" % (tag, outcome))
+' 2>/dev/null || {
+    for _cz_tag in DEADLOCK ATTRIB SORT STALL; do
+        echo "SP_CZAR_${_cz_tag}_FIRED=?"
+        echo "SP_CZAR_${_cz_tag}_BY=?"
+        echo "SP_CZAR_${_cz_tag}_OUTCOME=?"
+    done
+}
+}
+
 # The SOP shelf metrics, broken out so a suite can drive the exact code the collector
 # runs — the same reason strand_keys is a function and not inlined.
 #
@@ -2559,7 +2642,11 @@ statute)
 mail)
     mail_keys
     ;;
-*) echo "usage: cockpit.sh [once|loop|history|now|core|core_detail|unsent|strands|sops|ratelim|reachable|sphere|repo_labels|livelock|dup_refs|statute|mail]" >&2
+# Czar trigger outcome keys — per-class last-fired, handled-by, and outcome flag.
+czar_triggers)
+    czar_triggers_keys
+    ;;
+*) echo "usage: cockpit.sh [once|loop|history|now|core|core_detail|unsent|strands|sops|ratelim|reachable|sphere|repo_labels|livelock|dup_refs|statute|mail|czar_triggers]" >&2
    echo "  (no args: collect once then attach to the concierge; SPIRA_COCKPIT_NO_ATTACH=1 skips the attach)" >&2
    exit 1 ;;
 esac

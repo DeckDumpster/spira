@@ -669,6 +669,14 @@ spira_conf_defaults() {
     # czar" (law-schema-over-code). The labels are mutually exclusive by design: a bead that
     # carries both would be claimable by both ops and czar, which is a race condition.
     : "${SPIRA_CZAR_LABEL:=czar-trigger}"
+    # OUTCOME WINDOW: minutes after a czar-trigger bead closes before checking if the
+    # condition that fired it has cleared. A new bead for the same class within this
+    # window means the czar's action did not hold (law-measure-the-outcome).
+    : "${SPIRA_CZAR_OUTCOME_MINS:=30}"
+    # UNCLAIMED THRESHOLD: minutes a czar-trigger bead may stay open before watchtower
+    # escalates it as unclaimed. The czar has a 5-minute summoning budget; this window
+    # is wider to allow for sentinel cadence and rate-limit pauses.
+    : "${SPIRA_CZAR_UNCLAIMED_MINS:=10}"
     # The name the operator's OWN comments are recorded under, so the attention panel can tell
     # a reply of theirs from a reply of the agent's. Both write into the same thread, and a
     # panel that cannot separate them announces the agent's own comment back to it as an answer.

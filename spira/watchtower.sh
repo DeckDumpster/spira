@@ -297,6 +297,140 @@ if [ "${1:-}" = "--throttle-check" ]; then
     exit 0
 fi
 
+# --czar-outcome-check: verify that czar-trigger beads are being handled and that the
+# conditions they were fired for have cleared after closure. Called by sentinel.sh on every
+# pass (2-minute cadence), the same hook as --queue-checks and --throttle-check.
+#
+# TWO CHECKS:
+# 1. UNCLAIMED — a czar-trigger bead open for more than SPIRA_CZAR_UNCLAIMED_MINS without
+#    being claimed or closed. The czar's summoning budget is 5 minutes; this window is
+#    wider to absorb sentinel cadence and rate-limit pauses.
+# 2. NOT CLEARED — a czar-trigger bead that was closed but the same condition returned:
+#    a newer bead with the same external_ref was filed after the closed bead's close time,
+#    and the closed bead was itself closed more than SPIRA_CZAR_OUTCOME_MINS ago.
+#    This is law-measure-the-outcome: the czar closing a bead is not evidence the condition
+#    cleared; the absence of a subsequent bead for the same class is.
+#
+# DEDUPED PER BEAD via SPIRA_INCIDENT_REF. Each unclaimed or not-cleared escalation carries
+# a bead-scoped ref so a bead that fires the check on two consecutive passes does not produce
+# two escalations. incident.sh's lookback window handles the dedup.
+#
+# USES SPIRA_BD for bd queries. This makes it the first watchtower subcommand with a database
+# dependency; the others are file-reads-only. The embedded Dolt engine makes each query ~50ms,
+# which is acceptable on the sentinel's 2-minute cadence.
+if [ "${1:-}" = "--czar-outcome-check" ]; then
+    [ -f "$SPIRA_RUN/world.halted" ] && {
+        log "watchtower: czar-outcome-check skipped — world is halted"
+        exit 0
+    }
+
+    _co_inc="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
+    _co_outcome_mins="${SPIRA_CZAR_OUTCOME_MINS:-30}"
+    _co_unclaimed_mins="${SPIRA_CZAR_UNCLAIMED_MINS:-10}"
+    _co_label="${SPIRA_CZAR_LABEL:-czar-trigger}"
+    _co_now="$(date +%s)"
+
+    [ -r "$_co_inc" ] || {
+        log "watchtower: czar-outcome-check skipped — $_co_inc not readable"
+        exit 0
+    }
+
+    # Query all czar-trigger beads (all statuses). --brief omits description/notes to
+    # keep the query cheap; we only need id, status, created_at, closed_at, external_ref.
+    _co_raw="$(bd -C "$SPIRA_DB" list \
+        --label "$_co_label" \
+        --all --json --limit 0 --brief 2>/dev/null)" || _co_raw=""
+
+    # Parse and classify beads that need escalation.
+    # Outputs: UNCLAIMED <id> <ref> or NOT_CLEARED <id> <ref>
+    _co_hits="$(printf '%s\n' "${_co_raw:-[]}" | \
+    python3 - "$_co_now" "$_co_outcome_mins" "$_co_unclaimed_mins" <<'PYEOF'
+import sys, json
+from datetime import datetime, timezone
+
+def ts(s):
+    if not s: return None
+    try: return int(datetime.strptime(s.rstrip('Z'), '%Y-%m-%dT%H:%M:%S').replace(tzinfo=timezone.utc).timestamp())
+    except: return None
+
+data = json.loads(sys.stdin.read() or '[]')
+if not isinstance(data, list): data = [data]
+now_s    = int(sys.argv[1])
+out_secs = int(sys.argv[2]) * 60
+unc_secs = int(sys.argv[3]) * 60
+
+by_ref = {}
+for b in data:
+    ref = b.get('external_ref') or ''
+    if not ref.startswith('incident:queue-'): continue
+    b['_ct']  = ts(b.get('created_at'))
+    b['_cla'] = ts(b.get('closed_at'))
+    by_ref.setdefault(ref, []).append(b)
+
+for ref, beads in by_ref.items():
+    beads.sort(key=lambda b: b.get('_ct') or 0)
+    newest = beads[-1]
+    status = newest.get('status', '')
+    ct = newest.get('_ct')
+
+    if status in ('open', 'in_progress'):
+        if ct and (now_s - ct) >= unc_secs:
+            print('UNCLAIMED', newest['id'], ref)
+        continue
+
+    # Outcome check: find any closed bead followed by a newer bead after its close_at
+    for i, bead in enumerate(beads):
+        if bead.get('status') != 'closed': continue
+        cla = bead.get('_cla')
+        if not cla or (now_s - cla) < out_secs: continue
+        if any(b.get('_ct') and b['_ct'] > cla for b in beads[i+1:]):
+            print('NOT_CLEARED', bead['id'], ref)
+            break
+PYEOF
+    2>/dev/null)" || _co_hits=""
+
+    while IFS=' ' read -r _co_kind _co_id _co_ref; do
+        [ -n "$_co_kind" ] || continue
+        case "$_co_kind" in
+        UNCLAIMED)
+            printf 'Czar-trigger bead %s (class: %s) has been open for more than %s minutes without being claimed or closed.\n\nThe czar'\''s summoning budget is 5 minutes. If the czar lane is not running, check: SPIRA_FAYTHS, SPIRA_LANES, and the spira-aeon-czar unit.\n\nBead: %s\nClass: %s\n' \
+                "$_co_id" "$_co_ref" "$_co_unclaimed_mins" "$_co_id" "$_co_ref" | \
+            SPIRA_DB="$SPIRA_DB" \
+            SPIRA_INCIDENT_TYPE=task \
+            SPIRA_INCIDENT_PRIORITY=1 \
+            SPIRA_INCIDENT_ACTOR=watchtower \
+            SPIRA_SIN_EXEMPT=1 \
+            SPIRA_INCIDENT_REPO=spira \
+            SPIRA_INCIDENT_REF="incident:czar-unclaimed-${_co_id}" \
+            SPIRA_INCIDENT_CAUSE="czar-unclaimed" \
+            bash "$_co_inc" file \
+                "CZAR: trigger bead ${_co_id} unclaimed (${_co_ref})" \
+                - >/dev/null || true
+            log "watchtower: czar-outcome-check filed unclaimed escalation for ${_co_id}"
+            ;;
+        NOT_CLEARED)
+            printf 'Czar closed trigger bead %s (class: %s) but the condition returned: a newer bead with the same class was filed after the closure, and the outcome window (%sm) has elapsed.\n\nThe czar'\''s action did not hold. Investigate: was the batch actually fixed, or did the same fault recur?\n\nBead: %s\nClass: %s\n' \
+                "$_co_id" "$_co_ref" "$_co_outcome_mins" "$_co_id" "$_co_ref" | \
+            SPIRA_DB="$SPIRA_DB" \
+            SPIRA_INCIDENT_TYPE=task \
+            SPIRA_INCIDENT_PRIORITY=1 \
+            SPIRA_INCIDENT_ACTOR=watchtower \
+            SPIRA_SIN_EXEMPT=1 \
+            SPIRA_INCIDENT_REPO=spira \
+            SPIRA_INCIDENT_REF="incident:czar-not-cleared-${_co_id}" \
+            SPIRA_INCIDENT_CAUSE="czar-not-cleared" \
+            bash "$_co_inc" file \
+                "CZAR: outcome not cleared — condition returned after ${_co_id} closed (${_co_ref})" \
+                - >/dev/null || true
+            log "watchtower: czar-outcome-check filed not-cleared escalation for ${_co_id}"
+            ;;
+        esac
+    done <<< "$_co_hits"
+
+    log "watchtower: czar-outcome-check complete"
+    exit 0
+fi
+
 SNAP_AGE_MAX="${SPIRA_WATCH_SNAP_MAX:-600}"
 now="$(date +%s)"
 
@@ -585,6 +719,24 @@ if [ -r "$GUARD_SH" ]; then
     esac
 fi
 
+# THE CZAR TRIGGER TABLE — per-class display of the four queue-check trigger classes.
+# Read from cockpit.env (written by czar_triggers_keys via collect.sh). A missing key
+# renders ? (law-absence-needs-a-positive-control): the collector not having run is not
+# the same as no czar events having occurred.
+_cz_row() {  # _cz_row <label> <tag>  -> one table line
+    local _label="$1" _tag="$2"
+    printf '  %-22s %-22s %-12s %s\n' \
+        "$_label" \
+        "$(g "SP_CZAR_${_tag}_FIRED")" \
+        "$(g "SP_CZAR_${_tag}_BY")" \
+        "$(g "SP_CZAR_${_tag}_OUTCOME")"
+}
+czar_block="$(printf '  %-22s %-22s %-12s %s\n' class "last fired" "handled by" outcome)
+$(_cz_row deadlock          DEADLOCK)
+$(_cz_row attribution-failed ATTRIB)
+$(_cz_row sort-failed        SORT)
+$(_cz_row loop-stalled       STALL)"
+
 # Pre-computed so the heredoc below can reference it as a plain variable. A trailing
 # newline is intentional: the heredoc adds one more, giving a blank line between the halt
 # banner and the body text.
@@ -752,6 +904,13 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
   stranded (claimed, nobody home)     $(g SP_STRAND_GHOST)
   strand ledger, other classes        $(g SP_STRAND_OTHER)
   account capacity paused             $(g SP_CAPACITY_PAUSED)
+
+### The czar — trigger outcome
+
+  A \`?\` means this probe could not read the store. A \`no\` means the condition
+  returned after the czar closed its bead — file an investigation bead.
+
+${czar_block}
 
 ### Lapsed aeons — killed by the liveness lease since the previous sweep
 
