@@ -396,15 +396,20 @@ if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ] && \
                     [ -n "$_repeat_reason" ] && \
                         log "batch: SPIRA_VERDICT_REPEAT_CONSIDERED must be a sentence (min 10 chars)"
                     log "batch: repeat attempt refused — prior red at ${_cached_when:-unknown} — key batch-$BATCH_KEY — red suites: ${_cached_red_suites:-(unknown)}"
-                    _bead_cmd="${SPIRA_BATCH_BEAD_CMD:-$HERE/bead.sh}"
-                    if [ -r "$_bead_cmd" ] && [ -n "${SPIRA_DB:-}" ]; then
+                    _incident_cmd="${SPIRA_BATCH_INCIDENT_CMD:-$HERE/incident.sh}"
+                    if [ -r "$_incident_cmd" ] && [ -n "${SPIRA_DB:-}" ] && \
+                       ! git -C "$REPO" merge-base --is-ancestor "$BR" "$BASE" 2>/dev/null; then
                         printf '%s\n' \
                             "Repeat attempt refused. Prior red at ${_cached_when:-unknown}. Key: batch-$BATCH_KEY. Red suites: ${_cached_red_suites:-(unknown)}. Branch: $BR." \
-                            | bash "$_bead_cmd" file \
-                                "repeat attempt: no change — $BR" \
-                                --for builder \
-                                --repo "$(spira_home_repo 2>/dev/null)" \
-                                --body-file - 2>/dev/null || true
+                            | SPIRA_INCIDENT_REF="repeat-refused:$BR" \
+                              SPIRA_INCIDENT_TYPE=task \
+                              SPIRA_INCIDENT_ACTOR=builder \
+                              SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" \
+                              SPIRA_INCIDENT_REPO="$(spira_home_repo 2>/dev/null)" \
+                              SPIRA_INCIDENT_CAUSE=repeat-refused \
+                              bash "$_incident_cmd" file \
+                                  "repeat attempt: no change — $BR" \
+                                  - 2>/dev/null || true
                     fi
                     exit 2
                 fi
