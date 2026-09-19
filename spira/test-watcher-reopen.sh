@@ -17,10 +17,14 @@
 # POSITIVE CONTROL (law-absence-needs-a-positive-control):
 #   - Case 2 positive control: filing with WATCHER_INTERVAL_S=0 produces
 #     cause=recurrence (the "outside interval" path fires); filing with a large
-#     interval produces cause=closed-while-live. Both must fire.
+#     interval produces cause=closed-while-live. Both must fire before we assert
+#     absence below.
+#
+# REQUIRES SERVER MODE. The cause is stored via bd sql INSERT into the events
+# table; bd in embedded mode does not support bd sql, so the event write fails
+# silently. Server mode is the same mechanism the rest of the harness uses.
 #
 # covers: spira/incident.sh spira/conf.sh spira/chamber/ops.md
-# hermetic-ok: uses a fixture database, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -36,7 +40,11 @@ echo "test-watcher-reopen.sh"
 . "$HERE/testdb.sh"
 testdb_require test-watcher-reopen
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up watcher_reopen || { echo "test-watcher-reopen: could not build fixture database" >&2; exit 1; }
+export SPIRA_TESTDB_MODE=server
+testdb_up watcher_reopen || {
+    printf 'SKIP test-watcher-reopen: server testdb not available (bd sql required)\n' >&2
+    exit 77
+}
 
 INC="$HERE/incident.sh"
 B() { bd -C "$SPIRA_DB" "$@"; }
@@ -49,13 +57,13 @@ mkdir -p "$TMP/home"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail.sh"; chmod +x "$TMP/home/mail.sh"
 
 # file_watcher_incident <ref> <title> [VAR=val ...]
-# Files a watcher-style incident (SIN_EXEMPT=1); output to /dev/null.
-# Use find_bead "$ref" to get the bead id afterwards.
+# Files a watcher-style incident (SIN_EXEMPT=1). Output goes to /dev/null.
+# Uses env (not env -i) to preserve SPIRA_BD so the subprocess's bdq uses the
+# server-mode binary and can write to the events table via bd sql.
 file_watcher_incident() {
     local ref="$1" title="$2"; shift 2
     printf 'watcher payload' | \
-        env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
-        SPIRA_CONF="$TMP/no-conf" \
+        env SPIRA_CONF="$TMP/no-conf" \
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_RUN="$RUN" \
         SPIRA_HOME="$TMP/home" \
@@ -69,11 +77,10 @@ file_watcher_incident() {
         bash "$INC" file "$title" - >/dev/null 2>&1
 }
 
-# find_bead <ref> — print bead id (any status) by external_ref, most recent first.
+# find_bead <ref> — print bead id (open or recently closed) by external_ref.
 find_bead() {
     local ref="$1" hash
     hash="$(printf '%s' "$ref" | sha256sum | cut -c1-8)"
-    # Open/in_progress first (fast path via label).
     local _id
     _id="$(B list --status open,in_progress --label "ref:$hash" --limit 0 --json 2>/dev/null \
       | python3 -c '
@@ -86,7 +93,6 @@ try:
 except: pass
 ' "$ref" 2>/dev/null)"
     [ -n "$_id" ] && { printf '%s' "$_id"; return; }
-    # Closed fallback.
     B list --status closed --closed-after "$(date -u -d '-1 day' '+%Y-%m-%d' 2>/dev/null \
         || date -u -v-1d '+%Y-%m-%d' 2>/dev/null)" \
       --label "ref:$hash" --limit 0 --json 2>/dev/null \
@@ -112,16 +118,19 @@ print(b.get("status", "?"))
 ' 2>/dev/null || printf '?'
 }
 
+# sql_val — parse bd sql output: skip header+separator (lines 1-2), return first data line.
+sql_val() { tail -n +3 | head -1 | tr -d ' '; }
+
 # reopen_count <id> — count reopen events on the given bead.
 reopen_count() {
     B sql "SELECT COUNT(*) FROM events WHERE issue_id='$1' AND event_type='reopen'" 2>/dev/null \
-        | grep -v '^COUNT' | tr -d ' \t' | grep -E '^[0-9]+$' | head -1 || echo 0
+        | sql_val | grep -E '^[0-9]+$' || echo 0
 }
 
 # reopen_cause <id> — most recent reopen event's new_value (the cause).
 reopen_cause() {
     B sql "SELECT new_value FROM events WHERE issue_id='$1' AND event_type='reopen' ORDER BY created_at DESC LIMIT 1" 2>/dev/null \
-        | grep -v '^new_value' | tr -d ' \t' | grep -v '^$' | head -1 || echo ""
+        | sql_val | grep -v '^[(]' || echo ""
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -177,11 +186,11 @@ ok "case1: dep added (incident → root)"
 # Refile the same ref (simulating next watcher tick). Bead is OPEN; should just note.
 file_watcher_incident "$REF1" "watcher dep test"
 
-# Assert: bead is still open (dep was not resolved; open bead path in incident.sh → no reopen).
+# Assert: bead is still open (dep was not resolved; open bead path → no reopen).
 S1="$(bead_status "$INC1")"
 is "case1: bead stays open after refile with dep" "open" "$S1"
 
-# Assert: no reopen event (bead was never closed, nothing to reopen).
+# Assert: no reopen event (bead was never closed).
 R1="$(reopen_count "$INC1")"
 is "case1: no reopen events" "0" "$R1"
 
