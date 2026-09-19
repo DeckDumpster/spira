@@ -326,6 +326,9 @@ for id in $dispatchable; do
     # be correct; the queue cannot get it to land. Distinct from poison: no poison label is
     # added; the close cancels the claim in attempts_of so no attempt is charged.
     if [ "$_requeues" -ge "$REQUEUE_AT" ]; then
+        case "$_labels" in
+            *'delivers:action'*) ;;  # closes without a commit; reopens are not harness landing stalls
+            *)
         requeue_asked "$id" "$_requeues" && continue
         _rq_causes="$(printf '%s' "$_labels" | sed -n 's/^ *- //p' \
             | grep -E '^sp-requeue-[0-9]+(-|$)' \
@@ -358,6 +361,8 @@ MAILEOF
         else
             log "CHECK4 $id: requeue escalation path refused the ask — retries next pass"
         fi
+            ;;
+        esac
     fi
 
     # RECLAIM CAP. A bead N aeons have died holding is on a box that cannot run it. The
