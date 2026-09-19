@@ -188,13 +188,45 @@ want "blocked remedy still annotates [suppressed]" "[suppressed]" "$out2cs"
 
 # ==============================================================================
 echo
-echo "3. CONTROL: closing remedy bead makes class reappear"
+echo "3. POSITIVE CONTROL: closed remedy keeps suppression until commit is on base"
 # ==============================================================================
-B close "$remedy_id" --reason "test control: remove suppression" --force >/dev/null 2>&1
+# On the unfixed tree, closing a remedy bead lifts suppression immediately.
+# These assertions are red there (law-a-regression-test-must-be-seen-to-fail).
+FIXTURE_REPO="$TMP/fixture-repo"
+git init -q "$FIXTURE_REPO" \
+    && GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=test \
+       GIT_COMMITTER_EMAIL=t@t \
+       git -C "$FIXTURE_REPO" commit --allow-empty -q -m "initial" 2>/dev/null
 
-out3="$(run_census)"
-want "sp-recur-suite-red reappears after remedy closed"    "sp-recur-suite-red"    "$out3"
-lack "no stale [suppressed] annotation after remedy closed" "[suppressed]"          "$out3"
+run_census_repo() {
+    env SPIRA_DB="$SPIRA_DB" \
+        SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
+        SPIRA_CONF="$TMP/no-conf" \
+        SPIRA_HOME="$HERE" \
+        SPIRA_REPO="$FIXTURE_REPO" \
+        bash "$CENSUS" "$@" 2>/dev/null
+}
+
+B close "$remedy_id" --reason "test: verify closed remedy still suppresses" --force >/dev/null 2>&1
+
+out3_pre="$(run_census_repo)"
+lack "sp-recur-suite-red still suppressed after close, commit not on base" \
+    "sp-recur-suite-red" "$out3_pre"
+
+out3_pre_s="$(run_census_repo --with-suppressed)"
+want "closed-unlanded remedy annotated [suppressed: remedy closed, not landed]" \
+    "[suppressed: remedy closed, not landed]" "$out3_pre_s"
+want "suppressed class appears in annotated output" "sp-recur-suite-red" "$out3_pre_s"
+
+# Land the remedy: add a commit naming the bead to the base.
+GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=t@t \
+    git -C "$FIXTURE_REPO" commit --allow-empty -q \
+    -m "fix: $remedy_id closes sp-recur-suite-red" 2>/dev/null
+
+out3="$(run_census_repo)"
+want "sp-recur-suite-red reappears once remedy commit is on base" \
+    "sp-recur-suite-red" "$out3"
+lack "no [suppressed] after remedy landed" "[suppressed]" "$out3"
 
 # ==============================================================================
 echo
