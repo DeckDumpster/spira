@@ -1491,6 +1491,7 @@ reachable_keys() {
 import os, sys, json
 from collections import deque
 
+# literal-ok: Python os.environ.get fallback mirrors schema.sh shipped default; operator value arrives in SPIRA_ASK_LABEL at runtime
 ASK = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")
 CTRL = os.environ.get("SPIRA_CTRL", "")
 CHAMBER = os.environ.get("SPIRA_CHAMBER", "")
