@@ -242,7 +242,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/suite-assert.sh"
 ok "first assertion"
 bad "second assertion" "intentional fail"
-[ "$fail" -eq 0 ]
+exit 1
 S
 
     out4="$(sut run)"
