@@ -1219,7 +1219,7 @@ if [ -n "${SPIRA_WIKI:-}" ] && [ -d "$SPIRA_WIKI" ]; then
                   | awk '/^worktree /{print $2; exit}')"
     _wdb_real="$(cd "$SPIRA_WIKI" 2>/dev/null && pwd -P)"
     if [ -n "${_wdb_main:-}" ] && [ "${_wdb_real:-}" = "$_wdb_main" ]; then
-        WIKI_DIRTY_BEFORE="$(git -C "$SPIRA_WIKI" diff --name-only HEAD 2>/dev/null | sort -u)"
+        WIKI_DIRTY_BEFORE="$(git -C "$SPIRA_WIKI" status --short 2>/dev/null | cut -c4- | sort -u)"
     fi
     unset _wdb_main _wdb_real
 fi
@@ -1707,7 +1707,7 @@ if [ -n "${SPIRA_WIKI:-}" ] && [ -d "$SPIRA_WIKI" ]; then
                 grep -qxF -- "$_wp" <<< "$WIKI_DIRTY_BEFORE" 2>/dev/null && continue
             fi
             _wc_new="${_wc_new:+$_wc_new$'\n'}$_wp"
-        done < <(git -C "$SPIRA_WIKI" diff --name-only HEAD 2>/dev/null)
+        done < <(git -C "$SPIRA_WIKI" status --short 2>/dev/null | cut -c4-)
         if [ -n "$_wc_new" ]; then
             while IFS= read -r _wp; do
                 [ -n "$_wp" ] || continue
