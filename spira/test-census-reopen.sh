@@ -101,7 +101,7 @@ insert_reopen "sp-rb1"                        # NULL new_value
 insert_reopen "sp-rb1" '{"status":"open"}'    # non-empty new_value
 out_b="$(census_out)"
 want "multi-value: 1 distinct bead across two new_values" "1 sp-reopen" "$out_b"
-want "multi-value: 2 events detected" "sp-reopen (2 detections" "$out_b"
+want "multi-value: 2 events detected" "sp-reopen-unrecorded (2 detections" "$out_b"
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"

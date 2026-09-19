@@ -183,7 +183,7 @@ testdb_seed <<'JSONL'
 {"id":"sp-g0","title":"no-reopen control","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-16T00:00:00Z"}
 JSONL
 _pc_out="$(census_out)"
-is "positive control: no bead_reopen produces no sp-reopen" "" "$(printf '%s' "$_pc_out" | grep sp-reopen || true)"
+is "positive control: no bead_reopen produces no sp-reopen-*" "" "$(printf '%s' "$_pc_out" | grep sp-reopen || true)"
 
 testdb_reset
 testdb_seed <<'JSONL'
@@ -245,7 +245,7 @@ _write_reopen sp-h2; _write_reopen sp-h2; _write_reopen sp-h2; _write_reopen sp-
 
 out="$(census_out)"
 want "2 sp-reopen for 2-bead fixture" "2 sp-reopen" "$out"
-want "sp-reopen (8 detections" "sp-reopen (8 detections" "$out"
+want "sp-reopen (8 detections" "sp-reopen-unrecorded (8 detections" "$out"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
