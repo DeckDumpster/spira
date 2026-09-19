@@ -1360,11 +1360,11 @@ cleanruns_inc()   { printf '%d\n' $(( $(cleanruns_get "$1") + 1 )) > "$(cleanrun
 cleanruns_reset() { mkdir -p "$STATE" 2>/dev/null; printf '0\n' > "$(cleanruns_file "$1")"; }
 
 # _suite_auto_quarantine <suite> <reason>
-# Writes suite-state and files through incident.sh for dedup. Fails closed: write fails → suite stays active.
+# Creates a branch, writes the quarantine entry there, commits, and submits to the queue.
+# The production checkout is never modified. Fails closed: any step failing leaves the suite active.
 _suite_auto_quarantine() {
     local suite="$1" reason="$2"
     local repo; repo="$(cd "$HERE/.." && pwd -P)"
-    local statefile; statefile="$(suite_state_file "$repo")"
     local bead_id=""
     if [ -r "$INC" ]; then
         local out_inc rc_inc
@@ -1390,11 +1390,45 @@ PAYLOAD
             case "${bead_id:-}" in ''|*[!A-Za-z0-9-]*|-*|*-) bead_id="" ;; esac
         fi
     fi
-    suite_state_write "$statefile" "$suite" quarantined "${bead_id:-}" "$reason" || return 1
+    local stamp; stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    local branch="spira/suite-state/auto-${suite%.sh}-${stamp}"
+    # Use a subdirectory so git worktree add creates the leaf (it rejects an existing dir).
+    local wt_parent; wt_parent="$(mktemp -d)" || {
+        printf 'auto-quarantine: cannot create temp dir — %s stays active\n' "$suite"
+        return 1
+    }
+    local wt="$wt_parent/wt"
+    if ! git -C "$repo" worktree add "$wt" -b "$branch" HEAD >/dev/null 2>&1; then
+        rm -rf "$wt_parent" 2>/dev/null || true
+        printf 'auto-quarantine: cannot create branch — %s stays active\n' "$suite"
+        return 1
+    fi
+    local wt_statefile; wt_statefile="$(suite_state_file "$wt")"
+    if ! suite_state_write "$wt_statefile" "$suite" quarantined "${bead_id:-}" "$reason"; then
+        git -C "$repo" worktree remove --force "$wt" 2>/dev/null || true
+        git -C "$repo" branch -D "$branch" 2>/dev/null || true
+        rm -rf "$wt_parent" 2>/dev/null || true
+        printf 'auto-quarantine: state write failed — %s stays active\n' "$suite"
+        return 1
+    fi
+    git -C "$wt" add -- "${SPIRA_SUITE_STATE:-spira/suite-state}" >/dev/null 2>&1
+    if ! git -C "$wt" commit --no-gpg-sign \
+         -m "auto-quarantine: $suite  ${bead_id:-}" >/dev/null 2>&1; then
+        git -C "$repo" worktree remove --force "$wt" 2>/dev/null || true
+        git -C "$repo" branch -D "$branch" 2>/dev/null || true
+        rm -rf "$wt_parent" 2>/dev/null || true
+        printf 'auto-quarantine: commit failed — %s stays active\n' "$suite"
+        return 1
+    fi
+    git -C "$repo" worktree remove "$wt" >/dev/null 2>&1 || true
+    rm -rf "$wt_parent" 2>/dev/null || true
     cleanruns_reset "$suite"
-    printf 'auto-quarantine: %s quarantined (bead: %s)\n' "$suite" "${bead_id:-(none filed)}"
-    printf '## Note\n%s was automatically quarantined.\n\nReason: %s\nBead: %s\n' \
-        "$suite" "$reason" "${bead_id:-(none filed)}" \
+    bash "$HERE/queue.sh" submit "$branch" 2>/dev/null || \
+        printf 'auto-quarantine: queue submit failed for %s — branch %s exists\n' "$suite" "$branch"
+    printf 'auto-quarantine: %s quarantined on branch %s (bead: %s)\n' \
+        "$suite" "$branch" "${bead_id:-(none filed)}"
+    printf '## Note\n%s was automatically quarantined.\n\nReason: %s\nBead: %s\nBranch: %s\n' \
+        "$suite" "$reason" "${bead_id:-(none filed)}" "$branch" \
     | SPIRA_MAIL_LINT_CONSIDERED="auto-quarantine" \
       bash "$HERE/mail.sh" send operator \
         --from "Suite hygiene <hygiene@spira>" \
