@@ -348,14 +348,7 @@ for j, l in enumerate(lines[-n:]):
     echo "SP_AEONS=$n"
 
     # ---- the account's own capacity -----------------------------------------------------
-    # "Nothing is moving" and "nothing is moving because the account is out until 15:00" are
-    # the same pixels without this, and the first of those is the reading that prompts
-    # somebody to go looking for a fault that does not exist.
-    #
-    # READ-ONLY, unlike everywhere else this predicate is asked. capacity_paused deletes an
-    # expired pause file and announces the reopening; a collector that ran every minute would
-    # win that race against the sentinel and swallow the announcement into a snapshot nobody
-    # reads. So the epoch is compared here by hand and the file is left for its owner.
+    # READ-ONLY. The epoch is compared here by hand; the file is left for its owner.
     local cap_at cap_now
     cap_at="$(capacity_pause_until)"; cap_now="$(date +%s)"
     if [ "${cap_at:-0}" -gt "$cap_now" ] 2>/dev/null; then
@@ -1025,30 +1018,6 @@ PY
                echo "$k=?"
            done; }
 
-    # ---- LIVE CONTEXT: how close the session in front of the operator is to the edge -----
-    # A total says what was spent; only the proximity says whether to act now, and acting is
-    # what the operator can actually do about it. Measured by ctx-meter.sh — the same program
-    # the status line calls, deliberately, so the pane and the status line cannot disagree
-    # about how close to a threshold a session is.
-    "$HERE/ctx-meter.sh" env 2>/dev/null \
-      || { for k in SP_CTX_NOW SP_CTX_TURNS SP_CTX_GROWTH SP_CTX_NEXT SP_CTX_HEADROOM \
-                    SP_CTX_TURNS_LEFT SP_CTX_AGE SP_CTX_ARCHIVIST SP_CTX_ARCHIVIST_BEHIND \
-                    SP_CTX_SCAN_BYTES SP_CTX_ARCHIVIST_FILED \
-                    SP_LIMIT_5H_PCT SP_LIMIT_5H_ETA SP_LIMIT_7D_PCT SP_LIMIT_7D_ETA \
-                    SP_LIMIT_AGE; do
-               echo "$k=?"
-           done; }
-
-    # ---- the four numbers this build got wrong -----------------------------------------
-    SPIRA_SELF_WINDOW="${SPIRA_SELF_WINDOW:-60}" \
-    python3 "$HERE/cockpit-metrics.py" \
-        "$SPIRA_RUN/sentinel.log" "$SPIRA_RUN/aeon-ledger.log" "$WINDOW_HOURS" 2>/dev/null \
-      || { for k in SP_PASSES SP_ACTS SP_FALSE_ACTS SP_FALSE_PER_PASS SP_SINCE_JUDGEMENT \
-                    SP_AEON_BORN SP_AEON_LIVED SP_AEON_STILLBORN SP_AEON_WORKED SP_AEON_THRASH \
-                    SP_SELF_REPEATING_N SP_SELF_STILLBORN_W SP_SELF_STILLBORN_LAST \
-                    SP_SELF_STARVED_W SP_SELF_STARVED_LAST; do
-               echo "$k=?"
-           done; }
 }
 
 # Slow-tier keys: git graph walks, landing checks, unbounded queries.
@@ -2266,6 +2235,65 @@ sweep_stale_tmps() {
     return 0
 }
 
+mail_keys() {
+    local now; now=$(date +%s)
+    local dir="${SPIRA_MAIL:-}/concierge"
+    if [ ! -d "${SPIRA_MAIL:-}" ] || [ ! -d "$dir/new" ]; then
+        printf 'SP_MAIL_UNREAD=?\nSP_MAIL_OLDEST_AGE=?\nSP_MAIL_N=0\n'
+        return
+    fi
+    local unread=0 oldest_t="" f t
+    for f in "$dir/new"/*; do
+        [ -f "$f" ] || continue
+        unread=$((unread+1))
+        t="$(stat -c %Y "$f" 2>/dev/null)" || continue
+        { [ -z "$oldest_t" ] || [ "$t" -lt "$oldest_t" ]; } && oldest_t="$t"
+    done
+    echo "SP_MAIL_UNREAD=$unread"
+    [ -n "$oldest_t" ] && echo "SP_MAIL_OLDEST_AGE=$(( now - oldest_t ))" || echo "SP_MAIL_OLDEST_AGE=-"
+    python3 - "$dir" "$now" <<'PY'
+import os, sys, re
+mdir, now = sys.argv[1], int(sys.argv[2])
+def read_subject(path):
+    try:
+        with open(path, 'rb') as fh:
+            for line in fh:
+                line = line.decode('utf-8', errors='replace').rstrip('\r\n')
+                if not line:
+                    break
+                if line.lower().startswith('subject:'):
+                    s = line[8:].lstrip()
+                    return re.sub(r'[^A-Za-z0-9 ._/:,()#+-]', ' ', s)[:60].strip()
+    except Exception:
+        pass
+    return ""
+rows = []
+for d, is_new in [(os.path.join(mdir, "new"), True), (os.path.join(mdir, "cur"), False)]:
+    if not os.path.isdir(d):
+        continue
+    for fn in os.listdir(d):
+        path = os.path.join(d, fn)
+        if not os.path.isfile(path):
+            continue
+        try:
+            mtime = int(os.stat(path).st_mtime)
+        except Exception:
+            mtime = 0
+        if is_new:
+            state = "NEW"
+        elif ":2," in fn and "R" in fn.split(":2,", 1)[-1]:
+            state = "DONE"
+        else:
+            state = "READ"
+        rows.append((mtime, state, read_subject(path)))
+rows.sort(key=lambda r: r[0], reverse=True)
+for i, (mtime, state, subj) in enumerate(rows[:5]):
+    age = now - mtime
+    print("SP_MAIL%d='%d|%s|%s'" % (i, age, state, subj))
+print("SP_MAIL_N=%d" % min(len(rows), 5))
+PY
+}
+
 case "${1:-}" in
 ""|once)
     if cockpit_may_write; then
@@ -2379,7 +2407,11 @@ queue)
 statute)
     statute_keys
     ;;
-*) echo "usage: cockpit.sh [once|loop|history|now|core|core_detail|unsent|strands|sops|ratelim|sphere|repo_labels|livelock|dup_refs|statute]" >&2
+# Mail probe — concierge mailbox state for the ops pane.
+mail)
+    mail_keys
+    ;;
+*) echo "usage: cockpit.sh [once|loop|history|now|core|core_detail|unsent|strands|sops|ratelim|sphere|repo_labels|livelock|dup_refs|statute|mail]" >&2
    echo "  (no args: collect once then attach to the concierge; SPIRA_COCKPIT_NO_ATTACH=1 skips the attach)" >&2
    exit 1 ;;
 esac

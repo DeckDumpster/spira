@@ -440,6 +440,59 @@ for x in d:
     fi
 }
 
+_mark_replied() {
+    local f="$1"
+    [ -f "$f" ] || return 0
+    local dir base dest
+    dir="$(dirname "$f")"; base="$(basename "$f")"
+    if [[ "$base" == *:2,* ]]; then
+        local flags="${base##*:2,}"
+        [[ "$flags" == *R* ]] && return 0
+        local new_flags; new_flags="$(printf '%sR' "$flags" | fold -w1 | sort | tr -d '\n')"
+        dest="$dir/${base%:2,*}:2,$new_flags"
+    else
+        dest="$dir/${base}:2,R"
+    fi
+    mv "$f" "$dest" 2>/dev/null || true
+}
+
+cmd_done() {
+    local mailbox="${1:-}"; shift || true
+    local msgid="${1:-}"; shift || true
+    local note="${*:-}"
+    [ -z "$mailbox" ] && { printf 'mail.sh done: mailbox required\n' >&2; return 1; }
+    [ -z "$msgid"   ] && { printf 'mail.sh done: message id required\n' >&2; return 1; }
+    _mail_ensure "$mailbox"
+    local dir; dir="$(_mail_dir "$mailbox")"
+    local f="" candidate
+    for candidate in "$dir/new/$msgid" "$dir/cur/$msgid"; do
+        [ -f "$candidate" ] && { f="$candidate"; break; }
+    done
+    if [ -z "$f" ]; then
+        for candidate in "$dir/cur/$msgid":*; do
+            [ -f "$candidate" ] && { f="$candidate"; break; }
+        done
+    fi
+    [ -z "$f" ] && { printf 'mail.sh done: %s: not found in %s\n' "$msgid" "$mailbox" >&2; return 1; }
+    [[ "$f" == "$dir/new/"* ]] && { mv "$f" "$dir/cur/$(basename "$f")"; f="$dir/cur/$(basename "$f")"; }
+    local base; base="$(basename "$f")"
+    local dest
+    if [[ "$base" == *:2,* ]]; then
+        local flags="${base##*:2,}"
+        if [[ "$flags" != *R* ]]; then
+            local new_flags; new_flags="$(printf '%sR' "$flags" | fold -w1 | sort | tr -d '\n')"
+            dest="$dir/cur/${base%:2,*}:2,$new_flags"
+            mv "$f" "$dest" && f="$dest"
+        fi
+    else
+        dest="$dir/cur/${base}:2,R"
+        mv "$f" "$dest" && f="$dest"
+    fi
+    if [ -n "$note" ]; then
+        printf '\n-- done: %s\n%s\n' "$(date -u '+%Y-%m-%d %H:%M UTC')" "$note" >> "$f"
+    fi
+}
+
 cmd_sendmail() {
     local raw; raw="$(cat)"
 
@@ -474,6 +527,7 @@ cmd_sendmail() {
     fi
 
     [ -n "${orig_bead:-}" ] && _sendmail_close_bead "$orig_bead" "${orig_kind:-}" "$first_para"
+    [ -n "$orig_file" ] && _mark_replied "$orig_file"
 
     _mail_ensure "$dest_mailbox"
     local dir; dir="$(_mail_dir "$dest_mailbox")"
@@ -489,6 +543,7 @@ case "${1:-}" in
     read)       shift; cmd_read "$@" ;;
     count)      shift; cmd_count "$@" ;;
     unread-age) shift; cmd_unread_age "$@" ;;
+    done)       shift; cmd_done "$@" ;;
     sendmail)   shift; cmd_sendmail "$@" ;;
     *)          printf 'mail.sh: unknown command: %s\n' "${1:-}" >&2; exit 1 ;;
 esac

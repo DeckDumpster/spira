@@ -261,18 +261,18 @@ for k, v in sorted(d.items()):
     is_n "thrash lines do not inflate SP_AEON_WORKED" "1" "$worked_count"
 fi
 
-# ---- Part 8: cockpit.sh emits SP_AEON_THRASH in fallback key list -------------------
+# ---- Part 8: aeon.sh creates .thrash marker on thrash detection ---------------------
 echo
-echo "cockpit.sh: SP_AEON_THRASH appears in the fallback ? key list"
+echo "aeon.sh structural: .thrash marker path uses BEAD_ID"
 
-COCKPIT="$HERE/cockpit.sh"
-if [ ! -f "$COCKPIT" ]; then
-    bad "cockpit.sh not found"
+AEON="$HERE/aeon.sh"
+if [ ! -f "$AEON" ]; then
+    bad "aeon.sh not found"
 else
-    if grep -q 'SP_AEON_THRASH' "$COCKPIT"; then
-        ok "cockpit.sh references SP_AEON_THRASH"
+    if grep -q 'BEAD_ID\.thrash' "$AEON"; then
+        ok "aeon.sh references BEAD_ID.thrash marker"
     else
-        bad "cockpit.sh does not reference SP_AEON_THRASH"
+        bad "aeon.sh does not reference BEAD_ID.thrash marker"
     fi
 fi
 
