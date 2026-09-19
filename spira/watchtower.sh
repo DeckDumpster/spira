@@ -171,7 +171,7 @@ if [ "${1:-}" = "--throttle-check" ]; then
     # Stale records (branch gone or tip already merged) inflate depth and can hold the pool
     # past the throttle threshold when no work is actually waiting.
     # SPIRA_TC_REPO and SPIRA_TC_LAND_REF are seams for test isolation (cf. SPIRA_INCIDENT_SH).
-    _tc_repo="${SPIRA_TC_REPO:-${SPIRA_REPO:-}}"
+    _tc_repo="${SPIRA_TC_REPO-${SPIRA_REPO:-}}"
     _tc_lref="${SPIRA_TC_LAND_REF:-}"
     if [ -n "$_tc_repo" ] && [ -z "$_tc_lref" ]; then
         _tc_lref="$(spira_landref "$_tc_repo" 2>/dev/null)" || true
