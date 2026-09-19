@@ -813,6 +813,36 @@ for u in $({ systemctl --user list-unit-files --no-legend \
     case "$watch_units" in *" $u "*) continue ;; esac
     systemctl --user disable --now "$u" >/dev/null 2>&1 && echo "disabled  $u (no row in the manifest)"
 done
+
+# PRUNE NON-WATCHER SPIRA-* UNITS FOR THIS INSTANCE that are installed but absent from the
+# manifest. Mirrors the watcher prune above. Without this, a unit added in a newer release
+# and then rolled back stays installed against prior-release scripts and crash-loops.
+_expected_units=" "
+for _eu in "${UNITS[@]}"; do
+    [ "$_eu" = "spira-watch@.service" ] && continue
+    _expected_units="$_expected_units$(inst_name "$_eu") "
+done
+for u in $({ systemctl --user list-unit-files --no-legend \
+                 "spira-*-${SPIRA_INSTANCE}.service" \
+                 "spira-*-${SPIRA_INSTANCE}.timer" 2>/dev/null
+             systemctl --user list-units --all --no-legend \
+                 "spira-*-${SPIRA_INSTANCE}.service" \
+                 "spira-*-${SPIRA_INSTANCE}.timer" 2>/dev/null
+             for _df in "$DEST"/spira-*-"${SPIRA_INSTANCE}".service \
+                        "$DEST"/spira-*-"${SPIRA_INSTANCE}".timer; do
+                 [ -e "$_df" ] && basename "$_df"
+             done
+           } | tr -s ' \t' '\n\n' \
+             | grep -E "^spira-[A-Za-z0-9_-]+-${SPIRA_INSTANCE}\.(service|timer)$" | sort -u); do
+    case "$u" in spira-watch-*) continue ;; esac   # handled by the watcher prune above
+    case "$u" in spira-aeon-*) continue ;; esac    # transient; not in UNITS
+    case "$_expected_units" in *" $u "*) continue ;; esac
+    systemctl --user disable --now "$u" >/dev/null 2>&1 || true
+    rm -f "$DEST/$u"
+    echo "pruned    $u (no longer in the manifest)"
+done
+unset _eu _expected_units
+
 systemctl --user list-timers --all 2>/dev/null | grep -E 'cockpit|concierge|beads-push|spira' || true
 # Long-running services never appear above. Everything else on this list is worthless if
 # they are down.
