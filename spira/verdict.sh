@@ -45,13 +45,14 @@ _batch_reseal() {   # _batch_reseal <file> <new_head> <new_members>
 # SPIRA_QUEUE_REPRO_BATCH allows tests to substitute testenv-batch.sh.
 : "${SPIRA_QUEUE_REPRO_BATCH:=$HERE/testenv-batch.sh}"
 
-_repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip>
+_repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-file]
                     # Merges <tip> onto <base-sha> so suites added after the member
                     # forked are present in the tested tree.
                     # Empty <base-sha>: tests <tip> directly (batch-head path).
                     # Returns 0 (red), 1 (green), 2 (could not judge — harness fault).
-    local suites="$1" repo="$2" base="$3" tip="$4"
-    local tmp rc test_ref wt
+                    # If [fail-file] is given and result is red, writes FAIL lines there.
+    local suites="$1" repo="$2" base="$3" tip="$4" _fail_out="${5:-}"
+    local tmp rc test_ref wt _repro_out
     if [ -n "$base" ]; then
         wt="$SPIRA_RUN/worktree/.repro-$$"
         mkdir -p "$SPIRA_RUN/worktree" 2>/dev/null || true
@@ -71,10 +72,13 @@ _repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip>
         test_ref="$tip"
     fi
     tmp="$(mktemp -d)"
-    SPIRA_REPO="$repo" SPIRA_BATCH_RESULTS="$tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
-        --mode serial --suites "$suites" "$test_ref" >/dev/null 2>&1
+    _repro_out="$(SPIRA_REPO="$repo" SPIRA_BATCH_RESULTS="$tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
+        --mode serial --suites "$suites" "$test_ref" 2>&1)"
     rc=$?
     rm -rf "$tmp"
+    if [ "$rc" -eq 1 ] && [ -n "$_fail_out" ]; then
+        printf '%s\n' "$_repro_out" | grep '^FAIL ' | head -20 > "$_fail_out" || true
+    fi
     [ "$rc" -eq 1 ] && return 0
     [ "$rc" -eq 0 ] && return 1
     return 2
@@ -113,16 +117,20 @@ _meter_write() {  # _meter_write <repo> <members> <caught> <escaped> <start-epoc
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
 }
 
-_attr_eject() {  # _attr_eject <id> <tip> <suites-csv> <pr-n> <name>
-    local id="$1" tip="$2" suites="$3" pr_n="$4" name="$5"
-    bead_reopen "$id" queue-eject \
-        "Ejected by merge-queue attribution: spira/$id reproduced failure ($suites) from PR $pr_n in $name. Run those suites against this branch to reproduce." \
-        >/dev/null 2>&1 || true
+_attr_eject() {  # _attr_eject <id> <tip> <suites-csv> <pr-n> <name> [fail-lines]
+    local id="$1" tip="$2" suites="$3" pr_n="$4" name="$5" fail_lines="${6:-}"
+    local _note="Ejected by merge-queue attribution: spira/$id reproduced failure ($suites) from PR $pr_n in $name."
+    if [ -n "$fail_lines" ]; then
+        _note="$(printf '%s\n\nFailing assertions:\n%s' "$_note" "$fail_lines")"
+    fi
+    bead_reopen "$id" queue-eject "$_note" >/dev/null 2>&1 || true
     land_mark "$id" EJECTED "$tip"
     printf 'QUEUE ESCAPED %s branch=%s\n' "$(date +%s)" "$id" \
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-    printf '## Note\n%s was ejected from the merge queue after reproducing CI failures in PR %s (%s).\n\nFailing suites: %s\n\nRun those suites against spira/%s to reproduce.\n' \
-        "$id" "$pr_n" "$name" "$suites" "$id" \
+    local _fail_section=""
+    [ -n "$fail_lines" ] && _fail_section="$(printf '\n\nFailing assertions:\n%s' "$fail_lines")"
+    printf '## Note\n%s was ejected from the merge queue after reproducing CI failures in PR %s (%s).\n\nFailing suites: %s\n\nRun those suites against spira/%s to reproduce.%s\n' \
+        "$id" "$pr_n" "$name" "$suites" "$id" "$_fail_section" \
     | SPIRA_MAIL_LINT_CONSIDERED="queue-ejection" \
       bash "$HERE/mail.sh" send operator \
         --from "Spira Queue <queue@spira>" \
@@ -155,13 +163,14 @@ _q_attribute() {
     local mc="${#members_arr[@]}"
     local caught=0 escaped=0
     local ejected=() survivors=()
+    local _eject_fail_dir; _eject_fail_dir="$(mktemp -d)"
     local _mm _mid _mtip
 
     if [ "$mc" -eq 1 ]; then
         _mm="${members_arr[0]}"; _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
         local _unrep_dir="$SPIRA_QUEUE_DIR/$name/unreproduced"
         local _unrep_f="$_unrep_dir/$_mid"
-        if _repro_is_red "$suites_csv" "$repo" "$base_sha" "$_mtip"; then
+        if _repro_is_red "$suites_csv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid"; then
             ejected+=("$_mm")
             _any_suite_in_selection "$red_suites" "$repo" "$base_sha" "$_mtip" \
                 && caught=$(( caught + 1 )) || escaped=$(( escaped + 1 ))
@@ -203,7 +212,7 @@ _q_attribute() {
                 case ",$_mcsv," in *",$_rs,"*) ;; *) _mcsv="${_mcsv:+$_mcsv,}$_rs" ;; esac
             done
             [ -n "$_mcsv" ] || continue
-            if _repro_is_red "$_mcsv" "$repo" "$base_sha" "$_mtip"; then
+            if _repro_is_red "$_mcsv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid"; then
                 ejected+=("$_mid|$_mtip|$_mcsv")
                 caught=$(( caught + 1 ))
             fi
@@ -234,7 +243,7 @@ _q_attribute() {
         if [ "${#ejected[@]}" -eq 0 ] && [ -n "$_unselected_csv" ]; then
             for _mm in "${members_arr[@]}"; do
                 _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
-                if _repro_is_red "$_unselected_csv" "$repo" "$base_sha" "$_mtip"; then
+                if _repro_is_red "$_unselected_csv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid"; then
                     ejected+=("$_mid|$_mtip|$_unselected_csv")
                     caught=$(( caught + 1 ))
                 fi
@@ -247,7 +256,7 @@ _q_attribute() {
             # can be caused by any member regardless of its declared covers.
             for _mm in "${members_arr[@]}"; do
                 _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
-                if _repro_is_red "$suites_csv" "$repo" "$base_sha" "$_mtip"; then
+                if _repro_is_red "$suites_csv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid"; then
                     ejected+=("$_mid|$_mtip|$suites_csv")
                     caught=$(( caught + 1 ))
                 fi
@@ -274,6 +283,7 @@ _q_attribute() {
                 printf 'verdict %s: PR %s together-only red — halved (%d+%d)\n' \
                     "$name" "$pr_n" "$half" "$(( mc - half ))"
                 _meter_write "$name" "$mc" 0 0 "$attr_start"
+                rm -rf "$_eject_fail_dir" 2>/dev/null || true
                 return 0
             else
                 # Unreproduced — requeue all.
@@ -291,7 +301,7 @@ _q_attribute() {
     fi
 
     # Eject guilty members.
-    local _ej _ej_id _ej_tip _ej_csv _ej_rest
+    local _ej _ej_id _ej_tip _ej_csv _ej_rest _ej_fail_lines
     for _ej in "${ejected[@]}"; do
         case "$_ej" in
             *"|"*)
@@ -301,7 +311,9 @@ _q_attribute() {
                 _ej_id="${_ej%%:*}"; _ej_tip="${_ej##*:}"; _ej_csv="$suites_csv"
                 ;;
         esac
-        _attr_eject "$_ej_id" "$_ej_tip" "$_ej_csv" "$pr_n" "$name"
+        _ej_fail_lines=""
+        [ -f "$_eject_fail_dir/$_ej_id" ] && _ej_fail_lines="$(cat "$_eject_fail_dir/$_ej_id")"
+        _attr_eject "$_ej_id" "$_ej_tip" "$_ej_csv" "$pr_n" "$name" "$_ej_fail_lines"
     done
 
     # When ejection leaves survivors, rebuild on the same base and re-push to
@@ -360,6 +372,7 @@ _q_attribute() {
     fi
 
     _meter_write "$name" "$mc" "$caught" "$escaped" "$attr_start"
+    rm -rf "$_eject_fail_dir" 2>/dev/null || true
 }
 
 main() {
