@@ -105,9 +105,12 @@ fi
 
 # ==========================================================================
 # BEAD CHECK — every open bead's repo: label must resolve.
+# Uses a fixture database seeded with known cases so the verdict is
+# independent of production data (law-probe-a-fixture-not-production,
+# law-gates-run-in-a-clean-environment).
 # ==========================================================================
 
-# Positive control: repo_root must reject an unknown name.
+# Positive control: repo_root rejects names absent from the map.
 if repo_root "unresolvable-sentinel-xyz-test" >/dev/null 2>&1; then
     bad "positive control: repo_root must reject unknown repo" \
         "repo_root accepted a nonexistent name — check is untrustworthy"
@@ -115,22 +118,15 @@ else
     ok "positive control: repo_root rejects unknown repo names"
 fi
 
-if [ -z "${SPIRA_DB:-}" ]; then
-    ok "bead check skipped: SPIRA_DB not set"
-elif ! command -v "${SPIRA_BD:-bd}" >/dev/null 2>&1; then
-    ok "bead check skipped: bd not in PATH"
+. "$HERE/testdb.sh"
+if ! testdb_available; then
+    ok "bead check skipped: no bd engine available"
 else
-    bead_fail=0
-    while IFS=$'\t' read -r bead_id repo_name; do
-        [ -n "$bead_id" ] && [ -n "$repo_name" ] || continue
-        if repo_root "$repo_name" >/dev/null 2>&1; then
-            ok "bead $bead_id: repo:$repo_name resolves"
-        else
-            bad "bead $bead_id: repo:$repo_name" \
-                "does not resolve in repo-map — bead is permanently parked"
-            bead_fail=$((bead_fail+1))
-        fi
-    done < <(
+    testdb_up "chamber-repo-labels"
+    trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+
+    # Emit tab-separated <id> <repo-name> for open beads that carry a repo: label.
+    _bead_repos() {
         "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list \
             --status open --flat --limit 0 2>/dev/null \
         | while IFS= read -r line; do
@@ -140,9 +136,45 @@ else
             [ -n "$bead" ] && [ -n "$repo" ] \
                 && printf '%s\t%s\n' "$bead" "$repo" || true
         done
-    )
-    if [ "$bead_fail" -eq 0 ]; then
-        ok "all open beads have resolvable repo: labels"
+    }
+
+    # POSITIVE CONTROL (SEEN RED): a bead whose repo: label is absent from
+    # the map must be detected before the check's silence over a clean store
+    # means anything (law-absence-needs-a-positive-control).
+    testdb_reset
+    testdb_seed <<'JSONL'
+{"id":"sp-ctl01","title":"bead with unresolvable repo label","status":"open","issue_type":"task","labels":["repo:fixture-unmapped-xyz"],"updated_at":"2026-09-01T00:00:00Z"}
+JSONL
+    ctrl_hit=0
+    while IFS=$'\t' read -r _bid _repo; do
+        [ -n "$_bid" ] && [ -n "$_repo" ] || continue
+        repo_root "$_repo" >/dev/null 2>&1 || ctrl_hit=$((ctrl_hit+1))
+    done < <(_bead_repos)
+    if [ "$ctrl_hit" -gt 0 ]; then
+        ok "a bead whose repo label is not in the map is reported"
+    else
+        bad "a bead whose repo label is not in the map is reported" \
+            "bead with repo:fixture-unmapped-xyz was not flagged — check is untrustworthy"
+    fi
+
+    # A bead whose repo: label resolves is accepted without error.
+    home_repo="$(spira_home_repo)"
+    if repo_root "$home_repo" >/dev/null 2>&1; then
+        testdb_reset
+        testdb_seed <<JSONL
+{"id":"sp-ctl02","title":"bead with resolvable repo label","status":"open","issue_type":"task","labels":["repo:${home_repo}"],"updated_at":"2026-09-01T00:00:00Z"}
+JSONL
+        resolve_fail=0
+        while IFS=$'\t' read -r _bid _repo; do
+            [ -n "$_bid" ] && [ -n "$_repo" ] || continue
+            repo_root "$_repo" >/dev/null 2>&1 || resolve_fail=$((resolve_fail+1))
+        done < <(_bead_repos)
+        if [ "$resolve_fail" -eq 0 ]; then
+            ok "a bead whose repo: label resolves is accepted"
+        else
+            bad "a bead whose repo: label resolves is accepted" \
+                "repo:$home_repo was incorrectly rejected — check repo-map"
+        fi
     fi
 fi
 
