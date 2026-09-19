@@ -74,16 +74,30 @@ printf '%s\n' "$*" >> "$CALLS"
 cmd=""
 svc=""
 for a; do
-    case "$a" in --user|--state=active|--no-legend) ;; *) [ -z "$cmd" ] && cmd="$a" || svc="$a" ;; esac
+    case "$a" in --user|--state=active|--no-legend|--all) ;; *) [ -z "$cmd" ] && cmd="$a" || svc="$a" ;; esac
 done
 case "$cmd" in
 is-active)
-    if [ "$svc" = "$ACTIVE_SVC" ]; then echo active; exit 0
-    else echo inactive; exit 3
-    fi ;;
+    if [ "$svc" = "$ACTIVE_SVC" ]; then echo active; exit 0; fi
+    IFS=, read -ra _ats <<< "${ACTIVE_TIMERS:-}"
+    for _at in "${_ats[@]}"; do [ "$svc" = "$_at" ] && { echo active; exit 0; }; done
+    echo inactive; exit 3 ;;
 list-units)
-    # Emit the ACTIVE_SVC as the one active service, if any.
-    [ -n "$ACTIVE_SVC" ] && printf '%s active running\n' "$ACTIVE_SVC"
+    case "${svc:-}" in
+    *service*)
+        [ -n "$ACTIVE_SVC" ] && printf '%s active running\n' "$ACTIVE_SVC" ;;
+    *timer*)
+        IFS=, read -ra _ats <<< "${ACTIVE_TIMERS:-}"
+        for _at in "${_ats[@]}"; do printf '%s active running\n' "$_at"; done ;;
+    *)
+        [ -n "$ACTIVE_SVC" ] && printf '%s active running\n' "$ACTIVE_SVC"
+        IFS=, read -ra _ats <<< "${ACTIVE_TIMERS:-}"
+        for _at in "${_ats[@]}"; do printf '%s active running\n' "$_at"; done ;;
+    esac
+    exit 0 ;;
+list-unit-files)
+    IFS=, read -ra _ats <<< "${ACTIVE_TIMERS:-}"
+    for _at in "${_ats[@]}"; do printf '%s enabled\n' "$_at"; done
     exit 0 ;;
 stop)
     if [ "$svc" = "$STOP_FAILS" ]; then exit 1
@@ -93,9 +107,10 @@ stop)
 esac
 SC
     chmod +x "$TMP/systemctl"
-    export ACTIVE_SVC STOP_FAILS
+    export ACTIVE_SVC STOP_FAILS ACTIVE_TIMERS
 }
 STOP_FAILS=""
+ACTIVE_TIMERS=""
 
 world() {
     : > "$CALLS"
@@ -284,6 +299,40 @@ if [ -d "$HARNESS/systemd" ]; then
         && ok "summon_fayth carries the halt gate" \
         || bad "summon_fayth carries the halt gate" "no world.halted check in lib.sh"
 fi
+
+# --------------------------------------------------------------------------------------
+# 5. CI WATCHERS — gate-check and pr-notify survive a plain halt; --hard stops them
+# --------------------------------------------------------------------------------------
+echo
+echo "CI watchers (gate-check, pr-notify):"
+
+ACTIVE_TIMERS="spira-gate-check.timer,spira-pr-notify.timer"
+ACTIVE_SVC=""; write_sc; : > "$CALLS"
+out="$(world stop)"
+calls="$(cat "$CALLS")"
+nowant "plain halt does not stop gate-check"  "stop spira-gate-check.timer"  "$calls"
+nowant "plain halt does not stop pr-notify"   "stop spira-pr-notify.timer"   "$calls"
+want   "plain halt still prints STOPPED"      "STOPPED"                       "$out"
+
+# The stamp was written by stop above; status should name the active CI watchers.
+out="$(world status)"
+want "status names gate-check as CI watcher" "spira-gate-check" "$out"
+want "status names pr-notify as CI watcher"  "spira-pr-notify"  "$out"
+
+# Hard halt: both CI watcher timers must be stopped.
+rm -f "$RUN/world.halted"
+ACTIVE_TIMERS="spira-gate-check.timer,spira-pr-notify.timer"
+ACTIVE_SVC=""; write_sc; : > "$CALLS"
+out="$(world stop --hard)"
+calls="$(cat "$CALLS")"
+want "hard halt stops gate-check"  "stop spira-gate-check.timer"  "$calls"
+want "hard halt stops pr-notify"   "stop spira-pr-notify.timer"   "$calls"
+
+# Status with watchers inactive: nobody is watching CI.
+ACTIVE_TIMERS=""; write_sc
+out="$(world status)"
+want "status says nobody is watching CI when watchers are inactive" "nobody" "$out"
+ACTIVE_TIMERS=""
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

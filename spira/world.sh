@@ -47,6 +47,8 @@ SC="${SPIRA_SYSTEMCTL:-systemctl}"
 # what already exists, then everything else systemd reports. Anything not named in the priority
 # list still gets stopped — it just stops after the ones whose order matters.
 TIMER_PRIORITY=(spira-sentinel spira-ops spira-watchtower spira-archivist spira-archive spira-skew)
+# Stopped only on --hard; a plain halt leaves them running (summon nothing, create no worktree).
+CI_WATCHER_BASES=(spira-gate-check spira-pr-notify)
 _inst_sfx="${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}"
 TIMERS=()
 _timer_seen=" "
@@ -72,6 +74,13 @@ while IFS= read -r _u; do
 done < <("$SC" --user list-unit-files 'spira-*.timer' --no-legend 2>/dev/null | awk '{print $1}'
          "$SC" --user list-units      'spira-*.timer' --all --no-legend 2>/dev/null | awk '{print $1}')
 unset _b _i _u _inst_sfx
+_is_ci_watcher() {
+    local b
+    for b in "${CI_WATCHER_BASES[@]}"; do
+        case "$1" in "$b".timer|"$b"-*.timer) return 0 ;; esac
+    done
+    return 1
+}
 STAMP="$SPIRA_RUN/world.halted"
 DRAIN_STAMP="$SPIRA_RUN/world.draining"
 
@@ -153,6 +162,7 @@ stop)
 
     echo "spira: halting the loop"
     for t in "${TIMERS[@]}"; do
+        [ "$hard" = 0 ] && _is_ci_watcher "$t" && continue
         "$SC" --user stop "$t" 2>/dev/null && printf '  stopped %s\n' "$t"
     done
     # WATCHER UNITS ARE INSTANCE-QUALIFIED after the per-instance migration. The template
@@ -414,7 +424,21 @@ status)
     # A GATED SUMMON MUST NEVER BE INVISIBLE: a pool held at zero on purpose and a queue with
     # nothing in it look identical from every other surface.
     [ -f "$DRAIN_STAMP" ] && { printf 'spira: DRAINING since %s — summons gated\n' "$(head -1 "$DRAIN_STAMP")"; sed -n 2p "$DRAIN_STAMP"; }
-    if [ -f "$STAMP" ]; then printf 'spira: HALTED since %s\n' "$(head -1 "$STAMP")"; sed -n 2p "$STAMP"
+    if [ -f "$STAMP" ]; then
+        printf 'spira: HALTED since %s\n' "$(head -1 "$STAMP")"; sed -n 2p "$STAMP"
+        _sfx="${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}"
+        _ci_watching=()
+        for _b in "${CI_WATCHER_BASES[@]}"; do
+            for _t in "${_b}${_sfx}.timer" "${_b}.timer"; do
+                [ "$("$SC" --user is-active "$_t" 2>/dev/null)" = active ] && { _ci_watching+=("$_t"); break; }
+            done
+        done
+        unset _sfx _b _t
+        if [ "${#_ci_watching[@]}" -gt 0 ]; then
+            printf 'spira: CI watchers: %s\n' "${_ci_watching[*]}"
+        else
+            printf 'spira: nobody is watching CI\n'
+        fi
     else echo "spira: not halted by world.sh"; fi
     for t in "${TIMERS[@]}"; do
         timer_state="$("$SC" --user is-active "$t" 2>/dev/null)"
