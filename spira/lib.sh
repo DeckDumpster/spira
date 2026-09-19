@@ -1918,6 +1918,12 @@ _census_events_sql() {   # _census_events_sql [since_epoch_s]
     fi
     printf "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT (event_type = 'requeued' AND new_value = 'merge-conflict') AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict')%s GROUP BY event_type, new_value UNION ALL SELECT 'reopen', 'rebase-conflict', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR (event_type = 'requeued' AND new_value = 'merge-conflict'))%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopened', 'unrecorded', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE event_type = 'reopened'%s AND issue_id NOT IN (SELECT issue_id FROM events WHERE event_type = 'reopen') HAVING COUNT(DISTINCT issue_id) > 0 ORDER BY 3 DESC" "$since_clause" "$since_clause" "$since_clause"
 }
+_census_class_fold_map() {
+    # <folded-away-class> <canonical-class>. A covers: label naming a folded-away class
+    # suppresses the class it was folded into. Keep this adjacent to the SQL fold in
+    # _census_events_sql: a rename of one must carry the other.
+    printf 'sp-requeue-merge-conflict sp-reopen-rebase-conflict\n'
+}
 census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output; exits non-zero when unreachable
     local q
     q="$(_census_events_sql "${1:-}")"
