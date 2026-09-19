@@ -62,7 +62,7 @@ if [ -x "$_schema" ]; then
     while IFS= read -r _k; do
         [ -n "$_k" ] || continue
         for _v in "$("$_schema" name "$_k" 2>/dev/null)" \
-                  "$(SPIRA_CONF=/dev/null "$_schema" name "$_k" 2>/dev/null)"; do
+                  "$("$_schema" default "$_k" 2>/dev/null)"; do
             # Short single-word names appear legitimately as English prose; a fence with a
             # high false-positive rate is one everybody learns to ignore.
             case "$_v" in ""|*[!a-z0-9-]*) continue ;; esac

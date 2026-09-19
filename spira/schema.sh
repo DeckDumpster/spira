@@ -108,6 +108,31 @@ schema_name() {          # schema_name <key> -> the name; exit 2 on an undeclare
 }
 schema_names() { printf '%s\n' ask ci scope plan incident spike groomer maechen maechen_remedy review reclaim_skip world_stop insight; }
 
+# schema_default <key> — the declared default value, ignoring env and conf.
+# Used by literal-lint.sh to build its pattern list without the ambient environment
+# masking the shipped default (law-schema-over-code).
+schema_default() {
+    local k="${1:-}"
+    case "$k" in
+        ask)            printf '%s' "needs-operator" ;;
+        ci)             printf '%s' "awaiting-ci" ;;
+        scope)          printf '%s' "spira" ;;
+        plan)           printf '%s' "plan" ;;
+        incident)       printf '%s' "incident" ;;
+        spike)          printf '%s' "spike" ;;
+        groomer)        printf '%s' "groom" ;;
+        maechen)        printf '%s' "maechen-sweep" ;;
+        maechen_remedy) printf '%s' "maechen-remedy" ;;
+        review)         printf '%s' "review-finding" ;;
+        reclaim_skip)   printf '%s' "spira-waiting-operator" ;;
+        world_stop)     printf '%s' "world-stop" ;;
+        insight)        printf '%s' "insight" ;;
+        *)  printf 'schema: no such name: %s\n' "${k:-<empty>}" >&2
+            printf 'schema: declared names: %s\n' "$(schema_names | tr '\n' ' ')" >&2
+            return 2 ;;
+    esac
+}
+
 schema_kinds()    { local p; for p in $SCHEMA_KINDS; do printf '%s\n' "${p%%:*}"; done; }
 schema_type_of()  { local p; for p in $SCHEMA_KINDS; do [ "${p%%:*}" = "${1:-}" ] && { printf '%s' "${p#*:}"; return 0; }; done
                     printf 'schema: no such kind: %s\n' "${1:-<empty>}" >&2; return 2; }
@@ -197,10 +222,11 @@ case "${1:-contract}" in
     contract) schema_contract ;;
     check)    schema_check ;;
     name)     shift; schema_name "${1:-}" ;;
+    default)  shift; schema_default "${1:-}" ;;
     type-of)  shift; schema_type_of "${1:-}" ;;
     kinds)    schema_kinds ;;
     statuses) schema_statuses ;;
     dims)     schema_dims ;;
     custom-types) schema_custom_types ;;
-    *) printf 'usage: schema.sh [contract|check|name <key>|type-of <kind>|kinds|statuses|dims|custom-types]\n' >&2; exit 2 ;;
+    *) printf 'usage: schema.sh [contract|check|name <key>|default <key>|type-of <kind>|kinds|statuses|dims|custom-types]\n' >&2; exit 2 ;;
 esac
