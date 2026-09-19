@@ -10,8 +10,8 @@
 # WHAT THIS SUITE CHECKS.
 #   1. czar-fence.sh exits 1 (shadow) when SPIRA_CZAR_STAGE_<CLASS> is unset — default.
 #   2. czar-fence.sh exits 0 (act) when set to act.
-#   3. A stub mutation succeeds regardless of SPIRA_CZAR_STAGE_DEADLOCK=shadow —
-#      proving the fence is what stops it, not the mutation command itself (FAILS OPEN).
+#   3. queue.sh eject is refused when SPIRA_FAYTH=czar and SPIRA_CZAR_CLASS is set and the
+#      class is in shadow; act mode and non-czar callers are unaffected.
 #   4. All 7 class names map to the correct env var suffix (hyphens → underscores).
 #   5. czar.fayth FAYTH_TOOLS includes czar-fence.sh.
 #   6. czar.md brief mentions CZAR-WOULD note format and czar-fence.sh.
@@ -22,8 +22,8 @@
 # act-mode acceptance. A fence that silently allows both modes is indistinguishable
 # from a fence that is absent.
 #
-# covers: spira/czar-fence.sh spira/conf.sh spira/chamber/czar.fayth spira/chamber/czar.md
-# hermetic-ok: no database, no systemd; mutation command is a stub
+# covers: spira/czar-fence.sh spira/conf.sh spira/chamber/czar.fayth spira/chamber/czar.md spira/queue.sh spira/lib.sh spira/aeon.sh spira/watchtower.sh
+# hermetic-ok: no database, no systemd; queue.sh fence fires before any db access
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
@@ -60,28 +60,35 @@ rc=0; SPIRA_CZAR_STAGE_DEADLOCK=act "$FENCE" deadlock >/dev/null 2>&1 && rc=0 ||
 
 # ==========================================================================================
 echo
-echo "shadow fence FAILS OPEN against a direct mutation command (no stage check in queue.sh)"
+echo "czar + shadow → queue.sh eject refused; act and non-czar unaffected"
 # ==========================================================================================
-# A stub mutation that always exits 0. SPIRA_CZAR_STAGE_DEADLOCK=shadow has no effect on
-# it — the mutation command has no stage awareness; only czar-fence.sh does.
-# This is the "FAILS OPEN" proof: the current czar, calling queue.sh directly, would still
-# mutate even when the class is in shadow. The fence is what the czar needs to interpose.
-STUB="$T/stub-mutation.sh"
-printf '#!/usr/bin/env bash\nprintf "stub: mutation ran\\n"\nexit 0\n' > "$STUB"
-chmod +x "$STUB"
+# The fence is bound inside cmd_eject before any db access, so SPIRA_DB need not be real.
+TQ="$(mktemp -d)"; mkdir -p "$TQ/run"
 
-out="$(SPIRA_CZAR_STAGE_DEADLOCK=shadow "$STUB" 2>&1)"
-[[ "$out" == *"mutation ran"* ]] \
-    && ok "stub mutation runs regardless of SPIRA_CZAR_STAGE_DEADLOCK=shadow (FAILS OPEN without fence)" \
-    || bad "stub mutation should run — FAILS OPEN test broken"
+# SEEN RED: czar in shadow — queue.sh eject refused with czar-fence message.
+out="$(SPIRA_FAYTH=czar SPIRA_CZAR_CLASS=deadlock \
+       SPIRA_CONF=/nonexistent SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" \
+       bash "$HERE/queue.sh" eject sp-fake 2>&1 || true)"
+[[ "$out" == *"czar-fence"* && "$out" == *"shadow"* ]] \
+    && ok "czar eject in shadow: fence fires inside queue.sh" \
+    || bad "czar eject in shadow: expected czar-fence shadow message, got: $out"
 
-# Confirm queue.sh itself carries no CZAR_STAGE check (the fence is separate).
-queue_sh="$HERE/queue.sh"
-[ -r "$queue_sh" ] \
-    && { grep -q 'CZAR_STAGE' "$queue_sh" 2>/dev/null \
-         && bad "queue.sh unexpectedly contains CZAR_STAGE — fence may have moved" \
-         || ok "queue.sh has no CZAR_STAGE check — fence is separate from the command"; } \
-    || ok "queue.sh not present — skipped (not part of this bead's scope)"
+# SEEN GREEN: czar in act — no shadow refusal (may fail for other reasons; that is expected).
+out2="$(SPIRA_FAYTH=czar SPIRA_CZAR_CLASS=deadlock SPIRA_CZAR_STAGE_DEADLOCK=act \
+        SPIRA_CONF=/nonexistent SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" \
+        bash "$HERE/queue.sh" eject sp-fake 2>&1 || true)"
+[[ "$out2" != *"czar-fence"*shadow* ]] \
+    && ok "czar eject in act: no shadow refusal" \
+    || bad "czar eject in act: unexpected shadow refusal: $out2"
+
+# NON-CZAR: unaffected — no czar-fence message regardless of queue outcome.
+out3="$(SPIRA_CONF=/nonexistent SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" \
+        bash "$HERE/queue.sh" eject sp-fake 2>&1 || true)"
+[[ "$out3" != *"czar-fence"* ]] \
+    && ok "non-czar eject: fence not triggered" \
+    || bad "non-czar eject: unexpected czar-fence message: $out3"
+
+rm -rf "$TQ"
 
 # ==========================================================================================
 echo

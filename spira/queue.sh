@@ -230,6 +230,9 @@ cmd_step() {
 cmd_eject() {
     local id="${1:-}" reason="" dry_run=0 name=""
     [ -n "$id" ] || { printf 'queue.sh eject: bead id required\n' >&2; return 2; }
+    if [ "${SPIRA_FAYTH:-}" = czar ] && [ -n "${SPIRA_CZAR_CLASS:-}" ]; then
+        bash "$HERE/czar-fence.sh" "$SPIRA_CZAR_CLASS" || return 1
+    fi
     shift
 
     while [ $# -gt 0 ]; do
@@ -312,6 +315,9 @@ cmd_eject() {
 
 cmd_abandon() {
     local name="" reason="" dry_run=0
+    if [ "${SPIRA_FAYTH:-}" = czar ] && [ -n "${SPIRA_CZAR_CLASS:-}" ]; then
+        bash "$HERE/czar-fence.sh" "$SPIRA_CZAR_CLASS" || return 1
+    fi
 
     while [ $# -gt 0 ]; do
         case "$1" in
