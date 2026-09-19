@@ -37,8 +37,8 @@ WORKFLOW="$REPO_ROOT/.github/workflows/release.yml"
 pass=0; fail=0
 ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { grep -qF "$2" "$WORKFLOW" 2>/dev/null && ok "$1" || bad "$1" "not found in workflow: $2"; }
-nowant() { grep -qF "$2" "$WORKFLOW" 2>/dev/null && bad "$1" "found in workflow (should not be): $2" || ok "$1"; }
+want()   { grep -qF -- "$2" "$WORKFLOW" 2>/dev/null && ok "$1" || bad "$1" "not found in workflow: $2"; }
+nowant() { grep -qF -- "$2" "$WORKFLOW" 2>/dev/null && bad "$1" "found in workflow (should not be): $2" || ok "$1"; }
 
 echo "test-release-workflow.sh"
 
