@@ -9,10 +9,11 @@
 #     sp-b: open, depends on sp-a          → reachable (sp-a in seeds)
 #     sp-c: open, depends on sp-b          → reachable (sp-b reachable)
 #     sp-d: open, no deps                  → seed (ready)
-#     sp-e: open, depends on sp-d, needs-ryan label → stopper (not reachable)
-#     sp-f: open, depends on sp-e          → not reachable (chain through stopper)
+#     sp-e: open, depends on sp-d, needs-ryan label → excluded from work universe
+#     sp-f: open, depends on sp-e          → stranded (blocked by ask bead sp-e)
 #
-#   Expected: SP_REACHABLE=4 (sp-a, sp-b, sp-c, sp-d), SP_STRANDED=2 (sp-e, sp-f).
+#   Expected: SP_REACHABLE=4 (sp-a, sp-b, sp-c, sp-d), SP_STRANDED=1 (sp-f).
+#   sp-e is an ask bead — outside the work-only universe, but still blocks sp-f.
 #   N (ready seeds) = 2 (sp-a, sp-d). M=4, K=2.
 #
 #   Also tests: SP_REACHABLE=? and SP_STRANDED=? when the store is unreadable.
@@ -71,10 +72,10 @@ EOF
 chmod +x "$BD_FIXTURE"
 
 fixture_out="$(run_reachable "$BD_FIXTURE")"
-# sp-a, sp-b, sp-c, sp-d are reachable. sp-e (needs-ryan) and sp-f are stranded.
+# sp-a, sp-b, sp-c, sp-d reachable. sp-f stranded (blocked by ask sp-e). sp-e excluded.
 is "SP_REACHABLE=4" "4" \
    "$(printf '%s\n' "$fixture_out" | grep '^SP_REACHABLE=' | sed 's/^SP_REACHABLE=//')"
-is "SP_STRANDED=2" "2" \
+is "SP_STRANDED=1" "1" \
    "$(printf '%s\n' "$fixture_out" | grep '^SP_STRANDED=' | sed 's/^SP_STRANDED=//')"
 
 # =============================================================================
@@ -225,6 +226,61 @@ echo "health.sh: SP_REACHABLE=? renders ? not 0"
 pane_q="$(SPIRA_RUN="$TMP" bash "$HERE/../cockpit/health.sh" once 2>/dev/null)"
 want   "? reachable appears in pane" "? reachable" "$pane_q"
 nowant "0 reachable must not appear" "0 reachable" "$pane_q"
+
+# =============================================================================
+# ASK + INSIGHT EXCLUSION — the acceptance fixture from sp-7gq94.
+# 3 work beads (one poisoned), 2 ask beads (needs-ryan), 1 insight bead.
+# After fix: stranded = 1 (the poisoned work bead only).
+# Positive control (law-a-regression-test-must-be-seen-to-fail): with the old
+# code (ask beads and insights counted in universe) this fixture gives stranded=3
+# (poison + 2 asks). That confirms the fixture would catch a regression.
+# =============================================================================
+echo ""
+echo "ask/insight exclusion: acceptance fixture (sp-7gq94) → stranded=1"
+
+BD_ASKS="$TMP/bd-asks"
+cat > "$BD_ASKS" <<'EOF'
+#!/usr/bin/env bash
+# 3 work beads (sp-w1 poisoned, sp-w2/sp-w3 plain), 2 asks, 1 insight.
+printf '[
+  {"id":"sp-w1","status":"open","labels":["spira","plan","spira-poison"],"issue_type":"task"},
+  {"id":"sp-w2","status":"open","labels":["spira","plan"],"issue_type":"task"},
+  {"id":"sp-w3","status":"open","labels":["spira","plan"],"issue_type":"task"},
+  {"id":"sp-a1","status":"open","labels":["spira","plan","needs-ryan"],"issue_type":"task"},
+  {"id":"sp-a2","status":"open","labels":["spira","plan","needs-ryan"],"issue_type":"task"},
+  {"id":"sp-i1","status":"open","labels":["spira","plan","insight"],"issue_type":"task"}
+]'
+EOF
+chmod +x "$BD_ASKS"
+
+asks_out="$(run_reachable "$BD_ASKS")"
+# sp-w2 and sp-w3 reachable. sp-w1 (poison) stranded. Asks and insight excluded.
+is "SP_REACHABLE=2 with ask+insight exclusion" "2" \
+   "$(printf '%s\n' "$asks_out" | grep '^SP_REACHABLE=' | sed 's/^SP_REACHABLE=//')"
+is "SP_STRANDED=1 with ask+insight exclusion" "1" \
+   "$(printf '%s\n' "$asks_out" | grep '^SP_STRANDED=' | sed 's/^SP_STRANDED=//')"
+
+# Screenshot: pane renders "1 stranded" — only the poisoned work bead.
+{
+    printf 'SP_AT=%s\n' "$(date +%s)"
+    printf 'SP_READY=2\n'
+    printf 'SP_REACHABLE=2\n'
+    printf 'SP_STRANDED=1\n'
+    printf 'SP_NEXT_N=2\n'
+    printf 'SP_NEXT0=P2 builder sp-w2 a work bead\n'
+    printf 'SP_NEXT1=P2 builder sp-w3 another work bead\n'
+    printf 'SP_AEONS=0\nSP_SENTINEL_AGE=5\nSP_OPS_AGE=5\nSP_AURON_AGE=5\n'
+    printf 'SP_SENTINEL_TIMER=1\nSP_OPS_TIMER=1\nSP_AURON_TIMER=1\nSP_AURON_FIRING=0\n'
+    printf 'SP_TOK_WIN=0\nSP_TOK_WINDOW_H=5\n'
+    printf 'SP_RATELIM_5H_PCT=0\nSP_RATELIM_7D_PCT=0\nSP_RATELIM_5H_MIN=0\nSP_RATELIM_7D_MIN=0\n'
+    printf 'SP_RATELIM_5H_ETA=-\nSP_RATELIM_7D_ETA=-\nSP_RATELIM_AGE=0\n'
+} > "$SNAP"
+
+pane_ask="$(SPIRA_RUN="$TMP" bash "$HERE/../cockpit/health.sh" once 2>/dev/null)"
+echo "--- NEXT pane screenshot (ask/insight excluded) ---"
+printf '%s\n' "$pane_ask" | grep -i 'NEXT\|ready\|reachable\|stranded' || true
+echo "---"
+want "stranded shows 1 (only poisoned work bead)" "1 stranded" "$pane_ask"
 
 # =============================================================================
 echo ""
