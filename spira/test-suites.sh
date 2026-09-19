@@ -66,7 +66,7 @@ printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$TMP/ask.log" > "$
 chmod +x "$SH/ask.sh"
 
 # The knobs, every one of them away from the shipped default.
-BUDGET=120; PERSUITE=20; STALE=3600; PRIO=3; REPONAME=fixture-repo
+BUDGET=120; PERSUITE=30; STALE=3600; PRIO=3; REPONAME=fixture-repo
 
 # THE FIXTURE NEEDS A REAL `bd`, AND IT IS REACHED THROUGH SPIRA_PATH RATHER THAN PATH.
 # conf.sh REPLACES PATH outright, so a directory that is only on the caller's PATH has gone by
