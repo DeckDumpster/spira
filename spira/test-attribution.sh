@@ -359,5 +359,66 @@ want "5. meter: caught=1 in stats"    "caught:          1" "$stats_out"
 want "5. meter: escaped=1 in stats"   "escaped:         1" "$stats_out"
 clean_case
 
+# =============================================================================
+# 6. DIFF-BASED ATTRIBUTION — repro unavailable but one member's diff contains
+#    the red suite; that member is ejected, the survivor re-pushed to same PR.
+#    Simulates container failure: repro stub returns green for all branches.
+# =============================================================================
+testdb_reset
+base_sha_6="$(git -C "$REPO" rev-parse origin/main)"
+wt_build6="$RUN/worktree/.batch-build-6"
+git -C "$REPO" worktree add -q --detach "$wt_build6" "$base_sha_6"
+
+wt_guilty="$RUN/worktree/sp-at-dg"
+wt_clean="$RUN/worktree/sp-at-dc"
+git -C "$REPO" worktree add -q -b "spira/sp-at-dg" "$wt_guilty" origin/main
+git -C "$REPO" worktree add -q -b "spira/sp-at-dc" "$wt_clean" origin/main
+
+# sp-at-dg adds the red suite file to its branch (test-canary.sh).
+printf 'modified\n' > "$wt_guilty/test-canary.sh"
+git -C "$wt_guilty" add -A && git -C "$wt_guilty" commit -q -m "sp-at-dg: work"
+tip_dg="$(git -C "$REPO" rev-parse spira/sp-at-dg)"
+
+# sp-at-dc adds an unrelated file.
+printf 'clean\n' > "$wt_clean/sp-at-dc.txt"
+git -C "$wt_clean" add -A && git -C "$wt_clean" commit -q -m "sp-at-dc: work"
+tip_dc="$(git -C "$REPO" rev-parse spira/sp-at-dc)"
+
+git -C "$wt_build6" merge -q --no-edit --no-ff -m "spira: land sp-at-dg" "$tip_dg" >/dev/null 2>&1
+git -C "$wt_build6" merge -q --no-edit --no-ff -m "spira: land sp-at-dc" "$tip_dc" >/dev/null 2>&1
+batch_head6="$(git -C "$wt_build6" rev-parse HEAD)"
+batch_br6="spira/queue/test6-$$"
+git -C "$REPO" branch -f "$batch_br6" "$batch_head6"
+git -C "$REPO" worktree remove -f "$wt_build6"
+
+for id in sp-at-dg sp-at-dc; do plant_bead "$id"; done
+printf 'BATCHED %s %s\n' "$tip_dg" "$(date +%s)" > "$LANDSTATE/sp-at-dg"
+printf 'BATCHED %s %s\n' "$tip_dc" "$(date +%s)" > "$LANDSTATE/sp-at-dc"
+{
+    printf 'pr=44\n'
+    printf 'head=%s\n' "$batch_head6"
+    printf 'base=%s\n' "$base_sha_6"
+    printf 'members=sp-at-dg:%s sp-at-dc:%s\n' "$tip_dg" "$tip_dc"
+    printf 'opened=%s\n' "$(date +%s)"
+    printf 'branch=%s\n' "$batch_br6"
+} > "$(batch_file)"
+
+# Repro stub returns green for all (simulates container startup failure).
+: > "$REPRO_FAIL_FILE"
+out="$(verdict "$REPONAME")"
+is   "6. diff-attr: sp-at-dg ejected (diff has red suite)"  "EJECTED"  "$(land_state_of sp-at-dg)"
+is   "6. diff-attr: sp-at-dc stays BATCHED"                  "BATCHED"  "$(land_state_of sp-at-dc)"
+is   "6. diff-attr: same PR number"                          "44"       "$(grep '^pr=' "$(batch_file)" | cut -d= -f2)"
+is   "6. diff-attr: batch record kept"                       "1"        "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+nowant "6. diff-attr: PR not closed"                         "close"    "$(cat "$FORGE_LOG")"
+want "6. diff-attr: re-push reported"                        "re-pushed to same PR" "$out"
+_new_head6="$(grep '^head=' "$(batch_file)" | cut -d= -f2)"
+_remote_head6="$(git -C "$REMOTE" rev-parse "$batch_br6" 2>/dev/null || echo none)"
+is   "6. diff-attr: head resealed"                           "$_new_head6" "$_remote_head6"
+[ "${_new_head6:-}" != "${batch_head6:-}" ] \
+    && ok "6. diff-attr: new head differs from old" \
+    || bad "6. diff-attr: new head differs from old" "head unchanged: ${_new_head6:-}"
+clean_case
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -80,6 +80,17 @@ _any_suite_in_selection() {  # _any_suite_in_selection <suites-spacesep> <repo> 
     return 1
 }
 
+_suite_directly_in_diff() {  # _suite_directly_in_diff <suites-spacesep> <repo> <base-sha> <tip> -> 0 if any suite file is in diff
+    local suites="$1" repo="$2" base="$3" tip="$4" tmp s
+    tmp="$(mktemp)"
+    git -C "$repo" diff --name-only "$base" "$tip" 2>/dev/null > "$tmp" || true
+    for s in $suites; do
+        grep -qF "$s" "$tmp" 2>/dev/null && { rm -f "$tmp"; return 0; }
+    done
+    rm -f "$tmp"
+    return 1
+}
+
 _meter_write() {  # _meter_write <repo> <members> <caught> <escaped> <start-epoch>
     local name="$1" members="$2" caught="$3" escaped="$4" start="$5"
     local cost=$(( $(date +%s) - start ))
@@ -140,6 +151,12 @@ _q_attribute() {
             ejected+=("$_mm")
             _any_suite_in_selection "$red_suites" "$repo" "$base_sha" "$_mtip" \
                 && caught=$(( caught + 1 )) || escaped=$(( escaped + 1 ))
+        elif _suite_directly_in_diff "$red_suites" "$repo" "$base_sha" "$_mtip"; then
+            # Diff contains the red suite — eject on diff evidence without waiting
+            # for a second occurrence (repro unavailable).
+            ejected+=("$_mm")
+            caught=$(( caught + 1 ))
+            rm -f "$_unrep_f" 2>/dev/null || true
         else
             local _prev_tip; _prev_tip="$(cat "$_unrep_f" 2>/dev/null || true)"
             if [ "${_prev_tip:-}" = "$_mtip" ]; then
@@ -166,7 +183,19 @@ _q_attribute() {
         done
 
         if [ "${#ejected[@]}" -eq 0 ]; then
-            # None reproduced individually — test the batch head.
+            # Repro found nothing. Try diff-based: eject members whose diff directly
+            # contains a red suite — their change added or modified the failing suite.
+            for _mm in "${members_arr[@]}"; do
+                _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
+                if _suite_directly_in_diff "$red_suites" "$repo" "$base_sha" "$_mtip"; then
+                    ejected+=("$_mm")
+                    caught=$(( caught + 1 ))
+                fi
+            done
+        fi
+
+        if [ "${#ejected[@]}" -eq 0 ]; then
+            # Neither repro nor diff — test the batch head.
             if _repro_is_red "$suites_csv" "$repo" "$branch_name"; then
                 # Together-only break → halve: first half gets epoch=1 (batches immediately),
                 # second half gets epoch=now (waits for BATCH_WAIT).
@@ -191,7 +220,7 @@ _q_attribute() {
                 for _mm in "${members_arr[@]}"; do survivors+=("$_mm"); done
             fi
         else
-            # Some reproduced — collect non-ejected survivors.
+            # Some ejected (repro or diff) — collect non-ejected survivors.
             local ejected_set=" $(printf '%s\n' "${ejected[@]}" | sed 's/:.*//' | tr '\n' ' ')"
             for _mm in "${members_arr[@]}"; do
                 _mid="${_mm%%:*}"
