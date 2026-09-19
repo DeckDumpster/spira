@@ -13,7 +13,7 @@
 #      header is handled in land_repo. Positive control: a synthetic landing.sh
 #      that lists a mode not present in land_repo's case is detected as an offender.
 #
-# covers: spira/landing.sh spira/batch.sh spira/verdict.sh spira/queue.sh spira/lib.sh
+# covers: spira/*.sh
 # timeout: 30
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

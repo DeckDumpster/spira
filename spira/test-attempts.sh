@@ -27,7 +27,7 @@
 # one thing being asked about (law-prefer-the-real-dependency).
 #
 # defect: sp-sc3
-# covers: spira/lib.sh spira/attempts.sh spira/aeon.sh spira/strand.sh spira/capacity.sh
+# covers: spira/*.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

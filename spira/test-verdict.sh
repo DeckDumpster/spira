@@ -2,7 +2,7 @@
 #
 # test-verdict.sh — merge-queue verdict: fast-forward landing pass.
 #
-# Fourteen cases:
+# Sixteen cases:
 #   1. No open batch → forge is never reached.
 #   2. Pending within CI max → nothing happens.
 #   3. Pending, run old and stuck → run cancelled explicitly; no workflow-rerun.
@@ -25,6 +25,10 @@
 #      re-queued. Positive control with case 7: case 7 proves CERTIFIED when tips
 #      are NOT in the new base; this proves LANDED when they ARE.
 #  14. PR old, run old, but last-activity recent → run still progressing; no cancel.
+#  15. All-suites repro ejects a member whose diff is claimed by no suite, before
+#      the batch-head halve is attempted.
+#  16. Positive control for case 15: same batch shape with no offender — members
+#      CERTIFIED; no halve.
 #
 # The forge seam is a local fixture; no network is reached.
 # mail.sh and suites.sh are stubbed to capture calls.
@@ -515,6 +519,95 @@ is     "14. progressing: no push"       "$before_main14" "$(remote_main)"
 nowant "14. progressing: no cancel"     "cancel"         "$(cat "$FORGE_LOG")"
 nowant "14. progressing: no rerun"      "rerun"          "$(cat "$FORGE_LOG")"
 want   "14. progressing: reported"      "progressing"    "$out"
+clean_case
+
+# =============================================================================
+# 15. ALL-SUITES REPRO EJECTS GUILTY MEMBER BEFORE HALVING.
+#     A member whose diff is claimed by no suite (only a non-.sh file changed)
+#     still gets ejected when it reproduces the red suite alone against all
+#     red suites — the filter-lift fallback runs before the batch-head halve.
+#     POSITIVE CONTROL (case 16): same shape of batch with no offender — the
+#     all-suites repro finds nothing, the batch head is also green, and all
+#     members are returned to CERTIFIED without ejection or halving.
+# =============================================================================
+cat > "$SH/repro-batch-attr.sh" <<'REPRO'
+#!/usr/bin/env bash
+# Red if the test-ref tree contains guilty-marker.txt; green otherwise.
+ref="${@: -1}"
+git -C "$SPIRA_REPO" ls-tree "$ref" -- guilty-marker.txt 2>/dev/null | grep -q . && exit 1
+exit 0
+REPRO
+chmod +x "$SH/repro-batch-attr.sh"
+
+# sp-vd-a1: innocent — adds only a plain text file (claims no .sh covers)
+# sp-vd-a2: guilty   — adds guilty-marker.txt (also uncovered, but repro fails)
+base_sha15="$(git -C "$REPO" rev-parse origin/main)"
+for id in sp-vd-a1 sp-vd-a2; do
+    bwt15="$RUN/worktree/$id"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$bwt15" origin/main 2>/dev/null || true
+    printf '%s\n' "$id" > "$bwt15/$id.txt"
+done
+printf 'offender\n' > "$RUN/worktree/sp-vd-a2/guilty-marker.txt"
+for id in sp-vd-a1 sp-vd-a2; do
+    bwt15="$RUN/worktree/$id"
+    git -C "$bwt15" add -A
+    git -C "$bwt15" commit -q -m "$id: work"
+    printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" \
+        > "$LANDSTATE/$id"
+done
+tip_a1="$(git -C "$REPO" rev-parse "spira/sp-vd-a1")"
+tip_a2="$(git -C "$REPO" rev-parse "spira/sp-vd-a2")"
+wt15="$RUN/worktree/.b15"
+git -C "$REPO" worktree add -q --detach "$wt15" "$base_sha15" 2>/dev/null || true
+git -C "$wt15" merge -q --no-edit --no-ff -m "spira: land sp-vd-a1" "$tip_a1" >/dev/null 2>&1
+git -C "$wt15" merge -q --no-edit --no-ff -m "spira: land sp-vd-a2" "$tip_a2" >/dev/null 2>&1
+batch_head15="$(git -C "$wt15" rev-parse HEAD)"
+git -C "$REPO" worktree remove -f "$wt15" 2>/dev/null || true
+{ printf 'pr=55\nhead=%s\nbase=%s\nmembers=sp-vd-a1:%s sp-vd-a2:%s\nopened=%s\n' \
+    "$batch_head15" "$base_sha15" "$tip_a1" "$tip_a2" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-attr-suite.sh\n' > "$FORGE_STATUS_FILE"
+out="$(SPIRA_QUEUE_REPRO_BATCH="$SH/repro-batch-attr.sh" verdict "$REPONAME")"
+case "$(landstate sp-vd-a2)" in EJECTED*) ok "15. all-suites-repro: guilty ejected" ;;
+    *) bad "15. all-suites-repro: guilty ejected" "got: $(landstate sp-vd-a2)" ;; esac
+case "$(landstate sp-vd-a1)" in CERTIFIED*) ok "15. all-suites-repro: innocent CERTIFIED" ;;
+    *) bad "15. all-suites-repro: innocent CERTIFIED" "got: $(landstate sp-vd-a1)" ;; esac
+nowant "15. all-suites-repro: no halve"     "halved"   "$out"
+want   "15. all-suites-repro: ejection out" "ejected"  "$out"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 16. POSITIVE CONTROL: batch with no offender — all-suites repro green for
+#     every member, batch head repro also green; members CERTIFIED, no halve.
+# =============================================================================
+base_sha16="$(git -C "$REPO" rev-parse origin/main)"
+for id in sp-vd-b1 sp-vd-b2; do
+    bwt16="$RUN/worktree/$id"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$bwt16" origin/main 2>/dev/null || true
+    printf '%s\n' "$id" > "$bwt16/$id.txt"
+    git -C "$bwt16" add -A
+    git -C "$bwt16" commit -q -m "$id: work"
+    printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" \
+        > "$LANDSTATE/$id"
+done
+tip_b1="$(git -C "$REPO" rev-parse "spira/sp-vd-b1")"
+tip_b2="$(git -C "$REPO" rev-parse "spira/sp-vd-b2")"
+wt16="$RUN/worktree/.b16"
+git -C "$REPO" worktree add -q --detach "$wt16" "$base_sha16" 2>/dev/null || true
+git -C "$wt16" merge -q --no-edit --no-ff -m "spira: land sp-vd-b1" "$tip_b1" >/dev/null 2>&1
+git -C "$wt16" merge -q --no-edit --no-ff -m "spira: land sp-vd-b2" "$tip_b2" >/dev/null 2>&1
+batch_head16="$(git -C "$wt16" rev-parse HEAD)"
+git -C "$REPO" worktree remove -f "$wt16" 2>/dev/null || true
+{ printf 'pr=56\nhead=%s\nbase=%s\nmembers=sp-vd-b1:%s sp-vd-b2:%s\nopened=%s\n' \
+    "$batch_head16" "$base_sha16" "$tip_b1" "$tip_b2" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-attr-suite.sh\n' > "$FORGE_STATUS_FILE"
+out="$(SPIRA_QUEUE_REPRO_BATCH="$SH/repro-batch-attr.sh" verdict "$REPONAME")"
+case "$(landstate sp-vd-b1)" in CERTIFIED*) ok "16. all-suites-ctrl: sp-vd-b1 CERTIFIED" ;;
+    *) bad "16. all-suites-ctrl: sp-vd-b1 CERTIFIED" "got: $(landstate sp-vd-b1)" ;; esac
+case "$(landstate sp-vd-b2)" in CERTIFIED*) ok "16. all-suites-ctrl: sp-vd-b2 CERTIFIED" ;;
+    *) bad "16. all-suites-ctrl: sp-vd-b2 CERTIFIED" "got: $(landstate sp-vd-b2)" ;; esac
+nowant "16. all-suites-ctrl: no ejection" "ejected" "$out"
+nowant "16. all-suites-ctrl: no halve"    "halved"  "$out"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"

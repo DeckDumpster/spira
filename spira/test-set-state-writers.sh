@@ -21,8 +21,7 @@
 # code with label add would have proved nothing about atomicity; this one would have shown
 # two labels (the defect) where one was expected.
 #
-# covers: spira/aeon.sh spira/stage.sh spira/groomer.sh spira/incident.sh spira/review.sh
-#         spira/landing.sh spira/suites.sh spira/canary.sh spira/lib.sh
+# covers: spira/*.sh
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

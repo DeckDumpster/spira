@@ -242,6 +242,19 @@ _q_attribute() {
         fi
 
         if [ "${#ejected[@]}" -eq 0 ]; then
+            # Diff-based selection missed every member. Lift the filter: test each
+            # member alone against all red suites. A suite that scans the whole tree
+            # can be caused by any member regardless of its declared covers.
+            for _mm in "${members_arr[@]}"; do
+                _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
+                if _repro_is_red "$suites_csv" "$repo" "$base_sha" "$_mtip"; then
+                    ejected+=("$_mid|$_mtip|$suites_csv")
+                    caught=$(( caught + 1 ))
+                fi
+            done
+        fi
+
+        if [ "${#ejected[@]}" -eq 0 ]; then
             # Neither repro nor diff — test the batch head.
             if _repro_is_red "$suites_csv" "$repo" "" "$branch_name"; then
                 # Together-only break → halve: first half gets epoch=1 (batches immediately),
@@ -336,8 +349,13 @@ _q_attribute() {
         if [ "${#ejected[@]}" -gt 0 ] || [ "${#survivors[@]}" -gt 0 ]; then
             "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
             rm -f "$batch_file"
-            printf 'verdict %s: PR %s — ejected %d, requeued %d\n' \
-                "$name" "$pr_n" "${#ejected[@]}" "${#survivors[@]}"
+            if [ "${#ejected[@]}" -gt 0 ]; then
+                printf 'verdict %s: PR %s — ejected %d, requeued %d\n' \
+                    "$name" "$pr_n" "${#ejected[@]}" "${#survivors[@]}"
+            else
+                printf 'verdict %s: PR %s — requeued %d\n' \
+                    "$name" "$pr_n" "${#survivors[@]}"
+            fi
         fi
     fi
 
