@@ -29,7 +29,7 @@
 # (law-prefer-the-real-dependency).
 #
 # defect: sp-lzt
-# covers: spira/lib.sh spira/sentinel.sh spira/aeon.sh spira/strand.sh spira/landing.sh spira/attempts.sh
+# covers: spira/*.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

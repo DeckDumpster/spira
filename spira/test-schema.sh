@@ -15,7 +15,7 @@
 # non-zero and print nothing usable on stdout. The positive cases are the control that proves
 # the negative is not passing by accident (law-a-regression-test-must-be-seen-to-fail).
 #
-# covers: spira/schema.sh
+# covers: spira/*.sh
 # hermetic-ok: no database, no systemd, no network; conf.sh is pointed at a nonexistent file
 # timeout: 60
 set -uo pipefail

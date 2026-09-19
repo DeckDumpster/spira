@@ -17,7 +17,7 @@
 #   4. SP_OPS_AGE reports 0 when an ops aeon pid is live, not the stale log mtime.
 #
 # defect: sp-06hs
-# covers: spira/lib.sh spira/aeon.sh spira/cockpit.sh
+# covers: spira/*.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

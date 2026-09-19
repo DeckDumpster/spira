@@ -19,7 +19,7 @@
 # or a grep that finds nothing all look like "clean" without the control.
 #
 # defect: sp-crov
-# covers: spira/incident.sh spira/watchtower.sh spira/landing.sh spira/canary.sh spira/lib.sh spira/suites.sh
+# covers: spira/*.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

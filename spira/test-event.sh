@@ -21,7 +21,7 @@
 # `mail.sh` then delivers is test-mail-delivery.sh's question. Splitting
 # them keeps this suite fast enough to be the one that always runs.
 # defect: sp-gvm
-# covers: spira/lib.sh spira/aeon.sh spira/landing.sh spira/sentinel.sh spira/strand.sh spira/gate-check.sh spira/mail.sh
+# covers: spira/*.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
