@@ -1819,6 +1819,16 @@ bump_requeue() { _bump_write_event "${1:-}" requeued  "${2:-unrecorded}"; }
 bump_timeout() { return 0; }
 bump_recur()   { _bump_write_event "${1:-}" recurred  "${2:-unrecorded}"; }
 bump_lapsed()  { _bump_write_event "${1:-}" lapsed    "${2:-unrecorded}"; }
+bump_reopen()  {
+    # new_value is intentionally empty for reopened events — cannot use _bump_write_event
+    # which defaults to 'unrecorded' when the cause argument is empty or absent.
+    local id="${1:-}"; [ -n "$id" ] || return 0
+    local actor="${BEADS_ACTOR:-harness}" uuid
+    uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 0
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+        "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'reopened', '$actor', '', NOW())" \
+        >/dev/null 2>&1; return 0
+}
 
 # DIAGNOSTIC ACCESSORS — requeue/reclaim/recur counters are read from the events
 # table via bd sql (sp-2lk). timeouts_of returns 0 (no census role; events-based
