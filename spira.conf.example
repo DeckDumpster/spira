@@ -392,6 +392,23 @@
 # any bead carrying the right partition label (plan, incident, spike, ...) is visible.
 # SPIRA_SCOPE_LABEL = spira
 
+# CZAR STAGE MODE — per-class shadow/act for the queue sovereign.
+# Each class of queue-state escalation (deadlock, attribution-failed, sort-failed,
+# loop-stalled, ci-stalled, starved, ci-red) has its own stage key. The default is
+# shadow: the czar investigates and writes CZAR-WOULD notes but changes nothing in the
+# queue. Set a class to act once you have watched one shadow run and trust the verdict.
+#
+# shadow (default) — czar writes CZAR-WOULD notes and changes nothing in the queue
+# act              — czar acts as it normally would; mutations are permitted
+#
+# SPIRA_CZAR_STAGE_DEADLOCK = shadow
+# SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED = shadow
+# SPIRA_CZAR_STAGE_SORT_FAILED = shadow
+# SPIRA_CZAR_STAGE_LOOP_STALLED = shadow
+# SPIRA_CZAR_STAGE_CI_STALLED = shadow
+# SPIRA_CZAR_STAGE_STARVED = shadow
+# SPIRA_CZAR_STAGE_CI_RED = shadow
+
 # The timezone dates are written in. Empty means the host's own, which is right until the host
 # is a server in one zone and you read its output in another — the case where an evening's
 # work lands under tomorrow's date and a chronological log stops being chronological.
