@@ -655,12 +655,14 @@ echo "the Sending vital signs render from cockpit.env:"
 # only a fixture with real numbers can prove it is actually reading the keys.
 fresh
 mkdir -p "$TMP/run"
-printf "SP_UNSENT=9\nSP_UNSENT_OLDEST_H=72\nSP_UNADOPTED=1\nSP_ORPHAN_WORK=2\nSP_SENT_FAILED=17\n" \
+printf "SP_UNSENT=9\nSP_UNSENT_OLDEST_H=72\nSP_BATCHED_STRANDED=2\nSP_UNADOPTED=1\nSP_ORPHAN_WORK=2\nSP_SENT_FAILED=17\n" \
     > "$TMP/run/cockpit.env"
 snap="$(wt)"
 want "SP_UNSENT renders in the Sending section"        "unsent branches"             "$snap"
 want "SP_UNSENT value renders"                         "unsent branches                     9" "$snap"
 want "SP_UNSENT_OLDEST_H renders"                      "oldest unsent (hours)               72" "$snap"
+want "SP_BATCHED_STRANDED renders"                     "BATCHED with no open batch"          "$snap"
+want "SP_BATCHED_STRANDED value renders"               "BATCHED with no open batch          2" "$snap"
 want "SP_UNADOPTED renders"                            "strays (no bead"              "$snap"
 want "SP_UNADOPTED value renders"                      "strays (no bead, commits on base)   1" "$snap"
 want "SP_ORPHAN_WORK renders"                          "orphan work (no bead, has commits)  2" "$snap"
@@ -674,6 +676,7 @@ printf "SP_OPEN=5\n" > "$TMP/run/cockpit.env"   # no SP_UNSENT/SP_UNADOPTED/SP_S
 snap="$(wt)"
 want "missing SP_UNSENT renders ?"           "unsent branches                     ?" "$snap"
 want "missing SP_UNSENT_OLDEST_H renders ?"  "oldest unsent (hours)               ?" "$snap"
+want "missing SP_BATCHED_STRANDED renders ?" "BATCHED with no open batch          ?" "$snap"
 want "missing SP_UNADOPTED renders ?"        "strays (no bead, commits on base)   ?" "$snap"
 want "missing SP_ORPHAN_WORK renders ?"      "orphan work (no bead, has commits)  ?" "$snap"
 want "missing SP_SENT_FAILED renders ?"      "fiends (FAILED deletes, came back)  ?" "$snap"
@@ -681,15 +684,17 @@ want "missing SP_SENT_FAILED renders ?"      "fiends (FAILED deletes, came back)
 # ZERO IS A VALID MEASUREMENT. A clean Sending should render 0, not ?.
 fresh
 mkdir -p "$TMP/run"
-printf "SP_UNSENT=0\nSP_UNSENT_OLDEST_H=0\nSP_UNADOPTED=0\nSP_ORPHAN_WORK=0\nSP_SENT_FAILED=0\n" \
+printf "SP_UNSENT=0\nSP_UNSENT_OLDEST_H=0\nSP_BATCHED_STRANDED=0\nSP_UNADOPTED=0\nSP_ORPHAN_WORK=0\nSP_SENT_FAILED=0\n" \
     > "$TMP/run/cockpit.env"
 snap="$(wt)"
 want "SP_UNSENT=0 renders as 0, not ?"          "unsent branches                     0" "$snap"
 want "SP_UNSENT_OLDEST_H=0 renders as 0, not ?" "oldest unsent (hours)               0" "$snap"
+want "SP_BATCHED_STRANDED=0 renders as 0, not ?" "BATCHED with no open batch          0" "$snap"
 want "SP_UNADOPTED=0 renders as 0, not ?"        "strays (no bead, commits on base)   0" "$snap"
 want "SP_ORPHAN_WORK=0 renders as 0, not ?"      "orphan work (no bead, has commits)  0" "$snap"
 want "SP_SENT_FAILED=0 renders as 0, not ?"      "fiends (FAILED deletes, came back)  0" "$snap"
 nowant "and SP_UNSENT=0 is not disguised as ?"   "unsent branches                     ?" "$snap"
+nowant "and SP_BATCHED_STRANDED=0 is not disguised as ?" "BATCHED with no open batch          ?" "$snap"
 
 # ======================================================================================
 echo
@@ -761,6 +766,52 @@ rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
 wt_file_multi SPIRA_UNSENT_WARN_H=0
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 nowant "? unadopted never fires escalation" "unadopted" "$subjects"
+
+# BATCHED-STRANDED ESCALATION. SP_BATCHED_STRANDED > 0 fires the escalation.
+fresh
+mkdir -p "$TMP/run/landstate"
+printf "SP_BATCHED_STRANDED=1\nSP_BATCHED_STRANDED_NAMES='sp-stuck'\nSP_SENT_FAILED=0\n" \
+    > "$TMP/run/cockpit.env"
+rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
+wt_file_multi
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+want "nonzero SP_BATCHED_STRANDED fires escalation"         "SENDING:"   "$subjects"
+want "subject names the stranded state"                     "absent from open batch" "$subjects"
+
+# Zero: no escalation.
+fresh
+mkdir -p "$TMP/run/landstate"
+printf "SP_BATCHED_STRANDED=0\nSP_SENT_FAILED=0\n" \
+    > "$TMP/run/cockpit.env"
+rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
+wt_file_multi
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+nowant "SP_BATCHED_STRANDED=0 does not fire escalation" "absent from open batch" "$subjects"
+
+# `?` is never an escalation (law-absence-needs-a-positive-control).
+fresh
+mkdir -p "$TMP/run/landstate"
+printf "SP_BATCHED_STRANDED=?\nSP_SENT_FAILED=0\n" \
+    > "$TMP/run/cockpit.env"
+rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
+wt_file_multi
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+nowant "? batched-stranded never fires escalation" "absent from open batch" "$subjects"
+
+# Stable ref: two passes with different counts produce one dedupe key.
+fresh
+mkdir -p "$TMP/run/landstate"
+rm -f "$TMP/inc-refs" "$TMP/ops-prompt"
+printf "SP_BATCHED_STRANDED=1\nSP_BATCHED_STRANDED_NAMES='sp-stuck'\n" \
+    > "$TMP/run/cockpit.env"
+wt_refs_multi
+printf "SP_BATCHED_STRANDED=2\nSP_BATCHED_STRANDED_NAMES='sp-stuck sp-also'\n" \
+    > "$TMP/run/cockpit.env"
+wt_refs_multi
+refs="$(cat "$TMP/inc-refs" 2>/dev/null || echo "")"
+unique_ref_count="$(printf '%s\n' "$refs" | sort -u | grep -c .)"
+is "two batched-stranded passes produce one dedupe key"             "1" "$unique_ref_count"
+want "and the key is the stable sending-batched-stranded ref"       "sending-batched-stranded" "$refs"
 
 # ======================================================================================
 echo
