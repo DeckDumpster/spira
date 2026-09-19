@@ -260,7 +260,11 @@ print("\n".join(r["id"] for r in rows if r.get("status") == "in_progress"))' 2>/
     # must not duplicate that logic. Injected as TOTAL_LIVE so tests can supply a specific
     # value without needing a live systemd or pidfiles. MAX_AEONS is SPIRA_MAX_LIVE_AEONS;
     # 0 means "unconfigured — do not suppress based on fleet occupancy".
-    local _total_live
+    # POOL_PAUSED=1 when SPIRA_MAX_AEONS is explicitly 0 — the operator deliberately
+    # held builders down. A deliberate zero and an absent config are different facts
+    # (law-a-deliberate-state-is-not-a-fault) and must not share a sentinel value.
+    local _total_live _pool_paused=0
+    [ "${SPIRA_MAX_AEONS:-}" = "0" ] && _pool_paused=1
     _total_live="$(aeons_live_total)"
     # DID THE LAST PASS EVALUATE THIS PARTITION? Find "not evaluated (pass budget
     # exhausted)" in the most recent sentinel pass for any fayth whose partition is
@@ -284,7 +288,7 @@ print("\n".join(r["id"] for r in rows if r.get("status") == "in_progress"))' 2>/
     BEADS_FILE="$tmp/beads.json" READY_FILE="$tmp/ready.json" HOLDERS="$holders" LIVE="$live" \
     TOTAL_LIVE="$_total_live" MAX_AEONS="${SPIRA_MAX_LIVE_AEONS:-0}" \
     GHOST_GRACE="$GHOST_GRACE" CAPACITY_PAUSED="$_cap_paused" CAPACITY_DETAIL="$_cap_detail" \
-    PASS_TRUNCATED="$_truncated" \
+    PASS_TRUNCATED="$_truncated" POOL_PAUSED="$_pool_paused" \
     python3 "$HERE/strand-classify.py"
     local rc=$?
     rm -rf "$tmp"
