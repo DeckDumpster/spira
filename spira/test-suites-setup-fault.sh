@@ -30,7 +30,7 @@
 # EVERY CONFIGURED VALUE IS PINNED TO A NON-DEFAULT (law-gates-run-in-a-clean-environment).
 #
 # defect: sp-r21
-# covers: spira/suites.sh spira/suite-assert.sh
+# covers: spira/suites.sh spira/suite-assert.sh spira/suite-state.sh
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -55,7 +55,7 @@ testdb_up setup-fault || { echo "test-suites-setup-fault: could not build a fixt
 SH="$TMP/spira"; RUN="$TMP/run"; STATE="$TMP/state"; GATEF="$TMP/gate-suites"
 mkdir -p "$SH" "$RUN" "$STATE" "$TMP/home" "$TMP/repo"
 cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" \
-   "$HERE/suite-covers.sh" "$SH/"
+   "$HERE/suite-covers.sh" "$HERE/suite-state.sh" "$SH/"
 # Also copy suite-assert.sh so planted suites can source it.
 [ -f "$HERE/suite-assert.sh" ] && cp "$HERE/suite-assert.sh" "$SH/"
 
