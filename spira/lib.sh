@@ -2924,6 +2924,36 @@ content_landed() {
     [ "$merged" = "$basetree" ]
 }
 
+# bead_cited_commit_on_base <id> <repo> <base> → prints the first SHA found in the bead's
+# notes that is a valid commit and an ancestor of <base>. Returns 0 if found, 1 if not.
+#
+# When a fix is hand-landed from another branch, the worker notes the commit SHA. The close
+# gate reads those notes so it can treat a conflicting duplicate branch as landed rather than
+# reopen it for a rebase it will never win.
+bead_cited_commit_on_base() {
+    local id="$1" repo="$2" base="$3" sha _shas
+    _shas="$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys, json, re
+try:
+    d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
+    notes = d[0].get("notes") if d else None
+    if isinstance(notes, str): notes = [n for n in notes.split("\n") if n.strip()]
+    elif isinstance(notes, list): notes = [(n.get("text") if isinstance(n, dict) else str(n)) for n in notes]
+    else: notes = []
+    for n in notes:
+        for m in re.findall(r"[0-9a-f]{7,40}", str(n).lower()): print(m)
+except Exception: pass
+' 2>/dev/null)" || return 1
+    [ -n "$_shas" ] || return 1
+    while IFS= read -r sha; do
+        [ -n "$sha" ] || continue
+        git -C "$repo" rev-parse -q --verify "${sha}^{commit}" >/dev/null 2>&1 \
+            && git -C "$repo" merge-base --is-ancestor "$sha" "$base" 2>/dev/null \
+            && { printf '%s\n' "$sha"; return 0; }
+    done <<< "$_shas"
+    return 1
+}
+
 # pr_merged <repo> <branch> -> 0 if a pull request whose head is <branch> is MERGED.
 #
 # The second reading of "already landed", and the one that survives what content_landed
