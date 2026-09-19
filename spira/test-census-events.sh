@@ -272,6 +272,44 @@ is "no attempt charged for a conflict requeue" "0" "$_att"
 _rqn="$(requeues_of "sp-z1")"
 is "requeues_of still counts the requeue event" "1" "$_rqn"
 
+# ======================================================================================
+echo
+echo "db-hn1t: covers:sp-requeue-merge-conflict suppresses sp-reopen-rebase-conflict"
+# ======================================================================================
+# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail):
+# On the unfixed tree, census prints "3 sp-reopen-rebase-conflict (...)" without
+# [suppressed] because the covers: label names the pre-fold class sp-requeue-merge-conflict
+# and the grep -qxF match against the emitted class sp-reopen-rebase-conflict misses.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-p1","title":"conflict bead 1","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
+{"id":"sp-p2","title":"conflict bead 2","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
+{"id":"sp-p3","title":"conflict bead 3","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
+{"id":"sp-p4","title":"remedy bead","status":"open","issue_type":"task","labels":["spira","maechen-remedy","covers:sp-requeue-merge-conflict"],"updated_at":"2026-09-19T00:00:00Z"}
+JSONL
+bump_requeue "sp-p1" merge-conflict >/dev/null 2>&1
+bump_requeue "sp-p2" merge-conflict >/dev/null 2>&1
+bump_requeue "sp-p3" merge-conflict >/dev/null 2>&1
+
+_fold_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" bash "$HERE/census.sh" --with-suppressed 2>/dev/null)"
+_fold_line="$(printf '%s\n' "$_fold_out" | grep 'sp-reopen-rebase-conflict' || true)"
+want "covers:sp-requeue-merge-conflict suppresses sp-reopen-rebase-conflict" "[suppressed" "$_fold_line"
+nowant "sp-reopen-rebase-conflict not emitted unsuppressed" "sp-reopen-rebase-conflict" \
+    "$(printf '%s\n' "$_fold_out" | grep -v '\[suppressed' || true)"
+
+# Unrelated covers: label does NOT suppress sp-reopen-rebase-conflict.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-q1","title":"conflict bead","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
+{"id":"sp-q2","title":"unrelated remedy","status":"open","issue_type":"task","labels":["spira","maechen-remedy","covers:sp-recur-suite-red"],"updated_at":"2026-09-19T00:00:00Z"}
+JSONL
+bump_requeue "sp-q1" merge-conflict >/dev/null 2>&1
+
+_unrel_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" bash "$HERE/census.sh" --with-suppressed 2>/dev/null)"
+_unrel_line="$(printf '%s\n' "$_unrel_out" | grep 'sp-reopen-rebase-conflict' || true)"
+nowant "unrelated covers: does not suppress sp-reopen-rebase-conflict" "[suppressed" "$_unrel_line"
+want "sp-reopen-rebase-conflict still appears without suppression" "sp-reopen-rebase-conflict" "$_unrel_out"
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -146,8 +146,21 @@ for cls in ranked:
 EOF
 
 # Python: extract covered classes from open remedy beads → one class per line.
+# Accepts the fold-map file as argv[1]: lines of "<alias> <canonical>" resolve
+# a covers: label naming a folded-away class to the class the census emits.
 cat > "$_TMPDIR/covers.py" <<'EOF'
 import sys, json
+
+fold = {}
+try:
+    with open(sys.argv[1]) as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) == 2:
+                fold[parts[0]] = parts[1]
+except Exception:
+    pass
+
 try:
     data = json.load(sys.stdin)
 except Exception:
@@ -157,15 +170,28 @@ if not isinstance(data, list):
 for b in data:
     for lbl in (b.get("labels") or []):
         if lbl.startswith("covers:"):
-            print(lbl[len("covers:"):])
+            cls = lbl[len("covers:"):]
+            print(fold.get(cls, cls))
 EOF
 
 # Python: closed remedy beads → "<bead-id> <class>" within SPIRA_REMEDY_WINDOW days.
+# Accepts the fold-map file as argv[1]: resolves covers: aliases to canonical names.
 cat > "$_TMPDIR/covers_closed.py" <<EOF
 import sys, json
 from datetime import datetime, timezone, timedelta
 window = ${SPIRA_REMEDY_WINDOW:-30}
 cutoff = datetime.now(timezone.utc) - timedelta(days=window)
+
+fold = {}
+try:
+    with open(sys.argv[1]) as f:
+        for line in f:
+            parts = line.split()
+            if len(parts) == 2:
+                fold[parts[0]] = parts[1]
+except Exception:
+    pass
+
 try:
     data = json.load(sys.stdin)
 except Exception:
@@ -186,7 +212,8 @@ for b in data:
         continue
     for lbl in (b.get('labels') or []):
         if lbl.startswith('covers:'):
-            print(bid, lbl[len('covers:'):])
+            cls = lbl[len('covers:'):]
+            print(bid, fold.get(cls, cls))
 EOF
 
 # Aggregate failure events across the whole store, output <count> <class> ranked.
@@ -233,17 +260,20 @@ else
     _RANKED="$(awk '{print $1, $3, "(" $2 " detections)"}' "$_TMPDIR/all_time.txt")"
 fi
 
+# Build the class fold map so covers: labels using pre-fold names suppress correctly.
+_census_class_fold_map > "$_TMPDIR/fold_map.txt"
+
 # Collect classes already covered by an open remedy bead.
 _suppressed_classes() {
     bdq list --status open,in_progress,blocked,deferred --label "$REMEDY_LABEL" --json 2>/dev/null \
-        | python3 "$_TMPDIR/covers.py"
+        | python3 "$_TMPDIR/covers.py" "$_TMPDIR/fold_map.txt"
 }
 
 # Collect classes covered by a closed remedy bead whose commit is not yet on the base.
 _suppressed_closed_classes() {
     local bead_id class rc
     bdq list --status closed --label "$REMEDY_LABEL" --json 2>/dev/null \
-        | python3 "$_TMPDIR/covers_closed.py" \
+        | python3 "$_TMPDIR/covers_closed.py" "$_TMPDIR/fold_map.txt" \
         | while IFS=' ' read -r bead_id class; do
             landed "$bead_id"; rc=$?
             case $rc in
