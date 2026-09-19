@@ -46,7 +46,7 @@ git -C "$REPO" fetch -q origin
 # --------------------------------------------------------------------------------------
 CTRL_WT="$TMP/ctrl-wt"
 git -C "$REPO" worktree add -q --detach "$CTRL_WT" spira/testbranch
-ctrl_err="$(env -i HOME="$EMPTYHOME" PATH=/usr/bin:/bin \
+ctrl_err="$(env -i HOME="$EMPTYHOME" PATH=/usr/bin:/bin GIT_CONFIG_NOSYSTEM=1 \
     git -C "$CTRL_WT" rebase -q origin/main 2>&1 || true)"
 git -C "$CTRL_WT" rebase --abort 2>/dev/null || true
 want "positive-control: bare rebase without identity fails" "Committer identity unknown" "$ctrl_err"
