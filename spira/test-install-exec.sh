@@ -224,7 +224,7 @@ _tarball_tmp="$TMP/tarball-unpack"
 _tarball_stem="spira-20260901T000000Z"
 _tarball_root="$_tarball_tmp/$_tarball_stem"
 mkdir -p "$_tarball_root"
-if git -C "$REAL_REPO" archive HEAD | tar -x -C "$_tarball_root" 2>/dev/null; then
+if tar -C "$REAL_REPO" --exclude='.git' -cf - . 2>/dev/null | tar -x -C "$_tarball_root" 2>/dev/null; then
     # FAIL-FIRST: wrong SPIRA_PROD (the release root, without /spira).
     # install.sh looks for sentinel.sh in the wrong place and refuses.
     _tb_fail="$(TEST_PROD="$_tarball_root" inst)"
