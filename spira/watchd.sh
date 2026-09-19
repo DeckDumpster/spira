@@ -1203,6 +1203,40 @@ cmd_health_view() {
 # in full and the drain command is named, so nothing is hidden, only deferred.
 WD_NOTIFY_MAX=12
 
+# _wd_orphan_lock <target> — find a process running target (first word) that holds an
+# exclusive flock, and print "pid <pid> holds <lockfile>".
+# Reads /proc/locks and /proc/<pid>/fd — no execs except pgrep.  Returns 1 when no match.
+_wd_orphan_lock() {
+    local target; target="${1%% *}"
+    [ -n "$target" ] || return 1
+    command -v pgrep >/dev/null 2>&1 || return 1
+    [ -r /proc/locks ] || return 1
+    local pid n arg found fd f ino
+    for pid in $(pgrep -f "$(basename "$target")" 2>/dev/null); do
+        case "$pid" in ''|*[!0-9]*) continue ;; esac
+        found=0; n=0
+        while IFS= read -r -d '' arg; do
+            [ "$arg" = "$target" ] && { found=1; break; }
+            n=$(( n + 1 )); [ "$n" -ge 3 ] && break
+        done < "/proc/$pid/cmdline" 2>/dev/null
+        [ "$found" = 1 ] || continue
+        [ -d "/proc/$pid/fd" ] || continue
+        for fd in /proc/$pid/fd/*; do
+            [ -e "$fd" ] || continue
+            f="$(readlink "$fd" 2>/dev/null)" || continue
+            case "$f" in /*) ;; *) continue ;; esac
+            ino="$(stat -c '%i' "$f" 2>/dev/null)" || continue
+            case "$ino" in ''|*[!0-9]*) continue ;; esac
+            if awk -v ino="$ino" \
+               'BEGIN{f=0} { n=split($6,a,":"); if(a[n]==ino){f=1} } END{exit !f}' \
+               /proc/locks 2>/dev/null; then
+                printf 'pid %s holds %s' "$pid" "$f"; return 0
+            fi
+        done
+    done
+    return 1
+}
+
 # _wd_notify_health — escalate a watcher that has been DEGRADED for longer than the threshold.
 #
 # `notify`'s other half reports events that WERE produced, so it is blind by construction to
@@ -1235,7 +1269,7 @@ _wd_notify_health() {
         esac
     done < <(systemctl --user show "${units[@]}" -p Id -p ActiveState -p NRestarts --no-pager 2>/dev/null)
 
-    local i n u state nr lf uf prev_at age last report="" key="" stale=0
+    local i n u state nr lf uf prev_at age last lock_line report="" key="" stale=0
     for ((i=0; i<${#unames[@]}; i++)); do
         n="${unames[$i]}"; u="${units[$i]}"
         # NO ANSWER IS NOT A FAULT. systemd may not be running here at all, and reporting that
@@ -1271,12 +1305,15 @@ _wd_notify_health() {
         nr="${urestarts[$u]:-?}"
         lf="$(_wd_logfile "$n" daemon "${utarget[$i]}")"
         last="$(tail -n 1 "$lf" 2>/dev/null)"
+        lock_line=""
+        [ "$state" != active ] && lock_line="$(_wd_orphan_lock "${utarget[$i]}" 2>/dev/null)" || true
         key="$key$n|$_wd_hwhy
 "
         report="$report
 $n — DEGRADED for $(_wd_age "$age"): $_wd_hwhy
   $u, restarted $nr time(s) by systemd
-  last line written: ${last:-(nothing)}
+${lock_line:+  $lock_line
+}  last line written: ${last:-(nothing)}
   $lf
 "
     done
