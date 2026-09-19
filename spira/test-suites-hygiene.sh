@@ -78,6 +78,14 @@ touch "$SH/suite-state"
 # Touch the suite files referenced by observe-flake so the existence check passes.
 touch "$SH/test-hygiene-foo.sh"
 
+# Init the fixture root as a git repo so _suite_auto_quarantine can create worktree branches.
+# _suite_auto_quarantine derives repo from HERE/.., which is $TMP when suites.sh runs from $SH.
+git init -q "$TMP"
+git -C "$TMP" config user.email "flake-test@example.invalid"
+git -C "$TMP" config user.name "Test"
+git -C "$TMP" add -- spira/suite-state
+git -C "$TMP" commit -q --no-gpg-sign -m "init"
+
 # bd wrapper: bd needs the real HOME for dolt config; everything else is the fixture.
 printf '#!/usr/bin/env bash\nHOME=%s exec %s "$@"\n' "$HOME" "$(type -P bd)" > "$BINDIR/bd"
 chmod +x "$BINDIR/bd"
@@ -108,6 +116,29 @@ state_of()       { grep -E "^$1 \|" "$SH/suite-state" 2>/dev/null | awk -F'|' '{
 bead_of_state()  { grep -E "^$1 \|" "$SH/suite-state" 2>/dev/null | awk -F'|' '{print $4}' | tr -d ' ' || echo ""; }
 obs_count()      { wc -l < "$STATE/$1.flakeobs" 2>/dev/null || echo 0; }
 mail_count_op()  { SPIRA_MAIL="$MAIL" SPIRA_MAIL_KINDS="$SH/mail/kinds" bash "$SH/mail.sh" count operator 2>/dev/null || echo 0; }
+# Inspect the auto-quarantine branch for a suite (quarantine is no longer written to production checkout).
+branch_state_of() {
+    local _br _tmp _r
+    _br="$(git -C "$TMP" branch --list "spira/suite-state/auto-${1%.sh}-*" 2>/dev/null \
+        | tail -1 | tr -d ' *')"
+    [ -n "$_br" ] || { printf ''; return 0; }
+    _tmp="$(mktemp)"
+    git -C "$TMP" show "$_br:spira/suite-state" > "$_tmp" 2>/dev/null
+    _r="$(grep -E "^$1 \|" "$_tmp" | awk -F'|' '{print $2}' | tr -d ' ')"
+    rm -f "$_tmp"
+    printf '%s' "${_r:-active}"
+}
+branch_bead_of() {
+    local _br _tmp _bid
+    _br="$(git -C "$TMP" branch --list "spira/suite-state/auto-${1%.sh}-*" 2>/dev/null \
+        | tail -1 | tr -d ' *')"
+    [ -n "$_br" ] || { printf ''; return 0; }
+    _tmp="$(mktemp)"
+    git -C "$TMP" show "$_br:spira/suite-state" > "$_tmp" 2>/dev/null
+    _bid="$(grep -E "^$1 \|" "$_tmp" | awk -F'|' '{print $4}' | tr -d ' ')"
+    rm -f "$_tmp"
+    printf '%s' "${_bid:-}"
+}
 
 # Reset helpers.
 reset_statefile() { : > "$SH/suite-state"; }
@@ -138,13 +169,15 @@ out1="$(sut observe-flake test-hygiene-foo.sh run-1 2>&1)"
 st1="$(state_of test-hygiene-foo.sh)"
 is "SEEN RED: first run: 1 in window, not quarantined yet" "active" "$st1"
 
-# Second call (run-2, different run id): count=2 = threshold, quarantine triggered.
+# Second call: count=2 = threshold, quarantine goes to a branch (not the production checkout).
 out2="$(sut observe-flake test-hygiene-foo.sh run-2 2>&1)"
 st2="$(state_of test-hygiene-foo.sh)"
-is "second run reaches threshold: suite quarantined" "quarantined" "$st2"
+is "second obs: production checkout stays clean" "active" "$st2"
+bst2="$(branch_state_of test-hygiene-foo.sh)"
+is "second obs reaches threshold: suite quarantined on branch" "quarantined" "$bst2"
 want "auto-quarantine message emitted" "auto-quarantine" "$out2"
-bid_after_quarantine="$(bead_of_state test-hygiene-foo.sh)"
-isnz "auto-quarantine: state carries non-empty bead id" "${#bid_after_quarantine}"
+bid_after_quarantine="$(branch_bead_of test-hygiene-foo.sh)"
+isnz "auto-quarantine: branch carries non-empty bead id" "${#bid_after_quarantine}"
 
 # -- same run_id twice: dedup fires, only one observation recorded --
 echo
