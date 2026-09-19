@@ -329,8 +329,13 @@ _q_attribute() {
         if [ "${#ejected[@]}" -gt 0 ] || [ "${#survivors[@]}" -gt 0 ]; then
             "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
             rm -f "$batch_file"
-            printf 'verdict %s: PR %s — ejected %d, requeued %d\n' \
-                "$name" "$pr_n" "${#ejected[@]}" "${#survivors[@]}"
+            if [ "${#ejected[@]}" -gt 0 ]; then
+                printf 'verdict %s: PR %s — ejected %d, requeued %d\n' \
+                    "$name" "$pr_n" "${#ejected[@]}" "${#survivors[@]}"
+            else
+                printf 'verdict %s: PR %s — requeued %d\n' \
+                    "$name" "$pr_n" "${#survivors[@]}"
+            fi
         fi
     fi
 
