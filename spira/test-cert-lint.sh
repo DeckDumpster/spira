@@ -146,8 +146,7 @@ note_out="$(B show sp-clnt-drt --json 2>/dev/null \
 import json, sys
 d = json.load(sys.stdin)
 d = d if isinstance(d, list) else [d]
-notes = d[0].get("notes", []) if d else []
-print(" ".join(str(n) for n in notes))' 2>/dev/null || true)"
+print(d[0].get("notes", "") if d else "")' 2>/dev/null || true)"
 want "reopen note names the scratch file"        "sp-clnt-drt.txt" "$note_out"
 
 # -------------------------------------------------------------------------------------
