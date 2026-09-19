@@ -194,5 +194,26 @@ refuse "H1: bash \$SPIRA_PROD/census.sh --with-suppressed not blocked" '"decisio
 
 # ===========================================================================
 echo
+echo "I — git file-path arguments are not mistaken for script invocations:"
+# ===========================================================================
+# POSITIVE CONTROL: a direct bash invocation is still blocked.
+out="$(fence_run "bash spira/landing.sh push" SPIRA_AEON=test-aeon)"
+want "I0 POSITIVE: bash spira/landing.sh still blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "git add spira/landing.sh" SPIRA_AEON=test-aeon)"
+refuse "I1: git add landing.sh not blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "git commit spira/landing.sh -m msg" SPIRA_AEON=test-aeon)"
+refuse "I2: git commit landing.sh not blocked" '"decision":"block"' "$out"
+
+out="$(fence_run "git add spira/queue.sh" SPIRA_AEON=test-aeon)"
+refuse "I3: git add queue.sh not blocked" '"decision":"block"' "$out"
+
+# Compound: git add followed by a real invocation must still block.
+out="$(fence_run "git add spira/landing.sh && bash spira/landing.sh push" SPIRA_AEON=test-aeon)"
+want "I4: compound git-add + invocation is blocked" '"decision":"block"' "$out"
+
+# ===========================================================================
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

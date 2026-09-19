@@ -32,14 +32,32 @@ except Exception: print("")' 2>/dev/null)"
 
 [ -n "$cmd" ] || exit 0
 
-# Check only the first line: heredoc bodies are data, not commands to execute.
-_cmd1="${cmd%%$'\n'*}"
+# Returns "1" if /$1 appears as an exec target in $2; "" if only as a git file argument.
+# Splits compound commands on shell separators; sub-commands starting with "git" are
+# file operations, not invocations.
+_exec_ctx() {
+    python3 -c '
+import sys, re
+script = sys.argv[1]; cmd = sys.argv[2]
+pat = "/" + script
+EXEC = {"bash", "sh", "ksh", "zsh", "dash", "source", "."}
+for sub in re.split(r"&&|\|\||;", cmd):
+    sub = sub.strip()
+    if pat not in sub: continue
+    toks = sub.split()
+    if not toks: continue
+    t = toks[0]
+    if t in EXEC or t.startswith("/") or t.startswith("./") or pat in t:
+        print("1"); break
+' "$1" "$2" 2>/dev/null
+}
 
 reason=""
 
 for _script in landing.sh batch.sh verdict.sh slay.sh world.sh deploy.sh activate.sh promote.sh; do
-    case "$_cmd1" in
-        *"/$_script"*) reason="aeons may not call $_script (sp-kz8ob: landing and batch handle forge writes; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"; break ;;
+    case "$cmd" in
+        *"/$_script"*)
+            [ "$(_exec_ctx "$_script" "$cmd")" = "1" ] && { reason="aeons may not call $_script (sp-kz8ob: landing and batch handle forge writes; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"; break; } ;;
     esac
 done
 
@@ -48,7 +66,9 @@ if [ -z "$reason" ]; then
         *"/queue.sh"*)
             case "$cmd" in
                 *"/queue.sh stats"*) ;;
-                *) reason="aeons may not operate the queue (sp-kz8ob: queue.sh stats is the only read-only subcommand)" ;;
+                *)
+                    [ "$(_exec_ctx "queue.sh" "$cmd")" = "1" ] && \
+                        reason="aeons may not operate the queue (sp-kz8ob: queue.sh stats is the only read-only subcommand; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
             esac ;;
     esac
 fi
