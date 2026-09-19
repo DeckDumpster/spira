@@ -227,40 +227,33 @@ check() {
     local latest_tag findings="" hard=0 cond_not_latest=0 cond_mismatch=0
     latest_tag="$(printf '%s\n' "$all_tags" | tail -1)"
 
-    # Read the .tag sidecar written by deploy.sh. It maps the release directory to the
-    # release tag without relying on timestamps matching between the tarball and the tag.
+    # Read the .tag sidecar. Sidecar lives in .tags/ beside the release dirs, not inside
+    # the release dir (which is read-only after activate.sh runs chmod -R a-w).
     local release_tag=""
-    local tag_sidecar="$SPIRA_RELEASES/$activated_name/.tag"
+    local tag_sidecar="$SPIRA_RELEASES/.tags/$activated_name"
     if [ -f "$tag_sidecar" ]; then
         release_tag="$(tr -d '\n' < "$tag_sidecar" 2>/dev/null)"
     fi
 
+    # No sidecar: find the release tag whose commit matches the MANIFEST commit.
+    # Never fall back to timestamps — tarball and tag stamps diverge legitimately (issue #51).
+    if [ -z "$release_tag" ]; then
+        local _t _tc
+        while IFS= read -r _t; do
+            _tc="$(git -C "$SPIRA_REPO" rev-parse "${_t}^{commit}" 2>/dev/null)" || continue
+            [ "$_tc" = "$manifest_commit" ] && { release_tag="$_t"; break; }
+        done <<< "$all_tags"
+        unset _t _tc
+    fi
+
     # ---------------------------------------------------------------- NOT-LATEST
-    # Compare by tag when the sidecar is present; fall back to timestamp suffix otherwise.
-    local activated_ts="${activated_name#spira-}"
-    if [ -n "$release_tag" ]; then
-        if [ "$release_tag" != "$latest_tag" ]; then
-            hard=1; cond_not_latest=1
-            findings="${findings}NOT-LATEST activated $activated_name is not the latest published release $latest_tag
+    if [ -n "$release_tag" ] && [ "$release_tag" != "$latest_tag" ]; then
+        hard=1; cond_not_latest=1
+        findings="${findings}NOT-LATEST activated $activated_name is not the latest published release $latest_tag
 "
-        fi
-    else
-        local latest_ts="${latest_tag##*-}"
-        if [ "$activated_ts" != "$latest_ts" ]; then
-            hard=1; cond_not_latest=1
-            findings="${findings}NOT-LATEST activated $activated_name is not the latest published release $latest_tag
-"
-        fi
     fi
 
     # ---------------------------------------------------------------- MANIFEST-MISMATCH
-    # Use the sidecar tag when available; fall back to timestamp suffix matching.
-    if [ -z "$release_tag" ]; then
-        while IFS= read -r t; do
-            case "$t" in *"-${activated_ts}") release_tag="$t"; break ;; esac
-        done <<< "$all_tags"
-    fi
-
     if [ -n "$release_tag" ]; then
         local tag_commit
         tag_commit="$(git -C "$SPIRA_REPO" rev-parse "${release_tag}^{commit}" 2>/dev/null)" || tag_commit=""
