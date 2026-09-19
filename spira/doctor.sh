@@ -606,27 +606,26 @@ else
         else
             OK "repo:$n — $p on $b"
         fi
-        # PR-MODE REQUIRES ALLOW_AUTO_MERGE. A land=pr repo depends on GitHub auto-merge to
-        # land beads without a human. If allow_auto_merge=false at the repo level, the arm
-        # in landing.sh silently fails and every finished bead sits on an open PR forever.
-        # `gh repo view` is skipped when gh is absent or unauthenticated — a missing check
-        # is reported, not a FAIL, because the binary check above already covers gh absence.
         if [ "$(repo_land "$n" 2>/dev/null)" = "pr" ]; then
             if ! command -v gh >/dev/null 2>&1; then
                 printf '  info  repo:%s — pr mode, allow_auto_merge not checked (gh not on PATH)\n' "$n"
-            elif _dr_aam="$(cd "$p" && timeout 30 gh repo view \
-                    --json allowAutoMerge --jq .allowAutoMerge 2>/dev/null)"; then
-                if [ "${_dr_aam:-}" = "false" ]; then
+            else
+                _dr_aam_err="$(mktemp)"
+                _dr_aam="$(cd "$p" && timeout 30 gh api "repos/{owner}/{repo}" \
+                        -q '.allow_auto_merge' 2>"$_dr_aam_err")" || true
+                _dr_aam_msg="$(head -1 "$_dr_aam_err")"
+                rm -f "$_dr_aam_err"
+                if [ "${_dr_aam:-}" = "true" ]; then
+                    OK "repo:$n — pr mode: allow_auto_merge is enabled"
+                elif [ "${_dr_aam:-}" = "false" ]; then
                     FAIL "repo:$n — land=pr but allow_auto_merge=false — PRs will never merge automatically" \
                          "Enable it: GitHub → repository Settings → General → Allow auto-merge."
                 else
-                    OK "repo:$n — pr mode: allow_auto_merge is enabled"
+                    WARN "repo:$n — pr mode: could not check allow_auto_merge: ${_dr_aam_msg:-empty response}" \
+                         "Run: cd $p && gh api repos/{owner}/{repo} -q .allow_auto_merge"
                 fi
-            else
-                WARN "repo:$n — pr mode: could not verify allow_auto_merge (gh not authenticated or API error)" \
-                     "Run: cd $p && gh repo view --json allowAutoMerge --jq .allowAutoMerge"
+                unset _dr_aam _dr_aam_err _dr_aam_msg
             fi
-            unset _dr_aam
         fi
     done
 
