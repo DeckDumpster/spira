@@ -1761,10 +1761,13 @@ _attempts_sql_query() {   # _attempts_sql_query <id> -> the SQL that counts atte
     #
     # The old label counters exempted thrash requeues; sp-lzt deleted them; the exemption is
     # restored here: requeued/thrash events are subtracted so a thrash claim is net-zero.
+    # A worker that died before judging the bead writes requeued/unjudged-<cause> and is
+    # net-zero too: aeon.sh tells the bead no attempt was charged, and this is where that
+    # promise is kept (sp-8fgmw).
     #
     # GREATEST(...,0) because a bead can carry more closes than claims — an operator closing
     # a bead by hand adds one with no claim behind it.
-    printf "select greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and new_value='thrash' then 1 else 0 end), 0) from events where issue_id='%s'" "$1"
+    printf "select greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end), 0) from events where issue_id='%s'" "$1"
 }
 
 attempts_of() {          # attempts_of <id> -> count of in_progress status-change events
