@@ -110,9 +110,15 @@ while [ $# -gt 0 ]; do
 done
 fail_list="$(cat "${REPRO_FAIL_FILE}" 2>/dev/null || true)"
 for f in $fail_list; do
-    [ "$f" = "$br" ] && exit 1
+    if [ "$f" = "$br" ]; then
+        [ -n "${REPRO_FAIL_LINE:-}" ] && printf '%s\n' "$REPRO_FAIL_LINE"
+        exit 1
+    fi
     [ -n "${SPIRA_REPO:-}" ] || continue
-    git -C "$SPIRA_REPO" merge-base --is-ancestor "$f" "$br" 2>/dev/null && exit 1 || true
+    if git -C "$SPIRA_REPO" merge-base --is-ancestor "$f" "$br" 2>/dev/null; then
+        [ -n "${REPRO_FAIL_LINE:-}" ] && printf '%s\n' "$REPRO_FAIL_LINE"
+        exit 1
+    fi
 done
 exit 0
 REPRO
@@ -144,6 +150,12 @@ verdict() {
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_QUEUE_REPRO_BATCH="$SH/repro-stub.sh" \
         bash "$SH/verdict.sh" "$@" 2>&1
+}
+
+notes_of() {
+    "${TESTDB_BD:-bd}" -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
+        | sed -n '/^[[{]/,$p' \
+        | python3 -c 'import sys,json; d=json.load(sys.stdin); print((d[0].get("notes","") or ""))' 2>/dev/null
 }
 
 batch_file() { printf '%s/%s/open' "$QUEUEDIR" "$REPONAME"; }
@@ -613,6 +625,24 @@ is "10. unselected: sp-at-uns-a ejected (whole-tree suite, diff not mapped)" \
     "EJECTED" "$(land_state_of sp-at-uns-a)"
 is "10. unselected: sp-at-uns-b stays BATCHED" \
     "BATCHED" "$(land_state_of sp-at-uns-b)"
+clean_case
+
+# =============================================================================
+# 11. EJECTION NOTE CONTAINS FAIL LINES — repro stub prints a FAIL line;
+#     the ejected bead's reopen note carries that line verbatim so the next
+#     aeon has the failing assertion, not just the suite name
+#     (law-a-retry-must-change-an-input, law-escalations-carry-their-evidence).
+# =============================================================================
+testdb_reset
+make_branch sp-at-fnl spira/canary.sh
+build_batch sp-at-fnl > /dev/null
+plant_bead sp-at-fnl
+printf 'spira/sp-at-fnl\n' > "$REPRO_FAIL_FILE"
+export REPRO_FAIL_LINE="FAIL stub-assertion: expected [landed] got []"
+verdict "$REPONAME" > /dev/null
+unset REPRO_FAIL_LINE
+is   "11. fail-note: sp-at-fnl ejected"           "EJECTED"  "$(land_state_of sp-at-fnl)"
+want "11. fail-note: note contains the FAIL line"  "FAIL stub-assertion: expected [landed] got []" "$(notes_of sp-at-fnl)"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
