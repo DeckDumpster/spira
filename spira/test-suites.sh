@@ -34,7 +34,7 @@
 # the key exists to stop.
 #
 # defect: sp-ewnb
-# covers: spira/suites.sh spira/gate-suites spira/gate-spira.sh spira/incident.sh
+# covers: spira/suites.sh spira/suite-state.sh spira/gate-suites spira/gate-spira.sh spira/incident.sh
 # timeout: 180
 # host-reason: testdb provides isolation; no host systemd or network contact required.
 # scar: the landing-gate section's hand-written stub loop listed `exclude.sh inventory.sh
