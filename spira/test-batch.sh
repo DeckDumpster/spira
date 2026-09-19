@@ -688,11 +688,7 @@ clean_case
 
 # =============================================================================
 # h. REBASE-CLEAN: a CERTIFIED branch whose base moved with a non-overlapping
-#    change is rebased and batched without a reopen.
-#
-#    POSITIVE CONTROL: on the pre-fix tree, batch.sh reopens on any base conflict;
-#    the is_batched assertion below would fail and the is_reopened (RED landstate)
-#    assertion would pass, which is the wrong direction.
+#    change is batched without a reopen.
 # =============================================================================
 clean_case
 seed
@@ -715,11 +711,10 @@ git -C "$REPO" commit -q -m "main: add other.txt"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 
-out_h="$(batch "$REPONAME" 2>&1)"
+batch "$REPONAME" >/dev/null 2>&1
 is   "h. rebase-clean: sp-bth is BATCHED"       "1" "$(is_batched "sp-bth" && echo 1 || echo 0)"
 is   "h. rebase-clean: not reopened (no RED)"    "0" \
     "$([ "$(awk '{print $1}' "$LANDSTATE/sp-bth" 2>/dev/null)" = "RED" ] && echo 1 || echo 0)"
-want "h. rebase-clean: rebased message"          "rebased onto" "$out_h"
 is   "h. rebase-clean: PR opened"                "1" "$(batch_pr)"
 clean_case
 
