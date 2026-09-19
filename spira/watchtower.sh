@@ -541,6 +541,7 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
 
   unsent branches                     $(g SP_UNSENT)
   oldest unsent (hours)               $(g SP_UNSENT_OLDEST_H)
+  BATCHED with no open batch          $(g SP_BATCHED_STRANDED)
   strays (no bead, commits on base)   $(g SP_UNADOPTED)
   orphan work (no bead, has commits)  $(g SP_ORPHAN_WORK)
   fiends (FAILED deletes, came back)  $(g SP_SENT_FAILED)
@@ -781,6 +782,35 @@ if [ "$_unadopted" != "?" ] && [ "$_unadopted" -gt 0 ] 2>/dev/null; then
         log "watchtower: unadopted escalation filed (${_unadopted} unadopted refs)"
     else
         log "watchtower: $INC is missing — unadopted escalation not filed"
+    fi
+fi
+
+# ---------------------------------------------------------------------------------------
+# BATCHED-STRANDED ESCALATION. A branch whose landstate is BATCHED but whose ID is absent
+# from every open batch members= line is permanently skipped by sending.sh (CERTIFIED/BATCHED
+# guard). It will age in SP_UNSENT_OLDEST_H forever, and any watchtower that reads only the
+# BATCHED state will say "normal queue" when the work is actually stranded.
+#
+# ONLY WHEN NUMERIC AND NONZERO. A `?` means cockpit.sh did not emit the key (older snapshot
+# predating this probe); filing on an unread probe would alarm without evidence.
+# ---------------------------------------------------------------------------------------
+_batched_stranded="${SP_BATCHED_STRANDED:-?}"
+if [ "$_batched_stranded" != "?" ] && [ "$_batched_stranded" -gt 0 ] 2>/dev/null; then
+    if [ -x "$INC" ] || [ -r "$INC" ]; then
+        printf 'Stranded BATCHED branches: %s\n\nThe branch(es) below have BATCHED landstate but their ID is absent from every open batch members= line. sending.sh refuses to reap BATCHED branches, so these are permanently stuck until the landstate is corrected.\n\nBranch IDs (spira/ prefix omitted): %s\n\nCheck: for each id, read $SPIRA_RUN/landstate/<id> (first field = BATCHED) and confirm the id does not appear in $SPIRA_QUEUE_DIR/*/open members= lines.\nFix: if the branch still points to the BATCHED tip, recertify: land_mark <id> CERTIFIED <tip>. If the tip moved, escalate — the branch has diverged from what was batched.\n' \
+            "$_batched_stranded" "${SP_BATCHED_STRANDED_NAMES:-(unavailable)}" | \
+        SPIRA_DB="$SPIRA_DB" \
+        SPIRA_INCIDENT_TYPE=task \
+        SPIRA_INCIDENT_PRIORITY=1 \
+        SPIRA_INCIDENT_ACTOR=watchtower \
+        SPIRA_SIN_EXEMPT=1 \
+        SPIRA_INCIDENT_REPO=spira \
+        SPIRA_INCIDENT_REF=incident:sending-batched-stranded \
+        SPIRA_INCIDENT_CAUSE=batched-stranded \
+        bash "$INC" file "SENDING: BATCHED branch absent from open batch" - >/dev/null || true
+        log "watchtower: batched-stranded escalation filed (${_batched_stranded} stranded)"
+    else
+        log "watchtower: $INC is missing — batched-stranded escalation not filed"
     fi
 fi
 

@@ -133,6 +133,48 @@ want "output contains SP_UNSENT" "SP_UNSENT=" "$out"
 
 # ======================================================================================
 echo
+echo "BATCHED-stranded detection:"
+# ======================================================================================
+# BATCHED branch absent from any open batch → SP_BATCHED_STRANDED=1.
+# This is the sp-kogm shape: sp-bbb in beta has in_progress status; we mark its landstate
+# BATCHED and provide no open batch file. The probe must count it as stranded.
+#
+# POSITIVE CONTROL FIRST: a run with BATCHED state and no open batch must report 1.
+# Only after that do we verify the BATCHED-in-batch case reports 0 — an all-zero result
+# could pass both tests if the probe is not running at all.
+mkdir -p "$RUN/landstate"
+printf 'BATCHED %s %s' "$(git -C "$BETA" rev-parse spira/sp-bbb 2>/dev/null)" "$(date +%s)" \
+    > "$RUN/landstate/sp-bbb"
+out2="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
+    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
+    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$REAL_BD" \
+    SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_PATH="$BD_PATH" \
+    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+val2() { printf '%s' "$out2" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
+is "BATCHED with no open batch → SP_BATCHED_STRANDED=1" "1" "$(val2 SP_BATCHED_STRANDED)"
+want "SP_BATCHED_STRANDED_NAMES names the branch" "sp-bbb" "$(val2 SP_BATCHED_STRANDED_NAMES)"
+
+# BATCHED branch present in the open batch → SP_BATCHED_STRANDED=0.
+# Create an open batch file whose members= line includes sp-bbb:<tip>.
+_bbb_tip="$(git -C "$BETA" rev-parse spira/sp-bbb 2>/dev/null)"
+mkdir -p "$RUN/queue/beta"
+printf 'pr=1\nopened=%s\nmembers=sp-bbb:%s\nbranch=spira/queue/test\n' \
+    "$(date +%s)" "$_bbb_tip" > "$RUN/queue/beta/open"
+out3="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
+    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
+    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$REAL_BD" \
+    SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_PATH="$BD_PATH" \
+    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+val3() { printf '%s' "$out3" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
+is "BATCHED present in open batch → SP_BATCHED_STRANDED=0" "0" "$(val3 SP_BATCHED_STRANDED)"
+rm -f "$RUN/queue/beta/open" "$RUN/landstate/sp-bbb"
+
+# ======================================================================================
+echo
 echo "no shell function is invoked through timeout(1):"
 # ======================================================================================
 # `timeout` is an external binary. It execs its argument, so it cannot run a shell function

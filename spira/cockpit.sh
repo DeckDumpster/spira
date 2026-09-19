@@ -1067,6 +1067,7 @@ unsent_keys() {
     # Refs are a local read, so this costs nothing per repository; no fetch happens here.
     _fail=0; _n=0; _o=""; _done=0; _unadopted=0; _orphan_work=0; _unadopted_names=""
     _protected=0; _protected_names=""
+    _batched_stranded=0; _batched_stranded_names=""
     for _r in $(spira_repos); do
         _p="$(repo_root "$_r")" || continue
         [ -e "$_p/.git" ] || continue
@@ -1118,6 +1119,31 @@ except Exception: print("")' 2>/dev/null)"
                 if [ -n "$_ts" ]; then
                     if [ -z "$_o" ] || [ "$_ts" -lt "$_o" ]; then _o="$_ts"; fi
                 fi
+                # BATCHED-STRANDED: a branch whose landstate is BATCHED but whose ID is absent
+                # from every open batch members= line is permanently skipped by sending.sh.
+                # Only check non-closed beads; a closed bead branch is already counted as done.
+                if [ "$_st" != "closed" ]; then
+                    _id="${_b#spira/}"
+                    _ls_f="${SPIRA_RUN:-}/landstate/$_id"
+                    if [ -f "$_ls_f" ]; then
+                        _ls_state=""
+                        { read -r _ls_state _ < "$_ls_f"; } 2>/dev/null || true
+                        if [ "$_ls_state" = "BATCHED" ]; then
+                            _in_batch=0
+                            _qdir="${SPIRA_QUEUE_DIR:-${SPIRA_RUN:-}/queue}"
+                            for _open_f in "$_qdir"/*/open; do
+                                [ -f "$_open_f" ] || continue
+                                if grep -q "^members=.*[[:space:]]${_id}:\|^members=${_id}:" "$_open_f" 2>/dev/null; then
+                                    _in_batch=1; break
+                                fi
+                            done
+                            if [ "$_in_batch" = "0" ]; then
+                                _batched_stranded=$((_batched_stranded+1))
+                                _batched_stranded_names="${_batched_stranded_names:+$_batched_stranded_names }$_id"
+                            fi
+                        fi
+                    fi
+                fi
             done <<< "$_brs"
         else
             _fail=1
@@ -1153,6 +1179,8 @@ except Exception: print("")' 2>/dev/null)"
     echo "SP_ORPHAN_WORK=$_orphan_work"
     echo "SP_PROTECTED=$_protected"
     echo "SP_PROTECTED_NAMES='$_protected_names'"
+    echo "SP_BATCHED_STRANDED=$_batched_stranded"
+    echo "SP_BATCHED_STRANDED_NAMES='$_batched_stranded_names'"
     if [ "$_fail" = 1 ]; then
         echo "SP_UNSENT=?"
         echo "SP_UNSENT_OLDEST_H=?"
