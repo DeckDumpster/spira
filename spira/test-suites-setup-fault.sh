@@ -122,7 +122,7 @@ d = d[0] if isinstance(d, list) else d
 print(d.get(sys.argv[1], ""))
 ' "$2" 2>/dev/null || true
 }
-count() { printf '%s\n' "${1:-}" | grep -c '[^ ]' 2>/dev/null || echo 0; }
+count() { printf '%s\n' "${1:-}" | grep -c '[^ ]' 2>/dev/null || true; }
 
 # Gate file is empty — every planted suite goes to the timed pass.
 printf '# nothing in the gate for this fixture\n' > "$GATEF"
