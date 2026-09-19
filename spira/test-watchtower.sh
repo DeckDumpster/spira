@@ -90,16 +90,16 @@ fresh() { rm -rf "$TMP/run"; mkdir -p "$TMP/run/landstate"; }
 echo
 echo "the positive control — the fixture still has the shape that broke the reader:"
 # ======================================================================================
-# THE WRITER ITSELF, not a copy of what it emits. If landing.sh renames or reshapes
+# THE WRITER ITSELF, not a copy of what it emits. If lib.sh renames or reshapes
 # `land_mark`, the extraction below finds nothing and this control fails — which is the
 # report that is wanted, because every assertion after it would then be about a format no
 # program writes any more.
 fresh
 LANDSTATE="$TMP/run/landstate"
-eval "$(sed -n '/^land_mark() *{/,/^}/p' "$HERE/landing.sh")" 2>/dev/null
+eval "$(sed -n '/^land_mark() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
 [ "$(type -t land_mark 2>/dev/null)" = function ] \
-    && ok "landing.sh's land_mark could be lifted out and run" \
-    || bad "landing.sh's land_mark could be lifted out and run" "no such function — the record format has moved"
+    && ok "lib.sh's land_mark could be lifted out and run" \
+    || bad "lib.sh's land_mark could be lifted out and run" "no such function — the record format has moved"
 
 if [ "$(type -t land_mark 2>/dev/null)" = function ]; then
     land_mark sp-ctl LANDED deadbeef spira
