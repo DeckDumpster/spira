@@ -74,6 +74,8 @@ cp "$HERE/chamber/builder.fayth" "$SH/chamber/builder.fayth"
 
 # Touch the suite-state file so suite_state_file finds a readable path.
 touch "$SH/suite-state"
+# Touch the suite files referenced by observe-flake so the existence check passes.
+touch "$SH/test-hygiene-foo.sh"
 
 # bd wrapper: bd needs the real HOME for dolt config; everything else is the fixture.
 printf '#!/usr/bin/env bash\nHOME=%s exec %s "$@"\n' "$HOME" "$(type -P bd)" > "$BINDIR/bd"
@@ -101,9 +103,10 @@ sut() {
 }
 
 # Helpers to inspect the state file and per-suite files.
-state_of()  { grep -E "^$1 \|" "$SH/suite-state" 2>/dev/null | awk -F'|' '{print $2}' | tr -d ' ' || echo active; }
-obs_count() { wc -l < "$STATE/$1.flakeobs" 2>/dev/null || echo 0; }
-mail_count_op() { SPIRA_MAIL="$MAIL" SPIRA_MAIL_KINDS="$SH/mail/kinds" bash "$SH/mail.sh" count operator 2>/dev/null || echo 0; }
+state_of()       { grep -E "^$1 \|" "$SH/suite-state" 2>/dev/null | awk -F'|' '{print $2}' | tr -d ' ' || echo active; }
+bead_of_state()  { grep -E "^$1 \|" "$SH/suite-state" 2>/dev/null | awk -F'|' '{print $4}' | tr -d ' ' || echo ""; }
+obs_count()      { wc -l < "$STATE/$1.flakeobs" 2>/dev/null || echo 0; }
+mail_count_op()  { SPIRA_MAIL="$MAIL" SPIRA_MAIL_KINDS="$SH/mail/kinds" bash "$SH/mail.sh" count operator 2>/dev/null || echo 0; }
 
 # Reset helpers.
 reset_statefile() { : > "$SH/suite-state"; }
@@ -114,6 +117,15 @@ reset_mail()      { rm -rf "$MAIL"; }
 echo
 echo "=== PART 1: flake observations ==="
 # ======================================================================================
+
+# -- positive control: non-existent suite is rejected --
+echo
+echo "SEEN RED: non-existent suite → rejected:"
+reset_statefile; reset_state
+
+out_ne="$(sut observe-flake no-such-suite.sh 2>&1)"; rc_ne=$?
+isnz "non-existent suite: non-zero exit" "$rc_ne"
+want "non-existent suite: error names the suite" "no such suite" "$out_ne"
 
 # -- positive control: two observations inside the window quarantine --
 echo
@@ -130,6 +142,8 @@ out2="$(sut observe-flake test-hygiene-foo.sh 2>&1)"
 st2="$(state_of test-hygiene-foo.sh)"
 is "second obs reaches threshold: suite quarantined" "quarantined" "$st2"
 want "auto-quarantine message emitted" "auto-quarantine" "$out2"
+bid_after_quarantine="$(bead_of_state test-hygiene-foo.sh)"
+isnz "auto-quarantine: state carries non-empty bead id" "${#bid_after_quarantine}"
 
 # -- one observation: stays active --
 echo

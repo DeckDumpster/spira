@@ -1360,19 +1360,35 @@ cleanruns_inc()   { printf '%d\n' $(( $(cleanruns_get "$1") + 1 )) > "$(cleanrun
 cleanruns_reset() { mkdir -p "$STATE" 2>/dev/null; printf '0\n' > "$(cleanruns_file "$1")"; }
 
 # _suite_auto_quarantine <suite> <reason>
-# Writes suite-state and tries to file a bead. Fails closed: write fails → suite stays active.
+# Writes suite-state and files through incident.sh for dedup. Fails closed: write fails → suite stays active.
 _suite_auto_quarantine() {
     local suite="$1" reason="$2"
     local repo; repo="$(cd "$HERE/.." && pwd -P)"
     local statefile; statefile="$(suite_state_file "$repo")"
     local bead_id=""
-    if [ -r "$HERE/bead.sh" ]; then
-        bead_id="$(printf '%s is auto-quarantined.\n\nReason: %s\n\nReproduce: bash spira/%s\n' \
-            "$suite" "$reason" "$suite" \
-            | bash "$HERE/bead.sh" file "fix $suite: flaky" \
-                --for builder --repo "$(spira_home_repo)" -p 2 --body-file - 2>/dev/null \
-            | tail -1 | tr -d '[:space:]')" || bead_id=""
-        case "${bead_id:-}" in ''|*[!A-Za-z0-9-]*|-*|*-) bead_id="" ;; esac
+    if [ -r "$INC" ]; then
+        local out_inc rc_inc
+        out_inc="$(SPIRA_INCIDENT_TYPE=bug \
+              SPIRA_INCIDENT_PRIORITY=2 \
+              SPIRA_INCIDENT_ACTOR=suites \
+              SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" \
+              SPIRA_INCIDENT_REPO="$SPIRA_HOME_REPO" \
+              SPIRA_INCIDENT_REF="flake:$suite" \
+              SPIRA_SIN_EXEMPT=1 \
+              SPIRA_INCIDENT_CAUSE=suite-flaky \
+              SPIRA_DB="$SPIRA_DB" \
+              bash "$INC" file "why does $suite fail intermittently" - <<PAYLOAD
+$suite is auto-quarantined.
+
+Reason: $reason
+
+Reproduce: bash spira/$suite
+PAYLOAD
+        )"; rc_inc=$?
+        if [ "$rc_inc" -eq 0 ]; then
+            bead_id="$(printf '%s\n' "$out_inc" | tail -n 1 | tr -d '[:space:]')"
+            case "${bead_id:-}" in ''|*[!A-Za-z0-9-]*|-*|*-) bead_id="" ;; esac
+        fi
     fi
     suite_state_write "$statefile" "$suite" quarantined "${bead_id:-}" "$reason" || return 1
     cleanruns_reset "$suite"
@@ -1390,6 +1406,10 @@ _suite_auto_quarantine() {
 cmd_observe_flake() {
     local suite="${1:-}"
     [ -n "$suite" ] || { printf 'suites observe-flake: suite name required\n' >&2; return 2; }
+    [ -r "$HERE/$suite" ] || {
+        printf 'suites observe-flake: no such suite: %s\n' "$suite" >&2
+        return 2
+    }
     flakeobs_record "$suite"
     local count threshold
     count="$(flakeobs_in_window "$suite")"
