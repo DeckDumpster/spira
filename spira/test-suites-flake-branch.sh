@@ -90,17 +90,17 @@ obs() {
         SPIRA_FLAKE_QUARANTINE_AT=2 \
         SPIRA_FLAKE_WINDOW=604800 \
         SPIRA_SUITES_INLINE=1 \
-        bash "$_sh/suites.sh" observe-flake test-flaky.sh 2>&1
+        bash "$_sh/suites.sh" observe-flake test-flaky.sh "$1" 2>&1
 }
 
 # First observation: below threshold.  Production checkout must stay clean.
-obs >/dev/null
+obs run-1 >/dev/null
 _d="$(git -C "$_repo" status --porcelain -- spira/suite-state 2>/dev/null)"
 [ -z "$_d" ] && pass "observe(1): production checkout clean below threshold" \
     || fail "observe(1): production checkout dirty after one observation: '$_d'"
 
 # Second observation: crosses threshold.  Quarantine must land on a branch, not in the tree.
-obs >/dev/null
+obs run-2 >/dev/null
 _d="$(git -C "$_repo" status --porcelain -- spira/suite-state 2>/dev/null)"
 [ -z "$_d" ] && pass "observe(2): production checkout clean after quarantine" \
     || fail "observe(2): production checkout dirty after quarantine: '$_d'"
