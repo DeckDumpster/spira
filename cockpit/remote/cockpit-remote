@@ -239,13 +239,55 @@ watch_loop() {
 # the check. `( flock -n 8 8>>$LOCK )`: acquires iff the lock is FREE (=> not running).
 watcher_running() { ( flock -n 8 8>>"$LOCK" ) 2>/dev/null && return 1 || return 0; }
 
+# _watch_unit_name — the systemd unit managing this watcher process, if one is installed.
+# Requires SPIRA_HOME (read from env or ~/.config/spira/harness) and asks the manifest
+# for a daemon row whose target is "$SELF watch".  Returns failure when no such row exists
+# or conf.sh cannot be sourced.  Always called in a subshell so conf.sh side-effects are
+# contained.
+_watch_unit_name() {
+    local h="${SPIRA_HOME:-}"
+    [ -n "$h" ] || h="$(head -1 "${XDG_CONFIG_HOME:-$HOME/.config}/spira/harness" 2>/dev/null)"
+    [ -n "$h" ] && [ -f "$h/watchd.sh" ] || return 1
+    local row
+    row="$(bash "$h/watchd.sh" manifest 2>/dev/null \
+        | awk -F'|' -v s="$SELF" '$2=="daemon" && $3==(s " watch") { print $1; exit }')"
+    [ -n "$row" ] || return 1
+    { set +u; . "$h/conf.sh" 2>/dev/null; } || return 1
+    watch_unit_name "$row"
+}
+
+# _lock_pid — pid of the process holding an exclusive flock on $LOCK, from /proc/locks.
+# Returns failure when the lock is free or the holder cannot be identified.
+_lock_pid() {
+    local ino pid
+    [ -e "$LOCK" ] || return 1
+    ino="$(stat -c '%i' "$LOCK" 2>/dev/null)" || return 1
+    case "$ino" in ''|*[!0-9]*) return 1 ;; esac
+    pid="$(awk -v ino="$ino" '{ n=split($6,a,":"); if(a[n]==ino) { print $5; exit } }' \
+          /proc/locks 2>/dev/null)"
+    # pid from /proc/locks may be a dead flock subprocess (exec-fd+flock pattern).
+    if [ -n "$pid" ] && [ -d "/proc/$pid" ]; then
+        printf '%s' "$pid"; return 0
+    fi
+    # Fallback: find the live process that has the lock file open.
+    if command -v fuser >/dev/null 2>&1; then
+        pid="$(fuser "$LOCK" 2>/dev/null | tr -s ' ' '\n' | grep -m1 '^[0-9]')"
+        case "$pid" in ''|*[!0-9]*) ;; *) printf '%s' "$pid"; return 0 ;; esac
+    fi
+    return 1
+}
+
 start_watcher() {
-  watcher_running && return 0
-  if command -v setsid >/dev/null 2>&1; then
-    setsid -f "$SELF" watch >>"$LOG" 2>&1 || nohup "$SELF" watch >>"$LOG" 2>&1 &
-  else
-    nohup "$SELF" watch >>"$LOG" 2>&1 &
-  fi
+    watcher_running && return 0
+    local unit; unit="$(_watch_unit_name 2>/dev/null)" || unit=""
+    if [ -n "$unit" ] && systemctl --user is-enabled "$unit" >/dev/null 2>&1; then
+        systemctl --user start "$unit"; return
+    fi
+    if command -v setsid >/dev/null 2>&1; then
+        setsid -f "$SELF" watch >>"$LOG" 2>&1 || nohup "$SELF" watch >>"$LOG" 2>&1 &
+    else
+        nohup "$SELF" watch >>"$LOG" 2>&1 &
+    fi
 }
 
 # ---- dismiss / keybinding ---------------------------------------------------
@@ -327,6 +369,20 @@ case "${1:-attach}" in
     watch_loop
     ;;
   status) cmd_status ;;
-  stop)   pkill -f "$SELF watch" && echo "watcher stopped" || echo "no watcher running" ;;
+  stop)
+    local unit; unit="$(_watch_unit_name 2>/dev/null)" || unit=""
+    if [ -n "$unit" ] && systemctl --user is-enabled "$unit" >/dev/null 2>&1; then
+        systemctl --user stop "$unit" && echo "watcher stopped" || echo "no watcher running"
+    elif watcher_running; then
+        local pid; pid="$(_lock_pid)"
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null && echo "watcher stopped" || { echo "watcher stop failed" >&2; exit 1; }
+        else
+            echo "watcher: lock held but holder not found in /proc/locks" >&2; exit 1
+        fi
+    else
+        echo "no watcher running"
+    fi
+    ;;
   *) echo "usage: cockpit-remote {attach [brain|hunk]|build|start|sync|done|keys|watch|status|stop}" >&2; exit 2 ;;
 esac
