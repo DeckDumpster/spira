@@ -86,7 +86,7 @@ stub confine.sh 'exit 0'
 # (law-gates-run-in-a-clean-environment).
 stub mail.sh '[ "${1:-}" = send ] || exit 0; printf "%s\n" "$*" >> "$EMITTED"; cat >> "$EMITTED"; printf "\n" >> "$EMITTED"'
 export EMITTED="$TMP/events"; : > "$EMITTED"
-events() { cat "$EMITTED" 2>/dev/null; }
+events() { cat "$RUN/events.log" 2>/dev/null; }
 
 # THE GATE IS ALSO THE REAPER, and that is the whole fixture. A pass holds its branch list
 # across the gate, which is the only long call in it, so a branch removed from inside the
@@ -215,7 +215,7 @@ echo "test-landing.sh"
 # land, and it can reopen. A suite whose assertions are all "did not happen" passes just as
 # well against a landing.sh that does nothing at all.
 # --------------------------------------------------------------------------------------
-: > "$EMITTED"
+: > "$EMITTED"; : > "$RUN/events.log"
 seed; branch sp-plain; out="$(landing)"
 want "an uncontested land is reported" "landed spira/sp-plain" "$out"
 # Landing pushes the base from the .landing worktree; the home checkout must be advanced in
@@ -231,7 +231,7 @@ drop_branch sp-plain
 
 # A GATE FAILURE ALSO RECORDS AN EVENT, and the negative is the landing above: a gate that
 # passed produced bead.landed, not bead.reopened, so the check is not just reading the stub.
-: > "$EMITTED"
+: > "$EMITTED"; : > "$RUN/events.log"
 stub gate.sh 'echo "gate: VERDICT=FAIL reason=stub-fail branch=$1 repo=${2:-?}" >&2; exit 1'
 seed; branch sp-gfail; out="$(landing)"
 want "a failed gate reopens the bead"          "reopened sp-gfail — failed the gate" "$out"

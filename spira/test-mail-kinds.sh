@@ -136,6 +136,35 @@ out="$(printf '## Note\n\nContent.\n\n## Why it is urgent\n\nThe system is on fi
 isz  "SEEN GREEN: urgent message with ## Why it is urgent is accepted" "$rc"
 
 # ==========================================================================
+# PROMISED ASK WITH NO ASK (SEEN RED then SEEN GREEN)
+# A body that says "the ask below carries the failure" (or similar) but has no
+# ## Question or ## Decision section is lying: the operator has nowhere to act.
+# ==========================================================================
+echo
+echo "promised ask with no ask present (SEEN RED then SEEN GREEN)"
+
+out="$(printf '## Note\n\nthe ask below carries the failure\n' | \
+    run send mb --from "Sender <s@s>" --subject "An event" --kind note 2>&1)"; rc=$?
+isnz "SEEN RED: body promising 'the ask below' with no ## Question section is refused" "$rc"
+want "refusal names the rule"    "rule"     "$out"
+want "refusal mentions the ask"  "ask"      "$out"
+
+# variant: "the question below"
+out="$(printf '## Note\n\nSee the question below for details.\n' | \
+    run send mb --from "Sender <s@s>" --subject "An event" --kind note 2>&1)"; rc=$?
+isnz "SEEN RED: 'the question below' with no ## Question section is also refused" "$rc"
+
+# SEEN GREEN: body with the promise AND a ## Question section is accepted.
+out="$(printf '## Note\n\nthe ask below carries the failure\n\n## Question\n\nDrop the bead?\n' | \
+    run send mb --from "Sender <s@s>" --subject "An event" --kind note 2>&1)"; rc=$?
+isz  "SEEN GREEN: promised ask fulfilled by a ## Question section is accepted" "$rc"
+
+# SEEN GREEN: a body with no promise phrase is accepted normally.
+out="$(printf '## Note\n\nThe bead was poisoned.\n' | \
+    run send mb --from "Sender <s@s>" --subject "An event" --kind note 2>&1)"; rc=$?
+isz  "SEEN GREEN: note body with no promise phrase is accepted" "$rc"
+
+# ==========================================================================
 # EDITING A KIND FILE CHANGES ACCEPTANCE — no code change needed
 # ==========================================================================
 echo

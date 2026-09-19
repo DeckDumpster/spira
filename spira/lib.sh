@@ -4229,14 +4229,9 @@ SPIRA_EVENT_COOLDOWN="${SPIRA_EVENT_COOLDOWN:-3600}"
 
 spira_event() {          # spira_event <kind> <target|-> <title> [detail]
     local kind="${1:-}" target="${2:--}" title="${3:-}" detail="${4:-}"
-    local dir="$SPIRA_RUN/events" key f now last=0 supp=0 out
+    local dir="$SPIRA_RUN/events" key f now last=0 supp=0
     [ -n "$kind" ] && [ -n "$title" ] || return 1
     [ "$target" = "-" ] && target=""
-
-    if [ ! -x "$SPIRA_HOME/mail.sh" ]; then
-        log "event: $kind on ${target:-the plan} not recorded — mail.sh not found"
-        return 1
-    fi
 
     mkdir -p "$dir" 2>/dev/null || return 1
     key="$(printf '%s@%s' "$kind" "${target:-plan}" | tr -c 'a-zA-Z0-9._@-' '_')"
@@ -4255,27 +4250,14 @@ spira_event() {          # spira_event <kind> <target|-> <title> [detail]
         && title="$title (+$supp more since $(date -u -d "@$last" +%H:%MZ 2>/dev/null || echo 'the last one'))"
     printf '%s 0\n' "$now" > "$f"
 
-    local _body="## Note
-$title
-
-kind: $kind"
-    [ -n "$target" ] && _body+="
-
-target: $target"
-    [ -n "$detail" ] && _body+="
-
-$detail"
-
-    # Bounded: a hung mail.sh must not hold a landing pass open.
-    if ! out="$(timeout "${SPIRA_EVENT_TIMEOUT:-60}" \
-                    "$SPIRA_HOME/mail.sh" send operator \
-                        --from "Spira event <event@spira>" \
-                        --subject "$title" \
-                        --kind note \
-                        <<< "$_body" 2>&1)"; then
-        log "event: $kind on ${target:-the plan} could not be recorded — $(printf '%s' "$out" | tail -1)"
-        return 1
-    fi
+    # Events are informational — they go to the event log, not the operator mailbox.
+    # Operator asks (question/decision mails) are sent directly by the callers that have
+    # the context to write them properly. Claims, reopens, landings, and similar transitions
+    # belong in the log; the operator's mailbox holds only decisions.
+    printf '%s\tkind: %s\ttarget: %s\t%s%s\n' \
+        "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$kind" "${target:--}" "$title" \
+        "${detail:+$(printf '\t%s' "$detail")}" \
+        >> "$SPIRA_RUN/events.log" 2>/dev/null || true
     return 0
 }
 
