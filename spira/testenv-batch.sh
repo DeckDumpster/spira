@@ -655,6 +655,7 @@ if [ "$MODE" = serial ]; then
                 -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
                 -e "CARGO_HOME=${_CONTAINER_CARGO}" \
                 -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
+                -e "SPIRA_IN_TESTENV=1" \
                 -e "TESTDB_SHARED=0" \
                 -e "TESTDB_NAME=" \
                 -e "TESTDB_DIR=" \
@@ -668,6 +669,7 @@ if [ "$MODE" = serial ]; then
                 -e "DBUS_SESSION_BUS_ADDRESS=unix:path=${_USER_RUNTIME}/bus" \
                 -e "CARGO_HOME=${_CONTAINER_CARGO}" \
                 -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
+                -e "SPIRA_IN_TESTENV=1" \
                 -e "TESTDB_SHARED=0" \
                 -e "TESTDB_NAME=" \
                 -e "TESTDB_DIR=" \
