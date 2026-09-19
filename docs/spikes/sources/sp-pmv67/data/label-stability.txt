@@ -1,0 +1,7 @@
+new origin/ma: 343 suites, 5643 literal labels
+old f6622e0d7 (2026-09-16): suites 323, in both 320, deleted suites 3; labels in common suites 5307; absent at new 118 (2.2%): likely-rename 55 (1.0%), deletion 63 (1.2%); suites with any absent label 19
+old 25de4ddc1 (2026-09-16): suites 305, in both 293, deleted suites 12; labels in common suites 4978; absent at new 141 (2.8%): likely-rename 59 (1.2%), deletion 82 (1.6%); suites with any absent label 24
+old fe23c1b14 (2026-09-15): suites 276, in both 262, deleted suites 14; labels in common suites 4545; absent at new 177 (3.9%): likely-rename 88 (1.9%), deletion 89 (2.0%); suites with any absent label 35
+old f405a60ef (2026-09-12): suites 222, in both 206, deleted suites 16; labels in common suites 3772; absent at new 157 (4.2%): likely-rename 54 (1.4%), deletion 103 (2.7%); suites with any absent label 37
+old 214e3f887 (2026-09-09): suites 119, in both 112, deleted suites 7; labels in common suites 2353; absent at new 214 (9.1%): likely-rename 65 (2.8%), deletion 149 (6.3%); suites with any absent label 30
+old 2a79c17a3 (2026-09-07): suites 36, in both 17, deleted suites 19; labels in common suites 674; absent at new 623 (92.4%): likely-rename 55 (8.2%), deletion 568 (84.3%); suites with any absent label 14

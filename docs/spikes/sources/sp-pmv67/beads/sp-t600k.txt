@@ -1,0 +1,182 @@
+# Source: bead sp-t600k, read from the Spira beads store with 'bd show sp-t600k' on 2026-09-18.
+# Preserved because the beads store is not public. Home-directory paths rewritten to $HOME;
+# nothing else edited except as noted below.
+# REDACTED for spira/inventory.sh: the operator's name is written "the operator".
+
+○ sp-t600k · SPIKE: test-case identity, lifecycle and trust scores — replace 'flaky' with data   [P1 · OPEN]
+Owner: overseer · Type: task
+Created: 2026-09-17 · Updated: 2026-09-17
+
+DESCRIPTION
+
+  Research spike. Not an implementation bead: the deliverable is a design Ryan
+  can                                                                         
+  approve or reject, and the evidence below is the case for doing it at all.  
+                                                                              
+  ## The thesis (per the operator, 2026-09-17)                                        
+                                                                              
+  "Flakiness" can be made far more precise if we take a strong opinion about  
+  the                                                                         
+  structure of suites and tests. Every TEST CASE should have an identity and a
+  lifecycle. When one is suspected flaky we should produce DATA about it, not 
+  a                                                                           
+  verdict. Every test should carry a trust score derived from what it has     
+  actually                                                                    
+  done: how many real problems it has halted, how many false failures it has  
+  cost,                                                                       
+  how much time it has consumed.                                              
+                                                                              
+  ## The evidence, collected 2026-09-17                                       
+                                                                              
+  This is the day the argument was made for us. Six findings, each a separate 
+  bead,                                                                       
+  all with one root: the system records the wrong thing about tests, so every 
+  decision it makes about them is made blind.                                 
+                                                                              
+  1. IDENTITY IS THE FILE, NOT THE CASE.                                      
+  Everything -- quarantine, flake observation, result record -- is keyed on a 
+  suite FILENAME. test-cockpit-landed.sh holds many cases. One unstable case  
+  condemns the file, and quarantining it removes ALL its coverage, including  
+  whatever it was uniquely protecting. There is no way to express "this case  
+  is                                                                          
+  unstable and these eleven are not," so the only available action is the     
+  maximally destructive one.                                                  
+  2. THE OBSERVATION RECORD CARRIES NO FACTS.                                 
+  $STATE/<suite>.flakeobs is a file of bare unix timestamps. Not the run id,  
+  not                                                                         
+  the commit, not parallel-vs-serial, not the failure text, not the duration. 
+  So it cannot answer the only question that matters -- "is this the same     
+  incident twice, or two incidents?" -- and that is precisely why sp-iaxck    
+  went                                                                        
+  unnoticed: one run recorded three observations seconds apart and crossed a  
+  threshold of 2, and nothing in the record could distinguish that from a     
+  suite                                                                       
+  failing three times in a week.                                              
+  3. QUARANTINE DECISIONS ARE MADE WITH NO VALUE DATA.                        
+  test-suites-confirm-red.sh -- the suite that verifies a red is genuinely red --
+  was auto-quarantined at 22:48:32Z today. Nowhere in the system is there a   
+  record of whether that suite has ever caught a real defect. The decision to 
+  delete coverage was taken with zero information about the worth of the      
+  coverage                                                                    
+  being deleted. A trust score is exactly the missing input.                  
+  4. MODE IS KNOWN TO MATTER AND IS NOT RECORDED.                             
+  testenv-batch.sh states it in its own comment -- "a green under serial is a 
+  weaker claim than a green under parallel; the record must not conflate them" --
+  and duly writes MODE as the 5th field of every RESULT. The flake observation
+  record drops it. The one axis we have already decided is significant is     
+  absent                                                                      
+  from the data used to condemn a suite.                                      
+  5. NOTHING RECORDS WHICH TREE WAS TESTED.                                   
+  sp-2f51e: testenv-batch.sh never checks out the branch it is given and runs 
+  against the production checkout instead. Every flake observation taken while
+  that stood is an observation about the wrong tree -- and is                 
+  indistinguishable                                                           
+  in the record from a good one, because the record does not name the tree.   
+  There                                                                       
+  is no positive control (law-absence-needs-a-positive-control). The entire   
+  ledger is now of unknown provenance and cannot be repaired by arithmetic.   
+  6. THE LIFECYCLE IS A ONE-WAY DOOR IN PRACTICE.                             
+  Reactivation needs a LANDED bead plus SPIRA_QUARANTINE_CLEAN_RUNS green runs.
+  But a quarantined suite's red does not block the queue, so nothing creates  
+  pressure to file that bead -- and sp-zmd3u records the observer quarantining
+  without filing one at all. Entry is automatic, exit requires work nobody is 
+  forced to do. Coverage ratchets down and never back up.                     
+                                                                              
+  ## What the spike should produce                                            
+                                                                              
+  • A test-case identity scheme: stable across renames and refactors,         
+  addressable,                                                                
+  and granular enough that a single case can be quarantined without its file. 
+  • An execution record: one row per (case, run, commit, mode, environment)   
+  with                                                                        
+  outcome, duration and failure fingerprint. This is the data collection Ryan 
+  is                                                                          
+  asking for, and it is what every other question here is derived from.       
+  • A lifecycle with named states and recorded, reversible transitions, where 
+  entry                                                                       
+  and exit cost roughly the same -- explicitly fixing finding 6.              
+  • A trust score defined as a function of the execution record: real defects 
+  caught, false failures produced, wall-clock consumed. State what it is FOR --
+  which decision consumes it -- before defining how it is computed.           
+  • A migration answer for the existing ledgers, which finding 5 says are of  
+  unknown                                                                     
+  provenance.                                                                 
+                                                                              
+  ## Do not start by fixing flakiness                                         
+                                                                              
+  The spike's first job is to say what a test IS in this system. Every defect 
+  above                                                                       
+  is downstream of there being no answer.                                     
+                                                                              
+  ## Related                                                                  
+                                                                              
+  sp-iaxck (annotation counting), sp-pjc2x (writes to the production          
+  checkout),                                                                  
+  sp-zmd3u (quarantined without filing), sp-2f51e (wrong tree under test),    
+  sp-spj61 and sp-1tu9d (the two suites currently condemned by this data).    
+
+
+
+NOTES
+
+  Archivist sweep (session 80831135, turns 733-736): READ THIS BEFORE         
+  CLAIMING. This spike has                                                    
+  already been run. sp-t600k is a duplicate.                                  
+                                                                              
+  sp-pmv67 -- "SPIKE: tests need identity, lifecycle and a trust score --     
+  'flaky' is currently                                                        
+  one label applied by a counter that cannot tell a real failure from a false 
+  one" -- was                                                                 
+  created 2026-09-17T19:01Z, worked by aeon-sandy, and is CLOSED. Its close   
+  reason carries a                                                            
+  verdict:                                                                    
+                                                                              
+  "Fix the three bugs first, then build the harvester increment (which edits  
+  zero suites);                                                               
+  reject per-assertion quarantine -- it makes disarming cheaper, which is the 
+  wrong direction                                                             
+  on the evidence. docs/spikes/test-identity-lifecycle-and-trust.md"          
+                                                                              
+  The deliverable exists: a 656-line design at docs/spikes/test-identity-     
+  lifecycle-and-trust.md                                                      
+  with sections on identity, lifecycle, evidence-not-labels, a two-number     
+  trust score, storage                                                        
+  and ownership, costed options, a recommendation, a falsifier, a proof of    
+  concept, and verbatim                                                       
+  sources under docs/spikes/sources/sp-pmv67/. It filed sp-6zw2p, sp-4f0oe and
+  sp-5cnem, and                                                               
+  named sp-2f51e as already open.                                             
+                                                                              
+  Why nobody saw it: the doc is only on branch spira/sp-pmv67 (tip e927a02),  
+  which is NOT an                                                             
+  ancestor of origin/main as of this sweep. It is absent from the harness     
+  checkout, so a search                                                       
+  of the working tree finds nothing, and the session's bead searches at turns 
+  728-733 did not                                                             
+  surface the closed bead either. At turn 736 the session said plainly: "the  
+  spike bead you                                                              
+  asked me to file earlier wasn't in the store. I said I'd filed it and I     
+  hadn't." The first                                                          
+  half of that was wrong -- it was in the store, closed.                      
+                                                                              
+  What is genuinely NEW here and not in sp-pmv67: the six findings collected  
+  between 19:00Z and                                                          
+  23:00Z (sp-pjc2x, sp-iaxck, sp-66q0p, sp-spj61 and the burst-counted        
+  ledgers), which are                                                         
+  further evidence for the same design rather than a reason to redesign it.   
+                                                                              
+  Do not re-run the research. An ask has gone to the operator proposing that  
+  this bead be closed                                                         
+  as a duplicate and the work retargeted to the harvester-A increment sp-pmv67
+  recommended.                                                                
+  Read the design first; if it must be re-opened, re-open it against sp-      
+  pmv67's recommendation,                                                     
+  not against a blank page.                                                   
+
+
+
+LABELS: repo:spira, spike, spira
+
+DEPENDS ON
+  → ○ sp-gh8fa: A spike that already ran has been re-filed as a fresh P1 — close the duplicate? P2
+

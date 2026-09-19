@@ -1,0 +1,17 @@
+# How the regression test-cockpit-landed.sh caught on 2026-09-17 was resolved: commit 0ebd0ca,
+# 'sp-d0j1g: fix test suites broken by UNLND→QUEUE rename'. Assertion lines and the scar line only.
+0ebd0ca 2026-09-17T18:26:51Z sp-d0j1g: fix test suites broken by UNLND→QUEUE rename
+
+ spira/test-cockpit-landed.sh      |  25 +++-----
+ spira/test-cockpit-probe-fault.sh | 121 +++++++++++++++++++-------------------
+-# test-cockpit-landed.sh — the worked/landed row is 24h, and never-landed means irrecoverable.
++# test-cockpit-landed.sh — the worked/landed row is 24h-scoped; anomaly = closed, branch,
+-# THREE STATES, NOT TWO. A closed bead without a commit is awaiting landing if its branch is
+-is "SP_AWAITING_LAND counts branch-present work"   "1" "$(val SP_AWAITING_LAND)"
+-is "SP_UNLANDED counts irrecoverable only"         "1" "$(val SP_UNLANDED)"
++is "SP_UNLANDED_N counts anomalies only"          "1" "$(val SP_UNLANDED_N)"
+-want "output contains SP_AWAITING_LAND"  "SP_AWAITING_LAND=" "$out"
++want "output contains SP_UNLANDED_N"     "SP_UNLANDED_N=" "$out"
+
+# The scar line as it stands on origin/main c26bd5b:
+# scar: the worked/landed row counted all-time under a 24h header, producing nonsense against scoped counts; and never-landed falsely flagged healthy landing queues as irrecoverable.

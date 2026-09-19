@@ -1,0 +1,999 @@
+epoch	batch	mode	branch	suite	status	verdict	label
+1789617863	0068aab6196f	serial	HEAD	test-watchd-halt-health.sh	red	fail	escalation fires without halt stamp
+1789617862	0068aab6196f	serial	HEAD	test-watchd-tail.sh	red	fail	the first reader holds the lock
+1789617862	0068aab6196f	serial	HEAD	test-watchd-tail.sh	red	fail	a second tail refuses
+1789617862	0068aab6196f	serial	HEAD	test-watchd-tail.sh	red	fail	the refusal names the holder
+1789617862	0068aab6196f	serial	HEAD	test-watchd-tail.sh	red	fail	and names its own override
+1789617862	0068aab6196f	serial	HEAD	test-watchd-tail.sh	red	fail	the event is delivered exactly once
+1789617862	0068aab6196f	serial	HEAD	test-watchd-tail.sh	red	fail	and the lock names the challenger
+1789617862	0068aab6196f	serial	HEAD	test-watchd-tail.sh	red	fail	the next event goes only to the new reader
+1789617862	0068aab6196f	serial	HEAD	test-watchd-tail.sh	red	fail	a later reader takes it cleanly
+1789537082	032cfe7e0a68	serial	spira/sp-obwc	test-incident-recur-bounded.sh	red	fail	19 recurrences produce notes <= 19 * N bytes (got N, max N)
+1789617819	0be023765c4a	serial	HEAD	test-testenv-scratch.sh	red	fail	shell
+1789617819	0be023765c4a	serial	HEAD	test-testenv-scratch.sh	red	fail	shell
+1789595945	0ce8c8268440	parallel	spira/sp-4d9	test-watch-notify.sh	red	fail	the run says so with no error
+1789595945	0ce8c8268440	parallel	spira/sp-4d9	test-watch-notify.sh	red	fail	and does not stumble over its unnamed log
+1789595945	0ce8c8268440	parallel	spira/sp-4d9	test-watch-notify.sh	red	fail	and does not error
+1789595945	0ce8c8268440	parallel	spira/sp-4d9	test-watch-notify.sh	red	fail	with no error
+1789582128	0e6743eac7bf	parallel	main	test-maechen.sh	red	fail	brief names the three-occurrence threshold
+1789545570	104918726be5	parallel	spira/sp-itsy	test-ready.sh	red	fail	agent-absent
+1789545570	104918726be5	parallel	spira/sp-itsy	test-ready.sh	red	fail	no cockpit snapshot at /tmp/X/run/cockpit.env — collector has not written yet
+1789550563	12d50ff3a24c	parallel	spira/sp-jpvp	test-gate-check-stuck.sh	red	fail	gate resolve called for tt-gate1
+1789550563	12d50ff3a24c	parallel	spira/sp-jpvp	test-gate-check-stuck.sh	red	fail	show called for tt-gate1
+1789615769	1566cf13038b	parallel	spira/sp-egge2	test-aeon-decision-blocked.sh	red	fail	note says released due to decision blocker
+1789615769	1566cf13038b	parallel	spira/sp-egge2	test-aeon-decision-blocked.sh	red	fail	note says no attempt charged
+1789615769	1566cf13038b	parallel	spira/sp-egge2	test-aeon-decision-blocked.sh	red	fail	ledger says decision-blocked
+1789616155	1789616124-4	parallel	spira/egge2	test-aeon-decision-blocked.sh	red	fail	SEEN RED
+1789517399	1befd266ea55	parallel	spira/sp-m00m	test-aeon-sweep.sh	red	fail	awake shows paused
+1789517399	1befd266ea55	parallel	spira/sp-m00m	test-aeon-sweep.sh	red	fail	done is NOT written
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	seeded class appears in census output
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-recur-suite-red
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-requeue-prod-dirty
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-reclaim
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-recur-unrecorded
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	highest-bead-count class is first
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-requeue-prod-dirty still present after suppression
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-reclaim still present after suppression
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	with --with-suppressed, suppressed class appears
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	with --with-suppressed, marked [suppressed]
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	in_progress remedy still annotates [suppressed]
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	blocked remedy still annotates [suppressed]
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-recur-suite-red reappears after remedy closed
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-reclaim
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-recur-unrecorded
+1789603569	1e45d4b42e86	parallel	spira/sp-df8qo	test-census.sh	red	fail	three-bead class (sp-recur-beta) ranks above single-bead class with more events
+1789600161	2009376defd4	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and the epic is now closed
+1789600139	2009376defd4	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	no ask.sh callers remain in spira/ or cockpit/
+1789579945	2069b536a309	parallel	main	test-concierge.sh	red	fail	so it kills only its main process
+1789515069	22101619d3f5	parallel	HEAD	test-gate-workflow.sh	red	fail	the gate job sets timeout-minutes
+1789515069	22101619d3f5	parallel	HEAD	test-gate-workflow.sh	red	fail	the timeout is a sane bound
+1789600078	2222caef53e2	parallel	spira/sp-urzcm-rebased	test-cockpit-unsent.sh	red	fail	SP_BRANCH_DONE counts across repos
+1789600078	2222caef53e2	parallel	spira/sp-urzcm-rebased	test-cockpit-unsent.sh	red	fail	SP_UNSENT counts only bead-backed branches
+1789600078	2222caef53e2	parallel	spira/sp-urzcm-rebased	test-cockpit-unsent.sh	red	fail	SP_ORPHAN_WORK counts no-bead branches with unlanded commits
+1789467335	231dd833163e	parallel	spira/sp-f342	test-census-blind.sh	red	fail	census output is empty (events in dolt are unreachable)
+1789467335	231dd833163e	parallel	spira/sp-f342	test-census-blind.sh	red	fail	embedded store
+1789467335	231dd833163e	parallel	spira/sp-f342	test-census-blind.sh	red	fail	events write/read round trip failed — writes via dolt embedded (/tmp/X/embedded-db/.beads/embeddeddolt) are discarded
+1789515729	2588380263ce	parallel	spira/sp-0wqx	test-chamber-repo-labels.sh	red	fail	chamber file /workspace/spira/chamber/maechen.md:N
+1789595656	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	count_beads detects a real creation (positive control)
+1789595656	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789595656	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789595656	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789595656	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789595656	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789595656	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789595656	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789595656	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789595656	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789595853	2eb75d2b2dab	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and sent exactly one notification
+1789595853	2eb75d2b2dab	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	notification names the epic
+1789595853	2eb75d2b2dab	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	notification carries the target
+1789595853	2eb75d2b2dab	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and carries which children closed
+1789595853	2eb75d2b2dab	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and the epic itself is closed once the notice is out
+1789595853	2eb75d2b2dab	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	a second pass announces nothing — the marker holds
+1789595853	2eb75d2b2dab	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and sends no second notification
+1789595853	2eb75d2b2dab	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and the epic is now closed
+1789595824	2eb75d2b2dab	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	no ask.sh callers remain in spira/ or cockpit/
+1789595650	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	insight creation exits 0 (positive control)
+1789595650	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	insight output carries bead id
+1789595650	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	ask.sh law exits 0
+1789595650	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	output carries 'law ['
+1789595650	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	bead id extracted from output
+1789595650	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	law without --default exits 0
+1789595650	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default
+1789595650	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default renders 'yes' default
+1789595650	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default still has decision question
+1789595650	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	error message mentions colon separator
+1789595650	2eb75d2b2dab	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	ask.sh law with colon exits 0 (positive pair)
+1789596058	2eb75d2b2dab	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	the run says so with no error
+1789596058	2eb75d2b2dab	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	and does not stumble over its unnamed log
+1789596058	2eb75d2b2dab	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	and does not error
+1789596058	2eb75d2b2dab	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	with no error
+1789455408	2f4d49fd5eab	parallel	?	test-census-blind.sh	red	fail	census output is empty (events in dolt are unreachable)
+1789455408	2f4d49fd5eab	parallel	?	test-census-blind.sh	red	fail	embedded store
+1789455408	2f4d49fd5eab	parallel	?	test-census-blind.sh	red	fail	events write/read round trip failed — writes via dolt embedded (/tmp/X/embedded-db/.beads/embeddeddolt) are discarded
+1789455470	2f4d49fd5eab	parallel	?	test-events-nodolt.sh	red	fail	census reports 3 sp-recur-suite-red (db-wx4 acceptance criterion)
+1789455470	2f4d49fd5eab	parallel	?	test-events-nodolt.sh	red	fail	census reports 2 sp-recur-merge-conflict
+1789455470	2f4d49fd5eab	parallel	?	test-events-nodolt.sh	red	fail	census reports 2 sp-reclaim-timeout
+1789455470	2f4d49fd5eab	parallel	?	test-events-nodolt.sh	red	fail	census reports 1 sp-requeue-thrash (db-ipo acceptance criterion)
+1789455470	2f4d49fd5eab	parallel	?	test-events-nodolt.sh	red	fail	census reports 1 sp-lapsed-lease-expired (db-ipo lapsed filter fix)
+1789594051	319d5c5cf939	parallel	origin/main	test-watch-notify.sh	red	fail	the run says so with no error
+1789594051	319d5c5cf939	parallel	origin/main	test-watch-notify.sh	red	fail	and does not stumble over its unnamed log
+1789560719	341a59b61f2d	serial	spira/sp-ow8n	test-strand-truncated.sh	red	fail	detection
+1789560719	341a59b61f2d	serial	spira/sp-ow8n	test-strand-truncated.sh	red	fail	no truncation
+1789601953	35b475a300d3	serial	spira/sp-5zmhz	test-census-events.sh	red	fail	census reports 1 distinct bead sp-requeue-merge-conflict (sp-2lk)
+1789601953	35b475a300d3	serial	spira/sp-5zmhz	test-census-events.sh	red	fail	census shows 2 detections for sp-requeue-merge-conflict
+1789601953	35b475a300d3	serial	spira/sp-5zmhz	test-census-events.sh	red	fail	census reports 1 sp-recur-suite-red
+1789601953	35b475a300d3	serial	spira/sp-5zmhz	test-census-events.sh	red	fail	census reports sp-reclaim with 2 detections (1 bead)
+1789601953	35b475a300d3	serial	spira/sp-5zmhz	test-census-events.sh	red	fail	census reports sp-reclaim-timeout with 3 detections (1 bead)
+1789601953	35b475a300d3	serial	spira/sp-5zmhz	test-census-events.sh	red	fail	cross-bead
+1789601953	35b475a300d3	serial	spira/sp-5zmhz	test-census-events.sh	red	fail	cross-bead
+1789601953	35b475a300d3	serial	spira/sp-5zmhz	test-census-events.sh	red	fail	landing requeue path produces sp-requeue-merge-conflict
+1789601953	35b475a300d3	serial	spira/sp-5zmhz	test-census-events.sh	red	fail	strand reclaim path produces sp-reclaim-ghost
+1789515001	38893b9fa79b	parallel	spira/sp-0wqx	test-requeue.sh	red	fail	the bead carries the decision
+1789515001	38893b9fa79b	parallel	spira/sp-0wqx	test-requeue.sh	red	fail	the rungs are left standing as the record
+1789515293	3a9047bbe3dc	parallel	HEAD	test-suites-timer.sh	red	fail	spira-suites.timer is in install.sh's _ENABLE_TMPL list
+1789515293	3a9047bbe3dc	parallel	HEAD	test-suites-timer.sh	red	fail	spira-suites.timer is in install.sh's UNITS list (will be written to disk)
+1789515293	3a9047bbe3dc	parallel	HEAD	test-suites-timer.sh	red	fail	spira-suites.service is in install.sh's UNITS list
+1789578151	3f30ffaf3d27	parallel	spira/sp-1l4a7	test-mail-deliver.sh	red	fail	three rapid deliveries produce exactly one wake
+1789474508	3f58c3221dc2	parallel	spira/sp-f342	test-census-blind.sh	red	fail	embedded store
+1789474508	3f58c3221dc2	parallel	spira/sp-f342	test-census-blind.sh	red	fail	events write/read round trip failed — writes via dolt embedded (/tmp/X/embedded-db/.beads/embeddeddolt) are discarded
+1789576857	4330e9b2eb6d	parallel	spira/sp-q0k3k	test-maechen.sh	red	fail	brief names the three-occurrence threshold
+1789582274	471123616ac4	parallel	main	test-gate-base-selection.sh	red	fail	the branch trial selects from the branch
+1789582274	471123616ac4	parallel	main	test-gate-base-selection.sh	red	fail	and the base trial also selects from the branch
+1789528401	4b43da433dd5	parallel	spira/sp-8tol	test-covers-entries.sh	red	fail	git ls-files returned nothing in /workspace
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	dolt is absent from PATH
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	events.log was created by bump_recur
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	recurs_of reads back 3 (db-wx4 acceptance criterion)
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	recurs_of sp-nd-2 reads 2
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	recurs_of sp-nd-1 still 3 after sp-nd-2 bumps
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	reclaims_of reads 2
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	requeues_of reads 1
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	requeues_of for thrash cause reads 1 (db-ipo)
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	output contains event_type 'recurred'
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	output contains cause 'suite-red'
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	output contains count 3
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	output contains 'reclaimed'
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	output contains 'lapsed' (db-ipo filter fix)
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	since=0 returns all events
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	census reports 3 sp-recur-suite-red (db-wx4 acceptance criterion)
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	census reports 2 sp-recur-merge-conflict
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	census reports 2 sp-reclaim-timeout
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	census reports 1 sp-requeue-thrash (db-ipo acceptance criterion)
+1789453781	4c2190d11db2	parallel	origin/main	test-events-nodolt.sh	red	fail	census reports 1 sp-lapsed-lease-expired (db-ipo lapsed filter fix)
+1789547484	4cc6f6e1bbef	serial	spira/sp-6clb	test-answers-silent-seed.sh	red	fail	cold start produces no SEEDED line
+1789554937	4d4255140be3	serial	spira/sp-jpvp	test-gate-check-stuck.sh	red	fail	gate resolve called for tt-gate1
+1789554937	4d4255140be3	serial	spira/sp-jpvp	test-gate-check-stuck.sh	red	fail	show called for tt-gate1
+1789457923	51824742fc26	parallel	spira/sp-ie1n	test-install-unit-directive.sh	red	fail	migrate @-form
+1789457928	51824742fc26	parallel	spira/sp-ie1n	test-install-migrate.sh	red	fail	ordering
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	goal_open_children returns in_progress beads too
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	but it IS in the set the summoner can dispatch
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	a dispatchable bead at the threshold is poisoned
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	and the pass says so
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	and the operator is asked what to do about it
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	and the poisoning is recorded as an event
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	against the bead that poisoned
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	a goal child at the threshold is poisoned too
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	the check names the size of the set it examined
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	a held bead at the threshold is still poisoned
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	the note says the holder keeps its claim
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	CHECK 7 declines to summon for a poisoned bead
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	the same bead unpoisoned is ready for its fayth
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	the first pass over the threshold asks exactly once
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	a second pass over the same count asks nothing more
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	the bead is poisoned again, because it is still over the threshold
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	but clearing the label did NOT re-arm the ask
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	a fourth attempt is a new fact and asks again
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	the fixture really did close it mid-pass
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	the bead that was still open is poisoned
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	and says no bead is being examined
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	ask title shows attempt count not 'failed'
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	BRANCH line says no commits when branch is empty
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	branch with one commit reports its count
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	a poisoned bead with count below threshold has its label cleared
+1789515124	51871ac6cb77	parallel	spira/sp-1a83	test-poison.sh	red	fail	the pass records the stale clear
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	the bead closed as usual
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	the disposition is still the first thing said
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	and it is the disposition the bead reached
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	wall clock, in seconds
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	of which the API held
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	the turn count
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	fresh input tokens
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	cache reads, the figure that predicts a limit
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	output tokens
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	of which thinking
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	and what it cost
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	the disposition is recorded as ever
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	wall clock is unknown
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	and so is the API time
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	and the turn count
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	and every token count
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	and the cost
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	the turn count it did carry
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	the cost it did carry
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	the token counts it did carry
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	and the output tokens
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	the duration it did NOT carry
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	nor the API duration
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	nor the cache reads
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	nor the thinking tokens
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	both records' turns are summed
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	cost from the last record
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	wall_s sums both records
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	wall_s reflects the whole session
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	api_s from the last record (cumulative)
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	turns sum both records
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	cost from the last record's cumulative
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	wall_s=N is greater than api_s=N
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	attempt 1 is a full reading
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	and it cost what the record said
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	attempt 2 reads as unknown
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	and unknown on the cost
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	and the fields ride a disposition that is not a close
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	the disposition names the fault
+1789514897	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-ledger.sh	red	fail	and the spend is unknown, in full
+1789514918	51871ac6cb77	parallel	spira/sp-1a83	test-attempts.sh	red	fail	prune-reclaims with no args exits non-zero
+1789514881	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-lease.sh	red	fail	a Ns future deadline renders ~10m
+1789515023	51871ac6cb77	parallel	spira/sp-1a83	test-landed-stays-landed.sh	red	fail	sp-ctrl IS reopened
+1789515023	51871ac6cb77	parallel	spira/sp-1a83	test-landed-stays-landed.sh	red	fail	the pass says so
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	the prompt was rendered at all
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	a pr repo's aeon is told to create a gate
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	with the repo set on the gate
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	a push repo's aeon is told there is no run
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	and told not to create a gate
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	naming the land mode it read
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	a hold repo's aeon is told the same
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	naming its own land mode
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	with no gates, nothing is watched
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	and nothing is stuck
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	a fresh gate is watched (non-zero expected value)
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	an old gate is stuck (non-zero expected value)
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	a stuck gate's row names it
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	the stuck gate is named for the summary
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	past the deadline the fresh gate also becomes stuck
+1789514983	51871ac6cb77	parallel	spira/sp-1a83	test-ci-park.sh	red	fail	and both gates are stuck
+1789515128	51871ac6cb77	parallel	spira/sp-1a83	test-sending-empty-commit.sh	red	fail	content_landed should approve an empty-commit branch
+1789515128	51871ac6cb77	parallel	spira/sp-1a83	test-sending-empty-commit.sh	red	fail	sending reaps the empty-commit branch
+1789515128	51871ac6cb77	parallel	spira/sp-1a83	test-sending-empty-commit.sh	red	fail	sending keeps the real-work branch (unlanded)
+1789515128	51871ac6cb77	parallel	spira/sp-1a83	test-sending-empty-commit.sh	red	fail	the empty-commit branch is actually gone
+1789514952	51871ac6cb77	parallel	spira/sp-1a83	test-check5-body-search.sh	red	fail	sp-ctrl IS reopened
+1789514952	51871ac6cb77	parallel	spira/sp-1a83	test-check5-body-search.sh	red	fail	the pass says so
+1789515104	51871ac6cb77	parallel	spira/sp-1a83	test-requeue-cap.sh	red	fail	a bead at the attempt threshold is still poisoned
+1789514992	51871ac6cb77	parallel	spira/sp-1a83	test-content-landed-empty-branch.sh	red	fail	sending reaps the ff-merged branch
+1789514992	51871ac6cb77	parallel	spira/sp-1a83	test-content-landed-empty-branch.sh	red	fail	the ff-merged branch is actually gone
+1789514992	51871ac6cb77	parallel	spira/sp-1a83	test-content-landed-empty-branch.sh	red	fail	content_landed should return 0 for squash-merged
+1789514981	51871ac6cb77	parallel	spira/sp-1a83	test-check5-nopayload.sh	red	fail	sp-bare is reopened
+1789514981	51871ac6cb77	parallel	spira/sp-1a83	test-check5-nopayload.sh	red	fail	the pass says so
+1789514981	51871ac6cb77	parallel	spira/sp-1a83	test-check5-nopayload.sh	red	fail	sp-nop is reopened (no-payload is retired)
+1789514981	51871ac6cb77	parallel	spira/sp-1a83	test-check5-nopayload.sh	red	fail	the pass reopens it
+1789514981	51871ac6cb77	parallel	spira/sp-1a83	test-check5-nopayload.sh	red	fail	the pass records the verification
+1789514981	51871ac6cb77	parallel	spira/sp-1a83	test-check5-nopayload.sh	red	fail	sp-del-b0 is reopened (no children)
+1789514981	51871ac6cb77	parallel	spira/sp-1a83	test-check5-nopayload.sh	red	fail	the pass says so
+1789514981	51871ac6cb77	parallel	spira/sp-1a83	test-check5-nopayload.sh	red	fail	the pass records the verification
+1789514981	51871ac6cb77	parallel	spira/sp-1a83	test-check5-nopayload.sh	red	fail	sp-del-nold is reopened (file predates session)
+1789514981	51871ac6cb77	parallel	spira/sp-1a83	test-check5-nopayload.sh	red	fail	the pass says so
+1789514981	51871ac6cb77	parallel	spira/sp-1a83	test-check5-nopayload.sh	red	fail	sp-del-nmiss is reopened (file missing)
+1789514981	51871ac6cb77	parallel	spira/sp-1a83	test-check5-nopayload.sh	red	fail	the pass says so
+1789515152	51871ac6cb77	parallel	spira/sp-1a83	test-superseded.sh	red	fail	the plain branch lands (positive control
+1789515152	51871ac6cb77	parallel	spira/sp-1a83	test-superseded.sh	red	fail	and the pass names the reason it was skipped
+1789515152	51871ac6cb77	parallel	spira/sp-1a83	test-superseded.sh	red	fail	the Sending reaps the superseded branch
+1789515152	51871ac6cb77	parallel	spira/sp-1a83	test-superseded.sh	red	fail	the branch is actually gone
+1789515152	51871ac6cb77	parallel	spira/sp-1a83	test-superseded.sh	red	fail	superseded branch with unique content is kept
+1789515152	51871ac6cb77	parallel	spira/sp-1a83	test-superseded.sh	red	fail	and the reason names the unlanded commits
+1789515152	51871ac6cb77	parallel	spira/sp-1a83	test-superseded.sh	red	fail	a non-superseded unlanded branch is kept
+1789515152	51871ac6cb77	parallel	spira/sp-1a83	test-superseded.sh	red	fail	dry-run names the superseded branch
+1789515152	51871ac6cb77	parallel	spira/sp-1a83	test-superseded.sh	red	fail	and mentions the reason
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	and the log says why
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	it is counted as a requeue instead
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	and the note names the cause
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	the teardown says no attempt was charged
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	the bead carries the decision
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	and the ledger carries the outcome
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	the branch still carries the aeon's commit after the requeue
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	and one attempt is charged
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	the note records the outcome
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	and its cycling is visible as one requeue
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	the work's bead carries one attempt
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	the deadlocked bead is named
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	the genuinely failed one is kept
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	with the test it failed
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	the sweep lifts it
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	and the label is gone
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	the rungs are left standing as the record
+1789515115	51871ac6cb77	parallel	spira/sp-1a83	test-requeue.sh	red	fail	the bead records why
+1789514965	51871ac6cb77	parallel	spira/sp-1a83	test-check4-events.sh	red	fail	sentinel poisons a bead at threshold via events
+1789514965	51871ac6cb77	parallel	spira/sp-1a83	test-check4-events.sh	red	fail	pass records the poisoning
+1789514965	51871ac6cb77	parallel	spira/sp-1a83	test-check4-events.sh	red	fail	stale poison (1 event < threshold 3) is cleared
+1789514965	51871ac6cb77	parallel	spira/sp-1a83	test-check4-events.sh	red	fail	pass records the stale clear
+1789514908	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-sweep.sh	red	fail	without --sweep a branch label IS added
+1789514908	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-sweep.sh	red	fail	awake shows paused
+1789514908	51871ac6cb77	parallel	spira/sp-1a83	test-aeon-sweep.sh	red	fail	done is NOT written
+1789514959	51871ac6cb77	parallel	spira/sp-1a83	test-check5-content-landed.sh	red	fail	sp-bare IS reopened
+1789514959	51871ac6cb77	parallel	spira/sp-1a83	test-check5-content-landed.sh	red	fail	the pass says so
+1789514970	51871ac6cb77	parallel	spira/sp-1a83	test-check5-drop.sh	red	fail	sp-bare is reopened
+1789514970	51871ac6cb77	parallel	spira/sp-1a83	test-check5-drop.sh	red	fail	the pass says so
+1789514970	51871ac6cb77	parallel	spira/sp-1a83	test-check5-drop.sh	red	fail	and the reopen note names bd supersede as the remedy
+1789515132	51871ac6cb77	parallel	spira/sp-1a83	test-sending-squash-merged.sh	red	fail	sp-sq was reaped
+1789515132	51871ac6cb77	parallel	spira/sp-1a83	test-sending-squash-merged.sh	red	fail	sp-sq branch is gone
+1789515132	51871ac6cb77	parallel	spira/sp-1a83	test-sending-squash-merged.sh	red	fail	sp-post was kept (tip moved after PR)
+1789515132	51871ac6cb77	parallel	spira/sp-1a83	test-sending-squash-merged.sh	red	fail	sp-unland was kept
+1789514980	51871ac6cb77	parallel	spira/sp-1a83	test-containment.sh	red	fail	outside-path map exits non-zero
+1789514980	51871ac6cb77	parallel	spira/sp-1a83	test-containment.sh	red	fail	error names the repo entry
+1789514980	51871ac6cb77	parallel	spira/sp-1a83	test-containment.sh	red	fail	error mentions containment
+1789514980	51871ac6cb77	parallel	spira/sp-1a83	test-containment.sh	red	fail	error mentions the instance
+1789514980	51871ac6cb77	parallel	spira/sp-1a83	test-containment.sh	red	fail	real-remote map exits non-zero
+1789514980	51871ac6cb77	parallel	spira/sp-1a83	test-containment.sh	red	fail	error names the repo entry
+1789514980	51871ac6cb77	parallel	spira/sp-1a83	test-containment.sh	red	fail	error mentions the remote URL
+1789514980	51871ac6cb77	parallel	spira/sp-1a83	test-containment.sh	red	fail	error mentions containment
+1789514980	51871ac6cb77	parallel	spira/sp-1a83	test-containment.sh	red	fail	D2
+1789514980	51871ac6cb77	parallel	spira/sp-1a83	test-containment.sh	red	fail	D2
+1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo.sh	red	fail	the bead ends closed
+1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo.sh	red	fail	commit naming the bead is in second repo's history
+1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo.sh	red	fail	second repo owns the spira branch
+1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo.sh	red	fail	log says works repo:second
+1789514994	51871ac6cb77	parallel	spira/sp-1a83	test-cross-repo.sh	red	fail	log shows the second repo path
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	a first outcome is recorded
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	with the kind the panel badges
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	the bead it happened to, in its own column
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	the title as written
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	and the detail beside it
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	through the note verb, not insight
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	the first reclaim is recorded
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	a repeat inside the window is not
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	a 26-reclaim storm is one row, not 26
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	six different beads reclaiming is six rows
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	a second KIND on the same bead is not a repeat
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	three repeats are held
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	the expired window emits again
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	carrying what it held back
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	a loop faster than the window still surfaces
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	a missing emitter fails loudly
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	and names what is missing
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	and says which outcome was lost
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	an emitter that refuses is reported
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	naming the outcome it could not record
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	an outcome with no kind is refused
+1789515000	51871ac6cb77	parallel	spira/sp-1a83	test-event.sh	red	fail	an outcome with no title is refused
+1789471428	520599b86c07	parallel	spira/sp-f342	test-census-blind.sh	red	fail	embedded store
+1789471428	520599b86c07	parallel	spira/sp-f342	test-census-blind.sh	red	fail	events write/read round trip failed — writes via dolt embedded (/tmp/X/embedded-db/.beads/embeddeddolt) are discarded
+1789625187	5bc3d37c6a4d	parallel	spira/sp-ufd8d	test-batch.sh	red	fail	b
+1789625187	5bc3d37c6a4d	parallel	spira/sp-ufd8d	test-batch.sh	red	fail	b
+1789625187	5bc3d37c6a4d	parallel	spira/sp-ufd8d	test-batch.sh	red	fail	b
+1789625187	5bc3d37c6a4d	parallel	spira/sp-ufd8d	test-batch.sh	red	fail	b
+1789625187	5bc3d37c6a4d	parallel	spira/sp-ufd8d	test-batch.sh	red	fail	b
+1789515083	5c47e5d4933d	parallel	spira/sp-0wqx	test-requeue.sh	red	fail	the bead carries the decision
+1789515083	5c47e5d4933d	parallel	spira/sp-0wqx	test-requeue.sh	red	fail	the rungs are left standing as the record
+1789603475	5c573541b6a5	parallel	spira/sp-df8qo	test-census-watermark.sh	red	fail	stale class visible all-time (1 distinct bead)
+1789603475	5c573541b6a5	parallel	spira/sp-df8qo	test-census-watermark.sh	red	fail	stale class
+1789603475	5c573541b6a5	parallel	spira/sp-df8qo	test-census-watermark.sh	red	fail	live class visible all-time (1 distinct bead)
+1789603475	5c573541b6a5	parallel	spira/sp-df8qo	test-census-watermark.sh	red	fail	all-time
+1789603475	5c573541b6a5	parallel	spira/sp-df8qo	test-census-watermark.sh	red	fail	live class appears in output
+1789603475	5c573541b6a5	parallel	spira/sp-df8qo	test-census-watermark.sh	red	fail	stale class appears in output
+1789603475	5c573541b6a5	parallel	spira/sp-df8qo	test-census-watermark.sh	red	fail	live class ranks first (since-watermark)
+1789603475	5c573541b6a5	parallel	spira/sp-df8qo	test-census-watermark.sh	red	fail	stale class shows 0 new since watermark
+1789603475	5c573541b6a5	parallel	spira/sp-df8qo	test-census-watermark.sh	red	fail	stale class
+1789603475	5c573541b6a5	parallel	spira/sp-df8qo	test-census-watermark.sh	red	fail	live class shows 1 bead since watermark with detections
+1789603475	5c573541b6a5	parallel	spira/sp-df8qo	test-census-watermark.sh	red	fail	missing watermark
+1789603475	5c573541b6a5	parallel	spira/sp-df8qo	test-census-watermark.sh	red	fail	missing watermark
+1789603505	5c573541b6a5	parallel	spira/sp-df8qo	test-requeue-cap.sh	red	fail	3 reopens (at cap 3) fires the requeue escalation
+1789603505	5c573541b6a5	parallel	spira/sp-df8qo	test-requeue-cap.sh	red	fail	the escalation names the reopen count
+1789603505	5c573541b6a5	parallel	spira/sp-df8qo	test-requeue-cap.sh	red	fail	a bead at the attempt threshold is still poisoned
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	seeded class appears in census output
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-recur-suite-red
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-requeue-prod-dirty
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-reclaim
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-recur-unrecorded
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	highest-bead-count class is first
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-requeue-prod-dirty still present after suppression
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-reclaim still present after suppression
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	with --with-suppressed, suppressed class appears
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	with --with-suppressed, marked [suppressed]
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	in_progress remedy still annotates [suppressed]
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	blocked remedy still annotates [suppressed]
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-recur-suite-red reappears after remedy closed
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-reclaim
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	sp-recur-unrecorded
+1789603489	5c573541b6a5	parallel	spira/sp-df8qo	test-census.sh	red	fail	three-bead class (sp-recur-beta) ranks above single-bead class with more events
+1789580602	5e5c7b0938c4	parallel	spira/sp-1l4a7	test-maechen.sh	red	fail	brief names the three-occurrence threshold
+1789550611	5fa6f83c51b5	serial	spira/sp-jpvp	test-gate-check-stuck.sh	red	fail	gate resolve called for tt-gate1
+1789550611	5fa6f83c51b5	serial	spira/sp-jpvp	test-gate-check-stuck.sh	red	fail	show called for tt-gate1
+1789581680	5fd1fb38249a	parallel	spira/sp-q0k3k	test-maechen.sh	red	fail	brief names the three-occurrence threshold
+1789520238	60f10355d57c	parallel	spira/sp-m00m	test-aeon-sweep.sh	red	fail	awake shows paused
+1789520238	60f10355d57c	parallel	spira/sp-m00m	test-aeon-sweep.sh	red	fail	done is NOT written
+1789582216	6160d4e9c089	parallel	main	test-gate-base-selection.sh	red	fail	both trials ran
+1789582216	6160d4e9c089	parallel	main	test-gate-base-selection.sh	red	fail	the branch trial selects from the branch
+1789582216	6160d4e9c089	parallel	main	test-gate-base-selection.sh	red	fail	and the base trial also selects from the branch
+1789593091	629b02f3678c	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	count_beads detects a real creation (positive control)
+1789593091	629b02f3678c	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789593091	629b02f3678c	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789593091	629b02f3678c	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789593091	629b02f3678c	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789593091	629b02f3678c	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789593091	629b02f3678c	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789593091	629b02f3678c	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789593091	629b02f3678c	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789593091	629b02f3678c	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789593295	629b02f3678c	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and sent exactly one notification
+1789593295	629b02f3678c	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	notification names the epic
+1789593295	629b02f3678c	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	notification carries the target
+1789593295	629b02f3678c	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and carries which children closed
+1789593295	629b02f3678c	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and the epic itself is closed once the notice is out
+1789593295	629b02f3678c	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	a second pass announces nothing — the marker holds
+1789593295	629b02f3678c	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and sends no second notification
+1789593295	629b02f3678c	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and the epic is now closed
+1789593086	629b02f3678c	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	insight creation exits 0 (positive control)
+1789593086	629b02f3678c	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	insight output carries bead id
+1789593086	629b02f3678c	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	ask.sh law exits 0
+1789593086	629b02f3678c	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	output carries 'law ['
+1789593086	629b02f3678c	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	bead id extracted from output
+1789593086	629b02f3678c	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	law without --default exits 0
+1789593086	629b02f3678c	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default
+1789593086	629b02f3678c	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default renders 'yes' default
+1789593086	629b02f3678c	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default still has decision question
+1789593086	629b02f3678c	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	error message mentions colon separator
+1789593086	629b02f3678c	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	ask.sh law with colon exits 0 (positive pair)
+1789593517	629b02f3678c	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	the run says so with no error
+1789593517	629b02f3678c	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	and does not stumble over its unnamed log
+1789593517	629b02f3678c	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	and does not error
+1789593517	629b02f3678c	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	with no error
+1789540562	66b62bc7f708	parallel	spira/sp-l57d	test-unclaimable-cycle.sh	red	fail	control
+1789540562	66b62bc7f708	parallel	spira/sp-l57d	test-unclaimable-cycle.sh	red	fail	guard
+1789540562	66b62bc7f708	parallel	spira/sp-l57d	test-unclaimable-cycle.sh	red	fail	both
+1789571303	6757fa76ae6b	serial	spira/sp-wfoy	test-census-watermark.sh	red	fail	all-time
+1789571303	6757fa76ae6b	serial	spira/sp-wfoy	test-census-watermark.sh	red	fail	missing watermark
+1789579811	67ed5688d4d6	parallel	spira/sp-1l4a7	test-maechen.sh	red	fail	brief names the three-occurrence threshold
+1789592053	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	count_beads detects a real creation (positive control)
+1789592053	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789592053	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789592053	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789592053	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789592053	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789592053	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789592053	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789592053	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789592053	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789592228	6a31a1b85d75	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and sent exactly one notification
+1789592228	6a31a1b85d75	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	notification names the epic
+1789592228	6a31a1b85d75	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	notification carries the target
+1789592228	6a31a1b85d75	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and carries which children closed
+1789592228	6a31a1b85d75	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and the epic itself is closed once the notice is out
+1789592228	6a31a1b85d75	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	a second pass announces nothing — the marker holds
+1789592228	6a31a1b85d75	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and sends no second notification
+1789592228	6a31a1b85d75	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and the epic is now closed
+1789592048	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	insight creation exits 0 (positive control)
+1789592048	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	insight output carries bead id
+1789592048	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	ask.sh law exits 0
+1789592048	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	output carries 'law ['
+1789592048	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	bead id extracted from output
+1789592048	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	law without --default exits 0
+1789592048	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default
+1789592048	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default renders 'yes' default
+1789592048	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default still has decision question
+1789592048	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	error message mentions colon separator
+1789592048	6a31a1b85d75	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	ask.sh law with colon exits 0 (positive pair)
+1789592420	6a31a1b85d75	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	the run says so with no error
+1789592420	6a31a1b85d75	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	and does not stumble over its unnamed log
+1789592420	6a31a1b85d75	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	and does not error
+1789592420	6a31a1b85d75	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	with no error
+1789463108	6db0232c78f9	parallel	spira/sp-f342	test-census-blind.sh	red	fail	census output is empty (events in dolt are unreachable)
+1789463108	6db0232c78f9	parallel	spira/sp-f342	test-census-blind.sh	red	fail	embedded store
+1789463108	6db0232c78f9	parallel	spira/sp-f342	test-census-blind.sh	red	fail	events write/read round trip failed — writes via dolt embedded (/tmp/X/embedded-db/.beads/embeddeddolt) are discarded
+1789452990	6e5397405dd0	parallel	spira/sp-f342	test-requeue.sh	red	fail	it is counted as a requeue instead
+1789452990	6e5397405dd0	parallel	spira/sp-f342	test-requeue.sh	red	fail	and that rung names its cause
+1789452990	6e5397405dd0	parallel	spira/sp-f342	test-requeue.sh	red	fail	the bead carries the decision
+1789452990	6e5397405dd0	parallel	spira/sp-f342	test-requeue.sh	red	fail	the rung names the outcome
+1789452990	6e5397405dd0	parallel	spira/sp-f342	test-requeue.sh	red	fail	and its cycling is visible as one requeue
+1789452990	6e5397405dd0	parallel	spira/sp-f342	test-requeue.sh	red	fail	the rungs are left standing as the record
+1789583925	71209c42658e	parallel	spira/sp-136xj	test-mail.sh	red	fail	SEEN GREEN
+1789583925	71209c42658e	parallel	spira/sp-136xj	test-mail.sh	red	fail	SEEN GREEN
+1789458270	71273c37b6bd	parallel	spira/sp-ie1n	test-install-migrate.sh	red	fail	clean install
+1789451507	738061f59378	parallel	spira/sp-ie1n	test-install-unit-directive.sh	red	fail	migrate @-form
+1789451503	738061f59378	parallel	spira/sp-ie1n	test-install-migrate.sh	red	fail	ordering
+1789516576	75dc8026645d	parallel	spira/sp-m00m	test-requeue.sh	red	fail	the rungs are left standing as the record
+1789667666	771ddaa76f7b	parallel	spira/sp-u3pb6	test-bin-manifest.sh	red	fail	POSITIVE CONTROL stub setup
+1789667666	771ddaa76f7b	parallel	spira/sp-u3pb6	test-bin-manifest.sh	red	fail	POSITIVE CONTROL
+1789510845	772fb5093119	serial	spira/sp-utvi	test-landing.sh	red	fail	the push is rejected, as the case requires
+1789510845	772fb5093119	serial	spira/sp-utvi	test-landing.sh	red	fail	and the retry says it could not attempt a rebase
+1789510845	772fb5093119	serial	spira/sp-utvi	test-landing.sh	red	fail	naming the reason rather than a file list
+1789450877	7c8cae78f934	serial	spira/sp-ie1n	test-install-instance.sh	red	fail	naming
+1789453843	822ad0331487	parallel	origin/main	test-concierge.sh	red	fail	concierge.sh brief produced nothing:
+1789453843	822ad0331487	parallel	origin/main	test-concierge.sh	red	fail	and says the slugs were demoted
+1789453843	822ad0331487	parallel	origin/main	test-concierge.sh	red	fail	one real slug composes a brief
+1789453843	822ad0331487	parallel	origin/main	test-concierge.sh	red	fail	and renders that statute in full
+1789453843	822ad0331487	parallel	origin/main	test-concierge.sh	red	fail	the summary names a count and a size
+1789453843	822ad0331487	parallel	origin/main	test-concierge.sh	red	fail	the summary reported [] statutes
+1789453853	822ad0331487	parallel	origin/main	test-census-blind.sh	red	fail	seeded-row
+1789453853	822ad0331487	parallel	origin/main	test-census-blind.sh	red	fail	census exits non-zero when substrate is unreachable
+1789453853	822ad0331487	parallel	origin/main	test-census-blind.sh	red	fail	stderr names the substrate
+1789453853	822ad0331487	parallel	origin/main	test-census-blind.sh	red	fail	stderr message appears
+1789453853	822ad0331487	parallel	origin/main	test-census-blind.sh	red	fail	embedded store, missing dolt
+1789453853	822ad0331487	parallel	origin/main	test-census-blind.sh	red	fail	events write/read round trip failed — writes via dolt embedded (/tmp/X/embedded-db/.beads/embeddeddolt) are discarded
+1789453853	822ad0331487	parallel	origin/main	test-census-blind.sh	red	fail	embedded store, missing dolt
+1789453853	822ad0331487	parallel	origin/main	test-census-blind.sh	red	fail	events write/read round trip failed — writes via dolt embedded (/tmp/X/embedded-db/.beads/embeddeddolt) are discarded
+1789453853	822ad0331487	parallel	origin/main	test-census-blind.sh	red	fail	server-mode store, missing dolt
+1789453843	822ad0331487	parallel	origin/main	test-doctor-events-probe.sh	red	fail	happy path
+1789617718	8278b6e5a98c	serial	HEAD	test-attempts.sh	red	fail	one in_progress transition counts as 1
+1789617718	8278b6e5a98c	serial	HEAD	test-attempts.sh	red	fail	three events poison
+1789617701	8278b6e5a98c	serial	HEAD	test-timeout.sh	red	fail	an in_progress transition charges an attempt
+1789618469	8427d6bed577	serial	HEAD	test-watchd-halt-health.sh	red	fail	escalation fires without halt stamp
+1789671856	87b98abc4c0f	parallel	spira/queue/20260917T190209Z	test-deploy.sh	red	fail	dry-run/bad-exec
+1789671856	87b98abc4c0f	parallel	spira/queue/20260917T190209Z	test-deploy.sh	red	fail	dry-run/good-exec
+1789671856	87b98abc4c0f	parallel	spira/queue/20260917T190209Z	test-deploy.sh	red	fail	dry-run/good-exec
+1789583700	8972ec6c649a	parallel	main	test-cockpit-unit-notify.sh	red	fail	spira-cockpit.service
+1789452799	8acff95e55c1	parallel	spira/sp-f342	test-requeue.sh	red	fail	it is counted as a requeue instead
+1789452799	8acff95e55c1	parallel	spira/sp-f342	test-requeue.sh	red	fail	and that rung names its cause
+1789452799	8acff95e55c1	parallel	spira/sp-f342	test-requeue.sh	red	fail	the bead carries the decision
+1789452799	8acff95e55c1	parallel	spira/sp-f342	test-requeue.sh	red	fail	the rung names the outcome
+1789452799	8acff95e55c1	parallel	spira/sp-f342	test-requeue.sh	red	fail	and its cycling is visible as one requeue
+1789452799	8acff95e55c1	parallel	spira/sp-f342	test-requeue.sh	red	fail	the rungs are left standing as the record
+1789688776	8b26d2cec507	parallel	spira/queue/20260917T234505Z	test-testdb-concurrent.sh	red	fail	gone baseline must exit fixture-fault (75)
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	a dispatchable bead at the threshold is poisoned
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	and the pass says so
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	and the operator is asked what to do about it
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	and the poisoning is recorded as an event
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	against the bead that poisoned
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	a goal child at the threshold is poisoned too
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	a held bead at the threshold is still poisoned
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	the note says the holder keeps its claim
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	CHECK 7 declines to summon for a poisoned bead
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	the first pass over the threshold asks exactly once
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	a second pass over the same count asks nothing more
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	the bead is poisoned again, because it is still over the threshold
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	but clearing the label did NOT re-arm the ask
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	a fourth attempt is a new fact and asks again
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	the fixture really did close it mid-pass
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	the bead that was still open is poisoned
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	ask title shows attempt count not 'failed'
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	BRANCH line says no commits when branch is empty
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	branch with one commit reports its count
+1789617449	8f724a28ed65	serial	HEAD	test-poison.sh	red	fail	a poisoned bead with count at threshold keeps its label
+1789617118	8f724a28ed65	serial	HEAD	test-attempts.sh	red	fail	one in_progress transition counts as 1
+1789617118	8f724a28ed65	serial	HEAD	test-attempts.sh	red	fail	three events poison
+1789617212	8f724a28ed65	serial	HEAD	test-incident-recur-cause.sh	red	fail	second filing produces exactly one recurrence event
+1789617212	8f724a28ed65	serial	HEAD	test-incident-recur-cause.sh	red	fail	incident.log contains recurred (2)
+1789617212	8f724a28ed65	serial	HEAD	test-incident-recur-cause.sh	red	fail	incident.log contains recurred (3)
+1789617212	8f724a28ed65	serial	HEAD	test-incident-recur-cause.sh	red	fail	exactly one Sin ask recorded
+1789617212	8f724a28ed65	serial	HEAD	test-incident-recur-cause.sh	red	fail	bead carries sin label after escalation
+1789617148	8f724a28ed65	serial	HEAD	test-census-watermark.sh	red	fail	stale class visible all-time (1 distinct bead)
+1789617148	8f724a28ed65	serial	HEAD	test-census-watermark.sh	red	fail	stale class
+1789617148	8f724a28ed65	serial	HEAD	test-census-watermark.sh	red	fail	live class visible all-time (1 distinct bead)
+1789617148	8f724a28ed65	serial	HEAD	test-census-watermark.sh	red	fail	all-time
+1789617148	8f724a28ed65	serial	HEAD	test-census-watermark.sh	red	fail	live class appears in output
+1789617148	8f724a28ed65	serial	HEAD	test-census-watermark.sh	red	fail	stale class appears in output
+1789617148	8f724a28ed65	serial	HEAD	test-census-watermark.sh	red	fail	live class ranks first (since-watermark)
+1789617148	8f724a28ed65	serial	HEAD	test-census-watermark.sh	red	fail	stale class shows 0 new since watermark
+1789617148	8f724a28ed65	serial	HEAD	test-census-watermark.sh	red	fail	stale class
+1789617148	8f724a28ed65	serial	HEAD	test-census-watermark.sh	red	fail	live class shows 1 bead since watermark with detections
+1789617148	8f724a28ed65	serial	HEAD	test-census-watermark.sh	red	fail	missing watermark
+1789617148	8f724a28ed65	serial	HEAD	test-census-watermark.sh	red	fail	missing watermark
+1789617325	8f724a28ed65	serial	HEAD	test-maechen-blind-window.sh	red	fail	all events visible all-time (3 detections for 1 bead)
+1789617325	8f724a28ed65	serial	HEAD	test-maechen-blind-window.sh	red	fail	census sees 3 detections from trigger window (1 distinct bead)
+1789617539	8f724a28ed65	serial	HEAD	test-sin-exempt.sh	red	fail	the non-exempt bead gets the sin label
+1789617539	8f724a28ed65	serial	HEAD	test-sin-exempt.sh	red	fail	the recurrence counter reached 3
+1789617539	8f724a28ed65	serial	HEAD	test-sin-exempt.sh	red	fail	the ask was filed
+1789617539	8f724a28ed65	serial	HEAD	test-sin-exempt.sh	red	fail	the recurrence counter still advances
+1789617539	8f724a28ed65	serial	HEAD	test-sin-exempt.sh	red	fail	the counter advances past SIN_AT
+1789617316	8f724a28ed65	serial	HEAD	test-landing.sh	red	fail	third rebase failure escalates
+1789617316	8f724a28ed65	serial	HEAD	test-landing.sh	red	fail	and does not reopen
+1789617316	8f724a28ed65	serial	HEAD	test-landing.sh	red	fail	bead stays closed on escalation
+1789617578	8f724a28ed65	serial	HEAD	test-watchd-halt-health.sh	red	fail	escalation fires without halt stamp
+1789617471	8f724a28ed65	serial	HEAD	test-requeue-cap.sh	red	fail	3 reopens (at cap 3) fires the requeue escalation
+1789617471	8f724a28ed65	serial	HEAD	test-requeue-cap.sh	red	fail	the escalation names the reopen count
+1789617471	8f724a28ed65	serial	HEAD	test-requeue-cap.sh	red	fail	a bead at the attempt threshold is still poisoned
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	seeded class appears in census output
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	sp-recur-suite-red
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	sp-requeue-prod-dirty
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	sp-reclaim
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	sp-recur-unrecorded
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	highest-bead-count class is first
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	sp-requeue-prod-dirty still present after suppression
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	sp-reclaim still present after suppression
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	with --with-suppressed, suppressed class appears
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	with --with-suppressed, marked [suppressed]
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	in_progress remedy still annotates [suppressed]
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	blocked remedy still annotates [suppressed]
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	sp-recur-suite-red reappears after remedy closed
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	sp-reclaim
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	sp-recur-unrecorded
+1789617138	8f724a28ed65	serial	HEAD	test-census.sh	red	fail	three-bead class (sp-recur-beta) ranks above single-bead class with more events
+1789617568	8f724a28ed65	serial	HEAD	test-testenv-scratch.sh	red	fail	shell
+1789617568	8f724a28ed65	serial	HEAD	test-testenv-scratch.sh	red	fail	shell
+1789617606	8f724a28ed65	serial	HEAD	test-watchd-tail.sh	red	fail	the first reader holds the lock
+1789617606	8f724a28ed65	serial	HEAD	test-watchd-tail.sh	red	fail	a second tail refuses
+1789617606	8f724a28ed65	serial	HEAD	test-watchd-tail.sh	red	fail	the refusal names the holder
+1789617606	8f724a28ed65	serial	HEAD	test-watchd-tail.sh	red	fail	and names its own override
+1789617606	8f724a28ed65	serial	HEAD	test-watchd-tail.sh	red	fail	the event is delivered exactly once
+1789617606	8f724a28ed65	serial	HEAD	test-watchd-tail.sh	red	fail	and the lock names the challenger
+1789617606	8f724a28ed65	serial	HEAD	test-watchd-tail.sh	red	fail	the next event goes only to the new reader
+1789617606	8f724a28ed65	serial	HEAD	test-watchd-tail.sh	red	fail	a later reader takes it cleanly
+1789617510	8f724a28ed65	serial	HEAD	test-requeue.sh	red	fail	it is counted as a requeue instead
+1789617510	8f724a28ed65	serial	HEAD	test-requeue.sh	red	fail	the bead carries the decision
+1789617510	8f724a28ed65	serial	HEAD	test-requeue.sh	red	fail	and one attempt is charged
+1789617510	8f724a28ed65	serial	HEAD	test-requeue.sh	red	fail	and its cycling is visible as one requeue
+1789617510	8f724a28ed65	serial	HEAD	test-requeue.sh	red	fail	the work's bead carries one attempt
+1789617510	8f724a28ed65	serial	HEAD	test-requeue.sh	red	fail	the rungs are left standing as the record
+1789617180	8f724a28ed65	serial	HEAD	test-check4-events.sh	red	fail	one in_progress transition is one attempt
+1789617180	8f724a28ed65	serial	HEAD	test-check4-events.sh	red	fail	three cycles report exactly 3
+1789617180	8f724a28ed65	serial	HEAD	test-check4-events.sh	red	fail	one cycle reports exactly 1
+1789617180	8f724a28ed65	serial	HEAD	test-check4-events.sh	red	fail	yet three cycles still count as 3 attempts
+1789617180	8f724a28ed65	serial	HEAD	test-check4-events.sh	red	fail	bead has 3 in_progress events
+1789617180	8f724a28ed65	serial	HEAD	test-check4-events.sh	red	fail	sentinel poisons a bead at threshold via events
+1789617180	8f724a28ed65	serial	HEAD	test-check4-events.sh	red	fail	pass records the poisoning
+1789617180	8f724a28ed65	serial	HEAD	test-check4-events.sh	red	fail	live poison (3 events >= threshold 3) is kept
+1789617578	8f724a28ed65	serial	HEAD	test-timeout.sh	red	fail	an in_progress transition charges an attempt
+1789570654	911d2c5589b9	parallel	spira/sp-wfoy	test-census-watermark.sh	red	fail	stale class visible all-time (2 events)
+1789570654	911d2c5589b9	parallel	spira/sp-wfoy	test-census-watermark.sh	red	fail	all-time
+1789570654	911d2c5589b9	parallel	spira/sp-wfoy	test-census-watermark.sh	red	fail	stale class all-time count in parens
+1789570654	911d2c5589b9	parallel	spira/sp-wfoy	test-census-watermark.sh	red	fail	live class shows 1 new since watermark
+1789570654	911d2c5589b9	parallel	spira/sp-wfoy	test-census-watermark.sh	red	fail	missing watermark
+1789570665	911d2c5589b9	parallel	spira/sp-wfoy	test-maechen-blind-window.sh	red	fail	all 3 events visible all-time
+1789570665	911d2c5589b9	parallel	spira/sp-wfoy	test-maechen-blind-window.sh	red	fail	census sees events from trigger window (3 sp-recur-blind-window-test)
+1789570656	911d2c5589b9	parallel	spira/sp-wfoy	test-events-nodolt.sh	red	fail	census reports 3 sp-recur-suite-red (db-wx4 acceptance criterion)
+1789570656	911d2c5589b9	parallel	spira/sp-wfoy	test-events-nodolt.sh	red	fail	census reports 2 sp-recur-merge-conflict
+1789570656	911d2c5589b9	parallel	spira/sp-wfoy	test-events-nodolt.sh	red	fail	census reports 2 sp-reclaim-timeout
+1789570661	911d2c5589b9	parallel	spira/sp-wfoy	test-census-events.sh	red	fail	census reports 2 sp-requeue-merge-conflict
+1789570661	911d2c5589b9	parallel	spira/sp-wfoy	test-census-events.sh	red	fail	census reports 2 sp-reclaim
+1789570661	911d2c5589b9	parallel	spira/sp-wfoy	test-census-events.sh	red	fail	census reports 3 sp-reclaim-timeout
+1789570661	911d2c5589b9	parallel	spira/sp-wfoy	test-census-events.sh	red	fail	cross-bead class count is 3
+1789616709	93336ff505c6	parallel	spira/sp-egge2	test-attempts.sh	red	fail	one in_progress transition counts as 1
+1789616709	93336ff505c6	parallel	spira/sp-egge2	test-attempts.sh	red	fail	three events poison
+1789616718	93336ff505c6	parallel	spira/sp-egge2	test-literal-lint.sh	red	fail	every shipped file passes
+1789603953	935066f80e03	serial	spira/sp-sk134	test-queue-protect.sh	red	fail	queue-mode with receipt
+1789603953	935066f80e03	serial	spira/sp-sk134	test-queue-protect.sh	red	fail	the home repository 'workspace' has no row in the map
+1789592616	956f3d8905b2	serial	HEAD	test-mail-sendmail.sh	red	fail	SEEN RED
+1789592616	956f3d8905b2	serial	HEAD	test-mail-sendmail.sh	red	fail	reply closes tracking bead
+1789592616	956f3d8905b2	serial	HEAD	test-mail-sendmail.sh	red	fail	SEEN RED
+1789592616	956f3d8905b2	serial	HEAD	test-mail-sendmail.sh	red	fail	uphold closes suit bead
+1789592616	956f3d8905b2	serial	HEAD	test-mail-sendmail.sh	red	fail	SEEN RED
+1789592616	956f3d8905b2	serial	HEAD	test-mail-sendmail.sh	red	fail	retire closes suit bead
+1789592616	956f3d8905b2	serial	HEAD	test-mail-sendmail.sh	red	fail	SEEN RED
+1789592616	956f3d8905b2	serial	HEAD	test-mail-sendmail.sh	red	fail	amend closes suit bead
+1789533841	97e65f98dd6e	parallel	spira/sp-obwc	test-incident-recur-notes.sh	red	fail	19 recurrences produce notes <= 19 * N bytes (got N, max N)
+1789600225	98b53b58f6ce	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	no ask.sh callers remain in spira/ or cockpit/
+1789595816	9d2ba4df1312	serial	spira/sp-h3g55	test-batch.sh	red	fail	8 certified
+1789595816	9d2ba4df1312	serial	spira/sp-h3g55	test-batch.sh	red	fail	3 new
+1789595816	9d2ba4df1312	serial	spira/sp-h3g55	test-batch.sh	red	fail	conflict
+1789599224	9e6a778be1b8	serial	spira/sp-03ush	test-install-dolt-mode.sh	red	fail	embedded
+1789469687	9f1f20bae232	parallel	spira/sp-f342	test-census-blind.sh	red	fail	embedded store
+1789469687	9f1f20bae232	parallel	spira/sp-f342	test-census-blind.sh	red	fail	events write/read round trip failed — writes via dolt embedded (/tmp/X/embedded-db/.beads/embeddeddolt) are discarded
+1789589891	a0cf347a4851	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	grep pattern fires on a planted ask.sh caller
+1789589891	a0cf347a4851	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	no ask.sh callers remain in spira/ or cockpit/
+1789589891	a0cf347a4851	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	lib.sh spira_ask_timeout_loop question passes lint
+1789589891	a0cf347a4851	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	lib.sh land_escalate question passes lint
+1789589891	a0cf347a4851	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	lib.sh spira_event note passes lint
+1789589891	a0cf347a4851	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	sentinel.sh requeue question passes lint
+1789589891	a0cf347a4851	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	watchd.sh question passes lint
+1789589891	a0cf347a4851	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	reflect.sh question passes lint
+1789589891	a0cf347a4851	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	strand.sh question passes lint
+1789589891	a0cf347a4851	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	pilgrimage.sh note passes lint
+1789589891	a0cf347a4851	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	skew.sh question passes lint
+1789589891	a0cf347a4851	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	incident.sh SIN question passes lint
+1789589891	a0cf347a4851	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	archivist.sh note passes lint
+1789596588	a4f8626a0db4	parallel	origin/main	test-watch-notify.sh	red	fail	the run says so with no error
+1789596588	a4f8626a0db4	parallel	origin/main	test-watch-notify.sh	red	fail	and does not stumble over its unnamed log
+1789596588	a4f8626a0db4	parallel	origin/main	test-watch-notify.sh	red	fail	and does not error
+1789596588	a4f8626a0db4	parallel	origin/main	test-watch-notify.sh	red	fail	with no error
+1789458771	a67773631967	parallel	spira/sp-ie1n	test-install-migrate.sh	red	fail	clean install
+1789452201	a7d5be0bc623	parallel	origin/main	test-requeue.sh	red	fail	it is counted as a requeue instead
+1789452201	a7d5be0bc623	parallel	origin/main	test-requeue.sh	red	fail	and that rung names its cause
+1789452201	a7d5be0bc623	parallel	origin/main	test-requeue.sh	red	fail	the bead carries the decision
+1789452201	a7d5be0bc623	parallel	origin/main	test-requeue.sh	red	fail	the rung names the outcome
+1789452201	a7d5be0bc623	parallel	origin/main	test-requeue.sh	red	fail	and its cycling is visible as one requeue
+1789452201	a7d5be0bc623	parallel	origin/main	test-requeue.sh	red	fail	the rungs are left standing as the record
+1789472944	a84d3790ba8a	parallel	spira/sp-f342	test-census-blind.sh	red	fail	embedded store
+1789472944	a84d3790ba8a	parallel	spira/sp-f342	test-census-blind.sh	red	fail	events write/read round trip failed — writes via dolt embedded (/tmp/X/embedded-db/.beads/embeddeddolt) are discarded
+1789566344	a9d12b6d82e7	serial	spira/sp-mp9s	test-maechen-trigger.sh	red	fail	in_progress dedup logs skipping
+1789566344	a9d12b6d82e7	serial	spira/sp-mp9s	test-maechen-trigger.sh	red	fail	in_progress dedup
+1789580195	ab022ad72cc0	parallel	spira/sp-q0k3k	test-maechen.sh	red	fail	brief names the three-occurrence threshold
+1789594280	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	count_beads detects a real creation (positive control)
+1789594280	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789594280	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789594280	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789594280	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789594280	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789594280	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789594280	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789594280	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789594280	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789594521	abc200ae5d96	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and sent exactly one notification
+1789594521	abc200ae5d96	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	notification names the epic
+1789594521	abc200ae5d96	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	notification carries the target
+1789594521	abc200ae5d96	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and carries which children closed
+1789594521	abc200ae5d96	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and the epic itself is closed once the notice is out
+1789594521	abc200ae5d96	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	a second pass announces nothing — the marker holds
+1789594521	abc200ae5d96	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and sends no second notification
+1789594521	abc200ae5d96	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and the epic is now closed
+1789594275	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	insight creation exits 0 (positive control)
+1789594275	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	insight output carries bead id
+1789594275	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	ask.sh law exits 0
+1789594275	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	output carries 'law ['
+1789594275	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	bead id extracted from output
+1789594275	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	law without --default exits 0
+1789594275	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default
+1789594275	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default renders 'yes' default
+1789594275	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default still has decision question
+1789594275	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	error message mentions colon separator
+1789594275	abc200ae5d96	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	ask.sh law with colon exits 0 (positive pair)
+1789594735	abc200ae5d96	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	the run says so with no error
+1789594735	abc200ae5d96	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	and does not stumble over its unnamed log
+1789594735	abc200ae5d96	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	and does not error
+1789594735	abc200ae5d96	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	with no error
+1789617996	af34e7f03fe2	serial	HEAD	test-watchd-tail.sh	red	fail	the first reader holds the lock
+1789617996	af34e7f03fe2	serial	HEAD	test-watchd-tail.sh	red	fail	a second tail refuses
+1789617996	af34e7f03fe2	serial	HEAD	test-watchd-tail.sh	red	fail	the refusal names the holder
+1789617996	af34e7f03fe2	serial	HEAD	test-watchd-tail.sh	red	fail	and names its own override
+1789617996	af34e7f03fe2	serial	HEAD	test-watchd-tail.sh	red	fail	the event is delivered exactly once
+1789617996	af34e7f03fe2	serial	HEAD	test-watchd-tail.sh	red	fail	and the lock names the challenger
+1789617996	af34e7f03fe2	serial	HEAD	test-watchd-tail.sh	red	fail	the next event goes only to the new reader
+1789617996	af34e7f03fe2	serial	HEAD	test-watchd-tail.sh	red	fail	a later reader takes it cleanly
+1789617780	b08b3154fda7	parallel	spira/sp-vlwgc	test-concierge.sh	red	fail	cockpit.sh from pane exits 0
+1789617780	b08b3154fda7	parallel	spira/sp-vlwgc	test-concierge.sh	red	fail	cockpit.sh from pane calls concierge.sh attach
+1789527574	bbb629dd102c	serial	spira/sp-wgwl	test-select.sh	red	fail	C1
+1789527574	bbb629dd102c	serial	spira/sp-wgwl	test-select.sh	red	fail	C1
+1789527574	bbb629dd102c	serial	spira/sp-wgwl	test-select.sh	red	fail	C1
+1789527574	bbb629dd102c	serial	spira/sp-wgwl	test-select.sh	red	fail	C2
+1789527574	bbb629dd102c	serial	spira/sp-wgwl	test-select.sh	red	fail	F1
+1789527574	bbb629dd102c	serial	spira/sp-wgwl	test-select.sh	red	fail	G2
+1789527574	bbb629dd102c	serial	spira/sp-wgwl	test-select.sh	red	fail	G2
+1789527574	bbb629dd102c	serial	spira/sp-wgwl	test-select.sh	red	fail	G2
+1789527574	bbb629dd102c	serial	spira/sp-wgwl	test-select.sh	red	fail	G3
+1789527574	bbb629dd102c	serial	spira/sp-wgwl	test-select.sh	red	fail	G5
+1789527574	bbb629dd102c	serial	spira/sp-wgwl	test-select.sh	red	fail	H3
+1789530114	bd4a55cc4ec1	parallel	spira/sp-ge0v	test-boundary.sh	red	fail	the shipped tree passes check
+1789509359	bdf65529f5b0	parallel	spira/sp-utvi	test-landing.sh	red	fail	the push is rejected, as the case requires
+1789509359	bdf65529f5b0	parallel	spira/sp-utvi	test-landing.sh	red	fail	and the retry says it could not attempt a rebase
+1789509359	bdf65529f5b0	parallel	spira/sp-utvi	test-landing.sh	red	fail	naming the reason rather than a file list
+1789613273	c429d85fe154	parallel	concierge/aerc-cockpit-pane	test-cockpit-rebuild.sh	red	fail	rebuild exits 0
+1789613273	c429d85fe154	parallel	concierge/aerc-cockpit-pane	test-cockpit-rebuild.sh	red	fail	brain:0 holds two panes
+1789613273	c429d85fe154	parallel	concierge/aerc-cockpit-pane	test-cockpit-rebuild.sh	red	fail	second run exits 0
+1789613273	c429d85fe154	parallel	concierge/aerc-cockpit-pane	test-cockpit-rebuild.sh	red	fail	still two panes in brain:0
+1789601901	c4d490d71315	parallel	spira/sp-5zmhz	test-census-events.sh	red	fail	census reports 1 distinct bead sp-requeue-merge-conflict (sp-2lk)
+1789601901	c4d490d71315	parallel	spira/sp-5zmhz	test-census-events.sh	red	fail	census shows 2 detections for sp-requeue-merge-conflict
+1789601901	c4d490d71315	parallel	spira/sp-5zmhz	test-census-events.sh	red	fail	census reports 1 sp-recur-suite-red
+1789601901	c4d490d71315	parallel	spira/sp-5zmhz	test-census-events.sh	red	fail	census reports sp-reclaim with 2 detections (1 bead)
+1789601901	c4d490d71315	parallel	spira/sp-5zmhz	test-census-events.sh	red	fail	census reports sp-reclaim-timeout with 3 detections (1 bead)
+1789601901	c4d490d71315	parallel	spira/sp-5zmhz	test-census-events.sh	red	fail	cross-bead
+1789601901	c4d490d71315	parallel	spira/sp-5zmhz	test-census-events.sh	red	fail	cross-bead
+1789601901	c4d490d71315	parallel	spira/sp-5zmhz	test-census-events.sh	red	fail	landing requeue path produces sp-requeue-merge-conflict
+1789601901	c4d490d71315	parallel	spira/sp-5zmhz	test-census-events.sh	red	fail	strand reclaim path produces sp-reclaim-ghost
+1789571145	c5cb5cbc6d37	parallel	spira/sp-wfoy	test-census-watermark.sh	red	fail	missing watermark
+1789520333	c5cfc169466a	serial	spira/sp-m00m	test-aeon-sweep.sh	red	fail	awake shows paused
+1789520333	c5cfc169466a	serial	spira/sp-m00m	test-aeon-sweep.sh	red	fail	done is NOT written
+1789598511	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	count_beads detects a real creation (positive control)
+1789598511	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789598511	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789598511	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789598511	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789598511	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789598511	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789598511	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789598511	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789598511	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789598724	c5d5c3fa94af	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and sent exactly one notification
+1789598724	c5d5c3fa94af	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	notification names the epic
+1789598724	c5d5c3fa94af	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	notification carries the target
+1789598724	c5d5c3fa94af	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and carries which children closed
+1789598724	c5d5c3fa94af	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and the epic itself is closed once the notice is out
+1789598724	c5d5c3fa94af	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	a second pass announces nothing — the marker holds
+1789598724	c5d5c3fa94af	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and sends no second notification
+1789598724	c5d5c3fa94af	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and the epic is now closed
+1789598694	c5d5c3fa94af	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	no ask.sh callers remain in spira/ or cockpit/
+1789598507	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	insight creation exits 0 (positive control)
+1789598507	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	insight output carries bead id
+1789598507	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	ask.sh law exits 0
+1789598507	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	output carries 'law ['
+1789598507	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	bead id extracted from output
+1789598507	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	law without --default exits 0
+1789598507	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default
+1789598507	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default renders 'yes' default
+1789598507	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default still has decision question
+1789598507	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	error message mentions colon separator
+1789598507	c5d5c3fa94af	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	ask.sh law with colon exits 0 (positive pair)
+1789598984	c5d5c3fa94af	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	the run says so with no error
+1789598984	c5d5c3fa94af	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	and does not stumble over its unnamed log
+1789598984	c5d5c3fa94af	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	and does not error
+1789598984	c5d5c3fa94af	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	with no error
+1789468364	c6591ed12adc	parallel	spira/sp-f342	test-census-blind.sh	red	fail	embedded store
+1789468364	c6591ed12adc	parallel	spira/sp-f342	test-census-blind.sh	red	fail	events write/read round trip failed — writes via dolt embedded (/tmp/X/embedded-db/.beads/embeddeddolt) are discarded
+1789453409	ca2e1a8338fb	parallel	spira/sp-f342	test-concierge.sh	red	fail	concierge.sh brief produced nothing:
+1789453409	ca2e1a8338fb	parallel	spira/sp-f342	test-concierge.sh	red	fail	and says the slugs were demoted
+1789453409	ca2e1a8338fb	parallel	spira/sp-f342	test-concierge.sh	red	fail	one real slug composes a brief
+1789453409	ca2e1a8338fb	parallel	spira/sp-f342	test-concierge.sh	red	fail	and renders that statute in full
+1789453409	ca2e1a8338fb	parallel	spira/sp-f342	test-concierge.sh	red	fail	the summary names a count and a size
+1789453409	ca2e1a8338fb	parallel	spira/sp-f342	test-concierge.sh	red	fail	the summary reported [] statutes
+1789453364	ca2e1a8338fb	parallel	spira/sp-f342	test-census-blind.sh	red	fail	seeded-row
+1789453364	ca2e1a8338fb	parallel	spira/sp-f342	test-census-blind.sh	red	fail	census exits non-zero when substrate is unreachable
+1789453364	ca2e1a8338fb	parallel	spira/sp-f342	test-census-blind.sh	red	fail	stderr names the substrate
+1789453364	ca2e1a8338fb	parallel	spira/sp-f342	test-census-blind.sh	red	fail	stderr message appears
+1789453364	ca2e1a8338fb	parallel	spira/sp-f342	test-census-blind.sh	red	fail	embedded store, missing dolt
+1789453364	ca2e1a8338fb	parallel	spira/sp-f342	test-census-blind.sh	red	fail	events write/read round trip failed — writes via dolt embedded (/tmp/X/embedded-db/.beads/embeddeddolt) are discarded
+1789453364	ca2e1a8338fb	parallel	spira/sp-f342	test-census-blind.sh	red	fail	embedded store, missing dolt
+1789453364	ca2e1a8338fb	parallel	spira/sp-f342	test-census-blind.sh	red	fail	events write/read round trip failed — writes via dolt embedded (/tmp/X/embedded-db/.beads/embeddeddolt) are discarded
+1789453364	ca2e1a8338fb	parallel	spira/sp-f342	test-census-blind.sh	red	fail	server-mode store, missing dolt
+1789453419	ca2e1a8338fb	parallel	spira/sp-f342	test-doctor-events-probe.sh	red	fail	happy path
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	dolt is absent from PATH
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	events.log was created by bump_recur
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	recurs_of reads back 3 (db-wx4 acceptance criterion)
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	recurs_of sp-nd-2 reads 2
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	recurs_of sp-nd-1 still 3 after sp-nd-2 bumps
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	reclaims_of reads 2
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	requeues_of reads 1
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	requeues_of for thrash cause reads 1 (db-ipo)
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	output contains event_type 'recurred'
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	output contains cause 'suite-red'
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	output contains count 3
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	output contains 'reclaimed'
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	output contains 'lapsed' (db-ipo filter fix)
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	since=0 returns all events
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	census reports 3 sp-recur-suite-red (db-wx4 acceptance criterion)
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	census reports 2 sp-recur-merge-conflict
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	census reports 2 sp-reclaim-timeout
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	census reports 1 sp-requeue-thrash (db-ipo acceptance criterion)
+1789453426	ca2e1a8338fb	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	census reports 1 sp-lapsed-lease-expired (db-ipo lapsed filter fix)
+1789595198	ccd43beab3e7	parallel	origin/main	test-watch-notify.sh	red	fail	the run says so with no error
+1789595198	ccd43beab3e7	parallel	origin/main	test-watch-notify.sh	red	fail	and does not stumble over its unnamed log
+1789595198	ccd43beab3e7	parallel	origin/main	test-watch-notify.sh	red	fail	and does not error
+1789595198	ccd43beab3e7	parallel	origin/main	test-watch-notify.sh	red	fail	with no error
+1789583539	ce2b95e1db96	parallel	main	test-census-blind.sh	red	fail	embedded store
+1789583539	ce2b95e1db96	parallel	main	test-census-blind.sh	red	fail	dolt-beads.service — systemctl returned no output; cannot verify enablement state]
+1789583539	ce2b95e1db96	parallel	main	test-census-blind.sh	red	fail	server-mode store
+1789583539	ce2b95e1db96	parallel	main	test-census-blind.sh	red	fail	dolt-beads.service — systemctl returned no output; cannot verify enablement state]
+1789569553	cf412179c778	serial	spira/sp-wfoy	test-census.sh	red	fail	three-bead class (sp-recur-beta) ranks above single-bead class with more events
+1789598997	d27bbf84b939	parallel	origin/main	test-watch-notify.sh	red	fail	the run says so with no error
+1789598997	d27bbf84b939	parallel	origin/main	test-watch-notify.sh	red	fail	and does not stumble over its unnamed log
+1789598997	d27bbf84b939	parallel	origin/main	test-watch-notify.sh	red	fail	and does not error
+1789598997	d27bbf84b939	parallel	origin/main	test-watch-notify.sh	red	fail	with no error
+1789557485	d554e45648fb	serial	spira/sp-lbij	test-bd-update-inflight-guard.sh	red	fail	BLOCKED by guard name
+1789557485	d554e45648fb	serial	spira/sp-lbij	test-bd-update-inflight-guard.sh	red	fail	shows the bead id
+1789557485	d554e45648fb	serial	spira/sp-lbij	test-bd-update-inflight-guard.sh	red	fail	shows in_progress evidence
+1789557485	d554e45648fb	serial	spira/sp-lbij	test-bd-update-inflight-guard.sh	red	fail	names comment as safe alternative
+1789557485	d554e45648fb	serial	spira/sp-lbij	test-bd-update-inflight-guard.sh	red	fail	names the override
+1789557485	d554e45648fb	serial	spira/sp-lbij	test-bd-update-inflight-guard.sh	red	fail	--design on in-flight bead blocked
+1789557485	d554e45648fb	serial	spira/sp-lbij	test-bd-update-inflight-guard.sh	red	fail	--acceptance on in-flight bead blocked
+1789557485	d554e45648fb	serial	spira/sp-lbij	test-bd-update-inflight-guard.sh	red	fail	--body-file on in-flight bead blocked
+1789557485	d554e45648fb	serial	spira/sp-lbij	test-bd-update-inflight-guard.sh	red	fail	--design-file on in-flight bead blocked
+1789557485	d554e45648fb	serial	spira/sp-lbij	test-bd-update-inflight-guard.sh	red	fail	-d on in-flight bead blocked
+1789501075	d8774c9b8f64	parallel	main	test-gate-workflow.sh	red	fail	gate.yml exists at .github/workflows/gate.yml
+1789588512	d8d3477c7444	serial	spira/sp-b1opp	test-auron.sh	red	fail	restart count below threshold fires nothing
+1789569905	d8efd62c7771	parallel	spira/sp-wfoy	test-census-watermark.sh	red	fail	stale class visible all-time (2 events)
+1789569905	d8efd62c7771	parallel	spira/sp-wfoy	test-census-watermark.sh	red	fail	stale class all-time count in parens
+1789569905	d8efd62c7771	parallel	spira/sp-wfoy	test-census-watermark.sh	red	fail	live class shows 1 new since watermark
+1789569905	d8efd62c7771	parallel	spira/sp-wfoy	test-census-watermark.sh	red	fail	missing watermark
+1789569919	d8efd62c7771	parallel	spira/sp-wfoy	test-maechen-blind-window.sh	red	fail	all 3 events visible all-time
+1789569919	d8efd62c7771	parallel	spira/sp-wfoy	test-maechen-blind-window.sh	red	fail	census sees events from trigger window (3 sp-recur-blind-window-test)
+1789569900	d8efd62c7771	parallel	spira/sp-wfoy	test-events-nodolt.sh	red	fail	census reports 3 sp-recur-suite-red (db-wx4 acceptance criterion)
+1789569900	d8efd62c7771	parallel	spira/sp-wfoy	test-events-nodolt.sh	red	fail	census reports 2 sp-recur-merge-conflict
+1789569900	d8efd62c7771	parallel	spira/sp-wfoy	test-events-nodolt.sh	red	fail	census reports 2 sp-reclaim-timeout
+1789569914	d8efd62c7771	parallel	spira/sp-wfoy	test-census-events.sh	red	fail	census reports 2 sp-requeue-merge-conflict
+1789569914	d8efd62c7771	parallel	spira/sp-wfoy	test-census-events.sh	red	fail	census reports 2 sp-reclaim
+1789569914	d8efd62c7771	parallel	spira/sp-wfoy	test-census-events.sh	red	fail	census reports 3 sp-reclaim-timeout
+1789569914	d8efd62c7771	parallel	spira/sp-wfoy	test-census-events.sh	red	fail	cross-bead class count is 3
+1789571240	dc4c91aa8f22	parallel	spira/sp-wfoy	test-census-watermark.sh	red	fail	missing watermark
+1789659064	dda05d52012a	parallel	spira/sp-7t5yp	test-batch.sh	red	fail	7. already-in-base
+1789599450	df393015d744	parallel	origin/main	test-watch-notify.sh	red	fail	the run says so with no error
+1789599450	df393015d744	parallel	origin/main	test-watch-notify.sh	red	fail	and does not stumble over its unnamed log
+1789599450	df393015d744	parallel	origin/main	test-watch-notify.sh	red	fail	and does not error
+1789599450	df393015d744	parallel	origin/main	test-watch-notify.sh	red	fail	with no error
+1789660476	e043646e9603	parallel	spira/sp-d0j1g	test-batch.sh	red	fail	landing-shaped records
+1789597840	e0c34d333c8f	parallel	origin/main	test-watch-notify.sh	red	fail	the run says so with no error
+1789597840	e0c34d333c8f	parallel	origin/main	test-watch-notify.sh	red	fail	and does not stumble over its unnamed log
+1789597840	e0c34d333c8f	parallel	origin/main	test-watch-notify.sh	red	fail	and does not error
+1789597840	e0c34d333c8f	parallel	origin/main	test-watch-notify.sh	red	fail	with no error
+1789695402	e13c274db901	parallel	spira/queue/20260918T013531Z	test-testdb-concurrent.sh	red	fail	gone baseline must exit fixture-fault (75)
+1789621798	e2917f6d8340	parallel	spira/sp-e5ow0	test-sending-certified-guard.sh	red	fail	sending exits 0
+1789621794	e2917f6d8340	parallel	spira/sp-e5ow0	test-batch-certified-orphan.sh	red	fail	sp-good is a batch member
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	the fixture starts with the bead held
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	and by a named holder
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	a held bead at the threshold is still poisoned
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	but it is not unclaimed under its holder
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	and the holder is untouched
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	the note says the holder keeps its claim
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	CHECK 7 declines to summon for a poisoned bead
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	the same bead unpoisoned is ready for its fayth
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	the fixture really did close it mid-pass
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	the bead that was still open is poisoned
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	and says no bead is being examined
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	ask title shows attempt count not 'failed'
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	BRANCH line says no commits when branch is empty
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	branch with one commit reports its count
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	a poisoned bead with count at threshold keeps its label
+1789621264	e37cf8e99f71	parallel	spira/sp-w25c6	test-poison.sh	red	fail	the pass records the stale clear
+1789546721	e4c058b2ac85	parallel	spira/sp-itsy	test-artifact-install.sh	red	fail	ready.sh exits 0 in tarball-only environment
+1789615956	e56a30499e7d	parallel	spira/sp-vlwgc	test-concierge.sh	red	fail	cockpit.sh from pane exits 0
+1789615956	e56a30499e7d	parallel	spira/sp-vlwgc	test-concierge.sh	red	fail	cockpit.sh from pane calls concierge.sh attach
+1789617907	e7c4f61329e4	serial	HEAD	test-watchd-halt-health.sh	red	fail	escalation fires without halt stamp
+1789617907	e7c4f61329e4	serial	HEAD	test-watchd-tail.sh	red	fail	the first reader holds the lock
+1789617907	e7c4f61329e4	serial	HEAD	test-watchd-tail.sh	red	fail	a second tail refuses
+1789617907	e7c4f61329e4	serial	HEAD	test-watchd-tail.sh	red	fail	the refusal names the holder
+1789617907	e7c4f61329e4	serial	HEAD	test-watchd-tail.sh	red	fail	and names its own override
+1789617907	e7c4f61329e4	serial	HEAD	test-watchd-tail.sh	red	fail	the event is delivered exactly once
+1789617907	e7c4f61329e4	serial	HEAD	test-watchd-tail.sh	red	fail	and the lock names the challenger
+1789617907	e7c4f61329e4	serial	HEAD	test-watchd-tail.sh	red	fail	the next event goes only to the new reader
+1789617907	e7c4f61329e4	serial	HEAD	test-watchd-tail.sh	red	fail	a later reader takes it cleanly
+1789510504	e89904e203cf	parallel	spira/sp-uqod	test-owned.sh	red	fail	unit rows for instance 'prod'
+1789510504	e89904e203cf	parallel	spira/sp-uqod	test-owned.sh	red	fail	unit rows for instance 'test'
+1789592575	e8c6ad6b34e9	parallel	HEAD	test-mail-sendmail.sh	red	fail	SEEN RED
+1789592575	e8c6ad6b34e9	parallel	HEAD	test-mail-sendmail.sh	red	fail	reply closes tracking bead
+1789592575	e8c6ad6b34e9	parallel	HEAD	test-mail-sendmail.sh	red	fail	SEEN RED
+1789592575	e8c6ad6b34e9	parallel	HEAD	test-mail-sendmail.sh	red	fail	uphold closes suit bead
+1789592575	e8c6ad6b34e9	parallel	HEAD	test-mail-sendmail.sh	red	fail	SEEN RED
+1789592575	e8c6ad6b34e9	parallel	HEAD	test-mail-sendmail.sh	red	fail	retire closes suit bead
+1789592575	e8c6ad6b34e9	parallel	HEAD	test-mail-sendmail.sh	red	fail	SEEN RED
+1789592575	e8c6ad6b34e9	parallel	HEAD	test-mail-sendmail.sh	red	fail	amend closes suit bead
+1789660594	ea5195c7a90e	serial	spira/sp-d0j1g	test-batch.sh	red	fail	landing-shaped records
+1789591383	ea862743ea02	serial	spira/sp-urzcm	test-migrate-ask.sh	red	fail	no ask.sh callers remain in spira/ or cockpit/
+1789689011	f10b701a0966	parallel	spira/queue/20260917T234903Z	test-testdb-concurrent.sh	red	fail	gone baseline must exit fixture-fault (75)
+1789616881	f44170323ccf	parallel	spira/sp-vlwgc	test-concierge.sh	red	fail	cockpit.sh from pane exits 0
+1789616881	f44170323ccf	parallel	spira/sp-vlwgc	test-concierge.sh	red	fail	cockpit.sh from pane calls concierge.sh attach
+1789546185	f4c4ac862f63	serial	spira/sp-itsy	test-ready.sh	red	fail	agent-absent
+1789546185	f4c4ac862f63	serial	spira/sp-itsy	test-ready.sh	red	fail	no cockpit snapshot at /tmp/X/run/cockpit.env — collector has not written yet
+1789616850	f5326be23346	parallel	main	test-attempts.sh	red	fail	one in_progress transition counts as 1
+1789616850	f5326be23346	parallel	main	test-attempts.sh	red	fail	three events poison
+1789589867	f6e136c9ccb8	parallel	spira/sp-urzcm	test-poison.sh	red	fail	a dispatchable bead at the threshold is poisoned
+1789589867	f6e136c9ccb8	parallel	spira/sp-urzcm	test-poison.sh	red	fail	and the pass says so
+1789589867	f6e136c9ccb8	parallel	spira/sp-urzcm	test-poison.sh	red	fail	and the operator is asked what to do about it
+1789589867	f6e136c9ccb8	parallel	spira/sp-urzcm	test-poison.sh	red	fail	against the bead that poisoned
+1789589867	f6e136c9ccb8	parallel	spira/sp-urzcm	test-poison.sh	red	fail	an already-poisoned bead emits nothing
+1789589867	f6e136c9ccb8	parallel	spira/sp-urzcm	test-poison.sh	red	fail	the first pass over the threshold asks exactly once
+1789589867	f6e136c9ccb8	parallel	spira/sp-urzcm	test-poison.sh	red	fail	a second pass over the same count asks nothing more
+1789589867	f6e136c9ccb8	parallel	spira/sp-urzcm	test-poison.sh	red	fail	but clearing the label did NOT re-arm the ask
+1789589867	f6e136c9ccb8	parallel	spira/sp-urzcm	test-poison.sh	red	fail	a fourth attempt is a new fact and asks again
+1789589867	f6e136c9ccb8	parallel	spira/sp-urzcm	test-poison.sh	red	fail	the fixture really did close it mid-pass
+1789589867	f6e136c9ccb8	parallel	spira/sp-urzcm	test-poison.sh	red	fail	the bead that was still open is poisoned
+1789589867	f6e136c9ccb8	parallel	spira/sp-urzcm	test-poison.sh	red	fail	ask title shows attempt count not 'failed'
+1789589867	f6e136c9ccb8	parallel	spira/sp-urzcm	test-poison.sh	red	fail	BRANCH line says no commits when branch is empty
+1789589867	f6e136c9ccb8	parallel	spira/sp-urzcm	test-poison.sh	red	fail	branch with one commit reports its count
+1789589796	f6e136c9ccb8	parallel	spira/sp-urzcm	test-incident-recur-cause.sh	red	fail	exactly one Sin ask recorded
+1789589739	f6e136c9ccb8	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	grep pattern fires on a planted ask.sh caller
+1789589739	f6e136c9ccb8	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	no ask.sh callers remain in spira/ or cockpit/
+1789589739	f6e136c9ccb8	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	lib.sh spira_ask_timeout_loop question passes lint
+1789589739	f6e136c9ccb8	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	lib.sh land_escalate question passes lint
+1789589739	f6e136c9ccb8	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	lib.sh spira_event note passes lint
+1789589739	f6e136c9ccb8	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	sentinel.sh requeue question passes lint
+1789589739	f6e136c9ccb8	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	watchd.sh question passes lint
+1789589739	f6e136c9ccb8	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	reflect.sh question passes lint
+1789589739	f6e136c9ccb8	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	strand.sh question passes lint
+1789589739	f6e136c9ccb8	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	pilgrimage.sh note passes lint
+1789589739	f6e136c9ccb8	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	skew.sh question passes lint
+1789589739	f6e136c9ccb8	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	incident.sh SIN question passes lint
+1789589739	f6e136c9ccb8	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	archivist.sh note passes lint
+1789589749	f6e136c9ccb8	parallel	spira/sp-urzcm	test-event.sh	red	fail	a missing emitter fails loudly
+1789589749	f6e136c9ccb8	parallel	spira/sp-urzcm	test-event.sh	red	fail	and names what is missing
+1789589749	f6e136c9ccb8	parallel	spira/sp-urzcm	test-event.sh	red	fail	and says which outcome was lost
+1789596857	faf099c4d811	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	count_beads detects a real creation (positive control)
+1789596857	faf099c4d811	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789596857	faf099c4d811	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789596857	faf099c4d811	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789596857	faf099c4d811	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789596857	faf099c4d811	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789596857	faf099c4d811	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	exit 0
+1789596857	faf099c4d811	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789596857	faf099c4d811	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789596857	faf099c4d811	parallel	spira/sp-urzcm	test-ask-help.sh	red	fail	names the bad token
+1789597057	faf099c4d811	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and sent exactly one notification
+1789597057	faf099c4d811	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	notification names the epic
+1789597057	faf099c4d811	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	notification carries the target
+1789597057	faf099c4d811	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and carries which children closed
+1789597057	faf099c4d811	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and the epic itself is closed once the notice is out
+1789597057	faf099c4d811	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	a second pass announces nothing — the marker holds
+1789597057	faf099c4d811	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and sends no second notification
+1789597057	faf099c4d811	parallel	spira/sp-urzcm	test-pilgrimage.sh	red	fail	and the epic is now closed
+1789597036	faf099c4d811	parallel	spira/sp-urzcm	test-migrate-ask.sh	red	fail	no ask.sh callers remain in spira/ or cockpit/
+1789596851	faf099c4d811	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	insight creation exits 0 (positive control)
+1789596851	faf099c4d811	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	insight output carries bead id
+1789596851	faf099c4d811	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	ask.sh law exits 0
+1789596851	faf099c4d811	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	output carries 'law ['
+1789596851	faf099c4d811	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	bead id extracted from output
+1789596851	faf099c4d811	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	law without --default exits 0
+1789596851	faf099c4d811	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default
+1789596851	faf099c4d811	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default renders 'yes' default
+1789596851	faf099c4d811	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	omitted --default still has decision question
+1789596851	faf099c4d811	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	error message mentions colon separator
+1789596851	faf099c4d811	parallel	spira/sp-urzcm	test-ask-law.sh	red	fail	ask.sh law with colon exits 0 (positive pair)
+1789597272	faf099c4d811	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	the run says so with no error
+1789597272	faf099c4d811	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	and does not stumble over its unnamed log
+1789597272	faf099c4d811	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	and does not error
+1789597272	faf099c4d811	parallel	spira/sp-urzcm	test-watch-notify.sh	red	fail	with no error
+1789468992	fbb073ecb511	parallel	spira/sp-f342	test-census-blind.sh	red	fail	embedded store
+1789468992	fbb073ecb511	parallel	spira/sp-f342	test-census-blind.sh	red	fail	events write/read round trip failed — writes via dolt embedded (/tmp/X/embedded-db/.beads/embeddeddolt) are discarded
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	dolt is absent from PATH
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	events.log was created by bump_recur
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	recurs_of reads back 3 (db-wx4 acceptance criterion)
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	recurs_of sp-nd-2 reads 2
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	recurs_of sp-nd-1 still 3 after sp-nd-2 bumps
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	reclaims_of reads 2
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	requeues_of reads 1
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	requeues_of for thrash cause reads 1 (db-ipo)
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	output contains event_type 'recurred'
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	output contains cause 'suite-red'
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	output contains count 3
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	output contains 'reclaimed'
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	output contains 'lapsed' (db-ipo filter fix)
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	since=0 returns all events
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	census reports 3 sp-recur-suite-red (db-wx4 acceptance criterion)
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	census reports 2 sp-recur-merge-conflict
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	census reports 2 sp-reclaim-timeout
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	census reports 1 sp-requeue-thrash (db-ipo acceptance criterion)
+1789453694	fe0425f3a46d	parallel	spira/sp-f342	test-events-nodolt.sh	red	fail	census reports 1 sp-lapsed-lease-expired (db-ipo lapsed filter fix)
+1789570680	fe86f6188841	parallel	main	test-answers-premise-rejected.sh	red	fail	it woke the reader exactly once
+1789513191	feb84b3903e8	serial	spira/sp-nbnt	test-auron.sh	red	fail	re-derive fail
+1789513191	feb84b3903e8	serial	spira/sp-nbnt	test-auron.sh	red	fail	extras count

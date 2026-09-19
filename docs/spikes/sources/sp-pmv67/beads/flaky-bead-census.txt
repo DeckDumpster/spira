@@ -1,0 +1,29 @@
+# Every bead whose title contains 'flaky', read from the beads store 2026-09-18 (bd list --all --json).
+# id  status  created  title
+sp-d2xrt closed 2026-09-17T15:49 fix test-reclaim-slay-branch-guard.sh: flaky
+sp-tdm02 open 2026-09-17T16:28 fix test-released-defects.sh: flaky
+sp-o3yyq closed 2026-09-17T17:00 fix test-suites-fixture-fault.sh: flaky
+sp-h78b4 open 2026-09-17T18:00 fix test-suites-result-files.sh: flaky
+sp-j1w7b open 2026-09-17T18:00 fix test-doctor-embedded.sh: flaky
+sp-527lg closed 2026-09-17T18:00 fix test-cockpit-probe-fault.sh: flaky
+sp-hy2f0 closed 2026-09-17T18:00 fix test-cockpit-mouse.sh: flaky
+sp-1vn7j closed 2026-09-17T18:00 fix test-cockpit-landed.sh: flaky
+sp-qwpql closed 2026-09-17T18:23 fix test-dummy.sh: flaky
+sp-g31qy closed 2026-09-17T18:24 fix test-dummy.sh: flaky
+sp-fckrr open 2026-09-17T18:28 fix test-suites-confirm-red.sh: flaky
+sp-pj51i closed 2026-09-17T18:28 fix test-cockpit-probe-fault.sh: flaky
+sp-da0kg closed 2026-09-17T18:28 fix test-cockpit-landed.sh: flaky
+sp-v58yh closed 2026-09-17T18:29 fix test-dummy.sh: flaky
+sp-9qmwu open 2026-09-17T18:35 fix test-dummy.sh: flaky
+sp-mdyap closed 2026-09-17T18:42 fix test-dummy.sh: flaky
+sp-40a5p closed 2026-09-17T18:51 fix test-dummy.sh: flaky
+sp-wx42s closed 2026-09-17T18:56 fix test-dummy.sh: flaky
+sp-pmv67 in_progress 2026-09-17T19:01 SPIKE: tests need identity, lifecycle and a trust score — 'flaky' is currently one label applied by a counter that cannot tell a real failure from a false one
+sp-6zw2p closed 2026-09-17T19:21 the merge-queue quarantines, at threshold 1, exactly the suites the gate declared NOT flaky
+sp-1tu9d open 2026-09-17T21:50 fix test-suites-hygiene.sh: flaky
+sp-spj61 closed 2026-09-17T22:48 fix test-suites-confirm-red.sh: flaky
+sp-iaxck closed 2026-09-17T22:51 The flake observer counts annotations, not runs: one flaky suite in one run crosses the quarantine threshold
+sp-t600k open 2026-09-17T22:52 SPIKE: test-case identity, lifecycle and trust scores — replace 'flaky' with data
+sp-jfzus open 2026-09-17T23:26 fix test-suites-fixture-fault.sh: flaky
+sp-1j7ez open 2026-09-17T23:27 fix test-cockpit-mouse.sh: flaky
+sp-iavci open 2026-09-18T00:16 fix test-testdb-concurrent.sh: flaky
