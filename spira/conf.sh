@@ -81,6 +81,7 @@ SPIRA_BATCH_ARTIFACT_DAYS SPIRA_BATCH_TAIL_LINES
 SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST SPIRA_INCIDENT_PRIORITY
 SPIRA_FLAKE_QUARANTINE_AT SPIRA_FLAKE_WINDOW SPIRA_QUARANTINE_CLEAN_RUNS SPIRA_QUARANTINE_MAX_AGE
 SPIRA_QUEUE_BATCH_MAX SPIRA_QUEUE_BATCH_WAIT SPIRA_QUEUE_CI_MAXSEC SPIRA_QUEUE_CI_IDLE_SEC SPIRA_QUEUE_LOCAL_GATE SPIRA_QUEUE_INFRA_RETRIES SPIRA_QUEUE_STUCK_AGE SPIRA_QUEUE_DIR SPIRA_FORGE SPIRA_QUEUE_WAIT_LABEL SPIRA_QUEUE_ACTIONS_APP_ID
+SPIRA_QUEUE_THROTTLE_DEPTH_AT SPIRA_QUEUE_THROTTLE_RELEASE_AT SPIRA_QUEUE_THROTTLE_STALL_MINS SPIRA_QUEUE_THROTTLE_OVERRIDE
 SPIRA_AURON_RESTARTS SPIRA_AURON_RESTART_WINDOW
 SPIRA_PROD SPIRA_INSTANCE
 SPIRA_RELEASES SPIRA_RELEASES_KEEP
@@ -962,6 +963,25 @@ spira_conf_defaults() {
     # which admits a hand-posted commit status that bypasses gate enforcement. 15368 is the
     # GitHub Actions app. Must be a non-negative integer.
     : "${SPIRA_QUEUE_ACTIONS_APP_ID:=15368}"
+    # THE ADMISSION THROTTLE (sp-h7zzx) — Little's Law with a rework feedback term.
+    # Two conditions, two outcomes:
+    #   depth >= DEPTH_AT AND drain active → throttle new builders; queue is over capacity
+    #   depth >= DEPTH_AT AND drain zero  → escalate, do not throttle; queue is stalled
+    # Throttling a stalled queue delays repairs rather than reducing load.
+    #
+    # SPIRA_QUEUE_THROTTLE_DEPTH_AT: engage when CERTIFIED depth reaches this many branches.
+    # Default is two batches; tune up if the queue recovers faster than builders refill it.
+    : "${SPIRA_QUEUE_THROTTLE_DEPTH_AT:=$(( ${SPIRA_QUEUE_BATCH_MAX:-8} * 2 ))}"
+    # SPIRA_QUEUE_THROTTLE_RELEASE_AT: lift when depth drops to this. Hysteresis gap prevents
+    # oscillation; set below DEPTH_AT so lifting does not immediately re-engage.
+    : "${SPIRA_QUEUE_THROTTLE_RELEASE_AT:=${SPIRA_QUEUE_BATCH_MAX:-8}}"
+    # SPIRA_QUEUE_THROTTLE_STALL_MINS: if nothing has landed in this many minutes, the queue
+    # is stalled rather than busy. Stall → escalate, not throttle.
+    # Matches the loop-stall threshold by default (SPIRA_LOOP_STALL_SECS / 60 = 50m).
+    : "${SPIRA_QUEUE_THROTTLE_STALL_MINS:=50}"
+    # SPIRA_QUEUE_THROTTLE_OVERRIDE: set to 'off' to pin the automated throttle disabled.
+    # The stamp file is never written while this is 'off'; pool follows SPIRA_MAX_AEONS alone.
+    : "${SPIRA_QUEUE_THROTTLE_OVERRIDE:=}"
     # WHETHER THIS INSTALLATION RUNS ITS OWN TEST SUITES on a timer. On by default when
     # SPIRA_REPO is a git checkout (development mode — the operator can land changes); off
     # when it is not (a consumer installation from a release tarball, where SPIRA_REPO has
