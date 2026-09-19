@@ -99,7 +99,7 @@ rc_override=$?
 isz "SPIRA_MAIL_REPEAT_CONSIDERED lets the repeat through" "$rc_override"
 
 # Check the override is recorded in the delivered message header.
-msg_file="$(ls "$SPIRA_MAIL/operator/new/" 2>/dev/null | tail -1)"
+msg_file="$(ls -t "$SPIRA_MAIL/operator/new/" 2>/dev/null | head -1)"
 if [ -n "$msg_file" ]; then
     msg_content="$(cat "$SPIRA_MAIL/operator/new/$msg_file" 2>/dev/null)"
     want "override reason recorded in X-Spira-Repeat-Override header" \
