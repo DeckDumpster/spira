@@ -95,8 +95,8 @@ done
 _dr_op_level=FAIL; [ "${SPIRA_OPERATED:-1}" = 0 ] && _dr_op_level=WARN
 
 if command -v inotifywait >/dev/null 2>&1; then OK "inotifywait — $(command -v inotifywait)"
-else "$_dr_op_level" "inotifywait is not on PATH — no mail reaches you until a session starts" \
-                     "Install: apt install inotify-tools"; fi
+else WARN "inotifywait is not on PATH — spira-mail-deliver not installed; mail delivery is off" \
+          "Install inotify-tools and re-run install.sh to enable it: apt install inotify-tools"; fi
 
 # aerc is the default COCKPIT_MAIL — the check uses the configured client, not the literal name.
 _dr_mail_bin="${COCKPIT_MAIL:-}"

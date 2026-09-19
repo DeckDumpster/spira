@@ -76,7 +76,6 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
        spira-verify-asks.service spira-verify-asks.timer
        spira-gate-check.service spira-gate-check.timer
        spira-pr-notify.service spira-pr-notify.timer
-       spira-mail-deliver.service
        spira-mail-tidy.service spira-mail-tidy.timer
        spira-gh-intake.service spira-gh-intake.timer
        spira-broker.service spira-broker.timer
@@ -96,7 +95,6 @@ _ENABLE_TMPL=(cockpit-ensure.timer concierge.timer spira-watch-refresh.timer
               spira-gate-check.timer
               spira-pr-notify.timer
               spira-cockpit.service spira-loom.service
-              spira-mail-deliver.service
               spira-mail-tidy.timer
               spira-gh-intake.timer
               spira-broker.timer)
@@ -131,6 +129,18 @@ if [ "${SPIRA_SELF_TEST:-1}" != "0" ]; then
     ENABLE+=("$(inst_name spira-suites.timer)")
 else
     OPTIONAL+=(spira-suites.service spira-suites.timer)
+fi
+
+# spira-mail-deliver.service requires inotifywait. Without it the daemon exits 1 on start
+# and crash-loops under Restart=always. Skip when the binary is absent; install inotify-tools
+# and re-run install.sh to enable mail delivery.
+if command -v inotifywait >/dev/null 2>&1; then
+    UNITS+=(spira-mail-deliver.service)
+    ENABLE+=("$(inst_name spira-mail-deliver.service)")
+else
+    OPTIONAL+=(spira-mail-deliver.service)
+    echo "note: inotifywait not found — not installing spira-mail-deliver.service." >&2
+    echo "      Install inotify-tools and re-run install.sh to enable mail delivery." >&2
 fi
 
 # dolt-beads.service supervises the Dolt server itself, which is only this harness's business
