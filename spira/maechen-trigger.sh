@@ -126,14 +126,18 @@ fi
 # Deduplicates by bead id so a merge plus its landing commit counts as one.
 landing_count=0
 
-_count_landings() {   # _count_landings <repo_path> <since_ts>
-    local rp="$1" ts="$2" base_ref="" n=0
+_count_landings() {   # _count_landings <repo_path_or_name> <since_ts>
+    local rp="$1" ts="$2" base_ref="" rpath="" n=0
     base_ref="$(spira_landref "$rp" 2>/dev/null)" || base_ref=""
     if [ -z "$base_ref" ]; then
         log "landing count: cannot resolve base ref for $rp — skipped"
         printf '0'; return 0
     fi
-    n="$(git -C "$rp" log --format='%s' --after="@${ts}" "$base_ref" 2>/dev/null \
+    case "$rp" in
+        */*) rpath="$rp" ;;
+        *)   rpath="$(repo_root "$rp" 2>/dev/null)" || rpath="" ;;
+    esac
+    n="$(git -C "$rpath" log --format='%s' --after="@${ts}" "$base_ref" 2>/dev/null \
         | awk '
             /^spira: land / {
                 rest=substr($0,13)
@@ -169,8 +173,10 @@ _add_landings() {
 }
 
 # Home repo — always present.
-if [ -d "${SPIRA_REPO:-}" ]; then
-    _n="$(_count_landings "$SPIRA_REPO" "$watermark_ts")"
+_home_repo="$(spira_home_repo)"
+_home_path="$(repo_root "$_home_repo" 2>/dev/null)" || _home_path=""
+if [ -d "${_home_path:-}" ]; then
+    _n="$(_count_landings "$_home_repo" "$watermark_ts")"
     _add_landings "$_n"
 fi
 
@@ -182,7 +188,7 @@ if [ -f "${SPIRA_REPO_MAP:-}" ]; then
         _rp="${_rp#"${_rp%%[![:space:]]*}"}"; _rp="${_rp%"${_rp##*[![:space:]]}"}"
         case "${_nm:-}" in ''|'#'*) continue ;; esac
         [ -n "$_rp" ] || continue
-        [ "$_rp" = "${SPIRA_REPO:-}" ] && continue   # already counted
+        [ "$_nm" = "$_home_repo" ] && continue   # already counted
         [ -d "$_rp" ] || continue
         _n="$(_count_landings "$_rp" "$watermark_ts")"
         _add_landings "$_n"
