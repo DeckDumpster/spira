@@ -62,7 +62,7 @@ send_msg() {   # send_msg <mailbox> <subject> <bead-id|->
     local extra=""
     [ "$bid" != "-" ] && extra="--bead $bid"
     # shellcheck disable=SC2086
-    echo "body" | SPIRA_MAIL_LINT_CONSIDERED="test" \
+    echo "body" | SPIRA_MAIL_LINT_CONSIDERED="test" SPIRA_MAIL_REPEAT_CONSIDERED="fixture" \
         bash "$MAIL" send "$mbox" \
             --from "Bot <bot@spira>" \
             --subject "$subj" \
