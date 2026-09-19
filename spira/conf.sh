@@ -1209,10 +1209,10 @@ if [ -d "${SPIRA_DB:-}/.beads" ]; then
         _spira_schema_ok=0
         if [ "$_spira_bd_rc" -eq 0 ]; then
             _spira_schema_ok=1
-        elif printf '%s\n' "$_spira_bd_out" | grep -q 'dolt_server_port.*deprecated'; then
+        elif grep -q 'dolt_server_port.*deprecated' <<< "$_spira_bd_out"; then
             # A deprecated field in metadata.json; schema is unaffected (sp-lh8r).
             _spira_schema_ok=1
-        elif printf '%s\n' "$_spira_bd_out" | grep -q 'locked by another dolt process'; then
+        elif grep -q 'locked by another dolt process' <<< "$_spira_bd_out"; then
             # Lock contention means the store is in embedded mode — one exclusive lock,
             # many waiters. Embedded mode is refused by doctor.sh; run it to diagnose.
             printf 'spira: bd locked — store is in embedded mode (dolt_mode); run doctor.sh\n' >&2
