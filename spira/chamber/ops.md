@@ -212,7 +212,7 @@ the diagnosis.
 
 **Before closing, re-read the value the watcher reads and verify it has cleared:**
 
-    grep -E 'SP_UNSENT_OLDEST_H|SP_UNADOPTED|SP_QUEUE_STALL' /home/ryan/spira/run/cockpit.env 2>/dev/null
+    grep -E 'SP_UNSENT_OLDEST_H|SP_UNADOPTED|SP_QUEUE_STALL' "$SPIRA_RUN/cockpit.env" 2>/dev/null
 
 Quote the current reading in the close reason. If the condition still holds:
 
