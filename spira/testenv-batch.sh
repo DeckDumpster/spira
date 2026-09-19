@@ -402,11 +402,11 @@ if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ] && \
                         printf '%s\n' \
                             "Repeat attempt refused. Prior red at ${_cached_when:-unknown}. Key: batch-$BATCH_KEY. Red suites: ${_cached_red_suites:-(unknown)}. Branch: $BR." \
                             | SPIRA_INCIDENT_REF="repeat-refused:$BR" \
+                              SPIRA_INCIDENT_CAUSE=repeat-refused \
                               SPIRA_INCIDENT_TYPE=task \
                               SPIRA_INCIDENT_ACTOR=builder \
                               SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" \
                               SPIRA_INCIDENT_REPO="$(spira_home_repo 2>/dev/null)" \
-                              SPIRA_INCIDENT_CAUSE=repeat-refused \
                               bash "$_incident_cmd" file \
                                   "repeat attempt: no change — $BR" \
                                   - 2>/dev/null || true
