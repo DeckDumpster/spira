@@ -1,0 +1,24 @@
+[Unit]
+# gh-intake.sh fetches open issues from SPIRA_GH_INTAKE_REPO and runs them
+# through a triage gate: trusted authors (SPIRA_GH_INTAKE_TRUSTED) become
+# work beads; everyone else gets an untrusted record and appears in a daily
+# digest mail. Promotion requires an allowlisted login to apply the GitHub
+# label spira:accept; the actor is verified from the events API.
+#
+# ExecCondition makes the unit inert until SPIRA_GH_INTAKE_REPO is configured.
+# A timer firing without a configured inbox would abort every pass with an error.
+Description=Spira GitHub issue intake — triage gate
+After=default.target
+
+[Service]
+Type=oneshot
+ExecCondition=/bin/sh -c 'test -n "${SPIRA_GH_INTAKE_REPO:-}"'
+ExecStart=@SPIRA_PROD@/gh-intake.sh
+TimeoutStartSec=120
+CPUQuota=10%
+Nice=10
+StandardOutput=append:@SPIRA_RUN@/gh-intake.log
+StandardError=append:@SPIRA_RUN@/gh-intake.log
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Ingest GitHub issues through the triage gate every 15 minutes
+
+[Timer]
+# FIFTEEN MINUTES. The triage gate fetches open issues and files trusted ones
+# as work beads; untrusted ones accumulate in a daily digest. 15 minutes keeps
+# the inbox fresh without hammering the unauthenticated rate limit (60 req/hr).
+OnBootSec=15min
+OnUnitActiveSec=15min
+AccuracySec=2min
+Unit=spira-gh-intake.service
+
+[Install]
+WantedBy=timers.target
