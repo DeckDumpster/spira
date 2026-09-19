@@ -10,7 +10,7 @@
 #   3. (a) Already-current: refuses (exit 1) if the release is already active.
 #   4. (b) Drain refuses: non-zero drain exit blocks deploy without killing aeons.
 #   5. (c) Rollback non-first: failed health check restores the prior release.
-#   6. (d) Unit re-render: install.sh is called with SPIRA_PROD=$SPIRA_RELEASES/current.
+#   6. (d) Unit re-render: install.sh is called with SPIRA_PROD=$SPIRA_RELEASES/current/spira.
 #   7. (e) Dry-run: --dry-run leaves the releases dir untouched.
 #   8. (f) First-deploy rollback: no prior release → current removed, units on checkout, world resumed.
 #   9. (g) spira.conf update: after successful deploy SPIRA_PROD written to conf.
@@ -32,6 +32,7 @@ bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 is()      { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+is()      { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 is0()     { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
 not0()    { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero, got 0"; }
 islink()  {
@@ -362,7 +363,7 @@ islink "rollback-skew: current restored to prior" "$RELEASES/current" "$PRIOR_RE
 
 # ==========================================================================
 echo
-echo "PROPERTY 6: re-render calls install.sh with SPIRA_PROD=\$SPIRA_RELEASES/current"
+echo "PROPERTY 6: re-render calls install.sh with SPIRA_PROD=\$SPIRA_RELEASES/current/spira"
 # ==========================================================================
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 
