@@ -42,6 +42,8 @@ set -uo pipefail
 
 STATUS="$SPIRA_RUN/landing.status"
 MAILBOX="$SPIRA_RUN/landing.progress"
+LAND_RUN="$SPIRA_RUN/landing.run"
+LAND_CONTAINERS="$SPIRA_RUN/landing.containers"
 
 # n_branches is the positive control's evidence and it counts every spira/* ref seen, not
 # the subset that was landable. "I looked at nine branches and moved none" is a claim about
@@ -81,6 +83,7 @@ finish() {
       printf 'SP_LAND_MOVED=%s\n'    "$n_prog"
     } > "$STATUS.$$" 2>/dev/null && mv -f "$STATUS.$$" "$STATUS" 2>/dev/null
     rm -f "$STATUS.$$" 2>/dev/null
+    rm -f "$LAND_RUN" "$LAND_CONTAINERS" 2>/dev/null
     exit "$rc"
 }
 # EXECUTABLE FROM HERE. Everything below runs a landing pass — the EXIT trap that writes the
@@ -92,6 +95,166 @@ finish() {
 # A partial guard on a side effect is worse than none: it makes the remaining half harder to
 # see. Guarded the way harness.sh guards itself.
 if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0 2>/dev/null || true; fi
+
+# ======================================================================================
+# HALT SUBCOMMAND — stop a running pass cleanly.
+#
+#   landing.sh halt [--reason <text>] [--dry-run]
+#
+# Signals the pass and waits for it to finish its current step (bounded by
+# SPIRA_HALT_GRACE, default 30s) before escalating to SIGKILL. Tears down
+# containers by name from the registry (LAND_CONTAINERS), removes unpushed
+# batch branches, and writes an interrupt record so the reason is durable.
+#
+# --dry-run: reports whether a pass is running and what would be cleaned up,
+# touching nothing. Exits non-zero when no pass is running.
+# ======================================================================================
+_land_pid_alive() {   # _land_pid_alive <pid> -> 0 when pid exists and is not ourselves
+    [ -n "$1" ] || return 1
+    [ "$1" != "$$" ] || return 1
+    [ -d "/proc/$1" ]
+}
+
+_halt_cleanup_orphan_branches() {
+    local name repo open_br rbr open_file
+    for name in $(spira_repos 2>/dev/null); do
+        [ "$(repo_land "$name" 2>/dev/null)" = "queue" ] || continue
+        repo="$(repo_root "$name" 2>/dev/null)" || continue
+        open_br=""
+        open_file="${SPIRA_QUEUE_DIR:-$SPIRA_RUN/queue}/$name/open"
+        if [ -r "$open_file" ]; then
+            while IFS='=' read -r k v; do
+                [ "$k" = branch ] && { open_br="$v"; break; }
+            done < "$open_file"
+        fi
+        while IFS= read -r rbr; do
+            [ -n "$rbr" ] || continue
+            [ "$rbr" = "$open_br" ] && continue
+            # Pushed branches have a remote tracking ref — leave them alone.
+            if git -C "$repo" for-each-ref "refs/remotes/*/$rbr" 2>/dev/null | grep -q .; then
+                continue
+            fi
+            printf 'landing halt: removing orphaned batch branch %s in %s\n' "$rbr" "$name"
+            SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$rbr" 2>/dev/null \
+                || printf 'landing halt: WARNING — could not remove %s\n' "$rbr"
+        done < <(git -C "$repo" for-each-ref --format='%(refname:short)' \
+                     'refs/heads/spira/queue/*' 2>/dev/null)
+    done
+}
+
+_cmd_halt() {
+    local reason="" dry_run=0 grace="${SPIRA_HALT_GRACE:-30}"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --reason)     [ $# -ge 2 ] || { printf 'landing halt: --reason requires an argument\n' >&2; exit 2; }
+                      reason="$2"; shift 2 ;;
+        --reason=*)   reason="${1#--reason=}"; shift ;;
+        --dry-run)    dry_run=1; shift ;;
+        --*)  printf 'landing halt: unknown option: %s\n' "$1" >&2; exit 2 ;;
+        *)    printf 'landing halt: unexpected argument: %s\n' "$1" >&2; exit 2 ;;
+        esac
+    done
+
+    local pid="" started="" repo="" branch="" phase=""
+    if [ -r "$LAND_RUN" ]; then
+        while IFS='=' read -r k v; do
+            case "$k" in
+            pid)     pid="$v" ;;
+            started) started="$v" ;;
+            repo)    repo="$v" ;;
+            branch)  branch="$v" ;;
+            phase)   phase="$v" ;;
+            esac
+        done < "$LAND_RUN"
+    fi
+
+    # Read container registry before signaling — a clean pass exit deletes the file.
+    local containers=()
+    if [ -r "$LAND_CONTAINERS" ]; then
+        while IFS= read -r cname; do
+            [ -n "$cname" ] && containers+=("$cname")
+        done < "$LAND_CONTAINERS"
+    fi
+
+    local running=0
+    _land_pid_alive "${pid:-}" && running=1
+
+    if [ "$dry_run" = 1 ]; then
+        if [ "$running" = 0 ]; then
+            printf 'landing: no pass running\n'
+            exit 1
+        fi
+        local elapsed="-"
+        [ -n "${started:-}" ] && elapsed="$(( $(date +%s) - started ))s"
+        printf 'landing: pass running — pid=%s elapsed=%s repo=%s branch=%s phase=%s\n' \
+            "$pid" "$elapsed" "${repo:--}" "${branch:--}" "${phase:--}"
+        local cname
+        for cname in "${containers[@]:-}"; do
+            [ -n "$cname" ] && printf 'landing: would tear down container %s\n' "$cname"
+        done
+        exit 0
+    fi
+
+    if [ "$running" = 0 ]; then
+        printf 'landing: no pass running — nothing to halt\n' >&2
+        exit 1
+    fi
+
+    local elapsed="-"
+    [ -n "${started:-}" ] && elapsed="$(( $(date +%s) - started ))s"
+
+    # Write interrupt record before signaling so the reason is durable.
+    local int_file="$SPIRA_RUN/landing.interrupted"
+    { printf 'halted=%s\n'   "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      printf 'reason=%s\n'   "${reason:-unstated}"
+      printf 'pid=%s\n'      "${pid:--}"
+      printf 'elapsed=%s\n'  "$elapsed"
+      printf 'repo=%s\n'     "${repo:--}"
+      printf 'branch=%s\n'   "${branch:--}"
+      printf 'phase=%s\n'    "${phase:--}"
+    } > "$int_file.$$" 2>/dev/null && mv -f "$int_file.$$" "$int_file" 2>/dev/null
+
+    printf 'landing: halting pass pid=%s elapsed=%s repo=%s branch=%s phase=%s reason=%s\n' \
+        "$pid" "$elapsed" "${repo:--}" "${branch:--}" "${phase:--}" "${reason:-unstated}"
+
+    kill -TERM "$pid" 2>/dev/null || true
+
+    local waited=0
+    while [ "$waited" -lt "$grace" ]; do
+        [ -d "/proc/$pid" ] || break
+        sleep 1
+        waited=$(( waited + 1 ))
+    done
+
+    if [ -d "/proc/$pid" ]; then
+        printf 'landing: pass did not stop after %ss — sending SIGKILL\n' "$grace"
+        kill -KILL "$pid" 2>/dev/null || true
+        sleep 1
+    fi
+
+    # After SIGKILL the EXIT trap does not run — clean up state files here.
+    rm -f "$LAND_RUN" "$LAND_CONTAINERS" 2>/dev/null || true
+
+    # Tear down containers by name from the record.
+    local cname
+    for cname in "${containers[@]:-}"; do
+        [ -n "$cname" ] || continue
+        if podman ps --format '{{.Names}}' 2>/dev/null | grep -qxF "$cname"; then
+            printf 'landing: tearing down container %s\n' "$cname"
+            bash "${SPIRA_PROD:-$SPIRA_HOME}/testenv.sh" down --name "$cname" >/dev/null 2>&1 \
+                || printf 'landing: WARNING — could not tear down container %s\n' "$cname"
+        fi
+    done
+
+    _halt_cleanup_orphan_branches
+
+    printf 'landing: halted — interrupted at phase=%s in %s (%s)\n' \
+        "${phase:--}" "${repo:--}" "$elapsed"
+}
+
+case "${1:-}" in
+halt) shift; _cmd_halt "$@" ;;
+esac
 
 trap finish EXIT
 trap 'exit 143' TERM INT
@@ -115,6 +278,18 @@ trap 'exit 143' TERM INT
 # costs one branch's turn, and the next pass is two minutes away.
 PASS_START="$(date +%s)"
 LAND_MAXSEC="${SPIRA_LAND_MAXSEC:-3600}"     # what the dispatcher gave us, or the same default
+
+# _land_state — write pass state atomically so halt can report what was interrupted.
+# Called at key phase transitions in land_repo(); always includes pid and started.
+_land_state() {   # _land_state [key=value...]
+    { printf 'pid=%s\nstarted=%s\n' "$$" "$PASS_START"
+      printf '%s\n' "$@"
+    } > "$LAND_RUN.$$" 2>/dev/null \
+    && mv -f "$LAND_RUN.$$" "$LAND_RUN" 2>/dev/null || true
+}
+_land_state
+export SPIRA_LANDING_CONTAINERS="$LAND_CONTAINERS"
+: > "$LAND_CONTAINERS" 2>/dev/null || true
 LAND_GATE_RESERVE="${SPIRA_LAND_GATE_RESERVE:-1200}"
 
 # gate_fits -> 0 if there is room for another gate in this pass, 1 if the pass should stop.
@@ -747,6 +922,7 @@ for i in d:
 
     for br in $brs; do
         id="${br#spira/}"
+        _land_state "repo=$name" "branch=$br"
         # THE LIST IS OLDER THAN THE LOOP. `brs` was read once at the top of this function
         # and a pass legitimately runs for tens of minutes — the 14:42 pass on 2026-09-07
         # reached its last branch at 15:16. In that window a branch can be landed by hand,
@@ -926,9 +1102,11 @@ for i in d:
                 log "landing: $(( LAND_MAXSEC - ($(date +%s) - PASS_START) ))s left in this pass — not certifying $name's $id; the next pass takes it"
                 return 0
             fi
+            _land_state "repo=$name" "branch=$br" "phase=gate"
             gate_out="$(SPIRA_GATE_LOCK_WAIT="$(gate_lock_wait)" SPIRA_GATE_BEAD="$id" \
                 "$SPIRA_HOME/gate.sh" "$br" "$name" 2>&1)"
             gate_rc=$?
+            _land_state "repo=$name" "branch=$br"
             gate_outcome="$(spira_gate_outcome "$gate_rc")"
             gate_reason="$(printf '%s' "$gate_out" \
                 | sed -n 's/^gate: VERDICT=[A-Z_]* reason=\([^ ]*\).*$/\1/p' | tail -1)"
@@ -1051,9 +1229,11 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
         # name, which is right only while a branch is named after the bead it was cut for —
         # and a branch's affinity is recorded precisely because that is not always true
         # (law-branch-affinity-is-recorded).
+        _land_state "repo=$name" "branch=$br" "phase=gate"
         gate_out="$(SPIRA_GATE_LOCK_WAIT="$(gate_lock_wait)" SPIRA_GATE_BEAD="$id" \
             "$SPIRA_HOME/gate.sh" "$br" "$name" 2>&1)"
         gate_rc=$?
+        _land_state "repo=$name" "branch=$br"
         # ------------------------------------------------------------------------------
         # FOUR OUTCOMES, AND ONLY ONE OF THEM IS THE BRANCH'S FAULT (conf.sh).
         #
