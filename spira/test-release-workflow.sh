@@ -103,5 +103,16 @@ echo "5. Build steps do not suppress failure"
 nowant "no continue-on-error: true" "continue-on-error: true"
 
 # ============================================================================
+echo
+echo "6. build-tarball.sh is called with --name to stamp once per release"
+# ============================================================================
+
+# The tarball stem must match the release tag stem so deploy.sh and skew.sh
+# can correlate them without a separate asset lookup or timestamp fallback.
+# Without --name, build-tarball.sh generates its own timestamp independently
+# of the tag, producing the mismatch that issue #51 describes.
+want "build-tarball.sh uses --name" "--name"
+
+# ============================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
