@@ -12,6 +12,7 @@
 # run-cancel <repo-dir> <run-id>               cancels an in-progress run
 # workflow-rerun <repo-dir> <run-id>           re-queues a failed workflow run
 # pr-close <repo-dir> <pr-number>              closes the PR without merging
+# pr-comment <repo-dir> <pr-number> <body>     posts a comment to the PR
 # branch-protect <repo-dir> <branch>           set: required gate check, no force-push, no delete
 # branch-protection-status <repo-dir> <branch> prints: protected | unprotected
 
@@ -195,6 +196,10 @@ except Exception: pass
     pr-close)
         pr_n="${1:-}"
         ( cd "$repo" && ghq pr close "$pr_n" ) 2>/dev/null
+        ;;
+    pr-comment)
+        pr_n="${1:-}" body="${2:-}"
+        ( cd "$repo" && ghq pr comment "$pr_n" --body "$body" ) 2>/dev/null
         ;;
     branch-protect)
         base="${1:-}"
