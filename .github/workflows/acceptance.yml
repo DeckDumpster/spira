@@ -1,0 +1,216 @@
+# acceptance.yml — run acceptance-run.sh against a release tag on a genuinely
+# clean machine and record PASS/FAIL in refs/notes/acceptance on the tag.
+#
+# TRIGGERS
+#   push to spira-release-* tags: automatically tests each release as it is cut.
+#   workflow_dispatch: manual run with an explicit tag (and optional prev-tag for
+#     upgrade/rollback phases).
+#
+# THE STUB AGENT. acceptance-agent.sh replaces claude so no model credential is
+# needed. It commits acceptance-probe.txt and closes the bead — proving the full
+# sentinel → summon → claim → branch → commit → land path deterministically.
+#
+# SINGLE-CHECKOUT MODE. --agent passes CONFIGURE_PROD=<clone> so install.sh treats
+# the cloned tag as its own production checkout. This skips the promote.sh path
+# (which does not apply on a clean machine without a tarball-based release) and
+# keeps the acceptance test self-contained: nothing touches GitHub beyond the
+# workflow run itself.
+#
+# RECORDING. acceptance-run.sh --record writes refs/notes/acceptance on the tag.
+# The Push notes step pushes those notes back so the verdict persists on the repo.
+# The Step summary step writes a one-line summary to the workflow run page.
+#
+# ACTION REFERENCES. The provision and teardown jobs reference the operator's own
+# runner infrastructure (DeckDumpster/ephemeral-ci). A clone replaces these with
+# its own or removes the provision/teardown jobs and points runs-on at whatever
+# runner it has.
+
+name: Acceptance
+
+on:
+  push:
+    tags:
+      - 'spira-release-*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to test (spira-release-*)
+        required: true
+      prev-tag:
+        description: Previous tag for upgrade/rollback phases (optional)
+        required: false
+        default: ''
+
+concurrency:
+  group: acceptance-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Create the machine the acceptance run will use.
+  # ---------------------------------------------------------------------------
+  provision:
+    runs-on: ubuntu-latest
+    outputs:
+      vmid:  ${{ steps.vm.outputs.vmid }}
+      label: ${{ steps.vm.outputs.label }}
+    steps:
+      - uses: DeckDumpster/ephemeral-ci/provision@v1
+        id: vm
+        with:
+          ts-oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          ts-oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          runner-reg-pat:     ${{ secrets.RUNNER_REG_PAT }}
+          pve-token-id:       ${{ secrets.PVE_TOKEN_ID }}
+          pve-token-secret:   ${{ secrets.PVE_TOKEN_SECRET }}
+          pve-api-host:       ${{ vars.PVE_API_HOST }}
+          pve-node:           ${{ vars.PVE_NODE }}
+          template-vmid:      ${{ vars.TEMPLATE_VMID }}
+
+  # ---------------------------------------------------------------------------
+  # The acceptance run itself, on the provisioned machine.
+  # ---------------------------------------------------------------------------
+  acceptance:
+    needs: provision
+    runs-on: [self-hosted, "${{ needs.provision.outputs.label }}"]
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Confirm provisioned machine
+        run: test "$RUNNER_NAME" = "${{ needs.provision.outputs.label }}"
+
+      - name: Stop apt automation
+        run: |
+          sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service
+          sudo systemctl stop apt-daily-upgrade.service apt-daily.service unattended-upgrades.service || true
+          sudo dpkg --configure -a || true
+
+      - name: Enable systemd user session
+        # The runner process is not a login session, so XDG_RUNTIME_DIR may be
+        # unset and /run/user/<uid> may not exist. Linger creates the runtime
+        # directory and starts the user systemd manager so systemctl --user works.
+        run: |
+          sudo loginctl enable-linger "$USER"
+          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          for i in $(seq 10); do
+            XDG_RUNTIME_DIR="/run/user/$(id -u)" systemctl --user status >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+      - name: Install gh
+        run: |
+          if ! command -v gh >/dev/null 2>&1; then
+            mkdir -p /etc/apt/keyrings
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+              | sudo gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+            printf 'deb [arch=%s signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' \
+              "$(dpkg --print-architecture)" \
+              | sudo tee /etc/apt/sources.list.d/github-cli.list
+            sudo apt-get update -q && sudo apt-get install -yq gh
+          fi
+
+      - name: Install bd
+        # build-bd.sh --from-release downloads the pinned release binary (SPIRA_BD_TAG
+        # from conf.sh) and installs it to $HOME/.local/bin/bd and bd-embedded.
+        # The schema check is skipped when no existing store is present — correct for a
+        # fresh machine where the db has not been created yet.
+        run: bash spira/build-bd.sh --from-release --install
+
+      - name: Install dolt
+        # Dolt version is pinned in testenv/Containerfile (DOLT_VERSION) to keep
+        # the acceptance test environment consistent with the suite container.
+        run: |
+          _dolt_ver="$(grep '^ARG DOLT_VERSION=' spira/testenv/Containerfile | cut -d= -f2)"
+          _arch="$(uname -m)"; [ "$_arch" = x86_64 ] && _arch=amd64
+          curl -fsSL \
+            "https://github.com/dolthub/dolt/releases/download/v${_dolt_ver}/dolt-linux-${_arch}.tar.gz" \
+            | tar -xz -C /tmp
+          sudo install -m 0755 "/tmp/dolt-linux-${_arch}/bin/dolt" /usr/local/bin/dolt
+
+      - name: Create scratch repo
+        # A local bare repo as origin with a working clone. acceptance-run.sh files
+        # a bead with repo:scratch-repo; the sentinel lands it here by push.
+        run: |
+          git init --bare "$HOME/scratch-repo.git"
+          git clone "$HOME/scratch-repo.git" "$HOME/scratch-repo"
+          git -C "$HOME/scratch-repo" \
+            -c user.email="acceptance@spira.local" \
+            -c user.name="Acceptance" \
+            commit --allow-empty -m "init"
+          git -C "$HOME/scratch-repo" push origin main
+
+      - name: Write repo-map
+        # Pre-write the repo-map before install.sh runs configure.sh, which seeds
+        # it from the example only when it does not already exist.
+        run: |
+          mkdir -p "$HOME/.config/spira"
+          printf 'scratch-repo | %s | push | origin/main | |\n' "$HOME/scratch-repo" \
+            > "$HOME/.config/spira/repo-map"
+
+      - name: Run acceptance
+        env:
+          CONFIGURE_MAX_AEONS: "1"
+          CONFIGURE_MAX_LIVE_AEONS: ""
+          CONFIGURE_DOLT_DATA: ""
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          _tag="${{ inputs.tag || github.ref_name }}"
+          _prev="${{ inputs.prev-tag || '' }}"
+          _args=(
+            "$_tag"
+            --scratch-repo "$HOME/scratch-repo"
+            --agent        "$GITHUB_WORKSPACE/spira/acceptance-agent.sh"
+            --bd-db        "$HOME/.local/share/spira/db"
+            --record
+          )
+          [ -n "${_prev:-}" ] && _args+=(--prev-tag "$_prev")
+          bash spira/acceptance-run.sh "${_args[@]}"
+
+      - name: Push notes
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.email "acceptance@spira.local"
+          git config user.name "Spira Acceptance"
+          git push origin 'refs/notes/acceptance' 2>/dev/null || true
+
+      - name: Step summary
+        if: always()
+        run: |
+          _tag="${{ inputs.tag || github.ref_name }}"
+          _note="$(git notes --ref=acceptance show "refs/tags/$_tag" 2>/dev/null || echo '(no note written)')"
+          printf '## Acceptance: %s\n\n```\n%s\n```\n' "$_tag" "$_note" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Destroy the machine. Runs even when provision or acceptance fail.
+  # ---------------------------------------------------------------------------
+  teardown:
+    needs: [provision, acceptance]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: DeckDumpster/ephemeral-ci/teardown@v1
+        with:
+          vmid:  ${{ needs.provision.outputs.vmid }}
+          label: ${{ needs.provision.outputs.label }}
+          runner-reg-pat:     ${{ secrets.RUNNER_REG_PAT }}
+          ts-oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          ts-oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          pve-token-id:       ${{ secrets.PVE_TOKEN_ID }}
+          pve-token-secret:   ${{ secrets.PVE_TOKEN_SECRET }}
+          pve-api-host:       ${{ vars.PVE_API_HOST }}
+          pve-node:           ${{ vars.PVE_NODE }}

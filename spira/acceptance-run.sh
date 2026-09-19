@@ -59,6 +59,7 @@ prev_tag=""
 do_record=0
 do_file_defects=0
 bd_db="${HOME}/spira-acceptance-test-db"
+_agent=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -68,6 +69,8 @@ while [ $# -gt 0 ]; do
         --prev-tag=*)    prev_tag="${1#--prev-tag=}"; shift ;;
         --bd-db)         bd_db="${2:-}"; shift 2 ;;
         --bd-db=*)       bd_db="${1#--bd-db=}"; shift ;;
+        --agent)         _agent="${2:-}"; shift 2 ;;
+        --agent=*)       _agent="${1#--agent=}"; shift ;;
         --record)        do_record=1; shift ;;
         --file-defects)  do_file_defects=1; shift ;;
         -*)              printf 'acceptance-run: unknown option: %s\n' "$1" >&2; exit 2 ;;
@@ -171,9 +174,26 @@ is0 "phase A: git clone --branch $tag" "$?"
 # We pass SPIRA_INSTALL_CONFLICT_CONSIDERED=1 only if this is not the first run on this
 # machine — on a genuinely clean machine, no conflict should exist.
 _install_rc=0
-SPIRA_HOME_REPO="$(basename "$scratch_repo")" \
-    bash "$_clone/install.sh" 2>&1 | tee "$TMP/install.log" || _install_rc=$?
+_install_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")")
+# --agent triggers single-checkout mode (CONFIGURE_PROD = clone path) so install.sh
+# creates SPIRA_PROD inside the clone, bypassing the promote.sh requirement on a
+# clean machine. The git-checkout guard is overridden because the clone IS the prod
+# checkout in this mode — the test proves the path, not the release mechanism.
+if [ -n "$_agent" ]; then
+    _install_env+=(
+        "CONFIGURE_PROD=$_clone"
+        "SPIRA_INSTALL_PROD_GIT_CONSIDERED=1"
+    )
+fi
+env "${_install_env[@]}" bash "$_clone/install.sh" 2>&1 | tee "$TMP/install.log" || _install_rc=$?
 is0 "phase A: install.sh exits 0" "$_install_rc"
+
+# After a successful install with a stub agent, write SPIRA_AGENT into spira.conf so
+# every aeon spawned by the sentinel uses the stub instead of the real model CLI.
+if [ -n "$_agent" ] && [ "$_install_rc" -eq 0 ]; then
+    _conf="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
+    printf '\nSPIRA_AGENT = %s\n' "$_agent" >> "$_conf"
+fi
 
 # After install, verify ready.sh exits 0.
 _ready_out="$(bash "$HERE/ready.sh" 2>&1)" || true
