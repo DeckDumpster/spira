@@ -533,7 +533,7 @@ rebase_id_classify() {   # rebase_id_classify <branch> <onto> -> "rc|committer-n
     _out="$(env -i \
         HOME="$_home" \
         PATH="$PATH" \
-        SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$_home/nodb" \
         SPIRA_REPO="$REPO" SPIRA_REPO_MAP="$SH/repo-map" \
         SPIRA_GIT_NAME=testharness SPIRA_GIT_EMAIL=testharness@test.invalid \
         bash -c '. "$1/lib.sh" >/dev/null 2>&1
