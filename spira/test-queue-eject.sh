@@ -41,6 +41,9 @@ RMAP="$TMP/repo-map"
 printf '%s | %s | queue | main | | |\n' "$REPONAME" "$REPO" > "$RMAP"
 
 B() { "${TESTDB_BD:-bd}" -C "$SPIRA_DB" "$@"; }
+field() { B show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
+import sys,json
+d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
 
 run() {
     env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
@@ -120,11 +123,11 @@ st="$(awk '{print $1}' "$LANDSTATE/sp-ej01" 2>/dev/null || true)"
 [ "$st" = "RED" ] && ok "landstate written as RED" || bad "landstate RED" "got $st"
 
 # 2. Bead is open (claimable).
-bead_st="$(B state sp-ej01 status 2>/dev/null || true)"
+bead_st="$(field sp-ej01 status)"
 [ "$bead_st" = "open" ] && ok "bead reopened" || bad "bead open" "status=$bead_st"
 
 # 3. Assignee cleared.
-assignee="$(B state sp-ej01 assignee 2>/dev/null || true)"
+assignee="$(field sp-ej01 assignee)"
 [ -z "$assignee" ] && ok "assignee cleared" || bad "assignee cleared" "got $assignee"
 
 # 4. Batch record no longer lists sp-ej01; sp-ej02 remains.
