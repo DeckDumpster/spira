@@ -187,6 +187,21 @@ out="$(printf '%s' "$_question_body" | run send lint-q --from "Gate <g@g>" --sub
 isz  "SEEN GREEN: question with default is accepted" "$rc"
 
 # ==========================================================================
+# LINT: "ask below" promise with no section
+# ==========================================================================
+echo
+echo "lint: 'the ask below' promise without a section (SEEN RED then SEEN GREEN)"
+
+out="$(printf 'not retried until a human changes the approach; the ask below carries the failure\n' \
+    | run send lint-ask --from "Sentinel <sentinel@spira>" --subject "Some event" 2>&1)"; rc=$?
+isnz "SEEN RED: body promises ask below but has no section" "$rc"
+want "refusal names the rule"   "rule"     "$out"
+
+out="$(printf 'the ask below carries the failure\n\n## Question\n\nChange the approach?\n' \
+    | run send lint-ask --from "Sentinel <sentinel@spira>" --subject "Some event" 2>&1)"; rc=$?
+isz  "SEEN GREEN: body promises ask below and has a Question section" "$rc"
+
+# ==========================================================================
 # LINT OVERRIDE — SPIRA_MAIL_LINT_CONSIDERED=1 bypasses all checks
 # ==========================================================================
 echo

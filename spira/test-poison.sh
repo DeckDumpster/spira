@@ -211,6 +211,7 @@ want        "and the operator is asked what to do about it"  "3 in_progress tran
 # says what to do if the right answer is not obvious.
 want "the question mail body has the bead title"   "TITLE"       "$(cat "$MAIL_LOG")"
 want "and a Default line the operator can follow"  "## Default"  "$(cat "$MAIL_LOG")"
+want "and carries a failure excerpt (session log)" "--- last session log" "$(cat "$MAIL_LOG")"
 # THE POISONING IS RECORDED AS AN EVENT in events.log, not the operator mailbox. The ask is
 # the operator notification; the event log records the transition for audit. The transition
 # fires once — on entry to poisoned; the label is now on the bead, so every later pass takes
