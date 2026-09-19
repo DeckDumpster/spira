@@ -248,7 +248,8 @@ if grep -q 'already present 2\|skipped 2' <<<"$out"; then ok "closed ingested be
 else bad "closed ingested beads are found" "expected skip of 2, got: $(printf '%s' "$out" | tail -2 | tr '\n' ' ')"; fi
 rm -f "$STATE/closed_bead_flag"
 
-echo "5. --dry-run changes nothing:"
+echo "5. --dry-run changes nothing and says 'would create':"
+reset
 out="$(run 2 --dry-run)"
 if grep -qE '^update|update ' "$BDLOG"; then bad "dry-run does not write" "an update was issued"
 else ok "dry-run does not write"; fi
@@ -256,6 +257,10 @@ if grep -q -- 'github sync' "$BDLOG"; then
     if grep -q -- '--dry-run' "$BDLOG"; then ok "dry-run is passed through to the sync"
     else bad "dry-run is passed through to the sync" "sync ran for real"; fi
 else ok "dry-run does not sync"; fi
+if grep -q 'would create' <<<"$out"; then ok "dry-run says 'would create'"
+else bad "dry-run says 'would create'" "got: $(grep -E 'create|created' <<<"$out" | head -1)"; fi
+if grep -qE '\bcreated [0-9]' <<<"$out"; then bad "dry-run does not say 'created N'" "got: $(grep -E 'created [0-9]' <<<"$out" | head -1)"
+else ok "dry-run does not claim beads were created"; fi
 
 echo "6. an ingested issue outranks what the harness files about itself:"
 reset
