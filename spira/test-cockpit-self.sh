@@ -190,7 +190,7 @@ is "stillborn out-of-window: SP_SELF_STILLBORN_W is 0" "SP_SELF_STILLBORN_W=0" \
 
 # ======================================================================================
 echo
-echo "health.sh rendering: REPEATING row only when non-zero, JUDGE always"
+echo "health.sh rendering: SELF section removed — no REPEATING/BIRTH/STALL/JUDGE rows"
 
 RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
@@ -219,11 +219,10 @@ SP_SELF_STARVED_W='0'
 SP_SELF_STARVED_LAST='-'
 SNAP
 h_none="$(run_health)"
-want   "no repeating: JUDGE row always present" "judgement" "$h_none"
-want   "no repeating: passes since shown"       "passes ago" "$h_none"
-nowant "no repeating: no REPEATING row"         "REPEATING"  "$h_none"
-nowant "no repeating: no BIRTH row"             "BIRTH"      "$h_none"
-nowant "no repeating: no STALL row"             "STALL"      "$h_none"
+nowant "no repeating: no REPEATING row" "REPEATING" "$h_none"
+nowant "no repeating: no BIRTH row"    "BIRTH"      "$h_none"
+nowant "no repeating: no STALL row"    "STALL"      "$h_none"
+nowant "no repeating: no SELF label"   " SELF "     "$h_none"
 
 # One repeating ACT → REPEATING row present.
 cat > "$RUN/cockpit.env" <<'SNAP'
@@ -241,10 +240,8 @@ SP_SELF_STARVED_W='0'
 SP_SELF_STARVED_LAST='-'
 SNAP
 h_rep="$(run_health)"
-want   "repeating: REPEATING row present"       "REPEATING"           "$h_rep"
-want   "repeating: act text in row"             "handled 1 stranded"  "$h_rep"
-want   "repeating: JUDGE row still present"     "judgement"           "$h_rep"
-nowant "repeating: no BIRTH row when zero"      "BIRTH"               "$h_rep"
+nowant "repeating: no REPEATING row (SELF removed)" "REPEATING" "$h_rep"
+nowant "repeating: no BIRTH row when zero"          "BIRTH"     "$h_rep"
 
 # Stillborn non-zero → BIRTH alert row.
 cat > "$RUN/cockpit.env" <<'SNAP'
@@ -261,10 +258,8 @@ SP_SELF_STARVED_W='0'
 SP_SELF_STARVED_LAST='-'
 SNAP
 h_birth="$(run_health)"
-want   "stillborn: BIRTH alert row present"    "BIRTH"        "$h_birth"
-want   "stillborn: count visible"              "1"            "$h_birth"
-want   "stillborn: last time visible"          "3m ago"       "$h_birth"
-nowant "stillborn: no REPEATING row"           "REPEATING"    "$h_birth"
+nowant "stillborn: no BIRTH row (SELF removed)"     "BIRTH"     "$h_birth"
+nowant "stillborn: no REPEATING row (SELF removed)" "REPEATING" "$h_birth"
 
 # Stalled non-zero → STALL alert row.
 cat > "$RUN/cockpit.env" <<'SNAP'
@@ -281,10 +276,8 @@ SP_SELF_STARVED_W='2'
 SP_SELF_STARVED_LAST='7m ago'
 SNAP
 h_stall="$(run_health)"
-want   "stalled: STALL alert row present"      "STALL"        "$h_stall"
-want   "stalled: count visible"                "2"            "$h_stall"
-want   "stalled: last time visible"            "7m ago"       "$h_stall"
-nowant "stalled: no BIRTH row"                 "BIRTH"        "$h_stall"
+nowant "stalled: no STALL row (SELF removed)" "STALL" "$h_stall"
+nowant "stalled: no BIRTH row (SELF removed)" "BIRTH" "$h_stall"
 
 # ======================================================================================
 echo
