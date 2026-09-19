@@ -284,11 +284,15 @@ exit 0
 DOLTEOF
 chmod +x "$DOCTOR_TMP/dolt"
 
-# gh stub: return allow_auto_merge=false for the doctor check
+# gh stub: return allow_auto_merge value for the REST API doctor check
 cat > "$DOCTOR_TMP/gh" <<'GHEOF'
 #!/usr/bin/env bash
 case "$*" in
-    *"--json allowAutoMerge"*)
+    *"api"*".allow_auto_merge"*)
+        if [ -n "${GH_ALLOW_AUTO_MERGE_ERR:-}" ]; then
+            printf '%s\n' "$GH_ALLOW_AUTO_MERGE_ERR" >&2
+            exit 1
+        fi
         printf '%s\n' "${GH_ALLOW_AUTO_MERGE:-false}" ;;
     *) exit 0 ;;
 esac
@@ -305,6 +309,7 @@ printf 'prrepo|%s|pr|origin/main||\n' "$FAKE_REPO" > "$DOCTOR_MAP"
 run_doctor() {
     env -i PATH="$DOCTOR_TMP:$PATH" HOME="$DOCTOR_TMP/home" \
         GH_ALLOW_AUTO_MERGE="${GH_ALLOW_AUTO_MERGE:-false}" \
+        GH_ALLOW_AUTO_MERGE_ERR="${GH_ALLOW_AUTO_MERGE_ERR:-}" \
         SPIRA_CONF="$DOCTOR_CONF" \
         SPIRA_REPO_MAP="$DOCTOR_MAP" \
         SPIRA_SYSTEMCTL="$DOCTOR_TMP/systemctl" \
@@ -313,6 +318,8 @@ run_doctor() {
 }
 
 # POSITIVE CONTROL FOR DOCTOR.SH: allow_auto_merge=false → FAIL.
+# Regression: old code used `gh repo view --json allowAutoMerge` which exits non-zero on
+# gh 2.46 ("Unknown JSON field"), causing WARN instead of FAIL for the false case.
 GH_ALLOW_AUTO_MERGE=false
 dr_out="$(run_doctor)"
 want  "doctor FAIL for allow_auto_merge=false"  "FAIL" "$dr_out"
@@ -323,6 +330,14 @@ want  "doctor mentions allow_auto_merge"        "allow_auto_merge" "$dr_out"
 GH_ALLOW_AUTO_MERGE=true
 dr_out="$(run_doctor)"
 nowant "doctor ok for allow_auto_merge=true"    "FAIL" "$(printf '%s\n' "$dr_out" | grep 'allow_auto_merge')"
+
+# ERROR PATH: gh exits non-zero with text on stderr → "could not check" with that text.
+GH_ALLOW_AUTO_MERGE_ERR="Unknown JSON field"
+dr_out="$(run_doctor)"
+want  "could not check names the real error"    "could not check" "$dr_out"
+want  "could not check includes stderr text"    "Unknown JSON field" "$dr_out"
+nowant "could not check is not a FAIL"          "FAIL" "$(printf '%s\n' "$dr_out" | grep 'allow_auto_merge')"
+GH_ALLOW_AUTO_MERGE_ERR=""
 
 # ====================================================================================
 echo
