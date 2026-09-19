@@ -33,7 +33,17 @@ export SPIRA_MAIL_REPEAT_WINDOW=3600
 
 run() { bash "$HERE/mail.sh" "$@"; }
 
-body() { printf 'Test body for %s.\n' "$1"; }
+# Body with the required question-kind sections filled.
+qbody() {
+    local subj="$1" dflt="$2"
+    printf '## Question\n%s\n\n## Default\n%s\n\nDetailed context goes here.\n' "$subj" "$dflt"
+}
+
+SUBJ_A="Spira bead sp-abc — requeued 5 times, never landed — harness cannot land it"
+SUBJ_A2="Spira bead sp-abc — requeued 6 times, never landed — harness cannot land it"
+SUBJ_B="Spira bead sp-xyz — poisoned after 3 attempts — change the approach or drop it?"
+DFLT="close or fix"
+DFLT_B="close or relabel"
 
 # ==========================================================================
 # POSITIVE CONTROL — second send with same normalized subject is refused
@@ -41,19 +51,17 @@ body() { printf 'Test body for %s.\n' "$1"; }
 echo
 echo "positive control — repeat to operator is refused"
 
-body first | run send operator --from "Sentinel <sentinel@spira>" \
-    --subject "Spira bead sp-abc — requeued 5 times, never landed — harness cannot land it" \
-    --kind question --default "close or fix" >/dev/null 2>&1
+qbody "$SUBJ_A" "$DFLT" | run send operator --from "Sentinel <sentinel@spira>" \
+    --subject "$SUBJ_A" --kind question --default "$DFLT" >/dev/null 2>&1
 rc_first=$?
 isz "first send exits 0" "$rc_first"
 
-out="$(body second | run send operator --from "Sentinel <sentinel@spira>" \
-    --subject "Spira bead sp-abc — requeued 6 times, never landed — harness cannot land it" \
-    --kind question --default "close or fix" 2>&1)"
+out="$(qbody "$SUBJ_A2" "$DFLT" | run send operator --from "Sentinel <sentinel@spira>" \
+    --subject "$SUBJ_A2" --kind question --default "$DFLT" 2>&1)"
 rc_second=$?
 isnz "second send (count changed, same normalized subject) is refused" "$rc_second"
 want "refusal message names the override" "SPIRA_MAIL_REPEAT_CONSIDERED" "$out"
-want "refusal message names the caller" "sentinel" "$out"
+want "refusal message says already sent" "already sent" "$out"
 
 # ==========================================================================
 # POSITIVE CONTROL — refusal is counted
@@ -71,9 +79,8 @@ isnz "at least one refusal was recorded" "${refused_count:-0}"
 echo
 echo "negative control — different subject from same sender gets through"
 
-out="$(body other | run send operator --from "Sentinel <sentinel@spira>" \
-    --subject "Spira bead sp-xyz — poisoned after 3 attempts — change the approach or drop it?" \
-    --kind question --default "close or relabel" 2>&1)"
+out="$(qbody "$SUBJ_B" "$DFLT_B" | run send operator --from "Sentinel <sentinel@spira>" \
+    --subject "$SUBJ_B" --kind question --default "$DFLT_B" 2>&1)"
 rc_other=$?
 isz "different subject (different bead, different verb) gets through" "$rc_other"
 nowant "different subject carries no repeat-refused message" "repeat refused" "$out"
@@ -84,10 +91,10 @@ nowant "different subject carries no repeat-refused message" "repeat refused" "$
 echo
 echo "override — SPIRA_MAIL_REPEAT_CONSIDERED bypasses the guard"
 
-out="$(SPIRA_MAIL_REPEAT_CONSIDERED="testing override" \
-    body override | run send operator --from "Sentinel <sentinel@spira>" \
-    --subject "Spira bead sp-abc — requeued 7 times, never landed — harness cannot land it" \
-    --kind question --default "close or fix" 2>&1)"
+out="$(qbody "$SUBJ_A2" "$DFLT" \
+    | SPIRA_MAIL_REPEAT_CONSIDERED="testing override" bash "$HERE/mail.sh" send operator \
+        --from "Sentinel <sentinel@spira>" --subject "$SUBJ_A2" \
+        --kind question --default "$DFLT" 2>&1)"
 rc_override=$?
 isz "SPIRA_MAIL_REPEAT_CONSIDERED lets the repeat through" "$rc_override"
 
@@ -105,9 +112,9 @@ fi
 echo
 echo "non-operator mailbox — repeat guard does not apply"
 
-body nc1 | run send concierge --from "Builder <builder@spira>" \
+printf 'Simple note body.\n' | run send concierge --from "Builder <builder@spira>" \
     --subject "Build complete for sp-abc" >/dev/null 2>&1 || true
-rc_nc="$(body nc2 | run send concierge --from "Builder <builder@spira>" \
+rc_nc="$(printf 'Simple note body.\n' | run send concierge --from "Builder <builder@spira>" \
     --subject "Build complete for sp-abc" 2>/dev/null; echo $?)"
 is "concierge mailbox allows repeat" "0" "$rc_nc"
 
