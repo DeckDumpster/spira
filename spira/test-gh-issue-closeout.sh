@@ -67,32 +67,22 @@ SH="$TMP/spira"
 mkdir -p "$SH"
 cp "$HERE"/*.sh "$SH/"
 
-# --- bd fixture ---
-export SPIRA_BD="${SPIRA_BD:-bd}"
-export SPIRA_DB="$TESTDB_PATH"
+# Minimal repo-map for backfill: one repo named "fixture" at the git fixture path.
+printf 'fixture | %s\n' "$REPO" > "$SH/repo-map"
 
-# Bead 1: closed with a github ref — will be marked LANDED
-"$SPIRA_BD" -C "$SPIRA_DB" create "Fix issue 1" \
-    --external-ref "github:fixture/testrepo#1" \
-    --labels "spira,plan" -t bug 2>/dev/null
-BEAD1="$("$SPIRA_BD" -C "$SPIRA_DB" list --status open --limit 1 --json 2>/dev/null \
-    | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0]["id"] if d else "")' 2>/dev/null)"
-"$SPIRA_BD" -C "$SPIRA_DB" close "$BEAD1" --reason-file - <<< "done" 2>/dev/null || true
-
-# Bead 2: closed with a github ref but NOT landed
-"$SPIRA_BD" -C "$SPIRA_DB" create "Fix issue 2 - not landed" \
-    --external-ref "github:fixture/testrepo#2" \
-    --labels "spira,plan" -t bug 2>/dev/null
-BEAD2="$("$SPIRA_BD" -C "$SPIRA_DB" list --status open --limit 1 --json 2>/dev/null \
-    | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0]["id"] if d else "")' 2>/dev/null)"
-"$SPIRA_BD" -C "$SPIRA_DB" close "$BEAD2" --reason-file - <<< "done" 2>/dev/null || true
-
-# Bead 3: closed with no github ref
-"$SPIRA_BD" -C "$SPIRA_DB" create "No external ref" \
-    --labels "spira,plan" -t bug 2>/dev/null
-BEAD3="$("$SPIRA_BD" -C "$SPIRA_DB" list --status open --limit 1 --json 2>/dev/null \
-    | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0]["id"] if d else "")' 2>/dev/null)"
-"$SPIRA_BD" -C "$SPIRA_DB" close "$BEAD3" --reason-file - <<< "done" 2>/dev/null || true
+# --- bd fixture: seed beads with explicit IDs ---
+# SPIRA_DB and SPIRA_BD are set by testdb_up above.
+testdb_seed <<JSONL
+{"id":"sp-tgh1","title":"Fix issue 1","status":"open","issue_type":"bug","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#1","updated_at":"2026-09-05T00:00:00Z"}
+{"id":"sp-tgh2","title":"Fix issue 2 not landed","status":"open","issue_type":"bug","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#2","updated_at":"2026-09-05T00:00:00Z"}
+{"id":"sp-tgh3","title":"No external ref","status":"open","issue_type":"bug","labels":["spira","plan"],"updated_at":"2026-09-05T00:00:00Z"}
+JSONL
+BEAD1=sp-tgh1
+BEAD2=sp-tgh2
+BEAD3=sp-tgh3
+"${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$BEAD1" --reason-file - <<< "done" 2>/dev/null || true
+"${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$BEAD2" --reason-file - <<< "done" 2>/dev/null || true
+"${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$BEAD3" --reason-file - <<< "done" 2>/dev/null || true
 
 # Set landstate: BEAD1 is LANDED; BEAD2 has no landstate
 printf 'LANDED %s %s push\n' "$LANDED_SHA" "$(date +%s)" > "$RUN/landstate/$BEAD1"
@@ -155,7 +145,9 @@ fi
 printf '\n4. a closed-but-unlanded bead is not auto-closed:\n'
 : > "$GHLOG"
 # The backfill script enforces this: it only calls closeout for LANDED beads.
-out="$(SPIRA_GH="$TMP/bin/gh" GHLOG="$GHLOG" bash "$SH/gh-issue-backfill.sh" 2>&1)"
+out="$(SPIRA_GH="$TMP/bin/gh" GHLOG="$GHLOG" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
+     SPIRA_RUN="$RUN" SPIRA_HOME="$SH" SPIRA_HOME_REPO=fixture SPIRA_REPO="$REPO" \
+     SPIRA_REPO_MAP="$SH/repo-map" bash "$SH/gh-issue-backfill.sh" 2>&1)"
 if grep -q "issue close" "$GHLOG" 2>/dev/null; then
     # Fail if bead2 was closed
     if grep -q "fixture/testrepo#2" "$GHLOG"; then
@@ -187,7 +179,9 @@ printf '\n6. the backfill script finds landed beads and closes their issues:\n'
 # Remove bead1's close marker so backfill has something to do.
 rm -f "$RUN/gh-closed/$BEAD1"
 : > "$GHLOG"
-out="$(SPIRA_GH="$TMP/bin/gh" GHLOG="$GHLOG" bash "$SH/gh-issue-backfill.sh" 2>&1)"
+out="$(SPIRA_GH="$TMP/bin/gh" GHLOG="$GHLOG" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
+     SPIRA_RUN="$RUN" SPIRA_HOME="$SH" SPIRA_HOME_REPO=fixture SPIRA_REPO="$REPO" \
+     SPIRA_REPO_MAP="$SH/repo-map" bash "$SH/gh-issue-backfill.sh" 2>&1)"
 if grep -q "issue comment" "$GHLOG" 2>/dev/null; then
     ok "backfill posted a comment"
 else
@@ -202,7 +196,9 @@ fi
 printf '\n7. the backfill --dry-run makes no gh calls:\n'
 rm -f "$RUN/gh-closed/$BEAD1"
 : > "$GHLOG"
-out="$(SPIRA_GH="$TMP/bin/gh" GHLOG="$GHLOG" bash "$SH/gh-issue-backfill.sh" --dry-run 2>&1)"
+out="$(SPIRA_GH="$TMP/bin/gh" GHLOG="$GHLOG" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
+     SPIRA_RUN="$RUN" SPIRA_HOME="$SH" SPIRA_HOME_REPO=fixture SPIRA_REPO="$REPO" \
+     SPIRA_REPO_MAP="$SH/repo-map" bash "$SH/gh-issue-backfill.sh" --dry-run 2>&1)"
 if grep -q "issue" "$GHLOG" 2>/dev/null; then
     bad "dry-run makes no gh calls" "got: $(cat "$GHLOG")"
 else

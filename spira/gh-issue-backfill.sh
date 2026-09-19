@@ -52,7 +52,7 @@ while IFS=$'\t' read -r _id _ext; do
     _ls_st=""; _ls_sha=""
     [ -r "$_ls_file" ] && { read -r _ls_st _ls_sha _ < "$_ls_file" 2>/dev/null || true; }
     if [ "${_ls_st:-}" != LANDED ]; then
-        log "gh-issue-backfill: $id: landstate is ${_ls_st:-(none)} — skipping"
+        log "gh-issue-backfill: $_id: landstate is ${_ls_st:-(none)} — skipping"
         n_skipped=$(( n_skipped + 1 ))
         continue
     fi
