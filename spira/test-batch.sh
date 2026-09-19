@@ -636,6 +636,40 @@ want "A. stale-cert: certified sha in log" "${BASE_SHA_A:0:8}" "$out_a"
 want "A. stale-cert: live sha in log"      "${LIVE_TIP_A:0:8}"  "$out_a"
 
 # =============================================================================
+# B. STALE-CERT-IN-BASE: certified at a stale tip; live tip equals the base —
+#    LANDED (already-in-base), not batched. This is the sp-n9z scenario: the
+#    branch carries no commits (tip == base), but its CERTIFIED record predates
+#    the current base, so the stale-cert path runs first. Without the fix the
+#    live-tip in-base check never runs and the branch is adopted as a batch member.
+#
+#    POSITIVE CONTROL: against pre-fix batch.sh, the branch reaches the _filt
+#    accumulator unchanged and is batched; the LANDED assertion below fails.
+# =============================================================================
+clean_case
+seed
+NOW_B2="$(date +%s)"; OLD_B2=$(( NOW_B2 - 1800 - 1 ))
+
+plant_bead "sp-btB-stale-base"
+BASE_SHA_B="$(git -C "$REPO" rev-parse origin/main)"
+
+# Branch tip equals the base — no commits of its own.
+git -C "$REPO" branch "spira/sp-btB-stale-base" main 2>/dev/null || true
+
+# Landstate records a stale certified tip (different from the live tip).
+STALE_TIP_B="0000000000000000000000000000000000000001"
+printf 'CERTIFIED %s %s\n' "$STALE_TIP_B" "$OLD_B2" > "$LANDSTATE/sp-btB-stale-base"
+
+out_b2="$(batch "$REPONAME")"
+_st_b2=""; _rs_b2=""
+read -r _st_b2 _ _ _rs_b2 < "$LANDSTATE/sp-btB-stale-base" 2>/dev/null || true
+is "B. stale-cert-in-base: LANDED"                "LANDED"         "$_st_b2"
+is "B. stale-cert-in-base: reason already-in-base" "already-in-base" "$_rs_b2"
+is "B. stale-cert-in-base: no batch opened"       "0"  \
+    "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
+want "B. stale-cert-in-base: stale-certification in log" "stale-certification" "$out_b2"
+clean_case
+
+# =============================================================================
 # g. BASE-CONFLICT STAMP: a branch that conflicts with origin/main is reopened
 #    AND stamped merge-conflict via bump_requeue, matching landing.sh:624/922.
 #

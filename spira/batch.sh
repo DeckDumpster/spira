@@ -172,13 +172,16 @@ main() {
             read -r _cid _ctip _cepoch <<< "$_cl"
             _ltip="$(git -C "$repo" rev-parse "refs/heads/spira/$_cid" 2>/dev/null || true)"
             if [ -n "${_ltip:-}" ] && [ "$_ltip" != "$_ctip" ]; then
-                # Branch advanced after certification; the stale tip may be in base even
-                # when the live tip is not. Re-certify on the live tip rather than
-                # declaring the bead LANDED on evidence that predates the new commit.
                 land_mark "$_cid" CERTIFIED "$_ltip"
                 printf 'batch %s: stale-certification %s — certified=%s live=%s — re-certified\n' \
                     "$name" "$_cid" "${_ctip:0:8}" "${_ltip:0:8}"
-                _filt="${_filt}${_cid} ${_ltip} ${_cepoch}"$'\n'
+                if git -C "$repo" merge-base --is-ancestor "$_ltip" "$base_sha" 2>/dev/null; then
+                    land_mark "$_cid" LANDED "$_ltip" already-in-base
+                    printf 'batch %s: %s live tip already in %s — LANDED (already-in-base)\n' \
+                        "$name" "$_cid" "$base"
+                else
+                    _filt="${_filt}${_cid} ${_ltip} ${_cepoch}"$'\n'
+                fi
             elif git -C "$repo" merge-base --is-ancestor "$_ctip" "$base_sha" 2>/dev/null; then
                 land_mark "$_cid" LANDED "$_ctip" already-in-base
                 printf 'batch %s: %s tip already in %s — LANDED (already-in-base)\n' \
