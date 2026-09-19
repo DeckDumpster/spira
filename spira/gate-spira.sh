@@ -206,6 +206,15 @@ fi
 # not check" as all-clear would displace the suspicion that would have prompted a look
 # (law-alerts-must-be-actionable).
 # ---------------------------------------------------------------------------------------
+
+# INLINE MODE. When SPIRA_IN_TESTENV=1 (already inside a container — calling testenv-batch
+# again would nest containers), or when SPIRA_GATE_INLINE=1 (test context: the scratch tree
+# has no container support), run suites directly on the host.
+# Containment is not waived in either case: the caller guarantees an isolated context.
+INLINE=0
+[ -n "${SPIRA_IN_TESTENV:-}" ] && INLINE=1
+[ -n "${SPIRA_GATE_INLINE:-}" ] && INLINE=1
+
 run() {                  # run <suite> — its output only when it matters; cost always
     local s="$1" out st t0 t1 elapsed elapsed_s name suite_pid killer tmp
     name="$(basename "$s")"
@@ -324,9 +333,33 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
     fi
 fi
 
-for s in $suites $extra_suites; do
-    run "$s"
-done
+if [ "$INLINE" = 1 ]; then
+    for s in $suites $extra_suites; do
+        run "$s"
+    done
+else
+    # Route through testenv-batch.sh: one container, suites as basenames on stdin.
+    _tb_t0=$(date +%s 2>/dev/null) || _tb_t0=""
+    {
+        for s in $suites $extra_suites; do
+            printf '%s\n' "$(basename "$s")"
+        done
+    } | bash "$HERE/testenv-batch.sh" --suites - "${SPIRA_GATE_SELECT_HEAD:-HEAD}" >&2
+    _tb_rc=${PIPESTATUS[1]}
+    _tb_t1=$(date +%s 2>/dev/null) || _tb_t1=""
+    if [ -n "$_tb_t0" ] && [ -n "$_tb_t1" ]; then
+        gate_total=$(( _tb_t1 - _tb_t0 ))
+    else
+        gate_unmeasurable=1
+    fi
+    case "$_tb_rc" in
+        0) ;;
+        1) rc=1 ;;
+        2) say "testenv-batch: container failed to start — suites did not run (harness fault)"; rc=1 ;;
+        3) say "testenv-batch: install failed in container — suites did not run (harness fault)"; rc=1 ;;
+        *) say "testenv-batch exited $_tb_rc — suites did not run"; rc=1 ;;
+    esac
+fi
 
 # ---------------------------------------------------------------------------------------
 # BUDGET CHECK. The gate times itself and reports what it cost, on every run, so the timed
