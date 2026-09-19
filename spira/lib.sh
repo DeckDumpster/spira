@@ -2778,7 +2778,7 @@ aeon_lease_minutes() {
         printf '?'
         return 0
     fi
-    now="$(date +%s)"
+    now="${SPIRA_NOW:-$(date +%s)}"
     printf '%d' "$(( (deadline - now) / 60 ))"
 }
 
