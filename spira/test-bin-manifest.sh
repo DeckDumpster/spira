@@ -146,19 +146,28 @@ _op_default="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/none.conf" bash
     ". $HERE/conf.sh 2>/dev/null; printf '%s' \"\${SPIRA_OPERATED}\"" 2>/dev/null)"
 is "SPIRA_OPERATED defaults to 1" "1" "$_op_default"
 
-# Stub PATH for hunk positive control: prepend $TMP so a stub 'hunk' we create there
-# takes precedence over anything installed.
+# Stubs live under $TMP, never under $HOME. SPIRA_PATH="$STUB_BIN" puts the stub dir
+# first in the PATH conf.sh builds, ahead of $HOME/.local/bin, so a real installed binary
+# is never touched. Writing to $HOME/.local/bin follows symlinks and can truncate the real
+# target — that is what destroyed the operator's hunk installation (sp-jy2d1).
+STUB_BIN="$TMP/stub-bin"
+mkdir -p "$STUB_BIN"
+# Guard: fail immediately if the stub dir is not inside $TMP.
+case "$STUB_BIN" in
+    "$TMP"/*|"$TMP") ;;
+    *) bad "guard: stub dir is inside TMP" \
+           "stub dir $STUB_BIN escapes TMP=$TMP — refusing to write stubs"; exit 1 ;;
+esac
 
 # POSITIVE CONTROL: with hunk on PATH, operator section says ok.
-# Uses $HOME/.local/bin which conf.sh hardcodes into PATH, so no SPIRA_PATH tricks needed.
 # Stub is a minimal shell script (not a symlink): `command -v true` returns the builtin
 # name, not an absolute path, so a symlink to it would be broken.
-mkdir -p "$HOME/.local/bin"
-printf '#!/bin/sh\n' > "$HOME/.local/bin/hunk" && chmod +x "$HOME/.local/bin/hunk"
+printf '#!/bin/sh\n' > "$STUB_BIN/hunk" && chmod +x "$STUB_BIN/hunk"
 _pc_out="$(SPIRA_CONF="$TMP/none.conf" SPIRA_DOCTOR_INSTALLING=1 \
     SPIRA_OPERATED=1 COCKPIT_SESSIONS="brain hunk chat" \
+    SPIRA_PATH="$STUB_BIN" \
     bash "$HERE/doctor.sh" 2>&1 || true)"
-rm -f "$HOME/.local/bin/hunk"
+rm -f "$STUB_BIN/hunk"
 printf '%s\n' "$_pc_out" | grep -q 'ok.*hunk' \
     && ok "POSITIVE CONTROL: hunk stub present → ok" \
     || bad "POSITIVE CONTROL: hunk stub present → ok" \
@@ -167,6 +176,7 @@ printf '%s\n' "$_pc_out" | grep -q 'ok.*hunk' \
 # hunk absent, SPIRA_OPERATED=1 → FAIL (not warn).
 _op_out="$(SPIRA_CONF="$TMP/none.conf" SPIRA_DOCTOR_INSTALLING=1 \
     SPIRA_OPERATED=1 COCKPIT_SESSIONS="brain hunk chat" \
+    SPIRA_PATH="$STUB_BIN" \
     bash "$HERE/doctor.sh" 2>&1 || true)"
 printf '%s\n' "$_op_out" | grep -q 'FAIL.*hunk' \
     && ok "hunk absent with SPIRA_OPERATED=1 → FAIL" \
@@ -176,6 +186,7 @@ printf '%s\n' "$_op_out" | grep -q 'FAIL.*hunk' \
 # hunk absent, SPIRA_OPERATED=0 → warn (not FAIL).
 _op_out2="$(SPIRA_CONF="$TMP/none.conf" SPIRA_DOCTOR_INSTALLING=1 \
     SPIRA_OPERATED=0 COCKPIT_SESSIONS="brain hunk chat" \
+    SPIRA_PATH="$STUB_BIN" \
     bash "$HERE/doctor.sh" 2>&1 || true)"
 printf '%s\n' "$_op_out2" | grep -q '  warn  hunk' \
     && ok "hunk absent with SPIRA_OPERATED=0 → warn" \
@@ -184,12 +195,12 @@ printf '%s\n' "$_op_out2" | grep -q '  warn  hunk' \
 
 # COCKPIT_MAIL: checked as configured client, not literally aerc.
 # With COCKPIT_MAIL=mutt and mutt present, aerc absence must not produce FAIL.
-mkdir -p "$HOME/.local/bin"
-printf '#!/bin/sh\n' > "$HOME/.local/bin/mutt" && chmod +x "$HOME/.local/bin/mutt"
+printf '#!/bin/sh\n' > "$STUB_BIN/mutt" && chmod +x "$STUB_BIN/mutt"
 _mail_out="$(SPIRA_CONF="$TMP/none.conf" SPIRA_DOCTOR_INSTALLING=1 \
     SPIRA_OPERATED=1 COCKPIT_MAIL=mutt \
+    SPIRA_PATH="$STUB_BIN" \
     bash "$HERE/doctor.sh" 2>&1 || true)"
-rm -f "$HOME/.local/bin/mutt"
+rm -f "$STUB_BIN/mutt"
 printf '%s\n' "$_mail_out" | grep -q 'FAIL.*aerc' \
     && bad "COCKPIT_MAIL=mutt present: aerc absence should not be FAIL" \
            "got: $(printf '%s\n' "$_mail_out" | grep aerc | head -2)" \
