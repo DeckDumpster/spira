@@ -202,6 +202,11 @@ LIVELOCK row handled and every ESCALATED bead in the actions field:
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" N L "<list or none>" \
         >> "$SPIRA_RUN/groom.log"
 
+Also write the lastpass timestamp so the next trigger can measure graph activity
+since this pass and short-circuit if the graph is settled:
+
+    date +%s > "$SPIRA_RUN/groom.lastpass"
+
 Then close the trigger bead:
 
     bd -C {{DB}} close {{BEAD_ID}} --reason-file - <<'REASON'

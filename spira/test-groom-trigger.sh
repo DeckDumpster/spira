@@ -72,22 +72,36 @@ printf '%s\n' "$*" >> "$BD_LOG_PATH"
 # Strip -C <path> so the subcommand is always in $1 for the case.
 [ "${1:-}" = "-C" ] && shift 2
 case "${1:-}" in
-    list) printf '%s\n' "${BD_LIST_OUTPUT:-[]}"; exit 0 ;;
+    list)
+        # Dedup query carries --label; total-count query does not.
+        case " $* " in
+            *" --label "*) printf '%s\n' "${BD_LIST_OUTPUT:-[]}"; exit 0 ;;
+            *)             printf '%s\n' "${BD_TOTAL_OUTPUT:-[]}"; exit 0 ;;
+        esac ;;
     *)    exit 0 ;;
 esac
 STUB
 chmod +x "$STUB_BD"
 
+# FIVE_OPEN: a minimal JSON array satisfying SPIRA_GROOM_THRESHOLD=5 (default). Used
+# as BD_TOTAL_OUTPUT wherever the short-circuit predicate must not suppress filing.
+FIVE_OPEN='[{"id":"x1"},{"id":"x2"},{"id":"x3"},{"id":"x4"},{"id":"x5"}]'
+
 # Run groom-trigger.sh in a clean environment.
 # SPIRA_CONF points to a nonexistent file so no real config is read; conf.sh defaults
 # still apply. SPIRA_BD is the stub. BD_LOG_PATH is the argv capture file.
+# BD_TOTAL_OUTPUT feeds the stub's total-count list response; BD_LIST_OUTPUT feeds the
+# dedup list response. SPIRA_RUN=$T/run gives tests a writable, predictable lastpass dir.
 run_trigger() {
+    mkdir -p "$T/run"
     env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
         BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" \
+        BD_TOTAL_OUTPUT="${BD_TOTAL_OUTPUT:-[]}" \
         SPIRA_DB="$T/fixture.db" \
+        SPIRA_RUN="$T/run" \
         SPIRA_REPO_MAP="$GROOM_MAP" \
         bash "$TRIGSH" "$@" 2>&1
 }
@@ -96,9 +110,11 @@ run_trigger() {
 echo
 echo "FILING: no open trigger — bd create is called with the right labels"
 # ==========================================================================================
-# POSITIVE CONTROL: BD_LIST_OUTPUT=[] means no open trigger; we expect a create call.
+# POSITIVE CONTROL: BD_LIST_OUTPUT=[] means no open trigger; BD_TOTAL_OUTPUT satisfies
+# the short-circuit threshold; we expect a create call.
 : > "$BD_LOG"
-BD_LIST_OUTPUT="[]" out="$(BD_LIST_OUTPUT="[]" run_trigger)"; rc=$?
+BD_LIST_OUTPUT="[]" BD_TOTAL_OUTPUT="$FIVE_OPEN" \
+    out="$(BD_LIST_OUTPUT="[]" BD_TOTAL_OUTPUT="$FIVE_OPEN" run_trigger)"; rc=$?
 is   "filing exits 0"                  0          "$rc"
 want "bd create is called"             "create"   "$(cat "$BD_LOG")"
 # The trigger bead must carry the scope label so the groomer's FAYTH_LABELS predicate
@@ -128,12 +144,18 @@ echo "ERROR: bd create fails — exit code is 1"
 # If filing fails (bd returns non-zero for create), groom-trigger.sh must exit 1 so the
 # service records a failure and the timer does not silently mark success for a broken pass.
 FAIL_BD="$T/fail-bd"
+# FAIL_BD returns [] for the dedup (labeled) list query, five beads for the total-count
+# (unlabeled) query so the short-circuit predicate does not fire, and exit 1 for create.
 cat > "$FAIL_BD" <<'STUB'
 #!/usr/bin/env bash
+[ "${1:-}" = "-C" ] && shift 2
 case "${1:-}" in
-    -C) shift; shift ;;&
-    list) printf '[]'; exit 0 ;;
-    *)   exit 1 ;;
+    list)
+        case " $* " in
+            *" --label "*) printf '[]'; exit 0 ;;
+            *) printf '[{"id":"x1"},{"id":"x2"},{"id":"x3"},{"id":"x4"},{"id":"x5"}]'; exit 0 ;;
+        esac ;;
+    *) exit 1 ;;
 esac
 STUB
 chmod +x "$FAIL_BD"
@@ -143,6 +165,7 @@ out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
         SPIRA_BD="$FAIL_BD" \
         BD_LOG_PATH="$BD_LOG" \
         BD_LIST_OUTPUT="[]" \
+        SPIRA_RUN="$T/run" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_REPO_MAP="$GROOM_MAP" \
         bash "$TRIGSH" 2>&1)"; rc=$?
@@ -163,7 +186,9 @@ out="$(BD_LIST_OUTPUT="[]" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
+        BD_TOTAL_OUTPUT="$FIVE_OPEN" \
         SPIRA_DB="$T/fixture.db" \
+        SPIRA_RUN="$T/run" \
         SPIRA_REPO_MAP="$GROOM_MAP" \
         SPIRA_SCOPE_LABEL="myproject" \
         SPIRA_GROOMER_LABEL="hygiene" \
@@ -191,7 +216,9 @@ out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
+        BD_TOTAL_OUTPUT="$FIVE_OPEN" \
         SPIRA_DB="$T/fixture.db" \
+        SPIRA_RUN="$T/run" \
         SPIRA_REPO_MAP="$GROOM_MAP" \
         SPIRA_SCOPE_LABEL="" \
         SPIRA_GROOMER_LABEL="groom" \
@@ -232,12 +259,73 @@ out_gp="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
+    BD_TOTAL_OUTPUT="$FIVE_OPEN" \
     SPIRA_DB="$T/fixture.db" \
+    SPIRA_RUN="$T/run" \
     SPIRA_REPO_MAP="$GROOM_MAP" \
     SPIRA_GROOMER_LABEL="groom" \
     bash "$TRIGSH" 2>&1)"; rc_gp=$?
 is   "groom-admitted map: trigger exits 0"      0        "$rc_gp"
 want "groom-admitted map: bd create is called"  "create" "$(cat "$BD_LOG")"
+
+# ==========================================================================================
+echo
+echo "SHORT-CIRCUIT: low score — trigger skips without filing"
+# ==========================================================================================
+# POSITIVE CONTROL: the next test proves the skip is lifted when the score is at the
+# threshold; if the trigger always skipped, both tests would exit 0 but the positive
+# control would lack a bd create call.
+: > "$BD_LOG"
+out_sc="$(BD_LIST_OUTPUT="[]" BD_TOTAL_OUTPUT="[]" run_trigger)"; rc_sc=$?
+is     "short-circuit exits 0"          0         "$rc_sc"
+nowant "short-circuit: no create call"  "create"  "$(cat "$BD_LOG")"
+want   "short-circuit: logs no-pass"    "no-pass" "$out_sc"
+
+# ==========================================================================================
+echo
+echo "SHORT-CIRCUIT LIFTED: score at threshold — trigger fires"
+# ==========================================================================================
+# FIVE_OPEN delivers score=5, matching the default threshold=5. Trigger must file.
+: > "$BD_LOG"
+out_sf="$(BD_LIST_OUTPUT="[]" BD_TOTAL_OUTPUT="$FIVE_OPEN" run_trigger)"; rc_sf=$?
+is   "score-at-threshold exits 0"       0        "$rc_sf"
+want "score-at-threshold: create called" "create" "$(cat "$BD_LOG")"
+
+# ==========================================================================================
+echo
+echo "SHORT-CIRCUIT: custom SPIRA_GROOM_THRESHOLD respected"
+# ==========================================================================================
+# Two open beads (score=2) with threshold=2 must fire; with threshold=3 must not.
+TWO_OPEN='[{"id":"y1"},{"id":"y2"}]'
+: > "$BD_LOG"
+out_t2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    SPIRA_CONF="$NONE" \
+    SPIRA_BD="$STUB_BD" \
+    BD_LOG_PATH="$BD_LOG" \
+    BD_LIST_OUTPUT="[]" \
+    BD_TOTAL_OUTPUT="$TWO_OPEN" \
+    SPIRA_DB="$T/fixture.db" \
+    SPIRA_RUN="$T/run" \
+    SPIRA_REPO_MAP="$GROOM_MAP" \
+    SPIRA_GROOM_THRESHOLD="2" \
+    bash "$TRIGSH" 2>&1)"; rc_t2=$?
+is   "threshold=2, score=2: exits 0"        0        "$rc_t2"
+want "threshold=2, score=2: create called"  "create" "$(cat "$BD_LOG")"
+: > "$BD_LOG"
+out_t3="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    SPIRA_CONF="$NONE" \
+    SPIRA_BD="$STUB_BD" \
+    BD_LOG_PATH="$BD_LOG" \
+    BD_LIST_OUTPUT="[]" \
+    BD_TOTAL_OUTPUT="$TWO_OPEN" \
+    SPIRA_DB="$T/fixture.db" \
+    SPIRA_RUN="$T/run" \
+    SPIRA_REPO_MAP="$GROOM_MAP" \
+    SPIRA_GROOM_THRESHOLD="3" \
+    bash "$TRIGSH" 2>&1)"; rc_t3=$?
+is     "threshold=3, score=2: exits 0"          0         "$rc_t3"
+nowant "threshold=3, score=2: no create call"   "create"  "$(cat "$BD_LOG")"
+want   "threshold=3, score=2: logs no-pass"     "no-pass" "$out_t3"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"

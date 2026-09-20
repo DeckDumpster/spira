@@ -83,6 +83,49 @@ if [ "$_lane_admitted" = 0 ]; then
     exit 0
 fi
 
+# SHORT-CIRCUIT PREDICATE. Skip when the graph has not changed enough since the last
+# pass to be worth examining. Score = total open bead count + landings since the last
+# groom pass. Below SPIRA_GROOM_THRESHOLD the pass would cost a context to print
+# "Actions: none". A missing lastpass file yields ts=0 (never ran) so the trigger
+# always fires on first run.
+_lp_file="${SPIRA_RUN}/groom.lastpass"
+_lp_ts=0
+if [ -f "$_lp_file" ]; then
+    _lp_raw="$(cat "$_lp_file" 2>/dev/null | tr -d '[:space:]' || true)"
+    case "${_lp_raw:-}" in
+        ''|*[!0-9]*) _lp_ts=0 ;;
+        *) _lp_ts="$_lp_raw" ;;
+    esac
+fi
+
+_total_json="$("$BD" -C "$DB" list --status open,in_progress --json 2>/dev/null)" || _total_json="[]"
+[ -z "$_total_json" ] && _total_json="[]"
+_total_open="$(printf '%s\n' "$_total_json" \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null)" || _total_open=0
+
+_land_count=0
+_hr="$(spira_home_repo 2>/dev/null)" || _hr=""
+_hr_path="$(repo_root "$_hr" 2>/dev/null)" || _hr_path=""
+if [ -d "${_hr_path:-}" ]; then
+    _base_ref="$(spira_landref "$_hr" 2>/dev/null)" || _base_ref=""
+    if [ -n "$_base_ref" ]; then
+        _land_count="$(git -C "$_hr_path" log --format='%s' --after="@${_lp_ts}" "$_base_ref" 2>/dev/null \
+            | awk '
+                /^spira: land / { rest=substr($0,13); if (match(rest,/^[a-z0-9]+-[a-z0-9]+/)) { id=substr(rest,RSTART,RLENGTH); if (!seen[id]++) print id }; next }
+                /spira\// { if (match($0,/spira\/[a-z0-9]+-[a-z0-9]+/)) { id=substr($0,RSTART+6,RLENGTH-6); if (!seen[id]++) print id }; next }
+                /^[a-z0-9]+-[a-z0-9]+:/ { if (match($0,/^[a-z0-9]+-[a-z0-9]+/)) { id=substr($0,RSTART,RLENGTH); if (!seen[id]++) print id } }
+            ' \
+            | wc -l | tr -d '[:space:]')" || _land_count=0
+    fi
+fi
+
+_score=$(( ${_total_open:-0} + ${_land_count:-0} ))
+_threshold="${SPIRA_GROOM_THRESHOLD:-5}"
+if [ "$_score" -lt "$_threshold" ] 2>/dev/null; then
+    log "no-pass: score ${_score} (open ${_total_open}, landings ${_land_count} since ts=${_lp_ts}) below threshold ${_threshold} — skipping"
+    exit 0
+fi
+
 # FILE THE TRIGGER BEAD. Type task (not decision) — this is work the groomer does,
 # not a question Ryan answers. Priority 3: hygiene work, not urgent, but important
 # enough to run on schedule. No repo: label — the groomer reads the whole graph,
