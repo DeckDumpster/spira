@@ -1,0 +1,18 @@
+[Unit]
+Description=Spira verdict — settle open merge-queue batches
+Documentation=file://@SPIRA_HOME@/spira-verdict.sh
+After=default.target
+
+[Service]
+Type=oneshot
+ExecStart=@SPIRA_PROD@/spira-verdict.sh
+# Forge round-trips per open batch, plus local git operations. 120s covers a busy
+# queue on a slow connection and does not compete with the sentinel's own ceiling.
+TimeoutStartSec=120
+CPUQuota=10%
+Nice=10
+StandardOutput=append:@SPIRA_RUN@/verdict.log
+StandardError=append:@SPIRA_RUN@/verdict.log
+
+[Install]
+WantedBy=default.target

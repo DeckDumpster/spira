@@ -1,0 +1,11 @@
+[Unit]
+Description=Settle open merge-queue batches every two minutes
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=2min
+AccuracySec=30s
+Unit=spira-verdict.service
+
+[Install]
+WantedBy=timers.target
