@@ -31,25 +31,19 @@ chmod +x "$FAKE_BIN"
 
 BASE_PATH="$PATH"
 
-# Common env for loom.sh invocations: a minimal harness environment pointing at our
-# fake binary. SPIRA_LOOM_TICK=1 so the config check fires every second (not every 5s).
-common_env() {
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="${1}" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
-        SPIRA_LOOM_BIN="$FAKE_BIN" \
-        SPIRA_LOOM_TICK=1 \
-        bash "$HERE/loom.sh"
-}
-
 # ── NEGATIVE CASE: no config change — loom.sh must not exit before timeout ────────────
 echo "1. no config change — loom.sh stays running"
 
 CONF_NOCHANGE="$TMP/nochange.conf"
 printf '# test\n' > "$CONF_NOCHANGE"
 _ec_nochange=0
-timeout 3 common_env "$CONF_NOCHANGE" >/dev/null 2>/dev/null || _ec_nochange=$?
+timeout 3 env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$CONF_NOCHANGE" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_LOOM_BIN="$FAKE_BIN" \
+    SPIRA_LOOM_TICK=1 \
+    bash "$HERE/loom.sh" >/dev/null 2>/dev/null || _ec_nochange=$?
 # timeout exits 124 when the child was still running when the clock expired.
 if [ "$_ec_nochange" -eq 124 ]; then
     ok "no config change: loom.sh stayed running until timeout"
@@ -62,12 +56,18 @@ echo "2. config change — loom.sh exits 0 and logs the change"
 
 CONF_CHANGE="$TMP/change.conf"
 printf '# test\n' > "$CONF_CHANGE"
-# Pre-date so the touch below is a real mtime change, not just a same-second write.
+# Pre-date so the touch below produces a genuine mtime change.
 touch -d "10 seconds ago" "$CONF_CHANGE"
 ( sleep 2; touch "$CONF_CHANGE" ) &
 _touch_pid=$!
 _ec_change=0
-timeout 8 common_env "$CONF_CHANGE" >/dev/null 2>"$TMP/loom_err.log" || _ec_change=$?
+timeout 8 env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$CONF_CHANGE" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_LOOM_BIN="$FAKE_BIN" \
+    SPIRA_LOOM_TICK=1 \
+    bash "$HERE/loom.sh" >/dev/null 2>"$TMP/loom_err.log" || _ec_change=$?
 wait "$_touch_pid" 2>/dev/null || true
 
 if [ "$_ec_change" -eq 0 ]; then
