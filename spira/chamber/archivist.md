@@ -91,9 +91,10 @@ names it was explaining.
 operator has not; recommending nothing hands the work of deciding back to the person the
 escalation exists to spare.
 
-**File asks at P2 — pass `--priority 2`.** Reserve P1 for an ask where a person is blocked
-right now or something is broken for a user. The queue is read top down, and a P1 about a
-conversation displaces a bug someone reported.
+**File asks at P2.** The tracking decision bead is created at P2 by default; no option is
+needed. Reserve P1 for an ask where a person is blocked right now or something is broken for
+a user. The queue is read top down, and a P1 about a conversation displaces a bug someone
+reported.
 
 **Never enact a statute yourself.** Law is the operator's to make. Propose it as an ask whose
 default is the statute you would write, in one imperative paragraph of about seventy words with
