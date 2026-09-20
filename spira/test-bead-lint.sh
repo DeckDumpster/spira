@@ -19,10 +19,14 @@ testdb_up bead_lint || { printf 'test-bead-lint: could not build fixture databas
 
 lint() {
     SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
+        SPIRA_NO_LOOP_LABEL="no-loop" \
         bash "$HERE/bead.sh" lint "$@" 2>&1
 }
 lint_rc() {
     SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+        SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
+        SPIRA_NO_LOOP_LABEL="no-loop" \
         bash "$HERE/bead.sh" lint "$@" >/dev/null 2>&1; echo $?
 }
 
@@ -38,7 +42,7 @@ testdb_seed <<'JSONL'
 JSONL
 
 # -----------------------------------------------------------------------------------------
-# POSITIVE CONTROL: a bead WITH repo: passes.
+# POSITIVE CONTROL: a bead WITH repo: and partition label passes.
 # The suite depends on this to trust any silence from subsequent checks.
 # -----------------------------------------------------------------------------------------
 out="$(lint sp-lint-good)"
@@ -85,6 +89,49 @@ want "event bead reported explicitly"    "sp-lint-ev.1: no repo: label"  "$out"
 # -----------------------------------------------------------------------------------------
 out_all="$(lint --all)"
 nowant "--all skips event bead"          "sp-lint-ev.1"                  "$out_all"
+
+# ==========================================================================================
+echo
+echo "no-loop: bead with no-loop label passes even without a partition label"
+# ==========================================================================================
+# POSITIVE CONTROL: the scan must fire on a bead WITHOUT no-loop that lacks partition.
+# Without this, a scanner that skips all partition checks reads as correct.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-lint-broken","title":"open work, no partition","status":"open","issue_type":"task","labels":["repo:spira"],"updated_at":"2026-09-16T00:00:00Z"}
+JSONL
+out="$(lint sp-lint-broken)"
+rc="$(lint_rc sp-lint-broken)"
+is   "positive control: open bead without partition exits 1"       "1" "$rc"
+want "positive control: open bead without partition is reported"   "sp-lint-broken: no partition label" "$out"
+
+# Now verify the intentionally-unclaimable bead is NOT flagged.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-lint-noloop","title":"intentionally unclaimable","status":"open","issue_type":"task","labels":["repo:spira","no-loop"],"updated_at":"2026-09-16T00:00:00Z"}
+JSONL
+out="$(lint sp-lint-noloop)"
+rc="$(lint_rc sp-lint-noloop)"
+is   "no-loop bead passes lint"              "0"            "$rc"
+nowant "no-loop bead not reported as error"  "partition"    "$out"
+
+# ==========================================================================================
+echo
+echo "no-loop: a claimable bead (has partition) and a no-loop bead pass; broken one fails"
+# ==========================================================================================
+# All three in one --all pass: only the broken bead appears in output.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-lint-mix-a","title":"claimable","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-16T00:00:00Z"}
+{"id":"sp-lint-mix-b","title":"no-loop","status":"open","issue_type":"task","labels":["repo:spira","no-loop"],"updated_at":"2026-09-16T00:00:00Z"}
+{"id":"sp-lint-mix-c","title":"broken unclaimable","status":"open","issue_type":"task","labels":["repo:spira"],"updated_at":"2026-09-16T00:00:00Z"}
+JSONL
+out="$(lint --all)"
+rc="$(lint_rc --all)"
+is     "mixed --all exits 1"                           "1"              "$rc"
+nowant "claimable bead not reported"                   "sp-lint-mix-a"  "$out"
+nowant "no-loop bead not reported"                     "sp-lint-mix-b"  "$out"
+want   "broken bead reported as no partition"          "sp-lint-mix-c"  "$out"
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

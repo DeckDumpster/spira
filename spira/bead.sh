@@ -139,7 +139,7 @@ _bead_contract() {
 }
 
 _bead_lint() {
-    local rc=0 n=0 bad=0 id labels show_out show_rc
+    local rc=0 n=0 bad=0 id labels show_out show_rc show_parsed bead_status bead_type
     local ids=""
     if [ "${1:-}" = "--all" ] || [ $# -eq 0 ]; then
         ids="$(bdq list --all --limit 0 --json 2>/dev/null \
@@ -153,6 +153,23 @@ for d in (data if isinstance(data, list) else [data]):
     else
         ids="$*"
     fi
+
+    # Partition labels from the chamber — open work beads must carry one (or no-loop).
+    local _part="" _f _lbl _l _p _scope="${SPIRA_SCOPE_LABEL:-}" _no_loop="${SPIRA_NO_LOOP_LABEL:-}"
+    local _ifs_save="$IFS"
+    for _f in $(fayth_names 2>/dev/null); do
+        _lbl="$(fayth_get "$_f" FAYTH_LABELS "" 2>/dev/null)"
+        [ -n "$_lbl" ] || continue
+        IFS=,
+        for _l in $_lbl; do
+            IFS="$_ifs_save"
+            _l="${_l# }"; _l="${_l% }"
+            [ -z "$_l" ] || [ "$_l" = "$_scope" ] && continue
+            case " $_part " in *" $_l "*) ;; *) _part="${_part:+$_part }$_l" ;; esac
+        done
+        IFS="$_ifs_save"
+    done
+
     for id in $ids; do
         [ -z "$id" ] && continue
         n=$((n+1))
@@ -162,16 +179,42 @@ for d in (data if isinstance(data, list) else [data]):
             printf 'bead: %s: unreadable (bd show failed)\n' "$id" >&2
             bad=$((bad+1)); rc=1; continue
         fi
-        labels="$(printf '%s\n' "$show_out" | python3 -c '
+        show_parsed="$(printf '%s\n' "$show_out" | python3 -c '
 import json, sys
 data = json.load(sys.stdin)
 d = data[0] if isinstance(data, list) else data
 print(" ".join(d.get("labels") or []))
-' 2>/dev/null || true)"
+print(d.get("status") or "")
+print(d.get("issue_type") or "")
+' 2>/dev/null || printf '\n\n')"
+        labels="$(printf '%s\n' "$show_parsed" | sed -n '1p')"
+        bead_status="$(printf '%s\n' "$show_parsed" | sed -n '2p')"
+        bead_type="$(printf '%s\n' "$show_parsed" | sed -n '3p')"
         case " $labels " in
             *" repo:"*) ;;
             *) printf 'bead: %s: no repo: label\n' "$id" >&2; bad=$((bad+1)); rc=1 ;;
         esac
+        # Open claimable-type beads without a partition label are unclaimable unless
+        # marked no-loop. epic and event are excluded from bd ready and need no check.
+        if [ "$bead_status" = "open" ]; then
+            case " task bug feature chore spike " in
+                *" $bead_type "*)
+                    local _has_noloop=0
+                    [ -n "$_no_loop" ] && case " $labels " in *" $_no_loop "*) _has_noloop=1 ;; esac
+                    if [ "$_has_noloop" -eq 0 ]; then
+                        local _has=0
+                        for _p in $_part; do
+                            case " $labels " in *" $_p "*) _has=1; break ;; esac
+                        done
+                        if [ "$_has" -eq 0 ]; then
+                            printf 'bead: %s: no partition label%s\n' "$id" \
+                                "${_no_loop:+; add one or mark $_no_loop}" >&2
+                            bad=$((bad+1)); rc=1
+                        fi
+                    fi
+                    ;;
+            esac
+        fi
     done
     [ "$bad" = 0 ] && printf 'bead: %d bead(s) checked, ok\n' "$n"
     return "$rc"

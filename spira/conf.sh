@@ -62,7 +62,7 @@ SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE SPIRA_VERDICT_TTL SPIRA_REBASE_ESCALAT
 SPIRA_LOOM_ADDR SPIRA_LOOM_BUDGET_MS SPIRA_LOOM_CACHE_S SPIRA_LOOM_BIN
 SPIRA_BROKER_BIN SPIRA_CZAR_PASS_BIN
 SPIRA_SPIKE_LABEL SPIRA_SPIKE_DIR SPIRA_SPIKE_PATHS
-SPIRA_GROOMER_LABEL SPIRA_SCOPE_LABEL SPIRA_PLAN_LABEL SPIRA_INCIDENT_LABEL SPIRA_CZAR_LABEL
+SPIRA_GROOMER_LABEL SPIRA_SCOPE_LABEL SPIRA_PLAN_LABEL SPIRA_INCIDENT_LABEL SPIRA_CZAR_LABEL SPIRA_NO_LOOP_LABEL
 SPIRA_CZAR_STAGE_DEADLOCK SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED SPIRA_CZAR_STAGE_SORT_FAILED SPIRA_CZAR_STAGE_LOOP_STALLED SPIRA_CZAR_STAGE_CI_STALLED SPIRA_CZAR_STAGE_STARVED SPIRA_CZAR_STAGE_CI_RED
 SPIRA_MAECHEN_LABEL SPIRA_MAECHEN_LANDING_INTERVAL SPIRA_MAECHEN_MAX_GAP_SECONDS SPIRA_MAECHEN_MAX_BEADS SPIRA_MAECHEN_REMEDY_LABEL
 COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_MAIL COCKPIT_RIGHT_PCT COCKPIT_MOUSE COCKPIT_CWD COCKPIT_SESSIONS COCKPIT_HOST
@@ -687,10 +687,12 @@ spira_conf_defaults() {
     # multiple programs come to disagree (law-schema-over-code). The default is "plan" — the
     # value the store has always used — so upgrading a clean install changes nothing.
     : "${SPIRA_PLAN_LABEL:=plan}"
-    # THE INCIDENT PARTITION LABEL — the label that marks a bead as a production event for
-    # the ops persona. Filed by incident.sh from systemd OnFailure handlers. Same reason as
-    # SPIRA_PLAN_LABEL: one configurable name, never a literal in reader code.
     : "${SPIRA_INCIDENT_LABEL:=incident}"
+    # NO-LOOP LABEL — marks a bead as intentionally unclaimable. READY_ARGS excludes it, so
+    # fayth_ready and detect_unclaimable_ready never see it. Without this label, a bead that
+    # must not be worked can only be expressed by accident; the unclaimable detector then files
+    # a remedy to make it claimable. Empty string disables the feature entirely.
+    : "${SPIRA_NO_LOOP_LABEL:=no-loop}"
     # THE CZAR PARTITION LABEL — the label on queue-state escalation beads. Watchtower
     # attaches this label instead of SPIRA_INCIDENT_LABEL to the queue-check incidents it
     # files, routing them to the czar rather than to ops. One definition keeps czar.fayth,
@@ -1432,7 +1434,7 @@ export SPIRA_INSTANCE \
        SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE \
        SPIRA_LOOM_ADDR SPIRA_LOOM_BUDGET_MS SPIRA_LOOM_CACHE_S SPIRA_LOOM_BIN SPIRA_BROKER_BIN SPIRA_RUN SPIRA_SYSTEMCTL \
        SPIRA_SPIKE_LABEL SPIRA_SPIKE_DIR SPIRA_SPIKE_PATHS SPIRA_SCOPE_LABEL \
-       SPIRA_PLAN_LABEL SPIRA_INCIDENT_LABEL \
+       SPIRA_PLAN_LABEL SPIRA_INCIDENT_LABEL SPIRA_NO_LOOP_LABEL \
        SPIRA_TOWN SPIRA_MIRROR SPIRA_EXPORTER SPIRA_DESIGN SPIRA_WIKI SPIRA_WIKI_HOOK SPIRA_DOLT_DATA \
        SPIRA_ALERT_GLOB \
        SPIRA_GATE_NOVERDICT SPIRA_GATE_BASEFAIL \
