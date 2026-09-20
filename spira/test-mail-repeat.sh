@@ -107,6 +107,31 @@ if [ -n "$msg_file" ]; then
 fi
 
 # ==========================================================================
+# LINT FAILURE — stamp not written; corrected resend with same subject delivers
+# ==========================================================================
+echo
+echo "lint failure — stamp not written; corrected resend is delivered"
+
+SUBJ_LINT="Lint failure test subject for repeat guard"
+DFLT_LINT="close"
+
+# Empty required section — lint must refuse.
+out_lint1="$(printf '## Question\n\n## Default\n%s\n' "$DFLT_LINT" \
+    | run send operator --from "Sentinel <sentinel@spira>" \
+        --subject "$SUBJ_LINT" --kind question --default "$DFLT_LINT" 2>&1)"
+rc_lint1=$?
+isnz "lint-refused send exits non-zero" "$rc_lint1"
+want "refusal message mentions lint" "lint" "$out_lint1"
+
+# Corrected resend: same subject, body now properly filled — must not be refused as repeat.
+out_lint2="$(qbody "$SUBJ_LINT" "$DFLT_LINT" \
+    | run send operator --from "Sentinel <sentinel@spira>" \
+        --subject "$SUBJ_LINT" --kind question --default "$DFLT_LINT" 2>&1)"
+rc_lint2=$?
+isz "corrected resend after lint failure is delivered" "$rc_lint2"
+nowant "corrected resend is not refused as repeat" "repeat refused" "$out_lint2"
+
+# ==========================================================================
 # NON-OPERATOR — repeat guard does not apply to other mailboxes
 # ==========================================================================
 echo

@@ -56,20 +56,29 @@ _section_empty() {
     [ -z "$result" ]
 }
 
+_REPEAT_FP=""  # set by _repeat_check; consumed by _repeat_stamp
+
 _repeat_check() {
     # Refuses a repeat mail to the same recipient within SPIRA_MAIL_REPEAT_WINDOW.
     # Fingerprint: (caller-script, normalized-subject, recipient). Normalization strips
     # digits and SHA-like hex runs so "requeued 5 times" and "requeued 6 times" are the same
     # escalation. Override: SPIRA_MAIL_REPEAT_CONSIDERED=<reason>, recorded and counted.
     # Each refusal is counted under SPIRA_RUN/mail-repeat so audits are possible.
+    # Stamp is written only on success, by _repeat_stamp, after lint and delivery.
     local mailbox="$1" subject="$2"
     [ -n "${SPIRA_MAIL_REPEAT_CONSIDERED:-}" ] && return 0
 
     local caller=""
-    local _c0 _c1
+    local _c0 _c1 _src
     _c0="$(tr '\0' '\n' < "/proc/$PPID/cmdline" 2>/dev/null | sed -n '1p')" || _c0=""
     _c1="$(tr '\0' '\n' < "/proc/$PPID/cmdline" 2>/dev/null | sed -n '2p')" || _c1=""
-    caller="$(basename "${_c1:-${_c0:-unknown}}")"
+    # argv[1] starting with '-' is a flag (e.g. bash -c '...'), not a script path.
+    if [[ "${_c1:-}" == -* ]] || [ -z "${_c1:-}" ]; then
+        _src="${_c0:-unknown}"
+    else
+        _src="$_c1"
+    fi
+    caller="$(basename -- "${_src:-unknown}")"
 
     local norm_subj
     norm_subj="$(printf '%s' "$subject" \
@@ -79,6 +88,8 @@ _repeat_check() {
     local fp
     fp="$(printf '%s|%s|%s' "$caller" "$norm_subj" "$mailbox" \
         | sha256sum | cut -c1-48)"
+
+    _REPEAT_FP="$fp"
 
     local stamp_dir="${SPIRA_RUN:-/tmp}/mail-repeat"
     local stamp_file="$stamp_dir/$fp"
@@ -100,9 +111,15 @@ _repeat_check() {
         fi
     fi
 
-    mkdir -p "$stamp_dir"
-    touch "$stamp_file"
     return 0
+}
+
+_repeat_stamp() {
+    [ -n "${SPIRA_MAIL_REPEAT_CONSIDERED:-}" ] && return 0
+    [ -z "${_REPEAT_FP:-}" ] && return 0
+    local stamp_dir="${SPIRA_RUN:-/tmp}/mail-repeat"
+    mkdir -p "$stamp_dir"
+    touch "$stamp_dir/$_REPEAT_FP"
 }
 
 _lint_check() {
@@ -284,6 +301,10 @@ cmd_send() {
     } > "$dir/tmp/$msgid"
 
     mv "$dir/tmp/$msgid" "$dir/new/$msgid"
+
+    if [ "$mailbox" = "operator" ]; then
+        _repeat_stamp
+    fi
 }
 
 cmd_template() {
