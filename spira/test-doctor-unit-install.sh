@@ -68,6 +68,7 @@ COMMON_ENV=(
     SPIRA_WATCHERS="$TMP/watchers-empty"
     SPIRA_DOLT_DATA=""
     SPIRA_TESTDB_DATA=""
+    SPIRA_PATH="$BIN"
 )
 
 DEST="$TMP/home/.config/systemd/user"

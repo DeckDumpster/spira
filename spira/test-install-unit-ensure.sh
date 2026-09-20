@@ -32,8 +32,20 @@ echo "test-install-unit-ensure.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 DEST="$TMP/home/.config/systemd/user"
-mkdir -p "$DEST"
+BIN="$TMP/bin"
+mkdir -p "$DEST" "$BIN" "$TMP/db/.beads" "$TMP/run"
 touch "$TMP/watchers-empty"
+
+# Fake bd: conf.sh calls "bd migrate schema" on source; answer without a real db.
+cat > "$BIN/bd" <<'FAKEBD'
+#!/usr/bin/env bash
+case "$*" in
+    *"migrate schema"*) printf '✓ Schema already at v61\n'; exit 0 ;;
+    *"list"*"--limit"*) printf '[]\n'; exit 0 ;;
+    *) exit 0 ;;
+esac
+FAKEBD
+chmod +x "$BIN/bd"
 
 # Mock systemctl: records every call to a log file, reports units as enabled/active.
 SC_LOG="$TMP/sc.log"
@@ -55,6 +67,7 @@ chmod +x "$TMP/sc"
 ensure() {
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
+        SPIRA_PATH="$BIN" \
         SPIRA_WATCHERS="$TMP/watchers-empty" \
         SPIRA_DB="$TMP/db" \
         SPIRA_RUN="$TMP/run" \
@@ -65,14 +78,13 @@ ensure() {
         bash "$HERE/../systemd/unit-ensure.sh" "$@" 2>&1
 }
 
-mkdir -p "$TMP/db/.beads" "$TMP/run"
-
 # ==========================================================================
 echo
 echo "positive control — render produces valid output before testing:"
 # ==========================================================================
 rendered="$(env -i PATH="$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
+    SPIRA_PATH="$BIN" \
     SPIRA_WATCHERS="$TMP/watchers-empty" \
     SPIRA_DB="$TMP/db" SPIRA_RUN="$TMP/run" \
     SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
