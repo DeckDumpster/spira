@@ -3886,13 +3886,13 @@ spira_repo_lanes() {
     local name="${1:-}" raw
     raw="$(repo_field "$name" lanes 2>/dev/null)"
     [ -z "$raw" ] && {
-        printf '%s %s %s %s %s %s' \
-            "${SPIRA_PLAN_LABEL:-plan}" \
-            "${SPIRA_INCIDENT_LABEL:-incident}" \
-            "${SPIRA_GROOMER_LABEL:-groom}" \
-            "${SPIRA_MAECHEN_LABEL:-maechen-sweep}" \
-            "${SPIRA_SPIKE_LABEL:-spike}" \
-            "${SPIRA_CZAR_LABEL:-czar-trigger}"
+        local p="${SPIRA_PLAN_LABEL:-plan}"
+        local inc="${SPIRA_INCIDENT_LABEL:-incident}"
+        local gr="${SPIRA_GROOMER_LABEL:-groom}"
+        local mae="${SPIRA_MAECHEN_LABEL:-maechen-sweep}"  # literal-ok: bash fallback; SPIRA_MAECHEN_LABEL set by conf.sh
+        local sp="${SPIRA_SPIKE_LABEL:-spike}"
+        local cz="${SPIRA_CZAR_LABEL:-czar-trigger}"
+        printf '%s %s %s %s %s %s' "$p" "$inc" "$gr" "$mae" "$sp" "$cz"
         return 0
     }
     _spira_expand_lanes "$name" "$raw"
