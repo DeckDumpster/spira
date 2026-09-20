@@ -57,6 +57,8 @@ printf '%s\n' "$*" >> "$SCTL_LOG"
 exec /usr/bin/systemctl "$@"
 SCTL
 chmod +x "$TMP/bin/systemctl"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/spira-supervise"
+chmod +x "$TMP/bin/spira-supervise"
 
 WATCHERS="$TMP/watchers"
 printf '# empty\n' > "$WATCHERS"
@@ -73,6 +75,7 @@ inst() {
     SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
     SPIRA_WATCHERS="$WATCHERS" \
+    SPIRA_SUPERVISE_BIN="$TMP/bin/spira-supervise" \
     "$@" \
     bash "$HERE/../systemd/install.sh" test 2>&1
 }

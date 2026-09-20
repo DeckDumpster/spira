@@ -203,6 +203,8 @@ case "$*" in
 esac
 SCTL
 chmod +x "$TMP/bin/systemctl"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/spira-supervise"
+chmod +x "$TMP/bin/spira-supervise"
 
 # hermetic-ok: container-first suite — pre-plants legacy units in real systemd; SKIP guard exits 77
 "$TMP/bin/systemctl" --user daemon-reload
@@ -221,6 +223,7 @@ migrate_out="$(
     SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
+    SPIRA_SUPERVISE_BIN="$TMP/bin/spira-supervise" \
     MIGRATE_LOG="$MIGRATE_LOG" \
     bash "$HERE/../systemd/install.sh" test 2>&1
 )"

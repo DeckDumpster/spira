@@ -114,6 +114,8 @@ case "$*" in
 esac
 SCTL
 chmod +x "$TMP/bin/systemctl"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/spira-supervise"
+chmod +x "$TMP/bin/spira-supervise"
 
 inst() {
     > "$SCTL_LOG"
@@ -125,6 +127,7 @@ inst() {
     SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
+    SPIRA_SUPERVISE_BIN="$TMP/bin/spira-supervise" \
     bash "$HERE/../systemd/install.sh" "$_INST" "$@" 2>&1
 }
 

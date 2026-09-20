@@ -100,6 +100,8 @@ chmod +x "$MOCK_BIN/systemctl"
 
 printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/loginctl"
 chmod +x "$MOCK_BIN/loginctl"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/spira-supervise"
+chmod +x "$MOCK_BIN/spira-supervise"
 
 inst() {
     > "$MOCK_LOG"
@@ -116,6 +118,7 @@ inst() {
         "SPIRA_PROD=$HERE" \
         "SPIRA_REPO=$REAL_REPO" \
         "SPIRA_COCKPIT=$REAL_COCKPIT" \
+        "SPIRA_SUPERVISE_BIN=$MOCK_BIN/spira-supervise" \
         "MOCK_LOG=$MOCK_LOG" \
         "MOCK_ENABLED_DIR=$MOCK_ENABLED_DIR" \
         "MOCK_IS_ACTIVE=${MOCK_IS_ACTIVE:-active}" \

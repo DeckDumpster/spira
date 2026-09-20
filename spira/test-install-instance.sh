@@ -70,6 +70,8 @@ printf '%s\n' "$*" >> "$SCTL_LOG"
 exec /usr/bin/systemctl "$@"
 SCTL
 chmod +x "$TMP/bin/systemctl"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/spira-supervise"
+chmod +x "$TMP/bin/spira-supervise"
 
 # inst [extra-env...] [args] — run install.sh for the 'test' instance.
 # SPIRA_PATH prepends the logger dir to PATH (conf.sh rebuilds PATH with it).
@@ -82,6 +84,7 @@ inst() {
     SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
+    SPIRA_SUPERVISE_BIN="$TMP/bin/spira-supervise" \
     "$@" \
     bash "$HERE/../systemd/install.sh" test 2>&1
 }

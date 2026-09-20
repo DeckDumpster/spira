@@ -481,7 +481,8 @@ esac
 exit 0
 EOF
 printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/loginctl"
-chmod +x "$STUB/systemctl" "$STUB/loginctl"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/spira-supervise"
+chmod +x "$STUB/systemctl" "$STUB/loginctl" "$STUB/spira-supervise"
 IHOME="$TMP/ihome"; mkdir -p "$IHOME"
 : > "$TMP/systemctl.log"
 # Reached through SPIRA_PATH and not PATH: conf.sh REPLACES PATH outright, so a directory
@@ -496,6 +497,7 @@ printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s
 # conf.sh otherwise derives it from the clone, where only conf.sh and watchd.sh exist.
 env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" \
     SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" \
+    "SPIRA_SUPERVISE_BIN=$STUB/spira-supervise" \
     bash "$CLONE/systemd/install.sh" > "$TMP/install.out" 2>&1
 log="$(cat "$TMP/systemctl.log")"
 has "the install ran"                           "$log" "daemon-reload"
