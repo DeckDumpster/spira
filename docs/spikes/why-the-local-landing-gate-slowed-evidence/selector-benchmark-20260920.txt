@@ -1,0 +1,35 @@
+# provenance: measured 2026-09-20T20:00Z by spike sp-kz6ml on the box that runs the landing pass.
+# Each row: the same selector, the same 6-file diff (spira/sp-5jsuu), the same 416-suite corpus,
+# run alternately old/new so that box load is shared between the arms. 'old' is origin/main at
+# f4d9072; 'new' is the one-commit POC on spike/sp-kz6ml-poc. Both returned the identical 174 suites.
+# command: env -i PATH=... SPIRA_GATE_FILES=<diff> bash spira/gate-touched.sh origin/main spira/sp-5jsuu
+
+rep1 old selected=174 38665ms
+rep1 new selected=174 12143ms
+rep2 old selected=174 43747ms
+rep2 new selected=174 15383ms
+rep3 old selected=174 49615ms
+rep3 new selected=174 19668ms
+
+[exited with code 0]
+
+# scaling of the UNPATCHED selector with the number of changed files (same corpus):
+files=1 selected=15 elapsed=14946ms
+files=3 selected=171 elapsed=23186ms
+files=6 selected=174 elapsed=36895ms
+files=12 selected=0 elapsed=70460ms   <- NOT comparable: this row's 12 paths were taken from
+#                                       ls-tree rather than the branch diff, and included a file no
+#                                       suite claims, so select.sh exited on 'unclaimed source file'
+#                                       and returned nothing. The elapsed time is still a real
+#                                       measurement of the matcher at 12 files.
+
+[exited with code 0]
+
+# the four suites that cover the selector, run through testenv-batch.sh against the POC branch:
+  test-gate-touched.sh             ok      1s
+  test-covers-entries.sh           ok      2s
+  test-select.sh                   ok      4s
+  test-gate-base-selection.sh      ok      1s
+2026-09-20T20:03:28Z spira: batch: all suites passed
+
+[exited with code 0]

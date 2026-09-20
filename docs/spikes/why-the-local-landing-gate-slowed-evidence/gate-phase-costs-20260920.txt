@@ -1,0 +1,40 @@
+# provenance: measured 2026-09-20T20:00-20:05Z by spike sp-kz6ml on the box that runs the
+# landing pass, against the tree at origin/main f4d9072. Each fence run in an explicit minimal
+# environment (env -i).
+#
+# THE LANDING GATE'S COMMAND, from the repo map (this is the spira row's gate column, verbatim
+# except for the shell quoting):
+#
+#   bash spira/inventory.sh && bash spira/literal-lint.sh && bash spira/scratch-fence.sh && {
+#       _s="$(bash spira/gate-touched.sh "$SPIRA_GATE_BASE" "$SPIRA_GATE_SELECT_HEAD")";
+#       [ -n "$_s" ] || exit 0;
+#       bash spira/testenv-batch.sh --suites "${_s//$'\n'/,}" "$SPIRA_GATE_BRANCH"; }
+#
+# It does NOT read spira/gate-suites. That file is gate-spira.sh's list, and gate-spira.sh is the
+# scheduled runner, not the landing gate — its own header says so.
+
+phase                                              cost
+spira/inventory.sh                                36.3s
+spira/literal-lint.sh                              5.7s
+spira/scratch-fence.sh                             0.07s
+spira/gate-touched.sh (6-file diff, 416 suites)   38.7s   median of three unpatched runs
+container start -> first suite result             24s     podman StartedAt 19:31:13Z vs first
+                                                          suite start 19:31:37Z, batch d80aab
+                                                  -----
+sum of the phases above                          ~105s
+
+measured gate overhead (gate ran= minus batch wall), 73 matched certifications:
+  median 120s   mean 200s   min 30s   max 1123s
+
+container memory, batch d80aab (155 suites, SPIRA_BATCH_MAXPAR=2):
+  cgroup memory.peak    835 MB
+  cgroup cpu.stat       2,647s CPU over 1,292s wall = 2.05 cores (the suites are CPU-bound)
+  in-batch concurrency  2 for 251 of 259 five-second samples, 1 for the other 8
+
+box, at the time of measurement:
+  16 cores, 7,419 MB RAM, 4,095 MB swap of which 3,897 MB in use
+  user slice memory.current 6,164 MB, memory.peak 6,961 MB
+  spira-landing.service CPUQuota=40%; the batch container itself has no CPU limit (cpu.max=max)
+  SPIRA_BATCH_MAXPAR=2, set in the operator's spira.conf with the reason:
+    "16 cores but 7 GiB of memory: the batch pool derives its width from nproc, and 16 parallel
+     test containers would exhaust memory long before CPU. Memory is the binding constraint here."

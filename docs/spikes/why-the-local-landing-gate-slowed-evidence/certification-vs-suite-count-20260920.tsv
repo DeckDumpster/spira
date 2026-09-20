@@ -1,0 +1,80 @@
+# provenance: join of the two files above, by spike sp-kz6ml. A gate row is matched to the
+# testenv-batch run whose suite timestamps fall inside [gate_end - ran, gate_end]. Rows with
+# ran<30s and rows with no contained batch are omitted: batch-results directories are keyed by
+# a content hash and are OVERWRITTEN by a later run with the same key, so early-hour batches are
+# under-represented. This is a bias toward MISSING rows, not toward wrong ones.
+# format: <utc> <branch> <gate_ran_s> <verdict> <n_suites> <sum_suite_s> <batch_wall_s> <hour>
+
+2026-09-20T00:03:20Z	spira/sp-kcbzb	162	branch-red	2	1	1	0
+2026-09-20T00:18:32Z	spira/sp-kcbzb	78	pass	2	4	2	0
+2026-09-20T00:32:52Z	spira/sp-awm7y	84	pass	2	14	7	0
+2026-09-20T00:59:43Z	spira/sp-aor1l	123	pass	2	1	1	0
+2026-09-20T01:03:08Z	spira/sp-czsf4	77	pass	2	3	2	1
+2026-09-20T01:19:11Z	spira/sp-m2zdm	55	pass	4	33	20	1
+2026-09-20T01:26:38Z	spira/sp-4uey8	87	pass	2	47	27	1
+2026-09-20T01:33:29Z	spira/sp-4k8bf	147	branch-red	2	14	13	1
+2026-09-20T01:41:08Z	spira/sp-4k8bf	92	pass	5	18	15	1
+2026-09-20T01:52:31Z	spira/sp-4mpy6	219	pass	9	259	138	1
+2026-09-20T02:54:53Z	spira/sp-4k8bf	66	pass	4	15	13	2
+2026-09-20T03:53:18Z	spira/sp-4mpy6	461	branch-red	10	278	140	3
+2026-09-20T03:54:28Z	spira/sp-54qsc	70	pass	2	14	13	3
+2026-09-20T04:05:21Z	spira/sp-llqq1	180	branch-red	2	78	75	4
+2026-09-20T04:09:06Z	spira/sp-i6z75	107	pass	3	81	77	4
+2026-09-20T04:14:34Z	spira/sp-3az9w	153	pass	3	79	75	4
+2026-09-20T04:18:20Z	spira/sp-4mpy6	221	pass	10	274	139	4
+2026-09-20T04:23:19Z	spira/sp-llqq1	87	pass	2	10	9	4
+2026-09-20T08:29:38Z	spira/sp-1i6sq	626	branch-red	7	177	99	8
+2026-09-20T08:33:47Z	spira/sp-4k8bf	243	branch-red	7	125	67	8
+2026-09-20T08:37:55Z	spira/sp-f2h4h	241	branch-red	5	133	67	8
+2026-09-20T08:43:41Z	spira/sp-llqq1	157	pass	4	41	25	8
+2026-09-20T08:48:57Z	spira/sp-4k8bf	108	pass	4	19	16	8
+2026-09-20T09:08:30Z	spira/sp-s8kn7	806	branch-red	95	1081	547	9
+2026-09-20T09:15:08Z	spira/sp-54qsc	91	pass	2	14	13	9
+2026-09-20T09:38:41Z	spira/sp-s8kn7	613	pass	95	1034	520	9
+2026-09-20T10:02:20Z	spira/sp-4mpy6	1419	branch-red	32	1167	596	10
+2026-09-20T10:07:47Z	spira/sp-4k8bf	101	pass	5	28	17	10
+2026-09-20T10:24:31Z	spira/sp-s8kn7	865	pass	95	1291	651	10
+2026-09-20T11:08:51Z	spira/sp-4mpy6	588	pass	31	987	502	11
+2026-09-20T11:19:36Z	spira/sp-njd17	165	pass	4	89	83	11
+2026-09-20T11:26:07Z	spira/sp-54qsc	98	pass	3	34	19	11
+2026-09-20T11:42:59Z	spira/sp-argjf	200	pass	12	151	80	11
+2026-09-20T11:52:06Z	spira/sp-k8d5x	184	pass	12	155	81	11
+2026-09-20T12:10:33Z	spira/sp-ksqvc	1103	pass	111	1912	964	12
+2026-09-20T12:13:16Z	spira/sp-mplcb	158	harness-fault	3	36	35	12
+2026-09-20T12:29:23Z	spira/sp-mvg44	196	pass	13	156	81	12
+2026-09-20T12:33:18Z	spira/sp-nk8le	231	pass	7	189	125	12
+2026-09-20T12:50:49Z	spira/sp-yr4ih	1046	branch-red	122	1668	841	12
+2026-09-20T12:52:57Z	spira-suite-state/auto-test-suites-timeout-20260920T125108Z	105	pass	3	3	2	12
+2026-09-20T13:09:46Z	spira/sp-1f56o	641	pass	57	931	469	13
+2026-09-20T13:30:08Z	spira/sp-d0rnp	1215	pass	119	2029	1022	13
+2026-09-20T13:33:30Z	spira/sp-ja7ng	196	pass	12	158	83	13
+2026-09-20T13:41:33Z	spira/sp-tagu1	472	pass	40	693	348	13
+2026-09-20T14:14:40Z	spira/sp-vjfv6	1982	branch-red	102	1696	859	14
+2026-09-20T14:17:13Z	spira-suite-state/auto-test-suites-20260920T141504Z	125	pass	3	7	6	14
+2026-09-20T14:19:53Z	spira-suite-state/auto-test-batch-lock-20260920T141747Z	121	pass	3	6	4	14
+2026-09-20T14:27:43Z	spira/sp-4aa1h	232	pass	28	186	104	14
+2026-09-20T14:32:09Z	spira/sp-81anm	260	branch-red	13	157	82	14
+2026-09-20T14:35:25Z	spira/sp-95ooh	190	pass	12	155	81	14
+2026-09-20T15:06:07Z	spira/sp-9c208	1837	pass	221	3186	1637	15
+2026-09-20T15:15:04Z	spira/sp-hmx69	531	branch-red	17	258	143	15
+2026-09-20T15:20:34Z	spira/sp-5fd9z	242	pass	13	174	92	15
+2026-09-20T15:36:27Z	spira/sp-81anm	946	pass	97	1564	784	15
+2026-09-20T15:39:46Z	spira/sp-hrnzw	192	pass	12	162	85	15
+2026-09-20T15:43:00Z	spira/sp-kn2bj	189	pass	12	158	82	15
+2026-09-20T16:11:10Z	spira/sp-mplcb	1684	branch-red	117	1205	613	16
+2026-09-20T16:13:29Z	spira-suite-state/auto-test-suites-timeout-20260920T161133Z	112	pass	3	4	3	16
+2026-09-20T16:15:40Z	spira-suite-state/auto-test-bd-close-unacked-guard-20260920T161336Z	120	pass	3	4	3	16
+2026-09-20T16:22:11Z	spira/sp-30hjg	254	pass	37	249	131	16
+2026-09-20T16:31:43Z	spira/sp-47gkv	567	pass	47	881	445	16
+2026-09-20T16:35:22Z	spira/sp-6as8d	214	pass	16	172	95	16
+2026-09-20T16:38:51Z	spira/sp-7dcpz	205	pass	16	162	87	16
+2026-09-20T17:01:45Z	spira/sp-h3sw8	1367	branch-red	94	1068	537	17
+2026-09-20T17:14:05Z	spira/sp-jxtpn	731	pass	96	1151	580	17
+2026-09-20T17:24:35Z	spira/sp-3fg6w	504	pass	29	607	314	17
+2026-09-20T17:50:03Z	spira/sp-5jsuu	1522	pass	171	2675	1342	17
+2026-09-20T18:10:31Z	spira/sp-d0rnp	1221	pass	121	2021	1020	18
+2026-09-20T18:14:22Z	spira-suite-state/auto-test-suites-confirm-red-20260920T181152Z	146	pass	3	32	20	18
+2026-09-20T18:41:29Z	spira/sp-c8spz	1064	branch-red	38	798	417	18
+2026-09-20T19:11:23Z	spira/sp-h3sw8	1782	branch-red	95	1773	922	19
+2026-09-20T19:13:54Z	spira-suite-state/auto-test-suites-fixture-fault-20260920T191152Z	119	pass	3	5	3	19
+2026-09-20T19:28:52Z	spira/sp-0y7cs	594	branch-red	40	336	178	19
