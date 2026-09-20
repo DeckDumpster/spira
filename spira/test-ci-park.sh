@@ -182,8 +182,13 @@ AREPO="$TMP/arepo"; git clone -q "$AORIGIN" "$AREPO" 2>/dev/null
 git -C "$AREPO" config user.email t@t; git -C "$AREPO" config user.name t
 printf 'seed\n' > "$AREPO/f"
 git -C "$AREPO" add f; git -C "$AREPO" commit -qm seed; git -C "$AREPO" push -q origin main 2>/dev/null
-printf 'FAYTH_NAME=builder\nFAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison"\nFAYTH_MAX_CONCURRENT=1\nFAYTH_HEARTBEAT_SECONDS=600\n' \
-    > "$AH/chamber/builder.fayth"
+cat > "$AH/chamber/builder.fayth" <<'FAYTH'
+FAYTH_NAME=builder
+FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
+FAYTH_EXCLUDE_LABELS="spira-poison"
+FAYTH_MAX_CONCURRENT=1
+FAYTH_HEARTBEAT_SECONDS=600
+FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$AH/chamber/builder.md"
 
 ABIN="$TMP/abin"; mkdir -p "$ABIN"
@@ -198,10 +203,11 @@ chmod +x "$ABIN/claude"
 
 brief_for() {   # brief_for <land> -> the PARK section of the brief an aeon was handed
     local land="$1" map="$TMP/aeon-map-$1"
+    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:arepo\""
     printf 'arepo | %s | %s | origin/main | |\n' "$AREPO" "$land" > "$map"
     testdb_reset
-    printf '{"id":"sp-br-1","title":"t","status":"open","issue_type":"task","labels":["spira","plan","repo:arepo"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
-        | testdb_seed
+    printf '{"id":"sp-br-1","title":"t","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+        "$_lbl" | testdb_seed
     rm -rf "$TMP/arun"; mkdir -p "$TMP/arun"
     : > "$TMP/prompt"
     SPIRA_HOME="$AH" SPIRA_RUN="$TMP/arun" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$AREPO" \

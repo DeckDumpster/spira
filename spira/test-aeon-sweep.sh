@@ -61,7 +61,7 @@ printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
 # Custom fayth: uses the test-label partition; no SOP_REQUIRED so the closing rule
 # does not fire and confuse the attempt-label check.
-FAYTH_LABELS_T="spira,test-sweep-bead"
+FAYTH_LABELS_T="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}test-sweep-bead"
 cat > "$SPIRA_HOME/chamber/testsweep.fayth" <<FAYTH
 FAYTH_NAME=testsweep
 FAYTH_LABELS="$FAYTH_LABELS_T"

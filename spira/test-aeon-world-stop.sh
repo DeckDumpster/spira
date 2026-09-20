@@ -73,7 +73,7 @@ printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 # in a real session wait; FAYTH_HEARTBEAT_SECONDS=1 for the same reason.
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
-FAYTH_LABELS="spira,plan"
+FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
 FAYTH_EXCLUDE_LABELS="spira-poison,needs-operator"
 FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600
@@ -126,7 +126,7 @@ export WORLD_CALLS
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SPIRA_HOME/slay.sh"; chmod +x "$SPIRA_HOME/slay.sh"
 
 seed() {   # seed <id> [extra-labels...]
-    local labels="spira,plan,repo:fixture"
+    local labels="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:fixture"
     for l in "${@:2}"; do labels="$labels,$l"; done
     printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":["%s"],"updated_at":"2026-09-08T00:00:00Z"}\n' \
         "$1" "$(printf '%s' "$labels" | sed 's/,/","/g')" | testdb_seed
