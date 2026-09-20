@@ -59,7 +59,7 @@ cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$HERE/s
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$TMP/ask.log" > "$SH/ask.sh"
 chmod +x "$SH/ask.sh"
 
-BUDGET=120; PERSUITE=20; STALE=3600; PRIO=3; REPONAME=fixture-repo
+BUDGET=120; PERSUITE=20; STALE=3600; PRIO=3; REPONAME=fixture-repo; CONFIRM_MIN=5
 TOOLPATH="$TMP/bin"; mkdir -p "$TOOLPATH"
 printf '#!/usr/bin/env bash\nHOME=%s exec %s "$@"\n' "$HOME" "$(type -P bd)" > "$TOOLPATH/bd"
 chmod +x "$TOOLPATH/bd"
@@ -94,6 +94,7 @@ sut() {
         SPIRA_SUITES_RUNNER_VARS="$RUNNER_VAR" \
         SPIRA_INCIDENT_LOCK_WAIT="60" \
         SPIRA_SUITES_INLINE=1 \
+        SPIRA_SUITES_CONFIRM_MIN="$CONFIRM_MIN" \
         "$@" bash "$SH/suites.sh" "$cmd" 2>&1
 }
 plant() { cat > "$SH/$1"; chmod +x "$SH/$1"; }
@@ -188,25 +189,21 @@ echo "when budget is exhausted after the suite runs, file nothing and record red
 # STRATEGY: run this test with a clean timed set so previous suites do not consume budget.
 rm -f "$SH/test-cx-always-red.sh" "$SH/test-cx-env-sensitive.sh"
 
-# Budget-sensitive suite: always fails (independent of SPIRA_HOME) but sleeps to consume
-# budget, so that left ≤ 5 when it exits and the confirming run cannot start.
+# Suite: exits 1 immediately (no sleep). With CONFIRM_MIN=9999, any positive left after
+# the suite exits is ≤ CONFIRM_MIN, so the confirming run check fires without relying on
+# elapsed time. SPIRA_HOME is set in sut()'s environment, so confirm_differing is
+# non-empty; the budget check fires before the confirming run starts → red-unconfirmed.
 plant test-cx-budget-red.sh <<'S'
 #!/usr/bin/env bash
 # covers: spira/nothing.sh
-sleep 15
 printf '  FAIL  this suite always fails (budget exhaustion test)\n'
 exit 1
 S
 
-# BUDGET=sleep+5=20: suite starts (left=20 > 5), runs for 15s, exits. left ≤ 5.
-# Startup overhead up to 14 integer seconds is tolerated: left_before = 20-overhead > 5
-# for overhead < 15; left_after = 5-overhead ≤ 5 for any overhead ≥ 0. SPIRA_HOME is
-# set in sut()'s environment, so confirm_differing is non-empty; the budget check fires
-# before the confirming run starts → red-unconfirmed.
-BUDGET=20
+CONFIRM_MIN=9999
 rm -f "$STATE/test-cx-budget-red.sh.result"
 out3="$(sut run)"
-BUDGET=120
+CONFIRM_MIN=5
 want "when no budget for confirming run, output says so" "RED-UNCONFIRMED" "$out3"
 # Nothing should be filed since we cannot confirm whether this is a defect or env-only.
 budget_suite_ids="$(beads_with 'test-cx-budget-red.sh')"
