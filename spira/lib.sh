@@ -331,6 +331,31 @@ $id has been reopened for a rebase conflict $n times and the loop is not converg
 MAILEOF
 }
 
+# spira_ask_rebase_refused — one deduplicated ask per closed bead the harness cannot rebase.
+# A refusal is an infrastructure fault, not the work's fault — the bead stays closed.
+spira_ask_rebase_refused() {  # <bead> <branch> <repo-name> <reason>
+    local id="$1" br="$2" name="$3" reason="$4"
+    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
+    ask_already_open "$br rebase refused" && return 0
+    local _subj="$br rebase refused in $name: $reason"
+    local _dflt="fix the infrastructure; $id stays closed and its branch will land on the next pass"
+    "$SPIRA_HOME/mail.sh" send operator \
+        --from "Landing gate <gate@spira>" \
+        --subject "$_subj" \
+        --kind question \
+        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
+## Question
+$_subj
+
+## Default
+$_dflt
+
+$id is closed; its branch $br cannot be rebased onto the base in $name.
+The failure is not a merge conflict — the work is not being reopened.
+Reason: $reason.
+MAILEOF
+}
+
 # spira_ask_refresh_loop — escalate a pr-mode branch that will not merge despite being
 # repeatedly refreshed onto the base.
 #
@@ -1893,6 +1918,12 @@ _census_events_sql() {   # _census_events_sql [since_epoch_s]
     fi
     printf "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT (event_type = 'requeued' AND new_value = 'merge-conflict') AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict')%s GROUP BY event_type, new_value UNION ALL SELECT 'reopen', 'rebase-conflict', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR (event_type = 'requeued' AND new_value = 'merge-conflict'))%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopened', 'unrecorded', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE event_type = 'reopened'%s AND issue_id NOT IN (SELECT issue_id FROM events WHERE event_type = 'reopen') HAVING COUNT(DISTINCT issue_id) > 0 ORDER BY 3 DESC" "$since_clause" "$since_clause" "$since_clause"
 }
+_census_class_fold_map() {
+    # <folded-away-class> <canonical-class>. A covers: label naming a folded-away class
+    # suppresses the class it was folded into. Keep this adjacent to the SQL fold in
+    # _census_events_sql: a rename of one must carry the other.
+    printf 'sp-requeue-merge-conflict sp-reopen-rebase-conflict\n'
+}
 census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output; exits non-zero when unreachable
     local q
     q="$(_census_events_sql "${1:-}")"
@@ -3026,7 +3057,7 @@ other_beads_on_conflicts() {
     # shellcheck disable=SC2086
     subjects="$(git -C "$repo" log --format='%s' "$mb..$base" -- $files 2>/dev/null)" || return 0
     [ -n "$subjects" ] || return 0
-    ids="$(grep -oE "${SPIRA_ID_PREFIX:-sp}-[a-z0-9]+" <<< "$subjects" | sort -u)" || return 0
+    ids="$(grep -oE "${own_id%%-*}-[a-z0-9]+" <<< "$subjects" | sort -u)" || return 0
     ids="$(grep -vxF "$own_id" <<< "$ids")" || return 0
     printf '%s' "$ids" | tr '\n' ' ' | sed 's/ $//'
 }
@@ -4707,7 +4738,7 @@ format_rebased() {
     # (law-aeon-commits-name-their-bead). Through stdin, never an argument: a formatter
     # command containing backticks or $( ) would otherwise be executed by the very quoting
     # that was meant to quote it (law-commit-messages-via-stdin).
-    git -C "$wt" commit -q -F - <<EOF 2>/dev/null
+    git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" commit -q -F - <<EOF 2>/dev/null
 spira: re-format ${br##*/} after rebase onto $onto
 
 The rebase replayed cleanly and nothing re-ran $name's formatter on the result, so
@@ -4822,7 +4853,7 @@ rebase_branch() {
 
     local _rebase_err
     _rebase_err="$(mktemp)"
-    if ! git -C "$wt" rebase -q "$onto" >/dev/null 2>"$_rebase_err"; then
+    if ! git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" rebase -q "$onto" >/dev/null 2>"$_rebase_err"; then
         # Name the collisions BEFORE aborting; after the abort there is nothing to read.
         REBASE_CONFLICTS="$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
         REBASE_CONFLICTS="${REBASE_CONFLICTS% }"

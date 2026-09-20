@@ -173,8 +173,12 @@ landing() {
     # and PATH-resolution after that depends on TESTDB_BIN existing in PATH. Pinning here
     # removes the dependency: the pass always uses the binary testdb_up chose regardless of
     # what the counter-script section left in the environment.
+    # SPIRA_ID_PREFIX IS PINNED. A session running on a non-default-prefix harness hands
+    # other_beads_on_conflicts a pattern that does not match the sp- ids used in this
+    # fixture's commits, so the function returns empty and the parallel-duplicate note
+    # omits the bead name it is written to carry (law-gates-run-in-a-clean-environment).
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
+    SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
         bash "$SH/landing.sh" 2>&1
 }
@@ -519,6 +523,54 @@ _ext_fail="${_ext%%|*}"; _ext_rest="${_ext#*|}"; _ext_conflicts="${_ext_rest#*|}
 is   "a real content conflict still produces REBASE_FAILURE=conflict"    conflict "$(classify spira/sp-kindconflicts origin/main)"
 want "and REBASE_CONFLICTS names the colliding file"                      "shared2.txt" "$_ext_conflicts"
 drop_branch sp-kindconflicts
+
+# THE IDENTITY FIX. The landing pass runs without an ambient git identity (no GIT_COMMITTER_*,
+# no ~/.gitconfig); git refuses any rebase that must replay a commit. After the fix, the
+# harness passes -c user.name/user.email from SPIRA_GIT_NAME and SPIRA_GIT_EMAIL.
+# Run under env -i with a fresh HOME so ambient config cannot satisfy the assertion.
+# Identity keys pinned to non-defaults so the assertion fails if the literal is written in.
+# POSITIVE CONTROL: on the unfixed tree (no -c flags, no conf.sh defaults for these keys)
+# the call below returns rc=1 REBASE_FAILURE=rebase-refused.
+rebase_id_classify() {   # rebase_id_classify <branch> <onto> -> "rc|committer-name|committer-email|failure"
+    local _home; _home="$(mktemp -d)"
+    local _out
+    _out="$(env -i \
+        HOME="$_home" \
+        PATH="$PATH" \
+        SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$_home/nodb" \
+        SPIRA_REPO="$REPO" SPIRA_REPO_MAP="$SH/repo-map" \
+        SPIRA_GIT_NAME=testharness SPIRA_GIT_EMAIL=testharness@test.invalid \
+        bash -c '. "$1/lib.sh" >/dev/null 2>&1
+                 rebase_branch "$2" "$3" "$4" fixture >/dev/null 2>&1; _rc=$?
+                 _cn="$(git -C "$4" log -1 --format=%cn "$2" 2>/dev/null)"
+                 _ce="$(git -C "$4" log -1 --format=%ce "$2" 2>/dev/null)"
+                 printf "%s|%s|%s|%s" "$_rc" "$_cn" "$_ce" "${REBASE_FAILURE:-}"' \
+        _ "$SH" "$1" "$2" "$REPO" 2>/dev/null)"
+    rm -rf "$_home"
+    printf '%s' "$_out"
+}
+
+seed; branch sp-ident
+printf 'base step\n' > "$REPO/ident-base.txt"
+git -C "$REPO" add ident-base.txt
+git -C "$REPO" commit -q -m "base adds ident-base.txt"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+_ri="$(rebase_id_classify spira/sp-ident origin/main)"
+_ri_rc="${_ri%%|*}"; _ri_rest="${_ri#*|}"; _ri_cn="${_ri_rest%%|*}"; _ri_rest2="${_ri_rest#*|}"; _ri_ce="${_ri_rest2%%|*}"
+is   "rebase succeeds in a clean env when SPIRA_GIT_NAME and SPIRA_GIT_EMAIL are set" "0" "$_ri_rc"
+is   "the rebased commit's committer name is taken from SPIRA_GIT_NAME"  "testharness" "$_ri_cn"
+is   "the rebased commit's committer email is taken from SPIRA_GIT_EMAIL" "testharness@test.invalid" "$_ri_ce"
+drop_branch sp-ident
+
+seed; branch sp-ident-clash shared-ic.txt "branch content"
+printf 'base content\n' > "$REPO/shared-ic.txt"
+git -C "$REPO" add shared-ic.txt
+git -C "$REPO" commit -q -m "base also writes shared-ic.txt"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+_ri_clash="$(rebase_id_classify spira/sp-ident-clash origin/main)"
+_ri_clash_fail="${_ri_clash##*|}"
+is "a real conflict returns REBASE_FAILURE=conflict even with identity set" "conflict" "$_ri_clash_fail"
+drop_branch sp-ident-clash
 
 # THE FENCE. Every route from a rebase failure to a reopen lives in landing.sh and must read
 # the classification first; the two above are the ones that exist today and a third would
@@ -879,6 +931,11 @@ nowant "and does NOT mention other beads"    "check whether" "$notes"
 drop_branch sp-mine
 
 # REPEATED REBASE FAILURES ESCALATE INSTEAD OF REOPENING AGAIN.
+# TIP MUST MOVE BETWEEN PASSES. The guard added by db-91ox suppresses duplicate bumps
+# when (tip, base) are unchanged — which is the right behaviour because in real usage
+# an aeon works the reopened bead and pushes new commits. These commits change the tip,
+# so the guard fires only on genuine repeated conflicts, not on re-encounters with the
+# same (tip, base) pair. The empty commits below simulate aeon work.
 seed; branch sp-loop shared.txt "from the branch"
 printf '%s\n' "from sp-other on the base" > "$REPO/shared.txt"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "sp-other — change shared.txt"
@@ -887,11 +944,13 @@ git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
 out="$(SPIRA_REBASE_ESCALATE_AT=3 landing)"
 want "first rebase failure reopens"   "reopened sp-loop" "$out"
 is   "bead is open after first"       open "$(status_of sp-loop)"
-# Close the bead again so landing will see it.
+# Close the bead and advance the tip (simulating aeon work) so landing will see it.
 B close sp-loop --reason "try again" >/dev/null 2>&1
+git -C "$RUN/worktree/sp-loop" commit -q --allow-empty -m "sp-loop aeon attempt 1"
 out="$(SPIRA_REBASE_ESCALATE_AT=3 landing)"
 want "second rebase failure reopens"  "reopened sp-loop" "$out"
 B close sp-loop --reason "try again" >/dev/null 2>&1
+git -C "$RUN/worktree/sp-loop" commit -q --allow-empty -m "sp-loop aeon attempt 2"
 out="$(SPIRA_REBASE_ESCALATE_AT=3 landing)"
 want "third rebase failure escalates" "escalated sp-loop" "$out"
 nowant "and does not reopen"          "reopened sp-loop" "$out"
@@ -1124,6 +1183,44 @@ is   "and Ryan is not paged a second time"                      "" "$(cat "$EMIT
 cat > "$SH/repo-map" <<MAP
 $REPONAME | $REPO | push | |
 MAP
+
+# --------------------------------------------------------------------------------------
+# DUPLICATE MERGE-CONFLICT BUMP SUPPRESSION (db-91ox)
+#
+# An escalated branch whose tip and base have not moved since the last RED mark must
+# produce exactly one requeued/merge-conflict event however many passes run against it.
+# A base that advances is new evidence and must still bump.
+#
+# POSITIVE CONTROL (verified against origin/main 421485a before the fix):
+# Two passes on an unchanged tip+base produced 2 events with the unfixed code —
+# the second-pass assertion below failed with "wanted [1] got [2]".
+# --------------------------------------------------------------------------------------
+mc_of() {  # requeued/merge-conflict event count for bead $1
+    B sql "SELECT COUNT(*) FROM events WHERE issue_id='$1' AND event_type='requeued' AND new_value='merge-conflict'" 2>/dev/null \
+    | sed -n '3p' | tr -d ' '
+}
+
+seed; branch sp-nodupe shared.txt "from the branch"
+printf '%s\n' "from the base" > "$REPO/shared.txt"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base writes shared.txt"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+
+out="$(SPIRA_REBASE_ESCALATE_AT=1 landing)"
+want "first pass detects the conflict and escalates"     "escalated sp-nodupe" "$out"
+is   "and writes exactly one merge-conflict event"       1 "$(mc_of sp-nodupe)"
+
+# Second pass: tip and base unchanged — guard suppresses the duplicate bump.
+out2="$(SPIRA_REBASE_ESCALATE_AT=1 landing)"
+is   "a second pass with unchanged tip and base writes no new event" 1 "$(mc_of sp-nodupe)"
+want "and the log names the reason it skipped" "tip and base unchanged since last RED" "$out2"
+
+# Third pass after the base advances: new evidence, new event.
+printf '%s\n' "another base commit" >> "$REPO/shared.txt"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base advances"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+out3="$(SPIRA_REBASE_ESCALATE_AT=1 landing)"
+is   "after base moves, a new event is written" 2 "$(mc_of sp-nodupe)"
+drop_branch sp-nodupe
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

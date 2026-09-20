@@ -47,7 +47,7 @@ DENY="${SPIRA_INVENTORY_DENY:-$HERE/inventory-deny}"
 # one exactly, and the harness renders a unit per watcher that way — so without this every
 # file that names an instance would be refused as though it carried somebody's mail. The
 # exemption is on the unit SUFFIX, which no mail domain has.
-EXEMPT_MAIL='^git@|@example\.(com|net|org|invalid)|@(example|test|invalid|localhost)$|@spira\.local'
+EXEMPT_MAIL='^git@|@example\.(com|net|org|invalid)|@[A-Za-z0-9_.-]+\.invalid$|@(example|test|invalid|localhost)$|@spira\.local'
 EXEMPT_MAIL="$EXEMPT_MAIL"'|@[A-Za-z0-9_.-]*\.(service|timer|socket|target|path|mount|slice|scope|swap|device)$'
 
 patterns() {

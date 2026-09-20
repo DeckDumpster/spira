@@ -272,6 +272,92 @@ is "no attempt charged for a conflict requeue" "0" "$_att"
 _rqn="$(requeues_of "sp-z1")"
 is "requeues_of still counts the requeue event" "1" "$_rqn"
 
+# ======================================================================================
+echo
+echo "db-hn1t: covers:sp-requeue-merge-conflict suppresses sp-reopen-rebase-conflict"
+# ======================================================================================
+# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail):
+# On the unfixed tree, census prints "3 sp-reopen-rebase-conflict (...)" without
+# [suppressed] because the covers: label names the pre-fold class sp-requeue-merge-conflict
+# and the grep -qxF match against the emitted class sp-reopen-rebase-conflict misses.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-p1","title":"conflict bead 1","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
+{"id":"sp-p2","title":"conflict bead 2","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
+{"id":"sp-p3","title":"conflict bead 3","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
+{"id":"sp-p4","title":"remedy bead","status":"open","issue_type":"task","labels":["spira","maechen-remedy","covers:sp-requeue-merge-conflict"],"updated_at":"2026-09-19T00:00:00Z"}
+JSONL
+bump_requeue "sp-p1" merge-conflict >/dev/null 2>&1
+bump_requeue "sp-p2" merge-conflict >/dev/null 2>&1
+bump_requeue "sp-p3" merge-conflict >/dev/null 2>&1
+
+_fold_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" bash "$HERE/census.sh" --with-suppressed 2>/dev/null)"
+_fold_line="$(printf '%s\n' "$_fold_out" | grep 'sp-reopen-rebase-conflict' || true)"
+want "covers:sp-requeue-merge-conflict suppresses sp-reopen-rebase-conflict" "[suppressed" "$_fold_line"
+nowant "sp-reopen-rebase-conflict not emitted unsuppressed" "sp-reopen-rebase-conflict" \
+    "$(printf '%s\n' "$_fold_out" | grep -v '\[suppressed' || true)"
+
+# Unrelated covers: label does NOT suppress sp-reopen-rebase-conflict.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-q1","title":"conflict bead","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
+{"id":"sp-q2","title":"unrelated remedy","status":"open","issue_type":"task","labels":["spira","maechen-remedy","covers:sp-recur-suite-red"],"updated_at":"2026-09-19T00:00:00Z"}
+JSONL
+bump_requeue "sp-q1" merge-conflict >/dev/null 2>&1
+
+_unrel_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" bash "$HERE/census.sh" --with-suppressed 2>/dev/null)"
+_unrel_line="$(printf '%s\n' "$_unrel_out" | grep 'sp-reopen-rebase-conflict' || true)"
+nowant "unrelated covers: does not suppress sp-reopen-rebase-conflict" "[suppressed" "$_unrel_line"
+want "sp-reopen-rebase-conflict still appears without suppression" "sp-reopen-rebase-conflict" "$_unrel_out"
+
+# ======================================================================================
+echo
+echo "empty new_value (sp-census-empty-cause-shift) — genuinely NULL cause must not shift columns"
+# ======================================================================================
+# bd reopen writes event_type='reopened' with new_value=NULL. The count.py parser was
+# filtering empty fields before counting; an empty second column became a 3-column row,
+# causing the bead count to be read as the cause and inflating the reported count.
+# This test uses direct INSERT (not bump_*) to produce an empty new_value, which no
+# bump_* call can produce (they all default cause to 'unrecorded').
+#
+# POSITIVE CONTROL: verify the test CAN detect the defect before relying on its absence.
+_insert_empty_cause() {   # _insert_empty_cause <bead_id> <event_type>
+    local id="$1" etype="$2"
+    local uuid
+    uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 1
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+        "INSERT INTO events (id, issue_id, event_type, actor, new_value) VALUES ('$uuid', '$id', '$etype', 'test', NULL)" \
+        >/dev/null 2>&1
+}
+
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-h1","title":"empty-cause bead","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
+JSONL
+_insert_empty_cause "sp-h1" "reclaimed"
+_insert_empty_cause "sp-h1" "reclaimed"
+
+# Positive control: without any events, the class is absent (proves detection works).
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-h0","title":"empty-cause control","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
+JSONL
+_pc_out="$(census_out)"
+is "positive control: no events produces no sp-reclaim" "" "$(printf '%s' "$_pc_out" | grep sp-reclaim || true)"
+
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-h1","title":"empty-cause bead","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
+JSONL
+_insert_empty_cause "sp-h1" "reclaimed"
+_insert_empty_cause "sp-h1" "reclaimed"
+
+out="$(census_out)"
+want "empty-cause reclaimed: bare sp-reclaim class (no digit suffix)" "1 sp-reclaim" "$out"
+nowant "empty-cause reclaimed: no phantom class sp-reclaim-1" "sp-reclaim-1" "$out"
+nowant "empty-cause reclaimed: no phantom class sp-reclaim-2" "sp-reclaim-2" "$out"
+want "empty-cause reclaimed: event count shown correctly" "sp-reclaim (2 detections" "$out"
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

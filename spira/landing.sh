@@ -757,6 +757,8 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
             # a finished bead as "conflicts in unknown" and costs it an attempt toward poison.
             if [ "${REBASE_FAILURE:-}" != conflict ]; then
                 log "CHECK6 $id: could not attempt a rebase of $br onto $base after landing $landed (${REBASE_FAILURE:-unknown}) — not a conflict, leaving the bead closed"
+                [ "${REBASE_FAILURE:-}" = rebase-refused ] && \
+                    spira_ask_rebase_refused "$id" "$br" "$name" "${REBASE_REFUSED_REASON:-unknown}"
                 continue
             fi
             # The squash-and-amend case the content test above cannot see. Only a repository
@@ -770,7 +772,15 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
                 continue
             fi
             n_swept_conflict=$(( n_swept_conflict + 1 ))
-            local _other_beads _reopen_note _rq_n _rn_sweep
+            local _other_beads _reopen_note _rq_n _rn_sweep _cur_br_tip _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason
+            _cur_br_tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
+            _cur_base_sha="$(git -C "$repo" rev-parse "$base" 2>/dev/null)"
+            read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
+            if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$_cur_br_tip" ] && \
+               [ "${_ls_reason:-}" = "no-rebase@${_cur_base_sha}" ]; then
+                log "CHECK6 $id: tip and base unchanged since last RED mark — skipping duplicate bump"
+                continue
+            fi
             _rn_sweep="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
             _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
             _reopen_note="Reopened by sentinel: $br does not rebase onto $base in $name after $landed landed; conflicts in ${REBASE_CONFLICTS:-unknown}. The branch carries $_rn_sweep commit(s) from the previous session — resume from the existing work."
@@ -790,7 +800,7 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
                 spira_event bead.reopened "$id" "reopened $id — $br does not rebase onto $base in $name" \
                     "conflicts in ${REBASE_CONFLICTS:-unknown}; the next aeon is handed the rebase" || true
             fi
-            land_mark "$id" RED "$(git -C "$repo" rev-parse "$br" 2>/dev/null)" no-rebase
+            land_mark "$id" RED "$_cur_br_tip" "no-rebase@${_cur_base_sha}"
             continue
         fi
         n_swept=$(( n_swept + 1 ))
@@ -1057,6 +1067,8 @@ for i in d:
             # nothing to rebase, and counts against the bead toward poison.
             if [ "${REBASE_FAILURE:-}" != conflict ]; then
                 log "CHECK6 $id: could not attempt a rebase of $br onto $base (${REBASE_FAILURE:-unknown}) — not a conflict, leaving the bead closed"
+                [ "${REBASE_FAILURE:-}" = rebase-refused ] && \
+                    spira_ask_rebase_refused "$id" "$br" "$name" "${REBASE_REFUSED_REASON:-unknown}"
                 continue
             fi
             # "DOES NOT REBASE" IS NOT EVIDENCE OF UNLANDED WORK ON ITS OWN. content_landed
@@ -1069,7 +1081,14 @@ for i in d:
                 log "CHECK6 $id: $br does not rebase onto $base, but its pull request is merged — landed, not stuck"
                 continue
             fi
-            local _other_beads _reopen_note _rq_n _rn_land
+            local _other_beads _reopen_note _rq_n _rn_land _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason
+            _cur_base_sha="$(git -C "$repo" rev-parse "$base" 2>/dev/null)"
+            read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
+            if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$tip" ] && \
+               [ "${_ls_reason:-}" = "no-rebase@${_cur_base_sha}" ]; then
+                log "CHECK6 $id: tip and base unchanged since last RED mark — skipping duplicate bump"
+                continue
+            fi
             _rn_land="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
             _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
             _reopen_note="Reopened by sentinel: $br does not rebase onto $base in $name; conflicts in ${REBASE_CONFLICTS:-unknown}. The branch carries $_rn_land commit(s) from the previous session — resume from the existing work."
@@ -1089,7 +1108,7 @@ for i in d:
                 spira_event bead.reopened "$id" "reopened $id — $br does not rebase onto $base in $name" \
                     "conflicts in ${REBASE_CONFLICTS:-unknown}; the next aeon is handed the rebase" || true
             fi
-            land_mark "$id" RED "$tip" no-rebase
+            land_mark "$id" RED "$tip" "no-rebase@${_cur_base_sha}"
             continue
         fi
         tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
@@ -1440,14 +1459,16 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 log "CHECK6 $id: no landing worktree at $land — leaving $br to the next pass"
                 continue
             fi
-            merged=0; pushed=0; nothing=0; wedged=0; norebase=''; push_blocked=''
+            merged=0; pushed=0; nothing=0; wedged=0; norebase=''; push_blocked=''; _merge_conflicts=''
             for attempt in 1 2 3; do
                 # A landing worktree that will not check the base out is a broken worktree,
                 # not a branch that conflicts — same reason as the guard above, and the same
                 # cost if it is allowed to fall through to the merge.
                 git -C "$land" checkout -q -B landing "$base" 2>/dev/null || { wedged=1; break; }
                 _pre_merge="$(git -C "$land" rev-parse HEAD 2>/dev/null)"
-                if ! git -C "$land" merge --no-edit -q -m "spira: land $id" "$br" 2>/dev/null; then
+                if ! git -C "$land" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" merge --no-edit -q -m "spira: land $id" "$br" 2>/dev/null; then
+                    _merge_conflicts="$(git -C "$land" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
+                    _merge_conflicts="${_merge_conflicts% }"
                     git -C "$land" merge --abort 2>/dev/null
                     merged=0; break
                 fi
@@ -1619,8 +1640,15 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 # spurious reopen is a fact to read rather than a sequence to reconstruct
                 # from timestamps across two logs.
                 log "landing: $br genuinely conflicts with $base (ancestor=$_anc, commits-ahead=$_rn_merge)"
-                bead_reopen "$id" rebase-conflict "Reopened by sentinel: branch $br conflicts with $base. The branch carries $_rn_merge commit(s) from the previous session — rebase onto $base, resolve the conflict, and finish. A merge conflict is not an escalation."
-                unset _rn_merge _anc
+                local _merge_other _merge_note
+                _merge_other="$(other_beads_on_conflicts "$repo" "$br" "$base" "${_merge_conflicts:-${REBASE_CONFLICTS:-}}")"
+                if [ -n "$_merge_other" ]; then
+                    _merge_note="Reopened by sentinel: branch $br conflicts with $base. The branch carries $_rn_merge commit(s) from the previous session. Those files were changed on $base by $_merge_other — check whether this work is already landed before resolving."
+                else
+                    _merge_note="Reopened by sentinel: branch $br conflicts with $base. The branch carries $_rn_merge commit(s) from the previous session — rebase onto $base, resolve the conflict, and finish. A merge conflict is not an escalation."
+                fi
+                bead_reopen "$id" rebase-conflict "$_merge_note"
+                unset _rn_merge _anc _merge_other _merge_note _merge_conflicts
                 # Counter labels (sp-requeue-N) no longer written (sp-lzt).
                 progress "reopened $id — branch conflicts with $base"
                 spira_event bead.reopened "$id" "reopened $id — $br conflicts with $name's $base" \

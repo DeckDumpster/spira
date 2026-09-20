@@ -1501,6 +1501,7 @@ fi
 BEAD_BODY="$(bdq show "$BEAD_ID" 2>/dev/null | grep -vE '^💡|^warning|^  Fix|^  Or')"
 PROMPT="$(sed -e "s|{{BEAD_ID}}|$BEAD_ID|g" -e "s|{{BRANCH}}|$BRANCH|g" \
               -e "s|{{REPO}}|$WORK|g" -e "s|{{REPO_NAME}}|$REPO_NAME|g" \
+              -e "s|{{HOME_REPO}}|$(spira_home_repo)|g" \
               -e "s|{{LANDING}}|$LANDING_BRIEF|g" -e "s|{{DB}}|$SPIRA_DB|g" \
               -e "s|{{SPIKE_DIR}}|$SPIRA_SPIKE_DIR|g" -e "s|{{SPIKE_PATHS}}|$SPIRA_SPIKE_PATHS|g" \
               -e "s|{{SOP}}|$SPIRA_HOME/sop.sh|g" -e "s|{{INCIDENT}}|$SPIRA_HOME/incident.sh|g" \
