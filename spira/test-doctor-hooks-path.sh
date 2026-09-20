@@ -112,7 +112,7 @@ echo "SPIRA_DOCTOR_INSTALLING=1, hooksPath unset — WARN (not FAIL):"
 # in phase 5 after this check runs.
 git -C "$REPO" config --unset core.hooksPath 2>/dev/null || true
 ins_unset_out="$(run_doctor SPIRA_DOCTOR_INSTALLING=1)"
-want   "installing unset: WARN fires"   "WARN" "$ins_unset_out"
+want   "installing unset: WARN fires"   "warn" "$ins_unset_out"
 nowant "installing unset: no FAIL"      "FAIL" "$(printf '%s\n' "$ins_unset_out" | grep 'hooksPath\|not set')"
 want   "installing unset: phase 5 hint" "phase 5" "$ins_unset_out"
 
@@ -154,13 +154,13 @@ chmod +x "$FRESH/spira/hooks/pre-commit"
 before="$(git -C "$FRESH" config core.hooksPath 2>/dev/null || true)"
 [ -z "$before" ] \
     && ok "fresh clone: core.hooksPath absent before install" \
-    || bad "fresh clone: core.hooksPath unexpectedly set before install" "got: $before"
+    || bad "fresh clone: core.hooksPath unexpectedly set before install" "got: [$before]"
 
 bash "$HERE/exclude.sh" install "$FRESH" >/dev/null 2>&1
 install_rc=$?
 [ "$install_rc" = 0 ] \
     && ok "fresh clone: exclude.sh install exits 0" \
-    || bad "fresh clone: exclude.sh install exited $install_rc"
+    || bad "fresh clone: exclude.sh install exited $install_rc" "wanted exit 0"
 
 after="$(git -C "$FRESH" config core.hooksPath 2>/dev/null || true)"
 [ "$after" = "spira/hooks" ] \
