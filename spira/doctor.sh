@@ -1043,9 +1043,9 @@ echo "enabled units"
 # control plane records a deliberate suspension. A disabled unit with no control-plane
 # entry is silent drift: nothing alerts, nothing fails, the feature it drives simply stops.
 #
-# Fail closed for ambiguous output: empty with a non-zero exit is "not-found"
-# (some systemd builds omit the word for absent units); empty with exit 0 is
-# FAIL — a probe that says clean when it cannot see hides the outage.
+# Fail closed: if systemctl returns no output for a unit, the result is a FAIL rather than
+# a clean pass — a probe that says clean when it cannot see is the silence that hides the
+# outage (law-alerts-must-be-actionable).
 #
 # The ENABLE set is sourced from units.sh directly, not restated here. A second hand-
 # written list rots the way the gate's suite list did: units.sh grows, the copy here does
@@ -1062,9 +1062,7 @@ fi
 if [ "${_dr_en_bad}" -eq 0 ]; then
     for _dr_en_unit in "${ENABLE[@]}"; do
         [ -n "$_dr_en_unit" ] || continue
-        _dr_en_rc=0
-        _dr_en_state="$("$_dr_en_sc" --user is-enabled "$_dr_en_unit" 2>/dev/null)" \
-            || _dr_en_rc=$?
+        _dr_en_state="$("$_dr_en_sc" --user is-enabled "$_dr_en_unit" 2>/dev/null || true)"
         if [ -z "$_dr_en_state" ]; then
             # No output from systemctl can mean no active systemd user session.
             # If the unit file isn't installed either, treat it the same as "not-found".
@@ -1095,7 +1093,7 @@ if [ "${_dr_en_bad}" -eq 0 ]; then
     [ "$_dr_en_bad" -eq 0 ] \
         && OK "all ${#ENABLE[@]} ENABLE units are enabled or suspended via ctrl.sh"
 fi
-unset _dr_en_sc _dr_en_bad _dr_en_units_sh _dr_en_unit _dr_en_rc _dr_en_state _dr_en_base _dr_en_subj
+unset _dr_en_sc _dr_en_bad _dr_en_units_sh _dr_en_unit _dr_en_state _dr_en_base _dr_en_subj
 
 echo
 echo "unit installation"
