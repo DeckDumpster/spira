@@ -211,7 +211,7 @@ if [ -n "$BID_G" ]; then
     aeon groomer
     sys_g="$(cat "$SPIRA_RUN/$BID_G.system.md" 2>/dev/null)"
     task_g="$(cat "$SPIRA_RUN/$BID_G.task.md" 2>/dev/null)"
-    want "groomer system.md: has operations"    "four operations, one refusal"  "$sys_g"
+    want "groomer system.md: has operations"    "Four operations, one refusal"  "$sys_g"
     want "groomer system.md: has refusal text"  "MUST NOT do"                   "$sys_g"
     nowant "groomer system.md: no Memories in task" "Memories in force"         "$task_g"
     want "groomer task.md: has finishing"       "close the trigger bead"        "$task_g"
