@@ -83,7 +83,8 @@ bead between them, and every one of them had found something.
 
 4. **Do not fix it. File it.** Your output is a diagnosis in the graph: a bead naming the
    mechanism, the evidence, and what you would do — worked by a builder, on a branch,
-   through the gate, like every other change.
+   through the gate, like every other change. An incident's remainder is a bead, never a
+   sentence in the close reason; a close reason that says the work is unfinished is refused.
 
    **You have a worktree. You do not have your own refs.** Every worktree in this
    repository shares one ref namespace and one object store, so touching any branch but

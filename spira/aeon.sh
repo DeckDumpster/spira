@@ -2055,6 +2055,40 @@ if [ "$SOP_REQUIRED" = 1 ] && [ "$st" = "closed" ] && [ "$superseded" != 1 ]; th
     fi
 fi
 
+# ---- close-reason fence: refuse a reason that names its own remainder ------------------
+# A close reason containing a statute phrase (law-no-close-reason-admits-unfinished:
+# "PERMANENT FIX NEEDED", "temporary workaround", etc.) says the work is not done.
+# The remainder is a bead, never a sentence in the close reason.
+#
+# THE FENCE AND detect_invalid_closed IN lib.sh SHARE close-reason-flags.py so they
+# cannot disagree about which phrase triggers a refusal.
+#
+# Two honest endings when this fires:
+#   (a) file the remainder with bead.sh, cite its id in the reason, then close
+#   (b) leave the bead open: groomer.sh depends-on-fix <bead> --fix <blocker-bead>
+#
+# Override: SPIRA_CLOSE_REASON_OVERRIDE=<why this phrase is not a remainder>
+if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ -z "$SOP_SILENT" ]; then
+    _cr_raw="$(bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(0)
+d=d if isinstance(d,list) else [d]
+if d: print((d[0].get("close_reason") or ""))' 2>/dev/null)" || _cr_raw=""
+    if [ -n "$_cr_raw" ] && [ -z "${SPIRA_CLOSE_REASON_OVERRIDE:-}" ]; then
+        _cr_hit="$(python3 "$SPIRA_HOME/close-reason-flags.py" "$_cr_raw" 2>/dev/null)" || _cr_hit=""
+        if [ -n "$_cr_hit" ]; then
+            bead_reopen "$BEAD_ID" unfinished-reason "Reopened by aeon.sh: close reason contains a statute phrase (\"$_cr_hit\") that says the work is not done (law-no-close-reason-admits-unfinished). A remainder is a bead, not a sentence in the close reason. Two endings: (a) file the remainder with bead.sh, cite its id in the reason, then close; (b) groomer.sh depends-on-fix $BEAD_ID --fix <blocker-bead> if a fix is already in flight (law-a-bug-with-a-fix-in-flight-depends-on-it)."
+            printf '%s spira: %s: %s REOPENED — close reason contains statute phrase: %s. Override: SPIRA_CLOSE_REASON_OVERRIDE=<why>\n' \
+                "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAYTH" "$BEAD_ID" "$_cr_hit"
+            st="open"
+            REQUEUE_CAUSE="unfinished-reason"
+            REQUEUE_WHY="Close reason contained a statute phrase (\"$_cr_hit\"). File the remainder as a bead, cite its id in the reason, then re-close."
+        fi
+    fi
+    unset _cr_raw _cr_hit
+fi
+
 # CLOSED BEHIND THE BASE IS NOT FINISHED. The brief asked for a rebase as the last step; this
 # is the check that it happened, and the fallback when it did not. The session is over, the
 # claim is still this process's, so rewriting the branch here rewrites nothing beneath

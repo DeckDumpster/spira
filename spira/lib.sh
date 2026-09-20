@@ -3579,18 +3579,18 @@ detect_invalid_closed() {
         _closed_raw="$(bdjson list --status closed --limit 0 2>/dev/null)"
     fi
     [ -n "$_closed_raw" ] || return 0
-    printf '%s\n' "$_closed_raw" | SPIRA_ID_PREFIX="${SPIRA_ID_PREFIX:-sp}" python3 -c '
+    printf '%s\n' "$_closed_raw" | SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_ID_PREFIX="${SPIRA_ID_PREFIX:-sp}" python3 -c '
 import sys, json, re, os
 
-# The statute phrases, matched as claims about the fix: a bare "temporary" also names
-# things that were removed or never were the deliverable, and those closes are complete.
-RED_FLAGS = [
-    (r"PERMANENT FIX NEEDED", re.I),
-    (r"\bmitigated[- ]only\b", re.I),
-    (r"\bTODO\b", 0),
-    (r"\btemporar(?:y|ily)\s+(?:fix|workaround|mitigation|patch|hack|solution)", re.I),
-    (r"\btemporarily\s+(?:fixed|mitigated|patched|worked around)", re.I),
-]
+# Load RED_FLAGS and check_close_reason from the shared helper so the detector and the
+# close-time fence in aeon.sh cannot disagree about what constitutes an unfinished close.
+_flags_path = os.path.join(os.environ.get("SPIRA_HOME", ""), "close-reason-flags.py")
+try:
+    _ns = {"re": re, "__name__": ""}
+    exec(open(_flags_path).read(), _ns)
+    check_close_reason = _ns["check_close_reason"]
+except Exception:
+    check_close_reason = lambda r: None
 
 # Phrases that imply a follow-on obligation. Only a violation when no tracking reference
 # is cited. "upstream" names a destination, not an unfinished remainder, so it is not here.
@@ -3616,7 +3616,7 @@ for i in (d if isinstance(d, list) else [d]):
     title = re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:60]
     reason_short = re.sub(r"\s+", " ", reason.strip())[:120]
 
-    hit = next((m.group(0) for m in (re.search(f, reason, fl) for f, fl in RED_FLAGS) if m), None)
+    hit = check_close_reason(reason)
     if hit:
         print("INVALID-CLOSED %s — close reason contains %r: %s. title: %s" % (
             i["id"], hit, reason_short, title))
