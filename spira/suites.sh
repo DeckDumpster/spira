@@ -508,6 +508,53 @@ PAYLOAD
 }
 
 # --------------------------------------------------------------------------------------
+# FILING A PERSISTENT SKIP. Called when a suite exits 77 on consecutive passes. A check
+# that cannot run is not a check that passed. The ref is suite-skip:<suite> so consecutive
+# passes bump recurrence on one bead rather than opening a new one each cycle.
+# --------------------------------------------------------------------------------------
+file_skip() {    # file_skip <basename> <seconds> <output>
+    local s="$1" secs="$2" out="$3" cov id=""
+    cov="$(suite_covers_of "$HERE/$s")"
+    if [ ! -r "$INC" ]; then
+        log "suites: no intake at $INC — $s is persistently skipped and the finding reaches nobody"
+        return 1
+    fi
+    local out_inc rc_inc
+    out_inc="$(SPIRA_INCIDENT_TYPE=bug \
+          SPIRA_INCIDENT_PRIORITY="$(priority_of "$s")" \
+          SPIRA_INCIDENT_ACTOR=suites \
+          SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" \
+          SPIRA_INCIDENT_REPO="$SPIRA_HOME_REPO" \
+          SPIRA_INCIDENT_REF="suite-skip:$s" \
+          SPIRA_SIN_EXEMPT=1 \
+          SPIRA_INCIDENT_PATH="$HERE/$s" \
+          SPIRA_INCIDENT_CAUSE=suite-skip \
+          SPIRA_DB="$SPIRA_DB" \
+          bash "$INC" file "$s is skipping on consecutive runs" - <<PAYLOAD
+The timed full run found this suite exit 77 (skip) on consecutive passes. A check that
+cannot run is not a check that passed.
+
+  suite            $s
+  covers           ${cov:-NOTHING DECLARED — this suite has no \`# covers:\` line}
+  last skip        ${secs}s
+  reproduce        bash spira/$s
+
+--- last output ----------------------------------------------------------------------
+$(printf '%s\n' "$out" | tail -c 3000)
+PAYLOAD
+)"; rc_inc=$?
+    if [ "$rc_inc" -ne 0 ]; then
+        log "suites: the intake could not file skip bead for $s — it stays spooled and drain will retry"
+        return 1
+    fi
+    id="$(printf '%s\n' "$out_inc" | tail -n 1 | tr -d '[:space:]')"
+    case "${id:-}" in
+        ''|*[!A-Za-z0-9-]*|-*|*-) log "suites: the intake returned no id for skip on $s"; return 1 ;;
+    esac
+    printf '%s' "$id"
+}
+
+# --------------------------------------------------------------------------------------
 # FILING A SAME-CAUSE CLUSTER. Called after the suite loop when N>=2 confirmed reds share
 # the same normalised first FAIL line. Files one bead naming every member suite.
 #
@@ -951,10 +998,16 @@ cmd_run() {
                 record_write "$s" ok "$secs" -
                 printf '  %-26s ok       %ss\n' "$s" "$secs" ;;
             # 77 is the automake convention and the one this tree already uses for "the box
-            # cannot host this check". It is not a pass and it is not a failure: recorded as
-            # its own status so `status` can report it, and never filed, because a bead
-            # saying "your box has no Dolt server" is not work anybody can do.
+            # cannot host this check". A single skip is not filed — it may be transient.
+            # Consecutive skips are filed: a check that cannot run repeatedly is a gap.
+            # quarantined-red and disabled map to 77 but are not suite-capability skips.
             77) status=skip
+                local _pst; _pst="$(record_read "$s" || true)"; _pst="${_pst%% *}"
+                if [ "$_pst" = skip ] && \
+                        [ "${_br_status:-}" != quarantined-red ] && \
+                        [ "${_br_status:-}" != disabled ]; then
+                    file_skip "$s" "$secs" "$out" || true
+                fi
                 record_write "$s" skip "$secs" -
                 skipped=$(( skipped + 1 ))
                 printf '  %-26s SKIPPED  %s\n' "$s" \
