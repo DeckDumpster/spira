@@ -1665,6 +1665,17 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
 # the one worth borrowing — otherwise executes a full landing over every repository as a side
 # effect of the `.`, which is how a diagnostic became a live pass over 29 branches while its
 # author was asking a read-only question.
+
+# EARLY QUEUE CHECK: run before certification gates so a batch whose CI finished before the
+# pass started lands in seconds rather than waiting for the gate sequence (up to 90 min).
+# Idempotent with the late check: a batch that lands here is gone by the late check, and one
+# still pending here is the one the late check settles.
+for repo_name in $(spira_repos); do
+    [ "$(repo_land "$repo_name")" = queue ] || continue
+    bash "$SPIRA_HOME/queue.sh" step "$repo_name" 2>&1 \
+        | while IFS= read -r _bl; do log "queue early: $_bl"; done || true
+done
+
 for repo_name in $(spira_repos); do
     land_repo "$repo_name"
 done
@@ -1673,7 +1684,7 @@ done
 for repo_name in $(spira_repos); do
     [ "$(repo_land "$repo_name")" = queue ] || continue
     bash "$SPIRA_HOME/queue.sh" step "$repo_name" 2>&1 \
-        | while IFS= read -r _bl; do log "$_bl"; done || true
+        | while IFS= read -r _bl; do log "queue late: $_bl"; done || true
 done
 
 # ======================================================================================
