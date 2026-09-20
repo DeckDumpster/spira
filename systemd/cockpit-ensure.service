@@ -27,8 +27,8 @@ TimeoutStartSec=60
 # comparison cost, so a real repair is never the thing the quota slows down.
 CPUQuota=40%
 Nice=10
-StandardOutput=append:@SPIRA_REPO@/.runtime/cockpit-heal.log
-StandardError=append:@SPIRA_REPO@/.runtime/cockpit-heal.log
+StandardOutput=append:@SPIRA_RUN@/cockpit-heal.log
+StandardError=append:@SPIRA_RUN@/cockpit-heal.log
 
 [Install]
 WantedBy=default.target

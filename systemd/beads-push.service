@@ -17,8 +17,8 @@ TimeoutStartSec=3600
 CPUQuota=50%
 Nice=10
 IOSchedulingClass=idle
-StandardOutput=append:@SPIRA_REPO@/.runtime/beads-push.log
-StandardError=append:@SPIRA_REPO@/.runtime/beads-push.log
+StandardOutput=append:@SPIRA_RUN@/beads-push.log
+StandardError=append:@SPIRA_RUN@/beads-push.log
 
 [Install]
 WantedBy=default.target

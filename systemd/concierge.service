@@ -11,8 +11,8 @@ After=default.target
 Type=oneshot
 ExecStart=@SPIRA_REPO@/concierge.sh start
 TimeoutStartSec=60
-StandardOutput=append:@SPIRA_REPO@/.runtime/concierge.log
-StandardError=append:@SPIRA_REPO@/.runtime/concierge.log
+StandardOutput=append:@SPIRA_RUN@/concierge.log
+StandardError=append:@SPIRA_RUN@/concierge.log
 
 [Install]
 WantedBy=default.target
