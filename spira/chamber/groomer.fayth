@@ -21,15 +21,17 @@ FAYTH_MEMORY_PREFIXES="law-"
 # NO FAYTH_REPO. The repository comes from the BEAD through its `repo:` label. A groom
 # pass is not bound to one repository — it reads the whole graph.
 
-# HAIKU. The groomer's work is recognition: is this bead a duplicate? does its premise still
-# hold? what lane does it belong in? These are classification and comparison tasks, not
-# construction. The small model is the right shape for them, and a lane persona that holds a
-# slot for longer than needed starves the party it exists to serve.
+# SONNET. The groomer's work is judgment: does this premise still hold? is this litter?
+# which beads are true duplicates? Six Haiku passes on two obvious cases produced deferral
+# every time — "require clarification", "filed inquiries" — and neither call was ever made.
+# Premise-gone and litter require weighing context against a rule, not pattern-matching a
+# label. Sonnet makes that call; Haiku defers it. At four passes a day the cost difference
+# is a rounding error against one builder session.
 #
-# VERIFIED: `claude --model claude-haiku-4-5-20251001 -p ...` answers on this box. An id the
+# VERIFIED: `claude --model claude-sonnet-4-6 -p 'ok'` answers on this box. An id the
 # CLI rejects does not fail loudly — every summon dies and the lane looks merely quiet.
 # Probe a candidate id before writing it here.
-FAYTH_MODEL=claude-haiku-4-5-20251001
+FAYTH_MODEL=claude-sonnet-4-6
 FAYTH_MAX_CONCURRENT=1
 
 # THE GROOMER LANE. A lane fayth draws from its own FAYTH_MAX_CONCURRENT rather than from
