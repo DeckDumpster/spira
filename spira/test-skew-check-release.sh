@@ -200,11 +200,12 @@ mkdir -p "$ARTIFACT_REPO"
 
 run_skew_artifact() {
     local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"
-    env -i PATH="$MOCK_BIN:$PATH" \
+    env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$REPO/spira" \
         SPIRA_REPO="$ARTIFACT_REPO" \
+        SPIRA_GH="$MOCK_BIN/gh" \
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \

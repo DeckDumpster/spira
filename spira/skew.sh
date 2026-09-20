@@ -223,7 +223,7 @@ check() {
     all_tags="$(git -C "$SPIRA_REPO" tag -l 'spira-release-*' 2>/dev/null | sort)"
     if [ -z "$all_tags" ] && [ -n "${SPIRA_GH_INTAKE_REPO:-}" ]; then
         local _rel_json=""
-        _rel_json="$(gh release list --repo "$SPIRA_GH_INTAKE_REPO" --json tagName,isDraft 2>/dev/null)" \
+        _rel_json="$(ghq release list --repo "$SPIRA_GH_INTAKE_REPO" --json tagName,isDraft 2>/dev/null)" \
             || _rel_json=""
         if [ -n "$_rel_json" ]; then
             all_tags="$(printf '%s' "$_rel_json" | python3 -c '
