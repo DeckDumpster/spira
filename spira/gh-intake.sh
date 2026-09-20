@@ -61,7 +61,10 @@ UNTRUSTED_LABEL="gh-untrusted"
 die() { printf 'gh-intake: %s\n' "$1" >&2; exit 1; }
 log() { printf 'gh-intake: %s\n' "$1"; }
 
-[ -n "$REPO" ] || die "SPIRA_GH_INTAKE_REPO is not set — nothing says which tracker to ingest from"
+if [ -z "$REPO" ]; then
+    log "SPIRA_GH_INTAKE_REPO is not set — nothing to ingest"
+    exit 0
+fi
 
 _rr="$(repo_root "$BEAD_REPO" 2>/dev/null)" || _rr=""
 if [ -z "$_rr" ] || [ ! -e "$_rr/.git" ]; then

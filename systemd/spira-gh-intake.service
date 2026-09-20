@@ -5,14 +5,13 @@
 # spira:accept requires the actor to currently have admin/maintain/write access,
 # verified at promotion time against the collaborators API.
 #
-# ExecCondition makes the unit inert until SPIRA_GH_INTAKE_REPO is configured.
-# A timer firing without a configured inbox would abort every pass with an error.
+# The script reads SPIRA_GH_INTAKE_REPO through conf.sh. When unset it logs one
+# line and exits 0, keeping the unit inert on installs with no configured inbox.
 Description=Spira GitHub issue intake — triage gate
 After=default.target
 
 [Service]
 Type=oneshot
-ExecCondition=/bin/sh -c 'test -n "${SPIRA_GH_INTAKE_REPO:-}"'
 ExecStart=@SPIRA_PROD@/gh-intake.sh
 TimeoutStartSec=120
 CPUQuota=10%
