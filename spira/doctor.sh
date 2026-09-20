@@ -95,7 +95,10 @@ done
 # the flag is caught here rather than in the aeon ledger.
 _dr_agent="${SPIRA_AGENT:-claude}"
 if command -v "$_dr_agent" >/dev/null 2>&1; then
-    if "$_dr_agent" --system-prompt-snapshot on --version >/dev/null 2>&1; then
+    if ! timeout 5 "$_dr_agent" --version >/dev/null 2>&1; then
+        WARN "$_dr_agent is on PATH but --version fails — cannot verify launch-grammar flag" \
+             "Run: $_dr_agent --version"
+    elif timeout 5 "$_dr_agent" --system-prompt-snapshot on --version >/dev/null 2>&1; then
         OK "$_dr_agent accepts --system-prompt-snapshot on"
     else
         FAIL "$_dr_agent rejects --system-prompt-snapshot on — every aeon and archivist summon will exit within seconds" \
