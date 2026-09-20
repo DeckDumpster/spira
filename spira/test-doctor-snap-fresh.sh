@@ -87,7 +87,7 @@ echo "stale snapshot — FAIL names the age:"
 printf 'SP_AT=0\n' > "$TMP/run/cockpit.env"
 touch -d "300 seconds ago" "$TMP/run/cockpit.env"
 stale_out="$(run_doctor)"
-want "stale snapshot: FAIL for stale"                 "fail  cockpit snapshot stale" "$stale_out"
+want "stale snapshot: FAIL for stale"                 "FAIL  cockpit snapshot stale" "$stale_out"
 want "stale snapshot: age shown"                      "s ago"                         "$stale_out"
 nowant "stale snapshot: no fresh OK"                  "ok    cockpit snapshot fresh"  "$stale_out"
 
@@ -100,7 +100,7 @@ printf 'SP_AT=0\n' > "$TMP/run/cockpit.env"
 fresh_out="$(run_doctor)"
 want "fresh snapshot: OK line present"                "ok    cockpit snapshot fresh"  "$fresh_out"
 nowant "fresh snapshot: no absent WARN"               "warn  no cockpit snapshot"     "$fresh_out"
-nowant "fresh snapshot: no stale FAIL"                "fail  cockpit snapshot stale"  "$fresh_out"
+nowant "fresh snapshot: no stale FAIL"                "FAIL  cockpit snapshot stale"  "$fresh_out"
 
 # ==========================================================================
 echo
