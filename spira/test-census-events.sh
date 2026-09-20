@@ -358,6 +358,24 @@ nowant "empty-cause reclaimed: no phantom class sp-reclaim-1" "sp-reclaim-1" "$o
 nowant "empty-cause reclaimed: no phantom class sp-reclaim-2" "sp-reclaim-2" "$out"
 want "empty-cause reclaimed: event count shown correctly" "sp-reclaim (2 detections" "$out"
 
+# ======================================================================================
+echo
+echo "sp-aor1l: requeued/merge-conflict + reopened — sp-reopen-rebase-conflict only"
+# ======================================================================================
+# Positive control (law-a-regression-test-must-be-seen-to-fail): against unfixed lib.sh
+# this bead also appears in sp-reopen-unrecorded because the exclusion only checked
+# event_type='reopen', missing the requeued/merge-conflict fold path.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-i1","title":"conflict+reopened","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
+JSONL
+bump_requeue "sp-i1" merge-conflict >/dev/null 2>&1
+_write_reopen sp-i1
+
+out="$(census_out)"
+want   "conflict+reopened: sp-reopen-rebase-conflict present" "1 sp-reopen-rebase-conflict" "$out"
+nowant "conflict+reopened: sp-reopen-unrecorded absent"       "sp-reopen-unrecorded" "$out"
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
