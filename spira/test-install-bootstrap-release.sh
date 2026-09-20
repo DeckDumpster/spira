@@ -263,6 +263,9 @@ mkdir -p "$FAKE_RELEASES_B"
 # Remove the home conf so configure.sh stub can write a fresh one.
 rm -f "$FAKE_HOME/.config/spira/spira.conf"
 
+# world.halted bypasses the unit-active check in systemd/install.sh — units cannot
+# start in a test environment and that is not what this test covers.
+touch "$FAKE_RUN/world.halted"
 _boot_out="$(run_install prod -- "SPIRA_RELEASES=$FAKE_RELEASES_B" 2>&1)"
 _boot_rc=$?
 not2  "bootstrap: install does not exit 2"                    "$_boot_rc" "$_boot_out"
