@@ -6,18 +6,23 @@
 #
 # Usage:
 #   acceptance-run.sh <tag> --scratch-repo <path> [--prev-tag <tag>] [--record]
-#                           [--file-defects] [--bd-db <path>]
+#                           [--file-defects] [--bd-db <path>] [--agent <path>]
 #
 # Arguments:
 #   <tag>                  release tag to test (spira-release-spira-*)
 #   --scratch-repo <path>  local checkout of a git repo in Spira's repo-map;
 #                          a trivial bead is filed here and must land
-#   --prev-tag <tag>       previous release tag; enables upgrade (phase B) and
-#                          rollback (phase C) tests
+#   --prev-tag <tag>       previous release tag; enables upgrade (phase B),
+#                          rollback (phase C), and aged-install upgrade (phase D)
 #   --record               write PASS/FAIL as a git note on <tag>
 #                          under refs/notes/acceptance
 #   --file-defects         file a builder bead per FAIL, linked discovered-from sp-ewwwq
-#   --bd-db <path>         bd database path (default: ~/spira-acceptance-test-db)
+#   --bd-db <path>         bd database path (default: ~/spira-acceptance-test-db).
+#                          In CI, pass the instance's own db so phase D migration
+#                          checks exercise the real store.
+#   --agent <path>         stub agent replacing claude; set SPIRA_AGENT to this path
+#                          so the sentinel's aeons complete deterministically without
+#                          a model credential (enables single-checkout install mode)
 #
 # PHASES
 #   A. Fresh install: check prerequisites, install from <tag>, land a bead by ancestry,
@@ -26,7 +31,12 @@
 #      no rollback occurred, verify .tag sidecar names <tag>.  [--prev-tag only]
 #   C. Rollback: deploy.sh <prev-tag>, verify unit set matches pre-upgrade snapshot.
 #      [--prev-tag only]
-#   D. Final uninstall (after B/C): --purge clean state.
+#   D. Aged-install upgrade: install <prev-tag> into surviving state (db, config from
+#      prior phases), seed beads and statutes, start world, deploy.sh <tag>, assert
+#      bead/memory counts preserved through migration, doctor no fatal, operator
+#      override survived, no crash-loop units, world resumed, one bead lands after
+#      upgrade. Force rollback and assert it either succeeds with a healthy world or
+#      is refused and names the blocking migration.  [--prev-tag only]
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control)
 #   Point the script at a tag known to be broken (e.g. one predating sp-jcb1) and
@@ -361,6 +371,212 @@ fi
 
 # ===========================================================================
 echo
+echo "phase D — aged-install upgrade: $prev_tag with real state → $tag"
+# ===========================================================================
+# Install prev_tag into surviving state (db and config persist from phases A-C;
+# uninstall.sh --yes removes units but not the database or config file). Seed
+# additional beads and memories to guarantee the store is populated, write an
+# operator override, start the world, then upgrade via deploy.sh. Assert that
+# migration preserved bead/memory counts, doctor reports no fatal, the operator
+# override survived, no units crash-loop, and the world can land new work.
+# Finally force a rollback and assert it either succeeds cleanly or is refused
+# with the blocking migration named (law-pin-by-migration-count).
+if [ -z "$prev_tag" ]; then
+    printf '  skip  phase D: --prev-tag not given\n'
+else
+    _aged_clone="$TMP/clone-aged-$prev_tag"
+    git clone --no-local --branch "$prev_tag" --depth 1 "$_tag_repo" "$_aged_clone" \
+        >/dev/null 2>&1
+    is0 "phase D: git clone $prev_tag (aged base)" "$?"
+
+    _aged_install_rc=0
+    _aged_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")")
+    if [ -n "$_agent" ]; then
+        _aged_env+=(
+            "CONFIGURE_PROD=$_aged_clone"
+            "SPIRA_INSTALL_PROD_GIT_CONSIDERED=1"
+        )
+    fi
+    env "${_aged_env[@]}" bash "$_aged_clone/install.sh" 2>&1 \
+        | tee "$TMP/aged-install.log" || _aged_install_rc=$?
+    is0 "phase D: install.sh ($prev_tag, aged) exits 0" "$_aged_install_rc"
+
+    if [ "$_aged_install_rc" -eq 0 ]; then
+        _aged_conf="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
+
+        # Write stub agent if provided so the sentinel's aeons complete without a model.
+        if [ -n "$_agent" ]; then
+            printf '\nSPIRA_AGENT = %s\n' "$_agent" >> "$_aged_conf"
+        fi
+
+        # Seed beads into $bd_db (the instance's db in CI).
+        bd -C "$bd_db" create \
+            --title "aged-install: open seed bead (pre-upgrade)" \
+            --label "acceptance-seed" --type task >/dev/null 2>&1 || true
+        _aged_seed2="$(bd -C "$bd_db" create \
+            --title "aged-install: closed seed bead (pre-upgrade)" \
+            --label "acceptance-seed" --type task 2>&1)" || _aged_seed2=""
+        [ -n "$_aged_seed2" ] && \
+            bd -C "$bd_db" close "$_aged_seed2" \
+                --reason "acceptance: closed for aged-install migration test" \
+                >/dev/null 2>&1 || true
+
+        # Seed statute-style memories.
+        bd -C "$bd_db" remember \
+            "aged-install acceptance seed: statute 1 for migration verification" \
+            --key "law-acceptance-aged-seed-1" >/dev/null 2>&1 || true
+        bd -C "$bd_db" remember \
+            "aged-install acceptance seed: statute 2 for migration verification" \
+            --key "law-acceptance-aged-seed-2" >/dev/null 2>&1 || true
+
+        # Capture pre-upgrade counts.
+        _aged_pre_beads="$(bd -C "$bd_db" list --all --json 2>/dev/null \
+            | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null \
+            || printf 0)"
+        _aged_pre_mems="$(bd -C "$bd_db" memories 2>/dev/null | grep -c . 2>/dev/null \
+            || printf 0)"
+
+        # Write an operator override into spira.conf to verify it survives the upgrade.
+        _aged_override_val="aged-install-override-$$"
+        printf '\nACCEPTANCE_AGED_OVERRIDE = %s\n' "$_aged_override_val" >> "$_aged_conf"
+
+        # Start world and confirm the sentinel timer is active.
+        bash "$HERE/world.sh" start 2>&1 | tee "$TMP/aged-world-start.log" || true
+        _aged_sentinel="$(systemctl --user list-units --state=active --no-legend 2>/dev/null \
+            | awk '{print $1}' | grep 'spira-sentinel' | head -1)"
+        [ -n "$_aged_sentinel" ] \
+            && ok "phase D: sentinel timer active (world live before upgrade)" \
+            || bad "phase D: sentinel timer active (world live before upgrade)" \
+                   "no spira-sentinel* in active units"
+
+        # Brief window: prove the world is live before upgrading.
+        sleep 30
+
+        # Upgrade to tag from the aged, populated state.
+        _aged_deploy_rc=0
+        bash "$HERE/deploy.sh" "$tag" 2>&1 | tee "$TMP/aged-deploy.log" \
+            || _aged_deploy_rc=$?
+        is0 "phase D: deploy.sh $tag (aged upgrade) exits 0 — no rollback" "$_aged_deploy_rc"
+
+        if [ "$_aged_deploy_rc" -eq 0 ]; then
+
+            # Assert: bead count preserved through migration (no rows dropped).
+            _aged_post_beads="$(bd -C "$bd_db" list --all --json 2>/dev/null \
+                | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null \
+                || printf 0)"
+            [ "$_aged_post_beads" -ge "$_aged_pre_beads" ] \
+                && ok "phase D: bead count preserved through migration ($_aged_pre_beads → $_aged_post_beads)" \
+                || bad "phase D: bead count preserved through migration" \
+                       "before=$_aged_pre_beads after=$_aged_post_beads — rows lost"
+
+            # Assert: memory count preserved through migration.
+            _aged_post_mems="$(bd -C "$bd_db" memories 2>/dev/null | grep -c . 2>/dev/null \
+                || printf 0)"
+            [ "$_aged_post_mems" -ge "$_aged_pre_mems" ] \
+                && ok "phase D: memory count preserved through migration ($_aged_pre_mems → $_aged_post_mems)" \
+                || bad "phase D: memory count preserved through migration" \
+                       "before=$_aged_pre_mems after=$_aged_post_mems — rows lost"
+
+            # Assert: doctor.sh exits 0 (no fatal).
+            _aged_doctor_rc=0
+            bash "$HERE/doctor.sh" 2>&1 | tee "$TMP/aged-doctor.log" \
+                || _aged_doctor_rc=$?
+            is0 "phase D: doctor.sh no fatal after aged upgrade" "$_aged_doctor_rc"
+
+            # Assert: operator override survived in spira.conf.
+            _aged_override_got="$(grep -E '^\s*ACCEPTANCE_AGED_OVERRIDE\s*=' \
+                "$_aged_conf" 2>/dev/null \
+                | sed 's/[^=]*=\s*//' | head -1 || true)"
+            is_same "phase D: operator override survived aged upgrade" \
+                "$_aged_override_val" "$_aged_override_got"
+
+            # Assert: no failed spira units 2 min after upgrade (crash-loop check).
+            sleep 120
+            _aged_failed="$(systemctl --user list-units --state=failed --no-legend \
+                2>/dev/null | awk '{print $1}' | grep '^spira-' || true)"
+            [ -z "$_aged_failed" ] \
+                && ok "phase D: no failed spira units 2 min after aged upgrade" \
+                || bad "phase D: no failed spira units 2 min after aged upgrade" \
+                       "$_aged_failed"
+
+            # Assert: world resumed after upgrade (no HALTED/STOPPED state).
+            _aged_world_out="$(bash "$HERE/world.sh" status 2>&1)"
+            if printf '%s' "$_aged_world_out" | grep -qE 'HALTED|STOPPED'; then
+                bad "phase D: world running after aged upgrade" \
+                    "$(printf '%s' "$_aged_world_out" \
+                       | grep -E 'HALTED|STOPPED' | head -1)"
+            else
+                ok "phase D: world running after aged upgrade"
+            fi
+
+            # Assert: file a bead post-upgrade; verify it lands by ancestry.
+            _aged_land_base="$(git -C "$scratch_repo" \
+                rev-parse "origin/${_land_ref:-main}" 2>/dev/null)" || _aged_land_base=""
+            _aged_probe_id="$(bd -C "$bd_db" create \
+                --title "aged-install: post-upgrade land proof ($prev_tag → $tag)" \
+                --description "Prove world resumed and can land work after aged upgrade from $prev_tag to $tag." \
+                --label "acceptance,repo:$(basename "$scratch_repo")" \
+                --type task 2>&1)" || _aged_probe_id=""
+            if printf '%s' "$_aged_probe_id" | grep -qE '^[a-z0-9]+-[a-z0-9]+$'; then
+                ok "phase D: post-upgrade bead filed ($_aged_probe_id)"
+                _aged_land_wait=0; _aged_landed=0
+                while [ "$_aged_land_wait" -lt 600 ]; do
+                    git -C "$scratch_repo" fetch origin >/dev/null 2>&1 || true
+                    _aged_sha_now="$(git -C "$scratch_repo" \
+                        rev-parse "origin/${_land_ref:-main}" 2>/dev/null)" \
+                        || _aged_sha_now="${_aged_land_base:-}"
+                    if [ -n "${_aged_land_base:-}" ] \
+                        && [ "$_aged_sha_now" != "$_aged_land_base" ] \
+                        && git -C "$scratch_repo" log --format='%s' \
+                               "${_aged_land_base}..${_aged_sha_now}" 2>/dev/null \
+                           | grep -qF "$_aged_probe_id"; then
+                        _aged_landed=1; break
+                    fi
+                    sleep 30
+                    _aged_land_wait=$((_aged_land_wait + 30))
+                done
+                [ "$_aged_landed" -eq 1 ] \
+                    && ok "phase D: post-upgrade bead landed by ancestry" \
+                    || bad "phase D: post-upgrade bead landed by ancestry" \
+                           "no commit with $_aged_probe_id on origin/${_land_ref:-main} after ${_aged_land_wait}s"
+            else
+                bad "phase D: post-upgrade bead filed" "output: $_aged_probe_id"
+            fi
+        fi
+
+        # Rollback: deploy prev_tag. A schema migration that prevents downgrade must
+        # cause deploy to REFUSE and name the migration (law-pin-by-migration-count).
+        echo
+        echo "phase D — aged rollback: deploy $prev_tag (refuse-or-succeed)"
+        _aged_rollback_rc=0
+        _aged_rollback_out="$(bash "$HERE/deploy.sh" "$prev_tag" 2>&1)" \
+            || _aged_rollback_rc=$?
+        if [ "$_aged_rollback_rc" -ne 0 ]; then
+            if printf '%s' "$_aged_rollback_out" | grep -qi 'migrat'; then
+                ok "phase D: rollback refused — names migration (law-pin-by-migration-count)"
+            else
+                bad "phase D: rollback refused but output does not name migration" \
+                    "$(printf '%s' "$_aged_rollback_out" | tail -5)"
+            fi
+        else
+            ok "phase D: rollback to $prev_tag succeeded"
+            _aged_rollback_world="$(bash "$HERE/world.sh" status 2>&1)"
+            if printf '%s' "$_aged_rollback_world" | grep -qE 'HALTED|STOPPED'; then
+                bad "phase D: world running after aged rollback" \
+                    "$(printf '%s' "$_aged_rollback_world" \
+                       | grep -E 'HALTED|STOPPED' | head -1)"
+            else
+                ok "phase D: world running after aged rollback"
+            fi
+        fi
+
+        bash "$HERE/uninstall.sh" --yes >/dev/null 2>&1
+        is0 "phase D: uninstall.sh exits 0" "$?"
+    fi
+fi
+
+# ===========================================================================
+echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 
 verdict="FAIL"
@@ -374,6 +590,10 @@ printf 'verdict: %s  tag=%s  date=%s\n' "$verdict" "$tag" "$(date -u '+%Y-%m-%dT
 if [ "$do_record" -eq 1 ]; then
     _note="$(printf '%s\n%s %s  %d passed, %d failed\n' \
         "$verdict" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$tag" "$pass" "$fail")"
+    # Include (from, to) pair so phase D results are queryable per upgrade path.
+    if [ -n "$prev_tag" ]; then
+        _note="$(printf '%s\naged-install from=%s: %s\n' "$_note" "$prev_tag" "$verdict")"
+    fi
     git -C "$REPO_ROOT" notes --ref=acceptance add -f -m "$_note" "refs/tags/$tag" \
         && printf 'recorded: git notes --ref=acceptance show refs/tags/%s\n' "$tag" \
         || printf 'warning: could not write git note (verdict still printed above)\n'
