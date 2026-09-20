@@ -948,21 +948,19 @@ cmd_run() {
         setsid bash -c "sleep ${slice} && printf '1' > '$watchdog_flag' && kill -- -${suite_pid} 2>/dev/null" &
         killer=$!
         wait "$suite_pid" 2>/dev/null; rc=$?
+        # SWEEP SURVIVORS: sample the PGID immediately after wait, before killing the watchdog
+        # adds delay. suite_pid's PID is freed by wait; any recycled process that later calls
+        # setsid() into that PGID cannot have done so yet — the window between wait() and this
+        # check is too small. If no survivors at wait time, the block below is skipped entirely,
+        # closing the false-positive path for suites that leave nothing behind.
+        local _had_survivor=0
+        kill -0 -- -"$suite_pid" 2>/dev/null && _had_survivor=1 || true
         kill -- -"$killer" 2>/dev/null; wait "$killer" 2>/dev/null || true
         # Classify as timeout when the watchdog fired, regardless of exit code.
         # Belt-and-suspenders: also remap rc>=128 (SIGTERM without a trap → 143).
         if [ -f "$watchdog_flag" ] || [ "$rc" -ge 128 ]; then rc=124; fi
         rm -f "$watchdog_flag"
-        # SWEEP SURVIVORS. If any process remains in the suite's process group after it
-        # exited, the suite has a cleanup defect. Kill them and, if the suite otherwise
-        # passed, mark it red so the defect surfaces rather than being silently absorbed.
-        # PID RECYCLING GUARD. Concurrent setsid'd processes from other suites may recycle
-        # suite_pid after it is freed. The 200 ms re-check filters out PIDs that are gone
-        # by then, but a long-running concurrent suite can hold a recycled PGID past that
-        # window and produce a false alarm. A real orphan was started by this suite's bash
-        # and reparented to init (PPID=1) when that bash exited; a recycled-PID process
-        # has a live parent (PPID≠1). Check PPID to tell them apart.
-        if kill -0 -- -"$suite_pid" 2>/dev/null; then
+        if [ "$_had_survivor" = 1 ]; then
             sleep 0.2
             if kill -0 -- -"$suite_pid" 2>/dev/null; then
                 local _orphan=0 _op
