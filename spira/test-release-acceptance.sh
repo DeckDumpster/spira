@@ -22,11 +22,16 @@
 #   5. Positive-control section: script has a positive-control self-check.
 #   6. Ancestry verification: script uses merge-base or ancestry, not bead status.
 #   7. --record writes a git note (structure: git notes --ref=acceptance).
-#   8. Phase A, B, C: script has all three phase labels.
+#   8. Phase A, B, C, D: script has all four phase labels.
 #   9. Upgrade assertions: .tag sidecar and SPIRA_PROD checks present.
 #  10. Rollback unit-set diff: diff of unit sets is present.
+#  11. Phase D: aged-install upgrade — bead/memory count, doctor, operator override,
+#      crash-loop check, world-running check, post-upgrade ancestry landing.
+#  12. Phase D: rollback either refused (names migration) or succeeds with healthy world.
+#  13. Phase D: (from, to) pair recorded in git note when --prev-tag is given.
+#  14. acceptance-agent.sh exists and is executable.
 #
-# covers: spira/acceptance-run.sh
+# covers: spira/acceptance-run.sh spira/acceptance-agent.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SCRIPT="$HERE/acceptance-run.sh"
@@ -112,12 +117,13 @@ want "--record flag uses refs/tags/<tag>"      "refs/tags/"
 
 # ============================================================================
 echo
-echo "8. Phase A, B, C labels present"
+echo "8. Phase A, B, C, D labels present"
 # ============================================================================
 
 want "phase A label present" "phase A"
 want "phase B label present" "phase B"
 want "phase C label present" "phase C"
+want "phase D label present" "phase D"
 
 # ============================================================================
 echo
@@ -137,6 +143,65 @@ echo "10. Rollback unit-set diff"
 want "phase C captures pre-upgrade unit set"  "_units_pre_upgrade"
 want "phase C captures post-rollback unit set" "_units_post_rollback"
 want "phase C diffs pre vs post"               "_unit_diff"
+
+# ============================================================================
+echo
+echo "11. Phase D: aged-install upgrade checks present"
+# ============================================================================
+
+# Bead and memory counts preserved through migration.
+want "phase D checks bead count preserved"     "_aged_pre_beads"
+want "phase D checks memory count preserved"   "_aged_pre_mems"
+
+# Doctor check.
+want "phase D runs doctor.sh"                  "_aged_doctor_rc"
+
+# Operator override survives.
+want "phase D checks operator override"        "ACCEPTANCE_AGED_OVERRIDE"
+
+# No crash-loop: failed units check.
+want "phase D checks failed units"             "_aged_failed"
+
+# World running after upgrade.
+want "phase D checks world not halted"         "_aged_world_out"
+
+# Post-upgrade bead landing by ancestry.
+want "phase D files post-upgrade bead"         "_aged_probe_id"
+want "phase D waits for post-upgrade landing"  "_aged_landed"
+wantre "phase D ancestry check on post-upgrade bead" '_aged_land_base.*\.\.'
+
+# ============================================================================
+echo
+echo "12. Phase D: rollback handled — refused names migration, or succeeds with healthy world"
+# ============================================================================
+
+want "phase D rollback refused must name migration" "migrat"
+want "phase D rollback succeeded: world check"      "_aged_rollback_world"
+
+# ============================================================================
+echo
+echo "13. Phase D: (from, to) pair recorded in git note"
+# ============================================================================
+
+want "aged-install result in git note" "aged-install from="
+
+# ============================================================================
+echo
+echo "14. acceptance-agent.sh exists and is executable"
+# ============================================================================
+
+AGENT="$HERE/acceptance-agent.sh"
+wanta() { grep -qF "$2" "$AGENT" 2>/dev/null && ok "$1" || bad "$1" "not found: $2"; }
+
+if [ -f "$AGENT" ] && [ -x "$AGENT" ]; then
+    ok "acceptance-agent.sh exists and is executable"
+else
+    bad "acceptance-agent.sh exists and is executable" \
+        "missing or not executable at $AGENT"
+fi
+wanta "acceptance-agent.sh drains stdin"  "cat >/dev/null"
+wanta "acceptance-agent.sh commits probe" "acceptance-probe.txt"
+wanta "acceptance-agent.sh closes bead"   "close"
 
 # ============================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

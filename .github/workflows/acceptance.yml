@@ -4,7 +4,7 @@
 # TRIGGERS
 #   push to spira-release-* tags: automatically tests each release as it is cut.
 #   workflow_dispatch: manual run with an explicit tag (and optional prev-tag for
-#     upgrade/rollback phases).
+#     upgrade/rollback and aged-install phases).
 #
 # THE STUB AGENT. acceptance-agent.sh replaces claude so no model credential is
 # needed. It commits acceptance-probe.txt and closes the bead — proving the full
@@ -17,8 +17,10 @@
 # workflow run itself.
 #
 # RECORDING. acceptance-run.sh --record writes refs/notes/acceptance on the tag.
-# The Push notes step pushes those notes back so the verdict persists on the repo.
-# The Step summary step writes a one-line summary to the workflow run page.
+# When --prev-tag is given, the note also includes an aged-install from=<prev> line
+# so each (from, to) upgrade path is queryable. The Push notes step pushes those
+# notes back so the verdict persists on the repo. The Step summary step writes a
+# one-line summary to the workflow run page.
 #
 # ACTION REFERENCES. The provision and teardown jobs reference the operator's own
 # runner infrastructure (DeckDumpster/ephemeral-ci). A clone replaces these with
@@ -37,7 +39,7 @@ on:
         description: Release tag to test (spira-release-*)
         required: true
       prev-tag:
-        description: Previous tag for upgrade/rollback phases (optional)
+        description: Previous tag for upgrade/rollback/aged-install phases (optional)
         required: false
         default: ''
 
@@ -76,7 +78,10 @@ jobs:
   acceptance:
     needs: provision
     runs-on: [self-hosted, "${{ needs.provision.outputs.label }}"]
-    timeout-minutes: 60
+    # Phase D (aged-install) adds ~30 min to the fresh-install run. 90 min
+    # covers all four phases (A fresh, B upgrade, C rollback, D aged-install)
+    # with margin for slow package installs on the ephemeral VM.
+    timeout-minutes: 90
     permissions:
       contents: write
     steps:
