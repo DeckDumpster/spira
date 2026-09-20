@@ -3,6 +3,7 @@
 # bead.sh — file a bead through the contract; never call bd create directly.
 #
 #   bead.sh file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F]
+#   bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F]
 #   bead.sh lint [--all|<id>...]     check that beads in the store satisfy the contract
 #   bead.sh contract                 legal personas, repos and kinds, read from source
 #
@@ -13,6 +14,11 @@
 # cannot find it) or misrouted (a different persona claims it). `--for <persona>` reads the
 # label set from the fayth file, so the filing tool and the claim predicate cannot disagree.
 #
+# For non-work kinds (event, escalation, proposal, insight) no persona claims the bead, so
+# --for is not valid. The label set carries the scope label and, if --repo is given, repo:<name>;
+# no partition label is added, making the bead deliberately unclaimable rather than accidentally
+# invisible. insight beads are created closed at P4 per the schema declaration.
+#
 # `bead.sh contract` asks the live source — fayths for personas, schema.sh for kinds, the
 # repo-map for repos — so the set it prints is exactly the set it can accept.
 set -uo pipefail
@@ -22,63 +28,96 @@ BEAD_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 _bead_file() {
     local title="${1:-}"; shift || true
     [ -n "$title" ] || { printf 'bead: title required\n' >&2; return 2; }
-    local for_fayth="" repo="" priority="" body_file=""
+    local for_fayth="" repo="" priority="" body_file="" kind=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --for)          shift; for_fayth="${1:-}" ;;
             --repo)         shift; repo="${1:-}" ;;
             --priority|-p)  shift; priority="${1:-}" ;;
             --body-file)    shift; body_file="${1:-}" ;;
+            --kind)         shift; kind="${1:-}" ;;
             *) printf 'bead: unknown option: %s\n' "$1" >&2; return 2 ;;
         esac
         shift
     done
-    [ -n "$for_fayth" ] || { printf 'bead: --for <persona> required\n' >&2; return 2; }
-    [ -n "$repo" ]      || { printf 'bead: --repo <name> required\n' >&2; return 2; }
-    local fpath="$SPIRA_HOME/chamber/$for_fayth.fayth"
-    [ -f "$fpath" ] || { printf 'bead: no such persona: %s\n' "$for_fayth" >&2; return 2; }
-    local labels; labels="$(fayth_get "$for_fayth" FAYTH_LABELS "")"
-    [ -n "$labels" ] || { printf 'bead: persona %s has no partition labels\n' "$for_fayth" >&2; return 2; }
-    # LANE CHECK. The repo must admit the persona's partition lane.
-    # Override: SPIRA_BEAD_LANE_OVERRIDE=1
-    if [ -z "${SPIRA_BEAD_LANE_OVERRIDE:-}" ]; then
-        local _p="${SPIRA_PLAN_LABEL:-plan}"
-        # literal-ok: bash fallbacks; conf.sh always sets SPIRA_MAECHEN_LABEL before this runs
-        local _vocab="${_p} ${SPIRA_INCIDENT_LABEL:-incident} ${SPIRA_GROOMER_LABEL:-groom} ${SPIRA_MAECHEN_LABEL:-maechen-sweep} ${SPIRA_SPIKE_LABEL:-spike} ${SPIRA_CZAR_LABEL:-czar-trigger}"
-        local _partition="" _lbl _ifs="$IFS"
-        IFS=,
-        for _lbl in $labels; do
-            IFS="$_ifs"
-            _lbl="${_lbl#"${_lbl%%[![:space:]]*}"}"; _lbl="${_lbl%"${_lbl##*[![:space:]]}"}"
-            case " $_vocab " in *" $_lbl "*) _partition="$_lbl" ;; esac
-            IFS=,
-        done
-        IFS="$_ifs"
-        if [ -n "$_partition" ]; then
-            local _repo_lanes
-            _repo_lanes="$(spira_repo_lanes "$repo" 2>/dev/null)" || _repo_lanes="$_p"
-            case " $_repo_lanes " in
-                *" $_partition "*) ;;
-                *)
-                    local _raw; _raw="$(repo_field "$repo" lanes 2>/dev/null)"
-                    local _refuser
-                    if [ -n "$_raw" ]; then
-                        _refuser="repo-map (lanes=${_raw})"
-                    else
-                        _refuser="repo-map (no lanes column — defaults to ${_p})"
-                    fi
-                    printf 'bead: repo:%s does not admit lane %s — refused by %s\n' \
-                        "$repo" "$_partition" "$_refuser" >&2
-                    printf 'bead: override: SPIRA_BEAD_LANE_OVERRIDE=1\n' >&2
-                    return 2 ;;
-            esac
-        fi
+
+    # --kind and --for are mutually exclusive routing decisions
+    if [ -n "$kind" ] && [ -n "$for_fayth" ]; then
+        printf 'bead: --kind and --for are mutually exclusive\n' >&2; return 2
     fi
-    labels="$labels,repo:$repo"
-    set -- create "$title" -l "$labels"
-    [ -n "$priority" ]  && set -- "$@" -p "$priority"
-    [ -n "$body_file" ] && set -- "$@" --body-file "$body_file"
-    bdq "$@"
+
+    # Default to work kind when --for is used (legacy path)
+    [ -z "$kind" ] && kind="work"
+
+    # gate is a bd-internal type; its fields (await_type, await_id, timeout) require bd gate
+    [ "$kind" = "gate" ] && { printf 'bead: kind=gate is a bd-internal type; use bd gate directly\n' >&2; return 2; }
+
+    local bd_type; bd_type="$("$BEAD_HOME/schema.sh" type-of "$kind" 2>/dev/null)" \
+        || { printf 'bead: unknown kind: %s\n' "$kind" >&2; return 2; }
+
+    if [ "$kind" = "work" ]; then
+        [ -n "$for_fayth" ] || { printf 'bead: --for <persona> required\n' >&2; return 2; }
+        [ -n "$repo" ]      || { printf 'bead: --repo <name> required\n' >&2; return 2; }
+        local fpath="$SPIRA_HOME/chamber/$for_fayth.fayth"
+        [ -f "$fpath" ] || { printf 'bead: no such persona: %s\n' "$for_fayth" >&2; return 2; }
+        local labels; labels="$(fayth_get "$for_fayth" FAYTH_LABELS "")"
+        [ -n "$labels" ] || { printf 'bead: persona %s has no partition labels\n' "$for_fayth" >&2; return 2; }
+        # LANE CHECK. The repo must admit the persona's partition lane.
+        # Override: SPIRA_BEAD_LANE_OVERRIDE=1
+        if [ -z "${SPIRA_BEAD_LANE_OVERRIDE:-}" ]; then
+            local _p="${SPIRA_PLAN_LABEL:-plan}"
+            # literal-ok: bash fallbacks; conf.sh always sets SPIRA_MAECHEN_LABEL before this runs
+            local _vocab="${_p} ${SPIRA_INCIDENT_LABEL:-incident} ${SPIRA_GROOMER_LABEL:-groom} ${SPIRA_MAECHEN_LABEL:-maechen-sweep} ${SPIRA_SPIKE_LABEL:-spike} ${SPIRA_CZAR_LABEL:-czar-trigger}"
+            local _partition="" _lbl _ifs="$IFS"
+            IFS=,
+            for _lbl in $labels; do
+                IFS="$_ifs"
+                _lbl="${_lbl#"${_lbl%%[![:space:]]*}"}"; _lbl="${_lbl%"${_lbl##*[![:space:]]}"}"
+                case " $_vocab " in *" $_lbl "*) _partition="$_lbl" ;; esac
+                IFS=,
+            done
+            IFS="$_ifs"
+            if [ -n "$_partition" ]; then
+                local _repo_lanes
+                _repo_lanes="$(spira_repo_lanes "$repo" 2>/dev/null)" || _repo_lanes="$_p"
+                case " $_repo_lanes " in
+                    *" $_partition "*) ;;
+                    *)
+                        local _raw; _raw="$(repo_field "$repo" lanes 2>/dev/null)"
+                        local _refuser
+                        if [ -n "$_raw" ]; then
+                            _refuser="repo-map (lanes=${_raw})"
+                        else
+                            _refuser="repo-map (no lanes column — defaults to ${_p})"
+                        fi
+                        printf 'bead: repo:%s does not admit lane %s — refused by %s\n' \
+                            "$repo" "$_partition" "$_refuser" >&2
+                        printf 'bead: override: SPIRA_BEAD_LANE_OVERRIDE=1\n' >&2
+                        return 2 ;;
+                esac
+            fi
+        fi
+        labels="$labels,repo:$repo"
+        set -- create "$title" -l "$labels"
+        [ -n "$priority" ]  && set -- "$@" -p "$priority"
+        [ -n "$body_file" ] && set -- "$@" --body-file "$body_file"
+        bdq "$@"
+    else
+        # Non-work kind: no persona, no partition labels — deliberately unclaimable
+        local scope_label; scope_label="$("$BEAD_HOME/schema.sh" name scope)"
+        local labels="$scope_label"
+        if [ "$kind" = "insight" ]; then
+            local insight_label; insight_label="$("$BEAD_HOME/schema.sh" name insight)"
+            labels="$labels,$insight_label"
+        fi
+        [ -n "$repo" ] && labels="$labels,repo:$repo"
+        set -- create "$title" -l "$labels" --type "$bd_type"
+        [ "$kind" = "insight" ] && set -- "$@" --status closed
+        [ "$kind" = "insight" ] && [ -z "$priority" ] && priority=4
+        [ -n "$priority" ]  && set -- "$@" -p "$priority"
+        [ -n "$body_file" ] && set -- "$@" --body-file "$body_file"
+        bdq "$@"
+    fi
 }
 
 _bead_contract() {
@@ -180,6 +219,7 @@ case "${1:-}" in
     contract) _bead_contract ;;
     lint)     shift; _bead_lint "$@" ;;
     *) printf 'usage: bead.sh file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F]\n' >&2
+       printf '       bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F]\n' >&2
        printf '       bead.sh amend <id> [--note "<text>"] [--body-file F]\n' >&2
        printf '       bead.sh lint [--all|<id>...]\n' >&2
        printf '       bead.sh contract\n' >&2
