@@ -54,7 +54,7 @@
 # implementation of the thing in question (law-prefer-the-real-dependency).
 #
 # defect: sp-9pyr
-# covers: spira/aeon.sh spira/sop.sh spira/chamber/ops.fayth spira/chamber/ops.md
+# covers: spira/aeon.sh spira/sop.sh spira/chamber/ops.fayth spira/chamber/ops.md spira/test-ops-closing.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
