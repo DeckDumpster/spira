@@ -107,7 +107,7 @@ echo "positive control — skip with repo set produces FAIL before clean case tr
 skip_out="$(run_doctor "$BIN/jctl-skip" "fixture-owner/fixture-repo")"
 want "positive control: FAIL line present" \
     "  FAIL  spira-gh-intake-prod.service" "$skip_out"
-want "positive control: names the cause" "exec-condition" "$skip_out"
+want "positive control: names the cause" "ExecCondition" "$skip_out"
 want "positive control: names the remedy" "install.sh" "$skip_out"
 
 # ===========================================================================
