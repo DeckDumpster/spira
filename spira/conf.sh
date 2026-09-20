@@ -272,10 +272,15 @@ spira_conf_defaults() {
     : "${SPIRA_MAIL_TIDY_FRESH:=86400}"
     : "${SPIRA_GOAL:=sp-spira}"
     : "${SPIRA_PATH:=}"
-    # DERIVED FROM SPIRA_REPO's parent. dirname returns "/" for a repo mounted at the
-    # filesystem root (/workspace in every container run); derivation sites use _spira_join
-    # so they never produce double slashes regardless of what SPIRA_WORKSPACES contains.
-    : "${SPIRA_WORKSPACES:=$(dirname "$SPIRA_REPO")}"
+    # Git checkout: workspaces is the parent of SPIRA_REPO. Artifact deployment: SPIRA_REPO
+    # is a release dir inside the releases directory, so workspaces is two levels up — one
+    # level would land inside the releases dir and double SPIRA_RELEASES. dirname returns "/"
+    # for a root-mounted repo; _spira_join prevents double slashes at derivation sites.
+    if [ -d "$SPIRA_REPO/.git" ] || [ -f "$SPIRA_REPO/.git" ]; then
+        : "${SPIRA_WORKSPACES:=$(dirname "$SPIRA_REPO")}"
+    else
+        : "${SPIRA_WORKSPACES:=$(dirname "$(dirname "$SPIRA_REPO")")}"
+    fi
     # OPERATOR-OWNED CONFIGURATION THAT BELONGS BESIDE THE REPO-MAP, not inside the harness
     # tree. An operator whose harness lives in a repository they did not write would otherwise
     # have to keep this file in the checkout — where a push might share it — or remember to
