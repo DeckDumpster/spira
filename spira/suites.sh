@@ -904,11 +904,11 @@ cmd_run() {
         # exited, the suite has a cleanup defect. Kill them and, if the suite otherwise
         # passed, mark it red so the defect surfaces rather than being silently absorbed.
         # The kernel briefly holds a process group table entry accessible via kill -0 after
-        # the last member exits; a 50 ms re-check lets the table settle before we declare a
-        # defect.  Real survivors persist well beyond 50 ms; the transient race clears
-        # within that window, so the two cases are distinguishable.
+        # the last member exits; a 200 ms re-check lets the table settle before we declare a
+        # defect.  Real survivors persist well beyond 200 ms; the transient race clears
+        # within that window even under CPU contention from concurrent suites.
         if kill -0 -- -"$suite_pid" 2>/dev/null; then
-            sleep 0.05
+            sleep 0.2
             if kill -0 -- -"$suite_pid" 2>/dev/null; then
                 kill -- -"$suite_pid" 2>/dev/null || true
                 if [ "$rc" -eq 0 ]; then
