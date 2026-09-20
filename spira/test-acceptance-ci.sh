@@ -120,5 +120,24 @@ HOME="$CI_HOME4" PATH="$_SYSPATH" XDG_CONFIG_HOME="$CI_HOME4/.config" \
 want "prereq-fail: bd absent → prereq check names it" \
     "FAIL  prereq: bd on PATH" "$(cat "$SCRATCH/out4")"
 
+# --- scratch repo has git identity set (no home .gitconfig needed for git notes) ---
+# On a runner with no global git config, git notes fails with "unable to auto-detect
+# email address". acceptance-ci.sh must set user.email/name in the scratch repo's
+# per-repo config so git notes in acceptance-run.sh works without a home identity.
+CI_HOME5="$SCRATCH/home5"
+mkdir -p "$CI_HOME5/.local/bin"
+for _t in bd dolt gh; do
+    printf '#!/bin/sh\nexit 0\n' > "$CI_HOME5/.local/bin/$_t"
+    chmod +x "$CI_HOME5/.local/bin/$_t"
+done
+HOME="$CI_HOME5" STUB_RC=0 \
+    SPIRA_ACCEPTANCE_RUN="$STUB" \
+    XDG_CONFIG_HOME="$CI_HOME5/.config" \
+    bash "$HERE/acceptance-ci.sh" "test-tag-$$" --bd-db "$SCRATCH/bd5" \
+    >/dev/null 2>&1 || true
+_git_email="$(git -C "$CI_HOME5/scratch-repo" config user.email 2>/dev/null || true)"
+want "scratch-repo has user.email set for git notes" \
+    "acceptance@spira.local" "$_git_email"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
