@@ -42,6 +42,7 @@ printf 'test-held.sh\n'
 
 # ---------------------------------------------------------------------------
 # Build a no-remote fixture git repo with three kinds of spira/* branches.
+# Branch names use tst- IDs that cannot match any real bead in the store.
 # ---------------------------------------------------------------------------
 REPO="$TMP/repo"
 git init -q "$REPO"
@@ -51,15 +52,16 @@ git -C "$REPO" commit --allow-empty -m "root"
 BASE_BR="$(git -C "$REPO" symbolic-ref --short HEAD)"
 
 # HELD: one commit ahead — bead exists, awaiting human.
-git -C "$REPO" checkout -q -b spira/sp-held
+git -C "$REPO" checkout -q -b spira/tst-held
 git -C "$REPO" commit --allow-empty -m "held work"
 git -C "$REPO" checkout -q "$BASE_BR"
 
 # EMPTY: no commits ahead — bead exists, safe to drop.
-git -C "$REPO" branch spira/sp-empty
+git -C "$REPO" branch spira/tst-empty
 
 # ORPHAN: one commit ahead — no bead in store, more dangerous to drop.
-git -C "$REPO" checkout -q -b spira/sp-orphan
+# Uses tst- prefix so bd show returns not-found without any real-db match.
+git -C "$REPO" checkout -q -b spira/tst-orphan
 git -C "$REPO" commit --allow-empty -m "orphan work"
 git -C "$REPO" checkout -q "$BASE_BR"
 
@@ -70,8 +72,8 @@ printf 'fixture | %s | hold | | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 testdb_reset
 testdb_seed <<JSONL
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-20T00:00:00Z"}
-{"id":"sp-held","title":"held bead","status":"closed","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-20T00:00:00Z"}
-{"id":"sp-empty","title":"empty bead","status":"closed","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-20T00:00:00Z"}
+{"id":"tst-held","title":"held bead","status":"closed","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-20T00:00:00Z"}
+{"id":"tst-empty","title":"empty bead","status":"closed","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-20T00:00:00Z"}
 JSONL
 
 # ===========================================================================
@@ -94,8 +96,8 @@ want "table shows merge hint"              "held.sh --merge"    "$tbl"
 want "table shows drop hint"               "held.sh --drop-empty" "$tbl"
 want "table shows commit count"            "commit"             "$tbl"
 
-# sp-orphan must appear in the table.
-want "table names sp-orphan branch"        "spira/sp-orphan"    "$tbl"
+# tst-orphan must appear in the table.
+want "table names tst-orphan branch"       "spira/tst-orphan"   "$tbl"
 
 # ===========================================================================
 # SECTION 2 — summary mode.
