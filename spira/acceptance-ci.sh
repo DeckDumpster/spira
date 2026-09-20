@@ -56,7 +56,7 @@ _run_args=("$_tag" --scratch-repo "$HOME/scratch-repo" --bd-db "$_bd_db")
 [ "$_do_record" -eq 1 ] && _run_args+=(--record)
 [ -n "$_prev_tag" ]     && _run_args+=(--prev-tag "$_prev_tag")
 
-printf '--- runner env ---\n'
+printf -- '--- runner env ---\n'
 printf 'whoami: %s\n' "$(whoami 2>/dev/null || echo unknown)"
 printf 'HOME:   %s\n' "$HOME"
 printf 'PATH:   %s\n' "$PATH"
@@ -65,14 +65,15 @@ ls -l "$HOME/.local/bin" 2>/dev/null || printf '  (.local/bin absent)\n'
 file "$HOME/.local/bin/bd" 2>/dev/null || printf '  (file: not found)\n'
 "$HOME/.local/bin/bd" --version 2>/dev/null || printf '  (bd --version failed)\n'
 findmnt -T "$HOME/.local/bin" -o TARGET,OPTIONS 2>/dev/null || printf '  (findmnt unavailable)\n'
-printf '--- end ---\n'
+printf -- '--- end ---\n'
+
+git -C "$HERE/.." config user.email "acceptance@spira.local" 2>/dev/null || true
+git -C "$HERE/.." config user.name "Spira Acceptance" 2>/dev/null || true
 
 _run_rc=0
 bash "${SPIRA_ACCEPTANCE_RUN:-$HERE/acceptance-run.sh}" "${_run_args[@]}" || _run_rc=$?
 
 if [ -n "${GH_TOKEN:-}" ]; then
-    git config user.email "acceptance@spira.local" 2>/dev/null || true
-    git config user.name "Spira Acceptance" 2>/dev/null || true
     git push origin 'refs/notes/acceptance' 2>/dev/null || true
 fi
 
