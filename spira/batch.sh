@@ -138,7 +138,19 @@ main() {
                 git -C "$_rp" show-ref --verify --quiet "refs/heads/spira/$_lid" 2>/dev/null \
                     && { _anyrn=1; break; }
             done
-            [ "$_anyrn" = 1 ] && continue
+            if [ "$_anyrn" = 1 ]; then
+                # Branch still exists. If the certified tip is already in the base, reconcile
+                # to LANDED here — the same check _certified_list does inside the open-batch
+                # guard, but also while a batch PR is pending. A long CI run accumulates these
+                # indefinitely otherwise.
+                if git -C "$repo" merge-base --is-ancestor "${_ltip:-none}" "$base_sha" \
+                       2>/dev/null; then
+                    land_mark "$_lid" LANDED "${_ltip:-none}" already-in-base-live
+                    printf 'batch %s: %s tip already in %s (live branch) — LANDED\n' \
+                        "$name" "$_lid" "$base"
+                fi
+                continue
+            fi
             # Tip already in base: the branch landed (via external merge before verdict.sh
             # ran). Mark LANDED rather than LOST so the queue view and queue-wait logic
             # both see it as done — LOST drops it from the view but does not unblock
