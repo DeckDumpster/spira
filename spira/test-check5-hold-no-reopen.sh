@@ -53,8 +53,8 @@ printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK
 
 PUSH_NAME="$(basename "$PUSH_REPO")"
 HOLD_NAME="$(basename "$HOLD_REPO")"
-printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$PUSH_NAME" "$PUSH_REPO" push main '' '' > "$TMP/repo-map"
-printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$HOLD_NAME" "$HOLD_REPO" hold main '' '' >> "$TMP/repo-map"
+printf '%s | %s | push | main | | \n' "$PUSH_NAME" "$PUSH_REPO" > "$TMP/repo-map"
+printf '%s | %s | hold | main | | \n' "$HOLD_NAME" "$HOLD_REPO" >> "$TMP/repo-map"
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/launch"
