@@ -161,22 +161,39 @@ if [ "${1:-}" = "--throttle-check" ]; then
                 log "watchtower: throttle-check — still throttled (depth=${_tc_depth}>=${_tc_depth_at})"
             fi
         else
-            # Drain is zero: FAULT, not capacity. Do not throttle; escalate once.
-            log "watchtower: throttle-check — depth=${_tc_depth}>=${_tc_depth_at} but since_land=${_tc_since_land}m>=${_tc_stall_mins}m stall — not throttling (fault)"
-            [ "$_tc_throttled" = "0" ] && [ -r "$_tc_inc" ] && \
-                printf 'Queue depth %s above throttle threshold (%s) but drain has been zero for %sm (stall threshold: %sm).\n\nThis is a QUEUE FAULT, not a capacity condition. Throttling builders delays repairs.\nInvestigate: landing loop, batch CI, gate status.\n' \
-                    "$_tc_depth" "$_tc_depth_at" "${_tc_since_land:-?}" "$_tc_stall_mins" | \
-                SPIRA_DB="$SPIRA_DB" \
-                SPIRA_INCIDENT_TYPE=task \
-                SPIRA_INCIDENT_PRIORITY=1 \
-                SPIRA_INCIDENT_ACTOR=watchtower \
-                SPIRA_SIN_EXEMPT=1 \
-                SPIRA_INCIDENT_REPO=spira \
-                SPIRA_INCIDENT_REF=incident:queue-throttle-stall \
-                SPIRA_INCIDENT_CAUSE=throttle-stall \
-                bash "$_tc_inc" file \
-                    "QUEUE: deep+stalled (depth ${_tc_depth}, no landings for ${_tc_since_land:-?}m)" \
-                    - >/dev/null || true
+            # Drain is zero: FAULT or deliberate wait state (async gate pending). Do not throttle.
+            # Check if the stall is deliberate (async gate not yet on main per sop-sp-hsxk8 CHECK).
+            _tc_async_on_main=0
+            if [ -n "$_tc_repo" ]; then
+                _tc_async_on_main="$(git -C "$_tc_repo" log --oneline "${_tc_lref:-origin/main}" 2>/dev/null | grep -E '(sp-c8w16|sp-74gwk)' | wc -l)" || _tc_async_on_main=0
+            else
+                _tc_async_on_main="$(git log --oneline origin/main 2>/dev/null | grep -E '(sp-c8w16|sp-74gwk)' | wc -l)" || _tc_async_on_main=0
+            fi
+            _tc_stall_is_deliberate=0
+            [ "$_tc_async_on_main" = "2" ] || _tc_stall_is_deliberate=1
+
+            if [ "$_tc_stall_is_deliberate" = "1" ]; then
+                # Stall is deliberate: async gate implementation (sp-c8w16/sp-74gwk) not yet on main.
+                # Do not escalate. Log it and continue.
+                log "watchtower: throttle-check — depth=${_tc_depth}>=${_tc_depth_at} but stall is deliberate (async gate not on main) — not escalating"
+            else
+                # Stall is real: both async gate commits are on main, but queue is still stalled. FAULT.
+                log "watchtower: throttle-check — depth=${_tc_depth}>=${_tc_depth_at} but since_land=${_tc_since_land}m>=${_tc_stall_mins}m stall — not throttling (fault)"
+                [ "$_tc_throttled" = "0" ] && [ -r "$_tc_inc" ] && \
+                    printf 'Queue depth %s above throttle threshold (%s) but drain has been zero for %sm (stall threshold: %sm).\n\nThis is a QUEUE FAULT, not a capacity condition. Throttling builders delays repairs.\nInvestigate: landing loop, batch CI, gate status.\n' \
+                        "$_tc_depth" "$_tc_depth_at" "${_tc_since_land:-?}" "$_tc_stall_mins" | \
+                    SPIRA_DB="$SPIRA_DB" \
+                    SPIRA_INCIDENT_TYPE=task \
+                    SPIRA_INCIDENT_PRIORITY=1 \
+                    SPIRA_INCIDENT_ACTOR=watchtower \
+                    SPIRA_SIN_EXEMPT=1 \
+                    SPIRA_INCIDENT_REPO=spira \
+                    SPIRA_INCIDENT_REF=incident:queue-throttle-stall \
+                    SPIRA_INCIDENT_CAUSE=throttle-stall \
+                    bash "$_tc_inc" file \
+                        "QUEUE: deep+stalled (depth ${_tc_depth}, no landings for ${_tc_since_land:-?}m)" \
+                        - >/dev/null || true
+            fi
         fi
     elif [ "$_tc_throttled" = "1" ] && [ "$_tc_depth" -lt "$_tc_release_at" ] 2>/dev/null; then
         # LIFT: depth below release threshold.
