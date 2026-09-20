@@ -162,6 +162,18 @@ check "an unreadable log is itself the alert" sentinel-unobservable \
     "$(obs "" '{"sentinel_log_readable":false,"sentinel_log_error":"no such file"}')"
 
 echo
+echo "auron-classify — deliberate halt or drain suppresses sentinel-stalled:"
+
+# POSITIVE CONTROL: the 'a dead timer is a stalled loop' case above proves this scenario
+# fires without halt/drain flags. These are believed only because that one fired first.
+check "halted loop does not fire sentinel-stalled" - \
+    "$(obs "$TMP/dead.log" \
+        "{\"world_halted\":true,\"world_halt_at\":$(( NOW - 900 )),\"sentinel_timer\":\"inactive\",\"sentinel_log_mtime\":$(( NOW - 3900 ))}")"
+check "draining loop does not fire sentinel-stalled" - \
+    "$(obs "$TMP/dead.log" \
+        "{\"world_draining\":true,\"world_drain_at\":$(( NOW - 300 ))}")"
+
+echo
 echo "auron-classify — summon starvation:"
 
 mklog 6 15 0 0 1 $(( NOW - 60 )) > "$TMP/starved.log"
@@ -768,6 +780,24 @@ auron_restart >/dev/null; auron_restart >/dev/null
     || bad "restart reopen" "expected [$_rst_id open] got [$(restart_alert_status)]"
 
 unset _rst _rst_id _rst_n
+
+echo
+echo "auron.sh — deliberately halted loop does not raise sentinel-stalled:"
+
+heal; rm -f "$RUN/auron.state"
+printf '2026-01-01T00:00:00Z\nwhy: test halt\n' > "$RUN/world.halted"
+wedge
+auron >/dev/null; auron >/dev/null
+[ "$(alert_status sentinel-stalled)" = "-" ] \
+    && ok "a halted loop does not raise sentinel-stalled" \
+    || bad "halt suppress" "sentinel-stalled raised while loop is deliberately halted"
+rm -f "$RUN/world.halted"
+# Without the halt stamp, the same wedged log fires after CONFIRM=2 passes.
+auron >/dev/null; auron >/dev/null
+st_h="$(alert_status sentinel-stalled)"
+case "$st_h" in *" open") ok "lifting the halt stamp restores normal alerting" ;;
+    *) bad "halt lifted" "expected sentinel-stalled open after halt stamp removed, got [$st_h]" ;; esac
+unset st_h
 
 testdb_drop >/dev/null 2>&1
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"

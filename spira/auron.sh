@@ -477,6 +477,23 @@ for i in (d if isinstance(d, list) else [d]):
             break' 2>/dev/null)
 fi
 
+# HALT/DRAIN STATE. Passed to the classifier so sentinel-stalled is not raised when
+# the operator deliberately stopped or is draining the loop.
+world_halted=0; world_halt_at=0
+world_draining=0; world_drain_at=0
+if [ -f "$SPIRA_RUN/world.halted" ]; then
+    world_halted=1
+    world_halt_at="$(date -d "$(head -1 "$SPIRA_RUN/world.halted" 2>/dev/null || true)" +%s 2>/dev/null || echo 0)"
+fi
+if [ -f "$SPIRA_RUN/world.draining" ]; then
+    _de="$(awk '/^expires /{print $2; exit}' "$SPIRA_RUN/world.draining" 2>/dev/null || echo 0)"
+    if [ "$NOW" -lt "${_de:-0}" ] 2>/dev/null; then
+        world_draining=1
+        world_drain_at="$(date -d "$(head -1 "$SPIRA_RUN/world.draining" 2>/dev/null || true)" +%s 2>/dev/null || echo 0)"
+    fi
+    unset _de
+fi
+
 # ======================================================================================
 # CLASSIFY. Everything gathered above, handed to a pure function that opens nothing.
 # ======================================================================================
@@ -490,6 +507,8 @@ T_PASS="${SPIRA_AURON_PASS_STALE:-600}" T_STARVE="${SPIRA_AURON_STARVE_PASSES:-5
 T_MIRROR="${SPIRA_AURON_MIRROR_STALE:-90000}" T_GHOST="${SPIRA_AURON_GHOST_STALE:-1800}" \
 RESTART_ALERTS="$_restart_alerts_json" \
 T_RESTARTS="$RESTARTS_THRESHOLD" T_RESTART_WINDOW="$RESTART_WINDOW_S" \
+WORLD_HALTED="$world_halted" WORLD_HALT_AT="$world_halt_at" \
+WORLD_DRAINING="$world_draining" WORLD_DRAIN_AT="$world_drain_at" \
 python3 - > "$LOG_TAIL.obs" <<'PY'
 import json, os, sys
 def n(k, d=0):
@@ -528,6 +547,10 @@ json.dump({
                "exporter": os.environ.get("EXPORTER") or ""},
     "strands": strands,
     "restart_alerts": restart_alerts,
+    "world_halted": os.environ.get("WORLD_HALTED") == "1",
+    "world_halt_at": n("WORLD_HALT_AT"),
+    "world_draining": os.environ.get("WORLD_DRAINING") == "1",
+    "world_drain_at": n("WORLD_DRAIN_AT"),
     "thresholds": {"pass_stale": n("T_PASS", 600), "starve_passes": n("T_STARVE", 5),
                    "mirror_stale": n("T_MIRROR", 90000), "ghost_stale": n("T_GHOST", 1800),
                    "restart_threshold": n("T_RESTARTS", 5),
