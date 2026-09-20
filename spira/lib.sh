@@ -2031,6 +2031,7 @@ session_outcome() {      # session_outcome <trace-file> -> unlanded|refused|kill
         return 0
     fi
     case "$last" in
+        *'"api_error_status":null'*) : ;;  # null value — key present but no actual refusal
         *'"api_error_status"'*|*'"error":"rate_limit"'*) printf 'refused'; return 0 ;;
     esac
     # It ran to its own end. If it never called a tool it decided nothing about the work
