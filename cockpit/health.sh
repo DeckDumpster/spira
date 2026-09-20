@@ -1780,6 +1780,21 @@ case "${1:-loop}" in
 # suite would have to fake a TTY of a given height to see how the rows were divided, and
 # an allocator nobody has watched divide anything is a hypothesis.
 once) render "${2:-0}" "${3:-0}" ;;
-loop) printf '\e[?25l\e[?7l' 2>/dev/null; while :; do paint; sleep 2; done ;;
+loop)
+    printf '\e[?25l\e[?7l' 2>/dev/null
+    _conf_file="${SPIRA_CONF_FILE:-}"
+    _conf_mtime_0="$(stat --format='%Y' "$_conf_file" 2>/dev/null || echo 0)"
+    while :; do
+        paint
+        sleep 2
+        if [ -n "$_conf_file" ]; then
+            _conf_mtime_now="$(stat --format='%Y' "$_conf_file" 2>/dev/null || echo 0)"
+            if [ "$_conf_mtime_now" != "$_conf_mtime_0" ]; then
+                printf 'health.sh: config changed — exiting for restart\n' >&2
+                exit 0
+            fi
+        fi
+    done
+    ;;
 *) echo "usage: health.sh [once [rows [cols]]|loop]" >&2; exit 1 ;;
 esac
