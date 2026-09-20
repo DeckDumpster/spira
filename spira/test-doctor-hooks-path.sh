@@ -91,11 +91,17 @@ want "unset: remedy names exclude.sh" "exclude.sh" "$unset_out"
 echo
 echo "core.hooksPath points at nonexistent directory — FAIL fires:"
 # ==========================================================================
-git -C "$REPO" config core.hooksPath "spira/hooks-deleted"
+# Correct path value, but the directory itself is gone.
+git -C "$REPO" config core.hooksPath "spira/hooks"
+rm -rf "$REPO/spira/hooks"
 missing_out="$(run_doctor)"
-want "missing dir: FAIL fires"        "FAIL"               "$(hooks_lines "$missing_out")"
-want "missing dir: path named"        "spira/hooks-deleted" "$(hooks_lines "$missing_out")"
-want "missing dir: 'does not exist'"  "does not exist"     "$(hooks_lines "$missing_out")"
+want "missing dir: FAIL fires"       "FAIL"           "$(hooks_lines "$missing_out")"
+want "missing dir: path named"       "spira/hooks"    "$(hooks_lines "$missing_out")"
+want "missing dir: 'does not exist'" "does not exist" "$(hooks_lines "$missing_out")"
+# Restore hooks directory for the passing case below.
+mkdir -p "$REPO/spira/hooks"
+printf '#!/usr/bin/env bash\n' > "$REPO/spira/hooks/pre-commit"
+chmod +x "$REPO/spira/hooks/pre-commit"
 
 # ==========================================================================
 echo
