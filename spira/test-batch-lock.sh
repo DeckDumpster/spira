@@ -145,12 +145,13 @@ plant_bead() {
 
 branch() {
     local id="$1" epoch="${2:-$(date +%s)}"
-    local wt="$RUN/worktree/$id"
-    git -C "$REPO" worktree add -q -b "spira/$id" "$wt" main 2>/dev/null || true
-    printf '%s\n' "$id" > "$wt/$id.txt"
-    git -C "$wt" add -A
-    git -C "$wt" commit -q -m "$id: work"
-    local tip; tip="$(git -C "$REPO" rev-parse "spira/$id")"
+    local base blob tree tip
+    base="$(git -C "$REPO" rev-parse main)"
+    blob="$(printf '%s\n' "$id" | git -C "$REPO" hash-object -w --stdin)"
+    tree="$(printf '100644 blob %s\t%s.txt\n' "$blob" "$id" | git -C "$REPO" mktree)"
+    tip="$(git -C "$REPO" commit-tree "$tree" -p "$base" -m "$id: work")"
+    [ -n "$tip" ] || { printf 'test-batch-lock: branch setup failed for %s\n' "$id" >&2; exit 1; }
+    git -C "$REPO" update-ref "refs/heads/spira/$id" "$tip"
     printf 'CERTIFIED %s %s\n' "$tip" "$epoch" > "$LANDSTATE/$id"
     plant_bead "$id"
 }
@@ -172,9 +173,10 @@ clean_case() {
     fi
     rm -rf "$RUN/worktree" && mkdir -p "$RUN/worktree"
     git -C "$REPO" worktree prune 2>/dev/null || true
-    git -C "$REPO" for-each-ref --format='%(refname:short)' 'refs/heads/spira/*' 2>/dev/null \
+    git -C "$REPO" for-each-ref --format='%(refname:short)' \
+        'refs/heads/spira/*' 'refs/heads/spira/*/*' 2>/dev/null \
         | while read -r br; do
-            git -C "$REPO" branch -D "$br" 2>/dev/null || true
+            git -C "$REPO" branch -D "$br" >/dev/null 2>&1 || true
         done
 }
 
