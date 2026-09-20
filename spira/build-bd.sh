@@ -182,8 +182,9 @@ fi
 # was overwritten once by identifying the install target from `bd version` rather than the file.
 stamp="$(date +%Y%m%d-%H%M%S)"
 for dst in "$HOME/.local/bin/bd" "$HOME/.local/bin/bd-embedded"; do
-    [ -e "$dst" ] && cp -p "$dst" "$dst.pre-$stamp"
-    install -m 0755 "$OUT" "$dst.staging" && mv "$dst.staging" "$dst"
+    [ -e "$dst" ] && mv "$dst" "$dst.pre-$stamp"
+    install -m 0755 "$OUT" "$dst.staging" && mv "$dst.staging" "$dst" || {
+        printf 'build-bd.sh: failed to install %s\n' "$dst" >&2; exit 1; }
     printf '  installed %-34s (backup %s)\n' "$dst" "$(basename "$dst").pre-$stamp"
 done
 echo "build-bd.sh: $TAG installed. Run the suites before trusting it." >&2
