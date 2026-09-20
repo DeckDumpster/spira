@@ -3238,12 +3238,41 @@ for i in (d if isinstance(d, list) else [d]):
         continue
     if excl & set(i.get("labels") or []):
         continue
-    print(i["id"])
+    print(i["id"] + "\t" + ",".join(i.get("labels") or []))
 ' 2>/dev/null
         done < <(fayth_partitions)
         [ "$n" -gt 0 ] || log "WARN no persona in the chamber declares a partition — no bead is dispatchable, and none is being examined" >&2
-    } | awk 'NF && !seen[$0]++'
+    } | awk -F'\t' 'NF && !seen[$1]++'
     return 0
+}
+
+# _check4_bulk_sql <in-clause> -> SQL returning attempts and reopens for each id in the clause
+_check4_bulk_sql() {
+    printf "select issue_id, greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end), 0), sum(case when event_type='reopened' then 1 else 0 end) from events where issue_id in (%s) group by issue_id" "$1"
+}
+
+# check4_bulk_data <dispatchable-output> -> id TAB attempts TAB reopens, one per bead
+# One GROUP BY replaces attempts_of and reopens_of called per bead in the CHECK 4 loop.
+# Beads with no events are absent from the output; callers default missing entries to 0.
+check4_bulk_data() {
+    local input="${1:-}"; [ -n "$input" ] || return 0
+    local in_clause
+    in_clause="$(printf '%s' "$input" | awk -F'\t' '{print $1}' | grep -v '^$' \
+        | sed "s/.*/'&'/" | paste -sd,)"
+    [ -n "$in_clause" ] || return 0
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$(_check4_bulk_sql "$in_clause")" 2>/dev/null \
+    | python3 -c '
+import sys
+for line in sys.stdin:
+    if not line.startswith("|") or line.startswith("+-"):
+        continue
+    cols = [c.strip() for c in line.strip("|").split("|")]
+    if len(cols) >= 3 and cols[0] and cols[0] != "issue_id":
+        try:
+            print(cols[0] + "\t" + str(int(cols[1] or 0)) + "\t" + str(int(cols[2] or 0)))
+        except (ValueError, IndexError):
+            pass
+' 2>/dev/null
 }
 
 # detect_unclaimable_ready -> one UNCLAIMABLE line per ready bead no persona can claim.
