@@ -268,9 +268,10 @@ cause_fp() {           # cause_fp <rc> <output> -> stable first-FAIL-line hash
 # spend its first minutes reproducing what this pass has already got, and it would reproduce
 # it against a tree that has moved (law-escalations-carry-their-evidence).
 # --------------------------------------------------------------------------------------
-file_red() {             # file_red <basename> <status> <rc> <seconds> <fp> <output> [priority]
+file_red() {             # file_red <basename> <status> <rc> <seconds> <fp> <output> [priority] [limit_s]
     local s="$1" status="$2" rc="$3" secs="$4" fp="$5" out="$6" cov id=""
     local _prio="${7:-$(priority_of "$s")}"
+    local _limit_s="${8:-}"
     cov="$(suite_covers_of "$HERE/$s")"
     if [ ! -r "$INC" ]; then
         log "suites: no intake at $INC — $s is red and the finding reaches nobody"
@@ -299,7 +300,7 @@ suite $status. It is filed and nothing is blocked: this run reopens no bead and 
 branch, so the fix lands as ordinary work.
 
   suite            $s
-  status           $status (rc=$rc) after ${secs}s
+  status           $status (rc=$rc) after ${secs}s${_limit_s:+, killed at ${_limit_s}s}
   covers           ${cov:-NOTHING DECLARED — this suite has no \`# covers:\` line}
   fingerprint      $fp
   reproduce        bash spira/$s
@@ -1039,7 +1040,7 @@ cmd_run() {
                 local _full_to="${declared_to:-$PER_SUITE}"
                 local _to_prio; _to_prio="$(priority_of "$s")"
                 [ "$slice" -lt "$_full_to" ] && _to_prio="$PRIORITY"
-                id="$(file_red "$s" timeout "$rc" "$secs" "$fp" "$out" "$_to_prio" || true)"
+                id="$(file_red "$s" timeout "$rc" "$secs" "$fp" "$out" "$_to_prio" "$slice" || true)"
                 printf '  %-26s TIMEOUT  killed at %ss  %s\n' "$s" "$slice" "${id:-not filed}" ;;
             *)  status=red
                 fp="$(fingerprint "$rc" "$out")"
