@@ -84,7 +84,7 @@ export SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder
-FAYTH_LABELS="spira,plan"
+FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
 FAYTH_EXCLUDE_LABELS="spira-poison,needs-operator"
 FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600
@@ -158,7 +158,7 @@ echo "-----------------------------------------------------------------------"
 # an uncommitted wiki/notes/sop-<id>.md and fails the assertions below.
 printf 'wiki-write' > "$TMP/shim-mode"
 b1="$(bd -C "$SPIRA_DB" create --title "test: wiki write" --type task \
-        -l spira,plan,repo:fixture 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b1" ] || { bad "case 1 bead created" "(bead-create failed)"; true; }
 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
 is "wiki-write: bead is closed" "closed" "$(bead_status "$b1")"
@@ -187,7 +187,7 @@ printf 'modified content\n' >> "$WIKI/wiki/notes/preexist.md"
 
 printf 'wiki-preexist' > "$TMP/shim-mode"
 b2="$(bd -C "$SPIRA_DB" create --title "test: preexist wiki" --type task \
-        -l spira,plan,repo:fixture 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b2" ] || { bad "case 2 bead created" "(bead-create failed)"; true; }
 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
 is "preexist: bead is closed" "closed" "$(bead_status "$b2")"
@@ -207,7 +207,7 @@ echo "CASE 3: SPIRA_WIKI not set — aeon must close normally:"
 echo "-----------------------------------------------------------------------"
 printf 'no-wiki-write' > "$TMP/shim-mode"
 b3="$(bd -C "$SPIRA_DB" create --title "test: no wiki" --type task \
-        -l spira,plan,repo:fixture 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b3" ] || { bad "case 3 bead created" "(bead-create failed)"; true; }
 SPIRA_WIKI="" bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
 is "no-wiki: bead is closed" "closed" "$(bead_status "$b3")"
@@ -219,7 +219,7 @@ echo "CASE 4: wiki/tasks.md dirty — must NOT be committed by the aeon:"
 echo "-----------------------------------------------------------------------"
 printf 'wiki-tasks-only' > "$TMP/shim-mode"
 b4="$(bd -C "$SPIRA_DB" create --title "test: tasks.md dirty" --type task \
-        -l spira,plan,repo:fixture 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b4" ] || { bad "case 4 bead created" "(bead-create failed)"; true; }
 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
 is "tasks-only: bead is closed" "closed" "$(bead_status "$b4")"

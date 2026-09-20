@@ -64,7 +64,7 @@ export SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
-FAYTH_LABELS="spira,plan"
+FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
 FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
 FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600
@@ -106,8 +106,9 @@ session() {   # session <commit:0|1> <close:0|1>  — the next session's shape; 
     cat > "$TMP/result"
 }
 seed() {   # seed <id> [repo-label]
-    printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":["spira","plan","repo:%s"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
-        "$1" "${2:-fixture}" | testdb_seed
+    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:${2:-fixture}\""
+    printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+        "$1" "$_lbl" | testdb_seed
 }
 run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_HOME/aeon.sh" builder > "$TMP/out" 2>&1; }
 # The disposition line, and never a `born`/`awake` one: those carry no session to describe.

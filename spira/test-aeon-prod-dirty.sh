@@ -102,7 +102,7 @@ printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 # builder.fayth: excludes spira-poison so beads from completed cases are skipped.
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder
-FAYTH_LABELS="spira,plan"
+FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
 FAYTH_EXCLUDE_LABELS="spira-poison,needs-operator"
 FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600
@@ -182,7 +182,7 @@ echo "CASE 1 (positive control): OWN WORKTREE dirty — bead must be reopened wi
 echo "-----------------------------------------------------------------------"
 printf 'own-dirty' > "$TMP/shim-dirty"
 b1="$(bd -C "$SPIRA_DB" create --title "test: own worktree dirty" --type task \
-        -l spira,plan,repo:fixture 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b1" ] || { bad "case 1 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
@@ -203,7 +203,7 @@ echo "CASE 2: SPIRA_REPO dirty, own worktree clean — bead must STAY CLOSED (re
 echo "-----------------------------------------------------------------------"
 printf 'repo-dirty' > "$TMP/shim-dirty"
 b2="$(bd -C "$SPIRA_DB" create --title "test: repo dirty only" --type task \
-        -l spira,plan,repo:fixture 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b2" ] || { bad "case 2 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
@@ -218,7 +218,7 @@ echo "CASE 3: both clean — bead must stay closed (baseline):"
 echo "-----------------------------------------------------------------------"
 printf 'clean' > "$TMP/shim-dirty"
 b3="$(bd -C "$SPIRA_DB" create --title "test: clean" --type task \
-        -l spira,plan,repo:fixture 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b3" ] || { bad "case 3 bead created" "(bead-create failed)"; true; }
 unset SPIRA_ALLOW_PROD_DIRTY
 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
@@ -230,7 +230,7 @@ echo "CASE 4: own worktree dirty with SPIRA_ALLOW_PROD_DIRTY=1 — bead must sta
 echo "-----------------------------------------------------------------------"
 printf 'own-dirty' > "$TMP/shim-dirty"
 b4="$(bd -C "$SPIRA_DB" create --title "test: own dirty with override" --type task \
-        -l spira,plan,repo:fixture 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
 [ -n "$b4" ] || { bad "case 4 bead created" "(bead-create failed)"; true; }
 SPIRA_ALLOW_PROD_DIRTY=1 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
 is "override: bead stays closed despite dirty worktree" "closed" "$(bead_status "$b4")"

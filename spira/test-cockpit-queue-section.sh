@@ -63,6 +63,7 @@ printf '# name | path | land | base | format | gate\nalpha | %s | queue | main |
 
 RUN="$TMP/run"
 mkdir -p "$RUN"
+SPIRA_SCOPE_LABEL=alpha
 for b in sp-b1 sp-b2 sp-b3 sp-bopen sp-c1 sp-c2 sp-noq; do
     printf '{"type":"system","subtype":"init"}\n' > "$RUN/$b.log"
 done
@@ -73,13 +74,13 @@ EPOCH_C2=$(( NOW_EPOCH - 300 ))
 AGO10="$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-10M +%Y-%m-%dT%H:%M:%SZ)"
 
 testdb_seed <<JSONL
-{"id":"sp-b1","title":"batch member 1","status":"closed","priority":2,"closed_at":"$AGO10","labels":["spira","plan","repo:alpha"]}
-{"id":"sp-b2","title":"batch member 2","status":"closed","priority":2,"closed_at":"$AGO10","labels":["spira","plan","repo:alpha"]}
-{"id":"sp-b3","title":"batch member 3","status":"closed","priority":2,"closed_at":"$AGO10","labels":["spira","plan","repo:alpha"]}
-{"id":"sp-bopen","title":"open batched bead","status":"open","priority":2,"labels":["spira","plan","repo:alpha"]}
-{"id":"sp-c1","title":"next P1 item","status":"closed","priority":1,"closed_at":"$AGO10","labels":["spira","plan","repo:alpha"]}
-{"id":"sp-c2","title":"next P2 item","status":"closed","priority":2,"closed_at":"$AGO10","labels":["spira","plan","repo:alpha"]}
-{"id":"sp-noq","title":"anomaly bead","status":"closed","priority":3,"closed_at":"$AGO10","labels":["spira","plan","repo:alpha"]}
+{"id":"sp-b1","title":"batch member 1","status":"closed","priority":2,"closed_at":"$AGO10","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
+{"id":"sp-b2","title":"batch member 2","status":"closed","priority":2,"closed_at":"$AGO10","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
+{"id":"sp-b3","title":"batch member 3","status":"closed","priority":2,"closed_at":"$AGO10","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
+{"id":"sp-bopen","title":"open batched bead","status":"open","priority":2,"labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
+{"id":"sp-c1","title":"next P1 item","status":"closed","priority":1,"closed_at":"$AGO10","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
+{"id":"sp-c2","title":"next P2 item","status":"closed","priority":2,"closed_at":"$AGO10","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
+{"id":"sp-noq","title":"anomaly bead","status":"closed","priority":3,"closed_at":"$AGO10","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
 JSONL
 
 # Landstate: batch members BATCHED, certified CERTIFIED; sp-noq has no landstate.
@@ -113,7 +114,7 @@ BATCHEOF
 
 out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-    SPIRA_REPO="$REPO" SPIRA_HOME_REPO=alpha \
+    SPIRA_REPO="$REPO" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
     SPIRA_PATH="$BD_PATH" \

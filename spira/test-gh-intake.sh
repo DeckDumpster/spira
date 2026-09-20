@@ -64,12 +64,14 @@ case "$*" in
     *list*)
         broken=$(cat "$STATE/broken" 2>/dev/null || echo 0)
         closed=$(cat "$STATE/closed_bead_flag" 2>/dev/null || echo 0)
-        printf '[{"id":"sp-native","external_ref":"","labels":["spira","plan"]}'
+        _ns="${SPIRA_SCOPE_LABEL:-spira}"
+        printf '[{"id":"sp-native","external_ref":"","labels":["%s","plan"]}' "$_ns"
         i=0
         while IFS= read -r ref; do
             [ -n "$ref" ] || continue
             case " $* " in *" --all "*) : ;; *) [ "$closed" = "1" ] && continue ;; esac
-            if [ "$broken" = "1" ]; then lbl=''; else lbl='"spira","plan"'; fi
+            _scope="${SPIRA_SCOPE_LABEL:-spira}"
+        if [ "$broken" = "1" ]; then lbl=''; else lbl="\"${_scope}\",\"plan\""; fi
             printf ',{"id":"sp-gh%02d","external_ref":"%s","labels":[%s]}' "$i" "$ref" "$lbl"
             i=$((i+1))
         done < <(cat "$STATE/created_work" 2>/dev/null)
@@ -162,6 +164,7 @@ run() {   # run <open-issue-count> [args...]
     SPIRA_GH_INTAKE_API=https://api.github.com \
     SPIRA_GH_INTAKE_PRIORITY="${INTAKE_PRIORITY_OVERRIDE-$FIXTURE_PRIORITY}" \
     SPIRA_MAIL=/dev/null \
+    SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         bash "$SCRIPT" "$@" 2>&1
 }
 FIXTURE_PRIORITY=3
@@ -226,8 +229,9 @@ if grep -q 'fetched 2 open issue' <<<"$out"; then ok "the multi-line feed is par
 else bad "the multi-line feed is parsed" "got: $(grep fetched <<<"$out")"; fi
 if grep -q 'create' "$BDLOG"; then ok "beads are created"
 else bad "beads are created" "no create call"; fi
-if grep -qE 'labels spira,plan|--labels spira,plan' "$BDLOG"; then ok "the live partition labels are applied at creation"
-else bad "the live partition labels are applied at creation" "no spira,plan on the create"; fi
+_slbl="${SPIRA_SCOPE_LABEL:-spira}"
+if grep -qE "labels ${_slbl},plan|--labels ${_slbl},plan" "$BDLOG"; then ok "the live partition labels are applied at creation"
+else bad "the live partition labels are applied at creation" "no ${_slbl},plan on the create"; fi
 if grep -qE "repo:$FIXTURE_REPO" "$BDLOG"; then ok "the bead names the resolved repository"
 else bad "the bead names the resolved repository" "no repo:$FIXTURE_REPO label on the create"; fi
 if grep -q 'external-ref github:DeckDumpster/spira#1' "$BDLOG"; then ok "the external ref is the join key"

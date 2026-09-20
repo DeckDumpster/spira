@@ -86,8 +86,8 @@ if [ -n "${ASK_CLOSES:-}" ]; then case "$*" in *"$ASK_CLOSES"*) ;;
 # EACH DECLARES ITS OWN EXCLUSIONS, unexpanded, exactly as a shipped fayth does: the string
 # is evaluated when the fayth is sourced, so the suite pins the escalation and CI labels to
 # whatever the harness configures rather than to a literal written here twice.
-printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n'     > "$SH/chamber/t.fayth"
-printf 'FAYTH_LABELS="spira,incident"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/tinc.fayth"
+printf 'FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n'     > "$SH/chamber/t.fayth"
+printf 'FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_INCIDENT_LABEL}"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/tinc.fayth"
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 export MAIL_LOG="$TMP/mail.log"; : > "$MAIL_LOG"
@@ -148,10 +148,10 @@ seed() {   # seed — the goal, one unclaimable child of it, and that child's bl
     # The ask's suppression is a mark in the run directory and testdb_reset does not reach it,
     # so a case that did not clear it would inherit the previous case's silence.
     rm -rf "$RUN/poison-asked"
-    testdb_seed <<'JSONL'
+    testdb_seed <<JSONL
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 {"id":"sp-block","title":"the blocker","status":"open","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-open","title":"blocked","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-open","depends_on_id":"sp-goal","type":"parent-child"},{"issue_id":"sp-open","depends_on_id":"sp-block","type":"blocks"}]}
+{"id":"sp-open","title":"blocked","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-open","depends_on_id":"sp-goal","type":"parent-child"},{"issue_id":"sp-open","depends_on_id":"sp-block","type":"blocks"}]}
 JSONL
 }
 
@@ -162,9 +162,12 @@ JSONL
 # sp-attempt-N labels are no longer written (sp-lzt); sentinel CHECK4 reads attempt counts
 # from status_changed events. cycle() creates the events by transitioning each bead to
 # in_progress and back N times, matching POISON_AT=3 for orphan/kid and POISON_AT-1 for young.
-POISON_SEED='{"id":"sp-orphan","title":"dispatchable, unparented","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-kid","title":"a child of the goal","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-kid","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-young","title":"below the threshold","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}'
+POISON_SEED=$(cat <<JSONL
+{"id":"sp-orphan","title":"dispatchable, unparented","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-kid","title":"a child of the goal","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-kid","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-young","title":"below the threshold","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+)
 cycle() {   # cycle <id> <n> — create n status_changed(in_progress) events via bd update
     local id="$1" n="$2" i=0
     while [ "$i" -lt "$n" ]; do
@@ -239,8 +242,8 @@ nowant "and it is not in the dispatchable set" "sp-orphan" "$(predicate dispatch
 # An epic is a container. The summoner passes --exclude-type epic and never claims one, so
 # poisoning one would take a pilgrimage out of circulation for its children's failures.
 seed_poison
-testdb_seed <<'JSONL'
-{"id":"sp-epic","title":"an epic at the threshold","status":"open","issue_type":"epic","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+testdb_seed <<JSONL
+{"id":"sp-epic","title":"an epic at the threshold","status":"open","issue_type":"epic","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 out="$(sentinel)"
 notpoisoned "an epic is never poisoned" sp-epic
@@ -260,14 +263,14 @@ notpoisoned "an epic is never poisoned" sp-epic
 # --------------------------------------------------------------------------------------
 seed_held() {
     seed
-    testdb_seed <<'JSONL'
-{"id":"sp-orphan","title":"dispatchable, unparented","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+    testdb_seed <<JSONL
+{"id":"sp-orphan","title":"dispatchable, unparented","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
     # sp-attempt-N labels retired (sp-lzt); cycle creates status_changed events.
     # cycle 3 creates 3 events; the subsequent B ready --claim creates a 4th (claimed event).
     # attempts_of() counts both; 4 >= POISON_AT=3 triggers poisoning.
     cycle sp-orphan 3
-    BEADS_ACTOR=aeon-holder B ready --claim --limit 0 --label spira,plan >/dev/null 2>&1
+    BEADS_ACTOR=aeon-holder B ready --claim --limit 0 --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan}" >/dev/null 2>&1
 }
 
 seed_held
@@ -351,8 +354,8 @@ is "a fourth attempt is a new fact and asks again" "1" \
 # and the incident bead is still ahead of the loop when the stub closes it.
 # --------------------------------------------------------------------------------------
 seed_poison; : > "$MAIL_LOG"
-testdb_seed <<'JSONL'
-{"id":"sp-late","title":"closed while the pass ran","status":"open","issue_type":"task","labels":["spira","incident"],"updated_at":"2026-09-04T00:00:00Z"}
+testdb_seed <<JSONL
+{"id":"sp-late","title":"closed while the pass ran","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","incident"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 # sp-attempt-3-unlanded label retired (sp-lzt); cycle creates 3 status_changed events.
 cycle sp-late 3
@@ -425,9 +428,9 @@ git -C "$REPO" branch -D "spira/sp-orphan" 2>/dev/null || true
 # attempt labels from a previously-poisoned bead but did not remove the poison label.
 # --------------------------------------------------------------------------------------
 seed; rm -rf "$RUN/poison-asked"
-testdb_seed <<'JSONL'
-{"id":"sp-stale","title":"stale poison — count below threshold","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-live","title":"live poison — count at threshold","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-04T00:00:00Z"}
+testdb_seed <<JSONL
+{"id":"sp-stale","title":"stale poison — count below threshold","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","spira-poison"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-live","title":"live poison — count at threshold","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","spira-poison"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 # sp-attempt-N labels retired (sp-lzt); cycle creates status_changed events for each bead.
 # sp-stale needs 1 event (below threshold 3); sp-live needs 3 events (at threshold).
@@ -452,9 +455,9 @@ thrash_event() {   # thrash_event <id> — write one requeued/thrash event the w
     B sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'requeued', 'harness', 'thrash', NOW())" >/dev/null 2>&1
 }
 seed; rm -rf "$RUN/poison-asked"
-testdb_seed <<'JSONL'
-{"id":"sp-thrash","title":"thrash-only","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-real","title":"real failures","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+testdb_seed <<JSONL
+{"id":"sp-thrash","title":"thrash-only","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-real","title":"real failures","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 # Three claim+thrash pairs: each B update writes a status_changed(in_progress) event;
 # thrash_event writes the requeued/thrash that attempts_of must subtract.
@@ -478,9 +481,9 @@ ispoisoned  "CONTROL: three real failures still poison"     sp-real
 # must poison and ask. The control proves the guard is keyed on n, not on POISON_AT.
 # --------------------------------------------------------------------------------------
 seed; rm -rf "$RUN/poison-asked"; : > "$MAIL_LOG"
-testdb_seed <<'JSONL'
-{"id":"sp-zero","title":"zero attempts","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-one","title":"one attempt","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+testdb_seed <<JSONL
+{"id":"sp-zero","title":"zero attempts","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-one","title":"one attempt","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 # sp-one gets one in_progress cycle; sp-zero gets none.
 cycle sp-one 1

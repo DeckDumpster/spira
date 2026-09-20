@@ -3573,7 +3573,11 @@ for i in (d if isinstance(d, list) else [d]):
 # OUTPUT: "INVALID-CLOSED <id> — <reason>" or "UNFILED-FOLLOW <id> — <reason>"
 detect_invalid_closed() {
     local _closed_raw
-    _closed_raw="$(bdjson list --status closed --label spira --limit 0 2>/dev/null)"
+    if [ -n "${SPIRA_SCOPE_LABEL:-}" ]; then
+        _closed_raw="$(bdjson list --status closed --label "$SPIRA_SCOPE_LABEL" --limit 0 2>/dev/null)"
+    else
+        _closed_raw="$(bdjson list --status closed --limit 0 2>/dev/null)"
+    fi
     [ -n "$_closed_raw" ] || return 0
     printf '%s\n' "$_closed_raw" | SPIRA_ID_PREFIX="${SPIRA_ID_PREFIX:-sp}" python3 -c '
 import sys, json, re, os

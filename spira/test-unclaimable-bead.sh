@@ -61,8 +61,8 @@ echo "case 1 — positive control: a claimable bead (builder: spira,plan) is NOT
 # Without this, a detect-everything implementation reads as correct. A bead builder can
 # claim must pass through detect_unclaimable_ready without producing a UNCLAIMABLE line.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-unc1a","title":"claimable builder bead","status":"open","issue_type":"task","labels":["plan","repo:spira","spira"]}
+testdb_seed <<JSONL
+{"id":"sp-unc1a","title":"claimable builder bead","status":"open","issue_type":"task","labels":["plan","repo:spira","${SPIRA_SCOPE_LABEL}"]}
 JSONL
 
 out="$(detect_unclaimable_ready 2>/dev/null)"
@@ -76,8 +76,8 @@ echo "case 2 — fayth:ops on spira,plan labels is UNCLAIMABLE (the fifteen-hour
 # partition (needs spira,incident, not spira,plan). The sentinel reported every partition
 # empty for fifteen hours; this check names the bead and why.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-unc2a","title":"unclaimable fayth:ops on plan labels","status":"open","issue_type":"task","labels":["fayth:ops","plan","repo:spira","spira"]}
+testdb_seed <<JSONL
+{"id":"sp-unc2a","title":"unclaimable fayth:ops on plan labels","status":"open","issue_type":"task","labels":["fayth:ops","plan","repo:spira","${SPIRA_SCOPE_LABEL}"]}
 JSONL
 
 out="$(detect_unclaimable_ready 2>/dev/null)"
@@ -92,8 +92,8 @@ echo "case 3 — spira with no partition label is UNCLAIMABLE (the sp-bvo7 route
 # No persona's partition (spira,plan; spira,incident; ...) is a subset of {spira,repo:spira}.
 # Every persona reports 0, every report is truthful. This check distinguishes it from idle.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-unc3a","title":"unclaimable no partition label","status":"open","issue_type":"task","labels":["repo:spira","spira"]}
+testdb_seed <<JSONL
+{"id":"sp-unc3a","title":"unclaimable no partition label","status":"open","issue_type":"task","labels":["repo:spira","${SPIRA_SCOPE_LABEL}"]}
 JSONL
 
 out="$(detect_unclaimable_ready 2>/dev/null)"
@@ -117,9 +117,9 @@ echo "case 5 — mixed queue: unclaimable bead flagged, claimable neighbour is n
 # ==========================================================================================
 # The two beads sit in the same ready set. Only the unclaimable one may appear in output.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-unc5a","title":"claimable: spira,plan","status":"open","issue_type":"task","labels":["plan","repo:spira","spira"]}
-{"id":"sp-unc5b","title":"unclaimable: spira only","status":"open","issue_type":"task","labels":["repo:spira","spira"]}
+testdb_seed <<JSONL
+{"id":"sp-unc5a","title":"claimable: spira,plan","status":"open","issue_type":"task","labels":["plan","repo:spira","${SPIRA_SCOPE_LABEL}"]}
+{"id":"sp-unc5b","title":"unclaimable: spira only","status":"open","issue_type":"task","labels":["repo:spira","${SPIRA_SCOPE_LABEL}"]}
 JSONL
 
 out="$(detect_unclaimable_ready 2>/dev/null)"
@@ -139,9 +139,9 @@ echo "case 6 — scope filter: out-of-scope bead is silent; in-scope+unclaimable
 # no partition label is still reported UNCLAIMABLE. The two cases must be asserted in the
 # same pass: the change is correct only if exactly one of the two disappears.
 testdb_reset
-testdb_seed <<'JSONL'
+testdb_seed <<JSONL
 {"id":"pd-unc6a","title":"out-of-scope: no scope label","status":"open","issue_type":"task","labels":["plan","repo:pokedumpster"]}
-{"id":"sp-unc6c","title":"in-scope unclaimable: spira, no partition","status":"open","issue_type":"task","labels":["repo:spira","spira"]}
+{"id":"sp-unc6c","title":"in-scope unclaimable: spira, no partition","status":"open","issue_type":"task","labels":["repo:spira","${SPIRA_SCOPE_LABEL}"]}
 JSONL
 
 out="$(detect_unclaimable_ready 2>/dev/null)"
@@ -160,11 +160,11 @@ testdb_reset
 # a hardcoded "needs-ryan" is invisible to the exclusion when SPIRA_ASK_LABEL is
 # "needs-operator" (conf.sh default), so the bead appears UNCLAIMABLE instead of
 # being skipped — and the assertion fails. Use the live variable.
-{ cat <<'JSONL'
-{"id":"sp-unc6a","title":"poisoned: skipped","status":"open","issue_type":"task","labels":["spira-poison","repo:spira","spira"]}
+{ cat <<JSONL
+{"id":"sp-unc6a","title":"poisoned: skipped","status":"open","issue_type":"task","labels":["spira-poison","repo:spira","${SPIRA_SCOPE_LABEL}"]}
 JSONL
-printf '{"id":"sp-unc6b","title":"ask-label: skipped","status":"open","issue_type":"task","labels":["%s","repo:spira","spira"]}\n' \
-    "${SPIRA_ASK_LABEL:-needs-operator}"
+printf '{"id":"sp-unc6b","title":"ask-label: skipped","status":"open","issue_type":"task","labels":["%s","repo:spira","%s"]}\n' \
+    "${SPIRA_ASK_LABEL:-needs-operator}" "${SPIRA_SCOPE_LABEL}"
 } | testdb_seed
 
 out="$(detect_unclaimable_ready 2>/dev/null)"
@@ -179,8 +179,8 @@ echo "case 8 — file_unclaimable_incidents: a P1 incident is filed for the uncl
 # file_unclaimable_incidents must file an incident bead that Ops can claim and fix. A mock
 # incident.sh captures the calls; the real one is not invoked.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-unc8a","title":"unclaimable: fayth:ops on plan labels","status":"open","issue_type":"task","labels":["fayth:ops","plan","repo:spira","spira"]}
+testdb_seed <<JSONL
+{"id":"sp-unc8a","title":"unclaimable: fayth:ops on plan labels","status":"open","issue_type":"task","labels":["fayth:ops","plan","repo:spira","${SPIRA_SCOPE_LABEL}"]}
 JSONL
 
 # The mock writes its args to a file whose path is embedded at write time (unquoted heredoc).
@@ -205,8 +205,8 @@ echo "case 9 — file_unclaimable_incidents: no incident for a claimable bead (n
 # A claimable bead must never produce an incident call. Without this, a detect-everything
 # implementation files noise on every pass.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-unc9a","title":"claimable: spira,plan","status":"open","issue_type":"task","labels":["plan","repo:spira","spira"]}
+testdb_seed <<JSONL
+{"id":"sp-unc9a","title":"claimable: spira,plan","status":"open","issue_type":"task","labels":["plan","repo:spira","${SPIRA_SCOPE_LABEL}"]}
 JSONL
 
 INC_LOG9="$TMP/inc9.log"
@@ -233,10 +233,10 @@ echo "case 10 — parked partition: bead claimable by a parked fayth is silent (
 #
 # POSITIVE CONTROL: a truly unclaimable bead (no partition label) still fires.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-unc10a","title":"parked: ops partition (spira,incident)","status":"open","issue_type":"task","labels":["incident","repo:spira","spira"]}
-{"id":"sp-unc10b","title":"parked: maechen partition (spira,maechen-sweep)","status":"open","issue_type":"task","labels":["maechen-sweep","repo:spira","spira"]}
-{"id":"sp-unc10c","title":"truly unclaimable: spira only, no partition","status":"open","issue_type":"task","labels":["repo:spira","spira"]}
+testdb_seed <<JSONL
+{"id":"sp-unc10a","title":"parked: ops partition (spira,incident)","status":"open","issue_type":"task","labels":["incident","repo:spira","${SPIRA_SCOPE_LABEL}"]}
+{"id":"sp-unc10b","title":"parked: maechen partition (spira,maechen-sweep)","status":"open","issue_type":"task","labels":["maechen-sweep","repo:spira","${SPIRA_SCOPE_LABEL}"]}
+{"id":"sp-unc10c","title":"truly unclaimable: spira only, no partition","status":"open","issue_type":"task","labels":["repo:spira","${SPIRA_SCOPE_LABEL}"]}
 JSONL
 
 out="$(SPIRA_FAYTHS="builder spike" detect_unclaimable_ready 2>/dev/null)"
@@ -251,8 +251,8 @@ echo "case 11 — parked partition: no incident filed for a parked bead"
 # file_unclaimable_incidents must be silent for a parked bead. An incident relabelled into
 # the wrong partition is claimed by the wrong persona and that advice does damage.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-unc11a","title":"parked: ops partition","status":"open","issue_type":"task","labels":["incident","repo:spira","spira"]}
+testdb_seed <<JSONL
+{"id":"sp-unc11a","title":"parked: ops partition","status":"open","issue_type":"task","labels":["incident","repo:spira","${SPIRA_SCOPE_LABEL}"]}
 JSONL
 
 INC_LOG11="$TMP/inc11.log"

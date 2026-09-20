@@ -62,6 +62,7 @@ beta  | $BETA  | push | master | |
 MAP
 
 RUN="$TMP/run"; mkdir -p "$RUN"
+SPIRA_SCOPE_LABEL=alpha
 
 for b in sp-aaa sp-bbb sp-ccc sp-ddd; do
     printf '{"type":"system","subtype":"init"}\n' > "$RUN/$b.log"
@@ -73,15 +74,15 @@ AGO10="$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u 
 AGO5="$(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-5M +%Y-%m-%dT%H:%M:%SZ)"
 
 testdb_seed <<JSONL
-{"id":"sp-aaa","title":"work not landed","status":"closed","priority":1,"closed_at":"$AGO5","labels":["spira","plan","repo:alpha"]}
-{"id":"sp-bbb","title":"work already landed","status":"closed","priority":2,"closed_at":"$AGO10","labels":["spira","plan","repo:alpha"]}
-{"id":"sp-ccc","title":"work no branch","status":"closed","priority":1,"closed_at":"$AGO15","labels":["spira","plan","repo:alpha"]}
-{"id":"sp-ddd","title":"work in master repo","status":"closed","priority":0,"closed_at":"$AGO20","labels":["spira","plan","repo:beta"]}
+{"id":"sp-aaa","title":"work not landed","status":"closed","priority":1,"closed_at":"$AGO5","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
+{"id":"sp-bbb","title":"work already landed","status":"closed","priority":2,"closed_at":"$AGO10","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
+{"id":"sp-ccc","title":"work no branch","status":"closed","priority":1,"closed_at":"$AGO15","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
+{"id":"sp-ddd","title":"work in master repo","status":"closed","priority":0,"closed_at":"$AGO20","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:beta"]}
 JSONL
 
 out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
+    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
     SPIRA_PATH="$BD_PATH" \
@@ -127,14 +128,14 @@ nowant "pane does not render old UNLND label" "UNLND" "$pane"
 # THE ZERO CASE — nothing anomalous; queue section says nothing queued.
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-eee","title":"already landed","status":"closed","priority":1,"closed_at":"$AGO5","labels":["spira","plan","repo:alpha"]}
+{"id":"sp-eee","title":"already landed","status":"closed","priority":1,"closed_at":"$AGO5","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
 JSONL
 printf '{"type":"system","subtype":"init"}\n' > "$RUN/sp-eee.log"
 git -C "$ALPHA" commit --allow-empty -m "spira: land sp-eee" -q
 
 out_zero="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
+    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
     SPIRA_PATH="$BD_PATH" \

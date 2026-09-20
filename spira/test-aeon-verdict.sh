@@ -68,7 +68,7 @@ export SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
-FAYTH_LABELS="spira,plan"
+FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
 FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
 FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600
@@ -120,8 +120,9 @@ SHIM
     chmod +x "$BIN/claude"
 }
 seed() {   # seed <id> [status]
-    printf '{"id":"%s","title":"t","status":"%s","issue_type":"task","labels":["spira","plan","repo:fixture"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
-        "$1" "${2:-open}" | testdb_seed
+    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
+    printf '{"id":"%s","title":"t","status":"%s","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+        "$1" "${2:-open}" "$_lbl" | testdb_seed
 }
 run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_HOME/aeon.sh" builder > "$TMP/out" 2>&1; }
 field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
@@ -246,7 +247,7 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{DEADLINE}}\n{{PARK}}\n' \
 walled_fayth() {                # walled_fayth [seconds] — rewrite the fayth, with or without a wall
     { cat <<FAYTH
 FAYTH_NAME=builder
-FAYTH_LABELS="spira,plan"
+FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
 FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
 FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600

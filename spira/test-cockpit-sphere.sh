@@ -48,6 +48,7 @@ sphere() {
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-goal SPIRA_FAYTHS=t \
+        SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
         SPIRA_ASK_LABEL=needs-ryan \
         bash "$HERE/cockpit.sh" sphere 2>/dev/null
 }
@@ -80,10 +81,10 @@ echo
 echo "incident-labelled poisoned bead (no plan label):"
 
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-inc1","title":"incident bead, poisoned","status":"open","issue_type":"task","labels":["spira","incident","spira-poison"],"updated_at":"2026-09-08T00:00:00Z"}
-{"id":"sp-inc2","title":"second incident bead, poisoned","status":"open","issue_type":"task","labels":["spira","incident","spira-poison"],"updated_at":"2026-09-08T00:00:00Z"}
-{"id":"sp-inc3","title":"incident bead, not poisoned","status":"open","issue_type":"task","labels":["spira","incident"],"updated_at":"2026-09-08T00:00:00Z"}
+testdb_seed <<JSONL
+{"id":"sp-inc1","title":"incident bead, poisoned","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","incident","spira-poison"],"updated_at":"2026-09-08T00:00:00Z"}
+{"id":"sp-inc2","title":"second incident bead, poisoned","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","incident","spira-poison"],"updated_at":"2026-09-08T00:00:00Z"}
+{"id":"sp-inc3","title":"incident bead, not poisoned","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","incident"],"updated_at":"2026-09-08T00:00:00Z"}
 JSONL
 
 out="$(sphere)"
@@ -98,9 +99,9 @@ is     "SP_POISON matches the raw bd count (2)"            "$bd_count" \
 is     "raw bd count is 2 (positive control is real)"      "2" "$bd_count"
 
 # Verify the plan query still works independently: plan beads are counted for OPEN/INPROG.
-testdb_seed <<'JSONL'
-{"id":"sp-plan1","title":"plan bead, open","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-08T00:00:00Z"}
-{"id":"sp-plan2","title":"plan bead, in progress","status":"in_progress","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-08T00:00:00Z"}
+testdb_seed <<JSONL
+{"id":"sp-plan1","title":"plan bead, open","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-08T00:00:00Z"}
+{"id":"sp-plan2","title":"plan bead, in progress","status":"in_progress","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-08T00:00:00Z"}
 JSONL
 out="$(sphere)"
 want "SP_OPEN counts plan beads"   "SP_OPEN=2"  "$out"
@@ -116,9 +117,9 @@ echo
 echo "closed poisoned bead:"
 
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-closed","title":"closed poisoned bead","status":"closed","issue_type":"task","labels":["spira","incident","spira-poison"],"updated_at":"2026-09-08T00:00:00Z"}
-{"id":"sp-open-p","title":"open poisoned bead","status":"open","issue_type":"task","labels":["spira","incident","spira-poison"],"updated_at":"2026-09-08T00:00:00Z"}
+testdb_seed <<JSONL
+{"id":"sp-closed","title":"closed poisoned bead","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","incident","spira-poison"],"updated_at":"2026-09-08T00:00:00Z"}
+{"id":"sp-open-p","title":"open poisoned bead","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","incident","spira-poison"],"updated_at":"2026-09-08T00:00:00Z"}
 JSONL
 out="$(sphere)"
 is "closed poisoned bead is excluded; only open one counts" "1" \
@@ -132,8 +133,8 @@ echo
 echo "plan-labelled poisoned bead is also counted:"
 
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-plan-p","title":"plan bead that is also poisoned","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-08T00:00:00Z"}
+testdb_seed <<JSONL
+{"id":"sp-plan-p","title":"plan bead that is also poisoned","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","spira-poison"],"updated_at":"2026-09-08T00:00:00Z"}
 JSONL
 out="$(sphere)"
 is "a plan-labelled poisoned bead is counted in SP_POISON" "1" \

@@ -35,6 +35,7 @@ run_core() {
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-goal SPIRA_FAYTHS=builder \
+        SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_BD="$SPIRA_BD" \
         bash "$HERE/cockpit.sh" core 2>/dev/null
@@ -60,9 +61,9 @@ is     "SP_READY is 0 with no beads"           "0" \
 echo
 echo "2 ready beads seeded — SP_READY must be 2:"
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-r1","title":"ready bead one","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-08T00:00:00Z"}
-{"id":"sp-r2","title":"ready bead two","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-08T00:00:00Z"}
+testdb_seed <<JSONL
+{"id":"sp-r1","title":"ready bead one","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-08T00:00:00Z"}
+{"id":"sp-r2","title":"ready bead two","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-08T00:00:00Z"}
 JSONL
 out="$(run_core)"
 sp_ready="$(printf '%s\n' "$out" | grep -m1 '^SP_READY=' | sed 's/^SP_READY=//')"

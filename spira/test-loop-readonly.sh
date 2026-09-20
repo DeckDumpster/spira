@@ -114,9 +114,9 @@ echo "phase 2: fixture database with a ready bead"
 testdb_up "loopro_$$" >/dev/null 2>&1
 iszero "testdb_up exits 0" "$?"
 
-testdb_seed <<'JSONL'
+testdb_seed <<JSONL
 {"id":"sp-lr-goal","title":"loop-readonly goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-lr-work","title":"sentinel loop readonly test bead","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-lr-work","title":"sentinel loop readonly test bead","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 
 _bd="${SPIRA_BD:-$(command -v bd)}"

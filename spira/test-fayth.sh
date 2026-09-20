@@ -116,12 +116,13 @@ want "ops asked for its own incident beads" "incident"   "$observed"
 
 # ==========================================================================================
 echo
-echo "summon_fayth — builder uses ITS OWN predicate (spira,plan)"
+echo "summon_fayth — builder uses ITS OWN predicate"
 # ==========================================================================================
 MOCK_READY=1; rm -f "$LABELS_FILE"
 summon_fayth builder >/dev/null 2>&1 || true
 observed="$(cat "$LABELS_FILE" 2>/dev/null)"
-is "builder asked for spira,plan beads" "spira,plan" "$observed"
+is "builder asked for its own partition beads" \
+   "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan}" "$observed"
 
 # ==========================================================================================
 echo

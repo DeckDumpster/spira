@@ -73,6 +73,7 @@ run_ll() {    # run_ll [KEY=val ...]  — extra args override env vars
         SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-goal \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
+        SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         "$@" \
         bash "$HERE/cockpit.sh" livelock 2>/dev/null
 }
@@ -101,8 +102,8 @@ echo "NEGATIVE CONTROL — claimable builder bead is not flagged:"
 # Without this, a detect-everything implementation would read as correct. A bead that
 # builder can claim must produce SP_LIVELOCKED=0 and no LIVELOCK row naming it.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-good","title":"claimable builder bead","status":"open","issue_type":"task","labels":["plan","repo:pushrepo","spira"]}
+testdb_seed <<JSONL
+{"id":"sp-ll-good","title":"claimable builder bead","status":"open","issue_type":"task","labels":["plan","repo:pushrepo","${SPIRA_SCOPE_LABEL}"]}
 JSONL
 out="$(run_ll)"
 is "claimable bead: SP_LIVELOCKED=0" "0" \
@@ -116,8 +117,8 @@ echo "POSITIVE CONTROL — unclaimable: fayth:ops on spira,plan labels:"
 # builder matches spira,plan but is excluded by fayth:ops; ops is excluded by its own
 # partition (spira,incident). This is the fifteen-hour strand of 2026-09-09.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-unc","title":"unclaimable fayth:ops on plan","status":"open","issue_type":"task","labels":["fayth:ops","plan","repo:pushrepo","spira"]}
+testdb_seed <<JSONL
+{"id":"sp-ll-unc","title":"unclaimable fayth:ops on plan","status":"open","issue_type":"task","labels":["fayth:ops","plan","repo:pushrepo","${SPIRA_SCOPE_LABEL}"]}
 JSONL
 out="$(run_ll)"
 want  "unclaimable: SP_LIVELOCKED>=1"     "SP_LIVELOCKED=" "$out"
@@ -132,8 +133,8 @@ echo "POSITIVE CONTROL — needs-ryan without overseer:"
 # needs-ryan is excluded from every fayth predicate; without overseer, the decisions pane
 # cannot see this bead either. It is invisible to the loop and to Ryan.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-nr","title":"needs-ryan no overseer","status":"open","issue_type":"task","labels":["needs-ryan","spira","plan","repo:pushrepo"]}
+testdb_seed <<JSONL
+{"id":"sp-ll-nr","title":"needs-ryan no overseer","status":"open","issue_type":"task","labels":["needs-ryan","${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"]}
 JSONL
 out="$(run_ll)"
 want  "needs-ryan-no-overseer: LIVELOCK row" "LIVELOCK"                 "$out"
@@ -142,8 +143,8 @@ want  "needs-ryan-no-overseer: category"     "needs-ryan-no-overseer"   "$out"
 
 # A needs-ryan bead WITH overseer is not flagged — that is the correct configuration.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-nrok","title":"needs-ryan with overseer","status":"open","issue_type":"task","labels":["needs-ryan","overseer","spira","plan","repo:pushrepo"]}
+testdb_seed <<JSONL
+{"id":"sp-ll-nrok","title":"needs-ryan with overseer","status":"open","issue_type":"task","labels":["needs-ryan","overseer","${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"]}
 JSONL
 out="$(run_ll)"
 nowant "needs-ryan WITH overseer is not flagged" "sp-ll-nrok" "$out"
@@ -155,8 +156,8 @@ echo "POSITIVE CONTROL — unmapped-repo: repo:bogus not in the repo-map:"
 # aeon.sh refuses to claim a bead whose repo: label the map cannot resolve, and leaves it
 # open forever. The sweeper names it so the fix is one label change.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-unmap","title":"unmapped repo label","status":"open","issue_type":"task","labels":["spira","plan","repo:bogusrepo"]}
+testdb_seed <<JSONL
+{"id":"sp-ll-unmap","title":"unmapped repo label","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:bogusrepo"]}
 JSONL
 out="$(run_ll)"
 want  "unmapped-repo: LIVELOCK row" "LIVELOCK"      "$out"
@@ -165,8 +166,8 @@ want  "unmapped-repo: category"     "unmapped-repo" "$out"
 
 # A bead with a mapped repo: label is not flagged for unmapped-repo.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-mapped","title":"correctly mapped repo","status":"open","issue_type":"task","labels":["spira","plan","repo:pushrepo"]}
+testdb_seed <<JSONL
+{"id":"sp-ll-mapped","title":"correctly mapped repo","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"]}
 JSONL
 out="$(run_ll)"
 nowant "mapped repo bead not flagged as unmapped" "unmapped-repo" "$out"
@@ -178,8 +179,8 @@ echo "POSITIVE CONTROL — ci-stuck: awaiting-ci on a push-mode repo:"
 # pushrepo uses land mode 'push', not 'pr'. No pull request is opened and no CI run ever
 # reports. The awaiting-ci label is a permanent hold that no mechanism will ever clear.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-ci","title":"ci-stuck push repo","status":"open","issue_type":"task","labels":["awaiting-ci","spira","plan","repo:pushrepo"]}
+testdb_seed <<JSONL
+{"id":"sp-ll-ci","title":"ci-stuck push repo","status":"open","issue_type":"task","labels":["awaiting-ci","${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"]}
 JSONL
 out="$(run_ll)"
 want  "ci-stuck: LIVELOCK row" "LIVELOCK"  "$out"
@@ -188,8 +189,8 @@ want  "ci-stuck: category"     "ci-stuck"  "$out"
 
 # A bead with awaiting-ci on a pr-mode repo is NOT ci-stuck — the run is expected.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-ciwait","title":"ci-waiting pr repo","status":"open","issue_type":"task","labels":["awaiting-ci","spira","plan","repo:prerepo"],"updated_at":"2026-09-09T10:00:00Z"}
+testdb_seed <<JSONL
+{"id":"sp-ll-ciwait","title":"ci-waiting pr repo","status":"open","issue_type":"task","labels":["awaiting-ci","${SPIRA_SCOPE_LABEL}","plan","repo:prerepo"],"updated_at":"2026-09-09T10:00:00Z"}
 JSONL
 out="$(run_ll)"
 nowant "pr-mode ci-wait is not ci-stuck" "ci-stuck" "$out"
@@ -201,8 +202,8 @@ echo "POSITIVE CONTROL — INVALID-CLOSED: close reason admits unfinished work:"
 # law-no-close-reason-admits-unfinished forbids prospectively; nothing detected the ones
 # already in the store. This check finds them by grepping close_reason.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-ic","title":"invalid closed bead","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"PERMANENT FIX NEEDED: add real detection"}
+testdb_seed <<JSONL
+{"id":"sp-ll-ic","title":"invalid closed bead","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"close_reason":"PERMANENT FIX NEEDED: add real detection"}
 JSONL
 out="$(run_ll)"
 want  "invalid-closed: INVALID-CLOSED row" "INVALID-CLOSED" "$out"
@@ -212,8 +213,8 @@ is "invalid-closed: SP_INVALID_CLOSED=1" "1" \
 
 # A closed bead with a clean close reason is not flagged.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-clean","title":"cleanly closed","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"fixed: sp-ll-clean commit abc123 landed on main"}
+testdb_seed <<JSONL
+{"id":"sp-ll-clean","title":"cleanly closed","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"close_reason":"fixed: sp-ll-clean commit abc123 landed on main"}
 JSONL
 out="$(run_ll)"
 is "clean close reason: SP_INVALID_CLOSED=0" "0" \
@@ -225,8 +226,8 @@ echo
 echo "POSITIVE CONTROL — INVALID-CLOSED: a temporary fix is flagged:"
 # ==========================================================================================
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-tmp","title":"temporary fix closed","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Applied a temporary workaround in the unit drop-in; landed."}
+testdb_seed <<JSONL
+{"id":"sp-ll-tmp","title":"temporary fix closed","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"close_reason":"Applied a temporary workaround in the unit drop-in; landed."}
 JSONL
 out="$(run_ll)"
 want  "temporary workaround: INVALID-CLOSED row" "INVALID-CLOSED" "$out"
@@ -237,9 +238,9 @@ echo
 echo "NEGATIVE CONTROL — 'temporary' describing something other than the fix is NOT flagged:"
 # ==========================================================================================
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-tmp2","title":"stopgap removed","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Default derived from nproc and landed. The drop-in was a temporary measure and is removed."}
-{"id":"sp-ll-tmp3","title":"groom pass","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Groom pass complete. Closed a temporary worker bead with no purpose."}
+testdb_seed <<JSONL
+{"id":"sp-ll-tmp2","title":"stopgap removed","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"close_reason":"Default derived from nproc and landed. The drop-in was a temporary measure and is removed."}
+{"id":"sp-ll-tmp3","title":"groom pass","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"close_reason":"Groom pass complete. Closed a temporary worker bead with no purpose."}
 JSONL
 out="$(run_ll)"
 nowant "temporary measure removed: no INVALID-CLOSED row" "INVALID-CLOSED" "$out"
@@ -254,8 +255,8 @@ echo "NEGATIVE CONTROL — workaround in close reason is NOT flagged:"
 # complete, verified and landed. Positive control (the bead that prompted this fix) had
 # close reason ending "Ready for rebase and merge." and was incorrectly flagged.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-wa","title":"workaround landed","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Workaround implemented by aeon-yojimbo, verified, landed on origin/main. Ready for merge."}
+testdb_seed <<JSONL
+{"id":"sp-ll-wa","title":"workaround landed","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"close_reason":"Workaround implemented by aeon-yojimbo, verified, landed on origin/main. Ready for merge."}
 JSONL
 out="$(run_ll)"
 nowant "workaround: no INVALID-CLOSED row"  "INVALID-CLOSED"  "$out"
@@ -273,8 +274,8 @@ echo "POSITIVE CONTROL — UNFILED-FOLLOW: follow-on phrase with no bead id:"
 # work was observed but not filed. The check flags this as UNFILED-FOLLOW (separate from
 # INVALID-CLOSED so the two family counts mean different things on the dashboard).
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-uf","title":"unfiled follow-on","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Builders should add external_ref to bd list --json output."}
+testdb_seed <<JSONL
+{"id":"sp-ll-uf","title":"unfiled follow-on","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"close_reason":"Builders should add external_ref to bd list --json output."}
 JSONL
 out="$(run_ll)"
 want  "unfiled-follow: UNFILED-FOLLOW row"  "UNFILED-FOLLOW"  "$out"
@@ -292,8 +293,8 @@ echo "NEGATIVE CONTROL — UNFILED-FOLLOW: follow-on phrase WITH a bead id is no
 # A close reason that says "builders should add X, tracked as sp-foo" has handed off
 # correctly — the work is filed. The bead id acquits the follow-on phrase.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-uf2","title":"follow-on filed","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Builders should add external_ref to bd list --json. Tracked as sp-80br6."}
+testdb_seed <<JSONL
+{"id":"sp-ll-uf2","title":"follow-on filed","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"close_reason":"Builders should add external_ref to bd list --json. Tracked as sp-80br6."}
 JSONL
 out="$(run_ll)"
 nowant "unfiled-follow filed: no UNFILED-FOLLOW row" "UNFILED-FOLLOW" "$out"
@@ -307,8 +308,8 @@ echo "NEGATIVE CONTROL — UNFILED-FOLLOW: follow-on phrase WITH a GitHub issue 
 # ==========================================================================================
 # A close reason citing owner/repo#N has handed off to a tracked external issue.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-uf3","title":"follow-on github issue","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Builders should add external_ref to bd list --json. Filed as owner/repo#42."}
+testdb_seed <<JSONL
+{"id":"sp-ll-uf3","title":"follow-on github issue","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"close_reason":"Builders should add external_ref to bd list --json. Filed as owner/repo#42."}
 JSONL
 out="$(run_ll)"
 nowant "unfiled-follow github: no UNFILED-FOLLOW row" "UNFILED-FOLLOW" "$out"
@@ -320,8 +321,8 @@ echo
 echo "NEGATIVE CONTROL — UNFILED-FOLLOW: follow-on phrase WITH an https:// URL is not flagged:"
 # ==========================================================================================
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-uf4","title":"follow-on url","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"The real fix is tracked at https://github.com/owner/repo/issues/42."}
+testdb_seed <<JSONL
+{"id":"sp-ll-uf4","title":"follow-on url","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"close_reason":"The real fix is tracked at https://github.com/owner/repo/issues/42."}
 JSONL
 out="$(run_ll)"
 nowant "unfiled-follow url: no UNFILED-FOLLOW row" "UNFILED-FOLLOW" "$out"
@@ -334,8 +335,8 @@ echo "NEGATIVE CONTROL — UNFILED-FOLLOW: non-default prefix bead id acquits:"
 # ==========================================================================================
 # SPIRA_ID_PREFIX=tt means tt-xxxx is a valid bead id; the hardcoded sp- would miss it.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"tt-ll-uf5","title":"follow-on non-default prefix","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Builders should fix the schema. Tracked as tt-abc1."}
+testdb_seed <<JSONL
+{"id":"tt-ll-uf5","title":"follow-on non-default prefix","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"close_reason":"Builders should fix the schema. Tracked as tt-abc1."}
 JSONL
 out="$(run_ll SPIRA_ID_PREFIX=tt SPIRA_GOAL=tt-goal)"
 nowant "non-default prefix: no UNFILED-FOLLOW row" "UNFILED-FOLLOW" "$out"
@@ -349,8 +350,8 @@ echo "NEGATIVE CONTROL — UNFILED-FOLLOW: 'upstream' alone does not trigger:"
 # "upstream" names a destination, not an unfinished remainder. A close reason that says
 # "filed upstream" without any other follow-on phrase must not be flagged.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-up","title":"filed upstream","status":"closed","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"close_reason":"Moot upstream — the sentinel already handles this. Closed."}
+testdb_seed <<JSONL
+{"id":"sp-ll-up","title":"filed upstream","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"close_reason":"Moot upstream — the sentinel already handles this. Closed."}
 JSONL
 out="$(run_ll)"
 nowant "upstream alone: no UNFILED-FOLLOW row" "UNFILED-FOLLOW" "$out"
@@ -365,10 +366,10 @@ echo "MIXED — two distinct shapes, both found and categorised:"
 # in a single pass and names each by category. This case plants a fayth:ops mismatch and
 # a needs-ryan-no-overseer bead side by side.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-mix1","title":"unclaimable fayth:ops","status":"open","issue_type":"task","labels":["fayth:ops","plan","repo:pushrepo","spira"]}
-{"id":"sp-ll-mix2","title":"needs-ryan no overseer","status":"open","issue_type":"task","labels":["needs-ryan","spira","plan","repo:pushrepo"]}
-{"id":"sp-ll-mix3","title":"cleanly claimable","status":"open","issue_type":"task","labels":["plan","repo:pushrepo","spira"]}
+testdb_seed <<JSONL
+{"id":"sp-ll-mix1","title":"unclaimable fayth:ops","status":"open","issue_type":"task","labels":["fayth:ops","plan","repo:pushrepo","${SPIRA_SCOPE_LABEL}"]}
+{"id":"sp-ll-mix2","title":"needs-ryan no overseer","status":"open","issue_type":"task","labels":["needs-ryan","${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"]}
+{"id":"sp-ll-mix3","title":"cleanly claimable","status":"open","issue_type":"task","labels":["plan","repo:pushrepo","${SPIRA_SCOPE_LABEL}"]}
 JSONL
 out="$(run_ll)"
 want  "mixed: unclaimable bead named"          "sp-ll-mix1"             "$out"
@@ -390,9 +391,9 @@ echo "NEGATIVE CONTROL — blocked bead (open dependency) is not livelocked:"
 # bd ready does not surface blocked beads; the sweeper must not flag them either.
 # The unclaimable detection uses bd ready which already filters these out.
 testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-ll-dep","title":"open dependency","status":"open","issue_type":"task","labels":["spira","plan","repo:pushrepo"]}
-{"id":"sp-ll-blocked","title":"blocked on open dep","status":"open","issue_type":"task","labels":["spira","plan","repo:pushrepo"],"dependency_count":1}
+testdb_seed <<JSONL
+{"id":"sp-ll-dep","title":"open dependency","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"]}
+{"id":"sp-ll-blocked","title":"blocked on open dep","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"dependency_count":1}
 JSONL
 out="$(run_ll)"
 nowant "blocked bead: sp-ll-blocked not in livelock output" "sp-ll-blocked" "$out"
