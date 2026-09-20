@@ -35,6 +35,7 @@ testdb_require test-batch
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up batch || { echo "test-batch: could not build fixture database"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+SPIRA_QUEUE_LOCAL_GATE=""
 
 REPO="$TMP/repo"
 REMOTE="$TMP/remote.git"
@@ -122,7 +123,7 @@ batch() {
     SPIRA_SUITE_STATE="spira/suite-state" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_QUEUE_REPRO_BATCH="$SH/repro-stub.sh" \
-    SPIRA_QUEUE_LOCAL_GATE=${SPIRA_QUEUE_LOCAL_GATE:-1} \
+    SPIRA_QUEUE_LOCAL_GATE="${SPIRA_QUEUE_LOCAL_GATE:-1}" \
         bash "$SH/batch.sh" "$@" 2>&1
 }
 
