@@ -1,0 +1,67 @@
+=== 06 — the resident-bd option: `bd serve` already exists ===
+Spike sp-krxs8, 2026-09-20. Session fence CPUQuota=70%.
+
+bd v1.2.1 ships `bd serve`, described in its own help as being exactly for this:
+
+  "Serve the beads HTTP API — the same work surface the CLI answers, for automation
+   clients that would otherwise fork a bd subprocess per call."
+
+--- THE CONSTRAINT THAT DECIDES ITS SCOPE ---
+$ cd <embedded fixture> && bd-embedded serve --addr 127.0.0.1:18931
+  Error: operation "serve" not supported by the embedded-dolt backend: bd serve requires
+  a Dolt SQL server; this workspace uses embedded Dolt
+
+  So `bd serve` CANNOT serve the test suites. Every fixture-using suite runs embedded
+  (spira/testdb.sh prefers it, and server mode is the documented fallback). The resident
+  option is available only to callers of the server-mode store — sentinel, landing,
+  census, the aeons. That is the opposite of where the bead's headline evidence sits.
+
+  It also requires a git repository root:
+  $ bd -C <non-repo dir> serve
+    Error: cannot resolve workspace context: cannot determine repository root
+
+--- startup, against the server-mode store ---
+$ cd $SPIRA_DB && bd serve --addr 127.0.0.1:18932
+  bd serve: listening on http://127.0.0.1:18932
+  event=startup mode="server (external dolt)" database=spira host_allowlist=127.0.0.1,::1,localhost
+    capabilities=config.get,...,dependencies.tree,events.list,events.watch,issues.addComment,
+    issues.batchApply,issues.batchClose,issues.batchCreate,issues.casMetadata,issues.claim,
+    issues.claimNext,issues.close,issues.count,issues.create,issues.delete,issues.get,
+    issues.list,issues.query,issues.related,issues.release,issues.reopen,issues.sweep,
+    issues.update,memories.*,project.enforce,ready.count,ready.list,stats.get  auth=none
+  event=limits max_inflight=16 max_conns=64 sem_wait=10s deadline=1m0s
+                pool_max_open=20 pool_max_idle=16 pool_idle_time=5m0s pool_lifetime=1h0m0s
+
+  Auth is off by default on loopback; --auth-token-file turns it on with one token per
+  line and hot reload. It shuts down on SIGHUP/SIGINT/SIGTERM and wants a supervisor.
+  Routes are under /v0/beads/; there is no OpenAPI document served at /v0/openapi.json
+  on this build (404), so routes were found by probing.
+
+--- head to head ---
+  CLI  bd show sp-krxs8 --json                    n=20  total=3830 ms   per_call=191 ms
+  HTTP GET /v0/beads/issues/sp-krxs8 (fresh curl) n=20  total=661 ms    per_call=33 ms
+  CLI  bd list --limit 0 --json  (3064 rows)      n=10  total=2023 ms   per_call=202 ms
+  HTTP GET /v0/beads/issues?limit=0               n=10  total=824 ms    per_call=82 ms
+
+--- decomposing the HTTP figure ---
+  curl + GET /healthz (answers from the process, never touches the database)  24 ms/call
+  /bin/true exec floor                                                         3 ms/call
+
+  So of the 33 ms, ~24 ms is curl's own process start. The server-side cost of a one-bead
+  lookup is ~9 ms. A client that is not a fresh curl per call — a persistent connection, a
+  Rust client, one curl fed many URLs — gets ~9 ms against the CLI's 191 ms, about 20x.
+  With a fresh curl per call, as a bash caller would do it, 5.8x.
+
+  Single-route latencies, fresh curl, for reference:
+    /v0/beads/ready?limit=1        27.8 ms
+    /v0/beads/issues?limit=1       49.3 ms
+    /v0/beads/issues/sp-krxs8      23.5 ms
+    /v0/beads/stats                18.8 ms
+
+--- what was NOT measured ---
+  - No write path was exercised. Only GETs were issued, against the live store.
+  - `issues.batchApply` / `bd batch` (write batching in one transaction) was not measured;
+    the hot loops found in this spike are reads.
+  - The resident process was run in the foreground under the aeon's own 70% fence, not
+    under a unit with its own CPUQuota. A supervised bd serve would need one
+    (law-fence-loops-on-shared-hardware), and its cost under that fence is not measured.

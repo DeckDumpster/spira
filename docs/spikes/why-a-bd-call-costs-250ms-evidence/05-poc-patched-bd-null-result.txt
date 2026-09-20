@@ -1,0 +1,70 @@
+=== 05 — proof of concept: patching bd's startup does NOT help ===
+Spike sp-krxs8, 2026-09-20. Branch: spike/sp-krxs8-poc (unmerged).
+
+--- the hypothesis ---
+`GODEBUG=inittrace=1 bd --version` showed `github.com/olebedev/when/rules/nl` at 53 ms
+clock — the Dutch rules of a natural-language date parser, on the startup path of every bd
+call. Reading the library confirmed the mechanism looked real:
+
+  github.com/olebedev/when@v1.1.0/when.go imports rules/{br,common,en,nl,ru} and its
+  package init() eagerly constructs FOUR parsers:
+
+      func init() {
+          EN = New(nil); EN.Add(en.All...); EN.Add(common.All...)
+          RU = New(nil); RU.Add(ru.All...); RU.Add(common.All...)
+          BR = New(nil); BR.Add(br.All...); BR.Add(common.All...)
+          NL = New(nil); NL.Add(nl.All...); NL.Add(common.All...)
+      }
+
+  beads does not use any of them. internal/timeparsing/parser.go builds its own lazily:
+
+      var nlpParser *when.Parser
+      func getNLPParser() *when.Parser { ... nlpParser = when.New(nil) ... }
+
+  So beads already does the lazy thing and the library's package init defeats it.
+
+--- the test ---
+Built two binaries from the same v1.2.1 source with the same toolchain (go1.27.1,
+CGO_ENABLED=1, -tags gms_pure_go):
+
+  bd-baseline   unmodified
+  bd-patched    go.mod replace -> a local when fork with the br/nl/ru imports, the RU/BR/NL
+                vars and their three init blocks deleted
+
+Verified the patch took effect:
+  bd-baseline  when/rules/br=0.68ms when/rules/common=0.043ms when/rules/en=0.56ms
+               when/rules/nl=0.70ms when/rules/ru=0.83ms
+  bd-patched   when/rules/common=0.049ms when/rules/en=0.49ms
+
+--- the result: no change ---
+  bd-baseline  total init = 108.0 ms across 689 packages
+  bd-patched   total init = 109.3 ms across 686 packages
+
+bd-baseline --version                        n=15  cpu_ms: min=70   p50=90   max=100  | wall_ms: min=110  p50=120  max=170
+bd-patched  --version                        n=15  cpu_ms: min=70   p50=80   max=130  | wall_ms: min=100  p50=110  max=290
+bd-baseline -C empty ping                    n=12  cpu_ms: min=170  p50=180  max=190  | wall_ms: min=220  p50=280  max=290
+bd-patched  -C empty ping                    n=12  cpu_ms: min=160  p50=170  max=180  | wall_ms: min=210  p50=260  max=270
+
+Within noise. Three packages out of 689.
+
+--- why the 53 ms was an artifact ---
+Re-running inittrace on the SAME shipped binary moved the number to a different package:
+
+  run A (cold):  olebedev/when/rules/nl        53 ms clock
+  run B (warm):  alecthomas/chroma/v2/styles   59 ms clock
+
+inittrace reports WALL clock per init, so it charges page-fault time (a 202 MB binary
+being read in) and GC pauses to whichever package happened to be running. Reading it as
+per-package CPU cost is wrong, and it is wrong in the most inviting direction: it produces
+a large number attached to an obviously-useless package.
+
+--- the finding this leaves ---
+bd's ~90 ms of startup CPU is the diffuse cost of running 689 package init() functions.
+The stable contributors are all small (chroma/lexers ~10 ms, go-mysql-server
+sql/variables ~4.6 ms, sql/information_schema ~4.2 ms, main ~4 ms). There is no hot spot,
+so there is no cheap surgical fix — only `GOGC=off`, worth ~10 ms (01), and a dependency
+amputation across hundreds of packages, which is an upstream project, not a change here.
+
+This is the measurement that had to be BUILT rather than estimated. The estimate from
+inittrace alone would have promised ~55 ms per call across every bd invocation in the
+harness, and it would have been wrong.

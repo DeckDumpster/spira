@@ -1,0 +1,45 @@
+=== 03 — wall time is CPU time divided by the unit's CPUQuota ===
+Spike sp-krxs8, 2026-09-20.
+
+This is the measurement that answers the bead's headline question. `bd count` against the
+server-mode store, 8 calls per quota, run through systemd-run so each batch sits in its own
+cgroup with an explicit minimal environment:
+
+$ for q in 100 70 40 20; do
+    systemd-run --user --quiet --pipe --wait --collect \
+      --property=CPUQuota=${q}% \
+      --setenv=PATH=... --setenv=HOME=... \
+      /bin/bash -c 'ts=$(date +%s%N); for i in $(seq 8); do bd -C $SPIRA_DB count >/dev/null 2>&1; done;
+                    te=$(date +%s%N); echo "wall_per_call_ms=$(( (te-ts)/8000000 ))"'
+  done
+
+    CPUQuota=100%  wall_per_call_ms=119
+    CPUQuota= 70%  wall_per_call_ms=170
+    CPUQuota= 40%  wall_per_call_ms=314
+    CPUQuota= 20%  wall_per_call_ms=887
+
+The call does ~110 ms of CPU work (02). Divide by the quota:
+
+    quota   predicted   measured   note
+    100%      110 ms     119 ms
+     70%      157 ms     170 ms
+     40%      275 ms     314 ms    <- spira-sentinel, spira-suites
+     20%      550 ms     887 ms    <- worse than linear; see below
+
+The bead's observed p50 of 251 ms sits between the 70% and 40% rows, which is where a
+harness whose passes run at 40% and whose aeons run at 70% should sit.
+
+WHY 20% IS WORSE THAN LINEAR. The CFS quota period is 100 ms. A process needing 110 ms of
+CPU at a 20 ms/period allowance must wait out five whole periods, and the rounding is
+charged every time. The relevant fence here is spira-gate-check.service at CPUQuota=10%,
+where the same call should cost well over a second. Not separately measured.
+
+CONSEQUENCE. Any reduction in bd's CPU cost is multiplied by 1/quota in the units that
+matter. 10 ms of CPU saved is 25 ms of sentinel wall. Equally: any work that can be moved
+OUT of a fenced unit, or any call that can be deleted, is worth 2.5x its CPU cost there.
+
+Throttling actually observed in this session's own cgroup, for scale:
+$ cat .../cpu.stat
+  nr_periods 1205
+  nr_throttled 546          <- throttled in 45% of periods
+  throttled_usec 35959475   <- 36 s spent waiting for quota
