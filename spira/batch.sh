@@ -395,7 +395,7 @@ main() {
 
     # LOCAL GATE: run the gate on the combined batch before opening a PR.
     # Green → push + open PR. Red → attribute, eject, rebuild, gate again.
-    local lg_out lg_rc lg_start lg_cost
+    local lg_out lg_rc lg_start lg_cost lg_ejected="" lg_suites_csv=""
     lg_start="$(date +%s)"
     git -C "$repo" branch -f "$batch_br" "$batch_head" 2>/dev/null || true
     # SPIRA_QUEUE_LOCAL_GATE=0 opens the PR without the local gate. The gate runs inside
@@ -554,14 +554,27 @@ main() {
     fi
 
     # Open PR via forge seam.
+    local member_titles_json
+    member_titles_json="$(bdjson show "${member_ids[@]}" 2>/dev/null)" || member_titles_json="[]"
+
     local pr_body pr_n
     pr_body="$(
-        printf 'queue: %d branch(es)\n\n' "${#members[@]}"
-        for mid in "${member_ids[@]}"; do printf -- '- %s\n' "$mid"; done
+        printf 'Merge-queue batch: %d beads for %s, onto %s.\n\n' \
+            "${#members[@]}" "$name" "$base_branch"
+        for mid in "${member_ids[@]}"; do
+            t="$(printf '%s\n' "$member_titles_json" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+items = data if isinstance(data, list) else [data]
+t = next((str(i.get('title','')) for i in items if i.get('id') == '$mid'), '')
+print((t[:120] if t else '(title unavailable)') or '(title unavailable)')
+" 2>/dev/null)" || t="(title unavailable)"
+            printf -- '- %s — %s\n' "$mid" "${t:-(title unavailable)}"
+        done
     )"
     pr_n="$(printf '%s' "$pr_body" \
             | "$forge" pr-create "$repo" "$batch_br" "$base_branch" \
-                "queue: ${#members[@]} branches" 2>/dev/null)" || {
+                "queue: ${#members[@]} beads for $name" 2>/dev/null)" || {
         printf 'batch %s: forge pr-create failed for %s\n' "$name" "$batch_br" >&2
         return 1
     }
@@ -569,6 +582,26 @@ main() {
         printf 'batch %s: forge returned no PR number for %s\n' "$name" "$batch_br" >&2
         return 1
     }
+
+    # Post a comment for each ejected member so the PR body stays accurate.
+    if [ -n "${lg_ejected:-}" ]; then
+        local ej_titles_json ej_id ej_title ej_n_remain
+        ej_n_remain="${#members[@]}"
+        # shellcheck disable=SC2086
+        ej_titles_json="$(bdjson show $lg_ejected 2>/dev/null)" || ej_titles_json="[]"
+        for ej_id in $lg_ejected; do
+            ej_title="$(printf '%s\n' "$ej_titles_json" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+items = data if isinstance(data, list) else [data]
+t = next((str(i.get('title','')) for i in items if i.get('id') == '$ej_id'), '')
+print((t[:120] if t else '(title unavailable)') or '(title unavailable)')
+" 2>/dev/null)" || ej_title="(title unavailable)"
+            "$forge" pr-comment "$repo" "$pr_n" \
+                "Ejected: $ej_id — ${ej_title:-(title unavailable)} (${lg_suites_csv:-unknown}); $ej_n_remain remain" \
+                2>/dev/null || true
+        done
+    fi
 
     # Record the open batch.
     local bdir; bdir="$(dirname "$(_batch_open_file "$name")")"

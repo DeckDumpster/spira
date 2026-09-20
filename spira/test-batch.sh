@@ -85,28 +85,43 @@ chmod +x "$SH/repro-stub.sh"
 
 # Forge fixture: log every pr-create call, return incrementing PR numbers.
 # A real forge is never reached in this suite.
+# Paths are baked into the script at write time (unquoted heredoc) so the fixture
+# does not need FORGE_LOG/BODY_LOG/COMMENT_LOG passed through the environment.
 FORGE_LOG="$TMP/forge-log"
-cat > "$SH/forge-fixture.sh" <<'FORGE'
+BODY_LOG="$TMP/body-log"
+COMMENT_LOG="$TMP/comment-log"
+TITLE_LOG="$TMP/title-log"
+cat > "$SH/forge-fixture.sh" << FORGE
 #!/usr/bin/env bash
 # Fixture forge seam.  Pinned to a non-default SPIRA_FORGE so that an assertion
 # passing against "used gh" fails rather than passing vacuously.
-cmd="${1:-}"; shift; repo="${1:-}"; shift
-case "$cmd" in
+cmd="\${1:-}"; shift; repo="\${1:-}"; shift
+case "\$cmd" in
     pr-create)
-        head="${1:-}" base="${2:-}" title="${3:-}"
-        n=$(( $(wc -l < "$FORGE_LOG" 2>/dev/null || echo 0) + 1 ))
-        printf '%s\t%s\n' "$head" "$n" >> "$FORGE_LOG"
-        printf '%s\n' "$n"
+        head="\${1:-}" base="\${2:-}" title="\${3:-}"
+        n=\$(( \$(wc -l < "$FORGE_LOG" 2>/dev/null || echo 0) + 1 ))
+        body="\$(cat)"
+        printf '%s\t%s\n' "\$head" "\$n" >> "$FORGE_LOG"
+        printf '%s\n' "\$title" >> "$TITLE_LOG"
+        printf '%s\n' "\$body" >> "$BODY_LOG"
+        printf '%s\n' "\$n"
         ;;
     pr-number)
-        head="${1:-}"
-        grep "^${head}	" "$FORGE_LOG" 2>/dev/null | tail -1 | cut -f2
+        head="\${1:-}"
+        grep "^\${head}	" "$FORGE_LOG" 2>/dev/null | tail -1 | cut -f2
         ;;
-    *) printf 'forge-fixture: unknown command: %s\n' "$cmd" >&2; exit 1 ;;
+    pr-comment)
+        pr_n="\${1:-}" comment="\${2:-}"
+        printf '%s\t%s\n' "\$pr_n" "\$comment" >> "$COMMENT_LOG"
+        ;;
+    *) printf 'forge-fixture: unknown command: %s\n' "\$cmd" >&2; exit 1 ;;
 esac
 FORGE
 chmod +x "$SH/forge-fixture.sh"
 : > "$FORGE_LOG"
+: > "$BODY_LOG"
+: > "$TITLE_LOG"
+: > "$COMMENT_LOG"
 
 # Write repo-map: queue mode, pinned to a non-default land value.
 cat > "$SH/repo-map" <<RMAP
@@ -141,6 +156,13 @@ plant_bead() {
         "$1" "$1" "$1" | testdb_seed
 }
 
+# plant_bead_t <id> <title>  — seed a closed bead with a specific title
+plant_bead_t() {
+    printf \
+        '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
+        "$1" "$2" "$1" | testdb_seed
+}
+
 # branch <id> [epoch]  — create a spira/<id> branch on main with one commit
 #                        and plant CERTIFIED landstate at <epoch> (default: now)
 branch() {
@@ -153,6 +175,19 @@ branch() {
     local tip; tip="$(git -C "$REPO" rev-parse "spira/$id")"
     printf 'CERTIFIED %s %s\n' "$tip" "$epoch" > "$LANDSTATE/$id"
     plant_bead "$id"
+}
+
+# branch_t <id> <title> [epoch]  — branch with a custom bead title
+branch_t() {
+    local id="$1" title="$2" epoch="${3:-$(date +%s)}"
+    local wt="$RUN/worktree/$id"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$wt" main 2>/dev/null || true
+    printf '%s\n' "$id" > "$wt/$id.txt"
+    git -C "$wt" add -A
+    git -C "$wt" commit -q -m "$id: work"
+    local tip; tip="$(git -C "$REPO" rev-parse "spira/$id")"
+    printf 'CERTIFIED %s %s\n' "$tip" "$epoch" > "$LANDSTATE/$id"
+    plant_bead_t "$id" "$title"
 }
 
 open_batch_file() { printf '%s/%s/open' "$QUEUEDIR" "$REPONAME"; }
@@ -168,6 +203,9 @@ clean_case() {
     rm -f "$QUEUEDIR/$REPONAME/open"
     rm -f "$RUN/landing.log"
     : > "$FORGE_LOG"
+    : > "$BODY_LOG"
+    : > "$TITLE_LOG"
+    : > "$COMMENT_LOG"
     : > "$GATE_COUNT"
     : > "$REPRO_FAIL_FILE"
     find "$LANDSTATE" -maxdepth 1 -type f 2>/dev/null -delete
@@ -800,6 +838,118 @@ is   "i. rebase-conflict: bump_requeue called"       "1" \
     "$(grep -c "^sp-bti merge-conflict$" "$REQUEUE_SPY_I" 2>/dev/null || echo 0)"
 
 cp "$HERE/lib.sh" "$SH/lib.sh"
+clean_case
+
+# =============================================================================
+# j. PR BODY CARRIES TITLES: the PR body contains "id — title" for every
+#    member; the PR title says "beads for <repo>", not a list of bead IDs.
+#
+#    POSITIVE CONTROL: BODY_LOG is empty before the run (clean_case zeroed it);
+#    a forge that is never reached cannot have written the titles.
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"; OLD_J=$(( NOW - 1800 - 1 ))
+branch_t "sp-btj-1" "Cache invalidation breaks on empty key"     "$OLD_J"
+branch_t "sp-btj-2" "Retry loop exceeds configured max attempts" "$OLD_J"
+branch_t "sp-btj-3" "Scope label defaults to literal spira"      "$OLD_J"
+
+is "j. positive-control: body empty before run" "0" \
+    "$([ -s "$BODY_LOG" ] && echo 1 || echo 0)"
+
+batch "$REPONAME" >/dev/null 2>&1
+
+want "j. body: sp-btj-1 with title" "sp-btj-1 — Cache invalidation breaks on empty key" \
+    "$(cat "$BODY_LOG" 2>/dev/null)"
+want "j. body: sp-btj-2 with title" "sp-btj-2 — Retry loop exceeds configured max attempts" \
+    "$(cat "$BODY_LOG" 2>/dev/null)"
+want "j. body: sp-btj-3 with title" "sp-btj-3 — Scope label defaults to literal spira" \
+    "$(cat "$BODY_LOG" 2>/dev/null)"
+want "j. title: contains 'beads for'" "beads for" \
+    "$(cat "$TITLE_LOG" 2>/dev/null)"
+nowant "j. title: no bead id in title" "sp-btj" \
+    "$(cat "$TITLE_LOG" 2>/dev/null)"
+clean_case
+
+# =============================================================================
+# k. TITLE UNAVAILABLE: a member not in the bead database still opens the PR;
+#    its body line shows "(title unavailable)".
+#
+#    POSITIVE CONTROL: the member WITH a known title must appear with that title
+#    (if all titles show unavailable, the lookup is simply broken, not graceful).
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"; OLD_K=$(( NOW - 1800 - 1 ))
+branch_t "sp-btk-known" "Title that is present in the DB" "$OLD_K"
+
+# sp-btk-missing: branch exists, CERTIFIED, but bead not in DB.
+wt_k="$RUN/worktree/sp-btk-missing"
+git -C "$REPO" worktree add -q -b "spira/sp-btk-missing" "$wt_k" main 2>/dev/null || true
+printf 'missing\n' > "$wt_k/sp-btk-missing.txt"
+git -C "$wt_k" add -A
+git -C "$wt_k" commit -q -m "sp-btk-missing: work"
+tip_km="$(git -C "$REPO" rev-parse "spira/sp-btk-missing")"
+printf 'CERTIFIED %s %s\n' "$tip_km" "$OLD_K" > "$LANDSTATE/sp-btk-missing"
+
+batch "$REPONAME" >/dev/null 2>&1
+
+want "k. known title present" "sp-btk-known — Title that is present in the DB" \
+    "$(cat "$BODY_LOG" 2>/dev/null)"
+want "k. unavailable for missing" "(title unavailable)" \
+    "$(cat "$BODY_LOG" 2>/dev/null)"
+is "k. PR opened despite missing title" "1" "$(batch_pr)"
+clean_case
+
+# =============================================================================
+# l. EJECT COMMENT: when a member is ejected, a comment on the new PR names
+#    the ejected id, its title, and the failing suite, with remaining count.
+#
+#    POSITIVE CONTROL: COMMENT_LOG is empty before the run (clean_case zeroed
+#    it); a comment only appears when the forge pr-comment seam is called.
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"; OLD_L=$(( NOW - 1800 - 1 ))
+branch_t "sp-btl-1"   "Survivor bead that stays in the batch"    "$OLD_L"
+branch_t "sp-btl-2"   "Second survivor in the rebuilt batch"     "$OLD_L"
+branch_t "sp-btl-red" "Bead that fails the local gate suite"     "$OLD_L"
+
+# Gate fails on first call (full batch of 3), passes on second (rebuilt batch of 2).
+cat > "$SH/gate.sh" <<GSTUB_L
+#!/usr/bin/env bash
+n=\$(wc -l < "$GATE_COUNT" 2>/dev/null | tr -d ' ' || printf 0)
+printf '%s\n' "\$1" >> "$GATE_COUNT"
+if [ "\${n:-0}" -eq 0 ]; then
+    printf 'gate: VERDICT=FAIL reason=red test-btl.sh FAILED branch=%s repo=%s suite=test-btl.sh\n' "\$1" "\${2:-?}" >&2
+    exit 1
+fi
+printf 'gate: VERDICT=PASS reason=stub branch=%s repo=%s suite=none\n' "\$1" "\${2:-?}" >&2
+exit 0
+GSTUB_L
+chmod +x "$SH/gate.sh"
+
+printf 'spira/sp-btl-red\n' > "$REPRO_FAIL_FILE"
+
+is "l. positive-control: comment log empty before run" "0" \
+    "$([ -s "$COMMENT_LOG" ] && echo 1 || echo 0)"
+
+batch "$REPONAME" >/dev/null 2>&1
+
+want "l. eject comment: names ejected id"    "sp-btl-red"                   "$(cat "$COMMENT_LOG" 2>/dev/null)"
+want "l. eject comment: names title"         "Bead that fails the local gate suite" "$(cat "$COMMENT_LOG" 2>/dev/null)"
+want "l. eject comment: names suite"         "test-btl.sh"                  "$(cat "$COMMENT_LOG" 2>/dev/null)"
+want "l. eject comment: shows remain count"  "2 remain"                     "$(cat "$COMMENT_LOG" 2>/dev/null)"
+
+# Restore default always-pass gate stub.
+cat > "$SH/gate.sh" <<GSTUB
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >> "$GATE_COUNT"
+printf 'gate: VERDICT=PASS reason=stub branch=%s repo=%s suite=none\n' "\$1" "\${2:-?}" >&2
+exit 0
+GSTUB
+chmod +x "$SH/gate.sh"
+: > "$REPRO_FAIL_FILE"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
