@@ -102,7 +102,7 @@ chmod +x "$BIN/claude"
 fresh; seed sp-yh-1
 run_aeon > /dev/null 2>&1
 want "ledger records yield-headless"      "status=yield-headless" "$(grep 'done builder sp-yh-1' "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null)"
-want "bead note mentions yield-headless"  "yield-headless"        "$(bead_notes sp-yh-1)"
+want "bead note mentions yield-headless"  "background task notification" "$(bead_notes sp-yh-1)"
 
 # ======================================================================================
 echo
