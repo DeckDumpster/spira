@@ -238,6 +238,20 @@ else
     bad  "groomer.fayth" "not found at $HERE/chamber/groomer.fayth"
 fi
 
+# ==========================================================================================
+echo
+echo "groomer.fayth declares FAYTH_GROOM_ESCALATION_CHECK=1"
+# ==========================================================================================
+# The escalation check in aeon.sh is activated by this key. Without it, a groom pass
+# that claims ESCALATED without filing an ask bead is never caught.
+if [ -f "$HERE/chamber/groomer.fayth" ]; then
+    gesc_val="$(env -i HOME="$T" PATH="/usr/bin:/bin" SPIRA_CONF="$NONE" SPIRA_DB="$T/db" \
+        bash -c '. "'"$HERE"'/conf.sh" && . "'"$HERE"'/chamber/groomer.fayth" && printf "%s" "${FAYTH_GROOM_ESCALATION_CHECK:-}"' 2>/dev/null)"
+    is   "groomer.fayth FAYTH_GROOM_ESCALATION_CHECK=1" "1" "$gesc_val"
+else
+    bad  "groomer.fayth" "not found at $HERE/chamber/groomer.fayth"
+fi
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

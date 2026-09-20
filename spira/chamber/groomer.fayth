@@ -63,3 +63,8 @@ FAYTH_PROJECT_INSTRUCTIONS=none
 # REPLACE: the groomer reconciles the graph — never writes code. The default coding
 # guidance competes with the standing constraints.
 FAYTH_SYSTEM_PROMPT=replace
+
+# THE ESCALATION CHECK. A groom log line claiming ESCALATED or inquiry for bead X must be
+# backed by an ask bead created in the same session — aeon.sh verifies this after the
+# session closes, the same way FAYTH_SOP_REQUIRED backs the Ops closing rule.
+FAYTH_GROOM_ESCALATION_CHECK=1
