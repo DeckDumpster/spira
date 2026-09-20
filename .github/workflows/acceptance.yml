@@ -105,11 +105,15 @@ jobs:
         # The runner process is not a login session, so XDG_RUNTIME_DIR may be
         # unset and /run/user/<uid> may not exist. Linger creates the runtime
         # directory and starts the user systemd manager so systemctl --user works.
+        # Both variables are written to GITHUB_ENV so every subsequent step,
+        # including subprocesses of install.sh, inherits them without explicit env:.
         run: |
           sudo loginctl enable-linger "$USER"
-          echo "XDG_RUNTIME_DIR=/run/user/$(id -u)" >> "$GITHUB_ENV"
+          _xdg="/run/user/$(id -u)"
+          echo "XDG_RUNTIME_DIR=${_xdg}" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=${_xdg}/bus" >> "$GITHUB_ENV"
           for i in $(seq 10); do
-            XDG_RUNTIME_DIR="/run/user/$(id -u)" systemctl --user status >/dev/null 2>&1 && break
+            XDG_RUNTIME_DIR="${_xdg}" systemctl --user is-system-running >/dev/null 2>&1 && break
             sleep 1
           done
 
