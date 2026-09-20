@@ -258,7 +258,7 @@ _supervisor_loop() {
     # the datagram from the short-lived child before it is reaped (sender-PID race).
     if [ -n "${NOTIFY_SOCKET:-}" ]; then
         systemd-notify --pid="${WATCHDOG_PID:-$$}" --watchdog \
-            || printf 'collect.sh: systemd-notify --watchdog failed\n' >&2
+            || printf 'collect.sh: watchdog ping failed\n' >&2
     fi
 
     mkdir -p "$FRAG_DIR"
@@ -293,7 +293,7 @@ _supervisor_loop() {
         # NotifyAccess=all still required because systemd-notify is a child.
         if [ -n "${NOTIFY_SOCKET:-}" ]; then
             systemd-notify --pid="${WATCHDOG_PID:-$$}" --watchdog \
-                || printf 'collect.sh: systemd-notify --watchdog failed\n' >&2
+                || printf 'collect.sh: watchdog ping failed\n' >&2
         fi
 
         # Config-change check: exit cleanly so the restart picks up the new config.
