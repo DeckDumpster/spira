@@ -227,6 +227,7 @@ case "${1:-contract}" in
     kinds)    schema_kinds ;;
     statuses) schema_statuses ;;
     dims)     schema_dims ;;
+    names)    schema_names ;;
     custom-types) schema_custom_types ;;
-    *) printf 'usage: schema.sh [contract|check|name <key>|default <key>|type-of <kind>|kinds|statuses|dims|custom-types]\n' >&2; exit 2 ;;
+    *) printf 'usage: schema.sh [contract|check|name <key>|default <key>|type-of <kind>|kinds|statuses|dims|names|custom-types]\n' >&2; exit 2 ;;
 esac
