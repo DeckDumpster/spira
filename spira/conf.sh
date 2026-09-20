@@ -356,6 +356,10 @@ spira_conf_defaults() {
     # row it gave back is what INFLOW is built on.
     : "${SPIRA_COCKPIT_TRACE_LINES:=2}"
     : "${SPIRA_COCKPIT_STALE_S:=120}"
+    # COLLECTOR LIVENESS THRESHOLD for the watchtower ops prompt. A snapshot older than this
+    # is rendered as FAULT rather than a number. Default: 3x the collector tick (5s) plus the
+    # slowest probe timeout (900s) — the furthest a healthy collector can fall behind.
+    : "${SPIRA_WATCH_SNAP_MAX:=915}"
     # HOW LONG AN ACTIONABLE EVENT MAY WAIT WITH NO READER before it is escalated through a
     # channel that needs no session, in seconds. `watchd.sh notify` is what enforces it.
     #

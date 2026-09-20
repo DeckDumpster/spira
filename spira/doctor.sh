@@ -681,7 +681,7 @@ if [ ! -f "$_dr_snap" ]; then
 else
     _dr_snap_age=$(( $(date +%s) - $(stat --format='%Y' "$_dr_snap" 2>/dev/null || echo 0) ))
     if [ "$_dr_snap_age" -gt "${SPIRA_COCKPIT_STALE_S:-120}" ]; then
-        WARN "cockpit snapshot stale — last written ${_dr_snap_age}s ago (limit ${SPIRA_COCKPIT_STALE_S:-120}s)" \
+        FAIL "cockpit snapshot stale — last written ${_dr_snap_age}s ago (limit ${SPIRA_COCKPIT_STALE_S:-120}s)" \
              "The collector is not writing. Check: systemctl --user status $(spira_unit cockpit service)"
     else
         OK "cockpit snapshot fresh — $_dr_snap (${_dr_snap_age}s old)"

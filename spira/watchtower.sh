@@ -431,7 +431,7 @@ if [ "${1:-}" = "--pr-stall-check" ]; then
     exit 0
 fi
 
-SNAP_AGE_MAX="${SPIRA_WATCH_SNAP_MAX:-600}"
+SNAP_AGE_MAX="${SPIRA_WATCH_SNAP_MAX:-915}"
 now="$(date +%s)"
 
 # ---------------------------------------------------------------------------------------
@@ -500,6 +500,10 @@ if [ -r "$ENVF" ]; then
     # shellcheck disable=SC1090
     eval "$(sed -n 's/^\(SP_[A-Z_0-9]*\)=\(.*\)$/\1=\2/p' "$ENVF" 2>/dev/null)" 2>/dev/null || true
     [ -n "${SP_AT:-}" ] && snap_age=$(( now - SP_AT ))
+fi
+snap_age_disp="${snap_age}s"
+if [ "$snap_age" != "?" ] && [ "$snap_age" -ge "$SNAP_AGE_MAX" ] 2>/dev/null; then
+    snap_age_disp="FAULT (${snap_age}s, stale above ${SNAP_AGE_MAX}s)"
 fi
 g() { local v="${!1:-}"; [ -n "$v" ] && printf '%s' "$v" || printf '?'; }
 
@@ -953,7 +957,7 @@ ${guard_block}
 
 ### Can this snapshot be believed?
 
-  collector snapshot age              ${snap_age}s   (stale above ${SNAP_AGE_MAX}s)
+  collector snapshot age              ${snap_age_disp}
   sentinel timer                      $(g SP_SENTINEL_TIMER)   last pass $(g SP_SENTINEL_AGE)s ago
 
 ## Your task

@@ -1,30 +1,13 @@
 #!/usr/bin/env bash
-# test-cockpit-unit-notify.sh — watchdog configuration for the cockpit collector.
-#
-# THREE PROPERTIES, each requiring a positive control:
-#
-#   1. NotifyAccess=all: every service unit that carries WatchdogSec must also
-#      declare NotifyAccess=all, because the heartbeat is sent via systemd-notify
-#      (a child process), which `main` rejects.
-#      Positive control: a unit with WatchdogSec but without NotifyAccess=all
-#      must be flagged.
-#
-#   2. Early ping: _supervisor_loop in collect.sh must send a watchdog ping before
-#      any setup code (the _write_never_frag loop). Without it, a slow startup
-#      exhausts WatchdogSec before the first in-loop ping fires.
-#      Positive control: a loop-only variant (ping inside while, not before setup)
-#      must be detected as arriving too late.
-#
-#   3. --pid= flag: every systemd-notify --watchdog call must pass --pid= so the
-#      manager can attribute the datagram to the main process before the short-lived
-#      child is reaped (sender-attribution race).
-#      Positive control: a variant without --pid= must be detected.
+# test-cockpit-unit-notify.sh — fence: no unit template whose ExecStart runs bash may carry
+# WatchdogSec=. bash cannot satisfy WatchdogSec — only the main PID's own datagram is
+# credited, and an unprivileged process cannot assert another PID in SCM_CREDENTIALS.
+# Lift this fence when sp-mplcb lands (Rust supervisor that is the main PID).
 #
 # covers: systemd/*.service spira/collect.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-COLLECT="$HERE/collect.sh"
 
 pass=0; fail=0
 ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
@@ -32,99 +15,37 @@ bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 
 echo "test-cockpit-unit-notify.sh"
 
-# ── Property 1: NotifyAccess=all on all watchdog units ────────────────────────
+# ── Fence: no bash ExecStart unit carries WatchdogSec= ────────────────────────
 checked=0
 for u in "$HERE"/../systemd/*.service; do
     body="$(grep -v '^\s*#' "$u")"
-    case "$body" in *WatchdogSec=*) ;; *) continue ;; esac
+    case "$body" in *'ExecStart='*bash*|*'ExecStart='*.sh*) ;; *) continue ;; esac
     checked=$((checked + 1))
     case "$body" in
-        *NotifyAccess=all*)
-            ok "$(basename "$u"): NotifyAccess=all" ;;
+        *WatchdogSec=*)
+            bad "$(basename "$u"): no WatchdogSec on bash unit" \
+                "bash cannot deliver watchdog heartbeats — see sp-3az9w, sp-mplcb" ;;
         *)
-            bad "$(basename "$u"): NotifyAccess=all" "missing — systemd-notify pings need NotifyAccess=all" ;;
+            ok "$(basename "$u"): no WatchdogSec on bash unit" ;;
     esac
 done
 
-# Positive control: a fabricated unit with WatchdogSec but no NotifyAccess=all fails.
+# Positive control: a fixture with bash ExecStart and WatchdogSec is detected.
 BAD_UNIT='[Service]
-WatchdogSec=30
-ExecStart=/bin/true'
-case "$BAD_UNIT" in *NotifyAccess=all*) bad "pc NotifyAccess: bad unit is detected" "not detected" ;;
-    *) ok "pc NotifyAccess: bad unit is detected" ;; esac
+ExecStart=/usr/bin/bash /some/script.sh
+WatchdogSec=60'
+_pc_found=0
+_pc_body="$(printf '%s' "$BAD_UNIT" | grep -v '^\s*#')"
+case "$_pc_body" in *'ExecStart='*bash*|*'ExecStart='*.sh*)
+    case "$_pc_body" in *WatchdogSec=*) _pc_found=1 ;; esac ;;
+esac
+[ "$_pc_found" -eq 1 ] \
+    && ok "pc: bash+WatchdogSec fixture is detected" \
+    || bad "pc: bash+WatchdogSec fixture is detected" "positive control broken"
 
-[ "$checked" -gt 0 ] && ok "at least one watchdog unit was examined" \
-    || bad "at least one watchdog unit was examined" "none found — is WatchdogSec missing?"
-
-# ── Property 2: early ping precedes initialization in _supervisor_loop ────────
-FUNC_BODY=$(awk '/^_supervisor_loop\(\)/{ p=1 } p{ print } p && /^\}$/{ exit }' "$COLLECT")
-if [ -z "$FUNC_BODY" ]; then
-    bad "_supervisor_loop found in collect.sh" "function not found"
-else
-    ok "_supervisor_loop found in collect.sh"
-
-    PING_LINE=$(printf '%s\n' "$FUNC_BODY" | grep -n 'systemd-notify.*--watchdog' | head -1 | cut -d: -f1)
-    SETUP_LINE=$(printf '%s\n' "$FUNC_BODY" | grep -n '_write_never_frag' | head -1 | cut -d: -f1)
-
-    if [ -z "$PING_LINE" ]; then
-        bad "early ping precedes init" "no systemd-notify --watchdog found in _supervisor_loop"
-    elif [ -z "$SETUP_LINE" ]; then
-        bad "early ping precedes init" "_write_never_frag not found in _supervisor_loop"
-    elif [ "$PING_LINE" -lt "$SETUP_LINE" ]; then
-        ok "early ping precedes init (line $PING_LINE < $SETUP_LINE)"
-    else
-        bad "early ping precedes init" "ping at line $PING_LINE, init at line $SETUP_LINE — ping arrives too late"
-    fi
-
-    # Positive control: a loop-only variant (ping only inside while, after init) is detected.
-    LOOP_ONLY='_supervisor_loop() {
-    for name in a b; do _write_never_frag "$name"; done
-    while :; do
-        [ -n "${NOTIFY_SOCKET:-}" ] && systemd-notify --watchdog || true
-        sleep 5
-    done
-}'
-    LO_PING=$(printf '%s\n' "$LOOP_ONLY" | grep -n 'systemd-notify.*--watchdog' | head -1 | cut -d: -f1)
-    LO_SETUP=$(printf '%s\n' "$LOOP_ONLY" | grep -n '_write_never_frag' | head -1 | cut -d: -f1)
-    if [ -n "$LO_PING" ] && [ -n "$LO_SETUP" ] && [ "$LO_PING" -gt "$LO_SETUP" ]; then
-        ok "pc early ping: loop-only variant is detected as too late"
-    else
-        bad "pc early ping: loop-only variant is detected as too late" \
-            "PING=$LO_PING SETUP=$LO_SETUP — positive control broken"
-    fi
-fi
-
-# ── Property 3: --pid= present on every systemd-notify --watchdog call ───────
-if [ -z "$FUNC_BODY" ]; then
-    bad "--pid= on all watchdog pings" "_supervisor_loop not found — cannot check"
-else
-    all_pings_have_pid=1
-    while IFS= read -r line; do
-        case "$line" in *'systemd-notify'*'--watchdog'*)
-            case "$line" in *'--pid='*) ;; *)
-                all_pings_have_pid=0
-                bad "--pid= on all watchdog pings" "missing --pid= on: $line" ;;
-            esac ;;
-        esac
-    done <<< "$FUNC_BODY"
-    [ "$all_pings_have_pid" -eq 1 ] && ok "--pid= on all watchdog pings"
-
-    # Positive control: a variant without --pid= must be detected.
-    NO_PID_VARIANT='_supervisor_loop() {
-    if [ -n "${NOTIFY_SOCKET:-}" ]; then
-        systemd-notify --watchdog || printf err >&2
-    fi
-}'
-    found_missing=0
-    while IFS= read -r line; do
-        case "$line" in *'systemd-notify'*'--watchdog'*)
-            case "$line" in *'--pid='*) ;; *) found_missing=1 ;; esac ;;
-        esac
-    done <<< "$NO_PID_VARIANT"
-    [ "$found_missing" -eq 1 ] \
-        && ok "pc --pid=: missing --pid= is detected" \
-        || bad "pc --pid=: missing --pid= is detected" "positive control broken"
-fi
+[ "$checked" -gt 0 ] \
+    && ok "at least one bash unit was examined" \
+    || bad "at least one bash unit was examined" "none found — are ExecStart patterns still .sh or bash?"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
