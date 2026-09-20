@@ -227,7 +227,7 @@ _q_attribute() {
             _sm_fs="$(cat "$_sm_flaky_f" 2>/dev/null || true)"
             rm -f "$_sm_flaky_f"
             _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_sm_fs"
-            printf 'verdict %s: %s — flaky (red then green), not ejected: %s\n' "$name" "$_mid" "$_sm_fs"
+            printf 'verdict %s: %s — flaky (red then green), survived: %s\n' "$name" "$_mid" "$_sm_fs"
             survivors+=("$_mm")
         else
             rm -f "$_sm_flaky_f"
@@ -279,7 +279,7 @@ _q_attribute() {
             elif [ "$_mrc" -eq 3 ]; then
                 _fs="$(cat "$_flaky_f" 2>/dev/null || true)"
                 _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
-                printf 'verdict %s: %s — flaky (red then green), not ejected: %s\n' "$name" "$_mid" "$_fs"
+                printf 'verdict %s: %s — flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
             fi
             rm -f "$_flaky_f"
         done
@@ -318,7 +318,7 @@ _q_attribute() {
                 elif [ "$_mrc" -eq 3 ]; then
                     _fs="$(cat "$_flaky_f" 2>/dev/null || true)"
                     _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
-                    printf 'verdict %s: %s — flaky (red then green), not ejected: %s\n' "$name" "$_mid" "$_fs"
+                    printf 'verdict %s: %s — flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
                 fi
                 rm -f "$_flaky_f"
             done
@@ -339,7 +339,7 @@ _q_attribute() {
                 elif [ "$_mrc" -eq 3 ]; then
                     _fs="$(cat "$_flaky_f" 2>/dev/null || true)"
                     _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
-                    printf 'verdict %s: %s — flaky (red then green), not ejected: %s\n' "$name" "$_mid" "$_fs"
+                    printf 'verdict %s: %s — flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
                 fi
                 rm -f "$_flaky_f"
             done
