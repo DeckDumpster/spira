@@ -38,6 +38,7 @@ BD_PATH="${SPIRA_PATH:-}"
 REAL_BD="$(PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" command -v bd)"
 [ -n "$REAL_BD" ] || { echo "SKIP cockpit-queue: no bd binary" >&2; exit 77; }
 TESTDB_BD_PATH="$(command -v bd)"
+SPIRA_SCOPE_LABEL=alpha
 
 REPO="$TMP/repo"
 git init -q -b main "$REPO"
@@ -62,9 +63,9 @@ AGO8="$(date -u -d '8 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v
 AGO10="$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-10M +%Y-%m-%dT%H:%M:%SZ)"
 
 testdb_seed <<JSONL
-{"id":"sp-q1","title":"certified branch","status":"closed","priority":1,"closed_at":"$AGO10","labels":["spira","plan","repo:alpha"]}
-{"id":"sp-q2","title":"batched branch","status":"closed","priority":1,"closed_at":"$AGO8","labels":["spira","plan","repo:alpha"]}
-{"id":"sp-q3","title":"no landstate","status":"closed","priority":1,"closed_at":"$AGO5","labels":["spira","plan","repo:alpha"]}
+{"id":"sp-q1","title":"certified branch","status":"closed","priority":1,"closed_at":"$AGO10","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
+{"id":"sp-q2","title":"batched branch","status":"closed","priority":1,"closed_at":"$AGO8","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
+{"id":"sp-q3","title":"no landstate","status":"closed","priority":1,"closed_at":"$AGO5","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:alpha"]}
 JSONL
 
 mkdir -p "$RUN/landstate"
@@ -93,7 +94,7 @@ printf 'test-foo.sh | quarantined | 2026-01-01T00:00:00Z | sp-abc | flaky dns\n'
 
 out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-    SPIRA_REPO="$REPO" SPIRA_HOME_REPO=alpha \
+    SPIRA_REPO="$REPO" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
     SPIRA_PATH="$BD_PATH" \
