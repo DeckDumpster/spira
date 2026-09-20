@@ -49,7 +49,7 @@ done
 for f in install.sh units.sh; do
     [ -e "$HERE/../systemd/$f" ] && ln -s "$HERE/../systemd/$f" "$FIXTURE/systemd/$f"
 done
-for f in conf.sh watchd.sh lib.sh install-session-hook.sh owned.sh; do
+for f in conf.sh watchd.sh lib.sh install-session-hook.sh owned.sh suite-covers.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
 printf '# empty — test fixture\n' > "$FIXTURE/spira/watchers"
@@ -61,7 +61,8 @@ RUN_DIR="$TMP/run"
 DB_DIR="$TMP/db"
 MOCK_BIN="$TMP/mock-bin"
 MOCK_LOG="$TMP/mock-systemctl.log"
-mkdir -p "$UNITDIR" "$RUN_DIR" "$MOCK_BIN"
+TESTDB_DIR="$TMP/testdb-data"
+mkdir -p "$UNITDIR" "$RUN_DIR" "$MOCK_BIN" "$TESTDB_DIR"
 
 # Stub systemctl: owned.sh passes SPIRA_SYSTEMCTL to install.sh --diff, which uses
 # it for the live-aeon check (skipped by SPIRA_INSTALL_FORCE, but the stub keeps
@@ -96,6 +97,17 @@ exit 1
 MOCK
 chmod +x "$MOCK_BIN/tmux"
 
+# Stub dolt: install.sh resolves DOLT via `command -v dolt` to decide whether
+# @DOLT@ can be substituted in unit templates. Without a stub, render() exits 1
+# for dolt-beads*.service on any box without dolt installed, causing --render to
+# exit early (missing later units) and --diff to skip those units (reporting them
+# as present instead of absent).
+cat > "$MOCK_BIN/dolt" <<'MOCK'
+#!/usr/bin/env bash
+exit 0
+MOCK
+chmod +x "$MOCK_BIN/dolt"
+
 # A fake alert template in UNITDIR so alert-dropin rows appear.
 touch "$UNITDIR/alert-prod@.service"
 ALERT_GLOB="alert-prod@.service"
@@ -117,14 +129,16 @@ run_owned() {
     local inst="${1:-}" subcmd="${2:-list}"
     MOCK_LOG="$MOCK_LOG" \
     env -i \
-        "PATH=$PATH" \
+        "PATH=$MOCK_BIN:$PATH" \
         "HOME=$FAKE_HOME" \
         "USER=testuser" \
         "SPIRA_CONF=/nonexistent" \
         "SPIRA_HOME=$HERE" \
+        "SPIRA_PATH=$MOCK_BIN" \
+        "SPIRA_REPO_MAP=$FIXTURE/spira/repo-map.example" \
         "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="$DOLT_DIR" \
-        SPIRA_TESTDB_DATA= \
+        "SPIRA_TESTDB_DATA=$TESTDB_DIR" \
         "SPIRA_ALERT_GLOB=$ALERT_GLOB" \
         "SPIRA_LOOM_BIN=$FAKE_LOOM" \
         "SPIRA_PANEL=$FAKE_PANEL" \
@@ -145,13 +159,15 @@ run_owned() {
 render_units() {
     local inst="$1"
     env -i \
-        "PATH=$PATH" \
+        "PATH=$MOCK_BIN:$PATH" \
         "HOME=$FAKE_HOME" \
         "SPIRA_HOME=$HERE" \
         "SPIRA_CONF=/nonexistent" \
+        "SPIRA_PATH=$MOCK_BIN" \
+        "SPIRA_REPO_MAP=$FIXTURE/spira/repo-map.example" \
         "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
         "SPIRA_DOLT_DATA=$DOLT_DIR" \
-        SPIRA_TESTDB_DATA= \
+        "SPIRA_TESTDB_DATA=$TESTDB_DIR" \
         "SPIRA_INSTALL_FORCE=1" \
         bash "$FIXTURE/systemd/install.sh" "$inst" --render 2>/dev/null \
     | awk '/^===== /{gsub(/^===== /,""); gsub(/ =====$/, ""); print}' \
@@ -219,13 +235,15 @@ echo "4. CHECK PRESENT — units present after rendering (positive control):"
 # ==========================================================================
 rendered="$(
     env -i \
-        "PATH=$PATH" \
+        "PATH=$MOCK_BIN:$PATH" \
         "HOME=$FAKE_HOME" \
         "SPIRA_CONF=/nonexistent" \
         "SPIRA_HOME=$HERE" \
+        "SPIRA_PATH=$MOCK_BIN" \
+        "SPIRA_REPO_MAP=$FIXTURE/spira/repo-map.example" \
         "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
         "SPIRA_DOLT_DATA=$DOLT_DIR" \
-        SPIRA_TESTDB_DATA= \
+        "SPIRA_TESTDB_DATA=$TESTDB_DIR" \
         "SPIRA_RUN=$RUN_DIR" \
         "SPIRA_DB=$DB_DIR" \
         "SPIRA_COCKPIT=$REAL_COCKPIT" \
