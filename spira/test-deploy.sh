@@ -18,6 +18,7 @@
 #  11. (i) Migration mismatch: refuses before drain when bd migrate schema fails.
 #  12. (j) Bootstrap: deploy from tarball location with no deploy.sh in checkout.
 #  16. (k) --force: slays live aeons (--keep-work --reopen --why "deploy <tag>") and proceeds.
+#  19. (n) conf ordering: SPIRA_PROD written to conf before activate.sh restarts services.
 #
 # FAIL-FIRST (law-absence-needs-a-positive-control)
 # Each detector is shown to fire before it is trusted as silent.
@@ -479,6 +480,66 @@ _count="$(grep -c 'SPIRA_PROD' "$_conf_file" 2>/dev/null || echo 0)"
     && ok "conf-update: only one SPIRA_PROD line after update" \
     || bad "conf-update: only one SPIRA_PROD line after update" "found $_count"
 notwant "conf-update: old path removed" "/old/checkout" "$(cat "$_conf_file")"
+
+# ==========================================================================
+echo
+echo "PROPERTY 19: spira.conf written before activate.sh restarts services"
+# Services read conf at restart; the conf must be in effect before activate is called.
+# ==========================================================================
+_conf_timing_file="$TMP/conf-at-activate.txt"
+_timing_activate="$TMP/timing-activate.sh"
+cat > "$_timing_activate" <<TAEOF
+#!/usr/bin/env bash
+printf 'activate %s\n' "\$*" >> "\${CALL_LOG:-/dev/null}"
+[ "\${ACTIVATE_EXIT:-0}" = "0" ] || exit "\${ACTIVATE_EXIT}"
+_conf_val=""
+if [ -n "\${SPIRA_CONF:-}" ] && [ -f "\${SPIRA_CONF}" ]; then
+    _conf_val="\$(grep 'SPIRA_PROD' "\${SPIRA_CONF}" 2>/dev/null | tail -1 || true)"
+fi
+printf '%s\n' "\${_conf_val}" > "${_conf_timing_file}"
+tarball="\${*: -1}"
+release_name="\$(basename "\$tarball" .tar.gz)"
+releases="\${SPIRA_RELEASES:?}"
+mkdir -p "\$releases/\$release_name"
+_tmp="\$releases/.current.new.\$\$"
+ln -s "\$release_name" "\$_tmp" && mv -T "\$_tmp" "\$releases/current"
+TAEOF
+chmod +x "$_timing_activate"
+
+# FAIL-FIRST: point SPIRA_CONF at /dev/null so the conf write silently fails; activate
+# then captures an empty SPIRA_PROD, proving the capture detects absent conf writes.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+> "$_conf_timing_file"
+run_deploy \
+    "SPIRA_CONF=/dev/null" \
+    "SPIRA_ACTIVATE_SH=$_timing_activate" \
+    -- "$NEW_TAG" >/dev/null 2>&1
+_ff_val_at_activate="$(cat "$_conf_timing_file" 2>/dev/null)"
+if ! printf '%s' "$_ff_val_at_activate" | grep -qF "$RELEASES/current/spira"; then
+    ok "fail-first: capture detects conf absent at activate time"
+else
+    bad "fail-first: capture should not find new SPIRA_PROD when conf write fails" \
+        "got [${_ff_val_at_activate}]"
+fi
+
+# With a real conf file: new SPIRA_PROD must be present in conf when activate runs.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_ord_conf="$TMP/ordering.conf"
+printf 'SPIRA_PROD = /old/checkout/spira\n' > "$_ord_conf"
+> "$_conf_timing_file"
+run_deploy \
+    "SPIRA_CONF=$_ord_conf" \
+    "SPIRA_ACTIVATE_SH=$_timing_activate" \
+    -- "$NEW_TAG" >/dev/null 2>&1
+_val_at_activate="$(cat "$_conf_timing_file" 2>/dev/null)"
+if printf '%s' "$_val_at_activate" | grep -qF "$RELEASES/current/spira"; then
+    ok "conf-before-activate: new SPIRA_PROD in conf when activate called"
+else
+    bad "conf-before-activate: new SPIRA_PROD must be in conf before activate" \
+        "got [${_val_at_activate:-<empty>}]"
+fi
+notwant "conf-before-activate: old path absent at activate time" \
+    "/old/checkout" "$_val_at_activate"
 
 # ==========================================================================
 echo
