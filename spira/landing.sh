@@ -1705,4 +1705,12 @@ _gh_unlanded_scan || true
 sweep_note=""
 [ $(( n_swept + n_swept_conflict )) -gt 0 ] \
     && sweep_note=", $n_swept survivor(s) rebased after a landing, $n_swept_conflict conflicted"
+
+# UNIT INSTALLATION ENSURE. After every pass, install any unit templates that landed
+# since the last install.sh run. Nothing else re-renders after a landing; this closes
+# that gap without the full install.sh (no live-aeons fence, no re-enabling everything).
+_land_ue="$SPIRA_REPO/systemd/unit-ensure.sh"
+[ -x "$_land_ue" ] && bash "$_land_ue" 2>&1 | while IFS= read -r _ue_l; do log "$_ue_l"; done || true
+unset _land_ue _ue_l
+
 log "landing: pass complete — $n_branches branch(es) seen, $n_prog movement(s)$sweep_note"
