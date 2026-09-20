@@ -645,5 +645,23 @@ is   "11. fail-note: sp-at-fnl ejected"           "EJECTED"  "$(land_state_of sp
 want "11. fail-note: note contains the FAIL line"  "FAIL stub-assertion: expected [landed] got []" "$(notes_of sp-at-fnl)"
 clean_case
 
+# =============================================================================
+# 12. EJECTION NOTE FALLBACK — repro output has no FAIL line (e.g. a FENCE
+#     guard message); last lines of output must still appear in the note so
+#     a retrier has more than just the suite name
+#     (law-escalations-carry-their-evidence).
+# =============================================================================
+testdb_reset
+make_branch sp-at-nfl spira/canary.sh
+build_batch sp-at-nfl > /dev/null
+plant_bead sp-at-nfl
+printf 'spira/sp-at-nfl\n' > "$REPRO_FAIL_FILE"
+export REPRO_FAIL_LINE="FENCE builder: FAYTH_LABELS='spira,plan' does not require 'workspace'"
+verdict "$REPONAME" > /dev/null
+unset REPRO_FAIL_LINE
+is   "12. no-fail-line: sp-at-nfl ejected"                    "EJECTED" "$(land_state_of sp-at-nfl)"
+want "12. no-fail-line: note contains fallback output line"    "FENCE builder" "$(notes_of sp-at-nfl)"
+clean_case
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
