@@ -345,6 +345,167 @@ else
 fi
 unset _dolt_port _dolt_data _dbname
 
+# Switch to real seed.sh and add one stub statute for seeding tests.
+rm "$SPIRA_DIR/seed.sh"
+ln -s "$HERE/seed.sh" "$SPIRA_DIR/seed.sh"
+printf 'Test statute body.\n' > "$SPIRA_DIR/statutes/law-test-statute.txt"
+
+# ==========================================================================
+echo
+echo "4. SEED WITH SERVER UP — server mode, remember succeeds, reports written:"
+# ==========================================================================
+rm -rf "$FAKE_DB"
+mkdir -p "$FAKE_DB"
+
+_dolt_port4=19874
+_dolt_data4="$TMP/dolt-data4"
+mkdir -p "$_dolt_data4"
+cat > "$_dolt_data4/dolt-server.yaml" <<YAML4
+listener:
+  port: $_dolt_port4
+data_dir: "$_dolt_data4"
+YAML4
+_dbname4="$(basename "$FAKE_DB")"
+
+cat > "$MOCK_BIN/bd" <<FAKESCRIPT4
+#!/usr/bin/env bash
+case "\$*" in
+    *-C*init*--server*)
+        _db=""
+        while [ \$# -gt 0 ]; do
+            [ "\$1" = "-C" ] && { _db="\$2"; shift 2; continue; }
+            shift
+        done
+        if [ -n "\$_db" ]; then
+            mkdir -p "\$_db/.beads"
+            printf '{"dolt_mode":"server","dolt_server_port":$_dolt_port4,"dolt_database":"$_dbname4","project_id":"test"}\n' \
+                > "\$_db/.beads/metadata.json"
+        fi
+        exit 0 ;;
+    *init*)     exit 0 ;;
+    *list*)     printf '[]\n' ;;
+    *memories*) printf '{}\n' ;;
+    *)          exit 0 ;;
+esac
+FAKESCRIPT4
+chmod +x "$MOCK_BIN/bd"
+
+_nc_pid4=""
+if command -v nc >/dev/null 2>&1; then
+    nc -lk "$_dolt_port4" >/dev/null 2>&1 &
+    _nc_pid4=$!
+    sleep 0.1
+fi
+
+if [ -n "$_nc_pid4" ]; then
+    _seed_up_out="$(run_install prod -- "SPIRA_DOLT_DATA=$_dolt_data4")"
+    want "seed-up: seeding ran, reports written"         "written" "$_seed_up_out"
+    want "seed-up: statute written"                      "wrote law-test-statute" "$_seed_up_out"
+    nowant "seed-up: no FAILED in output"                "FAILED" "$_seed_up_out"
+    kill "$_nc_pid4" 2>/dev/null; wait "$_nc_pid4" 2>/dev/null || true
+else
+    ok "seed-up: nc unavailable — skipping"
+    ok "seed-up: nc unavailable — skipping"
+    ok "seed-up: nc unavailable — skipping"
+fi
+unset _dolt_port4 _dolt_data4 _dbname4 _nc_pid4
+
+# ==========================================================================
+echo
+echo "5. SEED FAILURE FAILS PHASE — fresh db, remember fails, exit 2:"
+# ==========================================================================
+rm -rf "$FAKE_DB"
+mkdir -p "$FAKE_DB"
+
+_dolt_port5=19875
+_dolt_data5="$TMP/dolt-data5"
+mkdir -p "$_dolt_data5"
+cat > "$_dolt_data5/dolt-server.yaml" <<YAML5
+listener:
+  port: $_dolt_port5
+data_dir: "$_dolt_data5"
+YAML5
+_dbname5="$(basename "$FAKE_DB")"
+
+cat > "$MOCK_BIN/bd" <<FAKESCRIPT5
+#!/usr/bin/env bash
+case "\$*" in
+    *-C*init*--server*)
+        _db=""
+        while [ \$# -gt 0 ]; do
+            [ "\$1" = "-C" ] && { _db="\$2"; shift 2; continue; }
+            shift
+        done
+        if [ -n "\$_db" ]; then
+            mkdir -p "\$_db/.beads"
+            printf '{"dolt_mode":"server","dolt_server_port":$_dolt_port5,"dolt_database":"$_dbname5","project_id":"test"}\n' \
+                > "\$_db/.beads/metadata.json"
+        fi
+        exit 0 ;;
+    *init*)     exit 0 ;;
+    *list*)     printf '[]\n' ;;
+    *memories*) printf '{}\n' ;;
+    *remember*) printf 'Error: server appears down\n' >&2; exit 1 ;;
+    *)          exit 0 ;;
+esac
+FAKESCRIPT5
+chmod +x "$MOCK_BIN/bd"
+
+_nc_pid5=""
+if command -v nc >/dev/null 2>&1; then
+    nc -lk "$_dolt_port5" >/dev/null 2>&1 &
+    _nc_pid5=$!
+    sleep 0.1
+fi
+
+if [ -n "$_nc_pid5" ]; then
+    _seed_fail_out="$(run_install prod -- "SPIRA_DOLT_DATA=$_dolt_data5")"
+    _seed_fail_rc=$?
+    is2 "seed-fail: exits 2 (phase failed)" "$_seed_fail_rc"
+    want "seed-fail: names 'seed.sh failed' in output" "seed.sh failed" "$_seed_fail_out"
+    want "seed-fail: reports FAILED statute"           "FAILED law-test-statute" "$_seed_fail_out"
+    kill "$_nc_pid5" 2>/dev/null; wait "$_nc_pid5" 2>/dev/null || true
+else
+    ok "seed-fail: nc unavailable — skipping"
+    ok "seed-fail: nc unavailable — skipping"
+    ok "seed-fail: nc unavailable — skipping"
+fi
+unset _dolt_port5 _dolt_data5 _dbname5 _nc_pid5
+
+# ==========================================================================
+echo
+echo "6. EMBEDDED MODE SEEDING — no SPIRA_DOLT_DATA, remember succeeds:"
+# ==========================================================================
+rm -rf "$FAKE_DB"
+mkdir -p "$FAKE_DB"
+
+_dbname6="$(basename "$FAKE_DB")"
+cat > "$MOCK_BIN/bd" <<FAKESCRIPT6
+#!/usr/bin/env bash
+case "\$*" in
+    *-C*init*)
+        _db=""
+        while [ \$# -gt 0 ]; do
+            [ "\$1" = "-C" ] && { _db="\$2"; shift 2; continue; }
+            shift
+        done
+        [ -n "\$_db" ] && mkdir -p "\$_db/.beads" && \
+            printf '{"dolt_mode":"embedded","dolt_database":"$_dbname6","project_id":"test"}\n' \
+                > "\$_db/.beads/metadata.json"
+        exit 0 ;;
+    *list*)     printf '[]\n' ;;
+    *memories*) printf '{}\n' ;;
+    *)          exit 0 ;;
+esac
+FAKESCRIPT6
+chmod +x "$MOCK_BIN/bd"
+
+_emb_seed_out="$(run_install prod)"
+want "emb-seed: seeding ran, reports written"    "written" "$_emb_seed_out"
+want "emb-seed: statute written"                 "wrote law-test-statute" "$_emb_seed_out"
+nowant "emb-seed: no FAILED in output"           "FAILED" "$_emb_seed_out"
+unset _dbname6
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

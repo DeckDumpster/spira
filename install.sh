@@ -414,6 +414,9 @@ if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
     unset _yaml_dest _yaml_tpl
 fi
 
+_dolt_bg_pid=""
+_db_fresh=0
+
 # Database init — run bd init if no .beads yet.
 if [ -d "${SPIRA_DB:-}/.beads" ]; then
     _meta="${SPIRA_DB}/.beads/metadata.json"
@@ -432,6 +435,7 @@ if [ -d "${SPIRA_DB:-}/.beads" ]; then
         | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo '?')"
     phase_skip "database exists at $SPIRA_DB ($_bead_count bead(s))"
 else
+    _db_fresh=1
     if [ "$_dry" = 1 ]; then
         if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
             phase_info "would start dolt server and run: (cd $SPIRA_DB && bd init --server --external)"
@@ -478,8 +482,7 @@ else
                 --database "$_dolt_dbname" --external -q ) \
                 || { [ -n "$_dolt_bg_pid" ] && kill "$_dolt_bg_pid" 2>/dev/null || true
                      _phase_fail "database" "bd init (server mode) failed"; }
-            [ -n "$_dolt_bg_pid" ] && kill "$_dolt_bg_pid" 2>/dev/null || true
-            unset _dolt_port _dolt_yaml _dolt_dbname _dolt_bg_pid _dolt_wait
+            unset _dolt_port _dolt_yaml _dolt_dbname _dolt_wait
         else
             ( cd "$SPIRA_DB" && "$SPIRA_BD" init ) || _phase_fail "database" "bd init failed"
         fi
@@ -493,7 +496,13 @@ if [ -d "${SPIRA_DB:-}/.beads" ] || [ "$_dry" = 0 ]; then
         phase_info "would run: spira/seed.sh (skips statutes already in force)"
     else
         phase_info "seeding statutes"
-        "$SPIRA_HOME/seed.sh" 2>&1 | sed 's/^/  /' || true
+        "$SPIRA_HOME/seed.sh" 2>&1 | sed 's/^/  /'
+        _seed_rc=${PIPESTATUS[0]}
+        [ -n "$_dolt_bg_pid" ] && { kill "$_dolt_bg_pid" 2>/dev/null || true; }
+        unset _dolt_bg_pid
+        [ "$_seed_rc" != 0 ] && [ "$_db_fresh" = 1 ] && \
+            _phase_fail "database" "seed.sh failed — statutes not seeded on fresh database"
+        unset _seed_rc
     fi
 fi
 
