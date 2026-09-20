@@ -139,13 +139,15 @@ main() {
                     && { _anyrn=1; break; }
             done
             if [ "$_anyrn" = 1 ]; then
-                # Branch still exists. If the certified tip is already in the base, reconcile
-                # to LANDED here — the same check _certified_list does inside the open-batch
-                # guard, but also while a batch PR is pending. A long CI run accumulates these
-                # indefinitely otherwise.
-                if git -C "$repo" merge-base --is-ancestor "${_ltip:-none}" "$base_sha" \
+                # Branch still exists. Reconcile to LANDED when the certified tip is already
+                # in the base AND the branch hasn't moved past it. If the branch has advanced
+                # since certification, defer to the _certified_list stale-cert path (inside
+                # the open-batch guard), which re-certifies with the live tip first.
+                _lcur="$(git -C "$repo" rev-parse "refs/heads/spira/$_lid" 2>/dev/null || true)"
+                if [ "${_lcur:-none}" = "${_ltip:-none}" ] && \
+                   git -C "$repo" merge-base --is-ancestor "${_ltip:-none}" "$base_sha" \
                        2>/dev/null; then
-                    land_mark "$_lid" LANDED "${_ltip:-none}" already-in-base-live
+                    land_mark "$_lid" LANDED "${_ltip:-none}" already-in-base
                     printf 'batch %s: %s tip already in %s (live branch) — LANDED\n' \
                         "$name" "$_lid" "$base"
                 fi
