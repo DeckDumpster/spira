@@ -89,8 +89,9 @@ FAYTH
 }
 
 make_bead() {           # make_bead -> prints bead id
+    local _labels="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}$T_LABEL,repo:fixture"
     BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "layers test bead" --type task \
-        -l "$T_LABEL,repo:fixture" 2>/dev/null \
+        -l "$_labels" 2>/dev/null \
         | grep -oE 'sp-[a-z0-9]+' | head -1
 }
 
@@ -202,7 +203,7 @@ echo "groomer system.md has the five operations; task.md has the finishing contr
 # Run through the real chamber file (not the test stub), using a groomer bead.
 GROOMER_LABEL="$(. "$HERE/conf.sh" 2>/dev/null; printf '%s' "${SPIRA_GROOMER_LABEL:-groomer}")"
 BID_G="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "groomer layers test" --type task \
-    -l "$GROOMER_LABEL,repo:fixture" 2>/dev/null \
+    -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}$GROOMER_LABEL,repo:fixture" 2>/dev/null \
     | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID_G" ]; then
     cp "$HERE/chamber/groomer.fayth" "$SPIRA_HOME/chamber/groomer.fayth"
