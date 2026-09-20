@@ -17,10 +17,11 @@ StartLimitBurst=5
 Type=notify
 ExecStart=@SPIRA_SUPERVISE_BIN@ @SPIRA_PROD@/collect.sh loop
 Environment=SPIRA_RUN=@SPIRA_RUN@
+Environment=SPIRA_SNAP_STALE_S=@SPIRA_SNAP_STALE_S@
 Restart=always
 RestartSec=15
 # Watchdog fires when spira-supervise stops pinging — which it does when the snapshot
-# stops being written on schedule (SPIRA_WATCH_SNAP_MAX, default 120s).  WatchdogSec=60
+# stops being written on schedule (SPIRA_SNAP_STALE_S, default 60s).  WatchdogSec=60
 # means the supervisor pings every 30s; systemd kills after 60s with no ping.
 WatchdogSec=60
 # A pass shells out to bd and git several times. This box also runs prod, so it is fenced

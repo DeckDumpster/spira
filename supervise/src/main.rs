@@ -3,7 +3,7 @@
 // Spawns the child, sends READY=1 when it is up, then sends WATCHDOG=1 on an
 // interval — but only while the child is demonstrably healthy.  "Healthy" for
 // the cockpit collector means the snapshot file is being written on schedule,
-// measured by the same age threshold watchtower uses (SPIRA_WATCH_SNAP_MAX).
+// measured by the same age threshold watchtower and doctor use (SPIRA_SNAP_STALE_S).
 //
 // A heartbeat sent while the child is hung would defeat the watchdog.  When
 // the snapshot goes stale the supervisor stops pinging; systemd kills the
@@ -17,7 +17,7 @@
 //   SPIRA_RUN          runtime directory; snapshot is $SPIRA_RUN/cockpit.env
 //
 // Optional environment (defaults shown):
-//   SPIRA_WATCH_SNAP_MAX  120   stale threshold in seconds
+//   SPIRA_SNAP_STALE_S    60    stale threshold in seconds (same key as watchtower/doctor)
 //   WATCHDOG_USEC         0     set by systemd when WatchdogSec= is configured
 //   NOTIFY_SOCKET               set by systemd for sd_notify delivery
 use std::env;
@@ -110,10 +110,10 @@ fn main() -> ExitCode {
         }
     };
 
-    let stale_secs: u64 = env::var("SPIRA_WATCH_SNAP_MAX")
+    let stale_secs: u64 = env::var("SPIRA_SNAP_STALE_S")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(120);
+        .unwrap_or(60);
 
     let watchdog_usec: u64 = env::var("WATCHDOG_USEC")
         .ok()
