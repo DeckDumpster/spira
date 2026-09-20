@@ -598,6 +598,18 @@ else
             FAIL "repo:$n — lanes column parse error: $_dr_lanes_err" \
                  "Fix the lanes field: use a mode (consume/develop/self) or a comma-separated list of lane labels."
         unset _dr_lanes_err
+        _dr_lane_out="$(_spira_lane_diag "$n" "$p")" || true
+        while IFS= read -r _dr_lline; do
+            _dr_ltag="${_dr_lline%% *}"
+            _dr_lval="${_dr_lline#* }"
+            case "$_dr_ltag" in
+                effective:)   OK "repo:$n — effective lanes: $_dr_lval" ;;
+                refused:)     printf '  info  repo:%s — %s\n' "$n" "$_dr_lval" ;;
+                modes-error:) FAIL "repo:$n — .spira/modes parse error: $_dr_lval" \
+                                   "Fix .spira/modes: use a mode (consume/develop/self) or comma-separated lane labels." ;;
+            esac
+        done <<< "$_dr_lane_out"
+        unset _dr_lane_out _dr_lline _dr_ltag _dr_lval
         if [ ! -e "$p/.git" ]; then
             WARN "repo:$n — $p is not a checkout" "Another machine's row, or a path that has moved."
             continue

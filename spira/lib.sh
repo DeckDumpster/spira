@@ -3919,6 +3919,111 @@ _spira_expand_lanes() {  # _spira_expand_lanes <repo-name> <raw> -> space-separa
     printf '%s' "$result"
 }
 
+_spira_modes_lanes() {    # <path> -> lane set from .spira/modes; empty if absent
+    local mf="$1/.spira/modes" raw
+    [ -f "$mf" ] || return 0
+    raw="$(tr -d '[:space:]' < "$mf" 2>/dev/null)" || return 0
+    [ -z "$raw" ] && return 0
+    _spira_expand_lanes ".spira/modes" "$raw"
+}
+
+_spira_fayths_lane_set() {    # -> space-separated lane labels the configured fayths admit
+    local p="${SPIRA_PLAN_LABEL:-plan}"
+    local inc="${SPIRA_INCIDENT_LABEL:-incident}"
+    local gr="${SPIRA_GROOMER_LABEL:-groom}"
+    local mae="${SPIRA_MAECHEN_LABEL:-maechen-sweep}"  # literal-ok: bash fallback; SPIRA_MAECHEN_LABEL set by conf.sh
+    local sp="${SPIRA_SPIKE_LABEL:-spike}"
+    local cz="${SPIRA_CZAR_LABEL:-czar-trigger}"
+    local result="" f labels lbl saved="$IFS"
+    for f in $(spira_fayths); do
+        labels="$(fayth_get "$f" FAYTH_LABELS "" 2>/dev/null)"
+        [ -z "$labels" ] && continue
+        IFS=,
+        for lbl in $labels; do
+            IFS="$saved"
+            lbl="${lbl#"${lbl%%[![:space:]]*}"}"; lbl="${lbl%"${lbl##*[![:space:]]}"}"
+            case "$lbl" in
+                "$p"|"$inc"|"$gr"|"$mae"|"$sp"|"$cz")
+                    case " $result " in *" $lbl "*) ;; *) result="${result:+$result }$lbl" ;; esac ;;
+            esac
+            IFS=,
+        done
+        IFS="$saved"
+    done
+    [ -n "$result" ] || result="$p"
+    printf '%s' "$result"
+}
+
+# _spira_lane_diag <name> <path> — effective lanes and per-lane refusal diagnostics.
+#
+# Outputs one line per category:
+#   effective: lane1 lane2 ...
+#   refused: <lane> by <side>[, <side>]
+#   modes-error: <message>
+#
+# The effective set is (fayths ∩ repo-map ∩ .spira/modes when present).
+# Absent .spira/modes does not restrict. A lane only generates a refused line when
+# at least one explicit source (map column or .spira/modes file) proposes it and
+# another source denies it — so absent column + absent file produces no diagnostics.
+_spira_lane_diag() {
+    local name="$1" path="$2"
+    local p="${SPIRA_PLAN_LABEL:-plan}"
+    local inc="${SPIRA_INCIDENT_LABEL:-incident}"
+    local gr="${SPIRA_GROOMER_LABEL:-groom}"
+    local mae="${SPIRA_MAECHEN_LABEL:-maechen-sweep}"  # literal-ok: bash fallback; SPIRA_MAECHEN_LABEL set by conf.sh
+    local sp="${SPIRA_SPIKE_LABEL:-spike}"
+    local cz="${SPIRA_CZAR_LABEL:-czar-trigger}"
+    local all_known="$p $inc $gr $mae $sp $cz"
+    local raw_map_col map_lanes fayths_lanes
+    local modes_exists modes_lanes modes_raw _ml_err_file _ml_rc
+    local effective lane in_map in_modes who
+    raw_map_col="$(repo_field "$name" lanes 2>/dev/null)"
+    map_lanes="$(spira_repo_lanes "$name")" || return 1
+    fayths_lanes="$(_spira_fayths_lane_set)"
+    modes_exists=0 modes_lanes="$all_known"
+    if [ -f "$path/.spira/modes" ]; then
+        modes_exists=1
+        modes_raw="$(tr -d '[:space:]' < "$path/.spira/modes" 2>/dev/null)"
+        if [ -n "$modes_raw" ]; then
+            _ml_err_file="$(mktemp)"
+            _ml_rc=0
+            modes_lanes="$(_spira_modes_lanes "$path" 2>"$_ml_err_file")" || _ml_rc=$?
+            if [ "$_ml_rc" -ne 0 ]; then
+                printf 'modes-error: %s\n' "$(cat "$_ml_err_file")"
+                modes_lanes="$p"
+            fi
+            rm -f "$_ml_err_file"
+        else
+            modes_lanes="$p"
+        fi
+    fi
+    effective=""
+    for lane in $all_known; do
+        case " $map_lanes " in *" $lane "*) ;; *) continue ;; esac
+        case " $fayths_lanes " in *" $lane "*) ;; *) continue ;; esac
+        if [ "$modes_exists" = 1 ]; then
+            case " $modes_lanes " in *" $lane "*) ;; *) continue ;; esac
+        fi
+        effective="${effective:+$effective }$lane"
+    done
+    [ -n "$effective" ] || effective="$p"
+    printf 'effective: %s\n' "$effective"
+    for lane in $all_known; do
+        in_map=0 in_modes=0
+        [ -n "$raw_map_col" ] && case " $map_lanes " in *" $lane "*) in_map=1 ;; esac
+        [ "$modes_exists" = 1 ] && case " $modes_lanes " in *" $lane "*) in_modes=1 ;; esac
+        [ "$in_map" = 1 ] || [ "$in_modes" = 1 ] || continue
+        case " $effective " in *" $lane "*) continue ;; esac
+        who=""
+        [ "$in_map" = 0 ] && who="repo-map"
+        if [ "$modes_exists" = 1 ] && [ "$in_modes" = 0 ]; then
+            who="${who:+$who, }.spira/modes"
+        fi
+        case " $fayths_lanes " in *" $lane "*) ;; *) who="${who:+$who, }SPIRA_FAYTHS" ;; esac
+        [ -n "$who" ] && printf 'refused: %s by %s\n' "$lane" "$who"
+    done
+}
+
 # --------------------------------------------------------------------------------------
 # THE CI PARK, AND THE TWO WAYS IT BECOMES A LIE.
 #
