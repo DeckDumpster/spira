@@ -16,7 +16,7 @@ ExecStart=@SPIRA_PROD@/collect.sh loop
 Restart=always
 RestartSec=15
 WatchdogSec=60
-# The heartbeat is sent by systemd-notify, a child of the loop; `main` rejects it.
+# systemd-notify is a child; NotifyAccess=all + --pid=WATCHDOG_PID avoids the sender-attribution race.
 NotifyAccess=all
 # A pass shells out to bd and git several times. This box also runs prod, so it is fenced
 # (law-fence-loops-on-shared-hardware).
