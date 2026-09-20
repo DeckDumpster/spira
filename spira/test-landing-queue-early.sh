@@ -80,10 +80,9 @@ sleep 1
 echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2
 exit 0'
 
-# VERDICT STUB: reads its control file to decide whether to report green or pending.
-#   $RUN/forge-green exists → output a "landed" line and write "verdict-ran:early" marker
-#   otherwise → print nothing (pending)
-# batch.sh is a no-op (no new batch to open in this fixture).
+# VERDICT STUB: stateful — outputs a landing line exactly once (simulates a batch file that
+# disappears after a fast-forward). After the first call the batch is gone; subsequent calls
+# are silent. batch.sh is a no-op (no new batch to open in this fixture).
 stub batch.sh 'exit 0'
 
 B() { bd -C "$SPIRA_DB" "$@"; }
@@ -126,14 +125,18 @@ echo "test-landing-queue-early.sh"
 # The batch lands at the early check, before the gate runs.
 # --------------------------------------------------------------------------------------
 
-# verdict.sh stub: always reports a landing (forge is green).
+# verdict.sh stub: first call reports green and marks the batch consumed; subsequent calls are
+# silent (the batch file is gone after a fast-forward, so the real verdict.sh would also be
+# silent on the second call).
 stub verdict.sh '
-printf "verdict fixture: PR 1 landed by fast-forward (abc123)\n"
-printf "verdict-ran\n" >> "'"$RUN"'/order-log"'
+printf "verdict-ran\n" >> "'"$RUN"'/order-log"
+[ -f "'"$RUN"'/batch-landed" ] && exit 0
+touch "'"$RUN"'/batch-landed"
+printf "verdict fixture: PR 1 landed by fast-forward (abc123)\n"'
 
 seed
 branch sp-earlyq
-: > "$RUN/order-log"
+: > "$RUN/order-log"; rm -f "$RUN/batch-landed"
 out="$(landing)"
 
 want "1. early green: early check logs a landing" "queue early: verdict fixture: PR 1 landed by fast-forward" "$out"
@@ -169,7 +172,7 @@ out="$(landing)"
 
 nowant "2. late green: early check does not show a landing" "queue early: verdict fixture: PR 1 landed by fast-forward" "$out"
 want   "2. late green: late check logs a landing"           "queue late: verdict fixture: PR 1 landed by fast-forward" "$out"
-before_in_output "2. late green: gate ran before the late verdict" "gate-ran" "verdict-ran" "$(cat "$RUN/order-log" | tail -2)"
+before_in_output "2. late green: gate ran before the late verdict" "gate-ran" "verdict-ran" "$(tail -2 "$RUN/order-log")"
 
 git -C "$REPO" worktree remove --force "$RUN/worktree/sp-lateq" 2>/dev/null || true
 git -C "$REPO" branch -D "spira/sp-lateq" 2>/dev/null || true
