@@ -1,0 +1,46 @@
+# provenance: computed 2026-09-20T20:05Z by spike sp-kz6ml from the '# covers:' declarations of
+# every spira/test-*.sh in origin/main at the stated commit. Reproduced with the same matcher
+# select.sh uses (shell case-glob); validated against the real gate-touched.sh, which returned
+# the identical 174 suites for spira/sp-5jsuu.
+# format: <changed file> -> <number of suites in the 416-suite corpus whose covers globs match it>
+
+  373  TOTAL(union)
+   97  spira/lib.sh
+   92  spira/conf.sh
+   46  spira/sentinel.sh
+   43  spira/cockpit.sh
+   40  spira/aeon.sh
+   36  spira/doctor.sh
+   32  spira/suites.sh
+   29  spira/incident.sh
+   27  spira/testenv-batch.sh
+   27  spira/landing.sh
+   25  spira/watchtower.sh
+   25  spira/mail.sh
+   22  spira/world.sh
+   22  spira/gate.sh
+   21  spira/watchd.sh
+   21  spira/sending.sh
+   21  spira/batch.sh
+   20  spira/queue.sh
+   19  spira/strand.sh
+   19  spira/skew.sh
+   19  spira/gate-spira.sh
+   18  spira/testenv.sh
+   17  spira/suite-state.sh
+   17  spira/forge.sh
+   16  spira/verdict.sh
+   16  spira/sop.sh
+   16  spira/gate-check.sh
+   15  spira/testdb.sh
+   15  spira/collect.sh
+   15  spira/census.sh
+   15  spira/bead.sh
+   14  spira/suite-covers.sh
+   14  spira/hooks/session.sh
+   14  spira/archivist.sh
+   14  spira/activate.sh
+   13  spira/watch-refresh.sh
+   13  spira/schema.sh
+   13  spira/maechen-trigger.sh
+   13  spira/gate-touched.sh
