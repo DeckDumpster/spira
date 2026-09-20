@@ -60,3 +60,4 @@ FAYTH_STALL_BEATS=15
 # branch of its own and named in it. A spike may leave a branch and must not leave a merge —
 # and that is enforced by confine.sh at the landing gate rather than by withholding an editor.
 FAYTH_TOOLS="Bash,Read,Edit,Write,Glob,Grep,TodoWrite,WebSearch,WebFetch"
+FAYTH_PROJECT_INSTRUCTIONS=repo
