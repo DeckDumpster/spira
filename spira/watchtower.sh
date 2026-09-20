@@ -163,7 +163,12 @@ if [ "${1:-}" = "--throttle-check" ]; then
         else
             # Drain is zero: FAULT or deliberate wait state (async gate pending). Do not throttle.
             # Check if the stall is deliberate (async gate not yet on main per sop-sp-hsxk8 CHECK).
-            _tc_async_on_main="$(git log --oneline origin/main 2>/dev/null | grep -E '(sp-c8w16|sp-74gwk)' | wc -l)"
+            _tc_async_on_main=0
+            if [ -n "$_tc_repo" ]; then
+                _tc_async_on_main="$(git -C "$_tc_repo" log --oneline "${_tc_lref:-origin/main}" 2>/dev/null | grep -E '(sp-c8w16|sp-74gwk)' | wc -l)" || _tc_async_on_main=0
+            else
+                _tc_async_on_main="$(git log --oneline origin/main 2>/dev/null | grep -E '(sp-c8w16|sp-74gwk)' | wc -l)" || _tc_async_on_main=0
+            fi
             _tc_stall_is_deliberate=0
             [ "$_tc_async_on_main" = "2" ] || _tc_stall_is_deliberate=1
 
