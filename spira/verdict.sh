@@ -77,7 +77,10 @@ _repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-f
     rc=$?
     rm -rf "$tmp"
     if [ "$rc" -eq 1 ] && [ -n "$_fail_out" ]; then
-        printf '%s\n' "$_repro_out" | grep '^FAIL ' | head -20 > "$_fail_out" || true
+        local _ev
+        _ev="$(printf '%s\n' "$_repro_out" | grep 'FAIL' | head -20 || true)"
+        [ -n "$_ev" ] || _ev="$(printf '%s\n' "$_repro_out" | tail -n 20)"
+        printf '%s\n' "$_ev" > "$_fail_out" || true
     fi
     [ "$rc" -eq 1 ] && return 0
     [ "$rc" -eq 0 ] && return 1
