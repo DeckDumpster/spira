@@ -63,7 +63,7 @@ run_doctor() {
         SPIRA_SYSTEMCTL="$TMP/bin/systemctl" \
         SPIRA_GOAL=sp-test \
         SPIRA_COCKPIT="$TMP/run" \
-        SPIRA_COCKPIT_STALE_S=60 \
+        SPIRA_SNAP_STALE_S=60 \
         "$@" \
         bash "$HERE/doctor.sh" 2>/dev/null || true
 }

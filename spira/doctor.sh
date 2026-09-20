@@ -685,15 +685,15 @@ else WARN "attention panel not built at $SPIRA_PANEL" \
           "Build it: cd $SPIRA_COCKPIT/panel && cargo build --release"; fi
 # SNAPSHOT FRESHNESS. The collector writes cockpit.env on every tick; absence or a stale
 # mtime means the supervisor is not writing — the exact condition that went undetected
-# because nothing else checked it (sp-itsy). Uses SPIRA_COCKPIT_STALE_S as the threshold.
+# because nothing else checked it (sp-itsy). Uses SPIRA_SNAP_STALE_S as the threshold.
 _dr_snap="$SPIRA_RUN/cockpit.env"
 if [ ! -f "$_dr_snap" ]; then
     WARN "no cockpit snapshot at $_dr_snap — collector may not have run yet" \
          "Check: systemctl --user status $(spira_unit cockpit service)"
 else
     _dr_snap_age=$(( $(date +%s) - $(stat --format='%Y' "$_dr_snap" 2>/dev/null || echo 0) ))
-    if [ "$_dr_snap_age" -gt "${SPIRA_COCKPIT_STALE_S:-120}" ]; then
-        FAIL "cockpit snapshot stale — last written ${_dr_snap_age}s ago (limit ${SPIRA_COCKPIT_STALE_S:-120}s)" \
+    if [ "$_dr_snap_age" -gt "${SPIRA_SNAP_STALE_S:-60}" ]; then
+        FAIL "cockpit snapshot stale — last written ${_dr_snap_age}s ago (limit ${SPIRA_SNAP_STALE_S:-60}s)" \
              "The collector is not writing. Check: systemctl --user status $(spira_unit cockpit service)"
     else
         OK "cockpit snapshot fresh — $_dr_snap (${_dr_snap_age}s old)"

@@ -448,7 +448,7 @@ if [ "${1:-}" = "--pr-stall-check" ]; then
     exit 0
 fi
 
-SNAP_AGE_MAX="${SPIRA_WATCH_SNAP_MAX:-120}"
+SNAP_AGE_MAX="${SPIRA_SNAP_STALE_S:-60}"
 now="$(date +%s)"
 
 # ---------------------------------------------------------------------------------------
