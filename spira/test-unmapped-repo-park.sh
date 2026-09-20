@@ -15,9 +15,9 @@
 # one per summon.
 #
 # THE LIVELOCK THIS ALSO PREVENTS (sp-foi7). The ask label must be paired with overseer
-# at every creation site; without overseer the bead carries needs-ryan but lacks the label the
-# decisions pane selects on — invisible to the loop AND to the operator
-# (detect_livelocked: needs-ryan-no-overseer). The park path must apply both labels.
+# at every creation site; without overseer the bead carries SPIRA_ASK_LABEL but lacks the
+# label the decisions pane selects on — invisible to the loop AND to the operator
+# (detect_livelocked: ask-no-overseer). The park path must apply both labels.
 #
 # FOUR CASES:
 #   1. POSITIVE CONTROL — without ask label, bead IS in bd ready --exclude-label output.

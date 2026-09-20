@@ -47,7 +47,7 @@ case "$cmd" in
   sweep)
     # groomer.sh sweep [--dry-run]
     # Runs detect_livelocked and applies three mechanical remedies before the model pass:
-    #   needs-ryan-no-overseer → add overseer label (decisions pane remedy)
+    #   ask-no-overseer → add overseer label (decisions pane remedy)
     #   ci-stuck               → strip awaiting-ci (repo is not pr-mode; no run will ever clear it)
     #   unmapped-repo, litter  → close (no description, no notes — predicate is fully computable)
     # unclaimable → REPORT only; partition repair is a judgment.
@@ -80,7 +80,7 @@ case "$cmd" in
     while IFS= read -r _sw_line; do
         [ -n "$_sw_line" ] || continue
         case "$_sw_line" in
-            LIVELOCK\ *\ needs-ryan-no-overseer\ *)
+            LIVELOCK\ *\ ask-no-overseer\ *)
                 _sw_rest="${_sw_line#LIVELOCK }"
                 _sw_bid="${_sw_rest%% *}"
                 _sw_log "OVERSEER $_sw_bid — adding overseer label; decisions pane cannot see this bead"
