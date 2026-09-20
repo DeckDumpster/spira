@@ -687,8 +687,12 @@ _dr_hooks_rel="${SPIRA_HOME#"${SPIRA_REPO}/"}"
 _dr_hooks_want="${_dr_hooks_rel}/hooks"; [ "$_dr_hooks_rel" = "." ] && _dr_hooks_want="hooks"
 _dr_hooks_cur="$(git -C "$SPIRA_REPO" config core.hooksPath 2>/dev/null || true)"
 if [ -z "$_dr_hooks_cur" ]; then
-    FAIL "core.hooksPath is not set — harness hooks are not armed" \
-         "Arm them: bash $SPIRA_HOME/exclude.sh install $SPIRA_REPO"
+    if [ "${SPIRA_DOCTOR_INSTALLING:-}" = "1" ]; then
+        WARN "core.hooksPath is not set — install.sh will arm the hooks in phase 5"
+    else
+        FAIL "core.hooksPath is not set — harness hooks are not armed" \
+             "Arm them: bash $SPIRA_HOME/exclude.sh install $SPIRA_REPO"
+    fi
 elif [ "$_dr_hooks_cur" != "$_dr_hooks_want" ]; then
     FAIL "core.hooksPath is '$_dr_hooks_cur', expected '$_dr_hooks_want' — every harness hook is displaced" \
          "A displaced path disables the reference-transaction guard silently.

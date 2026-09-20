@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 #
 # test-doctor-hooks-path.sh — doctor.sh detects when core.hooksPath is missing,
-#   displaced, or points at a non-existent directory.
+#   displaced, or points at a non-existent directory; SPIRA_DOCTOR_INSTALLING=1
+#   downgrades the unset case to WARN; exclude.sh install arms core.hooksPath.
 #
 #   ./test-doctor-hooks-path.sh
 #
-# covers: spira/doctor.sh spira/exclude.sh
+# covers: spira/doctor.sh spira/exclude.sh install.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0
@@ -105,6 +106,30 @@ chmod +x "$REPO/spira/hooks/pre-commit"
 
 # ==========================================================================
 echo
+echo "SPIRA_DOCTOR_INSTALLING=1, hooksPath unset — WARN (not FAIL):"
+# ==========================================================================
+# Under installing mode an unset hooksPath is expected; install.sh arms it
+# in phase 5 after this check runs.
+git -C "$REPO" config --unset core.hooksPath 2>/dev/null || true
+ins_unset_out="$(run_doctor SPIRA_DOCTOR_INSTALLING=1)"
+want   "installing unset: WARN fires"   "WARN" "$ins_unset_out"
+nowant "installing unset: no FAIL"      "FAIL" "$(printf '%s\n' "$ins_unset_out" | grep 'hooksPath\|not set')"
+want   "installing unset: phase 5 hint" "phase 5" "$ins_unset_out"
+
+# ==========================================================================
+echo
+echo "SPIRA_DOCTOR_INSTALLING=1, hooksPath wrong path — FAIL still fires:"
+# ==========================================================================
+git -C "$REPO" config core.hooksPath "other/hooks"
+ins_displaced_out="$(run_doctor SPIRA_DOCTOR_INSTALLING=1)"
+want "installing displaced: FAIL fires" "FAIL" "$ins_displaced_out"
+want "installing displaced: wrong path named" "other/hooks" "$(hooks_lines "$ins_displaced_out")"
+
+# Restore correct path for subsequent tests.
+git -C "$REPO" config core.hooksPath "spira/hooks"
+
+# ==========================================================================
+echo
 echo "correct core.hooksPath — OK and no FAIL for hooks:"
 # ==========================================================================
 git -C "$REPO" config core.hooksPath "spira/hooks"
@@ -113,6 +138,34 @@ want   "correct: ok line present"   "ok" \
        "$(printf '%s\n' "$good_out" | grep 'core.hooksPath')"
 nowant "correct: no FAIL for hooks" "FAIL" \
        "$(printf '%s\n' "$good_out" | grep 'core.hooksPath')"
+
+# ==========================================================================
+echo
+echo "exclude.sh install on a fresh clone — arms core.hooksPath:"
+# ==========================================================================
+# This mirrors what install.sh phase 5 now does.  A fresh repo has no
+# core.hooksPath; exclude.sh install sets it to the relative hooks dir.
+FRESH="$TMP/fresh"
+git init -q "$FRESH"
+mkdir -p "$FRESH/spira/hooks"
+printf '#!/usr/bin/env bash\n' > "$FRESH/spira/hooks/pre-commit"
+chmod +x "$FRESH/spira/hooks/pre-commit"
+# Positive control — confirm hooksPath absent before calling install.
+before="$(git -C "$FRESH" config core.hooksPath 2>/dev/null || true)"
+[ -z "$before" ] \
+    && ok "fresh clone: core.hooksPath absent before install" \
+    || bad "fresh clone: core.hooksPath unexpectedly set before install" "got: $before"
+
+bash "$HERE/exclude.sh" install "$FRESH" >/dev/null 2>&1
+install_rc=$?
+[ "$install_rc" = 0 ] \
+    && ok "fresh clone: exclude.sh install exits 0" \
+    || bad "fresh clone: exclude.sh install exited $install_rc"
+
+after="$(git -C "$FRESH" config core.hooksPath 2>/dev/null || true)"
+[ "$after" = "spira/hooks" ] \
+    && ok "fresh clone: core.hooksPath set to spira/hooks after install" \
+    || bad "fresh clone: core.hooksPath after install" "got: [$after], want: [spira/hooks]"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
