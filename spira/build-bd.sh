@@ -180,6 +180,7 @@ fi
 # Install to the canonical paths only — SPIRA_PATH may place a policy shim ahead of the real
 # binary, and `bd version` finds the shim first and reports a plausible version string. A shim
 # was overwritten once by identifying the install target from `bd version` rather than the file.
+mkdir -p "$HOME/.local/bin"
 stamp="$(date +%Y%m%d-%H%M%S)"
 for dst in "$HOME/.local/bin/bd" "$HOME/.local/bin/bd-embedded"; do
     [ -e "$dst" ] && mv "$dst" "$dst.pre-$stamp"
