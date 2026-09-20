@@ -1024,10 +1024,6 @@ echo "enabled units"
 # control plane records a deliberate suspension. A disabled unit with no control-plane
 # entry is silent drift: nothing alerts, nothing fails, the feature it drives simply stops.
 #
-# Fail closed: if systemctl returns no output for a unit, the result is a FAIL rather than
-# a clean pass — a probe that says clean when it cannot see is the silence that hides the
-# outage (law-alerts-must-be-actionable).
-#
 # The ENABLE set is sourced from units.sh directly, not restated here. A second hand-
 # written list rots the way the gate's suite list did: units.sh grows, the copy here does
 # not, and the check passes on units it never knew to test.
@@ -1041,40 +1037,40 @@ if [ -z "${_SPIRA_UNITS_LOADED:-}" ]; then
              _dr_en_bad=1; }
 fi
 if [ "${_dr_en_bad}" -eq 0 ]; then
-    for _dr_en_unit in "${ENABLE[@]}"; do
-        [ -n "$_dr_en_unit" ] || continue
-        _dr_en_state="$("$_dr_en_sc" --user is-enabled "$_dr_en_unit" 2>/dev/null || true)"
-        if [ -z "$_dr_en_state" ]; then
-            # No output from systemctl can mean no active systemd user session.
-            # If the unit file isn't installed either, treat it the same as "not-found".
-            [ ! -e "${HOME}/.config/systemd/user/${_dr_en_unit}" ] && continue
-            FAIL "$_dr_en_unit — systemctl returned no output; cannot verify enablement state" \
-                 "Check that the systemd user session is active: $_dr_en_sc --user status"
-            _dr_en_bad=$((_dr_en_bad + 1))
-            continue
-        fi
-        [ "$_dr_en_state" = "enabled" ] && continue
-        # not-found means the unit file does not exist yet — a fresh install has none.
-        # That is not drift; drift is a unit whose file IS installed but not enabled.
-        [ "$_dr_en_state" = "not-found" ] && continue
-        # Not enabled. Check the control plane before classifying as drift. The subject key
-        # is derived the same way ctrl.sh divergence derives it: strip the file extension,
-        # then strip the per-instance suffix.
-        _dr_en_base="${_dr_en_unit%.*}"
-        _dr_en_subj="${_dr_en_base%-${SPIRA_INSTANCE:-prod}}"
-        if "$SPIRA_HOME/ctrl.sh" check "$_dr_en_subj" 2>/dev/null; then
-            : # deliberately suspended — control-plane decision, not drift
-        else
-            FAIL "$_dr_en_unit is $_dr_en_state but has no control-plane suspension" \
-                 "Enable it:   $_dr_en_sc --user enable $_dr_en_unit
+    # Probe the user manager once. Empty stdout means the bus is unreachable and
+    # every per-unit call would fail identically — one FAIL names the cause.
+    _dr_en_mgr_out="$("$_dr_en_sc" --user is-system-running 2>/dev/null || true)"
+    if [ -z "$_dr_en_mgr_out" ]; then
+        _dr_en_mgr_err="$("$_dr_en_sc" --user is-system-running 2>&1 >/dev/null || true)"
+        FAIL "systemd user manager unreachable${_dr_en_mgr_err:+: $_dr_en_mgr_err}" \
+             "Check XDG_RUNTIME_DIR (${XDG_RUNTIME_DIR:-unset}) and DBUS_SESSION_BUS_ADDRESS (${DBUS_SESSION_BUS_ADDRESS:-unset})"
+        _dr_en_bad=1
+    else
+        for _dr_en_unit in "${ENABLE[@]}"; do
+            [ -n "$_dr_en_unit" ] || continue
+            _dr_en_state="$("$_dr_en_sc" --user is-enabled "$_dr_en_unit" 2>/dev/null || true)"
+            [ "$_dr_en_state" = "enabled" ] && continue
+            # not-found means the unit file does not exist yet — a fresh install has none.
+            # That is not drift; drift is a unit whose file IS installed but not enabled.
+            [ "$_dr_en_state" = "not-found" ] && continue
+            # Not enabled. Check the control plane before classifying as drift.
+            _dr_en_base="${_dr_en_unit%.*}"
+            _dr_en_subj="${_dr_en_base%-${SPIRA_INSTANCE:-prod}}"
+            if "$SPIRA_HOME/ctrl.sh" check "$_dr_en_subj" 2>/dev/null; then
+                : # deliberately suspended — control-plane decision, not drift
+            else
+                FAIL "$_dr_en_unit is $_dr_en_state but has no control-plane suspension" \
+                     "Enable it:   $_dr_en_sc --user enable $_dr_en_unit
         Suspend it:  $SPIRA_HOME/ctrl.sh suspend $_dr_en_subj --reason <why> --owner <bead>"
-            _dr_en_bad=$((_dr_en_bad + 1))
-        fi
-    done
-    [ "$_dr_en_bad" -eq 0 ] \
-        && OK "all ${#ENABLE[@]} ENABLE units are enabled or suspended via ctrl.sh"
+                _dr_en_bad=$((_dr_en_bad + 1))
+            fi
+        done
+        [ "$_dr_en_bad" -eq 0 ] \
+            && OK "all ${#ENABLE[@]} ENABLE units are enabled or suspended via ctrl.sh"
+    fi
 fi
-unset _dr_en_sc _dr_en_bad _dr_en_units_sh _dr_en_unit _dr_en_state _dr_en_base _dr_en_subj
+unset _dr_en_sc _dr_en_bad _dr_en_units_sh _dr_en_unit _dr_en_state _dr_en_base _dr_en_subj \
+      _dr_en_mgr_out _dr_en_mgr_err
 
 echo
 echo "unit installation"

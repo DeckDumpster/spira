@@ -139,5 +139,35 @@ _git_email="$(git -C "$CI_HOME5/scratch-repo" config user.email 2>/dev/null || t
 want "scratch-repo has user.email set for git notes" \
     "acceptance@spira.local" "$_git_email"
 
+# --- XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS pass-through ---
+# acceptance.yml's "Enable systemd user session" step writes both to $GITHUB_ENV;
+# they must be present for install.sh and doctor.sh to reach the user manager.
+_ACCYML="$HERE/../.github/workflows/acceptance.yml"
+_yml="$(cat "$_ACCYML" 2>/dev/null || true)"
+want "acceptance.yml: DBUS_SESSION_BUS_ADDRESS written to GITHUB_ENV" \
+    "DBUS_SESSION_BUS_ADDRESS" "$_yml"
+want "acceptance.yml: XDG_RUNTIME_DIR written to GITHUB_ENV" \
+    "XDG_RUNTIME_DIR" "$_yml"
+
+# Verify acceptance-ci.sh passes XDG_RUNTIME_DIR through to acceptance-run.sh.
+CI_HOME6="$SCRATCH/home6"
+mkdir -p "$CI_HOME6"
+STUB6="$SCRATCH/stub6.sh"
+cat > "$STUB6" <<STUB6_BODY
+#!/usr/bin/env bash
+printf '%s\n' "\${XDG_RUNTIME_DIR:-UNSET}" > "$SCRATCH/xdg-seen"
+exit 0
+STUB6_BODY
+chmod +x "$STUB6"
+XDG_RUNTIME_DIR="/run/user/1001" \
+HOME="$CI_HOME6" \
+XDG_CONFIG_HOME="$CI_HOME6/.config" \
+SPIRA_ACCEPTANCE_RUN="$STUB6" \
+    bash "$HERE/acceptance-ci.sh" "any-tag" --bd-db "$SCRATCH/bd6" \
+    >/dev/null 2>&1 || true
+_xdg_seen="$(cat "$SCRATCH/xdg-seen" 2>/dev/null || true)"
+want "XDG_RUNTIME_DIR passes through to acceptance-run.sh" \
+    "/run/user/1001" "$_xdg_seen"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
