@@ -3889,7 +3889,7 @@ _spira_expand_lanes() {  # _spira_expand_lanes <repo-name> <raw> -> space-separa
     local p="${SPIRA_PLAN_LABEL:-plan}"
     local inc="${SPIRA_INCIDENT_LABEL:-incident}"
     local gr="${SPIRA_GROOMER_LABEL:-groom}"
-    local mae="${SPIRA_MAECHEN_LABEL:-maechen-sweep}"
+    local mae="${SPIRA_MAECHEN_LABEL:-maechen-sweep}"  # literal-ok: bash fallback; SPIRA_MAECHEN_LABEL set by conf.sh
     local sp="${SPIRA_SPIKE_LABEL:-spike}"
     local cz="${SPIRA_CZAR_LABEL:-czar-trigger}"
     case "$raw" in
