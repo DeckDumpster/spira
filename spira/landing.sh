@@ -738,7 +738,7 @@ land_repo() {
     local bead_repo_name bead_repo_path gate_out base_branch base_remote base_fqref bead_labels
     local norebase was _ref _obj gate_suite basefail_filed= _cur_st _budget_cut=0
     local _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason
-    local -a _cert_brs=() _cert_beadids=() _cert_tips=()
+    local -a _cert_brs=() _cert_beadids=() _cert_tips=() _cert_gate_alls=()
     local -A enum_tip=()
     # WHAT THIS PASS HAS ALREADY JUDGED CLOSED, REBASED AND STILL UNLANDED. A branch enters
     # when its rebase onto the base succeeds and leaves the moment it stops being that — it
@@ -1180,6 +1180,16 @@ for i in d:
                     fi
                 fi
             fi
+
+            # MID-PASS VERDICT (hotfix, concierge 2026-09-21, sp-len2q): PR 180 went red at
+            # 03:47Z during a pass that started at 03:35Z and could not be attributed until
+            # the pass ended. One queue step costs a few seconds; a gate costs ten minutes.
+            bash "$SPIRA_HOME/queue.sh" step "$name" 2>&1 \
+                | while IFS= read -r _bl; do log "$_bl"; done || true
+            local _ej_count=0 _ej_count_f="$SPIRA_RUN/eject-count/$id"
+            { read -r _ej_count < "$_ej_count_f"; } 2>/dev/null || true
+            local _gate_all=0
+            [ "${_ej_count:-0}" -ge 2 ] && _gate_all=1
             if [ "${certify_pass_par:-1}" -le 1 ]; then
                 if ! gate_fits; then
                     case "${_scan_extref[$id]:-}" in
@@ -1194,6 +1204,7 @@ for i in d:
                 land_mark "$id" GATING "$tip"
                 gate_out="$(SPIRA_GATE_LOCK_WAIT="$_gate_wait" SPIRA_GATE_BEAD="$id" \
                     SPIRA_GATE_SUITES="${SPIRA_CERTIFY_SUITES:-on}" \
+                    SPIRA_GATE_ALL="$_gate_all" \
                     "$SPIRA_HOME/gate.sh" "$br" "$name" 2>&1)"
                 gate_rc=$?
                 _land_state "repo=$name" "branch=$br"
@@ -1271,7 +1282,9 @@ $(printf '%s' "$gate_out" | tail -20)"
                     log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not certifying $br"
                     continue
                 fi
-                land_mark "$id" CERTIFIED "$tip"
+                local _cert_mode=""
+                [ "${_gate_all:-0}" -eq 1 ] && { _cert_mode="full-corpus"; rm -f "$_ej_count_f" 2>/dev/null || true; }
+                land_mark "$id" CERTIFIED "$tip" "$_cert_mode"
                 _cert_gk="$(compute_gate_key "$repo" "$name" "$br" "$base" 2>/dev/null || true)"
                 [ -n "${_cert_gk:-}" ] && printf '%s\n' "$_cert_gk" > "$LANDSTATE/$id.gate-key"
                 unset _cert_gk
@@ -1290,7 +1303,7 @@ $(printf '%s' "$gate_out" | tail -20)"
                         _budget_cut=1; break ;;
                 esac
             fi
-            _cert_brs+=("$br"); _cert_beadids+=("$id"); _cert_tips+=("$tip")
+            _cert_brs+=("$br"); _cert_beadids+=("$id"); _cert_tips+=("$tip"); _cert_gate_alls+=("${_gate_all:-0}")
             continue
         fi
 
@@ -1793,6 +1806,7 @@ $(printf '%s' "$gate_out" | tail -20)"
     _p2_admit_new_candidates() {
         [ "$mode" = queue ] || return 0
         local _adm_id _adm_st _adm_br _adm_tip _adm_repo_path _adm_ej_st
+        local _adm_ej_count _adm_gate_all
         local -a _adm_probe=()
         for _adm_br in $brs; do
             _adm_id="${_adm_br#spira/}"
@@ -1823,9 +1837,14 @@ $(printf '%s' "$gate_out" | tail -20)"
             _adm_tip="$(git -C "$repo" rev-parse "$_adm_br" 2>/dev/null)"
             judged["$_adm_br"]=1
             log "CHECK6 $_adm_id: closed mid-pass — admitting $_adm_br to the running candidate list"
+            _adm_ej_count=0
+            { read -r _adm_ej_count < "$SPIRA_RUN/eject-count/$_adm_id"; } 2>/dev/null || true
+            _adm_gate_all=0
+            [ "${_adm_ej_count:-0}" -ge 2 ] && _adm_gate_all=1
             _cert_brs=("$_adm_br" "${_cert_brs[@]}")
             _cert_beadids=("$_adm_id" "${_cert_beadids[@]}")
             _cert_tips=("$_adm_tip" "${_cert_tips[@]}")
+            _cert_gate_alls=("$_adm_gate_all" "${_cert_gate_alls[@]}")
         done < <(bdjson show "${_adm_probe[@]}" 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -1850,7 +1869,7 @@ for i in d:
     # one process.
     # ==========================================================================
     if [ "${#_cert_brs[@]}" -gt 0 ]; then
-        local -a _cp_pids=() _cp_brs=() _cp_ids=() _cp_tips=() _cp_tmps=()
+        local -a _cp_pids=() _cp_brs=() _cp_ids=() _cp_tips=() _cp_tmps=() _cp_gate_alls=()
         log "landing: certify phase 2: ${#_cert_brs[@]} candidate(s) in $name (before tier sort)"
 
         # Waits for whichever running gate finishes next, then applies cert logic.
@@ -1860,7 +1879,7 @@ for i in d:
         _cert_process_result() {
             local br id tip gate_rc gate_out gate_outcome gate_reason gate_suite
             local _rn_cert _rn_scope _cur_st
-            local _finished_pid _idx _tmp
+            local _finished_pid _idx _tmp _p_gate_all
             wait -n -p _finished_pid "${_cp_pids[@]}" 2>/dev/null; gate_rc=$?
             _idx=0
             while [ "$_idx" -lt "${#_cp_pids[@]}" ] && \
@@ -1869,11 +1888,13 @@ for i in d:
             done
             _tmp="${_cp_tmps[$_idx]}"
             br="${_cp_brs[$_idx]}"; id="${_cp_ids[$_idx]}"; tip="${_cp_tips[$_idx]}"
+            _p_gate_all="${_cp_gate_alls[$_idx]:-0}"
             _cp_pids=("${_cp_pids[@]:0:$_idx}" "${_cp_pids[@]:$((_idx+1))}")
             _cp_brs=("${_cp_brs[@]:0:$_idx}" "${_cp_brs[@]:$((_idx+1))}")
             _cp_ids=("${_cp_ids[@]:0:$_idx}" "${_cp_ids[@]:$((_idx+1))}")
             _cp_tips=("${_cp_tips[@]:0:$_idx}" "${_cp_tips[@]:$((_idx+1))}")
             _cp_tmps=("${_cp_tmps[@]:0:$_idx}" "${_cp_tmps[@]:$((_idx+1))}")
+            _cp_gate_alls=("${_cp_gate_alls[@]:0:$_idx}" "${_cp_gate_alls[@]:$((_idx+1))}")
             gate_out="$(cat "$_tmp" 2>/dev/null)"; rm -f "$_tmp"
             gate_outcome="$(spira_gate_outcome "$gate_rc")"
             gate_reason="$(printf '%s' "$gate_out" \
@@ -1947,7 +1968,9 @@ $(printf '%s' "$gate_out" | tail -20)"
                 log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not certifying $br"
                 return 0
             fi
-            land_mark "$id" CERTIFIED "$tip"
+            local _cert_mode_p=""
+            [ "${_p_gate_all:-0}" -eq 1 ] && { _cert_mode_p="full-corpus"; rm -f "$SPIRA_RUN/eject-count/$id" 2>/dev/null || true; }
+            land_mark "$id" CERTIFIED "$tip" "$_cert_mode_p"
             _cert_gk="$(compute_gate_key "$repo" "$name" "$br" "$base" 2>/dev/null || true)"
             [ -n "${_cert_gk:-}" ] && printf '%s\n' "$_cert_gk" > "$LANDSTATE/$id.gate-key"
             unset _cert_gk
@@ -1964,9 +1987,9 @@ $(printf '%s' "$gate_out" | tail -20)"
         # whose failure is not base-red is skipped — the same tip and base will produce the
         # same result, and the slot is better spent on a branch that has never been tried.
         # Timeouts write RED (above) and are subject to the same skip condition.
-        local -a _t0_brs=() _t0_ids=() _t0_tips=()
-        local -a _t1_brs=() _t1_ids=() _t1_tips=()
-        local -a _t2_brs=() _t2_ids=() _t2_tips=()
+        local -a _t0_brs=() _t0_ids=() _t0_tips=() _t0_gas=()
+        local -a _t1_brs=() _t1_ids=() _t1_tips=() _t1_gas=()
+        local -a _t2_brs=() _t2_ids=() _t2_tips=() _t2_gas=()
         local _p2_skip=0 _p2_ls _p2_ls_st _p2_ls_tip _p2_ls_at _p2_ls_reason _p2_ci _p2_br _p2_id _p2_tip _p2_base_ct _p2_tier_out _p2_tier _p2_tag
         # Read once: every branch in this phase-2 pass is classified against the same
         # base, so one git log replaces what used to be a fresh read per conflicts-with-
@@ -1989,31 +2012,34 @@ $(printf '%s' "$gate_out" | tail -20)"
                     cwb-stale-base) log "CHECK6 $_p2_id: RED conflicts-with-base stale (base advanced since ${_p2_ls_at}) — treating as never-gated" ;;
                     tip-stale) log "CHECK6 $_p2_id: RED record tip stale (was ${_p2_ls_tip:-none}) — treating as never-gated" ;;
                 esac
-                _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip")
+                _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip"); _t0_gas+=("${_cert_gate_alls[$_p2_ci]:-0}")
             elif [ "$_p2_tier" = skip ]; then
                 _p2_skip=$(( _p2_skip + 1 ))
                 log "CHECK6 $_p2_id: tip unchanged since RED mark (reason=${_p2_ls_reason:-unknown}) — skipping re-gate of $_p2_br"
             elif [ "$_p2_tier" = 2 ]; then
-                _t2_brs+=("$_p2_br"); _t2_ids+=("$_p2_id"); _t2_tips+=("$_p2_tip")
+                _t2_brs+=("$_p2_br"); _t2_ids+=("$_p2_id"); _t2_tips+=("$_p2_tip"); _t2_gas+=("${_cert_gate_alls[$_p2_ci]:-0}")
             else
-                _t1_brs+=("$_p2_br"); _t1_ids+=("$_p2_id"); _t1_tips+=("$_p2_tip")
+                _t1_brs+=("$_p2_br"); _t1_ids+=("$_p2_id"); _t1_tips+=("$_p2_tip"); _t1_gas+=("${_cert_gate_alls[$_p2_ci]:-0}")
             fi
         done
         log "landing: certify phase 2 tiers in $name: never-gated=${#_t0_brs[@]} non-red=${#_t1_brs[@]} red=${#_t2_brs[@]} skipped=$_p2_skip width=${certify_pass_par}"
         _cert_brs=("${_t0_brs[@]+"${_t0_brs[@]}"}" "${_t1_brs[@]+"${_t1_brs[@]}"}" "${_t2_brs[@]+"${_t2_brs[@]}"}")
         _cert_beadids=("${_t0_ids[@]+"${_t0_ids[@]}"}" "${_t1_ids[@]+"${_t1_ids[@]}"}" "${_t2_ids[@]+"${_t2_ids[@]}"}")
         _cert_tips=("${_t0_tips[@]+"${_t0_tips[@]}"}" "${_t1_tips[@]+"${_t1_tips[@]}"}" "${_t2_tips[@]+"${_t2_tips[@]}"}")
+        _cert_gate_alls=("${_t0_gas[@]+"${_t0_gas[@]}"}" "${_t1_gas[@]+"${_t1_gas[@]}"}" "${_t2_gas[@]+"${_t2_gas[@]}"}")
 
-        local _ctmp _dbr _did _dtip
+        local _ctmp _dbr _did _dtip _dga
         # A while loop consuming from the front, not `for _ci in "${!_cert_brs[@]}"`:
         # bash expands that index list once when the for loop starts, so an admission
         # appended by _p2_admit_new_candidates mid-loop would never be iterated. Popping
         # from a live array is what makes "before each dispatch" literal.
         while [ "${#_cert_brs[@]}" -gt 0 ]; do
             _dbr="${_cert_brs[0]}"; _did="${_cert_beadids[0]}"; _dtip="${_cert_tips[0]}"
+            _dga="${_cert_gate_alls[0]:-0}"
             _cert_brs=("${_cert_brs[@]:1}")
             _cert_beadids=("${_cert_beadids[@]:1}")
             _cert_tips=("${_cert_tips[@]:1}")
+            _cert_gate_alls=("${_cert_gate_alls[@]:1}")
             if ! gate_fits; then
                 case "${_scan_extref[${_dbr#spira/}]:-}" in
                     basefail:"$name":*)
@@ -2035,9 +2061,10 @@ $(printf '%s' "$gate_out" | tail -20)"
             gate_lock_wait
             SPIRA_GATE_LOCK_WAIT="$_gate_wait" SPIRA_GATE_BEAD="$_did" \
                 SPIRA_GATE_SUITES="${SPIRA_CERTIFY_SUITES:-on}" \
+                SPIRA_GATE_ALL="$_dga" \
                 "$SPIRA_HOME/gate.sh" "$_dbr" "$name" >"$_ctmp" 2>&1 &
             _cp_pids+=("$!"); _cp_brs+=("$_dbr"); _cp_ids+=("$_did")
-            _cp_tips+=("$_dtip"); _cp_tmps+=("$_ctmp")
+            _cp_tips+=("$_dtip"); _cp_tmps+=("$_ctmp"); _cp_gate_alls+=("$_dga")
             _p2_admit_new_candidates
         done
         while [ "${#_cp_pids[@]}" -gt 0 ]; do

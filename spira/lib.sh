@@ -7038,11 +7038,12 @@ _tsd_landing_event() {
     fi
 }
 
-land_mark() {    # land_mark <id> <state> <tip> [reason]
+land_mark() {    # land_mark <id> <state> <tip> [reason] [extra]
     mkdir -p "$(dirname "$LANDSTATE/$1")" 2>/dev/null || return 0
     printf '%s %s %s %s' "$2" "${3:-none}" "$(date +%s)" "${4:-}" \
-        > "$LANDSTATE/$1.$$" 2>/dev/null \
-        && mv -f "$LANDSTATE/$1.$$" "$LANDSTATE/$1" 2>/dev/null
+        > "$LANDSTATE/$1.$$" 2>/dev/null
+    [ -n "${5:-}" ] && printf ' %s' "$5" >> "$LANDSTATE/$1.$$" 2>/dev/null
+    mv -f "$LANDSTATE/$1.$$" "$LANDSTATE/$1" 2>/dev/null
     local rc=$?
     _tsd_landing_event "$1" "$2" "${3:-}" "${4:-}"
     return "$rc"

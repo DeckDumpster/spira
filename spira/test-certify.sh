@@ -47,12 +47,12 @@ cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
 
-# THE GATE IS ALSO THE COUNTER. Each invocation appends the branch name so the
-# suite can assert it was (or was not) called, which is the positive control every
-# silence here depends on.
+# THE GATE IS ALSO THE COUNTER. Each invocation appends the branch name and
+# SPIRA_GATE_ALL so the suite can assert it was (or was not) called, and with
+# what full-corpus setting (law-absence-needs-a-positive-control).
 GATE_COUNT="$TMP/gate-count"
 stub gate.sh '
-printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
+printf "%s GATE_ALL=%s\n" "$1" "${SPIRA_GATE_ALL:-0}" >> "'"$GATE_COUNT"'"
 printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
 exit 0'
 
@@ -101,9 +101,11 @@ branch() {
         "$id" "$id" "$id" | testdb_seed
 }
 
-main_tip()  { git -C "$REMOTE" rev-parse main 2>/dev/null; }
-landstate() { cat "$RUN/landstate/${1:-}" 2>/dev/null; }
-gate_n()    { [ -f "$GATE_COUNT" ] && wc -l < "$GATE_COUNT" || echo 0; }
+main_tip()     { git -C "$REMOTE" rev-parse main 2>/dev/null; }
+landstate()    { cat "$RUN/landstate/${1:-}" 2>/dev/null; }
+gate_n()       { [ -f "$GATE_COUNT" ] && wc -l < "$GATE_COUNT" || echo 0; }
+gate_all_of()  { grep "^spira/$1 " "$GATE_COUNT" 2>/dev/null | grep -o 'GATE_ALL=[^ ]*' | tail -1; }
+eject_count()  { cat "$RUN/eject-count/${1:-}" 2>/dev/null; }
 
 echo "test-certify.sh"
 
@@ -357,9 +359,9 @@ _spread=$(( _t1 - _t0 ))
 case "$(landstate sp-par-a)" in CERTIFIED*) ok "sp-par-a certified" ;; *) bad "sp-par-a certified" "$(landstate sp-par-a)" ;; esac
 case "$(landstate sp-par-b)" in CERTIFIED*) ok "sp-par-b certified" ;; *) bad "sp-par-b certified" "$(landstate sp-par-b)" ;; esac
 
-# Restore the fast passing stub used by any future cases.
+# Restore the gate stub that logs GATE_ALL (required by the full-corpus assertions below).
 stub gate.sh '
-printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
+printf "%s GATE_ALL=%s\n" "$1" "${SPIRA_GATE_ALL:-0}" >> "'"$GATE_COUNT"'"
 printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
 exit 0'
 
@@ -503,5 +505,52 @@ busy_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         bash "$SH/landing.sh" 2>&1)"
 is   "busy: gate called"        "1"        "$(gate_n)"
 want "busy: certify reported"   "certified spira/sp-busy-gate" "$busy_out"
+
+# Restore the gate stub that logs GATE_ALL (required by the full-corpus assertions below —
+# the busy/idle stubs above write only "%s\n", the same defect fixed for the earlier restore).
+stub gate.sh '
+printf "%s GATE_ALL=%s\n" "$1" "${SPIRA_GATE_ALL:-0}" >> "'"$GATE_COUNT"'"
+printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
+exit 0'
+
+# -----------------------------------------------------------------------------------------
+# CONSECUTIVE EJECTIONS: a member ejected twice requires a full-corpus gate.
+#
+# Plant eject-count=2 before the landing pass; verify the gate is called with
+# SPIRA_GATE_ALL=1 and CERTIFIED carries the "full-corpus" mode in its reason.
+# After a full-corpus pass the counter file must be cleared.
+#
+# POSITIVE CONTROL (law-absence-needs-a-positive-control): the same setup with
+# eject-count=1 must call the gate with SPIRA_GATE_ALL=0 — this case must be
+# seen before trusting the silence when count=2 (if GATE_ALL were always 1, both
+# branches would pass and the count=1 assertion would never distinguish them).
+# -----------------------------------------------------------------------------------------
+seed; branch sp-cert-fc
+# Plant count=2 (consecutive ejections).
+mkdir -p "$RUN/eject-count"
+printf '2\n' > "$RUN/eject-count/sp-cert-fc"
+out="$(landing)"
+is   "full-corpus: gate called with GATE_ALL=1"   "GATE_ALL=1"     "$(gate_all_of sp-cert-fc)"
+case "$(landstate sp-cert-fc)" in
+    CERTIFIED*full-corpus*) ok "full-corpus: landstate says CERTIFIED full-corpus" ;;
+    *) bad "full-corpus: landstate says CERTIFIED full-corpus" "got: $(landstate sp-cert-fc)" ;;
+esac
+is   "full-corpus: counter cleared after full-corpus pass" "" "$(eject_count sp-cert-fc)"
+
+seed; branch sp-cert-fc1
+# Plant count=1 (single ejection — diff-selected gate suffices).
+printf '1\n' > "$RUN/eject-count/sp-cert-fc1"
+out="$(landing)"
+is   "full-corpus-ctrl: gate called with GATE_ALL=0" "GATE_ALL=0" "$(gate_all_of sp-cert-fc1)"
+case "$(landstate sp-cert-fc1)" in
+    CERTIFIED*)
+        ls_reason="$(awk '{print $4}' "$RUN/landstate/sp-cert-fc1" 2>/dev/null)"
+        [ "$ls_reason" != "full-corpus" ] \
+            && ok "full-corpus-ctrl: landstate reason is not full-corpus" \
+            || bad "full-corpus-ctrl: landstate reason is not full-corpus" "got: $ls_reason" ;;
+    *) bad "full-corpus-ctrl: member CERTIFIED" "got: $(landstate sp-cert-fc1)" ;;
+esac
+# Counter not cleared (diff-selected pass does not reset it).
+is "full-corpus-ctrl: counter not cleared" "1" "$(eject_count sp-cert-fc1)"
 
 tl_summary

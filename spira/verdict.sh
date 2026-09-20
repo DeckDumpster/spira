@@ -445,6 +445,7 @@ except Exception:
 
 # _attr_eject <id> <tip> <suites-csv> <pr-n> <name> <method> <detail> <title>
 #             <summary> <diffstat> <run-url> <rest-of-batch> [fail-lines] [excluded-suites]
+#             [unattributed-csv]
 #
 # <method> is one of the attribution procedures verdict.sh actually runs:
 #   reproduced-alone  — suites were rerun against this branch alone and failed
@@ -456,24 +457,35 @@ except Exception:
 # The mail states the method by name so it never claims a reproduction that
 # did not happen (the defect this replaced: every ejection mail said
 # "after reproducing CI failures" regardless of which of these ran).
+#
+# <unattributed-csv> is the run's red suites this member's diff selection
+# never covered — named separately so the next session can check them before
+# re-certifying, instead of re-certifying through the same diff-selected gate
+# that missed them the first time.
 _attr_eject() {
     local id="$1" tip="$2" suites="$3" pr_n="$4" name="$5" method="$6" detail="$7"
     local title="$8" summary="$9" diffstat="${10}" run_url="${11}" rest_of_batch="${12}"
-    local fail_lines="${13:-}" excluded="${14:-}"
+    local fail_lines="${13:-}" excluded="${14:-}" unattributed="${15:-}"
 
     local _note="Ejected by merge-queue attribution ($method): spira/$id ($suites) from PR $pr_n in $name."
     [ -n "$detail" ] && _note="$(printf '%s\n\n%s' "$_note" "$detail")"
     if [ -n "$excluded" ]; then
         _note="$(printf "%s\n\nExcluded from blame (already red on the batch's base, not this branch's fault): %s" "$_note" "$excluded")"
     fi
+    [ -n "$unattributed" ] && \
+        _note="$(printf '%s\n\nAlso red on this run, not attributed: %s' "$_note" "$unattributed")"
     if [ -n "$fail_lines" ]; then
         _note="$(printf '%s\n\nFailing assertions:\n%s' "$_note" "$fail_lines")"
     fi
     bead_reopen "$id" queue-eject "$_note" >/dev/null 2>&1 || true
     bdq label remove "$id" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
-    land_mark "$id" EJECTED "$tip" "$suites"
+    land_mark "$id" EJECTED "$tip" "$suites" "$unattributed"
     printf '%s' "$suites" > "$LANDSTATE/$id.ejected.$$" 2>/dev/null \
         && mv -f "$LANDSTATE/$id.ejected.$$" "$LANDSTATE/$id.ejected" 2>/dev/null || true
+    local _ejc_dir="${SPIRA_RUN:-}/eject-count"
+    mkdir -p "$_ejc_dir" 2>/dev/null || true
+    printf '%d\n' "$(( $(cat "$_ejc_dir/$id" 2>/dev/null || echo 0) + 1 ))" \
+        > "$_ejc_dir/$id" 2>/dev/null || true
     printf 'QUEUE ESCAPED %s branch=%s\n' "$(date +%s)" "$id" \
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
 
@@ -499,10 +511,14 @@ _attr_eject() {
     local _excluded_line=""
     [ -n "$excluded" ] && _excluded_line="$(printf "\nExcluded from blame (already red on the batch's base, not this branch's fault): %s\n" "$excluded")"
 
-    printf '## Note\nspira/%s was ejected from the merge queue in PR %s (%s).\n\n**The change:** %s\n\n%s\n\nDiffstat: %s\n\n**How it was chosen:** %s\n\n**The evidence:**\nFailing suites: %s\n%s%s\nCI run: %s\n\n**The rest of the batch:**%s\n\nNext: reopened as queue-eject; goes back to a builder.\n\nRun those suites against spira/%s to reproduce.\n' \
+    local _unattr_section=""
+    [ -n "$unattributed" ] && \
+        _unattr_section="$(printf '\n\nAlso red on this run, not attributed: %s' "$unattributed")"
+
+    printf '## Note\nspira/%s was ejected from the merge queue in PR %s (%s).\n\n**The change:** %s\n\n%s\n\nDiffstat: %s\n\n**How it was chosen:** %s\n\n**The evidence:**\nFailing suites: %s\n%s%s\nCI run: %s\n\n**The rest of the batch:**%s\n\nNext: reopened as queue-eject; goes back to a builder.\n\nRun those suites against spira/%s to reproduce.%s\n' \
         "$id" "$pr_n" "$name" \
         "${title:-(title unavailable)}" "${summary:-(no description)}" "${diffstat:-(diffstat unavailable)}" \
-        "$_method_line" "$suites" "$_excluded_line" "$_fail_section" "$_run_line" "$rest_of_batch" "$id" \
+        "$_method_line" "$suites" "$_excluded_line" "$_fail_section" "$_run_line" "$rest_of_batch" "$id" "$_unattr_section" \
     | bash "$HERE/mail.sh" send operator \
         --from "Spira Queue <queue@spira>" \
         --subject "Merge queue: $id ejected from $name" \
@@ -951,7 +967,7 @@ ${_line#build-error: }" ;;
     local _ejected_id_set=" $(printf '%s\n' "${ejected[@]}" | sed 's/[:|].*//' | tr '\n' ' ')"
 
     # Eject guilty members.
-    local _ej _ej_id _ej_tip _ej_csv _ej_rest _ej_fail_lines
+    local _ej _ej_id _ej_tip _ej_csv _ej_rest _ej_fail_lines _ej_unattr
     for _ej in "${ejected[@]}"; do
         case "$_ej" in
             *"|"*)
@@ -983,10 +999,14 @@ ${_line#build-error: }" ;;
         [ -n "$_ej_rest_text" ] || _ej_rest_text="
 (no other members — this batch was this one branch)"
 
+        _ej_unattr="$(comm -23 \
+            <(printf '%s\n' "$suites_csv" | tr ',' '\n' | sort) \
+            <(printf '%s\n' "$_ej_csv"   | tr ',' '\n' | sort) \
+            | tr '\n' ',' | sed 's/,$//')"
         _attr_eject "$_ej_id" "$_ej_tip" "$_ej_csv" "$pr_n" "$name" \
             "${_ej_method[$_ej_id]:-suite-overlap}" "${_ej_detail[$_ej_id]:-}" \
             "$_ej_title" "$_ej_summary" "$_ej_diffstat" "$run_url" "$_ej_rest_text" \
-            "$_ej_fail_lines" "$baseline_red"
+            "$_ej_fail_lines" "$baseline_red" "$_ej_unattr"
     done
 
     # When ejection leaves survivors, rebuild on the same base and re-push to
