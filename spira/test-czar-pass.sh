@@ -251,5 +251,96 @@ _sent="$HERE/sentinel.sh"
 lack "sentinel.sh: no watchtower --queue-checks call" \
     "watchtower.sh --queue-checks" "$(cat "$_sent")"
 
+# ==========================================================================================
+printf '\n%s\n' "13. ci-red: batch old, run just turned red → DETECTED=no (POSITIVE CONTROL)"
+# ==========================================================================================
+# The batch opened 30 min ago; the CI run completed (failure) only 60s ago.
+# The detector must NOT fire: the verdict has not had its turn yet.
+_now_e2="$(date +%s)"
+_batch_dir2="$SPIRA_RUN/queue/redrepo"
+mkdir -p "$_batch_dir2"
+printf 'branch=spira/queue/test-red\n' > "$_batch_dir2/open"
+touch -d "30 minutes ago" "$_batch_dir2/open"
+
+_ci_completed_recent=$(( _now_e2 - 60 ))   # completed 60s ago
+cat > "$STUB_FORGE" <<FEOF13
+#!/usr/bin/env bash
+cmd="\${1:-}"
+case "\$cmd" in
+    batch-ci-status)
+        printf 'run-id: 99999\n'
+        printf 'run-conclusion: failure\n'
+        printf 'run-completed-at: %s\n' "${_ci_completed_recent}"
+        ;;
+esac
+exit 0
+FEOF13
+chmod +x "$STUB_FORGE"
+
+export SPIRA_REPO_MAP="$T/repo-map"
+mkdir -p "$T/redrepo"
+printf 'redrepo | %s | push | origin/main | |\n' "$T/redrepo" >> "$SPIRA_REPO_MAP"
+
+export SPIRA_CI_RED_MAX_SECS=600
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "ci-red: DETECTED=no when run just turned red (60s < 600s threshold)" \
+    "CLASS=ci-red DETECTED=no" "$_log"
+
+# ==========================================================================================
+printf '\n%s\n' "14. ci-red: run red for >threshold → DETECTED=yes, interval from completion"
+# ==========================================================================================
+# The batch opened 30 min ago; the CI run completed (failure) 700s ago.
+# The detector must fire. The logged interval must be ~700s (not ~1800s from batch age).
+_ci_completed_old=$(( _now_e2 - 700 ))   # completed 700s ago; 700 > 600 threshold
+cat > "$STUB_FORGE" <<FEOF14
+#!/usr/bin/env bash
+cmd="\${1:-}"
+case "\$cmd" in
+    batch-ci-status)
+        printf 'run-id: 99999\n'
+        printf 'run-conclusion: failure\n'
+        printf 'run-completed-at: %s\n' "${_ci_completed_old}"
+        ;;
+esac
+exit 0
+FEOF14
+chmod +x "$STUB_FORGE"
+
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "ci-red: DETECTED=yes when run red >threshold" "CLASS=ci-red DETECTED=yes" "$_log"
+lack "ci-red: interval is not ~1800s (batch-open age)" "not acting for 1" "$_log"
+want "ci-red: czar.log shows 'not acting for 7'" "not acting for 7" "$_log"
+
+# ==========================================================================================
+printf '\n%s\n' "15. ci-stalled unaffected by ci-red fix (positive control for coexistence)"
+# ==========================================================================================
+# Same pass: ci job queued > threshold (ci-stalled fires) + run just turned red (ci-red quiet).
+# Uses a single repo that shows both conditions simultaneously.
+_ci_queued_old=$(( _now_e2 - 700 ))
+cat > "$STUB_FORGE" <<FEOF15
+#!/usr/bin/env bash
+cmd="\${1:-}"
+case "\$cmd" in
+    batch-ci-status)
+        printf 'run-id: 88888\n'
+        printf 'queued-since: %s\n' "${_ci_queued_old}"
+        printf 'run-completed-at: %s\n' "$(( _now_e2 - 60 ))"
+        ;;
+    workflow-rerun) printf 'stub: workflow-rerun\n' >> "\$FORGE_LOG" ;;
+esac
+exit 0
+FEOF15
+chmod +x "$STUB_FORGE"
+
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "coexistence: ci-stalled still DETECTED=yes" "CLASS=ci-stalled DETECTED=yes" "$_log"
+want "coexistence: ci-red stays DETECTED=no (run only 60s red)" "CLASS=ci-red DETECTED=no" "$_log"
+
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

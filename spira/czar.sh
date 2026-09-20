@@ -237,7 +237,8 @@ fi
 #
 # ci-stalled: a CI job has been queued with no runner > SPIRA_CI_QUEUED_MAX_SECS.
 #   Remedy: cancel the stuck run and re-dispatch the whole workflow (never rerun --failed).
-# ci-red: CI run completed failure and the batch open file is old (verdict not acting).
+# ci-red: CI run completed failure and red for > SPIRA_CI_RED_MAX_SECS (verdict not acting).
+#   Measures from run-completed-at (CI completion), not from batch open.
 #   Remedy: inference.
 # ======================================================================================
 _cis_detected=no _cis_remedy=none _cis_tier=det
@@ -286,20 +287,26 @@ if [ -d "$_queue_dir" ] && [ -r "$_forge" ]; then
         fi
 
         _ci_conclusion="$(printf '%s' "$_ci_out" | sed -n 's/^run-conclusion: //p')"
+        _ci_completed_at="$(printf '%s' "$_ci_out" | sed -n 's/^run-completed-at: //p')"
         if [ "$_ci_conclusion" = "failure" ]; then
-            _ci_open_age=$(( _now - $(stat -c %Y "$_ci_open" 2>/dev/null || echo "$_now") ))
-            if [ "$_ci_open_age" -gt "$_ci_red_max" ] 2>/dev/null; then
-                _cir_detected=yes
-                _fs_record ci-red
-                _ci_r_safe="${_ci_repo//,/-}"
-                _infer ci-red "ci-red-${_ci_r_safe}" \
-                    "QUEUE: CI run completed red, verdict not acting for ${_ci_open_age}s (${_ci_repo})" \
-                    "$(printf 'CI run completed red for the open batch in %s.\nBatch file %ds old (threshold %ds); verdict has not acted.\nBranch: %s\nInvestigate the red and act.\n' \
-                        "$_ci_repo" "$_ci_open_age" "$_ci_red_max" "$_ci_branch")"
-                _cir_remedy=inference
-                _cir_tier=inf
-                continue
-            fi
+            case "${_ci_completed_at:-}" in
+                ''|*[!0-9]*) : ;;
+                *)
+                    _ci_red_age=$(( _now - _ci_completed_at ))
+                    if [ "$_ci_red_age" -gt "$_ci_red_max" ] 2>/dev/null; then
+                        _cir_detected=yes
+                        _fs_record ci-red
+                        _ci_r_safe="${_ci_repo//,/-}"
+                        _infer ci-red "ci-red-${_ci_r_safe}" \
+                            "QUEUE: CI run completed red, verdict not acting for ${_ci_red_age}s (${_ci_repo})" \
+                            "$(printf 'CI run completed red for the open batch in %s.\nRed for %ds (threshold %ds); verdict has not acted.\nBranch: %s\nInvestigate the red and act.\n' \
+                                "$_ci_repo" "$_ci_red_age" "$_ci_red_max" "$_ci_branch")"
+                        _cir_remedy=inference
+                        _cir_tier=inf
+                        continue
+                    fi
+                    ;;
+            esac
         fi
     done < <(find "$_queue_dir" -maxdepth 2 -name "open" -type f 2>/dev/null)
 fi

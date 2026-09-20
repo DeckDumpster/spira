@@ -142,12 +142,13 @@ except Exception:
         # batch-ci-status <repo-dir> <branch> → lines describing the current CI run:
         #   run-id: <id>
         #   run-conclusion: <conclusion>       (when run is completed)
+        #   run-completed-at: <epoch>          (when run is completed; from updatedAt)
         #   queued-since: <epoch>              (when any job is in queued status)
         # Uses 2 gh API calls: run list (run_id + conclusion) and jobs (queued-since).
         # Both ci-stalled and ci-red detectors in czar.sh --pass share this output.
         branch="${1:-}"
         run_list="$( cd "$repo" && ghq run list --branch "$branch" \
-            --json databaseId,conclusion,status --limit 1 2>/dev/null )" || run_list="[]"
+            --json databaseId,conclusion,status,updatedAt --limit 1 2>/dev/null )" || run_list="[]"
         run_id="$(printf '%s\n' "$run_list" | python3 -c "
 import json, sys
 try:
@@ -158,10 +159,19 @@ except: pass
         [ -n "$run_id" ] || exit 0
         printf 'run-id: %s\n' "$run_id"
         printf '%s\n' "$run_list" | python3 -c "
-import json, sys
+import json, sys, calendar, datetime
+def epoch(t):
+    if not t: return 0
+    try:
+        dt = datetime.datetime.strptime(t.rstrip('Z'), '%Y-%m-%dT%H:%M:%S')
+        return calendar.timegm(dt.timetuple())
+    except: return 0
 try:
     d = json.load(sys.stdin)
-    if d and d[0].get('conclusion'): print('run-conclusion: ' + d[0]['conclusion'])
+    if d and d[0].get('conclusion'):
+        print('run-conclusion: ' + d[0]['conclusion'])
+        e = epoch(d[0].get('updatedAt') or '')
+        if e: print('run-completed-at: ' + str(e))
 except: pass
 " 2>/dev/null
         jobs_json="$( cd "$repo" && ghq api \
