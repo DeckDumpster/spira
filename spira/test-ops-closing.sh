@@ -172,6 +172,7 @@ run_aeon() {             # run_aeon <fayth> <act>
         SPIRA_HOME="$HOMEDIR" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$BIN/claude" \
         SPIRA_SOP_LEDGER="${LEDGER_OVERRIDE:-$LEDGER}" \
+        SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         BEADS_NO_AUTO_IMPORT=1 \
         timeout 300 bash "$HOMEDIR/aeon.sh" "$1" > "$TMP/out" 2>&1
 }
