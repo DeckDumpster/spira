@@ -85,6 +85,28 @@ if [ "${open_count:-0}" -gt 0 ] 2>/dev/null; then
     exit 0
 fi
 
+# LANE CHECK. Skip when no repository admits the maechen lane — on a consuming install
+# this prevents trigger beads from accumulating for work nobody can do.
+_mae_lane="${SPIRA_MAECHEN_LABEL:-maechen-sweep}"  # literal-ok: bash fallback; SPIRA_MAECHEN_LABEL set by conf.sh
+_lane_admitted=0
+_hr="$(spira_home_repo 2>/dev/null)" || _hr=""
+if [ -n "$_hr" ]; then
+    _hl="$(spira_repo_lanes "$_hr" 2>/dev/null)" || _hl=""
+    case " $_hl " in *" $_mae_lane "*) _lane_admitted=1 ;; esac
+fi
+if [ "$_lane_admitted" = 0 ] && [ -f "${SPIRA_REPO_MAP:-}" ]; then
+    while IFS='|' read -r _rn _rest; do
+        _rn="${_rn#"${_rn%%[![:space:]]*}"}"; _rn="${_rn%"${_rn##*[![:space:]]}"}"
+        case "${_rn:-}" in ''|'#'*) continue ;; esac
+        _rl="$(spira_repo_lanes "$_rn" 2>/dev/null)" || continue
+        case " $_rl " in *" $_mae_lane "*) _lane_admitted=1; break ;; esac
+    done < "$SPIRA_REPO_MAP"
+fi
+if [ "$_lane_admitted" = 0 ]; then
+    log "no repository admits lane ${_mae_lane} — skipping trigger"
+    exit 0
+fi
+
 # READ THE WATERMARK. A missing or empty file yields epoch 0 (trigger fires immediately).
 watermark_ts=0
 if [ -f "$WATERMARK_FILE" ]; then
