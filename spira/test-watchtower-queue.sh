@@ -34,6 +34,30 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 echo "test-watchtower-queue.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+
+# czar.sh is now a thin shim; the binary must exist before any czar.sh call.
+# Build it from source if not already present (same pattern as test-broker.sh).
+_CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+if [ -z "$_CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+    _CARGO_BIN="$HOME/.cargo/bin/cargo"
+fi
+if [ -z "$_CARGO_BIN" ]; then
+    echo "SKIP test-watchtower-queue: cargo not found — czar-pass binary cannot be built"
+    exit 77
+fi
+CZAR_PASS_BIN="$HERE/../czar-pass/target/release/czar-pass"
+if [ ! -x "$CZAR_PASS_BIN" ]; then
+    cp -r "$HERE/../czar-pass/." "$TMP/czar-pass-src"
+    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$TMP/czar-pass-target" \
+        "$_CARGO_BIN" build --release \
+        --manifest-path "$TMP/czar-pass-src/Cargo.toml" 2>&1 | tail -5
+    CZAR_PASS_BIN="$TMP/czar-pass-target/release/czar-pass"
+fi
+if [ ! -x "$CZAR_PASS_BIN" ]; then
+    printf 'czar-pass binary not found at %s\n' "$CZAR_PASS_BIN" >&2
+    exit 1
+fi
+
 NOW="$(date +%s)"
 NOW_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 PAST_TS="$(date -u -d "@$(( NOW - 7200 ))" +%Y-%m-%dT%H:%M:%SZ)"
@@ -69,6 +93,7 @@ wt_qc() {   # wt_qc [VAR=val ...]
         SPIRA_DB="$TMP/db" \
         SPIRA_QUEUE_LOG="$TMP/run/landing.log" \
         SPIRA_CZAR_PASS_MARKER="$TMP/run/czar-pass.swept" \
+        SPIRA_CZAR_PASS_BIN="$CZAR_PASS_BIN" \
         SPIRA_INCIDENT_SH="$mock" \
         SPIRA_SYSTEMCTL="$TMP/stub-sc.sh" \
         SPIRA_CZAR_STAGE_DEADLOCK=act \
@@ -93,6 +118,7 @@ wt_qc_refs() {   # wt_qc_refs [VAR=val ...]
         SPIRA_DB="$TMP/db" \
         SPIRA_QUEUE_LOG="$TMP/run/landing.log" \
         SPIRA_CZAR_PASS_MARKER="$TMP/run/czar-pass.swept" \
+        SPIRA_CZAR_PASS_BIN="$CZAR_PASS_BIN" \
         SPIRA_INCIDENT_SH="$mock" \
         SPIRA_SYSTEMCTL="$TMP/stub-sc.sh" \
         SPIRA_CZAR_STAGE_DEADLOCK=act \
@@ -329,6 +355,7 @@ wt_qc_ext() {   # wt_qc_ext [VAR=val ...]
         SPIRA_DB="$TMP/db" \
         SPIRA_QUEUE_LOG="$TMP/run/landing.log" \
         SPIRA_CZAR_PASS_MARKER="$TMP/run/czar-pass.swept" \
+        SPIRA_CZAR_PASS_BIN="$CZAR_PASS_BIN" \
         SPIRA_INCIDENT_SH="$mock" \
         SPIRA_SYSTEMCTL="$TMP/stub-sc.sh" \
         SPIRA_REPO_MAP="$TMP/repo-map" \
@@ -424,6 +451,7 @@ wt_qc_refs_ext() {
         SPIRA_DB="$TMP/db" \
         SPIRA_QUEUE_LOG="$TMP/run/landing.log" \
         SPIRA_CZAR_PASS_MARKER="$TMP/run/czar-pass.swept" \
+        SPIRA_CZAR_PASS_BIN="$CZAR_PASS_BIN" \
         SPIRA_INCIDENT_SH="$mock" \
         SPIRA_SYSTEMCTL="$TMP/stub-sc.sh" \
         SPIRA_REPO_MAP="$TMP/repo-map" \

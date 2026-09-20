@@ -263,7 +263,7 @@ fn infer(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str) {
                 .stderr(Stdio::null())
                 .spawn();
             if let Ok(ref mut child) = child {
-                if let Some(stdin) = child.stdin.as_mut() {
+                if let Some(mut stdin) = child.stdin.take() {
                     let _ = stdin.write_all(body.as_bytes());
                 }
                 let _ = child.wait();
