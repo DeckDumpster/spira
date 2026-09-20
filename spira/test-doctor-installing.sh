@@ -145,7 +145,8 @@ echo "5. EXIT CODE — doctor exits 0 with SPIRA_DOCTOR_INSTALLING=1:"
 if run_doctor --installing >/dev/null 2>&1; then
     ok "installing: doctor exits 0"
 else
-    bad "installing: doctor exits 0" "non-zero exit; run without redirect to inspect"
+    _remaining="$(run_doctor --installing 2>/dev/null | grep '  FAIL  ' | head -5 || true)"
+    bad "installing: doctor exits 0" "remaining FAILs: ${_remaining:-<none visible — check stderr>}"
 fi
 
 echo
