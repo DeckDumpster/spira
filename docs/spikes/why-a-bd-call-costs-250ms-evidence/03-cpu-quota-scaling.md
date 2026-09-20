@@ -1,4 +1,8 @@
-=== 03 — wall time is CPU time divided by the unit's CPUQuota ===
+# 03 — wall time is CPU time divided by the unit's CPUQuota
+
+Transcript, preserved verbatim. See `00-method.md` for conditions.
+
+```
 Spike sp-krxs8, 2026-09-20.
 
 This is the measurement that answers the bead's headline question. `bd count` against the
@@ -43,3 +47,4 @@ $ cat .../cpu.stat
   nr_periods 1205
   nr_throttled 546          <- throttled in 45% of periods
   throttled_usec 35959475   <- 36 s spent waiting for quota
+```

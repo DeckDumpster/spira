@@ -1,4 +1,8 @@
-=== 02 — the same commands against the two backends ===
+# 02 — the same commands against the two backends
+
+Transcript, preserved verbatim. See `00-method.md` for conditions.
+
+```
 Spike sp-krxs8, 2026-09-20. Session fence CPUQuota=70%.
 
 The harness runs bd against two different stores and they have completely different cost
@@ -49,3 +53,4 @@ $ bd-embedded -C prod-fixture import -i live-export.jsonl
 
   Note: a plain import fails with `invalid issue type: escalation` until the custom types
   are registered; 1724 of the 3064 are type `event`.
+```

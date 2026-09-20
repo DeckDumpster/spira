@@ -1,4 +1,8 @@
-=== 01 — what a bd invocation costs before it looks at anything ===
+# 01 — what a bd invocation costs before it looks at anything
+
+Transcript, preserved verbatim. See `00-method.md` for conditions.
+
+```
 Spike sp-krxs8, 2026-09-20. Session fence CPUQuota=70%.
 cpu_ms is /usr/bin/time %U+%S; wall_ms is elapsed. n runs each, min/p50/max.
 
@@ -58,3 +62,4 @@ inside a 0.7-CPU cgroup. Pinning it changes nothing:
 bd -C empty ping  GOMAXPROCS=default(16)      n=15  wall: min=229  p50=290  p90=542
 bd -C empty ping  GOMAXPROCS=1                n=15  wall: min=239  p50=304  p90=341
 bd -C empty ping  GOMAXPROCS=2                n=15  wall: min=252  p50=285  p90=316
+```

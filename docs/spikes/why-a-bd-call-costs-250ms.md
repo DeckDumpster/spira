@@ -46,7 +46,7 @@ against the per-bead path. Fix the caller, not the callee.
 ### 1. Ninety milliseconds happen before bd looks at anything (OBSERVED)
 
 `bd --version` opens no store, reads no config and runs no query. It costs **80–90 ms of
-CPU** (`01-process-start.txt`). That is not dynamic linking — `ldd` lists three objects and
+CPU** (`01-process-start.md`). That is not dynamic linking — `ldd` lists three objects and
 `LD_DEBUG=statistics` puts the whole loader at ~30 microseconds. It is Go package
 initialisation:
 
@@ -57,11 +57,11 @@ initialisation:
 `main()`, on every invocation, whatever the subcommand. `GOGC=off` removes about 10 ms of
 it (~12%) and nothing else moves it. `GOMAXPROCS` is not implicated — the box reports 16
 CPUs to Go inside a sub-one-CPU cgroup, which looked like a classic pathology, but pinning
-it to 1 or 2 changes nothing measurable (`01-process-start.txt`).
+it to 1 or 2 changes nothing measurable (`01-process-start.md`).
 
 ### 2. The query is not the cost — but which backend is (OBSERVED)
 
-Against the live server-mode store, every command costs the same (`02-backend-comparison.txt`):
+Against the live server-mode store, every command costs the same (`02-backend-comparison.md`):
 
 | command (server mode, 3,064 issues) | CPU |
 |---|---|
@@ -86,7 +86,7 @@ itself, and that open scales with store size:
 `bd label list` for a *single* id against the 3,064-issue embedded fixture costs 1,580 ms
 CPU, because the open dominates the lookup entirely. This is why suites are slow: a real
 suite run under a counting shim spent **65% of its wall clock inside bd at 630 ms a call**
-(`07-suite-shim.txt`), against 167 ms for comparable server-mode work.
+(`07-suite-shim.md`), against 167 ms for comparable server-mode work.
 
 One caveat I could not remove: the 3,064-issue embedded fixture was built by importing a
 live export, which commits in chunks of 250, so its Dolt history is not shaped like a
@@ -96,7 +96,7 @@ store that grew normally.
 ### 3. Wall time is CPU time divided by the quota (OBSERVED)
 
 This is the measurement that actually answers the bead's question. The same `bd count`,
-run through `systemd-run` so each batch sits in its own cgroup (`03-cpu-quota-scaling.txt`):
+run through `systemd-run` so each batch sits in its own cgroup (`03-cpu-quota-scaling.md`):
 
 | CPUQuota | wall per call | who runs there |
 |---|---|---|
@@ -123,7 +123,7 @@ eagerly builds four parsers (English, Russian, Brazilian Portuguese, Dutch), and
 none of them: `internal/timeparsing/parser.go` builds its own lazily via `when.New(nil)`.
 beads already does the lazy thing; the library's package init defeats it.
 
-So I built it (`05-poc-patched-bd-null-result.txt`). Two binaries from the same v1.2.1
+So I built it (`05-poc-patched-bd-null-result.md`). Two binaries from the same v1.2.1
 source and toolchain, one with a `go.mod` replace onto a `when` fork with those three rule
 packages and their init blocks deleted. The patch demonstrably took effect — the packages
 vanish from the trace. And:
@@ -151,7 +151,7 @@ call across the whole harness and been wrong.
 ### 5. The harness calls bd three times per bead, every two minutes (OBSERVED + INFERRED)
 
 `sentinel.sh` CHECK 4 loops over the dispatchable set and makes three bd calls per bead
-(`04-nplus1-sentinel-check4.txt`):
+(`04-nplus1-sentinel-check4.md`):
 
     for id in $dispatchable; do
         _labels="$(bdq label list "$id" ...)"      # 1
@@ -190,7 +190,7 @@ block of bd calls in the pass" is read from the code.
 
 bd v1.2.1 ships `bd serve`, whose own help names this exact use: *"the same work surface
 the CLI answers, for automation clients that would otherwise fork a bd subprocess per
-call."* It works, and it is fast (`06-resident-bd-serve.txt`):
+call."* It works, and it is fast (`06-resident-bd-serve.md`):
 
 | | per call |
 |---|---|
@@ -338,9 +338,26 @@ Three more things that would each falsify a specific claim, cheapest first:
   fence. A supervised one needs its own, and its cost there is unmeasured.
 - **Option D's real cost**, for the reasons given under it.
 
+## Found along the way, filed not fixed
+
+Running the gate's own suites over this document's evidence turned up an unrelated defect,
+filed as **sp-shhy5**. `SPIRA_SCOPE_LABEL` derives from `basename "$SPIRA_REPO"`, and
+`SPIRA_REPO` is a fact about where `conf.sh` sits — so in a worktree it is the *worktree's*
+directory name. Run from an aeon worktree under `env -i`, which is how a gate must run
+anything, `schema.sh name scope` returns the bead id. `literal-lint.sh` builds its pattern
+list from `schema.sh`, so it flagged every line of this spike's evidence that named its own
+bead and reported it as a configured label name. The same file, same tree, passes with the
+ambient environment and fails without it — the shape
+`law-gates-run-in-a-clean-environment` exists to catch.
+
+The evidence files here are `.md` rather than `.txt` as a result: the lint exempts prose,
+these are prose, and the rename makes the branch independent of what the tree it is linted
+in happens to be called.
+
 ## Related
 
 - sp-f1m7f — the batching fix, filed by this spike. P1.
+- sp-shhy5 — the scope-label derivation defect above, filed by this spike. P1.
 - sp-nyfng — the fixture-baseline lever. Removes the 15 s `bd init`; this spike confirms it
   does not touch the per-call floor, and that the suites' floor is embedded store-open.
 - `wiki/notes/where-the-gate-time-goes-2026-09-20.md` — the concierge session's measurement

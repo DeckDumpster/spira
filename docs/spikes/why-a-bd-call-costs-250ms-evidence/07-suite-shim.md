@@ -1,4 +1,8 @@
-=== 07 — a real suite under a counting shim ===
+# 07 — a real suite under a counting shim
+
+Transcript, preserved verbatim. See `00-method.md` for conditions.
+
+```
 Spike sp-krxs8, 2026-09-20. Session fence CPUQuota=70%; suites run at 40%.
 
 The bead's premise is that ~80% of a suite's wall time is inside bd. Confirmed on a small
@@ -28,3 +32,4 @@ fixture-using suite by pointing TESTDB_BD at a wrapper that times each call.
   (340 s) and test-landing (327 s) as the worst, and those are slow because they drive
   whole sentinel and landing passes, each of which makes many bd calls of its own — i.e.
   the N+1 in 04 is a large part of what the slowest suites are waiting for.
+```

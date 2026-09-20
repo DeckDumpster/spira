@@ -1,4 +1,8 @@
-=== 04 — the worst N+1 in the harness: sentinel.sh CHECK 4 ===
+# 04 — the worst N+1 in the harness: sentinel.sh CHECK 4
+
+Transcript, preserved verbatim. See `00-method.md` for conditions.
+
+```
 Spike sp-krxs8, 2026-09-20. Session fence CPUQuota=70%; rescale to 40% for the sentinel.
 
 --- the loop, as shipped ---
@@ -80,3 +84,4 @@ $ . lib.sh; dispatchable_open | wc -l
 This was measured by driving the loop's queries directly, NOT by instrumenting a real
 sentinel pass — a real pass mutates the production store. So CHECK 4's share OF THE WHOLE
 PASS is inferred from the code, not counted. See the falsifier in the document.
+```

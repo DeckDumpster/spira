@@ -26,7 +26,7 @@ the gate, sentinel or suites run under, and the difference is the whole point of
     spira-suites.service      CPUQuota=40%   OnUnitActiveSec=1h
     spira-gate-check.service  CPUQuota=10%   OnUnitActiveSec=2min
 
-So wall-clock figures taken in this session are the 70% row of `03-cpu-quota-scaling.txt`
+So wall-clock figures taken in this session are the 70% row of `03-cpu-quota-scaling.md`
 and must be rescaled before being read as a sentinel or suite cost. Where a number is
 quoted for one of those units, it was either taken through `systemd-run --property=CPUQuota`
 at that unit's quota or derived from the CPU-time figure.
@@ -38,7 +38,7 @@ p50=125 ms and max=2317 ms within one 20-run batch while other aeons worked. CPU
 (`/usr/bin/time` %U+%S) is stable to about +/-10 ms across the same runs and is immune to
 both throttling and contention, so it is the primary figure throughout. Wall time is
 reported alongside it, and the relation between them is measured directly in
-`03-cpu-quota-scaling.txt`.
+`03-cpu-quota-scaling.md`.
 
 ## Reproducing
 

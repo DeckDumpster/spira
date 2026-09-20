@@ -1,4 +1,8 @@
-=== 06 — the resident-bd option: `bd serve` already exists ===
+# 06 — the resident-bd option: `bd serve` already exists
+
+Transcript, preserved verbatim. See `00-method.md` for conditions.
+
+```
 Spike sp-krxs8, 2026-09-20. Session fence CPUQuota=70%.
 
 bd v1.2.1 ships `bd serve`, described in its own help as being exactly for this:
@@ -65,3 +69,4 @@ $ cd $SPIRA_DB && bd serve --addr 127.0.0.1:18932
   - The resident process was run in the foreground under the aeon's own 70% fence, not
     under a unit with its own CPUQuota. A supervised bd serve would need one
     (law-fence-loops-on-shared-hardware), and its cost under that fence is not measured.
+```

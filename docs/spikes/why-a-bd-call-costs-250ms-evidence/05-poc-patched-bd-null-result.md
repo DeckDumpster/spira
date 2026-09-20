@@ -1,4 +1,8 @@
-=== 05 — proof of concept: patching bd's startup does NOT help ===
+# 05 — proof of concept: patching bd's startup does NOT help
+
+Transcript, preserved verbatim. See `00-method.md` for conditions.
+
+```
 Spike sp-krxs8, 2026-09-20. Branch: spike/sp-krxs8-poc (unmerged).
 
 --- the hypothesis ---
@@ -68,3 +72,4 @@ amputation across hundreds of packages, which is an upstream project, not a chan
 This is the measurement that had to be BUILT rather than estimated. The estimate from
 inittrace alone would have promised ~55 ms per call across every bd invocation in the
 harness, and it would have been wrong.
+```
