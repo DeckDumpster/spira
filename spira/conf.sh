@@ -356,6 +356,8 @@ spira_conf_defaults() {
     # row it gave back is what INFLOW is built on.
     : "${SPIRA_COCKPIT_TRACE_LINES:=2}"
     : "${SPIRA_COCKPIT_STALE_S:=120}"
+    # Watchtower renders snap_age as FAULT rather than a number above this. Match SPIRA_COCKPIT_STALE_S.
+    : "${SPIRA_WATCH_SNAP_MAX:=120}"
     # HOW LONG AN ACTIONABLE EVENT MAY WAIT WITH NO READER before it is escalated through a
     # channel that needs no session, in seconds. `watchd.sh notify` is what enforces it.
     #

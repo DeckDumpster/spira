@@ -15,9 +15,9 @@ Type=simple
 ExecStart=@SPIRA_PROD@/collect.sh loop
 Restart=always
 RestartSec=15
-WatchdogSec=60
-# systemd-notify is a child; NotifyAccess=all + --pid=WATCHDOG_PID avoids the sender-attribution race.
-NotifyAccess=all
+# WatchdogSec is absent: bash cannot satisfy it — only the main PID's own datagram is credited,
+# and an unprivileged process cannot assert another PID in SCM_CREDENTIALS, so --pid= is ignored.
+# Liveness is the snapshot's age instead (sp-3az9w; sp-mplcb restores this with a Rust supervisor).
 # A pass shells out to bd and git several times. This box also runs prod, so it is fenced
 # (law-fence-loops-on-shared-hardware).
 CPUQuota=35%
