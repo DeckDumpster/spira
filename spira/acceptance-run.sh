@@ -417,6 +417,14 @@ else
     is0 "phase D: install.sh ($prev_tag, aged) exits 0" "$_aged_install_rc"
 
     if [ "$_aged_install_rc" -eq 0 ]; then
+<<<<<<< HEAD
+=======
+        _aged_conf="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
+
+        [ -n "$_agent" ] && printf '\nSPIRA_AGENT = %s\n' "$_agent" >> "$_aged_conf"
+        printf 'SPIRA_OPERATED = 0\n' >> "$_aged_conf"
+
+>>>>>>> 31143107 (sp-vm5zk: acceptance-run.sh declares runner headless, fix doctor.sh empty is-enabled)
         # Seed beads into $bd_db (the instance's db in CI).
         bd -C "$bd_db" create \
             --title "aged-install: open seed bead (pre-upgrade)" \

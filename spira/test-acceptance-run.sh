@@ -175,5 +175,6 @@ grep -qE 'git -C.*SPIRA_DB.*config beads\.role maintainer' "$REAL_REPO/install.s
     || bad "install.sh file mode: git config beads.role maintainer" \
            "pattern not found in install.sh"
 
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
