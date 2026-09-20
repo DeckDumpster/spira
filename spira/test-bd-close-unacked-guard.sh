@@ -59,7 +59,7 @@ ACTOR="aeon-test-guard"
 BEADS_ACTOR="$ACTOR" "$BD" -C "$SPIRA_DB" update "$BID" --claim 2>/dev/null
 
 # Add a comment AFTER the claim (post-claim comment from an operator).
-sleep 1
+sleep 2
 COMMENT_ID="$("$BD" -C "$SPIRA_DB" comment "$BID" "Amendment: use approach B, not A" \
                2>/dev/null | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)"
 # If bd comment does not print the uuid, fetch it from the list.
@@ -143,7 +143,7 @@ echo "SPIRA_CLOSE_UNACKED_CONSIDERED env override → guard allows"
 BID2="$("$BD" -C "$SPIRA_DB" create --title "test-override" -l spira --type task \
          2>/dev/null | grep -oE 'sp-[a-z0-9]+' | head -1)"
 BEADS_ACTOR="$ACTOR" "$BD" -C "$SPIRA_DB" update "$BID2" --claim 2>/dev/null
-sleep 1
+sleep 2
 "$BD" -C "$SPIRA_DB" comment "$BID2" "operator amendment" 2>/dev/null
 
 CLOSE2="bd -C $SPIRA_DB close $BID2 --reason-file - <<'REASON'
@@ -204,7 +204,7 @@ BID4="$("$BD" -C "$SPIRA_DB" create --title "test-pre-claim" -l spira --type tas
          2>/dev/null | grep -oE 'sp-[a-z0-9]+' | head -1)"
 # Add comment BEFORE claim.
 "$BD" -C "$SPIRA_DB" comment "$BID4" "pre-claim note" 2>/dev/null
-sleep 1
+sleep 2
 BEADS_ACTOR="$ACTOR" "$BD" -C "$SPIRA_DB" update "$BID4" --claim 2>/dev/null
 
 CLOSE4="bd -C $SPIRA_DB close $BID4 --reason done"
@@ -259,7 +259,7 @@ echo "Comment from aeon itself → no ACK needed"
 BID5="$("$BD" -C "$SPIRA_DB" create --title "test-self-comment" -l spira --type task \
          2>/dev/null | grep -oE 'sp-[a-z0-9]+' | head -1)"
 BEADS_ACTOR="$ACTOR" "$BD" -C "$SPIRA_DB" update "$BID5" --claim 2>/dev/null
-sleep 1
+sleep 2
 # Aeon writes a comment in its own name.
 BEADS_ACTOR="$ACTOR" "$BD" -C "$SPIRA_DB" comment "$BID5" "self-written note" 2>/dev/null
 
@@ -318,7 +318,7 @@ echo "Deliver hook — pre-claim comment is not delivered"
 BID7="$("$BD" -C "$SPIRA_DB" create --title "test-deliver-pre" -l spira --type task \
          2>/dev/null | grep -oE 'sp-[a-z0-9]+' | head -1)"
 "$BD" -C "$SPIRA_DB" comment "$BID7" "pre-claim comment" 2>/dev/null
-sleep 1
+sleep 2
 BEADS_ACTOR="$ACTOR" "$BD" -C "$SPIRA_DB" update "$BID7" --claim 2>/dev/null
 
 out7="$(printf '{}' | \
@@ -336,7 +336,7 @@ echo "Deliver hook — comment from aeon itself not delivered"
 BID8="$("$BD" -C "$SPIRA_DB" create --title "test-deliver-self" -l spira --type task \
          2>/dev/null | grep -oE 'sp-[a-z0-9]+' | head -1)"
 BEADS_ACTOR="$ACTOR" "$BD" -C "$SPIRA_DB" update "$BID8" --claim 2>/dev/null
-sleep 1
+sleep 2
 BEADS_ACTOR="$ACTOR" "$BD" -C "$SPIRA_DB" comment "$BID8" "self comment" 2>/dev/null
 
 out8="$(printf '{}' | \

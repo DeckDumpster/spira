@@ -58,7 +58,7 @@ if not bid or not db:
 
 try:
     r = subprocess.run([bd, "-C", db, "show", bid, "--format", "json"],
-                       capture_output=True, text=True, timeout=5)
+                       capture_output=True, text=True, timeout=30)
     if r.returncode != 0 or not r.stdout.strip():
         sys.exit(0)
     bead = json.loads(r.stdout)
@@ -73,7 +73,7 @@ if not started_at:
 
 try:
     r = subprocess.run([bd, "-C", db, "comments", bid, "--json"],
-                       capture_output=True, text=True, timeout=5)
+                       capture_output=True, text=True, timeout=30)
     if r.returncode != 0 or not r.stdout.strip():
         sys.exit(0)
     comments = json.loads(r.stdout)
