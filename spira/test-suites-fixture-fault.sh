@@ -41,8 +41,12 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 echo "test-suites-fixture-fault.sh"
 
 # Capture before conf.sh rebuilds PATH from scratch HOME and drops bd-embedded from it.
+# testenv-batch.sh scratch HOME means ~/.local/bin may not be in inherited PATH either;
+# fall back to the real HOME's canonical install so the wrapper resolves in both cases.
 _REAL_HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || echo "$HOME")"
 _BD_EMBEDDED_REAL="$(command -v bd-embedded 2>/dev/null || true)"
+[ -z "$_BD_EMBEDDED_REAL" ] && [ -x "${_REAL_HOME}/.local/bin/bd-embedded" ] && \
+    _BD_EMBEDDED_REAL="${_REAL_HOME}/.local/bin/bd-embedded"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
