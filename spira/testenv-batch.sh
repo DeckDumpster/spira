@@ -409,6 +409,7 @@ if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ] && \
                             SPIRA_INCIDENT_TYPE=task \
                             SPIRA_INCIDENT_CAUSE=repeat-refused \
                             SPIRA_INCIDENT_PRIORITY=3 \
+                            SPIRA_INCIDENT_DELIVERS=action \
                             bash "$_bead_cmd" file \
                                 "repeat attempt: no change — $BR" - 2>/dev/null || true
                     fi
