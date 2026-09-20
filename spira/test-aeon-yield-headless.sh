@@ -70,6 +70,14 @@ run_aeon() {
     "$HERE/aeon.sh" builder > "$TMP/out" 2>&1
     echo $?
 }
+bead_notes() {
+    BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
+        | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+d = d if isinstance(d, list) else [d]
+print(d[0].get("notes", "") or "")' 2>/dev/null
+}
 fresh() { testdb_reset; }
 
 echo "test-aeon-yield-headless.sh"
@@ -94,7 +102,7 @@ chmod +x "$BIN/claude"
 fresh; seed sp-yh-1
 run_aeon > /dev/null 2>&1
 want "ledger records yield-headless"      "status=yield-headless" "$(grep 'done builder sp-yh-1' "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null)"
-want "bead note mentions yield-headless"  "yield-headless"        "$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" notes sp-yh-1 2>/dev/null)"
+want "bead note mentions yield-headless"  "yield-headless"        "$(bead_notes sp-yh-1)"
 
 # ======================================================================================
 echo
