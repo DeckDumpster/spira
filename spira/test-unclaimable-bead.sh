@@ -268,6 +268,28 @@ SPIRA_INCIDENT_SH="$TMP/mock-incident11.sh" file_unclaimable_incidents "$unc"
 inc11_out="$(cat "$INC_LOG11")"
 is "no incident for parked bead" "" "$inc11_out"
 
+# ==========================================================================================
+echo
+echo "case 12 — no-loop: a bead marked no-loop is NOT reported by detect_unclaimable_ready"
+# ==========================================================================================
+# A bead carrying the no-loop label is intentionally unclaimable — an operator plan
+# recorded for the record, not for the loop. READY_ARGS excludes it via --exclude-label,
+# so detect_unclaimable_ready never sees it and never files a remedy to make it claimable.
+#
+# POSITIVE CONTROL: a bead without no-loop (and with no partition) still fires.
+# Without this, a scanner that never checks anything reads as correct.
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-unc12a","title":"no-loop: intentionally unclaimable","status":"open","issue_type":"task","labels":["plan","repo:spira","${SPIRA_SCOPE_LABEL}","${SPIRA_NO_LOOP_LABEL:-no-loop}"]}
+{"id":"sp-unc12b","title":"no-loop absent: unclaimable (no partition)","status":"open","issue_type":"task","labels":["repo:spira","${SPIRA_SCOPE_LABEL}"]}
+JSONL
+
+out="$(detect_unclaimable_ready 2>/dev/null)"
+lacks "no-loop bead not reported UNCLAIMABLE (positive control fires below)" \
+    "sp-unc12a" "$out"
+has   "bead without no-loop still reported when unclaimable (positive control)" \
+    "UNCLAIMABLE sp-unc12b" "$out"
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

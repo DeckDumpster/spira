@@ -96,6 +96,7 @@ schema_name() {          # schema_name <key> -> the name; exit 2 on an undeclare
         review)        printf '%s' "${SPIRA_REVIEW_LABEL:-review-finding}" ;;
         reclaim_skip)  printf '%s' "${SPIRA_RECLAIM_SKIP_LABEL:-spira-waiting-operator}" ;;
         world_stop)    printf '%s' "${SPIRA_WORLD_STOP_LABEL:-world-stop}" ;;
+        no_loop)       printf '%s' "${SPIRA_NO_LOOP_LABEL:-no-loop}" ;;
         insight)       printf '%s' 'insight' ;;
         # FAIL CLOSED. An undeclared key must not resolve to the empty string: an empty label
         # in a query is a well-formed question about nothing, which returns [] truthfully and
@@ -106,7 +107,7 @@ schema_name() {          # schema_name <key> -> the name; exit 2 on an undeclare
             return 2 ;;
     esac
 }
-schema_names() { printf '%s\n' ask ci scope plan incident spike groomer maechen maechen_remedy review reclaim_skip world_stop insight; }
+schema_names() { printf '%s\n' ask ci scope plan incident spike groomer maechen maechen_remedy review reclaim_skip world_stop no_loop insight; }
 
 # schema_default <key> — the declared default value, ignoring env and conf.
 # Used by literal-lint.sh to build its pattern list without the ambient environment
@@ -126,6 +127,7 @@ schema_default() {
         review)         printf '%s' "review-finding" ;;
         reclaim_skip)   printf '%s' "spira-waiting-operator" ;;
         world_stop)     printf '%s' "world-stop" ;;
+        no_loop)        printf '%s' "no-loop" ;;
         insight)        printf '%s' "insight" ;;
         *)  printf 'schema: no such name: %s\n' "${k:-<empty>}" >&2
             printf 'schema: declared names: %s\n' "$(schema_names | tr '\n' ' ')" >&2

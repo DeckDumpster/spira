@@ -768,6 +768,7 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # installations where SPIRA_SCOPE_LABEL is empty.
 READY_ARGS=(ready --limit 0 --exclude-type epic,event -u)
 [[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && READY_ARGS+=(--label "$SPIRA_SCOPE_LABEL")
+[[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
 
 # ready_count <labels> <exclude-labels> -> how many beads that predicate can claim.
 ready_count() {
