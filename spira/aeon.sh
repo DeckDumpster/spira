@@ -2164,7 +2164,7 @@ print("\n".join(ids))
 ' 2>/dev/null)"
         if [ -n "$_groom_claimed_ids" ]; then
             _ask_json="$(bdq list --type decision \
-                --label "${SPIRA_ASK_LABEL:-needs-operator}" --json 2>/dev/null)" || _ask_json=""
+                --label "$SPIRA_ASK_LABEL" --json 2>/dev/null)" || _ask_json=""
             _unproven=""
             while IFS= read -r _gcid; do
                 [ -n "$_gcid" ] || continue
