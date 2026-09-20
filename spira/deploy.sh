@@ -21,13 +21,13 @@
 #   6. Stop the promote timer (retired by this command).
 #   7. world.sh drain — wait for live aeons to finish; refuse if they do not.
 #      With --force: drain --timeout 0, then slay each live aeon (--keep-work --reopen).
-#   8. activate.sh — unpack, atomic symlink swap, daemon-reload, restart units.
-#   9. systemd/install.sh — re-render unit files with SPIRA_PROD=$SPIRA_RELEASES/current/spira.
-#  10. cockpit/layout.sh ensure.
-#  11. world.sh resume.
-#  12. Health check: world.sh status, doctor.sh, skew.sh check.
+#   8. Write SPIRA_PROD to spira.conf before restarting services.
+#   9. activate.sh — unpack, atomic symlink swap, daemon-reload, restart units.
+#  10. systemd/install.sh — re-render unit files with SPIRA_PROD=$SPIRA_RELEASES/current/spira.
+#  11. cockpit/layout.sh ensure.
+#  12. world.sh resume.
+#  13. Health check: world.sh status, doctor.sh, skew.sh check.
 #      On failure: restore prior state, restart, resume, exit 1 naming what failed.
-#  13. Write SPIRA_PROD to spira.conf so conf-sourced scripts use the release path.
 #
 # EXIT
 #   0  deployed
@@ -190,6 +190,7 @@ if [ "$dry_run" = 1 ]; then
     else
         printf 'deploy: would world.sh drain\n'
     fi
+    printf 'deploy: would update spira.conf: SPIRA_PROD=%s/current/spira\n' "$SPIRA_RELEASES"
     printf 'deploy: would activate.sh %s.tar.gz\n' "$release_stem"
     # When a current release is active, verify the ExecStart target that install.sh would
     # render is executable. This catches a wrong SPIRA_PROD before any disruptive action.
@@ -218,7 +219,6 @@ if [ "$dry_run" = 1 ]; then
     printf 'deploy: would cockpit/layout.sh ensure\n'
     printf 'deploy: would world.sh resume\n'
     printf 'deploy: would run health checks\n'
-    printf 'deploy: would update spira.conf: SPIRA_PROD=%s/current/spira\n' "$SPIRA_RELEASES"
     exit 0
 fi
 
@@ -303,9 +303,14 @@ fi
 # Rollback: restore prior state, restart, resume.
 # On a non-first deploy: swap current back to the prior release.
 # On a first deploy: remove current and re-render units against the original checkout.
+_conf_path=""
+_conf_backup=""
 _rollback() {
     local _why="$1"
     printf 'deploy: ROLLBACK — %s\n' "$_why" >&2
+    [ -z "${_conf_backup:-}" ] || [ ! -f "${_conf_backup:-}" ] || \
+        mv "${_conf_backup}" "${_conf_path}" 2>/dev/null || \
+        log "deploy: rollback: could not restore spira.conf"
     if [ -n "$prev_release" ] && [ -d "$SPIRA_RELEASES/$prev_release" ]; then
         local _tmp="$SPIRA_RELEASES/.current.rollback.$$"
         ln -s "$prev_release" "$_tmp" && mv -T "$_tmp" "$SPIRA_RELEASES/current" || {
@@ -345,6 +350,23 @@ _rollback() {
     exit 1
 }
 
+# Write SPIRA_PROD to spira.conf before restarting services so they come up reading the
+# current config. Rollback restores the backup if activation fails.
+_conf_path="$(spira_conf_file)"
+[ -n "$_conf_path" ] || _conf_path="$SPIRA_REPO/spira.conf"
+if [ -f "$_conf_path" ]; then
+    _conf_backup="${_conf_path}.pre-deploy.$$"
+    cp "$_conf_path" "$_conf_backup" 2>/dev/null || _conf_backup=""
+    grep -v '^SPIRA_PROD[[:space:]]*=' "$_conf_path" > "${_conf_path}.new.$$" 2>/dev/null \
+        || :> "${_conf_path}.new.$$"
+else
+    :> "${_conf_path}.new.$$"
+fi
+printf 'SPIRA_PROD = %s/current/spira\n' "$SPIRA_RELEASES" >> "${_conf_path}.new.$$"
+mv "${_conf_path}.new.$$" "$_conf_path" \
+    || log "deploy: WARN: could not write SPIRA_PROD to $_conf_path — fix manually"
+log "deploy: spira.conf updated — SPIRA_PROD = $SPIRA_RELEASES/current/spira"
+
 # Activate the tarball.
 log "deploy: activating"
 "$_ACTIVATE" "$_tarball" || { _rollback "activate.sh failed"; }
@@ -382,22 +404,6 @@ _skew_exit=$?
     || _deploy_failed="${_deploy_failed:+$_deploy_failed, }skew (exit $_skew_exit)"
 
 [ -z "$_deploy_failed" ] || { _rollback "$_deploy_failed"; }
-
-# Write SPIRA_PROD to spira.conf so scripts that source conf see the release path, not
-# the checkout. Backup the existing conf beside it before writing.
-_conf_path="$(spira_conf_file)"
-[ -n "$_conf_path" ] || _conf_path="$SPIRA_REPO/spira.conf"
-if [ -f "$_conf_path" ]; then
-    cp "$_conf_path" "${_conf_path}.pre-deploy.$$" 2>/dev/null || true
-    grep -v '^SPIRA_PROD[[:space:]]*=' "$_conf_path" > "${_conf_path}.new.$$" 2>/dev/null \
-        || :> "${_conf_path}.new.$$"
-else
-    :> "${_conf_path}.new.$$"
-fi
-printf 'SPIRA_PROD = %s/current/spira\n' "$SPIRA_RELEASES" >> "${_conf_path}.new.$$"
-mv "${_conf_path}.new.$$" "$_conf_path" \
-    || log "deploy: WARN: could not write SPIRA_PROD to $_conf_path — fix manually"
-log "deploy: spira.conf updated — SPIRA_PROD = $SPIRA_RELEASES/current/spira"
 
 rm -f "${_pre_deploy_unit_state:-}" 2>/dev/null || true
 log "deploy: $release_stem active"
