@@ -317,21 +317,11 @@ testdb_up() {            # testdb_up <tag>
     #      to start because an aeon built its own fixture while the run was borrowing one.
     #      --database gives each fixture its own server-side database and they stop colliding.
     #
-    #   2. The workspace goes in a HIDDEN directory under the server's data root, never at
-    #      $SPIRA_TESTDB_DATA/$TESTDB_NAME and never in /tmp. Two constraints pin it there
-    #      and only this shape satisfies both:
-    #        - Dolt treats every visible directory in its data root as a database, so a
-    #          workspace sharing the database's name makes bd's own CREATE DATABASE fail
-    #          with "database not available after CREATE DATABASE". A dot-prefixed parent
-    #          is not scanned, so .ws/<name> is invisible to that sweep.
-    #        - Keeping it out of /tmp is incidental, not a rule about bd. When this was
-    #          written a stray, empty `.beads` sat in /tmp; bd walks UP from the working
-    #          directory looking for a workspace, found that one, and refused any init
-    #          under /tmp with "legacy Dolt workspace detected". The stray directory was
-    #          the fault and has been removed. The data root remains the right home for a
-    #          server-mode workspace anyway — it keeps the fixture and its database
-    #          adjacent — but a workspace elsewhere is not wrong.
-    TESTDB_DIR="$SPIRA_TESTDB_DATA/.ws/$TESTDB_NAME"
+    #   2. The workspace goes in /var/tmp, not under $SPIRA_TESTDB_DATA. bd init --server
+    #      walks UP from its working directory for a Dolt workspace and refuses when it finds
+    #      one; $SPIRA_TESTDB_DATA is itself a Dolt repo (.dolt), so any subdirectory fails
+    #      init with "already initialized". /var/tmp has no .dolt ancestor.
+    TESTDB_DIR="/var/tmp/$TESTDB_NAME"
     mkdir -p "$TESTDB_DIR" || { printf 'testdb: mkdir %s failed\n' "$TESTDB_DIR" >&2; return 1; }
     local init_out init_rc
     init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
