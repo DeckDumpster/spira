@@ -23,7 +23,7 @@ ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 is2()    { [ "$2" = 2 ] && ok "$1" || bad "$1" "wanted exit 2, got $2"; }
-not2()   { [ "$2" != 2 ] && ok "$1" || bad "$1" "must not exit 2"; }
+not2()   { [ "$2" != 2 ] && ok "$1" || { bad "$1" "must not exit 2"; printf '  install output:\n'; printf '%s\n' "${3:-}" | sed 's/^/    /'; }; }
 islink() { [ -L "$2" ] && ok "$1" || bad "$1" "expected symlink at $2"; }
 isdir()  { [ -d "$2" ] && ok "$1" || bad "$1" "expected directory at $2"; }
 
@@ -265,7 +265,7 @@ rm -f "$FAKE_HOME/.config/spira/spira.conf"
 
 _boot_out="$(run_install prod -- "SPIRA_RELEASES=$FAKE_RELEASES_B" 2>&1)"
 _boot_rc=$?
-not2  "bootstrap: install does not exit 2"                    "$_boot_rc"
+not2  "bootstrap: install does not exit 2"                    "$_boot_rc" "$_boot_out"
 islink "bootstrap: SPIRA_RELEASES/current is a symlink"       "$FAKE_RELEASES_B/current"
 isdir  "bootstrap: SPIRA_RELEASES/bootstrap/ exists"          "$FAKE_RELEASES_B/bootstrap"
 isdir  "bootstrap: SPIRA_RELEASES/bootstrap/spira/ exists"    "$FAKE_RELEASES_B/bootstrap/spira"
