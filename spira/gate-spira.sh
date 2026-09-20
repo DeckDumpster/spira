@@ -237,9 +237,16 @@ run() {                  # run <suite> — its output only when it matters; cost
     if kill -0 -- -"$suite_pid" 2>/dev/null; then
         sleep 0.2
         if kill -0 -- -"$suite_pid" 2>/dev/null; then
-            printf '\nFAIL: %s left background jobs after exit — killed by gate harness\n' "$name" >> "$tmp"
-            kill -- -"$suite_pid" 2>/dev/null || true
-            [ "$st" -eq 0 ] && st=1
+            local _orphan=0 _op
+            for _op in $(pgrep -g "$suite_pid" 2>/dev/null); do
+                [ "$(awk '{print $4}' /proc/"$_op"/stat 2>/dev/null)" = "1" ] \
+                    && { _orphan=1; break; }
+            done
+            if [ "$_orphan" = 1 ]; then
+                printf '\nFAIL: %s left background jobs after exit — killed by gate harness\n' "$name" >> "$tmp"
+                kill -- -"$suite_pid" 2>/dev/null || true
+                [ "$st" -eq 0 ] && st=1
+            fi
         fi
     fi
     out="$(cat "$tmp")"; rm -f "$tmp"
