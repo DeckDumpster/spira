@@ -144,27 +144,10 @@ jobs:
             | tar -xz -C /tmp
           sudo install -m 0755 "/tmp/dolt-linux-${_arch}/bin/dolt" /usr/local/bin/dolt
 
-      - name: Create scratch repo
-        # A local bare repo as origin with a working clone. acceptance-run.sh files
-        # a bead with repo:scratch-repo; the sentinel lands it here by push.
-        run: |
-          git init --bare "$HOME/scratch-repo.git"
-          git clone "$HOME/scratch-repo.git" "$HOME/scratch-repo"
-          git -C "$HOME/scratch-repo" \
-            -c user.email="acceptance@spira.local" \
-            -c user.name="Acceptance" \
-            commit --allow-empty -m "init"
-          git -C "$HOME/scratch-repo" push origin main
-
-      - name: Write repo-map
-        # Pre-write the repo-map before install.sh runs configure.sh, which seeds
-        # it from the example only when it does not already exist.
-        run: |
-          mkdir -p "$HOME/.config/spira"
-          printf 'scratch-repo | %s | push | origin/main | |\n' "$HOME/scratch-repo" \
-            > "$HOME/.config/spira/repo-map"
-
-      - name: Run acceptance
+      - name: Run acceptance (scratch repo, config, run, verdict)
+        # acceptance-ci.sh creates the scratch repo with --initial-branch=main,
+        # writes the repo-map, calls acceptance-run.sh, pushes notes, and writes
+        # the step summary. Exercisable by test-acceptance-ci.sh without the forge.
         env:
           CONFIGURE_MAX_AEONS: "1"
           CONFIGURE_MAX_LIVE_AEONS: ""
@@ -174,31 +157,12 @@ jobs:
           set -uo pipefail
           _tag="${{ inputs.tag || github.ref_name }}"
           _prev="${{ inputs.prev-tag || '' }}"
-          _args=(
-            "$_tag"
-            --scratch-repo "$HOME/scratch-repo"
-            --agent        "$GITHUB_WORKSPACE/spira/acceptance-agent.sh"
-            --bd-db        "$HOME/.local/share/spira/db"
-            --record
-          )
+          _args=("$_tag"
+                 --bd-db  "$HOME/.local/share/spira/db"
+                 --agent  "$GITHUB_WORKSPACE/spira/acceptance-agent.sh"
+                 --record)
           [ -n "${_prev:-}" ] && _args+=(--prev-tag "$_prev")
-          bash spira/acceptance-run.sh "${_args[@]}"
-
-      - name: Push notes
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config user.email "acceptance@spira.local"
-          git config user.name "Spira Acceptance"
-          git push origin 'refs/notes/acceptance' 2>/dev/null || true
-
-      - name: Step summary
-        if: always()
-        run: |
-          _tag="${{ inputs.tag || github.ref_name }}"
-          _note="$(git notes --ref=acceptance show "refs/tags/$_tag" 2>/dev/null || echo '(no note written)')"
-          printf '## Acceptance: %s\n\n```\n%s\n```\n' "$_tag" "$_note" >> "$GITHUB_STEP_SUMMARY"
+          bash spira/acceptance-ci.sh "${_args[@]}"
 
   # ---------------------------------------------------------------------------
   # Destroy the machine. Runs even when provision or acceptance fail.
