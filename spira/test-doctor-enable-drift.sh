@@ -227,15 +227,32 @@ echo
 echo "fail-closed — systemctl returning no output is a FAIL, not a clean pass:"
 # ===========================================================================
 # A probe that says clean when it cannot see the state is the silence that hides
-# the outage (law-alerts-must-be-actionable).
+# the outage (law-alerts-must-be-actionable). The fail-closed property applies
+# when a unit file IS installed — an installed unit whose state cannot be queried
+# is the outage we need to catch.
+touch "$FAKE_HOME/.config/systemd/user/spira-ops-prod.timer"
 write_sc "$BIN/sc-silent" "SILENT"
 silent_out="$(run_doctor "$BIN/sc-silent")"
-want   "fail-closed: FAIL when systemctl returns nothing" \
+want   "fail-closed: FAIL when systemctl returns nothing for installed unit" \
     "  FAIL  " "$silent_out"
 want   "fail-closed: error message mentions enablement state" \
     "cannot verify enablement state" "$silent_out"
 nowant "fail-closed: no OK for enabled units" \
     "ENABLE units are enabled" "$silent_out"
+rm -f "$FAKE_HOME/.config/systemd/user/spira-ops-prod.timer"
+
+# ===========================================================================
+echo
+echo "silent-no-units — no systemd session AND no unit files: must not fail preflight:"
+# ===========================================================================
+# A GitHub Actions runner has no active systemd user session, so systemctl returns
+# no output. When no units are installed yet, this is the same as "not-found" —
+# not drift, just not installed. The bead that found this: sp-0y7cs.
+write_sc "$BIN/sc-silent" "SILENT"
+silent_nounits_out="$(run_doctor "$BIN/sc-silent")"
+nowant "silent-no-units: no FAIL in enabled-units section" "  FAIL  " \
+    "$(printf '%s\n' "$silent_nounits_out" | grep -A 100 'enabled units' || true)"
+want "silent-no-units: OK line present" "ENABLE units are enabled" "$silent_nounits_out"
 
 # ===========================================================================
 echo
