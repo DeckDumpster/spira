@@ -43,6 +43,7 @@ _bead_file() {
     # Override: SPIRA_BEAD_LANE_OVERRIDE=1
     if [ -z "${SPIRA_BEAD_LANE_OVERRIDE:-}" ]; then
         local _p="${SPIRA_PLAN_LABEL:-plan}"
+        # literal-ok: bash fallbacks; conf.sh always sets SPIRA_MAECHEN_LABEL before this runs
         local _vocab="${_p} ${SPIRA_INCIDENT_LABEL:-incident} ${SPIRA_GROOMER_LABEL:-groom} ${SPIRA_MAECHEN_LABEL:-maechen-sweep} ${SPIRA_SPIKE_LABEL:-spike} ${SPIRA_CZAR_LABEL:-czar-trigger}"
         local _partition="" _lbl _ifs="$IFS"
         IFS=,
