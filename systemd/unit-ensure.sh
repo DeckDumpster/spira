@@ -126,10 +126,35 @@ printf 'unit-ensure: daemon-reload after %d change(s), %d unchanged\n' "$n_chang
 
 # Enable and start newly installed units that belong to the ENABLE set.
 # Updated (DIFFERS) units are not restarted — that is the operator's call.
+#
+# MISSING-TARGET GUARD. A unit whose ExecStart points at a binary that does not
+# exist would exit 127 on every tick — worse than an absent unit, because
+# systemctl reports it as enabled. Parse the ExecStart line from the rendered
+# file and refuse to enable if the target is not executable.
+_ue_execstart_ok() {  # _ue_execstart_ok <unit-file>
+    local f="$1"
+    # ExecStart= may have args; the executable is the first token after the '='.
+    local line exec_bin
+    line="$(grep -m1 '^ExecStart=' "$f" 2>/dev/null || true)"
+    [ -n "$line" ] || return 0   # no ExecStart — let systemd decide
+    exec_bin="${line#ExecStart=}"
+    exec_bin="${exec_bin%% *}"   # first token only
+    [ -n "$exec_bin" ] || return 1
+    [ -x "$exec_bin" ]
+}
+
 for _en in "${ENABLE[@]}"; do
     [ -n "${_ue_new[$_en]:-}" ] || continue
+    _ue_file="$DEST/$_en"
+    if [ -f "$_ue_file" ] && ! _ue_execstart_ok "$_ue_file"; then
+        _ue_exec="$(grep -m1 '^ExecStart=' "$_ue_file" | sed 's/^ExecStart=//;s/ .*//')"
+        printf 'unit-ensure: MISSING-TARGET  %s (ExecStart target not executable: %s)\n' \
+            "$_en" "${_ue_exec:-<empty>}" >&2
+        continue
+    fi
     "$SC" --user enable "$_en" >/dev/null 2>&1 \
         && "$SC" --user start  "$_en" >/dev/null 2>&1 \
         && printf 'unit-ensure: enabled+started  %s\n' "$_en" \
         || printf 'unit-ensure: failed to enable %s\n' "$_en" >&2
 done
+unset _ue_file _ue_exec

@@ -43,12 +43,14 @@ esac
 FAKESCRIPT
 chmod +x "$BIN/bd"
 
-# Fake systemctl: everything is active so unrelated sections do not add noise.
+# Fake systemctl: everything is active; units report disabled so the broker
+# enabled-unit FAIL does not fire and obscure the cargo-version check results.
 cat > "$BIN/systemctl" <<'FAKESCRIPT'
 #!/usr/bin/env bash
 case "$*" in
     *"is-active"*"--quiet"*) exit 0 ;;
     *"is-active"*) printf 'active\n' ;;
+    *"is-enabled"*) printf 'disabled\n'; exit 1 ;;
     *"list-unit-files"*) true ;;
     *"list-units"*) true ;;
     *"list-timers"*) true ;;
