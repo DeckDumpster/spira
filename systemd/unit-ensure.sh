@@ -158,3 +158,31 @@ for _en in "${ENABLE[@]}"; do
         || printf 'unit-ensure: failed to enable %s\n' "$_en" >&2
 done
 unset _ue_file _ue_exec
+
+# CARGO-BINARY GUARD. When cargo is absent, a unit whose binary was never built will
+# fail on every tick (exit 2 or 127). Disable it so the box is not red; doctor reports
+# the absent binary and that cargo is not on PATH.
+if ! command -v cargo >/dev/null 2>&1; then
+    for _ue_pair in \
+        "${SPIRA_LOOM_BIN:-}:loom:service" \
+        "${SPIRA_BROKER_BIN:-}:broker:timer" \
+        "${SPIRA_PANEL:-}:cockpit:service" \
+        "${SPIRA_CZAR_PASS_BIN:-}:czar-pass:timer"; do
+        _ue_cbin="${_ue_pair%%:*}"
+        _ue_rest="${_ue_pair#*:}"
+        _ue_cbase="${_ue_rest%%:*}"
+        _ue_ctype="${_ue_rest#*:}"
+        [ -n "${_ue_cbin:-}" ] || continue
+        [ -x "${_ue_cbin}" ] && continue
+        for _ue_cname in \
+            "spira-${_ue_cbase}${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}.${_ue_ctype}" \
+            "spira-${_ue_cbase}.${_ue_ctype}"; do
+            "$SC" --user is-enabled "$_ue_cname" >/dev/null 2>&1 || continue
+            "$SC" --user disable "$_ue_cname" >/dev/null 2>&1 \
+                && printf 'unit-ensure: DISABLED %s (cargo absent, binary missing at %s)\n' \
+                    "$_ue_cname" "${_ue_cbin}" \
+                || printf 'unit-ensure: WARNING could not disable %s\n' "$_ue_cname" >&2
+        done
+    done
+    unset _ue_pair _ue_cbin _ue_rest _ue_cbase _ue_ctype _ue_cname
+fi
