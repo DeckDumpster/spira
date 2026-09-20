@@ -592,9 +592,17 @@ unset _linger_user _cur_linger _linger_stamp
 
 # ---------------------------------------------------------------------------
 # PHASE 5 — HOOKS
-# Skipped under --ephemeral and --no-session-hook.
+# Git hooks armed unconditionally (idempotent); session hook skipped under
+# --ephemeral / --no-session-hook.
 # ---------------------------------------------------------------------------
 phase_start "phase 5: hooks"
+
+if [ "$_dry" = 1 ]; then
+    phase_info "would run: spira/exclude.sh install $SPIRA_REPO"
+else
+    "$SPIRA_HOME/exclude.sh" install "$SPIRA_REPO" 2>&1 | sed 's/^/  /' \
+        || _phase_fail "hooks" "exclude.sh install failed — core.hooksPath not set"
+fi
 
 if [ "$_ephemeral" = 1 ] || [ "$_no_hook" = 1 ]; then
     phase_skip "session hook skipped (--ephemeral or --no-session-hook)"
