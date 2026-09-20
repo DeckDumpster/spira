@@ -95,10 +95,12 @@ cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
 id="$(sed -n 's/^trigger \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
+# Commit something so aeon.sh sees committed=yes and the groom check is the only
+# verdict mechanism that fires. Without a commit aeon.sh reopens for a different
+# reason before the groom check can run.
+printf 'groom pass for %s\n' "$id" >> f
+git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — groom pass"
 case "$(cat "$TMP/act")" in
-    none)
-        # No log write, no ask bead — trigger closes silently.
-        ;;
     log-claim)
         # Write ESCALATED to the groom log without filing an ask bead.
         printf '%s groom: pass complete. Examined 1 beads. LIVELOCK rows: 0. Actions: ESCALATED sp-gc1.\n' \
@@ -113,7 +115,6 @@ case "$(cat "$TMP/act")" in
         ;;
     old-ask)
         # Ask bead exists but was created BEFORE the session — must not excuse the claim.
-        # The test seeds it in fresh() below; shim only writes the log claim here.
         printf '%s groom: pass complete. Examined 1 beads. LIVELOCK rows: 0. Actions: ESCALATED sp-gc3.\n' \
             "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GROOM_LOG"
         ;;
@@ -147,12 +148,9 @@ d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.a
 labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }
 
 # seed a trigger bead for the scrubber/tiler lane.
-# repo:fixture matches the repo map entry so aeon.sh resolves the workspace without
-# falling back to spira_home_repo() and hitting an unmapped name in the fixture.
-# delivers:note:$GROOM_LOG is the deliverable the shim writes; without it aeon.sh
-# reopens the bead as "closed without a commit" before the escalation check can run.
+# repo:fixture matches the repo map entry so aeon.sh resolves the workspace.
 seed_trigger() {  # seed_trigger <id>
-    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"$GROOM_LABEL\",\"repo:fixture\",\"delivers:note:${GROOM_LOG}\""
+    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"$GROOM_LABEL\",\"repo:fixture\""
     printf '{"id":"%s","title":"Groomer pass","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-20T00:00:00Z"}\n' \
         "$1" "$_lbl" | testdb_seed
 }
