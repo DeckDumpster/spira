@@ -254,7 +254,12 @@ PY
 _supervisor_loop() {
     # Ping before any setup so the WatchdogSec timer is reset immediately on entry,
     # covering the window between service start and the first in-loop ping.
-    [ -n "${NOTIFY_SOCKET:-}" ] && systemd-notify --watchdog 2>/dev/null || true
+    # --pid= names the main PID explicitly; without it the manager cannot attribute
+    # the datagram from the short-lived child before it is reaped (sender-PID race).
+    if [ -n "${NOTIFY_SOCKET:-}" ]; then
+        systemd-notify --pid="${WATCHDOG_PID:-$$}" --watchdog \
+            || printf 'collect.sh: systemd-notify --watchdog failed\n' >&2
+    fi
 
     mkdir -p "$FRAG_DIR"
     _sweep_probe_tmps
@@ -284,9 +289,12 @@ _supervisor_loop() {
     trap 'exit' TERM INT
 
     while :; do
-        # Watchdog heartbeat: keeps systemd from killing a live supervisor between ticks.
-        # Requires WatchdogSec= and NotifyAccess=all (systemd-notify is a child process).
-        [ -n "${NOTIFY_SOCKET:-}" ] && systemd-notify --watchdog 2>/dev/null || true
+        # Watchdog heartbeat. --pid= prevents the sender-attribution race;
+        # NotifyAccess=all still required because systemd-notify is a child.
+        if [ -n "${NOTIFY_SOCKET:-}" ]; then
+            systemd-notify --pid="${WATCHDOG_PID:-$$}" --watchdog \
+                || printf 'collect.sh: systemd-notify --watchdog failed\n' >&2
+        fi
 
         # Config-change check: exit cleanly so the restart picks up the new config.
         if [ -n "$_conf_file" ]; then
