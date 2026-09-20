@@ -3768,22 +3768,16 @@ repo_field() {           # repo_field <name> <path|land|base|format|gate|lanes> 
     local name="$1" col="$2"
     [ -f "$SPIRA_REPO_MAP" ] || return 1
     awk -v want="$name" -v col="$col" '
-        function _is_lane_list(s,    n, parts, i, v) {
-            n = split(s, parts, ",")
-            if (n == 0) return 0
-            for (i = 1; i <= n; i++) {
-                v = parts[i]; gsub(/^[ \t]+|[ \t]+$/, "", v)
-                if (v != "plan" && v != "incident" && v != "groom" &&
-                    v != "maechen-sweep" && v != "spike" && v != "czar-trigger") return 0
-            }
-            return 1
-        }
         function _lanes_col_idx(    t) {
             if (NF < 7) return 0
             t = $NF; gsub(/^[ \t]+|[ \t]+$/, "", t)
-            if (t == "consume" || t == "develop" || t == "self") return NF
+            # An empty trailing field means an explicit empty lanes column.
             if (t == "") return NF
-            return _is_lane_list(t) ? NF : 0
+            # A lanes value is a simple identifier: letters, digits, hyphens, commas only.
+            # Gate fragments always contain spaces, slashes, dollars, or other shell chars,
+            # so this pattern distinguishes them in practice.
+            if (t ~ /^[A-Za-z][A-Za-z0-9,_-]*$/) return NF
+            return 0
         }
         BEGIN { FS = "|" }
         /^[ \t]*#/ { next }

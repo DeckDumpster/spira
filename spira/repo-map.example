@@ -85,6 +85,8 @@
 #          a typo must not quietly disable a lane. The accessor is spira_repo_lanes <name>.
 #          This column is the GRANT side only; the project proposal (.spira/modes) and
 #          SPIRA_FAYTHS are intersected with it by a later bead.
+#          NOTE: a gate command that ends with a bare single-word token (e.g., `|| exit`)
+#          is ambiguous; use `|| exit "$?"` or `|| { exit $?; }` instead.
 #
 # EVERY LINE CARRIES ALL SIX COLUMNS, EVEN WHERE THREE OF THEM ARE EMPTY; the seventh
 # (lanes) is optional. A row written in an older, narrower form reads its GATE as a
