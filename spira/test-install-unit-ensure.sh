@@ -251,11 +251,6 @@ UNIT_P="$DEST/spira-broker-present-test.service"
 printf '[Service]\nType=oneshot\nExecStart=%s execute\n' "$PRESENT_BIN" > "$UNIT_P"
 
 for _en in spira-broker-test.service spira-broker-present-test.service; do
-    _ue_new[$_en]=1
-done
-declare -A _ue_new
-
-for _en in spira-broker-test.service spira-broker-present-test.service; do
     _ue_file="$DEST/$_en"
     if [ -f "$_ue_file" ] && ! _ue_execstart_ok "$_ue_file"; then
         _ue_exec="$(grep -m1 '^ExecStart=' "$_ue_file" | sed 's/^ExecStart=//;s/ .*//')"
