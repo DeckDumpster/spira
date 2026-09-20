@@ -146,9 +146,11 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
 labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }
 
-# seed a trigger bead for the scrubber/tiler lane
+# seed a trigger bead for the scrubber/tiler lane.
+# repo:fixture matches the repo map entry so aeon.sh resolves the workspace without
+# falling back to spira_home_repo() and hitting an unmapped name in the fixture.
 seed_trigger() {  # seed_trigger <id>
-    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"$GROOM_LABEL\""
+    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"$GROOM_LABEL\",\"repo:fixture\""
     printf '{"id":"%s","title":"Groomer pass","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-20T00:00:00Z"}\n' \
         "$1" "$_lbl" | testdb_seed
 }
