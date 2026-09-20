@@ -994,7 +994,7 @@ spira_conf_defaults() {
     # --pass fires ci-red (verdict not acting on a red result). In seconds.
     : "${SPIRA_CI_RED_MAX_SECS:=600}"
     # WHETHER A BATCH RUNS THE LOCAL GATE before its PR opens. 0 skips it; CI still runs.
-    : "${SPIRA_QUEUE_LOCAL_GATE:=1}"
+    : "${SPIRA_QUEUE_LOCAL_GATE:=0}"
     # HOW MANY TIMES THE BATCH BUILDER RE-RUNS A WORKFLOW before mailing the operator.
     : "${SPIRA_QUEUE_INFRA_RETRIES:=2}"
     # HOW OLD THE OLDEST CERTIFIED BRANCH MAY BE before the batch builder is considered
