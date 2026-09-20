@@ -38,6 +38,7 @@ done
 }
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+export PATH="$HOME/.local/bin:$PATH"
 
 git init --bare --initial-branch=main "$HOME/scratch-repo.git"
 git clone "$HOME/scratch-repo.git" "$HOME/scratch-repo"

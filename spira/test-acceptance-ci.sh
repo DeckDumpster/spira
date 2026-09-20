@@ -82,5 +82,43 @@ want "scratch repo clone is on main" "main" "$_branch"
 _rmap="$CI_HOME/.config/spira/repo-map"
 [ -f "$_rmap" ] && ok "repo-map written" || bad "repo-map written" "not found"
 
+# --- PATH injection: real acceptance-run.sh prerequisite stage ---
+# acceptance-ci.sh must export $HOME/.local/bin onto PATH before calling
+# acceptance-run.sh. Proven here against the real prerequisite check.
+#
+# /usr/local/bin (where the container's bd lives) is excluded from PATH so
+# the only way acceptance-run.sh can find bd is via the injection.
+_SYSPATH="/usr/local/sbin:/usr/sbin:/sbin:/usr/bin:/bin"
+
+# pass: stub bd in .local/bin; after acceptance-ci injection the prereq passes
+CI_HOME3="$SCRATCH/home3"
+mkdir -p "$CI_HOME3/.local/bin"
+git config --file "$CI_HOME3/.gitconfig" user.email "t@spira" 2>/dev/null || true
+git config --file "$CI_HOME3/.gitconfig" user.name "T" 2>/dev/null || true
+for _t in bd dolt gh; do
+    printf '#!/bin/sh\nexit 0\n' > "$CI_HOME3/.local/bin/$_t"
+    chmod +x "$CI_HOME3/.local/bin/$_t"
+done
+HOME="$CI_HOME3" PATH="$_SYSPATH" XDG_CONFIG_HOME="$CI_HOME3/.config" \
+    bash "$HERE/acceptance-ci.sh" "no-such-tag-$$" --bd-db "$SCRATCH/bd3" \
+    >"$SCRATCH/out3" 2>&1 || true
+want "prereq-pass: bd found on PATH via acceptance-ci injection" \
+    "ok    prereq: bd on PATH" "$(cat "$SCRATCH/out3")"
+
+# pair: bd absent from .local/bin; prereq check fails on that line
+CI_HOME4="$SCRATCH/home4"
+mkdir -p "$CI_HOME4/.local/bin"
+git config --file "$CI_HOME4/.gitconfig" user.email "t@spira" 2>/dev/null || true
+git config --file "$CI_HOME4/.gitconfig" user.name "T" 2>/dev/null || true
+for _t in dolt gh; do  # bd deliberately absent
+    printf '#!/bin/sh\nexit 0\n' > "$CI_HOME4/.local/bin/$_t"
+    chmod +x "$CI_HOME4/.local/bin/$_t"
+done
+HOME="$CI_HOME4" PATH="$_SYSPATH" XDG_CONFIG_HOME="$CI_HOME4/.config" \
+    bash "$HERE/acceptance-ci.sh" "no-such-tag-$$" --bd-db "$SCRATCH/bd4" \
+    >"$SCRATCH/out4" 2>&1 || true
+want "prereq-fail: bd absent → prereq check names it" \
+    "FAIL  prereq: bd on PATH" "$(cat "$SCRATCH/out4")"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
