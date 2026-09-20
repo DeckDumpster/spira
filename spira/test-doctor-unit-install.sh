@@ -80,11 +80,6 @@ echo "fixture: render all units for comparison:"
 # ==========================================================================
 rendered="$(env -i PATH="$PATH" "${COMMON_ENV[@]}" \
     bash "$HERE/../systemd/install.sh" --render 2>&1)"
-if printf '%s\n' "$rendered" | grep -q "^====="; then
-    ok "render produced unit headers"
-else
-    bad "render produced output" "no ===== headers; install.sh may have failed"
-fi
 
 # Write each rendered unit to DEST.
 current_unit=""
@@ -100,6 +95,11 @@ installed_count="$(ls "$DEST" | wc -l)"
 [ "$installed_count" -gt 0 ] \
     && ok "fixture: wrote $installed_count unit file(s) to DEST" \
     || bad "fixture: wrote rendered units" "no files in $DEST"
+# Verify that the specific unit we'll remove later was installed — this is the
+# positive control that install.sh actually ran and rendered the enable-set units.
+[ -f "$DEST/spira-czar-pass-prod.timer" ] \
+    && ok "fixture: czar-pass timer present" \
+    || bad "fixture: czar-pass timer present" "spira-czar-pass-prod.timer missing from $DEST"
 
 # ==========================================================================
 echo

@@ -89,7 +89,6 @@ rendered="$(env -i PATH="$PATH" HOME="$TMP/home" \
     SPIRA_DB="$TMP/db" SPIRA_RUN="$TMP/run" \
     SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
     bash "$HERE/../systemd/install.sh" --render 2>&1)"
-want "render produces headers" "=====" "$rendered"
 
 # Write all units to DEST (full install).
 current_unit=""
@@ -104,6 +103,9 @@ done <<< "$rendered"
 n="$(ls "$DEST" | wc -l)"
 [ "$n" -gt 0 ] && ok "installed $n unit(s) for fixture" \
     || bad "fixture install" "no files in $DEST"
+[ -f "$DEST/spira-czar-pass-prod.timer" ] \
+    && ok "fixture: czar-pass timer present" \
+    || bad "fixture: czar-pass timer present" "spira-czar-pass-prod.timer missing"
 
 # ==========================================================================
 echo
