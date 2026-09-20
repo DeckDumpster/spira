@@ -673,5 +673,53 @@ nowant "16. all-suites-ctrl: no ejection" "ejected" "$out"
 nowant "16. all-suites-ctrl: no halve"    "halved"  "$out"
 clean_case
 
+# =============================================================================
+# 17. SINGLE-STEP JOB: run.updated_at recent, job/step timestamps stale.
+#     Forge emits two last-activity lines: one from run.updated_at (recent) and
+#     one from job/step timestamps (stale, because the single step hasn't finished).
+#     Verdict must take the MAX — the run is progressing, not stuck.
+#     POSITIVE CONTROL: the older last-activity line alone would exceed IDLE_SEC
+#     and trigger cancellation; the fact that it doesn't proves max is taken.
+# =============================================================================
+build_batch sp-vd-w1 sp-vd-w2 > /dev/null
+{
+    grep -v '^opened=' "$(batch_file)"
+    printf 'opened=%s\n' "$(( $(date +%s) - 7200 ))"
+} > "$(batch_file).$$" && mv -f "$(batch_file).$$" "$(batch_file)"
+printf 'started-at: %s\nlast-activity: %s\nlast-activity: %s\n' \
+    "$(( $(date +%s) - 3700 ))" \
+    "$(( $(date +%s) - 30 ))" \
+    "$(( $(date +%s) - 3700 ))" \
+    > "$FORGE_RUN_METADATA_FILE"
+printf 'pending\n' > "$FORGE_STATUS_FILE"
+before_main17="$(remote_main)"
+out="$(verdict "$REPONAME")"
+is     "17. single-step: no push"     "$before_main17" "$(remote_main)"
+nowant "17. single-step: no cancel"   "cancel"         "$(cat "$FORGE_LOG")"
+want   "17. single-step: progressing" "progressing"    "$out"
+clean_case
+
+# =============================================================================
+# 18. PER-REPO CI_MAXSEC OVERRIDE: SPIRA_QUEUE_CI_MAXSEC_<NAME> used when set.
+#     POSITIVE CONTROL: run started 120s ago is within global MAXSEC=3600 and
+#     would NOT be cancelled without the per-repo override. With the override
+#     (FIXTURE_REPO=60), it is past the repo's limit and is cancelled.
+# =============================================================================
+build_batch sp-vd-x1 sp-vd-x2 > /dev/null
+printf 'started-at: %s\n' "$(( $(date +%s) - 120 ))" > "$FORGE_RUN_METADATA_FILE"
+printf 'pending\n' > "$FORGE_STATUS_FILE"
+before_main18="$(remote_main)"
+# Positive control: without the override the run is within global MAXSEC=3600.
+out="$(verdict "$REPONAME")"
+is     "18. per-repo ctrl: no cancel without override" "$before_main18" "$(remote_main)"
+nowant "18. per-repo ctrl: no cancel"  "cancel"  "$(cat "$FORGE_LOG")"
+want   "18. per-repo ctrl: pending"    "pending" "$out"
+# Now set the per-repo override: 60s limit, run is 120s old → stuck.
+: > "$FORGE_LOG"
+out="$(SPIRA_QUEUE_CI_MAXSEC_FIXTURE_REPO=60 verdict "$REPONAME")"
+want "18. per-repo: cancel with override" "cancel" "$(cat "$FORGE_LOG")"
+want "18. per-repo: stuck reported"       "stuck"  "$out"
+clean_case
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

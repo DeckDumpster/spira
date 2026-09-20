@@ -241,6 +241,10 @@ try:
     d = json.load(sys.stdin)
     e = epoch(d.get('run_started_at') or d.get('created_at') or '')
     if e: print('started-at: ' + str(e))
+    # run.updated_at advances while CI runs; job/step timestamps stall for the
+    # duration of a single-step job until it completes.
+    u = epoch(d.get('updated_at') or '')
+    if u: print('last-activity: ' + str(u))
 except Exception: pass
 " 2>/dev/null
         jobs_json="$( cd "$repo" && ghq api \
