@@ -134,7 +134,7 @@ testdb_up suites-timeout || { echo "test-suites-timeout: could not build a fixtu
 
 SH="$TMP/spira"; RUN="$TMP/run"; STATE="$TMP/state"; GATEF="$TMP/gate-suites"
 mkdir -p "$SH" "$RUN" "$STATE" "$TMP/home" "$TMP/repo"
-cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$SH/"
+cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$HERE/suite-state.sh" "$SH/"
 
 # Knobs, every one pinned away from the shipped default.
 BUDGET=60; PERSUITE=3; STALE=3600; PRIO=3; REPONAME=timeout-fixture
@@ -202,7 +202,21 @@ count() { printf '%s\n' "$1" | grep -c . || true; }
 # The gate file names nothing — every planted suite goes to the timed pass.
 printf '# nothing in the gate for this fixture\n' > "$GATEF"
 
-# Plant a suite that sleeps forever — the hung suite under test.
+# Plant a suite that exits quickly — its result proves the runner recovered after the hang.
+plant test-fx-after-hang.sh <<'S'
+#!/usr/bin/env bash
+# covers: spira/suites.sh
+echo "  ok    suite after the hung one ran"
+S
+
+# POSITIVE CONTROL: only the fast suite is present; this proves the runner works before
+# the hung suite is introduced. Running the hung suite in the positive control would file
+# a bead and add dedup ambiguity to the count check below.
+out_pre="$(sut run)"
+want "positive control: the after-hang suite ran on a normal pass" "test-fx-after-hang.sh" "$out_pre"
+
+# Now plant the hung suite and run; it should be killed, filed, and the runner should
+# continue to test-fx-after-hang.sh.
 plant test-fx-hung.sh <<'S'
 #!/usr/bin/env bash
 # covers: spira/suites.sh
@@ -211,20 +225,6 @@ sleep 300
 echo "FAIL  hung suite woke up — the timeout did not fire"
 exit 1
 S
-
-# Plant a suite that exits quickly — its result proves the runner recovered after the hang.
-plant test-fx-after-hang.sh <<'S'
-#!/usr/bin/env bash
-# covers: spira/suites.sh
-echo "  ok    suite after the hung one ran"
-S
-
-# POSITIVE CONTROL: show the runner can actually run a suite before testing recovery.
-out_pre="$(sut run)"
-want "positive control: the after-hang suite ran on a normal pass" "test-fx-after-hang.sh" "$out_pre"
-
-# Now reset and run again with the hung suite present; it should be killed, filed, and
-# the runner should continue to test-fx-after-hang.sh.
 find "$STATE" -maxdepth 1 -name '*.result' -delete 2>/dev/null; true
 
 t0="$(date +%s)"
