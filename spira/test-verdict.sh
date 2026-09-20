@@ -2,7 +2,7 @@
 #
 # test-verdict.sh — merge-queue verdict: fast-forward landing pass.
 #
-# Sixteen cases:
+# Twenty cases:
 #   1. No open batch → forge is never reached.
 #   2. Pending within CI max → nothing happens.
 #   3. Pending, run old and stuck → run cancelled explicitly; no workflow-rerun.
@@ -29,6 +29,10 @@
 #      the batch-head halve is attempted.
 #  16. Positive control for case 15: same batch shape with no offender — members
 #      CERTIFIED; no halve.
+#  17. Single-step job: run.updated_at recent, job/step timestamps stale → MAX taken.
+#  18. Per-repo CI_MAXSEC override: SPIRA_QUEUE_CI_MAXSEC_<NAME> cancels run early.
+#  19. Flaky suite: fails once then passes on retry → member not ejected; flaky_suites=.
+#  20. Always-red control: suite fails twice → member ejected (retry doesn't suppress).
 #
 # The forge seam is a local fixture; no network is reached.
 # mail.sh and suites.sh are stubbed to capture calls.
@@ -720,6 +724,94 @@ out="$(SPIRA_QUEUE_CI_MAXSEC_FIXTURE_REPO=60 verdict "$REPONAME")"
 want "18. per-repo: cancel with override" "cancel" "$(cat "$FORGE_LOG")"
 want "18. per-repo: stuck reported"       "stuck"  "$out"
 clean_case
+
+# =============================================================================
+# 19. FLAKY SUITE — batch of 2 members, suite fails once then passes on retry.
+#     Verdict ejects neither member; flaky_suites= appears in output; suites.sh
+#     observe-flake is called for the suite.
+#     POSITIVE CONTROL (case 20): same shape but suite fails twice → member ejected.
+# =============================================================================
+# Mock: first call for each unique test_ref exits 1 (red); second exits 0 (green).
+# State is tracked per-ref via a counter file in REPRO_STATE_DIR.
+REPRO_STATE_DIR="$TMP/repro-state-19"
+mkdir -p "$REPRO_STATE_DIR"
+export REPRO_STATE_DIR
+cat > "$SH/repro-flaky.sh" <<'REPRO'
+#!/usr/bin/env bash
+shift 2; shift 2  # skip --mode serial --suites csv
+ref="${1:-}"
+key="$(printf '%s' "$ref" | sha256sum | cut -c1-8)"
+count_file="$REPRO_STATE_DIR/$key"
+count=0; [ -f "$count_file" ] && count=$(cat "$count_file")
+count=$(( count + 1 ))
+printf '%d\n' "$count" > "$count_file"
+[ "$count" -eq 1 ] && exit 1 || exit 0
+REPRO
+chmod +x "$SH/repro-flaky.sh"
+
+base_sha19="$(git -C "$REPO" rev-parse origin/main)"
+for id in sp-vd-f1 sp-vd-f2; do
+    bwt19="$RUN/worktree/$id"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$bwt19" origin/main 2>/dev/null || true
+    printf '%s\n' "$id" > "$bwt19/$id.txt"
+    git -C "$bwt19" add -A
+    git -C "$bwt19" commit -q -m "$id: work"
+    printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" \
+        > "$LANDSTATE/$id"
+done
+tip_f1="$(git -C "$REPO" rev-parse "spira/sp-vd-f1")"
+tip_f2="$(git -C "$REPO" rev-parse "spira/sp-vd-f2")"
+wt19="$RUN/worktree/.b19"
+git -C "$REPO" worktree add -q --detach "$wt19" "$base_sha19" 2>/dev/null || true
+git -C "$wt19" merge -q --no-edit --no-ff -m "spira: land sp-vd-f1" "$tip_f1" >/dev/null 2>&1
+git -C "$wt19" merge -q --no-edit --no-ff -m "spira: land sp-vd-f2" "$tip_f2" >/dev/null 2>&1
+batch_head19="$(git -C "$wt19" rev-parse HEAD)"
+git -C "$REPO" worktree remove -f "$wt19" 2>/dev/null || true
+{ printf 'pr=71\nhead=%s\nbase=%s\nmembers=sp-vd-f1:%s sp-vd-f2:%s\nopened=%s\n' \
+    "$batch_head19" "$base_sha19" "$tip_f1" "$tip_f2" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-flaky-repro.sh\n' > "$FORGE_STATUS_FILE"
+: > "$SUITES_LOG"
+out="$(SPIRA_QUEUE_REPRO_BATCH="$SH/repro-flaky.sh" verdict "$REPONAME")"
+case "$(landstate sp-vd-f1)" in CERTIFIED*) ok "19. flaky-repro: sp-vd-f1 not ejected (CERTIFIED)" ;;
+    EJECTED*) bad "19. flaky-repro: sp-vd-f1 not ejected" "was EJECTED" ;;
+    *) bad "19. flaky-repro: sp-vd-f1 not ejected" "got: $(landstate sp-vd-f1)" ;; esac
+case "$(landstate sp-vd-f2)" in CERTIFIED*) ok "19. flaky-repro: sp-vd-f2 not ejected (CERTIFIED)" ;;
+    EJECTED*) bad "19. flaky-repro: sp-vd-f2 not ejected" "was EJECTED" ;;
+    *) bad "19. flaky-repro: sp-vd-f2 not ejected" "got: $(landstate sp-vd-f2)" ;; esac
+want   "19. flaky-repro: flaky_suites in output"    "flaky_suites="       "$out"
+want   "19. flaky-repro: suite named in output"     "test-flaky-repro.sh" "$out"
+want   "19. flaky-repro: observe-flake called"      "test-flaky-repro.sh" "$(cat "$SUITES_LOG")"
+nowant "19. flaky-repro: no ejection"               "ejected"             "$out"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 20. ALWAYS-RED CONTROL — same batch shape as case 19, but suite fails twice.
+#     The member must still be ejected (retry does not suppress a real failure).
+# =============================================================================
+cat > "$SH/repro-always-red.sh" <<'REPRO'
+#!/usr/bin/env bash
+exit 1
+REPRO
+chmod +x "$SH/repro-always-red.sh"
+
+base_sha20="$(git -C "$REPO" rev-parse origin/main)"
+bwt20="$RUN/worktree/sp-vd-g1"
+git -C "$REPO" worktree add -q -b "spira/sp-vd-g1" "$bwt20" origin/main 2>/dev/null || true
+printf 'sp-vd-g1\n' > "$bwt20/sp-vd-g1.txt"
+git -C "$bwt20" add -A
+git -C "$bwt20" commit -q -m "sp-vd-g1: work"
+tip_g1="$(git -C "$REPO" rev-parse "spira/sp-vd-g1")"
+printf 'BATCHED %s %s\n' "$tip_g1" "$(date +%s)" > "$LANDSTATE/sp-vd-g1"
+{ printf 'pr=72\nhead=%s\nbase=%s\nmembers=sp-vd-g1:%s\nopened=%s\n' \
+    "$tip_g1" "$base_sha20" "$tip_g1" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-always-red.sh\n' > "$FORGE_STATUS_FILE"
+out="$(SPIRA_QUEUE_REPRO_BATCH="$SH/repro-always-red.sh" verdict "$REPONAME")"
+case "$(landstate sp-vd-g1)" in EJECTED*) ok "20. always-red: sp-vd-g1 ejected" ;;
+    *) bad "20. always-red: sp-vd-g1 ejected" "got: $(landstate sp-vd-g1)" ;; esac
+want "20. always-red: ejection reported" "ejected" "$out"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
