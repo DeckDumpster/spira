@@ -211,22 +211,22 @@ for i in (d if isinstance(d, list) else [d]):
 count() { printf '%s\n' "${1:-}" | grep -c '[^ ]' 2>/dev/null || echo 0; }
 
 # Positive control: two passes with the same slice produce the same fingerprint.
-PERSUITE=20 sut run > /dev/null
+PERSUITE=3 sut run > /dev/null
 fp1="$(result_field test-fx-hangs.sh 4 || true)"
 rm -f "$STATE/test-fx-hangs.sh.result"
-PERSUITE=20 sut run > /dev/null
+PERSUITE=3 sut run > /dev/null
 fp2="$(result_field test-fx-hangs.sh 4 || true)"
 [ -n "${fp1:-}" ] && [ -n "${fp2:-}" ] \
     && is "positive control: same PERSUITE → same fingerprint" "$fp1" "$fp2" \
     || bad "positive control: fingerprint was recorded" "fp1=[${fp1:-empty}] fp2=[${fp2:-empty}]"
 
-# Now test different slices. Two passes with PERSUITE=40 vs PERSUITE=20 produce the same
+# Now test different slices. Two passes with PERSUITE=5 vs PERSUITE=3 produce the same
 # fingerprint — the suite name, not the slice, is the stable identifier.
 rm -f "$STATE/test-fx-hangs.sh.result"
-PERSUITE=40 sut run > /dev/null
+PERSUITE=5 sut run > /dev/null
 fp_a="$(result_field test-fx-hangs.sh 4 || true)"
 rm -f "$STATE/test-fx-hangs.sh.result"
-PERSUITE=20 sut run > /dev/null
+PERSUITE=3 sut run > /dev/null
 fp_b="$(result_field test-fx-hangs.sh 4 || true)"
 [ -n "${fp_a:-}" ] && [ -n "${fp_b:-}" ] \
     && is "different budgets produce the same timeout fingerprint" "$fp_a" "$fp_b" \
