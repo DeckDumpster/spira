@@ -3161,6 +3161,30 @@ print("\n\n".join(parts))
 ' "$prefixes" "$budget" "$core_csv" "$harness" 2>/dev/null
 }
 
+# Split a rendered persona prompt on <!-- task --> and write system.md / task.md.
+# system_prompt_split <sysfile> <taskfile> <statutes_text> <rendered_prompt>
+# Sets SPIRA_SYSTEM_FLAG to the appropriate --*-system-prompt-file value.
+# Reads FAYTH_SYSTEM_PROMPT (replace|append, default append): replace uses
+# --system-prompt-file; append (or unset) uses --append-system-prompt-file so
+# Claude Code's coding guidance stays underneath the persona layer.
+system_prompt_split() {
+    local sysfile="$1" taskfile="$2" statutes="$3" prompt="$4"
+    local sys task
+    if [[ "$prompt" == *'<!-- task -->'* ]]; then
+        sys="${prompt%%<!-- task -->*}"
+        task="${prompt#*<!-- task -->}"
+        task="${task#$'\n'}"
+    else
+        sys=""; task="$prompt"
+    fi
+    printf '# Memories in force\n\n%s\n\n---\n\n%s' "$statutes" "$sys" > "$sysfile"
+    printf '%s' "$task" > "$taskfile"
+    case "${FAYTH_SYSTEM_PROMPT:-append}" in
+        replace) SPIRA_SYSTEM_FLAG="--system-prompt-file" ;;
+        *)       SPIRA_SYSTEM_FLAG="--append-system-prompt-file" ;;
+    esac
+}
+
 # THE GOAL EPIC IS ONE PILGRIMAGE, NOT "THE WORK". This answers "is the pilgrimage under
 # $SPIRA_GOAL finished", which is what CHECK 1, CHECK 3 and CHECK 8 reason about. It is the
 # wrong question for anything that must cover what the harness DISPATCHES: a bead carrying a

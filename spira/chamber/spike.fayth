@@ -61,3 +61,6 @@ FAYTH_STALL_BEATS=15
 # and that is enforced by confine.sh at the landing gate rather than by withholding an editor.
 FAYTH_TOOLS="Bash,Read,Edit,Write,Glob,Grep,TodoWrite,WebSearch,WebFetch"
 FAYTH_PROJECT_INSTRUCTIONS=repo
+
+# APPEND: the spike writes code proofs-of-concept, so the coding guidance stays.
+FAYTH_SYSTEM_PROMPT=append
