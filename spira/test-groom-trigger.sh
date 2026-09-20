@@ -50,6 +50,11 @@ TRIGSH="$HERE/groom-trigger.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 
+# GROOM_MAP: one repo in develop mode so the lane check admits the groom lane (and any
+# custom SPIRA_GROOMER_LABEL, since _spira_expand_lanes reads env vars at expansion time).
+GROOM_MAP="$T/groom-map"
+printf 'test-repo | /tmp/test-repo | push | origin/main | | true | develop\n' > "$GROOM_MAP"
+
 # Build a stub bd. The stub checks $BD_LIST_OUTPUT to decide what to return for
 # 'list' subcommands and records all argv to BD_LOG. For all other subcommands it
 # exits 0 with nothing on stdout.
@@ -83,6 +88,7 @@ run_trigger() {
         BD_LOG_PATH="$BD_LOG" \
         BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" \
         SPIRA_DB="$T/fixture.db" \
+        SPIRA_REPO_MAP="$GROOM_MAP" \
         bash "$TRIGSH" "$@" 2>&1
 }
 
@@ -138,6 +144,7 @@ out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
         BD_LOG_PATH="$BD_LOG" \
         BD_LIST_OUTPUT="[]" \
         SPIRA_DB="$T/fixture.db" \
+        SPIRA_REPO_MAP="$GROOM_MAP" \
         bash "$TRIGSH" 2>&1)"; rc=$?
 is   "create failure exits 1" 1 "$rc"
 want "failure log mentions ERROR" "ERROR" "$out"
@@ -157,6 +164,7 @@ out="$(BD_LIST_OUTPUT="[]" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_DB="$T/fixture.db" \
+        SPIRA_REPO_MAP="$GROOM_MAP" \
         SPIRA_SCOPE_LABEL="myproject" \
         SPIRA_GROOMER_LABEL="hygiene" \
     bash "$TRIGSH" 2>&1)"; rc=$?
@@ -184,12 +192,52 @@ out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_DB="$T/fixture.db" \
+        SPIRA_REPO_MAP="$GROOM_MAP" \
         SPIRA_SCOPE_LABEL="" \
         SPIRA_GROOMER_LABEL="groom" \
     bash "$TRIGSH" 2>&1)"; rc=$?
 is     "empty scope exits 0"               0     "$rc"
 nowant "no leading comma in labels"        ",groom" "$(grep 'create' "$BD_LOG")"
 want   "groomer label present without scope" "groom" "$(cat "$BD_LOG")"
+
+# ==========================================================================================
+echo
+echo "LANE GUARD: no repository admits groom — trigger skips with one log line"
+# ==========================================================================================
+# POSITIVE CONTROL (law-absence-needs-a-positive-control): the next test proves the skip
+# is lifted when a repo does admit the lane; if the trigger always skipped, both tests
+# would exit 0 but the positive control would lack a bd create call.
+CONSUME_MAP="$T/consume-map"
+printf 'home-tg | /tmp/home-tg | push | origin/main | | | consume\n' > "$CONSUME_MAP"
+printf 'plan-only | /tmp/plan-only | push | origin/main | | | consume\n' >> "$CONSUME_MAP"
+: > "$BD_LOG"
+out_ng="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    SPIRA_CONF="$NONE" \
+    SPIRA_BD="$STUB_BD" \
+    BD_LOG_PATH="$BD_LOG" \
+    BD_LIST_OUTPUT="[]" \
+    SPIRA_DB="$T/fixture.db" \
+    SPIRA_REPO_MAP="$CONSUME_MAP" \
+    SPIRA_HOME_REPO="home-tg" \
+    SPIRA_GROOMER_LABEL="groom" \
+    bash "$TRIGSH" 2>&1)"; rc_ng=$?
+is     "no-groom-map: trigger exits 0"        0 "$rc_ng"
+nowant "no-groom-map: no bd create call"      "create" "$(cat "$BD_LOG")"
+want   "no-groom-map: logs skipping trigger"  "skipping trigger" "$out_ng"
+
+# POSITIVE CONTROL: develop mode admits groom — trigger must fire.
+: > "$BD_LOG"
+out_gp="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    SPIRA_CONF="$NONE" \
+    SPIRA_BD="$STUB_BD" \
+    BD_LOG_PATH="$BD_LOG" \
+    BD_LIST_OUTPUT="[]" \
+    SPIRA_DB="$T/fixture.db" \
+    SPIRA_REPO_MAP="$GROOM_MAP" \
+    SPIRA_GROOMER_LABEL="groom" \
+    bash "$TRIGSH" 2>&1)"; rc_gp=$?
+is   "groom-admitted map: trigger exits 0"      0        "$rc_gp"
+want "groom-admitted map: bd create is called"  "create" "$(cat "$BD_LOG")"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"

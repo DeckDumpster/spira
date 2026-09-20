@@ -108,6 +108,11 @@ git -C "$TESTREPO" commit --allow-empty -q -m "initial"
 mkdir -p "$TESTREPO/.git/refs/remotes/origin"
 git -C "$TESTREPO" rev-parse HEAD > "$TESTREPO/.git/refs/remotes/origin/main"
 
+# SELFMAP: a repo-map that admits maechen-sweep for the testrepo home repo.
+# Required by the lane check added in sp-4k8bf: triggers skip when no repo admits their lane.
+SELFMAP="$T/selfmap"
+printf 'testrepo | %s | push | origin/main | | true | self\n' "$TESTREPO" > "$SELFMAP"
+
 # add_landing <subject> — add a commit that the landing trigger counts.
 add_landing() {
     git -C "$TESTREPO" commit --allow-empty -q -m "$1"
@@ -132,6 +137,7 @@ run_trigger() {
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$RUNDIR" \
         SPIRA_REPO="$TESTREPO" \
+        SPIRA_REPO_MAP="$SELFMAP" \
         SPIRA_MAECHEN_LABEL="${SPIRA_MAECHEN_LABEL:-maechen-sweep}" \
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-spira}" \
         SPIRA_MAECHEN_LANDING_INTERVAL="${SPIRA_MAECHEN_LANDING_INTERVAL:-25}" \
@@ -263,6 +269,8 @@ git -C "$NONMATCH_REPO" commit --allow-empty -q -m "sp-xyz9: real landing"
 git -C "$NONMATCH_REPO" commit --allow-empty -q -m "fix typo in readme"
 mkdir -p "$NONMATCH_REPO/.git/refs/remotes/origin"
 git -C "$NONMATCH_REPO" rev-parse HEAD > "$NONMATCH_REPO/.git/refs/remotes/origin/main"
+NONMATCH_MAP="$T/nonmatch-map"
+printf 'nonmatch | %s | push | origin/main | | true | self\n' "$NONMATCH_REPO" > "$NONMATCH_MAP"
 
 # Watermark = now so elapsed = 0 and the time trigger does not fire independently.
 # Use a far-future gap threshold to doubly ensure only the landing trigger is tested.
@@ -276,6 +284,7 @@ out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$RUNDIR" \
         SPIRA_REPO="$NONMATCH_REPO" \
+        SPIRA_REPO_MAP="$NONMATCH_MAP" \
         SPIRA_MAECHEN_LABEL="maechen-sweep" \
         SPIRA_SCOPE_LABEL="spira" \
         SPIRA_MAECHEN_LANDING_INTERVAL=2 \
@@ -335,6 +344,7 @@ dedup_ip_out="$(env -i HOME="$T" \
     SPIRA_DB="$SPIRA_DB" \
     SPIRA_RUN="$RUNDIR" \
     SPIRA_REPO="$TESTREPO" \
+    SPIRA_REPO_MAP="$SELFMAP" \
     SPIRA_MAECHEN_LABEL="$DEDUP_IP_MAECHEN" \
     SPIRA_SCOPE_LABEL="$DEDUP_IP_SCOPE" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
@@ -379,6 +389,7 @@ SPIRA_MAECHEN_LANDING_INTERVAL=999 \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$RUNDIR" \
         SPIRA_REPO="$TESTREPO" \
+        SPIRA_REPO_MAP="$SELFMAP" \
         SPIRA_MAECHEN_LABEL="maechen-sweep" \
         SPIRA_SCOPE_LABEL="spira" \
         SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
@@ -403,6 +414,7 @@ out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$RUNDIR" \
         SPIRA_REPO="$TESTREPO" \
+        SPIRA_REPO_MAP="$SELFMAP" \
         SPIRA_SCOPE_LABEL="myproject" \
         SPIRA_MAECHEN_LABEL="retro" \
         SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
@@ -431,6 +443,7 @@ out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$RUNDIR" \
         SPIRA_REPO="$TESTREPO" \
+        SPIRA_REPO_MAP="$SELFMAP" \
         SPIRA_SCOPE_LABEL="" \
         SPIRA_MAECHEN_LABEL="maechen-sweep" \
         SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
@@ -486,8 +499,10 @@ mkdir -p "$HOME_B4T/.git/refs/remotes/origin"
 git -C "$HOME_B4T" rev-parse HEAD > "$HOME_B4T/.git/refs/remotes/origin/main"
 
 REPOMAP_B4T="$T/repomap-b4t"
-# no-origin repo listed before the counted repo — the problematic ordering.
-printf 'noremote|%s|\ncounted|%s|\n' "$NOREMOTE_B4T" "$COUNTED_B4T" > "$REPOMAP_B4T"
+# home-b4t with self mode so the lane check admits maechen-sweep. no-origin listed before
+# counted — the ordering that triggered the b4t arithmetic-error defect.
+printf 'home-b4t | %s | push | origin/main | | true | self\nnoremote|%s|\ncounted|%s|\n' \
+    "$HOME_B4T" "$NOREMOTE_B4T" "$COUNTED_B4T" > "$REPOMAP_B4T"
 : > "$BD_LOG"
 out_b4t="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_CONF="$NONE" \
@@ -558,7 +573,9 @@ mkdir -p "$HOME_3LJK/.git/refs/remotes/origin"
 git -C "$HOME_3LJK" rev-parse HEAD > "$HOME_3LJK/.git/refs/remotes/origin/main"
 
 REPOMAP_3LJK="$T/repomap-3ljk"
-printf 'gitea-repo|%s|\n' "$GITEA_REPO" > "$REPOMAP_3LJK"
+# home-3ljk with self mode so the lane check admits maechen-sweep.
+printf 'home-3ljk | %s | push | origin/main | | true | self\ngitea-repo|%s|\n' \
+    "$HOME_3LJK" "$GITEA_REPO" > "$REPOMAP_3LJK"
 : > "$BD_LOG"
 out_3ljk="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:/usr/lib/git-core" \
     SPIRA_CONF="$NONE" \
@@ -599,10 +616,12 @@ git -C "$LAND_FORM_REPO" commit --allow-empty -q -m "spira: land sp-bbb2"
 mkdir -p "$LAND_FORM_REPO/.git/refs/remotes/origin"
 git -C "$LAND_FORM_REPO" rev-parse HEAD > "$LAND_FORM_REPO/.git/refs/remotes/origin/main"
 
+printf 'land-form | %s | push | origin/main | | true | self\n' "$LAND_FORM_REPO" > "$T/map-land-form"
 : > "$BD_LOG"
 out_lf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
     SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$LAND_FORM_REPO" \
+    SPIRA_REPO_MAP="$T/map-land-form" \
     SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
     bash "$TRIGSH" 2>&1)"; rc_lf=$?
@@ -627,10 +646,12 @@ git -C "$MERGE_FORM_REPO" commit --allow-empty -q -m "Merge pull request #42 fro
 mkdir -p "$MERGE_FORM_REPO/.git/refs/remotes/origin"
 git -C "$MERGE_FORM_REPO" rev-parse HEAD > "$MERGE_FORM_REPO/.git/refs/remotes/origin/main"
 
+printf 'merge-form | %s | push | origin/main | | true | self\n' "$MERGE_FORM_REPO" > "$T/map-merge-form"
 : > "$BD_LOG"
 out_mf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
     SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$MERGE_FORM_REPO" \
+    SPIRA_REPO_MAP="$T/map-merge-form" \
     SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
     bash "$TRIGSH" 2>&1)"; rc_mf=$?
@@ -657,11 +678,13 @@ git -C "$DEDUP_FORM_REPO" commit --allow-empty -q -m "spira: land sp-eee5"
 mkdir -p "$DEDUP_FORM_REPO/.git/refs/remotes/origin"
 git -C "$DEDUP_FORM_REPO" rev-parse HEAD > "$DEDUP_FORM_REPO/.git/refs/remotes/origin/main"
 
+printf 'dedup-form | %s | push | origin/main | | true | self\n' "$DEDUP_FORM_REPO" > "$T/map-dedup-form"
 # Threshold=2: only 1 distinct bead landed — trigger must NOT fire.
 : > "$BD_LOG"
 out_dd="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
     SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$DEDUP_FORM_REPO" \
+    SPIRA_REPO_MAP="$T/map-dedup-form" \
     SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
     bash "$TRIGSH" 2>&1)"; rc_dd=$?
@@ -675,6 +698,7 @@ git -C "$DEDUP_FORM_REPO" rev-parse HEAD > "$DEDUP_FORM_REPO/.git/refs/remotes/o
 out_dd2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_CONF="$NONE" SPIRA_BD="$STUB_BD" BD_LOG_PATH="$BD_LOG" BD_LIST_OUTPUT="[]" \
     SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" SPIRA_REPO="$DEDUP_FORM_REPO" \
+    SPIRA_REPO_MAP="$T/map-dedup-form" \
     SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2 \
     bash "$TRIGSH" 2>&1)"; rc_dd2=$?
@@ -710,7 +734,8 @@ mkdir -p "$HOMEREPO_WPJM/.git/refs/remotes/origin"
 git -C "$HOMEREPO_WPJM" rev-parse HEAD > "$HOMEREPO_WPJM/.git/refs/remotes/origin/main"
 
 REPOMAP_WPJM="$T/repomap-wpjm"
-printf 'home-wpjm|%s|\n' "$HOMEREPO_WPJM" > "$REPOMAP_WPJM"
+# Full 7-column entry so repo_field "home-wpjm" lanes returns "self" and the lane check passes.
+printf 'home-wpjm | %s | push | origin/main | | true | self\n' "$HOMEREPO_WPJM" > "$REPOMAP_WPJM"
 
 # Run 1: threshold=2, time trigger disabled — must fire (proves landings are counted).
 printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
@@ -755,6 +780,56 @@ out_wpjm2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
 is     "threshold=3 exits 0 — home repo not double-counted" 0 "$rc_wpjm2"
 nowant "no create at threshold=3 — exactly 2 landings, not 4" \
     "create" "$(cat "$BD_LOG")"
+
+# ==========================================================================================
+echo
+echo "LANE GUARD: no repository admits maechen-sweep — trigger skips with one log line"
+# ==========================================================================================
+# POSITIVE CONTROL (law-absence-needs-a-positive-control): the next test proves the skip
+# is lifted when a repo does admit the lane; if the trigger always skipped, both tests
+# would exit 0 but the positive control would lack a bd create call.
+NOLANEMAP="$T/nolanemap"
+printf 'testrepo | %s | push | origin/main | | | develop\n' "$TESTREPO" > "$NOLANEMAP"
+printf 'dev-repo | /tmp/dev | push | origin/main | | | develop\n' >> "$NOLANEMAP"
+printf '0\n' > "$WATERMARK_FILE"
+: > "$BD_LOG"
+out_ng="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    SPIRA_CONF="$NONE" \
+    SPIRA_BD="$STUB_BD" \
+    BD_LOG_PATH="$BD_LOG" \
+    BD_LIST_OUTPUT="[]" \
+    SPIRA_DB="$T/fixture.db" \
+    SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO="$TESTREPO" \
+    SPIRA_REPO_MAP="$NOLANEMAP" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" \
+    SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
+    SPIRA_MAECHEN_LANDING_INTERVAL=0 \
+    bash "$TRIGSH" 2>&1)"; rc_ng=$?
+is     "no-lane map: trigger exits 0"         0 "$rc_ng"
+nowant "no-lane map: no bd create call"       "create" "$(cat "$BD_LOG")"
+want   "no-lane map: logs skipping trigger"   "skipping trigger" "$out_ng"
+
+# POSITIVE CONTROL: testrepo is in SELFMAP with self mode — maechen-sweep is admitted.
+printf '0\n' > "$WATERMARK_FILE"
+: > "$BD_LOG"
+out_lp="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    SPIRA_CONF="$NONE" \
+    SPIRA_BD="$STUB_BD" \
+    BD_LOG_PATH="$BD_LOG" \
+    BD_LIST_OUTPUT="[]" \
+    SPIRA_DB="$T/fixture.db" \
+    SPIRA_RUN="$RUNDIR" \
+    SPIRA_REPO="$TESTREPO" \
+    SPIRA_REPO_MAP="$SELFMAP" \
+    SPIRA_MAECHEN_LABEL="maechen-sweep" \
+    SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
+    SPIRA_MAECHEN_LANDING_INTERVAL=0 \
+    bash "$TRIGSH" 2>&1)"; rc_lp=$?
+is   "lane-admitted map: trigger exits 0"       0        "$rc_lp"
+want "lane-admitted map: bd create is called"   "create" "$(cat "$BD_LOG")"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"

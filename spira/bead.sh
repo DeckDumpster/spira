@@ -39,6 +39,41 @@ _bead_file() {
     [ -f "$fpath" ] || { printf 'bead: no such persona: %s\n' "$for_fayth" >&2; return 2; }
     local labels; labels="$(fayth_get "$for_fayth" FAYTH_LABELS "")"
     [ -n "$labels" ] || { printf 'bead: persona %s has no partition labels\n' "$for_fayth" >&2; return 2; }
+    # LANE CHECK. The repo must admit the persona's partition lane.
+    # Override: SPIRA_BEAD_LANE_OVERRIDE=1
+    if [ -z "${SPIRA_BEAD_LANE_OVERRIDE:-}" ]; then
+        local _p="${SPIRA_PLAN_LABEL:-plan}"
+        # literal-ok: bash fallbacks; conf.sh always sets SPIRA_MAECHEN_LABEL before this runs
+        local _vocab="${_p} ${SPIRA_INCIDENT_LABEL:-incident} ${SPIRA_GROOMER_LABEL:-groom} ${SPIRA_MAECHEN_LABEL:-maechen-sweep} ${SPIRA_SPIKE_LABEL:-spike} ${SPIRA_CZAR_LABEL:-czar-trigger}"
+        local _partition="" _lbl _ifs="$IFS"
+        IFS=,
+        for _lbl in $labels; do
+            IFS="$_ifs"
+            _lbl="${_lbl#"${_lbl%%[![:space:]]*}"}"; _lbl="${_lbl%"${_lbl##*[![:space:]]}"}"
+            case " $_vocab " in *" $_lbl "*) _partition="$_lbl" ;; esac
+            IFS=,
+        done
+        IFS="$_ifs"
+        if [ -n "$_partition" ]; then
+            local _repo_lanes
+            _repo_lanes="$(spira_repo_lanes "$repo" 2>/dev/null)" || _repo_lanes="$_p"
+            case " $_repo_lanes " in
+                *" $_partition "*) ;;
+                *)
+                    local _raw; _raw="$(repo_field "$repo" lanes 2>/dev/null)"
+                    local _refuser
+                    if [ -n "$_raw" ]; then
+                        _refuser="repo-map (lanes=${_raw})"
+                    else
+                        _refuser="repo-map (no lanes column — defaults to ${_p})"
+                    fi
+                    printf 'bead: repo:%s does not admit lane %s — refused by %s\n' \
+                        "$repo" "$_partition" "$_refuser" >&2
+                    printf 'bead: override: SPIRA_BEAD_LANE_OVERRIDE=1\n' >&2
+                    return 2 ;;
+            esac
+        fi
+    fi
     labels="$labels,repo:$repo"
     set -- create "$title" -l "$labels"
     [ -n "$priority" ]  && set -- "$@" -p "$priority"

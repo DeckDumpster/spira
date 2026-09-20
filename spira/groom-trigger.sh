@@ -27,8 +27,8 @@
 # covers: spira/groom-trigger.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=conf.sh
-. "$HERE/conf.sh"
+# shellcheck source=lib.sh
+. "$HERE/lib.sh"
 
 BD="${SPIRA_BD:-bd}"
 DB="${SPIRA_DB:-.}"
@@ -58,6 +58,28 @@ open_count="$(printf '%s\n' "$open_json" \
 
 if [ "${open_count:-0}" -gt 0 ] 2>/dev/null; then
     log "trigger already open ($open_count bead(s) with labels [$LABELS]) — skipping"
+    exit 0
+fi
+
+# LANE CHECK. Skip when no repository admits the groom lane — on a consuming install
+# this prevents trigger beads from accumulating for work nobody can do.
+_gr_lane="${SPIRA_GROOMER_LABEL:-groom}"  # literal-ok: bash fallback; SPIRA_GROOMER_LABEL set by conf.sh
+_lane_admitted=0
+_hr="$(spira_home_repo 2>/dev/null)" || _hr=""
+if [ -n "$_hr" ]; then
+    _hl="$(spira_repo_lanes "$_hr" 2>/dev/null)" || _hl=""
+    case " $_hl " in *" $_gr_lane "*) _lane_admitted=1 ;; esac
+fi
+if [ "$_lane_admitted" = 0 ] && [ -f "${SPIRA_REPO_MAP:-}" ]; then
+    while IFS='|' read -r _rn _rest; do
+        _rn="${_rn#"${_rn%%[![:space:]]*}"}"; _rn="${_rn%"${_rn##*[![:space:]]}"}"
+        case "${_rn:-}" in ''|'#'*) continue ;; esac
+        _rl="$(spira_repo_lanes "$_rn" 2>/dev/null)" || continue
+        case " $_rl " in *" $_gr_lane "*) _lane_admitted=1; break ;; esac
+    done < "$SPIRA_REPO_MAP"
+fi
+if [ "$_lane_admitted" = 0 ]; then
+    log "no repository admits lane ${_gr_lane} — skipping trigger"
     exit 0
 fi
 

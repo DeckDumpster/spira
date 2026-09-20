@@ -3878,14 +3878,23 @@ repo_land() {            # repo_land <name> -> push | pr | hold | queue
 
 # spira_repo_lanes <name> -> the granted lane set (space-separated partition labels).
 #
-# A six-column row, a missing lanes column, and an explicit empty lanes field all yield the
-# plan label alone. A mode name (consume/develop/self) expands to its lane set using the
-# configured SPIRA_*_LABEL values. An unknown mode name or unknown lane label is a hard
-# error naming the row — a typo must not quietly disable a lane.
+# A missing lanes column or empty field admits all known lanes (no restriction). A mode name
+# (consume/develop/self) expands to its lane set using the configured SPIRA_*_LABEL values.
+# An unknown mode name or unknown lane label is a hard error naming the row — a typo must
+# not quietly disable a lane.
 spira_repo_lanes() {
     local name="${1:-}" raw
     raw="$(repo_field "$name" lanes 2>/dev/null)"
-    [ -z "$raw" ] && { printf '%s' "${SPIRA_PLAN_LABEL:-plan}"; return 0; }
+    [ -z "$raw" ] && {
+        local p="${SPIRA_PLAN_LABEL:-plan}"
+        local inc="${SPIRA_INCIDENT_LABEL:-incident}"
+        local gr="${SPIRA_GROOMER_LABEL:-groom}"
+        local mae="${SPIRA_MAECHEN_LABEL:-maechen-sweep}"  # literal-ok: bash fallback; SPIRA_MAECHEN_LABEL set by conf.sh
+        local sp="${SPIRA_SPIKE_LABEL:-spike}"
+        local cz="${SPIRA_CZAR_LABEL:-czar-trigger}"
+        printf '%s %s %s %s %s %s' "$p" "$inc" "$gr" "$mae" "$sp" "$cz"
+        return 0
+    }
     _spira_expand_lanes "$name" "$raw"
 }
 

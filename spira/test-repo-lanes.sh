@@ -2,14 +2,14 @@
 #
 # test-repo-lanes.sh — repo-map lanes column: parsing, mode expansion, and validation.
 #
-# ACCEPTANCE CRITERIA (bead sp-5q5mi):
-#   1. Six-column row (no lanes column) yields exactly plan.
+# ACCEPTANCE CRITERIA (bead sp-5q5mi, revised sp-4k8bf):
+#   1. Six-column row (no lanes column) admits all lanes (no restriction declared).
 #   2. Seven-column row naming a mode yields that mode's lane set.
 #   3. Seven-column row listing lanes explicitly yields exactly those lanes.
 #   4. Unknown mode name is a hard parse error naming the row.
 #   5. Unknown lane label is a hard parse error naming the row.
 #   6. Positive control: a valid row still parses after the above checks.
-#   7. Empty lanes field (trailing pipe, nothing after it) yields plan.
+#   7. Empty lanes field (trailing pipe, nothing after it) admits all lanes.
 #
 # POSITIVE CONTROLS. Each absence assertion is preceded by a presence assertion on the same
 # path, so a check pointed at the wrong thing and a check that found nothing look different
@@ -52,7 +52,7 @@ MAP="$T/repo-map"
 
 # ==========================================================================================
 echo
-echo "criterion 1 — six-column row yields plan alone"
+echo "criterion 1 — six-column row (no lanes column) admits all lanes"
 # ==========================================================================================
 printf 'alpha | /tmp/alpha | push | origin/main | | true\n' > "$MAP"
 export SPIRA_REPO_MAP="$MAP"
@@ -61,9 +61,12 @@ export SPIRA_REPO_MAP="$MAP"
 is "six-col: path column resolves" "/tmp/alpha" "$(repo_field alpha path)"
 
 out="$(spira_repo_lanes alpha)"
-is "six-col: lanes yields plan alone" "plan" "$out"
-nowant "six-col: no incident in result"     "incident" "$out"
-nowant "six-col: no groom in result"        "groom"    "$out"
+want "six-col: plan in result"              "plan"          "$out"
+want "six-col: incident in result"          "incident"      "$out"
+want "six-col: groom in result"             "groom"         "$out"
+want "six-col: maechen-sweep in result"     "maechen-sweep" "$out"
+want "six-col: spike in result"             "spike"         "$out"
+want "six-col: czar-trigger in result"      "czar-trigger"  "$out"
 
 # ==========================================================================================
 echo
@@ -152,12 +155,17 @@ want   "unknown lane: mentions the bad label" "bogus-lane"  "$err"
 
 # ==========================================================================================
 echo
-echo "criterion 7 — empty lanes field yields plan"
+echo "criterion 7 — empty lanes field admits all lanes"
 # ==========================================================================================
 # A trailing pipe with nothing after it: `name | path | land | base | format | gate | `
 printf 'alpha | /tmp/alpha | push | origin/main | | true | \n' > "$MAP"
 out_empty="$(spira_repo_lanes alpha)"
-is "empty lanes field: yields plan" "plan" "$out_empty"
+want "empty lanes field: plan in result"          "plan"          "$out_empty"
+want "empty lanes field: incident in result"      "incident"      "$out_empty"
+want "empty lanes field: groom in result"         "groom"         "$out_empty"
+want "empty lanes field: maechen-sweep in result" "maechen-sweep" "$out_empty"
+want "empty lanes field: spike in result"         "spike"         "$out_empty"
+want "empty lanes field: czar-trigger in result"  "czar-trigger"  "$out_empty"
 
 # ==========================================================================================
 echo
@@ -181,9 +189,12 @@ cat > "$MAP" <<'ROW'
 alpha | /tmp/alpha | queue | origin/main | | bash a.sh || bash b.sh
 ROW
 bc_gate="$(repo_field alpha gate)"
+bc_lanes="$(spira_repo_lanes alpha)"
 want   "six-col complex gate: first cmd"    "bash a.sh"    "$bc_gate"
 want   "six-col complex gate: second cmd"   "bash b.sh"    "$bc_gate"
-is     "six-col: lanes returns plan"        "plan"         "$(spira_repo_lanes alpha)"
+want   "six-col: plan in lanes"             "plan"         "$bc_lanes"
+want   "six-col: incident in lanes"         "incident"     "$bc_lanes"
+nowant "six-col: gate fragment not in lanes" "bash"        "$bc_lanes"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
