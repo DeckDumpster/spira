@@ -82,6 +82,17 @@ cat > "$TMP/clean.log" <<'LOG'
 LOG
 is "a session that ran to its own end and left the bead open IS an attempt" unlanded "$(session_outcome "$TMP/clean.log")"
 
+# THE CLI NOW EMITS "api_error_status":null ON EVERY RESULT RECORD. A session that ran real
+# work and returned null for api_error_status is NOT a refusal — null means "no API error
+# occurred". Classifying on the key's presence (not its value) caused every completed session
+# to read as refused, blocking all attempt charges (defect: sp-1g37h).
+cat > "$TMP/null-status.log" <<'LOG'
+{"type":"system","subtype":"init","session_id":"x"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}
+{"type":"result","subtype":"success","is_error":false,"api_error_status":null}
+LOG
+is "a session with api_error_status:null is an attempt, not a refusal" unlanded "$(session_outcome "$TMP/null-status.log")"
+
 # A trace with tool calls and no terminal record is a session that was killed part-way — the
 # host died, the cgroup was torn down, or its worktree was deleted under it. Nothing in it is
 # a verdict about the bead.
