@@ -208,7 +208,8 @@ echo "LANE GUARD: no repository admits groom — trigger skips with one log line
 # is lifted when a repo does admit the lane; if the trigger always skipped, both tests
 # would exit 0 but the positive control would lack a bd create call.
 CONSUME_MAP="$T/consume-map"
-printf 'plan-only | /tmp/plan-only | push | origin/main | | true | consume\n' > "$CONSUME_MAP"
+printf 'home-tg | /tmp/home-tg | push | origin/main | | | consume\n' > "$CONSUME_MAP"
+printf 'plan-only | /tmp/plan-only | push | origin/main | | | consume\n' >> "$CONSUME_MAP"
 : > "$BD_LOG"
 out_ng="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_CONF="$NONE" \
@@ -217,6 +218,7 @@ out_ng="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
     BD_LIST_OUTPUT="[]" \
     SPIRA_DB="$T/fixture.db" \
     SPIRA_REPO_MAP="$CONSUME_MAP" \
+    SPIRA_HOME_REPO="home-tg" \
     SPIRA_GROOMER_LABEL="groom" \
     bash "$TRIGSH" 2>&1)"; rc_ng=$?
 is     "no-groom-map: trigger exits 0"        0 "$rc_ng"

@@ -789,7 +789,8 @@ echo "LANE GUARD: no repository admits maechen-sweep — trigger skips with one 
 # is lifted when a repo does admit the lane; if the trigger always skipped, both tests
 # would exit 0 but the positive control would lack a bd create call.
 NOLANEMAP="$T/nolanemap"
-printf 'dev-repo | /tmp/dev | push | origin/main | | true | develop\n' > "$NOLANEMAP"
+printf 'testrepo | %s | push | origin/main | | | develop\n' "$TESTREPO" > "$NOLANEMAP"
+printf 'dev-repo | /tmp/dev | push | origin/main | | | develop\n' >> "$NOLANEMAP"
 printf '0\n' > "$WATERMARK_FILE"
 : > "$BD_LOG"
 out_ng="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
