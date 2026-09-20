@@ -138,10 +138,10 @@ is "sp-b3 attempts match per-bead"               "$att_b3" "${bulk_att_b3:-0}"
 is "sp-b3 reopens match per-bead (non-zero check)" "$rep_b3" "${bulk_rep_b3:-0}"
 is "sp-b3 has non-zero reopens (proves detectability)" "3" "$rep_b3"
 
-# sp-b1 has no events: it is absent from the bulk output (no row to return).
-# The caller must default to 0 — the test verifies 0 is the right answer.
-b1_in_bulk="$(printf '%s' "$bulk" | awk -F'\t' '$1=="sp-b1"{print $1}')"
-is "sp-b1 absent from bulk output when it has no events" "" "$b1_in_bulk"
+# sp-b1 has no attempt-type events, so its bulk att must be 0.
+# The caller defaults missing entries to 0; a row with att=0 is equally correct.
+bulk_att_b1="$(printf '%s' "$bulk" | awk -F'\t' '$1=="sp-b1"{print $2}')"
+is "sp-b1 bulk attempts is 0" "0" "${bulk_att_b1:-0}"
 
 # --------------------------------------------------------------------------------------
 # CRITERION 3: sentinel CHECK 4 uses bulk values — poison and requeue cap both fire.
