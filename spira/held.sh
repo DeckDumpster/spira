@@ -64,7 +64,7 @@ try: d = json.load(sys.stdin)
 except Exception: print("(none)"); sys.exit()
 d = d if isinstance(d, list) else [d]
 s = d[0].get("status", "") if d else ""
-print(s.upper() if s else "(none)")' 2>/dev/null || printf '(none)'
+print(s.upper() if s else "(none)")' 2>/dev/null
 }
 
 _ahead()  { git -C "$1" rev-list --count "${3}..$2"  2>/dev/null || printf '?'; }

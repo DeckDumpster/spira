@@ -83,12 +83,6 @@ JSONL
 # ===========================================================================
 printf '\npositive controls — scanner classifies each kind:\n'
 
-# Diagnostic: show raw bd output for the orphan bead so failures are diagnosable.
-printf 'diag: bd show tst-orphan = [%s]\n' \
-    "$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show tst-orphan --json 2>/dev/null)"
-printf 'diag: bd show tst-held = [%s]\n' \
-    "$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show tst-held --json 2>/dev/null)"
-
 tbl="$(bash "$HERE/held.sh" 2>&1)"; rc=$?
 isz "held.sh exits 0" "$rc"
 
