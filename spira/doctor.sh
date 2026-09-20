@@ -594,6 +594,10 @@ else
             fi
             unset _dr_qp
         fi
+        _dr_lanes_err="$(spira_repo_lanes "$n" 2>&1 >/dev/null)" || \
+            FAIL "repo:$n — lanes column parse error: $_dr_lanes_err" \
+                 "Fix the lanes field: use a mode (consume/develop/self) or a comma-separated list of lane labels."
+        unset _dr_lanes_err
         if [ ! -e "$p/.git" ]; then
             WARN "repo:$n — $p is not a checkout" "Another machine's row, or a path that has moved."
             continue
