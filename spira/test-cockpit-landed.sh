@@ -59,6 +59,7 @@ cat > "$MAP" <<MAP
 work | $REPO | push | | |
 MAP
 RUN="$TMP/run"; mkdir -p "$RUN"
+SPIRA_SCOPE_LABEL=work
 
 # --- fixture: four closed beads, three within 24h, one outside ---
 # closed_at timestamps: "now" for the 24h cases, 48h ago for the old one.
@@ -66,10 +67,10 @@ NOW_ISO="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 OLD_ISO="$(date -u -d '48 hours ago' '+%Y-%m-%dT%H:%M:%SZ')"
 
 testdb_seed <<JSONL
-{"id":"sp-land","title":"landed work","status":"closed","closed_at":"$NOW_ISO","labels":["spira","plan","repo:work"]}
-{"id":"sp-wait","title":"awaiting work","status":"closed","closed_at":"$NOW_ISO","labels":["spira","plan","repo:work"]}
-{"id":"sp-gone","title":"lost work","status":"closed","closed_at":"$NOW_ISO","labels":["spira","plan","repo:work"]}
-{"id":"sp-oldd","title":"old closed","status":"closed","closed_at":"$OLD_ISO","labels":["spira","plan","repo:work"]}
+{"id":"sp-land","title":"landed work","status":"closed","closed_at":"$NOW_ISO","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:work"]}
+{"id":"sp-wait","title":"awaiting work","status":"closed","closed_at":"$NOW_ISO","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:work"]}
+{"id":"sp-gone","title":"lost work","status":"closed","closed_at":"$NOW_ISO","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:work"]}
+{"id":"sp-oldd","title":"old closed","status":"closed","closed_at":"$OLD_ISO","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:work"]}
 JSONL
 
 # All four have aeon logs (the evidence a session ran).
@@ -103,7 +104,7 @@ echo "closed-vs-landed — three-way classification and 24h scoping:"
 
 out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-    SPIRA_REPO="$REPO" SPIRA_HOME_REPO=work \
+    SPIRA_REPO="$REPO" SPIRA_HOME_REPO=work SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
     SPIRA_PATH="$BD_PATH" \

@@ -85,7 +85,7 @@ printf 'second | %s | push | origin/main | |\n' "$SECOND_REPO" >> "$SPIRA_REPO_M
 # the test run.
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder
-FAYTH_LABELS="spira,plan"
+FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
 FAYTH_EXCLUDE_LABELS="spira-poison,needs-operator"
 FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600
@@ -127,7 +127,7 @@ chmod +x "$BIN/claude"
 
 # SPIRA_HOME_REPO names the home repo in the map. Without it, lib.sh derives the home from
 # the basename of SPIRA_REPO, and that must match a key in the repo-map.
-export SPIRA_HOME_REPO=home
+export SPIRA_HOME_REPO=home SPIRA_SCOPE_LABEL=home
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 status_of() { B show "$1" --json 2>/dev/null | python3 -c '
@@ -140,7 +140,7 @@ run_aeon() { rm -rf "$SPIRA_RUN/worktree"; \
 
 seed() {
     testdb_reset
-    B create "cross-repo work" --labels "spira,plan,repo:second" >/dev/null 2>&1
+    B create "cross-repo work" --labels "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:second" >/dev/null 2>&1
 }
 
 echo "test-cross-repo.sh"
@@ -150,7 +150,7 @@ echo
 echo "POSITIVE CONTROL: cross-repo aeon commits in the second repo, not the home repo:"
 # ======================================================================================
 seed
-BID="$(B list --status open --label "spira,plan,repo:second" --json 2>/dev/null \
+BID="$(B list --status open --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:second" --json 2>/dev/null \
     | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d[0]["id"] if isinstance(d,list) and d else "")' 2>/dev/null)"
 
 [ -n "$BID" ] || { bad "fixture: could not create bead"; printf '\n  %d passed, %d failed\n' "$pass" "$fail"; exit 1; }

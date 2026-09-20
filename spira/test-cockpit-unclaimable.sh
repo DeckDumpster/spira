@@ -31,26 +31,26 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
+: "${SPIRA_SCOPE_LABEL:=$(basename "$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || printf '')")}"
 
 # run_core <bd-binary> -> stdout of cockpit.sh core (SP_NEXT* and SP_READY keys)
-# SPIRA_SCOPE_LABEL is not set, so conf.sh will default it to "spira".
-# This means partition labels are "spira,plan" and "spira,incident" — not bare "plan".
-# The bead fixture labels must include "spira" to match the partition queries.
+# SPIRA_SCOPE_LABEL is passed explicitly so the cockpit's partition queries use the
+# same value as the bead fixture labels below.
 run_core() {
     local bd_path="$1"
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test "SPIRA_FAYTHS=builder ops" \
+        SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_BD="$bd_path" \
         bash "$HERE/cockpit.sh" core 2>/dev/null
 }
 
 # Build a mock bd that returns a given JSON array when queried for the plan partition
-# (ready ... --label spira,plan), and [] for everything else.
-# The LAST --label argument in the partition query is the partition-specific one
-# (e.g. "spira,plan" for builder, "spira,incident" for ops) — scope comes first.
+# (ready ... --label <scope>,plan), and [] for everything else.
+# The LAST --label argument in the partition query is the combined scope+partition label.
 make_bd() {     # make_bd <path> <label-to-match> <json-to-return>
     local path="$1" match="$2" payload="$3"
     cat > "$path" <<EOF
@@ -73,11 +73,11 @@ EOF
 # ========================================================================================
 echo "case 1 — positive control: a claimable builder bead shows 'builder', not 'unclaimable'"
 # ========================================================================================
-# A bead with {plan, spira} and no fayth: preference appears in builder's partition query
+# A bead with {plan, scope} and no fayth: preference appears in builder's partition query
 # and has no narrowing preference. The cockpit must show "builder", not "unclaimable".
 # Without this case, an implementation that always shows "unclaimable" would pass case 2.
-make_bd "$TMP/bd-1" "spira,plan" \
-    '[{"id":"sp-uc1a","title":"claimable builder bead","status":"open","issue_type":"task","priority":1,"labels":["plan","repo:spira","spira"]}]'
+make_bd "$TMP/bd-1" "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}plan" \
+    '[{"id":"sp-uc1a","title":"claimable builder bead","status":"open","issue_type":"task","priority":1,"labels":["plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
 
 out="$(run_core "$TMP/bd-1")"
 want   "claimable bead appears in NEXT"               "sp-uc1a"       "$out"
@@ -86,15 +86,15 @@ nowant "claimable bead does NOT show unclaimable"      "unclaimable"   "$out"
 
 # ========================================================================================
 echo
-echo "case 2 — fayth:ops on spira,plan labels shows 'unclaimable', not 'builder'"
+echo "case 2 — fayth:ops on plan labels shows 'unclaimable', not 'builder'"
 # ========================================================================================
 # The fifteen-hour strand. A bead carrying fayth:ops AND the builder partition labels
 # appears in builder's partition query because builder's labels are a subset.
 # The cockpit used to stamp it as "builder". This case asserts that the cockpit now shows
 # "unclaimable" instead: builder is excluded by the fayth:ops preference, and ops is
 # excluded by its own partition check (the bead has no incident label).
-make_bd "$TMP/bd-2" "spira,plan" \
-    '[{"id":"sp-uc2a","title":"fayth:ops on plan labels","status":"open","issue_type":"task","priority":1,"labels":["fayth:ops","plan","repo:spira","spira"]}]'
+make_bd "$TMP/bd-2" "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}plan" \
+    '[{"id":"sp-uc2a","title":"fayth:ops on plan labels","status":"open","issue_type":"task","priority":1,"labels":["fayth:ops","plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
 
 out="$(run_core "$TMP/bd-2")"
 want   "unclaimable bead appears in NEXT"             "sp-uc2a"       "$out"
@@ -108,8 +108,8 @@ echo "case 3 — fayth:ops on incident labels shows 'ops' (the preference matche
 # A bead with fayth:ops AND ops's partition labels (incident, spira) is correctly claimable
 # by ops. The cockpit must show "ops", not "unclaimable". The preference matches the
 # persona whose labels are all present on the bead.
-make_bd "$TMP/bd-3" "spira,incident" \
-    '[{"id":"sp-uc3a","title":"fayth:ops on incident labels","status":"open","issue_type":"task","priority":1,"labels":["fayth:ops","incident","repo:spira","spira"]}]'
+make_bd "$TMP/bd-3" "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}incident" \
+    '[{"id":"sp-uc3a","title":"fayth:ops on incident labels","status":"open","issue_type":"task","priority":1,"labels":["fayth:ops","incident","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
 
 out="$(run_core "$TMP/bd-3")"
 want   "ops-fayth ops-partition bead appears in NEXT"      "sp-uc3a"      "$out"
@@ -124,8 +124,8 @@ echo "case 4 — mixed: claimable and unclaimable beads in the same partition qu
 # and is unclaimable; the other has no preference and is claimable. Both must render
 # correctly in the same SP_NEXT output: the claimable one shows "builder", the
 # unclaimable one shows "unclaimable".
-make_bd "$TMP/bd-4" "spira,plan" \
-    '[{"id":"sp-uc4a","title":"claimable: no pref","status":"open","issue_type":"task","priority":1,"labels":["plan","repo:spira","spira"]},{"id":"sp-uc4b","title":"unclaimable: fayth:ops","status":"open","issue_type":"task","priority":1,"labels":["fayth:ops","plan","repo:spira","spira"]}]'
+make_bd "$TMP/bd-4" "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}plan" \
+    '[{"id":"sp-uc4a","title":"claimable: no pref","status":"open","issue_type":"task","priority":1,"labels":["plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]},{"id":"sp-uc4b","title":"unclaimable: fayth:ops","status":"open","issue_type":"task","priority":1,"labels":["fayth:ops","plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
 
 out="$(run_core "$TMP/bd-4")"
 want   "mixed: claimable bead in NEXT"              "sp-uc4a"       "$out"

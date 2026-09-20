@@ -402,7 +402,7 @@ exit 76'
 # ref, so a second filing under a DIFFERENT ref is counted rather than hidden. Counting the
 # ref alone would report "still one" against exactly the bug this case is written for.
 incidents() {
-    B list --status open,in_progress --limit 0 --label "spira,plan,repo:$REPONAME" --json 2>/dev/null \
+    B list --status open,in_progress --limit 0 --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:$REPONAME" --json 2>/dev/null \
       | python3 -c '
 import json, sys
 try: d = json.load(sys.stdin)

@@ -80,8 +80,8 @@ WAIT="${SPIRA_QUEUE_WAIT_LABEL:-spira-queue-waiting}"
 seed() {
     testdb_reset
     testdb_seed <<JSONL
-{"id":"sp-blocker","title":"blocker","status":"closed","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-dependent","title":"dependent","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-dependent","depends_on_id":"sp-blocker","type":"blocks"}]}
+{"id":"sp-blocker","title":"blocker","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-dependent","title":"dependent","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-dependent","depends_on_id":"sp-blocker","type":"blocks"}]}
 JSONL
     # Reset landstate for a clean fixture each case.
     rm -f "$LANDSTATE/sp-blocker"
@@ -202,9 +202,9 @@ echo "assertions 12-14 — two-blocker scenario: one real, one commit-less:"
 # in a single pass (not cleared-then-reapplied for the design bead).
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-blocker-real","title":"real blocker","status":"closed","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-blocker-design","title":"design blocker","status":"closed","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-two","title":"two-blocker dependent","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-two","depends_on_id":"sp-blocker-real","type":"blocks"},{"issue_id":"sp-two","depends_on_id":"sp-blocker-design","type":"blocks"}]}
+{"id":"sp-blocker-real","title":"real blocker","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-blocker-design","title":"design blocker","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-two","title":"two-blocker dependent","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-two","depends_on_id":"sp-blocker-real","type":"blocks"},{"issue_id":"sp-two","depends_on_id":"sp-blocker-design","type":"blocks"}]}
 JSONL
 rm -f "$LANDSTATE/sp-blocker-real" "$LANDSTATE/sp-blocker-design"
 printf 'CERTIFIED abc123 %s\n' "$(date +%s)" > "$LANDSTATE/sp-blocker-real"

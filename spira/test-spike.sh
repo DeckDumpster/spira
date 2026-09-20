@@ -311,13 +311,13 @@ summon() { : > "$SUMMONED"; summon_fayth "$1" >"$TMP/log" 2>&1; printf '%s' "$?"
 
 want "the shipped fayth is discovered without being listed" "spike" "$(spira_fayths)"
 
-beads "$(bead sp-spike-1 "spira,$SPIRA_SPIKE_LABEL")"
+beads "$(bead sp-spike-1 "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL")"
 is "a spike bead is in the spike's partition" 1 "$(fayth_ready spike)"
 is "and not in the builder's"                 0 "$(fayth_ready builder)"
 is "so the spike is summoned"                 0 "$(summon spike)"
 is "and the builder is not"                   1 "$(summon builder)"
 
-beads "$(bead sp-plan-1 spira,plan)"
+beads "$(bead sp-plan-1 "${SPIRA_SCOPE_LABEL},plan")"
 is "a plan bead is not in the spike's partition" 0 "$(fayth_ready spike)"
 is "and the spike is not summoned for it"        1 "$(summon spike)"
 is "while the builder is"                        0 "$(summon builder)"
@@ -327,9 +327,9 @@ is "while the builder is"                        0 "$(summon builder)"
 # them, and a persona that ORs its way in races a live worker.
 beads "$(bead xx-1 "$SPIRA_SPIKE_LABEL")"
 is "a partial label match is not in the partition" 0 "$(fayth_ready spike)"
-beads "$(bead sp-spike-2 "spira,$SPIRA_SPIKE_LABEL,$SPIRA_ASK_LABEL")"
+beads "$(bead sp-spike-2 "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL,$SPIRA_ASK_LABEL")"
 is "an escalation is never dispatched as spike work" 0 "$(fayth_ready spike)"
-beads "$(bead sp-spike-3 "spira,$SPIRA_SPIKE_LABEL,spira-poison")"
+beads "$(bead sp-spike-3 "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL,spira-poison")"
 is "nor is a poisoned spike"                         0 "$(fayth_ready spike)"
 
 # ======================================================================================
@@ -354,7 +354,7 @@ spike_branch() {
 confine() { bash "$HERE/confine.sh" "$1" "spira/$1" "$REPO" main 2>&1; }
 confine_rc() { confine "$1" >/dev/null 2>&1; printf '%s' "$?"; }
 
-beads "$(bead sp-poc "spira,$SPIRA_SPIKE_LABEL" task closed)"
+beads "$(bead sp-poc "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL" task closed)"
 spike_branch sp-poc notes/spikes/question.md src/poc.rs
 is   "a spike branch carrying code is REFUSED" 1 "$(confine_rc sp-poc)"
 want "and the refusal names the offending path" "src/poc.rs" "$(confine sp-poc)"
@@ -364,10 +364,10 @@ nowant "and does not accuse the document"       "notes/spikes/question.md
 " "$(confine sp-poc | sed -n '/^outside:/,$p')"
 
 # Only now is a silence worth anything.
-beads "$(bead sp-doc "spira,$SPIRA_SPIKE_LABEL" task closed)"
+beads "$(bead sp-doc "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL" task closed)"
 spike_branch sp-doc notes/spikes/question.md
 is "a spike branch carrying only its document is allowed" 0 "$(confine_rc sp-doc)"
-beads "$(bead sp-src "spira,$SPIRA_SPIKE_LABEL" task closed)"
+beads "$(bead sp-src "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL" task closed)"
 spike_branch sp-src notes/spikes/q.md sources/fetched.md
 is "and the second configured tree is allowed too" 0 "$(confine_rc sp-src)"
 
@@ -377,7 +377,7 @@ echo "the fence binds the persona, not the path:"
 # ======================================================================================
 # A guard that bound the PATH would bind whoever is most disciplined about using it and miss
 # the actor it was aimed at. The builder's whole job is to change `src/`.
-beads "$(bead sp-build spira,plan task closed)"
+beads "$(bead sp-build "${SPIRA_SCOPE_LABEL},plan" task closed)"
 spike_branch sp-build src/feature.rs
 is "a plan bead's branch is not confined" 0 "$(confine_rc sp-build)"
 is "and neither is its output examined"   "" "$(confine sp-build)"
@@ -394,13 +394,13 @@ echo "the allowed trees are path prefixes, not string prefixes:"
 # ======================================================================================
 # `notes/spikes-scratch` is exactly the name an aeon reaches for when told to keep its
 # experiment beside its notes, and a naive `case $f in $p*)` admits it.
-beads "$(bead sp-adj "spira,$SPIRA_SPIKE_LABEL" task closed)"
+beads "$(bead sp-adj "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL" task closed)"
 spike_branch sp-adj notes/spikes-scratch/poc.rs
 is   "an adjacent directory is outside" 1 "$(confine_rc sp-adj)"
 want "and is named as such" "notes/spikes-scratch/poc.rs" "$(confine sp-adj)"
 
 # A deep path inside an allowed tree is inside it.
-beads "$(bead sp-deep "spira,$SPIRA_SPIKE_LABEL" task closed)"
+beads "$(bead sp-deep "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL" task closed)"
 spike_branch sp-deep notes/spikes/sources/2026/a.jsonl
 is "a deep path inside an allowed tree is allowed" 0 "$(confine_rc sp-deep)"
 
@@ -410,7 +410,7 @@ echo "the diff is against the merge base, not against the tip:"
 # ======================================================================================
 # `diff A..B` is every difference between two tips, so a base that moved ahead reports files
 # the branch never touched as the branch's offence. `diff A...B` is the branch's own work.
-beads "$(bead sp-behind "spira,$SPIRA_SPIKE_LABEL" task closed)"
+beads "$(bead sp-behind "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL" task closed)"
 spike_branch sp-behind notes/spikes/behind.md
 echo moved > "$REPO/src/unrelated.rs"
 git -C "$REPO" add -A && git -C "$REPO" commit -q -m "main moves on"
@@ -462,7 +462,7 @@ land_branch() {   # land_branch <id> <file>...
     git -C "$RUN/worktree/$id" commit -q -m "$id — work"
 }
 
-beads "$(bead sp-land-doc "spira,$SPIRA_SPIKE_LABEL,repo:home" task closed)"
+beads "$(bead sp-land-doc "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL,repo:home" task closed)"
 land_branch sp-land-doc notes/spikes/answer.md
 out="$(land)"
 want "a confined spike branch lands" "landed spira/sp-land-doc" "$out"
@@ -471,7 +471,7 @@ git -C "$LREPO" merge-base --is-ancestor spira/sp-land-doc origin/main \
     && ok "and its document really reached origin/main" \
     || bad "a confined spike lands" "not an ancestor of origin/main"
 
-beads "$(bead sp-land-poc "spira,$SPIRA_SPIKE_LABEL,repo:home" task closed)"
+beads "$(bead sp-land-poc "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL,repo:home" task closed)"
 land_branch sp-land-poc notes/spikes/answer2.md src/experiment.rs
 # THE DEAD CLAIMANT'S NAME MUST COME OFF, and it is asserted on this path rather than assumed
 # from the one next to it. `bd reopen` keeps the assignee and `bd ready --claim` skips an

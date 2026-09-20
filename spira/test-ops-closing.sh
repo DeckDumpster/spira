@@ -102,7 +102,7 @@ LEDGER_OVERRIDE=""
 for f in healer builder; do
     cat > "$HOMEDIR/chamber/$f.fayth" <<FAYTH
 FAYTH_NAME=$f
-FAYTH_LABELS="spira,plan"
+FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
 FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
 FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600
@@ -183,8 +183,9 @@ sop() {                  # the same program the aeon runs, in the same environme
         timeout 120 bash "$HOMEDIR/sop.sh" "$@" 2>&1
 }
 seed() {                 # seed <id>
-    printf '{"id":"%s","title":"unit failed","status":"open","issue_type":"bug","labels":["spira","plan","repo:fixture"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
-        "$1" | testdb_seed
+    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
+    printf '{"id":"%s","title":"unit failed","status":"open","issue_type":"bug","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+        "$1" "$_lbl" | testdb_seed
 }
 field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
