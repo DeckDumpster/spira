@@ -233,6 +233,12 @@ for seg in re.split(r"&&|\|\||;|\n", cmd):
                     sys.exit(0)
 
     if title is not None:
+        # Direct pattern check: titles that look like test fixtures.
+        # Matches the same prefixes bd flags and that the groomer identifies.
+        if re.match(r"^(?:test|debug|tmp|temp)\b", title, re.IGNORECASE):
+            print("test-data")
+            sys.exit(0)
+        # Also ask bd itself (works when the store has production markers).
         try:
             args = [bd_bin, "-C", eff_db, "create", title]
             if labels:
