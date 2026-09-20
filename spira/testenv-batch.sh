@@ -396,7 +396,7 @@ if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ] && \
                     [ -n "$_repeat_reason" ] && \
                         log "batch: SPIRA_VERDICT_REPEAT_CONSIDERED must be a sentence (min 10 chars)"
                     log "batch: repeat attempt refused — prior red at ${_cached_when:-unknown} — key batch-$BATCH_KEY — red suites: ${_cached_red_suites:-(unknown)}"
-                    _bead_cmd="${SPIRA_BATCH_BEAD_CMD:-$HERE/bead.sh}"
+                    _bead_cmd="${SPIRA_BATCH_INCIDENT_CMD:-$HERE/incident.sh}"
                     if [ -r "$_bead_cmd" ] && [ -n "${SPIRA_DB:-}" ]; then
                         _suites_csv="${_cached_red_suites// /,}"
                         { printf '%s\n\nFirst: bash spira/testenv-batch.sh --suites %s %s\nIf tests now pass, the fix was committed after the retry was refused — close with evidence. If they still fail, investigate.\n' \
@@ -404,11 +404,13 @@ if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ] && \
                             "${_suites_csv:-(unknown)}" "$BR"
                           [ -n "${_cached_override_reason:-}" ] && \
                             printf 'Prior override attempted: %s\n' "$_cached_override_reason"
-                        } | bash "$_bead_cmd" file \
-                                "repeat attempt: no change — $BR" \
-                                --for builder \
-                                --repo "$(spira_home_repo 2>/dev/null)" \
-                                --body-file - 2>/dev/null || true
+                        } | SPIRA_INCIDENT_REF="repeat-refused:$BR" \
+                            SPIRA_INCIDENT_REPO="$(spira_home_repo 2>/dev/null)" \
+                            SPIRA_INCIDENT_TYPE=task \
+                            SPIRA_INCIDENT_CAUSE=repeat-refused \
+                            SPIRA_INCIDENT_PRIORITY=3 \
+                            bash "$_bead_cmd" file \
+                                "repeat attempt: no change — $BR" - 2>/dev/null || true
                     fi
                     exit 2
                 fi

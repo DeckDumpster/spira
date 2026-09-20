@@ -688,7 +688,7 @@ want "B6b: log shows maxpar: 3 (from spira.conf)" "maxpar: 3" "$b6b_out"
 #   B7b fails: old code exits 1 on a repeat (runs), not 2 (refused)
 #   B7d fails: old code never logs "repeat allowed"
 #   B7e fails: old code exits 1 on bare-flag override (runs), not 2
-#   B7f fails: SPIRA_BATCH_BEAD_CMD did not exist; stub not reachable
+#   B7f fails: SPIRA_BATCH_INCIDENT_CMD did not exist; stub not reachable
 # B7c is the positive control and passes against old code too — old code never
 # refuses — proving a guard that refuses everything looks identical to one that
 # works (law-absence-needs-a-positive-control).
