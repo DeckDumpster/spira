@@ -95,13 +95,13 @@ DOLT="$(command -v dolt 2>/dev/null || true)"
 render() {
     python3 - "$1" "$SPIRA_HOME" "$SPIRA_REPO" "$SPIRA_RUN" "$SPIRA_DB" "$SPIRA_COCKPIT" \
                    "$SPIRA_DOLT_DATA" "$SPIRA_TESTDB_DATA" "$DOLT" "$SPIRA_PROD" \
-                   "$SPIRA_INSTANCE" "$SPIRA_TESTDB_PORT" "${2:-}" <<'PY'
+                   "$SPIRA_INSTANCE" "$SPIRA_TESTDB_PORT" "$SPIRA_SUPERVISE_BIN" "${2:-}" <<'PY'
 import os, re, sys
 keys = ["SPIRA_HOME", "SPIRA_REPO", "SPIRA_RUN", "SPIRA_DB", "SPIRA_COCKPIT",
         "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "DOLT", "SPIRA_PROD", "SPIRA_INSTANCE",
-        "SPIRA_TESTDB_PORT"]
-m = dict(zip(keys, sys.argv[2:13]))
-watcher_name = sys.argv[13] if len(sys.argv) > 13 else ""
+        "SPIRA_TESTDB_PORT", "SPIRA_SUPERVISE_BIN"]
+m = dict(zip(keys, sys.argv[2:14]))
+watcher_name = sys.argv[14] if len(sys.argv) > 14 else ""
 # FALLBACK: an empty SPIRA_PROD is the documented signal that no checkout split
 # is wanted — everything runs from the development checkout (SPIRA_HOME). An
 # empty string substituted into @SPIRA_PROD@ yields ExecStart=/sentinel.sh,

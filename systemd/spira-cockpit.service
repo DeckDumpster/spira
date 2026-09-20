@@ -11,14 +11,21 @@ StartLimitIntervalSec=120
 StartLimitBurst=5
 
 [Service]
-Type=simple
-ExecStart=@SPIRA_PROD@/collect.sh loop
+# Type=notify: spira-supervise sends READY=1 once collect.sh is up, then WATCHDOG=1 while
+# the snapshot is fresh.  The supervisor is the main PID so its datagrams are credited
+# by the manager (sp-3az9w established that bash cannot satisfy this; sp-mplcb fixes it).
+Type=notify
+ExecStart=@SPIRA_SUPERVISE_BIN@ @SPIRA_PROD@/collect.sh loop
+Environment=SPIRA_RUN=@SPIRA_RUN@
 Restart=always
 RestartSec=15
-# WatchdogSec is absent: bash cannot satisfy it — only the main PID's own datagram is credited,
-# and an unprivileged process cannot assert another PID in SCM_CREDENTIALS, so --pid= is ignored.
-# Liveness is the snapshot's age instead (sp-3az9w; sp-mplcb restores this with a Rust supervisor).
-# Yields to aeons and other work on the box (law-fence-loops-on-shared-hardware).
+# Watchdog fires when spira-supervise stops pinging — which it does when the snapshot
+# stops being written on schedule (SPIRA_WATCH_SNAP_MAX, default 120s).  WatchdogSec=60
+# means the supervisor pings every 30s; systemd kills after 60s with no ping.
+WatchdogSec=60
+# A pass shells out to bd and git several times. This box also runs prod, so it is fenced
+# (law-fence-loops-on-shared-hardware).
+CPUQuota=35%
 Nice=10
 StandardOutput=append:@SPIRA_RUN@/collector.log
 StandardError=append:@SPIRA_RUN@/collector.log

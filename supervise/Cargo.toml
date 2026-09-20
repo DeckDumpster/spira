@@ -1,0 +1,14 @@
+[package]
+name = "spira-supervise"
+version = "1.0.0"
+edition = "2021"
+description = "spira-supervise — main-PID supervisor for the cockpit collector; sends sd_notify heartbeats while the child is healthy."
+
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
