@@ -5304,11 +5304,25 @@ if d: print(d[0].get("external_ref") or "")' 2>/dev/null)" || ext_ref=""
 # One ask per issue, deduped through ask_already_open.
 gh_issue_ask_unlanded() {  # gh_issue_ask_unlanded <bead-id> <external-ref> [draft]
     local id="$1" ext_ref="$2" draft="${3:-}"
-    local _subj _dflt gh_part issue_n
+    local _subj _dflt gh_part gh_repo issue_n _st _err _rc
 
     gh_part="${ext_ref#github:}"
+    gh_repo="${gh_part%%#*}"
     issue_n="${gh_part##*#}"
     case "$issue_n" in ''|*[!0-9]*) return 0 ;; esac
+
+    local closed_mark="${SPIRA_RUN:?}/gh-closed/$id"
+    [ -e "$closed_mark" ] && return 0
+
+    # Issue already closed on the forge: write the marker so future scans skip it.
+    _st="$(ghq issue view "$issue_n" --repo "$gh_repo" --json state -q .state 2>/dev/null)" \
+        || _st=""
+    if [ "${_st:-}" = CLOSED ]; then
+        mkdir -p "${SPIRA_RUN}/gh-closed" 2>/dev/null || true
+        : > "$closed_mark"
+        log "gh-closeout $id: $ext_ref already closed on forge — skipping"
+        return 0
+    fi
 
     [ -x "${SPIRA_HOME}/mail.sh" ] || return 0
     _subj="Close GitHub issue $ext_ref for bead $id"
@@ -5316,11 +5330,12 @@ gh_issue_ask_unlanded() {  # gh_issue_ask_unlanded <bead-id> <external-ref> [dra
 
     _dflt="${draft:-post a comment explaining the resolution and close the issue}"
 
-    "${SPIRA_HOME}/mail.sh" send operator \
+    _err="$("${SPIRA_HOME}/mail.sh" send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1 || true
+        --default "$_dflt" \
+        --bead "$id" <<MAILEOF 2>&1 >/dev/null
 ## Question
 $_subj
 
@@ -5331,7 +5346,14 @@ $id was closed without a commit landing on the base branch, but it links to GitH
 
 Suggested public reply: "${_dflt}"
 MAILEOF
-    log "gh-closeout $id: asked operator about $ext_ref"
+    )"; _rc=$?
+    if [ "$_rc" -eq 0 ]; then
+        log "gh-closeout $id: asked operator about $ext_ref"
+    elif [ -n "${_err:-}" ]; then
+        log "gh-closeout $id: ask refused (${_err})"
+    else
+        log "gh-closeout $id: ask refused — probe fault: mail.sh produced no reason"
+    fi
 }
 
 # _gh_unlanded_scan — run at the end of a landing pass to ask about GitHub issues
@@ -5339,7 +5361,9 @@ MAILEOF
 # via ask_already_open.
 _gh_unlanded_scan() {
     local _tmp _id _ext _superseder _ls_file _ls_st _sup_ls _sup_st _sup_sha _draft
+    local _wait_dir _wait_file _now _last
     _tmp="$(mktemp)" || return 0
+    _wait_dir="${SPIRA_RUN:-/tmp}/gh-wait-log"
     bdjson list --all --limit 0 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -5367,6 +5391,22 @@ for r in rows:
         _ls_st=""
         [ -r "$_ls_file" ] && { read -r _ls_st _ < "$_ls_file" 2>/dev/null || true; }
         [ "${_ls_st:-}" = LANDED ] && continue
+
+        # In-flight: commit is on its way; ask only when it genuinely needs attention.
+        case "${_ls_st:-}" in
+            CERTIFIED|BATCHED|GATED|REBASED|CONTENT)
+                _wait_file="$_wait_dir/$_id"
+                _now="$(date +%s)"
+                _last=""
+                [ -f "$_wait_file" ] && { read -r _last _ < "$_wait_file" 2>/dev/null || true; }
+                if [ -z "${_last:-}" ] || [ "$(( _now - _last ))" -gt 3600 ]; then
+                    log "gh-closeout $_id: $_ext in flight (${_ls_st}) — waiting on landing"
+                    mkdir -p "$_wait_dir" 2>/dev/null || true
+                    printf '%s\n' "$_now" > "$_wait_file"
+                fi
+                continue
+                ;;
+        esac
 
         _draft=""
         if [ -n "${_superseder:-}" ]; then

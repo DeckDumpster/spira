@@ -237,5 +237,142 @@ else
     bad "close marker written for stale-landstate bead" "no marker at $RUN/gh-closed/$BEAD4"
 fi
 
+printf '\n9. _gh_unlanded_scan: CERTIFIED landstate logs waiting, sends no ask:\n'
+# Pre-mark existing unlanded test beads so they don't fire in the scan tests.
+: > "$RUN/gh-closed/sp-tgh2"
+# Seed a closed bead with CERTIFIED landstate.
+testdb_seed <<JSONL
+{"id":"sp-scan1","title":"Scan CERTIFIED bead","status":"closed","issue_type":"task","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#91","updated_at":"2026-09-05T00:00:00Z"}
+JSONL
+printf 'CERTIFIED abc1234 %s\n' "$(date +%s)" > "$RUN/landstate/sp-scan1"
+export SPIRA_ASK_LABEL=needs-operator
+export SPIRA_MAIL_KINDS="$HERE/mail/kinds"
+export SPIRA_MAIL="$RUN/mail"
+MAIL_CALLS="$TMP/mail.calls"
+: > "$MAIL_CALLS"
+# Stub mail.sh: any call writes to MAIL_CALLS (a call here is a test failure).
+cat > "$SH/mail.sh" <<MAILSTUB
+#!/usr/bin/env bash
+echo called >> $MAIL_CALLS
+exit 0
+MAILSTUB
+chmod +x "$SH/mail.sh"
+: > "$GHLOG"
+scan_out="$(_gh_unlanded_scan 2>&1)"
+if [[ "$scan_out" == *"waiting on landing"* ]]; then
+    ok "CERTIFIED: 'waiting on landing' logged"
+else
+    bad "CERTIFIED: 'waiting on landing' logged" "got: $scan_out"
+fi
+if [ -s "$MAIL_CALLS" ]; then
+    bad "CERTIFIED: no ask sent" "mail.sh was called: $(cat "$MAIL_CALLS")"
+else
+    ok "CERTIFIED: no ask sent"
+fi
+
+printf '\n10. _gh_unlanded_scan: mail.sh refuse logs ask refused with reason:\n'
+testdb_seed <<JSONL
+{"id":"sp-scan2","title":"Scan unlanded bead","status":"closed","issue_type":"task","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#92","updated_at":"2026-09-05T00:00:00Z"}
+JSONL
+# Restore gh stub to return OPEN for issue view.
+: > "$GHLOG"
+cat > "$TMP/bin/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHLOG"
+case " $* " in
+    *" issue view "*) printf 'OPEN\n' ;;
+esac
+exit 0
+GHSTUB
+chmod +x "$TMP/bin/gh"
+# Stub mail.sh to refuse with a reason on stderr.
+cat > "$SH/mail.sh" <<'MAILSTUB'
+#!/usr/bin/env bash
+printf 'mail: repeat refused — stub\n' >&2
+exit 1
+MAILSTUB
+chmod +x "$SH/mail.sh"
+scan_out="$(_gh_unlanded_scan 2>&1)"
+if [[ "$scan_out" == *"ask refused"* ]]; then
+    ok "refused: 'ask refused' logged"
+else
+    bad "refused: 'ask refused' logged" "got: $scan_out"
+fi
+if [[ "$scan_out" == *"repeat refused"* ]]; then
+    ok "refused: reason from mail.sh in log"
+else
+    bad "refused: reason from mail.sh in log" "got: $scan_out"
+fi
+if [[ "$scan_out" == *"asked operator"* ]]; then
+    bad "refused: 'asked operator' not logged on refusal" "got: $scan_out"
+else
+    ok "refused: 'asked operator' not logged on refusal"
+fi
+
+printf '\n11. mail.sh success logs asked operator; second pass silent:\n'
+# Stub mail.sh to succeed.
+cat > "$SH/mail.sh" <<'MAILSTUB'
+#!/usr/bin/env bash
+exit 0
+MAILSTUB
+chmod +x "$SH/mail.sh"
+scan_out="$(_gh_unlanded_scan 2>&1)"
+if [[ "$scan_out" == *"asked operator"* ]]; then
+    ok "success: 'asked operator' logged"
+else
+    bad "success: 'asked operator' logged" "got: $scan_out"
+fi
+# Simulate the tracking ask bead now existing (as mail.sh with --bead would create).
+_ask_subj="Close GitHub issue github:fixture/testrepo#92 for bead sp-scan2"
+"${SPIRA_BD:-bd}" -C "$SPIRA_DB" create "$_ask_subj" \
+    -l "needs-operator,overseer" --type decision --silent >/dev/null 2>&1 || true
+# Second pass must produce no output (dedupe via ask_already_open finds the bead).
+scan_out2="$(_gh_unlanded_scan 2>&1)"
+if [ -z "$scan_out2" ]; then
+    ok "second pass: silent (dedupe held)"
+else
+    bad "second pass: silent (dedupe held)" "got: $scan_out2"
+fi
+
+printf '\n12. gh_issue_ask_unlanded: issue already closed on forge writes marker, no mail:\n'
+testdb_seed <<JSONL
+{"id":"sp-scan3","title":"Forge-closed bead","status":"closed","issue_type":"task","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#93","updated_at":"2026-09-05T00:00:00Z"}
+JSONL
+# Stub gh to return CLOSED for issue view.
+: > "$GHLOG"
+cat > "$TMP/bin/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHLOG"
+case " $* " in
+    *" issue view "*) printf 'CLOSED\n' ;;
+esac
+exit 0
+GHSTUB
+chmod +x "$TMP/bin/gh"
+MAIL_CALLS2="$TMP/mail.calls2"
+: > "$MAIL_CALLS2"
+cat > "$SH/mail.sh" <<MAILSTUB
+#!/usr/bin/env bash
+echo called >> $MAIL_CALLS2
+exit 0
+MAILSTUB
+chmod +x "$SH/mail.sh"
+scan_out="$(_gh_unlanded_scan 2>&1)"
+if [ -e "$RUN/gh-closed/sp-scan3" ]; then
+    ok "forge-closed: gh-closed marker written"
+else
+    bad "forge-closed: gh-closed marker written" "marker not at $RUN/gh-closed/sp-scan3"
+fi
+if [[ "$scan_out" == *"already closed on forge"* ]]; then
+    ok "forge-closed: log line about being closed"
+else
+    bad "forge-closed: log line about being closed" "got: $scan_out"
+fi
+if [ -s "$MAIL_CALLS2" ]; then
+    bad "forge-closed: no mail sent" "mail.sh was called: $(cat "$MAIL_CALLS2")"
+else
+    ok "forge-closed: no mail sent"
+fi
+
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
