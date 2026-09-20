@@ -77,7 +77,7 @@ SPIRA_ARCHIVIST_EVERY SPIRA_ARCHIVIST_IDLE SPIRA_ARCHIVIST_MODEL SPIRA_ARCHIVIST
 SPIRA_ARCHIVIST_PER_PASS
 SPIRA_TESTDB_LIB SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT
 SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY SPIRA_GH_INTAKE_BEAD_REPO SPIRA_FLAKY_GH_REPO
-SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET
+SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET SPIRA_GATE_SELECT_CAP
 SPIRA_GATE_SUITES SPIRA_SUITE_STATE SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
 SPIRA_BATCH_ARTIFACT_DAYS SPIRA_BATCH_TAIL_LINES
 SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST SPIRA_INCIDENT_PRIORITY SPIRA_WATCHER_INTERVAL_S
@@ -487,6 +487,10 @@ spira_conf_defaults() {
     # that trips it. Set against a measurement: gate-spira.sh measured ~210s when this key was
     # added (2026-09-08); 300 gives headroom while still catching the next suite added without argument.
     : "${SPIRA_GATE_BUDGET:=300}"
+    # HOW MANY SUITES THE LANDING GATE MAY SELECT. 0 = no cap. When the
+    # coverage-based selection exceeds this, ejected suites are kept and
+    # covered suites fill the remaining slots; excluded suites are logged.
+    : "${SPIRA_GATE_SELECT_CAP:=0}"
     # HOW LONG A LANDING PASS MAY RUN, and how much of that it keeps in reserve so it never
     # begins a gate it cannot finish. Settable because the right number is a fact about this
     # host's gate: 3600 was correct until the gate budget was raised to 2700 to cover the

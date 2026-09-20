@@ -15,7 +15,7 @@
 #   • B: suite A is the planted offender that must appear to trust the selection
 #   • C: all three suites are the planted offenders for unmapped fallback
 #
-# covers: spira/select.sh spira/select-globs.sh spira/gate-spira.sh spira/testenv-batch.sh
+# covers: spira/select.sh spira/select-globs.sh spira/gate-spira.sh spira/testenv-batch.sh spira/gate-touched.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -200,6 +200,12 @@ iseq "E6: gate-spira.sh does not use --no-all-fallback (keeps full fallback)" "$
 _n="$(grep -c -- '--files' "$HERE/gate-spira.sh" 2>/dev/null || true)"
 [ "${_n:-0}" -ge 1 ] && ok "E7: gate-spira.sh calls select.sh with --files" \
     || bad "E7: gate-spira.sh calls select.sh with --files" "no reference found"
+
+# E8: gate-touched.sh (the landing gate selector) calls select.sh — closing the
+#     "caller the source never names" gap (law-bake-rules-into-tools).
+_n="$(grep -c 'select\.sh' "$HERE/gate-touched.sh" 2>/dev/null || true)"
+[ "${_n:-0}" -ge 1 ] && ok "E8: gate-touched.sh calls select.sh (ONE selector)" \
+    || bad "E8: gate-touched.sh calls select.sh" "no reference found"
 
 # ---------------------------------------------------------------------------
 echo
@@ -447,6 +453,35 @@ SPIRA_SELECT_SOURCE='*.sh' bash "$SELECT" \
 rc=$?
 [ "$rc" -ne 0 ] && ok "J2-ctrl: removing coverage triggers error again" \
     || bad "J2-ctrl: removing coverage triggers error again" "got exit $rc"
+
+# ---------------------------------------------------------------------------
+echo
+echo "Part K: gate-touched.sh acceptance — landing gate uses select.sh for # covers:"
+# ---------------------------------------------------------------------------
+# K1 (static): gate-touched.sh calls select.sh — the landing gate selector is the ONE selector.
+TOUCHED="$HERE/gate-touched.sh"
+_n="$(grep -c 'select\.sh' "$TOUCHED" 2>/dev/null || true)"
+[ "${_n:-0}" -ge 1 ] && ok "K1: gate-touched.sh calls select.sh" \
+    || bad "K1: gate-touched.sh calls select.sh" "no reference found"
+
+# K2 (functional): SPIRA_GATE_FILES containing spira/conf.sh → test-aeon-world-stop.sh selected.
+# Positive control (law-absence-needs-a-positive-control): the old gate-touched.sh (git diff on
+# test-*.sh only) would miss test-aeon-world-stop.sh since it isn't the file that changed.
+# The new gate-touched.sh reads # covers: via select.sh and selects it.
+FLIST_CONF="$TMP/flist-conf"
+printf 'spira/conf.sh\n' > "$FLIST_CONF"
+out_k="$(SPIRA_GATE_FILES="$FLIST_CONF" bash "$TOUCHED" dummy-base dummy-head 2>/dev/null)"
+want "K2: conf.sh change selects test-aeon-world-stop.sh (acceptance criterion)" \
+    "test-aeon-world-stop.sh" "$out_k"
+
+# K3 (fixture): SPIRA_GATE_FILES with covered.sh selects the covering suite, using
+# the fixture SUITE_DIR from Part B. Isolates from real suite declarations.
+FLIST_K="$TMP/flist-k"
+printf 'covered.sh\n' > "$FLIST_K"
+out_k3="$(SPIRA_GATE_FILES="$FLIST_K" SPIRA_BATCH_SUITE_DIR="$SD" \
+    bash "$TOUCHED" dummy-base dummy-head 2>/dev/null)"
+want    "K3: fixture: covered file selects its suite"    "test-fx-a.sh" "$out_k3"
+notwant "K3: fixture: uncovered suite not selected"      "test-fx-b.sh" "$out_k3"
 
 # ---------------------------------------------------------------------------
 echo
