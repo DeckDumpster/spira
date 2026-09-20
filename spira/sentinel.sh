@@ -835,6 +835,12 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
             log "CHECK5 $id: landstate LANDED, tip $_c5_ls_tip is ancestor of $subj_base — not reopening"
             continue
         fi
+        # HOLD MODE: a closed bead with a standing branch is the expected terminal state.
+        # The human has not merged it yet; this is not a fault.
+        if [ "$(repo_land "${r_name:-}" 2>/dev/null)" = "hold" ]; then
+            log "CHECK5 $id: repo ${r_name:-} is land=hold — standing branch is terminal; not reopening"
+            continue
+        fi
         if git -C "$r_path" show-ref --verify -q "refs/heads/spira/$id"; then
             # ZERO COMMITS AHEAD IS NOT WORK ON A BRANCH. An empty branch kept by the
             # Sending (content_landed now returns non-zero for zero-ahead) looks like "work
