@@ -55,7 +55,7 @@ testdb_up suites-confirm-red || { echo "test-suites-confirm-red: could not build
 
 SH="$TMP/spira"; RUN="$TMP/run"; STATE="$TMP/state"; GATEF="$TMP/gate-suites"
 mkdir -p "$SH" "$RUN" "$STATE" "$TMP/home" "$TMP/repo"
-cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$HERE/suite-covers.sh" "$SH/"
+cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$HERE/suite-covers.sh" "$HERE/suite-state.sh" "$SH/"
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$TMP/ask.log" > "$SH/ask.sh"
 chmod +x "$SH/ask.sh"
 
@@ -193,17 +193,17 @@ rm -f "$SH/test-cx-always-red.sh" "$SH/test-cx-env-sensitive.sh"
 plant test-cx-budget-red.sh <<'S'
 #!/usr/bin/env bash
 # covers: spira/nothing.sh
-sleep 5
+sleep 15
 printf '  FAIL  this suite always fails (budget exhaustion test)\n'
 exit 1
 S
 
-# BUDGET=sleep+5=10: suite starts (left=10 > 5), runs for 5s, exits. left ≤ 5.
-# Startup overhead up to 4 integer seconds is tolerated: left_before = 10-overhead > 5,
-# left_after = 5-overhead ≤ 5 for any overhead < 5. SPIRA_HOME is set in sut()'s
-# environment, so confirm_differing is non-empty; the budget check fires before the
-# confirming run starts → red-unconfirmed.
-BUDGET=10
+# BUDGET=sleep+5=20: suite starts (left=20 > 5), runs for 15s, exits. left ≤ 5.
+# Startup overhead up to 14 integer seconds is tolerated: left_before = 20-overhead > 5
+# for overhead < 15; left_after = 5-overhead ≤ 5 for any overhead ≥ 0. SPIRA_HOME is
+# set in sut()'s environment, so confirm_differing is non-empty; the budget check fires
+# before the confirming run starts → red-unconfirmed.
+BUDGET=20
 rm -f "$STATE/test-cx-budget-red.sh.result"
 out3="$(sut run)"
 BUDGET=120
