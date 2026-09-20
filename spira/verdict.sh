@@ -493,6 +493,10 @@ main() {
 
     case "$status" in
         pending)
+            local _name_key; _name_key="$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')"
+            local _v _ci_maxsec _ci_idle _t
+            _v="SPIRA_QUEUE_CI_MAXSEC_${_name_key}"; _ci_maxsec="${!_v:-${SPIRA_QUEUE_CI_MAXSEC:-3600}}"
+            _v="SPIRA_QUEUE_CI_IDLE_SEC_${_name_key}"; _ci_idle="${!_v:-${SPIRA_QUEUE_CI_IDLE_SEC:-600}}"
             local run_id run_started=0 run_last_act=0 _ml
             run_id="$("$forge" run-id "$repo" "${branch_name:-}" 2>/dev/null)" || run_id=""
             if [ -n "${run_id:-}" ]; then
@@ -501,7 +505,10 @@ main() {
                 while IFS= read -r _ml; do
                     case "$_ml" in
                         "started-at: "*) run_started="${_ml#started-at: }" ;;
-                        "last-activity: "*) run_last_act="${_ml#last-activity: }" ;;
+                        "last-activity: "*)
+                            _t="${_ml#last-activity: }"
+                            [ "${_t:-0}" -gt "${run_last_act:-0}" ] && run_last_act="$_t"
+                            ;;
                     esac
                 done <<< "$_run_meta"
             fi
@@ -518,14 +525,14 @@ main() {
                 return 0
             fi
 
-            if [ "$run_age" -lt "${SPIRA_QUEUE_CI_MAXSEC:-3600}" ]; then
+            if [ "$run_age" -lt "$_ci_maxsec" ]; then
                 printf 'verdict %s: PR %s pending (run age %ds)\n' "$name" "$pr_n" "$run_age"
                 return 0
             fi
 
             local _idle=$(( now - ${run_last_act:-0} ))
             if [ "${run_last_act:-0}" -gt 0 ] && \
-               [ "$_idle" -lt "${SPIRA_QUEUE_CI_IDLE_SEC:-600}" ]; then
+               [ "$_idle" -lt "$_ci_idle" ]; then
                 printf 'verdict %s: PR %s run %s progressing (last activity %ds ago)\n' \
                     "$name" "$pr_n" "${run_id:-?}" "$_idle"
                 return 0

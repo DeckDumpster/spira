@@ -995,8 +995,11 @@ spira_conf_defaults() {
     # fewer than SPIRA_QUEUE_BATCH_MAX. In seconds.
     : "${SPIRA_QUEUE_BATCH_WAIT:=1800}"
     # HOW LONG A CI RUN MAY RUN before it is a candidate for the stuck check.
+    # Per-repository override: SPIRA_QUEUE_CI_MAXSEC_<NAME> where <NAME> is the
+    # repo-map name uppercased with hyphens replaced by underscores.
     : "${SPIRA_QUEUE_CI_MAXSEC:=3600}"
-    # HOW LONG WITH NO JOB ACTIVITY before a run is treated as hung and re-queued.
+    # HOW LONG WITH NO RUN ACTIVITY before a run is treated as hung and re-queued.
+    # Per-repository override: SPIRA_QUEUE_CI_IDLE_SEC_<NAME>.
     : "${SPIRA_QUEUE_CI_IDLE_SEC:=600}"
     # HOW LONG A CI JOB MAY BE IN QUEUED STATUS (no runner assigned) before czar.sh --pass
     # fires ci-stalled. A queued job with a torn-down VM label will never start; the czar
