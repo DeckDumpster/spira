@@ -113,6 +113,10 @@ case "$finish" in
         bd -C "$SPIRA_DB" label add "$id" "delivers:beads" >/dev/null 2>&1
         bd -C "$SPIRA_DB" close "$id" --reason "diagnosis complete" >/dev/null 2>&1
         ;;
+    delivers-action:close)
+        bd -C "$SPIRA_DB" label add "$id" "delivers:action" >/dev/null 2>&1
+        bd -C "$SPIRA_DB" close "$id" --reason "action taken on the box; no commit needed" >/dev/null 2>&1
+        ;;
 esac
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
 exit 0
@@ -182,6 +186,16 @@ echo "delivers:beads WITHOUT child beads — IS reopened; evidence missing:"
 testdb_reset; seed sp-vd-dbe; shim 0 delivers-beads-empty:close; run_aeon
 is   "the bead is reopened"               open "$(field sp-vd-dbe status)"
 want "the verdict names the missing evidence" "REOPENED — delivers not verified" "$(cat "$TMP/out")"
+
+# ======================================================================================
+echo
+echo "delivers:action — NOT reopened; close reason carries the evidence (sp-vkozc):"
+# ======================================================================================
+testdb_reset; seed sp-vd-da; shim 0 delivers-action:close; run_aeon
+is     "the bead stays closed"              closed "$(field sp-vd-da status)"
+want   "the verdict records the acceptance" "delivers" "$(cat "$TMP/out")"
+want   "and says it was not reopened"       "NOT reopened" "$(cat "$TMP/out")"
+nowant "so nothing is reopened"             "REOPENED"     "$(cat "$TMP/out")"
 
 # ======================================================================================
 echo
