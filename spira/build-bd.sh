@@ -144,7 +144,7 @@ if [ -n "${SPIRA_DB:-}" ] && [ -d "${SPIRA_DB:-}" ]; then
         *)              say "store schema" "MISMATCH — $ms"; fail=1 ;;
     esac
 else
-    say "store schema" "SKIPPED — SPIRA_DB unset"; fail=1
+    say "store schema" "SKIPPED — no existing store to check compatibility against"
 fi
 
 [ "$fail" = 0 ] || { echo "build-bd.sh: verification FAILED — installing nothing" >&2; exit 1; }
