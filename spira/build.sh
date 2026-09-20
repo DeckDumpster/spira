@@ -41,12 +41,14 @@ done
 LOOM_DIR="$SPIRA_REPO/loom"
 PANEL_DIR="$SPIRA_COCKPIT/panel"
 BROKER_DIR="$SPIRA_REPO/broker"
+CZAR_PASS_DIR="$SPIRA_REPO/czar-pass"
 
 if [ "$skip_build" = 1 ]; then
     printf 'build.sh: --skip-build — prebuilt binaries expected at:\n'
-    printf '  loom:   %s\n' "$SPIRA_LOOM_BIN"
-    printf '  panel:  %s\n' "$SPIRA_PANEL"
-    printf '  broker: %s\n' "$SPIRA_BROKER_BIN"
+    printf '  loom:      %s\n' "$SPIRA_LOOM_BIN"
+    printf '  panel:     %s\n' "$SPIRA_PANEL"
+    printf '  broker:    %s\n' "$SPIRA_BROKER_BIN"
+    printf '  czar-pass: %s\n' "$SPIRA_CZAR_PASS_BIN"
     exit 0
 fi
 
@@ -100,6 +102,16 @@ printf 'build.sh: building broker (release)\n'
 ( cd "$BROKER_DIR" && cargo build --release ) || {
     printf 'build.sh: broker build failed\n' >&2; exit 1; }
 printf 'build.sh: broker built at %s\n' "$SPIRA_BROKER_BIN"
+
+# CZAR-PASS — the czar fast-pass binary. Queue-stall detection on a 30-second timer.
+if [ ! -d "$CZAR_PASS_DIR" ]; then
+    printf 'build.sh: czar-pass source directory not found at %s\n' "$CZAR_PASS_DIR" >&2
+    exit 1
+fi
+printf 'build.sh: building czar-pass (release)\n'
+( cd "$CZAR_PASS_DIR" && cargo build --release ) || {
+    printf 'build.sh: czar-pass build failed\n' >&2; exit 1; }
+printf 'build.sh: czar-pass built at %s\n' "$SPIRA_CZAR_PASS_BIN"
 
 # BD — optional, only when --with-bd was given.
 if [ "$with_bd" = 1 ]; then

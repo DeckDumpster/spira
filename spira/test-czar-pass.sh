@@ -22,7 +22,7 @@
 # the test first verifies NO detection with an empty/fresh fixture, then adds the
 # trigger and verifies detection. A detector that fires on empty data is not a detector.
 #
-# covers: spira/czar.sh spira/conf.sh spira/sentinel.sh spira/watchtower.sh
+# covers: czar-pass/src/main.rs spira/czar.sh spira/conf.sh spira/sentinel.sh spira/watchtower.sh
 #         spira/systemd/spira-czar-pass.service spira/systemd/spira-czar-pass.timer
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -37,6 +37,32 @@ CZAR="$HERE/czar.sh"
 [ -x "$CZAR" ] || { printf 'czar.sh not found or not executable: %s\n' "$CZAR" >&2; exit 2; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
+
+# Find or build the czar-pass binary (law-absence-needs-a-positive-control).
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+    CARGO_BIN="$HOME/.cargo/bin/cargo"
+fi
+if [ -z "$CARGO_BIN" ]; then
+    echo "SKIP test-czar-pass: cargo not found — czar-pass binary cannot be built"
+    exit 77
+fi
+CZAR_PASS_ROOT="$HERE/../czar-pass"
+CZAR_PASS_BIN="$CZAR_PASS_ROOT/target/release/czar-pass"
+if [ ! -x "$CZAR_PASS_BIN" ]; then
+    cp -r "$CZAR_PASS_ROOT/." "$T/czar-pass-src"
+    printf '  (building czar-pass into %s)\n' "$T/czar-pass-target"
+    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/czar-pass-target" \
+        "$CARGO_BIN" build --release \
+        --manifest-path "$T/czar-pass-src/Cargo.toml" 2>&1 | tail -5
+    CZAR_PASS_BIN="$T/czar-pass-target/release/czar-pass"
+fi
+if [ ! -x "$CZAR_PASS_BIN" ]; then
+    printf 'czar-pass binary not found at %s\n' "$CZAR_PASS_BIN" >&2
+    printf '0 passed, 1 failed\n'
+    exit 1
+fi
+export SPIRA_CZAR_PASS_BIN="$CZAR_PASS_BIN"
 
 # Minimal test environment — no real database needed: incident is stubbed,
 # summon_fayth silently returns 1 when fayth_ready finds no db (|| true guards it).
