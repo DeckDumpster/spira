@@ -304,11 +304,14 @@ home.}"
         # working directory, so this is what keeps the archivist's own transcript inside
         # $SPIRA_RUN and therefore outside its own sweep.
         cd "$ARC/cwd" || exit 1
+        # --add-dir loads brain's CLAUDE.md (page schema: frontmatter, filenames, log.md, index.md).
+        # $ARC/cwd has no CLAUDE.md, so this is the only project instructions source.
         printf '%s' "$prompt" | timeout "$SPIRA_ARCHIVIST_TIMEOUT" \
             "${SPIRA_AGENT:-claude}" -p --output-format stream-json --verbose \
                    --model "$SPIRA_ARCHIVIST_MODEL" \
                    --allowedTools "Bash,Read,Grep,Glob,Write" \
                    --dangerously-skip-permissions \
+                   ${SPIRA_WIKI:+--add-dir "$SPIRA_WIKI"} \
             > "$logf" 2>&1
         rc=$?
 

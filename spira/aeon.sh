@@ -193,6 +193,8 @@ $SWEEP_STATUTES
 
 $SWEEP_PROMPT"
 
+    _SWEEP_PI=""
+    [ "${FAYTH_PROJECT_INSTRUCTIONS:-}" = "none" ] && _SWEEP_PI="user"
     set +e
     printf '%s' "$SWEEP_FULL" | \
         ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
@@ -201,6 +203,7 @@ $SWEEP_PROMPT"
                --model "${FAYTH_MODEL:-claude-opus-5}" \
                --allowedTools "${FAYTH_TOOLS:-Bash,Read,Edit,Write,Glob,Grep}" \
                --dangerously-skip-permissions \
+               ${_SWEEP_PI:+--setting-sources "$_SWEEP_PI"} \
         >> "$SWEEP_LOGF" 2>&1
     exit $?
 fi
@@ -1697,11 +1700,14 @@ if pre_hooks:
     hooks['PreToolUse'] = [{'hooks': pre_hooks}]
 print(json.dumps({'hooks': hooks}))
 " 2>/dev/null)" || _AEON_SETTINGS=""
+_BEAD_PI=""
+[ "${FAYTH_PROJECT_INSTRUCTIONS:-}" = "none" ] && _BEAD_PI="user"
 printf '%s' "$FULL" | ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
     "${SPIRA_AGENT:-claude}" -p --output-format stream-json --verbose --include-partial-messages \
            --model "${FAYTH_MODEL:-claude-opus-5}" \
            --allowedTools "${FAYTH_TOOLS:-Bash,Read,Edit,Write,Glob,Grep}" \
            --dangerously-skip-permissions \
+           ${_BEAD_PI:+--setting-sources "$_BEAD_PI"} \
            ${_AEON_SETTINGS:+--settings "$_AEON_SETTINGS"} \
     >> "$LOGF" 2>&1
 rc=$?

@@ -69,3 +69,4 @@ FAYTH_STALL_BEATS=8
 # produced the 17-minute gate. Withholding Edit and Write enforces "Maechen proposes;
 # it does not build."
 FAYTH_TOOLS="Bash,Read,Glob,Grep,TodoWrite"
+FAYTH_PROJECT_INSTRUCTIONS=none
