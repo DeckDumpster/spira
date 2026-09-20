@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# covers: spira/acceptance-run.sh spira/doctor.sh
+# covers: spira/acceptance-run.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SCRIPT="$HERE/acceptance-run.sh"
