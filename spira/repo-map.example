@@ -13,7 +13,7 @@
 # was a constant per persona, every fayth pointed at one checkout, so a bead for any other
 # repository had no aeon that could open the file.
 #
-# Format:  name | path | land | base | format | gate
+# Format:  name | path | land | base | format | gate | lanes
 #
 #   name   the value after `repo:` on a bead. It is a LABEL, not a directory: a repository
 #          whose label and directory differ is exactly why this file exists rather than a
@@ -68,11 +68,28 @@
 #          cache-free: the tree is a fresh extraction, so anything that needs a warm build
 #          cache will not be measuring what you think it is
 #          (law-seen-red-must-be-seen-in-ci). Under `pr`, CI is the real gate and this is
-#          pre-flight. Last field, so it is the one that may contain a pipe.
+#          pre-flight. May contain a pipe.
+#   lanes  the persona lanes this repository admits. OPTIONAL: omitting it, or leaving it
+#          empty (trailing pipe, nothing after it), yields `plan` alone. A row may name a
+#          MODE or list lanes explicitly:
 #
-# EVERY LINE CARRIES ALL SIX COLUMNS, EVEN WHERE THREE OF THEM ARE EMPTY. A row written in an
-# older, narrower form reads its GATE as a formatter and runs it in the branch's tree — so
-# `test -f branch-only.txt` becomes something this harness executes and commits the result of.
+#            Modes (shorthand):
+#              consume  plan
+#              develop  plan, incident, groom, spike
+#              self     develop + maechen-sweep, czar-trigger
+#
+#            Explicit list: comma-separated lane labels from the set
+#              plan, incident, groom, maechen-sweep, spike, czar-trigger
+#
+#          An unknown mode name or unknown lane label is a hard parse error naming the row —
+#          a typo must not quietly disable a lane. The accessor is spira_repo_lanes <name>.
+#          This column is the GRANT side only; the project proposal (.spira/modes) and
+#          SPIRA_FAYTHS are intersected with it by a later bead.
+#
+# EVERY LINE CARRIES ALL SIX COLUMNS, EVEN WHERE THREE OF THEM ARE EMPTY; the seventh
+# (lanes) is optional. A row written in an older, narrower form reads its GATE as a
+# formatter and runs it in the branch's tree — so `test -f branch-only.txt` becomes
+# something this harness executes and commits the result of.
 # doctor.sh refuses a line with fewer than six fields for that reason.
 #
 # A `repo:` value ABSENT from this file is refused rather than guessed. An unmapped repo must

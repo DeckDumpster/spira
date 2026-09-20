@@ -3764,25 +3764,48 @@ spira_home_repo() {      # the repo name a bead means when it names none
 #
 # NOTE: no apostrophes inside the awk program below. It is single-quoted, so one in a comment
 # closes the string and the shell reports a syntax error pointing at the following line.
-repo_field() {           # repo_field <name> <path|land|base|format|gate> -> the field
+repo_field() {           # repo_field <name> <path|land|base|format|gate|lanes> -> the field
     local name="$1" col="$2"
     [ -f "$SPIRA_REPO_MAP" ] || return 1
     awk -v want="$name" -v col="$col" '
+        function _is_lane_list(s,    n, parts, i, v) {
+            n = split(s, parts, ",")
+            if (n == 0) return 0
+            for (i = 1; i <= n; i++) {
+                v = parts[i]; gsub(/^[ \t]+|[ \t]+$/, "", v)
+                if (v != "plan" && v != "incident" && v != "groom" &&
+                    v != "maechen-sweep" && v != "spike" && v != "czar-trigger") return 0
+            }
+            return 1
+        }
+        function _lanes_col_idx(    t) {
+            if (NF < 7) return 0
+            t = $NF; gsub(/^[ \t]+|[ \t]+$/, "", t)
+            if (t == "consume" || t == "develop" || t == "self") return NF
+            if (t == "") return NF
+            return _is_lane_list(t) ? NF : 0
+        }
         BEGIN { FS = "|" }
         /^[ \t]*#/ { next }
         {
             n = $1; gsub(/^[ \t]+|[ \t]+$/, "", n)
             if (n == "" || NF < 2 || n != want) next
-            # The gate is everything from the last fixed column on, rejoined: of the two
-            # command columns only one can be last, and the gate is the one with any
-            # business containing a pipe. The formatter is therefore a single field, which
-            # is why repo-map says so.
+            li = _lanes_col_idx()
+            # The gate is everything from the last fixed column on, rejoined with "|", up
+            # to but not including the lanes column when one is present. The formatter is
+            # always a single field; the gate is the last command column and may contain
+            # pipes (and therefore become multiple awk fields when split on "|").
             #
-            # WHICH position that is comes from NF, never from a constant. A six-field row
-            # is the current shape; a five-field row is the shape before `base` existed, so
-            # it has a formatter and no base; anything narrower predates both.
-            if      (col == "gate")   { s = (NF >= 6 ? 6 : (NF == 5 ? 5 : 4)); v = ""
-                                        for (i = s; i <= NF; i++) v = v (i > s ? "|" : "") $i }
+            # WHICH position gate starts at comes from NF (or li when lanes is present),
+            # never from a constant. A six-field row is the current shape; five-field rows
+            # predate `base`; anything narrower predates both.
+            if (col == "lanes") { v = (li > 0 ? $NF : "") }
+            else if (col == "gate") {
+                s = (NF >= 6 ? 6 : (NF == 5 ? 5 : 4))
+                e = (li > 0 ? NF - 1 : NF)
+                v = ""
+                for (i = s; i <= e; i++) v = v (i > s ? "|" : "") $i
+            }
             else if (col == "path")   v = $2
             else if (col == "land")   v = $3
             else if (col == "base")   v = (NF >= 6 ? $4 : "")
@@ -3852,6 +3875,49 @@ _spira_gitstore() {      # _spira_gitstore <path> -> its shared git directory, a
 repo_land() {            # repo_land <name> -> push | pr | hold | queue
     local m; m="$(repo_field "${1:-}" land)"
     printf '%s' "${m:-push}"
+}
+
+# spira_repo_lanes <name> -> the granted lane set (space-separated partition labels).
+#
+# A six-column row, a missing lanes column, and an explicit empty lanes field all yield the
+# plan label alone. A mode name (consume/develop/self) expands to its lane set using the
+# configured SPIRA_*_LABEL values. An unknown mode name or unknown lane label is a hard
+# error naming the row — a typo must not quietly disable a lane.
+spira_repo_lanes() {
+    local name="${1:-}" raw
+    raw="$(repo_field "$name" lanes 2>/dev/null)"
+    [ -z "$raw" ] && { printf '%s' "${SPIRA_PLAN_LABEL:-plan}"; return 0; }
+    _spira_expand_lanes "$name" "$raw"
+}
+
+_spira_expand_lanes() {  # _spira_expand_lanes <repo-name> <raw> -> space-separated lane labels
+    local name="$1" raw="$2"
+    local p="${SPIRA_PLAN_LABEL:-plan}"
+    local inc="${SPIRA_INCIDENT_LABEL:-incident}"
+    local gr="${SPIRA_GROOMER_LABEL:-groom}"
+    local mae="${SPIRA_MAECHEN_LABEL:-maechen-sweep}"
+    local sp="${SPIRA_SPIKE_LABEL:-spike}"
+    local cz="${SPIRA_CZAR_LABEL:-czar-trigger}"
+    case "$raw" in
+        consume) printf '%s' "$p"; return 0 ;;
+        develop) printf '%s %s %s %s' "$p" "$inc" "$gr" "$sp"; return 0 ;;
+        self)    printf '%s %s %s %s %s %s' "$p" "$inc" "$gr" "$sp" "$mae" "$cz"; return 0 ;;
+    esac
+    local result="" item
+    local IFS=,
+    for item in $raw; do
+        item="${item#"${item%%[![:space:]]*}"}"; item="${item%"${item##*[![:space:]]}"}"
+        [ -z "$item" ] && continue
+        case "$item" in
+            "$p"|"$inc"|"$gr"|"$mae"|"$sp"|"$cz") ;;
+            *) printf 'spira: repo:%s — unknown lane %s (valid: %s)\n' \
+                   "$name" "$item" "$p,$inc,$gr,$mae,$sp,$cz" >&2
+               return 1 ;;
+        esac
+        result="${result:+$result }$item"
+    done
+    [ -n "$result" ] || { printf '%s' "$p"; return 0; }
+    printf '%s' "$result"
 }
 
 # --------------------------------------------------------------------------------------
