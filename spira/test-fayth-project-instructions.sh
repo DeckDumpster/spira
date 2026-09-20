@@ -40,6 +40,8 @@ cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/suite-covers.sh" "$SPIR
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"
+# Empty scope label so any non-empty FAYTH_LABELS passes the fence (not a claim test).
+export SPIRA_SCOPE_LABEL=""
 
 grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
     || { printf 'test-fayth-project-instructions: aeon.sh has no SPIRA_AGENT injection point\n' >&2; exit 1; }
@@ -66,7 +68,7 @@ echo "POSITIVE CONTROL — none fayth sweep gets --setting-sources user:"
 # Run first: proves the stub can detect the flag before any absence assertion.
 cat > "$SPIRA_HOME/chamber/testnone.fayth" <<'FAYTH'
 FAYTH_NAME=testnone
-FAYTH_LABELS=""
+FAYTH_LABELS=test-pi-none
 FAYTH_EXCLUDE_LABELS=""
 FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600
@@ -87,7 +89,7 @@ echo "repo fayth sweep does NOT get --setting-sources:"
 # ==========================================================================================
 cat > "$SPIRA_HOME/chamber/testrepo.fayth" <<'FAYTH'
 FAYTH_NAME=testrepo
-FAYTH_LABELS=""
+FAYTH_LABELS=test-pi-repo
 FAYTH_EXCLUDE_LABELS=""
 FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600
