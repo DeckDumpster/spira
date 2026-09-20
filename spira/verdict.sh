@@ -561,7 +561,17 @@ _attr_eject() {
     if [ -n "$fail_lines" ]; then
         _note="$(printf '%s\n\nFailing assertions:\n%s' "$_note" "$fail_lines")"
     fi
-    bead_reopen "$id" queue-eject "$_note" >/dev/null 2>&1 || true
+    if ! bead_reopen "$id" queue-eject "$_note"; then
+        printf 'verdict %s: bead_reopen refused %s — ejection blocked; operator notified\n' "$name" "$id"
+        printf '## Note\nMerge queue attribution for %s: bd refused to reopen %s.\n\nThe bead may be stranded. Ejection from PR %s (%s) was NOT recorded.\nInvestigate bd state and reopen manually if needed.\n' \
+            "$name" "$id" "$pr_n" "$name" \
+        | SPIRA_MAIL_LINT_CONSIDERED="queue-eject-reopen-failure" \
+          bash "$HERE/mail.sh" send operator \
+            --from "Spira Queue <queue@spira>" \
+            --subject "Merge queue: $name reopen refused for $id" \
+            2>/dev/null || true
+        return 1
+    fi
     bdq label remove "$id" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
     land_mark "$id" EJECTED "$tip" "$suites" "$unattributed"
     printf '%s' "$suites" > "$LANDSTATE/$id.ejected.$$" 2>/dev/null \

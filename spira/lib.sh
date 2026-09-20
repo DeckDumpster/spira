@@ -1586,7 +1586,7 @@ bead_reopen() {
     _bump_write_event "$id" reopen "$cause" || rc=1
     [ -n "$note" ] && { bdq note "$id" "$note" >/dev/null 2>&1 || rc=1; }
     [ "$rc" = 0 ] || printf 'bead_reopen: %s — bd refused the reopen, the release or the note\n' "$id" >&2
-    return 0
+    return "$rc"
 }
 
 # verdict_committed <repo> <branch> <bead-id> [window] -> "yes" or "no"

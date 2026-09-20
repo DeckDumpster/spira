@@ -69,6 +69,8 @@
 #      by any diff, phase 2/3 short-circuited by an earlier eject) is logged
 #      explicitly as "unattributed" in the machine-readable results — never
 #      just absent (sp-yivi7 archivist note, batch PR 297).
+#  44. Failed reopen blocks ejection: bd refuses bead_reopen → no EJECTED mark,
+#      no "ejected" mail, refusal logged, escalation mail sent.
 #
 # MOVED (docs/test-plan/landing-merge-queue.md UC-43/44/49, section 4 cluster 1):
 #   Cases 12, 14, 17, 18, 27 (age/idle/retry classification over verdict_action,
@@ -667,7 +669,15 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 #     POSITIVE CONTROL (case 16): same shape of batch with no offender — the
 #     all-suites repro finds nothing, the batch head is also green, and all
 #     members are returned to CERTIFIED without ejection or halving.
+#
+#     sp-vd-a2 must exist in testdb so bead_reopen returns 0 for it (it is
+#     open, so bd reopen is a no-op with exit 0). Without this, bead_reopen
+#     returns 1 (no issue found), _attr_eject escalates, and EJECTED is never
+#     written — which is the correct production behaviour but would hide the
+#     diff-attribution logic that this case exercises.
 # =============================================================================
+printf '{"id":"sp-vd-a2","title":"t","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+    | testdb_seed
 printf 'red\n' > "$MEMBER_RC_DIR/sp-vd-a2"
 printf 'green\n' > "$MEMBER_RC_DIR/sp-vd-a1"
 
@@ -1650,4 +1660,59 @@ want "43. silent-suite: unpinned suite logged explicitly as unattributed, not ab
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
+# =============================================================================
+# 44. FAILED REOPEN BLOCKS EJECTION.
+#     When bd refuses bead_reopen, _attr_eject must not write the EJECTED mark
+#     or send the "ejected" mail. It must log the refusal and send an escalation.
+#     POSITIVE CONTROL: if unfixed (bead_reopen always returns 0, 2>&1 on the
+#     call site), QUEUE ESCAPED would be written and the refusal diagnostic
+#     would not appear — both "nowant QUEUE ESCAPED" and "want bead_reopen"
+#     assertions would fail against the unfixed code.
+# =============================================================================
+cat > "$SH/repro-batch-attr.sh" <<'REPRO'
+#!/usr/bin/env bash
+# Red if the test-ref tree contains guilty-marker.txt; green otherwise.
+ref="${@: -1}"
+git -C "$SPIRA_REPO" ls-tree "$ref" -- guilty-marker.txt 2>/dev/null | grep -q . && exit 1
+exit 0
+REPRO
+chmod +x "$SH/repro-batch-attr.sh"
+: > "$RUN/landing.log"
+: > "$MAIL_LOG"
+base_sha44="$(git -C "$REPO" rev-parse origin/main)"
+for id in sp-vd-nr1 sp-vd-nr2; do
+    bwt44="$RUN/worktree/$id"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$bwt44" origin/main 2>/dev/null || true
+    printf '%s\n' "$id" > "$bwt44/$id.txt"
+done
+printf 'offender\n' > "$RUN/worktree/sp-vd-nr2/guilty-marker.txt"
+for id in sp-vd-nr1 sp-vd-nr2; do
+    bwt44="$RUN/worktree/$id"
+    git -C "$bwt44" add -A
+    git -C "$bwt44" commit -q -m "$id: work"
+    printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" \
+        > "$LANDSTATE/$id"
+done
+tip_nr1="$(git -C "$REPO" rev-parse "spira/sp-vd-nr1")"
+tip_nr2="$(git -C "$REPO" rev-parse "spira/sp-vd-nr2")"
+wt44="$RUN/worktree/.b44"
+git -C "$REPO" worktree add -q --detach "$wt44" "$base_sha44" 2>/dev/null || true
+git -C "$wt44" merge -q --no-edit --no-ff -m "spira: land sp-vd-nr1" "$tip_nr1" >/dev/null 2>&1
+git -C "$wt44" merge -q --no-edit --no-ff -m "spira: land sp-vd-nr2" "$tip_nr2" >/dev/null 2>&1
+batch_head44="$(git -C "$wt44" rev-parse HEAD)"
+git -C "$REPO" worktree remove -f "$wt44" 2>/dev/null || true
+{ printf 'pr=64\nhead=%s\nbase=%s\nmembers=sp-vd-nr1:%s sp-vd-nr2:%s\nopened=%s\n' \
+    "$batch_head44" "$base_sha44" "$tip_nr1" "$tip_nr2" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-attr-suite.sh\n' > "$FORGE_STATUS_FILE"
+# sp-vd-nr2 is NOT seeded in testdb — bd refuses its reopen, exercising the fix.
+out44="$(SPIRA_QUEUE_REPRO_BATCH="$SH/repro-batch-attr.sh" verdict "$REPONAME")"
+nowant "44. reopen-refused: no QUEUE ESCAPED"   "QUEUE ESCAPED"     "$(cat "$RUN/landing.log" 2>/dev/null)"
+want   "44. reopen-refused: refusal logged"      "bead_reopen: sp-vd-nr2" "$out44"
+nowant "44. reopen-refused: no ejected mail"     "ejected from"      "$(cat "$MAIL_LOG")"
+want   "44. reopen-refused: escalation mail"     "reopen refused"    "$(cat "$MAIL_LOG")"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
 tl_summary
+printf '\n%s passed, %s failed\n' "$pass" "$fail"
+[ "$fail" -eq 0 ]
