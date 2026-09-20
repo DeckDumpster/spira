@@ -59,7 +59,7 @@ cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$HERE/s
 printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s"\n' "$TMP/ask.log" > "$SH/ask.sh"
 chmod +x "$SH/ask.sh"
 
-BUDGET=120; PERSUITE=20; STALE=3600; PRIO=3; REPONAME=fixture-repo; CONFIRM_MIN=5
+BUDGET=120; PERSUITE=20; STALE=3600; PRIO=3; REPONAME=fixture-repo; CONFIRM_MIN=5; UNREACHED_MIN=5
 TOOLPATH="$TMP/bin"; mkdir -p "$TOOLPATH"
 printf '#!/usr/bin/env bash\nHOME=%s exec %s "$@"\n' "$HOME" "$(type -P bd)" > "$TOOLPATH/bd"
 chmod +x "$TOOLPATH/bd"
@@ -95,6 +95,7 @@ sut() {
         SPIRA_INCIDENT_LOCK_WAIT="60" \
         SPIRA_SUITES_INLINE=1 \
         SPIRA_SUITES_CONFIRM_MIN="$CONFIRM_MIN" \
+        SPIRA_SUITES_UNREACHED_MIN="$UNREACHED_MIN" \
         "$@" bash "$SH/suites.sh" "$cmd" 2>&1
 }
 plant() { cat > "$SH/$1"; chmod +x "$SH/$1"; }
@@ -166,7 +167,11 @@ printf '  FAIL  this suite is broken regardless of SPIRA_HOME\n'
 exit 1
 S
 
+# Use thresholds of 0 so timing never prevents the confirming run; this section
+# tests that a genuinely broken suite is confirmed red, not the budget-exhaustion path.
+CONFIRM_MIN=0; UNREACHED_MIN=0
 out2="$(sut run)"
+CONFIRM_MIN=5; UNREACHED_MIN=5
 # The env-sensitive suite (still planted) will also appear as ok; only assert
 # that test-cx-always-red.sh specifically shows RED in its output line.
 want "a genuinely broken suite is labelled RED in its output line" \
