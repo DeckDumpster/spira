@@ -1081,7 +1081,7 @@ for i in d:
                 log "CHECK6 $id: $br does not rebase onto $base, but its pull request is merged — landed, not stuck"
                 continue
             fi
-            local _other_beads _reopen_note _rq_n _rn_land _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason
+            local _other_beads _reopen_note _rq_n _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason
             _cur_base_sha="$(git -C "$repo" rev-parse "$base" 2>/dev/null)"
             read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
             if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$tip" ] && \
@@ -1089,14 +1089,8 @@ for i in d:
                 log "CHECK6 $id: tip and base unchanged since last RED mark — skipping duplicate bump"
                 continue
             fi
-            _rn_land="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
+            _reopen_note="$(conflict_reopen_note "$repo" "$br" "$base" "$name" "${REBASE_CONFLICTS:-}" "sentinel")"
             _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
-            _reopen_note="Reopened by sentinel: $br does not rebase onto $base in $name; conflicts in ${REBASE_CONFLICTS:-unknown}. The branch carries $_rn_land commit(s) from the previous session — resume from the existing work."
-            if [ -n "$_other_beads" ]; then
-                _reopen_note="$_reopen_note Those files were changed on $base by $_other_beads — check whether this work is already landed before resolving."
-            else
-                _reopen_note="$_reopen_note A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it."
-            fi
             bump_requeue "$id" merge-conflict >/dev/null 2>&1
             _rq_n="$(requeues_of "$id")"
             if [ "${_rq_n:-0}" -ge "${SPIRA_REBASE_ESCALATE_AT:-3}" ]; then

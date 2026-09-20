@@ -321,17 +321,21 @@ main() {
                         "$name" "$_bid" "$_cited_sha" "$base"
                 else
                     # Attempt rebase onto base before reopening.
-                    local _rbwt _rbtip _rbtmp _rbrc _rbsrc _rbfp
+                    local _rbwt _rbtip _rbtmp _rbrc _rbsrc _rbfp _rbconf _wtconf
                     _rbwt="$SPIRA_RUN/worktree/.batch-rb-$$"
-                    _rbtip="" _rbrc=1
+                    _rbtip="" _rbrc=1 _rbconf=""
                     if git -C "$repo" worktree add -q --detach "$_rbwt" "$_btip" 2>/dev/null; then
                         _rbfp="$(git -C "$_rbwt" merge-base HEAD "$base_sha" 2>/dev/null)" || _rbfp=""
                         if [ -n "$_rbfp" ]; then
                             git -C "$_rbwt" rebase --onto "$base_sha" "$_rbfp" \
                                 >/dev/null 2>&1; _rbrc=$?
-                            [ "$_rbrc" -eq 0 ] \
-                                && _rbtip="$(git -C "$_rbwt" rev-parse HEAD 2>/dev/null)" \
-                                || git -C "$_rbwt" rebase --abort 2>/dev/null || true
+                            if [ "$_rbrc" -eq 0 ]; then
+                                _rbtip="$(git -C "$_rbwt" rev-parse HEAD 2>/dev/null)"
+                            else
+                                _rbconf="$(git -C "$_rbwt" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
+                                _rbconf="${_rbconf% }"
+                                git -C "$_rbwt" rebase --abort 2>/dev/null || true
+                            fi
                         fi
                         git -C "$repo" worktree remove -f "$_rbwt" 2>/dev/null || true
                     fi
@@ -351,10 +355,12 @@ main() {
                                 printf 'batch %s: %s rebased onto %s — batched\n' \
                                     "$name" "$_bid" "$base"
                             else
+                                _wtconf="$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
+                                _wtconf="${_wtconf% }"
                                 git -C "$wt" merge --abort 2>/dev/null || true
                                 bump_requeue "$_bid" merge-conflict >/dev/null 2>&1 || true
                                 bead_reopen "$_bid" rebase-conflict \
-                                    "Reopened by batch builder: branch spira/$_bid conflicts with $base in $name after rebase." \
+                                    "$(conflict_reopen_note "$repo" "spira/$_bid" "$base" "$name" "$_wtconf" "batch builder")" \
                                     >/dev/null 2>&1 || true
                                 land_mark "$_bid" RED "$_rbtip" conflicts-with-base
                                 printf 'batch %s: %s conflicts with %s after rebase — reopened\n' \
@@ -372,12 +378,12 @@ main() {
                     else
                         bump_requeue "$_bid" merge-conflict >/dev/null 2>&1 || true
                         bead_reopen "$_bid" rebase-conflict \
-                            "Reopened by batch builder: branch spira/$_bid conflicts with $base in $name." \
+                            "$(conflict_reopen_note "$repo" "spira/$_bid" "$base" "$name" "$_rbconf" "batch builder")" \
                             >/dev/null 2>&1 || true
                         land_mark "$_bid" RED "$_btip" conflicts-with-base
                         printf 'batch %s: %s conflicts with %s — reopened\n' "$name" "$_bid" "$base"
                     fi
-                    unset _rbwt _rbtip _rbtmp _rbrc _rbsrc _rbfp
+                    unset _rbwt _rbtip _rbtmp _rbrc _rbsrc _rbfp _rbconf _wtconf
                 fi
             else
                 # Clean merge with the land ref: conflict is only with batch accumulation — skip.
