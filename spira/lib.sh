@@ -3248,7 +3248,7 @@ for i in (d if isinstance(d, list) else [d]):
 
 # _check4_bulk_sql <in-clause> -> SQL returning attempts and reopens for each id in the clause
 _check4_bulk_sql() {
-    printf "select issue_id, greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end), 0), sum(case when event_type='reopened' then 1 else 0 end) from events where issue_id in (%s) group by issue_id" "$1"
+    printf "select issue_id, greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end), 0) as att, sum(case when event_type='reopened' then 1 else 0 end) as rep from events where issue_id in (%s) group by issue_id" "$1"
 }
 
 # check4_bulk_data <dispatchable-output> -> id TAB attempts TAB reopens, one per bead
@@ -3264,14 +3264,27 @@ check4_bulk_data() {
     | python3 -c '
 import sys
 for line in sys.stdin:
-    if not line.startswith("|") or line.startswith("+-"):
-        continue
-    cols = [c.strip() for c in line.strip("|").split("|")]
-    if len(cols) >= 3 and cols[0] and cols[0] != "issue_id":
-        try:
-            print(cols[0] + "\t" + str(int(cols[1] or 0)) + "\t" + str(int(cols[2] or 0)))
-        except (ValueError, IndexError):
-            pass
+    s = line.rstrip("\n")
+    if "|" in s:
+        if s.lstrip().startswith("+-"):
+            continue
+        cols = [c.strip() for c in s.strip("|").split("|")]
+        if len(cols) >= 3 and cols[0] and cols[0] not in ("issue_id",):
+            try:
+                print(cols[0] + "\t" + str(int(cols[1] or 0)) + "\t" + str(int(cols[2] or 0)))
+            except (ValueError, IndexError):
+                pass
+    else:
+        parts = s.split("\t") if "\t" in s else s.split()
+        if len(parts) >= 3:
+            try:
+                a = int(parts[1].strip())
+                r = int(parts[2].strip())
+                bid = parts[0].strip()
+                if bid:
+                    print(bid + "\t" + str(a) + "\t" + str(r))
+            except (ValueError, IndexError):
+                pass
 ' 2>/dev/null
 }
 

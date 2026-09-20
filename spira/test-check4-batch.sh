@@ -212,7 +212,8 @@ done
 
 out="$(SPIRA_POISON_AT=3 SPIRA_REQUEUE_AT=5 sentinel)"
 ispoisoned "sentinel poisons bead at threshold using bulk attempts"   sp-poison-target
-want       "requeue cap fires using bulk reopens"                     "requeue" "$out"
+is "requeue cap fired for sp-requeue-target" "yes" \
+    "$([ -f "$RUN/requeue-asked/sp-requeue-target" ] && echo yes || echo no)"
 notpoisoned "requeue target is not poisoned (different path)"         sp-requeue-target
 
 printf '\ntest-check4-batch.sh: %d passed, %d failed\n' "$pass" "$fail"
