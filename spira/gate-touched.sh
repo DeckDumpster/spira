@@ -18,8 +18,25 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo="${SPIRA_GATE_REPO:-.}"
 
 if [ -f "${SPIRA_GATE_FILES:-}" ]; then
-    _covered="$(bash "$HERE/select.sh" --files "$SPIRA_GATE_FILES" --repo "$repo" \
-        --no-all-fallback 2>/dev/null || true)"
+    # Build corpus from BASE tree so suites added by the branch are not self-selected
+    # through coverage. Falls back to SUITE_DIR when BASE is not a resolvable ref.
+    _suite_dir="${SPIRA_BATCH_SUITE_DIR:-$HERE}"
+    _tmp_corpus="$(mktemp -d)"
+    while IFS= read -r _sp; do
+        [ -n "$_sp" ] || continue
+        _sn="$(basename "$_sp")"
+        [ -f "$_suite_dir/$_sn" ] && ln -s "$_suite_dir/$_sn" "$_tmp_corpus/$_sn" 2>/dev/null || true
+    done < <(git -C "$repo" ls-tree -r "$BASE" --name-only 2>/dev/null \
+        | grep '^spira/test-[^/]*\.sh$' || true)
+    if [ -n "$(ls -A "$_tmp_corpus" 2>/dev/null)" ]; then
+        _corpus="$_tmp_corpus"
+    else
+        rm -rf "$_tmp_corpus"
+        _corpus="$_suite_dir"
+    fi
+    _covered="$(bash "$HERE/select.sh" --files "$SPIRA_GATE_FILES" --suite-dir "$_corpus" \
+        --repo "$repo" --no-all-fallback 2>/dev/null || true)"
+    [ "$_corpus" = "$_tmp_corpus" ] && rm -rf "$_tmp_corpus" 2>/dev/null || true
 else
     _covered="$(bash "$HERE/select.sh" --base "$BASE" --head "$HEAD" --repo "$repo" \
         --no-all-fallback 2>/dev/null || true)"

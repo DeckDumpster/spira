@@ -82,7 +82,7 @@ FLIST="$TMP/flist"
 printf 'spira/changed.sh\n' > "$FLIST"
 
 fsel="$(cd "$R" && SPIRA_GATE_FILES="$FLIST" SPIRA_GATE_REPO="$R" SPIRA_BATCH_SUITE_DIR="$R/spira" \
-    bash "$TOUCHED" dummy-base dummy-head 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')"
+    bash "$TOUCHED" main br 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')"
 want    "C1: GATE_FILES: covering suite selected"     "test-a.sh"  "$fsel"
 notwant "C2: GATE_FILES: branch-added suite excluded" "test-a2.sh" "$fsel"
 notwant "C3: GATE_FILES: unrelated suite excluded"    "test-b.sh"  "$fsel"
