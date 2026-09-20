@@ -138,7 +138,21 @@ main() {
                 git -C "$_rp" show-ref --verify --quiet "refs/heads/spira/$_lid" 2>/dev/null \
                     && { _anyrn=1; break; }
             done
-            [ "$_anyrn" = 1 ] && continue
+            if [ "$_anyrn" = 1 ]; then
+                # Branch still exists. Reconcile to LANDED when the certified tip is already
+                # in the base AND the branch hasn't moved past it. If the branch has advanced
+                # since certification, defer to the _certified_list stale-cert path (inside
+                # the open-batch guard), which re-certifies with the live tip first.
+                _lcur="$(git -C "$repo" rev-parse "refs/heads/spira/$_lid" 2>/dev/null || true)"
+                if [ "${_lcur:-none}" = "${_ltip:-none}" ] && \
+                   git -C "$repo" merge-base --is-ancestor "${_ltip:-none}" "$base_sha" \
+                       2>/dev/null; then
+                    land_mark "$_lid" LANDED "${_ltip:-none}" already-in-base
+                    printf 'batch %s: %s tip already in %s (live branch) — LANDED\n' \
+                        "$name" "$_lid" "$base"
+                fi
+                continue
+            fi
             # Tip already in base: the branch landed (via external merge before verdict.sh
             # ran). Mark LANDED rather than LOST so the queue view and queue-wait logic
             # both see it as done — LOST drops it from the view but does not unblock
