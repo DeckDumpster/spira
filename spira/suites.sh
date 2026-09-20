@@ -74,6 +74,12 @@ CURSOR="$STATE/cursor"
 # Stripping SPIRA_DB causes conf.sh to derive a default path that has no .beads on any
 # stock install, skipping the check entirely; testdb_up then sets SPIRA_DB to the fixture.
 RUNNER_VARS="${SPIRA_SUITES_RUNNER_VARS:-SPIRA_HOME SPIRA_SUITES_MAXSEC SPIRA_DB}"
+# Minimum seconds of budget remaining to attempt a confirming run. When a suite
+# exhausts the budget past this point, the red is recorded as red-unconfirmed rather
+# than attempting a confirming run that would be killed by its own timeout (treated as
+# confirmed red) and waste the remaining budget. Configurable so tests can trigger the
+# red-unconfirmed path without relying on actual elapsed time.
+CONFIRM_MIN="${SPIRA_SUITES_CONFIRM_MIN:-5}"
 
 # --------------------------------------------------------------------------------------
 # THE POPULATION, AND THE PARTITION OF IT.
@@ -1093,7 +1099,7 @@ cmd_run() {
                     printf '%s\n' "$s" >> "$_cfp_dir/cause/$_cfp"
                     _deferred_red_count=$(( _deferred_red_count + 1 ))
                     printf '  %-26s RED      rc=%s after %ss  (pending cluster)\n' "$s" "$rc" "$secs"
-                elif [ "$left" -le 5 ]; then
+                elif [ "$left" -le "$CONFIRM_MIN" ]; then
                     # Budget exhausted: cannot confirm. Record the result but do not file.
                     # An unconfirmed red that reaches a bead an aeon cannot reproduce is the
                     # defect this mechanism exists to prevent.
