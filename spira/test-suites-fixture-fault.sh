@@ -50,7 +50,6 @@ _BD_EMBEDDED_REAL="$(command -v bd-embedded 2>/dev/null || true)"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
-testdb_require test-suites-fixture-fault
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 # Capture after conf.sh rebuilt PATH; used in sut for server-mode fallback.
 _BD_REAL="$(command -v bd 2>/dev/null || true)"
@@ -67,15 +66,16 @@ printf '# the gated one\nspira/test-ff-gated.sh\n' > "$GATEF"
 # Knobs, all away from the shipped default.
 BUDGET=120; PERSUITE=20; STALE=3600; PRIO=3; REPONAME=fixture-fault-repo
 
-# THE bd WRAPPER NEEDS THE REAL HOME. testenv-batch.sh sets HOME to a private scratch
-# dir; conf.sh rebuilds PATH from it, dropping bd-embedded. Creating the wrapper before
-# testdb_up and setting TESTDB_BD to it lets _testdb_embedded_check succeed so the outer
-# fixture uses embedded mode rather than the dolt server (which fails under load).
+# THE bd WRAPPER MUST BE SET BEFORE testdb_require. testenv-batch.sh overrides HOME;
+# conf.sh then rebuilds PATH, dropping bd-embedded. _testdb_embedded_check caches its
+# first result — a stale "no" from testdb_require makes testdb_up fall to server mode
+# even when bd-embedded is available via the wrapper (scar: sp-7nblo).
 TOOLPATH="$TMP/bin"; mkdir -p "$TOOLPATH"
 printf '#!/usr/bin/env bash\nHOME=%s exec %s "$@"\n' \
     "$_REAL_HOME" "${_BD_EMBEDDED_REAL:-${_BD_REAL:-bd}}" > "$TOOLPATH/bd"
 chmod +x "$TOOLPATH/bd"
 TESTDB_BD="$TOOLPATH/bd"
+testdb_require test-suites-fixture-fault
 testdb_up fixture-fault || { echo "test-suites-fixture-fault: could not build a fixture database"; exit 1; }
 
 # PRE-SEEDED SHARED FIXTURE FOR THE SUT.
