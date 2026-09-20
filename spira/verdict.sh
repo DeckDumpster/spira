@@ -563,7 +563,7 @@ _attr_eject() {
     fi
     if ! bead_reopen "$id" queue-eject "$_note"; then
         printf 'verdict %s: bead_reopen refused %s — ejection blocked; operator notified\n' "$name" "$id"
-        printf '## Note\nMerge queue attribution for %s: bd refused to reopen %s.\n\nThe bead may be stranded. Ejection from PR %s (%s) was NOT recorded.\nInvestigate bd state and reopen manually if needed.\n' \
+        printf '## Note\nMerge queue attribution for %s: reopen refused for %s.\n\nThe bead may be stranded. Ejection from PR %s (%s) was NOT recorded.\nInvestigate bead state and reopen manually if needed.\n' \
             "$name" "$id" "$pr_n" "$name" \
         | SPIRA_MAIL_LINT_CONSIDERED="queue-eject-reopen-failure" \
           bash "$HERE/mail.sh" send operator \
