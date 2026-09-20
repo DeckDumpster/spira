@@ -1489,7 +1489,7 @@ PAYLOAD
         printf 'auto-quarantine: state write failed — %s stays active\n' "$suite"
         return 1
     fi
-    git -C "$wt" add -- "${SPIRA_SUITE_STATE:-spira/suite-state}" >/dev/null 2>&1
+    git -C "$wt" add -- "${SPIRA_SUITE_STATE_FILE:-spira/suite-state}" >/dev/null 2>&1
     if ! git -C "$wt" commit --no-gpg-sign \
          -m "auto-quarantine: $suite  ${bead_id:-}" >/dev/null 2>&1; then
         git -C "$repo" worktree remove --force "$wt" 2>/dev/null || true
@@ -1646,7 +1646,7 @@ _sts_transition() {  # _sts_transition <state> <suite> [<bead>] [<reason>]
             printf 'suites %s: failed to update state file\n' "$state" >&2; return 1
         }
     fi
-    git -C "$repo" add "${SPIRA_SUITE_STATE:-spira/suite-state}" >/dev/null 2>&1
+    git -C "$repo" add "${SPIRA_SUITE_STATE_FILE:-spira/suite-state}" >/dev/null 2>&1
     git -C "$repo" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" commit -m "suite-state: $suite -> $state  sp-emvlk" \
         --no-gpg-sign >/dev/null 2>&1 || {
         git -C "$repo" checkout - >/dev/null 2>&1 || true

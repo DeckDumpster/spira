@@ -1501,7 +1501,7 @@ else:
     local quarantine_n=0 _rname2 _rp2 _sf _sfn
     for _rname2 in $(spira_repos 2>/dev/null); do
         _rp2="$(repo_root "$_rname2" 2>/dev/null)" || continue
-        _sf="$_rp2/${SPIRA_SUITE_STATE:-spira/suite-state}"
+        _sf="$_rp2/${SPIRA_SUITE_STATE_FILE:-spira/suite-state}"
         [ -f "$_sf" ] || continue
         _sfn="$(grep -c ' | quarantined |' "$_sf" 2>/dev/null)" || _sfn=0
         quarantine_n=$(( quarantine_n + _sfn ))

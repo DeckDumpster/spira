@@ -19,7 +19,7 @@ _sts_trim() {
 # suite_state_file <repo> -> absolute path of the lifecycle file for this repo
 suite_state_file() {
     local repo="${1:?suite_state_file: requires a repo path}"
-    printf '%s/%s' "${repo%/}" "${SPIRA_SUITE_STATE:-spira/suite-state}"
+    printf '%s/%s' "${repo%/}" "${SPIRA_SUITE_STATE_FILE:-spira/suite-state}"
 }
 
 # suite_state_parse <file> -> emit tab-separated "suite state since bead reason" per non-default entry.
