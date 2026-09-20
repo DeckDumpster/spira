@@ -183,9 +183,9 @@ is "no environment-finding bead is filed for it" "0" "$(count "$env_ids2")"
 echo
 echo "when budget is exhausted after the suite runs, file nothing and record red-unconfirmed:"
 # ======================================================================================
-# THE CONFIRMING RUN TAKES TIME. The budget check `left <= 5` fires AFTER the suite has
-# finished but BEFORE the confirming run starts. If the suite consumes most of the budget,
-# there is no room for a confirming run; the result is recorded but no bead is filed.
+# THE CONFIRMING RUN THRESHOLD. The budget check `left <= CONFIRM_MIN` fires AFTER the
+# suite finishes but BEFORE the confirming run starts. When there is no budget for a
+# confirming run, the result is recorded as red-unconfirmed and no bead is filed.
 # STRATEGY: run this test with a clean timed set so previous suites do not consume budget.
 rm -f "$SH/test-cx-always-red.sh" "$SH/test-cx-env-sensitive.sh"
 
