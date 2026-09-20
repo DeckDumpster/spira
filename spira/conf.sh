@@ -661,15 +661,20 @@ spira_conf_defaults() {
     : "${SPIRA_MAECHEN_MAX_BEADS:=3}"
     # THE SCOPE LABEL prepended to every persona's partition. Every fayth predicate reads
     # this key rather than the literal "spira", so the fleet's work scope is a runtime choice.
-    # Two values matter: "spira" (today — the default, unchanged behaviour) and "" (empty —
-    # no scope restriction; the partition is the persona label alone, e.g. "plan" for builder).
-    # An empty value must never produce a leading comma in a fayth's AND-labels, which would
-    # match nothing and look exactly like "no work ready".
+    # Two values matter: a non-empty string (scope restriction; only beads carrying that label
+    # are claimed) and "" (no scope restriction; the partition is the persona label alone, e.g.
+    # "plan" for builder). An empty value must never produce a leading comma in a fayth's
+    # AND-labels, which would match nothing and look exactly like "no work ready".
     #
-    # NO COLON in the := form: ${var=default} assigns only when the variable is UNSET, not
+    # DEFAULT IS THE HOME REPO NAME, not a literal. A literal "spira" aimed every install at a
+    # repository it may not own. Deriving from SPIRA_HOME_REPO gives each install its own
+    # scope automatically; an install where that is "spira" is unchanged; an install with no
+    # resolvable home repo gets an empty scope (no restriction) rather than a wrong literal.
+    #
+    # NO COLON in the = form: ${var=default} assigns only when the variable is UNSET, not
     # when it is empty. Empty is a valid and meaningful value here (no scope restriction), and
-    # the colon form would silently promote it back to "spira", defeating the feature.
-    : "${SPIRA_SCOPE_LABEL=spira}"
+    # the colon form would silently promote it back, defeating the feature.
+    : "${SPIRA_SCOPE_LABEL=$SPIRA_HOME_REPO}"
     # THE PLAN PARTITION LABEL — the label that marks a bead as ready plan work for a builder.
     # Declared here so the fayth predicate, the sentinel, and any other reader that needs to
     # say "plan bead" all read the same value. A literal in multiple files is how those

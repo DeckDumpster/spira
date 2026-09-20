@@ -384,13 +384,16 @@
 # THE SCOPE LABEL. Every persona predicate is built as "$SPIRA_SCOPE_LABEL,<partition>", so
 # this one key is the runtime dial that decides which beads the fleet can see.
 #
-# Two values that matter:
-#   spira   — today's behaviour; the fleet works only beads carrying this label (default)
-#   (empty) — no scope restriction; the partition label alone (e.g. "plan") is sufficient
+# Default: the home repo's name (SPIRA_HOME_REPO). An install in a repo named "myproject"
+# gets "myproject" automatically; an install in "spira" is unchanged.
 #
-# When set to a non-default value, beads must carry that label to be claimable. When empty,
-# any bead carrying the right partition label (plan, incident, spike, ...) is visible.
-# SPIRA_SCOPE_LABEL = spira
+# Two values that also matter:
+#   myproject — beads must carry this label to be claimable by this install's fleet
+#   (empty)   — no scope restriction; the partition label alone (e.g. "plan") is sufficient
+#
+# When empty, any bead carrying the right partition label (plan, incident, spike, ...) is
+# visible. Set this only when you want to override the default derivation.
+# SPIRA_SCOPE_LABEL = myproject
 
 # CZAR STAGE MODE — per-class shadow/act for the queue sovereign.
 # Each class of queue-state escalation (deadlock, attribution-failed, sort-failed,

@@ -3,7 +3,8 @@
 # test-scope-label.sh — SPIRA_SCOPE_LABEL is a runtime key, not a literal.
 #
 # WHAT THIS SUITE VERIFIES
-# 1. Default (SPIRA_SCOPE_LABEL=spira): builder predicate is spira,plan — unchanged behaviour.
+# 1. Default derives from SPIRA_HOME_REPO, not the literal "spira": a non-spira home repo
+#    gets its own scope; a missing home repo gets an empty scope (never "spira").
 # 2. Custom value: builder predicate becomes that value + plan; spira,plan is NOT the predicate.
 # 3. Empty value: builder predicate is plan alone; no predicate contains an empty label
 #    (a leading comma would match nothing, looking exactly like "no work ready").
@@ -15,7 +16,7 @@
 # half of item 2 — "spira,plan is NOT the predicate under a custom key" — distinguishes
 # a working implementation from a no-op.
 #
-# defect: law-scope-is-a-runtime-key (sp-9xsjm)
+# defect: law-scope-is-a-runtime-key (sp-9xsjm), sp-4mpy6
 # covers: spira/conf.sh spira/lib.sh spira/chamber/*.fayth
 # hermetic-ok: no database, no systemd; fayth_get and fayth_fenced are tested from lib.sh
 set -uo pipefail
@@ -42,15 +43,38 @@ fayth_get_with_scope() {
              _ "$fayth" "$var" 2>/dev/null
 }
 
+# conf_scope_with_home <home_repo> — resolve SPIRA_SCOPE_LABEL from conf.sh defaults for a
+# given SPIRA_HOME_REPO, without setting SPIRA_SCOPE_LABEL so the default path is exercised.
+conf_scope_with_home() {
+    local home_repo="$1"
+    SPIRA_HOME="$HERE" SPIRA_RUN="$T/run" SPIRA_CONF="$T/no-such.conf" \
+    SPIRA_HOME_REPO="$home_repo" \
+        bash -c '. "$SPIRA_HOME/lib.sh" 2>/dev/null; printf "%s" "$SPIRA_SCOPE_LABEL"'
+}
+
 echo "test-scope-label.sh"
+
+# ==========================================================================================
+echo
+echo "default — SPIRA_SCOPE_LABEL derives from SPIRA_HOME_REPO, not the literal spira"
+# ==========================================================================================
+# THE DISCRIMINATING TEST. A fixed literal "spira" passes when home repo IS spira; only the
+# non-spira case separates a derived default from a hardcoded one.
+got="$(conf_scope_with_home "myproject")"
+is   "scope defaults to home repo name (myproject)" "myproject" "$got"
+lack "scope default for non-spira install does NOT contain spira" "spira" "$got"
+
+got="$(conf_scope_with_home "spira")"
+is   "scope defaults to spira when home repo is spira" "spira" "$got"
+
+# An install with no resolvable home repo must not silently produce the literal "spira".
+got="$(conf_scope_with_home "")"
+lack "scope with empty home repo does NOT produce spira" "spira" "$got"
 
 # ==========================================================================================
 echo
 echo "default (SPIRA_SCOPE_LABEL=spira) — builder predicate is spira,plan"
 # ==========================================================================================
-# The positive control: conf.sh sets spira as the default. Any code that ignores the key
-# entirely would also produce "spira,plan" here, so this alone is not sufficient — see the
-# custom-value test below for the discriminating assertion.
 got="$(fayth_get_with_scope "spira" builder FAYTH_LABELS)"
 is "builder FAYTH_LABELS with scope=spira is spira,plan" "spira,plan" "$got"
 
