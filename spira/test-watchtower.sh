@@ -1026,7 +1026,7 @@ nowant "drain prevents nominal skip" \
 
 # A STALE SNAPSHOT PREVENTS NOMINAL. snap_age >= SNAP_AGE_MAX means the collector has
 # not run recently; the pipeline picture is too old to trust as an all-clear.
-# Use 700s which exceeds the 120s SPIRA_WATCH_SNAP_MAX default shipped in watchtower.sh.
+# Use 700s which exceeds the 60s SPIRA_SNAP_STALE_S default shipped in watchtower.sh.
 fresh
 mkdir -p "$TMP/run/landstate"
 printf "SP_AT=%s\n" "$(( NOW - 700 ))" > "$TMP/run/cockpit.env"

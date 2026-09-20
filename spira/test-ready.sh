@@ -449,7 +449,7 @@ touch -d "300 seconds ago" "$RUN/cockpit.env"
 out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
                  "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
                  "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
-                 "SPIRA_COCKPIT_STALE_S=120" \
+                 "SPIRA_SNAP_STALE_S=60" \
                  "FAKE_TMUX_PANES=panel %1
 health %2" -- || true)"
 want "snap-stale: FAIL for stale snapshot"      "  FAIL  cockpit snapshot stale"        "$out"
@@ -462,7 +462,7 @@ printf 'SP_AT=0\n' > "$RUN/cockpit.env"
 out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
                  "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
                  "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
-                 "SPIRA_COCKPIT_STALE_S=120" \
+                 "SPIRA_SNAP_STALE_S=60" \
                  "FAKE_TMUX_PANES=panel %1
 health %2" --)"
 want "snap-fresh: pass for fresh snapshot"      "  pass  cockpit snapshot fresh"         "$out"

@@ -380,7 +380,7 @@ drain_banner() {
 header_line() {
     local age="?" stale="" pass_dur=""
     [ -n "${SP_AT:-}" ] && age=$(( $(date +%s) - SP_AT ))
-    [ "$age" != "?" ] && [ "$age" -gt 180 ] && stale="  ${C_BAD}STALE ${age}s${C_RST}"
+    [ "$age" != "?" ] && [ "$age" -gt "${SPIRA_SNAP_STALE_S:-60}" ] && stale="  ${C_BAD}${C_B}FAULT (${age}s)${C_RST}"
     # SP_PASS_SECS: always shown in dim so a collector getting slower is visible before
     # it is a mystery. When the pass duration approaches or exceeds INTERVAL, the STALE
     # badge follows on the next snapshot — pass duration is the leading indicator.
