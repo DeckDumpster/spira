@@ -863,8 +863,25 @@ echo "broker"
 if [ -x "${SPIRA_BROKER_BIN:-}" ]; then
     OK "broker binary built at $SPIRA_BROKER_BIN"
 else
-    WARN "broker binary not built at ${SPIRA_BROKER_BIN:-<unset>}" \
-         "Build it: cd $SPIRA_REPO/broker && cargo build --release"
+    # FAIL when the broker unit is enabled: an enabled unit with no binary exits 127
+    # on every tick, which reads as "installed and working" to everything except the
+    # log. WARN when the unit is not enabled — missing binary, no live dependency.
+    _dr_broker_unit="$(spira_unit broker timer 2>/dev/null || true)"
+    _dr_broker_enabled=0
+    if [ -n "$_dr_broker_unit" ] && [ "$_dr_broker_unit" != '?' ]; then
+        "${SPIRA_SYSTEMCTL:-systemctl}" --user is-enabled "$_dr_broker_unit" \
+            >/dev/null 2>&1 && _dr_broker_enabled=1
+    fi
+    _dr_broker_cargo=""
+    command -v cargo >/dev/null 2>&1 || _dr_broker_cargo=" (cargo not on PATH)"
+    if [ "$_dr_broker_enabled" -eq 1 ]; then
+        FAIL "broker binary missing at ${SPIRA_BROKER_BIN:-<unset>} — unit is enabled but binary does not exist${_dr_broker_cargo}" \
+             "Build it: cd $SPIRA_REPO/broker && cargo build --release"
+    else
+        WARN "broker binary not built at ${SPIRA_BROKER_BIN:-<unset>}${_dr_broker_cargo}" \
+             "Build it: cd $SPIRA_REPO/broker && cargo build --release"
+    fi
+    unset _dr_broker_unit _dr_broker_enabled _dr_broker_cargo
 fi
 
 echo

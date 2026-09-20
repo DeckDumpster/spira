@@ -13,6 +13,7 @@
 #   Every file tracked by git at the given commit, plus:
 #     bin/loom   — prebuilt linux-x86_64 binary (required via --loom-bin)
 #     bin/panel  — prebuilt linux-x86_64 binary (required via --panel-bin)
+#     bin/broker — prebuilt linux-x86_64 binary (required via --broker-bin)
 #     MANIFEST   — one line: "commit <40-hex-sha>", one line: "timestamp <ts>"
 #
 #   Scratch files (sp-*, *.fixed) at the repo root are not present once
@@ -40,7 +41,8 @@
 #   # Build from HEAD of current repo with prebuilt binaries:
 #   build-tarball.sh build \
 #       --loom-bin loom/target/release/loom \
-#       --panel-bin cockpit/panel/target/release/panel
+#       --panel-bin cockpit/panel/target/release/panel \
+#       --broker-bin broker/target/release/broker
 #
 #   # Verify a release directory:
 #   build-tarball.sh verify /opt/spira-releases/current --repo /path/to/harness
@@ -51,14 +53,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # build — produce the tarball
 # ---------------------------------------------------------------------------
 do_build() {
-    local outdir="." loom_bin="" panel_bin="" commit="" repo="" name_override=""
+    local outdir="." loom_bin="" panel_bin="" broker_bin="" commit="" repo="" name_override=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --output)    outdir="$2";        shift 2 ;;
-            --loom-bin)  loom_bin="$2";      shift 2 ;;
-            --panel-bin) panel_bin="$2";     shift 2 ;;
-            --name)      name_override="$2"; shift 2 ;;
+            --output)     outdir="$2";        shift 2 ;;
+            --loom-bin)   loom_bin="$2";      shift 2 ;;
+            --panel-bin)  panel_bin="$2";     shift 2 ;;
+            --broker-bin) broker_bin="$2";    shift 2 ;;
+            --name)       name_override="$2"; shift 2 ;;
             -h|--help)   _usage; exit 0 ;;
             -*) printf 'build-tarball.sh: unknown option: %s\n' "$1" >&2; exit 2 ;;
             *)
@@ -86,7 +89,7 @@ do_build() {
             printf 'build-tarball.sh: cannot resolve HEAD in %s\n' "$repo" >&2; exit 1; }
     fi
 
-    # Validate binary paths: both are required.
+    # Validate binary paths: all three are required.
     if [ -z "$loom_bin" ] || [ ! -f "$loom_bin" ]; then
         printf 'build-tarball.sh: loom binary not found: %s\n' \
             "${loom_bin:-(not specified; pass --loom-bin <path>)}" >&2
@@ -95,6 +98,11 @@ do_build() {
     if [ -z "$panel_bin" ] || [ ! -f "$panel_bin" ]; then
         printf 'build-tarball.sh: panel binary not found: %s\n' \
             "${panel_bin:-(not specified; pass --panel-bin <path>)}" >&2
+        exit 1
+    fi
+    if [ -z "$broker_bin" ] || [ ! -f "$broker_bin" ]; then
+        printf 'build-tarball.sh: broker binary not found: %s\n' \
+            "${broker_bin:-(not specified; pass --broker-bin <path>)}" >&2
         exit 1
     fi
 
@@ -127,9 +135,10 @@ do_build() {
     git -C "$repo" archive "$sha" | tar -x -C "$stage"
 
     # Add prebuilt binaries under bin/.
-    cp "$loom_bin"  "$stage/bin/loom"
-    cp "$panel_bin" "$stage/bin/panel"
-    chmod +x "$stage/bin/loom" "$stage/bin/panel"
+    cp "$loom_bin"   "$stage/bin/loom"
+    cp "$panel_bin"  "$stage/bin/panel"
+    cp "$broker_bin" "$stage/bin/broker"
+    chmod +x "$stage/bin/loom" "$stage/bin/panel" "$stage/bin/broker"
 
     # Write MANIFEST — the source of truth for which commit this came from.
     printf 'commit %s\ntimestamp %s\n' "$sha" "$ts" > "$stage/MANIFEST"
