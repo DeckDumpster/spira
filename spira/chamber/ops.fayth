@@ -166,3 +166,7 @@ FAYTH_STALL_BEATS=6
 # mutations. The ref guard (sp-q27cp) remains the floor for git refs.
 FAYTH_TOOLS="Bash(systemctl status*),Bash(systemctl show*),Bash(systemctl list-*),Bash(systemctl is-*),Bash(systemctl cat*),Bash(journalctl*),Bash(ls*),Bash(cat *),Bash(head *),Bash(tail *),Bash(grep *),Bash(awk *),Bash(find *),Bash(wc *),Bash(sort *),Bash(uniq *),Bash(sed *),Bash(python3 *),Bash(echo *),Bash(printf *),Bash(date*),Bash(basename *),Bash(dirname *),Bash(bd *),Bash(git log*),Bash(git show*),Bash(git status*),Bash(git diff*),Bash(git fetch*),Bash(git for-each-ref*),Bash(git rev-parse*),Bash(git -C * log*),Bash(git -C * show*),Bash(git -C * status*),Bash(git -C * diff*),Bash(git -C * fetch*),Bash(git -C * for-each-ref*),Bash(git -C * rev-parse*),Bash(*sop.sh*),Bash(*incident.sh*),Bash(*mail.sh*),Bash(*suites.sh*),Bash(*testenv-batch.sh*),Read,Glob,Grep,TodoWrite"
 FAYTH_PROJECT_INSTRUCTIONS=none
+
+# REPLACE: Ops reads, diagnoses, and files — never writes code. The default coding
+# guidance adds noise and competes with the standing constraints.
+FAYTH_SYSTEM_PROMPT=replace

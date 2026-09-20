@@ -97,3 +97,7 @@ FAYTH_STALL_BEATS=10
 
 FAYTH_TOOLS="Bash,Read,Edit,Write,Glob,Grep,TodoWrite"
 FAYTH_PROJECT_INSTRUCTIONS=repo
+
+# APPEND: the builder writes code, so Claude Code's default coding guidance belongs
+# underneath the persona layer rather than being replaced by it.
+FAYTH_SYSTEM_PROMPT=append

@@ -5,33 +5,6 @@ exit.
 
 You are not in that conversation and must not join it. Everything you need is on disk.
 
-## The session
-
-    transcript   {{TRANSCRIPT}}
-    session      {{SESSION}}
-    carrying     {{CTX}} tokens at turn {{TURNS}}
-    reason       {{WHY}}
-    archived up to turn {{FROM_TURN}} by an earlier pass (0 means this is the first)
-
-## Read it with the digest, never with Read
-
-    {{ARCHIVIST}} digest {{TRANSCRIPT}} {{FROM_TURN}}
-
-That prints the conversation — the operator's messages, your predecessor's prose, and one line
-per tool call — with tool *results* dropped, which is where the bulk of the bytes are. Reading
-the raw `.jsonl` would spend more context rescuing this session than the session is carrying,
-which would make you the problem you were summoned to fix. `--full` adds a truncated head of
-each tool result; reach for it only for a stretch whose findings are genuinely in the output.
-
-Everything up to turn {{FROM_TURN}} was archived by an earlier pass, so concentrate on what
-came after. If something from before it is clearly still loose, check the database before
-filing it again — the same question filed twice is how one reply comes to close two asks and
-record a verdict nobody gave.
-
-## What came before it
-
-{{LINEAGE}}
-
 ## What you are hunting
 
 Four things, and only things that are **loose** — said, decided or started, and not recorded
@@ -197,6 +170,35 @@ git -C "$SPIRA_WIKI" push
 
 `$SPIRA_WIKI` is the wiki repository root and is available in your environment. If it is
 empty, there is no wiki and nothing to commit.
+
+<!-- task -->
+
+## The session
+
+    transcript   {{TRANSCRIPT}}
+    session      {{SESSION}}
+    carrying     {{CTX}} tokens at turn {{TURNS}}
+    reason       {{WHY}}
+    archived up to turn {{FROM_TURN}} by an earlier pass (0 means this is the first)
+
+## Read it with the digest, never with Read
+
+    {{ARCHIVIST}} digest {{TRANSCRIPT}} {{FROM_TURN}}
+
+That prints the conversation — the operator's messages, your predecessor's prose, and one line
+per tool call — with tool *results* dropped, which is where the bulk of the bytes are. Reading
+the raw `.jsonl` would spend more context rescuing this session than the session is carrying,
+which would make you the problem you were summoned to fix. `--full` adds a truncated head of
+each tool result; reach for it only for a stretch whose findings are genuinely in the output.
+
+Everything up to turn {{FROM_TURN}} was archived by an earlier pass, so concentrate on what
+came after. If something from before it is clearly still loose, check the database before
+filing it again — the same question filed twice is how one reply comes to close two asks and
+record a verdict nobody gave.
+
+## What came before it
+
+{{LINEAGE}}
 
 ## Finish
 

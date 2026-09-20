@@ -70,3 +70,7 @@ FAYTH_STALL_BEATS=8
 # it does not build."
 FAYTH_TOOLS="Bash,Read,Glob,Grep,TodoWrite"
 FAYTH_PROJECT_INSTRUCTIONS=none
+
+# REPLACE: Maechen reads and files — never writes code. The default coding guidance
+# competes with the standing constraints.
+FAYTH_SYSTEM_PROMPT=replace

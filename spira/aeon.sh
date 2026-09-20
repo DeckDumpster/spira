@@ -185,21 +185,19 @@ if [ "$SWEEP" = 1 ]; then
     if [ -z "$SWEEP_PROMPT" ]; then
         SWEEP_PROMPT="$(cat "$SPIRA_HOME/chamber/$FAYTH.md" 2>/dev/null || true)"
     fi
-    SWEEP_FULL="# Memories in force
-
-$SWEEP_STATUTES
-
----
-
-$SWEEP_PROMPT"
+    SWEEP_SYSTEM_FILE="$SPIRA_RUN/sweep-$FAYTH-$$.system.md"
+    SWEEP_TASK_FILE="$SPIRA_RUN/sweep-$FAYTH-$$.task.md"
+    system_prompt_split "$SWEEP_SYSTEM_FILE" "$SWEEP_TASK_FILE" "$SWEEP_STATUTES" "$SWEEP_PROMPT"
 
     _SWEEP_PI=""
     [ "${FAYTH_PROJECT_INSTRUCTIONS:-}" = "none" ] && _SWEEP_PI="user"
     set +e
-    printf '%s' "$SWEEP_FULL" | \
+    cat "$SWEEP_TASK_FILE" | \
         ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
         "${SPIRA_AGENT:-claude}" -p --output-format stream-json --verbose \
                --include-partial-messages \
+               --system-prompt-snapshot \
+               "$SPIRA_SYSTEM_FLAG" "$SWEEP_SYSTEM_FILE" \
                --model "${FAYTH_MODEL:-claude-opus-5}" \
                --allowedTools "${FAYTH_TOOLS:-Bash,Read,Edit,Write,Glob,Grep}" \
                --dangerously-skip-permissions \
@@ -1593,19 +1591,21 @@ landing pass does not — it would reopen the bead and hand the conflict to a st
 run the gate once more on the rebased tree, and close. A bead closed behind \`$BASE\` that
 does not rebase cleanly is reopened by the harness, which costs a whole second session."
 
-FULL="# Memories in force
-
-$STATUTES
-
----
-
-$PROMPT
-$DIRTY_BRIEF
-$RESUME_BRIEF
-$SLAIN_BRIEF
-$ALREADY_DONE_BRIEF
-$CLOSE_BRIEF
-$REBASE_BRIEF"
+# Split the persona prompt on <!-- task --> into system and task layers.
+# system.md: persona identity, standing rules, statutes.
+# task.md: bead body, deadline, session-specific briefs.
+SYSTEM_FILE="$SPIRA_RUN/$BEAD_ID.system.md"
+TASK_FILE="$SPIRA_RUN/$BEAD_ID.task.md"
+system_prompt_split "$SYSTEM_FILE" "$TASK_FILE" "$STATUTES" "$PROMPT"
+# Append session-specific briefs to the task file.
+{
+    printf '%s' "$DIRTY_BRIEF"
+    printf '%s' "$RESUME_BRIEF"
+    printf '%s' "$SLAIN_BRIEF"
+    printf '%s' "$ALREADY_DONE_BRIEF"
+    printf '%s' "$CLOSE_BRIEF"
+    printf '%s' "$REBASE_BRIEF"
+} >> "$TASK_FILE"
 
 # ---- the shelf, before ----------------------------------------------------------------
 # READ BEFORE THE SESSION RUNS, for the closing-rule check at the foot of this script. A
@@ -1702,8 +1702,10 @@ print(json.dumps({'hooks': hooks}))
 " 2>/dev/null)" || _AEON_SETTINGS=""
 _BEAD_PI=""
 [ "${FAYTH_PROJECT_INSTRUCTIONS:-}" = "none" ] && _BEAD_PI="user"
-printf '%s' "$FULL" | ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
+cat "$TASK_FILE" | ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
     "${SPIRA_AGENT:-claude}" -p --output-format stream-json --verbose --include-partial-messages \
+           --system-prompt-snapshot \
+           "$SPIRA_SYSTEM_FLAG" "$SYSTEM_FILE" \
            --model "${FAYTH_MODEL:-claude-opus-5}" \
            --allowedTools "${FAYTH_TOOLS:-Bash,Read,Edit,Write,Glob,Grep}" \
            --dangerously-skip-permissions \
