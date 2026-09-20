@@ -85,6 +85,18 @@ chmod +x "$BIN/broker"
 
 touch "$TMP/watchers-empty"
 
+# Doctor checks git -C $SPIRA_REPO config core.hooksPath; the container mounts the
+# worktree but not the main git dir, so git can't follow the gitdir pointer and always
+# returns empty. Fake git returns "spira/hooks" for that read; passes everything else to
+# the real git (stripping $BIN from PATH first to avoid calling itself).
+REAL_GIT="$(PATH="/usr/local/bin:/usr/bin:/bin" command -v git || echo /usr/bin/git)"
+cat > "$BIN/git" <<FAKEGIT
+#!/usr/bin/env bash
+for arg; do [ "\$arg" = "core.hooksPath" ] && { printf 'spira/hooks\n'; exit 0; }; done
+exec $REAL_GIT "\$@"
+FAKEGIT
+chmod +x "$BIN/git"
+
 # SPIRA_DOLT_DATA points at a directory that does not yet exist.
 DOLT_DIR="$TMP/dolt-data-not-created-yet"
 
