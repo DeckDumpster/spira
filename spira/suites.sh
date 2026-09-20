@@ -950,15 +950,22 @@ cmd_run() {
         # SWEEP SURVIVORS. If any process remains in the suite's process group after it
         # exited, the suite has a cleanup defect. Kill them and, if the suite otherwise
         # passed, mark it red so the defect surfaces rather than being silently absorbed.
-        # The kernel briefly holds a process group table entry accessible via kill -0 after
-        # the last member exits; a 200 ms re-check lets the table settle before we declare a
-        # defect.  Real survivors persist well beyond 200 ms; the transient race clears
-        # within that window even under CPU contention from concurrent suites.
+        # PID RECYCLING GUARD. Concurrent setsid'd processes from other suites may recycle
+        # suite_pid after it is freed. The 200 ms re-check filters out PIDs that are gone
+        # by then, but a long-running concurrent suite can hold a recycled PGID past that
+        # window and produce a false alarm. A real orphan was started by this suite's bash
+        # and reparented to init (PPID=1) when that bash exited; a recycled-PID process
+        # has a live parent (PPID≠1). Check PPID to tell them apart.
         if kill -0 -- -"$suite_pid" 2>/dev/null; then
             sleep 0.2
             if kill -0 -- -"$suite_pid" 2>/dev/null; then
-                kill -- -"$suite_pid" 2>/dev/null || true
-                if [ "$rc" -eq 0 ]; then
+                local _orphan=0 _op
+                for _op in $(pgrep -g "$suite_pid" 2>/dev/null); do
+                    [ "$(awk '{print $4}' /proc/"$_op"/stat 2>/dev/null)" = "1" ] \
+                        && { _orphan=1; break; }
+                done
+                [ "$_orphan" = 1 ] && kill -- -"$suite_pid" 2>/dev/null || true
+                if [ "$_orphan" = 1 ] && [ "$rc" -eq 0 ]; then
                     printf 'FAIL: %s left background jobs after exit — killed by harness\n' "$s" >> "$tmp"
                     rc=1
                 fi
