@@ -4,9 +4,10 @@
 #
 #   gh-issue-backfill.sh [--dry-run]
 #
-# For each closed bead with a github: external_ref whose landstate is LANDED,
-# post the "Fixed in <sha>" comment and close the GitHub issue — the same action
-# the landing pass now does inline for new landings.
+# For each closed bead with a github: external_ref, locate its landing commit by
+# ancestry (git log --grep on the land ref, falling back to the landstate tip when
+# it is itself an ancestor). Beads whose commit is not on any land ref are reported
+# to the operator rather than skipped silently.
 #
 # Run --dry-run first; the concierge supervises the first real pass
 # (law-one-supervised-pass-before-you-arm).
@@ -48,43 +49,54 @@ while IFS=$'\t' read -r _id _ext; do
     [ -n "$_id" ] || continue
     n_found=$(( n_found + 1 ))
 
-    _ls_file="$SPIRA_RUN/landstate/$_id"
-    _ls_st=""; _ls_sha=""
-    [ -r "$_ls_file" ] && { read -r _ls_st _ls_sha _ < "$_ls_file" 2>/dev/null || true; }
-    if [ "${_ls_st:-}" != LANDED ]; then
-        log "gh-issue-backfill: $_id: landstate is ${_ls_st:-(none)} — skipping"
-        n_skipped=$(( n_skipped + 1 ))
-        continue
-    fi
-
     if [ -e "${SPIRA_RUN}/gh-closed/$_id" ]; then
         log "gh-issue-backfill: $_id: already closed — skipping"
         n_skipped=$(( n_skipped + 1 ))
         continue
     fi
 
-    if [ "$DRY" = 1 ]; then
-        printf 'would close %s (%s) as %s\n' "$_ext" "$_id" "${_ls_sha:0:8}"
-        n_dry=$(( n_dry + 1 ))
-        continue
-    fi
+    # Read landstate sha for fallback; do not trust the state field (may be stale).
+    _ls_sha=""
+    _ls_file="$SPIRA_RUN/landstate/$_id"
+    [ -r "$_ls_file" ] && { read -r _ _ls_sha _ < "$_ls_file" 2>/dev/null || true; }
 
-    # Find the repo path from the repo-map to pass to gh_issue_closeout.
-    # The landed sha is in landstate; any repo that has the object will do.
+    # Find the landing commit by ancestry: git log --grep for the bead id on the
+    # land ref, then the landstate tip if it is itself an ancestor.
+    _landed_sha=""
     _repo_path=""
     for _rn in $(spira_repos 2>/dev/null); do
         _rp="$(repo_root "$_rn" 2>/dev/null)" || continue
-        git -C "$_rp" cat-file -e "${_ls_sha:-HEAD}" 2>/dev/null \
-            && { _repo_path="$_rp"; break; }
+        _lref="$(spira_landref "$_rn" 2>/dev/null)" || continue
+        _c="$(git -C "$_rp" log --format='%H' --grep="$_id" "$_lref" 2>/dev/null | head -1)" \
+            || _c=""
+        if [ -n "$_c" ]; then
+            _landed_sha="$_c"; _repo_path="$_rp"; break
+        fi
+        if [ -n "${_ls_sha:-}" ] \
+           && git -C "$_rp" cat-file -e "$_ls_sha" 2>/dev/null \
+           && git -C "$_rp" merge-base --is-ancestor "$_ls_sha" "$_lref" 2>/dev/null; then
+            _landed_sha="$_ls_sha"; _repo_path="$_rp"; break
+        fi
     done
 
-    if [ -z "$_repo_path" ]; then
-        log "gh-issue-backfill: $_id: landed sha ${_ls_sha:0:8} not found in any repo — skipping"
+    if [ -z "$_landed_sha" ]; then
+        if [ "$DRY" = 1 ]; then
+            log "gh-issue-backfill: $_id: no commit on land ref — would ask operator"
+        else
+            log "gh-issue-backfill: $_id: no commit on land ref — asking operator"
+            gh_issue_ask_unlanded "$_id" "$_ext" || true
+        fi
         n_skipped=$(( n_skipped + 1 ))
         continue
     fi
 
-    gh_issue_closeout "$_id" "$_ls_sha" "$_repo_path"
+    if [ "$DRY" = 1 ]; then
+        printf 'would close %s (%s) as %s\n' "$_ext" "$_id" "${_landed_sha:0:8}"
+        n_dry=$(( n_dry + 1 ))
+        continue
+    fi
+
+    gh_issue_closeout "$_id" "$_landed_sha" "$_repo_path"
     _rc=$?
     if [ "$_rc" -eq 0 ] && [ -e "${SPIRA_RUN}/gh-closed/$_id" ]; then
         n_closed=$(( n_closed + 1 ))

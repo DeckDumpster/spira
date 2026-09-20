@@ -76,15 +76,18 @@ testdb_seed <<JSONL
 {"id":"sp-tgh1","title":"Fix issue 1","status":"open","issue_type":"bug","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#1","updated_at":"2026-09-05T00:00:00Z"}
 {"id":"sp-tgh2","title":"Fix issue 2 not landed","status":"open","issue_type":"bug","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#2","updated_at":"2026-09-05T00:00:00Z"}
 {"id":"sp-tgh3","title":"No external ref","status":"open","issue_type":"bug","labels":["spira","plan"],"updated_at":"2026-09-05T00:00:00Z"}
+{"id":"sp-tgh4","title":"Fix issue 4 stale-landstate","status":"open","issue_type":"bug","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#4","updated_at":"2026-09-05T00:00:00Z"}
 JSONL
 BEAD1=sp-tgh1
 BEAD2=sp-tgh2
 BEAD3=sp-tgh3
+BEAD4=sp-tgh4
 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$BEAD1" --reason-file - <<< "done" 2>/dev/null || true
 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$BEAD2" --reason-file - <<< "done" 2>/dev/null || true
 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$BEAD3" --reason-file - <<< "done" 2>/dev/null || true
+"${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$BEAD4" --reason-file - <<< "done" 2>/dev/null || true
 
-# Set landstate: BEAD1 is LANDED; BEAD2 has no landstate
+# Set landstate: BEAD1 is LANDED; BEAD2 and BEAD4 have no landstate yet
 printf 'LANDED %s %s push\n' "$LANDED_SHA" "$(date +%s)" > "$RUN/landstate/$BEAD1"
 
 # Source lib.sh for the functions under test.
@@ -208,6 +211,30 @@ if [[ "$out" == *"would close"* ]]; then
     ok "dry-run reports what would be closed"
 else
     bad "dry-run reports what would be closed" "got: $out"
+fi
+
+printf '\n8. stale GATED landstate: backfill uses ancestry, not landstate state:\n'
+# POSITIVE CONTROL: a bead whose landstate is stale GATED but whose commit IS on
+# the land ref gets its GitHub issue closed by the backfill. Against the old code
+# (which trusted landstate state==LANDED) this bead would be skipped silently.
+git -C "$REPO" commit -q --allow-empty -m "spira: land sp-tgh4 stale-landstate-test"
+# Stale landstate: state says GATED, sha is a non-existent object.
+printf 'GATED 0000000000000000000000000000000000000000 0 NO_VERDICT:tree-unidentified\n' \
+    > "$RUN/landstate/$BEAD4"
+: > "$GHLOG"
+out="$(SPIRA_GH="$TMP/bin/gh" GHLOG="$GHLOG" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
+     SPIRA_RUN="$RUN" SPIRA_HOME="$SH" SPIRA_HOME_REPO=fixture SPIRA_REPO="$REPO" \
+     SPIRA_REPO_MAP="$SH/repo-map" bash "$SH/gh-issue-backfill.sh" 2>&1)"
+if grep -q "issue close 4" "$GHLOG" 2>/dev/null; then
+    ok "stale-GATED bead closed by ancestry check"
+else
+    bad "stale-GATED bead closed by ancestry check" \
+        "issue 4 not closed — out: $out, ghlog: $(cat "$GHLOG" 2>/dev/null)"
+fi
+if [ -e "$RUN/gh-closed/$BEAD4" ]; then
+    ok "close marker written for stale-landstate bead"
+else
+    bad "close marker written for stale-landstate bead" "no marker at $RUN/gh-closed/$BEAD4"
 fi
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
