@@ -32,12 +32,14 @@
 #
 # BUDGET AND PERSUITE ARE PINNED SO BOTH CASES ARE RELIABLE.
 #
-# For zzz.sh to be unreached: BUDGET-PERSUITE must be ≤ 5. With BUDGET=20, PERSUITE=16,
-# BUDGET-PERSUITE=4, left_after_slow≈4≤5 even at zero overhead. ✓
+# For zzz.sh to be unreached: BUDGET-PERSUITE must be ≤ 5. With BUDGET=40, PERSUITE=35,
+# BUDGET-PERSUITE=5, left_after_slow≈5-overhead≤5 for any overhead≥0. ✓
 #
 # For slow.sh to START (not be unreached itself): overhead before slow.sh must be
-# less than BUDGET-5=15 seconds. Process-spawn overhead in a loaded container is at
-# most a few seconds; 15s gives ample headroom against transient system load.
+# less than BUDGET-5=35 seconds. Between `started` and the slow.sh left-check there
+# are ~17 subprocess spawns; at 800ms each under heavy load that is 14s, well under
+# the 35s margin. The previous BUDGET=20 (15s margin) was hit when the container ran
+# many bd-heavy suites in parallel, driving spawn latency to ~800ms (sp-ja7ng).
 #
 # THE INTAKE IS THE REAL ONE on a throwaway database (law-prefer-the-real-dependency).
 # EVERY CONFIGURED VALUE IS PINNED TO A NON-DEFAULT (law-gates-run-in-a-clean-environment).
@@ -65,10 +67,11 @@ testdb_up result-files || { echo "test-suites-result-files: could not build a fi
 
 SH="$TMP/spira"; RUN="$TMP/run"; STATE="$TMP/state"; GATEF="$TMP/gate-suites"
 mkdir -p "$SH" "$RUN" "$STATE" "$TMP/home" "$TMP/repo"
-cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$SH/"
+cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" \
+   "$HERE/suite-covers.sh" "$SH/"
 
 # Knobs, every one pinned away from the shipped default.
-BUDGET=20; PERSUITE=16; STALE=3600; PRIO=3; REPONAME=result-files-fixture
+BUDGET=40; PERSUITE=35; STALE=3600; PRIO=3; REPONAME=result-files-fixture
 
 # Repo map for incident.sh's bdq create when a red or timeout is filed.
 printf '%s | %s | push | main | : | :\n' "$REPONAME" "$TMP/repo" > "$SH/repo-map"
@@ -91,9 +94,9 @@ sut() {
     # run code that exists only to be counted. Containment is not being waived: this suite
     # is itself run inside a container by the timed pass, so the planted suites are already
     # contained by it.
-    # SPIRA_SUITES_SKIP_TESTDB=1 — the planted suites need no testdb; without this,
-    # cmd_run runs bd init twice (~12s total) before the suite loop, consuming budget
-    # that the timing-sensitive slow/zzz split depends on.
+    # SPIRA_SUITES_SKIP_TESTDB=1 — the planted suites need no testdb. testdb.sh is not
+    # in $SH so the testdb block is already skipped, but the flag makes the intent
+    # explicit and guards against accidental testdb overhead if the fixture changes.
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF="$TMP/no-such.conf" \
         SPIRA_HOME="$SH" SPIRA_REPO="$TMP/repo" SPIRA_HOME_REPO="$REPONAME" \
@@ -127,8 +130,8 @@ plant test-fx-aaa.sh <<'S'
 # covers: spira/suites.sh
 echo "  ok    passes immediately"
 S
-# test-fx-slow.sh hangs; the per-suite watchdog kills it after PERSUITE=16s.
-# After it is killed, left ≈ 20-16 = 4 ≤ 5, so test-fx-zzz.sh cannot start.
+# test-fx-slow.sh hangs; the per-suite watchdog kills it after PERSUITE=35s.
+# After it is killed, left ≈ 40-35 = 5 ≤ 5, so test-fx-zzz.sh cannot start.
 plant test-fx-slow.sh <<'S'
 #!/usr/bin/env bash
 # covers: spira/suites.sh
