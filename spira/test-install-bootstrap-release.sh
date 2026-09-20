@@ -60,8 +60,11 @@ mkdir -p "$SPIRA_DIR/statutes"
 # Executable stubs for every ExecStart under @SPIRA_PROD@ and @SPIRA_HOME@ so
 # systemd/install.sh's executability check passes after bootstrap copies this tree.
 for _s in $(grep -h "ExecStart=\|ExecStartPre=" "$REAL_REPO/systemd/"*.service 2>/dev/null \
-            | grep "@SPIRA_PROD@\|@SPIRA_HOME@" \
-            | sed 's|.*@SPIRA_PROD@/\|.*@SPIRA_HOME@/||' | sed 's/ .*//' | sort -u); do
+            | grep "@SPIRA_PROD@" | sed 's|.*@SPIRA_PROD@/||' | sed 's/ .*//' | sort -u); do
+    [ -e "$SPIRA_DIR/$_s" ] || { printf '#!/usr/bin/env bash\nexit 0\n' > "$SPIRA_DIR/$_s"; chmod +x "$SPIRA_DIR/$_s"; }
+done
+for _s in $(grep -h "ExecStart=\|ExecStartPre=" "$REAL_REPO/systemd/"*.service 2>/dev/null \
+            | grep "@SPIRA_HOME@" | sed 's|.*@SPIRA_HOME@/||' | sed 's/ .*//' | sort -u); do
     [ -e "$SPIRA_DIR/$_s" ] || { printf '#!/usr/bin/env bash\nexit 0\n' > "$SPIRA_DIR/$_s"; chmod +x "$SPIRA_DIR/$_s"; }
 done
 unset _s
@@ -243,7 +246,7 @@ mkdir -p "$FAKE_RELEASES_A"
 _refuse_out="$(run_install prod --dry-run -- \
     "SPIRA_RELEASES=$FAKE_RELEASES_A" \
     "SPIRA_PROD=$OUTSIDE_RELEASES" \
-    SPIRA_INSTALL_PROD_GIT_CONSIDERED=1 2>&1)" || true
+    SPIRA_INSTALL_PROD_GIT_CONSIDERED=1)"
 _refuse_rc=$?
 is2   "refuse: exits 2"                    "$_refuse_rc"
 want  "refuse: names 'activate.sh'"        "activate.sh" "$_refuse_out"
