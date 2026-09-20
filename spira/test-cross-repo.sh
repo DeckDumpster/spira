@@ -70,10 +70,16 @@ git -C "$SECOND_REPO" add second.txt; git -C "$SECOND_REPO" commit -qm "second s
 git -C "$SECOND_REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/harness"; mkdir -p "$SPIRA_HOME/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$SPIRA_HOME/"
+# Derive the copy set from a glob — not a hand-maintained list that drifts when lib.sh
+# gains a new sourced dependency. Only production scripts; test-*.sh are excluded.
+find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+# POSITIVE CONTROL (law-absence-needs-a-positive-control): prove the fixture harness loads
+# before any assertion runs.
+bash -c ". \"$SPIRA_HOME/lib.sh\"" \
+    || { printf 'test-cross-repo: fixture harness failed to source lib.sh — dependency missing?\n' >&2; exit 1; }
 
 # THE REPO-MAP: two repos, neither the other's alias. "home" maps to the home checkout;
 # "second" maps to the second checkout. The bead will carry repo:second.
