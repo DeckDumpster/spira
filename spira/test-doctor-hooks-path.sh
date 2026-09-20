@@ -148,6 +148,7 @@ echo "exclude.sh install on a fresh clone — arms core.hooksPath:"
 FRESH="$TMP/fresh"
 git init -q "$FRESH"
 mkdir -p "$FRESH/spira/hooks"
+touch "$FRESH/spira/boundary" "$FRESH/spira/gate.sh" "$FRESH/spira/lib.sh"
 printf '#!/usr/bin/env bash\n' > "$FRESH/spira/hooks/pre-commit"
 chmod +x "$FRESH/spira/hooks/pre-commit"
 # Positive control — confirm hooksPath absent before calling install.
