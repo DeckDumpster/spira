@@ -137,7 +137,7 @@ batch() {
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_SUITE_STATE="spira/suite-state" \
+    SPIRA_SUITE_STATE_FILE="spira/suite-state" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_QUEUE_REPRO_BATCH="$SH/repro-stub.sh" \
     SPIRA_QUEUE_LOCAL_GATE="$_gate" \

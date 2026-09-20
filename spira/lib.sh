@@ -5166,10 +5166,10 @@ queue_certified_list() {
 }
 
 # queue_is_suite_transition <repo-path> <tip> <base-sha>
-# 0 if the tip modifies SPIRA_SUITE_STATE relative to base-sha.
+# 0 if the tip modifies SPIRA_SUITE_STATE_FILE relative to base-sha.
 queue_is_suite_transition() {
     git -C "$1" diff --name-only "$3" "$2" 2>/dev/null \
-        | grep -qF "${SPIRA_SUITE_STATE:-spira/suite-state}"
+        | grep -qF "${SPIRA_SUITE_STATE_FILE:-spira/suite-state}"
 }
 
 # queue_sort_rows <repo-path> <base-sha>

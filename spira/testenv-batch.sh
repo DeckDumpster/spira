@@ -336,7 +336,7 @@ mkdir -p "$RESULTS"
 # ---------------------------------------------------------------------------
 _STS_TMP="$(mktemp)"
 _STS_QUARANTINED=""
-git -C "$REPO" show "${BR}:${SPIRA_SUITE_STATE:-spira/suite-state}" > "$_STS_TMP" 2>/dev/null || true
+git -C "$REPO" show "${BR}:${SPIRA_SUITE_STATE_FILE:-spira/suite-state}" > "$_STS_TMP" 2>/dev/null || true
 _SELECTED_ACTIVE=""
 for _sts_s in $SELECTED; do
     case "$(suite_state_of "$_STS_TMP" "$_sts_s")" in

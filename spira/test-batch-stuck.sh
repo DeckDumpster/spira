@@ -84,7 +84,7 @@ batch() {
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_SUITE_STATE="spira/suite-state" \
+    SPIRA_SUITE_STATE_FILE="spira/suite-state" \
         bash "$SH/batch.sh" "$@" 2>&1
 }
 

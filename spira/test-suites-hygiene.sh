@@ -51,7 +51,7 @@ B() { "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 
 # ---- FIXTURE LAYOUT ----
 # SH/  — the fake "spira/" directory; suites.sh HERE derives repo as SH/..=TMP
-# TMP/spira/ — same dir (SPIRA_SUITE_STATE default "spira/suite-state" appends to TMP)
+# TMP/spira/ — same dir (SPIRA_SUITE_STATE_FILE default "spira/suite-state" appends to TMP)
 #   suite-state — the lifecycle state file under test
 # TMP/state/  — SPIRA_SUITES_STATE (flakeobs, clean-runs, maxage-mailed files)
 # TMP/mail/   — SPIRA_MAIL mailboxes
@@ -101,7 +101,7 @@ sut() {
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="$BINDIR/bd" \
         SPIRA_RUN="$RUND" \
         SPIRA_SUITES_STATE="$STATE" \
-        SPIRA_SUITE_STATE="spira/suite-state" \
+        SPIRA_SUITE_STATE_FILE="spira/suite-state" \
         SPIRA_MAIL="$MAIL" SPIRA_MAIL_KINDS="$SH/mail/kinds" \
         SPIRA_FLAKE_QUARANTINE_AT="$FLAKE_AT" \
         SPIRA_FLAKE_WINDOW="$FLAKE_WIN" \

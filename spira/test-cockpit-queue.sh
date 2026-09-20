@@ -99,7 +99,7 @@ out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
     SPIRA_PATH="$BD_PATH" \
     SPIRA_QUEUE_DIR="$TMP/queue" \
-    SPIRA_SUITE_STATE="spira/suite-state-test" \
+    SPIRA_SUITE_STATE_FILE="spira/suite-state-test" \
     bash "$HERE/cockpit.sh" once 2>/dev/null)"
 
 val() { printf '%s' "$out" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
