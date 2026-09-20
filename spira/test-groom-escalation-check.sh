@@ -149,8 +149,10 @@ labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }
 # seed a trigger bead for the scrubber/tiler lane.
 # repo:fixture matches the repo map entry so aeon.sh resolves the workspace without
 # falling back to spira_home_repo() and hitting an unmapped name in the fixture.
+# delivers:note:$GROOM_LOG is the deliverable the shim writes; without it aeon.sh
+# reopens the bead as "closed without a commit" before the escalation check can run.
 seed_trigger() {  # seed_trigger <id>
-    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"$GROOM_LABEL\",\"repo:fixture\""
+    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"$GROOM_LABEL\",\"repo:fixture\",\"delivers:note:${GROOM_LOG}\""
     printf '{"id":"%s","title":"Groomer pass","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-20T00:00:00Z"}\n' \
         "$1" "$_lbl" | testdb_seed
 }
@@ -178,13 +180,15 @@ want   "check saw the ask bead"   "groom-escalation-check: all claimed escalatio
 
 echo
 echo "an OLD ask bead (before session epoch) does NOT excuse the claim — trigger is poisoned:"
-# Plant the ask bead an hour before the session starts so its created_at is before SESSION_EPOCH.
+# Seed the ask bead with a timestamp from an hour ago so its created_at is unambiguously
+# before SESSION_EPOCH regardless of clock granularity. bd create would set created_at=now
+# and might match SESSION_EPOCH within the same second; seeding with a fixed past timestamp
+# removes that race (law-fixtures-carry-real-cadence).
 fresh sp-gc-3
-bd -C "$SPIRA_DB" create "Close sp-gc3?" \
-    -l "needs-operator,overseer" --type decision --silent >/dev/null 2>&1 \
-    && printf 'planted old ask bead for sp-gc3\n'
-# Ensure the bead's created_at is in the past by sleeping 1s so SESSION_EPOCH > it.
-# (The shim writes the log claim during the session; its created_at is already in the past.)
+_old_ts="$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '2026-09-20T00:00:00Z')"
+printf '{"id":"sp-gc3-ask","title":"Close sp-gc3?","status":"open","issue_type":"decision","labels":["needs-operator","overseer"],"created_at":"%s","updated_at":"%s"}\n' \
+    "$_old_ts" "$_old_ts" | testdb_seed
+printf 'planted old ask bead for sp-gc3 (created_at=%s)\n' "$_old_ts"
 run_aeon scrubber old-ask
 is   "trigger is reopened"   open        "$(field sp-gc-3 status)"
 want "trigger is poisoned"   "spira-poison" "$(labels sp-gc-3)"
