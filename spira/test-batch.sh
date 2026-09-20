@@ -116,6 +116,8 @@ RMAP
 B() { bd -C "$SPIRA_DB" "$@"; }
 
 batch() {
+    local _gate="${SPIRA_QUEUE_LOCAL_GATE:-}"
+    [ "$_gate" = "0" ] || _gate="1"
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
@@ -123,7 +125,7 @@ batch() {
     SPIRA_SUITE_STATE="spira/suite-state" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_QUEUE_REPRO_BATCH="$SH/repro-stub.sh" \
-    SPIRA_QUEUE_LOCAL_GATE=1 \
+    SPIRA_QUEUE_LOCAL_GATE="$_gate" \
         bash "$SH/batch.sh" "$@" 2>&1
 }
 
