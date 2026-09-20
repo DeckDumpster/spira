@@ -42,10 +42,9 @@ export PATH="$HOME/.local/bin:$PATH"
 
 git init --bare --initial-branch=main "$HOME/scratch-repo.git"
 git clone "$HOME/scratch-repo.git" "$HOME/scratch-repo"
-git -C "$HOME/scratch-repo" \
-    -c user.email="acceptance@spira.local" \
-    -c user.name="Acceptance" \
-    commit --allow-empty -m "init"
+git -C "$HOME/scratch-repo" config user.email "acceptance@spira.local"
+git -C "$HOME/scratch-repo" config user.name "Spira Acceptance"
+git -C "$HOME/scratch-repo" commit --allow-empty -m "init"
 git -C "$HOME/scratch-repo" push origin main
 
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/spira"
