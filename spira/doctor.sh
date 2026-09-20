@@ -320,6 +320,9 @@ echo "the dolt server"
 if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
     if [ -d "$SPIRA_DOLT_DATA" ]; then
         OK "dolt data directory at $SPIRA_DOLT_DATA"
+    elif [ -n "${SPIRA_DOCTOR_INSTALLING:-}" ]; then
+        WARN "SPIRA_DOLT_DATA is set but $SPIRA_DOLT_DATA does not exist — install.sh will create it in phase 3" \
+             "Set SPIRA_DOLT_DATA in ${CONF:-spira.conf} if this path is wrong."
     else
         FAIL "SPIRA_DOLT_DATA is set but $SPIRA_DOLT_DATA does not exist" \
              "Create it, or point SPIRA_DOLT_DATA at the directory dolt sql-server uses."
@@ -333,6 +336,9 @@ if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
     fi
     if systemctl --user is-active --quiet dolt-beads.service 2>/dev/null; then
         OK "dolt-beads.service is active"
+    elif [ -n "${SPIRA_DOCTOR_INSTALLING:-}" ]; then
+        WARN "dolt-beads.service is not active — install.sh will install and start it in phase 4" \
+             "phase 4 (systemd/install.sh) enables and starts dolt-beads.service."
     else
         FAIL "dolt-beads.service is not active" \
              "The database is unreachable without the server. Start it:
@@ -573,11 +579,16 @@ else
                   {n=$1; gsub(/^[ \t]+|[ \t]+$/,"",n)
                    if (n!="" && NF>1 && NF<6) print n}' \
         "$SPIRA_REPO_MAP" 2>/dev/null || true)
-    repo_root "$home" >/dev/null 2>&1 \
-        && OK "the home repository '$home' has a row" \
-        || FAIL "the home repository '$home' has no row in the map" \
-                "A bead that names no repository resolves to '$home', and an unmapped name is
+    if repo_root "$home" >/dev/null 2>&1; then
+        OK "the home repository '$home' has a row"
+    elif [ -n "${SPIRA_DOCTOR_INSTALLING:-}" ]; then
+        WARN "the home repository '$home' has no row in the map — add a row after phase 1" \
+             "configure.sh seeds a repo-map from the example; add a row for '$home', or set SPIRA_HOME_REPO in ${CONF:-spira.conf}."
+    else
+        FAIL "the home repository '$home' has no row in the map" \
+             "A bead that names no repository resolves to '$home', and an unmapped name is
         refused rather than guessed. Add a row, or set SPIRA_HOME_REPO in ${CONF:-spira.conf}."
+    fi
     for n in $(repo_names); do
         p="$(repo_field "$n" path)"
         b="$(repo_field "$n" base)"
