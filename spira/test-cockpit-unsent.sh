@@ -215,5 +215,63 @@ else
 fi
 
 echo
+echo "probe-fault — a failed bead lookup lands in SP_PROBE_FAIL, not SP_UNADOPTED:"
+# ======================================================================================
+# DEFECT: a failed bdjson call returned empty, which the probe read as "no bead exists"
+# and routed to SP_UNADOPTED. Closed beads appeared as unadopted strays.
+# TWO FAILURE MODES: (1) bd exits non-zero, (2) bd exits 0 but emits nothing
+# (the bd-zero-empty shape: a pipeline ending in sed inherits sed's exit status so a
+# refusing bd still exits 0). Both must land in SP_PROBE_FAIL, never SP_UNADOPTED.
+# (sp-kc9v4)
+
+# POSITIVE CONTROL FIRST: the fixture already proves SP_UNADOPTED=1 (sp-true-stray)
+# when bd works (asserted in the first section above). Now prove that with a broken bd
+# the same branch does NOT feed SP_UNADOPTED.
+
+FAIL_BD="$TMP/bd-fail-uat"
+# Pass migrate so conf.sh's schema check succeeds; fail everything else (show, list, ...).
+printf '#!/bin/sh\nfor a; do [ "$a" = migrate ] && exit 0; done\nexit 1\n' > "$FAIL_BD"
+chmod +x "$FAIL_BD"
+
+out_fail="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
+    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
+    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$FAIL_BD" \
+    SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_PATH="$BD_PATH" BD_TIMEOUT=1 \
+    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+valf() { printf '%s' "$out_fail" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
+
+want "bd-fail output has SP_AT (probe ran)" "SP_AT=" "$out_fail"
+_pf="$(valf SP_PROBE_FAIL)"
+if [ "${_pf:-0}" -gt 0 ] 2>/dev/null; then
+    ok "bd-fail: SP_PROBE_FAIL > 0 — failed lookups counted as probe faults"
+else
+    bad "bd-fail: SP_PROBE_FAIL not > 0" "got '${_pf:-<absent>}'"
+fi
+is "bd-fail: SP_UNADOPTED=0 — failed lookup never feeds unadopted count" "0" "$(valf SP_UNADOPTED)"
+
+EMPTY_BD="$TMP/bd-zero-empty-uat"
+printf '#!/bin/sh\nprintf ""\nexit 0\n' > "$EMPTY_BD"
+chmod +x "$EMPTY_BD"
+
+out_empty="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
+    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
+    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$EMPTY_BD" \
+    SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_PATH="$BD_PATH" BD_TIMEOUT=1 \
+    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+valz() { printf '%s' "$out_empty" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
+
+_pf2="$(valz SP_PROBE_FAIL)"
+if [ "${_pf2:-0}" -gt 0 ] 2>/dev/null; then
+    ok "bd-zero-empty: SP_PROBE_FAIL > 0 — empty-output lookup counted as probe fault"
+else
+    bad "bd-zero-empty: SP_PROBE_FAIL not > 0" "got '${_pf2:-<absent>}'"
+fi
+is "bd-zero-empty: SP_UNADOPTED=0 — empty lookup never feeds unadopted count" "0" "$(valz SP_UNADOPTED)"
+
+echo
 printf 'test-cockpit-unsent: %d ok, %d fail\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
