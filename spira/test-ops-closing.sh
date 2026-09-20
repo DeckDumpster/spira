@@ -84,7 +84,7 @@ HOMEDIR="$TMP/home"; mkdir -p "$HOMEDIR/chamber"
 # SCAR: the fixture's cp list omitted suite-covers.sh after sp-dt8u added it to lib.sh.
 # lib.sh sources suite-covers.sh at boot; without it a "No such file" error goes to stderr,
 # which 2>&1 in the sop helper merges into stdout, inflating sop digest | grep -c . by 1.
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/sop.sh" "$HERE/suite-covers.sh" "$HOMEDIR/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/sop.sh" "$HERE/suite-covers.sh" "$HERE/close-reason-flags.py" "$HOMEDIR/"
 cp -r "$HERE/actors" "$HOMEDIR/" 2>/dev/null || true
 RUN="$TMP/run"; mkdir -p "$RUN"
 REPO_MAP="$TMP/repo-map"
@@ -153,7 +153,10 @@ SOP
     retire)
         "$SPIRA_HOME/sop.sh" retire disk-full >/dev/null 2>&1 ;;
 esac
-bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
+case "$(cat "$TMP/act")" in
+    bad-reason) bd -C "$SPIRA_DB" close "$id" --reason "DIAGNOSED: X. TEMPORARY WORKAROUND: Y must be removed once fix lands." >/dev/null 2>&1 ;;
+    *)          bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1 ;;
+esac
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
 exit 0
 SHIM
@@ -338,6 +341,22 @@ echo "the mechanism is declared, and Ops deliberately does not opt into it:"
 want "ops.fayth declares the rule OFF" "FAYTH_SOP_REQUIRED=0" "$(cat "$HERE/chamber/ops.fayth")"
 want "aeon.sh binds the check to that key"   "FAYTH_SOP_REQUIRED"   "$(cat "$HERE/aeon.sh")"
 nowant "and not to the persona's name"       "FAYTH\" = \"ops"      "$(cat "$HERE/aeon.sh")"
+
+echo
+echo "a close reason with a statute phrase is refused — this is the close-reason fence:"
+# THE FENCE IS UNIVERSAL. It applies to every aeon regardless of FAYTH_SOP_REQUIRED.
+# Using `builder` here (the persona that opted OUT of the SOP rule) proves the fence is
+# bound to the close reason text, not to the persona's contract.
+# POSITIVE CONTROL FIRST: a clean reason keeps the bead closed.
+fresh sp-oc-12; run_aeon builder none
+is   "a clean reason stays closed"              closed "$(field sp-oc-12 status)"
+nowant "and the fence did not fire"             "REOPENED" "$(cat "$TMP/out")"
+
+# THE FENCE: a statute phrase triggers a reopen.
+fresh sp-oc-13; run_aeon builder bad-reason
+is   "a statute phrase reopens the bead"        open   "$(field sp-oc-13 status)"
+want "the note names the matched phrase"        "TEMPORARY WORKAROUND" "$(notes sp-oc-13)"
+want "the log names the override"              "SPIRA_CLOSE_REASON_OVERRIDE" "$(cat "$TMP/out")"
 
 echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
