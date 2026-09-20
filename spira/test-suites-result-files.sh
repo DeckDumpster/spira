@@ -91,6 +91,9 @@ sut() {
     # run code that exists only to be counted. Containment is not being waived: this suite
     # is itself run inside a container by the timed pass, so the planted suites are already
     # contained by it.
+    # SPIRA_SUITES_SKIP_TESTDB=1 — the planted suites need no testdb; without this,
+    # cmd_run runs bd init twice (~12s total) before the suite loop, consuming budget
+    # that the timing-sensitive slow/zzz split depends on.
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF="$TMP/no-such.conf" \
         SPIRA_HOME="$SH" SPIRA_REPO="$TMP/repo" SPIRA_HOME_REPO="$REPONAME" \
@@ -101,6 +104,7 @@ sut() {
         SPIRA_NOTIFY="$SH/ask.sh" \
         SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_SUITES_INLINE=1 \
+        SPIRA_SUITES_SKIP_TESTDB=1 \
         "$@" bash "$SH/suites.sh" "$cmd" 2>&1
 }
 plant() { cat > "$SH/$1"; chmod +x "$SH/$1"; }
