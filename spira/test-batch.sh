@@ -123,7 +123,7 @@ batch() {
     SPIRA_SUITE_STATE="spira/suite-state" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_QUEUE_REPRO_BATCH="$SH/repro-stub.sh" \
-    SPIRA_QUEUE_LOCAL_GATE="${SPIRA_QUEUE_LOCAL_GATE:-1}" \
+    SPIRA_QUEUE_LOCAL_GATE=1 \
         bash "$SH/batch.sh" "$@" 2>&1
 }
 
