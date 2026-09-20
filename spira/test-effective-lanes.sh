@@ -62,7 +62,7 @@ unset _f_name _f_label
 . "$HERE/lib.sh"
 
 REPO="$T/repo"
-mkdir -p "$REPO"
+mkdir -p "$REPO/.spira"
 
 # ==========================================================================================
 echo
