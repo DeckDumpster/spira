@@ -67,14 +67,21 @@ chmod +x "$BIN/systemctl"
 printf '# repo-map — no rows\n' > "$TMP/repo-map"
 
 # Fake cargo: reports a version >= 1.78.0 so the cargo-version check passes.
-# Without this, the container's old rustc triggers an unrelated FAIL that makes
-# doctor exit non-zero regardless of SPIRA_DOCTOR_INSTALLING.
+# Without this, the container's old rustc triggers an unrelated FAIL.
 cat > "$BIN/cargo" <<'CARGO'
 #!/usr/bin/env bash
 [ "${1:-}" = "--version" ] && printf 'cargo 1.82.0 (abc123)\n' && exit 0
 exit 0
 CARGO
 chmod +x "$BIN/cargo"
+
+# Fake broker: the broker check FAILs when the unit is enabled but binary absent.
+# Provide a stub binary so that check passes.
+cat > "$BIN/broker" <<'BROKER'
+#!/usr/bin/env bash
+exit 0
+BROKER
+chmod +x "$BIN/broker"
 
 touch "$TMP/watchers-empty"
 
@@ -100,6 +107,7 @@ run_doctor() {
         SPIRA_DOLT_DATA="$DOLT_DIR" \
         SPIRA_HOME_REPO=test-home-repo \
         SPIRA_OPERATED=0 \
+        SPIRA_BROKER_BIN="$BIN/broker" \
         "${extra_env[@]+"${extra_env[@]}"}" \
         bash "$HERE/doctor.sh" 2>/dev/null
 }
