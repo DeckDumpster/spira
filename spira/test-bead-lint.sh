@@ -34,6 +34,7 @@ echo "test-bead-lint.sh"
 testdb_seed <<'JSONL'
 {"id":"sp-lint-good","title":"good bead","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-16T00:00:00Z"}
 {"id":"sp-lint-bad","title":"bad bead","status":"open","issue_type":"task","labels":["plan"],"updated_at":"2026-09-16T00:00:00Z"}
+{"id":"sp-lint-ev.1","title":"State change: branch → spira/sp-lint-ev","status":"closed","issue_type":"event","labels":[],"updated_at":"2026-09-16T00:00:00Z"}
 JSONL
 
 # -----------------------------------------------------------------------------------------
@@ -70,6 +71,20 @@ rc="$(lint_rc --all)"
 is   "--all exits 1 (offender present)"   "1"                        "$rc"
 want "--all reports the bad bead"         "sp-lint-bad: no repo: label" "$out"
 nowant "--all does not report the good one" "sp-lint-good"            "$out"
+
+# -----------------------------------------------------------------------------------------
+# POSITIVE CONTROL — event filter: explicit lint flags the event bead (detector is live).
+# -----------------------------------------------------------------------------------------
+out="$(lint sp-lint-ev.1)"
+rc="$(lint_rc sp-lint-ev.1)"
+is   "event bead fails explicit lint"    "1"                             "$rc"
+want "event bead reported explicitly"    "sp-lint-ev.1: no repo: label"  "$out"
+
+# -----------------------------------------------------------------------------------------
+# EVENT FILTER: --all skips event-type beads; they are not work beads.
+# -----------------------------------------------------------------------------------------
+out_all="$(lint --all)"
+nowant "--all skips event bead"          "sp-lint-ev.1"                  "$out_all"
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

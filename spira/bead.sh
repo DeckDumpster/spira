@@ -108,7 +108,8 @@ _bead_lint() {
 import json, sys
 data = json.load(sys.stdin)
 for d in (data if isinstance(data, list) else [data]):
-    print(d["id"])
+    if d.get("issue_type") != "event":
+        print(d["id"])
 ' 2>/dev/null || true)"
     else
         ids="$*"
