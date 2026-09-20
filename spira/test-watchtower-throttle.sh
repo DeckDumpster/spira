@@ -125,6 +125,9 @@ want "throttle: cause is throttle-engaged" "throttle-engaged" "$(causes)"
 
 # POSITIVE CONTROL: stall. Depth high, drain zero → NO stamp, stall incident filed.
 fresh
+# Add async gate commits to main (sp-c8w16, sp-74gwk) so stall detection proceeds
+git -C "$GIT_REPO" commit -q --allow-empty -m "sp-c8w16 async gate implementation"
+git -C "$GIT_REPO" commit -q --allow-empty -m "sp-74gwk async gate landing"
 for i in $(seq 1 16); do certified "sp-tc-c${i}"; done    # 16 CERTIFIED
 landed "sp-tc-l1" $(( 60 * 60 ))                          # landed 60m ago (stall)
 wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=16 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
@@ -146,6 +149,9 @@ echo "THE CRITICAL PAIR — same depth, different drain rate:"
 # Now verify: drain zero does NOT throttle (already verified as stall above)
 # Extra verification: no stamp after stall case
 fresh
+# Add async gate commits to main so stall detection proceeds
+git -C "$GIT_REPO" commit -q --allow-empty -m "sp-c8w16 async gate implementation"
+git -C "$GIT_REPO" commit -q --allow-empty -m "sp-74gwk async gate landing"
 for i in $(seq 1 16); do certified "sp-tc-c${i}"; done
 landed "sp-tc-l1" $(( 55 * 60 ))   # 55m ago, above 50m stall threshold
 wt_tc SPIRA_QUEUE_THROTTLE_DEPTH_AT=16 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
