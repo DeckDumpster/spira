@@ -66,6 +66,16 @@ chmod +x "$BIN/systemctl"
 # Repo-map: exists but has no repo rows — the home-repo row is missing by design.
 printf '# repo-map — no rows\n' > "$TMP/repo-map"
 
+# Fake cargo: reports a version >= 1.78.0 so the cargo-version check passes.
+# Without this, the container's old rustc triggers an unrelated FAIL that makes
+# doctor exit non-zero regardless of SPIRA_DOCTOR_INSTALLING.
+cat > "$BIN/cargo" <<'CARGO'
+#!/usr/bin/env bash
+[ "${1:-}" = "--version" ] && printf 'cargo 1.82.0 (abc123)\n' && exit 0
+exit 0
+CARGO
+chmod +x "$BIN/cargo"
+
 touch "$TMP/watchers-empty"
 
 # SPIRA_DOLT_DATA points at a directory that does not yet exist.
