@@ -294,17 +294,18 @@ file_one() {
         [ "$_ev_n" -gt "$_recur_n" ] && _recur_n="$_ev_n"
         n=$((_recur_n + 1))
         if [ "$_was_closed" = 1 ]; then
-            # CLASSIFY THE REOPEN. A bead closed within one watcher interval of the next
-            # same-ref filing was closed while the condition was still live — the aeon
-            # resolved it before the watcher confirmed the fix. Record that as its own
-            # class so census can distinguish it from genuine recurrences after a real fix.
             _reopen_cause=recurrence
-            if [ -n "$_closed_at_raw" ]; then
-                _close_ts="$(date -u -d "$_closed_at_raw" +%s 2>/dev/null || true)"
-                if [ -n "$_close_ts" ]; then
-                    _now_ts="$(date -u +%s)"
-                    [ "$(( _now_ts - _close_ts ))" -lt "$WATCHER_INTERVAL_S" ] && _reopen_cause=closed-while-live
-                fi
+            _close_raw="$(bdq show "$id" --json 2>/dev/null \
+                | python3 -c 'import sys,json; d=json.load(sys.stdin); b=d if isinstance(d,dict) else (d[0] if d else {}); print(b.get("closed_at",""))' 2>/dev/null || true)"
+            [ -z "$_close_raw" ] && _close_raw="${_closed_at_raw:-}"
+            _close_ts="$([ -n "$_close_raw" ] && date -u -d "$_close_raw" +%s 2>/dev/null || true)"
+            if [ -n "$_close_ts" ]; then
+                _now_ts="$(date -u +%s)"
+                _delta=$(( _now_ts - _close_ts ))
+                ilog "reopen classify $id: closed_at=${_close_raw} delta=${_delta}s interval=${WATCHER_INTERVAL_S}s"
+                [ "$_delta" -lt "$WATCHER_INTERVAL_S" ] && _reopen_cause=closed-while-live
+            else
+                ilog "reopen classify $id: closed_at=${_close_raw:-empty} unparseable → recurrence"
             fi
             bead_reopen "$id" "$_reopen_cause" "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ) — same failure fingerprint, dedup within ${DEDUP_LOOKBACK_DAYS}-day window"
         fi
