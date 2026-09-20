@@ -48,6 +48,7 @@ PROD_BIN="${TESTDB_BIN:-}"
 TMP="$(mktemp -d)"
 INVALID_BASELINE="$(mktemp -d)"   # exists but has no .beads subdir
 trap 'rm -rf "$TMP" "$INVALID_BASELINE" "${PROD_DIR:-}" "${PROD_BASELINE:-}" "${PROD_BIN:-}"' EXIT INT TERM
+printf '#!/bin/sh\nexit 2\n' > "$TMP/fail-bd" && chmod +x "$TMP/fail-bd"
 
 # Count beads in the stand-in before anything touches it.
 count_before="$("$PROD_BD" -C "$PROD_DB" list --limit 0 --json 2>/dev/null \
@@ -93,6 +94,7 @@ fi
 #   SPIRA_DB pointing at the stand-in (so any inadvertent write is detectable)
 #   TESTDB_SHARED=1 with TESTDB_DIR existing (so testdb_require/testdb_available passes)
 #   TESTDB_BASELINE pointing at a dir with no .beads (so testdb_reset fails)
+#   TESTDB_SERVER_BD pointing at a stub that exits 2 (so server-mode fresh init fails)
 #
 # A suite exits non-zero either because it has `|| exit 1` after testdb_up (fix 2) or
 # because a later `$SPIRA_DB` reference is unbound under `set -u` (fix 1 alone). Either
@@ -110,7 +112,7 @@ suite_env=(
     TESTDB_DIR="$INVALID_BASELINE"
     TESTDB_BASELINE="$INVALID_BASELINE"
     TESTDB_BD="${TESTDB_BD:-bd-embedded}"
-    TESTDB_SERVER_BD="${TESTDB_SERVER_BD:-bd}"
+    TESTDB_SERVER_BD="$TMP/fail-bd"
 )
 
 # test-landing.sh and test-timeout.sh use testdb with real bd writes and each guard
