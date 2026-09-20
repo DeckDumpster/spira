@@ -17,6 +17,11 @@ indistinguishable from one that did not happen.
 
 ### Step 1 — Census
 
+Capture the watermark value before running census — Step 5 compares against it to detect a
+sibling pass that may have advanced it while this pass was running:
+
+    wm_start="$(cat "{{RUN}}/maechen.watermark" 2>/dev/null || printf '')"
+
 Aggregate failure events and rank by **since-watermark count** with open-remedy suppression:
 
     bash "{{SPIRA_HOME}}/census.sh" --with-suppressed
@@ -145,22 +150,34 @@ the stamp atomically before the watermark advance so a crash does not leave both
 watermark at its pre-trigger value so census.sh could see the events that caused the trigger
 to fire. Whether the watermark now moves depends on Step 1's `census_rc`:
 
-- When `census_rc` is 0 (census succeeded): advance the watermark atomically, so a crash
-  here leaves either the old value or the new one, never a partial write:
+- When `census_rc` is 0 (census succeeded): advance the watermark only when it still holds
+  the value captured in Step 1. Another pass that finished concurrently may have moved it
+  forward already — advancing over that value collapses the next pass's window. Compare
+  before writing:
 
-      printf '%d\n' "$(date +%s)" > "{{RUN}}/maechen.watermark.new" \
-          && mv "{{RUN}}/maechen.watermark.new" "{{RUN}}/maechen.watermark"
+      wm_now="$(cat "{{RUN}}/maechen.watermark" 2>/dev/null || printf '')"
+      if [ "$wm_now" = "$wm_start" ]; then
+          printf '%d\n' "$(date +%s)" > "{{RUN}}/maechen.watermark.new" \
+              && mv "{{RUN}}/maechen.watermark.new" "{{RUN}}/maechen.watermark"
+      fi
+
+  When the compare fails (sibling already advanced), leave the watermark where the sibling
+  left it and write the blinded-pass log entry instead of the done entry.
 
 - When `census_rc` is non-zero (census failed): leave the watermark where it is. A retained
   watermark costs one duplicate count in the next pass; an advanced one costs the window
   forever. Prefer the recoverable error.
 
-Write the closing entry to the Maechen log. The log line must record the outcome so the pass
-is auditable — two formats, one per outcome:
+Write the closing entry to the Maechen log. Three formats — one per outcome:
 
-    # When census succeeded (census_rc=0):
+    # When census succeeded and this pass advanced the watermark (CAS succeeded):
     printf 'Maechen pass done: census=%d classes ranked (instrument rc=0), threshold_met=%s, beads_cut=%d. Watermark advanced to %s.\n' \
         N "yes|no" N "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        >> "{{RUN}}/maechen.log"
+
+    # When census succeeded but a sibling already advanced the watermark (CAS failed):
+    printf 'Maechen pass blinded: watermark advanced by sibling pass (was %s, now %s). Census window collapsed; pass recorded without verdict.\n' \
+        "$wm_start" "$wm_now" \
         >> "{{RUN}}/maechen.log"
 
     # When census failed (census_rc non-zero):
