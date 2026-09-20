@@ -222,5 +222,21 @@ out_clean="$(inst "$REPO")"; rc_clean=$?
 nowant "clean state: no landref refuse in output" "refusing — checkout is on branch" "$out_clean"
 nowant "clean state: no behind refuse in output"  "refusing — checkout is"           "$out_clean"
 
+# ===========================================================================
+echo
+echo "ARTIFACT DEPLOY — SPIRA_REPO is not a git checkout: landref check is skipped."
+# Positive control for the skip: we proved the refusal fires above (wrong-branch and
+# behind cases), so silence here is meaningful.
+# ===========================================================================
+
+NOT_GIT="$TMP/not-a-git-repo"
+mkdir -p "$NOT_GIT"
+
+out_notgit="$(inst "$NOT_GIT")"; rc_notgit=$?
+nowant "artifact deploy: no 'cannot resolve landref' in output" \
+    "cannot resolve landref" "$out_notgit"
+nowant "artifact deploy: no landref refusal in output" \
+    "refusing — checkout is on branch" "$out_notgit"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
