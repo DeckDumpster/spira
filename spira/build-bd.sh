@@ -64,10 +64,8 @@ while [ $# -gt 0 ]; do
 done
 
 if [ "$RELEASE_MODE" = 1 ]; then
-    # Download and install a prebuilt release tarball rather than building from source.
-    # Upstream publishes tarballs at github.com/steveyegge/beads/releases for each tag;
-    # the linux_amd64 tarball for the pinned tag passes every check this script performs.
-    command -v curl >/dev/null 2>&1 || { echo "build-bd.sh: --from-release needs curl" >&2; exit 1; }
+    command -v curl      >/dev/null 2>&1 || { echo "build-bd.sh: --from-release needs curl" >&2; exit 1; }
+    command -v sha256sum >/dev/null 2>&1 || { echo "build-bd.sh: --from-release needs sha256sum" >&2; exit 1; }
     _rel_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
     _rel_arch="$(uname -m)"
     case "$_rel_arch" in
@@ -75,7 +73,17 @@ if [ "$RELEASE_MODE" = 1 ]; then
         aarch64) _rel_arch=arm64 ;;
         *) echo "build-bd.sh: --from-release: unsupported architecture: $_rel_arch" >&2; exit 1 ;;
     esac
-    _rel_url="${BD_RELEASE_URL:-https://github.com/steveyegge/beads/releases/download/$TAG/bd_${_rel_os}_${_rel_arch}.tar.gz}"
+    # Upstream publishes beads_${version}_${os}_${arch}.tar.gz (project name, version without
+    # the v prefix, underscores). BD_RELEASE_BASE_URL overrides the GitHub base for testing.
+    _rel_asset="beads_${TAG#v}_${_rel_os}_${_rel_arch}.tar.gz"
+    if [ -n "${BD_RELEASE_URL:-}" ]; then
+        _rel_url="$BD_RELEASE_URL"
+        _rel_checksum_url=""
+    else
+        _rel_base="${BD_RELEASE_BASE_URL:-https://github.com/steveyegge/beads/releases/download/$TAG}"
+        _rel_url="$_rel_base/$_rel_asset"
+        _rel_checksum_url="$_rel_base/checksums.txt"
+    fi
     _rel_tmp="$(mktemp -d)"
     echo "build-bd.sh: downloading $TAG from $_rel_url" >&2
     if ! curl -fsSL --retry 3 -o "$_rel_tmp/bd.tar.gz" "$_rel_url"; then
@@ -83,9 +91,24 @@ if [ "$RELEASE_MODE" = 1 ]; then
         rm -rf "$_rel_tmp"
         exit 1
     fi
+    if [ -n "${_rel_checksum_url:-}" ]; then
+        if ! curl -fsSL --retry 3 -o "$_rel_tmp/checksums.txt" "$_rel_checksum_url"; then
+            echo "build-bd.sh: checksum download failed — $_rel_checksum_url" >&2
+            rm -rf "$_rel_tmp"; exit 1
+        fi
+        _dl_sha256="$(sha256sum "$_rel_tmp/bd.tar.gz" | awk '{print $1}')"
+        _exp_sha256="$(grep "$_rel_asset" "$_rel_tmp/checksums.txt" | awk '{print $1}')"
+        if [ -z "${_exp_sha256:-}" ]; then
+            echo "build-bd.sh: no checksum entry for $_rel_asset in checksums.txt" >&2
+            rm -rf "$_rel_tmp"; exit 1
+        fi
+        if [ "$_dl_sha256" != "$_exp_sha256" ]; then
+            echo "build-bd.sh: checksum mismatch for $_rel_asset: expected $_exp_sha256, got $_dl_sha256" >&2
+            rm -rf "$_rel_tmp"; exit 1
+        fi
+    fi
     tar -xzf "$_rel_tmp/bd.tar.gz" -C "$_rel_tmp" || {
         echo "build-bd.sh: failed to unpack $_rel_tmp/bd.tar.gz" >&2; rm -rf "$_rel_tmp"; exit 1; }
-    # The tarball may place the binary in a subdirectory; find it.
     OUT="$(find "$_rel_tmp" -maxdepth 2 -name bd -perm /111 | head -1)"
     if [ -z "${OUT:-}" ]; then
         echo "build-bd.sh: no bd binary found in tarball" >&2; rm -rf "$_rel_tmp"; exit 1; fi
