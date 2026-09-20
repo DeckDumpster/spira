@@ -1733,15 +1733,9 @@ if [ -n "${SPIRA_WIKI:-}" ] && [ -d "$SPIRA_WIKI" ]; then
             _wc_new="${_wc_new:+$_wc_new$'\n'}$_wp"
         done < <(git -C "$SPIRA_WIKI" status --short 2>/dev/null | cut -c4-)
         if [ -n "$_wc_new" ]; then
-            while IFS= read -r _wp; do
-                [ -n "$_wp" ] || continue
-                git -C "$SPIRA_WIKI" add -- "$_wp" 2>/dev/null || true
-            done <<< "$_wc_new"
             _wc_count="$(printf '%s\n' "$_wc_new" | grep -c .)"
-            if git -C "$SPIRA_WIKI" commit \
-                    -m "$FAYTH: wiki writes for $BEAD_ID" 2>/dev/null; then
-                git -C "$SPIRA_WIKI" push 2>/dev/null \
-                    || log "$FAYTH: $BEAD_ID wiki commit ok — push failed"
+            if printf '%s\n' "$_wc_new" | bash "$SPIRA_HOME/wiki-commit.sh" \
+                    "$SPIRA_WIKI" "$FAYTH: wiki writes for $BEAD_ID"; then
                 log "$FAYTH: $BEAD_ID committed wiki changes ($_wc_count file(s)): $(printf '%s' "$_wc_new" | head -5 | tr '\n' ' ')"
             else
                 log "$FAYTH: $BEAD_ID wiki commit failed"
