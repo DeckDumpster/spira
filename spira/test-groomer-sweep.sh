@@ -140,9 +140,8 @@ is "real: litter bead closed" "closed" "$(status_of sp-sw-lit)"
 reason_lit="$(bd -C "$SPIRA_DB" show sp-sw-lit --json 2>/dev/null | python3 -c '
 import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 print(d[0].get("close_reason","") or "")' 2>/dev/null)"
-want "real: litter close reason names predicate" "litter"       "$reason_lit"
-want "real: litter close reason names no description"   "no description" "$reason_lit"
-want "real: litter close reason names no notes"         "no notes"       "$reason_lit"
+want "real: litter close reason names predicate"     "litter"         "$reason_lit"
+want "real: litter close reason names no description" "no description" "$reason_lit"
 
 # described bead still open
 is "real: described bead still open" "open" "$(status_of sp-sw-desc)"

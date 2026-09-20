@@ -113,7 +113,7 @@ case "$cmd" in
 import json,sys
 try:
     d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; b=d[0]
-    print(1 if (b.get("description") or "").strip() or (b.get("notes") or "").strip() else 0)
+    print(1 if (b.get("description") or "").strip() else 0)
 except Exception: print(0)
 ' 2>/dev/null)"
                 _sw_meta="$(printf '%s\n' "$_sw_bj" | python3 -c '
@@ -126,14 +126,14 @@ try:
 except Exception: print("")
 ' 2>/dev/null)"
                 if [ "${_sw_has_content:-0}" = "0" ]; then
-                    _sw_log "CLOSED $_sw_bid — litter: no description, no notes, $_sw_meta. Detector: $_sw_reason"
+                    _sw_log "CLOSED $_sw_bid — litter: no description, $_sw_meta. Detector: $_sw_reason"
                     if [ "$_sw_dry" -eq 0 ]; then
                         "$BD_CMD" -C "$DB" close "$_sw_bid" --reason-file - <<< \
-                            "litter: no description, no notes, $_sw_meta. Detector: $_sw_reason"
+                            "litter: no description, $_sw_meta. Detector: $_sw_reason"
                     fi
                     _sw_n=$((_sw_n+1))
                 else
-                    _sw_log "REPORT $_sw_bid unmapped-repo — has description or notes; leaving for model. $_sw_reason"
+                    _sw_log "REPORT $_sw_bid unmapped-repo — has description; leaving for model. $_sw_reason"
                 fi
                 ;;
             LIVELOCK\ *\ unclaimable\ *)
