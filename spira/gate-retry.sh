@@ -4,6 +4,9 @@
 # Red twice fails the gate. Red then green passes it and names each suite as flaky, so the
 # flake is recorded without holding the release. Exits 1 without retrying when the first batch
 # recorded no red suite: a failure this cannot attribute to a suite is not a flake.
+#
+# GATE_RETRY_MAX_RETRY (default: 5): skip the serial re-run when more than this many suites
+# are red, or when red suites exceed half of all recorded results — whichever fires first.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 BATCH="${GATE_RETRY_BATCH:-$HERE/testenv-batch.sh}"
@@ -23,6 +26,22 @@ red_in() {
 reds="$(red_in "$ROOT")"
 if [ -z "$reds" ]; then
     printf 'gate-retry: no red suite recorded under %s — nothing to retry\n' "$ROOT" >&2
+    exit 1
+fi
+
+_red_count=0
+for _r in $reds; do _red_count=$((_red_count+1)); done
+_total_count=0
+for _f in "$ROOT"/*/*.result; do [ -f "$_f" ] && _total_count=$((_total_count+1)); done
+: "${GATE_RETRY_MAX_RETRY:=5}"
+_structural=0
+[ "$_red_count" -gt "$GATE_RETRY_MAX_RETRY" ] && _structural=1
+[ "$_structural" -eq 0 ] && [ "$_total_count" -gt "$GATE_RETRY_MAX_RETRY" ] && \
+    [ $((_red_count * 2)) -gt "$_total_count" ] && _structural=1
+if [ "$_structural" -eq 1 ]; then
+    printf 'gate-retry: %d of %d suites red — structural, not flaky; serial re-run skipped\n' \
+        "$_red_count" "$_total_count" >&2
+    for _s in $reds; do printf '::error title=red suite::%s\n' "$_s"; done
     exit 1
 fi
 
