@@ -101,6 +101,46 @@ is "state is EJECTED"                     "EJECTED"                       "$_st"
 is "tip recorded"                         "abc123"                        "$_tip"
 is "suites CSV in reason field"           "test-batch.sh,test-other.sh"   "$_csv"
 
+# ---------------------------------------------------------------------------
+# EJECTED FILE SURVIVES A RED TRANSITION. This is the defect class:
+# a failed re-certification overwrites the EJECTED landstate with RED,
+# erasing the suite CSV. The .ejected sidecar file must persist independently.
+#
+# Positive control: without the .ejected file the UNFIXED code returns empty.
+# (The positive control is the negative assertion in "unfixed leg" below.)
+# ---------------------------------------------------------------------------
+echo
+echo "ejected-suite file survives RED transition (sp-px6ng):"
+export SPIRA_RUN="$TMP/run2"; mkdir -p "$SPIRA_RUN/landstate"
+LANDSTATE="$SPIRA_RUN/landstate"
+
+# Seed EJECTED state + .ejected file, as _attr_eject now does.
+land_mark sp-z EJECTED def456 "test-other.sh"
+printf '%s' "test-other.sh" > "$LANDSTATE/sp-z.ejected"
+
+# Simulate a failed re-certification (landing.sh:1179): overwrites EJECTED with RED.
+land_mark sp-z RED def456 gate
+
+# The EJECTED record is gone; only the .ejected file remains.
+_post_red_st="" _post_red_tip="" _post_red_epoch="" _post_red_reason=""
+{ read -r _post_red_st _post_red_tip _post_red_epoch _post_red_reason < "$LANDSTATE/sp-z"; } 2>/dev/null || true
+is "landstate shows RED after failed re-cert"  "RED"  "$_post_red_st"
+
+# Gate reads .ejected file when present, regardless of state.
+_got_ejected=""
+_ej_file="$LANDSTATE/sp-z.ejected"
+if [ -f "$_ej_file" ]; then
+    { read -r _got_ejected < "$_ej_file"; } 2>/dev/null || true
+fi
+is "ejected_suites non-empty after RED transition"  "test-other.sh"  "$_got_ejected"
+
+# Negative leg: a bead with no eject history resolves ejected_suites empty.
+land_mark sp-noeject RED abc000 gate
+_neg_ejected=""
+_neg_ej_file="$LANDSTATE/sp-noeject.ejected"
+[ -f "$_neg_ej_file" ] && { read -r _neg_ejected < "$_neg_ej_file"; } 2>/dev/null || true
+is "no .ejected file → ejected_suites empty"  ""  "$_neg_ejected"
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

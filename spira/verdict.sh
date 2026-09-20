@@ -152,6 +152,8 @@ _attr_eject() {  # _attr_eject <id> <tip> <suites-csv> <pr-n> <name> [fail-lines
     fi
     bead_reopen "$id" queue-eject "$_note" >/dev/null 2>&1 || true
     land_mark "$id" EJECTED "$tip" "$suites"
+    printf '%s' "$suites" > "$LANDSTATE/$id.ejected.$$" 2>/dev/null \
+        && mv -f "$LANDSTATE/$id.ejected.$$" "$LANDSTATE/$id.ejected" 2>/dev/null || true
     printf 'QUEUE ESCAPED %s branch=%s\n' "$(date +%s)" "$id" \
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
     local _fail_section=""
