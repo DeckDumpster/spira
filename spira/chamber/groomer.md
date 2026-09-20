@@ -88,6 +88,14 @@ ask bead and escalate:
 **Re-prioritise.** Priority management is the scheduler's and Ryan's. Leave priorities as
 you find them. The groomer lane exists to reconcile structure, not to sort a queue.
 
+## Before you scan: mechanical sweep
+
+Run the sweep first so beads with mechanical remedies are resolved before you read the graph:
+
+    {{GROOM}} sweep
+
+The sweep closes litter unmapped-repo beads, adds the overseer label to needs-ryan beads that lack it, and strips awaiting-ci from beads whose repo will never have a CI run. Described unmapped-repo beads and unclaimable beads remain for you.
+
 ## How to scan the graph
 
 Read all open beads in the partition you own, or in a specific label set if the trigger bead

@@ -3428,10 +3428,10 @@ file_unclaimable_incidents() {   # file_unclaimable_incidents <detect_unclaimabl
 #                        sentinel reports every queue empty, truthfully; this names which
 #                        beads are responsible. (Reuses detect_unclaimable_ready logic.)
 #
-#   needs-ryan-no-overseer  carries needs-ryan (excluded from every fayth predicate) but
+#   ask-no-overseer      carries SPIRA_ASK_LABEL (excluded from every fayth predicate) but
 #                        lacks overseer (the label the decisions pane selects on). The bead
-#                        is invisible to both the loop and to Ryan — it cannot be answered
-#                        and cannot be dispatched.
+#                        is invisible to both the loop and to the operator — it cannot be
+#                        answered and cannot be dispatched.
 #
 #   ci-stuck             carries awaiting-ci (excluded from every fayth predicate, and from
 #                        the stranded-work report) but the repository's land mode is not `pr`,
@@ -3466,9 +3466,9 @@ detect_livelocked() {
         done
     fi
 
-    # ---- needs-ryan-no-overseer: open beads with needs-ryan but without overseer ----
-    # The decisions pane selects on `overseer`; without it, the bead is invisible to Ryan.
-    # The loop excludes needs-ryan from every predicate, so no aeon can claim it either.
+    # ---- ask-no-overseer: open beads with SPIRA_ASK_LABEL but without overseer ----
+    # The decisions pane selects on `overseer`; without it, the bead is invisible to the operator.
+    # The loop excludes SPIRA_ASK_LABEL from every predicate, so no aeon can claim it either.
     local _nr_raw
     _nr_raw="$(bdjson list --limit 0 --label "${SPIRA_ASK_LABEL:?SPIRA_ASK_LABEL is unset — source conf.sh}" 2>/dev/null)"
     if [ -n "$_nr_raw" ]; then
@@ -3484,8 +3484,7 @@ for i in (d if isinstance(d, list) else [d]):
     if "overseer" in L:
         continue
     title = re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:60]
-    # literal-ok: a livelock CATEGORY name in output text, not a comparison; nothing matches on it
-    print("LIVELOCK %s needs-ryan-no-overseer — missing overseer label; "
+    print("LIVELOCK %s ask-no-overseer — missing overseer label; "
           "the decisions pane cannot see this bead and no aeon can claim it; "
           "add overseer label. title: %s" % (i["id"], title))
 ' 2>/dev/null

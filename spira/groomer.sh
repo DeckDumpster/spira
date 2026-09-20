@@ -2,6 +2,7 @@
 #
 # groomer.sh — graph hygiene operations for the Spira DAG.
 #
+#   groomer.sh sweep          [--dry-run]                                     apply mechanical livelock remedies
 #   groomer.sh supersede      <id> --with <successor>                        mark a bead superseded by another
 #   groomer.sh close          <id> --evidence <text>                         close a bead whose premise is gone
 #   groomer.sh correct-lane   <id> --lane <lane>                             correct a mislabelled lane label
@@ -26,7 +27,7 @@
 #   1  usage error / missing required argument
 #   2  refused: the operation violates groomer policy
 #
-# covers: spira/groomer.sh spira/conf.sh
+# covers: spira/groomer.sh spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=conf.sh
@@ -36,12 +37,116 @@ BD_CMD="${SPIRA_BD:-bd}"
 DB="${SPIRA_DB:-.}"
 
 usage() {
-    printf 'usage: groomer.sh supersede|close|correct-lane|depends-on-fix|unwanted ...\n' >&2
+    printf 'usage: groomer.sh sweep|supersede|close|correct-lane|depends-on-fix|unwanted ...\n' >&2
     exit 1
 }
 
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
+
+  sweep)
+    # groomer.sh sweep [--dry-run]
+    # Runs detect_livelocked and applies three mechanical remedies before the model pass:
+    #   ask-no-overseer → add overseer label (decisions pane remedy)
+    #   ci-stuck               → strip awaiting-ci (repo is not pr-mode; no run will ever clear it)
+    #   unmapped-repo, litter  → close (no description, no notes — predicate is fully computable)
+    # unclaimable → REPORT only; partition repair is a judgment.
+    _sw_dry=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --dry-run) _sw_dry=1; shift ;;
+        *) printf 'groomer: sweep: unknown option: %s\n' "$1" >&2; exit 1 ;;
+      esac
+    done
+
+    # shellcheck source=lib.sh
+    . "$HERE/lib.sh"
+
+    _sw_log() {
+        local _ts _msg
+        _ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        _msg="$_ts groom: sweep: $*"
+        printf '%s\n' "$_msg"
+        [ -d "${SPIRA_RUN:-}" ] && printf '%s\n' "$_msg" >> "$SPIRA_RUN/groom.log" 2>/dev/null || true
+    }
+
+    _sw_ll="$(detect_livelocked 2>/dev/null)"
+    if [ -z "$_sw_ll" ]; then
+        _sw_log "no livelocked beads"
+        exit 0
+    fi
+
+    _sw_n=0
+    while IFS= read -r _sw_line; do
+        [ -n "$_sw_line" ] || continue
+        case "$_sw_line" in
+            LIVELOCK\ *\ ask-no-overseer\ *)
+                _sw_rest="${_sw_line#LIVELOCK }"
+                _sw_bid="${_sw_rest%% *}"
+                _sw_log "OVERSEER $_sw_bid — adding overseer label; decisions pane cannot see this bead"
+                if [ "$_sw_dry" -eq 0 ]; then
+                    "$BD_CMD" -C "$DB" label add "$_sw_bid" overseer >/dev/null 2>&1 \
+                        || printf 'groomer: sweep: WARN overseer label add failed for %s\n' "$_sw_bid" >&2
+                fi
+                _sw_n=$((_sw_n+1))
+                ;;
+            LIVELOCK\ *\ ci-stuck\ *)
+                _sw_rest="${_sw_line#LIVELOCK }"
+                _sw_bid="${_sw_rest%% *}"
+                _sw_log "UNSTUCK $_sw_bid — stripping ${SPIRA_CI_LABEL}; repo not pr-mode, no run will ever clear this label"
+                if [ "$_sw_dry" -eq 0 ]; then
+                    "$BD_CMD" -C "$DB" label remove "$_sw_bid" "${SPIRA_CI_LABEL:?}" >/dev/null 2>&1 \
+                        || printf 'groomer: sweep: WARN label remove %s failed for %s\n' "$SPIRA_CI_LABEL" "$_sw_bid" >&2
+                fi
+                _sw_n=$((_sw_n+1))
+                ;;
+            LIVELOCK\ *\ unmapped-repo\ *)
+                _sw_rest="${_sw_line#LIVELOCK }"
+                _sw_bid="${_sw_rest%% *}"
+                _sw_reason="${_sw_rest#* — }"
+                _sw_bj="$("$BD_CMD" -C "$DB" show "$_sw_bid" --json 2>/dev/null)"
+                if [ -z "$_sw_bj" ]; then
+                    _sw_log "REPORT $_sw_bid unmapped-repo — bd show failed; leaving for model. $_sw_reason"
+                    continue
+                fi
+                _sw_has_content="$(printf '%s\n' "$_sw_bj" | python3 -c '
+import json,sys
+try:
+    d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; b=d[0]
+    print(1 if (b.get("description") or "").strip() else 0)
+except Exception: print(0)
+' 2>/dev/null)"
+                _sw_meta="$(printf '%s\n' "$_sw_bj" | python3 -c '
+import json,sys,re
+try:
+    d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; b=d[0]
+    ca = re.sub(r"[^A-Za-z0-9:.T_-]","_",(b.get("created_at") or "unknown"))
+    ag = re.sub(r"[^A-Za-z0-9._@-]","_",(b.get("assignee") or "unknown"))
+    print("created_at: %s, assignee: %s" % (ca, ag))
+except Exception: print("")
+' 2>/dev/null)"
+                if [ "${_sw_has_content:-0}" = "0" ]; then
+                    _sw_log "CLOSED $_sw_bid — litter: no description, $_sw_meta. Detector: $_sw_reason"
+                    if [ "$_sw_dry" -eq 0 ]; then
+                        "$BD_CMD" -C "$DB" close "$_sw_bid" --reason-file - <<< \
+                            "litter: no description, $_sw_meta. Detector: $_sw_reason"
+                    fi
+                    _sw_n=$((_sw_n+1))
+                else
+                    _sw_log "REPORT $_sw_bid unmapped-repo — has description; leaving for model. $_sw_reason"
+                fi
+                ;;
+            LIVELOCK\ *\ unclaimable\ *)
+                _sw_rest="${_sw_line#LIVELOCK }"
+                _sw_bid="${_sw_rest%% *}"
+                _sw_reason="${_sw_rest#* — }"
+                _sw_log "REPORT $_sw_bid unclaimable — $_sw_reason"
+                ;;
+        esac
+    done <<< "$_sw_ll"
+
+    _sw_log "sweep complete; acted on $_sw_n bead(s)"
+    ;;
 
   supersede)
     # groomer.sh supersede <id> --with <successor>

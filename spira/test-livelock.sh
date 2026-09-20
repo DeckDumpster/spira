@@ -16,7 +16,7 @@
 #   unclaimable          fayth:ops on spira,plan labels — builder excluded by preference,
 #                        ops excluded by its own partition. Fifteen-hour strand, 2026-09-09.
 #
-#   needs-ryan-no-overseer  needs-ryan without overseer: invisible to the decisions pane
+#   ask-no-overseer      SPIRA_ASK_LABEL without overseer: invisible to the decisions pane
 #                        and excluded from every fayth predicate.
 #
 #   unmapped-repo        repo:bogus not in the repo-map; aeon.sh refuses at claim time.
@@ -137,9 +137,9 @@ testdb_seed <<JSONL
 {"id":"sp-ll-nr","title":"needs-ryan no overseer","status":"open","issue_type":"task","labels":["needs-ryan","${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"]}
 JSONL
 out="$(run_ll)"
-want  "needs-ryan-no-overseer: LIVELOCK row" "LIVELOCK"                 "$out"
-want  "needs-ryan-no-overseer: bead id"      "sp-ll-nr"                 "$out"
-want  "needs-ryan-no-overseer: category"     "needs-ryan-no-overseer"   "$out"
+want  "ask-no-overseer: LIVELOCK row" "LIVELOCK"           "$out"
+want  "ask-no-overseer: bead id"      "sp-ll-nr"           "$out"
+want  "ask-no-overseer: category"     "ask-no-overseer"    "$out"
 
 # A needs-ryan bead WITH overseer is not flagged — that is the correct configuration.
 testdb_reset
@@ -374,8 +374,8 @@ JSONL
 out="$(run_ll)"
 want  "mixed: unclaimable bead named"          "sp-ll-mix1"             "$out"
 want  "mixed: unclaimable category"            "unclaimable"            "$out"
-want  "mixed: needs-ryan-no-overseer named"    "sp-ll-mix2"             "$out"
-want  "mixed: needs-ryan-no-overseer category" "needs-ryan-no-overseer" "$out"
+want  "mixed: ask-no-overseer named"    "sp-ll-mix2"      "$out"
+want  "mixed: ask-no-overseer category" "ask-no-overseer" "$out"
 nowant "mixed: claimable bead NOT reported"    "sp-ll-mix3"             "$out"
 # The count reflects only the two livelocked beads, not the claimable one.
 ll_n="$(printf '%s\n' "$out" | sed -n 's/^SP_LIVELOCKED=//p' | head -1)"
