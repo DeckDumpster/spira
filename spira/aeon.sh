@@ -821,6 +821,18 @@ sys.exit(0)' 2>/dev/null; then
             ledger_done "$rc" "requeue-$REQUEUE_CAUSE"
             exit $rc
         fi
+        # YIELD-HEADLESS IS NAMED, NOT GENERIC UNLANDED. rc=0 with the bead open reads
+        # "finished, didn't close" — there is no signal that the session's background tasks
+        # were killed mid-flight. Detecting it here lets the ledger say why and gives the
+        # next summon a specific repair (commit before any long step, not "change approach").
+        # The attempt IS charged: the brief says not to do this.
+        if session_yield_headless "$LOGF"; then
+            bdq note "$BEAD_ID" "Yield-headless: the session ended its turn waiting for a background task notification. This session runs headless — there is no notification channel, so the session terminated and its background tasks were killed. Attempt charged; commit before any long step rather than backgrounding and yielding." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID yield-headless — ended turn waiting for background task, attempt charged"
+            release_own_claim "$BEAD_ID"
+            ledger_done "$rc" yield-headless
+            exit $rc
+        fi
         cause="$(session_outcome "$LOGF")"
         if outcome_charges "$cause"; then
             # Counter labels (sp-attempt-N) are no longer written; the events trail records
