@@ -41,6 +41,16 @@ Acceptance:
 - Landing pass latency is bounded and measurable (publish before-and-after)
 - Green batch PR settled within one pass cadence regardless of other gates in flight
 
+## Watcher False-Positive Pattern (sp-4hbuj)
+
+While this phase is in progress (async gate commits not yet on main), the landing loop **legitimately freezes** pending implementation — this is not a gate bug. However, watchtower.sh --throttle-check cannot distinguish this expected state from real gate failure and fires recurring "deep+stalled" queue incidents (sp-pw5qw pattern).
+
+**Fix (filed as sp-f2h4h):** watchtower.sh --throttle-check should verify async gate implementation status before escalating:
+```bash
+git log --oneline origin/main | grep -E '(sp-c8w16|sp-74gwk)' | wc -l | grep -qE '^2$'
+```
+If both commits NOT on main, the stall is deliberate—suppress alert.
+
 ## Reference
 
 - law-local-gates-buy-latency-not-coverage — local gates buy latency, CI buys coverage
@@ -48,6 +58,7 @@ Acceptance:
 - law-arm-before-you-retire — decouple before retiring old mechanism
 - Child beads: sp-c8w16 (Phase 1), sp-74gwk (Phase 2)
 - Decision: operator 2026-09-17 20:11, documented in sp-hsxk8 incident notes
+- Watcher fix: sp-f2h4h
 
 ## Tags
 
