@@ -1002,6 +1002,55 @@ fi
 unset _dr_en_sc _dr_en_bad _dr_en_units_sh _dr_en_unit _dr_en_state _dr_en_base _dr_en_subj
 
 echo
+echo "unit installation"
+# UNIT INSTALLATION DRIFT. An enable-set unit whose file is missing from the installation
+# is silent: systemctl returns 'not-found' for every call and the feature it drives simply
+# stops without any alert (the czar-pass gap: template landed, install.sh never ran).
+# Call skew.sh units (which calls install.sh --diff) and report MISSING as a fault and
+# DIFFERS as a warning.
+#
+# GATE ON ANY INSTALLED UNIT. A fresh host has no unit files, which is expected before
+# install.sh runs. The check is only meaningful once install.sh has run at least once.
+_dr_ui_dir="${HOME}/.config/systemd/user"
+_dr_ui_any=0
+for _dr_ui_f in "$_dr_ui_dir"/spira-*; do
+    [ -e "$_dr_ui_f" ] && { _dr_ui_any=1; break; }
+done
+if [ "$_dr_ui_any" -eq 0 ]; then
+    OK "no units installed yet — run systemd/install.sh"
+else
+    _dr_ui_out="$(bash "$SPIRA_HOME/skew.sh" units 2>&1)"; _dr_ui_rc=$?
+    case "$_dr_ui_rc" in
+        3)  WARN "cannot check unit installation — install.sh not found" \
+                 "Run: bash $SPIRA_REPO/systemd/install.sh" ;;
+        0)  OK "all units match installed copies" ;;
+        *)  _dr_ui_miss=0; _dr_ui_diff=0
+            while IFS= read -r _dr_ui_ln; do
+                case "$_dr_ui_ln" in
+                    MISSING*)
+                        _dr_ui_u="${_dr_ui_ln#MISSING  }"
+                        _dr_ui_u="${_dr_ui_u% (not*}"
+                        FAIL "$_dr_ui_u — not installed" \
+                             "Run: bash $SPIRA_REPO/systemd/unit-ensure.sh"
+                        _dr_ui_miss=$((_dr_ui_miss+1))
+                        ;;
+                    DIFFERS*)
+                        _dr_ui_u="${_dr_ui_ln#DIFFERS  }"
+                        WARN "$_dr_ui_u — installed unit differs from rendered template" \
+                             "Run: bash $SPIRA_REPO/systemd/unit-ensure.sh"
+                        _dr_ui_diff=$((_dr_ui_diff+1))
+                        ;;
+                esac
+            done <<< "$_dr_ui_out"
+            [ "$_dr_ui_miss" -eq 0 ] && [ "$_dr_ui_diff" -eq 0 ] && \
+                OK "all units match installed copies"
+            ;;
+    esac
+fi
+unset _dr_ui_dir _dr_ui_any _dr_ui_f _dr_ui_out _dr_ui_rc \
+      _dr_ui_miss _dr_ui_diff _dr_ui_ln _dr_ui_u
+
+echo
 echo "writable state"
 if mkdir -p "$SPIRA_RUN" 2>/dev/null && [ -w "$SPIRA_RUN" ]; then OK "runtime directory $SPIRA_RUN"
 else FAIL "cannot write $SPIRA_RUN" "Leases, logs and worktrees live here. Set SPIRA_RUN in ${CONF:-spira.conf}."; fi
