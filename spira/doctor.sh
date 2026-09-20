@@ -677,6 +677,34 @@ else
 fi
 
 echo
+echo "hooks"
+# CORE.HOOKSPATH DISPLACEMENT. core.hooksPath is a single path, not a search list.
+# Anything that writes it silently displaces every harness hook at once, including the
+# reference-transaction guard that spira_destroy_branch depends on. git accepts the
+# overwrite; if the new path does not exist, git runs no hooks and says nothing.
+_dr_hooks_rel="${SPIRA_HOME#"${SPIRA_REPO}/"}"
+[ "$SPIRA_HOME" = "$SPIRA_REPO" ] && _dr_hooks_rel="."
+_dr_hooks_want="${_dr_hooks_rel}/hooks"; [ "$_dr_hooks_rel" = "." ] && _dr_hooks_want="hooks"
+_dr_hooks_cur="$(git -C "$SPIRA_REPO" config core.hooksPath 2>/dev/null || true)"
+if [ -z "$_dr_hooks_cur" ]; then
+    FAIL "core.hooksPath is not set — harness hooks are not armed" \
+         "Arm them: bash $SPIRA_HOME/exclude.sh install $SPIRA_REPO"
+elif [ "$_dr_hooks_cur" != "$_dr_hooks_want" ]; then
+    FAIL "core.hooksPath is '$_dr_hooks_cur', expected '$_dr_hooks_want' — every harness hook is displaced" \
+         "A displaced path disables the reference-transaction guard silently.
+    Restore: bash $SPIRA_HOME/exclude.sh install $SPIRA_REPO"
+elif [ ! -d "$SPIRA_REPO/$_dr_hooks_cur" ]; then
+    FAIL "core.hooksPath '$_dr_hooks_cur' names a directory that does not exist — no hooks are running" \
+         "Restore: bash $SPIRA_HOME/exclude.sh install $SPIRA_REPO"
+elif [ ! -x "$SPIRA_REPO/$_dr_hooks_cur/pre-commit" ]; then
+    FAIL "core.hooksPath '$_dr_hooks_cur' exists but is missing the pre-commit hook" \
+         "Check: ls -la $SPIRA_REPO/$_dr_hooks_cur"
+else
+    OK "core.hooksPath -> $_dr_hooks_cur (pre-commit present)"
+fi
+unset _dr_hooks_rel _dr_hooks_want _dr_hooks_cur
+
+echo
 echo "the cockpit"
 [ -d "$SPIRA_COCKPIT" ] && OK "cockpit at $SPIRA_COCKPIT" \
     || WARN "no cockpit directory at $SPIRA_COCKPIT" "The loop runs; you have no way to see it."
