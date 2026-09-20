@@ -434,9 +434,9 @@ if [ -d "${SPIRA_DB:-}/.beads" ]; then
 else
     if [ "$_dry" = 1 ]; then
         if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
-            phase_info "would start dolt server and run: bd -C $SPIRA_DB init --server --external"
+            phase_info "would start dolt server and run: (cd $SPIRA_DB && bd init --server --external)"
         else
-            phase_info "would run: bd -C $SPIRA_DB init"
+            phase_info "would run: (cd $SPIRA_DB && bd init)"
         fi
     else
         phase_info "initialising database at $SPIRA_DB"
@@ -471,17 +471,17 @@ else
                     _phase_fail "database" "dolt server did not start on port $_dolt_port within 30s"
                 fi
             fi
-            BD_NON_INTERACTIVE=1 \
-                "$SPIRA_BD" -C "$SPIRA_DB" init --non-interactive --prefix sp \
+            ( cd "$SPIRA_DB" && BD_NON_INTERACTIVE=1 \
+                "$SPIRA_BD" init --non-interactive --prefix sp \
                 --skip-agents --skip-hooks \
                 --server --server-host 127.0.0.1 --server-port "$_dolt_port" \
-                --database "$_dolt_dbname" --external -q \
+                --database "$_dolt_dbname" --external -q ) \
                 || { [ -n "$_dolt_bg_pid" ] && kill "$_dolt_bg_pid" 2>/dev/null || true
                      _phase_fail "database" "bd init (server mode) failed"; }
             [ -n "$_dolt_bg_pid" ] && kill "$_dolt_bg_pid" 2>/dev/null || true
             unset _dolt_port _dolt_yaml _dolt_dbname _dolt_bg_pid _dolt_wait
         else
-            "$SPIRA_BD" -C "$SPIRA_DB" init || _phase_fail "database" "bd init failed"
+            ( cd "$SPIRA_DB" && "$SPIRA_BD" init ) || _phase_fail "database" "bd init failed"
         fi
         _changes=$((_changes+1))
     fi
