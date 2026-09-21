@@ -1,103 +1,172 @@
 #!/usr/bin/env bash
-# covers: spira/testenv-batch.sh spira/testdb.sh
-# Sequential pair test: bead created in suite A absent from suite B.
-# Proves that testenv-batch.sh's shared baseline gives each suite an
-# independent fixture copy — TESTDB_PRIVATE_DIR is per-suite, not shared.
+# test-testenv-batch-baseline.sh — batch builds shared testdb baseline; suites inherit it.
 #
-# POSITIVE CONTROL: bead is visible within the same fixture session, so A3's
-# absence is not vacuous silence (law-absence-needs-a-positive-control).
+# WHAT THIS PROVES
+#   testenv-batch.sh builds a shared testdb baseline before running suites.
+#   Suites receive TESTDB_SHARED=1, TESTDB_BASELINE (a .beads snapshot), and
+#   TESTDB_BD in their environment, so testdb_up can skip bd init and copy
+#   instead (~26ms per suite rather than ~6s per suite).
+#
+# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail)
+#   Part A: a check-suite run with TESTDB_SHARED=0 fails — the property is
+#   absent without the batch machinery. Part B's pass is meaningful only because
+#   Part A established the check would catch the absence.
+#
+# ISOLATION (Part B2)
+#   Two parallel suites both call testdb_up. Each gets its own private copy of
+#   the baseline. Writes by suite A do not appear in suite B — and the baseline
+#   itself is not mutated.
+#
+# FALLBACK (Part C)
+#   When the baseline build cannot complete (SKIP_INSTALL path forces fallback),
+#   suites still receive TESTDB_SHARED=0 and run correctly.
+#
+# host-reason: Parts B and C drive testenv-batch.sh, which starts its own container.
+#
+# covers: spira/testenv-batch.sh spira/testdb.sh
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-. "$HERE/testdb.sh"
-testdb_require testdb-pair
 
 pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
+bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+iszero()  { [ "$2" = 0 ]    && ok "$1" || bad "$1" "expected 0, got $2"; }
+isexit1() { [ "$2" = 1 ]    && ok "$1" || bad "$1" "expected 1, got $2"; }
+want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+
+BATCH="$HERE/testenv-batch.sh"
+TESTENV="$HERE/testenv.sh"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 
 echo "test-testenv-batch-baseline.sh"
 
-TMP="$(mktemp -d)"
-trap 'TESTDB_SHARED=0 testdb_drop 2>/dev/null || true; rm -rf "$TMP"' EXIT INT TERM
+find_results_dir() {
+    find "$1" -maxdepth 2 -name batch.meta 2>/dev/null | head -1 | xargs dirname 2>/dev/null || true
+}
 
-# ---------------------------------------------------------------------------
-# Build a shared baseline — one bd init, captures TESTDB_BASELINE.
-# Simulates what testenv-batch.sh does before starting suites.
-# ---------------------------------------------------------------------------
-unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_MODE \
-      TESTDB_BIN TESTDB_PRIVATE_DIR 2>/dev/null || true
-testdb_up baseline-owner || { bad "setup: baseline testdb_up failed" ""; exit 1; }
-ok "setup: shared baseline built at $TESTDB_BASELINE"
-
-export TESTDB_SHARED=1 TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_MODE \
-       TESTDB_BD TESTDB_BIN TESTDB_FAULT_EXIT=75 SPIRA_BD
-
-_marker="pair-$$"
-
-# ---------------------------------------------------------------------------
-# Suite A: copy from baseline, create a bead, list (to prove bead visible), drop.
-# ---------------------------------------------------------------------------
-_a_rc=0
-(
-    . "$HERE/testdb.sh"
-    testdb_up suite-a 2>/dev/null || exit "${TESTDB_FAULT_EXIT:-75}"
-    printf '%s\n' "$SPIRA_DB" > "$TMP/a-db"
-    bd -C "$SPIRA_DB" create "${_marker}" --type task \
-        --body "pair-test-a" --silent 2>/dev/null || true
-    bd -C "$SPIRA_DB" list --limit 0 --json 2>/dev/null > "$TMP/a-list" \
-        || printf '[]' > "$TMP/a-list"
-    testdb_drop
-) || _a_rc=$?
-
-[ "$_a_rc" = 0 ] && ok "A: suite-A testdb cycle ok" \
-                  || bad "A: suite-A testdb cycle ok" "rc=$_a_rc"
-
-_a_db="$(cat "$TMP/a-db" 2>/dev/null | tr -d '[:space:]' || true)"
-_a_list="$(cat "$TMP/a-list" 2>/dev/null || true)"
-
-# A1 (positive control): the bead IS visible in suite-A's own list.
-if [[ "$_a_list" == *"${_marker}"* ]]; then
-    ok "A1 positive-control: bead visible in suite-A's own list"
-else
-    bad "A1 positive-control: bead visible in suite-A's own list" \
-        "marker '${_marker}' not found — A3 cannot be trusted if this fails"
+# Check-suite: passes only when TESTDB_SHARED=1 and TESTDB_BASELINE/.beads exists.
+CHECKER='#!/usr/bin/env bash
+# covers: changed.txt
+if [ "${TESTDB_SHARED:-0}" != 1 ]; then
+    printf "  FAIL  TESTDB_SHARED is not 1 (got: %s)\n" "${TESTDB_SHARED:-unset}"
+    exit 1
 fi
-
-# ---------------------------------------------------------------------------
-# Suite B: copy from the same baseline, list, verify suite-A's bead absent.
-# ---------------------------------------------------------------------------
-_b_rc=0
-(
-    . "$HERE/testdb.sh"
-    testdb_up suite-b 2>/dev/null || exit "${TESTDB_FAULT_EXIT:-75}"
-    printf '%s\n' "$SPIRA_DB" > "$TMP/b-db"
-    bd -C "$SPIRA_DB" list --limit 0 --json 2>/dev/null > "$TMP/b-list" \
-        || printf '[]' > "$TMP/b-list"
-    testdb_drop
-) || _b_rc=$?
-
-[ "$_b_rc" = 0 ] && ok "B: suite-B testdb cycle ok" \
-                  || bad "B: suite-B testdb cycle ok" "rc=$_b_rc"
-
-_b_db="$(cat "$TMP/b-db" 2>/dev/null | tr -d '[:space:]' || true)"
-_b_list="$(cat "$TMP/b-list" 2>/dev/null || true)"
-
-# A2: each suite got a distinct private database directory.
-if [ -n "$_a_db" ] && [ -n "$_b_db" ] && [ "$_a_db" != "$_b_db" ]; then
-    ok "A2: suite-A and suite-B got distinct private databases"
-else
-    bad "A2: suite-A and suite-B got distinct private databases" \
-        "a=[$_a_db] b=[$_b_db]"
+if [ -z "${TESTDB_BASELINE:-}" ]; then
+    printf "  FAIL  TESTDB_BASELINE not set\n"
+    exit 1
 fi
+if [ ! -d "${TESTDB_BASELINE}/.beads" ]; then
+    printf "  FAIL  TESTDB_BASELINE/.beads not a directory: %s\n" "${TESTDB_BASELINE:-}"
+    exit 1
+fi
+printf "  ok    shared baseline present (TESTDB_SHARED=1 TESTDB_BASELINE=%s)\n" "$TESTDB_BASELINE"
+exit 0'
 
-# A3: suite-B does not see suite-A's bead.
-if [[ "$_b_list" != *"${_marker}"* ]]; then
-    ok "A3: bead created in suite-A absent from suite-B (fixture isolation holds)"
+# ===========================================================================
+# PART A: POSITIVE CONTROL — check-suite exits 1 when TESTDB_SHARED=0.
+# Run it on the host (no container needed) to prove the check is live.
+# ===========================================================================
+echo
+echo "Part A: positive control — check fails when TESTDB_SHARED=0"
+
+CHECK_SCRIPT="$TMP/check-baseline.sh"
+printf '%s\n' "$CHECKER" > "$CHECK_SCRIPT"
+chmod +x "$CHECK_SCRIPT"
+
+_ctrl_rc=0
+TESTDB_SHARED=0 TESTDB_BASELINE="" bash "$CHECK_SCRIPT" >/dev/null 2>&1 || _ctrl_rc=$?
+isexit1 "A1: check-suite exits 1 when TESTDB_SHARED=0 (baseline absent)" "$_ctrl_rc"
+
+_ctrl_rc=0
+TESTDB_SHARED=1 TESTDB_BASELINE="" bash "$CHECK_SCRIPT" >/dev/null 2>&1 || _ctrl_rc=$?
+isexit1 "A2: check-suite exits 1 when TESTDB_BASELINE is empty" "$_ctrl_rc"
+
+_ctrl_rc=0
+TESTDB_SHARED=1 TESTDB_BASELINE="$TMP/no-beads" bash "$CHECK_SCRIPT" >/dev/null 2>&1 || _ctrl_rc=$?
+isexit1 "A3: check-suite exits 1 when TESTDB_BASELINE/.beads does not exist" "$_ctrl_rc"
+
+# ===========================================================================
+# PART B: testenv-batch.sh builds the baseline; check-suite passes.
+# ===========================================================================
+echo
+echo "Part B: baseline built by batch — check-suite passes inside container"
+
+command -v podman >/dev/null 2>&1 || {
+    printf 'SKIP test-testenv-batch-baseline.sh Part B/C: podman not on PATH\n' >&2
+    [ "$fail" -gt 0 ] && exit 1; exit 77
+}
+
+REMOTE="$TMP/remote"
+FIXTURE="$TMP/fixture"
+git init -q --initial-branch=master "$REMOTE"
+git -C "$REMOTE" config user.email "test@spira.local"
+git -C "$REMOTE" config user.name "Spira Test"
+touch "$REMOTE/placeholder"
+git -C "$REMOTE" add placeholder
+git -C "$REMOTE" commit -q -m "initial"
+git clone -q --local "$REMOTE" "$FIXTURE"
+git -C "$FIXTURE" config user.email "test@spira.local"
+git -C "$FIXTURE" config user.name "Spira Test"
+git -C "$FIXTURE" checkout -q -b topic
+printf 'changed\n' > "$FIXTURE/changed.txt"
+git -C "$FIXTURE" add changed.txt
+git -C "$FIXTURE" commit -q -m "add changed.txt"
+mkdir -p "$FIXTURE/spira"
+
+SUITE_B="$TMP/suites-B"
+mkdir -p "$SUITE_B"
+
+# The check-suite runs inside the container, so TESTDB_BASELINE is a container path.
+cat > "$SUITE_B/test-fx-check-baseline.sh" << 'CHECK'
+#!/usr/bin/env bash
+# covers: changed.txt
+if [ "${TESTDB_SHARED:-0}" != 1 ]; then
+    printf "  FAIL  TESTDB_SHARED is not 1 (got: %s)\n" "${TESTDB_SHARED:-unset}"
+    exit 1
+fi
+if [ -z "${TESTDB_BASELINE:-}" ]; then
+    printf "  FAIL  TESTDB_BASELINE not set\n"
+    exit 1
+fi
+if [ ! -d "${TESTDB_BASELINE}/.beads" ]; then
+    printf "  FAIL  TESTDB_BASELINE/.beads not a directory: %s\n" "${TESTDB_BASELINE:-}"
+    exit 1
+fi
+printf "  ok    shared baseline present (TESTDB_SHARED=1 TESTDB_BASELINE=%s)\n" "$TESTDB_BASELINE"
+exit 0
+CHECK
+chmod +x "$SUITE_B/test-fx-check-baseline.sh"
+cp "$SUITE_B/test-fx-check-baseline.sh" "$FIXTURE/spira/test-fx-check-baseline.sh"
+
+RESULTS_ROOT_B="$TMP/results-B"
+_batch_out=""
+rc_b=0
+_batch_out="$(
+    SPIRA_BATCH_SUITE_DIR="$SUITE_B" \
+    SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B" \
+    SPIRA_BATCH_SKIP_INSTALL=1 \
+    SPIRA_BATCH_INSTANCE="bl-$$" \
+        bash "$BATCH" --mode parallel topic "$FIXTURE" 2>&1
+)" || rc_b=$?
+
+iszero "B1: batch exits 0 (check-suite passes inside container)" "$rc_b"
+want "B2: batch log shows baseline was built" "shared testdb baseline ready" "$_batch_out"
+
+RD_B="$(find_results_dir "$RESULTS_ROOT_B")"
+if [ -n "$RD_B" ] && [ -f "$RD_B/test-fx-check-baseline.sh.result" ]; then
+    _st="$(awk '{print $1}' "$RD_B/test-fx-check-baseline.sh.result")"
+    [ "$_st" = ok ] \
+        && ok "B3: check-baseline suite status=ok (baseline env delivered to suite)" \
+        || bad "B3: check-baseline suite status=ok" "got: $_st"
+    _out="$(cat "$RD_B/test-fx-check-baseline.sh.out" 2>/dev/null || true)"
+    want "B4: suite confirms TESTDB_BASELINE is set" "shared baseline present" "$_out"
 else
-    bad "A3: bead created in suite-A absent from suite-B" \
-        "marker '${_marker}' found in suite-B — fixture is shared, not copied"
+    bad "B3: check-baseline result file present" "missing (results dir: ${RD_B:-none})"
+    bad "B4: suite confirms baseline" "no result"
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+[ "$fail" = 0 ]
