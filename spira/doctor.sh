@@ -928,8 +928,8 @@ if [ -x "${SPIRA_LOOM_BIN:-}" ]; then
         Or run install.sh to enable and start it on every boot."
     fi
 else
-    WARN "loom binary not built at ${SPIRA_LOOM_BIN:-<unset>}" \
-         "Build it: cd $SPIRA_REPO/loom && cargo build --release"
+    WARN "loom binary not built at ${SPIRA_LOOM_BIN:-<unset>} — spira-loom unit not installed" \
+         "Build it: cd $SPIRA_REPO/loom && cargo build --release; then re-run install.sh"
 fi
 
 echo
@@ -950,10 +950,10 @@ else
     command -v cargo >/dev/null 2>&1 || _dr_broker_cargo=" (cargo not on PATH)"
     if [ "$_dr_broker_enabled" -eq 1 ]; then
         FAIL "broker binary missing at ${SPIRA_BROKER_BIN:-<unset>} — unit is enabled but binary does not exist${_dr_broker_cargo}" \
-             "Build it: cd $SPIRA_REPO/broker && cargo build --release"
+             "Build it: cd $SPIRA_REPO/broker && cargo build --release; then re-run install.sh"
     else
-        WARN "broker binary not built at ${SPIRA_BROKER_BIN:-<unset>}${_dr_broker_cargo}" \
-             "Build it: cd $SPIRA_REPO/broker && cargo build --release"
+        WARN "broker binary not built at ${SPIRA_BROKER_BIN:-<unset>}${_dr_broker_cargo} — spira-broker unit not installed" \
+             "Build it: cd $SPIRA_REPO/broker && cargo build --release; then re-run install.sh"
     fi
     unset _dr_broker_unit _dr_broker_enabled _dr_broker_cargo
 fi
