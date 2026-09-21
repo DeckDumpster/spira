@@ -140,7 +140,7 @@ else
     fixture_passed="$(grep -oE -- '--[a-z]+-bin' "$FIXTURE" | sort -u)"
     ctrl_detected=0
     for flag in $required_bins; do
-        if ! printf '%s\n' "$fixture_passed" | grep -qF "$flag"; then
+        if ! printf '%s\n' "$fixture_passed" | grep -qF -- "$flag"; then
             ctrl_detected=1
             break
         fi
@@ -156,7 +156,7 @@ else
     passed_bins="$(grep -oE -- '--[a-z]+-bin' "$WORKFLOW" | sort -u)"
     all_present=1
     for flag in $required_bins; do
-        if printf '%s\n' "$passed_bins" | grep -qF "$flag"; then
+        if printf '%s\n' "$passed_bins" | grep -qF -- "$flag"; then
             ok "release.yml passes $flag"
         else
             bad "release.yml passes $flag" \
