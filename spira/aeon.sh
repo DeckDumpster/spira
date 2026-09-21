@@ -196,7 +196,7 @@ if [ "$SWEEP" = 1 ]; then
         ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
         "${SPIRA_AGENT:-claude}" -p --output-format stream-json --verbose \
                --include-partial-messages \
-               --system-prompt-snapshot \
+               --system-prompt-snapshot on \
                "$SPIRA_SYSTEM_FLAG" "$SWEEP_SYSTEM_FILE" \
                --model "${FAYTH_MODEL:-claude-opus-5}" \
                --allowedTools "${FAYTH_TOOLS:-Bash,Read,Edit,Write,Glob,Grep}" \
@@ -1716,7 +1716,7 @@ _BEAD_PI=""
 [ "${FAYTH_PROJECT_INSTRUCTIONS:-}" = "none" ] && _BEAD_PI="user"
 cat "$TASK_FILE" | ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
     "${SPIRA_AGENT:-claude}" -p --output-format stream-json --verbose --include-partial-messages \
-           --system-prompt-snapshot \
+           --system-prompt-snapshot on \
            "$SPIRA_SYSTEM_FLAG" "$SYSTEM_FILE" \
            --model "${FAYTH_MODEL:-claude-opus-5}" \
            --allowedTools "${FAYTH_TOOLS:-Bash,Read,Edit,Write,Glob,Grep}" \
