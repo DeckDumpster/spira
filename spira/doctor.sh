@@ -1037,25 +1037,23 @@ if [ -z "${_SPIRA_UNITS_LOADED:-}" ]; then
              _dr_en_bad=1; }
 fi
 if [ "${_dr_en_bad}" -eq 0 ]; then
-    # If no ENABLE units have been installed yet, the manager probe is pointless —
-    # systemctl would return "not-found" for every unit, not a reachability error.
+    # Probe the user manager only when unit files are already installed. A silent
+    # manager on a host with no units is not an error — install.sh hasn't run yet.
     _dr_en_any=0
     for _dr_en_unit in "${ENABLE[@]}"; do
         [ -n "$_dr_en_unit" ] || continue
         [ -e "${HOME}/.config/systemd/user/${_dr_en_unit}" ] && { _dr_en_any=1; break; }
     done
-    if [ "$_dr_en_any" -eq 0 ]; then
-        OK "all ${#ENABLE[@]} ENABLE units are enabled or suspended via ctrl.sh"
-    else
-    # Probe the user manager once. Empty stdout means the bus is unreachable and
-    # every per-unit call would fail identically — one FAIL names the cause.
-    _dr_en_mgr_out="$("$_dr_en_sc" --user is-system-running 2>/dev/null || true)"
-    if [ -z "$_dr_en_mgr_out" ]; then
-        _dr_en_mgr_err="$("$_dr_en_sc" --user is-system-running 2>&1 >/dev/null || true)"
-        FAIL "systemd user manager unreachable${_dr_en_mgr_err:+: $_dr_en_mgr_err}" \
-             "Check XDG_RUNTIME_DIR (${XDG_RUNTIME_DIR:-unset}) and DBUS_SESSION_BUS_ADDRESS (${DBUS_SESSION_BUS_ADDRESS:-unset})"
-        _dr_en_bad=1
-    else
+    if [ "$_dr_en_any" -eq 1 ]; then
+        _dr_en_mgr_out="$("$_dr_en_sc" --user is-system-running 2>/dev/null || true)"
+        if [ -z "$_dr_en_mgr_out" ]; then
+            _dr_en_mgr_err="$("$_dr_en_sc" --user is-system-running 2>&1 >/dev/null || true)"
+            FAIL "systemd user manager unreachable${_dr_en_mgr_err:+: $_dr_en_mgr_err}" \
+                 "Check XDG_RUNTIME_DIR (${XDG_RUNTIME_DIR:-unset}) and DBUS_SESSION_BUS_ADDRESS (${DBUS_SESSION_BUS_ADDRESS:-unset})"
+            _dr_en_bad=1
+        fi
+    fi
+    if [ "${_dr_en_bad}" -eq 0 ]; then
         for _dr_en_unit in "${ENABLE[@]}"; do
             [ -n "$_dr_en_unit" ] || continue
             _dr_en_state="$("$_dr_en_sc" --user is-enabled "$_dr_en_unit" 2>/dev/null || true)"
@@ -1063,6 +1061,9 @@ if [ "${_dr_en_bad}" -eq 0 ]; then
             # not-found means the unit file does not exist yet — a fresh install has none.
             # That is not drift; drift is a unit whose file IS installed but not enabled.
             [ "$_dr_en_state" = "not-found" ] && continue
+            # Empty output means the manager was unreachable; if the probe above did not
+            # catch it (no files installed), treat it the same as not-found.
+            [ -z "$_dr_en_state" ] && continue
             # Not enabled. Check the control plane before classifying as drift.
             _dr_en_base="${_dr_en_unit%.*}"
             _dr_en_subj="${_dr_en_base%-${SPIRA_INSTANCE:-prod}}"
@@ -1078,7 +1079,6 @@ if [ "${_dr_en_bad}" -eq 0 ]; then
         [ "$_dr_en_bad" -eq 0 ] \
             && OK "all ${#ENABLE[@]} ENABLE units are enabled or suspended via ctrl.sh"
     fi
-    fi  # end: any units installed
 fi
 unset _dr_en_sc _dr_en_bad _dr_en_units_sh _dr_en_unit _dr_en_state _dr_en_base _dr_en_subj \
       _dr_en_mgr_out _dr_en_mgr_err _dr_en_any
