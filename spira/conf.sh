@@ -70,7 +70,7 @@ SPIRA_TOWN SPIRA_MIRROR SPIRA_EXPORTER SPIRA_DESIGN SPIRA_WIKI SPIRA_WIKI_HOOK S
 SPIRA_VIEW SPIRA_VIEW_SESSION
 SPIRA_ALERT_GLOB
 SPIRA_BD SPIRA_BD_PIN SPIRA_BD_TAG
-SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_LANES_MAX_LIVE SPIRA_QA_DEPTH SPIRA_THRASH_MINUTES
+SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_AEON_CPU_QUOTA SPIRA_LANES SPIRA_LANES_MAX_LIVE SPIRA_QA_DEPTH SPIRA_THRASH_MINUTES
 SPIRA_TOKEN_WINDOW_H SPIRA_TOKEN_PROJECTS SPIRA_CTX_WARN SPIRA_CTX_HIGH SPIRA_CTX_LIMIT
 SPIRA_ARCHIVE
 SPIRA_ARCHIVIST_EVERY SPIRA_ARCHIVIST_IDLE SPIRA_ARCHIVIST_MODEL SPIRA_ARCHIVIST_TIMEOUT
@@ -567,6 +567,13 @@ spira_conf_defaults() {
     # FAYTH_LANE set, not membership here), but the declaration makes it visible to operators
     # reading SPIRA_LANES for the list of scheduled partitions.
     : "${SPIRA_LANES:=ops groomer qa maechen czar}"
+    # CPU QUOTA PASSED TO systemd-run WHEN SUMMONING AN AEON. The aeon and every child it
+    # spawns — including a repository's gate command — run inside this cgroup. nproc inside
+    # that fence reports ceil(quota/100%), minimum 1, rather than the host's physical count.
+    # gate.sh exports SPIRA_GATE_HOST_CORES (from host_cores(), which reads getconf) so a
+    # repository's CI can use the real count; this key lets an operator raise the fence for
+    # hosts where gate commands do real builds and need more than a fraction of a core.
+    : "${SPIRA_AEON_CPU_QUOTA:=70%}"
     # THE WHOLE-FLEET CEILING — how many aeons may exist at once, counting lane fayths.
     # SPIRA_MAX_AEONS is the task pool and a lane draws outside it, so the two of them
     # together are the box's real ceiling (pool + one per lane) and neither one alone is the
