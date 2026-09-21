@@ -1205,25 +1205,20 @@ for i in d:
                     land_mark "$id" GATED "$tip" "$gate_outcome:${gate_reason:-unspecified}"
                     if [ "$gate_rc" = "$SPIRA_GATE_BASEFAIL" ]; then
                         log "CHECK6 $id: held — the base fails its own gate (suite $gate_suite)"
-                        if [ "${basefail_filed:-}" != 1 ]; then
-                            basefail_filed=1
-                            base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
-                                          "$br" "$base" "$gate_out"
-                        fi
                         if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
                             local _fse_cert="${_scan_extref[$id]:-}"
                             _fse_cert="${_fse_cert#basefail:$name:}"
-                            _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys,json
-try:d=json.load(sys.stdin)
-except:raise SystemExit
-d=d if isinstance(d,list) else [d]
-print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
-                            if [ "${_cur_st:-}" = "closed" ]; then
+                            if [ "${_scan_st[$id]:-}" = "closed" ]; then
                                 log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
                                 land_mark "$id" CERTIFIED "$tip"
                                 mark_submitted "$id" "$tip" certified
                                 progress "certified $br in $name — base-fix (suite $_fse_cert)"
+                            fi
+                        else
+                            if [ "${basefail_filed:-}" != 1 ]; then
+                                basefail_filed=1
+                                base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
+                                              "$br" "$base" "$gate_out"
                             fi
                         fi
                         continue
@@ -1417,25 +1412,20 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 # across the seam would mute the judgement tier's only check on paralysis —
                 # which is precisely the condition a red base creates (see `act` above).
                 log "CHECK6 $id: gate: held — the base fails its own gate; $name's gate is red against $base too (suite $gate_suite)"
-                if [ "${basefail_filed:-}" != 1 ]; then
-                    basefail_filed=1
-                    base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
-                                  "$br" "$base" "$gate_out"
-                fi
                 if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
                     local _fse_cert="${_scan_extref[$id]:-}"
                     _fse_cert="${_fse_cert#basefail:$name:}"
-                    _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys,json
-try:d=json.load(sys.stdin)
-except:raise SystemExit
-d=d if isinstance(d,list) else [d]
-print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
-                    if [ "${_cur_st:-}" = "closed" ]; then
+                    if [ "${_scan_st[$id]:-}" = "closed" ]; then
                         log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
                         land_mark "$id" CERTIFIED "$tip"
                         mark_submitted "$id" "$tip" certified
                         progress "certified $br in $name — base-fix (suite $_fse_cert)"
+                    fi
+                else
+                    if [ "${basefail_filed:-}" != 1 ]; then
+                        basefail_filed=1
+                        base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
+                                      "$br" "$base" "$gate_out"
                     fi
                 fi
                 continue
@@ -1819,25 +1809,20 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 land_mark "$id" GATED "$tip" "$gate_outcome:${gate_reason:-unspecified}"
                 if [ "$gate_rc" = "$SPIRA_GATE_BASEFAIL" ]; then
                     log "CHECK6 $id: held — the base fails its own gate (suite $gate_suite)"
-                    if [ "${basefail_filed:-}" != 1 ]; then
-                        basefail_filed=1
-                        base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
-                                      "$br" "$base" "$gate_out"
-                    fi
                     if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
                         local _fse_cert="${_scan_extref[$id]:-}"
                         _fse_cert="${_fse_cert#basefail:$name:}"
-                        _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys,json
-try:d=json.load(sys.stdin)
-except:raise SystemExit
-d=d if isinstance(d,list) else [d]
-print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
-                        if [ "${_cur_st:-}" = "closed" ]; then
+                        if [ "${_scan_st[$id]:-}" = "closed" ]; then
                             log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
                             land_mark "$id" CERTIFIED "$tip"
                             mark_submitted "$id" "$tip" certified
                             progress "certified $br in $name — base-fix (suite $_fse_cert)"
+                        fi
+                    else
+                        if [ "${basefail_filed:-}" != 1 ]; then
+                            basefail_filed=1
+                            base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
+                                          "$br" "$base" "$gate_out"
                         fi
                     fi
                     return 0
