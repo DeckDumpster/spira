@@ -1713,32 +1713,11 @@ _land_ue="$SPIRA_REPO/systemd/unit-ensure.sh"
 [ -x "$_land_ue" ] && bash "$_land_ue" 2>&1 | while IFS= read -r _ue_l; do log "$_ue_l"; done || true
 unset _land_ue _ue_l
 
-# CARGO BUILD ENSURE. When broker/, loom/, or cockpit/panel/ changed in the landed
-# range, build.sh produces new binaries. This runs without the live-aeons fence or
-# the restart phase from install.sh — those are operator acts. If cargo is absent
-# build.sh exits 0 after printing a warning, so this never blocks the landing pass.
-# The landed-range check uses the home checkout's reflog: the last SPIRA_LAND_WINDOW
-# commits on the base (default 400). Missing cargo is the expected state on boxes
-# where the operator has not yet run install; silence that by checking cargo first.
-if command -v cargo >/dev/null 2>&1; then
-    _land_bs="$SPIRA_REPO/spira/build.sh"
-    if [ -x "$_land_bs" ]; then
-        _land_base_ref="$(git -C "$SPIRA_REPO" symbolic-ref --short HEAD 2>/dev/null || true)"
-        _land_cargo_changed=0
-        if [ -n "$_land_base_ref" ]; then
-            _land_prev="$(git -C "$SPIRA_REPO" rev-parse "${_land_base_ref}@{1}" 2>/dev/null || true)"
-            if [ -n "$_land_prev" ]; then
-                git -C "$SPIRA_REPO" diff --name-only "$_land_prev" HEAD 2>/dev/null \
-                    | grep -qE '^(broker|loom|cockpit/panel)/' \
-                    && _land_cargo_changed=1 || true
-            fi
-        fi
-        if [ "$_land_cargo_changed" -eq 1 ]; then
-            log "landing: cargo project changed — running build.sh"
-            bash "$_land_bs" 2>&1 | while IFS= read -r _bs_l; do log "$_bs_l"; done || true
-        fi
-    fi
-    unset _land_bs _land_base_ref _land_prev _land_cargo_changed _bs_l
-fi
+# CARGO BUILD ENSURE. Fires build.sh when cargo source changed or a binary is absent
+# while its unit is enabled. Cargo-absent boxes skip silently. Extraction into
+# land-build-ensure.sh makes the trigger testable without a full landing pass.
+_land_be="$SPIRA_REPO/spira/land-build-ensure.sh"
+[ -x "$_land_be" ] && bash "$_land_be" 2>&1 | while IFS= read -r _be_l; do log "$_be_l"; done || true
+unset _land_be _be_l
 
 log "landing: pass complete — $n_branches branch(es) seen, $n_prog movement(s)$sweep_note"
