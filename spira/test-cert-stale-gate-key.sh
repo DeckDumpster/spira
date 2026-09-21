@@ -126,6 +126,7 @@ compute_key() {
 
 seed() {
     testdb_reset
+    rm -f "$LANDSTATE"/* "$SUBMITTED"/*
     testdb_seed <<'JSONL'
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
