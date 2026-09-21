@@ -1056,6 +1056,16 @@ if [ -z "${_SPIRA_UNITS_LOADED:-}" ]; then
              _dr_en_bad=1; }
 fi
 if [ "${_dr_en_bad}" -eq 0 ]; then
+    # If no ENABLE units have been installed yet, the manager probe is pointless —
+    # systemctl would return "not-found" for every unit, not a reachability error.
+    _dr_en_any=0
+    for _dr_en_unit in "${ENABLE[@]}"; do
+        [ -n "$_dr_en_unit" ] || continue
+        [ -e "${HOME}/.config/systemd/user/${_dr_en_unit}" ] && { _dr_en_any=1; break; }
+    done
+    if [ "$_dr_en_any" -eq 0 ]; then
+        OK "all ${#ENABLE[@]} ENABLE units are enabled or suspended via ctrl.sh"
+    else
     # Probe the user manager once. Empty stdout means the bus is unreachable and
     # every per-unit call would fail identically — one FAIL names the cause.
     _dr_en_mgr_out="$("$_dr_en_sc" --user is-system-running 2>/dev/null || true)"
@@ -1087,9 +1097,10 @@ if [ "${_dr_en_bad}" -eq 0 ]; then
         [ "$_dr_en_bad" -eq 0 ] \
             && OK "all ${#ENABLE[@]} ENABLE units are enabled or suspended via ctrl.sh"
     fi
+    fi  # end: any units installed
 fi
 unset _dr_en_sc _dr_en_bad _dr_en_units_sh _dr_en_unit _dr_en_state _dr_en_base _dr_en_subj \
-      _dr_en_mgr_out _dr_en_mgr_err
+      _dr_en_mgr_out _dr_en_mgr_err _dr_en_any
 
 echo
 echo "unit installation"

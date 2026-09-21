@@ -235,6 +235,9 @@ echo "manager-unreachable — systemctl exits 1 on every call: exactly one FAIL:
 # ===========================================================================
 # The manager probe sees empty stdout → one FAIL naming the cause; the per-unit
 # loop is skipped so 26 units do not produce 26 identical fatals.
+# Install a unit file so the pre-probe gate (no units installed → skip) does not
+# suppress the check; fail-closed and silent-no-units run after this in sequence.
+touch "$FAKE_HOME/.config/systemd/user/spira-ops-prod.timer"
 cat > "$BIN/sc-exits1" <<'MOCK'
 #!/usr/bin/env bash
 exit 1
