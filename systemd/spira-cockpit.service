@@ -18,9 +18,7 @@ RestartSec=15
 # WatchdogSec is absent: bash cannot satisfy it — only the main PID's own datagram is credited,
 # and an unprivileged process cannot assert another PID in SCM_CREDENTIALS, so --pid= is ignored.
 # Liveness is the snapshot's age instead (sp-3az9w; sp-mplcb restores this with a Rust supervisor).
-# A pass shells out to bd and git several times. This box also runs prod, so it is fenced
-# (law-fence-loops-on-shared-hardware).
-CPUQuota=35%
+# Yields to aeons and other work on the box (law-fence-loops-on-shared-hardware).
 Nice=10
 StandardOutput=append:@SPIRA_RUN@/collector.log
 StandardError=append:@SPIRA_RUN@/collector.log
