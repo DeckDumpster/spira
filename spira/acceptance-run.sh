@@ -136,12 +136,16 @@ for _tool in bd dolt git gh python3; do
 done
 
 # Check systemd --user is available (not just on PATH but functional).
-if systemctl --user status >/dev/null 2>&1 || systemctl --user list-units >/dev/null 2>&1; then
+# Uses is-system-running: the same probe doctor uses so a failure here blocks
+# before doctor reaches the enabled-units check and produces one clear message.
+_ar_mgr_out="$(systemctl --user is-system-running 2>/dev/null || true)"
+if [ -n "$_ar_mgr_out" ]; then
     ok "prereq: systemd --user available"
 else
     bad "prereq: systemd --user available" \
-        "systemctl --user not functional; may need: loginctl enable-linger \$USER"
+        "systemctl --user is-system-running produced no output; check XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS"
 fi
+unset _ar_mgr_out
 
 # Scratch repo must exist.
 if [ -d "$scratch_repo/.git" ] || git -C "$scratch_repo" rev-parse --git-dir >/dev/null 2>&1; then
