@@ -1,0 +1,223 @@
+name: Provision an ephemeral CI runner
+description: >-
+  Clone a Proxmox template into a per-run VM, register it as an org-level
+  self-hosted runner in a restricted group, and wait for it to come online.
+  Outputs the VMID to destroy and the label to schedule onto.
+
+# WHY THIS IS A COMPOSITE ACTION AND NOT A REUSABLE WORKFLOW
+# ---------------------------------------------------------
+# Two reasons, either of which decides it on its own.
+#
+# 1. A reusable workflow ships YAML and nothing else. It never gets its own
+#    repository checked out, so provision.sh, teardown.sh and the guest unit
+#    could not travel with it -- every consumer would have to vendor the
+#    scripts, which is the duplication this repository exists to end. A
+#    composite action is handed its own repository at $GITHUB_ACTION_PATH
+#    before the first step runs.
+#
+# 2. A reusable workflow renames the status check. A job that calls one reports
+#    as `<caller-job> / <called-job>`, not `<caller-job>`. Both consuming repos
+#    have a `pr-required` ruleset requiring a check literally named `test`, and
+#    a required check that never reports does not fail the pull request -- it
+#    blocks the merge indefinitely with "the base branch policy prohibits the
+#    merge" while every job in the run is green. Keeping the orchestration in
+#    the caller keeps the job names, and therefore the branch policy, untouched.
+
+inputs:
+  ts-oauth-client-id:
+    description: Tailscale OAuth client id (tag:ci).
+    required: true
+  ts-oauth-secret:
+    description: Tailscale OAuth secret (tag:ci).
+    required: true
+  runner-reg-pat:
+    description: >-
+      PAT with organization "Self-hosted runners: Read and write" AND NOTHING
+      ELSE. Not repo Administration -- that also grants repository deletion,
+      collaborator management and branch-protection changes, which is far more
+      than a CI job should hold on a repo whose required checks are the thing
+      stopping unreviewed work from landing.
+    required: true
+  pve-token-id:
+    description: Proxmox API token id (user@realm!tokenname).
+    required: true
+  pve-token-secret:
+    description: Proxmox API token secret, bounded by the pveum ACL to /pool/ephemeral-ci.
+    required: true
+  pve-api-host:
+    description: Proxmox API host (IP or hostname), reachable over the tailnet.
+    required: true
+  pve-api-hostname:
+    description: >-
+      Hostname as it appears in the Proxmox TLS certificate. Required when
+      pve-api-host is an IP address (the certificate carries no SAN for IPs).
+      When set, pvapi.sh connects to pve-api-host but validates TLS against
+      this name. Typically the same value as pve-node.
+    required: false
+    default: ''
+  pve-node:
+    description: Proxmox node name.
+    required: true
+  template-vmid:
+    description: VMID of the runner template to clone.
+    required: true
+  runner-group:
+    description: >-
+      Org runner group the guest registers into. The group's repository access
+      is what confines an org-level runner to one repository, so this must name
+      a group whose selected repositories include the calling repo.
+    required: false
+    default: ephemeral-ci
+  register-timeout-seconds:
+    description: How long to wait for the runner to appear in the org runner list.
+    required: false
+    default: '240'
+  node-memory-reserve-mib:
+    description: >-
+      RAM left for the hypervisor itself -- kernel, ZFS ARC, whatever is not a
+      guest. NOT a safety margin for the guests; that is capacity-slack-runners.
+      The capacity wait sums maxmem over every running VM on the node, so other
+      fleets and production services are already in the total and nobody has to
+      declare their sizes here.
+    required: false
+    default: '8192'
+  capacity-slack-runners:
+    description: >-
+      How many extra runners' worth of room to require before cloning. Two
+      provision jobs can observe the same free memory and both clone, and the
+      API has no atomic reserve; this bounds that overshoot instead of trying to
+      coordinate across GitHub-hosted runners. It costs that many slots of
+      standing headroom, which is the price of the guarantee -- 0 disables it.
+    required: false
+    default: '1'
+  capacity-timeout-seconds:
+    description: >-
+      How long to wait for room before giving up. The wait is deliberately long:
+      a run that waits is a slow run, and a run that fails for capacity is
+      indistinguishable from a broken test to whoever opened the pull request.
+    required: false
+    default: '1800'
+
+outputs:
+  vmid:
+    description: >-
+      The provisioned VM's id, or empty if the clone itself never happened.
+      ALWAYS pass this to the teardown action under `if: always()`.
+    value: ${{ steps.provision.outputs.vmid }}
+  label:
+    description: The unique runner label to put in the test job's `runs-on`.
+    value: ${{ steps.label.outputs.label }}
+
+runs:
+  using: composite
+  steps:
+    # A label unique to this run AND attempt. Never $(hostname): every clone of
+    # the template is named ci-runners, GitHub rejects a duplicate runner name,
+    # and the caller's test job targets exactly this label -- without uniqueness
+    # two concurrent runs can land on each other's VMs and one teardown kills
+    # the other's job. github.run_id is unique across all of GitHub, so this is
+    # safe with any number of repositories sharing one group. The repository
+    # name is in there for legibility on the hypervisor, not for uniqueness.
+    - name: Compute runner label
+      id: label
+      shell: bash
+      run: |
+        repo='${{ github.event.repository.name }}'
+        echo "label=ci-${repo}-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+
+    - name: Connect to Tailscale
+      uses: tailscale/github-action@v4
+      with:
+        oauth-client-id: ${{ inputs.ts-oauth-client-id }}
+        oauth-secret: ${{ inputs.ts-oauth-secret }}
+        tags: tag:ci
+
+    # ORG-LEVEL, and the registration URL must match the scope the token was
+    # minted for. An org registration token with a repository URL fails at
+    # config.sh with a 404 that reads like a bad token.
+    - name: Mint a registration token
+      id: regtoken
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.runner-reg-pat }}
+      run: |
+        TOKEN=$(gh api -X POST \
+          "orgs/${{ github.repository_owner }}/actions/runners/registration-token" \
+          --jq .token)
+        echo "::add-mask::$TOKEN"
+        echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+    # provision.sh emits vmid= on stdout BEFORE any step that can fail, so the
+    # VMID is captured and published even when the script exits non-zero.
+    # Without this, a failure after the clone leaks a VM that teardown can never
+    # name. See the output contract at the top of scripts/provision.sh.
+    - name: Provision the runner VM
+      id: provision
+      shell: bash
+      env:
+        PVE_API_HOST: ${{ inputs.pve-api-host }}
+        PVE_API_HOSTNAME: ${{ inputs.pve-api-hostname }}
+        PVE_NODE: ${{ inputs.pve-node }}
+        TEMPLATE_VMID: ${{ inputs.template-vmid }}
+        PVE_TOKEN_ID: ${{ inputs.pve-token-id }}
+        PVE_TOKEN_SECRET: ${{ inputs.pve-token-secret }}
+        RUNNER_GROUP: ${{ inputs.runner-group }}
+        NODE_MEM_RESERVE_MIB: ${{ inputs.node-memory-reserve-mib }}
+        CAPACITY_SLACK_RUNNERS: ${{ inputs.capacity-slack-runners }}
+        CAPACITY_TIMEOUT: ${{ inputs.capacity-timeout-seconds }}
+        CRED_FILE: /dev/null
+      run: |
+        set +e
+        OUT=$(bash "${{ github.action_path }}/../scripts/provision.sh" \
+                "${{ steps.label.outputs.label }}" \
+                "${{ steps.regtoken.outputs.token }}" \
+                "${{ github.server_url }}/${{ github.repository_owner }}")
+        RC=$?
+        set -e
+        VMID=$(printf '%s\n' "$OUT" | sed -n 's/^vmid=\([0-9]\+\)$/\1/p' | head -1)
+        [ -n "$VMID" ] && echo "vmid=$VMID" >> "$GITHUB_OUTPUT"
+        exit "$RC"
+
+    # WRITING THE FILE IS NOT PROOF OF REGISTRATION. agent/file-write returns
+    # success once the bytes land; if the token is bad the guest's service
+    # fails, its path unit retriggers until systemd rate-limits it, and the
+    # runner never appears -- while this action would otherwise report success
+    # and the caller's test job would queue against a label that will never
+    # exist, which looks exactly like a label mismatch and is not one.
+    - name: Wait for the runner to register
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.runner-reg-pat }}
+        LABEL: ${{ steps.label.outputs.label }}
+        TIMEOUT: ${{ inputs.register-timeout-seconds }}
+      run: |
+        tries=$(( TIMEOUT / 6 ))
+        [ "$tries" -gt 0 ] || tries=1
+        for _ in $(seq 1 "$tries"); do
+          if gh api "orgs/${{ github.repository_owner }}/actions/runners" \
+               --paginate --jq '.runners[].name' | grep -qx "$LABEL"; then
+            echo "runner $LABEL registered"
+            exit 0
+          fi
+          sleep 6
+        done
+        echo "::error::runner $LABEL never registered within ${TIMEOUT}s"
+        exit 1
+
+    # Runs only when something above failed, and before teardown destroys the
+    # VM. A registration failure is otherwise completely blind: the guest is on
+    # an internal bridge with no inbound SSH and the machine is gone seconds
+    # later. Never fails the job itself -- the job is already failing and this
+    # must not mask the original error.
+    - name: Dump guest state on failure
+      if: failure() && steps.provision.outputs.vmid != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        PVE_API_HOST: ${{ inputs.pve-api-host }}
+        PVE_API_HOSTNAME: ${{ inputs.pve-api-hostname }}
+        PVE_NODE: ${{ inputs.pve-node }}
+        PVE_TOKEN_ID: ${{ inputs.pve-token-id }}
+        PVE_TOKEN_SECRET: ${{ inputs.pve-token-secret }}
+        CRED_FILE: /dev/null
+      run: bash "${{ github.action_path }}/../scripts/guest-diag.sh" "${{ steps.provision.outputs.vmid }}"

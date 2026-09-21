@@ -1,0 +1,119 @@
+name: Destroy an ephemeral CI runner
+description: >-
+  Destroy the per-run Proxmox VM and remove the runner registration it left
+  behind. Call under `if: always()` -- a cancelled or failed job otherwise
+  leaves the VM running and the scheduled reaper becomes the only thing that
+  cleans up, which is a backstop, not a plan.
+
+inputs:
+  vmid:
+    description: The VMID emitted by the provision action. Empty means nothing was cloned.
+    required: true
+  label:
+    description: >-
+      The runner label from the provision action. Used to delete the runner
+      REGISTRATION, which destroying the VM does not do -- see below.
+    required: false
+    default: ''
+  runner-reg-pat:
+    description: >-
+      PAT with organization "Self-hosted runners: Read and write".
+      Required to deregister; the step is skipped without it.
+    required: false
+    default: ''
+  ts-oauth-client-id:
+    description: Tailscale OAuth client id (tag:ci).
+    required: true
+  ts-oauth-secret:
+    description: Tailscale OAuth secret (tag:ci).
+    required: true
+  pve-token-id:
+    description: Proxmox API token id (user@realm!tokenname).
+    required: true
+  pve-token-secret:
+    description: Proxmox API token secret.
+    required: true
+  pve-api-host:
+    description: Proxmox API host (IP or hostname), reachable over the tailnet.
+    required: true
+  pve-api-hostname:
+    description: >-
+      Hostname as it appears in the Proxmox TLS certificate. Required when
+      pve-api-host is an IP address (the certificate carries no SAN for IPs).
+      When set, pvapi.sh connects to pve-api-host but validates TLS against
+      this name. Typically the same value as pve-node.
+    required: false
+    default: ''
+  pve-node:
+    description: Proxmox node name.
+    required: true
+  pve-ca-cert:
+    description: >-
+      Proxmox cluster CA certificate (PEM), used to verify the API TLS
+      connection. Supply as a repository or environment variable
+      (vars.PVE_CA_CERT). Without this the connection fails loudly — there
+      is no insecure fallback.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Connect to Tailscale
+      uses: tailscale/github-action@v4
+      with:
+        oauth-client-id: ${{ inputs.ts-oauth-client-id }}
+        oauth-secret: ${{ inputs.ts-oauth-secret }}
+        tags: tag:ci
+
+    - name: Write CA certificate
+      shell: bash
+      env:
+        PVE_CA_CERT: ${{ inputs.pve-ca-cert }}
+      run: |
+        printf '%s\n' "$PVE_CA_CERT" > "$RUNNER_TEMP/pve-root-ca.pem"
+        echo "PVE_CA_CERT_FILE=$RUNNER_TEMP/pve-root-ca.pem" >> "$GITHUB_ENV"
+
+    - name: Destroy the runner VM
+      if: inputs.vmid != ''
+      shell: bash
+      env:
+        PVE_API_HOST: ${{ inputs.pve-api-host }}
+        PVE_API_HOSTNAME: ${{ inputs.pve-api-hostname }}
+        PVE_NODE: ${{ inputs.pve-node }}
+        PVE_TOKEN_ID: ${{ inputs.pve-token-id }}
+        PVE_TOKEN_SECRET: ${{ inputs.pve-token-secret }}
+        CRED_FILE: /dev/null
+      run: bash "${{ github.action_path }}/../scripts/teardown.sh" "${{ inputs.vmid }}"
+
+    # DESTROYING THE VM DOES NOT DEREGISTER THE RUNNER.
+    #
+    # An --ephemeral runner removes its own registration after it completes one
+    # job, so the happy path needs nothing here. Every other path leaves the
+    # registration behind: a provision that registered but whose job was never
+    # scheduled, a cancellation between registration and the job starting, a VM
+    # destroyed mid-job. Those accumulate as `offline` org runners forever.
+    #
+    # That is not only untidy. The provision action confirms registration by
+    # grepping the org runner list for an exact name, and the org runner list is
+    # paginated -- enough dead registrations and a real runner lands on a later
+    # page. It also counts against the org's runner limit.
+    #
+    # Best-effort and never fails the job: this runs under `if: always()` in a
+    # job whose purpose is to clean up after a failure, and turning a cleanup
+    # into a second failure buries the first one.
+    - name: Remove the runner registration
+      if: inputs.label != '' && inputs.runner-reg-pat != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.runner-reg-pat }}
+        LABEL: ${{ inputs.label }}
+      run: |
+        id=$(gh api "orgs/${{ github.repository_owner }}/actions/runners" \
+               --paginate --jq ".runners[] | select(.name == \"$LABEL\") | .id" | head -1)
+        if [ -z "$id" ]; then
+          echo "no runner registration named $LABEL -- it deregistered itself"
+          exit 0
+        fi
+        gh api -X DELETE "orgs/${{ github.repository_owner }}/actions/runners/$id" \
+          && echo "removed stale runner registration $LABEL (id $id)"
