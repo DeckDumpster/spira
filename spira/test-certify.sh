@@ -158,7 +158,7 @@ case "$(landstate sp-cert-red)" in
 esac
 # Restore the passing stub for subsequent tests.
 stub gate.sh '
-printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
+printf "%s GATE_ALL=%s\n" "$1" "${SPIRA_GATE_ALL:-0}" >> "'"$GATE_COUNT"'"
 printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
 exit 0'
 
