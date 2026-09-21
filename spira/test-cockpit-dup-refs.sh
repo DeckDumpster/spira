@@ -43,11 +43,13 @@ echo "test-cockpit-dup-refs.sh"
 # Passes both SPIRA_BD (binary) and SPIRA_DB (database dir) so that bdq can reach the
 # test database. SPIRA_RUN is pointed at the test dir (writes no important files in dup_refs).
 dup_refs() {
+    local _bd; _bd="$(command -v "${SPIRA_BD:-bd-embedded}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd-embedded}")"
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_BD="$TESTDB_BD" \
-        SPIRA_DB="$TESTDB_DIR" \
-        SPIRA_RUN="$TESTDB_DIR" \
+        SPIRA_PATH="${SPIRA_PATH:-}" \
+        SPIRA_BD="$_bd" \
+        SPIRA_DB="$SPIRA_DB" \
+        SPIRA_RUN="$SPIRA_DB" \
         "$@" bash "$HERE/cockpit.sh" dup_refs 2>/dev/null
 }
 key() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }
