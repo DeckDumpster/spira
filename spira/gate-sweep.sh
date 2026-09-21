@@ -30,7 +30,11 @@ removed=0
 
 while IFS= read -r wt_path; do
     [ "$wt_path" = "$REPO" ] && continue
-    [ "$(basename "$wt_path")" = "$TARGET_NAME" ] || continue
+    # Match both old-style .gate.<repo> and new per-branch .gate.<repo>.<key>.
+    case "$(basename "$wt_path")" in
+        "${TARGET_NAME}"|"${TARGET_NAME}".*) ;;
+        *) continue ;;
+    esac
 
     # SKIP IF THE LOCK IS HELD — a running gate has exclusive access to its tree. The lock
     # file lives at <tree>.lock; flock -n -x acquires exclusively without waiting. If the
