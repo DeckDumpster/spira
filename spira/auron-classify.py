@@ -166,6 +166,9 @@ def main():
     def alert(key, title, evidence):
         out.append({"key": key, "title": title, "evidence": evidence.strip()})
 
+    world_halted = bool(o.get("world_halted"))
+    world_draining = bool(o.get("world_draining"))
+
     # -- the sentinel's own pulse --------------------------------------------------------
     log_path = o.get("sentinel_log_path") or "the sentinel log"
     if not o.get("sentinel_log_readable"):
@@ -190,7 +193,10 @@ def main():
                     passes[0]["at"] if passes else 0)
         since = done if done is not None else floor
         age = now - since
-        if since and age > pass_stale:
+        # A deliberately halted or draining loop is expected to stop completing passes.
+        # Firing here would train the reader to discount the one alert that matters when
+        # the loop genuinely dies (law-alerts-must-be-actionable).
+        if since and age > pass_stale and not world_halted and not world_draining:
             timer = o.get("sentinel_timer") or "unknown"
             # WHICH FAILURE IT IS, in the evidence rather than in a second alert. A dead
             # timer and a pass wedged mid-flight both read as "nothing completed", and
