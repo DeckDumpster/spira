@@ -39,7 +39,7 @@
 # EVERY CASE IS A PAIR (law-absence-needs-a-positive-control). The negative half proves
 # the check can read a true zero; the positive half proves it reads the real fault.
 #
-# covers: spira/lib.sh spira/cockpit.sh spira/chamber/builder.fayth spira/chamber/ops.fayth
+# covers: spira/lib.sh spira/cockpit.sh spira/close-reason-flags.py spira/chamber/builder.fayth spira/chamber/ops.fayth
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"
@@ -265,6 +265,21 @@ is "workaround: SP_INVALID_CLOSED=0" "0" \
    "$(printf '%s\n' "$out" | sed -n 's/^SP_INVALID_CLOSED=//p' | head -1)"
 is "workaround: SP_UNFILED_FOLLOW=0" "0" \
    "$(printf '%s\n' "$out" | sed -n 's/^SP_UNFILED_FOLLOW=//p' | head -1)"
+
+# ==========================================================================================
+echo
+echo "NEGATIVE CONTROL — INVALID-CLOSED: a quoted MENTION of a statute phrase is not an admission:"
+# ==========================================================================================
+# The same phrase inside a parenthetical is a mention; only a bare admission triggers the flag.
+# Positive control: the bare admission case at line 230 above already fires.
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-ll-ment","title":"mentioned phrase bead","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"close_reason":"pair added — bad-reason (\"TEMPORARY WORKAROUND\") is reopened; clean reason stays closed"}
+JSONL
+out="$(run_ll)"
+nowant "mention: no INVALID-CLOSED row" "INVALID-CLOSED" "$out"
+is "mention: SP_INVALID_CLOSED=0" "0" \
+   "$(printf '%s\n' "$out" | sed -n 's/^SP_INVALID_CLOSED=//p' | head -1)"
 
 # ==========================================================================================
 echo
