@@ -24,3 +24,11 @@ suite_requires_of() {  # suite_requires_of <file-path> -> space-separated requir
     # Empty return means no declared requirements — the suite runs unconditionally.
     sed -n 's/^# *requires: *//p' "$1" 2>/dev/null | head -1 | tr ',' ' ' || true
 }
+
+suite_exclusive_of() {  # suite_exclusive_of <file-path> -> reason string, or empty
+    # Empty return means "not exclusive" — the suite runs alongside others in parallel.
+    # Non-empty: the reason given after "# exclusive:"; logged when the batch drains
+    # in-flight jobs before running this suite alone.
+    # Stop at "set -" so heredocs inside the suite body cannot spoof the declaration.
+    sed -n '/^set -/q;s/^# *exclusive: *//p' "$1" 2>/dev/null | head -1 || true
+}
