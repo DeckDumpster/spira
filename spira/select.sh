@@ -67,6 +67,55 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 [ -r "$HERE/select-globs.sh" ] || { printf 'select: select-globs.sh is missing\n' >&2; exit 1; }
 . "$HERE/select-globs.sh"
 
+# _fn_changed_in FILE — space-separated shell function names whose bodies contain
+# at least one changed line in the BASE...HEAD diff for FILE.
+# Requires REPO, _ARG_BASE, and _ARG_HEAD (diff mode only); empty in --files mode.
+# Clears cur on ^} to detect code between functions; single-line functions may
+# attribute nearby global code to the preceding function — acceptable for the
+# common multi-line form.
+_fn_changed_in() {
+    local _fnc_file="$1"
+    [ -n "$REPO" ] || return 0
+    [ -n "$_ARG_BASE" ] && [ -n "$_ARG_HEAD" ] || return 0
+    local _fnc_ranges
+    _fnc_ranges="$(git -C "$REPO" diff --unified=0 "${_ARG_BASE}...${_ARG_HEAD}" -- \
+        "$_fnc_file" 2>/dev/null \
+        | awk '/^@@/{
+            match($0, /\+[0-9]+(,[0-9]+)?/)
+            part = substr($0, RSTART+1, RLENGTH-1)
+            n = split(part, p, ",")
+            start = p[1]+0
+            count = (n > 1 ? p[2]+0 : 1)
+            if (count == 0) next
+            printf "%d %d\n", start, start+count-1
+        }')"
+    [ -n "$_fnc_ranges" ] || return 0
+    git -C "$REPO" show "${_ARG_HEAD}:${_fnc_file}" 2>/dev/null \
+        | awk -v rng="$_fnc_ranges" '
+            BEGIN {
+                n = split(rng, rows, "\n")
+                for (i = 1; i <= n; i++) {
+                    if (rows[i] == "") continue
+                    split(rows[i], p, " ")
+                    ++nr; rs[nr] = p[1]+0; re[nr] = p[2]+0
+                }
+                cur = ""
+            }
+            /^}/ { cur = "" }
+            /^[A-Za-z_][A-Za-z0-9_]*\(\)/ {
+                match($0, /^[A-Za-z_][A-Za-z0-9_]*/)
+                cur = substr($0, RSTART, RLENGTH)
+            }
+            {
+                for (i = 1; i <= nr; i++) {
+                    if (NR >= rs[i] && NR <= re[i] && cur != "" && !(cur in seen)) {
+                        seen[cur] = 1; printf "%s ", cur
+                    }
+                }
+            }
+        '
+}
+
 SUITE_DIR="${SPIRA_BATCH_SUITE_DIR:-$HERE}"
 REPO="${SPIRA_REPO:-}"
 MODE_FILE=""
@@ -246,7 +295,13 @@ for _cv_f in $_cv_changed; do
 done
 set +f
 if [ -z "$_cv_live" ]; then
+    # All changed files are inert — no suite coverage decisions to make, but
+    # always-run (no covers:) suites still run. Same as the empty-diff case.
     _write_mode diff
+    for _s in $_all; do
+        _cov="$(suite_covers_of "$SUITE_DIR/$_s")"
+        [ -z "$_cov" ] && printf '%s\n' "$_s"
+    done
     exit 0
 fi
 _cv_changed="$_cv_live"
@@ -259,26 +314,72 @@ for _s in $_all; do
 done
 
 # For each changed file, find suites whose # covers: globs match.
+# Patterns of the form file#funcname match only when funcname appears in the
+# diff for that file. When a file has only function-level patterns and none of
+# the declared functions changed, all those suites run — code outside any
+# declared function cannot be narrowed further (law-absence-needs-a-positive-control).
 _cv_unmapped=""
 _cv_selected=""
 for _cv_f in $_cv_changed; do
     _cv_hit=0
+    _cv_fn_pairs=""  # "suite:funcname" for function-level patterns on this file
     set -f
     for _s in $_all; do
         _cov="$(suite_covers_of "$SUITE_DIR/$_s")"
         [ -z "$_cov" ] && continue
         for _cv_pat in $_cov; do
-            case "$_cv_f" in
-                $_cv_pat)
-                    _cv_hit=1
-                    case " $_cv_selected " in
-                        *" $_s "*) ;;
-                        *) _cv_selected="$_cv_selected $_s" ;;
+            case "$_cv_pat" in
+                *\#*)
+                    _cv_fpat="${_cv_pat%%\#*}"
+                    _cv_fname="${_cv_pat#*\#}"
+                    case "$_cv_f" in
+                        $_cv_fpat)
+                            _cv_hit=1
+                            _cv_fn_pairs="$_cv_fn_pairs ${_s}:${_cv_fname}" ;;
+                    esac ;;
+                *)
+                    case "$_cv_f" in
+                        $_cv_pat)
+                            _cv_hit=1
+                            case " $_cv_selected " in
+                                *" $_s "*) ;;
+                                *) _cv_selected="$_cv_selected $_s" ;;
+                            esac ;;
                     esac ;;
             esac
         done
     done
     set +f
+
+    if [ -n "$_cv_fn_pairs" ]; then
+        _cv_fns="$(_fn_changed_in "$_cv_f")"
+        _cv_fn_any=0
+        for _cv_sfn in $_cv_fn_pairs; do
+            _cv_sfn_s="${_cv_sfn%%:*}"
+            _cv_sfn_fn="${_cv_sfn#*:}"
+            _cv_fn_match=0
+            for _cv_cfn in $_cv_fns; do
+                [ "$_cv_cfn" = "$_cv_sfn_fn" ] && { _cv_fn_match=1; break; }
+            done
+            if [ "$_cv_fn_match" -eq 1 ]; then
+                _cv_fn_any=1
+                case " $_cv_selected " in
+                    *" $_cv_sfn_s "*) ;;
+                    *) _cv_selected="$_cv_selected $_cv_sfn_s" ;;
+                esac
+            fi
+        done
+        if [ "$_cv_fn_any" -eq 0 ]; then
+            for _cv_sfn in $_cv_fn_pairs; do
+                _cv_sfn_s="${_cv_sfn%%:*}"
+                case " $_cv_selected " in
+                    *" $_cv_sfn_s "*) ;;
+                    *) _cv_selected="$_cv_selected $_cv_sfn_s" ;;
+                esac
+            done
+        fi
+    fi
+
     [ "$_cv_hit" -eq 0 ] && _cv_unmapped="$_cv_unmapped $_cv_f"
 done
 
@@ -315,6 +416,11 @@ if [ -n "$_cv_unmapped" ] && [ "$_ARG_NO_FALLBACK" -eq 0 ]; then
     # Suppressed by --no-all-fallback for callers (e.g. the landing gate) that
     # keep the gate cheap: the timed runner without --no-all-fallback handles
     # thorough coverage; the gate runs covered+nocov suites only.
+    for _cv_f in $_cv_unmapped; do
+        printf 'select: %s → [all: unmapped]\n' "$_cv_f" >&2
+    done
+    _cv_n_all=0; for _s in $_all; do _cv_n_all=$((_cv_n_all+1)); done
+    printf 'select: fallback — running all %d suites\n' "$_cv_n_all" >&2
     _write_mode all
     for _s in $_all; do printf '%s\n' "$_s"; done
     exit 0
@@ -329,4 +435,6 @@ for _s in $_cv_selected $_cv_nocov; do
         *) _cv_deduped="$_cv_deduped $_s" ;;
     esac
 done
+_cv_n_sel=0; for _s in $_cv_deduped; do _cv_n_sel=$((_cv_n_sel+1)); done
+printf 'select: %d suite(s) selected\n' "$_cv_n_sel" >&2
 for _s in $_cv_deduped; do printf '%s\n' "$_s"; done

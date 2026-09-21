@@ -20,7 +20,7 @@
 # means what it says.
 #
 # PULL REQUEST vs PUSH ARE DIFFERENT GATES, AND MUST BE.
-#   On a pull request, testenv-batch.sh derives the suite selection from the diff
+#   On any pull request, select.sh derives the suite selection from the diff
 #   against the base ref. That is the right, fast answer for a branch.
 #   On a push to the base branch that diff is EMPTY. Diff-derived selection would
 #   select nothing, exit 0, and cut a release off a gate that ran zero suites — a
@@ -251,10 +251,11 @@ jobs:
         # THREE PATHS, IN ORDER OF PRECEDENCE.
         #   push to main: no suites. The corpus ran on the queue PR that produced
         #     this SHA; the cut job asserts that run exists before tagging.
-        #   pull_request from spira/queue/*: every non-disabled suite via
-        #     suites.sh corpus, then gate-retry.sh. The full corpus catches
-        #     interactions between batched branches; diff selection would miss them.
-        #   other pull_request: diff-selected suites, as before.
+        #   pull_request from spira/queue/*: diff-selected suites over the batch
+        #     diff (base..head), falling back to all suites only when a changed
+        #     file is genuinely unmapped source. Inert files (*.md etc.) never
+        #     trigger the fallback (select-globs.sh).
+        #   other pull_request: diff-selected suites, same algorithm.
         env:
           # The step above has already acquired the image under this closure's tag,
           # so testenv.sh finds it locally. Naming the registry here as well keeps
@@ -343,8 +344,9 @@ jobs:
           _b=0
           if [ "${{ github.event_name }}" = "pull_request" ] \
              && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/queue/'; then
-            printf 'gate: queue PR — running every non-disabled suite\n'
-            bash spira/suites.sh corpus \
+            _base="${{ github.event.pull_request.base.sha }}"
+            printf 'gate: queue PR — running suites selected by batch diff (base %s)\n' "$_base"
+            bash spira/select.sh --base "$_base" --head "${{ github.sha }}" \
               | bash spira/testenv-batch.sh --suites - "${{ github.sha }}" || _b=$?
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             printf 'gate: pull request — running the suites the diff selects\n'

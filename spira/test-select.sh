@@ -485,5 +485,219 @@ notwant "K3: fixture: uncovered suite not selected"      "test-fx-b.sh" "$out_k3
 
 # ---------------------------------------------------------------------------
 echo
+echo "Part L: docs-only diff — inert files select nothing; pair: unmapped .sh selects all"
+# ---------------------------------------------------------------------------
+# This verifies the SELECT_INERT filter: docs/*.md changes are inert and never
+# trigger the all-suites fallback. A genuinely unmapped .sh does.
+
+SD_L="$TMP/suites-l"
+mkdir -p "$SD_L"
+cat > "$SD_L/test-fx-l.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: some.sh
+exit 0
+EOF
+# Always-run suite (no covers line)
+cat > "$SD_L/test-fx-l-nocov.sh" << 'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$SD_L"/test-fx-l*.sh
+
+FLIST_DOCS="$TMP/flist-docs"
+printf 'docs/spikes/notes.md\n' > "$FLIST_DOCS"
+
+# L1: docs-only diff → only always-run suite (no fallback, no coverage suites)
+out="$(SPIRA_SELECT_INERT='*.md *.txt' bash "$SELECT" \
+    --files "$FLIST_DOCS" --suite-dir "$SD_L" 2>/dev/null)"
+rc=$?
+iszero  "L1: docs-only diff exits 0"                   "$rc"
+notwant "L1: coverage suite not selected"              "test-fx-l.sh" "$out"
+want    "L1: always-run suite still selected"          "test-fx-l-nocov.sh" "$out"
+
+# L1-ctrl: unmapped .sh with the same suite dir → all-suites fallback
+FLIST_UNMAPPED_SH="$TMP/flist-unmapped-sh"
+printf 'lib-nobody-covers.sh\n' > "$FLIST_UNMAPPED_SH"
+
+out="$(SPIRA_SELECT_INERT='*.md *.txt' bash "$SELECT" \
+    --files "$FLIST_UNMAPPED_SH" --suite-dir "$SD_L" 2>/dev/null)"
+rc=$?
+iszero "L1-ctrl: unmapped .sh exits 0" "$rc"
+want   "L1-ctrl: fallback includes coverage suite"   "test-fx-l.sh"       "$out"
+want   "L1-ctrl: fallback includes always-run suite" "test-fx-l-nocov.sh" "$out"
+
+# ---------------------------------------------------------------------------
+echo
+echo "Part M: function-level coverage — hub file hunk selects only matching function suite"
+# ---------------------------------------------------------------------------
+# Suite M-A covers lib-hub.sh#foo, M-B covers lib-hub.sh#bar.
+# A diff that touches only function foo selects M-A but not M-B.
+# A diff with a hunk outside any declared function selects both (fallback within file).
+
+REPO_M="$TMP/repo-m"
+git init -q --initial-branch=main "$REPO_M"
+git -C "$REPO_M" config user.email "test@spira.local"
+git -C "$REPO_M" config user.name "Spira Test"
+# Initial lib-hub.sh with two functions
+cat > "$REPO_M/lib-hub.sh" << 'LIBEOF'
+#!/usr/bin/env bash
+foo() {
+    echo "foo v1"
+}
+
+bar() {
+    echo "bar v1"
+}
+LIBEOF
+git -C "$REPO_M" add lib-hub.sh
+git -C "$REPO_M" commit -q -m "initial"
+BASE_M="$(git -C "$REPO_M" rev-parse HEAD)"
+
+# Branch 1: change only function foo
+git -C "$REPO_M" checkout -q -b topic-foo
+cat > "$REPO_M/lib-hub.sh" << 'LIBEOF'
+#!/usr/bin/env bash
+foo() {
+    echo "foo v2"
+}
+
+bar() {
+    echo "bar v1"
+}
+LIBEOF
+git -C "$REPO_M" add lib-hub.sh
+git -C "$REPO_M" commit -q -m "change foo"
+HEAD_FOO="$(git -C "$REPO_M" rev-parse HEAD)"
+
+# Branch 2: change outside any declared function (top-level comment/code)
+git -C "$REPO_M" checkout -q main
+git -C "$REPO_M" checkout -q -b topic-global
+cat > "$REPO_M/lib-hub.sh" << 'LIBEOF'
+#!/usr/bin/env bash
+# global comment changed
+foo() {
+    echo "foo v1"
+}
+
+bar() {
+    echo "bar v1"
+}
+LIBEOF
+git -C "$REPO_M" add lib-hub.sh
+git -C "$REPO_M" commit -q -m "change global"
+HEAD_GLOBAL="$(git -C "$REPO_M" rev-parse HEAD)"
+
+SD_M="$TMP/suites-m"
+mkdir -p "$SD_M"
+# Suite MA covers lib-hub.sh#foo only
+cat > "$SD_M/test-fx-ma.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: lib-hub.sh#foo
+exit 0
+EOF
+# Suite MB covers lib-hub.sh#bar only
+cat > "$SD_M/test-fx-mb.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: lib-hub.sh#bar
+exit 0
+EOF
+chmod +x "$SD_M"/test-fx-m*.sh
+
+# M1: hunk inside function foo → MA selected, MB not selected
+out="$(bash "$SELECT" --base "$BASE_M" --head "$HEAD_FOO" \
+          --repo "$REPO_M" --suite-dir "$SD_M" 2>/dev/null)"
+rc=$?
+iszero  "M1: foo-only diff exits 0"                        "$rc"
+want    "M1: lib-hub.sh#foo suite selected"                "test-fx-ma.sh" "$out"
+notwant "M1: lib-hub.sh#bar suite not selected"            "test-fx-mb.sh" "$out"
+
+# M1-ctrl: hunk outside any declared function → both suites selected (cannot narrow further)
+out="$(bash "$SELECT" --base "$BASE_M" --head "$HEAD_GLOBAL" \
+          --repo "$REPO_M" --suite-dir "$SD_M" 2>/dev/null)"
+rc=$?
+iszero "M1-ctrl: global-scope diff exits 0"                "$rc"
+want   "M1-ctrl: MA selected when hunk outside functions"  "test-fx-ma.sh" "$out"
+want   "M1-ctrl: MB selected when hunk outside functions"  "test-fx-mb.sh" "$out"
+
+# M2: --files mode treats file#func as file-glob (conservative: always select when file present)
+FLIST_M="$TMP/flist-m"
+printf 'lib-hub.sh\n' > "$FLIST_M"
+out="$(bash "$SELECT" --files "$FLIST_M" --suite-dir "$SD_M" 2>/dev/null)"
+rc=$?
+iszero "M2: --files mode with file#func exits 0"           "$rc"
+want   "M2: --files mode selects MA (conservative)"        "test-fx-ma.sh" "$out"
+want   "M2: --files mode selects MB (conservative)"        "test-fx-mb.sh" "$out"
+
+# ---------------------------------------------------------------------------
+echo
+echo "Part N: queue-branch union — batch diff selects union; fallback on unmapped member"
+# ---------------------------------------------------------------------------
+# A queue branch combines multiple topic branches. The diff (base..queue head)
+# is the union of all member diffs. The selector runs over this combined diff.
+# If any member touches unmapped code, the full corpus fallback fires.
+
+REPO_N="$TMP/repo-n"
+git init -q --initial-branch=main "$REPO_N"
+git -C "$REPO_N" config user.email "test@spira.local"
+git -C "$REPO_N" config user.name "Spira Test"
+touch "$REPO_N/placeholder"
+git -C "$REPO_N" add placeholder
+git -C "$REPO_N" commit -q -m "initial"
+BASE_N="$(git -C "$REPO_N" rev-parse HEAD)"
+
+# Merge branch 1 (changes alpha.sh) and branch 2 (changes beta.sh) onto a queue branch
+printf 'changed\n' > "$REPO_N/alpha.sh"
+git -C "$REPO_N" add alpha.sh
+git -C "$REPO_N" commit -q -m "branch1: alpha"
+printf 'changed\n' > "$REPO_N/beta.sh"
+git -C "$REPO_N" add beta.sh
+git -C "$REPO_N" commit -q -m "branch2: beta"
+HEAD_N_CLEAN="$(git -C "$REPO_N" rev-parse HEAD)"
+
+# Queue branch also includes an unmapped .go file
+printf 'changed\n' > "$REPO_N/unmapped.go"
+git -C "$REPO_N" add unmapped.go
+git -C "$REPO_N" commit -q -m "branch3: unmapped"
+HEAD_N_UNMAPPED="$(git -C "$REPO_N" rev-parse HEAD)"
+
+SD_N="$TMP/suites-n"
+mkdir -p "$SD_N"
+cat > "$SD_N/test-fx-na.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: alpha.sh
+exit 0
+EOF
+cat > "$SD_N/test-fx-nb.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: beta.sh
+exit 0
+EOF
+cat > "$SD_N/test-fx-nc.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: other.sh
+exit 0
+EOF
+chmod +x "$SD_N"/test-fx-n*.sh
+
+# N1: clean batch diff → union of covering suites (alpha+beta, not other)
+out="$(bash "$SELECT" --base "$BASE_N" --head "$HEAD_N_CLEAN" \
+          --repo "$REPO_N" --suite-dir "$SD_N" 2>/dev/null)"
+rc=$?
+iszero  "N1: clean batch diff exits 0"                   "$rc"
+want    "N1: alpha.sh suite selected"                    "test-fx-na.sh" "$out"
+want    "N1: beta.sh suite selected"                     "test-fx-nb.sh" "$out"
+notwant "N1: uncovered suite not selected"               "test-fx-nc.sh" "$out"
+
+# N1-ctrl: batch diff with unmapped member → all-suites fallback
+out="$(bash "$SELECT" --base "$BASE_N" --head "$HEAD_N_UNMAPPED" \
+          --repo "$REPO_N" --suite-dir "$SD_N" 2>/dev/null)"
+rc=$?
+iszero "N1-ctrl: batch with unmapped member exits 0"     "$rc"
+want   "N1-ctrl: fallback includes all suites (na)"      "test-fx-na.sh" "$out"
+want   "N1-ctrl: fallback includes all suites (nb)"      "test-fx-nb.sh" "$out"
+want   "N1-ctrl: fallback includes all suites (nc)"      "test-fx-nc.sh" "$out"
+
+# ---------------------------------------------------------------------------
+echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1

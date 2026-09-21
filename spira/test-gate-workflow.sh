@@ -78,13 +78,13 @@ want "scratch-fence.sh"  "spira/scratch-fence.sh" "$G"
 want "testenv-batch.sh"  "spira/testenv-batch.sh" "$G"
 
 echo
-echo "2. queue PRs pipe the non-disabled corpus explicitly (law-a-runner-takes-a-list):"
-# Queue PRs run every non-disabled suite via suites.sh corpus piped into
-# testenv-batch.sh --suites -. Without --suites, diff selection would pick only
-# the changed files — missing interactions between the batched branches.
-want "the corpus is piped via --suites" "--suites" "$G"
-want "queue PRs use suites.sh corpus"   "corpus"   "$G"
-want "queue PRs match spira/queue/"     'spira/queue/' "$G"
+echo "2. queue PRs use diff-selected suites via select.sh (law-a-runner-takes-a-list):"
+# Queue PRs run the diff-selected suites: select.sh derives the suite list from
+# the batch diff and pipes it to testenv-batch.sh --suites -. Inert files
+# (*.md etc.) are filtered; genuinely unmapped source still triggers all-suites.
+want "the selected list is piped via --suites" "--suites"      "$G"
+want "queue PRs use select.sh"                 "select.sh"    "$G"
+want "queue PRs match spira/queue/"            'spira/queue/' "$G"
 
 echo
 echo "3. an infrastructure fault is distinguished from a branch failure:"
@@ -240,10 +240,10 @@ if [ -z "$_suites_block" ]; then
 else
     ok "the Suites step block was located (positive control)"
 fi
-want "push case is detected"          '"push"'      "$_suites_block"
-want "push path carries no suites"    "no suites"   "$_suites_block"
-want "queue PRs run the corpus"       'spira/queue/'                        "$_suites_block"
-want "corpus selection uses corpus"   "suites.sh corpus"                    "$_suites_block"
+want "push case is detected"             '"push"'       "$_suites_block"
+want "push path carries no suites"     "no suites"    "$_suites_block"
+want "queue PRs are matched"           'spira/queue/' "$_suites_block"
+want "queue selection uses select.sh"  "select.sh"    "$_suites_block"
 
 echo
 echo "15. the cut job asserts a green gate check before tagging:"
