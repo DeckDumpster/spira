@@ -634,6 +634,40 @@ if [ -z "$SELECTED" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# TESTDB BASELINE — warm one bd init inside the container before suites start.
+# Each suite that sources testdb.sh copies .beads from this snapshot instead of
+# running bd init (~12s per fixture). Keyed on the bd-embedded binary hash so a
+# binary upgrade invalidates the snapshot. Falls back gracefully if unavailable.
+# ---------------------------------------------------------------------------
+_TESTDB_BASELINE_PATH="/tmp/spira-batch-${INSTANCE}/testdb/baseline"
+_TESTDB_BASELINE_READY=0
+_TESTDB_BASELINE_KEY="-"
+_n_testdb=0
+for _ts in $SELECTED; do
+    if grep -ql 'testdb\.sh' "$SUITE_DIR/$_ts" 2>/dev/null; then
+        _n_testdb=$((_n_testdb + 1))
+    fi
+done
+if [ "$_n_testdb" -gt 0 ]; then
+    _TESTDB_BASELINE_KEY="$(podman exec --user "$_SPIRA_USER" \
+        -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" "$CNAME" \
+        bash -c 'f=$(command -v bd-embedded 2>/dev/null); [ -n "$f" ] && sha256sum "$f" | cut -d" " -f1 || echo -' \
+        2>/dev/null || echo -)"
+    log "batch: warming testdb baseline (key ${_TESTDB_BASELINE_KEY:0:12}, $_n_testdb testdb suite(s))"
+    if podman exec --user "$_SPIRA_USER" \
+           -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
+           -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
+           -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
+           "$CNAME" bash -c "mkdir -p ${_TESTDB_BASELINE_PATH} && cd ${_TESTDB_BASELINE_PATH} && BD_NON_INTERACTIVE=1 bd-embedded init --non-interactive --prefix sp --skip-agents --skip-hooks -q" \
+           >/dev/null 2>&1; then
+        _TESTDB_BASELINE_READY=1
+        log "batch: testdb baseline ready (key ${_TESTDB_BASELINE_KEY:0:12})"
+    else
+        log "batch: testdb baseline warm failed — suites will build their own fixtures"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # RUN SUITES — serial or parallel, per --mode.
 #
 # MODE is recorded as the 5th field of every result file: a green under serial
@@ -803,8 +837,9 @@ if [ "$MODE" = serial ]; then
                 -e "CARGO_HOME=${_CONTAINER_CARGO}" \
                 -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                 -e "SPIRA_IN_TESTENV=1" \
-                -e "TESTDB_SHARED=0" \
-                -e "TESTDB_NAME=" \
+                -e "TESTDB_SHARED=${_TESTDB_BASELINE_READY}" \
+                -e "TESTDB_NAME=$s" \
+                -e "TESTDB_BASELINE=${_TESTDB_BASELINE_PATH}" \
                 -e "TESTDB_DIR=" \
                 -e "TMUX=" \
                 -e "SPIRA_PATH=${_shim_spira_path}" \
@@ -819,8 +854,9 @@ if [ "$MODE" = serial ]; then
                 -e "CARGO_HOME=${_CONTAINER_CARGO}" \
                 -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                 -e "SPIRA_IN_TESTENV=1" \
-                -e "TESTDB_SHARED=0" \
-                -e "TESTDB_NAME=" \
+                -e "TESTDB_SHARED=${_TESTDB_BASELINE_READY}" \
+                -e "TESTDB_NAME=$s" \
+                -e "TESTDB_BASELINE=${_TESTDB_BASELINE_PATH}" \
                 -e "TESTDB_DIR=" \
                 -e "TMUX=" \
                 -e "SPIRA_PATH=${_shim_spira_path}" \
@@ -982,8 +1018,9 @@ else
                     -e "CARGO_HOME=${_CONTAINER_CARGO}" \
                     -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                     -e "SPIRA_IN_TESTENV=1" \
-                    -e "TESTDB_SHARED=0" \
-                    -e "TESTDB_NAME=" \
+                    -e "TESTDB_SHARED=${_TESTDB_BASELINE_READY}" \
+                    -e "TESTDB_NAME=$s" \
+                    -e "TESTDB_BASELINE=${_TESTDB_BASELINE_PATH}" \
                     -e "TESTDB_DIR=" \
                     -e "TMUX=" \
                     -e "SPIRA_PATH=${_shim_spira_path}" \
@@ -1001,8 +1038,9 @@ else
                     -e "CARGO_HOME=${_CONTAINER_CARGO}" \
                     -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                     -e "SPIRA_IN_TESTENV=1" \
-                    -e "TESTDB_SHARED=0" \
-                    -e "TESTDB_NAME=" \
+                    -e "TESTDB_SHARED=${_TESTDB_BASELINE_READY}" \
+                    -e "TESTDB_NAME=$s" \
+                    -e "TESTDB_BASELINE=${_TESTDB_BASELINE_PATH}" \
                     -e "TESTDB_DIR=" \
                     -e "TMUX=" \
                     -e "SPIRA_PATH=${_shim_spira_path}" \
@@ -1180,6 +1218,10 @@ log "batch: wall ${_BATCH_WALL}s"
 # ---------------------------------------------------------------------------
 # VERDICT — three distinguishable outcomes.
 # ---------------------------------------------------------------------------
+if [ "$_TESTDB_BASELINE_READY" = 1 ] && [ "$_n_testdb" -gt 0 ]; then
+    log "batch: testdb: $_n_testdb fixture(s) used baseline (~$((_n_testdb * 12))s estimated saving)"
+fi
+
 if [ "$_batch_exec_fault" = 1 ]; then
     log "batch: harness fault — exec failures, not suite reds"
     exit 2
