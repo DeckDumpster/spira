@@ -62,7 +62,6 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
        spira-archivist.service spira-archivist.timer
        spira-czar-pass.service spira-czar-pass.timer
        spira-cockpit.service
-       spira-loom.service
        spira-watch@.service
        spira-watch-notify.service spira-watch-notify.timer
        spira-watch-refresh.service spira-watch-refresh.timer
@@ -78,7 +77,6 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
        spira-pr-notify.service spira-pr-notify.timer
        spira-mail-tidy.service spira-mail-tidy.timer
        spira-gh-intake.service spira-gh-intake.timer
-       spira-broker.service spira-broker.timer
        spira-verdict.service spira-verdict.timer
        )
 # Only these get enabled. The .service behind a .timer is started BY the timer; enabling it
@@ -95,10 +93,9 @@ _ENABLE_TMPL=(cockpit-ensure.timer concierge.timer spira-watch-refresh.timer
               spira-verify-asks.timer
               spira-gate-check.timer
               spira-pr-notify.timer
-              spira-cockpit.service spira-loom.service
+              spira-cockpit.service
               spira-mail-tidy.timer
               spira-gh-intake.timer
-              spira-broker.timer
               spira-verdict.timer)
 ENABLE=()
 for _t in "${_ENABLE_TMPL[@]}"; do ENABLE+=("$(inst_name "$_t")"); done
@@ -165,6 +162,28 @@ if [ -n "${SPIRA_TESTDB_DATA:-}" ]; then
     # Not in ENABLE — installed but not enabled at login; testdb.sh starts on demand.
 else
     OPTIONAL+=(dolt-beads-test.service)
+fi
+
+# spira-loom.service requires the compiled loom binary. Skip when absent — loom.sh is
+# executable (passes the ExecStart check) but exec's the binary, so the unit would cycle in
+# activating forever. Build the binary and re-run install.sh to install the unit.
+if [ -x "${SPIRA_LOOM_BIN:-}" ]; then
+    UNITS+=(spira-loom.service)
+    ENABLE+=("$(inst_name spira-loom.service)")
+else
+    OPTIONAL+=(spira-loom.service)
+    echo "note: loom binary not built at ${SPIRA_LOOM_BIN:-<path not set>} — not installing spira-loom.service." >&2
+    echo "      Build it: cd \$SPIRA_REPO/loom && cargo build --release, then re-run install.sh." >&2
+fi
+
+# spira-broker.service/.timer require the compiled broker binary. Same hazard as loom.
+if [ -x "${SPIRA_BROKER_BIN:-}" ]; then
+    UNITS+=(spira-broker.service spira-broker.timer)
+    ENABLE+=("$(inst_name spira-broker.timer)")
+else
+    OPTIONAL+=(spira-broker.service spira-broker.timer)
+    echo "note: broker binary not built at ${SPIRA_BROKER_BIN:-<path not set>} — not installing spira-broker.service." >&2
+    echo "      Build it: cd \$SPIRA_REPO/broker && cargo build --release, then re-run install.sh." >&2
 fi
 
 # ONE INSTANCE PER `daemon` ROW, AND THE MANIFEST DECIDES WHICH. `log` rows name a file
