@@ -59,7 +59,7 @@ ACTOR="aeon-test-guard"
 BEADS_ACTOR="$ACTOR" "$BD" -C "$SPIRA_DB" update "$BID" --claim 2>/dev/null
 
 # Add a comment AFTER the claim (post-claim comment from an operator).
-sleep 1
+sleep 2
 COMMENT_ID="$("$BD" -C "$SPIRA_DB" comment "$BID" "Amendment: use approach B, not A" \
                2>/dev/null | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)"
 # If bd comment does not print the uuid, fetch it from the list.
@@ -143,7 +143,7 @@ echo "SPIRA_CLOSE_UNACKED_CONSIDERED env override → guard allows"
 BID2="$("$BD" -C "$SPIRA_DB" create --title "test-override" -l spira --type task \
          2>/dev/null | grep -oE 'sp-[a-z0-9]+' | head -1)"
 BEADS_ACTOR="$ACTOR" "$BD" -C "$SPIRA_DB" update "$BID2" --claim 2>/dev/null
-sleep 1
+sleep 2
 "$BD" -C "$SPIRA_DB" comment "$BID2" "operator amendment" 2>/dev/null
 
 CLOSE2="bd -C $SPIRA_DB close $BID2 --reason-file - <<'REASON'
