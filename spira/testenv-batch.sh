@@ -710,21 +710,31 @@ fi
 # home (XDG_RUNTIME_DIR check already acts as a container guard; HOME can extend it).
 # ---------------------------------------------------------------------------
 #!maxpar-begin
-# Derive maxpar from the guest's own hardware when SPIRA_BATCH_MAXPAR is not set.
+# Derive maxpar from the guest's own hardware.
+# SPIRA_BATCH_MAXPAR overrides the cpu-bound default but is still capped at the
+# memory-bound so that an operator value set for a larger box cannot OOM a smaller
+# one. Setting it to 0 disables all capping (useful for small explicit selections).
 _mem_reserve_mib="${SPIRA_BATCH_MEM_RESERVE_MIB:-1024}"
 _mem_per_suite_mib="${SPIRA_BATCH_MEM_PER_SUITE_MIB:-512}"
 _maxpar_cpu="$(nproc)"
+_mem_avail_mib="${SPIRA_BATCH_MEM_AVAIL_MIB:-$(awk '/^MemAvailable:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0)}"
+_mem_budget=$(( _mem_avail_mib - _mem_reserve_mib ))
+[ "${_mem_budget:-0}" -lt "${_mem_per_suite_mib}" ] && _mem_budget="${_mem_per_suite_mib}"
+_mem_bound=$(( _mem_budget / _mem_per_suite_mib ))
+[ "${_mem_bound:-0}" -lt 1 ] && _mem_bound=1
 if [ -n "${SPIRA_BATCH_MAXPAR:-}" ]; then
-    _maxpar="${SPIRA_BATCH_MAXPAR}"
-    _maxpar_binding="override"
-    _mem_avail_mib="${SPIRA_BATCH_MEM_AVAIL_MIB:-0}"
-    _mem_bound=0
+    _maxpar_requested="${SPIRA_BATCH_MAXPAR}"
+    if [ "${_maxpar_requested}" = "0" ]; then
+        _maxpar=0
+        _maxpar_binding="override-unlimited"
+    elif [ "${_maxpar_requested}" -le "${_mem_bound}" ] 2>/dev/null; then
+        _maxpar="${_maxpar_requested}"
+        _maxpar_binding="override"
+    else
+        _maxpar="${_mem_bound}"
+        _maxpar_binding="memory-capped"
+    fi
 else
-    _mem_avail_mib="${SPIRA_BATCH_MEM_AVAIL_MIB:-$(awk '/^MemAvailable:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0)}"
-    _mem_budget=$(( _mem_avail_mib - _mem_reserve_mib ))
-    [ "${_mem_budget:-0}" -lt "${_mem_per_suite_mib}" ] && _mem_budget="${_mem_per_suite_mib}"
-    _mem_bound=$(( _mem_budget / _mem_per_suite_mib ))
-    [ "${_mem_bound:-0}" -lt 1 ] && _mem_bound=1
     if [ "${_maxpar_cpu}" -le "${_mem_bound}" ]; then
         _maxpar="${_maxpar_cpu}"
         _maxpar_binding="cpu"
@@ -805,11 +815,14 @@ _append_suite_times() {
 
 if [ "$MODE" = parallel ]; then
     if [ "${_maxpar:-0}" -gt 0 ] 2>/dev/null; then
-        if [ "${_maxpar_binding}" = "override" ]; then
-            log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar [override])"
-        else
-            log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar [${_maxpar_binding}-bound: cpu=${_maxpar_cpu} mem=${_mem_avail_mib}MiB avail ${_mem_reserve_mib}MiB reserve ${_mem_per_suite_mib}MiB/suite])"
-        fi
+        case "${_maxpar_binding}" in
+            override)
+                log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar [override: SPIRA_BATCH_MAXPAR=${SPIRA_BATCH_MAXPAR:-?}])" ;;
+            memory-capped)
+                log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar [memory-capped: SPIRA_BATCH_MAXPAR=${SPIRA_BATCH_MAXPAR:-?} capped by mem=${_mem_avail_mib}MiB avail ${_mem_reserve_mib}MiB reserve ${_mem_per_suite_mib}MiB/suite])" ;;
+            *)
+                log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar [${_maxpar_binding}-bound: cpu=${_maxpar_cpu} mem=${_mem_avail_mib}MiB avail ${_mem_reserve_mib}MiB reserve ${_mem_per_suite_mib}MiB/suite])" ;;
+        esac
     else
         log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: unlimited)"
     fi
