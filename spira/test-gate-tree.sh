@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# test-gate-tree.sh — the gate tree is locked per repository, and concurrent gates are
-# serialised rather than crossing each other's branches.
+# test-gate-tree.sh — the gate tree is locked per branch: different branches run
+# concurrently, same-branch gates serialise.
 #
 #   ./test-gate-tree.sh
 #
@@ -58,12 +58,13 @@ for i in 1 2; do
 done
 
 # THE GATE COMMAND: sleep long enough that two concurrent runs would overlap without the
-# lock, then record which branch and which file the tree actually holds. If the lock
-# failed, the second checkout would pull the first's branch out from under it and the
-# recording would show the wrong file.
+# lock, then record which branch and which file the tree actually holds.
 GATE_SECS=3
 CMD="sleep $GATE_SECS; printf '%s %s\\n' \"\$SPIRA_GATE_BRANCH\" \"\$(ls f*.txt 2>/dev/null | head -1)\" >> $JUDGED; true"
 printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" "$CMD" > "$MAP"
+
+# Branch name → filesystem-safe key, matching gate.sh's TREE_KEY computation.
+tree_key() { printf '%s' "$1" | tr '/' '-' | tr -c 'A-Za-z0-9.-' '-'; }
 
 rungate() {              # rungate <branch> [VAR=VAL ...]
     local br="$1"; shift
@@ -78,11 +79,11 @@ rungate() {              # rungate <branch> [VAR=VAL ...]
 echo "test-gate-tree.sh — the gate tree is locked, and concurrent gates cannot cross branches"
 
 # --------------------------------------------------------------------------------------
-# CASE 1 — SERIALISATION AND CORRECTNESS. Two gates on different branches, launched at the
-# same instant. Without the lock, both would check out their branch over the same directory
-# and the second checkout would pull the first's branch out from under it mid-trial.
+# CASE 1 — CONCURRENCY. Two gates on DIFFERENT branches run concurrently: each has its
+# own tree and its own lock, so neither waits for the other.
 # --------------------------------------------------------------------------------------
 t0=$(date +%s)
+: > "$JUDGED"
 ( rungate "spira/sp-t1" > "$TMP/g1.out" 2>&1; echo $? > "$TMP/g1.rc" ) &
 ( rungate "spira/sp-t2" > "$TMP/g2.out" 2>&1; echo $? > "$TMP/g2.rc" ) &
 wait
@@ -91,21 +92,38 @@ rc1="$(cat "$TMP/g1.rc" 2>/dev/null)"; rc2="$(cat "$TMP/g2.rc" 2>/dev/null)"
 is  "gate 1 reached a verdict" 0 "$rc1"
 is  "gate 2 reached a verdict" 0 "$rc2"
 
-# SERIALISED: two gates that each take GATE_SECS must not finish in fewer than twice that.
-# If they overlapped, the pair would complete in ~GATE_SECS; serialised, ~GATE_SECS*2.
+# CONCURRENT: two gates on different branches each have their own tree, so they run in
+# parallel. The pair completes in roughly one gate's time, not two.
 elapsed=$(( $(date +%s) - t0 ))
-[ "$elapsed" -ge $(( GATE_SECS * 2 - 1 )) ] \
-    && ok "the gates were serialised (${elapsed}s >= $((GATE_SECS*2))s)" \
-    || bad "the gates were serialised" "${elapsed}s < $((GATE_SECS*2))s — they overlapped"
+[ "$elapsed" -lt $(( GATE_SECS * 2 - 1 )) ] \
+    && ok "the gates ran concurrently: different branches do not share a lock (${elapsed}s)" \
+    || bad "the gates ran concurrently: different branches do not share a lock" \
+           "${elapsed}s >= $((GATE_SECS*2-1))s — they serialised when they should not have"
 
-# CORRECTNESS: each gate judged its own branch's tree, never the other's. The recording
-# pairs the branch the gate was asked about with the file in the tree at trial time; a
-# swapped tree makes the pair disagree.
+# CORRECTNESS: each gate judged its own branch's tree, never the other's.
 crossed="$(awk '{ split($1, a, "sp-t"); if ($2 != "f" a[2] ".txt") print }' "$JUDGED")"
 is "neither gate observed the other's branch" "" "$crossed"
 
-# THE WAIT WAS METERED (law-take-the-simple-fix-with-a-meter). One of the two runs had to
-# wait; its wait must appear in the gate log as a non-zero `waited=`.
+# --------------------------------------------------------------------------------------
+# CASE 2 — SAME-BRANCH SERIALISATION. Two gates on the SAME branch serialise because
+# they share one tree and one lock. The wait is metered.
+# --------------------------------------------------------------------------------------
+: > "$GATELOG"
+t1=$(date +%s)
+( rungate "spira/sp-t1" > "$TMP/gs1.out" 2>&1; echo $? > "$TMP/gs1.rc" ) &
+( rungate "spira/sp-t1" > "$TMP/gs2.out" 2>&1; echo $? > "$TMP/gs2.rc" ) &
+wait
+
+rcs1="$(cat "$TMP/gs1.rc" 2>/dev/null)"; rcs2="$(cat "$TMP/gs2.rc" 2>/dev/null)"
+is  "same-branch gate 1 reached a verdict" 0 "$rcs1"
+is  "same-branch gate 2 reached a verdict" 0 "$rcs2"
+
+elapsed2=$(( $(date +%s) - t1 ))
+[ "$elapsed2" -ge $(( GATE_SECS * 2 - 1 )) ] \
+    && ok "the same-branch gates were serialised (${elapsed2}s >= $((GATE_SECS*2-1))s)" \
+    || bad "the same-branch gates were serialised" \
+           "${elapsed2}s < $((GATE_SECS*2-1))s — they overlapped"
+
 waits="$(grep -oE 'waited=[0-9]+s' "$GATELOG" 2>/dev/null \
     | sed 's/waited=//;s/s$//' | sort -n | tail -1)"
 [ "${waits:-0}" -gt 0 ] \
@@ -113,11 +131,12 @@ waits="$(grep -oE 'waited=[0-9]+s' "$GATELOG" 2>/dev/null \
     || bad "the serialisation wait was metered" "no non-zero waited= in the gate log"
 
 # --------------------------------------------------------------------------------------
-# CASE 2 — GRACEFUL TIMEOUT. A gate that cannot obtain the tree in time returns NO_VERDICT
+# CASE 3 — GRACEFUL TIMEOUT. A gate that cannot obtain the tree in time returns NO_VERDICT
 # (exit 75), not FAIL (exit 1). The branch is not charged for a queue — that is a machinery
 # fault, not a judgement about the work.
 # --------------------------------------------------------------------------------------
-LOCKFILE="$RUN/worktree/.gate.$(basename "$REPO").lock"
+KEY_T1="$(tree_key "spira/sp-t1")"
+LOCKFILE="$RUN/worktree/.gate.$(basename "$REPO").$KEY_T1.lock"
 exec 8>"$LOCKFILE"
 flock -x 8
 
@@ -131,12 +150,10 @@ want "and says it is a queue, not a fault"  "not a fault"  "$out"
 exec 8>&-
 
 # --------------------------------------------------------------------------------------
-# CASE 3 — WORKTREE CLEANUP. The gate removes its worktree AND its registration on every
-# exit path — success, failure, timeout, kill. A registration that outlives the run pins
-# the checked-out branch and prevents its deletion; across passes it fills the list with
-# stale entries that slow every `git worktree list` and `prune` call.
+# CASE 4 — WORKTREE CLEANUP. The gate removes its worktree AND its registration on every
+# exit path — success, failure, timeout, kill.
 # --------------------------------------------------------------------------------------
-TREE_PATH="$RUN/worktree/.gate.$(basename "$REPO")"
+TREE_PATH="$RUN/worktree/.gate.$(basename "$REPO").$KEY_T1"
 
 # Pass case: a gate that exits 0 must have removed its tree.
 rungate "spira/sp-t1" > "$TMP/g3.out" 2>&1; g3_rc=$?
@@ -148,8 +165,7 @@ is "worktree is deregistered after a passing gate" 0 "$registered"
     && ok "worktree directory is removed after a passing gate" \
     || bad "worktree directory is removed after a passing gate" "directory still exists at $TREE_PATH"
 
-# Fail case: a gate that exits non-zero must also have removed its tree. Fail on the branch
-# only (SPIRA_GATE_BRANCH != base) so the gate exits FAIL=1 rather than BASE_FAIL=76.
+# Fail case: a gate that exits non-zero must also have removed its tree.
 CMD_FAIL='[ "$SPIRA_GATE_BRANCH" = "$SPIRA_GATE_BASE" ] || { echo "gate: test-gate-tree.sh FAILED deliberately"; exit 1; }'
 printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" "$CMD_FAIL" > "$MAP"
 rungate "spira/sp-t1" > "$TMP/g4.out" 2>&1; g4_rc=$?
@@ -160,7 +176,7 @@ is "worktree is deregistered after a failing gate" 0 "$registered"
 [ ! -d "$TREE_PATH" ] \
     && ok "worktree directory is removed after a failing gate" \
     || bad "worktree directory is removed after a failing gate" "directory still exists at $TREE_PATH"
-printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" "$CMD" > "$MAP"  # restore for any future cases
+printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" "$CMD" > "$MAP"  # restore
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
