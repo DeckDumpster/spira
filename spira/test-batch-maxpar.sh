@@ -81,23 +81,22 @@ _binding2="${_r2##* }"
 [ "$_binding2" = "memory" ] && ok "A4: 3GiB avail → memory-bound" \
                              || bad "A4: 3GiB avail → memory-bound" "got binding='$_binding2'"
 
-# Case 3: SPIRA_BATCH_MAXPAR=2 with 3GiB avail (mem_bound=4) → override wins at 2
+# Case 3: SPIRA_BATCH_MAXPAR=2 (ceiling), nproc=16, 11GiB avail (hardware=cpu-bound 16) → override=2
 _r_ov="$(
     PATH="$FAKE_BIN:$PATH" \
-    SPIRA_BATCH_MAXPAR=2 \
-    SPIRA_BATCH_MEM_AVAIL_MIB=3072 \
+    SPIRA_BATCH_MEM_AVAIL_MIB=11264 \
     SPIRA_BATCH_MEM_RESERVE_MIB=1024 \
     SPIRA_BATCH_MEM_PER_SUITE_MIB=512 \
-    bash -c "unset SPIRA_BATCH_MAXPAR 2>/dev/null; SPIRA_BATCH_MAXPAR=2; $_block; printf '%s %s' \"\$_maxpar\" \"\$_maxpar_binding\""
+    bash -c "SPIRA_BATCH_MAXPAR=2; $_block; printf '%s %s' \"\$_maxpar\" \"\$_maxpar_binding\""
 )"
 _maxpar_ov="${_r_ov%% *}"
 _binding_ov="${_r_ov##* }"
-[ "$_maxpar_ov" = "2" ] && ok "A5: override=2 within mem_bound=4 → maxpar 2" \
-                         || bad "A5: override=2 within mem_bound=4 → maxpar 2" "got '$_maxpar_ov'"
-[ "$_binding_ov" = "override" ] && ok "A6: binding=override when request within memory" \
-                                  || bad "A6: binding=override when request within memory" "got '$_binding_ov'"
+[ "$_maxpar_ov" = "2" ] && ok "A5: SPIRA_BATCH_MAXPAR=2 ceiling below hardware=16 → maxpar 2" \
+                         || bad "A5: SPIRA_BATCH_MAXPAR=2 ceiling below hardware=16 → maxpar 2" "got '$_maxpar_ov'"
+[ "$_binding_ov" = "override" ] && ok "A6: binding=override when ceiling below hardware" \
+                                  || bad "A6: binding=override when ceiling below hardware" "got '$_binding_ov'"
 
-# Case 4: SPIRA_BATCH_MAXPAR=99 with 3GiB avail (mem_bound=4) → capped to mem_bound
+# Case 4: SPIRA_BATCH_MAXPAR=99 (above hardware-bound), nproc=16, 3GiB avail (hardware=memory-bound 4) → hardware wins
 _r_cap="$(
     PATH="$FAKE_BIN:$PATH" \
     SPIRA_BATCH_MEM_AVAIL_MIB=3072 \
@@ -107,10 +106,10 @@ _r_cap="$(
 )"
 _maxpar_cap="${_r_cap%% *}"
 _binding_cap="${_r_cap##* }"
-[ "$_maxpar_cap" = "4" ] && ok "A7: override=99 capped to mem_bound=4 on 3GiB box" \
-                          || bad "A7: override=99 capped to mem_bound=4 on 3GiB box" "got '$_maxpar_cap'"
-[ "$_binding_cap" = "memory-capped" ] && ok "A8: binding=memory-capped when override exceeds mem_bound" \
-                                        || bad "A8: binding=memory-capped when override exceeds mem_bound" "got '$_binding_cap'"
+[ "$_maxpar_cap" = "4" ] && ok "A7: SPIRA_BATCH_MAXPAR=99 above hardware-bound=4 → hardware wins at 4" \
+                          || bad "A7: SPIRA_BATCH_MAXPAR=99 above hardware-bound=4 → hardware wins at 4" "got '$_maxpar_cap'"
+[ "$_binding_cap" = "memory" ] && ok "A8: binding=memory when override above hardware" \
+                                 || bad "A8: binding=memory when override above hardware" "got '$_binding_cap'"
 
 # ===========================================================================
 # PART B: new keys are accepted by conf.sh's allowlist
