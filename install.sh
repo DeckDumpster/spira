@@ -487,7 +487,7 @@ else
                 || { [ -n "$_dolt_bg_pid" ] && kill "$_dolt_bg_pid" 2>/dev/null || true
                      _phase_fail "database" "bd init (server mode) failed"; }
             git -C "$SPIRA_DB" config beads.role maintainer 2>/dev/null || true
-            unset _dolt_port _dolt_yaml _dolt_dbname _dolt_wait
+            unset _dolt_yaml _dolt_dbname _dolt_wait
         else
             ( cd "$SPIRA_DB" && "$SPIRA_BD" init ) || _phase_fail "database" "bd init failed"
             git -C "$SPIRA_DB" config beads.role maintainer 2>/dev/null || true
@@ -505,7 +505,15 @@ if [ -d "${SPIRA_DB:-}/.beads" ] || [ "$_dry" = 0 ]; then
         "$SPIRA_HOME/seed.sh" 2>&1 | sed 's/^/  /'
         _seed_rc=${PIPESTATUS[0]}
         [ -n "$_dolt_bg_pid" ] && { kill "$_dolt_bg_pid" 2>/dev/null || true; }
-        unset _dolt_bg_pid
+        if [ -n "${_dolt_bg_pid:-}" ] && [ -n "${_dolt_port:-}" ]; then
+            _pw=0; _pcw="${SPIRA_INSTALL_DOLT_CLOSE_WAIT:-30}"
+            while [ "$_pw" -lt "$_pcw" ] && \
+                  (echo -n "" >/dev/tcp/127.0.0.1/"$_dolt_port") 2>/dev/null; do
+                sleep 1; _pw=$((_pw+1))
+            done
+            unset _pw _pcw
+        fi
+        unset _dolt_bg_pid _dolt_port
         [ "$_seed_rc" != 0 ] && [ "$_db_fresh" = 1 ] && \
             _phase_fail "database" "seed.sh failed — statutes not seeded on fresh database"
         unset _seed_rc
@@ -598,6 +606,27 @@ else
     bash "$HERE/systemd/install.sh" "${_unit_args[@]}" \
         || _phase_fail "units" "systemd/install.sh exited non-zero"
     _changes=$((_changes+1))
+    if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
+        _bp=3307
+        if [ -f "$SPIRA_DOLT_DATA/dolt-server.yaml" ]; then
+            _p="$(grep -E '^\s*port\s*:' "$SPIRA_DOLT_DATA/dolt-server.yaml" 2>/dev/null \
+                | head -1 | sed 's/.*:\s*//' | tr -d ' ')"
+            [ -n "$_p" ] && [ "$_p" -gt 0 ] 2>/dev/null && _bp="$_p"
+            unset _p
+        fi
+        phase_info "waiting for dolt-beads.service on port $_bp"
+        _pw=0; _pwt="${SPIRA_INSTALL_DOLT_WAIT:-60}"
+        while [ "$_pw" -lt "$_pwt" ]; do
+            (echo -n "" >/dev/tcp/127.0.0.1/"$_bp") 2>/dev/null && break
+            sleep 1; _pw=$((_pw+1))
+        done
+        if ! (echo -n "" >/dev/tcp/127.0.0.1/"$_bp") 2>/dev/null; then
+            _phase_fail "units" \
+                "dolt-beads.service is active but not listening on $_bp after ${_pwt}s"
+        fi
+        phase_info "dolt-beads.service listening on port $_bp"
+        unset _bp _pw _pwt
+    fi
 fi
 
 # Linger — enable so user units survive session logout.

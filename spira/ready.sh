@@ -108,8 +108,25 @@ if ! [ -d "$SPIRA_DB/.beads" ]; then
     FAIL "database absent — no .beads at $SPIRA_DB" \
          "Create it: bd -C $SPIRA_DB init"
 elif ! _db_out="$(timeout 30 "$SPIRA_BD" -C "$SPIRA_DB" list --limit 0 --json 2>&1)"; then
-    FAIL "database unreadable — $SPIRA_DB" \
-         "$(printf '%s' "$_db_out" | head -2)"
+    _rdy_dp=""
+    if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
+        _rdy_dp=3307
+        if [ -f "$SPIRA_DOLT_DATA/dolt-server.yaml" ]; then
+            _p="$(grep -E '^\s*port\s*:' "$SPIRA_DOLT_DATA/dolt-server.yaml" 2>/dev/null \
+                | head -1 | sed 's/.*:\s*//' | tr -d ' ')"
+            [ -n "$_p" ] && [ "$_p" -gt 0 ] 2>/dev/null && _rdy_dp="$_p"
+            unset _p
+        fi
+    fi
+    if [ -n "$_rdy_dp" ] && \
+           "$SC" --user is-active --quiet dolt-beads.service 2>/dev/null && \
+           ! (echo -n "" >/dev/tcp/127.0.0.1/"$_rdy_dp") 2>/dev/null; then
+        UNKN "database: dolt-beads.service active, port $_rdy_dp not yet open — server is starting"
+    else
+        FAIL "database unreadable — $SPIRA_DB" \
+             "$(printf '%s' "$_db_out" | head -2)"
+    fi
+    unset _rdy_dp
 else
     _bead_count="$(printf '%s\n' "$_db_out" \
         | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null \
