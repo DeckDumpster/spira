@@ -290,13 +290,11 @@ nowant "clean: does not mention 'is a git checkout'" "is a git checkout" "$_clea
 echo
 echo "CONFIGURE_PROD without conf.sh fires the guard"
 # ===========================================================================
-# sp-egqj0: CONFIGURE_PROD must be the harness subdir (contains conf.sh), not
-# the clone root.
 NO_CONF_DIR="$TMP/no-conf"
 mkdir -p "$NO_CONF_DIR"
 
-_no_conf_out="$(run_install prod -- "CONFIGURE_PROD=$NO_CONF_DIR" SPIRA_INSTALL_CONFLICT_CONSIDERED=1 2>&1)" || true
-_no_conf_rc=$?
+_no_conf_rc=0
+_no_conf_out="$(run_install prod -- "CONFIGURE_PROD=$NO_CONF_DIR" SPIRA_INSTALL_CONFLICT_CONSIDERED=1 2>&1)" || _no_conf_rc=$?
 [ "$_no_conf_rc" -ne 0 ] \
     && ok "CONFIGURE_PROD without conf.sh: exits non-zero" \
     || bad "CONFIGURE_PROD without conf.sh: exits non-zero" "exit 0 (expected non-zero)"
