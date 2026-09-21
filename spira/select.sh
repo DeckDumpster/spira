@@ -142,7 +142,7 @@ _trap_report() {
     [ -n "$REPO" ] || { set +f; return 0; }
     _rp_allpat=""
     for _rp_s in $_all; do
-        _rp_cov="$(suite_covers_of "$SUITE_DIR/$_rp_s")"
+        _rp_cov="${_COV[$_rp_s]-}"
         [ -z "$_rp_cov" ] && continue
         _rp_allpat="$_rp_allpat $_rp_cov"
     done
@@ -244,6 +244,10 @@ for _f in "$SUITE_DIR"/test-*.sh; do
     [ -r "$_f" ] || continue
     _all="$_all $(basename "$_f")"
 done
+# Build covers map once — suite_covers_of forks a sed, and calling it inside
+# the per-file loop costs (corpus × diff) forks per certification.
+declare -A _COV
+for _s in $_all; do _COV[$_s]="$(suite_covers_of "$SUITE_DIR/$_s")"; done
 _report_ready=1
 
 _write_mode() {   # _write_mode diff|all
@@ -307,7 +311,7 @@ if [ -z "$_cv_changed" ]; then
     # No changed files: only always-run (no # covers:) suites.
     _write_mode diff
     for _s in $_all; do
-        _cov="$(suite_covers_of "$SUITE_DIR/$_s")"
+        _cov="${_COV[$_s]-}"
         [ -z "$_cov" ] && printf '%s\n' "$_s"
     done
     exit 0
@@ -339,7 +343,7 @@ _cv_changed="$_cv_live"
 # Collect always-run (no # covers:) suites.
 _cv_nocov=""
 for _s in $_all; do
-    _cov="$(suite_covers_of "$SUITE_DIR/$_s")"
+    _cov="${_COV[$_s]-}"
     [ -z "$_cov" ] && _cv_nocov="$_cv_nocov $_s"
 done
 
@@ -364,7 +368,7 @@ for _cv_f in $_cv_changed; do
     _cv_fn_pairs=""  # "suite:funcname" for function-level patterns on this file
     set -f
     for _s in $_all; do
-        _cov="$(suite_covers_of "$SUITE_DIR/$_s")"
+        _cov="${_COV[$_s]-}"
         [ -z "$_cov" ] && continue
         for _cv_pat in $_cov; do
             case "$_cv_pat" in
