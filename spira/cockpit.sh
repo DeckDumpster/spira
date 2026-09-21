@@ -2112,7 +2112,7 @@ livelock_keys() {
         echo "SP_UNFILED_FOLLOW=?"
         echo "SP_UNFLFLW_N=?"
     else
-        local _ic_n=0 _uf_n=0
+        local _ic_n=0 _uf_n=0 _alw_n=0
         if [ -n "$_ic_out" ]; then
             while IFS= read -r _line; do
                 [ -n "$_line" ] || continue
@@ -2129,6 +2129,12 @@ livelock_keys() {
                     _uf_n=$((_uf_n+1))
                     [ "$_uf_n" -ge 20 ] && true
                     ;;
+                ALLOWED-IC\ *)
+                    _line="$(printf '%s' "$_line" | tr -c 'A-Za-z0-9 ._/:,()#+-' ' ' | tr -s ' ')"
+                    printf 'SP_ALLOWEDIC%d=%s\n' "$_alw_n" "${_line:0:120}"
+                    _alw_n=$((_alw_n+1))
+                    [ "$_alw_n" -ge 20 ] && true
+                    ;;
                 esac
             done <<< "$_ic_out"
         fi
@@ -2136,6 +2142,8 @@ livelock_keys() {
         echo "SP_INVCLSD_N=$_ic_n"
         echo "SP_UNFILED_FOLLOW=$_uf_n"
         echo "SP_UNFLFLW_N=$_uf_n"
+        echo "SP_ALLOWED_IC=$_alw_n"
+        echo "SP_ALLOWEDIC_N=$_alw_n"
     fi
 }
 
