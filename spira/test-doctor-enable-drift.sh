@@ -62,10 +62,11 @@ FAKE_HOME="$TMP/home"
 mkdir -p "$FAKE_HOME/.config/systemd/user"
 
 # write_sc <path> <disabled-pattern>
-# Write a fake systemctl that returns "enabled" for is-enabled calls except when the unit
-# name matches <disabled-pattern>, in which case it returns "disabled". Pass the empty
-# string for <disabled-pattern> to make all units return "enabled". Pass "SILENT" to make
-# is-enabled produce no output at all (the fail-closed test).
+# Write a fake systemctl that returns "running" for is-system-running and "enabled" for
+# is-enabled calls except when the unit name matches <disabled-pattern>, in which case it
+# returns "disabled". Pass the empty string for <disabled-pattern> to make all units return
+# "enabled". Pass "SILENT" to make all calls produce no output (the fail-closed test:
+# simulates an unreachable user manager).
 write_sc() {
     local path="$1" disabled_pat="${2:-}"
     cat > "$path" <<MOCK
@@ -76,11 +77,16 @@ case "\$*" in
     *"list-unit-files"*)     true ;;
     *"list-units"*)          true ;;
     *"list-timers"*)         true ;;
+MOCK
+    if [ "$disabled_pat" != "SILENT" ]; then
+        printf '    *"is-system-running"*) printf "running\\n"; exit 0 ;;\n' >> "$path"
+    fi
+    cat >> "$path" <<MOCK2
     *"is-enabled"*)
         case "\$*" in
-MOCK
+MOCK2
     if [ "$disabled_pat" = "SILENT" ]; then
-        # Produce no output — the fail-closed test.
+        # Produce no output for all calls — simulates an unreachable user manager.
         printf '            *) exit 0 ;;\n' >> "$path"
     elif [ "$disabled_pat" = "NOTFOUND" ]; then
         # Return "not-found" for every unit — simulates a fresh install with no unit files.
@@ -92,12 +98,12 @@ MOCK
     else
         printf '            *) printf "enabled\\n"; exit 0 ;;\n' >> "$path"
     fi
-    cat >> "$path" <<'MOCK'
+    cat >> "$path" <<'MOCK3'
         esac
         ;;
 esac
 exit 0
-MOCK
+MOCK3
     chmod +x "$path"
 }
 
@@ -148,6 +154,7 @@ case "$*" in
     *"list-unit-files"*)     true ;;
     *"list-units"*)          true ;;
     *"list-timers"*)         true ;;
+    *"is-system-running"*)   printf 'running\n'; exit 0 ;;
     *"is-enabled"*)
         case "$*" in
             *"spira-ops-prod.timer"*)      printf 'disabled\n'; exit 1 ;;
@@ -224,19 +231,51 @@ nowant "clean: no FAIL line"      "  FAIL  " \
 
 # ===========================================================================
 echo
-echo "fail-closed — systemctl returning no output is a FAIL, not a clean pass:"
+echo "manager-unreachable — systemctl exits 1 on every call: exactly one FAIL:"
+# ===========================================================================
+# The manager probe sees empty stdout → one FAIL naming the cause; the per-unit
+# loop is skipped so 26 units do not produce 26 identical fatals.
+# Install a unit file so the pre-probe gate (no units installed → skip) does not
+# suppress the check; fail-closed and silent-no-units run after this in sequence.
+touch "$FAKE_HOME/.config/systemd/user/spira-ops-prod.timer"
+cat > "$BIN/sc-exits1" <<'MOCK'
+#!/usr/bin/env bash
+exit 1
+MOCK
+chmod +x "$BIN/sc-exits1"
+exits1_out="$(run_doctor "$BIN/sc-exits1")"
+want   "manager-unreachable: FAIL present" \
+    "  FAIL  " "$exits1_out"
+want   "manager-unreachable: mentions manager unreachable" \
+    "user manager unreachable" "$exits1_out"
+want   "manager-unreachable: mentions XDG_RUNTIME_DIR" \
+    "XDG_RUNTIME_DIR" "$exits1_out"
+want   "manager-unreachable: mentions DBUS_SESSION_BUS_ADDRESS" \
+    "DBUS_SESSION_BUS_ADDRESS" "$exits1_out"
+nowant "manager-unreachable: no OK for enabled units" \
+    "ENABLE units are enabled" "$exits1_out"
+_exits1_en_section="$(printf '%s\n' "$exits1_out" | awk '/^enabled units$/{p=1;next} p && /^[a-z]/{exit} p' || true)"
+_exits1_fail_count="$(printf '%s\n' "$_exits1_en_section" | grep -c '  FAIL  ' || true)"
+[ "$_exits1_fail_count" -eq 1 ] \
+    && ok "manager-unreachable: exactly one FAIL in enabled-units section (count=$_exits1_fail_count)" \
+    || bad "manager-unreachable: expected exactly one FAIL in enabled-units section" "got $_exits1_fail_count"
+
+# pair: a stub that answers enabled for every unit and a reachable manager → no FAIL
+# (covered by the clean case above)
+
+# ===========================================================================
+echo
+echo "fail-closed — systemctl producing no output is a FAIL, not a clean pass:"
 # ===========================================================================
 # A probe that says clean when it cannot see the state is the silence that hides
-# the outage (law-alerts-must-be-actionable). The fail-closed property applies
-# when a unit file IS installed — an installed unit whose state cannot be queried
-# is the outage we need to catch.
-touch "$FAKE_HOME/.config/systemd/user/spira-ops-prod.timer"
+# the outage (law-alerts-must-be-actionable). SILENT mode exits 0 with no output
+# for all calls, which also simulates an unreachable manager.
 write_sc "$BIN/sc-silent" "SILENT"
 silent_out="$(run_doctor "$BIN/sc-silent")"
 want   "fail-closed: FAIL when systemctl returns nothing for installed unit" \
     "  FAIL  " "$silent_out"
-want   "fail-closed: error message mentions enablement state" \
-    "cannot verify enablement state" "$silent_out"
+want   "fail-closed: error message mentions manager unreachable" \
+    "user manager unreachable" "$silent_out"
 nowant "fail-closed: no OK for enabled units" \
     "ENABLE units are enabled" "$silent_out"
 rm -f "$FAKE_HOME/.config/systemd/user/spira-ops-prod.timer"
