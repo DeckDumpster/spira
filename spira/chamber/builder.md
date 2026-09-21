@@ -43,6 +43,8 @@ Your job is to make the change and the covering suites green, and to say what yo
 you cannot finish tells nobody anything; a bead closed with its own suites green and its
 verdict left to the landing pass tells everyone something.
 
+**You are headless: this session has no notification channel. Ending your turn ends the session; nothing will wake you.** Never background a command and yield to wait for the result — the session terminates, its background tasks are killed, and the bead is left in_progress with an attempt charged. Commit before any long verification step.
+
 **Run them in the foreground.** Never start a suite in the background and poll it in a
 `sleep`/`until` loop: each iteration is a model turn carrying your entire context, and that
 polling alone was a fifth of all tool time.

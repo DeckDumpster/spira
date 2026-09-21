@@ -2047,6 +2047,40 @@ outcome_charges() {      # outcome_charges <outcome> -> rc 0 when it may charge 
     case "${1:-}" in unlanded) return 0 ;; *) return 1 ;; esac
 }
 
+# session_yield_headless <logfile> -> 0 if the session's last turn ended waiting for a
+# background task notification. In headless mode there is no such channel: the session
+# terminates and background tasks are killed, leaving rc=0 with no diagnostic signal.
+session_yield_headless() {
+    local f="${1:-}"
+    [ -r "$f" ] || return 1
+    attempt_trace "$f" 50000 2>/dev/null | python3 -c '
+import sys, json, re
+PATTERNS = [
+    r"background task notification",
+    r"background.{0,30}(wait|waiting|woken|wake|notification)",
+    r"(wait|waiting).{0,40}background.{0,30}task",
+    r"will be woken",
+    r"run_in_background",
+]
+last_text = ""
+for line in sys.stdin:
+    line = line.strip()
+    if not line.startswith("{"): continue
+    try: e = json.loads(line)
+    except Exception: continue
+    if e.get("type") != "assistant": continue
+    for c in (e.get("message", {}) or {}).get("content", []) or []:
+        if c.get("type") == "text" and c.get("text", "").strip():
+            last_text = c["text"]
+if not last_text:
+    sys.exit(1)
+for p in PATTERNS:
+    if re.search(p, last_text, re.IGNORECASE | re.DOTALL):
+        sys.exit(0)
+sys.exit(1)
+' 2>/dev/null
+}
+
 # --------------------------------------------------------------------------------------
 # session_result_fields <trace-file> -> one line of `key=value` pairs saying what the
 # attempt COST, ready to append to a ledger line:
