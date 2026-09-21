@@ -47,6 +47,12 @@ git -C "$REPO" fetch -q origin
 
 cp "$HERE"/*.sh "$SH/"
 cp -r "$HERE/chamber" "$SH/"
+
+# Repo-map must exist before any bead.sh call; bdq validates repo: labels against it.
+cat > "$SH/repo-map" <<RMAP
+$REPONAME | $REPO | queue | origin/main | | |
+RMAP
+
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
 GATE_COUNT="$TMP/gate-count"; : > "$GATE_COUNT"
@@ -254,10 +260,6 @@ git -C "$REPO" worktree add -q -b "spira/sp-b-express" "$wt_exp" main
 printf 'express\n' > "$wt_exp/sp-b-express.txt"
 git -C "$wt_exp" add -A
 git -C "$wt_exp" commit -q -m "sp-b-express: work"
-
-cat > "$SH/repo-map" <<RMAP
-$REPONAME | $REPO | queue | origin/main | | |
-RMAP
 
 landing_run() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
