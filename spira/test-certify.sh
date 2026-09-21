@@ -241,28 +241,27 @@ is   "push-mode remote actually moved"  "yes"  "$([ "$push_before" != "$push_aft
 write_map  # restore queue-only map
 GATE_SLEEP=3
 stub gate.sh '
+printf "%s %s\n" "$(date +%s)" "$1" >> "'"$GATE_COUNT"'"
 sleep '"$GATE_SLEEP"'
-printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
 printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
 exit 0'
 
 stub queue.sh 'exit 0'
 rm -f "$GATE_COUNT"
 seed; branch sp-par-a; branch sp-par-b
-t0=$(date +%s)
 SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_CERTIFY_PAR=2 \
         bash "$SH/landing.sh" > /dev/null 2>&1
-t1=$(date +%s)
-elapsed=$(( t1 - t0 ))
-printf '  debug: gate calls (%s): [%s]\n' "$(gate_n)" "$(cat "$GATE_COUNT" 2>/dev/null | tr '\n' ' ')"
 is "gate called for both branches with par=2" "2" "$(gate_n)"
-[ "$elapsed" -lt $(( GATE_SLEEP * 2 - 1 )) ] \
-    && ok "both branches certified in parallel (~${elapsed}s < $((GATE_SLEEP*2-1))s)" \
-    || bad "both branches certified in parallel" "${elapsed}s >= $((GATE_SLEEP*2-1))s — serial"
+_t0=$(awk 'NR==1{print $1}' "$GATE_COUNT" 2>/dev/null || echo 0)
+_t1=$(awk 'END{print $1}' "$GATE_COUNT" 2>/dev/null || echo 0)
+_spread=$(( _t1 - _t0 ))
+[ "$_spread" -le 1 ] \
+    && ok "both branches certified in parallel (start times ${_spread}s apart)" \
+    || bad "both branches certified in parallel" "gates started ${_spread}s apart — serial"
 case "$(landstate sp-par-a)" in CERTIFIED*) ok "sp-par-a certified" ;; *) bad "sp-par-a certified" "$(landstate sp-par-a)" ;; esac
 case "$(landstate sp-par-b)" in CERTIFIED*) ok "sp-par-b certified" ;; *) bad "sp-par-b certified" "$(landstate sp-par-b)" ;; esac
 
