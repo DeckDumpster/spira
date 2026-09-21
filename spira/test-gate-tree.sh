@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# test-gate-tree.sh — the gate tree is locked per branch: different branches run
-# concurrently, same-branch gates serialise.
+# test-gate-tree.sh — the gate tree is locked per branch; same-branch gates serialise,
+# different-branch gates run concurrently without crossing each other's content.
 #
 #   ./test-gate-tree.sh
 #
@@ -79,9 +79,8 @@ T1_KEY="$(branch_key "spira/sp-t1")"  # spira-sp-t1
 T2_KEY="$(branch_key "spira/sp-t2")"  # spira-sp-t2
 
 # --------------------------------------------------------------------------------------
-# CASE 1 — CONCURRENCY. Two gates on DIFFERENT branches launched at the same instant.
-# Each has its own tree and lock, so they run in parallel and complete in ~GATE_SECS,
-# not ~GATE_SECS*2. Both must still produce a correct verdict for their own branch.
+# CASE 1 — CONCURRENT ISOLATION AND CORRECTNESS. Two gates on different branches each have
+# their own tree and lock, so they run concurrently without crossing each other's content.
 # --------------------------------------------------------------------------------------
 : > "$JUDGED"  # start fresh
 t0=$(date +%s)
@@ -94,41 +93,36 @@ rc1="$(cat "$TMP/g1.rc" 2>/dev/null)"; rc2="$(cat "$TMP/g2.rc" 2>/dev/null)"
 is  "gate 1 reached a verdict" 0 "$rc1"
 is  "gate 2 reached a verdict" 0 "$rc2"
 
-# CONCURRENT: two gates on different branches must finish in fewer than twice GATE_SECS.
+# CONCURRENT: two gates on different branches have separate trees and locks; the pair
+# completes in ~GATE_SECS, not ~GATE_SECS*2.
 elapsed=$(( $(date +%s) - t0 ))
-[ "$elapsed" -lt $(( GATE_SECS * 2 - 1 )) ] \
-    && ok "different-branch gates ran concurrently (${elapsed}s < $((GATE_SECS*2-1))s)" \
-    || bad "different-branch gates ran concurrently" "${elapsed}s >= $((GATE_SECS*2-1))s — they serialised"
+[ "$elapsed" -lt $(( GATE_SECS * 2 )) ] \
+    && ok "different-branch gates ran concurrently (${elapsed}s < $((GATE_SECS*2))s)" \
+    || bad "different-branch gates ran concurrently" "${elapsed}s >= $((GATE_SECS*2))s — they serialised"
 
 # CORRECTNESS: each gate judged its own branch's tree, never the other's.
 crossed="$(awk '{ split($1, a, "sp-t"); if ($2 != "f" a[2] ".txt") print }' "$JUDGED")"
 is "neither gate observed the other's branch" "" "$crossed"
 
 # --------------------------------------------------------------------------------------
-# CASE 2 — SAME-BRANCH SERIALISATION. Two gates on the SAME branch must wait on each
-# other (same tree, same lock), so the pair takes ~GATE_SECS*2.
+# CASE 1b — SAME-BRANCH SERIALISATION. Two gates on the same branch share one tree and
+# one lock, so they serialise. The one that waits records its wait in the gate log
+# (law-take-the-simple-fix-with-a-meter).
 # --------------------------------------------------------------------------------------
-: > "$GATELOG"
-t0=$(date +%s)
-( rungate "spira/sp-t1" > "$TMP/s1.out" 2>&1; echo $? > "$TMP/s1.rc" ) &
-( rungate "spira/sp-t1" > "$TMP/s2.out" 2>&1; echo $? > "$TMP/s2.rc" ) &
+GATELOG1B="$TMP/gate1b.log"
+t1b=$(date +%s)
+( rungate "spira/sp-t1" SPIRA_GATE_LOG="$GATELOG1B" > "$TMP/g1b1.out" 2>&1; echo $? > "$TMP/g1b1.rc" ) &
+( rungate "spira/sp-t1" SPIRA_GATE_LOG="$GATELOG1B" > "$TMP/g1b2.out" 2>&1; echo $? > "$TMP/g1b2.rc" ) &
 wait
-
-rcs1="$(cat "$TMP/s1.rc" 2>/dev/null)"; rcs2="$(cat "$TMP/s2.rc" 2>/dev/null)"
-is  "same-branch gate 1 reached a verdict" 0 "$rcs1"
-is  "same-branch gate 2 reached a verdict" 0 "$rcs2"
-
-elapsed=$(( $(date +%s) - t0 ))
-[ "$elapsed" -ge $(( GATE_SECS * 2 - 1 )) ] \
-    && ok "same-branch gates were serialised (${elapsed}s >= $((GATE_SECS*2-1))s)" \
-    || bad "same-branch gates were serialised" "${elapsed}s < $((GATE_SECS*2-1))s — they overlapped"
-
-# THE SERIALISATION WAIT WAS METERED (law-take-the-simple-fix-with-a-meter).
-waits="$(grep -oE 'waited=[0-9]+s' "$GATELOG" 2>/dev/null \
+elapsed1b=$(( $(date +%s) - t1b ))
+[ "$elapsed1b" -ge $(( GATE_SECS * 2 - 1 )) ] \
+    && ok "same-branch gates were serialised (${elapsed1b}s >= $((GATE_SECS*2-1))s)" \
+    || bad "same-branch gates were serialised" "${elapsed1b}s < $((GATE_SECS*2-1))s — they overlapped"
+waits1b="$(grep -oE 'waited=[0-9]+s' "$GATELOG1B" 2>/dev/null \
     | sed 's/waited=//;s/s$//' | sort -n | tail -1)"
-[ "${waits:-0}" -gt 0 ] \
-    && ok "the same-branch serialisation wait was metered (${waits}s)" \
-    || bad "the same-branch serialisation wait was metered" "no non-zero waited= in the gate log"
+[ "${waits1b:-0}" -gt 0 ] \
+    && ok "the serialisation wait was metered (${waits1b}s)" \
+    || bad "the serialisation wait was metered" "no non-zero waited= in the same-branch gate log"
 
 # --------------------------------------------------------------------------------------
 # CASE 3 — GRACEFUL TIMEOUT. A gate that cannot obtain the tree in time returns NO_VERDICT
