@@ -1857,6 +1857,26 @@ else
 fi
 log "$FAYTH: $BEAD_ID status=$st committed=$committed superseded=$superseded delivers=${delivers:-none}"
 
+# EVICTION RACE. A batch eviction writes landstate=RED/EJECTED and calls bead_reopen. An
+# in-flight aeon does not see the reopen — it closes the bead after the reopen succeeds,
+# all other exit guards pass (the commit is real), and the bead lands closed with a RED
+# landstate. No queue mechanism retrieves it: queue_certified_list selects on CERTIFIED,
+# the batch builder ignores closed beads, and bd list hides closed by default. Reopen here
+# when the combination closed+committed+RED/EJECTED is seen, so the next session can
+# recertify and re-enter the queue.
+if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ "$superseded" != 1 ]; then
+    _evict_ls="$(land_state "$BEAD_ID" 2>/dev/null)" || _evict_ls=""
+    _evict_state="${_evict_ls%% *}"
+    if [ "$_evict_state" = "RED" ] || [ "$_evict_state" = "EJECTED" ]; then
+        bead_reopen "$BEAD_ID" eviction-race "Reopened by aeon.sh: bead closed while landstate is $_evict_state — the branch was evicted from the batch while this session was in flight. The close is valid but the work cannot re-enter the queue while the bead is closed. Recertify the branch to re-enter the merge queue."
+        log "$FAYTH: $BEAD_ID REOPENED — closed with landstate=$_evict_state (eviction race)"
+        st="open"
+        REQUEUE_CAUSE="eviction-race"
+        REQUEUE_WHY="Batch evicted the branch while this aeon was in flight; the bead was re-closed on a stale pass. Recertify the branch."
+    fi
+    unset _evict_ls _evict_state
+fi
+
 if [ "$st" = "closed" ] && [ "$committed" = "no" ] && [ "$superseded" != 1 ]; then
     if [ -n "${delivers:-}" ]; then
         # VERIFY EACH DECLARED DELIVERABLE. An aeon that set delivers:TYPE labels must have
