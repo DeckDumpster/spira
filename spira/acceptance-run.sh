@@ -209,9 +209,10 @@ if [ "$_install_rc" -eq 0 ]; then
 fi
 
 # After install, verify ready.sh exits 0.
-_ready_out="$(bash "$HERE/ready.sh" 2>&1)" || true
-_ready_rc=$?
+_ready_rc=0
+_ready_out="$(bash "$HERE/ready.sh" 2>&1)" || _ready_rc=$?
 is0 "phase A: ready.sh exits 0 after install" "$_ready_rc"
+[ "$_ready_rc" -eq 0 ] || printf '%s\n' "$_ready_out"
 
 # ===========================================================================
 echo
