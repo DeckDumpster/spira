@@ -9,7 +9,7 @@
 # longer than SPIRA_QUEUE_CI_MAXSEC. A harness fault re-runs the workflow up to
 # SPIRA_QUEUE_INFRA_RETRIES times, then mails the operator. A red batch runs local
 # reproduction per member: reproducers are ejected, together-only reds halve the
-# batch, and unreproduced reds quarantine their suites and requeue.
+# batch, and unreproduced reds requeue without flake quarantine.
 #
 # covers: spira/verdict.sh spira/forge.sh spira/conf.sh spira/batch.sh
 
@@ -235,7 +235,6 @@ _q_attribute() {
     local members_str="${10}" remote="${11:-}" base_ref="${12:-}"
 
     local attr_start; attr_start="$(date +%s)"
-    local _batch_flaky=""
 
     # Parse red suite names from check-status output.
     local red_suites="" _line
@@ -302,8 +301,7 @@ _q_attribute() {
         elif [ "$_sm_rc" -eq 3 ]; then
             _sm_fs="$(cat "$_sm_flaky_f" 2>/dev/null || true)"
             rm -f "$_sm_flaky_f"
-            _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_sm_fs"
-            printf 'verdict %s: %s \xe2\x80\x94 flaky (red then green), survived: %s\n' "$name" "$_mid" "$_sm_fs"
+            printf 'verdict %s: %s — repro inconclusive (red-suite: not quarantined): %s\n' "$name" "$_mid" "$_sm_fs"
             survivors+=("$_mm")
         elif [ "$_sm_rc" -eq 2 ]; then
             rm -f "$_sm_flaky_f"
@@ -380,8 +378,7 @@ _q_attribute() {
                 elif [ "$_mrc" -eq 3 ]; then
                     local _fs; _fs="$(cat "$_eject_fail_dir/$_mid.flaky" 2>/dev/null || true)"
                     rm -f "$_eject_fail_dir/$_mid.flaky"
-                    _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
-                    printf 'verdict %s: %s — flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
+                    printf 'verdict %s: %s — repro inconclusive (red-suite: not quarantined): %s\n' "$name" "$_mid" "$_fs"
                 fi
             done
         fi
@@ -424,11 +421,10 @@ _q_attribute() {
                 elif [ "$_mrc" -eq 3 ]; then
                     local _fs; _fs="$(cat "$_eject_fail_dir/$_mid.flaky" 2>/dev/null || true)"
                     rm -f "$_eject_fail_dir/$_mid.flaky"
-                    _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
-                    printf 'verdict %s: %s \xe2\x80\x94 flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
+                    printf 'verdict %s: %s — repro inconclusive (red-suite: not quarantined): %s\n' "$name" "$_mid" "$_fs"
                 elif [ "$_mrc" -eq 2 ]; then
                     unjudged+=("$_mm")
-                    printf 'verdict %s: %s \xe2\x80\x94 harness fault (could not judge)\n' "$name" "$_mid"
+                    printf 'verdict %s: %s — harness fault (could not judge)\n' "$name" "$_mid"
                 fi
             done
         fi
@@ -451,11 +447,10 @@ _q_attribute() {
                 elif [ "$_mrc" -eq 3 ]; then
                     local _fs; _fs="$(cat "$_eject_fail_dir/$_mid.flaky" 2>/dev/null || true)"
                     rm -f "$_eject_fail_dir/$_mid.flaky"
-                    _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
-                    printf 'verdict %s: %s \xe2\x80\x94 flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
+                    printf 'verdict %s: %s — repro inconclusive (red-suite: not quarantined): %s\n' "$name" "$_mid" "$_fs"
                 elif [ "$_mrc" -eq 2 ]; then
                     unjudged+=("$_mm")
-                    printf 'verdict %s: %s \xe2\x80\x94 harness fault (could not judge)\n' "$name" "$_mid"
+                    printf 'verdict %s: %s — harness fault (could not judge)\n' "$name" "$_mid"
                 fi
             done
         fi
@@ -507,15 +502,6 @@ _q_attribute() {
                 case "$ejected_set" in *" $_mid "*) ;; *) survivors+=("$_mm") ;; esac
             done
         fi
-    fi
-
-    # Record flaky suites detected by local reproduction.
-    if [ -n "$_batch_flaky" ]; then
-        printf 'verdict %s: PR %s flaky_suites=%s\n' "$name" "$pr_n" "$_batch_flaky"
-        local _fls
-        for _fls in $(printf '%s\n' "$_batch_flaky" | tr ',' '\n'); do
-            bash "$HERE/suites.sh" observe-flake "$_fls" "${batch_head:-}" 2>/dev/null || true
-        done
     fi
 
     # Eject guilty members.
