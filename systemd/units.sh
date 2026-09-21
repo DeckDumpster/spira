@@ -79,6 +79,7 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
        spira-mail-tidy.service spira-mail-tidy.timer
        spira-gh-intake.service spira-gh-intake.timer
        spira-broker.service spira-broker.timer
+       spira-verdict.service spira-verdict.timer
        )
 # Only these get enabled. The .service behind a .timer is started BY the timer; enabling it
 # as well would also run it once at boot, outside the schedule.
@@ -97,7 +98,8 @@ _ENABLE_TMPL=(cockpit-ensure.timer concierge.timer spira-watch-refresh.timer
               spira-cockpit.service spira-loom.service
               spira-mail-tidy.timer
               spira-gh-intake.timer
-              spira-broker.timer)
+              spira-broker.timer
+              spira-verdict.timer)
 ENABLE=()
 for _t in "${_ENABLE_TMPL[@]}"; do ENABLE+=("$(inst_name "$_t")"); done
 unset _t _ENABLE_TMPL
