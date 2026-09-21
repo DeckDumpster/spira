@@ -1125,42 +1125,6 @@ fi
 land_drain
 
 # ======================================================================================
-# CHECK 6b — the Sending. Send the branch and worktree of every bead whose work is now an
-# ancestor of its repository's base.
-#
-# THIS STILL RUNS INSIDE THE PASS, and it may run while a landing is in flight. That is safe
-# by the same predicate that makes the two separate checks: the Sending sends only branches
-# ALREADY an ancestor of the base, and those are exactly the branches landing.sh skips, so
-# the two never hold the same ref. The one interleaving that looks alarming — landing pushes
-# a branch and this sends it in the same minute — is the intended path arriving a pass early.
-#
-# This is `gt convoy land`'s worktree cleanup, scoped to branches,
-# and it is a separate check from CHECK 6 on purpose: a branch also arrives at "landed" by
-# a hand merge, by an earlier pass whose send was interrupted, or by a send that a locked
-# worktree refused, and a cleanup that only ever runs on the success path of one code path
-# leaks everywhere else. sending.sh judges by ancestry alone, never by bead status, so it
-# cannot be talked into deleting work by a database that is merely optimistic.
-# ======================================================================================
-sent="$("$SPIRA_HOME/sending.sh" 2>&1)"
-[ -n "$sent" ] && printf '%s\n' "$sent"
-n_sent="$(grep -c '^SENT' <<< "$sent" || true)"
-# ONE ACT PER BRANCH, NAMING IT, rather than one act carrying a count. "sent 2 landed
-# branch(es)" told the pane that something had been cleaned up and withheld the only part a
-# reader can act on — WHICH branch, in WHICH repository. Two of these a pass is two rows, and
-# RECENT now has the height for them; a count is what a section with five rows had to settle
-# for. The id is last so the title lookup in the collector still finds it.
-if [ "${n_sent:-0}" -gt 0 ]; then
-    while read -r _ rid rrepo rbr _; do
-        [ -n "${rbr:-}" ] || continue
-        act "sent $rrepo $rbr $rid"
-    done < <(grep '^SENT' <<< "$sent")
-fi
-# A FAILED send is a leak that will repeat every pass, so it is worth a line in the log —
-# but it is NOT an action, because counting a failure as an action is precisely how the
-# starvation check was blinded in the first place.
-grep -q '^FAILED' <<< "$sent" && log "sending reported a branch it could not delete"
-
-# ======================================================================================
 # ======================================================================================
 # THE GOVERNOR runs before capacity is considered. It decides from /proc how much of this
 # machine Spira may use — the box also runs prod, two CI runners, all of Gas Town and
@@ -1289,11 +1253,59 @@ for f in $TASK_FAYTHS; do
         log "CHECK7 $f: not evaluated (pass budget exhausted)"
         continue
     fi
-    if summon_fayth "$f" "$pool"; then
+    # FILL EVERY FREE SLOT IN ONE PASS (hotfix, concierge 2026-09-21). One summon per
+    # fayth per pass meant four free slots took four passes of 6-12 minutes to fill.
+    # summon_fayth re-reads ready and live counts on every call, so it stops on its own
+    # when the partition or the fleet is full; the cap below is a belt for the braces.
+    _fill=0
+    while summon_fayth "$f" "$pool"; do
         act "summoned a $f aeon"
         [ -n "$pool" ] && pool=$(( pool > 0 ? pool - 1 : 0 ))
-    fi
+        _fill=$(( _fill + 1 ))
+        [ -n "$pool" ] && [ "$pool" -le 0 ] && break
+        [ "$_fill" -ge "${SPIRA_MAX_LIVE_AEONS:-4}" ] && break
+    done
 done
+
+# ======================================================================================
+# CHECK 6b MOVED BELOW CHECK 7 (hotfix, concierge 2026-09-21): the Sending walks ~110
+# branches with git and bd calls and took 4-7 minutes a pass while deleting nothing,
+# and the summon decision waited behind it. Summon first; reap after.
+# CHECK 6b — the Sending. Send the branch and worktree of every bead whose work is now an
+# ancestor of its repository's base.
+#
+# THIS STILL RUNS INSIDE THE PASS, and it may run while a landing is in flight. That is safe
+# by the same predicate that makes the two separate checks: the Sending sends only branches
+# ALREADY an ancestor of the base, and those are exactly the branches landing.sh skips, so
+# the two never hold the same ref. The one interleaving that looks alarming — landing pushes
+# a branch and this sends it in the same minute — is the intended path arriving a pass early.
+#
+# This is `gt convoy land`'s worktree cleanup, scoped to branches,
+# and it is a separate check from CHECK 6 on purpose: a branch also arrives at "landed" by
+# a hand merge, by an earlier pass whose send was interrupted, or by a send that a locked
+# worktree refused, and a cleanup that only ever runs on the success path of one code path
+# leaks everywhere else. sending.sh judges by ancestry alone, never by bead status, so it
+# cannot be talked into deleting work by a database that is merely optimistic.
+# ======================================================================================
+sent="$("$SPIRA_HOME/sending.sh" 2>&1)"
+[ -n "$sent" ] && printf '%s\n' "$sent"
+n_sent="$(grep -c '^SENT' <<< "$sent" || true)"
+# ONE ACT PER BRANCH, NAMING IT, rather than one act carrying a count. "sent 2 landed
+# branch(es)" told the pane that something had been cleaned up and withheld the only part a
+# reader can act on — WHICH branch, in WHICH repository. Two of these a pass is two rows, and
+# RECENT now has the height for them; a count is what a section with five rows had to settle
+# for. The id is last so the title lookup in the collector still finds it.
+if [ "${n_sent:-0}" -gt 0 ]; then
+    while read -r _ rid rrepo rbr _; do
+        [ -n "${rbr:-}" ] || continue
+        act "sent $rrepo $rbr $rid"
+    done < <(grep '^SENT' <<< "$sent")
+fi
+# A FAILED send is a leak that will repeat every pass, so it is worth a line in the log —
+# but it is NOT an action, because counting a failure as an action is precisely how the
+# starvation check was blinded in the first place.
+grep -q '^FAILED' <<< "$sent" && log "sending reported a branch it could not delete"
+
 
 # ======================================================================================
 # CHECK 7c — ready beads no persona can claim. Every partition reporting "nothing ready"
