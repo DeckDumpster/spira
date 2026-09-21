@@ -329,6 +329,14 @@ if [ -z "${SPIRA_INSTALL_CONFLICT_CONSIDERED:-}" ]; then
     unset _live_aeon_pid _gate_lock _conf_instance _conf_inst_val _our_unit
 fi  # end conflict checks
 
+# Refuse a CONFIGURE_PROD that does not contain conf.sh — must be the harness
+# subdir, not the clone root.
+if [ -n "${CONFIGURE_PROD:-}" ] && [ ! -f "${CONFIGURE_PROD}/conf.sh" ]; then
+    printf 'install: CONFIGURE_PROD (%s) does not contain conf.sh\n' "$CONFIGURE_PROD" >&2
+    printf 'install:   set CONFIGURE_PROD to the harness subdir: %s/spira\n' "$CONFIGURE_PROD" >&2
+    exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # PHASE 1 — CONFIG (configure.sh)
 # Never overwrites; idempotent.

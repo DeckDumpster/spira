@@ -224,5 +224,12 @@ else
 fi
 
 # ============================================================================
+echo
+echo "16. Phase A and D: CONFIGURE_PROD set to harness subdir (not clone root)"
+# ============================================================================
+want "phase A CONFIGURE_PROD includes /spira suffix" 'CONFIGURE_PROD=$_clone/spira'
+want "phase D CONFIGURE_PROD includes /spira suffix" 'CONFIGURE_PROD=$_aged_clone/spira'
+
+# ============================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
