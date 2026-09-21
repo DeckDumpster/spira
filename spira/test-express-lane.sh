@@ -12,7 +12,7 @@
 # PLUS: bead.sh file --express and bead.sh amend --express add the express label;
 # P0 beads receive it automatically.
 #
-# covers: spira/sentinel.sh spira/landing.sh spira/batch.sh spira/bead.sh spira/lib.sh spira/conf.sh
+# covers: spira/sentinel.sh spira/landing.sh spira/batch.sh spira/bead.sh spira/lib.sh spira/conf.sh spira/watchtower.sh spira/cockpit.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
