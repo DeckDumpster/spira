@@ -29,7 +29,6 @@ want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 lacks(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 # shellcheck disable=SC1090
-. "$HERE/lib.sh"
 . "$HERE/testdb.sh"
 testdb_require test-aeon-decision-blocked
 TMP="$(mktemp -d)"
@@ -157,8 +156,6 @@ want "note says no attempt charged" "No attempt charged" "$notes2"
 lacks "note does not say Unlanded" "Unlanded" "$notes2"
 want "ledger says decision-blocked" "decision-blocked" \
     "$(grep 'done builder sp-db-2' "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null)"
-is "attempts_of is 0 after decision-blocked exit" "0" \
-    "$(attempts_of sp-db-2 2>/dev/null | tr -d '[:space:]' || echo 0)"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

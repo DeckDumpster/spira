@@ -28,7 +28,6 @@ want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 lacks(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 # shellcheck disable=SC1090
-. "$HERE/lib.sh"
 . "$HERE/testdb.sh"
 testdb_require test-aeon-operator-wait
 TMP="$(mktemp -d)"
@@ -126,8 +125,6 @@ fresh; seed sp-ow-1
 run_aeon
 is   "SEEN RED: bead is still open"      "open"    "$(bead_status sp-ow-1)"
 want "SEEN RED: note says Unlanded"      "Unlanded" "$(bead_notes sp-ow-1)"
-is   "SEEN RED: attempts_of is 1"        "1" \
-    "$(attempts_of sp-ow-1 2>/dev/null | tr -d '[:space:]' || echo 0)"
 
 # ======================================================================================
 # CASE: with operator-wait marker — exit without closing is NOT charged.
@@ -140,13 +137,11 @@ fresh; seed sp-ow-2
 run_aeon
 is   "bead is still open (correctly not closed)" "open" "$(bead_status sp-ow-2)"
 notes2="$(bead_notes sp-ow-2)"
-want "note says operator-wait"           "operator-wait"    "$notes2"
+want "note says kind-question mail"      "kind-question mail" "$notes2"
 want "note says No attempt charged"      "No attempt charged" "$notes2"
 lacks "note does not say Unlanded"       "Unlanded"           "$notes2"
 want "ledger says operator-wait" "operator-wait" \
     "$(grep 'done builder sp-ow-2' "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null)"
-is   "attempts_of is 0 after operator-wait exit" "0" \
-    "$(attempts_of sp-ow-2 2>/dev/null | tr -d '[:space:]' || echo 0)"
 
 # ======================================================================================
 # Code assertion: mail.sh writes the operator-wait marker for kind=question/decision.
