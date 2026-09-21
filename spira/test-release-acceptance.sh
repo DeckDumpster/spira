@@ -204,5 +204,25 @@ wanta "acceptance-agent.sh commits probe" "acceptance-probe.txt"
 wanta "acceptance-agent.sh closes bead"   "close"
 
 # ============================================================================
+echo
+echo "15. ready.sh capture: correct pattern, not || true"
+# ============================================================================
+# The old code used _ready_out=$(bash ready.sh) || true; _ready_rc=$? which
+# always gave _ready_rc=0 because || true runs last (law-status-after-a-pipe-is-the-last-command).
+wantre "ready.sh: _ready_rc initialized before capture" \
+    '_ready_rc=0'
+wantre "ready.sh: exit captured with || _ready_rc=\\\$\\?" \
+    'bash.*ready\.sh.*\|\| _ready_rc=\$\?'
+wantre "ready.sh: _ready_out printed on failure" \
+    '_ready_rc.*-eq 0.*\|\|.*printf.*_ready_out'
+# The buggy || true must not appear on the same line as ready.sh.
+if grep -E 'ready\.sh.*\|\| true' "$SCRIPT" 2>/dev/null; then
+    bad "ready.sh capture does not use || true" \
+        "found ready.sh line with || true — exit code always 0"
+else
+    ok "ready.sh capture does not use || true"
+fi
+
+# ============================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
