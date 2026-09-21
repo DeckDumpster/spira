@@ -69,6 +69,7 @@ tmux set-option -p -t "$SESS" @cockpit health
 
 SPIRA_COCKPIT="$COCKPIT_DIR" \
 SPIRA_REPO="$TMP" \
+SPIRA_RUN="$TMP/.runtime" \
 SPIRA_HOME="$HERE" \
 SPIRA_CONF="$TMP/no.conf" \
 SPIRA_PANEL="$TMP/fake/nonexistent-panel" \
