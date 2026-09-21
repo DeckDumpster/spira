@@ -72,11 +72,18 @@ rungate() {              # rungate <branch> [VAR=VAL ...]
 
 echo "test-gate-tree.sh — per-branch trees: different branches concurrent, same branch serialised"
 
+# Compute the branch key gate.sh uses to name per-branch trees and lock files.
+# gate.sh: TREE_KEY="$(printf '%s' "$BR" | tr '/' '-' | tr -c 'A-Za-z0-9.-' '-')"
+branch_key() { printf '%s' "$1" | tr '/' '-' | tr -c 'A-Za-z0-9.-' '-'; }
+T1_KEY="$(branch_key "spira/sp-t1")"  # spira-sp-t1
+T2_KEY="$(branch_key "spira/sp-t2")"  # spira-sp-t2
+
 # --------------------------------------------------------------------------------------
 # CASE 1 — CONCURRENCY. Two gates on DIFFERENT branches launched at the same instant.
 # Each has its own tree and lock, so they run in parallel and complete in ~GATE_SECS,
 # not ~GATE_SECS*2. Both must still produce a correct verdict for their own branch.
 # --------------------------------------------------------------------------------------
+: > "$JUDGED"  # start fresh
 t0=$(date +%s)
 : > "$JUDGED"
 ( rungate "spira/sp-t1" > "$TMP/g1.out" 2>&1; echo $? > "$TMP/g1.rc" ) &
@@ -128,7 +135,6 @@ waits="$(grep -oE 'waited=[0-9]+s' "$GATELOG" 2>/dev/null \
 # (exit 75), not FAIL (exit 1). The branch is not charged for a queue — that is a machinery
 # fault, not a judgement about the work. The lock file path now includes the branch key.
 # --------------------------------------------------------------------------------------
-T1_KEY="$(printf '%s' "spira/sp-t1" | tr '/' '-' | tr -c 'A-Za-z0-9.-' '-')"
 LOCKFILE="$RUN/worktree/.gate.$(basename "$REPO").$T1_KEY.lock"
 exec 8>"$LOCKFILE"
 flock -x 8
