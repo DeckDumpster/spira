@@ -231,7 +231,7 @@ JSONL2
 
     is "SP_UNLANDED_N is 2 (both have branch, no landstate)" "2" "$(cval SP_UNLANDED_N)"
     is "SP_STRANDED_N is 1 (sp-old closed 200 min ago)"      "1" "$(cval SP_STRANDED_N)"
-    is "SP_AWAITING_N is 1 (sp-new closed 5 min ago)"        "1" "$(cval SP_AWAITING_N)"
+    is "SP_CERT_N is 1 (sp-new closed 5 min ago)"            "1" "$(cval SP_CERT_N)"
 fi
 
 echo
