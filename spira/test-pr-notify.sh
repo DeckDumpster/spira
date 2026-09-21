@@ -333,13 +333,14 @@ esac
 exit 0
 EOF
 printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/loginctl"
-chmod +x "$STUB/systemctl" "$STUB/loginctl"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/spira-supervise"
+chmod +x "$STUB/systemctl" "$STUB/loginctl" "$STUB/spira-supervise"
 IHOME="$TMP/ihome"; mkdir -p "$IHOME"
 : > "$TMP/systemctl.log"
 printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s\nSPIRA_PROD = %s\n' \
     "$RUN" "$ROOT/cockpit" "$HERE/watchers" "$STUB" "$HERE" > "$TMP/install.conf"
 env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" \
-    SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" \
+    SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" "SPIRA_SUPERVISE_BIN=$STUB/spira-supervise" \
     bash "$ROOT/systemd/install.sh" > "$TMP/install.out" 2>&1
 log="$(cat "$TMP/systemctl.log")"
 has "install ran"                        "$log" "daemon-reload"
