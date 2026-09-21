@@ -376,6 +376,55 @@ out="$(census_out)"
 want   "conflict+reopened: sp-reopen-rebase-conflict present" "1 sp-reopen-rebase-conflict" "$out"
 nowant "conflict+reopened: sp-reopen-unrecorded absent"       "sp-reopen-unrecorded" "$out"
 
+# ======================================================================================
+echo
+echo "sp-n3ijm: census_events_run_sql retries on transient failure (sp-census-transient-blind)"
+# ======================================================================================
+# POSITIVE CONTROL (law-absence-needs-a-positive-control): the unfixed function makes exactly
+# one bd call and returns 1 on the first failure. We verify attempt count = 3 on partial
+# failure; the unfixed tree would show 1. Verified against main before this commit.
+_fake_dir="$(mktemp -d)"
+_calls_file="$_fake_dir/calls"
+printf '0' > "$_calls_file"
+
+# Fake bd: fails first 2 calls with "i/o timeout" to stderr, succeeds on 3rd.
+# $_calls_file is expanded at write time; \$n etc. evaluate at runtime.
+cat > "$_fake_dir/bd" <<END
+#!/bin/sh
+n=\$(cat '$_calls_file' 2>/dev/null || printf 0)
+n=\$((n+1))
+printf '%d' "\$n" > '$_calls_file'
+if [ "\$n" -lt 3 ]; then
+    printf 'read tcp: i/o timeout\n' >&2
+    exit 1
+fi
+exit 0
+END
+chmod +x "$_fake_dir/bd"
+
+_retry_rc=0
+CENSUS_RETRY_DELAY_S=0 SPIRA_BD="$_fake_dir/bd" SPIRA_DB="$_fake_dir" \
+    census_events_run_sql >/dev/null 2>/dev/null || _retry_rc=$?
+is "retry: succeeds after 2 failures" "0" "$_retry_rc"
+is "retry: exactly 3 bd calls made" "3" "$(cat "$_calls_file")"
+
+# Fake bd that always fails — verify: non-zero return and driver error in stderr.
+cat > "$_fake_dir/bd_fail" <<'FAKEFAIL'
+#!/bin/sh
+printf 'read tcp: i/o timeout\n' >&2
+exit 1
+FAKEFAIL
+chmod +x "$_fake_dir/bd_fail"
+
+_fail_err=""
+_fail_rc=0
+_fail_err="$(CENSUS_RETRY_DELAY_S=0 SPIRA_BD="$_fake_dir/bd_fail" SPIRA_DB="$_fake_dir" \
+    census_events_run_sql 2>&1 >/dev/null)" || _fail_rc=$?
+is    "all-fail: returns non-zero" "1" "$_fail_rc"
+want  "all-fail: driver error in final message" "i/o timeout" "$_fail_err"
+
+rm -rf "$_fake_dir"
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

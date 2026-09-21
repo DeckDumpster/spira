@@ -1932,11 +1932,22 @@ _census_class_fold_map() {
 census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output; exits non-zero when unreachable
     local q
     q="$(_census_events_sql "${1:-}")"
-    local out bd_rc=0
-    out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>/dev/null)" || bd_rc=$?
-    [ "$bd_rc" -ne 0 ] && return 1
-    printf '%s\n' "$out"
-    return 0
+    local out bd_rc _errtmp _delay _attempt
+    _delay="${CENSUS_RETRY_DELAY_S:-2}"
+    _errtmp="$(mktemp)"
+    for _attempt in 1 2 3; do
+        bd_rc=0
+        out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>"$_errtmp")" || bd_rc=$?
+        if [ "$bd_rc" -eq 0 ]; then
+            rm -f "$_errtmp"
+            printf '%s\n' "$out"
+            return 0
+        fi
+        [ "$_attempt" -lt 3 ] && sleep "$_delay" && _delay=$((_delay * 2))
+    done
+    printf 'census_events_run_sql: query failed after 3 attempts: %s\n' "$(cat "$_errtmp")" >&2
+    rm -f "$_errtmp"
+    return 1
 }
 
 # counter_of, counter_label, counter_causes, bump_counter, attempt_causes, requeue_causes,
