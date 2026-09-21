@@ -1,0 +1,56 @@
+# 02 — the same commands against the two backends
+
+Transcript, preserved verbatim. See `00-method.md` for conditions.
+
+```
+Spike sp-krxs8, 2026-09-20. Session fence CPUQuota=70%.
+
+The harness runs bd against two different stores and they have completely different cost
+shapes. Conflating them is how "a bd call costs 250 ms" becomes one number for two things.
+
+--- SERVER MODE: $SPIRA_DB, dolt sql-server, 3064 issues ---
+    (what sentinel.sh, landing.sh and census.sh pay)
+
+live: bd ping                                n=10  cpu_ms: min=100  p50=100  max=110  | wall_ms: min=160  p50=210  max=550
+live: bd count                               n=10  cpu_ms: min=90   p50=100  max=100  | wall_ms: min=150  p50=200  max=230
+live: bd label list sp-krxs8                 n=10  cpu_ms: min=90   p50=110  max=110  | wall_ms: min=230  p50=350  max=420
+live: bd sql (attempts_of shape, 1 id)       n=10  cpu_ms: min=100  p50=100  max=110  | wall_ms: min=210  p50=320  max=410
+live: bd list --limit 0 --json (3064 rows)   n=6   cpu_ms: min=110  p50=120  max=130  | wall_ms: min=280  p50=400  max=480
+
+  Every command costs the same ~100-120 ms CPU. A one-row lookup and a 3064-row dump are
+  within 20 ms of each other. Against `bd --version`'s 90 ms, that leaves ~10-30 ms for
+  everything bd does with the store. THE QUERY IS NOT THE COST.
+
+--- EMBEDDED MODE: private fixture directory ---
+    (what every suite that sources spira/testdb.sh pays)
+
+0 issues:
+bd -C empty ping                             n=15  cpu_ms: min=160   p50=180   max=190
+bd -C empty list --limit 0 --json            n=10  cpu_ms: min=320   p50=350   max=360
+
+3064 issues:
+bd -C prod ping                              n=10  cpu_ms: min=550   p50=570   max=610   | wall_ms: min=810   p50=860   max=1370
+bd -C prod count                             n=10  cpu_ms: min=540   p50=580   max=590   | wall_ms: min=800   p50=850   max=1000
+bd -C prod list --limit 0 --json             n=10  cpu_ms: min=1800  p50=1850  max=1940  | wall_ms: min=2640  p50=2820  max=3110
+bd -C prod label list sp-krxs8 (ONE id)      n=10  cpu_ms: min=1540  p50=1580  max=1820  | wall_ms: min=2270  p50=2570  max=25290
+
+  Opening an embedded store is 90 ms CPU empty and ~480 ms CPU at 3064 issues, and a
+  one-id lookup costs 1580 ms CPU because the open dominates it. In server mode a resident
+  dolt process has already paid that; in embedded mode every invocation pays it again.
+
+  CAVEAT, stated because it changes how far this generalises: the 3064-issue fixture was
+  built by `bd import` of a live export, which commits in chunks of 250. Its Dolt history
+  is therefore not shaped like a naturally-grown store's. The DIRECTION (open cost grows
+  with store size) is solid; the magnitude at 3064 issues is not verified against a store
+  that grew normally.
+
+--- how the fixture was built ---
+$ bd -C $SPIRA_DB export --all -o live-export.jsonl
+  Exported 3064 issues and 183 memories
+$ bd-embedded -C prod-fixture config set types.custom "event,escalation"
+$ bd-embedded -C prod-fixture import -i live-export.jsonl
+  Imported 3064 issues and 183 memories        (~7 min, commits every 250)
+
+  Note: a plain import fails with `invalid issue type: escalation` until the custom types
+  are registered; 1724 of the 3064 are type `event`.
+```

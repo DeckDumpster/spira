@@ -1,0 +1,65 @@
+# 01 — what a bd invocation costs before it looks at anything
+
+Transcript, preserved verbatim. See `00-method.md` for conditions.
+
+```
+Spike sp-krxs8, 2026-09-20. Session fence CPUQuota=70%.
+cpu_ms is /usr/bin/time %U+%S; wall_ms is elapsed. n runs each, min/p50/max.
+
+--- floors ---
+bd --version (no store)                      n=15  cpu_ms: min=80     p50=90     max=90     | wall_ms: min=110    p50=160    max=290
+bd -C empty ping   (embedded, 0 issues)      n=15  cpu_ms: min=160    p50=180    max=190    | wall_ms: min=250    p50=300    max=610
+bd -C empty count  (embedded, 0 issues)      n=15  cpu_ms: min=160    p50=170    max=180    | wall_ms: min=230    p50=280    max=340
+/bin/true (exec floor)                       n=15  cpu_ms: min=0      p50=0      max=0      | wall_ms: min=0      p50=0      max=0
+
+  bd --version opens no store, reads no config and runs no query. It costs 80-90 ms CPU.
+  Opening an EMPTY embedded store adds a further ~90 ms CPU.
+
+--- the 80-90 ms is not dynamic linking ---
+$ LD_DEBUG=statistics bd --version
+  total startup time in dynamic loader: 102948 cycles      (~30 microseconds)
+            time needed for relocation: 5884 cycles (5.7%)
+                 number of relocations: 121
+            time needed to load objects: 20229 cycles (19.6%)
+$ ldd $(command -v bd) | wc -l
+  3                       (linux-vdso, libc, ld-linux — that is all)
+
+--- the 80-90 ms IS Go package init ---
+$ GODEBUG=inittrace=1 bd --version 2>&1 | grep '^init ' | awk '{s+=$5} END{...}'
+  108.4 ms across 689 packages          (run 1)
+  120.5 ms across 689 packages          (run 2)
+
+  689 packages are linked into the binary and every one of their init() functions runs
+  before main(), on every invocation, whatever the subcommand.
+
+--- BUT the per-package attribution is an artifact: see 05 ---
+Run A, cold:
+  init github.com/olebedev/when/rules/nl        @41 ms,  53 ms clock, 415408 bytes,  1951 allocs
+  init github.com/alecthomas/chroma/v2/lexers   @17 ms,  10 ms clock, 2484904 bytes, 27812 allocs
+  init github.com/alecthomas/chroma/v2/styles   @28 ms, 9.5 ms clock, 1675680 bytes, 35495 allocs
+  init main                                    @133 ms, 6.9 ms clock,  824760 bytes,  5447 allocs
+Run B, warm, same binary:
+  init github.com/alecthomas/chroma/v2/styles   @24 ms,  59 ms clock, 1675680 bytes, 35495 allocs
+  init github.com/alecthomas/chroma/v2/lexers   @14 ms,  10 ms clock, 2484808 bytes, 27811 allocs
+  init github.com/olebedev/when/rules/ru        @87 ms, 2.0 ms clock,  540736 bytes,  1476 allocs
+
+  The ~50 ms item MOVES between packages run to run. inittrace's "clock" is wall time, so
+  it charges page-fault and GC time to whichever package happens to be running. No single
+  package owns it. The stable contributors are small: chroma/lexers ~10 ms,
+  go-mysql-server/sql/variables ~4.6 ms, .../information_schema ~4.2 ms, main ~4 ms.
+
+--- GC accounts for about 10 ms of it ---
+bd --version  GOGC=default(100)               n=12  cpu_ms: min=70     p50=80     max=90
+bd --version  GOGC=off                        n=12  cpu_ms: min=60     p50=70     max=80
+bd --version  GOGC=400                        n=12  cpu_ms: min=60     p50=70     max=80
+
+  ~12% for one environment variable, with the usual caveat that GOGC=off removes the
+  ceiling on heap growth for long-lived commands.
+
+--- GOMAXPROCS is NOT the problem (hypothesis tested and rejected) ---
+The box has 16 CPUs and sched_getaffinity reports all 16, so Go sets GOMAXPROCS=16 even
+inside a 0.7-CPU cgroup. Pinning it changes nothing:
+bd -C empty ping  GOMAXPROCS=default(16)      n=15  wall: min=229  p50=290  p90=542
+bd -C empty ping  GOMAXPROCS=1                n=15  wall: min=239  p50=304  p90=341
+bd -C empty ping  GOMAXPROCS=2                n=15  wall: min=252  p50=285  p90=316
+```

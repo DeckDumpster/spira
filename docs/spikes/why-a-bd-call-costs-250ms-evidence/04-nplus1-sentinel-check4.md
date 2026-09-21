@@ -1,0 +1,87 @@
+# 04 — the worst N+1 in the harness: sentinel.sh CHECK 4
+
+Transcript, preserved verbatim. See `00-method.md` for conditions.
+
+```
+Spike sp-krxs8, 2026-09-20. Session fence CPUQuota=70%; rescale to 40% for the sentinel.
+
+--- the loop, as shipped ---
+spira/sentinel.sh, CHECK 4:
+
+    dispatchable="$(dispatchable_open)"
+    for id in $dispatchable; do
+        _labels="$(bdq label list "$id" 2>/dev/null)" || _labels=""
+        n="$(attempts_of "$id")"; n="${n:-0}"
+        _requeues="$(reopens_of "$id")"; _requeues="${_requeues:-0}"
+
+spira/lib.sh:
+    attempts_of()  -> bd -C $SPIRA_DB sql "select greatest(sum(...) - sum(...) - sum(...), 0)
+                                           from events where issue_id='<id>'"
+    reopens_of()   -> bd -C $SPIRA_DB sql "select count(*) from events
+                                           where issue_id='<id>' and event_type='reopened'"
+
+Three bd processes per bead. Both SQL calls are single-row aggregates keyed on one
+issue_id, which one GROUP BY serves for the whole set.
+
+The `bdq label list` call is not merely batchable, it is redundant. `dispatchable_open`
+(lib.sh) already pulls every bead's full JSON and reads `i.get("labels")` to apply the
+partition exclusions — then prints only `i["id"]`. The labels were in hand and discarded,
+and CHECK 4 fetches them back one process at a time.
+
+--- measured, live store, 59-bead set ---
+$ for id in $IDLIST; do
+    bd -C $SPIRA_DB label list "$id"
+    bd -C $SPIRA_DB sql "select count(*) from events where issue_id='$id'"
+    bd -C $SPIRA_DB sql "select count(*) from events where issue_id='$id' and event_type='reopened'"
+  done
+    177 calls: 29731ms  (167ms per call)
+
+$ bd -C $SPIRA_DB sql "select issue_id,
+        sum(case when event_type='claimed' or (event_type='status_changed'
+                 and new_value like '%in_progress%') then 1 else 0 end),
+        sum(case when event_type='closed'   then 1 else 0 end),
+        sum(case when event_type='reopened' then 1 else 0 end)
+      from events where issue_id in (<59 ids>) group by issue_id"
+    1 call: 178ms
+
+    ratio: 167x   saving: 29553 ms per CHECK 4
+
+(An earlier run of the same pair while a Go build competed for the box gave 106503 ms vs
+599 ms — 178x. The ratio is stable under load; the absolute figures are not.)
+
+--- POSITIVE CONTROL (law-absence-needs-a-positive-control) ---
+A batched query that returned zeros for everything would look exactly like a correct one
+on a set where every answer is zero. Cross-checked bead by bead against the per-bead path:
+
+  sp-krxs8     per-bead reopens=0    batched reopens=0    AGREE
+  sp-0y7cs     per-bead reopens=0    batched reopens=0    AGREE
+  sp-kogm      per-bead reopens=17   batched reopens=17   AGREE   <- non-zero, found by both
+  sp-hyn5s     per-bead reopens=0    batched reopens=0    AGREE
+  sp-dnzd9     per-bead reopens=0    batched reopens=0    AGREE
+  sp-4lakz     per-bead reopens=0    batched reopens=0    AGREE
+  sp-yty8w     per-bead reopens=0    batched reopens=0    AGREE
+  sp-xevus     per-bead reopens=0    batched reopens=0    AGREE
+  sp-czz4i     per-bead reopens=0    batched reopens=0    AGREE
+  sp-0pb8h     per-bead reopens=0    batched reopens=0    AGREE
+  (20 checked, 20 agree)
+
+--- what this costs per day ---
+The real dispatchable set on the day of the spike:
+$ . lib.sh; dispatchable_open | wc -l
+    22
+
+    22 beads x 3 calls                                  =   66 bd calls per pass
+    66 x 314 ms (the sentinel's own 40% quota, from 03) =   20.7 s per pass
+    spira-sentinel.timer OnUnitActiveSec=2min           =  720 passes/day
+    720 x 20.7 s                                        =   4.1 h/day of wall
+    66 x ~110 ms CPU x 720                              =   1.45 CPU-hours/day
+
+  The sentinel's pass budget is 120 s between firings and TimeoutStartSec=900. CHECK 4's
+  N+1 alone is ~17% of the interval, and it grows linearly with the open-work backlog: the
+  59-bead set measured above would be 55.6 s per pass.
+
+--- what is NOT established here ---
+This was measured by driving the loop's queries directly, NOT by instrumenting a real
+sentinel pass — a real pass mutates the production store. So CHECK 4's share OF THE WHOLE
+PASS is inferred from the code, not counted. See the falsifier in the document.
+```
