@@ -120,6 +120,12 @@ exit 0
 EOF
 chmod +x "$SPIRA_DIR/ready.sh"
 
+cat > "$SPIRA_DIR/exclude.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$SPIRA_DIR/exclude.sh"
+
 # configure.sh stub: writes a minimal conf file respecting CONFIGURE_PROD.
 cat > "$SPIRA_DIR/configure.sh" <<'EOF'
 #!/usr/bin/env bash
