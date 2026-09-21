@@ -238,5 +238,28 @@ nowant "artifact deploy: no 'cannot resolve landref' in output" \
 nowant "artifact deploy: no landref refusal in output" \
     "refusing — checkout is on branch" "$out_notgit"
 
+# ===========================================================================
+echo
+echo "TAG INSTALL — detached HEAD at an exact tag: landref check is skipped."
+# Positive control: the refusal fires for a branch checkout behind its base
+# (proved above). Silence here is therefore meaningful.
+# ===========================================================================
+
+TAG_REPO="$TMP/tag-repo"
+git init -q -b main "$TAG_REPO"
+git -C "$TAG_REPO" config user.email t@t
+git -C "$TAG_REPO" config user.name test
+printf 'v1\n' > "$TAG_REPO/v"
+git -C "$TAG_REPO" add v
+git -C "$TAG_REPO" commit -qm "v1"
+git -C "$TAG_REPO" tag v1.0.0
+git -C "$TAG_REPO" checkout -q --detach v1.0.0
+
+# No origin, no origin/HEAD — exactly what a shallow tag clone looks like.
+out_tag="$(inst "$TAG_REPO")"; rc_tag=$?
+nowant "tag install: no 'cannot resolve landref' in output"  "cannot resolve landref"    "$out_tag"
+nowant "tag install: no landref refusal"                     "refusing — checkout is"    "$out_tag"
+want   "tag install: mentions release install in output"     "release install from tag"  "$out_tag"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
