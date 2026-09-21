@@ -821,7 +821,6 @@ want "20. always-red: ejection reported" "ejected" "$out"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
-# =============================================================================
 # 21. TERM TRAP: a verdict.sh process interrupted by TERM during attribution
 #     writes "attribution of PR ... interrupted after ...s" to landing.log.
 #
@@ -1080,6 +1079,49 @@ res25b="$(_run_shuffled_batch)"
 [ "$res25a" = "$res25b" ] \
     && ok "25. deterministic: same ejected set both runs ($res25a)" \
     || bad "25. deterministic: ejected set differs" "run1=$res25a run2=$res25b"
+
+# =============================================================================
+# 26. STALE QUEUE REF REAPING — after a green verdict, local spira/queue/*
+#     refs whose tips are already on the base are cleaned up by
+#     _reap_stale_queue_refs. A ref whose tip is NOT on the base (from an
+#     ejected or pending batch) must survive.
+#
+#     POSITIVE CONTROL: the stale ref must actually be gone.
+#     PAIR: the live ref (not an ancestor) must still be present.
+# =============================================================================
+batch_head26="$(build_batch sp-vd-ra sp-vd-rb)"
+# stale-26: tip is the original base — already on main after the batch lands.
+stale_sha26="$(git -C "$REPO" rev-parse origin/main 2>/dev/null)"
+git -C "$REPO" branch "spira/queue/stale-26" "$stale_sha26"
+# live-26: tip is a commit that is NOT on main yet.
+{
+    git -C "$REPO" worktree add -q --detach "$RUN/worktree/.live26" origin/main
+    printf 'live\n' > "$RUN/worktree/.live26/live26.txt"
+    git -C "$RUN/worktree/.live26" add -A
+    git -C "$RUN/worktree/.live26" commit -q -m "live26: pending work"
+    live26_sha="$(git -C "$RUN/worktree/.live26" rev-parse HEAD)"
+    git -C "$REPO" worktree remove -f "$RUN/worktree/.live26" 2>/dev/null || true
+} 2>/dev/null
+git -C "$REPO" branch "spira/queue/live-26" "$live26_sha"
+# Point the current batch at a unique branch name.
+git -C "$REPO" branch -f "spira/queue/test26" "$batch_head26"
+git -C "$REPO" push -q origin "spira/queue/test26"
+git -C "$REPO" fetch -q origin
+{
+    grep -v '^branch=' "$(batch_file)"
+    printf 'branch=spira/queue/test26\n'
+} > "$(batch_file).$$" && mv -f "$(batch_file).$$" "$(batch_file)"
+
+printf 'green\n' > "$FORGE_STATUS_FILE"
+verdict "$REPONAME" > /dev/null
+is "26. reap: stale ancestor queue ref cleaned up" "0" \
+    "$(git -C "$REPO" show-ref --verify "refs/heads/spira/queue/stale-26" >/dev/null 2>&1 && echo 1 || echo 0)"
+is "26. reap (pair): non-ancestor queue ref survives" "1" \
+    "$(git -C "$REPO" show-ref --verify "refs/heads/spira/queue/live-26" >/dev/null 2>&1 && echo 1 || echo 0)"
+# Cleanup the surviving live branch before clean_case (which skips spira/queue/*).
+git -C "$REPO" branch -D "spira/queue/live-26" 2>/dev/null || true
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

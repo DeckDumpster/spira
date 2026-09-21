@@ -440,9 +440,11 @@ for labels, name in json.loads(sys.argv[1]).items():
     } | while IFS=$(printf '\t') read -r _pname _plabels; do
         # The sentinel line has no tab, so _plabels is empty — pass it straight through.
         if [ -z "$_plabels" ]; then printf '%s\n' "$_pname"; continue; fi
+        _next_excl="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+        [ -n "${SPIRA_QUEUE_WAIT_LABEL:-}" ] && _next_excl="$_next_excl,$SPIRA_QUEUE_WAIT_LABEL"
         bdjson "${READY_ARGS[@]}" \
             --label "$_plabels" \
-            --exclude-label "spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL" \
+            --exclude-label "$_next_excl" \
             2>/dev/null | python3 -c '
 import sys, json
 name = sys.argv[1]
