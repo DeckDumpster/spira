@@ -228,6 +228,44 @@ printf 'stdin sweep prompt content' | aeon testsweep --sweep -
 want "stdin prompt reached model" "stdin sweep prompt content" \
      "$(cat "$TMP/sweep-prompt" 2>/dev/null)"
 
+
+# ======================================================================================
+echo
+echo "--sweep: launch carries --settings naming aeon-fence.sh when the hook is present:"
+# ======================================================================================
+# POSITIVE CONTROL: without aeon-fence.sh the settings JSON must NOT name it — this proves
+# the assertion below can detect absence before trusting that it detects presence.
+mkdir -p "$SPIRA_HOME/hooks"
+rm -f "$SPIRA_HOME/hooks/aeon-fence.sh"
+
+cat > "$BIN/claude" <<'SHIM'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$TMP/claude-argv"
+cat /dev/stdin > "$TMP/sweep-prompt"
+printf '{"type":"result","subtype":"success","duration_ms":1,"turns":0,"num_turns":0,"total_cost_usd":0}\n'
+SHIM
+chmod +x "$BIN/claude"
+
+rm -f "$TMP/claude-argv"
+aeon testsweep --sweep --prompt "settings probe"
+
+_s_argv="$(cat "$TMP/claude-argv" 2>/dev/null || true)"
+want  "PC: --settings in argv even without fence" "--settings" "$_s_argv"
+_s_json_nofence="$(awk '/^--settings$/{getline; print; exit}' "$TMP/claude-argv" 2>/dev/null || true)"
+nowant "PC: settings JSON absent aeon-fence.sh before hook created" "aeon-fence.sh" "$_s_json_nofence"
+
+# Install the fence hook and verify it appears in the settings JSON.
+printf '#!/usr/bin/env bash\n' > "$SPIRA_HOME/hooks/aeon-fence.sh"
+chmod +x "$SPIRA_HOME/hooks/aeon-fence.sh"
+
+rm -f "$TMP/claude-argv"
+aeon testsweep --sweep --prompt "settings probe with fence"
+
+_s_argv2="$(cat "$TMP/claude-argv" 2>/dev/null || true)"
+want "--settings in sweep argv" "--settings" "$_s_argv2"
+_s_json_fence="$(awk '/^--settings$/{getline; print; exit}' "$TMP/claude-argv" 2>/dev/null || true)"
+want "settings JSON names aeon-fence.sh" "aeon-fence.sh" "$_s_json_fence"
+
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]

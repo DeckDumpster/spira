@@ -109,6 +109,33 @@ ledger_done() {
     && { tail -n 5000 "$LEDGER" > "$LEDGER.trim" && mv -f "$LEDGER.trim" "$LEDGER"; }
 ledger "born $FAYTH $$"
 
+# Build the --settings JSON that wires aeon-fence.sh and the mail/unacked-comment delivery
+# hooks into a claude session. Called by both the sweep and the claimed-bead launch so that
+# both sessions carry the same guards (law-guard-binds-the-caller).
+aeon_settings() {
+    python3 -c "
+import json, os
+spira_home = '$SPIRA_HOME'
+hooks = {}
+mail    = os.path.join(spira_home, 'hooks', 'aeon-mail-deliver.sh')
+deliver = os.path.join(spira_home, 'bd-unacked-comment-deliver.sh')
+post_hooks = [{'type': 'command', 'command': mail, 'timeout': 5}]
+if os.access(deliver, os.X_OK):
+    post_hooks.append({'type': 'command', 'command': deliver, 'timeout': 5})
+hooks['PostToolUse'] = [{'hooks': post_hooks}]
+pre_hooks = []
+fence = os.path.join(spira_home, 'hooks', 'aeon-fence.sh')
+if os.access(fence, os.X_OK):
+    pre_hooks.append({'type': 'command', 'command': fence, 'timeout': 5})
+guard = os.path.join(spira_home, 'bd-close-unacked-guard.sh')
+if os.access(guard, os.X_OK):
+    pre_hooks.append({'type': 'command', 'command': guard, 'timeout': 5})
+if pre_hooks:
+    hooks['PreToolUse'] = [{'hooks': pre_hooks}]
+print(json.dumps({'hooks': hooks}))
+" 2>/dev/null
+}
+
 # ---- sweep mode: a beadless session --------------------------------------------------
 # A SWEEP RUNS THE PERSONA WITHOUT A BEAD. The bead lifecycle — claim, lease, close,
 # verdict, attempt — does not apply. What does apply is the capacity check, the draining
@@ -191,6 +218,7 @@ if [ "$SWEEP" = 1 ]; then
 
     _SWEEP_PI=""
     [ "${FAYTH_PROJECT_INSTRUCTIONS:-}" = "none" ] && _SWEEP_PI="user"
+    _SWEEP_SETTINGS="$(aeon_settings)" || _SWEEP_SETTINGS=""
     set +e
     cat "$SWEEP_TASK_FILE" | \
         ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
@@ -202,6 +230,7 @@ if [ "$SWEEP" = 1 ]; then
                --allowedTools "${FAYTH_TOOLS:-Bash,Read,Edit,Write,Glob,Grep}" \
                --dangerously-skip-permissions \
                ${_SWEEP_PI:+--setting-sources "$_SWEEP_PI"} \
+               ${_SWEEP_SETTINGS:+--settings "$_SWEEP_SETTINGS"} \
         >> "$SWEEP_LOGF" 2>&1
     exit $?
 fi
@@ -1691,27 +1720,7 @@ export GH_CONFIG_DIR="$_AEON_GH_EMPTY"
 unset GH_TOKEN GITHUB_TOKEN
 export GIT_SSH_COMMAND="echo 'aeon: no SSH credentials — landing.sh and batch.sh handle forge writes' >&2; exit 1"
 export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false
-_AEON_SETTINGS="$(python3 -c "
-import json, os
-spira_home = '$SPIRA_HOME'
-hooks = {}
-mail    = os.path.join(spira_home, 'hooks', 'aeon-mail-deliver.sh')
-deliver = os.path.join(spira_home, 'bd-unacked-comment-deliver.sh')
-post_hooks = [{'type': 'command', 'command': mail, 'timeout': 5}]
-if os.access(deliver, os.X_OK):
-    post_hooks.append({'type': 'command', 'command': deliver, 'timeout': 5})
-hooks['PostToolUse'] = [{'hooks': post_hooks}]
-pre_hooks = []
-fence = os.path.join(spira_home, 'hooks', 'aeon-fence.sh')
-if os.access(fence, os.X_OK):
-    pre_hooks.append({'type': 'command', 'command': fence, 'timeout': 5})
-guard = os.path.join(spira_home, 'bd-close-unacked-guard.sh')
-if os.access(guard, os.X_OK):
-    pre_hooks.append({'type': 'command', 'command': guard, 'timeout': 5})
-if pre_hooks:
-    hooks['PreToolUse'] = [{'hooks': pre_hooks}]
-print(json.dumps({'hooks': hooks}))
-" 2>/dev/null)" || _AEON_SETTINGS=""
+_AEON_SETTINGS="$(aeon_settings)" || _AEON_SETTINGS=""
 _BEAD_PI=""
 [ "${FAYTH_PROJECT_INSTRUCTIONS:-}" = "none" ] && _BEAD_PI="user"
 cat "$TASK_FILE" | ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
