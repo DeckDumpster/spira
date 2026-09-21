@@ -1366,14 +1366,21 @@ $(git -C "$_p" for-each-ref --format='%(refname:short)' 'refs/heads/spira/' 'ref
         # SP_FUNNEL_DONE_AGE: age of the oldest such bead, from its closed_at timestamp.
         local _land_out _cert_win
         _cert_win="${SPIRA_CERT_WINDOW_MINS:-90}"
-        _land_out="$(printf '%s' "$subjects" | python3 -c '
+        # closed_pairs is piped via stdin after subjects, separated by a sentinel line, to
+        # avoid any argument quoting or length issues with tab-separated multi-line data.
+        _land_out="$(printf '%s\n\037PAIRS\037\n%s' "$subjects" "$closed_pairs" | python3 -c '
 import sys, re, os, datetime
 ids = [i for i in sys.argv[1].split() if i]
 br_lines = sys.argv[2].split("\n") if len(sys.argv) > 2 and sys.argv[2] else []
 landstate_dir = sys.argv[3] if len(sys.argv) > 3 else ""
 cert_win = int(sys.argv[4]) if len(sys.argv) > 4 else 90
-pairs_raw = sys.argv[5] if len(sys.argv) > 5 else ""
-subjects = sys.stdin.read().splitlines()
+raw = sys.stdin.read()
+sep = "\n\x1fPAIRS\x1f\n"
+if sep in raw:
+    subjects_raw, pairs_raw = raw.split(sep, 1)
+else:
+    subjects_raw, pairs_raw = raw, ""
+subjects = subjects_raw.splitlines()
 id_closed_at = {}
 for row in pairs_raw.splitlines():
     parts = row.split("\t")
@@ -1425,7 +1432,7 @@ print("SP_UNLANDED_N=%d"       % anomaly)
 print("SP_STRANDED_N=%d"       % stranded)
 print("SP_CERT_N=%d"           % awaiting)
 print("SP_FUNNEL_DONE_AGE=%s"  % age)
-' "$closed_ids" "$branches" "$SPIRA_RUN/landstate" "$_cert_win" "$closed_pairs" 2>/dev/null)"
+' "$closed_ids" "$branches" "$SPIRA_RUN/landstate" "$_cert_win" 2>/dev/null)"
         if [ -n "$_land_out" ]; then
             printf '%s\n' "$_land_out"
         else
