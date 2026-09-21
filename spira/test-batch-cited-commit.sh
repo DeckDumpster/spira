@@ -1,30 +1,45 @@
 #!/usr/bin/env bash
 #
-# test-batch-cited-commit.sh — batch.sh marks a CERTIFIED branch landed (not reopened)
-#   when the bead's notes cite a commit already on the base.
+# test-batch-cited-commit.sh — bead_cited_commit_on_base requires an explicit
+#   hand-landed citation, never a bare SHA in prose.
 #
-# THE DEFECT (sp-ohu7i). When a fix is hand-landed from a different branch (e.g. concierge
-# session) and the bead's own spira/<id> branch carries a conflicting version, batch.sh
-# reopened the bead ("conflicts with origin/main"). The same fix already on main makes the
-# rebase impossible: the branch cycles through CERTIFIED → conflicts → reopened forever.
+# THE DEFECT (sp-c9d41). bead_cited_commit_on_base accepted any 7-40 hex string
+# in a bead's notes as evidence the fix had landed, causing batch.sh to mark beads
+# LANDED and retire their branches when a commit SHA appeared in prose context.
 #
-# THE FIX. Before reopening a branch that conflicts with the base, batch.sh checks the
-# bead's notes for a commit SHA that is an ancestor of the base. If it finds one, the fix
-# has already landed: batch.sh marks the bead LANDED and retires the branch instead.
+# THE FIX. bead_cited_commit_on_base now accepts a sha only when:
+#   - the note uses "landed as <sha>" or "hand-landed <sha>", or
+#   - the commit message at that sha names the bead id.
+# A bare sha in prose is never sufficient. The cited-on-main path no longer
+# destroys the bead's branch.
 #
-# THREE CASES (law-absence-needs-a-positive-control):
+# SIX UNIT CASES for bead_cited_commit_on_base (law-absence-needs-a-positive-control):
 #
-#   1. POSITIVE CONTROL — a conflicting branch with NO note citing a commit on main IS
-#      reopened. Proves the conflict detector fires and the check is not vacuously silent.
+#   1. BARE-SHA — note cites HAND_SHA in prose ("re-applied on <sha>"); commit
+#      message does not name the bead → no match.  Prevents the incident that
+#      triggered this bead: bare shas in context notes must not trigger landing.
 #
-#   2. CITED — a conflicting branch whose bead's notes cite a commit on main is marked
-#      LANDED and its branch retired, never reopened. This is the arm SEEN TO FAIL before
-#      the fix: the bead is reopened on unfixed batch.sh.
+#   2. DECLARED — note "landed as <sha>" where sha is on base → returns sha and
+#      "cited-declared".  Positive control: the declared path can fire.
 #
-#   3. CITED-WRONG — a note citing a hex-looking string that is NOT a commit on main does
-#      not trigger the landed path; the bead is reopened normally.
+#   3. DECLARED-VARIANT — note "hand-landed <sha>" → returns sha and "cited-declared".
+#      Confirms the second explicit phrase is accepted.
 #
-# defect: sp-ohu7i
+#   4. NAMED — bare sha in note where the commit message names the bead id
+#      → returns sha and "cited-named".  Positive control: the named path can fire.
+#
+#   5. WRONG-HEX — note contains a hex string that is not a real commit → no match.
+#
+#   6. SHA-NOT-ON-BASE — note "landed as <sha>" where sha is NOT an ancestor of
+#      base → no match.  Ancestry check applies to explicit declarations too.
+#
+# ONE INTEGRATION CASE for batch.sh (positive control for the reopen path):
+#
+#   7. INTEGRATION-CTRL — conflicting branch with no cited commit, no declared
+#      phrase → batch reopens the bead and preserves the branch.  Proves the
+#      conflict-detector fires and the reopen path is not vacuously silent.
+#
+# defect: sp-c9d41
 # covers: spira/batch.sh spira/lib.sh
 # hermetic-ok: uses a fixture database and a local git repo, no systemd or gh
 set -uo pipefail
@@ -56,20 +71,35 @@ git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
 git -C "$REPO" remote add origin "$REMOTE"
 
-# Initial commit: a file that multiple branches will all touch (creates the conflict).
-printf 'original\n' > "$REPO/shared.txt"
-git -C "$REPO" add shared.txt && git -C "$REPO" commit -q -m "initial"
+# Initial commit.
+printf 'original\n' > "$REPO/f.txt"
+git -C "$REPO" add f.txt && git -C "$REPO" commit -q -m "initial"
+INITIAL_SHA="$(git -C "$REPO" rev-parse HEAD)"
+
+# HAND_SHA: the hand-applied fix on main. Commit message deliberately does not
+# name any test bead id so only the declared path can match it.
+printf 'handfix\n' > "$REPO/f.txt"
+git -C "$REPO" add f.txt && git -C "$REPO" commit -q -m "handfix applied"
+HAND_SHA="$(git -C "$REPO" rev-parse HEAD)"
+
+# NAMED_SHA: commit whose message names "sp-named", for the named-path test.
+printf 'named-extra\n' > "$REPO/g.txt"
+git -C "$REPO" add g.txt && git -C "$REPO" commit -q -m "sp-named: applied here"
+NAMED_SHA="$(git -C "$REPO" rev-parse HEAD)"
+
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
 
-# Hand-fix commit: represents the fix that landed from another branch. This is what
-# spira/<id> branches will conflict with, and what the bead's note will cite.
-printf 'hand-fixed\n' > "$REPO/shared.txt"
-git -C "$REPO" add shared.txt && git -C "$REPO" commit -q -m "fix: hand-landed from concierge"
-HAND_SHA="$(git -C "$REPO" rev-parse HEAD)"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
+BASE="$NAMED_SHA"
+
+# SIDE_SHA: a commit NOT on main, for the sha-not-on-base test.
+git -C "$REPO" branch side "$INITIAL_SHA"
+git -C "$REPO" worktree add -q "$TMP/side" side
+printf 'side\n' > "$TMP/side/h.txt"
+git -C "$TMP/side" add h.txt && git -C "$TMP/side" commit -q -m "side commit"
+SIDE_SHA="$(git -C "$REPO" rev-parse side)"
+git -C "$REPO" worktree remove "$TMP/side" 2>/dev/null || true
 
 mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 cp "$HERE"/*.sh "$SH/"
@@ -99,13 +129,27 @@ FORGE
 chmod +x "$SH/forge-fixture.sh"
 : > "$FORGE_LOG"
 
-# mail.sh stub — swallow mail, this suite does not assert on mail.
+# mail.sh stub.
 printf '#!/usr/bin/env bash\ntrue\n' > "$SH/mail.sh"; chmod +x "$SH/mail.sh"
 
 # Repo-map: queue mode.
 printf '%s | %s | queue | origin/main | | |\n' "$REPONAME" "$REPO" > "$SH/repo-map"
 
 B() { bd -C "$SPIRA_DB" "$@"; }
+
+# cited_on_base <id> — call bead_cited_commit_on_base against the test repo and base.
+cited_on_base() {
+    local _id="$1"
+    (
+        SPIRA_HOME="$SH"
+        SPIRA_RUN="$RUN"
+        SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
+        export SPIRA_HOME SPIRA_RUN SPIRA_BD
+        # shellcheck disable=SC1090
+        . "$SH/lib.sh"
+        bead_cited_commit_on_base "$_id" "$REPO" "$BASE"
+    ) 2>/dev/null
+}
 
 batch() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
@@ -118,120 +162,123 @@ batch() {
         bash "$SH/batch.sh" "$@" 2>&1
 }
 
-status_of() { B show "$1" --json 2>/dev/null | python3 -c '
+status_of()   { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status",""))' 2>/dev/null; }
 
 branch_exists() { git -C "$REPO" show-ref --verify -q "refs/heads/spira/$1" 2>/dev/null; }
 
-landstate_of() { awk '{print $1}' "$LANDSTATE/$1" 2>/dev/null; }
-
-# make_conflicting_branch <id> — cut a branch from the initial commit and modify shared.txt
-# in a way that conflicts with the hand-fix commit on main.
-make_conflicting_branch() {
-    local id="$1" initial
-    initial="$(git -C "$REPO" rev-parse origin/main~1)"  # commit before hand-fix
-    git -C "$REPO" branch "spira/$id" "$initial"
-    # Add a worktree, write a conflicting value, commit.
-    git -C "$REPO" worktree add -q "$RUN/worktree/$id" "spira/$id"
-    printf 'aeon-version\n' > "$RUN/worktree/$id/shared.txt"
-    git -C "$RUN/worktree/$id" add shared.txt
-    git -C "$RUN/worktree/$id" commit -q -m "$id: fix via aeon"
-    git -C "$REPO" worktree remove "$RUN/worktree/$id" 2>/dev/null || true
-}
-
-seed() {
-    testdb_reset || { echo "seed: testdb_reset failed" >&2; exit 1; }
-    testdb_seed <<JSONL || { echo "seed: testdb_seed failed" >&2; exit 1; }
-{"id":"sp-ctrl","title":"positive control — no cited commit","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-19T00:00:00Z"}
-{"id":"sp-cited","title":"bead with cited commit in notes","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-19T00:00:00Z"}
-{"id":"sp-wrong","title":"bead with non-commit hex in notes","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-19T00:00:00Z"}
+# Seed all beads for unit tests (notes are set once, not reset between cases).
+testdb_reset || { echo "seed: testdb_reset failed" >&2; exit 1; }
+testdb_seed <<JSONL || { echo "seed: testdb_seed failed" >&2; exit 1; }
+{"id":"sp-bare","title":"bare sha test","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-21T00:00:00Z"}
+{"id":"sp-decl","title":"declared sha test","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-21T00:00:00Z"}
+{"id":"sp-decl2","title":"hand-landed sha test","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-21T00:00:00Z"}
+{"id":"sp-named","title":"named commit test","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-21T00:00:00Z"}
+{"id":"sp-wrong","title":"wrong hex test","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-21T00:00:00Z"}
+{"id":"sp-nobase","title":"sha not on base test","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-21T00:00:00Z"}
+{"id":"sp-ctrl","title":"positive control — no cited commit","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-21T00:00:00Z"}
 JSONL
-    # Add a note to sp-cited that cites the hand-fix SHA.
-    B note sp-cited "Fix already landed from concierge as commit $HAND_SHA (PR #74)." >/dev/null 2>&1 || true
-    # Add a note to sp-wrong with a plausible but non-commit hex string.
-    B note sp-wrong "Related to ticket deadbeef1234567 in external tracker." >/dev/null 2>&1 || true
-}
+B note sp-bare  "re-applied on $HAND_SHA when rebasing locally"                     >/dev/null 2>&1 || true
+B note sp-decl  "landed as $HAND_SHA"                                                >/dev/null 2>&1 || true
+B note sp-decl2 "hand-landed $HAND_SHA in production"                               >/dev/null 2>&1 || true
+B note sp-named "patch originally at $NAMED_SHA, see review"                        >/dev/null 2>&1 || true
+B note sp-wrong "related to tracker ticket deadbeef1234567, not a commit"            >/dev/null 2>&1 || true
+B note sp-nobase "landed as $SIDE_SHA (side branch, not on main)"                   >/dev/null 2>&1 || true
 
 echo "test-batch-cited-commit.sh"
 
 # =============================================================================
-# SETUP: build conflicting branches for all three beads.
-# =============================================================================
-make_conflicting_branch sp-ctrl
-make_conflicting_branch sp-cited
-make_conflicting_branch sp-wrong
-
-# Verify the branches actually conflict with origin/main before asserting batch behaviour.
-echo
-echo "fixture sanity — all branches conflict with origin/main:"
-for _id in sp-ctrl sp-cited sp-wrong; do
-    _init="$TMP/ck-$_id"
-    if git -C "$REPO" worktree add -q --detach "$_init" "$(git -C "$REPO" rev-parse origin/main)" 2>/dev/null; then
-        if git -C "$_init" merge --no-commit --no-ff "spira/$_id" >/dev/null 2>&1; then
-            bad "spira/$_id should conflict with origin/main" "merge succeeded"
-        else
-            ok "spira/$_id conflicts with origin/main (fixture correct)"
-        fi
-        git -C "$_init" merge --abort 2>/dev/null || true
-        git -C "$REPO" worktree remove -f "$_init" 2>/dev/null || true
-    else
-        bad "spira/$_id conflict check" "worktree add failed"
-    fi
-done
-
-# =============================================================================
-# CASE 1: POSITIVE CONTROL — no cited commit → normal reopen.
+# FIXTURE SANITY: verify the commits are in the expected positions.
 # =============================================================================
 echo
-echo "positive control — conflicting branch with no cited commit IS reopened:"
+echo "fixture sanity:"
+if git -C "$REPO" merge-base --is-ancestor "$HAND_SHA" "$BASE" 2>/dev/null; then
+    ok "HAND_SHA is an ancestor of BASE"
+else
+    bad "HAND_SHA is an ancestor of BASE" "is-ancestor returned false"
+fi
+if git -C "$REPO" merge-base --is-ancestor "$NAMED_SHA" "$BASE" 2>/dev/null; then
+    ok "NAMED_SHA is an ancestor of BASE"
+else
+    bad "NAMED_SHA is an ancestor of BASE" "is-ancestor returned false"
+fi
+if ! git -C "$REPO" merge-base --is-ancestor "$SIDE_SHA" "$BASE" 2>/dev/null; then
+    ok "SIDE_SHA is NOT an ancestor of BASE"
+else
+    bad "SIDE_SHA is NOT an ancestor of BASE" "is-ancestor returned true"
+fi
 
-seed
+# =============================================================================
+# UNIT CASES 1-6: bead_cited_commit_on_base
+# =============================================================================
+
+# CASE 1: BARE-SHA — bare sha in prose does not trigger the cited path.
+echo
+echo "case 1 — bare sha in prose: no match:"
+out="$(cited_on_base sp-bare)"
+is  "bare sha: no output"        ""    "$out"
+
+# CASE 2: DECLARED — "landed as <sha>" → sha cited-declared.
+echo
+echo "case 2 — declared (landed as): match with cited-declared:"
+out="$(cited_on_base sp-decl)"
+want "declared: sha present"     "${HAND_SHA:0:7}"   "$out"
+want "declared: rule is cited-declared" "cited-declared" "$out"
+
+# CASE 3: DECLARED-VARIANT — "hand-landed <sha>" → sha cited-declared.
+echo
+echo "case 3 — declared (hand-landed): match with cited-declared:"
+out="$(cited_on_base sp-decl2)"
+want "hand-landed: sha present"  "${HAND_SHA:0:7}"   "$out"
+want "hand-landed: rule is cited-declared" "cited-declared" "$out"
+
+# CASE 4: NAMED — bare sha where the commit message names the bead id.
+echo
+echo "case 4 — named commit (commit message names bead): match with cited-named:"
+out="$(cited_on_base sp-named)"
+want "named: sha present"        "${NAMED_SHA:0:7}"  "$out"
+want "named: rule is cited-named" "cited-named"       "$out"
+
+# CASE 5: WRONG-HEX — hex string that is not a real commit: no match.
+echo
+echo "case 5 — hex string not a real commit: no match:"
+out="$(cited_on_base sp-wrong)"
+is  "wrong-hex: no output"       ""    "$out"
+
+# CASE 6: SHA-NOT-ON-BASE — declared phrase but sha is not an ancestor of base.
+echo
+echo "case 6 — declared sha not on base: no match:"
+out="$(cited_on_base sp-nobase)"
+is  "not-on-base: no output"     ""    "$out"
+
+# =============================================================================
+# INTEGRATION CASE 7: batch.sh reopens a conflicting branch with no cited SHA.
+# This exercises the batch.sh flow to prove the reopen path is still intact.
+# =============================================================================
+echo
+echo "case 7 — integration: conflicting branch, no valid citation → reopened:"
+
+# Create a conflicting branch for sp-ctrl.
+_ctrl_init="$(git -C "$REPO" rev-parse origin/main~2)"  # before HAND_SHA
+git -C "$REPO" branch "spira/sp-ctrl" "$_ctrl_init"
+git -C "$REPO" worktree add -q "$RUN/worktree/sp-ctrl" "spira/sp-ctrl"
+printf 'aeon-version\n' > "$RUN/worktree/sp-ctrl/f.txt"
+git -C "$RUN/worktree/sp-ctrl" add f.txt
+git -C "$RUN/worktree/sp-ctrl" commit -q -m "sp-ctrl: fix via aeon"
+git -C "$REPO" worktree remove "$RUN/worktree/sp-ctrl" 2>/dev/null || true
+
 _ctrl_tip="$(git -C "$REPO" rev-parse spira/sp-ctrl)"
 printf 'CERTIFIED %s %s\n' "$_ctrl_tip" "$(date +%s)" > "$LANDSTATE/sp-ctrl"
 
 out="$(batch "$REPONAME")"
-want "batch logs the conflict"       "conflicts with"         "$out"
-want "batch reports reopened"        "reopened"               "$out"
-is   "sp-ctrl is reopened"          open                     "$(status_of sp-ctrl)"
-# Branch should still exist (not retired) after reopen.
-if branch_exists sp-ctrl; then ok "sp-ctrl branch still exists after reopen"; \
-else bad "sp-ctrl branch still exists after reopen" "branch was deleted"; fi
-
-# =============================================================================
-# CASE 2: CITED — note cites a commit on main → marked LANDED, branch retired.
-# This is the arm SEEN TO FAIL on unfixed batch.sh: the bead is reopened instead.
-# =============================================================================
-echo
-echo "cited commit on main — LANDED and branch retired, not reopened:"
-
-seed
-_cited_tip="$(git -C "$REPO" rev-parse spira/sp-cited)"
-printf 'CERTIFIED %s %s\n' "$_cited_tip" "$(date +%s)" > "$LANDSTATE/sp-cited"
-
-out="$(batch "$REPONAME")"
-want "batch reports cited-commit path" "notes cite"            "$out"
-want "batch reports landed"            "marked landed"         "$out"
-nowant "batch does not reopen it"      "reopened"              "$out"
-is   "sp-cited stays closed"          closed                  "$(status_of sp-cited)"
-is   "sp-cited landstate is LANDED"   LANDED                  "$(landstate_of sp-cited)"
-if ! branch_exists sp-cited; then ok "sp-cited branch is gone (retired)"; \
-else bad "sp-cited branch is gone (retired)" "branch still exists"; fi
-
-# =============================================================================
-# CASE 3: CITED-WRONG — note cites hex that is not a commit → normal reopen.
-# =============================================================================
-echo
-echo "hex-looking note that is not a commit on main → normal reopen:"
-
-seed
-_wrong_tip="$(git -C "$REPO" rev-parse spira/sp-wrong)"
-printf 'CERTIFIED %s %s\n' "$_wrong_tip" "$(date +%s)" > "$LANDSTATE/sp-wrong"
-
-out="$(batch "$REPONAME")"
-nowant "batch does not report cited-commit path" "notes cite"  "$out"
-is    "sp-wrong is reopened"                    open           "$(status_of sp-wrong)"
+want  "batch reports conflict"     "conflicts with"  "$out"
+want  "batch reports reopen"       "reopened"        "$out"
+nowant "batch did not cite"        "notes cite"      "$out"
+is    "sp-ctrl is reopened"        open              "$(status_of sp-ctrl)"
+if branch_exists sp-ctrl; then ok "sp-ctrl branch survives reopen"; \
+else bad "sp-ctrl branch survives reopen" "branch was deleted"; fi
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"

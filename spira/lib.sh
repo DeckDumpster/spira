@@ -3030,15 +3030,16 @@ content_landed() {
     [ "$merged" = "$basetree" ]
 }
 
-# bead_cited_commit_on_base <id> <repo> <base> → prints the first SHA found in the bead's
-# notes that is a valid commit and an ancestor of <base>. Returns 0 if found, 1 if not.
+# bead_cited_commit_on_base <id> <repo> <base> → prints "<sha> <rule>" where rule is
+# cited-declared or cited-named.  Returns 0 if found, 1 if not.
 #
-# When a fix is hand-landed from another branch, the worker notes the commit SHA. The close
-# gate reads those notes so it can treat a conflicting duplicate branch as landed rather than
-# reopen it for a rebase it will never win.
+# Accepts a sha only when the note uses an explicit hand-landed phrase
+# ("landed as <sha>" or "hand-landed <sha>") → cited-declared, or when the commit
+# message at that sha names the bead id → cited-named.  A bare sha in prose is never
+# sufficient (law-closed-is-not-landed).
 bead_cited_commit_on_base() {
-    local id="$1" repo="$2" base="$3" sha _shas
-    _shas="$(bdjson show "$id" 2>/dev/null | python3 -c '
+    local id="$1" repo="$2" base="$3" kind sha _lines
+    _lines="$(bdjson show "$id" 2>/dev/null | python3 -c '
 import sys, json, re
 try:
     d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
@@ -3046,17 +3047,34 @@ try:
     if isinstance(notes, str): notes = [n for n in notes.split("\n") if n.strip()]
     elif isinstance(notes, list): notes = [(n.get("text") if isinstance(n, dict) else str(n)) for n in notes]
     else: notes = []
+    declared = re.compile(r"(?:landed\s+as|hand-landed)\s+([0-9a-f]{7,40})", re.IGNORECASE)
+    sha_pat = re.compile(r"[0-9a-f]{7,40}")
+    seen = set()
     for n in notes:
-        for m in re.findall(r"[0-9a-f]{7,40}", str(n).lower()): print(m)
-except Exception: pass
+        for m in declared.finditer(str(n).lower()):
+            s = m.group(1)
+            if s not in seen:
+                seen.add(s); print("declared " + s)
+    for n in notes:
+        for s in sha_pat.findall(str(n).lower()):
+            if s not in seen:
+                seen.add(s); print("bare " + s)
+except Exception:
+    pass
 ' 2>/dev/null)" || return 1
-    [ -n "$_shas" ] || return 1
-    while IFS= read -r sha; do
+    [ -n "$_lines" ] || return 1
+    while IFS=' ' read -r kind sha; do
         [ -n "$sha" ] || continue
-        git -C "$repo" rev-parse -q --verify "${sha}^{commit}" >/dev/null 2>&1 \
-            && git -C "$repo" merge-base --is-ancestor "$sha" "$base" 2>/dev/null \
-            && { printf '%s\n' "$sha"; return 0; }
-    done <<< "$_shas"
+        git -C "$repo" rev-parse -q --verify "${sha}^{commit}" >/dev/null 2>&1 || continue
+        git -C "$repo" merge-base --is-ancestor "$sha" "$base" 2>/dev/null || continue
+        if [ "$kind" = "declared" ]; then
+            printf '%s cited-declared\n' "$sha"; return 0
+        else
+            git -C "$repo" log -1 --format=%B "${sha}^{commit}" 2>/dev/null \
+                | grep -qE "(^|[^a-z0-9-])${id}([^a-z0-9-]|$)" \
+                && { printf '%s cited-named\n' "$sha"; return 0; }
+        fi
+    done <<< "$_lines"
     return 1
 }
 

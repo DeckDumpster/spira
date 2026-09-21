@@ -310,15 +310,13 @@ main() {
         else
             git -C "$wt" merge --abort 2>/dev/null || true
             if _base_conflict "$repo" "$base_sha" "$_btip"; then
-                local _cited_sha=""
-                _cited_sha="$(bead_cited_commit_on_base "$_bid" "$repo" "$base_sha" 2>/dev/null)" || true
+                local _cited_result="" _cited_sha="" _cited_rule=""
+                _cited_result="$(bead_cited_commit_on_base "$_bid" "$repo" "$base_sha" 2>/dev/null)" || true
+                read -r _cited_sha _cited_rule <<< "$_cited_result"
                 if [ -n "$_cited_sha" ]; then
-                    land_mark "$_bid" LANDED "$_cited_sha" "cited-on-main"
-                    spira_destroy_branch "$_bid" "spira/$_bid" "$repo" \
-                        "fix on $base cited in notes as $_cited_sha" "cited-landed" \
-                        >/dev/null 2>&1 || true
-                    printf 'batch %s: %s notes cite %s already on %s — marked landed, branch retired\n' \
-                        "$name" "$_bid" "$_cited_sha" "$base"
+                    land_mark "$_bid" LANDED "$_cited_sha" "$_cited_rule"
+                    printf 'batch %s: %s notes cite %s (%s) already on %s — marked landed\n' \
+                        "$name" "$_bid" "$_cited_sha" "$_cited_rule" "$base"
                 else
                     # Attempt rebase onto base before reopening.
                     local _rbwt _rbtip _rbtmp _rbrc _rbsrc _rbfp _rbconf _wtconf
@@ -385,6 +383,7 @@ main() {
                     fi
                     unset _rbwt _rbtip _rbtmp _rbrc _rbsrc _rbfp _rbconf _wtconf
                 fi
+                unset _cited_result _cited_sha _cited_rule
             else
                 # Clean merge with the land ref: conflict is only with batch accumulation — skip.
                 printf 'batch %s: %s conflicts with batch — skipped\n' "$name" "$_bid"
