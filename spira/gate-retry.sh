@@ -6,7 +6,9 @@
 # recorded no red suite: a failure this cannot attribute to a suite is not a flake.
 #
 # GATE_RETRY_MAX_RETRY (default: 5): skip the serial re-run when more than this many suites
-# are red, or when red suites exceed half of all recorded results — whichever fires first.
+# are genuinely red (non-timeout), or when they exceed half of all recorded results — whichever
+# fires first. Timed-out suites (rc=124) never count toward the structural threshold; they are
+# always re-run with a longer cap (GATE_RETRY_RERUN_TIMEOUT, default 1200 s).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 BATCH="${GATE_RETRY_BATCH:-$HERE/testenv-batch.sh}"
@@ -32,12 +34,22 @@ fi
 _red_count=0
 for _r in $reds; do _red_count=$((_red_count+1)); done
 _total_count=0
-for _f in "$ROOT"/*/*.result; do [ -f "$_f" ] && _total_count=$((_total_count+1)); done
+_hard_red_count=0
+_timeout_count=0
+for _f in "$ROOT"/*/*.result; do
+    [ -f "$_f" ] || continue
+    _total_count=$((_total_count+1))
+    read -r _s _ < "$_f"
+    case "$_s" in
+        red)     _hard_red_count=$((_hard_red_count+1)) ;;
+        timeout) _timeout_count=$((_timeout_count+1)) ;;
+    esac
+done
 : "${GATE_RETRY_MAX_RETRY:=5}"
 _structural=0
-[ "$_red_count" -gt "$GATE_RETRY_MAX_RETRY" ] && _structural=1
+[ "$_hard_red_count" -gt "$GATE_RETRY_MAX_RETRY" ] && _structural=1
 [ "$_structural" -eq 0 ] && [ "$_total_count" -gt "$GATE_RETRY_MAX_RETRY" ] && \
-    [ $((_red_count * 2)) -gt "$_total_count" ] && _structural=1
+    [ $((_hard_red_count * 2)) -gt "$_total_count" ] && _structural=1
 if [ "$_structural" -eq 1 ]; then
     printf 'gate-retry: %d of %d suites red — structural, not flaky; serial re-run skipped\n' \
         "$_red_count" "$_total_count" >&2
@@ -47,7 +59,12 @@ fi
 
 printf 'gate-retry: re-running serially: %s\n' "$reds"
 rc=0
-printf '%s\n' $reds | SPIRA_BATCH_RESULTS="$ROOT-retry" bash "$BATCH" --mode serial --suites - "$REV" || rc=$?
+if [ "$_timeout_count" -gt 0 ]; then
+    printf '%s\n' $reds | SPIRA_SUITE_TIMEOUT="${GATE_RETRY_RERUN_TIMEOUT:-1200}" \
+        SPIRA_BATCH_RESULTS="$ROOT-retry" bash "$BATCH" --mode serial --suites - "$REV" || rc=$?
+else
+    printf '%s\n' $reds | SPIRA_BATCH_RESULTS="$ROOT-retry" bash "$BATCH" --mode serial --suites - "$REV" || rc=$?
+fi
 case "$rc" in
     0)  for s in $reds; do printf '::warning title=flaky suite::%s was red, then green on a serial re-run\n' "$s"; done
         printf 'gate-retry: flaky, not failing: %s\n' "$reds"
