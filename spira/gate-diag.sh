@@ -111,8 +111,8 @@ for suite in $reds; do
         if [ -z "$raw_out" ]; then
             printf '(no output)\n'
         else
-            [ -n "$fail_lines" ] && { printf '--- FAIL lines ---\n'; printf '%s\n' "$fail_lines"; }
-            printf '--- last %s lines ---\n' "$TAIL"
+            [ -n "$fail_lines" ] && { printf -- '--- FAIL lines ---\n'; printf '%s\n' "$fail_lines"; }
+            printf -- '--- last %s lines ---\n' "$TAIL"
             printf '%s\n' "$raw_out" | tail -n "$TAIL"
         fi
         printf '::endgroup::\n'
@@ -124,7 +124,7 @@ for suite in $reds; do
             printf '(no output)\n'
         else
             [ -n "$fail_lines" ] && printf '%s\n' "$fail_lines"
-            printf '--- last %s lines ---\n' "$TAIL"
+            printf -- '--- last %s lines ---\n' "$TAIL"
             printf '%s\n' "$raw_out" | tail -n "$TAIL"
         fi
     fi

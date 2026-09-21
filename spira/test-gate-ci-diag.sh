@@ -47,6 +47,7 @@ echo "1. red suite: FAIL line and summary row appear:"
 setup "$TMP/r" a.sh=red/1 b.sh=ok/0
 out="$(bash "$DIAG" "$TMP/r" 2>&1)"
 has "FAIL line in output"            "FAIL"                       "$out"
+has "--- last N lines --- separator" "--- last"                   "$out"
 has "summary table header"           "| Suite"                    "$out"
 has "red suite named in summary"     "a.sh"                       "$out"
 lacks "green suite not in summary"   "b.sh"                       "$out"
