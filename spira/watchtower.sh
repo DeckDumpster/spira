@@ -921,7 +921,7 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
 ### The workers
 
   /tmp used (? = cannot read)         ${_tmp_pct}
-  throttle                            ${throttle_since:-clear}      (stamp: queue-throttled; depth at engage: ${throttle_depth:-—})
+  throttle                            ${throttle_since:-clear}      (stamp: queue-throttled; depth at engage: ${throttle_depth:-—})$([ "${SP_EXPRESS_N:-0}" != "0" ] && printf '\n  express ready                       %s      (bypass active — one slot granted per pass)' "${SP_EXPRESS_N}")
   draining since (? = cannot read)    ${drain_mins}      minutes   (stamp: world.draining)
   aeons alive                         ${aeons_live}      (counted now, not from the snapshot)
   beads in progress                   $(g SP_INPROG)

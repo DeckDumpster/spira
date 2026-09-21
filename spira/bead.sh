@@ -28,7 +28,7 @@ BEAD_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 _bead_file() {
     local title="${1:-}"; shift || true
     [ -n "$title" ] || { printf 'bead: title required\n' >&2; return 2; }
-    local for_fayth="" repo="" priority="" body_file="" kind=""
+    local for_fayth="" repo="" priority="" body_file="" kind="" express=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --for)          shift; for_fayth="${1:-}" ;;
@@ -36,10 +36,13 @@ _bead_file() {
             --priority|-p)  shift; priority="${1:-}" ;;
             --body-file)    shift; body_file="${1:-}" ;;
             --kind)         shift; kind="${1:-}" ;;
+            --express)      express=1 ;;
             *) printf 'bead: unknown option: %s\n' "$1" >&2; return 2 ;;
         esac
         shift
     done
+    # P0 beads are express by definition.
+    [ "${priority:-}" = "0" ] && express=1
 
     # --kind and --for are mutually exclusive routing decisions
     if [ -n "$kind" ] && [ -n "$for_fayth" ]; then
@@ -98,6 +101,8 @@ _bead_file() {
             fi
         fi
         labels="$labels,repo:$repo"
+        local _express_label="${SPIRA_EXPRESS_LABEL:-express}"
+        [ -n "$express" ] && labels="$labels,$_express_label"
         set -- create "$title" -l "$labels"
         [ -n "$priority" ]  && set -- "$@" -p "$priority"
         [ -n "$body_file" ] && set -- "$@" --body-file "$body_file"
@@ -111,6 +116,8 @@ _bead_file() {
             labels="$labels,$insight_label"
         fi
         [ -n "$repo" ] && labels="$labels,repo:$repo"
+        local _express_label="${SPIRA_EXPRESS_LABEL:-express}"
+        [ -n "$express" ] && labels="$labels,$_express_label"
         set -- create "$title" -l "$labels" --type "$bd_type"
         [ "$kind" = "insight" ] && set -- "$@" --status closed
         [ "$kind" = "insight" ] && [ -z "$priority" ] && priority=4
@@ -229,22 +236,28 @@ print(d.get("issue_type") or "")
 _bead_amend() {
     local id="${1:-}"; shift || true
     [ -n "$id" ] || { printf 'bead: amend: id required\n' >&2; return 2; }
-    local note="" body_file=""
+    local note="" body_file="" express=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --note)       shift; note="${1:-}" ;;
             --body-file)  shift; body_file="${1:-}" ;;
+            --express)    express=1 ;;
             *) printf 'bead: amend: unknown option: %s\n' "$1" >&2; return 2 ;;
         esac
         shift
     done
-    [ -n "$note" ] || [ -n "$body_file" ] || {
-        printf 'bead: amend: --note or --body-file required\n' >&2; return 2; }
+    [ -n "$note" ] || [ -n "$body_file" ] || [ -n "$express" ] || {
+        printf 'bead: amend: --note, --body-file, or --express required\n' >&2; return 2; }
 
     local changed=""
+    if [ -n "$express" ]; then
+        local _elab="${SPIRA_EXPRESS_LABEL:-express}"
+        bdq label "$id" "$_elab"
+        changed="${changed:+$changed$'\n\n'}Marked express."
+    fi
     if [ -n "$note" ]; then
         bdq note "$id" "$note"
-        changed="$note"
+        changed="${changed:+$changed$'\n\n'}$note"
     fi
     if [ -n "$body_file" ]; then
         bdq update "$id" --body-file "$body_file"
@@ -268,9 +281,9 @@ case "${1:-}" in
     amend)    shift; _bead_amend "$@" ;;
     contract) _bead_contract ;;
     lint)     shift; _bead_lint "$@" ;;
-    *) printf 'usage: bead.sh file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F]\n' >&2
-       printf '       bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F]\n' >&2
-       printf '       bead.sh amend <id> [--note "<text>"] [--body-file F]\n' >&2
+    *) printf 'usage: bead.sh file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F] [--express]\n' >&2
+       printf '       bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express]\n' >&2
+       printf '       bead.sh amend <id> [--note "<text>"] [--body-file F] [--express]\n' >&2
        printf '       bead.sh lint [--all|<id>...]\n' >&2
        printf '       bead.sh contract\n' >&2
        exit 2 ;;
