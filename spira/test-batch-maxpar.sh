@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
-# test-batch-maxpar.sh — SPIRA_BATCH_MAXPAR defaults to nproc and is settable from spira.conf
+# test-batch-maxpar.sh — maxpar derived from guest hardware when SPIRA_BATCH_MAXPAR unset
 #
 # WHAT THIS PROVES
-#   1. testenv-batch.sh derives its default pool size from nproc, not a literal constant.
-#      On a 4-core box, MAXPAR=32 drives CPU pressure to 97% and produces fork-EAGAIN
-#      resource errors the gate blames on the branch. Sizing from nproc caps the pool to
-#      available cores. (sp-gkbf)
-#   2. SPIRA_BATCH_MAXPAR is in SPIRA_CONF_KEYS, so an operator can tune it from
-#      spira.conf without editing code.
+#   1. testenv-batch.sh derives maxpar from min(nproc, floor((MemAvailable-reserve)/per_suite))
+#      rather than a literal. Memory is the binding resource in the guest; the formula caps
+#      the pool at the memory-bound value when MemAvailable is low.
+#   2. When nproc <= memory-bound, CPU is the binding input (and vice versa).
+#   3. SPIRA_BATCH_MAXPAR, SPIRA_BATCH_MEM_RESERVE_MIB, SPIRA_BATCH_MEM_PER_SUITE_MIB,
+#      SPIRA_BATCH_MEM_AVAIL_MIB, and SPIRA_BATCH_PSI_THRESHOLD are in SPIRA_CONF_KEYS.
 #
-# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail)
-#   Part A plants a fake nproc that outputs 7 — a value that cannot result from the
-#   literal 32 — then evaluates the batch script's own assignment expression in an
-#   isolated env. If the derivation is removed (:-32 restored), the result is 32 and
-#   A1 fails.
-#
-#   Part B's positive control asserts a made-up key is absent from SPIRA_CONF_KEYS,
-#   proving the membership test runs and SPIRA_BATCH_MAXPAR was not always there.
+# POSITIVE CONTROLS (law-a-regression-test-must-be-seen-to-fail)
+#   Part A plants fake nproc (16) and fake MemAvailable (11GiB then 3GiB). The 11GiB case
+#   expects cpu-bound at 16; the 3GiB case expects memory-bound at 4. If the formula
+#   reverts to a literal the cpu/memory-binding label disappears and A2b/A3b fail.
+#   Part B's positive control asserts a fabricated key is absent from SPIRA_CONF_KEYS.
 #
 # covers: spira/testenv-batch.sh spira/conf.sh
 
@@ -38,76 +35,100 @@ trap 'rm -rf "$TMP"' EXIT
 echo "test-batch-maxpar.sh"
 
 # ===========================================================================
-# PART A: _maxpar default is derived from nproc, not a literal
+# PART A: maxpar derived from hardware (cpu-bound and memory-bound cases)
 # ===========================================================================
 echo
-echo "Part A: pool default derived from nproc"
+echo "Part A: maxpar formula — cpu-bound and memory-bound"
+
+# Extract the derivation block from the batch script.
+_block="$(sed -n '/#!maxpar-begin/,/#!maxpar-end/{/#!maxpar-/d; p}' "$BATCH")"
+[ -n "$_block" ] || {
+    printf '  FAIL  A0: maxpar derivation block not found in %s\n' "$BATCH" >&2
+    exit 1
+}
+ok "A0: maxpar derivation block found"
 
 FAKE_BIN="$TMP/bin"
 mkdir -p "$FAKE_BIN"
-# Sentinel value: 7 cannot be the result of any literal in the script.
-printf '#!/bin/sh\necho 7\n' > "$FAKE_BIN/nproc"
+printf '#!/bin/sh\necho 16\n' > "$FAKE_BIN/nproc"
 chmod +x "$FAKE_BIN/nproc"
 
-# Extract the _maxpar assignment line from the batch script.
-_maxpar_line="$(grep -E '^\s*_maxpar=' "$BATCH" | grep 'SPIRA_BATCH_MAXPAR' | head -1)"
-[ -n "$_maxpar_line" ] || {
-    printf '  FAIL  A0: _maxpar= assignment not found in %s\n' "$BATCH" >&2
-    exit 1
+# Case 1: MemAvailable=11GiB (11264MiB), reserve=1024, per_suite=512 → mem_bound=20 → cpu wins → maxpar=16
+_eval_maxpar() {
+    PATH="$FAKE_BIN:$PATH" \
+    SPIRA_BATCH_MEM_AVAIL_MIB="$1" \
+    SPIRA_BATCH_MEM_RESERVE_MIB=1024 \
+    SPIRA_BATCH_MEM_PER_SUITE_MIB=512 \
+    bash -c "unset SPIRA_BATCH_MAXPAR 2>/dev/null||true; $_block; printf '%s %s' \"\$_maxpar\" \"\$_maxpar_binding\""
 }
-ok "A0: _maxpar= assignment found in batch script"
 
-# Evaluate the assignment in isolation with stub nproc and SPIRA_BATCH_MAXPAR unset.
-_result="$(
-    PATH="$FAKE_BIN:$PATH" bash -c "
-        unset SPIRA_BATCH_MAXPAR 2>/dev/null || true
-        $_maxpar_line
-        printf '%s' \"\$_maxpar\"
-    "
-)"
-[ "$_result" = "7" ] && ok "A1: default equals nproc output (stub→7)" \
-                      || bad "A1: default equals nproc output" "expected 7, got '$_result'"
+_r1="$(_eval_maxpar 11264)"
+_maxpar1="${_r1%% *}"
+_binding1="${_r1##* }"
 
-# Positive control: when SPIRA_BATCH_MAXPAR is set explicitly, stub is not consulted.
-_result_set="$(
-    PATH="$FAKE_BIN:$PATH" SPIRA_BATCH_MAXPAR=99 bash -c "
-        $_maxpar_line
-        printf '%s' \"\$_maxpar\"
-    "
+[ "$_maxpar1" = "16" ] && ok "A1: 11GiB avail → maxpar 16" \
+                        || bad "A1: 11GiB avail → maxpar 16" "got '$_maxpar1'"
+[ "$_binding1" = "cpu" ] && ok "A2: 11GiB avail → cpu-bound" \
+                          || bad "A2: 11GiB avail → cpu-bound" "got binding='$_binding1'"
+
+# Case 2: MemAvailable=3GiB (3072MiB), reserve=1024, per_suite=512 → mem_bound=4 → memory wins → maxpar=4
+_r2="$(_eval_maxpar 3072)"
+_maxpar2="${_r2%% *}"
+_binding2="${_r2##* }"
+
+[ "$_maxpar2" = "4" ] && ok "A3: 3GiB avail → maxpar 4" \
+                       || bad "A3: 3GiB avail → maxpar 4" "got '$_maxpar2'"
+[ "$_binding2" = "memory" ] && ok "A4: 3GiB avail → memory-bound" \
+                             || bad "A4: 3GiB avail → memory-bound" "got binding='$_binding2'"
+
+# Positive control: explicit SPIRA_BATCH_MAXPAR bypasses the formula entirely.
+_r_ov="$(
+    PATH="$FAKE_BIN:$PATH" \
+    SPIRA_BATCH_MAXPAR=99 \
+    SPIRA_BATCH_MEM_AVAIL_MIB=3072 \
+    SPIRA_BATCH_MEM_RESERVE_MIB=1024 \
+    SPIRA_BATCH_MEM_PER_SUITE_MIB=512 \
+    bash -c "$_block; printf '%s %s' \"\$_maxpar\" \"\$_maxpar_binding\""
 )"
-[ "$_result_set" = "99" ] && ok "A1-pos: explicit SPIRA_BATCH_MAXPAR overrides nproc" \
-                           || bad "A1-pos: explicit SPIRA_BATCH_MAXPAR overrides nproc" \
-                                  "expected 99, got '$_result_set'"
+_maxpar_ov="${_r_ov%% *}"
+_binding_ov="${_r_ov##* }"
+[ "$_maxpar_ov" = "99" ] && ok "A5-pos: explicit SPIRA_BATCH_MAXPAR overrides formula" \
+                          || bad "A5-pos: explicit SPIRA_BATCH_MAXPAR overrides formula" "got '$_maxpar_ov'"
+[ "$_binding_ov" = "override" ] && ok "A6-pos: binding=override when explicit" \
+                                 || bad "A6-pos: binding=override when explicit" "got '$_binding_ov'"
 
 # ===========================================================================
-# PART B: SPIRA_BATCH_MAXPAR is accepted by conf.sh's allowlist
+# PART B: new keys are accepted by conf.sh's allowlist
 # ===========================================================================
 echo
-echo "Part B: SPIRA_BATCH_MAXPAR settable from spira.conf"
+echo "Part B: new conf keys in SPIRA_CONF_KEYS"
 
-# Source conf.sh in a minimal env and capture SPIRA_CONF_KEYS.
 _conf_keys="$(
     SPIRA_HOME="$HERE" \
     SPIRA_CONF=/nonexistent \
     bash -c ". '$CONF_SH'; printf '%s' \"\$SPIRA_CONF_KEYS\""
 )"
-want "B1: SPIRA_BATCH_MAXPAR in SPIRA_CONF_KEYS" "SPIRA_BATCH_MAXPAR" "$_conf_keys"
 
-# Positive control: a fabricated key is absent, proving the membership test runs.
-notwant "B1-pos: SPIRA_BATCH_NOEXIST absent from SPIRA_CONF_KEYS (positive control)" \
+for _key in SPIRA_BATCH_MAXPAR SPIRA_BATCH_MEM_RESERVE_MIB SPIRA_BATCH_MEM_PER_SUITE_MIB \
+            SPIRA_BATCH_MEM_AVAIL_MIB SPIRA_BATCH_PSI_THRESHOLD; do
+    want "B-${_key}" "$_key" "$_conf_keys"
+done
+
+# Positive control: fabricated key is absent.
+notwant "B-pos: SPIRA_BATCH_NOEXIST absent (positive control)" \
         "SPIRA_BATCH_NOEXIST" "$_conf_keys"
 
-# Write a temp conf file and verify the value is picked up.
+# Verify a value from a conf file is picked up for a new key.
 CONF_FILE="$TMP/spira.conf"
-printf 'SPIRA_BATCH_MAXPAR=13\n' > "$CONF_FILE"
+printf 'SPIRA_BATCH_MEM_PER_SUITE_MIB=256\n' > "$CONF_FILE"
 _from_conf="$(
     SPIRA_HOME="$HERE" \
     SPIRA_CONF="$CONF_FILE" \
-    bash -c "unset SPIRA_BATCH_MAXPAR; . '$CONF_SH'; printf '%s' \"\${SPIRA_BATCH_MAXPAR:-unset}\""
+    bash -c "unset SPIRA_BATCH_MEM_PER_SUITE_MIB; . '$CONF_SH'; printf '%s' \"\${SPIRA_BATCH_MEM_PER_SUITE_MIB:-unset}\""
 )"
-[ "$_from_conf" = "13" ] && ok "B2: spira.conf line sets SPIRA_BATCH_MAXPAR" \
-                          || bad "B2: spira.conf line sets SPIRA_BATCH_MAXPAR" \
-                                 "expected 13, got '$_from_conf'"
+[ "$_from_conf" = "256" ] && ok "B-conf: spira.conf line sets SPIRA_BATCH_MEM_PER_SUITE_MIB" \
+                           || bad "B-conf: spira.conf line sets SPIRA_BATCH_MEM_PER_SUITE_MIB" \
+                                  "expected 256, got '$_from_conf'"
 
 # ===========================================================================
 echo
