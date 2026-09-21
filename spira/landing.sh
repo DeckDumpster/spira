@@ -1256,6 +1256,22 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                                 progress "certified $br in $name — base-fix (suite $_fse_cert)"
                             fi
                         fi
+                        if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
+                            local _fse_cert="${_scan_extref[$id]:-}"
+                            _fse_cert="${_fse_cert#basefail:$name:}"
+                            _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys,json
+try:d=json.load(sys.stdin)
+except:raise SystemExit
+d=d if isinstance(d,list) else [d]
+print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                            if [ "${_cur_st:-}" = "closed" ]; then
+                                log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
+                                land_mark "$id" CERTIFIED "$tip"
+                                mark_submitted "$id" "$tip" certified
+                                progress "certified $br in $name — base-fix (suite $_fse_cert)"
+                            fi
+                        fi
                         continue
                     fi
                     if ! spira_gate_blames_branch "$gate_rc"; then
@@ -1459,6 +1475,22 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                         basefail_filed=1
                         base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
                                       "$br" "$base" "$gate_out"
+                    fi
+                fi
+                if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
+                    local _fse_cert="${_scan_extref[$id]:-}"
+                    _fse_cert="${_fse_cert#basefail:$name:}"
+                    _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys,json
+try:d=json.load(sys.stdin)
+except:raise SystemExit
+d=d if isinstance(d,list) else [d]
+print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                    if [ "${_cur_st:-}" = "closed" ]; then
+                        log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
+                        land_mark "$id" CERTIFIED "$tip"
+                        mark_submitted "$id" "$tip" certified
+                        progress "certified $br in $name — base-fix (suite $_fse_cert)"
                     fi
                 fi
                 if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
@@ -1884,6 +1916,22 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                             basefail_filed=1
                             base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
                                           "$br" "$base" "$gate_out"
+                        fi
+                    fi
+                    if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
+                        local _fse_cert="${_scan_extref[$id]:-}"
+                        _fse_cert="${_fse_cert#basefail:$name:}"
+                        _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys,json
+try:d=json.load(sys.stdin)
+except:raise SystemExit
+d=d if isinstance(d,list) else [d]
+print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                        if [ "${_cur_st:-}" = "closed" ]; then
+                            log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
+                            land_mark "$id" CERTIFIED "$tip"
+                            mark_submitted "$id" "$tip" certified
+                            progress "certified $br in $name — base-fix (suite $_fse_cert)"
                         fi
                     fi
                     if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
