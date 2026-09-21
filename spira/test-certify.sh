@@ -246,6 +246,8 @@ printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
 printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
 exit 0'
 
+stub queue.sh 'exit 0'
+rm -f "$GATE_COUNT"
 seed; branch sp-par-a; branch sp-par-b
 t0=$(date +%s)
 SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
@@ -256,6 +258,7 @@ SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         bash "$SH/landing.sh" > /dev/null 2>&1
 t1=$(date +%s)
 elapsed=$(( t1 - t0 ))
+printf '  debug: gate calls (%s): [%s]\n' "$(gate_n)" "$(cat "$GATE_COUNT" 2>/dev/null | tr '\n' ' ')"
 is "gate called for both branches with par=2" "2" "$(gate_n)"
 [ "$elapsed" -lt $(( GATE_SLEEP * 2 - 1 )) ] \
     && ok "both branches certified in parallel (~${elapsed}s < $((GATE_SLEEP*2-1))s)" \
