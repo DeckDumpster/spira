@@ -788,9 +788,14 @@ heal; rm -f "$RUN/auron.state"
 printf '2026-01-01T00:00:00Z\nwhy: test halt\n' > "$RUN/world.halted"
 wedge
 auron >/dev/null; auron >/dev/null
-[ "$(alert_status sentinel-stalled)" = "-" ] \
-    && ok "a halted loop does not raise sentinel-stalled" \
-    || bad "halt suppress" "sentinel-stalled raised while loop is deliberately halted"
+# An earlier test already created a closed sentinel-stalled bead. The check is that no
+# NEW OPEN bead was raised, not that no bead exists at all.
+_st_halt="$(alert_status sentinel-stalled)"
+case "$_st_halt" in
+    "-"|*" closed") ok "a halted loop does not raise sentinel-stalled" ;;
+    *) bad "halt suppress" "sentinel-stalled raised while loop is deliberately halted" ;;
+esac
+unset _st_halt
 rm -f "$RUN/world.halted"
 # Without the halt stamp, the same wedged log fires after CONFIRM=2 passes.
 auron >/dev/null; auron >/dev/null
