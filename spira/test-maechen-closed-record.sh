@@ -24,8 +24,8 @@
 # POSITIVE CONTROLS (law-absence-needs-a-positive-control)
 # --------------------------------------------------------
 # Every absence assertion is paired with a presence assertion that proves the
-# check is live: allowlist has no effect when the file is absent (positive);
-# trigger fires when rows exist (positive); trigger skips when no rows (negative).
+# check is live. Bead ids are pinned to non-default strings; allowlist state
+# is reset between sections.
 #
 # covers: spira/maechen-trigger.sh spira/lib.sh spira/cockpit.sh
 set -uo pipefail
@@ -46,7 +46,7 @@ trap 'testdb_drop; rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 
 # ---------------------------------------------------------------------------
-# THROWAWAY GIT REPO — required by the trigger's lane check and landing count.
+# THROWAWAY GIT REPO — required by the trigger's lane check.
 # ---------------------------------------------------------------------------
 TESTREPO="$T/testrepo"
 git init -q "$TESTREPO"
@@ -55,7 +55,6 @@ git -C "$TESTREPO" config user.name "Test"
 git -C "$TESTREPO" commit --allow-empty -q -m "initial"
 mkdir -p "$TESTREPO/.git/refs/remotes/origin"
 git -C "$TESTREPO" rev-parse HEAD > "$TESTREPO/.git/refs/remotes/origin/main"
-
 SELFMAP="$T/selfmap"
 printf 'testrepo | %s | push | origin/main | | true | self\n' "$TESTREPO" > "$SELFMAP"
 
@@ -68,30 +67,25 @@ now_ts="$(date +%s)"
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 
+# SCOPE labels pinned to non-defaults (law-gates-run-in-a-clean-environment).
+ALLW_SCOPE="sptest-cr-allow"
+
 echo "test-maechen-closed-record.sh"
 
 # ==========================================================================================
 echo
-echo "ALLOWLIST: id in allowlist → ALLOWED-IC, not counted"
+echo "ALLOWLIST: INVALID-CLOSED id in allowlist → ALLOWED-IC, not counted"
 # ==========================================================================================
-# Build a fixture database with one INVALID-CLOSED bead and one allowlisted bead.
+# Plant a closed bead whose close reason hits RED_FLAGS, then show it clears when
+# allowlisted. Uses testdb_seed to set close_reason directly (bd close stores it).
 testdb_up maechen_closed_record_allow || { bad "allowlist fixture: testdb_up failed" ""; }
 
-IC_SCOPE="sptest-cr-allow-scope"
-# Plant an INVALID-CLOSED bead (close reason hits RED_FLAGS).
-IC_ID="$("$SPIRA_BD" -C "$SPIRA_DB" create "admitting workaround" \
-    --type task --label "$IC_SCOPE,plan" --priority 3 2>/dev/null \
-    | grep -oE 'sp-[a-z0-9]+')"
-[ -n "$IC_ID" ] || { bad "allowlist: could not create test bead" ""; }
-BD_UPDATE_CLOSED_OVERRIDE=1 "$SPIRA_BD" -C "$SPIRA_DB" update "$IC_ID" \
-    --status closed 2>/dev/null || true
-# close_reason is set via bd close; use update on close_reason directly since the guard
-# only blocks --status closed, not close_reason updates.
-"$SPIRA_BD" -C "$SPIRA_DB" update "$IC_ID" \
-    --close-reason "Applied a temporary workaround — real fix needed." 2>/dev/null || true
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-cr-ic1","title":"admitting workaround","status":"closed","issue_type":"task","labels":["$ALLW_SCOPE","plan","repo:pushrepo"],"close_reason":"Applied a temporary workaround — real fix needed."}
+JSONL
 
-# Without allowlist: expect INVALID-CLOSED row.
-_lc_run() {
+run_livelock() {
     env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_CONF="$T/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
@@ -99,23 +93,24 @@ _lc_run() {
         SPIRA_REPO_MAP="$SELFMAP" SPIRA_GOAL=sp-goal \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
-        SPIRA_SCOPE_LABEL="$IC_SCOPE" \
+        SPIRA_SCOPE_LABEL="$ALLW_SCOPE" \
         bash "$HERE/cockpit.sh" livelock 2>/dev/null
 }
 
-out="$(_lc_run)"
+# Without allowlist: INVALID-CLOSED row expected.
+out="$(run_livelock)"
 want  "no allowlist: INVALID-CLOSED row present"  "INVALID-CLOSED" "$out"
-want  "no allowlist: bead id in row"              "$IC_ID"         "$out"
+want  "no allowlist: bead id in row"              "sp-cr-ic1"      "$out"
 is "no allowlist: SP_INVALID_CLOSED=1" "1" \
    "$(printf '%s\n' "$out" | sed -n 's/^SP_INVALID_CLOSED=//p' | head -1)"
 
-# Add to allowlist — bead should now appear as ALLOWED-IC, not counted.
-printf '%s quotation: reason names the flag list, not a remainder\n' "$IC_ID" > "$ALLOW_FILE"
+# Add to allowlist.
+printf 'sp-cr-ic1 quotation: reason names the flag list, not a remainder\n' > "$ALLOW_FILE"
 
-out="$(_lc_run)"
+out="$(run_livelock)"
 nowant "allowlisted: no INVALID-CLOSED row"   "INVALID-CLOSED"  "$out"
 want   "allowlisted: ALLOWED-IC row present"  "ALLOWED-IC"      "$out"
-want   "allowlisted: bead id in allowed row"  "$IC_ID"          "$out"
+want   "allowlisted: bead id in allowed row"  "sp-cr-ic1"       "$out"
 is "allowlisted: SP_INVALID_CLOSED=0" "0" \
    "$(printf '%s\n' "$out" | sed -n 's/^SP_INVALID_CLOSED=//p' | head -1)"
 
@@ -128,17 +123,12 @@ echo "ALLOWLIST: UNFILED-FOLLOW id in allowlist → ALLOWED-IC, not counted"
 # ==========================================================================================
 testdb_up maechen_closed_record_uf_allow || { bad "uf-allowlist fixture: testdb_up failed" ""; }
 
-UF_SCOPE="sptest-cr-uf-scope"
-UF_ID="$("$SPIRA_BD" -C "$SPIRA_DB" create "unfiled follow bead" \
-    --type task --label "$UF_SCOPE,plan" --priority 3 2>/dev/null \
-    | grep -oE 'sp-[a-z0-9]+')"
-[ -n "$UF_ID" ] || { bad "uf-allowlist: could not create test bead" ""; }
-BD_UPDATE_CLOSED_OVERRIDE=1 "$SPIRA_BD" -C "$SPIRA_DB" update "$UF_ID" \
-    --status closed 2>/dev/null || true
-"$SPIRA_BD" -C "$SPIRA_DB" update "$UF_ID" \
-    --close-reason "The real fix is a proper guard. Deployed the stopgap." 2>/dev/null || true
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-cr-uf1","title":"unfiled follow bead","status":"closed","issue_type":"task","labels":["$ALLW_SCOPE","plan","repo:pushrepo"],"close_reason":"The real fix is a proper guard. Deployed the stopgap."}
+JSONL
 
-_lc_run_uf() {
+run_livelock_uf() {
     env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_CONF="$T/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
@@ -146,17 +136,20 @@ _lc_run_uf() {
         SPIRA_REPO_MAP="$SELFMAP" SPIRA_GOAL=sp-goal \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
-        SPIRA_SCOPE_LABEL="$UF_SCOPE" \
+        SPIRA_SCOPE_LABEL="$ALLW_SCOPE" \
         bash "$HERE/cockpit.sh" livelock 2>/dev/null
 }
 
-out="$(_lc_run_uf)"
+out="$(run_livelock_uf)"
 want "no allowlist: UNFILED-FOLLOW row present" "UNFILED-FOLLOW" "$out"
+is "no allowlist: SP_UNFILED_FOLLOW=1" "1" \
+   "$(printf '%s\n' "$out" | sed -n 's/^SP_UNFILED_FOLLOW=//p' | head -1)"
 
-printf '%s follow-up filed as sp-fake1\n' "$UF_ID" > "$ALLOW_FILE"
-out="$(_lc_run_uf)"
+printf 'sp-cr-uf1 follow-up filed as sp-fake1\n' > "$ALLOW_FILE"
+out="$(run_livelock_uf)"
 nowant "allowlisted: no UNFILED-FOLLOW row"  "UNFILED-FOLLOW" "$out"
 want   "allowlisted: ALLOWED-IC row present" "ALLOWED-IC"     "$out"
+want   "allowlisted: bead id in row"         "sp-cr-uf1"      "$out"
 is "uf-allowlisted: SP_UNFILED_FOLLOW=0" "0" \
    "$(printf '%s\n' "$out" | sed -n 's/^SP_UNFILED_FOLLOW=//p' | head -1)"
 
@@ -167,24 +160,19 @@ testdb_drop
 echo
 echo "TRIGGER: INVALID-CLOSED rows fire the third trigger condition"
 # ==========================================================================================
-# Use a real fixture database so the --status closed filter is exercised correctly
-# (law-prefer-the-real-dependency). The stub bd in other trigger tests returns
-# BD_LIST_OUTPUT for all list calls regardless of --status.
+# Use a real fixture so the --status closed filter in detect_invalid_closed is exercised
+# (law-prefer-the-real-dependency). A stub bd cannot distinguish list --status queries.
 testdb_up maechen_closed_record_trigger || { bad "trigger fixture: testdb_up failed" ""; }
 
-TR_SCOPE="sptest-cr-trig-scope"
-TR_MAE="sptest-cr-mae"
-TR_ID="$("$SPIRA_BD" -C "$SPIRA_DB" create "admitting close bead" \
-    --type task --label "$TR_SCOPE,plan" --priority 3 2>/dev/null \
-    | grep -oE 'sp-[a-z0-9]+')"
-[ -n "$TR_ID" ] || { bad "trigger: could not create test bead" ""; }
-BD_UPDATE_CLOSED_OVERRIDE=1 "$SPIRA_BD" -C "$SPIRA_DB" update "$TR_ID" \
-    --status closed 2>/dev/null || true
-"$SPIRA_BD" -C "$SPIRA_DB" update "$TR_ID" \
-    --close-reason "Applied a temporary workaround, real fix still needed." 2>/dev/null || true
+TR_SCOPE="sptest-cr-trig"
+TR_MAE="sptest-cr-trig-mae"
 
-# Set lastpass=now, watermark=now so neither time nor landing trigger fires;
-# only the INVALID-CLOSED trigger should fire.
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-cr-trig1","title":"admitting close","status":"closed","issue_type":"task","labels":["$TR_SCOPE","plan","repo:pushrepo"],"close_reason":"Applied a temporary workaround, real fix still needed."}
+JSONL
+
+# Set lastpass=now, watermark=now so neither time nor landing trigger fires.
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 
@@ -204,25 +192,23 @@ tr_out="$(env -i HOME="$T" \
     SPIRA_MAECHEN_LANDING_INTERVAL=999 \
     bash "$TRIGSH" 2>&1)"; tr_rc=$?
 
-is   "invalid-closed trigger: exits 0"         0 "$tr_rc"
-want "invalid-closed trigger: bead created"    "invalid-closed" "$tr_out"
-want "invalid-closed trigger: log mentions row" "invalid-closed trigger:" "$tr_out"
+is   "invalid-closed trigger: exits 0"             0 "$tr_rc"
+want "invalid-closed trigger: log mentions rows"   "invalid-closed trigger:" "$tr_out"
 
-# Verify bead was filed with the closed-record rows in description.
+# Verify bead filed with closed-record rows in description.
 tr_bead="$("$SPIRA_BD" -C "$SPIRA_DB" list \
     --status open --label "$TR_SCOPE,$TR_MAE" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["id"] if d else "")' 2>/dev/null \
     || echo "")"
-is "invalid-closed trigger: bead open" "1" "$([ -n "$tr_bead" ] && echo 1 || echo 0)"
+is "invalid-closed trigger: bead filed" "1" "$([ -n "$tr_bead" ] && echo 1 || echo 0)"
 tr_desc="$("$SPIRA_BD" -C "$SPIRA_DB" show "$tr_bead" 2>/dev/null || echo "")"
-want "trigger bead description has INVALID-CLOSED row" "INVALID-CLOSED" "$tr_desc"
-want "trigger bead description has the bead id"        "$TR_ID"         "$tr_desc"
+want "trigger bead description: INVALID-CLOSED row" "INVALID-CLOSED"  "$tr_desc"
+want "trigger bead description: bead id present"    "sp-cr-trig1"     "$tr_desc"
 
 # ==========================================================================================
 echo
-echo "TRIGGER: second run files nothing (dedup)"
+echo "TRIGGER: second run files nothing new (dedup)"
 # ==========================================================================================
-# The trigger bead from the previous run is still open — dedup must prevent another.
 tr_out2="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin" \
     SPIRA_CONF="$NONE" \
@@ -237,38 +223,32 @@ tr_out2="$(env -i HOME="$T" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
     SPIRA_MAECHEN_LANDING_INTERVAL=999 \
     bash "$TRIGSH" 2>&1)"; tr_rc2=$?
-is     "dedup second run: exits 0"    0          "$tr_rc2"
-want   "dedup second run: logs skip"  "skipping" "$tr_out2"
+is   "dedup second run: exits 0"      0          "$tr_rc2"
+want "dedup second run: logs skip"    "skipping" "$tr_out2"
 tr_count="$("$SPIRA_BD" -C "$SPIRA_DB" list \
     --status open --label "$TR_SCOPE,$TR_MAE" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null || echo 0)"
-is "dedup second run: still one bead" "1" "${tr_count:-0}"
+is "dedup: still exactly one bead" "1" "${tr_count:-0}"
 
 testdb_drop
 
 # ==========================================================================================
 echo
-echo "TRIGGER: no fire when all rows are in the allowlist"
+echo "TRIGGER: no fire when all rows are in the allowlist (ALLOWED-IC only)"
 # ==========================================================================================
-# When detect_invalid_closed finds only ALLOWED-IC rows (all ids in the allowlist),
-# the invalid_closed_trigger must NOT fire. Set time and landing triggers to never fire.
-testdb_up maechen_closed_record_allow_no_trigger || { bad "allow-notrigger fixture: testdb_up failed" ""; }
+testdb_up maechen_closed_record_nofire || { bad "no-fire fixture: testdb_up failed" ""; }
 
-ANT_SCOPE="sptest-cr-ant-scope"
+ANT_SCOPE="sptest-cr-ant"
 ANT_MAE="sptest-cr-ant-mae"
-ANT_ID="$("$SPIRA_BD" -C "$SPIRA_DB" create "allowlisted closed bead" \
-    --type task --label "$ANT_SCOPE,plan" --priority 3 2>/dev/null \
-    | grep -oE 'sp-[a-z0-9]+')"
-[ -n "$ANT_ID" ] || { bad "allow-notrigger: could not create test bead" ""; }
-BD_UPDATE_CLOSED_OVERRIDE=1 "$SPIRA_BD" -C "$SPIRA_DB" update "$ANT_ID" \
-    --status closed 2>/dev/null || true
-"$SPIRA_BD" -C "$SPIRA_DB" update "$ANT_ID" \
-    --close-reason "Applied a temporary workaround — but just for the test." 2>/dev/null || true
 
-# Add to allowlist so detect_invalid_closed sees only ALLOWED-IC.
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-cr-ant1","title":"allowlisted bead","status":"closed","issue_type":"task","labels":["$ANT_SCOPE","plan","repo:pushrepo"],"close_reason":"Applied a temporary workaround."}
+JSONL
+
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
-printf '%s quotation: this is a test bead\n' "$ANT_ID" > "$ALLOW_FILE"
+printf 'sp-cr-ant1 quotation: test bead\n' > "$ALLOW_FILE"
 
 _ant_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
 ant_out="$(env -i HOME="$T" \
@@ -285,13 +265,14 @@ ant_out="$(env -i HOME="$T" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
     SPIRA_MAECHEN_LANDING_INTERVAL=999 \
     bash "$TRIGSH" 2>&1)"; ant_rc=$?
-is     "allowlisted rows: trigger exits 0"        0           "$ant_rc"
-want   "allowlisted rows: logs no trigger"        "no trigger" "$ant_out"
-nowant "allowlisted rows: no bead created"        "invalid-closed trigger:" "$ant_out"
+
+is     "allowlisted only: trigger exits 0"    0            "$ant_rc"
+want   "allowlisted only: logs no trigger"    "no trigger" "$ant_out"
+nowant "allowlisted only: no rows trigger"    "invalid-closed trigger:" "$ant_out"
 ant_count="$("$SPIRA_BD" -C "$SPIRA_DB" list \
     --status open --label "$ANT_SCOPE,$ANT_MAE" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null || echo 0)"
-is "allowlisted rows: no trigger bead filed" "0" "${ant_count:-0}"
+is "allowlisted only: no trigger bead filed" "0" "${ant_count:-0}"
 
 rm -f "$ALLOW_FILE"
 testdb_drop
@@ -300,54 +281,30 @@ testdb_drop
 echo
 echo "END-TO-END: three closed beads, trigger, simulated pass, zero counted rows after"
 # ==========================================================================================
-# Three closed beads in a fixture:
-#   A — INVALID-CLOSED (admission): temporary workaround admitted
-#   B — INVALID-CLOSED (quotation): reason discusses the flag list, not a remainder
-#   C — UNFILED-FOLLOW: "the real fix" without a tracking reference
+# Three closed beads in the fixture:
+#   A (sp-cr-e2e-a) — INVALID-CLOSED (admission): temporary workaround admitted
+#   B (sp-cr-e2e-b) — INVALID-CLOSED (quotation): reason discusses the flag list
+#   C (sp-cr-e2e-c) — UNFILED-FOLLOW: "the real fix" without a tracking reference
 #
 # Sequence:
 #   1. Trigger fires → one maechen bead carrying all three rows
-#   2. Second trigger run → dedup (one open bead already)
-#   3. Simulated pass actions:
-#       A → reopen
-#       B → allowlist
-#       C → update close_reason with new bead id reference
+#   2. Second trigger run → dedup (open bead already exists)
+#   3. Simulated Maechen pass:
+#       A → reopen (admission)
+#       B → allowlist (quotation)
+#       C → update close_reason to include tracking reference (clears UNFILED-FOLLOW)
 #   4. detect_invalid_closed → 0 counted rows, 1 ALLOWED-IC line
-
 testdb_up maechen_closed_record_e2e || { bad "e2e fixture: testdb_up failed" ""; }
 
-E2E_SCOPE="sptest-cr-e2e-scope"
+E2E_SCOPE="sptest-cr-e2e"
 E2E_MAE="sptest-cr-e2e-mae"
 
-# Bead A — admission.
-BEAD_A="$("$SPIRA_BD" -C "$SPIRA_DB" create "bead A admission" \
-    --type task --label "$E2E_SCOPE,plan" --priority 3 2>/dev/null \
-    | grep -oE 'sp-[a-z0-9]+')"
-BD_UPDATE_CLOSED_OVERRIDE=1 "$SPIRA_BD" -C "$SPIRA_DB" update "$BEAD_A" \
-    --status closed 2>/dev/null || true
-"$SPIRA_BD" -C "$SPIRA_DB" update "$BEAD_A" \
-    --close-reason "Applied a temporary workaround pending the real fix." 2>/dev/null || true
-
-# Bead B — quotation (reason discusses the flag list, not a remainder).
-BEAD_B="$("$SPIRA_BD" -C "$SPIRA_DB" create "bead B quotation" \
-    --type task --label "$E2E_SCOPE,plan" --priority 3 2>/dev/null \
-    | grep -oE 'sp-[a-z0-9]+')"
-BD_UPDATE_CLOSED_OVERRIDE=1 "$SPIRA_BD" -C "$SPIRA_DB" update "$BEAD_B" \
-    --status closed 2>/dev/null || true
-"$SPIRA_BD" -C "$SPIRA_DB" update "$BEAD_B" \
-    --close-reason "Built close-reason-flags.py which adds 'TEMPORARY WORKAROUND' to RED_FLAGS. Landed on origin/main." 2>/dev/null || true
-
-# Bead C — unfiled follow-on.
-BEAD_C="$("$SPIRA_BD" -C "$SPIRA_DB" create "bead C unfiled" \
-    --type task --label "$E2E_SCOPE,plan" --priority 3 2>/dev/null \
-    | grep -oE 'sp-[a-z0-9]+')"
-BD_UPDATE_CLOSED_OVERRIDE=1 "$SPIRA_BD" -C "$SPIRA_DB" update "$BEAD_C" \
-    --status closed 2>/dev/null || true
-"$SPIRA_BD" -C "$SPIRA_DB" update "$BEAD_C" \
-    --close-reason "The real fix requires a schema migration. Deployed the stopgap." 2>/dev/null || true
-
-[ -n "$BEAD_A" ] && [ -n "$BEAD_B" ] && [ -n "$BEAD_C" ] \
-    || { bad "e2e: could not create fixture beads" "A=$BEAD_A B=$BEAD_B C=$BEAD_C"; }
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-cr-e2e-a","title":"bead A admission","status":"closed","issue_type":"task","labels":["$E2E_SCOPE","plan","repo:pushrepo"],"close_reason":"Applied a temporary workaround pending the real fix."}
+{"id":"sp-cr-e2e-b","title":"bead B quotation","status":"closed","issue_type":"task","labels":["$E2E_SCOPE","plan","repo:pushrepo"],"close_reason":"Built close-reason-flags.py which adds 'TEMPORARY WORKAROUND' to RED_FLAGS. Landed on origin/main."}
+{"id":"sp-cr-e2e-c","title":"bead C unfiled","status":"closed","issue_type":"task","labels":["$E2E_SCOPE","plan","repo:pushrepo"],"close_reason":"The real fix requires a schema migration. Deployed the stopgap."}
+JSONL
 
 rm -f "$ALLOW_FILE"
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
@@ -369,22 +326,22 @@ e2e_trig1="$(env -i HOME="$T" \
     SPIRA_SCOPE_LABEL="$E2E_SCOPE" \
     SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
     SPIRA_MAECHEN_LANDING_INTERVAL=999 \
-    bash "$TRIGSH" 2>&1)"
-is "e2e: trigger run 1 exits 0" "0" "$?"
-want "e2e: trigger log mentions rows" "invalid-closed trigger:" "$e2e_trig1"
+    bash "$TRIGSH" 2>&1)"; e2e_rc1=$?
+is   "e2e: trigger run 1 exits 0"           0                      "$e2e_rc1"
+want "e2e: trigger log mentions rows"        "invalid-closed trigger:" "$e2e_trig1"
 
 e2e_sweep_id="$("$SPIRA_BD" -C "$SPIRA_DB" list \
     --status open --label "$E2E_SCOPE,$E2E_MAE" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["id"] if d else "")' 2>/dev/null \
     || echo "")"
-[ -n "$e2e_sweep_id" ] || { bad "e2e: no sweep bead filed" ""; }
+[ -n "$e2e_sweep_id" ] || bad "e2e: no sweep bead filed" ""
 
 e2e_desc="$("$SPIRA_BD" -C "$SPIRA_DB" show "$e2e_sweep_id" 2>/dev/null || echo "")"
-want "e2e: sweep bead has BEAD_A row" "$BEAD_A" "$e2e_desc"
-want "e2e: sweep bead has BEAD_B row" "$BEAD_B" "$e2e_desc"
-want "e2e: sweep bead has BEAD_C row" "$BEAD_C" "$e2e_desc"
+want "e2e: sweep bead has bead A row" "sp-cr-e2e-a" "$e2e_desc"
+want "e2e: sweep bead has bead B row" "sp-cr-e2e-b" "$e2e_desc"
+want "e2e: sweep bead has bead C row" "sp-cr-e2e-c" "$e2e_desc"
 
-# Step 2: second trigger run → dedup (bead still open).
+# Step 2: second trigger run → dedup.
 e2e_trig2="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin" \
     SPIRA_CONF="$NONE" \
@@ -403,41 +360,39 @@ want "e2e: second trigger run logs skipping" "skipping" "$e2e_trig2"
 e2e_bead_count="$("$SPIRA_BD" -C "$SPIRA_DB" list \
     --status open --label "$E2E_SCOPE,$E2E_MAE" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null || echo 0)"
-is "e2e: second trigger run files nothing new" "1" "${e2e_bead_count:-0}"
+is "e2e: second trigger files nothing new" "1" "${e2e_bead_count:-0}"
 
 # Step 3: simulate Maechen pass decisions.
 # A → reopen (admission).
-"$SPIRA_BD" -C "$SPIRA_DB" reopen "$BEAD_A" 2>/dev/null || true
-
+"$SPIRA_BD" -C "$SPIRA_DB" reopen "sp-cr-e2e-a" 2>/dev/null || true
 # B → allowlist (quotation).
-printf '%s quotation: reason names the flag list, not a remainder\n' "$BEAD_B" > "$ALLOW_FILE"
-
-# C → update close_reason with a tracking reference (follow-up filed as a fake bead id).
-"$SPIRA_BD" -C "$SPIRA_DB" update "$BEAD_C" \
-    --close-reason "The real fix requires a schema migration. Deployed the stopgap. Follow-up filed as sp-fake99." 2>/dev/null || true
+printf 'sp-cr-e2e-b quotation: reason names the flag list, not a remainder\n' > "$ALLOW_FILE"
+# C → file follow-up bead, then add bead C to the allowlist citing it (clears UNFILED-FOLLOW).
+FOLLOW_ID="$("$SPIRA_BD" -C "$SPIRA_DB" create "follow-up: schema migration for e2e-c" \
+    --type task --label "$E2E_SCOPE,plan" --priority 3 2>/dev/null \
+    | grep -oE 'sp-[a-z0-9]+')" || FOLLOW_ID="sp-fake99"
+printf 'sp-cr-e2e-c follow-up filed as %s\n' "$FOLLOW_ID" >> "$ALLOW_FILE"
 
 # Step 4: detect_invalid_closed via cockpit seam → 0 counted, 1 allowed.
-_e2e_lc() {
-    env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
-        SPIRA_PATH="${SPIRA_PATH:-}" \
-        SPIRA_CONF="$T/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
-        SPIRA_RUN="$RUNDIR" SPIRA_DB="$SPIRA_DB" \
-        SPIRA_REPO_MAP="$SELFMAP" SPIRA_GOAL=sp-goal \
-        SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-        SPIRA_SPIKE_LABEL=spike \
-        SPIRA_SCOPE_LABEL="$E2E_SCOPE" \
-        bash "$HERE/cockpit.sh" livelock 2>/dev/null
-}
+e2e_final="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    SPIRA_PATH="${SPIRA_PATH:-}" \
+    SPIRA_CONF="$T/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
+    SPIRA_RUN="$RUNDIR" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_REPO_MAP="$SELFMAP" SPIRA_GOAL=sp-goal \
+    SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
+    SPIRA_SPIKE_LABEL=spike \
+    SPIRA_SCOPE_LABEL="$E2E_SCOPE" \
+    bash "$HERE/cockpit.sh" livelock 2>/dev/null)"
 
-e2e_final="$(_e2e_lc)"
 is "e2e: SP_INVALID_CLOSED=0 after pass" "0" \
    "$(printf '%s\n' "$e2e_final" | sed -n 's/^SP_INVALID_CLOSED=//p' | head -1)"
 is "e2e: SP_UNFILED_FOLLOW=0 after pass" "0" \
    "$(printf '%s\n' "$e2e_final" | sed -n 's/^SP_UNFILED_FOLLOW=//p' | head -1)"
-want   "e2e: one ALLOWED-IC line present" "ALLOWED-IC" "$e2e_final"
-want   "e2e: ALLOWED-IC names BEAD_B"    "$BEAD_B"    "$e2e_final"
-nowant "e2e: BEAD_A not in ALLOWED-IC"   "ALLOWED-IC $BEAD_A" "$e2e_final"
-nowant "e2e: BEAD_C not in ALLOWED-IC"   "ALLOWED-IC $BEAD_C" "$e2e_final"
+# Both B (quotation) and C (follow-up filed) are in the allowlist → two ALLOWED-IC lines.
+want   "e2e: ALLOWED-IC present"           "ALLOWED-IC"         "$e2e_final"
+want   "e2e: ALLOWED-IC names bead B"      "ALLOWED-IC sp-cr-e2e-b" "$e2e_final"
+want   "e2e: ALLOWED-IC names bead C"      "ALLOWED-IC sp-cr-e2e-c" "$e2e_final"
+nowant "e2e: bead A not in ALLOWED-IC"     "ALLOWED-IC sp-cr-e2e-a" "$e2e_final"
 
 rm -f "$ALLOW_FILE"
 testdb_drop

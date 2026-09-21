@@ -44,7 +44,8 @@ For each UNFILED-FOLLOW row, read the close reason and decide whether a follow-u
 should be filed.
 
 **If a follow-up is warranted** — the phrase implies real remaining work with no tracking
-reference:
+reference. File the follow-up, then add the original bead to the allowlist citing it so
+the UNFILED-FOLLOW row clears on the next detector pass:
 
     new_id="$(bd -C "{{DB}}" create "<follow-up title>" \
         --type task --priority 3 \
@@ -53,12 +54,9 @@ reference:
     ref: <closed-bead-id>
     <what the follow-up is and why it was implied by the close reason>
     DESC
-    )"
-    bd -C "{{DB}}" update <closed-id> --close-reason "<original reason> Follow-up filed as <new-id>."
-    printf '%s maechen: closed-record: FILED %s for %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "<new-id>" "<closed-id>" >> "{{RUN}}/maechen.log"
-
-Updating the close reason with the new bead's id gives the original bead a tracking
-reference, clearing it from the UNFILED-FOLLOW detector without the allowlist.
+    | grep -oE '[a-z0-9]+-[a-z0-9]+')"
+    printf '%s follow-up filed as %s\n' "<closed-id>" "$new_id" >> "{{RUN}}/invalid-closed.allow"
+    printf '%s maechen: closed-record: FILED %s for %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$new_id" "<closed-id>" >> "{{RUN}}/maechen.log"
 
 **If no follow-up is warranted** — the phrase was incidental and the work is genuinely
 complete. Add to the allowlist and note the reason:
