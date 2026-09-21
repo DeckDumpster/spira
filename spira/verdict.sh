@@ -45,13 +45,14 @@ _batch_reseal() {   # _batch_reseal <file> <new_head> <new_members>
 # SPIRA_QUEUE_REPRO_BATCH allows tests to substitute testenv-batch.sh.
 : "${SPIRA_QUEUE_REPRO_BATCH:=$HERE/testenv-batch.sh}"
 
-_repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-file]
+_repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-file] [flaky-file]
                     # Merges <tip> onto <base-sha> so suites added after the member
                     # forked are present in the tested tree.
                     # Empty <base-sha>: tests <tip> directly (batch-head path).
-                    # Returns 0 (red), 1 (green), 2 (could not judge — harness fault).
-                    # If [fail-file] is given and result is red, writes FAIL lines there.
-    local suites="$1" repo="$2" base="$3" tip="$4" _fail_out="${5:-}"
+                    # Returns 0 (red), 1 (green), 2 (harness fault), 3 (flaky: red then green).
+                    # If [fail-file] given and result is red, writes FAIL lines there.
+                    # If [flaky-file] given and result is flaky, writes suite names there.
+    local suites="$1" repo="$2" base="$3" tip="$4" _fail_out="${5:-}" _flaky_out="${6:-}"
     local tmp rc test_ref wt _repro_out
     if [ -n "$base" ]; then
         wt="$SPIRA_RUN/worktree/.repro-$$"
@@ -76,13 +77,28 @@ _repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-f
         --mode serial --suites "$suites" "$test_ref" 2>&1)"
     rc=$?
     rm -rf "$tmp"
-    if [ "$rc" -eq 1 ] && [ -n "$_fail_out" ]; then
-        local _ev
-        _ev="$(printf '%s\n' "$_repro_out" | grep 'FAIL' | head -20 || true)"
-        [ -n "$_ev" ] || _ev="$(printf '%s\n' "$_repro_out" | tail -n 20)"
-        printf '%s\n' "$_ev" > "$_fail_out" || true
+    if [ "$rc" -eq 1 ]; then
+        local _retry_tmp _retry_rc
+        _retry_tmp="$(mktemp -d)"
+        SPIRA_REPO="$repo" SPIRA_BATCH_RESULTS="$_retry_tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
+            --mode serial --suites "$suites" "$test_ref" >/dev/null 2>&1
+        _retry_rc=$?
+        rm -rf "$_retry_tmp"
+        if [ "$_retry_rc" -eq 0 ]; then
+            [ -n "$_flaky_out" ] && printf '%s\n' "$suites" > "$_flaky_out" || true
+            return 3
+        elif [ "$_retry_rc" -eq 1 ]; then
+            if [ -n "$_fail_out" ]; then
+                local _ev
+                _ev="$(printf '%s\n' "$_repro_out" | grep 'FAIL' | head -20 || true)"
+                [ -n "$_ev" ] || _ev="$(printf '%s\n' "$_repro_out" | tail -n 20)"
+                printf '%s\n' "$_ev" > "$_fail_out" || true
+            fi
+            return 0
+        else
+            return 2
+        fi
     fi
-    [ "$rc" -eq 1 ] && return 0
     [ "$rc" -eq 0 ] && return 1
     return 2
 }
@@ -172,6 +188,7 @@ _q_attribute() {
     local members_str="${10}" remote="${11:-}" base_ref="${12:-}"
 
     local attr_start; attr_start="$(date +%s)"
+    local _batch_flaky=""
 
     # Parse red suite names from check-status output.
     local red_suites="" _line
@@ -197,35 +214,49 @@ _q_attribute() {
         _mm="${members_arr[0]}"; _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
         local _unrep_dir="$SPIRA_QUEUE_DIR/$name/unreproduced"
         local _unrep_f="$_unrep_dir/$_mid"
-        if _repro_is_red "$suites_csv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid"; then
+        local _sm_flaky_f _sm_rc _sm_fs
+        _sm_flaky_f="$(mktemp)"
+        _repro_is_red "$suites_csv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid" "$_sm_flaky_f"
+        _sm_rc=$?
+        if [ "$_sm_rc" -eq 0 ]; then
+            rm -f "$_sm_flaky_f"
             ejected+=("$_mm")
             _any_suite_in_selection "$red_suites" "$repo" "$base_sha" "$_mtip" \
                 && caught=$(( caught + 1 )) || escaped=$(( escaped + 1 ))
-        elif _suite_directly_in_diff "$red_suites" "$repo" "$base_sha" "$_mtip"; then
-            # Diff contains the red suite — eject on diff evidence without waiting
-            # for a second occurrence (repro unavailable).
-            ejected+=("$_mm")
-            caught=$(( caught + 1 ))
-            rm -f "$_unrep_f" 2>/dev/null || true
+        elif [ "$_sm_rc" -eq 3 ]; then
+            _sm_fs="$(cat "$_sm_flaky_f" 2>/dev/null || true)"
+            rm -f "$_sm_flaky_f"
+            _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_sm_fs"
+            printf 'verdict %s: %s — flaky (red then green), survived: %s\n' "$name" "$_mid" "$_sm_fs"
+            survivors+=("$_mm")
         else
-            local _prev_tip; _prev_tip="$(cat "$_unrep_f" 2>/dev/null || true)"
-            if [ "${_prev_tip:-}" = "$_mtip" ]; then
-                # Second unreproduced red on same tip → eject.
+            rm -f "$_sm_flaky_f"
+            if _suite_directly_in_diff "$red_suites" "$repo" "$base_sha" "$_mtip"; then
+                # Diff contains the red suite — eject on diff evidence without waiting
+                # for a second occurrence (repro unavailable).
                 ejected+=("$_mm")
-                escaped=$(( escaped + 1 ))
+                caught=$(( caught + 1 ))
                 rm -f "$_unrep_f" 2>/dev/null || true
             else
-                # First unreproduced red → record and requeue.
-                mkdir -p "$_unrep_dir"
-                printf '%s\n' "$_mtip" > "$_unrep_f"
-                survivors+=("$_mm")
+                local _prev_tip; _prev_tip="$(cat "$_unrep_f" 2>/dev/null || true)"
+                if [ "${_prev_tip:-}" = "$_mtip" ]; then
+                    # Second unreproduced red on same tip → eject.
+                    ejected+=("$_mm")
+                    escaped=$(( escaped + 1 ))
+                    rm -f "$_unrep_f" 2>/dev/null || true
+                else
+                    # First unreproduced red → record and requeue.
+                    mkdir -p "$_unrep_dir"
+                    printf '%s\n' "$_mtip" > "$_unrep_f"
+                    survivors+=("$_mm")
+                fi
             fi
         fi
     else
         # Per-member reproduction: each member tested only on the failing suites
         # its own diff selects. Suites no member's diff selects are tried against
         # every member below before falling through to together-only.
-        local _mf _msel _mcsv _rs _covered_suites=""
+        local _mf _msel _mcsv _rs _covered_suites="" _flaky_f="" _mrc=0 _fs=""
         for _mm in "${members_arr[@]}"; do
             _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
             _mf="$(mktemp)"
@@ -239,10 +270,18 @@ _q_attribute() {
                 case ",$_mcsv," in *",$_rs,"*) ;; *) _mcsv="${_mcsv:+$_mcsv,}$_rs" ;; esac
             done
             [ -n "$_mcsv" ] || continue
-            if _repro_is_red "$_mcsv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid"; then
+            _flaky_f="$(mktemp)"
+            _repro_is_red "$_mcsv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid" "$_flaky_f"
+            _mrc=$?
+            if [ "$_mrc" -eq 0 ]; then
                 ejected+=("$_mid|$_mtip|$_mcsv")
                 caught=$(( caught + 1 ))
+            elif [ "$_mrc" -eq 3 ]; then
+                _fs="$(cat "$_flaky_f" 2>/dev/null || true)"
+                _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
+                printf 'verdict %s: %s — flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
             fi
+            rm -f "$_flaky_f"
         done
 
         # Suites that no member's diff selected (e.g. whole-tree lints): try each
@@ -270,10 +309,18 @@ _q_attribute() {
         if [ "${#ejected[@]}" -eq 0 ] && [ -n "$_unselected_csv" ]; then
             for _mm in "${members_arr[@]}"; do
                 _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
-                if _repro_is_red "$_unselected_csv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid"; then
+                _flaky_f="$(mktemp)"
+                _repro_is_red "$_unselected_csv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid" "$_flaky_f"
+                _mrc=$?
+                if [ "$_mrc" -eq 0 ]; then
                     ejected+=("$_mid|$_mtip|$_unselected_csv")
                     caught=$(( caught + 1 ))
+                elif [ "$_mrc" -eq 3 ]; then
+                    _fs="$(cat "$_flaky_f" 2>/dev/null || true)"
+                    _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
+                    printf 'verdict %s: %s — flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
                 fi
+                rm -f "$_flaky_f"
             done
         fi
 
@@ -283,10 +330,18 @@ _q_attribute() {
             # can be caused by any member regardless of its declared covers.
             for _mm in "${members_arr[@]}"; do
                 _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
-                if _repro_is_red "$suites_csv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid"; then
+                _flaky_f="$(mktemp)"
+                _repro_is_red "$suites_csv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid" "$_flaky_f"
+                _mrc=$?
+                if [ "$_mrc" -eq 0 ]; then
                     ejected+=("$_mid|$_mtip|$suites_csv")
                     caught=$(( caught + 1 ))
+                elif [ "$_mrc" -eq 3 ]; then
+                    _fs="$(cat "$_flaky_f" 2>/dev/null || true)"
+                    _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
+                    printf 'verdict %s: %s — flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
                 fi
+                rm -f "$_flaky_f"
             done
         fi
 
@@ -328,6 +383,15 @@ _q_attribute() {
                 case "$ejected_set" in *" $_mid "*) ;; *) survivors+=("$_mm") ;; esac
             done
         fi
+    fi
+
+    # Record flaky suites detected by local reproduction.
+    if [ -n "$_batch_flaky" ]; then
+        printf 'verdict %s: PR %s flaky_suites=%s\n' "$name" "$pr_n" "$_batch_flaky"
+        local _fls
+        for _fls in $(printf '%s\n' "$_batch_flaky" | tr ',' '\n'); do
+            bash "$HERE/suites.sh" observe-flake "$_fls" "${batch_head:-}" 2>/dev/null || true
+        done
     fi
 
     # Eject guilty members.
