@@ -45,6 +45,11 @@ _batch_reseal() {   # _batch_reseal <file> <new_head> <new_members>
 # SPIRA_QUEUE_REPRO_BATCH allows tests to substitute testenv-batch.sh.
 : "${SPIRA_QUEUE_REPRO_BATCH:=$HERE/testenv-batch.sh}"
 
+# REPLAY IN PARALLEL (hotfix, concierge 2026-09-21, per Ryan; sp-groic). The replay ran
+# `--mode serial`, so five 200-400 s suites cost their sum per member (~19 min) and six
+# members cost two hours. Parallel mode is bounded by SPIRA_BATCH_MAXPAR like every other
+# batch on this box; the serial re-run that tells a flake from a failure is gate-retry's
+# job on the CI side, not this one's.
 _repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-file] [flaky-file]
                     # Merges <tip> onto <base-sha> so suites added after the member
                     # forked are present in the tested tree.
@@ -74,7 +79,7 @@ _repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-f
     fi
     tmp="$(mktemp -d)"
     _repro_out="$(SPIRA_REPO="$repo" SPIRA_BATCH_RESULTS="$tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
-        --mode serial --suites "$suites" "$test_ref" 2>&1)"
+        --mode parallel --suites "$suites" "$test_ref" 2>&1)"
     rc=$?
     rm -rf "$tmp"
     if [ "$rc" -eq 1 ]; then
