@@ -2,7 +2,7 @@
 #
 # test-verdict.sh — merge-queue verdict: fast-forward landing pass.
 #
-# Twenty-five cases:
+# Twenty-six cases:
 #   1. No open batch → forge is never reached.
 #   2. Pending within CI max → nothing happens.
 #   3. Pending, run old and stuck → run cancelled explicitly; no workflow-rerun.
@@ -38,6 +38,7 @@
 #  23. Serial pair: same 3 members with MAXPAR=1 → total ≥ 6s (positive control).
 #  24. Could-not-judge: rc=2 member doesn't shield others; guilty member ejected.
 #  25. Deterministic: ejected set identical across two runs with different completion order.
+#  26. Red-suite ineligible for quarantine: gate's red-twice verdict blocks observe-flake.
 #
 # The forge seam is a local fixture; no network is reached.
 # mail.sh and suites.sh are stubbed to capture calls.
@@ -735,9 +736,11 @@ clean_case
 
 # =============================================================================
 # 19. FLAKY SUITE — batch of 2 members, suite fails once then passes on retry.
-#     Verdict ejects neither member; flaky_suites= appears in output; suites.sh
-#     observe-flake is called for the suite.
-#     POSITIVE CONTROL (case 20): same shape but suite fails twice → member ejected.
+#     Verdict ejects neither member; observe-flake is NOT called (the suite
+#     arrived on a red-suite: line — the gate's non-flaky classification wins).
+#     POSITIVE CONTROL (case 20): same shape but suite fails twice → ejected.
+#     REGRESSION TEST (case 21): single member, same forge status, same repro
+#     behaviour — observe-flake must not be called (sp-6zw2p).
 # =============================================================================
 # Mock: first call for each unique test_ref exits 1 (red); second exits 0 (green).
 # State is tracked per-ref via a counter file in REPRO_STATE_DIR.
@@ -786,10 +789,9 @@ case "$(landstate sp-vd-f1)" in CERTIFIED*) ok "19. flaky-repro: sp-vd-f1 not ej
 case "$(landstate sp-vd-f2)" in CERTIFIED*) ok "19. flaky-repro: sp-vd-f2 not ejected (CERTIFIED)" ;;
     EJECTED*) bad "19. flaky-repro: sp-vd-f2 not ejected" "was EJECTED" ;;
     *) bad "19. flaky-repro: sp-vd-f2 not ejected" "got: $(landstate sp-vd-f2)" ;; esac
-want   "19. flaky-repro: flaky_suites in output"    "flaky_suites="       "$out"
-want   "19. flaky-repro: suite named in output"     "test-flaky-repro.sh" "$out"
-want   "19. flaky-repro: observe-flake called"      "test-flaky-repro.sh" "$(cat "$SUITES_LOG")"
-nowant "19. flaky-repro: no ejection"               "ejected"             "$out"
+want   "19. flaky-repro: suite named in output"            "test-flaky-repro.sh" "$out"
+nowant "19. flaky-repro: observe-flake not called"         "test-flaky-repro.sh" "$(cat "$SUITES_LOG")"
+nowant "19. flaky-repro: no ejection"                      "ejected"             "$out"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
@@ -1080,6 +1082,53 @@ res25b="$(_run_shuffled_batch)"
 [ "$res25a" = "$res25b" ] \
     && ok "25. deterministic: same ejected set both runs ($res25a)" \
     || bad "25. deterministic: ejected set differs" "run1=$res25a run2=$res25b"
+
+# =============================================================================
+# 26. RED-SUITE INELIGIBLE FOR QUARANTINE (sp-6zw2p) — single member; forge
+#     classified the suite as red-twice (red-suite:), so it is not flaky by
+#     the gate's own verdict. Local repro returns red-then-green (would look
+#     flaky) but the gate's classification wins: observe-flake must not be
+#     called. Member survives (repro was inconclusive, not confirmatory).
+#     POSITIVE CONTROL: case 20 proves that a truly red suite (fails twice
+#     in repro) still ejects the member; this case proves survival is from
+#     inconclusive repro, not from a missing ejection path.
+# =============================================================================
+REPRO_STATE_DIR26="$TMP/repro-state-26"
+mkdir -p "$REPRO_STATE_DIR26"
+export REPRO_STATE_DIR26
+cat > "$SH/repro-redtwice.sh" <<'REPRO'
+#!/usr/bin/env bash
+shift 2; shift 2  # skip --mode <mode> --suites <csv>
+ref="${1:-}"
+key="$(printf '%s' "$ref" | sha256sum | cut -c1-8)"
+count_file="$REPRO_STATE_DIR26/$key"
+count=0; [ -f "$count_file" ] && count=$(cat "$count_file")
+count=$(( count + 1 ))
+printf '%d\n' "$count" > "$count_file"
+[ "$count" -eq 1 ] && exit 1 || exit 0
+REPRO
+chmod +x "$SH/repro-redtwice.sh"
+
+base_sha26="$(git -C "$REPO" rev-parse origin/main)"
+bwt26="$RUN/worktree/sp-vd-r26"
+git -C "$REPO" worktree add -q -b "spira/sp-vd-r26" "$bwt26" origin/main 2>/dev/null || true
+printf 'sp-vd-r26\n' > "$bwt26/sp-vd-r26.txt"
+git -C "$bwt26" add -A
+git -C "$bwt26" commit -q -m "sp-vd-r26: work"
+tip_r26="$(git -C "$REPO" rev-parse "spira/sp-vd-r26")"
+printf 'BATCHED %s %s\n' "$tip_r26" "$(date +%s)" > "$LANDSTATE/sp-vd-r26"
+{ printf 'pr=91\nhead=%s\nbase=%s\nmembers=sp-vd-r26:%s\nopened=%s\n' \
+    "$tip_r26" "$base_sha26" "$tip_r26" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-gate-classified.sh\n' > "$FORGE_STATUS_FILE"
+: > "$SUITES_LOG"
+out="$(SPIRA_QUEUE_REPRO_BATCH="$SH/repro-redtwice.sh" verdict "$REPONAME")"
+case "$(landstate sp-vd-r26)" in CERTIFIED*) ok "26. red-suite-no-quarantine: member survived (CERTIFIED)" ;;
+    EJECTED*) bad "26. red-suite-no-quarantine: member survived" "was EJECTED" ;;
+    *) bad "26. red-suite-no-quarantine: member survived" "got: $(landstate sp-vd-r26)" ;; esac
+nowant "26. red-suite-no-quarantine: observe-flake not called" \
+    "test-gate-classified.sh" "$(cat "$SUITES_LOG")"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
