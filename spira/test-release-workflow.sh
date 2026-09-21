@@ -2,21 +2,22 @@
 #
 # test-release-workflow.sh — .github/workflows/release.yml structural checks:
 # the workflow file exists, triggers on spira-release-* tags, pins the
-# toolchain to a specific semver rather than a floating alias, and includes
-# an assertion step that verifies the installed version.
+# toolchain to a specific semver rather than a floating alias, includes
+# an assertion step that verifies the installed version, and every --*-bin
+# flag that build-tarball.sh requires is supplied by the workflow.
 #
 # A GitHub Actions workflow cannot be executed locally, so this suite validates
 # structural properties of the YAML file rather than its runtime behaviour.
-# These properties are the ones the bead's acceptance criteria name explicitly:
-# the trigger pattern, the pinned toolchain, and the assertion step.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control)
 # --------------------------------------------------------
 # Case 1 proves the file is present before any "not found in file" result can
 # be read as meaningful. A missing file and a check whose pattern never matches
 # look the same from outside — the positive control distinguishes them.
+# Case 7 plants a fixture workflow missing one --*-bin flag and requires the
+# check to detect it before trusting the silence on the real workflow.
 #
-# host-reason: structural grep checks on a YAML file; no container or database dependency
+# host-reason: structural grep checks on YAML/shell files; no container or database dependency
 #
 # CASES
 #   1. POSITIVE CONTROL: workflow file is present.
@@ -24,8 +25,11 @@
 #   3. Toolchain is pinned to a semver (not "stable", "nightly", or "beta").
 #   4. An assertion step verifies the installed Rust version at runtime.
 #   5. No build step silences failure with continue-on-error: true.
+#   6. build-tarball.sh is called with --name to stamp once per release.
+#   7. POSITIVE CONTROL + every required --*-bin from build-tarball.sh is
+#      supplied in the workflow's build-tarball invocation.
 #
-# covers: .github/workflows/release.yml
+# covers: .github/workflows/release.yml spira/build-tarball.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 # $HERE is always the spira/ directory, one level below the repo root.
@@ -33,6 +37,10 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 # worktree .git file references the parent repo path, which is not mounted there.
 REPO_ROOT="$(cd "$HERE/.." && pwd -P)"
 WORKFLOW="$REPO_ROOT/.github/workflows/release.yml"
+TARBALL_SH="$HERE/build-tarball.sh"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT INT TERM
 
 pass=0; fail=0
 ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
@@ -112,6 +120,51 @@ echo "6. build-tarball.sh is called with --name to stamp once per release"
 # Without --name, build-tarball.sh generates its own timestamp independently
 # of the tag, producing the mismatch that issue #51 describes.
 want "build-tarball.sh uses --name" "--name"
+
+# ============================================================================
+echo
+echo "7. Producer/consumer agreement — every --*-bin required by build-tarball.sh is passed"
+# ============================================================================
+# Extract the --*-bin flags that build-tarball.sh considers required. These are
+# identified by the error-message pattern: "pass --X-bin <path>" appears exactly
+# once per required flag and never for optional ones.
+required_bins="$(grep -oE 'pass --[a-z]+-bin' "$TARBALL_SH" | grep -oE -- '--[a-z]+-bin' | sort -u)"
+
+if [ -z "$required_bins" ]; then
+    bad "required bins extracted from build-tarball.sh" \
+        "no required --*-bin flags found — check the grep pattern"
+else
+    # Positive control: a fixture workflow missing --broker-bin must be detected.
+    FIXTURE="$TMP/fixture-release.yml"
+    grep -v -- '--broker-bin' "$WORKFLOW" > "$FIXTURE"
+    fixture_passed="$(grep -oE -- '--[a-z]+-bin' "$FIXTURE" | sort -u)"
+    ctrl_detected=0
+    for flag in $required_bins; do
+        if ! printf '%s\n' "$fixture_passed" | grep -qF -- "$flag"; then
+            ctrl_detected=1
+            break
+        fi
+    done
+    if [ "$ctrl_detected" -eq 1 ]; then
+        ok "positive control: fixture without --broker-bin is detected as missing"
+    else
+        bad "positive control: fixture without --broker-bin is detected as missing" \
+            "check did not detect absence of --broker-bin in fixture (positive control failed)"
+    fi
+
+    # Real check: the actual workflow passes every required flag.
+    passed_bins="$(grep -oE -- '--[a-z]+-bin' "$WORKFLOW" | sort -u)"
+    all_present=1
+    for flag in $required_bins; do
+        if printf '%s\n' "$passed_bins" | grep -qF -- "$flag"; then
+            ok "release.yml passes $flag"
+        else
+            bad "release.yml passes $flag" \
+                "$flag is required by build-tarball.sh but absent from release.yml"
+            all_present=0
+        fi
+    done
+fi
 
 # ============================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
