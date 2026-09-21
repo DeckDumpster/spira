@@ -1231,6 +1231,12 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 continue
             fi
             # Parallel path: defer gating to Phase 2 after the loop.
+            # Budget is checked here so a tight pass cuts in Phase 1 and the
+            # cut message fires at the same point it does on the serial path.
+            if ! gate_fits; then
+                _budget_cut=1
+                break
+            fi
             _cert_brs+=("$br"); _cert_beadids+=("$id"); _cert_tips+=("$tip")
             continue
         fi

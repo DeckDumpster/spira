@@ -118,6 +118,7 @@ drop_branch() {
 }
 
 seed_order() {
+    rm -rf "$RUN/submitted"   # submitted state from a prior landing must not carry over
     testdb_reset
     testdb_seed <<'JSONL'
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-01T00:00:00Z"}
