@@ -954,5 +954,46 @@ chmod +x "$SH/gate.sh"
 : > "$REPRO_FAIL_FILE"
 clean_case
 
+# =============================================================================
+# m. CONFLICT-NOTE PATHS: a CERTIFIED branch that conflicts with the new base
+#    is reopened with a note naming the specific conflicting file, not a bare
+#    "conflicts with $base" sentence.
+#
+#    POSITIVE CONTROL: the note is read from the bead database after the run;
+#    a batch that never called bead_reopen produces an empty note, which
+#    would fail the "want" check rather than passing vacuously.
+#
+#    This must be seen to fail on the UNFIXED tree (batch.sh drops the
+#    conflict path list before writing the reopen note).
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"; OLD_M=$(( NOW - 1800 - 1 ))
+
+git -C "$REPO" worktree add -q -b "spira/sp-btm" \
+    "$RUN/worktree/sp-btm" main 2>/dev/null || true
+printf 'branch-ver\n' > "$RUN/worktree/sp-btm/conflict3.txt"
+git -C "$RUN/worktree/sp-btm" add -A
+git -C "$RUN/worktree/sp-btm" commit -q -m "sp-btm: set conflict3.txt"
+tip_m="$(git -C "$REPO" rev-parse "spira/sp-btm")"
+printf 'CERTIFIED %s %s\n' "$tip_m" "$OLD_M" > "$LANDSTATE/sp-btm"
+plant_bead "sp-btm"
+
+printf 'main-ver\n' > "$REPO/conflict3.txt"
+git -C "$REPO" add conflict3.txt
+git -C "$REPO" commit -q -m "main: set conflict3.txt"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+
+batch "$REPONAME" >/dev/null 2>&1
+
+note_m="$(B show sp-btm --json 2>/dev/null \
+    | python3 -c "import json,sys;d=json.load(sys.stdin);d=d[0] if isinstance(d,list) else d;print(d.get('notes') or '')" \
+    2>/dev/null || true)"
+is   "m. positive-control: sp-btm reopened (RED)" "1" \
+    "$([ "$(awk '{print $1}' "$LANDSTATE/sp-btm" 2>/dev/null)" = "RED" ] && echo 1 || echo 0)"
+want "m. conflict-note: names conflicting file" "conflict3.txt" "$note_m"
+clean_case
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

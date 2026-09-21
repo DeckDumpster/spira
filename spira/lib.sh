@@ -3102,6 +3102,20 @@ other_beads_on_conflicts() {
     printf '%s' "$ids" | tr '\n' ' ' | sed 's/ $//'
 }
 
+conflict_reopen_note() {
+    local repo="$1" br="$2" base="$3" name="$4" conflicts="$5" actor="$6"
+    local rn other_beads note
+    rn="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
+    other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "$conflicts")"
+    note="Reopened by $actor: $br does not rebase onto $base in $name; conflicts in ${conflicts:-unknown}. The branch carries $rn commit(s) from the previous session — resume from the existing work."
+    if [ -n "$other_beads" ]; then
+        note="$note Those files were changed on $base by $other_beads — check whether this work is already landed before resolving."
+    else
+        note="$note A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it."
+    fi
+    printf '%s' "$note"
+}
+
 # --------------------------------------------------------------------------------------
 # Memory delivery. An aeon has no SessionStart hook, so this is how it reads the law — and
 # now also how Ops reads its runbooks, since a statute and an SOP are the same mechanism
