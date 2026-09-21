@@ -120,7 +120,7 @@ printf 'EJECTED %s 0\n' "$_tip_open" > "$RUN/landstate/sp-open"
 is "sp-ej starts closed"  closed "$(status_of sp-ej)"
 is "sp-open starts open"  open   "$(status_of sp-open)"
 
-out="$(sentinel)"
+out="$(landing)"
 printf '%s\n' "$out" | grep -E "sp-ej|sp-open|ejected|EJECTED|reopened" | head -20 >&2
 
 want   "CHECK6 reopens the closed+EJECTED bead"       "reopened sp-ej"    "$out"
