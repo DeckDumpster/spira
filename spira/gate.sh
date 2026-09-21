@@ -155,6 +155,9 @@ _diff_out="$(git -C "$REPO" diff --name-only "$BASE...$BR" 2>&1)" || verdict "$N
     "gate: cannot diff $BASE...$BR in $REPO_NAME — one of them does not resolve in this checkout
 $_diff_out"
 files="$_diff_out"
+# STATUS\tFILE format for FILELIST — carries diff status (A=added, M=modified, etc.)
+# so select.sh can apply # selects-on: added,mode without re-diffing.
+_diff_status_out="$(git -C "$REPO" diff --name-status "$BASE...$BR" 2>/dev/null || true)"
 
 # EJECTED SUITES. A branch ejected by the merge queue has proven those suites red
 # against it. Re-certification must re-run them even when the branch diff does not
@@ -523,7 +526,7 @@ gate_at "$BR" || verdict "$NV" tree-unidentified ""
 # selects its suites from the changed files needs a way to be told to run all of them anyway;
 # leaking in from the environment only ever widens what is checked, which is the safe
 # direction, and it is named here so that it is a seam rather than an ambient surprise.
-FILELIST="$(mktemp)"; printf '%s\n' "$files" > "$FILELIST"
+FILELIST="$(mktemp)"; printf '%s\n' "${_diff_status_out:-$files}" > "$FILELIST"
 # The status is captured FIRST: `$?` inside a trap is whatever the previous command in the
 # trap returned, so a cleanup line ahead of the meter would have every run recorded as the
 # exit status of `rm`.
