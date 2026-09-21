@@ -286,9 +286,8 @@ _suppressed_closed_classes() {
             landed "$bead_id"; rc=$?
             case $rc in
                 1) printf '%s\n' "$class" ;;
-                2) printf 'census.sh: remedy %s: land ref unresolvable, keeping suppression for %s\n' \
-                       "$bead_id" "$class" >&2
-                   printf '%s\n' "$class" ;;
+                2) printf 'census.sh: remedy %s: land status unknown, not suppressing %s\n' \
+                       "$bead_id" "$class" >&2 ;;
             esac
         done
 }

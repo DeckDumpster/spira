@@ -2965,7 +2965,7 @@ if notes:
 # times. It reached attempt 4 against a poison threshold of 3: the harness was one pass from
 # escalating a finished, merged deliverable as a failure.
 landed() {
-    local id="$1" repo="${2:-$(repo_root)}" subjects refs
+    local id="$1" repo="${2:-$(repo_root)}" commit refs
     # THE REPOSITORY'S OWN LAND REF, not `main`, and its local counterpart alongside it. The
     # sentinel lands by pushing from the .landing worktree straight to the remote, and
     # nothing in the harness ever pulls the shared checkout, so the local ref there is
@@ -2975,12 +2975,13 @@ landed() {
     # landed bead and being reopened. spira_landrefs keeps only refs that resolve, so a
     # repository with no local copy of its base still works.
     refs="$(spira_landrefs "$repo")" || return 2
-    # Capture, then match. `git log | grep -q` under pipefail returns 141 (SIGPIPE) on a
-    # MATCH, because grep -q closes the pipe first — so the check inverts exactly when it
-    # succeeds. It reopened finished work once before this was understood.
+    # Full-history search: no window limit. -n1 stops git after the first hit, so this is
+    # O(depth of first matching commit), not O(total history). Not found over full history is
+    # definitive — rc 1 (not landed). rc 2 is reserved for the refs-unresolvable case above.
     # shellcheck disable=SC2086
-    subjects="$(git -C "$repo" log --format='%s%n%b' -n "${SPIRA_VERDICT_WINDOW:-400}" $refs 2>/dev/null)"
-    grep -qF "$id" <<< "$subjects"
+    commit="$(git -C "$repo" log --format='%H' -n1 --grep="$id" $refs 2>/dev/null)"
+    [ -n "$commit" ] && return 0
+    return 1
 }
 
 # content_landed <repo> <branch> <baseref> -> 0 if <baseref> already contains every change
