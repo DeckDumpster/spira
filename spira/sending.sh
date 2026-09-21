@@ -258,7 +258,8 @@ sys.exit(0 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
                 # and reap directly.
                 _sup_n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo '?')"
                 if [ "${_sup_n:-?}" != "0" ] && git -C "$REPO" merge-tree --write-tree "$LANDREF" "$br" >/dev/null 2>&1; then
-                    say "KEEP   $id  superseded but $_sup_n unlanded commit(s) add content absent from $LANDREF — unsafe to reap; check that the supersede mark is correct"
+                    _sup_files="$(git -C "$REPO" diff --name-only "$LANDREF" "$br" 2>/dev/null | head -5)"
+                    say "KEEP   $id  superseded but $_sup_n unlanded commit(s) add content absent from $LANDREF: ${_sup_files:-unknown files}"
                     continue
                 fi
                 if [ "$DRY" = 1 ]; then

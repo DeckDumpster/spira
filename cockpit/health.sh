@@ -1004,7 +1004,7 @@ _q_hdr() {
 # working the queue (law-alerts-must-be-actionable).
 queue_section() {
     local _bpr="${SP_QUEUE_BATCH_PR:-0}" _bn="${SP_QUEUE_BATCH_N:-0}"
-    local _nn="${SP_QUEUE_NEXT_N:-0}" _uln="${SP_UNLANDED_N:-0}"
+    local _nn="${SP_QUEUE_NEXT_N:-0}" _uln="${SP_STRANDED_N:-${SP_UNLANDED_N:-0}}"
     local _nm="${SP_QUEUE_NEXT_MAX:-0}" _qqn="${SP_QUEUE_QUARANTINE_N:-0}"
     local _fn_certify="${SP_FUNNEL_CERTIFY_N:-?}" _fn_certify_age="${SP_FUNNEL_CERTIFY_AGE:-}"
     local _fn_red="${SP_FUNNEL_RED_N:-?}" _fn_red_age="${SP_FUNNEL_RED_AGE:-}"

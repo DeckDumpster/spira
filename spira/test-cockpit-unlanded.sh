@@ -94,6 +94,9 @@ echo "--- counts ---"
 is "SP_CLOSED counts all four" "4" "$(val SP_CLOSED)"
 is "SP_LANDED is 1 (sp-bbb via 'spira: land' subject)" "1" "$(val SP_LANDED)"
 is "SP_UNLANDED_N is 2 (sp-aaa and sp-ddd have branch, no landstate)" "2" "$(val SP_UNLANDED_N)"
+# Both sp-aaa (5 min ago) and sp-ddd (20 min ago) are within the default 90-min cert window.
+is "SP_AWAITING_N is 2 (both within cert window)" "2" "$(val SP_AWAITING_N)"
+is "SP_STRANDED_N is 0 (none older than cert window)" "0" "$(val SP_STRANDED_N)"
 
 echo "--- landed detection: subject form only ---"
 # Criterion: commit body mentioning an id does NOT count; only landing subjects do.
