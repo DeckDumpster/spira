@@ -302,7 +302,7 @@ gate_fits() {
     [ $(( LAND_MAXSEC - spent )) -ge "$LAND_GATE_RESERVE" ]
 }
 
-# gate_lock_wait -> how long this pass may wait for a repository's gate tree, in seconds.
+# gate_lock_wait — sets _gate_wait to how long this pass may wait for the gate tree.
 #
 # DERIVED FROM THE GATE TIMEOUT, not the pass budget. gate.sh documents why the wait must
 # be at least 2 * SPIRA_GATE_TIMEOUT: one holder can legitimately run two full trials
@@ -310,18 +310,23 @@ gate_fits() {
 # SPIRA_GATE_LOCK_WAIT is honored so the operator can size the two independently. When the
 # remaining pass budget is shorter than the ideal, the wait is capped and logged so rc=75
 # is readable as contention rather than as a branch fault.
+#
+# Sets _gate_wait (not stdout) so log() messages are not consumed by a $() caller.
 gate_lock_wait() {
-    [ -n "${SPIRA_GATE_LOCK_WAIT:-}" ] && { echo "$SPIRA_GATE_LOCK_WAIT"; return; }
+    if [ -n "${SPIRA_GATE_LOCK_WAIT:-}" ]; then
+        _gate_wait="$SPIRA_GATE_LOCK_WAIT"
+        return
+    fi
     local ideal=$(( ${SPIRA_GATE_TIMEOUT:-2700} * 2 ))
     if [ "${LAND_MAXSEC:-0}" -gt 0 ]; then
         local remaining=$(( LAND_MAXSEC - ($(date +%s) - PASS_START) ))
         if [ "$remaining" -lt "$ideal" ]; then
             log "landing: gate lock wait capped at ${remaining}s by pass budget (ideal ${ideal}s); rc=75 should be read as contention"
-            echo "$remaining"
+            _gate_wait="$remaining"
             return
         fi
     fi
-    echo "$ideal"
+    _gate_wait="$ideal"
 }
 
 # HOW MANY CERTIFICATION GATES RUN IN PARALLEL THIS PASS. Derived from the box when
@@ -1164,7 +1169,7 @@ for i in d:
                     break
                 fi
                 _land_state "repo=$name" "branch=$br" "phase=gate"
-                _gate_wait="$(gate_lock_wait)"
+                gate_lock_wait
                 gate_out="$(SPIRA_GATE_LOCK_WAIT="$_gate_wait" SPIRA_GATE_BEAD="$id" \
                     "$SPIRA_HOME/gate.sh" "$br" "$name" 2>&1)"
                 gate_rc=$?
@@ -1298,7 +1303,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
         # and a branch's affinity is recorded precisely because that is not always true
         # (law-branch-affinity-is-recorded).
         _land_state "repo=$name" "branch=$br" "phase=gate"
-        _gate_wait="$(gate_lock_wait)"
+        gate_lock_wait
         gate_out="$(SPIRA_GATE_LOCK_WAIT="$_gate_wait" SPIRA_GATE_BEAD="$id" \
             "$SPIRA_HOME/gate.sh" "$br" "$name" 2>&1)"
         gate_rc=$?
@@ -1820,7 +1825,8 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 _cert_process_result
             done
             _ctmp="$(mktemp -t spira-cert.XXXXXX)"
-            SPIRA_GATE_LOCK_WAIT="$(gate_lock_wait)" SPIRA_GATE_BEAD="$_did" \
+            gate_lock_wait
+            SPIRA_GATE_LOCK_WAIT="$_gate_wait" SPIRA_GATE_BEAD="$_did" \
                 "$SPIRA_HOME/gate.sh" "$_dbr" "$name" >"$_ctmp" 2>&1 &
             _cp_pids+=("$!"); _cp_brs+=("$_dbr"); _cp_ids+=("$_did")
             _cp_tips+=("$_dtip"); _cp_tmps+=("$_ctmp")
