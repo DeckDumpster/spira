@@ -317,7 +317,7 @@ main() {
     # Mark already-in-base certified tips LANDED so they do not consume batch slots
     # or inflate the wait trigger.
     if [ -n "${certs:-}" ]; then
-        local _filt="" _cid _ctip _cepoch _ltip
+        local _filt="" _cid _ctip _cepoch _ltip _gkf _stored_gk _current_gk
         while IFS= read -r _cl; do
             [ -n "$_cl" ] || continue
             read -r _cid _ctip _cepoch <<< "$_cl"
@@ -331,6 +331,16 @@ main() {
                     printf 'batch %s: %s live tip already in %s — LANDED (already-in-base)\n' \
                         "$name" "$_cid" "$base"
                 else
+                    _gkf="$LANDSTATE/$_cid.gate-key"
+                    if [ -f "$_gkf" ]; then
+                        _stored_gk="$(cat "$_gkf" 2>/dev/null)"
+                        _current_gk="$(compute_gate_key "$repo" "$name" "spira/$_cid" "$base" 2>/dev/null || true)"
+                        if [ -n "$_stored_gk" ] && [ -n "$_current_gk" ] && [ "$_stored_gk" != "$_current_gk" ]; then
+                            printf 'batch %s: stale-cert-key %s — gate changed; needs fresh gate\n' "$name" "$_cid"
+                            rm -f "${SPIRA_RUN:-/nonexistent}/submitted/$_cid" 2>/dev/null || true
+                            continue
+                        fi
+                    fi
                     _filt="${_filt}${_cid} ${_ltip} ${_cepoch}"$'\n'
                 fi
             elif git -C "$repo" merge-base --is-ancestor "$_ctip" "$base_sha" 2>/dev/null; then
@@ -338,6 +348,16 @@ main() {
                 printf 'batch %s: %s tip already in %s — LANDED (already-in-base)\n' \
                     "$name" "$_cid" "$base"
             else
+                _gkf="$LANDSTATE/$_cid.gate-key"
+                if [ -f "$_gkf" ]; then
+                    _stored_gk="$(cat "$_gkf" 2>/dev/null)"
+                    _current_gk="$(compute_gate_key "$repo" "$name" "spira/$_cid" "$base" 2>/dev/null || true)"
+                    if [ -n "$_stored_gk" ] && [ -n "$_current_gk" ] && [ "$_stored_gk" != "$_current_gk" ]; then
+                        printf 'batch %s: stale-cert-key %s — gate changed; needs fresh gate\n' "$name" "$_cid"
+                        rm -f "${SPIRA_RUN:-/nonexistent}/submitted/$_cid" 2>/dev/null || true
+                        continue
+                    fi
+                fi
                 _filt="${_filt}${_cl}"$'\n'
             fi
         done <<< "$certs"
@@ -535,6 +555,9 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
                         rm -rf "$_rbtmp"
                         if [ "$_rbsrc" -eq 0 ]; then
                             land_mark "$_bid" CERTIFIED "$_rbtip"
+                            _rbck="$(compute_gate_key "$repo" "$name" "spira/$_bid" "$base" 2>/dev/null || true)"
+                            [ -n "${_rbck:-}" ] && printf '%s\n' "$_rbck" > "$LANDSTATE/$_bid.gate-key"
+                            unset _rbck
                             if git -C "$wt" merge --no-edit --no-ff \
                                    -m "spira: land $_bid" "$_rbtip" >/dev/null 2>&1; then
                                 members+=("$_bid:$_rbtip")

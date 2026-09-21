@@ -1342,6 +1342,9 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                     continue
                 fi
                 land_mark "$id" CERTIFIED "$tip"
+                _cert_gk="$(compute_gate_key "$repo" "$name" "$br" "$base" 2>/dev/null || true)"
+                [ -n "${_cert_gk:-}" ] && printf '%s\n' "$_cert_gk" > "$LANDSTATE/$id.gate-key"
+                unset _cert_gk
                 mark_submitted "$id" "$tip" certified
                 progress "certified $br in $name — queued"
                 continue
@@ -1986,6 +1989,9 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 return 0
             fi
             land_mark "$id" CERTIFIED "$tip"
+            _cert_gk="$(compute_gate_key "$repo" "$name" "$br" "$base" 2>/dev/null || true)"
+            [ -n "${_cert_gk:-}" ] && printf '%s\n' "$_cert_gk" > "$LANDSTATE/$id.gate-key"
+            unset _cert_gk
             mark_submitted "$id" "$tip" certified
             progress "certified $br in $name — queued"
         }
