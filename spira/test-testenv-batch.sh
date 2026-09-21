@@ -1039,6 +1039,191 @@ else
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# B10: LIVENESS RETRY — a single failed inspect does not declare the container
+# dead; only a definitive Running=false or N consecutive failures do.
+#
+# Tested with a stub podman that:
+#   B10a: fails container inspect once then returns "true" → no death declared
+#   B10b: returns "false" on first inspect → death declared, podman rm called
+#   B10c: fault path leaves no container behind (stub records rm calls)
+#
+# The stub intercepts only "podman container inspect --format {{.State.Running}}";
+# all other podman calls are forwarded to the real binary so testenv up/down
+# still work. SPIRA_BATCH_LIVENESS_RETRIES=3 SPIRA_BATCH_LIVENESS_SLEEP=0
+# keeps the retry loop fast.
+#
+# POSITIVE CONTROL (law-absence-needs-a-positive-control): B10b confirms the
+# death path fires when Running=false, so B10a's silence is not vacuous.
+# ---------------------------------------------------------------------------
+echo
+echo "B10: liveness retry (stub podman inspect)"
+
+REAL_PODMAN="$(command -v podman 2>/dev/null || true)"
+if [ -z "$REAL_PODMAN" ]; then
+    printf 'SKIP B10: podman not on PATH\n' >&2
+else
+    # Shared stub dir — two variants are installed here, swapped per sub-test.
+    STUB_DIR_B10="$TMP/stub-b10"
+    mkdir -p "$STUB_DIR_B10"
+    STUB_COUNTER_B10="$TMP/b10-inspect-count"
+    STUB_RM_B10="$TMP/b10-rm-called"
+
+    # Stub template: each test writes its own $STUB_DIR_B10/podman.
+    _write_stub_b10() {  # _write_stub_b10 <inspect_responses_space_sep>
+        local _responses="$1"
+        cat > "$STUB_DIR_B10/podman" << STUBEOF
+#!/usr/bin/env bash
+if [ "\$1" = "container" ] && [ "\$2" = "inspect" ]; then
+    n=\$(cat "$STUB_COUNTER_B10" 2>/dev/null || echo 0)
+    n=\$(( n + 1 ))
+    printf '%s\n' "\$n" > "$STUB_COUNTER_B10"
+    _resp=\$(echo "$_responses" | cut -d' ' -f\$n)
+    if [ -z "\$_resp" ] || [ "\$_resp" = "DELEGATE" ]; then
+        exec "$REAL_PODMAN" "\$@"
+    elif [ "\$_resp" = "FAIL" ]; then
+        exit 1
+    else
+        printf '%s\n' "\$_resp"
+        exit 0
+    fi
+fi
+if [ "\$1" = "stop" ] || [ "\$1" = "rm" ]; then
+    printf 'rm:%s\n' "\${2:-}" >> "$STUB_RM_B10"
+fi
+exec "$REAL_PODMAN" "\$@"
+STUBEOF
+        chmod +x "$STUB_DIR_B10/podman"
+        rm -f "$STUB_COUNTER_B10" "$STUB_RM_B10"
+    }
+
+    SUITE_B10="$TMP/suites-B10"
+    mkdir -p "$SUITE_B10"
+    cp "$SUITE_B3/test-fx-ka.sh" "$SUITE_B10/"
+
+    # B10a: inspect fails once (FAIL) then succeeds (DELEGATE) — no death declared.
+    _write_stub_b10 "FAIL DELEGATE"
+    B10A_INSTANCE="b10a-$$"
+    RESULTS_ROOT_B10A="$TMP/results-B10a"
+    rc_b10a=0
+    SPIRA_PATH="$STUB_DIR_B10" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_BATCH_SUITE_DIR="$SUITE_B10" \
+    SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B10A" \
+    SPIRA_BATCH_SKIP_INSTALL=1 \
+    SPIRA_VERDICT_TTL=0 \
+    SPIRA_BATCH_INSTANCE="$B10A_INSTANCE" \
+    SPIRA_BATCH_LIVENESS_RETRIES=3 \
+    SPIRA_BATCH_LIVENESS_SLEEP=0 \
+        bash "$BATCH" --mode serial topic "$FIXTURE" 2>/dev/null || rc_b10a=$?
+    [ "$rc_b10a" -ne 2 ] \
+        && ok "B10a: one failed inspect does not declare container dead (exit $rc_b10a, not 2)" \
+        || bad "B10a: one failed inspect does not declare container dead" \
+               "got exit 2 — false death declared on transient inspect failure"
+
+    # B10b (POSITIVE CONTROL): inspect returns "false" → death declared → exits 2.
+    _write_stub_b10 "false"
+    B10B_INSTANCE="b10b-$$"
+    RESULTS_ROOT_B10B="$TMP/results-B10b"
+    rc_b10b=0
+    SPIRA_PATH="$STUB_DIR_B10" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_BATCH_SUITE_DIR="$SUITE_B10" \
+    SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B10B" \
+    SPIRA_BATCH_SKIP_INSTALL=1 \
+    SPIRA_VERDICT_TTL=0 \
+    SPIRA_BATCH_INSTANCE="$B10B_INSTANCE" \
+    SPIRA_BATCH_LIVENESS_RETRIES=3 \
+    SPIRA_BATCH_LIVENESS_SLEEP=0 \
+        bash "$BATCH" --mode serial topic "$FIXTURE" 2>/dev/null || rc_b10b=$?
+    isexit2 "B10b: positive-control: Running=false declares container dead (exit 2)" "$rc_b10b"
+    # Confirm podman rm was called — no container leaked.
+    if [ -f "$STUB_RM_B10" ] && grep -q "rm:" "$STUB_RM_B10" 2>/dev/null; then
+        ok "B10c: fault path called podman rm — no container leaked"
+    else
+        bad "B10c: fault path called podman rm — no container leaked" \
+            "rm not recorded in stub; container may have been leaked"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# B11: EXEC-STORM — K parallel suites returning rc=1 after 0s with no output
+# while the container is alive are reported as a harness fault (exit 2), not
+# per-suite reds (exit 1), so gate-retry does not quarantine healthy suites.
+#
+# Stub podman: only intercepts exec calls whose last positional arg ends in
+# a suite path (*/spira/test-fx-*.sh); all other podman calls delegate to the
+# real binary so testenv up/probe still work and the liveness check still sees
+# the container as alive.
+#
+# POSITIVE CONTROL: B2 proves a legitimately failing suite (with output)
+# produces exit 1, so exit 2 here is not over-refusal.
+# ---------------------------------------------------------------------------
+echo
+echo "B11: exec-storm detection (exit 2 not exit 1)"
+
+if [ -z "$REAL_PODMAN" ]; then
+    printf 'SKIP B11: podman not on PATH\n' >&2
+else
+    SUITE_B11="$TMP/suites-B11"
+    mkdir -p "$SUITE_B11"
+
+    for _b11_name in e1 e2 e3 e4 e5; do
+        printf '#!/usr/bin/env bash\n# covers: changed.sh\nsleep 999; exit 0\n' \
+            > "$SUITE_B11/test-fx-${_b11_name}.sh"
+        chmod +x "$SUITE_B11/test-fx-${_b11_name}.sh"
+    done
+
+    # Stub: fail exec calls whose last argument is a suite path; delegate everything else.
+    STUB_DIR_B11="$TMP/stub-b11"
+    mkdir -p "$STUB_DIR_B11"
+    _real_podman_b11="$REAL_PODMAN"
+    cat > "$STUB_DIR_B11/podman" << STUBEOF
+#!/usr/bin/env bash
+if [ "\$1" = "exec" ]; then
+    for _sa in "\$@"; do
+        case "\$_sa" in */spira/test-fx-*.sh) exit 1 ;; esac
+    done
+fi
+exec "$_real_podman_b11" "\$@"
+STUBEOF
+    chmod +x "$STUB_DIR_B11/podman"
+
+    B11_INSTANCE="b11-$$"
+    RESULTS_ROOT_B11="$TMP/results-B11"
+    rc_b11=0
+    b11_out="$(
+    SPIRA_PATH="$STUB_DIR_B11" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_BATCH_SUITE_DIR="$SUITE_B11" \
+    SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B11" \
+    SPIRA_BATCH_SKIP_INSTALL=1 \
+    SPIRA_VERDICT_TTL=0 \
+    SPIRA_BATCH_INSTANCE="$B11_INSTANCE" \
+    SPIRA_BATCH_EXEC_FAULT_THRESHOLD=5 \
+    SPIRA_BATCH_LIVENESS_SLEEP=0 \
+        bash "$BATCH" --mode serial \
+        --suites test-fx-e1.sh,test-fx-e2.sh,test-fx-e3.sh,test-fx-e4.sh,test-fx-e5.sh \
+        topic "$FIXTURE" 2>/dev/null
+    )" || rc_b11=$?
+    isexit2 "B11: exec-storm (5 serial rc=1 after 0s, container alive) exits 2" "$rc_b11"
+    want "B11: harness fault message names exec failures" "exec failures" "$b11_out"
+
+    RD_B11="$(find_results_dir "$RESULTS_ROOT_B11")"
+    if [ -n "$RD_B11" ]; then
+        _b11_red=0
+        for _b11_s in e1 e2 e3 e4 e5; do
+            _b11_f="$RD_B11/test-fx-${_b11_s}.sh.result"
+            _b11_st="$(awk '{print $1}' "$_b11_f" 2>/dev/null || true)"
+            [ "$_b11_st" = "red" ] && _b11_red=$((_b11_red + 1))
+        done
+        [ "$_b11_red" -eq 0 ] \
+            && ok "B11: no suite is red after exec-storm (reclassified as unreached)" \
+            || bad "B11: no suite is red after exec-storm" \
+                   "$_b11_red suite(s) still marked red — reclassification did not fire"
+    fi
+fi
+
 # ===========================================================================
 echo
 echo "C: the constants testenv-batch.sh mirrors from testenv.sh still agree"

@@ -454,13 +454,38 @@ CNAME="spira-batch-${INSTANCE}"
 _batch_tmp="$(mktemp)"
 _par_tmp=""  # set in parallel block; empty means serial mode was used
 
+# Owner file: a host-side record that maps this container to our PID, so a
+# later batch (or this one at startup) can identify and sweep containers whose
+# owner process has died without cleaning up.
+_BATCH_OWNER_FILE="/tmp/${CNAME}.owner"
+
 _batch_cleanup() {
     bash "$TESTENV" down --name "$CNAME" >/dev/null 2>&1 || true
+    rm -f "$_BATCH_OWNER_FILE"
     _wt_cleanup
     rm -f "$_batch_tmp"
     [ -n "$_par_tmp" ] && rm -rf "$_par_tmp" || true
 }
 trap _batch_cleanup EXIT INT TERM
+
+# ---------------------------------------------------------------------------
+# ORPHAN SWEEP — remove spira-batch-* containers whose owner PID has exited.
+# Runs before we start our own container so a crashed previous run does not
+# consume memory for the duration of this one.
+# ---------------------------------------------------------------------------
+for _sw_f in /tmp/spira-batch-*.owner; do
+    [ -f "$_sw_f" ] || continue
+    _sw_pid="$(cat "$_sw_f" 2>/dev/null)" || continue
+    [ -n "$_sw_pid" ] || continue
+    [ -d "/proc/$_sw_pid" ] && continue  # still alive
+    _sw_cname="${_sw_f#/tmp/}"; _sw_cname="${_sw_cname%.owner}"
+    podman stop "$_sw_cname" >/dev/null 2>&1 || true
+    podman rm   "$_sw_cname" >/dev/null 2>&1 || true
+    rm -f "$_sw_f"
+    log "batch: swept orphan container $_sw_cname (owner pid $_sw_pid gone)"
+done
+
+printf '%s\n' "$$" > "$_BATCH_OWNER_FILE"
 
 # ---------------------------------------------------------------------------
 # CONTAINER UP
@@ -639,11 +664,41 @@ fi
 _batch_red=0
 _batch_quarantined_red=0
 _batch_container_dead=0
+_batch_container_fault_detail=""
+_batch_exec_fault=0
+_batch_exec_fault_n=0  # consecutive rc!=0 after 0s with no output (serial mode)
 
 # Per-suite timeout: 0 disables; default 600 seconds, mirroring gate-spira.sh.
 # The `timeout` command exits 124 when the limit fires; we map that to status=timeout
 # in the result file so callers can distinguish a runaway from a genuine red.
 _suite_timeout="${SPIRA_SUITE_TIMEOUT:-600}"
+
+# _container_check_live — sets _batch_container_dead=1 when the container is
+# confirmed dead. A single failed or empty inspect is transient; only a
+# definitive Running=false, or N consecutive non-true results, declares death.
+# Records ExitCode and OOMKilled in _batch_container_fault_detail.
+_container_check_live() {
+    local _cl_n=0 _cl_result
+    local _cl_max="${SPIRA_BATCH_LIVENESS_RETRIES:-3}"
+    local _cl_sleep="${SPIRA_BATCH_LIVENESS_SLEEP:-3}"
+    while [ "$_cl_n" -lt "$_cl_max" ]; do
+        _cl_result="$(podman container inspect \
+            --format '{{.State.Running}}' "$CNAME" 2>/dev/null || true)"
+        [ "$_cl_result" = "true"  ] && return 0   # alive
+        [ "$_cl_result" = "false" ] && break       # definitively exited
+        _cl_n=$((_cl_n + 1))
+        [ "$_cl_n" -lt "$_cl_max" ] || break
+        log "batch: container inspect returned empty (attempt $_cl_n/$_cl_max) — retrying in ${_cl_sleep}s"
+        sleep "$_cl_sleep"
+    done
+    local _cl_exit _cl_oom
+    _cl_exit="$(podman container inspect \
+        --format '{{.State.ExitCode}}' "$CNAME" 2>/dev/null || true)"
+    _cl_oom="$(podman container inspect \
+        --format '{{.State.OOMKilled}}' "$CNAME" 2>/dev/null || true)"
+    _batch_container_dead=1
+    _batch_container_fault_detail="ExitCode=${_cl_exit:-?} OOMKilled=${_cl_oom:-?}"
+}
 
 if [ "$MODE" = serial ]; then
 
@@ -692,17 +747,35 @@ if [ "$MODE" = serial ]; then
         out="$(cat "$_batch_tmp")" || true
         secs=$(( $(date +%s) - t0 ))
 
-        # Distinguish a dead container from a suite that simply failed: podman exec
-        # returns non-zero for both. A dead container is a harness fault; a failing
-        # suite is a branch fault. Check that the container is still RUNNING — an
-        # exited container still passes `podman container exists`, so inspect the
-        # state field directly.
-        if ! podman container inspect --format '{{.State.Running}}' "$CNAME" 2>/dev/null \
-               | grep -qx 'true'; then
-            _batch_container_dead=1
-            log "batch: container died during $s — remaining suites will be unreached"
-            # The suite that was running when the container died gets no result file;
-            # the unreached loop below marks it along with any suites not yet started.
+        # Exec-storm detection: consecutive non-zero exits after 0s with no output
+        # means podman exec is failing immediately rather than suites running and failing.
+        if [ "$_rc" -ne 0 ] && [ "$secs" -eq 0 ] \
+               && [ -z "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then
+            _batch_exec_fault_n=$((_batch_exec_fault_n + 1))
+        else
+            _batch_exec_fault_n=0
+        fi
+        if [ "$_batch_exec_fault_n" -ge "${SPIRA_BATCH_EXEC_FAULT_THRESHOLD:-5}" ]; then
+            _batch_exec_fault=1
+            log "batch: harness fault — $_batch_exec_fault_n consecutive exec failures (podman exec not reaching suites)"
+            # Reclassify any red+0s+empty results already recorded so they are not
+            # treated as branch failures by gate-retry's flake observer.
+            for _es_s in $SELECTED; do
+                _es_res="$RESULTS/$_es_s.result"
+                [ -f "$_es_res" ]                                               || continue
+                [ "$(awk '{print $1}' "$_es_res" 2>/dev/null)" = "red" ]       || continue
+                [ "$(awk '{print $3}' "$_es_res" 2>/dev/null)" = "0"  ]        || continue
+                [ -z "$(cat "$RESULTS/$_es_s.out" 2>/dev/null | tr -d '[:space:]')" ] || continue
+                printf 'unreached %s 0 -\n' "$(date +%s)" > "$_es_res"
+                : > "$RESULTS/$_es_s.out"
+            done
+            break
+        fi
+
+        # Container-death check with retry: a transient inspect failure is not death.
+        _container_check_live
+        if [ "$_batch_container_dead" = 1 ]; then
+            log "batch: container died during $s (${_batch_container_fault_detail}) — remaining suites will be unreached"
             break
         fi
 
@@ -891,16 +964,34 @@ else
         wait "$_pid" 2>/dev/null || true
     done
 
-    # Container-death check after all jobs have finished.
-    if ! podman container inspect --format '{{.State.Running}}' "$CNAME" 2>/dev/null \
-           | grep -qx 'true'; then
-        _batch_container_dead=1
-        log "batch: container died during parallel run"
-        # Reclassify suites that got red with 0 seconds and no output: podman exec
-        # returned immediately because the container was already dead when the
-        # subshell tried to connect. These are not suite defects; recording them as
-        # red feeds gate-retry's flake observer and quarantines healthy suites.
-        # Reclassifying as unreached lets the gate's retry logic skip them.
+    # Container-death check with retry after all jobs have finished.
+    _container_check_live
+    if [ "$_batch_container_dead" = 1 ]; then
+        log "batch: container died during parallel run (${_batch_container_fault_detail})"
+    else
+        # Exec-storm detection: only relevant when the container is alive. K or more
+        # suites returning red+0s+empty-output means podman exec was refusing rather
+        # than suites failing legitimately — a harness fault, not a branch fault.
+        _par_exec_fault_n=0
+        for _ef_s in $SELECTED; do
+            _ef_res="$RESULTS/$_ef_s.result"
+            [ -f "$_ef_res" ]                                               || continue
+            [ "$(awk '{print $1}' "$_ef_res" 2>/dev/null)" = "red" ]       || continue
+            [ "$(awk '{print $3}' "$_ef_res" 2>/dev/null)" = "0"  ]        || continue
+            [ -z "$(cat "$RESULTS/$_ef_s.out" 2>/dev/null | tr -d '[:space:]')" ] || continue
+            _par_exec_fault_n=$((_par_exec_fault_n + 1))
+        done
+        if [ "$_par_exec_fault_n" -ge "${SPIRA_BATCH_EXEC_FAULT_THRESHOLD:-5}" ]; then
+            _batch_exec_fault=1
+            log "batch: harness fault — $_par_exec_fault_n parallel exec failures (podman exec not reaching suites)"
+        fi
+    fi
+
+    # Reclassify red+0s+empty-output suites as unreached when the container died or
+    # exec-storm was detected: podman exec failed rather than the suite running and
+    # failing. Recording them as red feeds gate-retry's flake observer and quarantines
+    # healthy suites; unreached lets the retry logic skip them.
+    if [ "$_batch_container_dead" = 1 ] || [ "$_batch_exec_fault" = 1 ]; then
         for _cd_s in $SELECTED; do
             _cd_res="$RESULTS/$_cd_s.result"
             [ -f "$_cd_res" ]                                           || continue
@@ -965,8 +1056,13 @@ printf 'image_tag=%s\nbranch=%s\nbase=%s\nkey=%s\nmode=%s\nselection=%s\n' \
 # ---------------------------------------------------------------------------
 # VERDICT — three distinguishable outcomes.
 # ---------------------------------------------------------------------------
+if [ "$_batch_exec_fault" = 1 ]; then
+    log "batch: harness fault — exec failures, not suite reds"
+    exit 2
+fi
+
 if [ "$_batch_container_dead" = 1 ]; then
-    log "batch: harness fault — container died mid-batch"
+    log "batch: harness fault — container died mid-batch (${_batch_container_fault_detail})"
     exit 2
 fi
 
