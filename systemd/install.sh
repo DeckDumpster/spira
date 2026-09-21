@@ -270,10 +270,18 @@ _install_landref() {    # -> the landref for SPIRA_REPO, or non-zero if it canno
 }
 
 _check_landref_current() {
-    local cur base behind base_short
+    local cur base behind base_short tag
     # Not a git checkout — landref is not applicable (artifact deploy); skip rather than fail.
     git -C "${SPIRA_REPO:-}" rev-parse --git-dir >/dev/null 2>&1 || return 0
     cur="$(git -C "$SPIRA_REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)" || cur=""
+    # Detached HEAD at an exact tag — release install; no base to be behind.
+    if [ "$cur" = "HEAD" ]; then
+        tag="$(git -C "$SPIRA_REPO" describe --exact-match --tags HEAD 2>/dev/null)" || tag=""
+        if [ -n "$tag" ]; then
+            printf 'install: release install from tag %s — landref currency not applicable\n' "$tag"
+            return 0
+        fi
+    fi
     base="$(_install_landref)" || {
         printf 'install: cannot resolve landref for %s\n' "$SPIRA_REPO" >&2
         printf 'install: update origin/HEAD (git remote set-head origin -a) or set SPIRA_INSTALL_FORCE=1 to skip.\n' >&2
