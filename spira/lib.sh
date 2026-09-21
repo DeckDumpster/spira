@@ -4887,7 +4887,7 @@ if _allow_path and os.path.isfile(_allow_path):
     with open(_allow_path) as _af:
         for _line in _af:
             _parts = _line.strip().split(None, 1)
-            if _parts and re.match(r"^[a-z0-9]+-[a-z0-9]+$", _parts[0]):
+            if _parts and re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)+$", _parts[0]):
                 allowlist[_parts[0]] = _parts[1] if len(_parts) > 1 else ""
 
 try: d = json.load(sys.stdin)
