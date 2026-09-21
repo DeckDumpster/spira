@@ -1045,6 +1045,9 @@ if [ "${_dr_en_bad}" -eq 0 ]; then
         [ -n "$_dr_en_unit" ] || continue
         _dr_en_state="$("$_dr_en_sc" --user is-enabled "$_dr_en_unit" 2>/dev/null || true)"
         if [ -z "$_dr_en_state" ]; then
+            # No output from systemctl can mean no active systemd user session.
+            # If the unit file isn't installed either, treat it the same as "not-found".
+            [ ! -e "${HOME}/.config/systemd/user/${_dr_en_unit}" ] && continue
             FAIL "$_dr_en_unit — systemctl returned no output; cannot verify enablement state" \
                  "Check that the systemd user session is active: $_dr_en_sc --user status"
             _dr_en_bad=$((_dr_en_bad + 1))
