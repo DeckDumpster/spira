@@ -234,5 +234,40 @@ push_after="$(git -C "$PUSHREMOTE" rev-parse main 2>/dev/null)"
 want "push-mode branch reports landed"  "landed spira/sp-push-a"  "$out"
 is   "push-mode remote actually moved"  "yes"  "$([ "$push_before" != "$push_after" ] && echo yes || echo no)"
 
+# -----------------------------------------------------------------------------------------
+# PARALLEL CERTIFY: with SPIRA_CERTIFY_PAR=2 and a gate that sleeps 3s, two branches are
+# certified in ~3s (parallel), not ~6s (serial). Both branches must reach CERTIFIED.
+# -----------------------------------------------------------------------------------------
+write_map  # restore queue-only map
+GATE_SLEEP=3
+stub gate.sh '
+sleep '"$GATE_SLEEP"'
+printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
+printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
+exit 0'
+
+seed; branch sp-par-a; branch sp-par-b
+t0=$(date +%s)
+SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
+    SPIRA_HOME_REPO="$REPONAME" \
+    SPIRA_REPO_MAP="$SH/repo-map" \
+    SPIRA_CERTIFY_PAR=2 \
+        bash "$SH/landing.sh" > /dev/null 2>&1
+t1=$(date +%s)
+elapsed=$(( t1 - t0 ))
+is "gate called for both branches with par=2" "2" "$(gate_n)"
+[ "$elapsed" -lt $(( GATE_SLEEP * 2 - 1 )) ] \
+    && ok "both branches certified in parallel (~${elapsed}s < $((GATE_SLEEP*2-1))s)" \
+    || bad "both branches certified in parallel" "${elapsed}s >= $((GATE_SLEEP*2-1))s — serial"
+case "$(landstate sp-par-a)" in CERTIFIED*) ok "sp-par-a certified" ;; *) bad "sp-par-a certified" "$(landstate sp-par-a)" ;; esac
+case "$(landstate sp-par-b)" in CERTIFIED*) ok "sp-par-b certified" ;; *) bad "sp-par-b certified" "$(landstate sp-par-b)" ;; esac
+
+# Restore the fast passing stub used by any future cases.
+stub gate.sh '
+printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
+printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
+exit 0'
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

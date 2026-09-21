@@ -5,19 +5,13 @@
 #
 #   ./test-gate-tree.sh
 #
-# THE DEFECT THIS PREVENTS. Two gates for the same repository ran concurrently. While one
-# was running suites, the other checked a different branch out over the same directory;
-# git -C <tree> log --oneline -1 reported the OTHER run's branch. Both runs were inside
-# their trial at the time, so each was running suites from a tree it did not put there.
-# A gate that passes work it never looked at is the worst failure a gate has, and a gate
-# that fails a branch on someone else's code poisons it without cause.
-#
-# test-soak.sh exercises the property under multi-aeon contention. This suite tests the
-# mechanism directly: the flock, the meter and the timeout, each as a separate case so a
-# break names itself. The soak takes ~90s; this takes ~10s.
+# Per-branch trees mean two gates on DIFFERENT branches have separate worktrees and
+# separate locks — they run fully concurrently. Two gates on the SAME branch share one
+# tree and one lock, so they serialise exactly as before. The defect sp-64v0 (wrong-
+# branch verdicts from a shared tree) is impossible with per-branch trees.
 #
 # defect: sp-64v0
-# covers: spira/gate.sh
+# covers: spira/gate.sh spira/gate-sweep.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -76,11 +70,12 @@ rungate() {              # rungate <branch> [VAR=VAL ...]
         "$@" bash "$SH/gate.sh" "$br" repo
 }
 
-echo "test-gate-tree.sh — the gate tree is locked, and concurrent gates cannot cross branches"
+echo "test-gate-tree.sh — per-branch trees: different branches concurrent, same branch serialised"
 
 # --------------------------------------------------------------------------------------
-# CASE 1 — CONCURRENCY. Two gates on DIFFERENT branches run concurrently: each has its
-# own tree and its own lock, so neither waits for the other.
+# CASE 1 — CONCURRENCY. Two gates on DIFFERENT branches launched at the same instant.
+# Each has its own tree and lock, so they run in parallel and complete in ~GATE_SECS,
+# not ~GATE_SECS*2. Both must still produce a correct verdict for their own branch.
 # --------------------------------------------------------------------------------------
 t0=$(date +%s)
 : > "$JUDGED"
@@ -92,51 +87,49 @@ rc1="$(cat "$TMP/g1.rc" 2>/dev/null)"; rc2="$(cat "$TMP/g2.rc" 2>/dev/null)"
 is  "gate 1 reached a verdict" 0 "$rc1"
 is  "gate 2 reached a verdict" 0 "$rc2"
 
-# CONCURRENT: two gates on different branches each have their own tree, so they run in
-# parallel. The pair completes in roughly one gate's time, not two.
+# CONCURRENT: two gates on different branches must finish in fewer than twice GATE_SECS.
 elapsed=$(( $(date +%s) - t0 ))
 [ "$elapsed" -lt $(( GATE_SECS * 2 - 1 )) ] \
-    && ok "the gates ran concurrently: different branches do not share a lock (${elapsed}s)" \
-    || bad "the gates ran concurrently: different branches do not share a lock" \
-           "${elapsed}s >= $((GATE_SECS*2-1))s — they serialised when they should not have"
+    && ok "different-branch gates ran concurrently (${elapsed}s < $((GATE_SECS*2-1))s)" \
+    || bad "different-branch gates ran concurrently" "${elapsed}s >= $((GATE_SECS*2-1))s — they serialised"
 
 # CORRECTNESS: each gate judged its own branch's tree, never the other's.
 crossed="$(awk '{ split($1, a, "sp-t"); if ($2 != "f" a[2] ".txt") print }' "$JUDGED")"
 is "neither gate observed the other's branch" "" "$crossed"
 
 # --------------------------------------------------------------------------------------
-# CASE 2 — SAME-BRANCH SERIALISATION. Two gates on the SAME branch serialise because
-# they share one tree and one lock. The wait is metered.
+# CASE 2 — SAME-BRANCH SERIALISATION. Two gates on the SAME branch must wait on each
+# other (same tree, same lock), so the pair takes ~GATE_SECS*2.
 # --------------------------------------------------------------------------------------
 : > "$GATELOG"
-t1=$(date +%s)
-( rungate "spira/sp-t1" > "$TMP/gs1.out" 2>&1; echo $? > "$TMP/gs1.rc" ) &
-( rungate "spira/sp-t1" > "$TMP/gs2.out" 2>&1; echo $? > "$TMP/gs2.rc" ) &
+t0=$(date +%s)
+( rungate "spira/sp-t1" > "$TMP/s1.out" 2>&1; echo $? > "$TMP/s1.rc" ) &
+( rungate "spira/sp-t1" > "$TMP/s2.out" 2>&1; echo $? > "$TMP/s2.rc" ) &
 wait
 
-rcs1="$(cat "$TMP/gs1.rc" 2>/dev/null)"; rcs2="$(cat "$TMP/gs2.rc" 2>/dev/null)"
+rcs1="$(cat "$TMP/s1.rc" 2>/dev/null)"; rcs2="$(cat "$TMP/s2.rc" 2>/dev/null)"
 is  "same-branch gate 1 reached a verdict" 0 "$rcs1"
 is  "same-branch gate 2 reached a verdict" 0 "$rcs2"
 
-elapsed2=$(( $(date +%s) - t1 ))
-[ "$elapsed2" -ge $(( GATE_SECS * 2 - 1 )) ] \
-    && ok "the same-branch gates were serialised (${elapsed2}s >= $((GATE_SECS*2-1))s)" \
-    || bad "the same-branch gates were serialised" \
-           "${elapsed2}s < $((GATE_SECS*2-1))s — they overlapped"
+elapsed=$(( $(date +%s) - t0 ))
+[ "$elapsed" -ge $(( GATE_SECS * 2 - 1 )) ] \
+    && ok "same-branch gates were serialised (${elapsed}s >= $((GATE_SECS*2-1))s)" \
+    || bad "same-branch gates were serialised" "${elapsed}s < $((GATE_SECS*2-1))s — they overlapped"
 
+# THE SERIALISATION WAIT WAS METERED (law-take-the-simple-fix-with-a-meter).
 waits="$(grep -oE 'waited=[0-9]+s' "$GATELOG" 2>/dev/null \
     | sed 's/waited=//;s/s$//' | sort -n | tail -1)"
 [ "${waits:-0}" -gt 0 ] \
-    && ok "the serialisation wait was metered (${waits}s)" \
-    || bad "the serialisation wait was metered" "no non-zero waited= in the gate log"
+    && ok "the same-branch serialisation wait was metered (${waits}s)" \
+    || bad "the same-branch serialisation wait was metered" "no non-zero waited= in the gate log"
 
 # --------------------------------------------------------------------------------------
 # CASE 3 — GRACEFUL TIMEOUT. A gate that cannot obtain the tree in time returns NO_VERDICT
 # (exit 75), not FAIL (exit 1). The branch is not charged for a queue — that is a machinery
-# fault, not a judgement about the work.
+# fault, not a judgement about the work. The lock file path now includes the branch key.
 # --------------------------------------------------------------------------------------
-KEY_T1="$(tree_key "spira/sp-t1")"
-LOCKFILE="$RUN/worktree/.gate.$(basename "$REPO").$KEY_T1.lock"
+T1_KEY="$(printf '%s' "spira/sp-t1" | tr '/' '-' | tr -c 'A-Za-z0-9.-' '-')"
+LOCKFILE="$RUN/worktree/.gate.$(basename "$REPO").$T1_KEY.lock"
 exec 8>"$LOCKFILE"
 flock -x 8
 
@@ -151,9 +144,11 @@ exec 8>&-
 
 # --------------------------------------------------------------------------------------
 # CASE 4 — WORKTREE CLEANUP. The gate removes its worktree AND its registration on every
-# exit path — success, failure, timeout, kill.
+# exit path — success, failure, timeout, kill. A registration that outlives the run pins
+# the checked-out branch and prevents its deletion; across passes it fills the list with
+# stale entries that slow every `git worktree list` and `prune` call.
 # --------------------------------------------------------------------------------------
-TREE_PATH="$RUN/worktree/.gate.$(basename "$REPO").$KEY_T1"
+TREE_PATH="$RUN/worktree/.gate.$(basename "$REPO").$T1_KEY"
 
 # Pass case: a gate that exits 0 must have removed its tree.
 rungate "spira/sp-t1" > "$TMP/g3.out" 2>&1; g3_rc=$?
