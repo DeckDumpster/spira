@@ -44,6 +44,11 @@
 # Home repo is always included; additional repos are read from SPIRA_REPO_MAP. A repo
 # whose base ref cannot be resolved is skipped with a log line.
 #
+#   INVALID-CLOSED TRIGGER: fires when detect_invalid_closed returns one or more rows
+#     (INVALID-CLOSED or UNFILED-FOLLOW, excluding ALLOWED-IC). Rows are included in the
+#     trigger bead's description as evidence for the Maechen closed-record review. The
+#     existing dedup guard prevents a second trigger bead when one is already open.
+#
 # EXIT:
 #   0  bead filed, or an open trigger already exists (dedup) — either is correct
 #   1  error writing watermark or filing the bead
@@ -223,23 +228,60 @@ if [ "$landing_count" -ge "${SPIRA_MAECHEN_LANDING_INTERVAL:-25}" ]; then
     log "landing trigger: ${landing_count} landings since watermark (threshold: ${SPIRA_MAECHEN_LANDING_INTERVAL:-25})"
 fi
 
-# NEITHER TRIGGER — nothing to do.
-if [ "$time_trigger" = 0 ] && [ "$landing_trigger" = 0 ]; then
-    log "no trigger: ${landing_count} landings (threshold: ${SPIRA_MAECHEN_LANDING_INTERVAL:-25}), ${elapsed}s since last pass (threshold: ${SPIRA_MAECHEN_MAX_GAP_SECONDS:-10800}s)"
+# INVALID-CLOSED TRIGGER. Fire when detect_invalid_closed returns one or more rows that
+# are not already in the allowlist (INVALID-CLOSED or UNFILED-FOLLOW, not ALLOWED-IC).
+# Rows are deduplicated by bead id and included in the trigger bead's description so the
+# Maechen closed-record review has its evidence at claim time.
+invalid_closed_trigger=0
+invalid_closed_rows=""
+_ic_raw="$(detect_invalid_closed 2>/dev/null)" || _ic_raw=""
+if [ -n "$_ic_raw" ]; then
+    while IFS= read -r _row; do
+        [ -n "$_row" ] || continue
+        case "$_row" in
+            INVALID-CLOSED\ *|UNFILED-FOLLOW\ *)
+                _bid="${_row#* }"; _bid="${_bid%% *}"
+                case "$invalid_closed_rows" in
+                    *"$_bid"*) ;;
+                    *) invalid_closed_rows="${invalid_closed_rows}${invalid_closed_rows:+
+}$_row" ;;
+                esac
+                ;;
+        esac
+    done <<< "$_ic_raw"
+    if [ -n "$invalid_closed_rows" ]; then
+        invalid_closed_trigger=1
+        _ic_count="$(printf '%s\n' "$invalid_closed_rows" | wc -l | tr -d '[:space:]')"
+        log "invalid-closed trigger: ${_ic_count} row(s) found"
+    fi
+fi
+
+# NO TRIGGER — nothing to do.
+if [ "$time_trigger" = 0 ] && [ "$landing_trigger" = 0 ] && [ "$invalid_closed_trigger" = 0 ]; then
+    log "no trigger: ${landing_count} landings (threshold: ${SPIRA_MAECHEN_LANDING_INTERVAL:-25}), ${elapsed}s since last pass (threshold: ${SPIRA_MAECHEN_MAX_GAP_SECONDS:-10800}s), 0 invalid-closed rows"
     exit 0
 fi
 
 # BUILD THE TRIGGER REASON for the bead title and description.
 trigger_reason=""
-[ "$time_trigger"    = 1 ] && trigger_reason="${trigger_reason}${trigger_reason:+, }${elapsed}s elapsed"
-[ "$landing_trigger" = 1 ] && trigger_reason="${trigger_reason}${trigger_reason:+, }${landing_count} landings"
+[ "$time_trigger"           = 1 ] && trigger_reason="${trigger_reason}${trigger_reason:+, }${elapsed}s elapsed"
+[ "$landing_trigger"        = 1 ] && trigger_reason="${trigger_reason}${trigger_reason:+, }${landing_count} landings"
+[ "$invalid_closed_trigger" = 1 ] && trigger_reason="${trigger_reason}${trigger_reason:+, }${_ic_count} invalid-closed row(s)"
+
+_desc="Scheduled trigger: the Maechen persona will claim this bead, run a retrospective pass over the failure distribution, identify recurring failure classes, and cut at most ${SPIRA_MAECHEN_MAX_BEADS:-3} remedy beads. Trigger: ${trigger_reason} (lastpass ts=${lastpass_ts}, watermark ts=${watermark_ts}). See spira/chamber/maechen.md for the pass procedure."
+if [ "$invalid_closed_trigger" = 1 ]; then
+    _desc="${_desc}
+
+Closed-record rows (detect_invalid_closed output):
+${invalid_closed_rows}"
+fi
 
 if "$BD" -C "$DB" create \
     "Maechen pass — ${trigger_reason}" \
     --type task \
     --label "$LABELS,delivers:note:${SPIRA_RUN}/maechen.log" \
     --priority 3 \
-    --description "Scheduled trigger: the Maechen persona will claim this bead, run a retrospective pass over the failure distribution, identify recurring failure classes, and cut at most ${SPIRA_MAECHEN_MAX_BEADS:-3} remedy beads. Trigger: ${trigger_reason} (lastpass ts=${lastpass_ts}, watermark ts=${watermark_ts}). See spira/chamber/maechen.md for the pass procedure." \
+    --description "$_desc" \
 ; then
     log "Maechen trigger bead filed (labels: $LABELS,delivers:note:${SPIRA_RUN}/maechen.log, reason: ${trigger_reason})"
 else
