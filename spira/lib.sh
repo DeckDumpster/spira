@@ -1142,6 +1142,44 @@ for bid in labeled:
     done
 }
 
+# close_landed_queue_waiters — close any open bead carrying SPIRA_QUEUE_WAIT_LABEL whose
+# landstate file records LANDED. These beads never leave the label on their own because the
+# normal close path runs when the branch lands; a bead with no branch or an empty branch has
+# nothing to land and is never visited by that path.
+close_landed_queue_waiters() {
+    local label="${SPIRA_QUEUE_WAIT_LABEL:-}"
+    [ -n "$label" ] || return 0
+    local landstate_dir="$SPIRA_RUN/landstate"
+    local labeled_json _id _state _ls
+    labeled_json="$(bdjson list --status open --label "$label" --limit 0 2>/dev/null)" \
+        || labeled_json=""
+    [ -n "$labeled_json" ] || return 0
+    while IFS= read -r _id; do
+        [ -n "$_id" ] || continue
+        _ls="$landstate_dir/$_id"
+        [ -f "$_ls" ] || continue
+        _state=""
+        { read -r _state _ < "$_ls"; } 2>/dev/null || continue
+        if [ "$_state" = "LANDED" ]; then
+            bdq label remove "$_id" "$label" >/dev/null 2>&1 || true
+            bdq close "$_id" \
+                --reason "Content already on main (landstate=LANDED); no branch remained to land." \
+                >/dev/null 2>&1 || true
+            log "close_landed_queue_waiters: $_id — closed (LANDED, no branch)"
+        fi
+    done < <(printf '%s\n' "$labeled_json" | python3 -c '
+import sys, json
+try:
+    rows = json.loads(sys.stdin.read())
+    if not isinstance(rows, list): rows = [rows]
+    for r in rows:
+        bid = r.get("id", "")
+        if bid: print(bid)
+except Exception:
+    pass
+' 2>/dev/null)
+}
+
 # bead_reopen <id> <cause> [note] — hand a bead back to the graph so the NEXT aeon can claim it.
 #
 # REOPENING IS NOT ENOUGH. `bd reopen` keeps the assignee, and `bd ready --claim` skips any

@@ -1164,8 +1164,11 @@ fi
 # CHECK 3b — queue-mode dep wait. A ready bead whose closed blocker has a CERTIFIED or
 # BATCHED landstate has not yet landed on base. mark_queue_waiters applies
 # SPIRA_QUEUE_WAIT_LABEL so fayth_ready excludes it; removes the label once the blocker
-# reaches LANDED.
+# reaches LANDED. close_landed_queue_waiters closes any bead that already carries LANDED in
+# its landstate but still has the wait label — these have no branch left to land through the
+# normal path and would otherwise stay open and invisible to fayths indefinitely.
 mark_queue_waiters 2>/dev/null || true
+close_landed_queue_waiters 2>/dev/null || true
 
 # CHECK 7 — idle capacity. Ready work and a free aeon is the whole point of the system.
 #
