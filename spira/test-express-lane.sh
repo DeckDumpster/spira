@@ -46,6 +46,7 @@ git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 
 cp "$HERE"/*.sh "$SH/"
+cp -r "$HERE/chamber" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
 GATE_COUNT="$TMP/gate-count"; : > "$GATE_COUNT"
@@ -336,7 +337,7 @@ batch_run() {
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_QUEUE_REPRO_BATCH="$SH/repro.sh" \
     SPIRA_QUEUE_LOCAL_GATE="" \
-        bash "$SH/batch.sh" 2>&1
+        bash "$SH/batch.sh" "$REPONAME" 2>&1
 }
 
 # Remove the non-express branch for the express-only test.
@@ -356,13 +357,8 @@ rm -f "$LANDSTATE/sp-expr-b" "$QUEUEDIR/$REPONAME/open"
 git -C "$REPO" branch -D spira/sp-expr-b 2>/dev/null || true
 git -C "$REPO" worktree prune 2>/dev/null || true
 
-# Re-add only the non-express branch.
-wt_n2="$RUN/worktree/sp-norm-b2"
-git -C "$REPO" worktree add -q -b "spira/sp-norm-b" "$wt_n2" main
-printf 'y2\n' > "$wt_n2/sp-norm-b.txt"
-git -C "$wt_n2" add -A; git -C "$wt_n2" commit -q -m "sp-norm-b: work"
-tip_n2="$(git -C "$REPO" rev-parse spira/sp-norm-b)"
-printf 'CERTIFIED %s %s\n' "$tip_n2" "$NOW" > "$LANDSTATE/sp-norm-b"
+# sp-norm-b branch and worktree are still in place; just restore the landstate.
+printf 'CERTIFIED %s %s\n' "$tip_n" "$NOW" > "$LANDSTATE/sp-norm-b"
 
 out2="$(batch_run)"
 nowant "batch pair: non-express lone branch does not trigger early" "express certified" "$out2"
