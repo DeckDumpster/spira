@@ -51,7 +51,7 @@ cat > "$BIN/systemctl" <<'MOCK'
 unit=""
 for a in "$@"; do
     case "$a" in
-        spira-*) unit="$a" ;;
+        spira-*|dolt-*) unit="$a" ;;
     esac
 done
 if [[ "$*" == *"is-active"* ]]; then
@@ -299,6 +299,53 @@ out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
                  "FAKE_BD_RC=0" \
                  'FAKE_BD_LIST=[{"id":"sp-1"},{"id":"sp-2"},{"id":"sp-3"}]' --)"
 want "db-count: 3 bead(s)"                      "3 bead(s)"                    "$out"
+
+# Database: bd fails and dolt-beads.service active but port not yet open → UNKN (starting).
+echo "database: dolt-beads active, port not open — starting up"
+_dolt_data_dir="$TMP/dolt-data-ready"
+mkdir -p "$_dolt_data_dir"
+printf 'listener:\n  port: 19880\n' > "$_dolt_data_dir/dolt-server.yaml"
+out="$(run_ready "FAKE_SC_ACTIVE=dolt-beads.service" \
+                 "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
+                 "FAKE_BD_RC=1" \
+                 "SPIRA_DOLT_DATA=$_dolt_data_dir" -- || true)"
+want "db-starting: ? line present"        "  ?     database: dolt-beads.service active" "$out"
+want "db-starting: names the port"        "port 19880"                                   "$out"
+want "db-starting: says server is starting" "server is starting"                         "$out"
+nowant "db-starting: no FAIL unreadable"  "  FAIL  database unreadable"                  "$out"
+unset _dolt_data_dir
+
+# Database: bd fails and dolt-beads.service active but port IS open → FAIL unreadable.
+echo "database: dolt-beads active, port IS open — still fails"
+_dolt_data_dir2="$TMP/dolt-data-ready2"
+mkdir -p "$_dolt_data_dir2"
+printf 'listener:\n  port: 19881\n' > "$_dolt_data_dir2/dolt-server.yaml"
+_nc_pid=""
+if command -v nc >/dev/null 2>&1; then
+    nc -lk 19881 >/dev/null 2>&1 & _nc_pid=$!
+    sleep 0.1
+fi
+out="$(run_ready "FAKE_SC_ACTIVE=dolt-beads.service" \
+                 "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
+                 "FAKE_BD_RC=1" \
+                 "SPIRA_DOLT_DATA=$_dolt_data_dir2" -- || true)"
+[ -n "$_nc_pid" ] && { kill "$_nc_pid" 2>/dev/null; wait "$_nc_pid" 2>/dev/null || true; }
+if [ -n "$_nc_pid" ]; then
+    want "db-portopen: FAIL unreadable (port open)"  "  FAIL  database unreadable" "$out"
+    nowant "db-portopen: no ? starting"              "server is starting"           "$out"
+else
+    ok "db-portopen: nc unavailable — skip port-open case"
+    ok "db-portopen: nc unavailable — skip port-open case"
+fi
+unset _dolt_data_dir2 _nc_pid
+
+# Database: bd fails with no SPIRA_DOLT_DATA → FAIL unreadable (no starting check).
+echo "database: bd fails, no SPIRA_DOLT_DATA"
+out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
+                 "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
+                 "FAKE_BD_RC=1" -- || true)"
+want "db-no-doltdata: FAIL unreadable"     "  FAIL  database unreadable" "$out"
+nowant "db-no-doltdata: no ? starting"     "server is starting"          "$out"
 
 # Statutes: missing → WARN.
 echo "statutes: some missing"
