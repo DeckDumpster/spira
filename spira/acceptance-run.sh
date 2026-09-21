@@ -188,7 +188,7 @@ is0 "phase A: git clone --branch $tag" "$?"
 # We pass SPIRA_INSTALL_CONFLICT_CONSIDERED=1 only if this is not the first run on this
 # machine — on a genuinely clean machine, no conflict should exist.
 _install_rc=0
-_install_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")")
+_install_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")" SPIRA_OPERATED=0)
 # --agent triggers single-checkout mode (CONFIGURE_PROD = clone path) so install.sh
 # creates SPIRA_PROD inside the clone, bypassing the promote.sh requirement on a
 # clean machine. The git-checkout guard is overridden because the clone IS the prod
@@ -202,11 +202,10 @@ fi
 env "${_install_env[@]}" bash "$_clone/install.sh" 2>&1 | tee "$TMP/install.log" || _install_rc=$?
 is0 "phase A: install.sh exits 0" "$_install_rc"
 
-# After a successful install with a stub agent, write SPIRA_AGENT into spira.conf so
-# every aeon spawned by the sentinel uses the stub instead of the real model CLI.
-if [ -n "$_agent" ] && [ "$_install_rc" -eq 0 ]; then
+if [ "$_install_rc" -eq 0 ]; then
     _conf="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
-    printf '\nSPIRA_AGENT = %s\n' "$_agent" >> "$_conf"
+    [ -n "$_agent" ] && printf '\nSPIRA_AGENT = %s\n' "$_agent" >> "$_conf"
+    printf 'SPIRA_OPERATED = 0\n' >> "$_conf"
 fi
 
 # After install, verify ready.sh exits 0.
@@ -320,7 +319,7 @@ else
         is0 "phase B: git clone --branch $prev_tag" "$?"
 
         _prev_install_rc=0
-        bash "$_prev_clone/install.sh" >/dev/null 2>&1 || _prev_install_rc=$?
+        SPIRA_OPERATED=0 bash "$_prev_clone/install.sh" >/dev/null 2>&1 || _prev_install_rc=$?
         is0 "phase B: install.sh ($prev_tag) exits 0" "$_prev_install_rc"
 
         # Capture unit set BEFORE upgrade.
@@ -394,7 +393,7 @@ else
     is0 "phase D: git clone $prev_tag (aged base)" "$?"
 
     _aged_install_rc=0
-    _aged_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")")
+    _aged_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")" SPIRA_OPERATED=0)
     if [ -n "$_agent" ]; then
         _aged_env+=(
             "CONFIGURE_PROD=$_aged_clone"
@@ -408,10 +407,8 @@ else
     if [ "$_aged_install_rc" -eq 0 ]; then
         _aged_conf="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
 
-        # Write stub agent if provided so the sentinel's aeons complete without a model.
-        if [ -n "$_agent" ]; then
-            printf '\nSPIRA_AGENT = %s\n' "$_agent" >> "$_aged_conf"
-        fi
+        [ -n "$_agent" ] && printf '\nSPIRA_AGENT = %s\n' "$_agent" >> "$_aged_conf"
+        printf 'SPIRA_OPERATED = 0\n' >> "$_aged_conf"
 
         # Seed beads into $bd_db (the instance's db in CI).
         bd -C "$bd_db" create \
