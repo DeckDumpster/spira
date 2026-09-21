@@ -417,27 +417,27 @@ fi
 # tests live there, and a gate that can only see one directory cannot run `cargo` or `npm`
 # at all. A worktree shares the object store, so the full tree costs a checkout of the files
 # that actually changed, and it is reused across passes.
-TREE="$SPIRA_RUN/worktree/.gate.$(basename "$REPO")"
+# ONE TREE PER BRANCH, keyed by sanitising the branch name into a filesystem-safe suffix.
+# Two gates on different branches have different trees and different lock files, so they run
+# concurrently. Two gates on the same branch (an aeon's gate and the landing pass's) share
+# one tree and serialise on its lock — which is correct, since each checkout must own the
+# tree while it runs suites against it.
+TREE_KEY="$(printf '%s' "$BR" | tr '/' '-' | tr -c 'A-Za-z0-9.-' '-')"
+TREE="$SPIRA_RUN/worktree/.gate.$(basename "$REPO").$TREE_KEY"
 
 # SWEEP STALE GATE WORKTREES BEFORE OBTAINING THE LOCK. Old runs that were killed before
 # cleanup (SIGKILL, power loss) leave registrations the lock check in the sweep skips safely.
 SWEEP="$(dirname "$0")/gate-sweep.sh"
 [ -r "$SWEEP" ] && bash "$SWEEP" "$REPO" >/dev/null 2>&1 || true
 
-# ONE TREE PER REPOSITORY MEANS ONE TREE FOR ALL OF THAT REPOSITORY'S GATES, so the tree is
-# LOCKED for the whole trial. Gates run concurrently by construction — every aeon runs one
-# before it closes, and the landing pass runs one per branch it is about to merge — and
-# without a lock each `checkout --detach` pulls the previous run's branch out from under it
-# mid-command. The verdict is then about whatever was checked out last, and nothing says so:
-# two consecutive runs both passed, one of them on a branch deliberately broken, because a
-# concurrent gate had swapped the tree between them. That is the worst failure a gate has —
-# it passes work it never looked at, and the landing pass acts on the pass.
+# THE TREE IS LOCKED FOR THE WHOLE TRIAL. Two gates on the same branch — one from an aeon
+# and one from the landing pass — would otherwise race: the second checkout would pull the
+# first's branch out from under it mid-command and each gate would judge whatever was
+# checked out last. The verdict cache suppresses the second run most of the time; the lock
+# catches the rest.
 #
-# THE SIMPLE FIX, SHIPPED WITH THE METER THAT SAYS WHEN IT STOPS BEING ENOUGH. Serialising
-# is correct at any scale; what it costs is wall clock, so every run records how long it
-# waited for the tree and how long it then held it, and a non-zero wait is said out loud
-# (law-take-the-simple-fix-with-a-meter). When that log shows waits approaching the runs
-# themselves, the answer is a tree per branch — not a wider timeout.
+# THE METER SAYS WHEN THE LOCK BECOMES A BOTTLENECK (law-take-the-simple-fix-with-a-meter).
+# A non-zero wait is said out loud on stderr.
 #
 # It fails CLOSED on a wait that runs out: a gate that could not obtain the tree has checked
 # nothing, and "could not run" is not a pass.

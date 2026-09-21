@@ -179,5 +179,42 @@ fi
 
 # ============================================================================
 echo
+echo "spira-verdict.service limits cover the attribution budget (sp-vhvyi):"
+# ============================================================================
+# POSITIVE CONTROL (must come first): confirm the parser reads the real service
+# file before checking for absence of CPUQuota. A completely empty file would pass
+# the absence check vacuously; requiring Type= proves the file is non-empty.
+if grep -q '^Type=' "$SVC" 2>/dev/null; then
+    ok "positive control: Type= directive present (service file is readable)"
+else
+    bad "positive control: Type= directive present (service file is readable)" \
+        "not found — service file may be empty or unparseable"
+fi
+
+timeout_line="$(grep '^TimeoutStartSec=' "$SVC" 2>/dev/null | head -1)"
+if [ -z "$timeout_line" ]; then
+    bad "spira-verdict.service has TimeoutStartSec" "directive absent"
+else
+    ok "spira-verdict.service has TimeoutStartSec ($timeout_line)"
+    timeout_val="${timeout_line#TimeoutStartSec=}"
+    # The old value (120) would fail this check — that is the pair the bead requires.
+    if [ "${timeout_val}" -ge 3600 ] 2>/dev/null; then
+        ok "TimeoutStartSec >= 3600s (covers red-batch replay per member)"
+    else
+        bad "TimeoutStartSec >= 3600s (covers red-batch replay per member)" \
+            "${timeout_val}s < 3600s — systemd kills every replay at two minutes (sp-vhvyi)"
+    fi
+fi
+
+cpu_quota="$(grep '^CPUQuota=' "$SVC" 2>/dev/null | head -1)"
+if [ -z "$cpu_quota" ]; then
+    ok "spira-verdict.service has no CPUQuota (replay runs at full CPU)"
+else
+    bad "spira-verdict.service has no CPUQuota (replay runs at full CPU)" \
+        "found: $cpu_quota — CPUQuota throttles containers during red-batch replay (sp-vhvyi)"
+fi
+
+# ============================================================================
+echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

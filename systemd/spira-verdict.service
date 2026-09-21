@@ -6,10 +6,11 @@ After=default.target
 [Service]
 Type=oneshot
 ExecStart=@SPIRA_PROD@/spira-verdict.sh
-# Forge round-trips per open batch, plus local git operations. 120s covers a busy
-# queue on a slow connection and does not compete with the sentinel's own ceiling.
-TimeoutStartSec=120
-CPUQuota=10%
+# TimeoutStartSec covers the longest legitimate job: a red batch replays each member
+# in a container, which takes several minutes per member at full CPU. 3600s matches
+# the CI-run ceiling (SPIRA_QUEUE_CI_MAXSEC). CPUQuota is absent: throttling the
+# poller is fine; throttling the replay containers that run inside it is not.
+TimeoutStartSec=3600
 Nice=10
 StandardOutput=append:@SPIRA_RUN@/verdict.log
 StandardError=append:@SPIRA_RUN@/verdict.log

@@ -216,6 +216,9 @@ _q_attribute() {
     local _eject_fail_dir; _eject_fail_dir="$(mktemp -d)"
     local _mm _mid _mtip
 
+    _verdict_trap_pr="$pr_n"
+    printf 'verdict %s: attributing PR %s (%d members, %s)\n' "$name" "$pr_n" "$mc" "$suites_csv"
+
     if [ "$mc" -eq 1 ]; then
         _mm="${members_arr[0]}"; _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
         local _unrep_dir="$SPIRA_QUEUE_DIR/$name/unreproduced"
@@ -540,6 +543,15 @@ _q_attribute() {
 main() {
     local name="${1:-}"
     [ -n "$name" ] || { printf 'verdict.sh: repo name required\n' >&2; exit 1; }
+
+    _verdict_trap_pr=""
+    _verdict_trap_start="$(date +%s)"
+    trap '_e=$(( $(date +%s) - _verdict_trap_start ))
+          [ -n "$_verdict_trap_pr" ] && \
+              printf "verdict %s: attribution of PR %s interrupted after %ss\n" \
+                  "$name" "$_verdict_trap_pr" "$_e" \
+                  >> "${SPIRA_RUN:-/tmp}/landing.log" 2>/dev/null || true
+          exit 143' TERM
 
     local repo mode
     repo="$(repo_root "$name")" || {
