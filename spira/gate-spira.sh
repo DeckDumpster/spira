@@ -232,9 +232,11 @@ run() {                  # run <suite> — its output only when it matters; cost
     setsid bash -c "sleep ${SPIRA_SUITE_TIMEOUT:-600} && kill -- -${suite_pid} 2>/dev/null" &
     killer=$!
     wait "$suite_pid" 2>/dev/null; st=$?
+    local _had_survivor=0
+    kill -0 -- -"$suite_pid" 2>/dev/null && _had_survivor=1 || true
     kill -- -"$killer" 2>/dev/null; wait "$killer" 2>/dev/null || true
     [ "$st" -ge 128 ] && st=124
-    if kill -0 -- -"$suite_pid" 2>/dev/null; then
+    if [ "$_had_survivor" = 1 ]; then
         sleep 0.2
         if kill -0 -- -"$suite_pid" 2>/dev/null; then
             local _orphan=0 _op
