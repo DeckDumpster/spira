@@ -228,19 +228,20 @@ _base_sha_before="$(git -C "$scratch_repo" rev-parse "origin/${_land_ref}" 2>/de
 # Use a very short task description so an aeon can complete it in one pass without
 # complex reasoning. The bead body says to commit an empty file.
 _bead_title="acceptance-run: trivial land proof for $tag"
-_bead_id=""
-_bead_id="$(bd -C "$bd_db" create \
+_bead_out=""
+_bead_out="$(bd -C "$bd_db" create \
     --title "$_bead_title" \
     --description "Acceptance test: commit an empty file named acceptance-probe.txt to prove end-to-end landing works. Content: the tag under test is $tag." \
     --label "acceptance,repo:$(basename "$scratch_repo")" \
     --type task \
     2>&1)" || true
+_bead_id="$(printf '%s\n' "$_bead_out" \
+    | sed -n 's/.*Created issue: \([a-z0-9]*-[a-z0-9]*\).*/\1/p' | head -1)"
 
-if printf '%s' "$_bead_id" | grep -qE '^[a-z0-9]+-[a-z0-9]+$'; then
-    ok "phase A: bead filed ($bead_id)"
+if [ -n "$_bead_id" ]; then
+    ok "phase A: bead filed ($_bead_id)"
 else
-    bad "phase A: bead filed" "bd create output: $_bead_id"
-    _bead_id=""
+    bad "phase A: bead filed" "bd create output: $_bead_out"
 fi
 
 if [ -n "$_bead_id" ]; then
@@ -415,9 +416,12 @@ else
         bd -C "$bd_db" create \
             --title "aged-install: open seed bead (pre-upgrade)" \
             --label "acceptance-seed" --type task >/dev/null 2>&1 || true
-        _aged_seed2="$(bd -C "$bd_db" create \
+        _aged_seed2_out=""
+        _aged_seed2_out="$(bd -C "$bd_db" create \
             --title "aged-install: closed seed bead (pre-upgrade)" \
-            --label "acceptance-seed" --type task 2>&1)" || _aged_seed2=""
+            --label "acceptance-seed" --type task 2>&1)" || true
+        _aged_seed2="$(printf '%s\n' "$_aged_seed2_out" \
+            | sed -n 's/.*Created issue: \([a-z0-9]*-[a-z0-9]*\).*/\1/p' | head -1)"
         [ -n "$_aged_seed2" ] && \
             bd -C "$bd_db" close "$_aged_seed2" \
                 --reason "acceptance: closed for aged-install migration test" \
@@ -514,12 +518,15 @@ else
             # Assert: file a bead post-upgrade; verify it lands by ancestry.
             _aged_land_base="$(git -C "$scratch_repo" \
                 rev-parse "origin/${_land_ref:-main}" 2>/dev/null)" || _aged_land_base=""
-            _aged_probe_id="$(bd -C "$bd_db" create \
+            _aged_probe_out=""
+            _aged_probe_out="$(bd -C "$bd_db" create \
                 --title "aged-install: post-upgrade land proof ($prev_tag → $tag)" \
                 --description "Prove world resumed and can land work after aged upgrade from $prev_tag to $tag." \
                 --label "acceptance,repo:$(basename "$scratch_repo")" \
-                --type task 2>&1)" || _aged_probe_id=""
-            if printf '%s' "$_aged_probe_id" | grep -qE '^[a-z0-9]+-[a-z0-9]+$'; then
+                --type task 2>&1)" || true
+            _aged_probe_id="$(printf '%s\n' "$_aged_probe_out" \
+                | sed -n 's/.*Created issue: \([a-z0-9]*-[a-z0-9]*\).*/\1/p' | head -1)"
+            if [ -n "$_aged_probe_id" ]; then
                 ok "phase D: post-upgrade bead filed ($_aged_probe_id)"
                 _aged_land_wait=0; _aged_landed=0
                 while [ "$_aged_land_wait" -lt 600 ]; do
@@ -542,7 +549,7 @@ else
                     || bad "phase D: post-upgrade bead landed by ancestry" \
                            "no commit with $_aged_probe_id on origin/${_land_ref:-main} after ${_aged_land_wait}s"
             else
-                bad "phase D: post-upgrade bead filed" "output: $_aged_probe_id"
+                bad "phase D: post-upgrade bead filed" "output: $_aged_probe_out"
             fi
         fi
 

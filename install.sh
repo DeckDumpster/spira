@@ -482,9 +482,11 @@ else
                 --database "$_dolt_dbname" --external -q ) \
                 || { [ -n "$_dolt_bg_pid" ] && kill "$_dolt_bg_pid" 2>/dev/null || true
                      _phase_fail "database" "bd init (server mode) failed"; }
+            git -C "$SPIRA_DB" config beads.role maintainer 2>/dev/null || true
             unset _dolt_port _dolt_yaml _dolt_dbname _dolt_wait
         else
             ( cd "$SPIRA_DB" && "$SPIRA_BD" init ) || _phase_fail "database" "bd init failed"
+            git -C "$SPIRA_DB" config beads.role maintainer 2>/dev/null || true
         fi
         _changes=$((_changes+1))
     fi

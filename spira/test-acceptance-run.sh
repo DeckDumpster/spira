@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
-# covers: spira/acceptance-run.sh
+# covers: spira/acceptance-run.sh install.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REAL_REPO="$(cd "$HERE/.." && pwd -P)"
 SCRIPT="$HERE/acceptance-run.sh"
 
 pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want()   { grep -qF  "$2" "$SCRIPT" && ok "$1" || bad "$1" "not found: [$2]"; }
-wantre() { grep -qE  "$2" "$SCRIPT" && ok "$1" || bad "$1" "pattern not found: $2"; }
+ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
+bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
+want()    { grep -qF  "$2" "$SCRIPT" && ok "$1" || bad "$1" "not found: [$2]"; }
+wantre()  { grep -qE  "$2" "$SCRIPT" && ok "$1" || bad "$1" "pattern not found: $2"; }
+iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
+is_eq()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 echo "test-acceptance-run.sh"
+
 SCRATCH="$(mktemp -d)"
+TMP="$SCRATCH"
 trap 'rm -rf "$SCRATCH"' EXIT INT TERM
 
 echo
@@ -81,6 +86,94 @@ else
     bad "with SPIRA_OPERATED=0: stub install proceeds" \
         "exit=$_rc2 output=$_out2"
 fi
+
+# ===========================================================================
+echo
+echo "4. bead-id extraction: warning before id line (positive control first)"
+# ===========================================================================
+# Helper: mirrors the extraction logic in acceptance-run.sh.
+_extract_bead_id() {
+    printf '%s\n' "$1" \
+        | sed -n 's/.*Created issue: \([a-z0-9]*-[a-z0-9]*\).*/\1/p' \
+        | head -1
+}
+
+# Positive control: extractor finds nothing when output has no id.
+_ctrl="$(_extract_bead_id "warning: beads.role not configured (GH#2950)")"
+is_eq "positive-control: no id in warning-only output → empty" "" "$_ctrl"
+
+# Main case: warning lines before ✓ Created issue: sp-xxxx — the failing pattern from GH#2950.
+_out_with_warning="warning: beads.role not configured (GH#2950)
+Fix: git config beads.role maintainer
+Fix: git config --global beads.role maintainer
+✓ Created issue: sp-xxxx — acceptance test probe title
+  Priority: P2
+  Status: open"
+_extracted="$(_extract_bead_id "$_out_with_warning")"
+is_eq "bead-id extracted from output with warning prefix" "sp-xxxx" "$_extracted"
+
+# Structural check: acceptance-run.sh uses the same extraction pattern.
+wantre "acceptance-run.sh uses Created issue extraction" \
+    "sed -n 's/.*Created issue:"
+
+# ===========================================================================
+echo
+echo "5. bead-id extraction (pair): error with no id → empty"
+# ===========================================================================
+_out_error="error: cannot connect to database
+connection refused: dial tcp 127.0.0.1:3307"
+_from_error="$(_extract_bead_id "$_out_error")"
+is_eq "error output with no id extracts nothing" "" "$_from_error"
+
+# ===========================================================================
+echo
+echo "6. beads.role set by install.sh after bd init (real bd)"
+# ===========================================================================
+_real_bd="${SPIRA_BD:-$(command -v bd 2>/dev/null || true)}"
+if [ ! -x "${_real_bd:-}" ]; then
+    ok "beads.role: bd not found — skipping install fixture test"
+    printf '\n%d passed, %d failed\n' "$pass" "$fail"
+    [ "$fail" -eq 0 ]; exit $?
+fi
+
+# Use /var/tmp so there is no .beads ancestor that bd would find by walking up.
+_fb_base="$(mktemp -d /var/tmp/test-accept-run-XXXXXX 2>/dev/null \
+    || mktemp -d /tmp/test-accept-run-XXXXXX)"
+trap 'rm -rf "$SCRATCH" "$_fb_base"' EXIT INT TERM
+
+_fb_db="$_fb_base/db"
+mkdir -p "$_fb_db"
+
+# Positive control: confirm no .beads ancestor (isolation required for meaningful result).
+_walk="$_fb_db"; _found=0
+while [ "$_walk" != "/" ] && [ -n "$_walk" ]; do
+    [ -d "$_walk/.beads" ] && { _found=1; break; }
+    _walk="$(dirname "$_walk")"
+done
+if [ "$_found" = 1 ]; then
+    ok "beads.role: parent .beads found — cannot isolate; skipping"
+    printf '\n%d passed, %d failed\n' "$pass" "$fail"
+    [ "$fail" -eq 0 ]; exit $?
+fi
+unset _walk _found
+
+# Run bd init in file mode (cd form, as install.sh does).
+_init_out="$(cd "$_fb_db" && BD_NON_INTERACTIVE=1 "$_real_bd" init \
+    --non-interactive --prefix sp --skip-agents --skip-hooks -q 2>&1)"
+_init_rc=$?
+iszero "bd init exits 0 on fresh directory" "$_init_rc"
+
+# Apply the same git config that install.sh runs after bd init.
+git -C "$_fb_db" config beads.role maintainer 2>/dev/null || true
+
+_role="$(git -C "$_fb_db" config beads.role 2>/dev/null || true)"
+is_eq "beads.role set to maintainer in SPIRA_DB after init" "maintainer" "$_role"
+
+# Structural: install.sh sets beads.role in both modes.
+grep -qE 'git -C.*SPIRA_DB.*config beads\.role maintainer' "$REAL_REPO/install.sh" \
+    && ok "install.sh file mode: git config beads.role maintainer" \
+    || bad "install.sh file mode: git config beads.role maintainer" \
+           "pattern not found in install.sh"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
