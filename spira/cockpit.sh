@@ -1549,8 +1549,11 @@ reachable_keys() {
     # ONE bd list call for all of them: per-bead queries would make the probe proportional
     # to queue depth, which is why the pane's probe budget is tight.
     # A failed probe renders ?, never 0 (law-absence-needs-a-positive-control).
-    local _reach_raw
-    _reach_raw="$(bdjson list --status open,in_progress --limit 0 2>/dev/null)"
+    # SCOPE FILTER mirrors READY_ARGS: a bead the loop cannot claim must not count as
+    # reachable. The same SPIRA_SCOPE_LABEL that gates claims gates the count.
+    local _reach_raw _reach_args=(list --status open,in_progress --limit 0)
+    [[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && _reach_args+=(--label "$SPIRA_SCOPE_LABEL")
+    _reach_raw="$(bdjson "${_reach_args[@]}" 2>/dev/null)"
     if [ -z "$_reach_raw" ]; then
         echo "SP_REACHABLE=?"
         echo "SP_STRANDED=?"

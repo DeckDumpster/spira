@@ -135,5 +135,29 @@ nowant "claimable bead not reported"                   "sp-lint-mix-a"  "$out"
 nowant "no-loop bead not reported"                     "sp-lint-mix-b"  "$out"
 want   "broken bead reported as no partition"          "sp-lint-mix-c"  "$out"
 
+# ==========================================================================================
+echo
+echo "zero-labels: open non-event bead with no labels is reported (sp-xrgae)"
+# ==========================================================================================
+# A bead with an empty label set is unclaimable and unreachable to detect_unclaimable_ready
+# unless it appears in the ready set. bead.sh lint must catch it: both "no repo: label" and
+# "no partition label" should be reported.
+# POSITIVE CONTROL: a bead with proper labels passes to confirm the scanner is live.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-lint-zero","title":"zero labels: filed by bypass path","status":"open","issue_type":"task","labels":[],"updated_at":"2026-09-16T00:00:00Z"}
+{"id":"sp-lint-ok2","title":"properly labelled","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-16T00:00:00Z"}
+JSONL
+out="$(lint sp-lint-zero)"
+rc="$(lint_rc sp-lint-zero)"
+is   "zero-label bead exits 1"               "1"                            "$rc"
+want "zero-label bead: no repo: label"       "sp-lint-zero: no repo: label" "$out"
+want "zero-label bead: no partition label"   "no partition label"           "$out"
+
+out_ok="$(lint sp-lint-ok2)"
+rc_ok="$(lint_rc sp-lint-ok2)"
+is   "properly labelled bead passes (positive control)"   "0" "$rc_ok"
+nowant "properly labelled bead not reported"              "sp-lint-ok2" "$out_ok"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

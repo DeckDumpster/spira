@@ -46,6 +46,19 @@ run_reachable() {
         bash "$HERE/cockpit.sh" reachable 2>/dev/null
 }
 
+# Like run_reachable but passes SPIRA_SCOPE_LABEL so the scope filter is active.
+run_reachable_scoped() {
+    local bd_path="$1" scope="$2"
+    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
+        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=builder \
+        SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
+        SPIRA_SCOPE_LABEL="$scope" \
+        SPIRA_BD="$bd_path" \
+        bash "$HERE/cockpit.sh" reachable 2>/dev/null
+}
+
 # =============================================================================
 # POSITIVE CONTROL — a bd that returns the fixture graph.
 # A probe that always returns 0 would pass the refusal test but fail here.
@@ -328,6 +341,33 @@ is "SP_STRANDED=1 for blocks edge onto ask" "1" \
    "$(printf '%s\n' "$blocks_ask_out" | grep '^SP_STRANDED=' | sed 's/^SP_STRANDED=//')"
 is "SP_REACHABLE=0 for blocks edge onto ask" "0" \
    "$(printf '%s\n' "$blocks_ask_out" | grep '^SP_REACHABLE=' | sed 's/^SP_REACHABLE=//')"
+
+# =============================================================================
+# SCOPE FILTER — reachable_keys respects SPIRA_SCOPE_LABEL (sp-xrgae).
+# A bead with no scope label is unclaimable; it must not be counted as reachable
+# or stranded — it belongs to neither set. Only in-scope beads are counted.
+# Positive control: an in-scope bead IS counted, so a filter that drops everything
+# would still fail here.
+# =============================================================================
+echo ""
+echo "scope filter: out-of-scope bead not counted; in-scope bead still counted"
+
+BD_SCOPE="$TMP/bd-scope"
+cat > "$BD_SCOPE" <<'EOF'
+#!/usr/bin/env bash
+# sp-in: has the scope label; sp-out: no scope label (empty labels).
+printf '[
+  {"id":"sp-in","status":"open","labels":["spira","plan"],"issue_type":"task"},
+  {"id":"sp-out","status":"open","labels":[],"issue_type":"task"}
+]'
+EOF
+chmod +x "$BD_SCOPE"
+
+scope_out="$(run_reachable_scoped "$BD_SCOPE" "spira")"
+is "SP_REACHABLE=1 with scope filter (only in-scope bead)" "1" \
+   "$(printf '%s\n' "$scope_out" | grep '^SP_REACHABLE=' | sed 's/^SP_REACHABLE=//')"
+is "SP_STRANDED=0 with scope filter (out-of-scope excluded)" "0" \
+   "$(printf '%s\n' "$scope_out" | grep '^SP_STRANDED=' | sed 's/^SP_STRANDED=//')"
 
 # =============================================================================
 echo ""

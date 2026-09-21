@@ -762,10 +762,12 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # other repositories out of every count, claim and strand report. An empty key means the
 # operator has explicitly disabled scope restriction; the ready set is then unrestricted,
 # which is the correct behaviour for a fleet with no scope boundary. The same convention
-# appears in fayth_scope_check (lib.sh) and orphan_claims. When this filter is active,
-# detect_unclaimable_ready will never see a bead missing the scope label — bd ready itself
-# has already excluded it — so the label check inside that function is only reached in
-# installations where SPIRA_SCOPE_LABEL is empty.
+# appears in fayth_scope_check (lib.sh) and orphan_claims.
+#
+# detect_unclaimable_ready intentionally does NOT use READY_ARGS; it reads the full ready
+# set (no scope filter) so that beads missing the scope label are seen and reported as
+# UNCLAIMABLE. They are excluded from claims, counts and strand reports via READY_ARGS, but
+# the detector's job is to name the condition — exclusion is not a reason to stay silent.
 READY_ARGS=(ready --limit 0 --exclude-type epic,event -u)
 [[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && READY_ARGS+=(--label "$SPIRA_SCOPE_LABEL")
 [[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
@@ -3404,7 +3406,9 @@ detect_unclaimable_ready() {
         [ -n "$inc" ] && all_parts="${all_parts}${f}|${inc}|${exc}"$'\n'
     done
 
-    bdjson "${READY_ARGS[@]}" 2>/dev/null \
+    local _det_args=(ready --limit 0 --exclude-type epic,event -u)
+    [[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && _det_args+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
+    bdjson "${_det_args[@]}" 2>/dev/null \
     | PARTS="$parts" ALL_PARTS="$all_parts" python3 -c '
 import json, os, sys
 
@@ -3428,11 +3432,6 @@ def parse_parts(env_key):
 parts = parse_parts("PARTS")
 all_parts = parse_parts("ALL_PARTS")
 
-# sp-d906p: READY_ARGS now carries --label SPIRA_SCOPE_LABEL when the key is non-empty, so
-# bd ready itself excludes out-of-scope beads before they reach this function. The check
-# below is only reachable when SPIRA_SCOPE_LABEL is empty (unrestricted fleet). Keep it:
-# an operator who has disabled scope restriction still benefits from seeing which beads no
-# persona can claim, and the message correctly names the missing label in that case too.
 scope_label = os.environ.get("SPIRA_SCOPE_LABEL", "spira")
 partition_labels = sorted({lab for inc, _ in all_parts.values() for lab in inc if lab != scope_label})
 ci_label = os.environ.get("SPIRA_CI_LABEL", "awaiting-ci")  # literal-ok: Python fallback for direct invocation without conf.sh
