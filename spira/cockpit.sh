@@ -1306,7 +1306,8 @@ else:
     _closed_raw="$(bdq list --status closed --limit 0 --label "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" --json 2>/dev/null)"
     [ -n "$_closed_raw" ] || _closed_read=0
     if [ "$_closed_read" = 0 ]; then
-        echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"; echo "SP_FUNNEL_DONE_AGE=?"
+        echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"
+        echo "SP_STRANDED_N=?"; echo "SP_CERT_N=?"; echo "SP_FUNNEL_DONE_AGE=?"
     else
     closed_pairs="$(printf '%s\n' "$_closed_raw" | json_only | python3 -c '
 import sys, json, os, re, datetime
@@ -1328,7 +1329,8 @@ for i in (d if isinstance(d, list) else [d]):
             print("%s\t%s\t%s\t%s\t%s" % (i["id"], repo, pri, cat, title))' "$SPIRA_RUN" "$(spira_home_repo)" 2>/dev/null)"
     closed_ids="$(printf '%s\n' "$closed_pairs" | awk -F'\t' 'NF{print $1}')"
     if [ -z "$closed_ids" ]; then
-        echo "SP_CLOSED=0"; echo "SP_LANDED=0"; echo "SP_UNLANDED_N=0"; echo "SP_FUNNEL_DONE_AGE="
+        echo "SP_CLOSED=0"; echo "SP_LANDED=0"; echo "SP_UNLANDED_N=0"
+        echo "SP_STRANDED_N=0"; echo "SP_CERT_N=0"; echo "SP_FUNNEL_DONE_AGE="
     else
     # ONE FETCH PER REPOSITORY THAT ACTUALLY HAS A CLOSED BEAD IN IT, and none at all for the
     # rest. This runs on the collector loop; fetching every registered repository each pass
@@ -1357,19 +1359,24 @@ $(git -C "$_p" log --format='%s' -n 2000 $_refs 2>/dev/null)"
 $(git -C "$_p" for-each-ref --format='%(refname:short)' 'refs/heads/spira/' 'refs/remotes/*/spira/' 2>/dev/null)"
     done
     if [ -z "$subjects" ] && [ -z "$branches" ]; then
-        echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"; echo "SP_FUNNEL_DONE_AGE=?"
+        echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"
+        echo "SP_STRANDED_N=?"; echo "SP_CERT_N=?"; echo "SP_FUNNEL_DONE_AGE=?"
     else
         # Subjects only (no bodies). Landed = subject is "spira: land <id>" or "<id>: <desc>"
         # (law-aeon-commits-name-their-bead). Body mentions do not count as landing.
-        # SP_UNLANDED_N: closed beads with a branch but no landstate entry (done, awaiting cert).
+        # SP_UNLANDED_N: closed beads with a branch but no landstate entry (queue anomaly).
+        # SP_STRANDED_N: same but closed longer than SPIRA_CERT_WINDOW_MINS ago (truly stuck).
+        # SP_CERT_N: same but closed within the cert window (normal in-flight state).
         # SP_FUNNEL_DONE_AGE: age of the oldest such bead, from its closed_at timestamp.
-        local _land_out
+        local _land_out _cert_win
+        _cert_win="${SPIRA_CERT_WINDOW_MINS:-90}"
         _land_out="$(printf '%s' "$subjects" | python3 -c '
 import sys, re, os, datetime
 ids = [i for i in sys.argv[1].split() if i]
 br_lines = sys.argv[2].split("\n") if len(sys.argv) > 2 and sys.argv[2] else []
 landstate_dir = sys.argv[3] if len(sys.argv) > 3 else ""
-pairs_raw = sys.argv[4] if len(sys.argv) > 4 else ""
+cert_win = int(sys.argv[4]) if len(sys.argv) > 4 else 90
+pairs_raw = sys.argv[5] if len(sys.argv) > 5 else ""
 subjects = sys.stdin.read().splitlines()
 id_closed_at = {}
 for row in pairs_raw.splitlines():
@@ -1383,7 +1390,7 @@ for i in ids:
         if s.startswith("spira: land " + i) or s.startswith(i + ": "):
             landed_set.add(i)
             break
-done_n = 0
+anomaly = 0; stranded = 0; awaiting = 0
 done_oldest = None
 now = datetime.datetime.now(datetime.timezone.utc)
 for i in ids:
@@ -1393,15 +1400,21 @@ for i in ids:
     if has_br:
         ls_file = os.path.join(landstate_dir, i) if landstate_dir else ""
         if not (ls_file and os.path.exists(ls_file)):
-            done_n += 1
+            anomaly += 1
             cat = id_closed_at.get(i, "")
+            ts = None
             if cat:
                 try:
                     ts = datetime.datetime.fromisoformat(cat.replace("Z", "+00:00"))
-                    if done_oldest is None or ts < done_oldest:
-                        done_oldest = ts
                 except Exception:
-                    pass
+                    ts = None
+            if ts is not None and (done_oldest is None or ts < done_oldest):
+                done_oldest = ts
+            age_mins = int((now - ts).total_seconds() / 60) if ts is not None else 9999999
+            if age_mins > cert_win:
+                stranded += 1
+            else:
+                awaiting += 1
 if done_oldest is not None:
     diff = int((now - done_oldest).total_seconds())
     if diff < 90: age = "now"
@@ -1412,13 +1425,16 @@ else:
     age = ""
 print("SP_CLOSED=%d"           % len(ids))
 print("SP_LANDED=%d"           % len(landed_set))
-print("SP_UNLANDED_N=%d"       % done_n)
+print("SP_UNLANDED_N=%d"       % anomaly)
+print("SP_STRANDED_N=%d"       % stranded)
+print("SP_CERT_N=%d"           % awaiting)
 print("SP_FUNNEL_DONE_AGE=%s"  % age)
-' "$closed_ids" "$branches" "$SPIRA_RUN/landstate" "$closed_pairs" 2>/dev/null)"
+' "$closed_ids" "$branches" "$SPIRA_RUN/landstate" "$_cert_win" "$closed_pairs" 2>/dev/null)"
         if [ -n "$_land_out" ]; then
             printf '%s\n' "$_land_out"
         else
-            echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"; echo "SP_FUNNEL_DONE_AGE=?"
+            echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"
+            echo "SP_STRANDED_N=?"; echo "SP_CERT_N=?"; echo "SP_FUNNEL_DONE_AGE=?"
         fi
     fi
     fi

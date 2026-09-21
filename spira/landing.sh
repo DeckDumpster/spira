@@ -385,6 +385,39 @@ case "$verdict_ttl" in ''|*[!0-9]*) verdict_ttl=0 ;; esac
 find "${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}" -maxdepth 1 -type f \
     -mmin "+$(( verdict_ttl / 60 ))" -delete 2>/dev/null || true
 
+# PRUNE LANDSTATE FILES WHOSE BEAD HAS NO LIVE BRANCH. A bead that is closed and has no
+# branch in any repo will never be visited by CHECK6's branch loop, so its landstate file
+# accumulates indefinitely. Walk the landstate dir once per pass and remove any file whose
+# bead is closed and has no branch across all registered repos. Skip sidecar files (.ejected
+# etc.) — they share the bead's id but are cleaned up by the branch they belong to.
+if [ -d "${SPIRA_RUN}/landstate" ]; then
+    while IFS= read -r _ls_file; do
+        _ls_id="$(basename "$_ls_file")"
+        [[ "$_ls_id" == *.* ]] && continue   # skip sidecars
+        _ls_st_val=""
+        { read -r _ls_st_val _ < "$_ls_file"; } 2>/dev/null || true
+        [ -z "$_ls_st_val" ] && continue
+        # Only prune if bead is closed and has no branch.
+        _ls_bead_st="$(bdjson show "$_ls_id" 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+print(d[0].get("status","") if d else "")' 2>/dev/null)" || _ls_bead_st=""
+        [ "${_ls_bead_st:-}" = "closed" ] || continue
+        _ls_has_branch=0
+        for _ls_repo in $(spira_repos 2>/dev/null); do
+            _ls_rpath="$(repo_root "$_ls_repo" 2>/dev/null)" || continue
+            git -C "$_ls_rpath" show-ref --verify --quiet "refs/heads/spira/$_ls_id" 2>/dev/null \
+                && { _ls_has_branch=1; break; }
+        done
+        if [ "$_ls_has_branch" -eq 0 ]; then
+            log "landing: pruning landstate/$_ls_id — closed bead with no branch (state was $_ls_st_val)"
+            rm -f "$_ls_file" "${_ls_file}.ejected" 2>/dev/null || true
+        fi
+    done < <(find "${SPIRA_RUN}/landstate" -maxdepth 1 -type f 2>/dev/null | sort)
+fi
+
 # ======================================================================================
 # LAND FINISHED BRANCHES. A passing branch must merge without a human; a branch
 # that waits rots, because main moves underneath it and manufactures conflicts that did
@@ -949,6 +982,22 @@ for i in d:
         if [ "${bead_superseded:-0}" = 1 ]; then
             log "CHECK6 $id: $br is superseded — its work landed under the successor's id; leaving it for the Sending to reap"
             continue
+        fi
+        # EJECTED BEAD NEVER RE-QUEUED. batch.sh writes EJECTED landstate when a batch member
+        # fails the local gate and ejects the bead; the aeon is expected to fix the failure and
+        # re-queue. If the bead was closed before the aeon acted, the EJECTED state is never
+        # cleared and the bead sits stranded. Reopen it so a fresh aeon can address the failure.
+        if [ -r "$LANDSTATE/$id" ]; then
+            local _ej_st _ej_tip
+            { read -r _ej_st _ej_tip _ < "$LANDSTATE/$id"; } 2>/dev/null || true
+            if [ "${_ej_st:-}" = EJECTED ]; then
+                log "CHECK6 $id: closed but landstate is EJECTED — reopening so the aeon can fix the batch gate failure"
+                land_mark "$id" RED "${_ej_tip:-none}" "ejected-not-requeued"
+                bead_reopen "$id" batch-eject \
+                    "Reopened by sentinel: batch gate failure recorded but bead closed before aeon could fix it."
+                progress "reopened $id — ejected-not-requeued"
+                continue
+            fi
         fi
         # WHETHER THE BASE ALREADY HOLDS THIS WORK IS THE WHOLE QUESTION, and ancestry is
         # only one of the two ways the answer is yes. A branch already merged has nothing to
