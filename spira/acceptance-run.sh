@@ -195,7 +195,7 @@ _install_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")" SPIRA_OPERATED=0)
 # checkout in this mode — the test proves the path, not the release mechanism.
 if [ -n "$_agent" ]; then
     _install_env+=(
-        "CONFIGURE_PROD=$_clone"
+        "CONFIGURE_PROD=$_clone/spira"
         "SPIRA_INSTALL_PROD_GIT_CONSIDERED=1"
     )
 fi
@@ -396,7 +396,7 @@ else
     _aged_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")" SPIRA_OPERATED=0)
     if [ -n "$_agent" ]; then
         _aged_env+=(
-            "CONFIGURE_PROD=$_aged_clone"
+            "CONFIGURE_PROD=$_aged_clone/spira"
             "SPIRA_INSTALL_PROD_GIT_CONSIDERED=1"
         )
     fi
