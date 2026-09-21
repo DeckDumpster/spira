@@ -50,8 +50,37 @@ filed to address. If the thing is gone, close with the evidence:
 
     {{GROOM}} close <id> --evidence "Premise gone: <what was filed to address> no longer exists. Evidence: <command or commit that confirms it>."
 
-**Do not close beads you are merely unsure about.** File a note on the bead saying what
-would need to be true to close it, and move on.
+**Fixture-shaped litter is premise-gone, not unsure.** A bead with ALL of these properties
+has a structurally absent premise and you may close it directly:
+
+- Created by an aeon (`created_by` starts with `aeon-`)
+- No description
+- Title matches `test bead`, `test-*`, `fixture*`, or `demo-*`; OR carries a `repo:` label
+  whose value is not in the repo-map (`aeon.sh` refuses to claim it at claim time)
+- No branch, commit, or note in the repository names its id
+
+Close it and name the evidence:
+
+    {{GROOM}} close <id> --evidence "Litter: aeon-created, no description, repo:<name> not in repo-map (confirmed: bd label list <id>; spira inventory.sh found no reference)."
+
+**Do not close beads you are merely unsure about. The unsure path has two steps; a third
+note without an ask is the defect this bead exists to end.**
+
+Pass 1 — the bead is unsure: write one note saying what would need to be true to close it:
+
+    bd -C {{DB}} note <id> "UNSURE: <what would need to be true to close this>."
+
+Pass 2 — same bead is still unsure on the next pass: send the question and label the bead:
+
+    {{ASK}} send operator --from "Groomer <groomer@spira>" \
+        --subject "Close <id>?" --kind question \
+        --default "<what you would do>" <<'BODY'
+    <why you are unsure>
+    BODY
+    bd -C {{DB}} note <id> "ESCALATED: <what I would do>. Default sent to operator."
+    bd -C {{DB}} label add <id> "${SPIRA_GROOM_ASK_LABEL:-groom-asked}"
+
+Pass 3+ — bead carries `groom-asked`: skip it. An operator answer is pending.
 
 ### 5. Correct a mislabelled lane
 
@@ -63,6 +92,25 @@ by adding the right one:
 If you also need to remove the old label, do it directly:
 
     bd -C {{DB}} label remove <id> lane:<wrong-lane>
+
+### 6. Drain the LIVELOCK worklist
+
+Before the graph-hygiene scan, get the current LIVELOCK rows and resolve each one:
+
+    bash -c '. "$SPIRA_HOME/lib.sh" && detect_livelocked'
+
+Each row is `LIVELOCK <id> <category> — <reason>`. Handle by category:
+
+| category | what to do |
+|---|---|
+| `unmapped-repo` | Fix the `repo:` label to a mapped name, or close as litter if it is fixture-shaped. |
+| `unclaimable` | Add the missing partition label or correct the lane; escalate if the right label is unclear. |
+| `needs-ryan-no-overseer` | Add the `overseer` label: `bd -C {{DB}} label add <id> overseer`. |
+| `ci-stuck` | Strip `awaiting-ci` if the bead can proceed; escalate if the land mode is structurally wrong. |
+
+Log each LIVELOCK row and its disposition in the pass note:
+
+    bd -C {{DB}} note {{BEAD_ID}} "LIVELOCK <id> <category>: <what was done>."
 
 ## What you MUST NOT do
 
@@ -147,10 +195,11 @@ Then leave the bead open and exit non-zero.
 ## Finishing
 
 Before closing, write a line to the groom log — this is the evidence the sentinel
-verifies (the trigger bead carries `delivers:note:${SPIRA_RUN}/groom.log`):
+verifies (the trigger bead carries `delivers:note:${SPIRA_RUN}/groom.log`). Name every
+LIVELOCK row handled and every ESCALATED bead in the actions field:
 
-    printf '%s groom: pass complete. Examined %d beads. Actions: %s.\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" N "<list or none>" \
+    printf '%s groom: pass complete. Examined %d beads. LIVELOCK rows: %d. Actions: %s.\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" N L "<list or none>" \
         >> "$SPIRA_RUN/groom.log"
 
 Then close the trigger bead:
