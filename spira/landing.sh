@@ -304,15 +304,24 @@ gate_fits() {
 
 # gate_lock_wait -> how long this pass may wait for a repository's gate tree, in seconds.
 #
-# THE RESERVE IS FOR RUNNING THE GATE, NOT FOR QUEUING TO START IT. gate_fits has just
-# guaranteed LAND_GATE_RESERVE seconds remain; spending them waiting on a lock would burn a
-# whole pass to land nothing, so the wait gets a slice and the run keeps the rest. A pass with
-# no limit at all still does not wait forever here — an operator draining a backlog wants the
-# branches whose trees are free, not a pass parked on the first one that is not.
+# DERIVED FROM THE GATE TIMEOUT, not the pass budget. gate.sh documents why the wait must
+# be at least 2 * SPIRA_GATE_TIMEOUT: one holder can legitimately run two full trials
+# (branch + base), so a shorter wait times out against a healthy holder. An explicit
+# SPIRA_GATE_LOCK_WAIT is honored so the operator can size the two independently. When the
+# remaining pass budget is shorter than the ideal, the wait is capped and logged so rc=75
+# is readable as contention rather than as a branch fault.
 gate_lock_wait() {
-    local slice=$(( LAND_GATE_RESERVE / 10 ))
-    [ "$slice" -lt 30 ] && slice=30
-    echo "$slice"
+    [ -n "${SPIRA_GATE_LOCK_WAIT:-}" ] && { echo "$SPIRA_GATE_LOCK_WAIT"; return; }
+    local ideal=$(( ${SPIRA_GATE_TIMEOUT:-2700} * 2 ))
+    if [ "${LAND_MAXSEC:-0}" -gt 0 ]; then
+        local remaining=$(( LAND_MAXSEC - ($(date +%s) - PASS_START) ))
+        if [ "$remaining" -lt "$ideal" ]; then
+            log "landing: gate lock wait capped at ${remaining}s by pass budget (ideal ${ideal}s); rc=75 should be read as contention"
+            echo "$remaining"
+            return
+        fi
+    fi
+    echo "$ideal"
 }
 
 # HOW MANY CERTIFICATION GATES RUN IN PARALLEL THIS PASS. Derived from the box when
@@ -1282,10 +1291,6 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
             _budget_cut=1
             break
         fi
-        # THE LOCK WAIT IS CAPPED AT WHAT THIS PASS CAN SPARE. Same-branch gates (an aeon and
-        # this pass gating the same branch) share a tree and serialise on its lock; per-branch
-        # trees mean different branches never contend. The cap prevents the pass from sitting
-        # in a lock queue for longer than its remaining budget.
         # THE BEAD IS NAMED TO THE GATE, because this pass is the only caller that knows it
         # for certain. The gate's yield record otherwise derives the bead from the branch
         # name, which is right only while a branch is named after the bead it was cut for —
