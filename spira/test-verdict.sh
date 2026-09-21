@@ -813,5 +813,70 @@ want "20. always-red: ejection reported" "ejected" "$out"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
+# =============================================================================
+# 21. TERM TRAP: a verdict.sh process interrupted by TERM during attribution
+#     writes "attribution of PR ... interrupted after ...s" to landing.log.
+#
+#     POSITIVE CONTROL: the repro stub writes its own PID to a flag file before
+#     sleeping. The test waits for that file before sending TERM, proving that
+#     TERM arrives while the replay is genuinely in progress.
+# =============================================================================
+_repro21_pid_file="$RUN/repro21-pid"
+rm -f "$_repro21_pid_file"
+
+cat > "$SH/repro-slow.sh" <<REPRO
+#!/usr/bin/env bash
+printf '%s\n' "\$\$" > "$_repro21_pid_file"
+sleep 60
+REPRO
+chmod +x "$SH/repro-slow.sh"
+
+base_sha21="$(git -C "$REPO" rev-parse origin/main)"
+bwt21="$RUN/worktree/sp-vd-t1"
+git -C "$REPO" worktree add -q -b "spira/sp-vd-t1" "$bwt21" origin/main 2>/dev/null || true
+printf 'sp-vd-t1\n' > "$bwt21/sp-vd-t1.txt"
+git -C "$bwt21" add -A
+git -C "$bwt21" commit -q -m "sp-vd-t1: work"
+tip_t1="$(git -C "$REPO" rev-parse "spira/sp-vd-t1")"
+printf 'BATCHED %s %s\n' "$tip_t1" "$(date +%s)" > "$LANDSTATE/sp-vd-t1"
+{ printf 'pr=99\nhead=%s\nbase=%s\nmembers=sp-vd-t1:%s\nopened=%s\n' \
+    "$tip_t1" "$base_sha21" "$tip_t1" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-slow-suite.sh\n' > "$FORGE_STATUS_FILE"
+: > "$RUN/landing.log"
+
+# Run verdict.sh directly to get its exact PID (not through the verdict() wrapper)
+SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+SPIRA_REPO_MAP="$SH/repo-map" \
+SPIRA_QUEUE_DIR="$QUEUEDIR" \
+SPIRA_FORGE="$SH/forge-fixture.sh" \
+SPIRA_QUEUE_REPRO_BATCH="$SH/repro-slow.sh" \
+    bash "$SH/verdict.sh" "$REPONAME" &
+vd_pid=$!
+
+_w=0
+while [ ! -f "$_repro21_pid_file" ] && [ "$_w" -lt 100 ]; do
+    sleep 0.1; _w=$((_w+1))
+done
+if [ -f "$_repro21_pid_file" ]; then
+    ok "21. TERM trap: positive control — repro started before TERM"
+else
+    bad "21. TERM trap: positive control — repro started before TERM" \
+        "repro stub never wrote PID file (verdict may have exited early)"
+fi
+
+# Send TERM to verdict.sh (sets a pending TERM), then kill the repro stub so the
+# blocking command substitution returns and bash processes the pending TERM trap.
+_repro_pid="$(cat "$_repro21_pid_file" 2>/dev/null || true)"
+kill -TERM "$vd_pid" 2>/dev/null || true
+[ -n "$_repro_pid" ] && kill -9 "$_repro_pid" 2>/dev/null || true
+wait "$vd_pid" 2>/dev/null || true
+
+want "21. TERM trap: interrupted line in landing.log" \
+    "attribution of PR 99 interrupted" \
+    "$(cat "$RUN/landing.log" 2>/dev/null)"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
