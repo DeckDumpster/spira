@@ -846,18 +846,6 @@ land_repo() {
     done <<< "$brs"
     brs="$(printf '%s\n' "$brs" | awk 'NF{print $1}')"
 
-    # RESUME WHERE THE LAST PASS CUT (hotfix, concierge 2026-09-21). The walk below is
-    # refname order and a pass that runs out of budget returns for the whole repository,
-    # so every pass restarted at the top and branches late in the alphabet waited behind
-    # newly closed work forever (sp-w8l21 P1 4.5h with no log line; sp-zz9s1 9h+). The
-    # cursor is read-then-deleted: a pass that completes starts the next from the top.
-    _land_cursor="$SPIRA_RUN/landing-cursor.$name"
-    if [ -s "$_land_cursor" ]; then
-        _lc="$(head -1 "$_land_cursor")"; rm -f "$_land_cursor"
-        brs="$(printf '%s\n' "$brs" | awk -v c="$_lc" 'NF{ if ($1 >= c) a[++n]=$1; else b[++m]=$1 }
-            END{ for(i=1;i<=n;i++) print a[i]; for(i=1;i<=m;i++) print b[i] }')"
-    fi
-
     mode="$(repo_land "$name")"
 
     # THE BASE IS RESOLVED BEFORE THE FETCH, AND THE FETCH FOLLOWS IT. `git fetch origin` was
