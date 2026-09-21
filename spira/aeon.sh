@@ -1903,9 +1903,12 @@ print(len([x for x in (d if isinstance(d,list) else [d])
                         _delivers_fail="delivers:check: command exited non-zero: $_dval"
                     fi
                     ;;
+                action)
+                    # No machine check — close reason is the evidence.
+                    ;;
                 *)
                     _delivers_ok=0
-                    _delivers_fail="delivers:$_dtype is not a recognised type (beads, note, report, check)"
+                    _delivers_fail="delivers:$_dtype is not a recognised type (beads, note, report, check, action)"
                     ;;
             esac
             [ "$_delivers_ok" = 1 ] || break
