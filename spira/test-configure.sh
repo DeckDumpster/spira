@@ -115,6 +115,7 @@ _active_key() {
 _prod_val="$(_active_key SPIRA_PROD)"
 [ -n "$_prod_val" ] && ok "SPIRA_PROD is an active line" \
                     || bad "SPIRA_PROD missing as active line" "in: $OUT"
+is "SPIRA_PROD value matches CONFIGURE_PROD" "$FAKE_PROD" "$_prod_val"
 
 _max_aeons_val="$(_active_key SPIRA_MAX_AEONS)"
 is "SPIRA_MAX_AEONS value is 2 (what we passed)" "2" "$_max_aeons_val"
