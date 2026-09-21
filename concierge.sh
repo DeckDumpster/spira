@@ -173,10 +173,14 @@ brief_summary() {
 }
 
 # concierge_resume_id -> the recorded session id when BRAIN matches, else empty.
-# Warns to stderr when a file exists but the cwd changed (orphaned conversation).
+# Warns to stderr when a file exists but the cwd changed (orphaned conversation),
+# or when the file is absent (so a silent empty resume is not confused with a broken recorder).
 concierge_resume_id() {
     local sf="$SPIRA_RUN/concierge-session" stored_id stored_cwd
-    [ -f "$sf" ] || return 0
+    if [ ! -f "$sf" ]; then
+        printf 'concierge: no session file (%s) — starting fresh\n' "$sf" >&2
+        return 0
+    fi
     { IFS= read -r stored_id && IFS= read -r stored_cwd; } < "$sf" || return 0
     [ -n "$stored_id" ] || return 0
     if [ "$stored_cwd" != "$BRAIN" ]; then

@@ -61,7 +61,9 @@ set -uo pipefail
 # checkout that is not it may be tested, landed and read; it may not print into the operator's
 # sessions. Silent, because a second harness is a legitimate thing to have and a warning in
 # every session is the noise this whole file exists to have replaced.
-[ -n "${SPIRA_PROD:-}" ] && [ "${SPIRA_HOME:-}" != "$SPIRA_PROD" ] && exit 0
+_prod="$(readlink -f "${SPIRA_PROD:-}" 2>/dev/null || printf '%s' "${SPIRA_PROD:-}")"
+_home="$(readlink -f "${SPIRA_HOME:-}" 2>/dev/null || printf '%s' "${SPIRA_HOME:-}")"
+[ -n "$_prod" ] && [ "$_home" != "$_prod" ] && exit 0
 
 WATCHD="$SPIRA_HOME/watchd.sh"
 [ -x "$WATCHD" ] || exit 0
