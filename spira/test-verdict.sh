@@ -808,7 +808,11 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 # =============================================================================
 # 20. ALWAYS-RED CONTROL — same batch shape as case 19, but suite fails twice.
 #     The member must still be ejected (retry does not suppress a real failure).
+#     sp-vd-g1 must exist in testdb so bead_reopen returns 0 (open bead: bd
+#     reopen is a no-op with exit 0); without it _attr_eject escalates instead.
 # =============================================================================
+printf '{"id":"sp-vd-g1","title":"t","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+    | testdb_seed
 MEMBER_RC_DEFAULT="red"
 
 base_sha20="$(git -C "$REPO" rev-parse origin/main)"
