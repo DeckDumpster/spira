@@ -158,14 +158,19 @@ files="$_diff_out"
 
 # EJECTED SUITES. A branch ejected by the merge queue has proven those suites red
 # against it. Re-certification must re-run them even when the branch diff does not
-# touch them (law-a-retry-must-change-an-input). The suites are stored in the
-# EJECTED landstate reason by verdict.sh and passed through to the gate command so
-# gate-touched.sh (or any gate that reads SPIRA_GATE_EJECTED_SUITES) adds them.
+# touch them (law-a-retry-must-change-an-input). verdict.sh writes the suite CSV
+# to $LANDSTATE/$id.ejected so the list survives state transitions (e.g. a failed
+# re-certification overwrites the EJECTED record with RED, erasing the field).
 ejected_suites=""
-if [ -n "${SPIRA_GATE_BEAD:-}" ] && [ -f "${LANDSTATE:-/nonexistent}/${SPIRA_GATE_BEAD}" ]; then
-    _ej_st="" _ej_tip="" _ej_epoch="" _ej_csv=""
-    { read -r _ej_st _ej_tip _ej_epoch _ej_csv < "$LANDSTATE/$SPIRA_GATE_BEAD"; } 2>/dev/null || true
-    [ "$_ej_st" = EJECTED ] && ejected_suites="${_ej_csv:-}"
+if [ -n "${SPIRA_GATE_BEAD:-}" ]; then
+    _ej_file="${LANDSTATE:-/nonexistent}/${SPIRA_GATE_BEAD}.ejected"
+    if [ -f "$_ej_file" ]; then
+        { read -r ejected_suites < "$_ej_file"; } 2>/dev/null || true
+    elif [ -f "${LANDSTATE:-/nonexistent}/${SPIRA_GATE_BEAD}" ]; then
+        _ej_st="" _ej_tip="" _ej_epoch="" _ej_csv=""
+        { read -r _ej_st _ej_tip _ej_epoch _ej_csv < "$LANDSTATE/$SPIRA_GATE_BEAD"; } 2>/dev/null || true
+        [ "$_ej_st" = EJECTED ] && ejected_suites="${_ej_csv:-}"
+    fi
 fi
 
 # ---------------------------------------------------------------------------------------

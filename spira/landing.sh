@@ -1029,6 +1029,7 @@ for i in d:
             # beads that landing.sh correctly determined needed no push.
             tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
             land_mark "$id" CONTENT "${tip:-none}"
+            rm -f "$LANDSTATE/$id.ejected" 2>/dev/null || true
             continue
         fi
 
@@ -1556,6 +1557,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 # rather than before, so a push that never landed can never leave a memory
                 # saying it did (law-closed-is-not-landed, one layer in).
                 land_mark "$id" LANDED "$tip" "$name"
+                rm -f "$LANDSTATE/$id.ejected" 2>/dev/null || true
                 gh_issue_closeout "$id" \
                     "$(git -C "$land" rev-parse HEAD 2>/dev/null)" "$repo" || true
                 # AFTER the push, never before it: the event says the commit is on the base
