@@ -462,6 +462,25 @@ find "${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}" -maxdepth 1 -type f \
 # IT IS A DEFECT, NOT AN OUTAGE, so the labels are the builder's rather than Ops's: fixing a
 # red suite on a base means changing code, and Ops has eight minutes and a runbook.
 INC="${SPIRA_INCIDENT:-$SPIRA_HOME/incident.sh}"
+
+# Returns 0 if the branch is a certified base-fix (caller should certify it).
+# A base-fix branch has external_ref=basefail:<name>:<suite> and its gate output
+# shows the failing suite as green in the branch trial. Reads _scan_extref from
+# the calling land_repo's dynamic scope.
+_basefail_fix_check() {  # _basefail_fix_check <id> <gate_out> <gate_suite> <name>
+    local _id="$1" _gate_out="$2" _gate_suite="$3" _name="$4" _fse _br_had
+    _fse="${_scan_extref[$_id]:-}"
+    case "$_fse" in basefail:"$_name":*) : ;; *) return 1 ;; esac
+    _fse="${_fse#basefail:$_name:}"
+    [ -n "$_fse" ] && [ "$_fse" != "-" ] || return 1
+    _br_had="$(printf '%s' "$_gate_out" | awk -v s="$_fse" '
+        /^--- this branch/{p=1;next}
+        p&&/^(---|gate:)/{p=0}
+        p{for(i=1;i<NF;i++) if($i==s&&($(i+1)~/^(RED|TIMEOUT|FAILED)$/||($(i+1)=="was"&&$(i+2)=="killed"))){print "yes";exit}}
+    ')"
+    [ -z "$_br_had" ]
+}
+
 base_incident() {        # base_incident <repo> <suite> <reason> <branch> <base> <gate output>
     local name="$1" suite="$2" reason="$3" br="$4" base="$5" out="$6" id named
     if [ ! -r "$INC" ]; then
@@ -905,15 +924,15 @@ land_repo() {
     # reopening — the map is up to a pass old by then, and closing or reopening on a stale
     # status is how work gets reopened that already landed (law-closed-is-not-landed).
     # ==================================================================================
-    local -A _scan_st=() _scan_repo=() _scan_labels=() _scan_superseded=() _scan_closed_at=() _scan_priority=()
+    local -A _scan_st=() _scan_repo=() _scan_labels=() _scan_superseded=() _scan_closed_at=() _scan_priority=() _scan_extref=()
     local _scan_ids=""
     for br in $brs; do
         _scan_ids="$_scan_ids ${br#spira/}"
     done
     if [ -n "${_scan_ids// /}" ]; then
-        local _sid _sst _srepo _ssup _scat _spri _slabels
+        local _sid _sst _srepo _ssup _scat _spri _sextref _slabels
         # shellcheck disable=SC2086
-        while IFS=$'\t' read -r _sid _sst _srepo _ssup _scat _spri _slabels; do
+        while IFS=$'\t' read -r _sid _sst _srepo _ssup _scat _spri _sextref _slabels; do
             [ -n "${_sid:-}" ] || continue
             _scan_st["$_sid"]="$_sst"
             _scan_repo["$_sid"]="$_srepo"
@@ -921,6 +940,7 @@ land_repo() {
             _scan_superseded["$_sid"]="${_ssup:-0}"
             _scan_closed_at["$_sid"]="${_scat:-}"
             _scan_priority["$_sid"]="${_spri:-9999}"
+            _scan_extref["$_sid"]="${_sextref:-}"
         done < <(bdjson show $_scan_ids 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -939,26 +959,37 @@ for i in d:
     # every two minutes because only the show spelling was read off a list row).
     sup = 1 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
                    for x in (i.get("dependencies") or [])) else 0
-    # cat and pri BEFORE labels: IFS=$'\t' collapses consecutive tabs (tab is IFS-whitespace),
-    # so any empty field before a non-empty one shifts the read variables. labels is the only
-    # field that may safely be empty (and trailing). cat uses a high-sorting sentinel for
-    # non-closed beads so they sort after all closed branches.
+    # cat and pri BEFORE extref BEFORE labels: IFS=$'\t' collapses consecutive tabs (tab is
+    # IFS-whitespace), so any empty field before a non-empty one shifts the read variables.
+    # extref uses "-" as a sentinel for absent so it is never empty; labels is the only field
+    # that may safely be empty (and trailing). cat uses a high-sorting sentinel for non-closed
+    # beads so they sort after all closed branches.
     cat = i.get("closed_at") or "9999-99-99"
     pri = i.get("priority") if i.get("priority") is not None else 9999
-    print(f"{bid}\t{st}\t{repo}\t{sup}\t{cat}\t{pri}\t{labels}")
+    extref = i.get("external_ref") or "-"
+    print(f"{bid}\t{st}\t{repo}\t{sup}\t{cat}\t{pri}\t{extref}\t{labels}")
 ' "$(spira_home_repo)" 2>/dev/null)
     fi
-    # Certify oldest-closed first within each priority tier so no branch starves
-    # when a pass is cut short. Branches without bead data sort last.
+    # Base-fix branches (external_ref=basefail:<name>:*) sort before all others so a
+    # budget cut cannot defer the fix that unblocks every held branch. Within each group,
+    # certify oldest-closed first within each priority tier so no branch starves.
+    local _fix_front=""
     brs="$(
         for _br in $brs; do
             _id="${_br#spira/}"
-            printf '%s\t%s\t%s\n' \
+            _fk=1; case "${_scan_extref[$_id]:-}" in basefail:"$name":*) _fk=0 ;; esac
+            printf '%s\t%s\t%s\t%s\n' "$_fk" \
                 "${_scan_priority[$_id]:-9999}" \
-                "${_scan_closed_at[$_id]:-9999-99-99}" \
-                "$_br"
-        done | sort -t$'\t' -k1,1n -k2,2 | awk -F'\t' '{print $3}'
+                "${_scan_closed_at[$_id]:-9999-99-99}" "$_br"
+        done | sort -t$'\t' -k1,1n -k2,2n -k3,3 | awk -F'\t' '{print $4}'
     )"
+    for _br in $brs; do
+        case "${_scan_extref[${_br#spira/}]:-}" in
+            basefail:"$name":*) _fix_front="${_fix_front:+$_fix_front }$_br" ;;
+            *) break ;;
+        esac
+    done
+    [ -n "$_fix_front" ] && log "CHECK6 $name: base-fix branch(es) at front of queue: $_fix_front"
 
     for br in $brs; do
         id="${br#spira/}"
@@ -1151,8 +1182,12 @@ for i in d:
                 | while IFS= read -r _bl; do log "$_bl"; done || true
             if [ "${certify_pass_par:-1}" -le 1 ]; then
                 if ! gate_fits; then
-                    _budget_cut=1
-                    break
+                    case "${_scan_extref[$id]:-}" in
+                        basefail:"$name":*)
+                            log "CHECK6 $id: base-fix branch — gating despite budget exhaustion" ;;
+                        *)
+                            _budget_cut=1; break ;;
+                    esac
                 fi
                 _land_state "repo=$name" "branch=$br" "phase=gate"
                 gate_out="$(SPIRA_GATE_LOCK_WAIT="$(gate_lock_wait)" SPIRA_GATE_BEAD="$id" \
@@ -1174,6 +1209,22 @@ for i in d:
                             basefail_filed=1
                             base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
                                           "$br" "$base" "$gate_out"
+                        fi
+                        if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
+                            local _fse_cert="${_scan_extref[$id]:-}"
+                            _fse_cert="${_fse_cert#basefail:$name:}"
+                            _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys,json
+try:d=json.load(sys.stdin)
+except:raise SystemExit
+d=d if isinstance(d,list) else [d]
+print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                            if [ "${_cur_st:-}" = "closed" ]; then
+                                log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
+                                land_mark "$id" CERTIFIED "$tip"
+                                mark_submitted "$id" "$tip" certified
+                                progress "certified $br in $name — base-fix (suite $_fse_cert)"
+                            fi
                         fi
                         continue
                     fi
@@ -1234,8 +1285,12 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
             # Budget is checked here so a tight pass cuts in Phase 1 and the
             # cut message fires at the same point it does on the serial path.
             if ! gate_fits; then
-                _budget_cut=1
-                break
+                case "${_scan_extref[$id]:-}" in
+                    basefail:"$name":*)
+                        log "CHECK6 $id: base-fix branch — gating despite budget exhaustion" ;;
+                    *)
+                        _budget_cut=1; break ;;
+                esac
             fi
             _cert_brs+=("$br"); _cert_beadids+=("$id"); _cert_tips+=("$tip")
             continue
@@ -1279,8 +1334,12 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
         # loop, rather than at the top of the pass: everything above is cheap, and a branch
         # that needs no gate should still be processed in the tail of a pass.
         if ! gate_fits; then
-            _budget_cut=1
-            break
+            case "${_scan_extref[$id]:-}" in
+                basefail:"$name":*)
+                    log "CHECK6 $id: base-fix branch — gating despite budget exhaustion" ;;
+                *)
+                    _budget_cut=1; break ;;
+            esac
         fi
         # THE LOCK WAIT IS CAPPED AT WHAT THIS PASS CAN SPARE. Same-branch gates (an aeon and
         # this pass gating the same branch) share a tree and serialise on its lock; per-branch
@@ -1362,6 +1421,22 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                     basefail_filed=1
                     base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
                                   "$br" "$base" "$gate_out"
+                fi
+                if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
+                    local _fse_cert="${_scan_extref[$id]:-}"
+                    _fse_cert="${_fse_cert#basefail:$name:}"
+                    _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys,json
+try:d=json.load(sys.stdin)
+except:raise SystemExit
+d=d if isinstance(d,list) else [d]
+print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                    if [ "${_cur_st:-}" = "closed" ]; then
+                        log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
+                        land_mark "$id" CERTIFIED "$tip"
+                        mark_submitted "$id" "$tip" certified
+                        progress "certified $br in $name — base-fix (suite $_fse_cert)"
+                    fi
                 fi
                 continue
             fi
@@ -1749,6 +1824,22 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                         base_incident "$name" "$gate_suite" "${gate_reason:-base-red}" \
                                       "$br" "$base" "$gate_out"
                     fi
+                    if _basefail_fix_check "$id" "$gate_out" "$gate_suite" "$name"; then
+                        local _fse_cert="${_scan_extref[$id]:-}"
+                        _fse_cert="${_fse_cert#basefail:$name:}"
+                        _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys,json
+try:d=json.load(sys.stdin)
+except:raise SystemExit
+d=d if isinstance(d,list) else [d]
+print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                        if [ "${_cur_st:-}" = "closed" ]; then
+                            log "CHECK6 $id: base-fix: $br is green on $name's red suite $_fse_cert — certifying"
+                            land_mark "$id" CERTIFIED "$tip"
+                            mark_submitted "$id" "$tip" certified
+                            progress "certified $br in $name — base-fix (suite $_fse_cert)"
+                        fi
+                    fi
                     return 0
                 fi
                 if ! spira_gate_blames_branch "$gate_rc"; then
@@ -1806,8 +1897,12 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
         for _ci in "${!_cert_brs[@]}"; do
             _dbr="${_cert_brs[$_ci]}"; _did="${_cert_beadids[$_ci]}"; _dtip="${_cert_tips[$_ci]}"
             if ! gate_fits; then
-                _budget_cut=1
-                break
+                case "${_scan_extref[${_dbr#spira/}]:-}" in
+                    basefail:"$name":*)
+                        log "CHECK6 $_did: base-fix branch — gating despite budget exhaustion" ;;
+                    *)
+                        _budget_cut=1; break ;;
+                esac
             fi
             while [ "${#_cp_pids[@]}" -ge "${certify_pass_par:-1}" ]; do
                 _cert_process_result
