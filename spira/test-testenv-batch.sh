@@ -928,7 +928,7 @@ fi
 #   B8 positive control: a stub without dedup produces 2 beads, confirming the
 #   test can detect the pre-fix behavior (old code called bead.sh with no
 #   external_ref, so no dedup and a second bead on every refused repeat).
-#   B8 actual: real incident.sh with SPIRA_INCIDENT_REF=repeat-refused:<BR>
+#   B8 actual: real incident.sh with SPIRA_INCIDENT_REF=repeat-refused:<BR>:<KEY16>
 #   dedupes to 1 bead; second call bumps recurrence instead.
 #
 # Driven through real incident.sh against a real testdb — the dedup is a
@@ -946,15 +946,15 @@ else
     _b8_db="$SPIRA_DB"
     _b8_run="$TMP/run-b8"; mkdir -p "$_b8_run"
 
-    _count_b8_ref() {   # _count_b8_ref <external-ref> -> integer
+    _count_b8_ref() {   # _count_b8_ref <external-ref-prefix> -> integer
         bd -C "$_b8_db" list --status open,in_progress --limit 0 --json 2>/dev/null \
           | python3 -c '
 import sys, json
-target = sys.argv[1]; count = 0
+prefix = sys.argv[1]; count = 0
 try: d = json.load(sys.stdin)
 except Exception: print(0); raise SystemExit(0)
 for i in (d if isinstance(d, list) else [d]):
-    if i.get("external_ref") == target: count += 1
+    if (i.get("external_ref") or "").startswith(prefix): count += 1
 print(count)
 ' "$1"
     }
@@ -1015,11 +1015,11 @@ print(count)
             bash "$BATCH" --suites test-fx-red.sh topic "$FIXTURE" 2>/dev/null || true
     done
 
-    _b8_n="$(_count_b8_ref "repeat-refused:topic")"
+    _b8_n="$(_count_b8_ref "repeat-refused:topic:")"
     [ "$_b8_n" = 1 ] \
         && ok "B8: two refused repeats yield exactly one open bead (deduped)" \
         || bad "B8: two refused repeats yield exactly one open bead" \
-               "got $_b8_n open bead(s) for repeat-refused:topic"
+               "got $_b8_n open bead(s) for repeat-refused:topic:..."
 
     testdb_drop
 fi

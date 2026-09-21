@@ -418,7 +418,7 @@ if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ] && \
                             "${_suites_csv:-(unknown)}" "$BR"
                           [ -n "${_cached_override_reason:-}" ] && \
                             printf 'Prior override attempted: %s\n' "$_cached_override_reason"
-                        } | SPIRA_INCIDENT_REF="repeat-refused:$BR" \
+                        } | SPIRA_INCIDENT_REF="repeat-refused:$BR:${BATCH_KEY:0:16}" \
                             SPIRA_INCIDENT_REPO="$(spira_home_repo 2>/dev/null)" \
                             SPIRA_INCIDENT_TYPE=task \
                             SPIRA_INCIDENT_CAUSE=repeat-refused \
