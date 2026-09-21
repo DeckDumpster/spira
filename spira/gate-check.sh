@@ -31,7 +31,6 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
-spira_conf
 
 bdq() { "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 
