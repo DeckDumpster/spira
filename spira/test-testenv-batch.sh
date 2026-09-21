@@ -818,8 +818,9 @@ SPIRA_DB= \
 )" || rc_b7b=$?
 
 isexit2 "B7b: second attempt exits 2 (refused — same key as prior red)" "$rc_b7b"
-want "B7b: output names the refusal"    "repeat attempt refused" "$b7b_out"
-want "B7b: output names the batch key" "batch-"                  "$b7b_out"
+want "B7b: output names the refusal"    "repeat attempt refused"          "$b7b_out"
+want "B7b: output names the batch key" "batch-"                           "$b7b_out"
+want "B7b: refusal names the override" "SPIRA_VERDICT_REPEAT_CONSIDERED"  "$b7b_out"
 
 # B7c: POSITIVE CONTROL — different MODE produces a different key; the prior
 # parallel-red verdict does NOT refuse this serial run.
@@ -1026,6 +1027,7 @@ fi
 # body must surface that a prior override was already tried.
 if [ -f "$_stub_body_b7f" ]; then
     want "B7f: bead body names the prior override attempt" "Prior override attempted" "$(cat "$_stub_body_b7f")"
+    want "B7f: bead body names SPIRA_VERDICT_REPEAT_CONSIDERED" "SPIRA_VERDICT_REPEAT_CONSIDERED" "$(cat "$_stub_body_b7f")"
 fi
 
 # ---------------------------------------------------------------------------
