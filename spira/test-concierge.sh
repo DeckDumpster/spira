@@ -131,11 +131,15 @@ echo "resume — session continuity"
 FAKE_BRAIN="$TMP/fakebrain"; mkdir -p "$FAKE_BRAIN"
 SID_FILE="$TMP/concierge-session"
 
-# WITHOUT A SESSION FILE: no id returned (first run starts empty).
+# WITHOUT A SESSION FILE: no id returned (first run starts empty), but a diagnostic is printed
+# so the operator can distinguish "no previous session" from "the recorder is broken".
 rm -f "$SID_FILE"
 rid="$(SPIRA_RUN="$TMP" SPIRA_WIKI="$FAKE_BRAIN" SPIRA_CONF="$TMP/no.conf" \
     bash "$HARNESS/concierge.sh" _resume-id 2>/dev/null)"
 is "no id when session file absent"    ""  "$rid"
+rid_diag="$(SPIRA_RUN="$TMP" SPIRA_WIKI="$FAKE_BRAIN" SPIRA_CONF="$TMP/no.conf" \
+    bash "$HARNESS/concierge.sh" _resume-id 2>&1 >/dev/null)"
+want "and logs a diagnostic for the absent file" "starting fresh" "$rid_diag"
 
 # WITH A MATCHING CWD: the stored id is returned.
 printf 'session-abc-123\n%s\n' "$FAKE_BRAIN" > "$SID_FILE"
@@ -417,6 +421,48 @@ is "/compact updates the recorded id" \
 run_hook "hook-sid-other-session" "startup"
 is "another session without the flag does not overwrite" \
    "hook-sid-after-compact" "$(sed -n '1p' "$SID_HOOK_DIR/run/concierge-session" 2>/dev/null)"
+
+# SYMLINK SPIRA_PROD. When SPIRA_PROD is a symlink to the same directory as SPIRA_HOME the
+# guard must pass — the resolved paths are identical even though the strings differ.
+# SEEN TO FAIL FIRST: the in-force guard was a string comparison; a symlink path for SPIRA_PROD
+# compared unequal to SPIRA_HOME (a resolved path) and the hook silently exited 0, recording
+# nothing and leaving the concierge unable to resume after any session reset.
+SID_LINK_DIR="$TMP/hookrun_link"; mkdir -p "$SID_LINK_DIR/run"
+ln -sfn "$HERE" "$SID_LINK_DIR/spira-link"
+HOOK_CONF_LINK="$SID_LINK_DIR/spira.conf"
+cat > "$HOOK_CONF_LINK" <<EOF
+SPIRA_PROD = $SID_LINK_DIR/spira-link
+SPIRA_RUN = $SID_LINK_DIR/run
+SPIRA_WATCHERS = $SID_LINK_DIR/no-watchers
+EOF
+: > "$SID_LINK_DIR/no-watchers"
+run_hook_link() {
+    local sid="$1" src="$2"; shift 2
+    printf '{"hook_event_name":"SessionStart","session_id":"%s","source":"%s","cwd":"%s"}' \
+        "$sid" "$src" "$SID_LINK_DIR" \
+      | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$HOOK_CONF_LINK" "$@" \
+        bash "$HOOK" >/dev/null 2>&1
+}
+# NEGATIVE CONTROL: a symlink SPIRA_PROD pointing somewhere else must still refuse.
+ln -sfn "$TMP" "$SID_LINK_DIR/spira-other"
+HOOK_CONF_OTHER="$SID_LINK_DIR/spira-other.conf"
+cat > "$HOOK_CONF_OTHER" <<EOF
+SPIRA_PROD = $SID_LINK_DIR/spira-other
+SPIRA_RUN = $SID_LINK_DIR/run
+SPIRA_WATCHERS = $SID_LINK_DIR/no-watchers
+EOF
+rm -f "$SID_LINK_DIR/run/concierge-session"
+printf '{"hook_event_name":"SessionStart","session_id":"%s","source":"%s","cwd":"%s"}' \
+    "hook-sid-refused" "startup" "$SID_LINK_DIR" \
+  | env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$HOOK_CONF_OTHER" SPIRA_CONCIERGE=1 \
+    bash "$HOOK" >/dev/null 2>&1
+is "symlink SPIRA_PROD to a different dir is still refused" \
+   "" "$(cat "$SID_LINK_DIR/run/concierge-session" 2>/dev/null)"
+# THE PROPERTY: a symlink SPIRA_PROD to the same dir as SPIRA_HOME must record.
+rm -f "$SID_LINK_DIR/run/concierge-session"
+run_hook_link "hook-sid-symlink" "startup" SPIRA_CONCIERGE=1
+is "symlink SPIRA_PROD resolving to SPIRA_HOME records the session id" \
+   "hook-sid-symlink" "$(sed -n '1p' "$SID_LINK_DIR/run/concierge-session" 2>/dev/null)"
 
 echo
 echo "duplicate client detection"
