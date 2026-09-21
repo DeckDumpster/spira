@@ -1224,6 +1224,23 @@ else:
     echo "SP_YIELD_CONC_MED=$_y_conc"
     echo "SP_YIELD_TOP_FAULT=$_y_worst"
 
+    # ---- suite-times: last-run sum and wall from the ledger ---------------------------
+    local _st_log="${SPIRA_SUITE_TIMES_LOG:-$SPIRA_RUN/suite-times.log}"
+    local _st_sum="?" _st_wall="?"
+    if [ -r "$_st_log" ]; then
+        read -r _st_sum _st_wall <<< "$(awk -F'\t' '
+        !/^#/ && NF>=8 {
+            rid=$1; suite=$3; wall=$5+0
+            if (!(rid in seen)) { seen[rid]=1; last_run=rid }
+            if (suite == "__batch__" && rid == last_run) { bwall=wall }
+            else if (suite != "__batch__" && rid == last_run) { sum += wall }
+        }
+        END { printf "%d %s\n", sum+0, (bwall ? bwall : "?") }
+        ' "$_st_log" 2>/dev/null)"
+    fi
+    echo "SP_SUITE_LAST_SUM=${_st_sum:-?}"
+    echo "SP_SUITE_LAST_WALL=${_st_wall:-?}"
+
     # law-closed-is-not-landed as a 24h figure matching the header it sits under. The
     # population is beads an aeon worked AND closed within the last 24 hours, so the row's
     # window agrees with the throughput row above it. Previously this was all-time, which

@@ -27,12 +27,15 @@
 #
 # USAGE
 #   testenv-batch.sh [--mode parallel|serial] [--suites <suite1.sh,suite2.sh,...|->]
+#                    [--report [N]]
 #                    <branch> [<repo-name-or-path>]
 #
 #   --suites -  reads suite names from stdin, one per line (blank lines ignored).
 #               Empty stdin means "nothing to run" — exit 0, not an error.
 #               Composes with a selector:
 #                 select.sh --base X --head Y | testenv-batch.sh --suites - <branch> [<repo>]
+#   --report N  print the top-20 report over the last N runs from the suite-times ledger;
+#               no branch or container is required. Delegates to suite-times.sh.
 #
 # EXIT STATUS
 #   0   all selected suites passed or skipped
@@ -95,6 +98,7 @@ _CONTAINER_WORKSPACE="/workspace"
 # ---------------------------------------------------------------------------
 MODE="parallel"  # default: parallel is safer and the normal operating mode
 SUITES_EXPLICIT=""  # empty: use diff-derived selection; non-empty: use this comma-list
+_BATCH_REPORT=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --mode)
@@ -113,15 +117,25 @@ while [ $# -gt 0 ]; do
                 printf 'batch: --suites may only be given once\n' >&2; exit 2
             }
             SUITES_EXPLICIT="${1#--suites=}"; shift ;;
+        --report)
+            _BATCH_REPORT="${2:-2}"
+            case "$_BATCH_REPORT" in [0-9]*) shift 2 ;; *) _BATCH_REPORT=2; shift ;; esac ;;
+        --report=*)
+            _BATCH_REPORT="${1#--report=}"; shift ;;
         --)
             shift; break ;;
         -*)
             printf 'batch: unknown option: %s\n' "$1" >&2
-            printf 'usage: testenv-batch.sh [--mode parallel|serial] [--suites <list|->] <branch> [<repo-name>]\n' >&2
+            printf 'usage: testenv-batch.sh [--mode parallel|serial] [--suites <list|->] [--report [N]] <branch> [<repo-name>]\n' >&2
             exit 2 ;;
         *)  break ;;
     esac
 done
+
+# --report: delegate to suite-times.sh and exit; no branch or container needed.
+if [ -n "$_BATCH_REPORT" ]; then
+    exec bash "$HERE/suite-times.sh" report "$_BATCH_REPORT" "$@"
+fi
 case "$MODE" in
     parallel|serial) ;;
     *) printf 'batch: --mode must be parallel or serial, got: %s\n' "$MODE" >&2; exit 2 ;;
@@ -652,15 +666,82 @@ fi
 # ---------------------------------------------------------------------------
 _n_selected=0; for _s in $SELECTED; do _n_selected=$((_n_selected+1)); done
 
+# ---------------------------------------------------------------------------
+# RUN ID — identifies this batch in the suite-times ledger.
+# GITHUB_RUN_ID is set by GitHub Actions; local runs use a timestamp.
+# ---------------------------------------------------------------------------
+_BATCH_RUN_ID="${GITHUB_RUN_ID:-${SPIRA_BATCH_RUN_ID:-local-$(date +%s)}}"
+
+# ---------------------------------------------------------------------------
+# BD SHIM — a timing wrapper installed ahead of the real bd on SPIRA_PATH.
+# The shim appends "<ms> <rc> <subcommand>" to SPIRA_BD_LOG per call, letting
+# the batch attribute each suite's wall time to bd versus non-bd work.
+# Set SPIRA_BATCH_NO_BD_SHIM=1 to disable (e.g. for skip-install runs that
+# have no installed bd or when the container image is stripped).
+# ---------------------------------------------------------------------------
+_shim_dir="/tmp/spira-batch-${INSTANCE}/shim"
+_shim_spira_path=""
+if [ -z "${SPIRA_BATCH_NO_BD_SHIM:-}" ]; then
+    _real_bd="$(podman exec --user "$_SPIRA_USER" \
+        -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
+        "$CNAME" bash -c 'command -v bd 2>/dev/null' 2>/dev/null || true)"
+    if [ -n "$_real_bd" ]; then
+        podman exec --user "$_SPIRA_USER" "$CNAME" mkdir -p "$_shim_dir" \
+            >/dev/null 2>&1 || true
+        _shim_tmp="$(mktemp)"
+        _shim_tmp2="${_shim_tmp}.bd"
+        cat > "$_shim_tmp" << 'SHIM_EOF'
+#!/usr/bin/env bash
+_t0=$(date +%s%3N)
+_rc=0; REAL_BD "$@" || _rc=$?
+_log="${SPIRA_BD_LOG:-${SPIRA_RUN:-/tmp}/bd-calls.log}"
+mkdir -p "${_log%/*}" 2>/dev/null
+printf '%s %s %s\n' $(( $(date +%s%3N) - _t0 )) "$_rc" "${1:--}" >> "$_log" 2>/dev/null
+exit $_rc
+SHIM_EOF
+        sed "s|REAL_BD|${_real_bd}|g" "$_shim_tmp" > "$_shim_tmp2"
+        if podman cp "$_shim_tmp2" "${CNAME}:${_shim_dir}/bd" >/dev/null 2>&1 \
+           && podman exec --user "$_SPIRA_USER" "$CNAME" \
+                  chmod +x "${_shim_dir}/bd" >/dev/null 2>&1; then
+            _shim_spira_path="$_shim_dir"
+            log "batch: bd shim installed (real bd: ${_real_bd})"
+        else
+            log "batch: bd shim install failed — bd timing will be absent"
+        fi
+        rm -f "$_shim_tmp" "$_shim_tmp2"
+    else
+        log "batch: bd not found in container — bd timing absent"
+    fi
+fi
+
+# _batch_bd_read <log-path-inside-container> — print "<calls>\t<ms>"
+_batch_bd_read() {
+    podman exec --user "$_SPIRA_USER" \
+        -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
+        "$CNAME" awk 'BEGIN{n=0;s=0}{n++;s+=$1}END{printf "%d\t%d",n,s}' \
+        "$1" 2>/dev/null || printf '0\t0'
+}
+
+# _append_suite_times <suite> <rc> <wall_secs> <bd_calls> <bd_ms> <mode>
+_append_suite_times() {
+    local _row
+    _row="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+        "$_BATCH_RUN_ID" "$BR" "$1" "$2" "$3" "$4" "$5" "$6")"
+    printf '%s\n' "$_row" >> "$RESULTS/suite-times.tsv"
+    mkdir -p "${SPIRA_SUITE_TIMES_LOG%/*}" 2>/dev/null || true
+    printf '%s\n' "$_row" >> "${SPIRA_SUITE_TIMES_LOG:-$SPIRA_RUN/suite-times.log}" 2>/dev/null || true
+}
+
 if [ "$MODE" = parallel ]; then
     _maxpar_display="${SPIRA_BATCH_MAXPAR:-$(nproc)}"
     [ "${_maxpar_display:-0}" -gt 0 ] 2>/dev/null \
-        && log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar_display)" \
-        || log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: unlimited)"
+        && log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar_display, nproc: $(nproc))" \
+        || log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: unlimited, nproc: $(nproc))"
 else
-    log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE)"
+    log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, nproc: $(nproc))"
 fi
 
+_BATCH_T0="$(date +%s)"
 _batch_red=0
 _batch_quarantined_red=0
 _batch_container_dead=0
@@ -711,6 +792,7 @@ if [ "$MODE" = serial ]; then
         res_file="$RESULTS/$s.result"
 
         _rc=0
+        _serial_bd_log="/tmp/spira-batch-${INSTANCE}/bd/${s}.log"
         # Wrap with `timeout` when the limit is non-zero. On timeout, `timeout`
         # kills the podman exec client (rc=124) and we record status=timeout rather
         # than red so the two failure kinds stay distinguishable.
@@ -725,6 +807,8 @@ if [ "$MODE" = serial ]; then
                 -e "TESTDB_NAME=" \
                 -e "TESTDB_DIR=" \
                 -e "TMUX=" \
+                -e "SPIRA_PATH=${_shim_spira_path}" \
+                -e "SPIRA_BD_LOG=${_serial_bd_log}" \
                 -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
                 -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
                 "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" >"$_batch_tmp" 2>&1 || _rc=$?
@@ -739,6 +823,8 @@ if [ "$MODE" = serial ]; then
                 -e "TESTDB_NAME=" \
                 -e "TESTDB_DIR=" \
                 -e "TMUX=" \
+                -e "SPIRA_PATH=${_shim_spira_path}" \
+                -e "SPIRA_BD_LOG=${_serial_bd_log}" \
                 -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
                 -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
                 "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" >"$_batch_tmp" 2>&1 || _rc=$?
@@ -822,6 +908,9 @@ if [ "$MODE" = serial ]; then
                 fi
                 ;;
         esac
+        _s_bd_result="$(_batch_bd_read "$_serial_bd_log")"
+        _append_suite_times "$s" "$_rc" "$secs" \
+            "${_s_bd_result%%	*}" "${_s_bd_result##*	}" "$MODE"
     done
 
 else
@@ -883,6 +972,7 @@ else
         # Each variable is captured by value at fork time; the outer loop
         # changes them, but each subshell has the snapshot from this iteration.
         (
+            _par_bd_log="${_suite_run}/bd-calls.log"
             _inner_rc=0
             if [ "${_suite_timeout:-0}" -gt 0 ] 2>/dev/null; then
                 timeout "$_suite_timeout" podman exec --user "$_SPIRA_USER" \
@@ -896,6 +986,8 @@ else
                     -e "TESTDB_NAME=" \
                     -e "TESTDB_DIR=" \
                     -e "TMUX=" \
+                    -e "SPIRA_PATH=${_shim_spira_path}" \
+                    -e "SPIRA_BD_LOG=${_par_bd_log}" \
                     -e "SPIRA_INSTANCE=${_suite_instance}" \
                     -e "SPIRA_RUN=${_suite_run}" \
                     -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
@@ -913,6 +1005,8 @@ else
                     -e "TESTDB_NAME=" \
                     -e "TESTDB_DIR=" \
                     -e "TMUX=" \
+                    -e "SPIRA_PATH=${_shim_spira_path}" \
+                    -e "SPIRA_BD_LOG=${_par_bd_log}" \
                     -e "SPIRA_INSTANCE=${_suite_instance}" \
                     -e "SPIRA_RUN=${_suite_run}" \
                     -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
@@ -959,6 +1053,10 @@ else
                     fi
                     ;;
             esac
+
+            _p_bd_result="$(_batch_bd_read "$_par_bd_log")"
+            _append_suite_times "$s" "$_inner_rc" "$_secs" \
+                "${_p_bd_result%%	*}" "${_p_bd_result##*	}" "$MODE"
 
             # Signal to the main shell that this suite completed and its rc.
             printf '%s\n' "$_inner_rc" > "$_par_tmp/$s.rc"
@@ -1064,6 +1162,20 @@ done
 printf 'image_tag=%s\nbranch=%s\nbase=%s\nkey=%s\nmode=%s\nselection=%s\n' \
     "$IMG_TAG" "$BR" "$BASE" "${BATCH_KEY:--}" "$MODE" "$_SELECTION_TYPE" \
     > "$RESULTS/batch.meta"
+
+# ---------------------------------------------------------------------------
+# SUITE-TIMES BATCH SUMMARY — one row per batch with the end-to-end wall time.
+# Suite name __batch__ is reserved for this row; suite-times.sh skips it in
+# per-suite output but uses it for the "wall" figure in per-run summaries.
+# ---------------------------------------------------------------------------
+_BATCH_WALL=$(( $(date +%s) - _BATCH_T0 ))
+_batch_times_row="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+    "$_BATCH_RUN_ID" "$BR" "__batch__" "0" "$_BATCH_WALL" "0" "0" "$MODE")"
+printf '%s\n' "$_batch_times_row" >> "$RESULTS/suite-times.tsv"
+mkdir -p "${SPIRA_SUITE_TIMES_LOG%/*}" 2>/dev/null || true
+printf '%s\n' "$_batch_times_row" >> \
+    "${SPIRA_SUITE_TIMES_LOG:-$SPIRA_RUN/suite-times.log}" 2>/dev/null || true
+log "batch: wall ${_BATCH_WALL}s"
 
 # ---------------------------------------------------------------------------
 # VERDICT — three distinguishable outcomes.

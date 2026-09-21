@@ -479,6 +479,33 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Persist suite times
+        # Download the batch-results artifact from the suites job and append
+        # suite-times.tsv to refs/notes/suite-times on the merged SHA. This
+        # survives the seven-day artifact retention window (law-measure-the-outcome).
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_AUTHOR_NAME: Spira Gate
+          GIT_AUTHOR_EMAIL: gate@spira.local
+          GIT_COMMITTER_NAME: Spira Gate
+          GIT_COMMITTER_EMAIL: gate@spira.local
+        run: |
+          set -uo pipefail
+          _art="$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/${{ github.run_id }}/artifacts" \
+            --jq '.artifacts[] | select(.name | startswith("batch-results-")) | .id' \
+            2>/dev/null | head -1 || true)"
+          [ -n "$_art" ] || { printf 'persist-suite-times: no batch-results artifact\n'; exit 0; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/${_art}/zip" > /tmp/batch-results.zip 2>/dev/null || exit 0
+          mkdir -p /tmp/batch-results
+          unzip -q /tmp/batch-results.zip -d /tmp/batch-results 2>/dev/null || exit 0
+          _tsv="$(find /tmp/batch-results -name 'suite-times.tsv' | head -1)"
+          [ -f "$_tsv" ] || { printf 'persist-suite-times: suite-times.tsv not in artifact\n'; exit 0; }
+          git fetch origin 'refs/notes/suite-times:refs/notes/suite-times' 2>/dev/null || true
+          git notes --ref suite-times add -f -F "$_tsv" HEAD 2>/dev/null || true
+          git push origin 'refs/notes/suite-times' 2>/dev/null || \
+            printf 'persist-suite-times: push skipped (non-fatal)\n'
+
       - name: Assert gate check
         # The SHA on main came from a fast-forward merge of a queue PR whose gate
         # ran the full corpus. Assert both halves before cutting a tag: a queue PR
