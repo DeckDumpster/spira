@@ -10,11 +10,12 @@ is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "want [$2] got [$3]"; }
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "no [$3] in [$2]" ;; esac; }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-# The stub batch records its argv and stdin, writes results for each suite named on stdin as
-# STUB_STATUS, and exits STUB_RC.
+# The stub batch records its argv, stdin, and SPIRA_SUITE_TIMEOUT, writes results for each
+# suite named on stdin as STUB_STATUS, and exits STUB_RC.
 cat > "$TMP/batch" <<'B'
 #!/usr/bin/env bash
 printf '%s\n' "$*" > "$STUB_LOG.args"
+printf '%s\n' "${SPIRA_SUITE_TIMEOUT:-unset}" > "$STUB_LOG.timeout"
 cat > "$STUB_LOG.stdin"
 mkdir -p "$SPIRA_BATCH_RESULTS/k"
 while read -r s; do [ -n "$s" ] && printf '%s 1 1 - serial explicit\n' "$STUB_STATUS" > "$SPIRA_BATCH_RESULTS/k/$s.result"; done < "$STUB_LOG.stdin"
@@ -53,6 +54,13 @@ rm -f "$TMP/log.args"
 run ok 0; rc=$?
 is  "no red suite recorded: fail without retrying" "1" "$rc"
 is  "and the batch is never called"               "no" "$([ -f "$TMP/log.args" ] && echo yes || echo no)"
+
+# Timeout suites: the serial re-run uses the longer GATE_RETRY_RERUN_TIMEOUT cap (default 1200 s),
+# not the original 600 s, so a suite that timed out once gets a fair chance on a serial pass.
+first "$TMP/r" a.sh=ok b.sh=timeout
+run ok 0; rc=$?
+is  "timeout then green passes"                              "0" "$rc"
+is  "serial re-run uses the longer cap (1200 s by default)" "1200" "$(cat "$TMP/log.timeout")"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

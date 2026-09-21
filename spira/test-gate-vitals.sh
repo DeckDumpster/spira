@@ -83,17 +83,20 @@ nowant "A2-pos: nproc is not the fallback (positive control)" \
 echo
 echo "Part B: vitals sampler output shape"
 
-_shape='^vitals [0-9]{2}:[0-9]{2}:[0-9]{2} mem .+MiB.+avail [|] pressure .+ [|] containers '
+_shape='^vitals [0-9]{2}:[0-9]{2}:[0-9]{2} mem .+MiB.+avail [|] pressure mem .+ cpu .+ [|] load .+ [|] steal .+ [|] containers '
 
 # Positive control: a line without the vitals prefix does not satisfy the shape.
 grepno "B-pos: non-vitals line fails shape pattern (positive control)" \
        "$_shape" "some unrelated output line"
 
 _vitals_line="$(
-    printf 'vitals %s %s | pressure %s | containers %s\n' \
+    printf 'vitals %s %s | pressure mem %s cpu %s | load %s | steal %s | containers %s\n' \
         "$(date -u +%H:%M:%S)" \
         "$(free -m | awk '/^Mem:/{printf "mem %s/%sMiB used, %sMiB avail", $3, $2, $7}')" \
         "$(awk '/^some/{print $2}' /proc/pressure/memory 2>/dev/null || echo 'n/a')" \
+        "$(awk '/^some/{print $2}' /proc/pressure/cpu 2>/dev/null || echo 'n/a')" \
+        "$(cut -d' ' -f1 /proc/loadavg 2>/dev/null || echo 'n/a')" \
+        "n/a" \
         "$(pgrep -c conmon 2>/dev/null || printf '0')"
 )"
 [ -n "$_vitals_line" ] \
@@ -101,6 +104,14 @@ _vitals_line="$(
     || bad "B1: sampler loop body produced output" "empty"
 
 grepok "B2: output matches documented shape" "$_shape" "$_vitals_line"
+
+# Verify the gate.yml vitals loop contains the new fields.
+want "B3: cpu pressure sampled in gate.yml vitals loop" \
+     "pressure/cpu" "$_suites_step"
+want "B4: vCPU count printed at step start" \
+     "vcpus" "$_suites_step"
+want "B5: steal field in gate.yml vitals loop" \
+     "steal" "$_suites_step"
 
 # ---------------------------------------------------------------------------
 # Part C: the EXIT trap's kill mechanism stops the background sampler
