@@ -72,13 +72,17 @@ RMAP
 FORGE_LOG="$TMP/forge-log"
 FORGE_STATUS_FILE="$TMP/forge-status"
 SUITES_LOG="$TMP/suites-log"
-REPRO_FAIL_FILE="$TMP/repro-fail"  # space-separated branch names that repro as red
-export FORGE_LOG FORGE_STATUS_FILE SUITES_LOG REPRO_FAIL_FILE
+REPRO_FAIL_FILE="$TMP/repro-fail"    # branches that repro as red (exit 1)
+REPRO_FAULT_FILE="$TMP/repro-fault"  # branches that trigger harness fault (exit 2)
+MAIL_LOG="$TMP/mail-log"
+export FORGE_LOG FORGE_STATUS_FILE SUITES_LOG REPRO_FAIL_FILE REPRO_FAULT_FILE MAIL_LOG
 
 printf 'red\n' > "$FORGE_STATUS_FILE"
 : > "$FORGE_LOG"
 : > "$SUITES_LOG"
 : > "$REPRO_FAIL_FILE"
+: > "$REPRO_FAULT_FILE"
+: > "$MAIL_LOG"
 
 # ─── Forge fixture ────────────────────────────────────────────────────────────
 # Returns check-status from FORGE_STATUS_FILE; records pr-close to FORGE_LOG.
@@ -100,13 +104,20 @@ FORGE
 chmod +x "$SH/forge-fixture.sh"
 
 # ─── Repro batch stub ─────────────────────────────────────────────────────────
-# Returns exit 1 (red) if any REPRO_FAIL_FILE entry matches the branch argument
-# exactly or is a git ancestor of it (handles merged-SHA callers from _repro_is_red).
+# exit 2 (harness fault) if REPRO_FAULT_FILE entry matches or is an ancestor.
+# exit 1 (red) if REPRO_FAIL_FILE entry matches or is an ancestor.
+# exit 0 (green) otherwise.
 cat > "$SH/repro-stub.sh" <<'REPRO'
 #!/usr/bin/env bash
 br=""
 while [ $# -gt 0 ]; do
     case "$1" in --mode|--suites) shift 2 ;; *) br="$1"; shift ;; esac
+done
+fault_list="$(cat "${REPRO_FAULT_FILE:-}" 2>/dev/null || true)"
+for f in $fault_list; do
+    if [ "$f" = "$br" ]; then exit 2; fi
+    [ -n "${SPIRA_REPO:-}" ] || continue
+    if git -C "$SPIRA_REPO" merge-base --is-ancestor "$f" "$br" 2>/dev/null; then exit 2; fi
 done
 fail_list="$(cat "${REPRO_FAIL_FILE}" 2>/dev/null || true)"
 for f in $fail_list; do
@@ -134,7 +145,8 @@ chmod +x "$SH/suites.sh"
 # ─── mail.sh stub ─────────────────────────────────────────────────────────────
 cat > "$SH/mail.sh" <<'MAIL'
 #!/usr/bin/env bash
-exit 0
+body="$(cat)"
+[ -n "${MAIL_LOG:-}" ] && printf '%s\n' "$body" >> "$MAIL_LOG" || true
 MAIL
 chmod +x "$SH/mail.sh"
 
@@ -213,6 +225,8 @@ clean_case() {
     : > "$FORGE_LOG"
     : > "$SUITES_LOG"
     : > "$REPRO_FAIL_FILE"
+    : > "$REPRO_FAULT_FILE"
+    : > "$MAIL_LOG"
     printf 'red\nred-suite: test-canary.sh\n' > "$FORGE_STATUS_FILE"
     find "$LANDSTATE" -maxdepth 1 -type f -delete 2>/dev/null || true
     rm -rf "$QUEUEDIR/$REPONAME/unreproduced" 2>/dev/null || true
@@ -661,6 +675,27 @@ verdict "$REPONAME" > /dev/null
 unset REPRO_FAIL_LINE
 is   "12. no-fail-line: sp-at-nfl ejected"                    "EJECTED" "$(land_state_of sp-at-nfl)"
 want "12. no-fail-line: note contains fallback output line"    "FENCE builder" "$(notes_of sp-at-nfl)"
+clean_case
+
+# =============================================================================
+# 13. UNJUDGED MEMBER — repro stub returns exit 2 (harness fault) for one
+#     member; that member must be named in the verdict output AND in the
+#     operator mail as unjudged.  Against unfixed verdict.sh rc=2 falls into
+#     the same else branch as rc=1 with no distinguishing log line and no
+#     "Unjudged branches" section in the mail, so both assertions below fail.
+# =============================================================================
+testdb_reset
+make_branch sp-at-uj spira/canary.sh
+build_batch sp-at-uj > /dev/null
+plant_bead sp-at-uj
+printf 'spira/sp-at-uj\n' > "$REPRO_FAULT_FILE"
+out13="$(verdict "$REPONAME")"
+want "13. unjudged: verdict output says 'could not judge'" "could not judge" "$out13"
+want "13. unjudged: verdict output names the member"       "sp-at-uj"        "$out13"
+want "13. unjudged: operator mail has Unjudged section"    "Unjudged"        "$(cat "$MAIL_LOG")"
+want "13. unjudged: operator mail names the member"        "sp-at-uj"        "$(cat "$MAIL_LOG")"
+is   "13. unjudged: member requeued, not ejected"    "CERTIFIED" "$(land_state_of sp-at-uj)"
+is   "13. unjudged: batch removed"                   "0"         "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
