@@ -206,6 +206,10 @@ cmd_protect() {
     mkdir -p "$SPIRA_RUN" 2>/dev/null || true
     printf '%s\n' "$base_branch" > "$receipt"
     printf 'queue.sh protect: protection set for repo:%s (branch: %s)\n' "$name" "$base_branch"
+    printf 'queue.sh protect: attribution note: suite-level attribution requires CI to emit\n'
+    printf 'queue.sh protect:   failure annotations whose path matches spira/test-*.sh,\n'
+    printf 'queue.sh protect:   or a check annotation titled "red-twice suite".\n'
+    printf 'queue.sh protect:   Without them the queue uses bisect attribution (O(log n) CI runs).\n'
 }
 
 cmd_flush() {

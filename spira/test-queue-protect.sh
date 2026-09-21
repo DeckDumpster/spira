@@ -148,6 +148,8 @@ want "protect: forge gets base branch" "main"           "$(cat "$FORGE_LOG")"
 want "protect: receipt contains branch" "main" \
     "$(cat "$TMP/run/queue-protected-$QNAME" 2>/dev/null || true)"
 want "protect: reports success" "protection set" "$protect_out"
+want "protect: attribution note present" "attribution note" "$protect_out"
+want "protect: bisect fallback mentioned" "bisect" "$protect_out"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
