@@ -251,7 +251,7 @@ want   "manager-unreachable: mentions DBUS_SESSION_BUS_ADDRESS" \
     "DBUS_SESSION_BUS_ADDRESS" "$exits1_out"
 nowant "manager-unreachable: no OK for enabled units" \
     "ENABLE units are enabled" "$exits1_out"
-_exits1_en_section="$(printf '%s\n' "$exits1_out" | awk '/^enabled units$/,/^[a-z]/' || true)"
+_exits1_en_section="$(printf '%s\n' "$exits1_out" | awk '/^enabled units$/{p=1;next} p && /^[a-z]/{exit} p' || true)"
 _exits1_fail_count="$(printf '%s\n' "$_exits1_en_section" | grep -c '  FAIL  ' || true)"
 [ "$_exits1_fail_count" -eq 1 ] \
     && ok "manager-unreachable: exactly one FAIL in enabled-units section (count=$_exits1_fail_count)" \

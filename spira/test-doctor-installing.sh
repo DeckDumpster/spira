@@ -56,6 +56,7 @@ case "$*" in
     *"list-unit-files"*"spira-watch"*) true ;;
     *"list-units"*"spira-watch"*) true ;;
     *"is-active"*) printf 'active\n' ;;
+    *"is-system-running"*) printf 'running\n' ;;
     *"list-timers"*) true ;;
     *"is-enabled"*) printf 'enabled\n' ;;
 esac
