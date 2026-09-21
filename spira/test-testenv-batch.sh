@@ -100,6 +100,42 @@ cat > "$REMOTE/spira/test-fx-p.sh" << 'EOF'
 # covers: unreachable.sh
 printf '  ok    test-fx-p ran\n'; exit 0
 EOF
+
+# B12 fixture: coordination via shared /tmp files inside the container.
+# test-fx-b12a writes start/done markers; test-fx-b12b (exclusive) checks them.
+# test-fx-b12p/q: same pattern without the exclusive declaration (positive control).
+cat > "$REMOTE/spira/test-fx-b12a.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: b12-fixture.sh
+touch /tmp/b12-a-start
+sleep 5
+touch /tmp/b12-a-done
+exit 0
+EOF
+cat > "$REMOTE/spira/test-fx-b12b.sh" << 'EOF'
+#!/usr/bin/env bash
+# exclusive: isolation test
+# covers: b12-fixture.sh
+[ -f /tmp/b12-a-start ] || { printf 'FAIL: a-start absent\n'; exit 1; }
+[ -f /tmp/b12-a-done  ] || { printf 'FAIL: a-done absent (drain did not wait)\n'; exit 1; }
+printf '  ok  exclusive: a finished before b started\n'
+exit 0
+EOF
+cat > "$REMOTE/spira/test-fx-b12p.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: b12-fixture.sh
+touch /tmp/b12-p-start
+sleep 5
+touch /tmp/b12-p-done
+exit 0
+EOF
+cat > "$REMOTE/spira/test-fx-b12q.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: b12-fixture.sh (intentionally no exclusive — positive control)
+[ -f /tmp/b12-p-done  ] || { printf 'FAIL: p-done absent\n'; exit 1; }
+printf '  ok  q check\n'
+exit 0
+EOF
 chmod +x "$REMOTE/spira"/test-fx-*.sh
 git -C "$REMOTE" add spira/
 git -C "$REMOTE" commit -q -m "add fixture suites"
@@ -273,6 +309,45 @@ want "A3: mixed: covered file still selects test-fx-e.sh" "test-fx-e.sh" "$sel_m
 _n_m=0; for _s in $sel_mixed; do _n_m=$((_n_m+1)); done
 [ "$_n_m" = 1 ] && ok "A3: mixed: exactly 1 suite (not all)" \
                 || bad "A3: mixed: exactly 1 suite (not all)" "got $_n_m: $sel_mixed"
+
+# ---------------------------------------------------------------------------
+# A4: EXCLUSIVE DECLARATION PARSING
+#
+# suite_exclusive_of returns the reason string for a suite with # exclusive:,
+# and empty for a suite without it.
+#
+# POSITIVE CONTROL: the `want "cargo"` assertion fails if suite_exclusive_of
+# returns empty, proving the parser actually found the declaration rather than
+# silently returning empty for both suites.
+# ---------------------------------------------------------------------------
+SUITE_A4="$TMP/suites-a4"
+mkdir -p "$SUITE_A4"
+
+cat > "$SUITE_A4/test-fx-a4-excl.sh" << 'EOF'
+#!/usr/bin/env bash
+# exclusive: cargo build; peak memory
+# covers: heavy.sh
+exit 0
+EOF
+chmod +x "$SUITE_A4/test-fx-a4-excl.sh"
+
+cat > "$SUITE_A4/test-fx-a4-plain.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: light.sh
+exit 0
+EOF
+chmod +x "$SUITE_A4/test-fx-a4-plain.sh"
+
+_excl_a4="$(suite_exclusive_of "$SUITE_A4/test-fx-a4-excl.sh")"
+[ -n "$_excl_a4" ] \
+    && ok "A4: suite_exclusive_of returns non-empty for declared suite" \
+    || bad "A4: suite_exclusive_of returns non-empty for declared suite" "got empty"
+want "A4: positive-control: exclusive reason matches declaration" "cargo" "${_excl_a4:-}"
+
+_plain_a4="$(suite_exclusive_of "$SUITE_A4/test-fx-a4-plain.sh")"
+[ -z "$_plain_a4" ] \
+    && ok "A4: suite_exclusive_of returns empty for non-declared suite" \
+    || bad "A4: suite_exclusive_of returns empty for non-declared suite" "got: $_plain_a4"
 
 # ===========================================================================
 # PART B: CONTAINER TIER
@@ -1222,6 +1297,77 @@ STUBEOF
             || bad "B11: no suite is red after exec-storm" \
                    "$_b11_red suite(s) still marked red — reclassification did not fire"
     fi
+fi
+
+# ---------------------------------------------------------------------------
+# B12: EXCLUSIVE SUITE ISOLATION
+#
+# An exclusive suite drains all in-flight parallel jobs before it starts and
+# holds the pool alone until it finishes. This prevents OOM when a heavy suite
+# (e.g. a cargo build) would push total container memory over the host limit
+# when running alongside other parallel suites.
+#
+# POSITIVE CONTROL: B12a runs WITHOUT the exclusive declaration.  Suite q
+# reads /tmp/b12-p-done; suite p writes it only after a 5-second sleep.
+# With maxpar=2 and no exclusive drain, q starts while p is still sleeping and
+# FAILS — proving the test CAN detect missing isolation.
+#
+# B12b runs WITH the exclusive declaration on b.  Suite b reads /tmp/b12-a-done;
+# suite a writes it only after a 5-second sleep.  The exclusive drain holds b
+# until a finishes, so b PASSES — proving the mechanism works.
+#
+# The 5-second sleep makes the positive-control failure reliable: podman exec
+# overhead is well under 5 seconds, so q starts before p completes.
+# ---------------------------------------------------------------------------
+echo
+echo "B12: exclusive suite isolation"
+
+SUITE_B12="$TMP/suites-B12"
+mkdir -p "$SUITE_B12"
+cp "$REMOTE/spira/test-fx-b12a.sh" "$SUITE_B12/"
+cp "$REMOTE/spira/test-fx-b12b.sh" "$SUITE_B12/"
+cp "$REMOTE/spira/test-fx-b12p.sh" "$SUITE_B12/"
+cp "$REMOTE/spira/test-fx-b12q.sh" "$SUITE_B12/"
+
+# B12a POSITIVE CONTROL: without exclusive, q starts while p sleeps → q fails.
+RESULTS_ROOT_B12PC="$TMP/results-B12PC"
+rc_b12pc=0
+SPIRA_BATCH_SUITE_DIR="$SUITE_B12" \
+SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B12PC" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_VERDICT_TTL=0 \
+SPIRA_BATCH_INSTANCE="b12pc-$$" \
+SPIRA_BATCH_MAXPAR=2 \
+    bash "$BATCH" --mode parallel \
+    --suites test-fx-b12p.sh,test-fx-b12q.sh \
+    topic "$FIXTURE" || rc_b12pc=$?
+[ "$rc_b12pc" -ne 0 ] \
+    && ok "B12a positive-control: non-exclusive q fails (p still sleeping — test can detect)" \
+    || bad "B12a positive-control: non-exclusive q fails" \
+           "got exit 0 — test cannot detect isolation violation (p may have finished first)"
+
+# B12b: with exclusive declaration, a drains before b starts → b passes.
+RESULTS_ROOT_B12="$TMP/results-B12"
+rc_b12=0
+SPIRA_BATCH_SUITE_DIR="$SUITE_B12" \
+SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B12" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_VERDICT_TTL=0 \
+SPIRA_BATCH_INSTANCE="b12-$$" \
+SPIRA_BATCH_MAXPAR=2 \
+    bash "$BATCH" --mode parallel \
+    --suites test-fx-b12a.sh,test-fx-b12b.sh \
+    topic "$FIXTURE" || rc_b12=$?
+
+iszero "B12b: exclusive suite batch exits 0 (drain waited for a)" "$rc_b12"
+
+RD_B12="$(find_results_dir "$RESULTS_ROOT_B12")"
+if [ -n "$RD_B12" ] && [ -f "$RD_B12/test-fx-b12b.sh.result" ]; then
+    _st_b12b="$(awk '{print $1}' "$RD_B12/test-fx-b12b.sh.result")"
+    [ "$_st_b12b" = ok ] \
+        && ok "B12b: exclusive suite b passed (a-done existed when b ran)" \
+        || bad "B12b: exclusive suite b passed" \
+               "got $_st_b12b ($(cat "$RD_B12/test-fx-b12b.sh.out" 2>/dev/null))"
 fi
 
 # ===========================================================================

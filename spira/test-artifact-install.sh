@@ -27,6 +27,7 @@
 #
 # SKIP: cargo absent (not in testenv); XDG_RUNTIME_DIR absent (no user session).
 #
+# exclusive: cargo build peaks at several GB; runs alone to prevent container OOM
 # runtime: ~5m (cargo build dominates on first run; ~2m on re-runs)
 # covers: spira/conf.sh spira/activate.sh spira/loom.sh spira/ready.sh install.sh
 

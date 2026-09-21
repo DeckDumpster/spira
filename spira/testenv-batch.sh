@@ -844,11 +844,18 @@ else
     _n=0
 
     for s in $SELECTED; do
-        # Throttle: wait for a slot before launching the next suite.
-        if [ "${_maxpar:-0}" -gt 0 ] 2>/dev/null; then
-            while [ "$(jobs -rp | wc -l)" -ge "$_maxpar" ]; do
-                wait -n 2>/dev/null || true
-            done
+        # Exclusive suites drain all in-flight parallel jobs and run alone — prevents OOM
+        # when a heavy suite (e.g. a cargo build) runs alongside others in the same container.
+        _excl_reason="$(suite_exclusive_of "$SUITE_DIR/$s")"
+        if [ -n "$_excl_reason" ]; then
+            for _ep in $_par_pids; do wait "$_ep" 2>/dev/null || true; done
+            _par_pids=""
+            log "batch: draining for exclusive suite $s (${_excl_reason})"
+            _container_check_live
+            if [ "$_batch_container_dead" = 1 ]; then
+                log "batch: container died before exclusive suite $s — remaining suites will be unreached"
+                break
+            fi
         fi
 
         _n=$((_n+1))
@@ -860,7 +867,7 @@ else
         # Throttle: wait for a slot before launching the next suite.
         # `wait -n` (bash 4.3+) waits for exactly one job; the fallback
         # loop with `true` prevents a hard failure on older bash.
-        if [ "${_maxpar:-0}" -gt 0 ] 2>/dev/null; then
+        if [ -z "$_excl_reason" ] && [ "${_maxpar:-0}" -gt 0 ] 2>/dev/null; then
             while [ "$(jobs -rp | wc -l)" -ge "$_maxpar" ]; do
                 wait -n 2>/dev/null || true
             done
@@ -956,10 +963,15 @@ else
             # Signal to the main shell that this suite completed and its rc.
             printf '%s\n' "$_inner_rc" > "$_par_tmp/$s.rc"
         ) &
-        _par_pids="$_par_pids $!"
+        if [ -n "${_excl_reason:-}" ]; then
+            # Exclusive: wait here so no other suite starts until this one finishes.
+            wait "$!" 2>/dev/null || true
+        else
+            _par_pids="$_par_pids $!"
+        fi
     done
 
-    # Wait for all suites to complete.
+    # Wait for any remaining in-flight jobs (non-exclusive suites from the last batch).
     for _pid in $_par_pids; do
         wait "$_pid" 2>/dev/null || true
     done
