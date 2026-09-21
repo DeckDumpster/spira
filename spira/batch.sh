@@ -63,7 +63,7 @@ _certified_orphans() {
 # a live branch and a failed landstate — the eviction-race shape where a bead ends up
 # closed+RED+live and no queue mechanism retrieves it.
 _closed_red_live() {
-    local f id st
+    local f id st _crl_st
     [ -d "$LANDSTATE" ] || return 0
     for f in "$LANDSTATE/"*; do
         [ -f "$f" ] || continue
@@ -72,13 +72,13 @@ _closed_red_live() {
         { read -r st _ < "$f"; } 2>/dev/null || continue
         [ "$st" = "RED" ] || [ "$st" = "EJECTED" ] || continue
         git -C "$1" show-ref --verify -q "refs/heads/spira/$id" 2>/dev/null || continue
-        bdq show "$id" 2>/dev/null \
+        _crl_st="$(bdjson show "$id" 2>/dev/null \
             | python3 -c 'import sys,json
 try: d=json.load(sys.stdin)
-except Exception: sys.exit(1)
+except Exception: sys.exit(0)
 d=d if isinstance(d,list) else [d]
-if d and d[0].get("status")=="closed": print("closed")' 2>/dev/null \
-            | grep -q "closed" || continue
+if d and d[0].get("status")=="closed": print("closed")' 2>/dev/null)" || _crl_st=""
+        [ "${_crl_st:-}" = "closed" ] || continue
         printf '%s\n' "$id"
     done
 }
