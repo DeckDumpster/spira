@@ -61,12 +61,14 @@ PAT
     return 0
 }
 
+# Computed once here; scan() uses it directly so the subshell+paste runs once, not per file.
+_pat="$(patterns | paste -sd'|' -)"
+
 # scan <file> -> the offending tokens, one per line. Exit 0 either way; the caller decides
 # what an offender means. Mail is matched separately because the exemption is a subtraction.
 scan() {
-    local f="$1" pat
-    pat="$(patterns | paste -sd'|' -)"
-    { [ -n "$pat" ] && grep -ohE "$pat" "$f" 2>/dev/null
+    local f="$1"
+    { [ -n "$_pat" ] && grep -ohE "$_pat" "$f" 2>/dev/null
       grep -ohE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' "$f" 2>/dev/null \
         | grep -vE "$EXEMPT_MAIL"
     } | sort -u
@@ -89,9 +91,22 @@ mapfile -t files < <(
     git -C "$ROOT" ls-files --others --exclude-standard
 )
 
+# Batch-find the candidate set: files that may carry an offender.
+# Two grep -l invocations across the whole tree replace 850+ per-file subshell forks.
+declare -A _cands
+if [ -n "$_pat" ]; then
+    while IFS= read -r abs; do
+        _cands["${abs#$ROOT/}"]=1
+    done < <(printf '%s\0' "${files[@]/#/$ROOT/}" | xargs -0 grep -lE "$_pat" -- 2>/dev/null)
+fi
+while IFS= read -r abs; do
+    _cands["${abs#$ROOT/}"]=1
+done < <(printf '%s\0' "${files[@]/#/$ROOT/}" \
+    | xargs -0 grep -lE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' -- 2>/dev/null)
+
 bad=0
 _offenders=()
-for f in "${files[@]}"; do
+for f in "${!_cands[@]}"; do
     # Three files are exempt, and all three for the same reason: their content IS the
     # offender list. This file carries the patterns as string literals, the deny-list is
     # nothing but tokens to refuse, and the suite has to plant one of each shape to prove the
