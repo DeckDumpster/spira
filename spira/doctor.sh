@@ -1152,6 +1152,38 @@ unset _dr_ui_dir _dr_ui_any _dr_ui_f _dr_ui_out _dr_ui_rc \
       _dr_ui_miss _dr_ui_diff _dr_ui_ln _dr_ui_u
 
 echo
+echo "github issue intake"
+# TIMER SERVICES SKIPPED BY EXEC-CONDITION. An ExecCondition that tests a shell
+# variable is never satisfied by systemd: the variable lives in conf.sh, which
+# only runs after the condition. The unit fires every 15 minutes, records SKIP,
+# looks healthy from every systemd state query, and the log stays empty.
+# The discriminating check: if SPIRA_GH_INTAKE_REPO is set (intake should run)
+# but the service's recent journal shows only exec-condition skips, the
+# installed unit is stale. law-detection-outranks-rejection.
+if [ -n "${SPIRA_GH_INTAKE_REPO:-}" ]; then
+    _dr_ghi_unit="$(spira_unit gh-intake service 2>/dev/null)"
+    if [ -n "$_dr_ghi_unit" ] && [ "$_dr_ghi_unit" != '?' ]; then
+        _dr_jctl="${SPIRA_JOURNALCTL:-journalctl}"
+        _dr_ghi_j="$("$_dr_jctl" --user -u "$_dr_ghi_unit" -n 20 --no-pager 2>/dev/null || true)"
+        _dr_ghi_skips="$(printf '%s\n' "$_dr_ghi_j" | grep -c "exec-condition" || true)"
+        _dr_ghi_runs="$(printf '%s\n' "$_dr_ghi_j" | grep -cE "Succeeded|Finished" || true)"
+        if [ "${_dr_ghi_skips:-0}" -gt 0 ] && [ "${_dr_ghi_runs:-0}" -eq 0 ]; then
+            FAIL "$_dr_ghi_unit: skipped by ExecCondition on every recent firing while SPIRA_GH_INTAKE_REPO is set" \
+                 "The installed unit's ExecCondition tests an environment variable that systemd cannot
+        read from conf.sh. The unit fires but never runs. Reinstall:
+        bash $SPIRA_REPO/systemd/install.sh"
+        else
+            OK "github intake — no persistent exec-condition skip"
+        fi
+    else
+        printf '  info  github intake — unit not installed yet\n'
+    fi
+    unset _dr_ghi_unit _dr_jctl _dr_ghi_j _dr_ghi_skips _dr_ghi_runs
+else
+    printf '  info  SPIRA_GH_INTAKE_REPO not configured — intake is off\n'
+fi
+
+echo
 echo "writable state"
 if mkdir -p "$SPIRA_RUN" 2>/dev/null && [ -w "$SPIRA_RUN" ]; then OK "runtime directory $SPIRA_RUN"
 else FAIL "cannot write $SPIRA_RUN" "Leases, logs and worktrees live here. Set SPIRA_RUN in ${CONF:-spira.conf}."; fi

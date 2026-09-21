@@ -380,5 +380,50 @@ fi
 ok "(e) comment absence is structural: nothing fetches /comments"
 
 echo
+echo "10. unconfigured: exits 0 with a log line, does not die:"
+# Positive control: the check must be able to fail. Run with SPIRA_GH_INTAKE_REPO set
+# first to confirm the script proceeds past the guard; then with it empty to confirm
+# exit 0 and the log line.
+out_conf="$(run 1 2>&1)"; rc_conf=$?
+if [ "$rc_conf" -eq 0 ]; then ok "positive control: configured path exits 0"
+else bad "positive control: configured path exits 0" "rc=$rc_conf"; fi
+out_unconf="$(PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" \
+    BDLOG="$BDLOG" CURLLOG="$CURLLOG" STATE="$STATE" \
+    SPIRA_BD=bd SPIRA_GH_INTAKE_REPO="" \
+    SPIRA_GH_INTAKE_BEAD_REPO="$FIXTURE_REPO" SPIRA_REPO_MAP="$TMP/repo-map" \
+    SPIRA_GH_INTAKE_API=https://api.github.com \
+    SPIRA_GH_INTAKE_PRIORITY=3 \
+    SPIRA_MAIL=/dev/null \
+    SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
+        bash "$SCRIPT" 2>&1)"; rc_unconf=$?
+if [ "$rc_unconf" -eq 0 ]; then ok "unconfigured exits 0"
+else bad "unconfigured exits 0" "rc=$rc_unconf"; fi
+case "$out_unconf" in
+    *"not set"*|*"nothing to ingest"*) ok "unconfigured logs a message" ;;
+    *) bad "unconfigured logs a message" "got: $out_unconf" ;;
+esac
+if grep -q 'create\|curl' "$BDLOG" 2>/dev/null && \
+   grep -q 'api.github.com' "$CURLLOG" 2>/dev/null; then
+    bad "unconfigured does not reach the API" "curl or bd was called"
+else
+    ok "unconfigured does not reach the API"
+fi
+
+echo
+echo "11. the service template has no ExecCondition testing a shell variable:"
+SERVICE_TMPL="$HERE/../systemd/spira-gh-intake.service"
+if [ -f "$SERVICE_TMPL" ]; then
+    ok "service template exists"
+    if grep -qE '^ExecCondition.*\$\{' "$SERVICE_TMPL" 2>/dev/null; then
+        bad "no ExecCondition tests a shell variable" \
+            "found: $(grep 'ExecCondition.*\${' "$SERVICE_TMPL")"
+    else
+        ok "no ExecCondition tests a shell variable"
+    fi
+else
+    bad "service template exists" "not found at $SERVICE_TMPL"
+fi
+
+echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
