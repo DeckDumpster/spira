@@ -38,7 +38,7 @@ if os.path.exists(state):
 if not started_at:
     try:
         r = subprocess.run([bd, "-C", db, "show", bid, "--format", "json"],
-                           capture_output=True, text=True, timeout=5)
+                           capture_output=True, text=True, timeout=30)
         if r.returncode == 0 and r.stdout.strip():
             d = json.loads(r.stdout)
             d = d[0] if isinstance(d, list) else d
@@ -57,7 +57,7 @@ if not os.path.exists(state):
 
 try:
     r = subprocess.run([bd, "-C", db, "comments", bid, "--json"],
-                       capture_output=True, text=True, timeout=5)
+                       capture_output=True, text=True, timeout=30)
     if r.returncode != 0 or not r.stdout.strip():
         sys.exit(0)
     comments = json.loads(r.stdout)
