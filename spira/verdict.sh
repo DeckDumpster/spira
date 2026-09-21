@@ -141,8 +141,8 @@ _meter_write() {  # _meter_write <repo> <members> <caught> <escaped> <start-epoc
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
 }
 
-_attr_notify_red() {  # _attr_notify_red <pr-n> <name> <suites-csv> <decision> <ejected-ids> <requeued-ids>
-    local pr_n="$1" name="$2" suites="$3" decision="$4" ejected_ids="$5" requeued_ids="$6"
+_attr_notify_red() {  # _attr_notify_red <pr-n> <name> <suites-csv> <decision> <ejected-ids> <requeued-ids> [unjudged-ids]
+    local pr_n="$1" name="$2" suites="$3" decision="$4" ejected_ids="$5" requeued_ids="$6" unjudged_ids="${7:-}"
     local body="## Note
 Merge queue batch for $name failed CI and was processed.
 
@@ -157,6 +157,10 @@ Ejected branches: $ejected_ids"
     if [ -n "$requeued_ids" ]; then
         body="$body
 Requeued branches: $requeued_ids"
+    fi
+    if [ -n "$unjudged_ids" ]; then
+        body="$body
+Unjudged branches (harness fault): $unjudged_ids"
     fi
     printf '%s' "$body" \
     | bash "$HERE/mail.sh" send operator \
@@ -213,7 +217,7 @@ _q_attribute() {
     local members_arr=(); read -ra members_arr <<< "$members_str"
     local mc="${#members_arr[@]}"
     local caught=0 escaped=0
-    local ejected=() survivors=()
+    local ejected=() survivors=() unjudged=()
     local _eject_fail_dir; _eject_fail_dir="$(mktemp -d)"
     local _mm _mid _mtip
 
@@ -234,8 +238,28 @@ _q_attribute() {
             _sm_fs="$(cat "$_sm_flaky_f" 2>/dev/null || true)"
             rm -f "$_sm_flaky_f"
             _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_sm_fs"
-            printf 'verdict %s: %s — flaky (red then green), survived: %s\n' "$name" "$_mid" "$_sm_fs"
+            printf 'verdict %s: %s \xe2\x80\x94 flaky (red then green), survived: %s\n' "$name" "$_mid" "$_sm_fs"
             survivors+=("$_mm")
+        elif [ "$_sm_rc" -eq 2 ]; then
+            rm -f "$_sm_flaky_f"
+            printf 'verdict %s: %s \xe2\x80\x94 harness fault (could not judge)\n' "$name" "$_mid"
+            if _suite_directly_in_diff "$red_suites" "$repo" "$base_sha" "$_mtip"; then
+                ejected+=("$_mm")
+                caught=$(( caught + 1 ))
+                rm -f "$_unrep_f" 2>/dev/null || true
+            else
+                local _prev_tip; _prev_tip="$(cat "$_unrep_f" 2>/dev/null || true)"
+                if [ "${_prev_tip:-}" = "$_mtip" ]; then
+                    ejected+=("$_mm")
+                    escaped=$(( escaped + 1 ))
+                    rm -f "$_unrep_f" 2>/dev/null || true
+                else
+                    mkdir -p "$_unrep_dir"
+                    printf '%s\n' "$_mtip" > "$_unrep_f"
+                    unjudged+=("$_mm")
+                    survivors+=("$_mm")
+                fi
+            fi
         else
             rm -f "$_sm_flaky_f"
             if _suite_directly_in_diff "$red_suites" "$repo" "$base_sha" "$_mtip"; then
@@ -286,7 +310,10 @@ _q_attribute() {
             elif [ "$_mrc" -eq 3 ]; then
                 _fs="$(cat "$_flaky_f" 2>/dev/null || true)"
                 _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
-                printf 'verdict %s: %s — flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
+                printf 'verdict %s: %s \xe2\x80\x94 flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
+            elif [ "$_mrc" -eq 2 ]; then
+                unjudged+=("$_mm")
+                printf 'verdict %s: %s \xe2\x80\x94 harness fault (could not judge)\n' "$name" "$_mid"
             fi
             rm -f "$_flaky_f"
         done
@@ -325,7 +352,10 @@ _q_attribute() {
                 elif [ "$_mrc" -eq 3 ]; then
                     _fs="$(cat "$_flaky_f" 2>/dev/null || true)"
                     _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
-                    printf 'verdict %s: %s — flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
+                    printf 'verdict %s: %s \xe2\x80\x94 flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
+                elif [ "$_mrc" -eq 2 ]; then
+                    unjudged+=("$_mm")
+                    printf 'verdict %s: %s \xe2\x80\x94 harness fault (could not judge)\n' "$name" "$_mid"
                 fi
                 rm -f "$_flaky_f"
             done
@@ -346,7 +376,10 @@ _q_attribute() {
                 elif [ "$_mrc" -eq 3 ]; then
                     _fs="$(cat "$_flaky_f" 2>/dev/null || true)"
                     _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
-                    printf 'verdict %s: %s — flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
+                    printf 'verdict %s: %s \xe2\x80\x94 flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
+                elif [ "$_mrc" -eq 2 ]; then
+                    unjudged+=("$_mm")
+                    printf 'verdict %s: %s \xe2\x80\x94 harness fault (could not judge)\n' "$name" "$_mid"
                 fi
                 rm -f "$_flaky_f"
             done
@@ -354,7 +387,9 @@ _q_attribute() {
 
         if [ "${#ejected[@]}" -eq 0 ]; then
             # Neither repro nor diff — test the batch head.
-            if _repro_is_red "$suites_csv" "$repo" "" "$branch_name"; then
+            _repro_is_red "$suites_csv" "$repo" "" "$branch_name"
+            _togrc=$?
+            if [ "$_togrc" -eq 0 ]; then
                 # Together-only break → halve: first half gets epoch=1 (batches immediately),
                 # second half gets epoch=now (waits for BATCH_WAIT).
                 local half=$(( mc / 2 )) i=0
@@ -377,6 +412,13 @@ _q_attribute() {
                 _meter_write "$name" "$mc" 0 0 "$attr_start"
                 rm -rf "$_eject_fail_dir" 2>/dev/null || true
                 return 0
+            elif [ "$_togrc" -eq 2 ]; then
+                # Harness fault on batch head — cannot judge together-only; requeue all.
+                printf 'verdict %s: PR %s batch-head harness fault (could not judge); requeueing all\n' "$name" "$pr_n"
+                for _mm in "${members_arr[@]}"; do
+                    unjudged+=("$_mm")
+                    survivors+=("$_mm")
+                done
             else
                 # Unreproduced — requeue all.
                 for _mm in "${members_arr[@]}"; do survivors+=("$_mm"); done
@@ -473,15 +515,20 @@ _q_attribute() {
     fi
 
     # Notify on every red verdict
-    local ejected_ids="" requeued_ids="" decision_text=""
+    local ejected_ids="" requeued_ids="" unjudged_ids="" decision_text=""
     if [ "${#ejected[@]}" -gt 0 ]; then
         ejected_ids="$(printf '%s\n' "${ejected[@]}" | cut -d: -f1 | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
     fi
     if [ "${#survivors[@]}" -gt 0 ]; then
         requeued_ids="$(printf '%s\n' "${survivors[@]}" | cut -d: -f1 | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
     fi
+    if [ "${#unjudged[@]}" -gt 0 ]; then
+        unjudged_ids="$(printf '%s\n' "${unjudged[@]}" | cut -d: -f1 | sort -u | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
+    fi
     if [ "$mc" -eq 1 ] && [ "${#ejected[@]}" -eq 1 ]; then
         decision_text="Single member: reproduced and ejected"
+    elif [ "${#unjudged[@]}" -gt 0 ] && [ "${#ejected[@]}" -eq 0 ]; then
+        decision_text="Harness fault: ${#unjudged[@]} member(s) could not be judged; requeueing"
     elif [ "$mc" -gt 1 ] && [ "${#ejected[@]}" -eq 0 ] && [ "${#survivors[@]}" -eq "$mc" ]; then
         decision_text="Together-only red: batch halved, members requeued"
     elif [ "${#ejected[@]}" -gt 0 ] && [ "${#survivors[@]}" -gt 0 ]; then
@@ -489,7 +536,7 @@ _q_attribute() {
     elif [ "${#ejected[@]}" -eq 0 ] && [ "${#survivors[@]}" -gt 0 ]; then
         decision_text="Flake: suites quarantined, all members requeued"
     fi
-    _attr_notify_red "$pr_n" "$name" "$suites_csv" "$decision_text" "$ejected_ids" "$requeued_ids"
+    _attr_notify_red "$pr_n" "$name" "$suites_csv" "$decision_text" "$ejected_ids" "$requeued_ids" "$unjudged_ids"
 
     _meter_write "$name" "$mc" "$caught" "$escaped" "$attr_start"
     rm -rf "$_eject_fail_dir" 2>/dev/null || true
