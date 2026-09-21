@@ -45,51 +45,45 @@ STUB_BROKER="$TMP/broker"
 printf '#!/bin/sh\nexec "$@"\n' > "$STUB_LOOM" && chmod +x "$STUB_LOOM"
 printf '#!/bin/sh\nexec "$@"\n' > "$STUB_BROKER" && chmod +x "$STUB_BROKER"
 
-# query_units <loom-bin> <broker-bin> — source units.sh in a subprocess and
-# print UNITS, OPTIONAL, and ENABLE arrays.  Pass "" to simulate absent binary.
-query_units() {
+# query_arrays <loom-bin> <broker-bin> — source units.sh and print UNITS, OPTIONAL, ENABLE.
+# Use env -i to prevent inherited SPIRA_LOOM_BIN/SPIRA_BROKER_BIN from leaking in.
+query_arrays() {
     local loom_bin="$1" broker_bin="$2"
-    bash - <<SUBSH
+    env -i \
+        PATH="$PATH" \
+        SPIRA_HOME="$HERE" \
+        SPIRA_INSTANCE=prod \
+        SPIRA_DOLT_DATA= \
+        SPIRA_TESTDB_DATA= \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_RUN="$TMP/run" \
+        SPIRA_LOOM_BIN="$loom_bin" \
+        SPIRA_BROKER_BIN="$broker_bin" \
+        bash - 2>/dev/null <<'SUBSH'
 set -uo pipefail
-SPIRA_HOME="$HERE"
-SPIRA_INSTANCE=prod
-SPIRA_DOLT_DATA=
-SPIRA_TESTDB_DATA=
-SPIRA_CONF=/nonexistent
-SPIRA_RUN="$TMP/run"
-SPIRA_LOOM_BIN="$loom_bin"
-SPIRA_BROKER_BIN="$broker_bin"
-export SPIRA_HOME SPIRA_INSTANCE SPIRA_DOLT_DATA SPIRA_TESTDB_DATA
-export SPIRA_CONF SPIRA_RUN SPIRA_LOOM_BIN SPIRA_BROKER_BIN
-. "$HERE/../systemd/units.sh" 2>&1 >&3
-printf 'UNITS: %s\n' "\${UNITS[*]}"
-printf 'OPTIONAL: %s\n' "\${OPTIONAL[*]}"
-printf 'ENABLE: %s\n' "\${ENABLE[*]}"
+. "$SPIRA_HOME/../systemd/units.sh" 2>/dev/null
+printf 'UNITS: %s\n' "${UNITS[*]}"
+printf 'OPTIONAL: %s\n' "${OPTIONAL[*]}"
+printf 'ENABLE: %s\n' "${ENABLE[*]}"
 SUBSH
 }
 
-# query_units redirects stderr notes to stdout so we can capture both together.
-# Rewrite to capture them separately.
-query_units_split() {
+# query_notes <loom-bin> <broker-bin> — capture stderr from units.sh.
+query_notes() {
     local loom_bin="$1" broker_bin="$2"
-    bash - 3>/dev/null <<SUBSH
+    env -i \
+        PATH="$PATH" \
+        SPIRA_HOME="$HERE" \
+        SPIRA_INSTANCE=prod \
+        SPIRA_DOLT_DATA= \
+        SPIRA_TESTDB_DATA= \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_RUN="$TMP/run" \
+        SPIRA_LOOM_BIN="$loom_bin" \
+        SPIRA_BROKER_BIN="$broker_bin" \
+        bash - 2>&1 >/dev/null <<'SUBSH'
 set -uo pipefail
-SPIRA_HOME="$HERE"
-SPIRA_INSTANCE=prod
-SPIRA_DOLT_DATA=
-SPIRA_TESTDB_DATA=
-SPIRA_CONF=/nonexistent
-SPIRA_RUN="$TMP/run"
-SPIRA_LOOM_BIN="$loom_bin"
-SPIRA_BROKER_BIN="$broker_bin"
-export SPIRA_HOME SPIRA_INSTANCE SPIRA_DOLT_DATA SPIRA_TESTDB_DATA
-export SPIRA_CONF SPIRA_RUN SPIRA_LOOM_BIN SPIRA_BROKER_BIN
-notes=\$( . "$HERE/../systemd/units.sh" 2>&1 >/dev/null )
-. "$HERE/../systemd/units.sh" 2>/dev/null
-printf 'UNITS: %s\n' "\${UNITS[*]}"
-printf 'OPTIONAL: %s\n' "\${OPTIONAL[*]}"
-printf 'ENABLE: %s\n' "\${ENABLE[*]}"
-printf 'NOTES: %s\n' "\$notes"
+. "$SPIRA_HOME/../systemd/units.sh"
 SUBSH
 }
 
@@ -97,57 +91,57 @@ SUBSH
 echo
 echo "A: POSITIVE CONTROL — loom binary present → spira-loom in UNITS and ENABLE:"
 # ==========================================================================
-loom_pos="$(query_units_split "$STUB_LOOM" "$STUB_BROKER")"; rc=$?
+pos_out="$(query_arrays "$STUB_LOOM" "$STUB_BROKER")"; rc=$?
 is     "A: units.sh exits 0 with loom binary present"                  "0" "$rc"
 want   "A: UNITS includes spira-loom.service"  "spira-loom.service" \
-       "$(printf '%s\n' "$loom_pos" | grep '^UNITS:')"
+       "$(printf '%s\n' "$pos_out" | grep '^UNITS:')"
 want   "A: ENABLE includes spira-loom-prod.service"  "spira-loom-prod.service" \
-       "$(printf '%s\n' "$loom_pos" | grep '^ENABLE:')"
+       "$(printf '%s\n' "$pos_out" | grep '^ENABLE:')"
 nowant "A: OPTIONAL does not include spira-loom"  "spira-loom" \
-       "$(printf '%s\n' "$loom_pos" | grep '^OPTIONAL:')"
+       "$(printf '%s\n' "$pos_out" | grep '^OPTIONAL:')"
 
 # ==========================================================================
 echo
 echo "B: SKIP — loom binary absent → spira-loom in OPTIONAL, note printed:"
 # ==========================================================================
-loom_neg="$(query_units_split "" "$STUB_BROKER")"; rc=$?
+neg_out="$(query_arrays "" "$STUB_BROKER")"; rc=$?
 is     "B: units.sh exits 0 with loom binary absent"                   "0" "$rc"
 nowant "B: UNITS does not include spira-loom.service"  "spira-loom.service" \
-       "$(printf '%s\n' "$loom_neg" | grep '^UNITS:')"
+       "$(printf '%s\n' "$neg_out" | grep '^UNITS:')"
 nowant "B: ENABLE does not include spira-loom-prod.service"  "spira-loom-prod.service" \
-       "$(printf '%s\n' "$loom_neg" | grep '^ENABLE:')"
+       "$(printf '%s\n' "$neg_out" | grep '^ENABLE:')"
 want   "B: OPTIONAL includes spira-loom.service"  "spira-loom.service" \
-       "$(printf '%s\n' "$loom_neg" | grep '^OPTIONAL:')"
-want   "B: note printed for absent loom binary"  "not installing spira-loom.service" \
-       "$(printf '%s\n' "$loom_neg" | grep '^NOTES:')"
+       "$(printf '%s\n' "$neg_out" | grep '^OPTIONAL:')"
+neg_notes="$(query_notes "" "$STUB_BROKER")"
+want   "B: note printed for absent loom binary"  "not installing spira-loom.service" "$neg_notes"
 
 # ==========================================================================
 echo
 echo "C: POSITIVE CONTROL — broker binary present → spira-broker in UNITS and ENABLE:"
 # ==========================================================================
 want   "C: UNITS includes spira-broker.service"  "spira-broker.service" \
-       "$(printf '%s\n' "$loom_pos" | grep '^UNITS:')"
+       "$(printf '%s\n' "$pos_out" | grep '^UNITS:')"
 want   "C: UNITS includes spira-broker.timer"  "spira-broker.timer" \
-       "$(printf '%s\n' "$loom_pos" | grep '^UNITS:')"
+       "$(printf '%s\n' "$pos_out" | grep '^UNITS:')"
 want   "C: ENABLE includes spira-broker-prod.timer"  "spira-broker-prod.timer" \
-       "$(printf '%s\n' "$loom_pos" | grep '^ENABLE:')"
+       "$(printf '%s\n' "$pos_out" | grep '^ENABLE:')"
 nowant "C: OPTIONAL does not include spira-broker"  "spira-broker" \
-       "$(printf '%s\n' "$loom_pos" | grep '^OPTIONAL:')"
+       "$(printf '%s\n' "$pos_out" | grep '^OPTIONAL:')"
 
 # ==========================================================================
 echo
 echo "D: SKIP — broker binary absent → spira-broker in OPTIONAL, note printed:"
 # ==========================================================================
-broker_neg="$(query_units_split "$STUB_LOOM" "")"; rc=$?
+bro_neg_out="$(query_arrays "$STUB_LOOM" "")"; rc=$?
 is     "D: units.sh exits 0 with broker binary absent"                 "0" "$rc"
 nowant "D: UNITS does not include spira-broker.service"  "spira-broker.service" \
-       "$(printf '%s\n' "$broker_neg" | grep '^UNITS:')"
+       "$(printf '%s\n' "$bro_neg_out" | grep '^UNITS:')"
 nowant "D: ENABLE does not include spira-broker-prod.timer"  "spira-broker-prod.timer" \
-       "$(printf '%s\n' "$broker_neg" | grep '^ENABLE:')"
+       "$(printf '%s\n' "$bro_neg_out" | grep '^ENABLE:')"
 want   "D: OPTIONAL includes spira-broker.service"  "spira-broker.service" \
-       "$(printf '%s\n' "$broker_neg" | grep '^OPTIONAL:')"
-want   "D: note printed for absent broker binary"  "not installing spira-broker.service" \
-       "$(printf '%s\n' "$broker_neg" | grep '^NOTES:')"
+       "$(printf '%s\n' "$bro_neg_out" | grep '^OPTIONAL:')"
+bro_neg_notes="$(query_notes "$STUB_LOOM" "")"
+want   "D: note printed for absent broker binary"  "not installing spira-broker.service" "$bro_neg_notes"
 
 # ==========================================================================
 echo
