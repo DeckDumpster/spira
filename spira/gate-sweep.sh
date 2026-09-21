@@ -73,4 +73,39 @@ while IFS= read -r wt_path; do
 done < <(git -C "$REPO" worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $2}')
 
 [ "$removed" -gt 0 ] && printf 'gate-sweep: removed %d stale gate worktree(s)\n' "$removed" >&2
+
+# BATCH HOME SWEEP — remove /tmp/spira-batch-* fixture homes orphaned by SIGKILL.
+# A home is stale when its container is absent from `podman ps` AND its mtime exceeds
+# the suite timeout.  A home that is too recent is skipped even if the container is
+# gone — it may belong to a batch that just started and has not yet written its owner
+# file (law-bound-the-rare-path).
+# SPIRA_PODMAN_PS_FILE: testing seam — a file whose lines are treated as running
+# container names, replacing the live podman ps call.
+_batch_timeout="${SPIRA_SUITE_TIMEOUT:-600}"
+if [ -n "${SPIRA_PODMAN_PS_FILE:-}" ] && [ -f "${SPIRA_PODMAN_PS_FILE}" ]; then
+    _live_containers="$(cat "${SPIRA_PODMAN_PS_FILE}" 2>/dev/null || true)"
+else
+    _live_containers="$(podman ps --format '{{.Names}}' 2>/dev/null || true)"
+fi
+for _bh in /tmp/spira-batch-*; do
+    case "$_bh" in *.owner) continue ;; esac
+    [ -e "$_bh" ] || continue
+    _bh_name="$(basename "$_bh")"
+    case "
+${_live_containers}
+" in
+        *"
+${_bh_name}
+"*) continue ;;
+    esac
+    _bh_mtime="$(stat -c %Y "$_bh" 2>/dev/null || echo 0)"
+    _bh_age=$(( $(date +%s) - _bh_mtime ))
+    [ "$_bh_age" -le "$_batch_timeout" ] && continue
+    printf 'gate-sweep: removing stale batch home %s (age %ds, container %s not running)\n' \
+        "$_bh" "$_bh_age" "$_bh_name" >&2
+    rm -rf "$_bh" 2>/dev/null || true
+    removed=$((removed + 1))
+done
+
+[ "$removed" -gt 0 ] && printf 'gate-sweep: removed %d stale entry/entries total\n' "$removed" >&2
 exit 0

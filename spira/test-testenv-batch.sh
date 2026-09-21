@@ -1438,5 +1438,95 @@ fi
 
 # ===========================================================================
 echo
+echo "D: cleanup trap removes fixture home on TERM and on clean exit (sp-q7d72)"
+# ===========================================================================
+# Tests that _batch_cleanup removes /tmp/spira-batch-<INSTANCE> (the host-side
+# fixture home) on both TERM and on a normal exit. No container or git repo is
+# needed: these stubs carry only the trap, mkdir, and sleep/exit.
+
+_D_INST="batch-traptest-$$"
+_D_HOME="/tmp/spira-batch-${_D_INST}"
+_D_OWNER="/tmp/spira-batch-${_D_INST}.owner"
+trap 'rm -rf "$_D_HOME" "$_D_OWNER" 2>/dev/null' EXIT
+
+# Build a stub that mimics the testenv-batch.sh trap and home setup.
+_D_STUB="$TMP/d-stub.sh"
+cat > "$_D_STUB" << STUB_EOF
+#!/usr/bin/env bash
+set -uo pipefail
+INSTANCE="${_D_INST}"
+_BATCH_HOME="/tmp/spira-batch-\${INSTANCE}"
+_BATCH_OWNER="/tmp/spira-batch-\${INSTANCE}.owner"
+_cleanup() {
+    rm -rf "\$_BATCH_HOME" 2>/dev/null || true
+    rm -f "\$_BATCH_OWNER"
+}
+trap _cleanup EXIT INT TERM
+mkdir -p "\$_BATCH_HOME"
+printf '%s\n' "\$\$" > "\$_BATCH_OWNER"
+sleep 300
+STUB_EOF
+chmod +x "$_D_STUB"
+
+bash "$_D_STUB" &
+_D_PID=$!
+_d_waited=0
+while [ ! -d "$_D_HOME" ] && [ "$_d_waited" -lt 20 ]; do
+    sleep 0.1; _d_waited=$((_d_waited+1))
+done
+
+[ -d "$_D_HOME" ] \
+    && ok "D-pos: home exists before kill (positive control)" \
+    || bad "D-pos: home exists before kill (positive control)" "home not found after ${_d_waited}x0.1s"
+
+kill -TERM "$_D_PID" 2>/dev/null || true
+_d_waited=0
+while kill -0 "$_D_PID" 2>/dev/null && [ "$_d_waited" -lt 30 ]; do
+    sleep 0.1; _d_waited=$((_d_waited+1))
+done
+wait "$_D_PID" 2>/dev/null || true
+
+[ ! -d "$_D_HOME" ] \
+    && ok "D1: TERM cleanup removes fixture home" \
+    || bad "D1: TERM cleanup removes fixture home" "home still present"
+[ ! -f "$_D_OWNER" ] \
+    && ok "D2: TERM cleanup removes owner file" \
+    || bad "D2: TERM cleanup removes owner file" "owner file still present"
+
+# Clean exit: the trap must also fire on normal exit.
+_D_STUB2="$TMP/d-stub2.sh"
+cat > "$_D_STUB2" << STUB2_EOF
+#!/usr/bin/env bash
+set -uo pipefail
+INSTANCE="${_D_INST}"
+_BATCH_HOME="/tmp/spira-batch-\${INSTANCE}"
+_BATCH_OWNER="/tmp/spira-batch-\${INSTANCE}.owner"
+_cleanup() {
+    rm -rf "\$_BATCH_HOME" 2>/dev/null || true
+    rm -f "\$_BATCH_OWNER"
+}
+trap _cleanup EXIT INT TERM
+mkdir -p "\$_BATCH_HOME"
+printf '%s\n' "\$\$" > "\$_BATCH_OWNER"
+exit 0
+STUB2_EOF
+bash "$_D_STUB2"
+_D2_RC=$?
+
+[ "$_D2_RC" -eq 0 ] \
+    && ok "D3: stub exits 0" \
+    || bad "D3: stub exits 0" "rc=$_D2_RC"
+[ ! -d "$_D_HOME" ] \
+    && ok "D4: clean exit removes fixture home" \
+    || bad "D4: clean exit removes fixture home" "home still present"
+
+# Double-remove: running cleanup again (home already gone) must not fail.
+rm -rf "$_D_HOME" 2>/dev/null
+[ $? -eq 0 ] \
+    && ok "D5: double-remove of absent home is harmless" \
+    || bad "D5: double-remove of absent home is harmless" "rm -rf failed on absent path"
+
+# ===========================================================================
+echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1

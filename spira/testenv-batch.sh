@@ -473,8 +473,11 @@ _par_tmp=""  # set in parallel block; empty means serial mode was used
 # owner process has died without cleaning up.
 _BATCH_OWNER_FILE="/tmp/${CNAME}.owner"
 
+_BATCH_HOME="/tmp/spira-batch-${INSTANCE}"
+
 _batch_cleanup() {
     bash "$TESTENV" down --name "$CNAME" >/dev/null 2>&1 || true
+    rm -rf "$_BATCH_HOME" 2>/dev/null || true
     rm -f "$_BATCH_OWNER_FILE"
     _wt_cleanup
     rm -f "$_batch_tmp"
@@ -495,11 +498,13 @@ for _sw_f in /tmp/spira-batch-*.owner; do
     _sw_cname="${_sw_f#/tmp/}"; _sw_cname="${_sw_cname%.owner}"
     podman stop "$_sw_cname" >/dev/null 2>&1 || true
     podman rm   "$_sw_cname" >/dev/null 2>&1 || true
+    rm -rf "/tmp/${_sw_cname}" 2>/dev/null || true
     rm -f "$_sw_f"
     log "batch: swept orphan container $_sw_cname (owner pid $_sw_pid gone)"
 done
 
 printf '%s\n' "$$" > "$_BATCH_OWNER_FILE"
+mkdir -p "$_BATCH_HOME" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # CONTAINER UP
