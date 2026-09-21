@@ -1441,6 +1441,14 @@ standing_lines() {
     printf '        %scost%s %s solo · %s with another gate overlapping %s(median)%s\n' \
         "$C_DIM" "$C_RST" "$solo" "$conc" "$C_DIM" "$C_RST"
 
+    local _st_sum="${SP_SUITE_LAST_SUM:-?}" _st_wall="${SP_SUITE_LAST_WALL:-?}"
+    [ "$_st_wall" = "?" ] || _st_wall="${_st_wall}s"
+    [ "$_st_sum"  = "?" ] || _st_sum="${_st_sum}s"
+    printf ' %sSUITES%s %ssum%s %s  %swall%s %s\n' \
+        "$C_DIM" "$C_RST" \
+        "$C_DIM" "$C_RST" "$_st_sum" \
+        "$C_DIM" "$C_RST" "$_st_wall"
+
     printf ' %sBOX%s    %sdisk%s / %s  %sworkspaces%s %s  %scpu%s %s%% idle  %sload%s %s\n' \
         "$C_DIM" "$C_RST" \
         "$C_DIM" "$C_RST" "$(num "${SP_DISK_ROOT_PCT:-?}" 85 '%')" \
