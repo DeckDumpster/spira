@@ -618,6 +618,16 @@ red_suites() {           # red_suites <gate output> -> one suite per line, as th
                 if (!seen[$i]++) print $i
     }'
 }
+# timed_out_suites: only the suites killed by the watchdog, never the genuinely failed ones.
+# A killed suite produces no FAIL line, so a base trial of all-timeouts cannot prove the base
+# is broken — it may have been about to fail or about to pass, and neither fact is known.
+timed_out_suites() {     # timed_out_suites <gate output> -> one suite per line
+    printf '%s\n' "$1" | awk '{
+        for (i = 1; i < NF; i++)
+            if ($i ~ /\.sh$/ && ($(i+1) == "TIMEOUT" || ($(i+1) == "was" && $(i+2) == "killed")))
+                if (!seen[$i]++) print $i
+    }'
+}
 GATE_SUITE="$(red_suites "$out" | head -1)"
 [ -n "$GATE_SUITE" ] || GATE_SUITE=-
 
@@ -677,6 +687,17 @@ if [ "$base_ran" = 1 ] && [ "$base_rc" -ne 0 ]; then
 $out
 gate: red on this branch and not on $BASE: $(printf '%s' "$branch_only" | tr '\n' ' ')
 gate: $BASE is red too, on: $(printf '%s' "$base_reds" | tr '\n' ' ')"
+    fi
+    # A base trial whose only reds are timeouts is inconclusive: every killed suite
+    # may have been about to pass or about to fail, so we cannot say the base is broken.
+    # BASE_FAIL would hold every branch for a fact about load, not a fact about the code.
+    _base_timeouts="$(timed_out_suites "$base_out")"
+    _base_genuine="$(printf '%s\n' "$base_reds" | grep -vxF -f <(printf '%s\n' "$_base_timeouts") || true)"
+    if [ -n "$_base_timeouts" ] && [ -z "$_base_genuine" ]; then
+        GATE_SUITE="$(printf '%s\n' "$_base_timeouts" | head -1)"
+        verdict "$NV" base-timeout \
+            "gate: $REPO_NAME's base trial timed out on $(printf '%s ' $_base_timeouts)— no verdict for $BR.
+gate: a killed suite cannot prove the base is broken; retry when the box is quieter."
     fi
     GATE_SUITE="$(printf '%s\n' "$base_reds" | head -1)"
     [ -n "$GATE_SUITE" ] || GATE_SUITE=-

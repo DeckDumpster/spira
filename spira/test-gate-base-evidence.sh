@@ -49,10 +49,19 @@ want   "base-red verdict"                 "reason=base-red"       "$out"
 want   "the suite is named, not -"        "suite=test-shared.sh"  "$out"
 want   "the base's own output is carried" "BASE-ONLY-EVIDENCE"    "$out"
 
-echo "a timeout on the base is named too"
-out="$(gate_with '  test-slow.sh                     TIMEOUT after 300s' \
-                 '  test-slow.sh                     TIMEOUT after 300s')"
-want   "timeout suite named"              "suite=test-slow.sh"    "$out"
+echo "a base trial with only timeouts is NO_VERDICT, not BASE_FAIL"
+out="$(gate_with '  test-slow.sh                     TIMEOUT after 600s' \
+                 '  test-slow.sh                     TIMEOUT after 600s')"
+want   "base-timeout verdict"             "reason=base-timeout"   "$out"
+want   "VERDICT is NO_VERDICT"            "VERDICT=NO_VERDICT"    "$out"
+want   "timed suite is named"             "suite=test-slow.sh"    "$out"
+nowant "not charged as BASE_FAIL"         "VERDICT=BASE_FAIL"     "$out"
+
+echo "a base with both genuine failures and timeouts is still BASE_FAIL"
+out="$(gate_with $'  test-real.sh                     RED     rc=1 after 2s\n  test-slow.sh                     TIMEOUT after 600s' \
+                 $'  test-real.sh                     RED     rc=1 after 2s\n  test-slow.sh                     TIMEOUT after 600s')"
+want   "base-red verdict retained"        "reason=base-red"       "$out"
+want   "VERDICT is BASE_FAIL"             "VERDICT=BASE_FAIL"     "$out"
 
 echo "a suite red only on the branch is the branch's, even while the base is red elsewhere"
 out="$(gate_with $'  test-shared.sh                   RED     rc=1 after 2s\n  test-mine.sh                     RED     rc=1 after 2s' \
