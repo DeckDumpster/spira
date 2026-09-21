@@ -97,5 +97,71 @@ want "gate was called for transition branch" "gate-called" "$(cat "$GATE_LOG")"
 rm -rf "$TMP/run"
 
 echo
+echo "submit uses the given repo name, not the home repo, for mode and gate:"
+REPO2="$TMP/repo2"
+git init -q -b main "$REPO2"
+git -C "$REPO2" commit -q --allow-empty -m "init"
+git -C "$REPO2" branch "spira/sp-def02" main
+
+GATE_LOG2="$TMP/gate-calls2.log"
+cp -r "$HERE" "$TMP/spira2"
+cat > "$TMP/spira2/gate.sh" <<FAKE2
+#!/usr/bin/env bash
+printf 'gate-called branch=%s repo=%s\n' "\${1:-}" "\${2:-}" >> "$GATE_LOG2"
+exit 0
+FAKE2
+chmod +x "$TMP/spira2/gate.sh"
+
+RMAP2="$TMP/repo-map2"
+printf 'holdhome | %s | hold | main | | |\n' "$REPO" > "$RMAP2"
+printf 'queuerepo | %s | queue | main | | |\n' "$REPO2" >> "$RMAP2"
+
+mkdir -p "$TMP/run2/queue" "$TMP/run2/landstate"
+: > "$GATE_LOG2"
+run2() {
+    env -i PATH="/usr/local/bin:/usr/bin:/bin" \
+        HOME="$TMP" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_HOME_REPO=holdhome \
+        SPIRA_REPO="$REPO" \
+        SPIRA_RUN="$TMP/run2" \
+        SPIRA_QUEUE_DIR="$TMP/run2/queue" \
+        SPIRA_REPO_MAP="$RMAP2" \
+        bash "$TMP/spira2/queue.sh" "$@" 2>&1
+}
+
+out="$(run2 submit spira/sp-def02 queuerepo)"; rc=$?
+[ "$rc" -eq 0 ] && ok "exit 0 when repo arg names a queue-mode repo" \
+    || bad "exit 0 when repo arg names a queue-mode repo" "got rc=$rc out=$out"
+want "gate called with queue repo name" "repo=queuerepo" "$(cat "$GATE_LOG2")"
+want "certified via named repo" "certified" "$out"
+rm -rf "$TMP/run2"
+
+echo
+echo "submit uses home repo when no second arg — gate sees home repo name:"
+mkdir -p "$TMP/run3/queue" "$TMP/run3/landstate"
+: > "$GATE_LOG2"
+git -C "$REPO" branch "spira/sp-ghi03" main 2>/dev/null || true
+
+RMAP3="$TMP/repo-map3"
+printf 'fixq | %s | queue | main | | |\n' "$REPO" > "$RMAP3"
+
+run3() {
+    env -i PATH="/usr/local/bin:/usr/bin:/bin" \
+        HOME="$TMP" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_HOME_REPO=fixq \
+        SPIRA_REPO="$REPO" \
+        SPIRA_RUN="$TMP/run3" \
+        SPIRA_QUEUE_DIR="$TMP/run3/queue" \
+        SPIRA_REPO_MAP="$RMAP3" \
+        bash "$TMP/spira2/queue.sh" "$@" 2>&1
+}
+out="$(run3 submit spira/sp-ghi03)"; rc=$?
+[ "$rc" -eq 0 ] && ok "exit 0 with no repo arg" || bad "exit 0 with no repo arg" "got rc=$rc out=$out"
+want "gate sees home repo name when no arg" "repo=fixq" "$(cat "$GATE_LOG2")"
+rm -rf "$TMP/run3"
+
+echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

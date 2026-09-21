@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # queue.sh — submit a branch into the merge queue; protect the base branch; report stats.
 #
-#   queue.sh submit <branch>
+#   queue.sh submit <branch> [<repo>]
 #   queue.sh protect [<repo>]
 #   queue.sh stats
 #   queue.sh flush [<repo>]
@@ -40,8 +40,8 @@ cmd_submit() {
     [ -n "$br" ] || { printf 'queue.sh submit: branch name required\n' >&2; return 2; }
 
     local repo name mode
-    repo="$(repo_root)" 2>/dev/null || repo="$SPIRA_REPO"
-    name="$(spira_home_repo)"
+    name="${2:-$(spira_home_repo)}"
+    repo="$(repo_root "$name" 2>/dev/null)" || repo="$SPIRA_REPO"
     mode="$(repo_land "$name")"
 
     if [ "$mode" = "queue" ]; then
@@ -415,5 +415,5 @@ case "${1:-}" in
     step)    shift; cmd_step "$@" ;;
     eject)   shift; cmd_eject "$@" ;;
     abandon) shift; cmd_abandon "$@" ;;
-    *) printf 'usage: queue.sh submit <branch> | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] [--reason <text>] [--dry-run]\n' >&2; exit 2 ;;
+    *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] [--reason <text>] [--dry-run]\n' >&2; exit 2 ;;
 esac
