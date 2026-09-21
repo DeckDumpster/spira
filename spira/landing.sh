@@ -846,6 +846,18 @@ land_repo() {
     done <<< "$brs"
     brs="$(printf '%s\n' "$brs" | awk 'NF{print $1}')"
 
+    # RESUME WHERE THE LAST PASS CUT (hotfix, concierge 2026-09-21). The walk below is
+    # refname order and a pass that runs out of budget returns for the whole repository,
+    # so every pass restarted at the top and branches late in the alphabet waited behind
+    # newly closed work forever (sp-w8l21 P1 4.5h with no log line; sp-zz9s1 9h+). The
+    # cursor is read-then-deleted: a pass that completes starts the next from the top.
+    _land_cursor="$SPIRA_RUN/landing-cursor.$name"
+    if [ -s "$_land_cursor" ]; then
+        _lc="$(head -1 "$_land_cursor")"; rm -f "$_land_cursor"
+        brs="$(printf '%s\n' "$brs" | awk -v c="$_lc" 'NF{ if ($1 >= c) a[++n]=$1; else b[++m]=$1 }
+            END{ for(i=1;i<=n;i++) print a[i]; for(i=1;i<=m;i++) print b[i] }')"
+    fi
+
     mode="$(repo_land "$name")"
 
     # THE BASE IS RESOLVED BEFORE THE FETCH, AND THE FETCH FOLLOWS IT. `git fetch origin` was
@@ -1112,8 +1124,14 @@ for i in d:
         # QUEUE MODE: gate before certifying so fence violations are caught per-branch
         # and never reach a batch PR or CI where they are unattributable (sp-hm2vw).
         if [ "$mode" = queue ]; then
+            # MID-PASS VERDICT (hotfix, concierge 2026-09-21, sp-len2q): PR 180 went red at
+            # 03:47Z during a pass that started at 03:35Z and could not be attributed until
+            # the pass ended. One queue step costs a few seconds; a gate costs ten minutes.
+            bash "$SPIRA_HOME/queue.sh" step "$name" 2>&1 \
+                | while IFS= read -r _bl; do log "$_bl"; done || true
             if ! gate_fits; then
-                log "landing: $(( LAND_MAXSEC - ($(date +%s) - PASS_START) ))s left in this pass — not certifying $name's $id; the next pass takes it"
+                log "landing: $(( LAND_MAXSEC - ($(date +%s) - PASS_START) ))s left in this pass — not certifying $name's $id; the next pass resumes here"
+                printf '%s\n' "$br" > "$_land_cursor"
                 return 0
             fi
             _land_state "repo=$name" "branch=$br" "phase=gate"
@@ -1231,7 +1249,8 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
         # loop, rather than at the top of the pass: everything above is cheap, and a branch
         # that needs no gate should still be processed in the tail of a pass.
         if ! gate_fits; then
-            log "landing: $(( LAND_MAXSEC - ($(date +%s) - PASS_START) ))s left in this pass — not starting $name's gate for $id; the next pass takes it"
+            log "landing: $(( LAND_MAXSEC - ($(date +%s) - PASS_START) ))s left in this pass — not starting $name's gate for $id; the next pass resumes here"
+            printf '%s\n' "$br" > "$_land_cursor"
             return 0
         fi
         # THE GATE'S TREE IS SHARED WITH EVERY OTHER GATE OF THIS REPOSITORY, so it may be
@@ -1672,6 +1691,16 @@ for repo_name in $(spira_repos); do
         | while IFS= read -r _bl; do log "queue early: $_bl"; done || true
 done
 
+# VERDICT FIRST (hotfix, concierge 2026-09-21, sp-len2q): the queue step (land a green
+# batch, eject a red one, open the next) ran only after every repository's certification
+# walk, so a PR that went green at 03:08Z waited behind an hour of gating. Landing green
+# work is the highest-value action in the pass; take it before certifying anything. The
+# step runs again below so newly certified branches can still form a batch this pass.
+for repo_name in $(spira_repos); do
+    [ "$(repo_land "$repo_name")" = queue ] || continue
+    bash "$SPIRA_HOME/queue.sh" step "$repo_name" 2>&1 \
+        | while IFS= read -r _bl; do log "$_bl"; done || true
+done
 for repo_name in $(spira_repos); do
     land_repo "$repo_name"
 done
