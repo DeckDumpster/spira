@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 #
-# pre-commit — two fences, in order:
+# pre-commit — three fences, in order:
 #
 #   1. exclude.sh staged  — refuses beads data in staged files
-#   2. branch-guard.sh staged — refuses aeon-identity commits on the base branch
+#   2. scratch-fence.sh   — refuses aeon scratch files at the harness root
+#   3. branch-guard.sh staged — refuses aeon-identity commits on the base branch
 #
 # Armed by `exclude.sh install`, which sets core.hooksPath to this directory. That is why
 # the hook is TRACKED rather than copied into .git/hooks: .git/hooks is not cloned, so a
 # colleague would get the harness with its fences quietly missing. Tracked, it travels; one
 # `git config` line arms it.
 #
-# All the judgement is in exclude.sh and branch-guard.sh, so there is one implementation
-# of each rule and each test suite exercises the thing that actually runs. Resolved relative
-# to this file, so it works in a worktree and in a clone at any path.
+# All the judgement is in exclude.sh, scratch-fence.sh and branch-guard.sh, so there is
+# one implementation of each rule and each test suite exercises the thing that actually
+# runs. Resolved relative to this file, so it works in a worktree and in a clone at any
+# path.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 bash "$HERE/../exclude.sh" staged || exit 1
+bash "$HERE/../scratch-fence.sh" || exit 1
 exec bash "$HERE/../branch-guard.sh" staged

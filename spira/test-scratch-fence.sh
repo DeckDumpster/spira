@@ -133,5 +133,16 @@ else
     bad "gate-spira.sh references scratch-fence.sh" "not found in $(basename "$gate")"
 fi
 
+# ---------------------------------------------------------------------------------------
+# PRE-COMMIT INTEGRATION: scratch-fence.sh is called from the pre-commit hook.
+# Without this, aeons land scratch files at the gate rather than at commit time.
+# ---------------------------------------------------------------------------------------
+hook="$HERE/hooks/pre-commit"
+if grep -q "scratch-fence" "$hook" 2>/dev/null; then
+    ok "pre-commit hook calls scratch-fence.sh"
+else
+    bad "pre-commit hook calls scratch-fence.sh" "not found in $(basename "$hook")"
+fi
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
