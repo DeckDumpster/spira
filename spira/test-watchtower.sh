@@ -999,11 +999,11 @@ want   "positive control: lapse makes state non-nominal (full snapshot written)"
 nowant "positive control: skip marker absent when lapse is present" \
        "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
 
-# THE NOMINAL CASE. Fresh cockpit.env (SP_AT=NOW), no lapses, no noverdict dir, no drain.
+# THE NOMINAL CASE. Fresh cockpit.env, no lapses, no noverdict dir, no drain.
 # Every signal the check evaluates is green; the skip marker must be the first line.
 fresh
 mkdir -p "$TMP/run/landstate"
-printf "SP_AT=%s\n" "$NOW" > "$TMP/run/cockpit.env"
+printf "SP_AT=%s\n" "$(date +%s)" > "$TMP/run/cockpit.env"
 rm -f "$TMP/ops-prompt"
 wt_file
 is   "nominal pipeline writes the prompt file" "1" \
