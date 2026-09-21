@@ -16,6 +16,8 @@
 # look the same from outside — the positive control distinguishes them.
 # Case 7 plants a fixture workflow missing one --*-bin flag and requires the
 # check to detect it before trusting the silence on the real workflow.
+# Case 8 plants a gate.yml without the retraction condition and requires the
+# check to detect it before trusting the silence on the real gate.yml.
 #
 # host-reason: structural grep checks on YAML/shell files; no container or database dependency
 #
@@ -28,8 +30,9 @@
 #   6. build-tarball.sh is called with --name to stamp once per release.
 #   7. POSITIVE CONTROL + every required --*-bin from build-tarball.sh is
 #      supplied in the workflow's build-tarball invocation.
+#   8. POSITIVE CONTROL + gate.yml retracts the tag when publish fails.
 #
-# covers: .github/workflows/release.yml spira/build-tarball.sh
+# covers: .github/workflows/release.yml .github/workflows/gate.yml spira/build-tarball.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 # $HERE is always the spira/ directory, one level below the repo root.
@@ -164,6 +167,35 @@ else
             all_present=0
         fi
     done
+fi
+
+# ============================================================================
+echo
+echo "8. Retraction — gate.yml deletes the tag when publish fails"
+# ============================================================================
+
+GATE_WORKFLOW="$REPO_ROOT/.github/workflows/gate.yml"
+
+if [ ! -f "$GATE_WORKFLOW" ]; then
+    bad "gate.yml exists" "not found; skipping retraction case"
+    fail=$((fail+1))
+else
+    ok "gate.yml exists at .github/workflows/gate.yml"
+
+    _check_retraction() { grep -qF "needs.publish.result" "$1" 2>/dev/null; }
+
+    # Negative fixture: a gate.yml without the retraction condition must fail.
+    _fix="$(mktemp)"
+    printf 'jobs:\n  cut:\n    steps: []\n  publish:\n    steps: []\n' > "$_fix"
+    _check_retraction "$_fix" \
+        && bad "negative fixture: gate without retraction detected" "fixture matched — cannot be a valid negative control" \
+        || ok "negative fixture: gate without retraction detected"
+    rm -f "$_fix"
+
+    # Real gate.yml must have the retraction condition.
+    _check_retraction "$GATE_WORKFLOW" \
+        && ok "gate.yml retracts orphan tag when publish fails" \
+        || bad "gate.yml retracts orphan tag when publish fails" "needs.publish.result not found in gate.yml"
 fi
 
 # ============================================================================
