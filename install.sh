@@ -83,6 +83,10 @@ if [ "$_ephemeral" = 1 ] && [ -z "${SPIRA_INSTANCE:-}" ]; then
     export SPIRA_INSTANCE="eph-$$"
 fi
 
+# CONFIGURE_PROD → SPIRA_PROD so conf.sh's no-colon derivation does not override the
+# value that configure.sh will later write to the conf file.
+[ -n "${CONFIGURE_PROD:-}" ] && export SPIRA_PROD="$CONFIGURE_PROD"
+
 . "$HERE/spira/conf.sh"
 
 SPIRA_LOGINCTL="${SPIRA_LOGINCTL:-loginctl}"
@@ -541,25 +545,40 @@ if [ -z "${SPIRA_INSTALL_PROD_GIT_CONSIDERED:-}" ] && [ -n "${SPIRA_PROD:-}" ] &
     unset _prod_walk _prod_in_git
 fi
 
-# SPIRA_PROD must exist before systemd/install.sh renders units: it checks that every
-# ExecStart target is executable. When SPIRA_PROD is under SPIRA_RELEASES (the release
-# path), a missing directory means no release has been activated yet — promote.sh cannot
-# create it. For a non-release SPIRA_PROD, promote.sh creates the checkout.
+# SPIRA_PROD must exist before systemd/install.sh renders units. When it is missing on
+# a fresh install:
+#   Under SPIRA_RELEASES: bootstrap a release directory from the installing clone and
+#     create the current symlink — the release model is in place from first boot, no
+#     tarball required.
+#   Outside SPIRA_RELEASES: refuse — activate.sh must run first.
 if ! spira_single_checkout && [ -n "${SPIRA_PROD:-}" ] && [ ! -d "$SPIRA_PROD" ]; then
     _prod_parent="$(dirname "$SPIRA_PROD" 2>/dev/null)"
-    if [ "$_prod_parent" = "$SPIRA_RELEASES" ]; then
-        _phase_fail "units" \
-            "SPIRA_PROD ($SPIRA_PROD) does not exist — no release activated; run: bash spira/activate.sh <tarball>"
-    fi
-    unset _prod_parent
-    if [ "$_dry" = 1 ]; then
-        phase_info "would run: spira/promote.sh HEAD (SPIRA_PROD does not exist yet)"
+    _rel_canon="$(cd "$SPIRA_RELEASES" 2>/dev/null && pwd -P)" || _rel_canon="$SPIRA_RELEASES"
+    _prod_in_releases=0
+    case "$_prod_parent/" in
+        "$_rel_canon/"*) _prod_in_releases=1 ;;
+    esac
+    if [ "$_prod_in_releases" = 1 ]; then
+        _boot_name="bootstrap"
+        _boot_dir="$SPIRA_RELEASES/$_boot_name"
+        if [ "$_dry" = 1 ]; then
+            phase_info "would bootstrap: cp clone → $_boot_dir, current → $_boot_name"
+        else
+            phase_info "bootstrapping release directory from clone at $_boot_dir"
+            mkdir -p "$_boot_dir"
+            cp -rp "$HERE/." "$_boot_dir/"
+            _tmp="$SPIRA_RELEASES/.current.bootstrap.$$"
+            ln -s "$_boot_name" "$_tmp" \
+                && mv -T "$_tmp" "$SPIRA_RELEASES/current" \
+                || _phase_fail "units" "failed to create $SPIRA_RELEASES/current symlink"
+            _changes=$((_changes+1))
+        fi
+        unset _boot_name _boot_dir _tmp
     else
-        phase_info "creating production checkout at $SPIRA_PROD"
-        "$SPIRA_HOME/promote.sh" HEAD \
-            || _phase_fail "units" "promote.sh failed to create $SPIRA_PROD"
-        _changes=$((_changes+1))
+        _phase_fail "units" \
+            "SPIRA_PROD ($SPIRA_PROD) does not exist — activate a release first: bash spira/activate.sh <tarball>"
     fi
+    unset _prod_parent _rel_canon _prod_in_releases
 fi
 
 _unit_args=("${SPIRA_INSTANCE:-prod}")
