@@ -252,7 +252,7 @@ _bead_amend() {
     local changed=""
     if [ -n "$express" ]; then
         local _elab="${SPIRA_EXPRESS_LABEL:-express}"
-        bdq label "$id" "$_elab"
+        bdq label add "$id" "$_elab"
         changed="${changed:+$changed$'\n\n'}Marked express."
     fi
     if [ -n "$note" ]; then
