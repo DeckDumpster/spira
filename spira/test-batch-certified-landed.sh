@@ -96,7 +96,9 @@ git -C "$REPO" checkout -q main
 git -C "$REPO" merge -q --no-edit --ff-only spira/sp-landed
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
-printf 'CERTIFIED %s %s\n' "$_landed_tip" "$(date +%s)" > "$LANDSTATE/sp-landed"
+# No trailing newline — matches land_mark in lib.sh.  A reader using "|| continue"
+# would skip this record; that was the defect.
+printf 'CERTIFIED %s %s' "$_landed_tip" "$(date +%s)" > "$LANDSTATE/sp-landed"
 
 # ─── sp-pending: branch exists, tip NOT in origin/main ────────────────────────
 git -C "$REPO" checkout -q -b spira/sp-pending main
@@ -104,7 +106,7 @@ printf 'pending\n' > "$REPO/sp-pending.txt"
 git -C "$REPO" add sp-pending.txt && git -C "$REPO" commit -q -m "sp-pending: work"
 _pending_tip="$(git -C "$REPO" rev-parse spira/sp-pending)"
 git -C "$REPO" checkout -q main
-printf 'CERTIFIED %s %s\n' "$_pending_tip" "$(date +%s)" > "$LANDSTATE/sp-pending"
+printf 'CERTIFIED %s %s' "$_pending_tip" "$(date +%s)" > "$LANDSTATE/sp-pending"
 
 # ─── Open batch: simulates a batch PR currently waiting for CI ────────────────
 # With an open batch, _batch_is_open returns true and the normal certified-list
