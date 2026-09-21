@@ -73,7 +73,7 @@ for seg in segs:
             continue
         if t.startswith("delivers:"):
             break
-        bid_hit = t.strip("\"' ")
+        bid_hit = t.strip("\"\x27 ")
         break
     if bid_hit is None:
         bid_hit = os.environ.get("BEAD_ID", "") or "unknown"
