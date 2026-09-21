@@ -89,6 +89,25 @@ for b in gh "${SPIRA_AGENT:-claude}" tmux node jq zstd; do
               "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."; fi
 done
 
+# AGENT LAUNCH GRAMMAR. --system-prompt-snapshot requires an explicit on|off value; the
+# bare flag swallows the next argument as its value and the CLI refuses with "invalid choice".
+# This check runs the real binary with the exact flag so a CLI upgrade that drops or changes
+# the flag is caught here rather than in the aeon ledger.
+_dr_agent="${SPIRA_AGENT:-claude}"
+if command -v "$_dr_agent" >/dev/null 2>&1; then
+    if ! timeout 5 "$_dr_agent" --version >/dev/null 2>&1; then
+        WARN "$_dr_agent is on PATH but --version fails — cannot verify launch-grammar flag" \
+             "Run: $_dr_agent --version"
+    elif timeout 5 "$_dr_agent" --system-prompt-snapshot on --version >/dev/null 2>&1; then
+        OK "$_dr_agent accepts --system-prompt-snapshot on"
+    else
+        FAIL "$_dr_agent rejects --system-prompt-snapshot on — every aeon and archivist summon will exit within seconds" \
+             "Run: $_dr_agent --system-prompt-snapshot on --version
+        If this flag has been renamed or removed, update aeon.sh (lines that pass --system-prompt-snapshot) and archivist.sh."
+    fi
+fi
+unset _dr_agent
+
 # OPERATOR TOOLS. inotifywait, the configured mail client (COCKPIT_MAIL), hunk, and go
 # are needed on an operated instance. SPIRA_OPERATED=0 in spira.conf downgrades these
 # to WARN for a headless box where no operator is reading the cockpit.
