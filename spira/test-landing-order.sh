@@ -102,6 +102,7 @@ landing_tight() {
 # branch_at <id> <priority> <closed_at> — a closed bead with a git branch
 branch_at() {
     local id="$1" pri="$2" cat="$3"
+    drop_branch "$id"   # ensure clean start; silently no-ops if already absent
     git -C "$REPO" worktree add -q -b "spira/$id" "$RUN/worktree/$id" main
     printf '%s\n' "$id" > "$RUN/worktree/$id/$id.txt"
     git -C "$RUN/worktree/$id" add -A

@@ -909,9 +909,9 @@ land_repo() {
         _scan_ids="$_scan_ids ${br#spira/}"
     done
     if [ -n "${_scan_ids// /}" ]; then
-        local _sid _sst _srepo _ssup _slabels _scat _spri
+        local _sid _sst _srepo _ssup _scat _spri _slabels
         # shellcheck disable=SC2086
-        while IFS=$'\t' read -r _sid _sst _srepo _ssup _slabels _scat _spri; do
+        while IFS=$'\t' read -r _sid _sst _srepo _ssup _scat _spri _slabels; do
             [ -n "${_sid:-}" ] || continue
             _scan_st["$_sid"]="$_sst"
             _scan_repo["$_sid"]="$_srepo"
@@ -937,12 +937,13 @@ for i in d:
     # every two minutes because only the show spelling was read off a list row).
     sup = 1 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
                    for x in (i.get("dependencies") or [])) else 0
-    # sup BEFORE labels: bash whitespace-IFS collapses consecutive tabs, so an empty labels
-    # field followed by a non-empty sup field would produce the wrong token order. With sup
-    # first, only the trailing labels tab can be empty, and trailing whitespace IFS is stripped.
-    cat = i.get("closed_at") or ""
+    # cat and pri BEFORE labels: IFS=$'\t' collapses consecutive tabs (tab is IFS-whitespace),
+    # so any empty field before a non-empty one shifts the read variables. labels is the only
+    # field that may safely be empty (and trailing). cat uses a high-sorting sentinel for
+    # non-closed beads so they sort after all closed branches.
+    cat = i.get("closed_at") or "9999-99-99"
     pri = i.get("priority") if i.get("priority") is not None else 9999
-    print(f"{bid}\t{st}\t{repo}\t{sup}\t{labels}\t{cat}\t{pri}")
+    print(f"{bid}\t{st}\t{repo}\t{sup}\t{cat}\t{pri}\t{labels}")
 ' "$(spira_home_repo)" 2>/dev/null)
     fi
     # Certify oldest-closed first within each priority tier so no branch starves
@@ -952,7 +953,7 @@ for i in d:
             _id="${_br#spira/}"
             printf '%s\t%s\t%s\n' \
                 "${_scan_priority[$_id]:-9999}" \
-                "${_scan_closed_at[$_id]:-9999}" \
+                "${_scan_closed_at[$_id]:-9999-99-99}" \
                 "$_br"
         done | sort -t$'\t' -k1,1n -k2,2 | awk -F'\t' '{print $3}'
     )"
