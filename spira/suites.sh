@@ -80,6 +80,7 @@ RUNNER_VARS="${SPIRA_SUITES_RUNNER_VARS:-SPIRA_HOME SPIRA_SUITES_MAXSEC SPIRA_DB
 # confirmed red) and waste the remaining budget. Configurable so tests can trigger the
 # red-unconfirmed path without relying on actual elapsed time.
 CONFIRM_MIN="${SPIRA_SUITES_CONFIRM_MIN:-5}"
+UNREACHED_MIN="${SPIRA_SUITES_UNREACHED_MIN:-5}"
 
 # --------------------------------------------------------------------------------------
 # THE POPULATION, AND THE PARTITION OF IT.
@@ -897,7 +898,7 @@ cmd_run() {
         slice="${declared_to:-$PER_SUITE}"
       else
         left=$(( deadline - $(date +%s) ))
-        if [ "$left" -le 5 ]; then
+        if [ "$left" -le "$UNREACHED_MIN" ]; then
             unreached="$unreached $s"
             [ -n "${next_cursor:-}" ] || next_cursor="$s"
             continue
