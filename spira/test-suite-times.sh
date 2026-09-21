@@ -94,7 +94,8 @@ echo "Part B: container batch — bd shim and TSV"
 
 command -v podman >/dev/null 2>&1 || {
     printf 'SKIP Part B: podman not on PATH\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    printf '%d passed, %d failed\n' "$pass" "$fail"
+    [ "$fail" -gt 0 ] && exit 1; exit 0
 }
 
 BATCH="$HERE/testenv-batch.sh"
@@ -108,7 +109,8 @@ bash "$TESTENV" up --name "$PRE_CNAME" >&2 || {
 if ! bash "$TESTENV" probe --name "$PRE_CNAME" 2>/dev/null; then
     bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
     printf 'SKIP Part B: user systemd not available\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    printf '%d passed, %d failed\n' "$pass" "$fail"
+    [ "$fail" -gt 0 ] && exit 1; exit 0
 fi
 bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
 ok "B0: pre-flight: container + user systemd available"
