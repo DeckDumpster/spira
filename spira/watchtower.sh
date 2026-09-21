@@ -872,6 +872,10 @@ elif [ "${SPIRA_QUEUE_THROTTLE_OVERRIDE:-}" = "off" ]; then
 "
 fi
 
+# /tmp usage — EDQUOT fires before df says full (per-user quota on tmpfs).
+_tmp_pct="$(df /tmp 2>/dev/null | awk 'NR==2{print $5}' || true)"
+[ -n "$_tmp_pct" ] || _tmp_pct="?"
+
 snapshot() {
 cat <<EOF
 ## Spira pipeline, $(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -916,6 +920,7 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
 
 ### The workers
 
+  /tmp used (? = cannot read)         ${_tmp_pct}
   throttle                            ${throttle_since:-clear}      (stamp: queue-throttled; depth at engage: ${throttle_depth:-—})
   draining since (? = cannot read)    ${drain_mins}      minutes   (stamp: world.draining)
   aeons alive                         ${aeons_live}      (counted now, not from the snapshot)

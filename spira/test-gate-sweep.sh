@@ -97,5 +97,60 @@ registered="$(git -C "$REPO" worktree list --porcelain 2>/dev/null \
 is "a young worktree is kept by sweep" 1 "$registered"
 git -C "$REPO" worktree remove --force "$TREE" 2>/dev/null || true
 
+# --------------------------------------------------------------------------------------
+# BATCH HOME SWEEP (sp-q7d72) — gate-sweep.sh removes /tmp/spira-batch-* homes that
+# have no live container and are older than SPIRA_SUITE_TIMEOUT.
+# --------------------------------------------------------------------------------------
+echo
+echo "Batch home sweep (sp-q7d72)"
+
+PS_EMPTY="$TMP/ps-empty.txt"; touch "$PS_EMPTY"
+PS_LIVE="$TMP/ps-live.txt"
+
+run_sweep_batch() {
+    env -i HOME="$TMP/home" PATH="/usr/bin:/bin" \
+        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
+        SPIRA_DB="$TMP/nonexistent-db" \
+        SPIRA_SUITE_TIMEOUT="${1}" \
+        SPIRA_PODMAN_PS_FILE="${2}" \
+        bash "$SH/gate-sweep.sh" "$REPO" 2>&1
+}
+
+# CASE 4 — positive control: stale home, no live container → removed.
+_BH_STALE="/tmp/spira-batch-sweeptest-stale-$$"
+mkdir -p "$_BH_STALE"
+touch -d "800 seconds ago" "$_BH_STALE"
+
+_bsweep_out="$(run_sweep_batch 600 "$PS_EMPTY")"
+[ ! -d "$_BH_STALE" ] \
+    && ok "B1: stale batch home (dead container, old mtime) is removed" \
+    || bad "B1: stale batch home (dead container, old mtime) is removed" "home still present; sweep output: $_bsweep_out"
+rm -rf "$_BH_STALE" 2>/dev/null || true
+
+[[ "$_bsweep_out" == *"spira-batch-sweeptest-stale-$$"* ]] \
+    && ok "B1+: sweep logged the removal" \
+    || bad "B1+: sweep logged the removal" "expected name in output; got: $_bsweep_out"
+
+# CASE 5 — fresh home is not swept regardless of container state.
+_BH_FRESH="/tmp/spira-batch-sweeptest-fresh-$$"
+mkdir -p "$_BH_FRESH"
+run_sweep_batch 600 "$PS_EMPTY" > /dev/null
+[ -d "$_BH_FRESH" ] \
+    && ok "B2: fresh batch home is not removed (age guard)" \
+    || bad "B2: fresh batch home is not removed (age guard)" "home was removed"
+rm -rf "$_BH_FRESH"
+
+# CASE 6 — old home with live container → not swept.
+_BH_LIVE_NAME="spira-batch-sweeptest-live-$$"
+_BH_LIVE="/tmp/${_BH_LIVE_NAME}"
+mkdir -p "$_BH_LIVE"
+touch -d "800 seconds ago" "$_BH_LIVE"
+printf '%s\n' "$_BH_LIVE_NAME" > "$PS_LIVE"
+run_sweep_batch 600 "$PS_LIVE" > /dev/null
+[ -d "$_BH_LIVE" ] \
+    && ok "B3: old home with live container is not removed" \
+    || bad "B3: old home with live container is not removed" "home was removed"
+rm -rf "$_BH_LIVE"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
