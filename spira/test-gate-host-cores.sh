@@ -71,7 +71,7 @@ CORES_FILE="$TMP/cores-seen"
 CMD_SCRIPT="$TMP/check-cores.sh"
 printf '#!/usr/bin/env bash\nprintf "%%s" "$SPIRA_GATE_HOST_CORES" > "%s"\n' "$CORES_FILE" > "$CMD_SCRIPT"
 chmod +x "$CMD_SCRIPT"
-printf 'repo | %s | push | origin/main | bash %s | true\n' "$REPO" "$CMD_SCRIPT" > "$MAP"
+printf 'repo | %s | push | origin/main |  | bash %s\n' "$REPO" "$CMD_SCRIPT" > "$MAP"
 
 rungate() {
     env -i HOME="$HOMEDIR" PATH="$TMP/bin:/usr/bin:/bin" \
