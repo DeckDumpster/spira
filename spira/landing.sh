@@ -818,7 +818,7 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
 land_repo() {
     local name="$1" repo br id st mode base land tip merged pushed nothing wedged attempt brs refresh
     local bead_repo_name bead_repo_path gate_out base_branch base_remote bead_labels
-    local norebase was _ref _obj gate_suite basefail_filed= _cur_st
+    local norebase was _ref _obj gate_suite basefail_filed= _cur_st _budget_cut=0
     local -A enum_tip=()
     # WHAT THIS PASS HAS ALREADY JUDGED CLOSED, REBASED AND STILL UNLANDED. A branch enters
     # when its rebase onto the base succeeds and leaves the moment it stops being that — it
@@ -845,18 +845,6 @@ land_repo() {
         [ -n "${_ref:-}" ] && enum_tip["$_ref"]="$_obj"
     done <<< "$brs"
     brs="$(printf '%s\n' "$brs" | awk 'NF{print $1}')"
-
-    # RESUME WHERE THE LAST PASS CUT (hotfix, concierge 2026-09-21). The walk below is
-    # refname order and a pass that runs out of budget returns for the whole repository,
-    # so every pass restarted at the top and branches late in the alphabet waited behind
-    # newly closed work forever (sp-w8l21 P1 4.5h with no log line; sp-zz9s1 9h+). The
-    # cursor is read-then-deleted: a pass that completes starts the next from the top.
-    _land_cursor="$SPIRA_RUN/landing-cursor.$name"
-    if [ -s "$_land_cursor" ]; then
-        _lc="$(head -1 "$_land_cursor")"; rm -f "$_land_cursor"
-        brs="$(printf '%s\n' "$brs" | awk -v c="$_lc" 'NF{ if ($1 >= c) a[++n]=$1; else b[++m]=$1 }
-            END{ for(i=1;i<=n;i++) print a[i]; for(i=1;i<=m;i++) print b[i] }')"
-    fi
 
     mode="$(repo_land "$name")"
 
@@ -903,20 +891,22 @@ land_repo() {
     # reopening — the map is up to a pass old by then, and closing or reopening on a stale
     # status is how work gets reopened that already landed (law-closed-is-not-landed).
     # ==================================================================================
-    local -A _scan_st=() _scan_repo=() _scan_labels=() _scan_superseded=()
+    local -A _scan_st=() _scan_repo=() _scan_labels=() _scan_superseded=() _scan_closed_at=() _scan_priority=()
     local _scan_ids=""
     for br in $brs; do
         _scan_ids="$_scan_ids ${br#spira/}"
     done
     if [ -n "${_scan_ids// /}" ]; then
-        local _sid _sst _srepo _ssup _slabels
+        local _sid _sst _srepo _ssup _scat _spri _slabels
         # shellcheck disable=SC2086
-        while IFS=$'\t' read -r _sid _sst _srepo _ssup _slabels; do
+        while IFS=$'\t' read -r _sid _sst _srepo _ssup _scat _spri _slabels; do
             [ -n "${_sid:-}" ] || continue
             _scan_st["$_sid"]="$_sst"
             _scan_repo["$_sid"]="$_srepo"
             _scan_labels["$_sid"]="$_slabels"
             _scan_superseded["$_sid"]="${_ssup:-0}"
+            _scan_closed_at["$_sid"]="${_scat:-}"
+            _scan_priority["$_sid"]="${_spri:-9999}"
         done < <(bdjson show $_scan_ids 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -935,12 +925,26 @@ for i in d:
     # every two minutes because only the show spelling was read off a list row).
     sup = 1 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
                    for x in (i.get("dependencies") or [])) else 0
-    # sup BEFORE labels: bash whitespace-IFS collapses consecutive tabs, so an empty labels
-    # field followed by a non-empty sup field would produce the wrong token order. With sup
-    # first, only the trailing labels tab can be empty, and trailing whitespace IFS is stripped.
-    print(f"{bid}\t{st}\t{repo}\t{sup}\t{labels}")
+    # cat and pri BEFORE labels: IFS=$'\t' collapses consecutive tabs (tab is IFS-whitespace),
+    # so any empty field before a non-empty one shifts the read variables. labels is the only
+    # field that may safely be empty (and trailing). cat uses a high-sorting sentinel for
+    # non-closed beads so they sort after all closed branches.
+    cat = i.get("closed_at") or "9999-99-99"
+    pri = i.get("priority") if i.get("priority") is not None else 9999
+    print(f"{bid}\t{st}\t{repo}\t{sup}\t{cat}\t{pri}\t{labels}")
 ' "$(spira_home_repo)" 2>/dev/null)
     fi
+    # Certify oldest-closed first within each priority tier so no branch starves
+    # when a pass is cut short. Branches without bead data sort last.
+    brs="$(
+        for _br in $brs; do
+            _id="${_br#spira/}"
+            printf '%s\t%s\t%s\n' \
+                "${_scan_priority[$_id]:-9999}" \
+                "${_scan_closed_at[$_id]:-9999-99-99}" \
+                "$_br"
+        done | sort -t$'\t' -k1,1n -k2,2 | awk -F'\t' '{print $3}'
+    )"
 
     for br in $brs; do
         id="${br#spira/}"
@@ -1130,9 +1134,8 @@ for i in d:
             bash "$SPIRA_HOME/queue.sh" step "$name" 2>&1 \
                 | while IFS= read -r _bl; do log "$_bl"; done || true
             if ! gate_fits; then
-                log "landing: $(( LAND_MAXSEC - ($(date +%s) - PASS_START) ))s left in this pass — not certifying $name's $id; the next pass resumes here"
-                printf '%s\n' "$br" > "$_land_cursor"
-                return 0
+                _budget_cut=1
+                break
             fi
             _land_state "repo=$name" "branch=$br" "phase=gate"
             gate_out="$(SPIRA_GATE_LOCK_WAIT="$(gate_lock_wait)" SPIRA_GATE_BEAD="$id" \
@@ -1249,9 +1252,8 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
         # loop, rather than at the top of the pass: everything above is cheap, and a branch
         # that needs no gate should still be processed in the tail of a pass.
         if ! gate_fits; then
-            log "landing: $(( LAND_MAXSEC - ($(date +%s) - PASS_START) ))s left in this pass — not starting $name's gate for $id; the next pass resumes here"
-            printf '%s\n' "$br" > "$_land_cursor"
-            return 0
+            _budget_cut=1
+            break
         fi
         # THE GATE'S TREE IS SHARED WITH EVERY OTHER GATE OF THIS REPOSITORY, so it may be
         # busy, and a pass on a clock must not sit in that queue: the wait is capped at what
@@ -1673,6 +1675,15 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
             ;;
         esac
     done
+    if [ "$_budget_cut" = 1 ]; then
+        _n_unvisited=0
+        _past_cut=0
+        for _ubr in $brs; do
+            [ "$_past_cut" = 1 ] && _n_unvisited=$(( _n_unvisited + 1 ))
+            [ "$_ubr" = "$br" ] && _past_cut=1
+        done
+        log "landing: budget cut at $br — $(( LAND_MAXSEC - ($(date +%s) - PASS_START) ))s left, $(( _n_unvisited + 1 )) branch(es) deferred in $name"
+    fi
     return 0
 }
 
