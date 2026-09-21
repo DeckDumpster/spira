@@ -112,11 +112,13 @@ chmod +x "$MOCK_BIN/dolt"
 touch "$UNITDIR/alert-prod@.service"
 ALERT_GLOB="alert-prod@.service"
 
-# Fake loom and panel paths so binary rows appear.
+# Fake loom, broker, and panel paths so binary rows appear and units.sh includes
+# loom/broker units (which it gates on SPIRA_LOOM_BIN/SPIRA_BROKER_BIN being executable).
 FAKE_LOOM="$TMP/loom"
+FAKE_BROKER="$TMP/broker"
 FAKE_PANEL="$TMP/panel"
-touch "$FAKE_LOOM" "$FAKE_PANEL"
-chmod +x "$FAKE_LOOM" "$FAKE_PANEL"
+touch "$FAKE_LOOM" "$FAKE_BROKER" "$FAKE_PANEL"
+chmod +x "$FAKE_LOOM" "$FAKE_BROKER" "$FAKE_PANEL"
 
 # A fake dolt data directory so dolt-yaml rows appear.
 DOLT_DIR="$TMP/dolt-data"
@@ -141,6 +143,7 @@ run_owned() {
         "SPIRA_TESTDB_DATA=$TESTDB_DIR" \
         "SPIRA_ALERT_GLOB=$ALERT_GLOB" \
         "SPIRA_LOOM_BIN=$FAKE_LOOM" \
+        "SPIRA_BROKER_BIN=$FAKE_BROKER" \
         "SPIRA_PANEL=$FAKE_PANEL" \
         "SPIRA_RUN=$RUN_DIR" \
         "SPIRA_DB=$DB_DIR" \
@@ -168,6 +171,8 @@ render_units() {
         "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
         "SPIRA_DOLT_DATA=$DOLT_DIR" \
         "SPIRA_TESTDB_DATA=$TESTDB_DIR" \
+        "SPIRA_LOOM_BIN=$FAKE_LOOM" \
+        "SPIRA_BROKER_BIN=$FAKE_BROKER" \
         "SPIRA_INSTALL_FORCE=1" \
         bash "$FIXTURE/systemd/install.sh" "$inst" --render 2>/dev/null \
     | awk '/^===== /{gsub(/^===== /,""); gsub(/ =====$/, ""); print}' \
@@ -244,6 +249,8 @@ rendered="$(
         "SPIRA_WATCHERS=$FIXTURE/spira/watchers" \
         "SPIRA_DOLT_DATA=$DOLT_DIR" \
         "SPIRA_TESTDB_DATA=$TESTDB_DIR" \
+        "SPIRA_LOOM_BIN=$FAKE_LOOM" \
+        "SPIRA_BROKER_BIN=$FAKE_BROKER" \
         "SPIRA_RUN=$RUN_DIR" \
         "SPIRA_DB=$DB_DIR" \
         "SPIRA_COCKPIT=$REAL_COCKPIT" \
