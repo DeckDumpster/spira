@@ -117,34 +117,37 @@ is "pool=3 → 3 summons (fill loop fills the pool)" "3" "$(grep -c . "$SUMMON_L
 
 # ======================================================================================
 echo
-echo "sending skip — stamp matches → skipped; no stamp → walks:"
+echo "sending skip — base unchanged stamp → skipped; no stamp → walks:"
 # ======================================================================================
-# POSITIVE CONTROL FIRST. No stamp file: sending.sh must be called.
+# POSITIVE CONTROL FIRST (pair). No stamp: sending.sh must be called.
+# The same run that proves "no stamp → walks" also writes the stamp; the second run
+# reuses it to prove "stamp present and matching → skipped". One pair, two runs.
+_sr="$TMP/run-send"
 rm -f "$SENDING_LOG"
-out_nostamp="$(run_pass "$TMP/run-s1" SPIRA_FAYTHS=)"
-is   "no stamp → sending.sh called (positive control)" \
+out_nostamp="$(run_pass "$_sr" SPIRA_FAYTHS=)"
+is   "no stamp → sending.sh called" \
      "1" "$(grep -c . "$SENDING_LOG" 2>/dev/null || echo 0)"
 lack "no stamp → log does NOT say skipped" "base unchanged" "$out_nostamp"
-
-# Empty stamp + 0 repos: counts both 0 → skip.
+# Stamp was written by the run above (stamp update loop). Reuse the same SPIRA_RUN.
 rm -f "$SENDING_LOG"
-_sr="$TMP/run-s2"; mkdir -p "$_sr"; touch "$_sr/sending.base"
 out_stamp="$(run_pass "$_sr" SPIRA_FAYTHS=)"
-is   "empty stamp + 0 repos → sending.sh not called" \
+is   "stamp matches → sending.sh not called" \
      "0" "$(grep -c . "$SENDING_LOG" 2>/dev/null || echo 0)"
-want "empty stamp + 0 repos → log says skipped" "base unchanged" "$out_stamp"
+want "stamp matches → log says skipped" "base unchanged" "$out_stamp"
 
 # ======================================================================================
 echo
 echo "log order — CHECK7 appears before sending in one pass:"
 # ======================================================================================
-# No stamp so the Sending writes a log line (skipped is also a log line, but
-# a missing stamp triggers the walk path which is more visible in the log).
-order_out="$(run_pass "$TMP/run-ord" \
+# Reuse the run-send dir (stamp from sending tests is still valid): the Sending logs
+# "sending: base unchanged — skipped", giving a "sending:" line to order against CHECK7.
+# Using "sending:" (with colon) avoids matching the "finishing the sending" line
+# emitted earlier by the goal-reached path.
+order_out="$(run_pass "$_sr" \
     SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= SPIRA_MAX_AEONS=1)"
-want   "CHECK7 line appears in log"  "CHECK7"  "$order_out"
-want   "sending line appears in log" "sending" "$order_out"
-before "CHECK7" "sending" "$order_out"
+want   "CHECK7 line appears in log"   "CHECK7"   "$order_out"
+want   "sending: line appears in log" "sending:" "$order_out"
+before "CHECK7" "sending:" "$order_out"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
