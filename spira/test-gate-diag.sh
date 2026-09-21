@@ -32,15 +32,15 @@ _make_root() {
     printf '%s' "$root"
 }
 
-# ── T1: red suite with FAIL lines — both headers appear, stderr empty ──────────
-printf '\nT1: red suite with FAIL lines shows both headers, stderr clean\n'
+# ── T1: red suite with FAIL lines in GHA mode — both headers appear, stderr empty
+printf '\nT1: red suite with FAIL lines (GHA) shows both headers, stderr clean\n'
 (
     root="$(_make_root test-suite yes)"
     trap 'rm -rf "$root"' EXIT
     stderr_tmp="$(mktemp)"
     trap 'rm -f "$stderr_tmp"' EXIT
 
-    out="$(bash "$HERE/gate-diag.sh" "$root" 2>"$stderr_tmp")"
+    out="$(GITHUB_ACTIONS=1 bash "$HERE/gate-diag.sh" "$root" 2>"$stderr_tmp")"
     err="$(cat "$stderr_tmp")"
 
     want "FAIL lines header present"    '--- FAIL lines ---'    "$out"
