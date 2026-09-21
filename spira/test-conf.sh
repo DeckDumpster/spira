@@ -195,5 +195,26 @@ nowant "artifact: SPIRA_WORKSPACES excludes releases subdir"  "art-releases" "$w
 
 # ==========================================================================
 echo
+echo "SPIRA_HOME_REPO from worktree — resolves to main repo name, not worktree name:"
+# ==========================================================================
+# Positive control first: with a plain checkout the name is the repo's basename.
+# The regression: from a worktree whose directory name differs from the main repo,
+# the old code (basename "$SPIRA_REPO") returned the worktree directory name instead.
+WTEST_MAIN="$TMP/wtest-main-repo"
+git init -q "$WTEST_MAIN"
+git -C "$WTEST_MAIN" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+WTEST_WT="$TMP/wtest-worktree-xyzzy"   # name that must NOT appear as SPIRA_HOME_REPO
+git -C "$WTEST_MAIN" worktree add -q "$WTEST_WT" -b wt-branch
+mkdir -p "$WTEST_WT/spira"
+ln -sf "$HERE/conf.sh" "$WTEST_WT/spira/conf.sh"
+wt_got="$(env -i PATH="$PATH" HOME="$TMP/home" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_WATCHERS="$HARNESS/spira/watchers" \
+    bash -c ". '$WTEST_WT/spira/conf.sh'; printf '%s' \"\${SPIRA_HOME_REPO:-}\"" 2>/dev/null)"
+is    "worktree: SPIRA_HOME_REPO equals main repo name" "wtest-main-repo" "$wt_got"
+isne  "worktree: SPIRA_HOME_REPO is not the worktree dir name" "wtest-worktree-xyzzy" "$wt_got"
+
+# ==========================================================================
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

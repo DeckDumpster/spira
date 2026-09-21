@@ -218,7 +218,15 @@ _spira_join() { local _b="${1%/}"; printf '%s/%s' "$_b" "$2"; }
 # spira_conf_defaults — fill in whatever is still unset. Ordered: later defaults refer to
 # earlier ones.
 spira_conf_defaults() {
-    : "${SPIRA_HOME_REPO:=$(basename "$SPIRA_REPO")}"
+    # In a worktree, rev-parse --git-common-dir returns an absolute path to the
+    # shared .git; dirname of that is the main repo, so basename is its identity.
+    # In a plain checkout it returns a relative path — fall back to SPIRA_REPO.
+    local _spira_gcd
+    _spira_gcd="$(git -C "$SPIRA_REPO" rev-parse --git-common-dir 2>/dev/null)" || _spira_gcd=""
+    case "$_spira_gcd" in
+        /*)  : "${SPIRA_HOME_REPO:=$(basename "$(dirname "$_spira_gcd")")}" ;;
+        *)   : "${SPIRA_HOME_REPO:=$(basename "$SPIRA_REPO")}" ;;
+    esac
     # THE INSTANCE NAME. Two instances (e.g. 'prod' and 'test') may run side by side on
     # one machine; each reads its own database and writes its own runtime tree. 'prod' is
     # the default so every existing installation is unaffected by this key's existence.
