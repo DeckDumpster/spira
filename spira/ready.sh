@@ -156,8 +156,14 @@ echo "loom"
 # so it is always available. SPIRA_LOOM_PROBE overrides the HTTP call for test fixtures.
 _loom_url="http://$SPIRA_LOOM_ADDR/api/beads"
 if ! [ -x "${SPIRA_LOOM_BIN:-}" ]; then
-    UNKN "loom — binary not built at ${SPIRA_LOOM_BIN:-<unset>}; cannot probe $_loom_url" \
-         "Build it: cd $SPIRA_REPO/loom && cargo build --release"
+    _loom_unit="$(spira_unit loom service)"
+    if [ "$_loom_unit" = "?" ]; then
+        WARN "loom not installed — binary not built at ${SPIRA_LOOM_BIN:-<unset>}" \
+             "Build it: cd $SPIRA_REPO/loom && cargo build --release"
+    else
+        UNKN "loom — binary not built at ${SPIRA_LOOM_BIN:-<unset>}; cannot probe $_loom_url" \
+             "Build it: cd $SPIRA_REPO/loom && cargo build --release"
+    fi
 else
     _loom_probe_cmd="${SPIRA_LOOM_PROBE:-}"
     if [ -n "$_loom_probe_cmd" ]; then
