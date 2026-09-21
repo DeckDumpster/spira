@@ -17,6 +17,7 @@
 # Runs against a throwaway repository, never the harness: a suite that exercised branch
 # deletion in a real checkout would be the very thing the hook exists to prevent.
 
+# covers: spira/hooks/reference-transaction spira/worktree-hooks.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
