@@ -1263,10 +1263,6 @@ for f in $TASK_FAYTHS; do
         log "CHECK7 $f: not evaluated (pass budget exhausted)"
         continue
     fi
-    # FILL EVERY FREE SLOT IN ONE PASS (hotfix, concierge 2026-09-21). One summon per
-    # fayth per pass meant four free slots took four passes of 6-12 minutes to fill.
-    # summon_fayth re-reads ready and live counts on every call, so it stops on its own
-    # when the partition or the fleet is full; the cap below is a belt for the braces.
     _fill=0
     while summon_fayth "$f" "$pool"; do
         act "summoned a $f aeon"
@@ -1274,62 +1270,64 @@ for f in $TASK_FAYTHS; do
         _fill=$(( _fill + 1 ))
         [ -n "$pool" ] && [ "$pool" -le 0 ] && break
         [ "$_fill" -ge "${SPIRA_MAX_LIVE_AEONS:-4}" ] && break
+        [ $(( $(date +%s) - _ck7_start )) -ge "$_ck7_budget" ] && break
     done
 done
 
-# ======================================================================================
-# CHECK 6b MOVED BELOW CHECK 7 (hotfix, concierge 2026-09-21): the Sending walks ~110
-# branches with git and bd calls and took 4-7 minutes a pass while deleting nothing,
-# and the summon decision waited behind it. Summon first; reap after.
+# CHECK 6b MOVED BELOW CHECK 7: the Sending walks branches with git and bd calls and took
+# 4-7 minutes a pass, and the summon decision waited behind it. Summon first; reap after.
 # CHECK 6b — the Sending. Send the branch and worktree of every bead whose work is now an
 # ancestor of its repository's base.
 #
-# THIS STILL RUNS INSIDE THE PASS, and it may run while a landing is in flight. That is safe
-# by the same predicate that makes the two separate checks: the Sending sends only branches
-# ALREADY an ancestor of the base, and those are exactly the branches landing.sh skips, so
-# the two never hold the same ref. The one interleaving that looks alarming — landing pushes
-# a branch and this sends it in the same minute — is the intended path arriving a pass early.
+# sending.sh judges by ancestry alone, never by bead status, so it cannot be talked into
+# deleting work by a database that is merely optimistic.
 #
-# This is `gt convoy land`'s worktree cleanup, scoped to branches,
-# and it is a separate check from CHECK 6 on purpose: a branch also arrives at "landed" by
-# a hand merge, by an earlier pass whose send was interrupted, or by a send that a locked
-# worktree refused, and a cleanup that only ever runs on the success path of one code path
-# leaks everywhere else. sending.sh judges by ancestry alone, never by bead status, so it
-# cannot be talked into deleting work by a database that is merely optimistic.
+# BASE-UNCHANGED SKIP. When no repo's land ref has moved since the last walk, nothing could
+# have landed. Stamp: per-repo name=sha lines at $SPIRA_RUN/sending.base, written after
+# each full walk. Repos that repo_root cannot resolve are skipped in both directions.
 # ======================================================================================
-# SKIP THE WALK WHEN NOTHING CAN HAVE LANDED (hotfix, concierge 2026-09-21, sp-len2q). The
-# Sending only ever has work after a landing moved the base: 2603 passes today logged
-# "0 sent" and five logged sends, each right after a landing. Walk when the base sha
-# differs from the last walk's, or every 30 minutes regardless (other repositories land
-# rarely and outside this check).
-_send_stamp="$SPIRA_RUN/sending.base"
-_send_base="$(git -C "$SPIRA_HOME/.." rev-parse origin/main 2>/dev/null || true)"
-_send_age=$(( $(date +%s) - $(stat -c %Y "$_send_stamp" 2>/dev/null || echo 0) ))
-if [ -n "$_send_base" ] && [ "$(cat "$_send_stamp" 2>/dev/null)" = "$_send_base" ] && [ "$_send_age" -lt 1800 ]; then
-    log "sending: base $(printf '%.8s' "$_send_base") unchanged since the last walk ${_send_age}s ago — skipped"
-    sent=""
+_sending_base_stamp="$SPIRA_RUN/sending.base"
+_sending_skip=0
+if [ -f "$_sending_base_stamp" ]; then
+    _sending_all_match=1
+    while IFS='=' read -r _sr_name _sr_sha; do
+        [ -n "$_sr_name" ] || continue
+        _sr_repo="$(repo_root "$_sr_name" 2>/dev/null)" || { _sending_all_match=0; break; }
+        _sr_ref="$(spira_landref "$_sr_repo" 2>/dev/null)" || { _sending_all_match=0; break; }
+        _sr_cur="$(git -C "$_sr_repo" rev-parse "$_sr_ref" 2>/dev/null)" || { _sending_all_match=0; break; }
+        [ "$_sr_cur" = "$_sr_sha" ] || { _sending_all_match=0; break; }
+    done < "$_sending_base_stamp"
+    if [ "$_sending_all_match" -eq 1 ]; then
+        while IFS= read -r _sr_name; do
+            [ -n "$_sr_name" ] || continue
+            repo_root "$_sr_name" >/dev/null 2>&1 || continue
+            spira_landref "$(repo_root "$_sr_name" 2>/dev/null)" >/dev/null 2>&1 || continue
+            grep -qF "${_sr_name}=" "$_sending_base_stamp" 2>/dev/null \
+                || { _sending_all_match=0; break; }
+        done < <(spira_repos 2>/dev/null)
+    fi
+    [ "$_sending_all_match" -eq 1 ] && _sending_skip=1
+fi
+if [ "$_sending_skip" -eq 1 ]; then
+    log "sending: base unchanged — skipped"
 else
     sent="$("$SPIRA_HOME/sending.sh" 2>&1)"
-    printf '%s\n' "$_send_base" > "$_send_stamp"
+    [ -n "$sent" ] && printf '%s\n' "$sent"
+    n_sent="$(grep -c '^SENT' <<< "$sent" || true)"
+    if [ "${n_sent:-0}" -gt 0 ]; then
+        while read -r _ rid rrepo rbr _; do
+            [ -n "${rbr:-}" ] || continue
+            act "sent $rrepo $rbr $rid"
+        done < <(grep '^SENT' <<< "$sent")
+    fi
+    grep -q '^FAILED' <<< "$sent" && log "sending reported a branch it could not delete"
+    { for _sr_name in $(spira_repos 2>/dev/null); do
+        _sr_repo="$(repo_root "$_sr_name" 2>/dev/null)" || continue
+        _sr_ref="$(spira_landref "$_sr_repo" 2>/dev/null)" || continue
+        _sr_cur="$(git -C "$_sr_repo" rev-parse "$_sr_ref" 2>/dev/null)" || continue
+        printf '%s=%s\n' "$_sr_name" "$_sr_cur"
+    done; } > "$_sending_base_stamp"
 fi
-[ -n "$sent" ] && printf '%s\n' "$sent"
-n_sent="$(grep -c '^SENT' <<< "$sent" || true)"
-# ONE ACT PER BRANCH, NAMING IT, rather than one act carrying a count. "sent 2 landed
-# branch(es)" told the pane that something had been cleaned up and withheld the only part a
-# reader can act on — WHICH branch, in WHICH repository. Two of these a pass is two rows, and
-# RECENT now has the height for them; a count is what a section with five rows had to settle
-# for. The id is last so the title lookup in the collector still finds it.
-if [ "${n_sent:-0}" -gt 0 ]; then
-    while read -r _ rid rrepo rbr _; do
-        [ -n "${rbr:-}" ] || continue
-        act "sent $rrepo $rbr $rid"
-    done < <(grep '^SENT' <<< "$sent")
-fi
-# A FAILED send is a leak that will repeat every pass, so it is worth a line in the log —
-# but it is NOT an action, because counting a failure as an action is precisely how the
-# starvation check was blinded in the first place.
-grep -q '^FAILED' <<< "$sent" && log "sending reported a branch it could not delete"
-
 
 # ======================================================================================
 # CHECK 7c — ready beads no persona can claim. Every partition reporting "nothing ready"
