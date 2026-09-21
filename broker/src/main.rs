@@ -1,5 +1,6 @@
 mod execute;
 mod policy;
+mod read;
 mod submit;
 
 use std::process::ExitCode;
@@ -11,9 +12,11 @@ fn main() -> ExitCode {
     match sub {
         "submit"  => run_submit(&args[2..]),
         "execute" => run_execute(),
+        "read"    => run_read(&args[2..]),
         _ => {
             eprintln!("broker: usage: broker submit <verb> <target> --reason <text> --bead <id> [--class <class>]");
             eprintln!("broker:        broker execute");
+            eprintln!("broker:        broker read <verb> <repo>/<id> [--artifact <name>] [--output-dir <path>]");
             ExitCode::from(2)
         }
     }
@@ -82,6 +85,13 @@ fn run_submit(args: &[String]) -> ExitCode {
 
 fn run_execute() -> ExitCode {
     match execute::run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => { eprintln!("{}", e); ExitCode::FAILURE }
+    }
+}
+
+fn run_read(args: &[String]) -> ExitCode {
+    match read::run(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => { eprintln!("{}", e); ExitCode::FAILURE }
     }

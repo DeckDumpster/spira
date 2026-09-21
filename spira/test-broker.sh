@@ -12,6 +12,9 @@
 #   7. FAILS OPEN: direct gh call bypasses the fence (naive executor proves the gap).
 #   8. broker.sh shim execs the broker binary.
 #   9. SPIRA_BROKER_BIN in conf.sh allowlist.
+#  10. read: unknown verb rejected, run-view calls gh with safe JSON fields (no --log),
+#      artifact-download calls gh run download with named artifact, missing --artifact fails.
+#  11. SPIRA_BROKER_GH_CONFIG_DIR and SPIRA_BROKER_GH_TOKEN in conf.sh allowlist.
 #
 # POSITIVE CONTROL FIRST (law-absence-needs-a-positive-control). The check that would fail
 # before the fix is run first; only when it finds the offender do later checks mean anything.
@@ -82,10 +85,14 @@ REPO_MAP="$T/repo-map"
 printf 'test-repo | %s | push | origin/main | | \n' "$REPO_DIR" > "$REPO_MAP"
 
 # Stub gh: records what it was called with and exits 0.
+# For run view calls it outputs minimal JSON so broker read can return it.
 GH_STUB="$T/gh"
 cat > "$GH_STUB" << 'ENDGH'
 #!/usr/bin/env bash
 printf 'stub-gh: %s\n' "$*" >> "$SPIRA_BROKER_GH_LOG"
+case "$1 $2" in
+    "run view") printf '{"status":"completed","conclusion":"success","databaseId":12345,"name":"CI"}\n' ;;
+esac
 exit 0
 ENDGH
 chmod +x "$GH_STUB"
@@ -285,6 +292,79 @@ echo "build.sh names broker"
 grep -q 'broker' "$HERE/build.sh" 2>/dev/null \
     && ok "build.sh mentions broker" \
     || bad "build.sh does not mention broker"
+
+# =========================================================================
+echo
+echo "POSITIVE CONTROL — read: unknown verb rejected before the fix"
+# =========================================================================
+# If this were run on a build without read support, broker would exit 2 with "usage" —
+# but it would NOT name "run-view". This proves the verb table is wired.
+read_unknown_out="$(base_env "$BROKER_BIN" read no-such-verb test-repo/999 2>&1)"
+read_unknown_rc=$?
+[ "$read_unknown_rc" -ne 0 ] \
+    && ok "broker read: unknown verb exits non-zero (positive control)" \
+    || bad "broker read: unknown verb should exit non-zero"
+want "broker read: unknown verb output names run-view" "run-view" "$read_unknown_out"
+
+# =========================================================================
+echo
+echo "broker read run-view — calls gh with safe JSON fields, no --log"
+# =========================================================================
+> "$GH_LOG"
+read_view_out="$(base_env \
+    "$BROKER_BIN" read run-view test-repo/12345 2>&1)"
+read_view_rc=$?
+is "broker read run-view exits 0" "0" "$read_view_rc"
+want "broker read run-view output contains status"     '"status"'     "$read_view_out"
+want "broker read run-view output contains conclusion" '"conclusion"' "$read_view_out"
+gh_calls="$(cat "$GH_LOG" 2>/dev/null || echo "")"
+want "gh called with run view"        "run view"   "$gh_calls"
+want "gh called with run id 12345"    "12345"      "$gh_calls"
+want "gh called with --json"          "--json"     "$gh_calls"
+lack "gh NOT called with --log"       "--log"      "$gh_calls"
+
+# =========================================================================
+echo
+echo "broker read artifact-download — calls gh run download with named artifact"
+# =========================================================================
+ART_DIR="$T/artifacts-out"
+> "$GH_LOG"
+art_out="$(base_env \
+    "$BROKER_BIN" read artifact-download test-repo/12345 \
+    --artifact batch-results --output-dir "$ART_DIR" 2>&1)"
+art_rc=$?
+is "broker read artifact-download exits 0" "0" "$art_rc"
+want "artifact-download prints the output dir" "$ART_DIR" "$art_out"
+gh_calls="$(cat "$GH_LOG" 2>/dev/null || echo "")"
+want "gh called with run download"         "run download" "$gh_calls"
+want "gh called with -n batch-results"     "batch-results" "$gh_calls"
+want "gh called with -D and output dir"    "$ART_DIR"      "$gh_calls"
+[ -d "$ART_DIR" ] \
+    && ok "artifact-download creates output directory" \
+    || bad "artifact-download should create output directory"
+
+# =========================================================================
+echo
+echo "broker read artifact-download — --artifact required"
+# =========================================================================
+art_missing_out="$(base_env \
+    "$BROKER_BIN" read artifact-download test-repo/12345 2>&1)"
+art_missing_rc=$?
+[ "$art_missing_rc" -ne 0 ] \
+    && ok "artifact-download without --artifact exits non-zero" \
+    || bad "artifact-download without --artifact should fail"
+want "error names --artifact" "--artifact" "$art_missing_out"
+
+# =========================================================================
+echo
+echo "SPIRA_BROKER_GH_CONFIG_DIR and SPIRA_BROKER_GH_TOKEN in conf.sh allowlist"
+# =========================================================================
+grep -q 'SPIRA_BROKER_GH_CONFIG_DIR' "$conf_sh" 2>/dev/null \
+    && ok "SPIRA_BROKER_GH_CONFIG_DIR in conf.sh" \
+    || bad "SPIRA_BROKER_GH_CONFIG_DIR missing from conf.sh"
+grep -q 'SPIRA_BROKER_GH_TOKEN' "$conf_sh" 2>/dev/null \
+    && ok "SPIRA_BROKER_GH_TOKEN in conf.sh" \
+    || bad "SPIRA_BROKER_GH_TOKEN missing from conf.sh"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"

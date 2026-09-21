@@ -1,5 +1,23 @@
 /// Forge-write policy: fayth × verb table. Hard-coded in source per the design.
 
+/// Read verbs: synchronous, bypass the inbox queue, no fayth restriction.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReadVerb {
+    RunView,
+    ArtifactDownload,
+}
+
+impl ReadVerb {
+    pub fn parse(s: &str) -> Option<ReadVerb> {
+        match s {
+            "run-view"          => Some(ReadVerb::RunView),
+            "artifact-download" => Some(ReadVerb::ArtifactDownload),
+            _                   => None,
+        }
+    }
+
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Verb {
     RunRerun,
