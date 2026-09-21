@@ -191,6 +191,7 @@ testdb_up() {            # testdb_up <tag>
             printf 'testdb: shared fixture baseline is empty — fixture collapsed\n' >&2
             exit "${TESTDB_FAULT_EXIT:-75}"
         }
+        printf 'testdb: baseline copy from %s\n' "$TESTDB_BASELINE" >&2
         export SPIRA_DB="$TESTDB_PRIVATE_DIR" SPIRA_BD="$TESTDB_BD"
         # conf.sh resets PATH from SPIRA_PATH; add TESTDB_BIN to both so child processes
         # that re-source conf.sh still find the embedded binary.
