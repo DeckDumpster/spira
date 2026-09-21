@@ -4578,6 +4578,9 @@ if os.access(fence, os.X_OK):
 guard = os.path.join(spira_home, 'bd-close-unacked-guard.sh')
 if os.access(guard, os.X_OK):
     pre_hooks.append({'type': 'command', 'command': guard, 'timeout': 5})
+wf_guard = os.path.join(spira_home, 'bd-close-workflow-run-guard.sh')
+if os.access(wf_guard, os.X_OK):
+    pre_hooks.append({'type': 'command', 'command': wf_guard, 'timeout': 5})
 if pre_hooks:
     hooks['PreToolUse'] = [{'hooks': pre_hooks}]
 print(json.dumps({'hooks': hooks}))

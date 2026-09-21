@@ -103,4 +103,34 @@ FAYTH_MODEL=claude-opus-5-5
 # a second tmux session of the same name, which is the mechanism. It is written down because
 # "one session, not a repo-by-repo list" is a design decision worth reading, not an accident
 # of how the launcher happens to work.
+
+# HANDLING "DISPATCH <workflow> ON <branch>" MAIL QUESTIONS
+# -----------------------------------------------------------------------
+# When a builder is refused by bd-close-workflow-run-guard because its branch touches a
+# workflow file and no valid run URL is in the close reason, it mails the operator asking
+# for a dispatch. The subject is "dispatch <workflow-file> on <branch>".
+#
+# Three steps, in order:
+#
+# 1. PUSH THE BRANCH. The aeon's branch must be on the forge before gh workflow run resolves
+#    it. Aeon branches are not pushed until certification, so the concierge pushes first.
+#    A rebased branch needs --force-with-lease:
+#
+#      git push origin <branch>:<branch> --force-with-lease
+#
+# 2. DISPATCH THE WORKFLOW. Use gh workflow run targeting the branch pushed in step 1:
+#
+#      gh workflow run <workflow-file> --ref <branch> [--field key=value ...]
+#
+#    Wait for the run to start (gh run list --branch <branch> --workflow <file> --limit 1),
+#    then record the run URL from the output.
+#
+# 3. REPLY WITH THE URL. Reply to the question mail with the full actions/runs/<id> URL.
+#    The builder includes it in the close reason and re-attempts the close.
+#
+# If the branch was not found on the forge after step 1, verify the push succeeded before
+# dispatching — a missing ref causes gh workflow run to fail silently against main.
+#
+# A run that fails at the changed step is still valid evidence; the fence does not require
+# the run to be green, only that the step was reached.
 FAYTH_MAX_CONCURRENT=1
