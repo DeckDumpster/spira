@@ -189,13 +189,13 @@ is0 "phase A: git clone --branch $tag" "$?"
 # machine — on a genuinely clean machine, no conflict should exist.
 _install_rc=0
 _install_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")" SPIRA_OPERATED=0)
-# --agent triggers single-checkout mode (CONFIGURE_PROD = clone path) so install.sh
-# creates SPIRA_PROD inside the clone, bypassing the promote.sh requirement on a
-# clean machine. The git-checkout guard is overridden because the clone IS the prod
-# checkout in this mode — the test proves the path, not the release mechanism.
+# --agent triggers single-checkout mode; CONFIGURE_PROD is the harness subdir
+# inside the clone so install.sh sets SPIRA_PROD there, bypassing promote.sh.
+# The git-checkout guard is overridden because the clone IS the prod checkout
+# in this mode — the test proves the path, not the release mechanism.
 if [ -n "$_agent" ]; then
     _install_env+=(
-        "CONFIGURE_PROD=$_clone"
+        "CONFIGURE_PROD=$_clone/spira"
         "SPIRA_INSTALL_PROD_GIT_CONSIDERED=1"
     )
 fi
@@ -397,7 +397,7 @@ else
     _aged_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")" SPIRA_OPERATED=0)
     if [ -n "$_agent" ]; then
         _aged_env+=(
-            "CONFIGURE_PROD=$_aged_clone"
+            "CONFIGURE_PROD=$_aged_clone/spira"
             "SPIRA_INSTALL_PROD_GIT_CONSIDERED=1"
         )
     fi
