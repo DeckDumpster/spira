@@ -493,6 +493,12 @@ case "\$*" in
             printf '{"dolt_mode":"embedded","dolt_database":"$_dbname6","project_id":"test"}\n' \
                 > "\$_db/.beads/metadata.json"
         exit 0 ;;
+    *init*)
+        # embedded init: install.sh uses (cd SPIRA_DB && bd init), no -C
+        mkdir -p "\$PWD/.beads"
+        printf '{"dolt_mode":"embedded","dolt_database":"$_dbname6","project_id":"test"}\n' \
+            > "\$PWD/.beads/metadata.json"
+        exit 0 ;;
     *list*)     printf '[]\n' ;;
     *memories*) printf '{}\n' ;;
     *)          exit 0 ;;
