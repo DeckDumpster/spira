@@ -17,12 +17,11 @@ set -uo pipefail
 
 PAYLOAD="$(cat)"
 
-result="$(printf '%s' "$PAYLOAD" | \
-    SPIRA_BD="${SPIRA_BD:-bd}" \
-    SPIRA_DB="${SPIRA_DB:-}" \
+# Detect bd label remove ... delivers: in the command and extract the bead id.
+bid_hit="$(printf '%s' "$PAYLOAD" | \
     BEAD_ID="${BEAD_ID:-}" \
     python3 -c '
-import json, os, re, subprocess, sys
+import json, os, re, sys
 
 try:
     d = json.load(sys.stdin)
@@ -50,7 +49,6 @@ cmd = re.sub(r"\x27[^\x27]*\x27", " ", cmd)  # strip single-quoted spans
 
 segs = re.split(r"\|\||\&\&|[;|\n]", cmd)
 
-bid_hit = None
 for seg in segs:
     # Match: bd [opts] label remove <id> delivers:*
     m = re.search(
@@ -66,49 +64,42 @@ for seg in segs:
     except StopIteration:
         ri = -1
     if ri < 0:
-        bid_hit = os.environ.get("BEAD_ID", "") or "unknown"
-        break
+        print(os.environ.get("BEAD_ID", "") or "")
+        sys.exit(0)
     for t in toks[ri+1:]:
         if t.startswith("-"):
             continue
         if t.startswith("delivers:"):
             break
-        bid_hit = t.strip("\"\x27 ")
-        break
-    if bid_hit is None:
-        bid_hit = os.environ.get("BEAD_ID", "") or "unknown"
-    break
-
-if bid_hit is None:
+        print(t.strip("\"\x27 "))
+        sys.exit(0)
+    print(os.environ.get("BEAD_ID", "") or "")
     sys.exit(0)
-
-# Look up the producer.
-bd  = os.environ.get("SPIRA_BD", "bd")
-db  = os.environ.get("SPIRA_DB", "")
-producer = ""
-if db and bid_hit and bid_hit != "unknown":
-    try:
-        r = subprocess.run([bd, "-C", db, "show", bid_hit, "--json"],
-                           capture_output=True, text=True, timeout=10)
-        if r.returncode == 0 and r.stdout.strip():
-            b = json.loads(r.stdout)
-            b = b[0] if isinstance(b, list) else b
-            producer = b.get("created_by", "") or ""
-    except Exception:
-        pass
-
-print("HIT:" + (producer or "unknown"))
 ' 2>/dev/null)"
 
-case "$result" in HIT:*) ;; *) exit 0 ;; esac
+[ -n "$bid_hit" ] || exit 0
 
-producer="${result#HIT:}"
+# Look up the producer in bash so bd-embedded is found via PATH.
+_bd="${SPIRA_BD:-bd}"
+_db="${SPIRA_DB:-}"
+producer=""
+if [ -n "$_db" ] && [ -n "$bid_hit" ]; then
+    producer="$("$_bd" -C "$_db" show "$bid_hit" --json 2>/dev/null \
+        | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    d = d[0] if isinstance(d, list) else d
+    print(d.get("created_by", "") or "")
+except Exception:
+    print("")' 2>/dev/null)" || producer=""
+fi
 
 printf '\nBLOCKED by bd-delivers-label-guard: removes delivers: label — a closing criterion.\n\n' >&2
 printf 'A delivers: label is stamped at filing time by the producer and records the\n' >&2
 printf 'evidence required to close this bead. Removing it escapes the criterion rather\n' >&2
 printf 'than satisfying it.\n\n' >&2
-if [ -n "$producer" ] && [ "$producer" != "unknown" ]; then
+if [ -n "$producer" ]; then
     printf 'Producer: %s\n' "$producer" >&2
     printf '\nEscalate to %s if the criterion cannot be met.\n' "$producer" >&2
 else
