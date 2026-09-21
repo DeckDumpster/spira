@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-install-prod-checkout.sh — install.sh refuses to install over a git checkout
-# at SPIRA_PROD, and the named override bypasses the guard.
+# test-install-prod-checkout.sh — install.sh CONFIGURE_PROD and SPIRA_PROD guards.
 #
 #   ./test-install-prod-checkout.sh
 #
@@ -12,6 +11,8 @@
 # 2. OVERRIDE: SPIRA_INSTALL_PROD_GIT_CONSIDERED=1 bypasses the guard → no
 #    "is a git checkout" in output.
 # 3. CLEAN: SPIRA_PROD is not a git checkout → guard does not fire.
+# 4. CONFIGURE_PROD WITHOUT conf.sh: exit 1, names "conf.sh", names "/spira" path.
+# 5. CONFIGURE_PROD WITH conf.sh: guard does not fire.
 #
 # FAIL-FIRST: the git-checkout case is verified first so a silent clean case
 # is believed (law-absence-needs-a-positive-control).
@@ -284,6 +285,33 @@ unset _s
 
 _clean_out="$(run_install prod -- "SPIRA_PROD=$CLEAN_PROD" SPIRA_INSTALL_CONFLICT_CONSIDERED=1)"
 nowant "clean: does not mention 'is a git checkout'" "is a git checkout" "$_clean_out"
+
+# ===========================================================================
+echo
+echo "CONFIGURE_PROD without conf.sh fires the guard"
+# ===========================================================================
+# sp-egqj0: CONFIGURE_PROD must be the harness subdir (contains conf.sh), not
+# the clone root.
+NO_CONF_DIR="$TMP/no-conf"
+mkdir -p "$NO_CONF_DIR"
+
+_no_conf_out="$(run_install prod -- "CONFIGURE_PROD=$NO_CONF_DIR" SPIRA_INSTALL_CONFLICT_CONSIDERED=1 2>&1)" || true
+_no_conf_rc=$?
+[ "$_no_conf_rc" -ne 0 ] \
+    && ok "CONFIGURE_PROD without conf.sh: exits non-zero" \
+    || bad "CONFIGURE_PROD without conf.sh: exits non-zero" "exit 0 (expected non-zero)"
+want "CONFIGURE_PROD without conf.sh: names conf.sh"  "conf.sh"            "$_no_conf_out"
+want "CONFIGURE_PROD without conf.sh: names /spira"   "/spira"             "$_no_conf_out"
+want "CONFIGURE_PROD without conf.sh: names the path" "$NO_CONF_DIR"       "$_no_conf_out"
+
+# ===========================================================================
+echo
+echo "CONFIGURE_PROD with conf.sh does not fire the guard"
+# ===========================================================================
+# SPIRA_DIR already has conf.sh symlinked in — use it as a valid CONFIGURE_PROD.
+_with_conf_out="$(run_install prod --dry-run -- "CONFIGURE_PROD=$SPIRA_DIR" SPIRA_INSTALL_CONFLICT_CONSIDERED=1 2>&1)" || true
+nowant "CONFIGURE_PROD with conf.sh: does not mention 'does not contain conf.sh'" \
+    "does not contain conf.sh" "$_with_conf_out"
 
 # ===========================================================================
 echo
