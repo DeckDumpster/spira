@@ -31,9 +31,8 @@
 # SKIP, NOT QUEUE. A probe still running when its next slot arrives is skipped. The skip
 # is visible as growing age on that probe's values rather than as a silent backlog.
 #
-# CPU FENCE (law-fence-loops-on-shared-hardware). The service's CPUQuota covers the whole
-# supervisor tree. The slow tier is further bounded to SLOW_CONCURRENT concurrent jobs
-# so one expensive graph walk cannot crowd out the fast tier's 5s repaint.
+# SLOW TIER: SLOW_CONCURRENT caps concurrent slow probes so one graph walk cannot
+# crowd out the fast tier's 5s repaint. Nice=10 on the service yields to the box.
 #
 # MIGRATION: keeps writing the merged cockpit.env so existing readers and test suites
 # that source that file do not break when the supervisor replaces cockpit.sh loop.
@@ -127,6 +126,7 @@ _run_probe_body() {
         { printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\n' "$now"; cat "$out_tmp"; } > "$hdr_tmp" \
             && mv "$hdr_tmp" "$frag"
         rm -f "$out_tmp"
+        printf 'collect.sh: probe %s ok %ss\n' "$name" "$(( $(date +%s) - now ))" >&2
     else
         local rc=$?
         rm -f "$out_tmp"

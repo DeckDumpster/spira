@@ -380,7 +380,14 @@ drain_banner() {
 header_line() {
     local age="?" stale="" pass_dur=""
     [ -n "${SP_AT:-}" ] && age=$(( $(date +%s) - SP_AT ))
-    [ "$age" != "?" ] && [ "$age" -gt "${SPIRA_SNAP_STALE_S:-60}" ] && stale="  ${C_BAD}${C_B}FAULT (${age}s)${C_RST}"
+    if [ "$age" != "?" ] && [ "$age" -gt "${SPIRA_SNAP_STALE_S:-60}" ]; then
+        # Probe timeouts explain the staleness — STALE names the cause; FAULT means unknown.
+        if [ -f "$SPIRA_SNAP" ] && grep -qE "^_PROBE_STATUS_[^=]+='(timeout|error)'" "$SPIRA_SNAP" 2>/dev/null; then
+            stale="  ${C_BAD}${C_B}STALE${C_RST}"
+        else
+            stale="  ${C_BAD}${C_B}FAULT (${age}s)${C_RST}"
+        fi
+    fi
     # SP_PASS_SECS: always shown in dim so a collector getting slower is visible before
     # it is a mystery. When the pass duration approaches or exceeds INTERVAL, the STALE
     # badge follows on the next snapshot — pass duration is the leading indicator.
@@ -411,20 +418,17 @@ header_line() {
             "$C_DIM" "$C_RST" "$C_BAD" "$C_B" "${SP_AURON_FIRING}" "$C_RST" \
             "$C_BAD" "$(printf '%s' "${SP_AURON_KEYS:-}" | tr ',' ' ')" "$C_RST"
     fi
-    # PROBE FAULT: a timed-out probe is a fault, not merely stale. "never" means it has not
-    # run yet; "timeout" means it ran and was killed before producing output — a different
-    # condition, and one that indicates the probe's timeout ceiling is too low.
-    # Re-reading the snap file is intentional: there is no portable way to enumerate shell
-    # variables by prefix, and the snap is small enough that a grep per frame costs nothing.
     if [ -f "$SPIRA_SNAP" ]; then
-        local _faulted
-        _faulted="$(grep -oE '_PROBE_STATUS_[^=]+=('"'"'timeout'"'"'|'"'"'error'"'"')' \
-            "$SPIRA_SNAP" 2>/dev/null \
-            | sed "s/_PROBE_STATUS_//;s/='timeout'//;s/='error'//" \
-            | tr '\n' ' ' | sed 's/ $//')"
-        if [ -n "$_faulted" ]; then
-            printf ' %sPROBE%s  %s%stimed out%s: %s\n' \
-                "$C_DIM" "$C_RST" "$C_BAD" "$C_B" "$C_RST" "$_faulted"
+        local _probe_info="" _pline _pname _pkilled
+        while IFS= read -r _pline; do
+            _pname="${_pline%%=*}"; _pname="${_pname#_PROBE_STATUS_}"
+            _pkilled="$(grep "^SP_PROBE_KILLED_${_pname}=" "$SPIRA_SNAP" 2>/dev/null \
+                | cut -d= -f2 | tr -d "'")"
+            _probe_info="${_probe_info:+$_probe_info  }${_pname}: timeout ×${_pkilled:-?}"
+        done < <(grep -E "^_PROBE_STATUS_[^=]+='(timeout|error)'" "$SPIRA_SNAP" 2>/dev/null)
+        if [ -n "$_probe_info" ]; then
+            printf ' %sSTALE%s  %s%s%s%s\n' \
+                "$C_DIM" "$C_RST" "$C_BAD" "$C_B" "$_probe_info" "$C_RST"
         fi
     else
         snap_absent_banner
