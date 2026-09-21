@@ -255,9 +255,21 @@ cmd_eject() {
         printf 'queue.sh eject: no open batch for %s\n' "$name" >&2; return 1
     }
 
-    local members_val tip="" found=0 new_members=""
+    # Take the per-repo lock — eject racing a batch build produces the
+    # two-PRs-one-batch state the lock exists to prevent.
+    local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
+    mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
+    { exec 9>"$lockfile"; } 2>/dev/null \
+        || { printf 'queue.sh eject: cannot open lock file for %s\n' "$name" >&2; return 1; }
+    if ! flock -n 9; then
+        printf 'queue.sh eject: another queue operation holds the lock for %s\n' "$name" >&2
+        return 1
+    fi
+
+    local members_val pr_n tip="" found=0 new_members=""
     members_val="$(grep '^members=' "$open_file" | head -1)"
     members_val="${members_val#members=}"
+    pr_n="$(grep '^pr=' "$open_file" | head -1)"; pr_n="${pr_n#pr=}"
 
     local _m mid mtip
     for _m in $members_val; do
@@ -282,7 +294,12 @@ cmd_eject() {
         printf 'dry-run: would write RED to %s/%s\n' "$LANDSTATE" "$id"
         printf 'dry-run: would reopen bead %s and clear assignee\n' "$id"
         printf 'dry-run: would post comment to %s\n' "$id"
-        printf 'dry-run: would rewrite batch members to: %s\n' "${new_members:-<empty>}"
+        printf 'dry-run: would close PR %s\n' "$pr_n"
+        if [ -n "$new_members" ]; then
+            local _surv=""
+            for _m in $new_members; do _surv="${_surv}${_surv:+ }${_m%%:*}"; done
+            printf 'dry-run: would return survivors to CERTIFIED: %s\n' "$_surv"
+        fi
         bdq show "$id" >/dev/null 2>&1 || {
             printf 'dry-run: ERROR: cannot resolve bead %s\n' "$id" >&2; return 1
         }
@@ -299,16 +316,17 @@ cmd_eject() {
     _comment="Ejected from open batch in $name.${reason:+$'\n\n'${reason}}"$'\n\n'"Landstate written as RED. Fix the failing issue and re-certify before rejoining the queue."
     printf '%s' "$_comment" | bdq comment "$id" --stdin >/dev/null 2>&1 || true
 
-    local _tmp="$open_file.$$"
-    {
-        while IFS= read -r _line; do
-            case "$_line" in
-            members=*) printf 'members=%s\n' "$new_members" ;;
-            *)         printf '%s\n' "$_line" ;;
-            esac
-        done < "$open_file"
-    } > "$_tmp" && mv -f "$_tmp" "$open_file" \
-        || { rm -f "$_tmp" 2>/dev/null; printf 'queue.sh eject: failed to rewrite batch\n' >&2; return 1; }
+    # Close the PR and return survivors to CERTIFIED. The batch branch contains
+    # the ejected member's commits and is stale; a fresh batch rebuilds from CERTIFIED.
+    local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
+    local repo_dir; repo_dir="$(repo_root "$name")"
+    for _m in $new_members; do
+        mid="${_m%%:*}"; mtip="${_m##*:}"
+        land_mark "$mid" CERTIFIED "$mtip"
+        printf 'queue.sh eject: %s returned to CERTIFIED\n' "$mid"
+    done
+    "$forge" pr-close "$repo_dir" "$pr_n" 2>/dev/null || true
+    rm -f "$open_file"
 
     printf 'queue.sh eject: ejected %s from %s batch (landstate=RED)\n' "$id" "$name"
 }
