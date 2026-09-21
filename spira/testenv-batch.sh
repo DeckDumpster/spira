@@ -409,12 +409,12 @@ if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ] && \
                 else
                     [ -n "$_repeat_reason" ] && \
                         log "batch: SPIRA_VERDICT_REPEAT_CONSIDERED must be a sentence (min 10 chars)"
-                    log "batch: repeat attempt refused — prior red at ${_cached_when:-unknown} — key batch-$BATCH_KEY — red suites: ${_cached_red_suites:-(unknown)}"
+                    log "batch: repeat attempt refused — prior red at ${_cached_when:-unknown} — key batch-$BATCH_KEY — red suites: ${_cached_red_suites:-(unknown)} — to override: SPIRA_VERDICT_REPEAT_CONSIDERED='<reason, min 10 chars>' bash spira/testenv-batch.sh ..."
                     _bead_cmd="${SPIRA_BATCH_INCIDENT_CMD:-$HERE/incident.sh}"
                     if [ -r "$_bead_cmd" ] && [ -n "${SPIRA_DB:-}" ]; then
                         _suites_csv="${_cached_red_suites// /,}"
-                        { printf '%s\n\nFirst: bash spira/testenv-batch.sh --suites %s %s\nIf tests now pass, the fix was committed after the retry was refused — close with evidence. If they still fail, investigate.\n' \
-                            "Repeat attempt refused. Prior red at ${_cached_when:-unknown}. Key: batch-$BATCH_KEY. Red suites: ${_cached_red_suites:-(unknown)}. Branch: $BR." \
+                        { printf '%s\n\nTwo routes forward:\n1. Commit a fix — the new tree produces a new key and the cache does not apply.\n2. If the red was environmental (not a code defect), re-run with SPIRA_VERDICT_REPEAT_CONSIDERED set to a sentence describing why (min 10 chars): SPIRA_VERDICT_REPEAT_CONSIDERED="<reason>" bash spira/testenv-batch.sh --suites %s %s\n' \
+                            "Repeat attempt refused. Prior red at ${_cached_when:-unknown}. Key: batch-$BATCH_KEY. Red suites: ${_cached_red_suites:-(unknown)}. Branch: $BR. SPIRA_VERDICT_REPEAT_CONSIDERED was not set or was too short." \
                             "${_suites_csv:-(unknown)}" "$BR"
                           [ -n "${_cached_override_reason:-}" ] && \
                             printf 'Prior override attempted: %s\n' "$_cached_override_reason"

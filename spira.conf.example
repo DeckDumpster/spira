@@ -288,6 +288,13 @@
 # expired and every gate runs its suites.
 # SPIRA_VERDICT_TTL = 86400
 
+# When a prior red verdict still applies (same key, within TTL), testenv-batch.sh refuses to
+# re-run. Set this to a sentence of at least 10 characters explaining why the prior red was
+# not caused by the code — e.g. "runner host was destroyed by hypervisor OOM" — and the
+# refusal is lifted for that one invocation. A bare flag or short string is rejected.
+# Recorded in the verdict file so later readers can weigh the override.
+# SPIRA_VERDICT_REPEAT_CONSIDERED =
+
 # ---- the suites, and where each of them runs -----------------------------------------------
 # Which suites the LANDING GATE runs, as a file of repository-relative paths with the reason
 # each earns the wait beside it. `spira/suites.sh` reads the same file and runs everything the
