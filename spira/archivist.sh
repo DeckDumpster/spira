@@ -310,7 +310,7 @@ home.}"
         system_prompt_split "$arc_sysfile" "$arc_taskfile" "" "$prompt"
         cat "$arc_taskfile" | timeout "$SPIRA_ARCHIVIST_TIMEOUT" \
             "${SPIRA_AGENT:-claude}" -p --output-format stream-json --verbose \
-                   --system-prompt-snapshot \
+                   --system-prompt-snapshot on \
                    "$SPIRA_SYSTEM_FLAG" "$arc_sysfile" \
                    --model "$SPIRA_ARCHIVIST_MODEL" \
                    --allowedTools "Bash,Read,Grep,Glob,Write" \
