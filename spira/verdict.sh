@@ -208,11 +208,6 @@ _q_attribute() {
     done <<< "$status_out"
     red_suites="${red_suites# }"
 
-    if [ -z "$red_suites" ]; then
-        printf 'verdict %s: PR %s red — no suites identified; leaving batch open\n' "$name" "$pr_n"
-        return 0
-    fi
-
     local suites_csv; suites_csv="$(printf '%s\n' $red_suites | awk '!seen[$0]++' | tr '\n' ',' | sed 's/,$//')"
     local members_arr=(); read -ra members_arr <<< "$members_str"
     local mc="${#members_arr[@]}"
