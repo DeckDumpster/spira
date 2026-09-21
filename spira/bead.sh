@@ -190,9 +190,15 @@ print(d.get("issue_type") or "")
         labels="$(printf '%s\n' "$show_parsed" | sed -n '1p')"
         bead_status="$(printf '%s\n' "$show_parsed" | sed -n '2p')"
         bead_type="$(printf '%s\n' "$show_parsed" | sed -n '3p')"
-        case " $labels " in
-            *" repo:"*) ;;
-            *) printf 'bead: %s: no repo: label\n' "$id" >&2; bad=$((bad+1)); rc=1 ;;
+        # repo: is required only for routable work beads. Non-work kinds (event,
+        # escalation, proposal, gate) carry no routing obligation and may omit it.
+        case " task bug feature epic chore spike " in
+            *" $bead_type "*)
+                case " $labels " in
+                    *" repo:"*) ;;
+                    *) printf 'bead: %s: no repo: label\n' "$id" >&2; bad=$((bad+1)); rc=1 ;;
+                esac
+                ;;
         esac
         # Open claimable-type beads without a partition label are unclaimable unless
         # marked no-loop. epic and event are excluded from bd ready and need no check.

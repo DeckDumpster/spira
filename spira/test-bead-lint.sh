@@ -77,18 +77,20 @@ want "--all reports the bad bead"         "sp-lint-bad: no repo: label" "$out"
 nowant "--all does not report the good one" "sp-lint-good"            "$out"
 
 # -----------------------------------------------------------------------------------------
-# POSITIVE CONTROL — event filter: explicit lint flags the event bead (detector is live).
+# EVENT BEAD: event type has no routing obligation; repo: is not required.
+# The positive control for the repo check lives above: sp-lint-bad (type=task, no repo)
+# still exits 1, proving the check is live.
 # -----------------------------------------------------------------------------------------
 out="$(lint sp-lint-ev.1)"
 rc="$(lint_rc sp-lint-ev.1)"
-is   "event bead fails explicit lint"    "1"                             "$rc"
-want "event bead reported explicitly"    "sp-lint-ev.1: no repo: label"  "$out"
+is   "event bead passes lint"            "0"                              "$rc"
+nowant "event bead not reported"         "sp-lint-ev.1: no repo: label"  "$out"
 
 # -----------------------------------------------------------------------------------------
-# EVENT FILTER: --all skips event-type beads; they are not work beads.
+# EVENT BEAD: --all does not flag the event bead either.
 # -----------------------------------------------------------------------------------------
 out_all="$(lint --all)"
-nowant "--all skips event bead"          "sp-lint-ev.1"                  "$out_all"
+nowant "--all does not flag event bead"  "sp-lint-ev.1"                  "$out_all"
 
 # ==========================================================================================
 echo
