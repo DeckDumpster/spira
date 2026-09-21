@@ -304,6 +304,10 @@ cmd_send() {
 
     if [ "$mailbox" = "operator" ]; then
         _repeat_stamp
+        if { [ "$kind" = "question" ] || [ "$kind" = "decision" ]; } \
+                && [ -n "${BEAD_ID:-}" ] && [ -n "${SPIRA_RUN:-}" ]; then
+            touch "$SPIRA_RUN/$BEAD_ID.operator-wait"
+        fi
     fi
 }
 
