@@ -112,8 +112,8 @@ if not wf_changed and not only_changed:
 
 # Branch touches workflow files. Extract the close reason from the command.
 reason = ""
-# Heredoc: <<'"'"'WORD'"'"'\n...\nWORD (or <<"WORD">)
-hd = re.search(r"<<['\"]?(\w+)['\"]?\n(.*?)\n\1\s*(?:$|#)", cmd, re.DOTALL | re.MULTILINE)
+# Heredoc: <<\x27WORD\x27\n...\nWORD (or <<"WORD"> or <<WORD)
+hd = re.search(r"<<[\x27\"]?(\w+)[\x27\"]?\n(.*?)\n\1\s*(?:$|#)", cmd, re.DOTALL | re.MULTILINE)
 if hd:
     reason = hd.group(2)
 else:

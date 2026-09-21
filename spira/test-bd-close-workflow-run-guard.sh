@@ -154,6 +154,7 @@ BID="$("$BD" -C "$SPIRA_DB" create --title "test-workflow-guard" -l spira --type
 [ -n "$BID" ] || { printf 'SKIP could not create test bead\n'; exit 77; }
 ACTOR="aeon-test-wf"
 BEADS_ACTOR="$ACTOR" "$BD" -C "$SPIRA_DB" update "$BID" --claim 2>/dev/null
+"$BD" -C "$SPIRA_DB" set-state "$BID" "branch=test-wf-branch" 2>/dev/null
 
 CLOSE_CMD="bd -C $SPIRA_DB close $BID --reason-file - <<'REASON'
 done without URL
@@ -241,7 +242,6 @@ rc=0
 make_payload "$CLOSE_BAD_SHA" | \
   env -i PATH="$PATH" HOME="$HOME" SPIRA_AEON=1 BEAD_ID="$BID" BEADS_ACTOR="$ACTOR" \
          SPIRA_DB="$SPIRA_DB" SPIRA_BD="$BD" SPIRA_WORK="$REPO" SPIRA_GH_API="$GH_API" \
-         SPIRA_BD_BRANCH="test-wf-branch" \
          bash "$GUARD" >/dev/null 2>&1 || rc=$?
 wantrc "stale SHA exits 2"                         2                                        "$rc"
 
