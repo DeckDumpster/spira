@@ -699,5 +699,142 @@ want   "N1-ctrl: fallback includes all suites (nc)"      "test-fx-nc.sh" "$out"
 
 # ---------------------------------------------------------------------------
 echo
+echo "Part O: # selects-on: added,mode — invariant-suite selection by diff event"
+# ---------------------------------------------------------------------------
+# A suite with # selects-on: added,mode is selected when a file matching its
+# # covers: glob is ADDED or has its MODE CHANGED, not just content-modified.
+# POSITIVE CONTROL: the suite is selected when the condition fires; the
+# pair verifies it is NOT selected for an unrelated diff (law-a-regression-test-must-be-seen-to-fail).
+
+# Fixture: one suite with # selects-on: added,mode on spira/*.sh
+SD_O="$TMP/suites-o"
+mkdir -p "$SD_O"
+
+cat > "$SD_O/test-fx-o-inv.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: spira/*.sh
+# selects-on: added,mode
+exit 0
+EOF
+
+# Suite with only # covers: (no selects-on) — should be selected for content changes.
+cat > "$SD_O/test-fx-o-cov.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: spira/*.sh
+exit 0
+EOF
+
+chmod +x "$SD_O"/test-fx-o*.sh
+
+# O1: --files with A<tab>spira/new.sh → selects-on:added fires → test-fx-o-inv.sh selected
+FLIST_O_ADDED="$TMP/flist-o-added"
+printf 'A\tspira/new.sh\n' > "$FLIST_O_ADDED"
+
+out="$(bash "$SELECT" --files "$FLIST_O_ADDED" --suite-dir "$SD_O" 2>/dev/null)"
+rc=$?
+iszero  "O1: added file exits 0"                              "$rc"
+want    "O1: selects-on:added fires for added file"          "test-fx-o-inv.sh" "$out"
+want    "O1: covers-only suite also selected"                 "test-fx-o-cov.sh" "$out"
+
+# O1-ctrl: plain filename (no status) → treated as M → selects-on:added does NOT fire
+# but covers-only suite is still selected (spira/new.sh matches spira/*.sh for content match)
+FLIST_O_PLAIN="$TMP/flist-o-plain"
+printf 'spira/new.sh\n' > "$FLIST_O_PLAIN"
+
+out="$(bash "$SELECT" --files "$FLIST_O_PLAIN" --suite-dir "$SD_O" 2>/dev/null)"
+rc=$?
+iszero  "O1-ctrl: plain file exits 0"                                  "$rc"
+notwant "O1-ctrl: selects-on:added NOT fired for plain (M) file"      "test-fx-o-inv.sh" "$out"
+want    "O1-ctrl: covers-only suite selected (content match)"          "test-fx-o-cov.sh" "$out"
+
+# O2: --base/--head with a branch that ADDS spira/new.sh → selects-on:added fires
+REPO_O="$TMP/repo-o"
+git init -q --initial-branch=main "$REPO_O"
+git -C "$REPO_O" config user.email "test@spira.local"
+git -C "$REPO_O" config user.name "Spira Test"
+touch "$REPO_O/placeholder"
+git -C "$REPO_O" add placeholder
+git -C "$REPO_O" commit -q -m "initial"
+BASE_O="$(git -C "$REPO_O" rev-parse HEAD)"
+
+git -C "$REPO_O" checkout -q -b topic-add-script
+# Add spira/new.sh with mode 100644 (NOT executable — the actual defect being guarded)
+mkdir -p "$REPO_O/spira"
+printf '#!/usr/bin/env bash\ntrue\n' > "$REPO_O/spira/new.sh"
+git -C "$REPO_O" add spira/new.sh
+git -C "$REPO_O" commit -q -m "add spira/new.sh"
+HEAD_O_ADD="$(git -C "$REPO_O" rev-parse HEAD)"
+
+out="$(bash "$SELECT" --base "$BASE_O" --head "$HEAD_O_ADD" \
+          --repo "$REPO_O" --suite-dir "$SD_O" 2>/dev/null)"
+rc=$?
+iszero "O2: branch that adds spira/new.sh exits 0"                      "$rc"
+want   "O2: selects-on:added fires for added script"                     "test-fx-o-inv.sh" "$out"
+
+# O2-ctrl: branch that edits README.md (inert) does NOT select the selects-on suite
+git -C "$REPO_O" checkout -q main
+git -C "$REPO_O" checkout -q -b topic-edit-md
+printf '# changed\n' > "$REPO_O/README.md"
+git -C "$REPO_O" add README.md
+git -C "$REPO_O" commit -q -m "edit README"
+HEAD_O_MD="$(git -C "$REPO_O" rev-parse HEAD)"
+
+out="$(SPIRA_SELECT_INERT='*.md *.txt' bash "$SELECT" \
+          --base "$BASE_O" --head "$HEAD_O_MD" \
+          --repo "$REPO_O" --suite-dir "$SD_O" 2>/dev/null)"
+rc=$?
+iszero  "O2-ctrl: .md-only diff exits 0"                                     "$rc"
+notwant "O2-ctrl: selects-on suite NOT selected for .md edit"                "test-fx-o-inv.sh" "$out"
+notwant "O2-ctrl: covers-only suite NOT selected for inert .md edit"         "test-fx-o-cov.sh" "$out"
+
+# O3: --base/--head with a mode change on an existing file
+git -C "$REPO_O" checkout -q main
+git -C "$REPO_O" checkout -q -b topic-mode-change
+mkdir -p "$REPO_O/spira"
+printf '#!/usr/bin/env bash\ntrue\n' > "$REPO_O/spira/old.sh"
+chmod +x "$REPO_O/spira/old.sh"
+git -C "$REPO_O" add spira/old.sh
+git -C "$REPO_O" commit -q -m "add old.sh with +x"
+BASE_O_MODE="$(git -C "$REPO_O" rev-parse HEAD)"
+
+# Strip execute bit — mode change without content change
+chmod -x "$REPO_O/spira/old.sh"
+git -C "$REPO_O" add spira/old.sh
+git -C "$REPO_O" commit -q -m "remove +x from old.sh"
+HEAD_O_MODE="$(git -C "$REPO_O" rev-parse HEAD)"
+
+out="$(bash "$SELECT" --base "$BASE_O_MODE" --head "$HEAD_O_MODE" \
+          --repo "$REPO_O" --suite-dir "$SD_O" 2>/dev/null)"
+rc=$?
+iszero "O3: mode-change branch exits 0"                                  "$rc"
+want   "O3: selects-on:mode fires for mode-changed script"               "test-fx-o-inv.sh" "$out"
+
+# ---------------------------------------------------------------------------
+echo
+echo "Part P: real tree — spira/new.sh (100644) addition selects test-script-exec.sh"
+# ---------------------------------------------------------------------------
+# Verify that the real test-script-exec.sh (# covers: spira/*.sh, # selects-on: added,mode)
+# is selected when a spira/*.sh file is added, using the --files mode with A-status.
+# This is the production scenario from the bead: a branch adds a new script without +x.
+FLIST_P="$TMP/flist-p"
+printf 'A\tspira/new-script.sh\n' > "$FLIST_P"
+
+out_p="$(bash "$SELECT" --files "$FLIST_P" --suite-dir "$HERE" 2>/dev/null)"
+rc_p=$?
+iszero "P1: added spira script exits 0"                                          "$rc_p"
+want   "P1: test-script-exec.sh selected for added spira/new-script.sh"         "test-script-exec.sh" "$out_p"
+
+# Pair: editing an unrelated .md does NOT select test-script-exec.sh
+FLIST_P_MD="$TMP/flist-p-md"
+printf 'README.md\n' > "$FLIST_P_MD"
+
+out_p_md="$(SPIRA_SELECT_INERT='*.md *.txt' bash "$SELECT" \
+    --files "$FLIST_P_MD" --suite-dir "$HERE" 2>/dev/null)"
+rc_p_md=$?
+iszero  "P2: .md-only diff exits 0"                                                  "$rc_p_md"
+notwant "P2: test-script-exec.sh NOT selected for .md edit"                         "test-script-exec.sh" "$out_p_md"
+
+# ---------------------------------------------------------------------------
+echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1

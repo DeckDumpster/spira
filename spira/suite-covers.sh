@@ -32,3 +32,12 @@ suite_exclusive_of() {  # suite_exclusive_of <file-path> -> reason string, or em
     # Stop at "set -" so heredocs inside the suite body cannot spoof the declaration.
     sed -n '/^set -/q;s/^# *exclusive: *//p' "$1" 2>/dev/null | head -1 || true
 }
+
+suite_selects_on_of() {  # suite_selects_on_of <file-path> -> space-separated event tokens, or empty
+    # Tokens are "added" and "mode". A suite with this declaration is selected when a
+    # file matching its # covers: glob undergoes one of the listed diff events, instead
+    # of (not in addition to) the default content-change trigger.
+    # Stop at "set -" so heredocs inside the suite body cannot spoof the declaration.
+    # Commas are treated as delimiters so "added,mode" and "added mode" both work.
+    sed -n '/^set -/q;s/^# *selects-on: *//p' "$1" 2>/dev/null | head -1 | tr ',' ' ' || true
+}

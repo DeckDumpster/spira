@@ -5,7 +5,8 @@
 # legitimately non-executable and excluded. test-*.sh suites are also excluded.
 # Everything else must have +x so a newly-added operator command cannot ship silent.
 #
-# covers: spira/queue.sh spira/verdict.sh spira/bd-update-inflight-guard.sh spira/gate-diag.sh spira/mail-fence.sh spira/suite-state-fence.sh spira/yield.sh
+# covers: spira/*.sh
+# selects-on: added,mode
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0

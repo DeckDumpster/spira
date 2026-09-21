@@ -257,20 +257,50 @@ if [ "$_ARG_ALL" -eq 1 ]; then
     exit 0
 fi
 
-# --base/--head or --files mode: build the changed-file list
+# --base/--head or --files mode: build the changed-file list.
+# _cv_added: files with diff status A (newly added).
+# _cv_mode_changed: files whose file mode changed (--base/--head only, from --raw).
+# Lines in _ARG_FILES may be STATUS<tab>FILE (from gate.sh name-status output) or bare
+# filenames (plain FILE, backwards-compat — treated as M/unknown, not added or mode).
 _cv_changed=""
+_cv_added=""
+_cv_mode_changed=""
 if [ -n "$_ARG_FILES" ]; then
     # Pre-computed file list — read it directly (avoids git diff and lets test
     # fixtures supply the list without git refs).
-    while IFS= read -r _cv_f || [ -n "$_cv_f" ]; do
-        [ -n "$_cv_f" ] || continue
+    while IFS= read -r _cv_ln || [ -n "$_cv_ln" ]; do
+        [ -n "$_cv_ln" ] || continue
+        case "$_cv_ln" in
+            *"	"*)  # STATUS<tab>FILE — from --name-status
+                _cv_st="${_cv_ln%%	*}"
+                _cv_f="${_cv_ln#*	}"
+                ;;
+            *)     # bare filename — no status info
+                _cv_st="M"
+                _cv_f="$_cv_ln"
+                ;;
+        esac
         _cv_changed="$_cv_changed $_cv_f"
+        case "$_cv_st" in A) _cv_added="$_cv_added $_cv_f" ;; esac
     done < "$_ARG_FILES"
 else
-    while IFS= read -r _cv_f || [ -n "$_cv_f" ]; do
-        [ -n "$_cv_f" ] || continue
+    # --base/--head: use --name-status for add detection, --raw for mode detection.
+    while IFS= read -r _cv_ln || [ -n "$_cv_ln" ]; do
+        [ -n "$_cv_ln" ] || continue
+        _cv_st="${_cv_ln%%	*}"
+        _cv_f="${_cv_ln#*	}"
         _cv_changed="$_cv_changed $_cv_f"
-    done < <(git -C "$REPO" diff --name-only "${_ARG_BASE}...${_ARG_HEAD}" 2>/dev/null || true)
+        case "$_cv_st" in A) _cv_added="$_cv_added $_cv_f" ;; esac
+    done < <(git -C "$REPO" diff --name-status "${_ARG_BASE}...${_ARG_HEAD}" 2>/dev/null || true)
+    # Mode-changed files: raw format ":old-mode new-mode ... status<tab>file"
+    # A file is mode-changed when old-mode != new-mode and old-mode != 000000 (not new).
+    while IFS= read -r _cv_ln || [ -n "$_cv_ln" ]; do
+        [ -n "$_cv_ln" ] || continue
+        case "$_cv_ln" in :*) ;; *) continue ;; esac
+        _cv_om="${_cv_ln:1:6}"; _cv_nm="${_cv_ln:8:6}"
+        [ "$_cv_om" != "000000" ] && [ "$_cv_om" != "$_cv_nm" ] && \
+            _cv_mode_changed="$_cv_mode_changed ${_cv_ln##*	}"
+    done < <(git -C "$REPO" diff --raw "${_ARG_BASE}...${_ARG_HEAD}" 2>/dev/null || true)
 fi
 
 if [ -z "$_cv_changed" ]; then
@@ -313,6 +343,15 @@ for _s in $_all; do
     [ -z "$_cov" ] && _cv_nocov="$_cv_nocov $_s"
 done
 
+# Suites with # selects-on: are selected only by the selects-on event loop below,
+# not by the normal covers content-match. Precompute the set to avoid re-reading
+# each suite's declaration inside the O(files * suites) loop.
+_son_suite_list=""
+for _s in $_all; do
+    _son_pre="$(suite_selects_on_of "$SUITE_DIR/$_s")"
+    [ -n "$_son_pre" ] && _son_suite_list="$_son_suite_list $_s"
+done
+
 # For each changed file, find suites whose # covers: globs match.
 # Patterns of the form file#funcname match only when funcname appears in the
 # diff for that file. When a file has only function-level patterns and none of
@@ -341,9 +380,14 @@ for _cv_f in $_cv_changed; do
                     case "$_cv_f" in
                         $_cv_pat)
                             _cv_hit=1
-                            case " $_cv_selected " in
-                                *" $_s "*) ;;
-                                *) _cv_selected="$_cv_selected $_s" ;;
+                            # Suites with # selects-on: are NOT selected here; their
+                            # covers match claims the file (prevents unmapped fallback)
+                            # but selection is deferred to the selects-on event loop.
+                            case " $_son_suite_list " in *" $_s "*) ;; *)
+                                case " $_cv_selected " in
+                                    *" $_s "*) ;;
+                                    *) _cv_selected="$_cv_selected $_s" ;;
+                                esac ;;
                             esac ;;
                     esac ;;
             esac
@@ -425,6 +469,48 @@ if [ -n "$_cv_unmapped" ] && [ "$_ARG_NO_FALLBACK" -eq 0 ]; then
     for _s in $_all; do printf '%s\n' "$_s"; done
     exit 0
 fi
+
+# Selects-on: suites with # selects-on: are selected when a file matching their
+# # covers: glob undergoes a listed diff event (added, mode).  This fires in addition
+# to the normal covers matching above — a suite may appear in _cv_selected already.
+set -f
+for _s in $_all; do
+    _son="$(suite_selects_on_of "$SUITE_DIR/$_s")"
+    [ -n "$_son" ] || continue
+    _cov="$(suite_covers_of "$SUITE_DIR/$_s")"
+    [ -n "$_cov" ] || continue
+    _son_hit=0
+    for _son_ev in $_son; do
+        case "$_son_ev" in
+            added)
+                for _cv_af in $_cv_added; do
+                    for _cv_pat in $_cov; do
+                        case "$_cv_pat" in *\#*) continue ;; esac
+                        case "$_cv_af" in
+                            $_cv_pat) _son_hit=1; break 3 ;;
+                        esac
+                    done
+                done ;;
+            mode)
+                for _cv_mf in $_cv_mode_changed; do
+                    for _cv_pat in $_cov; do
+                        case "$_cv_pat" in *\#*) continue ;; esac
+                        case "$_cv_mf" in
+                            $_cv_pat) _son_hit=1; break 3 ;;
+                        esac
+                    done
+                done ;;
+        esac
+        [ "$_son_hit" -eq 1 ] && break
+    done
+    if [ "$_son_hit" -eq 1 ]; then
+        case " $_cv_selected " in
+            *" $_s "*) ;;
+            *) _cv_selected="$_cv_selected $_s" ;;
+        esac
+    fi
+done
+set +f
 
 # Merge coverage-selected suites with always-run (no-covers) suites; deduplicate.
 _write_mode diff
