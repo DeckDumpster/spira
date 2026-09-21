@@ -1297,7 +1297,21 @@ done
 # leaks everywhere else. sending.sh judges by ancestry alone, never by bead status, so it
 # cannot be talked into deleting work by a database that is merely optimistic.
 # ======================================================================================
-sent="$("$SPIRA_HOME/sending.sh" 2>&1)"
+# SKIP THE WALK WHEN NOTHING CAN HAVE LANDED (hotfix, concierge 2026-09-21, sp-len2q). The
+# Sending only ever has work after a landing moved the base: 2603 passes today logged
+# "0 sent" and five logged sends, each right after a landing. Walk when the base sha
+# differs from the last walk's, or every 30 minutes regardless (other repositories land
+# rarely and outside this check).
+_send_stamp="$SPIRA_RUN/sending.base"
+_send_base="$(git -C "$SPIRA_HOME/.." rev-parse origin/main 2>/dev/null || true)"
+_send_age=$(( $(date +%s) - $(stat -c %Y "$_send_stamp" 2>/dev/null || echo 0) ))
+if [ -n "$_send_base" ] && [ "$(cat "$_send_stamp" 2>/dev/null)" = "$_send_base" ] && [ "$_send_age" -lt 1800 ]; then
+    log "sending: base $(printf '%.8s' "$_send_base") unchanged since the last walk ${_send_age}s ago — skipped"
+    sent=""
+else
+    sent="$("$SPIRA_HOME/sending.sh" 2>&1)"
+    printf '%s\n' "$_send_base" > "$_send_stamp"
+fi
 [ -n "$sent" ] && printf '%s\n' "$sent"
 n_sent="$(grep -c '^SENT' <<< "$sent" || true)"
 # ONE ACT PER BRANCH, NAMING IT, rather than one act carrying a count. "sent 2 landed
