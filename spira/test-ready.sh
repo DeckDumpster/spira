@@ -56,7 +56,7 @@ for a in "$@"; do
 done
 if [[ "$*" == *"is-active"* ]]; then
     active="${FAKE_SC_ACTIVE:-}"
-    if [[ -n "$active" && "$unit" == "$active" ]]; then
+    if [[ -n "$active" ]] && [[ " $active " == *" $unit "* ]]; then
         [[ "$*" == *"--quiet"* ]] && exit 0
         printf 'active\n'; exit 0
     else
@@ -66,7 +66,7 @@ if [[ "$*" == *"is-active"* ]]; then
 fi
 if [[ "$*" == *"is-enabled"* ]]; then
     enabled="${FAKE_SC_ENABLED:-}"
-    if [[ -n "$enabled" && "$unit" == "$enabled" ]]; then
+    if [[ -n "$enabled" ]] && [[ " $enabled " == *" $unit "* ]]; then
         printf 'enabled\n'; exit 0
     fi
     exit 1
@@ -432,13 +432,24 @@ out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
                  "FAKE_LOOM_RESULT=200 500ms" --)"
 want "loom-over-budget: WARN line present"      "  WARN  loom answers 200 but over budget" "$out"
 
-# UNKN: loom binary not built.
-echo "loom binary not built"
+# WARN: loom binary absent AND loom unit not installed (installer skipped it — known absence).
+echo "loom binary absent, unit not installed"
 out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
                  "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
                  "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
                  "SPIRA_LOOM_BIN=/nonexistent/loom" --)"
+want "loom-warn: WARN line present"             "  WARN  loom not installed"   "$out"
+nowant "loom-warn: no ? line"                   "  ?     loom"                 "$out"
+nowant "loom-warn: no FAIL line"                "  FAIL  loom"                 "$out"
+
+# UNKN: loom binary absent but loom unit IS installed (something wrong — binary should exist).
+echo "loom binary absent, unit installed"
+out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
+                 "FAKE_SC_ENABLED=spira-sentinel-prod.timer spira-loom-prod.service" \
+                 "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
+                 "SPIRA_LOOM_BIN=/nonexistent/loom" -- || true)"
 want "loom-unkn: ? line present"                "  ?     loom"                 "$out"
+nowant "loom-unkn: no WARN line"                "  WARN  loom not installed"   "$out"
 nowant "loom-unkn: no FAIL"                     "  FAIL  loom"                 "$out"
 
 # ===========================================================================
@@ -556,14 +567,25 @@ echo "--- exit code ---"
 echo "exit 1 when sentinel timer is inactive"
 run_ready "FAKE_SC_ACTIVE=" -- >/dev/null 2>&1 && bad "exit-fail: should exit 1 on FAIL" "exited 0" || ok "exit-fail: exits 1 on FAIL"
 
-# Exit 1 when ? is present (unknown check).
+# Exit 1 when ? is present (binary absent but loom unit installed → UNKN).
 echo "exit 1 when check unknown"
 run_ready "SPIRA_LOOM_BIN=/nonexistent/loom" \
           "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
-          "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
+          "FAKE_SC_ENABLED=spira-sentinel-prod.timer spira-loom-prod.service" \
           "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" -- >/dev/null 2>&1 \
     && bad "exit-unkn: should exit 1 on ?" "exited 0" \
     || ok "exit-unkn: exits 1 on ?"
+
+# Exit 0 when loom not installed (binary absent + no unit → WARN, not an error).
+echo "exit 0 when loom not installed"
+run_ready "SPIRA_LOOM_BIN=/nonexistent/loom" \
+          "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
+          "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
+          "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
+          "FAKE_TMUX_PANES=panel %1
+health %2" -- >/dev/null 2>&1 \
+    && ok "exit-loom-warn: exits 0 when loom not installed" \
+    || bad "exit-loom-warn: should exit 0 when loom not installed" "exited non-zero"
 
 # Exit 0 when all pass/warn.
 echo "exit 0 when armed"
