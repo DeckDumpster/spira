@@ -16,6 +16,11 @@
 # 5. MISSING-TARGET (gap G10). A newly-installed unit whose ExecStart is not
 #    executable is refused, not enabled, via unit-ensure.sh's own
 #    _ue_execstart_ok — not a copy of it.
+# 6. BINARY GUARD (sp-5dcpj). An already-enabled unit whose binary is missing is
+#    disabled on the next ensure regardless of whether cargo is on PATH — the old
+#    guard skipped the check entirely whenever cargo was present, which is exactly
+#    "cargo present, build never run" — the case that produced 1500+ failed broker
+#    ticks. Paired with a binary-present run that must NOT disable it.
 #
 # THE FIXTURE builds from the real installer (law-prefer-the-real-dependency).
 # A mock systemctl records calls without touching systemd.
@@ -67,6 +72,15 @@ chmod +x "$TMP/sc"
 # path that does not exist).
 printf '#!/bin/sh\nexec "$@"\n' > "$BIN/spira-supervise" && chmod +x "$BIN/spira-supervise"
 
+# A real, executable czar-pass binary so the BINARY GUARD is quiet by default.
+# _ENSURE_CZAR_PASS_BIN overrides it per-call (the BINARY GUARD case below points it
+# at a path that does not exist).
+printf '#!/bin/sh\n' > "$BIN/spira-czar-pass" && chmod +x "$BIN/spira-czar-pass"
+
+# A fake cargo on PATH — the guard must fire on a missing binary regardless of
+# cargo's presence (the case the old cargo-gated guard missed).
+printf '#!/bin/sh\nexit 0\n' > "$BIN/cargo" && chmod +x "$BIN/cargo"
+
 # ensure <args> — run unit-ensure.sh in a controlled environment.
 ensure() {
     env -i PATH="$PATH" HOME="$TMP/home" \
@@ -80,6 +94,7 @@ ensure() {
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_SYSTEMCTL="$TMP/sc" \
         SPIRA_SUPERVISE_BIN="${_ENSURE_SUPERVISE:-$BIN/spira-supervise}" \
+        SPIRA_CZAR_PASS_BIN="${_ENSURE_CZAR_PASS_BIN:-$BIN/spira-czar-pass}" \
         bash "$HERE/../systemd/unit-ensure.sh" "$@" 2>&1
 }
 
@@ -216,4 +231,32 @@ want "MISSING-TARGET: present ExecStart target is enabled" \
 
 # ==========================================================================
 echo
+echo "BINARY GUARD — enabled unit disabled when its binary is missing, cargo or not (sp-5dcpj):"
+# ==========================================================================
+# POSITIVE CONTROL FIRST (law-absence-needs-a-positive-control): drive a content
+# change so the script passes the early no-op exit, with a fake cargo already on
+# PATH (added above), and a missing czar-pass binary. The guard must disable the
+# already-enabled timer despite cargo being present — the exact case the old
+# `! command -v cargo` gate missed.
+printf '\n# force a content change to re-enter the changed path (guard case)\n' >> "$czar_timer"
+: > "$SC_LOG"
+_ENSURE_CZAR_PASS_BIN="$TMP/nonexistent-czar-pass"
+guard_out="$(ensure)"
+unset _ENSURE_CZAR_PASS_BIN
+want "BINARY GUARD: disables the enabled timer whose binary is missing" \
+     "DISABLED spira-czar-pass-prod.timer" "$guard_out"
+if grep -q "disable spira-czar-pass-prod.timer" "$SC_LOG"; then
+    ok "BINARY GUARD: systemctl disable was actually called"
+else
+    bad "BINARY GUARD: systemctl disable was actually called" "$(cat "$SC_LOG")"
+fi
+
+# PAIR: same trigger, binary present — the guard must stay quiet.
+printf '\n# force another content change (no-guard case)\n' >> "$czar_timer"
+: > "$SC_LOG"
+noguard_out="$(ensure)"
+nowant "BINARY GUARD: does not disable when the binary is executable" \
+     "DISABLED spira-czar-pass" "$noguard_out"
+
+# ==========================================================================
 tl_summary

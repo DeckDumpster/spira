@@ -173,10 +173,15 @@ else
     echo "      Build it: cd \$SPIRA_REPO/loom && cargo build --release, then re-run install.sh." >&2
 fi
 
-# spira-broker.service/.timer require the compiled broker binary. Same hazard as loom.
+# spira-broker.service/.timer require the compiled broker binary. The broker also has no
+# producer yet — nothing in the harness submits intents to it. Install the units when the
+# binary is present; enable the timer only when SPIRA_BROKER_ENABLE=1 as well (the
+# operator's explicit opt-in while a producer is in development).
 if [ -x "${SPIRA_BROKER_BIN:-}" ]; then
     UNITS+=(spira-broker.service spira-broker.timer)
-    ENABLE+=("$(inst_name spira-broker.timer)")
+    if [ "${SPIRA_BROKER_ENABLE:-0}" = "1" ]; then
+        ENABLE+=("$(inst_name spira-broker.timer)")
+    fi
 else
     OPTIONAL+=(spira-broker.service spira-broker.timer); UNBUILT+=(spira-broker.service spira-broker.timer)
     echo "note: broker binary not built at ${SPIRA_BROKER_BIN:-<path not set>} — not installing spira-broker.service." >&2
