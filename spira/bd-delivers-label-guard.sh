@@ -88,7 +88,7 @@ db  = os.environ.get("SPIRA_DB", "")
 producer = ""
 if db and bid_hit and bid_hit != "unknown":
     try:
-        r = subprocess.run([bd, "-C", db, "show", bid_hit, "--format", "json"],
+        r = subprocess.run([bd, "-C", db, "show", bid_hit, "--json"],
                            capture_output=True, text=True, timeout=10)
         if r.returncode == 0 and r.stdout.strip():
             b = json.loads(r.stdout)

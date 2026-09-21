@@ -75,11 +75,16 @@ out=$(run_guard_aeon "bd -C $SPIRA_DB label remove $PROBE_ID delivers:action" ||
 want "PC: blocked by guard"              "BLOCKED by bd-delivers-label-guard" "$out"
 want "PC: names the producer"            "Producer:"                          "$out"
 
-# Confirm label count stays at 1 (guard blocked, so nothing ran).
-_cnt="$("$SPIRA_BD" -C "$SPIRA_DB" sql \
-    "SELECT COUNT(*) FROM labels WHERE issue_id='$PROBE_ID' AND label LIKE 'delivers%'" \
-    2>/dev/null | tail -1 | tr -d ' |')"
-is "PC: delivers: label remains after blocked remove" "1" "$_cnt"
+# Confirm delivers: label is still present (guard blocked, command never ran).
+_delivers_count="$("$SPIRA_BD" -C "$SPIRA_DB" label list "$PROBE_ID" --json 2>/dev/null \
+    | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(sum(1 for l in (d if isinstance(d, list) else []) if str(l).startswith("delivers:")))
+except Exception:
+    print(0)' 2>/dev/null)"
+is "PC: delivers: label remains after blocked remove" "1" "${_delivers_count:-0}"
 
 # ==========================================================================
 echo
