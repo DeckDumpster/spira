@@ -130,6 +130,9 @@ if os.access(fence, os.X_OK):
 guard = os.path.join(spira_home, 'bd-close-unacked-guard.sh')
 if os.access(guard, os.X_OK):
     pre_hooks.append({'type': 'command', 'command': guard, 'timeout': 5})
+delivers_guard = os.path.join(spira_home, 'bd-delivers-label-guard.sh')
+if os.access(delivers_guard, os.X_OK):
+    pre_hooks.append({'type': 'command', 'command': delivers_guard, 'timeout': 5})
 if pre_hooks:
     hooks['PreToolUse'] = [{'hooks': pre_hooks}]
 print(json.dumps({'hooks': hooks}))
@@ -1917,7 +1920,13 @@ print(len([x for x in (d if isinstance(d,list) else [d])
             # SAID OUT LOUD. A silent decline is indistinguishable from the check never running.
             log "$FAYTH: $BEAD_ID closed with nothing committed and NOT reopened — delivers ($delivers) verified"
         else
-            bead_reopen "$BEAD_ID" delivers-mismatch "Reopened by aeon.sh: $_delivers_fail. Set delivers:TYPE labels that match the evidence actually produced."
+            _producer="$(bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
+import sys,json
+try: d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print(d.get("created_by","") or "")
+except Exception: print("")' 2>/dev/null)"
+            _producer_msg=""
+            [ -n "$_producer" ] && _producer_msg=" Escalate to $_producer if the criterion cannot be met — the delivers: label may not be removed."
+            bead_reopen "$BEAD_ID" delivers-mismatch "Reopened by aeon.sh: $_delivers_fail. Set delivers:TYPE labels that match the evidence actually produced.${_producer_msg}"
             log "$FAYTH: $BEAD_ID REOPENED — delivers not verified: $_delivers_fail"
         fi
     else
