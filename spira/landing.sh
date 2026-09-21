@@ -1164,7 +1164,8 @@ for i in d:
                     break
                 fi
                 _land_state "repo=$name" "branch=$br" "phase=gate"
-                gate_out="$(SPIRA_GATE_LOCK_WAIT="$(gate_lock_wait)" SPIRA_GATE_BEAD="$id" \
+                _gate_wait="$(gate_lock_wait)"
+                gate_out="$(SPIRA_GATE_LOCK_WAIT="$_gate_wait" SPIRA_GATE_BEAD="$id" \
                     "$SPIRA_HOME/gate.sh" "$br" "$name" 2>&1)"
                 gate_rc=$?
                 _land_state "repo=$name" "branch=$br"
@@ -1297,7 +1298,8 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
         # and a branch's affinity is recorded precisely because that is not always true
         # (law-branch-affinity-is-recorded).
         _land_state "repo=$name" "branch=$br" "phase=gate"
-        gate_out="$(SPIRA_GATE_LOCK_WAIT="$(gate_lock_wait)" SPIRA_GATE_BEAD="$id" \
+        _gate_wait="$(gate_lock_wait)"
+        gate_out="$(SPIRA_GATE_LOCK_WAIT="$_gate_wait" SPIRA_GATE_BEAD="$id" \
             "$SPIRA_HOME/gate.sh" "$br" "$name" 2>&1)"
         gate_rc=$?
         _land_state "repo=$name" "branch=$br"
