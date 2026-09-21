@@ -1061,6 +1061,8 @@ unsent_keys() {
         if _brs="$(git -C "$_p" for-each-ref --format='%(refname:short) %(committerdate:unix)' 'refs/heads/spira/*' 2>/dev/null)"; then
             while read -r _b _ts; do
                 [ -n "$_b" ] || continue
+                # queue/* are not bead branches; they are cleaned up by verdict.sh.
+                case "$_b" in spira/queue/*) continue ;; esac
                 # BD_TIMEOUT, NOT `timeout 2`. bdjson is a SHELL FUNCTION, and timeout is an
                 # external binary that cannot execute one: `timeout 2 bdjson ...` died with
                 # "timeout: failed to execute process: No such file or directory" and rc=127
