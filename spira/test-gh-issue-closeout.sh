@@ -585,5 +585,89 @@ MAILSTUB
     want "log names the already-answered ask" "already answered" "$scan_out"
 fi
 
+_blocking_deps() {  # count open BLOCKING deps on a bead
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
+        | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: raise SystemExit(0)
+d = d if isinstance(d, list) else [d]
+deps = d[0].get("dependencies") or []
+print(len([x for x in deps
+    if x.get("status") != "closed" and x.get("dependency_type") == "blocks"]))' 2>/dev/null
+}
+
+printf '\n19. _gh_close_ask_unblock converts a blocking ask to relates_to (backfill):\n'
+export SPIRA_ASK_LABEL=needs-operator
+testdb_seed <<JSONL
+{"id":"sp-ct1","title":"Closeout blocking test bead","status":"closed","issue_type":"bug","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#101","updated_at":"2026-09-05T00:00:00Z"}
+JSONL
+_ct1_subj="Close GitHub issue github:fixture/testrepo#101 for bead sp-ct1"
+_ct1_ask="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" create "$_ct1_subj" \
+    -l "needs-operator,overseer" --type decision --silent 2>/dev/null)" || _ct1_ask=""
+"${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep add "sp-ct1" "$_ct1_ask" >/dev/null 2>&1 || true
+is "SEEN RED: blocking dep exists before backfill" "1" "$(_blocking_deps sp-ct1)"
+_ct1_log="$(_gh_close_ask_unblock "$_ct1_subj" "sp-ct1" 2>&1)"
+if [[ "$_ct1_log" == *"converted blocking ask"* ]]; then
+    ok "backfill: conversion logged"
+else
+    bad "backfill: conversion logged" "got: $_ct1_log"
+fi
+is "blocking dep removed after backfill" "0" "$(_blocking_deps sp-ct1)"
+
+printf '\n20. new ask wired with dep relate: bd blocked empty; positive control detects blocking dep:\n'
+testdb_seed <<JSONL
+{"id":"sp-ct2","title":"Closeout non-blocking ask test","status":"closed","issue_type":"bug","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#102","updated_at":"2026-09-05T00:00:00Z"}
+{"id":"sp-ct2d","title":"dummy blocker for positive control","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-05T00:00:00Z"}
+JSONL
+# Stub mail.sh: creates ask bead with dep relate (the path the guard enforces).
+cat > "$SH/mail.sh" <<'MAILSTUB'
+#!/usr/bin/env bash
+_bead=""; _subj=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --bead)    _bead="$2"; shift 2 ;;
+        --subject) _subj="$2"; shift 2 ;;
+        *) shift ;;
+    esac
+done
+body="$(cat)"
+if [ -n "$_bead" ] && [ -n "${SPIRA_DB:-}" ] && [ -n "$_subj" ]; then
+    _lab="${SPIRA_ASK_LABEL:-needs-operator}"
+    _dec="$(printf '%s\n' "$body" | "${SPIRA_BD:-bd}" -C "$SPIRA_DB" create "$_subj" \
+        -l "$_lab,overseer" --type decision --body-file - --silent 2>/dev/null)" || _dec=""
+    [ -n "$_dec" ] && \
+        "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep relate "$_dec" "$_bead" >/dev/null 2>&1 || true
+fi
+exit 0
+MAILSTUB
+chmod +x "$SH/mail.sh"
+cat > "$TMP/bin/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+case " $* " in *" issue view "*) printf '{"state":"OPEN"}\n' ;; esac
+exit 0
+GHSTUB
+chmod +x "$TMP/bin/gh"
+_ct2_out="$(gh_issue_ask_unlanded "sp-ct2" "github:fixture/testrepo#102" 2>&1)"
+if [[ "$_ct2_out" == *"asked operator"* ]]; then
+    ok "ask filed: 'asked operator' logged"
+else
+    bad "ask filed: 'asked operator' logged" "got: $_ct2_out"
+fi
+_ct2_ask_n="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" list \
+    --status open --label needs-operator --limit 0 --brief --json 2>/dev/null \
+    | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: raise SystemExit(0)
+rows = d if isinstance(d, list) else [d]
+want = "Close GitHub issue github:fixture/testrepo#102 for bead sp-ct2"
+print(sum(1 for r in rows if want == (r.get("title") or "")))' 2>/dev/null)"
+is "ask bead exists after filing" "1" "$_ct2_ask_n"
+is "bd blocked sp-ct2 is empty (dep relate, not dep add)" "0" "$(_blocking_deps sp-ct2)"
+# Positive control: a hand-added blocking dep IS reported by the same check.
+"${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep add "sp-ct2" "sp-ct2d" >/dev/null 2>&1 || true
+is "positive control: manual blocking dep is detected" "1" "$(_blocking_deps sp-ct2)"
+
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

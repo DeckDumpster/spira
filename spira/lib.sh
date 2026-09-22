@@ -7158,15 +7158,52 @@ REASON
     fi
 }
 
+# _gh_close_ask_unblock — backfill: convert any blocking "Close GitHub issue" ask
+# for a work bead to dep relate. One log line per conversion.
+_gh_close_ask_unblock() {  # _gh_close_ask_unblock <subject> <work-bead-id>
+    local _subj="$1" _id="$2" _ask_id _blocks
+    [ -n "${SPIRA_DB:-}" ] || return 0
+    _ask_id="$(bdjson list --status open \
+        --label "${SPIRA_ASK_LABEL:?SPIRA_ASK_LABEL is unset — source conf.sh}" --limit 0 2>/dev/null \
+        | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: raise SystemExit(0)
+rows = d if isinstance(d, list) else [d]
+want = sys.argv[1]
+for r in rows:
+    if want == (r.get("title") or ""):
+        print(r.get("id", ""))
+        break
+' "$_subj" 2>/dev/null)"
+    [ -z "$_ask_id" ] && return 0
+    _blocks="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$_id" --json 2>/dev/null \
+        | sed -n '/^[[{]/,$p' \
+        | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: raise SystemExit(0)
+d = d if isinstance(d, list) else [d]
+ask = sys.argv[1]
+deps = d[0].get("dependencies") or []
+print("yes" if any(
+    (dep.get("dependency_type") or "") == "blocks"
+    and (dep.get("id") or "") == ask
+    for dep in deps
+) else "")' "$_ask_id" 2>/dev/null)"
+    [ "$_blocks" != "yes" ] && return 0
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep remove "$_id" "$_ask_id" >/dev/null 2>&1 || true
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep relate "$_ask_id" "$_id" >/dev/null 2>&1 || true
+    log "gh-closeout $_id: converted blocking ask $_ask_id to relates_to"
+}
+
 # gh_issue_ask_unlanded — ask the operator what to do about a GitHub issue whose
 # bead closed without a commit landing on the base branch.
 #
 # One ask per issue, deduped through ask_already_open while it is still open — and
-# through ask_closed_subject once he has answered it. Answering closes the tracking
-# decision bead but writes nothing else, so a scan that only checked ask_already_open
-# saw no open ask and filed an identical one next pass, forever — the same GitHub
-# issue re-asked several times in one afternoon. Finding the answered ask and writing
-# gh-closed/<id> here is what makes answering it actually stick.
+# through ask_closed_subject once he has answered it (writes gh-closed/<id> so
+# answering sticks). Wired with dep relate, never dep add, so a reopened bead is
+# not stranded behind the ask.
 gh_issue_ask_unlanded() {  # gh_issue_ask_unlanded <bead-id> <external-ref> [draft]
     local id="$1" ext_ref="$2" draft="${3:-}"
     local _subj _dflt gh_part gh_repo issue_n _st _err _rc _answered
@@ -7191,6 +7228,8 @@ gh_issue_ask_unlanded() {  # gh_issue_ask_unlanded <bead-id> <external-ref> [dra
 
     [ -x "${SPIRA_HOME}/mail.sh" ] || return 0
     _subj="Close GitHub issue $ext_ref for bead $id"
+    # Backfill: if an existing ask blocks this work bead, convert to relates_to.
+    _gh_close_ask_unblock "$_subj" "$id"
     ask_already_open "$_subj" && return 0
 
     _answered="$(ask_closed_subject "$_subj")"
