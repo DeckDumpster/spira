@@ -140,11 +140,13 @@ printf '%s\n' "${FAKE_LOOM_RESULT:-200 42ms}"
 MOCK
 chmod +x "$BIN/loom-probe"
 
-# Fake tmux — controlled by FAKE_TMUX_PANES (list-panes output).
+# Fake tmux — controlled by FAKE_TMUX_PANES (list-panes output) and
+# FAKE_TMUX_SERVER_UP (default 1; set to 0 to simulate no server — list-panes exits 1).
 # Use ${VAR-default} (no colon) so empty string means "no panes", not "use default".
 cat > "$BIN/tmux" <<'MOCK'
 #!/usr/bin/env bash
 if [[ "$*" == *"list-panes"* ]]; then
+    [[ "${FAKE_TMUX_SERVER_UP:-1}" = "0" ]] && exit 1
     panes="${FAKE_TMUX_PANES-panel %1
 health %2}"
     [ -n "$panes" ] && printf '%s\n' "$panes"
@@ -560,6 +562,36 @@ want "cockpit-pass: pane id shown panel"        "%1"                            
 want "cockpit-pass: pane id shown health"       "%2"                                  "$out"
 
 # ===========================================================================
+# COCKPIT — not installed (no unit AND no tmux server → skip, not FAIL)
+# ===========================================================================
+echo ""
+echo "--- cockpit not installed ---"
+
+# POSITIVE CONTROL: cockpit unit enabled, snapshot absent → FAIL (not skip).
+# Verifies the guard fires before trusting the skip path.
+echo "positive control: cockpit unit enabled, snapshot absent"
+rm -f "$RUN/cockpit.env"
+out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
+                 "FAKE_SC_ENABLED=spira-sentinel-prod.timer spira-cockpit-prod.service" \
+                 "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
+                 "FAKE_TMUX_SERVER_UP=0" -- || true)"
+want "ckp-no-inst-ctrl: FAIL for missing snapshot"  "  FAIL  no cockpit snapshot"  "$out"
+nowant "ckp-no-inst-ctrl: no skip"                  "  skip  cockpit"              "$out"
+
+# SKIP: no cockpit unit and no tmux server → skip, ready.sh exit 0.
+echo "cockpit not installed: no unit, no tmux server"
+rm -f "$RUN/cockpit.env"
+out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
+                 "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
+                 "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
+                 "FAKE_TMUX_SERVER_UP=0" --)"
+want "ckp-no-inst: skip line present"               "  skip  cockpit"              "$out"
+nowant "ckp-no-inst: no FAIL for snapshot"          "  FAIL  no cockpit snapshot"  "$out"
+
+# Restore snapshot for subsequent tests.
+printf 'SP_AT=0\n' > "$RUN/cockpit.env"
+
+# ===========================================================================
 # EXIT CODE
 # ===========================================================================
 echo ""
@@ -577,6 +609,17 @@ run_ready "SPIRA_LOOM_BIN=/nonexistent/loom" \
           "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" -- >/dev/null 2>&1 \
     && bad "exit-unkn: should exit 1 on ?" "exited 0" \
     || ok "exit-unkn: exits 1 on ?"
+
+# Exit 0 when cockpit not installed (no unit + no tmux server → skip, not error).
+echo "exit 0 when cockpit not installed"
+rm -f "$RUN/cockpit.env"
+run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
+          "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
+          "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
+          "FAKE_TMUX_SERVER_UP=0" -- >/dev/null 2>&1 \
+    && ok "exit-ckp-skip: exits 0 when cockpit not installed" \
+    || bad "exit-ckp-skip: should exit 0 when cockpit not installed" "exited non-zero"
+printf 'SP_AT=0\n' > "$RUN/cockpit.env"
 
 # Exit 0 when loom not installed (binary absent + no unit → skip, not an error).
 echo "exit 0 when loom not installed"

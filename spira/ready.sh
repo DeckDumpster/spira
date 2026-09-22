@@ -260,46 +260,54 @@ fi
 echo ""
 echo "cockpit"
 # =============================================================================
-# SNAPSHOT FRESHNESS. A missing or stale cockpit.env means the collector is not
-# writing — the exact condition that went undetected for 71 minutes while every
-# other health surface reported OK (sp-itsy). Check before the pane checks because
-# a pane that cannot read any snapshot is useless even if the pane itself exists.
 _rdy_snap="$SPIRA_RUN/cockpit.env"
 _rdy_stale_s="${SPIRA_COCKPIT_STALE_S:-120}"
-if [ ! -f "$_rdy_snap" ]; then
-    FAIL "no cockpit snapshot at $_rdy_snap — collector has not written yet" \
-         "Check: systemctl --user status $(spira_unit cockpit service)"
+_ckp_unit="$(spira_unit cockpit service)"
+_ckp_tmux_up=0
+if command -v tmux >/dev/null 2>&1 && tmux list-panes -a >/dev/null 2>&1; then
+    _ckp_tmux_up=1
+fi
+
+if [ "$_ckp_unit" = "?" ] && [ "$_ckp_tmux_up" = "0" ]; then
+    # No unit and no tmux server: cockpit is not installed here. A missing
+    # snapshot is not late — it was never expected (same rule as loom's skip).
+    SKIP "cockpit not installed — no unit and no tmux server"
 else
-    _rdy_snap_age=$(( $(date +%s) - $(stat --format='%Y' "$_rdy_snap" 2>/dev/null || echo 0) ))
-    if [ "$_rdy_snap_age" -gt "$_rdy_stale_s" ]; then
-        FAIL "cockpit snapshot stale — last written ${_rdy_snap_age}s ago (limit ${_rdy_stale_s}s)" \
-             "The collector is not writing. Check: systemctl --user status $(spira_unit cockpit service)"
+    # Snapshot freshness: a missing or stale cockpit.env means the collector has stopped.
+    # Check before pane checks — a pane that cannot read a snapshot is useless even if present.
+    if [ ! -f "$_rdy_snap" ]; then
+        FAIL "no cockpit snapshot at $_rdy_snap — collector has not written yet" \
+             "Check: systemctl --user status $_ckp_unit"
     else
-        PASS "cockpit snapshot fresh — $_rdy_snap (${_rdy_snap_age}s old)"
+        _rdy_snap_age=$(( $(date +%s) - $(stat --format='%Y' "$_rdy_snap" 2>/dev/null || echo 0) ))
+        if [ "$_rdy_snap_age" -gt "$_rdy_stale_s" ]; then
+            FAIL "cockpit snapshot stale — last written ${_rdy_snap_age}s ago (limit ${_rdy_stale_s}s)" \
+                 "The collector is not writing. Check: systemctl --user status $_ckp_unit"
+        else
+            PASS "cockpit snapshot fresh — $_rdy_snap (${_rdy_snap_age}s old)"
+        fi
+    fi
+    # Check for the two tagged panes (panel, health) that layout.sh creates.
+    if ! command -v tmux >/dev/null 2>&1; then
+        WARN "tmux not on PATH — cannot check cockpit panes" \
+             "Install tmux or set SPIRA_PATH in spira.conf."
+    elif [ "$_ckp_tmux_up" = "0" ]; then
+        WARN "no tmux server running — cockpit panes absent" \
+             "Build the cockpit: $SPIRA_COCKPIT/layout.sh up"
+    else
+        for _ctag in panel health; do
+            _cpane="$(tmux list-panes -a -F '#{@cockpit} #{pane_id}' 2>/dev/null \
+                | awk -v t="$_ctag" '$1==t {print $2; exit}')"
+            if [ -n "$_cpane" ]; then
+                PASS "cockpit $_ctag pane present — $_cpane"
+            else
+                WARN "cockpit $_ctag pane absent" \
+                     "Rebuild the cockpit: $SPIRA_COCKPIT/layout.sh up"
+            fi
+        done
     fi
 fi
-unset _rdy_snap _rdy_snap_age _rdy_stale_s
-
-# Check for the two tagged panes (panel, health) that layout.sh creates. Each carries
-# the tmux pane-scoped option @cockpit set to its role.
-if ! command -v tmux >/dev/null 2>&1; then
-    WARN "tmux not on PATH — cannot check cockpit panes" \
-         "Install tmux or set SPIRA_PATH in spira.conf."
-elif ! tmux list-panes -a >/dev/null 2>&1; then
-    WARN "no tmux server running — cockpit panes absent" \
-         "Build the cockpit: $SPIRA_COCKPIT/layout.sh up"
-else
-    for _ctag in panel health; do
-        _cpane="$(tmux list-panes -a -F '#{@cockpit} #{pane_id}' 2>/dev/null \
-            | awk -v t="$_ctag" '$1==t {print $2; exit}')"
-        if [ -n "$_cpane" ]; then
-            PASS "cockpit $_ctag pane present — $_cpane"
-        else
-            WARN "cockpit $_ctag pane absent" \
-                 "Rebuild the cockpit: $SPIRA_COCKPIT/layout.sh up"
-        fi
-    done
-fi
+unset _rdy_snap _rdy_snap_age _rdy_stale_s _ckp_unit _ckp_tmux_up
 
 # =============================================================================
 echo ""
