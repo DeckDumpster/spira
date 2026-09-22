@@ -218,12 +218,13 @@ check() {
     # THE POSITIVE CONTROL: at least one release tag must exist before the check can claim
     # anything is current. No tags means the check cannot prove currency or detect a mismatch.
     # Artifact mode: SPIRA_REPO has no .git; fall back to gh release list when
-    # SPIRA_GH_INTAKE_REPO is set (the same repo where published releases live).
+    # SPIRA_RELEASE_REPO is set. Defaults to SPIRA_GH_INTAKE_REPO for single-repo installs.
     local all_tags=""
     all_tags="$(git -C "$SPIRA_REPO" tag -l 'spira-release-*' 2>/dev/null | sort)"
-    if [ -z "$all_tags" ] && [ -n "${SPIRA_GH_INTAKE_REPO:-}" ]; then
+    local _rel_repo="${SPIRA_RELEASE_REPO:-${SPIRA_GH_INTAKE_REPO:-}}"
+    if [ -z "$all_tags" ] && [ -n "$_rel_repo" ]; then
         local _rel_json=""
-        _rel_json="$(ghq release list --repo "$SPIRA_GH_INTAKE_REPO" --json tagName,isDraft 2>/dev/null)" \
+        _rel_json="$(ghq release list --repo "$_rel_repo" --json tagName,isDraft 2>/dev/null)" \
             || _rel_json=""
         if [ -n "$_rel_json" ]; then
             all_tags="$(printf '%s' "$_rel_json" | python3 -c '

@@ -19,14 +19,16 @@
 #   4. Fetch the release tarball from the forge.
 #   5. Check DB migration compatibility before drain.
 #   6. Stop the promote timer (retired by this command).
-#   7. world.sh drain — wait for live aeons to finish; refuse if they do not.
+#   7. Pre-deploy health check: run doctor.sh; refuse if any FAIL (pre-existing issue, not release).
+#   8. world.sh drain — wait for live aeons to finish; refuse if they do not.
 #      With --force: drain --timeout 0, then slay each live aeon (--keep-work --reopen).
-#   8. Write SPIRA_PROD to spira.conf before restarting services.
-#   9. activate.sh — unpack, atomic symlink swap, daemon-reload, restart units.
-#  10. systemd/install.sh — re-render unit files with SPIRA_PROD=$SPIRA_RELEASES/current/spira.
-#  11. cockpit/layout.sh ensure.
-#  12. world.sh resume.
-#  13. Health check: world.sh status, doctor.sh, skew.sh check.
+#   9. Write SPIRA_PROD to spira.conf before restarting services.
+#  10. activate.sh — unpack, atomic symlink swap, daemon-reload, restart units.
+#  11. activated release's install.sh — re-render unit files with SPIRA_HOME and SPIRA_PROD
+#      set to the release, so unit ExecStart paths are not stamped from the invoking directory.
+#  12. cockpit/layout.sh ensure.
+#  13. world.sh resume.
+#  14. Health check: world.sh status, doctor.sh, skew.sh check.
 #      On failure: restore prior state, restart, resume, exit 1 naming what failed.
 #
 # EXIT
@@ -278,6 +280,18 @@ _pre_deploy_unit_state="$SPIRA_RUN/pre-deploy-unit-state.$$"
     "spira-*-${SPIRA_INSTANCE}.timer" 2>/dev/null \
     > "$_pre_deploy_unit_state" 2>/dev/null || true
 
+# Pre-deploy health baseline: run the incoming doctor before any disruptive step so
+# fatals that exist before activation are named here, not blamed on the release.
+# A fatal here means the box has a pre-existing problem; fix it and re-run deploy.
+log "deploy: pre-deploy health check"
+_pre_deploy_fails="$(SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1 | grep '^  FAIL  ')" || true
+if [ -n "$_pre_deploy_fails" ]; then
+    printf 'deploy: pre-deploy health check has failures — fix before deploying:\n' >&2
+    printf '%s\n' "$_pre_deploy_fails" >&2
+    exit 1
+fi
+unset _pre_deploy_fails
+
 # Drain: wait for live aeons to finish; refuse if they do not.
 # With --force: set the gate immediately, then slay any remaining aeons.
 log "deploy: draining"
@@ -317,8 +331,10 @@ _rollback() {
             printf 'deploy: rollback: symlink swap failed\n' >&2
         }
         # Re-render units against the prior release, pruning units the newer release added.
+        # current now points at the prior release; use its install.sh so SPIRA_HOME is right.
+        SPIRA_HOME="$SPIRA_RELEASES/current/spira" \
         SPIRA_PROD="$SPIRA_RELEASES/current/spira" SPIRA_INSTALL_FORCE=1 \
-            bash "$_INSTALL" 2>/dev/null || true
+            bash "${SPIRA_INSTALL_SH:-$SPIRA_RELEASES/current/systemd/install.sh}" 2>/dev/null || true
         # Restore units that were enabled before the deploy but that the incoming release's
         # install disabled (by pruning them from its manifest). install.sh treats a disabled
         # unit as operator-disabled and leaves it alone, so we must restore from the snapshot.
@@ -378,8 +394,13 @@ printf '%s\n' "$tag" > "$SPIRA_RELEASES/.tags/$release_stem" || {
 
 # Re-render unit files so ExecStart paths point at $SPIRA_RELEASES/current/spira.
 # One-time cutover if SPIRA_PROD was previously set to the checkout; idempotent thereafter.
+# Use the activated release's own install.sh so conf.sh is sourced from the correct location;
+# a deploy.sh invoked from a temporary directory would otherwise stamp that directory into
+# SPIRA_HOME across all 24+ unit ExecStart lines.
 log "deploy: re-rendering units"
-SPIRA_PROD="$SPIRA_RELEASES/current/spira" SPIRA_INSTALL_FORCE=1 bash "$_INSTALL" || {
+SPIRA_HOME="$SPIRA_RELEASES/current/spira" \
+SPIRA_PROD="$SPIRA_RELEASES/current/spira" SPIRA_INSTALL_FORCE=1 \
+    bash "${SPIRA_INSTALL_SH:-$SPIRA_RELEASES/current/systemd/install.sh}" || {
     _rollback "unit re-render failed"
 }
 
