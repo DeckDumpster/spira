@@ -316,19 +316,23 @@ gate_lock_wait() {
 }
 
 # HOW MANY CERTIFICATION GATES RUN IN PARALLEL THIS PASS. Derived from the box when
-# SPIRA_CERTIFY_PAR is unset: min(nproc/4, free-memory/400MiB), at least 1. Logged once.
+# SPIRA_CERTIFY_PAR is unset: min(nproc --all/4, free-memory/400MiB), at least 1.
+# nproc --all reads /proc/cpuinfo directly, not cgroup limits (law-measure-inside-the-fence).
 certify_pass_par="${SPIRA_CERTIFY_PAR:-}"
+_certify_par_detail=""
 if [ -z "$certify_pass_par" ]; then
-    _cp_np=$(nproc 2>/dev/null || echo 4)
+    _cp_np=$(nproc --all 2>/dev/null || grep -c '^processor' /proc/cpuinfo 2>/dev/null || echo 4)
     _cp_mem=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 1600)
     _cp_by_cpu=$(( _cp_np / 4 ))
     _cp_by_mem=$(( _cp_mem / 400 ))
     certify_pass_par=$(( _cp_by_cpu < _cp_by_mem ? _cp_by_cpu : _cp_by_mem ))
+    _certify_par_detail=" (cpu ${_cp_np}/4, mem ${_cp_mem}/400)"
     unset _cp_np _cp_mem _cp_by_cpu _cp_by_mem
 fi
 [ "${certify_pass_par:-0}" -lt 1 ] && certify_pass_par=1
 
-log "landing: starting a pass over [$(spira_repos | tr '\n' ' ')] certify_par=${certify_pass_par}"
+log "landing: starting a pass over [$(spira_repos | tr '\n' ' ')] certify_par=${certify_pass_par}${_certify_par_detail}"
+unset _certify_par_detail
 
 # THE VERDICT CACHE IS PRUNED HERE, once a pass, because this is the only thing that runs on
 # a clock and already touches every repository. Entries are keyed by content — an entry can
@@ -1714,24 +1718,36 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
 
     # ==========================================================================
     # PHASE 2: PARALLEL CERTIFICATION. Branches deferred to _cert_brs above are
-    # dispatched to gate.sh up to certify_pass_par at a time. Results are
-    # collected and processed serially here so all DB writes stay on one process.
+    # dispatched to gate.sh up to certify_pass_par at a time. Each result is
+    # processed the moment its gate finishes (wait -n -p), not in dispatch order,
+    # so a fast gate is never blocked behind a slow one. All DB writes stay on
+    # one process.
     # ==========================================================================
     if [ "${#_cert_brs[@]}" -gt 0 ]; then
         local -a _cp_pids=() _cp_brs=() _cp_ids=() _cp_tips=() _cp_tmps=()
+        log "landing: certify phase 2: ${#_cert_brs[@]} candidate(s) in $name, width ${certify_pass_par}"
 
-        # Pops _cp_pids[0], waits for its PID, reads output, applies cert logic.
-        # Declares local copies of temp vars so land_repo's br/id/tip/gate_suite
-        # are not clobbered; name/repo/base/basefail_filed are read via dynamic scope.
+        # Waits for whichever running gate finishes next, then applies cert logic.
+        # Uses wait -n -p (bash 5.1+) to collect results in completion order so a
+        # fast gate is never blocked behind a slower one dispatched before it.
+        # name/repo/base/basefail_filed are read via dynamic scope.
         _cert_process_result() {
             local br id tip gate_rc gate_out gate_outcome gate_reason gate_suite
             local _rn_cert nv_key nv_file nv_n _cur_st
-            local _pid="${_cp_pids[0]}" _tmp="${_cp_tmps[0]}"
-            br="${_cp_brs[0]}"; id="${_cp_ids[0]}"; tip="${_cp_tips[0]}"
-            _cp_pids=("${_cp_pids[@]:1}"); _cp_brs=("${_cp_brs[@]:1}")
-            _cp_ids=("${_cp_ids[@]:1}"); _cp_tips=("${_cp_tips[@]:1}")
-            _cp_tmps=("${_cp_tmps[@]:1}")
-            wait "$_pid" 2>/dev/null; gate_rc=$?
+            local _finished_pid _idx _tmp
+            wait -n -p _finished_pid "${_cp_pids[@]}" 2>/dev/null; gate_rc=$?
+            _idx=0
+            while [ "$_idx" -lt "${#_cp_pids[@]}" ] && \
+                  [ "${_cp_pids[$_idx]}" != "$_finished_pid" ]; do
+                _idx=$(( _idx + 1 ))
+            done
+            _tmp="${_cp_tmps[$_idx]}"
+            br="${_cp_brs[$_idx]}"; id="${_cp_ids[$_idx]}"; tip="${_cp_tips[$_idx]}"
+            _cp_pids=("${_cp_pids[@]:0:$_idx}" "${_cp_pids[@]:$((_idx+1))}")
+            _cp_brs=("${_cp_brs[@]:0:$_idx}" "${_cp_brs[@]:$((_idx+1))}")
+            _cp_ids=("${_cp_ids[@]:0:$_idx}" "${_cp_ids[@]:$((_idx+1))}")
+            _cp_tips=("${_cp_tips[@]:0:$_idx}" "${_cp_tips[@]:$((_idx+1))}")
+            _cp_tmps=("${_cp_tmps[@]:0:$_idx}" "${_cp_tmps[@]:$((_idx+1))}")
             gate_out="$(cat "$_tmp" 2>/dev/null)"; rm -f "$_tmp"
             gate_outcome="$(spira_gate_outcome "$gate_rc")"
             gate_reason="$(printf '%s' "$gate_out" \

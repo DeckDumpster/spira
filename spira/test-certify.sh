@@ -22,6 +22,14 @@ bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 is()     { [ "$2" = "$3" ]        && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 nowant() { [[ "$3" != *"$2"* ]]   && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+before() {
+    local la lb
+    la=$(printf '%s\n' "$4" | grep -n "$2" | head -1 | cut -d: -f1)
+    lb=$(printf '%s\n' "$4" | grep -n "$3" | head -1 | cut -d: -f1)
+    [ -n "$la" ] && [ -n "$lb" ] && [ "$la" -lt "$lb" ] \
+        && ok "$1" \
+        || bad "$1" "[$2] (line ${la:--}) not before [$3] (line ${lb:--})"
+}
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -270,6 +278,76 @@ stub gate.sh '
 printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
 printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
 exit 0'
+
+# -----------------------------------------------------------------------------------------
+# COMPLETION-ORDER: a gate dispatched second is certified as soon as it finishes, without
+# waiting for gates dispatched before it.
+#
+# Gate stub: branches containing "-slow" sleep 3s; "-fast" exits immediately.
+# sp-co-slow has an earlier closed_at, so it sorts first and is dispatched first.
+#
+# par=2: both gates start together; sp-co-fast finishes first and must be certified
+#        before sp-co-slow (which is still sleeping).
+# par=1: serial dispatch — sp-co-slow runs to completion before sp-co-fast starts,
+#        so sp-co-slow certifies first. This is the positive control proving the
+#        par=2 reversal is real, not an artefact of output order.
+# -----------------------------------------------------------------------------------------
+stub gate.sh '
+printf "%s %s\n" "$(date +%s)" "$1" >> "'"$GATE_COUNT"'"
+if printf "%s" "$1" | grep -q "\-slow"; then sleep 3; fi
+printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
+exit 0'
+stub queue.sh 'exit 0'
+
+branch_with_date() {
+    local id="$1" cat="$2"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$RUN/worktree/$id" main
+    printf '%s\n' "$id" > "$RUN/worktree/$id/$id.txt"
+    git -C "$RUN/worktree/$id" add -A
+    git -C "$RUN/worktree/$id" commit -q -m "feat: $id — work"
+    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"%s","closed_at":"%s","dependencies":[{"issue_id":"%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
+        "$id" "$id" "$cat" "$cat" "$id" | testdb_seed
+}
+drop_branch() {
+    git -C "$REPO" worktree remove --force "$RUN/worktree/$1" >/dev/null 2>&1 || true
+    git -C "$REPO" branch -D "spira/$1" >/dev/null 2>&1 || true
+}
+
+# par=2: fast gate (dispatched second) is certified before slow gate (dispatched first)
+write_map
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-01T00:00:00Z"}
+JSONL
+rm -f "$GATE_COUNT"
+branch_with_date sp-co-slow "2026-09-01T00:00:00Z"
+branch_with_date sp-co-fast "2026-09-02T00:00:00Z"
+co_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
+    SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" \
+    SPIRA_CERTIFY_PAR=2 bash "$SH/landing.sh" 2>&1)"
+want "par=2: sp-co-fast certified"                      "certified spira/sp-co-fast" "$co_out"
+want "par=2: sp-co-slow certified"                      "certified spira/sp-co-slow" "$co_out"
+before "par=2: fast certified before slow" \
+    "certified spira/sp-co-fast" "certified spira/sp-co-slow" "$co_out"
+
+# par=1 positive control: slow dispatched first, certifies first
+drop_branch sp-co-slow; drop_branch sp-co-fast
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-01T00:00:00Z"}
+JSONL
+rm -f "$GATE_COUNT"
+branch_with_date sp-co-slow "2026-09-01T00:00:00Z"
+branch_with_date sp-co-fast "2026-09-02T00:00:00Z"
+co_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
+    SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" \
+    SPIRA_CERTIFY_PAR=1 bash "$SH/landing.sh" 2>&1)"
+want "par=1: sp-co-slow certified"                      "certified spira/sp-co-slow" "$co_out"
+want "par=1: sp-co-fast certified"                      "certified spira/sp-co-fast" "$co_out"
+before "par=1: slow certified before fast (serial)" \
+    "certified spira/sp-co-slow" "certified spira/sp-co-fast" "$co_out"
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
