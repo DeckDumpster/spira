@@ -456,7 +456,8 @@ jobs:
       checks: read
       pull-requests: read
     outputs:
-      tag: ${{ steps.cut.outputs.tag }}
+      tag:      ${{ steps.cut.outputs.tag }}
+      prev-tag: ${{ steps.cut.outputs.prev-tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -564,6 +565,9 @@ jobs:
           _branch="$(gh api \
             "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/pulls" \
             --jq '.[0].head.ref // ""' 2>/dev/null || true)"
+          # Capture the latest release tag BEFORE the cut so the accept job can
+          # pass it as prev-tag to acceptance.yml's upgrade/rollback phases.
+          _prev="$(git tag -l 'spira-release-*' | sort | tail -1 || true)"
           _args=""
           [ -n "${_pr:-}" ]     && _args="$_args --pr $_pr"
           [ -n "${_branch:-}" ] && _args="$_args --branches $_branch"
@@ -572,11 +576,13 @@ jobs:
           if [ -z "$tag" ]; then
             printf 'cut: land ref did not move since last tag — nothing to tag\n'
             printf 'tag=\n' >> "$GITHUB_OUTPUT"
+            printf 'prev-tag=\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          printf 'cut: %s\n' "$tag"
+          printf 'cut: %s (prev: %s)\n' "$tag" "${_prev:-none}"
           git push origin "refs/tags/$tag"
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'prev-tag=%s\n' "${_prev:-}" >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
   # Publish. Invoked DIRECTLY, never left to release.yml's tag trigger.
@@ -615,3 +621,33 @@ jobs:
           tag="${{ needs.cut.outputs.tag }}"
           gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag"
           printf 'retract-tag: deleted orphan tag %s\n' "$tag"
+
+  # ---------------------------------------------------------------------------
+  # Dispatch acceptance. Runs after publish so release artifacts exist.
+  #
+  # THE TAG TRIGGER IN acceptance.yml DOES NOT FIRE FOR GITHUB_TOKEN PUSHES.
+  # GitHub's anti-recursion rule suppresses workflow events created by the
+  # workflow's own token. Every spira-release-* tag pushed by the cut job
+  # above has produced no acceptance run. This job dispatches acceptance.yml
+  # directly under a token that can start workflows (WORKFLOW_PAT), passing
+  # both tag and prev-tag so phases B–D (upgrade, rollback, aged-install) run.
+  # ---------------------------------------------------------------------------
+  accept:
+    needs: [cut, publish]
+    if: needs.cut.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch acceptance
+        env:
+          GH_TOKEN: ${{ secrets.WORKFLOW_PAT }}
+        run: |
+          set -uo pipefail
+          _tag="${{ needs.cut.outputs.tag }}"
+          _prev="${{ needs.cut.outputs.prev-tag }}"
+          _fields=(-f "tag=$_tag")
+          [ -n "${_prev:-}" ] && _fields+=(-f "prev-tag=$_prev")
+          gh workflow run acceptance.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            "${_fields[@]}"
+          printf 'accept: dispatched acceptance.yml for %s (prev: %s)\n' \
+            "$_tag" "${_prev:-none}"
