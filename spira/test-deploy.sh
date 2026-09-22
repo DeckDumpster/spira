@@ -927,14 +927,16 @@ echo "PROPERTY 18: rollback converges on prior release unit set"
 # ==========================================================================
 
 UNIT_Y="spira-watch-answers-prod.service"   # enabled before deploy, dropped by B's install
+UNIT_Z="spira-gate-check-prod.timer"        # STATE=disabled, PRESET=enabled — must not be re-enabled
 BIN_P18="$TMP/bin-p18"
 CALL_P18="$TMP/calls-p18.log"
 SC_P18_LOG="$TMP/sc-p18.log"
 mkdir -p "$BIN_P18"
 
 # Stateful mock systemctl for this property:
-#   list-unit-files --no-legend  → Y is enabled (pre-deploy snapshot)
+#   list-unit-files --no-legend  → three columns (UNIT STATE PRESET); Y is enabled, Z is disabled
 #   is-enabled Y                 → disabled (B's install pruned Y; rollback install leaves it)
+#   is-enabled Z                 → disabled (it was disabled before the deploy too)
 #   enable --now Y               → logged (deploy.sh restore step)
 #   list-units --state=active    → one sentinel unit (for the normal rollback restart path)
 cat > "$BIN_P18/systemctl" <<SCEOF
@@ -942,9 +944,13 @@ cat > "$BIN_P18/systemctl" <<SCEOF
 printf 'SC %s\n' "\$*" >> "${SC_P18_LOG}"
 case "\$*" in
     *"list-unit-files"*"--no-legend"*)
-        printf '%s enabled\n' "${UNIT_Y}"
+        printf '%s enabled  enabled\n' "${UNIT_Y}"
+        printf '%s disabled enabled\n' "${UNIT_Z}"
         ;;
     *"is-enabled"*"${UNIT_Y}"*)
+        printf 'disabled\n'
+        ;;
+    *"is-enabled"*"${UNIT_Z}"*)
         printf 'disabled\n'
         ;;
     *"list-units"*) printf 'spira-sentinel-prod.service loaded active running\n' ;;
@@ -1019,6 +1025,106 @@ if grep -qF "SC --user enable --now ${UNIT_Y}" "$SC_P18_LOG" 2>/dev/null; then
 else
     bad "p18: pre-deploy-enabled unit Y re-enabled after rollback" \
         "no 'enable --now ${UNIT_Y}' in systemctl log — enable-state restore missing"
+fi
+
+# UNIT_Z had STATE=disabled, PRESET=enabled in the snapshot. The rollback must read STATE
+# (second column), not PRESET (last column). If PRESET were read, UNIT_Z would be wrongly
+# re-enabled because its PRESET is "enabled". The positive control above (UNIT_Y) confirms
+# the "enable --now" mechanism works, so absence here is meaningful.
+if ! grep -qF "SC --user enable --now ${UNIT_Z}" "$SC_P18_LOG" 2>/dev/null; then
+    ok "p18/column-parse: STATE=disabled unit not re-enabled despite PRESET=enabled"
+else
+    bad "p18/column-parse: STATE=disabled unit must not be re-enabled" \
+        "UNIT_Z was re-enabled — rollback read PRESET instead of STATE"
+fi
+
+# ==========================================================================
+echo
+echo "PROPERTY 20: ctrl-suspended units not re-enabled during rollback"
+# A unit that was enabled before the deploy but is now declared suspended by the control
+# plane must not be re-enabled by the rollback restore loop.
+# FAIL-FIRST: without the ctrl guard, the unit IS re-enabled (confirming the detector works).
+# ==========================================================================
+UNIT_CTRL="spira-ops-prod.timer"   # STATE=enabled in snapshot; ctrl says suspended
+BIN_P20="$TMP/bin-p20"
+SC_P20_LOG="$TMP/sc-p20.log"
+mkdir -p "$BIN_P20"
+
+# ctrl.sh mock: suspended for spira-ops (derived from spira-ops-prod.timer)
+CTRL_P20="$TMP/ctrl-p20.sh"
+cat > "$CTRL_P20" <<'CTEOF'
+#!/usr/bin/env bash
+[ "${1:-}" = "check" ] || exit 1
+[ "${2:-}" = "spira-ops" ] && exit 0
+exit 1
+CTEOF
+chmod +x "$CTRL_P20"
+
+# ctrl.sh stub that says nothing is suspended (for fail-first)
+CTRL_P20_NONE="$TMP/ctrl-p20-none.sh"
+cat > "$CTRL_P20_NONE" <<'CTEOF'
+#!/usr/bin/env bash
+exit 1
+CTEOF
+chmod +x "$CTRL_P20_NONE"
+
+# Mock systemctl: UNIT_CTRL enabled in pre-deploy snapshot, currently disabled.
+cat > "$BIN_P20/systemctl" <<SCEOF
+#!/usr/bin/env bash
+printf 'SC %s\n' "\$*" >> "${SC_P20_LOG}"
+case "\$*" in
+    *"list-unit-files"*"--no-legend"*)
+        printf '%s enabled enabled\n' "${UNIT_CTRL}"
+        ;;
+    *"is-enabled"*"${UNIT_CTRL}"*)
+        printf 'disabled\n'
+        ;;
+    *"list-units"*) printf 'spira-sentinel-prod.service loaded active running\n' ;;
+esac
+exit 0
+SCEOF
+chmod +x "$BIN_P20/systemctl"
+
+for _m in world.sh activate.sh layout.sh doctor.sh skew.sh slay.sh gh bd; do
+    [ -f "$BIN/$_m" ] && ln -sf "$BIN/$_m" "$BIN_P20/$_m"
+done
+unset _m
+ln -sf "$BIN/install.sh" "$BIN_P20/install.sh"
+
+# FAIL-FIRST: without ctrl guard (ctrl says not-suspended), UNIT_CTRL IS re-enabled.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$PRIOR_RELEASE"
+ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+> "$SC_P20_LOG"
+run_deploy \
+    "SPIRA_SYSTEMCTL=$BIN_P20/systemctl" \
+    "SPIRA_INSTALL_SH=$BIN_P20/install.sh" \
+    "SPIRA_CTRL_SH=$CTRL_P20_NONE" \
+    "DOCTOR_EXIT=1" \
+    -- "$NEW_TAG" >/dev/null 2>&1
+if grep -qF "SC --user enable --now ${UNIT_CTRL}" "$SC_P20_LOG" 2>/dev/null; then
+    ok "p20/fail-first: unit re-enabled when ctrl not-suspended (control confirmed)"
+else
+    bad "p20/fail-first: unit must be re-enabled when ctrl says not-suspended" \
+        "enable --now not called — fail-first failed"
+fi
+
+# With ctrl saying suspended: must NOT be re-enabled.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$PRIOR_RELEASE"
+ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+> "$SC_P20_LOG"
+run_deploy \
+    "SPIRA_SYSTEMCTL=$BIN_P20/systemctl" \
+    "SPIRA_INSTALL_SH=$BIN_P20/install.sh" \
+    "SPIRA_CTRL_SH=$CTRL_P20" \
+    "DOCTOR_EXIT=1" \
+    -- "$NEW_TAG" >/dev/null 2>&1
+if ! grep -qF "SC --user enable --now ${UNIT_CTRL}" "$SC_P20_LOG" 2>/dev/null; then
+    ok "p20: ctrl-suspended unit not re-enabled after rollback"
+else
+    bad "p20: ctrl-suspended unit must not be re-enabled" \
+        "enable --now was called — ctrl.sh check not honoured"
 fi
 
 # ==========================================================================
