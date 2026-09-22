@@ -50,9 +50,10 @@ done
 ln -s "$REAL_REPO/systemd/install.sh" "$SYSTEMD_DIR/install.sh"
 ln -s "$REAL_REPO/systemd/units.sh"   "$SYSTEMD_DIR/units.sh"
 
-ln -s "$HERE/conf.sh"   "$SPIRA_DIR/conf.sh"
-ln -s "$HERE/lib.sh"    "$SPIRA_DIR/lib.sh"
-ln -s "$HERE/watchd.sh" "$SPIRA_DIR/watchd.sh"
+ln -s "$HERE/conf.sh"         "$SPIRA_DIR/conf.sh"
+ln -s "$HERE/lib.sh"          "$SPIRA_DIR/lib.sh"
+ln -s "$HERE/suite-covers.sh" "$SPIRA_DIR/suite-covers.sh"
+ln -s "$HERE/watchd.sh"       "$SPIRA_DIR/watchd.sh"
 printf '# empty\n' > "$SPIRA_DIR/watchers"
 printf '# empty\n' > "$SPIRA_DIR/repo-map.example"
 mkdir -p "$SPIRA_DIR/statutes"
@@ -72,6 +73,16 @@ unset _s
 # Executable stubs for @SPIRA_COCKPIT@ scripts.
 for _s in $(grep -h "ExecStart=\|ExecStartPre=" "$REAL_REPO/systemd/"*.service 2>/dev/null \
             | grep "@SPIRA_COCKPIT@" | sed 's|.*@SPIRA_COCKPIT@/||' | sed 's/ .*//' | sort -u); do
+    [ -e "$COCKPIT_DIR/$_s" ] || { printf '#!/usr/bin/env bash\nexit 0\n' > "$COCKPIT_DIR/$_s"; chmod +x "$COCKPIT_DIR/$_s"; }
+done
+unset _s
+
+# Executable stubs for @SPIRA_PROD_COCK@ scripts. SPIRA_PROD_COCK resolves as
+# dirname(SPIRA_PROD)/cockpit; after bootstrap that is inside the release tree,
+# which is a copy of $FIXTURE. Stubs placed in $COCKPIT_DIR (= $FIXTURE/cockpit)
+# land there automatically.
+for _s in $(grep -h "ExecStart=\|ExecStartPre=" "$REAL_REPO/systemd/"*.service 2>/dev/null \
+            | grep "@SPIRA_PROD_COCK@" | sed 's|.*@SPIRA_PROD_COCK@/||' | sed 's/ .*//' | sort -u); do
     [ -e "$COCKPIT_DIR/$_s" ] || { printf '#!/usr/bin/env bash\nexit 0\n' > "$COCKPIT_DIR/$_s"; chmod +x "$COCKPIT_DIR/$_s"; }
 done
 unset _s
