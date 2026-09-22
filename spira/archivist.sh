@@ -64,7 +64,7 @@ crossed() { case "$1" in warn) echo 0 ;; high) echo 1 ;; limit) echo 2 ;; over) 
 # ctx-meter.sh renders it in the status line and cockpit/health.sh renders it on the
 # dashboard, both from $SPIRA_RUN/archivist/<session>.state as flat key=value lines:
 #
-#   state=sweeping|archiving|safe|failed|capacity
+#   state=sweeping|archiving|safe|failed|capacity|timeout
 #   at_turn=<the session's turn count when this state was computed>
 #   items_filed=<how many beads and notes were written>
 #
@@ -234,6 +234,9 @@ for ln in sys.stdin:
 archive() {              # archive <session> <transcript> <at_turn> <ctx> <why> [wait]
     local sid="$1" tp="$2" at="$3" ctx="$4" why="$5" lock_mode="${6:-try}" from
     from="$(arc_numeric "$(covered "$sid")" "session $sid prior cursor")"
+    local tc_file="$ARC/$sid.timeout_count" tc=0
+    [ -f "$tc_file" ] && tc="$(cat "$tc_file" 2>/dev/null)" && tc="${tc:-0}" && [[ "$tc" =~ ^[0-9]+$ ]] || tc=0
+    local effective_timeout=$(( SPIRA_ARCHIVIST_TIMEOUT * (tc + 1) ))
     [ -f "$PROMPT_FILE" ] || { log "archivist: no prompt at $PROMPT_FILE"; return 1; }
     mkdir -p "$ARC/cwd" || return 1
 
@@ -308,7 +311,7 @@ home.}"
         arc_taskfile="$SPIRA_RUN/archivist-$sid.task.md"
         FAYTH_SYSTEM_PROMPT=replace
         system_prompt_split "$arc_sysfile" "$arc_taskfile" "" "$prompt"
-        cat "$arc_taskfile" | timeout "$SPIRA_ARCHIVIST_TIMEOUT" \
+        cat "$arc_taskfile" | timeout "$effective_timeout" \
             "${SPIRA_AGENT:-claude}" -p --output-format stream-json --verbose \
                    --system-prompt-snapshot on \
                    "$SPIRA_SYSTEM_FLAG" "$arc_sysfile" \
@@ -333,7 +336,22 @@ home.}"
         if [ "$rc" -eq 0 ]; then
             write_state "$sid" safe "$at" "$items"
             set_covered "$sid" "$at"
+            rm -f "$tc_file"
             log "archivist: $sid safe to clear — $items item(s) filed"
+        elif [ "$rc" -eq 124 ]; then
+            # TIMED OUT IS NOT FAILED. A run that was killed by the clock will not break on the
+            # same input next pass — the next pass may simply be faster, or get a scaled timeout.
+            # Record timeout and retry up to the configured budget before permanently failing.
+            local budget="${SPIRA_ARCHIVIST_TIMEOUT_RETRIES:-3}"
+            tc=$(( tc + 1 ))
+            if [ "$tc" -ge "$budget" ]; then
+                write_state "$sid" failed "$at" "$items"
+                log "archivist: $sid FAILED (timeout budget $budget exhausted) — see $logf"
+            else
+                printf '%d\n' "$tc" > "$tc_file"
+                write_state "$sid" timeout "$at" "$items"
+                log "archivist: $sid timed out (attempt $tc/$budget, timeout was ${effective_timeout}s) — will retry"
+            fi
         elif reset_at="$(capacity_reset_at "$logf")"; then
             # REFUSED IS NOT FAILED, and the difference is whether this session is ever looked
             # at again. `failed` is excluded from the sweep by design (see prev_state below),
@@ -420,6 +438,8 @@ sweep|list)
         # so without this gate a failure would re-trigger on every pass — drift stays above the
         # threshold because covered was never advanced. The failure is reported through the state
         # file, where the operator is already looking; leave it to them.
+        # `timeout` is deliberately NOT excluded: a timed-out run may succeed on a later pass
+        # with a scaled timeout, and the retry budget in archive() enforces the ceiling.
         prev_state="$(state_key "$sid" state)"
 
         would=hold
@@ -519,7 +539,7 @@ MAILEOF
         [ "$s" = sweep ] && continue     # the sweep-level state is not a session
         [ -z "$(find "$SPIRA_TOKEN_PROJECTS" -name "$s.jsonl" -print -quit 2>/dev/null)" ] || continue
         rm -f "$ARC/$s.state" "$ARC/$s.hwm" "$ARC/$s.covered" "$ARC/$s.notified" \
-              "$ARC/$s.lock" "$SPIRA_RUN/archivist-$s.log"
+              "$ARC/$s.lock" "$ARC/$s.timeout_count" "$SPIRA_RUN/archivist-$s.log"
         log "archivist: forgot $s — its transcript is gone"
     done
     ;;
@@ -562,7 +582,7 @@ mark)
     # the sweep is happening rather than jumping from nothing to a verdict.
     sid="${2:?mark needs a session}"; st="${3:?mark needs a state}"
     case "$st" in
-        sweeping|archiving|safe|failed|capacity) ;;
+        sweeping|archiving|safe|failed|capacity|timeout) ;;
         *) die "unknown archivist state '$st'" ;;
     esac
     # AT_TURN IS NEVER INVENTED HERE. There is no state file to take it from unless a run is in

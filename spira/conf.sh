@@ -74,7 +74,7 @@ SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_LANES_MAX_LI
 SPIRA_TOKEN_WINDOW_H SPIRA_TOKEN_PROJECTS SPIRA_CTX_WARN SPIRA_CTX_HIGH SPIRA_CTX_LIMIT
 SPIRA_ARCHIVE
 SPIRA_ARCHIVIST_EVERY SPIRA_ARCHIVIST_IDLE SPIRA_ARCHIVIST_MODEL SPIRA_ARCHIVIST_TIMEOUT
-SPIRA_ARCHIVIST_PER_PASS
+SPIRA_ARCHIVIST_PER_PASS SPIRA_ARCHIVIST_TIMEOUT_RETRIES
 SPIRA_TESTDB_LIB SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT
 SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY SPIRA_GH_INTAKE_BEAD_REPO SPIRA_FLAKY_GH_REPO
 SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET SPIRA_GATE_SELECT_CAP
@@ -911,6 +911,10 @@ spira_conf_defaults() {
     # with a budget the work still drains — drift does not disappear — but at a rate the
     # account window can absorb, and the timer is the throttle rather than the session count.
     : "${SPIRA_ARCHIVIST_PER_PASS:=1}"
+    # HOW MANY TIMES A TIMED-OUT RUN IS RETRIED BEFORE BEING MARKED FAILED. rc=124 is distinct
+    # from a crash: it means the session outgrew the timeout window, not that the code is broken.
+    # Each retry gets a scaled timeout; after this many retries the session becomes failed.
+    : "${SPIRA_ARCHIVIST_TIMEOUT_RETRIES:=3}"
     # WHERE A REPOSITORY'S TEST-FIXTURE LIBRARY SITS, relative to that repository's ROOT.
     # An aeon builds one fixture at summon for a repository that has one and exports it, so
     # every suite the session runs resets that fixture instead of building its own — measured

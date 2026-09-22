@@ -512,6 +512,123 @@ alias_out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
 has    "SPIRA_CLAUDE alias: deprecation warning is emitted" "$alias_out" "SPIRA_CLAUDE is deprecated"
 has    "SPIRA_CLAUDE alias: sweep still runs via the alias"  "$alias_out" "safe to clear"
 
+# ==========================================================================================
+echo
+echo "a run that exits 124 (timeout) records state=timeout and is re-swept on the next pass"
+# ==========================================================================================
+# The incident: one timed-out run (rc=124) retired a session permanently because the sweep
+# excluded state=failed and any non-zero exit wrote failed. rc=124 must now write timeout
+# instead, which the sweep does not exclude, so the session is picked up again next tick.
+rm -rf "$T/run" "$T/projects" "$T/home" "$T/chamber"
+mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/chamber"
+cp "$HERE/chamber/archivist.md" "$T/chamber/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/chamber/archivist.md"
+mktranscript "$T/projects/-test-project/sess-timed.jsonl"  60 300000
+mktranscript "$T/projects/-test-project/sess-after-t.jsonl" 50 300000
+
+TIMEOUT_CLAUDE="$T/stub-claude-timeout"
+cat > "$TIMEOUT_CLAUDE" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+exit 124
+STUB
+chmod +x "$TIMEOUT_CLAUDE"
+
+tout="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+    SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
+    SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
+    SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
+    SPIRA_ARCHIVIST_EVERY="$EVERY" \
+    SPIRA_AGENT="$TIMEOUT_CLAUDE" \
+    SPIRA_ARCHIVIST_TIMEOUT=10 \
+    SPIRA_ARCHIVIST_PER_PASS=5 \
+    SPIRA_ARCHIVIST_TIMEOUT_RETRIES=3 \
+    SPIRA_CHAMBER="$T/chamber" \
+    bash "$ARC" sweep 2>&1)"
+
+_st="$(sed -n 's/^state=//p' "$T/run/archivist/sess-timed.state" 2>/dev/null)"
+is   "a timed-out run records state=timeout, not failed" "timeout" "$_st"
+has  "the log says timed out, not FAILED" "$tout" "timed out"
+hasnt "the log does not call a timeout a failure" "$tout" "FAILED"
+
+# The session must appear as an archive candidate on the next list call (same predicate sweep uses).
+tlist="$(alist)"
+has  "a timeout session is still an archive candidate" "$tlist" "sess-timed"
+case "$tlist" in *sess-timed*archive*) ok "list would archive it on the next pass" ;;
+    *) bad "list would archive it on the next pass" "got [$tlist]" ;;
+esac
+
+# POSITIVE CONTROL: a genuine crash (rc=1) must still write failed and be excluded.
+# Without this, the test above passes even if we stopped excluding everything.
+rm -rf "$T/run" "$T/projects" "$T/home" "$T/chamber"
+mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/chamber"
+cp "$HERE/chamber/archivist.md" "$T/chamber/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/chamber/archivist.md"
+mktranscript "$T/projects/-test-project/sess-crash.jsonl" 60 300000
+
+CRASH_CLAUDE="$T/stub-claude-crash"
+cat > "$CRASH_CLAUDE" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+exit 1
+STUB
+chmod +x "$CRASH_CLAUDE"
+
+env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+    SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
+    SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
+    SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
+    SPIRA_ARCHIVIST_EVERY="$EVERY" \
+    SPIRA_AGENT="$CRASH_CLAUDE" \
+    SPIRA_ARCHIVIST_TIMEOUT=10 \
+    SPIRA_ARCHIVIST_PER_PASS=1 \
+    SPIRA_ARCHIVIST_TIMEOUT_RETRIES=3 \
+    SPIRA_CHAMBER="$T/chamber" \
+    bash "$ARC" sweep 2>/dev/null
+
+_st_crash="$(sed -n 's/^state=//p' "$T/run/archivist/sess-crash.state" 2>/dev/null)"
+is   "a crashed run (rc=1) records state=failed" "failed" "$_st_crash"
+clist="$(alist)"
+hasnt "a failed session is excluded from the next pass" "$clist" "archive"
+
+# ==========================================================================================
+echo
+echo "after exhausting the retry budget, a timeout becomes failed"
+# ==========================================================================================
+rm -rf "$T/run" "$T/projects" "$T/home" "$T/chamber"
+mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/chamber"
+cp "$HERE/chamber/archivist.md" "$T/chamber/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/chamber/archivist.md"
+mktranscript "$T/projects/-test-project/sess-exhaust.jsonl" 60 300000
+
+# Plant a timeout_count file at budget-1 so the next timeout crosses the threshold.
+printf '2\n' > "$T/run/archivist/sess-exhaust.timeout_count"
+
+env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+    SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
+    SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
+    SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
+    SPIRA_ARCHIVIST_EVERY="$EVERY" \
+    SPIRA_AGENT="$TIMEOUT_CLAUDE" \
+    SPIRA_ARCHIVIST_TIMEOUT=10 \
+    SPIRA_ARCHIVIST_PER_PASS=1 \
+    SPIRA_ARCHIVIST_TIMEOUT_RETRIES=3 \
+    SPIRA_CHAMBER="$T/chamber" \
+    bash "$ARC" sweep 2>/dev/null
+
+_st_ex="$(sed -n 's/^state=//p' "$T/run/archivist/sess-exhaust.state" 2>/dev/null)"
+is   "a timeout that exhausts its budget becomes failed" "failed" "$_st_ex"
+elist="$(alist)"
+hasnt "an exhausted timeout is excluded from the next pass" "$elist" "archive"
+
+# ==========================================================================================
+echo
+echo "SPIRA_ARCHIVIST_TIMEOUT_RETRIES is in the key list and defaults to 3"
+# ==========================================================================================
+out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
+    bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_CONF_KEYS"' 2>/dev/null)"
+has "SPIRA_ARCHIVIST_TIMEOUT_RETRIES is in the key list" "$out" "SPIRA_ARCHIVIST_TIMEOUT_RETRIES"
+val="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
+    bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_ARCHIVIST_TIMEOUT_RETRIES"' 2>/dev/null)"
+is "default SPIRA_ARCHIVIST_TIMEOUT_RETRIES" "3" "$val"
+
 echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
