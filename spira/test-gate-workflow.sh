@@ -232,36 +232,56 @@ esac
 ACC_YML="$ROOT/.github/workflows/acceptance.yml"
 
 echo
-echo "14. push to main runs no suites:"
-# The corpus runs on the queue PR. Re-running it on the push that fast-forwarded
-# main would test the same commit twice and hold the provisioned VM open for no
-# new information. The cut job asserts that the PR gate exists before tagging.
+echo "14. push to main runs the whole corpus (law-a-runner-takes-a-list):"
+# On a push the diff is EMPTY, so diff-derived selection selects nothing. The
+# gate must enumerate the corpus explicitly; the release is cut from this run.
 _suites_block="$(awk '/^      - name: Suites/{f=1;next} f&&/^      - name:/{exit} f{print}' "$GATE_YML")"
 if [ -z "$_suites_block" ]; then
     bad "the Suites step block was located (positive control)" "awk extracted nothing"
 else
     ok "the Suites step block was located (positive control)"
 fi
-want "push case is detected"             '"push"'       "$_suites_block"
-want "push path carries no suites"     "no suites"    "$_suites_block"
+want "push case reaches corpus path"   '"push"'       "$_suites_block"
+want "push enumerates test-*.sh"       'test-*.sh'    "$_suites_block"
+want "push pipes suite list to batch"  '--suites -'   "$_suites_block"
 want "queue PRs are matched"           'spira/queue/' "$_suites_block"
 want "queue selection uses select.sh"  "select.sh"    "$_suites_block"
+nowant "no early exit on push"         "no suites"    "$_suites_block"
 
 echo
-echo "15. the cut job asserts a green gate check before tagging:"
-# The SHA on main is the queue PR head. Assert a check-run named 'gate' with
-# conclusion=success and at least one associated pull request exists. A direct
-# push to main (bypassing the queue) has no such run, and the cut refuses.
+echo "15. the cut job asserts a green gate check and non-empty suite results before tagging:"
+# The push gate runs the full corpus. Assert both: a green gate check on this SHA,
+# and that the batch-results artifact has .result files (law-absence-needs-a-positive-control).
 _cut_block="$(awk '/^  cut:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
 if [ -z "$_cut_block" ]; then
     bad "the cut job block was located (positive control)" "awk extracted nothing"
 else
     ok "the cut job block was located (positive control)"
 fi
-want "cut queries check-runs for the SHA"      "check-runs"         "$_cut_block"
-want "cut filters on the gate check name"      '"gate"'             "$_cut_block"
-want "cut requires a green PR-associated run"  "pull_requests"      "$_cut_block"
-want "release.sh cut receives the workspace"   "release.sh cut"     "$_cut_block"
+want "cut queries check-runs for the SHA"  "check-runs"    "$_cut_block"
+want "cut filters on the gate check name"  '"gate"'        "$_cut_block"
+want "cut checks batch-results artifact"   "batch-results" "$_cut_block"
+want "cut counts .result files"            ".result"       "$_cut_block"
+want "release.sh cut receives the workspace" "release.sh cut" "$_cut_block"
+
+echo
+echo "16. positive control: the cut step's suite-count check catches an empty results dir:"
+# Verify the find/.result counting logic that guards the cut step.
+_td="$(mktemp -d)"
+_count="$(find "$_td" -name '*.result' 2>/dev/null | wc -l)"
+if [ "${_count:-0}" -eq 0 ]; then
+    ok "empty dir has zero .result files (count check would refuse)"
+else
+    bad "empty dir had unexpected .result files"
+fi
+printf 'green 1000000000 5 abc parallel all 0\n' > "$_td/test-foo.sh.result"
+_count="$(find "$_td" -name '*.result' 2>/dev/null | wc -l)"
+if [ "${_count:-0}" -gt 0 ]; then
+    ok "dir with one result file has count > 0 (count check would pass)"
+else
+    bad "dir with a .result file still counted zero"
+fi
+rm -rf "$_td"
 
 echo
 echo "16. a failed provision leaves the gate check failing, not skipped:"
