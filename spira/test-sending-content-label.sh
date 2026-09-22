@@ -100,9 +100,13 @@ is "and carries content-landed"        "yes" "$(has sp-cont content-landed)"
 
 echo
 echo "the branch with no commits of its own:"
-# An empty branch must NOT be sent — it carries nothing, and reaping it would exempt
-# the bead from CHECK 5's closed-not-landed reopen (sp-qc4kn). The Sending keeps it.
-is "sp-empty was NOT sent (kept)"      "no"  "$(case "$out" in *"SENT sp-empty"*) echo yes;; *) echo no;; esac)"
+# sp-bf31a: content_landed returns 0 for ANY ancestor of the base, including an empty
+# branch.  The Sending reaps it (no content-landed label — _ahead=0).  The label is
+# what would exempt the bead from CHECK 5's closed-not-landed reopen; the branch
+# deletion alone does not.  CHECK 5 finds no commit on the base naming sp-empty and
+# reopens it via the normal path (sp-qc4kn).
+is "sp-empty WAS sent (reaped as ancestor, CHECK 5 reopens)" \
+   "yes" "$(case "$out" in *"SENT sp-empty"*) echo yes;; *) echo no;; esac)"
 is "and is NOT labelled content-landed" "no"  "$(has sp-empty content-landed)"
 
 [ "$fail" -eq 0 ] || { echo; echo "--- sending output ---"; echo "$out"; }

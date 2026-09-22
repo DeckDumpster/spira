@@ -419,14 +419,6 @@ sys.exit(0 if d and "status" in d[0] else 1)' 2>/dev/null; then
         _ahead="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo 0)"
         if [ "${_ahead:-0}" -gt 0 ] 2>/dev/null; then
             bdq label add "$id" content-landed >/dev/null 2>&1 || true
-        elif ! landed "$id" "$REPO" 2>/dev/null; then
-            # ZERO-AHEAD ANCESTOR. content_landed returns true for any ancestor
-            # of base, including an empty branch an aeon left with no commits.
-            # Only a fast-forward merged branch has a commit on the base naming
-            # the bead id; an empty branch does not and SHOULD be reopened by
-            # CHECK 5. Keep it here so that check fires.
-            say "KEEP   $id  zero-ahead ancestor: no commit on $LANDREF names $id"
-            continue
         fi
         # ASSERT: every branch content_landed confirms as done should have been seen by
         # landing.sh first. landing.sh writes $SPIRA_RUN/landstate/$id on every code path
