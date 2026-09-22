@@ -805,6 +805,7 @@ open_ask = [x for x in deps
 if open_ask: sys.exit(1)
 sys.exit(0)' 2>/dev/null; then
             release_own_claim "$BEAD_ID"
+            bump_requeue "$BEAD_ID" "unjudged-decision-blocked"
             bdq note "$BEAD_ID" "Released by aeon.sh: blocked on an open decision bead (${SPIRA_ASK_LABEL:-needs-operator} label) — waiting for operator input. No attempt charged; the bead becomes ready when the decision is resolved." >/dev/null 2>&1  # literal-ok: human-readable note, not a label predicate
             log "$FAYTH: $BEAD_ID has open decision blocker — released, no attempt charged"
             ledger_done "$rc" decision-blocked
@@ -851,6 +852,19 @@ sys.exit(0)' 2>/dev/null; then
             log "$FAYTH: $BEAD_ID requeued by the harness ($REQUEUE_CAUSE, count $_rq_count) — no attempt charged"
             release_own_claim "$BEAD_ID"
             ledger_done "$rc" "requeue-$REQUEUE_CAUSE"
+            exit $rc
+        fi
+        # OPERATOR-WAIT IS NOT AN ATTEMPT. A session that sent a kind-question (or
+        # kind-decision) mail to the operator and exited left the bead open awaiting a
+        # reply, not because the work failed. mail.sh writes this marker when it sends such
+        # mail in an aeon context.
+        if [ -f "$SPIRA_RUN/$BEAD_ID.operator-wait" ]; then
+            rm -f "$SPIRA_RUN/$BEAD_ID.operator-wait"
+            bump_requeue "$BEAD_ID" "unjudged-operator-wait"
+            bdq note "$BEAD_ID" "Released by aeon.sh: the session sent a kind-question mail to the operator and exited awaiting a reply. No attempt charged; the bead becomes ready when the question is answered." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID operator-wait — sent kind-question mail, released, no attempt charged"
+            release_own_claim "$BEAD_ID"
+            ledger_done "$rc" "operator-wait"
             exit $rc
         fi
         # YIELD-HEADLESS IS NAMED, NOT GENERIC UNLANDED. rc=0 with the bead open reads
