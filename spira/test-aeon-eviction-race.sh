@@ -203,5 +203,41 @@ nowant "no eviction-race reopen fired"                 "eviction-race" "$(cat "$
 want   "aeon log mentions stale record"                "stale record" "$(cat "$TMP/out")"
 rm -f "$SPIRA_RUN/landstate/sp-er-7"
 
+# =============================================================================
+echo
+echo "closed+committed+landstate=RED, sidecar matches — skip (idempotence):"
+# =============================================================================
+# When tip+reason in the sidecar match the current landstate, the reopen is a
+# duplicate — the condition has not changed since the last reopen. The second
+# pass must not write another requeued event.
+testdb_reset; seed sp-er-8
+printf 'RED fakesha99 %s idempotence-test\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-8"
+printf 'fakesha99 idempotence-test' > "$SPIRA_RUN/landstate/sp-er-8.evict-seen"
+run_aeon
+is   "bead stays closed (idempotence)"              closed "$(field sp-er-8 status)"
+_rq8="$(bd -C "$SPIRA_DB" sql "SELECT COUNT(*) FROM events WHERE issue_id='sp-er-8' AND event_type='requeued' AND new_value='eviction-race'" 2>/dev/null | sed -n '3p' | tr -d ' ')"
+is   "no eviction-race requeue event written"       0 "${_rq8:-0}"
+want "aeon log shows idempotence skip"              "tip+reason unchanged" "$(cat "$TMP/out")"
+rm -f "$SPIRA_RUN/landstate/sp-er-8" "$SPIRA_RUN/landstate/sp-er-8.evict-seen"
+
+# =============================================================================
+echo
+echo "closed+committed+landstate=RED, cap reached — escalate, no requeue:"
+# =============================================================================
+# At SPIRA_EVICTION_ESCALATE_AT requeues the guard must escalate to the operator
+# instead of requeueing, so the bead does not loop indefinitely.
+testdb_reset; seed sp-er-9
+printf 'RED faksha6 %s cap-test\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-9"
+for _i in 1 2 3; do
+    _uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"
+    bd -C "$SPIRA_DB" sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$_uuid', 'sp-er-9', 'requeued', 'harness', 'eviction-race', NOW())" >/dev/null 2>&1
+done
+run_aeon
+is   "bead stays closed (cap)"                     closed "$(field sp-er-9 status)"
+_rq9="$(bd -C "$SPIRA_DB" sql "SELECT COUNT(*) FROM events WHERE issue_id='sp-er-9' AND event_type='requeued' AND new_value='eviction-race'" 2>/dev/null | sed -n '3p' | tr -d ' ')"
+is   "no new requeue event at cap"                 3 "${_rq9:-0}"
+want "aeon log shows escalation"                   "eviction-race escalated" "$(cat "$TMP/out")"
+rm -f "$SPIRA_RUN/landstate/sp-er-9"
+
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]
