@@ -49,6 +49,19 @@ _PORT1=19141
 _DBNAME1="testbd$$"
 
 mkdir -p "$_TMP1/db/.beads"
+
+# Reusable Python TCP listener (accepts multiple connections, ignores data).
+cat > "$_TMP1/listener.py" <<'PYEOF'
+import socket, sys, signal
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', int(sys.argv[1])))
+s.listen(10)
+while True:
+    try: s.accept()[0].close()
+    except Exception: break
+PYEOF
 printf '{"dolt_mode":"server","dolt_server_port":%s,"dolt_database":"%s","project_id":"test"}\n' \
     "$_PORT1" "$_DBNAME1" > "$_TMP1/db/.beads/metadata.json"
 
@@ -77,13 +90,21 @@ echo
 echo "2. CLEAR PASSES — bd doctor --fix --yes removes the breaker file:"
 # ==========================================================================
 
-# bd doctor --fix only removes STALE breaker files — those past the 5s cooldown TTL.
-# Wait for the TTL to expire before calling doctor so the file is considered stale.
-sleep 7
+# bd doctor --fix removes STALE breaker files: past the 5s TTL AND server back up.
+# Wait for the TTL, then start a python listener on the port so doctor sees the
+# server as reachable before deciding the file is stale.
+sleep 6
+python3 "$_TMP1/listener.py" "$_PORT1" &
+_listener_pid=$!
+sleep 0.3
+
 BD_NON_INTERACTIVE=1 bd -C "$_TMP1/db" doctor --fix --yes 2>/dev/null || true
+
+kill "$_listener_pid" 2>/dev/null; wait "$_listener_pid" 2>/dev/null || true
+
 if [ ! -f "$_breaker_file" ]; then
     ok "clear passes: bd doctor --fix --yes removed the stale breaker file"
-elif [ -f "$_breaker_file" ]; then
+else
     bad "clear passes: breaker file remains after doctor --fix" \
         "file still exists: $_breaker_file"
 fi
@@ -99,6 +120,19 @@ trap - EXIT INT TERM
 # ---------------------------------------------------------------------------
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+
+# Python TCP listener reused by parts 3 and 4.
+cat > "$TMP/listener.py" <<'PYEOF'
+import socket, sys, signal
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('127.0.0.1', int(sys.argv[1])))
+s.listen(10)
+while True:
+    try: s.accept()[0].close()
+    except Exception: break
+PYEOF
 
 # Harness fixture (mirrors test-install-dolt-port-wait.sh).
 FIXTURE="$TMP/harness"
@@ -252,6 +286,10 @@ listener:
 data_dir: $_DOLT_DATA
 YAML
 
+# Python listener that accepts multiple connections (unlike nc which may exit
+# after one). install.sh phase 4 makes two TCP probes: one in the loop and one
+# as a final confirmation; nc -lk exits after the first on this container.
+
 # BREAKER FLAG: bd stub gates list on this file; doctor --fix removes it.
 # doctor --fix (no-op): breaker flag NOT removed → list keeps failing.
 # doctor --fix (clearing): breaker flag IS removed → list succeeds.
@@ -375,15 +413,16 @@ touch "$_BREAKER_FLAG"   # pre-trip the breaker
 # db stub: doctor is a no-op; list always fails while flag exists.
 make_bd_stub 0
 
-# nc listener simulates dolt-beads.service listening on the port.
-# Phase 3 is skipped (db exists), so nc is consumed only by phase 4's probe.
-nc -lk "$_DOLT_PORT" >/dev/null 2>&1 & _nc_pid=$!
+# Python listener simulates dolt-beads.service; handles multiple TCP probes
+# (phase 4 makes both a loop probe and a final-confirm probe).
+python3 "$TMP/listener.py" "$_DOLT_PORT" &
+_py_pid=$!
 sleep 0.3
 
 _no_clear_out="$(run_install)"
 _no_clear_rc=$?
 
-kill "$_nc_pid" 2>/dev/null; wait "$_nc_pid" 2>/dev/null || true
+kill "$_py_pid" 2>/dev/null; wait "$_py_pid" 2>/dev/null || true
 
 nonzero "no-clear: install exits non-zero when db probe fails"     "$_no_clear_rc"
 want    "no-clear: circuit-breaker error in output" "circuit breaker" "$_no_clear_out"
@@ -400,13 +439,14 @@ touch "$_BREAKER_FLAG"   # pre-trip the breaker
 # db stub: doctor removes the flag; list then succeeds.
 make_bd_stub 1
 
-nc -lk "$_DOLT_PORT" >/dev/null 2>&1 & _nc_pid2=$!
+python3 "$TMP/listener.py" "$_DOLT_PORT" &
+_py_pid2=$!
 sleep 0.3
 
 _clear_out="$(run_install)"
 _clear_rc=$?
 
-kill "$_nc_pid2" 2>/dev/null; wait "$_nc_pid2" 2>/dev/null || true
+kill "$_py_pid2" 2>/dev/null; wait "$_py_pid2" 2>/dev/null || true
 
 is0   "install passes: install exits 0 after doctor clears breaker"    "$_clear_rc"
 want  "install passes: bd store accepting logged"  "bd store accepting" "$_clear_out"
