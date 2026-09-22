@@ -439,6 +439,8 @@ testdb_reset() {
             "DELETE FROM events" 2>/dev/null || true
         "$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
             "DELETE FROM bd_events_journal" 2>/dev/null || true
+        "$TESTDB_SERVER_BD" -C "$TESTDB_DIR" sql \
+            "DELETE FROM leases" 2>/dev/null || true
         # Restore local .beads (project_id, sequence counters) from the init baseline.
         [ -d "${TESTDB_BASELINE:-}/.beads" ] || return 1
         local _new; _new="$TESTDB_DIR/.beads.new"
