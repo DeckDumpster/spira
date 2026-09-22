@@ -809,6 +809,7 @@ _n_selected=0; for _s in $SELECTED; do _n_selected=$((_n_selected+1)); done
 # GITHUB_RUN_ID is set by GitHub Actions; local runs use a timestamp.
 # ---------------------------------------------------------------------------
 _BATCH_RUN_ID="${GITHUB_RUN_ID:-${SPIRA_BATCH_RUN_ID:-local-$(date +%s)}}"
+_shim_spira_path=""
 
 # _batch_bd_read <log-path-inside-container> — print "<calls>\t<ms>"
 _batch_bd_read() {
