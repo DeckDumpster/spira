@@ -39,7 +39,17 @@
 #      phrase → batch reopens the bead and preserves the branch.  Proves the
 #      conflict-detector fires and the reopen path is not vacuously silent.
 #
-# defect: sp-c9d41
+# TWO INTEGRATION CASES for batch.sh (sp-jjnmc: partial vs complete citation):
+#
+#   8. PARTIAL-CITED — naming commit is on base, branch has one extra commit not
+#      on base that conflicts → batch reopens, does NOT mark landed.  Fixes the
+#      case where the batch builder treated a partial-landing as a full landing.
+#
+#   9. FULL-ON-BASE — branch tip is already an ancestor of base → batch marks
+#      LANDED (already-in-base).  Positive control: fully-landed branches are
+#      still handled correctly with the new unlanded check in place.
+#
+# defect: sp-c9d41 sp-jjnmc
 # covers: spira/batch.sh spira/lib.sh
 # hermetic-ok: uses a fixture database and a local git repo, no systemd or gh
 set -uo pipefail
@@ -279,6 +289,76 @@ nowant "batch did not cite"        "notes cite"      "$out"
 is    "sp-ctrl is reopened"        open              "$(status_of sp-ctrl)"
 if branch_exists sp-ctrl; then ok "sp-ctrl branch survives reopen"; \
 else bad "sp-ctrl branch survives reopen" "branch was deleted"; fi
+
+# =============================================================================
+# INTEGRATION CASES 8-9 (sp-jjnmc): partial vs complete citation.
+#
+# Fixture: a naming commit (NAMING_SHA) lands on main, then main advances.
+# A branch branches from NAMING_SHA and adds an extra conflicting commit
+# (PARTIAL_TIP). batch should REOPEN, not mark landed (Case 8). A separate
+# branch whose certified tip IS already on main should be marked LANDED via
+# already-in-base (Case 9 — positive control).
+# =============================================================================
+
+# Advance main: add a naming commit for sp-partial8, then one more commit
+# that the branch will conflict with.
+printf 'partial8-first-part\n' > "$REPO/p8a.txt"
+git -C "$REPO" add p8a.txt
+git -C "$REPO" commit -q -m "sp-partial8: first part of the work"
+PARTIAL8_NAMING_SHA="$(git -C "$REPO" rev-parse HEAD)"
+
+printf 'main-advance\n' > "$REPO/p8conflict.txt"
+git -C "$REPO" add p8conflict.txt
+git -C "$REPO" commit -q -m "main: advance after sp-partial8 naming commit"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+
+# Branch for Case 8: starts at NAMING_SHA, adds an extra commit that
+# conflicts with the "main: advance" commit.
+git -C "$REPO" branch "spira/sp-partial8" "$PARTIAL8_NAMING_SHA"
+git -C "$REPO" worktree add -q "$RUN/worktree/sp-partial8" "spira/sp-partial8"
+printf 'partial8-version\n' > "$RUN/worktree/sp-partial8/p8conflict.txt"
+git -C "$RUN/worktree/sp-partial8" add p8conflict.txt
+git -C "$RUN/worktree/sp-partial8" commit -q -m "sp-partial8: second part (extra work not on main)"
+git -C "$REPO" worktree remove "$RUN/worktree/sp-partial8" 2>/dev/null || true
+PARTIAL8_TIP="$(git -C "$REPO" rev-parse spira/sp-partial8)"
+
+# Branch for Case 9: tip is NAMING_SHA, which IS an ancestor of current main.
+git -C "$REPO" branch "spira/sp-full9" "$PARTIAL8_NAMING_SHA"
+
+# Seed beads.
+testdb_seed <<JSONL2 || { echo "seed: testdb_seed failed (8-9)" >&2; exit 1; }
+{"id":"sp-partial8","title":"partial citation test","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-21T00:00:00Z"}
+{"id":"sp-full9","title":"full citation test","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-21T00:00:00Z"}
+JSONL2
+
+# Notes: NAMING_SHA is in both beads' notes as a bare SHA; its message names sp-partial8.
+B note sp-partial8 "partial fix applied at $PARTIAL8_NAMING_SHA, streamer removal pending" >/dev/null 2>&1 || true
+B note sp-full9    "all work done; naming commit $PARTIAL8_NAMING_SHA is on main"          >/dev/null 2>&1 || true
+
+# Landstate: both beads are CERTIFIED.
+printf 'CERTIFIED %s %s\n' "$PARTIAL8_TIP"          "$(date +%s)" > "$LANDSTATE/sp-partial8"
+printf 'CERTIFIED %s %s\n' "$PARTIAL8_NAMING_SHA"   "$(date +%s)" > "$LANDSTATE/sp-full9"
+
+echo
+echo "case 8 — integration: partial citation (naming commit on base, extra commit not) → reopened:"
+echo "case 9 — integration: full citation (tip already on base) → landed (positive control):"
+
+out89="$(batch "$REPONAME")"
+
+# Case 8 assertions.
+want  "batch notes partial citation"   "unlanded commits"  "$out89"
+want  "batch reopens sp-partial8"      "reopened"          "$out89"
+nowant "batch did not mark p8 landed"  "marked landed"     "$out89"
+is    "sp-partial8 is reopened"        open                "$(status_of sp-partial8)"
+if branch_exists sp-partial8; then ok "sp-partial8 branch survives reopen"; \
+else bad "sp-partial8 branch survives reopen" "branch was deleted"; fi
+
+# Case 9 assertions.
+want  "batch marks sp-full9 landed"    "LANDED"            "$out89"
+want  "batch notes already-in-base"    "already in"        "$out89"
+_full9_ls="$(cat "$LANDSTATE/sp-full9" 2>/dev/null || true)"
+want  "sp-full9 landstate is LANDED"   "LANDED"            "$_full9_ls"
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"

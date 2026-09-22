@@ -356,14 +356,24 @@ main() {
         else
             git -C "$wt" merge --abort 2>/dev/null || true
             if _base_conflict "$repo" "$base_sha" "$_btip"; then
-                local _cited_result="" _cited_sha="" _cited_rule=""
+                local _cited_result="" _cited_sha="" _cited_rule="" _unlanded_ahead=""
                 _cited_result="$(bead_cited_commit_on_base "$_bid" "$repo" "$base_sha" 2>/dev/null)" || true
                 read -r _cited_sha _cited_rule <<< "$_cited_result"
                 if [ -n "$_cited_sha" ]; then
-                    land_mark "$_bid" LANDED "$_cited_sha" "$_cited_rule"
-                    printf 'batch %s: %s notes cite %s (%s) already on %s — marked landed\n' \
-                        "$name" "$_bid" "$_cited_sha" "$_cited_rule" "$base"
-                else
+                    _unlanded_ahead="$(git -C "$repo" rev-list "$base_sha..$_btip" 2>/dev/null)" \
+                        || _unlanded_ahead=""
+                    if [ -z "$_unlanded_ahead" ] \
+                       || content_landed "$repo" "$_btip" "$base_sha" 2>/dev/null; then
+                        land_mark "$_bid" LANDED "$_cited_sha" "${_cited_rule}-complete"
+                        printf 'batch %s: %s notes cite %s (%s) already on %s — marked landed\n' \
+                            "$name" "$_bid" "$_cited_sha" "${_cited_rule}-complete" "$base"
+                    else
+                        printf 'batch %s: %s notes cite %s (%s) on %s but branch has unlanded commits — reopening\n' \
+                            "$name" "$_bid" "$_cited_sha" "$_cited_rule" "$base"
+                        _cited_sha=""
+                    fi
+                fi
+                if [ -z "$_cited_sha" ]; then
                     # Attempt rebase onto base before reopening.
                     local _rbwt _rbtip _rbtmp _rbrc _rbsrc _rbfp _rbconf _wtconf
                     _rbwt="$SPIRA_RUN/worktree/.batch-rb-$$"
@@ -429,7 +439,7 @@ main() {
                     fi
                     unset _rbwt _rbtip _rbtmp _rbrc _rbsrc _rbfp _rbconf _wtconf
                 fi
-                unset _cited_result _cited_sha _cited_rule
+                unset _cited_result _cited_sha _cited_rule _unlanded_ahead
             else
                 # Clean merge with the land ref: conflict is only with batch accumulation — skip.
                 printf 'batch %s: %s conflicts with batch — skipped\n' "$name" "$_bid"
