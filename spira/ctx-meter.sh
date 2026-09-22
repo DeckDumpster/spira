@@ -644,7 +644,9 @@ elif arc_name == "safe":
     else:
         arc = f" \x1b[33m✓ safe as of {arc_behind}t ago\x1b[0m"
 elif arc_name == "failed":
-    arc = " \x1b[31m! archive failed\x1b[0m"
+    arc = " \x1b[31m! archive failed (run archivist.sh now)\x1b[0m"
+elif arc_name == "timeout":
+    arc = " \x1b[33m⏸ archive timed out, retrying\x1b[0m"
 elif arc_name == "capacity":
     # DEFERRED, NOT BROKEN. The sweep will retry this session once the window reopens, so this
     # is amber and says why — a red "failed" here would be a false alarm about a condition that
