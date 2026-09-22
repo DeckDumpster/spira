@@ -916,7 +916,6 @@ if [ "$MODE" = serial ]; then
                 -e "SPIRA_BD_LOG=${_serial_bd_log}" \
                 -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
                 -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
-                -e "PATH=${_bd_shim_path}" \
                 -e "SPIRA_BD_TIMING_LOG=${_bd_timing_dir}/${s}.log" \
                 "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" >"$_batch_tmp" 2>&1 || _rc=$?
         else
@@ -932,7 +931,6 @@ if [ "$MODE" = serial ]; then
                 -e "SPIRA_BD_LOG=${_serial_bd_log}" \
                 -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
                 -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
-                -e "PATH=${_bd_shim_path}" \
                 -e "SPIRA_BD_TIMING_LOG=${_bd_timing_dir}/${s}.log" \
                 "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" >"$_batch_tmp" 2>&1 || _rc=$?
         fi
@@ -1109,7 +1107,6 @@ else
                     -e "SPIRA_INSTANCE=${_suite_instance}" \
                     -e "SPIRA_RUN=${_suite_run}" \
                     -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
-                    -e "PATH=${_bd_shim_path}" \
                     -e "SPIRA_BD_TIMING_LOG=${_bd_timing_dir}/${s}.log" \
                     "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" \
                     >"$_par_tmp/$s.rawout" 2>&1 || _inner_rc=$?
@@ -1128,7 +1125,6 @@ else
                     -e "SPIRA_INSTANCE=${_suite_instance}" \
                     -e "SPIRA_RUN=${_suite_run}" \
                     -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
-                    -e "PATH=${_bd_shim_path}" \
                     -e "SPIRA_BD_TIMING_LOG=${_bd_timing_dir}/${s}.log" \
                     "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" \
                     >"$_par_tmp/$s.rawout" 2>&1 || _inner_rc=$?
