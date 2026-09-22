@@ -219,7 +219,7 @@ GH_LIST='[{"tagName":"spira-release-spira-'"$TS1"'","isDraft":false},{"tagName":
 
 # ===========================================================================
 echo
-echo "artifact positive control — NOT-LATEST reported via gh release list:"
+echo "artifact positive control — NOT-LATEST reported via gh release list (SPIRA_GH_INTAKE_REPO):"
 # (sidecar present so activated release is identified; gh returns both tags)
 # ===========================================================================
 rm -f "$RELEASES/current"
@@ -237,7 +237,18 @@ want "artifact-not-latest: names latest tag"    "spira-release-spira-${TS2}" "$a
 
 # ===========================================================================
 echo
-echo "artifact mode — no SPIRA_GH_INTAKE_REPO → exits 3 (no fallback path):"
+echo "artifact mode — SPIRA_RELEASE_REPO set (intake empty) → NOT-LATEST via SPIRA_RELEASE_REPO:"
+# Consuming installs set SPIRA_RELEASE_REPO without SPIRA_GH_INTAKE_REPO.
+# ===========================================================================
+art_release_repo_out="$(run_skew_artifact \
+    SPIRA_RELEASE_REPO=test/repo \
+    GH_RELEASE_LIST="$GH_LIST")"; art_release_repo_rc=$?
+is   "artifact-release-repo: exits 1"            "1"                          "$art_release_repo_rc"
+want "artifact-release-repo: NOT-LATEST reported" "NOT-LATEST"                "$art_release_repo_out"
+
+# ===========================================================================
+echo
+echo "artifact mode — no SPIRA_GH_INTAKE_REPO and no SPIRA_RELEASE_REPO → exits 3:"
 # ===========================================================================
 art_no_intake_out="$(run_skew_artifact)"; art_no_intake_rc=$?
 is "artifact-no-intake: exits 3" "3" "$art_no_intake_rc"
