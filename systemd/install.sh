@@ -108,6 +108,7 @@ watcher_name = sys.argv[13] if len(sys.argv) > 13 else ""
 # which is both wrong and silent (no unresolved placeholder remains).
 if not m["SPIRA_PROD"]:
     m["SPIRA_PROD"] = m["SPIRA_HOME"]
+m["SPIRA_PROD_COCK"] = os.path.dirname(m["SPIRA_PROD"]) + "/cockpit"
 text = open(sys.argv[1]).read()
 if not m["DOLT"] and "@DOLT@" in text:
     sys.stderr.write("install: %s: dolt is not on PATH; install dolt before rendering units that need it\n"

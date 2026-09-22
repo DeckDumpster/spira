@@ -74,8 +74,7 @@ unset TMUX
 TMUX_TMPDIR="$TMUXDIR" tmux start-server
 FIXTURE_UP=1
 
-# layout.sh derives RUN as "$SPIRA_REPO/.runtime" so heal.log lands there.
-RUN="$TMP/.runtime"; mkdir -p "$RUN"
+RUN="$TMP/run"; mkdir -p "$RUN"
 
 # Create a cockpit session. window-size largest is what 'up' sets; we set it here
 # so the detachment test can assert against it directly without invoking 'up'
@@ -139,6 +138,7 @@ WH_EXPECTED=$(TMUX_TMPDIR="$TMUXDIR" tmux display-message -t cockpit -p '#{windo
 # is detached; the live (< 1 s old) survives.
 SPIRA_COCKPIT="$COCKPIT_DIR" \
 SPIRA_REPO="$TMP" \
+SPIRA_RUN="$RUN" \
 SPIRA_HOME="$HERE" \
 SPIRA_CONF="$TMP/no.conf" \
 COCKPIT_CLIENT_IDLE_SECS=2 \
@@ -162,7 +162,7 @@ wh_after=$(TMUX_TMPDIR="$TMUXDIR" tmux display-message -t cockpit -p '#{window_h
 is "window height equals live-client height ($WH_EXPECTED) after ensure" "$WH_EXPECTED" "$wh_after"
 
 # Heal log records each detach so the operator can audit which ghosts were removed.
-HEAL="$TMP/.runtime/cockpit-heal.log"
+HEAL="$TMP/run/cockpit-heal.log"
 if [ -f "$HEAL" ]; then
     ok "heal.log written"
     want "heal.log records ghost TTY" "$GHOST_TTY" "$(cat "$HEAL")"

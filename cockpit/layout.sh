@@ -90,7 +90,7 @@ if [ -z "${SPIRA_DEV_RENDERER:-}" ] && [ -n "${SPIRA_PROD:-}" ] && ! spira_singl
     _prod_cock="$SPIRA_PROD/cockpit"
     [ -d "$_prod_cock" ] && COCK="$_prod_cock"
 fi
-RUN="$SPIRA_REPO/.runtime"
+RUN="$SPIRA_RUN"
 
 # SPIRA_CONF, when set, points to the config file for this instance. Pane commands carry it
 # in the command string so a respawn — from tmux itself or from the ensure timer — uses the
@@ -110,7 +110,7 @@ BOTTOM_PCT="$COCKPIT_BOTTOM_PCT"
 MAIL_CMD="${COCKPIT_MAIL:-}"
 MAIL_EXE="${MAIL_CMD%% *}"
 [ -n "$MAIL_EXE" ] && command -v "$MAIL_EXE" >/dev/null 2>&1 || MAIL_CMD=""
-mkdir -p "$RUN"
+mkdir -p "$RUN" || { printf 'cockpit: runtime directory %s is not writable\n' "$RUN" >&2; exit 1; }
 
 # Default to the window this script was invoked from; fall back to the claude window.
 default_window() {
