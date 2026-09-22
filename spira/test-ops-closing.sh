@@ -54,7 +54,7 @@
 # implementation of the thing in question (law-prefer-the-real-dependency).
 #
 # defect: sp-9pyr
-# covers: spira/aeon.sh spira/sop.sh spira/chamber/ops.fayth spira/chamber/ops.md spira/test-ops-closing.sh
+# covers: spira/aeon.sh spira/sop.sh spira/close-reason-flags.py spira/chamber/ops.fayth spira/chamber/ops.md spira/test-ops-closing.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -155,6 +155,8 @@ SOP
 esac
 case "$(cat "$TMP/act")" in
     bad-reason) bd -C "$SPIRA_DB" close "$id" --reason "DIAGNOSED: X. TEMPORARY WORKAROUND: Y must be removed once fix lands." >/dev/null 2>&1 ;;
+    bad-reason-admit) bd -C "$SPIRA_DB" close "$id" --reason "TEMPORARY WORKAROUND: x is set until y lands" >/dev/null 2>&1 ;;
+    bad-reason-mention) bd -C "$SPIRA_DB" close "$id" --reason 'pair added — bad-reason ("TEMPORARY WORKAROUND") is reopened; clean reason stays closed' >/dev/null 2>&1 ;;
     *)          bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1 ;;
 esac
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
@@ -357,6 +359,18 @@ fresh sp-oc-13; run_aeon builder bad-reason
 is   "a statute phrase reopens the bead"        open   "$(field sp-oc-13 status)"
 want "the note names the matched phrase"        "TEMPORARY WORKAROUND" "$(notes sp-oc-13)"
 want "the log names the override"              "SPIRA_CLOSE_REASON_OVERRIDE" "$(cat "$TMP/out")"
+
+echo
+echo "the fence fires on a plain ADMIT but not on a quoted MENTION:"
+# POSITIVE CONTROL: a reason that admits the phrase directly is refused.
+fresh sp-oc-14; run_aeon builder bad-reason-admit
+is   "an admit reopens the bead"                open   "$(field sp-oc-14 status)"
+want "the note names the matched phrase"        "TEMPORARY WORKAROUND" "$(notes sp-oc-14)"
+
+# NEGATIVE CONTROL: the same phrase inside a parenthetical is a mention, not an admission.
+fresh sp-oc-15; run_aeon builder bad-reason-mention
+is   "a quoted mention stays closed"            closed "$(field sp-oc-15 status)"
+nowant "and the fence did not fire"             "REOPENED" "$(cat "$TMP/out")"
 
 echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
