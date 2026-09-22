@@ -554,11 +554,20 @@ run_gate() {             # run_gate <ref-being-tested> -> the command's own stat
     # suite run of one-line "ok" entries, loses the reason entirely. gate-spira.sh
     # already limits output: one line per passing suite, full output only for failures,
     # so total size is bounded without truncation here.
+    #
+    # env -i SCRUBS THE ENVIRONMENT BUT NOT THE CGROUP. The gate runs as a child of the
+    # aeon's systemd unit, which carries a CPUQuota. nproc inside the gate measures the
+    # quota (ceil(quota/100%), minimum 1) rather than the host. A repository whose CI
+    # preflight asserts a minimum core count fails that assertion — and fails it on the base
+    # too, producing BASE_FAIL against every branch. SPIRA_GATE_HOST_CORES is set here from
+    # host_cores(), which reads getconf and is immune to the quota. A repository's CI can
+    # substitute it for nproc where the raw host count is what it needs.
     ( cd "$TREE" && env -i \
         PATH="$HOME/.cargo/bin:$PATH" HOME="$HOME" TERM=dumb \
         SPIRA_GATE_REPO="$REPO" SPIRA_GATE_REPO_NAME="$REPO_NAME" \
         SPIRA_GATE_BRANCH="$1" SPIRA_GATE_BASE="$BASE" SPIRA_GATE_SELECT_HEAD="$BR" \
         SPIRA_GATE_FILES="$FILELIST" \
+        SPIRA_GATE_HOST_CORES="$(host_cores)" \
         SPIRA_GATE_EJECTED_SUITES="${ejected_suites:-}" \
         SPIRA_GATE_ALL="${SPIRA_GATE_ALL:-0}" \
         SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
