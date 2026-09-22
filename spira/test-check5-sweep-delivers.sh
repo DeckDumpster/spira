@@ -227,6 +227,7 @@ env -i HOME="$TMP" PATH="$HERE:/usr/bin:/bin" \
     SPIRA_RUN="$TRUN" \
     SPIRA_GROOMER_LABEL="groom" \
     SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_GROOM_THRESHOLD=0 \
     bash "$HERE/groom-trigger.sh" >/dev/null 2>&1
 want "groom-trigger adds delivers:note:" "delivers:note:" "$(cat "$BD_LOG")"
 want "delivers: label names groom.log" "groom.log" "$(cat "$BD_LOG")"
