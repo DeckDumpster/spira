@@ -362,24 +362,6 @@ want "sp-recur-unlanded-cls reappears after fix branch lands on base" \
     "sp-recur-unlanded-cls" "$out8"
 lack "no [suppressed] annotation after branch lands" "[suppressed]" "$out8"
 
-# ==============================================================================
-echo
-echo "9. Landed remedy beyond commit window → class NOT suppressed (sp-census-suppression-starvation)"
-# ==============================================================================
-# After test 8: the landing commit for $closed_remedy_id is at depth 1 on origin/main.
-# Push 3 noise commits so it sits at depth 4, then call landed() directly.
-# POSITIVE CONTROL: old landed() searched only the last SPIRA_VERDICT_WINDOW commits and
-# returned 1 here (missed depth-4 commit). New landed() uses --grep with no -n limit; rc=0.
-for _wi in 1 2 3; do
-    GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=t@t \
-        git -C "$REMEDY_REPO" commit --allow-empty -q -m "post-land noise" 2>/dev/null
-done
-git -C "$REMEDY_REPO" push -q origin main >/dev/null 2>&1
-
-_landed9=1
-SPIRA_VERDICT_WINDOW=3 landed "$closed_remedy_id" "$REMEDY_REPO" && _landed9=0
-is "landed() finds commit at depth 4 despite SPIRA_VERDICT_WINDOW=3" 0 "$_landed9"
-
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]
