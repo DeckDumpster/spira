@@ -283,6 +283,53 @@ echo "---"
 want "stranded shows 1 (only poisoned work bead)" "1 stranded" "$pane_ask"
 
 # =============================================================================
+# RELATES-TO DOES NOT STRAND — the acceptance fixture from sp-dcmfd.
+# A work bead with a relates-to link to an open ask is still reachable.
+# Positive control: same bead with a blocks edge → SP_STRANDED=1.
+# =============================================================================
+echo ""
+echo "relates-to link: not a blocker → SP_STRANDED=0"
+
+BD_RELATES="$TMP/bd-relates"
+cat > "$BD_RELATES" <<'EOF'
+#!/usr/bin/env bash
+# sp-work: ready work bead; sp-ask: open ask; relates-to link from work to ask.
+printf '[
+  {"id":"sp-work","status":"open","labels":["spira","plan"],"issue_type":"task",
+   "dependencies":[{"issue_id":"sp-work","depends_on_id":"sp-ask","type":"relates-to"}]},
+  {"id":"sp-ask","status":"open","labels":["spira","plan","needs-ryan"],"issue_type":"task"}
+]'
+EOF
+chmod +x "$BD_RELATES"
+
+relates_out="$(run_reachable "$BD_RELATES")"
+is "SP_STRANDED=0 for relates-to link" "0" \
+   "$(printf '%s\n' "$relates_out" | grep '^SP_STRANDED=' | sed 's/^SP_STRANDED=//')"
+is "SP_REACHABLE=1 for relates-to link" "1" \
+   "$(printf '%s\n' "$relates_out" | grep '^SP_REACHABLE=' | sed 's/^SP_REACHABLE=//')"
+
+echo ""
+echo "positive control: blocks edge onto ask → SP_STRANDED=1"
+
+BD_BLOCKS_ASK="$TMP/bd-blocks-ask"
+cat > "$BD_BLOCKS_ASK" <<'EOF'
+#!/usr/bin/env bash
+# sp-work: depends via blocks on sp-ask (open ask) → stranded.
+printf '[
+  {"id":"sp-work","status":"open","labels":["spira","plan"],"issue_type":"task",
+   "dependencies":[{"issue_id":"sp-work","depends_on_id":"sp-ask","type":"blocks"}]},
+  {"id":"sp-ask","status":"open","labels":["spira","plan","needs-ryan"],"issue_type":"task"}
+]'
+EOF
+chmod +x "$BD_BLOCKS_ASK"
+
+blocks_ask_out="$(run_reachable "$BD_BLOCKS_ASK")"
+is "SP_STRANDED=1 for blocks edge onto ask" "1" \
+   "$(printf '%s\n' "$blocks_ask_out" | grep '^SP_STRANDED=' | sed 's/^SP_STRANDED=//')"
+is "SP_REACHABLE=0 for blocks edge onto ask" "0" \
+   "$(printf '%s\n' "$blocks_ask_out" | grep '^SP_REACHABLE=' | sed 's/^SP_REACHABLE=//')"
+
+# =============================================================================
 echo ""
 printf 'test-cockpit-reachable: %d ok, %d fail\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

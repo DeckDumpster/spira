@@ -1617,6 +1617,8 @@ for bead in beads:
     if dn not in all_ids:
         continue
     for dep in (bead.get("dependencies") or []):
+        if (dep.get("dependency_type") or dep.get("type")) != "blocks":
+            continue
         up = dep.get("depends_on_id", "")
         if up in bead_by_id:
             blocker_of[dn].add(up)
