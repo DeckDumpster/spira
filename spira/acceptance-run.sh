@@ -427,8 +427,7 @@ else
     if [ "$_aged_ready_rc" -eq 0 ]; then
         ok "phase D: ready.sh exits 0 after aged install"
     else
-        bad "phase D: ready.sh exits 0 after aged install" \
-            "$_aged_clone/spira/ready.sh exit $_aged_ready_rc"
+        bad "phase D: ready.sh exits 0 after aged install" "$_aged_clone/spira/ready.sh exit $_aged_ready_rc"
         printf '%s\n' "$_aged_ready_out"
     fi
 
