@@ -107,7 +107,7 @@ echo "closed+committed+landstate=RED — reopened (eviction race):"
 # THE FIX (sp-htw4r). The batch eviction wrote RED and called bead_reopen; the aeon
 # re-closed the bead while still in flight. aeon.sh must detect closed+RED and reopen.
 testdb_reset; seed sp-er-1
-printf 'RED faksha %s eviction-test\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-1"
+printf 'RED faksha %s ejected\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-1"
 run_aeon
 is   "bead is open after eviction-race detection"     open "$(field sp-er-1 status)"
 is   "and the claim is released"                       ""   "$(field sp-er-1 assignee)"
@@ -152,6 +152,33 @@ run_aeon
 is     "bead stays closed (landstate=CERTIFIED)"       closed "$(field sp-er-4 status)"
 nowant "no eviction-race reopen fired"                 "eviction-race" "$(cat "$TMP/out")"
 rm -f "$SPIRA_RUN/landstate/sp-er-4"
+
+# =============================================================================
+echo
+echo "closed+committed+landstate=RED no-rebase@<sha> — stays closed (landing.sh owns this):"
+# =============================================================================
+# no-rebase@ is written by landing.sh when the branch does not rebase onto the base.
+# That is a landing-gate RED with its own reopen path; the eviction-race guard must not
+# fire here, or it would give the next aeon wrong advice (recertify, not rebase).
+testdb_reset; seed sp-er-5
+printf 'RED faksha %s no-rebase@deadbeef\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-5"
+run_aeon
+is     "bead stays closed (no-rebase@ RED)"           closed "$(field sp-er-5 status)"
+nowant "no eviction-race reopen fired"                 "eviction-race" "$(cat "$TMP/out")"
+rm -f "$SPIRA_RUN/landstate/sp-er-5"
+
+# =============================================================================
+echo
+echo "closed+committed+landstate=RED gate — stays closed (landing.sh owns this):"
+# =============================================================================
+# gate is written by landing.sh when the landing gate fails. Same shape: a RED that
+# belongs to landing.sh, not the batch eviction machinery.
+testdb_reset; seed sp-er-6
+printf 'RED faksha %s gate\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-6"
+run_aeon
+is     "bead stays closed (gate RED)"                 closed "$(field sp-er-6 status)"
+nowant "no eviction-race reopen fired"                 "eviction-race" "$(cat "$TMP/out")"
+rm -f "$SPIRA_RUN/landstate/sp-er-6"
 
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]
