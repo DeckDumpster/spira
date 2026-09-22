@@ -50,17 +50,18 @@ _batch_reseal() {   # _batch_reseal <file> <new_head> <new_members>
 # members cost two hours. Parallel mode is bounded by SPIRA_BATCH_MAXPAR like every other
 # batch on this box; the serial re-run that tells a flake from a failure is gate-retry's
 # job on the CI side, not this one's.
-_repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-file] [flaky-file]
+_repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-file] [flaky-file] [wt-id]
                     # Merges <tip> onto <base-sha> so suites added after the member
                     # forked are present in the tested tree.
                     # Empty <base-sha>: tests <tip> directly (batch-head path).
                     # Returns 0 (red), 1 (green), 2 (harness fault), 3 (flaky: red then green).
                     # If [fail-file] given and result is red, writes FAIL lines there.
                     # If [flaky-file] given and result is flaky, writes suite names there.
-    local suites="$1" repo="$2" base="$3" tip="$4" _fail_out="${5:-}" _flaky_out="${6:-}"
+                    # [wt-id] disambiguates the worktree when concurrent callers run together.
+    local suites="$1" repo="$2" base="$3" tip="$4" _fail_out="${5:-}" _flaky_out="${6:-}" _wt_id="${7:-$$}"
     local tmp rc test_ref wt _repro_out
     if [ -n "$base" ]; then
-        wt="$SPIRA_RUN/worktree/.repro-$$"
+        wt="$SPIRA_RUN/worktree/.repro-$_wt_id"
         mkdir -p "$SPIRA_RUN/worktree" 2>/dev/null || true
         git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
         git -C "$repo" worktree add -q --detach "$wt" "$base" 2>/dev/null || return 2
@@ -106,6 +107,41 @@ _repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-f
     fi
     [ "$rc" -eq 0 ] && return 1
     return 2
+}
+
+_repro_member_bg() {  # background subshell worker: writes rc (and flaky file) to fail_dir
+    local _id="$1" _csv="$2" _repo="$3" _base="$4" _tip="$5" _fdir="$6"
+    _repro_is_red "$_csv" "$_repo" "$_base" "$_tip" "$_fdir/$_id" "$_fdir/$_id.flaky" "$$-$_id"
+    printf '%s\n' "$?" > "$_fdir/$_id.rc"
+}
+
+# _repro_members_par <fail_dir> <repo> <base> <id:tip:csv>...
+# Runs _repro_member_bg concurrently for each entry. Concurrency is bounded by
+# SPIRA_BATCH_MAXPAR: min(mc, MAXPAR) members active at once; each member's
+# testenv-batch width = MAXPAR / active, so total concurrent suites ≤ MAXPAR.
+_repro_members_par() {
+    local _fdir="$1" _repo="$2" _base="$3"; shift 3
+    local _mc="$#"
+    local _maxpar; _maxpar="${SPIRA_BATCH_MAXPAR:-$(nproc)}"
+    local _active _width
+    if [ "${_maxpar:-0}" -gt 0 ] 2>/dev/null; then
+        _active=$(( _mc < _maxpar ? _mc : _maxpar ))
+        _width=$(( _maxpar / _active ))
+        [ "${_width:-0}" -lt 1 ] && _width=1
+    else
+        _active=0; _width=0
+    fi
+    local _entry _id _rest _tip _csv _pids=()
+    for _entry in "$@"; do
+        _id="${_entry%%:*}"; _rest="${_entry#*:}"; _tip="${_rest%%:*}"; _csv="${_rest#*:}"
+        if [ "${_active:-0}" -gt 0 ] 2>/dev/null; then
+            while [ "$(jobs -rp | wc -l)" -ge "$_active" ]; do wait -n 2>/dev/null || true; done
+        fi
+        ( SPIRA_BATCH_MAXPAR="${_width:-}" \
+          _repro_member_bg "$_id" "$_csv" "$_repo" "$_base" "$_tip" "$_fdir" ) &
+        _pids+=($!)
+    done
+    wait "${_pids[@]}" 2>/dev/null || true
 }
 
 _any_suite_in_selection() {  # _any_suite_in_selection <suites-spacesep> <repo> <base-sha> <tip> -> 0 if any matches
@@ -313,10 +349,10 @@ _q_attribute() {
             fi
         fi
     else
-        # Per-member reproduction: each member tested only on the failing suites
-        # its own diff selects. Suites no member's diff selects are tried against
-        # every member below before falling through to together-only.
-        local _mf _msel _mcsv _rs _covered_suites="" _flaky_f="" _mrc=0 _fs=""
+        # Phase 1: diff-selected suites per member, run in parallel.
+        # First pass builds _p1_entries and _covered_suites (fast, no container).
+        local _mf _msel _mcsv _rs _covered_suites=""
+        local _p1_entries=()
         for _mm in "${members_arr[@]}"; do
             _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
             _mf="$(mktemp)"
@@ -330,26 +366,27 @@ _q_attribute() {
                 case ",$_mcsv," in *",$_rs,"*) ;; *) _mcsv="${_mcsv:+$_mcsv,}$_rs" ;; esac
             done
             [ -n "$_mcsv" ] || continue
-            _flaky_f="$(mktemp)"
-            _repro_is_red "$_mcsv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid" "$_flaky_f"
-            _mrc=$?
-            if [ "$_mrc" -eq 0 ]; then
-                ejected+=("$_mid|$_mtip|$_mcsv")
-                caught=$(( caught + 1 ))
-            elif [ "$_mrc" -eq 3 ]; then
-                _fs="$(cat "$_flaky_f" 2>/dev/null || true)"
-                _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
-                printf 'verdict %s: %s \xe2\x80\x94 flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
-            elif [ "$_mrc" -eq 2 ]; then
-                unjudged+=("$_mm")
-                printf 'verdict %s: %s \xe2\x80\x94 harness fault (could not judge)\n' "$name" "$_mid"
-            fi
-            rm -f "$_flaky_f"
+            _p1_entries+=("$_mid:$_mtip:$_mcsv")
         done
+        if [ "${#_p1_entries[@]}" -gt 0 ]; then
+            _repro_members_par "$_eject_fail_dir" "$repo" "$base_sha" "${_p1_entries[@]}"
+            for _entry in "${_p1_entries[@]}"; do
+                _mid="${_entry%%:*}"; _rest="${_entry#*:}"; _mtip="${_rest%%:*}"; _mcsv="${_rest#*:}"
+                local _mrc; _mrc="$(cat "$_eject_fail_dir/$_mid.rc" 2>/dev/null || printf '2')"
+                rm -f "$_eject_fail_dir/$_mid.rc"
+                if [ "$_mrc" -eq 0 ]; then
+                    ejected+=("$_mid|$_mtip|$_mcsv")
+                    caught=$(( caught + 1 ))
+                elif [ "$_mrc" -eq 3 ]; then
+                    local _fs; _fs="$(cat "$_eject_fail_dir/$_mid.flaky" 2>/dev/null || true)"
+                    rm -f "$_eject_fail_dir/$_mid.flaky"
+                    _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
+                    printf 'verdict %s: %s — flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
+                fi
+            done
+        fi
 
-        # Suites that no member's diff selected (e.g. whole-tree lints): try each
-        # member against them. A member+base break on such a suite still warrants
-        # ejection rather than a together-only halve.
+        # Suites that no member's diff selected (e.g. whole-tree lints).
         local _unselected_csv=""
         for _rs in $red_suites; do
             case " $_covered_suites " in *" $_rs "*) ;;
@@ -370,47 +407,56 @@ _q_attribute() {
         fi
 
         if [ "${#ejected[@]}" -eq 0 ] && [ -n "$_unselected_csv" ]; then
+            # Phase 2: unselected suites, all members in parallel.
+            local _p2_entries=()
             for _mm in "${members_arr[@]}"; do
                 _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
-                _flaky_f="$(mktemp)"
-                _repro_is_red "$_unselected_csv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid" "$_flaky_f"
-                _mrc=$?
+                _p2_entries+=("$_mid:$_mtip:$_unselected_csv")
+            done
+            _repro_members_par "$_eject_fail_dir" "$repo" "$base_sha" "${_p2_entries[@]}"
+            for _entry in "${_p2_entries[@]}"; do
+                _mid="${_entry%%:*}"; _rest="${_entry#*:}"; _mtip="${_rest%%:*}"; _mcsv="${_rest#*:}"
+                local _mrc; _mrc="$(cat "$_eject_fail_dir/$_mid.rc" 2>/dev/null || printf '2')"
+                rm -f "$_eject_fail_dir/$_mid.rc"
                 if [ "$_mrc" -eq 0 ]; then
-                    ejected+=("$_mid|$_mtip|$_unselected_csv")
+                    ejected+=("$_mid|$_mtip|$_mcsv")
                     caught=$(( caught + 1 ))
                 elif [ "$_mrc" -eq 3 ]; then
-                    _fs="$(cat "$_flaky_f" 2>/dev/null || true)"
+                    local _fs; _fs="$(cat "$_eject_fail_dir/$_mid.flaky" 2>/dev/null || true)"
+                    rm -f "$_eject_fail_dir/$_mid.flaky"
                     _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
                     printf 'verdict %s: %s \xe2\x80\x94 flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
                 elif [ "$_mrc" -eq 2 ]; then
                     unjudged+=("$_mm")
                     printf 'verdict %s: %s \xe2\x80\x94 harness fault (could not judge)\n' "$name" "$_mid"
                 fi
-                rm -f "$_flaky_f"
             done
         fi
 
         if [ "${#ejected[@]}" -eq 0 ]; then
-            # Diff-based selection missed every member. Lift the filter: test each
-            # member alone against all red suites. A suite that scans the whole tree
-            # can be caused by any member regardless of its declared covers.
+            # Phase 3: all-suites fallback, all members in parallel.
+            local _p3_entries=()
             for _mm in "${members_arr[@]}"; do
                 _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
-                _flaky_f="$(mktemp)"
-                _repro_is_red "$suites_csv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid" "$_flaky_f"
-                _mrc=$?
+                _p3_entries+=("$_mid:$_mtip:$suites_csv")
+            done
+            _repro_members_par "$_eject_fail_dir" "$repo" "$base_sha" "${_p3_entries[@]}"
+            for _entry in "${_p3_entries[@]}"; do
+                _mid="${_entry%%:*}"; _rest="${_entry#*:}"; _mtip="${_rest%%:*}"; _mcsv="${_rest#*:}"
+                local _mrc; _mrc="$(cat "$_eject_fail_dir/$_mid.rc" 2>/dev/null || printf '2')"
+                rm -f "$_eject_fail_dir/$_mid.rc"
                 if [ "$_mrc" -eq 0 ]; then
-                    ejected+=("$_mid|$_mtip|$suites_csv")
+                    ejected+=("$_mid|$_mtip|$_mcsv")
                     caught=$(( caught + 1 ))
                 elif [ "$_mrc" -eq 3 ]; then
-                    _fs="$(cat "$_flaky_f" 2>/dev/null || true)"
+                    local _fs; _fs="$(cat "$_eject_fail_dir/$_mid.flaky" 2>/dev/null || true)"
+                    rm -f "$_eject_fail_dir/$_mid.flaky"
                     _batch_flaky="${_batch_flaky:+$_batch_flaky,}$_fs"
                     printf 'verdict %s: %s \xe2\x80\x94 flaky (red then green), survived: %s\n' "$name" "$_mid" "$_fs"
                 elif [ "$_mrc" -eq 2 ]; then
                     unjudged+=("$_mm")
                     printf 'verdict %s: %s \xe2\x80\x94 harness fault (could not judge)\n' "$name" "$_mid"
                 fi
-                rm -f "$_flaky_f"
             done
         fi
 

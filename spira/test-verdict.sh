@@ -2,7 +2,7 @@
 #
 # test-verdict.sh — merge-queue verdict: fast-forward landing pass.
 #
-# Twenty cases:
+# Twenty-five cases:
 #   1. No open batch → forge is never reached.
 #   2. Pending within CI max → nothing happens.
 #   3. Pending, run old and stuck → run cancelled explicitly; no workflow-rerun.
@@ -33,6 +33,11 @@
 #  18. Per-repo CI_MAXSEC override: SPIRA_QUEUE_CI_MAXSEC_<NAME> cancels run early.
 #  19. Flaky suite: fails once then passes on retry → member not ejected; flaky_suites=.
 #  20. Always-red control: suite fails twice → member ejected (retry doesn't suppress).
+#  21. TERM TRAP: TERM during attribution writes "interrupted after ...s" to landing.log.
+#  22. Parallel wall-time: 3 members × 2s stub → total ≤ 75% of serial with MAXPAR=3.
+#  23. Serial pair: same 3 members with MAXPAR=1 → total ≥ 6s (positive control).
+#  24. Could-not-judge: rc=2 member doesn't shield others; guilty member ejected.
+#  25. Deterministic: ejected set identical across two runs with different completion order.
 #
 # The forge seam is a local fixture; no network is reached.
 # mail.sh and suites.sh are stubbed to capture calls.
@@ -834,16 +839,16 @@ sleep 60
 REPRO
 chmod +x "$SH/repro-slow.sh"
 
-base_sha21="$(git -C "$REPO" rev-parse origin/main)"
-bwt21="$RUN/worktree/sp-vd-t1"
-git -C "$REPO" worktree add -q -b "spira/sp-vd-t1" "$bwt21" origin/main 2>/dev/null || true
-printf 'sp-vd-t1\n' > "$bwt21/sp-vd-t1.txt"
-git -C "$bwt21" add -A
-git -C "$bwt21" commit -q -m "sp-vd-t1: work"
+base_sha21t="$(git -C "$REPO" rev-parse origin/main)"
+bwt21t="$RUN/worktree/sp-vd-t1"
+git -C "$REPO" worktree add -q -b "spira/sp-vd-t1" "$bwt21t" origin/main 2>/dev/null || true
+printf 'sp-vd-t1\n' > "$bwt21t/sp-vd-t1.txt"
+git -C "$bwt21t" add -A
+git -C "$bwt21t" commit -q -m "sp-vd-t1: work"
 tip_t1="$(git -C "$REPO" rev-parse "spira/sp-vd-t1")"
 printf 'BATCHED %s %s\n' "$tip_t1" "$(date +%s)" > "$LANDSTATE/sp-vd-t1"
 { printf 'pr=99\nhead=%s\nbase=%s\nmembers=sp-vd-t1:%s\nopened=%s\n' \
-    "$tip_t1" "$base_sha21" "$tip_t1" "$(date +%s)"; } > "$(batch_file)"
+    "$tip_t1" "$base_sha21t" "$tip_t1" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: test-slow-suite.sh\n' > "$FORGE_STATUS_FILE"
 : > "$RUN/landing.log"
 
@@ -880,6 +885,199 @@ want "21. TERM trap: interrupted line in landing.log" \
     "$(cat "$RUN/landing.log" 2>/dev/null)"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 22. PARALLEL WALL-TIME — 3 members, repro stub sleeps 2s each.
+#     With SPIRA_BATCH_MAXPAR=3 all run concurrently; wall time ≤ 75% of serial.
+#     Positive control is case 23: MAXPAR=1 forces serial; total wall time ≥ 6s.
+# =============================================================================
+cat > "$SH/repro-sleep.sh" <<'REPRO'
+#!/usr/bin/env bash
+sleep 2; exit 1
+REPRO
+chmod +x "$SH/repro-sleep.sh"
+
+base_sha21="$(git -C "$REPO" rev-parse origin/main)"
+for id in sp-vd-p1 sp-vd-p2 sp-vd-p3; do
+    bwt21="$RUN/worktree/$id"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$bwt21" origin/main 2>/dev/null || true
+    printf '%s\n' "$id" > "$bwt21/$id.txt"
+    git -C "$bwt21" add -A
+    git -C "$bwt21" commit -q -m "$id: work"
+    printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" > "$LANDSTATE/$id"
+done
+tip_p1="$(git -C "$REPO" rev-parse "spira/sp-vd-p1")"
+tip_p2="$(git -C "$REPO" rev-parse "spira/sp-vd-p2")"
+tip_p3="$(git -C "$REPO" rev-parse "spira/sp-vd-p3")"
+wt21="$RUN/worktree/.b21"
+git -C "$REPO" worktree add -q --detach "$wt21" "$base_sha21" 2>/dev/null || true
+git -C "$wt21" merge -q --no-edit --no-ff -m "spira: land sp-vd-p1" "$tip_p1" >/dev/null 2>&1
+git -C "$wt21" merge -q --no-edit --no-ff -m "spira: land sp-vd-p2" "$tip_p2" >/dev/null 2>&1
+git -C "$wt21" merge -q --no-edit --no-ff -m "spira: land sp-vd-p3" "$tip_p3" >/dev/null 2>&1
+batch_head21="$(git -C "$wt21" rev-parse HEAD)"
+git -C "$REPO" worktree remove -f "$wt21" 2>/dev/null || true
+{ printf 'pr=81\nhead=%s\nbase=%s\nmembers=sp-vd-p1:%s sp-vd-p2:%s sp-vd-p3:%s\nopened=%s\n' \
+    "$batch_head21" "$base_sha21" "$tip_p1" "$tip_p2" "$tip_p3" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-sleep.sh\n' > "$FORGE_STATUS_FILE"
+_t21_start="$(date +%s)"
+SPIRA_QUEUE_REPRO_BATCH="$SH/repro-sleep.sh" SPIRA_BATCH_MAXPAR=3 verdict "$REPONAME" >/dev/null
+_t21=$(( $(date +%s) - _t21_start ))
+# Comparison against serial time (_t22) happens after case 23 runs.
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 23. SERIAL PAIR (positive control for case 22) — same 3-sleep members but
+#     MAXPAR=1 forces one at a time; wall time ≥ 6s.
+# =============================================================================
+base_sha22="$(git -C "$REPO" rev-parse origin/main)"
+for id in sp-vd-q1 sp-vd-q2 sp-vd-q3; do
+    bwt22="$RUN/worktree/$id"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$bwt22" origin/main 2>/dev/null || true
+    printf '%s\n' "$id" > "$bwt22/$id.txt"
+    git -C "$bwt22" add -A
+    git -C "$bwt22" commit -q -m "$id: work"
+    printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" > "$LANDSTATE/$id"
+done
+tip_q1="$(git -C "$REPO" rev-parse "spira/sp-vd-q1")"
+tip_q2="$(git -C "$REPO" rev-parse "spira/sp-vd-q2")"
+tip_q3="$(git -C "$REPO" rev-parse "spira/sp-vd-q3")"
+wt22="$RUN/worktree/.b22"
+git -C "$REPO" worktree add -q --detach "$wt22" "$base_sha22" 2>/dev/null || true
+git -C "$wt22" merge -q --no-edit --no-ff -m "spira: land sp-vd-q1" "$tip_q1" >/dev/null 2>&1
+git -C "$wt22" merge -q --no-edit --no-ff -m "spira: land sp-vd-q2" "$tip_q2" >/dev/null 2>&1
+git -C "$wt22" merge -q --no-edit --no-ff -m "spira: land sp-vd-q3" "$tip_q3" >/dev/null 2>&1
+batch_head22="$(git -C "$wt22" rev-parse HEAD)"
+git -C "$REPO" worktree remove -f "$wt22" 2>/dev/null || true
+{ printf 'pr=82\nhead=%s\nbase=%s\nmembers=sp-vd-q1:%s sp-vd-q2:%s sp-vd-q3:%s\nopened=%s\n' \
+    "$batch_head22" "$base_sha22" "$tip_q1" "$tip_q2" "$tip_q3" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-sleep.sh\n' > "$FORGE_STATUS_FILE"
+_t22_start="$(date +%s)"
+SPIRA_QUEUE_REPRO_BATCH="$SH/repro-sleep.sh" SPIRA_BATCH_MAXPAR=1 verdict "$REPONAME" >/dev/null
+_t22=$(( $(date +%s) - _t22_start ))
+[ "$_t22" -ge 6 ] && ok "23. serial-pair: MAXPAR=1 forced serial, wall-time ${_t22}s ≥ 6s" \
+    || bad "23. serial-pair: wall-time" "expected ≥ 6s, got ${_t22}s"
+# Parallel must be meaningfully faster than serial: ≤ 75% of serial wall time.
+_t21_bound=$(( _t22 * 3 / 4 ))
+[ "$_t21" -le "$_t21_bound" ] \
+    && ok "22. parallel: 3 members concurrent, wall-time ${_t21}s ≤ ${_t21_bound}s (75% of serial ${_t22}s)" \
+    || bad "22. parallel: wall-time" "expected ≤ ${_t21_bound}s (75% of serial ${_t22}s), got ${_t21}s"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 24. COULD-NOT-JUDGE MEMBER — rc=2 from one member does not exonerate others;
+#     the guilty member (rc=0) is still ejected.
+# =============================================================================
+# Two members: sp-vd-r1 always fails (rc=1 → _repro_is_red returns 0 → ejected).
+# sp-vd-r2's repro exits 2 (harness fault). Only sp-vd-r1 must be ejected.
+cat > "$SH/repro-fault-one.sh" <<'REPRO'
+#!/usr/bin/env bash
+# Positional parsing: --mode <m> --suites <csv> <ref>
+while [[ "${1:-}" == --* ]]; do shift 2; done
+ref="${1:-}"
+# Fault if REPRO_FAULT_TIP (sp-vd-r2's tip) is a parent of the merge ref.
+# SPIRA_REPO is set by _repro_is_red; --no-walk avoids traversal.
+git -C "${SPIRA_REPO:-.}" log --no-walk --pretty="%P" "${ref:-}" 2>/dev/null \
+    | grep -qF "${REPRO_FAULT_TIP:-}" && exit 2
+exit 1
+REPRO
+chmod +x "$SH/repro-fault-one.sh"
+
+base_sha23="$(git -C "$REPO" rev-parse origin/main)"
+for id in sp-vd-r1 sp-vd-r2; do
+    bwt23="$RUN/worktree/$id"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$bwt23" origin/main 2>/dev/null || true
+    printf '%s\n' "$id" > "$bwt23/$id.txt"
+    git -C "$bwt23" add -A
+    git -C "$bwt23" commit -q -m "$id: work"
+    printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" > "$LANDSTATE/$id"
+done
+tip_r1="$(git -C "$REPO" rev-parse "spira/sp-vd-r1")"
+tip_r2="$(git -C "$REPO" rev-parse "spira/sp-vd-r2")"
+# Tell the stub which tip to fault: r2's tip is a parent of its merge sha.
+REPRO_FAULT_TIP="$tip_r2"
+export REPRO_FAULT_TIP
+wt23="$RUN/worktree/.b23"
+git -C "$REPO" worktree add -q --detach "$wt23" "$base_sha23" 2>/dev/null || true
+git -C "$wt23" merge -q --no-edit --no-ff -m "spira: land sp-vd-r1" "$tip_r1" >/dev/null 2>&1
+git -C "$wt23" merge -q --no-edit --no-ff -m "spira: land sp-vd-r2" "$tip_r2" >/dev/null 2>&1
+batch_head23="$(git -C "$wt23" rev-parse HEAD)"
+git -C "$REPO" worktree remove -f "$wt23" 2>/dev/null || true
+{ printf 'pr=83\nhead=%s\nbase=%s\nmembers=sp-vd-r1:%s sp-vd-r2:%s\nopened=%s\n' \
+    "$batch_head23" "$base_sha23" "$tip_r1" "$tip_r2" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-fault.sh\n' > "$FORGE_STATUS_FILE"
+SPIRA_QUEUE_REPRO_BATCH="$SH/repro-fault-one.sh" SPIRA_BATCH_MAXPAR=2 verdict "$REPONAME" >/dev/null
+case "$(landstate sp-vd-r1)" in EJECTED*) ok "24. could-not-judge: sp-vd-r1 ejected" ;;
+    *) bad "24. could-not-judge: sp-vd-r1 ejected" "got: $(landstate sp-vd-r1)" ;; esac
+case "$(landstate sp-vd-r2)" in EJECTED*) bad "24. could-not-judge: sp-vd-r2 not ejected" "was EJECTED" ;;
+    *) ok "24. could-not-judge: sp-vd-r2 not ejected (got: $(landstate sp-vd-r2 || echo none))" ;; esac
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 25. EJECTION SET DETERMINISTIC — same 3-member batch run twice; ejected set
+#     is the same regardless of completion order.
+# =============================================================================
+cat > "$SH/repro-first-red.sh" <<'REPRO'
+#!/usr/bin/env bash
+# First unique ref seen exits 1 (red/ejected); all others exit 0 (green).
+while [[ "${1:-}" == --* ]]; do shift 2; done
+ref="${1:-}"
+key="$(printf '%s' "$ref" | sha256sum | cut -c1-8)"
+first_file="$REPRO_STATE_DIR/first-$key"
+if [ ! -f "$first_file" ]; then
+    printf '1\n' > "$first_file"
+    exit 1
+fi
+exit 0
+REPRO
+chmod +x "$SH/repro-first-red.sh"
+
+_run_shuffled_batch() {
+    local bsha; bsha="$(git -C "$REPO" rev-parse origin/main)"
+    local ids=(sp-vd-s1 sp-vd-s2 sp-vd-s3)
+    for id in "${ids[@]}"; do
+        local bwt="$RUN/worktree/$id"
+        git -C "$REPO" worktree add -q -b "spira/$id" "$bwt" origin/main 2>/dev/null || true
+        printf '%s\n' "$id" > "$bwt/$id.txt"
+        git -C "$bwt" add -A
+        git -C "$bwt" commit -q -m "$id: work"
+        printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" > "$LANDSTATE/$id"
+    done
+    local t1 t2 t3
+    t1="$(git -C "$REPO" rev-parse "spira/sp-vd-s1")"
+    t2="$(git -C "$REPO" rev-parse "spira/sp-vd-s2")"
+    t3="$(git -C "$REPO" rev-parse "spira/sp-vd-s3")"
+    local wt="$RUN/worktree/.b25"
+    git -C "$REPO" worktree add -q --detach "$wt" "$bsha" 2>/dev/null || true
+    git -C "$wt" merge -q --no-edit --no-ff -m "spira: land sp-vd-s1" "$t1" >/dev/null 2>&1
+    git -C "$wt" merge -q --no-edit --no-ff -m "spira: land sp-vd-s2" "$t2" >/dev/null 2>&1
+    git -C "$wt" merge -q --no-edit --no-ff -m "spira: land sp-vd-s3" "$t3" >/dev/null 2>&1
+    local bhead; bhead="$(git -C "$wt" rev-parse HEAD)"
+    git -C "$REPO" worktree remove -f "$wt" 2>/dev/null || true
+    { printf 'pr=84\nhead=%s\nbase=%s\nmembers=sp-vd-s1:%s sp-vd-s2:%s sp-vd-s3:%s\nopened=%s\n' \
+        "$bhead" "$bsha" "$t1" "$t2" "$t3" "$(date +%s)"; } > "$(batch_file)"
+    printf 'red\nred-suite: test-det.sh\n' > "$FORGE_STATUS_FILE"
+    SPIRA_QUEUE_REPRO_BATCH="$SH/repro-first-red.sh" SPIRA_BATCH_MAXPAR=3 verdict "$REPONAME" >/dev/null
+    landstate sp-vd-s1 | head -1 | cut -d' ' -f1
+    clean_case >/dev/null 2>&1
+    git -C "$REPO" fetch -q origin 2>/dev/null || true
+}
+
+REPRO_STATE_DIR="$TMP/repro-state-25a"
+mkdir -p "$REPRO_STATE_DIR"
+export REPRO_STATE_DIR
+res25a="$(_run_shuffled_batch)"
+
+REPRO_STATE_DIR="$TMP/repro-state-25b"
+mkdir -p "$REPRO_STATE_DIR"
+export REPRO_STATE_DIR
+res25b="$(_run_shuffled_batch)"
+
+[ "$res25a" = "$res25b" ] \
+    && ok "25. deterministic: same ejected set both runs ($res25a)" \
+    || bad "25. deterministic: ejected set differs" "run1=$res25a run2=$res25b"
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
