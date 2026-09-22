@@ -81,7 +81,7 @@ done < <(git -C "$REPO" worktree list --porcelain 2>/dev/null | awk '/^worktree 
 # file (law-bound-the-rare-path).
 # SPIRA_PODMAN_PS_FILE: testing seam — a file whose lines are treated as running
 # container names, replacing the live podman ps call.
-_batch_timeout="${SPIRA_SUITE_TIMEOUT:-600}"
+_batch_timeout="${SPIRA_SUITE_TIMEOUT:-$MAX_AGE}"
 if [ -n "${SPIRA_PODMAN_PS_FILE:-}" ] && [ -f "${SPIRA_PODMAN_PS_FILE}" ]; then
     _live_containers="$(cat "${SPIRA_PODMAN_PS_FILE}" 2>/dev/null || true)"
 else
