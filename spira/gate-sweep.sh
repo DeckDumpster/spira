@@ -81,13 +81,16 @@ done < <(git -C "$REPO" worktree list --porcelain 2>/dev/null | awk '/^worktree 
 # file (law-bound-the-rare-path).
 # SPIRA_PODMAN_PS_FILE: testing seam — a file whose lines are treated as running
 # container names, replacing the live podman ps call.
+# SPIRA_BATCH_HOME_GLOB: testing seam — overrides the /tmp/spira-batch-* glob so a
+# suite can sweep only its own fixtures without touching a live container's home.
 _batch_timeout="${SPIRA_SUITE_TIMEOUT:-$MAX_AGE}"
+_batch_glob="${SPIRA_BATCH_HOME_GLOB:-/tmp/spira-batch-*}"
 if [ -n "${SPIRA_PODMAN_PS_FILE:-}" ] && [ -f "${SPIRA_PODMAN_PS_FILE}" ]; then
     _live_containers="$(cat "${SPIRA_PODMAN_PS_FILE}" 2>/dev/null || true)"
 else
     _live_containers="$(podman ps --format '{{.Names}}' 2>/dev/null || true)"
 fi
-for _bh in /tmp/spira-batch-*; do
+for _bh in $_batch_glob; do
     case "$_bh" in *.owner) continue ;; esac
     [ -e "$_bh" ] || continue
     _bh_name="$(basename "$_bh")"

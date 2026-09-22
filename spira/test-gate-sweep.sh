@@ -113,6 +113,7 @@ run_sweep_batch() {
         SPIRA_DB="$TMP/nonexistent-db" \
         SPIRA_SUITE_TIMEOUT="${1}" \
         SPIRA_PODMAN_PS_FILE="${2}" \
+        SPIRA_BATCH_HOME_GLOB="/tmp/spira-batch-sweeptest-*" \
         bash "$SH/gate-sweep.sh" "$REPO" 2>&1
 }
 
