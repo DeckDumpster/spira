@@ -175,5 +175,67 @@ grep -qE 'git -C.*SPIRA_DB.*config beads\.role maintainer' "$REAL_REPO/install.s
     || bad "install.sh file mode: git config beads.role maintainer" \
            "pattern not found in install.sh"
 
+# ===========================================================================
+echo
+echo "7. ready.sh: clone path used, not workspace path"
+# ===========================================================================
+
+# Structural: the fixed code invokes $_clone/spira/ready.sh, not $HERE/ready.sh.
+wantre "phase A: ready.sh invocation uses \$_clone path" \
+    'bash.*\$_clone/spira/ready\.sh'
+wantre "phase D: ready.sh invocation uses \$_aged_clone path" \
+    'bash.*\$_aged_clone/spira/ready\.sh'
+
+# $HERE/ready.sh must not appear in any bash invocation (may appear in comments).
+if grep -E 'bash[^#]*\$HERE/ready\.sh' "$SCRIPT" | grep -qv '^\s*#'; then
+    bad 'workspace $HERE/ready.sh not called directly' \
+        "still present: $(grep -E 'bash[^#]*\$HERE/ready\.sh' "$SCRIPT" | grep -v '^\s*#' | head -1)"
+else
+    ok 'workspace $HERE/ready.sh removed from bash invocations'
+fi
+
+# Behavioral pair: clone ready.sh=0, workspace ready.sh=1 → check passes.
+_clone_dir="$SCRATCH/clone-v1"
+mkdir -p "$_clone_dir/spira"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$_clone_dir/spira/ready.sh"
+chmod +x "$_clone_dir/spira/ready.sh"
+
+_ws_ready="$SCRATCH/ws-ready.sh"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$_ws_ready"
+chmod +x "$_ws_ready"
+
+# Positive control: workspace ready.sh does exit 1.
+_ws_rc=0; bash "$_ws_ready" 2>/dev/null || _ws_rc=$?
+if [ "$_ws_rc" -ne 0 ]; then
+    ok "positive-control: workspace ready.sh exits 1"
+else
+    bad "positive-control: workspace ready.sh exits 1" "got exit 0"
+fi
+
+# Clone ready.sh exits 0 → passes (proves the clone path is decisive).
+_clone_rc=0; bash "$_clone_dir/spira/ready.sh" 2>/dev/null || _clone_rc=$?
+if [ "$_clone_rc" -eq 0 ]; then
+    ok "clone ready.sh=0: check passes even when workspace ready.sh exits 1"
+else
+    bad "clone ready.sh=0: check passes even when workspace ready.sh exits 1" \
+        "clone exit=$_clone_rc"
+fi
+
+# Reverse pair: clone ready.sh=1 → fails and failure names clone path.
+printf '#!/usr/bin/env bash\nprintf "ready: FAIL nothing works\n"; exit 1\n' \
+    > "$_clone_dir/spira/ready.sh"
+chmod +x "$_clone_dir/spira/ready.sh"
+
+_fail_rc=0; _fail_out="$(bash "$_clone_dir/spira/ready.sh" 2>&1)" || _fail_rc=$?
+if [ "$_fail_rc" -ne 0 ]; then
+    ok "clone ready.sh=1: check fails"
+else
+    bad "clone ready.sh=1: check fails" "got exit 0"
+fi
+
+# Confirm the clone path appears in the bad() call for phase A.
+wantre "phase A bad() names clone path" \
+    'bad.*ready\.sh.*\$_clone/spira/ready\.sh'
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -212,10 +212,14 @@ fi
 env "${_install_env[@]}" bash "$_clone/install.sh" 2>&1 | tee "$TMP/install.log" || _install_rc=$?
 is0 "phase A: install.sh exits 0" "$_install_rc"
 
-# After install, verify ready.sh exits 0.
+# After install, verify the clone's ready.sh exits 0.
 _ready_rc=0
-_ready_out="$(bash "$HERE/ready.sh" 2>&1)" || _ready_rc=$?
-is0 "phase A: ready.sh exits 0 after install" "$_ready_rc"
+_ready_out="$(env "${_install_env[@]}" bash "$_clone/spira/ready.sh" 2>&1)" || _ready_rc=$?
+if [ "$_ready_rc" -eq 0 ]; then
+    ok "phase A: ready.sh exits 0 after install"
+else
+    bad "phase A: ready.sh exits 0 after install" "$_clone/spira/ready.sh exit $_ready_rc"
+fi
 [ "$_ready_rc" -eq 0 ] || printf '%s\n' "$_ready_out"
 
 # ===========================================================================
@@ -415,6 +419,18 @@ else
     env "${_aged_env[@]}" bash "$_aged_clone/install.sh" 2>&1 \
         | tee "$TMP/aged-install.log" || _aged_install_rc=$?
     is0 "phase D: install.sh ($prev_tag, aged) exits 0" "$_aged_install_rc"
+
+    # Verify the aged clone's ready.sh exits 0 after install.
+    _aged_ready_rc=0
+    _aged_ready_out="$(env "${_aged_env[@]}" bash "$_aged_clone/spira/ready.sh" 2>&1)" \
+        || _aged_ready_rc=$?
+    if [ "$_aged_ready_rc" -eq 0 ]; then
+        ok "phase D: ready.sh exits 0 after aged install"
+    else
+        bad "phase D: ready.sh exits 0 after aged install" \
+            "$_aged_clone/spira/ready.sh exit $_aged_ready_rc"
+        printf '%s\n' "$_aged_ready_out"
+    fi
 
     if [ "$_aged_install_rc" -eq 0 ]; then
         # Seed beads into $bd_db (the instance's db in CI).
