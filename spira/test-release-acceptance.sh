@@ -30,6 +30,10 @@
 #  12. Phase D: rollback either refused (names migration) or succeeds with healthy world.
 #  13. Phase D: (from, to) pair recorded in git note when --prev-tag is given.
 #  14. acceptance-agent.sh exists and is executable.
+#  15. ready.sh capture: correct exit-capture pattern, not || true.
+#  16. Phase A and D: CONFIGURE_PROD set to harness subdir (not clone root).
+#  17. Phase A: SPIRA_AGENT written before install.sh (not gated on _install_rc).
+#  18. Phase A and D: ready.sh call uses clone path, not workspace path.
 #
 # covers: spira/acceptance-run.sh spira/acceptance-agent.sh
 set -uo pipefail
@@ -246,6 +250,29 @@ if grep -A5 '_install_rc.*-eq 0' "$SCRIPT" 2>/dev/null \
         "SPIRA_AGENT write appears inside an _install_rc check — must be pre-seeded"
 else
     ok "SPIRA_AGENT write not gated on _install_rc"
+fi
+
+# ============================================================================
+echo
+echo "18. Phase A and D: ready.sh call uses clone path, not workspace path"
+# ============================================================================
+# The old code called bash "\$HERE/ready.sh" which read workspace paths; the
+# clone's own ready.sh (with clone paths) was never consulted, so install-side
+# fixes to ready.sh never changed the acceptance verdict.
+wantre "phase A calls clone's ready.sh" \
+    'bash.*\$_clone/spira/ready\.sh'
+wantre "phase A failure names clone's ready.sh path" \
+    'bad.*\$_clone.*ready\.sh'
+wantre "phase D calls aged clone's ready.sh" \
+    'bash.*\$_aged_clone/spira/ready\.sh'
+wantre "phase D failure names aged clone's ready.sh path" \
+    'bad.*\$_aged_clone.*ready\.sh'
+# Workspace's ready.sh must not appear on the capture line.
+if grep -E 'bash.*\$HERE/ready\.sh' "$SCRIPT" 2>/dev/null; then
+    bad "ready.sh call does not use workspace path" \
+        "found bash \$HERE/ready.sh — must use clone path"
+else
+    ok "ready.sh call does not use workspace path"
 fi
 
 # ============================================================================
