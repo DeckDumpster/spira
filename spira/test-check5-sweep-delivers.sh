@@ -225,6 +225,7 @@ env -i HOME="$TMP" PATH="$HERE:/usr/bin:/bin" \
     BD_LIST_OUTPUT="[]" \
     SPIRA_DB="$TMP/fixture.db" \
     SPIRA_RUN="$TRUN" \
+    SPIRA_REPO="$REPO" \
     SPIRA_GROOMER_LABEL="groom" \
     SPIRA_SCOPE_LABEL="spira" \
     SPIRA_GROOM_THRESHOLD=0 \

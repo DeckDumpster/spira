@@ -660,6 +660,10 @@ spira_conf_defaults() {
     # label is skipped on subsequent passes — an operator answer is pending. Without the
     # label, every pass after the first escalation files a second note rather than waiting.
     : "${SPIRA_GROOM_ASK_LABEL:=groom-asked}"
+    # SPIRA_GROOM_THRESHOLD — combined score (open bead count + landings since last pass)
+    # below which the trigger short-circuits without filing. When the graph is settled the
+    # pass would cost a context to report "Actions: none".
+    : "${SPIRA_GROOM_THRESHOLD:=5}"
     # THE MAECHEN PARTITION AND TUNING KNOBS. Maechen is the retrospective persona: it reads
     # the failure distribution, names recurring classes, and cuts remedy beads.
     #
