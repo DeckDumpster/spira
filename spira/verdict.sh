@@ -217,6 +217,37 @@ _q_attribute() {
     local _mm _mid _mtip
 
     _verdict_trap_pr="$pr_n"
+
+    if [ -z "$red_suites" ] && [ "$mc" -gt 1 ]; then
+        # No Spira-shaped annotations and multiple members: bisect by halving.
+        # Suite-level attribution requires CI to emit annotations whose path matches
+        # spira/test-*.sh or whose title is 'red-twice suite'. Without them the queue
+        # falls back to binary search: O(log n) CI runs converge to a single member.
+        local _half=$(( mc / 2 )) _i=0
+        for _mm in "${members_arr[@]}"; do
+            _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
+            if [ "$_i" -lt "$_half" ]; then
+                land_mark_at "$_mid" CERTIFIED "$_mtip" 1
+            else
+                land_mark "$_mid" CERTIFIED "$_mtip"
+            fi
+            _i=$(( _i + 1 ))
+        done
+        "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
+        rm -f "$batch_file"
+        local _all_ids; _all_ids="$(printf '%s\n' "${members_arr[@]}" | cut -d: -f1 | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
+        printf 'verdict %s: PR %s red — no suite annotations; bisect halved (%d+%d)\n' \
+            "$name" "$pr_n" "$_half" "$(( mc - _half ))"
+        _attr_notify_red "$pr_n" "$name" "" \
+            "No suite annotations: batch bisected, all members requeued" "" "$_all_ids"
+        _meter_write "$name" "$mc" 0 0 "$attr_start"
+        rm -rf "$_eject_fail_dir" 2>/dev/null || true
+        return 0
+    fi
+    # Single member with no annotations: fall through; empty suites_csv routes
+    # the repro to diff-derived selection (no suites found → green), which lands
+    # on the unreproduced-red track: first occurrence requeues, second ejects.
+
     printf 'verdict %s: attributing PR %s (%d members, %s)\n' "$name" "$pr_n" "$mc" "$suites_csv"
 
     if [ "$mc" -eq 1 ]; then
@@ -604,15 +635,10 @@ main() {
     status="$(printf '%s\n' "$status_out" | head -1)"
     status="${status:-pending}"
 
-    # A red that names no suite did not judge the branch: CI died around the suites (a
-    # runner kill, a cold image, a base ref it could not resolve). Attribution has nobody
-    # to eject and would hold the queue's only slot forever (sp-swux6), so it takes the
-    # harness-fault path: bounded re-runs, then the operator.
-    if [ "$status" = red ] && ! grep -q '^red-suite: ' <<< "$status_out"; then
-        printf 'verdict %s: PR %s red with no red suite — the branch was not judged; treating as a harness fault\n' \
-            "$name" "$pr_n"
-        status=harness_fault
-    fi
+    # Red with no suite annotations: multi-member batches bisect; single-member
+    # falls through to the unreproduced-red track. Both converge without jamming
+    # the queue (sp-swux6). No conversion to harness_fault here — that path is for
+    # explicit harness_fault status from check-status, not a missing annotation set.
 
     local now; now="$(date +%s)"
 

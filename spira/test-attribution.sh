@@ -4,7 +4,6 @@
 # together-only reds, quarantine flaky suites, eject on second unreproduced red,
 # and verify the local-gate meter.
 #
-# Six cases (nineteen assertions):
 #   1. Three members with one planted breaker → that member ejected, two survivors
 #      returned to CERTIFIED, PR closed, batch removed.
 #   2. Two members that break only together → batch halved (first half
@@ -23,6 +22,8 @@
 #      reproduced when a single member breaks it.
 #  10. Whole-tree unselected: a member whose diff covers no file declared by the
 #      red suite is still ejected when that suite fails against its merged tree.
+#  14. No suite annotations, multi-member → bisect halved (no "leaving batch open").
+#  15. No suite annotations, single member → first occurrence requeues, second ejects.
 #
 # The repro batch is stubbed via SPIRA_QUEUE_REPRO_BATCH; no container is used.
 # The forge is a local fixture; no network is reached.
@@ -696,6 +697,66 @@ want "13. unjudged: operator mail has Unjudged section"    "Unjudged"        "$(
 want "13. unjudged: operator mail names the member"        "sp-at-uj"        "$(cat "$MAIL_LOG")"
 is   "13. unjudged: member requeued, not ejected"    "CERTIFIED" "$(land_state_of sp-at-uj)"
 is   "13. unjudged: batch removed"                   "0"         "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+clean_case
+
+# =============================================================================
+# 14. NO SUITE ANNOTATIONS, MULTI-MEMBER — forge returns red with no red-suite:
+#     lines; the queue bisects by halving (first half epoch=1, second waits).
+#     Positive control: against unfixed verdict.sh the batch is left open (the
+#     old "leaving batch open" path), so the batch record still exists and both
+#     members stay BATCHED.
+# =============================================================================
+testdb_reset
+build_members sp-at-ns-a sp-at-ns-b > /dev/null
+for id in sp-at-ns-a sp-at-ns-b; do plant_bead "$id"; done
+printf 'red\n' > "$FORGE_STATUS_FILE"   # no red-suite: lines
+: > "$REPRO_FAIL_FILE"
+out14="$(verdict "$REPONAME")"
+is   "14. no-ann multi: sp-at-ns-a is CERTIFIED"   "CERTIFIED"  "$(land_state_of sp-at-ns-a)"
+is   "14. no-ann multi: sp-at-ns-b is CERTIFIED"   "CERTIFIED"  "$(land_state_of sp-at-ns-b)"
+is   "14. no-ann multi: batch record removed"      "0"          "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+ns_a_epoch="$(awk '{print $3}' "$LANDSTATE/sp-at-ns-a" 2>/dev/null || echo 0)"
+ns_b_epoch="$(awk '{print $3}' "$LANDSTATE/sp-at-ns-b" 2>/dev/null || echo 0)"
+is   "14. no-ann multi: first half epoch=1"        "1"          "$ns_a_epoch"
+[ "${ns_b_epoch:-0}" -gt 1 ] && ok "14. no-ann multi: second half epoch>1" \
+    || bad "14. no-ann multi: second half epoch>1" "got $ns_b_epoch"
+want "14. no-ann multi: bisect reported"           "bisect halved" "$out14"
+clean_case
+
+# =============================================================================
+# 15. NO SUITE ANNOTATIONS, SINGLE MEMBER — first occurrence requeues; second
+#     occurrence (same tip) ejects. Validates the unreproduced-red fallback.
+# =============================================================================
+testdb_reset
+build_members sp-at-ns-s > /dev/null
+plant_bead sp-at-ns-s
+printf 'red\n' > "$FORGE_STATUS_FILE"   # no red-suite: lines
+: > "$REPRO_FAIL_FILE"
+out15a="$(verdict "$REPONAME")"
+is     "15a. no-ann single 1st: not ejected"    "CERTIFIED"  "$(land_state_of sp-at-ns-s)"
+is     "15a. no-ann single 1st: batch removed"  "0"          "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+
+tip15="$(awk '{print $2}' "$LANDSTATE/sp-at-ns-s" 2>/dev/null)"
+local_tip15="$(git -C "$REPO" rev-parse "spira/sp-at-ns-s" 2>/dev/null)"
+is   "15a. no-ann single 1st: tip unchanged"    "$local_tip15" "$tip15"
+
+base_sha15="$(git -C "$REPO" rev-parse origin/main)"
+batch_br15="spira/queue/test15-$$"
+git -C "$REPO" branch -f "$batch_br15" "$tip15" 2>/dev/null || true
+{
+    printf 'pr=46\n'
+    printf 'head=%s\n' "$tip15"
+    printf 'base=%s\n' "$base_sha15"
+    printf 'members=%s:%s\n' "sp-at-ns-s" "$tip15"
+    printf 'opened=%s\n' "$(date +%s)"
+    printf 'branch=%s\n' "$batch_br15"
+} > "$(batch_file)"
+printf 'BATCHED %s %s\n' "$tip15" "$(date +%s)" > "$LANDSTATE/sp-at-ns-s"
+
+out15b="$(verdict "$REPONAME")"
+is   "15b. no-ann single 2nd: ejected"         "EJECTED"    "$(land_state_of sp-at-ns-s)"
+is   "15b. no-ann single 2nd: batch removed"   "0"          "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+want "15b. no-ann single 2nd: reported ejected" "ejected"   "$out15b"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
