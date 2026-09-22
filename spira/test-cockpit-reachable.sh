@@ -42,6 +42,7 @@ run_reachable() {
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=builder \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
+        SPIRA_SCOPE_LABEL=spira \
         SPIRA_BD="$bd_path" \
         bash "$HERE/cockpit.sh" reachable 2>/dev/null
 }

@@ -1559,7 +1559,7 @@ reachable_keys() {
         echo "SP_STRANDED=?"
         return
     fi
-    printf '%s\n' "$_reach_raw" | SPIRA_CHAMBER="$HERE/chamber" python3 -c '
+    printf '%s\n' "$_reach_raw" | SPIRA_CHAMBER="$HERE/chamber" SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" python3 -c '
 import os, sys, json
 from collections import deque
 
@@ -1567,6 +1567,7 @@ from collections import deque
 ASK = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")
 CTRL = os.environ.get("SPIRA_CTRL", "")
 CHAMBER = os.environ.get("SPIRA_CHAMBER", "")
+SCOPE = os.environ.get("SPIRA_SCOPE_LABEL", "")
 
 # Suspended fayths: read ctrl file once, map each to its partition label set.
 # A bead is in a suspended partition when that fayth'"'"'s labels are all present.
@@ -1604,10 +1605,12 @@ beads = d if isinstance(d, list) else [d]
 bead_by_id = {b["id"]: b for b in beads if b.get("id")}
 # Work-only universe: ask beads and insights are not stuck work — they have their
 # own panes. Poison and suspended-partition beads stay; those are stuck work.
+# SCOPE: bdjson carries --label but apply it in Python too — mirrors the invariant regardless of whether bd filtered.
 INSIGHT = "insight"
 all_ids = {
     bid for bid, b in bead_by_id.items()
     if ASK not in (b.get("labels") or []) and INSIGHT not in (b.get("labels") or [])
+    and (not SCOPE or SCOPE in (b.get("labels") or []))
 }
 
 # blocker_of[X] = open deps blocking X; blocks[Y] = downstream beads Y directly blocks.
