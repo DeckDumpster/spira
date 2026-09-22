@@ -1442,7 +1442,7 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining]
     log "CHECK7 $f: $r ready, $free free — summoning"
     "${SPIRA_SUMMON:-systemd-run}" --user --collect --quiet \
         --unit="spira-aeon-$f-$(date +%s)" \
-        --property=CPUQuota="${SPIRA_AEON_CPU_QUOTA:-70%}" --property=Nice=10 \
+        "--property=CPUQuota=${SPIRA_AEON_CPU_QUOTA:-70}%" --property=Nice=10 \
         --property=TimeoutStartSec="$(fayth_get "$f" FAYTH_TIMEOUT_SECONDS 3600)" \
         --setenv=PATH="$PATH" --setenv=HOME="$HOME" \
         "$SPIRA_HOME/aeon.sh" "$f" 2>/dev/null

@@ -522,6 +522,12 @@ gate_at "$BR" || verdict "$NV" tree-unidentified ""
 # real gate is `cargo fmt --check` and lib.sh's PATH — written for systemd — has no toolchain
 # on it.
 #
+# env -i SCRUBS THE ENVIRONMENT BUT NOT THE CGROUP. The calling unit's CPUQuota is an
+# attribute of the cgroup, not the environment, so it is inherited by every child regardless
+# of env -i. A repository whose CI preflight asserts a minimum core count will measure the
+# quota instead of the host, because nproc honours CPUQuota in the calling unit. Spira
+# exports the real count separately so CI can use it without being surprised by the fence.
+#
 # SPIRA_GATE_ALL is passed THROUGH rather than set, and defaults to 0. A repository whose gate
 # selects its suites from the changed files needs a way to be told to run all of them anyway;
 # leaking in from the environment only ever widens what is checked, which is the safe
@@ -572,6 +578,7 @@ run_gate() {             # run_gate <ref-being-tested> -> the command's own stat
         SPIRA_GATE_ALL="${SPIRA_GATE_ALL:-0}" \
         SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
         SPIRA_VERDICT_REPEAT_CONSIDERED="${SPIRA_VERDICT_REPEAT_CONSIDERED:-}" \
+        SPIRA_GATE_HOST_CORES="$(host_cores)" \
         timeout "${SPIRA_GATE_TIMEOUT:-2700}" bash -c "$CMD" 9>&- ) 2>&1
     return $?
 }

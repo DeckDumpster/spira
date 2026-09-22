@@ -77,7 +77,7 @@ SPIRA_ARCHIVIST_EVERY SPIRA_ARCHIVIST_IDLE SPIRA_ARCHIVIST_MODEL SPIRA_ARCHIVIST
 SPIRA_ARCHIVIST_PER_PASS SPIRA_ARCHIVIST_TIMEOUT_RETRIES
 SPIRA_TESTDB_LIB SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT
 SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY SPIRA_GH_INTAKE_BEAD_REPO SPIRA_FLAKY_GH_REPO SPIRA_RELEASE_REPO
-SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET SPIRA_GATE_SELECT_CAP
+SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET SPIRA_GATE_SELECT_CAP SPIRA_AEON_CPU_QUOTA
 SPIRA_GATE_SUITES SPIRA_SUITE_STATE_FILE SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
 SPIRA_BATCH_MEM_RESERVE_MIB SPIRA_BATCH_MEM_PER_SUITE_MIB SPIRA_BATCH_MEM_AVAIL_MIB SPIRA_BATCH_PSI_THRESHOLD
 SPIRA_BATCH_ARTIFACT_DAYS SPIRA_BATCH_TAIL_LINES SPIRA_SUITE_TIMES_LOG
@@ -493,6 +493,12 @@ spira_conf_defaults() {
     # covers that with margin and is the value observed to pass unchanged branches that 900
     # killed mid-sweep (sp-gys, sp-snyj).
     : "${SPIRA_GATE_TIMEOUT:=2700}"
+    # CPU QUOTA FOR AEON UNITS, as a percent integer (no % sign). Aeons run under this ceiling
+    # so a runaway model session cannot saturate a host that also runs prod and CI runners.
+    # A gate runs inside the calling aeon's cgroup, so this ceiling is inherited by every
+    # repository's CI; SPIRA_GATE_HOST_CORES is exported into the gate environment so a
+    # repository can measure the physical host rather than the fenced view.
+    : "${SPIRA_AEON_CPU_QUOTA:=70}"
     # THE GATE'S TIME BUDGET, in seconds. gate-spira.sh times itself per suite and in total;
     # when the total exceeds this value the gate files a bead against the harness — it does
     # NOT fail the branch, because the branch did not cause the overrun. The mechanism exists
@@ -562,7 +568,7 @@ spira_conf_defaults() {
     # THE CPU QUOTA APPLIED TO EACH AEON UNIT. Raise this when aeons run real builds that
     # saturate their slice; SPIRA_GATE_HOST_CORES controls parallelism inside the gate while
     # this controls how much of one core each aeon may use.
-    : "${SPIRA_AEON_CPU_QUOTA:=70%}"
+    : "${SPIRA_AEON_CPU_QUOTA:=70}"
     # THE DECLARED LANES — named scheduling partitions whose capacity does not compete with
     # SPIRA_MAX_AEONS. A lane fayth draws from its own FAYTH_MAX_CONCURRENT rather than from
     # the pool, so the pool can be fully occupied by builders while the lane fayth still has

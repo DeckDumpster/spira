@@ -47,7 +47,7 @@ fi
 log "escape.sh $FAYTH: $r ready — summoning directly (pool and lane checks bypassed)"
 "${SPIRA_SUMMON:-systemd-run}" --user --collect --quiet \
     --unit="spira-aeon-$FAYTH-escape-$(date +%s)" \
-    --property=CPUQuota=70% --property=Nice=10 \
+    "--property=CPUQuota=${SPIRA_AEON_CPU_QUOTA:-70}%" --property=Nice=10 \
     --property=TimeoutStartSec="$(fayth_get "$FAYTH" FAYTH_TIMEOUT_SECONDS 3600)" \
     --setenv=PATH="$PATH" --setenv=HOME="$HOME" \
     "$SPIRA_HOME/aeon.sh" "$FAYTH" ${DRY_FLAG} 2>/dev/null
