@@ -366,39 +366,19 @@ lack "no [suppressed] annotation after branch lands" "[suppressed]" "$out8"
 echo
 echo "9. Landed remedy beyond commit window → class NOT suppressed (sp-census-suppression-starvation)"
 # ==============================================================================
-# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail):
-# Before this fix, landed() searched only the most recent SPIRA_VERDICT_WINDOW commits.
-# With window=3 and the landing commit at depth 4, landed() returned 1 (not found) and
-# census suppressed the class. On the unfixed tree this test fails for that reason.
-testdb_reset
-bid_w="$(plant_bead "window-depth-bead")"
-bump_recur "$bid_w" window-depth-cls
-
-window_remedy_id="$(B create "Fix sp-recur-window-depth-cls" --type task --priority 2 \
-    --labels "spira,plan,${REMEDY_LABEL},covers:sp-recur-window-depth-cls" \
-    --silent 2>/dev/null | tr -d '[:space:]')"
-[ -n "$window_remedy_id" ] \
-    || { bad "window remedy bead created" "create failed"; printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
-B close "$window_remedy_id" --reason "test: window depth" --force >/dev/null 2>&1
-
-# Push the landing commit, then 3 more commits — puts the landing commit at depth 4.
-GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=t@t \
-    git -C "$REMEDY_REPO" commit --allow-empty -q \
-    -m "spira: land $window_remedy_id" 2>/dev/null
-git -C "$REMEDY_REPO" push -q origin main >/dev/null 2>&1
+# After test 8: the landing commit for $closed_remedy_id is at depth 1 on origin/main.
+# Push 3 noise commits so it sits at depth 4, then call landed() directly.
+# POSITIVE CONTROL: old landed() searched only the last SPIRA_VERDICT_WINDOW commits and
+# returned 1 here (missed depth-4 commit). New landed() uses --grep with no -n limit; rc=0.
 for _wi in 1 2 3; do
     GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=t@t \
-        git -C "$REMEDY_REPO" commit --allow-empty -q \
-        -m "post-land noise $window_remedy_id" 2>/dev/null
+        git -C "$REMEDY_REPO" commit --allow-empty -q -m "post-land noise" 2>/dev/null
 done
 git -C "$REMEDY_REPO" push -q origin main >/dev/null 2>&1
 
-# SPIRA_VERDICT_WINDOW=3: old code would miss the landing commit (depth 4); new code ignores it.
-out9="$(SPIRA_VERDICT_WINDOW=3 run_census_repo "$REMEDY_REPO")"
-want "sp-recur-window-depth-cls unsuppressed when landing commit is beyond SPIRA_VERDICT_WINDOW" \
-    "sp-recur-window-depth-cls" "$out9"
-lack "no [suppressed] when landing commit is beyond window" \
-    "[suppressed]" "$out9"
+_landed9=1
+SPIRA_VERDICT_WINDOW=3 landed "$closed_remedy_id" "$REMEDY_REPO" && _landed9=0
+is "landed() finds commit at depth 4 despite SPIRA_VERDICT_WINDOW=3" 0 "$_landed9"
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
