@@ -10,7 +10,7 @@
 # tree and one lock, so they serialise exactly as before. The defect sp-64v0 (wrong-
 # branch verdicts from a shared tree) is impossible with per-branch trees.
 #
-# defect: sp-64v0
+# defect: sp-64v0, sp-d8h0r
 # covers: spira/gate.sh spira/gate-sweep.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -34,6 +34,7 @@ mkdir -p "$RUN/worktree" "$HOMEDIR" "$SH"
 # the installed copy must not be what is tested.
 cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" \
    "$HERE/yield.sh" "$HERE/suite-covers.sh" "$SH/"
+[ -r "$HERE/gate-sweep.sh" ] && cp "$HERE/gate-sweep.sh" "$SH/" || true
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
@@ -178,6 +179,25 @@ is "worktree is deregistered after a failing gate" 0 "$registered"
     && ok "worktree directory is removed after a failing gate" \
     || bad "worktree directory is removed after a failing gate" "directory still exists at $TREE_PATH"
 printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" "$CMD" > "$MAP"  # restore
+
+# --------------------------------------------------------------------------------------
+# CASE 5 — TIMEOUT DOES NOT REMOVE THE HOLDER'S TREE (sp-d8h0r). When the lock wait
+# expires, verdict() must not remove the tree — it was never locked by this run.
+# --------------------------------------------------------------------------------------
+mkdir -p "$TREE_PATH"
+touch "$TREE_PATH/.git"    # stand in for the holder's registered tree
+
+exec 8>"$LOCKFILE"
+flock -x 8
+
+out5="$( exec 8>&-; rungate "spira/sp-t1" SPIRA_GATE_LOCK_WAIT=1 2>&1 )"; rc5=$?
+is   "timed-out gate returns NO_VERDICT" 75 "$rc5"
+[ -e "$TREE_PATH/.git" ] \
+    && ok "the holder's worktree survives a timeout" \
+    || bad "the holder's worktree survives a timeout" "tree was removed by the waiter"
+
+exec 8>&-
+rm -rf "$TREE_PATH"
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

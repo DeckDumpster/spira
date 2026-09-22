@@ -67,11 +67,10 @@ verdict() {              # verdict <status> <reason> [message...]
     # trap rather than the verdict's own. Cleanup that the trap owns is done here instead.
     trap - EXIT
     rm -f "${FILELIST:-}" 2>/dev/null
-    # REMOVE THE GATE WORKTREE ON EVERY EXIT PATH — success, failure, timeout, kill — so the
-    # registration does not outlive the run. TREE may be unset when verdict() is called before
-    # the tree was created (early preflight failures); guard before testing for it. The flock
-    # is still held at this point, so no concurrent gate can be using the tree.
-    if [ -n "${TREE:-}" ] && [ -e "${TREE}/.git" ]; then
+    # REMOVE THE GATE WORKTREE ONLY WHEN THIS RUN HELD THE LOCK. TREE may be unset on early
+    # preflight failures; on lock-timeout the flock was never acquired and the tree belongs to
+    # the run that holds it — removing it destroys a live run's working directory.
+    if [ "${HELD_LOCK:-0}" = 1 ] && [ -n "${TREE:-}" ] && [ -e "${TREE}/.git" ]; then
         git -C "${REPO:-/nonexistent}" worktree remove --force "$TREE" 2>/dev/null || true
     fi
     # gate_meter is defined only once the tree lock has been reached; before that there is no
@@ -466,6 +465,7 @@ if ! flock -w "$GATE_LOCK_WAIT" 9; then
         "gate: another gate has held $TREE for ${GATE_LOCK_WAIT}s — no verdict on $BR
 gate: this is a queue, not a fault in the branch; retry, or raise SPIRA_GATE_LOCK_WAIT."
 fi
+HELD_LOCK=1
 GATE_WAITED=$(( $(date +%s) - GATE_WAIT0 ))
 GATE_START=$(date +%s)
 [ "$GATE_WAITED" -gt 0 ] && echo "gate: waited ${GATE_WAITED}s for $TREE" >&2
@@ -536,7 +536,7 @@ FILELIST="$(mktemp)"; printf '%s\n' "${_diff_status_out:-$files}" > "$FILELIST"
 # because a gate that vanished judged nothing.
 trap 'gate_rc=$?
      rm -f "${FILELIST:-}" 2>/dev/null
-     [ -n "${TREE:-}" ] && [ -e "${TREE}/.git" ] && \
+     [ "${HELD_LOCK:-0}" = 1 ] && [ -n "${TREE:-}" ] && [ -e "${TREE}/.git" ] && \
          git -C "${REPO:-/nonexistent}" worktree remove --force "$TREE" 2>/dev/null
      gate_meter "${gate_rc:-$NV}" died' EXIT
 # 9>&- — THE TREE LOCK'S FD MUST NOT REACH THE GATE COMMAND. `exec 9>lock` leaves fd 9
