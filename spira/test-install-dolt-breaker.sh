@@ -77,9 +77,12 @@ echo
 echo "2. CLEAR PASSES — bd doctor --fix --yes removes the breaker file:"
 # ==========================================================================
 
+# bd doctor --fix only removes STALE breaker files — those past the 5s cooldown TTL.
+# Wait for the TTL to expire before calling doctor so the file is considered stale.
+sleep 7
 BD_NON_INTERACTIVE=1 bd -C "$_TMP1/db" doctor --fix --yes 2>/dev/null || true
 if [ ! -f "$_breaker_file" ]; then
-    ok "clear passes: bd doctor --fix --yes removed the breaker file"
+    ok "clear passes: bd doctor --fix --yes removed the stale breaker file"
 elif [ -f "$_breaker_file" ]; then
     bad "clear passes: breaker file remains after doctor --fix" \
         "file still exists: $_breaker_file"
@@ -362,14 +365,18 @@ touch "$_BREAKER_FLAG"   # pre-trip the breaker
 # db stub: doctor is a no-op; list always fails while flag exists.
 make_bd_stub 0
 
-# nc listener simulates the unit port being open.
+# Phase 3 probes the port to confirm dolt started; that probe exits the first
+# nc. Phase 4 then waits for the unit's port — a second nc provides it after a
+# short delay (matching the pattern from test-install-dolt-port-wait.sh).
 nc -lk "$_DOLT_PORT" >/dev/null 2>&1 & _nc_pid=$!
 sleep 0.1
+{ sleep 2; nc -lk "$_DOLT_PORT" >/dev/null 2>&1; } & _nc_unit=$!
 
 _no_clear_out="$(run_install)"
 _no_clear_rc=$?
 
-kill "$_nc_pid" 2>/dev/null; wait "$_nc_pid" 2>/dev/null || true
+kill "$_nc_pid" "$_nc_unit" 2>/dev/null
+wait "$_nc_pid" "$_nc_unit" 2>/dev/null || true
 
 nonzero "no-clear: install exits non-zero when db probe fails"     "$_no_clear_rc"
 want    "no-clear: circuit-breaker error in output" "circuit breaker" "$_no_clear_out"
@@ -388,11 +395,13 @@ make_bd_stub 1
 
 nc -lk "$_DOLT_PORT" >/dev/null 2>&1 & _nc_pid2=$!
 sleep 0.1
+{ sleep 2; nc -lk "$_DOLT_PORT" >/dev/null 2>&1; } & _nc_unit2=$!
 
 _clear_out="$(run_install)"
 _clear_rc=$?
 
-kill "$_nc_pid2" 2>/dev/null; wait "$_nc_pid2" 2>/dev/null || true
+kill "$_nc_pid2" "$_nc_unit2" 2>/dev/null
+wait "$_nc_pid2" "$_nc_unit2" 2>/dev/null || true
 
 is0   "install passes: install exits 0 after doctor clears breaker"    "$_clear_rc"
 want  "install passes: bd store accepting logged"  "bd store accepting" "$_clear_out"
