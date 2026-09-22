@@ -57,6 +57,32 @@ _certified_orphans() {
     done
 }
 
+# _closed_red_live <repo-path> — print id for each RED/EJECTED landstate whose branch
+# exists and whose bead is closed. This is the counterpart to _certified_orphans: where
+# that catches CERTIFIED with no branch (deleted while queued), this catches closed with
+# a live branch and a failed landstate — the eviction-race shape where a bead ends up
+# closed+RED+live and no queue mechanism retrieves it.
+_closed_red_live() {
+    local f id st _crl_st
+    [ -d "$LANDSTATE" ] || return 0
+    for f in "$LANDSTATE/"*; do
+        [ -f "$f" ] || continue
+        id="$(basename "$f")"
+        case "$id" in .*|*/*) continue ;; esac
+        { read -r st _ < "$f"; } 2>/dev/null || continue
+        [ "$st" = "RED" ] || [ "$st" = "EJECTED" ] || continue
+        git -C "$1" show-ref --verify -q "refs/heads/spira/$id" 2>/dev/null || continue
+        _crl_st="$(bdjson show "$id" 2>/dev/null \
+            | python3 -c 'import sys,json
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(0)
+d=d if isinstance(d,list) else [d]
+if d and d[0].get("status")=="closed": print("closed")' 2>/dev/null)" || _crl_st=""
+        [ "${_crl_st:-}" = "closed" ] || continue
+        printf '%s\n' "$id"
+    done
+}
+
 # _certified_list <repo-path> — delegates to queue_certified_list in lib.sh.
 # Kept as a local alias so callers inside this file do not need updating.
 _certified_list() { queue_certified_list "$@"; }
@@ -116,6 +142,26 @@ main() {
         | bash "$HERE/mail.sh" send operator \
             --from "Spira Queue <queue@spira>" \
             --subject "Merge queue: $name — CERTIFIED branch(es) missing" \
+            2>/dev/null || true
+    fi
+
+    # Closed beads with RED/EJECTED landstates and live branches are unreachable: the batch
+    # builder ignores closed beads and queue_certified_list selects on CERTIFIED. Log and
+    # mail the operator so the loss is visible before a "queue drained" conclusion stands.
+    local _crl_id _crl_ids _crl_list=""
+    _crl_ids="$(_closed_red_live "$repo")"
+    if [ -n "${_crl_ids:-}" ]; then
+        while IFS= read -r _crl_id; do
+            [ -n "$_crl_id" ] || continue
+            printf 'batch %s: WARN closed-red-live %s — bead closed with landstate RED/EJECTED and branch spira/%s is alive\n' \
+                "$name" "$_crl_id" "$_crl_id"
+            _crl_list="${_crl_list}- ${_crl_id}\n"
+        done <<< "$_crl_ids"
+        printf '## Note\nBead(s) for %s are closed with a RED/EJECTED landstate and a live branch:\n\n%bThese beads cannot re-enter the queue. Re-open and recertify each branch to resume.\n' \
+            "$name" "$_crl_list" \
+        | bash "$HERE/mail.sh" send operator \
+            --from "Spira Queue <queue@spira>" \
+            --subject "Merge queue: $name — closed bead(s) with live evicted branch" \
             2>/dev/null || true
     fi
 
