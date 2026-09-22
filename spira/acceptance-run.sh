@@ -198,7 +198,7 @@ mkdir -p "$(dirname "$_conf")"
     [ -n "$_agent" ] && printf 'SPIRA_AGENT = %s\n' "$_agent"
     printf 'SPIRA_OPERATED = 0\n'
 } > "$_conf"
-_install_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")")
+_install_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")" SPIRA_OPERATED=0)
 # --agent triggers single-checkout mode; CONFIGURE_PROD is the harness subdir
 # inside the clone so install.sh sets SPIRA_PROD there, bypassing promote.sh.
 # The git-checkout guard is overridden because the clone IS the prod checkout
@@ -398,6 +398,12 @@ else
         >/dev/null 2>&1
     is0 "phase D: git clone $prev_tag (aged base)" "$?"
 
+    _aged_conf="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
+    mkdir -p "$(dirname "$_aged_conf")"
+    {
+        [ -n "$_agent" ] && printf 'SPIRA_AGENT = %s\n' "$_agent"
+        printf 'SPIRA_OPERATED = 0\n'
+    } > "$_aged_conf"
     _aged_install_rc=0
     _aged_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")" SPIRA_OPERATED=0)
     if [ -n "$_agent" ]; then
@@ -411,11 +417,6 @@ else
     is0 "phase D: install.sh ($prev_tag, aged) exits 0" "$_aged_install_rc"
 
     if [ "$_aged_install_rc" -eq 0 ]; then
-        _aged_conf="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
-
-        [ -n "$_agent" ] && printf '\nSPIRA_AGENT = %s\n' "$_agent" >> "$_aged_conf"
-        printf 'SPIRA_OPERATED = 0\n' >> "$_aged_conf"
-
         # Seed beads into $bd_db (the instance's db in CI).
         bd -C "$bd_db" create \
             --title "aged-install: open seed bead (pre-upgrade)" \

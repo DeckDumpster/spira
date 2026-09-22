@@ -238,7 +238,7 @@ echo "17. Phase A: SPIRA_AGENT written before install.sh (not gated on _install_
 # install exits non-zero (e.g. exit 3: installed but not ready).
 # install.sh phase 1 sees the file and skips configure.sh; the values persist.
 wantre "phase A pre-seeds conf before install.sh call" \
-    'printf.*SPIRA_AGENT.*\|.*SPIRA_OPERATED.*>.*_conf'
+    'printf.*SPIRA_AGENT|SPIRA_OPERATED.*>.*_conf'
 # The conf write must NOT be inside an 'if _install_rc' guard.
 if grep -A5 '_install_rc.*-eq 0' "$SCRIPT" 2>/dev/null \
         | grep -q 'SPIRA_AGENT'; then
