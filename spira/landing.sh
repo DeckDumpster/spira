@@ -1269,6 +1269,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                             spira_ask_machinery "$id" "$br" "$name" "$gate_outcome" "$gate_reason" "$nv_n" "$gate_out"
                             progress "escalated $id — $gate_outcome x$nv_n on $br"
                         fi
+                        [ "${gate_reason:-}" = timeout ] && land_mark "$id" RED "$tip" timeout
                         continue
                     fi
                     _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
@@ -1834,7 +1835,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
     # ==========================================================================
     if [ "${#_cert_brs[@]}" -gt 0 ]; then
         local -a _cp_pids=() _cp_brs=() _cp_ids=() _cp_tips=() _cp_tmps=()
-        log "landing: certify phase 2: ${#_cert_brs[@]} candidate(s) in $name, width ${certify_pass_par}"
+        log "landing: certify phase 2: ${#_cert_brs[@]} candidate(s) in $name (before tier sort)"
 
         # Waits for whichever running gate finishes next, then applies cert logic.
         # Uses wait -n -p (bash 5.1+) to collect results in completion order so a
@@ -1914,6 +1915,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                         spira_ask_machinery "$id" "$br" "$name" "$gate_outcome" "$gate_reason" "$nv_n" "$gate_out"
                         progress "escalated $id — $gate_outcome x$nv_n on $br"
                     fi
+                    [ "${gate_reason:-}" = timeout ] && land_mark "$id" RED "$tip" timeout
                     return 0
                 fi
                 _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
@@ -1953,6 +1955,40 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
             mark_submitted "$id" "$tip" certified
             progress "certified $br in $name — queued"
         }
+
+        # PHASE 2 TIER ORDERING. Never-gated branches (no prior landstate record) go first;
+        # branches with a non-RED landstate go second; RED branches with a moved tip or a
+        # base-red reason go third. A RED branch whose tip is unchanged and whose failure is
+        # not base-red is skipped — the same tip will produce the same result, and the slot
+        # is better spent on a branch that has never been tried. Timeouts write RED (above)
+        # and are subject to the same skip condition.
+        local -a _t0_brs=() _t0_ids=() _t0_tips=()
+        local -a _t1_brs=() _t1_ids=() _t1_tips=()
+        local -a _t2_brs=() _t2_ids=() _t2_tips=()
+        local _p2_skip=0 _p2_ls _p2_ls_st _p2_ls_tip _p2_ls_reason _p2_ci _p2_br _p2_id _p2_tip
+        for _p2_ci in "${!_cert_brs[@]}"; do
+            _p2_br="${_cert_brs[$_p2_ci]}"
+            _p2_id="${_cert_beadids[$_p2_ci]}"
+            _p2_tip="${_cert_tips[$_p2_ci]}"
+            _p2_ls_st=""; _p2_ls_tip=""; _p2_ls_reason=""
+            _p2_ls="$(land_state "$_p2_id" 2>/dev/null || true)"
+            read -r _p2_ls_st _p2_ls_tip _ _p2_ls_reason <<< "$_p2_ls"
+            if [ -z "${_p2_ls_st:-}" ]; then
+                _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip")
+            elif [ "${_p2_ls_st:-}" = RED ] && [ "${_p2_ls_tip:-}" = "$_p2_tip" ] && \
+                 [ "${_p2_ls_reason:-}" != "base-red" ]; then
+                _p2_skip=$(( _p2_skip + 1 ))
+                log "CHECK6 $_p2_id: tip unchanged since RED mark (reason=${_p2_ls_reason:-unknown}) — skipping re-gate of $_p2_br"
+            elif [ "${_p2_ls_st:-}" = RED ]; then
+                _t2_brs+=("$_p2_br"); _t2_ids+=("$_p2_id"); _t2_tips+=("$_p2_tip")
+            else
+                _t1_brs+=("$_p2_br"); _t1_ids+=("$_p2_id"); _t1_tips+=("$_p2_tip")
+            fi
+        done
+        log "landing: certify phase 2 tiers in $name: never-gated=${#_t0_brs[@]} non-red=${#_t1_brs[@]} red=${#_t2_brs[@]} skipped=$_p2_skip width=${certify_pass_par}"
+        _cert_brs=("${_t0_brs[@]+"${_t0_brs[@]}"}" "${_t1_brs[@]+"${_t1_brs[@]}"}" "${_t2_brs[@]+"${_t2_brs[@]}"}")
+        _cert_beadids=("${_t0_ids[@]+"${_t0_ids[@]}"}" "${_t1_ids[@]+"${_t1_ids[@]}"}" "${_t2_ids[@]+"${_t2_ids[@]}"}")
+        _cert_tips=("${_t0_tips[@]+"${_t0_tips[@]}"}" "${_t1_tips[@]+"${_t1_tips[@]}"}" "${_t2_tips[@]+"${_t2_tips[@]}"}")
 
         local _ci _ctmp _dbr _did _dtip
         for _ci in "${!_cert_brs[@]}"; do
