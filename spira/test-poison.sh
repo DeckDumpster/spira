@@ -28,6 +28,7 @@
 #
 # defect: sp-mqnf
 # covers: spira/sentinel.sh spira/lib.sh spira/chamber/*
+# timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

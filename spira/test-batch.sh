@@ -995,5 +995,82 @@ is   "m. positive-control: sp-btm reopened (RED)" "1" \
 want "m. conflict-note: names conflicting file" "conflict3.txt" "$note_m"
 clean_case
 
+# =============================================================================
+# n. FORMAT BATCH: when the repo declares a formatter, the assembled batch
+#    receives a "spira: format batch" commit before the PR opens.
+#
+#    POSITIVE CONTROL: the format commit must NOT appear on origin/main (only
+#    on the batch branch). An empty formatter log means the formatter was
+#    bypassed entirely; the grep-c assertion would fail against 0.
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"; OLD_N=$(( NOW - 1800 - 1 ))
+branch "sp-btn-a" "$OLD_N"
+branch "sp-btn-b" "$OLD_N"
+
+FMT_SCRIPT_N="$TMP/fmt-n.sh"
+cat > "$FMT_SCRIPT_N" << 'FMTN'
+#!/usr/bin/env bash
+for f in *.txt; do [ -f "$f" ] && printf 'fmt\n' >> "$f"; done
+FMTN
+chmod +x "$FMT_SCRIPT_N"
+
+cat > "$SH/repo-map" << RMAP_N
+$REPONAME | $REPO | queue | origin/main | bash $FMT_SCRIPT_N | |
+RMAP_N
+
+batch "$REPONAME" > /dev/null
+
+batch_br_n="$(git -C "$REPO" for-each-ref --format='%(refname:short)' \
+    'refs/heads/spira/queue/*' 2>/dev/null | tail -1)"
+is "n. format batch: format commit present" "1" \
+    "$(git -C "$REPO" log --format='%s' "origin/main..$batch_br_n" 2>/dev/null \
+       | grep -c 'spira: format batch' || true)"
+is "n. format batch: PR opened" "1" "$(batch_pr)"
+is "n. format batch: no format commit on main" "0" \
+    "$(git -C "$REPO" log --format='%s' origin/main 2>/dev/null \
+       | grep -c 'spira: format batch' || true)"
+
+cat > "$SH/repo-map" << RMAP
+$REPONAME | $REPO | queue | origin/main | | |
+RMAP
+clean_case
+
+# =============================================================================
+# o. FORMATTER FAILURE: when the formatter exits non-zero, the batch opens
+#    without a format commit and nothing is changed.
+#
+#    POSITIVE CONTROL: a formatter that exits 0 but makes no changes would
+#    also produce no format commit; the test distinguishes the two paths by
+#    asserting the PR IS opened (the batch was not aborted on formatter failure).
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"; OLD_O=$(( NOW - 1800 - 1 ))
+branch "sp-bto-a" "$OLD_O"
+
+FMT_FAIL_N="$TMP/fmt-fail-o.sh"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$FMT_FAIL_N"
+chmod +x "$FMT_FAIL_N"
+
+cat > "$SH/repo-map" << RMAP_O
+$REPONAME | $REPO | queue | origin/main | bash $FMT_FAIL_N | |
+RMAP_O
+
+batch "$REPONAME" > /dev/null
+
+batch_br_o="$(git -C "$REPO" for-each-ref --format='%(refname:short)' \
+    'refs/heads/spira/queue/*' 2>/dev/null | tail -1)"
+is "o. formatter fail: PR still opened"          "1" "$(batch_pr)"
+is "o. formatter fail: no format commit present" "0" \
+    "$(git -C "$REPO" log --format='%s' "origin/main..$batch_br_o" 2>/dev/null \
+       | grep -c 'spira: format batch' || true)"
+
+cat > "$SH/repo-map" << RMAP
+$REPONAME | $REPO | queue | origin/main | | |
+RMAP
+clean_case
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

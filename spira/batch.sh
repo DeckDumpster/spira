@@ -17,6 +17,43 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/lib.sh"
 
 
+# format_batch <worktree> <base_sha> [repo-name] -> 0 always; the batch stands
+# whatever the formatter does. Same hygiene as format_rebased in lib.sh, applied
+# to the tree a batch merge synthesises.
+format_batch() {
+    local wt="$1" base="$2" name="${3:-}" cmd paths f staged=0
+
+    [ -n "$name" ] || name="$(repo_name_at "$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null)" || return 0
+    cmd="$(repo_format "$name" 2>/dev/null)"
+    [ -n "$cmd" ] || return 0
+
+    if ! ( cd "$wt" && env -i PATH="$HOME/.cargo/bin:$PATH" HOME="$HOME" TERM=dumb \
+             timeout "${SPIRA_FORMAT_TIMEOUT:-300}" bash -c "$cmd" ) >/dev/null 2>&1; then
+        log "format: $name's formatter failed on batch — leaving it unformatted"
+        git -C "$wt" checkout -q -- . 2>/dev/null
+        return 0
+    fi
+
+    paths=()
+    while IFS= read -r -d '' f; do
+        [ -f "$wt/$f" ] && paths+=("$f")
+    done < <(git -C "$wt" diff -z --name-only "$base" HEAD 2>/dev/null)
+    [ "${#paths[@]}" -gt 0 ] && git -C "$wt" add -- "${paths[@]}" 2>/dev/null
+
+    git -C "$wt" checkout -q -- . 2>/dev/null
+    git -C "$wt" diff --cached --quiet 2>/dev/null || staged=1
+    [ "$staged" = 1 ] || return 0
+
+    git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" commit -q -F - <<EOF 2>/dev/null
+spira: format batch
+
+Batch assembly merges branches without re-running $name's formatter, so the
+assembled tree may fail the required layout check. Formatted with: $cmd
+EOF
+    log "format: formatted $name batch"
+    return 0
+}
+
 # SPIRA_QUEUE_REPRO_BATCH: seam for per-member reproduction in tests.
 : "${SPIRA_QUEUE_REPRO_BATCH:=$HERE/testenv-batch.sh}"
 
@@ -462,6 +499,7 @@ main() {
     local stamp batch_br batch_head
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     batch_br="spira/queue/$stamp"
+    format_batch "$wt" "$base_sha" "$name"
     batch_head="$(git -C "$wt" rev-parse HEAD 2>/dev/null)"
 
     # LOCAL GATE: run the gate on the combined batch before opening a PR.
@@ -569,6 +607,7 @@ main() {
 
             # Delete old batch branch; new stamp for the rebuilt batch.
             SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+            format_batch "$wt" "$base_sha" "$name"
             batch_head="$(git -C "$wt" rev-parse HEAD 2>/dev/null)"
             stamp="$(date -u +%Y%m%dT%H%M%SZ)"
             batch_br="spira/queue/$stamp"
