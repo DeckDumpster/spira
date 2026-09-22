@@ -1880,15 +1880,25 @@ log "$FAYTH: $BEAD_ID status=$st committed=$committed superseded=$superseded del
 # recertify and re-enter the queue.
 if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ "$superseded" != 1 ]; then
     _evict_ls="$(land_state "$BEAD_ID" 2>/dev/null)" || _evict_ls=""
-    _evict_state="${_evict_ls%% *}"
-    if [ "$_evict_state" = "RED" ] || [ "$_evict_state" = "EJECTED" ]; then
+    _evict_state="" _evict_tip="" _evict_at="" _evict_reason=""
+    read -r _evict_state _evict_tip _evict_at _evict_reason <<< "$_evict_ls"
+    _evict_state="${_evict_state:-}"; _evict_reason="${_evict_reason:-}"
+    _is_eviction=0
+    if [ "$_evict_state" = "EJECTED" ]; then
+        _is_eviction=1
+    elif [ "$_evict_state" = "RED" ]; then
+        for _er in $LAND_EVICTION_REASONS; do
+            [ "$_evict_reason" = "$_er" ] && { _is_eviction=1; break; }
+        done
+    fi
+    if [ "$_is_eviction" = "1" ]; then
         bead_reopen "$BEAD_ID" eviction-race "Reopened by aeon.sh: bead closed while landstate is $_evict_state — the branch was evicted from the batch while this session was in flight. The close is valid but the work cannot re-enter the queue while the bead is closed. Recertify the branch to re-enter the merge queue."
         log "$FAYTH: $BEAD_ID REOPENED — closed with landstate=$_evict_state (eviction race)"
         st="open"
         REQUEUE_CAUSE="eviction-race"
         REQUEUE_WHY="Batch evicted the branch while this aeon was in flight; the bead was re-closed on a stale pass. Recertify the branch."
     fi
-    unset _evict_ls _evict_state
+    unset _evict_ls _evict_state _evict_tip _evict_at _evict_reason _is_eviction _er
 fi
 
 if [ "$st" = "closed" ] && [ "$committed" = "no" ] && [ "$superseded" != 1 ]; then
