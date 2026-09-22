@@ -354,29 +354,36 @@ run_install() {
         bash "$FIXTURE/install.sh" prod 2>&1
 }
 
+# Pre-populate the db directory with server-mode metadata so phase 3 sees an
+# existing store and skips bd init entirely. That avoids phase 3 starting a
+# real dolt server (which would consume the nc before phase 4 can use it).
+setup_fake_db() {
+    rm -rf "$FAKE_DB"
+    mkdir -p "$FAKE_DB/.beads"
+    printf '{"dolt_mode":"server","dolt_server_port":%s,"dolt_database":"%s","project_id":"test"}\n' \
+        "$_DOLT_PORT" "$_DBNAME2" > "$FAKE_DB/.beads/metadata.json"
+}
+
 # ==========================================================================
 echo
 echo "3. INSTALL POSITIVE CONTROL — no clear: probe fails, install exits non-zero:"
 # ==========================================================================
 
-rm -rf "$FAKE_DB"; mkdir -p "$FAKE_DB"
+setup_fake_db
 touch "$_BREAKER_FLAG"   # pre-trip the breaker
 
 # db stub: doctor is a no-op; list always fails while flag exists.
 make_bd_stub 0
 
-# Phase 3 probes the port to confirm dolt started; that probe exits the first
-# nc. Phase 4 then waits for the unit's port — a second nc provides it after a
-# short delay (matching the pattern from test-install-dolt-port-wait.sh).
+# nc listener simulates dolt-beads.service listening on the port.
+# Phase 3 is skipped (db exists), so nc is consumed only by phase 4's probe.
 nc -lk "$_DOLT_PORT" >/dev/null 2>&1 & _nc_pid=$!
-sleep 0.1
-{ sleep 2; nc -lk "$_DOLT_PORT" >/dev/null 2>&1; } & _nc_unit=$!
+sleep 0.3
 
 _no_clear_out="$(run_install)"
 _no_clear_rc=$?
 
-kill "$_nc_pid" "$_nc_unit" 2>/dev/null
-wait "$_nc_pid" "$_nc_unit" 2>/dev/null || true
+kill "$_nc_pid" 2>/dev/null; wait "$_nc_pid" 2>/dev/null || true
 
 nonzero "no-clear: install exits non-zero when db probe fails"     "$_no_clear_rc"
 want    "no-clear: circuit-breaker error in output" "circuit breaker" "$_no_clear_out"
@@ -387,21 +394,19 @@ echo
 echo "4. INSTALL PASSES — doctor clears breaker: install exits 0:"
 # ==========================================================================
 
-rm -rf "$FAKE_DB"; mkdir -p "$FAKE_DB"
+setup_fake_db
 touch "$_BREAKER_FLAG"   # pre-trip the breaker
 
 # db stub: doctor removes the flag; list then succeeds.
 make_bd_stub 1
 
 nc -lk "$_DOLT_PORT" >/dev/null 2>&1 & _nc_pid2=$!
-sleep 0.1
-{ sleep 2; nc -lk "$_DOLT_PORT" >/dev/null 2>&1; } & _nc_unit2=$!
+sleep 0.3
 
 _clear_out="$(run_install)"
 _clear_rc=$?
 
-kill "$_nc_pid2" "$_nc_unit2" 2>/dev/null
-wait "$_nc_pid2" "$_nc_unit2" 2>/dev/null || true
+kill "$_nc_pid2" 2>/dev/null; wait "$_nc_pid2" 2>/dev/null || true
 
 is0   "install passes: install exits 0 after doctor clears breaker"    "$_clear_rc"
 want  "install passes: bd store accepting logged"  "bd store accepting" "$_clear_out"
