@@ -102,6 +102,7 @@ batch() {
 testdb_reset
 testdb_seed <<JSONL
 {"id":"sp-good","title":"certified branch with ref","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-17T00:00:00Z"}
+{"id":"sp-reaped","title":"certified orphan reaped by sending","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-17T00:00:00Z"}
 JSONL
 
 # ─── Fixture: sp-good — CERTIFIED landstate with an existing branch ───────────
@@ -110,16 +111,24 @@ printf 'good\n' > "$REPO/sp-good.txt"
 git -C "$REPO" add sp-good.txt && git -C "$REPO" commit -q -m "sp-good: work"
 _good_tip="$(git -C "$REPO" rev-parse spira/sp-good)"
 git -C "$REPO" checkout -q main
-printf 'CERTIFIED %s %s\n' "$_good_tip" "$(date +%s)" > "$LANDSTATE/sp-good"
+# No trailing newline — matches land_mark in lib.sh.  A reader using "|| continue"
+# would skip this record; that was the defect.
+printf 'CERTIFIED %s %s' "$_good_tip" "$(date +%s)" > "$LANDSTATE/sp-good"
 
-# ─── Fixture: sp-gone — CERTIFIED landstate but NO branch ref ─────────────────
+# ─── Fixture: sp-gone — CERTIFIED landstate but NO branch ref, no reap entry ──
 # Plant only the landstate file; no refs/heads/spira/sp-gone exists.
-printf 'CERTIFIED fakeshafakeshabrakeshabrakebrakefakeshabrakebra %s\n' "$(date +%s)" > "$LANDSTATE/sp-gone"
+printf 'CERTIFIED fakeshafakeshabrakeshabrakebrakefakeshabrakebra %s' "$(date +%s)" > "$LANDSTATE/sp-gone"
 
 # ─── Fixture: sp-in-base — CERTIFIED orphan whose tip is already in origin/main ─
 # Represents a member whose batch PR was merged before verdict.sh ran.
 _base_tip="$(git -C "$REPO" rev-parse origin/main)"
-printf 'CERTIFIED %s %s\n' "$_base_tip" "$(date +%s)" > "$LANDSTATE/sp-in-base"
+printf 'CERTIFIED %s %s' "$_base_tip" "$(date +%s)" > "$LANDSTATE/sp-in-base"
+
+# ─── Fixture: sp-reaped — CERTIFIED orphan, tip NOT in base, Sending reaped it ─
+# Tip not an ancestor (rebased/squash-merged); reap log records REMOVED.
+printf 'CERTIFIED fakeshafakeshabrakeshabrakebrakefakeshb %s' "$(date +%s)" > "$LANDSTATE/sp-reaped"
+printf '2026-09-17T23:20:12Z REMOVED    sp-reaped              branch spira/sp-reaped [by sentinel.sh -> sending.sh]\n' \
+    > "$RUN/reap.log"
 
 echo "test-batch-certified-orphan.sh"
 
@@ -144,6 +153,8 @@ echo "orphan detection — sp-gone (CERTIFIED, no ref) is logged and mailed:"
 
 want "batch logs WARN for certified-orphan sp-gone" \
     "certified-orphan sp-gone" "$out"
+want "batch logs WARN for certified-orphan sp-reaped" \
+    "certified-orphan sp-reaped" "$out"
 want "mail.sh was called with the missing-branch subject" \
     "CERTIFIED branch" "$(cat "$MAIL_LOG" 2>/dev/null)"
 nowant "sp-gone is not in the open batch"         "sp-gone" "$(cat "$QUEUEDIR/$REPONAME/open" 2>/dev/null)"
@@ -165,6 +176,23 @@ case "$(cat "$LANDSTATE/sp-gone" 2>/dev/null)" in LOST*)
     ok "orphan-not-in-base: sp-gone marked LOST" ;;
     *) bad "orphan-not-in-base: sp-gone marked LOST" \
            "got: $(cat "$LANDSTATE/sp-gone" 2>/dev/null)" ;; esac
+
+# =============================================================================
+# REAPED ORPHAN — branch gone, tip NOT in base, REMOVED in reap log → LANDED.
+#   Positive control: sp-gone (no reap entry) stays LOST, proving the ancestry
+#   and reap-log checks both fire (a path that always writes LANDED would fail
+#   the sp-gone assertion above).
+# =============================================================================
+echo
+echo "reaped orphan — sp-reaped (reap log entry, tip not in base) → LANDED:"
+
+case "$(cat "$LANDSTATE/sp-reaped" 2>/dev/null)" in LANDED*)
+    ok "orphan-reaped: sp-reaped marked LANDED" ;;
+    *) bad "orphan-reaped: sp-reaped marked LANDED" \
+           "got: $(cat "$LANDSTATE/sp-reaped" 2>/dev/null)" ;; esac
+
+want "batch logs LANDED for sp-reaped" \
+    "sp-reaped has no branch — LANDED (reaped-orphan)" "$out"
 
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]

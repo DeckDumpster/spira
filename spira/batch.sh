@@ -50,7 +50,7 @@ _certified_orphans() {
     for f in "$LANDSTATE/"*; do
         [ -f "$f" ] || continue
         id="$(basename "$f")"
-        { read -r st _ < "$f"; } 2>/dev/null || continue
+        st=""; { read -r st _ < "$f"; } 2>/dev/null || [ -n "$st" ] || continue
         [ "$st" = "CERTIFIED" ] || continue
         git -C "$1" show-ref --verify -q "refs/heads/spira/$id" 2>/dev/null && continue
         printf '%s\n' "$id"
@@ -176,7 +176,7 @@ main() {
             _lid="$(basename "$_lf")"
             # Skip entries that are not bead IDs (no slashes, no leading dot).
             case "$_lid" in .*|*/*) continue ;; esac
-            { read -r _lst _ltip _ < "$_lf"; } 2>/dev/null || continue
+            _lst=""; _ltip=""; { read -r _lst _ltip _ < "$_lf"; } 2>/dev/null || [ -n "$_lst" ] || continue
             [ "$_lst" = "CERTIFIED" ] || continue
             _anyrn=0
             for _rn in $(spira_repos); do
@@ -209,8 +209,18 @@ main() {
                 printf 'batch %s: %s tip already in %s (orphan) — LANDED\n' \
                     "$name" "$_lid" "$base"
             else
-                land_mark "$_lid" LOST "${_ltip:-none}" branch-gone
-                printf 'batch %s: %s has no branch — LOST (branch-gone)\n' "$name" "$_lid"
+                # The Sending reaps branches it verified as landed/superseded; a REMOVED
+                # entry here means the content landed even if the tip is not an ancestor
+                # (rebased or squash-merged). Without an entry, the deletion was unexpected.
+                if [ -f "${SPIRA_REAPLOG:-$SPIRA_RUN/reap.log}" ] && \
+                       awk -v id="$_lid" '$2 == "REMOVED" && $3 == id {found=1} END {exit !found}' \
+                           "${SPIRA_REAPLOG:-$SPIRA_RUN/reap.log}" 2>/dev/null; then
+                    land_mark "$_lid" LANDED "${_ltip:-none}" reaped-orphan
+                    printf 'batch %s: %s has no branch — LANDED (reaped-orphan)\n' "$name" "$_lid"
+                else
+                    land_mark "$_lid" LOST "${_ltip:-none}" branch-gone
+                    printf 'batch %s: %s has no branch — LOST (branch-gone)\n' "$name" "$_lid"
+                fi
             fi
         done
     fi
