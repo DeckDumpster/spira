@@ -339,8 +339,13 @@ jobs:
             bash spira/testenv-batch.sh "${{ github.sha }}" || _b=$?
           else
             # Full corpus: push to main, merge_group, and workflow_dispatch.
-            printf 'gate: %s on %s — running the whole corpus\n' \
-              "${{ github.event_name }}" "${{ github.ref_name }}"
+            if [ "${{ github.event_name }}" = "push" ]; then
+              printf 'gate: push to %s — running the whole corpus\n' \
+                "${{ github.ref_name }}"
+            else
+              printf 'gate: %s on %s — running the whole corpus\n' \
+                "${{ github.event_name }}" "${{ github.ref_name }}"
+            fi
             ls spira/test-*.sh | xargs -n1 basename \
               | bash spira/testenv-batch.sh --suites - "${{ github.sha }}" || _b=$?
           fi
