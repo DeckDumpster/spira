@@ -47,6 +47,7 @@ _COCKPIT="${SPIRA_COCKPIT_LAYOUT_SH:-$HERE/../cockpit/layout.sh}"
 _DOCTOR="${SPIRA_DOCTOR_SH:-$HERE/doctor.sh}"
 _SKEW="${SPIRA_SKEW_SH:-$HERE/skew.sh}"
 _SLAY="${SPIRA_SLAY_SH:-$HERE/slay.sh}"
+_CTRL="${SPIRA_CTRL_SH:-$HERE/ctrl.sh}"
 
 # Save the pre-deploy production directory; first-deploy rollback restores units here.
 _orig_prod="${SPIRA_PROD:-$SPIRA_HOME}"
@@ -323,10 +324,14 @@ _rollback() {
         # install disabled (by pruning them from its manifest). install.sh treats a disabled
         # unit as operator-disabled and leaves it alone, so we must restore from the snapshot.
         if [ -f "${_pre_deploy_unit_state:-}" ]; then
-            while IFS= read -r _pdu_line; do
-                _pdu_u="${_pdu_line%% *}"
-                _pdu_s="${_pdu_line##* }"
+            while read -r _pdu_u _pdu_s _pdu_preset; do
                 [ "${_pdu_s}" = "enabled" ] || continue
+                _pdu_cs="${_pdu_u%"-${SPIRA_INSTANCE}.service"}"; _pdu_cs="${_pdu_cs%"-${SPIRA_INSTANCE}.timer"}"
+                _pdu_cs="${_pdu_cs%.service}"; _pdu_cs="${_pdu_cs%.timer}"
+                if [ -x "$_CTRL" ] && "$_CTRL" check "$_pdu_cs" >/dev/null 2>&1; then
+                    printf 'deploy: rollback: %s is suspended — skipping\n' "$_pdu_u" >&2
+                    continue
+                fi
                 _pdu_now="$("$_SC" --user is-enabled "$_pdu_u" 2>/dev/null || true)"
                 [ "$_pdu_now" = "disabled" ] || continue
                 "$_SC" --user enable --now "$_pdu_u" 2>/dev/null || true
