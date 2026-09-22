@@ -79,13 +79,20 @@ git -C "$FAKE_REPO" -c user.email=t@t -c user.name=t \
     commit --allow-empty -q -m "init" 2>/dev/null || true
 git -C "$FAKE_REPO" tag "$NEW_TAG" 2>/dev/null || true
 
-# Mock gh: handles release list, release view, and release download.
+# Mock gh: handles --repo arg, then dispatches on release subcommand.
 # GH_RELEASE_ASSET_NAME controls the asset returned by "release view --json assets".
 # GH_RELEASE_VIEW overrides the entire "release view" response when set.
 cat > "$BIN/gh" <<'GHEOF'
 #!/usr/bin/env bash
 printf 'gh %s\n' "$*" >> "${CALL_LOG:-/dev/null}"
 [ "${GH_EXIT:-0}" = "0" ] || exit "${GH_EXIT}"
+# Strip --repo <value> before dispatching so the mock is insensitive to its position.
+_args=()
+while [ $# -gt 0 ]; do
+    case "$1" in --repo) shift 2 ;; *) _args+=("$1"); shift ;; esac
+done
+set -- "${_args[@]+"${_args[@]}"}"
+unset _args
 if [ "${1:-}" = release ] && [ "${2:-}" = list ]; then
     printf '%s\n' "${GH_RELEASE_LIST:-[]}"
     exit 0
@@ -264,6 +271,7 @@ run_deploy() {
         "SPIRA_CONF=/nonexistent" \
         "SPIRA_RELEASES=$RELEASES" \
         "SPIRA_REPO=$FAKE_REPO" \
+        "SPIRA_FORGE_REPO=testowner/testrepo" \
         "SPIRA_INSTANCE=prod" \
         "SPIRA_DOCTOR=1" \
         "SPIRA_SYSTEMCTL=$BIN/systemctl" \
@@ -902,6 +910,7 @@ _ff_out="$(env -i \
     "SPIRA_CONF=/nonexistent" \
     "SPIRA_RELEASES=$RELEASES" \
     "SPIRA_REPO=$RDONLY_REPO" \
+    "SPIRA_FORGE_REPO=testowner/testrepo" \
     "SPIRA_INSTANCE=prod" \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
@@ -942,6 +951,7 @@ _rdonly_out="$(env -i \
     "SPIRA_CONF=/nonexistent" \
     "SPIRA_RELEASES=$RELEASES" \
     "SPIRA_REPO=$RDONLY_REPO" \
+    "SPIRA_FORGE_REPO=testowner/testrepo" \
     "SPIRA_INSTANCE=prod" \
     "SPIRA_DOCTOR=1" \
     "SPIRA_SYSTEMCTL=$BIN/systemctl" \
@@ -1221,6 +1231,132 @@ want   "p21: output names the failure"                     "hooks-path-missing" 
 notwant "p21: drain not called before pre-deploy check"    "world drain" "$(cat "$CALL_LOG")"
 notwant "p21: activate not called"                         "activate"    "$(cat "$CALL_LOG")"
 islink "p21: current unchanged after refusal"              "$RELEASES/current" "$PRIOR_RELEASE"
+
+# ==========================================================================
+echo
+echo "PROPERTY 22: tarball bootstrap — no .git in SPIRA_REPO, SPIRA_FORGE_REPO required"
+# When deploy.sh is run from an extracted tarball SPIRA_REPO has no .git.
+# With SPIRA_FORGE_REPO set, 'latest' must resolve and the asset must be found.
+# Without it, deploy.sh must refuse and name SPIRA_FORGE_REPO.
+# ==========================================================================
+TARBALL_REPO="$TMP/tarball-tree"
+mkdir -p "$TARBALL_REPO"
+# No .git directory — simulates an extracted tarball tree.
+
+# FAIL-FIRST (positive control): no SPIRA_FORGE_REPO and no .git → must refuse, naming SPIRA_FORGE_REPO.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_tb_out="$(env -i \
+    "PATH=$BIN:$PATH" \
+    "SPIRA_PATH=$BIN" \
+    "HOME=$HOME" \
+    "SPIRA_HOME=$HERE" \
+    "SPIRA_DB=/nonexistent-spira-db" \
+    "SPIRA_RUN=$RUN_DIR" \
+    "SPIRA_CONF=/nonexistent" \
+    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_REPO=$TARBALL_REPO" \
+    "SPIRA_INSTANCE=prod" \
+    "SPIRA_DOCTOR=1" \
+    "SPIRA_SYSTEMCTL=$BIN/systemctl" \
+    "SPIRA_WORLD_SH=$BIN/world.sh" \
+    "SPIRA_ACTIVATE_SH=$BIN/activate.sh" \
+    "SPIRA_INSTALL_SH=$BIN/install.sh" \
+    "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
+    "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
+    "SPIRA_SKEW_SH=$BIN/skew.sh" \
+    "SPIRA_SLAY_SH=$BIN/slay.sh" \
+    "CALL_LOG=$CALL_LOG" \
+    "SC_LOG=$SC_LOG" \
+    "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" \
+    "SLAY_LOG=$SLAY_LOG" \
+    "GIT_CONFIG_NOSYSTEM=1" \
+    "GIT_AUTHOR_NAME=test" \
+    "GIT_AUTHOR_EMAIL=test@t" \
+    "GIT_COMMITTER_NAME=test" \
+    "GIT_COMMITTER_EMAIL=test@t" \
+    bash "$DEPLOY" --dry-run "$NEW_TAG" 2>&1)"
+_tb_rc=$?
+not0 "tarball/no-forge-repo: exits non-zero without SPIRA_FORGE_REPO" "$_tb_rc"
+want "tarball/no-forge-repo: mentions SPIRA_FORGE_REPO" "SPIRA_FORGE_REPO" "$_tb_out"
+
+# Happy path: SPIRA_FORGE_REPO set — latest resolves (via gh), asset found, dry-run exits 0.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_pub_json="[{\"tagName\":\"$NEW_TAG\",\"isDraft\":false}]"
+_tb_out="$(env -i \
+    "PATH=$BIN:$PATH" \
+    "SPIRA_PATH=$BIN" \
+    "HOME=$HOME" \
+    "SPIRA_HOME=$HERE" \
+    "SPIRA_DB=/nonexistent-spira-db" \
+    "SPIRA_RUN=$RUN_DIR" \
+    "SPIRA_CONF=/nonexistent" \
+    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_REPO=$TARBALL_REPO" \
+    "SPIRA_FORGE_REPO=testowner/testrepo" \
+    "SPIRA_INSTANCE=prod" \
+    "SPIRA_DOCTOR=1" \
+    "SPIRA_SYSTEMCTL=$BIN/systemctl" \
+    "SPIRA_WORLD_SH=$BIN/world.sh" \
+    "SPIRA_ACTIVATE_SH=$BIN/activate.sh" \
+    "SPIRA_INSTALL_SH=$BIN/install.sh" \
+    "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
+    "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
+    "SPIRA_SKEW_SH=$BIN/skew.sh" \
+    "SPIRA_SLAY_SH=$BIN/slay.sh" \
+    "CALL_LOG=$CALL_LOG" \
+    "SC_LOG=$SC_LOG" \
+    "GH_RELEASE_LIST=$_pub_json" \
+    "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" \
+    "SLAY_LOG=$SLAY_LOG" \
+    "GIT_CONFIG_NOSYSTEM=1" \
+    "GIT_AUTHOR_NAME=test" \
+    "GIT_AUTHOR_EMAIL=test@t" \
+    "GIT_COMMITTER_NAME=test" \
+    "GIT_COMMITTER_EMAIL=test@t" \
+    bash "$DEPLOY" --dry-run latest 2>&1)"
+_tb_rc=$?
+is0  "tarball/latest: exits 0 with SPIRA_FORGE_REPO set"  "$_tb_rc"
+want "tarball/latest: resolves to $NEW_TAG" "$NEW_TAG" "$_tb_out"
+want "tarball/latest: says dry-run"        "dry-run"  "$_tb_out"
+
+# Explicit tag: SPIRA_FORGE_REPO set, SPIRA_REPO has no .git — asset must be found.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+_tb_out="$(env -i \
+    "PATH=$BIN:$PATH" \
+    "SPIRA_PATH=$BIN" \
+    "HOME=$HOME" \
+    "SPIRA_HOME=$HERE" \
+    "SPIRA_DB=/nonexistent-spira-db" \
+    "SPIRA_RUN=$RUN_DIR" \
+    "SPIRA_CONF=/nonexistent" \
+    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_REPO=$TARBALL_REPO" \
+    "SPIRA_FORGE_REPO=testowner/testrepo" \
+    "SPIRA_INSTANCE=prod" \
+    "SPIRA_DOCTOR=1" \
+    "SPIRA_SYSTEMCTL=$BIN/systemctl" \
+    "SPIRA_WORLD_SH=$BIN/world.sh" \
+    "SPIRA_ACTIVATE_SH=$BIN/activate.sh" \
+    "SPIRA_INSTALL_SH=$BIN/install.sh" \
+    "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
+    "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
+    "SPIRA_SKEW_SH=$BIN/skew.sh" \
+    "SPIRA_SLAY_SH=$BIN/slay.sh" \
+    "CALL_LOG=$CALL_LOG" \
+    "SC_LOG=$SC_LOG" \
+    "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" \
+    "SLAY_LOG=$SLAY_LOG" \
+    "GIT_CONFIG_NOSYSTEM=1" \
+    "GIT_AUTHOR_NAME=test" \
+    "GIT_AUTHOR_EMAIL=test@t" \
+    "GIT_COMMITTER_NAME=test" \
+    "GIT_COMMITTER_EMAIL=test@t" \
+    bash "$DEPLOY" --dry-run "$NEW_TAG" 2>&1)"
+_tb_rc=$?
+is0  "tarball/explicit-tag: exits 0"             "$_tb_rc"
+want "tarball/explicit-tag: names asset"         "$NEW_RELEASE" "$_tb_out"
+want "tarball/explicit-tag: says dry-run"        "dry-run"      "$_tb_out"
+notwant "tarball/explicit-tag: no asset-not-found error" "no unique" "$_tb_out"
 
 # ==========================================================================
 echo
