@@ -634,6 +634,27 @@ else
         fi
         phase_info "dolt-beads.service listening on port $_bp"
         unset _bp _pw _pwt
+        # The gap between killing the temp init server and the unit starting can leave
+        # bd's circuit breaker tripped (5 rapid failures against a closed port). The
+        # breaker persists in /tmp/beads-circuit/ files and blocks all bd calls until
+        # its cooldown expires — which never happens on CI when calls keep refreshing
+        # it. Clear it now, then prove the store with a retried probe before ready.sh.
+        BD_NON_INTERACTIVE=1 "$SPIRA_BD" -C "$SPIRA_DB" doctor --fix --yes 2>/dev/null || true
+        _db_wait=0; _db_max="${SPIRA_INSTALL_DB_WAIT:-30}"; _db_ok=0
+        while [ "$_db_wait" -lt "$_db_max" ]; do
+            if BD_NON_INTERACTIVE=1 "$SPIRA_BD" -C "$SPIRA_DB" list --json \
+                    >/dev/null 2>&1; then
+                _db_ok=1; break
+            fi
+            phase_info "  db probe: attempt $((_db_wait+1)) of ${_db_max}: retrying"
+            sleep 1; _db_wait=$((_db_wait+1))
+        done
+        if [ "$_db_ok" = 0 ]; then
+            _phase_fail "units" \
+                "bd did not accept connections within ${_db_max}s after dolt-beads.service started"
+        fi
+        phase_info "bd store accepting connections"
+        unset _db_wait _db_max _db_ok
     fi
 fi
 
