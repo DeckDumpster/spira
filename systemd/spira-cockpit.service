@@ -24,9 +24,6 @@ RestartSec=15
 # stops being written on schedule (SPIRA_SNAP_STALE_S, default 60s).  WatchdogSec=60
 # means the supervisor pings every 30s; systemd kills after 60s with no ping.
 WatchdogSec=60
-# A pass shells out to bd and git several times. This box also runs prod, so it is fenced
-# (law-fence-loops-on-shared-hardware).
-CPUQuota=35%
 Nice=10
 StandardOutput=append:@SPIRA_RUN@/collector.log
 StandardError=append:@SPIRA_RUN@/collector.log
