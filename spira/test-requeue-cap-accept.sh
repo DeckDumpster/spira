@@ -1,32 +1,12 @@
 #!/usr/bin/env bash
 #
-# test-requeue-cap.sh — the requeue and reclaim caps: a bead one under must not escalate,
-# a bead at or over must escalate with wording distinct from poison.
+# test-requeue-cap-accept.sh — acceptance counts (10-13 sends exactly one mail), the
+# delivers:action exemption, counter non-conflation, and the poison path unchanged.
 #
-#   ./test-requeue-cap.sh
-#
-# THE DEFECT THIS GUARDS. The poison threshold caps sp-attempt-N at POISON_AT; the two
-# excluded counters — sp-requeue-N (the harness put finished work back) and sp-reclaim-N
-# (the aeon died holding it) — were uncapped. A bead that conflicted on every rebase could
-# requeue indefinitely, spending one full aeon session per cycle, with nothing stopping it
-# and nothing reaching the operator. The cap sends one escalation per crossing and names
-# the cause distribution; the wording is distinct from poison because the diagnosis and the
-# remedy differ.
-#
-# EVERY CASE IS A PAIR (law-absence-needs-a-positive-control). "No escalation fired" is
-# also what a check that never runs returns. Each below-cap assertion is paired with an
-# at-cap assertion through the same code path, so absence has been proven detectable.
-#
-# The escalation text is verified for the key phrases the bead description requires:
-# - requeue: "completed and requeued" + count + "never landed"
-# - reclaim: "aeons died holding" + count + "never judged"
-# These distinguish the escalation from a poison ask, which says "change the approach".
-#
-# EXISTING POISON PATH IS NOT RETESTED HERE. test-poison.sh covers it; the only thing
-# asserted here is that a bead with requeue/reclaim labels at the threshold and zero
-# attempts is NOT poisoned — confirming the counters are not conflated.
+# Extracted from test-requeue-cap.sh to reduce the critical-path suite time.
 #
 # covers: spira/sentinel.sh spira/lib.sh
+# timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -38,11 +18,11 @@ is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
-testdb_require test-requeue-cap
+testdb_require test-requeue-cap-accept
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 export SPIRA_TESTDB_MODE=server
-testdb_up requeue-cap || {
-    printf 'SKIP test-requeue-cap: server testdb not available\n' >&2
+testdb_up requeue-cap-accept || {
+    printf 'SKIP test-requeue-cap-accept: server testdb not available\n' >&2
     exit 77
 }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -66,7 +46,6 @@ stub gate.sh       'exit ${GATE_RC:-0}'
 stub reflect.sh    'touch "$SPIRA_RUN/reflect.fired"'
 stub mail.sh       'printf "%s\n" "$*" >> "$MAIL_LOG"; cat >/dev/null'
 
-# TWO PERSONAS to prove the check is not hardcoded to one partition.
 printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/t.fayth"
 printf 'FAYTH_LABELS="spira,incident"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/tinc.fayth"
 
@@ -103,9 +82,7 @@ import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(" ".join(d[0].get("labels") or []))'; }
 
-# SEED a goal epic plus one ready bead.
-# Clears the asked-dirs so dedup state from a prior case does not bleed in.
-seed_bead() {   # seed_bead <id>
+seed_bead() {
     testdb_reset
     rm -rf "$RUN/requeue-asked" "$RUN/reclaim-asked" "$RUN/poison-asked"
     rm -f "$MAIL_LOG"; : > "$MAIL_LOG"
@@ -114,7 +91,7 @@ seed_bead() {   # seed_bead <id>
 {"id":"$1","title":"test bead","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-11T00:00:00Z"}
 JSONL
 }
-cycle() {   # cycle <id> <n> — create n status_changed(in_progress) events via bd update
+cycle() {
     local id="$1" n="$2" i=0
     while [ "$i" -lt "$n" ]; do
         B update "$id" --status in_progress >/dev/null 2>&1
@@ -122,10 +99,7 @@ cycle() {   # cycle <id> <n> — create n status_changed(in_progress) events via
         i=$((i+1))
     done
 }
-
-echo "test-requeue-cap.sh"
-
-reopen_cycle() {   # reopen_cycle <id> <n> — n close/reopen cycles; creates n reopened events
+reopen_cycle() {
     local id="$1" n="$2" i=0
     while [ "$i" -lt "$n" ]; do
         B close "$id" --reason "done" >/dev/null 2>&1 || true
@@ -134,46 +108,56 @@ reopen_cycle() {   # reopen_cycle <id> <n> — n close/reopen cycles; creates n 
     done
 }
 
-# --------------------------------------------------------------------------------------
-# REQUEUE CAP VIA REOPENED EVENTS. reopens_of() counts event_type='reopened' rows;
-# sentinel CHECK4 reads it into _requeues (sp-6bop). Pairs: below-cap first proves
-# absence is detectable, then at-cap proves the escalation fires.
-# REQUEUE_AT is pinned to 3 in the sentinel() wrapper — non-default (default is 5).
-# --------------------------------------------------------------------------------------
-echo
-echo "requeue cap via reopened events:"
-seed_bead sp-rq-below
-reopen_cycle sp-rq-below 2
-sentinel >/dev/null 2>&1 || true
-nowant "2 reopens (below cap 3) fires no requeue escalation" \
-       "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+echo "test-requeue-cap-accept.sh"
 
-seed_bead sp-rq-at
-reopen_cycle sp-rq-at 3
+# ACCEPTANCE CASE: bead requeued at counts 10, 11, 12, 13 sends exactly one mail.
+echo
+echo "acceptance: counts 10..13 send exactly one mail total:"
+seed_bead sp-rq-multi
+reopen_cycle sp-rq-multi 10
 sentinel >/dev/null 2>&1 || true
-want "3 reopens (at cap 3) fires the requeue escalation" \
+want "count 10 fires the first (and only) escalation" \
      "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
-want "the escalation names the reopen count" \
-     "requeued 3 times" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
-nowant "requeue thrash does not add spira-poison" \
-       "spira-poison" "$(labels_of sp-rq-at)"
+reopen_cycle sp-rq-multi 1; : > "$MAIL_LOG"; sentinel >/dev/null 2>&1 || true
+nowant "count 11 sends no mail (already asked per bead)" \
+       "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+reopen_cycle sp-rq-multi 1; : > "$MAIL_LOG"; sentinel >/dev/null 2>&1 || true
+nowant "count 12 sends no mail" \
+       "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+reopen_cycle sp-rq-multi 1; : > "$MAIL_LOG"; sentinel >/dev/null 2>&1 || true
+nowant "count 13 sends no mail" \
+       "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
 
-# DEDUP — per-bead: once asked, no re-mail even at a new count (positive control below).
-# POSITIVE CONTROL: the first-ask assertion above proves the check can detect mail.
-# This section proves a new count does NOT re-mail — an assertion that FAILS against
-# the old per-(bead,count) requeue_asked, establishing it can distinguish old from new.
+# delivers:action EXEMPTION
 echo
-echo "requeue dedup — per-bead: once asked, never re-mailed for higher counts:"
-: > "$MAIL_LOG"
+echo "delivers:action — never triggers requeue cap:"
+testdb_reset
+rm -rf "$RUN/requeue-asked" "$RUN/reclaim-asked" "$RUN/poison-asked"
+rm -f "$MAIL_LOG"; : > "$MAIL_LOG"
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-11T00:00:00Z"}
+{"id":"sp-rq-act","title":"action bead","status":"open","issue_type":"task","labels":["spira","plan","delivers:action"],"updated_at":"2026-09-11T00:00:00Z"}
+JSONL
+reopen_cycle sp-rq-act 10
 sentinel >/dev/null 2>&1 || true
-nowant "second pass at count 3 sends no mail (dedup stamp)" \
+nowant "delivers:action bead with 10 reopens sends no requeue mail" \
        "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
 
-reopen_cycle sp-rq-at 1   # count advances to 4
-: > "$MAIL_LOG"
+# COUNTERS DO NOT CONFLATE
+echo
+echo "counters do not conflate — bead with zero attempt events is never poisoned:"
+seed_bead sp-no-poison
 sentinel >/dev/null 2>&1 || true
-nowant "count 4 (higher count) sends no mail — per-bead dedup, not per-count" \
-       "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+nowant "a bead with no attempt events is never poisoned" \
+       "spira-poison" "$(labels_of sp-no-poison)"
+
+# POISON PATH UNCHANGED
+echo
+echo "poison path unchanged — bead at the attempt threshold is still poisoned:"
+seed_bead sp-attempts
+cycle sp-attempts 3
+sentinel >/dev/null 2>&1 || true
+want "a bead at the attempt threshold is still poisoned" "spira-poison" "$(labels_of sp-attempts)"
 
 echo
 echo "$pass passed, $fail failed"
