@@ -188,7 +188,17 @@ is0 "phase A: git clone --branch $tag" "$?"
 # We pass SPIRA_INSTALL_CONFLICT_CONSIDERED=1 only if this is not the first run on this
 # machine — on a genuinely clean machine, no conflict should exist.
 _install_rc=0
-_install_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")" SPIRA_OPERATED=0)
+_conf="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
+# Pre-seed conf with SPIRA_AGENT and SPIRA_OPERATED before calling install.sh so these
+# values survive even if install exits non-zero (e.g. exit 3: installed but not ready).
+# install.sh phase 1 sees the file exists and skips configure.sh; other values derive
+# from defaults or the env vars passed below (configure.sh never overwrites an existing file).
+mkdir -p "$(dirname "$_conf")"
+{
+    [ -n "$_agent" ] && printf 'SPIRA_AGENT = %s\n' "$_agent"
+    printf 'SPIRA_OPERATED = 0\n'
+} > "$_conf"
+_install_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")")
 # --agent triggers single-checkout mode; CONFIGURE_PROD is the harness subdir
 # inside the clone so install.sh sets SPIRA_PROD there, bypassing promote.sh.
 # The git-checkout guard is overridden because the clone IS the prod checkout
@@ -201,12 +211,6 @@ if [ -n "$_agent" ]; then
 fi
 env "${_install_env[@]}" bash "$_clone/install.sh" 2>&1 | tee "$TMP/install.log" || _install_rc=$?
 is0 "phase A: install.sh exits 0" "$_install_rc"
-
-if [ "$_install_rc" -eq 0 ]; then
-    _conf="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
-    [ -n "$_agent" ] && printf '\nSPIRA_AGENT = %s\n' "$_agent" >> "$_conf"
-    printf 'SPIRA_OPERATED = 0\n' >> "$_conf"
-fi
 
 # After install, verify ready.sh exits 0.
 _ready_rc=0
