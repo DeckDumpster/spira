@@ -432,15 +432,17 @@ out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
                  "FAKE_LOOM_RESULT=200 500ms" --)"
 want "loom-over-budget: WARN line present"      "  WARN  loom answers 200 but over budget" "$out"
 
-# WARN: loom binary absent AND loom unit not installed (installer skipped it — known absence).
+# SKIP: loom binary absent AND loom unit not installed (installer deliberately skipped it).
+# Binary absent + no unit = cargo was absent; the loop is unaffected; exit 0.
 echo "loom binary absent, unit not installed"
 out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
                  "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
                  "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
                  "SPIRA_LOOM_BIN=/nonexistent/loom" --)"
-want "loom-warn: WARN line present"             "  WARN  loom not installed"   "$out"
-nowant "loom-warn: no ? line"                   "  ?     loom"                 "$out"
-nowant "loom-warn: no FAIL line"                "  FAIL  loom"                 "$out"
+want "loom-skip: skip line present"             "  skip  loom not installed"   "$out"
+nowant "loom-skip: no ? line"                   "  ?     loom"                 "$out"
+nowant "loom-skip: no WARN line"                "  WARN  loom not installed"   "$out"
+nowant "loom-skip: no FAIL line"                "  FAIL  loom"                 "$out"
 
 # UNKN: loom binary absent but loom unit IS installed (something wrong — binary should exist).
 echo "loom binary absent, unit installed"
@@ -576,7 +578,7 @@ run_ready "SPIRA_LOOM_BIN=/nonexistent/loom" \
     && bad "exit-unkn: should exit 1 on ?" "exited 0" \
     || ok "exit-unkn: exits 1 on ?"
 
-# Exit 0 when loom not installed (binary absent + no unit → WARN, not an error).
+# Exit 0 when loom not installed (binary absent + no unit → skip, not an error).
 echo "exit 0 when loom not installed"
 run_ready "SPIRA_LOOM_BIN=/nonexistent/loom" \
           "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \

@@ -40,11 +40,13 @@ set -uo pipefail
 
 SC="${SPIRA_SYSTEMCTL:-systemctl}"
 
-pass=0; warn=0; fail=0; unkn=0
+pass=0; warn=0; fail=0; unkn=0; skip=0
 PASS() { printf '  pass  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; pass=$((pass+1)); }
 WARN() { printf '  WARN  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; warn=$((warn+1)); }
 FAIL() { printf '  FAIL  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; fail=$((fail+1)); }
 UNKN() { printf '  ?     %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; unkn=$((unkn+1)); }
+# SKIP: component deliberately not installed; counts as neither pass nor fail.
+SKIP() { printf '  skip  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; skip=$((skip+1)); }
 
 echo "spira ready"
 echo
@@ -175,9 +177,12 @@ _loom_url="http://$SPIRA_LOOM_ADDR/api/beads"
 if ! [ -x "${SPIRA_LOOM_BIN:-}" ]; then
     _loom_unit="$(spira_unit loom service)"
     if [ "$_loom_unit" = "?" ]; then
-        WARN "loom not installed — binary not built at ${SPIRA_LOOM_BIN:-<unset>}" \
+        # Binary absent and no unit found: installer deliberately skipped loom (cargo absent).
+        # The loop is unaffected; this is not a fault.
+        SKIP "loom not installed — binary not built at ${SPIRA_LOOM_BIN:-<unset>}" \
              "Build it: cd $SPIRA_REPO/loom && cargo build --release"
     else
+        # Binary absent but unit is installed: inconsistent state; probe should have worked.
         UNKN "loom — binary not built at ${SPIRA_LOOM_BIN:-<unset>}; cannot probe $_loom_url" \
              "Build it: cd $SPIRA_REPO/loom && cargo build --release"
     fi
@@ -299,9 +304,9 @@ fi
 # =============================================================================
 echo ""
 if [ "$fail" -gt 0 ] || [ "$unkn" -gt 0 ]; then
-    printf '%d pass, %d WARN, %d FAIL, %d unknown — NOT READY: loop may not receive work.\n' \
-        "$pass" "$warn" "$fail" "$unkn"
+    printf '%d pass, %d WARN, %d FAIL, %d unknown, %d skip — NOT READY: loop may not receive work.\n' \
+        "$pass" "$warn" "$fail" "$unkn" "$skip"
     exit 1
 fi
-printf '%d pass, %d WARN — armed: loop is ready to receive work.\n' "$pass" "$warn"
+printf '%d pass, %d WARN, %d skip — armed: loop is ready to receive work.\n' "$pass" "$warn" "$skip"
 exit 0
