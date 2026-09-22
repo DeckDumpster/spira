@@ -219,8 +219,8 @@ if [ "$_ready_rc" -eq 0 ]; then
     ok "phase A: ready.sh exits 0 after install"
 else
     bad "phase A: ready.sh exits 0 after install" "$_clone/spira/ready.sh exit $_ready_rc"
-    printf '%s\n' "$_ready_out"
 fi
+[ "$_ready_rc" -eq 0 ] || printf '%s\n' "$_ready_out"
 
 # ===========================================================================
 echo
