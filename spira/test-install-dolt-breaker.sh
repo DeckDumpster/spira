@@ -14,7 +14,8 @@
 # 2. CLEAR PASSES: removing the breaker file lifts the fast-fail; bd list
 #    then fails with a connection error rather than a circuit-breaker refusal.
 # 3. INSTALL POSITIVE CONTROL: install.sh's bd probe fails when the breaker is
-#    open and the clear step is skipped (db stub: doctor is a no-op).
+#    open and the clear step is skipped (db stub: doctor is a no-op). Install
+#    reports "bd did not accept connections" and exits non-zero.
 # 4. INSTALL PASSES: install.sh exits 0 when its doctor + probe sequence runs
 #    (db stub: doctor removes the breaker flag, then list succeeds).
 #
@@ -414,9 +415,9 @@ _no_clear_rc=$?
 
 kill "$_py_pid" 2>/dev/null; wait "$_py_pid" 2>/dev/null || true
 
-nonzero "no-clear: install exits non-zero when db probe fails"     "$_no_clear_rc"
-want    "no-clear: circuit-breaker error in output" "circuit breaker" "$_no_clear_out"
-want    "no-clear: db probe attempt logged"         "db probe"         "$_no_clear_out"
+nonzero "no-clear: install exits non-zero when db probe fails"        "$_no_clear_rc"
+want    "no-clear: install reports db probe failure" "bd did not accept" "$_no_clear_out"
+want    "no-clear: db probe attempt logged"           "db probe"          "$_no_clear_out"
 
 # ==========================================================================
 echo
