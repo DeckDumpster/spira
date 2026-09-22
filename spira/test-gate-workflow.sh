@@ -40,8 +40,8 @@
 #      previous release tag; actions/checkout defaults to depth 1 and fetches no
 #      tags, which makes every cut look like the first one.
 #
-# covers: .github/workflows/gate.yml .github/workflows/release.yml
-# covers: .github/workflows/testenv-image.yml
+# covers: .github/workflows/gate.yml .github/workflows/acceptance.yml .github/workflows/release.yml
+# covers: .github/workflows/testenv-image.yml spira/test-fixtures/ephemeral-ci-v1
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -229,6 +229,8 @@ case "$_t" in
        fi ;;
 esac
 
+ACC_YML="$ROOT/.github/workflows/acceptance.yml"
+
 echo
 echo "14. push to main runs no suites:"
 # The corpus runs on the queue PR. Re-running it on the push that fast-forwarded
@@ -281,6 +283,95 @@ want "gate runs on a hosted runner"         "ubuntu-latest"      "$_gate_verdict
 want "gate exits 75 on provision fault"     "75"                 "$_gate_verdict_block"
 want "gate checks provision.result"         "provision.result"   "$_gate_verdict_block"
 want "gate checks suites.result"            "suites.result"      "$_gate_verdict_block"
+
+echo
+echo "17. every required action input at the pinned v1 is passed (derived from the action.yml fixtures):"
+# POSITIVE CONTROL is built in: after checking the real workflows we also check a
+# synthetic teardown block with pve-ca-cert stripped, and assert the check catches it.
+_prov_fix="$HERE/test-fixtures/ephemeral-ci-v1/provision-action.yml"
+_tear_fix="$HERE/test-fixtures/ephemeral-ci-v1/teardown-action.yml"
+if [ -r "$_prov_fix" ] && [ -r "$_tear_fix" ]; then
+    ok "action fixtures exist"
+else
+    bad "action fixtures exist" "expected spira/test-fixtures/ephemeral-ci-v1/{provision,teardown}-action.yml"
+fi
+
+_parse_required() {
+    # Emit each input name whose `required: true` line appears inside `inputs:`.
+    awk '
+        /^inputs:/           { in_inputs=1; next }
+        /^(outputs|runs):/   { in_inputs=0; next }
+        in_inputs && /^  [a-z][a-z0-9-]+:$/ { name=$1; sub(/:$/,"",name) }
+        in_inputs && name && /^    required: true$/ { print name }
+    ' "$1"
+}
+
+_check_inputs() {
+    # $1 = workflow label, $2 = required-input list (newline-sep), $3 = workflow block
+    local _label="$1" _block="$3"
+    while IFS= read -r _inp; do
+        [ -n "$_inp" ] || continue
+        want "$_label passes required input: $_inp" "$_inp" "$_block"
+    done <<< "$2"
+}
+
+_prov_required="$(_parse_required "$_prov_fix")"
+_tear_required="$(_parse_required "$_tear_fix")"
+
+# gate.yml
+_gate_prov_block="$(awk '/^  provision:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
+_gate_tear_block="$(awk '/^  teardown:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
+if [ -z "$_gate_prov_block" ]; then
+    bad "gate.yml provision block found (positive control)" "awk extracted nothing"
+else
+    ok "gate.yml provision block found"
+    _check_inputs "gate.yml provision" "$_prov_required" "$_gate_prov_block"
+fi
+if [ -z "$_gate_tear_block" ]; then
+    bad "gate.yml teardown block found (positive control)" "awk extracted nothing"
+else
+    ok "gate.yml teardown block found"
+    _check_inputs "gate.yml teardown" "$_tear_required" "$_gate_tear_block"
+fi
+
+# acceptance.yml
+if [ -r "$ACC_YML" ]; then
+    _acc_prov_block="$(awk '/^  provision:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$ACC_YML")"
+    _acc_tear_block="$(awk '/^  teardown:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$ACC_YML")"
+    if [ -z "$_acc_prov_block" ]; then
+        bad "acceptance.yml provision block found (positive control)" "awk extracted nothing"
+    else
+        ok "acceptance.yml provision block found"
+        _check_inputs "acceptance.yml provision" "$_prov_required" "$_acc_prov_block"
+    fi
+    if [ -z "$_acc_tear_block" ]; then
+        bad "acceptance.yml teardown block found (positive control)" "awk extracted nothing"
+    else
+        ok "acceptance.yml teardown block found"
+        _check_inputs "acceptance.yml teardown" "$_tear_required" "$_acc_tear_block"
+    fi
+else
+    bad "acceptance.yml exists" "not found at $ACC_YML"
+fi
+
+# Positive control: a fixture teardown block missing pve-ca-cert is detected.
+# Strip pve-ca-cert from the real teardown block and verify the check flags it.
+if [ -n "$_gate_tear_block" ] && [ -n "$_tear_required" ]; then
+    _fixture_no_cert="$(printf '%s\n' "$_gate_tear_block" | grep -v 'pve-ca-cert')"
+    _detected=""
+    while IFS= read -r _inp; do
+        [ -n "$_inp" ] || continue
+        case "$_fixture_no_cert" in
+            *"$_inp"*) ;;
+            *) _detected="$_detected $_inp" ;;
+        esac
+    done <<< "$_tear_required"
+    case "$_detected" in
+        *pve-ca-cert*) ok "positive control: fixture missing pve-ca-cert is detected" ;;
+        *) bad "positive control: fixture missing pve-ca-cert is detected" \
+               "required-input check did not flag pve-ca-cert as missing from the fixture" ;;
+    esac
+fi
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
