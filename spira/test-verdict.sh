@@ -887,13 +887,15 @@ clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
 # =============================================================================
-# 22. PARALLEL WALL-TIME — 3 members, repro stub sleeps 2s each.
+# 22. PARALLEL WALL-TIME — 3 members, repro stub sleeps 4s each.
 #     With SPIRA_BATCH_MAXPAR=3 all run concurrently; wall time ≤ 75% of serial.
 #     Positive control is case 23: MAXPAR=1 forces serial; total wall time ≥ 6s.
+#     Sleep 4s: _repro_is_red retries on red (doubles per-member sleep to 8s);
+#     4s makes the parallelism signal dominate over worktree/merge overhead.
 # =============================================================================
 cat > "$SH/repro-sleep.sh" <<'REPRO'
 #!/usr/bin/env bash
-sleep 2; exit 1
+sleep 4; exit 1
 REPRO
 chmod +x "$SH/repro-sleep.sh"
 
