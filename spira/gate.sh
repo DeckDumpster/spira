@@ -562,6 +562,7 @@ run_gate() {             # run_gate <ref-being-tested> -> the command's own stat
         SPIRA_GATE_EJECTED_SUITES="${ejected_suites:-}" \
         SPIRA_GATE_ALL="${SPIRA_GATE_ALL:-0}" \
         SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
+        SPIRA_VERDICT_REPEAT_CONSIDERED="${SPIRA_VERDICT_REPEAT_CONSIDERED:-}" \
         timeout "${SPIRA_GATE_TIMEOUT:-2700}" bash -c "$CMD" 9>&- ) 2>&1
     return $?
 }
@@ -668,10 +669,15 @@ fi
 # we do not know whose fault the red is — and guessing "the branch" is the bug being fixed.
 base_ran=0; base_out=""
 if gate_at "$BASE" >/dev/null 2>&1; then
+    # THE BASE TRIAL OVERRIDES THE BATCH REPEAT PROTECTION. Its purpose is to verify the
+    # current state of the base, not to reuse a past verdict. A cached red would make it
+    # impossible to distinguish "base is broken right now" from "base was broken before".
+    SPIRA_VERDICT_REPEAT_CONSIDERED="base trial — confirming whether base is independently red"
     base_out="$(run_gate "$BASE" 2>&1)"; base_rc=$?
+    unset SPIRA_VERDICT_REPEAT_CONSIDERED
     # A base trial that TIMED OUT tells us nothing either; only a clean red on the base is
     # evidence the base is broken.
-    [ "$base_rc" -ne 124 ] && base_ran=1
+    [ "$base_rc" -ne 124 ] && [ "$base_rc" -ne "$NV" ] && base_ran=1
 fi
 gate_at "$BR" >/dev/null 2>&1
 

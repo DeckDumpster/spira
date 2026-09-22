@@ -75,6 +75,25 @@ out="$(gate_with 'lint said no' 'lint said no')"
 want   "unnamed base red is base-red"     "reason=base-red"       "$out"
 want   "suite is -"                       "suite=-"               "$out"
 
+echo "a base trial returning NV (exit 75) is NO_VERDICT, not BASE_FAIL"
+# The batch converts a repeat-refused run (exit 2) to exit 75 via the gate command's
+# case clause. A base trial that returns NV means we cannot confirm the base is broken;
+# it must not charge the branch or hold the repository as BASE_FAIL.
+# POSITIVE CONTROL: the case above (both exit 1, unnamed) still produces BASE_FAIL, so
+# this silence is not from a guard that never fires.
+_run_nv="$TMP/run.nv"; _map_nv="$TMP/map.nv"
+mkdir -p "$_run_nv/worktree"
+printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" \
+    "if [ \"\$SPIRA_GATE_BRANCH\" = \"$BR\" ]; then exit 1; else exit 75; fi" > "$_map_nv"
+out_nv="$(env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+    GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+    SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$_run_nv" \
+    SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$_map_nv" SPIRA_GATE_LOG="$_run_nv/gate.log" \
+    SPIRA_VERDICTS="$_run_nv/verdicts" SPIRA_VERDICT_TTL=600 \
+    bash "$SH/gate.sh" "$BR" repo 2>&1)"
+want   "base returning NV gives NO_VERDICT"  "VERDICT=NO_VERDICT" "$out_nv"
+nowant "and is not charged as BASE_FAIL"     "VERDICT=BASE_FAIL"  "$out_nv"
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
