@@ -894,14 +894,19 @@ sys.exit(0)' 2>/dev/null; then
             log "$FAYTH: $BEAD_ID never judged ($cause) — no attempt charged"
         fi
         release_own_claim "$BEAD_ID"
-    elif gate_why="$(gate_unfinished)"; then
-        # CLOSED WITH THE GATE STILL RUNNING is not reopened: the work is committed, and the
-        # landing pass gates the branch again before it merges and reopens the bead itself if
-        # it fails. What must not happen is for it to be silent — a close reached without a
-        # verdict is a claim the session could not back, and the note is the only place a
-        # reader would ever learn that.
-        bdq note "$BEAD_ID" "Closed by the session while its landing gate was still running — $gate_why. The close carries no gate verdict; the landing pass gates this branch again and reopens the bead if it fails." >/dev/null 2>&1
-        log "$FAYTH: $BEAD_ID closed with its gate still running ($gate_why)"
+    elif [ -f "$SPIRA_HOME/gate-run.sh" ]; then
+        local gate_st
+        gate_why="$(bash "$SPIRA_HOME/gate-run.sh" --status "$BRANCH" "$REPO_NAME" 2>/dev/null)"; gate_st=$?
+        case "$gate_st" in
+            2)  # CLOSED WITH THE GATE STILL RUNNING is not reopened: the work is committed,
+                # and the landing pass gates the branch again before it merges. Must not be silent.
+                bdq note "$BEAD_ID" "Closed by the session while its landing gate was still running — $gate_why. The close carries no gate verdict; the landing pass gates this branch again and reopens the bead if it fails." >/dev/null 2>&1
+                log "$FAYTH: $BEAD_ID closed with its gate still running ($gate_why)" ;;
+            1)  bdq note "$BEAD_ID" "Closed against a recorded FAIL verdict for this exact tree — ${gate_why:-gate returned fail}. The landing pass will reopen this bead." >/dev/null 2>&1
+                log "$FAYTH: $BEAD_ID closed against a recorded FAIL gate verdict" ;;
+            3)  bdq note "$BEAD_ID" "Closed without ever obtaining a gate verdict — no gate ran or finished for this branch." >/dev/null 2>&1
+                log "$FAYTH: $BEAD_ID closed with no gate verdict (none ran)" ;;
+        esac
     fi
     # PIDFILE IS REMOVED HERE, after all bead operations, so holder_alive stays true for the
     # entire teardown. strand-classify.py requires BOTH witnesses absent before classifying a
