@@ -268,7 +268,7 @@ FAKE_RUN="$TMP/run"
 FAKE_DB="$TMP/db"
 mkdir -p "$FAKE_HOME" "$FAKE_UNITDIR" "$FAKE_RUN" "$FAKE_DB"
 
-_DOLT_PORT=19142
+_DOLT_PORT=31415  # Use an unlikely port to avoid conflicts with running services
 _DOLT_DATA="$TMP/dolt-data"
 mkdir -p "$_DOLT_DATA"
 cat > "$_DOLT_DATA/dolt-server.yaml" <<YAML
@@ -362,6 +362,7 @@ fi
 unset _rendered _render_rc
 
 run_install() {
+    local output_file="$1"
     env -i \
         "PATH=$MOCK_BIN:$PATH" \
         "HOME=$FAKE_HOME" \
@@ -380,7 +381,24 @@ run_install() {
         "SPIRA_INSTALL_DOLT_WAIT=10" \
         "SPIRA_INSTALL_DOLT_CLOSE_WAIT=3" \
         "SPIRA_INSTALL_DB_WAIT=5" \
-        bash "$FIXTURE/install.sh" prod 2>&1
+        bash "$FIXTURE/install.sh" prod 2>&1 | tee "$output_file"
+    # Return the exit code of install.sh, not tee
+    return "${PIPESTATUS[0]}"
+}
+
+# Poll for a string to appear in the output file with a bounded wait.
+# Returns 0 if the string appears within the timeout, 1 if it doesn't.
+wait_for_output() {
+    local output_file="$1" expected="$2" timeout="${3:-10}"
+    local elapsed=0
+    while [ "$elapsed" -lt "$timeout" ]; do
+        if [ -f "$output_file" ] && grep -F "$expected" "$output_file" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.1
+        elapsed=$((elapsed + 1))  # Integer arithmetic is sufficient for our check
+    done
+    return 1
 }
 
 # Pre-populate the db directory with server-mode metadata so phase 3 sees an
@@ -410,10 +428,22 @@ python3 "$TMP/listener.py" "$_DOLT_PORT" &
 _py_pid=$!
 sleep 0.3
 
-_no_clear_out="$(run_install)"
+_no_clear_log="$TMP/no-clear-install.log"
+run_install "$_no_clear_log" >/dev/null &
+_install_pid=$!
+wait "$_install_pid" 2>/dev/null
 _no_clear_rc=$?
 
 kill "$_py_pid" 2>/dev/null; wait "$_py_pid" 2>/dev/null || true
+
+# Poll for the expected output lines to ensure all output is written
+# before checking the log (handles race under parallel load).
+_no_clear_out=""
+if [ -f "$_no_clear_log" ]; then
+    # Wait up to 5s for the key log lines to appear
+    wait_for_output "$_no_clear_log" "bd did not accept" 5 || true
+    _no_clear_out="$(cat "$_no_clear_log")"
+fi
 
 nonzero "no-clear: install exits non-zero when db probe fails"        "$_no_clear_rc"
 want    "no-clear: install reports db probe failure" "bd did not accept" "$_no_clear_out"
@@ -434,10 +464,22 @@ python3 "$TMP/listener.py" "$_DOLT_PORT" &
 _py_pid2=$!
 sleep 0.3
 
-_clear_out="$(run_install)"
+_clear_log="$TMP/clear-install.log"
+run_install "$_clear_log" >/dev/null &
+_install_pid2=$!
+wait "$_install_pid2" 2>/dev/null
 _clear_rc=$?
 
 kill "$_py_pid2" 2>/dev/null; wait "$_py_pid2" 2>/dev/null || true
+
+# Poll for the expected output lines to ensure all output is written
+# before checking the log (handles race under parallel load).
+_clear_out=""
+if [ -f "$_clear_log" ]; then
+    # Wait up to 5s for the key log lines to appear
+    wait_for_output "$_clear_log" "bd store accepting" 5 || true
+    _clear_out="$(cat "$_clear_log")"
+fi
 
 is0   "install passes: install exits 0 after doctor clears breaker"    "$_clear_rc"
 want  "install passes: bd store accepting logged"  "bd store accepting" "$_clear_out"
