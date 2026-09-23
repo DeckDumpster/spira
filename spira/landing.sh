@@ -1014,7 +1014,6 @@ for i in d:
 
     for br in $brs; do
         id="${br#spira/}"
-        rm -f "$LAND_DEFERRED_DIR/${br//\//_}" 2>/dev/null || true
         _land_state "repo=$name" "branch=$br"
         # THE LIST IS OLDER THAN THE LOOP. `brs` was read once at the top of this function
         # and a pass legitimately runs for tens of minutes — the 14:42 pass on 2026-09-07
@@ -1873,7 +1872,13 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 printf '%s\n' "$_defn" > "$_deffile" 2>/dev/null || true
                 [ "$_defn" -ge "$DEFERRAL_ESCALATE_AT" ] && \
                     spira_ask_budget_deferred "$_ubr" "$name" "$_defn"
+            else
+                rm -f "$LAND_DEFERRED_DIR/${_ubr//\//_}" 2>/dev/null || true
             fi
+        done
+    else
+        for _ubr in $brs; do
+            rm -f "$LAND_DEFERRED_DIR/${_ubr//\//_}" 2>/dev/null || true
         done
     fi
 
