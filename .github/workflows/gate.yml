@@ -97,6 +97,11 @@ jobs:
     outputs:
       vmid:  ${{ steps.vm.outputs.vmid }}
       label: ${{ steps.vm.outputs.label }}
+      # Guard 4b's ownership token, and it is not optional once the pinned
+      # provision stamps one: teardown REFUSES a VM that carries a token when
+      # the caller presents none. Unwired, every run would leak its VM under
+      # `if: always()` while reporting success.
+      vm-token: ${{ steps.vm.outputs.vm-token }}
     steps:
       - uses: DeckDumpster/ephemeral-ci/provision@v1
         id: vm
@@ -433,6 +438,7 @@ jobs:
           pve-api-hostname:   ${{ vars.PVE_API_HOSTNAME }}
           pve-ca-cert:        ${{ vars.PVE_CA_CERT }}
           pve-node:           ${{ vars.PVE_NODE }}
+          vm-token:           ${{ needs.provision.outputs.vm-token }}
 
   # ---------------------------------------------------------------------------
   # Cut the release unit. Only from the base branch, only from a gate that passed.
