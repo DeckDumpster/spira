@@ -35,6 +35,8 @@
 #  17. Phase A: SPIRA_AGENT written before install.sh (not gated on _install_rc).
 #  18. Phase A and D: ready.sh call uses clone path, not workspace path.
 #  19. Fixture: clone's ready.sh governs check, not workspace's.
+#  20. Phase A: bead labels carry plan+scope so builder predicate matches.
+#  21. Phase A: claimability check uses bd ready, not sentinel --report polling.
 #
 # covers: spira/acceptance-run.sh spira/acceptance-agent.sh
 set -uo pipefail
@@ -328,6 +330,33 @@ echo "$_fix_out2" | grep -qF "FAIL phase A: ready.sh exits 0 after install: $_fi
         "$(echo "$_fix_out2" | head -1)"
 
 rm -rf "$_fix_tmp"
+
+# ============================================================================
+echo
+echo "20. Phase A: bead labels carry plan+scope so builder predicate matches"
+# ============================================================================
+# Root cause of sp-utdzv: bead was filed with 'acceptance,repo:scratch-repo'
+# but the builder reads FAYTH_LABELS="${scope},${plan}". A bead missing those
+# labels is visible to the sentinel but claimable by no persona — indistinguishable
+# from a sentinel not running (law-absence-needs-a-positive-control).
+#
+# The fix: read SPIRA_PLAN_LABEL and SPIRA_SCOPE_LABEL from the installed conf
+# and add them to the bead creation call.
+want "phase A reads plan label from installed conf" '_a_plan_label'
+want "phase A reads scope label from installed conf" '_a_scope_label'
+want "phase A bead creation uses plan-label variable" '"acceptance,${_a_plan_label}'
+want "phase A bead creation uses scope-label variable" '"acceptance,${_a_plan_label},${_a_scope_label}'
+
+# ============================================================================
+echo
+echo "21. Phase A: claimability check uses bd ready, not sentinel --report polling"
+# ============================================================================
+# sentinel --report only lists SPIRA_GOAL children; a bead not under the goal epic
+# never appears there. The old 6-minute polling loop timed out on every run because
+# the acceptance bead was never filed as a goal child. A bd ready check is
+# immediate and directly tests whether the builder predicate matches the bead.
+wantre "phase A claimability check uses bd ready" 'bd.*ready.*_a_scope_label.*_a_plan_label|bd.*ready.*_a_plan_label.*_a_scope_label|bd.*ready.*label.*_a'
+want "phase A bead-not-claimable error names predicate" 'builder predicate does not match bead labels'
 
 # ============================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

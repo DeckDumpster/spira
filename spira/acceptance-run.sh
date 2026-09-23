@@ -212,6 +212,26 @@ fi
 env "${_install_env[@]}" bash "$_clone/install.sh" 2>&1 | tee "$TMP/install.log" || _install_rc=$?
 is0 "phase A: install.sh exits 0" "$_install_rc"
 
+# Read the builder's label keys from the installed clone's conf so the probe bead
+# carries the labels the sentinel's predicate reads, not hard-coded defaults.
+# The discriminating failure (law-absence-needs-a-positive-control): a bead missing
+# these labels is visible to the sentinel but matches no persona predicate — it sits
+# open forever while every sentinel pass reports "0 ready, nothing to summon."
+_a_plan_label="plan"
+_a_scope_label="$(basename "$scratch_repo")"
+if [ "$_install_rc" -eq 0 ] && [ -f "$_clone/spira/conf.sh" ]; then
+    _a_plan_label="$(SPIRA_CONF="$_conf" SPIRA_CONF_LOADED="" \
+        SPIRA_HOME_REPO="$(basename "$scratch_repo")" \
+        bash -c '. "$1" 2>/dev/null; printf "%s" "${SPIRA_PLAN_LABEL:-plan}"' \
+        _ "$_clone/spira/conf.sh" 2>/dev/null)" || _a_plan_label="plan"
+    [ -z "$_a_plan_label" ] && _a_plan_label="plan"
+    _a_scope_label="$(SPIRA_CONF="$_conf" SPIRA_CONF_LOADED="" \
+        SPIRA_HOME_REPO="$(basename "$scratch_repo")" \
+        bash -c '. "$1" 2>/dev/null; printf "%s" "${SPIRA_SCOPE_LABEL}"' \
+        _ "$_clone/spira/conf.sh" 2>/dev/null)" || _a_scope_label="$(basename "$scratch_repo")"
+    [ -z "$_a_scope_label" ] && _a_scope_label="$(basename "$scratch_repo")"
+fi
+
 # After install, verify the clone's ready.sh exits 0.
 _ready_rc=0
 _ready_out="$(env "${_install_env[@]}" bash "$_clone/spira/ready.sh" 2>&1)" || _ready_rc=$?
@@ -240,7 +260,7 @@ _bead_out=""
 _bead_out="$(bd -C "$bd_db" create \
     --title "$_bead_title" \
     --description "Acceptance test: commit an empty file named acceptance-probe.txt to prove end-to-end landing works. Content: the tag under test is $tag." \
-    --label "acceptance,repo:$(basename "$scratch_repo")" \
+    --label "acceptance,${_a_plan_label},${_a_scope_label},repo:$(basename "$scratch_repo")" \
     --type task \
     2>&1)" || true
 _bead_id="$(printf '%s\n' "$_bead_out" \
@@ -253,21 +273,32 @@ else
 fi
 
 if [ -n "$_bead_id" ]; then
-    # Wait for the bead to appear in sentinel's report (up to 6 minutes: 3 sentinel ticks).
-    _sentinel_wait=0
+    # Check: the bead is claimable by the builder persona — immediately, not after
+    # 6 minutes of polling. sentinel --report only shows SPIRA_GOAL children; it
+    # cannot see a bead that is not under the goal epic, so the old polling loop
+    # always timed out even when the sentinel was healthy and the bead was ready.
+    # Claimability (bd ready) is the discriminating question: a bead the sentinel
+    # can see but no predicate matches is indistinguishable from a silent sentinel
+    # (law-absence-needs-a-positive-control).
     _bead_ready=0
-    while [ "$_sentinel_wait" -lt 360 ]; do
-        _report="$(bash "$HERE/sentinel.sh" --report 2>&1)" || true
-        if printf '%s' "$_report" | grep -qF "$_bead_id"; then
-            _bead_ready=1; break
-        fi
-        sleep 30
-        _sentinel_wait=$((_sentinel_wait + 30))
-    done
-    [ "$_bead_ready" -eq 1 ] \
-        && ok "phase A: sentinel --report names the bead within 6 minutes" \
-        || bad "phase A: sentinel --report names the bead within 6 minutes" \
-               "bead $_bead_id not seen after ${_sentinel_wait}s"
+    _a_ready_json="$(bd -C "$bd_db" ready \
+        --label "${_a_scope_label},${_a_plan_label}" --limit 0 --json 2>/dev/null)" || true
+    if printf '%s' "$_a_ready_json" \
+        | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    ids = {i.get('id') for i in (d if isinstance(d, list) else [d])}
+    sys.exit(0 if '$_bead_id' in ids else 1)
+except Exception:
+    sys.exit(1)
+" 2>/dev/null; then
+        ok "phase A: bead is claimable by builder predicate (${_a_scope_label},${_a_plan_label})"
+        _bead_ready=1
+    else
+        bad "phase A: bead is claimable by builder predicate (${_a_scope_label},${_a_plan_label})" \
+            "bead $_bead_id not found in 'bd ready --label ${_a_scope_label},${_a_plan_label}' — builder predicate does not match bead labels"
+    fi
 
     # Wait for the aeon to land the bead (up to 15 minutes).
     _aeon_wait=0
@@ -542,7 +573,7 @@ else
             _aged_probe_out="$(bd -C "$bd_db" create \
                 --title "aged-install: post-upgrade land proof ($prev_tag → $tag)" \
                 --description "Prove world resumed and can land work after aged upgrade from $prev_tag to $tag." \
-                --label "acceptance,repo:$(basename "$scratch_repo")" \
+                --label "acceptance,${_a_plan_label},${_a_scope_label},repo:$(basename "$scratch_repo")" \
                 --type task 2>&1)" || true
             _aged_probe_id="$(printf '%s\n' "$_aged_probe_out" \
                 | sed -n 's/.*Created issue: \([a-z0-9]*-[a-z0-9]*\).*/\1/p' | head -1)"
