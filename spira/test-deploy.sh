@@ -15,7 +15,7 @@
 #   8. (f) First-deploy rollback: no prior release → current removed, units on checkout, world resumed.
 #   9. (g) spira.conf update: after successful deploy SPIRA_PROD written to conf.
 #  10. (h) Draft release refused: latest skips a draft; a named draft is refused.
-#  11. (i) Migration mismatch: refuses before drain when bd migrate schema fails.
+#  11. (i) Migration check: mismatch refuses; unreachable triggers dolt start, then proceeds or "cannot read".
 #  12. (j) Bootstrap: deploy from tarball location with no deploy.sh in checkout.
 #  16. (k) --force: slays live aeons (--keep-work --reopen --why "deploy <tag>") and proceeds.
 #  19. (n) conf ordering: SPIRA_PROD written to conf before activate.sh restarts services.
@@ -55,6 +55,7 @@ if [ ! -x "$DEPLOY" ]; then
 fi
 
 TMP="$(mktemp -d)"
+BD_MIG_CNT_FILE="$TMP/bd-migrate.cnt"
 trap 'rm -rf "$TMP"' EXIT
 
 RELEASES="$TMP/releases"
@@ -203,15 +204,27 @@ exit "${SLAY_EXIT:-0}"
 SLAYEOF
 chmod +x "$BIN/slay.sh"
 
-# Mock bd: records calls; fails for migrate schema when BD_MIGRATE_EXIT=1.
-cat > "$BIN/bd" <<'BDEOF'
+# Mock bd: records calls; configurable migrate/dolt behavior.
+# BD_MIGRATE_EXIT=1:             fail with version mismatch
+# BD_MIGRATE_UNREACHABLE=1:      first migrate schema call fails with unreachable, then succeeds
+# BD_MIGRATE_UNREACHABLE_FATAL=1:all migrate schema calls fail with unreachable
+cat > "$BIN/bd" <<BDEOF
 #!/usr/bin/env bash
-printf 'bd %s\n' "$*" >> "${CALL_LOG:-/dev/null}"
-case "$*" in
+printf 'bd %s\n' "\$*" >> "\${CALL_LOG:-/dev/null}"
+case "\$*" in
     *"migrate schema"*)
-        if [ "${BD_MIGRATE_EXIT:-0}" != "0" ]; then
+        if [ "\${BD_MIGRATE_EXIT:-0}" != "0" ]; then
             printf 'database is at v61, binary knows up to v53\n'
             exit 1
+        fi
+        if [ "\${BD_MIGRATE_UNREACHABLE:-0}" != "0" ] || [ "\${BD_MIGRATE_UNREACHABLE_FATAL:-0}" != "0" ]; then
+            _c=\$(cat "${BD_MIG_CNT_FILE}" 2>/dev/null || echo 0)
+            _c=\$((_c + 1))
+            printf '%d\n' "\$_c" > "${BD_MIG_CNT_FILE}"
+            if [ "\${BD_MIGRATE_UNREACHABLE_FATAL:-0}" != "0" ] || [ "\$_c" -le 1 ]; then
+                printf 'Error: failed to open database: Dolt server unreachable at 127.0.0.1:3307: dial tcp 127.0.0.1:3307: connect: connection refused\n'
+                exit 1
+            fi
         fi
         printf 'Schema already at v61\n'
         exit 0 ;;
@@ -600,8 +613,9 @@ notwant "draft-named: drain not called"            "world drain" "$(cat "$CALL_L
 
 # ==========================================================================
 echo
-echo "PROPERTY 11: DB migration mismatch refuses before drain"
+echo "PROPERTY 11: DB migration check distinguishes unreachable from mismatch"
 # (e) A bd migration mismatch stops the deploy before world.sh drain.
+#     A bd unreachable error triggers a dolt start attempt; on recovery the deploy proceeds.
 # ==========================================================================
 # Set up a fake DB directory so the migration check runs.
 _testdb="$TMP/testdb"
@@ -609,6 +623,7 @@ mkdir -p "$_testdb/.beads"
 
 # FAIL-FIRST: when bd migrate schema succeeds, drain IS called.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+> "${BD_MIG_CNT_FILE}"
 _out="$(run_deploy \
     "SPIRA_DB=$_testdb" "SPIRA_BD=$BIN/bd" \
     -- "$NEW_TAG" 2>&1)"
@@ -618,6 +633,7 @@ want "fail-first: drain called when migration ok"  "world drain" "$(cat "$CALL_L
 
 # Migration mismatch: refuses, names the failure, does not reach drain.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+> "${BD_MIG_CNT_FILE}"
 _out="$(run_deploy \
     "SPIRA_DB=$_testdb" "SPIRA_BD=$BIN/bd" "BD_MIGRATE_EXIT=1" \
     -- "$NEW_TAG" 2>&1)"
@@ -626,6 +642,31 @@ not0    "migration-check: exits non-zero"          "$_rc"
 want    "migration-check: mentions mismatch"        "migration mismatch" "$_out"
 notwant "migration-check: drain not called"         "world drain"       "$(cat "$CALL_LOG")"
 notwant "migration-check: activate not called"      "activate"          "$(cat "$CALL_LOG")"
+
+# FAIL-FIRST for "cannot read" path: unreachable (fatal) → "cannot read" message, not "mismatch".
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+> "${BD_MIG_CNT_FILE}"
+_out="$(run_deploy \
+    "SPIRA_DB=$_testdb" "SPIRA_BD=$BIN/bd" "BD_MIGRATE_UNREACHABLE_FATAL=1" \
+    -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0    "migration-unreachable/fail-first: exits non-zero"      "$_rc"
+want    "migration-unreachable/fail-first: says cannot read"    "cannot read" "$_out"
+notwant "migration-unreachable/fail-first: not mismatch"        "migration mismatch" "$_out"
+want    "migration-unreachable/fail-first: names address"       "127.0.0.1" "$_out"
+notwant "migration-unreachable/fail-first: drain not called"    "world drain" "$(cat "$CALL_LOG")"
+
+# Recover: unreachable, dolt start succeeds, second migrate schema succeeds → deploy proceeds.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+> "${BD_MIG_CNT_FILE}"
+_out="$(run_deploy \
+    "SPIRA_DB=$_testdb" "SPIRA_BD=$BIN/bd" "BD_MIGRATE_UNREACHABLE=1" \
+    -- "$NEW_TAG" 2>&1)"
+_rc=$?
+is0     "migration-unreachable/recover: deploy succeeds"         "$_rc"
+islink  "migration-unreachable/recover: current -> new release"  "$RELEASES/current" "$NEW_RELEASE"
+want    "migration-unreachable/recover: dolt start called"       "bd dolt start" "$(cat "$CALL_LOG")"
+notwant "migration-unreachable/recover: no cannot-read in output" "cannot read" "$_out"
 
 # ==========================================================================
 echo
