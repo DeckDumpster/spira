@@ -724,7 +724,10 @@ rm -rf "$_odir"
 
 # 3. DANGLING RESUME: code-shape check, plus a behavioral test where systemd is available.
 _src="$(cat "$HARNESS/concierge.sh")"
-want "a failed start retries without --resume" "retrying without it" "$_src"
+want  "a failed start retries without --resume"     "retrying without it"                  "$_src"
+want  "and clears the id that could not be resumed" 'rm -f "$SPIRA_RUN/concierge-session"' "$_src"
+# The launcher is one line; grep -v deletes it entirely. Verify regeneration is used instead.
+nowant "the retry regenerates rather than filtering the launcher" 'LAUNCHER.noresume' "$_src"
 
 if ! systemctl --user status >/dev/null 2>&1 || ! command -v systemd-run >/dev/null 2>&1; then
     printf '  skip  (no systemd user session — dangling resume retry test requires it)\n'

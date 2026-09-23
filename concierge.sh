@@ -287,7 +287,14 @@ start)
         # --resume failed (session not found or transcript gone); retry without it.
         printf 'concierge: start failed with --resume %s — retrying without it\n' "$RESUME_ID" >&2
         rm -f "$SPIRA_RUN/concierge-session"
-        grep -v -- '--resume' "$LAUNCHER" > "$LAUNCHER.noresume" && mv "$LAUNCHER.noresume" "$LAUNCHER"
+        # Regenerate rather than filter: the launcher is one line, so grep -v would delete it.
+        {
+            printf '#!/usr/bin/env bash\n'
+            printf 'export SPIRA_CONCIERGE=1\n'
+            printf 'exec claude --remote-control %q --dangerously-skip-permissions ' "$SESSION"
+            [ -n "$MODEL" ] && printf -- '--model %q ' "$MODEL"
+            printf -- '--append-system-prompt %q\n' "$(cat "$BRIEF")"
+        } > "$LAUNCHER"
         chmod +x "$LAUNCHER"
         systemd-run --user --collect --quiet --remain-after-exit \
             --setenv=PATH="$PATH" --setenv=HOME="$HOME" -- \
