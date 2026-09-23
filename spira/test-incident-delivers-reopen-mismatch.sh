@@ -53,18 +53,18 @@ echo "aeon.sh uses identity check for applied.jsonl, not mtime:"
 # The shared global SOP ledger mtime proves only that someone applied some SOP during
 # this session — a concurrent unrelated aeon satisfies the criterion for free.
 # The check must require a record naming this specific bead.
-# Positive control: the applied.jsonl case arm exists (absent means unfixed).
-if has_aeon '\*/applied\.jsonl\)'; then
-    ok "aeon.sh has a dedicated case arm for applied.jsonl (positive control)"
+# Positive control: a dedicated code path for applied.jsonl exists (absent means unfixed).
+if has_aeon 'applied\.jsonl'; then
+    ok "aeon.sh has a dedicated code path for applied.jsonl (positive control)"
 else
-    bad "aeon.sh has a dedicated case arm for applied.jsonl (positive control)" \
-        "no applied.jsonl) case in aeon.sh — identity check is absent"
+    bad "aeon.sh has a dedicated code path for applied.jsonl (positive control)" \
+        "no applied.jsonl branch in aeon.sh — identity check is absent"
 fi
-# The arm must reference BEAD_ID to prove it checks the record's bead field.
-if has_aeon '\*/applied\.jsonl\)' && has_aeon 'BEAD_ID'; then
-    ok "aeon.sh applied.jsonl arm references BEAD_ID for identity check"
+# That branch must reference BEAD_ID to prove it checks the record's bead field.
+if has_aeon 'applied\.jsonl' && has_aeon 'BEAD_ID'; then
+    ok "aeon.sh applied.jsonl branch references BEAD_ID for identity check"
 else
-    bad "aeon.sh applied.jsonl arm references BEAD_ID for identity check" \
+    bad "aeon.sh applied.jsonl branch references BEAD_ID for identity check" \
         "BEAD_ID not referenced near the applied.jsonl check"
 fi
 
