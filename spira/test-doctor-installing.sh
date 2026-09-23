@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
 # test-doctor-installing.sh — doctor.sh under SPIRA_DOCTOR_INSTALLING=1 downgrades to WARN
-# the three checks whose state install.sh's own phases create.
+# the checks whose state install.sh's own phases create.
 #
 #   ./test-doctor-installing.sh
 #
 # PROPERTIES UNDER TEST
 # ---------------------
-# 1. POSITIVE CONTROL. Without SPIRA_DOCTOR_INSTALLING the three checks are FAIL, so the
+# 1. POSITIVE CONTROL. Without SPIRA_DOCTOR_INSTALLING the checks are FAIL, so the
 #    WARN cases below prove something real.
 # 2. INSTALLING — Dolt data dir. SPIRA_DOLT_DATA set but directory absent: WARN naming
 #    phase 3, no FAIL.
@@ -17,6 +17,12 @@
 #    FAIL.
 # 5. EXIT CODE. With SPIRA_DOCTOR_INSTALLING=1 and all three conditions present, doctor.sh
 #    exits 0 (no fatals).
+# 6. INSTALLING — bd cannot read (dolt stopped). An existing database that bd cannot query
+#    because dolt-beads.service is inactive: WARN naming phase 4, no FAIL.
+#    Simulates the re-install after uninstall path: Phase A installs (creates db in server
+#    mode), Phase A uninstalls (stops dolt-beads.service), Phase B installs (doctor sees
+#    existing db but dolt is down). Without this downgrade, Phase B's preflight exits 1.
+# 7. POSITIVE CONTROL for case 6. Same condition without SPIRA_DOCTOR_INSTALLING → FAIL.
 #
 # covers: spira/doctor.sh
 # covers: spira/conf.sh
@@ -167,6 +173,71 @@ if run_doctor --installing >/dev/null 2>&1; then
     ok "installing: doctor exits 0"
 else
     bad "installing: doctor exits 0" "non-zero exit"
+fi
+
+# ==========================================================================
+echo
+echo "6-7. INSTALLING — bd cannot read (dolt stopped after prior uninstall):"
+# ==========================================================================
+# Fixture: existing .beads directory (db was created by a prior install), but
+# bd fails to connect because dolt-beads.service was removed by uninstall.sh.
+# doctor.sh calls `bd` by name, so put the failing stub first on PATH via
+# a separate SPIRA_PATH directory; other tools (systemctl, git, etc.) still
+# resolve from $BIN.
+FAKE_DB_EXISTS="$TMP/db-exists"
+BIN_FAIL="$TMP/bin-fail"
+mkdir -p "$FAKE_DB_EXISTS/.beads" "$BIN_FAIL"
+
+cat > "$BIN_FAIL/bd" <<'FAKEFAIL'
+#!/usr/bin/env bash
+case "$*" in
+    *"migrate schema"*) printf '✓ Schema already at v61\n'; exit 0 ;;
+    *"list"*"--limit"*)
+        printf 'connection refused: dolt server not running\n' >&2
+        exit 1 ;;
+    *) exit 0 ;;
+esac
+FAKEFAIL
+chmod +x "$BIN_FAIL/bd"
+
+run_doctor_db_exists() {
+    local extra_env=()
+    [ "${1:-}" = "--installing" ] && extra_env=(SPIRA_DOCTOR_INSTALLING=1)
+    env -i \
+        PATH="/usr/local/bin:/usr/bin:/bin" \
+        HOME="$TMP/home" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_PATH="$BIN_FAIL:$BIN" \
+        SPIRA_SYSTEMCTL="$BIN/systemctl" \
+        SPIRA_DB="$FAKE_DB_EXISTS" \
+        SPIRA_RUN="$TMP/run" \
+        SPIRA_INSTANCE=prod \
+        SPIRA_BD_PIN="$TMP/run/bd-pin" \
+        SPIRA_REPO_MAP="$TMP/repo-map" \
+        SPIRA_NOTIFY=/nonexistent \
+        SPIRA_WATCHERS="$TMP/watchers-empty" \
+        SPIRA_DOLT_DATA="$DOLT_DIR" \
+        SPIRA_HOME_REPO=test-home-repo \
+        SPIRA_OPERATED=0 \
+        SPIRA_BROKER_BIN="$BIN/broker" \
+        "${extra_env[@]+"${extra_env[@]}"}" \
+        bash "$HERE/doctor.sh" 2>/dev/null
+}
+
+inst_db_out="$(run_doctor_db_exists --installing || true)"
+want   "installing: bd-cannot-read WARN names phase 4" "phase 4" \
+    "$(printf '%s\n' "$inst_db_out" | grep 'bd cannot read' || true)"
+nowant "installing: bd-cannot-read no FAIL" "FAIL" \
+    "$(printf '%s\n' "$inst_db_out" | grep 'bd cannot read' || true)"
+
+ctrl_db_out="$(run_doctor_db_exists || true)"
+want "positive control: bd-cannot-read FAIL without installing flag" "FAIL" \
+    "$(printf '%s\n' "$ctrl_db_out" | grep 'bd cannot read' || true)"
+
+if run_doctor_db_exists --installing >/dev/null 2>&1; then
+    ok "installing: doctor exits 0 with existing db and dolt stopped"
+else
+    bad "installing: doctor exits 0 with existing db and dolt stopped" "non-zero exit"
 fi
 
 echo

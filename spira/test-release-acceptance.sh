@@ -137,8 +137,8 @@ echo
 echo "9. Upgrade assertions: .tag sidecar and SPIRA_PROD"
 # ============================================================================
 
-# sp-cb0q1: deploy.sh writes .tag sidecar; acceptance-run checks it.
-want "phase B checks .tag sidecar" ".tag"
+# sp-cb0q1: deploy.sh writes .tag sidecar to .tags/<release_stem>; acceptance-run checks it.
+want "phase B checks .tag sidecar from .tags dir" ".tags/"
 want "phase B checks SPIRA_PROD updated" "SPIRA_PROD"
 
 # ============================================================================
