@@ -1014,9 +1014,9 @@ export BEAD_ID SPIRA_MAIL="${SPIRA_MAIL:-}"
         # reclaimed after sitting idle has a stale fuse — the session cannot have stalled
         # for longer than it has been alive. sp-sv34w.
         #
-        # `$$` IS THE PARENT AEON'S PID INSIDE THIS SUBSHELL. kill -TERM $$ reaches only
-        # the parent bash process; the parent's TERM trap then fires cleanup(), which sees
-        # the .thrash file and requeues with no attempt charged.
+        # Kill the process group (-$$), same as the lease-lapse path above. A kill to $$
+        # alone defers: bash defers TERM while waiting for a foreground process, so the
+        # claude session runs on past the declared stall until it exits on its own.
         _dfuse="$(aeon_fuse_minutes "$BEAD_ID" "$SPIRA_RUN/worktree/$BEAD_ID" "$REPO_NAME" 2>/dev/null)"
         _dwall="${SPIRA_THRASH_MINUTES:-20}"
         _dsess=$(( (_now - _session_start) / 60 ))
@@ -1024,7 +1024,7 @@ export BEAD_ID SPIRA_MAIL="${SPIRA_MAIL:-}"
             _dlast="$(trace_last "$LOGF" 2>/dev/null | head -c 300)"
             printf '%s\n' "${_dlast:-no last action}" > "$SPIRA_RUN/$BEAD_ID.thrash"
             log "$FAYTH: $BEAD_ID deliverable stalled ${_dfuse}m session ${_dsess}m (wall ${_dwall}m) — requeueing for thrash"
-            kill -TERM $$ 2>/dev/null
+            kill -TERM -$$ 2>/dev/null
             exit 0
         fi
         bdq heartbeat "$BEAD_ID" >/dev/null 2>&1 || exit 0
