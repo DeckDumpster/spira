@@ -252,14 +252,38 @@ reopen_sites() {                # every direct `bd … reopen` outside the helpe
     # so a matcher that reads `# \`bd reopen\` keeps the assignee` as a violation fails on the
     # very comments saying why the rule exists — and a check that goes red for documenting
     # itself gets deleted rather than obeyed.
+    #
+    # AND NEITHER ARE QUOTED STRINGS, which is the same mistake one layer in. aeon.sh writes
+    # a NOTE whose text reads "The landing pass will reopen this bead." — prose, inside an
+    # argument to `bdq note`, reopening nothing. The comment filter above did not see it
+    # because it is not a comment, so this check went red on every push to main from
+    # 2026-09-23 and took the release with it: gate red means no cut, no publish, no
+    # acceptance. A lint that fails on a sentence ABOUT the rule is the exact failure the
+    # paragraph above was written to prevent; it just needed to cover one more case.
+    #
+    # The awk strips double-quoted spans and re-tests, but PRINTS THE ORIGINAL LINE, so a
+    # real violation still reports readable source rather than a mangled remnant.
     grep -rnE '\b(bd|bdq)[A-Za-z_]* +[^|;&#]*\breopen\b' "$1"/*.sh 2>/dev/null \
       | grep -vE '^[^:]*:[0-9]+: *#' \
-      | grep -v '/lib\.sh:' | grep -v '/test-'
+      | grep -v '/lib\.sh:' | grep -v '/test-' \
+      | awk '{ s = $0; gsub(/"[^"]*"/, "", s);
+               if (s ~ /(bd|bdq)[A-Za-z_]*[ \t]+[^|;&#]*reopen/) print $0 }'
 }
 PLANT="$(mktemp -d)"; cp "$HERE"/*.sh "$PLANT/" 2>/dev/null
 printf 'bdq reopen "$id"\n' > "$PLANT/planted.sh"
 want "the reopen check can see a direct call at all" "planted.sh" "$(reopen_sites "$PLANT")"
 rm -rf "$PLANT"
+
+# NEGATIVE CONTROL, and it is the whole point of the awk above. Without it this plant is
+# reported as a violation and every push to main goes red on a sentence.
+PLANT2="$(mktemp -d)"
+printf 'bdq note "$id" "The landing pass will reopen this bead." >/dev/null\n' > "$PLANT2/prose.sh"
+nowant "reopen inside a quoted argument is not a call site" "prose.sh" "$(reopen_sites "$PLANT2")"
+# And the positive control must still fire in the same directory, so the negative control
+# cannot be passing merely because the matcher stopped matching anything at all.
+printf 'bdq reopen "$id"\n' > "$PLANT2/real.sh"
+want "a real call beside it is still caught" "real.sh" "$(reopen_sites "$PLANT2")"
+rm -rf "$PLANT2"
 is   "and no harness script reopens a bead outside bead_reopen" "" "$(reopen_sites "$HERE")"
 
 # shellcheck disable=SC1090
