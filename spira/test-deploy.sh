@@ -1481,7 +1481,7 @@ _out="$(env -i \
 _rc=$?
 is0    "artifact/spira-gh-repo: deploy exits 0 with SPIRA_GH_REPO" "$_rc"
 islink "artifact/spira-gh-repo: current -> $NEW_RELEASE" "$RELEASES/current" "$NEW_RELEASE"
-want   "artifact/spira-gh-repo: gh download called" "gh release download" "$(cat "$CALL_LOG")"
+want   "artifact/spira-gh-repo: gh download called" "release download" "$(cat "$CALL_LOG")"
 
 # GH_REPO set directly (operator override) also works.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
