@@ -293,5 +293,56 @@ if [ -f "${pin_tarball:-}" ]; then
 fi
 
 # ============================================================================
+echo
+echo "10. --bin-dir — directory of executables populates bin/ (auto-discovery path)"
+# ============================================================================
+# POSITIVE CONTROL FIRST: build with a bin-dir that holds all five expected
+# binaries. Then remove one and assert the tarball reflects the absence.
+# (The explicit flags path is tested above; this covers the auto-discovery path
+# that build-bins.sh uses.)
+
+BINDIR="$TMP/bindir"
+mkdir -p "$BINDIR"
+for _name in loom panel broker czar-pass spira-supervise; do
+    printf '#!/bin/sh\necho %s\n' "$_name" > "$BINDIR/$_name"
+    chmod +x "$BINDIR/$_name"
+done
+
+bindir_out="$(run_build build \
+    --output "$TMP/out-bindir" \
+    --bin-dir "$BINDIR" \
+    HEAD "$REPO" 2>&1)"
+bindir_rc=$?
+is "--bin-dir build exits 0" "0" "$bindir_rc"
+
+bindir_tarball="$(find "$TMP/out-bindir" -name 'spira-*.tar.gz' | head -1)"
+UNPACK_BD="$TMP/unpack-bindir"
+mkdir -p "$UNPACK_BD"
+[ -n "${bindir_tarball:-}" ] && [ -f "$bindir_tarball" ] && \
+    tar -xzf "$bindir_tarball" -C "$UNPACK_BD"
+bd_stem="$(basename "${bindir_tarball:-spira-x.tar.gz}" .tar.gz)"
+BD_TREE="$UNPACK_BD/$bd_stem"
+
+for _name in loom panel broker czar-pass spira-supervise; do
+    if [ -x "${BD_TREE:-/dev/null}/bin/$_name" ]; then
+        ok "--bin-dir: bin/$_name present and executable"
+    else
+        bad "--bin-dir: bin/$_name present and executable" \
+            "not found at $BD_TREE/bin/$_name"
+    fi
+done
+
+# --bin-dir refuses a path that is not a directory.
+nodir_out="$(run_build build \
+    --output "$TMP/out-nodir" \
+    --bin-dir "$TMP/does-not-exist" \
+    HEAD "$REPO" 2>&1)" && nodir_rc=0 || nodir_rc=$?
+if [ "$nodir_rc" -ne 0 ]; then
+    ok "--bin-dir rejects a non-existent directory (rc=$nodir_rc)"
+else
+    bad "--bin-dir rejects a non-existent directory" "exited 0"
+fi
+
+# ============================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

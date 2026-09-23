@@ -28,8 +28,8 @@
 #   4. An assertion step verifies the installed Rust version at runtime.
 #   5. No build step silences failure with continue-on-error: true.
 #   6. build-tarball.sh is called with --name to stamp once per release.
-#   7. POSITIVE CONTROL + every required --*-bin from build-tarball.sh is
-#      supplied in the workflow's build-tarball invocation.
+#   7. POSITIVE CONTROL + release.yml supplies binaries via --bin-dir or every
+#      required --*-bin flag from build-tarball.sh.
 #   8. POSITIVE CONTROL + gate.yml retracts the tag when publish fails.
 #
 # covers: .github/workflows/release.yml .github/workflows/gate.yml spira/build-tarball.sh
@@ -126,47 +126,51 @@ want "build-tarball.sh uses --name" "--name"
 
 # ============================================================================
 echo
-echo "7. Producer/consumer agreement — every --*-bin required by build-tarball.sh is passed"
+echo "7. Binary supply: release.yml uses --bin-dir or every required --*-bin"
 # ============================================================================
-# Extract the --*-bin flags that build-tarball.sh considers required. These are
-# identified by the error-message pattern: "pass --X-bin <path>" appears exactly
-# once per required flag and never for optional ones.
-required_bins="$(grep -oE 'pass --[a-z]+-bin' "$TARBALL_SH" | grep -oE -- '--[a-z]+-bin' | sort -u)"
+# build-tarball.sh accepts binaries in two ways:
+#   --bin-dir <dir>   copies all executables from the directory (auto-discovery)
+#   --loom-bin / --panel-bin / --broker-bin   explicit per-binary paths (legacy)
+# The workflow must use one of these; --bin-dir is preferred because it includes
+# every crate without a hand-maintained list.
+#
+# POSITIVE CONTROL: a fixture that removes both --bin-dir and --broker-bin must
+# be detected before trusting the real workflow's binary supply.
 
-if [ -z "$required_bins" ]; then
-    bad "required bins extracted from build-tarball.sh" \
-        "no required --*-bin flags found — check the grep pattern"
+FIXTURE="$TMP/fixture-release.yml"
+grep -v -- '--bin-dir' "$WORKFLOW" | grep -v -- '--broker-bin' > "$FIXTURE"
+fixture_has_supply=0
+grep -qF -- '--bin-dir' "$FIXTURE" 2>/dev/null && fixture_has_supply=1
+for _flag in --loom-bin --panel-bin --broker-bin; do
+    grep -qF -- "$_flag" "$FIXTURE" 2>/dev/null && fixture_has_supply=1 && break
+done
+if [ "$fixture_has_supply" -eq 0 ]; then
+    ok "positive control: fixture without --bin-dir and --broker-bin is detected as missing binary supply"
 else
-    # Positive control: a fixture workflow missing --broker-bin must be detected.
-    FIXTURE="$TMP/fixture-release.yml"
-    grep -v -- '--broker-bin' "$WORKFLOW" > "$FIXTURE"
-    fixture_passed="$(grep -oE -- '--[a-z]+-bin' "$FIXTURE" | sort -u)"
-    ctrl_detected=0
-    for flag in $required_bins; do
-        if ! printf '%s\n' "$fixture_passed" | grep -qF -- "$flag"; then
-            ctrl_detected=1
-            break
-        fi
-    done
-    if [ "$ctrl_detected" -eq 1 ]; then
-        ok "positive control: fixture without --broker-bin is detected as missing"
-    else
-        bad "positive control: fixture without --broker-bin is detected as missing" \
-            "check did not detect absence of --broker-bin in fixture (positive control failed)"
-    fi
+    bad "positive control: fixture without --bin-dir and --broker-bin is detected as missing binary supply" \
+        "fixture still contains a binary supply directive — positive control cannot verify the real check"
+fi
 
-    # Real check: the actual workflow passes every required flag.
-    passed_bins="$(grep -oE -- '--[a-z]+-bin' "$WORKFLOW" | sort -u)"
-    all_present=1
-    for flag in $required_bins; do
-        if printf '%s\n' "$passed_bins" | grep -qF -- "$flag"; then
-            ok "release.yml passes $flag"
-        else
-            bad "release.yml passes $flag" \
-                "$flag is required by build-tarball.sh but absent from release.yml"
-            all_present=0
-        fi
-    done
+# Real check: the workflow uses --bin-dir or every known --*-bin flag.
+if grep -qF -- '--bin-dir' "$WORKFLOW" 2>/dev/null; then
+    ok "release.yml uses --bin-dir (all binaries supplied from the auto-discovered directory)"
+else
+    # Legacy path: check that every flag build-tarball.sh can require is present.
+    required_bins="$(grep -oE 'pass --[a-z]+-bin' "$TARBALL_SH" | grep -oE -- '--[a-z]+-bin' | sort -u)"
+    if [ -z "$required_bins" ]; then
+        bad "required bins extracted from build-tarball.sh" \
+            "no required --*-bin flags found — check the grep pattern"
+    else
+        passed_bins="$(grep -oE -- '--[a-z]+-bin' "$WORKFLOW" | sort -u)"
+        for _flag in $required_bins; do
+            if printf '%s\n' "$passed_bins" | grep -qF -- "$_flag"; then
+                ok "release.yml passes $_flag"
+            else
+                bad "release.yml passes $_flag" \
+                    "$_flag is required by build-tarball.sh but absent from release.yml"
+            fi
+        done
+    fi
 fi
 
 # ============================================================================

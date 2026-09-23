@@ -55,11 +55,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # build — produce the tarball
 # ---------------------------------------------------------------------------
 do_build() {
-    local outdir="." loom_bin="" panel_bin="" broker_bin="" supervise_bin="" commit="" repo="" name_override=""
+    local outdir="." loom_bin="" panel_bin="" broker_bin="" supervise_bin="" bin_dir="" commit="" repo="" name_override=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
             --output)        outdir="$2";        shift 2 ;;
+            --bin-dir)       bin_dir="$2";       shift 2 ;;
             --loom-bin)      loom_bin="$2";      shift 2 ;;
             --panel-bin)     panel_bin="$2";     shift 2 ;;
             --broker-bin)    broker_bin="$2";    shift 2 ;;
@@ -92,26 +93,35 @@ do_build() {
             printf 'build-tarball.sh: cannot resolve HEAD in %s\n' "$repo" >&2; exit 1; }
     fi
 
-    # Validate binary paths: all three are required.
-    if [ -z "$loom_bin" ] || [ ! -f "$loom_bin" ]; then
-        printf 'build-tarball.sh: loom binary not found: %s\n' \
-            "${loom_bin:-(not specified; pass --loom-bin <path>)}" >&2
-        exit 1
-    fi
-    if [ -z "$panel_bin" ] || [ ! -f "$panel_bin" ]; then
-        printf 'build-tarball.sh: panel binary not found: %s\n' \
-            "${panel_bin:-(not specified; pass --panel-bin <path>)}" >&2
-        exit 1
-    fi
-    if [ -z "$broker_bin" ] || [ ! -f "$broker_bin" ]; then
-        printf 'build-tarball.sh: broker binary not found: %s\n' \
-            "${broker_bin:-(not specified; pass --broker-bin <path>)}" >&2
-        exit 1
-    fi
-    if [ -z "$supervise_bin" ] || [ ! -f "$supervise_bin" ]; then
-        printf 'build-tarball.sh: spira-supervise binary not found: %s\n' \
-            "${supervise_bin:-(not specified; pass --supervise-bin <path>)}" >&2
-        exit 1
+    # Validate binary paths. --bin-dir copies every executable in a directory;
+    # the explicit per-binary flags are the legacy interface and still required
+    # when --bin-dir is not given.
+    if [ -n "$bin_dir" ]; then
+        [ -d "$bin_dir" ] || {
+            printf 'build-tarball.sh: --bin-dir is not a directory: %s\n' "$bin_dir" >&2
+            exit 1
+        }
+    else
+        if [ -z "$loom_bin" ] || [ ! -f "$loom_bin" ]; then
+            printf 'build-tarball.sh: loom binary not found: %s\n' \
+                "${loom_bin:-(not specified; pass --loom-bin <path>)}" >&2
+            exit 1
+        fi
+        if [ -z "$panel_bin" ] || [ ! -f "$panel_bin" ]; then
+            printf 'build-tarball.sh: panel binary not found: %s\n' \
+                "${panel_bin:-(not specified; pass --panel-bin <path>)}" >&2
+            exit 1
+        fi
+        if [ -z "$broker_bin" ] || [ ! -f "$broker_bin" ]; then
+            printf 'build-tarball.sh: broker binary not found: %s\n' \
+                "${broker_bin:-(not specified; pass --broker-bin <path>)}" >&2
+            exit 1
+        fi
+        if [ -z "$supervise_bin" ] || [ ! -f "$supervise_bin" ]; then
+            printf 'build-tarball.sh: spira-supervise binary not found: %s\n' \
+                "${supervise_bin:-(not specified; pass --supervise-bin <path>)}" >&2
+            exit 1
+        fi
     fi
 
     # Generate name and timestamp. --name overrides auto-generation and pins the
@@ -143,11 +153,19 @@ do_build() {
     git -C "$repo" archive "$sha" | tar -x -C "$stage"
 
     # Add prebuilt binaries under bin/.
-    cp "$loom_bin"      "$stage/bin/loom"
-    cp "$panel_bin"     "$stage/bin/panel"
-    cp "$broker_bin"    "$stage/bin/broker"
-    cp "$supervise_bin" "$stage/bin/spira-supervise"
-    chmod +x "$stage/bin/loom" "$stage/bin/panel" "$stage/bin/broker" "$stage/bin/spira-supervise"
+    if [ -n "$bin_dir" ]; then
+        for _f in "$bin_dir"/*; do
+            [ -f "$_f" ] && [ -x "$_f" ] || continue
+            cp "$_f" "$stage/bin/$(basename "$_f")"
+            chmod +x "$stage/bin/$(basename "$_f")"
+        done
+    else
+        cp "$loom_bin"      "$stage/bin/loom"
+        cp "$panel_bin"     "$stage/bin/panel"
+        cp "$broker_bin"    "$stage/bin/broker"
+        cp "$supervise_bin" "$stage/bin/spira-supervise"
+        chmod +x "$stage/bin/loom" "$stage/bin/panel" "$stage/bin/broker" "$stage/bin/spira-supervise"
+    fi
 
     # Write MANIFEST — the source of truth for which commit this came from.
     printf 'commit %s\ntimestamp %s\n' "$sha" "$ts" > "$stage/MANIFEST"
