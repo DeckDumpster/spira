@@ -90,9 +90,50 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Compute the suite selection before touching any infrastructure.
+  # For pull requests: gate-touched.sh selects from the diff.
+  # For everything else: the whole corpus.
+  #
+  # An empty output means no suites were selected — provision is skipped.
+  # The suite list is comma-separated so it fits in a single output value.
+  # ---------------------------------------------------------------------------
+  select:
+    runs-on: ubuntu-latest
+    outputs:
+      suites: ${{ steps.sel.outputs.suites }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Select suites
+        id: sel
+        run: |
+          set -uo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ] \
+             && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/queue/'; then
+            _base="${{ github.event.pull_request.base.sha }}"
+            _s="$(bash spira/select.sh --base "$_base" --head "${{ github.sha }}" \
+                  | tr '\n' ',' | sed 's/,$//')"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            _base="${{ github.event.pull_request.base.sha }}"
+            _s="$(bash spira/gate-touched.sh "$_base" "${{ github.sha }}" \
+                  | tr '\n' ',' | sed 's/,$//')"
+          else
+            _s="$(ls spira/test-*.sh | xargs -n1 basename \
+                  | tr '\n' ',' | sed 's/,$//')"
+          fi
+          printf 'suites=%s\n' "$_s" >> "$GITHUB_OUTPUT"
+          _n="$(printf '%s' "$_s" | tr ',' '\n' | grep -c . 2>/dev/null || echo 0)"
+          printf 'select: %s suite(s) selected\n' "$_n"
+
+  # ---------------------------------------------------------------------------
   # Create the machine the gate will run on.
+  # Skipped when the suite selection is empty — no suites, no machine needed.
   # ---------------------------------------------------------------------------
   provision:
+    needs: select
+    if: needs.select.outputs.suites != ''
     runs-on: ubuntu-latest
     outputs:
       vmid:  ${{ steps.vm.outputs.vmid }}
@@ -121,7 +162,7 @@ jobs:
   # provision fails; the gate job below catches that and reports failure.
   # ---------------------------------------------------------------------------
   suites:
-    needs: provision
+    needs: [select, provision]
     runs-on: [self-hosted, "${{ needs.provision.outputs.label }}"]
     # BOUNDED, BECAUSE THIS JOB HOLDS A REAL MACHINE. Without it the job inherits
     # GitHub's 360-minute default, and a wedged suite would hold a provisioned
@@ -254,11 +295,8 @@ jobs:
         # them in step: two gates that disagree about what 75 means is how a
         # harness fault comes to read as a branch failure.
         #
-        # TWO PATHS. Pull requests use diff-selected suites; everything else
-        # runs the whole corpus (law-a-runner-takes-a-list).
-        #   pull_request from spira/queue/*: diff-selected suites over the batch
-        #     diff (base..head). Inert files (*.md etc.) are filtered.
-        #   push / merge_group / workflow_dispatch: whole corpus.
+        # Suite selection was pre-computed by the select job and passed in via
+        # needs.select.outputs.suites (law-a-runner-takes-a-list).
         env:
           # The step above has already acquired the image under this closure's tag,
           # so testenv.sh finds it locally. Naming the registry here as well keeps
@@ -322,27 +360,22 @@ jobs:
           trap 'kill "$_vitals" 2>/dev/null || true' EXIT
 
           _b=0
+          # Suite selection was pre-computed by the select job. Convert the
+          # comma-separated list back to newline-separated for --suites -.
+          _s="$(printf '%s' "${{ needs.select.outputs.suites }}" | tr ',' '\n')"
           if [ "${{ github.event_name }}" = "pull_request" ] \
              && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/queue/'; then
             _base="${{ github.event.pull_request.base.sha }}"
             printf 'gate: queue PR — running suites selected by batch diff (base %s)\n' "$_base"
-            bash spira/select.sh --base "$_base" --head "${{ github.sha }}" \
-              | bash spira/testenv-batch.sh --suites - "${{ github.sha }}" || _b=$?
           elif [ "${{ github.event_name }}" = "pull_request" ]; then
             printf 'gate: pull request — running the suites the diff selects\n'
-            bash spira/testenv-batch.sh "${{ github.sha }}" || _b=$?
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            printf 'gate: push to %s — running the whole corpus\n' "${{ github.ref_name }}"
           else
-            # Full corpus: push to main, merge_group, and workflow_dispatch.
-            if [ "${{ github.event_name }}" = "push" ]; then
-              printf 'gate: push to %s — running the whole corpus\n' \
-                "${{ github.ref_name }}"
-            else
-              printf 'gate: %s on %s — running the whole corpus\n' \
-                "${{ github.event_name }}" "${{ github.ref_name }}"
-            fi
-            ls spira/test-*.sh | xargs -n1 basename \
-              | bash spira/testenv-batch.sh --suites - "${{ github.sha }}" || _b=$?
+            printf 'gate: %s on %s — running the whole corpus\n' \
+              "${{ github.event_name }}" "${{ github.ref_name }}"
           fi
+          printf '%s\n' "$_s" | bash spira/testenv-batch.sh --suites - "${{ github.sha }}" || _b=$?
           # A red suite gets one serial re-run; red then green is a flake, not a failure.
           if [ "$_b" = 1 ]; then
             _b=0
@@ -393,12 +426,17 @@ jobs:
   # push event. A skipped gate admits a push; a failed one refuses.
   # ---------------------------------------------------------------------------
   gate:
-    needs: [provision, suites]
+    needs: [select, provision, suites]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Verdict
         run: |
+          # Empty selection: nothing to provision or test; the diff is inert.
+          if [ -z "${{ needs.select.outputs.suites }}" ]; then
+            printf 'gate: no suites selected — nothing to provision or test\n'
+            exit 0
+          fi
           if [ "${{ needs.provision.result }}" != 'success' ]; then
             printf 'gate: provision failed — branch was not tested\n' >&2
             exit 75
@@ -421,11 +459,15 @@ jobs:
   # scheduled onto it would otherwise leak.
   # ---------------------------------------------------------------------------
   teardown:
-    needs: [provision, suites]
+    needs: [select, provision, suites]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - uses: DeckDumpster/ephemeral-ci/teardown@v1
+        # Skipped when provision never ran: no VM was created and no runner was
+        # registered. The teardown action handles an empty vmid for the destroy
+        # step, but with no label either there is nothing to deregister.
+        if: needs.provision.result != 'skipped'
         with:
           vmid:  ${{ needs.provision.outputs.vmid }}
           label: ${{ needs.provision.outputs.label }}

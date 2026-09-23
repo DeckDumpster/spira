@@ -233,20 +233,25 @@ ACC_YML="$ROOT/.github/workflows/acceptance.yml"
 
 echo
 echo "14. push to main runs the whole corpus (law-a-runner-takes-a-list):"
-# On a push the diff is EMPTY, so diff-derived selection selects nothing. The
-# gate must enumerate the corpus explicitly; the release is cut from this run.
+# The select job pre-computes the suite list before any machine is provisioned.
+# For push it enumerates the full corpus (test-*.sh); for queue PRs it uses
+# select.sh. The suites job pipes the pre-computed list via --suites -.
+_select_step="$(awk '/^      - name: Select suites/{f=1;next} f&&/^      - name:/{exit} f{print}' "$GATE_YML")"
+if [ -z "$_select_step" ]; then
+    bad "the Select suites step was located (positive control)" "awk extracted nothing"
+else
+    ok "the Select suites step was located (positive control)"
+fi
+want "push enumerates test-*.sh"       'test-*.sh'    "$_select_step"
+want "queue PRs are matched"           'spira/queue/' "$_select_step"
+want "queue selection uses select.sh"  "select.sh"    "$_select_step"
 _suites_block="$(awk '/^      - name: Suites/{f=1;next} f&&/^      - name:/{exit} f{print}' "$GATE_YML")"
 if [ -z "$_suites_block" ]; then
     bad "the Suites step block was located (positive control)" "awk extracted nothing"
 else
     ok "the Suites step block was located (positive control)"
 fi
-want "push case reaches corpus path"   '"push"'       "$_suites_block"
-want "push enumerates test-*.sh"       'test-*.sh'    "$_suites_block"
-want "push pipes suite list to batch"  '--suites -'   "$_suites_block"
-want "queue PRs are matched"           'spira/queue/' "$_suites_block"
-want "queue selection uses select.sh"  "select.sh"    "$_suites_block"
-nowant "no early exit on push"         "no suites"    "$_suites_block"
+want "suites step pipes pre-computed list to batch" '--suites -' "$_suites_block"
 
 echo
 echo "15. the cut job asserts a green gate check and non-empty suite results before tagging:"
@@ -427,6 +432,25 @@ if [ -r "$ACC_YML" ]; then
 else
     bad "acceptance.yml exists for cross-check" "not found at $ACC_YML"
 fi
+
+echo
+echo "19. provision is skipped when no suites are selected:"
+# A branch touching only statutes or docs selects zero suites. Acquiring a 12 GiB
+# machine to run nothing wastes a runner slot and starves a real gate. provision
+# is conditional on the select job outputting a non-empty list; gate exits 0
+# (green, not 75) when the list is empty.
+_prov_block="$(awk '/^  provision:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
+if [ -z "$_prov_block" ]; then
+    bad "the provision job block was located (positive control)" "awk extracted nothing"
+else
+    ok "the provision job block was located (positive control)"
+fi
+want "provision needs the select job"                "select"                      "$_prov_block"
+want "provision is conditional on suite selection"   "needs.select.outputs.suites" "$_prov_block"
+# The gate job exits 0 on an empty selection so branch protection sees green, not
+# skipped or failed — a skipped required check blocks the merge.
+want "gate exits cleanly on empty selection"         "exit 0"                      "$_gate_verdict_block"
+want "gate checks select output before provision"    "select.outputs.suites"       "$_gate_verdict_block"
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
