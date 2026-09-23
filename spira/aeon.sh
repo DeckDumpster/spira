@@ -962,7 +962,7 @@ if [ -n "${SPIRA_MAIL:-}" ]; then
              "$SPIRA_MAIL/aeon-$BEAD_ID/cur" \
              "$SPIRA_MAIL/aeon-$BEAD_ID/tmp"
 fi
-export BEAD_ID SPIRA_MAIL="${SPIRA_MAIL:-}"
+export BEAD_ID SPIRA_MAIL="${SPIRA_MAIL:-}" SPIRA_MAIL_FROM="${FAYTH^} <${FAYTH}@spira>"
 
 # ---- heartbeat: LIVENESS LEASE -------------------------------------------------------
 # A fixed 10-minute lease. The trace file growing — even by one byte — renews it in full.

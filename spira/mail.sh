@@ -130,6 +130,12 @@ _lint_check() {
     if [ -z "$from" ]; then
         printf 'mail: lint: missing From — rule: every message must name a sender\n' >&2
         fail=1
+    elif [[ "$from" =~ \;[[:space:]]*$ ]]; then
+        printf 'mail: lint: From has group syntax — rejected (RFC 6854 §3 requires a replyable mailbox). Use: Name <local@spira>.\n' >&2
+        fail=1
+    elif [[ "$from" != *@* ]]; then
+        printf 'mail: lint: From has no address: %s. Use: %s <local@spira>.\n' "$from" "$from" >&2
+        fail=1
     fi
 
     if [ -z "$subject" ]; then
@@ -237,6 +243,7 @@ cmd_send() {
         esac
     done
 
+    [ -z "$from" ] && [ -n "${SPIRA_MAIL_FROM:-}" ] && from="${SPIRA_MAIL_FROM}"
     local body; body="$(cat)"
     if [ "$mailbox" = "operator" ]; then
         _repeat_check "$mailbox" "$subject" || return 1
