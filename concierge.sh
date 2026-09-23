@@ -201,7 +201,9 @@ concierge_live_pid() {
         pid="${f%/cmdline}"; pid="${pid##*/}"
         case "$pid" in *[!0-9]*) continue ;; esac
         [ "$pid" = "$$" ] && continue
-        tr '\0' '\n' < "$f" 2>/dev/null | grep -qF -- "$sid" || continue
+        # guard the read: the glob races process exit, and the shell's own error precedes tr's.
+        [ -r "$f" ] || continue
+        { tr '\0' '\n' < "$f" | grep -qF -- "$sid"; } 2>/dev/null || continue
         printf '%s' "$pid"
         return 0
     done
@@ -222,9 +224,12 @@ start)
     RESUME_ID="$(concierge_resume_id)"
     if [ -n "$RESUME_ID" ]; then
         _live="$(concierge_live_pid "$RESUME_ID")" && {
-            printf 'concierge: session %s is already held by pid %s\n' "$RESUME_ID" "$_live"
-            printf '  attach:  tmux -L %s attach -t %s\n' "$SOCKET" "$SESSION"
-            exit 0
+            # has-session already failed above; a live holder with no session is headless.
+            printf 'concierge: session %s is held by pid %s but is HEADLESS — no tmux session on socket %s\n' \
+                "$RESUME_ID" "$_live" "$SOCKET" >&2
+            printf '  the claude client outlived its tmux server; it cannot be attached to.\n' >&2
+            printf '  recover:  kill %s && %s start\n' "$_live" "$0" >&2
+            exit 3
         }
     fi
     command -v claude >/dev/null || { echo "concierge: claude not on PATH" >&2; exit 1; }
@@ -278,6 +283,24 @@ start)
         echo "concierge: started as Remote Control session '$SESSION'"
         echo "  attach locally:  tmux -L $SOCKET attach -t $SESSION"
         echo "  on the phone:    Claude app -> Remote Control -> $SESSION"
+    elif [ -n "$RESUME_ID" ]; then
+        # --resume failed (session not found or transcript gone); retry without it.
+        printf 'concierge: start failed with --resume %s — retrying without it\n' "$RESUME_ID" >&2
+        rm -f "$SPIRA_RUN/concierge-session"
+        grep -v -- '--resume' "$LAUNCHER" > "$LAUNCHER.noresume" && mv "$LAUNCHER.noresume" "$LAUNCHER"
+        chmod +x "$LAUNCHER"
+        systemd-run --user --collect --quiet --remain-after-exit \
+            --setenv=PATH="$PATH" --setenv=HOME="$HOME" -- \
+            tmux -L "$SOCKET" new-session -d -s "$SESSION" -c "$BRAIN" "$LAUNCHER"
+        sleep 3
+        if $TM has-session -t "$SESSION" 2>/dev/null; then
+            printf 'concierge: started FRESH (the recorded session could not be resumed)\n'
+            printf '  attach locally:  tmux -L %s attach -t %s\n' "$SOCKET" "$SESSION"
+            exit 0
+        fi
+        echo "concierge: failed to stay up even without --resume — run it in the foreground:" >&2
+        echo "  cd $BRAIN && claude --remote-control $SESSION" >&2
+        exit 1
     else
         echo "concierge: failed to stay up — run it in the foreground to see why:" >&2
         echo "  cd $BRAIN && claude --remote-control $SESSION" >&2
