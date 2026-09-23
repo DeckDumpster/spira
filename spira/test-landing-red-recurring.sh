@@ -153,7 +153,7 @@ out="$(landing)"
 want "second RED escalates"              "escalated sp-recur" "$out"
 nowant "second RED does not reopen"      "reopened sp-recur"  "$out"
 is   "bead stays closed on second RED"   closed "$(status_of sp-recur)"
-want "escalation reaches the operator"   "red recurring" "$EMITTED"
+want "escalation reaches the operator"   "red recurring" "$(cat "$EMITTED")"
 
 # --------------------------------------------------------------------------------------
 # PART 3: IDEMPOTENT GUARD — identical re-mark (tip+base unchanged) is still skipped.
