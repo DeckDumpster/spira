@@ -95,6 +95,7 @@ SPIRA_SELF_WINDOW
 SPIRA_AGENT
 SPIRA_STATUTE_CORE
 SPIRA_GIT_NAME SPIRA_GIT_EMAIL
+SPIRA_PVE_ENV
 "
 
 # --------------------------------------------------------------------------------------
