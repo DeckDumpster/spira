@@ -8,7 +8,7 @@
 # check-status <repo-dir> <pr-number>          prints: pending | green | red | harness_fault | provision_fault
 #                                              then "flaky: <suite>" for each flaky annotation
 # run-id <repo-dir> <branch>                   prints the latest CI run ID for the branch
-# runs-active <repo-dir>                       prints the count of queued+in_progress runs, or ? if unknown
+# runs-active <repo-dir>                       prints the count of queued+in_progress PR runs, or ? if unknown
 # run-metadata <repo-dir> <run-id>             prints: started-at: <epoch>; last-activity: <epoch>
 # run-cancel <repo-dir> <run-id>               cancels an in-progress run
 # workflow-rerun <repo-dir> <run-id>           re-queues a failed workflow run
@@ -247,9 +247,16 @@ except Exception: pass
 " 2>/dev/null
         ;;
     runs-active)
-        # runs-active <repo-dir> → how many workflow runs are queued or in progress, across
-        # every branch and workflow in the repository. Used by batch.sh to answer "is CI idle
-        # right now"; idle means waiting for company buys nothing, so cut the batch at once.
+        # runs-active <repo-dir> → how many PULL-REQUEST workflow runs are queued or in
+        # progress. Used by batch.sh to answer "is CI idle right now"; idle means waiting for
+        # company buys nothing, so cut the batch at once.
+        #
+        # ONLY pull_request RUNS COUNT. A main-branch gate (push), a release, or a dispatched
+        # acceptance run is not competing with a batch for anything the wait could save: runners
+        # are cloned per run and the hypervisor has room. Counting them held two certified beads
+        # for twenty minutes on 2026-09-23 with no PR open anywhere, while the only runs in
+        # flight were a main gate and an acceptance dispatch (per Ryan: "that's not what i
+        # would consider 'CI isn't idle'. there are no open PRs").
         #
         # PRINTS ? WHEN IT CANNOT TELL, NEVER 0. A failed API call, an unparseable payload and
         # a genuinely empty queue are three different answers, and only the third one means
@@ -269,7 +276,7 @@ except Exception:
 runs = d.get('workflow_runs')
 if runs is None:
     print('?'); sys.exit(0)
-print(sum(1 for r in runs if r.get('status') in ('queued', 'in_progress', 'waiting', 'requested', 'pending')))
+print(sum(1 for r in runs if r.get('event') == 'pull_request' and r.get('status') in ('queued', 'in_progress', 'waiting', 'requested', 'pending')))
 " 2>/dev/null || printf '?\n'
         ;;
     run-metadata)
