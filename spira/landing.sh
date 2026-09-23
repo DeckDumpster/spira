@@ -1562,7 +1562,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 # moved" — the one case this loop handles. Classify first; take the retry
                 # path only when the evidence matches the diagnosis.
                 _push_err="$(mktemp)"
-                if git -C "$land" push -q "$base_remote" "landing:$base_branch" 2>"$_push_err"; then
+                if spira_git_push "$land" -q "$base_remote" "landing:$base_branch" 2>"$_push_err"; then
                     pushed=1; rm -f "$_push_err"; break
                 fi
                 _push_msg="$(cat "$_push_err"; rm -f "$_push_err")"

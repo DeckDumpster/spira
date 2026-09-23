@@ -109,7 +109,7 @@ cmd_submit() {
             return 1
         }
         tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
-        git -C "$repo" push -q "${base_remote:-origin}" "$br:$base_branch" 2>/dev/null || {
+        spira_git_push "$repo" -q "${base_remote:-origin}" "$br:$base_branch" 2>/dev/null || {
             printf 'queue.sh submit: push of %s to %s failed\n' "$br" "$base_branch" >&2
             return 1
         }

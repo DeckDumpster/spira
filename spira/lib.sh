@@ -6077,7 +6077,7 @@ land_pr() {
     local repo="$1" br="$2" id="$3" baseref="$4" num title remote base dup
     remote="$(ref_remote "$baseref")" || remote=origin
     base="$(ref_branch "$baseref")"
-    if ! git -C "$repo" push -q --force-with-lease -u "$remote" "$br" 2>/dev/null; then
+    if ! spira_git_push "$repo" -q --force-with-lease -u "$remote" "$br" 2>/dev/null; then
         log "$id: could not push $br to $remote"
         return 1
     fi
@@ -6124,4 +6124,20 @@ PRBODY
         || log "$id: pull request ${num:-?} is open but auto-merge could not be armed"
     log "$id: pull request ${num:-?} open on $br — its CI is the gate now"
     return 0
+}
+
+# spira_git_push <repo> [push-args...] — push with GitHub App identity when configured.
+# When SPIRA_GH_APP_ID and SPIRA_GH_APP_INSTALLATION_ID are set, routes the push over
+# HTTPS using the App installation token as the credential, so pushes are attributed to
+# the App rather than to the operator's SSH key.
+spira_git_push() {
+    local repo="$1"; shift
+    if [ -n "${SPIRA_GH_APP_ID:-}" ] && [ -n "${SPIRA_GH_APP_INSTALLATION_ID:-}" ]; then
+        git -C "$repo" \
+            -c "credential.helper=${SPIRA_HOME}/spira/git-credential-app.sh" \
+            -c "url.https://github.com/.insteadOf=git@github.com:" \
+            push "$@"
+    else
+        git -C "$repo" push "$@"
+    fi
 }

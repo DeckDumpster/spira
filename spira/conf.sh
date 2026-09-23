@@ -97,6 +97,7 @@ SPIRA_CERT_WINDOW_MINS
 SPIRA_AGENT
 SPIRA_STATUTE_CORE
 SPIRA_GIT_NAME SPIRA_GIT_EMAIL
+SPIRA_GH_APP_ID SPIRA_GH_APP_INSTALLATION_ID SPIRA_GH_APP_KEY SPIRA_GH_APP_PRIVATE_KEY SPIRA_GH_APP_CONFIG
 SPIRA_PVE_ENV
 "
 
@@ -565,6 +566,11 @@ spira_conf_defaults() {
     # .invalid: not a real domain. @spira.local trips is_aeon_email in branch-guard.sh.
     : "${SPIRA_GIT_NAME:=spira}"
     : "${SPIRA_GIT_EMAIL:=spira@spira.invalid}"
+    : "${SPIRA_GH_APP_ID:=}"
+    : "${SPIRA_GH_APP_INSTALLATION_ID:=}"
+    : "${SPIRA_GH_APP_KEY:=}"
+    : "${SPIRA_GH_APP_PRIVATE_KEY:=}"
+    : "${SPIRA_GH_APP_CONFIG:=}"
     # HOW MANY COMMITS BACK aeon.sh AND sentinel CHECK5 WALK when asking "is there a commit
     # that names this bead?" The bound must be the same in both places: aeon.sh walks the
     # branch (and the landing refs when the branch walk finds nothing); the sentinel walks
