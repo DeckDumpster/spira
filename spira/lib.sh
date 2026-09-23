@@ -5569,3 +5569,140 @@ for r in rows:
     done < "$_tmp"
     rm -f "$_tmp"
 }
+
+# --------------------------------------------------------------------------------------
+# PR-MODE LANDING PRIMITIVES
+#
+# These are called by both landing.sh (for legacy paths) and landing-pass (the Rust
+# binary's shell helper, pr-pass-branch.sh). Moving them here rather than keeping them
+# only in landing.sh lets the helper source lib.sh and get the full implementation
+# without sourcing a script that would execute on source.
+# --------------------------------------------------------------------------------------
+
+SUBMITTED="${SUBMITTED:-$SPIRA_RUN/submitted}"
+
+submitted() {            # submitted <id> <tip> -> 0 if nothing more to do for this tip
+    # rec_n IS LOAD-BEARING even though nothing here reads it. `read` puts every word past
+    # the last variable into that variable, so a three-variable read of a four-field record
+    # gives rec_state the value "pr 3" — and the `failed` comparison below, which decides
+    # whether a failed submission is retried, would then never be true again.
+    local id="$1" tip="$2" f="$SUBMITTED/$1" rec_tip rec_at rec_state rec_n
+    [ -f "$f" ] || return 1
+    read -r rec_tip rec_at rec_state rec_n < "$f" 2>/dev/null || return 1
+    [ "$rec_tip" = "$tip" ] || return 1
+    [ "$rec_state" = failed ] || return 0
+    [ $(( $(date +%s) - rec_at )) -lt 3600 ]
+}
+
+submitted_rec() {        # submitted_rec <id> state|refreshes
+    local f="$SUBMITTED/$1" tip at state n
+    [ -f "$f" ] || return 1
+    read -r tip at state n < "$f" 2>/dev/null || return 1
+    case "$2" in
+        state)     printf '%s' "${state:-}" ;;
+        refreshes) printf '%s' "${n:-0}" ;;
+    esac
+}
+
+mark_submitted() {       # mark_submitted <id> <tip> <state> [refreshes]
+    mkdir -p "$SUBMITTED"
+    printf '%s %s %s %s\n' "$2" "$(date +%s)" "$3" "${4:-0}" > "$SUBMITTED/$1"
+}
+
+PR_REFRESH_MAX="${SPIRA_PR_REFRESH_MAX:-5}"
+PR_REFRESH_N=0
+
+pr_state() {             # pr_state <repo> <branch> -> OPEN|MERGED|CLOSED, non-zero if unknown
+    local st
+    st="$( cd "$1" && ghq pr view "$2" --json state -q .state 2>/dev/null )"
+    [ -n "$st" ] || return 1
+    printf '%s' "$st"
+}
+
+# needs_refresh — 0 when this already-submitted branch should be rebased and force-pushed.
+needs_refresh() {        # needs_refresh <repo> <name> <branch> <id> <base> <tip>
+    local repo="$1" name="$2" br="$3" id="$4" base="$5" tip="$6" st n
+    PR_REFRESH_N=0
+    git -C "$repo" merge-base --is-ancestor "$base" "refs/heads/$br" 2>/dev/null && return 1
+    case "$(submitted_rec "$id" state)" in
+        stale) log "$id: $br is behind $base and already escalated — leaving it standing"; return 1 ;;
+        done)  return 1 ;;
+    esac
+    st="$(pr_state "$repo" "$br")" || {
+        log "$id: $br is behind $base but gh will not say whether its pull request is open — not touching it"
+        return 1; }
+    if [ "$st" != OPEN ]; then
+        log "$id: $br is behind $base but its pull request is $st — nothing to refresh"
+        mark_submitted "$id" "$tip" done
+        return 1
+    fi
+    n="$(submitted_rec "$id" refreshes)"
+    case "${n:-}" in ''|*[!0-9]*) n=0 ;; esac
+    if [ "$n" -ge "$PR_REFRESH_MAX" ]; then
+        spira_ask_refresh_loop "$repo" "$name" "$br" "$id" "$base" "$n"
+        mark_submitted "$id" "$tip" stale "$n"
+        log "$id: escalated — its pull request will not merge after $n refresh(es)"
+        return 1
+    fi
+    PR_REFRESH_N=$(( n + 1 ))
+    log "$id: $br is behind $base — rebasing its pull request onto it (refresh $PR_REFRESH_N of $PR_REFRESH_MAX)"
+    return 0
+}
+
+# land_pr <repo> <branch> <id> <base-ref> -> 0 if a pull request is open for this tip.
+# Force-pushes with a lease because the pass rebases before pushing and the remote is
+# routinely behind by a rewrite rather than a divergence.
+# THE REMOTE AND THE BASE BRANCH BOTH COME OUT OF THE BASE REF, never the literals
+# "origin" and "main" — two repositories here default to master.
+land_pr() {
+    local repo="$1" br="$2" id="$3" baseref="$4" num title remote base dup
+    remote="$(ref_remote "$baseref")" || remote=origin
+    base="$(ref_branch "$baseref")"
+    if ! git -C "$repo" push -q --force-with-lease -u "$remote" "$br" 2>/dev/null; then
+        log "$id: could not push $br to $remote"
+        return 1
+    fi
+    num="$( cd "$repo" && ghq pr view "$br" --json number -q .number 2>/dev/null )"
+    # DOES ANOTHER OPEN PR ALREADY CARRY THIS WORK? Catches the sp-pd-ci case: #114 carried
+    # all nineteen commits of #113, and both sat open burning CI minutes.
+    if [ -z "${num:-}" ]; then
+        dup="$( cd "$repo" && ghq pr list --state open --json number,headRefName \
+                  -q '.[] | "\(.number) \(.headRefName)"' 2>/dev/null \
+                | while read -r n ref; do
+                      [ "$ref" = "$br" ] && continue
+                      if [ -z "$(git -C "$repo" log --format='%H' "$base..$br" 2>/dev/null \
+                                 | while read -r c; do
+                                       git -C "$repo" merge-base --is-ancestor "$c" "origin/$ref" 2>/dev/null || echo x
+                                   done)" ]; then
+                          echo "$n"; break
+                      fi
+                  done | head -1 )"
+        if [ -n "${dup:-}" ]; then
+            log "$id: #$dup already carries every commit on $br — not opening a second pull request"
+            bdq note "$id" "Not opening a pull request: #$dup already carries every commit on $br. Continue the review there rather than splitting it across two threads." >/dev/null 2>&1
+            return 1
+        fi
+        title="$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: raise SystemExit
+d = d if isinstance(d, list) else [d]
+print(d[0].get("title", "") if d else "")' 2>/dev/null)"
+        if ! ( cd "$repo" && ghq pr create --head "$br" --base "$base" \
+                 --title "$id: ${title:-Spira}" --body-file - >/dev/null 2>&1 ) <<PRBODY
+Filed by Spira for bead $id. The bead is closed in the Spira database; this
+pull request is how the work lands, so it is not done until this merges.
+
+Auto-merge is armed — a green run merges it without anyone waiting on it.
+PRBODY
+        then
+            log "$id: gh pr create failed for $br"
+            return 1
+        fi
+        num="$( cd "$repo" && ghq pr view "$br" --json number -q .number 2>/dev/null )"
+    fi
+    ( cd "$repo" && ghq pr merge --auto --squash "$br" >/dev/null 2>&1 ) \
+        || log "$id: pull request ${num:-?} is open but auto-merge could not be armed"
+    log "$id: pull request ${num:-?} open on $br — its CI is the gate now"
+    return 0
+}

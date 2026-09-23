@@ -43,14 +43,16 @@ PANEL_DIR="$SPIRA_COCKPIT/panel"
 BROKER_DIR="$SPIRA_REPO/broker"
 CZAR_PASS_DIR="$SPIRA_REPO/czar-pass"
 SUPERVISE_DIR="$SPIRA_REPO/supervise"
+LANDING_PASS_DIR="$SPIRA_REPO/landing-pass"
 
 if [ "$skip_build" = 1 ]; then
     printf 'build.sh: --skip-build — prebuilt binaries expected at:\n'
-    printf '  loom:      %s\n' "$SPIRA_LOOM_BIN"
-    printf '  panel:     %s\n' "$SPIRA_PANEL"
-    printf '  broker:    %s\n' "$SPIRA_BROKER_BIN"
-    printf '  czar-pass: %s\n' "$SPIRA_CZAR_PASS_BIN"
-    printf '  supervise: %s\n' "$SPIRA_SUPERVISE_BIN"
+    printf '  loom:         %s\n' "$SPIRA_LOOM_BIN"
+    printf '  panel:        %s\n' "$SPIRA_PANEL"
+    printf '  broker:       %s\n' "$SPIRA_BROKER_BIN"
+    printf '  czar-pass:    %s\n' "$SPIRA_CZAR_PASS_BIN"
+    printf '  supervise:    %s\n' "$SPIRA_SUPERVISE_BIN"
+    printf '  landing-pass: %s\n' "$SPIRA_LANDING_PASS_BIN"
     exit 0
 fi
 
@@ -124,6 +126,16 @@ printf 'build.sh: building spira-supervise (release)\n'
 ( cd "$SUPERVISE_DIR" && cargo build --release ) || {
     printf 'build.sh: spira-supervise build failed\n' >&2; exit 1; }
 printf 'build.sh: spira-supervise built at %s\n' "$SPIRA_SUPERVISE_BIN"
+
+# LANDING-PASS — pr-mode repository landing on a short timer, no local gate.
+if [ ! -d "$LANDING_PASS_DIR" ]; then
+    printf 'build.sh: landing-pass source directory not found at %s\n' "$LANDING_PASS_DIR" >&2
+    exit 1
+fi
+printf 'build.sh: building landing-pass (release)\n'
+( cd "$LANDING_PASS_DIR" && cargo build --release ) || {
+    printf 'build.sh: landing-pass build failed\n' >&2; exit 1; }
+printf 'build.sh: landing-pass built at %s\n' "$SPIRA_LANDING_PASS_BIN"
 
 # BD — optional, only when --with-bd was given.
 if [ "$with_bd" = 1 ]; then
