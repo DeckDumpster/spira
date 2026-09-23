@@ -111,28 +111,28 @@ echo "POSITIVE CONTROL — st=2 (gate still running) writes a note (must pass in
 fresh; seed sp-gcs-1
 run_aeon 2
 want "st=2: note mentions 'still running'" "still running" "$(bead_notes sp-gcs-1)"
-want "st=2: ledger records gate still running" "closed with its gate still running" \
-    "$(grep 'sp-gcs-1' "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null)"
+want "st=2: log mentions gate still running" "closed with its gate still running" \
+    "$(cat "$TMP/out" 2>/dev/null)"
 
 # ======================================================================================
 echo
-echo "st=3 (no gate ever ran) — note and ledger entry must be written:"
+echo "st=3 (no gate ever ran) — note and log entry must be written:"
 # ======================================================================================
 fresh; seed sp-gcs-2
 run_aeon 3
-want "st=3: note mentions 'no gate verdict'" "no gate verdict" "$(bead_notes sp-gcs-2)"
-want "st=3: ledger records no gate verdict" "no gate verdict" \
-    "$(grep 'sp-gcs-2' "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null)"
+want "st=3: note mentions 'no gate ran'" "no gate ran" "$(bead_notes sp-gcs-2)"
+want "st=3: log mentions no gate verdict" "no gate verdict (none ran)" \
+    "$(cat "$TMP/out" 2>/dev/null)"
 
 # ======================================================================================
 echo
-echo "st=1 (FAIL verdict) — note and ledger entry must be written:"
+echo "st=1 (FAIL verdict) — note and log entry must be written:"
 # ======================================================================================
 fresh; seed sp-gcs-3
 run_aeon 1
 want "st=1: note mentions 'FAIL verdict'" "FAIL verdict" "$(bead_notes sp-gcs-3)"
-want "st=1: ledger records FAIL gate verdict" "FAIL gate verdict" \
-    "$(grep 'sp-gcs-3' "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null)"
+want "st=1: log mentions FAIL gate verdict" "closed against a recorded FAIL gate verdict" \
+    "$(cat "$TMP/out" 2>/dev/null)"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
