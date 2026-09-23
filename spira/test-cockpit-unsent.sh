@@ -173,6 +173,39 @@ val3() { printf '%s' "$out3" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 is "BATCHED present in open batch → SP_BATCHED_STRANDED=0" "0" "$(val3 SP_BATCHED_STRANDED)"
 rm -f "$RUN/queue/beta/open" "$RUN/landstate/sp-bbb"
 
+# BATCHED-too-long detection: epoch old enough → SP_BATCHED_TOO_LONG=1.
+# POSITIVE CONTROL: an old epoch (default wait=1800s; plant 1801s in the past) fires the
+# counter. Only after that do we verify a fresh timestamp returns 0.
+echo
+echo "BATCHED-too-long detection (sp-7kcj2):"
+mkdir -p "$RUN/landstate"
+_old_epoch=$(( $(date +%s) - 1801 ))
+_bbb_tip="$(git -C "$BETA" rev-parse spira/sp-bbb 2>/dev/null)"
+printf 'BATCHED %s %s' "$_bbb_tip" "$_old_epoch" > "$RUN/landstate/sp-bbb"
+out_btl="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
+    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
+    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$REAL_BD" \
+    SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_PATH="$BD_PATH" \
+    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+val_btl() { printf '%s' "$out_btl" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
+is "BATCHED older than wait → SP_BATCHED_TOO_LONG=1" "1" "$(val_btl SP_BATCHED_TOO_LONG)"
+want "SP_BATCHED_TOO_LONG_NAMES names the branch" "sp-bbb" "$(val_btl SP_BATCHED_TOO_LONG_NAMES)"
+
+# Fresh BATCHED epoch → SP_BATCHED_TOO_LONG=0 (positive control that the 0 is real).
+printf 'BATCHED %s %s' "$_bbb_tip" "$(date +%s)" > "$RUN/landstate/sp-bbb"
+out_btl2="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
+    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
+    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$REAL_BD" \
+    SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_PATH="$BD_PATH" \
+    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+val_btl2() { printf '%s' "$out_btl2" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
+is "fresh BATCHED epoch → SP_BATCHED_TOO_LONG=0" "0" "$(val_btl2 SP_BATCHED_TOO_LONG)"
+rm -f "$RUN/landstate/sp-bbb"
+
 # ======================================================================================
 echo
 echo "no shell function is invoked through timeout(1):"
