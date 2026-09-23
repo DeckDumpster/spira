@@ -5259,6 +5259,9 @@ spira_live_aeons() {
 }
 
 LANDSTATE="${SPIRA_RUN}/landstate"
+# Reasons written by the batch/queue eviction machinery. Only these warrant the eviction-race
+# reopen in aeon.sh; no-rebase@*, gate and confine are landing.sh REDs with their own paths.
+LAND_EVICTION_REASONS="ejected conflicts-with-base rebase-suite-red"
 
 land_mark() {    # land_mark <id> <state> <tip> [reason]
     mkdir -p "$(dirname "$LANDSTATE/$1")" 2>/dev/null || return 0
