@@ -1990,29 +1990,48 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
             progress "certified $br in $name — queued"
         }
 
-        # PHASE 2 TIER ORDERING. Never-gated branches (no prior landstate record) go first;
-        # branches with a non-RED landstate go second; RED branches with a moved tip or a
-        # base-red reason go third. A RED branch whose tip is unchanged and whose failure is
-        # not base-red is skipped — the same tip will produce the same result, and the slot
-        # is better spent on a branch that has never been tried. Timeouts write RED (above)
-        # and are subject to the same skip condition.
+        # PHASE 2 TIER ORDERING. Never-gated branches (no prior landstate record) go first,
+        # joined by RED branches whose record is stale: the tip has moved since RED was
+        # written, or the reason is conflicts-with-base and the base has advanced since the
+        # record was written (that record is a statement about a pair; either side moving
+        # makes it stale). Branches with a non-RED landstate go second. RED branches whose
+        # record is current go third. A RED branch whose tip and base are unchanged and
+        # whose failure is not base-red is skipped — the same tip and base will produce the
+        # same result, and the slot is better spent on a branch that has never been tried.
+        # Timeouts write RED (above) and are subject to the same skip condition.
         local -a _t0_brs=() _t0_ids=() _t0_tips=()
         local -a _t1_brs=() _t1_ids=() _t1_tips=()
         local -a _t2_brs=() _t2_ids=() _t2_tips=()
-        local _p2_skip=0 _p2_ls _p2_ls_st _p2_ls_tip _p2_ls_reason _p2_ci _p2_br _p2_id _p2_tip
+        local _p2_skip=0 _p2_ls _p2_ls_st _p2_ls_tip _p2_ls_at _p2_ls_reason _p2_ci _p2_br _p2_id _p2_tip _p2_stale_base _p2_base_ct
         for _p2_ci in "${!_cert_brs[@]}"; do
             _p2_br="${_cert_brs[$_p2_ci]}"
             _p2_id="${_cert_beadids[$_p2_ci]}"
             _p2_tip="${_cert_tips[$_p2_ci]}"
-            _p2_ls_st=""; _p2_ls_tip=""; _p2_ls_reason=""
+            _p2_ls_st=""; _p2_ls_tip=""; _p2_ls_at=""; _p2_ls_reason=""
             _p2_ls="$(land_state "$_p2_id" 2>/dev/null || true)"
-            read -r _p2_ls_st _p2_ls_tip _ _p2_ls_reason <<< "$_p2_ls"
+            read -r _p2_ls_st _p2_ls_tip _p2_ls_at _p2_ls_reason <<< "$_p2_ls"
             if [ -z "${_p2_ls_st:-}" ]; then
+                _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip")
+            elif [ "${_p2_ls_st:-}" = RED ] && [ "${_p2_ls_tip:-}" != "$_p2_tip" ]; then
+                log "CHECK6 $_p2_id: RED record tip stale (was ${_p2_ls_tip:-none}) — treating as never-gated"
                 _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip")
             elif [ "${_p2_ls_st:-}" = RED ] && [ "${_p2_ls_tip:-}" = "$_p2_tip" ] && \
                  [ "${_p2_ls_reason:-}" != "base-red" ]; then
-                _p2_skip=$(( _p2_skip + 1 ))
-                log "CHECK6 $_p2_id: tip unchanged since RED mark (reason=${_p2_ls_reason:-unknown}) — skipping re-gate of $_p2_br"
+                _p2_stale_base=0
+                if [ "${_p2_ls_reason:-}" = "conflicts-with-base" ]; then
+                    _p2_base_ct="$(git -C "$repo" log --format="%ct" -1 "$base" 2>/dev/null)"
+                    if [ -n "${_p2_ls_at:-}" ] && [ -n "${_p2_base_ct:-}" ] && \
+                       [ "${_p2_base_ct:-0}" -gt "${_p2_ls_at:-0}" ] 2>/dev/null; then
+                        _p2_stale_base=1
+                    fi
+                fi
+                if [ "$_p2_stale_base" = 1 ]; then
+                    log "CHECK6 $_p2_id: RED conflicts-with-base stale (base advanced since ${_p2_ls_at}) — treating as never-gated"
+                    _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip")
+                else
+                    _p2_skip=$(( _p2_skip + 1 ))
+                    log "CHECK6 $_p2_id: tip unchanged since RED mark (reason=${_p2_ls_reason:-unknown}) — skipping re-gate of $_p2_br"
+                fi
             elif [ "${_p2_ls_st:-}" = RED ]; then
                 _t2_brs+=("$_p2_br"); _t2_ids+=("$_p2_id"); _t2_tips+=("$_p2_tip")
             else
