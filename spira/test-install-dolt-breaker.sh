@@ -268,7 +268,7 @@ FAKE_RUN="$TMP/run"
 FAKE_DB="$TMP/db"
 mkdir -p "$FAKE_HOME" "$FAKE_UNITDIR" "$FAKE_RUN" "$FAKE_DB"
 
-_DOLT_PORT=31415  # Use an unlikely port to avoid conflicts with running services
+_DOLT_PORT=19142
 _DOLT_DATA="$TMP/dolt-data"
 mkdir -p "$_DOLT_DATA"
 cat > "$_DOLT_DATA/dolt-server.yaml" <<YAML
@@ -375,6 +375,7 @@ run_install() {
         "SPIRA_REPO=$FAKE_REPO" \
         "SPIRA_COCKPIT=$COCKPIT_DIR" \
         SPIRA_INSTALL_FORCE=1 \
+        SPIRA_INSTALL_CONFLICT_CONSIDERED=1 \
         "SPIRA_BD=$MOCK_BIN/bd" \
         "SPIRA_DB=$FAKE_DB" \
         "SPIRA_DOLT_DATA=$_DOLT_DATA" \
