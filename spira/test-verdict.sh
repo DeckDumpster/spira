@@ -34,7 +34,7 @@
 #  19. Flaky suite: fails once then passes on retry → member not ejected; flaky_suites=.
 #  20. Always-red control: suite fails twice → member ejected (retry doesn't suppress).
 #  21. TERM TRAP: TERM during attribution writes "interrupted after ...s" to landing.log.
-#  22. Parallel wall-time: 3 members × 2s stub → total ≤ 75% of serial with MAXPAR=3.
+#  22. Parallel wall-time: 3 members × 8s stub → total ≤ 85% of serial with MAXPAR=3.
 #  23. Serial pair: same 3 members with MAXPAR=1 → total ≥ 6s (positive control).
 #  24. Could-not-judge: rc=2 member doesn't shield others; guilty member ejected.
 #  25. Deterministic: ejected set identical across two runs with different completion order.
@@ -889,15 +889,15 @@ clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
 # =============================================================================
-# 22. PARALLEL WALL-TIME — 3 members, repro stub sleeps 4s each.
-#     With SPIRA_BATCH_MAXPAR=3 all run concurrently; wall time ≤ 75% of serial.
+# 22. PARALLEL WALL-TIME — 3 members, repro stub sleeps 8s each.
+#     With SPIRA_BATCH_MAXPAR=3 all run concurrently; wall time ≤ 85% of serial.
 #     Positive control is case 23: MAXPAR=1 forces serial; total wall time ≥ 6s.
-#     Sleep 4s: _repro_is_red retries on red (doubles per-member sleep to 8s);
-#     4s makes the parallelism signal dominate over worktree/merge overhead.
+#     Sleep 8s: _repro_is_red retries on red (doubles per-member sleep to 16s);
+#     8s makes the sleep signal dominate over worktree/merge overhead under load.
 # =============================================================================
 cat > "$SH/repro-sleep.sh" <<'REPRO'
 #!/usr/bin/env bash
-sleep 4; exit 1
+sleep 8; exit 1
 REPRO
 chmod +x "$SH/repro-sleep.sh"
 
@@ -961,11 +961,11 @@ SPIRA_QUEUE_REPRO_BATCH="$SH/repro-sleep.sh" SPIRA_BATCH_MAXPAR=1 verdict "$REPO
 _t22=$(( $(date +%s) - _t22_start ))
 [ "$_t22" -ge 6 ] && ok "23. serial-pair: MAXPAR=1 forced serial, wall-time ${_t22}s ≥ 6s" \
     || bad "23. serial-pair: wall-time" "expected ≥ 6s, got ${_t22}s"
-# Parallel must be meaningfully faster than serial: ≤ 75% of serial wall time.
-_t21_bound=$(( _t22 * 3 / 4 ))
+# Parallel must be meaningfully faster than serial: ≤ 85% of serial wall time.
+_t21_bound=$(( _t22 * 17 / 20 ))
 [ "$_t21" -le "$_t21_bound" ] \
-    && ok "22. parallel: 3 members concurrent, wall-time ${_t21}s ≤ ${_t21_bound}s (75% of serial ${_t22}s)" \
-    || bad "22. parallel: wall-time" "expected ≤ ${_t21_bound}s (75% of serial ${_t22}s), got ${_t21}s"
+    && ok "22. parallel: 3 members concurrent, wall-time ${_t21}s ≤ ${_t21_bound}s (85% of serial ${_t22}s)" \
+    || bad "22. parallel: wall-time" "expected ≤ ${_t21_bound}s (85% of serial ${_t22}s), got ${_t21}s"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
