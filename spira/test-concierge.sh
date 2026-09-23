@@ -34,7 +34,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 is()     { if [ "$2" = "$3" ]; then pass=$((pass+1)); printf '  ok    %s\n' "$1"
            else fail=$((fail+1)); printf '  FAIL  %s: want [%s] got [%s]\n' "$1" "$2" "$3"; fi; }
 want()   { case "$3" in *"$2"*) pass=$((pass+1)); printf '  ok    %s\n' "$1" ;;
-           *) fail=$((fail+1)); printf '  FAIL  %s: wanted [%s]\n' "$1" "$2" ;; esac; }
+           *) fail=$((fail+1)); printf '  FAIL  %s: wanted [%s] got [%s]\n' "$1" "$2" "$3" ;; esac; }
 nowant() { case "$3" in *"$2"*) fail=$((fail+1)); printf '  FAIL  %s: did not want [%s]\n' "$1" "$2" ;;
            *) pass=$((pass+1)); printf '  ok    %s\n' "$1" ;; esac; }
 
