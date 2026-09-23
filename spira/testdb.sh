@@ -332,25 +332,25 @@ testdb_up() {            # testdb_up <tag>
     # Serialize bd init: schema migrations hold a global Dolt lock (see testdb.sh header).
     # Concurrent inits queue behind it and each takes N×6s instead of 6s — enough to push
     # suites past the 600s timeout when more than ~6 server-mode suites run in parallel.
-    local init_out init_rc _init_fd
-    _init_fd=""
-    printf 'testdb: TRACE: acquiring lock on %s/.server-init.lock\n' "$SPIRA_TESTDB_DATA" >&2
-    if exec {_init_fd}>>"${SPIRA_TESTDB_DATA}/.server-init.lock" 2>/dev/null; then
-        printf 'testdb: TRACE: lock file opened, calling flock\n' >&2
-        flock -x "$_init_fd" 2>/dev/null || true
-        printf 'testdb: TRACE: flock returned\n' >&2
-    else
-        printf 'testdb: TRACE: could not open lock file\n' >&2
-    fi
+    # FD INHERITANCE HAZARD (sp-kz1lr): Bash's exec {fd} pattern opens an fd that is
+    # inherited by subshells, causing flock to deadlock when the subshell inherits the open
+    # fd and the parent tries to release it. Fix: use flock(1) to run bd init without the
+    # problematic fd inheritance pattern. flock(1) acquires the lock and runs the command
+    # in its own process tree, preventing the parent's fd from being inherited.
+    #
+    # THE FOUR LOCK TRACES sp-6qufb ADDED HERE ARE GONE WITH THE CODE THEY WATCHED. They
+    # narrated the exec {_init_fd} block ("acquiring lock", "lock file opened", "flock
+    # returned", "could not open lock file"); that block no longer exists, so the traces
+    # would describe a shape the file does not have. The two that bracket bd init still
+    # describe live code and are kept.
+    local init_out init_rc
     printf 'testdb: TRACE: calling bd init --server with database=%s\n' "$TESTDB_NAME" >&2
-    init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
-        BD_NON_INTERACTIVE=1 \
-        "$TESTDB_SERVER_BD" init --non-interactive --prefix sp --skip-agents --skip-hooks \
-        --server --server-host 127.0.0.1 --server-port "${SPIRA_TESTDB_PORT:-3308}" \
-        --database "$TESTDB_NAME" --external -q 2>&1 )"
+    init_out="$(
+        flock -x "${SPIRA_TESTDB_DATA}/.server-init.lock" \
+            sh -c "cd '$TESTDB_DIR' && env -i PATH='$PATH' HOME='$HOME' TERM=dumb BD_NON_INTERACTIVE=1 '$TESTDB_SERVER_BD' init --non-interactive --prefix sp --skip-agents --skip-hooks --server --server-host 127.0.0.1 --server-port '${SPIRA_TESTDB_PORT:-3308}' --database '$TESTDB_NAME' --external -q" 2>&1
+    )"
     init_rc=$?
     printf 'testdb: TRACE: bd init returned with rc=%s\n' "$init_rc" >&2
-    [ -n "$_init_fd" ] && { exec {_init_fd}>&- 2>/dev/null; } || true
     [ $init_rc -eq 0 ] || {
         printf 'testdb: bd init (server) failed (rc=%s) for %s\n' \
             "$init_rc" "$TESTDB_NAME" >&2
