@@ -210,6 +210,7 @@ since this pass and short-circuit if the graph is settled:
 Then close the trigger bead:
 
     bd -C {{DB}} close {{BEAD_ID}} --reason-file - <<'REASON'
+    OUTCOME: delivered
     Groom pass complete. Examined N beads. Actions: <list>.
     REASON
 

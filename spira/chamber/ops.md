@@ -239,6 +239,7 @@ leave nothing on the bead, nothing comes back for it.
 When the fix has landed and the SOP is committed:
 
     bd -C {{DB}} close {{BEAD_ID}} --reason-file - <<'REASON'
+    OUTCOME: delivered
     <what failed, what fixed it, how it was verified, which SOP>
     REASON
 

@@ -222,6 +222,7 @@ not written in this session, the bead is reopened and the pass is re-run.
 After writing the closing log entry (Step 5), close the trigger bead:
 
     bd -C "{{DB}}" close "{{BEAD_ID}}" --reason-file - <<'REASON'
+    OUTCOME: delivered
     Maechen pass complete. Census: N classes ranked. Threshold met: yes|no. Beads cut: N.
     REASON
 
