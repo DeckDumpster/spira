@@ -249,14 +249,11 @@ jobs:
         # them in step: two gates that disagree about what 75 means is how a
         # harness fault comes to read as a branch failure.
         #
-        # THREE PATHS, IN ORDER OF PRECEDENCE.
-        #   push to main: no suites. The corpus ran on the queue PR that produced
-        #     this SHA; the cut job asserts that run exists before tagging.
+        # TWO PATHS. Pull requests use diff-selected suites; everything else
+        # runs the whole corpus (law-a-runner-takes-a-list).
         #   pull_request from spira/queue/*: diff-selected suites over the batch
-        #     diff (base..head), falling back to all suites only when a changed
-        #     file is genuinely unmapped source. Inert files (*.md etc.) never
-        #     trigger the fallback (select-globs.sh).
-        #   other pull_request: diff-selected suites, same algorithm.
+        #     diff (base..head). Inert files (*.md etc.) are filtered.
+        #   push / merge_group / workflow_dispatch: whole corpus.
         env:
           # The step above has already acquired the image under this closure's tag,
           # so testenv.sh finds it locally. Naming the registry here as well keeps
@@ -312,19 +309,13 @@ jobs:
             done
           ) &
           _vitals=$!
-          # Stops the loop on every exit path, including the `exit 0` for a push
-          # below. The in-flight `sleep` is reparented to init rather than killed:
-          # a background subshell in a non-interactive shell shares the STEP's
-          # process group, so `kill -- -$PGID` — the textbook way to take the
-          # child with it — would kill the runner's own step process. The stray
-          # sleep costs nothing and the runner reaps it with the other orphans.
+          # Stops the loop on every exit path. The in-flight `sleep` is reparented
+          # to init rather than killed: a background subshell in a non-interactive
+          # shell shares the STEP's process group, so `kill -- -$PGID` — the
+          # textbook way to take the child with it — would kill the runner's own
+          # step process. The stray sleep costs nothing and the runner reaps it.
           trap 'kill "$_vitals" 2>/dev/null || true' EXIT
 
-          if [ "${{ github.event_name }}" = "push" ]; then
-            printf 'gate: push to %s — no suites; corpus ran on the queue PR\n' \
-              "${{ github.ref_name }}"
-            exit 0
-          fi
           _b=0
           if [ "${{ github.event_name }}" = "pull_request" ] \
              && printf '%s' "${{ github.head_ref }}" | grep -qE '^spira/queue/'; then
@@ -336,9 +327,14 @@ jobs:
             printf 'gate: pull request — running the suites the diff selects\n'
             bash spira/testenv-batch.sh "${{ github.sha }}" || _b=$?
           else
-            # Full corpus for merge_group and workflow_dispatch.
-            printf 'gate: %s on %s — running the whole corpus\n' \
-              "${{ github.event_name }}" "${{ github.ref_name }}"
+            # Full corpus: push to main, merge_group, and workflow_dispatch.
+            if [ "${{ github.event_name }}" = "push" ]; then
+              printf 'gate: push to %s — running the whole corpus\n' \
+                "${{ github.ref_name }}"
+            else
+              printf 'gate: %s on %s — running the whole corpus\n' \
+                "${{ github.event_name }}" "${{ github.ref_name }}"
+            fi
             ls spira/test-*.sh | xargs -n1 basename \
               | bash spira/testenv-batch.sh --suites - "${{ github.sha }}" || _b=$?
           fi
@@ -493,30 +489,39 @@ jobs:
             printf 'persist-suite-times: push skipped (non-fatal)\n'
 
       - name: Assert gate check
-        # The SHA on main came from a fast-forward merge of a queue PR whose gate
-        # ran the full corpus. Assert both halves before cutting a tag: a queue PR
-        # whose head is this SHA, and a green gate check on it. A push that bypassed
-        # the queue has no such PR, and this step refuses.
-        # THE PR IS FOUND FROM THE COMMIT, NOT FROM THE CHECK RUN. A check run's
-        # pull_requests list is emptied once its PR is merged and the head branch
-        # deleted, which is always the case by the time main is pushed.
+        # Assert a green gate check on this SHA and that the suites job ran a
+        # non-empty list. A gate that ran zero suites would report green and cut a
+        # release from nothing; this refuses that (law-absence-needs-a-positive-control).
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
-          _pr="$(gh api \
-            "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/pulls" \
-            --jq '[.[] | select(.head.sha == "${{ github.sha }}" and (.head.ref | startswith("spira/queue/")))] | length' \
-            2>/dev/null || echo 0)"
           _n="$(gh api \
             "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/check-runs" \
             --jq '[.check_runs[] | select(.name == "gate" and .conclusion == "success")] | length' \
             2>/dev/null || echo 0)"
-          [ "${_pr:-0}" -gt 0 ] && [ "${_n:-0}" -gt 0 ] || {
-            printf 'cut: SHA %s has no green gate check from a queue PR\n' \
-              "${{ github.sha }}" >&2
+          [ "${_n:-0}" -gt 0 ] || {
+            printf 'cut: SHA %s has no green gate check\n' "${{ github.sha }}" >&2
             exit 1
           }
+          _art="$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/${{ github.run_id }}/artifacts" \
+            --jq '.artifacts[] | select(.name | startswith("batch-results-")) | .id' \
+            2>/dev/null | head -1 || true)"
+          [ -n "${_art:-}" ] || {
+            printf 'cut: run %s has no batch-results artifact — no suites ran\n' \
+              "${{ github.run_id }}" >&2
+            exit 1
+          }
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/${_art}/zip" > /tmp/batch-assert.zip
+          unzip -q /tmp/batch-assert.zip -d /tmp/batch-assert
+          _count="$(find /tmp/batch-assert -name '*.result' | wc -l)"
+          [ "${_count:-0}" -gt 0 ] || {
+            printf 'cut: run %s has zero .result files — suite list was empty\n' \
+              "${{ github.run_id }}" >&2
+            exit 1
+          }
+          printf 'cut: %s suite results found in this run\n' "$_count"
 
       - name: Cut release tag
         id: cut
