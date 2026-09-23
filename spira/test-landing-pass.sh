@@ -18,22 +18,20 @@ bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
-nonempty() { [ -n "$2" ] && ok "$1" || bad "$1" "expected non-empty, got empty"; }
 
 . "$HERE/testdb.sh"
 testdb_require test-landing-pass
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-export SPIRA_TESTDB_MODE=server
 testdb_up landing-pass || {
-    printf 'SKIP test-landing-pass: server testdb not available\n' >&2
+    printf 'SKIP test-landing-pass: no bd engine available\n' >&2
     exit 77
 }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 SH="$TMP/spira"; RUN="$TMP/run"
+mkdir -p "$SH" "$RUN/worktree" "$RUN/submitted" "$RUN/landstate"
 cp "$HERE"/*.sh "$SH/"
-mkdir -p "$RUN/worktree" "$RUN/submitted" "$RUN/landstate"
 
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 
@@ -45,12 +43,7 @@ stub incident.sh 'echo sp-fake; exit 0'
 stub gate.sh 'printf "gate: branch=%s repo=%s\n" "$1" "${2:-?}" >> "$SPIRA_RUN/gate-calls"
 echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'
 
-stub gh 'exit 1'
-
 B() { bd -C "$SPIRA_DB" "$@"; }
-status_of() { B show "$1" --json 2>/dev/null | python3 -c '
-import json, sys; d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-print(d[0].get("status") or "")'; }
 
 testdb_reset
 
@@ -59,8 +52,6 @@ testdb_reset
 #
 # Positive control: push-mode repo with a closed bead → gate.sh IS invoked.
 # Test: pr-mode repo with a closed bead → gate.sh is NOT invoked.
-#
-# Both repos share the same landing.sh run so the gate spy file is conclusive.
 # ──────────────────────────────────────────────────────────────────────────────
 PUSH_REMOTE="$TMP/push-remote.git"; PUSH_REPO="$TMP/push-repo"
 PR_REMOTE="$TMP/pr-remote.git";     PR_REPO="$TMP/pr-repo"
@@ -71,7 +62,6 @@ git -C "$PUSH_REPO" commit -q --allow-empty -m "base"
 git -C "$PUSH_REPO" remote add origin "$PUSH_REMOTE"
 git -C "$PUSH_REPO" push -q origin main
 git -C "$PUSH_REPO" fetch -q origin
-# Remote set-head so spira_landref can resolve origin/main
 git -C "$PUSH_REPO" remote set-head origin --auto >/dev/null 2>&1 || true
 git -C "$PUSH_REPO" checkout -q -b spira/sp-push1
 printf 'push-work\n' > "$PUSH_REPO/push.txt"
@@ -102,11 +92,14 @@ push-repo | $PUSH_REPO | push | origin/main | default | $SH/gate.sh
 pr-repo   | $PR_REPO   | pr   | origin/main | default | $SH/gate.sh
 EOF
 
+stub gh 'exit 1'
 rm -f "$RUN/gate-calls"
-SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-SPIRA_REPO="$PUSH_REPO" SPIRA_HOME_REPO="push-repo" SPIRA_ID_PREFIX=sp \
+
+SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$PUSH_REPO" \
+SPIRA_HOME_REPO="push-repo" SPIRA_ID_PREFIX=sp \
 SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
-    bash "$SH/landing.sh" 2>&1 >/dev/null || true
+    bash "$SH/landing.sh" 2>/dev/null >/dev/null || true
 
 want   "gate called for push-mode repo (positive control)" "push-repo" \
     "$(cat "$RUN/gate-calls" 2>/dev/null)"
@@ -131,28 +124,30 @@ git -C "$MASTER_REPO" commit -q -m "feat: sp-master1 — work"
 git -C "$MASTER_REPO" push -q origin spira/sp-master1
 git -C "$MASTER_REPO" checkout -q master
 
-# Stub ghq via SPIRA_GH: records pr create args, no existing PR for this branch.
-PR_ARGS="$TMP/pr-args"
-cat > "$SH/gh2" <<'GHEOF'
+# Stub ghq via SPIRA_GH: records pr create args; no existing PR for this branch.
+# Unquoted heredoc so $PR_ARGS expands to the real path at write time; \$@ etc. are
+# literal variable references in the stub script.
+PR_ARGS="$TMP/pr-args"; : > "$PR_ARGS"
+cat > "$SH/gh-master" <<GHEOF
 #!/usr/bin/env bash
-echo "$@" >> "$PR_ARGS"
-case "$1 $2" in
-    "pr view")  printf ''; exit 0 ;;
-    "pr list")  printf ''; exit 0 ;;
+printf '%s\n' "\$@" >> "$PR_ARGS"
+case "\$1 \$2" in
+    "pr view")   printf ''; exit 0 ;;
+    "pr list")   printf ''; exit 0 ;;
     "pr create") echo "42"; exit 0 ;;
     "pr merge")  exit 0 ;;
     *) exit 0 ;;
 esac
 GHEOF
-chmod +x "$SH/gh2"
+chmod +x "$SH/gh-master"
 
-: > "$PR_ARGS"
 (
     export SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-           SPIRA_GH="$SH/gh2" GH_TIMEOUT=30 SPIRA_ID_PREFIX=sp
+           SPIRA_GH="$SH/gh-master" GH_TIMEOUT=30 SPIRA_ID_PREFIX=sp
     . "$SH/lib.sh"
-    log()  { :; }
-    bdq()  { :; }
+    log()    { :; }
+    bdq()    { :; }
+    bdjson() { echo '[]'; }
     land_pr "$MASTER_REPO" spira/sp-master1 sp-master1 origin/master
 ) >/dev/null 2>&1 || true
 
@@ -161,10 +156,12 @@ want "land_pr --base master (not main)" "--base master" "$(cat "$PR_ARGS" 2>/dev
 # ──────────────────────────────────────────────────────────────────────────────
 # TEST 3: duplicate PR suppression
 #
-# Positive control: when NO existing open PR covers our commits, ghq pr create IS called.
-# Then: when an open PR ALREADY carries every commit on our branch, ghq pr create is NOT
-# called (seen failing first — the positive control below would fail if the dup guard were
-# absent and something else also suppressed pr create).
+# Positive control: NO existing open PR → ghq pr create IS called.
+# Dup suppression: an open PR already carries every commit on our branch →
+#   ghq pr create is NOT called.
+#
+# The positive control is what makes the suppression test meaningful: without it,
+# a bug that always suppressed pr create would also pass the suppression check.
 # ──────────────────────────────────────────────────────────────────────────────
 DUP_REMOTE="$TMP/dup-remote.git"; DUP_REPO="$TMP/dup-repo"
 
@@ -186,33 +183,34 @@ git -C "$DUP_REPO" push -q origin spira/sp-new
 git -C "$DUP_REPO" checkout -q -b spira/sp-older spira/sp-new
 printf 'more\n' >> "$DUP_REPO/work.txt"
 git -C "$DUP_REPO" add work.txt
-git -C "$DUP_REPO" commit -q -m "feat: sp-older — extra commit"
+git -C "$DUP_REPO" commit -q -m "feat: sp-older — extra"
 git -C "$DUP_REPO" push -q origin spira/sp-older
+# Fetch so origin/spira/sp-older exists locally for merge-base checks
+git -C "$DUP_REPO" fetch -q origin
 git -C "$DUP_REPO" checkout -q main
 
 CREATE_LOG="$TMP/pr-create"
 
 # POSITIVE CONTROL: no existing open PRs → ghq pr create IS called.
-cat > "$SH/gh3" <<GHEOF
+: > "$CREATE_LOG"
+cat > "$SH/gh-noDup" <<GHEOF
 #!/usr/bin/env bash
-echo "\$@" >> "$TMP/dup-pr-args"
 case "\$1 \$2" in
-    "pr view")  printf ''; exit 0 ;;
-    "pr list")  printf ''; exit 0 ;;
+    "pr view")   printf ''; exit 0 ;;
+    "pr list")   printf ''; exit 0 ;;
     "pr create") echo "created" >> "$CREATE_LOG"; echo "42"; exit 0 ;;
     "pr merge")  exit 0 ;;
     *) exit 0 ;;
 esac
 GHEOF
-chmod +x "$SH/gh3"
+chmod +x "$SH/gh-noDup"
 
-: > "$CREATE_LOG"
 (
     export SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-           SPIRA_GH="$SH/gh3" GH_TIMEOUT=30 SPIRA_ID_PREFIX=sp
+           SPIRA_GH="$SH/gh-noDup" GH_TIMEOUT=30 SPIRA_ID_PREFIX=sp
     . "$SH/lib.sh"
-    log()  { :; }
-    bdq()  { :; }
+    log()    { :; }
+    bdq()    { :; }
     bdjson() { echo '[]'; }
     land_pr "$DUP_REPO" spira/sp-new sp-new origin/main
 ) >/dev/null 2>&1 || true
@@ -220,28 +218,27 @@ is "positive control: pr create called when no dup exists" "created" \
     "$(cat "$CREATE_LOG" 2>/dev/null)"
 
 # DUP SUPPRESSION: sp-older is open and already carries sp-new's commit.
-cat > "$SH/gh3" <<GHEOF
+# The gh stub outputs the number-headRefName pair in the format land_pr's pipe expects:
+#   "41 spira/sp-older"  (what `gh pr list -q '.[] | "\(.number) \(.headRefName)"'` produces)
+: > "$CREATE_LOG"
+cat > "$SH/gh-hasDup" <<GHEOF
 #!/usr/bin/env bash
-echo "\$@" >> "$TMP/dup-pr-args"
 case "\$1 \$2" in
-    "pr view")  printf ''; exit 0 ;;
-    "pr list")
-        printf '[{"number":41,"headRefName":"spira/sp-older"}]\n'
-        exit 0 ;;
+    "pr view")   printf ''; exit 0 ;;
+    "pr list")   printf '41 spira/sp-older\n'; exit 0 ;;
     "pr create") echo "created" >> "$CREATE_LOG"; echo "42"; exit 0 ;;
     "pr merge")  exit 0 ;;
     *) exit 0 ;;
 esac
 GHEOF
-chmod +x "$SH/gh3"
+chmod +x "$SH/gh-hasDup"
 
-: > "$CREATE_LOG"
 (
     export SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-           SPIRA_GH="$SH/gh3" GH_TIMEOUT=30 SPIRA_ID_PREFIX=sp
+           SPIRA_GH="$SH/gh-hasDup" GH_TIMEOUT=30 SPIRA_ID_PREFIX=sp
     . "$SH/lib.sh"
-    log()  { :; }
-    bdq()  { :; }
+    log()    { :; }
+    bdq()    { :; }
     bdjson() { echo '[]'; }
     land_pr "$DUP_REPO" spira/sp-new sp-new origin/main
 ) >/dev/null 2>&1 || true
