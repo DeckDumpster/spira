@@ -596,3 +596,22 @@ jobs:
       contents: write
     with:
       tag: ${{ needs.cut.outputs.tag }}
+
+  # ---------------------------------------------------------------------------
+  # Retract the tag when publish fails. A tag with no release is invisible
+  # absence to a consumer; it must not outlive a failed publish.
+  # ---------------------------------------------------------------------------
+  retract-tag:
+    needs: [cut, publish]
+    if: always() && needs.cut.outputs.tag != '' && (needs.publish.result == 'failure' || needs.publish.result == 'cancelled')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Delete orphan tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ needs.cut.outputs.tag }}"
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag"
+          printf 'retract-tag: deleted orphan tag %s\n' "$tag"
