@@ -647,7 +647,7 @@ spira_conf_defaults() {
     # predicate, the brief handed to a spike aeon, the confinement check the landing worker
     # runs, and whatever files the bead. A literal in four files is how four programs come to
     # disagree, and the half nobody notices is wrong is the one that simply matches less.
-    : "${SPIRA_SPIKE_LABEL:=spike}"
+    : "${SPIRA_SPIKE_LABEL:=partition:spike}"
     # Where a spike writes its document, relative to the root of whatever repository its bead
     # names. A spike's deliverable is a document, so it needs somewhere to put one that is
     # true of a repository this harness has never seen; a colleague who keeps notes elsewhere
@@ -662,7 +662,7 @@ spira_conf_defaults() {
     # THE GROOMER PARTITION, mirroring the spike partition: read by groomer.fayth's predicate
     # and by any scanner that queries for groom trigger beads. One definition keeps the label
     # name consistent across fayth, scanner and anything else that files trigger beads.
-    : "${SPIRA_GROOMER_LABEL:=groom}"
+    : "${SPIRA_GROOMER_LABEL:=partition:groom}"
     # SPIRA_GROOM_THRESHOLD — combined score (open bead count + landings since last pass)
     # below which the trigger short-circuits without filing. When the graph is settled the
     # pass would cost a context to report "Actions: none".
@@ -681,7 +681,7 @@ spira_conf_defaults() {
     # SPIRA_MAECHEN_LABEL — the sweep label that wakes Maechen. Read by maechen.fayth's
     # predicate and by whatever trigger files sweep beads (sp-emzov). One definition keeps
     # them consistent.
-    : "${SPIRA_MAECHEN_LABEL:=maechen-sweep}"
+    : "${SPIRA_MAECHEN_LABEL:=partition:maechen-sweep}"
     #
     # SPIRA_MAECHEN_REMEDY_LABEL — the label applied to every bead Maechen cuts. The
     # admissibility check (sp-ymwz5) and the flatline measurement query by this label.
@@ -734,7 +734,7 @@ spira_conf_defaults() {
     # watchtower, and any other reader in agreement on which label means "queue event for the
     # czar" (law-schema-over-code). The labels are mutually exclusive by design: a bead that
     # carries both would be claimable by both ops and czar, which is a race condition.
-    : "${SPIRA_CZAR_LABEL:=czar-trigger}"
+    : "${SPIRA_CZAR_LABEL:=partition:czar-trigger}"
     # OUTCOME WINDOW: minutes after a czar-trigger bead closes before checking if the
     # condition that fired it has cleared. A new bead for the same class within this
     # window means the czar's action did not hold (law-measure-the-outcome).

@@ -271,7 +271,7 @@ cmd_send() {
         fi
         dec_bead="$(printf '%s\n' "$body" \
             | "${SPIRA_BD:-bd}" -C "$SPIRA_DB" create "$subject" \
-                -l "$_ask_label,overseer" \
+                -l "$_ask_label,overseer,${SPIRA_CZAR_LABEL:-partition:czar-trigger}" \
                 --type decision \
                 --body-file - \
                 --silent 2>/dev/null)" || dec_bead=""
