@@ -43,7 +43,7 @@ SYSTEMD_DIR="$FIXTURE/systemd"
 COCKPIT_DIR="$FIXTURE/cockpit"
 mkdir -p "$SPIRA_DIR" "$SYSTEMD_DIR" "$COCKPIT_DIR"
 
-for f in "$REAL_REPO/systemd/"*.service "$REAL_REPO/systemd/"*.timer; do
+for f in "$REAL_REPO/systemd/"*.service "$REAL_REPO/systemd/"*.timer "$REAL_REPO/systemd/"*.yaml; do
     [ -e "$f" ] || continue
     ln -s "$f" "$SYSTEMD_DIR/$(basename "$f")" 2>/dev/null || true
 done
@@ -191,6 +191,8 @@ case "$*" in
 esac
 EOF
 chmod +x "$MOCK_BIN/bd"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/spira-supervise"
+chmod +x "$MOCK_BIN/spira-supervise"
 
 # Fake git repo for SPIRA_REPO.
 FAKE_ORIGIN="$TMP/origin.git"
@@ -244,6 +246,7 @@ run_install() {
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_INSTALL_CONFLICT_CONSIDERED=1 \
         "SPIRA_BD=$MOCK_BIN/bd" \
+        "SPIRA_SUPERVISE_BIN=$MOCK_BIN/spira-supervise" \
         "${extra_env[@]+"${extra_env[@]}"}" \
         bash "$FIXTURE/install.sh" \
             --skip-build \
