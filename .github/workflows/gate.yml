@@ -672,7 +672,7 @@ jobs:
   # GitHub's anti-recursion rule suppresses workflow events created by the
   # workflow's own token. Every spira-release-* tag pushed by the cut job
   # above has produced no acceptance run. This job dispatches acceptance.yml
-  # directly under a token that can start workflows (WORKFLOW_PAT), passing
+  # directly under a token that can start workflows, passing
   # both tag and prev-tag so phases B–D (upgrade, rollback, aged-install) run.
   # ---------------------------------------------------------------------------
   accept:
@@ -680,9 +680,20 @@ jobs:
     if: needs.cut.outputs.tag != ''
     runs-on: ubuntu-latest
     steps:
+      # THE TOKEN IS MINTED FROM THE SPIRA GITHUB APP, per run, and expires within the hour.
+      # A token the App creates is not GITHUB_TOKEN, so the dispatch it makes does start a
+      # run. The App already holds actions:write on this repository. This replaced a
+      # WORKFLOW_PAT secret that was never created: the job's first run (2026-09-23, main
+      # gate 35923499974) dispatched with an empty GH_TOKEN and acceptance never started.
+      - name: Mint a dispatch token from the Spira App
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.SPIRA_APP_ID }}
+          private-key: ${{ secrets.SPIRA_APP_KEY }}
       - name: Dispatch acceptance
         env:
-          GH_TOKEN: ${{ secrets.WORKFLOW_PAT }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -uo pipefail
           _tag="${{ needs.cut.outputs.tag }}"

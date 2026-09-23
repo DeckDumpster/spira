@@ -415,7 +415,14 @@ want "accept dispatches acceptance.yml"        "acceptance.yml"  "$_accept_block
 want "accept passes the tag input"             'f "tag='         "$_accept_block"
 want "accept passes the prev-tag input"        'f "prev-tag='    "$_accept_block"
 want "accept needs publish (runs after it)"    "publish"         "$_accept_block"
-want "accept uses a token that can start runs" "WORKFLOW_PAT"    "$_accept_block"
+# The dispatch token is minted from the Spira App. A named secret is not a working one:
+# WORKFLOW_PAT was asserted here and never existed, so the first real dispatch ran with an
+# empty GH_TOKEN. Both App secrets were set on 2026-09-23 (sp-qkudm).
+want   "accept mints a token from the App"       "create-github-app-token"             "$_accept_block"
+want   "accept passes the App id"                "secrets.SPIRA_APP_ID"                "$_accept_block"
+want   "accept passes the App key"               "secrets.SPIRA_APP_KEY"               "$_accept_block"
+want   "accept dispatches with the minted token" "steps.app-token.outputs.token"       "$_accept_block"
+nowant "accept no longer names WORKFLOW_PAT"     "WORKFLOW_PAT"                        "$_accept_block"
 # The cut job must output prev-tag so the accept job can read it.
 _cut_out_block="$(awk '/^  cut:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML" \
   | awk '/^    outputs:/{g=1;next} g&&/^    [a-z_-]+:/{exit} g{print}')"
