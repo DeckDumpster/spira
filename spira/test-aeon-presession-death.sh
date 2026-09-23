@@ -142,6 +142,27 @@ is   "two pre-session entries in ledger (infinite loop broken)" "2" "$_count"
 
 # ======================================================================================
 echo
+echo "CASE 3: third consecutive sub-10s death — rapid-recur detector fires:"
+# ======================================================================================
+# The stray branch is still in place. After two runs the detector has not yet fired;
+# a third pushes the count to SPIRA_RAPID_RECUR_THRESHOLD (default 3) and triggers it.
+# Check absence first — proves the check is not over-eager — then fire the third run.
+_note_before3="$(bd -C "$SPIRA_DB" show sp-pd-1 --json 2>/dev/null \
+    | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("notes","") if d else "")' 2>/dev/null)"
+nowant "no rapid-recur note after only 2 runs" "RAPID" "$_note_before3"
+
+_rc3b="$(run_aeon)"
+_line3b="$(done_lines_for sp-pd-1 | tail -1)"
+_count3="$(done_lines_for sp-pd-1 | grep -c 'status=pre-session' 2>/dev/null || echo 0)"
+_note3b="$(bd -C "$SPIRA_DB" show sp-pd-1 --json 2>/dev/null \
+    | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("notes","") if d else "")' 2>/dev/null)"
+
+want "third pre-session entry in ledger"           "status=pre-session" "$_line3b"
+is   "three pre-session entries total"             "3"                  "$_count3"
+want "rapid-recur note on bead after 3 short runs" "RAPID"              "$_note3b"
+
+# ======================================================================================
+echo
 echo "POSITIVE CONTROL — stray branch removed: session runs, no pre-session death:"
 # ======================================================================================
 git -C "$REPO" branch -D "origin/main" 2>/dev/null || true
