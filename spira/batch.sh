@@ -349,6 +349,33 @@ main() {
 
     [ "$count" -ge "${SPIRA_QUEUE_BATCH_MAX:-8}" ] && triggered=1
     [ "$age"   -ge "${SPIRA_QUEUE_BATCH_WAIT:-1800}" ] && triggered=1
+
+    # THIRD TRIGGER: CI IS IDLE, SO WAITING BUYS NOTHING. The wait exists to let certified
+    # branches accumulate into one CI run instead of spending a run each. That trade is only
+    # worth making while a run is in flight — with nothing in CI, a branch that waits its
+    # full SPIRA_QUEUE_BATCH_WAIT is a branch held back from an idle machine for no gain.
+    # The operator, verbatim (2026-09-23): "if there's NOTHING in CI, then we may as well
+    # just send an immediate batch."
+    #
+    # ASKED LAST, AND ONLY WHEN IT CAN CHANGE THE ANSWER. This is a network round trip and
+    # this function runs on every landing pass, so it is reached only when neither cheap
+    # trigger fired and there is certified work waiting. When the other two already said yes,
+    # the answer cannot matter.
+    #
+    # ? IS NOT ZERO. forge.sh runs-active prints ? when it cannot tell, and ? must never cut
+    # a batch: reading a failed API call as "CI is idle" would fire this trigger on every
+    # pass exactly when the forge is unreachable (law-absence-needs-a-positive-control).
+    if [ -z "$triggered" ] && [ "${SPIRA_QUEUE_BATCH_IDLE_CUT:-1}" = 1 ] && [ "$count" -gt 0 ]; then
+        local _active
+        _active="$("${SPIRA_FORGE:-$HERE/forge.sh}" runs-active "$repo" 2>/dev/null)" || _active="?"
+        case "${_active:-?}" in
+            0) triggered=1
+               printf 'batch %s: CI idle (0 runs queued or in progress) — cutting %d certified branch(es) without waiting\n' \
+                   "$name" "$count" ;;
+            ''|*[!0-9]*) : ;;   # ? or anything unparseable: assume busy, wait it out
+        esac
+    fi
+
     [ -n "$triggered" ] || return 0
 
     # Collect IDs for a bulk priority query.
