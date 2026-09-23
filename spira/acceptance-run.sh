@@ -52,13 +52,99 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # ---------------------------------------------------------------------------
 pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
+
+_json_escape() {
+    local _s="${1:-}"
+    _s="${_s//\\/\\\\}"
+    _s="${_s//\"/\\\"}"
+    _s="${_s//$'\n'/\\n}"
+    _s="${_s//$'\r'/\\r}"
+    printf '%s' "$_s"
+}
+
+ok() {
+    pass=$((pass+1))
+    printf '  ok    %s\n' "$1"
+    printf '{"phase":"%s","check":"%s","verdict":"ok","ts":"%s","elapsed":%d}\n' \
+        "${_cur_phase:-?}" "$(_json_escape "$1")" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "$(($(date +%s)-${_phase_start_ts:-0}))" >> "${_jsonl_file:-/dev/null}"
+}
+
+bad() {
+    fail=$((fail+1))
+    printf '  FAIL  %s: %s\n' "$1" "${2:-}"
+    printf '{"phase":"%s","check":"%s","verdict":"fail","reason":"%s","ts":"%s","elapsed":%d}\n' \
+        "${_cur_phase:-?}" "$(_json_escape "$1")" "$(_json_escape "${2:-}")" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "$(($(date +%s)-${_phase_start_ts:-0}))" >> "${_jsonl_file:-/dev/null}"
+    if [ "${_phase_snapped:-0}" = 0 ]; then
+        _phase_snapped=1
+        _take_snapshot "first-fail-${_cur_phase:-unknown}" || true
+    fi
+}
+
 is0()     { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
 not0()    { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit"; }
 want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 is_same() { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+
+_take_snapshot() {
+    local _label="${1:-snap}"
+    _snap_count=$((_snap_count+1))
+    [ -n "${_forensics_dir:-}" ] || return 0
+    local _sdir
+    _sdir="$_forensics_dir/$(printf '%02d' "$_snap_count")-${_label}"
+    mkdir -p "$_sdir" 2>/dev/null || return 0
+    systemctl --user list-timers --all          > "$_sdir/timers.txt"      2>&1 || true
+    systemctl --user list-units 'spira-*' --all > "$_sdir/units.txt"       2>&1 || true
+    {
+        systemctl --user list-units 'spira-*' --all --no-legend 2>/dev/null \
+            | awk '{print $1}' \
+            | while read -r _u; do
+                printf '\n=== %s ===\n' "$_u"
+                systemctl --user status "$_u" --no-pager -l 2>&1 || true
+            done
+    } > "$_sdir/unit-status.txt" 2>/dev/null || true
+    journalctl --user --since="${_run_start_wall:-today}" --no-pager -l \
+        > "$_sdir/journal-full.txt" 2>&1 || true
+    mkdir -p "$_sdir/journal"
+    systemctl --user list-units 'spira-*' --all --no-legend 2>/dev/null \
+        | awk '{print $1}' \
+        | while read -r _u; do
+            journalctl --user -u "$_u" --since="${_run_start_wall:-today}" --no-pager -l \
+                > "$_sdir/journal/${_u}.txt" 2>&1 || true
+        done
+    command -v bd >/dev/null 2>&1 && {
+        bd -C "$bd_db" list --all --json            > "$_sdir/bd-list.json"    2>&1 || true
+        bd -C "$bd_db" ready --json                 > "$_sdir/bd-ready.json"   2>&1 || true
+        [ -n "${_bead_id:-}" ] && \
+            bd -C "$bd_db" show "$_bead_id" --json  > "$_sdir/bd-probe.json"   2>&1 || true
+    }
+    local _spira_run="${SPIRA_RUN:-${HOME}/.local/share/spira/run}"
+    if [ -d "$_spira_run" ]; then
+        ls -laR "$_spira_run"                       > "$_sdir/run-listing.txt" 2>&1 || true
+        find "$_spira_run" -name '*.log' 2>/dev/null \
+            | while read -r _lf; do cp "$_lf" "$_sdir/" 2>/dev/null || true; done
+        cp "$_spira_run/landstate" "$_sdir/"                                    2>/dev/null || true
+        cp "$_spira_run/queue"     "$_sdir/"                                    2>/dev/null || true
+    fi
+    cp "${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf" \
+        "$_sdir/spira.conf" 2>/dev/null || true
+    cp "${XDG_CONFIG_HOME:-$HOME/.config}/spira/repo-map" \
+        "$_sdir/repo-map"   2>/dev/null || true
+    bash "$HERE/ready.sh"  > "$_sdir/ready.txt"  2>&1 || true
+    bash "$HERE/doctor.sh" > "$_sdir/doctor.txt" 2>&1 || true
+    git -C "${scratch_repo:-.}" rev-parse --git-dir >/dev/null 2>&1 && {
+        git -C "$scratch_repo" log --all --oneline  > "$_sdir/scratch-log.txt"  2>&1 || true
+        git -C "$scratch_repo" show-ref             > "$_sdir/scratch-refs.txt" 2>&1 || true
+    }
+    ps -ef --forest > "$_sdir/ps.txt"   2>&1 || true
+    free -m         > "$_sdir/free.txt" 2>&1 || true
+    df -h           > "$_sdir/df.txt"   2>&1 || true
+    printf 'snapshot: %s\n' "$_sdir"
+}
 
 # ---------------------------------------------------------------------------
 # ARG PARSING
@@ -112,7 +198,19 @@ _acceptance_cleanup() {
     rm -rf "$TMP"
 }
 
+_forensics_dir="${SPIRA_ACCEPTANCE_FORENSICS:-$TMP/forensics}"
+_jsonl_file="$_forensics_dir/checks.jsonl"
+_snap_count=0
+_cur_phase="prerequisites"
+_phase_snapped=0
+_run_start_ts="$(date +%s)"
+_run_start_wall="$(date -u '+%Y-%m-%d %H:%M:%S')"
+_phase_start_ts="$_run_start_ts"
+mkdir -p "$_forensics_dir"
+: > "$_jsonl_file"
+
 printf 'acceptance-run.sh  tag=%s\n' "$tag"
+printf 'forensics:         %s\n' "$_forensics_dir"
 
 # ===========================================================================
 echo
@@ -161,6 +259,7 @@ fi
 }
 
 # ===========================================================================
+_cur_phase="phase-A"; _phase_snapped=0; _phase_start_ts="$(date +%s)"
 echo
 echo "phase A — fresh install from $tag"
 # ===========================================================================
@@ -341,6 +440,7 @@ _units_after="$(systemctl --user list-unit-files --no-legend 2>/dev/null \
     || bad "phase A: no spira-* units remain after uninstall" "$_units_after"
 
 # ===========================================================================
+_cur_phase="phase-B"; _phase_snapped=0; _phase_start_ts="$(date +%s)"
 echo
 echo "phase B — upgrade: install $prev_tag, deploy to $tag, verify no rollback"
 # ===========================================================================
@@ -384,6 +484,7 @@ else
         want "phase B: SPIRA_PROD updated to releases path" "${_releases_dir}" "$_spira_prod"
 
         # ===========================================================================
+        _cur_phase="phase-C"; _phase_snapped=0; _phase_start_ts="$(date +%s)"
         echo
         echo "phase C — rollback: deploy $prev_tag, verify unit set restored"
         # ===========================================================================
@@ -414,6 +515,7 @@ else
 fi
 
 # ===========================================================================
+_cur_phase="phase-D"; _phase_snapped=0; _phase_start_ts="$(date +%s)"
 echo
 echo "phase D — aged-install upgrade: $prev_tag with real state → $tag"
 # ===========================================================================
@@ -636,6 +738,7 @@ else
 fi
 
 # ===========================================================================
+_take_snapshot "end-of-run" || true
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 
@@ -671,4 +774,5 @@ if [ "$do_file_defects" -eq 1 ] && [ "$fail" -gt 0 ]; then
         >/dev/null 2>&1 || true
 fi
 
+[ -n "${_forensics_dir:-}" ] && printf 'forensics: %s\n' "$_forensics_dir"
 [ "$fail" -eq 0 ]

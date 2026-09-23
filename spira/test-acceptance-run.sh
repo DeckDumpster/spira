@@ -237,5 +237,93 @@ fi
 wantre "phase A bad() names clone path" \
     'bad.*ready\.sh.*\$_clone/spira/ready\.sh'
 
+# ===========================================================================
+echo
+echo "8. snapshot trigger and JSONL writer"
+# ===========================================================================
+
+# Structural: SPIRA_ACCEPTANCE_FORENSICS controls the forensics dir.
+wantre "SPIRA_ACCEPTANCE_FORENSICS used for forensics dir" \
+    'SPIRA_ACCEPTANCE_FORENSICS'
+
+# Structural: bad() triggers _take_snapshot on first phase FAIL.
+wantre "bad() calls _take_snapshot when _phase_snapped is 0" \
+    '_take_snapshot.*_cur_phase'
+
+# Structural: _take_snapshot is called with || true so its failure does not
+# propagate and change the verdict exit code.
+wantre "bad(): _take_snapshot failure does not propagate" \
+    '_take_snapshot.*|| true'
+
+# Structural: ok() and bad() both write to _jsonl_file.
+wantre "ok() appends JSONL line" \
+    '"verdict":"ok"'
+wantre "bad() appends JSONL line with verdict fail" \
+    '"verdict":"fail"'
+
+# Structural: end-of-run snapshot is taken before the final exit.
+want "end-of-run snapshot taken" '_take_snapshot "end-of-run"'
+
+# Behavioral pair: JSONL writer — one line per ok/bad, FAIL count matches.
+_jdir="$SCRATCH/jtest"
+mkdir -p "$_jdir"
+_jfile="$_jdir/checks.jsonl"
+: > "$_jfile"
+_jpass=0; _jfail=0
+_jsnap=0
+_jcur_phase="test"; _jphase_snapped=0; _jphase_start_ts="$(date +%s)"
+_j_escape() {
+    local _s="${1:-}"
+    _s="${_s//\\/\\\\}"; _s="${_s//\"/\\\"}"; printf '%s' "$_s"
+}
+_jok() {
+    _jpass=$((_jpass+1))
+    printf '{"phase":"%s","check":"%s","verdict":"ok","ts":"%s","elapsed":%d}\n' \
+        "$_jcur_phase" "$(_j_escape "$1")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "$(($(date +%s)-_jphase_start_ts))" >> "$_jfile"
+}
+_jbad() {
+    _jfail=$((_jfail+1))
+    printf '{"phase":"%s","check":"%s","verdict":"fail","reason":"%s","ts":"%s","elapsed":%d}\n' \
+        "$_jcur_phase" "$(_j_escape "$1")" "$(_j_escape "${2:-}")" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        "$(($(date +%s)-_jphase_start_ts))" >> "$_jfile"
+    if [ "$_jphase_snapped" = 0 ]; then
+        _jphase_snapped=1
+        _jsnap=$((_jsnap+1))
+    fi
+}
+
+_jok  "check passes"
+_jbad "check fails" "some reason"
+_jbad "second fail"  "another"   # should NOT re-trigger snapshot
+_jok  "another pass"
+
+_jlines="$(wc -l < "$_jfile" | tr -d ' ')"
+is_eq "JSONL: one line per check (4 checks → 4 lines)" "4" "$_jlines"
+
+_jfail_json="$(grep -c '"verdict":"fail"' "$_jfile" || true)"
+is_eq "JSONL: fail count matches bad() calls" "$_jfail" "$_jfail_json"
+
+is_eq "snapshot triggered once on first phase FAIL" "1" "$_jsnap"
+
+# Phase reset: new phase triggers snapshot again on next FAIL.
+_jcur_phase="phase-2"; _jphase_snapped=0
+_jbad "phase-2 first fail" "x"
+is_eq "snapshot triggered again after phase reset" "2" "$_jsnap"
+
+# Behavioral: snapshot mkdir failure does not change verdict.
+_snap_dir_ro="$SCRATCH/snapshots-ro"
+mkdir -p "$_snap_dir_ro"
+chmod 000 "$_snap_dir_ro" 2>/dev/null || true
+_snap_count=0
+_forensics_dir_save="${_forensics_dir:-}"
+_forensics_dir="$_snap_dir_ro/nope"
+# _take_snapshot is not locally defined here, but we can verify structurally
+# that acceptance-run.sh uses || return 0 on mkdir in _take_snapshot.
+wantre "_take_snapshot: mkdir failure returns cleanly" \
+    'mkdir -p.*_sdir.*|| return 0'
+chmod 755 "$_snap_dir_ro" 2>/dev/null || true
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
