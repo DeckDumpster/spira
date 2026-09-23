@@ -95,13 +95,14 @@ DOLT="$(command -v dolt 2>/dev/null || true)"
 render() {
     python3 - "$1" "$SPIRA_HOME" "$SPIRA_REPO" "$SPIRA_RUN" "$SPIRA_DB" "$SPIRA_COCKPIT" \
                    "$SPIRA_DOLT_DATA" "$SPIRA_TESTDB_DATA" "$DOLT" "$SPIRA_PROD" \
-                   "$SPIRA_INSTANCE" "$SPIRA_TESTDB_PORT" "${2:-}" <<'PY'
+                   "$SPIRA_INSTANCE" "$SPIRA_TESTDB_PORT" "$SPIRA_SUPERVISE_BIN" \
+                   "$SPIRA_SNAP_STALE_S" "${2:-}" <<'PY'
 import os, re, sys
 keys = ["SPIRA_HOME", "SPIRA_REPO", "SPIRA_RUN", "SPIRA_DB", "SPIRA_COCKPIT",
         "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "DOLT", "SPIRA_PROD", "SPIRA_INSTANCE",
-        "SPIRA_TESTDB_PORT"]
-m = dict(zip(keys, sys.argv[2:13]))
-watcher_name = sys.argv[13] if len(sys.argv) > 13 else ""
+        "SPIRA_TESTDB_PORT", "SPIRA_SUPERVISE_BIN", "SPIRA_SNAP_STALE_S"]
+m = dict(zip(keys, sys.argv[2:15]))
+watcher_name = sys.argv[15] if len(sys.argv) > 15 else ""
 # FALLBACK: an empty SPIRA_PROD is the documented signal that no checkout split
 # is wanted — everything runs from the development checkout (SPIRA_HOME). An
 # empty string substituted into @SPIRA_PROD@ yields ExecStart=/sentinel.sh,
@@ -467,11 +468,18 @@ for u in "${UNITS[@]}"; do
         _MASKED[$inst]=1
         continue
     fi
+    _cs_check="${inst%"-${SPIRA_INSTANCE}.service"}"; _cs_check="${_cs_check%"-${SPIRA_INSTANCE}.timer"}"
+    _cs_check="${_cs_check%.service}"; _cs_check="${_cs_check%.timer}"
+    _unit_suspended=0
+    [ -x "$SPIRA_HOME/ctrl.sh" ] && \
+        "$SPIRA_HOME/ctrl.sh" check "$_cs_check" >/dev/null 2>&1 && _unit_suspended=1
     # REFUSE AN UNEXECUTABLE ExecStart TARGET before writing a single byte. The failure mode
     # this prevents is 203/EXEC: systemd accepts the unit, a timer reports 'active', and the
     # service never runs. Every path is in hand at render time; an unresolved @KEY@ raises an
     # error above, so what reaches this check is a fully-substituted path.
     # System binaries (/usr/*, /bin/*, /sbin/*) are the OS's responsibility, not ours.
+    # Suspended units are exempt: their dependency may be absent in the current environment.
+    if [ "$_unit_suspended" = 0 ]; then
     while IFS= read -r line; do
         case "$line" in
             ExecStart=*|ExecStartPre=*)
@@ -485,6 +493,7 @@ for u in "${UNITS[@]}"; do
                 ;;
         esac
     done <<< "$unit_text"
+    fi
     # WRITE ONLY WHEN THE CONTENT DIFFERS. An unconditional write triggers daemon-reload
     # and restarts units on every install, even when nothing changed — including reloading
     # unit state for running aeons that were not touched.

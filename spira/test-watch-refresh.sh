@@ -483,7 +483,8 @@ printf '%s\n' "\$*" >> "$TMP/install.log"
 exit 0
 EOF
 printf '#!/bin/bash\nexit 0\n' > "$STUB/loginctl"
-chmod +x "$STUB/systemctl" "$STUB/loginctl"
+printf '#!/bin/bash\nexit 0\n' > "$STUB/spira-supervise"
+chmod +x "$STUB/systemctl" "$STUB/loginctl" "$STUB/spira-supervise"
 IHOME="$TMP/ihome"; mkdir -p "$IHOME"
 # A separate PROD root, distinct from CLONE (SPIRA_HOME) and RUN (SPIRA_RUN), so the
 # assertion can verify that ExecStart resolves from SPIRA_PROD, not from a hardcoded path
@@ -502,7 +503,7 @@ unset _s
 printf 'SPIRA_COCKPIT = %s\nSPIRA_RUN = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s\nSPIRA_PROD = %s\n' \
     "$COCKPIT" "$RUN" "$MAN" "$STUB" "$PROD" > "$TMP/install.conf"
 env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" \
-    SPIRA_INSTALL_FORCE=1 \
+    SPIRA_INSTALL_FORCE=1 "SPIRA_SUPERVISE_BIN=$STUB/spira-supervise" \
     bash "$CLONE/systemd/install.sh" > "$TMP/install.out" 2>&1
 ilog="$(cat "$TMP/install.log")"
 has "the stub recorded an install"      "$ilog" "daemon-reload"

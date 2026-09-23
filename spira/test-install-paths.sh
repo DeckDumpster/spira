@@ -56,6 +56,8 @@ CONF_DIR="$TMP/conf"
 SPIRA_RUN_DIR="$TMP/run"
 DEST="$HOME/.config/systemd/user"
 mkdir -p "$CONF_DIR" "$SPIRA_RUN_DIR" "$DEST"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/spira-supervise"
+chmod +x "$TMP/spira-supervise"
 
 # world.halted causes install.sh to enable units but not start them and to skip
 # the end-state check (which needs bd + a real database, absent here).
@@ -67,6 +69,7 @@ inst_paths() {
     SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
+    SPIRA_SUPERVISE_BIN="$TMP/spira-supervise" \
     "$@" \
     bash "$HERE/../systemd/install.sh" test 2>&1
 }

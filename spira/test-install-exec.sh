@@ -72,6 +72,8 @@ MOCK
 chmod +x "$MOCK_BIN/systemctl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/loginctl"
 chmod +x "$MOCK_BIN/loginctl"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/spira-supervise"
+chmod +x "$MOCK_BIN/spira-supervise"
 
 # inst [args] — run install.sh in a controlled environment.
 # TEST_PROD overrides SPIRA_PROD for the scenario under test; default is $HERE (all
@@ -90,6 +92,7 @@ inst() {
         "SPIRA_PROD=${TEST_PROD:-$HERE}" \
         "SPIRA_REPO=$REAL_REPO" \
         "SPIRA_COCKPIT=$REAL_COCKPIT" \
+        "SPIRA_SUPERVISE_BIN=$MOCK_BIN/spira-supervise" \
         "MOCK_LOG=$MOCK_LOG" \
         SPIRA_INSTALL_FORCE=1 \
         bash "$FIXTURE/systemd/install.sh" "$@" 2>&1

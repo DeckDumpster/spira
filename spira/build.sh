@@ -42,6 +42,7 @@ LOOM_DIR="$SPIRA_REPO/loom"
 PANEL_DIR="$SPIRA_COCKPIT/panel"
 BROKER_DIR="$SPIRA_REPO/broker"
 CZAR_PASS_DIR="$SPIRA_REPO/czar-pass"
+SUPERVISE_DIR="$SPIRA_REPO/supervise"
 
 if [ "$skip_build" = 1 ]; then
     printf 'build.sh: --skip-build — prebuilt binaries expected at:\n'
@@ -49,6 +50,7 @@ if [ "$skip_build" = 1 ]; then
     printf '  panel:     %s\n' "$SPIRA_PANEL"
     printf '  broker:    %s\n' "$SPIRA_BROKER_BIN"
     printf '  czar-pass: %s\n' "$SPIRA_CZAR_PASS_BIN"
+    printf '  supervise: %s\n' "$SPIRA_SUPERVISE_BIN"
     exit 0
 fi
 
@@ -56,8 +58,8 @@ fi
 # of the harness keeps running. Name exactly what will not work so the operator knows why the
 # attention pane is empty and how to fix it.
 if ! command -v cargo >/dev/null 2>&1; then
-    printf 'build.sh: cargo not on PATH — loom, the cockpit panel and the broker will not be built\n' >&2
-    printf 'build.sh:   features lost: the Loom read endpoint, the attention panel, and the forge-write broker\n' >&2
+    printf 'build.sh: cargo not on PATH — loom, the cockpit panel, the broker and the supervisor will not be built\n' >&2
+    printf 'build.sh:   features lost: the Loom read endpoint, the attention panel, the forge-write broker, and the cockpit watchdog\n' >&2
     printf 'build.sh:   to fix: install Rust (https://rustup.rs/) and re-run build.sh\n' >&2
     printf 'build.sh:   PATH is %s\n' "$PATH" >&2
     printf 'build.sh: the harness loop continues without them\n' >&2
@@ -112,6 +114,16 @@ printf 'build.sh: building czar-pass (release)\n'
 ( cd "$CZAR_PASS_DIR" && cargo build --release ) || {
     printf 'build.sh: czar-pass build failed\n' >&2; exit 1; }
 printf 'build.sh: czar-pass built at %s\n' "$SPIRA_CZAR_PASS_BIN"
+
+# SUPERVISOR — the cockpit watchdog supervisor.
+if [ ! -d "$SUPERVISE_DIR" ]; then
+    printf 'build.sh: supervise source directory not found at %s\n' "$SUPERVISE_DIR" >&2
+    exit 1
+fi
+printf 'build.sh: building spira-supervise (release)\n'
+( cd "$SUPERVISE_DIR" && cargo build --release ) || {
+    printf 'build.sh: spira-supervise build failed\n' >&2; exit 1; }
+printf 'build.sh: spira-supervise built at %s\n' "$SPIRA_SUPERVISE_BIN"
 
 # BD — optional, only when --with-bd was given.
 if [ "$with_bd" = 1 ]; then

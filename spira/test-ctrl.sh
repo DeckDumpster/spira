@@ -262,6 +262,8 @@ chmod +x "$MOCK_BIN/systemctl"
 
 printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/loginctl"
 chmod +x "$MOCK_BIN/loginctl"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/spira-supervise"
+chmod +x "$MOCK_BIN/spira-supervise"
 
 # SPIRA_PATH is used rather than prepending PATH directly: conf.sh resets PATH, and a
 # prepend to the outer PATH is silently overwritten (law-gates-run-in-a-clean-environment).
@@ -281,6 +283,7 @@ inst() {
         SPIRA_REPO="$REAL_REPO" \
         SPIRA_COCKPIT="$REAL_COCKPIT" \
         SPIRA_INSTANCE=prod \
+        "SPIRA_SUPERVISE_BIN=$MOCK_BIN/spira-supervise" \
         MOCK_LOG="$MOCK_LOG" \
         SPIRA_INSTALL_FORCE=1 \
         bash "$FIXTURE/systemd/install.sh" "$@" 2>&1
