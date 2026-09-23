@@ -1125,7 +1125,7 @@ run_deploy \
     "SPIRA_SYSTEMCTL=$BIN_P20/systemctl" \
     "SPIRA_INSTALL_SH=$BIN_P20/install.sh" \
     "SPIRA_CTRL_SH=$CTRL_P20_NONE" \
-    "DOCTOR_EXIT=1" \
+    "DOCTOR_FAIL_ON_CALL=2" \
     -- "$NEW_TAG" >/dev/null 2>&1
 if grep -qF "SC --user enable --now ${UNIT_CTRL}" "$SC_P20_LOG" 2>/dev/null; then
     ok "p20/fail-first: unit re-enabled when ctrl not-suspended (control confirmed)"
@@ -1143,7 +1143,7 @@ run_deploy \
     "SPIRA_SYSTEMCTL=$BIN_P20/systemctl" \
     "SPIRA_INSTALL_SH=$BIN_P20/install.sh" \
     "SPIRA_CTRL_SH=$CTRL_P20" \
-    "DOCTOR_EXIT=1" \
+    "DOCTOR_FAIL_ON_CALL=2" \
     -- "$NEW_TAG" >/dev/null 2>&1
 if ! grep -qF "SC --user enable --now ${UNIT_CTRL}" "$SC_P20_LOG" 2>/dev/null; then
     ok "p20: ctrl-suspended unit not re-enabled after rollback"
@@ -1154,7 +1154,7 @@ fi
 
 # ==========================================================================
 echo
-echo "PROPERTY 20: pre-deploy doctor failure refuses before drain"
+echo "PROPERTY 21: pre-deploy doctor failure refuses before drain"
 # A fatal found by the incoming doctor before any disruptive step names the problem
 # and refuses the deploy. The box is left unchanged (drain not called, current unchanged).
 # FAIL-FIRST: with a passing pre-deploy doctor, drain IS reached and current is created.
@@ -1165,8 +1165,8 @@ ln -s "$PRIOR_RELEASE" "$RELEASES/current"
 > "$DOCTOR_CNT"
 _out="$(run_deploy -- "$NEW_TAG" 2>&1)"
 _rc=$?
-is0    "p20/fail-first: passing doctor allows deploy" "$_rc"
-islink "p20/fail-first: current moved to new release" "$RELEASES/current" "$NEW_RELEASE"
+is0    "p21/fail-first: passing doctor allows deploy" "$_rc"
+islink "p21/fail-first: current moved to new release" "$RELEASES/current" "$NEW_RELEASE"
 
 # With a fatal from the first doctor call (pre-deploy), deploy is refused before drain.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
@@ -1175,11 +1175,11 @@ ln -s "$PRIOR_RELEASE" "$RELEASES/current"
 > "$DOCTOR_CNT"
 _out="$(run_deploy "DOCTOR_EXIT=1" "DOCTOR_FAIL_MSG=hooks-path-missing" -- "$NEW_TAG" 2>&1)"
 _rc=$?
-not0   "p20: pre-deploy fatal refuses deploy"              "$_rc"
-want   "p20: output names the failure"                     "hooks-path-missing" "$_out"
-notwant "p20: drain not called before pre-deploy check"    "world drain" "$(cat "$CALL_LOG")"
-notwant "p20: activate not called"                         "activate"    "$(cat "$CALL_LOG")"
-islink "p20: current unchanged after refusal"              "$RELEASES/current" "$PRIOR_RELEASE"
+not0   "p21: pre-deploy fatal refuses deploy"              "$_rc"
+want   "p21: output names the failure"                     "hooks-path-missing" "$_out"
+notwant "p21: drain not called before pre-deploy check"    "world drain" "$(cat "$CALL_LOG")"
+notwant "p21: activate not called"                         "activate"    "$(cat "$CALL_LOG")"
+islink "p21: current unchanged after refusal"              "$RELEASES/current" "$PRIOR_RELEASE"
 
 # ==========================================================================
 echo
