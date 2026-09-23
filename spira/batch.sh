@@ -420,13 +420,29 @@ main() {
         esac
     fi
 
-    [ -n "$triggered" ] || return 0
-
-    # Collect IDs for a bulk priority query.
+    # Collect IDs for a bulk priority/labels query (also used for the express check).
     local all_ids=()
     while read -r _id _ _; do all_ids+=("$_id"); done <<< "$certs"
     local prio_json
     prio_json="$(bdjson show "${all_ids[@]}" 2>/dev/null)" || prio_json="[]"
+
+    # EXPRESS: a certified express branch triggers a batch immediately.
+    # A batch of one spends a full CI run on a single bead; knowingly accepted.
+    if [ -z "$triggered" ]; then
+        local _elab="${SPIRA_EXPRESS_LABEL:-express}"
+        if PRIO_JSON="$prio_json" EXPRESS_LABEL="$_elab" python3 -c '
+import sys, json, os
+d = json.loads(os.environ.get("PRIO_JSON", "[]") or "[]")
+d = d if isinstance(d, list) else [d]
+lbl = os.environ.get("EXPRESS_LABEL", "express")
+sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
+' 2>/dev/null; then
+            printf 'batch %s: express certified branch — triggering immediate batch\n' "$name"
+            triggered=1
+        fi
+    fi
+
+    [ -n "$triggered" ] || return 0
 
     # Sort: suite-transition first, then priority asc, then epoch asc.
     # queue_sort_rows (lib.sh) is the canonical implementation shared with the cockpit.
