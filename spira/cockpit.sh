@@ -1356,6 +1356,62 @@ print("SP_UNLANDED_N=%d"  % anomaly)
     fi
     fi
 
+    # ---- ACCEPTANCE: did the last release actually install on a clean machine ----------
+    # The operator (2026-09-23): "i still don't know what the fuck is going on with
+    # acceptance because i have no pane visibility about that."
+    #
+    # WHY THE SOURCE IS THE NOTE AND NOT THE WORKFLOW RUN. acceptance-run.sh --record writes
+    # refs/notes/acceptance on the tag, and that note is the only durable verdict — a run's
+    # conclusion says whether the JOB failed, which is a different question from whether the
+    # release installs. It is also the number that exposed the real defect here: on
+    # 2026-09-23 four release tags existed and exactly ONE tag in the whole repository
+    # carried a note, dated 2026-09-20. Acceptance had been running and throwing its verdict
+    # away, because the Push-notes step does not run when the run step fails.
+    #
+    # SO THE ROW REPORTS TWO THINGS, NOT ONE. The last verdict, and HOW MANY RELEASE TAGS
+    # HAVE BEEN CUT SINCE IT. A green verdict from three days and four releases ago is not
+    # a statement about what is deployable now, and a row that printed only the verdict
+    # would have read PASS while nothing had been tested (law-absence-needs-a-positive-
+    # control).
+    #
+    # NEVER IS NOT FAIL and neither is ?. A repository that has never recorded a verdict
+    # says NEVER; a git that could not be read says ?. Both are distinct from a recorded
+    # failure, and conflating them would make the pane lie in the direction of calm.
+    _acc_verdict="?"; _acc_tag="-"; _acc_at="?"; _acc_since="?"
+    if [ -n "${SPIRA_PROD:-}" ] && [ -e "${SPIRA_PROD%/spira}/.git" ]; then
+        _acc_repo="${SPIRA_PROD%/spira}"
+        _acc_obj="$(git -C "$_acc_repo" notes --ref=acceptance list 2>/dev/null \
+                    | awk '{print $2}' | tail -1)"
+        if [ -n "${_acc_obj:-}" ]; then
+            _acc_tag="$(git -C "$_acc_repo" tag --points-at "$_acc_obj" 2>/dev/null \
+                        | grep '^spira-release-' | head -1)"
+            _acc_note="$(git -C "$_acc_repo" notes --ref=acceptance show "$_acc_obj" 2>/dev/null)"
+            case "$_acc_note" in
+                PASS*) _acc_verdict=PASS ;;
+                FAIL*) _acc_verdict=FAIL ;;
+                "")    _acc_verdict="?" ;;
+                *)     _acc_verdict="$(printf '%s' "$_acc_note" | head -1 | cut -c1-8)" ;;
+            esac
+            _acc_at="$(git -C "$_acc_repo" log -1 --format=%ct "$_acc_obj" 2>/dev/null || echo '?')"
+            # Tags cut since the tested one, by the sort order release.sh stamps them in.
+            if [ -n "${_acc_tag:-}" ]; then
+                _acc_since="$(git -C "$_acc_repo" tag -l 'spira-release-*' 2>/dev/null \
+                              | sort | awk -v t="$_acc_tag" 'f{n++} $0==t{f=1} END{print n+0}')"
+            fi
+        else
+            # A git we could read, holding no note at all: that is NEVER, not unknown.
+            git -C "$_acc_repo" rev-parse --git-dir >/dev/null 2>&1 && {
+                _acc_verdict=NEVER
+                _acc_since="$(git -C "$_acc_repo" tag -l 'spira-release-*' 2>/dev/null | wc -l)"
+            }
+        fi
+    fi
+    echo "SP_ACCEPT_VERDICT=$_acc_verdict"
+    echo "SP_ACCEPT_TAG=${_acc_tag:--}"
+    echo "SP_ACCEPT_AT=$_acc_at"
+    echo "SP_ACCEPT_SINCE=$_acc_since"
+    unset _acc_verdict _acc_tag _acc_at _acc_since _acc_obj _acc_note _acc_repo
+
     # ---- GATE: what is happening between DONE and LANDED --------------------------------
     # The operator (2026-09-07): "there's currently a lot that happens between 'DONE' and
     # 'LANDED' and the ops dashboard shows none of it."

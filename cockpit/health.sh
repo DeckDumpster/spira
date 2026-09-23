@@ -1283,6 +1283,38 @@ standing_lines() {
     fit "anomaly = closed, has branch, no landstate" $(( COLS - 8 ))
     printf '        %s%s%s\n' "$C_DIM" "$FIT" "$C_RST"
 
+    # ACCEPTANCE — the only row that says whether a release INSTALLS, not whether its gate
+    # was green. The operator (2026-09-23): "i still don't know what the fuck is going on
+    # with acceptance because i have no pane visibility about that."
+    #
+    # TWO FACTS, DELIBERATELY. The verdict alone is a lie by omission: on the day this was
+    # written the newest recorded verdict was three days and four releases old, so a row
+    # printing "FAIL" or "PASS" on its own would have described a tag nobody was shipping.
+    # "since" is how many release tags have been cut with no verdict at all, and it is the
+    # number that turns a stale green into an obvious hole.
+    #
+    # NEVER and ? ARE NOT FAIL. Never recorded, and could-not-read, are different answers
+    # and both are different from a recorded failure. A row that renders 0 or FAIL for a
+    # probe it could not run is the failure mode this whole pane exists to avoid.
+    local acc_col acc_age
+    case "${SP_ACCEPT_VERDICT:-?}" in
+        PASS)  acc_col="$C_OK" ;;
+        FAIL)  acc_col="$C_BAD$C_B" ;;
+        NEVER) acc_col="$C_WARN" ;;
+        *)     acc_col="$C_WARN" ;;
+    esac
+    acc_age="?"
+    if [ -n "${SP_ACCEPT_AT:-}" ] && [ "${SP_ACCEPT_AT:-?}" != "?" ]; then
+        acc_age="$(age_str $(( $(date +%s) - SP_ACCEPT_AT )) 86400)"
+    fi
+    printf '        %saccept%s %s%s%s %s · %s%s untested since%s\n' \
+        "$C_DIM" "$C_RST" \
+        "$acc_col" "${SP_ACCEPT_VERDICT:-?}" "$C_RST" "$acc_age" \
+        "$( [ "${SP_ACCEPT_SINCE:-1}" = 0 ] && printf '%s' "$C_OK" || printf '%s' "$C_BAD$C_B")" \
+        "${SP_ACCEPT_SINCE:-?}" "$C_RST"
+    fit "${SP_ACCEPT_TAG:--}" $(( COLS - 8 ))
+    printf '        %s%s%s\n' "$C_DIM" "$FIT" "$C_RST"
+
     # LAND — the DONE-to-LANDED stretch. The operator (2026-09-07): "there's currently a
     # lot that happens between 'DONE' and 'LANDED' and the ops dashboard shows none of it."
     #
