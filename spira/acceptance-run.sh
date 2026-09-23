@@ -365,8 +365,7 @@ except Exception: print("")' 2>/dev/null)" || _a_s4_st=""
         _base_sha_now="$(git -C "$scratch_repo" rev-parse "origin/${_land_ref}" 2>/dev/null)" \
             || _base_sha_now="$_base_sha_before"
         if [ "$_base_sha_now" != "$_base_sha_before" ] \
-            && git -C "$scratch_repo" log --format='%s' \
-                   "${_base_sha_before}..${_base_sha_now}" 2>/dev/null \
+            && git -C "$scratch_repo" log --format='%s' "$_base_sha_before..$_base_sha_now" 2>/dev/null \
                | grep -qF "$_bead_id"; then
             _a_landed=1; break
         fi
@@ -694,7 +693,7 @@ except Exception: print("")' 2>/dev/null)" || _d_s4_st=""
                 # Stage 5: Landed — commit on origin/land_ref by ancestry.
                 systemctl --user start spira-sentinel.service 2>/dev/null || true
                 _d_t5=$(date +%s)
-                _d_landed=0
+                _aged_landed=0
                 while [ $(( $(date +%s) - _d_t5 )) -lt 120 ]; do
                     git -C "$scratch_repo" fetch origin >/dev/null 2>&1 || true
                     _aged_sha_now="$(git -C "$scratch_repo" \
@@ -702,15 +701,14 @@ except Exception: print("")' 2>/dev/null)" || _d_s4_st=""
                         || _aged_sha_now="${_aged_land_base:-}"
                     if [ -n "${_aged_land_base:-}" ] \
                         && [ "$_aged_sha_now" != "$_aged_land_base" ] \
-                        && git -C "$scratch_repo" log --format='%s' \
-                               "${_aged_land_base}..${_aged_sha_now}" 2>/dev/null \
+                        && git -C "$scratch_repo" log --format='%s' "$_aged_land_base..$_aged_sha_now" 2>/dev/null \
                            | grep -qF "$_aged_probe_id"; then
-                        _d_landed=1; break
+                        _aged_landed=1; break
                     fi
                     sleep 5
                 done
                 _d_s5_elapsed=$(( $(date +%s) - _d_t5 ))
-                [ "$_d_landed" -eq 1 ] \
+                [ "$_aged_landed" -eq 1 ] \
                     && ok "phase D stage 5: bead $_aged_probe_id landed by ancestry (${_d_s5_elapsed}s)" \
                     || bad "phase D stage 5: bead $_aged_probe_id landed by ancestry" \
                            "no commit with $_aged_probe_id on origin/${_land_ref:-main} after ${_d_s5_elapsed}s"
