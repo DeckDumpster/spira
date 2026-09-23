@@ -69,11 +69,29 @@ done
 unset _a
 [ -n "$tag" ] || { printf 'usage: deploy.sh [--dry-run] [--force] <tag|latest>\n' >&2; exit 2; }
 
+# Resolve the forge repository identifier for --repo on all gh calls.
+# Required when SPIRA_REPO is an extracted tarball with no .git; also used for normal
+# checkouts so every gh call is explicit about its target.
+_gh_repo="${SPIRA_FORGE_REPO:-}"
+if [ -z "$_gh_repo" ]; then
+    _remote="$(git -C "$SPIRA_REPO" remote get-url origin 2>/dev/null)" || _remote=""
+    case "$_remote" in
+        https://github.com/*) _gh_repo="${_remote#https://github.com/}"; _gh_repo="${_gh_repo%.git}" ;;
+        git@github.com:*)     _gh_repo="${_remote#git@github.com:}"; _gh_repo="${_gh_repo%.git}" ;;
+    esac
+    unset _remote
+fi
+[ -n "$_gh_repo" ] || {
+    printf 'deploy: SPIRA_FORGE_REPO is not set and forge repository cannot be inferred from git remote\n' >&2
+    exit 2
+}
+
 # Resolve "latest" to the newest PUBLISHED (non-draft) spira-release-* release.
 # gh release list skips drafts by filtering isDraft; fall back to git tags if gh unavailable.
 if [ "$tag" = "latest" ]; then
+    tag=""
     git -C "$SPIRA_REPO" fetch --tags --quiet 2>/dev/null || true
-    _rel_list="$(cd "$SPIRA_REPO" && gh release list --json tagName,isDraft 2>/dev/null)" \
+    _rel_list="$(gh --repo "$_gh_repo" release list --json tagName,isDraft 2>/dev/null)" \
         || _rel_list=""
     if [ -n "$_rel_list" ]; then
         tag="$(printf '%s' "$_rel_list" | python3 -c '
@@ -90,8 +108,15 @@ except Exception:
 ' 2>/dev/null)" || tag=""
     fi
     if [ -z "${tag:-}" ]; then
-        tag="$(git -C "$SPIRA_REPO" tag --list 'spira-release-*' \
-                --sort=-version:refname 2>/dev/null | head -1)"
+        if [ -d "$SPIRA_REPO/.git" ] || [ -f "$SPIRA_REPO/.git" ]; then
+            tag="$(git -C "$SPIRA_REPO" tag --list 'spira-release-*' \
+                    --sort=-version:refname 2>/dev/null | head -1)"
+        else
+            tag="$(git ls-remote --tags "https://github.com/$_gh_repo" \
+                    'refs/tags/spira-release-*' 2>/dev/null \
+                | awk '{print $2}' | sed 's|refs/tags/||' \
+                | sort -V | tail -1)"
+        fi
     fi
     [ -n "$tag" ] || {
         printf 'deploy: no published spira-release-* release found\n' >&2; exit 2
@@ -112,7 +137,7 @@ unset _tag_stem
 }
 
 # Refuse a draft release before any disruptive action.
-_draft_info="$(cd "$SPIRA_REPO" && gh release view "$tag" --json isDraft 2>/dev/null)" \
+_draft_info="$(gh --repo "$_gh_repo" release view "$tag" --json isDraft 2>/dev/null)" \
     || _draft_info=""
 if [ -n "$_draft_info" ]; then
     _is_draft="$(printf '%s' "$_draft_info" \
@@ -126,7 +151,7 @@ unset _draft_info _is_draft
 
 # Resolve the asset from the release. The tarball timestamp may differ from the tag
 # timestamp; the asset name is authoritative. Refuse if there is not exactly one match.
-_assets_json="$(cd "$SPIRA_REPO" && gh release view "$tag" --json assets 2>/dev/null)" \
+_assets_json="$(gh --repo "$_gh_repo" release view "$tag" --json assets 2>/dev/null)" \
     || _assets_json=""
 _asset_name="$(printf '%s' "${_assets_json:-}" | python3 -c '
 import json,sys
@@ -231,9 +256,9 @@ _deploy_tmp="$(mktemp -d "$SPIRA_RUN/deploy-XXXXXXXX")"
 trap 'rm -rf "$_deploy_tmp"' EXIT
 
 log "deploy: fetching $tag"
-(cd "$SPIRA_REPO" && gh release download "$tag" \
+gh --repo "$_gh_repo" release download "$tag" \
     --pattern "${release_stem}.tar.gz" \
-    --dir "$_deploy_tmp") || {
+    --dir "$_deploy_tmp" || {
     printf 'deploy: fetch failed\n' >&2; exit 2
 }
 _tarball="$_deploy_tmp/${release_stem}.tar.gz"
