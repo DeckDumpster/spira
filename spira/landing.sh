@@ -1190,6 +1190,15 @@ for i in d:
 
         # QUEUE MODE: gate before certifying so fence violations are caught per-branch
         # and never reach a batch PR or CI where they are unattributable (sp-hm2vw).
+        #
+        # SPIRA_CERTIFY_SUITES=off KEEPS THE FENCES AND DROPS THE SUITES. Every branch still
+        # gets bash -n, the no-beads-data check and the repository's fence commands; the
+        # suites are left to the batch's CI run, which runs them anyway on a runner fleet
+        # that was sitting idle while this box ran them first. 2026-09-23: thirty closed
+        # beads in 48 hours were RED here (thirteen of them `timeout`) and none reached a
+        # batch — including sp-a5jpo, the fix for exactly this (per Ryan: "we're running tests
+        # locally, holding up those beads. then we'll batch them … to be tested again").
+        # Push mode (below) lands straight on the base and keeps the full gate.
         # With certify_pass_par > 1, branches are collected here and gated in parallel
         # after the loop; with certify_pass_par == 1, the serial path runs inline.
         if [ "$mode" = queue ]; then
@@ -1210,6 +1219,7 @@ for i in d:
                 _land_state "repo=$name" "branch=$br" "phase=gate"
                 gate_lock_wait
                 gate_out="$(SPIRA_GATE_LOCK_WAIT="$_gate_wait" SPIRA_GATE_BEAD="$id" \
+                    SPIRA_GATE_SUITES="${SPIRA_CERTIFY_SUITES:-on}" \
                     "$SPIRA_HOME/gate.sh" "$br" "$name" 2>&1)"
                 gate_rc=$?
                 _land_state "repo=$name" "branch=$br"
@@ -2007,6 +2017,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
             _ctmp="$(mktemp -t spira-cert.XXXXXX)"
             gate_lock_wait
             SPIRA_GATE_LOCK_WAIT="$_gate_wait" SPIRA_GATE_BEAD="$_did" \
+                SPIRA_GATE_SUITES="${SPIRA_CERTIFY_SUITES:-on}" \
                 "$SPIRA_HOME/gate.sh" "$_dbr" "$name" >"$_ctmp" 2>&1 &
             _cp_pids+=("$!"); _cp_brs+=("$_dbr"); _cp_ids+=("$_did")
             _cp_tips+=("$_dtip"); _cp_tmps+=("$_ctmp")
