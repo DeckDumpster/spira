@@ -169,6 +169,7 @@ testdb_up() {            # testdb_up <tag>
     # database; leaving one set and the other unset would let a call slip through to the
     # wrong engine.
     unset SPIRA_DB SPIRA_BD
+    TESTDB_OWNS_SERVER_FIXTURE=0; export TESTDB_OWNS_SERVER_FIXTURE
 
     # ---- SHARED FIXTURE: EMBEDDED (has TESTDB_BASELINE) ----
     # Server mode sets TESTDB_BASELINE too (for .beads restoration), but must NOT take this
@@ -324,13 +325,21 @@ testdb_up() {            # testdb_up <tag>
     #      init with "already initialized". /var/tmp has no .dolt ancestor.
     TESTDB_DIR="/var/tmp/$TESTDB_NAME"
     mkdir -p "$TESTDB_DIR" || { printf 'testdb: mkdir %s failed\n' "$TESTDB_DIR" >&2; return 1; }
-    local init_out init_rc
+    # Serialize bd init: schema migrations hold a global Dolt lock (see testdb.sh header).
+    # Concurrent inits queue behind it and each takes N×6s instead of 6s — enough to push
+    # suites past the 600s timeout when more than ~6 server-mode suites run in parallel.
+    local init_out init_rc _init_fd
+    _init_fd=""
+    if exec {_init_fd}>>"${SPIRA_TESTDB_DATA}/.server-init.lock" 2>/dev/null; then
+        flock -x "$_init_fd" 2>/dev/null || true
+    fi
     init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
         BD_NON_INTERACTIVE=1 \
         "$TESTDB_SERVER_BD" init --non-interactive --prefix sp --skip-agents --skip-hooks \
         --server --server-host 127.0.0.1 --server-port "${SPIRA_TESTDB_PORT:-3308}" \
         --database "$TESTDB_NAME" --external -q 2>&1 )"
     init_rc=$?
+    [ -n "$_init_fd" ] && { exec {_init_fd}>&- 2>/dev/null; } || true
     [ $init_rc -eq 0 ] || {
         printf 'testdb: bd init (server) failed (rc=%s) for %s\n' \
             "$init_rc" "$TESTDB_NAME" >&2
@@ -369,6 +378,7 @@ testdb_up() {            # testdb_up <tag>
         printf 'testdb: warning: could not capture init hash for %s; reset will be slow\n' \
             "$TESTDB_NAME" >&2
     TESTDB_BIN=""
+    TESTDB_OWNS_SERVER_FIXTURE=1; export TESTDB_OWNS_SERVER_FIXTURE
     export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="$TESTDB_SERVER_BD"
     return 0
 }
@@ -490,11 +500,14 @@ testdb_seed() {          # testdb_seed  < JSONL on stdin
 }
 
 # Borrowers remove only their own private copy; shared dirs belong to the owner.
+# Exception: server-mode suites under TESTDB_SHARED always build a fresh fixture
+# (testdb_up skips shared paths when TESTDB_DIR is absent); TESTDB_OWNS_SERVER_FIXTURE=1
+# marks that case so the database is dropped here rather than accumulated on the server.
 testdb_drop() {
     if [ "${TESTDB_SHARED:-0}" = 1 ]; then
         [ -n "${TESTDB_PRIVATE_DIR:-}" ] && rm -rf "$TESTDB_PRIVATE_DIR"
         TESTDB_PRIVATE_DIR=""
-        return 0
+        [ "${TESTDB_OWNS_SERVER_FIXTURE:-0}" != 1 ] && return 0
     fi
     [ -n "${TESTDB_NAME:-}" ] || return 0
     # Server mode: drop THIS fixture's own database and nothing else.
@@ -533,6 +546,6 @@ testdb_drop() {
         fi
     done
     TESTDB_NAME=""; TESTDB_DIR=""; TESTDB_BASELINE=""; TESTDB_BIN=""
-    TESTDB_MODE=""; TESTDB_PRIVATE_DIR=""
+    TESTDB_MODE=""; TESTDB_PRIVATE_DIR=""; TESTDB_OWNS_SERVER_FIXTURE=0
     return 0
 }
