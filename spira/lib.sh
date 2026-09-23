@@ -6050,9 +6050,10 @@ pr_state() {             # pr_state <repo> <branch> -> OPEN|MERGED|CLOSED, non-z
 
 # needs_refresh — 0 when this already-submitted branch should be rebased and force-pushed.
 needs_refresh() {        # needs_refresh <repo> <name> <branch> <id> <base> <tip>
-    local repo="$1" name="$2" br="$3" id="$4" base="$5" tip="$6" st n
+    local repo="$1" name="$2" br="$3" id="$4" base="$5" tip="$6" st n base_fq
+    base_fq="$(qualify_base_ref "$base" "$repo")"
     PR_REFRESH_N=0
-    git -C "$repo" merge-base --is-ancestor "$base" "refs/heads/$br" 2>/dev/null && return 1
+    git -C "$repo" merge-base --is-ancestor "$base_fq" "refs/heads/$br" 2>/dev/null && return 1
     case "$(submitted_rec "$id" state)" in
         stale) log "$id: $br is behind $base and already escalated — leaving it standing"; return 1 ;;
         done)  return 1 ;;
@@ -6068,7 +6069,7 @@ needs_refresh() {        # needs_refresh <repo> <name> <branch> <id> <base> <tip
     n="$(submitted_rec "$id" refreshes)"
     case "${n:-}" in ''|*[!0-9]*) n=0 ;; esac
     if [ "$n" -ge "$PR_REFRESH_MAX" ]; then
-        spira_ask_refresh_loop "$repo" "$name" "$br" "$id" "$base" "$n"
+        spira_ask_refresh_loop "$repo" "$name" "$br" "$id" "$base_fq" "$n"
         mark_submitted "$id" "$tip" stale "$n"
         log "$id: escalated — its pull request will not merge after $n refresh(es)"
         return 1

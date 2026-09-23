@@ -613,7 +613,8 @@ PAYLOAD
 # one failure here that nothing can undo.
 # ======================================================================================
 rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch> [branch...]
-    local repo="$1" name="$2" base="$3" landed="$4" br id tip
+    local repo="$1" name="$2" base="$3" landed="$4" br id tip base_fq
+    base_fq="$(qualify_base_ref "$base" "$repo")"
     shift 4
     for br in "$@"; do
         [ -n "$br" ] || continue
@@ -622,7 +623,7 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
         # Already carries the new base: the ordinary answer for every branch after the FIRST
         # landing of a pass has swept them, and it must stay silent or a pass that lands three
         # branches logs the same untouched branch three times.
-        git -C "$repo" merge-base --is-ancestor "$base" "refs/heads/$br" 2>/dev/null && continue
+        git -C "$repo" merge-base --is-ancestor "$base_fq" "refs/heads/$br" 2>/dev/null && continue
         # A ref that has gone since the loop judged it was reaped, landed by hand or slain.
         # Whatever removed it did so deliberately; this holds a list, not a fact
         # (law-absence-needs-a-positive-control — say so rather than fall silent).
@@ -636,11 +637,11 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
         fi
         # Whoever landed carried this work with them. Rebasing would replay commits whose
         # content is already on the base; the Sending reaps the ref.
-        if content_landed "$repo" "$br" "$base"; then
+        if content_landed "$repo" "$br" "$base_fq"; then
             log "CHECK6 $id: $base now contains every change on $br — nothing left to rebase"
             continue
         fi
-        if ! rebase_branch "$br" "$base" "$repo" "$name"; then
+        if ! rebase_branch "$br" "$base_fq" "$repo" "$name"; then
             # ONLY A CONFLICT MAY REOPEN, the same rule and the same reason as the loop's own
             # arm: rebase_branch returns 1 four ways and three of them are this pass failing to
             # ask the question rather than an answer to it. Charging those to the work reopens
@@ -663,7 +664,7 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
             fi
             local _cur_br_tip _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason _other_beads _rq_n
             _cur_br_tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
-            _cur_base_sha="$(git -C "$repo" rev-parse "$base" 2>/dev/null)"
+            _cur_base_sha="$(git -C "$repo" rev-parse "$base_fq" 2>/dev/null)"
             read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
             if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$_cur_br_tip" ] && \
                [ "${_ls_reason:-}" = "no-rebase@${_cur_base_sha}" ]; then
@@ -676,7 +677,7 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
             # sweep survivor's bead is already closed — there is no aeon holding it to hand
             # a reopen to, so any conflict the recut cannot clear escalates immediately
             # rather than reopening a closed bead for a session that isn't there.
-            if recut_onto "$br" "$base" "$repo" "$name"; then
+            if recut_onto "$br" "$base_fq" "$repo" "$name"; then
                 n_swept=$(( n_swept + 1 ))
                 _cur_br_tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
                 land_mark "$id" REBASED "$_cur_br_tip" "recut-swept"
@@ -685,8 +686,8 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
             fi
             n_swept_conflict=$(( n_swept_conflict + 1 ))
             _cur_br_tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
-            _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${RECUT_CONFLICTS:-${REBASE_CONFLICTS:-}}")"
-            spira_ask_rebase_loop "$id" "$br" "$name" "${_rq_n:-1}" "${RECUT_CONFLICTS:-${REBASE_CONFLICTS:-unknown}}" "$_other_beads" "$repo" "$base"
+            _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base_fq" "${RECUT_CONFLICTS:-${REBASE_CONFLICTS:-}}")"
+            spira_ask_rebase_loop "$id" "$br" "$name" "${_rq_n:-1}" "${RECUT_CONFLICTS:-${REBASE_CONFLICTS:-unknown}}" "$_other_beads" "$repo" "$base_fq"
             progress "escalated $id — re-cut conflicted on $br after ${_rq_n:-1} attempt(s); ${RECUT_APPLIED_COUNT:-0} commit(s) moved to $base"
             land_mark "$id" RED "$_cur_br_tip" "no-rebase@${_cur_base_sha}"
             continue
@@ -1012,7 +1013,7 @@ for i in d:
         tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
         refresh=0
         if [ "$mode" != push ] && submitted "$id" "$tip"; then
-            if [ "$mode" != pr ] || ! needs_refresh "$repo" "$name" "$br" "$id" "$base_fqref" "$tip"; then
+            if [ "$mode" != pr ] || ! needs_refresh "$repo" "$name" "$br" "$id" "$base" "$tip"; then
                 continue
             fi
             refresh="$PR_REFRESH_N"
@@ -1647,7 +1648,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                 # replayed onto a base that already contains it.
                 unset 'judged[$br]'
                 [ "${#judged[@]}" -gt 0 ] \
-                    && rebase_survivors "$repo" "$name" "$base_fqref" "$br" "${!judged[@]}"
+                    && rebase_survivors "$repo" "$name" "$base" "$br" "${!judged[@]}"
             elif [ "$merged" = 1 ]; then
                 # Merged fine, could not push. Nothing is wrong with the work; leave the bead
                 # closed and let the next pass land it. Two distinct reasons reach here:
