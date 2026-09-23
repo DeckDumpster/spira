@@ -2072,17 +2072,26 @@ _census_events_sql() {   # _census_events_sql [since_epoch_s]
     if [ -n "${1:-}" ] && [ "${1:-0}" -gt 0 ] 2>/dev/null; then
         since_clause=" AND created_at > '$(date -u -d "@${1}" '+%Y-%m-%d %H:%M:%S')'"
     fi
-    # Single source for the requeued/merge-conflict fold predicate; used in both the
-    # sp-reopen-rebase-conflict branch and the sp-reopen-unrecorded exclusion so they
-    # cannot drift (law-bake-rules-into-tools).
+    # Single-source predicates for each folded event pair. A guard block that calls both
+    # bead_reopen and sets REQUEUE_CAUSE to the same string writes two event streams for
+    # one firing; the fold merges them so census does not double-count and a covers: label
+    # on either name suppresses the whole pair (law-bake-rules-into-tools).
     local conflict_fold="(event_type = 'requeued' AND new_value = 'merge-conflict')"
-    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT %s AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict')%s GROUP BY event_type, new_value UNION ALL SELECT 'reopen', 'rebase-conflict', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR %s)%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopened', 'unrecorded', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE event_type = 'reopened'%s AND issue_id NOT IN (SELECT issue_id FROM events WHERE event_type = 'reopen' OR %s) HAVING COUNT(DISTINCT issue_id) > 0 ORDER BY 3 DESC" "$conflict_fold" "$since_clause" "$conflict_fold" "$since_clause" "$since_clause" "$conflict_fold"
+    local rebase_aeon_fold="(event_type = 'requeued' AND new_value = 'rebase-conflict')"
+    local eviction_fold="(event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race')"
+    local prod_dirty_fold="(event_type IN ('reopen', 'requeued') AND new_value = 'prod-dirty')"
+    local unfinished_fold="(event_type IN ('reopen', 'requeued') AND new_value = 'unfinished-reason')"
+    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT %s AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT %s AND NOT %s AND NOT %s AND NOT %s%s GROUP BY event_type, new_value UNION ALL SELECT 'reopen', 'rebase-conflict', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR %s OR %s)%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'eviction-race', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'prod-dirty', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'unfinished-reason', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopened', 'unrecorded', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE event_type = 'reopened'%s AND issue_id NOT IN (SELECT issue_id FROM events WHERE event_type = 'reopen' OR %s) HAVING COUNT(DISTINCT issue_id) > 0 ORDER BY 3 DESC" "$conflict_fold" "$rebase_aeon_fold" "$eviction_fold" "$prod_dirty_fold" "$unfinished_fold" "$since_clause" "$conflict_fold" "$rebase_aeon_fold" "$since_clause" "$eviction_fold" "$since_clause" "$prod_dirty_fold" "$since_clause" "$unfinished_fold" "$since_clause" "$since_clause" "$conflict_fold"
 }
 _census_class_fold_map() {
     # <folded-away-class> <canonical-class>. A covers: label naming a folded-away class
     # suppresses the class it was folded into. Keep this adjacent to the SQL fold in
     # _census_events_sql: a rename of one must carry the other.
     printf 'sp-requeue-merge-conflict sp-reopen-rebase-conflict\n'
+    printf 'sp-requeue-rebase-conflict sp-reopen-rebase-conflict\n'
+    printf 'sp-requeue-eviction-race sp-reopen-eviction-race\n'
+    printf 'sp-requeue-prod-dirty sp-reopen-prod-dirty\n'
+    printf 'sp-requeue-unfinished-reason sp-reopen-unfinished-reason\n'
 }
 census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output; exits non-zero when unreachable
     local q
