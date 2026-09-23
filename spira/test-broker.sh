@@ -366,6 +366,79 @@ grep -q 'SPIRA_BROKER_GH_TOKEN' "$conf_sh" 2>/dev/null \
     && ok "SPIRA_BROKER_GH_TOKEN in conf.sh" \
     || bad "SPIRA_BROKER_GH_TOKEN missing from conf.sh"
 
+# =========================================================================
+echo
+echo "POSITIVE CONTROL — broker token: subcommand exists (fails without creds, not with 'usage')"
+# =========================================================================
+# If the token subcommand is not wired, broker exits 2 with the usage message.
+# When it IS wired but no credentials are configured, it exits non-zero with
+# a message naming the missing credentials — not the generic usage banner.
+token_out="$(base_env \
+    HOME="$T/home" \
+    "$BROKER_BIN" token 2>&1)"
+token_rc=$?
+[ "$token_rc" -ne 0 ] \
+    && ok "broker token exits non-zero when no credentials configured" \
+    || bad "broker token should exit non-zero with no credentials (positive control)"
+want "broker token error names credentials" "credentials" "$token_out"
+lack "broker token not a usage line" "broker execute" "$token_out"
+
+# =========================================================================
+echo
+echo "broker token: SPIRA_BROKER_GH_TOKEN static fallback via gh_env"
+# =========================================================================
+# When SPIRA_BROKER_GH_TOKEN is set and no App creds exist, broker execute
+# should pass GH_TOKEN=<that value> to gh. Verify via the audit that the
+# execute path ran (gh stub is called) — the env propagation is tested in
+# execute.rs unit path; here we confirm the integration does not regress.
+STATIC_FILE="$SPIRA_RUN/broker/inbox/static-token-test.json"
+cat > "$STATIC_FILE" << 'EOST'
+{"id":"static-token-test","verb":"pr-comment","repo":"test-repo","number":"88","reason":"static token test","bead":"sp-tok","fayth":"builder","aeon":"a","class":"","submitted_at":1000000010}
+EOST
+
+> "$GH_LOG"
+base_env \
+    SPIRA_BROKER_GH_TOKEN="test-static-tok" \
+    HOME="$T/home" \
+    "$BROKER_BIN" execute >/dev/null 2>&1
+
+tok_line="$(grep 'static-token-test' "$audit" 2>/dev/null || echo "")"
+want "static fallback: pr-comment via builder fayth → DONE" '"DONE"' "$tok_line"
+
+# =========================================================================
+echo
+echo "SPIRA_GH and SPIRA_GH_APP_CONFIG in conf.sh allowlist"
+# =========================================================================
+grep -q 'SPIRA_GH\b' "$conf_sh" 2>/dev/null \
+    && ok "SPIRA_GH in conf.sh" \
+    || bad "SPIRA_GH missing from conf.sh"
+grep -q 'SPIRA_GH_APP_CONFIG' "$conf_sh" 2>/dev/null \
+    && ok "SPIRA_GH_APP_CONFIG in conf.sh" \
+    || bad "SPIRA_GH_APP_CONFIG missing from conf.sh"
+
+# =========================================================================
+echo
+echo "gh-app.sh: present and executable"
+# =========================================================================
+GH_APP_SH="$HERE/gh-app.sh"
+[ -f "$GH_APP_SH" ] && [ -x "$GH_APP_SH" ] \
+    && ok "gh-app.sh is present and executable" \
+    || bad "gh-app.sh is not present or not executable"
+
+# =========================================================================
+echo
+echo "app-token.sh: present, executable, and names openssl+curl"
+# =========================================================================
+APP_TOK_SH="$HERE/app-token.sh"
+if [ -f "$APP_TOK_SH" ] && [ -x "$APP_TOK_SH" ]; then
+    ok "app-token.sh is present and executable"
+    _atcontent="$(cat "$APP_TOK_SH")"
+    want "app-token.sh uses openssl" "openssl"  "$_atcontent"
+    want "app-token.sh uses curl"    "curl"      "$_atcontent"
+else
+    bad "app-token.sh is not present or not executable"
+fi
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

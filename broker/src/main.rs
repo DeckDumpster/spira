@@ -2,6 +2,7 @@ mod execute;
 mod policy;
 mod read;
 mod submit;
+mod token;
 
 use std::process::ExitCode;
 
@@ -13,10 +14,12 @@ fn main() -> ExitCode {
         "submit"  => run_submit(&args[2..]),
         "execute" => run_execute(),
         "read"    => run_read(&args[2..]),
+        "token"   => run_token(),
         _ => {
             eprintln!("broker: usage: broker submit <verb> <target> --reason <text> --bead <id> [--class <class>]");
             eprintln!("broker:        broker execute");
             eprintln!("broker:        broker read <verb> <repo>/<id> [--artifact <name>] [--output-dir <path>]");
+            eprintln!("broker:        broker token");
             ExitCode::from(2)
         }
     }
@@ -94,5 +97,12 @@ fn run_read(args: &[String]) -> ExitCode {
     match read::run(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => { eprintln!("{}", e); ExitCode::FAILURE }
+    }
+}
+
+fn run_token() -> ExitCode {
+    match token::mint() {
+        Ok(t)  => { println!("{}", t); ExitCode::SUCCESS }
+        Err(e) => { eprintln!("broker token: {}", e); ExitCode::FAILURE }
     }
 }

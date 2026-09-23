@@ -2,11 +2,10 @@
 # clean machine and record PASS/FAIL in refs/notes/acceptance on the tag.
 #
 # TRIGGERS
-#   workflow_dispatch: dispatched by gate.yml's accept job after each release is
-#     cut and published, passing tag and prev-tag. Also accepts a manual run.
-#     push to spira-release-* tags is kept for tags pushed by hand, but it does
-#     not fire when the tag is pushed by GITHUB_TOKEN (GitHub's anti-recursion
-#     rule): that path is why the accept job exists.
+#   push to spira-release-* tags: fired by gate.yml's cut job, which pushes the
+#     tag using a GitHub App installation token so the anti-recursion rule does
+#     not apply. prev-tag is derived from sorted git tags when not provided.
+#   workflow_dispatch: for manual runs or testing outside the release pipeline.
 #
 # THE STUB AGENT. acceptance-agent.sh replaces claude so no model credential is
 # needed. It commits acceptance-probe.txt and closes the bead — proving the full
@@ -163,6 +162,11 @@ jobs:
           set -uo pipefail
           _tag="${{ inputs.tag || github.ref_name }}"
           _prev="${{ inputs.prev-tag || '' }}"
+          # When triggered by a tag push the prev-tag input is unavailable; derive
+          # it from the sorted release tag list so upgrade/rollback phases still run.
+          if [ -z "${_prev:-}" ]; then
+            _prev="$(git tag -l 'spira-release-*' | sort -V | grep -v "^${_tag}\$" | tail -1 || true)"
+          fi
           _args=("$_tag"
                  --bd-db  "$HOME/.local/share/spira/db"
                  --agent  "$GITHUB_WORKSPACE/spira/acceptance-agent.sh"
