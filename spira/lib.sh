@@ -4626,6 +4626,16 @@ ref_remote() {           # ref_remote <ref> -> its remote, or non-zero if the re
 ref_branch() {           # ref_branch <ref> -> the branch name, without any remote
     printf '%s' "${1#*/}"
 }
+qualify_base_ref() {     # qualify_base_ref <ref> <repo> -> refs/remotes/... or original
+    # A bare origin/main is ambiguous when refs/heads/origin/main also exists. Use the
+    # fully-qualified remote-tracking ref so git commands resolve it deterministically.
+    local ref="$1" repo="$2" remote branch fq
+    remote="$(ref_remote "$ref")" || { printf '%s' "$ref"; return 0; }
+    branch="$(ref_branch "$ref")"
+    fq="refs/remotes/$remote/$branch"
+    git -C "$repo" rev-parse --verify -q "$fq" >/dev/null 2>&1 \
+        && printf '%s' "$fq" || printf '%s' "$ref"
+}
 
 # spira_landrefs <repo> -> the land ref, plus its local counterpart when that exists.
 # The commit graph is read across BOTH, because a commit can be on the local branch and not
