@@ -328,18 +328,17 @@ testdb_up() {            # testdb_up <tag>
     # Serialize bd init: schema migrations hold a global Dolt lock (see testdb.sh header).
     # Concurrent inits queue behind it and each takes N×6s instead of 6s — enough to push
     # suites past the 600s timeout when more than ~6 server-mode suites run in parallel.
-    local init_out init_rc _init_fd
-    _init_fd=""
-    if exec {_init_fd}>>"${SPIRA_TESTDB_DATA}/.server-init.lock" 2>/dev/null; then
-        flock -x "$_init_fd" 2>/dev/null || true
-    fi
-    init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
-        BD_NON_INTERACTIVE=1 \
-        "$TESTDB_SERVER_BD" init --non-interactive --prefix sp --skip-agents --skip-hooks \
-        --server --server-host 127.0.0.1 --server-port "${SPIRA_TESTDB_PORT:-3308}" \
-        --database "$TESTDB_NAME" --external -q 2>&1 )"
+    # FD INHERITANCE HAZARD (sp-kz1lr): Bash's exec {fd} pattern opens an fd that is
+    # inherited by subshells, causing flock to deadlock when the subshell inherits the open
+    # fd and the parent tries to release it. Fix: use flock(1) to run bd init without the
+    # problematic fd inheritance pattern. flock(1) acquires the lock and runs the command
+    # in its own process tree, preventing the parent's fd from being inherited.
+    local init_out init_rc
+    init_out="$(
+        flock -x "${SPIRA_TESTDB_DATA}/.server-init.lock" \
+            sh -c "cd '$TESTDB_DIR' && env -i PATH='$PATH' HOME='$HOME' TERM=dumb BD_NON_INTERACTIVE=1 '$TESTDB_SERVER_BD' init --non-interactive --prefix sp --skip-agents --skip-hooks --server --server-host 127.0.0.1 --server-port '${SPIRA_TESTDB_PORT:-3308}' --database '$TESTDB_NAME' --external -q" 2>&1
+    )"
     init_rc=$?
-    [ -n "$_init_fd" ] && { exec {_init_fd}>&- 2>/dev/null; } || true
     [ $init_rc -eq 0 ] || {
         printf 'testdb: bd init (server) failed (rc=%s) for %s\n' \
             "$init_rc" "$TESTDB_NAME" >&2
