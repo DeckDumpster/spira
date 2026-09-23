@@ -902,6 +902,7 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
   unsent branches                     $(g SP_UNSENT)
   oldest unsent (hours)               $(g SP_UNSENT_OLDEST_H)
   BATCHED with no open batch          $(g SP_BATCHED_STRANDED)
+  BATCHED longer than one batch pass  $(g SP_BATCHED_TOO_LONG)
   strays (no bead, commits on base)   $(g SP_UNADOPTED)
   orphan work (no bead, has commits)  $(g SP_ORPHAN_WORK)
   fiends (FAILED deletes, came back)  $(g SP_SENT_FAILED)
@@ -1181,6 +1182,32 @@ if [ "$_batched_stranded" != "?" ] && [ "$_batched_stranded" -gt 0 ] 2>/dev/null
         log "watchtower: batched-stranded escalation filed (${_batched_stranded} stranded)"
     else
         log "watchtower: $INC is missing — batched-stranded escalation not filed"
+    fi
+fi
+
+# ---------------------------------------------------------------------------------------
+# BATCHED-TOO-LONG ESCALATION. A BATCHED landstate record older than one batch interval
+# (SPIRA_QUEUE_BATCH_WAIT) means the batch has not resolved. The root cause is usually a
+# conflicting PR that was not detected; batch.sh now checks mergeability on every pass and
+# abandons DIRTY batches, so this fires only when that check itself fails.
+# ---------------------------------------------------------------------------------------
+_batched_too_long="${SP_BATCHED_TOO_LONG:-?}"
+if [ "$_batched_too_long" != "?" ] && [ "$_batched_too_long" -gt 0 ] 2>/dev/null; then
+    if [ -x "$INC" ] || [ -r "$INC" ]; then
+        printf 'BATCHED branches not resolved after one batch interval: %s\n\nThe branch(es) below have been in BATCHED state longer than expected:\n\n%s\n\nCheck: is the open batch PR mergeable? Run: gh pr view <pr-number> --json mergeable,mergeStateStatus.\nFix: if DIRTY, abandon the batch: queue.sh abandon <repo> --reason "conflict".\n' \
+            "$_batched_too_long" "${SP_BATCHED_TOO_LONG_NAMES:-(unavailable)}" | \
+        SPIRA_DB="$SPIRA_DB" \
+        SPIRA_INCIDENT_TYPE=task \
+        SPIRA_INCIDENT_PRIORITY=1 \
+        SPIRA_INCIDENT_ACTOR=watchtower \
+        SPIRA_SIN_EXEMPT=1 \
+        SPIRA_INCIDENT_REPO=spira \
+        SPIRA_INCIDENT_REF=incident:queue-batched-too-long \
+        SPIRA_INCIDENT_CAUSE=batched-too-long \
+        bash "$INC" file "QUEUE: BATCHED branch not resolved (too long)" - >/dev/null || true
+        log "watchtower: batched-too-long escalation filed (${_batched_too_long} branches)"
+    else
+        log "watchtower: $INC is missing — batched-too-long escalation not filed"
     fi
 fi
 
