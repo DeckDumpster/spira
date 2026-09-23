@@ -38,23 +38,29 @@ bad()  { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "$2"; }
 has()  { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 lacks(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
+# conf.sh sets SPIRA_CONF_LOADED=1 on first source (inside testdb.sh). Any SPIRA_HOME,
+# SPIRA_CONF, or SPIRA_HOME_REPO set after that point is not seen by conf.sh. Export them
+# before sourcing testdb.sh so conf.sh picks them up on its one and only run.
+#
+# SPIRA_HOME_REPO is pinned to "spira" (matching PROD_ROOT's base name below) so
+# SPIRA_SCOPE_LABEL is "spira" in every context: outer test, fake worktree, and the
+# production re-run. In the container, the workspace git is a linked worktree with a
+# broken gitdir, so auto-derivation would produce "workspace" instead.
+export SPIRA_HOME="$HERE"
+export SPIRA_CONF=/tmp/.spira-test-noconf-$$   # nonexistent — no conf file loaded
+export SPIRA_HOME_REPO=spira
+
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
 testdb_require test-unclaimable-worktree
 TMP="$(mktemp -d)"
+export SPIRA_CONF="$TMP/no-such.conf"          # update to TMP-relative path
 
 # Build a self-contained git repo to serve as the "production" harness, then create a
 # worktree of it with a modified conf.sh. This topology mirrors production without relying
 # on the test environment's workspace git (which is a worktree referencing host paths the
 # container cannot reach).
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-
-# SPIRA_SCOPE_LABEL derives from the git repo's base name via SPIRA_HOME_REPO. Inside the
-# test container the workspace git (a linked worktree) has a broken gitdir link, so the
-# automatic derivation can produce "workspace" instead of "spira". Pin SPIRA_HOME_REPO
-# here so every context—outer test, fake worktree, production re-run—agrees on "spira",
-# and name PROD_ROOT to match so conf.sh derives the same value when re-run from it.
-export SPIRA_HOME_REPO=spira
 
 PROD_ROOT="$TMP/spira"
 FAKE_WT="$TMP/fake-worktree"
@@ -82,9 +88,7 @@ trap cleanup EXIT INT TERM
 testdb_up unclaimable_wt || { echo "test-unclaimable-worktree: could not build fixture database"; exit 1; }
 
 # Source production lib.sh so detect_unclaimable_ready is available for case 3.
-export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_CONF="$TMP/no-such.conf"
 acted=0; progressed=0
 act()      { acted=$((acted+1)); }
 progress() { progressed=$((progressed+1)); act "$@"; }
