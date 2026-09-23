@@ -1360,5 +1360,165 @@ notwant "tarball/explicit-tag: no asset-not-found error" "no unique" "$_tb_out"
 
 # ==========================================================================
 echo
+echo "PROPERTY 23: artifact-deploy mode — SPIRA_GH_REPO or GH_REPO supplies forge context"
+# SPIRA_GH_REPO is exported as GH_REPO before any gh call; GH_REPO set directly also works.
+# Both are accepted as the forge context when SPIRA_REPO has no .git.
+# FAIL-FIRST: a mock gh that exits 1 when GH_REPO is unset proves the export path.
+# ==========================================================================
+ARTDIR="$TMP/artifact-repo"
+mkdir -p "$ARTDIR"   # no git init — simulates an extracted tarball
+
+# mock gh that exits 1 when GH_REPO is not set; strips --repo like the main mock.
+ART_BIN="$TMP/art-bin"
+mkdir -p "$ART_BIN"
+cat > "$ART_BIN/gh" <<'NREOF'
+#!/usr/bin/env bash
+printf 'gh %s\n' "$*" >> "${CALL_LOG:-/dev/null}"
+[ -n "${GH_REPO:-}" ] || exit 1
+[ "${GH_EXIT:-0}" = "0" ] || exit "${GH_EXIT}"
+_args=()
+while [ $# -gt 0 ]; do
+    case "$1" in --repo) shift 2 ;; *) _args+=("$1"); shift ;; esac
+done
+set -- "${_args[@]+"${_args[@]}"}"
+unset _args
+if [ "${1:-}" = release ] && [ "${2:-}" = list ]; then
+    printf '%s\n' "${GH_RELEASE_LIST:-[]}"
+    exit 0
+fi
+if [ "${1:-}" = release ] && [ "${2:-}" = view ]; then
+    if printf '%s' "$*" | grep -q 'assets'; then
+        _aname="${GH_RELEASE_ASSET_NAME:-}"
+        if [ -n "$_aname" ]; then
+            printf '{"assets":[{"name":"%s"}]}\n' "$_aname"
+        else
+            printf '{"assets":[]}\n'
+        fi
+    else
+        printf '{"isDraft":false}\n'
+    fi
+    exit 0
+fi
+_dir=""; _pat=""
+while [ $# -gt 0 ]; do
+    case "$1" in --dir) _dir="$2"; shift 2 ;; --pattern) _pat="$2"; shift 2 ;; *) shift ;; esac
+done
+[ -n "$_dir" ] || exit 1
+mkdir -p "$_dir"
+_name="${_pat%.tar.gz}"
+mkdir -p "$_dir/.stage/$_name/spira"
+printf '# stub\n' > "$_dir/.stage/$_name/spira/sentinel.sh"
+tar -czf "$_dir/$_pat" -C "$_dir/.stage" "$_name" 2>/dev/null
+rm -rf "$_dir/.stage"
+NREOF
+chmod +x "$ART_BIN/gh"
+
+_pub_list="[{\"tagName\":\"$NEW_TAG\",\"isDraft\":false}]"
+
+# FAIL-FIRST: without GH_REPO/SPIRA_GH_REPO, deploy exits non-zero before calling gh.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+> "$CALL_LOG"
+_out="$(env -i \
+    "PATH=$ART_BIN:$PATH" \
+    "HOME=$HOME" \
+    "SPIRA_HOME=$HERE" \
+    "SPIRA_DB=/nonexistent-spira-db" \
+    "SPIRA_RUN=$RUN_DIR" \
+    "SPIRA_CONF=/nonexistent" \
+    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_REPO=$ARTDIR" \
+    "SPIRA_INSTANCE=prod" \
+    "SPIRA_DOCTOR=1" \
+    "SPIRA_SYSTEMCTL=$BIN/systemctl" \
+    "SPIRA_WORLD_SH=$BIN/world.sh" \
+    "SPIRA_ACTIVATE_SH=$BIN/activate.sh" \
+    "SPIRA_INSTALL_SH=$BIN/install.sh" \
+    "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
+    "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
+    "SPIRA_SKEW_SH=$BIN/skew.sh" \
+    "SPIRA_SLAY_SH=$BIN/slay.sh" \
+    "CALL_LOG=$CALL_LOG" \
+    "SC_LOG=$SC_LOG" \
+    "GH_RELEASE_LIST=$_pub_list" \
+    "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" \
+    "SLAY_LOG=$SLAY_LOG" \
+    "GIT_CONFIG_NOSYSTEM=1" \
+    bash "$DEPLOY" "$NEW_TAG" 2>&1)"
+_rc=$?
+not0 "artifact/fail-first: no GH_REPO with no-.git SPIRA_REPO → deploy fails" "$_rc"
+
+# Happy path: SPIRA_GH_REPO set → GH_REPO exported → gh can reach the forge.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+> "$CALL_LOG"
+_out="$(env -i \
+    "PATH=$ART_BIN:$PATH" \
+    "SPIRA_PATH=$ART_BIN" \
+    "HOME=$HOME" \
+    "SPIRA_HOME=$HERE" \
+    "SPIRA_DB=/nonexistent-spira-db" \
+    "SPIRA_RUN=$RUN_DIR" \
+    "SPIRA_CONF=/nonexistent" \
+    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_REPO=$ARTDIR" \
+    "SPIRA_GH_REPO=owner/spira" \
+    "SPIRA_INSTANCE=prod" \
+    "SPIRA_DOCTOR=1" \
+    "SPIRA_SYSTEMCTL=$BIN/systemctl" \
+    "SPIRA_WORLD_SH=$BIN/world.sh" \
+    "SPIRA_ACTIVATE_SH=$BIN/activate.sh" \
+    "SPIRA_INSTALL_SH=$BIN/install.sh" \
+    "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
+    "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
+    "SPIRA_SKEW_SH=$BIN/skew.sh" \
+    "SPIRA_SLAY_SH=$BIN/slay.sh" \
+    "CALL_LOG=$CALL_LOG" \
+    "SC_LOG=$SC_LOG" \
+    "GH_RELEASE_LIST=$_pub_list" \
+    "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" \
+    "SLAY_LOG=$SLAY_LOG" \
+    "GIT_CONFIG_NOSYSTEM=1" \
+    bash "$DEPLOY" "$NEW_TAG" 2>&1)"
+_rc=$?
+is0    "artifact/spira-gh-repo: deploy exits 0 with SPIRA_GH_REPO" "$_rc"
+islink "artifact/spira-gh-repo: current -> $NEW_RELEASE" "$RELEASES/current" "$NEW_RELEASE"
+want   "artifact/spira-gh-repo: gh download called" "release download" "$(cat "$CALL_LOG")"
+
+# GH_REPO set directly (operator override) also works.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+> "$CALL_LOG"
+_out="$(env -i \
+    "PATH=$ART_BIN:$PATH" \
+    "SPIRA_PATH=$ART_BIN" \
+    "HOME=$HOME" \
+    "SPIRA_HOME=$HERE" \
+    "SPIRA_DB=/nonexistent-spira-db" \
+    "SPIRA_RUN=$RUN_DIR" \
+    "SPIRA_CONF=/nonexistent" \
+    "SPIRA_RELEASES=$RELEASES" \
+    "SPIRA_REPO=$ARTDIR" \
+    "GH_REPO=owner/spira" \
+    "SPIRA_INSTANCE=prod" \
+    "SPIRA_DOCTOR=1" \
+    "SPIRA_SYSTEMCTL=$BIN/systemctl" \
+    "SPIRA_WORLD_SH=$BIN/world.sh" \
+    "SPIRA_ACTIVATE_SH=$BIN/activate.sh" \
+    "SPIRA_INSTALL_SH=$BIN/install.sh" \
+    "SPIRA_COCKPIT_LAYOUT_SH=$BIN/layout.sh" \
+    "SPIRA_DOCTOR_SH=$BIN/doctor.sh" \
+    "SPIRA_SKEW_SH=$BIN/skew.sh" \
+    "SPIRA_SLAY_SH=$BIN/slay.sh" \
+    "CALL_LOG=$CALL_LOG" \
+    "SC_LOG=$SC_LOG" \
+    "GH_RELEASE_LIST=$_pub_list" \
+    "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" \
+    "SLAY_LOG=$SLAY_LOG" \
+    "GIT_CONFIG_NOSYSTEM=1" \
+    bash "$DEPLOY" "$NEW_TAG" 2>&1)"
+_rc=$?
+is0    "artifact/gh-repo-direct: deploy exits 0 with GH_REPO set directly" "$_rc"
+islink "artifact/gh-repo-direct: current -> $NEW_RELEASE" "$RELEASES/current" "$NEW_RELEASE"
+
+# ==========================================================================
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

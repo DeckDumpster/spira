@@ -41,6 +41,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/conf.sh"
 . "$HERE/lib.sh"
 
+# On an artifact deployment SPIRA_REPO is an extracted tarball with no .git, so gh
+# cannot infer the repository from the working directory. SPIRA_GH_REPO (owner/repo)
+# lets gh find the forge without a git context; GH_REPO is gh's built-in override.
+if [ -z "${GH_REPO:-}" ] && [ -n "${SPIRA_GH_REPO:-}" ]; then
+    export GH_REPO="$SPIRA_GH_REPO"
+fi
+
 _SC="${SPIRA_SYSTEMCTL:-systemctl}"
 _WORLD="${SPIRA_WORLD_SH:-$HERE/world.sh}"
 _ACTIVATE="${SPIRA_ACTIVATE_SH:-$HERE/activate.sh}"
@@ -81,6 +88,7 @@ if [ -z "$_gh_repo" ]; then
     esac
     unset _remote
 fi
+[ -n "${_gh_repo:-}" ] || _gh_repo="${GH_REPO:-}"
 [ -n "$_gh_repo" ] || {
     printf 'deploy: SPIRA_FORGE_REPO is not set and forge repository cannot be inferred from git remote\n' >&2
     exit 2
