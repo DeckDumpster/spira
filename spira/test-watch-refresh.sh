@@ -492,6 +492,12 @@ IHOME="$TMP/ihome"; mkdir -p "$IHOME"
 # install.sh refuses an unexecutable ExecStart target; all scripts must exist in PROD.
 PROD="$TMP/prod-fake"; mkdir -p "$PROD"
 cp "$HERE"/*.sh "$PROD/"
+PROD_COCK="$(dirname "$PROD")/cockpit"; mkdir -p "$PROD_COCK"
+for _s in $(grep -h "ExecStart=" "$ROOT/systemd/"*.service 2>/dev/null \
+            | grep "@SPIRA_PROD_COCK@" | sed 's|.*@SPIRA_PROD_COCK@/||' | sed 's/ .*//' | sort -u); do
+    printf '#!/bin/sh\n: stub\n' > "$PROD_COCK/$_s"; chmod +x "$PROD_COCK/$_s"
+done
+unset _s
 : > "$TMP/install.log"
 printf 'SPIRA_COCKPIT = %s\nSPIRA_RUN = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s\nSPIRA_PROD = %s\n' \
     "$COCKPIT" "$RUN" "$MAN" "$STUB" "$PROD" > "$TMP/install.conf"
