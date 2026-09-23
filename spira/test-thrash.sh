@@ -297,6 +297,38 @@ else
     esac
 fi
 
+# ---- Part 10: thrash detection kills the process group, not just the parent shell -----
+echo
+echo "aeon.sh structural: thrash detection uses process-group kill (-\$\$)"
+
+AEON="$HERE/aeon.sh"
+if [ ! -f "$AEON" ]; then
+    bad "aeon.sh not found"
+else
+    # POSITIVE CONTROL: the lease-lapse path must use -$$ (it is the reference that works).
+    # If this fails, something else changed and neither check is meaningful.
+    if grep -qF 'kill -TERM -$$ 2>/dev/null' "$AEON"; then
+        ok "lease-lapse kill uses -\$\$ (positive control)"
+    else
+        bad "lease-lapse kill does not use -\$\$ — positive control failed"
+    fi
+
+    # Extract the kill inside the thrash-WRITE block (the printf that creates the .thrash
+    # file, followed by the kill). The cleanup READ block is distinct: it cats the file.
+    # Find the write line and check the kill that follows within 5 lines.
+    write_line="$(grep -n 'printf.*BEAD_ID\.thrash' "$AEON" | head -1 | cut -d: -f1)"
+    if [ -z "$write_line" ]; then
+        bad "thrash write line (printf > BEAD_ID.thrash) not found in aeon.sh"
+    else
+        kill_cmd="$(awk "NR>$write_line && NR<=$((write_line+5))" "$AEON" | grep 'kill')"
+        if printf '%s' "$kill_cmd" | grep -qF 'kill -TERM -$$'; then
+            ok "thrash detection uses kill -TERM -\$\$ (process-group kill)"
+        else
+            bad "thrash detection does not use kill -TERM -\$\$: [$(printf '%s' "$kill_cmd" | head -c 120)]"
+        fi
+    fi
+fi
+
 # ---- Results -------------------------------------------------------------------------
 echo
 echo "---"
