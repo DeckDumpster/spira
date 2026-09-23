@@ -2012,26 +2012,27 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
             read -r _p2_ls_st _p2_ls_tip _p2_ls_at _p2_ls_reason <<< "$_p2_ls"
             if [ -z "${_p2_ls_st:-}" ]; then
                 _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip")
+            elif [ "${_p2_ls_st:-}" = RED ] && [ "${_p2_ls_reason:-}" = "conflicts-with-base" ]; then
+                # Base advancement check before tip check: an advancing base causes a rebase that changes the tip.
+                _p2_base_ct="$(git -C "$repo" log --format="%ct" -1 "$base" 2>/dev/null)"
+                if [ -n "${_p2_ls_at:-}" ] && [ -n "${_p2_base_ct:-}" ] && \
+                   [ "${_p2_base_ct:-0}" -gt "${_p2_ls_at:-0}" ] 2>/dev/null; then
+                    log "CHECK6 $_p2_id: RED conflicts-with-base stale (base advanced since ${_p2_ls_at}) — treating as never-gated"
+                    _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip")
+                elif [ "${_p2_ls_tip:-}" != "$_p2_tip" ]; then
+                    log "CHECK6 $_p2_id: RED record tip stale (was ${_p2_ls_tip:-none}) — treating as never-gated"
+                    _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip")
+                else
+                    _p2_skip=$(( _p2_skip + 1 ))
+                    log "CHECK6 $_p2_id: tip unchanged since RED mark (reason=conflicts-with-base) — skipping re-gate of $_p2_br"
+                fi
             elif [ "${_p2_ls_st:-}" = RED ] && [ "${_p2_ls_tip:-}" != "$_p2_tip" ]; then
                 log "CHECK6 $_p2_id: RED record tip stale (was ${_p2_ls_tip:-none}) — treating as never-gated"
                 _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip")
             elif [ "${_p2_ls_st:-}" = RED ] && [ "${_p2_ls_tip:-}" = "$_p2_tip" ] && \
                  [ "${_p2_ls_reason:-}" != "base-red" ]; then
-                _p2_stale_base=0
-                if [ "${_p2_ls_reason:-}" = "conflicts-with-base" ]; then
-                    _p2_base_ct="$(git -C "$repo" log --format="%ct" -1 "$base" 2>/dev/null)"
-                    if [ -n "${_p2_ls_at:-}" ] && [ -n "${_p2_base_ct:-}" ] && \
-                       [ "${_p2_base_ct:-0}" -gt "${_p2_ls_at:-0}" ] 2>/dev/null; then
-                        _p2_stale_base=1
-                    fi
-                fi
-                if [ "$_p2_stale_base" = 1 ]; then
-                    log "CHECK6 $_p2_id: RED conflicts-with-base stale (base advanced since ${_p2_ls_at}) — treating as never-gated"
-                    _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip")
-                else
-                    _p2_skip=$(( _p2_skip + 1 ))
-                    log "CHECK6 $_p2_id: tip unchanged since RED mark (reason=${_p2_ls_reason:-unknown}) — skipping re-gate of $_p2_br"
-                fi
+                _p2_skip=$(( _p2_skip + 1 ))
+                log "CHECK6 $_p2_id: tip unchanged since RED mark (reason=${_p2_ls_reason:-unknown}) — skipping re-gate of $_p2_br"
             elif [ "${_p2_ls_st:-}" = RED ]; then
                 _t2_brs+=("$_p2_br"); _t2_ids+=("$_p2_id"); _t2_tips+=("$_p2_tip")
             else
