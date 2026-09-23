@@ -243,5 +243,28 @@ want "work bead note contains the operator verdict" "take the accept-test defaul
 [ "$rc" = 0 ] || printf '    %s\n' "$accept_out"
 
 echo
+echo "bead-not-found — close failure is reported, sendmail exits non-zero"
+
+# SEEN RED: plant the offender (a non-existent bead) and require sendmail to fail.
+# The previous || true design made this a no-op; after the fix a missing bead must
+# propagate non-zero so aerc's outgoing reports a failed send.
+BEAD_MISSING="sp-smtest-missing"
+# Do NOT seed this bead — it must be absent from the database.
+missing_msgid="missing-bead-test.$(date +%s).$$"
+mkdir -p "$SPIRA_MAIL/operator/new" "$SPIRA_MAIL/operator/tmp" "$SPIRA_MAIL/operator/cur"
+printf 'From: Gate <gate@spira>\nTo: Operator <operator@spira>\nSubject: Missing bead test\nMessage-ID: <%s>\nX-Spira-Bead: %s\nX-Spira-Kind: question\n\nbody\n' \
+    "$missing_msgid" "$BEAD_MISSING" > "$SPIRA_MAIL/operator/new/$missing_msgid"
+
+before_missing="$(ls "$SPIRA_MAIL/operator/new/$missing_msgid" 2>/dev/null | wc -l | tr -d ' ')"
+is "SEEN RED: original message exists in new/ before sendmail" "1" "$before_missing"
+
+err_out="$(compose_reply "$missing_msgid" "the answer" | run sendmail 2>&1)"; reply_rc=$?
+isnz "sendmail exits non-zero when bead close fails" "$reply_rc"
+want "error names the missing bead" "$BEAD_MISSING" "$err_out"
+
+after_missing="$(ls "$SPIRA_MAIL/operator/new/$missing_msgid" 2>/dev/null | wc -l | tr -d ' ')"
+is "original stays unmodified (not marked replied) when close fails" "1" "$after_missing"
+
+echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

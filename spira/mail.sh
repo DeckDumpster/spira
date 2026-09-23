@@ -453,8 +453,12 @@ _sendmail_close_bead() {
             [ -z "$reason" ] && reason="amended"
         fi
     fi
-    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$bead" --reason-file - <<< "$reason" >/dev/null 2>&1 || true
-    # For decision/question kinds: surface the verdict as a note on each blocked work bead.
+    local close_out close_rc
+    close_out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$bead" --reason-file - <<< "$reason" 2>&1)"; close_rc=$?
+    if [ "$close_rc" -ne 0 ]; then
+        printf 'mail.sh: bead close failed for %s: %s\n' "$bead" "$close_out" >&2
+        return "$close_rc"
+    fi
     if [ "$kind" = "question" ] || [ "$kind" = "decision" ]; then
         local work_ids
         work_ids="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep list "$bead" --direction=up --json 2>/dev/null \
@@ -469,8 +473,10 @@ for x in d:
         local wid
         while IFS= read -r wid; do
             [ -n "$wid" ] || continue
-            "${SPIRA_BD:-bd}" -C "$SPIRA_DB" note "$wid" \
-                "Operator verdict on decision bead $bead: $reason" >/dev/null 2>&1 || true
+            local note_out note_rc
+            note_out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" note "$wid" \
+                "Operator verdict on decision bead $bead: $reason" 2>&1)"; note_rc=$?
+            [ "$note_rc" -eq 0 ] || printf 'mail.sh: note failed for %s: %s\n' "$wid" "$note_out" >&2
         done <<< "$work_ids"
     fi
 }
@@ -561,7 +567,9 @@ cmd_sendmail() {
         fi
     fi
 
-    [ -n "${orig_bead:-}" ] && _sendmail_close_bead "$orig_bead" "${orig_kind:-}" "$first_para"
+    if [ -n "${orig_bead:-}" ]; then
+        _sendmail_close_bead "$orig_bead" "${orig_kind:-}" "$first_para" || return $?
+    fi
     [ -n "$orig_file" ] && _mark_replied "$orig_file"
 
     _mail_ensure "$dest_mailbox"
