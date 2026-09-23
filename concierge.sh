@@ -201,7 +201,14 @@ concierge_live_pid() {
         pid="${f%/cmdline}"; pid="${pid##*/}"
         case "$pid" in *[!0-9]*) continue ;; esac
         [ "$pid" = "$$" ] && continue
-        tr '\0' '\n' < "$f" 2>/dev/null | grep -qF -- "$sid" || continue
+        # THE RACE IS THE NORMAL CASE. The glob enumerates pids; by the time we read one
+        # the process has usually exited. `2>/dev/null` on `tr` does NOT silence this: the
+        # failure is the SHELL's redirection, reported on the shell's own stderr before tr
+        # ever runs. Thirty lines of "No such file or directory" then bury the one message
+        # the operator needed. Guard the read, and group the redirect so the shell's error
+        # is covered too.
+        [ -r "$f" ] || continue
+        { tr '\0' '\n' < "$f" | grep -qF -- "$sid"; } 2>/dev/null || continue
         printf '%s' "$pid"
         return 0
     done
@@ -222,9 +229,19 @@ start)
     RESUME_ID="$(concierge_resume_id)"
     if [ -n "$RESUME_ID" ]; then
         _live="$(concierge_live_pid "$RESUME_ID")" && {
-            printf 'concierge: session %s is already held by pid %s\n' "$RESUME_ID" "$_live"
-            printf '  attach:  tmux -L %s attach -t %s\n' "$SOCKET" "$SESSION"
-            exit 0
+            # A LIVE HOLDER IS NOT THE SAME CLAIM AS A REACHABLE CONCIERGE. When the tmux
+            # server dies it takes the pane but not the claude client: the process survives
+            # holding the id, unreachable. This branch used to exit 0 and print an attach
+            # line that was already false when printed, and `here` then exec'd that attach
+            # and dropped the operator at "no sessions". Five failed attempts, 2026-09-23.
+            # has-session was already tested above and failed, so reaching here with a live
+            # holder means exactly the headless case (law-a-deliberate-state-is-not-a-fault
+            # does not apply: nothing intended this).
+            printf 'concierge: session %s is held by pid %s but is HEADLESS — no tmux session on socket %s\n' \
+                "$RESUME_ID" "$_live" "$SOCKET" >&2
+            printf '  the claude client outlived its tmux server; it cannot be attached to.\n' >&2
+            printf '  recover:  kill %s && %s start\n' "$_live" "$0" >&2
+            exit 3
         }
     fi
     command -v claude >/dev/null || { echo "concierge: claude not on PATH" >&2; exit 1; }
@@ -278,6 +295,33 @@ start)
         echo "concierge: started as Remote Control session '$SESSION'"
         echo "  attach locally:  tmux -L $SOCKET attach -t $SESSION"
         echo "  on the phone:    Claude app -> Remote Control -> $SESSION"
+    elif [ -n "$RESUME_ID" ]; then
+        # A DANGLING RESUME ID WEDGES THIS PERMANENTLY. A session that starts, records its
+        # id and dies before its transcript is persisted leaves an id that resolves to
+        # nothing: `claude --resume <id>` prints "No conversation found with session ID"
+        # and exits 1 in about a second, tmux dies with it, and EVERY later start fails the
+        # same way because nothing revalidates the id. Observed 2026-09-23 with
+        # 7b927d50-8a64-406d-b30b-7889a4e195dc, which had no transcript at all.
+        #
+        # Retry once WITHOUT --resume rather than testing whether the transcript file
+        # exists: that would hard-code claude's on-disk layout, and this recovers from any
+        # reason a resume fails, not only a missing file.
+        printf 'concierge: start failed with --resume %s — retrying without it\n' "$RESUME_ID" >&2
+        rm -f "$SPIRA_RUN/concierge-session"
+        grep -v -- '--resume' "$LAUNCHER" > "$LAUNCHER.noresume" && mv "$LAUNCHER.noresume" "$LAUNCHER"
+        chmod +x "$LAUNCHER"
+        systemd-run --user --collect --quiet --remain-after-exit \
+            --setenv=PATH="$PATH" --setenv=HOME="$HOME" -- \
+            tmux -L "$SOCKET" new-session -d -s "$SESSION" -c "$BRAIN" "$LAUNCHER"
+        sleep 3
+        if $TM has-session -t "$SESSION" 2>/dev/null; then
+            printf 'concierge: started FRESH (the recorded session could not be resumed)\n'
+            printf '  attach locally:  tmux -L %s attach -t %s\n' "$SOCKET" "$SESSION"
+            exit 0
+        fi
+        echo "concierge: failed to stay up even without --resume — run it in the foreground:" >&2
+        echo "  cd $BRAIN && claude --remote-control $SESSION" >&2
+        exit 1
     else
         echo "concierge: failed to stay up — run it in the foreground to see why:" >&2
         echo "  cd $BRAIN && claude --remote-control $SESSION" >&2

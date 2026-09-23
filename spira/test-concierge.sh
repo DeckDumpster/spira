@@ -683,6 +683,58 @@ else
     TMUX_TMPDIR="$LDIR" tmux kill-server 2>/dev/null || true
 fi
 
+
+# ---------------------------------------------------------------------------
+# THREE WAYS THE OPERATOR'S WAY IN BREAKS, all seen on 2026-09-23.
+# ---------------------------------------------------------------------------
+echo
+echo "the way in — orphaned holders, dangling resume ids, and /proc noise"
+
+# 1. THE /proc SCAN RACES AND THE ERROR IS THE SHELL'S. `2>/dev/null` on `tr` does not
+#    silence a failed redirection: the shell reports that itself, before tr runs. Thirty
+#    lines of "No such file or directory" buried the one message that mattered.
+_src="$(cat "$HARNESS/concierge.sh")"
+want "the /proc read is guarded before it is attempted" '[ -r "$f" ] || continue' "$_src"
+want "and the redirect is grouped so the shell's own error is covered" \
+     '{ tr' "$_src"
+
+# 2. A DANGLING --resume ID MUST NOT WEDGE START FOREVER.
+want "a failed start retries without --resume"  "retrying without it" "$_src"
+want "and clears the id that could not be resumed" "rm -f \"$SPIRA_RUN/concierge-session\"" "$_src"
+
+# 3. THE HEADLESS ORPHAN, exercised for real. When the tmux server dies it takes the pane
+#    but NOT the claude client: the process survives holding the id, unreachable. start
+#    used to call that "already held", exit 0, and print an attach line that was already
+#    false — and `here` then exec'd it and printed "no sessions".
+_odir="$(mktemp -d)"
+_oid="orphan-$$-$(date +%s)"
+_ocwd="$(bash -c ". '$HARNESS/spira/conf.sh' >/dev/null 2>&1; printf %s \"\${SPIRA_WIKI:-\$SPIRA_REPO}\"")"
+printf '%s\n%s\n' "$_oid" "$_ocwd" > "$_odir/concierge-session"
+
+# A stub claude on PATH, so a regression that falls through cannot launch a real one.
+mkdir -p "$_odir/bin"; printf '#!/bin/sh\necho STUB_CLAUDE_RAN\n' > "$_odir/bin/claude"
+chmod +x "$_odir/bin/claude"
+
+python3 -c 'import sys,time; time.sleep(60)' "$_oid" &
+_opid=$!
+sleep 0.3
+_oout="$(PATH="$_odir/bin:$PATH" SPIRA_RUN="$_odir" \
+         CONCIERGE_SOCKET="ctest-$$" CONCIERGE_SESSION="ctest-$$" \
+         bash "$HARNESS/concierge.sh" start 2>&1)"; _orc=$?
+kill "$_opid" 2>/dev/null; wait "$_opid" 2>/dev/null
+
+# POSITIVE CONTROL: if the fixture holder was never found this asserts nothing at all.
+want "the fixture holder is detected"              "$_oid"   "$_oout"
+nowant "and no claude was launched"                "STUB_CLAUDE_RAN" "$_oout"
+if [ "$_orc" -ne 0 ]; then
+    pass=$((pass+1)); printf '  ok    %s\n' "a holder with no tmux session does not exit 0"
+else
+    fail=$((fail+1)); printf '  FAIL  %s: exited 0\n' "a holder with no tmux session does not exit 0"
+fi
+want   "it names the condition"                       "HEADLESS"   "$_oout"
+nowant "it does not advise an attach that cannot work" "attach:  tmux" "$_oout"
+rm -rf "$_odir"
+
 echo
 echo "concierge self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
