@@ -49,6 +49,13 @@ TMP="$(mktemp -d)"
 # container cannot reach).
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
+# SPIRA_SCOPE_LABEL derives from the git repo's base name via SPIRA_HOME_REPO. Inside the
+# test container the workspace git (a linked worktree) has a broken gitdir link, so the
+# automatic derivation can produce "workspace" instead of "spira". Pin SPIRA_HOME_REPO
+# here so every context—outer test, fake worktree, production re-run—agrees on "spira",
+# and name PROD_ROOT to match so conf.sh derives the same value when re-run from it.
+export SPIRA_HOME_REPO=spira
+
 PROD_ROOT="$TMP/spira"
 FAKE_WT="$TMP/fake-worktree"
 mkdir -p "$PROD_ROOT"
