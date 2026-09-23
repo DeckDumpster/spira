@@ -3525,16 +3525,15 @@ for bead in beads:
 }
 
 # file_unclaimable_incidents — for each UNCLAIMABLE line in detect_unclaimable_ready output,
-# file a P1 incident so Ops can claim and fix the label.
+# file a P1 incident in the Groomer partition so the Groomer can claim and fix the label.
+#
+# THE GROOMER IS THE TERMINUS. Only the Groomer can discharge an UNCLAIMABLE finding: it can
+# add the scope label, correct the fayth:, or close the row. Ops cannot do any of these and
+# must not be the sole recipient. The incident is filed with SPIRA_GROOMER_LABEL.
 #
 # THE CALL IS IDEMPOTENT. incident.sh dedupes on the unclaimable:<id> ref, so a
 # bead that is still unclaimable on the next sentinel pass bumps the recurrence counter
-# rather than filing a duplicate. An operator who fixes the label and the pass goes quiet is
-# the passing case; one who does not is a recurrence, not a new incident.
-#
-# THE TITLE NAMES THE BEAD AND THE FIX. "UNCLAIMABLE: <id>" is enough for Ops to identify
-# the bead, and "fix the fayth: or partition label" names the category of fix without
-# requiring the Ops aeon to read the full reason before acting. The full reason is in the body.
+# rather than filing a duplicate.
 #
 # SPIRA_INCIDENT_SH overrides the path to incident.sh. Test suites inject a mock here;
 # production uses the default.
@@ -3550,6 +3549,7 @@ file_unclaimable_incidents() {   # file_unclaimable_incidents <detect_unclaimabl
         SPIRA_INCIDENT_TYPE=task \
         SPIRA_INCIDENT_PRIORITY=1 \
         SPIRA_INCIDENT_ACTOR=sentinel \
+        SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:-spira},${SPIRA_GROOMER_LABEL:-groom}" \
         SPIRA_INCIDENT_REPO="${SPIRA_SCOPE_LABEL:-spira}" \
         SPIRA_INCIDENT_REF="unclaimable:$bid" \
         SPIRA_INCIDENT_CAUSE=unclaimable \
