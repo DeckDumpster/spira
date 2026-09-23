@@ -574,6 +574,65 @@ MAILEOF
     fi
 done <<< "$dispatchable"
 
+# CHECK 4 SUPPLEMENT — requeue cap for closed-but-unlanded beads.
+# dispatchable_open drops every closed bead, so a bead whose cycle ends closed-and-unlanded
+# is never examined by the loop above. Find closed beads that carry a branch: label, get
+# their reopen counts, and apply the same escalation for those at or above the cap that
+# have not yet landed. requeue_asked/requeue_asked_mark provide the same per-bead dedup.
+_c4_closed="$(check4_closed_branched)"
+if [ -n "$_c4_closed" ]; then
+    declare -A _c4c_reopens
+    while IFS=$'\t' read -r _bid _batt _brep; do
+        [ -n "$_bid" ] || continue
+        _c4c_reopens["$_bid"]="${_brep:-0}"
+    done < <(check4_bulk_data "$_c4_closed")
+    while IFS=$'\t' read -r id _labels; do
+        [ -n "$id" ] || continue
+        _requeues="${_c4c_reopens[$id]:-0}"
+        [ "$_requeues" -ge "$REQUEUE_AT" ] || continue
+        case "$_labels" in *'delivers:action'*) continue ;; esac
+        _r_name="$(printf '%s' "$_labels" | tr ',' '\n' | sed -n 's/^repo://p' | head -1)"
+        _r_name="${_r_name:-$(spira_home_repo)}"
+        _r_path="$(repo_root "$_r_name" 2>/dev/null)" || _r_path=""
+        if [ -n "$_r_path" ] && landed "$id" "$_r_path"; then
+            log "CHECK4-closed $id: reopens=$_requeues but already landed — no escalation"
+            continue
+        fi
+        requeue_asked "$id" "$_requeues" && continue
+        _rq_causes="$(printf '%s' "$_labels" | tr ',' '\n' \
+            | grep -E '^sp-requeue-[0-9]+(-|$)' \
+            | sed -E 's/^sp-requeue-([0-9]+)$/\1 unrecorded/;s/^sp-requeue-([0-9]+)-(.*)$/\1 \2/' \
+            | sort -n | awk '{printf "%s%s x%s", sep, $2, $1; sep=", "} END{printf "\n"}')" || true
+        _rq_causes="${_rq_causes:-unrecorded}"
+        _rq_subj="Spira bead $id — completed and requeued $_requeues times, never landed (${_rq_causes}) — the harness cannot land it"
+        _rq_dflt="close the bead if its work has already landed under a different id or is no longer needed; file a harness-defect bead if the deliverable was not a commit; otherwise label it needs-rebase so an aeon can resolve the conflict"
+        _rq_ev="$(bead_context "$id" 2>/dev/null || printf '(could not read %s)' "$id")
+
+REQUEUES  $_requeues (cap $REQUEUE_AT) — causes: ${_rq_causes}
+STATUS    closed (not landed in ${_r_name:-unknown})"
+        if [ -x "$SPIRA_HOME/mail.sh" ] && SPIRA_MAIL_REPEAT_CONSIDERED="sentinel-own-dedup" \
+              "$SPIRA_HOME/mail.sh" send operator \
+              --from "Sentinel <sentinel@spira>" \
+              --subject "$_rq_subj" \
+              --kind question \
+              --default "$_rq_dflt" <<MAILEOF >/dev/null 2>&1; then
+## Question
+$_rq_subj
+
+## Default
+$_rq_dflt
+
+$_rq_ev
+
+Every additional requeue costs one full aeon session and its context budget; no progress is made toward landing this work.
+MAILEOF
+            requeue_asked_mark "$id" "$_requeues"
+        else
+            log "CHECK4-closed $id: requeue escalation path refused the ask — retries next pass"
+        fi
+    done <<< "$_c4_closed"
+fi
+
 # STALE POISON CLEAR. spira-poison is added when a bead's attempt count reaches the
 # threshold; the operator clears it after changing the approach. But the label also becomes
 # stale when someone removes attempt labels and the count drops below the threshold: the
