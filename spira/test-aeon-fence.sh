@@ -142,6 +142,50 @@ _bd_cmd="$(printf "bd -C /db create title %s - <<'DESC'\nbash \"%s/census.sh\" a
 out="$(fence_run "$_bd_cmd" SPIRA_AEON=test-aeon)"
 refuse "F4: bd create with prod-path in heredoc NOT blocked" '"decision":"block"' "$out"
 
+# POSITIVE CONTROLS — all genuine write shapes to SPIRA_PROD must still be refused:
+out="$(fence_run "mv ${FAKE_PROD}/aeon.sh /tmp/x" SPIRA_AEON=test-aeon)"
+want "F5 POSITIVE: mv from SPIRA_PROD → decision:block" '"decision":"block"' "$out"
+
+out="$(fence_run "echo x | tee ${FAKE_PROD}/aeon.sh" SPIRA_AEON=test-aeon)"
+want "F6 POSITIVE: pipe to tee SPIRA_PROD → decision:block" '"decision":"block"' "$out"
+
+out="$(fence_run "sed -i s/a/b/ ${FAKE_PROD}/aeon.sh" SPIRA_AEON=test-aeon)"
+want "F7 POSITIVE: sed -i SPIRA_PROD → decision:block" '"decision":"block"' "$out"
+
+out="$(fence_run "git -C ${FAKE_PROD} add -A" SPIRA_AEON=test-aeon)"
+want "F8 POSITIVE: git -C SPIRA_PROD add → decision:block" '"decision":"block"' "$out"
+
+out="$(fence_run "git -C ${FAKE_PROD} commit -m x" SPIRA_AEON=test-aeon)"
+want "F9 POSITIVE: git -C SPIRA_PROD commit → decision:block" '"decision":"block"' "$out"
+
+out="$(fence_run "git -C ${FAKE_PROD} reset --hard" SPIRA_AEON=test-aeon)"
+want "F10 POSITIVE: git -C SPIRA_PROD reset → decision:block" '"decision":"block"' "$out"
+
+out="$(fence_run "git -C ${FAKE_PROD} checkout main" SPIRA_AEON=test-aeon)"
+want "F11 POSITIVE: git -C SPIRA_PROD checkout → decision:block" '"decision":"block"' "$out"
+
+out="$(fence_run "git -C ${FAKE_PROD} clean -fd" SPIRA_AEON=test-aeon)"
+want "F12 POSITIVE: git -C SPIRA_PROD clean → decision:block" '"decision":"block"' "$out"
+
+# Prose containing embedded tool names must NOT be refused (sp-c97mb):
+# "arm in" contains "rm " as a substring — must not trip the rm guard.
+out="$(fence_run "arm in aeon.sh see ${FAKE_PROD}/aeon.sh" SPIRA_AEON=test-aeon)"
+refuse "F13: prose 'arm in' with prod path NOT blocked" '"decision":"block"' "$out"
+
+# "tee" embedded mid-sentence must not trip the tee guard.
+out="$(fence_run "See ${FAKE_PROD}/aeon.sh tee operation" SPIRA_AEON=test-aeon)"
+refuse "F14: prose 'tee' with prod path NOT blocked" '"decision":"block"' "$out"
+
+# bd create with 'arm in' in the heredoc description (the exact failure from sp-c97mb):
+_arm_cmd="$(printf "bd -C /db create title %s - <<'DESC'\narm in aeon.sh see %s/aeon.sh\nDESC" "$_dflag" "${FAKE_PROD}")"
+out="$(fence_run "$_arm_cmd" SPIRA_AEON=test-aeon)"
+refuse "F15: bd create with 'arm in' in heredoc NOT blocked" '"decision":"block"' "$out"
+
+# "add" in prose (not a git subcommand) must not trip the git-add guard.
+_add_cmd="$(printf "bd -C /db create title %s - <<'DESC'\nadd -A the files in %s/spira\nDESC" "$_dflag" "${FAKE_PROD}")"
+out="$(fence_run "$_add_cmd" SPIRA_AEON=test-aeon)"
+refuse "F16: bd create with 'add' in heredoc NOT blocked" '"decision":"block"' "$out"
+
 # ===========================================================================
 echo
 echo "D — archivist.md prohibits filing production-operation beads:"
