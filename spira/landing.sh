@@ -1009,12 +1009,16 @@ for i in d:
     done
     [ -n "$_fix_front" ] && log "CHECK6 $name: base-fix branch(es) at front of queue: $_fix_front"
 
-    # EXPRESS FIRST: branches whose beads carry the express label are certified before
-    # the rest so a critical bead does not wait behind alphabetical refname order.
+    # EXPRESS SECOND: branches whose beads carry the express label are certified after
+    # base-fix but before everything else, so a critical bead does not wait behind
+    # alphabetical refname order. Base-fix stays first (three-bucket partition).
     local _exp_label_land="${SPIRA_EXPRESS_LABEL:-express}"
-    local _expr_brs="" _tail_brs="" _br_sort
+    local _fix_brs="" _expr_brs="" _tail_brs="" _br_sort
     for _br_sort in $brs; do
         _bid_sort="${_br_sort#spira/}"
+        case "${_scan_extref[$_bid_sort]:-}" in
+            basefail:"$name":*) _fix_brs="$_fix_brs $_br_sort"; continue ;;
+        esac
         case " ${_scan_labels[$_bid_sort]:-} " in
             *" $_exp_label_land "*) _expr_brs="$_expr_brs $_br_sort" ;;
             *) _tail_brs="$_tail_brs $_br_sort" ;;
@@ -1022,7 +1026,10 @@ for i in d:
     done
     [ -n "$_expr_brs" ] && \
         log "CHECK6 $name: express branch(es) certified first:${_expr_brs}"
-    brs="${_expr_brs# }${_tail_brs:+ }${_tail_brs# }"
+    brs=""
+    [ -n "$_fix_brs"  ] && brs="${_fix_brs# }"
+    [ -n "$_expr_brs" ] && brs="${brs:+$brs }${_expr_brs# }"
+    [ -n "$_tail_brs" ] && brs="${brs:+$brs }${_tail_brs# }"
 
     for br in $brs; do
         id="${br#spira/}"
