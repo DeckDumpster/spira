@@ -360,7 +360,7 @@ else
         is0 "phase B: git clone --branch $prev_tag" "$?"
 
         _prev_install_rc=0
-        SPIRA_OPERATED=0 bash "$_prev_clone/install.sh" >/dev/null 2>&1 || _prev_install_rc=$?
+        SPIRA_OPERATED=0 bash "$_prev_clone/install.sh" 2>&1 | tee "$TMP/prev-install.log" || _prev_install_rc=$?
         is0 "phase B: install.sh ($prev_tag) exits 0" "$_prev_install_rc"
 
         # Capture unit set BEFORE upgrade.
