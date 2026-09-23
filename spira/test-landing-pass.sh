@@ -130,7 +130,7 @@ git -C "$MASTER_REPO" checkout -q master
 PR_ARGS="$TMP/pr-args"; : > "$PR_ARGS"
 cat > "$SH/gh-master" <<GHEOF
 #!/usr/bin/env bash
-printf '%s\n' "\$@" >> "$PR_ARGS"
+echo "\$@" >> "$PR_ARGS"
 case "\$1 \$2" in
     "pr view")   printf ''; exit 0 ;;
     "pr list")   printf ''; exit 0 ;;
