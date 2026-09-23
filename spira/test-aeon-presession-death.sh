@@ -146,15 +146,12 @@ echo "POSITIVE CONTROL — stray branch removed: session runs, no pre-session de
 # ======================================================================================
 git -C "$REPO" branch -D "origin/main" 2>/dev/null || true
 
-# Replace shim with one that actually closes the bead so the positive control is clean.
+# Replace shim with one that emits valid session output (no close — we assert on session start,
+# not on bead disposition, which belongs to aeon.sh's own cleanup path).
 cat > "$BIN/claude" <<'SHIM2'
 #!/usr/bin/env bash
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
-id="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" list --json 2>/dev/null \
-    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
-      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
-BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
 printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
 SHIM2
 chmod +x "$BIN/claude"
@@ -164,9 +161,9 @@ _rc3="$(run_aeon)"
 _out3="$(cat "$TMP/out")"
 _line3="$(done_lines_for sp-pd-3 | tail -1)"
 
-nowant "no FATAL when worktree succeeds"    "FATAL"             "$_out3"
-nowant "shim not invoked on pre-session"    "shim was invoked"  "$_out3"
-want   "bead closed (session ran)"          "status=closed"     "$_line3"
+nowant "no FATAL when worktree succeeds"              "FATAL"             "$_out3"
+nowant "no pre-session death in positive control"     "status=pre-session" "$_line3"
+want   "session ran (turns recorded in ledger)"       "turns=1"           "$_line3"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
