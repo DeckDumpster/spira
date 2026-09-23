@@ -359,5 +359,46 @@ wantre "phase A claimability check uses bd ready" 'bd.*ready.*_a_scope_label.*_a
 want "phase A bead-not-claimable error names predicate" 'builder predicate does not match bead labels'
 
 # ============================================================================
+echo
+echo "22. Phase B: install.sh output not discarded on failure"
+# ============================================================================
+# Phase B previously sent all install.sh output to /dev/null, so a failing
+# install left only an exit code and no cause. The fix streams via tee, as
+# phase A and D do.
+
+if grep -E 'bash.*_prev_clone.*install\.sh.*>/dev/null' "$SCRIPT" 2>/dev/null; then
+    bad "phase B install.sh output not discarded" \
+        "found install.sh with >/dev/null — output invisible on failure"
+else
+    ok "phase B install.sh output not discarded"
+fi
+wantre "phase B install.sh streams output (tee pattern)" \
+    '_prev_clone.*install\.sh.*tee|tee.*prev-install'
+
+# Fixture: a failing phase B install.sh must emit its output before the FAIL line.
+_pb_tmp="$(mktemp -d)"
+mkdir -p "$_pb_tmp/clone"
+printf '#!/bin/sh\nprintf "prev-install-failure-reason\n"\nexit 1\n' \
+    > "$_pb_tmp/clone/install.sh"
+chmod +x "$_pb_tmp/clone/install.sh"
+
+_pb_out="$(
+    _prev_clone="$_pb_tmp/clone"
+    _prev_install_rc=0
+    SPIRA_OPERATED=0 bash "$_prev_clone/install.sh" 2>&1 | tee "$_pb_tmp/prev-install.log" \
+        || _prev_install_rc=$?
+    [ "$_prev_install_rc" -ne 0 ] && \
+        printf '  FAIL  phase B: install.sh exits 0: exit %d\n' "$_prev_install_rc" \
+        || true
+)"
+
+printf '%s\n' "$_pb_out" | grep -q 'prev-install-failure-reason' \
+    && ok "fixture: phase B failing install.sh output reaches report" \
+    || bad "fixture: phase B failing install.sh output reaches report" \
+        "marker not found; got: $(printf '%s\n' "$_pb_out" | head -3)"
+
+rm -rf "$_pb_tmp"
+
+# ============================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
