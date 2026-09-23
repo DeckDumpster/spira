@@ -1629,7 +1629,15 @@ reachable_keys() {
         echo "SP_STRANDED=?"
         return
     fi
-    printf '%s\n' "$_reach_raw" | SPIRA_CHAMBER="$HERE/chamber" SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" python3 -c '
+    # Collect expanded partition labels for every declared fayth so Python can detect
+    # beads that match no live partition (orphans). fayth_get sources the fayth file in a
+    # subshell, expanding variables like $SPIRA_PLAN_LABEL that raw file reads cannot resolve.
+    local _f _fl _live_labels=""
+    for _f in $(spira_fayths 2>/dev/null); do
+        _fl="$(fayth_get "$_f" FAYTH_LABELS 2>/dev/null)"
+        [ -n "$_fl" ] && _live_labels="${_live_labels:+$_live_labels|}${_fl}"
+    done
+    printf '%s\n' "$_reach_raw" | SPIRA_CHAMBER="$HERE/chamber" SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" SPIRA_LIVE_LABELS="${_live_labels}" python3 -c '
 import os, sys, json
 from collections import deque
 
@@ -1661,11 +1669,24 @@ if CTRL and os.path.isfile(CTRL):
     except Exception:
         pass
 
+# Live partitions: expanded labels passed from shell via |-separated list.
+# A bead that matches none of them is an orphan — no fayth will ever claim it.
+live_label_sets = []
+_ll_str = os.environ.get("SPIRA_LIVE_LABELS", "")
+for _part in _ll_str.split("|"):
+    _ls = {l.strip() for l in _part.split(",") if l.strip()}
+    if _ls:
+        live_label_sets.append(_ls)
+
 def is_stopper(labels):
     ls = set(labels or [])
     if ASK in ls or "spira-poison" in ls:
         return True
-    return any(sl.issubset(ls) for sl in suspended_label_sets)
+    if any(sl.issubset(ls) for sl in suspended_label_sets):
+        return True
+    if live_label_sets and not any(ll.issubset(ls) for ll in live_label_sets):
+        return True
+    return False
 
 try:
     d = json.load(sys.stdin)

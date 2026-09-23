@@ -371,6 +371,39 @@ is "SP_STRANDED=0 with scope filter (out-of-scope excluded)" "0" \
    "$(printf '%s\n' "$scope_out" | grep '^SP_STRANDED=' | sed 's/^SP_STRANDED=//')"
 
 # =============================================================================
+# ORPHAN BEAD — a bead whose labels match no live partition (sp-4pgou).
+# Such a bead can never be claimed: CHECK 7 finds nothing ready in any partition,
+# yet the old code counted it as reachable because it had no open blockers.
+# Fix: it is a stopper — stranded, not reachable.
+#
+# Positive control (law-a-regression-test-must-be-seen-to-fail): the fixture also
+# contains a bead that DOES match builder's partition, which must still be reachable.
+# A stopper that fires for everything would fail this half.
+# =============================================================================
+echo ""
+echo "orphan bead: no partition labels → stranded, not reachable"
+
+BD_ORPHAN="$TMP/bd-orphan"
+cat > "$BD_ORPHAN" <<'EOF'
+#!/usr/bin/env bash
+# sp-orphan: open, labels that match no fayth partition (no "plan" label).
+# sp-normal: open, labels that match builder (spira + plan).
+printf '[
+  {"id":"sp-orphan","status":"open","labels":["collection","deckdumpster"],"issue_type":"task"},
+  {"id":"sp-normal","status":"open","labels":["spira","plan"],"issue_type":"task"}
+]'
+EOF
+chmod +x "$BD_ORPHAN"
+
+orphan_out="$(run_reachable "$BD_ORPHAN")"
+# sp-normal: reachable (matches builder's spira,plan partition).
+# sp-orphan: stranded (matches no live partition; can never be claimed).
+is "SP_REACHABLE=1 with orphan bead" "1" \
+   "$(printf '%s\n' "$orphan_out" | grep '^SP_REACHABLE=' | sed 's/^SP_REACHABLE=//')"
+is "SP_STRANDED=1 with orphan bead" "1" \
+   "$(printf '%s\n' "$orphan_out" | grep '^SP_STRANDED=' | sed 's/^SP_STRANDED=//')"
+
+# =============================================================================
 echo ""
 printf 'test-cockpit-reachable: %d ok, %d fail\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
