@@ -295,14 +295,17 @@ testdb_up() {            # testdb_up <tag>
     fi
 
     # SERVER MODE: fallback for boxes without bd-embedded.
+    printf 'testdb: TRACE: entering server mode initialization for tag=%s\n' "$tag" >&2
     [ -n "${SPIRA_TESTDB_DATA:-}" ] || {
         printf 'testdb: no embedded bd and SPIRA_TESTDB_DATA is not set\n' >&2
         return 1
     }
+    printf 'testdb: TRACE: calling testdb_server_ensure\n' >&2
     testdb_server_ensure || {
         printf 'testdb: could not start dolt-beads-test.service\n' >&2
         return 1
     }
+    printf 'testdb: TRACE: testdb_server_ensure returned\n' >&2
     TESTDB_MODE=server
     TESTDB_NAME="sptest_${tag}_$(date +%s)_$$"
     # THE SERVER-SIDE DATABASE IS NAMED PER FIXTURE, AND THE WORKSPACE LIVES OUTSIDE THE
@@ -325,20 +328,28 @@ testdb_up() {            # testdb_up <tag>
     #      init with "already initialized". /var/tmp has no .dolt ancestor.
     TESTDB_DIR="/var/tmp/$TESTDB_NAME"
     mkdir -p "$TESTDB_DIR" || { printf 'testdb: mkdir %s failed\n' "$TESTDB_DIR" >&2; return 1; }
+    printf 'testdb: TRACE: TESTDB_DIR created: %s\n' "$TESTDB_DIR" >&2
     # Serialize bd init: schema migrations hold a global Dolt lock (see testdb.sh header).
     # Concurrent inits queue behind it and each takes N×6s instead of 6s — enough to push
     # suites past the 600s timeout when more than ~6 server-mode suites run in parallel.
     local init_out init_rc _init_fd
     _init_fd=""
+    printf 'testdb: TRACE: acquiring lock on %s/.server-init.lock\n' "$SPIRA_TESTDB_DATA" >&2
     if exec {_init_fd}>>"${SPIRA_TESTDB_DATA}/.server-init.lock" 2>/dev/null; then
+        printf 'testdb: TRACE: lock file opened, calling flock\n' >&2
         flock -x "$_init_fd" 2>/dev/null || true
+        printf 'testdb: TRACE: flock returned\n' >&2
+    else
+        printf 'testdb: TRACE: could not open lock file\n' >&2
     fi
+    printf 'testdb: TRACE: calling bd init --server with database=%s\n' "$TESTDB_NAME" >&2
     init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
         BD_NON_INTERACTIVE=1 \
         "$TESTDB_SERVER_BD" init --non-interactive --prefix sp --skip-agents --skip-hooks \
         --server --server-host 127.0.0.1 --server-port "${SPIRA_TESTDB_PORT:-3308}" \
         --database "$TESTDB_NAME" --external -q 2>&1 )"
     init_rc=$?
+    printf 'testdb: TRACE: bd init returned with rc=%s\n' "$init_rc" >&2
     [ -n "$_init_fd" ] && { exec {_init_fd}>&- 2>/dev/null; } || true
     [ $init_rc -eq 0 ] || {
         printf 'testdb: bd init (server) failed (rc=%s) for %s\n' \
