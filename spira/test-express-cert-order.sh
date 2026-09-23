@@ -125,9 +125,10 @@ echo "landing: base-fix first, then express, then ordinary"
 # Three beads: sp-a-basefail (base-fix), sp-b-express (express), sp-c-ordinary.
 # Refname order would give: sp-a, sp-b, sp-c — base-fix coincidentally first here,
 # but the express ordering must still hold between sp-b and sp-c.
+rm -rf "$RUN/worktree/sp-a-regular" "$RUN/worktree/sp-b-express"
 rm -f "$LANDSTATE"/sp-a-regular "$LANDSTATE"/sp-b-express
-git -C "$REPO" branch -D spira/sp-a-regular spira/sp-b-express 2>/dev/null || true
 git -C "$REPO" worktree prune 2>/dev/null || true
+git -C "$REPO" branch -D spira/sp-a-regular spira/sp-b-express 2>/dev/null || true
 
 testdb_reset
 testdb_seed <<'SEED'
@@ -165,9 +166,10 @@ echo
 echo "landing: oldest-closed first within express group"
 # ======================================================================================
 # Two express beads with different closed_at; the older one must be certified first.
+rm -rf "$RUN/worktree/sp-a-basefail" "$RUN/worktree/sp-b-express" "$RUN/worktree/sp-c-ordinary"
 rm -f "$LANDSTATE"/sp-a-basefail "$LANDSTATE"/sp-b-express "$LANDSTATE"/sp-c-ordinary
-git -C "$REPO" branch -D spira/sp-a-basefail spira/sp-b-express spira/sp-c-ordinary 2>/dev/null || true
 git -C "$REPO" worktree prune 2>/dev/null || true
+git -C "$REPO" branch -D spira/sp-a-basefail spira/sp-b-express spira/sp-c-ordinary 2>/dev/null || true
 
 testdb_reset
 testdb_seed <<'SEED'
