@@ -11,6 +11,9 @@
 #   incident.sh retire-unsatisfiable-delivers [--dry-run]
 #                                        drop delivers: labels naming a path this install
 #                                        can never write (one-time migration)
+#   incident.sh repair-mismatch-delivers [--dry-run]
+#                                        replace delivers:note:applied.jsonl with
+#                                        delivers:action on open beads that carry it
 #
 # THE INTAKE ALREADY EXISTED IN SHAPE
 # -----------------------------------
@@ -428,39 +431,43 @@ MAILEOF
     fi
     # DELIVERS LABEL. When an Ops session commits code naming the bead, the sentinel's
     # commit-naming check accepts the close and this label is never consulted. When no
-    # commit is made (the SOP already existed and no file changed), the sentinel checks
-    # this label: if `sop.sh applied` or `sop.sh write` ran during the session the
-    # applications ledger is updated, its mtime is after started_at, and the close stands.
-    # A session that skips both sop.sh calls is re-summoned — enforcing the closing rule
-    # mechanically rather than trusting the brief alone.
+    # commit is made, the sentinel checks this label to decide whether the close stands.
     #
-    # SPIRA_INCIDENT_DELIVERS: a caller that knows at filing time that no SOP and no commit
-    # will ever satisfy this bead can name the delivers type explicitly. Only recognised types
-    # are written — an unknown type is logged and omitted rather than recorded as a criterion
-    # nobody can satisfy. Currently recognised: action (close accepted; close reason is the
-    # evidence). When set, the SOP ledger path is skipped entirely, so the two do not combine
-    # into a criterion the aeon must satisfy both parts of.
+    # DEFAULT: delivers:action — close reason is the evidence. An incident whose resolution
+    # is unknown at filing time gets this: it does not presume an SOP will be applied, so
+    # correct diagnostic work is never reopened for failing to produce one.
+    #
+    # OPT-IN: a caller that KNOWS an SOP will be applied sets SPIRA_INCIDENT_DELIVERS=note
+    # to stamp delivers:note:$SPIRA_SOP_LEDGER instead. The check then requires a ledger
+    # record naming this bead, not just an mtime, so a concurrent unrelated SOP application
+    # does not satisfy the criterion (law-a-pattern-match-is-not-an-identity-check).
     #
     # SCHEMA ON WRITE: A CRITERION NOBODY CAN SATISFY IS NEVER RECORDED.
     #
-    # This label used to be stamped unconditionally, and both ways it could be wrong
-    # were live at once. Eleven open beads named $SPIRA_RUN/sop/applied.jsonl, a file
-    # under a directory nothing ever created -- so `sop.sh applied` could not write it,
-    # the mtime check could never pass, and any close without a commit was reopened
-    # forever. Two more named an absolute path under another install's layout, having
-    # travelled between machines inside the bead: no session on this box could satisfy
-    # those at all.
-    #
-    # Repairing the labels afterwards leaves the writer free to mint more, so the check
-    # belongs here. Two conditions, and the label is written only when both hold:
-    #   - the path is under THIS install's run directory, so a session here can write it
-    #   - its parent directory exists, which we ensure rather than assume
-    #
     # SKIPPING IS LOGGED. A criterion silently omitted is as hard to diagnose as one
-    # that cannot be met -- the bead simply closes on the commit rule and nobody knows
-    # a second rule was meant to apply.
+    # that cannot be met.
     if [ -n "${SPIRA_INCIDENT_DELIVERS:-}" ]; then
         case "${SPIRA_INCIDENT_DELIVERS}" in
+            note)
+                _sop_ledger="${SPIRA_SOP_LEDGER:-${SPIRA_RUN}/sop/applied.jsonl}"
+                _deliverable=1
+                case "$_sop_ledger" in
+                    "${SPIRA_RUN}"/*) ;;
+                    *) _deliverable=0
+                       ilog "delivers: $id: ledger $_sop_ledger is outside $SPIRA_RUN — falling back to delivers:action" ;;
+                esac
+                if [ "$_deliverable" = 1 ] && ! mkdir -p "$(dirname "$_sop_ledger")" 2>/dev/null; then
+                    _deliverable=0
+                    ilog "delivers: $id: cannot create $(dirname "$_sop_ledger") — falling back to delivers:action"
+                fi
+                if [ "$_deliverable" = 1 ]; then
+                    bdq label add "$id" "delivers:note:${_sop_ledger}" >/dev/null 2>&1
+                    ilog "delivers: $id: delivers:note:${_sop_ledger} written (SPIRA_INCIDENT_DELIVERS=note)"
+                else
+                    bdq label add "$id" "delivers:action" >/dev/null 2>&1
+                    ilog "delivers: $id: delivers:action written (note path not satisfiable — fallback)"
+                fi
+                ;;
             action)
                 bdq label add "$id" "delivers:${SPIRA_INCIDENT_DELIVERS}" >/dev/null 2>&1
                 ilog "delivers: $id: delivers:${SPIRA_INCIDENT_DELIVERS} written (SPIRA_INCIDENT_DELIVERS set by caller)" ;;
@@ -468,20 +475,8 @@ MAILEOF
                 ilog "delivers: $id: unrecognised SPIRA_INCIDENT_DELIVERS='${SPIRA_INCIDENT_DELIVERS}' — label not written" ;;
         esac
     else
-        _sop_ledger="${SPIRA_SOP_LEDGER:-${SPIRA_RUN}/sop/applied.jsonl}"
-        _deliverable=1
-        case "$_sop_ledger" in
-            "${SPIRA_RUN}"/*) ;;
-            *) _deliverable=0
-               ilog "delivers: $id: ledger $_sop_ledger is outside $SPIRA_RUN — label not written (a session here could never satisfy it)" ;;
-        esac
-        if [ "$_deliverable" = 1 ] && ! mkdir -p "$(dirname "$_sop_ledger")" 2>/dev/null; then
-            _deliverable=0
-            ilog "delivers: $id: cannot create $(dirname "$_sop_ledger") — label not written"
-        fi
-        if [ "$_deliverable" = 1 ]; then
-            bdq label add "$id" "delivers:note:${_sop_ledger}" >/dev/null 2>&1
-        fi
+        bdq label add "$id" "delivers:action" >/dev/null 2>&1
+        ilog "delivers: $id: delivers:action written (default — close reason is the evidence)"
     fi
     # LABEL THE REF HASH so future dedup queries take the O(1) label-keyed path instead of
     # scanning all open incident beads. Added at creation so every new bead carries it from
@@ -758,6 +753,43 @@ except Exception:
         printf 'would retire %d label(s); %d already reachable and left alone\n' "$n" "$k"
     else
         printf 'retired %d unsatisfiable label(s); %d already reachable and left alone\n' "$n" "$k"
+    fi
+    ;;
+
+repair-mismatch-delivers)
+    # MIGRATION PASS — replaces delivers:note:*/applied.jsonl with delivers:action on open
+    # beads that carry it. The criterion was stamped by default at filing time, before
+    # knowing whether the work would apply an SOP. Most incidents are diagnoses; their
+    # deliverable is a close reason, not a ledger record, so delivers:action is correct.
+    # Callers that know an SOP will be applied now opt in via SPIRA_INCIDENT_DELIVERS=note.
+    shift
+    _dry=0; [ "${1:-}" = "--dry-run" ] && _dry=1
+    n=0; k=0
+    while IFS=$'\t' read -r bid lab; do
+        [ -n "$bid" ] && [ -n "$lab" ] || continue
+        if [ "$_dry" = 1 ]; then
+            printf '  would repair %-9s: %s -> delivers:action\n' "$bid" "$lab"
+        else
+            bdq label remove "$bid" "$lab" >/dev/null 2>&1 \
+                && bdq label add "$bid" "delivers:action" >/dev/null 2>&1 \
+                && ilog "delivers: $bid: replaced $lab with delivers:action (repair-mismatch-delivers)"
+        fi
+        n=$((n+1))
+    done < <(bdq list --status open,in_progress --limit 0 --json 2>/dev/null \
+      | python3 -c '
+import sys, json
+try:
+    for b in json.load(sys.stdin):
+        for l in (b.get("labels") or []):
+            if l.startswith("delivers:note:") and "applied.jsonl" in l:
+                print(b.get("id",""), l, sep="\t")
+except Exception:
+    pass
+')
+    if [ "$_dry" = 1 ]; then
+        printf 'would repair %d label(s)\n' "$n"
+    else
+        printf 'repaired %d label(s)\n' "$n"
     fi
     ;;
 

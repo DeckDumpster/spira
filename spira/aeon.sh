@@ -1978,11 +1978,25 @@ print(len([x for x in (d if isinstance(d,list) else [d])
                         _delivers_ok=0
                         _delivers_fail="delivers:$_dtype: $_dval does not exist"
                     else
-                        _mt="$(stat -c %Y "$_dval" 2>/dev/null)" || _mt=0
-                        if [ "${_mt:-0}" -le "${SESSION_EPOCH:-0}" ] 2>/dev/null; then
-                            _delivers_ok=0
-                            _delivers_fail="delivers:$_dtype: $_dval exists but was not written in this session (mtime ${_mt} <= epoch ${SESSION_EPOCH:-0})"
-                        fi
+                        case "$_dval" in
+                            */applied.jsonl)
+                                # Identity check: a record in this shared global ledger must
+                                # name THIS bead. Mtime proves only that someone applied some
+                                # SOP during this session — a concurrent aeon satisfies it for
+                                # free (law-a-pattern-match-is-not-an-identity-check).
+                                if ! grep -q '"bead"[[:space:]]*:[[:space:]]*"'"$BEAD_ID"'"' "$_dval" 2>/dev/null; then
+                                    _delivers_ok=0
+                                    _delivers_fail="delivers:$_dtype: $_dval has no record naming bead $BEAD_ID. Set delivers:TYPE labels that match the evidence actually produced. Escalate to aeon-bahamut if the criterion cannot be met — the delivers: label may not be removed."
+                                fi
+                                ;;
+                            *)
+                                _mt="$(stat -c %Y "$_dval" 2>/dev/null)" || _mt=0
+                                if [ "${_mt:-0}" -le "${SESSION_EPOCH:-0}" ] 2>/dev/null; then
+                                    _delivers_ok=0
+                                    _delivers_fail="delivers:$_dtype: $_dval exists but was not written in this session (mtime ${_mt} <= epoch ${SESSION_EPOCH:-0})"
+                                fi
+                                ;;
+                        esac
                     fi
                     ;;
                 check)
