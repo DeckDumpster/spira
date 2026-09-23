@@ -73,9 +73,9 @@
 #                           dies with no annotation. The PID budget (container pids-limit
 #                           8192) is a ceiling, not the sizing input. Set to 0 for unlimited.
 #   SPIRA_BATCH_MEM_RESERVE_MIB  MiB to hold back from the maxpar formula (default 1024).
-#   SPIRA_BATCH_MEM_PER_SUITE_MIB  per-suite memory budget in MiB (default 512; measured
-#                           cgroup peak was ~175 MiB at 8 workers on an 11 GiB guest —
-#                           512 is peak plus margin). Calibrate from the "cgroup peak" line.
+#   SPIRA_BATCH_MEM_PER_SUITE_MIB  per-suite memory budget in MiB (default 192; measured
+#                           cgroup peak was ~91 MiB across five full-corpus gate runs —
+#                           192 is 2x peak). Calibrate from the "cgroup peak" line.
 #   SPIRA_BATCH_MEM_AVAIL_MIB  override the MemAvailable reading (testing/debugging only).
 #   SPIRA_BATCH_PSI_THRESHOLD  memory PSI avg10 above which suite launches pause (default
 #                           10, 0 = disabled). This is the guard the repo variable stood in
@@ -745,7 +745,7 @@ fi
 # An operator value set for a larger box cannot exceed what this box allows.
 # Setting it to 0 disables all capping (useful for small explicit selections or stress tests).
 _mem_reserve_mib="${SPIRA_BATCH_MEM_RESERVE_MIB:-1024}"
-_mem_per_suite_mib="${SPIRA_BATCH_MEM_PER_SUITE_MIB:-512}"
+_mem_per_suite_mib="${SPIRA_BATCH_MEM_PER_SUITE_MIB:-192}"
 _maxpar_cpu="$(nproc)"
 _mem_avail_mib="${SPIRA_BATCH_MEM_AVAIL_MIB:-$(awk '/^MemAvailable:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0)}"
 _mem_budget=$(( _mem_avail_mib - _mem_reserve_mib ))
