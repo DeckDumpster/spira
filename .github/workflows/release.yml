@@ -79,7 +79,7 @@ jobs:
         run: cargo build --release
         working-directory: broker
 
-      - name: Build supervise
+      - name: Build spira-supervise
         run: cargo build --release
         working-directory: supervise
 
@@ -100,11 +100,14 @@ jobs:
             --name "spira-${ts}")
           printf 'path=%s\n' "$tarball" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub release
+      - name: Create GitHub release (draft)
+        # Draft: acceptance downloads and tests this tarball before it is published.
+        # acceptance.yml publishes (undrafts) on PASS; on FAIL it deletes the draft.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${{ inputs.tag || github.ref_name }}"
           gh release create "$tag" \
             --title "$tag" \
+            --draft \
             "${{ steps.tarball.outputs.path }}"

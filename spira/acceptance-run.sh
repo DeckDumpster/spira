@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# acceptance-run.sh — release acceptance: fresh install from <tag>, land a bead end to end,
-# uninstall; optionally also upgrade and rollback paths.
+# acceptance-run.sh — release acceptance: fresh install from the release tarball,
+# land a bead end to end, uninstall; optionally also upgrade and rollback paths.
 #
 # Run this on a CLEAN machine (no existing Spira installation, no conflicting systemd units).
 #
@@ -22,21 +22,23 @@
 #                          checks exercise the real store.
 #   --agent <path>         stub agent replacing claude; set SPIRA_AGENT to this path
 #                          so the sentinel's aeons complete deterministically without
-#                          a model credential (enables single-checkout install mode)
+#                          a model credential
 #
 # PHASES
-#   A. Fresh install: check prerequisites, install from <tag>, land a bead by ancestry,
-#      run uninstall, verify clean state.
-#   B. Upgrade: install from <prev-tag>, capture unit set, deploy.sh <tag>, verify
-#      no rollback occurred, verify .tag sidecar names <tag>.  [--prev-tag only]
+#   A. Fresh install: check prerequisites, download release tarball for <tag>,
+#      install from tarball (activate.sh + install.sh --skip-build), assert all
+#      native binaries in bin/ are executable, land a bead by ancestry, run
+#      uninstall, verify clean state.
+#   B. Upgrade: install from <prev-tag> tarball, capture unit set, deploy.sh <tag>,
+#      verify no rollback occurred, verify .tag sidecar names <tag>.  [--prev-tag only]
 #   C. Rollback: deploy.sh <prev-tag>, verify unit set matches pre-upgrade snapshot.
 #      [--prev-tag only]
-#   D. Aged-install upgrade: install <prev-tag> into surviving state (db, config from
-#      prior phases), seed beads and statutes, start world, deploy.sh <tag>, assert
-#      bead/memory counts preserved through migration, doctor no fatal, operator
-#      override survived, no crash-loop units, world resumed, one bead lands after
-#      upgrade. Force rollback and assert it either succeeds with a healthy world or
-#      is refused and names the blocking migration.  [--prev-tag only]
+#   D. Aged-install upgrade: install <prev-tag> tarball into surviving state (db,
+#      config from prior phases), seed beads and statutes, start world, deploy.sh
+#      <tag>, assert bead/memory counts preserved through migration, doctor no fatal,
+#      operator override survived, no crash-loop units, world resumed, one bead lands
+#      after upgrade. Force rollback and assert it either succeeds with a healthy world
+#      or is refused and names the blocking migration.  [--prev-tag only]
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control)
 #   Point the script at a tag known to be broken (e.g. one predating sp-jcb1) and
@@ -107,9 +109,47 @@ REPO_ROOT="$(cd "$HERE/.." && pwd -P)"
 TMP="$(mktemp -d)"
 trap '_acceptance_cleanup' EXIT INT TERM
 _acceptance_cleanup() {
-    # Do not delete the install: uninstall.sh is part of the test.
-    # Clean up only our temp scratch (clones, etc.).
     rm -rf "$TMP"
+}
+
+# Derive the forge repository (owner/repo) for gh release download calls.
+_ar_gh_repo="${SPIRA_FORGE_REPO:-}"
+[ -z "$_ar_gh_repo" ] && _ar_gh_repo="${GH_REPO:-}"
+[ -z "$_ar_gh_repo" ] && _ar_gh_repo="${GITHUB_REPOSITORY:-}"
+if [ -z "$_ar_gh_repo" ]; then
+    _ar_remote="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null)" || _ar_remote=""
+    case "$_ar_remote" in
+        https://github.com/*) _ar_gh_repo="${_ar_remote#https://github.com/}"; _ar_gh_repo="${_ar_gh_repo%.git}" ;;
+        git@github.com:*)     _ar_gh_repo="${_ar_remote#git@github.com:}"; _ar_gh_repo="${_ar_gh_repo%.git}" ;;
+    esac
+    unset _ar_remote
+fi
+
+# _check_release_bins <release-dir> — print comma-separated list of missing bin/ entries.
+_check_release_bins() {
+    local _rd="$1" _missing=""
+    for _b in loom panel broker spira-supervise; do
+        [ -x "$_rd/bin/$_b" ] || _missing="${_missing:+$_missing, }bin/$_b"
+    done
+    printf '%s' "$_missing"
+}
+
+# _download_tarball <tag> <destdir> — download the release tarball; print path on stdout.
+_download_tarball() {
+    local _dtag="$1" _ddir="$2"
+    local _dl_args=()
+    [ -n "$_ar_gh_repo" ] && _dl_args+=(--repo "$_ar_gh_repo")
+    gh "${_dl_args[@]}" release download "$_dtag" \
+        --pattern 'spira-*.tar.gz' \
+        --dir "$_ddir" >/dev/null 2>&1 || return 1
+    ls "$_ddir"/spira-*.tar.gz 2>/dev/null | head -1
+}
+
+# _install_from_tarball <tarball> <releases-dir> <conf> — activate + install.sh --skip-build.
+_install_from_tarball() {
+    local _tb="$1" _rel="$2" _cf="$3"
+    SPIRA_CONF="$_cf" SPIRA_RELEASES="$_rel" SPIRA_ACTIVATE_FORCE=1 \
+        bash "$HERE/activate.sh" "$_tb" || return 1
 }
 
 printf 'acceptance-run.sh  tag=%s\n' "$tag"
@@ -162,83 +202,110 @@ fi
 
 # ===========================================================================
 echo
-echo "phase A — fresh install from $tag"
+echo "phase A — positive control: binary check catches missing binary"
+# ===========================================================================
+_pc_rel="$TMP/pc-release"
+mkdir -p "$_pc_rel/bin"
+for _pcb in loom panel broker; do
+    printf '#!/bin/sh\n' > "$_pc_rel/bin/$_pcb" && chmod +x "$_pc_rel/bin/$_pcb"
+done
+# spira-supervise intentionally absent
+_pc_missing="$(_check_release_bins "$_pc_rel")"
+if printf '%s' "$_pc_missing" | grep -q "spira-supervise"; then
+    ok "positive-control: binary check names missing binary (spira-supervise)"
+else
+    bad "positive-control: binary check names missing binary" \
+        "got: [${_pc_missing:-empty}]"
+fi
+unset _pc_rel _pc_missing _pcb
+
+# ===========================================================================
+echo
+echo "phase A — fresh install from $tag tarball"
 # ===========================================================================
 
-# Locate the repo the tag lives in.
-_tag_repo=""
-if git -C "$REPO_ROOT" rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1; then
-    _tag_repo="$REPO_ROOT"
-else
-    bad "phase A: tag $tag exists in this repository" "tag not found"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"; exit 1
-fi
-ok "phase A: tag $tag found in repository"
-
-# Clone the tag to a temp dir so we get a clean tree with no working-tree
-# modifications. Use --no-local so git creates a true copy (not hardlinks)
-# that mirrors what a fresh clone from the remote would produce.
-_clone="$TMP/clone-$tag"
-git clone --no-local --branch "$tag" --depth 1 "$_tag_repo" "$_clone" >/dev/null 2>&1
-is0 "phase A: git clone --branch $tag" "$?"
-
-# Run install.sh from the cloned tree.
-# The install.sh at the repo root is the full installer (config, build, db, units, hooks).
-# On a clean machine this will configure via configure.sh (interactive or via env vars).
-# We pass SPIRA_INSTALL_CONFLICT_CONSIDERED=1 only if this is not the first run on this
-# machine — on a genuinely clean machine, no conflict should exist.
-_install_rc=0
+# Set up the releases directory and pre-seed conf.
+_releases="$TMP/releases"
+mkdir -p "$_releases"
 _conf="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
-# Pre-seed conf with SPIRA_AGENT and SPIRA_OPERATED before calling install.sh so these
-# values survive even if install exits non-zero (e.g. exit 3: installed but not ready).
-# install.sh phase 1 sees the file exists and skips configure.sh; other values derive
-# from defaults or the env vars passed below (configure.sh never overwrites an existing file).
 mkdir -p "$(dirname "$_conf")"
 {
     [ -n "$_agent" ] && printf 'SPIRA_AGENT = %s\n' "$_agent"
     printf 'SPIRA_OPERATED = 0\n'
+    printf 'SPIRA_RELEASES = %s\n' "$_releases"
 } > "$_conf"
-_install_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")" SPIRA_OPERATED=0)
-# --agent triggers single-checkout mode; CONFIGURE_PROD is the harness subdir
-# inside the clone so install.sh sets SPIRA_PROD there, bypassing promote.sh.
-# The git-checkout guard is overridden because the clone IS the prod checkout
-# in this mode — the test proves the path, not the release mechanism.
-if [ -n "$_agent" ]; then
-    _install_env+=(
-        "CONFIGURE_PROD=$_clone/spira"
-        "SPIRA_INSTALL_PROD_GIT_CONSIDERED=1"
-    )
+
+# Download the release tarball.
+_tarball_dir="$TMP/tarball-dl"
+mkdir -p "$_tarball_dir"
+_tarball_dl_rc=0
+_tarball_file="$(_download_tarball "$tag" "$_tarball_dir")" || _tarball_dl_rc=$?
+is0 "phase A: gh release download $tag" "$_tarball_dl_rc"
+[ -n "${_tarball_file:-}" ] \
+    && ok "phase A: tarball found: $(basename "$_tarball_file")" \
+    || bad "phase A: tarball found" "no spira-*.tar.gz in $_tarball_dir"
+
+# Compute sha256 of the candidate tarball (recorded in the acceptance note).
+_tarball_sha256=""
+[ -f "${_tarball_file:-}" ] && \
+    _tarball_sha256="$(sha256sum "$_tarball_file" 2>/dev/null | awk '{print $1}')" || \
+    _tarball_sha256="$(shasum -a 256 "${_tarball_file:-/dev/null}" 2>/dev/null | awk '{print $1}')"
+
+# Activate the tarball: unpack into $releases, atomic current symlink.
+_activate_rc=0
+[ -f "${_tarball_file:-}" ] && \
+    _install_from_tarball "$_tarball_file" "$_releases" "$_conf" \
+    2>&1 | tee "$TMP/activate.log" || _activate_rc=${PIPESTATUS[0]}
+is0 "phase A: activate.sh exits 0" "$_activate_rc"
+
+# Assert every native binary the release ships is present and executable.
+if [ -d "$_releases/current" ]; then
+    _a_missing_bins="$(_check_release_bins "$_releases/current")"
+    if [ -z "$_a_missing_bins" ]; then
+        ok "phase A: all native binaries present and executable"
+    else
+        bad "phase A: all native binaries present and executable" "missing: $_a_missing_bins"
+    fi
 fi
-env "${_install_env[@]}" bash "$_clone/install.sh" 2>&1 | tee "$TMP/install.log" || _install_rc=$?
+
+# Run install.sh from the activated release (--skip-build: binaries are in bin/).
+_install_rc=0
+_install_env=(
+    SPIRA_CONF="$_conf"
+    SPIRA_RELEASES="$_releases"
+    SPIRA_HOME_REPO="$(basename "$scratch_repo")"
+    SPIRA_OPERATED=0
+)
+[ -n "$_agent" ] && _install_env+=(SPIRA_AGENT="$_agent")
+[ -d "$_releases/current" ] && \
+    env "${_install_env[@]}" bash "$_releases/current/install.sh" --skip-build \
+    2>&1 | tee "$TMP/install.log" || _install_rc=${PIPESTATUS[0]:-$?}
 is0 "phase A: install.sh exits 0" "$_install_rc"
 
-# Read the builder's label keys from the installed clone's conf so the probe bead
-# carries the labels the sentinel's predicate reads, not hard-coded defaults.
-# The discriminating failure (law-absence-needs-a-positive-control): a bead missing
-# these labels is visible to the sentinel but matches no persona predicate — it sits
-# open forever while every sentinel pass reports "0 ready, nothing to summon."
+# Read the builder's label keys from the release conf so the probe bead carries the
+# labels the sentinel's predicate reads (law-absence-needs-a-positive-control).
 _a_plan_label="plan"
 _a_scope_label="$(basename "$scratch_repo")"
-if [ "$_install_rc" -eq 0 ] && [ -f "$_clone/spira/conf.sh" ]; then
+if [ "$_install_rc" -eq 0 ] && [ -f "$_releases/current/spira/conf.sh" ]; then
     _a_plan_label="$(SPIRA_CONF="$_conf" SPIRA_CONF_LOADED="" \
         SPIRA_HOME_REPO="$(basename "$scratch_repo")" \
         bash -c '. "$1" 2>/dev/null; printf "%s" "${SPIRA_PLAN_LABEL:-plan}"' \
-        _ "$_clone/spira/conf.sh" 2>/dev/null)" || _a_plan_label="plan"
+        _ "$_releases/current/spira/conf.sh" 2>/dev/null)" || _a_plan_label="plan"
     [ -z "$_a_plan_label" ] && _a_plan_label="plan"
     _a_scope_label="$(SPIRA_CONF="$_conf" SPIRA_CONF_LOADED="" \
         SPIRA_HOME_REPO="$(basename "$scratch_repo")" \
         bash -c '. "$1" 2>/dev/null; printf "%s" "${SPIRA_SCOPE_LABEL}"' \
-        _ "$_clone/spira/conf.sh" 2>/dev/null)" || _a_scope_label="$(basename "$scratch_repo")"
+        _ "$_releases/current/spira/conf.sh" 2>/dev/null)" || _a_scope_label="$(basename "$scratch_repo")"
     [ -z "$_a_scope_label" ] && _a_scope_label="$(basename "$scratch_repo")"
 fi
 
-# After install, verify the clone's ready.sh exits 0.
+# After install, verify ready.sh exits 0.
 _ready_rc=0
-_ready_out="$(env "${_install_env[@]}" bash "$_clone/spira/ready.sh" 2>&1)" || _ready_rc=$?
+_ready_out="$(env "${_install_env[@]}" bash "$_releases/current/spira/ready.sh" 2>&1)" || _ready_rc=$?
 if [ "$_ready_rc" -eq 0 ]; then
     ok "phase A: ready.sh exits 0 after install"
 else
-    bad "phase A: ready.sh exits 0 after install" "$_clone/spira/ready.sh exit $_ready_rc"
+    bad "phase A: ready.sh exits 0 after install" "$_releases/current/spira/ready.sh exit $_ready_rc"
 fi
 [ "$_ready_rc" -eq 0 ] || printf '%s\n' "$_ready_out"
 
@@ -347,35 +414,23 @@ echo "phase B — upgrade: install $prev_tag, deploy to $tag, verify no rollback
 if [ -z "$prev_tag" ]; then
     printf '  skip  phase B+C: --prev-tag not given\n'
 else
-    # Verify prev_tag exists.
-    if ! git -C "$REPO_ROOT" rev-parse --verify "refs/tags/$prev_tag" >/dev/null 2>&1; then
-        bad "phase B: prev tag $prev_tag exists" "tag not found"
+    # Download and install from prev_tag tarball.
+    _prev_tb_dir="$TMP/prev-tarball-dl"
+    mkdir -p "$_prev_tb_dir"
+    _prev_tarball_dl_rc=0
+    _prev_tarball_file="$(_download_tarball "$prev_tag" "$_prev_tb_dir")" || _prev_tarball_dl_rc=$?
+    if [ "$_prev_tarball_dl_rc" -ne 0 ] || [ -z "${_prev_tarball_file:-}" ]; then
+        bad "phase B: gh release download $prev_tag" "rc=$_prev_tarball_dl_rc"
     else
-        ok "phase B: prev tag $prev_tag found"
+        ok "phase B: prev tarball downloaded: $(basename "$_prev_tarball_file")"
 
-        # Install from prev_tag.
-        _prev_clone="$TMP/clone-$prev_tag"
-        git clone --no-local --branch "$prev_tag" --depth 1 "$_tag_repo" "$_prev_clone" \
-            >/dev/null 2>&1
-        is0 "phase B: git clone --branch $prev_tag" "$?"
+        _install_from_tarball "$_prev_tarball_file" "$_releases" "$_conf" \
+            2>&1 | tee "$TMP/prev-activate.log" || true
 
-        # Mirror the env that phase A's install uses: CONFIGURE_PROD and
-        # SPIRA_INSTALL_PROD_GIT_CONSIDERED=1 are required when --agent is set so
-        # that install.sh bypasses the git-checkout guard and reaches phase 4 (units),
-        # which starts dolt-beads.service. Without them install.sh exits 2 at phase 4
-        # and Dolt is never started, causing deploy.sh to fail with connection refused.
-        _prev_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")" SPIRA_OPERATED=0)
-        if [ -n "$_agent" ]; then
-            _prev_env+=(
-                "CONFIGURE_PROD=$_prev_clone/spira"
-                "SPIRA_INSTALL_PROD_GIT_CONSIDERED=1"
-            )
-        fi
         _prev_install_rc=0
-        env "${_prev_env[@]}" bash "$_prev_clone/install.sh" 2>&1 \
-            | tee "$TMP/prev-install.log" || _prev_install_rc=$?
+        env "${_install_env[@]}" bash "$_releases/current/install.sh" --skip-build \
+            2>&1 | tee "$TMP/prev-install.log" || _prev_install_rc=${PIPESTATUS[0]:-$?}
         is0 "phase B: install.sh ($prev_tag) exits 0" "$_prev_install_rc"
-        unset _prev_env
 
         # Guard: a failed install leaves the database service down; deploy.sh would
         # then report connection refused — which looks like an upgrade failure rather
@@ -453,37 +508,45 @@ echo "phase D — aged-install upgrade: $prev_tag with real state → $tag"
 if [ -z "$prev_tag" ]; then
     printf '  skip  phase D: --prev-tag not given\n'
 else
-    _aged_clone="$TMP/clone-aged-$prev_tag"
-    git clone --no-local --branch "$prev_tag" --depth 1 "$_tag_repo" "$_aged_clone" \
-        >/dev/null 2>&1
-    is0 "phase D: git clone $prev_tag (aged base)" "$?"
-
-    _aged_conf="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
-    mkdir -p "$(dirname "$_aged_conf")"
-    {
-        [ -n "$_agent" ] && printf 'SPIRA_AGENT = %s\n' "$_agent"
-        printf 'SPIRA_OPERATED = 0\n'
-    } > "$_aged_conf"
-    _aged_install_rc=0
-    _aged_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")" SPIRA_OPERATED=0)
-    if [ -n "$_agent" ]; then
-        _aged_env+=(
-            "CONFIGURE_PROD=$_aged_clone/spira"
-            "SPIRA_INSTALL_PROD_GIT_CONSIDERED=1"
-        )
+    # Reuse the prev_tag tarball (already downloaded for phase B if --prev-tag was given).
+    _aged_tb_dir="$TMP/prev-tarball-dl"
+    [ -d "$_aged_tb_dir" ] || mkdir -p "$_aged_tb_dir"
+    _aged_tarball_file="$(ls "$_aged_tb_dir"/spira-*.tar.gz 2>/dev/null | head -1)"
+    if [ -z "${_aged_tarball_file:-}" ]; then
+        _aged_tb_rc=0
+        _aged_tarball_file="$(_download_tarball "$prev_tag" "$_aged_tb_dir")" || _aged_tb_rc=$?
+        is0 "phase D: gh release download $prev_tag (aged base)" "$_aged_tb_rc"
+    else
+        ok "phase D: prev tarball already present: $(basename "$_aged_tarball_file")"
     fi
-    env "${_aged_env[@]}" bash "$_aged_clone/install.sh" 2>&1 \
-        | tee "$TMP/aged-install.log" || _aged_install_rc=$?
+
+    # Conf already has SPIRA_RELEASES from phase A; surviving state is intentional.
+    _aged_conf="$_conf"
+    _aged_install_rc=0
+    _aged_env=(
+        SPIRA_CONF="$_aged_conf"
+        SPIRA_RELEASES="$_releases"
+        SPIRA_HOME_REPO="$(basename "$scratch_repo")"
+        SPIRA_OPERATED=0
+    )
+    [ -n "$_agent" ] && _aged_env+=(SPIRA_AGENT="$_agent")
+
+    [ -f "${_aged_tarball_file:-}" ] && \
+        _install_from_tarball "$_aged_tarball_file" "$_releases" "$_aged_conf" \
+        2>&1 | tee "$TMP/aged-activate.log" || true
+
+    env "${_aged_env[@]}" bash "$_releases/current/install.sh" --skip-build \
+        2>&1 | tee "$TMP/aged-install.log" || _aged_install_rc=${PIPESTATUS[0]:-$?}
     is0 "phase D: install.sh ($prev_tag, aged) exits 0" "$_aged_install_rc"
 
-    # Verify the aged clone's ready.sh exits 0 after install.
+    # Verify ready.sh exits 0 after aged install.
     _aged_ready_rc=0
-    _aged_ready_out="$(env "${_aged_env[@]}" bash "$_aged_clone/spira/ready.sh" 2>&1)" \
+    _aged_ready_out="$(env "${_aged_env[@]}" bash "$_releases/current/spira/ready.sh" 2>&1)" \
         || _aged_ready_rc=$?
     if [ "$_aged_ready_rc" -eq 0 ]; then
         ok "phase D: ready.sh exits 0 after aged install"
     else
-        bad "phase D: ready.sh exits 0 after aged install" "$_aged_clone/spira/ready.sh exit $_aged_ready_rc"
+        bad "phase D: ready.sh exits 0 after aged install" "$_releases/current/spira/ready.sh exit $_aged_ready_rc"
         printf '%s\n' "$_aged_ready_out"
     fi
 
@@ -675,6 +738,9 @@ printf 'verdict: %s  tag=%s  date=%s\n' "$verdict" "$tag" "$(date -u '+%Y-%m-%dT
 if [ "$do_record" -eq 1 ]; then
     _note="$(printf '%s\n%s %s  %d passed, %d failed\n' \
         "$verdict" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$tag" "$pass" "$fail")"
+    [ -n "${_tarball_sha256:-}" ] && \
+        _note="$(printf '%s\nsha256:%s tarball:%s\n' \
+            "$_note" "$_tarball_sha256" "$(basename "${_tarball_file:-unknown}")")"
     # Include (from, to) pair so phase D results are queryable per upgrade path.
     if [ -n "$prev_tag" ]; then
         _note="$(printf '%s\naged-install from=%s: %s\n' "$_note" "$prev_tag" "$verdict")"
