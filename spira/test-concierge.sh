@@ -727,6 +727,8 @@ want "a failed start retries without --resume" "retrying without it" "$_src"
 
 if ! systemctl --user status >/dev/null 2>&1 || ! command -v systemd-run >/dev/null 2>&1; then
     printf '  skip  (no systemd user session — dangling resume retry test requires it)\n'
+elif ! bash "$HARNESS/rule.sh" list 2>/dev/null | grep -q .; then
+    printf '  skip  (statute book empty — dangling resume retry test requires it)\n'
 else
     _ddir="$(mktemp -d)"; mkdir -p "$_ddir/bin"
     _dfake_id="dangling-$$-$(date +%s)"
