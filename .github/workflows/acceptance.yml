@@ -192,3 +192,4 @@ jobs:
           pve-api-hostname:   ${{ vars.PVE_API_HOSTNAME }}
           pve-ca-cert:        ${{ vars.PVE_CA_CERT }}
           pve-node:           ${{ vars.PVE_NODE }}
+          template-vmid:      ${{ vars.TEMPLATE_VMID }}

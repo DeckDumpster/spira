@@ -47,6 +47,12 @@ inputs:
   pve-node:
     description: Proxmox node name.
     required: true
+  template-vmid:
+    description: >-
+      VMID of the runner template. teardown.sh refuses to destroy this id
+      (Guard 2), so a clone that lands on it is never torn down — it leaks.
+      Pass vars.TEMPLATE_VMID here, the same value provision receives.
+    required: true
   pve-ca-cert:
     description: >-
       Proxmox cluster CA certificate (PEM), used to verify the API TLS
@@ -54,6 +60,27 @@ inputs:
       (vars.PVE_CA_CERT). Without this the connection fails loudly — there
       is no insecure fallback.
     required: true
+  vm-token:
+    description: >-
+      Ownership token emitted by the provision action (outputs.vm-token).
+      teardown.sh Guard 4b verifies that the VM description carries this exact
+      token before destroying. When absent, Guard 4b degrades: a VM that also
+      carries no token is allowed through with a warning; a VM that DOES carry
+      a token is refused — so a new-provision/old-teardown pair still refuses
+      correctly. Pass it when wiring provision and teardown in the same
+      workflow to get the full recycled-VMID protection (db-ogjn, db-rzdr).
+    required: false
+    default: ''
+  consumer-result:
+    description: >-
+      Result of the job that ran on this runner: success, failure, or
+      cancelled. When failure or cancelled, the guest is dumped before the VM
+      is destroyed -- that window is the only opportunity to capture evidence
+      of a mid-job death (dmesg OOM entries, the runner service journal, load
+      and memory at the moment of failure). Has no effect on success; omit it
+      and the dump never runs.
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -73,6 +100,24 @@ runs:
         printf '%s\n' "$PVE_CA_CERT" > "$RUNNER_TEMP/pve-root-ca.pem"
         echo "PVE_CA_CERT_FILE=$RUNNER_TEMP/pve-root-ca.pem" >> "$GITHUB_ENV"
 
+    # Runs before the destroy so the guest is still alive. Conditioned on the
+    # consuming job having failed or been cancelled -- the only cases where the
+    # evidence is needed and the guest may have died mid-job with nothing
+    # capturing it. Never fails the teardown job: continue-on-error is set and
+    # guest-diag.sh itself never returns non-zero for a broken guest.
+    - name: Dump guest state on job failure
+      if: inputs.vmid != '' && (inputs.consumer-result == 'failure' || inputs.consumer-result == 'cancelled')
+      continue-on-error: true
+      shell: bash
+      env:
+        PVE_API_HOST: ${{ inputs.pve-api-host }}
+        PVE_API_HOSTNAME: ${{ inputs.pve-api-hostname }}
+        PVE_NODE: ${{ inputs.pve-node }}
+        PVE_TOKEN_ID: ${{ inputs.pve-token-id }}
+        PVE_TOKEN_SECRET: ${{ inputs.pve-token-secret }}
+        CRED_FILE: /dev/null
+      run: bash "${{ github.action_path }}/../scripts/guest-diag.sh" "${{ inputs.vmid }}"
+
     - name: Destroy the runner VM
       if: inputs.vmid != ''
       shell: bash
@@ -82,6 +127,8 @@ runs:
         PVE_NODE: ${{ inputs.pve-node }}
         PVE_TOKEN_ID: ${{ inputs.pve-token-id }}
         PVE_TOKEN_SECRET: ${{ inputs.pve-token-secret }}
+        TEMPLATE_VMID: ${{ inputs.template-vmid }}
+        VM_TOKEN: ${{ inputs.vm-token }}
         CRED_FILE: /dev/null
       run: bash "${{ github.action_path }}/../scripts/teardown.sh" "${{ inputs.vmid }}"
 
