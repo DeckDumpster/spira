@@ -82,16 +82,22 @@ MAP
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 
-landing() {
+_landing_base() {
     rm -f "$RUN/landing.progress"
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO="$REPO_A" SPIRA_HOME_REPO="$NAME_A" SPIRA_ID_PREFIX=sp \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" "$@" \
+    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
         bash "$SH/landing.sh" 2>&1
 }
 
+landing() { _landing_base; }
+
 landing_tight() {
-    landing SPIRA_LAND_MAXSEC=1 SPIRA_LAND_GATE_RESERVE=2
+    SPIRA_LAND_MAXSEC=1 SPIRA_LAND_GATE_RESERVE=2 _landing_base
+}
+
+landing_tight_thresh() {   # landing_tight_thresh <threshold>
+    SPIRA_LAND_MAXSEC=1 SPIRA_LAND_GATE_RESERVE=2 SPIRA_DEFERRAL_ESCALATE_AT="$1" _landing_base
 }
 
 # Add a closed bead with a git branch in the given repo
@@ -195,12 +201,12 @@ branch_at sp-def-a "$REPO_A" "$NAME_A"
 # (uses default of 5 but we force it to 3 for speed)
 THRESHOLD=3
 for i in $(seq 1 $(( THRESHOLD - 1 )) ); do
-    out="$(landing SPIRA_LAND_MAXSEC=1 SPIRA_LAND_GATE_RESERVE=2 SPIRA_DEFERRAL_ESCALATE_AT="$THRESHOLD")"
+    out="$(landing_tight_thresh "$THRESHOLD")"
     nowant "no escalation before threshold (pass $i)" "budget-deferred" "$(cat "$EMITTED")"
 done
 
 # One more tight pass crosses the threshold
-out="$(landing SPIRA_LAND_MAXSEC=1 SPIRA_LAND_GATE_RESERVE=2 SPIRA_DEFERRAL_ESCALATE_AT="$THRESHOLD")"
+out="$(landing_tight_thresh "$THRESHOLD")"
 want "escalation mail sent after $THRESHOLD deferrals" "budget-deferred" "$(cat "$EMITTED")"
 want "escalation names the deferred branch" "spira/sp-def-a" "$(cat "$EMITTED")"
 
@@ -210,7 +216,7 @@ want "escalation names the deferred branch" "spira/sp-def-a" "$(cat "$EMITTED")"
 out="$(landing)"   # full-budget: processes the branch
 want "full-budget pass certifies the branch" "certified" "$out"
 # Now run tight again — deferral count reset, mail already closed, no re-escalation
-out="$(landing SPIRA_LAND_MAXSEC=1 SPIRA_LAND_GATE_RESERVE=2 SPIRA_DEFERRAL_ESCALATE_AT="$THRESHOLD")"
+out="$(landing_tight_thresh "$THRESHOLD")"
 nowant "no re-escalation after deferral count reset" "budget-deferred" "$(cat "$EMITTED")"
 drop_branch sp-def-a "$REPO_A"
 
