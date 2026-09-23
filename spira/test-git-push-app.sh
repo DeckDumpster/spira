@@ -46,16 +46,15 @@ fi
 echo
 echo "2. CREDENTIAL HELPER — outputs correct format with stub credentials"
 # =========================================================================
-# Stub openssl: outputs a deterministic fake signature (not real RSA).
+# Stub openssl: drains stdin, outputs a fake binary blob the b64url encoder accepts.
 cat > "$BIN/openssl" <<'EOF'
 #!/usr/bin/env bash
-# Stub: absorb all args and stdin; output a known fake binary blob.
 cat > /dev/null
-printf '\x01fake-sig'
+printf 'fakesig'
 EOF
 chmod +x "$BIN/openssl"
 
-# Stub curl: returns a valid JSON App token response.
+# Stub curl: returns a valid JSON App token response, regardless of arguments.
 cat > "$BIN/curl" <<'EOF'
 #!/usr/bin/env bash
 printf '{"token":"ghs_fakeAppToken9999","expires_at":"2099-01-01T00:00:00Z"}'
@@ -64,17 +63,18 @@ chmod +x "$BIN/curl"
 
 printf 'fake-key-content\n' > "$TMP/fake-key.pem"
 
+# SPIRA_PATH puts stub binaries first in PATH even after conf.sh rewrites PATH.
 out="$(env -i \
     HOME="$TMP" \
-    PATH="$BIN:/usr/bin:/bin" \
+    SPIRA_PATH="$BIN" \
     SPIRA_CONF=/nonexistent \
     SPIRA_GH_APP_ID=12345 \
     SPIRA_GH_APP_INSTALLATION_ID=67890 \
     SPIRA_GH_APP_KEY="$TMP/fake-key.pem" \
     bash "$CRED_HELPER" get 2>/dev/null)"
-want "protocol=https in output"           "protocol=https"            "$out"
-want "host=github.com in output"          "host=github.com"           "$out"
-want "username=x-access-token in output"  "username=x-access-token"  "$out"
+want "protocol=https in output"            "protocol=https"            "$out"
+want "host=github.com in output"           "host=github.com"           "$out"
+want "username=x-access-token in output"   "username=x-access-token"  "$out"
 want "password=ghs_fakeAppToken in output" "password=ghs_fakeAppToken" "$out"
 
 # =========================================================================
@@ -82,13 +82,13 @@ echo
 echo "3. CREDENTIAL HELPER — exits non-zero without credentials"
 # =========================================================================
 # This proves the check is real: if SPIRA_GH_APP_ID is absent the helper
-# fails rather than silently emitting an empty or stale credential.
+# must fail rather than silently emitting a blank or recycled credential.
+rc_nc=0
 out_nc="$(env -i \
     HOME="$TMP" \
-    PATH="$BIN:/usr/bin:/bin" \
+    SPIRA_PATH="$BIN" \
     SPIRA_CONF=/nonexistent \
-    bash "$CRED_HELPER" get 2>&1)" || true
-rc_nc=$?
+    bash "$CRED_HELPER" get 2>&1)" || rc_nc=$?
 wantrc "no credentials → non-zero exit" 1 "$rc_nc"
 want   "explains which var is missing"  "SPIRA_GH_APP_ID" "$out_nc"
 
@@ -97,9 +97,9 @@ echo
 echo "4. CREDENTIAL HELPER — store and erase are no-ops (exit 0, no output)"
 # =========================================================================
 for action in store erase; do
-    out_noop="$(env -i HOME="$TMP" PATH="$BIN:/usr/bin:/bin" SPIRA_CONF=/nonexistent \
-        bash "$CRED_HELPER" "$action" 2>&1)"
-    rc_noop=$?
+    rc_noop=0
+    out_noop="$(env -i HOME="$TMP" SPIRA_PATH="$BIN" SPIRA_CONF=/nonexistent \
+        bash "$CRED_HELPER" "$action" 2>&1)" || rc_noop=$?
     wantrc "$action exits 0" 0 "$rc_noop"
     is     "$action emits nothing" "" "$out_noop"
 done
@@ -108,7 +108,9 @@ done
 echo
 echo "5. spira_git_push — adds credential.helper and URL rewriting when App creds are set"
 # =========================================================================
-# Stub git records all its arguments to a file so we can inspect them.
+# Stub git records all arguments. SPIRA_PATH keeps the stub in PATH after conf.sh
+# rewrites it. We clear the args file inside the subshell AFTER lib.sh is sourced
+# so only the spira_git_push call is captured, not conf.sh's git calls.
 cat > "$BIN/git" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$@" >> "$TMP/git-args"
@@ -118,7 +120,7 @@ chmod +x "$BIN/git"
 
 rm -f "$TMP/git-args"
 (
-    export PATH="$BIN:$PATH"
+    export SPIRA_PATH="$BIN"
     export SPIRA_HOME="$HERE/.."
     export SPIRA_CONF=/nonexistent
     export SPIRA_REPO="$TMP/fake-repo"
@@ -127,14 +129,15 @@ rm -f "$TMP/git-args"
     export SPIRA_GH_APP_INSTALLATION_ID=11111
     # shellcheck disable=SC1090
     . "$LIB" 2>/dev/null || true
+    rm -f "$TMP/git-args"
     spira_git_push "$TMP/fake-repo" -q origin main
 ) 2>/dev/null || true
 
 args_with="$(cat "$TMP/git-args" 2>/dev/null)"
-want "credential.helper flag present"    "credential.helper"              "$args_with"
-want "URL rewriting flag present"        "insteadOf=git@github.com:"      "$args_with"
-want "push is the subcommand"            "push"                           "$args_with"
-want "original push args passed through" "main"                           "$args_with"
+want "credential.helper flag present"     "credential.helper"              "$args_with"
+want "URL rewriting flag present"         "insteadOf=git@github.com:"      "$args_with"
+want "push is the subcommand"             "push"                           "$args_with"
+want "original push args passed through"  "main"                           "$args_with"
 
 # =========================================================================
 echo
@@ -142,7 +145,7 @@ echo "6. spira_git_push — plain git push when App creds are not configured"
 # =========================================================================
 rm -f "$TMP/git-args"
 (
-    export PATH="$BIN:$PATH"
+    export SPIRA_PATH="$BIN"
     export SPIRA_HOME="$HERE/.."
     export SPIRA_CONF=/nonexistent
     export SPIRA_REPO="$TMP/fake-repo"
@@ -151,6 +154,7 @@ rm -f "$TMP/git-args"
     unset SPIRA_GH_APP_INSTALLATION_ID 2>/dev/null || true
     # shellcheck disable=SC1090
     . "$LIB" 2>/dev/null || true
+    rm -f "$TMP/git-args"
     spira_git_push "$TMP/fake-repo" -q origin main
 ) 2>/dev/null || true
 
@@ -182,7 +186,7 @@ for f in landing.sh batch.sh sending.sh verdict.sh queue.sh; do
     else
         bad "$f: spira_git_push present" "not found"
     fi
-    # No bare 'git ... push' should remain in these files (comments excluded).
+    # No bare 'git ... push' should remain in the push paths of these files.
     bare="$(grep -nE '^\s+git\s+-C\s+\S+\s+push\b|^\s+git\s+push\b' "$HERE/$f" 2>/dev/null \
             | grep -v '^\s*#' | head -2 || true)"
     if [ -n "${bare:-}" ]; then
