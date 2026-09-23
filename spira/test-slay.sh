@@ -68,7 +68,7 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 print(d[0].get("assignee","") or "" if d else "")' 2>/dev/null; }
 
-has_label() { bdq label list "$1" 2>/dev/null | grep -qF "$2"; }
+has_label() { local _all; _all="$(bdq label list "$1" 2>/dev/null)"; [[ "$_all" == *"$2"* ]]; }
 
 seed() {
     local id="$1" st="${2:-in_progress}" as="${3:-aeon-test}"
