@@ -244,12 +244,29 @@ _tarball="$_deploy_tmp/${release_stem}.tar.gz"
 # Check DB migration compatibility before drain so a mismatch does not strand the instance.
 if [ -d "${SPIRA_DB:-}/.beads" ]; then
     log "deploy: checking DB migration compatibility"
-    _mig_out="$(timeout 30 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" migrate schema 2>&1)" || {
-        printf 'deploy: DB migration mismatch — refusing before drain\n' >&2
-        printf '%s\n' "$_mig_out" >&2
+    _mig_out="$(timeout 30 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" migrate schema 2>&1)"
+    _mig_rc=$?
+    if [ "$_mig_rc" -ne 0 ] \
+            && printf '%s' "$_mig_out" | grep -qE 'unreachable|connection refused'; then
+        log "deploy: Dolt server not running — starting"
+        "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dolt start 2>/dev/null || true
+        _mig_out="$(timeout 30 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" migrate schema 2>&1)"
+        _mig_rc=$?
+    fi
+    if [ "$_mig_rc" -ne 0 ]; then
+        if printf '%s' "$_mig_out" | grep -qE 'unreachable|connection refused'; then
+            _dolt_addr="$(printf '%s' "$_mig_out" \
+                | sed -n 's/.*unreachable at \([^ :]*:[0-9]*\).*/\1/p' | head -1)"
+            printf 'deploy: cannot read DB migration count — Dolt server unreachable at %s\n' \
+                "${_dolt_addr:-127.0.0.1:3307}" >&2
+            printf '%s\n' "$_mig_out" >&2
+        else
+            printf 'deploy: DB migration mismatch — refusing before drain\n' >&2
+            printf '%s\n' "$_mig_out" >&2
+        fi
         exit 1
-    }
-    unset _mig_out
+    fi
+    unset _mig_out _mig_rc _dolt_addr
 fi
 
 # Retire the promote timer before draining; it is superseded by this command.
