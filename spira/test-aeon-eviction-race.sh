@@ -1,30 +1,34 @@
 #!/usr/bin/env bash
 #
-# test-aeon-eviction-race.sh — aeon.sh reopens a bead closed while its landstate is
-#   RED or EJECTED (the eviction-race shape).
+# test-aeon-eviction-race.sh — aeon.sh reopens a bead closed while its landstate carries a
+#   batch-eviction record, and does NOT reopen for a gate-red record or a stale tip.
 #
-# THE DEFECT THIS REPRODUCES (sp-htw4r). A batch eviction writes landstate=RED/EJECTED
-# and calls bead_reopen. An aeon still in flight does not see the reopen — it closes the
-# bead after the reopen (the close succeeds because the bead is now open). aeon.sh's exit
-# checks run, read st=closed and committed=yes, all guards pass, and the aeon exits
-# without reopening. The bead lands closed with a RED landstate: no queue mechanism
-# retrieves it (queue_certified_list selects on CERTIFIED; bd list hides closed beads).
+# THE ORIGINAL DEFECT (sp-htw4r). A batch eviction writes landstate=RED/EJECTED and calls
+# bead_reopen. An aeon still in flight does not see the reopen — it closes the bead after
+# the reopen (the close succeeds because the bead is now open). aeon.sh's exit checks run,
+# read st=closed and committed=yes, all guards pass, and the aeon exits without reopening.
+# The bead lands closed with a RED landstate: no queue mechanism retrieves it.
 #
-# THE RACE WINDOW: bead_reopen at 11:08:14Z, aeon re-closes at 11:12:31Z (+4m17s).
-# Both bead and branch carry the correct commit; only the landstate says the work is stuck.
+# THE REGRESSION (sp-ygvu0). The guard fires on RED regardless of reason. When the landing
+# pass writes RED reason=gate after a gate failure, fixes the code, and closes — the guard
+# reopens it as an eviction. The fix: skip RED reason=gate (normal path); skip when the
+# record tip is older than the current branch tip (session pushed past the eviction).
+#
+# FIXTURE CASES (sp-ygvu0):
+#   (a) RED reason=gate   at current tip   → stays closed (gate-red, not eviction)
+#   (b) RED reason=ejected at stale tip    → stays closed (session pushed past eviction)
+#   (c) RED reason=ejected at current tip  → reopened     (eviction, tip matches)
+#   EJECTED at current tip                 → reopened     (EJECTED is always batch eviction)
 #
 # POSITIVE CONTROLS (law-absence-needs-a-positive-control):
-#   - closed+committed with NO landstate file → stays closed (proves the check does not
-#     fire universally and would catch a version that always reopens)
-#   - closed+committed with landstate=CERTIFIED → stays closed (proves the check reads
-#     the state and only acts on RED/EJECTED)
+#   - closed+committed with NO landstate file → stays closed
+#   - closed+committed with landstate=CERTIFIED → stays closed
 #
-# Driven through the REAL aeon.sh against a real bd on a throwaway fixture.
-# Seen red without the fix: the eviction-race guard did not exist, so the bead stayed
-# closed in all three cases. The first case (RED → reopened) is the fix; the others are
-# guards against over-firing.
+# The shim writes the landstate after committing (so the recorded tip matches the real
+# branch tip) when a per-bead control file exists. For the stale-tip case the landstate is
+# written before the aeon runs, with a dummy tip, and the shim's commit makes it stale.
 #
-# defect: sp-htw4r
+# defect: sp-htw4r sp-ygvu0
 # covers: spira/aeon.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -70,15 +74,29 @@ BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
 grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
     || { echo "test-aeon-eviction-race: aeon.sh has no SPIRA_AGENT injection point" >&2; exit 1; }
 
-# The shim commits and closes, simulating the aeon session finishing its work. The
-# eviction (landstate=RED) is written into $SPIRA_RUN/landstate/ before aeon.sh runs,
-# simulating a batch eviction that raced with the session.
+# The shim commits and closes. If a per-bead control file exists under $TMP/evict-ctrl/<id>,
+# it writes the landstate AFTER committing (so the recorded tip is the real branch tip).
+# Modes: gate → RED reason=gate; ejected-cur → RED reason=ejected; ejected-stat → EJECTED.
+# For the stale-tip case the landstate is written outside the shim (before run_aeon), and
+# no control file is set so the shim leaves it alone.
+mkdir -p "$TMP/evict-ctrl"
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
 id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
 printf 'my work\n' >> f
 git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
+tip="$(git rev-parse HEAD)"
+ctrl="$TMP/evict-ctrl/$id"
+if [ -f "$ctrl" ]; then
+    mode="$(cat "$ctrl")"
+    epoch="$(date +%s)"
+    case "$mode" in
+        gate)         printf 'RED %s %s gate\n'    "$tip" "$epoch" > "$SPIRA_RUN/landstate/$id" ;;
+        ejected-cur)  printf 'RED %s %s ejected\n' "$tip" "$epoch" > "$SPIRA_RUN/landstate/$id" ;;
+        ejected-stat) printf 'EJECTED %s %s\n'     "$tip" "$epoch" > "$SPIRA_RUN/landstate/$id" ;;
+    esac
+fi
 bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
 exit 0
@@ -102,38 +120,34 @@ echo "test-aeon-eviction-race.sh"
 
 # =============================================================================
 echo
-echo "closed+committed+landstate=RED — reopened (eviction race):"
+echo "(c) closed+committed+landstate=RED reason=ejected at current tip — reopened:"
 # =============================================================================
-# THE FIX (sp-htw4r). The batch eviction wrote RED and called bead_reopen; the aeon
-# re-closed the bead while still in flight. aeon.sh must detect closed+RED and reopen.
+# The shim writes RED reason=ejected with the real branch tip. The guard must reopen.
 testdb_reset; seed sp-er-1
-printf 'RED faksha %s ejected\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-1"
+echo "ejected-cur" > "$TMP/evict-ctrl/sp-er-1"
 run_aeon
 is   "bead is open after eviction-race detection"     open "$(field sp-er-1 status)"
 is   "and the claim is released"                       ""   "$(field sp-er-1 assignee)"
 want "aeon log shows eviction-race reopen"             "REOPENED — closed with landstate=RED" "$(cat "$TMP/out")"
 want "and the reopen note names the cause"             "eviction-race" "$(notes sp-er-1)"
-rm -f "$SPIRA_RUN/landstate/sp-er-1"
+rm -f "$TMP/evict-ctrl/sp-er-1" "$SPIRA_RUN/landstate/sp-er-1"
 
 # =============================================================================
 echo
-echo "closed+committed+landstate=EJECTED — reopened (eviction race, automated shape):"
+echo "closed+committed+landstate=EJECTED at current tip — reopened:"
 # =============================================================================
-# EJECTED is the automated counterpart to RED: batch.sh sets it on local-gate failures.
-# Both states mean the branch was evicted and must not stay closed.
+# EJECTED is written by batch.sh and is always a batch eviction; no reason check needed.
 testdb_reset; seed sp-er-2
-printf 'EJECTED faksha %s batch-test\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-2"
+echo "ejected-stat" > "$TMP/evict-ctrl/sp-er-2"
 run_aeon
 is   "bead is open after EJECTED detection"            open "$(field sp-er-2 status)"
 want "aeon log shows eviction-race reopen"             "REOPENED — closed with landstate=EJECTED" "$(cat "$TMP/out")"
-rm -f "$SPIRA_RUN/landstate/sp-er-2"
+rm -f "$TMP/evict-ctrl/sp-er-2" "$SPIRA_RUN/landstate/sp-er-2"
 
 # =============================================================================
 echo
 echo "closed+committed, no landstate file — stays closed (positive control):"
 # =============================================================================
-# NO landstate file means the bead was never in a batch or was already cleaned up.
-# The eviction-race guard must not fire — it would prevent legitimate closes.
 testdb_reset; seed sp-er-3
 rm -f "$SPIRA_RUN/landstate/sp-er-3"
 run_aeon
@@ -144,8 +158,6 @@ nowant "no eviction-race reopen fired"                 "eviction-race" "$(cat "$
 echo
 echo "closed+committed+landstate=CERTIFIED — stays closed (positive control):"
 # =============================================================================
-# CERTIFIED means the branch passed the gate and is queued. The aeon closed it with
-# a commit — that is the expected outcome. The guard must not fire on CERTIFIED.
 testdb_reset; seed sp-er-4
 printf 'CERTIFIED faksha %s certified\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-4"
 run_aeon
@@ -157,9 +169,7 @@ rm -f "$SPIRA_RUN/landstate/sp-er-4"
 echo
 echo "closed+committed+landstate=RED no-rebase@<sha> — stays closed (landing.sh owns this):"
 # =============================================================================
-# no-rebase@ is written by landing.sh when the branch does not rebase onto the base.
-# That is a landing-gate RED with its own reopen path; the eviction-race guard must not
-# fire here, or it would give the next aeon wrong advice (recertify, not rebase).
+# no-rebase@ is not in LAND_EVICTION_REASONS; the guard exits before checking the tip.
 testdb_reset; seed sp-er-5
 printf 'RED faksha %s no-rebase@deadbeef\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-5"
 run_aeon
@@ -169,16 +179,29 @@ rm -f "$SPIRA_RUN/landstate/sp-er-5"
 
 # =============================================================================
 echo
-echo "closed+committed+landstate=RED gate — stays closed (landing.sh owns this):"
+echo "(a) closed+committed+landstate=RED reason=gate — stays closed:"
 # =============================================================================
-# gate is written by landing.sh when the landing gate fails. Same shape: a RED that
-# belongs to landing.sh, not the batch eviction machinery.
+# gate is not in LAND_EVICTION_REASONS; same shape as no-rebase@.
 testdb_reset; seed sp-er-6
 printf 'RED faksha %s gate\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-6"
 run_aeon
 is     "bead stays closed (gate RED)"                 closed "$(field sp-er-6 status)"
 nowant "no eviction-race reopen fired"                 "eviction-race" "$(cat "$TMP/out")"
 rm -f "$SPIRA_RUN/landstate/sp-er-6"
+
+# =============================================================================
+echo
+echo "(b) closed+committed+landstate=RED reason=ejected at STALE tip — stays closed:"
+# =============================================================================
+# Landstate is written before the shim runs with a fake tip. The shim's commit changes the
+# branch tip, making the record stale. Stale record → close stands.
+testdb_reset; seed sp-er-7
+printf 'RED faksha %s ejected\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-7"
+run_aeon
+is     "bead stays closed (stale eviction record)"     closed "$(field sp-er-7 status)"
+nowant "no eviction-race reopen fired"                 "eviction-race" "$(cat "$TMP/out")"
+want   "aeon log mentions stale record"                "stale record" "$(cat "$TMP/out")"
+rm -f "$SPIRA_RUN/landstate/sp-er-7"
 
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]
