@@ -27,11 +27,12 @@ done
 
 if [ "$skip_build" = 1 ]; then
     printf 'build.sh: --skip-build — prebuilt binaries expected at:\n'
-    printf '  loom:      %s\n' "$SPIRA_LOOM_BIN"
-    printf '  panel:     %s\n' "$SPIRA_PANEL"
-    printf '  broker:    %s\n' "$SPIRA_BROKER_BIN"
-    printf '  czar-pass: %s\n' "$SPIRA_CZAR_PASS_BIN"
-    printf '  supervise: %s\n' "$SPIRA_SUPERVISE_BIN"
+    printf '  loom:         %s\n' "$SPIRA_LOOM_BIN"
+    printf '  panel:        %s\n' "$SPIRA_PANEL"
+    printf '  broker:       %s\n' "$SPIRA_BROKER_BIN"
+    printf '  czar-pass:    %s\n' "$SPIRA_CZAR_PASS_BIN"
+    printf '  supervise:    %s\n' "$SPIRA_SUPERVISE_BIN"
+    printf '  landing-pass: %s\n' "$SPIRA_LANDING_PASS_BIN"
     exit 0
 fi
 

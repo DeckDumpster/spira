@@ -96,13 +96,14 @@ render() {
     python3 - "$1" "$SPIRA_HOME" "$SPIRA_REPO" "$SPIRA_RUN" "$SPIRA_DB" "$SPIRA_COCKPIT" \
                    "$SPIRA_DOLT_DATA" "$SPIRA_TESTDB_DATA" "$DOLT" "$SPIRA_PROD" \
                    "$SPIRA_INSTANCE" "$SPIRA_TESTDB_PORT" "$SPIRA_SUPERVISE_BIN" \
-                   "$SPIRA_SNAP_STALE_S" "${2:-}" <<'PY'
+                   "$SPIRA_SNAP_STALE_S" "$SPIRA_LANDING_PASS_BIN" "${2:-}" <<'PY'
 import os, re, sys
 keys = ["SPIRA_HOME", "SPIRA_REPO", "SPIRA_RUN", "SPIRA_DB", "SPIRA_COCKPIT",
         "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "DOLT", "SPIRA_PROD", "SPIRA_INSTANCE",
-        "SPIRA_TESTDB_PORT", "SPIRA_SUPERVISE_BIN", "SPIRA_SNAP_STALE_S"]
-m = dict(zip(keys, sys.argv[2:15]))
-watcher_name = sys.argv[15] if len(sys.argv) > 15 else ""
+        "SPIRA_TESTDB_PORT", "SPIRA_SUPERVISE_BIN", "SPIRA_SNAP_STALE_S",
+        "SPIRA_LANDING_PASS_BIN"]
+m = dict(zip(keys, sys.argv[2:16]))
+watcher_name = sys.argv[16] if len(sys.argv) > 16 else ""
 # FALLBACK: an empty SPIRA_PROD is the documented signal that no checkout split
 # is wanted — everything runs from the development checkout (SPIRA_HOME). An
 # empty string substituted into @SPIRA_PROD@ yields ExecStart=/sentinel.sh,

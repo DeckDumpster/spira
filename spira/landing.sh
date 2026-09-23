@@ -6,14 +6,15 @@
 #
 #   step                             push   pr    hold  queue
 #   ──────────────────────────────── ─────  ────  ────  ─────
-#   rebase_branch onto base           ✓      ✓     ✓     ✓
-#   confine.sh check                  ✓      ✓     ✓
-#   gate.sh                           ✓      ✓     ✓
+#   rebase_branch onto base           ✓            ✓     ✓
+#   confine.sh check                  ✓            ✓
+#   gate.sh                           ✓            ✓
 #   land_mark CERTIFIED                                   ✓
 #   merge + push to base              ✓
-#   land_pr (open pull request)              ✓
 #   note bead, hold for hand                       ✓
 #   rebase_survivors after landing    ✓
+#
+# pr mode: landing-pass owns it end-to-end (rebase, confine, push, PR, no gate).
 #
 # land-modes: push pr hold queue
 #
@@ -563,188 +564,8 @@ PAYLOAD
     esac
 }
 
-SUBMITTED="$SPIRA_RUN/submitted"
-submitted() {            # 0 if nothing more to do for this tip right now
-    # rec_n IS LOAD-BEARING even though nothing here reads it. `read` puts every word past
-    # the last variable into that variable, so a three-variable read of a four-field record
-    # gives rec_state the value "pr 3" — and the `failed` comparison below, which decides
-    # whether a failed submission is retried, would then never be true again.
-    local id="$1" tip="$2" f="$SUBMITTED/$1" rec_tip rec_at rec_state rec_n
-    [ -f "$f" ] || return 1
-    read -r rec_tip rec_at rec_state rec_n < "$f" 2>/dev/null || return 1
-    [ "$rec_tip" = "$tip" ] || return 1
-    [ "$rec_state" = failed ] || return 0
-    [ $(( $(date +%s) - rec_at )) -lt 3600 ]
-}
-# THE FOURTH FIELD IS THE REFRESH BUDGET ALREADY SPENT, and it has to live in the record
-# rather than be counted from anywhere else, because a refresh rewrites the branch — which
-# moves the tip, which writes a fresh marker. A count derived from anything the refresh
-# itself changes resets to zero every time it is spent, and the bound is then no bound.
-submitted_rec() {        # submitted_rec <id> state|refreshes
-    local f="$SUBMITTED/$1" tip at state n
-    [ -f "$f" ] || return 1
-    read -r tip at state n < "$f" 2>/dev/null || return 1
-    case "$2" in
-        state)     printf '%s' "${state:-}" ;;
-        refreshes) printf '%s' "${n:-0}" ;;
-    esac
-}
-mark_submitted() {       # mark_submitted <id> <tip> <state> [refreshes]
-    mkdir -p "$SUBMITTED"
-    printf '%s %s %s %s\n' "$2" "$(date +%s)" "$3" "${4:-0}" > "$SUBMITTED/$1"
-}
-
-# ======================================================================================
-# A SUBMITTED PULL REQUEST WHOSE BASE HAS MOVED IS DRAGGED BACK ONTO IT.
-#
-# `pr` mode pushes the branch, opens the pull request and records the tip, and every later
-# pass then skips the branch until that tip moves. Nothing moved it. So when the target
-# repository's base advances the pull request goes stale, and where a required check tests
-# the PR HEAD rather than the merge result it goes red with nobody owning it: the bead is
-# closed, the aeon is gone, and Spira has decided it is finished with the branch.
-#
-# `push` mode never had this. It rebases and merges inside the one pass, so its branch is
-# never left standing against a base that can move.
-#
-# THE PULL REQUEST'S OWN STATE IS ASKED FIRST, and that is not a formality. `gh pr merge
-# --squash` lands a NEW commit, so a merged branch is not an ancestor of its base — which
-# means the Sending, whose whole predicate is ancestry, never reaps it and it stands here
-# forever, further behind with every commit that follows. Without this question every
-# merged pull request in the repository would be force-pushed once a pass until its budget
-# ran out and then escalated to Ryan as work that would not merge: a page about something
-# that finished days ago. A gh that cannot answer is not a licence to rewrite a branch
-# either — unreadable is treated as leave it alone.
-#
-# AND IT IS BOUNDED. A branch refreshed and refreshed that still does not merge is not a
-# slow landing, it is a stuck one, and a loop that keeps rebasing it is hiding that rather
-# than fixing it. After the cap it is escalated ONCE — the marker's state records that, so
-# every later pass is silent — and it stays that way until something moves the branch.
-#
-# The cap is not a spira.conf key. Nothing about this box's layout sets it; it is a property
-# of the mechanism, and the thing an operator tunes is the escalation it produces.
-# ======================================================================================
-PR_REFRESH_MAX="${SPIRA_PR_REFRESH_MAX:-5}"
-PR_REFRESH_N=0           # set by needs_refresh, read by the caller that acts on it
-
-pr_state() {             # pr_state <repo> <branch> -> OPEN|MERGED|CLOSED, non-zero if unknown
-    local st
-    st="$( cd "$1" && ghq pr view "$2" --json state -q .state 2>/dev/null )"
-    [ -n "$st" ] || return 1
-    printf '%s' "$st"
-}
-
-# needs_refresh — 0 when this already-submitted branch should be rebased, re-gated and
-# force-pushed, with the refresh number in PR_REFRESH_N. Non-zero means leave it standing.
-needs_refresh() {        # needs_refresh <repo> <name> <branch> <id> <base> <tip>
-    local repo="$1" name="$2" br="$3" id="$4" base="$5" tip="$6" st n
-    PR_REFRESH_N=0
-    # Current already: the base is in the branch, so there is nothing to drag it onto. This
-    # is the common answer and it is a local read, which is what keeps this cheap enough to
-    # ask about every submitted branch on every pass.
-    git -C "$repo" merge-base --is-ancestor "$base" "refs/heads/$br" 2>/dev/null && return 1
-    case "$(submitted_rec "$id" state)" in
-        stale) log "CHECK6 $id: $br is behind $base and already escalated — leaving it standing"; return 1 ;;
-        done)  return 1 ;;
-    esac
-    st="$(pr_state "$repo" "$br")" || {
-        log "CHECK6 $id: $br is behind $base but gh will not say whether its pull request is open — not touching it"
-        return 1; }
-    if [ "$st" != OPEN ]; then
-        log "CHECK6 $id: $br is behind $base but its pull request is $st — nothing to refresh"
-        mark_submitted "$id" "$tip" done
-        return 1
-    fi
-    # Normalised to a number before it is compared as one. A marker written by an older
-    # harness has three fields, and a truncated write has whatever it has; `[ x -ge 5 ]`
-    # against either is a shell error, and the arm it falls to is the one that force-pushes.
-    n="$(submitted_rec "$id" refreshes)"
-    case "${n:-}" in ''|*[!0-9]*) n=0 ;; esac
-    if [ "$n" -ge "$PR_REFRESH_MAX" ]; then
-        spira_ask_refresh_loop "$repo" "$name" "$br" "$id" "$base" "$n"
-        mark_submitted "$id" "$tip" stale "$n"
-        act "escalated $id — its pull request will not merge after $n refresh(es)"
-        return 1
-    fi
-    PR_REFRESH_N=$(( n + 1 ))
-    log "CHECK6 $id: $br is behind $base — rebasing its pull request onto it (refresh $PR_REFRESH_N of $PR_REFRESH_MAX)"
-    return 0
-}
-
-# land_pr <repo> <branch> <id> <base-ref> -> 0 if a pull request is open for this tip.
-# The branch is force-pushed with a lease because CHECK 6 rebases it before gating, so the
-# remote ref is routinely behind by a rewrite rather than by a divergence — and the lease is
-# what keeps that from being a licence to clobber someone else's push.
-#
-# THE REMOTE AND THE BASE BRANCH BOTH COME OUT OF THE BASE REF. This took `origin` and `main`
-# literally, and `--base main` opens a pull request against a branch that does not exist in
-# the two repositories whose default is `master`.
-land_pr() {
-    local repo="$1" br="$2" id="$3" baseref="$4" num title remote base
-    remote="$(ref_remote "$baseref")" || remote=origin
-    base="$(ref_branch "$baseref")"
-    if ! git -C "$repo" push -q --force-with-lease -u "$remote" "$br" 2>/dev/null; then
-        log "CHECK6 $id: could not push $br to $remote"
-        return 1
-    fi
-    num="$( cd "$repo" && ghq pr view "$br" --json number -q .number 2>/dev/null )"
-    # DOES ANOTHER OPEN PR ALREADY CARRY THIS WORK? A branch is named for its bead, so a
-    # successor bead cuts a new branch and this path opens a SECOND pull request for the
-    # same commits — which is what happened to sp-pd-ci: #114 carried all nineteen commits
-    # of #113 plus one, and both sat open, burning CI minutes and splitting the review.
-    # law-decompose-by-deliverable stops the usual cause; this catches the rest, because a
-    # duplicate review thread is expensive and silent.
-    if [ -z "${num:-}" ]; then
-        dup="$( cd "$repo" && ghq pr list --state open --json number,headRefName \
-                  -q '.[] | "\(.number) \(.headRefName)"' 2>/dev/null \
-                | while read -r n ref; do
-                      [ "$ref" = "$br" ] && continue
-                      # An existing PR supersedes this branch when it already contains
-                      # every commit this branch would add.
-                      if [ -z "$(git -C "$repo" log --format='%H' "$base..$br" 2>/dev/null \
-                                 | while read -r c; do
-                                       git -C "$repo" merge-base --is-ancestor "$c" "origin/$ref" 2>/dev/null || echo x
-                                   done)" ]; then
-                          echo "$n"; break
-                      fi
-                  done | head -1 )"
-        if [ -n "${dup:-}" ]; then
-            log "CHECK6 $id: #$dup already carries every commit on $br — not opening a second pull request"
-            bdq note "$id" "Not opening a pull request: #$dup already carries every commit on $br. Continue the review there rather than splitting it across two threads." >/dev/null 2>&1
-            return 1
-        fi
-        title="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit
-d = d if isinstance(d, list) else [d]
-print(d[0].get("title", "") if d else "")' 2>/dev/null)"
-        # THE BODY GOES IN ON STDIN, and the heredoc must CLOSE before the `||` arm, or
-        # bash reads the arm itself as heredoc content — a redirection is bound to the line
-        # it appears on, not to the command that line continues. Prose belongs on stdin
-        # anyway: backticks and $( ) in a double-quoted argument are command substitution,
-        # and a message that silently loses the terms it was explaining is worse than none
-        # (law-commit-messages-via-stdin).
-        if ! ( cd "$repo" && ghq pr create --head "$br" --base "$base" \
-                 --title "$id: ${title:-Spira}" --body-file - >/dev/null 2>&1 ) <<PRBODY
-Filed by Spira for bead $id. The bead is closed in the Spira database; this
-pull request is how the work lands, so it is not done until this merges.
-
-Auto-merge is armed — a green run merges it without anyone waiting on it.
-PRBODY
-        then
-            log "CHECK6 $id: gh pr create failed for $br"
-            return 1
-        fi
-        num="$( cd "$repo" && ghq pr view "$br" --json number -q .number 2>/dev/null )"
-    fi
-    # A green pull request must merge itself. If the repository has auto-merge disabled the
-    # arm fails and is worth a line — the pull request is still open and correct, it simply
-    # now needs a human, which is the thing to know.
-    ( cd "$repo" && ghq pr merge --auto --squash "$br" >/dev/null 2>&1 ) \
-        || log "CHECK6 $id: pull request ${num:-?} is open but auto-merge could not be armed"
-    log "CHECK6 $id: pull request ${num:-?} open on $br — its CI is the gate now"
-    return 0
-}
+# PR-MODE PRIMITIVES (submitted, mark_submitted, pr_state, needs_refresh, land_pr) live in
+# lib.sh so that pr-pass-branch.sh can source them without sourcing this file.
 
 # ======================================================================================
 # THE SURVIVORS ARE REBASED THE MOMENT THE BASE MOVES, not when the pass next reaches them.
@@ -923,6 +744,10 @@ land_repo() {
     brs="$(printf '%s\n' "$brs" | awk 'NF{print $1}')"
 
     mode="$(repo_land "$name")"
+
+    # PR MODE IS OWNED BY LANDING-PASS, which runs on its own short timer without a local gate.
+    # landing.sh never touches pr-mode branches; landing-pass handles them end to end.
+    [ "$mode" = pr ] && return 0
 
     # THE BASE IS RESOLVED BEFORE THE FETCH, AND THE FETCH FOLLOWS IT. `git fetch origin` was
     # literal here; a remote need not be called `origin`, so that fetch was a silent no-op in the
@@ -1625,24 +1450,6 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
         fi
 
         case "$mode" in
-        pr)
-            if land_pr "$repo" "$br" "$id" "$base"; then
-                mark_submitted "$id" "$tip" pr "$refresh"
-                if [ "$refresh" -gt 0 ]; then
-                    # A REFRESH IS NOT A MOVEMENT OF THE DAG, so it does not cross the seam.
-                    # No bead changed state and nothing landed — the branch was only dragged
-                    # back onto a base that moved. Reporting it as progress would count
-                    # maintenance as throughput and mute CHECK 8, the one check that notices
-                    # paralysis, for exactly as long as a branch went on failing to merge.
-                    act "refreshed $br onto $base in $name — rebased, re-gated and force-pushed"
-                else
-                    land_mark "$id" REBASED "$tip" "pr-open:$name"
-                    progress "opened a pull request for $br in $name"
-                fi
-            else
-                mark_submitted "$id" "$tip" failed "$refresh"
-            fi
-            ;;
         hold)
             bdq note "$id" "Gated and held: $br passed $name's landing gate. Spira does not advance $name's $base_branch. Merge it by hand when you are ready — nothing else will." >/dev/null 2>&1
             mark_submitted "$id" "$tip" hold

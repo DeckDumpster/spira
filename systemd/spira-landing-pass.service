@@ -1,0 +1,21 @@
+[Unit]
+Description=Spira landing pass — pr-mode repository landing, no local gate
+Documentation=file://@SPIRA_HOME@/pr-pass-branch.sh
+After=default.target
+
+[Service]
+Type=oneshot
+ExecStart=@SPIRA_LANDING_PASS_BIN@ --pass
+# A pass enumerates repos, rebases branches, and pushes/opens pull requests.
+# No gate.sh, no container — bounded in seconds under normal load.
+TimeoutStartSec=120
+# Nice=10 is the fence (law-fence-loops-on-shared-hardware).
+Nice=10
+Environment=SPIRA_HOME=@SPIRA_PROD@
+Environment=SPIRA_RUN=@SPIRA_RUN@
+Environment=SPIRA_DB=@SPIRA_DB@
+StandardOutput=append:@SPIRA_RUN@/landing-pass.log
+StandardError=append:@SPIRA_RUN@/landing-pass.log
+
+[Install]
+WantedBy=default.target
