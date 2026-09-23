@@ -719,10 +719,10 @@ spira_conf_defaults() {
     # THE PLAN PARTITION LABEL — the label that marks a bead as ready plan work for a builder.
     # Declared here so the fayth predicate, the sentinel, and any other reader that needs to
     # say "plan bead" all read the same value. A literal in multiple files is how those
-    # multiple programs come to disagree (law-schema-over-code). The default is "plan" — the
-    # value the store has always used — so upgrading a clean install changes nothing.
-    : "${SPIRA_PLAN_LABEL:=plan}"
-    : "${SPIRA_INCIDENT_LABEL:=incident}"
+    # multiple programs come to disagree (law-schema-over-code). Must include 'partition:'
+    # prefix for the partition system to recognize it as a partition label.
+    : "${SPIRA_PLAN_LABEL:=partition:plan}"
+    : "${SPIRA_INCIDENT_LABEL:=partition:incident}"
     # NO-LOOP LABEL — marks a bead as intentionally unclaimable. READY_ARGS excludes it, so
     # fayth_ready and detect_unclaimable_ready never see it. Without this label, a bead that
     # must not be worked can only be expressed by accident; the unclaimable detector then files
