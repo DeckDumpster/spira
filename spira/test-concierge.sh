@@ -493,12 +493,13 @@ is "pid is gone after the process exits" "" "$(lp "$LP_SID")"
 trap 'rm -rf "$TMP"' EXIT  # restore trap without the kill
 
 echo
-echo "convergence — start exits 0 (no second client) when process holds the id"
+echo "convergence — live holder with no tmux session is HEADLESS, not convergence"
 
-# SEEN TO FAIL FIRST: the old behavior was exit 1 (refusal). The new behavior is exit 0
-# (convergence: it is running, no second needed). Verify:
-#   (i)  start exits 0 when a process holds the recorded session id
-#   (ii) no new tmux session is created (the process is not duplicated)
+# SEEN TO FAIL FIRST: the old behavior was exit 0 (treating the headless case as
+# convergence). The correct behavior is exit 3 (HEADLESS): has-session already failed,
+# so a live holder with no session means the tmux server is gone. Verify:
+#   (i)  start exits 3 when a process holds the recorded session id but tmux is gone
+#   (ii) no new tmux session is created
 #
 # POSITIVE CONTROL: the check fires on the id match, not always. A non-matching id with
 # no tmux session proceeds to compose_brief (which would fail here without a statute book,
@@ -518,8 +519,8 @@ SPIRA_RUN="$TMP" SPIRA_WIKI="$CONV_BRAIN" SPIRA_CONF="$TMP/no.conf" \
     bash "$HARNESS/concierge.sh" start 2>/dev/null || rc_conv=$?
 tmux_up=0; tmux -L "$CONV_SOCK" has-session -t "$CONV_SOCK" 2>/dev/null && tmux_up=1
 
-is "start exits 0 (convergence) when process holds the id" 0 "$rc_conv"
-is "and does not create a tmux session (no second client)"  0 "$tmux_up"
+is "start exits 3 (HEADLESS) when process holds the id but tmux is gone" 3 "$rc_conv"
+is "and does not create a tmux session"                                   0 "$tmux_up"
 
 # POSITIVE CONTROL: without a live pid the convergence check is skipped and start
 # proceeds to compose_brief. SPIRA_HOME points at an empty dir (no chamber/) so
