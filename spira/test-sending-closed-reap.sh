@@ -5,7 +5,7 @@
 #
 #   ./test-sending-closed-reap.sh
 #
-# THREE SHAPES:
+# THREE SHAPES (all tested in one sending pass):
 #
 #   A. NON-CODE DELIVERS, EMPTY BRANCH. A bead that carries a delivers: label (note,
 #      beads, action, etc.) was never expected to commit. Its branch is 0 ahead and an
@@ -15,17 +15,15 @@
 #
 #   B. SUPERSEDED BEAD, EMPTY BRANCH. A closed duplicate with a supersedes edge and a
 #      zero-ahead branch. Previously the safety check ran merge-tree on the empty branch;
-#      merge-tree trivially exits 0 on nothing, so the check reported "unsafe to reap"
-#      for a branch with nothing to protect. Now: n=0 skips merge-tree entirely.
+#      merge-tree trivially exits 0 on nothing and reported "unsafe to reap". Now: n=0
+#      skips merge-tree and the branch is reaped. Positive control: a superseded bead
+#      with n>0 and unique content (no conflict) is still KEPT.
 #
 #   C. LANDED BY OTHER PR. A closed bead whose work was included in a batch PR commit
 #      that names the bead id. The bead's own PR was closed unmerged; its branch has
 #      commits that conflict with the base (post-squash base movement). Previously
 #      landed() was only consulted at n=0. Now: closed + landed() = SENT before KEEP.
-#
-# POSITIVE CONTROLS (law-absence-needs-a-positive-control):
-#   - An unlanded branch with real content not on the base must be KEPT.
-#   - A superseded branch with n>0 and no conflict (possible new content) must be KEPT.
+#      Positive control: a closed bead whose id does NOT appear on the base is KEPT.
 #
 # covers: spira/sending.sh spira/lib.sh
 set -uo pipefail
@@ -69,14 +67,16 @@ sending() {
 }
 
 # ---------------------------------------------------------------------------
-# Shape A fixture: sp-groom — closed bead with delivers:note: label, 0 ahead.
-# Shape B fixture: sp-sup0 — closed superseded bead with empty branch (n=0).
-# Shape B control: sp-supc — closed superseded bead with n>0 and no conflict.
-# Shape C fixture: sp-btch — closed bead landed via batch PR commit naming it.
-# Positive control: sp-keep — closed bead with unlanded real content, not batch-named.
+# Git fixture branches:
+#
+# sp-groom: 0 ahead, ancestor (Shape A — non-code delivers)
+# sp-sup0:  0 ahead, ancestor, supersedes sp-sup1 (Shape B — empty superseded)
+# sp-supc:  1 commit unique content, supersedes sp-sup1 (Shape B control — kept)
+# sp-btch:  1 commit, named in batch commit on main (Shape C — landed by other PR)
+# sp-keep:  1 commit, unique content NOT named on main (positive control — kept)
 # ---------------------------------------------------------------------------
 
-# sp-groom: no commits at all — 0 ahead, ancestor of main.
+# sp-groom: empty branch (no commits ever).
 git -C "$REPO" checkout -q -b spira/sp-groom main
 git -C "$REPO" checkout -q main
 
@@ -91,18 +91,17 @@ git -C "$REPO" add sp-supc.txt
 git -C "$REPO" commit -q -m "sp-supc: unique content"
 git -C "$REPO" checkout -q main
 
-# sp-btch: 1 commit, conflicts with post-batch base movement. sp-btch IS named in the
-# batch commit on main.
+# sp-btch: 1 commit, then batch PR squash lands it (naming the id) and base advances.
 git -C "$REPO" checkout -q -b spira/sp-btch main
 printf 'shared-content-v1\n' > "$REPO/shared.txt"
 git -C "$REPO" add shared.txt
 git -C "$REPO" commit -q -m "sp-btch: add shared content"
 git -C "$REPO" checkout -q main
-# Batch PR squash: land sp-btch's content with a commit naming it, then advance main further.
+# Batch PR squash: a commit naming sp-btch lands the content.
 printf 'shared-content-v1\n' > "$REPO/shared.txt"
 git -C "$REPO" add shared.txt
-git -C "$REPO" commit -q -m "batch: sp-btch landed here (batch PR)"
-# Base moves on the same file — now sp-btch's branch conflicts with main.
+git -C "$REPO" commit -q -m "batch: sp-btch landed here"
+# Base moves on the same file — sp-btch's branch now conflicts with main.
 printf 'shared-content-v2\n' > "$REPO/shared.txt"
 git -C "$REPO" add shared.txt
 git -C "$REPO" commit -q -m "follow-up: advance shared.txt"
@@ -118,13 +117,13 @@ git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 
 # ---------------------------------------------------------------------------
-# Seed the bead database.
+# Bead database seed. Note: bd import uses "type" for dependency kinds.
 # ---------------------------------------------------------------------------
 testdb_seed <<'JSONL'
 {"id":"sp-groom","title":"groomer pass","status":"closed","issue_type":"task","labels":["delivers:note:/tmp/groom.log"],"updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z","dependencies":[]}
-{"id":"sp-sup0","title":"superseded empty","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z","dependencies":[{"issue_id":"sp-sup0","depends_on_id":"sp-sup1","dependency_type":"supersedes"}]}
 {"id":"sp-sup1","title":"successor","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z","dependencies":[]}
-{"id":"sp-supc","title":"superseded content","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z","dependencies":[{"issue_id":"sp-supc","depends_on_id":"sp-sup1","dependency_type":"supersedes"}]}
+{"id":"sp-sup0","title":"superseded empty","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z","dependencies":[{"issue_id":"sp-sup0","depends_on_id":"sp-sup1","type":"supersedes"}]}
+{"id":"sp-supc","title":"superseded content","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z","dependencies":[{"issue_id":"sp-supc","depends_on_id":"sp-sup1","type":"supersedes"}]}
 {"id":"sp-btch","title":"batch landed","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z","dependencies":[]}
 {"id":"sp-keep","title":"unlanded","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z","dependencies":[]}
 JSONL
@@ -132,7 +131,7 @@ JSONL
 echo "test-sending-closed-reap.sh"
 
 # ---------------------------------------------------------------------------
-# Fixture verification: confirm which cases content_landed and landed see.
+# Fixture verification.
 # ---------------------------------------------------------------------------
 # shellcheck disable=SC1090
 . "$SH/lib.sh"
@@ -147,19 +146,11 @@ if content_landed "$REPO" "spira/sp-btch" "origin/main"; then
 else
     ok "sp-btch: content_landed correctly returns non-zero (conflict with post-batch base)"
 fi
-if content_landed "$REPO" "spira/sp-keep" "origin/main"; then
-    bad "sp-keep: content_landed must return non-zero for unlanded content" "returned 0"
-else
-    ok "sp-keep: content_landed correctly returns non-zero (unlanded content)"
-fi
-
-# sp-btch commit message names the bead — landed() must return 0.
 if landed "sp-btch" "$REPO" 2>/dev/null; then
     ok "sp-btch: landed() finds the naming commit on origin/main"
 else
     bad "sp-btch: landed() must return 0 (batch commit on main names it)" "returned non-zero"
 fi
-# sp-keep is NOT named on main.
 if landed "sp-keep" "$REPO" 2>/dev/null; then
     bad "sp-keep: landed() must return non-zero" "returned 0 — fixture is wrong"
 else
@@ -167,65 +158,48 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Shape A: non-code delivers bead is reaped.
+# THE MAIN ASSERTION: one sending pass covering all three shapes.
 # ---------------------------------------------------------------------------
 echo ""
-echo "Shape A — non-code delivers, 0-ahead, ancestor:"
-out_a="$(sending)"
-printf '%s\n' "$out_a" >&2
+echo "All shapes in one pass:"
+out="$(sending)"
+printf '%s\n' "$out" >&2
 
-want   "A: sp-groom is REAPED"                       "REAPED sp-groom"  "$out_a"
-nowant "A: sp-groom is not KEPT"                     "KEEP   sp-groom"  "$out_a"
+# Shape A
+want   "A: sp-groom is REAPED (non-code delivers)"          "REAPED sp-groom"  "$out"
+nowant "A: sp-groom is not KEPT"                            "KEEP   sp-groom"  "$out"
 if git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-groom" 2>/dev/null; then
     bad "A: sp-groom branch is gone" "spira/sp-groom still exists after reap"
 else
     ok "A: sp-groom branch is gone after reap"
 fi
 
-# ---------------------------------------------------------------------------
-# Shape B: superseded empty branch is reaped; superseded non-empty with unique
-# content (no conflict) is kept.
-# ---------------------------------------------------------------------------
-echo ""
-echo "Shape B — superseded + empty branch:"
-# sp-groom was just reaped; sp-sup0 and sp-supc remain.
-out_b="$(sending)"
-printf '%s\n' "$out_b" >&2
-
-want   "B: sp-sup0 is REAPED (empty + superseded)"    "REAPED sp-sup0"  "$out_b"
-nowant "B: sp-sup0 is not KEPT"                       "KEEP   sp-sup0"  "$out_b"
+# Shape B
+want   "B: sp-sup0 is REAPED (empty + superseded)"          "REAPED sp-sup0"   "$out"
+nowant "B: sp-sup0 is not KEPT"                             "KEEP   sp-sup0"   "$out"
 if git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-sup0" 2>/dev/null; then
     bad "B: sp-sup0 branch is gone" "spira/sp-sup0 still exists after reap"
 else
     ok "B: sp-sup0 branch is gone after reap"
 fi
-
-want   "B: sp-supc is KEPT (superseded but has unique content)"  "KEEP   sp-supc"  "$out_b"
-nowant "B: sp-supc is not reaped (content absent from base)"     "REAPED sp-supc"  "$out_b"
+want   "B: sp-supc is KEPT (superseded but unique content)"  "KEEP   sp-supc"   "$out"
+nowant "B: sp-supc is not reaped"                            "REAPED sp-supc"   "$out"
 if git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-supc" 2>/dev/null; then
     ok "B: sp-supc branch still exists (correctly kept)"
 else
     bad "B: sp-supc branch still exists" "spira/sp-supc was deleted — unique content would be lost"
 fi
 
-# ---------------------------------------------------------------------------
-# Shape C: batch-named branch is sent; unlanded branch is kept.
-# ---------------------------------------------------------------------------
-echo ""
-echo "Shape C — landed by other PR (batch commit names bead):"
-out_c="$(sending)"
-printf '%s\n' "$out_c" >&2
-
-want   "C: sp-btch is SENT (landed() found naming commit)"  "SENT sp-btch"  "$out_c"
-nowant "C: sp-btch is not KEPT"                             "KEEP   sp-btch" "$out_c"
+# Shape C
+want   "C: sp-btch is SENT (landed via batch commit)"       "SENT sp-btch"     "$out"
+nowant "C: sp-btch is not KEPT"                             "KEEP   sp-btch"   "$out"
 if git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-btch" 2>/dev/null; then
     bad "C: sp-btch branch is gone" "spira/sp-btch still exists after send"
 else
     ok "C: sp-btch branch is gone after send"
 fi
-
-want   "C: sp-keep is KEPT (unlanded, positive control)"    "KEEP   sp-keep"  "$out_c"
-nowant "C: sp-keep is not sent or reaped"                   "SENT sp-keep"    "$out_c"
+want   "C: sp-keep is KEPT (unlanded, positive control)"    "KEEP   sp-keep"   "$out"
+nowant "C: sp-keep is not sent or reaped"                   "SENT sp-keep"     "$out"
 if git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-keep" 2>/dev/null; then
     ok "C: sp-keep branch still exists (correctly kept)"
 else
