@@ -20,7 +20,7 @@
 # Known distribution: expected classes appear, unexpected do not.
 # Suppression: remedy bead causes omission; closing it restores the class.
 #
-# covers: spira/census.sh
+# covers: spira/census.sh spira/lib.sh
 # hermetic-ok: uses a fixture database; no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
