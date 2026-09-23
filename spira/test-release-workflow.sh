@@ -28,8 +28,8 @@
 #   4. An assertion step verifies the installed Rust version at runtime.
 #   5. No build step silences failure with continue-on-error: true.
 #   6. build-tarball.sh is called with --name to stamp once per release.
-#   7. POSITIVE CONTROL + every required --*-bin from build-tarball.sh is
-#      supplied in the workflow's build-tarball invocation.
+#   7. POSITIVE CONTROL + release.yml supplies binaries via --bin-dir or every
+#      required --*-bin flag from build-tarball.sh.
 #   8. POSITIVE CONTROL + gate.yml retracts the tag when publish fails.
 #
 # covers: .github/workflows/release.yml .github/workflows/gate.yml spira/build-tarball.sh
@@ -128,8 +128,6 @@ want "build-tarball.sh uses --name" "--name"
 echo
 echo "7. Producer/consumer agreement — build-tarball.sh is invoked with --workspace"
 # ============================================================================
-# The workflow must use --workspace so new crates ship automatically. Explicit
-# --*-bin flags require a hand-written list that diverges when crates are added.
 
 # Positive control: a fixture without --workspace is detected as missing.
 FIXTURE="$TMP/fixture-release.yml"
