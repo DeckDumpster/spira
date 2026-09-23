@@ -21,9 +21,14 @@
 # must still be flagged even when called from the worktree context. A detector that silences
 # everything passes every negative assertion here.
 #
+# WORKTREE SETUP. A fresh git repo is created in TMP (the "production" harness) with the
+# spira directory copied in. A worktree is then branched from it with a modified conf.sh.
+# This avoids relying on the test environment's workspace git (which is itself a worktree
+# with .git pointing to paths the container cannot see).
+#
 # covers: spira/lib.sh spira/conf.sh
 # defect: sp-b0j0s
-# hermetic-ok: fixture database; creates a temporary git worktree within the test
+# hermetic-ok: fixture database; fresh git repo in TMP, no system git state
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
@@ -38,12 +43,23 @@ lacks(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"
 testdb_require test-unclaimable-worktree
 TMP="$(mktemp -d)"
 
-# Build a fake worktree: a real git worktree whose conf.sh has been patched to use
-# SPIRA_PLAN_LABEL:=partition:plan. This reproduces the exact condition from sp-b0j0s:
-# an aeon branch that changed the plan label default away from "plan".
-REPO_ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)"
+# Build a self-contained git repo to serve as the "production" harness, then create a
+# worktree of it with a modified conf.sh. This topology mirrors production without relying
+# on the test environment's workspace git (which is a worktree referencing host paths the
+# container cannot reach).
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+
+PROD_ROOT="$TMP/prod"
 FAKE_WT="$TMP/fake-worktree"
-git -C "$REPO_ROOT" worktree add --detach "$FAKE_WT" HEAD 2>/dev/null
+mkdir -p "$PROD_ROOT"
+git init -q -b main "$PROD_ROOT" 2>/dev/null || git init -q "$PROD_ROOT" 2>/dev/null
+git -C "$PROD_ROOT" config user.email t@t
+git -C "$PROD_ROOT" config user.name t
+cp -r "$HERE" "$PROD_ROOT/spira"
+git -C "$PROD_ROOT" add spira
+git -C "$PROD_ROOT" commit -qm "seed"
+git -C "$PROD_ROOT" worktree add --detach "$FAKE_WT" HEAD 2>/dev/null
+# Patch the worktree's conf.sh to simulate an aeon branch that renamed the partition labels.
 sed -i \
     -e 's/: "${SPIRA_PLAN_LABEL:=plan}"/: "${SPIRA_PLAN_LABEL:=partition:plan}"/' \
     -e 's/: "${SPIRA_INCIDENT_LABEL:=incident}"/: "${SPIRA_INCIDENT_LABEL:=partition:incident}"/' \
@@ -51,14 +67,14 @@ sed -i \
 
 cleanup() {
     testdb_drop
-    git -C "$REPO_ROOT" worktree remove --force "$FAKE_WT" 2>/dev/null || true
+    git -C "$PROD_ROOT" worktree remove --force "$FAKE_WT" 2>/dev/null || true
     rm -rf "$TMP"
 }
 trap cleanup EXIT INT TERM
 
 testdb_up unclaimable_wt || { echo "test-unclaimable-worktree: could not build fixture database"; exit 1; }
 
-# Source production lib.sh so detect_unclaimable_ready is available in this shell.
+# Source production lib.sh so detect_unclaimable_ready is available for case 3.
 export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"
@@ -71,9 +87,9 @@ log()      { : ; }
 
 echo "test-unclaimable-worktree.sh"
 
-# Helper: run detect_unclaimable_ready from the fake worktree's context.
-# Unsets the label vars so the fake conf.sh can set them to partition:plan.
-# Keeps SPIRA_DB so the fixture is queried.
+# Helper: run detect_unclaimable_ready from the fake worktree's lib.sh.
+# Unsets label vars so the modified conf.sh sets them to partition:plan/incident.
+# Keeps SPIRA_DB pointing at the fixture; SPIRA_CONF prevents reading production config.
 run_from_worktree() {
     env -u SPIRA_PLAN_LABEL -u SPIRA_INCIDENT_LABEL \
         -u SPIRA_SCOPE_LABEL -u SPIRA_CI_LABEL \
@@ -81,6 +97,7 @@ run_from_worktree() {
         -u SPIRA_CZAR_LABEL -u SPIRA_GROOMER_LABEL \
         -u SPIRA_MAECHEN_LABEL -u SPIRA_SPIKE_LABEL \
         SPIRA_DB="$SPIRA_DB" \
+        SPIRA_CONF="$TMP/no-such.conf" \
         bash -c ". \"$FAKE_WT/spira/lib.sh\"; detect_unclaimable_ready" 2>/dev/null
 }
 
