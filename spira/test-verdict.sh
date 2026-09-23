@@ -841,7 +841,11 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 # =============================================================================
 # 24. COULD-NOT-JUDGE MEMBER — rc=2 from one member does not exonerate others;
 #     the guilty member (rc=0) is still ejected.
+#     sp-vd-r1 must exist in testdb so bead_reopen returns 0 (open bead: bd
+#     reopen is a no-op with exit 0); without it _attr_eject escalates instead.
 # =============================================================================
+printf '{"id":"sp-vd-r1","title":"t","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+    | testdb_seed
 # Two members: sp-vd-r1 always fails (red → ejected). sp-vd-r2's dispatch faults
 # (harness fault). Only sp-vd-r1 must be ejected.
 MEMBER_RC_DEFAULT="red"
