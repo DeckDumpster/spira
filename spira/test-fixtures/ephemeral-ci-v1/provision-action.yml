@@ -95,8 +95,19 @@ inputs:
       How long to wait for room before giving up. The wait is deliberately long:
       a run that waits is a slow run, and a run that fails for capacity is
       indistinguishable from a broken test to whoever opened the pull request.
+      Raised from 1800 so a run queued behind a busy fleet is not failed before
+      the fleet can clear (a deckdumpster suite can run longer than 30 minutes).
     required: false
-    default: '1800'
+    default: '3600'
+  fleet-share-per-repo:
+    description: >-
+      Maximum concurrent runner VMs allowed from this repository. Counts ALL
+      gh-runner VMs tagged with this repo's slug (any state, including stopped
+      VMs still being initialised) before cloning; if at or above this ceiling,
+      waits. 0 disables, and 0 is the default: each repo counts only itself, so a
+      per-repo share cannot enforce fairness across the fleet (2026-09-23).
+    required: false
+    default: '0'
 
 outputs:
   vmid:
@@ -107,6 +118,12 @@ outputs:
   label:
     description: The unique runner label to put in the test job's `runs-on`.
     value: ${{ steps.label.outputs.label }}
+  vm-token:
+    description: >-
+      Ownership token stamped into the VM description at clone time. Pass this
+      to the teardown action's vm-token input so Guard 4b can verify the
+      teardown caller participated in this specific provision.
+    value: ${{ steps.provision.outputs.vm-token }}
 
 runs:
   using: composite
@@ -165,6 +182,8 @@ runs:
         NODE_MEM_RESERVE_MIB: ${{ inputs.node-memory-reserve-mib }}
         CAPACITY_SLACK_RUNNERS: ${{ inputs.capacity-slack-runners }}
         CAPACITY_TIMEOUT: ${{ inputs.capacity-timeout-seconds }}
+        FLEET_SHARE_PER_REPO: ${{ inputs.fleet-share-per-repo }}
+        REPO_SLUG: ${{ github.repository }}
         CRED_FILE: /dev/null
       run: |
         set +e
@@ -176,6 +195,8 @@ runs:
         set -e
         VMID=$(printf '%s\n' "$OUT" | sed -n 's/^vmid=\([0-9]\+\)$/\1/p' | head -1)
         [ -n "$VMID" ] && echo "vmid=$VMID" >> "$GITHUB_OUTPUT"
+        VMTOKEN=$(printf '%s\n' "$OUT" | sed -n 's/^vmtoken=\([a-f0-9]*\)$/\1/p' | head -1)
+        [ -n "$VMTOKEN" ] && echo "vm-token=$VMTOKEN" >> "$GITHUB_OUTPUT"
         exit "$RC"
 
     # WRITING THE FILE IS NOT PROOF OF REGISTRATION. agent/file-write returns
