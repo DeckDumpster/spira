@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# test-express-lane.sh — express label: bead.sh --express and P0 auto-express.
+# test-express-lane.sh — express label and sentinel admission bypass.
 #
-# covers: spira/bead.sh spira/conf.sh spira/cockpit.sh
+# covers: spira/bead.sh spira/conf.sh spira/cockpit.sh spira/sentinel.sh spira/lib.sh spira/watchtower.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -148,6 +148,46 @@ if [ -n "$BID" ]; then
 else
     bad "amend --express: could not create bead" "output: $out"
 fi
+
+# ======================================================================================
+echo
+echo "sentinel CHECK7 express bypass — express_ready_in_task_pool"
+# ======================================================================================
+# Override ready_count after sourcing lib.sh: returns non-zero when express label is
+# in the labels arg (simulates a ready express bead without a full testdb query).
+T_FAYTH="$TMP/chamber"; mkdir -p "$T_FAYTH"
+cat > "$T_FAYTH/builder.fayth" <<'FAYTH'
+FAYTH_LABELS="spira,plan"
+FAYTH_EXCLUDE_LABELS=""
+FAYTH
+export SPIRA_HOME="$TMP"
+export SPIRA_CONF="$TMP/no-such.conf"
+# shellcheck disable=SC1090
+. "$HERE/lib.sh"
+
+ready_count() {
+    case "$1" in *",express"*) printf '1' ;;
+                 *) printf '0' ;; esac
+}
+
+# POSITIVE CONTROL: throttle stamp present + express bead ready → returns 0.
+THROTTLE_STAMP="$RUN/queue-throttled"
+printf 'since=2026-09-21T00:00:00Z depth=20 since_land=60m\n' > "$THROTTLE_STAMP"
+express_ready_in_task_pool "builder" "express" \
+    && ok "throttle+express: express_ready_in_task_pool returns 0 (express ready)" \
+    || bad "throttle+express: express_ready_in_task_pool returns 0 (express ready)" "returned 1"
+
+# Pair: no express bead → returns 1.
+express_ready_in_task_pool "builder" "no-such-label" \
+    && bad "throttle+no-express: express_ready_in_task_pool returns 1 (not ready)" "returned 0" \
+    || ok "throttle+no-express: express_ready_in_task_pool returns 1 (not ready)"
+rm -f "$THROTTLE_STAMP"
+
+# Pair: express bead outside this fayth's partition does not grant a slot.
+# (fayth file absent → express_ready_in_task_pool skips it and returns 1)
+express_ready_in_task_pool "nonexistent-fayth" "express" \
+    && bad "express outside partition: absent fayth grants no slot" "returned 0" \
+    || ok "express outside partition: absent fayth grants no slot"
 
 # ======================================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

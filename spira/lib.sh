@@ -930,6 +930,24 @@ fayth_ready() {          # fayth_ready <fayth> -> claimable beads under ITS OWN 
       ready_count "${FAYTH_LABELS:-}" "$(fayth_exclude "$f" "${FAYTH_EXCLUDE_LABELS:-}")" )
 }
 
+# express_ready_in_task_pool <task-fayths> <express-label>
+# Returns 0 when an express bead is ready in any task partition, 1 otherwise.
+# Composes with FAYTH_LABELS rather than bypassing them — the partition stays intact.
+express_ready_in_task_pool() {
+    local task_fayths="$1" express_label="$2" f ff ec
+    for f in $task_fayths; do
+        ff="$SPIRA_HOME/chamber/$f.fayth"
+        [ -f "$ff" ] || continue
+        # shellcheck disable=SC1090
+        ec="$( ( . "$ff" 2>/dev/null
+                 [ -n "${FAYTH_LABELS:-}" ] || exit 1
+                 ready_count "${FAYTH_LABELS},${express_label}" \
+                     "$(fayth_exclude "$f" "${FAYTH_EXCLUDE_LABELS:-}")" ) 2>/dev/null)" || true
+        [ "${ec:-0}" -gt 0 ] 2>/dev/null && return 0
+    done
+    return 1
+}
+
 # mark_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on beads whose closed blocker
 # is in the queue pipeline (CERTIFIED or BATCHED) and has not yet reached LANDED.
 #
