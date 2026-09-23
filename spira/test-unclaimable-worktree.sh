@@ -88,10 +88,12 @@ log()      { : ; }
 echo "test-unclaimable-worktree.sh"
 
 # Helper: run detect_unclaimable_ready from the fake worktree's lib.sh.
-# Unsets label vars so the modified conf.sh sets them to partition:plan/incident.
-# Keeps SPIRA_DB pointing at the fixture; SPIRA_CONF prevents reading production config.
+# Unsets SPIRA_HOME so conf.sh derives it from BASH_SOURCE (the fake lib.sh path),
+# not from this test's exported SPIRA_HOME. Also unsets label vars so the modified
+# conf.sh sets them to partition:plan/incident. Keeps SPIRA_DB for the fixture.
 run_from_worktree() {
-    env -u SPIRA_PLAN_LABEL -u SPIRA_INCIDENT_LABEL \
+    env -u SPIRA_HOME \
+        -u SPIRA_PLAN_LABEL -u SPIRA_INCIDENT_LABEL \
         -u SPIRA_SCOPE_LABEL -u SPIRA_CI_LABEL \
         -u SPIRA_ASK_LABEL -u SPIRA_NO_LOOP_LABEL \
         -u SPIRA_CZAR_LABEL -u SPIRA_GROOMER_LABEL \
