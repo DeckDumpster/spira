@@ -239,6 +239,9 @@ run_census_fixture() {
 }
 
 B close "$remedy_id" --reason "test: verify closed remedy still suppresses" --force >/dev/null 2>&1
+# A closed remedy with NO branch is orphaned (sp-c3q60). This test checks the
+# "in-flight" path, so create a branch to represent the work in progress.
+git -C "$FIXTURE_REPO" branch "spira/${remedy_id}" >/dev/null 2>&1
 
 out3_pre="$(run_census_fixture)"
 lack "sp-recur-suite-red still suppressed after close, commit not on base" \
