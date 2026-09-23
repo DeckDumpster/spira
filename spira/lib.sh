@@ -4849,13 +4849,14 @@ detect_invalid_closed() {
     printf '%s\n' "$_closed_raw" | SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_ID_PREFIX="${SPIRA_ID_PREFIX:-sp}" SPIRA_RUN="${SPIRA_RUN:-}" python3 -c '
 import sys, json, re, os
 
-# Load RED_FLAGS and check_close_reason from the shared helper so the detector and the
-# close-time fence in aeon.sh cannot disagree about what constitutes an unfinished close.
+# Load detect_close_reason from the shared helper. The detector uses detect_close_reason
+# (raw scan, no masking) so all occurrences reach Maechen; check_close_reason (quote-masked)
+# belongs to the close-time fence in aeon.sh.
 _flags_path = os.path.join(os.environ.get("SPIRA_HOME", ""), "close-reason-flags.py")
 try:
     _ns = {"re": re, "__name__": ""}
     exec(open(_flags_path).read(), _ns)
-    check_close_reason = _ns["check_close_reason"]
+    check_close_reason = _ns.get("detect_close_reason") or _ns["check_close_reason"]
 except Exception:
     check_close_reason = lambda r: None
 
