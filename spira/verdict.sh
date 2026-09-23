@@ -21,6 +21,28 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 _batch_open_file() { printf '%s/%s/open' "${SPIRA_QUEUE_DIR:?}" "$1"; }
 
+# _reap_stale_queue_refs <repo-path> <base-ref> <repo-name> — delete local
+# spira/queue/* refs whose tip is already on the base and that are not the
+# currently-open batch branch. The ref-guard requires SPIRA_REF_SANCTIONED=1
+# for any spira/* deletion; batch.sh sets it for its own cleanup, and so do we.
+_reap_stale_queue_refs() {
+    local repo="$1" base="$2" name="$3"
+    local open_br="" qdir="${SPIRA_QUEUE_DIR:-${SPIRA_RUN:-}/queue}"
+    local open_f="$qdir/$name/open"
+    [ -f "$open_f" ] && open_br="$(grep '^branch=' "$open_f" 2>/dev/null | cut -d= -f2-)" || true
+    while IFS= read -r _qbr; do
+        [ -n "$_qbr" ] || continue
+        # Preserve the open batch's branch; it may not be on the base yet.
+        [ "$_qbr" = "${open_br:-__none__}" ] && continue
+        if git -C "$repo" merge-base --is-ancestor "$_qbr" "$base" 2>/dev/null; then
+            if SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$_qbr" 2>/dev/null; then
+                printf 'verdict %s: reaped stale queue ref %s\n' "$name" "$_qbr"
+            fi
+        fi
+    done < <(git -C "$repo" for-each-ref --format='%(refname:short)' \
+        'refs/heads/spira/queue/' 2>/dev/null || true)
+}
+
 _batch_field() {    # _batch_field <key> <file>
     grep "^$1=" "$2" 2>/dev/null | cut -d= -f2-
 }
@@ -821,9 +843,13 @@ main() {
                     # Delete the batch branch now that the base has advanced past it.
                     if [ -n "${branch_name:-}" ]; then
                         git -C "$repo" push -q "$remote" --delete "$branch_name" 2>/dev/null || true
-                        git -C "$repo" branch -D "$branch_name" 2>/dev/null || true
-                        printf 'verdict %s: deleted batch branch %s\n' "$name" "$branch_name"
+                        if SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$branch_name" 2>/dev/null; then
+                            printf 'verdict %s: deleted batch branch %s\n' "$name" "$branch_name"
+                        else
+                            printf 'verdict %s: local delete of %s failed\n' "$name" "$branch_name" >&2
+                        fi
                     fi
+                    _reap_stale_queue_refs "$repo" "$base" "$name"
                 else
                     printf 'verdict %s: PR %s fast-forward push failed\n' "$name" "$pr_n" >&2
                     return 1

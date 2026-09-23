@@ -440,9 +440,11 @@ for labels, name in json.loads(sys.argv[1]).items():
     } | while IFS=$(printf '\t') read -r _pname _plabels; do
         # The sentinel line has no tab, so _plabels is empty — pass it straight through.
         if [ -z "$_plabels" ]; then printf '%s\n' "$_pname"; continue; fi
+        _next_excl="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+        [ -n "${SPIRA_QUEUE_WAIT_LABEL:-}" ] && _next_excl="$_next_excl,$SPIRA_QUEUE_WAIT_LABEL"
         bdjson "${READY_ARGS[@]}" \
             --label "$_plabels" \
-            --exclude-label "spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL" \
+            --exclude-label "$_next_excl" \
             2>/dev/null | python3 -c '
 import sys, json
 name = sys.argv[1]
@@ -1059,6 +1061,8 @@ unsent_keys() {
         if _brs="$(git -C "$_p" for-each-ref --format='%(refname:short) %(committerdate:unix)' 'refs/heads/spira/*' 2>/dev/null)"; then
             while read -r _b _ts; do
                 [ -n "$_b" ] || continue
+                # queue/* are not bead branches; they are cleaned up by verdict.sh.
+                case "$_b" in spira/queue/*) continue ;; esac
                 # BD_TIMEOUT, NOT `timeout 2`. bdjson is a SHELL FUNCTION, and timeout is an
                 # external binary that cannot execute one: `timeout 2 bdjson ...` died with
                 # "timeout: failed to execute process: No such file or directory" and rc=127

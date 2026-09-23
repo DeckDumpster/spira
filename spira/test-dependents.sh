@@ -16,7 +16,7 @@
 # returns 0 for the dependent. When the blocker's landstate reaches LANDED, mark_queue_waiters
 # removes the label and the dependent becomes summonable.
 #
-# WHAT THIS SUITE CHECKS (14 assertions).
+# WHAT THIS SUITE CHECKS (17 assertions).
 #   1. POSITIVE CONTROL (label applied): mark_queue_waiters labels the dependent when the
 #      blocker has a CERTIFIED landstate. Without this, a sweep that labels nothing passes.
 #   2. State check: the queue-wait label is actually on the dependent in the db.
@@ -33,8 +33,12 @@
 #  13. Two-blocker single-pass clear: when real blocker lands, label cleared in one pass
 #      (not cleared-then-reapplied for the commit-less blocker).
 #  14. Summon restored after two-blocker clear.
+#  15. POSITIVE CONTROL: close_landed_queue_waiters closes a bead with LANDED landstate and
+#      the wait label. Without this, the function doing nothing still passes 16-17.
+#  16. State check: the closed bead no longer carries the wait label.
+#  17. CERTIFIED waiter stays open: a bead with CERTIFIED (not LANDED) is not closed.
 #
-# defect: sp-v890d sp-ya5nk
+# defect: sp-v890d sp-ya5nk sp-rvoun
 # covers: spira/lib.sh spira/sentinel.sh spira/conf.sh spira/strand.sh
 # hermetic-ok: uses a fixture database; mark_queue_waiters tested with real bd;
 #              assertion 10 uses stub ready_count (no db call needed for structural check)
@@ -229,6 +233,36 @@ lacks "13: single-pass clear — label not reapplied after clear in same pass" \
       "queue-wait applied" "$log_out"
 lacks "14: sp-two no longer labeled after real blocker lands" \
       "$WAIT" "$(labels_of sp-two)"
+
+# =====================================================================================
+echo
+echo "assertions 15-17 — close_landed_queue_waiters: LANDED bead with wait label closed:"
+# =====================================================================================
+# A bead that already has landstate=LANDED but still carries SPIRA_QUEUE_WAIT_LABEL
+# was never visited by the landing pass (no branch to land), so it stayed open.
+# close_landed_queue_waiters must close it and clear the label.
+#
+# POSITIVE CONTROL (15): plant the label + LANDED landstate; the function must close it.
+# STATE CHECK (16): the bead is closed in the db.
+# CERTIFIED DOES NOT CLOSE (17): a bead with CERTIFIED (not LANDED) must be left open.
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-landed-waiter","title":"already landed","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","$WAIT"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-certified-waiter","title":"still in queue","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","$WAIT"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+printf 'LANDED abc123 %s spira\n' "$(date +%s)" > "$LANDSTATE/sp-landed-waiter"
+printf 'CERTIFIED abc456 %s\n' "$(date +%s)" > "$LANDSTATE/sp-certified-waiter"
+
+close_landed_queue_waiters 2>/dev/null
+
+is "15: LANDED waiter — close_landed_queue_waiters closes it" \
+   "closed" "$(B show sp-landed-waiter --json 2>/dev/null | python3 -c \
+       'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status",""))' 2>/dev/null)"
+lacks "16: LANDED waiter — wait label cleared" \
+   "$WAIT" "$(labels_of sp-landed-waiter)"
+is "17: CERTIFIED waiter — still open (not closed by closeout pass)" \
+   "open" "$(B show sp-certified-waiter --json 2>/dev/null | python3 -c \
+       'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status",""))' 2>/dev/null)"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
