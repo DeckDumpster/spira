@@ -654,7 +654,8 @@ if [ "$do_record" -eq 1 ]; then
     if [ -n "$prev_tag" ]; then
         _note="$(printf '%s\naged-install from=%s: %s\n' "$_note" "$prev_tag" "$verdict")"
     fi
-    git -C "$REPO_ROOT" notes --ref=acceptance add -f -m "$_note" "refs/tags/$tag" \
+    git -C "${SPIRA_NOTES_REPO:-$REPO_ROOT}" notes --ref=acceptance add -f -m "$_note" \
+        "refs/tags/$tag" \
         && printf 'recorded: git notes --ref=acceptance show refs/tags/%s\n' "$tag" \
         || printf 'warning: could not write git note (verdict still printed above)\n'
 fi
