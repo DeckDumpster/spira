@@ -503,6 +503,7 @@ DRAIN_WARN_MINS="${SPIRA_DRAIN_WARN_MINS:-15}"
 # An unsent branch belonging to a live in_progress bead is work in flight; the escalation is
 # for branches that have been waiting far longer than any single bead should take.
 UNSENT_WARN_H="${SPIRA_UNSENT_WARN_H:-24}"
+CLOSED_STRANDED_WARN_H="${SPIRA_CLOSED_STRANDED_WARN_H:-48}"
 
 # ---------------------------------------------------------------------------------------
 # THE COLLECTOR'S SNAPSHOT, and whether it can be believed at all. Every other number below
@@ -523,6 +524,12 @@ if [ "$snap_age" != "?" ] && [ "$snap_age" -ge "$SNAP_AGE_MAX" ] 2>/dev/null; th
     snap_age_disp="FAULT (${snap_age}s, stale above ${SNAP_AGE_MAX}s)"
 fi
 g() { local v="${!1:-}"; [ -n "$v" ] && printf '%s' "$v" || printf '?'; }
+# In-flight count: total unsent minus the closed-bead stranded ones. Both must be numeric;
+# a `?` on either renders the in-flight figure as `?` rather than a false arithmetic result.
+_unsent_inflight="?"
+if [ "${SP_UNSENT:-?}" != "?" ] && [ "${SP_CLOSED_STRANDED:-?}" != "?" ] 2>/dev/null; then
+    _unsent_inflight=$(( SP_UNSENT - SP_CLOSED_STRANDED ))
+fi
 
 # ---------------------------------------------------------------------------------------
 # HOW LONG SINCE ANYTHING LANDED — the one number that says whether the pipeline works, and
@@ -893,14 +900,18 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
 
 ### The Sending — are finished branches leaving?
 
-  An unsent branch belonging to a live in_progress bead is work in flight, not backlog;
-  the raw count alone is not a fault. A no-bead branch splits into two kinds: one whose
-  commits are already on the base (SP_UNADOPTED — safe to delete, no aeon holds it) and
-  one whose commits are absent from the base (SP_ORPHAN_WORK — unlanded work, needs human
-  attention; deletion would destroy commits). Only SP_UNADOPTED triggers the reap escalation.
+  SP_UNSENT is the total; the two rows below break it into work in flight (open bead,
+  may still land) vs stranded (closed bead, sending.sh has not reaped it yet).
+  A no-bead branch splits into two kinds: one whose commits are already on the base
+  (SP_UNADOPTED — safe to delete) and one whose commits are absent (SP_ORPHAN_WORK —
+  unlanded work; deletion would destroy commits). Only SP_UNADOPTED triggers the reap
+  escalation.
 
-  unsent branches                     $(g SP_UNSENT)
-  oldest unsent (hours)               $(g SP_UNSENT_OLDEST_H)
+  unsent branches (total)             $(g SP_UNSENT)
+    in-flight (open bead)             ${_unsent_inflight}
+    stranded (closed bead)            $(g SP_CLOSED_STRANDED)
+  oldest in-flight (hours)            $(g SP_UNSENT_OLDEST_H)
+  oldest stranded (hours)             $(g SP_CLOSED_STRANDED_OLDEST_H)
   BATCHED with no open batch          $(g SP_BATCHED_STRANDED)
   BATCHED longer than one batch pass  $(g SP_BATCHED_TOO_LONG)
   strays (no bead, commits on base)   $(g SP_UNADOPTED)
@@ -1208,6 +1219,38 @@ if [ "$_batched_too_long" != "?" ] && [ "$_batched_too_long" -gt 0 ] 2>/dev/null
         log "watchtower: batched-too-long escalation filed (${_batched_too_long} branches)"
     else
         log "watchtower: $INC is missing — batched-too-long escalation not filed"
+    fi
+fi
+
+# ---------------------------------------------------------------------------------------
+# CLOSED-STRANDED ESCALATION. A branch whose bead is CLOSED but that sending.sh has not
+# reaped (content_landed=false, no PR merged at tip, no landed() hit) accumulates silently.
+# The pane now separates these from in-flight branches, so the number is visible; this
+# escalation fires when the oldest has been waiting more than CLOSED_STRANDED_WARN_H hours,
+# which means sending.sh has seen it many times and none of its rules matched.
+#
+# Filed only when numeric and above the threshold (a `?` means the snapshot predates this
+# key and we have no evidence to act on).
+# ---------------------------------------------------------------------------------------
+_closed_stranded_oldest="${SP_CLOSED_STRANDED_OLDEST_H:-?}"
+if [ "$_closed_stranded_oldest" != "?" ] && \
+   [ "$_closed_stranded_oldest" -ge "$CLOSED_STRANDED_WARN_H" ] 2>/dev/null; then
+    if [ -x "$INC" ] || [ -r "$INC" ]; then
+        printf 'Closed-bead branches not reaped: oldest %sh (threshold %sh)\n\nThese branches belong to CLOSED beads but sending.sh has kept them every pass because none of its reap rules matched. Each pass makes a GitHub API call per branch and logs a KEEP line.\n\nRun: sending.sh --dry-run  to see each branch and the rule it failed.\n\nCommon causes:\n  - work landed via a batch PR whose commit names the bead (check: git log --grep=<id> origin/main)\n  - a superseded bead with an empty branch (check n>0 guard)\n  - a non-code deliverable bead with no delivers: label\n\nReap by hand if confirmed safe: spira_destroy_branch / spira_destroy_worktree via sending.sh one-shot.\n' \
+            "$_closed_stranded_oldest" "$CLOSED_STRANDED_WARN_H" | \
+        SPIRA_DB="$SPIRA_DB" \
+        SPIRA_INCIDENT_TYPE=task \
+        SPIRA_INCIDENT_PRIORITY=2 \
+        SPIRA_INCIDENT_ACTOR=watchtower \
+        SPIRA_SIN_EXEMPT=1 \
+        SPIRA_INCIDENT_REPO=spira \
+        SPIRA_INCIDENT_REF=incident:sending-closed-stranded \
+        SPIRA_INCIDENT_CAUSE=closed-stranded \
+        SPIRA_INCIDENT_DELIVERS=action \
+        bash "$INC" file "SENDING: closed-bead branch not reaped above threshold" - >/dev/null || true
+        log "watchtower: closed-stranded escalation filed (oldest ${_closed_stranded_oldest}h >= ${CLOSED_STRANDED_WARN_H}h)"
+    else
+        log "watchtower: $INC is missing — closed-stranded escalation not filed"
     fi
 fi
 

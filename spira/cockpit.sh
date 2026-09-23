@@ -1041,6 +1041,7 @@ unsent_keys() {
     _protected=0; _protected_names=""
     _batched_stranded=0; _batched_stranded_names=""
     _batched_too_long=0; _batched_too_long_names=""
+    _closed_stranded=0; _closed_stranded_oldest=""
     _now_epoch="$(date +%s)"
     for _r in $(spira_repos); do
         _p="$(repo_root "$_r")" || continue
@@ -1101,14 +1102,31 @@ else:
                     fi
                     continue
                 fi
-                [ "$_st" = closed ] && _done=$((_done+1))
+                if [ "$_st" = closed ]; then
+                    _done=$((_done+1))
+                    # Closed-bead branches that sending.sh has not yet reaped are stranded:
+                    # they read as "unsent work" but are not in-flight work awaiting landing.
+                    # Track age separately so the pane and escalations can distinguish them.
+                    case "$_b" in
+                        spira/queue/*) ;;
+                        *)
+                            _closed_stranded=$((_closed_stranded+1))
+                            if [ -n "$_ts" ]; then
+                                if [ -z "$_closed_stranded_oldest" ] || [ "$_ts" -lt "$_closed_stranded_oldest" ]; then
+                                    _closed_stranded_oldest="$_ts"
+                                fi
+                            fi
+                            ;;
+                    esac
+                fi
                 _n=$((_n+1))
-                # Exclude queue/* branches from unsent-age measurement: queue branches are part of
-                # batch processing (30-40h cleanup time) and should not trigger an alert intended for stranded beads.
+                # Exclude queue/* and closed-bead branches from the oldest-unsent measurement.
+                # Closed branches are tracked separately as stranded; their age is not a signal
+                # that the landing rite has stalled (sp-v4652).
                 case "$_b" in
                     spira/queue/*) ;;
                     *)
-                        if [ -n "$_ts" ]; then
+                        if [ "$_st" != "closed" ] && [ -n "$_ts" ]; then
                             if [ -z "$_o" ] || [ "$_ts" -lt "$_o" ]; then _o="$_ts"; fi
                         fi
                         ;;
@@ -1189,12 +1207,18 @@ else:
     echo "SP_BATCHED_STRANDED_NAMES='$_batched_stranded_names'"
     echo "SP_BATCHED_TOO_LONG=$_batched_too_long"
     echo "SP_BATCHED_TOO_LONG_NAMES='$_batched_too_long_names'"
+    echo "SP_CLOSED_STRANDED=$_closed_stranded"
+    if [ "$_closed_stranded" -gt 0 ] && [ -n "$_closed_stranded_oldest" ]; then
+        echo "SP_CLOSED_STRANDED_OLDEST_H=$(( ( $(date +%s) - _closed_stranded_oldest ) / 3600 ))"
+    else
+        echo "SP_CLOSED_STRANDED_OLDEST_H=0"
+    fi
     if [ "$_fail" = 1 ]; then
         echo "SP_UNSENT=?"
         echo "SP_UNSENT_OLDEST_H=?"
     else
         echo "SP_UNSENT=$_n"
-        if [ "$_n" -gt 0 ]; then
+        if [ "$_n" -gt 0 ] && [ -n "$_o" ]; then
             echo "SP_UNSENT_OLDEST_H=$(( ( $(date +%s) - $_o ) / 3600 ))"
         else
             echo "SP_UNSENT_OLDEST_H=0"
