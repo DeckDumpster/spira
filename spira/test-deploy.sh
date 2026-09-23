@@ -316,7 +316,7 @@ _out="$(run_deploy -- latest 2>&1)"
 _rc=$?
 is0    "latest: exits 0"                "$_rc"
 islink "latest: current -> $NEW_RELEASE" "$RELEASES/current" "$NEW_RELEASE"
-want   "latest: gh download called"     "gh release download" "$(cat "$CALL_LOG")"
+want   "latest: gh download called"     "release download" "$(cat "$CALL_LOG")"
 want   "latest: activate called"        "activate"            "$(cat "$CALL_LOG")"
 
 # ==========================================================================
@@ -332,7 +332,7 @@ _rc=$?
 not0    "already-current: exits non-zero" "$_rc"
 want    "already-current: says already current" "already current" "$_out"
 islink  "already-current: current unchanged" "$RELEASES/current" "$NEW_RELEASE"
-notwant "already-current: gh not called"    "gh release download" "$(cat "$CALL_LOG")"
+notwant "already-current: gh not called"    "release download" "$(cat "$CALL_LOG")"
 
 # ==========================================================================
 echo
@@ -456,7 +456,7 @@ if [ ! -e "$RELEASES/current" ]; then
 else
     bad "dry-run: current not created"  "current exists after --dry-run"
 fi
-notwant "dry-run: gh not called"        "gh release download" "$(cat "$CALL_LOG")"
+notwant "dry-run: gh not called"        "release download" "$(cat "$CALL_LOG")"
 notwant "dry-run: activate not called"  "activate"            "$(cat "$CALL_LOG")"
 
 # ==========================================================================
