@@ -67,10 +67,11 @@ verdict() {              # verdict <status> <reason> [message...]
     # trap rather than the verdict's own. Cleanup that the trap owns is done here instead.
     trap - EXIT
     rm -f "${FILELIST:-}" 2>/dev/null
-    # REMOVE THE GATE WORKTREE ONLY WHEN THIS RUN HELD THE LOCK. TREE may be unset on early
-    # preflight failures; on lock-timeout the flock was never acquired and the tree belongs to
-    # the run that holds it — removing it destroys a live run's working directory.
-    if [ "${HELD_LOCK:-0}" = 1 ] && [ -n "${TREE:-}" ] && [ -e "${TREE}/.git" ]; then
+    # Keep the tree on success — the next run reuses it, touching only changed files, so
+    # cargo's mtime fingerprints survive. Remove only on non-success (a failed run may leave
+    # the tree in a state checkout cannot recover), and only when we held the lock (the
+    # lock-timeout path must not remove a tree it never owned).
+    if [ "${HELD_LOCK:-0}" = 1 ] && [ -n "${TREE:-}" ] && [ -e "${TREE}/.git" ] && [ "$st" != 0 ]; then
         git -C "${REPO:-/nonexistent}" worktree remove --force "$TREE" 2>/dev/null || true
     fi
     # gate_meter is defined only once the tree lock has been reached; before that there is no
@@ -492,10 +493,20 @@ gate_at() {
         git -C "$REPO" worktree add -q --detach "$TREE" "$ref" 2>/dev/null || {
             echo "gate: cannot create a gate worktree at $TREE" >&2; return 1; }
     else
-        # `--force` because a previous gate may have left build output; `checkout --detach`
-        # refuses nothing else here, and the lock makes the tree ours alone.
-        git -C "$TREE" checkout -q --force --detach "$ref" 2>/dev/null || {
-            echo "gate: cannot check $ref out in $TREE" >&2; return 1; }
+        # REUSE: checkout rewrites only files that differ, so mtimes of unchanged files
+        # survive and cargo's fingerprints keep matching. Fall back to recreate if checkout
+        # fails — correctness first.
+        if ! git -C "$TREE" checkout -q --force --detach "$ref" 2>/dev/null; then
+            echo "gate: reuse checkout failed; recreating worktree" >&2
+            git -C "$REPO" worktree remove --force "$TREE" 2>/dev/null || true
+            spira_prune_worktrees "$REPO" >/dev/null 2>&1
+            git -C "$REPO" worktree add -q --detach "$TREE" "$ref" 2>/dev/null || {
+                echo "gate: cannot create a gate worktree at $TREE" >&2; return 1; }
+        fi
+        # Remove untracked files the previous run may have left, but not the build output
+        # directory — that is exactly what we are keeping the tree to preserve.
+        git -C "$TREE" clean -xdff -e target 2>/dev/null || true
+        touch "$TREE" 2>/dev/null || true
     fi
     have="$(git -C "$TREE" rev-parse HEAD 2>/dev/null)"
     [ "$have" = "$want" ] && return 0

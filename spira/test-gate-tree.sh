@@ -144,22 +144,22 @@ want "and says it is a queue, not a fault"  "not a fault"  "$out"
 exec 8>&-
 
 # --------------------------------------------------------------------------------------
-# CASE 4 — WORKTREE CLEANUP. The gate removes its worktree AND its registration on every
-# exit path — success, failure, timeout, kill. A registration that outlives the run pins
-# the checked-out branch and prevents its deletion; across passes it fills the list with
-# stale entries that slow every `git worktree list` and `prune` call.
+# CASE 4 — WORKTREE LIFECYCLE. On failure the gate removes its tree; on success it keeps
+# it so the next run's checkout touches only changed files and build-tool fingerprints
+# (cargo mtime) survive. The tree is detached, so a kept registration does not pin any
+# branch ref. gate-sweep.sh removes trees that have been idle longer than MAX_AGE.
 # --------------------------------------------------------------------------------------
 TREE_PATH="$RUN/worktree/.gate.$(basename "$REPO").$T1_KEY"
 
-# Pass case: a gate that exits 0 must have removed its tree.
+# Pass case: a gate that exits 0 keeps the tree for the next run to reuse.
 rungate "spira/sp-t1" > "$TMP/g3.out" 2>&1; g3_rc=$?
 is "gate exits 0 on a passing branch" 0 "$g3_rc"
 registered="$(git -C "$REPO" worktree list --porcelain 2>/dev/null \
     | awk -v p="$TREE_PATH" '/^worktree /{if($2==p)c++} END{print c+0}')"
-is "worktree is deregistered after a passing gate" 0 "$registered"
-[ ! -d "$TREE_PATH" ] \
-    && ok "worktree directory is removed after a passing gate" \
-    || bad "worktree directory is removed after a passing gate" "directory still exists at $TREE_PATH"
+is "worktree remains registered after a passing gate" 1 "$registered"
+[ -d "$TREE_PATH" ] \
+    && ok "worktree directory is kept after a passing gate" \
+    || bad "worktree directory is kept after a passing gate" "directory is missing at $TREE_PATH"
 
 # Fail case: a gate that exits non-zero must also have removed its tree.
 CMD_FAIL='[ "$SPIRA_GATE_BRANCH" = "$SPIRA_GATE_BASE" ] || { echo "gate: test-gate-tree.sh FAILED deliberately"; exit 1; }'

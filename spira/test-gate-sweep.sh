@@ -21,7 +21,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"; RUN="$TMP/run"; SH="$TMP/spira"
 mkdir -p "$RUN/worktree" "$SH"
 
-cp "$HERE/gate-sweep.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
+cp "$HERE/gate-sweep.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
@@ -113,6 +113,7 @@ run_sweep_batch() {
         SPIRA_DB="$TMP/nonexistent-db" \
         SPIRA_SUITE_TIMEOUT="${1}" \
         SPIRA_PODMAN_PS_FILE="${2}" \
+        SPIRA_BATCH_HOME_GLOB="/tmp/spira-batch-sweeptest-*" \
         bash "$SH/gate-sweep.sh" "$REPO" 2>&1
 }
 
@@ -140,16 +141,19 @@ run_sweep_batch 600 "$PS_EMPTY" > /dev/null
     || bad "B2: fresh batch home is not removed (age guard)" "home was removed"
 rm -rf "$_BH_FRESH"
 
-# CASE 6 — old home with live container → not swept.
+# CASE 6 — home with live container → not swept even when over threshold.
+# Threshold is 0 so any non-zero age triggers the removal path; the container guard
+# is what protects this one.  Short age (2s) keeps the fixture below the 600s
+# threshold a concurrent gate uses, eliminating the race with test-gate-tree.sh.
 _BH_LIVE_NAME="spira-batch-sweeptest-live-$$"
 _BH_LIVE="/tmp/${_BH_LIVE_NAME}"
 mkdir -p "$_BH_LIVE"
-touch -d "800 seconds ago" "$_BH_LIVE"
+touch -d "2 seconds ago" "$_BH_LIVE"
 printf '%s\n' "$_BH_LIVE_NAME" > "$PS_LIVE"
-run_sweep_batch 600 "$PS_LIVE" > /dev/null
+run_sweep_batch 0 "$PS_LIVE" > /dev/null
 [ -d "$_BH_LIVE" ] \
-    && ok "B3: old home with live container is not removed" \
-    || bad "B3: old home with live container is not removed" "home was removed"
+    && ok "B3: home with live container is not removed" \
+    || bad "B3: home with live container is not removed" "home was removed"
 rm -rf "$_BH_LIVE"
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
