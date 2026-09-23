@@ -394,5 +394,40 @@ if [ -n "$_gate_tear_block" ] && [ -n "$_tear_required" ]; then
 fi
 
 echo
+echo "18. acceptance is dispatched from the release path, not left to the tag trigger:"
+# GitHub's anti-recursion rule: a tag pushed with GITHUB_TOKEN triggers no
+# workflow. The accept job dispatches acceptance.yml directly, under a token
+# that can start workflows, passing both tag and prev-tag so upgrade/rollback
+# phases run. Positive control: an accept block that doesn't exist leaves every
+# want below reporting the missing content.
+_accept_block="$(awk '/^  accept:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
+if [ -z "$_accept_block" ]; then
+    bad "accept job block located (positive control)" "awk extracted nothing; the assertions below would be vacuous"
+else
+    ok "accept job block located (positive control)"
+fi
+want "accept dispatches acceptance.yml"        "acceptance.yml"  "$_accept_block"
+want "accept passes the tag input"             'f "tag='         "$_accept_block"
+want "accept passes the prev-tag input"        'f "prev-tag='    "$_accept_block"
+want "accept needs publish (runs after it)"    "publish"         "$_accept_block"
+want "accept uses a token that can start runs" "WORKFLOW_PAT"    "$_accept_block"
+# The cut job must output prev-tag so the accept job can read it.
+_cut_out_block="$(awk '/^  cut:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML" \
+  | awk '/^    outputs:/{g=1;next} g&&/^    [a-z_-]+:/{exit} g{print}')"
+want "cut outputs prev-tag"                    "prev-tag"        "$_cut_out_block"
+# acceptance.yml must still accept workflow_dispatch with tag and prev-tag inputs.
+if [ -r "$ACC_YML" ]; then
+    A="$(cat "$ACC_YML")"
+    want "positive control: acceptance.yml was read"  "workflow_dispatch" "$A"
+    want "acceptance.yml accepts tag input"           "tag:"              "$A"
+    want "acceptance.yml accepts prev-tag input"      "prev-tag:"         "$A"
+    # The comment must no longer claim push fires automatically for every release.
+    nowant "comment no longer claims push auto-tests every release" \
+           "automatically tests each release" "$A"
+else
+    bad "acceptance.yml exists for cross-check" "not found at $ACC_YML"
+fi
+
+echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

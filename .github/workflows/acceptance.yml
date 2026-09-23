@@ -2,9 +2,11 @@
 # clean machine and record PASS/FAIL in refs/notes/acceptance on the tag.
 #
 # TRIGGERS
-#   push to spira-release-* tags: automatically tests each release as it is cut.
-#   workflow_dispatch: manual run with an explicit tag (and optional prev-tag for
-#     upgrade/rollback and aged-install phases).
+#   workflow_dispatch: dispatched by gate.yml's accept job after each release is
+#     cut and published, passing tag and prev-tag. Also accepts a manual run.
+#     push to spira-release-* tags is kept for tags pushed by hand, but it does
+#     not fire when the tag is pushed by GITHUB_TOKEN (GitHub's anti-recursion
+#     rule): that path is why the accept job exists.
 #
 # THE STUB AGENT. acceptance-agent.sh replaces claude so no model credential is
 # needed. It commits acceptance-probe.txt and closes the bead — proving the full
