@@ -371,7 +371,9 @@ gate_key() {
     # for every run, which is a cache that ignores the harness entirely, so it fails closed.
     harness_h="$(cat "$0" "$EXCLUDE" "$SKEW" 2>/dev/null | sha256sum | cut -d" " -f1)"
     [ -n "$harness_h" ] || return 1
-    printf '%s\n' "$REPO_NAME $tree $files_h $cmd_h $harness_h" | sha256sum | cut -d" " -f1
+    # SPIRA_GATE_SUITES is in the key: a fences-only pass (suites=off, landing.sh
+    # certification) must never be read back as a pass of the full gate, or the other way.
+    printf '%s\n' "$REPO_NAME $tree $files_h $cmd_h $harness_h suites=${SPIRA_GATE_SUITES:-on}" | sha256sum | cut -d" " -f1
 }
 GATE_KEY="$(gate_key || true)"
 

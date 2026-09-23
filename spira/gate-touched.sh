@@ -13,6 +13,13 @@
 #                             are always kept; excluded suites are logged to stderr.
 set -uo pipefail
 BASE="${1:?usage: gate-touched.sh <base> <head>}"
+# SPIRA_GATE_SUITES=off: select NOTHING, so the gate command's `[ -n "$_s" ] || exit 0`
+# passes after its fences have run. landing.sh sets it for queue-mode certification when
+# SPIRA_CERTIFY_SUITES=off; the batch's CI run is then where the suites run.
+if [ "${SPIRA_GATE_SUITES:-on}" = off ]; then
+    printf 'gate-touched: SPIRA_GATE_SUITES=off — no suites here; the batch CI run is the suite gate\n' >&2
+    exit 0
+fi
 HEAD="${2:?usage: gate-touched.sh <base> <head>}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo="${SPIRA_GATE_REPO:-.}"
