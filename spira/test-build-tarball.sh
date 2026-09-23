@@ -83,16 +83,18 @@ git -C "$REPO" push -q origin main 2>/dev/null
 EXPECTED_SHA="$(git -C "$REPO" rev-parse HEAD)"
 
 # ============================================================================
-# BINARY STUBS — executable shell scripts standing in for loom, panel, broker
+# BINARY STUBS — executable shell scripts standing in for loom, panel, broker, spira-supervise
 # ============================================================================
 LOOM_BIN="$TMP/bins/loom"
 PANEL_BIN="$TMP/bins/panel"
 BROKER_BIN="$TMP/bins/broker"
+SUPERVISE_BIN="$TMP/bins/spira-supervise"
 mkdir -p "$TMP/bins"
-printf '#!/usr/bin/env bash\necho loom\n'   > "$LOOM_BIN"
-printf '#!/usr/bin/env bash\necho panel\n'  > "$PANEL_BIN"
-printf '#!/usr/bin/env bash\necho broker\n' > "$BROKER_BIN"
-chmod +x "$LOOM_BIN" "$PANEL_BIN" "$BROKER_BIN"
+printf '#!/usr/bin/env bash\necho loom\n'            > "$LOOM_BIN"
+printf '#!/usr/bin/env bash\necho panel\n'           > "$PANEL_BIN"
+printf '#!/usr/bin/env bash\necho broker\n'          > "$BROKER_BIN"
+printf '#!/usr/bin/env bash\necho spira-supervise\n' > "$SUPERVISE_BIN"
+chmod +x "$LOOM_BIN" "$PANEL_BIN" "$BROKER_BIN" "$SUPERVISE_BIN"
 
 # ============================================================================
 # Helper — run build-tarball.sh in a clean environment
@@ -136,6 +138,7 @@ build_out="$(run_build build \
     --loom-bin "$LOOM_BIN" \
     --panel-bin "$PANEL_BIN" \
     --broker-bin "$BROKER_BIN" \
+    --supervise-bin "$SUPERVISE_BIN" \
     HEAD "$REPO" 2>&1)"
 build_rc=$?
 
@@ -176,7 +179,7 @@ else
     bad "MANIFEST is present" "not found at $TREE/MANIFEST"
 fi
 
-# 5. All three binaries present and executable
+# 5. All four binaries present and executable
 if [ -x "$TREE/bin/loom" ]; then
     ok "bin/loom is present and executable"
 else
@@ -191,6 +194,11 @@ if [ -x "$TREE/bin/broker" ]; then
     ok "bin/broker is present and executable"
 else
     bad "bin/broker is present and executable" "not found or not executable at $TREE/bin/broker"
+fi
+if [ -x "$TREE/bin/spira-supervise" ]; then
+    ok "bin/spira-supervise is present and executable"
+else
+    bad "bin/spira-supervise is present and executable" "not found or not executable at $TREE/bin/spira-supervise"
 fi
 
 # 6. No scratch files at the top level (sp-* or *.fixed)
@@ -256,6 +264,7 @@ pin_out="$(run_build build \
     --loom-bin "$LOOM_BIN" \
     --panel-bin "$PANEL_BIN" \
     --broker-bin "$BROKER_BIN" \
+    --supervise-bin "$SUPERVISE_BIN" \
     --name "$PINNED_STEM" \
     HEAD "$REPO" 2>&1)"
 pin_rc=$?

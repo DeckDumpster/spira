@@ -11,10 +11,11 @@
 #
 # TARBALL CONTENTS
 #   Every file tracked by git at the given commit, plus:
-#     bin/loom   — prebuilt linux-x86_64 binary (required via --loom-bin)
-#     bin/panel  — prebuilt linux-x86_64 binary (required via --panel-bin)
-#     bin/broker — prebuilt linux-x86_64 binary (required via --broker-bin)
-#     MANIFEST   — one line: "commit <40-hex-sha>", one line: "timestamp <ts>"
+#     bin/loom            — prebuilt linux-x86_64 binary (required via --loom-bin)
+#     bin/panel           — prebuilt linux-x86_64 binary (required via --panel-bin)
+#     bin/broker          — prebuilt linux-x86_64 binary (required via --broker-bin)
+#     bin/spira-supervise — prebuilt linux-x86_64 binary (required via --supervise-bin)
+#     MANIFEST            — one line: "commit <40-hex-sha>", one line: "timestamp <ts>"
 #
 #   Scratch files (sp-*, *.fixed) at the repo root are not present once
 #   sp-tlv7 lands. The builder does not exclude them — they are deleted, not
@@ -42,7 +43,8 @@
 #   build-tarball.sh build \
 #       --loom-bin loom/target/release/loom \
 #       --panel-bin cockpit/panel/target/release/panel \
-#       --broker-bin broker/target/release/broker
+#       --broker-bin broker/target/release/broker \
+#       --supervise-bin supervise/target/release/spira-supervise
 #
 #   # Verify a release directory:
 #   build-tarball.sh verify /opt/spira-releases/current --repo /path/to/harness
@@ -53,15 +55,16 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # build — produce the tarball
 # ---------------------------------------------------------------------------
 do_build() {
-    local outdir="." loom_bin="" panel_bin="" broker_bin="" commit="" repo="" name_override=""
+    local outdir="." loom_bin="" panel_bin="" broker_bin="" supervise_bin="" commit="" repo="" name_override=""
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --output)     outdir="$2";        shift 2 ;;
-            --loom-bin)   loom_bin="$2";      shift 2 ;;
-            --panel-bin)  panel_bin="$2";     shift 2 ;;
-            --broker-bin) broker_bin="$2";    shift 2 ;;
-            --name)       name_override="$2"; shift 2 ;;
+            --output)        outdir="$2";        shift 2 ;;
+            --loom-bin)      loom_bin="$2";      shift 2 ;;
+            --panel-bin)     panel_bin="$2";     shift 2 ;;
+            --broker-bin)    broker_bin="$2";    shift 2 ;;
+            --supervise-bin) supervise_bin="$2"; shift 2 ;;
+            --name)          name_override="$2"; shift 2 ;;
             -h|--help)   _usage; exit 0 ;;
             -*) printf 'build-tarball.sh: unknown option: %s\n' "$1" >&2; exit 2 ;;
             *)
@@ -105,6 +108,11 @@ do_build() {
             "${broker_bin:-(not specified; pass --broker-bin <path>)}" >&2
         exit 1
     fi
+    if [ -z "$supervise_bin" ] || [ ! -f "$supervise_bin" ]; then
+        printf 'build-tarball.sh: spira-supervise binary not found: %s\n' \
+            "${supervise_bin:-(not specified; pass --supervise-bin <path>)}" >&2
+        exit 1
+    fi
 
     # Generate name and timestamp. --name overrides auto-generation and pins the
     # tarball stem to match the release tag, eliminating the stamp skew that
@@ -135,10 +143,11 @@ do_build() {
     git -C "$repo" archive "$sha" | tar -x -C "$stage"
 
     # Add prebuilt binaries under bin/.
-    cp "$loom_bin"   "$stage/bin/loom"
-    cp "$panel_bin"  "$stage/bin/panel"
-    cp "$broker_bin" "$stage/bin/broker"
-    chmod +x "$stage/bin/loom" "$stage/bin/panel" "$stage/bin/broker"
+    cp "$loom_bin"      "$stage/bin/loom"
+    cp "$panel_bin"     "$stage/bin/panel"
+    cp "$broker_bin"    "$stage/bin/broker"
+    cp "$supervise_bin" "$stage/bin/spira-supervise"
+    chmod +x "$stage/bin/loom" "$stage/bin/panel" "$stage/bin/broker" "$stage/bin/spira-supervise"
 
     # Write MANIFEST — the source of truth for which commit this came from.
     printf 'commit %s\ntimestamp %s\n' "$sha" "$ts" > "$stage/MANIFEST"
