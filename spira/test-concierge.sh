@@ -755,6 +755,7 @@ STUB
     is   "start exits 0 after fresh retry" 0                     "$_drc"
 fi
 
+
 echo
 echo "concierge self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
