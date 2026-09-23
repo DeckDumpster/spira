@@ -134,8 +134,6 @@ _take_snapshot() {
         "$_sdir/spira.conf" 2>/dev/null || true
     cp "${XDG_CONFIG_HOME:-$HOME/.config}/spira/repo-map" \
         "$_sdir/repo-map"   2>/dev/null || true
-    bash "$HERE/ready.sh"  > "$_sdir/ready.txt"  2>&1 || true
-    bash "$HERE/doctor.sh" > "$_sdir/doctor.txt" 2>&1 || true
     git -C "${scratch_repo:-.}" rev-parse --git-dir >/dev/null 2>&1 && {
         git -C "$scratch_repo" log --all --oneline  > "$_sdir/scratch-log.txt"  2>&1 || true
         git -C "$scratch_repo" show-ref             > "$_sdir/scratch-refs.txt" 2>&1 || true
