@@ -34,6 +34,7 @@
 #  16. Phase A and D: CONFIGURE_PROD set to harness subdir (not clone root).
 #  17. Phase A: SPIRA_AGENT written before install.sh (not gated on _install_rc).
 #  18. Phase A and D: ready.sh call uses clone path, not workspace path.
+#  19. Fixture: clone's ready.sh governs check, not workspace's.
 #
 # covers: spira/acceptance-run.sh spira/acceptance-agent.sh
 set -uo pipefail
@@ -274,6 +275,59 @@ if grep -E 'bash.*\$HERE/ready\.sh' "$SCRIPT" 2>/dev/null; then
 else
     ok "ready.sh call does not use workspace path"
 fi
+
+# ============================================================================
+echo
+echo "19. Fixture: clone's ready.sh governs check, not workspace's"
+# ============================================================================
+# Positive: stub clone ready.sh exits 0, workspace exits 1 → check passes.
+# Negative: stub clone ready.sh exits 1, workspace exits 0 → check fails naming clone's path.
+
+_fix_tmp="$(mktemp -d)"
+
+mkdir -p "$_fix_tmp/clone/spira"
+printf '#!/bin/sh\nexit 0\n' > "$_fix_tmp/clone/spira/ready.sh"
+chmod +x "$_fix_tmp/clone/spira/ready.sh"
+
+_fix_out="$(
+    _clone="$_fix_tmp/clone"
+    _ready_rc=0
+    _ready_out="$(bash "$_clone/spira/ready.sh" 2>&1)" || _ready_rc=$?
+    if [ "$_ready_rc" -eq 0 ]; then
+        printf 'ok phase A: ready.sh exits 0 after install\n'
+    else
+        printf 'FAIL phase A: ready.sh exits 0 after install: %s exit %d\n' \
+            "$_clone/spira/ready.sh" "$_ready_rc"
+    fi
+    [ "$_ready_rc" -eq 0 ] || printf '%s\n' "$_ready_out"
+)"
+
+echo "$_fix_out" | grep -q '^ok ' \
+    && ok "fixture: clone ready.sh=0 → check passes" \
+    || bad "fixture: clone ready.sh=0 → check passes" "$(echo "$_fix_out" | head -1)"
+
+# Negative: clone exits 1 → fail line must name clone's path.
+printf '#!/bin/sh\nprintf "not ready\n"\nexit 1\n' > "$_fix_tmp/clone/spira/ready.sh"
+
+_fix_out2="$(
+    _clone="$_fix_tmp/clone"
+    _ready_rc=0
+    _ready_out="$(bash "$_clone/spira/ready.sh" 2>&1)" || _ready_rc=$?
+    if [ "$_ready_rc" -eq 0 ]; then
+        printf 'ok phase A: ready.sh exits 0 after install\n'
+    else
+        printf 'FAIL phase A: ready.sh exits 0 after install: %s exit %d\n' \
+            "$_clone/spira/ready.sh" "$_ready_rc"
+    fi
+    [ "$_ready_rc" -eq 0 ] || printf '%s\n' "$_ready_out"
+)"
+
+echo "$_fix_out2" | grep -qF "FAIL phase A: ready.sh exits 0 after install: $_fix_tmp/clone" \
+    && ok "fixture: clone ready.sh=1 → check fails naming clone's path" \
+    || bad "fixture: clone ready.sh=1 → check fails naming clone's path" \
+        "$(echo "$_fix_out2" | head -1)"
+
+rm -rf "$_fix_tmp"
 
 # ============================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
