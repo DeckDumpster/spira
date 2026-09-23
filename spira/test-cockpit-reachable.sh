@@ -389,7 +389,7 @@ cat > "$BD_ORPHAN" <<'EOF'
 # sp-orphan: open, labels that match no fayth partition (no "plan" label).
 # sp-normal: open, labels that match builder (spira + plan).
 printf '[
-  {"id":"sp-orphan","status":"open","labels":["collection","deckdumpster"],"issue_type":"task"},
+  {"id":"sp-orphan","status":"open","labels":["spira","collection","deckdumpster"],"issue_type":"task"},
   {"id":"sp-normal","status":"open","labels":["spira","plan"],"issue_type":"task"}
 ]'
 EOF
