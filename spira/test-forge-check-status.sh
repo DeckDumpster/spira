@@ -18,18 +18,20 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 git init -q "$TMP/repo"
 
 # A gh stand-in that answers `pr view --json statusCheckRollup` with the rollup in $ROLLUP,
-# returns a single job (id=99) for runs-jobs queries, and serves $ANNOTATIONS for annotations.
+# returns jobs from $JOBS_JSON for runs-jobs queries (default: one job id=99, no name),
+# and serves $ANNOTATIONS for annotations.
 cat > "$TMP/gh" <<'GH'
 #!/usr/bin/env bash
 case "$*" in
     *statusCheckRollup*)      cat "$ROLLUP" ;;
-    *actions/runs*jobs*)      printf '{"jobs":[{"id":99}]}\n' ;;
+    *actions/runs*jobs*)      [ -n "${JOBS_JSON:-}" ] && cat "$JOBS_JSON" || printf '{"jobs":[{"id":99}]}\n' ;;
     *check-runs*annotations*) [ -n "${ANNOTATIONS:-}" ] && cat "$ANNOTATIONS" || printf '[]\n' ;;
     *)                        printf '{}\n' ;;
 esac
 GH
 chmod +x "$TMP/gh"
 ANNOTATIONS=""
+JOBS_JSON=""
 
 rollup() {   # rollup <gate status> <gate conclusion>
     printf '{"headRefOid":"abc123def456abc123def456abc123def456abc123","statusCheckRollup":[{"__typename":"CheckRun","name":"suites","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://example.invalid/actions/runs/1/job/2"},{"__typename":"CheckRun","name":"gate","status":"%s","conclusion":"%s","detailsUrl":"https://example.invalid/actions/runs/1/job/3"}]}\n' "$1" "$2" > "$TMP/rollup.json"
@@ -37,13 +39,13 @@ rollup() {   # rollup <gate status> <gate conclusion>
 status() {
     env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" ROLLUP="$TMP/rollup.json" \
-        ANNOTATIONS="${ANNOTATIONS:-}" \
+        ANNOTATIONS="${ANNOTATIONS:-}" JOBS_JSON="${JOBS_JSON:-}" \
         bash "$HERE/forge.sh" check-status "$TMP/repo" 7 2>/dev/null | head -1
 }
 status_all() {
     env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" ROLLUP="$TMP/rollup.json" \
-        ANNOTATIONS="${ANNOTATIONS:-}" \
+        ANNOTATIONS="${ANNOTATIONS:-}" JOBS_JSON="${JOBS_JSON:-}" \
         bash "$HERE/forge.sh" check-status "$TMP/repo" 7 2>/dev/null
 }
 
@@ -98,6 +100,27 @@ _out4="$(status_all)"
 printf '%s\n' "$_out4" | grep -qF "head-sha:" \
     && bad "no head-sha when headRefOid absent" "found head-sha in: [$_out4]" \
     || ok "no head-sha when headRefOid absent"
+
+echo
+echo "provision_fault: red run with failed provision job → provision_fault:"
+rollup COMPLETED FAILURE
+printf '{"jobs":[{"id":99,"name":"provision","conclusion":"failure"},{"id":100,"name":"gate","conclusion":"failure"}]}\n' \
+    > "$TMP/jobs-prov-fail.json"
+JOBS_JSON="$TMP/jobs-prov-fail.json"
+is "provision failure → provision_fault" "provision_fault" "$(status)"
+
+echo "positive control — provision job success with other failure → still red:"
+printf '{"jobs":[{"id":99,"name":"provision","conclusion":"success"},{"id":100,"name":"gate","conclusion":"failure"}]}\n' \
+    > "$TMP/jobs-prov-ok.json"
+JOBS_JSON="$TMP/jobs-prov-ok.json"
+is "provision success → still red" "red" "$(status)"
+JOBS_JSON=""
+
+echo "positive control — provision_fault only when status is red (green ignores jobs):"
+rollup COMPLETED SUCCESS
+JOBS_JSON="$TMP/jobs-prov-fail.json"
+is "green with failed provision job → still green" "green" "$(status)"
+JOBS_JSON=""
 
 echo
 echo "workflow-rerun: no --failed in rerun argv; cancels in_progress runs first:"

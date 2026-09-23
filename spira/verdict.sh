@@ -666,6 +666,9 @@ main() {
     status_out="$("$forge" check-status "$repo" "$pr_n" 2>/dev/null)" || status_out="pending"
     status="$(printf '%s\n' "$status_out" | head -1)"
     status="${status:-pending}"
+    # provision_fault means the branch was never tested (gate exit 75); treat it as
+    # harness_fault so members are retried rather than ejected or bisected.
+    [ "$status" = "provision_fault" ] && status="harness_fault"
 
     # Red with no suite annotations: multi-member batches bisect; single-member
     # falls through to the unreproduced-red track. Both converge without jamming

@@ -39,6 +39,8 @@
 #  24. Could-not-judge: rc=2 member doesn't shield others; guilty member ejected.
 #  25. Deterministic: ejected set identical across two runs with different completion order.
 #  26. Red-suite ineligible for quarantine: gate's red-twice verdict blocks observe-flake.
+#  27. Provision fault: forge returns provision_fault; treated as harness_fault (rerun,
+#      no ejection, no bisect).
 #
 # The forge seam is a local fixture; no network is reached.
 # mail.sh and suites.sh are stubbed to capture calls.
@@ -1127,6 +1129,28 @@ case "$(landstate sp-vd-r26)" in CERTIFIED*) ok "26. red-suite-no-quarantine: me
     *) bad "26. red-suite-no-quarantine: member survived" "got: $(landstate sp-vd-r26)" ;; esac
 nowant "26. red-suite-no-quarantine: observe-flake not called" \
     "test-gate-classified.sh" "$(cat "$SUITES_LOG")"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 27. PROVISION_FAULT — forge returns provision_fault; treated as harness_fault:
+#     workflow re-run, retries counter incremented, no ejection or bisect.
+#     POSITIVE CONTROL: case 8 proves red with no annotations bisects; this proves
+#     provision_fault does not, even for a multi-member batch.
+# =============================================================================
+build_batch sp-vd-pf1 sp-vd-pf2 > /dev/null
+printf 'provision_fault\n' > "$FORGE_STATUS_FILE"
+before_main="$(remote_main)"
+out="$(verdict "$REPONAME")"
+is   "27. provision_fault: no push"      "$before_main" "$(remote_main)"
+want "27. provision_fault: rerun"        "rerun"        "$(cat "$FORGE_LOG")"
+is   "27. provision_fault: retries=1" "1" \
+     "$(grep '^retries=' "$(batch_file)" | cut -d= -f2)"
+nowant "27. provision_fault: no bisect"  "bisect"       "$out"
+case "$(landstate sp-vd-pf1)" in BATCHED*) ok "27. provision_fault: pf1 still BATCHED" ;;
+    *) bad "27. provision_fault: pf1 still BATCHED" "got: $(landstate sp-vd-pf1)" ;; esac
+case "$(landstate sp-vd-pf2)" in BATCHED*) ok "27. provision_fault: pf2 still BATCHED" ;;
+    *) bad "27. provision_fault: pf2 still BATCHED" "got: $(landstate sp-vd-pf2)" ;; esac
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 

@@ -5,7 +5,7 @@
 # pr-create <repo-dir> <head> <base> <title>   body on stdin; prints PR number
 # pr-number <repo-dir> <head>                  prints the open PR number, or empty
 # pr-list-queue <repo-dir>                     prints PR numbers with head spira/queue/*, one per line
-# check-status <repo-dir> <pr-number>          prints: pending | green | red | harness_fault
+# check-status <repo-dir> <pr-number>          prints: pending | green | red | harness_fault | provision_fault
 #                                              then "flaky: <suite>" for each flaky annotation
 # run-id <repo-dir> <branch>                   prints the latest CI run ID for the branch
 # run-metadata <repo-dir> <run-id>             prints: started-at: <epoch>; last-activity: <epoch>
@@ -77,16 +77,14 @@ except Exception:
     print('pending')
 " 2>/dev/null)"
         status="${status:-pending}"
-        printf '%s\n' "$status"
         head_sha="$(printf '%s\n' "${rollup_json:-"{}"}" | python3 -c "
 import json, sys
 try: print(json.load(sys.stdin).get('headRefOid', ''))
 except: pass
 " 2>/dev/null)"
-        [ -n "${head_sha:-}" ] && printf 'head-sha: %s\n' "$head_sha"
-        [ "$status" = "green" ] || [ "$status" = "red" ] || exit 0
-        # Green or red: extract the CI run id to fetch annotations.
-        run_id="$(printf '%s\n' "${rollup_json:-"{}"}" | python3 -c "
+        run_id="" jobs_json=""
+        if [ "$status" = "green" ] || [ "$status" = "red" ]; then
+            run_id="$(printf '%s\n' "${rollup_json:-"{}"}" | python3 -c "
 import json, sys, re
 try:
     checks = (json.load(sys.stdin).get('statusCheckRollup') or [])
@@ -98,9 +96,32 @@ try:
 except Exception:
     pass
 " 2>/dev/null)"
+            if [ -n "${run_id:-}" ]; then
+                jobs_json="$( cd "$repo" && ghq api \
+                    "repos/{owner}/{repo}/actions/runs/$run_id/jobs" 2>/dev/null )" \
+                    || jobs_json="{}"
+                # When red, check whether provision failed — gate exit 75 means the
+                # branch was never tested; report provision_fault so verdict.sh treats
+                # it as infrastructure rather than charging the members with a test red.
+                if [ "$status" = "red" ]; then
+                    _prov_failed="$(printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
+import json, sys
+try:
+    for j in json.load(sys.stdin).get('jobs', []):
+        if j.get('name') == 'provision' and (j.get('conclusion') or '').lower() not in ('success', ''):
+            print('yes'); sys.exit()
+except Exception:
+    pass
+" 2>/dev/null)"
+                    [ "${_prov_failed:-}" = "yes" ] && status="provision_fault"
+                fi
+            fi
+        fi
+        printf '%s\n' "$status"
+        [ -n "${head_sha:-}" ] && printf 'head-sha: %s\n' "$head_sha"
+        [ "$status" = "green" ] || [ "$status" = "red" ] || exit 0
         [ -n "${run_id:-}" ] || exit 0
-        ( cd "$repo" && ghq api "repos/{owner}/{repo}/actions/runs/$run_id/jobs" 2>/dev/null ) \
-        | python3 -c "
+        printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
 import json, sys
 try:
     for j in json.load(sys.stdin).get('jobs', []):
