@@ -61,7 +61,6 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
        spira-skew.service spira-skew.timer
        spira-archivist.service spira-archivist.timer
        spira-czar-pass.service spira-czar-pass.timer
-       spira-landing-pass.service spira-landing-pass.timer
        spira-cockpit.service
        spira-watch@.service
        spira-watch-notify.service spira-watch-notify.timer
@@ -86,7 +85,6 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
 _ENABLE_TMPL=(cockpit-ensure.timer concierge.timer spira-watch-refresh.timer
               beads-push.timer spira-sentinel.timer spira-ops.timer spira-auron.timer
               spira-watchtower.timer spira-skew.timer spira-czar-pass.timer
-              spira-landing-pass.timer
               spira-archive.timer
               spira-archivist.timer spira-watch-notify.timer
               spira-groom.timer
@@ -186,6 +184,16 @@ else
     OPTIONAL+=(spira-broker.service spira-broker.timer)
     echo "note: broker binary not built at ${SPIRA_BROKER_BIN:-<path not set>} — not installing spira-broker.service." >&2
     echo "      Build it: cd \$SPIRA_REPO/broker && cargo build --release, then re-run install.sh." >&2
+fi
+
+# spira-landing-pass.service/.timer require the compiled landing-pass binary. Same hazard.
+if [ -x "${SPIRA_LANDING_PASS_BIN:-}" ]; then
+    UNITS+=(spira-landing-pass.service spira-landing-pass.timer)
+    ENABLE+=("$(inst_name spira-landing-pass.timer)")
+else
+    OPTIONAL+=(spira-landing-pass.service spira-landing-pass.timer)
+    echo "note: landing-pass binary not built at ${SPIRA_LANDING_PASS_BIN:-<path not set>} — not installing spira-landing-pass.service." >&2
+    echo "      Build it: cd \$SPIRA_REPO/landing-pass && cargo build --release, then re-run install.sh." >&2
 fi
 
 # ONE INSTANCE PER `daemon` ROW, AND THE MANIFEST DECIDES WHICH. `log` rows name a file
