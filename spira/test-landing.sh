@@ -504,30 +504,22 @@ nowant "and does NOT mention other beads"    "check whether" "$notes"
 drop_branch sp-mine
 
 # REPEATED REBASE FAILURES ESCALATE INSTEAD OF REOPENING AGAIN.
-# TIP MUST MOVE BETWEEN PASSES. The guard added by db-91ox suppresses duplicate bumps
-# when (tip, base) are unchanged — which is the right behaviour because in real usage
-# an aeon works the reopened bead and pushes new commits. These commits change the tip,
-# so the guard fires only on genuine repeated conflicts, not on re-encounters with the
-# same (tip, base) pair. The empty commits below simulate aeon work.
+# THE TRIGGER IS THE REASON CLASS, not the requeue counter. The first RED reopens once;
+# on the second RED with the same reason class ("no-rebase") the pass escalates regardless
+# of how many times the tip or base sha changed between marks.
 seed; branch sp-loop shared.txt "from the branch"
 printf '%s\n' "from sp-other on the base" > "$REPO/shared.txt"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "sp-other — change shared.txt"
 git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
-# Reopen it twice below the threshold (default 3), then hit the threshold on the third.
-out="$(SPIRA_REBASE_ESCALATE_AT=3 landing)"
-want "first rebase failure reopens"   "reopened sp-loop" "$out"
-is   "bead is open after first"       open "$(status_of sp-loop)"
-# Close the bead and advance the tip (simulating aeon work) so landing will see it.
+out="$(landing)"
+want "first rebase failure reopens"       "reopened sp-loop" "$out"
+is   "bead is open after first"           open "$(status_of sp-loop)"
 B close sp-loop --reason "try again" >/dev/null 2>&1
 git -C "$RUN/worktree/sp-loop" commit -q --allow-empty -m "sp-loop aeon attempt 1"
-out="$(SPIRA_REBASE_ESCALATE_AT=3 landing)"
-want "second rebase failure reopens"  "reopened sp-loop" "$out"
-B close sp-loop --reason "try again" >/dev/null 2>&1
-git -C "$RUN/worktree/sp-loop" commit -q --allow-empty -m "sp-loop aeon attempt 2"
-out="$(SPIRA_REBASE_ESCALATE_AT=3 landing)"
-want "third rebase failure escalates" "escalated sp-loop" "$out"
-nowant "and does not reopen"          "reopened sp-loop" "$out"
-is     "bead stays closed on escalation" closed "$(status_of sp-loop)"
+out="$(landing)"
+want "second rebase failure escalates"    "escalated sp-loop" "$out"
+nowant "and does not reopen on second"    "reopened sp-loop"  "$out"
+is     "bead stays closed on escalation"  closed "$(status_of sp-loop)"
 drop_branch sp-loop
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

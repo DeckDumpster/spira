@@ -177,7 +177,7 @@ git -C "$REPO" fetch -q origin
 
 # First pass: RED, bead reopens.
 out="$(landing)"
-want "first RED reopens sp-idem" "reopened sp-recur" "$out"
+want "first RED reopens sp-idem" "reopened sp-idem" "$out"
 B close sp-idem --reason "aeon did nothing useful" >/dev/null 2>&1
 
 # Run landing AGAIN with the SAME tip and base (nothing changed).

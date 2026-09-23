@@ -331,6 +331,35 @@ $id has been reopened for a rebase conflict $n times and the loop is not converg
 MAILEOF
 }
 
+# spira_ask_red_recurring — escalate a bead that has gone RED twice with the same reason class.
+#
+# The second RED with the same reason class means the aeon's work did not fix the root cause.
+# Each reopen costs a full session; repeating it charges work that hits the same wall.
+# Deduped on "$br red recurring $reason_class" so one open ask suppresses re-escalation.
+spira_ask_red_recurring() {  # <bead> <branch> <repo-name> <reason-class> <first-red-epoch>
+    local id="$1" br="$2" name="$3" reason_class="$4" first_epoch="${5:-0}"
+    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
+    ask_already_open "$br red recurring $reason_class" && return 0
+    local elapsed_h=0
+    [ "${first_epoch:-0}" -gt 0 ] && \
+        elapsed_h=$(( ( $(date +%s) - first_epoch ) / 3600 ))
+    local _subj="$br red recurring: $reason_class twice on $id in $name"
+    local _dflt="investigate why $br cannot land ($reason_class); close the bead if the work is superseded, or rebase by hand if the root cause is external"
+    "$SPIRA_HOME/mail.sh" send operator \
+        --from "Landing gate <gate@spira>" \
+        --subject "$_subj" \
+        --kind question \
+        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
+## Question
+$_subj
+
+## Default
+$_dflt
+
+$id has gone RED twice with the same reason class ($reason_class) on $br in $name. The shas changed between marks, so each reopen charged a session to work that hit the same wall. Elapsed since first RED: ${elapsed_h}h.
+MAILEOF
+}
+
 # spira_ask_rebase_refused — one deduplicated ask per closed bead the harness cannot rebase.
 # A refusal is an infrastructure fault, not the work's fault — the bead stays closed.
 spira_ask_rebase_refused() {  # <bead> <branch> <repo-name> <reason>
