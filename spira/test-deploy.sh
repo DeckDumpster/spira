@@ -665,7 +665,7 @@ _out="$(run_deploy \
 _rc=$?
 is0     "migration-unreachable/recover: deploy succeeds"         "$_rc"
 islink  "migration-unreachable/recover: current -> new release"  "$RELEASES/current" "$NEW_RELEASE"
-want    "migration-unreachable/recover: dolt start called"       "bd dolt start" "$(cat "$CALL_LOG")"
+want    "migration-unreachable/recover: dolt start called"       "dolt start" "$(cat "$CALL_LOG")"
 notwant "migration-unreachable/recover: no cannot-read in output" "cannot read" "$_out"
 
 # ==========================================================================
