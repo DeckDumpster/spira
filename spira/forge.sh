@@ -8,6 +8,7 @@
 # check-status <repo-dir> <pr-number>          prints: pending | green | red | harness_fault | provision_fault
 #                                              then "flaky: <suite>" for each flaky annotation
 # run-id <repo-dir> <branch>                   prints the latest CI run ID for the branch
+# runs-active <repo-dir>                       prints the count of queued+in_progress runs, or ? if unknown
 # run-metadata <repo-dir> <run-id>             prints: started-at: <epoch>; last-activity: <epoch>
 # run-cancel <repo-dir> <run-id>               cancels an in-progress run
 # workflow-rerun <repo-dir> <run-id>           re-queues a failed workflow run
@@ -244,6 +245,32 @@ try:
     if earliest: print(earliest)
 except Exception: pass
 " 2>/dev/null
+        ;;
+    runs-active)
+        # runs-active <repo-dir> → how many workflow runs are queued or in progress, across
+        # every branch and workflow in the repository. Used by batch.sh to answer "is CI idle
+        # right now"; idle means waiting for company buys nothing, so cut the batch at once.
+        #
+        # PRINTS ? WHEN IT CANNOT TELL, NEVER 0. A failed API call, an unparseable payload and
+        # a genuinely empty queue are three different answers, and only the third one means
+        # idle. A caller that read a network failure as "nothing in CI" would cut a batch on
+        # every pass while CI was busy, which is the opposite of what this exists for
+        # (law-absence-needs-a-positive-control).
+        runs_json="$( cd "$repo" && ghq api \
+            "repos/{owner}/{repo}/actions/runs?per_page=100&exclude_pull_requests=true" \
+            2>/dev/null )" || { printf '?\n'; exit 0; }
+        [ -n "${runs_json:-}" ] || { printf '?\n'; exit 0; }
+        printf '%s\n' "$runs_json" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print('?'); sys.exit(0)
+runs = d.get('workflow_runs')
+if runs is None:
+    print('?'); sys.exit(0)
+print(sum(1 for r in runs if r.get('status') in ('queued', 'in_progress', 'waiting', 'requested', 'pending')))
+" 2>/dev/null || printf '?\n'
         ;;
     run-metadata)
         run_id="${1:-}"
