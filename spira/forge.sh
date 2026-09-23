@@ -5,6 +5,7 @@
 # pr-create <repo-dir> <head> <base> <title>   body on stdin; prints PR number
 # pr-number <repo-dir> <head>                  prints the open PR number, or empty
 # pr-list-queue <repo-dir>                     prints PR numbers with head spira/queue/*, one per line
+# pr-mergeability <repo-dir> <pr-number>       prints: DIRTY | CLEAN | UNKNOWN
 # check-status <repo-dir> <pr-number>          prints: pending | green | red | harness_fault | provision_fault
 #                                              then "flaky: <suite>" for each flaky annotation
 # run-id <repo-dir> <branch>                   prints the latest CI run ID for the branch
@@ -52,6 +53,26 @@ try:
 except Exception:
     pass
 " 2>/dev/null
+        ;;
+    pr-mergeability)
+        pr_n="${1:-}"
+        result="$( cd "$repo" && ghq pr view "$pr_n" \
+            --json mergeable,mergeStateStatus 2>/dev/null )" || result=""
+        printf '%s\n' "${result:-}" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    m  = (d.get('mergeable') or '').upper()
+    ms = (d.get('mergeStateStatus') or '').upper()
+    if m == 'CONFLICTING' or ms == 'DIRTY':
+        print('DIRTY')
+    elif m == 'MERGEABLE':
+        print('CLEAN')
+    else:
+        print('UNKNOWN')
+except Exception:
+    print('UNKNOWN')
+" 2>/dev/null || printf 'UNKNOWN\n'
         ;;
     check-status)
         pr_n="${1:-}"
