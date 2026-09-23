@@ -879,6 +879,17 @@ sys.exit(0)' 2>/dev/null; then
             ledger_done "$rc" yield-headless
             exit $rc
         fi
+        # PRE-SESSION DEATH. The session never started — setup failed before claude ran.
+        # Unlike a capacity refusal (transient API condition), a setup failure recurs
+        # identically on every retry until box state changes (law-a-retry-must-change-an-input).
+        # Charge an attempt so repeated pre-session deaths reach the poison threshold.
+        if [ "${SESSION_STARTED:-0}" = 0 ]; then
+            bdq note "$BEAD_ID" "Pre-session death (rc=$rc): the aeon died during setup before its Claude session started. Attempt charged — this failure repeats until the box state changes." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID pre-session death (rc=$rc) — attempt charged"
+            release_own_claim "$BEAD_ID"
+            ledger_done "$rc" pre-session
+            exit $rc
+        fi
         cause="$(session_outcome "$LOGF")"
         if outcome_charges "$cause"; then
             # Counter labels (sp-attempt-N) are no longer written; the events trail records
@@ -940,6 +951,7 @@ REQUEUE_CAUSE=""; REQUEUE_WHY=""
 # rc=$?` captures the script's exit code at the time the trap fires, which is the last
 # command before the fall-off — not the session's. SESSION_RC is set right after `rc=$?`
 # captures the session and is the only witness to rc=124 in the teardown.
+SESSION_STARTED=0
 SESSION_RC=0
 trap cleanup EXIT INT TERM
 
@@ -1107,20 +1119,27 @@ if [ ! -d "$WORK/.git" ] && [ ! -f "$WORK/.git" ]; then
         # the brain tree was cleared died here instead, and the bead reached attempt 20.
         #
         # The other tree IS the work, so work in it rather than refusing to work at all.
-        if ! git -C "$REPO" worktree add -q "$WORK" "$BRANCH" 2>/dev/null; then
+        _wt_tmp="$(mktemp)"; _wt_err=""
+        if ! git -C "$REPO" worktree add -q "$WORK" "$BRANCH" 2>"$_wt_tmp"; then
+            _wt_err="$(cat "$_wt_tmp" 2>/dev/null)"
             _held="$(git -C "$REPO" worktree list --porcelain 2>/dev/null \
                      | awk -v b="refs/heads/$BRANCH" '''/^worktree /{w=$2} /^branch /{if ($2==b) print w}''' | head -1)"
             if [ -n "$_held" ] && [ -d "$_held" ]; then
                 log "$FAYTH: $BEAD_ID — $BRANCH is checked out at $_held; working there instead of $WORK"
                 WORK="$_held"
             else
-                die "could not attach a worktree at $WORK to existing branch $BRANCH"
+                die "could not attach a worktree at $WORK to existing branch $BRANCH${_wt_err:+: $_wt_err}"
             fi
-            unset _held
+            unset _held _wt_err
         fi
+        rm -f "$_wt_tmp"; unset _wt_tmp
     else
-        git -C "$REPO" worktree add -q -b "$BRANCH" "$WORK" "$BASE" 2>/dev/null \
-            || die "could not create a worktree at $WORK from $BASE"
+        _wt_tmp="$(mktemp)"; _wt_err=""
+        if ! git -C "$REPO" worktree add -q -b "$BRANCH" "$WORK" "$BASE" 2>"$_wt_tmp"; then
+            _wt_err="$(cat "$_wt_tmp" 2>/dev/null)"
+            die "could not create a worktree at $WORK from $BASE${_wt_err:+: $_wt_err}"
+        fi
+        rm -f "$_wt_tmp"; unset _wt_tmp _wt_err
     fi
 fi
 
@@ -1756,6 +1775,7 @@ export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false
 _AEON_SETTINGS="$(aeon_settings)" || _AEON_SETTINGS=""
 _BEAD_PI=""
 [ "${FAYTH_PROJECT_INSTRUCTIONS:-}" = "none" ] && _BEAD_PI="user"
+SESSION_STARTED=1
 cat "$TASK_FILE" | ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
     "${SPIRA_AGENT:-claude}" -p --output-format stream-json --verbose --include-partial-messages \
            --system-prompt-snapshot on \
