@@ -263,6 +263,50 @@ main() {
     fi
 
     if _batch_is_open "$name"; then
+        local _ob_forge="${SPIRA_FORGE:-$HERE/forge.sh}"
+        local _ob_file; _ob_file="$(_batch_open_file "$name")"
+        local _ob_pr
+        _ob_pr="$(grep '^pr=' "$_ob_file" 2>/dev/null | head -1)"; _ob_pr="${_ob_pr#pr=}"
+        if [ -n "$_ob_pr" ]; then
+            local _ob_mstat
+            _ob_mstat="$("$_ob_forge" pr-mergeability "$repo" "$_ob_pr" 2>/dev/null)" \
+                || _ob_mstat="UNKNOWN"
+            if [ "${_ob_mstat:-UNKNOWN}" = "DIRTY" ]; then
+                printf 'batch %s: PR %s is DIRTY (merge conflicts) — abandoning\n' \
+                    "$name" "$_ob_pr"
+                local _ob_members _ob_m _ob_mid _ob_mtip _ob_cur
+                _ob_members="$(grep '^members=' "$_ob_file" 2>/dev/null | head -1)"
+                _ob_members="${_ob_members#members=}"
+                for _ob_m in $_ob_members; do
+                    _ob_mid="${_ob_m%%:*}"; _ob_mtip="${_ob_m##*:}"
+                    _ob_cur=""
+                    [ -f "$LANDSTATE/$_ob_mid" ] && \
+                        { read -r _ob_cur _ < "$LANDSTATE/$_ob_mid" 2>/dev/null || true; }
+                    case "${_ob_cur:-}" in
+                    RED|EJECTED)
+                        printf 'batch %s: %s left at %s\n' "$name" "$_ob_mid" "$_ob_cur" ;;
+                    *)
+                        land_mark "$_ob_mid" CERTIFIED "$_ob_mtip"
+                        printf 'batch %s: %s returned to CERTIFIED\n' "$name" "$_ob_mid" ;;
+                    esac
+                done
+                "$_ob_forge" pr-comment "$repo" "$_ob_pr" \
+                    "Batch abandoned: PR had merge conflicts (DIRTY). Members returned to CERTIFIED for re-batching." \
+                    2>/dev/null || true
+                "$_ob_forge" pr-close "$repo" "$_ob_pr" 2>/dev/null || true
+                local _ob_stamp; _ob_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+                mv "$_ob_file" \
+                    "$(dirname "$_ob_file")/closed-pr${_ob_pr}-${_ob_stamp}" \
+                    2>/dev/null || rm -f "$_ob_file"
+                printf '## Note\nBatch PR %s for %s was found unmergeable (DIRTY) and has been abandoned.\n\nMembers returned to CERTIFIED and will be re-batched on the next pass.\n' \
+                    "$_ob_pr" "$name" \
+                | bash "$HERE/mail.sh" send operator \
+                    --from "Spira Queue <queue@spira>" \
+                    --subject "Merge queue: $name — batch PR abandoned (conflicts)" \
+                    2>/dev/null || true
+                return 0
+            fi
+        fi
         printf 'batch %s: open batch exists — skipping\n' "$name"
         return 0
     fi

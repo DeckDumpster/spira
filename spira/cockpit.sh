@@ -1040,6 +1040,8 @@ unsent_keys() {
     _probe_fail=0; _probe_fail_names=""
     _protected=0; _protected_names=""
     _batched_stranded=0; _batched_stranded_names=""
+    _batched_too_long=0; _batched_too_long_names=""
+    _now_epoch="$(date +%s)"
     for _r in $(spira_repos); do
         _p="$(repo_root "$_r")" || continue
         [ -e "$_p/.git" ] || continue
@@ -1133,6 +1135,16 @@ else:
                                 _batched_stranded=$((_batched_stranded+1))
                                 _batched_stranded_names="${_batched_stranded_names:+$_batched_stranded_names }$_id"
                             fi
+                            # BATCHED-TOO-LONG: BATCHED for more than one batch interval.
+                            _ls_epoch=""
+                            { read -r _ _ _ls_epoch _ < "$_ls_f"; } 2>/dev/null || true
+                            _btl_wait="${SPIRA_QUEUE_BATCH_WAIT:-1800}"
+                            if [ -n "$_ls_epoch" ] && \
+                               [ "$_ls_epoch" -gt 0 ] 2>/dev/null && \
+                               [ "$(( _now_epoch - _ls_epoch ))" -gt "$_btl_wait" ] 2>/dev/null; then
+                                _batched_too_long=$((_batched_too_long+1))
+                                _batched_too_long_names="${_batched_too_long_names:+$_batched_too_long_names }$_id"
+                            fi
                         fi
                     fi
                 fi
@@ -1175,6 +1187,8 @@ else:
     echo "SP_PROTECTED_NAMES='$_protected_names'"
     echo "SP_BATCHED_STRANDED=$_batched_stranded"
     echo "SP_BATCHED_STRANDED_NAMES='$_batched_stranded_names'"
+    echo "SP_BATCHED_TOO_LONG=$_batched_too_long"
+    echo "SP_BATCHED_TOO_LONG_NAMES='$_batched_too_long_names'"
     if [ "$_fail" = 1 ]; then
         echo "SP_UNSENT=?"
         echo "SP_UNSENT_OLDEST_H=?"
