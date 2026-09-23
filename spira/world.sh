@@ -4,7 +4,7 @@
 #
 #   world.sh stop [--why "..."]   halt the loop: no summons, no landing, no live aeons
 #   world.sh start                bring it back
-#   world.sh drain [--timeout N]  no NEW aeons; loop and landing keep running until the pool empties
+#   world.sh drain [--timeout N | --deadline N]  no NEW aeons; loop and landing keep running until the pool empties
 #   world.sh resume               lift a drain
 #   world.sh status               what is up, what is down, what is running
 #
@@ -374,16 +374,23 @@ start)
 # before returning. That is this command's patience; this is the gate's lifetime after the
 # command has gone.
 #
+# AT THE DEADLINE, `--deadline N` slays every live aeon (--keep-work --reopen) so the fleet
+# ends quiet. No attempt is charged — a slay the operator ordered is not evidence the aeon
+# failed. `--timeout N` keeps the old warn-and-return for callers that only want to know.
+# world.sh stop uses its own slay sweep for the same reason: a stop cannot proceed with
+# aeons alive.
+#
 # The gate is a stamp file that summon_fayth() checks in lib.sh — one place, covering every
 # caller. The first attempt at this stopped spira-sentinel.timer instead, which also stopped
 # landing, because landing is a leg of the sentinel pass rather than a timer of its own:
 # three finished branches sat unlanded for sixteen minutes (2026-09-08).
 drain)
-    shift; dtimeout=1800; dfor="${SPIRA_DRAIN_TTL:-1800}"
+    shift; dtimeout=1800; dfor="${SPIRA_DRAIN_TTL:-1800}"; dslay=0
     while [ $# -gt 0 ]; do
         case "$1" in
-            --timeout) dtimeout="${2:-1800}"; shift 2 ;;
-            --for)     dfor="${2:-1800}";     shift 2 ;;
+            --timeout)  dtimeout="${2:-1800}"; shift 2 ;;
+            --for)      dfor="${2:-1800}";     shift 2 ;;
+            --deadline) dtimeout="${2:-1800}"; dslay=1; shift 2 ;;
             *) break ;;
         esac
     done
@@ -399,6 +406,24 @@ drain)
         n="$(live_aeons | grep -c . || true)"
         [ "$n" -eq 0 ] && break
         if [ "$waited" -ge "$dtimeout" ]; then
+            if [ "$dslay" = 1 ]; then
+                printf 'spira: drain deadline reached — slaying %s aeon(s)\n' "$n" >&2
+                for _pf in "$SPIRA_RUN"/aeon-*.pid; do
+                    [ -e "$_pf" ] || continue
+                    _pid="$(cat "$_pf" 2>/dev/null)"
+                    [ -n "$_pid" ] && [ -d "/proc/$_pid" ] || { rm -f "$_pf"; continue; }
+                    _abead="$(basename "$_pf" .pid)"; _abead="${_abead#aeon-}"; _abead="${_abead#*-}"
+                    [ -n "$_abead" ] || continue
+                    printf '  slaying %s (pid %s)\n' "$_abead" "$_pid"
+                    "$SPIRA_HOME/slay.sh" --bead "$_abead" --keep-work --reopen \
+                        --why "drain deadline reached" >/dev/null 2>&1 \
+                        || printf '    slay.sh could not stop %s — left running\n' "$_abead" >&2
+                done
+                unset _pf _pid _abead
+                echo "spira: DRAINED — aeons slain at deadline. Summons remain gated."
+                printf 'spira: resume with: %s resume\n' "$0"
+                exit 0
+            fi
             printf 'spira: NOT DRAINED — %s aeon(s) still live after %ss\n' "$n" "$dtimeout" >&2
             printf 'spira: summons REMAIN GATED. Lift with: %s resume\n' "$0" >&2
             exit 1
@@ -471,5 +496,5 @@ status)
 
     a="$(live_aeons | grep -c . || true)"; printf '  live aeons: %s\n' "$a"
     ;;
-*)  echo "usage: world.sh {stop [--why \"...\"] [--hard] | drain [--timeout SECS] | resume | start | status}" >&2; exit 64 ;;
+*)  echo "usage: world.sh {stop [--why \"...\"] [--hard] | drain [--timeout SECS | --deadline SECS] | resume | start | status}" >&2; exit 64 ;;
 esac
