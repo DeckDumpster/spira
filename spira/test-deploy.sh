@@ -62,6 +62,7 @@ RUN_DIR="$TMP/run"
 BIN="$TMP/bin"
 CALL_LOG="$TMP/calls.log"
 SC_LOG="$TMP/sc.log"
+DOCTOR_CNT="$TMP/doctor.cnt"
 mkdir -p "$RELEASES" "$RUN_DIR" "$BIN"
 
 NEW_RELEASE="spira-20260917T053803Z"
@@ -148,10 +149,10 @@ ln -s "$release_name" "$_tmp" && mv -T "$_tmp" "$releases/current"
 AEOF
 chmod +x "$BIN/activate.sh"
 
-# Mock install.sh: records SPIRA_PROD value at call time.
+# Mock install.sh: records SPIRA_PROD and SPIRA_HOME at call time.
 cat > "$BIN/install.sh" <<'IEOF'
 #!/usr/bin/env bash
-printf 'install SPIRA_PROD=%s\n' "${SPIRA_PROD:-UNSET}" >> "${CALL_LOG:-/dev/null}"
+printf 'install SPIRA_PROD=%s SPIRA_HOME=%s\n' "${SPIRA_PROD:-UNSET}" "${SPIRA_HOME:-UNSET}" >> "${CALL_LOG:-/dev/null}"
 exit "${INSTALL_EXIT:-0}"
 IEOF
 chmod +x "$BIN/install.sh"
@@ -164,11 +165,24 @@ exit 0
 LEOF
 chmod +x "$BIN/layout.sh"
 
-# Mock doctor.sh: configurable exit.
-cat > "$BIN/doctor.sh" <<'DEOF'
+# Mock doctor.sh: configurable exit; emits FAIL lines on failure.
+# DOCTOR_FAIL_ON_CALL: fail only when the call count reaches this number (1=pre-deploy, 2=post-activation).
+# DOCTOR_EXIT: non-zero means always fail (all calls).
+# Counts calls in DOCTOR_CNT; callers must reset it between tests that care about call order.
+cat > "$BIN/doctor.sh" <<DEOF
 #!/usr/bin/env bash
-printf 'doctor\n' >> "${CALL_LOG:-/dev/null}"
-exit "${DOCTOR_EXIT:-0}"
+printf 'doctor\n' >> "\${CALL_LOG:-/dev/null}"
+_cnt=\$(( \$(cat "${DOCTOR_CNT}" 2>/dev/null || echo 0) + 1 ))
+printf '%d\n' "\$_cnt" > "${DOCTOR_CNT}"
+_fail_on="\${DOCTOR_FAIL_ON_CALL:-}"
+_do_fail=0
+[ "\${DOCTOR_EXIT:-0}" != "0" ] && _do_fail=1
+[ -n "\$_fail_on" ] && [ "\$_cnt" -ge "\$_fail_on" ] && _do_fail=1
+if [ "\$_do_fail" = 1 ]; then
+    printf '  FAIL  %s\n' "\${DOCTOR_FAIL_MSG:-injected failure}"
+    exit 1
+fi
+exit 0
 DEOF
 chmod +x "$BIN/doctor.sh"
 
@@ -226,7 +240,7 @@ run_deploy() {
         extra_env+=("$_a")
     done
     unset _a in_args
-    > "$CALL_LOG" 2>/dev/null; > "$SC_LOG" 2>/dev/null
+    > "$CALL_LOG" 2>/dev/null; > "$SC_LOG" 2>/dev/null; > "$DOCTOR_CNT" 2>/dev/null
     env -i \
         "PATH=$BIN:$PATH" \
         "SPIRA_PATH=$BIN" \
@@ -340,12 +354,13 @@ else
         "current=$(readlink "$RELEASES/current" 2>/dev/null || echo '(missing)')"
 fi
 
-# With doctor failure: current must be restored to the prior release.
+# With doctor failure on post-activation call: current must be restored to the prior release.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 mkdir -p "$RELEASES/$PRIOR_RELEASE"
 ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+> "$DOCTOR_CNT"
 
-_out="$(run_deploy "DOCTOR_EXIT=1" -- "$NEW_TAG" 2>&1)"
+_out="$(run_deploy "DOCTOR_FAIL_ON_CALL=2" -- "$NEW_TAG" 2>&1)"
 _rc=$?
 not0   "rollback: exits non-zero on health failure" "$_rc"
 want   "rollback: mentions ROLLBACK"                "ROLLBACK" "$_out"
@@ -356,6 +371,7 @@ islink "rollback: current restored to prior"        "$RELEASES/current" "$PRIOR_
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 mkdir -p "$RELEASES/$PRIOR_RELEASE"
 ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+> "$DOCTOR_CNT"
 
 _out="$(run_deploy "SKEW_EXIT=1" -- "$NEW_TAG" 2>&1)"
 _rc=$?
@@ -378,11 +394,18 @@ else
     bad "re-render: install.sh was called" "not in call log"
 fi
 
-_got_prod="$(grep 'install SPIRA_PROD=' "$CALL_LOG" 2>/dev/null | head -1 | sed 's/^install SPIRA_PROD=//')"
+_got_install_line="$(grep 'install SPIRA_PROD=' "$CALL_LOG" 2>/dev/null | head -1)"
+_got_prod="$(printf '%s' "$_got_install_line" | sed 's/^install SPIRA_PROD=//; s/ SPIRA_HOME=.*//')"
+_got_home="$(printf '%s' "$_got_install_line" | sed 's/.*SPIRA_HOME=//')"
 if [ "$_got_prod" = "$RELEASES/current/spira" ]; then
     ok "re-render: SPIRA_PROD=$RELEASES/current/spira"
 else
     bad "re-render: SPIRA_PROD=$RELEASES/current/spira" "got [$_got_prod]"
+fi
+if [ "$_got_home" = "$RELEASES/current/spira" ]; then
+    ok "re-render: SPIRA_HOME=$RELEASES/current/spira (activated release, not invoking dir)"
+else
+    bad "re-render: SPIRA_HOME=$RELEASES/current/spira" "got [$_got_home]"
 fi
 
 # ==========================================================================
@@ -429,9 +452,10 @@ else
     bad "fail-first: successful first deploy creates current" "current missing"
 fi
 
-# Failed first deploy: health check fails, no prior release exists.
+# Failed first deploy: post-activation health check fails, no prior release exists.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
-_out="$(run_deploy "SPIRA_PROD=$TMP/fake-checkout" "DOCTOR_EXIT=1" -- "$NEW_TAG" 2>&1)"
+> "$DOCTOR_CNT"
+_out="$(run_deploy "SPIRA_PROD=$TMP/fake-checkout" "DOCTOR_FAIL_ON_CALL=2" -- "$NEW_TAG" 2>&1)"
 _rc=$?
 not0   "first-deploy-rollback: exits non-zero"                 "$_rc"
 want   "first-deploy-rollback: mentions ROLLBACK"              "ROLLBACK" "$_out"
@@ -641,7 +665,8 @@ mkdir -p "$RELEASES/$PRIOR_RELEASE"
 
 # FAIL-FIRST: without the bootstrap the rollback would have no prev_release.
 # Verify the doctor-failure path actually restores current when prev_release is set.
-_out="$(run_deploy "SPIRA_PROD=$RELEASES/$PRIOR_RELEASE/spira" "DOCTOR_EXIT=1" \
+> "$DOCTOR_CNT"
+_out="$(run_deploy "SPIRA_PROD=$RELEASES/$PRIOR_RELEASE/spira" "DOCTOR_FAIL_ON_CALL=2" \
     -- "$NEW_TAG" 2>&1)"
 _rc=$?
 not0   "bootstrap-rollback: exits non-zero on health failure"      "$_rc"
@@ -995,16 +1020,16 @@ else
         "got $_p18_install_calls call(s)"
 fi
 
-# Now test the rollback path: health check fails → rollback triggered.
+# Now test the rollback path: post-activation health check fails → rollback triggered.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 mkdir -p "$RELEASES/$PRIOR_RELEASE"
 ln -s "$PRIOR_RELEASE" "$RELEASES/current"
-> "$CALL_P18"; > "$SC_P18_LOG"
+> "$CALL_P18"; > "$SC_P18_LOG"; > "$DOCTOR_CNT"
 
 _out="$(run_deploy \
     "SPIRA_SYSTEMCTL=$BIN_P18/systemctl" \
     "SPIRA_INSTALL_SH=$BIN_P18/install.sh" \
-    "DOCTOR_EXIT=1" \
+    "DOCTOR_FAIL_ON_CALL=2" \
     -- "$NEW_TAG" 2>&1)"
 _rc=$?
 not0 "p18: rollback exits non-zero" "$_rc"
@@ -1100,7 +1125,7 @@ run_deploy \
     "SPIRA_SYSTEMCTL=$BIN_P20/systemctl" \
     "SPIRA_INSTALL_SH=$BIN_P20/install.sh" \
     "SPIRA_CTRL_SH=$CTRL_P20_NONE" \
-    "DOCTOR_EXIT=1" \
+    "DOCTOR_FAIL_ON_CALL=2" \
     -- "$NEW_TAG" >/dev/null 2>&1
 if grep -qF "SC --user enable --now ${UNIT_CTRL}" "$SC_P20_LOG" 2>/dev/null; then
     ok "p20/fail-first: unit re-enabled when ctrl not-suspended (control confirmed)"
@@ -1118,7 +1143,7 @@ run_deploy \
     "SPIRA_SYSTEMCTL=$BIN_P20/systemctl" \
     "SPIRA_INSTALL_SH=$BIN_P20/install.sh" \
     "SPIRA_CTRL_SH=$CTRL_P20" \
-    "DOCTOR_EXIT=1" \
+    "DOCTOR_FAIL_ON_CALL=2" \
     -- "$NEW_TAG" >/dev/null 2>&1
 if ! grep -qF "SC --user enable --now ${UNIT_CTRL}" "$SC_P20_LOG" 2>/dev/null; then
     ok "p20: ctrl-suspended unit not re-enabled after rollback"
@@ -1126,6 +1151,35 @@ else
     bad "p20: ctrl-suspended unit must not be re-enabled" \
         "enable --now was called — ctrl.sh check not honoured"
 fi
+
+# ==========================================================================
+echo
+echo "PROPERTY 21: pre-deploy doctor failure refuses before drain"
+# A fatal found by the incoming doctor before any disruptive step names the problem
+# and refuses the deploy. The box is left unchanged (drain not called, current unchanged).
+# FAIL-FIRST: with a passing pre-deploy doctor, drain IS reached and current is created.
+# ==========================================================================
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$PRIOR_RELEASE"
+ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+> "$DOCTOR_CNT"
+_out="$(run_deploy -- "$NEW_TAG" 2>&1)"
+_rc=$?
+is0    "p21/fail-first: passing doctor allows deploy" "$_rc"
+islink "p21/fail-first: current moved to new release" "$RELEASES/current" "$NEW_RELEASE"
+
+# With a fatal from the first doctor call (pre-deploy), deploy is refused before drain.
+rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+mkdir -p "$RELEASES/$PRIOR_RELEASE"
+ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+> "$DOCTOR_CNT"
+_out="$(run_deploy "DOCTOR_EXIT=1" "DOCTOR_FAIL_MSG=hooks-path-missing" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0   "p21: pre-deploy fatal refuses deploy"              "$_rc"
+want   "p21: output names the failure"                     "hooks-path-missing" "$_out"
+notwant "p21: drain not called before pre-deploy check"    "world drain" "$(cat "$CALL_LOG")"
+notwant "p21: activate not called"                         "activate"    "$(cat "$CALL_LOG")"
+islink "p21: current unchanged after refusal"              "$RELEASES/current" "$PRIOR_RELEASE"
 
 # ==========================================================================
 echo
