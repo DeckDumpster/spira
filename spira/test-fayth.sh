@@ -148,6 +148,35 @@ observed="$(cat "$LABELS_FILE" 2>/dev/null)"
 # The key assertion: ops's predicate was asked DESPITE plan_ready=0.
 want "ops predicate was asked even when plan_ready=0" "incident" "$observed"
 
+# ==========================================================================================
+echo
+echo "summon_fayth — SPIRA_AEON_CPU_QUOTA is passed to the summon command"
+# ==========================================================================================
+ARGS_FILE="$T/summon-args"
+MOCK_QUOTA="$T/summon-quota"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\nexit 0\n' "$ARGS_FILE" > "$MOCK_QUOTA"
+chmod +x "$MOCK_QUOTA"
+export SPIRA_SUMMON="$MOCK_QUOTA"
+
+# Default: no override — must pass CPUQuota=70%
+MOCK_READY=1; rm -f "$ARGS_FILE" "$LABELS_FILE"
+unset SPIRA_AEON_CPU_QUOTA 2>/dev/null || true
+summon_fayth ops >/dev/null 2>&1 || true
+args="$(cat "$ARGS_FILE" 2>/dev/null)"
+want "default quota: CPUQuota=70% appears in args" "CPUQuota=70%" "$args"
+
+# Custom override: must use the override value
+MOCK_READY=1; rm -f "$ARGS_FILE" "$LABELS_FILE"
+export SPIRA_AEON_CPU_QUOTA=90%
+summon_fayth ops >/dev/null 2>&1 || true
+args="$(cat "$ARGS_FILE" 2>/dev/null)"
+want "custom quota: CPUQuota=90% appears in args"    "CPUQuota=90%" "$args"
+lack "custom quota: CPUQuota=70% is absent from args" "CPUQuota=70%" "$args"
+
+# Restore original mock for any remaining tests
+export SPIRA_SUMMON="$MOCK_SUMMON"
+unset SPIRA_AEON_CPU_QUOTA
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

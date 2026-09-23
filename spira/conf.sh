@@ -553,6 +553,10 @@ spira_conf_defaults() {
     # Four is the sum of what the two shipped personas declared, so this default changes
     # nothing on a host that was already running them and starts enforcing an order.
     : "${SPIRA_MAX_AEONS:=4}"
+    # THE CPU QUOTA APPLIED TO EACH AEON UNIT. Raise this when aeons run real builds that
+    # saturate their slice; SPIRA_GATE_HOST_CORES controls parallelism inside the gate while
+    # this controls how much of one core each aeon may use.
+    : "${SPIRA_AEON_CPU_QUOTA:=70%}"
     # THE DECLARED LANES — named scheduling partitions whose capacity does not compete with
     # SPIRA_MAX_AEONS. A lane fayth draws from its own FAYTH_MAX_CONCURRENT rather than from
     # the pool, so the pool can be fully occupied by builders while the lane fayth still has
