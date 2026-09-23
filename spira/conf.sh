@@ -87,7 +87,7 @@ SPIRA_QUEUE_BATCH_MAX SPIRA_QUEUE_BATCH_WAIT SPIRA_QUEUE_BATCH_IDLE_CUT SPIRA_QU
 SPIRA_QUEUE_THROTTLE_DEPTH_AT SPIRA_QUEUE_THROTTLE_RELEASE_AT SPIRA_QUEUE_THROTTLE_STALL_MINS SPIRA_QUEUE_THROTTLE_OVERRIDE
 SPIRA_AURON_RESTARTS SPIRA_AURON_RESTART_WINDOW
 SPIRA_PROD SPIRA_INSTANCE
-SPIRA_RELEASES SPIRA_RELEASES_KEEP
+SPIRA_RELEASES SPIRA_RELEASES_KEEP SPIRA_GH_REPO
 SPIRA_REVIEWER_MODEL SPIRA_REVIEWER_VERDICTS SPIRA_REVIEWER_TIMEOUT SPIRA_REVIEWER_DIFF_LIMIT
 SPIRA_REVIEW_LABEL
 SPIRA_CAPACITY_PROBE_MODEL SPIRA_CAPACITY_PROBE_INTERVAL SPIRA_CAPACITY_PROBE_WINDOW SPIRA_CAPACITY_PROBE_TIMEOUT
@@ -1149,6 +1149,13 @@ spira_conf_defaults() {
     # directory is the unpacked contents of one tarball — about 1.4 MB — so 100 releases
     # total roughly 140 MB. Per Ryan: "They're tiny. make it 100."
     : "${SPIRA_RELEASES_KEEP:=100}"
+    # THE GITHUB REPOSITORY this harness's releases are published to, as "owner/repo".
+    # Set this in spira.conf on artifact deployments — those run from an extracted tarball
+    # with no .git, so gh cannot infer the repository from the working directory.
+    # When set, deploy.sh exports it as GH_REPO before any gh call.
+    # Empty by default: a source checkout lets gh infer the repository, and a default
+    # pointing at somebody else's account would silently fetch their releases.
+    : "${SPIRA_GH_REPO:=}"
 
     # THE ACTIVATED RELEASE — the ONLY directory systemd executes. activate.sh swaps
     # the 'current' symlink here atomically on each deployment; ExecStart= paths resolve
