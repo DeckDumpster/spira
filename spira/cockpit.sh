@@ -1549,14 +1549,17 @@ reachable_keys() {
     # ONE bd list call for all of them: per-bead queries would make the probe proportional
     # to queue depth, which is why the pane's probe budget is tight.
     # A failed probe renders ?, never 0 (law-absence-needs-a-positive-control).
-    local _reach_raw
-    _reach_raw="$(bdjson list --status open,in_progress --limit 0 2>/dev/null)"
+    # SCOPE FILTER mirrors READY_ARGS: a bead the loop cannot claim must not count as
+    # reachable. The same SPIRA_SCOPE_LABEL that gates claims gates the count.
+    local _reach_raw _reach_args=(list --status open,in_progress --limit 0)
+    [[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && _reach_args+=(--label "$SPIRA_SCOPE_LABEL")
+    _reach_raw="$(bdjson "${_reach_args[@]}" 2>/dev/null)"
     if [ -z "$_reach_raw" ]; then
         echo "SP_REACHABLE=?"
         echo "SP_STRANDED=?"
         return
     fi
-    printf '%s\n' "$_reach_raw" | SPIRA_CHAMBER="$HERE/chamber" python3 -c '
+    printf '%s\n' "$_reach_raw" | SPIRA_CHAMBER="$HERE/chamber" SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" python3 -c '
 import os, sys, json
 from collections import deque
 
@@ -1564,6 +1567,7 @@ from collections import deque
 ASK = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")
 CTRL = os.environ.get("SPIRA_CTRL", "")
 CHAMBER = os.environ.get("SPIRA_CHAMBER", "")
+SCOPE = os.environ.get("SPIRA_SCOPE_LABEL", "")
 
 # Suspended fayths: read ctrl file once, map each to its partition label set.
 # A bead is in a suspended partition when that fayth'"'"'s labels are all present.
@@ -1601,10 +1605,12 @@ beads = d if isinstance(d, list) else [d]
 bead_by_id = {b["id"]: b for b in beads if b.get("id")}
 # Work-only universe: ask beads and insights are not stuck work — they have their
 # own panes. Poison and suspended-partition beads stay; those are stuck work.
+# SCOPE: bdjson carries --label but apply it in Python too — mirrors the invariant regardless of whether bd filtered.
 INSIGHT = "insight"
 all_ids = {
     bid for bid, b in bead_by_id.items()
     if ASK not in (b.get("labels") or []) and INSIGHT not in (b.get("labels") or [])
+    and (not SCOPE or SCOPE in (b.get("labels") or []))
 }
 
 # blocker_of[X] = open deps blocking X; blocks[Y] = downstream beads Y directly blocks.

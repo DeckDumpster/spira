@@ -128,25 +128,24 @@ has   "mixed queue: unclaimable bead is flagged"    "UNCLAIMABLE sp-unc5b" "$out
 
 # ==========================================================================================
 echo
-echo "case 6 — scope filter: out-of-scope bead is silent; in-scope+unclaimable is not"
+echo "case 6 — no-scope-label bead is UNCLAIMABLE; in-scope+unclaimable is also not"
 # ==========================================================================================
-# sp-d906p: READY_ARGS now carries --label SPIRA_SCOPE_LABEL, so bd ready itself drops
-# beads from other repositories before they reach detect_unclaimable_ready. A bead that
-# carries no scope label produces no UNCLAIMABLE output — it is not a fault IN this fleet,
-# it is a bead that does not BELONG to this fleet.
+# detect_unclaimable_ready reads the unfiltered ready set (no scope label filter), so a
+# bead missing the scope label is seen and reported. Any open bead the loop cannot claim —
+# including one missing the scope label — is the condition the detector exists to name.
 #
 # Positive control (acceptance criterion): a bead that DOES carry the scope label but has
-# no partition label is still reported UNCLAIMABLE. The two cases must be asserted in the
-# same pass: the change is correct only if exactly one of the two disappears.
+# no partition label is still reported UNCLAIMABLE. Both cases must be asserted together;
+# a change is only correct if both produce UNCLAIMABLE output.
 testdb_reset
 testdb_seed <<JSONL
-{"id":"pd-unc6a","title":"out-of-scope: no scope label","status":"open","issue_type":"task","labels":["plan","repo:pokedumpster"]}
+{"id":"pd-unc6a","title":"no scope label: unclaimable by any persona","status":"open","issue_type":"task","labels":["plan","repo:pokedumpster"]}
 {"id":"sp-unc6c","title":"in-scope unclaimable: spira, no partition","status":"open","issue_type":"task","labels":["repo:spira","${SPIRA_SCOPE_LABEL}"]}
 JSONL
 
 out="$(detect_unclaimable_ready 2>/dev/null)"
-lacks "out-of-scope bead not reported (filtered by READY_ARGS)"  "pd-unc6a"             "$out"
-has   "in-scope no-partition bead IS reported (positive control)" "UNCLAIMABLE sp-unc6c" "$out"
+has   "no-scope-label bead reported UNCLAIMABLE (missing scope label)" "UNCLAIMABLE pd-unc6a" "$out"
+has   "in-scope no-partition bead IS reported (positive control)"      "UNCLAIMABLE sp-unc6c" "$out"
 
 # ==========================================================================================
 echo
