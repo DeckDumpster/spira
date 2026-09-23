@@ -683,6 +683,75 @@ else
     TMUX_TMPDIR="$LDIR" tmux kill-server 2>/dev/null || true
 fi
 
+
+# ---------------------------------------------------------------------------
+# THREE WAYS THE OPERATOR'S WAY IN BREAKS (all seen 2026-09-23).
+# ---------------------------------------------------------------------------
+echo
+echo "the way in — orphaned holders, dangling resume ids, and /proc noise"
+
+# 1. /PROC SCAN: the shell's redirection error is not silenced by 2>/dev/null on tr.
+_src="$(cat "$HARNESS/concierge.sh")"
+want "/proc read is guarded before it is attempted"          '[ -r "$f" ] || continue' "$_src"
+want "redirect is grouped so the shell's own error is covered" '{ tr' "$_src"
+
+# 2. HEADLESS HOLDER: when tmux dies but the claude client survives, start must refuse exit 0.
+_odir="$(mktemp -d)"
+_oid="orphan-$$-$(date +%s)"
+_ocwd="$(bash -c ". '$HARNESS/spira/conf.sh' >/dev/null 2>&1; printf %s \"\${SPIRA_WIKI:-\$SPIRA_REPO}\"")"
+printf '%s\n%s\n' "$_oid" "$_ocwd" > "$_odir/concierge-session"
+mkdir -p "$_odir/bin"
+printf '#!/bin/sh\necho STUB_CLAUDE_RAN\n' > "$_odir/bin/claude"; chmod +x "$_odir/bin/claude"
+python3 -c 'import sys,time; time.sleep(60)' "$_oid" &
+_opid=$!
+sleep 0.3
+_oout="$(PATH="$_odir/bin:$PATH" SPIRA_RUN="$_odir" \
+         CONCIERGE_SOCKET="ctest-$$" CONCIERGE_SESSION="ctest-$$" \
+         bash "$HARNESS/concierge.sh" start 2>&1)"; _orc=$?
+kill "$_opid" 2>/dev/null; wait "$_opid" 2>/dev/null
+# POSITIVE CONTROL: if the fixture holder was never found the assertions below prove nothing.
+want "the fixture holder is detected"              "$_oid"           "$_oout"
+nowant "no claude stub was launched"               "STUB_CLAUDE_RAN" "$_oout"
+if [ "$_orc" -ne 0 ]; then
+    pass=$((pass+1)); printf '  ok    %s\n' "a holder with no tmux session does not exit 0"
+else
+    fail=$((fail+1)); printf '  FAIL  %s: exited 0\n' "a holder with no tmux session does not exit 0"
+fi
+want   "it names the condition"                        "HEADLESS"    "$_oout"
+nowant "it does not advise an attach that cannot work" "attach:  tmux" "$_oout"
+rm -rf "$_odir"
+
+# 3. DANGLING RESUME: code-shape check, plus a behavioral test where systemd is available.
+_src="$(cat "$HARNESS/concierge.sh")"
+want "a failed start retries without --resume" "retrying without it" "$_src"
+
+if ! systemctl --user status >/dev/null 2>&1 || ! command -v systemd-run >/dev/null 2>&1; then
+    printf '  skip  (no systemd user session — dangling resume retry test requires it)\n'
+else
+    _ddir="$(mktemp -d)"; mkdir -p "$_ddir/bin"
+    _dfake_id="dangling-$$-$(date +%s)"
+    # Stub: exits 1 when --resume is passed; stays alive otherwise.
+    cat > "$_ddir/bin/claude" <<'STUB'
+#!/bin/sh
+case " $* " in *' --resume '*) exit 1 ;; esac
+exec sleep 30
+STUB
+    chmod +x "$_ddir/bin/claude"
+    printf '%s\n%s\n' "$_dfake_id" "$_ddir" > "$_ddir/concierge-session"
+    _dsock="test-concierge-dangle-$$"
+    tmux -L "$_dsock" kill-server 2>/dev/null || true
+    _dout="$(PATH="$_ddir/bin:$PATH" SPIRA_RUN="$_ddir" SPIRA_WIKI="$_ddir" \
+             CONCIERGE_SOCKET="$_dsock" CONCIERGE_SESSION="$_dsock" \
+             bash "$HARNESS/concierge.sh" start 2>&1)"; _drc=$?
+    _dsess_after="$(cat "$_ddir/concierge-session" 2>/dev/null)"
+    tmux -L "$_dsock" kill-server 2>/dev/null || true
+    rm -rf "$_ddir"
+    want "dangling resume triggers retry"  "retrying without it" "$_dout"
+    want "retry reports a FRESH start"     "FRESH"               "$_dout"
+    is   "session file is cleared"         ""                    "$_dsess_after"
+    is   "start exits 0 after fresh retry" 0                     "$_drc"
+fi
+
 echo
 echo "concierge self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
