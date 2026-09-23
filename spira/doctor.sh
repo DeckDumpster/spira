@@ -1075,15 +1075,25 @@ if [ "${_dr_en_bad}" -eq 0 ]; then
     if [ "${_dr_en_bad}" -eq 0 ]; then
         for _dr_en_unit in "${ENABLE[@]}"; do
             [ -n "$_dr_en_unit" ] || continue
-            _dr_en_state="$("$_dr_en_sc" --user is-enabled "$_dr_en_unit" 2>/dev/null || true)"
+            _dr_en_rc=0
+            _dr_en_state="$("$_dr_en_sc" --user is-enabled "$_dr_en_unit" 2>/dev/null)" \
+                || _dr_en_rc=$?
+            if [ -z "$_dr_en_state" ]; then
+                # No output from systemctl can mean no active systemd user session.
+                # If the unit file isn't installed either, treat it the same as "not-found".
+                [ ! -e "${HOME}/.config/systemd/user/${_dr_en_unit}" ] && continue
+                FAIL "$_dr_en_unit — systemctl returned no output; cannot verify enablement state" \
+                     "Check that the systemd user session is active: $_dr_en_sc --user status"
+                _dr_en_bad=$((_dr_en_bad + 1))
+                continue
+            fi
             [ "$_dr_en_state" = "enabled" ] && continue
             # not-found means the unit file does not exist yet — a fresh install has none.
             # That is not drift; drift is a unit whose file IS installed but not enabled.
             [ "$_dr_en_state" = "not-found" ] && continue
-            # Empty output means the manager was unreachable; if the probe above did not
-            # catch it (no files installed), treat it the same as not-found.
-            [ -z "$_dr_en_state" ] && continue
-            # Not enabled. Check the control plane before classifying as drift.
+            # Not enabled. Check the control plane before classifying as drift. The subject key
+            # is derived the same way ctrl.sh divergence derives it: strip the file extension,
+            # then strip the per-instance suffix.
             _dr_en_base="${_dr_en_unit%.*}"
             _dr_en_subj="${_dr_en_base%-${SPIRA_INSTANCE:-prod}}"
             if "$SPIRA_HOME/ctrl.sh" check "$_dr_en_subj" 2>/dev/null; then
@@ -1099,7 +1109,7 @@ if [ "${_dr_en_bad}" -eq 0 ]; then
             && OK "all ${#ENABLE[@]} ENABLE units are enabled or suspended via ctrl.sh"
     fi
 fi
-unset _dr_en_sc _dr_en_bad _dr_en_units_sh _dr_en_unit _dr_en_state _dr_en_base _dr_en_subj \
+unset _dr_en_sc _dr_en_bad _dr_en_units_sh _dr_en_unit _dr_en_rc _dr_en_state _dr_en_base _dr_en_subj \
       _dr_en_mgr_out _dr_en_mgr_err _dr_en_any
 
 echo
