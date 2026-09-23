@@ -72,7 +72,7 @@ run_census_repo() {  # run_census_repo <repo-path> [census-args...]
         bash "$CENSUS" "$@" 2>/dev/null
 }
 
-# Git fixture for closed-but-unlanded suppression (tests 6 and 7).
+# Git fixture for closed-but-unlanded suppression (tests 7–10).
 # Push one commit to the bare remote before cloning so origin/HEAD resolves;
 # cloning an empty remote leaves origin/HEAD unset and spira_landref falls to
 # rung 4 (HEAD), which is wrong in a worktree where HEAD is not on main.
@@ -92,12 +92,6 @@ git -C "$REMEDY_SRC" push -q origin main
 git clone -q "$REMEDY_REMOTE" "$REMEDY_REPO"
 git -C "$REMEDY_REPO" config user.email "t@t"
 git -C "$REMEDY_REPO" config user.name "t"
-git -C "$REMEDY_REPO" checkout -q -b sp-fix-cls
-printf 'fix\n' >> "$REMEDY_REPO/f"
-git -C "$REMEDY_REPO" add f
-git -C "$REMEDY_REPO" commit -q -m "fix"
-git -C "$REMEDY_REPO" push -q origin sp-fix-cls
-git -C "$REMEDY_REPO" checkout -q main
 
 add_labels() {  # add_labels <bead-id> <label>...
     local id="$1"; shift
@@ -321,20 +315,29 @@ lack "sp-reopen not reported as 3 beads (broken would read event count)" "3 sp-r
 
 # ==============================================================================
 echo
-echo "7. Closed remedy with unlanded branch → class still suppressed (db-ista)"
+echo "7. Closed remedy with in-flight branch (named after bead) → class still suppressed"
 # ==============================================================================
-# Positive control: a closed remedy whose branch tip is NOT yet on origin/main
-# must continue suppressing the class. Suppression lifts only when the fix lands.
+# Positive control: a closed remedy whose branch (naming the bead id) is NOT yet
+# on origin/main must continue suppressing the class. The in-flight check looks
+# for a git branch whose name contains the bead id — the Spira aeon convention.
 testdb_reset
 bid_u="$(plant_bead "unlanded-fix-bead")"
 bump_recur "$bid_u" unlanded-cls
 
 closed_remedy_id="$(B create "Fix sp-recur-unlanded-cls" --type task --priority 2 \
-    --labels "spira,plan,${REMEDY_LABEL},covers:sp-recur-unlanded-cls,branch:sp-fix-cls" \
+    --labels "spira,plan,${REMEDY_LABEL},covers:sp-recur-unlanded-cls" \
     --silent 2>/dev/null | tr -d '[:space:]')"
 [ -n "$closed_remedy_id" ] \
     || { bad "closed remedy bead created" "create failed"; printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
 B close "$closed_remedy_id" --reason "test: closed but not landed" --force >/dev/null 2>&1
+
+# Create a branch whose name contains the bead id (aeon convention: spira/<id>).
+git -C "$REMEDY_REPO" checkout -q -b "spira/${closed_remedy_id}" 2>/dev/null
+printf 'fix\n' >> "$REMEDY_REPO/f"
+git -C "$REMEDY_REPO" add f
+git -C "$REMEDY_REPO" commit -q -m "fix ${closed_remedy_id}"
+git -C "$REMEDY_REPO" push -q origin "spira/${closed_remedy_id}"
+git -C "$REMEDY_REPO" checkout -q main
 
 out7="$(run_census_repo "$REMEDY_REPO")"
 lack "sp-recur-unlanded-cls excluded when remedy is closed-but-unlanded" \
@@ -399,6 +402,60 @@ want "sp-recur-window-depth-cls unsuppressed when landing commit is beyond SPIRA
     "sp-recur-window-depth-cls" "$out9"
 lack "no [suppressed] when landing commit is beyond window" \
     "[suppressed]" "$out9"
+
+# ==============================================================================
+echo
+echo "10. Orphaned closed remedy (no branch) → class unsuppressed, annotated"
+# ==============================================================================
+# Positive control for sp-c3q60: a closed remedy with no branch naming the bead
+# id is orphaned — nothing will ever land. The class must appear in normal output.
+# On the unfixed tree, this fails: the class is suppressed (orphan treated as in-flight).
+testdb_reset
+bid_orphan="$(plant_bead "orphan-source-bead")"
+bump_recur "$bid_orphan" orphan-cls
+
+orphan_remedy_id="$(B create "Fix sp-recur-orphan-cls" --type task --priority 2 \
+    --labels "spira,plan,${REMEDY_LABEL},covers:sp-recur-orphan-cls" \
+    --silent 2>/dev/null | tr -d '[:space:]')"
+[ -n "$orphan_remedy_id" ] \
+    || { bad "orphan remedy bead created" "create failed"; printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
+B close "$orphan_remedy_id" --reason "test: orphaned, no branch" --force >/dev/null 2>&1
+
+# REMEDY_REPO has no branch naming $orphan_remedy_id — the bead is orphaned.
+out10="$(run_census_repo "$REMEDY_REPO")"
+want "sp-recur-orphan-cls appears in normal output (orphaned remedy not suppressed)" \
+    "sp-recur-orphan-cls" "$out10"
+want "orphaned annotation in normal output" "[orphaned remedy" "$out10"
+want "bead id in annotation" "$orphan_remedy_id" "$out10"
+lack "orphaned class not marked [suppressed: remedy closed, not landed]" \
+    "sp-recur-orphan-cls [suppressed: remedy closed" "$out10"
+
+# ==============================================================================
+echo
+echo "10b. In-flight and orphaned remedies in same run → correct split"
+# ==============================================================================
+# sp-recur-orphan-cls (from test 10): orphan_remedy_id has no branch → unsuppressed.
+# sp-recur-unlanded-cls (added here): closed_r2 has a named branch → suppressed.
+bid_u2="$(plant_bead "unlanded-verify-bead")"
+bump_recur "$bid_u2" unlanded-cls
+
+closed_r2="$(B create "Fix sp-recur-unlanded-cls-10b" --type task --priority 2 \
+    --labels "spira,plan,${REMEDY_LABEL},covers:sp-recur-unlanded-cls" \
+    --silent 2>/dev/null | tr -d '[:space:]')"
+[ -n "$closed_r2" ] \
+    || { bad "closed_r2 bead created" "create failed"; printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
+B close "$closed_r2" --reason "test: in-flight verify" --force >/dev/null 2>&1
+
+git -C "$REMEDY_REPO" checkout -q -b "spira/${closed_r2}" 2>/dev/null
+printf 'r2fix\n' >> "$REMEDY_REPO/f"
+git -C "$REMEDY_REPO" add f
+git -C "$REMEDY_REPO" commit -q -m "fix ${closed_r2}"
+git -C "$REMEDY_REPO" push -q origin "spira/${closed_r2}"
+git -C "$REMEDY_REPO" checkout -q main
+
+out10b="$(run_census_repo "$REMEDY_REPO")"
+lack "in-flight class suppressed in 10b" "sp-recur-unlanded-cls" "$out10b"
+want "orphaned class unsuppressed in 10b" "sp-recur-orphan-cls" "$out10b"
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
