@@ -65,16 +65,22 @@
 #                           recorded as "timeout" and the corpus continues. This
 #                           mirrors gate-spira.sh's per-suite watchdog so neither
 #                           runner can be held indefinitely by one runaway suite.
-#   SPIRA_BATCH_MAXPAR      max parallel suites in --mode parallel.
-#                           Default: nproc (quota-aware: honours CPUQuota of the calling
-#                           unit, not the host's physical count; this is intentional — the
-#                           suite pool runs within the unit's own allocation). CPU is the
-#                           binding resource: on a 4-core host, 37 concurrent suites drove
-#                           CPU pressure to 97% and produced fork-EAGAIN errors the gate
-#                           blamed on the branch rather than the load. The PID budget
-#                           (container pids-limit 8 192) is a ceiling, not the sizing
-#                           input — at nproc=4 the peak is far below it. Set to 0 for
-#                           unlimited (useful for small explicit selections or stress tests).
+#   SPIRA_BATCH_MAXPAR      max parallel suites in --mode parallel. When unset (the normal
+#                           case), derived from the guest's own hardware at run time:
+#                           min(nproc, floor((MemAvailable - reserve) / per_suite)).
+#                           Memory is the binding resource in the guest: each parallel suite
+#                           runs inside the batch container, and a guest that exhausts RAM
+#                           dies with no annotation. The PID budget (container pids-limit
+#                           8192) is a ceiling, not the sizing input. Set to 0 for unlimited.
+#   SPIRA_BATCH_MEM_RESERVE_MIB  MiB to hold back from the maxpar formula (default 1024).
+#   SPIRA_BATCH_MEM_PER_SUITE_MIB  per-suite memory budget in MiB (default 512; measured
+#                           cgroup peak was ~175 MiB at 8 workers on an 11 GiB guest —
+#                           512 is peak plus margin). Calibrate from the "cgroup peak" line.
+#   SPIRA_BATCH_MEM_AVAIL_MIB  override the MemAvailable reading (testing/debugging only).
+#   SPIRA_BATCH_PSI_THRESHOLD  memory PSI avg10 above which suite launches pause (default
+#                           10, 0 = disabled). This is the guard the repo variable stood in
+#                           for: it slows admission when the guest is already under pressure
+#                           rather than preventing it by capping the pool statically.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -733,6 +739,41 @@ fi
 # SPIRA_INSTANCE namespacing or declare a skip when HOME is not the real container
 # home (XDG_RUNTIME_DIR check already acts as a container guard; HOME can extend it).
 # ---------------------------------------------------------------------------
+#!maxpar-begin
+# Derive maxpar from the guest's own hardware: min(nproc, floor((avail-reserve)/per_suite)).
+# SPIRA_BATCH_MAXPAR is a ceiling: when set, the result is min(N, hardware_maxpar).
+# An operator value set for a larger box cannot exceed what this box allows.
+# Setting it to 0 disables all capping (useful for small explicit selections or stress tests).
+_mem_reserve_mib="${SPIRA_BATCH_MEM_RESERVE_MIB:-1024}"
+_mem_per_suite_mib="${SPIRA_BATCH_MEM_PER_SUITE_MIB:-512}"
+_maxpar_cpu="$(nproc)"
+_mem_avail_mib="${SPIRA_BATCH_MEM_AVAIL_MIB:-$(awk '/^MemAvailable:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0)}"
+_mem_budget=$(( _mem_avail_mib - _mem_reserve_mib ))
+[ "${_mem_budget:-0}" -lt "${_mem_per_suite_mib}" ] && _mem_budget="${_mem_per_suite_mib}"
+_mem_bound=$(( _mem_budget / _mem_per_suite_mib ))
+[ "${_mem_bound:-0}" -lt 1 ] && _mem_bound=1
+if [ "${_maxpar_cpu}" -le "${_mem_bound}" ]; then
+    _hardware_maxpar="${_maxpar_cpu}"
+    _hardware_binding="cpu"
+else
+    _hardware_maxpar="${_mem_bound}"
+    _hardware_binding="memory"
+fi
+if [ -n "${SPIRA_BATCH_MAXPAR:-}" ] && [ "${SPIRA_BATCH_MAXPAR}" = "0" ]; then
+    _maxpar=0
+    _maxpar_binding="override-unlimited"
+elif [ -n "${SPIRA_BATCH_MAXPAR:-}" ] && [ "${SPIRA_BATCH_MAXPAR}" -le "${_hardware_maxpar}" ] 2>/dev/null; then
+    _maxpar="${SPIRA_BATCH_MAXPAR}"
+    _maxpar_binding="override"
+elif [ -n "${SPIRA_BATCH_MAXPAR:-}" ]; then
+    _maxpar="${_hardware_maxpar}"
+    _maxpar_binding="${_hardware_binding}"
+else
+    _maxpar="${_hardware_maxpar}"
+    _maxpar_binding="${_hardware_binding}"
+fi
+#!maxpar-end
+
 _n_selected=0; for _s in $SELECTED; do _n_selected=$((_n_selected+1)); done
 
 # ---------------------------------------------------------------------------
@@ -802,10 +843,16 @@ _append_suite_times() {
 }
 
 if [ "$MODE" = parallel ]; then
-    _maxpar_display="${SPIRA_BATCH_MAXPAR:-$(nproc)}"
-    [ "${_maxpar_display:-0}" -gt 0 ] 2>/dev/null \
-        && log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar_display, nproc: $(nproc))" \
-        || log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: unlimited, nproc: $(nproc))"
+    if [ "${_maxpar:-0}" -gt 0 ] 2>/dev/null; then
+        case "${_maxpar_binding}" in
+            override)
+                log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar [override: SPIRA_BATCH_MAXPAR=${SPIRA_BATCH_MAXPAR:-?}; hardware was ${_hardware_binding}-bound at ${_hardware_maxpar}])" ;;
+            *)
+                log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar [${_maxpar_binding}-bound: cpu=${_maxpar_cpu} mem=${_mem_avail_mib}MiB avail ${_mem_reserve_mib}MiB reserve ${_mem_per_suite_mib}MiB/suite])" ;;
+        esac
+    else
+        log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: unlimited)"
+    fi
 else
     log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, nproc: $(nproc))"
 fi
@@ -990,12 +1037,20 @@ else
     # A suite that passes serially and fails in parallel means shared state
     # leaked between suites — a bead against the leak, never a retry.
     #
-    # MAXPAR: SPIRA_BATCH_MAXPAR caps concurrent suites. Default from nproc: the PID
-    # budget (container pids-limit) has headroom; CPU is the binding resource.
-    _maxpar="${SPIRA_BATCH_MAXPAR:-$(nproc)}"
+    # _maxpar derived above from hardware (or SPIRA_BATCH_MAXPAR override); 0 = unlimited.
     _par_tmp="$(mktemp -d)"
     _par_pids=""
     _n=0
+
+    # Returns 0 (true) when memory PSI avg10 exceeds the configured threshold.
+    _psi_above_threshold() {
+        local _t="${SPIRA_BATCH_PSI_THRESHOLD:-10}"
+        [ "${_t:-0}" -gt 0 ] 2>/dev/null || return 1
+        local _v
+        _v="$(awk '/^some/{for(i=1;i<=NF;i++) if($i~/^avg10=/){sub(/avg10=/,"",$i);print $i;exit}}' \
+            /proc/pressure/memory 2>/dev/null || echo 0)"
+        awk -v v="$_v" -v t="$_t" 'BEGIN{exit(v+0>t+0)?0:1}'
+    }
 
     for s in $SELECTED; do
         # Exclusive suites drain all in-flight parallel jobs and run alone — prevents OOM
@@ -1011,6 +1066,11 @@ else
                 break
             fi
         fi
+        # PSI guard: pause if the guest is under memory pressure.
+        while _psi_above_threshold; do
+            log "batch: memory pressure avg10 > ${SPIRA_BATCH_PSI_THRESHOLD:-10}% — pausing suite launch"
+            sleep 5
+        done
 
         _n=$((_n+1))
         _suite_instance="${INSTANCE}-${_n}"
@@ -1198,6 +1258,18 @@ else
 
     rm -rf "$_par_tmp"
     _par_tmp=""
+
+    # Log the container's cgroup peak memory so the per-suite budget is measured,
+    # not guessed, on every run. Divide by maxpar for an estimate per slot.
+    _cg_path="$(podman inspect --format '{{.State.CgroupPath}}' "$CNAME" 2>/dev/null || true)"
+    if [ -n "${_cg_path:-}" ]; then
+        _peak_bytes="$(cat "/sys/fs/cgroup/${_cg_path#/}/memory.peak" 2>/dev/null || true)"
+        if [ -n "${_peak_bytes:-}" ] && [ "${_peak_bytes}" -gt 0 ] 2>/dev/null; then
+            _peak_mib=$(( _peak_bytes / 1048576 ))
+            _per_slot_mib=$(( _maxpar > 0 ? _peak_mib / _maxpar : _peak_mib ))
+            log "batch: cgroup peak ${_peak_mib}MiB (maxpar ${_maxpar:-?}, ~${_per_slot_mib}MiB/slot; budget ${_mem_per_suite_mib:-512}MiB/suite)"
+        fi
+    fi
 
 fi
 

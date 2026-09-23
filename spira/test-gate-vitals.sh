@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# test-gate-vitals.sh — sp-ck11w: SPIRA_BATCH_MAXPAR pin and guest vitals sampler
+# test-gate-vitals.sh — gate.yml Suites env and guest vitals sampler
 #
 # WHAT THIS PROVES
-#   1. The Suites step env block pins SPIRA_BATCH_MAXPAR to 4 by default
-#      (overridable via vars.SPIRA_BATCH_MAXPAR), so a later edit cannot silently
-#      restore the nproc default that exhausted the CI guest's RAM at nproc=8.
-#   2. The vitals sampler loop body produces a line in the documented shape
+#   1. The Suites step env block does NOT set SPIRA_BATCH_MAXPAR (sp-4lakz:
+#      maxpar is now derived from the guest's own hardware inside testenv-batch.sh
+#      rather than capped by a repo variable that lagged behind the template).
+#   2. The maxpar derivation block is present in testenv-batch.sh.
+#   3. The vitals sampler loop body produces a line in the documented shape
 #      (timestamp, mem used/total, avail, pressure, container count), and a
 #      background process running it is stopped by kill — the mechanism the
 #      EXIT trap relies on.
@@ -18,10 +19,7 @@
 #   Part C: the process is confirmed alive before the kill, so a kill that never
 #     ran cannot produce a false positive.
 #
-# NOTE: 4 is a halved-guess ceiling, not a measured one. Raise it only against
-# vitals output from a completed gate run (law-measure-the-outcome).
-#
-# covers: .github/workflows/gate.yml
+# covers: .github/workflows/gate.yml spira/testenv-batch.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -36,6 +34,7 @@ grepno() { printf '%s\n' "$3" | grep -qE "$2" && bad "$1" "must not match [$2]" 
 echo "test-gate-vitals.sh"
 
 GATE_YML="$ROOT/.github/workflows/gate.yml"
+BATCH="$HERE/testenv-batch.sh"
 if [ ! -r "$GATE_YML" ]; then
     bad "gate.yml exists (prerequisite)" "not found at $GATE_YML"
     printf '\n%d passed, %d failed\n' "$pass" "$fail"; exit 1
@@ -44,10 +43,10 @@ fi
 _suites_step="$(awk '/^      - name: Suites/{f=1;next} f&&/^      - name:/{exit} f{print}' "$GATE_YML")"
 
 # ---------------------------------------------------------------------------
-# Part A: SPIRA_BATCH_MAXPAR pinned in Suites step env with numeric default
+# Part A: SPIRA_BATCH_MAXPAR removed from gate.yml; formula lives in batch
 # ---------------------------------------------------------------------------
 echo
-echo "Part A: SPIRA_BATCH_MAXPAR pin"
+echo "Part A: maxpar derived from hardware, not pinned in gate.yml"
 
 _suites_env="$(printf '%s\n' "$_suites_step" \
     | awk '/^        env:/{f=1;next} f&&/^        [a-zA-Z]/{exit} f{print}')"
@@ -62,20 +61,22 @@ ok "A0: Suites step env block located"
 want "A0-pos: SPIRA_TESTENV_REGISTRY in env block (positive control)" \
      "SPIRA_TESTENV_REGISTRY" "$_suites_env"
 
-want "A1: SPIRA_BATCH_MAXPAR is set in the Suites env" \
-     "SPIRA_BATCH_MAXPAR" "$_suites_env"
+# SPIRA_BATCH_MAXPAR must NOT be in gate.yml — maxpar is now derived inside the
+# guest from its own hardware (sp-4lakz). A repo variable that lagged behind the
+# template left the CI guest under-parallelised for days after each upgrade.
+nowant "A1: SPIRA_BATCH_MAXPAR absent from Suites env (derived in guest)" \
+       "SPIRA_BATCH_MAXPAR" "$_suites_env"
 
-_maxpar_line="$(printf '%s\n' "$_suites_env" | grep 'SPIRA_BATCH_MAXPAR' | head -1)"
+# The derivation block must exist in testenv-batch.sh.
+_block="$(sed -n '/#!maxpar-begin/,/#!maxpar-end/{/#!maxpar-/d; p}' "$BATCH" 2>/dev/null || true)"
+[ -n "$_block" ] && ok "A2: maxpar derivation block present in testenv-batch.sh" \
+                  || bad "A2: maxpar derivation block present in testenv-batch.sh" "not found"
 
-want "A2: the default is 4 (numeric fallback, not nproc)" \
-     "|| 4" "$_maxpar_line"
-
-want "A3: the override comes from vars.SPIRA_BATCH_MAXPAR" \
-     "vars.SPIRA_BATCH_MAXPAR" "$_maxpar_line"
-
-# nproc must not appear: it is the value that exhausted the guest.
-nowant "A2-pos: nproc is not the fallback (positive control)" \
-       "nproc" "$_maxpar_line"
+# The formula must reference MemAvailable so the binding resource is memory, not CPU alone.
+case "$_block" in
+    *MemAvailable*) ok "A3: formula reads MemAvailable from guest" ;;
+    *) bad "A3: formula reads MemAvailable from guest" "MemAvailable not found in block" ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Part B: vitals sampler output shape
