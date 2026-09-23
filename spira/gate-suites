@@ -108,6 +108,14 @@ spira/test-suite-state-fence.sh
 # control adds the file to the base and requires the gate to reach the suites.
 spira/test-gate-missing-cmd.sh
 
+# THE LANDING REBASE LIFECYCLE'S OWN FIXTURE INITIALIZATION. test-landing-rebase.sh (240s)
+# covers rebase_branch classification, the survivor sweep, the loop-defer guard, and checkout
+# refresh — all critical harness mechanisms. Uses server-mode testdb (+84s initialization
+# overhead), so shares a 420s timed budget with 45 other tests; when queued late, it receives
+# insufficient time and is killed by the watchdog. Running in the gate with a dedicated
+# per-suite timeout (600s) gives it the wall time its server-mode fixture requires.
+spira/test-landing-rebase.sh
+
 # NOT IN THE GATE (budget): test-watchtower, test-soak, test-owned, test-uninstall, test-ready,
 # test-install-conflicts, test-configure, test-build. test-watchtower (~263s) was moved to the
 # timed set to bring the gate under SPIRA_GATE_BUDGET (sp-6ceo); the pipeline-stall detection
