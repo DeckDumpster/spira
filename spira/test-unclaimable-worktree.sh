@@ -49,7 +49,7 @@ TMP="$(mktemp -d)"
 # container cannot reach).
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
-PROD_ROOT="$TMP/prod"
+PROD_ROOT="$TMP/spira"
 FAKE_WT="$TMP/fake-worktree"
 mkdir -p "$PROD_ROOT"
 git init -q -b main "$PROD_ROOT" 2>/dev/null || git init -q "$PROD_ROOT" 2>/dev/null
