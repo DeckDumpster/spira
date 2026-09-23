@@ -798,6 +798,37 @@ wt_file_multi
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 nowant "? batched-stranded never fires escalation" "absent from open batch" "$subjects"
 
+# BATCHED-TOO-LONG ESCALATION. SP_BATCHED_TOO_LONG > 0 fires the escalation.
+fresh
+mkdir -p "$TMP/run/landstate"
+printf "SP_BATCHED_TOO_LONG=1\nSP_BATCHED_TOO_LONG_NAMES='sp-slow'\nSP_SENT_FAILED=0\n" \
+    > "$TMP/run/cockpit.env"
+rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
+wt_file_multi
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+want "nonzero SP_BATCHED_TOO_LONG fires escalation"         "QUEUE:"   "$subjects"
+want "subject names the too-long state"                     "not resolved" "$subjects"
+
+# Zero: no escalation.
+fresh
+mkdir -p "$TMP/run/landstate"
+printf "SP_BATCHED_TOO_LONG=0\nSP_SENT_FAILED=0\n" \
+    > "$TMP/run/cockpit.env"
+rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
+wt_file_multi
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+nowant "SP_BATCHED_TOO_LONG=0 does not fire escalation" "not resolved" "$subjects"
+
+# `?` is never an escalation (law-absence-needs-a-positive-control).
+fresh
+mkdir -p "$TMP/run/landstate"
+printf "SP_BATCHED_TOO_LONG=?\nSP_SENT_FAILED=0\n" \
+    > "$TMP/run/cockpit.env"
+rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
+wt_file_multi
+subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
+nowant "? batched-too-long never fires escalation" "not resolved" "$subjects"
+
 # Stable ref: two passes with different counts produce one dedupe key.
 fresh
 mkdir -p "$TMP/run/landstate"
