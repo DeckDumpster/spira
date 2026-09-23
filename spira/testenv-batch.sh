@@ -639,37 +639,66 @@ if [ -z "$SELECTED" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# TESTDB BASELINE — warm one bd init inside the container before suites start.
-# Each suite that sources testdb.sh copies .beads from this snapshot instead of
-# running bd init (~12s per fixture). Keyed on the bd-embedded binary hash so a
-# binary upgrade invalidates the snapshot. Falls back gracefully if unavailable.
+# SHARED TESTDB BASELINE — build the fixture database once; suites derive
+# private copies via testdb_up's fast-path (cp .beads, ~26ms) instead of
+# each running bd init (~6s). Failure falls back to per-suite databases.
 # ---------------------------------------------------------------------------
-_TESTDB_BASELINE_PATH="/tmp/spira-batch-${INSTANCE}/testdb/baseline"
-_TESTDB_BASELINE_READY=0
-_TESTDB_BASELINE_KEY="-"
-_n_testdb=0
-for _ts in $SELECTED; do
-    if grep -ql 'testdb\.sh' "$SUITE_DIR/$_ts" 2>/dev/null; then
-        _n_testdb=$((_n_testdb + 1))
-    fi
-done
-if [ "$_n_testdb" -gt 0 ]; then
-    _TESTDB_BASELINE_KEY="$(podman exec --user "$_SPIRA_USER" \
-        -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" "$CNAME" \
-        bash -c 'f=$(command -v bd-embedded 2>/dev/null); [ -n "$f" ] && sha256sum "$f" | cut -d" " -f1 || echo -' \
-        2>/dev/null || echo -)"
-    log "batch: warming testdb baseline (key ${_TESTDB_BASELINE_KEY:0:12}, $_n_testdb testdb suite(s))"
-    if podman exec --user "$_SPIRA_USER" \
-           -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
-           -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
-           -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
-           "$CNAME" bash -c "mkdir -p ${_TESTDB_BASELINE_PATH} && cd ${_TESTDB_BASELINE_PATH} && BD_NON_INTERACTIVE=1 bd-embedded init --non-interactive --prefix sp --skip-agents --skip-hooks -q" \
-           >/dev/null 2>&1; then
-        _TESTDB_BASELINE_READY=1
-        log "batch: testdb baseline ready (key ${_TESTDB_BASELINE_KEY:0:12})"
+_TESTDB_SHARED_NAME=""
+_TESTDB_SHARED_DIR=""
+_TESTDB_SHARED_BASELINE=""
+_TESTDB_SHARED_BD=""
+_TESTDB_SHARED_BIN=""
+_TESTDB_SHARED_MODE=""
+_TESTDB_BATCH_SHARED=0
+
+_baseline_tmp="$(mktemp)"
+log "batch: building shared testdb baseline in $CNAME"
+if podman exec --user "$_SPIRA_USER" \
+       -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
+       -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
+       "$CNAME" bash -c \
+       '. /workspace/spira/testdb.sh && testdb_up batch_baseline && printf "TESTDB_NAME=%s\nTESTDB_DIR=%s\nTESTDB_BASELINE=%s\nTESTDB_BD=%s\nTESTDB_BIN=%s\nTESTDB_MODE=%s\n" "$TESTDB_NAME" "$TESTDB_DIR" "${TESTDB_BASELINE:-}" "$TESTDB_BD" "${TESTDB_BIN:-}" "${TESTDB_MODE:-}"' \
+       >"$_baseline_tmp" 2>&1; then
+    while IFS= read -r _bl; do
+        case "$_bl" in
+            TESTDB_NAME=*)     _TESTDB_SHARED_NAME="${_bl#TESTDB_NAME=}" ;;
+            TESTDB_DIR=*)      _TESTDB_SHARED_DIR="${_bl#TESTDB_DIR=}" ;;
+            TESTDB_BASELINE=*) _TESTDB_SHARED_BASELINE="${_bl#TESTDB_BASELINE=}" ;;
+            TESTDB_BD=*)       _TESTDB_SHARED_BD="${_bl#TESTDB_BD=}" ;;
+            TESTDB_BIN=*)      _TESTDB_SHARED_BIN="${_bl#TESTDB_BIN=}" ;;
+            TESTDB_MODE=*)     _TESTDB_SHARED_MODE="${_bl#TESTDB_MODE=}" ;;
+        esac
+    done <"$_baseline_tmp"
+    if [ -n "$_TESTDB_SHARED_NAME" ] && [ -n "$_TESTDB_SHARED_BASELINE" ]; then
+        _TESTDB_BATCH_SHARED=1
+        log "batch: shared testdb baseline ready (mode: ${_TESTDB_SHARED_MODE:-?}, name: ${_TESTDB_SHARED_NAME})"
     else
-        log "batch: testdb baseline warm failed — suites will build their own fixtures"
+        log "batch: shared testdb baseline built but vars incomplete — falling back to per-suite databases"
     fi
+else
+    log "batch: shared testdb baseline build failed — falling back to per-suite databases"
+    cat "$_baseline_tmp" >&2
+fi
+rm -f "$_baseline_tmp"
+
+# _testdb_env: per-suite testdb environment flags for podman exec.
+# Shared: suites copy the baseline (~26ms each); Private: each suite runs bd init (~6s).
+if [ "$_TESTDB_BATCH_SHARED" = 1 ]; then
+    _testdb_env=(
+        -e "TESTDB_SHARED=1"
+        -e "TESTDB_NAME=${_TESTDB_SHARED_NAME}"
+        -e "TESTDB_DIR=${_TESTDB_SHARED_DIR}"
+        -e "TESTDB_BASELINE=${_TESTDB_SHARED_BASELINE}"
+        -e "TESTDB_BD=${_TESTDB_SHARED_BD}"
+        -e "TESTDB_BIN=${_TESTDB_SHARED_BIN}"
+        -e "TESTDB_MODE=${_TESTDB_SHARED_MODE}"
+    )
+else
+    _testdb_env=(
+        -e "TESTDB_SHARED=0"
+        -e "TESTDB_NAME="
+        -e "TESTDB_DIR="
+    )
 fi
 
 # ---------------------------------------------------------------------------
@@ -693,9 +722,10 @@ fi
 #   SPIRA_INSTANCE: units are named per-instance; parallel suites cannot collide on
 #                   installed unit names.
 #   SPIRA_RUN:      each suite's temp state is isolated at a distinct path.
-#   TESTDB_NAME:    TESTDB_SHARED=0 + empty TESTDB_NAME → testdb.sh generates a
-#                   unique name per invocation; multiple parallel calls each get
-#                   their own fixture database.
+#   TESTDB_NAME:    when the shared baseline is available (TESTDB_BATCH_SHARED=1),
+#                   each suite copies .beads from TESTDB_BASELINE (~26ms); without
+#                   it, TESTDB_SHARED=0 + empty TESTDB_NAME → testdb.sh generates
+#                   a unique name and runs bd init (~6s) per suite.
 #
 # SCAR: test-install-migrate.sh and test-install-instance.sh plant legacy systemd
 # unit fixtures (spira-sentinel.service etc.) in the real systemd unit directory via
@@ -842,10 +872,7 @@ if [ "$MODE" = serial ]; then
                 -e "CARGO_HOME=${_CONTAINER_CARGO}" \
                 -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                 -e "SPIRA_IN_TESTENV=1" \
-                -e "TESTDB_SHARED=${_TESTDB_BASELINE_READY}" \
-                -e "TESTDB_NAME=$s" \
-                -e "TESTDB_BASELINE=${_TESTDB_BASELINE_PATH}" \
-                -e "TESTDB_DIR=" \
+                "${_testdb_env[@]}" \
                 -e "TMUX=" \
                 -e "SPIRA_PATH=${_shim_spira_path}" \
                 -e "SPIRA_BD_LOG=${_serial_bd_log}" \
@@ -859,10 +886,7 @@ if [ "$MODE" = serial ]; then
                 -e "CARGO_HOME=${_CONTAINER_CARGO}" \
                 -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                 -e "SPIRA_IN_TESTENV=1" \
-                -e "TESTDB_SHARED=${_TESTDB_BASELINE_READY}" \
-                -e "TESTDB_NAME=$s" \
-                -e "TESTDB_BASELINE=${_TESTDB_BASELINE_PATH}" \
-                -e "TESTDB_DIR=" \
+                "${_testdb_env[@]}" \
                 -e "TMUX=" \
                 -e "SPIRA_PATH=${_shim_spira_path}" \
                 -e "SPIRA_BD_LOG=${_serial_bd_log}" \
@@ -957,7 +981,7 @@ if [ "$MODE" = serial ]; then
 else
 
     # Parallel: suites run concurrently, each with its own HOME, SPIRA_INSTANCE,
-    # SPIRA_RUN, and testdb fixture (TESTDB_SHARED=0 + empty TESTDB_NAME).
+    # SPIRA_RUN, and private testdb copy (from the shared baseline when available).
     #
     # Each subshell writes .out and .result immediately on completion, so
     # results appear as suites finish — not after all suites complete. The
@@ -1023,10 +1047,7 @@ else
                     -e "CARGO_HOME=${_CONTAINER_CARGO}" \
                     -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                     -e "SPIRA_IN_TESTENV=1" \
-                    -e "TESTDB_SHARED=${_TESTDB_BASELINE_READY}" \
-                    -e "TESTDB_NAME=$s" \
-                    -e "TESTDB_BASELINE=${_TESTDB_BASELINE_PATH}" \
-                    -e "TESTDB_DIR=" \
+                    "${_testdb_env[@]}" \
                     -e "TMUX=" \
                     -e "SPIRA_PATH=${_shim_spira_path}" \
                     -e "SPIRA_BD_LOG=${_par_bd_log}" \
@@ -1043,10 +1064,7 @@ else
                     -e "CARGO_HOME=${_CONTAINER_CARGO}" \
                     -e "CARGO_TARGET_DIR=${_CONTAINER_CARGO_TARGET}" \
                     -e "SPIRA_IN_TESTENV=1" \
-                    -e "TESTDB_SHARED=${_TESTDB_BASELINE_READY}" \
-                    -e "TESTDB_NAME=$s" \
-                    -e "TESTDB_BASELINE=${_TESTDB_BASELINE_PATH}" \
-                    -e "TESTDB_DIR=" \
+                    "${_testdb_env[@]}" \
                     -e "TMUX=" \
                     -e "SPIRA_PATH=${_shim_spira_path}" \
                     -e "SPIRA_BD_LOG=${_par_bd_log}" \
@@ -1223,8 +1241,8 @@ log "batch: wall ${_BATCH_WALL}s"
 # ---------------------------------------------------------------------------
 # VERDICT — three distinguishable outcomes.
 # ---------------------------------------------------------------------------
-if [ "$_TESTDB_BASELINE_READY" = 1 ] && [ "$_n_testdb" -gt 0 ]; then
-    log "batch: testdb: $_n_testdb fixture(s) used baseline (~$((_n_testdb * 12))s estimated saving)"
+if [ "$_TESTDB_BATCH_SHARED" = 1 ]; then
+    log "batch: testdb: shared baseline used (mode: ${_TESTDB_SHARED_MODE:-?}, name: ${_TESTDB_SHARED_NAME})"
 fi
 
 if [ "$_batch_exec_fault" = 1 ]; then
