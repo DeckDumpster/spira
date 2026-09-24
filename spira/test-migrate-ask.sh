@@ -209,6 +209,34 @@ content here"
 send_note "Spira event <event@spira>" "Insight: the landing gate rejects branches with trailing whitespace" "$body" >/dev/null 2>&1
 is "archivist.sh note passes lint" "0" "$?"
 
+# -- lib.sh: spira_ask_rebase_loop (question, others empty) --
+subj="express lane: a label that exempts a bead from throttle: spira/sp-abc rebase loop x5 in spira"
+dflt="rebase spira/sp-abc by hand and push, or close it if the work is already landed"
+body="## Question
+$subj
+
+## Default
+$dflt
+
+sp-abc has been reopened for a rebase conflict 5 times and the loop is not converging. Conflicts in: foo.sh.
+Status: in_progress."
+send_question "Landing gate <gate@spira>" "$subj" "$dflt" "$body" >/dev/null 2>&1
+is "lib.sh spira_ask_rebase_loop (empty others) passes lint" "0" "$?"
+
+# -- lib.sh: spira_ask_rebase_loop (question, others non-empty) --
+subj="express lane: a label that exempts a bead from throttle: spira/sp-abc rebase loop x5 in spira"
+dflt="check whether spira/sp-abc is a duplicate of sp-xyz and close it if so; if the work is genuinely new, rebase by hand and push"
+body="## Question
+$subj
+
+## Default
+$dflt
+
+sp-abc has been reopened for a rebase conflict 5 times and the loop is not converging. Conflicts in: foo.sh. The conflicted files were also changed on the base by sp-xyz.
+Status: in_progress."
+send_question "Landing gate <gate@spira>" "$subj" "$dflt" "$body" >/dev/null 2>&1
+is "lib.sh spira_ask_rebase_loop (non-empty others) passes lint" "0" "$?"
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
