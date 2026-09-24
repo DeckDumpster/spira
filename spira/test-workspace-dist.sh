@@ -43,46 +43,32 @@ git init -q -b main "$WS"
 git -C "$WS" config user.email t@t
 git -C "$WS" config user.name t
 
+# No resolver/edition to maximise compatibility with the container's cargo version.
 cat > "$WS/Cargo.toml" << 'EOF'
 [workspace]
 members = ["alpha-crate", "beta-crate"]
-resolver = "2"
 EOF
 
+# Implicit binary named after the package (src/main.rs convention).
 mkdir -p "$WS/alpha-crate/src"
-cat > "$WS/alpha-crate/Cargo.toml" << 'EOF'
-[package]
-name = "alpha-crate"
-version = "0.1.0"
-edition = "2021"
-
-[[bin]]
-name = "alpha-bin"
-path = "src/main.rs"
-EOF
+printf '[package]\nname = "alpha-crate"\nversion = "0.1.0"\n' \
+    > "$WS/alpha-crate/Cargo.toml"
 printf 'fn main() {}\n' > "$WS/alpha-crate/src/main.rs"
 
 mkdir -p "$WS/beta-crate/src"
-cat > "$WS/beta-crate/Cargo.toml" << 'EOF'
-[package]
-name = "beta-crate"
-version = "0.1.0"
-edition = "2021"
-
-[[bin]]
-name = "beta-bin"
-path = "src/main.rs"
-EOF
+printf '[package]\nname = "beta-crate"\nversion = "0.1.0"\n' \
+    > "$WS/beta-crate/Cargo.toml"
 printf 'fn main() {}\n' > "$WS/beta-crate/src/main.rs"
 
 git -C "$WS" add .
 git -C "$WS" commit -qm "fixture: initial workspace"
 
 # Pre-populate target/release/ (build-tarball.sh does not run cargo).
+# Binary names match package names (implicit convention).
 mkdir -p "$WS/target/release"
-printf '#!/usr/bin/env bash\necho alpha\n' > "$WS/target/release/alpha-bin"
-printf '#!/usr/bin/env bash\necho beta\n'  > "$WS/target/release/beta-bin"
-chmod +x "$WS/target/release/alpha-bin" "$WS/target/release/beta-bin"
+printf '#!/usr/bin/env bash\necho alpha-crate\n' > "$WS/target/release/alpha-crate"
+printf '#!/usr/bin/env bash\necho beta-crate\n'  > "$WS/target/release/beta-crate"
+chmod +x "$WS/target/release/alpha-crate" "$WS/target/release/beta-crate"
 
 run_build() {
     env -i \
@@ -109,15 +95,15 @@ UNPACK1="$TMP/unpack1"; mkdir -p "$UNPACK1"
 stem="${tarball:+$(basename "${tarball%.tar.gz}")}"
 TREE1="${stem:+$UNPACK1/$stem}"
 
-if [ -x "${TREE1:-}/bin/alpha-bin" ]; then
-    ok "bin/alpha-bin ships (auto-discovered)"
+if [ -x "${TREE1:-}/bin/alpha-crate" ]; then
+    ok "bin/alpha-crate ships (auto-discovered)"
 else
-    bad "bin/alpha-bin ships (auto-discovered)" "not found; build: $build_out"
+    bad "bin/alpha-crate ships (auto-discovered)" "not found; build: $build_out"
 fi
-if [ -x "${TREE1:-}/bin/beta-bin" ]; then
-    ok "bin/beta-bin ships (auto-discovered)"
+if [ -x "${TREE1:-}/bin/beta-crate" ]; then
+    ok "bin/beta-crate ships (auto-discovered)"
 else
-    bad "bin/beta-bin ships (auto-discovered)" "not found; build: $build_out"
+    bad "bin/beta-crate ships (auto-discovered)" "not found; build: $build_out"
 fi
 
 # ============================================================================
@@ -125,29 +111,18 @@ echo
 echo "2. Adding a throwaway crate ships its binary without any flag change"
 # ============================================================================
 mkdir -p "$WS/throwaway/src"
-cat > "$WS/throwaway/Cargo.toml" << 'EOF'
-[package]
-name = "throwaway"
-version = "0.1.0"
-edition = "2021"
-
-[[bin]]
-name = "throwaway-bin"
-path = "src/main.rs"
-EOF
+printf '[package]\nname = "throwaway"\nversion = "0.1.0"\n' \
+    > "$WS/throwaway/Cargo.toml"
 printf 'fn main() {}\n' > "$WS/throwaway/src/main.rs"
 
-cat > "$WS/Cargo.toml" << 'EOF'
-[workspace]
-members = ["alpha-crate", "beta-crate", "throwaway"]
-resolver = "2"
-EOF
+printf '[workspace]\nmembers = ["alpha-crate", "beta-crate", "throwaway"]\n' \
+    > "$WS/Cargo.toml"
 
 git -C "$WS" add .
 git -C "$WS" commit -qm "fixture: add throwaway crate"
 
-printf '#!/usr/bin/env bash\necho throwaway\n' > "$WS/target/release/throwaway-bin"
-chmod +x "$WS/target/release/throwaway-bin"
+printf '#!/usr/bin/env bash\necho throwaway\n' > "$WS/target/release/throwaway"
+chmod +x "$WS/target/release/throwaway"
 
 build2_out="$(run_build build --workspace "$WS" --output "$TMP/out2" 2>&1)"
 build2_rc=$?
@@ -159,16 +134,16 @@ UNPACK2="$TMP/unpack2"; mkdir -p "$UNPACK2"
 stem2="${tarball2:+$(basename "${tarball2%.tar.gz}")}"
 TREE2="${stem2:+$UNPACK2/$stem2}"
 
-if [ -x "${TREE2:-}/bin/throwaway-bin" ]; then
-    ok "bin/throwaway-bin ships without any list edit (auto-discovery)"
+if [ -x "${TREE2:-}/bin/throwaway" ]; then
+    ok "bin/throwaway ships without any list edit (auto-discovery)"
 else
-    bad "bin/throwaway-bin ships without any list edit (auto-discovery)" \
+    bad "bin/throwaway ships without any list edit (auto-discovery)" \
         "not found; build: $build2_out"
 fi
-if [ -x "${TREE2:-}/bin/alpha-bin" ] && [ -x "${TREE2:-}/bin/beta-bin" ]; then
-    ok "existing binaries alpha-bin and beta-bin still ship"
+if [ -x "${TREE2:-}/bin/alpha-crate" ] && [ -x "${TREE2:-}/bin/beta-crate" ]; then
+    ok "existing binaries alpha-crate and beta-crate still ship"
 else
-    bad "existing binaries alpha-bin and beta-bin still ship" "one or both missing"
+    bad "existing binaries alpha-crate and beta-crate still ship" "one or both missing"
 fi
 
 # ============================================================================
@@ -176,10 +151,10 @@ echo
 echo "3. MANIFEST contains sha256 entries per binary"
 # ============================================================================
 if [ -f "${TREE2:-}/MANIFEST" ]; then
-    if grep -q "^bin/throwaway-bin " "$TREE2/MANIFEST"; then
-        ok "MANIFEST has sha256 entry for throwaway-bin"
+    if grep -q "^bin/throwaway " "$TREE2/MANIFEST"; then
+        ok "MANIFEST has sha256 entry for throwaway"
     else
-        bad "MANIFEST has sha256 entry for throwaway-bin" \
+        bad "MANIFEST has sha256 entry for throwaway" \
             "$(cat "$TREE2/MANIFEST")"
     fi
     if grep -q "^commit " "$TREE2/MANIFEST" && grep -q "^timestamp " "$TREE2/MANIFEST"; then
@@ -196,7 +171,7 @@ fi
 echo
 echo "4. POSITIVE CONTROL — missing pre-built binary is refused"
 # ============================================================================
-rm -f "$WS/target/release/throwaway-bin"
+rm -f "$WS/target/release/throwaway"
 missing_out="$(run_build build --workspace "$WS" --output "$TMP/out3" 2>&1)"
 missing_rc=$?
 if [ "$missing_rc" -ne 0 ]; then
