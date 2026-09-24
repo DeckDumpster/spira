@@ -170,7 +170,10 @@ main() {
     local repo base base_sha remote base_branch mode
     repo="$(repo_root "$name")" || { printf 'batch %s: no repo-map entry\n' "$name" >&2; return 1; }
     mode="$(repo_land "$name")"
-    [ "$mode" = "queue" ] || return 0
+    if [ "$mode" != "queue" ]; then
+        printf 'batch %s: no cut — mode is %s\n' "$name" "$mode"
+        return 0
+    fi
 
     local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
     mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
@@ -417,6 +420,9 @@ for b in d:
 
     if [ -z "${certs:-}" ]; then
         rm -f "$SPIRA_RUN/queue-stuck-$name" 2>/dev/null || true
+        printf 'batch %s: no cut — 0 certified\n' "$name"
+        printf 'QUEUE NOCUT %s repo=%s certified=0\n' "$(date +%s)" "$name" \
+            >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
         return 0
     fi
 
@@ -481,8 +487,8 @@ for b in d:
     # ? IS NOT ZERO. forge.sh runs-active prints ? when it cannot tell, and ? must never cut
     # a batch: reading a failed API call as "CI is idle" would fire this trigger on every
     # pass exactly when the forge is unreachable (law-absence-needs-a-positive-control).
+    local _active=""
     if [ -z "$triggered" ] && [ "${SPIRA_QUEUE_BATCH_IDLE_CUT:-1}" = 1 ] && [ "$count" -gt 0 ]; then
-        local _active
         _active="$("${SPIRA_FORGE:-$HERE/forge.sh}" runs-active "$repo" 2>/dev/null)" || _active="?"
         case "${_active:-?}" in
             0) triggered=1
@@ -514,7 +520,24 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
         fi
     fi
 
-    [ -n "$triggered" ] || return 0
+    if [ -z "$triggered" ]; then
+        local _age_m _wait_m _ci_status
+        _age_m=$(( age / 60 ))
+        _wait_m=$(( ${SPIRA_QUEUE_BATCH_WAIT:-1800} / 60 ))
+        _ci_status=""
+        case "${_active:-}" in
+            '')              : ;;
+            '?'|*[!0-9]*)  _ci_status="; CI unknown" ;;
+            *)               _ci_status="; CI busy (${_active} active)" ;;
+        esac
+        printf 'batch %s: no cut — %d certified, need %d; oldest %dm, cuts at %dm%s\n' \
+            "$name" "$count" "${SPIRA_QUEUE_BATCH_MAX:-8}" "$_age_m" "$_wait_m" "$_ci_status"
+        printf 'QUEUE NOCUT %s repo=%s certified=%d need=%d age_seconds=%d wait_seconds=%d\n' \
+            "$(date +%s)" "$name" "$count" "${SPIRA_QUEUE_BATCH_MAX:-8}" "$age" \
+            "${SPIRA_QUEUE_BATCH_WAIT:-1800}" \
+            >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+        return 0
+    fi
 
     # Sort: suite-transition first, then priority asc, then epoch asc.
     # queue_sort_rows (lib.sh) is the canonical implementation shared with the cockpit.
@@ -653,7 +676,13 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
         fi
     done < "$sortfile"
 
-    [ "${#members[@]}" -gt 0 ] || return 0
+    if [ "${#members[@]}" -eq 0 ]; then
+        printf 'batch %s: no cut — %d certified but all conflicted or skipped\n' "$name" "$count"
+        printf 'QUEUE NOCUT %s repo=%s certified=%d reason=all-conflicted\n' \
+            "$(date +%s)" "$name" "$count" \
+            >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+        return 0
+    fi
 
     local stamp batch_br batch_head
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -743,6 +772,11 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
         else
             if [ "${#lg_survivors[@]}" -eq 0 ]; then
                 SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+                printf 'batch %s: no cut — all %d members ejected (%s)\n' \
+                    "$name" "${#lg_ejected_arr[@]}" "${lg_suites_csv:-unknown}"
+                printf 'QUEUE NOCUT %s repo=%s reason=all-ejected ejected=%s\n' \
+                    "$(date +%s)" "$name" "${lg_ejected:--}" \
+                    >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
                 return 0
             fi
 
@@ -761,6 +795,10 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
 
             if [ "${#members[@]}" -eq 0 ]; then
                 SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+                printf 'batch %s: no cut — rebuilt batch is empty\n' "$name"
+                printf 'QUEUE NOCUT %s repo=%s reason=rebuilt-empty\n' \
+                    "$(date +%s)" "$name" \
+                    >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
                 return 0
             fi
 
