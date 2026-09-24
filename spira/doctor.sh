@@ -185,6 +185,28 @@ else
          "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."
 fi
 
+# AWS CLI v2: WARN only. Required when the runner pool spills to EC2.
+# Absent: gate runs on spilled EC2 workers cannot authenticate; runners fall back to
+# local capacity only. Present: v2 is the required major version; v1 lacks the assume-role
+# and SSO commands the runner pool uses. Neither absence nor a v1 install is fatal —
+# the loop runs; spill simply cannot activate on this install.
+if command -v aws >/dev/null 2>&1; then
+    _aws_full="$(aws --version 2>&1 | head -1)"
+    _aws_major="$(printf '%s\n' "$_aws_full" | grep -oE 'aws-cli/[0-9]+' | grep -oE '[0-9]+')"
+    if [ "${_aws_major:-0}" -ge 2 ]; then
+        OK "aws — $(command -v aws) (${_aws_full%%[[:space:]]*})"
+    else
+        WARN "aws is on PATH but appears to be v${_aws_major:-?} — runner pool EC2 spill requires v2" \
+             "Install AWS CLI v2: see install.sh PREREQUISITES for the verified-signature recipe.
+        Existing v1 install: $(command -v aws)"
+    fi
+    unset _aws_full _aws_major
+else
+    WARN "aws is not on PATH — $(spira_bin_purpose aws)" \
+         "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}.
+    Install recipe (verified-signature): see install.sh PREREQUISITES."
+fi
+
 # EVERY bd ON PATH, with its version. When more than one is present, PATH order decides
 # which one an unconfigured caller picks — and that order differs between a login shell, a
 # systemd unit and an aeon's confined environment. SPIRA_BD (set in conf.sh) is the pin that
