@@ -6,7 +6,9 @@
 home_repo = "home"
 db = "~/.local/share/spira/db"
 operator = "the operator"
+# literal-ok: the shipped example demonstrates the schema's own default label names
 ask_label = "needs-operator"
+# literal-ok: the shipped example demonstrates the schema's own default label names
 ci_label = "awaiting-ci"
 scope_label = "myproject"
 max_aeons = 4
