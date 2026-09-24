@@ -194,7 +194,19 @@ check() {
 
     local current_link="$SPIRA_RELEASES/current"
     if [ ! -L "$current_link" ]; then
-        echo "skew: no release is activated at $current_link" >&2
+        # CHECKOUT MODE: a git checkout with no activated release answers via gap — is HEAD
+        # at the base ref? This is the question the service exists to answer on a box that
+        # runs directly from a checkout rather than from an activated release tarball.
+        if [ -d "$SPIRA_REPO/.git" ] || [ -f "$SPIRA_REPO/.git" ]; then
+            local _gap_out _gap_rc
+            _gap_out="$(gap "$SPIRA_REPO" 2>&1)"; _gap_rc=$?
+            printf '%s\n' "$_gap_out"
+            if [ "$_gap_rc" = 1 ] && [ "$do_escalate" = 1 ]; then
+                escalate "v2:BEHIND=1" "BEHIND ${_gap_out}"
+            fi
+            return "$_gap_rc"
+        fi
+        echo "skew: no release is activated at $current_link — cannot determine skew" >&2
         return 3
     fi
 

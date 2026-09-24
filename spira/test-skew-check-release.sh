@@ -158,17 +158,43 @@ want   "clean-nosidecar: 'in effect' message"  "in effect"         "$clean_nosid
 nowant "clean-nosidecar: no NOT-LATEST"        "NOT-LATEST"        "$clean_nosidecar_out"
 nowant "clean-nosidecar: no MANIFEST-MISMATCH" "MANIFEST-MISMATCH" "$clean_nosidecar_out"
 
+# Plain (non-git) SPIRA_REPO for artifact-mode cannot-check cases. After the checkout-mode
+# fix, a git SPIRA_REPO with no current symlink delegates to gap rather than exiting 3;
+# artifact mode (no .git) still exits 3 — that is the "unknown verdict" path.
+NO_GIT_REPO="$TMP/no-git-repo"
+mkdir -p "$NO_GIT_REPO"
+run_skew_noart() {
+    local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    env -i PATH="$PATH" \
+        HOME="$TMP/home" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_HOME="$REPO/spira" \
+        SPIRA_REPO="$NO_GIT_REPO" \
+        SPIRA_RUN="$run_dir" \
+        SPIRA_DOLT_DATA="" \
+        SPIRA_TESTDB_DATA="" \
+        SPIRA_RELEASES="$RELEASES" \
+        "${@}" \
+        bash "$HERE/skew.sh" check 2>&1
+    return "${PIPESTATUS[0]:-$?}"
+}
+
 # ===========================================================================
 echo
 echo "CANNOT-CHECK cases — exit 3, not a silent pass:"
 # ===========================================================================
-no_releases_out="$(run_skew SPIRA_RELEASES='')"; no_releases_rc=$?
-is "no SPIRA_RELEASES: exits 3" "3" "$no_releases_rc"
-
+# conf.sh uses ':=' to fill empty SPIRA_RELEASES with a derived default, so passing ''
+# is not the same as "no releases infrastructure". Use an explicit empty directory and
+# an artifact-mode (no .git) SPIRA_REPO so the test reaches the cannot-check exit path.
 no_current_dir="$TMP/no-current-releases"
 mkdir -p "$no_current_dir"
-no_current_out="$(run_skew SPIRA_RELEASES="$no_current_dir")"; no_current_rc=$?
-is "no current symlink: exits 3" "3" "$no_current_rc"
+no_releases_out="$(run_skew_noart SPIRA_RELEASES="$no_current_dir")"; no_releases_rc=$?
+is "no SPIRA_RELEASES: exits 3" "3" "$no_releases_rc"
+
+# Alias of the above with different framing: artifact mode with no current symlink.
+# Both test the same path; kept separate so naming makes the intent clear at a glance.
+no_current_out="$(run_skew_noart SPIRA_RELEASES="$no_current_dir")"; no_current_rc=$?
+is "no current symlink (artifact mode): exits 3" "3" "$no_current_rc"
 
 no_manifest_dir="$TMP/no-manifest-releases"
 mkdir -p "$no_manifest_dir/spira-${TS2}/spira"
@@ -277,6 +303,68 @@ art_clean_out="$(run_skew_artifact \
 is     "artifact-clean: exits 0"           "0"          "$art_clean_rc"
 want   "artifact-clean: in effect message" "in effect"  "$art_clean_out"
 nowant "artifact-clean: no NOT-LATEST"     "NOT-LATEST" "$art_clean_out"
+
+# ---------------------------------------------------------------------------
+# Checkout mode: no activated release → gap check answers the skew question.
+#
+# POSITIVE CONTROL (acceptance criterion 3): inject real skew by resetting HEAD behind
+# origin/main — check must exit 1 (skew detected), distinct from exit 3 (unknown).
+# ---------------------------------------------------------------------------
+ORIGIN_CK="$TMP/origin-ck"
+CLONE_CK="$TMP/clone-ck"
+git init -q "$ORIGIN_CK"
+git -C "$ORIGIN_CK" config user.email "test@test"
+git -C "$ORIGIN_CK" config user.name "test"
+mkdir -p "$ORIGIN_CK/spira"
+printf '#!/usr/bin/env bash\n' > "$ORIGIN_CK/spira/lib.sh"
+git -C "$ORIGIN_CK" add spira/
+git -C "$ORIGIN_CK" commit -q -m "base"
+CK_BASE="$(git -C "$ORIGIN_CK" rev-parse HEAD)"
+printf '# v2\n' >> "$ORIGIN_CK/spira/lib.sh"
+git -C "$ORIGIN_CK" add spira/lib.sh
+git -C "$ORIGIN_CK" commit -q -m "advance"
+git clone -q "$ORIGIN_CK" "$CLONE_CK"
+git -C "$CLONE_CK" config user.email "test@test"
+git -C "$CLONE_CK" config user.name "test"
+git -C "$CLONE_CK" remote set-head origin --auto >/dev/null 2>&1 || true
+
+RELEASES_CK="$TMP/releases-ck"
+mkdir -p "$RELEASES_CK"   # no current symlink — checkout mode
+
+run_skew_checkout() {
+    local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    env -i PATH="$PATH" \
+        HOME="$TMP/home" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_HOME="$HERE" \
+        SPIRA_REPO="$CLONE_CK" \
+        SPIRA_RUN="$run_dir" \
+        SPIRA_DOLT_DATA="" \
+        SPIRA_TESTDB_DATA="" \
+        SPIRA_RELEASES="$RELEASES_CK" \
+        "${@}" \
+        bash "$HERE/skew.sh" check 2>&1
+    return "${PIPESTATUS[0]:-$?}"
+}
+
+# POSITIVE CONTROL: HEAD behind origin/main → skew detected, exits 1.
+git -C "$CLONE_CK" reset -q --hard "$CK_BASE"
+
+echo
+echo "checkout mode — POSITIVE CONTROL: HEAD behind origin → skew detected (exits 1):"
+ck_behind_out="$(run_skew_checkout)"; ck_behind_rc=$?
+is   "checkout-behind: exits 1"                  "1"                "$ck_behind_rc"
+want "checkout-behind: reports commits behind"   "commit(s) behind" "$ck_behind_out"
+
+# Clean case: HEAD at origin/main → exits 0.
+REMOTE_MAIN_CK="$(git -C "$CLONE_CK" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"
+git -C "$CLONE_CK" merge --ff-only -q "$REMOTE_MAIN_CK"
+
+echo
+echo "checkout mode — clean: HEAD at origin/main → exits 0:"
+ck_clean_out="$(run_skew_checkout)"; ck_clean_rc=$?
+is   "checkout-clean: exits 0"                    "0"          "$ck_clean_rc"
+want "checkout-clean: reports 0 commits behind"   "0 commits"  "$ck_clean_out"
 
 echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
