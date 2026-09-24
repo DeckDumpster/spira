@@ -351,6 +351,7 @@ echo "6. dep path — a watcher incident blocked by an open dep stays open on re
 testdb_reset; mkdir -p "$TMP/run"
 
 REF1="incident:watcher-dep-$$"
+printf 'DEBUG PID=%s REF1=%s\n' "$$" "$REF1" 1>&2
 file_watcher_incident "$REF1" "watcher dep test"
 B list --status open --limit 0 --label spira,incident --json 1>&2
 INC1="$(find_bead "$REF1")"
