@@ -158,12 +158,6 @@ if os.access(fence, os.X_OK):
 guard = os.path.join(spira_home, 'bd-close-unacked-guard.sh')
 if os.access(guard, os.X_OK):
     pre_hooks.append({'type': 'command', 'command': guard, 'timeout': 5})
-delivers_guard = os.path.join(spira_home, 'bd-delivers-label-guard.sh')
-if os.access(delivers_guard, os.X_OK):
-    pre_hooks.append({'type': 'command', 'command': delivers_guard, 'timeout': 5})
-outcome_guard = os.path.join(spira_home, 'bd-close-outcome-guard.sh')
-if os.access(outcome_guard, os.X_OK):
-    pre_hooks.append({'type': 'command', 'command': outcome_guard, 'timeout': 5})
 if pre_hooks:
     hooks['PreToolUse'] = [{'hooks': pre_hooks}]
 print(json.dumps({'hooks': hooks}))
