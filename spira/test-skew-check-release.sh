@@ -175,7 +175,13 @@ nowant "clean-nosidecar: no MANIFEST-MISMATCH" "MANIFEST-MISMATCH" "$clean_nosid
 NO_GIT_REPO="$TMP/no-git-repo"
 mkdir -p "$NO_GIT_REPO"
 run_skew_noart() {
-    local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    local run_dir releases_dir
+    run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    releases_dir="$(mktemp -d "$TMP/releases-XXXXX")"
+
+    # Copy the template to the per-run releases directory (including hidden directories like .tags)
+    (cd "$RELEASES_TEMPLATE" && cp -r . "$releases_dir/")
+
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -184,7 +190,7 @@ run_skew_noart() {
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
+        SPIRA_RELEASES="$releases_dir" \
         "${@}" \
         bash "$HERE/skew.sh" check 2>&1
     return "${PIPESTATUS[0]:-$?}"
