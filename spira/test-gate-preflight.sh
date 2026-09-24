@@ -9,9 +9,15 @@
 # code. The gate now captures git's own diagnostic and includes it, so a missing branch or
 # an unfetched base names itself rather than saying nothing.
 #
+# CASE 0 CLOSES THE HIGHEST-PRIORITY GAP IN docs/test-plan/gate-verdict.md (gap #1,
+# UC-gate-verdict-03): an unreadable SPIRA_REPO_MAP used to PASS every branch — the gate
+# saw no map, read that as "no gate command for anyone", and let the branch through a
+# trial that never ran. Nothing exercised this path before now. It runs first among the
+# fail-closed cases, per the bead's "fail-closed rows first" instruction.
+#
 # defect: sp-io5j
 # tier: T1
-# covers: spira/gate.sh
+# covers: spira/gate.sh UC-gate-verdict-03 UC-gate-verdict-04
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -64,6 +70,33 @@ echo "test-gate-preflight.sh — the gate's preflight checks fire with their evi
 out="$(rungate "$BR")"; rc=$?
 is   "a valid branch passes the gate"  0 "$rc"
 want "and says PASS"                   "VERDICT=PASS" "$out"
+
+# --------------------------------------------------------------------------------------
+# CASE 0a — AN UNREADABLE REPO-MAP (gap #1, UC-gate-verdict-03). A mistyped path, an
+# unmounted home, or a map a bad install deleted must never read as "no gate command" —
+# it must refuse to judge at all. FAIL-CLOSED, RUN FIRST.
+# --------------------------------------------------------------------------------------
+out="$(env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+    SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
+    SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$TMP/no-such-repo-map" \
+    SPIRA_GATE_LOG="$GATELOG" SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL=0 \
+    bash "$SH/gate.sh" "$BR" repo 2>&1)"; rc=$?
+is   "an unreadable repo-map exits NO_VERDICT, never PASS"    75 "$rc"
+want "and names the reason no-repo-map-file"                  "reason=no-repo-map-file" "$out"
+want "and the verdict line says NO_VERDICT"                   "VERDICT=NO_VERDICT" "$out"
+nowant "and never says PASS"                                  "VERDICT=PASS" "$out"
+
+# --------------------------------------------------------------------------------------
+# CASE 0b — A REPO ABSENT FROM THE MAP (UC-gate-verdict-03's second half). The map IS
+# readable; it simply names no entry for this repository.
+# --------------------------------------------------------------------------------------
+out="$(env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+    SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
+    SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" \
+    SPIRA_GATE_LOG="$GATELOG" SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL=0 \
+    bash "$SH/gate.sh" "$BR" no-such-repo-name 2>&1)"; rc=$?
+is   "a repo absent from the map exits NO_VERDICT"             75 "$rc"
+want "and names the reason no-repo-map"                        "reason=no-repo-map" "$out"
 
 # --------------------------------------------------------------------------------------
 # CASE 1 — AN UNRESOLVABLE BRANCH. The base is valid (origin/main) but the branch does not
