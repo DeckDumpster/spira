@@ -278,14 +278,24 @@ _suppressed_classes() {
 }
 
 # Collect classes covered by a closed remedy bead whose commit is not yet on the base.
+# Writes directly to suppressed_closed.txt (in-flight: a branch naming the bead exists)
+# and orphaned_closed.txt ("bead_id class": no branch found — nothing will ever land).
 _suppressed_closed_classes() {
-    local bead_id class rc
+    local bead_id class rc _repo
+    _repo="$(repo_root)"
     bdq list --status closed --label "$REMEDY_LABEL" --json 2>/dev/null \
         | python3 "$_TMPDIR/covers_closed.py" "$_TMPDIR/fold_map.txt" \
         | while IFS=' ' read -r bead_id class; do
             landed "$bead_id"; rc=$?
             case $rc in
-                1) printf '%s\n' "$class" ;;
+                1)
+                    if git -C "$_repo" branch -a --list "*${bead_id}*" 2>/dev/null \
+                           | grep -q .; then
+                        printf '%s\n' "$class" >> "$_TMPDIR/suppressed_closed.txt"
+                    else
+                        printf '%s %s\n' "$bead_id" "$class" >> "$_TMPDIR/orphaned_closed.txt"
+                    fi
+                    ;;
                 2) printf 'census.sh: remedy %s: land status unknown, not suppressing %s\n' \
                        "$bead_id" "$class" >&2 ;;
             esac
@@ -294,7 +304,13 @@ _suppressed_closed_classes() {
 
 # Build suppressed sets as newline-delimited files for grep -xF membership tests.
 _suppressed_classes > "$_TMPDIR/suppressed.txt"
-_suppressed_closed_classes > "$_TMPDIR/suppressed_closed.txt"
+: > "$_TMPDIR/suppressed_closed.txt"
+: > "$_TMPDIR/orphaned_closed.txt"
+_suppressed_closed_classes
+# Build class→"id[,id]" lookup for orphan annotations in the ranking loop below.
+[ -s "$_TMPDIR/orphaned_closed.txt" ] \
+    && awk '{ids[$2]=(ids[$2]?ids[$2]",":"")$1} END{for(c in ids)print c,ids[c]}' \
+       "$_TMPDIR/orphaned_closed.txt" > "$_TMPDIR/orphaned_annots.txt"
 
 # Emit the ranked census, suppressing (or annotating) remedy-covered classes.
 # IFS=' ' with read -r splits "N class (M all-time)" into: count, class, rest.
@@ -307,6 +323,15 @@ while IFS=' ' read -r count class rest; do
         [ "$WITH_SUPPRESSED" -eq 1 ] && printf '%s %s%s [suppressed: remedy closed, not landed]\n' \
             "$count" "$class" "${rest:+ $rest}"
     else
-        printf '%s %s%s\n' "$count" "$class" "${rest:+ $rest}"
+        _orphan=""
+        [ -f "$_TMPDIR/orphaned_annots.txt" ] \
+            && _orphan="$(awk -v c="$class" '$1==c{print $2;exit}' \
+                          "$_TMPDIR/orphaned_annots.txt" 2>/dev/null || true)"
+        if [ -n "$_orphan" ]; then
+            printf '%s %s%s [orphaned remedy %s: closed, nothing in flight]\n' \
+                "$count" "$class" "${rest:+ $rest}" "$_orphan"
+        else
+            printf '%s %s%s\n' "$count" "$class" "${rest:+ $rest}"
+        fi
     fi
 done <<< "$_RANKED"
