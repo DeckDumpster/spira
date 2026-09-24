@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
 #
-# doctor.sh — can this harness run on this box, and if not, exactly what is missing.
+# doctor.sh — is the running harness healthy, right now.
 #
-#   doctor.sh          check everything, name every fault, exit 1 if any is fatal
-#   doctor.sh --paths  print the resolved configuration and stop
+#   doctor.sh    check every runtime vital sign, name every fault, exit 1 if any is fatal
 #
-# WHY IT EXISTS. A harness that dies with `bd: command not found` from a systemd timer has
-# told the operator nothing: not which program, not what it is for, not where to get it, and
-# not into a log anyone reads. Every fault here is named, in one pass, with what to do about
-# it — because the alternative is discovering them one restart at a time.
+# RUNTIME HEALTH ONLY. This is not a preflight for a box that has never been installed, and
+# it is not a build check. A missing build input fails the build (make and the dependency
+# manifest in conf.sh own that); a release that should not activate is refused by
+# pre-activate.sh before the symlink flips. What is left for a box that is already running is
+# four read-only, fast questions, each its own function so watchtower can call them directly:
 #
-# FATAL versus WARN is the difference between "the loop cannot run" and "one feature is off".
-# A missing `cargo` is a warning: the loop runs fine without the attention panel. A missing
-# `bd` is fatal, because beads is the substrate.
+#   doctor_check_store           — is the store listener reachable
+#   doctor_check_events_probe    — does a write/read round trip on the events substrate
+#   doctor_check_failed_units    — are any spira-* systemd units in the failed state
+#   doctor_check_snapshot_fresh  — is the cockpit collector still writing
 #
-# ONE WRITE. The events substrate probe (in the "events substrate" section below) writes a
-# single sentinel event to the store and reads it back. That one write cannot collide with
-# production state: the sentinel id is reserved and matches no real bead. Every other check
-# here is read-only.
+# ONE WRITE. The events substrate probe writes a single sentinel event to the store and reads
+# it back. That one write cannot collide with production state: the sentinel id is reserved
+# and matches no real bead. Every other check here is read-only.
 set -uo pipefail
-# Tell conf.sh not to exit on schema mismatch so the "bd schema" section below can
-# report it cleanly. Without this, conf.sh exits before doctor.sh prints any FAIL line.
+# Tell conf.sh not to exit on a schema mismatch — doctor must survive to report the store
+# section even when the schema is the fault, not die on the way in.
 SPIRA_DOCTOR=1
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh"
 
@@ -31,407 +31,127 @@ OK()   { printf '  ok    %s\n' "$1"; }
 
 CONF="${SPIRA_CONF_FILE:-}"
 
-if [ "${1:-}" = "--paths" ]; then
-    printf 'config file   %s\n' "${CONF:-<none — every value is a default>}"
-    for k in SPIRA_HOME SPIRA_REPO $SPIRA_CONF_KEYS; do
-        printf '%-18s %s\n' "$k" "${!k:-}"
-    done
-    printf '%-18s %s\n' PATH "$PATH"
-    exit 0
-fi
-
-echo "spira doctor"
-echo
-echo "configuration"
-if [ -n "$CONF" ]; then OK "reading $CONF"
-else WARN "no spira.conf found — every value is a default" \
-          "looked in $SPIRA_REPO/spira.conf, \${XDG_CONFIG_HOME:-\$HOME/.config}/spira/, /etc/spira/"
-fi
-OK "harness at $SPIRA_HOME (in $SPIRA_REPO)"
-
-echo
-echo "programs"
-# ADDING A NAME TO EITHER `for b in` LOOP BELOW IS A CHANGE TO THE CONTAINER IMAGE.
-# spira/testenv/doctor-check.sh PARSES these two lines out of this file and fails the image
-# build for any program that is neither installed in the image nor listed in
-# spira/testenv/doctor-waivers with a reason. That is deliberate — it stops the image and the
-# harness drifting apart — but nothing here said so, and adding `jq` and `zstd` to the WARN
-# loop broke the image build, which took testenv-batch.sh down with it and left every suite
-# running on the host. Add the program to the Containerfile, or waive it with a reason.
-# FATAL: the loop cannot run without these. `flock` is one of them because the landing gate
-# serialises on the tree it extracts a branch into, and a gate that cannot take that lock
-# refuses rather than judging — so every branch would fail its gate and every finished bead
-# would be reopened.
-for b in bd git python3 flock; do
-    if command -v "$b" >/dev/null 2>&1; then OK "$b — $(command -v "$b")"
-    else FAIL "$b is not on PATH — $(spira_bin_purpose "$b")" \
-              "PATH is $PATH. If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."; fi
-done
-# dolt: WARN only. The round-trip probe in "events substrate" below verifies the write path;
-# this line names the binary so the probe failure message is not the first mention of dolt.
-if command -v dolt >/dev/null 2>&1; then
-    OK "dolt — $(command -v dolt)"
-else
-    WARN "dolt is not on PATH — $(spira_bin_purpose dolt)" \
-         "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."
-fi
-
-# WARN: each disables one feature, named, rather than the loop.
-# SPIRA_AGENT is used here rather than a literal: an operator who sets it to a different
-# binary name gets a useful message about that binary, not about a product they did not install.
-# jq and zstd each have a working fallback (python3 for JSON, gzip for archives), so their
-# absence is a warning about a slower or less convenient path, never about a broken one.
-# They are checked here because they are DECLARED — test-bin-manifest.sh fails if anything
-# in SPIRA_BINS is examined by nothing, which is how bd-embedded went a week unnoticed.
-for b in gh "${SPIRA_AGENT:-claude}" tmux node jq zstd; do
-    if command -v "$b" >/dev/null 2>&1; then OK "$b — $(command -v "$b")"
-    else WARN "$b is not on PATH — $(spira_bin_purpose "$b")" \
-              "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."; fi
-done
-
-# AGENT LAUNCH GRAMMAR. --system-prompt-snapshot requires an explicit on|off value; the
-# bare flag swallows the next argument as its value and the CLI refuses with "invalid choice".
-# This check runs the real binary with the exact flag so a CLI upgrade that drops or changes
-# the flag is caught here rather than in the aeon ledger.
-_dr_agent="${SPIRA_AGENT:-claude}"
-if command -v "$_dr_agent" >/dev/null 2>&1; then
-    if ! timeout 5 "$_dr_agent" --version >/dev/null 2>&1; then
-        WARN "$_dr_agent is on PATH but --version fails — cannot verify launch-grammar flag" \
-             "Run: $_dr_agent --version"
-    elif timeout 5 "$_dr_agent" --system-prompt-snapshot on --version >/dev/null 2>&1; then
-        OK "$_dr_agent accepts --system-prompt-snapshot on"
-    else
-        FAIL "$_dr_agent rejects --system-prompt-snapshot on — every aeon and archivist summon will exit within seconds" \
-             "Run: $_dr_agent --system-prompt-snapshot on --version
-        If this flag has been renamed or removed, update aeon.sh (lines that pass --system-prompt-snapshot) and archivist.sh."
-    fi
-fi
-unset _dr_agent
-
-# OPERATOR TOOLS. inotifywait, the configured mail client (COCKPIT_MAIL), hunk, and go
-# are needed on an operated instance. SPIRA_OPERATED=0 in spira.conf downgrades these
-# to WARN for a headless box where no operator is reading the cockpit.
-_dr_op_level=FAIL; [ "${SPIRA_OPERATED:-1}" = 0 ] && _dr_op_level=WARN
-
-if command -v inotifywait >/dev/null 2>&1; then OK "inotifywait — $(command -v inotifywait)"
-else WARN "inotifywait is not on PATH — spira-mail-deliver not installed; mail delivery is off" \
-          "Install inotify-tools and re-run install.sh to enable it: apt install inotify-tools"; fi
-
-# aerc is the default COCKPIT_MAIL — the check uses the configured client, not the literal name.
-_dr_mail_bin="${COCKPIT_MAIL:-}"
-if [ -n "$_dr_mail_bin" ]; then
-    if command -v "$_dr_mail_bin" >/dev/null 2>&1; then OK "$_dr_mail_bin (COCKPIT_MAIL) — $(command -v "$_dr_mail_bin")"
-    else "$_dr_op_level" "$_dr_mail_bin (COCKPIT_MAIL) is not on PATH — the cockpit mail pane is dead; escalations have no delivery path" \
-                         "Install $COCKPIT_MAIL, or set COCKPIT_MAIL in ${CONF:-spira.conf} to a mail client that is present."; fi
-fi
-unset _dr_mail_bin
-
-case " ${COCKPIT_SESSIONS:-} " in
-    *" hunk "*)
-        if command -v hunk >/dev/null 2>&1; then OK "hunk — $(command -v hunk)"
-        else "$_dr_op_level" "hunk is not on PATH — the cockpit review pane is unavailable; rebuild.sh creates a hunk session with no program behind it" \
-                             "Install: npm install -g --prefix ~/.local hunkdiff (bin lands at ~/.local/bin/hunk; ensure ~/.local/bin is in SPIRA_PATH in ${CONF:-spira.conf})"; fi ;;
-esac
-
-_dr_go_found=""
-for _c in "${GO:-}" "$HOME/.local/go/bin/go" "$(command -v go 2>/dev/null || true)"; do
-    [ -n "$_c" ] && [ -x "$_c" ] && { _dr_go_found="$_c"; break; }
-done
-if [ -n "$_dr_go_found" ]; then OK "go — $_dr_go_found"
-else
-    _dr_go_bd_ok=0
-    _dr_go_bd_ver="$(timeout 5 "$SPIRA_BD" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    [ "${_dr_go_bd_ver:-}" = "${SPIRA_BD_TAG#v}" ] && _dr_go_bd_ok=1
-    _dr_go_arch="$(uname -m)"
-    _dr_go_prebuilt=0
-    case "$_dr_go_arch" in x86_64|aarch64) _dr_go_prebuilt=1 ;; esac
-    if [ "$_dr_go_bd_ok" -eq 0 ] && [ "$_dr_go_prebuilt" -eq 0 ]; then
-        "$_dr_op_level" "go is not on PATH — $(spira_bin_purpose go)" \
-                        "bd is mismatched ($SPIRA_BD_TAG required) and no prebuilt exists for $_dr_go_arch. Install Go: https://go.dev/dl/ or $HOME/.local/go/bin/go"
-    else
-        printf '  ok    go absent — bd %s; prebuilt %s for %s\n' \
-            "$( [ "$_dr_go_bd_ok"    -eq 1 ] && echo "current"     || echo "mismatched" )" \
-            "$( [ "$_dr_go_prebuilt" -eq 1 ] && echo "available"   || echo "unavailable" )" \
-            "$_dr_go_arch"
-    fi
-    unset _dr_go_bd_ok _dr_go_bd_ver _dr_go_arch _dr_go_prebuilt
-fi
-unset _dr_go_found _c _dr_op_level
-
-# CARGO VERSION CHECK. cargo absent is a WARN — the loop runs fine without the panel.
-# cargo present but below 1.78.0 is a FAIL: loom/Cargo.lock is version 4, which only
-# parses on rustc >= 1.78.0. A stale toolchain fails silently in build.sh with "lock file
-# version 4 requires -Znext-lockfile-bump" and leaves the panel unbuildable with no
-# indication that the toolchain is the fault (sp-tst3). Presence alone is not enough.
-if command -v cargo >/dev/null 2>&1; then
-    _cargo_ver="$(cargo --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-    _cargo_major="$(printf '%s\n' "${_cargo_ver:-0.0.0}" | cut -d. -f1)"
-    _cargo_minor="$(printf '%s\n' "${_cargo_ver:-0.0.0}" | cut -d. -f2)"
-    if [ -z "$_cargo_ver" ]; then
-        FAIL "cargo is on PATH but its version could not be determined" \
-             "Run 'cargo --version' to inspect it."
-    elif [ "$_cargo_major" -gt 1 ] \
-      || { [ "$_cargo_major" -eq 1 ] && [ "$_cargo_minor" -ge 78 ]; }; then
-        OK "cargo — $(command -v cargo) ($_cargo_ver)"
-    else
-        FAIL "cargo $_cargo_ver is below the required minimum 1.78.0" \
-             "loom/Cargo.lock is version 4, which requires rustc >= 1.78.0. A build with
-        this toolchain fails immediately: 'lock file version 4 requires -Znext-lockfile-bump'.
-        Update the Rust toolchain: rustup update, or install via https://rustup.rs/"
-    fi
-    unset _cargo_ver _cargo_major _cargo_minor
-else
-    WARN "cargo is not on PATH — $(spira_bin_purpose cargo)" \
-         "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}."
-fi
-
-# AWS CLI v2: WARN only. Required when the runner pool spills to EC2.
-# Absent: gate runs on spilled EC2 workers cannot authenticate; runners fall back to
-# local capacity only. Present: v2 is the required major version; v1 lacks the assume-role
-# and SSO commands the runner pool uses. Neither absence nor a v1 install is fatal —
-# the loop runs; spill simply cannot activate on this install.
-if command -v aws >/dev/null 2>&1; then
-    _aws_full="$(aws --version 2>&1 | head -1)"
-    _aws_major="$(printf '%s\n' "$_aws_full" | grep -oE 'aws-cli/[0-9]+' | grep -oE '[0-9]+')"
-    if [ "${_aws_major:-0}" -ge 2 ]; then
-        OK "aws — $(command -v aws) (${_aws_full%%[[:space:]]*})"
-    else
-        WARN "aws is on PATH but appears to be v${_aws_major:-?} — runner pool EC2 spill requires v2" \
-             "Install AWS CLI v2: see install.sh PREREQUISITES for the verified-signature recipe.
-        Existing v1 install: $(command -v aws)"
-    fi
-    unset _aws_full _aws_major
-else
-    WARN "aws is not on PATH — $(spira_bin_purpose aws)" \
-         "If it is installed elsewhere, set SPIRA_PATH in ${CONF:-spira.conf}.
-    Install recipe (verified-signature): see install.sh PREREQUISITES."
-fi
-
-# EVERY bd ON PATH, with its version. When more than one is present, PATH order decides
-# which one an unconfigured caller picks — and that order differs between a login shell, a
-# systemd unit and an aeon's confined environment. SPIRA_BD (set in conf.sh) is the pin that
-# makes them agree; the configured binary is labelled here so a mismatch in "bd schema" below
-# immediately names the offender (sp-s2zvn, scar from 2026-09-08).
 # --------------------------------------------------------------------------------------
-# DEVELOPMENT DEPENDENCIES — what it takes to TEST Spira, not to run it.
+# STORE LISTENER. Two questions: can bd reach $SPIRA_DB, and is whatever it depends on
+# (a managed dolt-beads.service, or an independently-managed server) actually answering.
+# "Managed independently" is a claim to check, not to assume — an unmanaged server that
+# stopped answering fails exactly like a managed one that stopped.
 #
-# Reported in their own section and never counted as faults, because a production box is
-# correct without any of them. `--dev` promotes a missing one to a warning; that is the mode
-# for a box where suites are expected to run.
-#
-# THE EXCEPTION IS A SILENT DOWNGRADE. A program whose absence changes behaviour rather than
-# stopping it gets its consequence printed in EVERY mode, including on a production box —
-# because "tests quietly run on a different and much worse engine" is not a fact an operator
-# can be expected to infer from a line that says a binary is missing. That is precisely how
-# bd-embedded went missing here for a week while every check reported healthy.
+# SPIRA_DOCTOR_INSTALLING softens the two not-yet-created cases to WARN: install.sh runs
+# doctor.sh at phase 0, before the store exists (phase 3) and before the server unit is
+# started (phase 4).
 # --------------------------------------------------------------------------------------
-_dr_dev_mode=0
-[ "${1:-}" = "--dev" ] && _dr_dev_mode=1
-echo
-echo "development dependencies (not needed to run the loop)"
-for b in $SPIRA_BINS; do
-    [ "$(spira_bin_tier "$b")" = dev ] || continue
-    _dr_found="$(command -v "$b" 2>/dev/null || true)"
-    if [ -n "$_dr_found" ]; then
-        OK "$b — $_dr_found"
-        continue
-    fi
-    _dr_absent="$(spira_bin_absent "$b")"
-    if [ "$_dr_dev_mode" = 1 ]; then
-        WARN "$b is not on PATH — $(spira_bin_purpose "$b")" "${_dr_absent:-}"
-    elif [ -n "$_dr_absent" ]; then
-        # Not a fault on this box, but its absence is doing something, so say what.
-        WARN "$b is not on PATH — $(spira_bin_purpose "$b")" "$_dr_absent"
-    else
-        printf '  info  %s is not on PATH — %s\n' "$b" "$(spira_bin_purpose "$b")"
-    fi
-done
-unset _dr_absent
-
-# A STRAY .beads ABOVE THE TEMP DIRECTORY DISABLES EMBEDDED FIXTURES SILENTLY.
-# bd walks UP from the working directory looking for a workspace. Every fixture builder —
-# testdb.sh's embedded probe, and build-bd.sh's own verification — works inside `mktemp -d`,
-# which lives under TMPDIR. One abandoned `.beads` there (a `bd init` that once ran with
-# cwd=/tmp) makes every one of them refuse with "legacy Dolt workspace detected".
-#
-# The consequence is not a visible failure. testdb.sh reads the refusal as "this box has no
-# embedded engine" and falls back to the shared Dolt server; build-bd.sh reads it as a bad
-# binary and declines to install a good one. Both are correct responses to a wrong answer.
-# An empty directory nobody could see cost a week of test failures that read as code defects.
-_dr_tmp="${TMPDIR:-/tmp}"
-_dr_stray=""
-_dr_d="$_dr_tmp"
-while [ -n "$_dr_d" ] && [ "$_dr_d" != / ]; do
-    [ -e "$_dr_d/.beads" ] && _dr_stray="$_dr_d/.beads"
-    _dr_d="$(dirname "$_dr_d")"
-done
-[ -e "/.beads" ] && _dr_stray="/.beads"
-if [ -n "$_dr_stray" ]; then
-    WARN "a beads workspace sits above the temp directory: $_dr_stray" \
-         "bd searches parent directories, so every fixture built in $_dr_tmp refuses with \"legacy Dolt workspace detected\". Embedded fixtures silently fall back to a shared Dolt server and build-bd.sh refuses to install a good binary. Remove it if nothing owns it."
-else
-    OK "no stray beads workspace above $_dr_tmp"
-fi
-unset _dr_tmp _dr_stray _dr_d
-
-echo
-echo "bd binaries on PATH"
-_spira_dr_bd_count=0
-_spira_dr_bd_first=""
-IFS=: read -ra _spira_dr_path_dirs <<< "$PATH"
-for _spira_dr_bd_dir in "${_spira_dr_path_dirs[@]}"; do
-    [ -x "${_spira_dr_bd_dir}/bd" ] || continue
-    _spira_dr_bd_count=$((_spira_dr_bd_count + 1))
-    _spira_dr_bd_full="${_spira_dr_bd_dir}/bd"
-    _spira_dr_bd_ver="$(timeout 5 "$_spira_dr_bd_full" version 2>/dev/null | head -1 || printf '?')"
-    [ "$_spira_dr_bd_count" -eq 1 ] && _spira_dr_bd_first="$_spira_dr_bd_full"
-    if [ "$_spira_dr_bd_full" = "${SPIRA_BD:-}" ]; then
-        OK "$_spira_dr_bd_full — $_spira_dr_bd_ver  ← SPIRA_BD (configured)"
-    else
-        OK "$_spira_dr_bd_full — $_spira_dr_bd_ver"
-    fi
-done
-if [ "$_spira_dr_bd_count" -eq 0 ]; then
-    FAIL "no bd on PATH" "PATH is $PATH"
-elif [ "$_spira_dr_bd_count" -gt 1 ] && \
-     [ -n "${SPIRA_BD:-}" ] && [ "${SPIRA_BD:-}" != "$_spira_dr_bd_first" ]; then
-    WARN "SPIRA_BD is not the first bd on PATH" \
-         "An unconfigured tool would pick $_spira_dr_bd_first instead of $SPIRA_BD.
-    PATH order is determined by SPIRA_PATH in ${CONF:-spira.conf}."
-elif [ "$_spira_dr_bd_count" -gt 1 ] && [ -z "${SPIRA_BD:-}" ]; then
-    WARN "$_spira_dr_bd_count bd binaries on PATH and SPIRA_BD is not set" \
-         "Set SPIRA_BD in ${CONF:-spira.conf} to pin the binary explicitly."
-fi
-unset _spira_dr_bd_count _spira_dr_bd_first _spira_dr_path_dirs _spira_dr_bd_dir \
-      _spira_dr_bd_full _spira_dr_bd_ver
-
-echo
-echo "the database"
-if [ -d "$SPIRA_DB/.beads" ]; then
-    OK "$SPIRA_DB has a .beads"
-    # A DATABASE THAT ANSWERS IS NOT THE SAME AS ONE THAT IS THERE. `bd` takes its database
-    # from the path it is pointed at, so a wrong or moved path does not error — it silently
-    # answers from some other store.
-    if out="$(timeout 60 bd -C "$SPIRA_DB" list --limit 1 --json 2>&1)"; then
-        OK "bd can read it"
-    else
-        FAIL "bd cannot read $SPIRA_DB" "$(printf '%s' "$out" | head -2)
+doctor_check_store() {
+    if [ -d "$SPIRA_DB/.beads" ]; then
+        OK "$SPIRA_DB has a .beads"
+        # A DATABASE THAT ANSWERS IS NOT THE SAME AS ONE THAT IS THERE. `bd` takes its
+        # database from the path it is pointed at, so a wrong or moved path does not
+        # error — it silently answers from some other store.
+        local out
+        if out="$(timeout 60 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --limit 1 --json 2>&1)"; then
+            OK "bd can read it"
+        else
+            FAIL "bd cannot read $SPIRA_DB" "$(printf '%s' "$out" | head -2)
         A Dolt server may be down. Try: bd -C $SPIRA_DB dolt start"
-    fi
-    # EMBEDDED-MODE STORE. An embedded store holds one connection at a time; every bd call
-    # waits in a line. Under this harness's concurrency, reads have taken minutes.
-    _dr_meta="$SPIRA_DB/.beads/metadata.json"
-    if [ -f "$_dr_meta" ]; then
-        _dr_dolt_mode="$(python3 -c '
+        fi
+        # EMBEDDED-MODE STORE. An embedded store holds one connection at a time; every bd
+        # call waits in a line. Under this harness's concurrency, reads have taken minutes.
+        local meta="$SPIRA_DB/.beads/metadata.json" mode
+        if [ -f "$meta" ]; then
+            mode="$(python3 -c '
 import json,sys
 try: print(json.load(open(sys.argv[1])).get("dolt_mode",""))
 except Exception: print("")
-' "$_dr_meta" 2>/dev/null || true)"
-        if [ "${_dr_dolt_mode:-}" = embedded ]; then
-            FAIL "store is in embedded mode — one client at a time, every bd call serialises on one lock" \
-                 "Set SPIRA_DOLT_DATA in ${CONF:-spira.conf} and re-run install.sh to migrate to server mode."
-        else
-            OK "store mode: ${_dr_dolt_mode:-unknown}"
+' "$meta" 2>/dev/null || true)"
+            if [ "${mode:-}" = embedded ]; then
+                FAIL "store is in embedded mode — one client at a time, every bd call serialises on one lock" \
+                     "Set SPIRA_DOLT_DATA in ${CONF:-spira.conf} and re-run install.sh to migrate to server mode."
+            else
+                OK "store mode: ${mode:-unknown}"
+            fi
         fi
-        unset _dr_dolt_mode
-    fi
-    unset _dr_meta
-else
-    if [ -n "${SPIRA_DOCTOR_INSTALLING:-}" ]; then
+    elif [ -n "${SPIRA_DOCTOR_INSTALLING:-}" ]; then
         WARN "$SPIRA_DB has no .beads yet — install.sh will create it in phase 3" \
              "Set SPIRA_DB in ${CONF:-spira.conf} if this path is wrong."
     else
         FAIL "$SPIRA_DB has no .beads — the harness refuses to guess a database" \
              "Set SPIRA_DB in ${CONF:-spira.conf} and run install.sh to create it."
     fi
-fi
-case "$SPIRA_DB" in
-    "$SPIRA_REPO"/*|"$SPIRA_REPO")
-        WARN "the database is inside the harness checkout" \
-             "It accumulates internal notes and agent memories and must never be committed.
-        Move it out, or make certain it is gitignored (law-beads-is-never-public)." ;;
-esac
 
-echo
-echo "the dolt server"
-# SPIRA_DOLT_DATA is either set (this installation manages the Dolt server) or empty
-# (the operator runs it another way). When set, verify the service is active. When
-# empty and metadata names a port, verify a server is answering — "managed
-# independently" is a claim to check, not a pass.
-if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
-    if [ -d "$SPIRA_DOLT_DATA" ]; then
-        OK "dolt data directory at $SPIRA_DOLT_DATA"
-    elif [ -n "${SPIRA_DOCTOR_INSTALLING:-}" ]; then
-        WARN "SPIRA_DOLT_DATA is set but $SPIRA_DOLT_DATA does not exist — install.sh will create it in phase 3" \
-             "Set SPIRA_DOLT_DATA in ${CONF:-spira.conf} if this path is wrong."
-    else
-        FAIL "SPIRA_DOLT_DATA is set but $SPIRA_DOLT_DATA does not exist" \
-             "Create it, or point SPIRA_DOLT_DATA at the directory dolt sql-server uses."
-    fi
-    if [ -f "$SPIRA_DOLT_DATA/dolt-server.yaml" ]; then
-        OK "dolt-server.yaml at $SPIRA_DOLT_DATA/dolt-server.yaml"
-    else
-        WARN "no dolt-server.yaml at $SPIRA_DOLT_DATA/dolt-server.yaml" \
-             "The dolt-beads.service ExecStart expects this file. Without it the server
+    if [ -n "${SPIRA_DOLT_DATA:-}" ]; then
+        if [ -d "$SPIRA_DOLT_DATA" ]; then
+            OK "dolt data directory at $SPIRA_DOLT_DATA"
+        elif [ -n "${SPIRA_DOCTOR_INSTALLING:-}" ]; then
+            WARN "SPIRA_DOLT_DATA is set but $SPIRA_DOLT_DATA does not exist — install.sh will create it in phase 3" \
+                 "Set SPIRA_DOLT_DATA in ${CONF:-spira.conf} if this path is wrong."
+        else
+            FAIL "SPIRA_DOLT_DATA is set but $SPIRA_DOLT_DATA does not exist" \
+                 "Create it, or point SPIRA_DOLT_DATA at the directory dolt sql-server uses."
+        fi
+        if [ -f "$SPIRA_DOLT_DATA/dolt-server.yaml" ]; then
+            OK "dolt-server.yaml at $SPIRA_DOLT_DATA/dolt-server.yaml"
+        else
+            WARN "no dolt-server.yaml at $SPIRA_DOLT_DATA/dolt-server.yaml" \
+                 "The dolt-beads.service ExecStart expects this file. Without it the server
         cannot start. See the README for the minimal config."
-    fi
-    if systemctl --user is-active --quiet dolt-beads.service 2>/dev/null; then
-        OK "dolt-beads.service is active"
-    elif [ -n "${SPIRA_DOCTOR_INSTALLING:-}" ]; then
-        WARN "dolt-beads.service is not active — install.sh will install and start it in phase 4" \
-             "phase 4 (systemd/install.sh) enables and starts dolt-beads.service."
-    else
-        FAIL "dolt-beads.service is not active" \
-             "The database is unreachable without the server. Start it:
+        fi
+        if systemctl --user is-active --quiet dolt-beads.service 2>/dev/null; then
+            OK "dolt-beads.service is active"
+        elif [ -n "${SPIRA_DOCTOR_INSTALLING:-}" ]; then
+            WARN "dolt-beads.service is not active — install.sh will install and start it in phase 4" \
+                 "phase 4 (systemd/install.sh) enables and starts dolt-beads.service."
+        else
+            FAIL "dolt-beads.service is not active" \
+                 "The database is unreachable without the server. Start it:
         systemctl --user start dolt-beads.service
         Or run install.sh to enable and start it."
-    fi
-else
-    _dr_meta_srv="$SPIRA_DB/.beads/metadata.json"
-    if [ -f "$_dr_meta_srv" ]; then
-        _dr_srv_host="$(python3 -c '
+        fi
+    else
+        local meta_srv="$SPIRA_DB/.beads/metadata.json" host port
+        if [ -f "$meta_srv" ]; then
+            host="$(python3 -c '
 import json,sys
 try: print(json.load(open(sys.argv[1])).get("dolt_server_host","127.0.0.1"))
 except Exception: print("127.0.0.1")
-' "$_dr_meta_srv" 2>/dev/null || echo "127.0.0.1")"
-        _dr_srv_port="$(python3 -c '
+' "$meta_srv" 2>/dev/null || echo "127.0.0.1")"
+            port="$(python3 -c '
 import json,sys
 try:
     v=json.load(open(sys.argv[1])).get("dolt_server_port",""); print(v)
 except Exception: print("")
-' "$_dr_meta_srv" 2>/dev/null || true)"
-        if [ -n "$_dr_srv_port" ]; then
-            if (timeout 2 bash -c "(echo > /dev/tcp/${_dr_srv_host}/${_dr_srv_port}) 2>/dev/null") 2>/dev/null; then
-                OK "dolt server answering on ${_dr_srv_host}:${_dr_srv_port}"
-            else
-                FAIL "SPIRA_DOLT_DATA is empty but no server answers on ${_dr_srv_host}:${_dr_srv_port}" \
-                     "Start the dolt server, or set SPIRA_DOLT_DATA in ${CONF:-spira.conf} so
+' "$meta_srv" 2>/dev/null || true)"
+            if [ -n "$port" ]; then
+                if (timeout 2 bash -c "(echo > /dev/tcp/${host}/${port}) 2>/dev/null") 2>/dev/null; then
+                    OK "dolt server answering on ${host}:${port}"
+                else
+                    FAIL "SPIRA_DOLT_DATA is empty but no server answers on ${host}:${port}" \
+                         "Start the dolt server, or set SPIRA_DOLT_DATA in ${CONF:-spira.conf} so
         install.sh can manage it."
+                fi
+            else
+                OK "SPIRA_DOLT_DATA is empty — dolt server is managed independently"
             fi
         else
             OK "SPIRA_DOLT_DATA is empty — dolt server is managed independently"
         fi
-        unset _dr_srv_host _dr_srv_port
-    else
-        OK "SPIRA_DOLT_DATA is empty — dolt server is managed independently"
     fi
-    unset _dr_meta_srv
-fi
+}
 
-echo
-echo "events substrate"
-# ROUND-TRIP PROBE. Write one sentinel event via bd sql and read it back. Passes exactly when
-# the write path works. The probe anchors to a real bead because fk_events_issue enforces
-# issue_id -> issues.id on a server-mode store; a phantom id is refused and the probe can
-# never complete. Repeated runs append another probe row; the count only needs to be > 0.
-#
-# lib.sh is sourced here rather than at the top because loading it sooner would require
-# making the repo-map conditional unconditional, or duplicating the source. The events
-# functions are self-contained: they need only SPIRA_DB and SPIRA_BD (set by conf.sh).
-if [ -d "$SPIRA_DB/.beads" ]; then
+# --------------------------------------------------------------------------------------
+# EVENTS ROUND-TRIP PROBE. Write one sentinel event via bd sql and read it back. Passes
+# exactly when the write path works. The probe anchors to a real bead because
+# fk_events_issue enforces issue_id -> issues.id on a server-mode store; a phantom id is
+# refused and the probe can never complete. Repeated runs append another probe row; the
+# count only needs to be > 0.
+# --------------------------------------------------------------------------------------
+doctor_check_events_probe() {
+    if [ ! -d "$SPIRA_DB/.beads" ]; then
+        WARN "cannot probe events substrate — no database yet"
+        return
+    fi
     . "$SPIRA_HOME/lib.sh"
-    _probe_etype="__doctor_probe__"
-    _probe_id="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --limit 1 --json 2>/dev/null \
+    local etype="__doctor_probe__" id count wrote path
+    id="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --limit 1 --json 2>/dev/null \
         | python3 -c '
 import json, sys
 try:
@@ -442,864 +162,96 @@ except Exception:
     print("")
 ' 2>/dev/null)"
 
-    if [ -z "$_probe_id" ]; then
-        # No issues yet — the foreign key leaves nothing to anchor to.
+    if [ -z "$id" ]; then
         WARN "cannot probe events substrate — the store holds no issue to anchor a probe event to" \
              "This is expected on a store that has not been used yet. The probe resumes once a bead exists."
-    else
-        if _bump_write_event_try "$_probe_id" "$_probe_etype" "doctor" >/dev/null 2>&1; then
-            _probe_wrote=1
-        else
-            _probe_wrote=0
-        fi
-        _probe_count="$(_counter_events_query "$_probe_id" "$_probe_etype")"
-        if [ "${_probe_count:-0}" -gt 0 ]; then
-            OK "events write/read round trip"
-        else
-            _probe_path="bd sql (server mode at ${SPIRA_DB})"
-            # REFUSED AND DISCARDED ARE DIFFERENT FAULTS.
-            if [ "$_probe_wrote" -eq 0 ]; then
-                FAIL "events write/read round trip failed — the write via ${_probe_path} was refused (anchor bead: ${_probe_id})" \
-                     "Run the INSERT by hand to see the error; a foreign-key refusal means the anchor
+        return
+    fi
+
+    if _bump_write_event_try "$id" "$etype" "doctor" >/dev/null 2>&1; then wrote=1; else wrote=0; fi
+    count="$(_counter_events_query "$id" "$etype")"
+    if [ "${count:-0}" -gt 0 ]; then
+        OK "events write/read round trip"
+        return
+    fi
+    path="bd sql (server mode at ${SPIRA_DB})"
+    # REFUSED AND DISCARDED ARE DIFFERENT FAULTS.
+    if [ "$wrote" -eq 0 ]; then
+        FAIL "events write/read round trip failed — the write via ${path} was refused (anchor bead: ${id})" \
+             "Run the INSERT by hand to see the error; a foreign-key refusal means the anchor
         bead no longer exists, a permission error means ${SPIRA_DB} is not writable."
-            else
-                FAIL "events write/read round trip failed — writes via ${_probe_path} are discarded" \
-                     "The write reported success and did not come back. Check that ${SPIRA_DB} is writable."
-            fi
-        fi
-    fi
-    unset _probe_id _probe_etype _probe_count _probe_path _probe_wrote
-else
-    WARN "cannot probe events substrate — no database yet"
-fi
-
-echo
-echo "bd schema"
-# BD MIGRATION COUNT vs DATABASE CURSOR. When the installed bd knows more or fewer
-# migrations than the database cursor, bd exits 0 with the complaint on stdout — callers
-# that check exit status read success and parse the error message as data. This was the
-# failure mode on 2026-09-08: a rebuild replaced the installed bd with one that knows only
-# v53, the production database was at v61, and the harness summoned nothing for six minutes
-# while the panes showed 0 ready rather than a fault.
-#
-# `bd migrate schema` WITHOUT --ignore-schema-skew is the discriminating check: it exits 0
-# and names the matching version on agreement, and exits non-zero naming both counts when
-# they differ. The pair (installed bd, database) must stay in lock-step; rebuild one and
-# the other may need to move too. Record the installed bd's state right after any rebuild:
-#   spira/bd-pin.sh write
-if [ -d "$SPIRA_DB/.beads" ]; then
-    if _schema_out="$(timeout 30 bd -C "$SPIRA_DB" migrate schema 2>&1)"; then
-        _schema_ver="$(printf '%s\n' "$_schema_out" | grep -oE 'already at v[0-9]+' | grep -oE '[0-9]+')"
-        OK "bd migration count matches database cursor (v${_schema_ver:-?})"
     else
-        _schema_db="$(printf '%s\n' "$_schema_out" | grep -oE 'database is at v[0-9]+' | grep -oE '[0-9]+')"
-        _schema_bd="$(printf '%s\n' "$_schema_out" | grep -oE 'binary knows up to v[0-9]+' | grep -oE '[0-9]+')"
-        # Report both versions, rendering ? when one cannot be read. Previously this fell
-        # to a generic "cannot verify" message when only one version was parseable — losing
-        # the partial information that names which side the mismatch is on. (sp-1khst)
-        if [ -n "${_schema_db:-}" ] || [ -n "${_schema_bd:-}" ]; then
-            FAIL "bd migration count (v${_schema_bd:-?}) does not match database cursor (v${_schema_db:-?})" \
-                 "Rebuild bd from the commit recorded in $SPIRA_BD_PIN, then run:
-        $SPIRA_HOME/bd-pin.sh write"
-        else
-            FAIL "bd migrate schema failed — cannot verify migration count" \
-                 "$(printf '%s' "$_schema_out" | head -2)"
-        fi
+        FAIL "events write/read round trip failed — writes via ${path} are discarded" \
+             "The write reported success and did not come back. Check that ${SPIRA_DB} is writable."
     fi
-    unset _schema_out _schema_ver _schema_db _schema_bd
-    if [ -f "${SPIRA_BD_PIN:-}" ]; then
-        _pin_migs="$(grep '^BD_PIN_MIGRATIONS=' "$SPIRA_BD_PIN" 2>/dev/null | cut -d= -f2)"
-        OK "bd pin at $SPIRA_BD_PIN (pinned v${_pin_migs:-?})"
-        unset _pin_migs
-    else
-        WARN "no bd pin file at ${SPIRA_BD_PIN:-<unset>}" \
-             "After installing a new bd binary, record it: $SPIRA_HOME/bd-pin.sh write"
-    fi
-else
-    WARN "cannot check bd schema — no database yet"
-fi
-# BD VERSION TAG CHECK. Migration count proves binary and database are in step; tag proves
-# the binary is the one the harness decided on. A binary whose schema matches but whose tag
-# does not may lack commands or change semantics silently (the v1.2.2/v1.2.1 incident:
-# newer number, older code, --all quietly not meaning all).
-_bdtag_out="$(timeout 5 "$SPIRA_BD" version 2>/dev/null | head -1 || true)"
-_bdtag_ver="$(printf '%s\n' "$_bdtag_out" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-_bdtag_pin="${SPIRA_BD_TAG#v}"
-if [ -z "${_bdtag_ver:-}" ]; then
-    WARN "cannot read version from '$SPIRA_BD version' — tag pin is ${SPIRA_BD_TAG:-<unset>}" \
-         "Output: $_bdtag_out"
-elif [ "$_bdtag_ver" = "$_bdtag_pin" ]; then
-    OK "bd version matches tag pin ($SPIRA_BD_TAG)"
-else
-    # Distinguish ahead (installed is newer) from behind (installed is older). A version
-    # that is AHEAD of the pin may have migrated the store past what other tooling can read
-    # — and a migration is one-way. BEHIND means missing commands or silent semantic changes.
-    _bdtag_skew="$(awk -v a="$_bdtag_ver" -v b="$_bdtag_pin" 'BEGIN{
-        split(a,av,"."); split(b,bv,".")
-        for(i=1;i<=3;i++){av[i]+=0;bv[i]+=0
-            if(av[i]<bv[i]){print "BEHIND"; exit}
-            if(av[i]>bv[i]){print "AHEAD";  exit}
-        }
-        print "MISMATCH"
-    }')"
-    if [ "$_bdtag_skew" = AHEAD ]; then
-        FAIL "bd version mismatch — installed v$_bdtag_ver is AHEAD of pin $SPIRA_BD_TAG" \
-             "A binary ahead of the pin may have migrated the store past what other tooling
-        can read; migration is one-way. Install the pinned version:
-        $SPIRA_HOME/build-bd.sh --install
-        or: $SPIRA_HOME/build-bd.sh --from-release --install"
-    else
-        FAIL "bd version mismatch — installed v$_bdtag_ver is BEHIND pin $SPIRA_BD_TAG" \
-             "The harness expects $SPIRA_BD_TAG; a binary behind the pin may lack commands
-        or change semantics silently. Install the pinned version:
-        $SPIRA_HOME/build-bd.sh --install
-        or: $SPIRA_HOME/build-bd.sh --from-release --install"
-    fi
-fi
-unset _bdtag_out _bdtag_ver _bdtag_pin _bdtag_skew
+}
 
-echo
-echo "statutes"
-if command -v bd >/dev/null 2>&1 && [ -d "$SPIRA_DB/.beads" ]; then
-    missing="$("$SPIRA_HOME/seed.sh" --list 2>/dev/null | grep -c ' -$' || true)"
-    if [ "${missing:-0}" -gt 0 ]; then
-        WARN "$missing shipped statutes are not in this database" \
-             "Agents read their law from the database, not from the repository.
-        Write them in with: $SPIRA_HOME/seed.sh"
-    else
-        OK "every shipped statute is in force"
+# --------------------------------------------------------------------------------------
+# FAILED UNITS (sp-niqjl). A unit that has exited into the failed state can sit there for
+# days: nothing here restarts it, nothing before this check even looked. Dedup, age-since-
+# failed and the anomaly it becomes are watchtower's job (sp-niqjl); doctor's job is the
+# one-pass read of current state.
+# --------------------------------------------------------------------------------------
+doctor_check_failed_units() {
+    local sc="${SPIRA_SYSTEMCTL:-systemctl}" out n=0 line unit
+    if ! out="$("$sc" --user list-units --state=failed --no-legend 'spira-*' 2>&1)"; then
+        FAIL "cannot query failed units: $(printf '%s' "$out" | head -1)" \
+             "Check the systemd user manager: $sc --user status"
+        return
     fi
-else
-    WARN "cannot check the statute book without bd and a database"
-fi
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        unit="${line%% *}"
+        FAIL "$unit is a failed systemd unit" \
+             "Check: journalctl --user -u $unit -n 20"
+        n=$((n+1))
+    done <<< "$out"
+    [ "$n" -eq 0 ] && OK "no failed spira-* units"
+}
 
-echo
-echo "goal bead"
-# A DANGLING SPIRA_GOAL IS A SILENT FAULT. When the configured goal bead does not exist,
-# goal_open_children returns nothing, n_open=0, and the sentinel announces "goal reached"
-# on every pass regardless of actual state (sp-ejf3). Every correct completion signal is
-# indistinguishable from this broken one, so the signal is worthless until the goal is real.
-if [ -d "$SPIRA_DB/.beads" ]; then
-    if [ -n "$(timeout 10 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$SPIRA_GOAL" --json 2>/dev/null | sed -n '/^[[{]/,$p' | head -c 1)" ]; then
-        OK "goal bead $SPIRA_GOAL exists"
-    else
-        FAIL "SPIRA_GOAL=$SPIRA_GOAL names no bead in $SPIRA_DB — sentinel will announce 'goal reached' on every pass" \
-             "Create the goal bead, point SPIRA_GOAL at an existing one in ${CONF:-spira.conf}, or treat an absent goal as an explicit supported state."
-    fi
-else
-    WARN "cannot check goal bead — no database yet"
-fi
-
-echo
-echo "repositories"
-if [ ! -f "$SPIRA_REPO_MAP" ]; then
-    FAIL "no repo-map at $SPIRA_REPO_MAP" \
-         "Copy $SPIRA_HOME/repo-map.example to repo-map and write your own rows."
-else
-    case "$SPIRA_REPO_MAP" in
-        *.example) WARN "still reading the EXAMPLE map — its rows name repositories that do not exist" \
-                        "Copy it to $SPIRA_HOME/repo-map and write your own rows." ;;
-        *)         OK "map at $SPIRA_REPO_MAP" ;;
-    esac
-    . "$SPIRA_HOME/lib.sh"
-    home="$(spira_home_repo)"
-    # A ROW WITH FEWER THAN SIX COLUMNS MISDIRECTS ITS GATE AS A FORMATTER. The NF-based
-    # back-compat in repo_field reads the gate from $5 on a five-field row, $4 on a
-    # four-field row, and so on — so a row that drops FORMAT rather than leaving it empty
-    # runs the gate expression (e.g., `origin/main`, a test command) as a formatter in the
-    # branch's tree after a rebase and commits the result. The fix is not in repo_field,
-    # which preserves the historical shape intentionally; the fix is refusing to load a row
-    # this narrow in the first place (law-a-documented-control-must-exist).
-    while IFS= read -r narrow; do
-        [ -n "$narrow" ] || continue
-        FAIL "repo:$narrow — fewer than six columns (FORMAT missing or row truncated)" \
-             "A short row runs its gate field as a formatter in the branch's tree after a
-        rebase and commits the result. Add the missing | delimiters so every field has its
-        own column, leaving FORMAT empty where no formatter is needed."
-    done < <(awk 'BEGIN{FS="|"} /^[ \t]*#/{next}
-                  {n=$1; gsub(/^[ \t]+|[ \t]+$/,"",n)
-                   if (n!="" && NF>1 && NF<6) print n}' \
-        "$SPIRA_REPO_MAP" 2>/dev/null || true)
-    if repo_root "$home" >/dev/null 2>&1; then
-        OK "the home repository '$home' has a row"
-    elif [ -n "${SPIRA_DOCTOR_INSTALLING:-}" ]; then
-        WARN "the home repository '$home' has no row in the map — add a row after phase 1" \
-             "configure.sh seeds a repo-map from the example; add a row for '$home', or set SPIRA_HOME_REPO in ${CONF:-spira.conf}."
-    else
-        FAIL "the home repository '$home' has no row in the map" \
-             "A bead that names no repository resolves to '$home', and an unmapped name is
-        refused rather than guessed. Add a row, or set SPIRA_HOME_REPO in ${CONF:-spira.conf}."
-    fi
-    for n in $(repo_names); do
-        p="$(repo_field "$n" path)"
-        b="$(repo_field "$n" base)"
-        # QUEUE-MODE PROTECTION. queue.sh protect sets the required check, no force push
-        # and no deletion on the base branch, then writes a receipt under SPIRA_RUN.
-        # A missing receipt means protect was never run; the branch accepts any push.
-        if [ "$(repo_land "$n" 2>/dev/null)" = queue ]; then
-            _dr_qp="$SPIRA_RUN/queue-protected-$n"
-            if [ -f "$_dr_qp" ]; then
-                OK "repo:$n — queue mode: base branch protection record present"
-            else
-                WARN "repo:$n — queue mode: base branch has no protection record" \
-                     "Run: $SPIRA_HOME/queue.sh protect $n"
-            fi
-            unset _dr_qp
-        fi
-        _dr_lanes_err="$(spira_repo_lanes "$n" 2>&1 >/dev/null)" || \
-            FAIL "repo:$n — lanes column parse error: $_dr_lanes_err" \
-                 "Fix the lanes field: use a mode (consume/develop/self) or a comma-separated list of lane labels."
-        unset _dr_lanes_err
-        _dr_lane_out="$(_spira_lane_diag "$n" "$p")" || true
-        while IFS= read -r _dr_lline; do
-            _dr_ltag="${_dr_lline%% *}"
-            _dr_lval="${_dr_lline#* }"
-            case "$_dr_ltag" in
-                effective:)   OK "repo:$n — effective lanes: $_dr_lval" ;;
-                refused:)     printf '  info  repo:%s — %s\n' "$n" "$_dr_lval" ;;
-                modes-error:) FAIL "repo:$n — .spira/modes parse error: $_dr_lval" \
-                                   "Fix .spira/modes: use a mode (consume/develop/self) or comma-separated lane labels." ;;
-            esac
-        done <<< "$_dr_lane_out"
-        unset _dr_lane_out _dr_lline _dr_ltag _dr_lval
-        if [ ! -e "$p/.git" ]; then
-            WARN "repo:$n — $p is not a checkout" "Another machine's row, or a path that has moved."
-            continue
-        fi
-        if [ -z "$b" ]; then
-            WARN "repo:$n — no base declared; it will be resolved, and refused if it cannot be"
-        elif ! git -C "$p" rev-parse --verify -q "$b" >/dev/null 2>&1; then
-            FAIL "repo:$n — declared base '$b' does not exist in $p" \
-                 "Work would be rebased onto a ref nobody chose. Do not assume 'main'."
-        else
-            OK "repo:$n — $p on $b"
-        fi
-        if [ "$(repo_land "$n" 2>/dev/null)" = "pr" ]; then
-            if ! command -v gh >/dev/null 2>&1; then
-                printf '  info  repo:%s — pr mode, allow_auto_merge not checked (gh not on PATH)\n' "$n"
-            else
-                _dr_aam_err="$(mktemp)"
-                _dr_aam="$(cd "$p" && timeout 30 gh api "repos/{owner}/{repo}" \
-                        -q '.allow_auto_merge' 2>"$_dr_aam_err")" || true
-                _dr_aam_msg="$(head -1 "$_dr_aam_err")"
-                rm -f "$_dr_aam_err"
-                if [ "${_dr_aam:-}" = "true" ]; then
-                    OK "repo:$n — pr mode: allow_auto_merge is enabled"
-                elif [ "${_dr_aam:-}" = "false" ]; then
-                    FAIL "repo:$n — land=pr but allow_auto_merge=false — PRs will never merge automatically" \
-                         "Enable it: GitHub → repository Settings → General → Allow auto-merge."
-                else
-                    WARN "repo:$n — pr mode: could not check allow_auto_merge: ${_dr_aam_msg:-empty response}" \
-                         "Run: cd $p && gh api repos/{owner}/{repo} -q .allow_auto_merge"
-                fi
-                unset _dr_aam _dr_aam_err _dr_aam_msg
-            fi
-        fi
-    done
-
-    # HOW MANY COPIES OF THE HARNESS THIS BOX HAS. One is the answer; anything else means
-    # work aimed at the harness can land in a tree nothing executes, pass every check there,
-    # and never run. Nothing else here compares the two, which is what makes that failure
-    # silent — landed and in effect quietly became different claims.
-    #
-    # `copies` and not `check`: doctor is read-only, and the full check fetches and
-    # escalates. This is the structural half, which costs an ls-files per repository.
-    #
-    # A repository the map names that this box does not have is skipped by `copies`, so a
-    # verdict of "one" here is about this box and not about the map.
-    if ! copies="$(bash "$SPIRA_HOME/skew.sh" copies 2>/dev/null)"; then
-        WARN "no mapped repository carries a harness this box can find" \
-             "Either no row points at a real checkout, or the signature has changed.
-        $SPIRA_HOME/skew.sh copies"
-    elif [ "$(grep -c ' second$' <<< "$copies")" -gt 0 ]; then
-        while read -r n p d k; do
-            [ "$k" = second ] || continue
-            # WARN and not FAIL, per this file's own line: the loop runs perfectly well with
-            # two copies, which is exactly what makes the fault silent. The loud channel is
-            # skew.sh's escalation; doctor's job is to name it in the one pass.
-            WARN "repo:$n carries a SECOND harness at $p/$d" \
-                 "The harness in force is $SPIRA_REPO. Work landing in that other copy passes
-        its own gate and its own suites, closes its bead naming a real commit, and never runs.
-        Delete the copy, or point this installation at it — but not both.
-        $SPIRA_HOME/skew.sh check"
-        done <<< "$copies"
-    else
-        OK "one harness on this box — $SPIRA_REPO is the only copy the map reaches"
-    fi
-
-    # SKEW SERVICE RESULT. exit 3 means the check could not run; the unit stays failed,
-    # harness drift goes undetected, and the failed state is invisible until someone looks.
-    _dr_skew_unit="$(spira_unit skew service)"
-    if [ "$_dr_skew_unit" != "?" ]; then
-        _dr_skew_active="$("${SPIRA_SYSTEMCTL:-systemctl}" --user show "$_dr_skew_unit" \
-            --property=ActiveState 2>/dev/null | cut -d= -f2)"
-        _dr_skew_rc="$("${SPIRA_SYSTEMCTL:-systemctl}" --user show "$_dr_skew_unit" \
-            --property=ExecMainStatus 2>/dev/null | cut -d= -f2)"
-        if [ "$_dr_skew_active" = "failed" ] && [ "$_dr_skew_rc" = "3" ]; then
-            WARN "skew service last exited 3 — could not determine whether harness drift has occurred" \
-                 "Diagnose: bash $SPIRA_HOME/skew.sh check
-        Log: journalctl --user -u $_dr_skew_unit -n 20"
-        fi
-        unset _dr_skew_unit _dr_skew_active _dr_skew_rc
-    fi
-fi
-
-echo
-echo "hooks"
-# CORE.HOOKSPATH DISPLACEMENT. core.hooksPath is a single path, not a search list.
-# Anything that writes it silently displaces every harness hook at once, including the
-# reference-transaction guard that spira_destroy_branch depends on. git accepts the
-# overwrite; if the new path does not exist, git runs no hooks and says nothing.
-_dr_hooks_rel="${SPIRA_HOME#"${SPIRA_REPO}/"}"
-[ "$SPIRA_HOME" = "$SPIRA_REPO" ] && _dr_hooks_rel="."
-_dr_hooks_want="${_dr_hooks_rel}/hooks"; [ "$_dr_hooks_rel" = "." ] && _dr_hooks_want="hooks"
-_dr_hooks_cur="$(git -C "$SPIRA_REPO" config core.hooksPath 2>/dev/null || true)"
-if [ -z "$_dr_hooks_cur" ]; then
-    if [ "${SPIRA_DOCTOR_INSTALLING:-}" = "1" ]; then
-        WARN "core.hooksPath is not set — install.sh will arm the hooks in phase 5"
-    else
-        FAIL "core.hooksPath is not set — harness hooks are not armed" \
-             "Arm them: bash $SPIRA_HOME/exclude.sh install $SPIRA_REPO"
-    fi
-elif [ "$_dr_hooks_cur" != "$_dr_hooks_want" ]; then
-    FAIL "core.hooksPath is '$_dr_hooks_cur', expected '$_dr_hooks_want' — every harness hook is displaced" \
-         "A displaced path disables the reference-transaction guard silently.
-    Restore: bash $SPIRA_HOME/exclude.sh install $SPIRA_REPO"
-elif [ ! -d "$SPIRA_REPO/$_dr_hooks_cur" ]; then
-    FAIL "core.hooksPath '$_dr_hooks_cur' names a directory that does not exist — no hooks are running" \
-         "Restore: bash $SPIRA_HOME/exclude.sh install $SPIRA_REPO"
-elif [ ! -x "$SPIRA_REPO/$_dr_hooks_cur/pre-commit" ]; then
-    FAIL "core.hooksPath '$_dr_hooks_cur' exists but is missing the pre-commit hook" \
-         "Check: ls -la $SPIRA_REPO/$_dr_hooks_cur"
-else
-    OK "core.hooksPath -> $_dr_hooks_cur (pre-commit present)"
-fi
-unset _dr_hooks_rel _dr_hooks_want _dr_hooks_cur
-
-echo
-echo "the cockpit"
-[ -d "$SPIRA_COCKPIT" ] && OK "cockpit at $SPIRA_COCKPIT" \
-    || WARN "no cockpit directory at $SPIRA_COCKPIT" "The loop runs; you have no way to see it."
-if [ -x "$SPIRA_PANEL" ]; then OK "attention panel built at $SPIRA_PANEL"
-else WARN "attention panel not built at $SPIRA_PANEL" \
-          "Build it: cd $SPIRA_COCKPIT/panel && cargo build --release"; fi
+# --------------------------------------------------------------------------------------
 # SNAPSHOT FRESHNESS. The collector writes cockpit.env on every tick; absence or a stale
 # mtime means the supervisor is not writing — the exact condition that went undetected
 # because nothing else checked it (sp-itsy). Uses SPIRA_SNAP_STALE_S as the threshold.
-_dr_snap="$SPIRA_RUN/cockpit.env"
-if [ ! -f "$_dr_snap" ]; then
-    WARN "no cockpit snapshot at $_dr_snap — collector may not have run yet" \
-         "Check: systemctl --user status $(spira_unit cockpit service)"
-else
-    _dr_snap_age=$(( $(date +%s) - $(stat --format='%Y' "$_dr_snap" 2>/dev/null || echo 0) ))
-    if [ "$_dr_snap_age" -gt "${SPIRA_SNAP_STALE_S:-60}" ]; then
-        FAIL "cockpit snapshot stale — last written ${_dr_snap_age}s ago (limit ${SPIRA_SNAP_STALE_S:-60}s)" \
+# --------------------------------------------------------------------------------------
+doctor_check_snapshot_fresh() {
+    local snap="$SPIRA_RUN/cockpit.env" age
+    if [ ! -f "$snap" ]; then
+        WARN "no cockpit snapshot at $snap — collector may not have run yet" \
+             "Check: systemctl --user status $(spira_unit cockpit service)"
+        return
+    fi
+    age=$(( $(date +%s) - $(stat --format='%Y' "$snap" 2>/dev/null || echo 0) ))
+    if [ "$age" -gt "${SPIRA_SNAP_STALE_S:-60}" ]; then
+        FAIL "cockpit snapshot stale — last written ${age}s ago (limit ${SPIRA_SNAP_STALE_S:-60}s)" \
              "The collector is not writing. Check: systemctl --user status $(spira_unit cockpit service)"
     else
-        OK "cockpit snapshot fresh — $_dr_snap (${_dr_snap_age}s old)"
+        OK "cockpit snapshot fresh — $snap (${age}s old)"
     fi
-fi
-unset _dr_snap _dr_snap_age
-[ -x "$SPIRA_HOME/mail.sh" ] && OK "mail delivery path ready at $SPIRA_HOME/mail.sh" \
-    || FAIL "mail.sh not found at $SPIRA_HOME/mail.sh" \
-            "A mail that reaches nobody is worse than an unanswered question (law-answers-need-a-delivery-path)."
-# THE VIEW FOLLOWER is optional — empty means no follower — but WHEN SET, it must exist and
-# be executable, or a manifest row silently renders as `off` while the operator believes it is
-# configured. The contract: `<prog> watch` loops forever (the unit starts it), `<prog> status`
-# prints `want: <session>` (the health assertion reads it).
-if [ -n "$SPIRA_VIEW" ]; then
-    if [ -x "$SPIRA_VIEW" ]; then
-        OK "view follower at $SPIRA_VIEW"
-        if out="$("$SPIRA_VIEW" status 2>&1)" && printf '%s\n' "$out" | grep -q '^want:'; then
-            OK "view follower answers status — ${out%%$'\n'*}"
-        else
-            WARN "view follower exists but 'status' does not print 'want:'" \
-                 "The health assertion will read it as degraded.
-        Run: $SPIRA_VIEW status"
-        fi
-    else
-        WARN "SPIRA_VIEW is set but $SPIRA_VIEW is not executable" \
-             "The manifest's ?view row will render as 'off'. Set SPIRA_VIEW in ${CONF:-spira.conf}."
-    fi
-fi
+}
+
+echo "spira doctor"
 
 echo
-echo "gate locks"
-if [ -x "$SPIRA_HOME/gate-locks.sh" ]; then
-    bash "$SPIRA_HOME/gate-locks.sh" "$SPIRA_RUN" 2>/dev/null \
-        | sed 's/^/  /' \
-        || WARN "gate-locks.sh exited non-zero"
-else
-    WARN "gate-locks.sh not found at $SPIRA_HOME/gate-locks.sh"
-fi
+echo "store"
+doctor_check_store
 
 echo
-echo "the status line"
-# WHY THIS IS DOCTOR'S BUSINESS AT ALL. The status line is where the context meter and the
-# archivist's state machine are read, and it lives in the CLIENT's settings file, outside every
-# repository — so nothing the harness ships can set it, and nothing that lands here can fix it.
-# What the harness owes instead is to say so, once, in the one pass that names everything else.
-#
-# AND THE REFRESH INTERVAL IS THE LOAD-BEARING HALF. The client re-runs a status-line command on
-# a session starting, a new assistant message, a compaction finishing, a mode change, and a
-# timer — and clearing the session is not on that list. So without the timer the meter goes on
-# displaying the DISCARDED session's context until something is next said, which means the
-# instrument that exists to say whether clearing was worth doing reports that the clear did not
-# work. Every other state this feature renders — sweeping, archiving, safe to clear — likewise
-# changes while the session is IDLE, which is the definition of background work: with no timer
-# the pane can only show what was already true at the last assistant message, and "safe to
-# clear" would arrive one turn after it stopped being useful.
-SETTINGS="$SPIRA_CLIENT_SETTINGS"
-if [ ! -f "$SETTINGS" ]; then
-    WARN "no client settings at $SETTINGS — the context meter is not on the status line" \
-         "Point statusLine.command at $SPIRA_HOME/ctx-meter.sh, with refreshInterval beside it."
-else
-    sl="$(python3 "$SPIRA_HOME/statusline-check.py" "$SETTINGS" "$SPIRA_HOME/ctx-meter.sh" "$SPIRA_RUN")"
-    case "$sl" in
-        unreadable*) WARN "cannot read $SETTINGS — ${sl#unreadable }" ;;
-        absent)      WARN "no status line configured — the context meter is not being shown" \
-                          "Add a statusLine object to $SETTINGS whose command is
-        $SPIRA_HOME/ctx-meter.sh, with \"refreshInterval\": 5 beside it." ;;
-        "stale "*)
-            _sl_rest="${sl#stale }"
-            _sl_path="${_sl_rest% *}"
-            case "$_sl_path" in
-                "$SPIRA_RUN"/worktree/*)
-                    WARN "the status line runs a copy of the context meter from a worktree — $_sl_path" \
-                         "That worktree is deleted when the Sending reaps it, so the status line
-        is one landing away from rendering nothing. If the copy carries behaviour the
-        landed one lacks, land that work first: $SPIRA_HOME/ctx-meter.sh is what survives." ;;
-                /tmp/*)
-                    WARN "the status line runs a copy of the context meter under /tmp — $_sl_path" \
-                         "Lost on reboot. If it carries behaviour the landed one lacks, land that
-        work first: $SPIRA_HOME/ctx-meter.sh is what survives." ;;
-                *)
-                    WARN "the status line runs a different copy of the context meter — $_sl_path" \
-                         "If it carries behaviour the landed one lacks, the fix is to land that
-        work, not to repoint. The landed meter is $SPIRA_HOME/ctx-meter.sh." ;;
-            esac ;;
-        "fragile "*)
-            _sl_rest="${sl#fragile }"
-            _sl_path="${_sl_rest% *}"
-            case "$_sl_path" in
-                "$SPIRA_RUN"/worktree/*)
-                    WARN "the status line command lives in a worktree — $_sl_path" \
-                         "That worktree is deleted when the Sending reaps it. The status line
-        is one landing away from rendering nothing." ;;
-                /tmp/*)
-                    WARN "the status line command lives under /tmp — $_sl_path" \
-                         "Lost on reboot." ;;
-            esac ;;
-        "other "*)   WARN "the status line runs a different command — the context meter is not being shown" \
-                          "Point statusLine.command at $SPIRA_HOME/ctx-meter.sh." ;;
-        "ours -")    WARN "the status line has no refreshInterval — it cannot update between turns" \
-                          "It will go on showing a cleared session's context until something is next said, and
-        the archivist's state will never change on its own. Add \"refreshInterval\": 5 beside
-        \"command\" in the statusLine object in $SETTINGS." ;;
-        "ours "*)    OK "status line on the context meter, refreshing every ${sl#ours }s" ;;
-        *)           WARN "could not judge the status line configuration in $SETTINGS" ;;
-    esac
-fi
-
-# AND THE SESSION HOOK, in the same file and for the same reason: nothing that lands in this
-# repository can register it, so what the harness owes is to say whether it is registered.
-# The failure this catches is not "never installed" — it is a registration still pointing at a
-# harness that was decommissioned, which goes on printing its banner into every session on the
-# box and looks, from inside that session, exactly like a working one.
-hookout="$("$SPIRA_HOME/install-session-hook.sh" status 2>&1)"; hookrc=$?
-if [ "$hookrc" = 0 ]; then
-    OK "the session hook is registered on every session-start event"
-else
-    WARN "the session hook is not registered — a new session is told nothing about the watchers" \
-         "Run $SPIRA_HOME/install-session-hook.sh install."
-fi
-# A COMMAND THAT IS NOT OURS IS REPORTED, NEVER REMOVED. Two session hooks both reporting on
-# watchers is the state this replaced, and which of them the operator wants is theirs to say.
-# A HERE-STRING AND NOT A PIPE, because the loop increments the warning tally and the right
-# side of a pipe is a subshell — every warning raised in one would be printed and then
-# forgotten by the count that decides what this command reports at the end.
-while IFS= read -r l; do
-    [ -n "$l" ] || continue
-    WARN "another command is registered on that event:${l#*other}" \
-         "If it is stale, remove it with $SPIRA_HOME/install-session-hook.sh prune <substring>."
-done <<< "$(printf '%s\n' "$hookout" | grep '^  other' || true)"
-
-# ORPHANED GAS TOWN WATCHER PROCESSES. When SPIRA_TOWN is set the operator had a predecessor
-# harness. Its watcher processes — daemon-kind rows started with nohup by its watchd.sh — are
-# not owned by systemd and survive indefinitely, invisible to every `is-active` check. They
-# write to logs nothing here reads, they cannot see new events from the Spira database, and
-# they look healthy in every process listing because they ARE running, just watching the wrong
-# thing. The discriminating check is /proc: a process whose argv[1] is a script under
-# $SPIRA_TOWN/settings/ is one the predecessor started, not this harness.
-#
-# NEVER pkill -f — the pattern is a substring of the caller's own command line.
-if [ -n "${SPIRA_TOWN:-}" ]; then
-    _wd_orphans=""
-    for _d in /proc/[0-9]*; do
-        [ -r "$_d/cmdline" ] || continue
-        _cmd="$(tr '\0' '\n' < "$_d/cmdline" 2>/dev/null)" || continue
-        # argv[1] is the second NUL-delimited field, which becomes the second line after tr.
-        _arg1="$(printf '%s\n' "$_cmd" | sed -n '2p')"
-        case "$_arg1" in
-            "$SPIRA_TOWN/settings/watch-"*)
-                _wd_orphans="${_wd_orphans}${_wd_orphans:+ }${_d##*/}" ;;
-        esac
-    done
-    if [ -n "$_wd_orphans" ]; then
-        WARN "$(printf '%s' "$_wd_orphans" | wc -w | tr -d ' ') Gas Town watcher process(es) still running under $SPIRA_TOWN" \
-             "Kill each by PID after confirming /proc/<pid>/cmdline — never pkill -f, whose pattern
-        matches the caller's own argv. PIDs: $_wd_orphans"
-    else
-        OK "no orphaned Gas Town watcher processes under $SPIRA_TOWN"
-    fi
-fi
-unset _wd_orphans _d _cmd _arg1
+echo "events substrate"
+doctor_check_events_probe
 
 echo
-echo "loom"
-# THE BINARY IS NOT BUILT BY INSTALL. It is a Rust binary that must be compiled separately:
-# `cd loom && cargo build --release`. Doctor says so rather than guessing the binary is fine.
-if [ -x "${SPIRA_LOOM_BIN:-}" ]; then
-    OK "loom binary built at $SPIRA_LOOM_BIN"
-    # A SERVICE THAT IS NOT ACTIVE IS NOT SERVING. `is-active` returns a non-zero exit code
-    # and prints `inactive` (or `unknown`) when the unit is not running. Checking it here
-    # rather than in the loop above puts it beside the binary check that is its prerequisite.
-    _loom_unit="$(spira_unit loom service)"
-    if [ "$_loom_unit" = '?' ]; then
-        WARN "Loom service unit not found — install.sh may not have run yet" \
-             "Run install.sh to enable and start Loom on every boot."
-    elif systemctl --user is-active --quiet "$_loom_unit" 2>/dev/null; then
-        OK "$_loom_unit is active — Loom is reachable at $SPIRA_LOOM_ADDR"
-    else
-        WARN "$_loom_unit is not active — Loom is not reachable" \
-             "Run: systemctl --user start $_loom_unit
-        Or run install.sh to enable and start it on every boot."
-    fi
-else
-    WARN "loom binary not built at ${SPIRA_LOOM_BIN:-<unset>} — spira-loom unit not installed" \
-         "Build it: cd $SPIRA_REPO/loom && cargo build --release; then re-run install.sh"
-fi
+echo "systemd units"
+doctor_check_failed_units
 
 echo
-echo "broker"
-if [ -x "${SPIRA_BROKER_BIN:-}" ]; then
-    OK "broker binary built at $SPIRA_BROKER_BIN"
-else
-    # FAIL when the broker unit is enabled: an enabled unit with no binary exits 127
-    # on every tick, which reads as "installed and working" to everything except the
-    # log. WARN when the unit is not enabled — missing binary, no live dependency.
-    _dr_broker_unit="$(spira_unit broker timer 2>/dev/null || true)"
-    _dr_broker_enabled=0
-    if [ -n "$_dr_broker_unit" ] && [ "$_dr_broker_unit" != '?' ]; then
-        "${SPIRA_SYSTEMCTL:-systemctl}" --user is-enabled "$_dr_broker_unit" \
-            >/dev/null 2>&1 && _dr_broker_enabled=1
-    fi
-    _dr_broker_cargo=""
-    command -v cargo >/dev/null 2>&1 || _dr_broker_cargo=" (cargo not on PATH)"
-    if [ "$_dr_broker_enabled" -eq 1 ]; then
-        FAIL "broker binary missing at ${SPIRA_BROKER_BIN:-<unset>} — unit is enabled but binary does not exist${_dr_broker_cargo}" \
-             "Build it: cd $SPIRA_REPO/broker && cargo build --release; then re-run install.sh"
-    else
-        WARN "broker binary not built at ${SPIRA_BROKER_BIN:-<unset>}${_dr_broker_cargo} — spira-broker unit not installed" \
-             "Build it: cd $SPIRA_REPO/broker && cargo build --release; then re-run install.sh"
-    fi
-    unset _dr_broker_unit _dr_broker_enabled _dr_broker_cargo
-fi
-
-echo
-echo "installed units"
-# DUPLICATE UNIT DETECTION. Before per-instance naming, spira-* units were installed under
-# their plain names (e.g., spira-sentinel.service). install.sh migrates them: it disables the
-# old name and removes the file. If a plain-named unit file coexists with its instance-named
-# successor, the migration's rm step was absent or the file was placed by hand — and
-# `systemctl list-unit-files` then shows two units claiming the same service.
-#
-# The discriminating check: for each plain spira-<name>.<ext> in the user unit directory,
-# check whether spira-<name>-<instance>.<ext> also exists. That coexistence is the defect.
-# The shared-unit exceptions (cockpit-ensure, concierge, beads-push, dolt-beads) install
-# under their plain names permanently and are excluded by the `spira-` prefix requirement.
-#
-# SPIRA_SYSTEMCTL is the override used by tests to substitute a fake systemctl.
-_dr_sc="${SPIRA_SYSTEMCTL:-systemctl}"
-_dr_unit_dir="${HOME}/.config/systemd/user"
-_dr_dup_found=0
-if [ -d "$_dr_unit_dir" ] && [ -n "${SPIRA_INSTANCE:-}" ]; then
-    for _dr_f in "$_dr_unit_dir"/spira-*.service "$_dr_unit_dir"/spira-*.timer; do
-        [ -e "$_dr_f" ] || continue
-        _dr_base="$(basename "$_dr_f")"
-        # Skip the watcher template (spira-watch@.service) — it is never a duplicate.
-        case "$_dr_base" in spira-watch@*) continue ;; esac
-        # Skip units that already carry an instance suffix: we are looking for plain names.
-        # A plain name ends in .service or .timer with no preceding -<instance> segment.
-        # The instance suffix is SPIRA_INSTANCE, which is [A-Za-z0-9_-] by construction.
-        _dr_ext="${_dr_base##*.}"       # service | timer
-        _dr_stem="${_dr_base%.*}"       # spira-sentinel
-        _dr_inst_name="${_dr_stem}-${SPIRA_INSTANCE}.${_dr_ext}"
-        # If this file IS already the instance-named variant, skip it.
-        [ "$_dr_base" = "$_dr_inst_name" ] && continue
-        # If it ends with -<instance>.<ext> for any instance, it is already suffixed; skip.
-        # (Handles the case where SPIRA_INSTANCE differs from what was installed.)
-        case "$_dr_stem" in *"-${SPIRA_INSTANCE}") continue ;; esac
-        # Check for a sibling with the instance suffix.
-        if [ -e "$_dr_unit_dir/$_dr_inst_name" ]; then
-            _dr_dup_found=$((_dr_dup_found + 1))
-            # The sentinel uses the unit name as its ONLY concurrency control — sentinel.sh
-            # says so at the lock comment. Two enabled units with the same ExecStart means
-            # the mutex is gone: every pass runs twice, against the same free-slot count,
-            # and strand.sh produces duplicate escalations for the same episode. This is a
-            # fatal defect, not a warning. Other duplicate pairs are WARN because no other
-            # unit here carries that invariant.
-            case "$_dr_stem" in
-                spira-sentinel)
-                    FAIL "duplicate unit pair: $_dr_base and $_dr_inst_name both exist in $_dr_unit_dir" \
-                         "The sentinel uses the unit name as its mutex; two copies running simultaneously is a defect.
-        Delete the stale plain-named file and daemon-reload:
-        rm $_dr_unit_dir/$_dr_base && systemctl --user daemon-reload" ;;
-                *)
-                    WARN "duplicate unit pair: $_dr_base and $_dr_inst_name both exist in $_dr_unit_dir" \
-                         "The plain-named file is a stale legacy copy. Re-run install.sh to remove it,
-        or delete it by hand: rm $_dr_unit_dir/$_dr_base && systemctl --user daemon-reload" ;;
-            esac
-        fi
-    done
-fi
-[ "$_dr_dup_found" -eq 0 ] && OK "no duplicate plain/instance unit pairs"
-unset _dr_sc _dr_unit_dir _dr_dup_found _dr_f _dr_base _dr_ext _dr_stem _dr_inst_name
-
-# EMPTY EXECSTART EXECUTABLE. A unit with ExecStart= followed by a space has no
-# executable — systemd accepts it and fails with 203/EXEC on every start. The common
-# cause is dolt absent when units were rendered; install.sh refuses at render time now,
-# but this catches units installed before that guard.
-_dr_eexec_dir="${HOME}/.config/systemd/user"
-_dr_eexec_n=0
-if [ -d "$_dr_eexec_dir" ]; then
-    for _dr_eexec_f in "$_dr_eexec_dir"/*.service; do
-        [ -f "$_dr_eexec_f" ] || continue
-        if grep -E '^ExecStart= ' "$_dr_eexec_f" >/dev/null 2>&1; then
-            FAIL "$(basename "$_dr_eexec_f"): ExecStart has an empty executable — systemd will fail with 203/EXEC" \
-                 "Re-run install.sh after ensuring the missing program (e.g., dolt) is on PATH."
-            _dr_eexec_n=$((_dr_eexec_n + 1))
-        fi
-    done
-fi
-[ "$_dr_eexec_n" -eq 0 ] && OK "no installed unit has an empty ExecStart executable"
-unset _dr_eexec_dir _dr_eexec_n _dr_eexec_f
-
-echo
-echo "enabled units"
-# ENABLE-SET DRIFT. Every unit in the ENABLE set must be enabled in systemd unless the
-# control plane records a deliberate suspension. A disabled unit with no control-plane
-# entry is silent drift: nothing alerts, nothing fails, the feature it drives simply stops.
-#
-# The ENABLE set is sourced from units.sh directly, not restated here. A second hand-
-# written list rots the way the gate's suite list did: units.sh grows, the copy here does
-# not, and the check passes on units it never knew to test.
-_dr_en_sc="${SPIRA_SYSTEMCTL:-systemctl}"
-_dr_en_bad=0
-_dr_en_units_sh="$SPIRA_REPO/systemd/units.sh"
-if [ -z "${_SPIRA_UNITS_LOADED:-}" ]; then
-    { . "$_dr_en_units_sh"; } 2>/dev/null \
-        || { FAIL "cannot source $_dr_en_units_sh — enabled-units check skipped" \
-                  "Check that $_dr_en_units_sh exists and SPIRA_REPO is set correctly."
-             _dr_en_bad=1; }
-fi
-if [ "${_dr_en_bad}" -eq 0 ]; then
-    # Probe the user manager only when unit files are already installed. A silent
-    # manager on a host with no units is not an error — install.sh hasn't run yet.
-    _dr_en_any=0
-    for _dr_en_unit in "${ENABLE[@]}"; do
-        [ -n "$_dr_en_unit" ] || continue
-        [ -e "${HOME}/.config/systemd/user/${_dr_en_unit}" ] && { _dr_en_any=1; break; }
-    done
-    if [ "$_dr_en_any" -eq 1 ]; then
-        _dr_en_mgr_out="$("$_dr_en_sc" --user is-system-running 2>/dev/null || true)"
-        if [ -z "$_dr_en_mgr_out" ]; then
-            _dr_en_mgr_err="$("$_dr_en_sc" --user is-system-running 2>&1 >/dev/null || true)"
-            FAIL "systemd user manager unreachable${_dr_en_mgr_err:+: $_dr_en_mgr_err}" \
-                 "Check XDG_RUNTIME_DIR (${XDG_RUNTIME_DIR:-unset}) and DBUS_SESSION_BUS_ADDRESS (${DBUS_SESSION_BUS_ADDRESS:-unset})"
-            _dr_en_bad=1
-        fi
-    fi
-    if [ "${_dr_en_bad}" -eq 0 ]; then
-        for _dr_en_unit in "${ENABLE[@]}"; do
-            [ -n "$_dr_en_unit" ] || continue
-            _dr_en_rc=0
-            _dr_en_state="$("$_dr_en_sc" --user is-enabled "$_dr_en_unit" 2>/dev/null)" \
-                || _dr_en_rc=$?
-            if [ -z "$_dr_en_state" ]; then
-                # No output from systemctl can mean no active systemd user session.
-                # If the unit file isn't installed either, treat it the same as "not-found".
-                [ ! -e "${HOME}/.config/systemd/user/${_dr_en_unit}" ] && continue
-                FAIL "$_dr_en_unit — systemctl returned no output; cannot verify enablement state" \
-                     "Check that the systemd user session is active: $_dr_en_sc --user status"
-                _dr_en_bad=$((_dr_en_bad + 1))
-                continue
-            fi
-            [ "$_dr_en_state" = "enabled" ] && continue
-            # not-found means the unit file does not exist yet — a fresh install has none.
-            # That is not drift; drift is a unit whose file IS installed but not enabled.
-            [ "$_dr_en_state" = "not-found" ] && continue
-            # Not enabled. Check the control plane before classifying as drift. The subject key
-            # is derived the same way ctrl.sh divergence derives it: strip the file extension,
-            # then strip the per-instance suffix.
-            _dr_en_base="${_dr_en_unit%.*}"
-            _dr_en_subj="${_dr_en_base%-${SPIRA_INSTANCE:-prod}}"
-            if "$SPIRA_HOME/ctrl.sh" check "$_dr_en_subj" 2>/dev/null; then
-                : # deliberately suspended — control-plane decision, not drift
-            else
-                FAIL "$_dr_en_unit is $_dr_en_state but has no control-plane suspension" \
-                     "Enable it:   $_dr_en_sc --user enable $_dr_en_unit
-        Suspend it:  $SPIRA_HOME/ctrl.sh suspend $_dr_en_subj --reason <why> --owner <bead>"
-                _dr_en_bad=$((_dr_en_bad + 1))
-            fi
-        done
-        [ "$_dr_en_bad" -eq 0 ] \
-            && OK "all ${#ENABLE[@]} ENABLE units are enabled or suspended via ctrl.sh"
-    fi
-fi
-unset _dr_en_sc _dr_en_bad _dr_en_units_sh _dr_en_unit _dr_en_rc _dr_en_state _dr_en_base _dr_en_subj \
-      _dr_en_mgr_out _dr_en_mgr_err _dr_en_any
-
-echo
-echo "unit installation"
-# UNIT INSTALLATION DRIFT. An enable-set unit whose file is missing from the installation
-# is silent: systemctl returns 'not-found' for every call and the feature it drives simply
-# stops without any alert (the czar-pass gap: template landed, install.sh never ran).
-# Call skew.sh units (which calls install.sh --diff) and report MISSING as a fault and
-# DIFFERS as a warning.
-#
-# GATE ON ANY INSTALLED UNIT. A fresh host has no unit files, which is expected before
-# install.sh runs. The check is only meaningful once install.sh has run at least once.
-_dr_ui_dir="${HOME}/.config/systemd/user"
-_dr_ui_any=0
-for _dr_ui_f in "$_dr_ui_dir"/spira-*; do
-    [ -e "$_dr_ui_f" ] && { _dr_ui_any=1; break; }
-done
-if [ "$_dr_ui_any" -eq 0 ]; then
-    OK "no units installed yet — run systemd/install.sh"
-else
-    _dr_ui_out="$(bash "$SPIRA_HOME/skew.sh" units 2>&1)"; _dr_ui_rc=$?
-    case "$_dr_ui_rc" in
-        3)  WARN "cannot check unit installation — install.sh not found" \
-                 "Run: bash $SPIRA_REPO/systemd/install.sh" ;;
-        0)  OK "all units match installed copies" ;;
-        *)  _dr_ui_miss=0; _dr_ui_diff=0
-            while IFS= read -r _dr_ui_ln; do
-                case "$_dr_ui_ln" in
-                    MISSING*)
-                        _dr_ui_u="${_dr_ui_ln#MISSING  }"
-                        _dr_ui_u="${_dr_ui_u% (not*}"
-                        FAIL "$_dr_ui_u — not installed" \
-                             "Run: bash $SPIRA_REPO/systemd/unit-ensure.sh"
-                        _dr_ui_miss=$((_dr_ui_miss+1))
-                        ;;
-                    DIFFERS*)
-                        _dr_ui_u="${_dr_ui_ln#DIFFERS  }"
-                        WARN "$_dr_ui_u — installed unit differs from rendered template" \
-                             "Run: bash $SPIRA_REPO/systemd/unit-ensure.sh"
-                        _dr_ui_diff=$((_dr_ui_diff+1))
-                        ;;
-                esac
-            done <<< "$_dr_ui_out"
-            [ "$_dr_ui_miss" -eq 0 ] && [ "$_dr_ui_diff" -eq 0 ] && \
-                OK "all units match installed copies"
-            ;;
-    esac
-fi
-unset _dr_ui_dir _dr_ui_any _dr_ui_f _dr_ui_out _dr_ui_rc \
-      _dr_ui_miss _dr_ui_diff _dr_ui_ln _dr_ui_u
-
-echo
-echo "github issue intake"
-# TIMER SERVICES SKIPPED BY EXEC-CONDITION. An ExecCondition that tests a shell
-# variable is never satisfied by systemd: the variable lives in conf.sh, which
-# only runs after the condition. The unit fires every 15 minutes, records SKIP,
-# looks healthy from every systemd state query, and the log stays empty.
-# The discriminating check: if SPIRA_GH_INTAKE_REPO is set (intake should run)
-# but the service's recent journal shows only exec-condition skips, the
-# installed unit is stale. law-detection-outranks-rejection.
-if [ -n "${SPIRA_GH_INTAKE_REPO:-}" ]; then
-    _dr_ghi_unit="$(spira_unit gh-intake service 2>/dev/null)"
-    if [ -n "$_dr_ghi_unit" ] && [ "$_dr_ghi_unit" != '?' ]; then
-        _dr_jctl="${SPIRA_JOURNALCTL:-journalctl}"
-        _dr_ghi_j="$("$_dr_jctl" --user -u "$_dr_ghi_unit" -n 20 --no-pager 2>/dev/null || true)"
-        _dr_ghi_skips="$(printf '%s\n' "$_dr_ghi_j" | grep -c "exec-condition" || true)"
-        _dr_ghi_runs="$(printf '%s\n' "$_dr_ghi_j" | grep -cE "Succeeded|Finished" || true)"
-        if [ "${_dr_ghi_skips:-0}" -gt 0 ] && [ "${_dr_ghi_runs:-0}" -eq 0 ]; then
-            FAIL "$_dr_ghi_unit: skipped by ExecCondition on every recent firing while SPIRA_GH_INTAKE_REPO is set" \
-                 "The installed unit's ExecCondition tests an environment variable that systemd cannot
-        read from conf.sh. The unit fires but never runs. Reinstall:
-        bash $SPIRA_REPO/systemd/install.sh"
-        else
-            OK "github intake — no persistent exec-condition skip"
-        fi
-    else
-        printf '  info  github intake — unit not installed yet\n'
-    fi
-    unset _dr_ghi_unit _dr_jctl _dr_ghi_j _dr_ghi_skips _dr_ghi_runs
-else
-    printf '  info  SPIRA_GH_INTAKE_REPO not configured — intake is off\n'
-fi
-
-echo
-echo "writable state"
-if mkdir -p "$SPIRA_RUN" 2>/dev/null && [ -w "$SPIRA_RUN" ]; then OK "runtime directory $SPIRA_RUN"
-else FAIL "cannot write $SPIRA_RUN" "Leases, logs and worktrees live here. Set SPIRA_RUN in ${CONF:-spira.conf}."; fi
-
-echo
-echo "promote"
-# TWO SUPPORTED MODELS, AND ONE ERROR. The mode comes from spira_single_checkout in
-# conf.sh so that this check and the unit manifest cannot reach different answers about
-# one box; they did, and the box reported an un-suspended fatal for a promote unit that
-# was correctly absent.
-#
-# SPLIT-CHECKOUT. SPIRA_PROD outside SPIRA_REPO. promote.sh carries commits from the dev
-# checkout to a separate production clone on a timer; a dirty or mid-landing SPIRA_REPO
-# does not reach the executing copy.
-#
-# SINGLE-CHECKOUT. SPIRA_PROD inside SPIRA_REPO — one tree, developed and executed. This
-# was a FAIL, which made the mode unusable while spira-skew.service's own comment called
-# it supported. Two of the three reasons that FAIL gave have since dissolved: promote.sh
-# has no caller here at all (the manifest omits its units in this mode), and skew's
-# two-checkout question is a separate defect. The third is real and survives as the body
-# of this warning — an edit is live the moment it is saved, with no gate in between. That
-# is a cost to state plainly, not a reason to refuse: a box whose production lives on
-# another machine, reached through a tagged release, has no second checkout to promote
-# into and cannot satisfy a rule demanding one.
-if spira_single_checkout; then
-    WARN "single-checkout mode: SPIRA_PROD ($SPIRA_PROD) is inside SPIRA_REPO" \
-         "Edits here are live immediately — no promote step stands between saving and running. Commit or restore before you stop."
-elif [ -z "${SPIRA_PROD:-}" ]; then
-    FAIL "SPIRA_PROD is not set — nothing says what systemd should execute" \
-         "Set SPIRA_PROD in ${CONF:-spira.conf} to the harness subdir inside the production clone, or to \$SPIRA_HOME for single-checkout mode."
-elif [ -d "$SPIRA_PROD" ]; then
-    OK "split-checkout mode: production at $SPIRA_PROD"
-else
-    WARN "SPIRA_PROD ($SPIRA_PROD) does not exist yet" \
-         "The first call to promote.sh will clone from $SPIRA_REPO."
-fi
-
-# CONF/UNIT DISAGREEMENT. After deploy.sh activates a release, spira.conf is updated so that
-# conf-sourced scripts (sentinel, skew, doctor) agree with the units about which tree is in
-# force. A release active at $SPIRA_RELEASES/current while conf still names the checkout means
-# the two halves of the system are running different code.
-if [ -n "${SPIRA_RELEASES:-}" ] && [ -L "$SPIRA_RELEASES/current" ]; then
-    _releases_current="$SPIRA_RELEASES/current"
-    case "${SPIRA_PROD:-}" in
-        "$SPIRA_RELEASES"*)
-            OK "release mode: SPIRA_PROD matches activated release ($SPIRA_PROD)" ;;
-        *)
-            FAIL "conf/unit disagreement: release is active at $_releases_current but SPIRA_PROD=$SPIRA_PROD" \
-                 "After deploy.sh activates a release it writes SPIRA_PROD to spira.conf.
-        If that write was skipped, set: SPIRA_PROD = $_releases_current in ${CONF:-spira.conf}" ;;
-    esac
-    unset _releases_current
-fi
+echo "the cockpit"
+doctor_check_snapshot_fresh
 
 echo
 if [ "$fatal" -gt 0 ]; then
-    printf '%d fatal, %d warnings — the harness will not run until the fatals are fixed.\n' "$fatal" "$warn"
+    printf '%d fatal, %d warnings — the harness is not healthy.\n' "$fatal" "$warn"
     exit 1
 fi
-printf '0 fatal, %d warnings — the harness can run.\n' "$warn"
+printf '0 fatal, %d warnings — the harness is healthy.\n' "$warn"
 exit 0
