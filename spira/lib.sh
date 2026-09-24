@@ -5437,6 +5437,24 @@ queue_certified_list() {
     done
 }
 
+# compute_gate_key <repo-path> <repo-name> <branch-ref> <base-ref>
+# Compute the gate key for a branch. Matches gate.sh's gate_key() computation so that
+# a stored key can be compared against the current one to detect gate-command changes.
+# Exits non-zero if any input is unreadable or the harness hash is empty.
+compute_gate_key() {
+    local repo="$1" name="$2" br="$3" base="$4"
+    local tree files files_h CMD cmd_h harness_h
+    tree="$(git -C "$repo" rev-parse --verify -q "$br^{tree}" 2>/dev/null)" || return 1
+    files="$(git -C "$repo" diff --name-only "$base...$br" 2>/dev/null)" || return 1
+    files_h="$(printf '%s' "$files" | sha256sum | cut -d" " -f1)"
+    CMD="$(repo_gate "$name" 2>/dev/null)"
+    cmd_h="$(printf '%s' "$CMD" | sha256sum | cut -d" " -f1)"
+    harness_h="$(cat "${SPIRA_HOME:?}/gate.sh" "$SPIRA_HOME/exclude.sh" "$SPIRA_HOME/skew.sh" \
+        2>/dev/null | sha256sum | cut -d" " -f1)"
+    [ -n "$harness_h" ] || return 1
+    printf '%s\n' "$name $tree $files_h $cmd_h $harness_h" | sha256sum | cut -d" " -f1
+}
+
 # queue_is_suite_transition <repo-path> <tip> <base-sha>
 # 0 if the tip modifies SPIRA_SUITE_STATE_FILE relative to base-sha.
 queue_is_suite_transition() {
