@@ -217,14 +217,39 @@ _attr_eject() {  # _attr_eject <id> <tip> <suites-csv> <pr-n> <name> [fail-lines
         && mv -f "$LANDSTATE/$id.ejected.$$" "$LANDSTATE/$id.ejected" 2>/dev/null || true
     printf 'QUEUE ESCAPED %s branch=%s\n' "$(date +%s)" "$id" \
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+
+    local _bd_title="" _bd_desc_para="" _bd_priority=""
+    local _bd_json; _bd_json="$(timeout 10 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$id" --json 2>/dev/null)" || true
+    if [ -n "${_bd_json:-}" ]; then
+        _bd_title="$(printf '%s' "$_bd_json" | python3 -c '
+import sys,json; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d
+print(d.get("title") or "")' 2>/dev/null || true)"
+        _bd_desc_para="$(printf '%s' "$_bd_json" | python3 -c '
+import sys,json; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d
+desc=(d.get("description") or "").strip(); print(desc.split("\n\n")[0].strip())' 2>/dev/null || true)"
+        _bd_priority="$(printf '%s' "$_bd_json" | python3 -c '
+import sys,json; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d
+p=d.get("priority",""); print(p if p else "")' 2>/dev/null || true)"
+    fi
+
+    local _subject _meta_header
+    if [ -n "${_bd_title:-}" ]; then
+        _subject="Merge queue: $id ejected — ${_bd_title:0:60}"
+        _meta_header="$(printf '%s\n\n%s\n\nPriority: P%s\n\nNext: reopened as queue-eject; goes back to a builder.\n\n' \
+            "$_bd_title" "$_bd_desc_para" "$_bd_priority")"
+    else
+        _subject="Merge queue: $id ejected from $name"
+        _meta_header="(title could not be read — bd show failed for ${id})"$'\n\n'
+    fi
+
     local _fail_section=""
     [ -n "$fail_lines" ] && _fail_section="$(printf '\n\nFailing assertions:\n%s' "$fail_lines")"
-    printf '## Note\n%s was ejected from the merge queue after reproducing CI failures in PR %s (%s).\n\nFailing suites: %s\n\nRun those suites against spira/%s to reproduce.%s\n' \
-        "$id" "$pr_n" "$name" "$suites" "$id" "$_fail_section" \
+    printf '%s## Note\n%s was ejected from the merge queue after reproducing CI failures in PR %s (%s).\n\nFailing suites: %s\n\nRun those suites against spira/%s to reproduce.%s\n' \
+        "$_meta_header" "$id" "$pr_n" "$name" "$suites" "$id" "$_fail_section" \
     | SPIRA_MAIL_LINT_CONSIDERED="queue-ejection" \
       bash "$HERE/mail.sh" send operator \
         --from "Spira Queue <queue@spira>" \
-        --subject "Merge queue: $id ejected from $name" \
+        --subject "$_subject" \
         2>/dev/null || true
     printf 'verdict %s: ejected %s (suites: %s)\n' "$name" "$id" "$suites"
 }

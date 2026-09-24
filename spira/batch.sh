@@ -172,7 +172,10 @@ main() {
             [ -n "$_orphan" ] || continue
             printf 'batch %s: WARN certified-orphan %s — CERTIFIED landstate but branch spira/%s is gone\n' \
                 "$name" "$_orphan" "$_orphan"
-            _orphan_list="${_orphan_list}- ${_orphan}\n"
+            local _orphan_title
+            _orphan_title="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$_orphan" --json 2>/dev/null \
+                | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print(d.get("title") or "")' 2>/dev/null || true)"
+            _orphan_list="${_orphan_list}- ${_orphan}${_orphan_title:+ — ${_orphan_title}}\n"
         done <<< "$_orphans"
         printf '## Note\nBranch(es) were CERTIFIED in the merge queue for %s but their refs are gone:\n\n%b\nThe next batch will not include them. Check the reap log for what deleted the ref.\n' \
             "$name" "$_orphan_list" \
@@ -192,7 +195,10 @@ main() {
             [ -n "$_crl_id" ] || continue
             printf 'batch %s: WARN closed-red-live %s — bead closed with landstate RED/EJECTED and branch spira/%s is alive\n' \
                 "$name" "$_crl_id" "$_crl_id"
-            _crl_list="${_crl_list}- ${_crl_id}\n"
+            local _crl_title
+            _crl_title="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$_crl_id" --json 2>/dev/null \
+                | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print(d.get("title") or "")' 2>/dev/null || true)"
+            _crl_list="${_crl_list}- ${_crl_id}${_crl_title:+ — ${_crl_title}}\n"
         done <<< "$_crl_ids"
         printf '## Note\nBead(s) for %s are closed with a RED/EJECTED landstate and a live branch:\n\n%bThese beads cannot re-enter the queue. Re-open and recertify each branch to resume.\n' \
             "$name" "$_crl_list" \
