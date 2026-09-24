@@ -28,8 +28,7 @@
 #   4. An assertion step verifies the installed Rust version at runtime.
 #   5. No build step silences failure with continue-on-error: true.
 #   6. build-tarball.sh is called with --name to stamp once per release.
-#   7. POSITIVE CONTROL + release.yml supplies binaries via --bin-dir or every
-#      required --*-bin flag from build-tarball.sh.
+#   7. POSITIVE CONTROL + release.yml invokes build-tarball.sh with --workspace.
 #   8. POSITIVE CONTROL + gate.yml retracts the tag when publish fails.
 #
 # covers: .github/workflows/release.yml .github/workflows/gate.yml spira/build-tarball.sh
