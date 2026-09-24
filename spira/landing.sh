@@ -847,12 +847,6 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
                 log "CHECK6 $id: tip and base unchanged since last RED mark — skipping duplicate bump"
                 continue
             fi
-            if [ "${_ls_st:-}" = RED ] && [ "${_ls_reason%%@*}" = "no-rebase" ]; then
-                spira_ask_red_recurring "$id" "$br" "$name" "no-rebase" "${_ls_at:-0}"
-                progress "escalated $id — no-rebase RED recurring on $br"
-                land_mark "$id" RED "$_cur_br_tip" "no-rebase@${_cur_base_sha}"
-                continue
-            fi
             _rn_sweep="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
             _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
             _reopen_note="Reopened by sentinel: $br does not rebase onto $base in $name after $landed landed; conflicts in ${REBASE_CONFLICTS:-unknown}. The branch carries $_rn_sweep commit(s) from the previous session — resume from the existing work."
@@ -863,6 +857,12 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
             fi
             bump_requeue "$id" merge-conflict >/dev/null 2>&1
             _rq_n="$(requeues_of "$id")"
+            if [ "${_ls_st:-}" = RED ] && [ "${_ls_reason%%@*}" = "no-rebase" ]; then
+                spira_ask_red_recurring "$id" "$br" "$name" "no-rebase" "${_ls_at:-0}"
+                progress "escalated $id — no-rebase RED recurring on $br"
+                land_mark "$id" RED "$_cur_br_tip" "no-rebase@${_cur_base_sha}"
+                continue
+            fi
             if [ "${_rq_n:-0}" -ge "${SPIRA_REBASE_ESCALATE_AT:-3}" ]; then
                 spira_ask_rebase_loop "$id" "$br" "$name" "$_rq_n" "${REBASE_CONFLICTS:-unknown}" "$_other_beads"
                 progress "escalated $id — rebase conflict x${_rq_n} on $br"
@@ -1191,16 +1191,16 @@ for i in d:
                 log "CHECK6 $id: tip and base unchanged since last RED mark — skipping duplicate bump"
                 continue
             fi
+            _reopen_note="$(conflict_reopen_note "$repo" "$br" "$base" "$name" "${REBASE_CONFLICTS:-}" "sentinel")"
+            _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
+            bump_requeue "$id" merge-conflict >/dev/null 2>&1
+            _rq_n="$(requeues_of "$id")"
             if [ "${_ls_st:-}" = RED ] && [ "${_ls_reason%%@*}" = "no-rebase" ]; then
                 spira_ask_red_recurring "$id" "$br" "$name" "no-rebase" "${_ls_at:-0}"
                 progress "escalated $id — no-rebase RED recurring on $br"
                 land_mark "$id" RED "$tip" "no-rebase@${_cur_base_sha}"
                 continue
             fi
-            _reopen_note="$(conflict_reopen_note "$repo" "$br" "$base" "$name" "${REBASE_CONFLICTS:-}" "sentinel")"
-            _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
-            bump_requeue "$id" merge-conflict >/dev/null 2>&1
-            _rq_n="$(requeues_of "$id")"
             if [ "${_rq_n:-0}" -ge "${SPIRA_REBASE_ESCALATE_AT:-3}" ]; then
                 spira_ask_rebase_loop "$id" "$br" "$name" "$_rq_n" "${REBASE_CONFLICTS:-unknown}" "$_other_beads"
                 progress "escalated $id — rebase conflict x${_rq_n} on $br"
