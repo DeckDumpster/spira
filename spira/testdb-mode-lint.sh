@@ -66,6 +66,10 @@ mapfile -t files < <(git -C "$ROOT" ls-files -- 'spira/test-*.sh')
 bad=0
 _offenders=()
 for f in "${files[@]}"; do
+    case "$f" in
+        # THIS FENCE'S OWN TEST — content IS the planted example, not a real request.
+        */test-testdb-mode-lint.sh|test-testdb-mode-lint.sh) continue ;;
+    esac
     [ -f "$ROOT/$f" ] || continue
     hits="$(scan "$ROOT/$f")"
     [ -n "$hits" ] || continue
