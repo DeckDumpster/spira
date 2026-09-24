@@ -3568,7 +3568,7 @@ file_unclaimable_incidents() {   # file_unclaimable_incidents <detect_unclaimabl
         SPIRA_INCIDENT_TYPE=task \
         SPIRA_INCIDENT_PRIORITY=1 \
         SPIRA_INCIDENT_ACTOR=sentinel \
-        SPIRA_INCIDENT_REPO="${SPIRA_SCOPE_LABEL:-spira}" \
+        SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
         SPIRA_INCIDENT_REF="unclaimable:$bid" \
         SPIRA_INCIDENT_CAUSE=unclaimable \
         bash "$inc" file "UNCLAIMABLE: $bid — fix the fayth: or partition label" \

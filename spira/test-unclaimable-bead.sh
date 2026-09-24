@@ -289,6 +289,37 @@ lacks "no-loop bead not reported UNCLAIMABLE (positive control fires below)" \
 has   "bead without no-loop still reported when unclaimable (positive control)" \
     "UNCLAIMABLE sp-unc12b" "$out"
 
+# ==========================================================================================
+echo
+echo "case 13 — file_unclaimable_incidents: SPIRA_INCIDENT_REPO is home repo, not scope label"
+# ==========================================================================================
+# On a run-only install, SPIRA_SCOPE_LABEL ("spira") differs from SPIRA_HOME_REPO
+# ("spira-ops"). Filing with SPIRA_SCOPE_LABEL produces a bead repo:spira, which has no
+# repo-map entry, which Ops parks on claim, turning a routine label fix into a page.
+# file_unclaimable_incidents must use SPIRA_HOME_REPO.
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-unc13a","title":"unclaimable: no partition label","status":"open","issue_type":"task","labels":["repo:spira","${SPIRA_SCOPE_LABEL}"]}
+JSONL
+
+INC_LOG13="$TMP/inc13.log"
+: > "$INC_LOG13"
+cat > "$TMP/mock-incident13.sh" <<MOCK
+#!/usr/bin/env bash
+printf 'REPO=%s\n' "\${SPIRA_INCIDENT_REPO:-unset}" >> "$INC_LOG13"
+MOCK
+chmod +x "$TMP/mock-incident13.sh"
+
+_save_home_repo="${SPIRA_HOME_REPO:-}"
+export SPIRA_HOME_REPO="fixture-home-repo"
+unc="$(detect_unclaimable_ready 2>/dev/null)"
+SPIRA_INCIDENT_SH="$TMP/mock-incident13.sh" file_unclaimable_incidents "$unc"
+export SPIRA_HOME_REPO="$_save_home_repo"
+
+inc13_out="$(cat "$INC_LOG13")"
+has   "incident uses SPIRA_HOME_REPO as repo"          "REPO=fixture-home-repo" "$inc13_out"
+lacks "incident does not use SPIRA_SCOPE_LABEL as repo" "REPO=${SPIRA_SCOPE_LABEL}" "$inc13_out"
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
