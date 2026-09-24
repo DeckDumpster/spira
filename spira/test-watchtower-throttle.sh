@@ -315,11 +315,11 @@ echo "sentinel.sh CHECK7: throttle stamp gates task pool to 0:"
 sentinel="$HERE/sentinel.sh"
 want "sentinel reads throttle stamp before task fayth loop" \
      "SPIRA_THROTTLE_STAMP" "$(grep -o 'SPIRA_THROTTLE_STAMP' "$sentinel" 2>/dev/null || true)"
-want "sentinel sets pool=0 when stamp active" \
-     "pool=0" "$(grep -o 'pool=0' "$sentinel" 2>/dev/null || true)"
-# Confirm lanes loop is before the pool=0 gate (LANE_FAYTHS loop precedes the gate in the file)
+want "sentinel gates the task pool via check7_pool_decision when stamp active" \
+     "check7_pool_decision" "$(grep -o 'check7_pool_decision' "$sentinel" 2>/dev/null || true)"
+# Confirm lanes loop is before the pool gate (LANE_FAYTHS loop precedes the gate in the file)
 lane_line="$(grep -n 'for f in \$LANE_FAYTHS' "$sentinel" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
-gate_line="$(grep -n 'pool=0' "$sentinel" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
+gate_line="$(grep -n 'check7_pool_decision' "$sentinel" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
 if [ -n "$lane_line" ] && [ -n "$gate_line" ] && \
    [ "$lane_line" -gt 0 ] && [ "$gate_line" -gt 0 ] && \
    [ "$lane_line" -lt "$gate_line" ]; then
