@@ -907,6 +907,25 @@ sys.exit(0)' 2>/dev/null; then
             ledger_done "$rc" "operator-wait"
             exit $rc
         fi
+        # SUBMITTED IS NOT UNLANDED. A closed-work-bead close is converted back to open
+        # carrying this label further down, where the session's own close is read back
+        # (bead_close_on_land, lib.sh, closes it for real once the commit lands). The bead
+        # is open by design here; charging an attempt would poison work that is done and
+        # simply hasn't landed yet.
+        if bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
+import sys, json, os
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+labels = (d[0].get("labels") or []) if d else []
+sys.exit(0 if os.environ.get("SPIRA_SUBMITTED_LABEL", "spira-submitted") in labels else 1)
+' 2>/dev/null; then
+            bdq note "$BEAD_ID" "Submitted: work committed on branch and marked submitted; the landing pass closes this bead when it lands, citing the merge commit. No attempt charged." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID submitted — no attempt charged"
+            release_own_claim "$BEAD_ID"
+            ledger_done "$rc" submitted
+            exit $rc
+        fi
         # YIELD-HEADLESS IS NAMED, NOT GENERIC UNLANDED. rc=0 with the bead open reads
         # "finished, didn't close" — there is no signal that the session's background tasks
         # were killed mid-flight. Detecting it here lets the ledger say why and gives the
@@ -948,6 +967,23 @@ sys.exit(0)' 2>/dev/null; then
             log "$FAYTH: $BEAD_ID never judged ($cause) — no attempt charged"
         fi
         release_own_claim "$BEAD_ID"
+    elif bead_is_work_type "$(bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+d = d if isinstance(d, list) else [d]
+print((d[0].get("issue_type") or "") if d else "")' 2>/dev/null)"; then
+        # A WORK BEAD DOES NOT CLOSE HERE. bead_close_on_land (lib.sh) is the only place
+        # one closes for a landed reason, called once its commit is actually on the base —
+        # so a close reaching this point was the builder's own hand and is converted back
+        # to open, carrying SPIRA_SUBMITTED_LABEL, rather than left closed on nothing but
+        # the aeon's say-so (law-closed-is-not-landed). This runs AFTER the close already
+        # succeeded: there is no PreToolUse hook refusing the tool call, only aeon.sh's own
+        # teardown, which runs on every exit path and undoes the close before anything
+        # downstream can read it as a verdict about the work.
+        bead_reopen "$BEAD_ID" work-close-converted "Submitted: work committed on branch; marked submitted instead of closed. The landing pass closes this bead when it lands, citing the merge commit."
+        bdq label add "$BEAD_ID" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1
+        log "$FAYTH: $BEAD_ID closed a work bead directly — converted to submitted"
     elif [ -f "$SPIRA_HOME/gate-run.sh" ]; then
         local gate_st
         gate_why="$(bash "$SPIRA_HOME/gate-run.sh" --status "$BRANCH" "$REPO_NAME" 2>/dev/null)"; gate_st=$?

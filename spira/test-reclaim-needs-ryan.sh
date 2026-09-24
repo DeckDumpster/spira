@@ -29,7 +29,7 @@
 #
 # EXERCISED VIA FIXTURE FILES, not a live database. strand-classify.py reads BEADS_FILE
 # and READY_FILE; the classifier is what is under test, and the DB-to-JSON representation
-# is a separate seam verified by test-check2-reclaim / test-check5-drop.
+# is a separate seam verified by test-check2-reclaim / test-check5-invariant.
 #
 # defect: sp-2k5a
 # covers: spira/strand-classify.py

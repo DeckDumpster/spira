@@ -602,202 +602,39 @@ for i in (d if isinstance(d, list) else [d]):
 ' 2>/dev/null || true)
 
 # ======================================================================================
-# CHECK 5 — closed but not landed. A bead closed with no commit naming it unblocks its
-# dependents on a lie, and everything downstream then builds on work that is not there.
+# CHECK 5 — closed but not landed. One invariant: a closed work bead must carry a LANDED
+# landstate record whose tip is an ancestor of the base it lands on. A bead closed without
+# landing unblocks its dependents on a lie, and everything downstream then builds on work
+# that is not there (law-closed-is-not-landed).
 #
-# Skipped when SPIRA_SKIP_CLOSED_CHECK=1: a fixture that explicitly seeds all beads has no
-# $SPIRA_RUN/<id>.log files, so the while loop's first guard (`[ -f $SPIRA_RUN/$id.log ]`)
-# would skip every row anyway — but the two `bdjson list --status closed` queries per
-# partition still each cost ~500ms with nothing to show. Skipping the whole block saves ~1s
-# per sentinel pass in suites that do not test the closed-not-landed path.
+# THE INVARIANT HOLDS BY CONSTRUCTION NOW, NOT BY AUDIT. A builder's own close of a work
+# bead is converted back to open carrying SPIRA_SUBMITTED_LABEL instead of staying closed
+# (aeon.sh, at session teardown), and only bead_close_on_land (lib.sh) — called from the
+# landing pass at the moment a commit reaches the base — ever closes one for real. A
+# violation here is therefore not "reopen and try again": the aeon that would
+# retry did nothing wrong. It is a bug in the landing pass, and reading its log is Ops's
+# job, so this reports rather than reopens — reopening a bead whose work IS on the base
+# under a fact this check cannot see would throw away finished work for nothing.
 #
-# DELIBERATELY NOT tied to SPIRA_SKIP_RECLAIM. test-check5-drop.sh sets SPIRA_SKIP_RECLAIM=1
-# to skip the expensive overhead (DB check, STATE queries, CHECK 2, CHECK 3) while still
-# exercising this check. Suites that want to skip CHECK 5 must set SPIRA_SKIP_CLOSED_CHECK=1
-# explicitly (test-poison.sh and test-requeue-cap.sh do this to keep their per-pass budget).
+# NOT CHECKED: superseded (bd supersede records the relation; the work lands under the
+# successor's name) and spira-dropped (the operator's verdict that no branch is ever
+# coming). NOT CHECKED AT ALL: non-code types. Only SPIRA_WORK_CLOSE_TYPES beads go
+# through the submitted/landed pipeline this invariant polices — spike, ask, insight,
+# investigation, event, chore and epic close by the agent's own hand, same as always.
+#
+# Skipped when SPIRA_SKIP_CLOSED_CHECK=1, same reason as before: a fixture that seeds all
+# beads directly has none of them in $SPIRA_RUN/<id>.log, so every row is skipped anyway —
+# but the query cost per partition is not worth paying to prove that.
 # ======================================================================================
 if [ "${SPIRA_SKIP_CLOSED_CHECK:-0}" != 1 ]; then
-# The repository comes out of the SAME query as the id. `landed` reads the commit graph, and
-# reading the wrong repository's graph gives the wrong answer confidently in both directions:
-# a bead for repository A reads as never landed in repository B, so this check would reopen finished
-# work on every pass. One query, both facts.
-# THE FIELD SEPARATOR IS \x1f, NOT TAB, AND THAT IS LOAD-BEARING. Bash treats tab as IFS
-# WHITESPACE, so a run of tabs collapses to one delimiter and an EMPTY MIDDLE COLUMN
-# disappears, shifting every column after it left by one. `delivers` is empty on almost every
-# bead — it is the exception, not the rule — so `read` assigned it the NEXT column,
-# started_at's ISO timestamp. A timestamp is not a recognised delivers type, so CHECK 5 took
-# the delivers branch for every closed bead that had no delivers: label at all, charged an
-# attempt, and reopened it. Eleven beads were poisoned in ninety seconds on 2026-09-09 —
-# every one of them with commits on the base naming it, every one with no delivers: label.
-# The poison also caused eleven ask beads to be filed questioning whether each should be
-# dropped; all eleven were false and were closed during the operational recovery (sp-dj19i).
-# \x1f is not IFS whitespace, so empty columns survive it. Verified directly:
-#   printf 'a\tb\t\tc\n' | while IFS=$'\t' read -r w x y z; do echo "[$y]"; done   -> [c]
 _c5_absent_repos=""
-while IFS=$'\x1f' read -r id r_name superseded dropped sentcontent delivers started_at; do
+while IFS=$'\x1f' read -r id r_name superseded dropped; do
     [ -n "$id" ] || continue
-    # Carried from the delivers branch to the commit-naming check below, so a bead that
-    # fails both is reopened once, naming both reasons.
-    _c5_delivers_fail=""
-    # Only beads an aeon worked — anything closed by hand has its own evidence.
+    # Only beads an aeon worked — anything closed by hand outside the pipeline has its own
+    # evidence, and this check has no branch of its own to judge it against.
     [ -f "$SPIRA_RUN/$id.log" ] || continue
-    # A SUPERSEDED BEAD WILL NEVER HAVE A COMMIT NAMING IT, and that is correct: its work
-    # was carried onto the successor's branch and lands under the successor's name. Without
-    # this, two checks fought each other — the Sending sent the branch, and this check
-    # then read the missing branch as work lost and reopened a bead that was deliberately
-    # retired. `bd supersede` records the relation as a `supersedes` dependency; read it
-    # rather than inventing a label for something the database already models.
-    # Superseded comes out of the SAME query, which already carries dependencies. Asking
-    # `bd show` per bead cost 83ms x 36 closed beads for a fact the list had already
-    # returned — the third time tonight a per-item call was made for something a bulk
-    # query had in hand.
     [ "$superseded" = 1 ] && continue
-    # A BEAD THE OPERATOR DROPPED WILL NEVER HAVE A COMMIT NAMING IT EITHER, and that is
-    # equally correct: the verdict was "do not do this work", so no branch and no commit is
-    # ever coming. Without this, CHECK 5 reopens it every pass and the drop cannot stick —
-    # sp-m56w was closed on Ryan's verdict at 00:17 on 2026-09-08 and reopened by this check
-    # at 00:18:52, poison label intact, so no aeon would claim it and nothing would ever
-    # land it. A permanent zombie reached by a check that was right about every other bead.
     [ "$dropped" = 1 ] && continue
-    # A BRANCH THE SENDING REAPED BY CONTENT LEAVES NO COMMIT NAMING THE BEAD. content_landed
-    # deletes a branch when merging it would produce exactly the base tree — the work is on the
-    # base, but under some other commit, so no merge commit is ever made and the subject search
-    # below finds nothing. The guard above it ("work exists on a branch, CHECK 6 lands it")
-    # cannot fire either, because the Sending deleted that branch one pass earlier. So the bead
-    # was reopened, re-worked from scratch by a fresh aeon, closed, reaped and reopened again:
-    # 99 reopens over 80 beads in one day, each landing 86-143s after its own SENT — one
-    # sentinel pass, no jitter. sp-637b went six rounds. The Sending now labels these
-    # `content-landed` and this reads it.
-    #
-    # POISON IS TERMINAL HERE TOO. A poisoned bead was still being reopened by this check —
-    # sp-637b was poisoned after 3 attempts and reopened as attempt 4 four minutes later — so
-    # the counter that exists to bound the loop was being outrun by it.
-    [ "${sentcontent:-0}" = 1 ] && continue
-    # A BEAD CARRYING delivers:TYPE DECLARED WHAT IT PRODUCED INSTEAD OF A COMMIT. Verify
-    # each declared output is actually present; if all verify, accept the close. If any
-    # evidence is absent, reopen — a delivers: declaration with nothing behind it is a bead
-    # closed on nothing, which is precisely what this check exists to catch.
-    #
-    # This supersedes no-payload (sp-ail7). no-payload exempted unconditionally, so a sweep
-    # that failed silently after one command was indistinguishable from one that filed twenty
-    # beads. delivers:TYPE is the typed-and-verified form: the aeon declares what it produced
-    # and this check confirms it is there.
-    #
-    # RECOGNISED TYPES:
-    #   delivers:beads             — at least one child bead names $id as its parent
-    #   delivers:note:/abs/path    — the file at that path exists and was written in the bead's
-    #   delivers:report:/abs/path    window (mtime after started_at)
-    #   delivers:check:<command>   — the command exits 0; proves machine state the bead
-    #                                established. No time constraint — state is present or not.
-    #                                The command runs in the sentinel's environment (SPIRA_HOME,
-    #                                SPIRA_PROD and conf.sh exports are set). Shell variables in
-    #                                the command expand at check time via eval. Written at filing,
-    #                                not at close — so the aeon cannot pick a check it already
-    #                                satisfied (law-a-regression-test-must-be-seen-to-fail shape:
-    #                                the filer chose the criterion before knowing the outcome).
-    #
-    # Unknown types are treated as unverifiable and cause a reopen. A label that cannot be
-    # checked is not evidence; treating unknown types as passing would recreate the no-payload
-    # hole under a longer name.
-    if [ -n "${delivers:-}" ]; then
-        _delivers_ok=1
-        _delivers_fail=""
-        _IFS_SAVE="$IFS"; IFS=';'
-        # shellcheck disable=SC2206
-        _deliver_arr=( ${delivers} )
-        IFS="$_IFS_SAVE"
-        for _deliver in "${_deliver_arr[@]}"; do
-            [ -n "$_deliver" ] || continue
-            _dtype="${_deliver%%:*}"
-            _dval="${_deliver#*:}"   # path for note/report; same as _dtype for beads
-            case "$_dtype" in
-                beads)
-                    # Child bead count via a per-bead query. Only reached for beads that
-                    # declared this type, so the extra call is bounded and justified.
-                    _cnt="$(bdjson children "$id" 2>/dev/null | python3 -c '
-import sys,json
-try: d=json.load(sys.stdin)
-except Exception: print(0); sys.exit()
-print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/dev/null)" || _cnt=0
-                    if [ "${_cnt:-0}" -le 0 ] 2>/dev/null; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:beads declared but no child beads name $id as source"
-                    fi
-                    ;;
-                note|report)
-                    # Path must be distinct from the type name (i.e. a colon-separated path
-                    # must follow), the file must exist, and its mtime must be after the
-                    # bead's started_at — so that a file written before this session does not
-                    # satisfy a claim the aeon is making about work it did in this session.
-                    if [ "$_dval" = "$_dtype" ]; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:$_dtype has no file path — use delivers:$_dtype:/absolute/path"
-                    elif [ ! -f "$_dval" ]; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:$_dtype: $_dval does not exist"
-                    elif [ -n "${started_at:-}" ]; then
-                        _se="$(date -d "$started_at" +%s 2>/dev/null)" || _se=0
-                        _mt="$(stat -c %Y "$_dval" 2>/dev/null)" || _mt=0
-                        if [ "${_mt:-0}" -le "${_se:-0}" ] 2>/dev/null; then
-                            _delivers_ok=0
-                            _delivers_fail="delivers:$_dtype: $_dval exists but was not written in this bead's window (mtime $(date -d "@${_mt:-0}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown) <= started_at $started_at)"
-                        fi
-                    fi
-                    ;;
-                check)
-                    # Command must follow the colon. Run it in the sentinel's environment;
-                    # exit 0 confirms the machine state is in place, non-zero means not yet.
-                    # No time window — machine state is either present or not, regardless of
-                    # when it was established. Shell variables in the command (e.g. $SPIRA_HOME)
-                    # expand at check time from the sentinel's environment.
-                    if [ "$_dval" = "$_dtype" ]; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:check has no command — use delivers:check:<command>"
-                    elif ! eval "$_dval" >/dev/null 2>&1; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:check: command exited non-zero: $_dval"
-                    fi
-                    ;;
-                action)
-                    # The bead's work was done by action on the box, not by committing code.
-                    # The close reason carries the evidence; no machine check is run here.
-                    # Filed at bead creation time by the producer (e.g. watchtower.sh), not
-                    # chosen by the aeon, so the criterion cannot be gamed by picking a check
-                    # that is already satisfied (law-a-regression-test-must-be-seen-to-fail shape).
-                    ;;
-                *)
-                    _delivers_ok=0
-                    _delivers_fail="delivers:$_dtype is not a recognised type (beads, note, report, check, action)"
-                    ;;
-            esac
-            [ "$_delivers_ok" = 1 ] || break
-        done
-        if [ "$_delivers_ok" = 1 ]; then
-            log "CHECK5 $id: delivers ($delivers) verified — not reopened"
-            continue
-        fi
-        # FALL THROUGH TO THE COMMIT-NAMING CHECK. Do not reopen here.
-        #
-        # delivers: and a commit are alternatives, not a replacement. incident.sh says so
-        # where it writes the label: "When an Ops session commits code naming the bead, the
-        # commit-naming check accepts the close and this label is never consulted." Reopening
-        # here made the label authoritative instead, and the bead never reached the check
-        # that would have accepted it.
-        #
-        # THE TOLERANCE IS THE POINT. The commit path leaves a bead closed while its branch
-        # is merely ahead of the base — "work exists; CHECK 6 lands it" — because landing is
-        # the Sending's job and takes minutes. This branch had no such tolerance, so a bead
-        # that had done its work and was waiting to land was reopened and the work redone.
-        #
-        # SCAR: a bead closed with its fix committed, carrying a delivers:note: path nothing
-        # had written because the fix was code and not a runbook application, was reopened 45
-        # seconds after each close — three times, at $1.39, $0.23 and $0.67. The work was
-        # correct every time and landed unchanged. At a fleet ceiling of one aeon it owned the
-        # only slot for an hour. Fourteen open beads carried an unsatisfiable delivers: path
-        # at the time, so the loop sat under every one of them.
-        log "CHECK5 $id: delivers not verified ($_delivers_fail) — falling through to the commit check"
-        _c5_delivers_fail="$_delivers_fail"
-    fi
     r_path="$(repo_root "${r_name:-}")" || {
         case $'\n'"$_c5_absent_repos" in
             *$'\n'"$r_name"$'\n'*) ;;
@@ -805,106 +642,39 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
                log "CHECK5: repo:$r_name is not in repo-map — skipping its closed beads" ;;
         esac
         continue; }
-    # ONE `git log` PER REPO, not per bead. `landed` walks all commits on the base branch;
-    # a 400-commit window caused beads older than that to be incorrectly marked unlanded and
-    # reopened repeatedly (sp-a9g at 401, sp-37q at 400). Searching %B (full message) not
-    # %s (subject only) catches bead IDs in commit bodies (sp-m0s7 case). This is `landed`
-    # inlined over a cached walk, so it must keep landed's THREE outcomes.
     if [ "$r_path" != "${subj_repo:-}" ]; then
         subj_repo="$r_path"
-        # spira_landrefs is the base plus its local counterpart, both verified to resolve.
-        # Non-zero means the repository cannot say what it lands on at all.
         subj_refs="$(spira_landrefs "$r_path")" || subj_refs=""
         subj_base="${subj_refs%% *}"
-        # shellcheck disable=SC2086
-        [ -n "$subj_refs" ] \
-            && subjects="$(git -C "$r_path" log --format='%B' $subj_refs 2>/dev/null)" \
-            || subjects=""
     fi
-    # CANNOT TELL IS NOT "NOT LANDED". Reading an unresolvable base as "no commit names it"
-    # would reopen every closed bead in that repository on every pass. The question is
-    # unanswerable, so it is left unanswered and said out loud rather than answered wrongly.
-    if [ -z "$subj_refs" ]; then
+    # CANNOT TELL IS NOT "NOT LANDED". A repository whose base cannot be resolved is left
+    # unjudged rather than read as unlanded, which would report every closed bead in it.
+    if [ -z "${subj_base:-}" ]; then
         log "CHECK5 $id: cannot resolve the ref $r_name lands on — not judging whether it landed"
-    elif ! grep -qF "$id" <<< "$subjects"; then
-        # LANDSTATE CHECK. Read the pipeline record before deciding to reopen.
-        _c5_ls_state=""; _c5_ls_tip=""
-        if [ -r "$SPIRA_RUN/landstate/$id" ]; then
-            read -r _c5_ls_state _c5_ls_tip _ < "$SPIRA_RUN/landstate/$id" 2>/dev/null || true
-        fi
-        # BATCHED/GATED/REBASED: a PR or the landing pass holds this work; don't reopen.
-        case "${_c5_ls_state:-}" in
-            BATCHED|GATED|REBASED)
-                log "CHECK5 $id: landstate=$_c5_ls_state — pipeline handling it; not reopening"
-                continue ;;
-        esac
-        # LANDED tip is an ancestor of the base: reached base via squash, amend, or content merge.
-        if [ "${_c5_ls_state:-}" = LANDED ] && [ -n "${_c5_ls_tip:-}" ] \
-               && [ "$_c5_ls_tip" != none ] && [ -n "${subj_base:-}" ] \
-               && git -C "$r_path" merge-base --is-ancestor "$_c5_ls_tip" "$subj_base" 2>/dev/null; then
-            log "CHECK5 $id: landstate LANDED, tip $_c5_ls_tip is ancestor of $subj_base — not reopening"
-            continue
-        fi
-        # HOLD MODE: a closed bead with a standing branch is the expected terminal state.
-        # The human has not merged it yet; this is not a fault.
-        if [ "$(repo_land "${r_name:-}" 2>/dev/null)" = "hold" ]; then
-            log "CHECK5 $id: repo ${r_name:-} is land=hold — standing branch is terminal; not reopening"
-            continue
-        fi
-        if git -C "$r_path" show-ref --verify -q "refs/heads/spira/$id"; then
-            # ZERO COMMITS AHEAD IS NOT WORK ON A BRANCH. An empty branch kept by the
-            # Sending (content_landed now returns non-zero for zero-ahead) looks like "work
-            # on a branch" from here, but has no commits to land and CHECK 6 cannot advance
-            # it. Only exempt when the branch actually has commits of its own.
-            _c5_base="${subj_base:-}"
-            _c5_ahead="$(git -C "$r_path" rev-list --count \
-                "${_c5_base:+${_c5_base}..}spira/$id" 2>/dev/null)" || _c5_ahead=0
-            [ "${_c5_ahead:-0}" -gt 0 ] 2>/dev/null && continue  # work exists; CHECK 6 lands it
-        else
-            # BRANCH MISSING. Restore from the landstate tip or remote tracking ref so
-            # landing.sh can pick it up — a deleted ref is not evidence of unlanded work
-            # when the tip object still exists.
-            _c5_restore_tip=""
-            if [ -n "${_c5_ls_tip:-}" ] && [ "$_c5_ls_tip" != none ] \
-                   && git -C "$r_path" cat-file -e "$_c5_ls_tip" 2>/dev/null; then
-                _c5_restore_tip="$_c5_ls_tip"
-            elif git -C "$r_path" show-ref --verify -q "refs/remotes/origin/spira/$id" 2>/dev/null; then
-                _c5_restore_tip="$(git -C "$r_path" rev-parse "refs/remotes/origin/spira/$id" 2>/dev/null)" || true
-            fi
-            if [ -n "${_c5_restore_tip:-}" ]; then
-                git -C "$r_path" update-ref "refs/heads/spira/$id" "$_c5_restore_tip" 2>/dev/null \
-                    && log "CHECK5 $id: branch restored to $_c5_restore_tip (${_c5_ls_state:-unknown} landstate) — CHECK 6 will land it" \
-                    || log "CHECK5 $id: branch restore failed"
-                _c5_base="${subj_base:-}"
-                _c5_ahead="$(git -C "$r_path" rev-list --count \
-                    "${_c5_base:+${_c5_base}..}spira/$id" 2>/dev/null)" || _c5_ahead=0
-                [ "${_c5_ahead:-0}" -gt 0 ] 2>/dev/null && continue
-            elif [ "${_c5_ls_state:-}" = CERTIFIED ]; then
-                # CERTIFIED but branch and tip are gone — can't restore; don't reopen.
-                # The queue will skip it; a hand-recovery or a new aeon is needed.
-                log "CHECK5 $id: landstate CERTIFIED, branch and tip gone — not reopening"
-                continue
-            fi
-        fi
-        # COUNT IT. A bead that closes itself without committing a working change is
-        # reopened here, becomes ready, is claimed, and closes itself again — a loop
-        # with no counter, which is precisely the loop the poison threshold exists to
-        # bound. The aeon's own post-session check handles the normal case (the aeon
-        # detects closed+uncommitted and reopens it, so the cleanup trap sees the bead
-        # as open and charges via session_outcome). This is the safety net for the case
-        # where the aeon exited before reaching that check — in which case no attempt
-        # has been charged yet and this is genuinely a failed attempt at the work.
-        # Counter labels (sp-attempt-N) no longer written; the events trail records
-        # this reopening as a future attempt when the bead is next claimed (sp-lzt).
-        bead_reopen "$id" closed-without-commit "Reopened by sentinel:${_c5_delivers_fail:+ ${_c5_delivers_fail}, and} closed, but no commit on ${subj_base:-the base} or on spira/$id names it in $r_name. Closed is not landed; the next claim counts toward the poison threshold via the events trail. If this bead was closed because another bead did the work, record it with: bd supersede $id --with <successor> — a close reason alone is not read by this check."
-        progress "reopened $id — closed without landing"
+        continue
     fi
+    _c5_ls_state=""; _c5_ls_tip=""
+    if [ -r "$SPIRA_RUN/landstate/$id" ]; then
+        read -r _c5_ls_state _c5_ls_tip _ < "$SPIRA_RUN/landstate/$id" 2>/dev/null || true
+    fi
+    if [ "${_c5_ls_state:-}" = LANDED ] && [ -n "${_c5_ls_tip:-}" ] && [ "$_c5_ls_tip" != none ] \
+           && git -C "$r_path" merge-base --is-ancestor "$_c5_ls_tip" "$subj_base" 2>/dev/null; then
+        continue
+    fi
+    log "CHECK5 $id: closed with no LANDED record on $r_name ($subj_base) — filing an Ops incident"
+    SPIRA_DB="$SPIRA_DB" \
+    SPIRA_INCIDENT_TYPE=bug \
+    SPIRA_INCIDENT_PRIORITY=1 \
+    SPIRA_INCIDENT_ACTOR=sentinel \
+    SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:-spira},${SPIRA_INCIDENT_LABEL:-incident}" \
+    SPIRA_INCIDENT_REPO="${SPIRA_SCOPE_LABEL:-spira}" \
+    SPIRA_INCIDENT_REF="closed-not-landed:$id" \
+    SPIRA_INCIDENT_CAUSE=closed-not-landed \
+    bash "${SPIRA_INCIDENT_SH:-$SPIRA_HOME/incident.sh}" file \
+        "CLOSED NOT LANDED: $id has no LANDED record on $r_name" \
+        - <<< "landstate=${_c5_ls_state:-none} tip=${_c5_ls_tip:-none} base=$subj_base repo=$r_name. The landing pass closes work beads when their commit reaches the base (bead_close_on_land, lib.sh); this bead is closed with no such record. Check the landing pass's own log before assuming the work is missing." \
+        >/dev/null 2>&1 || true
 done < <(
-    # EVERY PERSONA'S PARTITION, NOT THE BUILDER'S. This listed `--label spira,plan`, so a
-    # bead of any other persona closed without a commit naming it was invisible to the one
-    # check that exists to catch that — law-closed-is-not-landed, pointed at one partition
-    # of several. A chamber that declares no partition is named below rather than read as a
-    # clean sweep.
     home_repo="$(spira_home_repo)"
     while IFS=$'\t' read -r part _; do
         [ -n "$part" ] || continue
@@ -913,42 +683,20 @@ import sys, json
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(0)
 home = sys.argv[1]
+work_types = set(sys.argv[2].split())
 for i in (d if isinstance(d, list) else [d]):
+    if (i.get("issue_type") or "") not in work_types:
+        continue
     repo = next((l[5:] for l in (i.get("labels") or []) if l.startswith("repo:")), home)
-    # The third column is supersession, read from the dependencies this query already
-    # returns rather than fetched per bead.
-    #
     # `bd list` AND `bd show` NAME THE SAME FIELD DIFFERENTLY. show returns
-    # {"dependency_type": "supersedes"}; list returns {"type": "supersedes"}. Reading only
-    # the show spelling off a list row yields None for every dependency, so `sup` was 0 for
-    # every bead and this exemption had never once fired: sp-dvlq was superseded by sp-35pl,
-    # carried the dependency, and was still reopened as closed-without-landing every two
-    # minutes. Accept either spelling rather than the one the neighbouring command happened
-    # to use, because nothing here can tell which shape it was handed.
+    # {"dependency_type": "supersedes"}; list returns {"type": "supersedes"}. Accept
+    # either spelling rather than the one the neighbouring command happened to use.
     sup = 1 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
                    for x in (i.get("dependencies") or [])) else 0
-    # Fourth column: dropped by the operator, carried as a label because "dropped" is not a
-    # relation between beads the way supersession is — there is no second bead to point at.
     drop = 1 if "spira-dropped" in (i.get("labels") or []) else 0
-    # Fifth column: the Sending reaped this branch by content, or the bead is poisoned. Both
-    # mean no commit will ever name it, so reopening only burns another aeon on finished work.
-    lab = i.get("labels") or []
-    sentc = 1 if ("content-landed" in lab or "spira-poison" in lab) else 0
-    # Sixth column: delivers:TYPE labels the aeon set on close — semicolon-separated list of
-    # the values after "delivers:", e.g. "beads" or "note:/path/to/file". Empty if none. The
-    # loop verifies each declared output is present; an empty column means this bead must have
-    # a commit on the base (the normal path). This supersedes no-payload (sp-ail7).
-    delivers = ";".join(l[len("delivers:"):] for l in lab if l.startswith("delivers:"))
-    # Seventh column: started_at — the timestamp of the last claim, used by note/report checks
-    # to confirm the file was written in the bead window, not before the session began.
-    started = i.get("started_at") or ""
-    # \x1f, not tab: an empty column between two tabs is eaten by bash read (see the loop).
-    print("\x1f".join([i["id"], repo, str(sup), str(drop), str(sentc), delivers, started]))' "$home_repo" 2>/dev/null
+    print("\x1f".join([i["id"], repo, str(sup), str(drop)]))' "$home_repo" \
+            "${SPIRA_WORK_CLOSE_TYPES:-task bug feature}" 2>/dev/null
     done <<< "$PARTITIONS" |
-    # Sorted on the REPOSITORY column first, because the loop above caches one `git log`
-    # walk per repository and re-walks whenever the repository changes between rows; `-u`
-    # then drops the duplicate a bead carrying two personas' labels would produce. Both
-    # keys together are the whole line, so nothing is deduplicated on a partial key.
     sort -u -t$'\x1f' -k2,2 -k1,1
 )
 [ -n "$PARTITIONS" ] || log "CHECK5 no persona in the chamber declares a partition — no closed bead is being checked for landing"
