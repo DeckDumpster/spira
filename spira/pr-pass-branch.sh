@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pr-pass-branch.sh — per-branch pr-mode landing, called by landing-pass.
 #
-# covers: spira/landing-pass spira/landing.sh spira/lib.sh
+# covers: landing-pass spira/landing.sh spira/lib.sh
 #
 # pr-pass-branch.sh <repo> <branch> <id> <baseref> <repo-name> <tip>
 #

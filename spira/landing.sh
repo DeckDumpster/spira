@@ -16,7 +16,7 @@
 #
 # pr mode: landing-pass owns it end-to-end (rebase, confine, push, PR, no gate).
 #
-# land-modes: push pr hold queue
+# land-modes: push hold queue
 #
 # After land_repo loops (this file):
 #   queue.sh step (verdict.sh + batch.sh) — queue mode only

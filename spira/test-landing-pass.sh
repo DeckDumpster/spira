@@ -8,7 +8,7 @@
 #      on the branch (positive control shows ghq pr create IS called when no dup exists).
 #
 # defect: sp-n971b
-# covers: spira/landing-pass spira/pr-pass-branch.sh spira/lib.sh spira/landing.sh
+# covers: landing-pass spira/pr-pass-branch.sh spira/lib.sh spira/landing.sh
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
