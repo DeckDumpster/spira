@@ -37,6 +37,9 @@
 #  19. Fixture: clone's ready.sh governs check, not workspace's.
 #  20. Phase A: bead labels carry plan+scope so builder predicate matches.
 #  21. Phase A: claimability check uses bd ready, not sentinel --report polling.
+#  22. Phase B: install.sh output not discarded on failure.
+#  23. Phase B: install env mirrors phase A — CONFIGURE_PROD and SPIRA_INSTALL_PROD_GIT_CONSIDERED.
+#  24. Phase B: deploy gated on install success (dead Dolt blamed on install, not deploy).
 #
 # covers: spira/acceptance-run.sh spira/acceptance-agent.sh
 set -uo pipefail
@@ -398,6 +401,69 @@ printf '%s\n' "$_pb_out" | grep -q 'prev-install-failure-reason' \
         "marker not found; got: $(printf '%s\n' "$_pb_out" | head -3)"
 
 rm -rf "$_pb_tmp"
+
+# ============================================================================
+echo
+echo "23. Phase B: install env mirrors phase A — CONFIGURE_PROD and SPIRA_INSTALL_PROD_GIT_CONSIDERED"
+# ============================================================================
+# Phase B previously called install.sh with only SPIRA_OPERATED=0; without
+# CONFIGURE_PROD=$_prev_clone/spira, install.sh reaches phase 4 (units) and
+# exits 2 because SPIRA_PROD points to a git checkout. Phase 4 is where
+# dolt-beads.service is installed and started. A phase 4 exit leaves Dolt down,
+# and every subsequent call that sources conf.sh gets connection refused.
+want "phase B _prev_env built with SPIRA_OPERATED=0" '_prev_env=('
+want "phase B sets CONFIGURE_PROD for prev_clone" \
+    'CONFIGURE_PROD=$_prev_clone/spira'
+want "phase B sets SPIRA_INSTALL_PROD_GIT_CONSIDERED=1 for prev install" \
+    'SPIRA_INSTALL_PROD_GIT_CONSIDERED=1'
+want "phase B uses env to pass _prev_env to install.sh" \
+    'env "${_prev_env[@]}" bash "$_prev_clone/install.sh"'
+
+# ============================================================================
+echo
+echo "24. Phase B: deploy gated on install success (dead Dolt blamed on install)"
+# ============================================================================
+# A failed install leaves the database service down; deploy.sh then reports
+# connection refused, which looks like an upgrade failure rather than an install
+# failure. The guard catches this and attributes the failure to install before
+# deploy.sh is invoked.
+wantre "phase B deploys only when install succeeded" \
+    '_prev_install_rc.*-ne 0'
+want "phase B guard names database service not started" \
+    'database service not started'
+
+# Fixture: guard fires when install fails — output must name the install failure.
+_pg_tmp="$(mktemp -d)"
+mkdir -p "$_pg_tmp/clone"
+printf '#!/bin/sh\nprintf "install-failed-marker\n"\nexit 2\n' \
+    > "$_pg_tmp/clone/install.sh"
+chmod +x "$_pg_tmp/clone/install.sh"
+
+_pg_out="$(
+    _prev_clone="$_pg_tmp/clone"
+    _prev_env=(SPIRA_OPERATED=0)
+    _prev_install_rc=0
+    env "${_prev_env[@]}" bash "$_prev_clone/install.sh" 2>&1 \
+        | tee "$_pg_tmp/prev-install.log" || _prev_install_rc=$?
+    if [ "$_prev_install_rc" -ne 0 ]; then
+        printf '  FAIL  phase B+C: skipped — install failed; database service not started: prev_install_rc=%d\n' \
+            "$_prev_install_rc"
+    else
+        printf '  ok    phase B+C: install succeeded\n'
+    fi
+)"
+
+printf '%s\n' "$_pg_out" | grep -q 'database service not started' \
+    && ok "fixture: guard emits database-not-started when install fails" \
+    || bad "fixture: guard emits database-not-started when install fails" \
+        "marker not found; got: $(printf '%s\n' "$_pg_out" | head -3)"
+
+printf '%s\n' "$_pg_out" | grep -qF 'install-failed-marker' \
+    && ok "fixture: failing install.sh output still visible before guard message" \
+    || bad "fixture: failing install.sh output still visible before guard message" \
+        "marker not found"
+
+rm -rf "$_pg_tmp"
 
 # ============================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
