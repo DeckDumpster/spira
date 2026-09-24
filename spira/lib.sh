@@ -5482,7 +5482,7 @@ queue_sort_rows() {
 import sys, json, os
 try:
     with open(os.environ['PRIO_FILE']) as f: prios = json.load(f)
-except Exception: prios = []
+except Exception: sys.exit(1)
 prios = prios if isinstance(prios, list) else [prios]
 prio_map = {}
 for x in prios:
