@@ -37,7 +37,10 @@ MAN="$TMP/watchers"
 # (watchd.sh cmd_units), which is the one this suite needs rendered.
 printf 'alpha|daemon|/usr/bin/true|\n' > "$MAN"
 CONF="$TMP/spira.conf"
-printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\n' "$RUN" "$COCKPIT" "$MAN" > "$CONF"
+# SPIRA_PROD pinned to empty: render() then falls back to SPIRA_HOME ($CLONE/spira), so
+# ExecStart resolves from the clone rather than this box's own derived release path.
+printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PROD = \n' \
+    "$RUN" "$COCKPIT" "$MAN" > "$CONF"
 
 printf 'test-units-lint.sh\n'
 
@@ -60,7 +63,7 @@ paths_are_configured() {  # paths_are_configured <label> <unit-text>
     local stray="" p
     while IFS= read -r p; do
         [ -n "$p" ] || continue
-        case "$p" in "$CLONE"/*|"$RUN"/*) ;; *) stray="$stray $p" ;; esac
+        case "$p" in "$CLONE"|"$CLONE"/*|"$RUN"|"$RUN"/*) ;; *) stray="$stray $p" ;; esac
     done < <(sed 's|file://|file:|' <<< "$2" | grep -oE '[=:]/[^ ]+' | sed 's/^[=:]//')
     is "$1: every path in it came from configuration" "" "$stray"
 }
