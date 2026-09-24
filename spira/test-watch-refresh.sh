@@ -24,20 +24,17 @@
 # It needs no database and no beads server, and it never touches the box's own units: the
 # only `systemctl` it can reach is a stub that records what it was asked to do.
 #
-# The units are named explicitly rather than by `systemd/*`: this suite asserts the CPUQuota
-# and the 60s cadence out of those two files, so a change to either must run it, while a
-# change to some other unit has no business selecting it.
+# The rendered unit's own CPUQuota/Nice/placeholders/config-only-paths and the install step's
+# enable-the-timer-not-the-service behaviour are asserted once for every watcher/notifier unit
+# in test-units-lint.sh (D8), not repeated here.
 #
 # defect: sp-gys
-# covers: spira/watch-refresh.sh systemd/spira-watch-refresh.service systemd/spira-watch-refresh.timer
+# tier: T1
+# covers: spira/watch-refresh.sh UC-operator-channel-32 UC-operator-channel-33
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-ROOT="$(cd "$HERE/.." && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
-bad() { printf '  FAIL  %s\n        got: %s\n' "$1" "$2"; fail=$((fail+1)); }
-is()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want [$2] got [$3]"; fi; }
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "$2" ;; esac; }
 hasnt() { case "$2" in *"$3"*) bad "$1" "$2" ;; *) ok "$1" ;; esac; }
 
@@ -52,10 +49,6 @@ REAL_MKDIR="$(command -v mkdir)"
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira" "$CLONE/cockpit"
 cp "$HERE"/*.sh "$CLONE/spira/"
-cp -r "$ROOT/systemd" "$CLONE/systemd"
-# beads-push.sh and concierge.sh live at repo root (@SPIRA_REPO@); the ExecStart fence in
-# install.sh requires them to be executable. SPIRA_REPO derives to $CLONE (parent of $CLONE/spira).
-cp "$ROOT/beads-push.sh" "$ROOT/concierge.sh" "$CLONE/"
 
 # EVERY CONFIGURED VALUE PINNED TO A NON-DEFAULT. SPIRA_COCKPIT would derive to
 # $CLONE/cockpit and SPIRA_RUN to $CLONE/.runtime/spira; both are moved somewhere unrelated,
@@ -474,76 +467,4 @@ out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_WATCH
 is "an argument it does not know is refused" "2" "$rc"
 has "with a usage line"                      "$out" "usage: watch-refresh.sh"
 
-echo
-echo "the units — fenced before they are enabled, and no path baked in"
-STUB="$TMP/instub"; mkdir -p "$STUB"
-cat > "$STUB/systemctl" <<EOF
-#!/bin/bash
-printf '%s\n' "\$*" >> "$TMP/install.log"
-exit 0
-EOF
-printf '#!/bin/bash\nexit 0\n' > "$STUB/loginctl"
-printf '#!/bin/bash\nexit 0\n' > "$STUB/spira-supervise"
-chmod +x "$STUB/systemctl" "$STUB/loginctl" "$STUB/spira-supervise"
-IHOME="$TMP/ihome"; mkdir -p "$IHOME"
-# A separate PROD root, distinct from CLONE (SPIRA_HOME) and RUN (SPIRA_RUN), so the
-# assertion can verify that ExecStart resolves from SPIRA_PROD, not from a hardcoded path
-# or from SPIRA_HOME. sp-g8ph changed ExecStart from @SPIRA_HOME@ to @SPIRA_PROD@; this
-# is the property that change introduced.
-# install.sh refuses an unexecutable ExecStart target; all scripts must exist in PROD.
-PROD="$TMP/prod-fake"; mkdir -p "$PROD"
-cp "$HERE"/*.sh "$PROD/"
-PROD_COCK="$(dirname "$PROD")/cockpit"; mkdir -p "$PROD_COCK"
-for _s in $(grep -h "ExecStart=" "$ROOT/systemd/"*.service 2>/dev/null \
-            | grep "@SPIRA_PROD_COCK@" | sed 's|.*@SPIRA_PROD_COCK@/||' | sed 's/ .*//' | sort -u); do
-    printf '#!/bin/sh\n: stub\n' > "$PROD_COCK/$_s"; chmod +x "$PROD_COCK/$_s"
-done
-unset _s
-# SPIRA_PROD_ROOT resolves as dirname(SPIRA_PROD) — the release root a real `make install`
-# populates from a full git archive, so it holds the repo-root scripts (concierge.sh,
-# beads-push.sh) alongside spira/ and cockpit/.
-PROD_ROOT="$(dirname "$PROD")"
-for _s in $(grep -h "ExecStart=" "$ROOT/systemd/"*.service 2>/dev/null \
-            | grep "@SPIRA_PROD_ROOT@" | sed 's|.*@SPIRA_PROD_ROOT@/||' | sed 's/ .*//' | sort -u); do
-    printf '#!/bin/sh\n: stub\n' > "$PROD_ROOT/$_s"; chmod +x "$PROD_ROOT/$_s"
-done
-unset _s
-: > "$TMP/install.log"
-printf 'SPIRA_COCKPIT = %s\nSPIRA_RUN = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s\nSPIRA_PROD = %s\n' \
-    "$COCKPIT" "$RUN" "$MAN" "$STUB" "$PROD" > "$TMP/install.conf"
-env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" \
-    SPIRA_INSTALL_FORCE=1 "SPIRA_SUPERVISE_BIN=$STUB/spira-supervise" \
-    bash "$CLONE/systemd/install.sh" > "$TMP/install.out" 2>&1
-ilog="$(cat "$TMP/install.log")"
-has "the stub recorded an install"      "$ilog" "daemon-reload"
-has "the refresh timer is enabled"      "$ilog" "enable --now spira-watch-refresh-prod.timer"
-# The .service behind a .timer is started BY the timer; enabling it as well runs it once at
-# boot, outside the schedule.
-hasnt "and the service behind it is not" "$ilog" "enable --now spira-watch-refresh-prod.service"
-
-U="$IHOME/.config/systemd/user/spira-watch-refresh-prod.service"
-unit="$(cat "$U" 2>/dev/null)"
-has "the service is installed"  "$(ls "$IHOME/.config/systemd/user" 2>/dev/null)" "spira-watch-refresh-prod.service"
-# law-fence-loops-on-shared-hardware: anything that polls is fenced BEFORE it is enabled.
-has "it is CPU-fenced"          "$unit" "CPUQuota="
-has "and it is niced"           "$unit" "Nice="
-has "and it cannot hang forever" "$unit" "TimeoutStartSec="
-hasnt "no placeholder survives into it" "$unit" "@"
-T="$IHOME/.config/systemd/user/spira-watch-refresh-prod.timer"
-has "the timer fires every minute" "$(cat "$T" 2>/dev/null)" "OnUnitActiveSec=1min"
-
-# NO PATH IS HARDCODED. Every absolute path in the rendered units must lie under a value
-# that came from the config above — which pins all three to non-defaults, so a literal cannot
-# pass by coincidence. SPIRA_HOME resolves from $CLONE/spira (conf.sh's own directory),
-# SPIRA_PROD from $PROD, and SPIRA_RUN from $RUN.
-paths="$(sed 's|file://|file:|' "$U" "$T" 2>/dev/null | grep -oE '[=:]/[^ ]+' | sed 's/^[=:]//')"
-is "the path extractor found paths to judge" "yes" "$([ -n "$paths" ] && echo yes || echo no)"
-stray=""
-while IFS= read -r p; do
-    [ -n "$p" ] || continue
-    case "$p" in "$CLONE/spira"/*|"$RUN"/*|"$PROD"/*) ;; *) stray="$stray $p" ;; esac
-done <<< "$paths"
-is "and every one came from configuration" "" "$stray"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
