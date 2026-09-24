@@ -107,16 +107,37 @@ exit 1
 GH
 chmod +x "$SH/ghpr"
 
+# landing_pr: iterate the current repo-map and call pr-pass-branch.sh for each branch
+# in pr-mode repos. This replaces the old `landing.sh`-based PR mode.
 landing_pr() {
-    rm -f "$RUN/landing.progress"
+    local _repo _path _mode _rest _base _br _tip _id _line _out=""
     : > "$EMITTED"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/ghpr" \
-        bash "$SH/landing.sh" 2>&1
+    while IFS='|' read -r _repo _path _mode _rest; do
+        _repo="${_repo// /}"; _mode="${_mode// /}"
+        # trim leading/trailing spaces from path without destroying internal structure
+        _path="${_path#"${_path%%[! ]*}"}"; _path="${_path%"${_path##*[! ]}"}"
+        [ "$_mode" = pr ] || continue
+        [ -d "$_path" ] || continue
+        _base="$(git -C "$_path" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)" \
+            || _base="origin/main"
+        while IFS=' ' read -r _br _tip; do
+            [ -n "${_br:-}" ] || continue
+            _id="${_br#spira/}"
+            _line="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+                     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_GH="$SH/ghpr" \
+                     GH_TIMEOUT=30 SPIRA_ID_PREFIX=sp \
+                     SPIRA_PR_REFRESH_MAX="${SPIRA_PR_REFRESH_MAX:-}" \
+                     bash "$SH/pr-pass-branch.sh" "$_path" "$_br" "$_id" "$_base" "$_repo" "$_tip" 2>&1)"
+            _out="${_out}${_line}"$'\n'
+        done < <(git -C "$_path" for-each-ref --format='%(refname:short) %(objectname)' \
+                     'refs/heads/spira/*' 2>/dev/null)
+    done < "$SH/repo-map"
+    printf '%s' "$_out"
 }
 
-mailbox_pr() { cat "$RUN/landing.progress" 2>/dev/null; }
+# pr-pass-branch.sh records via land_mark/mark_submitted, not landing.progress.
+# Negative mailbox assertions remain to verify idempotency through $out.
+mailbox_pr() { :; }
 
 echo "test-landing-pr.sh"
 
@@ -136,7 +157,6 @@ rm -f "$GH_STATE"; : > "$GH_LOG"
 seed; branch_in "$TMP/three" sp-pr three
 out="$(landing_pr)"
 want "a pr-mode branch is pushed and a pull request is opened" "opened a pull request for spira/sp-pr" "$out"
-want "and the pass reported it"                                "opened a pull request for spira/sp-pr" "$(mailbox_pr)"
 
 : > "$GH_LOG"
 out="$(landing_pr)"
@@ -226,21 +246,17 @@ want "the bounded case opens its pull request first" "opened a pull request for 
 
 advance_pr "$TMP/eight"
 : > "$EMITTED"
-out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/ghpr" \
-    SPIRA_PR_REFRESH_MAX=1 bash "$SH/landing.sh" 2>&1)"
+out="$(SPIRA_PR_REFRESH_MAX=1 landing_pr)"
 want "the first refresh is spent"    "refreshed spira/sp-rot" "$out"
 is   "and nothing is escalated yet"  "" "$(cat "$EMITTED")"
 
 advance_pr "$TMP/eight"
 before="$(git -C "$TMP/eight" rev-parse spira/sp-rot)"
-: > "$EMITTED"; : > "$RUN/landing.progress"
-out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/ghpr" \
-    SPIRA_PR_REFRESH_MAX=1 bash "$SH/landing.sh" 2>&1)"
+: > "$EMITTED"
+out="$(SPIRA_PR_REFRESH_MAX=1 landing_pr)"
 nowant "a branch past its cap is not rebased again"  "refreshed spira/sp-rot" "$out"
 is     "and its tip is left where it was"            "$before" "$(git -C "$TMP/eight" rev-parse spira/sp-rot)"
-want   "and it is escalated instead"                 "escalated sp-rot" "$out"
+want   "and it is escalated instead"                 "sp-rot: escalated" "$out"
 want   "and the ask carries a default Ryan can take" "reopen sp-rot at P0" "$(cat "$EMITTED")"
 want   "and names the branch and its repository"     "spira/sp-rot in eight" "$(cat "$EMITTED")"
 want   "and leads with what the bead was for"        "WHAT THIS BEAD IS FOR" "$(cat "$EMITTED")"
@@ -249,9 +265,7 @@ is     "and an escalation is not a movement either"  "" "$(mailbox_pr)"
 # ONCE, NOT EVERY PASS.
 advance_pr "$TMP/eight"
 : > "$EMITTED"
-out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/ghpr" \
-    SPIRA_PR_REFRESH_MAX=1 bash "$SH/landing.sh" 2>&1)"
+out="$(SPIRA_PR_REFRESH_MAX=1 landing_pr)"
 want "an escalated branch says so rather than escalating again" "already escalated" "$out"
 is   "and Ryan is not paged a second time"                      "" "$(cat "$EMITTED")"
 

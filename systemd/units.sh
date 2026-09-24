@@ -186,6 +186,16 @@ else
     echo "      Build it: cd \$SPIRA_REPO/broker && cargo build --release, then re-run install.sh." >&2
 fi
 
+# spira-landing-pass.service/.timer require the compiled landing-pass binary. Same hazard.
+if [ -x "${SPIRA_LANDING_PASS_BIN:-}" ]; then
+    UNITS+=(spira-landing-pass.service spira-landing-pass.timer)
+    ENABLE+=("$(inst_name spira-landing-pass.timer)")
+else
+    OPTIONAL+=(spira-landing-pass.service spira-landing-pass.timer)
+    echo "note: landing-pass binary not built at ${SPIRA_LANDING_PASS_BIN:-<path not set>} — not installing spira-landing-pass.service." >&2
+    echo "      Build it: cd \$SPIRA_REPO/landing-pass && cargo build --release, then re-run install.sh." >&2
+fi
+
 # ONE INSTANCE PER `daemon` ROW, AND THE MANIFEST DECIDES WHICH. `log` rows name a file
 # something else already writes, so they get no unit; enabling one would double up whatever
 # is already producing it.

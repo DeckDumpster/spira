@@ -47,6 +47,7 @@ export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 # table and build-tarball.sh together.
 declare -A TOKEN_TO_BIN=(
     [SPIRA_SUPERVISE_BIN]=spira-supervise
+    [SPIRA_LANDING_PASS_BIN]=landing-pass
 )
 
 # ---------------------------------------------------------------------------
@@ -118,11 +119,13 @@ LOOM_BIN="$TMP/bins/loom"
 PANEL_BIN="$TMP/bins/panel"
 BROKER_BIN="$TMP/bins/broker"
 SUPERVISE_BIN="$TMP/bins/spira-supervise"
+LANDING_PASS_BIN="$TMP/bins/landing-pass"
 printf '#!/usr/bin/env bash\necho loom\n'            > "$LOOM_BIN"
 printf '#!/usr/bin/env bash\necho panel\n'           > "$PANEL_BIN"
 printf '#!/usr/bin/env bash\necho broker\n'          > "$BROKER_BIN"
 printf '#!/usr/bin/env bash\necho spira-supervise\n' > "$SUPERVISE_BIN"
-chmod +x "$LOOM_BIN" "$PANEL_BIN" "$BROKER_BIN" "$SUPERVISE_BIN"
+printf '#!/usr/bin/env bash\necho landing-pass\n'    > "$LANDING_PASS_BIN"
+chmod +x "$LOOM_BIN" "$PANEL_BIN" "$BROKER_BIN" "$SUPERVISE_BIN" "$LANDING_PASS_BIN"
 
 run_build() {
     env -i \
@@ -158,7 +161,7 @@ fi
 
 # ============================================================================
 echo
-echo "3. Build with all four bins — bin/spira-supervise is present"
+echo "3. Build with all bins — bin/spira-supervise and bin/landing-pass are present"
 # ============================================================================
 build_out="$(run_build build \
     --output "$TMP/out-full" \
@@ -166,6 +169,7 @@ build_out="$(run_build build \
     --panel-bin "$PANEL_BIN" \
     --broker-bin "$BROKER_BIN" \
     --supervise-bin "$SUPERVISE_BIN" \
+    --landing-pass-bin "$LANDING_PASS_BIN" \
     HEAD "$REPO" 2>&1)"
 build_rc=$?
 is "build with all bins exits 0" "0" "$build_rc"
@@ -183,6 +187,12 @@ if [ -x "${TREE:-}/bin/spira-supervise" ]; then
     ok "bin/spira-supervise is present and executable"
 else
     bad "bin/spira-supervise is present and executable" \
+        "not found or not executable (build output: $build_out)"
+fi
+if [ -x "${TREE:-}/bin/landing-pass" ]; then
+    ok "bin/landing-pass is present and executable"
+else
+    bad "bin/landing-pass is present and executable" \
         "not found or not executable (build output: $build_out)"
 fi
 

@@ -62,7 +62,7 @@ cat > "$TMP/stub/cargo" << 'ENDSTUB'
 #!/usr/bin/env bash
 d="$(pwd)/target/release"
 mkdir -p "$d"
-for b in loom panel broker czar-pass spira-supervise; do
+for b in loom panel broker czar-pass spira-supervise landing-pass; do
     touch "$d/$b"
     chmod +x "$d/$b"
 done
@@ -114,7 +114,7 @@ want "absent cargo mentions Rust install" "Rust" "$nocargo_out"
 
 # =========================================================================
 echo
-echo "normal run — all five workspace binaries produced:"
+echo "normal run — all six workspace binaries produced:"
 # =========================================================================
 rm -rf "$TMP/repo/target"
 
@@ -127,16 +127,19 @@ PANEL_BIN="$TMP/repo/target/release/panel"
 BROKER_BIN="$TMP/repo/target/release/broker"
 CZAR_PASS_BIN="$TMP/repo/target/release/czar-pass"
 SUPERVISE_BIN="$TMP/repo/target/release/spira-supervise"
-[ -x "$LOOM_BIN" ]      && ok "loom binary at workspace target/release/" \
+LANDING_PASS_BIN="$TMP/repo/target/release/landing-pass"
+[ -x "$LOOM_BIN" ]         && ok "loom binary at workspace target/release/" \
     || bad "loom binary at workspace target/release/" "not found at $LOOM_BIN"
-[ -x "$PANEL_BIN" ]     && ok "panel binary at workspace target/release/" \
+[ -x "$PANEL_BIN" ]        && ok "panel binary at workspace target/release/" \
     || bad "panel binary at workspace target/release/" "not found at $PANEL_BIN"
-[ -x "$BROKER_BIN" ]    && ok "broker binary at workspace target/release/" \
+[ -x "$BROKER_BIN" ]       && ok "broker binary at workspace target/release/" \
     || bad "broker binary at workspace target/release/" "not found at $BROKER_BIN"
-[ -x "$CZAR_PASS_BIN" ] && ok "czar-pass binary at workspace target/release/" \
+[ -x "$CZAR_PASS_BIN" ]    && ok "czar-pass binary at workspace target/release/" \
     || bad "czar-pass binary at workspace target/release/" "not found at $CZAR_PASS_BIN"
-[ -x "$SUPERVISE_BIN" ] && ok "spira-supervise binary at workspace target/release/" \
+[ -x "$SUPERVISE_BIN" ]    && ok "spira-supervise binary at workspace target/release/" \
     || bad "spira-supervise binary at workspace target/release/" "not found at $SUPERVISE_BIN"
+[ -x "$LANDING_PASS_BIN" ] && ok "landing-pass binary at workspace target/release/" \
+    || bad "landing-pass binary at workspace target/release/" "not found at $LANDING_PASS_BIN"
 
 # =========================================================================
 echo
@@ -160,11 +163,12 @@ chmod +x "$TMP/stub/cargo"
 skip_out="$(run_build --skip-build 2>&1)"; skip_rc=$?
 
 is "--skip-build exits 0"                "0" "$skip_rc"
-want "--skip-build prints loom path"      "loom"            "$skip_out"
-want "--skip-build prints panel path"     "panel"           "$skip_out"
-want "--skip-build prints broker path"    "broker"          "$skip_out"
-want "--skip-build prints czar-pass path" "czar-pass"       "$skip_out"
-want "--skip-build prints supervise path" "spira-supervise" "$skip_out"
+want "--skip-build prints loom path"         "loom"            "$skip_out"
+want "--skip-build prints panel path"        "panel"           "$skip_out"
+want "--skip-build prints broker path"       "broker"          "$skip_out"
+want "--skip-build prints czar-pass path"    "czar-pass"       "$skip_out"
+want "--skip-build prints supervise path"    "spira-supervise" "$skip_out"
+want "--skip-build prints landing-pass path" "landing-pass"    "$skip_out"
 
 # =========================================================================
 echo
