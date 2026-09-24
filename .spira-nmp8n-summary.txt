@@ -1,0 +1,25 @@
+sp-nmp8n: Ops diagnosis — two aeon violations discovered
+
+## Findings
+
+1. sp-5l3zv (P1 mail.sh tracking-bead defect) closed without landing:
+   - Close claimed fix in commit e71b564e
+   - e71b564e does NOT exist on origin/main
+   - Production mail.sh line 264 still has unfixed code
+   - Defect is live in production
+   - Filed as: sp-t510b (BUG, P3)
+
+2. maechen commit c7c79af swept concierge's uncommitted test-plan files:
+   - 13 data files from another session's working tree
+   - Violates law-commit-only-paths-you-changed
+   - Operator's review lost diff
+   - Filed as: sp-4kncx (BUG, P3)
+
+## Child beads (delivers:action)
+
+- sp-t510b: Awaiting operator decision on sp-5l3zv reopen vs supersede
+- sp-4kncx: Awaiting operator decision on c7c79af revert vs keep
+
+## Status
+
+Operator notified via mail.sh of decision questions. Awaiting input.
