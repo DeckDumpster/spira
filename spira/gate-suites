@@ -121,6 +121,13 @@ spira/test-gate-missing-cmd.sh
 # to the timed set because the mechanisms it covers are still critical-path.
 spira/test-landing-rebase.sh
 
+# THE DEPS-LINT FENCE'S OWN POSITIVE CONTROL. deps-lint.sh refuses any external program
+# invoked in spira/*.sh or Rust sources that is not declared in deps.toml; this suite
+# plants an undeclared program (SEEN RED), withdraws it (SEEN GREEN), and confirms the
+# lint finds the shipped tree clean. Without a positive control, a lint that never fires
+# is indistinguishable from one that passes a clean tree.
+spira/test-deps-lint.sh
+
 # NOT IN THE GATE (budget): test-watchtower, test-soak, test-owned, test-uninstall, test-ready,
 # test-install-conflicts, test-configure. test-watchtower (~263s) was moved to the
 # timed set to bring the gate under SPIRA_GATE_BUDGET (sp-6ceo); the pipeline-stall detection
