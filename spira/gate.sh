@@ -374,7 +374,10 @@ gate_key() {
     [ -n "$harness_h" ] || return 1
     # SPIRA_GATE_SUITES is in the key: a fences-only pass (suites=off, landing.sh
     # certification) must never be read back as a pass of the full gate, or the other way.
-    printf '%s\n' "$REPO_NAME $tree $files_h $cmd_h $harness_h suites=${SPIRA_GATE_SUITES:-on}" | sha256sum | cut -d" " -f1
+    # SPIRA_BEAD_ID prevents different beads with identical trees from colliding in the
+    # verdict cache. Without it, a closed bead's cached verdict persists and can mislead
+    # a later bead that happens to have the same tree hash (via rebase without code changes).
+    printf '%s\n' "$REPO_NAME $tree $files_h $cmd_h $harness_h suites=${SPIRA_GATE_SUITES:-on} bead=${SPIRA_BEAD_ID:-none}" | sha256sum | cut -d" " -f1
 }
 GATE_KEY="$(gate_key || true)"
 
