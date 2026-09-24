@@ -9,8 +9,11 @@
 # Retry results are read from <results-root>-retry, classifying each suite as
 # red-red or red-green (flake).
 #
-# covers: spira/gate-diag.sh .github/workflows/gate.yml spira/testenv-batch.sh
+# covers: spira/gate-diag.sh .github/workflows/gate.yml spira/testenv-batch.sh spira/tap-jsonl.sh
 set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/tap-jsonl.sh"
 
 ROOT="${1:?usage: gate-diag.sh <results-root>}"
 TAIL="${SPIRA_BATCH_TAIL_LINES:-50}"
@@ -33,6 +36,72 @@ _collect_reds() {
         esac
     done
 }
+
+# --------------------------------------------------------------------------------------
+# results.jsonl and junit.xml — for EVERY suite, not only the red ones. This runs
+# unconditionally, before the reds-only early exit below, because a reader of the
+# machine-readable results (forge.sh's attribution, a human comparing runs) needs the
+# green and skipped rows as much as the red ones; red-suites.json further down stays
+# red-only because that is the one thing it was built to answer cheaply within GitHub's
+# 10-annotation cap.
+# --------------------------------------------------------------------------------------
+_write_results_jsonl() {
+    local f suite status secs out src jsonl_path="$ROOT/results.jsonl"
+    : > "$jsonl_path" || return 0
+    for f in "$ROOT"/*.result "$ROOT"/*/*.result; do
+        [ -f "$f" ] || continue
+        suite="$(basename "$f" .result)"
+        status="$(awk '{print $1}' "$f" 2>/dev/null)"; [ -n "$status" ] || status="red"
+        secs="$(awk '{print $3}' "$f" 2>/dev/null)"; case "$secs" in ''|*[!0-9]*) secs=0 ;; esac
+        out="${f%.result}.out"
+        src="$HERE/$suite"
+        tap_jsonl_rows "$suite" "$src" "$out" "$status" "$secs" >> "$jsonl_path"
+    done
+}
+_write_results_jsonl
+
+_write_junit_xml() {
+    command -v python3 >/dev/null 2>&1 || return 0
+    python3 -c "
+import json, sys
+from xml.sax.saxutils import escape
+from collections import defaultdict
+
+suites = defaultdict(list)
+try:
+    with open(sys.argv[1]) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            suites[row['suite']].append(row)
+except Exception:
+    sys.exit(0)
+
+out = ['<?xml version=\"1.0\" encoding=\"UTF-8\"?>', '<testsuites>']
+for suite, rows in sorted(suites.items()):
+    failures = sum(1 for r in rows if r.get('status') == 'fail')
+    skipped = sum(1 for r in rows if r.get('status') in ('skip', 'unreached', 'bail'))
+    seconds = rows[0].get('seconds', 0) if rows else 0
+    out.append('  <testsuite name=\"%s\" tests=\"%d\" failures=\"%d\" skipped=\"%d\" time=\"%s\">' %
+                (escape(suite), len(rows), failures, skipped, seconds))
+    for r in rows:
+        case = r.get('case') or '(suite)'
+        out.append('    <testcase name=\"%s\" classname=\"%s\" time=\"%s\">' %
+                    (escape(case), escape(suite), r.get('seconds', 0)))
+        if r.get('status') == 'fail':
+            out.append('      <failure message=\"%s\"></failure>' % escape(r.get('detail') or ''))
+        elif r.get('status') in ('skip', 'unreached', 'bail'):
+            out.append('      <skipped message=\"%s\"></skipped>' % escape(r.get('detail') or ''))
+        out.append('    </testcase>')
+    out.append('  </testsuite>')
+out.append('</testsuites>')
+with open(sys.argv[2], 'w') as f:
+    f.write('\n'.join(out) + '\n')
+" "$ROOT/results.jsonl" "$ROOT/junit.xml" 2>/dev/null || true
+}
+_write_junit_xml
 
 reds=""
 _collect_reds

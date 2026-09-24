@@ -253,6 +253,29 @@ cause_fp() {           # cause_fp <rc> <output> -> stable first-FAIL-line hash
         | cksum | tr -d ' \t'
 }
 
+# classify <rc> <out> -> ok|skip|timeout|setup-fault|red
+#
+# THE STATUS WORD ALONE, no side effects, so a T1 table can call it directly instead of
+# running and killing a real suite to observe which branch cmd_run took. Everything this
+# does NOT decide stays in cmd_run: the fixture-fault short-circuit runs before this is
+# called (it never reaches the generic rc space at all), and red's further split into
+# red/red-unconfirmed/env-mismatch needs a live confirming run, which is not pure.
+classify() {
+    local rc="$1" out="$2"
+    case "$rc" in
+        0)   printf 'ok' ;;
+        77)  printf 'skip' ;;
+        124) printf 'timeout' ;;
+        # THE DISCRIMINANT IS THE ASSERTIONS TRAILER, not the exit code. A missing trailer
+        # (an un-migrated suite) must stay red rather than silently becoming a setup-fault
+        # (law-absence-needs-a-positive-control applied to the counter itself).
+        *)   if grep -qxF 'ASSERTIONS 0' <<< "$out" 2>/dev/null
+             then printf 'setup-fault'
+             else printf 'red'
+             fi ;;
+    esac
+}
+
 # --------------------------------------------------------------------------------------
 # FILING A RED. Through incident.sh, which is the intake that already exists: it spools the
 # payload to disk BEFORE touching the database and clears the spool only once the bead
@@ -1006,15 +1029,15 @@ cmd_run() {
         if [ -z "$out" ] && [ "$rc" -ne 0 ] && [ "$rc" -ne 77 ]; then
             out="[no output — suite exited rc=$rc with nothing on stdout/stderr; check for exec redirects discarding output]"
         fi
-        case "$rc" in
-            0)  status=ok
-                record_write "$s" ok "$secs" -
+        status="$(classify "$rc" "$out")"
+        case "$status" in
+            ok) record_write "$s" ok "$secs" -
                 printf '  %-26s ok       %ss\n' "$s" "$secs" ;;
             # 77 is the automake convention and the one this tree already uses for "the box
             # cannot host this check". A single skip is not filed — it may be transient.
             # Consecutive skips are filed: a check that cannot run repeatedly is a gap.
             # quarantined-red and disabled map to 77 but are not suite-capability skips.
-            77) status=skip
+            skip)
                 local _pst; _pst="$(record_read "$s" || true)"; _pst="${_pst%% *}"
                 if [ "$_pst" = skip ] && \
                         [ "${_br_status:-}" != quarantined-red ] && \
@@ -1025,7 +1048,7 @@ cmd_run() {
                 skipped=$(( skipped + 1 ))
                 printf '  %-26s SKIPPED  %s\n' "$s" \
                     "$(printf '%s' "$out" | sed -n 's/.*SKIP *//p' | head -1)" ;;
-            124) status=timeout
+            timeout)
                 # Fingerprint over the suite name, not the slice. The slice is a property of
                 # the budget (it varies when left < PER_SUITE), not a property of the failure —
                 # fingerprinting it filed a new bead per pass for the same timing-out suite (sp-u1g).
@@ -1041,16 +1064,12 @@ cmd_run() {
                 [ "$slice" -lt "$_full_to" ] && _to_prio="$PRIORITY"
                 id="$(file_red "$s" timeout "$rc" "$secs" "$fp" "$out" "$_to_prio" "$slice" || true)"
                 printf '  %-26s TIMEOUT  killed at %ss  %s\n' "$s" "$slice" "${id:-not filed}" ;;
-            *)  status=red
-                fp="$(fingerprint "$rc" "$out")"
-                # SETUP-FAULT GUARD. A suite that emitted ASSERTIONS 0 ran no assertions
-                # before exiting — its setup failed. The code under # covers: is not the
-                # problem; a worker sent there will find it correct. The discriminant is the
-                # ASSERTIONS trailer (present and zero), never the exit code alone. A missing
-                # trailer is treated as red (as today) so that un-migrated suites cannot
-                # silently become setup-faults — the same rule suites.sh already applies to an
-                # unreadable gate-suites list: absence never reads as all-clear.
-                if grep -qxF 'ASSERTIONS 0' <<< "$out" 2>/dev/null; then
+            *)  fp="$(fingerprint "$rc" "$out")"
+                # SETUP-FAULT GUARD. classify() already told "ASSERTIONS 0" (setup failed —
+                # the code under # covers: is not the problem) apart from a genuine red or a
+                # missing trailer (treated as red so an un-migrated suite cannot silently
+                # become a setup-fault).
+                if [ "$status" = setup-fault ]; then
                     record_write "$s" setup-fault "$secs" -
                     _setup_fault_count=$(( _setup_fault_count + 1 ))
                     id="$(file_setup_fault "$s" "$rc" "$secs" "$out" || true)"
@@ -1664,6 +1683,11 @@ cmd_quarantine() { _sts_transition quarantined "$@"; }
 cmd_disable()    { _sts_transition disabled    "$1" "" "${2:-}"; }
 cmd_activate()   { _sts_transition active      "$1"; }
 
+# Sourced by a T1 suite to unit-test the pure functions above (record_write, fingerprint,
+# cause_fp, file_red and siblings) without paying for a container or a real intake — the
+# dispatcher below must not fire in that case, or sourcing this file would run whatever
+# command the sourcing script's own $1 happens to hold.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-list}" in
     run)            cmd_run ;;
     names)          cmd_names ;;
@@ -1677,3 +1701,4 @@ case "${1:-list}" in
     activate)       shift; cmd_activate   "$@" ;;
     *) printf 'usage: suites.sh [list|names|corpus|run|status|hygiene|observe-flake|quarantine|disable|activate]\n' >&2; exit 2 ;;
 esac
+fi

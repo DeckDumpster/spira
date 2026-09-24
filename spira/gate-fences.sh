@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
 # gate-fences.sh — derive and copy the fence files gate-spira.sh declares.
+# Sourced, never executed.
 #
 # Source this into suites that build a gate-spira.sh fixture. The fence list is
 # read from the gate at call time, so a fence added to gate-spira.sh requires

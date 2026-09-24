@@ -1,4 +1,5 @@
-# suite-assert.sh — assertion helpers with ASSERTIONS trailer. Sourced by suites.
+# suite-assert.sh — assertion helpers with ASSERTIONS trailer.
+# Sourced, never executed.
 #
 # Source this file to get ok/bad/is/want/nowant helpers that count assertions
 # and print "ASSERTIONS <n>" on EXIT. suites.sh reads this trailer to classify

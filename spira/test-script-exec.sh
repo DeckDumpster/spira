@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # test-script-exec.sh — every operator-runnable script in spira/ carries the execute bit.
 #
-# Sourced-only files (explicitly "Sourced, never executed" in their headers) are
-# legitimately non-executable and excluded. test-*.sh suites are also excluded.
-# Everything else must have +x so a newly-added operator command cannot ship silent.
+# A file whose header declares "Sourced, never executed" is legitimately
+# non-executable and excluded (law-fail-closed-at-the-source: the header is the
+# declaration, so no separate list can drift from it). test-*.sh suites are also
+# excluded. Everything else must have +x so a newly-added operator command cannot
+# ship silent.
 #
 # covers: spira/*.sh
 # selects-on: added,mode
@@ -16,17 +18,21 @@ is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 echo "test-script-exec.sh"
 
-SOURCED_ONLY="conf.sh lib.sh testdb.sh suite-assert.sh suite-covers.sh suite-state.sh select-globs.sh gate-fences.sh"
+# declares_sourced_only <file> — true if the header (first 10 lines) declares
+# "Sourced, never executed".
+declares_sourced_only() {
+    head -10 "$1" 2>/dev/null | grep -qF 'Sourced, never executed'
+}
 
 # find_nonexec <dir> — space-separated basenames of *.sh that are not test-*.sh,
-# not in SOURCED_ONLY, and lack the execute bit.
+# do not declare themselves sourced-only, and lack the execute bit.
 find_nonexec() {
     local dir="$1" nonexec="" b
     for f in "$dir"/*.sh; do
         [ -e "$f" ] || continue
         b="$(basename "$f")"
         case "$b" in test-*) continue ;; esac
-        for so in $SOURCED_ONLY; do [ "$b" = "$so" ] && continue 2; done
+        declares_sourced_only "$f" && continue
         [ -x "$f" ] || nonexec="$nonexec $b"
     done
     printf '%s' "${nonexec# }"
@@ -52,9 +58,9 @@ found="$(find_nonexec "$FAKE")"
 echo
 echo "POSITIVE CONTROL — sourced-only is not flagged:"
 # ===========================================================================
-printf '#!/usr/bin/env bash\ntrue\n' > "$FAKE/conf.sh"
+printf '# fake-lib.sh — a helper.\n# Sourced, never executed.\ntrue\n' > "$FAKE/fake-lib.sh"
 found_so="$(find_nonexec "$FAKE")"
-is "sourced-only (conf.sh) excluded from scan" "canary-operator.sh" "$found_so"
+is "sourced-only header (fake-lib.sh) excluded from scan" "canary-operator.sh" "$found_so"
 
 # ===========================================================================
 echo
