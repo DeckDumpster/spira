@@ -17,6 +17,8 @@
 # pr-comment <repo-dir> <pr-number> <body>     posts a comment to the PR
 # branch-protect <repo-dir> <branch>           set: required gate check, no force-push, no delete
 # branch-protection-status <repo-dir> <branch> prints: protected | unprotected
+# main-gate-status <repo-dir>                  prints: "red <sha>" | "green <sha>" | "unknown"
+#                                              — the most recent push-gate run on main
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -357,6 +359,69 @@ if runs is None:
     print('?'); sys.exit(0)
 print(sum(1 for r in runs if r.get('event') == 'pull_request' and r.get('status') in ('queued', 'in_progress', 'waiting', 'requested', 'pending')))
 " 2>/dev/null || printf '?\n'
+        ;;
+    main-gate-status)
+        # main-gate-status <repo-dir> → is main's most recent PUSH gate run red?
+        # Used by batch.sh to hold the queue: a landed batch can put main behind a
+        # red gate, and nothing else stops the next batch landing on top of it.
+        #
+        # PRINTS unknown ON ANYTHING IT CANNOT CONFIRM GREEN — an unreachable API,
+        # an unparsed payload, a still-running run, or no push run at all. A caller
+        # that read any of those as green would land straight through the outage
+        # that made this exist (law-a-control-that-cannot-check-must-refuse).
+        run_json="$( cd "$repo" && ghq run list --branch main --workflow gate.yml \
+            --event push --limit 1 --json status,conclusion,headSha,databaseId \
+            2>/dev/null )" || { printf 'unknown\n'; exit 0; }
+        [ -n "${run_json:-}" ] || { printf 'unknown\n'; exit 0; }
+        decision="$(printf '%s\n' "$run_json" | python3 -c "
+import json, sys
+try:
+    runs = json.load(sys.stdin)
+    if not isinstance(runs, list) or not runs:
+        print('unknown'); sys.exit(0)
+    r = runs[0]
+    sha = r.get('headSha') or '?'
+    if r.get('status') != 'completed':
+        print('unknown ' + sha)
+    elif r.get('conclusion') == 'success':
+        print('green ' + sha)
+    else:
+        print('maybe-red ' + sha + ' ' + str(r.get('databaseId') or ''))
+except Exception:
+    print('unknown')
+" 2>/dev/null)" || decision=""
+        [ -n "${decision:-}" ] || decision="unknown"
+        case "$decision" in
+            "maybe-red "*)
+                # A completed run that concluded failure still might never have tested
+                # the branch — gate exit 75 (provision fault) means the harness never
+                # ran the suites, so it is not evidence main is red (mirrors
+                # check-status's provision_fault). That reads as unknown, not red.
+                set -- $decision
+                sha="$2" run_id="$3"
+                _prov_failed=""
+                if [ -n "${run_id:-}" ]; then
+                    jobs_json="$( cd "$repo" && ghq api \
+                        "repos/{owner}/{repo}/actions/runs/$run_id/jobs" 2>/dev/null )" \
+                        || jobs_json="{}"
+                    _prov_failed="$(printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
+import json, sys
+try:
+    for j in json.load(sys.stdin).get('jobs', []):
+        if j.get('name') == 'provision' and (j.get('conclusion') or '').lower() not in ('success', ''):
+            print('yes'); sys.exit()
+except Exception:
+    pass
+" 2>/dev/null)"
+                fi
+                if [ "${_prov_failed:-}" = "yes" ]; then
+                    printf 'unknown %s\n' "$sha"
+                else
+                    printf 'red %s\n' "$sha"
+                fi
+                ;;
+            *) printf '%s\n' "$decision" ;;
+        esac
         ;;
     run-metadata)
         run_id="${1:-}"

@@ -97,6 +97,7 @@ cat > "$SH/forge-fixture.sh" << FORGE
 # passing against "used gh" fails rather than passing vacuously.
 cmd="\${1:-}"; shift; repo="\${1:-}"; shift
 case "\$cmd" in
+    main-gate-status) printf 'green deadbeef\n' ;;
     pr-create)
         head="\${1:-}" base="\${2:-}" title="\${3:-}"
         n=\$(( \$(wc -l < "$FORGE_LOG" 2>/dev/null || echo 0) + 1 ))

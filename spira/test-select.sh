@@ -60,6 +60,14 @@ git -C "$REPO" add no-suite-owns-this.go
 git -C "$REPO" commit -q -m "change unmapped file"
 HEAD_UNMAPPED="$(git -C "$REPO" rev-parse HEAD)"
 
+# Branch that changes Makefile — claimed by suite D's covers:, but plumbing.
+git -C "$REPO" checkout -q main
+git -C "$REPO" checkout -q -b topic-plumbing
+printf 'changed\n' > "$REPO/Makefile"
+git -C "$REPO" add Makefile
+git -C "$REPO" commit -q -m "change Makefile"
+HEAD_PLUMBING="$(git -C "$REPO" rev-parse HEAD)"
+
 # ---------------------------------------------------------------------------
 # FIXTURE SUITES
 # ---------------------------------------------------------------------------
@@ -83,6 +91,16 @@ EOF
 # Suite C: no # covers: line — always runs.
 cat > "$SD/test-fx-c.sh" << 'EOF'
 #!/usr/bin/env bash
+exit 0
+EOF
+
+# Suite D: covers Makefile — a suite that DOES claim the plumbing file. The
+# sp-nfiop gap was not an unclaimed file (Part C already caught that); it was
+# a claimed file whose claiming suite was the wrong one. Part Q must prove the
+# fallback fires even though this suite's covers: line matches.
+cat > "$SD/test-fx-d.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: Makefile
 exit 0
 EOF
 
@@ -833,6 +851,50 @@ out_p_md="$(SPIRA_SELECT_INERT='*.md *.txt' bash "$SELECT" \
 rc_p_md=$?
 iszero  "P2: .md-only diff exits 0"                                                  "$rc_p_md"
 notwant "P2: test-script-exec.sh NOT selected for .md edit"                         "test-script-exec.sh" "$out_p_md"
+
+# ---------------------------------------------------------------------------
+echo
+echo "Part Q: plumbing bucket — a claimed file still forces all-suites fallback (sp-221n8)"
+# ---------------------------------------------------------------------------
+# sp-nfiop (05d6a633) changed Makefile, spira/skew.sh and systemd/install.sh;
+# select.sh selected 47 suites because every one of those files WAS claimed by
+# some suite's covers: line — just not by test-install-bootstrap-release.sh or
+# test-watch-refresh.sh, the ones that actually exercised the change. A file
+# that reaches shared build/install/runtime plumbing cannot be trusted to any
+# single suite's covers: claim; PLUMBING forces the full corpus regardless.
+
+# POSITIVE CONTROL: with SELECT_PLUMBING disabled, the claimed Makefile change
+# behaves exactly like Part B — only the claiming suite + always-run selected,
+# proving PLUMBING (not some other mechanism) is what Q1 below relies on.
+out_q_ctrl="$(SPIRA_SELECT_PLUMBING='__none__' bash "$SELECT" \
+    --base "$BASE" --head "$HEAD_PLUMBING" --repo "$REPO" --suite-dir "$SD" 2>/dev/null)"
+rc_q_ctrl=$?
+iszero  "Q0-ctrl: without PLUMBING, claimed Makefile change exits 0" "$rc_q_ctrl"
+want    "Q0-ctrl: claiming suite D selected"      "test-fx-d.sh" "$out_q_ctrl"
+want    "Q0-ctrl: always-run suite C selected"    "test-fx-c.sh" "$out_q_ctrl"
+notwant "Q0-ctrl: unrelated suite B NOT selected" "test-fx-b.sh" "$out_q_ctrl"
+
+out_q="$(bash "$SELECT" --base "$BASE" --head "$HEAD_PLUMBING" \
+    --repo "$REPO" --suite-dir "$SD" 2>/dev/null)"
+rc_q=$?
+iszero "Q1: plumbing change exits 0" "$rc_q"
+want   "Q1: fallback includes claiming suite D" "test-fx-d.sh" "$out_q"
+want   "Q1: fallback includes unrelated suite B" "test-fx-b.sh" "$out_q"
+want   "Q1: fallback includes always-run suite C" "test-fx-c.sh" "$out_q"
+
+mf="$TMP/mode-q"
+bash "$SELECT" --base "$BASE" --head "$HEAD_PLUMBING" \
+    --repo "$REPO" --suite-dir "$SD" --mode-file "$mf" >/dev/null 2>&1
+iseq "Q2: plumbing fallback writes mode=all" "$(cat "$mf" 2>/dev/null)" "all"
+
+# Q3: --no-all-fallback suppresses the plumbing fallback too (same contract as
+# the unmapped fallback — a caller that opted into "cheap" accepts the risk).
+out_q_nf="$(bash "$SELECT" --base "$BASE" --head "$HEAD_PLUMBING" \
+    --repo "$REPO" --suite-dir "$SD" --no-all-fallback 2>/dev/null)"
+rc_q_nf=$?
+iszero  "Q3: --no-all-fallback plumbing exits 0"        "$rc_q_nf"
+want    "Q3: claiming suite D still selected"           "test-fx-d.sh" "$out_q_nf"
+notwant "Q3: unrelated suite B not selected"             "test-fx-b.sh" "$out_q_nf"
 
 # ---------------------------------------------------------------------------
 echo
