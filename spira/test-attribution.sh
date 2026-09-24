@@ -108,17 +108,23 @@ chmod +x "$SH/forge-fixture.sh"
 # exit 2 (harness fault) if REPRO_FAULT_FILE entry matches or is an ancestor.
 # exit 1 (red) if REPRO_FAIL_FILE entry matches or is an ancestor.
 # exit 0 (green) otherwise.
+# When REPRO_CALLS_LOG is set, every invocation appends "<ref> <SPIRA_BATCH_RESULTS>"
+# — evidence for asserting distinct refs/result-dirs across concurrent members.
 cat > "$SH/repro-stub.sh" <<'REPRO'
 #!/usr/bin/env bash
 br=""
 while [ $# -gt 0 ]; do
     case "$1" in --mode|--suites) shift 2 ;; *) br="$1"; shift ;; esac
 done
+[ -n "${REPRO_CALLS_LOG:-}" ] && printf '%s %s\n' "$br" "${SPIRA_BATCH_RESULTS:-}" >> "$REPRO_CALLS_LOG"
 fault_list="$(cat "${REPRO_FAULT_FILE:-}" 2>/dev/null || true)"
 for f in $fault_list; do
-    if [ "$f" = "$br" ]; then exit 2; fi
+    if [ "$f" = "$br" ]; then printf 'STUB FAULT for %s\n' "$br"; exit 2; fi
     [ -n "${SPIRA_REPO:-}" ] || continue
-    if git -C "$SPIRA_REPO" merge-base --is-ancestor "$f" "$br" 2>/dev/null; then exit 2; fi
+    if git -C "$SPIRA_REPO" merge-base --is-ancestor "$f" "$br" 2>/dev/null; then
+        printf 'STUB FAULT for %s (descendant of %s)\n' "$br" "$f"
+        exit 2
+    fi
 done
 fail_list="$(cat "${REPRO_FAIL_FILE}" 2>/dev/null || true)"
 for f in $fail_list; do
@@ -693,6 +699,12 @@ printf 'spira/sp-at-uj\n' > "$REPRO_FAULT_FILE"
 out13="$(verdict "$REPONAME")"
 want "13. unjudged: verdict output says 'could not judge'" "could not judge" "$out13"
 want "13. unjudged: verdict output names the member"       "sp-at-uj"        "$out13"
+want "13. unjudged: verdict output names the failing step" "testenv rc 2"    "$out13"
+evlog13="$RUN/attribution/42-sp-at-uj.log"
+[ -f "$evlog13" ] && ok "13. unjudged: per-member evidence log exists" \
+    || bad "13. unjudged: per-member evidence log exists" "missing $evlog13"
+want "13. unjudged: verdict output cites the evidence log" "$evlog13" "$out13"
+want "13. unjudged: evidence log holds the stub's testenv output" "STUB FAULT" "$(cat "$evlog13" 2>/dev/null)"
 want "13. unjudged: operator mail has Unjudged section"    "Unjudged"        "$(cat "$MAIL_LOG")"
 want "13. unjudged: operator mail names the member"        "sp-at-uj"        "$(cat "$MAIL_LOG")"
 is   "13. unjudged: member requeued, not ejected"    "CERTIFIED" "$(land_state_of sp-at-uj)"
@@ -757,6 +769,59 @@ out15b="$(verdict "$REPONAME")"
 is   "15b. no-ann single 2nd: ejected"         "EJECTED"    "$(land_state_of sp-at-ns-s)"
 is   "15b. no-ann single 2nd: batch removed"   "0"          "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
 want "15b. no-ann single 2nd: reported ejected" "ejected"   "$out15b"
+clean_case
+
+# =============================================================================
+# 16. FIVE CONCURRENT MEMBERS, ALL HARNESS FAULT — repro rc=2 for every member
+#     in phase 2 and phase 3 (sp-7u2ig: batch 316's actual shape). Every member
+#     must be named with per-member evidence (a log file citing the failing
+#     step), the red-batch mail must say so loudly (not the same wording as a
+#     partial fault), no member is ejected, and the 5 concurrent repro calls
+#     must test 5 distinct refs — proving no shared-resource collision
+#     collapsed them onto one worktree/tree (which would drive one container
+#     name and one testdb baseline in the real testenv-batch.sh).
+# =============================================================================
+testdb_reset
+build_members sp-at-p1 sp-at-p2 sp-at-p3 sp-at-p4 sp-at-p5 > /dev/null
+pr16="$(grep '^pr=' "$(batch_file)" | cut -d= -f2)"
+base_sha16="$(git -C "$REPO" rev-parse origin/main)"
+# Fault every ref tested: base_sha16 is an ancestor of every member's merged
+# tree and of the batch head.
+printf '%s\n' "$base_sha16" > "$REPRO_FAULT_FILE"
+REPRO_CALLS_LOG="$TMP/repro-calls-16"; : > "$REPRO_CALLS_LOG"
+# Force real concurrency (8/5 active=5 mirrors sp-7u2ig's own batch 316 shape)
+# regardless of this host's nproc, so the 5 members' repro calls actually
+# overlap rather than serializing.
+export REPRO_CALLS_LOG SPIRA_BATCH_MAXPAR=8
+out16="$(verdict "$REPONAME")"
+unset REPRO_CALLS_LOG SPIRA_BATCH_MAXPAR
+
+for id in sp-at-p1 sp-at-p2 sp-at-p3 sp-at-p4 sp-at-p5; do
+    is   "16. all-fault: $id requeued, not ejected" "CERTIFIED" "$(land_state_of "$id")"
+    evlog16="$RUN/attribution/$pr16-$id.log"
+    [ -f "$evlog16" ] && ok "16. all-fault: $id has a per-member evidence log" \
+        || bad "16. all-fault: $id has a per-member evidence log" "missing $evlog16"
+    want "16. all-fault: $id evidence log holds testenv output" "STUB FAULT" "$(cat "$evlog16" 2>/dev/null)"
+    want "16. all-fault: verdict output cites $id's evidence log" "$evlog16" "$out16"
+done
+is   "16. all-fault: batch record removed" "0" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+want "16. all-fault: verdict output names the failing step" "testenv rc 2" "$out16"
+want "16. all-fault: mail says every member could not be judged" "HARNESS FAULT" "$(cat "$MAIL_LOG")"
+want "16. all-fault: mail names all 5 as unjudged" "sp-at-p1" "$(cat "$MAIL_LOG")"
+want "16. all-fault: mail unjudged section names sp-at-p5 too" "sp-at-p5" "$(cat "$MAIL_LOG")"
+nowant "16. all-fault: nobody ejected" "EJECTED" "$(printf '%s\n' \
+    "$(land_state_of sp-at-p1)" "$(land_state_of sp-at-p2)" "$(land_state_of sp-at-p3)" \
+    "$(land_state_of sp-at-p4)" "$(land_state_of sp-at-p5)")"
+
+# No shared-resource collision: phase 2 runs all 5 members concurrently, and
+# `wait` in _repro_members_par guarantees phase 2's 5 calls are all logged
+# before phase 3 begins — so the first 5 lines are exactly phase 2's calls.
+n_calls16="$(wc -l < "$REPRO_CALLS_LOG" | tr -d ' ')"
+is   "16. all-fault: phase 2 + phase 3 + batch-head = 11 repro calls" "11" "$n_calls16"
+n_refs16="$(head -n 5 "$REPRO_CALLS_LOG" | awk '{print $1}' | sort -u | wc -l | tr -d ' ')"
+is   "16. all-fault: 5 concurrent members tested 5 distinct refs" "5" "$n_refs16"
+n_resdirs16="$(awk '{print $2}' "$REPRO_CALLS_LOG" | sort -u | wc -l | tr -d ' ')"
+is   "16. all-fault: every repro call used its own result dir" "$n_calls16" "$n_resdirs16"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"

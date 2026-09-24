@@ -57,7 +57,29 @@ _batch_reseal_rebased() {   # _batch_reseal_rebased <file> <new_head> <new_membe
 # members cost two hours. Parallel mode is bounded by SPIRA_BATCH_MAXPAR like every other
 # batch on this box; the serial re-run that tells a flake from a failure is gate-retry's
 # job on the CI side, not this one's.
-_repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-file] [flaky-file] [wt-id]
+
+# _repro_fault <pr> <member> <step> [testenv-output] — evidence for a return-2 (harness
+# fault): prints the "could not judge" line naming the step, and when [testenv-output] is
+# given, writes it to $SPIRA_RUN/attribution/<pr>-<member>.log and cites the path. A harness
+# fault with no evidence cannot be diagnosed after the fact (law-anomalies-are-not-coincidences).
+_repro_fault() {
+    local pr="$1" member="$2" step="$3" out="${4:-}"
+    local logf=""
+    if [ -n "$pr" ] && [ -n "$member" ] && [ -n "$out" ]; then
+        mkdir -p "$SPIRA_RUN/attribution" 2>/dev/null \
+            && logf="$SPIRA_RUN/attribution/$pr-$member.log" \
+            && printf '%s\n' "$out" > "$logf" 2>/dev/null \
+            || logf=""
+    fi
+    if [ -n "$logf" ]; then
+        printf 'verdict: %s \xe2\x80\x94 harness fault (could not judge): %s (log: %s)\n' \
+            "$member" "$step" "$logf"
+    else
+        printf 'verdict: %s \xe2\x80\x94 harness fault (could not judge): %s\n' "$member" "$step"
+    fi
+}
+
+_repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-file] [flaky-file] [wt-id] [pr] [member]
                     # Merges <tip> onto <base-sha> so suites added after the member
                     # forked are present in the tested tree.
                     # Empty <base-sha>: tests <tip> directly (batch-head path).
@@ -65,20 +87,27 @@ _repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-f
                     # If [fail-file] given and result is red, writes FAIL lines there.
                     # If [flaky-file] given and result is flaky, writes suite names there.
                     # [wt-id] disambiguates the worktree when concurrent callers run together.
+                    # [pr] and [member] name the evidence file for a harness fault; see _repro_fault.
     local suites="$1" repo="$2" base="$3" tip="$4" _fail_out="${5:-}" _flaky_out="${6:-}" _wt_id="${7:-$$}"
+    local _pr="${8:-}" _member="${9:-$_wt_id}"
     local tmp rc test_ref wt _repro_out
     if [ -n "$base" ]; then
         wt="$SPIRA_RUN/worktree/.repro-$_wt_id"
         mkdir -p "$SPIRA_RUN/worktree" 2>/dev/null || true
         git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
-        git -C "$repo" worktree add -q --detach "$wt" "$base" 2>/dev/null || return 2
+        git -C "$repo" worktree add -q --detach "$wt" "$base" 2>/dev/null || {
+            _repro_fault "$_pr" "$_member" "worktree add"
+            return 2
+        }
         git -C "$wt" merge -q --no-edit --no-ff "$tip" >/dev/null 2>&1 || {
             git -C "$wt" merge --abort 2>/dev/null || true
             git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
+            _repro_fault "$_pr" "$_member" "merge"
             return 2
         }
         test_ref="$(git -C "$wt" rev-parse HEAD 2>/dev/null)" || {
             git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
+            _repro_fault "$_pr" "$_member" "rev-parse"
             return 2
         }
         git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
@@ -91,10 +120,10 @@ _repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-f
     rc=$?
     rm -rf "$tmp"
     if [ "$rc" -eq 1 ]; then
-        local _retry_tmp _retry_rc
+        local _retry_tmp _retry_rc _retry_out
         _retry_tmp="$(mktemp -d)"
-        SPIRA_REPO="$repo" SPIRA_BATCH_RESULTS="$_retry_tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
-            --mode serial --suites "$suites" "$test_ref" >/dev/null 2>&1
+        _retry_out="$(SPIRA_REPO="$repo" SPIRA_BATCH_RESULTS="$_retry_tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
+            --mode serial --suites "$suites" "$test_ref" 2>&1)"
         _retry_rc=$?
         rm -rf "$_retry_tmp"
         if [ "$_retry_rc" -eq 0 ]; then
@@ -109,25 +138,27 @@ _repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-f
             fi
             return 0
         else
+            _repro_fault "$_pr" "$_member" "testenv rc $_retry_rc (serial retry)" "$_retry_out"
             return 2
         fi
     fi
     [ "$rc" -eq 0 ] && return 1
+    _repro_fault "$_pr" "$_member" "testenv rc $rc" "$_repro_out"
     return 2
 }
 
 _repro_member_bg() {  # background subshell worker: writes rc (and flaky file) to fail_dir
-    local _id="$1" _csv="$2" _repo="$3" _base="$4" _tip="$5" _fdir="$6"
-    _repro_is_red "$_csv" "$_repo" "$_base" "$_tip" "$_fdir/$_id" "$_fdir/$_id.flaky" "$$-$_id"
+    local _id="$1" _csv="$2" _repo="$3" _base="$4" _tip="$5" _fdir="$6" _pr="${7:-}"
+    _repro_is_red "$_csv" "$_repo" "$_base" "$_tip" "$_fdir/$_id" "$_fdir/$_id.flaky" "$$-$_id" "$_pr" "$_id"
     printf '%s\n' "$?" > "$_fdir/$_id.rc"
 }
 
-# _repro_members_par <fail_dir> <repo> <base> <id:tip:csv>...
+# _repro_members_par <fail_dir> <repo> <base> <pr> <id:tip:csv>...
 # Runs _repro_member_bg concurrently for each entry. Concurrency is bounded by
 # SPIRA_BATCH_MAXPAR: min(mc, MAXPAR) members active at once; each member's
 # testenv-batch width = MAXPAR / active, so total concurrent suites ≤ MAXPAR.
 _repro_members_par() {
-    local _fdir="$1" _repo="$2" _base="$3"; shift 3
+    local _fdir="$1" _repo="$2" _base="$3" _pr="$4"; shift 4
     local _mc="$#"
     local _maxpar; _maxpar="${SPIRA_BATCH_MAXPAR:-$(nproc)}"
     local _active _width
@@ -145,7 +176,7 @@ _repro_members_par() {
             while [ "$(jobs -rp | wc -l)" -ge "$_active" ]; do wait -n 2>/dev/null || true; done
         fi
         ( SPIRA_BATCH_MAXPAR="${_width:-}" \
-          _repro_member_bg "$_id" "$_csv" "$_repo" "$_base" "$_tip" "$_fdir" ) &
+          _repro_member_bg "$_id" "$_csv" "$_repo" "$_base" "$_tip" "$_fdir" "$_pr" ) &
         _pids+=($!)
     done
     wait "${_pids[@]}" 2>/dev/null || true
@@ -323,7 +354,7 @@ _q_attribute() {
         local _unrep_f="$_unrep_dir/$_mid"
         local _sm_flaky_f _sm_rc _sm_fs
         _sm_flaky_f="$(mktemp)"
-        _repro_is_red "$suites_csv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid" "$_sm_flaky_f"
+        _repro_is_red "$suites_csv" "$repo" "$base_sha" "$_mtip" "$_eject_fail_dir/$_mid" "$_sm_flaky_f" "" "$pr_n" "$_mid"
         _sm_rc=$?
         if [ "$_sm_rc" -eq 0 ]; then
             rm -f "$_sm_flaky_f"
@@ -337,7 +368,6 @@ _q_attribute() {
             survivors+=("$_mm")
         elif [ "$_sm_rc" -eq 2 ]; then
             rm -f "$_sm_flaky_f"
-            printf 'verdict %s: %s \xe2\x80\x94 harness fault (could not judge)\n' "$name" "$_mid"
             if _suite_directly_in_diff "$red_suites" "$repo" "$base_sha" "$_mtip"; then
                 ejected+=("$_mm")
                 caught=$(( caught + 1 ))
@@ -399,7 +429,7 @@ _q_attribute() {
             _p1_entries+=("$_mid:$_mtip:$_mcsv")
         done
         if [ "${#_p1_entries[@]}" -gt 0 ]; then
-            _repro_members_par "$_eject_fail_dir" "$repo" "$base_sha" "${_p1_entries[@]}"
+            _repro_members_par "$_eject_fail_dir" "$repo" "$base_sha" "$pr_n" "${_p1_entries[@]}"
             for _entry in "${_p1_entries[@]}"; do
                 _mid="${_entry%%:*}"; _rest="${_entry#*:}"; _mtip="${_rest%%:*}"; _mcsv="${_rest#*:}"
                 local _mrc; _mrc="$(cat "$_eject_fail_dir/$_mid.rc" 2>/dev/null || printf '2')"
@@ -411,6 +441,8 @@ _q_attribute() {
                     local _fs; _fs="$(cat "$_eject_fail_dir/$_mid.flaky" 2>/dev/null || true)"
                     rm -f "$_eject_fail_dir/$_mid.flaky"
                     printf 'verdict %s: %s — repro inconclusive (red-suite: not quarantined): %s\n' "$name" "$_mid" "$_fs"
+                elif [ "$_mrc" -eq 2 ]; then
+                    unjudged+=("$_mid:$_mtip")
                 fi
             done
         fi
@@ -442,7 +474,7 @@ _q_attribute() {
                 _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
                 _p2_entries+=("$_mid:$_mtip:$_unselected_csv")
             done
-            _repro_members_par "$_eject_fail_dir" "$repo" "$base_sha" "${_p2_entries[@]}"
+            _repro_members_par "$_eject_fail_dir" "$repo" "$base_sha" "$pr_n" "${_p2_entries[@]}"
             for _entry in "${_p2_entries[@]}"; do
                 _mid="${_entry%%:*}"; _rest="${_entry#*:}"; _mtip="${_rest%%:*}"; _mcsv="${_rest#*:}"
                 local _mrc; _mrc="$(cat "$_eject_fail_dir/$_mid.rc" 2>/dev/null || printf '2')"
@@ -455,8 +487,7 @@ _q_attribute() {
                     rm -f "$_eject_fail_dir/$_mid.flaky"
                     printf 'verdict %s: %s — repro inconclusive (red-suite: not quarantined): %s\n' "$name" "$_mid" "$_fs"
                 elif [ "$_mrc" -eq 2 ]; then
-                    unjudged+=("$_mm")
-                    printf 'verdict %s: %s — harness fault (could not judge)\n' "$name" "$_mid"
+                    unjudged+=("$_mid:$_mtip")
                 fi
             done
         fi
@@ -468,7 +499,7 @@ _q_attribute() {
                 _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
                 _p3_entries+=("$_mid:$_mtip:$suites_csv")
             done
-            _repro_members_par "$_eject_fail_dir" "$repo" "$base_sha" "${_p3_entries[@]}"
+            _repro_members_par "$_eject_fail_dir" "$repo" "$base_sha" "$pr_n" "${_p3_entries[@]}"
             for _entry in "${_p3_entries[@]}"; do
                 _mid="${_entry%%:*}"; _rest="${_entry#*:}"; _mtip="${_rest%%:*}"; _mcsv="${_rest#*:}"
                 local _mrc; _mrc="$(cat "$_eject_fail_dir/$_mid.rc" 2>/dev/null || printf '2')"
@@ -481,15 +512,14 @@ _q_attribute() {
                     rm -f "$_eject_fail_dir/$_mid.flaky"
                     printf 'verdict %s: %s — repro inconclusive (red-suite: not quarantined): %s\n' "$name" "$_mid" "$_fs"
                 elif [ "$_mrc" -eq 2 ]; then
-                    unjudged+=("$_mm")
-                    printf 'verdict %s: %s — harness fault (could not judge)\n' "$name" "$_mid"
+                    unjudged+=("$_mid:$_mtip")
                 fi
             done
         fi
 
         if [ "${#ejected[@]}" -eq 0 ]; then
             # Neither repro nor diff — test the batch head.
-            _repro_is_red "$suites_csv" "$repo" "" "$branch_name"
+            _repro_is_red "$suites_csv" "$repo" "" "$branch_name" "" "" "" "$pr_n" "batch-head"
             _togrc=$?
             if [ "$_togrc" -eq 0 ]; then
                 # Together-only break → halve: first half gets epoch=1 (batches immediately),
@@ -615,13 +645,17 @@ _q_attribute() {
     if [ "${#survivors[@]}" -gt 0 ]; then
         requeued_ids="$(printf '%s\n' "${survivors[@]}" | cut -d: -f1 | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
     fi
+    local _unjudged_n=0
     if [ "${#unjudged[@]}" -gt 0 ]; then
         unjudged_ids="$(printf '%s\n' "${unjudged[@]}" | cut -d: -f1 | sort -u | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
+        _unjudged_n="$(printf '%s\n' "${unjudged[@]}" | cut -d: -f1 | sort -u | grep -c .)"
     fi
     if [ "$mc" -eq 1 ] && [ "${#ejected[@]}" -eq 1 ]; then
         decision_text="Single member: reproduced and ejected"
-    elif [ "${#unjudged[@]}" -gt 0 ] && [ "${#ejected[@]}" -eq 0 ]; then
-        decision_text="Harness fault: ${#unjudged[@]} member(s) could not be judged; requeueing"
+    elif [ "$mc" -gt 1 ] && [ "$_unjudged_n" -gt 0 ] && [ "${#ejected[@]}" -eq 0 ] && [ "$_unjudged_n" -ge "$mc" ]; then
+        decision_text="HARNESS FAULT: every member ($_unjudged_n) could not be judged — nothing ejected, the culprit re-batches; requeueing without narrowing. Investigate the harness before the next batch."
+    elif [ "$_unjudged_n" -gt 0 ] && [ "${#ejected[@]}" -eq 0 ]; then
+        decision_text="Harness fault: $_unjudged_n member(s) could not be judged; requeueing"
     elif [ "$mc" -gt 1 ] && [ "${#ejected[@]}" -eq 0 ] && [ "${#survivors[@]}" -eq "$mc" ]; then
         decision_text="Together-only red: batch halved, members requeued"
     elif [ "${#ejected[@]}" -gt 0 ] && [ "${#survivors[@]}" -gt 0 ]; then
