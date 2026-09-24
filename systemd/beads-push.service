@@ -5,12 +5,12 @@
 # setup script rather than a backup. A configured remote that nothing pushes answers "is
 # this backed up?" with a yes it has not earned.
 Description=Push Spira's beads Dolt database to its configured remote
-Documentation=file://@SPIRA_REPO@/beads-push.sh
+Documentation=file://@SPIRA_PROD_ROOT@/beads-push.sh
 After=default.target
 
 [Service]
 Type=oneshot
-ExecStart=@SPIRA_REPO@/beads-push.sh
+ExecStart=@SPIRA_PROD_ROOT@/beads-push.sh
 TimeoutStartSec=3600
 # This box also runs prod and the CI runner; a Dolt push is bursty and must never be the
 # reason something user-facing gets slow (law-fence-loops-on-shared-hardware).

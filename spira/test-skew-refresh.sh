@@ -44,6 +44,21 @@ git -C "$REPO" config user.name "test"
 git -C "$REPO" remote set-head origin --auto >/dev/null 2>&1 || true
 
 reset_repo() { git -C "$REPO" reset -q --hard "$BASE_COMMIT"; }
+
+# Stub Makefile in REPO so that `make -C "$REPO" install SPIRA_RELEASES=...` works
+# without cargo.  Untracked — survives reset_repo but is never archived.
+cat > "$REPO/Makefile" <<'STUBMAKE'
+.PHONY: install
+install:
+	@set -eu; \
+	_sha="$$(git rev-parse HEAD)"; \
+	: "$${SPIRA_RELEASES?SPIRA_RELEASES not set}"; \
+	mkdir -p "$$SPIRA_RELEASES/$$_sha"; \
+	printf 'commit %%s\n' "$$_sha" > "$$SPIRA_RELEASES/$$_sha/MANIFEST"; \
+	_tmp="$$SPIRA_RELEASES/.current.new.$$$$"; \
+	ln -sf "$$_sha" "$$_tmp" && mv -T "$$_tmp" "$$SPIRA_RELEASES/current"; \
+	printf 'stub-install: current -> %%s\n' "$$_sha"
+STUBMAKE
 reset_repo
 
 run_skew_cmd() {
@@ -147,6 +162,68 @@ STASH_COUNT="$(git -C "$REPO" stash list 2>/dev/null | wc -l | tr -d ' ')"
 [ "$STASH_COUNT" -ge 1 ] \
     && ok "dirty: stash entry created" \
     || bad "dirty: stash entry created" "stash list shows $STASH_COUNT entries"
+
+# ===========================================================================
+echo
+echo "refresh — release mode: fetch + make install + symlink flip:"
+# ===========================================================================
+# In release mode (SPIRA_RELEASES set and releases/current is a symlink), refresh
+# must: fast-forward the checkout, call make install, and flip releases/current.
+# A mock 'make' creates the release dir and manifest so cargo is not required.
+
+RELEASES="$TMP/releases"
+OLD_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+mkdir -p "$RELEASES/$OLD_SHA"
+ln -sf "$OLD_SHA" "$RELEASES/current"
+
+reset_repo
+
+run_skew_release() {
+    local run_dir="$1"; shift
+    env -i PATH="$PATH" \
+        HOME="$TMP/home" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_HOME="$HERE" \
+        SPIRA_REPO="$REPO" \
+        SPIRA_RUN="$run_dir" \
+        SPIRA_RELEASES="$RELEASES" \
+        SPIRA_DOLT_DATA="" \
+        SPIRA_TESTDB_DATA="" \
+        bash "$HERE/skew.sh" "$@" 2>&1
+    return "${PIPESTATUS[0]:-$?}"
+}
+
+# T1a: refresh in release mode when behind — must advance, call make install, flip symlink
+reset_repo  # puts REPO at BASE_COMMIT, one behind AHEAD_COMMIT
+RUN6="$(mktemp -d "$TMP/run-XXXXX")"
+out6="$(run_skew_release "$RUN6" refresh "$REPO")"; rc6=$?
+is   "release-mode refresh: exits 0"            "0"          "$rc6"
+want "release-mode refresh: reports install"    "refreshed"  "$out6"
+HEAD6="$(git -C "$REPO" rev-parse HEAD)"
+is   "release-mode refresh: checkout advanced"  "$AHEAD_COMMIT" "$HEAD6"
+
+NEW_CURRENT="$(readlink "$RELEASES/current")"
+is   "release-mode refresh: current flipped to new sha" "$AHEAD_COMMIT" "$NEW_CURRENT"
+
+# T1b: old release dir still present (not deleted)
+[ -d "$RELEASES/$OLD_SHA" ] \
+    && ok "release-mode refresh: old release dir preserved" \
+    || bad "release-mode refresh: old release dir preserved" "missing $RELEASES/$OLD_SHA"
+
+# T1c: new release dir was created with MANIFEST
+[ -f "$RELEASES/$AHEAD_COMMIT/MANIFEST" ] \
+    && ok "release-mode refresh: new release has MANIFEST" \
+    || bad "release-mode refresh: new release has MANIFEST" "missing $RELEASES/$AHEAD_COMMIT/MANIFEST"
+
+# T1d: refresh when already up-to-date — must exit 0 and skip make install
+git -C "$REPO" merge --ff-only -q "$(git -C "$REPO" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"
+ln -sf "$AHEAD_COMMIT" "$RELEASES/current"  # already current
+
+RUN7="$(mktemp -d "$TMP/run-XXXXX")"
+out7="$(run_skew_release "$RUN7" refresh "$REPO")"; rc7=$?
+is   "release-mode already-current: exits 0"        "0"       "$rc7"
+want "release-mode already-current: reports current" "already" "$out7"
+nowant "release-mode already-current: no make call"  "stub-install" "$out7"
 
 echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

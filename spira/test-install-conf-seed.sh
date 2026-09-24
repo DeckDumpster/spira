@@ -107,6 +107,13 @@ for _s in $(grep -h "ExecStart=" "$REAL_REPO/systemd/"*.service 2>/dev/null \
     chmod +x "$FAKE_PROD_COCK/$_s"
 done
 unset _s
+FAKE_PROD_ROOT="$(dirname "$FAKE_PROD")"
+for _s in $(grep -h "ExecStart=" "$REAL_REPO/systemd/"*.service 2>/dev/null \
+            | grep "@SPIRA_PROD_ROOT@" | sed 's|.*@SPIRA_PROD_ROOT@/||' | sed 's/ .*//' | sort -u); do
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$FAKE_PROD_ROOT/$_s"
+    chmod +x "$FAKE_PROD_ROOT/$_s"
+done
+unset _s
 
 # The conf.sh seeding target: dirname($FAKE_PROD)/spira.conf.
 PROD_CONF="$TMP/prod-checkout/spira.conf"
