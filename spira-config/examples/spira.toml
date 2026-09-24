@@ -1,0 +1,53 @@
+# spira.toml — the shipped example. `spira-config validate examples/spira.toml` (run as
+# this crate's own T0 check) must accept it: a schema that rejects its own worked example
+# has nobody left to trust it.
+
+[spira]
+home_repo = "home"
+db = "~/.local/share/spira/db"
+operator = "the operator"
+# literal-ok: the shipped example demonstrates the schema's own default label names
+ask_label = "needs-operator"
+# literal-ok: the shipped example demonstrates the schema's own default label names
+ci_label = "awaiting-ci"
+scope_label = "myproject"
+max_aeons = 4
+fayths = ["builder", "ops"]
+certify_suites = "off"
+czar_stage_deadlock = "shadow"
+
+[repo.home]
+path = "/srv/checkouts/home"
+mode = "push"
+base = "origin/main"
+gate = "bash spira/inventory.sh && bash spira/testenv-batch.sh \"$SPIRA_GATE_BRANCH\""
+lanes = ["plan", "incident", "groom", "spike"]
+
+[repo.service]
+path = "/srv/checkouts/service"
+mode = "pr"
+base = "origin/master"
+format = "cargo fmt --all"
+gate = "cargo fmt --all -- --check"
+lanes = ["plan"]
+
+[persona.builder]
+model = "claude-sonnet-5"
+tools = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "TodoWrite"]
+labels = ["myproject", "plan"]
+system_prompt = "append"
+
+[persona.builder.lease]
+minutes = 90
+heartbeat_seconds = 30
+
+[persona.ops]
+model = "claude-haiku-4-5-20251001"
+tools = ["Bash", "Read", "Glob", "Grep", "TodoWrite"]
+labels = ["myproject", "incident"]
+lane = "ops"
+system_prompt = "replace"
+
+[persona.ops.lease]
+minutes = 10
+heartbeat_seconds = 30

@@ -1,0 +1,103 @@
+# builder.fayth — the Guardian: the only persona that writes code.
+#
+# A fayth is a persona DEFINITION; an aeon is one summoned instance of it. Everything a
+# persona is amounts to four things: a predicate that carves its partition out of the
+# graph, the statutes it must read, the tools it may use, and what wakes it.
+
+FAYTH_NAME=builder
+FAYTH_DESC="Guardian — the DPS: claims ready Spira plan beads and implements them, scaling to fill the party"
+
+# The partition. AND-labels: the scope label (SPIRA_SCOPE_LABEL) plus the partition label.
+# An empty scope label means no scope restriction; the predicate is the partition label alone.
+# The ${var:+val} form ensures a non-empty scope label is prepended with a comma separator,
+# and an empty one produces no leading comma — a leading comma is an empty label that would
+# match nothing and look exactly like "no work ready".
+#
+# SPIRA_PLAN_LABEL, not the literal "plan". A literal here is a label that cannot be changed
+# at runtime and cannot be validated by schema.sh at write time. The configured variable is
+# what keeps the fayth, the sentinel and every other reader in agreement on which label means
+# "ready work for a builder" — a literal in five files is how five programs come to disagree
+# (law-schema-over-code).
+FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_PLAN_LABEL"
+FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL,qa-proposed"
+
+# Statutes only. SOPs are runbooks for production incidents; a builder will never execute
+# one, and a shelf of them would push the law it does have to obey off the end of the
+# budget. Ops reads "law-,sop-".
+FAYTH_MEMORY_PREFIXES="law-"
+
+# STATUTES THAT RENDER IN FULL EVERY SESSION. law-tests-run-only-through-testenv-batch
+# was absent from this list, so it rendered only as a bare slug in the index rather than
+# as its full text — and 21 of the last 23 bead sessions contained direct host suite runs.
+# A statute the aeon cannot read cannot be followed; the full text is what makes the
+# rule legible rather than a slug a reader must separately look up (sp-23ev).
+FAYTH_STATUTE_CORE="law-tests-run-only-through-testenv-batch"
+
+# NO FAYTH_REPO. The repository comes from the BEAD — a `repo:<name>` label resolved
+# through .claude/spira/repo-map — because a repository pinned per persona is a
+# persona that can only ever work one of them, and every fayth here named the same
+# one. A bead with no `repo:` label is the home repo, which is what Spira's own plan
+# beads are.
+# SONNET 5. The builders are the party's DPS and hold their
+# slots for ~10 minutes each (p50 9.4 min, p90 18.6 min measured over 28 runs), so they are
+# where the five-hour window actually goes — and that window, not CPU and not the slot count,
+# is Spira's throughput ceiling. A cheaper model in the seats that are occupied longest buys
+# more finished beads per window than a wider pool did: four slots was tried and returned to
+# three ninety minutes later because a slot is only throughput if the aeon in it can finish.
+#
+# VERIFIED, NOT ASSUMED: `claude -p --model claude-sonnet-5` answered on the production box.
+# An id the CLI rejects does not fail loudly here —
+# every summon dies and the pool looks merely idle, which is the shape of outage this harness
+# is worst at noticing. Probe a candidate id before writing it.
+FAYTH_MODEL=claude-sonnet-5
+# Three. Raised to four on 2026-09-07 and returned to three ninety minutes later, by the
+# operator, with the measurement that settles it: a slot is only throughput if the aeon in it
+# can finish, and right now it cannot. In the 46 minutes at four, twenty-two aeons were
+# summoned, ten exited with their bead still in_progress, and NOTHING landed — while the
+# five-hour window went 38% to 54%.
+#
+# THE FOURTH SLOT IS A FOURTH FULL GATE, NOT A FOURTH WORKER. gate-spira.sh runs every suite
+# serially, 776s measured, which is past the 600s ceiling on a foreground Bash call — so an
+# aeon backgrounds the gate, ends its turn believing it will be woken, and is not
+# (sp-5su7). The bead is left in_progress, an attempt is charged, and the next summon starts
+# ANOTHER full gate. Four concurrent gates on four cores took the load average to 7.90 and
+# made each other slower, which made more sessions give up, which started more gates. The
+# cap was feeding the loop rather than draining the queue.
+#
+# RAISE IT AGAIN WHEN sp-7pi LANDS — suite selection is what makes a slot finishable. The
+# operator's own reasoning for four (the fourth inherits his interactive session's load
+# rather than adding to it) is sound and unchanged; it just does not apply while the thing
+# occupying the slot is a gate that cannot complete.
+#
+# Aeons work in separate worktrees and claim atomically, so the risk is contention in a
+# shared repo, not lost work; the governor will withhold in enforce mode if that proves wrong.
+# SPIRA_MAX_AEONS in spira.conf is the pool ceiling: the sentinel reads it and draws
+# it down across the task roster. This number is the fallback for a host with no pool.
+FAYTH_MAX_CONCURRENT=3
+
+# ELASTIC, AND THEREFORE LAST IN SPIRA_FAYTHS. The builder takes whatever the pool has left
+# once every persona ahead of it has been served and every reserve has been honoured, rather
+# than a number of its own — "builders scale to fill the remaining spots". Its own
+# MAX_CONCURRENT above is the fallback on a host that declares no pool at all, so a clean
+# clone does not discover this box's limits by exceeding them.
+FAYTH_ELASTIC=1
+
+# The lease TTL the claim carries, and how often the aeon's heartbeat beats. Heartbeats
+# write no Dolt commit, so a fast cadence is free; the reaper's grace window is ~2x TTL.
+FAYTH_LEASE_MINUTES=90
+FAYTH_HEARTBEAT_SECONDS=30
+
+# LIVENESS LEASE. An aeon holds a fixed 10-minute liveness lease renewed by its trace
+# growing. If the lease lapses the aeon is killed with work preserved. FAYTH_LEASE_SECONDS
+# is the liveness lease duration (not the Dolt claim TTL above); 600s is 10 minutes.
+# FAYTH_STALL_BEATS and FAYTH_STALL_GRANTS are unused by the new lease mechanism and
+# retained here only to avoid breaking any tooling that reads them.
+FAYTH_LEASE_SECONDS=600
+FAYTH_STALL_BEATS=10
+
+FAYTH_TOOLS="Bash,Read,Edit,Write,Glob,Grep,TodoWrite"
+FAYTH_PROJECT_INSTRUCTIONS=repo
+
+# APPEND: the builder writes code, so Claude Code's default coding guidance belongs
+# underneath the persona layer rather than being replaced by it.
+FAYTH_SYSTEM_PROMPT=append
