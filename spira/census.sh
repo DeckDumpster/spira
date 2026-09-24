@@ -278,8 +278,10 @@ _suppressed_classes() {
 }
 
 # Collect classes covered by a closed remedy bead whose commit is not yet on the base.
-# Writes directly to suppressed_closed.txt (in-flight: a branch naming the bead exists)
-# and orphaned_closed.txt ("bead_id class": no branch found — nothing will ever land).
+# Processes closed remedy beads to classify them as in-flight or orphaned.
+# Outputs classification markers to avoid buffering issues with file appends in subshells:
+#   "suppressed <class>" for in-flight (branch exists)
+#   "orphaned <bead_id> <class>" for orphaned (no branch)
 _suppressed_closed_classes() {
     local bead_id class rc _repo
     _repo="$(repo_root)"
@@ -291,9 +293,9 @@ _suppressed_closed_classes() {
                 1)
                     if git -C "$_repo" branch -a --list "*${bead_id}*" 2>/dev/null \
                            | grep -q .; then
-                        printf '%s\n' "$class" >> "$_TMPDIR/suppressed_closed.txt"
+                        printf 'suppressed %s\n' "$class"
                     else
-                        printf '%s %s\n' "$bead_id" "$class" >> "$_TMPDIR/orphaned_closed.txt"
+                        printf 'orphaned %s %s\n' "$bead_id" "$class"
                     fi
                     ;;
                 2) printf 'census.sh: remedy %s: land status unknown, not suppressing %s\n' \
@@ -306,7 +308,15 @@ _suppressed_closed_classes() {
 _suppressed_classes > "$_TMPDIR/suppressed.txt"
 : > "$_TMPDIR/suppressed_closed.txt"
 : > "$_TMPDIR/orphaned_closed.txt"
-_suppressed_closed_classes
+
+# Process classified remedies, separating into suppressed and orphaned files.
+while IFS=' ' read -r _class _type _bead_id _class2; do
+    case "$_class" in
+        suppressed) printf '%s\n' "$_type" >> "$_TMPDIR/suppressed_closed.txt" ;;
+        orphaned) printf '%s %s\n' "$_bead_id" "$_class2" >> "$_TMPDIR/orphaned_closed.txt" ;;
+    esac
+done < <(_suppressed_closed_classes)
+
 # Build class→"id[,id]" lookup for orphan annotations in the ranking loop below.
 [ -s "$_TMPDIR/orphaned_closed.txt" ] \
     && awk '{ids[$2]=(ids[$2]?ids[$2]",":"")$1} END{for(c in ids)print c,ids[c]}' \
