@@ -47,7 +47,7 @@ mgs() {
 
 echo
 echo "positive control — a still-running push gate reads unknown:"
-run_list IN_PROGRESS "" abc123 1
+run_list in_progress "" abc123 1
 is "in-progress run reads unknown" "unknown abc123" "$(mgs)"
 
 echo
@@ -57,17 +57,17 @@ is "empty run list reads unknown" "unknown" "$(mgs)"
 
 echo
 echo "a completed, successful push gate reads green:"
-run_list COMPLETED SUCCESS def456 2
+run_list completed success def456 2
 is "successful run reads green" "green def456" "$(mgs)"
 
 echo
 echo "a completed, failed push gate reads red:"
-run_list COMPLETED FAILURE bad0001 3
+run_list completed failure bad0001 3
 is "failed run reads red" "red bad0001" "$(mgs)"
 
 echo
 echo "provision fault: a failed push gate whose provision job also failed reads unknown, not red:"
-run_list COMPLETED FAILURE bad0002 4
+run_list completed failure bad0002 4
 printf '{"jobs":[{"id":9,"name":"provision","conclusion":"failure"},{"id":10,"name":"gate","conclusion":"failure"}]}\n' \
     > "$TMP/jobs-prov-fail.json"
 JOBS_JSON="$TMP/jobs-prov-fail.json"
@@ -81,7 +81,7 @@ is "provision success → still red" "red bad0002" "$(mgs)"
 JOBS_JSON=""
 
 echo "positive control — a green run with a failed provision job stays green (jobs are only consulted when red):"
-run_list COMPLETED SUCCESS def789 5
+run_list completed success def789 5
 JOBS_JSON="$TMP/jobs-prov-fail.json"
 is "green ignores jobs" "green def789" "$(mgs)"
 JOBS_JSON=""
