@@ -138,7 +138,7 @@ file_watcher_incident() {
 # that path is what is under test here, so this helper does not depend on it.
 find_bead() {
     local ref="$1" _id
-    for _status in open,in_progress closed; do
+    for _status in open in_progress closed; do
         _id="$(B list --status "$_status" --limit 0 --label spira,incident --json 2>/dev/null \
           | python3 -c '
 import sys, json
