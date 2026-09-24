@@ -31,7 +31,7 @@
 # after its migration reads as a plan rather than a record.
 
 # ---- the harness: generic mechanism, no operator data ----------------------------------
-spira   | spira/                        | the harness proper — aeon runner, sentinel and its checks, gate, governor, sending, strand, drain, the chamber and its fayth format, lib.sh, and the test suites that hold them
+spira   | spira/                        | the harness proper — aeon runner, sentinel and its checks, gate, watchtower, sending, strand, drain, the chamber and its fayth format, lib.sh, and the test suites that hold them
 spira   | spira/boundary                | this manifest — it describes the harness, so it travels with it
 spira   | spira/boundary.sh             | renders this manifest into every document that publishes it; the wiki-side target is configured and skipped when unset, per rule 2
 spira   | spira/conf.sh                 | the one configuration surface: the loader, the key allowlist, the derived defaults, and `spira_require`, which names a missing program instead of dying as a shell error

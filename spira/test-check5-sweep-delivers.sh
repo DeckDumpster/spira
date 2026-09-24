@@ -72,7 +72,6 @@ stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; 
 stub pilgrimage.sh 'exit 0'
 stub strand.sh     'exit 0'
 stub sending.sh    'exit 0'
-stub governor.sh   'exit 0'
 stub reflect.sh    'exit 0'
 stub ask.sh        'true'
 

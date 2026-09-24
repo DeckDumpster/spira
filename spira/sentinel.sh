@@ -1134,24 +1134,6 @@ fi
 # above returned in milliseconds and this finds nothing.
 land_drain
 
-# ======================================================================================
-# ======================================================================================
-# THE GOVERNOR runs before capacity is considered. It decides from /proc how much of this
-# machine Spira may use — the box also runs prod, two CI runners, all of Gas Town and
-# the operator's own session, so an aeon is never the most important thing on it. It withholds
-# only, and never touches an aeon already working: finishing costs less than restarting.
-# ======================================================================================
-"$SPIRA_HOME/governor.sh" >/dev/null 2>&1 || true
-if [ -r "$SPIRA_RUN/budget.env" ]; then
-    b="$(. "$SPIRA_RUN/budget.env"; printf '%s|%s|%s' "${SP_BUDGET:-?}" "${SP_BUDGET_REASON:-?}" "${SP_GOVERNOR_MODE:-measure}")"
-    gb="${b%%|*}"; grest="${b#*|}"; greason="${grest%|*}"; gmode="${grest##*|}"
-    if [ "$gmode" = measure ] && [ "$gb" = "0" ]; then
-        log "governor [measure]: WOULD withhold — $greason (not enforcing)"
-    elif [ "$gmode" = enforce ] && [ "$gb" = "0" ]; then
-        log "governor: summoning nothing — $greason"
-    fi
-fi
-
 # CHECK 6c — REMOVED. The bespoke awaiting-ci sweep has been replaced by bd gate check
 # running on spira-gate-check.timer. An aeon working on a pr-mode repository creates a
 # gh:run gate (bd gate create --type=gh:run --blocks <id>) instead of applying the
