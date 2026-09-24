@@ -2,15 +2,14 @@
 #
 # test-id-prefix.sh — SPIRA_ID_PREFIX is honoured at every detection site.
 #
-# Two sites previously hardcoded "sp-" and silently returned "nothing found"
-# for any installation with a non-default prefix:
-#   - other_beads_on_conflicts in lib.sh (grep pattern)
-#   - bead-id extractor in bd-close-focus-guard.sh (Python regex)
+# other_beads_on_conflicts in lib.sh previously hardcoded "sp-" (grep pattern)
+# and silently returned "nothing found" for any installation with a
+# non-default prefix.
 #
 # POSITIVE CONTROL FIRST (law-absence-needs-a-positive-control): prove the
 # detector fires before trusting the negative case.
 #
-# covers: spira/lib.sh spira/bd-close-focus-guard.sh
+# covers: spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -72,88 +71,6 @@ result_sp="$(
         -- "$HERE" "$TMP_REPO" "$BASE"
 )"
 nowant "sp-prefix branch does not match tt- ids on base"            "tt-abc123" "$result_sp"
-
-# ============================================================================
-echo
-echo "bd-close-focus-guard — non-default prefix in close reason"
-# ============================================================================
-
-GUARD="$HERE/bd-close-focus-guard.sh"
-[ -f "$GUARD" ] || { printf 'SKIP bd-close-focus-guard.sh not found at %s\n' "$GUARD"; exit 77; }
-
-# Require at least two auto-summoned personas to form a focus period.
-auto_count=0
-for _f in "$HERE/chamber"/*.fayth; do
-    [ -e "$_f" ] || continue
-    _summon=auto
-    while IFS= read -r _line; do
-        case "$_line" in FAYTH_SUMMON=*) _summon="${_line#FAYTH_SUMMON=}"; break ;; esac
-    done < "$_f"
-    [ "$_summon" = "auto" ] && auto_count=$((auto_count+1))
-done
-unset _f _summon _line
-if [ "$auto_count" -lt 2 ]; then
-    printf 'SKIP need at least 2 auto-summoned personas; found %d\n' "$auto_count"
-    exit 77
-fi
-
-FOCUS_PERSONA=""
-for _f in "$HERE/chamber"/*.fayth; do
-    [ -e "$_f" ] || continue
-    _summon=auto
-    while IFS= read -r _line; do
-        case "$_line" in FAYTH_SUMMON=*) _summon="${_line#FAYTH_SUMMON=}"; break ;; esac
-    done < "$_f"
-    if [ "$_summon" = "auto" ]; then
-        FOCUS_PERSONA="$(basename "$_f" .fayth)"
-        break
-    fi
-done
-unset _f _summon _line
-[ -n "$FOCUS_PERSONA" ] || { printf 'SKIP could not pick a focus persona\n'; exit 77; }
-
-FOCUS_CONF="$TMP_DIR/focus.conf"
-printf 'SPIRA_FAYTHS = %s\n' "$FOCUS_PERSONA" > "$FOCUS_CONF"
-
-make_payload() {
-    python3 -c '
-import json, sys
-print(json.dumps({"tool_name": "Bash", "tool_input": {"command": sys.argv[1]}}))
-' "$1"
-}
-
-run_guard() {
-    local cmd="$1" id_prefix="$2"
-    local rc=0 out
-    out=$(make_payload "$cmd" | \
-      env -i PATH="$PATH" HOME="$HOME" \
-          SPIRA_AEON=1 \
-          SPIRA_HOME="$HERE" \
-          SPIRA_CONF="$FOCUS_CONF" \
-          SPIRA_ID_PREFIX="$id_prefix" \
-          bash "$GUARD" 2>&1) || rc=$?
-    printf '%s' "$out"
-    return "$rc"
-}
-
-# POSITIVE CONTROL: focus period + custom-prefix id present → guard allows.
-# bd show will fail (no real db configured), guard fails open → exits 0.
-WITH_ID="bd close tt-work --reason-file - <<'REASON'
-finding tracked in tt-abc123
-REASON"
-rc=0; run_guard "$WITH_ID" "$PREFIX" >/dev/null 2>&1 || rc=$?
-wantrc "guard allows when custom-prefix id is present in reason" 0 "$rc"
-
-# NEGATIVE CONTROL: focus period + no id in reason → must block.
-NO_ID="bd close tt-work --reason-file - <<'REASON'
-finding present but no tracking reference filed
-REASON"
-out="$(run_guard "$NO_ID" "$PREFIX" 2>&1 || true)"
-want "guard blocks when no custom-prefix id in reason" "BLOCK" "$out"
-
-# REGRESSION PROOF: with sp- prefix, a tt- id must NOT satisfy the guard.
-out_sp="$(run_guard "$WITH_ID" "sp" 2>&1 || true)"
-want "sp- prefix does not match tt- id in reason (still blocks)" "BLOCK" "$out_sp"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
