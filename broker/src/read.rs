@@ -80,7 +80,7 @@ fn gh_run_view(repo_path: &str, run_id: &str) -> Result<String, String> {
     let output = Command::new(gh_bin())
         .args(["run", "view", run_id, "--json", RUN_VIEW_FIELDS])
         .current_dir(repo_path)
-        .envs(broker_gh_env())
+        .envs(crate::token::gh_env())
         .output()
         .map_err(|e| format!("gh failed: {e}"))?;
     if output.status.success() {
@@ -97,7 +97,7 @@ fn gh_artifact_download(repo_path: &str, run_id: &str, name: &str, dir: &str) ->
     let output = Command::new(gh_bin())
         .args(["run", "download", run_id, "-n", name, "-D", dir])
         .current_dir(repo_path)
-        .envs(broker_gh_env())
+        .envs(crate::token::gh_env())
         .output()
         .map_err(|e| format!("gh failed: {e}"))?;
     if output.status.success() {
@@ -115,25 +115,6 @@ fn gh_bin() -> String {
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "gh".to_string())
-}
-
-// Provide the broker's own GH credentials to subprocess calls.
-// The aeon fence strips GH_CONFIG_DIR; reads restore it from
-// SPIRA_BROKER_GH_CONFIG_DIR so the broker can authenticate while
-// direct gh use from the aeon remains blocked.
-fn broker_gh_env() -> Vec<(String, String)> {
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    if let Ok(dir) = std::env::var("SPIRA_BROKER_GH_CONFIG_DIR") {
-        if !dir.is_empty() {
-            pairs.push(("GH_CONFIG_DIR".to_string(), dir));
-        }
-    }
-    if let Ok(token) = std::env::var("SPIRA_BROKER_GH_TOKEN") {
-        if !token.is_empty() {
-            pairs.push(("GH_TOKEN".to_string(), token));
-        }
-    }
-    pairs
 }
 
 fn repo_map_lookup(repo: &str) -> Option<String> {

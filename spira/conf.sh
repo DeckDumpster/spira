@@ -61,6 +61,7 @@ SPIRA_CI_LABEL SPIRA_CI_PARK_MAX SPIRA_WORLD_STOP_LABEL
 SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE SPIRA_CERTIFY_PAR SPIRA_CERTIFY_SUITES SPIRA_VERDICT_TTL SPIRA_REBASE_ESCALATE_AT SPIRA_VERDICT_WINDOW SPIRA_REMEDY_WINDOW SPIRA_PR_STALL_MINS SPIRA_DEFERRAL_ESCALATE_AT
 SPIRA_LOOM_ADDR SPIRA_LOOM_BUDGET_MS SPIRA_LOOM_CACHE_S SPIRA_LOOM_BIN
 SPIRA_BROKER_BIN SPIRA_BROKER_GH_CONFIG_DIR SPIRA_BROKER_GH_TOKEN SPIRA_CZAR_PASS_BIN SPIRA_SUPERVISE_BIN SPIRA_LANDING_PASS_BIN
+SPIRA_GH SPIRA_GH_APP_CONFIG
 SPIRA_SPIKE_LABEL SPIRA_SPIKE_DIR SPIRA_SPIKE_PATHS
 SPIRA_GROOMER_LABEL SPIRA_GROOM_THRESHOLD SPIRA_GROOM_ASK_LABEL SPIRA_SCOPE_LABEL SPIRA_PLAN_LABEL SPIRA_INCIDENT_LABEL SPIRA_CZAR_LABEL SPIRA_NO_LOOP_LABEL SPIRA_EXPRESS_LABEL
 SPIRA_CZAR_STAGE_DEADLOCK SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED SPIRA_CZAR_STAGE_SORT_FAILED SPIRA_CZAR_STAGE_LOOP_STALLED SPIRA_CZAR_STAGE_CI_STALLED SPIRA_CZAR_STAGE_STARVED SPIRA_CZAR_STAGE_CI_RED
@@ -799,6 +800,15 @@ spira_conf_defaults() {
             SPIRA_LANDING_PASS_BIN="$SPIRA_REPO/landing-pass/target/release/landing-pass"
         fi
     fi
+    # SPIRA_GH: which gh-like binary ghq() calls. Empty means the system gh.
+    # Set to <spira>/spira/gh-app.sh to have all harness gh calls act as the
+    # GitHub App rather than as the operator's personal account.
+    : "${SPIRA_GH:=}"
+    # SPIRA_GH_APP_CONFIG: path to the GitHub App credential env file.
+    # Read by broker token to discover App ID, installation ID, and key path
+    # when those are not already set in the process environment. Empty falls
+    # back to ~/.config/spira/github-app.env.
+    : "${SPIRA_GH_APP_CONFIG:=}"
     : "${SPIRA_OPERATOR:=the operator}"
     # The timezone dates are written in. Empty means the host's own, which is right until
     # the host is a server in one zone and the operator reads its output in another — the
