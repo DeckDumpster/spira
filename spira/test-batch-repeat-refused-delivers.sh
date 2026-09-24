@@ -74,12 +74,14 @@ echo "test-batch-repeat-refused-delivers.sh"
 
 # ==============================================================================
 echo
-echo "POSITIVE CONTROL: without SPIRA_INCIDENT_DELIVERS, delivers:note: is stamped"
+echo "POSITIVE CONTROL: with SPIRA_INCIDENT_DELIVERS=note, delivers:note: is stamped"
 # ==============================================================================
 # This proves the label-reader is sound. If it returned nothing here, the
 # nowant assertion in the fixed case would pass even if no label was written at all.
+# The default is now delivers:action; we force delivers:note: via SPIRA_INCIDENT_DELIVERS=note
+# to get a non-action label the reader can detect.
 testdb_reset; mkdir -p "$RUN"
-file_rr >/dev/null
+file_rr SPIRA_INCIDENT_DELIVERS=note >/dev/null
 pc_id="$(bd -C "$SPIRA_DB" list --status open --limit 0 --label spira,incident --json 2>/dev/null \
     | python3 -c '
 import json,sys
@@ -93,7 +95,7 @@ for i in d:
     printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
 
 pc_labels="$(delivers_labels "$pc_id")"
-want "positive control: delivers:note: appears without SPIRA_INCIDENT_DELIVERS" "delivers:note:" "$pc_labels"
+want "positive control: delivers:note: appears with SPIRA_INCIDENT_DELIVERS=note" "delivers:note:" "$pc_labels"
 
 # ==============================================================================
 echo
