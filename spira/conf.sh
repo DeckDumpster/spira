@@ -52,7 +52,7 @@ SPIRA_CONF_LOADED=1
 # drives a fixture through, and it is explicit rather than ambient.
 SPIRA_CONF_KEYS="
 SPIRA_HOME_REPO SPIRA_DB SPIRA_RUN SPIRA_GOAL
-SPIRA_PATH SPIRA_WORKSPACES SPIRA_REPO_MAP SPIRA_PREFIX_MAP SPIRA_CHAMBER SPIRA_WATCHERS
+SPIRA_PATH SPIRA_WORKSPACES SPIRA_REPO_MAP SPIRA_PREFIX_MAP SPIRA_CHAMBER SPIRA_CHAMBER_OVERLAY SPIRA_WATCHERS
 SPIRA_ACTIONABLE SPIRA_ID_PREFIX SPIRA_HEALTH_TIMEOUT SPIRA_ANSWER_STATE SPIRA_ANSWER_MARK SPIRA_ANSWER_COMMENT_MARK SPIRA_SELF_CLOSED SPIRA_NOTIFY_AGE SPIRA_WAKE SPIRA_WAKE_WATCHERS
 SPIRA_CLIENT_SETTINGS SPIRA_HOOK_LINES SPIRA_CTRL
 SPIRA_MAIL SPIRA_MAIL_KINDS SPIRA_MAIL_READERS SPIRA_MAIL_UNREAD_AGE SPIRA_MAIL_SETTLE SPIRA_MAIL_SESSION_MAILBOX SPIRA_MAIL_REPEAT_WINDOW SPIRA_MAIL_TIDY_FRESH
@@ -297,6 +297,11 @@ spira_conf_defaults() {
     # set SPIRA_PREFIX_MAP on every box. ~/.config/spira is where repo-map already lives.
     : "${SPIRA_PREFIX_MAP:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/prefix-map}"
     : "${SPIRA_CHAMBER:=$SPIRA_HOME/chamber}"
+    # WHERE AN OPERATOR'S OWN COPY OF A BRIEF LIVES, so a hand edit to what an aeon is told
+    # survives the harness's own releases instead of being reverted by the next one. Same
+    # directory family as SPIRA_PREFIX_MAP, for the same reason: operator state beside the
+    # repo-map, never inside the checkout a `spira: land` push can overwrite.
+    : "${SPIRA_CHAMBER_OVERLAY:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/chamber}"
     # THE ONE LIST OF WHAT SHOULD BE WATCHING. One `daemon` row is one systemd unit, so this
     # file decides what `install.sh` enables; pointing the key elsewhere is how an operator
     # keeps their own rows out of a checkout they may push.
