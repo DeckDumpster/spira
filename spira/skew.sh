@@ -409,10 +409,26 @@ MAILEOF
 # =======================================================================================
 refresh() {
     local repo="${1:-$SPIRA_REPO}" base base_branch remote behind dirty current
-    # In release mode the checkout is not what systemd executes; fast-forwarding it would
-    # advance code that nothing runs and is not the release that is in force.
     if [ -n "${SPIRA_RELEASES:-}" ] && [ -L "$SPIRA_RELEASES/current" ]; then
-        echo "skew: refresh skipped — release mode is active ($SPIRA_RELEASES/current)"
+        # Release mode: fetch the base branch, build a new release, flip current.
+        # The git checkout is not the running tree; no stage-and-swap needed.
+        [ -e "$repo/.git" ] || {
+            echo "skew: refresh: $repo is not a git checkout"; return 1; }
+        local _base _remote _behind
+        _base="$(spira_landref "$repo")" || {
+            echo "skew: refresh: cannot resolve the ref $repo lands on"; return 1; }
+        _remote="$(ref_remote "$_base" 2>/dev/null)" || _remote=""
+        [ -n "$_remote" ] && git -C "$repo" fetch -q --no-write-fetch-head "$_remote" 2>/dev/null
+        _behind="$(git -C "$repo" rev-list --count "HEAD..$_base" 2>/dev/null || echo 0)"
+        if [ "${_behind:-0}" -eq 0 ]; then
+            echo "skew: refresh: release mode — already at $_base"
+            return 0
+        fi
+        git -C "$repo" merge --ff-only -q "$_base" 2>/dev/null || {
+            echo "skew: refresh: cannot fast-forward to $_base"; return 1; }
+        make -C "$repo" install SPIRA_RELEASES="$SPIRA_RELEASES" || {
+            echo "skew: refresh: make install failed"; return 1; }
+        echo "skew: refreshed — new release installed ($_behind commit(s))"
         return 0
     fi
     [ -e "$repo/.git" ] || {

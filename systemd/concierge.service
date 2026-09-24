@@ -4,12 +4,12 @@
 # supervise it as a main process — this is an ensure on a timer, replacing the cron
 # */10 and @reboot pair.
 Description=Ensure the Remote Control concierge session is up
-Documentation=file://@SPIRA_REPO@/concierge.sh
+Documentation=file://@SPIRA_PROD_ROOT@/concierge.sh
 After=default.target
 
 [Service]
 Type=oneshot
-ExecStart=@SPIRA_REPO@/concierge.sh start
+ExecStart=@SPIRA_PROD_ROOT@/concierge.sh start
 TimeoutStartSec=60
 StandardOutput=append:@SPIRA_RUN@/concierge.log
 StandardError=append:@SPIRA_RUN@/concierge.log
