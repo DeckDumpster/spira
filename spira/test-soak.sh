@@ -26,14 +26,12 @@
 # rather than being starved of the tree by the aeons. A soak that only checked "nothing hung"
 # would have passed all morning today.
 #
+# tier: T1
 # covers: spira/gate.sh spira/landing.sh
 # scar: a per-repository flock correct for two concurrent gates was wrong in composition with a landing pass; four aeons held the tree for 50 minutes while origin/main sat still.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 command -v flock >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH"; exit 77; }
 
@@ -168,6 +166,4 @@ r1="$(grep -c . "$GATELOG" 2>/dev/null)"; r1="${r1:-0}"
 cached="$(grep -c 'rc=0 cached' "$GATELOG" 2>/dev/null)"; cached="${cached:-0}"
 [ "$cached" -ge "$total" ] && ok "the pass's verdicts were reused, not re-run ($cached of $r1 rows)" \
     || bad "the pass's verdicts were reused, not re-run" "only $cached cached rows in $r1"
-
-printf '\n%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

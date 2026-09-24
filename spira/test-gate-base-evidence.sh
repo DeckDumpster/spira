@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 # test-gate-base-evidence.sh — a red base names its own red suites and carries its own output,
 # and excuses only the suites that are red on it too.
+# tier: T1
 # covers: spira/gate.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want(){ [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 command -v flock >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH"; exit 77; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -95,5 +92,4 @@ want   "base returning NV gives NO_VERDICT"  "VERDICT=NO_VERDICT" "$out_nv"
 nowant "and is not charged as BASE_FAIL"     "VERDICT=BASE_FAIL"  "$out_nv"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

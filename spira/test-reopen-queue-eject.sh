@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
 # test-reopen-queue-eject.sh — re-certification after ejection runs the ejecting suite.
 #
+# tier: T1
 # covers: spira/gate-touched.sh spira/verdict.sh spira/gate.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "want [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -142,5 +140,4 @@ _neg_ej_file="$LANDSTATE/sp-noeject.ejected"
 is "no .ejected file → ejected_suites empty"  ""  "$_neg_ejected"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
