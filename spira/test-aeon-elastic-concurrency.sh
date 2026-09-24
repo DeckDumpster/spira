@@ -65,6 +65,10 @@ export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"
 export SPIRA_DB="$TMP/no-db"
+# The fence (fayth_fenced, lib.sh) refuses an empty FAYTH_LABELS and, when SPIRA_SCOPE_LABEL
+# is set, requires the label naming this scope. Neither is what this suite is testing, so
+# disable scope restriction the same way an operator would to allow an unrestricted predicate.
+export SPIRA_SCOPE_LABEL=""
 cp "$HERE/aeon.sh" "$SPIRA_HOME/"
 
 # The stub: source the REAL lib.sh (so fayth_free is the genuine article), then override
@@ -88,6 +92,7 @@ echo "1 — elastic, pool declared (SPIRA_MAX_AEONS=6): 5 live is allowed, 6 liv
 # ======================================================================================
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<'F'
 FAYTH_NAME=builder
+FAYTH_LABELS="test,plan"
 FAYTH_MAX_CONCURRENT=3
 FAYTH_ELASTIC=1
 F
@@ -138,6 +143,7 @@ echo "3 — non-elastic fayth: unaffected by SPIRA_MAX_AEONS, still uses its own
 # exactly — refused at its own FAYTH_MAX_CONCURRENT regardless of how large the pool is.
 cat > "$SPIRA_HOME/chamber/anchor.fayth" <<'F'
 FAYTH_NAME=anchor
+FAYTH_LABELS="test,incident"
 FAYTH_MAX_CONCURRENT=2
 F
 # SPIRA_MAX_AEONS stays at 6 (non-default, still set from section 1) — a non-elastic fayth
