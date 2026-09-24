@@ -128,6 +128,53 @@ jobs:
           printf 'select: %s suite(s) selected\n' "$_n"
 
   # ---------------------------------------------------------------------------
+  # Build all binary crates. Runs in parallel with provision so a compile
+  # failure surfaces before any suite starts and before any release tag exists,
+  # without adding wall clock when the cache is warm (a cached build takes
+  # roughly as long as a clone and VM boot). The binaries are uploaded as an
+  # artifact; the suites job downloads them into bin/ so every suite runs
+  # against the real compiled output rather than a stub.
+  # ---------------------------------------------------------------------------
+  build:
+    needs: select
+    if: needs.select.outputs.suites != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.82.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.82.0'
+
+      - name: Assert Rust version
+        run: |
+          got=$(rustc --version | awk '{print $2}')
+          [ "$got" = "1.82.0" ] || {
+            printf 'expected Rust 1.82.0, got %s\n' "$got" >&2
+            exit 1
+          }
+
+      - name: Cargo registry cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-
+
+      - name: Build
+        run: |
+          make build
+          mkdir -p bin
+          find target/release -maxdepth 1 -type f -executable | xargs -I{} cp {} bin/
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ github.sha }}
+          path: bin/
+
+  # ---------------------------------------------------------------------------
   # Create the machine the gate will run on.
   # Skipped when the suite selection is empty — no suites, no machine needed.
   # ---------------------------------------------------------------------------
@@ -162,7 +209,7 @@ jobs:
   # provision fails; the gate job below catches that and reports failure.
   # ---------------------------------------------------------------------------
   suites:
-    needs: [select, provision]
+    needs: [select, provision, build]
     runs-on: [self-hosted, "${{ needs.provision.outputs.label }}"]
     # BOUNDED, BECAUSE THIS JOB HOLDS A REAL MACHINE. Without it the job inherits
     # GitHub's 360-minute default, and a wedged suite would hold a provisioned
@@ -199,6 +246,20 @@ jobs:
           # selection would be empty and the gate would pass having run nothing.
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Download binaries
+        # The build job compiled every crate and uploaded the binaries as an
+        # artifact. Download them into bin/ so conf.sh's preference for
+        # $SPIRA_REPO/bin/<name> takes effect and every suite runs the real
+        # compiled binary rather than the dev-tree fallback.
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-${{ github.sha }}
+          path: bin/
+
+      - name: Mark binaries executable
+        # upload-artifact does not preserve the executable bit; restore it.
+        run: chmod +x bin/* 2>/dev/null || true
 
       - name: Confirm the job landed on the provisioned machine
         # RUNNER_NAME is set by the runner process itself, so it is the one value
@@ -426,16 +487,20 @@ jobs:
   # push event. A skipped gate admits a push; a failed one refuses.
   # ---------------------------------------------------------------------------
   gate:
-    needs: [select, provision, suites]
+    needs: [select, provision, build, suites]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Verdict
         run: |
-          # Empty selection: nothing to provision or test; the diff is inert.
+          # Empty selection: nothing to provision, build, or test; the diff is inert.
           if [ -z "${{ needs.select.outputs.suites }}" ]; then
             printf 'gate: no suites selected — nothing to provision or test\n'
             exit 0
+          fi
+          if [ "${{ needs.build.result }}" != 'success' ]; then
+            printf 'gate: build failed — binaries did not compile\n' >&2
+            exit 1
           fi
           if [ "${{ needs.provision.result }}" != 'success' ]; then
             printf 'gate: provision failed — branch was not tested\n' >&2

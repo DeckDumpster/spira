@@ -302,12 +302,31 @@ if [ -z "$_gate_verdict_block" ]; then
 else
     ok "the gate verdict job block was located (positive control)"
 fi
-want "gate needs both provision and suites" "provision, suites"  "$_gate_verdict_block"
+want "gate needs provision"                 "provision"          "$_gate_verdict_block"
+want "gate needs suites"                    "suites"             "$_gate_verdict_block"
+want "gate needs build"                     "build"              "$_gate_verdict_block"
 want "gate runs even when needs failed"     "!cancelled()"       "$_gate_verdict_block"
 want "gate runs on a hosted runner"         "ubuntu-latest"      "$_gate_verdict_block"
 want "gate exits 75 on provision fault"     "75"                 "$_gate_verdict_block"
 want "gate checks provision.result"         "provision.result"   "$_gate_verdict_block"
 want "gate checks suites.result"            "suites.result"      "$_gate_verdict_block"
+
+echo
+echo "16b. the build job compiles binaries in parallel with provision, and suites downloads them:"
+# The build job must not depend on provision — that is what makes it run in
+# parallel rather than adding its time to the critical path.
+_build_job_block="$(awk '/^  build:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
+if [ -z "$_build_job_block" ]; then
+    bad "the build job block was located (positive control)" "awk extracted nothing; the assertions below would be vacuous"
+else
+    ok "the build job block was located (positive control)"
+fi
+want "build job needs select"               "needs: select"      "$_build_job_block"
+nowant "build job does not need provision"  "provision"          "$_build_job_block"
+want "build job calls make build"           "make build"         "$_build_job_block"
+want "build job uploads the binaries artifact" "upload-artifact" "$_build_job_block"
+want "suites job needs build"               "build"              "$_suites_job_block"
+want "suites job downloads the binaries artifact" "download-artifact" "$_suites_job_block"
 
 echo
 echo "17. every required action input at the pinned v1 is passed (derived from the action.yml fixtures):"
