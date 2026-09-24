@@ -129,7 +129,7 @@ file_watcher_incident() {
         SPIRA_SIN_EXEMPT=1 \
         SPIRA_INCIDENT_CAUSE=watchtower \
         "$@" \
-        bash "$INC" file "$title" - >/dev/null 2>&1
+        bash "$INC" file "$title" - >&2 2>&1
 }
 
 # find_bead <ref> — print bead id (open or recently closed) by external_ref.
