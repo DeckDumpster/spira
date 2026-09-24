@@ -18,14 +18,15 @@ dist:
 	$(CARGO) build --release --workspace
 	bash spira/build-tarball.sh build --workspace .
 
-# install — build a read-only release and flip releases/current atomically.
+# install — build a read-only release, gate it, then flip releases/current.
 #
 # Creates $SPIRA_RELEASES/<sha>/ from a git archive of HEAD, copies compiled
-# binaries under bin/, writes a MANIFEST, makes the tree read-only, then
-# atomically renames a temp symlink over releases/current.  If the release
-# directory already exists the cargo build is skipped; only the symlink flip
-# runs so that rollback (make install with a prior COMMIT= on the branch) is
-# cheap.
+# binaries under bin/, writes a MANIFEST, makes the tree read-only, then runs
+# the release's own pre-activate.sh before atomically renaming a temp symlink
+# over releases/current. If the release directory already exists the cargo
+# build is skipped; only the gate and the symlink flip run, so that rollback
+# (make install with a prior COMMIT= on the branch) is cheap — and gated the
+# same as a forward install, since a rollback target can be broken too.
 #
 # SPIRA_RELEASES  default: sibling directory <parent-of-repo>/spira-releases
 # COMMIT          git ref to build; default: HEAD
@@ -42,14 +43,14 @@ install:
 	    $(CARGO) build --release --workspace; \
 	    mkdir -p "$$_rel/bin"; \
 	    git archive "$$_sha" | tar -x -C "$$_rel"; \
-	    for _b in loom broker czar-pass spira-supervise; do \
+	    for _b in loom broker czar-pass spira-supervise spira-config; do \
 	        cp "$$_root/target/release/$$_b" "$$_rel/bin/$$_b"; \
 	        chmod +x "$$_rel/bin/$$_b"; \
 	    done; \
 	    cp "$$_root/cockpit/panel/target/release/panel" "$$_rel/bin/panel"; \
 	    chmod +x "$$_rel/bin/panel"; \
 	    { printf 'commit %%s\n' "$$_sha"; \
-	      for _b in loom broker czar-pass spira-supervise panel; do \
+	      for _b in loom broker czar-pass spira-supervise spira-config panel; do \
 	          _h="$$(sha256sum "$$_rel/bin/$$_b" | awk '{print $$1}')"; \
 	          printf 'bin/%%s %%s\n' "$$_b" "$$_h"; \
 	      done; } > "$$_rel/MANIFEST"; \
@@ -57,6 +58,14 @@ install:
 	    printf 'install: built release %%s\n' "$$_sha"; \
 	else \
 	    printf 'install: release %%s already present — skipping build\n' "$$_sha"; \
+	fi; \
+	if [ -x "$$_rel/spira/pre-activate.sh" ]; then \
+	    "$$_rel/spira/pre-activate.sh" "$$_rel" || { \
+	        printf 'install: pre-activate failed for %s — current left unchanged\n' "$$_sha" >&2; \
+	        exit 1; }; \
+	else \
+	    printf 'install: %s has no spira/pre-activate.sh — refusing to activate an unverifiable release\n' "$$_sha" >&2; \
+	    exit 1; \
 	fi; \
 	_tmp="$$SPIRA_RELEASES/.current.new.$$$$"; \
 	ln -sf "$$_sha" "$$_tmp" && mv -T "$$_tmp" "$$SPIRA_RELEASES/current"; \
