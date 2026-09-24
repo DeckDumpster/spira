@@ -372,7 +372,15 @@ stub queue.sh 'exit 0'
 stub forge.sh 'case "${1:-}" in runs-active) echo 0 ;; *) exit 0 ;; esac'
 
 write_map
-seed; branch sp-idle-skip
+seed
+# AN EMPTY CERT QUEUE IS THE CASE'S PRECONDITION, so make it one. The par=1 case above leaves
+# sp-co-slow and sp-co-fast CERTIFIED; queue_certified_list counted them, the skip correctly
+# declined, and this case failed on every run once #283 put it on main (main gates
+# 35940444737, 35940777548). Clear the landstate and assert the precondition.
+rm -f "$RUN"/landstate/* "$RUN"/submitted/* 2>/dev/null || true
+is "idle precondition: no CERTIFIED landstate left over" "0" \
+    "$(grep -l '^CERTIFIED' "$RUN"/landstate/* 2>/dev/null | wc -l | tr -d ' ')"
+branch sp-idle-skip
 rm -f "$GATE_COUNT"
 idle_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
