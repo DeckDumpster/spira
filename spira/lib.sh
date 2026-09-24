@@ -1300,7 +1300,7 @@ release_orphan_claims() {   # release_orphan_claims [labels] -> a RELEASED line 
 # THE POOL IS A CEILING, NOT A FLOOR. It only ever lowers what a persona may start, so a
 # host that sets nothing behaves exactly as before.
 fayth_free() {           # fayth_free <fayth> [pool-remaining]
-    local f="$1" pool="${2:-}" max have budget
+    local f="$1" pool="${2:-}" max have free
     max="$(fayth_get "$f" FAYTH_MAX_CONCURRENT 1)"; max="${max:-1}"
     # ELASTIC: the remainder of the pool, not this persona's own number. With no pool given
     # there is no remainder to take, so it falls back to its declared cap rather than to
@@ -1311,31 +1311,18 @@ fayth_free() {           # fayth_free <fayth> [pool-remaining]
         max="$pool"
         is_remainder=1
     fi
-    # THE GOVERNOR WITHHOLDS HERE, at the one chokepoint every summon path goes through.
-    # FAYTH_MAX_CONCURRENT is a COUNT, which is a proxy for load rather than a measure of
-    # it; governor.sh reads /proc and says what this machine can actually afford right now.
-    # It may only LOWER the cap — a fayth's own concurrency stays the ceiling — and its
-    # absence means no opinion, so a suite with no budget.env behaves exactly as before.
-    # Only `enforce` clamps. In `measure` the budget is recorded and reported and changes
-    # nothing, so the history accumulates under real conditions before it decides anything.
     # A REMAINDER IS NOT A CAP. A number that already nets out what is running (the pool
-    # from sentinel.sh, the headroom from the governor) is how many MORE may start. Subtracting
-    # the running count from it again withholds more the more is running, so the system
-    # saturates at half its ceiling and reports itself at its limit.
-    local gmode free
+    # from sentinel.sh) is how many MORE may start. Subtracting the running count from it
+    # again withholds more the more is running, so the system saturates at half its ceiling
+    # and reports itself at its limit.
     have="$(aeon_count "$f")"
     if [ "$is_remainder" = 1 ]; then
         free="$max"
     else
         free=$(( max > have ? max - have : 0 ))
     fi
-    budget="$(. "$SPIRA_RUN/budget.env" 2>/dev/null; printf '%s' "${SP_HEADROOM:-}")"
-    gmode="$(. "$SPIRA_RUN/budget.env" 2>/dev/null; printf '%s' "${SP_GOVERNOR_MODE:-measure}")"
-    if [ "$gmode" = enforce ] && [ -n "$budget" ] && [ "$budget" -lt "$free" ] 2>/dev/null; then
-        free="$budget"
-    fi
-    # AND THE POOL CLAMPS LAST, after both this persona's cap and the governor's headroom,
-    # because it is the outermost of the three and the only one the personas share.
+    # AND THE POOL CLAMPS LAST, after this persona's cap, because it is the outermost of
+    # the two and the only one the personas share.
     [ -n "$pool" ] && [ "$pool" -lt "$free" ] 2>/dev/null && free="$pool"
     printf '%d' "$free"
 }
@@ -1534,17 +1521,7 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining]
     if [ "${r:-0}" -eq 0 ]; then log "CHECK7 $f: nothing ready in its partition"; return 1; fi
     free="$(fayth_free "$f" "$pool")"
     if [ "${free:-0}" -eq 0 ]; then
-        # Name the ACTUAL reason. "at concurrency cap" was logged even when the governor
-        # was the one withholding, which is a check reporting someone else's decision as
-        # its own — the reader then tunes the wrong knob.
-        local b gm; b="$(. "$SPIRA_RUN/budget.env" 2>/dev/null; printf '%s' "${SP_HEADROOM:-}")"
-        gm="$(. "$SPIRA_RUN/budget.env" 2>/dev/null; printf '%s' "${SP_GOVERNOR_MODE:-measure}")"
-        if [ "$gm" = enforce ] && [ -n "$b" ] && [ "$b" -eq 0 ] 2>/dev/null; then
-            local why; why="$(. "$SPIRA_RUN/budget.env" 2>/dev/null; printf '%s' "${SP_BUDGET_REASON:-no headroom}")"
-            log "CHECK7 $f: $r ready, withheld by the governor — $why"
-        else
-            log "CHECK7 $f: $r ready, at concurrency cap"
-        fi
+        log "CHECK7 $f: $r ready, at concurrency cap"
         return 1
     fi
 
@@ -1563,13 +1540,12 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining]
 }
 
 # ======================================================================================
-# API CAPACITY — the account's own five-hour window, and the third unrelated thing in this
+# API CAPACITY — the account's own five-hour window, and the second unrelated thing in this
 # harness called "capacity".
 #
-# The other two: FAYTH_MAX_CONCURRENT is how many aeons may run at once, and the governor's
-# budget is CPU, memory and disk. Neither has anything to do with this one, which is whether
-# the API will answer at all. The name collision is why the condition went unhandled for so
-# long — `grep capacity` returned confident, irrelevant hits.
+# The other one: FAYTH_MAX_CONCURRENT is how many aeons may run at once. It has nothing to do
+# with this one, which is whether the API will answer at all. The name collision is why the
+# condition went unhandled for so long — `grep capacity` returned confident, irrelevant hits.
 #
 # WHAT GOES WRONG WITHOUT THIS. aeon.sh takes the session's exit code and any non-zero
 # becomes a failed attempt, so a session the API refused to serve is recorded as work that

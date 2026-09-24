@@ -81,15 +81,12 @@ set -uo pipefail
 # launched the pane.
 export LC_ALL="${LC_ALL:-C.UTF-8}"
 
-# EVERY PATH HERE COMES FROM $SPIRA_RUN, NONE OF THEM DERIVED. cockpit.sh and governor.sh
-# write under $SPIRA_RUN, and SPIRA_RUN is configurable — a reader that recomputes the path
-# from $SPIRA_REPO renders `?` for every row it feeds the moment an operator moves it, and a
-# panel that reports a broken read as "nothing happening" displaces the suspicion that would
-# have prompted a look. That is not hypothetical: the governor row read a derived
-# `$SPIRA_REPO/.runtime/spira/budget.env` and rendered `? mode  would withhold — no headroom`
-# against a budget file that was present and current, on an installation where the two differ.
+# EVERY PATH HERE COMES FROM $SPIRA_RUN, NONE OF THEM DERIVED. cockpit.sh writes under
+# $SPIRA_RUN, and SPIRA_RUN is configurable — a reader that recomputes the path from
+# $SPIRA_REPO renders `?` for every row it feeds the moment an operator moves it, and a
+# panel that reports a broken read as "nothing happening" displaces the suspicion that
+# would have prompted a look.
 SPIRA_SNAP="$SPIRA_RUN/cockpit.env"
-BUDGET_SNAP="$SPIRA_RUN/budget.env"
 # SPIRA'S OWN SERIES, beside its own snapshot: a pane drawing trends from a file nothing
 # appends to draws a flat line, and a flat line reads as calm rather than absent.
 HIST="$SPIRA_RUN/cockpit-history.csv"
@@ -252,7 +249,6 @@ INFLOW_BASE_ROWS=5
 load_snapshot() {
     set +u
     [ -f "$SPIRA_SNAP" ] && . "$SPIRA_SNAP" 2>/dev/null
-    [ -f "$BUDGET_SNAP" ] && . "$BUDGET_SNAP" 2>/dev/null
     set -u
 }
 

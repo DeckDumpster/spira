@@ -66,6 +66,25 @@ printf '#!/usr/bin/env bash\nprintf "  suites in the tree                  0   (
     > "$MOCK_SUITES"
 chmod +x "$MOCK_SUITES"
 
+# A HERMETIC DISK/MEMORY READING, DEFAULT FOR EVERY wt()/wt_file() CALL
+# (law-gates-run-in-a-clean-environment). Without this, every assertion about the nominal
+# path is silently coupled to this host's real root-disk usage and real free memory — a
+# box that happens to be 90% full on the day this runs would fail tests that have nothing
+# to do with disk. A test that wants the real anomaly path overrides SPIRA_PATH /
+# SPIRA_MEMINFO_PATH itself; being later in the env invocation, its override wins.
+DF_CLEAN="$TMP/df-clean"; mkdir -p "$DF_CLEAN"
+cat > "$DF_CLEAN/df" <<'STUB'
+#!/bin/sh
+if [ "$1" = "--output=pcent" ] && [ "$2" = "/" ]; then
+    printf 'Use%%\n %s%%\n' "${WT_DISK_PCT:-12}"
+else
+    /usr/bin/df "$@"
+fi
+STUB
+chmod +x "$DF_CLEAN/df"
+MEMINFO_CLEAN="$TMP/meminfo-clean"
+printf 'MemAvailable:   16000000 kB\n' > "$MEMINFO_CLEAN"
+
 # The program under test, in an environment holding nothing but what it needs. `--show`
 # gathers and prints and touches nothing, so nothing here can reach a database or file a bead.
 wt() {                   # wt [VAR=val ...] -> the snapshot
@@ -73,6 +92,7 @@ wt() {                   # wt [VAR=val ...] -> the snapshot
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
+        SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" \
         "$@" bash "$HERE/watchtower.sh" --show 2>/dev/null
 }
 # THE LABEL IS MATCHED LITERALLY, never with a `.*`. The value is separated from the label
@@ -390,6 +410,7 @@ wt_file() {   # wt_file [VAR=val ...] -> $TMP/ops-prompt written; $TMP/incident-
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_INCIDENT_SH="$mock" \
+        SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" \
         "$@" bash "$HERE/watchtower.sh" 2>/dev/null
 }
 
@@ -1074,6 +1095,67 @@ mkdir -p "$TMP/run/landstate"
 rm -f "$TMP/ops-prompt"
 wt_file
 nowant "unreadable snapshot prevents nominal skip" \
+       "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
+
+# ======================================================================================
+echo
+echo "disk usage is a vital sign, and an anomaly past its threshold:"
+# ======================================================================================
+# THE POSITIVE CONTROL COMES FIRST. An ordinary reading (12%, the WT_DISK_PCT default via
+# DF_CLEAN) must render plainly, not as a FAULT — without this, a check that always reports
+# FAULT would pass every assertion below it.
+disk_row() { printf '%s\n' "$1" | grep -F '/ used (? = cannot read)'; }
+
+fresh
+snap="$(wt)"
+row="$(disk_row "$snap")"
+want   "ordinary disk usage renders the plain percentage" "12%" "$row"
+nowant "and is not a FAULT" "FAULT" "$row"
+
+# THE OFFENDER. A stubbed df reporting 97% used — above the 90% default threshold — is
+# reported as a FAULT, the same vocabulary snap_age_disp uses for a stale collector.
+fresh
+snap="$(wt WT_DISK_PCT=97)"
+row="$(disk_row "$snap")"
+want "disk at or above the warn threshold is a FAULT" "FAULT (97%, warn at 90%)" "$row"
+
+# A DISK ANOMALY PREVENTS NOMINAL, exactly like a drain or a stale snapshot — a pipeline
+# that is otherwise quiet must still wake Ops when the root disk is nearly full, because a
+# full disk kills every process on the box, Spira's included.
+fresh
+mkdir -p "$TMP/run/landstate"
+printf "SP_AT=%s\n" "$NOW" > "$TMP/run/cockpit.env"
+rm -f "$TMP/ops-prompt"
+wt_file WT_DISK_PCT=97
+nowant "a full root disk prevents nominal skip" \
+       "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
+want   "and the full snapshot, with the disk FAULT, is what Ops sees instead" \
+       "FAULT (97%, warn at 90%)" "$(cat "$TMP/ops-prompt" 2>/dev/null || echo "")"
+
+# ======================================================================================
+echo
+echo "memory pressure is a vital sign, and an anomaly past its threshold:"
+# ======================================================================================
+mem_row() { printf '%s\n' "$1" | grep -F 'memory available (? = cannot read)'; }
+LOW_MEM="$TMP/meminfo-low"
+printf 'MemAvailable:      512000 kB\n' > "$LOW_MEM"   # 500MB, under the 1500MB default
+
+fresh
+snap="$(wt)"
+row="$(mem_row "$snap")"
+nowant "ordinary memory headroom is not a FAULT" "FAULT" "$row"
+
+fresh
+snap="$(wt SPIRA_MEMINFO_PATH="$LOW_MEM")"
+row="$(mem_row "$snap")"
+want "memory below the warn threshold is a FAULT" "FAULT (500MB, warn below 1500MB)" "$row"
+
+fresh
+mkdir -p "$TMP/run/landstate"
+printf "SP_AT=%s\n" "$NOW" > "$TMP/run/cockpit.env"
+rm -f "$TMP/ops-prompt"
+wt_file SPIRA_MEMINFO_PATH="$LOW_MEM"
+nowant "low memory prevents nominal skip" \
        "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
 
 echo

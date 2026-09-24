@@ -883,6 +883,34 @@ fi
 _tmp_pct="$(df /tmp 2>/dev/null | awk 'NR==2{print $5}' || true)"
 [ -n "$_tmp_pct" ] || _tmp_pct="?"
 
+# ROOT DISK AND MEMORY. A prior probe logged '/ at 99%' at 02:02Z on 2026-09-24, and a full
+# root disk kills every process on the box, not only Spira's — this is a fact worth Ops
+# seeing even though nothing here withholds a summon over it (that is the admission
+# throttle's job, CHECK 7 in sentinel.sh).
+DISK_WARN_PCT="${SPIRA_DISK_WARN_PCT:-90}"
+MEM_WARN_MB="${SPIRA_MEM_WARN_MB:-1500}"
+# SPIRA_MEMINFO_PATH is a seam for tests, the same idea as SPIRA_INCIDENT_SH and
+# SPIRA_SUITES_SH above: /proc/meminfo cannot be stubbed by PATH the way df can.
+MEMINFO="${SPIRA_MEMINFO_PATH:-/proc/meminfo}"
+_disk_root_pct="$(df --output=pcent / 2>/dev/null | tail -1 | tr -dc '0-9')"
+[ -n "$_disk_root_pct" ] || _disk_root_pct="?"
+_mem_avail_mb="$(awk '/MemAvailable/{printf "%d", $2/1024}' "$MEMINFO" 2>/dev/null)"
+[ -n "$_mem_avail_mb" ] || _mem_avail_mb="?"
+
+_disk_breach=0
+if [ "$_disk_root_pct" != "?" ] && [ "$_disk_root_pct" -ge "$DISK_WARN_PCT" ] 2>/dev/null; then
+    _disk_breach=1
+fi
+_disk_disp="${_disk_root_pct}%"
+[ "$_disk_breach" = 1 ] && _disk_disp="FAULT (${_disk_root_pct}%, warn at ${DISK_WARN_PCT}%)"
+
+_mem_breach=0
+if [ "$_mem_avail_mb" != "?" ] && [ "$_mem_avail_mb" -lt "$MEM_WARN_MB" ] 2>/dev/null; then
+    _mem_breach=1
+fi
+_mem_disp="${_mem_avail_mb}MB"
+[ "$_mem_breach" = 1 ] && _mem_disp="FAULT (${_mem_avail_mb}MB, warn below ${MEM_WARN_MB}MB)"
+
 snapshot() {
 cat <<EOF
 ## Spira pipeline, $(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -933,6 +961,8 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
 ### The workers
 
   /tmp used (? = cannot read)         ${_tmp_pct}
+  / used (? = cannot read)            ${_disk_disp}
+  memory available (? = cannot read)  ${_mem_disp}
   throttle                            ${throttle_since:-clear}      (stamp: queue-throttled; depth at engage: ${throttle_depth:-—})
   draining since (? = cannot read)    ${drain_mins}      minutes   (stamp: world.draining)
   aeons alive                         ${aeons_live}      (counted now, not from the snapshot)
@@ -1041,7 +1071,9 @@ if [ "$lapsed_count" = "0" ] && \
    [ "$snap_age" != "?" ] && [ "$snap_age" -lt "$SNAP_AGE_MAX" ] 2>/dev/null && \
    [ "$nv_worst" = "0" ] && \
    [ -z "$drain_since" ] && \
-   [ -z "$throttle_since" ]; then
+   [ -z "$throttle_since" ] && \
+   [ "$_disk_breach" = 0 ] && \
+   [ "$_mem_breach" = 0 ]; then
     nominal=1
 fi
 

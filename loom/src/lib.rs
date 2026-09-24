@@ -69,7 +69,7 @@ pub struct Config {
     /// The `bd` to run, from the harness's own `SPIRA_BD` override. Ordinarily the bare name,
     /// resolved through `extra_path`.
     pub bd: String,
-    /// The runtime directory holding cockpit.env, budget.env and the world stamps.
+    /// The runtime directory holding cockpit.env and the world stamps.
     /// From `SPIRA_RUN`. Empty means no ops endpoint data.
     pub run: String,
     /// Spira instance name, used to construct the sentinel timer unit name.
