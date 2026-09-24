@@ -806,6 +806,10 @@ for x in d:
     printf 'tidy: archived %d, kept %d\n' "$archived" "$kept"
 }
 
+# Sourced (not executed) by a test that wants _lint_check, _repeat_check, cmd_tidy et al.
+# as callable functions without forking `mail.sh send` per case (spira/testlib.sh consumers).
+[ "${BASH_SOURCE[0]}" = "${0}" ] || return 0
+
 case "${1:-}" in
     send)       shift; cmd_send "$@" ;;
     template)   shift; cmd_template "$@" ;;
