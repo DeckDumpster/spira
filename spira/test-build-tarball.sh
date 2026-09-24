@@ -89,12 +89,14 @@ LOOM_BIN="$TMP/bins/loom"
 PANEL_BIN="$TMP/bins/panel"
 BROKER_BIN="$TMP/bins/broker"
 SUPERVISE_BIN="$TMP/bins/spira-supervise"
+LANDING_PASS_BIN="$TMP/bins/landing-pass"
 mkdir -p "$TMP/bins"
 printf '#!/usr/bin/env bash\necho loom\n'             > "$LOOM_BIN"
 printf '#!/usr/bin/env bash\necho panel\n'            > "$PANEL_BIN"
 printf '#!/usr/bin/env bash\necho broker\n'           > "$BROKER_BIN"
 printf '#!/usr/bin/env bash\necho spira-supervise\n'  > "$SUPERVISE_BIN"
-chmod +x "$LOOM_BIN" "$PANEL_BIN" "$BROKER_BIN" "$SUPERVISE_BIN"
+printf '#!/usr/bin/env bash\necho landing-pass\n'     > "$LANDING_PASS_BIN"
+chmod +x "$LOOM_BIN" "$PANEL_BIN" "$BROKER_BIN" "$SUPERVISE_BIN" "$LANDING_PASS_BIN"
 
 # ============================================================================
 # Helper — run build-tarball.sh in a clean environment
@@ -139,6 +141,7 @@ build_out="$(run_build build \
     --panel-bin "$PANEL_BIN" \
     --broker-bin "$BROKER_BIN" \
     --supervise-bin "$SUPERVISE_BIN" \
+    --landing-pass-bin "$LANDING_PASS_BIN" \
     HEAD "$REPO" 2>&1)"
 build_rc=$?
 
@@ -265,6 +268,7 @@ pin_out="$(run_build build \
     --panel-bin "$PANEL_BIN" \
     --broker-bin "$BROKER_BIN" \
     --supervise-bin "$SUPERVISE_BIN" \
+    --landing-pass-bin "$LANDING_PASS_BIN" \
     --name "$PINNED_STEM" \
     HEAD "$REPO" 2>&1)"
 pin_rc=$?
