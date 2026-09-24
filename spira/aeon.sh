@@ -804,7 +804,9 @@ d = d if isinstance(d, list) else [d]
 if not d: sys.exit(0)
 deps = d[0].get("dependencies") or []
 open_ask = [x for x in deps
-            if x.get("status") != "closed" and ask in (x.get("labels") or [])]
+            if x.get("status") != "closed"
+            and ask in (x.get("labels") or [])
+            and (x.get("dependency_type") or x.get("type")) == "blocks"]
 if open_ask: sys.exit(1)
 sys.exit(0)' 2>/dev/null; then
             release_own_claim "$BEAD_ID"

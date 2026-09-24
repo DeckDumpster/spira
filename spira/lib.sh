@@ -943,7 +943,8 @@ for item in (d if isinstance(d, list) else [d]):
     bid = item.get("id", "")
     deps = item.get("dependencies") or []
     open_deps    = [x for x in deps if x.get("status") != "closed"]
-    ask_open     = [x for x in open_deps if ask in (x.get("labels") or [])]
+    ask_open     = [x for x in open_deps if ask in (x.get("labels") or [])
+                and (x.get("dependency_type") or x.get("type")) == "blocks"]
     non_ask_open = [x for x in open_deps if ask not in (x.get("labels") or [])]
     if bid in remove_set and not ask_open:
         print("remove", bid)
