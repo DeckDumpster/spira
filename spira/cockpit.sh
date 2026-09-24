@@ -1566,6 +1566,11 @@ queue_keys() {
         echo "SP_FUNNEL_CERT_AGE=$(_epoch_to_age "${_fn_cert_ep:-}" "$_now")"
     fi
 
+    local _elab="${SPIRA_EXPRESS_LABEL:-express}"
+    local _enr
+    _enr="$(bdq "${READY_ARGS[@]}" --label "$_elab" --json 2>/dev/null | json_only | json_count)" || _enr=0
+    echo "SP_EXPRESS_N=${_enr:-0}"
+
     # --- Active batch: read members and age from batch open files ---
     local batch_pr=0 batch_age="0" batch_n=0 _batch_member_ids=""
     local _bf _bf_pr _bf_opened _bf_mems _bf_age_secs _bf_mem _bf_mem_id

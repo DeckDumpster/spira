@@ -1255,8 +1255,13 @@ done
 # the queue is over capacity, not that lane work is unneeded (sp-h7zzx).
 _tc_stamp_ck7="${SPIRA_THROTTLE_STAMP:-$SPIRA_RUN/queue-throttled}"
 if [ -f "$_tc_stamp_ck7" ] && [ "${SPIRA_QUEUE_THROTTLE_OVERRIDE:-}" != "off" ]; then
-    log "CHECK7 pool: throttle active ($(head -1 "$_tc_stamp_ck7" 2>/dev/null)) — task pool held at 0"
-    pool=0
+    if express_ready_in_task_pool "$TASK_FAYTHS" "${SPIRA_EXPRESS_LABEL:-express}"; then
+        log "CHECK7 pool: throttle active — express bead ready, granting 1 slot"
+        [ "${pool:-0}" -lt 1 ] && pool=1
+    else
+        log "CHECK7 pool: throttle active ($(head -1 "$_tc_stamp_ck7" 2>/dev/null)) — task pool held at 0"
+        pool=0
+    fi
 fi
 for f in $TASK_FAYTHS; do
     if [ $(( $(date +%s) - _ck7_start )) -ge "$_ck7_budget" ]; then
