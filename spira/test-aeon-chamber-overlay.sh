@@ -100,7 +100,10 @@ echo "GOLDEN: the rendered builder brief has no gate-run.sh instruction, no over
 BID_G="$(make_bead)"
 [ -n "$BID_G" ] || { printf 'test-aeon-chamber-overlay: could not create golden bead\n' >&2; exit 1; }
 aeon builder
-task_g="$(cat "$SPIRA_RUN/$BID_G.task.md" 2>/dev/null)"
+# system.md carries the persona identity and its Tests section — everything ahead of the
+# <!-- task --> marker in chamber/builder.md; task.md carries the bead body and the rest.
+# An aeon reads both, so a rendering assertion checks the pair together.
+task_g="$(cat "$SPIRA_RUN/$BID_G.system.md" "$SPIRA_RUN/$BID_G.task.md" 2>/dev/null)"
 
 nowant "SEEN RED CONTROL: no gate-run.sh anywhere in the rendered brief" "gate-run.sh" "$task_g"
 nowant "and no stray {{GATE}} placeholder"                                "{{GATE}}"    "$task_g"
@@ -121,7 +124,7 @@ printf 'Operator append: a standing local note for every builder session.\n' \
 BID_O="$(make_bead)"
 [ -n "$BID_O" ] || { printf 'test-aeon-chamber-overlay: could not create overlay bead\n' >&2; exit 1; }
 aeon builder
-task_o="$(cat "$SPIRA_RUN/$BID_O.task.md" 2>/dev/null)"
+task_o="$(cat "$SPIRA_RUN/$BID_O.system.md" "$SPIRA_RUN/$BID_O.task.md" 2>/dev/null)"
 
 want   "SEEN RED CONTROL: the section overlay text appears"  "run only test-fixture-thing.sh" "$task_o"
 nowant "and the release Tests text it replaced is gone"      "DO NOT run the full landing"     "$task_o"
@@ -140,7 +143,7 @@ printf 'Whole-file operator brief. Nothing from the release is present.\n\n<!-- 
 BID_W="$(make_bead)"
 [ -n "$BID_W" ] || { printf 'test-aeon-chamber-overlay: could not create whole-file bead\n' >&2; exit 1; }
 aeon builder
-task_w="$(cat "$SPIRA_RUN/$BID_W.task.md" 2>/dev/null)"
+task_w="$(cat "$SPIRA_RUN/$BID_W.system.md" "$SPIRA_RUN/$BID_W.task.md" 2>/dev/null)"
 
 want   "SEEN RED CONTROL: the whole-file overlay text appears" "Whole-file operator brief" "$task_w"
 nowant "and release-only text is gone"                          "Guardian"                  "$task_w"
