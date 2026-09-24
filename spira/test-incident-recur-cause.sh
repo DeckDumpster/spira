@@ -143,11 +143,12 @@ find_bead() {
           | python3 -c '
 import sys, json
 target = sys.argv[1]
-try:
-    for b in json.load(sys.stdin):
-        if b.get("external_ref") == target:
-            print(b["id"]); sys.exit(0)
-except: pass
+try: d = json.load(sys.stdin)
+except: sys.exit(0)
+d = d if isinstance(d, list) else [d]
+for b in d:
+    if b.get("external_ref") == target:
+        print(b["id"]); break
 ' "$ref" 2>/dev/null)"
         [ -n "$_id" ] && { printf '%s' "$_id"; return; }
     done
