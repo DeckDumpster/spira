@@ -638,10 +638,25 @@ jobs:
           }
           printf 'cut: %s suite results found in this run\n' "$_count"
 
+      - name: Mint App token for tag push
+        # An App installation token is not subject to GitHub's anti-recursion rule,
+        # so a tag pushed with it fires acceptance.yml's push trigger directly.
+        # GITHUB_TOKEN-pushed tags are silently swallowed by that rule (sp-db8sw).
+        id: app-tok
+        env:
+          SPIRA_GH_APP_PRIVATE_KEY: ${{ secrets.SPIRA_GH_APP_PRIVATE_KEY }}
+          SPIRA_GH_APP_ID: ${{ vars.SPIRA_GH_APP_ID }}
+          SPIRA_GH_APP_INSTALLATION_ID: ${{ vars.SPIRA_GH_APP_INSTALLATION_ID }}
+        run: |
+          set -uo pipefail
+          tok="$(bash spira/app-token.sh)"
+          printf '::add-mask::%s\n' "$tok"
+          printf 'token=%s\n' "$tok" >> "$GITHUB_OUTPUT"
+
       - name: Cut release tag
         id: cut
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-tok.outputs.token }}
           # A RELEASE TAG IS ANNOTATED, AND AN ANNOTATED TAG NEEDS AN IDENTITY. A
           # hosted runner has no git identity configured, so `git tag -a` fails
           # with "Committer identity unknown" and the cut dies after the tag name
@@ -673,8 +688,6 @@ jobs:
           _branch="$(gh api \
             "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/pulls" \
             --jq '.[0].head.ref // ""' 2>/dev/null || true)"
-          # Capture the latest release tag BEFORE the cut so the accept job can
-          # pass it as prev-tag to acceptance.yml's upgrade/rollback phases.
           _prev="$(git tag -l 'spira-release-*' | sort | tail -1 || true)"
           _args=""
           [ -n "${_pr:-}" ]     && _args="$_args --pr $_pr"
@@ -688,19 +701,16 @@ jobs:
             exit 0
           fi
           printf 'cut: %s (prev: %s)\n' "$tag" "${_prev:-none}"
+          # App token push fires acceptance.yml's push trigger (unlike GITHUB_TOKEN).
           git push origin "refs/tags/$tag"
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
           printf 'prev-tag=%s\n' "${_prev:-}" >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
-  # Publish. Invoked DIRECTLY, never left to release.yml's tag trigger.
-  #
-  # GitHub does not start a workflow for a tag pushed with GITHUB_TOKEN. That is a
-  # deliberate anti-recursion rule, and it is silent: the tag appears, the release
-  # never does, and nothing reports a failure. Calling release.yml as a reusable
-  # workflow makes the publish a dependency of the cut rather than a hoped-for
-  # side effect of it. release.yml keeps its tag trigger as well, so a tag pushed
-  # by hand still publishes.
+  # Publish. Invoked DIRECTLY as a reusable workflow so the release exists before
+  # the acceptance run reads it. release.yml's tag trigger also fires — because the
+  # cut job uses the App token, not GITHUB_TOKEN — so a tag pushed by hand still
+  # publishes via the same path.
   # ---------------------------------------------------------------------------
   publish:
     needs: cut
@@ -729,44 +739,3 @@ jobs:
           tag="${{ needs.cut.outputs.tag }}"
           gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag"
           printf 'retract-tag: deleted orphan tag %s\n' "$tag"
-
-  # ---------------------------------------------------------------------------
-  # Dispatch acceptance. Runs after publish so release artifacts exist.
-  #
-  # THE TAG TRIGGER IN acceptance.yml DOES NOT FIRE FOR GITHUB_TOKEN PUSHES.
-  # GitHub's anti-recursion rule suppresses workflow events created by the
-  # workflow's own token. Every spira-release-* tag pushed by the cut job
-  # above has produced no acceptance run. This job dispatches acceptance.yml
-  # directly under a token that can start workflows, passing
-  # both tag and prev-tag so phases B–D (upgrade, rollback, aged-install) run.
-  # ---------------------------------------------------------------------------
-  accept:
-    needs: [cut, publish]
-    if: needs.cut.outputs.tag != ''
-    runs-on: ubuntu-latest
-    steps:
-      # THE TOKEN IS MINTED FROM THE SPIRA GITHUB APP, per run, and expires within the hour.
-      # A token the App creates is not GITHUB_TOKEN, so the dispatch it makes does start a
-      # run. The App already holds actions:write on this repository. This replaced a
-      # personal-access-token secret that was never created: the job's first run (2026-09-23,
-      # main gate 35923499974) dispatched with an empty GH_TOKEN and acceptance never started.
-      - name: Mint a dispatch token from the Spira App
-        id: app-token
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.SPIRA_APP_ID }}
-          private-key: ${{ secrets.SPIRA_APP_KEY }}
-      - name: Dispatch acceptance
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          set -uo pipefail
-          _tag="${{ needs.cut.outputs.tag }}"
-          _prev="${{ needs.cut.outputs.prev-tag }}"
-          _fields=(-f "tag=$_tag")
-          [ -n "${_prev:-}" ] && _fields+=(-f "prev-tag=$_prev")
-          gh workflow run acceptance.yml \
-            --repo "$GITHUB_REPOSITORY" \
-            "${_fields[@]}"
-          printf 'accept: dispatched acceptance.yml for %s (prev: %s)\n' \
-            "$_tag" "${_prev:-none}"

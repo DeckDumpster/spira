@@ -230,6 +230,7 @@ fn gh_exec(verb: &Verb, repo_path: &str, number: &str, reason: &str) -> Result<S
     let gh = gh_bin();
     let mut cmd = Command::new(&gh);
     cmd.current_dir(repo_path);
+    cmd.envs(crate::token::gh_env());
 
     match verb {
         Verb::RunRerun     => { cmd.args(["run", "rerun", number]); }

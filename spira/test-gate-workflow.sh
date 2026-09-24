@@ -418,32 +418,23 @@ if [ -n "$_gate_tear_block" ] && [ -n "$_tear_required" ]; then
 fi
 
 echo
-echo "18. acceptance is dispatched from the release path, not left to the tag trigger:"
+echo "18. acceptance fires via App-token tag push, not manual dispatch:"
 # GitHub's anti-recursion rule: a tag pushed with GITHUB_TOKEN triggers no
-# workflow. The accept job dispatches acceptance.yml directly, under a token
-# that can start workflows, passing both tag and prev-tag so upgrade/rollback
-# phases run. Positive control: an accept block that doesn't exist leaves every
-# want below reporting the missing content.
-_accept_block="$(awk '/^  accept:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
-if [ -z "$_accept_block" ]; then
-    bad "accept job block located (positive control)" "awk extracted nothing; the assertions below would be vacuous"
+# workflow. The cut job mints an App installation token and pushes the release
+# tag with it; an App-pushed tag is not subject to the rule, so acceptance.yml's
+# push trigger fires directly. Positive control: a cut block that does not exist
+# leaves every want below reporting missing content.
+_cut_block="$(awk '/^  cut:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
+if [ -z "$_cut_block" ]; then
+    bad "cut job block located (positive control)" "awk extracted nothing; assertions below would be vacuous"
 else
-    ok "accept job block located (positive control)"
+    ok "cut job block located (positive control)"
 fi
-want "accept dispatches acceptance.yml"        "acceptance.yml"  "$_accept_block"
-want "accept passes the tag input"             'f "tag='         "$_accept_block"
-want "accept passes the prev-tag input"        'f "prev-tag='    "$_accept_block"
-want "accept needs publish (runs after it)"    "publish"         "$_accept_block"
-# The dispatch token is minted from the Spira App. A named secret is not a working one:
-# WORKFLOW_PAT was asserted here and never existed, so the first real dispatch ran with an
-# empty GH_TOKEN. Both App secrets were set on 2026-09-23 (sp-qkudm).
-want   "accept mints a token from the App"       "create-github-app-token"             "$_accept_block"
-want   "accept passes the App id"                "secrets.SPIRA_APP_ID"                "$_accept_block"
-want   "accept passes the App key"               "secrets.SPIRA_APP_KEY"               "$_accept_block"
-want   "accept dispatches with the minted token" "steps.app-token.outputs.token"       "$_accept_block"
-nowant "accept no longer names WORKFLOW_PAT"     "WORKFLOW_PAT"                        "$_accept_block"
-# The cut job must output prev-tag so the accept job can read it.
-_cut_out_block="$(awk '/^  cut:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML" \
+want "cut mints App token"           "app-tok"                  "$_cut_block"
+want "cut reads App private key"     "SPIRA_GH_APP_PRIVATE_KEY" "$_cut_block"
+want "cut tag push uses App token"   "app-tok.outputs.token"    "$_cut_block"
+# The cut job must output prev-tag so acceptance.yml can derive the upgrade path.
+_cut_out_block="$(echo "$_cut_block" \
   | awk '/^    outputs:/{g=1;next} g&&/^    [a-z_-]+:/{exit} g{print}')"
 want "cut outputs prev-tag"                    "prev-tag"        "$_cut_out_block"
 # acceptance.yml must still accept workflow_dispatch with tag and prev-tag inputs.
