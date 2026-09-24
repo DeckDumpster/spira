@@ -136,7 +136,9 @@ verdict "$REPONAME" >/dev/null
 
 mail="$(latest_operator_mail)"
 want "rendered block leads with the bead id and title" "sp-ejm01: eject-mail-test-title" "$mail"
-want "rendered block carries status"                    "Status: closed"                 "$mail"
+# verdict.sh reopens the bead (queue-eject) before mailing, so the render sees the
+# post-reopen status — open, not the closed state it was seeded with.
+want "rendered block carries status"                    "Status: open"                   "$mail"
 want "rendered block carries priority"                   "Priority: P2"                   "$mail"
 
 rm -f "$(batch_file)" "$LANDSTATE/sp-ejm01"
