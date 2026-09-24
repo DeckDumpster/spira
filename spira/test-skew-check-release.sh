@@ -104,13 +104,11 @@ reset_releases
 # interference between concurrent batch executions.
 # ---------------------------------------------------------------------------
 run_skew() {
-    local run_dir releases_dir
+    local run_dir
     run_dir="$(mktemp -d "$TMP/run-XXXXX")"
-    releases_dir="$(mktemp -d "$TMP/releases-XXXXX")"
 
-    # Copy the template to the per-run releases directory (including hidden directories like .tags)
-    (cd "$RELEASES_TEMPLATE" && cp -r . "$releases_dir/")
-
+    # Use the test-specific RELEASES set up by reset_releases, not a new isolated copy.
+    # This allows test blocks to control what scenario skew.sh sees.
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -119,7 +117,7 @@ run_skew() {
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$releases_dir" \
+        SPIRA_RELEASES="$RELEASES" \
         "${@}" \
         bash "$HERE/skew.sh" check 2>&1
     return "${PIPESTATUS[0]:-$?}"
