@@ -47,7 +47,7 @@ echo "test-install-dolt-breaker.sh"
 # ---------------------------------------------------------------------------
 
 _TMP1="$(mktemp -d)"; trap 'rm -rf "$_TMP1"' EXIT INT TERM
-_PORT1=19141
+_PORT1="$(python3 -c "import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(('127.0.0.1',0)); p=s.getsockname()[1]; s.close(); print(p)")"
 _DBNAME1="testbd$$"
 
 mkdir -p "$_TMP1/db/.beads"
@@ -268,7 +268,7 @@ FAKE_RUN="$TMP/run"
 FAKE_DB="$TMP/db"
 mkdir -p "$FAKE_HOME" "$FAKE_UNITDIR" "$FAKE_RUN" "$FAKE_DB"
 
-_DOLT_PORT=19142
+_DOLT_PORT="$(python3 -c "import socket; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(('127.0.0.1',0)); p=s.getsockname()[1]; s.close(); print(p)")"
 _DOLT_DATA="$TMP/dolt-data"
 mkdir -p "$_DOLT_DATA"
 cat > "$_DOLT_DATA/dolt-server.yaml" <<YAML
