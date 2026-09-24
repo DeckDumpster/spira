@@ -107,7 +107,7 @@ print(count)' 2>/dev/null) || return 0
     bdq note "$BEAD_ID" \
         "RAPID-RECUR: $_count consecutive sub-10s aeon runs on $BEAD_ID. Each summon dies before meaningful work, suggesting a setup loop — the defect recurs on every retry. Check: worktree path, conflicting branches, or box state. Details in aeon-ledger." \
         >/dev/null 2>&1 || true
-    spira_event aeon.rapid-recur "$BEAD_ID" \
+    spira_event aeon.rapid "$BEAD_ID" \
         "Rapid-recur: $BEAD_ID — $_count consecutive sub-10s aeon summons (setup loop)" || true
 }
 
