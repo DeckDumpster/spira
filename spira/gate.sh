@@ -67,6 +67,7 @@ verdict() {              # verdict <status> <reason> [message...]
     # trap rather than the verdict's own. Cleanup that the trap owns is done here instead.
     trap - EXIT
     rm -f "${FILELIST:-}" 2>/dev/null
+    rm -f "${TREE:-}.lock.holder" 2>/dev/null || true
     # Keep the tree on success — the next run reuses it, touching only changed files, so
     # cargo's mtime fingerprints survive. Remove only on non-success (a failed run may leave
     # the tree in a state checkout cannot recover), and only when we held the lock (the
@@ -472,6 +473,8 @@ HELD_LOCK=1
 GATE_WAITED=$(( $(date +%s) - GATE_WAIT0 ))
 GATE_START=$(date +%s)
 [ "$GATE_WAITED" -gt 0 ] && echo "gate: waited ${GATE_WAITED}s for $TREE" >&2
+_gate_pgid="$(ps -o pgid= -p "$BASHPID" 2>/dev/null | tr -d ' ')" || _gate_pgid="?"
+printf '%s %s\n' "$BASHPID" "${_gate_pgid}" > "$TREE.lock.holder" 2>/dev/null || true
 
 # EVERY OTHER WAY OUT IS COUNTED FROM THE EXIT TRAP — the pass, the branch's own failure, and
 # the checkout that could not be proved. A meter only the happy path writes measures the
@@ -549,6 +552,7 @@ FILELIST="$(mktemp)"; printf '%s\n' "${_diff_status_out:-$files}" > "$FILELIST"
 # because a gate that vanished judged nothing.
 trap 'gate_rc=$?
      rm -f "${FILELIST:-}" 2>/dev/null
+     rm -f "${TREE:-}.lock.holder" 2>/dev/null
      [ "${HELD_LOCK:-0}" = 1 ] && [ -n "${TREE:-}" ] && [ -e "${TREE}/.git" ] && \
          git -C "${REPO:-/nonexistent}" worktree remove --force "$TREE" 2>/dev/null
      gate_meter "${gate_rc:-$NV}" died' EXIT

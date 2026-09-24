@@ -786,6 +786,16 @@ if [ -n "$SPIRA_VIEW" ]; then
 fi
 
 echo
+echo "gate locks"
+if [ -x "$SPIRA_HOME/gate-locks.sh" ]; then
+    bash "$SPIRA_HOME/gate-locks.sh" "$SPIRA_RUN" 2>/dev/null \
+        | sed 's/^/  /' \
+        || WARN "gate-locks.sh exited non-zero"
+else
+    WARN "gate-locks.sh not found at $SPIRA_HOME/gate-locks.sh"
+fi
+
+echo
 echo "the status line"
 # WHY THIS IS DOCTOR'S BUSINESS AT ALL. The status line is where the context meter and the
 # archivist's state machine are read, and it lives in the CLIENT's settings file, outside every
