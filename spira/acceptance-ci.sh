@@ -51,6 +51,9 @@ mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/spira"
 printf 'scratch-repo | %s | push | origin/main | |\n' "$HOME/scratch-repo" \
     > "${XDG_CONFIG_HOME:-$HOME/.config}/spira/repo-map"
 
+export SPIRA_ACCEPTANCE_FORENSICS="${SPIRA_ACCEPTANCE_FORENSICS:-$HOME/acceptance-forensics}"
+mkdir -p "$SPIRA_ACCEPTANCE_FORENSICS"
+
 _run_args=("$_tag" --scratch-repo "$HOME/scratch-repo" --bd-db "$_bd_db")
 [ -n "$_agent" ]        && _run_args+=(--agent "$_agent")
 [ "$_do_record" -eq 1 ] && _run_args+=(--record)

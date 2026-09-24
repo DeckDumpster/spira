@@ -171,6 +171,14 @@ jobs:
           [ -n "${_prev:-}" ] && _args+=(--prev-tag "$_prev")
           bash spira/acceptance-ci.sh "${_args[@]}"
 
+      - name: Upload forensics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-forensics-${{ inputs.tag || github.ref_name }}
+          path: ~/acceptance-forensics
+          if-no-files-found: warn
+
   # ---------------------------------------------------------------------------
   # Destroy the machine. Runs even when provision or acceptance fail.
   # ---------------------------------------------------------------------------
