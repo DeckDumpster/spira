@@ -346,6 +346,15 @@ else
 fi
 mkdir -p "$RESULTS"
 
+# Timing ledger — runner shape captured once at batch start; suites wall time
+# and CPU measured around the actual suite loop further below.
+_timing_nproc="$(nproc 2>/dev/null || printf '-')"
+_timing_memtotal_kb="$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo 2>/dev/null || printf '-')"
+_suites_t0=0
+_suites_wall=0
+_timing_cpu0="0 0"
+_timing_cpu1="0 0"
+
 # ---------------------------------------------------------------------------
 # SUITE STATE — read from the candidate tree, never from the installed harness.
 # Disabled suites are pre-empted here (before the container starts); their
@@ -580,6 +589,25 @@ if [ -z "${SPIRA_BATCH_SKIP_INSTALL:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# BD TIMING SHIM — inject a bd wrapper so per-suite bd call time can be
+# separated from suite script time.  Fail-soft: if injection fails the batch
+# continues; timing.tsv will carry "-" for bd_ms on every suite.
+# ---------------------------------------------------------------------------
+_bd_timing_dir="/tmp/bd-timing-${INSTANCE}"
+_bd_shim_dir="/tmp/bd-shim-${INSTANCE}"
+_bd_shim_path="${_bd_shim_dir}:/usr/local/bin:/usr/bin:/bin"
+{
+    podman exec --user "$_SPIRA_USER" "$CNAME" \
+        mkdir -p "$_bd_shim_dir" "$_bd_timing_dir" >/dev/null 2>&1
+    podman exec --user "$_SPIRA_USER" "$CNAME" bash -c "
+        printf '#!/usr/bin/env bash\nexec ${_CONTAINER_WORKSPACE}/spira/bd-shim.sh \"\$@\"\n' \
+            > '${_bd_shim_dir}/bd' && chmod +x '${_bd_shim_dir}/bd'
+    " >/dev/null 2>&1
+    _cpath="$(podman exec --user "$_SPIRA_USER" "$CNAME" printenv PATH 2>/dev/null)"
+    [ -n "${_cpath:-}" ] && _bd_shim_path="${_bd_shim_dir}:${_cpath}"
+} 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
 # REQUIREMENTS CHECK — suites declaring # requires: tokens are pre-checked
 # inside the container. An unmet requirement records skip-req (distinct from
 # exit-77 self-skip) with the missing token named in the fingerprint field.
@@ -781,48 +809,7 @@ _n_selected=0; for _s in $SELECTED; do _n_selected=$((_n_selected+1)); done
 # GITHUB_RUN_ID is set by GitHub Actions; local runs use a timestamp.
 # ---------------------------------------------------------------------------
 _BATCH_RUN_ID="${GITHUB_RUN_ID:-${SPIRA_BATCH_RUN_ID:-local-$(date +%s)}}"
-
-# ---------------------------------------------------------------------------
-# BD SHIM — a timing wrapper installed ahead of the real bd on SPIRA_PATH.
-# The shim appends "<ms> <rc> <subcommand>" to SPIRA_BD_LOG per call, letting
-# the batch attribute each suite's wall time to bd versus non-bd work.
-# Set SPIRA_BATCH_NO_BD_SHIM=1 to disable (e.g. for skip-install runs that
-# have no installed bd or when the container image is stripped).
-# ---------------------------------------------------------------------------
-_shim_dir="/tmp/spira-batch-${INSTANCE}/shim"
 _shim_spira_path=""
-if [ -z "${SPIRA_BATCH_NO_BD_SHIM:-}" ]; then
-    _real_bd="$(podman exec --user "$_SPIRA_USER" \
-        -e "XDG_RUNTIME_DIR=${_USER_RUNTIME}" \
-        "$CNAME" bash -c 'command -v bd 2>/dev/null' 2>/dev/null || true)"
-    if [ -n "$_real_bd" ]; then
-        podman exec --user "$_SPIRA_USER" "$CNAME" mkdir -p "$_shim_dir" \
-            >/dev/null 2>&1 || true
-        _shim_tmp="$(mktemp)"
-        _shim_tmp2="${_shim_tmp}.bd"
-        cat > "$_shim_tmp" << 'SHIM_EOF'
-#!/usr/bin/env bash
-_t0=$(date +%s%3N)
-_rc=0; REAL_BD "$@" || _rc=$?
-_log="${SPIRA_BD_LOG:-${SPIRA_RUN:-/tmp}/bd-calls.log}"
-mkdir -p "${_log%/*}" 2>/dev/null
-printf '%s %s %s\n' $(( $(date +%s%3N) - _t0 )) "$_rc" "${1:--}" >> "$_log" 2>/dev/null
-exit $_rc
-SHIM_EOF
-        sed "s|REAL_BD|${_real_bd}|g" "$_shim_tmp" > "$_shim_tmp2"
-        if podman cp "$_shim_tmp2" "${CNAME}:${_shim_dir}/bd" >/dev/null 2>&1 \
-           && podman exec --user "$_SPIRA_USER" "$CNAME" \
-                  chmod +x "${_shim_dir}/bd" >/dev/null 2>&1; then
-            _shim_spira_path="$_shim_dir"
-            log "batch: bd shim installed (real bd: ${_real_bd})"
-        else
-            log "batch: bd shim install failed — bd timing will be absent"
-        fi
-        rm -f "$_shim_tmp" "$_shim_tmp2"
-    else
-        log "batch: bd not found in container — bd timing absent"
-    fi
-fi
 
 # _batch_bd_read <log-path-inside-container> — print "<calls>\t<ms>"
 _batch_bd_read() {
@@ -841,6 +828,10 @@ _append_suite_times() {
     mkdir -p "${SPIRA_SUITE_TIMES_LOG%/*}" 2>/dev/null || true
     printf '%s\n' "$_row" >> "${SPIRA_SUITE_TIMES_LOG:-$SPIRA_RUN/suite-times.log}" 2>/dev/null || true
 }
+
+_suites_t0="$(date +%s)"
+_timing_cpu0="$(awk '/^cpu /{s=0;for(i=2;i<=NF;i++)s+=$i;idle=$6+$7;printf "%d %d",s,idle;exit}' \
+    /proc/stat 2>/dev/null || printf '0 0')"
 
 if [ "$MODE" = parallel ]; then
     if [ "${_maxpar:-0}" -gt 0 ] 2>/dev/null; then
@@ -925,6 +916,7 @@ if [ "$MODE" = serial ]; then
                 -e "SPIRA_BD_LOG=${_serial_bd_log}" \
                 -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
                 -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
+                -e "SPIRA_BD_TIMING_LOG=${_bd_timing_dir}/${s}.log" \
                 "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" >"$_batch_tmp" 2>&1 || _rc=$?
         else
             podman exec --user "$_SPIRA_USER" \
@@ -939,6 +931,7 @@ if [ "$MODE" = serial ]; then
                 -e "SPIRA_BD_LOG=${_serial_bd_log}" \
                 -e "SPIRA_RUN=/tmp/spira-batch-${INSTANCE}" \
                 -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
+                -e "SPIRA_BD_TIMING_LOG=${_bd_timing_dir}/${s}.log" \
                 "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" >"$_batch_tmp" 2>&1 || _rc=$?
         fi
 
@@ -1114,6 +1107,7 @@ else
                     -e "SPIRA_INSTANCE=${_suite_instance}" \
                     -e "SPIRA_RUN=${_suite_run}" \
                     -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
+                    -e "SPIRA_BD_TIMING_LOG=${_bd_timing_dir}/${s}.log" \
                     "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" \
                     >"$_par_tmp/$s.rawout" 2>&1 || _inner_rc=$?
             else
@@ -1131,6 +1125,7 @@ else
                     -e "SPIRA_INSTANCE=${_suite_instance}" \
                     -e "SPIRA_RUN=${_suite_run}" \
                     -e "SPIRA_TESTDB_DATA=/tmp/spira-batch-${INSTANCE}/testdb" \
+                    -e "SPIRA_BD_TIMING_LOG=${_bd_timing_dir}/${s}.log" \
                     "$CNAME" bash "${_CONTAINER_WORKSPACE}/spira/$s" \
                     >"$_par_tmp/$s.rawout" 2>&1 || _inner_rc=$?
             fi
@@ -1273,6 +1268,10 @@ else
 
 fi
 
+_suites_wall=$(( $(date +%s) - _suites_t0 ))
+_timing_cpu1="$(awk '/^cpu /{s=0;for(i=2;i<=NF;i++)s+=$i;idle=$6+$7;printf "%d %d",s,idle;exit}' \
+    /proc/stat 2>/dev/null || printf '0 0')"
+
 rm -f "$_batch_tmp"
 
 # ---------------------------------------------------------------------------
@@ -1309,6 +1308,57 @@ mkdir -p "${SPIRA_SUITE_TIMES_LOG%/*}" 2>/dev/null || true
 printf '%s\n' "$_batch_times_row" >> \
     "${SPIRA_SUITE_TIMES_LOG:-$SPIRA_RUN/suite-times.log}" 2>/dev/null || true
 log "batch: wall ${_BATCH_WALL}s"
+
+# ---------------------------------------------------------------------------
+# RUNNER METADATA — machine shape captured alongside batch.meta.
+# ---------------------------------------------------------------------------
+{
+    _cpu_pct="-"
+    _c0t="$(printf '%s' "$_timing_cpu0" | awk '{print $1}')"
+    _c0i="$(printf '%s' "$_timing_cpu0" | awk '{print $2}')"
+    _c1t="$(printf '%s' "$_timing_cpu1" | awk '{print $1}')"
+    _c1i="$(printf '%s' "$_timing_cpu1" | awk '{print $2}')"
+    _dt=$(( _c1t - _c0t )); _di=$(( _c1i - _c0i ))
+    [ "$_dt" -gt 0 ] && _cpu_pct=$(( 100 * (_dt - _di) / _dt )) || true
+    printf 'nproc=%s\nmemtotal_kb=%s\nmaxpar=%s\ncpu_busy_pct=%s\nsuites_wall_s=%s\n' \
+        "$_timing_nproc" "$_timing_memtotal_kb" \
+        "${SPIRA_BATCH_MAXPAR:-$(nproc 2>/dev/null || printf '-')}" \
+        "$_cpu_pct" "$_suites_wall" \
+        > "$RESULTS/runner.meta"
+} 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# TIMING.TSV — per-suite name, wall_s, result, bd_ms.
+# bd_ms is total milliseconds spent in bd calls (from container shim logs);
+# "-" when the shim was not active or produced no log for that suite.
+# ---------------------------------------------------------------------------
+_bd_timing_raw=""
+_bd_timing_raw="$(
+    podman exec --user "$_SPIRA_USER" "$CNAME" bash -c "
+        for f in \"${_bd_timing_dir}\"/*.log; do
+            [ -f \"\$f\" ] || continue
+            suite=\"\$(basename \"\$f\" .log)\"
+            ms=\"\$(awk '{s+=\$1} END{print s+0}' \"\$f\" 2>/dev/null || printf 0)\"
+            printf '%s\t%s\n' \"\$suite\" \"\$ms\"
+        done
+    " 2>/dev/null
+)" 2>/dev/null || true
+{
+    for _ts in $SELECTED; do
+        [ -f "$RESULTS/$_ts.result" ] || continue
+        _ts_wall="$(awk '{print $3}' "$RESULTS/$_ts.result" 2>/dev/null)"
+        case "${_ts_wall:-x}" in ''|*[!0-9]*) _ts_wall="-" ;; esac
+        _ts_st="$(awk '{print $1}' "$RESULTS/$_ts.result" 2>/dev/null)"
+        [ -n "${_ts_st:-}" ] || _ts_st="-"
+        _ts_bd="-"
+        if [ -n "${_bd_timing_raw:-}" ]; then
+            _ts_bd_v="$(printf '%s\n' "$_bd_timing_raw" | \
+                awk -F'\t' -v s="$_ts" '$1==s{print $2; exit}')"
+            case "${_ts_bd_v:-}" in ''|*[!0-9]*) ;; *) _ts_bd="$_ts_bd_v" ;; esac
+        fi
+        printf '%s\t%s\t%s\t%s\n' "$_ts" "$_ts_wall" "$_ts_st" "$_ts_bd"
+    done
+} > "$RESULTS/timing.tsv" 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # VERDICT — three distinguishable outcomes.
@@ -1359,6 +1409,7 @@ if [ "$_batch_red" -gt 0 ]; then
             printf 'override_reason=%s\n' "$_verdict_override_reason" \
                 >> "$VERDICT_DIR/batch-$BATCH_KEY"
     fi
+    [ -r "$HERE/gate-timing.sh" ] && bash "$HERE/gate-timing.sh" "$RESULTS" red 2>/dev/null || true
     exit 1
 fi
 
@@ -1374,4 +1425,5 @@ if [ -n "$BATCH_KEY" ] && [ "$verdict_ttl" -gt 0 ]; then
 fi
 
 log "batch: all suites passed"
+[ -r "$HERE/gate-timing.sh" ] && bash "$HERE/gate-timing.sh" "$RESULTS" green 2>/dev/null || true
 exit 0
