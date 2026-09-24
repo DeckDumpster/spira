@@ -704,6 +704,22 @@ else
     else
         OK "one harness on this box — $SPIRA_REPO is the only copy the map reaches"
     fi
+
+    # SKEW SERVICE RESULT. exit 3 means the check could not run; the unit stays failed,
+    # harness drift goes undetected, and the failed state is invisible until someone looks.
+    _dr_skew_unit="$(spira_unit skew service)"
+    if [ "$_dr_skew_unit" != "?" ]; then
+        _dr_skew_active="$("${SPIRA_SYSTEMCTL:-systemctl}" --user show "$_dr_skew_unit" \
+            --property=ActiveState 2>/dev/null | cut -d= -f2)"
+        _dr_skew_rc="$("${SPIRA_SYSTEMCTL:-systemctl}" --user show "$_dr_skew_unit" \
+            --property=ExecMainStatus 2>/dev/null | cut -d= -f2)"
+        if [ "$_dr_skew_active" = "failed" ] && [ "$_dr_skew_rc" = "3" ]; then
+            WARN "skew service last exited 3 — could not determine whether harness drift has occurred" \
+                 "Diagnose: bash $SPIRA_HOME/skew.sh check
+        Log: journalctl --user -u $_dr_skew_unit -n 20"
+        fi
+        unset _dr_skew_unit _dr_skew_active _dr_skew_rc
+    fi
 fi
 
 echo
