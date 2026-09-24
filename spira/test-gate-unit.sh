@@ -22,16 +22,19 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 # against, never the checkout this suite itself lives in.
 export SPIRA_CONF="$TMP/nonexistent.conf"
 export SPIRA_HOME="$HERE"
+. "$HERE/conf.sh"
+. "$HERE/gate-lib.sh"
 
 # --- 1. verdict()'s shape: exactly one anchored VERDICT= line, and the right exit code ---
 # (UC-gate-verdict-01)
 #
-# verdict() is sourced and called in a SUBSHELL, because it calls exit(). gate_meter and
-# yield_note stay undefined — verdict() only calls them through `command -v`, which is the
-# seam the plan names ("source with gate_meter/yield_note undefined").
+# verdict() is called in a SUBSHELL, because it calls exit(); the subshell inherits
+# verdict() and conf.sh's SPIRA_GATE_* vars from this script's own top-level sourcing
+# above. gate_meter and yield_note stay undefined — verdict() only calls them through
+# `command -v`, which is the seam the plan names ("source with gate_meter/yield_note
+# undefined").
 _run_verdict() {         # _run_verdict <status> <reason> [msg...] -> sets _V_OUT, _V_RC
     _V_OUT="$(
-        . "$HERE/conf.sh"; . "$HERE/gate-lib.sh"
         BR="spira/sp-unit"; REPO_NAME="spira"
         "$@" 2>&1
     )"
@@ -87,7 +90,6 @@ nowant "PASS with no message is never downgraded" "no-evidence:" "$_V_OUT"
 # --- 3. gate_tree_key(): a pure, filesystem-safe munge of the branch name -----------------
 # (part of the UC-gate-verdict-16 seam — test-gate-tree.sh calls this instead of its own
 # copy, per the plan's duplicate-cluster #4/seam table; that rewrite is tracked separately)
-. "$HERE/gate-lib.sh"
 is "gate_tree_key(): slashes become dashes"        "spira-sp-04yh0" "$(gate_tree_key "spira/sp-04yh0")"
 is "gate_tree_key(): repeatable for the same input" "$(gate_tree_key "spira/sp-x")" "$(gate_tree_key "spira/sp-x")"
 nowant "gate_tree_key(): never emits a slash (unsafe as a path component)" "/" "$(gate_tree_key "a/b/c")"
