@@ -193,6 +193,24 @@ branch_t() {
     plant_bead_t "$id" "$title"
 }
 
+# branch_p <id> <priority> [epoch] — branch with an explicit bead priority,
+# so a test can prove ordering is (or is not) driven by priority.
+branch_p() {
+    local id="$1" priority="$2" epoch="${3:-$(date +%s)}"
+    local wt="$RUN/worktree/$id"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$wt" main 2>/dev/null || true
+    printf '%s\n' "$id" > "$wt/$id.txt"
+    git -C "$wt" add -A
+    git -C "$wt" commit -q -m "$id: work"
+    local tip; tip="$(git -C "$REPO" rev-parse "spira/$id")"
+    printf 'CERTIFIED %s %s\n' "$tip" "$epoch" > "$LANDSTATE/$id"
+    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","priority":%d,"labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
+        "$id" "$id" "$priority" "$id" | testdb_seed
+}
+
+tip_of() { git -C "$REPO" rev-parse "spira/$1" 2>/dev/null; }
+bisect_file() { printf '%s/%s/bisect' "$QUEUEDIR" "$REPONAME"; }
+
 open_batch_file() { printf '%s/%s/open' "$QUEUEDIR" "$REPONAME"; }
 batch_pr()        { grep '^pr=' "$(open_batch_file)" 2>/dev/null | cut -d= -f2; }
 is_batched()      { grep -q '^BATCHED' "$LANDSTATE/${1:-}" 2>/dev/null; }
@@ -204,6 +222,7 @@ landing_log()     { cat "$RUN/landing.log" 2>/dev/null || true; }
 # clean_case — remove all landstate entries and spira/* branches between test cases
 clean_case() {
     rm -f "$QUEUEDIR/$REPONAME/open"
+    rm -f "$QUEUEDIR/$REPONAME/bisect"
     rm -f "$RUN/landing.log"
     : > "$FORGE_LOG"
     : > "$BODY_LOG"
@@ -1071,6 +1090,52 @@ is "o. formatter fail: no format commit present" "0" \
 cat > "$SH/repo-map" << RMAP
 $REPONAME | $REPO | queue | origin/main | | |
 RMAP
+clean_case
+
+# =============================================================================
+# p. BISECT FORCED CUT (sp-y931m): a bisect state file records the half a red,
+#    unattributable batch (e.g. a build failure) narrowed to. The next cut must
+#    be exactly that half, even though an unrelated P0 branch is also certified
+#    and would otherwise sort first — a fresh priority cut re-admitting the
+#    branch under isolation is exactly how PRs 302-304 looped forever.
+#
+#    POSITIVE CONTROL: without the fix, queue_sort_rows always wins and the P0
+#    branch (sp-btp-hi) is cut instead, so this assertion fails against
+#    unfixed batch.sh rather than passing vacuously.
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"
+branch_p "sp-btp-hi" 0 "$NOW"
+branch_p "sp-btp-lo" 4 "$NOW"
+lo_tip="$(tip_of sp-btp-lo)"
+mkdir -p "$QUEUEDIR/$REPONAME"
+printf '%s:%s\n' "sp-btp-lo" "$lo_tip" > "$(bisect_file)"
+
+out_p="$(batch "$REPONAME")"
+is   "p. bisect forced: PR opened"          "1" "$(batch_pr)"
+is   "p. bisect forced: lo is BATCHED"      "1" "$(is_batched sp-btp-lo && echo 1 || echo 0)"
+is   "p. bisect forced: hi stays CERTIFIED" "1" "$(is_certified sp-btp-hi && echo 1 || echo 0)"
+want "p. bisect forced: log names the forced cut" "forcing cut to recorded half" "$out_p"
+clean_case
+
+# =============================================================================
+# q. STALE BISECT GROUP: the recorded group names a member that is no longer
+#    CERTIFIED (ejected or landed by some other path). The forced cut is empty,
+#    so batch.sh drops the state and falls through to a normal priority cut
+#    instead of forcing an empty or stale batch forever.
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"; OLD_Q=$(( NOW - 1800 - 1 ))
+branch_p "sp-btq-a" 4 "$OLD_Q"
+mkdir -p "$QUEUEDIR/$REPONAME"
+printf '%s:%s\n' "sp-btq-ghost" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" > "$(bisect_file)"
+
+out_q="$(batch "$REPONAME")"
+is   "q. stale bisect: state file dropped" "0" "$([ -f "$(bisect_file)" ] && echo 1 || echo 0)"
+is   "q. stale bisect: real certified branch still batched" "1" "$(batch_pr)"
+want "q. stale bisect: log reports advance" "bisect group already resolved elsewhere" "$out_q"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"

@@ -7,7 +7,8 @@
 # pr-list-queue <repo-dir>                     prints PR numbers with head spira/queue/*, one per line
 # pr-mergeability <repo-dir> <pr-number>       prints: DIRTY | CLEAN | UNKNOWN
 # check-status <repo-dir> <pr-number>          prints: pending | green | red | harness_fault | provision_fault
-#                                              then "flaky: <suite>" for each flaky annotation
+#                                              then "flaky: <suite>" for each flaky annotation, and
+#                                              "build-error: <line>" per line of a failed build job's error
 # run-id <repo-dir> <branch>                   prints the latest CI run ID for the branch
 # runs-active <repo-dir>                       prints the count of queued+in_progress PR runs, or ? if unknown
 # run-metadata <repo-dir> <run-id>             prints: started-at: <epoch>; last-activity: <epoch>
@@ -106,7 +107,7 @@ import json, sys
 try: print(json.load(sys.stdin).get('headRefOid', ''))
 except: pass
 " 2>/dev/null)"
-        run_id="" jobs_json=""
+        run_id="" jobs_json="" build_err=""
         if [ "$status" = "green" ] || [ "$status" = "red" ]; then
             run_id="$(printf '%s\n' "${rollup_json:-"{}"}" | python3 -c "
 import json, sys, re
@@ -138,6 +139,29 @@ except Exception:
     pass
 " 2>/dev/null)"
                     [ "${_prov_failed:-}" = "yes" ] && status="provision_fault"
+                fi
+                # A failed build job precedes suites entirely, so a red here carries no
+                # suite annotations — the queue bisects it (queue_bisect_split, lib.sh)
+                # rather than attributing to a suite that never ran. Reading the build
+                # job's own error names the failing crate/manifest on the ejected bead
+                # instead of leaving the operator to open the run by hand.
+                if [ "$status" = "red" ]; then
+                    _build_job_id="$(printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
+import json, sys
+try:
+    for j in json.load(sys.stdin).get('jobs', []):
+        if j.get('name') == 'build' and (j.get('conclusion') or '').lower() not in ('success', ''):
+            print(j.get('id', '')); sys.exit()
+except Exception:
+    pass
+" 2>/dev/null)"
+                    if [ -n "${_build_job_id:-}" ]; then
+                        build_err="$( cd "$repo" && ghq api \
+                            "repos/{owner}/{repo}/actions/jobs/$_build_job_id/logs" 2>/dev/null \
+                            | sed -E 's/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z //' \
+                            | grep -E '^error(\[E[0-9]+\])?:|^error: could not compile|failed to load manifest for (workspace member|package)' \
+                            | awk '!seen[$0]++' | head -5 )"
+                    fi
                 fi
             fi
         fi
@@ -196,6 +220,11 @@ PYEOF
         fi
         printf '%s\n' "$status"
         [ -n "${head_sha:-}" ] && printf 'head-sha: %s\n' "$head_sha"
+        if [ -n "${build_err:-}" ]; then
+            while IFS= read -r _beline; do
+                [ -n "$_beline" ] && printf 'build-error: %s\n' "$_beline"
+            done <<< "$build_err"
+        fi
         [ "$status" = "green" ] || [ "$status" = "red" ] || exit 0
         [ -n "${run_id:-}" ] || exit 0
         if [ -n "${_artifact_out:-}" ]; then
