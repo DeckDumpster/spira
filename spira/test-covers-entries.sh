@@ -1,24 +1,21 @@
 #!/usr/bin/env bash
+# tier: T1
 # covers: spira/suite-covers.sh spira/test-*.sh
 # hermetic-ok: reads suite source and filesystem; no database, no systemd
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 . "$HERE/suite-covers.sh"
 
 ROOT="$(cd "$HERE/.." && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "$2"; }
 
 printf 'test-covers-entries.sh\n'
 
 # covers_hit <token>: exits 0 if any path under ROOT matches the token as a bash glob.
 # $token must be unquoted when passed to `for` so the shell expands wildcards.
-# A UC-<area>-NN token names a use-case catalogue entry (sp-qu948, testlib.sh's header
-# convention), not a file — it shares the # covers: line with path globs and is told
-# apart by its "UC-" prefix, so it is never resolved as a path. The catalogue's own lint
-# (plan-lint.sh) is not yet landed here; until it is, this suite trusts the token rather
-# than rejecting it.
+# A UC-<area>-NN token names an entry in the use-case catalogue (sp-qu948), not a file —
+# it shares the # covers: line with path globs (testlib.sh's header convention) and is
+# told apart from one by its "UC-" prefix, so it is never resolved as a path.
 covers_hit() {
     local tok="$1" _f
     case "$tok" in UC-*-[0-9][0-9]) return 0 ;; esac
@@ -69,6 +66,4 @@ done
 [ "$_bad" -eq 0 ] \
     && ok "$_checked suite(s) with declarations all resolve; $_skipped without" \
     || printf '  %d unresolvable token(s) across %d suite(s)\n' "$_bad" "$_checked"
-
-printf '\ntest-covers-entries.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary
