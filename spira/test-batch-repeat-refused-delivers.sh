@@ -82,7 +82,7 @@ echo "POSITIVE CONTROL: with SPIRA_INCIDENT_DELIVERS=note, delivers:note: is sta
 # to get a non-action label the reader can detect.
 testdb_reset; mkdir -p "$RUN"
 file_rr SPIRA_INCIDENT_DELIVERS=note >/dev/null
-pc_id="$(bd -C "$SPIRA_DB" list --status open --limit 0 --label spira,incident --json 2>/dev/null \
+pc_id="$(bd -C "$SPIRA_DB" list --status open --limit 0 --label spira,partition:incident --json 2>/dev/null \
     | python3 -c '
 import json,sys
 try: d=json.load(sys.stdin)
@@ -103,7 +103,7 @@ echo "FIXED CASE: with SPIRA_INCIDENT_DELIVERS=action (testenv-batch.sh path), d
 # ==============================================================================
 testdb_reset; mkdir -p "$RUN"
 file_rr SPIRA_INCIDENT_DELIVERS=action >/dev/null
-fixed_id="$(bd -C "$SPIRA_DB" list --status open --limit 0 --label spira,incident --json 2>/dev/null \
+fixed_id="$(bd -C "$SPIRA_DB" list --status open --limit 0 --label spira,partition:incident --json 2>/dev/null \
     | python3 -c '
 import json,sys
 try: d=json.load(sys.stdin)
