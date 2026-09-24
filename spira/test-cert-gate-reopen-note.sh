@@ -11,13 +11,11 @@
 # Run against the unfixed literal-lint.sh (before sp-ejdiu):
 #   FAIL — offender in tail-20 window: expected [1] got [0]
 #
-# covers: spira/literal-lint.sh
+# tier: T1
+# covers: spira/literal-lint.sh UC-gate-diag-01
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-cert-gate-reopen-note.sh"
 
@@ -50,5 +48,4 @@ note="$(printf '%s' "$gate_out" | tail -20)"
 count="$(printf '%s' "$note" | grep -cE '^[^ ]+:[0-9]+: ' || true)"
 is "offender in tail-20 window" "1" "$count"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
