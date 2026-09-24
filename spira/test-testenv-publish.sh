@@ -46,7 +46,6 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 FIXTURE="$TMP/spira"
 mkdir -p "$FIXTURE/testenv" "$TMP/bin"
 cp "$HERE/testenv.sh"            "$FIXTURE/testenv.sh"
-cp "$HERE/doctor.sh"             "$FIXTURE/doctor.sh"
 cp "$HERE/conf.sh"               "$FIXTURE/conf.sh"
 cp "$HERE/testenv/Containerfile" "$FIXTURE/testenv/Containerfile"
 PIN="$TMP/bd-pin"; printf 'BD_PIN_MIGRATIONS=42\n' > "$PIN"

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-install-dolt.sh — install.sh refuses to render dolt units when dolt is
-# absent, and doctor.sh FAILs on installed units with an empty ExecStart.
+# test-install-dolt.sh — install.sh refuses to render dolt units when dolt is absent.
 #
 #   ./test-install-dolt.sh
 #
@@ -12,11 +11,10 @@
 # 2. RENDER REFUSAL: exits non-zero when DOLT is empty and @DOLT@ is in the
 #    template, and names the missing program.
 # 3. RENDER CLEAN: exits 0 when DOLT is a valid path.
-# 4. POSITIVE CONTROL (doctor): plant a unit with ExecStart= <space> and confirm
-#    doctor FAILs before trusting the passing case.
-# 5. DOCTOR FAIL: doctor.sh reports FAIL on an installed unit whose ExecStart is
-#    followed by a space (empty executable, 203/EXEC at runtime).
-# 6. DOCTOR CLEAN: doctor.sh reports OK when no unit has an empty ExecStart.
+#
+# doctor.sh's own FAIL on an installed unit with an empty ExecStart executable was
+# part of the "installed units" section removed by sp-utt1i (build-input/host-preflight
+# territory now owned by make and pre-activate, not doctor).
 #
 # APPROACH FOR RENDER TESTS
 # -------------------------
@@ -26,7 +24,7 @@
 # directly with controlled args, bypassing conf.sh entirely. This tests the
 # actual Python code, not a copy: awk reads it from the file at test time.
 #
-# covers: systemd/install.sh spira/doctor.sh
+# covers: systemd/install.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 INSTALL_SH="$HERE/../systemd/install.sh"
@@ -118,99 +116,6 @@ if [ -f "$NODOLT_TEMPLATE" ]; then
     run_renderer "" "$NODOLT_TEMPLATE" >/dev/null 2>&1 || nodolt_rc=$?
     iszero "clean: renderer exits 0 for template without @DOLT@ even when DOLT empty" "$nodolt_rc"
 fi
-
-# ---------------------------------------------------------------------------
-# Part 2: doctor.sh FAIL on installed unit with empty ExecStart executable
-# ---------------------------------------------------------------------------
-
-BIN="$TMP/docbin"
-mkdir -p "$BIN"
-cat > "$BIN/bd" <<'FAKESCRIPT'
-#!/usr/bin/env bash
-case "$*" in
-    *"migrate schema"*) printf '✓ Schema already at v61\n'; exit 0 ;;
-    *"list"*"--limit"*) printf '[]\n'; exit 0 ;;
-    *) exit 0 ;;
-esac
-FAKESCRIPT
-chmod +x "$BIN/bd"
-
-cat > "$BIN/systemctl" <<'MOCK'
-#!/usr/bin/env bash
-case "$*" in
-    *"is-active"*"--quiet"*) exit 0 ;;
-    *"is-active"*) printf 'active\n' ;;
-    *"list-units"*"spira-aeon"*) true ;;
-    *"list-unit-files"*"spira-watch"*) true ;;
-    *"list-units"*"spira-watch"*) true ;;
-    *"list-timers"*) true ;;
-    *"is-enabled"*) printf 'enabled\n' ;;
-esac
-exit 0
-MOCK
-chmod +x "$BIN/systemctl"
-
-FAKE_HOME="$TMP/dochome"
-UNIT_DIR="$FAKE_HOME/.config/systemd/user"
-
-setup_doc_env() {
-    rm -rf "$FAKE_HOME"
-    mkdir -p "$UNIT_DIR" "$TMP/docdb/.beads" "$TMP/docrun"
-    touch "$TMP/watchers-empty"
-}
-
-run_doctor() {
-    env -i \
-        PATH="/usr/local/bin:/usr/bin:/bin" \
-        HOME="$FAKE_HOME" \
-        SPIRA_CONF=/nonexistent \
-        SPIRA_PATH="$BIN" \
-        SPIRA_SYSTEMCTL="$BIN/systemctl" \
-        SPIRA_DB="$TMP/docdb" \
-        SPIRA_RUN="$TMP/docrun" \
-        SPIRA_INSTANCE=prod \
-        SPIRA_BD_PIN="$TMP/docrun/bd-pin" \
-        SPIRA_REPO_MAP=/nonexistent \
-        SPIRA_NOTIFY=/nonexistent \
-        SPIRA_WATCHERS="$TMP/watchers-empty" \
-        bash "$HERE/doctor.sh" 2>/dev/null || true
-}
-
-# ==========================================================================
-echo
-echo "POSITIVE CONTROL (doctor) — empty ExecStart caught before clean case trusted:"
-# ==========================================================================
-
-setup_doc_env
-printf '[Service]\nExecStart= sql-server --config /data/dolt-server.yaml\n' \
-    > "$UNIT_DIR/dolt-beads.service"
-
-doc_ctrl_out="$(run_doctor)"
-want "doctor positive control: FAIL line appears"    "FAIL"               "$doc_ctrl_out"
-want "doctor positive control: unit name mentioned"  "dolt-beads.service" "$doc_ctrl_out"
-want "doctor positive control: 203/EXEC mentioned"   "203/EXEC"           "$doc_ctrl_out"
-
-# ==========================================================================
-echo
-echo "DOCTOR FAIL — ExecStart= <space>: FAIL, no ok for empty-exec check:"
-# ==========================================================================
-nowant "doctor fail: ok line absent when fault present" \
-       "no installed unit has an empty ExecStart executable" "$doc_ctrl_out"
-
-# ==========================================================================
-echo
-echo "DOCTOR CLEAN — proper ExecStart: OK line appears:"
-# ==========================================================================
-
-setup_doc_env
-printf '[Service]\nExecStart=/usr/local/bin/dolt sql-server --config /data/dolt-server.yaml\n' \
-    > "$UNIT_DIR/dolt-beads.service"
-
-doc_clean_out="$(run_doctor)"
-want   "doctor clean: ok line for empty-exec check" \
-       "no installed unit has an empty ExecStart executable" "$doc_clean_out"
-nowant "doctor clean: no FAIL for empty ExecStart" \
-       "ExecStart has an empty executable" "$doc_clean_out"
 
 # ==========================================================================
 echo
