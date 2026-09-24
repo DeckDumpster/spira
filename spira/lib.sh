@@ -5504,6 +5504,66 @@ queue_certified_list() {
     done
 }
 
+# queue_cancel_branch_runs <forge> <repo-dir> <branch> [<log-tag>]
+# Cancels every non-completed Gate run on <branch> and logs each attempt to
+# landing.log. GitHub does not cancel a workflow run when its PR closes, and
+# each batch branch is a fresh spira/queue/<stamp>, so the gate-${ref}
+# concurrency group has no earlier run on that branch to collide with and
+# cancel for free — closing the PR must cancel the run itself.
+# A failed cancel is logged loudly (stderr) rather than swallowed: the run
+# stays non-completed and its PR stays closed, so the orphan-run sweep
+# (queue_sweep_orphan_runs) or the next abandon retries it.
+queue_cancel_branch_runs() {
+    local forge="$1" repo="$2" branch="$3" tag="${4:-QUEUE}"
+    [ -n "$branch" ] || return 0
+    local run_id status rc=0
+    while read -r run_id status; do
+        [ -n "$run_id" ] || continue
+        if "$forge" run-cancel "$repo" "$run_id" >/dev/null 2>&1; then
+            printf '%s RUN_CANCEL %s branch=%s run=%s status=%s\n' \
+                "$tag" "$(date +%s)" "$branch" "$run_id" "$status" \
+                >> "${SPIRA_RUN:-/tmp}/landing.log" 2>/dev/null || true
+        else
+            rc=1
+            printf '%s RUN_CANCEL_FAILED %s branch=%s run=%s status=%s\n' \
+                "$tag" "$(date +%s)" "$branch" "$run_id" "$status" \
+                >> "${SPIRA_RUN:-/tmp}/landing.log" 2>/dev/null || true
+            printf 'spira: WARN failed to cancel run %s for %s — will retry\n' \
+                "$run_id" "$branch" >&2
+        fi
+    done < <("$forge" runs-for-branch "$repo" "$branch" 2>/dev/null)
+    return $rc
+}
+
+# queue_sweep_orphan_runs <forge> <repo-dir>
+# Cancels every non-completed Gate run on a spira/queue/* branch whose PR is not
+# open. Catches runs orphaned before queue_cancel_branch_runs existed, and a PR
+# closed by hand outside the abandon/eject/eviction paths. The live batch's own
+# branch and main's push runs are unaffected: the live branch's PR is open, and
+# a push run's branch is never spira/queue/*.
+queue_sweep_orphan_runs() {
+    local forge="$1" repo="$2"
+    local run_id branch status open_pr rc=0
+    while read -r run_id branch status; do
+        [ -n "$run_id" ] || continue
+        open_pr="$("$forge" pr-number "$repo" "$branch" 2>/dev/null)"
+        [ -n "$open_pr" ] && continue
+        if "$forge" run-cancel "$repo" "$run_id" >/dev/null 2>&1; then
+            printf 'QUEUE SWEEP_CANCEL %s branch=%s run=%s status=%s\n' \
+                "$(date +%s)" "$branch" "$run_id" "$status" \
+                >> "${SPIRA_RUN:-/tmp}/landing.log" 2>/dev/null || true
+        else
+            rc=1
+            printf 'QUEUE SWEEP_CANCEL_FAILED %s branch=%s run=%s status=%s\n' \
+                "$(date +%s)" "$branch" "$run_id" "$status" \
+                >> "${SPIRA_RUN:-/tmp}/landing.log" 2>/dev/null || true
+            printf 'spira: WARN failed to cancel orphaned run %s for %s\n' \
+                "$run_id" "$branch" >&2
+        fi
+    done < <("$forge" runs-queue-branches "$repo" 2>/dev/null)
+    return $rc
+}
+
 # compute_gate_key <repo-path> <repo-name> <branch-ref> <base-ref>
 # Compute the gate key for a branch. Matches gate.sh's gate_key() computation so that
 # a stored key can be compared against the current one to detect gate-command changes.

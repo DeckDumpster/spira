@@ -10,6 +10,8 @@
 #                                              then "flaky: <suite>" for each flaky annotation, and
 #                                              "build-error: <line>" per line of a failed build job's error
 # run-id <repo-dir> <branch>                   prints the latest CI run ID for the branch
+# runs-for-branch <repo-dir> <branch>          prints "<id> <status>" for each non-completed Gate run on the branch
+# runs-queue-branches <repo-dir>               prints "<id> <branch> <status>" for each non-completed Gate run on a spira/queue/* branch
 # runs-active <repo-dir>                       prints the count of queued+in_progress PR runs, or ? if unknown
 # run-metadata <repo-dir> <run-id>             prints: started-at: <epoch>; last-activity: <epoch>
 # run-cancel <repo-dir> <run-id>               cancels an in-progress run
@@ -269,6 +271,33 @@ except Exception:
         run_id="$( cd "$repo" && ghq run list --branch "$branch" \
             --json databaseId --limit 1 -q '.[0].databaseId' 2>/dev/null )" || run_id=""
         printf '%s\n' "${run_id:-}"
+        ;;
+    runs-for-branch)
+        branch="${1:-}"
+        [ -n "$branch" ] || exit 0
+        ( cd "$repo" && ghq run list --branch "$branch" --workflow Gate \
+            --json databaseId,status --limit 20 2>/dev/null ) | python3 -c "
+import json, sys
+try:
+    for r in json.load(sys.stdin):
+        if r.get('status') != 'completed':
+            print(r['databaseId'], r.get('status', ''))
+except Exception:
+    pass
+" 2>/dev/null
+        ;;
+    runs-queue-branches)
+        ( cd "$repo" && ghq run list --workflow Gate \
+            --json databaseId,headBranch,status --limit 100 2>/dev/null ) | python3 -c "
+import json, sys
+try:
+    for r in json.load(sys.stdin):
+        hb = r.get('headBranch') or ''
+        if hb.startswith('spira/queue/') and r.get('status') != 'completed':
+            print(r['databaseId'], hb, r.get('status', ''))
+except Exception:
+    pass
+" 2>/dev/null
         ;;
     batch-ci-status)
         # batch-ci-status <repo-dir> <branch> → lines describing the current CI run:

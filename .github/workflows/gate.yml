@@ -51,6 +51,12 @@ name: Gate
 
 on:
   pull_request:
+    # closed is added to the default set (opened, synchronize, reopened) as a backstop:
+    # whoever closes a batch PR — eviction, abandon, or a human — this queues a run in
+    # the same ref-keyed concurrency group below, and cancel-in-progress kills whatever
+    # gate run was still going for it. select's own `if:` (below) keeps this run from
+    # provisioning a machine.
+    types: [opened, synchronize, reopened, closed]
     branches: [main]
   push:
     branches: [main]
@@ -99,6 +105,9 @@ jobs:
   # ---------------------------------------------------------------------------
   select:
     runs-on: ubuntu-latest
+    # A closed PR enters the run only to occupy the concurrency group and trigger
+    # cancel-in-progress on the run this superseded; it does nothing else.
+    if: github.event.action != 'closed'
     outputs:
       suites: ${{ steps.sel.outputs.suites }}
     steps:
