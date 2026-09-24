@@ -175,6 +175,14 @@ sql_reopen_cause() {
         | sql_val | grep -v '^[(]' || echo ""
 }
 
+# sql_reopen_count <id> — count of "reopen" events (bead_reopen calls only, never fired for
+# a refile of a bead that stayed open) — distinct from recurs_of's "recurred" events, which
+# fire on every second-and-later filing whether or not the bead was ever closed.
+sql_reopen_count() {
+    B sql "SELECT COUNT(*) FROM events WHERE issue_id='$1' AND event_type='reopen'" 2>/dev/null \
+        | sql_val | grep -E '^[0-9]+$' || echo 0
+}
+
 # ======================================================================================
 echo
 # sp-recur-N-<cause> labels are no longer written (sp-lzt); recurrences are events.
@@ -365,7 +373,7 @@ B dep add "$INC1" "$ROOT1" >/dev/null 2>&1
 file_watcher_incident "$REF1" "watcher dep test"
 
 is "bead stays open after refile with an open dep" "open" "$(bead_status "$INC1")"
-is "no reopen event (bead was never closed)" "0" "$(recurs_of "$INC1")"
+is "no reopen event (bead was never closed)" "0" "$(sql_reopen_count "$INC1")"
 
 READY1="$(B ready --json 2>/dev/null | python3 -c '
 import sys, json
