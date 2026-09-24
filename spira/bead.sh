@@ -58,6 +58,19 @@ _bead_file() {
     local bd_type; bd_type="$("$BEAD_HOME/schema.sh" type-of "$kind" 2>/dev/null)" \
         || { printf 'bead: unknown kind: %s\n' "$kind" >&2; return 2; }
 
+    # REPO MAP CHECK. A repo: label the map does not resolve parks the bead in aeon.sh
+    # (law-a-guard-refuses-it-does-not-tidy) instead of failing where it was typed.
+    if [ -n "$repo" ]; then
+        local _known; _known=" $(repo_names 2>/dev/null | tr '\n' ' ')"
+        case "$_known" in
+            *" $repo "*) ;;
+            *)
+                printf 'bead: repo:%s is not in the repo map\n' "$repo" >&2
+                printf 'bead: known repos:%s\n' "$_known" >&2
+                return 2 ;;
+        esac
+    fi
+
     if [ "$kind" = "work" ]; then
         [ -n "$for_fayth" ] || { printf 'bead: --for <persona> required\n' >&2; return 2; }
         [ -n "$repo" ]      || { printf 'bead: --repo <name> required\n' >&2; return 2; }
