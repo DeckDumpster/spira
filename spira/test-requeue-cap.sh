@@ -182,7 +182,7 @@ echo
 echo "requeue cap for closed beads (supplement):"
 
 seed_bead sp-rq-closed-below
-B label add sp-rq-closed-below "branch:spira/sp-rq-closed-below" >/dev/null 2>&1
+B set-state sp-rq-closed-below "branch=spira/sp-rq-closed-below" --reason "branch" >/dev/null 2>&1
 reopen_cycle sp-rq-closed-below 2
 B close sp-rq-closed-below --reason "done" >/dev/null 2>&1 || true
 sentinel >/dev/null 2>&1 || true
@@ -190,7 +190,7 @@ nowant "closed bead with 2 reopens (below cap 3) fires no escalation" \
        "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
 
 seed_bead sp-rq-closed-at
-B label add sp-rq-closed-at "branch:spira/sp-rq-closed-at" >/dev/null 2>&1
+B set-state sp-rq-closed-at "branch=spira/sp-rq-closed-at" --reason "branch" >/dev/null 2>&1
 reopen_cycle sp-rq-closed-at 3
 B close sp-rq-closed-at --reason "done" >/dev/null 2>&1 || true
 sentinel >/dev/null 2>&1 || true
