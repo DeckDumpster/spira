@@ -1203,7 +1203,7 @@ spira_conf_defaults() {
     # cannot answer is evidence the account is genuinely out for builders. An operator
     # whose pool uses a different model sets this key. Probe with the cheapest capable
     # model — a refused probe costs nothing; a served one costs one minimal request.
-    : "${SPIRA_CAPACITY_PROBE_MODEL:=claude-sonnet-4-6}"
+    : "${SPIRA_CAPACITY_PROBE_MODEL:=claude-sonnet-5}"
     # PROBE_INTERVAL: minimum seconds between probes. One per hour is enough — the reset
     # time from a refusal is typically several hours, so a probe that keeps the pause for
     # an hour costs nothing and one that lifts it early unblocks the whole queue.
