@@ -1,0 +1,22 @@
+[package]
+name = "spira-config"
+version = "1.0.0"
+edition = "2021"
+description = "spira-config — typed spira.toml: schema, validate, get, export --sh, and a converter from spira.conf/repo-map/fayth."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+serde_json = "1"
+serde_path_to_error = "0.1"
+schemars = "0.8"
+
+[[bin]]
+name = "spira-config"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
