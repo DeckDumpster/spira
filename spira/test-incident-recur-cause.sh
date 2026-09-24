@@ -22,9 +22,17 @@
 #      sp-recur-1-unrecorded; a bead already carrying sp-recur-1-unrecorded is not double-
 #      converted (safe to re-run).
 #
-# A REAL bd ON A FIXTURE DATABASE (law-prefer-the-real-dependency).
+# 4. WATCHER-FILED INCIDENTS (merged from test-watcher-reopen.sh): a bead blocked by an
+#    open dep stays open on refile with no reopen event, and pc1/pc2 prove the interval
+#    classifier both ways over a real bead (case2, which only re-ran pc2's exact scenario,
+#    was deleted rather than merged — same assertion, no new fact).
 #
-# covers: spira/incident.sh spira/lib.sh
+# A REAL bd ON A FIXTURE DATABASE (law-prefer-the-real-dependency), except the classifier
+# itself (section 0 below), which is pure and needs no database at all — a T1 seam inside a
+# suite whose other sections stay T3 because the events table is the fact under test there.
+#
+# covers: spira/incident.sh spira/lib.sh UC-operator-channel-36
+# tier: T3
 # hermetic-ok: uses a fixture database, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -34,6 +42,25 @@ bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+
+echo "test-incident-recur-cause.sh"
+
+# ======================================================================================
+echo
+echo "0. _reopen_cause <closed-epoch> <now-epoch> <interval-s> — pure, no database:"
+# ======================================================================================
+# SPIRA_INCIDENT_CAUSE set only to keep incident.sh's own "cause not set" warning (a
+# top-level check unrelated to what this section tests) out of the suite's output.
+export SPIRA_INCIDENT_CAUSE=classifier-probe
+# shellcheck disable=SC1090
+. "$HERE/incident.sh"
+is "well inside the interval: closed-while-live" "closed-while-live" "$(_reopen_cause 1000 1100 200)"
+is "past the interval: recurrence"               "recurrence"        "$(_reopen_cause 1000 1300 200)"
+is "exactly at the interval boundary: recurrence (not < counts as outside)" \
+    "recurrence" "$(_reopen_cause 1000 1200 200)"
+is "interval=0 never qualifies as live: recurrence" "recurrence" "$(_reopen_cause 1000 1000 0)"
+is "a large interval still holds far out: closed-while-live" \
+    "closed-while-live" "$(_reopen_cause 1000 10998 9999)"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -85,7 +112,75 @@ recur_max() { B label list "$1" 2>/dev/null | grep -oE 'sp-recur-[0-9]+' \
 # under pipefail (law-no-grep-q-under-pipefail).
 has_label_like() { local all; all="$(B label list "$1" 2>/dev/null)"; [[ "$all" == *"$2"* ]]; }
 
-echo "test-incident-recur-cause.sh"
+# --- helpers for section 6/7 (merged from test-watcher-reopen.sh) -----------------------
+
+# file_watcher_incident <ref> <title> [VAR=val ...] — files a watcher-style incident
+# (SIN_EXEMPT=1). Uses env (not env -i) to preserve SPIRA_BD so the subprocess's bdq uses
+# the server-mode binary and can write to the events table via bd sql.
+file_watcher_incident() {
+    local ref="$1" title="$2"; shift 2
+    printf 'watcher payload' | \
+        env SPIRA_CONF="$TMP/no-conf" \
+        SPIRA_DB="$SPIRA_DB" \
+        SPIRA_RUN="$TMP/run" \
+        SPIRA_HOME="$TMP/inc-home" \
+        SPIRA_INCIDENT_LOCK="$TMP/run/watcher.lock" \
+        SPIRA_INCIDENT_REPO= \
+        SPIRA_SIN_EXEMPT=1 \
+        SPIRA_INCIDENT_CAUSE=watchtower \
+        "$@" \
+        bash "$INC" file "$title" - >/dev/null 2>&1
+}
+
+# find_bead <ref> — print bead id (open or recently closed) by external_ref.
+find_bead() {
+    local ref="$1" hash
+    hash="$(printf '%s' "$ref" | sha256sum | cut -c1-8)"
+    local _id
+    _id="$(B list --status open,in_progress --label "ref:$hash" --limit 0 --json 2>/dev/null \
+      | python3 -c '
+import sys, json
+target = sys.argv[1]
+try:
+    for b in json.load(sys.stdin):
+        if b.get("external_ref") == target:
+            print(b["id"]); sys.exit(0)
+except: pass
+' "$ref" 2>/dev/null)"
+    [ -n "$_id" ] && { printf '%s' "$_id"; return; }
+    B list --status closed --closed-after "$(date -u -d '-1 day' '+%Y-%m-%d' 2>/dev/null \
+        || date -u -v-1d '+%Y-%m-%d' 2>/dev/null)" \
+      --label "ref:$hash" --limit 0 --json 2>/dev/null \
+      | python3 -c '
+import sys, json
+target = sys.argv[1]
+try:
+    for b in json.load(sys.stdin):
+        if b.get("external_ref") == target:
+            print(b["id"]); sys.exit(0)
+except: pass
+' "$ref" 2>/dev/null
+}
+
+bead_status() {
+    B show "$1" --json 2>/dev/null \
+      | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+b = d if isinstance(d, dict) else (d[0] if d else {})
+print(b.get("status", "?"))
+' 2>/dev/null || printf '?'
+}
+
+# sql_val — parse bd sql output: skip header+separator (lines 1-2), return first data line.
+sql_val() { tail -n +3 | head -1 | tr -d ' '; }
+
+# sql_reopen_cause <id> — most recent reopen event's new_value (the cause), read straight
+# from the events table — the fact _reopen_cause's caller actually wrote, not a re-derivation.
+sql_reopen_cause() {
+    B sql "SELECT new_value FROM events WHERE issue_id='$1' AND event_type='reopen' ORDER BY created_at DESC LIMIT 1" 2>/dev/null \
+        | sql_val | grep -v '^[(]' || echo ""
+}
 
 # ======================================================================================
 echo
@@ -254,6 +349,63 @@ is "exactly one Sin ask recorded" "1" "$_ask_count"
 has_label_like "$bid5" "sin" \
     && ok "bead carries sin label after escalation" \
     || bad "bead carries sin label after escalation" "labels: $(B label list "$bid5" 2>/dev/null)"
+
+# ======================================================================================
+echo
+echo "6. dep path — a watcher incident blocked by an open dep stays open on refile:"
+# ======================================================================================
+# Merged from test-watcher-reopen.sh: proves the mechanism that lets an Ops aeon link the
+# incident to its root cause and leave it open without a fresh reopen event on every tick.
+testdb_reset; mkdir -p "$TMP/run"
+
+REF1="incident:watcher-dep-$$"
+file_watcher_incident "$REF1" "watcher dep test"
+INC1="$(find_bead "$REF1")"
+[ -n "$INC1" ] && ok "watcher incident filed" || bad "watcher incident filed" "no bead id"
+
+ROOT1="$(B create "root cause for watcher dep test" -l spira,plan 2>/dev/null \
+           | grep -oE '\b[a-z0-9]+-[a-z0-9]+\b' | head -1)"
+[ -n "$ROOT1" ] && ok "root cause bead created ($ROOT1)" || bad "root cause bead created" "no id"
+B dep add "$INC1" "$ROOT1" >/dev/null 2>&1
+
+# Refile the same ref (simulating next watcher tick). Bead is OPEN; should just note.
+file_watcher_incident "$REF1" "watcher dep test"
+
+is "bead stays open after refile with an open dep" "open" "$(bead_status "$INC1")"
+is "no reopen event (bead was never closed)" "0" "$(recurs_of "$INC1")"
+
+READY1="$(B ready --json 2>/dev/null | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+ids = [i.get("id","") for i in (d if isinstance(d, list) else [])]
+print("absent" if "'"$INC1"'" not in ids else "present")
+' 2>/dev/null)"
+is "blocked bead absent from bd ready" "absent" "$READY1"
+
+# ======================================================================================
+echo
+echo "7. the classifier over a real bead — pc1/pc2 positive control (both directions):"
+# ======================================================================================
+# law-absence-needs-a-positive-control: prove the classifier fires BOTH ways over a real
+# close-then-refile before trusting anything it says elsewhere. (test-watcher-reopen.sh's
+# case2 only re-ran pc2's exact scenario — deleted rather than merged, D-row 36.)
+testdb_reset; mkdir -p "$TMP/run"
+
+REF_PC1="incident:watcher-pc1-$$"
+file_watcher_incident "$REF_PC1" "pc1" SPIRA_WATCHER_INTERVAL_S=0
+PC1="$(find_bead "$REF_PC1")"
+[ -n "$PC1" ] && ok "pc1: initial filing creates bead" || bad "pc1: initial filing creates bead" "no bead id"
+B close "$PC1" --reason "test" >/dev/null 2>&1
+file_watcher_incident "$REF_PC1" "pc1" SPIRA_WATCHER_INTERVAL_S=0
+is "pc1: interval=0 → cause=recurrence" "recurrence" "$(sql_reopen_cause "$PC1")"
+
+REF_PC2="incident:watcher-pc2-$$"
+file_watcher_incident "$REF_PC2" "pc2" SPIRA_WATCHER_INTERVAL_S=9999
+PC2="$(find_bead "$REF_PC2")"
+[ -n "$PC2" ] && ok "pc2: initial filing creates bead" || bad "pc2: initial filing creates bead" "no bead id"
+B close "$PC2" --reason "test" >/dev/null 2>&1
+file_watcher_incident "$REF_PC2" "pc2" SPIRA_WATCHER_INTERVAL_S=9999
+is "pc2: large interval → cause=closed-while-live" "closed-while-live" "$(sql_reopen_cause "$PC2")"
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
