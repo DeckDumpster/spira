@@ -727,8 +727,8 @@ spira_conf_defaults() {
     # say "plan bead" all read the same value. A literal in multiple files is how those
     # multiple programs come to disagree (law-schema-over-code). The default is "plan" — the
     # value the store has always used — so upgrading a clean install changes nothing.
-    : "${SPIRA_PLAN_LABEL:=partition:plan}"
-    : "${SPIRA_INCIDENT_LABEL:=partition:incident}"
+    : "${SPIRA_PLAN_LABEL:=plan}"
+    : "${SPIRA_INCIDENT_LABEL:=incident}"
     : "${SPIRA_EXPRESS_LABEL:=express}"
     # NO-LOOP LABEL — marks a bead as intentionally unclaimable. READY_ARGS excludes it, so
     # fayth_ready and detect_unclaimable_ready never see it. Without this label, a bead that
