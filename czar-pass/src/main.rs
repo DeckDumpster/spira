@@ -56,10 +56,12 @@ struct Config {
     starved_max_s: u64,
     strands_state: PathBuf,
     ci_red_max: u64,
+    base_unreadable_grace: u64,
     lock_path: PathBuf,
     spira_db: String,
     scope_label: String,
     czar_label: String,
+    express_label: String,
     throttle_stamp: PathBuf,
     land_unit: String,
     systemctl: String,
@@ -113,11 +115,17 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(600),
+            base_unreadable_grace: env::var("SPIRA_BASE_CI_UNREADABLE_GRACE_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(120),
             lock_path: spira_run.join("czar-pass.lock"),
             spira_db: env::var("SPIRA_DB").unwrap_or_default(),
             scope_label: env::var("SPIRA_SCOPE_LABEL").unwrap_or_default(),
             czar_label: env::var("SPIRA_CZAR_LABEL")
                 .unwrap_or_else(|_| "czar-trigger".to_string()),
+            express_label: env::var("SPIRA_EXPRESS_LABEL")
+                .unwrap_or_else(|_| "express".to_string()),
             throttle_stamp: env::var("SPIRA_THROTTLE_STAMP")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("queue-throttled")),
@@ -277,6 +285,52 @@ fn infer(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str) {
     }
 }
 
+// A red base blocks every branch of its own repository, not one batch's members, so it is
+// filed at P0 + express against the REPOSITORY THAT IS RED rather than at czar-pass's usual
+// P1 against "spira" — a red main.py needs a builder in the failing repo, at the front of
+// the queue, not a routine queue-health ticket. The express label is added explicitly:
+// incident.sh's `bd create` does not go through bead.sh's "P0 implies express" default.
+fn infer_urgent(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str, repo: &str) {
+    match cfg.stage(class) {
+        Stage::Shadow => czar_would_log(cfg, class, "inference", subj),
+        Stage::Act => {
+            let mut labels = format!("plan,{}", cfg.express_label);
+            if !cfg.scope_label.is_empty() {
+                labels = format!("{},{}", cfg.scope_label, labels);
+            }
+            let mut child = Command::new("bash")
+                .arg(&cfg.incident_sh)
+                .arg("file")
+                .arg(subj)
+                .arg("-")
+                .env("SPIRA_DB", &cfg.spira_db)
+                .env("SPIRA_INCIDENT_LABELS", labels)
+                .env("SPIRA_INCIDENT_TYPE", "bug")
+                .env("SPIRA_INCIDENT_PRIORITY", "0")
+                .env("SPIRA_INCIDENT_ACTOR", "czar-pass")
+                .env("SPIRA_SIN_EXEMPT", "1")
+                .env("SPIRA_INCIDENT_REPO", repo)
+                .env("SPIRA_INCIDENT_REF", format!("incident:base-red:{}", ref_))
+                .env("SPIRA_INCIDENT_CAUSE", class)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn();
+            if let Ok(ref mut child) = child {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(body.as_bytes());
+                }
+                let _ = child.wait();
+            }
+            log_print(&format!(
+                "czar pass: {} → inference (filed, summoning czar)",
+                class
+            ));
+            summon_fayth_czar(cfg);
+        }
+    }
+}
+
 fn det_action(cfg: &Config, class: &str, desc: &str, action: impl FnOnce()) {
     match cfg.stage(class) {
         Stage::Shadow => czar_would_log(cfg, class, "det", desc),
@@ -318,6 +372,31 @@ fn repo_root(name: &str, repo_map: &Option<PathBuf>) -> Option<PathBuf> {
             if n == name && !p.is_empty() {
                 return Some(PathBuf::from(p));
             }
+        }
+    }
+    None
+}
+
+// The base ref a repository's branches are cut from and judged against (repo-map column
+// 4), reduced to a bare branch name: `gh run list --branch` wants "main", not "origin/main".
+// Empty in repo-map means "let spira_landref resolve it" (doctor.sh's own leave-empty
+// convention) — czar-pass has no such resolver, so an empty or absent base skips base-red
+// for that repo rather than guessing.
+fn repo_base(name: &str, repo_map: &Option<PathBuf>) -> Option<String> {
+    let map_path = repo_map.as_ref()?;
+    let content = fs::read_to_string(map_path).ok()?;
+    for line in content.lines() {
+        let t = line.trim();
+        if t.starts_with('#') || t.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = t.splitn(6, '|').collect();
+        if parts.len() >= 4 && parts[0].trim() == name {
+            let base = parts[3].trim();
+            if base.is_empty() {
+                return None;
+            }
+            return Some(base.rsplit('/').next().unwrap_or(base).to_string());
         }
     }
     None
@@ -455,6 +534,9 @@ fn run_pass() -> Result<(), String> {
     let (cis_det, cis_rem, cis_tier, cir_det, cir_rem, cir_tier) =
         detect_ci(&cfg);
 
+    // ── DETECTOR: base-red (the base ref's own gate run, not a batch's) ──────
+    let (br_det, br_rem, br_tier) = detect_base_red(&cfg);
+
     // ── DETECTOR: starved ─────────────────────────────────────────────────────
     let (sv_det, sv_rem, sv_tier) =
         detect_starved(&cfg, &check7);
@@ -466,6 +548,7 @@ fn run_pass() -> Result<(), String> {
     telem(&cfg, "loop-stalled",       ls_det,  ls_rem,  ls_tier);
     telem(&cfg, "ci-stalled",         cis_det, cis_rem, cis_tier);
     telem(&cfg, "ci-red",             cir_det, cir_rem, cir_tier);
+    telem(&cfg, "base-red",           br_det,  br_rem,  br_tier);
     telem(&cfg, "starved",            sv_det,  sv_rem,  sv_tier);
 
     // Marker
@@ -876,6 +959,129 @@ fn detect_ci<'a>(cfg: &Config) -> (&'a str, &'a str, &'a str, &'a str, &'a str, 
         cir_remedy,
         cir_tier,
     )
+}
+
+// The base ref's OWN gate run, as opposed to ci-red above (a batch's PR run). A batch PR
+// runs diff-selected suites; the push that lands it on the base ref runs the whole corpus,
+// so a batch can go green and land red with nothing else watching for that. Fires at once
+// on the first red pass — no age threshold — because the entire point is to beat "cut by
+// hand two hours later" (sp-eve0i), and infer_urgent files at P0 + express so it is not
+// merely first in a P0 queue that is itself hours deep.
+//
+// UNREADABLE IS NOT GREEN (law-a-control-that-cannot-check-must-refuse): when the forge
+// seam returns no run at all for the base branch, that is filed too, distinctly, once it
+// has persisted past base_unreadable_grace — long enough that it is not just GitHub not
+// yet having created the run row for a push that landed seconds ago.
+fn detect_base_red<'a>(cfg: &Config) -> (&'a str, &'a str, &'a str) {
+    let mut detected = false;
+    let mut remedy: &'a str = "none";
+    let mut tier: &'a str = "det";
+
+    if cfg.queue_dir.is_dir() {
+        for (repo_name, _open_path) in find_open_files(&cfg.queue_dir) {
+            let repo_path = match repo_root(&repo_name, &cfg.repo_map) {
+                Some(p) => p,
+                None => continue,
+            };
+            let base_branch = match repo_base(&repo_name, &cfg.repo_map) {
+                Some(b) => b,
+                None => continue,
+            };
+            let repo_path_str = repo_path.to_string_lossy().to_string();
+            let repo_safe = repo_name.replace(',', "-");
+            let unreadable_class = format!("base-red-unreadable-{}", repo_safe);
+
+            let ci_out = run_forge(
+                &cfg.forge_sh,
+                &["batch-ci-status", &repo_path_str, &base_branch],
+            );
+            let run_id = parse_field(&ci_out, "run-id");
+
+            if run_id.is_none() {
+                fs_record(&cfg.spira_run, &unreadable_class, cfg.now_secs);
+                let age = latency_secs(&cfg.spira_run, &unreadable_class, cfg.now_secs);
+                if age >= cfg.base_unreadable_grace {
+                    detected = true;
+                    fs_record(&cfg.spira_run, "base-red", cfg.now_secs);
+                    let body = format!(
+                        "{}'s base ({}) CI status could not be read for {}s — the forge \
+                         seam returned no run information for that branch.\n\
+                         A base whose status cannot be read is treated as failed, not \
+                         green: nothing here can tell you it is safe to land on.\n",
+                        repo_name, base_branch, age
+                    );
+                    infer_urgent(
+                        cfg,
+                        "base-red",
+                        &format!("{}:unreadable", repo_name),
+                        &format!(
+                            "QUEUE: {}'s base CI status could not be read",
+                            repo_name
+                        ),
+                        &body,
+                        &repo_name,
+                    );
+                    remedy = "inference";
+                    tier = "inf";
+                }
+                continue;
+            }
+            fs_clear(&cfg.spira_run, &unreadable_class);
+
+            let conclusion = parse_field(&ci_out, "run-conclusion");
+            if conclusion.as_deref() == Some("failure") {
+                detected = true;
+                fs_record(&cfg.spira_run, "base-red", cfg.now_secs);
+
+                let sha = parse_field(&ci_out, "head-sha")
+                    .unwrap_or_else(|| "unknown".to_string());
+                let run_url = parse_field(&ci_out, "run-url")
+                    .unwrap_or_else(|| "(no run url)".to_string());
+                let mut suites: Vec<String> = ci_out
+                    .lines()
+                    .filter_map(|l| l.strip_prefix("red-suite: ").map(|s| s.to_string()))
+                    .collect();
+                suites.sort();
+                suites.dedup();
+                let suite_key = if suites.is_empty() {
+                    "unknown".to_string()
+                } else {
+                    suites.join(",")
+                };
+                let suite_list = if suites.is_empty() {
+                    "(suite names unavailable)".to_string()
+                } else {
+                    suites.join(", ")
+                };
+
+                let body = format!(
+                    "{}'s own base ({}) gate run completed red.\n\n\
+                     failing suites   {}\n\
+                     base sha         {}\n\
+                     run url          {}\n\n\
+                     Nothing else stops the next batch landing on this red base. Post-hoc \
+                     attribution is acceptable — naming who caused it is not required —\
+                     but this bead does not close until the base is green again.\n",
+                    repo_name, base_branch, suite_list, sha, run_url
+                );
+                infer_urgent(
+                    cfg,
+                    "base-red",
+                    &format!("{}:{}", repo_name, suite_key),
+                    &format!("QUEUE: {}'s base is red — {}", repo_name, suite_list),
+                    &body,
+                    &repo_name,
+                );
+                remedy = "inference";
+                tier = "inf";
+            }
+        }
+    }
+
+    if !detected {
+        fs_clear(&cfg.spira_run, "base-red");
+    }
+    (if detected { "yes" } else { "no" }, remedy, tier)
 }
 
 fn detect_starved<'a>(cfg: &Config, check7: &str) -> (&'a str, &'a str, &'a str) {

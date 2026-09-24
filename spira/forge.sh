@@ -9,6 +9,9 @@
 # check-status <repo-dir> <pr-number>          prints: pending | green | red | harness_fault | provision_fault
 #                                              then "flaky: <suite>" for each flaky annotation, and
 #                                              "build-error: <line>" per line of a failed build job's error
+# batch-ci-status <repo-dir> <branch>          prints run-id/run-conclusion/run-completed-at/
+#                                              head-sha/run-url/queued-since for the branch's
+#                                              latest run, then red-suite/flaky lines when red
 # run-id <repo-dir> <branch>                   prints the latest CI run ID for the branch
 # runs-for-branch <repo-dir> <branch>          prints "<id> <status>" for each non-completed Gate run on the branch
 # runs-queue-branches <repo-dir>               prints "<id> <branch> <status>" for each non-completed Gate run on a spira/queue/* branch
@@ -27,6 +30,92 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$HERE/lib.sh"
+
+# Full suite list from the batch-results artifact, for a completed red run. GitHub caps
+# per-step annotations at 10; the artifact carries the whole list. Prints "red-suite: <s>"
+# / "flaky: <s>" lines, or "artifact-truncated: <n>/<m>" if the artifact's own count says
+# it holds fewer entries than it claims, or nothing if there is no artifact to read.
+_forge_red_suites_artifact() {   # _forge_red_suites_artifact <repo-dir> <run-id>
+    local repo="$1" run_id="$2" _art_id _art_tmp _out=""
+    _art_id="$( cd "$repo" && ghq api \
+        "repos/{owner}/{repo}/actions/runs/$run_id/artifacts" 2>/dev/null \
+        | python3 -c "
+import json, sys
+try:
+    for a in json.load(sys.stdin).get('artifacts', []):
+        if (a.get('name') or '').startswith('batch-results-'):
+            print(a['id']); break
+except: pass
+" 2>/dev/null )" || _art_id=""
+    if [ -n "${_art_id:-}" ]; then
+        _art_tmp="$(mktemp -d)"
+        if ( cd "$repo" && ghq api \
+            "repos/{owner}/{repo}/actions/artifacts/$_art_id/zip" 2>/dev/null ) \
+            > "$_art_tmp/b.zip" 2>/dev/null && [ -s "$_art_tmp/b.zip" ]; then
+            _out="$(python3 - "$_art_tmp/b.zip" <<'PYEOF' 2>/dev/null
+import zipfile, json, sys
+try:
+    with zipfile.ZipFile(sys.argv[1]) as z:
+        rs = next((n for n in z.namelist() if n.endswith('red-suites.json')), None)
+        if rs is None:
+            sys.exit(0)
+        d = json.loads(z.read(rs))
+        red = d.get('red', [])
+        flaky = d.get('flaky', [])
+        red_count = int(d.get('red_count', len(red)))
+        if len(red) < red_count:
+            print('artifact-truncated: ' + str(len(red)) + '/' + str(red_count))
+        else:
+            for s in red:
+                print('red-suite: ' + s)
+            for s in flaky:
+                print('flaky: ' + s)
+except Exception:
+    pass
+PYEOF
+)"
+        fi
+        rm -rf "$_art_tmp" 2>/dev/null || true
+    fi
+    printf '%s' "$_out"
+}
+
+# Fallback suite list from per-job annotations (capped at 10 per step by GitHub) — used
+# when the batch-results artifact is absent or truncated.
+_forge_red_suites_annotations() {   # _forge_red_suites_annotations <repo-dir> <jobs-json>
+    local repo="$1" jobs_json="$2"
+    printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
+import json, sys
+try:
+    for j in json.load(sys.stdin).get('jobs', []):
+        print(j['id'])
+except Exception:
+    pass
+" 2>/dev/null \
+    | while IFS= read -r _jid; do
+        ( cd "$repo" && ghq api \
+            "repos/{owner}/{repo}/check-runs/$_jid/annotations" 2>/dev/null ) \
+        | python3 -c "
+import json, sys
+try:
+    for a in json.load(sys.stdin):
+        lvl = a.get('annotation_level', '')
+        title = a.get('title', '')
+        msg = a.get('message', '')
+        path = a.get('path', '')
+        if lvl == 'warning' and title == 'flaky suite':
+            idx = msg.find(' was red')
+            if idx > 0:
+                print('flaky: ' + msg[:idx])
+        elif lvl == 'error' and title == 'red-twice suite':
+            print('red-suite: ' + msg)
+        elif lvl == 'failure' and path.startswith('spira/test-') and path.endswith('.sh'):
+            print('red-suite: ' + path.split('/')[-1])
+except Exception:
+    pass
+" 2>/dev/null || true
+    done
+}
 
 cmd="${1:-}"; shift
 repo="${1:-}"; shift
@@ -168,49 +257,9 @@ except Exception:
             fi
         fi
         # When red, read the full suite list from the batch-results artifact.
-        # GitHub caps per-step annotations at 10; the artifact carries the whole list.
         _artifact_out=""
         if [ "$status" = "red" ] && [ -n "${run_id:-}" ]; then
-            _art_id="$( cd "$repo" && ghq api \
-                "repos/{owner}/{repo}/actions/runs/$run_id/artifacts" 2>/dev/null \
-                | python3 -c "
-import json, sys
-try:
-    for a in json.load(sys.stdin).get('artifacts', []):
-        if (a.get('name') or '').startswith('batch-results-'):
-            print(a['id']); break
-except: pass
-" 2>/dev/null )" || _art_id=""
-            if [ -n "${_art_id:-}" ]; then
-                _art_tmp="$(mktemp -d)"
-                if ( cd "$repo" && ghq api \
-                    "repos/{owner}/{repo}/actions/artifacts/$_art_id/zip" 2>/dev/null ) \
-                    > "$_art_tmp/b.zip" 2>/dev/null && [ -s "$_art_tmp/b.zip" ]; then
-                    _artifact_out="$(python3 - "$_art_tmp/b.zip" <<'PYEOF' 2>/dev/null
-import zipfile, json, sys
-try:
-    with zipfile.ZipFile(sys.argv[1]) as z:
-        rs = next((n for n in z.namelist() if n.endswith('red-suites.json')), None)
-        if rs is None:
-            sys.exit(0)
-        d = json.loads(z.read(rs))
-        red = d.get('red', [])
-        flaky = d.get('flaky', [])
-        red_count = int(d.get('red_count', len(red)))
-        if len(red) < red_count:
-            print('artifact-truncated: ' + str(len(red)) + '/' + str(red_count))
-        else:
-            for s in red:
-                print('red-suite: ' + s)
-            for s in flaky:
-                print('flaky: ' + s)
-except Exception:
-    pass
-PYEOF
-)"
-                fi
-                rm -rf "$_art_tmp" 2>/dev/null || true
-            fi
+            _artifact_out="$(_forge_red_suites_artifact "$repo" "$run_id")"
             case "${_artifact_out:-}" in
                 "artifact-truncated:"*)
                     # Artifact incomplete — fail closed so attribution retries rather
@@ -232,38 +281,7 @@ PYEOF
         if [ -n "${_artifact_out:-}" ]; then
             printf '%s\n' "$_artifact_out"
         else
-            # Fall back to per-job annotations (capped at 10 per step by GitHub).
-            printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
-import json, sys
-try:
-    for j in json.load(sys.stdin).get('jobs', []):
-        print(j['id'])
-except Exception:
-    pass
-" 2>/dev/null \
-            | while IFS= read -r _jid; do
-                ( cd "$repo" && ghq api \
-                    "repos/{owner}/{repo}/check-runs/$_jid/annotations" 2>/dev/null ) \
-                | python3 -c "
-import json, sys
-try:
-    for a in json.load(sys.stdin):
-        lvl = a.get('annotation_level', '')
-        title = a.get('title', '')
-        msg = a.get('message', '')
-        path = a.get('path', '')
-        if lvl == 'warning' and title == 'flaky suite':
-            idx = msg.find(' was red')
-            if idx > 0:
-                print('flaky: ' + msg[:idx])
-        elif lvl == 'error' and title == 'red-twice suite':
-            print('red-suite: ' + msg)
-        elif lvl == 'failure' and path.startswith('spira/test-') and path.endswith('.sh'):
-            print('red-suite: ' + path.split('/')[-1])
-except Exception:
-    pass
-" 2>/dev/null || true
-            done
+            _forge_red_suites_annotations "$repo" "${jobs_json:-"{}"}"
         fi
         ;;
     run-id)
@@ -304,12 +322,18 @@ except Exception:
         #   run-id: <id>
         #   run-conclusion: <conclusion>       (when run is completed)
         #   run-completed-at: <epoch>          (when run is completed; from updatedAt)
+        #   head-sha: <sha>                    (the commit the run tested)
+        #   run-url: <url>                     (the run's web URL)
         #   queued-since: <epoch>              (when any job is in queued status)
-        # Uses 2 gh API calls: run list (run_id + conclusion) and jobs (queued-since).
-        # Both ci-stalled and ci-red detectors in czar.sh --pass share this output.
+        #   red-suite: <suite> / flaky: <suite> (when run-conclusion is failure)
+        # Uses 2-3 gh API calls: run list (run_id/conclusion/sha/url), jobs
+        # (queued-since), and — on failure — the artifact/annotation suite list.
+        # ci-stalled and ci-red in czar-pass share this output; base-red (reading it for
+        # the base ref itself rather than a batch's head) is a third.
         branch="${1:-}"
         run_list="$( cd "$repo" && ghq run list --branch "$branch" \
-            --json databaseId,conclusion,status,updatedAt --limit 1 2>/dev/null )" || run_list="[]"
+            --json databaseId,conclusion,status,updatedAt,headSha,url --limit 1 2>/dev/null )" \
+            || run_list="[]"
         run_id="$(printf '%s\n' "$run_list" | python3 -c "
 import json, sys
 try:
@@ -319,6 +343,13 @@ except: pass
 " 2>/dev/null)"
         [ -n "$run_id" ] || exit 0
         printf 'run-id: %s\n' "$run_id"
+        conclusion="$(printf '%s\n' "$run_list" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    if d: print(d[0].get('conclusion') or '')
+except: pass
+" 2>/dev/null)"
         printf '%s\n' "$run_list" | python3 -c "
 import json, sys, calendar, datetime
 def epoch(t):
@@ -329,10 +360,16 @@ def epoch(t):
     except: return 0
 try:
     d = json.load(sys.stdin)
-    if d and d[0].get('conclusion'):
-        print('run-conclusion: ' + d[0]['conclusion'])
-        e = epoch(d[0].get('updatedAt') or '')
-        if e: print('run-completed-at: ' + str(e))
+    if d:
+        c = d[0].get('conclusion') or ''
+        if c:
+            print('run-conclusion: ' + c)
+            e = epoch(d[0].get('updatedAt') or '')
+            if e: print('run-completed-at: ' + str(e))
+        sha = d[0].get('headSha') or ''
+        if sha: print('head-sha: ' + sha)
+        url = d[0].get('url') or ''
+        if url: print('run-url: ' + url)
 except: pass
 " 2>/dev/null
         jobs_json="$( cd "$repo" && ghq api \
@@ -355,6 +392,15 @@ try:
     if earliest: print('queued-since: ' + str(earliest))
 except Exception: pass
 " 2>/dev/null
+        if [ "$conclusion" = "failure" ]; then
+            _artifact_out="$(_forge_red_suites_artifact "$repo" "$run_id")"
+            case "${_artifact_out:-}" in "artifact-truncated:"*) _artifact_out="" ;; esac
+            if [ -n "${_artifact_out:-}" ]; then
+                printf '%s\n' "$_artifact_out"
+            else
+                _forge_red_suites_annotations "$repo" "$jobs_json"
+            fi
+        fi
         ;;
     queued-since)
         # queued-since <repo-dir> <branch> → epoch seconds when the earliest queued job was
