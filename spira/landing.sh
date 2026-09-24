@@ -44,6 +44,9 @@ STATUS="$SPIRA_RUN/landing.status"
 MAILBOX="$SPIRA_RUN/landing.progress"
 LAND_RUN="$SPIRA_RUN/landing.run"
 LAND_CONTAINERS="$SPIRA_RUN/landing.containers"
+LAND_CURSOR="$SPIRA_RUN/landing.cursor"
+LAND_DEFERRED_DIR="$SPIRA_RUN/landing.deferred"
+DEFERRAL_ESCALATE_AT="${SPIRA_DEFERRAL_ESCALATE_AT:-5}"
 
 # n_branches is the positive control's evidence and it counts every spira/* ref seen, not
 # the subset that was landable. "I looked at nine branches and moved none" is a claim about
@@ -1853,6 +1856,25 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
             [ "$_ubr" = "$br" ] && _past_cut=1
         done
         log "landing: budget cut at $br — $(( LAND_MAXSEC - ($(date +%s) - PASS_START) ))s left, $(( _n_unvisited + 1 )) branch(es) deferred in $name"
+        printf '%s\n' "$name" > "$LAND_CURSOR" 2>/dev/null || true
+        mkdir -p "$LAND_DEFERRED_DIR" 2>/dev/null || true
+        _past_cut=0
+        for _ubr in $brs; do
+            [ "$_ubr" = "$br" ] && _past_cut=1
+            if [ "$_past_cut" = 1 ]; then
+                _deffile="$LAND_DEFERRED_DIR/${_ubr//\//_}"
+                _defn=$(( $(cat "$_deffile" 2>/dev/null || echo 0) + 1 ))
+                printf '%s\n' "$_defn" > "$_deffile" 2>/dev/null || true
+                [ "$_defn" -ge "$DEFERRAL_ESCALATE_AT" ] && \
+                    spira_ask_budget_deferred "$_ubr" "$name" "$_defn"
+            else
+                rm -f "$LAND_DEFERRED_DIR/${_ubr//\//_}" 2>/dev/null || true
+            fi
+        done
+    else
+        for _ubr in $brs; do
+            rm -f "$LAND_DEFERRED_DIR/${_ubr//\//_}" 2>/dev/null || true
+        done
     fi
 
     # ==========================================================================
@@ -2075,9 +2097,27 @@ for repo_name in $(spira_repos); do
     bash "$SPIRA_HOME/queue.sh" step "$repo_name" 2>&1 \
         | while IFS= read -r _bl; do log "$_bl"; done || true
 done
-for repo_name in $(spira_repos); do
+# Rotate repo list: start from the repo where the last pass cut its budget.
+# No repo can be permanently last in the iteration order; the cursor advances
+# the start point each pass so deprived repos get processed first next time.
+_land_repos="$(spira_repos)"
+_land_cursor="$(cat "$LAND_CURSOR" 2>/dev/null)"
+if [ -n "$_land_cursor" ] && printf '%s\n' "$_land_repos" | grep -qx "$_land_cursor"; then
+    _land_tail="" _land_head="" _land_past=0
+    while IFS= read -r _lr; do
+        [ "$_lr" = "$_land_cursor" ] && _land_past=1
+        if [ "$_land_past" = 1 ]; then
+            _land_tail="${_land_tail:+$_land_tail$'\n'}$_lr"
+        else
+            _land_head="${_land_head:+$_land_head$'\n'}$_lr"
+        fi
+    done <<< "$_land_repos"
+    _land_repos="${_land_tail}${_land_tail:+${_land_head:+$'\n'}}${_land_head}"
+fi
+while IFS= read -r repo_name; do
+    [ -n "$repo_name" ] || continue
     land_repo "$repo_name"
-done
+done <<< "$_land_repos"
 
 # After all certification passes, settle each queue-mode repo's open batch and open the next.
 for repo_name in $(spira_repos); do
