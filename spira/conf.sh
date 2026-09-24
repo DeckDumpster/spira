@@ -1195,11 +1195,12 @@ spira_conf_defaults() {
     # REPOSITORY WHOSE LANDSTATE HAS NOT YET REACHED LANDED. Excludes the bead from
     # fayth_ready so it is not summoned until the blocker's change is pushed to base.
     : "${SPIRA_QUEUE_WAIT_LABEL:=spira-queue-waiting}"
-    # LABEL MARKING A WORK BEAD SUBMITTED BUT NOT YET LANDED. bd-close-outcome-guard.sh
-    # writes it instead of closing when a builder declares OUTCOME: submitted on a bead
-    # whose type is in SPIRA_WORK_CLOSE_TYPES; bead_close_on_land (lib.sh) closes the bead
-    # for real, citing the merge commit, once its batch lands. Carried in fayth_exclude so
-    # a submitted bead is not reclaimed while it is mid-flight through certification.
+    # LABEL MARKING A WORK BEAD SUBMITTED BUT NOT YET LANDED. aeon.sh writes it, at session
+    # teardown, converting a builder's own close of a bead whose type is in
+    # SPIRA_WORK_CLOSE_TYPES back to open instead of leaving it closed; bead_close_on_land
+    # (lib.sh) closes the bead for real, citing the merge commit, once its batch lands.
+    # Carried in fayth_exclude so a submitted bead is not reclaimed while it is mid-flight
+    # through certification.
     : "${SPIRA_SUBMITTED_LABEL:=spira-submitted}"
     # ISSUE TYPES WHOSE CLOSE ROUTES THROUGH SPIRA_SUBMITTED_LABEL rather than a direct bd
     # close. Everything else (spike, ask, insight, investigation, event, chore, epic) still

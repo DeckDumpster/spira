@@ -666,11 +666,11 @@ for i in (d if isinstance(d, list) else [d]):
 # landing unblocks its dependents on a lie, and everything downstream then builds on work
 # that is not there (law-closed-is-not-landed).
 #
-# THE INVARIANT HOLDS BY CONSTRUCTION NOW, NOT BY AUDIT. A builder no longer closes its own
-# work bead: bd-close-outcome-guard.sh converts OUTCOME: submitted into
-# SPIRA_SUBMITTED_LABEL instead of allowing the close, and only bead_close_on_land
-# (lib.sh) — called from the landing pass at the moment a commit reaches the base — ever
-# closes one. A violation here is therefore not "reopen and try again": the aeon that would
+# THE INVARIANT HOLDS BY CONSTRUCTION NOW, NOT BY AUDIT. A builder's own close of a work
+# bead is converted back to open carrying SPIRA_SUBMITTED_LABEL instead of staying closed
+# (aeon.sh, at session teardown), and only bead_close_on_land (lib.sh) — called from the
+# landing pass at the moment a commit reaches the base — ever closes one for real. A
+# violation here is therefore not "reopen and try again": the aeon that would
 # retry did nothing wrong. It is a bug in the landing pass, and reading its log is Ops's
 # job, so this reports rather than reopens — reopening a bead whose work IS on the base
 # under a fact this check cannot see would throw away finished work for nothing.

@@ -6,14 +6,11 @@
 # WHY THIS EXISTS
 # ----------------
 # sp-fjsxb retired the PreToolUse guard system: 7 of 10 guard scripts were wired
-# nowhere and one more (bd-delivers-label-guard.sh) was policy convention, not
-# destructive-action prevention, so aeon_settings() in aeon.sh was trimmed to wire
-# only what remains. sp-qsona re-registered bd-close-outcome-guard.sh: its
-# "submitted" outcome is no longer a convention nag, it is the refuse-or-convert
-# enforcement the landed-batch invariant (CHECK 5) depends on, so it moved back to
-# the kept column. Nothing stops a future edit from re-adding a
-# pre_hooks.append(...) line the way the other removed ones were added one bead at
-# a time — this suite is what would catch that.
+# nowhere and 2 more (bd-close-outcome-guard.sh, bd-delivers-label-guard.sh) were
+# policy convention, not destructive-action prevention, so aeon_settings() in
+# aeon.sh was trimmed to wire only what remains. Nothing stops a future edit from
+# re-adding a pre_hooks.append(...) line the way the removed ones were added one
+# bead at a time — this suite is what would catch that.
 #
 # ALLOW-LIST AND WHY EACH ENTRY REMAINS
 # --------------------------------------
@@ -22,9 +19,6 @@
 #                               bead creation — destructive actions with no
 #                               structural replacement yet (sp-kz8ob, sp-mvg44).
 #   bd-close-unacked-guard.sh  the unacked-close handling the bead named to keep.
-#   bd-close-outcome-guard.sh  refuses/converts a work-bead close to submitted so a
-#                               closed-without-landing bead is a bug, not a routine
-#                               reopen (sp-qsona).
 #
 # POSITIVE CONTROL FIRST (law-absence-needs-a-positive-control): the checker
 # function must flag a disallowed PreToolUse command before its silence on the
@@ -46,7 +40,7 @@ check_allowlist() {
     python3 -c '
 import json, os, sys
 
-ALLOWED = {"aeon-fence.sh", "bd-close-unacked-guard.sh", "bd-close-outcome-guard.sh"}
+ALLOWED = {"aeon-fence.sh", "bd-close-unacked-guard.sh"}
 
 try:
     d = json.loads(sys.argv[1])
@@ -68,10 +62,10 @@ for group in pre:
 echo
 echo "POSITIVE CONTROL — checker flags a disallowed PreToolUse entry:"
 # ===========================================================================
-FAKE_JSON='{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"/opt/spira/bd-delivers-label-guard.sh"}]}]}}'
+FAKE_JSON='{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"/opt/spira/bd-close-outcome-guard.sh"}]}]}}'
 pc="$(check_allowlist "$FAKE_JSON")"
 case "$pc" in
-    VIOLATION:bd-delivers-label-guard.sh) ok "POSITIVE: checker flags a removed guard reintroduced into settings" ;;
+    VIOLATION:bd-close-outcome-guard.sh) ok "POSITIVE: checker flags a removed guard reintroduced into settings" ;;
     *) bad "POSITIVE: checker flags a removed guard reintroduced into settings" "got [$pc]" ;;
 esac
 
@@ -84,11 +78,9 @@ SPIRA_HOME_FIXTURE="$TMP/home"; mkdir -p "$SPIRA_HOME_FIXTURE/hooks"
 cp "$HERE/hooks/aeon-fence.sh" "$SPIRA_HOME_FIXTURE/hooks/aeon-fence.sh"
 cp "$HERE/hooks/aeon-mail-deliver.sh" "$SPIRA_HOME_FIXTURE/hooks/aeon-mail-deliver.sh"
 cp "$HERE/bd-close-unacked-guard.sh" "$SPIRA_HOME_FIXTURE/bd-close-unacked-guard.sh"
-cp "$HERE/bd-close-outcome-guard.sh" "$SPIRA_HOME_FIXTURE/bd-close-outcome-guard.sh"
 chmod +x "$SPIRA_HOME_FIXTURE/hooks/aeon-fence.sh" \
          "$SPIRA_HOME_FIXTURE/hooks/aeon-mail-deliver.sh" \
-         "$SPIRA_HOME_FIXTURE/bd-close-unacked-guard.sh" \
-         "$SPIRA_HOME_FIXTURE/bd-close-outcome-guard.sh"
+         "$SPIRA_HOME_FIXTURE/bd-close-unacked-guard.sh"
 
 # aeon.sh has no argument for "just define functions" — the top-level script
 # requires a fayth and dies without one — so the function body is extracted
@@ -112,10 +104,6 @@ esac
 case "$REAL_JSON" in
     *bd-close-unacked-guard.sh*) ok "allow-listed hook bd-close-unacked-guard.sh still wired" ;;
     *) bad "allow-listed hook bd-close-unacked-guard.sh still wired" "missing from [$REAL_JSON]" ;;
-esac
-case "$REAL_JSON" in
-    *bd-close-outcome-guard.sh*) ok "allow-listed hook bd-close-outcome-guard.sh still wired" ;;
-    *) bad "allow-listed hook bd-close-outcome-guard.sh still wired" "missing from [$REAL_JSON]" ;;
 esac
 
 echo

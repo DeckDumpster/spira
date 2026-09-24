@@ -6122,10 +6122,24 @@ if d: print(d[0].get("external_ref") or "")' 2>/dev/null)" || ext_ref=""
     fi
 }
 
+# bead_is_work_type <issue-type> -> 0 if it is one of SPIRA_WORK_CLOSE_TYPES (task bug
+# feature by default) — the types a builder's own close is converted to submitted instead
+# of left closed (aeon.sh, at session teardown). Non-code types (spike, ask, insight,
+# investigation, event, chore, epic) close by the agent's own hand, unchanged.
+bead_is_work_type() {
+    local t="$1"
+    [ -n "$t" ] || return 1
+    case " ${SPIRA_WORK_CLOSE_TYPES:-task bug feature} " in
+        *" $t "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # bead_close_on_land — the only place a work bead is closed for a landed reason.
 #
-# A builder no longer closes its own work bead (bd-close-outcome-guard.sh converts
-# OUTCOME: submitted into the SPIRA_SUBMITTED_LABEL instead of allowing the close); this
+# A builder's own close of a work bead is converted back to open carrying
+# SPIRA_SUBMITTED_LABEL instead of staying closed (aeon.sh, at session teardown, once the
+# close has already happened — not a PreToolUse hook refusing the tool call); this
 # closes it for real once the commit is actually on the base, citing the sha. Called from
 # every LANDED land_mark site, right beside gh_issue_closeout.
 #
