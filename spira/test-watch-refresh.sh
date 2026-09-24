@@ -334,23 +334,23 @@ has "and it says which unit and what it got"       "$(cat "$TMP/err")" "no usabl
 
 MANBAD="$TMP/watchers-bad"
 printf 'answers|daemon|/bin/true\nbroken row\n' > "$MANBAD"
-( MAN="$MANBAD"; reset_mtimes 2>/dev/null; fresh_show
-  runpass; rc=$?
-  is "a malformed manifest fails the pass"  "1" "$rc"
-  is "and restarts nothing"                 "" "$(acted)"
-  is "and never even asks systemd"          "" "$(grep '^systemctl' "$EXECLOG" || true)"
-  printf '%d %d\n' "$pass" "$fail" > "$TMP/subshell-counts" )
-read -r p f < "$TMP/subshell-counts"; pass="$p"; fail="$f"
+_real_man="$MAN"; MAN="$MANBAD"
+reset_mtimes 2>/dev/null; fresh_show
+runpass; rc=$?
+is "a malformed manifest fails the pass"  "1" "$rc"
+is "and restarts nothing"                 "" "$(acted)"
+is "and never even asks systemd"          "" "$(grep '^systemctl' "$EXECLOG" || true)"
+MAN="$_real_man"
 
 MANNONE="$TMP/watchers-log-only"
 printf 'cron|log|/tmp/x.log\n' > "$MANNONE"
-( MAN="$MANNONE"; fresh_show
-  runpass; rc=$?
-  is "a manifest with no daemon row is not an error" "0" "$rc"
-  has "but it is said out loud"  "$(cat "$TMP/err")" "no daemon watchers"
-  is "and nothing is asked of systemd"  "" "$(grep '^systemctl' "$EXECLOG" || true)"
-  printf '%d %d\n' "$pass" "$fail" > "$TMP/subshell-counts" )
-read -r p f < "$TMP/subshell-counts"; pass="$p"; fail="$f"
+_real_man="$MAN"; MAN="$MANNONE"
+fresh_show
+runpass; rc=$?
+is "a manifest with no daemon row is not an error" "0" "$rc"
+has "but it is said out loud"  "$(cat "$TMP/err")" "no daemon watchers"
+is "and nothing is asked of systemd"  "" "$(grep '^systemctl' "$EXECLOG" || true)"
+MAN="$_real_man"
 
 echo
 echo "orphan reaping — watchers outside any spira-watch unit are terminated"
