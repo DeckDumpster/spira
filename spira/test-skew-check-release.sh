@@ -183,13 +183,16 @@ run_skew_noart() {
 echo
 echo "CANNOT-CHECK cases — exit 3, not a silent pass:"
 # ===========================================================================
-no_releases_out="$(run_skew SPIRA_RELEASES='')"; no_releases_rc=$?
-is "no SPIRA_RELEASES: exits 3" "3" "$no_releases_rc"
-
-# Artifact mode (no .git) with no current symlink: unknown verdict, exit 3. This is
-# distinct from skew-detected (exit 1): the check could not run, not that it found skew.
+# conf.sh uses ':=' to fill empty SPIRA_RELEASES with a derived default, so passing ''
+# is not the same as "no releases infrastructure". Use an explicit empty directory and
+# an artifact-mode (no .git) SPIRA_REPO so the test reaches the cannot-check exit path.
 no_current_dir="$TMP/no-current-releases"
 mkdir -p "$no_current_dir"
+no_releases_out="$(run_skew_noart SPIRA_RELEASES="$no_current_dir")"; no_releases_rc=$?
+is "no SPIRA_RELEASES: exits 3" "3" "$no_releases_rc"
+
+# Alias of the above with different framing: artifact mode with no current symlink.
+# Both test the same path; kept separate so naming makes the intent clear at a glance.
 no_current_out="$(run_skew_noart SPIRA_RELEASES="$no_current_dir")"; no_current_rc=$?
 is "no current symlink (artifact mode): exits 3" "3" "$no_current_rc"
 
