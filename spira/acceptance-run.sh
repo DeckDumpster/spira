@@ -396,8 +396,15 @@ else
         is0 "phase B: deploy.sh $tag exits 0 (no rollback)" "$_deploy_rc"
 
         # Verify .tag sidecar names the new tag (sp-cb0q1: sidecar written to releases dir).
-        _releases_dir="${SPIRA_RELEASES:-${HOME}/spira-releases}"
-        _tag_sidecar="${_releases_dir}/current/.tag"
+        # Read SPIRA_RELEASES from the installed conf so it matches what deploy.sh used,
+        # not a default derived from the workspace checkout (which differs on CI runners).
+        _releases_dir="$(bash -c '. "$1/conf.sh" 2>/dev/null; printf "%s" "${SPIRA_RELEASES:-}"' \
+            -- "$HERE" 2>/dev/null || true)"
+        [ -z "$_releases_dir" ] && _releases_dir="${SPIRA_RELEASES:-${HOME}/spira-releases}"
+        # deploy.sh writes the full release tag to .tags/<release_stem> beside the release
+        # dirs; current/.tag does not exist (release dirs are read-only after activate.sh).
+        _current_rel="$(readlink "${_releases_dir}/current" 2>/dev/null || true)"
+        _tag_sidecar="${_releases_dir}/.tags/${_current_rel:-}"
         _sidecar_val="$(cat "$_tag_sidecar" 2>/dev/null || printf '')"
         is_same "phase B: .tag sidecar names $tag" "$tag" "$_sidecar_val"
 
