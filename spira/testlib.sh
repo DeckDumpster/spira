@@ -54,12 +54,6 @@
 # has no batch collecting rows and should not block on a path nobody gave it. Set by the
 # batch runner, one shared file per batch: every case from every suite in that batch
 # appends here, so the file is opened for append and never truncated by this library.
-#
-# NO PIPE INTO A MATCHER THAT EXITS EARLY IN want/nowant. Bash's [[ ]] is used directly
-# rather than grep, so law-no-grep-q-under-pipefail does not apply here, but the same
-# instinct holds: a helper that can fail for a reason OTHER than the assertion itself
-# (a missing binary, a broken pipe) must not be indistinguishable from the assertion
-# failing. [[ ]] has no such failure mode.
 set -u
 
 _TL_NUM=0
