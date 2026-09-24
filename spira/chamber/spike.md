@@ -139,6 +139,7 @@ on. A merge conflict is not an escalation.
 Commit the document and its sources, then close the bead:
 
     bd -C {{DB}} close {{BEAD_ID}} --reason-file - <<'REASON'
+    OUTCOME: delivered
     <the recommendation in one line, and the path to the document>
     REASON
 

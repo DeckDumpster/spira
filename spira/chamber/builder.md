@@ -85,11 +85,28 @@ leave nothing on the bead, nothing comes back for it.
 
 ## Finishing
 
-When the work is committed on your branch, close the bead with evidence:
+When the work is committed on your branch, close the bead with evidence. The first line of
+the reason must declare the terminal outcome:
 
     bd -C {{DB}} close {{BEAD_ID}} --reason-file - <<'REASON'
+    OUTCOME: submitted
     <what landed, and how it was verified>
     REASON
+
+The seven valid outcomes, and when each applies:
+
+| Outcome     | When to use |
+|-------------|-------------|
+| `submitted` | Work committed on your branch; the landing pass carries it from here |
+| `delivered` | Deliverable is not code — beads, a note, a document; name what you wrote |
+| `escalated` | Blocked on an operator decision; name the ask bead (which must list this bead as a dependent) |
+| `blocked`   | Blocked on another bead; name it |
+| `abandoned` | Bead should not be done; explain why |
+| `parked`    | Out of lifetime; name what remains |
+| `landed`    | Work is already on the base branch (sentinel's record) |
+
+`submitted` is the standard outcome for a builder. Use `delivered` when the work is
+child beads, a mail message, or a document rather than a code commit.
 
 `--reason-file -`, never `--reason -`. `bd close` does not read stdin for `--reason`: it
 stores the literal string `-`, prints a success line and exits 0, so a close whose whole

@@ -32,6 +32,7 @@ Pattern for every queue-mutating call:
     bash {{SPIRA_HOME}}/spira/czar-fence.sh <class> || {
         bd -C {{DB}} note {{BEAD_ID}} "CZAR-WOULD: <class> <action> <target> — <evidence>"
         bd -C {{DB}} close {{BEAD_ID}} --reason-file - <<'REASON'
+    OUTCOME: abandoned
     shadow: would have <action> <target>. Set SPIRA_CZAR_STAGE_<CLASS>=act to enable.
     REASON
         exit 0
@@ -230,6 +231,7 @@ next summon possible instead of a fresh start.
 When the action is complete and the expectation is recorded:
 
     bd -C {{DB}} close {{BEAD_ID}} --reason-file - <<'REASON'
+    OUTCOME: delivered
     <what the event was, what action was taken, what was expected, what was verified>
     REASON
 
