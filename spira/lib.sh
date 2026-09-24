@@ -1100,6 +1100,7 @@ fayth_exclude() {        # fayth_exclude <fayth> -> comma-separated exclusions
     local me="$1" own="${2:-}" f out
     out="$own"
     [ -n "${SPIRA_QUEUE_WAIT_LABEL:-}" ] && out="${out:+$out,}${SPIRA_QUEUE_WAIT_LABEL}"
+    [ -n "${SPIRA_SUBMITTED_LABEL:-}" ] && out="${out:+$out,}${SPIRA_SUBMITTED_LABEL}"
     for f in $(spira_fayths 2>/dev/null); do
         [ "$f" = "$me" ] && continue
         out="${out:+$out,}fayth:$f"
@@ -6118,6 +6119,45 @@ if d: print(d[0].get("external_ref") or "")' 2>/dev/null)" || ext_ref=""
         log "gh-closeout $id: closed $ext_ref as $sha_short"
     else
         log "gh-closeout $id: could not comment or close $ext_ref"
+    fi
+}
+
+# bead_close_on_land — the only place a work bead is closed for a landed reason.
+#
+# A builder no longer closes its own work bead (bd-close-outcome-guard.sh converts
+# OUTCOME: submitted into the SPIRA_SUBMITTED_LABEL instead of allowing the close); this
+# closes it for real once the commit is actually on the base, citing the sha. Called from
+# every LANDED land_mark site, right beside gh_issue_closeout.
+#
+# Idempotent both ways: a bead already closed is left alone, and a bead never marked
+# submitted (an older-style direct close, or a non-code type) is left alone too — this is
+# not the only path that closes a bead, only the landing path for the new one.
+bead_close_on_land() {   # bead_close_on_land <bead-id> <landed-sha>
+    local id="$1" sha="${2:-}"
+    local st lbls
+    read -r st lbls <<< "$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: raise SystemExit(0)
+d = d if isinstance(d, list) else [d]
+if not d: raise SystemExit(0)
+row = d[0]
+print(row.get("status") or "", ",".join(row.get("labels") or []))
+' 2>/dev/null)"
+    [ -n "${st:-}" ] || return 0
+    [ "$st" = closed ] && return 0
+    case ",${lbls:-}," in
+        *",${SPIRA_SUBMITTED_LABEL:-spira-submitted},"*) ;;
+        *) return 0 ;;
+    esac
+    if bdq close "$id" --reason-file - <<REASON >/dev/null 2>&1
+OUTCOME: landed
+Closed by the landing pass: work landed at ${sha:-unknown} (law-closed-is-not-landed).
+REASON
+    then
+        log "land-close $id: closed at ${sha:-unknown} (submitted -> landed)"
+    else
+        log "land-close $id: bd close failed — left submitted, CHECK 5 will report it"
     fi
 }
 

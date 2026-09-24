@@ -394,6 +394,7 @@ main() {
                    git -C "$repo" merge-base --is-ancestor "${_ltip:-none}" "$base_sha" \
                        2>/dev/null; then
                     land_mark "$_lid" LANDED "${_ltip:-none}" already-in-base
+                    bead_close_on_land "$_lid" "${_ltip:-none}" || true
                     printf 'batch %s: %s tip already in %s (live branch) — LANDED\n' \
                         "$name" "$_lid" "$base"
                 fi
@@ -406,6 +407,7 @@ main() {
             if git -C "$repo" merge-base --is-ancestor "${_ltip:-none}" "$base_sha" \
                    2>/dev/null; then
                 land_mark "$_lid" LANDED "${_ltip:-none}" already-in-base-orphan
+                bead_close_on_land "$_lid" "${_ltip:-none}" || true
                 printf 'batch %s: %s tip already in %s (orphan) — LANDED\n' \
                     "$name" "$_lid" "$base"
             else
@@ -420,6 +422,7 @@ main() {
                 # though none of their content had reached base).
                 if content_landed "$repo" "${_ltip:-none}" "$base_sha" 2>/dev/null; then
                     land_mark "$_lid" LANDED "${_ltip:-none}" content-landed-orphan
+                    bead_close_on_land "$_lid" "${_ltip:-none}" || true
                     printf 'batch %s: %s has no branch — content on %s (orphan) — LANDED\n' \
                         "$name" "$_lid" "$base"
                 else
@@ -584,6 +587,7 @@ for b in d:
                     "$name" "$_cid" "${_ctip:0:8}" "${_ltip:0:8}"
                 if git -C "$repo" merge-base --is-ancestor "$_ltip" "$base_sha" 2>/dev/null; then
                     land_mark "$_cid" LANDED "$_ltip" already-in-base
+                    bead_close_on_land "$_cid" "$_ltip" || true
                     printf 'batch %s: %s live tip already in %s — LANDED (already-in-base)\n' \
                         "$name" "$_cid" "$base"
                 else
@@ -601,6 +605,7 @@ for b in d:
                 fi
             elif git -C "$repo" merge-base --is-ancestor "$_ctip" "$base_sha" 2>/dev/null; then
                 land_mark "$_cid" LANDED "$_ctip" already-in-base
+                bead_close_on_land "$_cid" "$_ctip" || true
                 printf 'batch %s: %s tip already in %s — LANDED (already-in-base)\n' \
                     "$name" "$_cid" "$base"
             else
@@ -842,6 +847,7 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
                     if [ -z "$_unlanded_ahead" ] \
                        || content_landed "$repo" "$_btip" "$base_sha" 2>/dev/null; then
                         land_mark "$_bid" LANDED "$_cited_sha" "${_cited_rule}-complete"
+                        bead_close_on_land "$_bid" "$_cited_sha" || true
                         printf 'batch %s: %s notes cite %s (%s) already on %s — marked landed\n' \
                             "$name" "$_bid" "$_cited_sha" "${_cited_rule}-complete" "$base"
                     else
@@ -972,6 +978,7 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
             bead_reopen "$_lmid" batch-eject \
                 "Ejected by local batch gate: spira/$_lmid reproduced failure in $name." \
                 >/dev/null 2>&1 || true
+            bdq label remove "$_lmid" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
             land_mark "$_lmid" EJECTED "$_lmtip"
             printf 'QUEUE CAUGHT %s branch=%s\n' "$(date +%s)" "$_lmid" \
                 >> "$SPIRA_RUN/landing.log" 2>/dev/null || true

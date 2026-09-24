@@ -114,6 +114,7 @@ cmd_submit() {
             return 1
         }
         land_mark "$id" LANDED "$tip"
+        bead_close_on_land "$id" "$tip" || true
         printf 'queue.sh submit: landed %s (push)\n' "$br"
         ;;
     pr|hold)
@@ -343,6 +344,9 @@ cmd_eject() {
     land_mark "$id" RED "$tip" "${reason:-ejected}"
 
     bead_reopen "$id" "eject"
+    # A submitted bead is excluded from ready (fayth_exclude) so it is not reclaimed
+    # mid-flight; an ejected bead must be claimable again, so the label goes with it.
+    bdq label remove "$id" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
 
     local _comment
     _comment="Ejected from open batch in $name.${reason:+$'\n\n'${reason}}"$'\n\n'"Landstate written as RED. Fix the failing issue and re-certify before rejoining the queue."
