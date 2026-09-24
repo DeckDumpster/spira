@@ -349,7 +349,7 @@ echo "attempts.sh reclassify — on a store with no counter labels:"
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/attempts.sh" "$SPIRA_HOME/"
-printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison"\nFAYTH_MAX_CONCURRENT=0\n' \
+printf 'FAYTH_LABELS="spira,${SPIRA_PLAN_LABEL}"\nFAYTH_EXCLUDE_LABELS="spira-poison"\nFAYTH_MAX_CONCURRENT=0\n' \
     > "$SPIRA_HOME/chamber/t.fayth"
 ATT="$SPIRA_HOME/attempts.sh"
 
