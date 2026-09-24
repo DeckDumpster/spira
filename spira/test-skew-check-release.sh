@@ -33,6 +33,9 @@ echo "test-skew-check-release.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
+# Create HOME directory that will be used by env -i in run_skew
+mkdir -p "$TMP/home"
+
 # ---------------------------------------------------------------------------
 # SPIRA_REPO: a git checkout with two commits and two release tags.
 # The tags follow the spira-release-<name>-<timestamp> convention from release.sh.
@@ -62,18 +65,36 @@ git -C "$REPO" tag -a "spira-release-spira-${TS2}" "$COMMIT2" \
     -m "$(printf 'spira release: spira\nbase: main (%s)\nprev: spira-release-spira-%s\n\nbead: sp-test2' "$COMMIT2" "$TS1")"
 
 # ---------------------------------------------------------------------------
-# Releases directory: two unpacked release directories, current symlink.
+# Setup release template: two unpacked release directories.
+# Each test case will get an isolated copy to avoid concurrent mutations.
 # ---------------------------------------------------------------------------
+RELEASES_TEMPLATE="$TMP/releases-template"
+mkdir -p "$RELEASES_TEMPLATE"
+
+REL1_TEMPLATE="$RELEASES_TEMPLATE/spira-${TS1}"
+mkdir -p "$REL1_TEMPLATE/spira"
+printf 'commit %s\ntimestamp %s\n' "$COMMIT1" "$TS1" > "$REL1_TEMPLATE/MANIFEST"
+
+REL2_TEMPLATE="$RELEASES_TEMPLATE/spira-${TS2}"
+mkdir -p "$REL2_TEMPLATE/spira"
+printf 'commit %s\ntimestamp %s\n' "$COMMIT2" "$TS2" > "$REL2_TEMPLATE/MANIFEST"
+
+# Create isolated copy for test cases and refresh directory pointers
+copy_releases() {
+    local dest="$1"
+    rm -rf "$dest"
+    cp -r "$RELEASES_TEMPLATE" "$dest"
+}
+
+reset_releases() {
+    copy_releases "$RELEASES"
+    REL1_DIR="$RELEASES/spira-${TS1}"
+    REL2_DIR="$RELEASES/spira-${TS2}"
+}
+
+# Initialize first copy
 RELEASES="$TMP/releases"
-mkdir -p "$RELEASES"
-
-REL1_DIR="$RELEASES/spira-${TS1}"
-mkdir -p "$REL1_DIR/spira"
-printf 'commit %s\ntimestamp %s\n' "$COMMIT1" "$TS1" > "$REL1_DIR/MANIFEST"
-
-REL2_DIR="$RELEASES/spira-${TS2}"
-mkdir -p "$REL2_DIR/spira"
-printf 'commit %s\ntimestamp %s\n' "$COMMIT2" "$TS2" > "$REL2_DIR/MANIFEST"
+reset_releases
 
 # ---------------------------------------------------------------------------
 # run_skew: check in a minimal isolated environment.
@@ -99,6 +120,7 @@ echo
 echo "positive control — activated is NOT latest → NOT-LATEST reported:"
 # (no sidecar — commit-based fallback must find the tag and report NOT-LATEST)
 # ===========================================================================
+reset_releases
 rm -f "$RELEASES/current"
 ln -s "spira-${TS1}" "$RELEASES/current"
 rm -rf "$RELEASES/.tags"
@@ -114,6 +136,7 @@ echo
 echo "positive control — MANIFEST commit does not match release tag (sidecar present):"
 # (sidecar identifies the tag; MANIFEST disagrees with what that tag points at)
 # ===========================================================================
+reset_releases
 rm -f "$RELEASES/current"
 ln -s "spira-${TS2}" "$RELEASES/current"
 mkdir -p "$RELEASES/.tags"
@@ -135,6 +158,10 @@ rm -f "$RELEASES/.tags/spira-${TS2}"
 echo
 echo "silence when activated is latest and MANIFEST matches (via sidecar):"
 # ===========================================================================
+reset_releases
+# Set up state: activate TS2 (latest release) with sidecar
+rm -f "$RELEASES/current"
+ln -s "spira-${TS2}" "$RELEASES/current"
 mkdir -p "$RELEASES/.tags"
 printf 'spira-release-spira-%s\n' "$TS2" > "$RELEASES/.tags/spira-${TS2}"
 
@@ -150,6 +177,10 @@ rm -f "$RELEASES/.tags/spira-${TS2}"
 echo
 echo "silence when activated is latest and MANIFEST matches (commit fallback, no sidecar):"
 # ===========================================================================
+reset_releases
+# Set up state: activate TS2 (latest release) without sidecar
+rm -f "$RELEASES/current"
+ln -s "spira-${TS2}" "$RELEASES/current"
 rm -rf "$RELEASES/.tags"
 
 clean_nosidecar_out="$(run_skew)"; clean_nosidecar_rc=$?
@@ -186,6 +217,8 @@ echo "CANNOT-CHECK cases — exit 3, not a silent pass:"
 # conf.sh uses ':=' to fill empty SPIRA_RELEASES with a derived default, so passing ''
 # is not the same as "no releases infrastructure". Use an explicit empty directory and
 # an artifact-mode (no .git) SPIRA_REPO so the test reaches the cannot-check exit path.
+
+reset_releases
 no_current_dir="$TMP/no-current-releases"
 mkdir -p "$no_current_dir"
 no_releases_out="$(run_skew_noart SPIRA_RELEASES="$no_current_dir")"; no_releases_rc=$?
@@ -248,6 +281,7 @@ echo
 echo "artifact positive control — NOT-LATEST reported via gh release list (SPIRA_GH_INTAKE_REPO):"
 # (sidecar present so activated release is identified; gh returns both tags)
 # ===========================================================================
+reset_releases
 rm -f "$RELEASES/current"
 ln -s "spira-${TS1}" "$RELEASES/current"
 mkdir -p "$RELEASES/.tags"
@@ -266,6 +300,13 @@ echo
 echo "artifact mode — SPIRA_RELEASE_REPO set (intake empty) → NOT-LATEST via SPIRA_RELEASE_REPO:"
 # Consuming installs set SPIRA_RELEASE_REPO without SPIRA_GH_INTAKE_REPO.
 # ===========================================================================
+reset_releases
+# Set up state: activate TS1 (older release) with sidecar
+rm -f "$RELEASES/current"
+ln -s "spira-${TS1}" "$RELEASES/current"
+mkdir -p "$RELEASES/.tags"
+printf 'spira-release-spira-%s\n' "$TS1" > "$RELEASES/.tags/spira-${TS1}"
+printf 'commit %s\ntimestamp %s\n' "$COMMIT1" "$TS1" > "$REL1_DIR/MANIFEST"
 art_release_repo_out="$(run_skew_artifact \
     SPIRA_RELEASE_REPO=test/repo \
     GH_RELEASE_LIST="$GH_LIST")"; art_release_repo_rc=$?
@@ -276,6 +317,7 @@ want "artifact-release-repo: NOT-LATEST reported" "NOT-LATEST"                "$
 echo
 echo "artifact mode — no SPIRA_GH_INTAKE_REPO and no SPIRA_RELEASE_REPO → exits 3:"
 # ===========================================================================
+reset_releases
 art_no_intake_out="$(run_skew_artifact)"; art_no_intake_rc=$?
 is "artifact-no-intake: exits 3" "3" "$art_no_intake_rc"
 
@@ -284,6 +326,7 @@ echo
 echo "artifact mode — gh returns no releases → exits 3:"
 # ===========================================================================
 # GH_RELEASE_LIST defaults to [] in the mock, giving no tags; exit 3 is expected.
+reset_releases
 art_empty_out="$(run_skew_artifact SPIRA_GH_INTAKE_REPO=test/repo)"; art_empty_rc=$?
 is "artifact-gh-empty: exits 3 when gh returns no tags" "3" "$art_empty_rc"
 
@@ -291,6 +334,7 @@ is "artifact-gh-empty: exits 3 when gh returns no tags" "3" "$art_empty_rc"
 echo
 echo "artifact mode — activated is latest → exits 0:"
 # ===========================================================================
+reset_releases
 rm -f "$RELEASES/current"
 ln -s "spira-${TS2}" "$RELEASES/current"
 mkdir -p "$RELEASES/.tags"
