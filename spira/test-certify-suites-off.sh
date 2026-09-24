@@ -14,7 +14,8 @@
 #   2. gate.sh's cache key differs between suites=on and suites=off for the same tree, so a
 #      fences-only PASS cannot satisfy a later full gate. POSITIVE CONTROL: the same mode twice
 #      yields the same key, so the difference is the mode and not noise.
-#   3. landing.sh passes the switch on both queue-mode certification calls, and not on the
+#   3. gate.sh's env -i allowlist carries the switch to the gate command.
+#   4. landing.sh passes the switch on both queue-mode certification calls, and not on the
 #      push-mode call, which lands straight on the base and must keep its suites.
 #
 # covers: spira/gate-touched.sh spira/gate.sh spira/landing.sh spira/conf.sh
@@ -67,7 +68,17 @@ else
         || bad "suites=off and suites=on have different keys" "both $k_on"
 fi
 
-echo "3. landing.sh call sites:"
+echo "3. the switch survives gate.sh's env -i:"
+# gate.sh runs the repo command under `env -i` with an allowlist. #281 shipped without
+# SPIRA_GATE_SUITES on it, so the switch reached gate.sh and died there: every property above
+# held and certification still ran full suites. Assert the handoff, not only the ends.
+envblk="$(awk '/env -i \\$/{f=1} f{print} f&&/bash -c "\$CMD"/{exit}' "$HERE/gate.sh")"
+[ -n "$envblk" ] && ok "gate.sh env -i block located (positive control)" \
+    || bad "gate.sh env -i block located" "awk extracted nothing"
+case "$envblk" in *'SPIRA_GATE_SUITES="${SPIRA_GATE_SUITES:-on}"'*) ok "env -i passes SPIRA_GATE_SUITES to the gate command" ;;
+    *) bad "env -i passes SPIRA_GATE_SUITES to the gate command" "missing from the allowlist" ;; esac
+
+echo "4. landing.sh call sites:"
 n_cert="$(grep -c 'SPIRA_GATE_SUITES="${SPIRA_CERTIFY_SUITES:-on}"' "$HERE/landing.sh")"
 is "both queue-mode certification calls pass the switch" "2" "$n_cert"
 n_gate="$(grep -c '"$SPIRA_HOME/gate.sh"' "$HERE/landing.sh")"
