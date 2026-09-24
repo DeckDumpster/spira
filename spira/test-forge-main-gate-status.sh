@@ -46,14 +46,14 @@ mgs() {
 }
 
 echo
-echo "positive control — a still-running push gate reads unknown:"
+echo "positive control — a still-running push gate reads pending, not unknown:"
 run_list in_progress "" abc123 1
-is "in-progress run reads unknown" "unknown abc123" "$(mgs)"
+is "in-progress run reads pending" "pending abc123" "$(mgs)"
 
 echo
 echo "positive control — no push run at all reads unknown:"
 printf '[]\n' > "$TMP/run-list.json"
-is "empty run list reads unknown" "unknown" "$(mgs)"
+is "empty run list reads unknown" "unknown (no gate run found)" "$(mgs)"
 
 echo
 echo "a completed, successful push gate reads green:"
@@ -71,7 +71,7 @@ run_list completed failure bad0002 4
 printf '{"jobs":[{"id":9,"name":"provision","conclusion":"failure"},{"id":10,"name":"gate","conclusion":"failure"}]}\n' \
     > "$TMP/jobs-prov-fail.json"
 JOBS_JSON="$TMP/jobs-prov-fail.json"
-is "provision fault reads unknown" "unknown bad0002" "$(mgs)"
+is "provision fault reads unknown" "unknown (provision fault bad0002)" "$(mgs)"
 
 echo "positive control — provision job succeeded, gate still failed → still red:"
 printf '{"jobs":[{"id":9,"name":"provision","conclusion":"success"},{"id":10,"name":"gate","conclusion":"failure"}]}\n' \
