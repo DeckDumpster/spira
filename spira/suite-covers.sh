@@ -59,3 +59,23 @@ suite_selects_on_of() {  # suite_selects_on_of <file-path> -> space-separated ev
     # Commas are treated as delimiters so "added,mode" and "added mode" both work.
     sed -n '/^set -/q;s/^# *selects-on: *//p' "$1" 2>/dev/null | head -1 | tr ',' ' ' || true
 }
+
+suite_tier_of() {  # suite_tier_of <file-path> -> "T0".."T4", or empty (undeclared)
+    # Empty return means no declaration. Unlike # covers:, an empty tier is never
+    # a valid "run always" state — test-plan-lint.sh treats it as a missing header.
+    # Stop at "set -" so heredocs inside the suite body cannot spoof the declaration.
+    sed -n '/^set -/q;s/^# *tier: *//p' "$1" 2>/dev/null | head -1 || true
+}
+
+suite_uc_of() {  # suite_uc_of <file-path> -> space-separated UC-<area>-NN tokens from # covers:, or empty
+    # UC ids live as tokens on the # covers: line, alongside path globs; this
+    # extracts only the tokens shaped like a UC id (path globs never are).
+    local _cov _tok _out=""
+    _cov="$(suite_covers_of "$1")"
+    for _tok in $_cov; do
+        case "$_tok" in
+            UC-*-[0-9][0-9]) _out="$_out $_tok" ;;
+        esac
+    done
+    printf '%s\n' "${_out# }"
+}
