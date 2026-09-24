@@ -52,25 +52,31 @@ fi
 # ---------------------------------------------------------------------------------------
 # THE REAL SCAN. git ls-files (tracked) plus --others --exclude-standard (staged-but-new)
 # — the same two-list union inventory.sh uses — so a file not yet committed still counts.
+#
+# A CONTAINERISED WORKTREE HAS NO RESOLVABLE .git (law-tests-run-only-through-testenv-batch:
+# testenv-batch.sh bind-mounts the worktree alone, and a worktree's .git file points at a
+# gitdir path on the host that does not exist inside the container). Falling back to `find`
+# there scans the same tree by content instead of by git's index — a wider list, never a
+# narrower one, so nothing the git path would have caught goes unseen.
 # ---------------------------------------------------------------------------------------
 EXEMPT='^spira/testdata/sentinel-healthy\.log$|^docs/spikes/sources/sp-pmv67/data/.*\.tsv$|^spira/test-governor-deleted\.sh$'
 
 offenders=0
 if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-    while IFS= read -r f; do
-        [[ "$f" =~ $EXEMPT ]] && continue
-        [ -f "$ROOT/$f" ] || continue
-        hit="$(grep -il "governor" "$ROOT/$f" 2>/dev/null || true)"
-        [ -n "$hit" ] || continue
-        offenders=$((offenders+1))
-        bad "clean tree" "$f still names the governor"
-    done < <(
-        { git -C "$ROOT" ls-files; git -C "$ROOT" ls-files --others --exclude-standard; } | sort -u
-    )
+    files="$( { git -C "$ROOT" ls-files; git -C "$ROOT" ls-files --others --exclude-standard; } | sort -u )"
 else
-    bad "the real tree could be scanned" "$ROOT is not a git repository"
-    offenders=1
+    files="$(cd "$ROOT" && find . \( -name .git -o -name target -o -name .runtime -o -name __pycache__ \) -prune -o -type f -print | sed 's#^\./##' | sort -u)"
 fi
+
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    [[ "$f" =~ $EXEMPT ]] && continue
+    [ -f "$ROOT/$f" ] || continue
+    hit="$(grep -il "governor" "$ROOT/$f" 2>/dev/null || true)"
+    [ -n "$hit" ] || continue
+    offenders=$((offenders+1))
+    bad "clean tree" "$f still names the governor"
+done <<<"$files"
 
 [ "$offenders" -eq 0 ] && ok "no tracked or new file names the governor"
 
