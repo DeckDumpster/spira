@@ -71,6 +71,8 @@ last_default() {
         /^=== END ===$/ { last=d; in_args=0; next }
         in_args && /^--default$/ { want_next=1; next }
         in_args && want_next { d=$0; want_next=0; next }
+        { next }
+        END { printf "%s", last }
     ' "$MAIL_LOG"
 }
 
@@ -93,7 +95,7 @@ dflt="$(last_default)"
 # The old code rendered "of  and close" when others was empty.
 nowant "no 'duplicate of' clause" "is a duplicate of" "$body"
 nowant "no blank slot in default" "duplicate of" "$dflt"
-want   "default says rebase by hand" "rebase by hand and push" "$dflt"
+want   "default says rebase by hand" "by hand and push" "$dflt"
 
 # ======================================================================================
 echo

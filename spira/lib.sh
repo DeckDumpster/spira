@@ -346,9 +346,10 @@ print(d[0].get("title", "") if d else "")' 2>/dev/null)"
     fi
     # Extra lines for the body: status and branch info.
     local _extra=""
-    [ -n "$bead_status" ] && _extra="${_extra}Status: ${bead_status}."$'\n'
-    [ -n "$tip_short" ] && [ -n "$ahead" ] && \
-        _extra="${_extra}Branch: ${tip_short} (${ahead} commit(s) ahead of ${base_ref})."$'\n'
+    [ -n "$bead_status" ] && _extra="Status: ${bead_status}."
+    if [ -n "$tip_short" ] && [ -n "$ahead" ]; then
+        _extra="${_extra:+$_extra$'\n'}Branch: ${tip_short} (${ahead} commit(s) ahead of ${base_ref})."
+    fi
     "$SPIRA_HOME/mail.sh" send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
@@ -361,7 +362,9 @@ $_subj
 $_dflt
 
 $id has been reopened for a rebase conflict $n times and the loop is not converging. Conflicts in: ${conflicts:-unknown}.$ctx
-${_extra}MAILEOF
+
+$_extra
+MAILEOF
 }
 
 # spira_ask_rebase_refused — one deduplicated ask per closed bead the harness cannot rebase.
