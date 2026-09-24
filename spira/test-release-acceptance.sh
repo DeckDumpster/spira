@@ -38,7 +38,7 @@
 #  20. Phase A: bead labels carry plan+scope so builder predicate matches.
 #  21. Phase A: claimability check uses bd ready, not sentinel --report polling.
 #  22. Phase B: install.sh output not discarded on failure.
-#  23. Phase B: install env mirrors phase A — CONFIGURE_PROD and SPIRA_INSTALL_PROD_GIT_CONSIDERED.
+#  23. Phase B: install uses tarball + shared _install_env (same as phase A).
 #  24. Phase B: deploy gated on install success (dead Dolt blamed on install, not deploy).
 #
 # covers: spira/acceptance-run.sh spira/acceptance-agent.sh
@@ -407,20 +407,23 @@ rm -rf "$_pb_tmp"
 
 # ============================================================================
 echo
-echo "23. Phase B: install env mirrors phase A — CONFIGURE_PROD and SPIRA_INSTALL_PROD_GIT_CONSIDERED"
+echo "23. Phase B: install uses tarball + shared _install_env (same as phase A)"
 # ============================================================================
-# Phase B previously called install.sh with only SPIRA_OPERATED=0; without
-# CONFIGURE_PROD=$_prev_clone/spira, install.sh reaches phase 4 (units) and
-# exits 2 because SPIRA_PROD points to a git checkout. Phase 4 is where
-# dolt-beads.service is installed and started. A phase 4 exit leaves Dolt down,
-# and every subsequent call that sources conf.sh gets connection refused.
-want "phase B _prev_env built with SPIRA_OPERATED=0" '_prev_env=('
-want "phase B sets CONFIGURE_PROD for prev_clone" \
-    'CONFIGURE_PROD=$_prev_clone/spira'
-want "phase B sets SPIRA_INSTALL_PROD_GIT_CONSIDERED=1 for prev install" \
-    'SPIRA_INSTALL_PROD_GIT_CONSIDERED=1'
-want "phase B uses env to pass _prev_env to install.sh" \
-    'env "${_prev_env[@]}" bash "$_prev_clone/install.sh"'
+# Phase B installs the previous release from its tarball via _install_from_tarball,
+# then calls install.sh from $releases/current using the same _install_env array as
+# phase A. No git clone, no CONFIGURE_PROD, no SPIRA_INSTALL_PROD_GIT_CONSIDERED.
+want "phase B downloads prev tarball" '_prev_tarball_file'
+want "phase B installs from prev tarball via _install_from_tarball" \
+    '_install_from_tarball "$_prev_tarball_file"'
+want "phase B uses shared _install_env for install.sh" \
+    'env "${_install_env[@]}" bash "$_releases/current/install.sh"'
+# Must NOT use the old git-clone approach.
+if grep -qF 'SPIRA_INSTALL_PROD_GIT_CONSIDERED' "$SCRIPT" 2>/dev/null; then
+    bad "phase B does not use SPIRA_INSTALL_PROD_GIT_CONSIDERED" \
+        "found SPIRA_INSTALL_PROD_GIT_CONSIDERED — tarball install must not use git-clone mode"
+else
+    ok "phase B does not use SPIRA_INSTALL_PROD_GIT_CONSIDERED"
+fi
 
 # ============================================================================
 echo
