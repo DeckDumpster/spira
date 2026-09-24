@@ -307,10 +307,15 @@ printf 'main version\n' > "$REPO/shared-recut.txt"
 git -C "$REPO" add shared-recut.txt
 git -C "$REPO" commit -q -m "main writes shared-recut.txt"
 git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
-out="$(landing)"
+: > "$EMITTED"
+out="$(SPIRA_REBASE_DECOMPOSE_FILES=1 landing)"
 want "the pass escalates the partial-conflict branch"   "escalated sp-recut2" "$out"
 is   "the merge-base moved to current main after recut" yes "$(on_base sp-recut2)"
 is   "the bead stays closed"                            closed "$(status_of sp-recut2)"
+# A BRANCH WIDE ENOUGH TO RACE EVERY LANDING IS TOLD TO SPLIT, NOT REBASE AGAIN.
+# sp-recut2 touches 2 files; with the threshold lowered to 1 the escalation must say so.
+want "and the escalation suggests decomposition, not another hand rebase" \
+     "smaller beads" "$(cat "$EMITTED")"
 drop_branch sp-recut2
 
 # A BRANCH AN AEON TOOK WHILE THE PASS RAN IS NEVER REWRITTEN.

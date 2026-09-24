@@ -330,6 +330,16 @@ print(d[0].get("title", "") if d else "")' 2>/dev/null)"
     fi
     local ctx=""
     [ -n "$others" ] && ctx=" The conflicted files were also changed on the base by $others."
+    # File count over the branch's own diff (not just the conflicted files) — a bead whose
+    # scope spans several hot files cannot win a rebase race it re-enters every few hours;
+    # past SPIRA_REBASE_DECOMPOSE_FILES the answer is decomposition, not another hand rebase.
+    local nfiles=0 decompose_ctx=""
+    if [ -n "$repo_dir" ] && [ -n "$base_ref" ]; then
+        nfiles="$(git -C "$repo_dir" diff --name-only "${base_ref}...${br}" 2>/dev/null | grep -c .)"
+    fi
+    if [ "${nfiles:-0}" -ge "${SPIRA_REBASE_DECOMPOSE_FILES:-4}" ]; then
+        decompose_ctx=" $br touches $nfiles files — a bead this wide re-enters the rebase race every landing; consider splitting it into smaller beads instead of hand-rebasing the whole thing again."
+    fi
     # Subject: title first so the operator knows what the work is (law-escalations-lead-with-the-bead).
     local _subj
     if [ -n "$bead_title" ]; then
@@ -339,7 +349,9 @@ print(d[0].get("title", "") if d else "")' 2>/dev/null)"
     fi
     # Default: no empty slots — omit the duplicate clause when others is empty.
     local _dflt
-    if [ -n "$others" ]; then
+    if [ "${nfiles:-0}" -ge "${SPIRA_REBASE_DECOMPOSE_FILES:-4}" ]; then
+        _dflt="split $br into smaller beads by file/deliverable and land those independently, rather than rebasing the whole thing by hand again"
+    elif [ -n "$others" ]; then
         _dflt="check whether $br is a duplicate of $others and close it if so; if the work is genuinely new, rebase by hand and push"
     else
         _dflt="rebase $br by hand and push, or close it if the work is already landed"
@@ -361,7 +373,7 @@ $_subj
 ## Default
 $_dflt
 
-$id has been reopened for a rebase conflict $n times and the loop is not converging. Conflicts in: ${conflicts:-unknown}.$ctx
+$id has been reopened for a rebase conflict $n times and the loop is not converging. Conflicts in: ${conflicts:-unknown}.$ctx$decompose_ctx
 
 $_extra
 MAILEOF

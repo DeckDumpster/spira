@@ -686,7 +686,7 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
             n_swept_conflict=$(( n_swept_conflict + 1 ))
             _cur_br_tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
             _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${RECUT_CONFLICTS:-${REBASE_CONFLICTS:-}}")"
-            spira_ask_rebase_loop "$id" "$br" "$name" "${_rq_n:-1}" "${RECUT_CONFLICTS:-${REBASE_CONFLICTS:-unknown}}" "$_other_beads"
+            spira_ask_rebase_loop "$id" "$br" "$name" "${_rq_n:-1}" "${RECUT_CONFLICTS:-${REBASE_CONFLICTS:-unknown}}" "$_other_beads" "$repo" "$base"
             progress "escalated $id — re-cut conflicted on $br after ${_rq_n:-1} attempt(s); ${RECUT_APPLIED_COUNT:-0} commit(s) moved to $base"
             land_mark "$id" RED "$_cur_br_tip" "no-rebase@${_cur_base_sha}"
             continue
@@ -1045,13 +1045,13 @@ for i in d:
             # otherwise reopen up to SPIRA_REBASE_ESCALATE_AT, then escalate.
             if ! recut_onto "$br" "$base" "$repo" "$name"; then
                 if [ "${RECUT_APPLIED_COUNT:-0}" -gt 0 ]; then
-                    spira_ask_rebase_loop "$id" "$br" "$name" "${_rq_n:-1}" "${RECUT_CONFLICTS:-${REBASE_CONFLICTS:-unknown}}" "$_other_beads"
+                    spira_ask_rebase_loop "$id" "$br" "$name" "${_rq_n:-1}" "${RECUT_CONFLICTS:-${REBASE_CONFLICTS:-unknown}}" "$_other_beads" "$repo" "$base"
                     progress "escalated $id — re-cut conflicted on $br after ${_rq_n:-1} attempt(s); ${RECUT_APPLIED_COUNT:-0} commit(s) moved to $base"
                 elif [ "${_ls_st:-}" = RED ] && [ "${_ls_reason_class:-}" = "no-rebase" ]; then
                     spira_ask_red_recurring "$id" "$br" "$name" "no-rebase" "${_ls_at:-0}"
                     progress "escalated $id — recurring no-rebase on $br after ${_rq_n:-1} attempt(s)"
                 elif [ "${_rq_n:-0}" -ge "${SPIRA_REBASE_ESCALATE_AT:-3}" ]; then
-                    spira_ask_rebase_loop "$id" "$br" "$name" "${_rq_n:-1}" "${REBASE_CONFLICTS:-unknown}" "$_other_beads"
+                    spira_ask_rebase_loop "$id" "$br" "$name" "${_rq_n:-1}" "${REBASE_CONFLICTS:-unknown}" "$_other_beads" "$repo" "$base"
                     progress "escalated $id — rebase conflict x${_rq_n} on $br"
                 else
                     bead_reopen "$id" rebase-conflict "$_reopen_note"
