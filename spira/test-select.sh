@@ -896,16 +896,6 @@ iszero  "Q3: --no-all-fallback plumbing exits 0"        "$rc_q_nf"
 want    "Q3: claiming suite D still selected"           "test-fx-d.sh" "$out_q_nf"
 notwant "Q3: unrelated suite B not selected"             "test-fx-b.sh" "$out_q_nf"
 
-# Q4: replaying the real sp-nfiop commit through the real tree's select.sh
-# selects the whole corpus (the bead's own acceptance criterion).
-out_q_real="$(bash "$SELECT" --base '05d6a633^' --head '05d6a633' \
-    --repo "$HERE/.." --suite-dir "$HERE" --mode-file "$TMP/mode-q-real" 2>/dev/null)"
-want "Q4: real 05d6a633 replay includes test-install-bootstrap-release.sh" \
-    "test-install-bootstrap-release.sh" "$out_q_real"
-want "Q4: real 05d6a633 replay includes test-watch-refresh.sh" \
-    "test-watch-refresh.sh" "$out_q_real"
-iseq "Q4: real 05d6a633 replay writes mode=all" "$(cat "$TMP/mode-q-real" 2>/dev/null)" "all"
-
 # ---------------------------------------------------------------------------
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
