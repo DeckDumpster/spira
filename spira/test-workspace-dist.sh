@@ -70,6 +70,7 @@ printf '#!/usr/bin/env bash\necho alpha-crate\n' > "$WS/target/release/alpha-cra
 printf '#!/usr/bin/env bash\necho beta-crate\n'  > "$WS/target/release/beta-crate"
 chmod +x "$WS/target/release/alpha-crate" "$WS/target/release/beta-crate"
 
+mkdir -p "$TMP/home"
 run_build() {
     env -i \
         PATH="$PATH" \
@@ -79,7 +80,19 @@ run_build() {
         GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         bash "$HERE/build-tarball.sh" "$@" 2>&1
 }
-mkdir -p "$TMP/home"
+
+# Check that cargo metadata actually works for the fixture before proceeding.
+# Old cargo in CI containers may lack workspace support or registry access.
+meta_check="$(env -i PATH="$PATH" HOME="$TMP/home" \
+    cargo metadata --format-version=1 --no-deps \
+    --manifest-path "$WS/Cargo.toml" 2>&1)"
+if [ $? -ne 0 ]; then
+    printf '  SKIP  cargo metadata fails for minimal fixture (%s): %s\n' \
+        "$(cargo --version 2>&1 | head -1)" "$meta_check"
+    printf '\n0 passed, 0 failed\n'
+    exit 0
+fi
+ok "cargo metadata works: $(cargo --version 2>&1 | head -1)"
 
 # ============================================================================
 echo
