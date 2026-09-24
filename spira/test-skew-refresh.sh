@@ -44,6 +44,21 @@ git -C "$REPO" config user.name "test"
 git -C "$REPO" remote set-head origin --auto >/dev/null 2>&1 || true
 
 reset_repo() { git -C "$REPO" reset -q --hard "$BASE_COMMIT"; }
+
+# Stub Makefile in REPO so that `make -C "$REPO" install SPIRA_RELEASES=...` works
+# without cargo.  Untracked — survives reset_repo but is never archived.
+cat > "$REPO/Makefile" <<'STUBMAKE'
+.PHONY: install
+install:
+	@set -eu; \
+	_sha="$$(git rev-parse HEAD)"; \
+	: "$${SPIRA_RELEASES?SPIRA_RELEASES not set}"; \
+	mkdir -p "$$SPIRA_RELEASES/$$_sha"; \
+	printf 'commit %%s\n' "$$_sha" > "$$SPIRA_RELEASES/$$_sha/MANIFEST"; \
+	_tmp="$$SPIRA_RELEASES/.current.new.$$$$"; \
+	ln -sf "$$_sha" "$$_tmp" && mv -T "$$_tmp" "$$SPIRA_RELEASES/current"; \
+	printf 'stub-install: current -> %%s\n' "$$_sha"
+STUBMAKE
 reset_repo
 
 run_skew_cmd() {
@@ -158,40 +173,14 @@ echo "refresh — release mode: fetch + make install + symlink flip:"
 
 RELEASES="$TMP/releases"
 OLD_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-mkdir -p "$RELEASES/$OLD_SHA/spira"
+mkdir -p "$RELEASES/$OLD_SHA"
 ln -sf "$OLD_SHA" "$RELEASES/current"
 
 reset_repo
 
-# Mock make: creates a release dir for the new sha and flips the symlink.
-MOCK_BIN="$TMP/mock-bin"
-mkdir -p "$MOCK_BIN"
-cat > "$MOCK_BIN/make" <<'MAKEMOCK'
-#!/usr/bin/env bash
-# Accept -C <dir> install SPIRA_RELEASES=<path>
-_repo=""; _releases=""
-while [ $# -gt 0 ]; do
-    case "$1" in
-        -C) _repo="$2"; shift ;;
-        install) ;;
-        SPIRA_RELEASES=*) _releases="${1#SPIRA_RELEASES=}" ;;
-    esac
-    shift
-done
-[ -n "$_repo" ] || { echo "mock make: missing -C" >&2; exit 1; }
-[ -n "$_releases" ] || { echo "mock make: missing SPIRA_RELEASES=" >&2; exit 1; }
-_sha="$(git -C "$_repo" rev-parse HEAD 2>/dev/null)" || { echo "mock make: git rev-parse failed" >&2; exit 1; }
-mkdir -p "$_releases/$_sha/spira"
-printf 'commit %s\n' "$_sha" > "$_releases/$_sha/MANIFEST"
-_tmp="$_releases/.current.new.$$"
-ln -sf "$_sha" "$_tmp" && mv -T "$_tmp" "$_releases/current"
-printf 'mock-install: current -> %s\n' "$_sha"
-MAKEMOCK
-chmod +x "$MOCK_BIN/make"
-
 run_skew_release() {
     local run_dir="$1"; shift
-    env -i PATH="$MOCK_BIN:$PATH" \
+    env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" \
@@ -234,7 +223,7 @@ RUN7="$(mktemp -d "$TMP/run-XXXXX")"
 out7="$(run_skew_release "$RUN7" refresh "$REPO")"; rc7=$?
 is   "release-mode already-current: exits 0"        "0"       "$rc7"
 want "release-mode already-current: reports current" "already" "$out7"
-nowant "release-mode already-current: no make call"  "mock-install" "$out7"
+nowant "release-mode already-current: no make call"  "stub-install" "$out7"
 
 echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
