@@ -54,6 +54,7 @@ lack() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$1"
 testdb_require test-maechen-blind-window
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — seeds a recurred event via bd sql directly, which embedded mode refuses
 export SPIRA_TESTDB_MODE=server
 testdb_up maechen-blind-window || {
     printf 'SKIP test-maechen-blind-window: server testdb not available\n' >&2

@@ -40,6 +40,7 @@ echo "test-watcher-reopen.sh"
 . "$HERE/testdb.sh"
 testdb_require test-watcher-reopen
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — the cause is written via bd sql INSERT into the events table, which embedded mode refuses
 export SPIRA_TESTDB_MODE=server
 testdb_up watcher_reopen || {
     printf 'SKIP test-watcher-reopen: server testdb not available (bd sql required)\n' >&2

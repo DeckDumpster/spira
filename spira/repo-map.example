@@ -137,4 +137,4 @@ platform     | /srv/checkouts/platform    | push | origin/main   |              
 # Run `queue.sh protect <name>` once after switching to set the required check,
 # disallow force-push, and disallow deletion on the base branch — doctor.sh warns
 # for any queue-mode repo whose base branch has no protection record.
-harness      | /srv/checkouts/harness     | queue | origin/main  |                 | bash spira/inventory.sh && bash spira/literal-lint.sh && bash spira/scratch-fence.sh && { _b=0; bash spira/testenv-batch.sh "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }
+harness      | /srv/checkouts/harness     | queue | origin/main  |                 | bash spira/inventory.sh && bash spira/literal-lint.sh && bash spira/testdb-mode-lint.sh && bash spira/scratch-fence.sh && { _b=0; bash spira/testenv-batch.sh "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }

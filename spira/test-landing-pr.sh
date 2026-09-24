@@ -22,6 +22,7 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 . "$HERE/testdb.sh"
 testdb_require test-landing-pr
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — asserts a requeued-event count via bd sql, which embedded mode refuses
 export SPIRA_TESTDB_MODE=server
 testdb_up landing-pr || {
     printf 'SKIP test-landing-pr: server testdb not available\n' >&2

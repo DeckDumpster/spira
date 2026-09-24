@@ -85,6 +85,7 @@ TMP="$(mktemp -d)"
 . "$HERE/testdb.sh"
 testdb_require test-timeout
 trap 'testdb_drop; rm -rf "$TMP"' EXIT; trap 'exit 143' INT TERM
+# testdb-mode: server — asserts on attempts_of, which reads the events table via bd sql
 export SPIRA_TESTDB_MODE=server
 testdb_up timeout || {
     printf 'SKIP test-timeout: server testdb not available\n' >&2

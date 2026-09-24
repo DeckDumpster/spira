@@ -27,6 +27,7 @@ want() { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in [$3]"; esac
 testdb_require test-census-reopen
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — seeds reopened events via bd sql directly, which embedded mode refuses
 export SPIRA_TESTDB_MODE=server
 testdb_up census-reopen || {
     printf 'SKIP test-census-reopen: server testdb not available\n' >&2

@@ -290,6 +290,7 @@ is "attempts_of delegates to the SQL builder" "1" \
 . "$HERE/testdb.sh"
 testdb_require test-attempts
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — attempts_of (its own subject) reads the events table via bd sql, which embedded mode refuses
 export SPIRA_TESTDB_MODE=server
 testdb_up attempts || {
     printf 'SKIP test-attempts: server testdb not available\n' >&2

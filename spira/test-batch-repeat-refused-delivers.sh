@@ -30,9 +30,8 @@ nowant() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$
 . "$HERE/testdb.sh"
 testdb_require test-batch-repeat-refused-delivers
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-export SPIRA_TESTDB_MODE=server
 testdb_up rr_delivers || {
-    printf 'SKIP test-batch-repeat-refused-delivers: server testdb not available\n' >&2
+    printf 'SKIP test-batch-repeat-refused-delivers: testdb not available\n' >&2
     exit 77
 }
 
