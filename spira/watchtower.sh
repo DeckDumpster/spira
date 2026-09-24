@@ -197,23 +197,11 @@ if [ "${1:-}" = "--throttle-check" ]; then
         fi
     elif [ "$_tc_throttled" = "1" ] && [ "$_tc_depth" -lt "$_tc_release_at" ] 2>/dev/null; then
         # LIFT: depth below release threshold.
+        # Recovery, not a failure. Per sop-queue-throttle-lifted, FIX is None.
+        # Do not file incident; it would re-fire on every check while the condition holds.
+        # sp-f1ap0: removed incident filing to stop duplicate incidents on every interval.
         rm -f "$_tc_stamp"
         log "watchtower: throttle lifted — depth=${_tc_depth}<${_tc_release_at}"
-        [ -r "$_tc_inc" ] && \
-            printf 'Queue throttle lifted: CERTIFIED depth now %s (below release threshold %s).\n\nBuilder admission is no longer throttled.\n' \
-                "$_tc_depth" "$_tc_release_at" | \
-            SPIRA_DB="$SPIRA_DB" \
-            SPIRA_INCIDENT_TYPE=task \
-            SPIRA_INCIDENT_PRIORITY=2 \
-            SPIRA_INCIDENT_ACTOR=watchtower \
-            SPIRA_SIN_EXEMPT=1 \
-            SPIRA_INCIDENT_REPO=spira \
-            SPIRA_INCIDENT_REF=incident:queue-throttle-lifted \
-            SPIRA_INCIDENT_CAUSE=throttle-lifted \
-            bash "$_tc_inc" file \
-                "QUEUE THROTTLE LIFTED: depth ${_tc_depth}" \
-                - >/dev/null || true
-        log "watchtower: throttle-lift escalation filed"
     else
         log "watchtower: throttle-check — $([ "$_tc_throttled" = "1" ] && echo "throttled" || echo "clear") (depth=${_tc_depth} since_land=${_tc_since_land}m)"
     fi
