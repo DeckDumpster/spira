@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# test-queue-protect.sh — queue.sh protect and doctor queue-protection check.
+# test-queue-protect.sh — queue.sh protect writes a protection receipt.
 #
-# doctor.sh warns when a queue-mode repository has no protection receipt, and
-# is silent for push-mode repositories and for protected queue-mode ones.
-# queue.sh protect writes the receipt on a successful forge call.
+# queue.sh protect writes the receipt on a successful forge call. Doctor's own
+# queue-protection check (which read that receipt back) was part of the "repositories"
+# section removed by sp-utt1i; repo-map/config validation is the config-store-preflight
+# area's job now (sp-n071y), not doctor's.
 #
-# covers: spira/queue.sh spira/doctor.sh spira/conf.sh
+# covers: spira/queue.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0
@@ -21,28 +22,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 BIN="$TMP/bin"; mkdir -p "$BIN" "$TMP/db/.beads" "$TMP/run"
 touch "$TMP/watchers-empty"
 
-cat > "$BIN/bd" <<'FAKESCRIPT'
-#!/usr/bin/env bash
-case "$*" in
-    *"migrate schema"*) printf '✓ Schema already at v61\n'; exit 0 ;;
-    *"list"*"--limit"*) printf '[]\n'; exit 0 ;;
-    *) exit 0 ;;
-esac
-FAKESCRIPT
-chmod +x "$BIN/bd"
-
 FAKE_HOME="$TMP/home"; mkdir -p "$FAKE_HOME/.config/systemd/user"
-
-cat > "$BIN/sc" <<'MOCK'
-#!/usr/bin/env bash
-case "$*" in
-    *"is-active"*"--quiet"*) exit 0 ;;
-    *"is-active"*)           printf 'active\n' ;;
-    *"is-enabled"*)          printf 'enabled\n'; exit 0 ;;
-esac
-exit 0
-MOCK
-chmod +x "$BIN/sc"
 
 # A minimal git repo used as the mapped checkout.
 QREPO="$TMP/repo"
@@ -50,59 +30,7 @@ git init -q -b main "$QREPO"
 git -C "$QREPO" commit -q --allow-empty -m "init"
 
 QNAME=fixture-queue-repo
-PNAME=fixture-push-repo
 RMAP="$TMP/repo-map"
-
-run_doctor() {
-    env -i \
-        PATH="/usr/local/bin:/usr/bin:/bin" \
-        HOME="$FAKE_HOME" \
-        SPIRA_CONF=/nonexistent \
-        SPIRA_PATH="$BIN" \
-        SPIRA_SYSTEMCTL="$BIN/sc" \
-        SPIRA_DB="$TMP/db" \
-        SPIRA_RUN="$TMP/run" \
-        SPIRA_INSTANCE=prod \
-        SPIRA_BD_PIN="$TMP/run/bd-pin" \
-        SPIRA_REPO_MAP="$RMAP" \
-        SPIRA_NOTIFY=/nonexistent \
-        SPIRA_WATCHERS="$TMP/watchers-empty" \
-        bash "$HERE/doctor.sh" 2>/dev/null || true
-}
-
-repos_section() { sed -n '/^repositories$/,/^$/p'; }
-
-# ===========================================================================
-echo
-echo "positive control — queue-mode with no protection record warns:"
-# ===========================================================================
-printf '%s | %s | queue | main | | |\n' "$QNAME" "$QREPO" > "$RMAP"
-# No receipt file yet — offender planted.
-out="$(run_doctor | repos_section)"
-want "queue-mode no receipt: warns"         "warn"      "$out"
-want "warn names the repo"                  "$QNAME"    "$out"
-want "warn mentions protection record"      "protection record" "$out"
-want "warn suggests the command"            "queue.sh protect"  "$out"
-
-# ===========================================================================
-echo
-echo "queue-mode with protection record — no warning:"
-# ===========================================================================
-printf 'main\n' > "$TMP/run/queue-protected-$QNAME"
-out2="$(run_doctor | repos_section)"
-nowant "queue-mode with receipt: no protection warn" \
-    "has no protection record" "$out2"
-want "queue-mode with receipt: ok shown" \
-    "protection record present" "$out2"
-rm -f "$TMP/run/queue-protected-$QNAME"
-
-# ===========================================================================
-echo
-echo "push-mode — no protection warning:"
-# ===========================================================================
-printf '%s | %s | push | main | | |\n' "$PNAME" "$QREPO" > "$RMAP"
-out3="$(run_doctor | repos_section)"
-nowant "push-mode: no protection warn" "protection record" "$out3"
 
 # ===========================================================================
 echo

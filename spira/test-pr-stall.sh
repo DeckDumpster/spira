@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-pr-stall.sh — PR-mode stall detector and doctor.sh allow_auto_merge check.
+# test-pr-stall.sh — PR-mode stall detector.
 #
 #   ./test-pr-stall.sh
 #
@@ -11,7 +11,9 @@
 #   allow_auto_merge=false → escalate once per repo via incident.sh (deduped).
 #   allow_auto_merge=true  → arm auto-merge on the PR.
 #
-# It also adds a doctor.sh FAIL for any land=pr repo with allow_auto_merge=false.
+# doctor.sh's own allow_auto_merge FAIL (for any land=pr repo with it false) was part
+# of the "repositories" section removed by sp-utt1i; repo-map/config validation is the
+# config-store-preflight area's job now (sp-n071y), not doctor's.
 #
 # THE POSITIVE CONTROL IS THE ENTIRE FIRST BLOCK. Before asserting that nothing is
 # filed for a recent PR, this suite plants a stale REBASED pr-open:<repo> entry and
@@ -21,7 +23,7 @@
 # THE ALLOW_AUTO_MERGE=FALSE PATH IS COVERED FIRST (it is the case that blocked
 # seven beads for 36 hours). The arm path is covered second.
 #
-# covers: spira/watchtower.sh spira/sentinel.sh spira/doctor.sh spira/conf.sh spira/landing.sh
+# covers: spira/watchtower.sh spira/sentinel.sh spira/conf.sh spira/landing.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -242,102 +244,6 @@ GH_ALLOW_AUTO_MERGE=false psc
 refs_count="$(cat "$INC_REFS" | grep -c 'pr-stall-auto-merge-off:testrepo' || true)"
 want "two stale entries in same repo still use the same ref" \
     "pr-stall-auto-merge-off:testrepo" "$(cat "$INC_REFS")"
-
-# ====================================================================================
-echo
-echo "doctor.sh: land=pr repo with allow_auto_merge=false → FAIL"
-# ====================================================================================
-# We can only run the repositories section check when gh is available and faked.
-# Build a minimal doctor environment: stub bd, stub systemctl, fake db, stub gh.
-DOCTOR_TMP="$TMP/doctor"
-mkdir -p "$DOCTOR_TMP/db/.beads" "$DOCTOR_TMP/run" "$DOCTOR_TMP/home/.config/systemd/user"
-
-# Stub bd (schema check passes, list returns empty)
-cat > "$DOCTOR_TMP/bd" <<'BDEOF'
-#!/usr/bin/env bash
-case "$*" in
-    *"migrate schema"*) printf '✓ Schema already at v61\n'; exit 0 ;;
-    *"list"*)           printf '[]\n'; exit 0 ;;
-    *"version"*)        printf 'bd v1.2.2\n'; exit 0 ;;
-    *)                  exit 0 ;;
-esac
-BDEOF
-chmod +x "$DOCTOR_TMP/bd"
-
-# Stub systemctl (all units enabled and active)
-cat > "$DOCTOR_TMP/systemctl" <<'SCEOF'
-#!/usr/bin/env bash
-case "$*" in
-    *"is-active"*"--quiet"*) exit 0 ;;
-    *"is-active"*)           printf 'active\n' ;;
-    *"is-enabled"*)          printf 'enabled\n'; exit 0 ;;
-    *"list-units"*)          : ;;
-esac
-exit 0
-SCEOF
-chmod +x "$DOCTOR_TMP/systemctl"
-
-# Fake dolt (not needed for the repo check, but doctor.sh checks it)
-cat > "$DOCTOR_TMP/dolt" <<'DOLTEOF'
-#!/usr/bin/env bash
-exit 0
-DOLTEOF
-chmod +x "$DOCTOR_TMP/dolt"
-
-# gh stub: return allow_auto_merge value for the REST API doctor check
-cat > "$DOCTOR_TMP/gh" <<'GHEOF'
-#!/usr/bin/env bash
-case "$*" in
-    *"api"*".allow_auto_merge"*)
-        if [ -n "${GH_ALLOW_AUTO_MERGE_ERR:-}" ]; then
-            printf '%s\n' "$GH_ALLOW_AUTO_MERGE_ERR" >&2
-            exit 1
-        fi
-        printf '%s\n' "${GH_ALLOW_AUTO_MERGE:-false}" ;;
-    *) exit 0 ;;
-esac
-GHEOF
-chmod +x "$DOCTOR_TMP/gh"
-
-DOCTOR_CONF="$DOCTOR_TMP/spira.conf"
-printf 'SPIRA_RUN = %s\nSPIRA_DB = %s/db\nSPIRA_PATH = %s\nSPIRA_OPERATED = 0\n' \
-    "$DOCTOR_TMP/run" "$DOCTOR_TMP" "$DOCTOR_TMP" > "$DOCTOR_CONF"
-
-DOCTOR_MAP="$DOCTOR_TMP/repo-map"
-printf 'prrepo|%s|pr|origin/main||\n' "$FAKE_REPO" > "$DOCTOR_MAP"
-
-run_doctor() {
-    env -i PATH="$DOCTOR_TMP:$PATH" HOME="$DOCTOR_TMP/home" \
-        GH_ALLOW_AUTO_MERGE="${GH_ALLOW_AUTO_MERGE:-false}" \
-        GH_ALLOW_AUTO_MERGE_ERR="${GH_ALLOW_AUTO_MERGE_ERR:-}" \
-        SPIRA_CONF="$DOCTOR_CONF" \
-        SPIRA_REPO_MAP="$DOCTOR_MAP" \
-        SPIRA_SYSTEMCTL="$DOCTOR_TMP/systemctl" \
-        SPIRA_REPO="$ROOT" \
-        bash "$HERE/doctor.sh" 2>/dev/null
-}
-
-# POSITIVE CONTROL FOR DOCTOR.SH: allow_auto_merge=false → FAIL.
-# Regression: old code used `gh repo view --json allowAutoMerge` which exits non-zero on
-# gh 2.46 ("Unknown JSON field"), causing WARN instead of FAIL for the false case.
-GH_ALLOW_AUTO_MERGE=false
-dr_out="$(run_doctor)"
-want  "doctor FAIL for allow_auto_merge=false"  "FAIL" "$dr_out"
-want  "doctor names the repo"                   "prrepo" "$dr_out"
-want  "doctor mentions allow_auto_merge"        "allow_auto_merge" "$dr_out"
-
-# NEGATIVE: allow_auto_merge=true → ok.
-GH_ALLOW_AUTO_MERGE=true
-dr_out="$(run_doctor)"
-nowant "doctor ok for allow_auto_merge=true"    "FAIL" "$(printf '%s\n' "$dr_out" | grep 'allow_auto_merge')"
-
-# ERROR PATH: gh exits non-zero with text on stderr → "could not check" with that text.
-GH_ALLOW_AUTO_MERGE_ERR="Unknown JSON field"
-dr_out="$(run_doctor)"
-want  "could not check names the real error"    "could not check" "$dr_out"
-want  "could not check includes stderr text"    "Unknown JSON field" "$dr_out"
-nowant "could not check is not a FAIL"          "FAIL" "$(printf '%s\n' "$dr_out" | grep 'allow_auto_merge')"
-GH_ALLOW_AUTO_MERGE_ERR=""
 
 # ====================================================================================
 echo

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# test-statusline.sh — the status line check classifies every configuration doctor.sh renders.
+# test-statusline.sh — statusline-check.py classifies every status-line configuration shape.
 #
 #   ./test-statusline.sh
 #
 # WHAT IT HOLDS. The status line lives in the CLIENT's settings, outside every repository, so
-# nothing that lands here can fix it — doctor.sh owes the right message, nothing more. This
-# suite exercises statusline-check.py's classification of every shape doctor.sh renders:
+# nothing that lands here can fix it — the right message is all that can be owed. This suite
+# exercises statusline-check.py's classification of every shape it can be handed:
 #
 #   1. THE EXISTING FOUR VERDICTS ARE UNCHANGED — ours, other, absent, unreadable — along with
 #      the boolean-refreshInterval edge case.
@@ -17,7 +17,7 @@
 #      wrapper under /tmp that pipes to a ctx-meter.sh copy in a worktree.
 #
 # defect: sp-9ydp
-# covers: spira/statusline-check.py spira/doctor.sh
+# covers: spira/statusline-check.py
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
