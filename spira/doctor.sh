@@ -50,6 +50,20 @@ fi
 OK "harness at $SPIRA_HOME (in $SPIRA_REPO)"
 
 echo
+echo "chamber overlays"
+# EVERY ACTIVE OVERRIDE IS NAMED HERE, never left to be discovered when it disagrees with
+# what a bead's history implies an aeon was told. aeon.sh applies these silently to the
+# rendered brief; this is the only place that says one is in force at all.
+_co_found="$(find "$SPIRA_CHAMBER_OVERLAY" -maxdepth 2 -name '*.md' 2>/dev/null)"
+if [ -n "$_co_found" ]; then
+    while IFS= read -r _co_f; do
+        OK "active: ${_co_f#"$SPIRA_CHAMBER_OVERLAY"/}"
+    done <<<"$_co_found"
+else
+    OK "none active (checked $SPIRA_CHAMBER_OVERLAY)"
+fi
+
+echo
 echo "programs"
 # ADDING A NAME TO EITHER `for b in` LOOP BELOW IS A CHANGE TO THE CONTAINER IMAGE.
 # spira/testenv/doctor-check.sh PARSES these two lines out of this file and fails the image

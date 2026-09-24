@@ -71,8 +71,6 @@ You may edit **only** this worktree. Another repository's files are another bead
 
 When this branch is finished, {{LANDING}}.
 
-{{GATE}}
-
 {{FIXTURE}}
 
 {{PARK}}

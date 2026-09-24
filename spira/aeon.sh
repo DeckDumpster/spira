@@ -1551,50 +1551,11 @@ its own. If that turns out to be the slowest thing in your session, say so when 
 bead — the number is worth having."
 fi
 
-# HOW TO RUN THE GATE IS PART OF THE BRIEF, because running it the obvious way does not
-# work. The gate outgrew the ceiling an agent's tool puts on a single command: past it the
-# tool moves the command to the background and hands back a task id instead of a verdict,
-# and no `timeout` the session chooses can move that — the tool's ceiling fires first.
+# HOW TO VERIFY HAS EXACTLY ONE SOURCE: the persona's own Tests section in chamber/$FAYTH.md.
+# A second, hard-coded instruction rendered from here duplicated it and drifted out of sync
+# with it — a brief that says two different things about the same question is worse than one
+# that says nothing.
 #
-# A session that then ends its turn to wait ends the SESSION, and the bead is released
-# in_progress with an attempt charged for a race it did not lose. gate-run.sh runs the gate
-# detached and waits a bounded slice per call, so the session always holds either a verdict
-# or the knowledge that there is not one yet.
-#
-# The path is rendered rather than named, for the same reason every other path in this brief
-# is: an aeon works in a worktree of some repository and the harness is not inside it.
-GATE_BRIEF="**Run the landing gate through the runner, never \`gate.sh\` directly:**
-
-    bash $SPIRA_HOME/gate-run.sh $BRANCH $REPO_NAME
-
-The gate takes longer than your Bash tool will run one command. Past its ceiling the tool
-moves your command to the background and hands you a task id instead of a verdict — and
-ending your turn to wait for that ends this session, which returns the bead unfinished.
-
-The runner starts the gate detached and waits a bounded slice of it, so each call is a real
-wait rather than a poll. It exits **0** when the gate passed, **1** when it failed — the
-output is printed for you — and **2** when it is still deciding. On a 2, run the exact same
-command again; it picks the same run back up rather than starting another.
-
-**Never end your turn while it is unfinished.** The exit path checks: a session that ends
-with its gate still running has the bead released with a note saying so, and records no
-verdict it did not have.
-
-**If the gate goes red, say which kind of red it was — in one command, at the moment you
-know:**
-
-    bash $SPIRA_HOME/yield.sh classify $BRANCH GATE_FAULT \"<what actually broke>\"
-
-\`GATE_FAULT\` when the branch did not cause it — a suite read the state of the box, a fixture
-collided, the base was already broken. \`DEFECT\` when the gate was right and you fixed
-something. You do not have to: a red you fix and re-gate green is classified for you from the
-fact that the tree changed, and a red the gate itself attributes to the base or to its own
-machinery is classified on arrival. Say it when you know better than that inference does.
-
-This is the only measurement of whether the gate is worth the minutes it takes from every
-branch. A gate whose reds are mostly its own fault gets deleted on this evidence, in a
-sentence, instead of after an outage — which is how the last one went."
-
 # ---- the deadline ---------------------------------------------------------------------
 # A SESSION THAT CAN BE KILLED MUST BE ABLE TO SEE WHEN. A persona that declares
 # FAYTH_TIMEOUT_SECONDS is killed from outside — the transient unit's TimeoutStartSec is set
@@ -1630,6 +1591,66 @@ observably changed for several checks, the lease then expires, and the bead retu
 queue. So a long session is fine and a silent one is not."
 fi
 
+# ---- chamber overlay: an operator's own copy of a brief outlives a release --------------
+# A hand edit made straight into the release checkout is reverted by the next skew refresh
+# with nothing to say so happened (sp-r1ca2). Read order, first hit wins per layer:
+#   $FAYTH.md            in SPIRA_CHAMBER_OVERLAY replaces the release brief whole
+#   $FAYTH.<section>.md  replaces one "## <section>" block of it; the file's own first line
+#                        must be that exact heading, so a rename is visible in the file
+#                        rather than silent, and a section named that is not in the release
+#                        brief is logged and ignored rather than applied nowhere
+#   $FAYTH.append.md     appended after everything else
+# {{PLACEHOLDER}} substitution below runs on the combined result, so an overlay may use
+# every token the release brief can.
+CHAMBER_FILE="$SPIRA_HOME/chamber/$FAYTH.md"
+CHAMBER_OVERLAY_WHOLE="$SPIRA_CHAMBER_OVERLAY/$FAYTH.md"
+CHAMBER_OVERLAY_APPEND="$SPIRA_CHAMBER_OVERLAY/$FAYTH.append.md"
+if [ -f "$CHAMBER_OVERLAY_WHOLE" ]; then
+    CHAMBER_CONTENT="$(cat "$CHAMBER_OVERLAY_WHOLE")"
+    log "$FAYTH: $BEAD_ID chamber brief replaced whole-file by $CHAMBER_OVERLAY_WHOLE"
+else
+    CHAMBER_CONTENT="$(cat "$CHAMBER_FILE" 2>/dev/null)"
+    for _co_f in "$SPIRA_CHAMBER_OVERLAY/$FAYTH".*.md; do
+        [ -f "$_co_f" ] || continue
+        [ "$_co_f" = "$CHAMBER_OVERLAY_APPEND" ] && continue
+        _co_section="${_co_f#"$SPIRA_CHAMBER_OVERLAY/$FAYTH".}"; _co_section="${_co_section%.md}"
+        _co_heading="## ${_co_section//_/ }"
+        if grep -qxF "$_co_heading" <<<"$CHAMBER_CONTENT"; then
+            CHAMBER_CONTENT="$(awk -v h="$_co_heading" -v rf="$_co_f" '
+                BEGIN { while ((getline line < rf) > 0) repl = repl line "\n"; close(rf) }
+                $0 == h { printf "%s", repl; skip=1; next }
+                skip && /^## / { skip=0 }
+                skip { next }
+                { print }
+            ' <<<"$CHAMBER_CONTENT")"
+            log "$FAYTH: $BEAD_ID chamber section '$_co_heading' overlaid by $_co_f"
+        else
+            log "$FAYTH: $BEAD_ID chamber overlay $_co_f names a section ($_co_heading) absent from $CHAMBER_FILE — ignored"
+        fi
+    done
+    [ -f "$CHAMBER_OVERLAY_APPEND" ] && CHAMBER_CONTENT="$(printf '%s\n\n%s' "$CHAMBER_CONTENT" "$(cat "$CHAMBER_OVERLAY_APPEND")")"
+fi
+
+# THE INJECTED BLOCKS ARE OVERLAID THE SAME WAY, under SPIRA_CHAMBER_OVERLAY/blocks/ rather
+# than beside the persona file, because they are text THIS SCRIPT computes (from repo-map and
+# the fixture, not from a chamber/*.md file) and are shared across personas. Unlike the
+# section overlay above, this text is spliced in after the {{PLACEHOLDER}} pass runs (the
+# reason PARK/FIXTURE/DEADLINE are parameter-expanded rather than sed'd in the first place —
+# see the comment at their substitution below), so a block overlay file is used verbatim; it
+# cannot itself contain a {{TOKEN}} and expect it resolved.
+block_overlay() {   # block_overlay <name> <built-in text> -> stdout
+    local f="$SPIRA_CHAMBER_OVERLAY/blocks/$1.md"
+    if [ -f "$f" ]; then
+        log "$FAYTH: $BEAD_ID $1 block overlaid by $f"
+        cat "$f"
+    else
+        printf '%s' "$2"
+    fi
+}
+PARK_BRIEF="$(block_overlay PARK "$PARK_BRIEF")"
+FIXTURE_BRIEF="$(block_overlay FIXTURE "$FIXTURE_BRIEF")"
+DEADLINE_BRIEF="$(block_overlay DEADLINE "$DEADLINE_BRIEF")"
+
 BEAD_BODY="$(bdq show "$BEAD_ID" 2>/dev/null | grep -vE '^💡|^warning|^  Fix|^  Or')"
 PROMPT="$(sed -e "s|{{BEAD_ID}}|$BEAD_ID|g" -e "s|{{BRANCH}}|$BRANCH|g" \
               -e "s|{{REPO}}|$WORK|g" -e "s|{{REPO_NAME}}|$REPO_NAME|g" \
@@ -1644,14 +1665,13 @@ PROMPT="$(sed -e "s|{{BEAD_ID}}|$BEAD_ID|g" -e "s|{{BRANCH}}|$BRANCH|g" \
               -e "s|{{MAX_BEADS}}|$SPIRA_MAECHEN_MAX_BEADS|g" \
               -e "s|{{REMEDY_LABEL}}|$SPIRA_MAECHEN_REMEDY_LABEL|g" \
               -e "s|{{SCOPE}}|${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}|g" \
-              "$SPIRA_HOME/chamber/$FAYTH.md")"
+              <<<"$CHAMBER_CONTENT")"
 # PARAMETER EXPANSION, NOT sed, for the multi-line substitutions. `s|{{X}}|<many lines>|`
 # is not a thing sed will do, and a brief that silently rendered as the literal `{{PARK}}`
 # would leave an aeon with no instruction at all about how its work is meant to end.
 PROMPT="${PROMPT/\{\{BEAD\}\}/$BEAD_BODY}"
 PROMPT="${PROMPT/\{\{PARK\}\}/$PARK_BRIEF}"
 PROMPT="${PROMPT/\{\{FIXTURE\}\}/$FIXTURE_BRIEF}"
-PROMPT="${PROMPT/\{\{GATE\}\}/$GATE_BRIEF}"
 PROMPT="${PROMPT/\{\{DEADLINE\}\}/$DEADLINE_BRIEF}"
 
 # The memory book. Every agent reads it on every session; this is the delivery mechanism
