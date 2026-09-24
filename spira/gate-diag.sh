@@ -73,6 +73,7 @@ _retry_status() {  # _retry_status <suite> -> ok | red | timeout | none
 _summary_tmp="$(mktemp)"
 trap 'rm -f "$_summary_tmp"' EXIT
 
+_json_red="" _json_flaky=""
 for suite in $reds; do
     rf="$(_result_file "$suite" 2>/dev/null || true)"
     of="$(_out_file   "$suite" 2>/dev/null || true)"
@@ -106,6 +107,11 @@ for suite in $reds; do
         *)           verdict="red" ;;
     esac
 
+    case "$retry_st" in
+        ok) _json_flaky="${_json_flaky:+$_json_flaky }$suite" ;;
+        *)  _json_red="${_json_red:+$_json_red }$suite" ;;
+    esac
+
     if [ -n "$IN_GHA" ]; then
         printf '::group::%s  %s  rc=%s  %ss\n' "$suite" "$verdict" "$rc_field" "$secs"
         if [ -z "$raw_out" ]; then
@@ -133,6 +139,16 @@ for suite in $reds; do
     printf '| %s | %s | %s | %s |\n' "$suite" "${secs}s (rc=${rc_field})" "$verdict" "$_fs" \
         >> "$_summary_tmp"
 done
+
+# Write machine-readable red-suite list. forge.sh reads this from the artifact
+# instead of per-suite annotations, which GitHub caps at 10 per step.
+python3 -c "
+import json, sys
+reds = [s for s in sys.argv[1].split() if s]
+flaky = [s for s in sys.argv[2].split() if s]
+with open(sys.argv[3], 'w') as f:
+    json.dump({'red': reds, 'flaky': flaky, 'red_count': len(reds)}, f)
+" "${_json_red:-}" "${_json_flaky:-}" "$ROOT/red-suites.json" 2>/dev/null || true
 
 _hdr='| Suite | Duration | Verdict | First FAIL line |
 |-------|----------|---------|-----------------|'
