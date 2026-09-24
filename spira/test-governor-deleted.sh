@@ -27,8 +27,9 @@
 #                             history to match today reads as a plan, not a record.
 #   docs/spikes/**         — a frozen research corpus, captured wholesale from real suite
 #                             runs; it is data, not a claim about current code.
+#   this file itself       — it names the word to test for it; that is not a live reference.
 # Anything else that names governor.sh after this suite is green is a live reference this
-# suite exists to catch, not a fourth exception to add.
+# suite exists to catch, not a fifth exception to add.
 #
 # covers: spira/watchtower.sh spira/sentinel.sh spira/lib.sh spira/auron-classify.py
 set -uo pipefail
@@ -47,13 +48,13 @@ git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-# scan <repo-root> -> tracked files, minus the three historical/data exclusions above, that
+# scan <repo-root> -> tracked files, minus the historical/data/self exclusions above, that
 # contain 'governor' (case-insensitive). Reads the tree; changes nothing.
 scan() {
     local repo="$1"
     git -C "$repo" ls-files -z \
-        | grep -zv -E '^spira/testdata/|^docs/test-plan/|^docs/spikes/' \
-        | xargs -0 grep -liE 'governor' 2>/dev/null
+        | grep -zv -E '^spira/testdata/|^docs/test-plan/|^docs/spikes/|^spira/test-governor-deleted\.sh$' \
+        | (cd "$repo" && xargs -0 grep -liE 'governor' 2>/dev/null)
 }
 
 echo

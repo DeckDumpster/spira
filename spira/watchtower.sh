@@ -883,10 +883,9 @@ fi
 _tmp_pct="$(df /tmp 2>/dev/null | awk 'NR==2{print $5}' || true)"
 [ -n "$_tmp_pct" ] || _tmp_pct="?"
 
-# ROOT DISK AND MEMORY. A prior probe logged '/ at 99%' at 02:02Z on 2026-09-24, and a full
-# root disk kills every process on the box, not only Spira's — this is a fact worth Ops
-# seeing even though nothing here withholds a summon over it (that is the admission
-# throttle's job, CHECK 7 in sentinel.sh).
+# ROOT DISK AND MEMORY. A full root disk kills every process on the box, not only Spira's —
+# this is a fact worth Ops seeing even though nothing here withholds a summon over it (that
+# is the admission throttle's job, CHECK 7 in sentinel.sh).
 DISK_WARN_PCT="${SPIRA_DISK_WARN_PCT:-90}"
 MEM_WARN_MB="${SPIRA_MEM_WARN_MB:-1500}"
 # SPIRA_MEMINFO_PATH is a seam for tests, the same idea as SPIRA_INCIDENT_SH and
