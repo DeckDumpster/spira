@@ -5212,6 +5212,50 @@ rebase_branch() {
     return $rc
 }
 
+# recut_onto — move a branch onto a new base by cherry-picking commits one by one.
+#
+# Unlike rebase (which stops entirely on the first conflict), this advances the branch
+# as far as the commits allow: clean commits are applied, and the first conflicting one
+# is noted in RECUT_CONFLICTS. The branch ref is force-updated to the last successfully
+# applied commit — or to the new base itself if no commits apply — so the merge-base
+# always moves forward. Returns 0 if all commits applied cleanly, 1 if any conflict
+# remains. Requires the .rebase.<repo> scratch worktree to already exist.
+recut_onto() {
+    local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" scratch old_base rc=0 _cp_err new_tip
+    RECUT_CONFLICTS=""; RECUT_APPLIED_COUNT=0
+    [ -n "$name" ] || name="$(repo_name_at "$repo" 2>/dev/null)" || name=""
+    scratch="$SPIRA_RUN/worktree/.rebase.$(basename "$repo")"
+    [ -e "$scratch/.git" ] || { RECUT_CONFLICTS="no-worktree"; return 1; }
+    git -C "$repo" rev-parse --verify -q "$onto" >/dev/null 2>&1 || { RECUT_CONFLICTS="no-base"; return 1; }
+    git -C "$repo" show-ref --verify -q "refs/heads/$br" || { RECUT_CONFLICTS="no-branch"; return 1; }
+    git -C "$repo" merge-base --is-ancestor "$onto" "refs/heads/$br" 2>/dev/null && return 0
+    old_base="$(git -C "$repo" merge-base "$onto" "refs/heads/$br" 2>/dev/null)" || { RECUT_CONFLICTS="no-merge-base"; return 1; }
+    git -C "$scratch" checkout -q --detach "$onto" >/dev/null 2>&1 || { RECUT_CONFLICTS="no-checkout"; return 1; }
+    _cp_err="$(mktemp)"
+    local commit count=0
+    while IFS= read -r commit; do
+        [ -n "$commit" ] || continue
+        if ! git -C "$scratch" \
+                -c "user.name=${SPIRA_GIT_NAME:-spira}" \
+                -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" \
+                cherry-pick -q "$commit" 2>"$_cp_err"; then
+            RECUT_CONFLICTS="$(git -C "$scratch" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
+            RECUT_CONFLICTS="${RECUT_CONFLICTS% }"
+            [ -n "$RECUT_CONFLICTS" ] || RECUT_CONFLICTS="$(head -1 "$_cp_err" 2>/dev/null)"
+            git -C "$scratch" cherry-pick --abort >/dev/null 2>&1
+            rc=1
+            break
+        fi
+        count=$(( count + 1 ))
+    done < <(git -C "$repo" rev-list --reverse "${old_base}..${br}" 2>/dev/null)
+    rm -f "$_cp_err"
+    RECUT_APPLIED_COUNT=$count
+    new_tip="$(git -C "$scratch" rev-parse HEAD 2>/dev/null)"
+    [ -n "$new_tip" ] && git -C "$repo" update-ref "refs/heads/$br" "$new_tip" >/dev/null 2>&1
+    git -C "$scratch" checkout -q --detach >/dev/null 2>&1
+    return $rc
+}
+
 # --------------------------------------------------------------------------------------
 # THE OWNERSHIP FENCE. An installation that imported a predecessor's databases holds
 # thousands of beads that predecessor is still writing to. An aeon that claims one of them is
