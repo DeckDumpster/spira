@@ -270,11 +270,10 @@ fi
 
 # Run install.sh from the activated release (--skip-build: binaries are in bin/).
 _install_rc=0
-_install_env=(
+_install_env=(SPIRA_OPERATED=0
     SPIRA_CONF="$_conf"
     SPIRA_RELEASES="$_releases"
     SPIRA_HOME_REPO="$(basename "$scratch_repo")"
-    SPIRA_OPERATED=0
 )
 [ -n "$_agent" ] && _install_env+=(SPIRA_AGENT="$_agent")
 [ -d "$_releases/current" ] && \
@@ -523,11 +522,10 @@ else
     # Conf already has SPIRA_RELEASES from phase A; surviving state is intentional.
     _aged_conf="$_conf"
     _aged_install_rc=0
-    _aged_env=(
+    _aged_env=(SPIRA_OPERATED=0
         SPIRA_CONF="$_aged_conf"
         SPIRA_RELEASES="$_releases"
         SPIRA_HOME_REPO="$(basename "$scratch_repo")"
-        SPIRA_OPERATED=0
     )
     [ -n "$_agent" ] && _aged_env+=(SPIRA_AGENT="$_agent")
 

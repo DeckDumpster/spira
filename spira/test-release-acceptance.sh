@@ -235,10 +235,14 @@ fi
 
 # ============================================================================
 echo
-echo "16. Phase A and D: CONFIGURE_PROD set to harness subdir (not clone root)"
+echo "16. Phase A and D: install uses \$_releases/current path (not bare releases root)"
 # ============================================================================
-want "phase A CONFIGURE_PROD includes /spira suffix" 'CONFIGURE_PROD=$_clone/spira'
-want "phase D CONFIGURE_PROD includes /spira suffix" 'CONFIGURE_PROD=$_aged_clone/spira'
+# The tarball-based approach unpacks into $releases/current via activate.sh;
+# install.sh must be called from that versioned path, not from $releases directly.
+wantre "phase A install uses \$_releases/current path" \
+    '_releases/current/install\.sh'
+wantre "phase D install uses \$_releases/current path" \
+    '_releases/current/install\.sh'
 
 # ============================================================================
 echo
@@ -260,23 +264,22 @@ fi
 
 # ============================================================================
 echo
-echo "18. Phase A and D: ready.sh call uses clone path, not workspace path"
+echo "18. Phase A and D: ready.sh call uses release path, not workspace path"
 # ============================================================================
-# The old code called bash "\$HERE/ready.sh" which read workspace paths; the
-# clone's own ready.sh (with clone paths) was never consulted, so install-side
-# fixes to ready.sh never changed the acceptance verdict.
-wantre "phase A calls clone's ready.sh" \
-    'bash.*\$_clone/spira/ready\.sh'
-wantre "phase A failure names clone's ready.sh path" \
-    'bad.*\$_clone.*ready\.sh'
-wantre "phase D calls aged clone's ready.sh" \
-    'bash.*\$_aged_clone/spira/ready\.sh'
-wantre "phase D failure names aged clone's ready.sh path" \
-    'bad.*\$_aged_clone.*ready\.sh'
-# Workspace's ready.sh must not appear on the capture line.
+# activate.sh unpacks the tarball into $releases/current; ready.sh from that
+# unpacked tree must be called, not $HERE/ready.sh from the workspace.
+wantre "phase A calls release ready.sh" \
+    'bash.*\$_releases/current/spira/ready\.sh'
+wantre "phase A failure names release ready.sh path" \
+    'bad.*\$_releases/current/spira/ready\.sh'
+wantre "phase D calls release ready.sh" \
+    'bash.*\$_releases/current/spira/ready\.sh'
+wantre "phase D failure names release ready.sh path" \
+    'bad.*\$_releases/current/spira/ready\.sh'
+# Workspace's ready.sh must not appear on a bash invocation line.
 if grep -E 'bash.*\$HERE/ready\.sh' "$SCRIPT" 2>/dev/null; then
     bad "ready.sh call does not use workspace path" \
-        "found bash \$HERE/ready.sh — must use clone path"
+        "found bash \$HERE/ready.sh — must use release path"
 else
     ok "ready.sh call does not use workspace path"
 fi
