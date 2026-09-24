@@ -268,11 +268,9 @@ cmd_up() {
     # spirauser, so cargo's first write died with
     #   error: failed to create directory `/var/spira/cargo/registry/cache/...`
     #   Caused by: Permission denied (os error 13)
-    # and every Rust suite went red — test-panel and test-pane-fyi in the timed pass, with
-    # pane-fyi then reporting "0 tests matched" because cargo never got far enough to list
-    # any. test-artifact-install.sh had already met this and worked around it privately by
-    # pointing CARGO_HOME at a temp directory of its own, which is why it stayed green and
-    # the defect stayed hidden.
+    # and every Rust suite went red. test-artifact-install.sh had already met this and
+    # worked around it privately by pointing CARGO_HOME at a temp directory of its own,
+    # which is why it stayed green and the defect stayed hidden.
     #
     # Chowning after the mount is what makes the volume usable whether it is fresh or being
     # reused, and whether or not the image happens to carry the directory. The owner is

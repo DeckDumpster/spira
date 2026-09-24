@@ -324,3 +324,87 @@ async fn the_static_page_and_its_scripts_are_served() {
     let (code, _) = get(addr, "/nonexistent.css").await;
     assert_eq!(code, 404, "/nonexistent.css must 404, not catch-all to the page");
 }
+
+// ── /api/ops ─────────────────────────────────────────────────────────────────
+//
+// This route never calls bd — it parses two small files under `run` and checks the halt
+// stamp. `cfg()` above wires `db`/`bd` for /api/beads; /api/ops ignores both, so these tests
+// only ever set `run`.
+
+fn ops_cfg(run: &str) -> Config {
+    Config {
+        db: String::new(),
+        extra_path: vec![],
+        budget: Duration::from_millis(20_000),
+        cache: Duration::from_secs(30),
+        addr: String::new(),
+        bd: "bd".to_string(),
+        run: run.to_string(),
+        instance: "test".to_string(),
+        systemctl: "systemctl".to_string(),
+    }
+}
+
+fn ops_run_dir() -> PathBuf {
+    let n = UNIQUE.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("loom-ops-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a run directory");
+    dir
+}
+
+async fn ops_json(addr: SocketAddr) -> (u16, Value) {
+    let (code, body) = get(addr, "/api/ops").await;
+    let v = serde_json::from_str(&body).unwrap_or_else(|e| panic!("body is not JSON ({e}): {body}"));
+    (code, v)
+}
+
+#[tokio::test]
+async fn ops_round_trips_shell_quoting_and_hides_absent_keys() {
+    let run = ops_run_dir();
+    // SP_APOS decodes to two apostrophes — close-quote, backslash-apostrophe, open-quote,
+    // twice — the same encoding cockpit.sh's Python writer uses.
+    std::fs::write(
+        run.join("cockpit.env"),
+        "SP_PLAIN='hello world'\nSP_APOS=''\\'''\\'''\nSP_MISSING_CONTROL='present'\n",
+    )
+    .expect("a cockpit.env");
+    std::fs::write(run.join("budget.env"), "").expect("an empty budget.env");
+
+    let addr = spawn(ops_cfg(run.to_str().unwrap())).await;
+    let (code, v) = ops_json(addr).await;
+    assert_eq!(code, 200, "{v}");
+
+    assert_eq!(v["SP_PLAIN"], "hello world");
+    assert_eq!(v["SP_APOS"], "''");
+    // POSITIVE CONTROL: SP_MISSING_CONTROL proves the lookup ran before SP_MISSING's absence
+    // below means anything.
+    assert_eq!(v["SP_MISSING_CONTROL"], "present");
+    assert!(
+        v.get("SP_MISSING").is_none(),
+        "a key absent from cockpit.env must be absent from the JSON, not defaulted: {v}"
+    );
+    assert!(v["cockpit_env_age_s"].is_u64(), "{v}");
+}
+
+#[tokio::test]
+async fn ops_reports_halted_only_from_the_stamp_not_the_snapshot() {
+    let run = ops_run_dir();
+    std::fs::write(run.join("cockpit.env"), "SP_PLAIN='x'\n").expect("a cockpit.env");
+    std::fs::write(run.join("budget.env"), "").expect("an empty budget.env");
+
+    let addr = spawn(ops_cfg(run.to_str().unwrap())).await;
+    let (code, v) = ops_json(addr).await;
+    assert_eq!(code, 200, "{v}");
+    assert_eq!(v["halted"], false, "no world.halted stamp: {v}");
+
+    // POSITIVE CONTROL: the same run dir with the stamp written — halted must flip. A
+    // collector that renders a halted world as healthy because the banner read the snapshot
+    // instead of the stamp is exactly the defect this route exists to avoid.
+    std::fs::write(run.join("world.halted"), "2026-09-24T00:00:00Z\nwhy: acceptance\n")
+        .expect("a halt stamp");
+    let addr2 = spawn(ops_cfg(run.to_str().unwrap())).await;
+    let (code, v) = ops_json(addr2).await;
+    assert_eq!(code, 200, "{v}");
+    assert_eq!(v["halted"], true, "{v}");
+    assert_eq!(v["halted_why"], "acceptance", "{v}");
+}

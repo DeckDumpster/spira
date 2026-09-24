@@ -333,4 +333,32 @@ mod tests {
         let (_, _, err) = parse_env_file("/nonexistent/path/cockpit.env");
         assert!(err.is_some(), "unreadable file must produce an error string");
     }
+
+    #[tokio::test]
+    async fn read_world_state_reflects_the_stamp_not_the_snapshot() {
+        // A dead collector would render a halted world as healthy if the banner read the
+        // snapshot instead of the stamp — this is the property that makes read_world_state
+        // its own read path rather than a field on OpsSnapshot.
+        let dir = std::env::temp_dir().join(format!("ops-world-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = dir.to_str().unwrap();
+
+        // POSITIVE CONTROL FIRST: no stamp, not halted — the flip below means something only
+        // because this baseline is not already halted.
+        let w = read_world_state(run, "test", "/nonexistent/systemctl").await;
+        assert!(!w.halted, "no world.halted stamp: expected not halted");
+        assert!(
+            w.sentinel_active.is_none(),
+            "a missing systemctl must not fabricate active/inactive"
+        );
+
+        std::fs::write(dir.join("world.halted"), "2026-09-24T00:00:00Z\nwhy: acceptance\n")
+            .unwrap();
+        let w = read_world_state(run, "test", "/nonexistent/systemctl").await;
+        assert!(w.halted, "the stamp is present: expected halted");
+        assert_eq!(w.halted_since.as_deref(), Some("2026-09-24T00:00:00Z"));
+        assert_eq!(w.halted_why.as_deref(), Some("acceptance"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

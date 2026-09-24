@@ -22,7 +22,8 @@
 # absent from the record.
 #
 # defect: sp-wok.3
-# covers: loom/*
+# tier: T2
+# covers: loom/* UC-cockpit-observability-31 UC-cockpit-observability-32
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
