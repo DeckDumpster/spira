@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-watchtower-disk-memory.sh — disk and memory are vital signs now that the governor,
-# which used to read them and withhold new summons, is gone.
+# test-watchtower-disk-memory.sh — disk and memory are watchtower vital signs.
 #
 #   ./test-watchtower-disk-memory.sh
 #
@@ -12,8 +11,7 @@
 # and SPIRA_BD carry for their own commands. A reading at or above its warn threshold does
 # two things: it is reported as an anomaly (the cheap nominal/not-nominal gate that decides
 # whether the sweep skips the model session), and it files a direct, deduplicated escalation
-# — the governor's own reasoning was that a full root disk kills everything on the box, and
-# that is still true with the governor gone.
+# — a full root disk kills everything on the box.
 #
 # POSITIVE CONTROLS FIRST (law-a-regression-test-must-be-seen-to-fail): each "not an anomaly"
 # or "no escalation" assertion is preceded by a fixture proving the same field DOES fire when
