@@ -330,6 +330,16 @@ print(d[0].get("title", "") if d else "")' 2>/dev/null)"
     fi
     local ctx=""
     [ -n "$others" ] && ctx=" The conflicted files were also changed on the base by $others."
+    # File count over the branch's own diff (not just the conflicted files) — a bead whose
+    # scope spans several hot files cannot win a rebase race it re-enters every few hours;
+    # past SPIRA_REBASE_DECOMPOSE_FILES the answer is decomposition, not another hand rebase.
+    local nfiles=0 decompose_ctx=""
+    if [ -n "$repo_dir" ] && [ -n "$base_ref" ]; then
+        nfiles="$(git -C "$repo_dir" diff --name-only "${base_ref}...${br}" 2>/dev/null | grep -c .)"
+    fi
+    if [ "${nfiles:-0}" -ge "${SPIRA_REBASE_DECOMPOSE_FILES:-4}" ]; then
+        decompose_ctx=" $br touches $nfiles files — a bead this wide re-enters the rebase race every landing; consider splitting it into smaller beads instead of hand-rebasing the whole thing again."
+    fi
     # Subject: title first so the operator knows what the work is (law-escalations-lead-with-the-bead).
     local _subj
     if [ -n "$bead_title" ]; then
@@ -339,7 +349,9 @@ print(d[0].get("title", "") if d else "")' 2>/dev/null)"
     fi
     # Default: no empty slots — omit the duplicate clause when others is empty.
     local _dflt
-    if [ -n "$others" ]; then
+    if [ "${nfiles:-0}" -ge "${SPIRA_REBASE_DECOMPOSE_FILES:-4}" ]; then
+        _dflt="split $br into smaller beads by file/deliverable and land those independently, rather than rebasing the whole thing by hand again"
+    elif [ -n "$others" ]; then
         _dflt="check whether $br is a duplicate of $others and close it if so; if the work is genuinely new, rebase by hand and push"
     else
         _dflt="rebase $br by hand and push, or close it if the work is already landed"
@@ -361,7 +373,7 @@ $_subj
 ## Default
 $_dflt
 
-$id has been reopened for a rebase conflict $n times and the loop is not converging. Conflicts in: ${conflicts:-unknown}.$ctx
+$id has been reopened for a rebase conflict $n times and the loop is not converging. Conflicts in: ${conflicts:-unknown}.$ctx$decompose_ctx
 
 $_extra
 MAILEOF
@@ -3215,11 +3227,11 @@ other_beads_on_conflicts() {
 }
 
 conflict_reopen_note() {
-    local repo="$1" br="$2" base="$3" name="$4" conflicts="$5" actor="$6"
+    local repo="$1" br="$2" base="$3" name="$4" conflicts="$5" actor="$6" rq_n="${7:-1}"
     local rn other_beads note
     rn="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
     other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "$conflicts")"
-    note="Reopened by $actor: $br does not rebase onto $base in $name; conflicts in ${conflicts:-unknown}. The branch carries $rn commit(s) from the previous session — resume from the existing work."
+    note="Reopened by $actor: $br does not rebase onto $base in $name; conflicts in ${conflicts:-unknown}. This is rebase-conflict attempt $rq_n on this bead. The branch carries $rn commit(s) from the previous session — resume from the existing work."
     if [ -n "$other_beads" ]; then
         note="$note Those files were changed on $base by $other_beads — check whether this work is already landed before resolving."
     else
@@ -5313,6 +5325,61 @@ rebase_branch() {
     if [ "$wt" = "${SPIRA_RUN}/worktree/.rebase.$(basename "$repo")" ]; then
         git -C "$wt" checkout -q --detach >/dev/null 2>&1
     fi
+    return $rc
+}
+
+# recut_onto — move a branch onto a new base by cherry-picking commits one by one.
+#
+# Unlike rebase (which stops entirely on the first conflict), this advances the branch
+# as far as the commits allow: clean commits are applied, and the first conflicting one
+# is noted in RECUT_CONFLICTS. When at least one commit lands, the branch ref is
+# force-updated to that commit so the merge-base moves forward. When zero commits land
+# the branch ref is left unchanged — moving it to the new base would strip all work and
+# leave a trivially-clean branch that the next pass certifies without any content.
+# Returns 0 if all commits applied cleanly, 1 if any conflict remains.
+recut_onto() {
+    local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" scratch old_base rc=0 _cp_err new_tip
+    RECUT_CONFLICTS=""; RECUT_APPLIED_COUNT=0
+    [ -n "$name" ] || name="$(repo_name_at "$repo" 2>/dev/null)" || name=""
+    scratch="$SPIRA_RUN/worktree/.rebase.$(basename "$repo")"
+    if [ ! -e "$scratch/.git" ]; then
+        mkdir -p "$(dirname "$scratch")"
+        spira_prune_worktrees "$repo" >/dev/null 2>&1
+        git -C "$repo" worktree add -q --detach "$scratch" "$onto" >/dev/null 2>&1 \
+            || { RECUT_CONFLICTS="no-worktree"; return 1; }
+    fi
+    git -C "$repo" rev-parse --verify -q "$onto" >/dev/null 2>&1 || { RECUT_CONFLICTS="no-base"; return 1; }
+    git -C "$repo" show-ref --verify -q "refs/heads/$br" || { RECUT_CONFLICTS="no-branch"; return 1; }
+    git -C "$repo" merge-base --is-ancestor "$onto" "refs/heads/$br" 2>/dev/null && return 0
+    old_base="$(git -C "$repo" merge-base "$onto" "refs/heads/$br" 2>/dev/null)" || { RECUT_CONFLICTS="no-merge-base"; return 1; }
+    git -C "$scratch" checkout -q --detach "$onto" >/dev/null 2>&1 || { RECUT_CONFLICTS="no-checkout"; return 1; }
+    _cp_err="$(mktemp)"
+    local commit count=0
+    while IFS= read -r commit; do
+        [ -n "$commit" ] || continue
+        if ! git -C "$scratch" \
+                -c "user.name=${SPIRA_GIT_NAME:-spira}" \
+                -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" \
+                cherry-pick "$commit" 2>"$_cp_err"; then
+            RECUT_CONFLICTS="$(git -C "$scratch" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
+            RECUT_CONFLICTS="${RECUT_CONFLICTS% }"
+            [ -n "$RECUT_CONFLICTS" ] || RECUT_CONFLICTS="$(head -1 "$_cp_err" 2>/dev/null)"
+            git -C "$scratch" cherry-pick --abort >/dev/null 2>&1
+            rc=1
+            break
+        fi
+        count=$(( count + 1 ))
+    done < <(git -C "$repo" rev-list --reverse "${old_base}..${br}" 2>/dev/null)
+    rm -f "$_cp_err"
+    RECUT_APPLIED_COUNT=$count
+    new_tip="$(git -C "$scratch" rev-parse HEAD 2>/dev/null)"
+    # Only move the branch when at least one commit landed on the new base.
+    # With zero commits the branch has no work on the new base, and updating it
+    # there strips all content — the next pass would see a trivially clean rebase
+    # and certify an empty branch.
+    [ "${RECUT_APPLIED_COUNT:-0}" -gt 0 ] && [ -n "$new_tip" ] && \
+        git -C "$repo" update-ref "refs/heads/$br" "$new_tip" >/dev/null 2>&1
+    git -C "$scratch" checkout -q --detach >/dev/null 2>&1
     return $rc
 }
 
