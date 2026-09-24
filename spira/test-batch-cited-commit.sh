@@ -127,6 +127,7 @@ cat > "$SH/forge-fixture.sh" <<'FORGE'
 #!/usr/bin/env bash
 cmd="${1:-}"; shift; repo="${1:-}"; shift
 case "$cmd" in
+    main-gate-status) printf 'green deadbeef\n' ;;
     pr-create)
         n=$(( $(wc -l < "$FORGE_LOG" 2>/dev/null || echo 0) + 1 ))
         printf '%s\n' "$n" >> "$FORGE_LOG"

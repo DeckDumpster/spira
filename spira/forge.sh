@@ -370,10 +370,10 @@ print(sum(1 for r in runs if r.get('event') == 'pull_request' and r.get('status'
         # that read any of those as green would land straight through the outage
         # that made this exist (law-a-control-that-cannot-check-must-refuse).
         run_json="$( cd "$repo" && ghq run list --branch main --workflow gate.yml \
-            --event push --limit 1 --json status,conclusion,headSha \
+            --event push --limit 1 --json status,conclusion,headSha,databaseId \
             2>/dev/null )" || { printf 'unknown\n'; exit 0; }
         [ -n "${run_json:-}" ] || { printf 'unknown\n'; exit 0; }
-        printf '%s\n' "$run_json" | python3 -c "
+        decision="$(printf '%s\n' "$run_json" | python3 -c "
 import json, sys
 try:
     runs = json.load(sys.stdin)
@@ -386,10 +386,42 @@ try:
     elif r.get('conclusion') == 'success':
         print('green ' + sha)
     else:
-        print('red ' + sha)
+        print('maybe-red ' + sha + ' ' + str(r.get('databaseId') or ''))
 except Exception:
     print('unknown')
-" 2>/dev/null || printf 'unknown\n'
+" 2>/dev/null)" || decision=""
+        [ -n "${decision:-}" ] || decision="unknown"
+        case "$decision" in
+            "maybe-red "*)
+                # A completed run that concluded failure still might never have tested
+                # the branch — gate exit 75 (provision fault) means the harness never
+                # ran the suites, so it is not evidence main is red (mirrors
+                # check-status's provision_fault). That reads as unknown, not red.
+                set -- $decision
+                sha="$2" run_id="$3"
+                _prov_failed=""
+                if [ -n "${run_id:-}" ]; then
+                    jobs_json="$( cd "$repo" && ghq api \
+                        "repos/{owner}/{repo}/actions/runs/$run_id/jobs" 2>/dev/null )" \
+                        || jobs_json="{}"
+                    _prov_failed="$(printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
+import json, sys
+try:
+    for j in json.load(sys.stdin).get('jobs', []):
+        if j.get('name') == 'provision' and (j.get('conclusion') or '').lower() not in ('success', ''):
+            print('yes'); sys.exit()
+except Exception:
+    pass
+" 2>/dev/null)"
+                fi
+                if [ "${_prov_failed:-}" = "yes" ]; then
+                    printf 'unknown %s\n' "$sha"
+                else
+                    printf 'red %s\n' "$sha"
+                fi
+                ;;
+            *) printf '%s\n' "$decision" ;;
+        esac
         ;;
     run-metadata)
         run_id="${1:-}"
