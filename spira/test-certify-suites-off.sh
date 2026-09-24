@@ -62,7 +62,9 @@ if [ -z "$fn" ]; then
     bad "gate_key located (positive control)" "awk extracted nothing"
 else
     ok "gate_key located (positive control)"
-    key() { ( eval "$fn"; REPO="$FIX"; BR=HEAD; files="spira/gate.sh"; CMD="bash x"
+    # gate_key() now calls gate_key_hash() (gate-lib.sh) for the pure hashing step —
+    # sourced here too, since $fn is only the gate_key() body, extracted by awk.
+    key() { ( . "$HERE/gate-lib.sh"; eval "$fn"; REPO="$FIX"; BR=HEAD; files="spira/gate.sh"; CMD="bash x"
               EXCLUDE="$HERE/gate.sh"; SKEW="$HERE/gate.sh"; REPO_NAME=spira
               SPIRA_GATE_SUITES="$1" gate_key ); }
     k_on="$(key on)"; k_on2="$(key on)"; k_off="$(key off)"

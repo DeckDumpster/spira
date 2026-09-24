@@ -16,7 +16,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"; RUN="$TMP/run"; SH="$TMP/spira"
 MAP="$TMP/repo-map"; HOMEDIR="$TMP/home"; RUNS="$TMP/invocations"
 mkdir -p "$RUN/worktree" "$HOMEDIR" "$SH"; : > "$RUNS"
-cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" "$HERE/yield.sh" "$SH/"
+cp "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" "$HERE/yield.sh" "$SH/"
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"

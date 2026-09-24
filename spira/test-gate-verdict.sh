@@ -47,7 +47,7 @@ mkdir -p "$RUN/worktree" "$HOMEDIR" "$SH"
 # exclude.sh and skew.sh because the gate fails closed on their absence and hashes both;
 # yield.sh because the gate records what it was worth on every way out, and a suite that left
 # it behind would be exercising a path the real gate never takes.
-cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" \
+cp "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" \
    "$HERE/yield.sh" "$SH/"
 
 git init -q --bare -b main "$REMOTE"

@@ -36,7 +36,7 @@ mkdir -p "$RUN/worktree" "$SH"
 # THE GATE UNDER TEST IS A COPY. lib.sh, conf.sh, exclude.sh, skew.sh, yield.sh and
 # suite-covers.sh travel with it because gate.sh fails closed on their absence and
 # lib.sh sources suite-covers.sh on startup.
-cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" \
+cp "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" \
    "$HERE/skew.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" "$SH/"
 
 git init -q --bare -b main "$REMOTE"
