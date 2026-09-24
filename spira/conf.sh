@@ -1571,14 +1571,14 @@ spira_require() {        # spira_require <bin> [<bin>...] -> 0, or 1 having name
 # Every program the harness or its tests invoke, in one list. doctor.sh iterates this rather
 # than carrying its own copy — two lists is how the development set came to be checked by
 # nothing at all.
-SPIRA_BINS="${SPIRA_BINS:-bd git python3 flock dolt gh tmux node cargo jq zstd bd-embedded podman go inotifywait aerc hunk}"
+SPIRA_BINS="${SPIRA_BINS:-bd git python3 flock dolt gh tmux node cargo jq zstd aws bd-embedded podman go inotifywait aerc hunk}"
 
 spira_bin_tier() {
     case "$1" in
         # runtime: the loop cannot run at all.
         bd|git|python3|flock)      echo runtime ;;
         # optional: the loop runs; one named feature is off.
-        dolt|gh|tmux|node|cargo|jq|zstd) echo optional ;;
+        dolt|gh|tmux|node|cargo|jq|zstd|aws) echo optional ;;
         # operator: needed on an operated instance (SPIRA_OPERATED=1). doctor.sh FAILs
         # when these are missing; SPIRA_OPERATED=0 downgrades to WARN for headless boxes.
         inotifywait|aerc|hunk|go)  echo operator ;;
@@ -1617,6 +1617,7 @@ spira_bin_purpose() {
         cargo)   echo "building the decisions panel; not needed to run the loop" ;;
         node)    echo "gating the browser page's view model; the loop itself never needs it" ;;
         jq)      echo "optional JSON convenience" ;;
+        aws)     echo "the AWS CLI v2 — required when the runner pool spills to EC2; without it, spilled gate runs cannot authenticate to AWS" ;;
         flock)   echo "serialising writers that share one path — the transcript archive, and the landing gate's per-repository tree" ;;
         zstd)    echo "compressing archived transcripts; gzip is used when it is absent" ;;
         inotifywait) echo "delivering mail the moment it arrives (inotify-tools); without it mail waits for the next session start" ;;

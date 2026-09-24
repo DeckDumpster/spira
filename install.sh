@@ -47,6 +47,27 @@
 # CONFLICT OVERRIDE
 #   Set SPIRA_INSTALL_CONFLICT_CONSIDERED=1 to bypass the conflict phase.
 #   Every conflict guard names its own override so the fence is crossable.
+#
+# PREREQUISITES — programs not managed by install.sh itself:
+#
+#   AWS CLI v2  — required when the runner pool spills to EC2.
+#     Install recipe (user-local, no root, signature verified):
+#
+#       AWSV=2.37.1
+#       curl -fsSL -o /tmp/awscliv2.zip \
+#           "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWSV}.zip"
+#       curl -fsSL -o /tmp/awscliv2.zip.sig \
+#           "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWSV}.zip.sig"
+#       # Import the AWS CLI Team public key and verify the signature:
+#       # Fingerprint: FB5D B77F D5C1 18B8 0511 ADA8 A631 0ACC 4672 475C
+#       curl -fsSL https://awscli.amazonaws.com/awscli.pub | gpg --import
+#       gpg --verify /tmp/awscliv2.zip.sig /tmp/awscliv2.zip
+#       unzip -q /tmp/awscliv2.zip -d /tmp
+#       /tmp/aws/install --install-dir ~/.local/aws-cli --bin-dir ~/.local/bin
+#       rm -rf /tmp/aws /tmp/awscliv2.zip /tmp/awscliv2.zip.sig
+#
+#     Verify: aws --version  (must show aws-cli/2.x)
+#     doctor.sh reports its version and warns when absent.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 

@@ -175,6 +175,27 @@ RUN curl -fsSL -o /tmp/dolt.tar.gz \
     install -m 0755 /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt && \
     rm -rf /tmp/dolt.tar.gz /tmp/dolt-linux-amd64
 
+# ── aws CLI v2 ────────────────────────────────────────────────────────────
+# Required when the runner pool spills to EC2. Installed system-wide.
+# Key fingerprint: FB5D B77F D5C1 18B8 0511 ADA8 A631 0ACC 4672 475C
+# Key embedded from keyserver.ubuntu.com — awscli.amazonaws.com/awscli.pub
+# returns 404 as of 2026-09-23; the embedded key avoids the external dependency.
+ARG AWS_CLI_VERSION=2.37.1
+COPY testenv/awscli.pub /tmp/awscli.pub
+RUN apt-get update -q && \
+    apt-get install -yq --no-install-recommends unzip && \
+    rm -rf /var/lib/apt/lists/* && \
+    curl -fsSL -o /tmp/awscliv2.zip \
+        "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" && \
+    curl -fsSL -o /tmp/awscliv2.zip.sig \
+        "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip.sig" && \
+    mkdir -p /tmp/.gnupg && chmod 700 /tmp/.gnupg && \
+    GNUPGHOME=/tmp/.gnupg gpg --batch --no-autostart --import /tmp/awscli.pub && \
+    GNUPGHOME=/tmp/.gnupg gpg --batch --no-autostart --verify /tmp/awscliv2.zip.sig /tmp/awscliv2.zip && \
+    unzip -q /tmp/awscliv2.zip -d /tmp && \
+    /tmp/aws/install --install-dir /usr/local/aws-cli --bin-dir /usr/local/bin && \
+    rm -rf /tmp/aws /tmp/awscliv2.zip /tmp/awscliv2.zip.sig /tmp/awscli.pub /tmp/.gnupg
+
 # ── bd — copied from builder stage ────────────────────────────────────────
 # The bd-builder stage compiled bd and was then discarded: Go toolchain,
 # source clone, and both Go caches (~3 GB combined) never appear in this layer.
