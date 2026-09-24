@@ -303,3 +303,11 @@ as their brief:**
 
 `B2` (testlib migration) is deferred for the whole area, as above, tracked implicitly by
 sp-qvjzb's own landing rather than a separate bead here.
+
+**Suite-seconds, this slice only** (measured via `testenv-batch.sh`, not the full area —
+the consolidation that would realize section 7's 174→77s projection is entirely in the
+four follow-up beads above). test-inventory.sh: 3s → 2s (D6's duplicate row dropped).
+test-czar-shadow.sh: 1s → 3s (the positive-control fix does one more real subprocess
+call; cost is noise at this scale). test-exclude.sh: 0s → 1s (new coverage for a
+previously untested fence, gap 4). Net for this slice: +1s, all of it new coverage for
+a gap rather than avoidable cost.
