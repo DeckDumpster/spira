@@ -807,9 +807,15 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
         continue; }
     # ONE `git log` PER REPO, not per bead. `landed` walks all commits on the base branch;
     # a 400-commit window caused beads older than that to be incorrectly marked unlanded and
-    # reopened repeatedly (sp-a9g at 401, sp-37q at 400). Searching %B (full message) not
-    # %s (subject only) catches bead IDs in commit bodies (sp-m0s7 case). This is `landed`
-    # inlined over a cached walk, so it must keep landed's THREE outcomes.
+    # reopened repeatedly (sp-a9g at 401, sp-37q at 400). This is `landed` inlined over a
+    # cached walk (one dump of every subject on the base, reused for every closed bead in
+    # this repository), so it must keep landed's THREE outcomes AND its match rule: a
+    # landing record, never a mention. Dumping %B (full message) here and grepping the id
+    # anywhere in it once matched any commit that named a bead in passing — a dependency
+    # list, a "Fixes: <id> (analysis)" cross-reference — as that bead having landed, and
+    # stranded five certified branches this way (sp-dgaig). %s (subject only) plus the same
+    # two shapes lib.sh's landed() trusts keeps this check and the shared one from silently
+    # drifting apart.
     if [ "$r_path" != "${subj_repo:-}" ]; then
         subj_repo="$r_path"
         # spira_landrefs is the base plus its local counterpart, both verified to resolve.
@@ -818,7 +824,7 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
         subj_base="${subj_refs%% *}"
         # shellcheck disable=SC2086
         [ -n "$subj_refs" ] \
-            && subjects="$(git -C "$r_path" log --format='%B' $subj_refs 2>/dev/null)" \
+            && subjects="$(git -C "$r_path" log --format='%s' $subj_refs 2>/dev/null)" \
             || subjects=""
     fi
     # CANNOT TELL IS NOT "NOT LANDED". Reading an unresolvable base as "no commit names it"
@@ -826,7 +832,7 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
     # unanswerable, so it is left unanswered and said out loud rather than answered wrongly.
     if [ -z "$subj_refs" ]; then
         log "CHECK5 $id: cannot resolve the ref $r_name lands on — not judging whether it landed"
-    elif ! grep -qF "$id" <<< "$subjects"; then
+    elif ! { grep -qxF "spira: land $id" <<< "$subjects" || grep -q "^${id}:" <<< "$subjects"; }; then
         # LANDSTATE CHECK. Read the pipeline record before deciding to reopen.
         _c5_ls_state=""; _c5_ls_tip=""
         if [ -r "$SPIRA_RUN/landstate/$id" ]; then

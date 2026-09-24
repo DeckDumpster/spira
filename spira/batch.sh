@@ -185,7 +185,7 @@ _landed_false_restore() {
         fi
         rem="$(ref_remote "$(spira_landref "$rp" 2>/dev/null)" 2>/dev/null)" || continue
         if git -C "$rp" show-ref --verify -q "refs/remotes/$rem/spira/$id" 2>/dev/null &&
-           git -C "$rp" branch "spira/$id" "refs/remotes/$rem/spira/$id" 2>/dev/null; then
+           git -C "$rp" branch "spira/$id" "refs/remotes/$rem/spira/$id" >/dev/null 2>&1; then
             git -C "$rp" rev-parse "refs/heads/spira/$id" 2>/dev/null
             return 0
         fi
