@@ -7,15 +7,12 @@
 # self-test.sh) rather than the real dependency, since pre-activate exists
 # specifically to run before those real dependencies are trusted.
 #
+# tier: T1
 # covers: spira/pre-activate.sh spira/self-test.sh Makefile
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-pre-activate.sh"
 
@@ -259,5 +256,4 @@ is   "make install: no pre-activate.sh: exit nonzero" 1 $([ "$make_rc" -ne 0 ] &
 is   "make install: no pre-activate.sh: current not created" 1 $([ -e "$MREL2/current" ] || echo 1)
 want "make install: no pre-activate.sh: names the reason" "unverifiable" "$make_out"
 
-echo "-- $pass ok, $fail failed --"
-[ "$fail" -eq 0 ]
+tl_summary

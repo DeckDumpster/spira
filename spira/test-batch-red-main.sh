@@ -1,31 +1,33 @@
 #!/usr/bin/env bash
 #
-# test-batch-red-main.sh — main's own push-gate state carries no back pressure on
-#   the merge queue: neither the CUT (batch.sh) nor the LANDING fast-forward
-#   (verdict.sh) ever holds on it, whatever it reads.
+# test-batch-red-main.sh — the queue holds a batch while main's most recent push
+#   gate is red, except when a certified member carries SPIRA_RED_MAIN_LABEL.
 #
-# THE PROPERTY UNDER TEST (sp-x54re, superseding sp-221n8/sp-wmn0w). The queue's
-# only back pressure is whether a batch PR is open for the repo — not the state of
-# a gate that tested a different tree than the one about to cut or land. Detecting
-# a red main is still wanted (czar-pass's base-red stage, sp-tb5jp), but doing it
-# HERE duplicated that detection as a rejection (law-detection-outranks-rejection),
-# so both holds are gone along with the forge.sh verb they read: main-gate-status no
-# longer exists, and neither batch.sh nor verdict.sh calls the forge at all for this.
+# THE PROPERTY UNDER TEST (sp-221n8). The batch PR and the push to main ran
+# different suite sets, so a batch could go green and land while the push gate
+# that actually tests main afterward failed — and nothing then stopped the next
+# batch landing on top of that red main. This suite covers the second half of
+# the fix: even a batch that would otherwise cut (express, BATCH_MAX, ...) must
+# not cut while main's last push gate is red, unless it is carrying the fix.
 #
-# SEEN HELD WITHOUT THE FIX. Against the pre-sp-x54re batch.sh/verdict.sh, every
-# "no HOLD" and "never asked the forge" assertion below fails: red or unknown holds
-# the cut, and red, unknown or pending holds the landing fast-forward
+# FOUR CASES:
+#
+#   green    main-gate-status reports green   → batch cuts normally
+#   red      main-gate-status reports red,
+#            no member carries the label      → HELD; landing.log says why
+#   red-fix  main-gate-status reports red,
+#            a member carries the label       → batch cuts anyway
+#   unknown  main-gate-status cannot tell      → HELD (fail-closed, same as red)
+#
+# SEEN RED WITHOUT THE FIX. With the red-main guard removed from batch.sh, the
+# "red" case cuts a batch exactly like "green" — the HOLD assertions fail
 # (law-a-regression-test-must-be-seen-to-fail).
 #
-# covers: spira/batch.sh spira/verdict.sh spira/forge.sh spira/conf.sh
+# tier: T2
+# covers: spira/batch.sh spira/forge.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -58,25 +60,15 @@ exit 0
 MAIL
 chmod +x "$SH/mail.sh"
 
-# Forge stub. CALL_LOG records every command name asked of it, so a test can prove
-# the forge was never consulted about main's gate state at all — not just that the
-# answer was ignored. main-gate-status is stubbed anyway (answering whatever
-# FIXTURE_GATE_STATUS says) so a caller that regresses and asks again still gets a
-# deterministic answer instead of the fixture's unknown-command fallback.
-CALL_LOG="$TMP/call-log"; : > "$CALL_LOG"
+# Forge stub: main-gate-status reports whatever FIXTURE_GATE_STATUS says (default
+# green); runs-active returns 1 (CI busy) so the CI-idle trigger never fires here.
 FORGE_LOG="$TMP/forge-log"; : > "$FORGE_LOG"
 cat > "$SH/forge-fixture.sh" <<'FORGE'
 #!/usr/bin/env bash
 cmd="${1:-}"; shift; shift  # skip repo arg
-printf '%s\n' "$cmd" >> "$CALL_LOG"
 case "$cmd" in
     runs-active) printf '1\n' ;;
     main-gate-status) printf '%s\n' "${FIXTURE_GATE_STATUS:-green deadbeef}" ;;
-    # Report the open batch's head the way the real forge does: verdict.sh now refuses to
-    # land a green batch whose check-status omits head-sha (sp-2711c).
-    check-status) printf '%s\n' "${FIXTURE_CHECK_STATUS:-green}"
-        _h="$(sed -n 's/^head=//p' "${SPIRA_QUEUE_DIR:-/nonexistent}"/*/open 2>/dev/null | head -1)"
-        [ -n "$_h" ] && printf 'head-sha: %s\n' "$_h" ;;
     pr-create)
         n=$(( $(wc -l < "$FORGE_LOG" 2>/dev/null || echo 0) + 1 ))
         printf '%s\n' "$n" >> "$FORGE_LOG"
@@ -86,11 +78,10 @@ case "$cmd" in
 esac
 FORGE
 chmod +x "$SH/forge-fixture.sh"
-export CALL_LOG
 
-# BATCH_MAX and BATCH_WAIT are huge; express is the only ordinary trigger allowed to
-# fire, so every cut case here is testing what main's gate state does (nothing) to a
-# batch that has already been triggered.
+# BATCH_MAX and BATCH_WAIT are huge; express is the only ordinary trigger allowed
+# to fire, so every case here is testing what the red-main guard does to a batch
+# that has already been triggered.
 batch() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
@@ -100,27 +91,10 @@ batch() {
     SPIRA_QUEUE_BATCH_WAIT=999999 \
     SPIRA_QUEUE_BATCH_IDLE_CUT=0 \
     SPIRA_EXPRESS_LABEL=express \
+    SPIRA_RED_MAIN_LABEL="${RED_MAIN_LABEL:-fixes-red-main}" \
     FIXTURE_GATE_STATUS="${GATE_STATUS:-green deadbeef}" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
         bash "$SH/batch.sh" "$@" 2>&1
-}
-
-# verdict() drives the LANDING half (verdict.sh) against whatever batch is
-# currently open — built by build_batch below. FIXTURE_CHECK_STATUS is pinned to
-# green: these cases test only what main's gate state (FIXTURE_GATE_STATUS) does
-# to the landing decision, never the batch's own CI result.
-verdict() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_QUEUE_CI_MAXSEC=3600 \
-    SPIRA_QUEUE_CI_IDLE_SEC=600 \
-    SPIRA_QUEUE_INFRA_RETRIES=2 \
-    FIXTURE_GATE_STATUS="${GATE_STATUS:-green deadbeef}" \
-    FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \
-    SPIRA_FORGE="$SH/forge-fixture.sh" \
-        bash "$SH/verdict.sh" "$@" 2>&1
 }
 
 # Seed a LANDED anchor so the stuck-queue check has something to read.
@@ -130,6 +104,7 @@ printf 'LANDED fakeshafakeshafakeshafakeshafakeshafake %s\n' "$(( NOW - 60 ))" >
 testdb_reset
 testdb_seed <<JSONL
 {"id":"sp-plain1","title":"plain express bead","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME","express"],"updated_at":"2026-09-23T00:00:00Z"}
+{"id":"sp-fixmain","title":"fixes red main","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME","express","fixes-red-main"],"updated_at":"2026-09-23T00:00:00Z"}
 JSONL
 
 git -C "$REPO" checkout -q -b spira/sp-plain1 main
@@ -138,74 +113,58 @@ git -C "$REPO" add plain1.txt && git -C "$REPO" commit -q -m "sp-plain1: work"
 tip_p="$(git -C "$REPO" rev-parse spira/sp-plain1)"
 git -C "$REPO" checkout -q main
 
+git -C "$REPO" checkout -q -b spira/sp-fixmain main
+printf 'f\n' > "$REPO/fixmain.txt"
+git -C "$REPO" add fixmain.txt && git -C "$REPO" commit -q -m "sp-fixmain: work"
+tip_f="$(git -C "$REPO" rev-parse spira/sp-fixmain)"
+git -C "$REPO" checkout -q main
+
 certify_plain() { printf 'CERTIFIED %s %s' "$tip_p" "$NOW" > "$LANDSTATE/sp-plain1"; }
+certify_fix()   { printf 'CERTIFIED %s %s' "$tip_f" "$NOW" > "$LANDSTATE/sp-fixmain"; }
 clear_batch()   { rm -f "$QUEUEDIR/$REPONAME/open"; : > "$FORGE_LOG"; }
 landing_log()   { cat "$RUN/landing.log" 2>/dev/null; }
 clear_log()     { : > "$RUN/landing.log"; }
-clear_calls()   { : > "$CALL_LOG"; }
-remote_main()   { git -C "$REMOTE" rev-parse main 2>/dev/null; }
-
-# build_batch <id:tip> [<id:tip> ...] — write an open batch record directly
-# (bypassing batch.sh's own gate/cut) so the LANDING cases below can drive
-# verdict.sh against a known batch shape without paying for a real gate run or
-# risking a same-second branch-name collision from repeated real cuts.
-build_batch() {
-    local base_sha; base_sha="$(git -C "$REPO" rev-parse origin/main)"
-    local wt="$RUN/worktree/.batch-build"
-    git -C "$REPO" worktree remove -f "$wt" 2>/dev/null || true
-    git -C "$REPO" worktree add -q --detach "$wt" "$base_sha"
-    local members=() spec id tip now; now="$(date +%s)"
-    for spec in "$@"; do
-        id="${spec%%:*}"; tip="${spec##*:}"
-        git -C "$wt" merge -q --no-edit --no-ff -m "spira: land $id" "$tip" >/dev/null 2>&1
-        members+=("$id:$tip")
-        printf 'BATCHED %s %s\n' "$tip" "$now" > "$LANDSTATE/$id"
-    done
-    local batch_head; batch_head="$(git -C "$wt" rev-parse HEAD)"
-    git -C "$REPO" worktree remove -f "$wt" 2>/dev/null || true
-    local branch="spira/queue/build-$$-${RANDOM}"
-    git -C "$REPO" branch -f "$branch" "$batch_head" 2>/dev/null
-    git -C "$REPO" push -q origin "$branch" 2>/dev/null
-    {
-        printf 'pr=99\n'
-        printf 'head=%s\n'    "$batch_head"
-        printf 'base=%s\n'    "$base_sha"
-        printf 'members=%s\n' "${members[*]}"
-        printf 'opened=%s\n'  "$now"
-        printf 'branch=%s\n'  "$branch"
-    } > "$QUEUEDIR/$REPONAME/open"
-    printf '%s\n' "$batch_head"
-}
 
 echo "test-batch-red-main.sh"
 
-# =============================================================================
-# CUT (batch.sh): no gate state ever holds it.
-# =============================================================================
-for status in 'green deadbeef' 'pending abc123' 'red badc0de' 'unknown'; do
-    certify_plain; clear_batch; clear_log; clear_calls
-    out="$(GATE_STATUS="$status" batch "$REPONAME")"
-    is     "cut [$status]: batch opened"           "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
-    is     "cut [$status]: landstate BATCHED"      "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-plain1")"
-    nowant "cut [$status]: no HOLD in landing.log" "QUEUE HOLD"      "$(landing_log)"
-    nowant "cut [$status]: forge never asked about main's gate" "main-gate-status" "$(cat "$CALL_LOG")"
-done
+# ── case: green — batch cuts normally, no HOLD ────────────────────────────────
+certify_plain; clear_batch; clear_log; rm -f "$LANDSTATE/sp-fixmain"
+out="$(GATE_STATUS='green deadbeef' batch "$REPONAME")"
+is     "green: batch opened"            "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
+is     "green: landstate BATCHED"       "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-plain1")"
+nowant "green: no HOLD in landing.log"  "QUEUE HOLD"  "$(landing_log)"
 
-# =============================================================================
-# LANDING (verdict.sh): no gate state ever holds the fast-forward.
-# =============================================================================
-for status in 'green deadbeef' 'pending abc123' 'red badc0de' 'unknown'; do
-    clear_batch; clear_log; clear_calls
-    batch_head="$(build_batch "sp-plain1:$tip_p")"
-    out="$(GATE_STATUS="$status" CHECK_STATUS='green' verdict "$REPONAME")"
-    is     "landing [$status]: fast-forwarded" "$batch_head" "$(remote_main)"
-    is     "landing [$status]: batch closed"   "0" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
-    is     "landing [$status]: sp-plain1 LANDED" "LANDED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-plain1")"
-    want   "landing [$status]: reported landed"  "landed by fast-forward" "$out"
-    nowant "landing [$status]: no HOLD in landing.log" "QUEUE HOLD" "$(landing_log)"
-    nowant "landing [$status]: forge never asked about main's gate" "main-gate-status" "$(cat "$CALL_LOG")"
-    git -C "$REPO" fetch -q origin
-done
+# ── case: red, no fixing member — batch is HELD ───────────────────────────────
+certify_plain; clear_batch; clear_log; rm -f "$LANDSTATE/sp-fixmain"
+out="$(GATE_STATUS='red badc0de' batch "$REPONAME")"
+want "red: names the hold"              "HOLD"                      "$out"
+is   "red: no batch opened"             "0" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
+is   "red: landstate still CERTIFIED"   "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-plain1")"
+want "red: landing.log records the hold" "QUEUE HOLD"               "$(landing_log)"
+want "red: landing.log names the reason" "reason=red-main"          "$(landing_log)"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+# ── case: red, a certified member carries the fix label — batch cuts anyway ───
+certify_fix; clear_batch; clear_log; rm -f "$LANDSTATE/sp-plain1"
+out="$(GATE_STATUS='red badc0de' batch "$REPONAME")"
+want "red-fix: names landing anyway"    "landing anyway"            "$out"
+is   "red-fix: batch opened"            "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
+is   "red-fix: landstate BATCHED"       "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-fixmain")"
+nowant "red-fix: no HOLD in landing.log" "QUEUE HOLD"                "$(landing_log)"
+
+# ── case: unknown gate status — HELD, same as red (fail-closed) ───────────────
+certify_plain; clear_batch; clear_log; rm -f "$LANDSTATE/sp-fixmain"
+out="$(GATE_STATUS='unknown' batch "$REPONAME")"
+want "unknown: names the hold"          "HOLD"                      "$out"
+is   "unknown: no batch opened"         "0" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
+want "unknown: landing.log records the hold" "QUEUE HOLD"           "$(landing_log)"
+
+# ── pair: red-main label overridden — plain express bead no longer matches
+#          even carrying the default label name is not enough once the
+#          configured label changes; the guard reads SPIRA_RED_MAIN_LABEL, not
+#          a hardcoded string.
+certify_fix; clear_batch; clear_log; rm -f "$LANDSTATE/sp-plain1"
+out="$(GATE_STATUS='red badc0de' RED_MAIN_LABEL='other-label' batch "$REPONAME")"
+want "label-off: names the hold"        "HOLD"                      "$out"
+is   "label-off: no batch opened"       "0" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
+
+tl_summary

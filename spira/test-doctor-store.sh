@@ -29,14 +29,11 @@
 # 5. EMBEDDED MODE. dolt_mode=embedded in metadata.json FAILs, naming the serialised-lock
 #    cost and the SPIRA_DOLT_DATA remedy.
 #
+# tier: T1
 # covers: spira/doctor.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in output"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in output"; }
+. "$HERE/testlib.sh"
 
 echo "test-doctor-store.sh"
 SRV_PID=""
@@ -243,5 +240,4 @@ want "embedded: names the cost" "one lock" "$embedded_store"
 want "embedded: names the remedy" "SPIRA_DOLT_DATA" "$embedded_store"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
