@@ -326,10 +326,12 @@ sys.exit(0 if d and d[0].get("status") == "closed" else 1)' 2>/dev/null; then
                     send_branch "$id" "$br"
                     continue
                 fi
-                # NON-CODE DELIVERS: a closed bead that declared a non-code deliverable
+                # NON-CODE DELIVERS: a bead that declared a non-code deliverable
                 # was never expected to commit. 0 ahead + ancestor means nothing to protect;
                 # the delivers: label is the positive control that says the empty branch is
                 # intentional rather than an aeon that failed to commit (sp-v4652).
+                # Works for both OPEN and CLOSED beads (OPEN beads with 0 commits can have
+                # non-code deliverables like sp-5lvh5).
                 if printf '%s\n' "$_bead_json" | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -339,7 +341,7 @@ if not d: sys.exit(1)
 b = d[0]
 labs = b.get("labels") or []
 has_delivers = any(str(l).startswith("delivers:") for l in labs)
-sys.exit(0 if b.get("status") == "closed" and has_delivers else 1)' 2>/dev/null; then
+sys.exit(0 if has_delivers else 1)' 2>/dev/null; then
                     if [ "$DRY" = 1 ]; then
                         say "WOULD  $id  reap non-code-delivers branch $br (closed, 0 ahead, no commit expected)"
                         continue
@@ -369,12 +371,13 @@ sys.exit(0 if d and d[0].get("status") == "closed" else 1)' 2>/dev/null; then
             # LANDED BY OTHER PR. A batch commit that names this bead satisfies landed()
             # even when the bead's own PR was closed unmerged and the branch conflicts with
             # the base. Ask here, not only at n=0 (law-closed-is-not-landed, sp-v4652).
+            # Works for OPEN beads with n=0 as well (sp-5lvh5).
             if printf '%s\n' "$_bead_json" | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(1)
 d = d if isinstance(d, list) else [d]
-sys.exit(0 if d and d[0].get("status") == "closed" else 1)' 2>/dev/null \
+sys.exit(0 if d else 1)' 2>/dev/null \
                && landed "$id" "$REPO" 2>/dev/null; then
                 if [ "$DRY" = 1 ]; then
                     say "WOULD  $id  send branch $br (commit on $LANDREF names it)"
