@@ -271,9 +271,22 @@ fi
 # ---- end sweep mode ------------------------------------------------------------------
 
 # ---- concurrency ---------------------------------------------------------------------
+# THE SAME CHOKEPOINT fayth_free GUARDS FOR THE SENTINEL (lib.sh), not a second copy of its
+# rule: this compared `have` to FAYTH_MAX_CONCURRENT alone and never saw FAYTH_ELASTIC, so an
+# elastic persona was capped at its own fallback number no matter how large the declared pool
+# was (sp-4gxjo) — the sentinel kept summoning past it because CHECK 7 already asked
+# fayth_free the right question. Passing SPIRA_MAX_AEONS through as the remainder is the same
+# subtraction sentinel.sh does before every fayth_free call; a non-elastic persona gets an
+# empty pool argument and fayth_free falls through to FAYTH_MAX_CONCURRENT exactly as before.
 have="$(aeon_count "$FAYTH")"
-if [ "$have" -ge "${FAYTH_MAX_CONCURRENT:-1}" ]; then
-    log "$FAYTH: at capacity ($have/${FAYTH_MAX_CONCURRENT:-1}), not summoning"
+limit="${FAYTH_MAX_CONCURRENT:-1}"
+pool=""
+if [ "$(fayth_get "$FAYTH" FAYTH_ELASTIC 0)" = 1 ] && [ -n "${SPIRA_MAX_AEONS:-}" ]; then
+    limit="$SPIRA_MAX_AEONS"
+    pool=$(( SPIRA_MAX_AEONS > have ? SPIRA_MAX_AEONS - have : 0 ))
+fi
+if [ "$(fayth_free "$FAYTH" "$pool")" -eq 0 ]; then
+    log "$FAYTH: at capacity ($have/$limit), not summoning"
     # A healthy no-op, and it must read as one: an aeon that declined to summon LIVED, it
     # simply had nothing to do. Counting it as stillborn would put a permanent false
     # reading on the panel every time the harness was correctly at capacity.
