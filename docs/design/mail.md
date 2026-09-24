@@ -80,6 +80,12 @@ never to code.
 Override: `SPIRA_MAIL_LINT_CONSIDERED=<reason>`, recorded in `X-Spira-Lint-Override` so
 bypasses are visible and countable.
 
+**A bead named by `--bead`, or found anywhere in the subject or body, is rendered.** `send`
+resolves it against the store and opens the body with a block — title, status, priority,
+type, repo, branch, and the close reason or last note — before the producer's own prose. An
+id the store can't resolve renders `unresolved: <id>`; the send still succeeds
+(`law-a-bead-reference-carries-its-details`).
+
 **No other writer.** Every sender — incident, watchd, suites, sessions — calls `mail.sh send`.
 A `PreToolUse` fence refuses an agent writing into `SPIRA_MAIL` by any other path, alongside
 the existing fence on a hand-rolled `bd create`.

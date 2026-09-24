@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# test-queue-eject-mail.sh — ejection mail includes bead title and description.
+# test-queue-eject-mail.sh — ejection mail carries the ejected bead's rendered details.
+#
+# verdict.sh passes --bead to the REAL mail.sh (not a stub) and lets it render the
+# block (law-a-bead-reference-carries-its-details); this suite no longer hand-checks
+# a title/description verdict.sh used to build itself.
 #
 # Two cases:
-#   1. bd show succeeds: subject has title; body has first description paragraph.
-#      POSITIVE CONTROL: bead sp-ejm01 is seeded with a known title and
-#      description; only the seeded values can cause the assertions to pass.
-#   2. bd show fails (bead not in db): body has the fallback
-#      "title could not be read" line; mail is still sent.
+#   1. bd show succeeds: rendered block carries title, status, priority.
+#      POSITIVE CONTROL: bead sp-ejm01 is seeded with known values; only they can
+#      cause the assertions to pass.
+#   2. bd show fails (bead not in db): rendered block is "unresolved: sp-ejm02";
+#      mail is still sent.
 #
-# covers: spira/verdict.sh spira/conf.sh
+# covers: spira/verdict.sh spira/mail.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -29,11 +33,10 @@ SH="$TMP/spira"
 REPONAME=fixture-repo
 LANDSTATE="$RUN/landstate"
 QUEUEDIR="$RUN/queue"
-MAIL_LOG="$TMP/mail-log"
 FORGE_STATUS_FILE="$TMP/forge-status"
 FORGE_RUN_METADATA_FILE="$TMP/forge-run-metadata"
 FORGE_LOG="$TMP/forge-log"
-export MAIL_LOG FORGE_STATUS_FILE FORGE_RUN_METADATA_FILE FORGE_LOG
+export FORGE_STATUS_FILE FORGE_RUN_METADATA_FILE FORGE_LOG
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
@@ -63,12 +66,7 @@ esac
 FORGE
 chmod +x "$SH/forge-fixture.sh"
 
-cat > "$SH/mail.sh" <<'MAIL'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$MAIL_LOG"
-cat >> "$MAIL_LOG"
-MAIL
-chmod +x "$SH/mail.sh"
+cp -r "$HERE/mail" "$SH/mail"
 
 cat > "$SH/suites.sh" <<'SUITES'
 #!/usr/bin/env bash
@@ -84,6 +82,8 @@ chmod +x "$SH/repro-always-red.sh"
 
 batch_file() { printf '%s/%s/open' "$QUEUEDIR" "$REPONAME"; }
 
+MAIL="$RUN/mail"
+
 verdict() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${TESTDB_BD:-bd}" \
@@ -94,22 +94,30 @@ verdict() {
     SPIRA_QUEUE_INFRA_RETRIES=2 \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
     SPIRA_QUEUE_REPRO_BATCH="$SH/repro-always-red.sh" \
+    SPIRA_MAIL="$MAIL" \
+    SPIRA_MAIL_REPEAT_CONSIDERED="test-queue-eject-mail" \
         bash "$SH/verdict.sh" "$@" 2>&1
+}
+
+latest_operator_mail() {
+    local f
+    f="$(ls -t "$MAIL/operator/new" 2>/dev/null | head -1)"
+    [ -n "$f" ] && cat "$MAIL/operator/new/$f"
 }
 
 echo "test-queue-eject-mail.sh"
 
-# Seed bead with known title and description.
+# Seed bead with known title, status and priority.
 testdb_seed <<'JSONL'
 {"id":"sp-ejm01","title":"eject-mail-test-title","description":"First paragraph here.\n\nSecond paragraph.","status":"closed","issue_type":"task","priority":2,"labels":[],"updated_at":"2026-09-24T00:00:00Z","closed_at":"2026-09-24T00:00:00Z"}
 JSONL
 
 # ==========================================================================
-# 1. bd show succeeds: subject has title; body has first description para.
+# 1. bd show succeeds: rendered block carries title, status, priority.
 #    POSITIVE CONTROL: only sp-ejm01's seeded values match the assertions.
 # ==========================================================================
 echo
-echo "ejection mail includes bead title and first description paragraph:"
+echo "ejection mail's rendered block carries bead title, status, priority:"
 
 base_sha="$(git -C "$REPO" rev-parse origin/main)"
 bwt="$RUN/worktree/sp-ejm01"
@@ -122,13 +130,16 @@ printf 'BATCHED %s %s\n' "$tip" "$(date +%s)" > "$LANDSTATE/sp-ejm01"
 { printf 'pr=42\nhead=%s\nbase=%s\nmembers=sp-ejm01:%s\nopened=%s\n' \
     "$tip" "$base_sha" "$tip" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: test-ejm-suite.sh\n' > "$FORGE_STATUS_FILE"
-: > "$MAIL_LOG"
+rm -rf "$MAIL"
 
 verdict "$REPONAME" >/dev/null
 
-mail="$(cat "$MAIL_LOG")"
-want "subject contains bead title"          "eject-mail-test-title" "$mail"
-want "body contains first description para" "First paragraph here." "$mail"
+mail="$(latest_operator_mail)"
+want "rendered block leads with the bead id and title" "sp-ejm01: eject-mail-test-title" "$mail"
+# verdict.sh reopens the bead (queue-eject) before mailing, so the render sees the
+# post-reopen status — open, not the closed state it was seeded with.
+want "rendered block carries status"                    "Status: open"                   "$mail"
+want "rendered block carries priority"                   "Priority: P2"                   "$mail"
 
 rm -f "$(batch_file)" "$LANDSTATE/sp-ejm01"
 git -C "$REPO" worktree remove -f "$bwt" 2>/dev/null || true
@@ -136,12 +147,12 @@ git -C "$REPO" branch -D "spira/sp-ejm01" 2>/dev/null || true
 git -C "$REPO" worktree prune 2>/dev/null || true
 
 # ==========================================================================
-# 2. bd show fails (bead not in db): mail is still sent with fallback line.
-#    POSITIVE CONTROL: sp-ejm01 (case 1) proves the bd-show path works;
-#    sp-ejm02 is not seeded, so bd show returns an error, triggering fallback.
+# 2. bd show fails (bead not in db): rendered block is "unresolved: <id>".
+#    POSITIVE CONTROL: sp-ejm01 (case 1) proves the bd-show path renders real
+#    values; sp-ejm02 is not seeded, so bd show fails, triggering "unresolved".
 # ==========================================================================
 echo
-echo "ejection mail has fallback when bd show fails:"
+echo "ejection mail renders 'unresolved: <id>' when bd show fails, and still sends:"
 
 base_sha="$(git -C "$REPO" rev-parse origin/main)"
 bwt2="$RUN/worktree/sp-ejm02"
@@ -154,13 +165,13 @@ printf 'BATCHED %s %s\n' "$tip2" "$(date +%s)" > "$LANDSTATE/sp-ejm02"
 { printf 'pr=43\nhead=%s\nbase=%s\nmembers=sp-ejm02:%s\nopened=%s\n' \
     "$tip2" "$base_sha" "$tip2" "$(date +%s)"; } > "$(batch_file)"
 printf 'red\nred-suite: test-ejm-suite.sh\n' > "$FORGE_STATUS_FILE"
-: > "$MAIL_LOG"
+rm -rf "$MAIL"
 
 verdict "$REPONAME" >/dev/null
 
-mail2="$(cat "$MAIL_LOG")"
-want "fallback: mail sent"                     "send operator"         "$mail2"
-want "fallback: body has 'title could not be read'" "title could not be read" "$mail2"
+mail2="$(latest_operator_mail)"
+want "fallback: mail sent"                    "ejected from the merge queue" "$mail2"
+want "fallback: body renders unresolved bead" "unresolved: sp-ejm02"         "$mail2"
 
 rm -f "$(batch_file)" "$LANDSTATE/sp-ejm02"
 git -C "$REPO" worktree remove -f "$bwt2" 2>/dev/null || true
