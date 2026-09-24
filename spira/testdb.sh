@@ -1,5 +1,5 @@
-# testdb.sh — a REAL `bd` on a throwaway Dolt database. Sourced by a suite,
-# never executed.
+# testdb.sh — a REAL `bd` on a throwaway Dolt database.
+# Sourced, never executed.
 #
 #   . "$HERE/testdb.sh"
 #   testdb_require fayth          # skips the suite, loudly, if no bd engine is usable
