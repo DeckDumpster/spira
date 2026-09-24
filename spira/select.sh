@@ -53,6 +53,12 @@
 #                             a fast gate where the timed runner handles thorough
 #                             coverage — law-absence-needs-a-positive-control still
 #                             governs the timed run)
+#   --tiers <csv>             restrict output to suites whose # tier: is in this
+#                             comma-separated list (docs/test-plan/README.md).
+#                             A suite with no # tier: declaration is always kept —
+#                             the corpus is not yet fully migrated, and absence of
+#                             a tier must not read as exclusion. Applies after
+#                             every other selection rule, including --all.
 #
 # FILE BUCKETS (select-globs.sh, overridable via SPIRA_SELECT_INERT / SPIRA_SELECT_SOURCE)
 #   inert   matches SELECT_INERT  → skipped; selects nothing, no fallback
@@ -125,6 +131,7 @@ _ARG_HEAD=""
 _ARG_FILES=""
 _ARG_ALL=0
 _ARG_NO_FALLBACK=0
+TIERS=""
 _all=""
 _cv_unmapped=""
 _report_ready=0
@@ -206,6 +213,11 @@ while [ $# -gt 0 ]; do
             REPORT_FILE="${1#--report-file=}"; shift ;;
         --no-all-fallback)
             _ARG_NO_FALLBACK=1; shift ;;
+        --tiers)
+            [ $# -ge 2 ] || { printf 'select: --tiers requires an argument\n' >&2; exit 2; }
+            TIERS="$(printf '%s' "$2" | tr ',' ' ')"; shift 2 ;;
+        --tiers=*)
+            TIERS="$(printf '%s' "${1#--tiers=}" | tr ',' ' ')"; shift ;;
         --)
             shift; break ;;
         -*)
@@ -250,6 +262,17 @@ declare -A _COV
 for _s in $_all; do _COV[$_s]="$(suite_covers_of "$SUITE_DIR/$_s")"; done
 _report_ready=1
 
+# _tier_ok <suite> -> 0 if TIERS is unset, the suite has no # tier: declaration
+# (not yet migrated — must keep running), or its tier is one of TIERS.
+_tier_ok() {
+    [ -z "$TIERS" ] && return 0
+    local _t _tt
+    _t="$(suite_tier_of "$SUITE_DIR/$1")"
+    [ -z "$_t" ] && return 0
+    for _tt in $TIERS; do [ "$_tt" = "$_t" ] && return 0; done
+    return 1
+}
+
 _write_mode() {   # _write_mode diff|all
     [ -n "$MODE_FILE" ] && printf '%s\n' "$1" > "$MODE_FILE" || true
 }
@@ -257,7 +280,7 @@ _write_mode() {   # _write_mode diff|all
 # --all mode: print every suite
 if [ "$_ARG_ALL" -eq 1 ]; then
     _write_mode all
-    for _s in $_all; do printf '%s\n' "$_s"; done
+    for _s in $_all; do _tier_ok "$_s" && printf '%s\n' "$_s"; done
     exit 0
 fi
 
@@ -312,7 +335,7 @@ if [ -z "$_cv_changed" ]; then
     _write_mode diff
     for _s in $_all; do
         _cov="${_COV[$_s]-}"
-        [ -z "$_cov" ] && printf '%s\n' "$_s"
+        [ -z "$_cov" ] && _tier_ok "$_s" && printf '%s\n' "$_s"
     done
     exit 0
 fi
@@ -334,7 +357,7 @@ if [ -z "$_cv_live" ]; then
     _write_mode diff
     for _s in $_all; do
         _cov="$(suite_covers_of "$SUITE_DIR/$_s")"
-        [ -z "$_cov" ] && printf '%s\n' "$_s"
+        [ -z "$_cov" ] && _tier_ok "$_s" && printf '%s\n' "$_s"
     done
     exit 0
 fi
@@ -470,7 +493,7 @@ if [ -n "$_cv_unmapped" ] && [ "$_ARG_NO_FALLBACK" -eq 0 ]; then
     _cv_n_all=0; for _s in $_all; do _cv_n_all=$((_cv_n_all+1)); done
     printf 'select: fallback — running all %d suites\n' "$_cv_n_all" >&2
     _write_mode all
-    for _s in $_all; do printf '%s\n' "$_s"; done
+    for _s in $_all; do _tier_ok "$_s" && printf '%s\n' "$_s"; done
     exit 0
 fi
 
@@ -525,6 +548,6 @@ for _s in $_cv_selected $_cv_nocov; do
         *) _cv_deduped="$_cv_deduped $_s" ;;
     esac
 done
-_cv_n_sel=0; for _s in $_cv_deduped; do _cv_n_sel=$((_cv_n_sel+1)); done
+_cv_n_sel=0; for _s in $_cv_deduped; do _tier_ok "$_s" && _cv_n_sel=$((_cv_n_sel+1)); done
 printf 'select: %d suite(s) selected\n' "$_cv_n_sel" >&2
-for _s in $_cv_deduped; do printf '%s\n' "$_s"; done
+for _s in $_cv_deduped; do _tier_ok "$_s" && printf '%s\n' "$_s"; done
