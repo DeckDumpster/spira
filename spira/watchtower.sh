@@ -90,12 +90,22 @@ if [ "${1:-}" = "--throttle-check" ]; then
             _tc_st=""; _tc_tip=""
             read -r _tc_st _tc_tip _ < "$_tc_lsf" 2>/dev/null || true
             [ "$_tc_st" = "CERTIFIED" ] || continue
+            # Filter stale records: branch must exist AND tip not yet merged.
+            # Use auto-detection for repo path when SPIRA_TC_REPO is unset (production case).
+            _tc_id="$(basename "$_tc_lsf")"
             if [ -n "$_tc_repo" ]; then
-                _tc_id="$(basename "$_tc_lsf")"
                 git -C "$_tc_repo" rev-parse --verify --quiet \
                     "refs/heads/spira/$_tc_id" >/dev/null 2>&1 || continue
-                if [ -n "$_tc_lref" ] && [ -n "$_tc_tip" ] && [ "$_tc_tip" != "none" ]; then
+            else
+                git rev-parse --verify --quiet \
+                    "refs/heads/spira/$_tc_id" >/dev/null 2>&1 || continue
+            fi
+            if [ -n "$_tc_lref" ] && [ -n "$_tc_tip" ] && [ "$_tc_tip" != "none" ]; then
+                if [ -n "$_tc_repo" ]; then
                     git -C "$_tc_repo" merge-base --is-ancestor \
+                        "$_tc_tip" "$_tc_lref" 2>/dev/null && continue
+                else
+                    git merge-base --is-ancestor \
                         "$_tc_tip" "$_tc_lref" 2>/dev/null && continue
                 fi
             fi
