@@ -184,8 +184,9 @@ sys.stdout.buffer.write(buf.read())
 " > "$TMP/artifact-28.zip"
 _ann10='[{"annotation_level":"failure","title":"","path":"spira/test-aaa-01.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-02.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-03.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-04.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-05.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-06.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-07.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-08.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-09.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-10.sh","message":"x"}]'
 printf '%s\n' "$_ann10" > "$TMP/ann-10.json"
+printf '{"artifacts":[{"id":7,"name":"batch-results-1"}]}\n' > "$TMP/artifacts-7.json"
 ANNOTATIONS="$TMP/ann-10.json"
-ARTIFACTS_JSON='{"artifacts":[{"id":7,"name":"batch-results-1"}]}'
+ARTIFACTS_JSON="$TMP/artifacts-7.json"
 ARTIFACT_ZIP="$TMP/artifact-28.zip"
 _out28="$(status_all)"
 is "artifact path: overall status is red" "red" "$(printf '%s\n' "$_out28" | head -1)"
@@ -197,12 +198,11 @@ echo
 echo "positive control — no artifact falls back to annotations:"
 rollup COMPLETED FAILURE
 ANNOTATIONS="$TMP/ann-10.json"
-ARTIFACTS_JSON=""
 _out_fb="$(status_all)"
 is "annotation fallback: status still red" "red" "$(printf '%s\n' "$_out_fb" | head -1)"
 _cnt_fb="$(printf '%s\n' "$_out_fb" | grep -c '^red-suite: ' || true)"
 is "annotation fallback: 10 lines from annotations" "10" "$_cnt_fb"
-ANNOTATIONS="" ARTIFACTS_JSON=""
+ANNOTATIONS=""
 
 echo
 echo "truncated artifact (red_count > len) → harness_fault:"
@@ -216,7 +216,8 @@ with zipfile.ZipFile(buf, 'w') as z:
 buf.seek(0)
 sys.stdout.buffer.write(buf.read())
 " > "$TMP/artifact-truncated.zip"
-ARTIFACTS_JSON='{"artifacts":[{"id":8,"name":"batch-results-1"}]}'
+printf '{"artifacts":[{"id":8,"name":"batch-results-1"}]}\n' > "$TMP/artifacts-8.json"
+ARTIFACTS_JSON="$TMP/artifacts-8.json"
 ARTIFACT_ZIP="$TMP/artifact-truncated.zip"
 is "truncated artifact → harness_fault" "harness_fault" "$(status)"
 ARTIFACTS_JSON="" ARTIFACT_ZIP=""
