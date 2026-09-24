@@ -2039,7 +2039,6 @@ if [ -d "${SPIRA_RUN}/landstate" ]; then
         _ls_ids="$_ls_ids $_ls_id"
         _ls_files="$_ls_files$_ls_file"$'\n'
     done < <(find "${SPIRA_RUN}/landstate" -maxdepth 1 -type f 2>/dev/null | sort)
-    log "DEBUGLS ids=[$_ls_ids]"
     if [ -n "${_ls_ids// /}" ]; then
         declare -A _ls_status=()
         # shellcheck disable=SC2086
@@ -2053,12 +2052,10 @@ except Exception: raise SystemExit
 d = d if isinstance(d, list) else [d]
 for i in d:
     bid = i.get("id", "")
-    if bid: print(f"{bid}\t{i.get(\"status\",\"\")}")' 2>/dev/null)
-        log "DEBUGLS status=[${_ls_status[*]@A}]"
+    if bid: print("%s\t%s" % (bid, i.get("status", "")))' 2>/dev/null)
         while IFS= read -r _ls_file; do
             [ -n "$_ls_file" ] || continue
             _ls_id="$(basename "$_ls_file")"
-            log "DEBUGLS file=$_ls_file id=$_ls_id st=[${_ls_status[$_ls_id]:-}]"
             [ "${_ls_status[$_ls_id]:-}" = "closed" ] || continue
             _ls_has_branch=0
             for _ls_repo in $(spira_repos 2>/dev/null); do
@@ -2066,7 +2063,6 @@ for i in d:
                 git -C "$_ls_rpath" show-ref --verify --quiet "refs/heads/spira/$_ls_id" 2>/dev/null \
                     && { _ls_has_branch=1; break; }
             done
-            log "DEBUGLS id=$_ls_id has_branch=$_ls_has_branch"
             if [ "$_ls_has_branch" -eq 0 ]; then
                 _ls_st_val=""
                 { read -r _ls_st_val _ < "$_ls_file"; } 2>/dev/null || true
