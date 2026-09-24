@@ -120,6 +120,16 @@ MAP
 
 echo "test-landing-queue-early.sh"
 
+# POSITIVE CONTROL: prove that a landing.sh crash is caught, not a silent non-zero exit.
+# Temporarily swap in a stub that exits 255, run it, then restore the real script.
+cp "$SH/landing.sh" "$SH/landing.sh.bak"
+printf '#!/usr/bin/env bash\nexit 255\n' > "$SH/landing.sh"; chmod +x "$SH/landing.sh"
+_ctrl_out="$(landing)"; _ctrl_rc=$?
+cp "$SH/landing.sh.bak" "$SH/landing.sh"; rm -f "$SH/landing.sh.bak"
+[ "$_ctrl_rc" -ne 0 ] \
+    && ok "positive-control: landing crash detected (rc=$_ctrl_rc)" \
+    || bad "positive-control" "expected non-zero from a landing.sh that exits 255; got rc=0"
+
 # --------------------------------------------------------------------------------------
 # CASE 1 (early): forge is green before the pass starts.
 # The batch lands at the early check, before the gate runs.
@@ -137,7 +147,8 @@ printf "verdict fixture: PR 1 landed by fast-forward (abc123)\n"'
 seed
 branch sp-earlyq
 : > "$RUN/order-log"; rm -f "$RUN/batch-landed"
-out="$(landing)"
+out="$(landing)"; _landing_rc=$?
+[ "$_landing_rc" -eq 0 ] || bad "1. landing-crashed" "landing.sh exited $_landing_rc (a stub or subprocess died)"
 
 want "1. early green: early check logs a landing" "queue early: verdict fixture: PR 1 landed by fast-forward" "$out"
 nowant "1. early green: late check is not where it landed" "queue late: verdict fixture: PR 1 landed by fast-forward" "$out"
@@ -168,7 +179,8 @@ seed
 branch sp-lateq
 : > "$RUN/order-log"
 rm -f "$RUN/verdict-call-count"
-out="$(landing)"
+out="$(landing)"; _landing_rc=$?
+[ "$_landing_rc" -eq 0 ] || bad "2. landing-crashed" "landing.sh exited $_landing_rc (a stub or subprocess died)"
 
 nowant "2. late green: early check does not show a landing" "queue early: verdict fixture: PR 1 landed by fast-forward" "$out"
 want   "2. late green: late check logs a landing"           "queue late: verdict fixture: PR 1 landed by fast-forward" "$out"
