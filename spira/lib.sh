@@ -1917,7 +1917,7 @@ _census_events_sql() {   # _census_events_sql [since_epoch_s]
     # means all-time.
     local since_clause=""
     if [ -n "${1:-}" ] && [ "${1:-0}" -gt 0 ] 2>/dev/null; then
-        since_clause=" AND created_at > FROM_UNIXTIME(${1})"
+        since_clause=" AND created_at > '$(date -u -d "@${1}" '+%Y-%m-%d %H:%M:%S')'"
     fi
     # Single source for the requeued/merge-conflict fold predicate; used in both the
     # sp-reopen-rebase-conflict branch and the sp-reopen-unrecorded exclusion so they
