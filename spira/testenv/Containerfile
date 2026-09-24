@@ -1,13 +1,12 @@
 # spira/testenv/Containerfile — Ubuntu 24.04 with system and user systemd,
-# Rust, and every dependency that doctor.sh declares.
+# Rust, and every dependency the manifest in conf.sh declares.
 #
-# THE IMAGE IS VERIFIED, NOT ASSERTED. After installation, doctor-check.sh runs
-# doctor.sh's declared program lists against PATH and fails the build on any
-# FATAL absence or any un-waived WARN absence. A program added to doctor.sh's
-# FATAL or WARN loop fails this build until the image carries it — the mechanism
-# is self-maintaining in the right direction.
+# THE IMAGE IS VERIFIED, NOT ASSERTED. After installation, doctor-check.sh reads conf.sh's
+# SPIRA_BINS, tiered by spira_bin_tier, and fails the build on any runtime-tier absence or
+# any un-waived optional/operator-tier absence. A program added to the manifest fails this
+# build until the image carries it — the mechanism is self-maintaining in the right direction.
 #
-# SIZING. Only what the tests and doctor.sh need. The caller's checkout is
+# SIZING. Only what the tests need to run against. The caller's checkout is
 # bind-mounted by testenv.sh at /workspace; this image provides only the runtime.
 #
 # BUILD CONTEXT. The build context is spira/ (the harness root), set by
@@ -213,14 +212,14 @@ RUN printf '#!/bin/sh\n# testenv stub: satisfies command -v claude and spira_req
     > /usr/local/bin/claude && chmod 0755 /usr/local/bin/claude
 
 # ── doctor-check: image is verified, not asserted ─────────────────────────
-# COPY doctor.sh and the check script into a scratch location. Run the check
-# to verify every program doctor.sh declares is present or explicitly waived.
+# COPY conf.sh (the manifest) and the check script into a scratch location. Run the check
+# to verify every manifest program is present or explicitly waived.
 # The scripts are deleted after; they are a build-time gate, not a runtime tool.
-COPY doctor.sh /tmp/doctor-check/doctor.sh
+COPY conf.sh /tmp/doctor-check/conf.sh
 COPY testenv/doctor-check.sh /tmp/doctor-check/doctor-check.sh
 COPY testenv/doctor-waivers /tmp/doctor-check/doctor-waivers
 RUN bash /tmp/doctor-check/doctor-check.sh \
-        /tmp/doctor-check/doctor.sh \
+        /tmp/doctor-check/conf.sh \
         /tmp/doctor-check/doctor-waivers && \
     rm -rf /tmp/doctor-check
 

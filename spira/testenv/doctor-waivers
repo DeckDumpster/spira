@@ -13,4 +13,4 @@
 
 jq    optional JSON convenience only — every JSON path in the harness parses with python3, which the image installs. No suite reads jq, and adding it would put a package in the image that nothing under test can exercise.
 zstd  transcript archives compress with zstd when present and gzip when absent, and the image carries gzip. The fallback is the behaviour worth exercising in a container, so waiving it is what keeps the archive suites testing the path a fresh box actually takes.
-hunk  operator-tier tool (cockpit review pane); no harness suite invokes it, and the container is a headless fixture. Its absence is intentional and expected to produce FAIL when doctor.sh runs with SPIRA_OPERATED=1 — which is how test-bin-manifest.sh verifies the operator FAIL path.
+hunk  operator-tier tool (cockpit review pane); no harness suite invokes it, and the container is a headless fixture.
