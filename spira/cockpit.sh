@@ -1278,7 +1278,7 @@ else:
     _closed_raw="$(bdq list --status closed --limit 0 --label "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" --json 2>/dev/null)"
     [ -n "$_closed_raw" ] || _closed_read=0
     if [ "$_closed_read" = 0 ]; then
-        echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"
+        echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"; echo "SP_FUNNEL_DONE_AGE=?"
     else
     closed_pairs="$(printf '%s\n' "$_closed_raw" | json_only | python3 -c '
 import sys, json, os, re, datetime
@@ -1300,7 +1300,7 @@ for i in (d if isinstance(d, list) else [d]):
             print("%s\t%s\t%s\t%s\t%s" % (i["id"], repo, pri, cat, title))' "$SPIRA_RUN" "$(spira_home_repo)" 2>/dev/null)"
     closed_ids="$(printf '%s\n' "$closed_pairs" | awk -F'\t' 'NF{print $1}')"
     if [ -z "$closed_ids" ]; then
-        echo "SP_CLOSED=0"; echo "SP_LANDED=0"; echo "SP_UNLANDED_N=0"
+        echo "SP_CLOSED=0"; echo "SP_LANDED=0"; echo "SP_UNLANDED_N=0"; echo "SP_FUNNEL_DONE_AGE="
     else
     # ONE FETCH PER REPOSITORY THAT ACTUALLY HAS A CLOSED BEAD IN IT, and none at all for the
     # rest. This runs on the collector loop; fetching every registered repository each pass
@@ -1329,18 +1329,25 @@ $(git -C "$_p" log --format='%s' -n 2000 $_refs 2>/dev/null)"
 $(git -C "$_p" for-each-ref --format='%(refname:short)' 'refs/heads/spira/' 'refs/remotes/*/spira/' 2>/dev/null)"
     done
     if [ -z "$subjects" ] && [ -z "$branches" ]; then
-        echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"
+        echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"; echo "SP_FUNNEL_DONE_AGE=?"
     else
         # Subjects only (no bodies). Landed = subject is "spira: land <id>" or "<id>: <desc>"
         # (law-aeon-commits-name-their-bead). Body mentions do not count as landing.
-        # SP_UNLANDED_N: closed beads with a branch but no landstate entry (queue anomaly).
+        # SP_UNLANDED_N: closed beads with a branch but no landstate entry (done, awaiting cert).
+        # SP_FUNNEL_DONE_AGE: age of the oldest such bead, from its closed_at timestamp.
         local _land_out
         _land_out="$(printf '%s' "$subjects" | python3 -c '
-import sys, re, os
+import sys, re, os, datetime
 ids = [i for i in sys.argv[1].split() if i]
 br_lines = sys.argv[2].split("\n") if len(sys.argv) > 2 and sys.argv[2] else []
 landstate_dir = sys.argv[3] if len(sys.argv) > 3 else ""
+pairs_raw = sys.argv[4] if len(sys.argv) > 4 else ""
 subjects = sys.stdin.read().splitlines()
+id_closed_at = {}
+for row in pairs_raw.splitlines():
+    parts = row.split("\t")
+    if len(parts) >= 4 and parts[0]:
+        id_closed_at[parts[0]] = parts[3]
 landed_set = set()
 for i in ids:
     for s in subjects:
@@ -1348,7 +1355,9 @@ for i in ids:
         if s.startswith("spira: land " + i) or s.startswith(i + ": "):
             landed_set.add(i)
             break
-anomaly = 0
+done_n = 0
+done_oldest = None
+now = datetime.datetime.now(datetime.timezone.utc)
 for i in ids:
     if i in landed_set:
         continue
@@ -1356,15 +1365,32 @@ for i in ids:
     if has_br:
         ls_file = os.path.join(landstate_dir, i) if landstate_dir else ""
         if not (ls_file and os.path.exists(ls_file)):
-            anomaly += 1
-print("SP_CLOSED=%d"      % len(ids))
-print("SP_LANDED=%d"      % len(landed_set))
-print("SP_UNLANDED_N=%d"  % anomaly)
-' "$closed_ids" "$branches" "$SPIRA_RUN/landstate" 2>/dev/null)"
+            done_n += 1
+            cat = id_closed_at.get(i, "")
+            if cat:
+                try:
+                    ts = datetime.datetime.fromisoformat(cat.replace("Z", "+00:00"))
+                    if done_oldest is None or ts < done_oldest:
+                        done_oldest = ts
+                except Exception:
+                    pass
+if done_oldest is not None:
+    diff = int((now - done_oldest).total_seconds())
+    if diff < 90: age = "now"
+    elif diff < 5400: age = "%dm" % (diff // 60)
+    elif diff < 172800: age = "%dh" % (diff // 3600)
+    else: age = "%dd" % (diff // 86400)
+else:
+    age = ""
+print("SP_CLOSED=%d"           % len(ids))
+print("SP_LANDED=%d"           % len(landed_set))
+print("SP_UNLANDED_N=%d"       % done_n)
+print("SP_FUNNEL_DONE_AGE=%s"  % age)
+' "$closed_ids" "$branches" "$SPIRA_RUN/landstate" "$closed_pairs" 2>/dev/null)"
         if [ -n "$_land_out" ]; then
             printf '%s\n' "$_land_out"
         else
-            echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"
+            echo "SP_CLOSED=?"; echo "SP_LANDED=?"; echo "SP_UNLANDED_N=?"; echo "SP_FUNNEL_DONE_AGE=?"
         fi
     fi
     fi
@@ -1458,27 +1484,87 @@ print("SP_UNLANDED_N=%d"  % anomaly)
     echo "SP_LANDPROG_N=$lp_n"
 }
 
+# _epoch_to_age <epoch> <now>: epoch seconds → now/Nm/Nh/Nd, or ? if epoch is empty/non-numeric.
+_epoch_to_age() {
+    local _ea_ep="${1:-}" _ea_now="${2:-0}" _ea_diff
+    case "$_ea_ep" in ''|*[!0-9]*) printf '?'; return ;; esac
+    _ea_diff=$(( _ea_now - _ea_ep ))
+    if   [ "$_ea_diff" -lt 90 ];     then printf 'now'
+    elif [ "$_ea_diff" -lt 5400 ];   then printf '%dm' $(( _ea_diff / 60 ))
+    elif [ "$_ea_diff" -lt 172800 ]; then printf '%dh' $(( _ea_diff / 3600 ))
+    else printf '%dd' $(( _ea_diff / 86400 ))
+    fi
+}
+
 # Queue-state summary keys: queue depth, open batch, quarantined suites.
 queue_keys() {
     local _qdir="${SPIRA_QUEUE_DIR:-$SPIRA_RUN/queue}"
     local _now; _now="$(date +%s)"
 
-    # --- Landstate summary: CERTIFIED depth, EJECTED, RED counts ---
-    local depth=0 _qejected=0 _qred=0 _f _st
-    if [ -d "$SPIRA_RUN/landstate" ]; then
+    # --- Landstate funnel: CERTIFIED depth, GATED/RED counts with breakdown and oldest ages ---
+    local depth=0 _qejected=0 _qred=0
+    local _fn_certify=0 _fn_certify_ep=''
+    local _fn_red_to=0 _fn_red_rb=0 _fn_red_gt=0 _fn_red_cf=0 _fn_red_ep=''
+    local _fn_cert_ep=''
+    local _f _fst _ftip _fep _freason _fep_ok
+    if ! [ -d "$SPIRA_RUN/landstate" ]; then
+        echo "SP_QUEUE_DEPTH=?"; echo "SP_QUEUE_EJECTED=?"; echo "SP_QUEUE_RED=?"
+        echo "SP_FUNNEL_CERTIFY_N=?"; echo "SP_FUNNEL_CERTIFY_AGE=?"
+        echo "SP_FUNNEL_RED_N=?";     echo "SP_FUNNEL_RED_AGE=?"
+        echo "SP_FUNNEL_RED_TIMEOUT=?"; echo "SP_FUNNEL_RED_REBASE=?"
+        echo "SP_FUNNEL_RED_GATE=?";    echo "SP_FUNNEL_RED_CONFLICT=?"
+        echo "SP_FUNNEL_CERT_AGE=?"
+    else
         for _f in "$SPIRA_RUN/landstate/"*; do
             [ -f "$_f" ] || continue
-            { read -r _st _ < "$_f"; } 2>/dev/null || continue
-            case "$_st" in
-                CERTIFIED) depth=$(( depth + 1 )) ;;
-                EJECTED)   _qejected=$(( _qejected + 1 )) ;;
-                RED)       _qred=$(( _qred + 1 )) ;;
+            _fst=''; _ftip=''; _fep=''; _freason=''
+            { read -r _fst _ftip _fep _freason _ < "$_f"; } 2>/dev/null || continue
+            case "${_fep:-}" in ''|*[!0-9]*) _fep_ok=0 ;; *) _fep_ok=1 ;; esac
+            case "$_fst" in
+                CERTIFIED)
+                    depth=$(( depth + 1 ))
+                    if [ "$_fep_ok" = 1 ]; then
+                        if [ -z "$_fn_cert_ep" ] || [ "$_fep" -lt "$_fn_cert_ep" ]; then
+                            _fn_cert_ep="$_fep"
+                        fi
+                    fi ;;
+                EJECTED)
+                    _qejected=$(( _qejected + 1 )) ;;
+                GATED)
+                    _fn_certify=$(( _fn_certify + 1 ))
+                    if [ "$_fep_ok" = 1 ]; then
+                        if [ -z "$_fn_certify_ep" ] || [ "$_fep" -lt "$_fn_certify_ep" ]; then
+                            _fn_certify_ep="$_fep"
+                        fi
+                    fi ;;
+                RED)
+                    _qred=$(( _qred + 1 ))
+                    if [ "$_fep_ok" = 1 ]; then
+                        if [ -z "$_fn_red_ep" ] || [ "$_fep" -lt "$_fn_red_ep" ]; then
+                            _fn_red_ep="$_fep"
+                        fi
+                    fi
+                    case "${_freason:-}" in
+                        timeout)                      _fn_red_to=$(( _fn_red_to + 1 )) ;;
+                        no-rebase*)                   _fn_red_rb=$(( _fn_red_rb + 1 )) ;;
+                        gate)                         _fn_red_gt=$(( _fn_red_gt + 1 )) ;;
+                        confine|conflicts-with-base*) _fn_red_cf=$(( _fn_red_cf + 1 )) ;;
+                    esac ;;
             esac
         done
+        echo "SP_QUEUE_DEPTH=$depth"
+        echo "SP_QUEUE_EJECTED=$_qejected"
+        echo "SP_QUEUE_RED=$_qred"
+        echo "SP_FUNNEL_CERTIFY_N=$_fn_certify"
+        echo "SP_FUNNEL_CERTIFY_AGE=$(_epoch_to_age "${_fn_certify_ep:-}" "$_now")"
+        echo "SP_FUNNEL_RED_N=$_qred"
+        echo "SP_FUNNEL_RED_AGE=$(_epoch_to_age "${_fn_red_ep:-}" "$_now")"
+        echo "SP_FUNNEL_RED_TIMEOUT=$_fn_red_to"
+        echo "SP_FUNNEL_RED_REBASE=$_fn_red_rb"
+        echo "SP_FUNNEL_RED_GATE=$_fn_red_gt"
+        echo "SP_FUNNEL_RED_CONFLICT=$_fn_red_cf"
+        echo "SP_FUNNEL_CERT_AGE=$(_epoch_to_age "${_fn_cert_ep:-}" "$_now")"
     fi
-    echo "SP_QUEUE_DEPTH=$depth"
-    echo "SP_QUEUE_EJECTED=$_qejected"
-    echo "SP_QUEUE_RED=$_qred"
 
     # --- Active batch: read members and age from batch open files ---
     local batch_pr=0 batch_age="0" batch_n=0 _batch_member_ids=""

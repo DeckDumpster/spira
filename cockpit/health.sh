@@ -988,23 +988,80 @@ next_section() {
     done
 }
 
-# UNLANDED — closed beads whose branch has not yet reached the base. This is the one
-# lifecycle stage the pane cannot otherwise show: between "an aeon closed it" and "a commit
-# on the base branch names it" there is a queue that was previously invisible. A non-zero
-# count is the normal healthy state of a working system; age past a threshold is the
-# actionable signal (law-alerts-must-be-actionable).
+# _q_hdr: emit ' QUEUE  ' on first call per section, '        ' thereafter.
+# Uses _q_hdr_done from the calling queue_section() scope (bash dynamic scoping).
+_q_hdr() {
+    if [ "${_q_hdr_done:-0}" = 0 ]; then
+        printf ' %sQUEUE%s  ' "$C_DIM" "$C_RST"
+        _q_hdr_done=1
+    else
+        printf '        '
+    fi
+}
+
+# QUEUE — done-to-landed pipeline funnel. One row per stage with count and oldest age.
+# Ages go stale → actionable. A non-zero done with certified=0 means the gate is not
+# working the queue (law-alerts-must-be-actionable).
 queue_section() {
     local _bpr="${SP_QUEUE_BATCH_PR:-0}" _bn="${SP_QUEUE_BATCH_N:-0}"
     local _nn="${SP_QUEUE_NEXT_N:-0}" _uln="${SP_UNLANDED_N:-0}"
     local _nm="${SP_QUEUE_NEXT_MAX:-0}" _qqn="${SP_QUEUE_QUARANTINE_N:-0}"
-    if [ "${SP_QUEUE_DEPTH:-?}" = "?" ] && [ "$_bpr" = "0" ] && [ "$_nn" = "0" ]; then
+    local _fn_certify="${SP_FUNNEL_CERTIFY_N:-?}" _fn_certify_age="${SP_FUNNEL_CERTIFY_AGE:-}"
+    local _fn_red="${SP_FUNNEL_RED_N:-?}" _fn_red_age="${SP_FUNNEL_RED_AGE:-}"
+    local _fn_red_to="${SP_FUNNEL_RED_TIMEOUT:-0}" _fn_red_rb="${SP_FUNNEL_RED_REBASE:-0}"
+    local _fn_red_gt="${SP_FUNNEL_RED_GATE:-0}" _fn_red_cf="${SP_FUNNEL_RED_CONFLICT:-0}"
+    local _fn_done_age="${SP_FUNNEL_DONE_AGE:-}"
+    local _q_hdr_done=0
+
+    if [ "${SP_QUEUE_DEPTH:-?}" = "?" ] && [ "$_bpr" = "0" ] && [ "$_nn" = "0" ] \
+       && [ "$_uln" = "?" ] && [ "$_fn_certify" = "?" ] && [ "$_fn_red" = "?" ]; then
         unread_row QUEUE "cannot read the queue"
         return
     fi
+
+    # --- Funnel rows: done → certify → red ---
+    if [ "$_uln" != "0" ] || [ "$_uln" = "?" ]; then
+        _q_hdr
+        if [ "$_uln" = "?" ]; then
+            printf '%sdone  ?%s\n' "$C_WARN" "$C_RST"
+        else
+            printf 'done  %s' "$_uln"
+            [ -n "${_fn_done_age:-}" ] && printf '  oldest %s' "$_fn_done_age"
+            printf '\n'
+        fi
+    fi
+    if [ "$_fn_certify" != "0" ] || [ "$_fn_certify" = "?" ]; then
+        _q_hdr
+        if [ "$_fn_certify" = "?" ]; then
+            printf '%scertify  ?%s\n' "$C_WARN" "$C_RST"
+        else
+            printf 'certify  %s' "$_fn_certify"
+            [ -n "${_fn_certify_age:-}" ] && printf '  %s' "$_fn_certify_age"
+            printf '\n'
+        fi
+    fi
+    if [ "$_fn_red" != "0" ] || [ "$_fn_red" = "?" ]; then
+        _q_hdr
+        if [ "$_fn_red" = "?" ]; then
+            printf '%sred  ?%s\n' "$C_WARN" "$C_RST"
+        else
+            printf '%sred  %s%s' "$C_WARN" "$_fn_red" "$C_RST"
+            local _rd_br=""
+            [ "$_fn_red_to" != "0" ] && _rd_br="${_rd_br}${_rd_br:+ · }${_fn_red_to} timeout"
+            [ "$_fn_red_rb" != "0" ] && _rd_br="${_rd_br}${_rd_br:+ · }${_fn_red_rb} no-rebase"
+            [ "$_fn_red_gt" != "0" ] && _rd_br="${_rd_br}${_rd_br:+ · }${_fn_red_gt} gate"
+            [ "$_fn_red_cf" != "0" ] && _rd_br="${_rd_br}${_rd_br:+ · }${_fn_red_cf} conflict"
+            [ -n "$_rd_br" ] && printf '  %s%s%s' "$C_DIM" "$_rd_br" "$C_RST"
+            [ -n "${_fn_red_age:-}" ] && printf '  oldest %s' "$_fn_red_age"
+            printf '\n'
+        fi
+    fi
+
+    # --- Existing: active batch ---
     if [ "$_bpr" != "0" ] && [ "$_bpr" != "?" ]; then
-        printf ' %sQUEUE%s  %sbatch #%s%s %s(%s member(s))%s\n' \
-            "$C_DIM" "$C_RST" "$C_B" "$_bpr" "$C_RST" \
-            "$C_DIM" "$_bn" "$C_RST"
+        _q_hdr
+        printf '%sbatch #%s%s %s(%s member(s))%s\n' \
+            "$C_B" "$_bpr" "$C_RST" "$C_DIM" "$_bn" "$C_RST"
         local i=0 raw
         while [ "$i" -lt "$MAX_SECTION_ROWS" ]; do
             eval "raw=\${SP_QUEUE_BATCH$i:-}"
@@ -1013,12 +1070,13 @@ queue_section() {
             i=$((i+1))
         done
     fi
+    # --- Existing: certified next items ---
     if [ "$_nn" != "0" ] && [ "$_nn" != "?" ]; then
         if [ "$_bpr" != "0" ] && [ "$_bpr" != "?" ]; then
             printf '        %snext →%s\n' "$C_DIM" "$C_RST"
         else
-            printf ' %sQUEUE%s  %s%s certified%s\n' \
-                "$C_DIM" "$C_RST" "$C_B" "$_nn" "$C_RST"
+            _q_hdr
+            printf '%s%s certified%s\n' "$C_B" "$_nn" "$C_RST"
         fi
         local i=0 raw shown=0
         while [ "$i" -lt "$MAX_SECTION_ROWS" ]; do
@@ -1031,17 +1089,16 @@ queue_section() {
             i=$((i+1))
         done
     fi
-    if [ "$_bpr" = "0" ] && [ "$_nn" = "0" ]; then
-        printf ' %sQUEUE%s  %snothing queued%s\n' "$C_DIM" "$C_RST" "$C_DIM" "$C_RST"
+    if [ "$_q_hdr_done" = 0 ]; then
+        _q_hdr
+        printf '%snothing queued%s\n' "$C_DIM" "$C_RST"
     fi
-    local _ej="${SP_QUEUE_EJECTED:-0}" _rd="${SP_QUEUE_RED:-0}" _footer=""
-    [ "$_ej" != "0" ] && [ "$_ej" != "?" ] && _footer="${_footer}${_footer:+  }${_ej} ejected"
-    [ "$_rd" != "0" ] && [ "$_rd" != "?" ] && _footer="${_footer}${_footer:+  }${_rd} red"
+
+    # Footer: ejected, quarantine (red is now a funnel row above)
+    local _ej="${SP_QUEUE_EJECTED:-0}" _footer=""
+    [ "$_ej" != "0" ] && [ "$_ej" != "?" ] && _footer="${_ej} ejected"
     [ "$_qqn" != "0" ] && [ "$_qqn" != "?" ] && _footer="${_footer}${_footer:+  }${_qqn} quarantined"
     [ -n "$_footer" ] && printf '        %s%s%s\n' "$C_WARN" "$_footer" "$C_RST"
-    if [ "$_uln" != "0" ] && [ "$_uln" != "?" ]; then
-        printf '        %s%s anomaly%s\n' "$C_WARN" "$_uln" "$C_RST"
-    fi
 }
 
 # RECENT — what the harness did, newest first. The label shares the first row with the
@@ -1276,11 +1333,11 @@ standing_lines() {
     # THE ROW STATES ITS OWN WINDOW. Previously it inherited "24h" from the header while its
     # population was all-time, so comparing it against the 24h closed/opened counts above
     # produced nonsense — 59% of the row was outside its header's window.
-    printf '        %s24h worked %s:%s %s landed · %s%s queued%s · %s%s anomaly%s\n' \
+    printf '        %s24h worked %s:%s %s landed · %s%s queued%s · %s%s done%s\n' \
         "$C_DIM" "${SP_CLOSED:-?}" "$C_RST" "${SP_LANDED:-?}" \
         "$C_DIM" "${SP_QUEUE_DEPTH:-?}" "$C_RST" \
         "$( [ "${SP_UNLANDED_N:-0}" = 0 ] && printf '%s' "$C_OK" || printf '%s' "$C_BAD$C_B")" "${SP_UNLANDED_N:-?}" "$C_RST"
-    fit "anomaly = closed, has branch, no landstate" $(( COLS - 8 ))
+    fit "done = closed, has branch, no landstate" $(( COLS - 8 ))
     printf '        %s%s%s\n' "$C_DIM" "$FIT" "$C_RST"
 
     # ACCEPTANCE — the only row that says whether a release INSTALLS, not whether its gate

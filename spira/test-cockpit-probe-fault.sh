@@ -493,15 +493,15 @@ echo "end-to-end: collector ? propagates to pane ?"
 } | snap
 e2e_pane="$(pane 0)"
 e2e_worked="$(printf '%s\n' "$e2e_pane" | grep '24h worked')"
-if printf '%s\n' "$e2e_worked" | grep -q '[?] anomaly'; then
-    ok "end-to-end: collector SP_UNLANDED_N=? propagates to pane '? anomaly'"
+if printf '%s\n' "$e2e_worked" | grep -q '[?] done'; then
+    ok "end-to-end: collector SP_UNLANDED_N=? propagates to pane '? done'"
 else
-    bad "end-to-end: collector SP_UNLANDED_N=? did not propagate to pane '? anomaly': $e2e_worked"
+    bad "end-to-end: collector SP_UNLANDED_N=? did not propagate to pane '? done': $e2e_worked"
 fi
-if printf '%s\n' "$e2e_worked" | grep -q '0 anomaly'; then
-    bad "end-to-end: pane rendered '0 anomaly' despite SP_UNLANDED_N=?"
+if printf '%s\n' "$e2e_worked" | grep -q '0 done'; then
+    bad "end-to-end: pane rendered '0 done' despite SP_UNLANDED_N=?"
 else
-    ok "end-to-end: pane did not render '0 anomaly'"
+    ok "end-to-end: pane did not render '0 done'"
 fi
 
 echo
