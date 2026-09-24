@@ -12,14 +12,16 @@
 # burned six summons in nine minutes with no work done and no alert.
 #
 # The root cause of that incident was a stray local branch refs/heads/origin/main making
-# the string "origin/main" ambiguous to git worktree add. The broader defect is that ALL
-# pre-session deaths share the same three flaws: the error is discarded, no attempt is
-# charged, and the ledger line is indistinguishable from success.
+# the string "origin/main" ambiguous to git worktree add. That specific path is fixed by
+# aeon.sh qualifying the ref to refs/remotes/origin/main — tested in test-aeon-base-ref-
+# qualify.sh. The broader defect is that ALL pre-session deaths share the same three flaws:
+# the error is discarded, no attempt is charged, and the ledger line is indistinguishable
+# from success.
 #
 # THREE THINGS ASSERTED:
 #   1. A worktree failure names git's own error in the FATAL line.
-#      Positive control: create refs/heads/origin/main in a FIXTURE repo and assert the
-#      string "ambiguous" appears in the output.
+#      Positive control: point the repo-map at a path that no longer exists and assert
+#      the string "could not create a worktree" appears in the output.
 #   2. Each pre-session death charges an attempt (ledger status=pre-session, not in_progress;
 #      assert on the ledger, not on intent).
 #   3. A second death on the same bead also charges an attempt — the ledger shows two
@@ -108,9 +110,46 @@ done_lines_for() {
 echo
 echo "test-aeon-presession-death.sh"
 
-# PLANT THE STRAY BRANCH that makes "origin/main" ambiguous to git worktree add.
-# This replicates: git fetch /path/to/harness main:origin/main (production incident).
-git -C "$REPO" branch "origin/main" main
+# Replace the shim with a success shim to test the fix: stray branch is now harmless
+# because aeon.sh qualifies the ref before passing to git worktree add. The full
+# regression is covered by test-aeon-base-ref-qualify.sh; here we just confirm the
+# session runs normally so the pre-session death cases below stand on a clean baseline.
+git -C "$REPO" branch "origin/main" main  # stray branch — no longer causes worktree failure
+cat > "$BIN/claude" <<'SHIM2'
+#!/usr/bin/env bash
+cat /dev/stdin > /dev/null
+printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
+printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
+SHIM2
+chmod +x "$BIN/claude"
+
+# ======================================================================================
+echo
+echo "BASELINE (fix in place): stray branch present, but session runs normally:"
+# ======================================================================================
+testdb_reset; seed sp-pd-0
+_rc0="$(run_aeon)"
+_out0="$(cat "$TMP/out")"
+_line0="$(done_lines_for sp-pd-0 | tail -1)"
+
+nowant "stray branch no longer blocks worktree"    "FATAL"              "$_out0"
+nowant "no pre-session death with qualified ref"   "status=pre-session" "$_line0"
+want   "session ran (turns recorded in ledger)"    "turns=1"            "$_line0"
+
+# Remove stray branch; break the repo so the worktree creation fails for the pre-session
+# death cases below. Moving the repo aside makes git -C "$REPO" ... fail with a clear error
+# that is forwarded into the FATAL line.
+git -C "$REPO" branch -D "origin/main" 2>/dev/null || true
+mv "$REPO" "$TMP/repo.bak"
+
+# Restore the never-called shim — the aeon must die before the session starts.
+cat > "$BIN/claude" <<'SHIM'
+#!/usr/bin/env bash
+cat /dev/stdin > /dev/null
+printf 'test-aeon-presession-death: shim was invoked — aeon did not die pre-session\n' >&2
+exit 1
+SHIM
+chmod +x "$BIN/claude"
 
 # ======================================================================================
 echo
@@ -121,18 +160,17 @@ _rc="$(run_aeon)"
 _out="$(cat "$TMP/out")"
 _line="$(done_lines_for sp-pd-1 | tail -1)"
 
-want "FATAL line is present"                "FATAL"             "$_out"
-want "FATAL names git's own error (ambiguous)" "ambiguous"      "$_out"
-want "ledger status is pre-session"         "status=pre-session" "$_line"
-nowant "not recorded as in_progress"        "status=in_progress" "$_line"
-nowant "rc is not 0 (session never ran)"    "rc=0 "              "$_line"
+want "FATAL line is present"                      "FATAL"                      "$_out"
+want "FATAL names the worktree error"             "could not create a worktree" "$_out"
+want "ledger status is pre-session"               "status=pre-session"          "$_line"
+nowant "not recorded as in_progress"              "status=in_progress"          "$_line"
+nowant "rc is not 0 (session never ran)"          "rc=0 "                       "$_line"
 
 # ======================================================================================
 echo
 echo "CASE 2: second death on same bead — second attempt is also charged (ledger-based):"
 # ======================================================================================
-# The bead is back in open state after cleanup released it. Run again — the stray branch
-# is still there, so the worktree fails again.
+# The bead is back in open state after cleanup released it. Run again — repo still missing.
 _rc2="$(run_aeon)"
 _line2="$(done_lines_for sp-pd-1 | tail -1)"
 _count="$(done_lines_for sp-pd-1 | grep -c 'status=pre-session' 2>/dev/null || echo 0)"
@@ -144,7 +182,7 @@ is   "two pre-session entries in ledger (infinite loop broken)" "2" "$_count"
 echo
 echo "CASE 3: third consecutive sub-10s death — rapid-recur detector fires:"
 # ======================================================================================
-# The stray branch is still in place. After two runs the detector has not yet fired;
+# The repo is still missing. After two runs the detector has not yet fired;
 # a third pushes the count to SPIRA_RAPID_RECUR_THRESHOLD (default 3) and triggers it.
 # Check absence first — proves the check is not over-eager — then fire the third run.
 _note_before3="$(bd -C "$SPIRA_DB" show sp-pd-1 --json 2>/dev/null \
@@ -163,18 +201,17 @@ want "rapid-recur note on bead after 3 short runs" "RAPID"              "$_note3
 
 # ======================================================================================
 echo
-echo "POSITIVE CONTROL — stray branch removed: session runs, no pre-session death:"
+echo "POSITIVE CONTROL — repo restored: session runs, no pre-session death:"
 # ======================================================================================
-git -C "$REPO" branch -D "origin/main" 2>/dev/null || true
+mv "$TMP/repo.bak" "$REPO"
 
-# Replace shim with one that emits valid session output (no close — we assert on session start,
-# not on bead disposition, which belongs to aeon.sh's own cleanup path).
-cat > "$BIN/claude" <<'SHIM2'
+# Replace shim with one that emits valid session output.
+cat > "$BIN/claude" <<'SHIM3'
 #!/usr/bin/env bash
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
-SHIM2
+SHIM3
 chmod +x "$BIN/claude"
 
 testdb_reset; seed sp-pd-3

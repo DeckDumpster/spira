@@ -3307,12 +3307,13 @@ other_beads_on_conflicts() {
 
 conflict_reopen_note() {
     local repo="$1" br="$2" base="$3" name="$4" conflicts="$5" actor="$6" rq_n="${7:-1}"
-    local rn other_beads note
+    local rn other_beads note base_display
+    base_display="${base#refs/remotes/}"
     rn="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
     other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "$conflicts")"
-    note="Reopened by $actor: $br does not rebase onto $base in $name; conflicts in ${conflicts:-unknown}. This is rebase-conflict attempt $rq_n on this bead. The branch carries $rn commit(s) from the previous session — resume from the existing work."
+    note="Reopened by $actor: $br does not rebase onto $base_display in $name; conflicts in ${conflicts:-unknown}. This is rebase-conflict attempt $rq_n on this bead. The branch carries $rn commit(s) from the previous session — resume from the existing work."
     if [ -n "$other_beads" ]; then
-        note="$note Those files were changed on $base by $other_beads — check whether this work is already landed before resolving."
+        note="$note Those files were changed on $base_display by $other_beads — check whether this work is already landed before resolving."
     else
         note="$note A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it."
     fi
