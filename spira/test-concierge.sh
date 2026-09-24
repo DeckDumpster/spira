@@ -46,11 +46,11 @@ echo "the roster — who the sentinel may summon"
 CH="$TMP/chamber"; mkdir -p "$CH"
 cat > "$CH/worker.fayth" <<'EOF'
 FAYTH_NAME=worker
-FAYTH_LABELS="spira,plan"
+FAYTH_LABELS="spira,${SPIRA_PLAN_LABEL}"
 EOF
 cat > "$CH/laner.fayth" <<'EOF'
 FAYTH_NAME=laner
-FAYTH_LABELS="spira,incident"
+FAYTH_LABELS="spira,${SPIRA_INCIDENT_LABEL}"
 FAYTH_LANE=ops
 EOF
 cat > "$CH/human.fayth" <<'EOF'
@@ -62,7 +62,7 @@ EOF
 # other is summoned exactly as if nothing had been declared.
 cat > "$CH/humanlane.fayth" <<'EOF'
 FAYTH_NAME=humanlane
-FAYTH_LABELS="spira,incident"
+FAYTH_LABELS="spira,${SPIRA_INCIDENT_LABEL}"
 FAYTH_LANE=ops
 FAYTH_SUMMON=operator
 EOF

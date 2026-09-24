@@ -115,9 +115,9 @@ up() {
     # ---- chamber: one canary fayth ------------------------------------------
     # FAYTH_LABELS must include SPIRA_SCOPE_LABEL (when non-empty) to pass fayth_fenced.
     # FAYTH_MAX_CONCURRENT=1 lets sentinel summon exactly one worker.
-    cat > "$sh/chamber/canary.fayth" <<'FAYTH'
+    cat > "$sh/chamber/canary.fayth" <<FAYTH
 FAYTH_NAME=canary
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan"
+FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
 FAYTH_MAX_CONCURRENT=1
 FAYTH
 
