@@ -220,6 +220,17 @@ _wt_cleanup() {
 }
 trap _wt_cleanup EXIT INT TERM
 
+# PREBUILT BINARIES — a fresh worktree carries only what git tracks, so the
+# gate's build job (compiles every workspace binary, downloads them into
+# $REPO/bin — sp-7r4rl) would otherwise never reach the container. Copy them
+# into the branch worktree so conf.sh's preference for $SPIRA_REPO/bin/<name>
+# finds the real compiled binary instead of a suite falling back to building
+# its own.
+if [ -d "$REPO/bin" ]; then
+    mkdir -p "$BRANCH_WT/bin"
+    cp -p "$REPO"/bin/* "$BRANCH_WT/bin/" 2>/dev/null || true
+fi
+
 # ---------------------------------------------------------------------------
 # SUITE DIRECTORY — where to find test-*.sh on the host.
 # Defaults to the branch worktree's spira/ dir so suite scripts and the code
