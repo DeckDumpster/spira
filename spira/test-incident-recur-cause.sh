@@ -124,6 +124,7 @@ file_watcher_incident() {
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_RUN="$TMP/run" \
         SPIRA_HOME="$TMP/inc-home" \
+        SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/watcher.lock" \
         SPIRA_INCIDENT_REPO= \
         SPIRA_SIN_EXEMPT=1 \
@@ -351,9 +352,7 @@ echo "6. dep path — a watcher incident blocked by an open dep stays open on re
 testdb_reset; mkdir -p "$TMP/run"
 
 REF1="incident:watcher-dep-$$"
-printf 'DEBUG PID=%s REF1=%s\n' "$$" "$REF1" 1>&2
 file_watcher_incident "$REF1" "watcher dep test"
-B list --status open --limit 0 --label spira,incident --json 1>&2
 INC1="$(find_bead "$REF1")"
 [ -n "$INC1" ] && ok "watcher incident filed" || bad "watcher incident filed" "no bead id"
 
