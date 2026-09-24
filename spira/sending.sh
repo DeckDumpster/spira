@@ -252,9 +252,13 @@ sys.exit(0 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
                 # the base already holds the same content from the successor's commits, which
                 # is the case this arm was written for. Only reap on a conflict; keep
                 # otherwise and let landing.sh or a corrected supersede handle it. (sp-bxd0)
-                if git -C "$REPO" merge-tree --write-tree "$LANDREF" "$br" >/dev/null 2>&1; then
-                    n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo '?')"
-                    say "KEEP   $id  superseded but $n unlanded commit(s) add content absent from $LANDREF — unsafe to reap; check that the supersede mark is correct"
+                #
+                # n=0 GUARD: an empty branch cannot carry unlanded content, so merge-tree's
+                # answer is meaningless — it trivially exits 0 on nothing. Skip the check
+                # and reap directly.
+                _sup_n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo '?')"
+                if [ "${_sup_n:-?}" != "0" ] && git -C "$REPO" merge-tree --write-tree "$LANDREF" "$br" >/dev/null 2>&1; then
+                    say "KEEP   $id  superseded but $_sup_n unlanded commit(s) add content absent from $LANDREF — unsafe to reap; check that the supersede mark is correct"
                     continue
                 fi
                 if [ "$DRY" = 1 ]; then
@@ -313,10 +317,49 @@ sys.exit(0 if d and d[0].get("status") == "closed" else 1)' 2>/dev/null; then
             # Reap it. No content-landed label is needed — CHECK 5 finds the commit itself.
             # An empty branch falls through: no such commit means landed() returns non-zero.
             if [ "${n:-?}" = 0 ] \
-               && git -C "$REPO" merge-base --is-ancestor "$br" "$LANDREF" 2>/dev/null \
+               && git -C "$REPO" merge-base --is-ancestor "$br" "$LANDREF" 2>/dev/null; then
+                if landed "$id" "$REPO" 2>/dev/null; then
+                    if [ "$DRY" = 1 ]; then
+                        say "WOULD  $id  send branch $br (zero ahead, commit on $LANDREF names it)"
+                        continue
+                    fi
+                    send_branch "$id" "$br"
+                    continue
+                fi
+                # NON-CODE DELIVERS: a closed bead that declared a non-code deliverable
+                # was never expected to commit. 0 ahead + ancestor means nothing to protect;
+                # the delivers: label is the positive control that says the empty branch is
+                # intentional rather than an aeon that failed to commit (sp-v4652).
+                if printf '%s\n' "$_bead_json" | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+if not d: sys.exit(1)
+b = d[0]
+labs = b.get("labels") or []
+has_delivers = any(str(l).startswith("delivers:") for l in labs)
+sys.exit(0 if b.get("status") == "closed" and has_delivers else 1)' 2>/dev/null; then
+                    if [ "$DRY" = 1 ]; then
+                        say "WOULD  $id  reap non-code-delivers branch $br (closed, 0 ahead, no commit expected)"
+                        continue
+                    fi
+                    send_branch "$id" "$br" "REAPED"
+                    continue
+                fi
+            fi
+            # LANDED BY OTHER PR. A batch commit that names this bead satisfies landed()
+            # even when the bead's own PR was closed unmerged and the branch conflicts with
+            # the base. Ask here, not only at n=0 (law-closed-is-not-landed, sp-v4652).
+            if printf '%s\n' "$_bead_json" | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+sys.exit(0 if d and d[0].get("status") == "closed" else 1)' 2>/dev/null \
                && landed "$id" "$REPO" 2>/dev/null; then
                 if [ "$DRY" = 1 ]; then
-                    say "WOULD  $id  send branch $br (zero ahead, commit on $LANDREF names it)"
+                    say "WOULD  $id  send branch $br (commit on $LANDREF names it)"
                     continue
                 fi
                 send_branch "$id" "$br"
