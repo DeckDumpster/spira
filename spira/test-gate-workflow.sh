@@ -194,6 +194,33 @@ want "the push group is keyed on the commit"             "github.sha" "$CONC"
 want "a pull request still supersedes itself"            "cancel-in-progress" "$CONC"
 
 echo
+echo "13b. a closed pull request still enters the gate-ref group, so cancel-in-progress kills its superseded run (sp-1p04d):"
+# GitHub does not cancel a batch's Gate run when its PR closes on its own. Adding
+# closed as a trigger type means a PR close queues a new run in the SAME group as
+# the run(s) it supersedes (every pull_request event keys on github.ref), and
+# cancel-in-progress is unconditionally true for pull_request events, so the new
+# run cancels whatever was still going for that PR.
+_pr_block="$(awk '/^  pull_request:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
+if [ -z "$_pr_block" ]; then
+    bad "the pull_request trigger block was located (positive control)" "awk extracted nothing"
+else
+    ok "the pull_request trigger block was located"
+fi
+want "pull_request trigger adds the closed type" "closed" "$_pr_block"
+want "pull_request trigger keeps the default open/sync/reopen types" "opened" "$_pr_block"
+want "the group still keys every pull_request run on the ref" "github.ref" "$CONC"
+
+echo
+echo "13c. a closed-PR run does no work — it only occupies the group to trigger cancellation:"
+_select_job_block="$(awk '/^  select:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f{print}' "$GATE_YML")"
+if [ -z "$_select_job_block" ]; then
+    bad "the select job block was located (positive control)" "awk extracted nothing"
+else
+    ok "the select job block was located"
+fi
+want "select refuses to run for a closed PR" "event.action != 'closed'" "$_select_job_block"
+
+echo
 echo "the suites job is bounded, because it holds a real machine:"
 # Without timeout-minutes the job inherits GitHub's 360-minute default and a wedge
 # holds a provisioned VM for six hours. Read from the parsed YAML rather than by

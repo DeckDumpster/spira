@@ -98,6 +98,9 @@ _abandon_open_batch() {
             printf 'batch %s: %s returned to CERTIFIED\n' "$name" "$mid" ;;
         esac
     done
+    local branch_val
+    branch_val="$(grep '^branch=' "$ob_file" 2>/dev/null | head -1)"; branch_val="${branch_val#branch=}"
+    queue_cancel_branch_runs "$forge" "$repo" "$branch_val" "QUEUE" || true
     "$forge" pr-comment "$repo" "$pr_n" "$comment_text" 2>/dev/null || true
     "$forge" pr-close   "$repo" "$pr_n" 2>/dev/null || true
     local ob_stamp; ob_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -190,6 +193,12 @@ main() {
         || { printf 'batch %s: cannot resolve %s\n' "$name" "$base" >&2; return 1; }
     remote="$(ref_remote "$base")"
     base_branch="$(ref_branch "$base")"
+
+    # Orphan-run sweep: a spira/queue/* branch's Gate run left in-progress after its
+    # PR closed (eviction/abandon/eject that predates queue_cancel_branch_runs, or a
+    # PR closed by hand). The live batch's own branch is excluded because its PR is
+    # still open.
+    queue_sweep_orphan_runs "${SPIRA_FORGE:-$HERE/forge.sh}" "$repo" || true
 
     # CERTIFIED landstate records with no branch ref were deleted while queued.
     # batch.sh would skip them silently; log and mail the operator instead.

@@ -50,6 +50,8 @@ FORGE_LOG="$TMP/forge-log"
 CLOSE_LOG="$TMP/close-log"
 COMMENT_LOG="$TMP/comment-log"
 MERGE_LOG="$TMP/merge-log"
+RUNS_QUERY_LOG="$TMP/runs-query-log"
+CANCEL_LOG="$TMP/cancel-log"
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
@@ -93,11 +95,23 @@ case "\$cmd" in
         ;;
     pr-list-queue)
         : ;;
+    runs-for-branch)
+        branch="\${1:-}"
+        printf '%s\n' "\$branch" >> "$RUNS_QUERY_LOG"
+        printf '77001 in_progress\n'
+        ;;
+    runs-queue-branches)
+        : ;;
+    run-cancel)
+        run_id="\${1:-}"
+        printf '%s\n' "\$run_id" >> "$CANCEL_LOG"
+        ;;
     *) printf 'forge-fixture: unknown command: %s\n' "\$cmd" >&2; exit 1 ;;
 esac
 FORGE
 chmod +x "$SH/forge-fixture.sh"
 : > "$FORGE_LOG"; : > "$CLOSE_LOG"; : > "$COMMENT_LOG"; : > "$MERGE_LOG"
+: > "$RUNS_QUERY_LOG"; : > "$CANCEL_LOG"
 
 batch() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
@@ -208,6 +222,17 @@ echo
 echo "PR closed — forge pr-close called with PR 259:"
 
 want "forge pr-close called with PR 259" "259" "$(cat "$CLOSE_LOG" 2>/dev/null)"
+
+# =============================================================================
+# GATE RUN CANCELLED — the DIRTY batch's in-flight Gate run is cancelled before
+# the PR closes (sp-1p04d: an abandoned batch must not leave its CI running).
+# =============================================================================
+echo
+echo "in-flight Gate run on the batch branch is cancelled before pr-close:"
+
+want "forge queried runs-for-branch for the batch branch" \
+    "spira/queue/20260923T182519Z" "$(cat "$RUNS_QUERY_LOG" 2>/dev/null)"
+want "forge cancelled the in-flight run" "77001" "$(cat "$CANCEL_LOG" 2>/dev/null)"
 
 # =============================================================================
 # OPERATOR MAILED — mail.sh was called with the conflict subject.

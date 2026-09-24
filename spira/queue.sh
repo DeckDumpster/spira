@@ -394,6 +394,7 @@ cmd_abandon() {
             *)           printf 'dry-run: %s: return to CERTIFIED at %s\n' "$mid" "$mtip" ;;
             esac
         done
+        printf 'dry-run: would cancel non-completed Gate run(s) for branch %s\n' "$branch_val"
         printf 'dry-run: archive path: %s\n' "$archive_path"
         return 0
     fi
@@ -401,6 +402,7 @@ cmd_abandon() {
     local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
     local repo_dir; repo_dir="$(repo_root "$name")"
     local comment_text="Batch abandoned.${reason:+ Reason: ${reason}}"
+    queue_cancel_branch_runs "$forge" "$repo_dir" "$branch_val" "QUEUE" || true
     "$forge" pr-comment "$repo_dir" "$pr_n" "$comment_text" 2>/dev/null || true
     "$forge" pr-close   "$repo_dir" "$pr_n" 2>/dev/null || true
 

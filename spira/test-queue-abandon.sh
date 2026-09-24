@@ -25,16 +25,24 @@ REPONAME=fixq
 LANDSTATE="$RUN/landstate"
 QUEUEDIR="$RUN/queue"
 FORGE_LOG="$TMP/forge.log"
+RUNS_FILE="$TMP/runs-for-branch"
+CANCEL_FAIL="$TMP/cancel-fail"
 
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m init
 mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 cp "$HERE"/*.sh "$SH/"
 
-# Fake forge: records arguments, succeeds silently.
+# Fake forge: records arguments, succeeds silently. runs-for-branch answers from
+# RUNS_FILE (empty/absent = no in-flight runs); run-cancel fails when CANCEL_FAIL
+# exists, so the retry/loud-failure path can be exercised.
 cat > "$SH/forge-fake.sh" <<ENDFAKE
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "\$FORGE_LOG"
+case "\${1:-}" in
+    runs-for-branch) [ -f "\$RUNS_FILE" ] && cat "\$RUNS_FILE"; exit 0 ;;
+    run-cancel)      [ -f "\$CANCEL_FAIL" ] && exit 1; exit 0 ;;
+esac
 exit 0
 ENDFAKE
 chmod +x "$SH/forge-fake.sh"
@@ -54,6 +62,8 @@ run() {
         SPIRA_QUEUE_DIR="$QUEUEDIR" \
         SPIRA_FORGE="$SH/forge-fake.sh" \
         FORGE_LOG="$FORGE_LOG" \
+        RUNS_FILE="$RUNS_FILE" \
+        CANCEL_FAIL="$CANCEL_FAIL" \
         bash "$SH/queue.sh" "$@" 2>&1
 }
 
@@ -117,6 +127,9 @@ printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
 # sp-ab03 was deliberately ejected — abandon must not re-certify it.
 printf 'EJECTED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
 > "$FORGE_LOG"
+# One non-completed Gate run in flight on the batch branch — abandon must cancel it.
+printf '55501 in_progress\n' > "$RUNS_FILE"
+: > "$RUN/landing.log"
 
 out="$(run abandon $REPONAME --reason 'guilty branch found')"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0" || bad "exit 0" "rc=$rc out=$out"
@@ -126,6 +139,21 @@ forge_calls="$(cat "$FORGE_LOG" 2>/dev/null || true)"
 want "forge pr-comment called"   "pr-comment" "$forge_calls"
 want "pr-comment mentions PR 58" "58"          "$forge_calls"
 want "forge pr-close called"     "pr-close"    "$forge_calls"
+
+# 1b. The in-flight Gate run on the batch branch is cancelled before the PR closes.
+want "forge queried runs-for-branch on the batch branch" \
+    "runs-for-branch $REPO spira/queue/20260917T120000Z" "$forge_calls"
+want "forge cancelled the in-flight run" "run-cancel $REPO 55501" "$forge_calls"
+cancel_line="$(grep -n 'run-cancel' <<< "$forge_calls" | head -1 | cut -d: -f1)"
+close_line="$(grep -n 'pr-close'   <<< "$forge_calls" | head -1 | cut -d: -f1)"
+if [ -n "$cancel_line" ] && [ -n "$close_line" ] && [ "$cancel_line" -lt "$close_line" ]; then
+    ok "run cancel happens before pr-close"
+else
+    bad "run cancel happens before pr-close" "cancel@$cancel_line close@$close_line"
+fi
+want "the cancel is recorded in landing.log" \
+    "RUN_CANCEL " "$(cat "$RUN/landing.log" 2>/dev/null || true)"
+rm -f "$RUNS_FILE"
 
 # 2. Innocent members returned to CERTIFIED at their recorded tips.
 st01="$(awk '{print $1}' "$LANDSTATE/sp-ab01" 2>/dev/null || true)"
@@ -175,6 +203,7 @@ out="$(run abandon $REPONAME --dry-run)"; rc=$?
 want "dry-run mentions PR"          "would close PR 58"                "$out"
 want "dry-run innocent member"      "return to CERTIFIED"              "$out"
 want "dry-run ejected member"       "leave alone"                      "$out"
+want "dry-run mentions the run cancel" "would cancel"                  "$out"
 want "dry-run shows archive path"   "archive path"                     "$out"
 
 [ -f "$OPEN_FILE" ] && ok "dry-run: open file unchanged" || bad "dry-run no change" "open file gone"
@@ -182,6 +211,28 @@ forge_calls="$(cat "$FORGE_LOG" 2>/dev/null || true)"
 [ -z "$forge_calls" ] && ok "dry-run: forge not called" || bad "dry-run no forge" "got $forge_calls"
 st01="$(awk '{print $1}' "$LANDSTATE/sp-ab01" 2>/dev/null || true)"
 [ "$st01" = "BATCHED" ] && ok "dry-run: landstate unchanged" || bad "dry-run landstate" "got $st01"
+
+echo
+echo "run cancel fails: logged loudly, not swallowed, abandon still proceeds:"
+write_batch
+printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ab01"
+printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
+printf 'EJECTED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
+printf '55502 in_progress\n' > "$RUNS_FILE"
+: > "$CANCEL_FAIL"
+> "$FORGE_LOG"
+: > "$RUN/landing.log"
+
+out="$(run abandon $REPONAME)"; rc=$?
+[ "$rc" -eq 0 ] && ok "abandon still exits 0 when a run cancel fails" \
+    || bad "abandon exits 0" "rc=$rc out=$out"
+want "failure is reported loudly, not swallowed" "WARN" "$out"
+want "failure names the run" "55502" "$out"
+want "the failure is recorded in landing.log" \
+    "RUN_CANCEL_FAILED " "$(cat "$RUN/landing.log" 2>/dev/null || true)"
+[ ! -f "$OPEN_FILE" ] && ok "batch still abandoned despite the cancel failure" \
+    || bad "batch abandoned" "open file still present"
+rm -f "$RUNS_FILE" "$CANCEL_FAIL"
 
 echo
 echo "archive name consistency — always ends with Z:"
