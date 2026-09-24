@@ -32,7 +32,8 @@
 # this suite off the database and its 6-second init cost.
 #
 # defect: sp-mqsl
-# covers: spira/lib.sh
+# tier: T2
+# covers: spira/lib.sh UC-landed-audit-reaping-15
 # scar: spira_destroy_branch called git branch -D unconditionally; a branch reclaimed before its commits reached origin/main was silently garbage-collected with no error.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -174,6 +175,78 @@ if branch_exists spira/sp-db3; then
 else
     ok "branch gone after squash-landed destroy"
 fi
+
+# ======================================================================================
+# CERTIFIED / BATCHED LANDSTATE — a branch in the merge queue is never destroyed, caller
+# bypass or not: batch.sh selects by ref, and deleting it drops the branch from the next
+# batch with no log line. Gap: UC-landed-audit-reaping-15.
+# ======================================================================================
+echo
+echo "queued landstate (fence must refuse, no bypass possible):"
+
+mkdir -p "$SPIRA_RUN/landstate"
+
+make_branch sp-db4
+printf 'CERTIFIED deadbeef\n' > "$SPIRA_RUN/landstate/sp-db4"
+out4="$(spira_destroy_branch sp-db4 spira/sp-db4 "$REPO" "test: certified" caller-bypass 2>&1)"
+rc4=$?
+is "CERTIFIED refuses even with a caller bypass" 1 "$rc4"
+if branch_exists spira/sp-db4; then ok "CERTIFIED branch still exists"; else bad "CERTIFIED branch still exists" "spira/sp-db4 was deleted"; fi
+want "reaplog names the landstate" "landstate is CERTIFIED" "$(cat "$SPIRA_REAPLOG" 2>/dev/null)"
+
+make_branch sp-db5
+printf 'BATCHED deadbeef\n' > "$SPIRA_RUN/landstate/sp-db5"
+out5="$(spira_destroy_branch sp-db5 spira/sp-db5 "$REPO" "test: batched" caller-bypass 2>&1)"
+rc5=$?
+is "BATCHED refuses even with a caller bypass" 1 "$rc5"
+if branch_exists spira/sp-db5; then ok "BATCHED branch still exists"; else bad "BATCHED branch still exists" "spira/sp-db5 was deleted"; fi
+
+# ======================================================================================
+# LIVE HOLDER WITNESS — a live process (a hold, or an in_progress lease via the status
+# seam) refuses the destroy regardless of content. Gap: UC-landed-audit-reaping-15.
+# ======================================================================================
+echo
+echo "live holder witness (fence must refuse):"
+
+make_branch sp-db6
+printf '%s\n' "$$" > "$SPIRA_RUN/hold-sp-db6.pid"
+out6="$(spira_destroy_branch sp-db6 spira/sp-db6 "$REPO" "test: held" 2>&1)"
+rc6=$?
+is "a live hold pid refuses the destroy" 1 "$rc6"
+if branch_exists spira/sp-db6; then ok "held branch still exists"; else bad "held branch still exists" "spira/sp-db6 was deleted while held"; fi
+want "reaplog records the holder" "a live process holds it" "$(cat "$SPIRA_REAPLOG" 2>/dev/null)"
+rm -f "$SPIRA_RUN/hold-sp-db6.pid"
+
+make_branch sp-db7
+spira_status_seam - <<'SEAM'
+sp-db1	open
+sp-db2	open
+sp-db3	open
+sp-db7	in_progress
+SEAM
+out7="$(spira_destroy_branch sp-db7 spira/sp-db7 "$REPO" "test: in_progress" 2>&1)"
+rc7=$?
+is "an in_progress lease refuses the destroy" 1 "$rc7"
+if branch_exists spira/sp-db7; then ok "in_progress branch still exists"; else bad "in_progress branch still exists" "spira/sp-db7 was deleted mid-lease"; fi
+want "reaplog records the lease" "the lease has not been released" "$(cat "$SPIRA_REAPLOG" 2>/dev/null)"
+
+# ======================================================================================
+# CHECKED-OUT-IN-A-WORKTREE — a branch a live worktree has attached is not deletable;
+# pruning the registration out from under it turns a live tree into an orphan. Gap:
+# UC-landed-audit-reaping-15.
+# ======================================================================================
+echo
+echo "checked out in a worktree (fence must refuse):"
+
+make_branch sp-db8
+WT="$TMP/wt-sp-db8"
+git -C "$REPO" worktree add -q "$WT" spira/sp-db8 >/dev/null 2>&1
+out8="$(spira_destroy_branch sp-db8 spira/sp-db8 "$REPO" "test: checked out" 2>&1)"
+rc8=$?
+is "a checked-out branch refuses the destroy" 1 "$rc8"
+if branch_exists spira/sp-db8; then ok "checked-out branch still exists"; else bad "checked-out branch still exists" "spira/sp-db8 was deleted while checked out"; fi
+want "reaplog names the worktree path" "checked out at" "$(cat "$SPIRA_REAPLOG" 2>/dev/null)"
+git -C "$REPO" worktree remove -q --force "$WT" >/dev/null 2>&1 || true
 
 # ======================================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
