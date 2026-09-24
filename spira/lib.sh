@@ -3237,11 +3237,11 @@ other_beads_on_conflicts() {
 }
 
 conflict_reopen_note() {
-    local repo="$1" br="$2" base="$3" name="$4" conflicts="$5" actor="$6"
+    local repo="$1" br="$2" base="$3" name="$4" conflicts="$5" actor="$6" rq_n="${7:-1}"
     local rn other_beads note
     rn="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
     other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "$conflicts")"
-    note="Reopened by $actor: $br does not rebase onto $base in $name; conflicts in ${conflicts:-unknown}. The branch carries $rn commit(s) from the previous session — resume from the existing work."
+    note="Reopened by $actor: $br does not rebase onto $base in $name; conflicts in ${conflicts:-unknown}. This is rebase-conflict attempt $rq_n on this bead. The branch carries $rn commit(s) from the previous session — resume from the existing work."
     if [ -n "$other_beads" ]; then
         note="$note Those files were changed on $base by $other_beads — check whether this work is already landed before resolving."
     else

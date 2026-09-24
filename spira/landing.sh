@@ -1036,7 +1036,7 @@ for i in d:
             bump_requeue "$id" merge-conflict >/dev/null 2>&1
             _rq_n="$(requeues_of "$id")"
             _ls_reason_class="${_ls_reason%%@*}"
-            _reopen_note="$(conflict_reopen_note "$repo" "$br" "$base" "$name" "${REBASE_CONFLICTS:-}" "sentinel")"
+            _reopen_note="$(conflict_reopen_note "$repo" "$br" "$base" "$name" "${REBASE_CONFLICTS:-}" "sentinel" "${_rq_n:-1}")"
             _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
             # Re-cut: cherry-pick commits onto the new base so merge-base always moves.
             # All committed: fall through to gate. Partial (some applied, some conflict):
