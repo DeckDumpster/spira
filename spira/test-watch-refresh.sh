@@ -499,6 +499,15 @@ for _s in $(grep -h "ExecStart=" "$ROOT/systemd/"*.service 2>/dev/null \
     printf '#!/bin/sh\n: stub\n' > "$PROD_COCK/$_s"; chmod +x "$PROD_COCK/$_s"
 done
 unset _s
+# SPIRA_PROD_ROOT resolves as dirname(SPIRA_PROD) — the release root a real `make install`
+# populates from a full git archive, so it holds the repo-root scripts (concierge.sh,
+# beads-push.sh) alongside spira/ and cockpit/.
+PROD_ROOT="$(dirname "$PROD")"
+for _s in $(grep -h "ExecStart=" "$ROOT/systemd/"*.service 2>/dev/null \
+            | grep "@SPIRA_PROD_ROOT@" | sed 's|.*@SPIRA_PROD_ROOT@/||' | sed 's/ .*//' | sort -u); do
+    printf '#!/bin/sh\n: stub\n' > "$PROD_ROOT/$_s"; chmod +x "$PROD_ROOT/$_s"
+done
+unset _s
 : > "$TMP/install.log"
 printf 'SPIRA_COCKPIT = %s\nSPIRA_RUN = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s\nSPIRA_PROD = %s\n' \
     "$COCKPIT" "$RUN" "$MAN" "$STUB" "$PROD" > "$TMP/install.conf"
