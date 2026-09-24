@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# covers: spira/inventory.sh spira/gate-spira.sh
+# tier: T2
+# covers: spira/inventory.sh spira/gate-spira.sh UC-safety-fences-25
 #
 # host-reason: creates scratch git repos to test inventory.sh; no container-hosted state
 set -uo pipefail
@@ -171,27 +172,10 @@ want "--patterns includes /workspaces/ pattern" "/workspaces/" "$out"
 want "--patterns includes per-name pattern"     "per " "$out"
 
 # ---------------------------------------------------------------------------------------
-# SHIPPED TREE. Run against a mirror of the shipped tree (same mirror approach as
-# test-literal-lint.sh, for container worktrees where .git is a file not a dir).
-# ---------------------------------------------------------------------------------------
-out="$(env -i PATH="$PATH" HOME="$HOME" TERM=dumb bash "$HERE/inventory.sh" 2>&1)"; rc=$?
-if [ "$rc" = 3 ]; then
-    MIRROR="$TMP/shipped-mirror"
-    SHIPPED="$(cd "$HERE/.." && pwd -P)"
-    cp -a "$SHIPPED/." "$MIRROR/"
-    rm -rf "$MIRROR/.git"
-    git init -q -b main "$MIRROR"
-    git -C "$MIRROR" config user.email t@t
-    git -C "$MIRROR" config user.name t
-    git -C "$MIRROR" add .
-    git -C "$MIRROR" commit -q -m mirror
-    out="$(inv_at "$MIRROR")"; rc=$?
-fi
-is "every shipped file passes inventory" "0" "$rc"
-[ "$rc" = 0 ] || printf '%s\n' "$out"
-
-# ---------------------------------------------------------------------------------------
-# GATE INTEGRATION. The fence is only useful if something invokes it.
+# GATE INTEGRATION. gate-spira.sh:126 already runs `bash spira/inventory.sh` against the
+# shipped tree on every landing (UC-safety-fences-25, D6) — re-running that same check here
+# against a mirrored copy asserted nothing this suite's own rows and the gate's own run
+# don't already cover, twice, on every branch.
 # ---------------------------------------------------------------------------------------
 want "gate-spira.sh names inventory.sh" "spira/inventory.sh" "$(cat "$HERE/gate-spira.sh")"
 is   "inventory.sh is executable"       "0" "$([ -x "$HERE/inventory.sh" ]; echo $?)"

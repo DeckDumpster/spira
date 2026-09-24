@@ -24,7 +24,8 @@
 # function must flag a disallowed PreToolUse command before its silence on the
 # real output is trusted as evidence of compliance.
 #
-# covers: spira/aeon.sh
+# tier: T1
+# covers: spira/aeon.sh UC-safety-fences-16
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0

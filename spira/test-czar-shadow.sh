@@ -22,7 +22,8 @@
 # act-mode acceptance. A fence that silently allows both modes is indistinguishable
 # from a fence that is absent.
 #
-# covers: spira/czar-fence.sh spira/conf.sh spira/chamber/czar.fayth spira/chamber/czar.md spira/queue.sh spira/lib.sh spira/aeon.sh spira/watchtower.sh
+# tier: T1
+# covers: spira/czar-fence.sh spira/conf.sh spira/chamber/czar.fayth spira/chamber/czar.md spira/queue.sh spira/lib.sh spira/aeon.sh spira/watchtower.sh UC-safety-fences-31
 # hermetic-ok: no database, no systemd; queue.sh fence fires before any db access
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -47,7 +48,7 @@ echo "POSITIVE CONTROL — shadow (default) refuses; act allows"
 
 # SEEN RED: czar-fence.sh deadlock exits 1 when stage is unset (default=shadow).
 out="$(SPIRA_CZAR_STAGE_DEADLOCK="" "$FENCE" deadlock 2>&1 || true)"
-rc=0; SPIRA_CZAR_STAGE_DEADLOCK="" "$FENCE" deadlock >/dev/null 2>&1 && rc=1 || rc=$?
+rc=0; SPIRA_CZAR_STAGE_DEADLOCK="" "$FENCE" deadlock >/dev/null 2>&1 || rc=$?
 [ "$rc" -eq 1 ] && ok "czar-fence deadlock exits 1 in shadow (default)" \
                 || bad "czar-fence deadlock: expected exit 1 in shadow, got $rc"
 want "refusal message names the stage var" "SPIRA_CZAR_STAGE_DEADLOCK" "$out"
