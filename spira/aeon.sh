@@ -1364,7 +1364,12 @@ if [ -n "${SPIRA_WIKI:-}" ] && [ -d "$SPIRA_WIKI" ]; then
                   | awk '/^worktree /{print $2; exit}')"
     _wdb_real="$(cd "$SPIRA_WIKI" 2>/dev/null && pwd -P)"
     if [ -n "${_wdb_main:-}" ] && [ "${_wdb_real:-}" = "$_wdb_main" ]; then
-        WIKI_DIRTY_BEFORE="$(git -C "$SPIRA_WIKI" status --short 2>/dev/null | cut -c4- | sort -u)"
+        # --untracked-files=all: plain `status --short` collapses a wholly-untracked
+        # directory to one line naming the directory, not the files in it. A directory
+        # that later reaches wiki-commit.sh as a "path" stages everything beneath it —
+        # indistinguishable from `git add -A` for that subtree. Naming every file keeps
+        # the before/after diff, and therefore the commit, file-granular.
+        WIKI_DIRTY_BEFORE="$(git -C "$SPIRA_WIKI" status --short --untracked-files=all 2>/dev/null | cut -c4- | sort -u)"
     fi
     unset _wdb_main _wdb_real
 fi
@@ -1862,7 +1867,7 @@ if [ -n "${SPIRA_WIKI:-}" ] && [ -d "$SPIRA_WIKI" ]; then
                 grep -qxF -- "$_wp" <<< "$WIKI_DIRTY_BEFORE" 2>/dev/null && continue
             fi
             _wc_new="${_wc_new:+$_wc_new$'\n'}$_wp"
-        done < <(git -C "$SPIRA_WIKI" status --short 2>/dev/null | cut -c4-)
+        done < <(git -C "$SPIRA_WIKI" status --short --untracked-files=all 2>/dev/null | cut -c4-)
         if [ -n "$_wc_new" ]; then
             _wc_count="$(printf '%s\n' "$_wc_new" | grep -c .)"
             if printf '%s\n' "$_wc_new" | bash "$SPIRA_HOME/wiki-commit.sh" \
