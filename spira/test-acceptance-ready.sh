@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
-# covers: spira/acceptance-run.sh
+# tier: T1
+# covers: spira/acceptance-run.sh UC-acceptance-01
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$HERE/testlib.sh"
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH"' EXIT INT TERM
-
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 echo "test-acceptance-ready.sh"
 
@@ -67,7 +63,6 @@ _ready_out="$(bash "$STUB_READY_OK" 2>&1)" || _ready_rc=$?
 
 _chk_out="$([ "$_ready_rc" = 0 ] && printf '  ok    %s\n' "ready" || printf '  FAIL  %s: %s\n' "ready" "exit $_ready_rc")"
 want "phase A ready check: is0 reports ok on exit 0" "ok" "$_chk_out"
-notwant "phase A ready check: is0 does not report FAIL on exit 0" "FAIL" "$_chk_out"
+nowant "phase A ready check: is0 does not report FAIL on exit 0" "FAIL" "$_chk_out"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
