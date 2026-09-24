@@ -2,13 +2,14 @@
 #
 # test-landing-phase2-order.sh — Phase 2 tier ordering and RED-skip.
 #
-# THREE PROPERTIES UNDER TEST:
+# PROPERTIES UNDER TEST:
 #
 #   1. TIER ORDER. With three closed branches — one never-gated (no prior landstate),
-#      one RED with an unchanged tip, one RED with a moved tip — Phase 2 certifies the
-#      never-gated branch first, then the moved-tip RED branch, and skips the same-tip
-#      RED branch entirely. This holds even when the same-tip RED branch would sort
-#      first by priority (it is P1; the others are P2).
+#      one RED with an unchanged tip, one RED with a moved tip — Phase 2 certifies both
+#      the never-gated branch and the moved-tip RED branch first (both are tier 0:
+#      stale RED is treated as never-gated), and skips the same-tip RED branch entirely.
+#      This holds even when the same-tip RED branch would sort first by priority
+#      (it is P1; the others are P2).
 #
 #   2. SKIP LOG. The same-tip RED branch produces a CHECK6 line naming the RED record
 #      and the branch is not dispatched to the gate.
@@ -16,10 +17,14 @@
 #   3. POSITIVE CONTROL. With the RED tip moved (add a commit to the previously-skipped
 #      branch), Phase 2 dispatches it.
 #
+#   4. CONFLICTS-WITH-BASE STALE BASE. A RED conflicts-with-base record whose base has
+#      advanced since the record was written is treated as never-gated (the record
+#      describes a pair, and either side moving makes it stale).
+#
 # The gate stub is instant. SPIRA_CERTIFY_PAR=2 forces the parallel path (Phase 2)
 # even on a single-core host.
 #
-# defect: sp-fpf62
+# defect: sp-fpf62 sp-npggh
 # covers: spira/landing.sh spira/lib.sh
 # timeout: 120
 set -uo pipefail
@@ -121,8 +126,10 @@ echo "test-landing-phase2-order.sh"
 #
 # Without tier ordering, brs sort gives: sp-p2-rs (P1) first, then
 # sp-p2-ng and sp-p2-rm (P2, oldest first). The same-tip RED would
-# consume the first slot. With tier ordering, sp-p2-ng goes first,
-# sp-p2-rs is skipped, sp-p2-rm is dispatched last.
+# consume the first slot. With tier ordering, sp-p2-ng and sp-p2-rm
+# are both treated as never-gated (ng has no record; rm has a stale
+# record because its tip moved), sp-p2-rs is skipped. Within tier 0,
+# ng (closed 2026-09-01) sorts before rm (closed 2026-09-02).
 # -----------------------------------------------------------------------
 
 echo
@@ -150,16 +157,17 @@ nowant "same-tip RED branch not certified"    "certified spira/sp-p2-ng\|certifi
 # (avoid literal pipe in test — separate assertion)
 nowant "same-tip RED branch not certified (direct)" "certified spira/sp-p2-rs" "$out"
 
-# Moved-tip RED branch is dispatched.
+# Moved-tip RED branch is promoted to never-gated and certifies.
 want "moved-tip RED branch certifies" "certified spira/sp-p2-rm" "$out"
+want "stale-tip RED produces promotion log" "RED record tip stale" "$out"
 
 # Tier log line is present and names the correct counts.
+# Both ng (no landstate) and rm (stale RED) are tier 0.
 want "tier log line present" "certify phase 2 tiers in $REPONAME" "$out"
-want "tier log shows never-gated=1" "never-gated=1" "$out"
+want "tier log shows never-gated=2" "never-gated=2" "$out"
 want "tier log shows skipped=1" "skipped=1" "$out"
 
-# Order: never-gated before moved-tip-RED. Without tier sort, sp-p2-rs (P1) would
-# come before sp-p2-ng (P2), and sp-p2-ng would not necessarily precede sp-p2-rm.
+# Order: never-gated before moved-tip-RED (both tier 0; ng closed 2026-09-01 < rm 2026-09-02).
 before "never-gated certifies before moved-tip RED" \
     "certified spira/sp-p2-ng" "certified spira/sp-p2-rm" "$out"
 
@@ -184,11 +192,62 @@ git -C "$RUN/worktree/sp-p2-rs" add -A
 git -C "$RUN/worktree/sp-p2-rs" commit -q -m "fix: sp-p2-rs retry"
 
 out2="$(landing)"
-want "moved tip is dispatched (certifies)"    "certified spira/sp-p2-rs" "$out2"
-nowant "skip line absent after tip moved"     "tip unchanged since RED mark" "$out2"
+want "moved tip is dispatched (certifies)"       "certified spira/sp-p2-rs" "$out2"
+want "stale-tip promotion log present"           "RED record tip stale" "$out2"
+nowant "skip line absent after tip moved"        "tip unchanged since RED mark" "$out2"
 
 drop_branch sp-p2-ng; drop_branch sp-p2-rs
 rm -f "$LANDSTATE/sp-p2-ng" "$LANDSTATE/sp-p2-rs"
+
+# -----------------------------------------------------------------------
+# CONFLICTS-WITH-BASE STALE BASE. A RED conflicts-with-base record whose
+# timestamp is older than the latest commit on the base is stale: main has
+# moved after the conflict was recorded, so the record no longer describes
+# the current pair. Treat the branch as never-gated.
+# -----------------------------------------------------------------------
+echo
+echo "conflicts-with-base stale-base tests:"
+seed_base
+branch_at sp-p2-cwb 2 "2026-09-01T00:00:00Z"
+
+# Plant a conflicts-with-base RED with a timestamp in the past, before
+# adding a new commit to main — so the base commit is newer than the record.
+tip_cwb="$(git -C "$REPO" rev-parse "spira/sp-p2-cwb")"
+past_epoch=$(( $(date +%s) - 3600 ))
+mkdir -p "$LANDSTATE"
+printf 'RED %s %s conflicts-with-base' "$tip_cwb" "$past_epoch" > "$LANDSTATE/sp-p2-cwb"
+
+# Advance the base (main) past the record timestamp.
+git -C "$REPO" checkout -q main
+git -C "$REPO" commit -q --allow-empty -m "advance main"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+
+out3="$(landing)"
+want "cwb stale-base branch certifies" "certified spira/sp-p2-cwb" "$out3"
+want "cwb stale-base produces promotion log" "RED conflicts-with-base stale" "$out3"
+nowant "cwb stale-base no skip line" "tip unchanged since RED mark" "$out3"
+
+# -----------------------------------------------------------------------
+# CONFLICTS-WITH-BASE CURRENT BASE. Same-tip conflicts-with-base RED whose
+# base has NOT advanced since the record is still current — skip it.
+# -----------------------------------------------------------------------
+echo
+echo "conflicts-with-base current-base (skip) tests:"
+seed_base
+branch_at sp-p2-cwb2 2 "2026-09-01T00:00:00Z"
+
+tip_cwb2="$(git -C "$REPO" rev-parse "spira/sp-p2-cwb2")"
+# Timestamp in the future relative to the base's latest commit — base has not advanced.
+future_epoch=$(( $(date +%s) + 3600 ))
+printf 'RED %s %s conflicts-with-base' "$tip_cwb2" "$future_epoch" > "$LANDSTATE/sp-p2-cwb2"
+
+out4="$(landing)"
+nowant "cwb current-base branch not certified" "certified spira/sp-p2-cwb2" "$out4"
+want "cwb current-base produces skip line" "tip unchanged since RED mark" "$out4"
+
+drop_branch sp-p2-cwb; drop_branch sp-p2-cwb2
+rm -f "$LANDSTATE/sp-p2-cwb" "$LANDSTATE/sp-p2-cwb2"
 
 echo
 printf 'results: %d passed, %d failed\n' "$pass" "$fail"
