@@ -1,0 +1,147 @@
+[spira]
+home_repo = "home"
+db = "/opt/fixture-home/.local/share/spira/db"
+run = "/opt/fixture-home/.local/state/spira"
+goal = "sp-goal"
+path = "/opt/spira/bin"
+workspaces = "/srv/checkouts"
+prod = "/srv/checkouts/harness-prod/spira"
+dolt_data = "/srv/beads"
+wiki = "/srv/checkouts/notes"
+wiki_hook = "/srv/checkouts/notes/bin/synth-statutes"
+view = "/opt/spira/bin/view-follower"
+tz = "America/Los_Angeles"
+operator = "the operator"
+operator_actor = "operator"
+ask_label = "fixture-ask-label"
+ci_label = "fixture-ci-label"
+scope_label = "myproject"
+max_aeons = 4
+max_live_aeons = 4
+fayths = [
+    "builder",
+    "ops",
+]
+batch_maxpar = 8
+certify_par = 4
+certify_suites = "off"
+cert_idle_skip = false
+queue_batch_max = 6
+queue_batch_wait = 1200
+queue_ci_maxsec = 21600
+queue_local_gate = false
+queue_throttle_release_at = 12
+suites_budget = 1800
+loom_addr = "127.0.0.1:8788"
+loom_budget_ms = 1500
+mail_readers = "concierge=/opt/spira/concierge.sh wake"
+gh_intake_repo = "example-org/example-repo"
+cockpit_bottom_pct = 40
+cockpit_right_pct = 45
+czar_stage_deadlock = "shadow"
+
+[repo.home]
+path = "/srv/checkouts/home"
+mode = "push"
+base = "origin/main"
+gate = 'bash spira/inventory.sh && bash spira/testenv-batch.sh "$SPIRA_GATE_BRANCH"'
+lanes = [
+    "plan",
+    "incident",
+    "groom",
+    "spike",
+]
+
+[repo.service]
+path = "/srv/checkouts/service"
+mode = "pr"
+base = "origin/master"
+format = "cargo fmt --all"
+gate = '{ _b=0; bash testenv-batch.sh "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; }'
+lanes = [
+    "plan",
+    "incident",
+]
+
+[persona.builder]
+model = "claude-sonnet-5"
+tools = [
+    "Bash",
+    "Read",
+    "Edit",
+    "Write",
+    "Glob",
+    "Grep",
+    "TodoWrite",
+]
+labels = [
+    "myproject",
+    "plan",
+]
+system_prompt = "append"
+
+[persona.builder.lease]
+minutes = 90
+heartbeat_seconds = 30
+
+[persona.ops]
+model = "claude-haiku-4-5-20251001"
+tools = [
+    "Bash(systemctl status*)",
+    "Bash(systemctl show*)",
+    "Bash(systemctl list-*)",
+    "Bash(systemctl is-*)",
+    "Bash(systemctl cat*)",
+    "Bash(journalctl*)",
+    "Bash(ls*)",
+    "Bash(cat *)",
+    "Bash(head *)",
+    "Bash(tail *)",
+    "Bash(grep *)",
+    "Bash(awk *)",
+    "Bash(find *)",
+    "Bash(wc *)",
+    "Bash(sort *)",
+    "Bash(uniq *)",
+    "Bash(sed *)",
+    "Bash(python3 *)",
+    "Bash(echo *)",
+    "Bash(printf *)",
+    "Bash(date*)",
+    "Bash(basename *)",
+    "Bash(dirname *)",
+    "Bash(bd *)",
+    "Bash(git log*)",
+    "Bash(git show*)",
+    "Bash(git status*)",
+    "Bash(git diff*)",
+    "Bash(git fetch*)",
+    "Bash(git for-each-ref*)",
+    "Bash(git rev-parse*)",
+    "Bash(git -C * log*)",
+    "Bash(git -C * show*)",
+    "Bash(git -C * status*)",
+    "Bash(git -C * diff*)",
+    "Bash(git -C * fetch*)",
+    "Bash(git -C * for-each-ref*)",
+    "Bash(git -C * rev-parse*)",
+    "Bash(*sop.sh*)",
+    "Bash(*incident.sh*)",
+    "Bash(*mail.sh*)",
+    "Bash(*suites.sh*)",
+    "Bash(*testenv-batch.sh*)",
+    "Read",
+    "Glob",
+    "Grep",
+    "TodoWrite",
+]
+labels = [
+    "myproject",
+    "incident",
+]
+lane = "ops"
+system_prompt = "replace"
+
+[persona.ops.lease]
+minutes = 10
+heartbeat_seconds = 30
