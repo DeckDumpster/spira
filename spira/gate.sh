@@ -30,62 +30,23 @@
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 
-# verdict <status> <reason-slug> [message ...] — the ONLY way out of this program.
+# verdict() — the ONLY way out of this program — and gate_tree_key(), gate_key_hash(),
+# cache_fresh(), red_suites(), timed_out_suites() and gate_attribute() live in gate-lib.sh.
+# They moved there so a T1 suite can call them directly: gate.sh is not sourceable on its
+# own (everything below runs at top level once BR="${1:?}" reads argv), but a library with
+# no top-level statement of its own is. See gate-lib.sh for what each one does and why.
 #
 # One exit point, because the classification is the whole contract and a bare `exit 1`
-# somewhere in the preflight is how the contract gets broken silently. It meters, it says the
-# outcome in a form both a human and `landing.sh` can read, and it enforces the one
+# somewhere in the preflight is how the contract gets broken silently. verdict() meters, it
+# says the outcome in a form both a human and `landing.sh` can read, and it enforces the one
 # invariant that cannot be left to the caller: a FAIL must be able to show its work.
 #
-# A FAIL THAT SAYS NOTHING AT ALL IS DOWNGRADED TO NO_VERDICT, here, as a backstop. The
+# A FAIL THAT SAYS NOTHING AT ALL IS DOWNGRADED TO NO_VERDICT, there, as a backstop. The
 # base..branch diff failure exited 1 without a word (sp-io5j), and this makes such an exit
 # structurally impossible rather than relying on every future call site to remember. The
 # richer form of the same rule — a gate command that ran and printed nothing — is enforced
-# where `$out` is in scope, because by the time it reaches here it is wrapped in prose.
-verdict() {              # verdict <status> <reason> [message...]
-    local st="$1" reason="$2"; shift 2
-    local msg="$*"
-    if [ "$st" != 0 ] && [ "$st" != "$SPIRA_GATE_NOVERDICT" ] && [ "$st" != "$SPIRA_GATE_BASEFAIL" ] \
-       && [ -z "${msg//[[:space:]]/}" ]; then
-        reason="no-evidence:$reason"; st="$SPIRA_GATE_NOVERDICT"
-        msg="the gate returned a failure with no output at all — that is the machinery failing to run a check, not the branch failing one"
-    fi
-    [ -n "$msg" ] && printf '%s\n' "$msg" >&2
-    # The machine-readable line. Anchored and single, so a caller matches the whole shape
-    # rather than grepping prose that a reword would silently change.
-    #
-    # IT CARRIES THE SUITE BECAUSE THE CALLER HAS TO KEY ON SOMETHING. A BASE_FAIL is filed
-    # by the landing pass as one incident against the repository, deduped on an external ref,
-    # and a ref built from prose is a ref that changes the day somebody rewords a message —
-    # at which point one broken base files a fresh bead every pass instead of bumping one.
-    # `-` when the repository's gate named nothing identifiable, which is a stable key too.
-    printf 'gate: VERDICT=%s reason=%s branch=%s repo=%s suite=%s\n' \
-        "$(spira_gate_outcome "$st")" "$reason" "$BR" "${REPO_NAME:-?}" "${GATE_SUITE:--}" >&2
-    # THE EXIT TRAP IS DISARMED FIRST. It exists to meter the ways out that do not come
-    # through here — a `set -e` death, a signal — and if it survived this call every verdict
-    # would be metered twice, the second time with the status of whatever ran last inside the
-    # trap rather than the verdict's own. Cleanup that the trap owns is done here instead.
-    trap - EXIT
-    rm -f "${FILELIST:-}" 2>/dev/null
-    rm -f "${TREE:-}.lock.holder" 2>/dev/null || true
-    # Keep the tree on success — the next run reuses it, touching only changed files, so
-    # cargo's mtime fingerprints survive. Remove only on non-success (a failed run may leave
-    # the tree in a state checkout cannot recover), and only when we held the lock (the
-    # lock-timeout path must not remove a tree it never owned).
-    if [ "${HELD_LOCK:-0}" = 1 ] && [ -n "${TREE:-}" ] && [ -e "${TREE}/.git" ] && [ "$st" != 0 ]; then
-        git -C "${REPO:-/nonexistent}" worktree remove --force "$TREE" 2>/dev/null || true
-    fi
-    # gate_meter is defined only once the tree lock has been reached; before that there is no
-    # wait and no run to record, and a preflight refusal is not a reading about contention.
-    command -v gate_meter >/dev/null 2>&1 && gate_meter "$st" "$reason"
-    # AND IT RECORDS WHAT THE GATE WAS WORTH, not only what it cost. Same placement and same
-    # reasoning as the meter: this is the one way out, so a red that is never recorded is a
-    # red that never happened as far as anybody measuring this gate is concerned. It can fail
-    # and is not allowed to matter — a gate whose verdict changed because its bookkeeping
-    # broke would be worse than not measuring at all.
-    command -v yield_note >/dev/null 2>&1 && yield_note "$st" "$reason"
-    exit "$st"
-}
+# where `$out` is in scope, because by the time it reaches verdict() it is wrapped in prose.
+. "$(dirname "$0")/gate-lib.sh"
 NV="$SPIRA_GATE_NOVERDICT"
 
 BR="${1:?usage: gate.sh <branch> [repo-name]}"
@@ -377,7 +338,10 @@ gate_key() {
     # SPIRA_BEAD_ID prevents different beads with identical trees from colliding in the
     # verdict cache. Without it, a closed bead's cached verdict persists and can mislead
     # a later bead that happens to have the same tree hash (via rebase without code changes).
-    printf '%s\n' "$REPO_NAME $tree $files_h $cmd_h $harness_h suites=${SPIRA_GATE_SUITES:-on} bead=${SPIRA_BEAD_ID:-none}" | sha256sum | cut -d" " -f1
+    # The hashing itself is gate_key_hash() (gate-lib.sh) — pure, so a T1 row can assert
+    # each input moves the key without a git repository.
+    gate_key_hash "$REPO_NAME" "$tree" "$files_h" "$cmd_h" "$harness_h" \
+        "${SPIRA_GATE_SUITES:-on}" "${SPIRA_BEAD_ID:-none}"
 }
 GATE_KEY="$(gate_key || true)"
 
@@ -401,14 +365,12 @@ verdict_ttl="${SPIRA_VERDICT_TTL:-0}"
 case "$verdict_ttl" in ''|*[!0-9]*) verdict_ttl=0 ;; esac
 
 if [ -n "$GATE_KEY" ] && [ -r "$VERDICT_DIR/$GATE_KEY" ]; then
-    # shellcheck disable=SC1090
-    cached_when=""; cached_by=""; cached_at=""
-    eval "$(sed -n 's/^\(when\|by\|at\)=\(.*\)$/cached_\1="\2"/p' "$VERDICT_DIR/$GATE_KEY" 2>/dev/null)"
-    cached_age=-1
-    case "$cached_at" in ''|*[!0-9]*) : ;; *) cached_age=$(( $(date +%s) - cached_at )) ;; esac
-    if [ "$cached_age" -ge 0 ] && [ "$cached_age" -lt "$verdict_ttl" ]; then
+    # cache_fresh() (gate-lib.sh) parses when=/by=/at= without eval — the original inline
+    # form built an eval string from the entry file's own text, so a `when=` containing
+    # `$(...)` would have run it (gate.sh gap sp-04yh0#10).
+    if _cf="$(cache_fresh "$VERDICT_DIR/$GATE_KEY" "$verdict_ttl" "$(date +%s)")"; then
         verdict 0 cached \
-            "gate: this exact tree already passed $REPO_NAME's gate at ${cached_when:-an earlier time} (${cached_by:-unknown caller})
+            "gate: this exact tree already passed $REPO_NAME's gate at ${_cf%%|*} (${_cf#*|})
 gate: key $GATE_KEY — same tree, same changed files, same command, same harness."
     fi
 fi
@@ -428,7 +390,7 @@ fi
 # concurrently. Two gates on the same branch (an aeon's gate and the landing pass's) share
 # one tree and serialise on its lock — which is correct, since each checkout must own the
 # tree while it runs suites against it.
-TREE_KEY="$(printf '%s' "$BR" | tr '/' '-' | tr -c 'A-Za-z0-9.-' '-')"
+TREE_KEY="$(gate_tree_key "$BR")"
 TREE="$SPIRA_RUN/worktree/.gate.$(basename "$REPO").$TREE_KEY"
 
 # SWEEP STALE GATE WORKTREES BEFORE OBTAINING THE LOCK. Old runs that were killed before
@@ -646,23 +608,9 @@ fi
 # follows when it reports a failing suite by filename — a filename immediately followed by
 # FAILED or by having been killed. Anything else leaves `-`: the reason slug is a true
 # attribution and a guessed suite name is not.
-red_suites() {           # red_suites <gate output> -> one suite per line, as the batch runner reports them
-    printf '%s\n' "$1" | awk '{
-        for (i = 1; i < NF; i++)
-            if ($i ~ /\.sh$/ && ($(i+1) ~ /^(RED|TIMEOUT|FAILED)$/ || ($(i+1) == "was" && $(i+2) == "killed")))
-                if (!seen[$i]++) print $i
-    }'
-}
-# timed_out_suites: only the suites killed by the watchdog, never the genuinely failed ones.
-# A killed suite produces no FAIL line, so a base trial of all-timeouts cannot prove the base
-# is broken — it may have been about to fail or about to pass, and neither fact is known.
-timed_out_suites() {     # timed_out_suites <gate output> -> one suite per line
-    printf '%s\n' "$1" | awk '{
-        for (i = 1; i < NF; i++)
-            if ($i ~ /\.sh$/ && ($(i+1) == "TIMEOUT" || ($(i+1) == "was" && $(i+2) == "killed")))
-                if (!seen[$i]++) print $i
-    }'
-}
+#
+# red_suites() and timed_out_suites() live in gate-lib.sh now, alongside gate_attribute()
+# which uses them below.
 GATE_SUITE="$(red_suites "$out" | head -1)"
 [ -n "$GATE_SUITE" ] || GATE_SUITE=-
 
@@ -715,32 +663,51 @@ if gate_at "$BASE" >/dev/null 2>&1; then
 fi
 gate_at "$BR" >/dev/null 2>&1
 
-if [ "$base_ran" = 1 ] && [ "$base_rc" -ne 0 ]; then
-    # A red base excuses only the suites that are red on it too; a suite red on the branch alone
-    # is still the branch's.
-    base_reds="$(red_suites "$base_out")"
-    branch_only="$(red_suites "$out" | grep -vxF -f <(printf '%s\n' "$base_reds") || true)"
-    if [ -n "$base_reds" ] && [ -n "$branch_only" ]; then
-        GATE_SUITE="$(printf '%s\n' "$branch_only" | head -1)"
+# THE CLASSIFICATION RULE ITSELF IS gate_attribute() (gate-lib.sh), a pure function of the
+# two trials' captured output — branch-red / base-red / base-timeout / base-untestable.
+# This block no longer decides anything; it hands the two outputs over via file (so a
+# multi-line trial with embedded NULs or odd bytes never has to survive a positional arg),
+# reads back which class won, and assembles that class's own message using its own copies
+# of red_suites()/timed_out_suites() for the text — the decision already happened.
+_attr_branch_f="/tmp/spira-gate-attr-branch-$$"
+_attr_base_f="/tmp/spira-gate-attr-base-$$"
+printf '%s' "$out" > "$_attr_branch_f"
+printf '%s' "${base_out:-}" > "$_attr_base_f"
+read -r _attr_class _attr_suite < <(gate_attribute "$gate_rc_branch" "$_attr_branch_f" "$base_ran" "${base_rc:-1}" "$_attr_base_f")
+rm -f "$_attr_branch_f" "$_attr_base_f"
+
+case "$_attr_class" in
+branch-red)
+    GATE_SUITE="$_attr_suite"
+    if [ "$base_ran" = 1 ] && [ "$base_rc" -ne 0 ]; then
+        # A red base excuses only the suites that are red on it too; a suite red on the
+        # branch alone is still the branch's — which is exactly this case.
+        base_reds="$(red_suites "$base_out")"
+        branch_only="$(red_suites "$out" | grep -vxF -f <(printf '%s\n' "$base_reds") || true)"
         verdict 1 branch-red \
             "gate: $REPO_NAME's own gate failed: $CMD
 $out
 gate: red on this branch and not on $BASE: $(printf '%s' "$branch_only" | tr '\n' ' ')
 gate: $BASE is red too, on: $(printf '%s' "$base_reds" | tr '\n' ' ')"
     fi
-    # A base trial whose only reds are timeouts is inconclusive: every killed suite
-    # may have been about to pass or about to fail, so we cannot say the base is broken.
+    verdict 1 branch-red \
+        "gate: $REPO_NAME's own gate failed: $CMD
+$out
+gate: the same command passes against $BASE, so this is the branch's own."
+    ;;
+base-timeout)
+    # A base trial whose only reds are timeouts is inconclusive: every killed suite may
+    # have been about to pass or about to fail, so we cannot say the base is broken.
     # BASE_FAIL would hold every branch for a fact about load, not a fact about the code.
+    GATE_SUITE="$_attr_suite"
     _base_timeouts="$(timed_out_suites "$base_out")"
-    _base_genuine="$(printf '%s\n' "$base_reds" | grep -vxF -f <(printf '%s\n' "$_base_timeouts") || true)"
-    if [ -n "$_base_timeouts" ] && [ -z "$_base_genuine" ]; then
-        GATE_SUITE="$(printf '%s\n' "$_base_timeouts" | head -1)"
-        verdict "$NV" base-timeout \
-            "gate: $REPO_NAME's base trial timed out on $(printf '%s ' $_base_timeouts)— no verdict for $BR.
+    verdict "$NV" base-timeout \
+        "gate: $REPO_NAME's base trial timed out on $(printf '%s ' $_base_timeouts)— no verdict for $BR.
 gate: a killed suite cannot prove the base is broken; retry when the box is quieter."
-    fi
-    GATE_SUITE="$(printf '%s\n' "$base_reds" | head -1)"
-    [ -n "$GATE_SUITE" ] || GATE_SUITE=-
+    ;;
+base-red)
+    GATE_SUITE="$_attr_suite"
+    base_reds="$(red_suites "$base_out")"
     verdict "$SPIRA_GATE_BASEFAIL" base-red \
         "gate: $REPO_NAME's own gate fails against $BASE — this branch did not cause it.
 gate: command: $CMD
@@ -750,15 +717,12 @@ $(printf '%s\n' "$base_out" | tail -c 8000)
 --- this branch's output ---
 $(printf '%s\n' "$out" | tail -c 4000)
 gate: fix the repository, or clear that command from $SPIRA_REPO_MAP."
-fi
-if [ "$base_ran" = 0 ]; then
+    ;;
+*)
     verdict "$NV" base-untestable \
         "gate: $REPO_NAME's own gate failed: $CMD
 $out
 gate: and the same command could not be tried against $BASE, so whose fault this is
 gate: cannot be established — refusing to charge it to the branch on a guess."
-fi
-verdict 1 branch-red \
-    "gate: $REPO_NAME's own gate failed: $CMD
-$out
-gate: the same command passes against $BASE, so this is the branch's own."
+    ;;
+esac

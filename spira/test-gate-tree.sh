@@ -29,7 +29,7 @@ mkdir -p "$RUN/worktree" "$HOMEDIR" "$SH"
 
 # The gate under test is a copy — the harness's own bytes are part of the verdict key, so
 # the installed copy must not be what is tested.
-cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" \
+cp "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" \
    "$HERE/yield.sh" "$HERE/suite-covers.sh" "$SH/"
 [ -r "$HERE/gate-sweep.sh" ] && cp "$HERE/gate-sweep.sh" "$SH/" || true
 

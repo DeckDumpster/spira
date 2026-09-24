@@ -12,7 +12,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"; SH="$TMP/spira"; HOMEDIR="$TMP/home"
 mkdir -p "$HOMEDIR" "$SH"
-cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" "$SH/"
+cp "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" "$SH/"
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
