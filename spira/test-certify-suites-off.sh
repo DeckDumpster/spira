@@ -44,7 +44,7 @@ HEAD_SHA="$(git rev-parse HEAD 2>/dev/null)"
 echo "1. gate-touched.sh:"
 sel_on="$(SPIRA_GATE_EJECTED_SUITES=test-conf.sh bash "$HERE/gate-touched.sh" "$HEAD_SHA" "$HEAD_SHA" 2>/dev/null)"
 # The positive control now checks that test-conf.sh is among the selected suites,
-# not that it's the only one, because test-mail-decision-ask-no-bead.sh also covers conf.sh
+# not that it's the only one, because test-verdict-flow.sh also covers conf.sh
 case "$sel_on" in *test-conf.sh*)
     ok "positive control: suites on selects the ejected suite"
     ;;

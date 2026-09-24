@@ -531,9 +531,13 @@ _reply_mailbox() {
     fi
 }
 
-_sendmail_close_bead() {
-    local bead="$1" kind="$2" first_para="$3"
-    [ -n "${SPIRA_DB:-}" ] || return 0
+# _suit_reason <kind> <first-paragraph> -> the close reason text.
+# A suit verdict (uphold/retire/amend) closes with its own word, not the raw paragraph, so a
+# monitor scanning close reasons can tell the three apart without re-parsing prose. Any other
+# kind, and any suit paragraph that opens with none of the three words, closes with the
+# paragraph unchanged — an unrecognised suit word is not refused, only left unmapped.
+_suit_reason() {
+    local kind="$1" first_para="$2"
     local reason="$first_para"
     if [ "$kind" = "suit" ]; then
         local lc="${first_para,,}"
@@ -546,6 +550,13 @@ _sendmail_close_bead() {
             [ -z "$reason" ] && reason="amended"
         fi
     fi
+    printf '%s' "$reason"
+}
+
+_sendmail_close_bead() {
+    local bead="$1" kind="$2" first_para="$3"
+    [ -n "${SPIRA_DB:-}" ] || return 0
+    local reason; reason="$(_suit_reason "$kind" "$first_para")"
     local close_out close_rc
     close_out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$bead" --reason-file - <<< "$reason" 2>&1)"; close_rc=$?
     if [ "$close_rc" -ne 0 ]; then

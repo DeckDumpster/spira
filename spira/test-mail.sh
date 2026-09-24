@@ -12,10 +12,11 @@
 # check's silence is evidence, not vacuous truth (law-absence-needs-a-positive-control).
 #
 # tier: T2
-# covers: spira/mail.sh spira/mail/kinds spira/conf.sh UC-operator-channel-01 UC-operator-channel-02 UC-operator-channel-03 UC-operator-channel-04 UC-operator-channel-06 UC-operator-channel-07
+# covers: spira/mail.sh spira/mail/kinds spira/conf.sh UC-operator-channel-01 UC-operator-channel-02 UC-operator-channel-03 UC-operator-channel-04 UC-operator-channel-06 UC-operator-channel-07 UC-operator-channel-17
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+isz() { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0 got $2"; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -262,6 +263,75 @@ is "R flag is not doubled by a second done" "1" "$flagged2"
 
 out="$(run done donebox "no-such-id" 2>&1)"; rc=$?
 [ "$rc" != 0 ] && ok "done on an unknown id fails" || bad "done on an unknown id fails" "exit 0"
+
+# ==========================================================================
+# UC-17 — reply routing (no bead cited, SPIRA_DB unset: routing needs no bead
+# store). Moved here from test-mail-decision-ask.sh and test-mail-sendmail.sh
+# (docs/test-plan/operator-channel.md row 17): both built a testdb this
+# behaviour never reads.
+# ==========================================================================
+echo
+echo "UC-17: reply routing"
+
+export SPIRA_HOME="$TMP/uc17-home"
+mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_MAIL/concierge/new" "$SPIRA_MAIL/concierge/tmp" "$SPIRA_MAIL/concierge/cur"
+
+send_plain() {   # send_plain <mailbox> <from> <subject> -> bare Message-ID on stdout
+    local mailbox="$1" from="$2" subject="$3" newest
+    echo "body" | run send "$mailbox" --from "$from" --subject "$subject" >/dev/null 2>&1
+    newest="$(ls -t "$SPIRA_MAIL/$mailbox/new/" 2>/dev/null | head -1)"
+    [ -z "$newest" ] && return 1
+    awk '/^[[:space:]]*$/ { exit }
+        tolower($0) ~ /^message-id:/ { sub(/^[^:]*:[[:space:]]*/, ""); gsub(/[<>]/, ""); print; exit }
+    ' "$SPIRA_MAIL/$mailbox/new/$newest"
+}
+
+reply_uc17() {   # reply_uc17 <in-reply-to|""> -> an RFC 5322 reply on stdout
+    printf 'From: Operator <operator@spira>\nSubject: Re: routing test\n'
+    [ -n "$1" ] && printf 'In-Reply-To: <%s>\n' "$1"
+    printf 'Date: %s\n\nNoted.\n' "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"
+}
+
+echo
+echo "reply routes to the sender's mailbox when one exists"
+
+mkdir -p "$SPIRA_MAIL/gate/new" "$SPIRA_MAIL/gate/tmp" "$SPIRA_MAIL/gate/cur"
+MSGID_G="$(send_plain uc17-orig1 "Gate <gate@spira>" "routing test")"
+is "SEEN RED: gate mailbox starts empty" "0" "$(ls "$SPIRA_MAIL/gate/new" 2>/dev/null | wc -l | tr -d ' ')"
+reply_uc17 "$MSGID_G" | run sendmail >/dev/null 2>&1
+is "reply routed to sender's mailbox (gate)" "1" "$(ls "$SPIRA_MAIL/gate/new" 2>/dev/null | wc -l | tr -d ' ')"
+
+echo
+echo "reply to a chamber persona routes to concierge, even if a same-named mailbox exists"
+
+printf '# builder persona\n' > "$SPIRA_HOME/chamber/builder.md"
+mkdir -p "$SPIRA_MAIL/builder/new" "$SPIRA_MAIL/builder/tmp" "$SPIRA_MAIL/builder/cur"
+MSGID_B="$(send_plain uc17-orig2 "Builder <builder@spira>" "routing test")"
+builder_before="$(ls "$SPIRA_MAIL/builder/new" 2>/dev/null | wc -l | tr -d ' ')"
+conc_before="$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
+reply_uc17 "$MSGID_B" | run sendmail >/dev/null 2>&1
+is "SEEN RED: builder mailbox did not grow (persona beats mailbox existence)" \
+    "$builder_before" "$(ls "$SPIRA_MAIL/builder/new" 2>/dev/null | wc -l | tr -d ' ')"
+is "reply to persona (builder) routes to concierge" \
+    "$((conc_before + 1))" "$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
+
+echo
+echo "reply with no sender mailbox and no persona routes to concierge"
+
+MSGID_N="$(send_plain uc17-orig3 "Landing gate <nobox@spira>" "routing test")"
+conc_before2="$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
+reply_uc17 "$MSGID_N" | run sendmail >/dev/null 2>&1
+is "reply with no sender mailbox routes to concierge" \
+    "$((conc_before2 + 1))" "$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
+
+echo
+echo "reply with no In-Reply-To routes to concierge"
+
+conc_before3="$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
+reply_uc17 "" | run sendmail >/dev/null 2>&1; rc=$?
+isz "sendmail exits 0 with no In-Reply-To" "$rc"
+is "no-reply message routes to concierge" \
+    "$((conc_before3 + 1))" "$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
 
 # ==========================================================================
 # T2 — REPEAT GUARD (UC-operator-channel-06)
