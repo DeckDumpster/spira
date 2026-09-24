@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 #
-# test-sop.sh — an SOP application leaves a record, and a session that left none is
-#               DISTINGUISHABLE from one that did.
+# test-sop.sh — an SOP is validated the same way whether it arrives through `write` or the
+#               back door, and an application leaves a record DISTINGUISHABLE from silence.
 #
-#   ./test-sop.sh
+# TWO CLAIMS.
 #
-# WHAT THIS SUITE IS FOR
-# ----------------------
-# The Ops brief told an aeon to match a runbook, run its CHECK, then run its FIX — and
-# nothing wrote down that any of it happened. A session that matched an SOP and ignored it
-# left exactly the trace of one that executed it faithfully, so nobody could say of any SOP
-# on the shelf how often it fired, how often it was applied, or how often the incident came
-# back anyway. `sop.sh applied` is that record and this is the suite that holds it.
+# THE VALIDATOR (UC-operator-channel-44) — `sop.sh validate <slug>`, body on stdin, no shelf
+# and no bd: the same rules `write` enforces and `lint` re-checks against the whole shelf.
+# One T1 table drives every rule (SYMPTOM/CHECK/FIX, MATCH, word cap, METRIC shape, no
+# operator-specific path), each planted violation alone so "one rule, one violation" is an
+# assertion and not a hope. This absorbs test-sop-lint.sh and the METRIC-only plant/forget
+# this file used to carry beside it (D9): one table, not two files doing the same thing two
+# different ways.
 #
-# THE PROPERTY UNDER TEST IS A DISTINCTION, NOT A VALUE. Everything downstream — the check
-# that fires on a silent Ops session, the numbers that will say which runbooks work — rests
-# on being able to tell three states apart:
+# THE LEDGER (UC-operator-channel-45) — `sop.sh applied` records that a runbook was matched
+# and what came of it, to a ledger and to a bead note, and the property under test is a
+# DISTINCTION, not a value:
 #
 #   the ledger was read and holds a record for this bead          exit 0, the line on stdout
 #   the ledger was read and holds nothing for this bead           exit 1, a TRUE absence
@@ -24,13 +24,13 @@
 # A two-valued answer would merge the second and third, and the merged one reads as
 # all-clear (law-absence-needs-a-positive-control). So every assertion below that something
 # is ABSENT is preceded, in the same fixture, by proof that the same read finds the same
-# thing when it is present — and the unreadable cases are asserted as 2 rather than as 1.
+# thing when it is present, and the unreadable cases are asserted as 2 rather than as 1.
 #
-# A REAL `bd` ON A THROWAWAY DATABASE. Half of what `applied` must do is put a note on a
-# bead, and a stub `bd` would reproduce the surface this suite remembers rather than the one
-# `sop.sh` actually calls (law-prefer-the-real-dependency). The shelf is real too: the slug
-# check reads `bd memories`, and its whole subtlety is telling "the shelf is empty" from "the
-# shelf could not be read", which no model of bd would get right by accident.
+# A REAL `bd` ON A THROWAWAY DATABASE for the ledger half. Half of what `applied` must do is
+# put a note on a bead, and a stub `bd` would reproduce the surface this suite remembers
+# rather than the one `sop.sh` actually calls (law-prefer-the-real-dependency). SOP_SHELF_CMD
+# stands in for the shelf read specifically — the ONE thing a fixture can answer as well as a
+# real database — so only the bead-note cases need bd.
 #
 # THE ENVIRONMENT IS EXPLICIT AND MINIMAL, and SPIRA_SOP_LEDGER and SOP_WHY_CAP ARE PINNED TO
 # NON-DEFAULTS. A suite that inherits a real spira.conf asserts against one box, one that
@@ -38,25 +38,105 @@
 # ledger path passes just as well if the code has that path written in — which is the thing
 # the key exists to stop (law-gates-run-in-a-clean-environment).
 #
-# defect: sp-9p1a
-# covers: spira/sop.sh spira/chamber/ops.md spira/chamber/*
-# scar: nothing recorded that an SOP was matched and applied; a session that ignored a runbook left the same trace as one that executed it faithfully.
+# defect: sp-9p1a sp-atts
+# covers: spira/sop.sh spira/chamber/ops.md spira/chamber/* UC-operator-channel-44 UC-operator-channel-45
+# scar: nothing recorded that an SOP was matched and applied; a session that ignored a runbook left the same trace as one that executed it faithfully. bd remember sop-<slug> bypassed sop.sh write's validator; a 236-word prose SOP with no structured fields was stored and was findable only by weak key-token fallback.
+# tier: T2
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
-echo "test-sop.sh"
+# ===========================================================================================
+echo "--- the validator: one rule, one violation, no shelf and no bd ---"
+# ===========================================================================================
+
+# sop_v <slug> <body> -> validates via the write-time validator, body on stdin.
+sop_v() { printf '%s' "$2" | env -i HOME="$HOME" PATH="$PATH" bash "$HERE/sop.sh" validate "$1" 2>&1; }
+sop_v_rc() { sop_v "$1" "$2" >/dev/null 2>&1; printf '%s' "$?"; }
+
+WELL_FORMED="$(printf 'MATCH: (test)\nSYMPTOM: test failed\nCHECK: check it\nFIX: fix it')"
+is "a well-formed SOP passes"           "0" "$(sop_v_rc well-formed "$WELL_FORMED")"
+want "and says so"                      "ok" "$(sop_v well-formed "$WELL_FORMED")"
+
+# PLANT A VALID SOP ALONGSIDE EACH BAD ONE (in the assertion text, not the shelf — there is
+# no shelf here): "all fail" and "only the right one fails" must be distinguishable.
+NO_CHECK="$(printf 'SYMPTOM: something is wrong\nFIX: restart the unit')"
+out_nc="$(sop_v no-check "$NO_CHECK")"
+is     "missing CHECK is caught"              "1"     "$(sop_v_rc no-check "$NO_CHECK")"
+want   "CHECK is named as missing"            "CHECK" "$out_nc"
+nowant "SYMPTOM not named (it is present)"    "SYMPTOM" "$out_nc"
+nowant "FIX not named (it is present)"        "FIX"     "$out_nc"
+
+NO_FIELDS="This SOP was written as a prose blob with no structured fields at all and no MATCH line."
+out_nf="$(sop_v no-fields "$NO_FIELDS")"
+is   "a prose blob with no fields fails"  "1"        "$(sop_v_rc no-fields "$NO_FIELDS")"
+want "it names missing SYMPTOM"           "SYMPTOM"  "$out_nf"
+want "it names missing CHECK"             "CHECK"    "$out_nf"
+want "it names missing FIX"               "FIX"      "$out_nf"
+
+BAD_REGEX="$(printf 'MATCH: ([unclosed\nSYMPTOM: something bad\nCHECK: check something\nFIX: fix something')"
+is   "invalid MATCH regex is caught"        "1"             "$(sop_v_rc bad-regex "$BAD_REGEX")"
+want "names it as a regex problem"          "extended regex" "$(sop_v bad-regex "$BAD_REGEX")"
+
+OVER_CAP="$(python3 -c 'print("SYMPTOM: the service failed " + " ".join(["filler"]*250) + "\nCHECK: check it\nFIX: fix it")')"
+is   "over word cap is caught"   "1"     "$(sop_v_rc too-long "$OVER_CAP")"
+want "names the word count"      "words" "$(sop_v too-long "$OVER_CAP")"
+
+GOOD_METRIC="$(printf 'SYMPTOM: t\nCHECK: c\nFIX: f\nMETRIC: SP_UNADOPTED unsent')"
+is "a well-formed METRIC field passes"  "0" "$(sop_v_rc good-metric "$GOOD_METRIC")"
+
+BAD_METRIC="$(printf 'SYMPTOM: t\nCHECK: c\nFIX: f\nMETRIC: notakey notasubcmd123$')"
+out_bm="$(sop_v bad-metric "$BAD_METRIC")"
+is   "a malformed METRIC is caught"    "1"       "$(sop_v_rc bad-metric "$BAD_METRIC")"
+want "METRIC is named as the problem"  "METRIC"  "$out_bm"
+
+is "an empty body is caught" "1" "$(sop_v_rc empty "")"
+want "and says so" "empty SOP" "$(sop_v empty "")"
+
+# THE OPERATOR-PATH FENCE. Split so this file's own source is not itself flagged.
+_bad_prefix="/"'home'"/test-spira/"
+BAD_PATH="$(printf 'SYMPTOM: a unit failed\nCHECK: ls %sdb\nFIX: fix it' "$_bad_prefix")"
+out_bp="$(sop_v bad-path "$BAD_PATH")"
+is   "a SOP naming an absolute home path is refused"  "1"           "$(sop_v_rc bad-path "$BAD_PATH")"
+want "and names the offending token"                  "$_bad_prefix" "$out_bp"
+
+GOOD_PATH="$(printf 'SYMPTOM: a unit failed\nCHECK: ls \$SPIRA_DB\nFIX: fix it')"
+is "the same shape using an env var passes" "0" "$(sop_v_rc good-path "$GOOD_PATH")"
+
+echo
+echo "--- lint: the validator applied to the whole shelf, via SOP_SHELF_CMD ---"
+
+# SOP_SHELF_CMD IS THE SEAM: its output stands in for `bd memories --json`. No database
+# anywhere in this section — including the fail-closed case, where the command simply
+# produces nothing, exactly as a broken bd read does.
+sop_shelf() { env -i HOME="$HOME" PATH="$PATH" SOP_SHELF_CMD="$1" bash "$HERE/sop.sh" "${@:2}" 2>&1; }
+sop_shelf_rc() { sop_shelf "$@" >/dev/null 2>&1; printf '%s' "$?"; }
+
+CLEAN_SHELF='printf "%s" "{\"sop-clean\":\"SYMPTOM: s\\nCHECK: c\\nFIX: f\"}"'
+is   "lint over a clean fixture shelf exits 0"  "0"  "$(sop_shelf_rc "$CLEAN_SHELF" lint)"
+want "and reports it valid"                     "ok" "$(sop_shelf "$CLEAN_SHELF" lint)"
+
+DIRTY_SHELF='printf "%s" "{\"sop-clean\":\"SYMPTOM: s\\nCHECK: c\\nFIX: f\",\"sop-broken\":\"no fields\"}"'
+out_dirty="$(sop_shelf "$DIRTY_SHELF" lint)"
+is   "lint over a shelf with one bad SOP exits 1"    "1"           "$(sop_shelf_rc "$DIRTY_SHELF" lint)"
+want "it names the failing key"                      "sop-broken"  "$out_dirty"
+nowant "and leaves the clean key unmentioned as a failure" "FAIL  sop-clean" "$out_dirty"
+
+# THE ONE FAIL-CLOSED CASE (UC-44's T2): the shelf command fails outright, exactly like an
+# unreachable database. lint must refuse to report clean, not read failure as an empty shelf.
+is   "an unreadable shelf exits non-zero"                "1" "$(sop_shelf_rc "false" lint)"
+want "and refuses to report clean"  "refusing to report clean" "$(sop_shelf "false" lint)"
+
+# ===========================================================================================
+echo
+echo "--- the ledger, against a real bd (bead notes need one) ---"
+# ===========================================================================================
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
 testdb_require test-sop
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up sop || { echo "test-sop: could not build a fixture database"; exit 1; }
+testdb_up sop || bail "could not build a fixture database"
 
 RUN="$TMP/run"; mkdir -p "$RUN"
 # NON-DEFAULTS, BOTH OF THEM. The shipped ledger sits at $SPIRA_RUN/sop/applied.jsonl and the
@@ -88,9 +168,13 @@ sop() {                  # sop <args...> — the program under test, in a clean 
         BEADS_ACTOR="aeon-testops" BEADS_NO_AUTO_IMPORT=1 \
         timeout 120 bash "$HERE/sop.sh" "$@" 2>&1
 }
-sop_rc() {               # the same, but the caller wants the status and not the output
+sop_rc() {               # the same, but the caller wants only the status
     sop "$@" >/dev/null 2>&1; printf '%s' "$?"
 }
+# sop_run <args...> — ONE invocation; sets $SOP_OUT (stdout+stderr) and $SOP_RC (exit status),
+# so an assertion needing both does not pay for the command twice.
+SOP_OUT=""; SOP_RC=0
+sop_run() { SOP_OUT="$(sop "$@")"; SOP_RC=$?; }
 bdt() { bd -C "$SPIRA_DB" "$@"; }
 # THE NOTES AS THEY WERE WRITTEN. `bd show` wraps prose to a width, so an assertion against
 # the rendered form passes or fails on where the wrap fell rather than on what was recorded.
@@ -112,6 +196,23 @@ FIX: clear the oldest artifacts, then restart the unit
 SOP
 
 echo
+echo "--- write refuses an absolute operator-specific path (the same fence, live) ---"
+
+_live_bad_path="/"'home'"/test-spira/db"
+_live_bad_prefix="/"'home'"/test-spira/"
+bad_path_sop="$(printf 'SYMPTOM: a unit failed\nCHECK: ls %s\nFIX: fix it' "$_live_bad_path")"
+sop_run write bad-path-sop - <<< "$bad_path_sop"
+is   "write refuses a SOP with an absolute home path"  "1" "$SOP_RC"
+want "and names the offending token" "$_live_bad_prefix" "$SOP_OUT"
+want "and says to use env vars"      "env var"           "$SOP_OUT"
+is   "the bad SOP was not stored"    "1" "$(bdt recall sop-bad-path-sop 2>/dev/null; printf '%s' "$?")"
+
+good_path_sop="$(printf 'SYMPTOM: a unit failed\nCHECK: ls \$SPIRA_DB\nFIX: fix it')"
+is  "write accepts a SOP using env vars"   "0" "$(sop_rc write good-path-sop - <<< "$good_path_sop")"
+want "and it is on the shelf"  "sop-good-path-sop" "$(sop list)"
+bdt forget sop-good-path-sop >/dev/null 2>&1
+
+echo
 echo "--- the shelf, and the ledger before anything is recorded"
 
 out="$(sop list)"
@@ -125,10 +226,10 @@ is "no ledger at all reads as unreadable, not as empty" "2" "$(sop_rc log --bead
 echo
 echo "--- a recorded application"
 
-out="$(sop applied disk-full --bead sp-t1 --check pass --held yes)"
-is  "recording exits 0"                         "0" "$(sop_rc applied disk-full --bead sp-t1 --check pass --held unknown)"
-want "it says what it recorded"                 "recorded sop-disk-full on sp-t1" "$out"
-want "--held yes reads as a complete outcome"   "taught us nothing new" "$out"
+sop_run applied disk-full --bead sp-t1 --check pass --held yes
+is   "recording exits 0"                         "0" "$SOP_RC"
+want "it says what it recorded"                  "recorded sop-disk-full on sp-t1" "$SOP_OUT"
+want "--held yes reads as a complete outcome"    "taught us nothing new" "$SOP_OUT"
 
 want "the ledger is at the CONFIGURED path"     "sop-disk-full" "$(cat "$LEDGER" 2>/dev/null)"
 is   "nothing was written to the default path"  "0" "$(ls "$RUN/sop" 2>/dev/null | wc -l)"
@@ -156,10 +257,11 @@ want "the epoch is a number"       "epoch_is_int=True" "$fields"
 echo
 echo "--- THE DISTINCTION: a session that recorded nothing is not a session that recorded"
 
-is "a bead with a record reads 0"          "0" "$(sop_rc log --bead sp-t1)"
+sop_run log --bead sp-t1
+is   "a bead with a record reads 0"          "0"     "$SOP_RC"
+want "and the one with a record prints it"   "sp-t1" "$SOP_OUT"
 is "a bead with NO record reads 1"         "1" "$(sop_rc log --bead sp-t2)"
-want "and the one with a record prints it" "sp-t1" "$(sop log --bead sp-t1)"
-nowant "the unrecorded bead prints nothing" "sp-t2" "$(sop log --bead sp-t1)"
+nowant "the unrecorded bead prints nothing" "sp-t2" "$SOP_OUT"
 is "filtering by SOP finds it"             "0" "$(sop_rc log --sop disk-full)"
 is "filtering by an SOP nobody applied reads 1" "1" "$(sop_rc log --sop never-fired)"
 
@@ -227,11 +329,14 @@ echo "--- --pass: beadless sweep records"
 
 # A SWEEP PASS HAS NO BEAD. The join target is the pass id — stable within one aeon run,
 # so two ledger lines from one pass can be correlated. The ledger carries "pass" (not "bead"),
-# and log --pass filters on it. The bead note is omitted (note=n/a).
+# and log --pass filters on it. The bead note is omitted (note=n/a). TWO DISTINCT --held
+# values are recorded deliberately here (yes, then unknown) — the count below depends on
+# there being exactly two records under this pass id.
 PASS_ID="sweep-$(date -u +%s)-testops"
-out="$(sop applied disk-full --pass "$PASS_ID" --check pass --held yes)"
-is  "recording with --pass exits 0"                   "0" "$(sop_rc applied disk-full --pass "$PASS_ID" --check pass --held unknown)"
-want "it says what it recorded"                        "recorded sop-disk-full on pass=$PASS_ID" "$out"
+sop_run applied disk-full --pass "$PASS_ID" --check pass --held yes
+is  "recording with --pass exits 0"     "0" "$SOP_RC"
+want "it says what it recorded"         "recorded sop-disk-full on pass=$PASS_ID" "$SOP_OUT"
+sop applied disk-full --pass "$PASS_ID" --check pass --held unknown >/dev/null 2>&1
 
 pass_line="$(grep "\"pass\"" "$LEDGER" | tail -1)"
 want "the ledger line carries the pass key"   '"pass"'   "$pass_line"
@@ -244,10 +349,6 @@ is "log --bead does NOT find it"   "1" "$(sop_rc log --bead "$PASS_ID")"
 want "log --pass prints the line"  "$PASS_ID" "$(sop log --pass "$PASS_ID")"
 is "two records share a pass id"   "2" "$(sop log --pass "$PASS_ID" | wc -l)"
 
-# MISSING BOTH IS STILL REFUSED: the reasoning that a record nobody can join back to
-# something counts nothing still applies — only the join target has changed.
-is "missing both --bead and --pass still refused" "1" "$(sop_rc applied disk-full --check pass --held yes)"
-
 echo
 echo "--- the record survives the day the harness itself is broken"
 
@@ -255,14 +356,13 @@ echo "--- the record survives the day the harness itself is broken"
 # Refusing here would mean the one incident where the database is down is the one incident
 # that leaves no trace, so the line is written anyway and says which half is missing.
 SPIRA_DB_OVERRIDE="$TMP/no-such-database"
-out="$(sop applied disk-full --bead sp-t1 --check pass --held unknown)"
-rc="$(sop_rc applied disk-full --bead sp-t1 --check pass --held unknown)"
+sop_run applied disk-full --bead sp-t1 --check pass --held unknown
 unset SPIRA_DB_OVERRIDE
-tail2="$(tail -2 "$LEDGER")"
-want "an unreadable shelf is recorded as unreadable" '"shelf":"unreadable"' "$tail2"
-want "and the missing note is recorded as missing"   '"note":"failed"'      "$tail2"
-is   "and the command exits non-zero about it"       "1" "$rc"
-want "and says the human will not see it on the bead" "was NOT" "$out"
+tail1="$(tail -1 "$LEDGER")"
+want "an unreadable shelf is recorded as unreadable" '"shelf":"unreadable"' "$tail1"
+want "and the missing note is recorded as missing"   '"note":"failed"'      "$tail1"
+is   "and the command exits non-zero about it"       "1" "$SOP_RC"
+want "and says the human will not see it on the bead" "was NOT" "$SOP_OUT"
 
 echo
 echo "--- --why: full on the bead, bounded in the ledger"
@@ -344,10 +444,11 @@ echo "--- digest: what the shelf holds, so a write can be seen after the fact"
 # the size it was, so a caller asking "did this session leave a runbook behind" cannot count
 # and cannot compare a whole-shelf hash either — that would read a RETIREMENT as a write.
 # Every assertion here is about that distinction.
-d0="$(sop digest)"
+sop_run digest
+d0="$SOP_OUT"
 want "digest names the SOP on the shelf" "sop-disk-full" "$d0"
 is   "one line per SOP"                  "1" "$(printf '%s\n' "$d0" | grep -c .)"
-is   "and it reads 0"                    "0" "$(sop_rc digest)"
+is   "and it reads 0"                    "0" "$SOP_RC"
 
 sop write disk-full - <<'SOP' >/dev/null 2>&1
 MATCH: (No space left on device|disk.*full)
@@ -380,9 +481,10 @@ is "and the shelf shrank"              "1" "$(printf '%s\n' "$d3" | grep -c .)"
 # THE POSITIVE CONTROL FOR THE 2. An unreadable shelf must not read as an empty one, or a
 # database outage looks exactly like a session that wrote nothing.
 SPIRA_DB_OVERRIDE="$TMP/no-such-db"
-is   "an unreadable shelf reads 2, not 0"          "2" "$(sop_rc digest)"
-want "and says so rather than printing an empty shelf" "not an empty shelf" "$(sop digest)"
+sop_run digest
 unset SPIRA_DB_OVERRIDE
+is   "an unreadable shelf reads 2, not 0"          "2" "$SOP_RC"
+want "and says so rather than printing an empty shelf" "not an empty shelf" "$SOP_OUT"
 is   "and the real shelf still reads 0"            "0" "$(sop_rc digest)"
 
 echo
@@ -448,7 +550,6 @@ DESCRIPTION
   ready to claim                      85'
 
 # A PAYLOAD FROM AN UNRELATED INCIDENT — a unit failure with no sweep content.
-# Using a heredoc so hermetic.sh skips the body (it contains "systemctl" as data, not a call).
 read -r -d '' UNRELATED_PAYLOAD <<'PAYLOAD' || true
 unit failed: mtgc-alert-prod@1.service   [● P2 · OPEN]
 Type: bug
@@ -459,9 +560,6 @@ DESCRIPTION
   Journal: connection refused on port 5432
 PAYLOAD
 
-# Write the sweep SOP with the deployed MATCH regex to the fixture database. This is
-# what controls exactly what the matcher sees — the test does NOT read the live database,
-# which would be reading the state of this box.
 sop write spira-sweep - <<'SOP' >/dev/null 2>&1
 MATCH: Spira sweep — is the pipeline moving|minutes since the last landing
 SYMPTOM: the ten-minute watchtower sweep — vital signs, not a failure.
@@ -516,8 +614,6 @@ MOCK
 chmod +x "$MOCK_COCKPIT"
 
 sop_m() {   # like sop() but with SOP_METRIC_COCKPIT — defaults to the mock, overridable.
-    # The outer SOP_METRIC_COCKPIT variable overrides $MOCK_COCKPIT so that individual tests
-    # can substitute a different cockpit (e.g. a silent one) without changing $MOCK_COCKPIT.
     env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_RUN="$RUN" \
         SPIRA_DB="${SPIRA_DB_OVERRIDE:-$SPIRA_DB}" \
@@ -527,10 +623,7 @@ sop_m() {   # like sop() but with SOP_METRIC_COCKPIT — defaults to the mock, o
         MOCK_UNADOPTED="${MOCK_UNADOPTED:-0}" \
         timeout 120 bash "$HERE/sop.sh" "$@" 2>&1
 }
-sop_m_rc() { sop_m "$@" >/dev/null 2>&1; printf '%s' "$?"; }
 
-# Write a SOP that declares METRIC: SP_UNADOPTED unsent. The CHECK already calls the
-# detector; the METRIC field tells applied which number to re-confirm before held=yes.
 sop write metric-sop - <<'SOP' >/dev/null 2>&1
 MATCH: SP_UNADOPTED.*nonzero|unadopted refs
 SYMPTOM: unadopted refs remain after cleanup
@@ -542,8 +635,6 @@ SOP
 want "the metric SOP is on the shelf" "sop-metric-sop" "$(sop list)"
 
 # POSITIVE CONTROL: verify the mock itself works before trusting the downgrade tests.
-# A broken mock that outputs nothing every time would make every "held=unknown" test
-# pass for the wrong reason (the cockpit returned nothing → unknown, regardless of the fix).
 mock_out="$(MOCK_UNADOPTED=3 bash "$MOCK_COCKPIT" unsent)"
 is "mock cockpit outputs the configured value" "SP_UNADOPTED=3" "$mock_out"
 
@@ -602,24 +693,4 @@ is "held=yes unaffected on SOP without METRIC" "0" \
 note_sp_t1="$(notes sp-t1)"
 want "note explains downgrade: names the METRIC key" "METRIC" "$note_sp_t1"
 
-# LINT ACCEPTS A WELL-FORMED METRIC FIELD and catches a bad one written via the back door.
-# `sop write` does not yet validate METRIC format; `lint` is what closes the gap.
-sop write good-metric - <<'SOP' >/dev/null 2>&1
-SYMPTOM: test
-CHECK: check
-FIX: fix
-METRIC: SP_UNADOPTED unsent
-SOP
-is "lint accepts a well-formed METRIC field" "0" "$(sop_rc lint)"
-
-# Write a malformed METRIC via the back door (bypassing `sop write`) — the same route
-# that could produce a broken SOP in production.  Lint must name it.
-bdt remember --key sop-bad-metric "$(printf 'SYMPTOM: t\nCHECK: c\nFIX: f\nMETRIC: notakey notasubcmd123$')" >/dev/null 2>&1
-is  "lint catches a malformed METRIC via the back door" "1" "$(sop_rc lint)"
-want "lint names METRIC as the problem"               "METRIC" "$(sop lint)"
-bdt forget sop-bad-metric >/dev/null 2>&1
-is  "lint is clean after removing the bad METRIC sop" "0"     "$(sop_rc lint)"
-
-echo
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -6,6 +6,7 @@
 #   sop.sh show <slug>               one SOP's full text
 #   sop.sh list                      what is on the shelf
 #   sop.sh match [-|<file>]          which SOPs match an incident payload
+#   sop.sh validate <slug>           the write-time validator, body on stdin — no shelf, no bd
 #   sop.sh applied <slug> --bead <id>|--pass <id> --check pass|fail --held yes|no|unknown [--why -|<file>]
 #                                    record that a runbook was consulted, and what came of it
 #   sop.sh log [--bead <id>] [--pass <id>] [--sop <slug>] [--check pass|fail] [--since <epoch>]
@@ -147,7 +148,7 @@ LEDGER="${SPIRA_SOP_LEDGER:-$SPIRA_RUN/sop/applied.jsonl}"
 # session writing at the same moment.
 WHY_CAP="${SOP_WHY_CAP:-400}"
 
-usage() { sed -n '3,17p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 slugify() { printf 'sop-%s' "${1#sop-}"; }
 # A flag proves its value is present before taking it: `shift 2` with one argument left shifts
 # nothing at all, and the parse loop then spins forever on the same token.
@@ -163,14 +164,73 @@ slurp() {
     esac
 }
 
+# _sop_shelf_raw -> the shelf as raw JSON text ({key: text, ...}), or empty on a failed read.
+# SOP_SHELF_CMD is the seam: set, its output stands in for `bd memories --json`, so a suite
+# drives every shelf-reading rule (list, match, applied's slug check, digest, lint) from a
+# fixture instead of a database. Unset, every caller in production reads bd for real. Only
+# `applied`'s bead-note write still needs a real bd regardless of this seam.
+_sop_shelf_raw() {
+    if [ -n "${SOP_SHELF_CMD:-}" ]; then
+        bash -c "$SOP_SHELF_CMD" 2>/dev/null
+    else
+        bdjson memories 2>/dev/null
+    fi
+}
+
 # All SOPs as JSON, {key: text}. One query, so every subcommand costs the same.
 shelf() {
-    bdjson memories 2>/dev/null | python3 -c '
+    _sop_shelf_raw | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
 except Exception: d = {}
 print(json.dumps({k: v.strip() for k, v in sorted(d.items())
                   if isinstance(v, str) and k.startswith("sop-")}))'
+}
+
+# _sop_validate <key> <text> -> "FAIL <key>: <reason>" per violation on stdout, "ok <key>"
+# when there are none; exit 0 valid, 1 invalid. Every rule `sop.sh write` and `sop.sh lint`
+# enforce, in one place, over a string — no shelf, no bd. This is what `sop.sh validate`
+# calls, and what a T1 suite drives to test each rule without a database.
+_sop_validate() {
+    local key="$1" text="$2" cap="${SOP_WORD_CAP:-$WORD_CAP}"
+    SOP_V_KEY="$key" SOP_V_TEXT="$text" SOP_V_CAP="$cap" python3 -c '
+import os, re, sys
+key  = os.environ["SOP_V_KEY"]
+text = os.environ["SOP_V_TEXT"]
+cap  = int(os.environ["SOP_V_CAP"])
+reasons = []
+if not text.strip():
+    reasons.append("empty SOP")
+else:
+    for field in ("SYMPTOM", "CHECK", "FIX"):
+        if not re.search(rf"^\s*{field}:", text, re.M):
+            reasons.append("missing required field: " + field)
+    m = re.search(r"^\s*MATCH:\s*(.+)$", text, re.M)
+    if m:
+        pat = m.group(1).strip()
+        try:
+            re.compile(pat)
+        except re.error:
+            reasons.append("MATCH is not a valid extended regex: " + pat)
+    m_metric = re.search(r"^\s*METRIC:\s*(.+)$", text, re.M)
+    if m_metric:
+        parts = m_metric.group(1).strip().split()
+        if len(parts) != 2 \
+           or not re.match(r"^[A-Z][A-Z0-9_]*$", parts[0]) \
+           or not re.match(r"^[a-z][a-z0-9_-]*$", parts[1]):
+            reasons.append(
+                "METRIC must be KEY SUBCMD — uppercase cockpit key then lowercase "
+                "cockpit subcommand (e.g. SP_UNADOPTED unsent); got: "
+                + m_metric.group(1).strip())
+    words = len(text.split())
+    if words > cap:
+        reasons.append("%d words, cap is %d" % (words, cap))
+for r in reasons:
+    print("FAIL  %s: %s" % (key, r))
+if not reasons:
+    print("ok    %s" % key)
+sys.exit(1 if reasons else 0)
+'
 }
 
 case "${1:-}" in
@@ -342,7 +402,7 @@ applied)
     # shelf is genuinely empty, so an empty STRING is the broken case and `{}` is the honest
     # one. Conflating them would refuse every record on the day the database is down, which is
     # the day a record is worth most.
-    raw="$(bdjson memories 2>/dev/null)"
+    raw="$(_sop_shelf_raw)"
     if [ -z "${raw//[[:space:]]/}" ]; then
         shelf_state="unreadable"
         echo "sop: warning — could not read the shelf from $SPIRA_DB; recording $key unverified" >&2
@@ -596,7 +656,7 @@ digest)
     # database outage look like a session that wrote nothing, which is the reading that gets
     # a good session punished (law-absence-needs-a-positive-control).
     [ $# -eq 1 ] || usage
-    raw="$(bdjson memories 2>/dev/null)"
+    raw="$(_sop_shelf_raw)"
     if [ -z "${raw//[[:space:]]/}" ]; then
         echo "sop: could not read the shelf from $SPIRA_DB — this is not an empty shelf" >&2
         exit 2
@@ -728,19 +788,20 @@ PY
     ;;
 
 lint)
-    # VALIDATES EVERY SOP ON THE SHELF AGAINST THE SAME RULES THAT `write` ENFORCES.
-    # `bd remember sop-<slug>` bypasses those rules; lint is what catches what slipped through.
-    # Fails closed: an unreadable shelf is not a clean shelf — a broken database is not evidence
-    # that no malformed SOPs exist (law-absence-needs-a-positive-control).
+    # VALIDATES EVERY SOP ON THE SHELF AGAINST THE SAME RULES THAT `write` ENFORCES, via
+    # _sop_validate — the one validator, so a lint failure and a `sop.sh validate` refusal are
+    # always the same check for the same text. `bd remember sop-<slug>` bypasses those rules;
+    # lint is what catches what slipped through. Fails closed: an unreadable shelf is not a
+    # clean shelf — a broken database is not evidence that no malformed SOPs exist
+    # (law-absence-needs-a-positive-control).
     [ $# -eq 1 ] || usage
-    raw="$(bdjson memories 2>/dev/null)"
+    raw="$(_sop_shelf_raw)"
     if [ -z "${raw//[[:space:]]/}" ]; then
         echo "sop: lint: could not read the shelf from $SPIRA_DB — refusing to report clean" >&2
         exit 1
     fi
-    SOP_LINT_CAP="$WORD_CAP" printf '%s\n' "$raw" | python3 -c '
-import sys, json, re, os
-
+    pairs="$(printf '%s\n' "$raw" | python3 -c '
+import sys, json, base64
 try:
     d = json.load(sys.stdin)
 except Exception:
@@ -749,61 +810,44 @@ except Exception:
 if not isinstance(d, dict):
     print("sop: lint: shelf is not an object — refusing to report clean", file=sys.stderr)
     sys.exit(1)
+for k, v in sorted(d.items()):
+    if isinstance(v, str) and k.startswith("sop-"):
+        print(k + "\t" + base64.b64encode(v.strip().encode()).decode())
+')" || exit 1
+    total=0; failed=0
+    while IFS=$'\t' read -r key b64; do
+        [ -n "$key" ] || continue
+        total=$((total + 1))
+        if ! _sop_validate "$key" "$(printf '%s' "$b64" | base64 -d)"; then
+            failed=$((failed + 1))
+        fi
+    done <<< "$pairs"
+    if [ "$failed" -gt 0 ]; then
+        echo "" >&2
+        echo "$failed of $total SOP(s) failed — fix with sop.sh write or remove with sop.sh retire" >&2
+        exit 1
+    fi
+    echo "ok — $([ "$total" -gt 0 ] && echo "$total SOP(s) on the shelf, all valid" || echo "shelf is empty")"
+    ;;
 
-sops = {k: v.strip() for k, v in d.items() if isinstance(v, str) and k.startswith("sop-")}
-cap = int(os.environ.get("SOP_LINT_CAP", "250"))
-failures = []
-
-for key, text in sorted(sops.items()):
-    reasons = []
-    if not text.strip():
-        reasons.append("empty SOP")
-    else:
-        for field in ("SYMPTOM", "CHECK", "FIX"):
-            if not re.search(rf"^\s*{field}:", text, re.M):
-                reasons.append("missing required field: " + field)
-        m = re.search(r"^\s*MATCH:\s*(.+)$", text, re.M)
-        if m:
-            pat = m.group(1).strip()
-            try:
-                re.compile(pat)
-            except re.error:
-                reasons.append("MATCH is not a valid extended regex: " + pat)
-        # METRIC is optional. If present, it must be exactly two tokens: an uppercase metric
-        # key (SP_SOMETHING) and a lowercase cockpit subcommand (unsent, sops, …). A single
-        # token has no subcommand and cannot be used by applied to re-read the metric; a key
-        # with lowercase or a subcommand with uppercase signals the fields were swapped.
-        m_metric = re.search(r"^\s*METRIC:\s*(.+)$", text, re.M)
-        if m_metric:
-            parts = m_metric.group(1).strip().split()
-            if len(parts) != 2 \
-               or not re.match(r"^[A-Z][A-Z0-9_]*$", parts[0]) \
-               or not re.match(r"^[a-z][a-z0-9_-]*$", parts[1]):
-                reasons.append(
-                    "METRIC must be KEY SUBCMD — uppercase cockpit key then lowercase "
-                    "cockpit subcommand (e.g. SP_UNADOPTED unsent); got: "
-                    + m_metric.group(1).strip())
-        words = len(text.split())
-        if words > cap:
-            reasons.append("%d words, cap is %d" % (words, cap))
-    if reasons:
-        for r in reasons:
-            print("FAIL  %s: %s" % (key, r))
-        failures.append(key)
-    else:
-        print("ok    %s" % key)
-
-if failures:
-    n = len(sops)
-    print(
-        "\n%d of %d SOP(s) failed — fix with sop.sh write or remove with sop.sh retire" % (len(failures), n),
-        file=sys.stderr,
-    )
-    sys.exit(1)
-else:
-    n = len(sops)
-    print("ok — %s" % ("%d SOP(s) on the shelf, all valid" % n if n else "shelf is empty"))
-' || exit 1
+validate)
+    # THE WRITE-TIME VALIDATOR, RUN OVER A BODY ON STDIN. No shelf, no bd, no write: the seam
+    # a T1 suite drives to test every rule `write` and `lint` enforce (SYMPTOM/CHECK/FIX,
+    # MATCH, word cap, METRIC shape, no operator-specific path) without a database.
+    [ $# -eq 2 ] || usage
+    key="$(slugify "$2")"
+    text="$(cat)"
+    rc=0
+    _sop_validate "$key" "$text" || rc=1
+    if [ -n "${text//[[:space:]]/}" ]; then
+        inv_hits="$(printf '%s\n' "$text" | bash "$(dirname "$0")/inventory.sh" --scan /dev/stdin 2>/dev/null)"
+        if [ -n "$inv_hits" ]; then
+            echo "FAIL  $key: names operator infrastructure:"
+            printf '%s\n' "$inv_hits" | sed 's/^/        /'
+            rc=1
+        fi
+    fi
+    exit "$rc"
     ;;
 
 *) usage ;;

@@ -3775,8 +3775,16 @@ render_memories() {      # render_memories <prefix-csv> [char-budget] [core-csv]
         mtime="$(stat -c %Y "$cache" 2>/dev/null || printf 0)"
         [ "$(( now - mtime ))" -lt "$age" ] && mem_json="$(cat "$cache" 2>/dev/null)"
     fi
+    # SPIRA_MEMORIES_CMD IS THE SEAM. The cache file above already lets a suite drive the
+    # tiering/budget/index logic from a fixture instead of a live bd read; this is the same
+    # idea for the read that FILLS the cache. Unset, it queries bd for real — every caller in
+    # production leaves it unset.
     if [ -z "$mem_json" ]; then
-        mem_json="$(bdjson memories 2>/dev/null)"
+        if [ -n "${SPIRA_MEMORIES_CMD:-}" ]; then
+            mem_json="$(bash -c "$SPIRA_MEMORIES_CMD" 2>/dev/null)"
+        else
+            mem_json="$(bdjson memories 2>/dev/null)"
+        fi
         [ -n "$cache" ] && [ -n "$mem_json" ] \
             && { mkdir -p "$(dirname "$cache")" 2>/dev/null; printf '%s\n' "$mem_json" > "$cache" 2>/dev/null || true; }
     fi
