@@ -45,6 +45,7 @@ want() { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in [$3]"; esac
 testdb_require test-census-watermark
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — census.sh's watermark path reads events via bd sql, which embedded mode refuses
 export SPIRA_TESTDB_MODE=server
 testdb_up census-watermark || {
     printf 'SKIP test-census-watermark: server testdb not available\n' >&2

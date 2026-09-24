@@ -22,9 +22,8 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 . "$HERE/testdb.sh"
 testdb_require test-express-cert-order
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-export SPIRA_TESTDB_MODE=server
 testdb_up express-cert-order || {
-    printf 'SKIP test-express-cert-order: server testdb not available\n' >&2
+    printf 'SKIP test-express-cert-order: testdb not available\n' >&2
     exit 77
 }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t

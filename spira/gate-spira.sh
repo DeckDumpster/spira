@@ -108,7 +108,7 @@ BODY
 # ---------------------------------------------------------------------------------------
 # 1. THE FENCES — first, and independently of everything below.
 # ---------------------------------------------------------------------------------------
-for fence in spira/exclude.sh spira/inventory.sh spira/scratch-fence.sh spira/wiki-add-fence.sh spira/literal-lint.sh spira/suite-state-fence.sh spira/orphan-test.sh; do
+for fence in spira/exclude.sh spira/inventory.sh spira/scratch-fence.sh spira/wiki-add-fence.sh spira/literal-lint.sh spira/testdb-mode-lint.sh spira/suite-state-fence.sh spira/orphan-test.sh; do
     [ -r "$fence" ] || { say "$fence is missing — refusing to land unchecked"; exit 1; }
 done
 
@@ -172,6 +172,16 @@ fi
 [ -r spira/literal-lint.sh ] || { say "spira/literal-lint.sh is missing — refusing to land unchecked"; exit 1; }
 if ! lit="$(bash spira/literal-lint.sh 2>&1)"; then
     printf '%s\n' "$lit" >&2
+    exit 1
+fi
+
+# TESTDB-MODE FENCE. Server-mode Dolt costs a median 110s per suite against ~5s for
+# embedded; a suite that requests it without saying why is indistinguishable from one
+# copied from a suite that did. A stated reason (# testdb-mode: server — <reason>) is
+# required wherever SPIRA_TESTDB_MODE=server is requested.
+[ -r spira/testdb-mode-lint.sh ] || { say "spira/testdb-mode-lint.sh is missing — refusing to land unchecked"; exit 1; }
+if ! tml="$(bash spira/testdb-mode-lint.sh 2>&1)"; then
+    printf '%s\n' "$tml" >&2
     exit 1
 fi
 

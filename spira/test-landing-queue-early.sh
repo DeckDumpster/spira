@@ -48,9 +48,8 @@ before_in_output() {
 . "$HERE/testdb.sh"
 testdb_require test-landing-queue-early
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-export SPIRA_TESTDB_MODE=server
 testdb_up landing-queue-early || {
-    printf 'SKIP test-landing-queue-early: server testdb not available\n' >&2
+    printf 'SKIP test-landing-queue-early: testdb not available\n' >&2
     exit 77
 }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t

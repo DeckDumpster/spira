@@ -20,6 +20,7 @@ is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 . "$HERE/testdb.sh"
 testdb_require test-requeue-cap-accept
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — sentinel's requeue and poison thresholds read counters via bd sql, which embedded mode refuses
 export SPIRA_TESTDB_MODE=server
 testdb_up requeue-cap-accept || {
     printf 'SKIP test-requeue-cap-accept: server testdb not available\n' >&2

@@ -80,6 +80,7 @@ echo "PART 2 — behavioural: boundary excludes event 1h before watermark"
 testdb_require test-census-tz-boundary
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — asserts on census_events_run_sql output (bd sql), which embedded mode refuses
 export SPIRA_TESTDB_MODE=server
 testdb_up census-tz-boundary || {
     printf 'SKIP test-census-tz-boundary part-2: server testdb not available\n' >&2

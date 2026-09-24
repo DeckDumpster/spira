@@ -43,6 +43,7 @@ nowant() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$
 . "$HERE/testdb.sh"
 testdb_require test-census-events
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — census_events_run_sql uses bd sql directly, which embedded mode refuses
 export SPIRA_TESTDB_MODE=server
 testdb_up census-events || {
     # Server testdb unavailable (no running Dolt server). Skip rather than fail: the

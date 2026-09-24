@@ -39,6 +39,7 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 . "$HERE/testdb.sh"
 testdb_require test-incident-recur-cause
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — asserts on recurs_of, which reads the events table via bd sql
 export SPIRA_TESTDB_MODE=server
 testdb_up rc_cause || {
     printf 'SKIP test-incident-recur-cause: server testdb not available\n' >&2
