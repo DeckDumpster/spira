@@ -11,14 +11,11 @@
 # branch verdicts from a shared tree) is impossible with per-branch trees.
 #
 # defect: sp-64v0, sp-d8h0r
+# tier: T1
 # covers: spira/gate.sh spira/gate-sweep.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want(){ [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 command -v flock >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH"; exit 77; }
 
@@ -192,6 +189,4 @@ is   "timed-out gate returns NO_VERDICT" 75 "$rc5"
 
 exec 8>&-
 rm -rf "$TREE_PATH"
-
-printf '\n%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

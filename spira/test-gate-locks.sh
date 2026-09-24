@@ -9,14 +9,11 @@
 #      reports HELD, not STALE.  This is the false-answer the bead tests for: the PID in
 #      /proc/locks may be dead even when the lock is genuinely held by a child.
 #
+# tier: T1
 # covers: spira/gate-locks.sh spira/gate.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want()   { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in [$3]"; esac; }
-nowant() { case "$3" in *"$2"*) bad "$1" "must not contain [$2]" ;; *) ok "$1"; esac; }
+. "$HERE/testlib.sh"
 
 GATE_LOCKS="$HERE/gate-locks.sh"
 if [ ! -x "$GATE_LOCKS" ]; then
@@ -141,5 +138,4 @@ rm -f "$LOCKF" "$LOCKF.holder"
 
 # ──────────────────────────────────────────────────────────────────────────────
 echo
-printf 'test-gate-locks: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ] || exit 1
+tl_summary
