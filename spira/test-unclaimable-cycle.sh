@@ -41,7 +41,7 @@ def run(beads):
         print("HARNESS %s" % p.stderr.strip().splitlines()[-1] if p.stderr else "HARNESS unknown"); return None
     return [l for l in p.stdout.splitlines() if l.startswith("UNCLAIMABLE")]
 genuine={"id":"sp-real","labels":["spira","incident","repo:spira"]}
-report ={"id":"sp-rep","labels":["spira","incident","repo:spira"],"external_ref":"unclaimable:sp-real"}
+report ={"id":"sp-rep","labels":["spira","groom","repo:spira"],"external_ref":"unclaimable:sp-real"}
 a=run([genuine]); b=run([report]); c=run([genuine,report])
 print("CONTROL %d" % (len(a) if a is not None else -1))
 print("GUARD %d"   % (len(b) if b is not None else -1))
