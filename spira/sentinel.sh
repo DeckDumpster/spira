@@ -1254,13 +1254,16 @@ done
 # Lane fayths are not affected — only builders draw from this pool, and the stamp says
 # the queue is over capacity, not that lane work is unneeded (sp-h7zzx).
 _tc_stamp_ck7="${SPIRA_THROTTLE_STAMP:-$SPIRA_RUN/queue-throttled}"
+_ck7_express_label=""
 if [ -f "$_tc_stamp_ck7" ] && [ "${SPIRA_QUEUE_THROTTLE_OVERRIDE:-}" != "off" ]; then
-    if express_ready_in_task_pool "$TASK_FAYTHS" "${SPIRA_EXPRESS_LABEL:-express}"; then
-        log "CHECK7 pool: throttle active — express bead ready, granting 1 slot"
-        [ "${pool:-0}" -lt 1 ] && pool=1
+    _ck7_express_ready=0
+    express_ready_in_task_pool "$TASK_FAYTHS" "${SPIRA_EXPRESS_LABEL:-express}" && _ck7_express_ready=1
+    pool="$(check7_pool_decision 1 "${pool:-0}" "$_ck7_express_ready")"
+    if [ "$_ck7_express_ready" = 1 ]; then
+        _ck7_express_label="${SPIRA_EXPRESS_LABEL:-express}"
+        log "CHECK7 pool: throttle active — express bead ready, granting pool=$pool (restricted to '$_ck7_express_label')"
     else
-        log "CHECK7 pool: throttle active ($(head -1 "$_tc_stamp_ck7" 2>/dev/null)) — task pool held at 0"
-        pool=0
+        log "CHECK7 pool: throttle active ($(head -1 "$_tc_stamp_ck7" 2>/dev/null)) — task pool held at $pool"
     fi
 fi
 for f in $TASK_FAYTHS; do
@@ -1269,7 +1272,7 @@ for f in $TASK_FAYTHS; do
         continue
     fi
     _fill=0
-    while summon_fayth "$f" "$pool"; do
+    while summon_fayth "$f" "$pool" "$_ck7_express_label"; do
         act "summoned a $f aeon"
         [ -n "$pool" ] && pool=$(( pool > 0 ? pool - 1 : 0 ))
         _fill=$(( _fill + 1 ))

@@ -177,6 +177,34 @@ lack "custom quota: CPUQuota=70% is absent from args" "CPUQuota=70%" "$args"
 export SPIRA_SUMMON="$MOCK_SUMMON"
 unset SPIRA_AEON_CPU_QUOTA
 
+# ==========================================================================================
+echo
+echo "summon_fayth — an express grant passes the label to the claim predicate (sp-zcvh1)"
+# ==========================================================================================
+# THE DEFECT this closes. Under the admission throttle, CHECK 7 grants an express-ready
+# task pool exactly 1 slot, but the summon that spends it asked for the fayth's own
+# predicate same as any other slot — so summon_fayth picked whichever P0 was ready, not
+# necessarily the express one. This is the second half of the fix: the aeon started under
+# that grant must not be able to claim a non-express bead. summon_fayth's third argument
+# is carried to the aeon as SPIRA_REQUIRE_LABEL (env var on the summon command, since the
+# label has to reach a process this call only starts — it does not claim anything itself).
+export SPIRA_SUMMON="$MOCK_QUOTA"
+
+# POSITIVE CONTROL: no require-label argument — today's behaviour, unchanged.
+MOCK_READY=1; rm -f "$ARGS_FILE" "$LABELS_FILE"
+summon_fayth builder 1 >/dev/null 2>&1 || true
+args="$(cat "$ARGS_FILE" 2>/dev/null)"
+lack "no require-label: SPIRA_REQUIRE_LABEL is absent from args" "SPIRA_REQUIRE_LABEL" "$args"
+
+# An express grant passes the label through.
+MOCK_READY=1; rm -f "$ARGS_FILE" "$LABELS_FILE"
+summon_fayth builder 1 express >/dev/null 2>&1 || true
+args="$(cat "$ARGS_FILE" 2>/dev/null)"
+want "express grant: SPIRA_REQUIRE_LABEL=express appears in args" \
+     "SPIRA_REQUIRE_LABEL=express" "$args"
+
+export SPIRA_SUMMON="$MOCK_SUMMON"
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

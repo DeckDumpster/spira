@@ -9,6 +9,7 @@ ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -188,6 +189,31 @@ rm -f "$THROTTLE_STAMP"
 express_ready_in_task_pool "nonexistent-fayth" "express" \
     && bad "express outside partition: absent fayth grants no slot" "returned 0" \
     || ok "express outside partition: absent fayth grants no slot"
+
+# ======================================================================================
+echo
+echo "check7_pool_decision — the throttle leak (sp-zcvh1)"
+# ======================================================================================
+# THE DEFECT. sentinel.sh CHECK 7 raised a throttled pool toward 1 but never capped it:
+# `[ "${pool:-0}" -lt 1 ] && pool=1` left a free value already >= 1 (e.g. 5, the free slot
+# count with no builders live) untouched, so one ready express bead switched the throttle
+# off for the whole pass instead of admitting the one express bead it was meant for.
+#
+# throttled + 0 express beads → 0 (the ordinary hold).
+is "throttled, no express: pool held at 0" "0" \
+   "$(check7_pool_decision 1 5 0)"
+
+# throttled + 1 express bead ready + 5 free → 1, NOT 5. This is the positive control for
+# the fix: the old inline form returns free (5) here, which is the leak itself.
+is "throttled, express ready, 5 free: pool granted exactly 1" "1" \
+   "$(check7_pool_decision 1 5 1)"
+
+# unthrottled → free, unchanged. The function must not touch a pool the throttle never
+# engaged.
+is "unthrottled: pool passes through as free" "5" \
+   "$(check7_pool_decision 0 5 0)"
+is "unthrottled: pool passes through as free even with an express bead ready" "5" \
+   "$(check7_pool_decision 0 5 1)"
 
 # ======================================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
