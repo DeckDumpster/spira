@@ -233,8 +233,8 @@ once the lint lands:
 
 - **UC-01, UC-02, UC-03** (commit search): `spira/test-landed-search.sh`, T2, calling
   `landed()` directly. Absorbs `test-census-window.sh` (deleted). UC-02 documents the prefix-
-  collision defect (gap 1) against current behaviour rather than fixing it silently — see the
-  filed follow-up bead for the fix.
+  collision defect (gap 1) against current behaviour rather than fixing it silently — fix
+  tracked as sp-ogogs.
 - **UC-15** (destroy-fence refusals): three rows added to the existing `test-destroy-branch.sh`
   — CERTIFIED/BATCHED landstate, a live holder witness, and a branch checked out in a
   worktree. The "survived deletion" `FAILED` row is not covered; it needs a way to make
@@ -245,16 +245,17 @@ brief, and each noting the dependency it is blocked on:
 
 - **UC-04 through UC-13** (CHECK 5 decision, `check5_decide`/`delivers_verify`/row-reader
   extraction, the 15-suite consolidation into `test-check5-decide.sh` + `test-check5.sh`):
-  blocked on sp-qsona's C3 landing, per the explicit instruction not to refactor CHECK 5 first.
+  sp-pyowh, blocked on sp-qsona's C3 landing, per the explicit instruction not to refactor
+  CHECK 5 first.
 - **UC-14, UC-16 through UC-22** (Sending disposition, `send_disposition` extraction,
-  `test-sending.sh`): the area instructions call for "Sending reduces to deleting branches of
-  LANDED beads, tested as T1" — that is sp-qsona's simplification, not yet on `origin/main`;
-  building `send_disposition` against the current, pre-simplification `sweep_repo` would be
-  reshaping code this plan is about to replace.
+  `test-sending.sh`): sp-rg46a, blocked on sp-qsona. The area instructions call for "Sending
+  reduces to deleting branches of LANDED beads, tested as T1" — that is sp-qsona's
+  simplification, not yet on `origin/main`; building `send_disposition` against the current,
+  pre-simplification `sweep_repo` would be reshaping code this plan is about to replace.
 - **UC-24** (pilgrimage epic-close gate extraction), **UC-25** (held.sh stub-bd
   reclassification), **UC-26/UC-27** (reassigning check2-reclaim and dependents to their
-  correct areas): none blocked on the above three beads, but out of scope for this slice on
-  size grounds; left as their own follow-up.
+  correct areas): sp-fcdru. Not blocked on the above three beads, but out of scope for this
+  slice on size grounds.
 - **B2 (testlib migration)**: `spira/testlib.sh` does not exist on `origin/main` yet
   (sp-qvjzb, closed, unlanded); `test-landed-search.sh` and the `test-destroy-branch.sh`
   additions use the existing per-suite `ok/bad/is/want` convention and should be swept into

@@ -120,8 +120,8 @@ echo "3. KNOWN DEFECT — prefix collision (UC-02; gap, no fix here):"
 #
 # This test documents the CURRENT (defective) behaviour rather than silently fixing the
 # matcher: a test-plan bead may not carry a product fix (see docs/test-plan/
-# landed-audit-reaping.md, gap 1). The fix is tracked separately; do not delete this case
-# without updating it to assert the corrected behaviour.
+# landed-audit-reaping.md, gap 1). Fix tracked as sp-ogogs; update this case to assert the
+# corrected behaviour once it lands, rather than deleting it.
 # ======================================================================================
 git -C "$REPO" commit -q --allow-empty -m "sp-prefix-collision-testXX: unrelated work"
 git -C "$REPO" push -q origin main
