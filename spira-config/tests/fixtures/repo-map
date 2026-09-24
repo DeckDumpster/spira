@@ -1,0 +1,6 @@
+# fixture repo-map — generic rows exercising the two shapes the converter must tell apart:
+# a `develop` lane-mode shorthand (row "home") and an explicit lane list where the gate
+# command itself contains a literal `|` from a shell case pattern (row "service").
+
+home    | /srv/checkouts/home    | push | origin/main   |                  | bash spira/inventory.sh && bash spira/testenv-batch.sh "$SPIRA_GATE_BRANCH" | develop
+service | /srv/checkouts/service | pr   | origin/master | cargo fmt --all | { _b=0; bash testenv-batch.sh "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3) exit 75;; *) exit "$_b";; esac; } | plan,incident
