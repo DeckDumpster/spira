@@ -19,7 +19,7 @@
 #    the actual Containerfile runs.
 #
 # defect: sp-qwmj (this suite was rewritten for sp-utt1i: doctor-check.sh reads conf.sh's
-# SPIRA_BINS manifest now, not doctor.sh's own program loops — doctor.sh no longer carries
+# deps.toml manifest now, not doctor.sh's own program loops — doctor.sh no longer carries
 # build-input checks at all)
 # covers: spira/testenv/doctor-check.sh spira/testenv/Containerfile spira/conf.sh
 set -uo pipefail
@@ -45,12 +45,12 @@ fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-# Helper: a minimal conf.sh stub declaring SPIRA_BINS and spira_bin_tier, enough for
+# Helper: a minimal conf.sh stub declaring spira_deps_list and spira_bin_tier, enough for
 # doctor-check.sh to build its FATAL/WARN sets from.
 write_conf() {
     local runtime="$1" optional="$2" dev="${3:-}"
     cat > "$TMP/conf.sh" <<EOF
-SPIRA_BINS="${runtime} ${optional} ${dev}"
+spira_deps_list() { printf '%s\n' ${runtime} ${optional} ${dev}; }
 spira_bin_tier() {
     case "\$1" in
 $(for p in $runtime; do printf '        %s) echo runtime ;;\n' "$p"; done)
@@ -132,7 +132,7 @@ want "clean run: mentions 'present or waived'" "present or waived" "$out"
 
 # ============================================================================
 echo
-echo "real manifest — conf.sh's actual SPIRA_BINS with the real waivers file:"
+echo "real manifest — conf.sh's actual deps.toml with the real waivers file:"
 # ============================================================================
 REAL_CONF="$HERE/conf.sh"
 REAL_WAIVERS="$HERE/testenv/doctor-waivers"
