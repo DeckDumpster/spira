@@ -79,7 +79,7 @@ jobs:
         run: cargo build --release
         working-directory: broker
 
-      - name: Build spira-supervise
+      - name: Build supervise
         run: cargo build --release
         working-directory: supervise
 
