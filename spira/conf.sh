@@ -523,6 +523,7 @@ spira_conf_defaults() {
     # Set to 1 to restore serial behaviour.
     : "${SPIRA_CERTIFY_PAR:=}"
     : "${SPIRA_CERTIFY_SUITES:=on}"   # off: queue-mode certification runs fences only; CI runs the suites
+    : "${SPIRA_CERT_IDLE_SKIP:=1}"   # 0: always gate even when CI is idle and the batch would be solo
     # HOW LONG A GATE VERDICT MAY BE REUSED, in seconds. The gate computes each verdict once
     # and keys it by everything the verdict depends on that it can name — the tree, the base,
     # the changed file list, the repository's gate command and this harness — so a reused
