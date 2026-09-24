@@ -118,6 +118,31 @@ certify_expr() { printf 'CERTIFIED %s %s' "$tip_e" "$NOW" > "$LANDSTATE/sp-expr1
 certify_norm() { printf 'CERTIFIED %s %s' "$tip_n" "$NOW" > "$LANDSTATE/sp-norm1"; }
 clear_batch()  { rm -f "$QUEUEDIR/$REPONAME/open"; : > "$FORGE_LOG"; }
 
+# Additional branches for eviction tests.
+testdb_seed <<JSONL
+{"id":"sp-norm2","title":"normal bead 2","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-23T00:00:00Z"}
+{"id":"sp-norm3","title":"normal bead 3","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-23T00:00:00Z"}
+JSONL
+
+git -C "$REPO" checkout -q -b spira/sp-norm2 main
+printf 'n2\n' > "$REPO/norm2.txt"
+git -C "$REPO" add norm2.txt && git -C "$REPO" commit -q -m "sp-norm2: work"
+tip_n2="$(git -C "$REPO" rev-parse spira/sp-norm2)"
+git -C "$REPO" checkout -q main
+
+git -C "$REPO" checkout -q -b spira/sp-norm3 main
+printf 'n3\n' > "$REPO/norm3.txt"
+git -C "$REPO" add norm3.txt && git -C "$REPO" commit -q -m "sp-norm3: work"
+tip_n3="$(git -C "$REPO" rev-parse spira/sp-norm3)"
+git -C "$REPO" checkout -q main
+
+# write_open_batch <pr> <members>: simulate an already-open batch record.
+write_open_batch() {
+    mkdir -p "$QUEUEDIR/$REPONAME"
+    printf 'pr=%s\nmembers=%s\nbranch=spira/queue/fake\nopened=%s\n' \
+        "$1" "$2" "$NOW" > "$QUEUEDIR/$REPONAME/open"
+}
+
 echo "test-batch-express.sh"
 
 # ── case: express branch — batch IS cut ───────────────────────────────────────
@@ -139,6 +164,56 @@ certify_expr; clear_batch
 out="$(EXPRESS_LABEL=other-label batch "$REPONAME")"
 nowant "label-off: express reason absent"   "express certified branch" "$out"
 is     "label-off: no batch opened"   "0" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
+
+# ── case: express eviction — open batch has two innocent members ──────────────
+# An express branch certifies while two normal branches are batched.
+# Accepted: old PR closed, both members CERTIFIED at their batched tips, new express batch open.
+clear_batch
+write_open_batch 99 "sp-norm1:${tip_n} sp-norm2:${tip_n2}"
+printf 'BATCHED %s %s\n' "$tip_n"  "$NOW" > "$LANDSTATE/sp-norm1"
+printf 'BATCHED %s %s\n' "$tip_n2" "$NOW" > "$LANDSTATE/sp-norm2"
+rm -f "$LANDSTATE/sp-expr1" "$LANDSTATE/sp-norm3"
+certify_expr; : > "$FORGE_LOG"
+out="$(batch "$REPONAME")"
+want "evict: names express reason"             "express branch certified"  "$out"
+want "evict: names eviction action"            "evicting open batch"       "$out"
+is   "evict: norm1 CERTIFIED"                  "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm1")"
+is   "evict: norm1 CERTIFIED at batched tip"   "$tip_n"    "$(cut -d' ' -f2 < "$LANDSTATE/sp-norm1")"
+is   "evict: norm2 CERTIFIED"                  "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm2")"
+is   "evict: norm2 CERTIFIED at batched tip"   "$tip_n2"   "$(cut -d' ' -f2 < "$LANDSTATE/sp-norm2")"
+is   "evict: new batch opened"                 "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
+is   "evict: expr1 BATCHED in new batch"       "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-expr1")"
+
+# ── pair: non-express certifies while batch open — batch untouched ───────────
+# Same open batch (sp-norm1, sp-norm2 batched) but sp-norm3 (non-express) certifies.
+clear_batch
+write_open_batch 99 "sp-norm1:${tip_n} sp-norm2:${tip_n2}"
+printf 'BATCHED %s %s\n' "$tip_n"  "$NOW" > "$LANDSTATE/sp-norm1"
+printf 'BATCHED %s %s\n' "$tip_n2" "$NOW" > "$LANDSTATE/sp-norm2"
+rm -f "$LANDSTATE/sp-expr1"
+printf 'CERTIFIED %s %s' "$tip_n3" "$NOW" > "$LANDSTATE/sp-norm3"
+: > "$FORGE_LOG"
+out="$(batch "$REPONAME")"
+nowant "nonevict: no eviction in log"          "evicting open batch"   "$out"
+want  "nonevict: skipping message present"     "open batch exists"     "$out"
+is    "nonevict: open batch intact"            "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
+is    "nonevict: norm1 still BATCHED"          "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm1")"
+is    "nonevict: norm2 still BATCHED"          "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm2")"
+
+# ── case: RED member of evicted batch stays RED ───────────────────────────────
+# sp-norm1 is innocent (BATCHED), sp-norm2 has RED landstate.
+# After eviction: sp-norm1 → CERTIFIED, sp-norm2 stays RED.
+clear_batch
+write_open_batch 99 "sp-norm1:${tip_n} sp-norm2:${tip_n2}"
+printf 'BATCHED %s %s\n' "$tip_n"  "$NOW" > "$LANDSTATE/sp-norm1"
+printf 'RED     %s %s\n' "$tip_n2" "$NOW" > "$LANDSTATE/sp-norm2"
+rm -f "$LANDSTATE/sp-norm3"
+certify_expr; : > "$FORGE_LOG"
+out="$(batch "$REPONAME")"
+want "red-member: eviction fired"             "evicting open batch"  "$out"
+is   "red-member: norm1 returned CERTIFIED"   "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm1")"
+is   "red-member: norm2 stays RED"            "RED"       "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm2")"
+is   "red-member: new batch opened"           "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
