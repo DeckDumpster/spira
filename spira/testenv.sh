@@ -50,13 +50,10 @@ _CONTAINER_CARGO_TARGET="/var/spira/cargo/target"
 _USER_RUNTIME="/run/user/${_SPIRA_UID}"
 _DEFAULT_NAME="spira-testenv"
 
-# Image tag derived from the build closure: Containerfile, the bd pin, and the program
-# lists that doctor.sh declares. All three determine what the image must provide; a change
-# to any of them must produce a new tag so a fresh build fires automatically rather than
-# a stale image being reused.
-#
-# The program lists are read from doctor.sh directly — a copy would be a second list that
-# must agree with the source, which is the defect class this function exists to prevent.
+# Image tag derived from the build closure: Containerfile, the bd pin, and the dependency
+# manifest in conf.sh. All three determine what the image must provide; a change to any of
+# them must produce a new tag so a fresh build fires automatically rather than a stale image
+# being reused.
 _image_tag() {
     # conf.sh supplies SPIRA_BD_PIN when it is not already in the environment. The guard is
     # conf.sh's own (SPIRA_CONF_LOADED), so re-sourcing inside a session is a no-op.
@@ -76,10 +73,10 @@ _image_tag() {
         # changes the migration count may invalidate schema expectations in the test suites, so
         # the image must be rebuilt when the pin changes.
         [ -f "$_pin" ] && cat "$_pin"
-        # Program lists: the FATAL loop (bd git python3 flock …) and the WARN loop
-        # (dolt gh claude tmux cargo node …) from doctor.sh. When a program is added to
-        # either list, the image must provide it — the tag must move first so a build fires.
-        grep -E '^for b in ' "$HERE/doctor.sh" 2>/dev/null || true
+        # Dependency manifest: SPIRA_BINS and spira_bin_tier. When a program is added or its
+        # tier changes, doctor-check.sh's FATAL/WARN sets move — the tag must move first so a
+        # build fires.
+        sed -n '/^SPIRA_BINS=/,/^}/p' "$HERE/conf.sh" 2>/dev/null || true
     } | sha256sum | cut -c1-12
 }
 
@@ -144,7 +141,7 @@ _remote_ref() {
 # so callers can capture it; all progress goes to stderr.
 #
 # BUILD CONTEXT IS HERE (the spira/ directory), not TESTENV_DIR. The Containerfile's
-# COPY instructions reference both spira/doctor.sh and spira/testenv/doctor-check.sh,
+# COPY instructions reference both spira/conf.sh and spira/testenv/doctor-check.sh,
 # and a file outside the build context cannot be COPY'd. Using HERE as context with -f
 # pointing at the Containerfile satisfies both: podman resolves COPY paths relative to
 # the context root (HERE), and the Containerfile itself is specified explicitly.

@@ -1585,16 +1585,16 @@ spira_require() {        # spira_require <bin> [<bin>...] -> 0, or 1 having name
 # Every program the harness or its tests invoke, in one list. doctor.sh iterates this rather
 # than carrying its own copy — two lists is how the development set came to be checked by
 # nothing at all.
-SPIRA_BINS="${SPIRA_BINS:-bd git python3 flock dolt gh tmux node cargo jq zstd aws bd-embedded podman go inotifywait aerc hunk}"
+SPIRA_BINS="${SPIRA_BINS:-bd git python3 flock dolt gh tmux node claude cargo jq zstd aws bd-embedded podman go inotifywait aerc hunk}"
 
 spira_bin_tier() {
     case "$1" in
         # runtime: the loop cannot run at all.
         bd|git|python3|flock)      echo runtime ;;
         # optional: the loop runs; one named feature is off.
-        dolt|gh|tmux|node|cargo|jq|zstd|aws) echo optional ;;
-        # operator: needed on an operated instance (SPIRA_OPERATED=1). doctor.sh FAILs
-        # when these are missing; SPIRA_OPERATED=0 downgrades to WARN for headless boxes.
+        dolt|gh|tmux|node|claude|cargo|jq|zstd|aws) echo optional ;;
+        # operator: needed on an operated instance (SPIRA_OPERATED=1) — a headless box
+        # (SPIRA_OPERATED=0) has no operator reading the cockpit these serve.
         inotifywait|aerc|hunk|go)  echo operator ;;
         # dev: needed to DEVELOP or TEST Spira, never to run it.
         bd-embedded|podman)        echo dev ;;

@@ -1,26 +1,29 @@
 #!/usr/bin/env bash
 #
-# doctor-check.sh — verify doctor.sh's declared programs are in PATH or waived.
+# doctor-check.sh — verify the dependency manifest's runtime/optional/operator programs
+# are in PATH or waived.
 #
-# Usage: doctor-check.sh <path/to/doctor.sh> [<path/to/waivers>]
+# Usage: doctor-check.sh <path/to/conf.sh> [<path/to/waivers>]
 #
-# doctor.sh contains two `for b in` loops:
-#   1. FATAL: `for b in bd git python3 flock; do`  — any absent program fails
-#   2. WARN:  `for b in dolt gh "${SPIRA_AGENT:-claude}" tmux cargo node; do`
-#                                                   — absent programs must be waived
+# THE MANIFEST IS conf.sh's SPIRA_BINS, TIERED BY spira_bin_tier — not a copy of it. Before
+# sp-utt1i, this script parsed doctor.sh's own hardcoded program loops; doctor.sh no longer
+# carries build-input checks at all (make and this manifest own them), so the loops it used
+# to parse are gone. Reading conf.sh directly means a program added to SPIRA_BINS fails the
+# image build until the image carries it, with no second list that must agree with the first.
 #
-# The program lists are read from doctor.sh directly, not hardcoded here. That is
-# the whole point: a program added to doctor.sh's lists fails the image build until
-# the image carries it. A second list that must agree with the source is cause B.
+#   runtime            FATAL: any absence fails the image build
+#   optional, operator  WARN: present or waived, with a written reason
+#   dev                 not checked here — the image is what tests need to RUN against, and
+#                       dev-tier programs (bd-embedded, podman) are what tests need to EXIST
 #
 # WAIVER FILE FORMAT. One program per non-comment, non-blank line:
 #   <name>  <reason text>
 # An empty reason is refused: an omission must be a written decision, not a silence.
 #
-# covers: spira/testenv/Containerfile spira/doctor.sh
+# covers: spira/testenv/Containerfile spira/conf.sh
 set -uo pipefail
 
-DOCTOR="${1:?usage: doctor-check.sh <doctor.sh> [<waivers>]}"
+CONF="${1:?usage: doctor-check.sh <conf.sh> [<waivers>]}"
 WAIVERS="${2:-}"
 
 fail_count=0
@@ -50,48 +53,30 @@ if [ -n "$WAIVERS" ] && [ -f "$WAIVERS" ]; then
     done < "$WAIVERS"
 fi
 
-# ── Parse doctor.sh's two program loops ──────────────────────────────────────
-# doctor.sh contains lines of the form:
-#   for b in bd git python3 flock; do
-# and:
-#   for b in dolt gh "${SPIRA_AGENT:-claude}" tmux cargo node; do
-#
-# We extract the Nth such line. This is a structural expectation about doctor.sh's
-# format: two consecutive `for b in` loops, FATAL first, WARN second.
+# ── Read the manifest from conf.sh, tiered ────────────────────────────────────
+# An explicit, minimal environment: a real spira.conf on this box (or in this image build)
+# must not decide what the image is checked against (law-gates-run-in-a-clean-environment).
+manifest="$(env -i HOME="${HOME:-/root}" PATH="$PATH" SPIRA_CONF=/nonexistent bash -c '
+    . '"$(printf '%q' "$CONF")"' 2>/dev/null
+    for b in $SPIRA_BINS; do
+        printf "%s %s\n" "$b" "$(spira_bin_tier "$b")"
+    done
+')"
 
-_extract_for_loop() {
-    awk -v target="$1" '
-        /^for b in .*; do$/ {
-            count++
-            if (count == target) {
-                sub(/^for b in /, "")
-                sub(/; do$/, "")
-                print
-                exit
-            }
-        }
-    ' "$DOCTOR"
-}
-
-fatal_line="$(_extract_for_loop 1)"
-warn_line="$(_extract_for_loop 2)"
-
-if [ -z "$fatal_line" ] || [ -z "$warn_line" ]; then
-    printf 'doctor-check: could not parse program loops from %s\n' "$DOCTOR" >&2
-    printf 'doctor-check: expected two lines matching ^for b in .*; do$\n' >&2
+if [ -z "$manifest" ]; then
+    printf 'doctor-check: could not read a manifest from %s (no SPIRA_BINS)\n' "$CONF" >&2
     exit 1
 fi
 
-# Expand ${SPIRA_AGENT:-claude} in the warn line. The sed replaces the literal
-# shell-parameter form with the resolved value, then strips the enclosing quotes.
-# The value is SPIRA_AGENT when set, or "claude" when not.
-_agent="${SPIRA_AGENT:-claude}"
-warn_line_expanded="$(printf '%s' "$warn_line" \
-    | sed 's/"\${SPIRA_AGENT:-[^}]*}"/'"$_agent"'/g' \
-    | tr -d '"')"
-
-read -ra fatal_progs <<< "$fatal_line"
-read -ra warn_progs  <<< "$warn_line_expanded"
+fatal_progs=(); warn_progs=()
+while read -r prog tier; do
+    [ -n "$prog" ] || continue
+    case "$tier" in
+        runtime)            fatal_progs+=("$prog") ;;
+        optional|operator)  warn_progs+=("$prog") ;;
+        dev)                ;;
+    esac
+done <<< "$manifest"
 
 # ── Check FATAL programs ──────────────────────────────────────────────────────
 printf '\nFATAL programs — any absence fails the image build:\n'
