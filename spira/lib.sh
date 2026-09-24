@@ -5596,6 +5596,97 @@ for r in rows:
     return 0
 }
 
+# ---------------------------------------------------------------------------
+# QUEUE BISECT — a red batch with no attributable suite (a build failure, or
+# any harness-shaped red with no annotations) narrows by binary search rather
+# than by re-running the priority sort, which would just re-select the same
+# culprit forever (sp-y931m: PRs 302-304 cycled the same P0 build-breaker).
+#
+# State is one group ("id:tip id:tip ...") per line in $SPIRA_QUEUE_DIR/<repo>/bisect.
+# Line 1 is the group batch.sh must cut next; later lines are untested siblings
+# parked by an earlier split, most-recently-parked first (a LIFO worklist), so a
+# nested split finishes the branch it is on before returning to an outer sibling.
+# ---------------------------------------------------------------------------
+
+queue_bisect_file() { printf '%s/%s/bisect' "${SPIRA_QUEUE_DIR:?}" "$1"; }
+
+# queue_bisect_current <repo-name> -> the forced-next group ("id:tip id:tip"),
+# one line. Empty output (rc 1) means no bisect is in progress.
+queue_bisect_current() {
+    local f; f="$(queue_bisect_file "$1")"
+    [ -s "$f" ] || return 1
+    head -1 "$f"
+}
+
+# queue_bisect_current_certified <repo-name> <certs-blob>
+# Print "<id> <tip>" for each member of the current forced group that is still
+# CERTIFIED, using its live certified tip from <certs-blob> (lines "id tip
+# epoch", as queue_certified_list prints) rather than the tip recorded when the
+# group was split — a member re-certified since then is tested at its current
+# head. A member no longer CERTIFIED (ejected or landed another way) is
+# dropped silently; an empty result means the group has nothing left to cut.
+queue_bisect_current_certified() {
+    local name="$1" certs="$2" _line _bl _id
+    _line="$(queue_bisect_current "$name" 2>/dev/null)" || return 0
+    for _bl in $_line; do
+        _id="${_bl%%:*}"
+        printf '%s\n' "$certs" | awk -v id="$_id" '$1==id{print $1, $2; exit}'
+    done
+}
+
+# queue_bisect_split <repo-name> <id:tip> [<id:tip> ...]
+# The given members just came back red together with no attributable suite.
+# Halve them (first half smaller or equal, matching the batcher's existing
+# epoch convention) and record the first half as the next forced cut. Any
+# group still pending from an earlier split is kept beneath the new second
+# half, so it is tested once the branch just opened resolves.
+queue_bisect_split() {
+    local name="$1"; shift
+    local members=("$@")
+    local half=$(( ${#members[@]} / 2 )) i
+    local a=() b=()
+    for i in "${!members[@]}"; do
+        if [ "$i" -lt "$half" ]; then a+=("${members[$i]}"); else b+=("${members[$i]}"); fi
+    done
+    local f; f="$(queue_bisect_file "$name")"
+    local rest=""
+    [ -s "$f" ] && rest="$(tail -n +2 "$f")"
+    mkdir -p "$(dirname "$f")" 2>/dev/null || true
+    {
+        printf '%s\n' "${a[*]}"
+        printf '%s\n' "${b[*]}"
+        [ -n "$rest" ] && printf '%s\n' "$rest"
+        true
+    } > "$f.$$" && mv -f "$f.$$" "$f"
+}
+
+# queue_bisect_advance <repo-name>
+# The current group is resolved (ejected down to nothing left to test, or
+# landed clean) — drop it and promote the next pending group, if any. Removes
+# the state file once the worklist is empty, ending the bisect.
+queue_bisect_advance() {
+    local f; f="$(queue_bisect_file "$1")"
+    [ -s "$f" ] || return 0
+    local rest; rest="$(tail -n +2 "$f")"
+    if [ -n "$rest" ]; then
+        printf '%s\n' "$rest" > "$f.$$" && mv -f "$f.$$" "$f"
+    else
+        rm -f "$f"
+    fi
+}
+
+# queue_bisect_resolve <repo-name> <members-str>
+# <members-str> (space-separated "id:tip") just landed clean. If it is exactly
+# the group the bisect is currently testing, that group is innocent — advance
+# to the next pending group so the culprit is sought there next.
+queue_bisect_resolve() {
+    local name="$1" members_str="$2" _cur
+    _cur="$(queue_bisect_current "$name" 2>/dev/null)" || return 0
+    [ "$(printf '%s\n' $_cur | sort)" = "$(printf '%s\n' $members_str | sort)" ] \
+        && queue_bisect_advance "$name"
+    return 0
+}
+
 # gh_issue_closeout — comment and close the GitHub issue linked to a landed bead.
 #
 # The write-back complement to gh-intake.sh's one-way ingest. Intake holds no

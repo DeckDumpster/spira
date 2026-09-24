@@ -44,6 +44,13 @@
 #      no ejection, no bisect).
 #  28. Green, base moved (conflicting) → PR closed; members returned to CERTIFIED;
 #      conflict member named in log.
+#  29. Red naming no suite, multi-member → the halving in case 8 also persists
+#      the first half as $SPIRA_QUEUE_DIR/<repo>/bisect (sp-y931m).
+#  30. A red batch whose sole member is the bisect's current forced group
+#      ejects on the first strike (not the two-strike unreproduced-red track),
+#      and a build-error annotation is logged on the ejected bead.
+#  31. A batch matching the bisect's current forced group lands green → the
+#      bisect advances to the sibling parked at the split.
 #
 # The forge seam is a local fixture; no network is reached.
 # mail.sh and suites.sh are stubbed to capture calls.
@@ -240,6 +247,7 @@ build_batch() {
 
 clean_case() {
     rm -f "$(batch_file)"
+    rm -f "$QUEUEDIR/$REPONAME/bisect"
     : > "$FORGE_LOG"
     : > "$FORGE_RUN_METADATA_FILE"
     : > "$MAIL_LOG"
@@ -1210,6 +1218,72 @@ case "$(landstate sp-vd-c2)" in CERTIFIED*) ok "28. moved-conflict: sp-vd-c2 CER
 is   "28. moved-conflict: batch record removed"   "0" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
 want "28. moved-conflict: conflict member named"  "sp-vd-c2"   "$out"
 want "28. moved-conflict: base-moved reported"    "base moved"  "$out"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 29. BISECT PERSISTS ITS HALVES (sp-y931m) — case 8's red-no-suite bisect must
+#     write $SPIRA_QUEUE_DIR/<repo>/bisect recording the first half, not just
+#     mark epochs. Without this the next cut is chosen by priority alone and
+#     can re-admit the very branch under isolation, as PRs 302-304 did.
+# =============================================================================
+build_batch sp-vd-bs1 sp-vd-bs2 sp-vd-bs3 sp-vd-bs4 > /dev/null
+printf 'red\n' > "$FORGE_STATUS_FILE"
+out="$(verdict "$REPONAME")"
+bisect_f="$QUEUEDIR/$REPONAME/bisect"
+is   "29. bisect split: state file written" "1" "$([ -s "$bisect_f" ] && echo 1 || echo 0)"
+recorded_half="$(head -1 "$bisect_f" 2>/dev/null)"
+want   "29. bisect split: recorded half names sp-vd-bs1"    "sp-vd-bs1" "$recorded_half"
+want   "29. bisect split: recorded half names sp-vd-bs2"    "sp-vd-bs2" "$recorded_half"
+nowant "29. bisect split: recorded half excludes sp-vd-bs3" "sp-vd-bs3" "$recorded_half"
+second_line="$(sed -n '2p' "$bisect_f" 2>/dev/null)"
+want "29. bisect split: sibling half parked on line 2" "sp-vd-bs3" "$second_line"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 30. BISECT NARROWS TO ONE, RED AGAIN — a red batch whose sole member is
+#     exactly the bisect's current forced group ejects immediately (no
+#     two-strike wait; that track is for an organic single-branch red, not a
+#     branch bisection has already isolated). A build-error annotation, when
+#     present, is logged on the ejected bead's note.
+#     POSITIVE CONTROL: test-attribution.sh case 15 proves the two-strike
+#     track still applies when there is no bisect state to match against.
+# =============================================================================
+build_batch sp-vd-bo1 > /dev/null
+bo1_tip="$(git -C "$REPO" rev-parse spira/sp-vd-bo1)"
+mkdir -p "$QUEUEDIR/$REPONAME"
+printf 'sp-vd-bo1:%s\n' "$bo1_tip" > "$QUEUEDIR/$REPONAME/bisect"
+{ printf 'red\n'; printf 'build-error: error: could not compile `spira-core`\n'; } > "$FORGE_STATUS_FILE"
+verdict "$REPONAME" > /dev/null
+case "$(landstate sp-vd-bo1)" in
+    EJECTED*) ok "30. bisect singleton: ejected on first strike" ;;
+    *) bad "30. bisect singleton: ejected on first strike" "got: $(landstate sp-vd-bo1)" ;;
+esac
+is   "30. bisect singleton: bisect state cleared" "0" \
+     "$([ -f "$QUEUEDIR/$REPONAME/bisect" ] && echo 1 || echo 0)"
+want "30. bisect singleton: build error logged on the bead" "could not compile" "$(cat "$MAIL_LOG")"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 31. BISECT RESOLVES ON GREEN — a batch that is exactly the bisect's current
+#     forced group lands clean; the group is innocent, so the bisect advances
+#     to the sibling parked when it was split.
+# =============================================================================
+build_batch sp-vd-bg1 sp-vd-bg2 > /dev/null
+bg1_tip="$(git -C "$REPO" rev-parse spira/sp-vd-bg1)"
+bg2_tip="$(git -C "$REPO" rev-parse spira/sp-vd-bg2)"
+mkdir -p "$QUEUEDIR/$REPONAME"
+{
+    printf 'sp-vd-bg1:%s sp-vd-bg2:%s\n' "$bg1_tip" "$bg2_tip"
+    printf 'sp-vd-bg3:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n'
+} > "$QUEUEDIR/$REPONAME/bisect"
+printf 'green\n' > "$FORGE_STATUS_FILE"
+out="$(verdict "$REPONAME")"
+want "31. bisect resolve: fast-forward landed" "landed by fast-forward" "$out"
+is   "31. bisect resolve: advances to sibling" "sp-vd-bg3:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" \
+     "$(head -1 "$QUEUEDIR/$REPONAME/bisect" 2>/dev/null)"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 

@@ -269,11 +269,16 @@ _q_attribute() {
     local attr_start; attr_start="$(date +%s)"
 
     # Parse red suite names from check-status output.
-    local red_suites="" _line
+    local red_suites="" build_error="" _line
     while IFS= read -r _line; do
-        case "$_line" in "red-suite: "*) red_suites="$red_suites ${_line#red-suite: }" ;; esac
+        case "$_line" in
+            "red-suite: "*) red_suites="$red_suites ${_line#red-suite: }" ;;
+            "build-error: "*) build_error="$build_error
+${_line#build-error: }" ;;
+        esac
     done <<< "$status_out"
     red_suites="${red_suites# }"
+    build_error="${build_error#$'\n'}"
 
     local suites_csv; suites_csv="$(printf '%s\n' $red_suites | awk '!seen[$0]++' | tr '\n' ',' | sed 's/,$//')"
     local members_arr=(); read -ra members_arr <<< "$members_str"
@@ -282,6 +287,7 @@ _q_attribute() {
     local ejected=() survivors=() unjudged=()
     local _eject_fail_dir; _eject_fail_dir="$(mktemp -d)"
     local _mm _mid _mtip
+    local _bisect_current; _bisect_current="$(queue_bisect_current "$name" 2>/dev/null)" || _bisect_current=""
 
     _verdict_trap_pr="$pr_n"
 
@@ -300,6 +306,7 @@ _q_attribute() {
             fi
             _i=$(( _i + 1 ))
         done
+        queue_bisect_split "$name" "${members_arr[@]}"
         "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
         rm -f "$batch_file"
         local _all_ids; _all_ids="$(printf '%s\n' "${members_arr[@]}" | cut -d: -f1 | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
@@ -319,6 +326,16 @@ _q_attribute() {
 
     if [ "$mc" -eq 1 ]; then
         _mm="${members_arr[0]}"; _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
+        if [ -z "$red_suites" ] && [ -n "$_bisect_current" ] && [ "$_bisect_current" = "$_mm" ]; then
+            # Bisection narrowed to this single member and it is still red with
+            # no attributable suite: it is the culprit, not a candidate for the
+            # unreproduced-red two-strikes track below. Eject on the first strike.
+            [ -n "$build_error" ] && printf '%s\n' "$build_error" > "$_eject_fail_dir/$_mid"
+            ejected+=("$_mm")
+            queue_bisect_advance "$name"
+            printf 'verdict %s: %s — bisected to a single member, still red with no suite annotation; ejecting\n' \
+                "$name" "$_mid"
+        else
         local _unrep_dir="$SPIRA_QUEUE_DIR/$name/unreproduced"
         local _unrep_f="$_unrep_dir/$_mid"
         local _sm_flaky_f _sm_rc _sm_fs
@@ -377,6 +394,7 @@ _q_attribute() {
                     survivors+=("$_mm")
                 fi
             fi
+        fi
         fi
     else
         # Phase 1: diff-selected suites per member, run in parallel.
@@ -504,6 +522,7 @@ _q_attribute() {
                     fi
                     i=$(( i + 1 ))
                 done
+                queue_bisect_split "$name" "${members_arr[@]}"
                 "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
                 rm -f "$batch_file"
                 printf 'verdict %s: PR %s together-only red — halved (%d+%d)\n' \
@@ -830,6 +849,10 @@ main() {
                         land_mark "$_mid" LANDED "$_mtip"
                         gh_issue_closeout "$_mid" "$batch_head" "$repo" || true
                     done
+                    # This batch built and landed clean: if it is the group a bisect
+                    # is currently isolating, that group is innocent — move on to the
+                    # sibling parked when it was split (sp-y931m).
+                    queue_bisect_resolve "$name" "$members_str"
                     while IFS= read -r _line; do
                         case "$_line" in
                             "flaky: "*)

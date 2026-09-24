@@ -498,6 +498,22 @@ for b in d:
     [ "$age"   -ge "${SPIRA_QUEUE_BATCH_WAIT:-1800}" ] && triggered=1
     [ "${_evict_for_express:-0}" = 1 ] && triggered=1
 
+    # BISECT: a prior red with no attributable suite already narrowed the
+    # culprit by persisted binary search (queue_bisect_split, run from
+    # verdict.sh). Force the cut regardless of the other triggers, and force
+    # its membership below to be exactly the recorded half — a fresh
+    # priority-sorted cut would just re-select the same culprit forever
+    # (sp-y931m: PRs 302-304 cycled the same P0 build-breaker).
+    local _bisect_forced=""
+    if [ -n "$(queue_bisect_current "$name" 2>/dev/null)" ]; then
+        _bisect_forced="$(queue_bisect_current_certified "$name" "$certs")"
+        if [ -z "$_bisect_forced" ]; then
+            queue_bisect_advance "$name"
+            printf 'batch %s: bisect group already resolved elsewhere — advancing\n' "$name"
+        fi
+    fi
+    [ -n "$_bisect_forced" ] && triggered=1
+
     # THIRD TRIGGER: CI IS IDLE, SO WAITING BUYS NOTHING. The wait exists to let certified
     # branches accumulate into one CI run instead of spending a run each. That trade is only
     # worth making while a run is in flight — with nothing in CI, a branch that waits its
@@ -567,11 +583,19 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
 
     # Sort: suite-transition first, then priority asc, then epoch asc.
     # queue_sort_rows (lib.sh) is the canonical implementation shared with the cockpit.
+    # A forced bisect group bypasses this sort entirely — see the BISECT trigger above.
     local sortfile; sortfile="$(mktemp)"
     # shellcheck disable=SC2064
     trap "rm -f '$sortfile'" RETURN
-    PRIO_JSON="$prio_json" queue_sort_rows "$repo" "$base_sha" \
-        < <(printf '%s\n' "$certs") > "$sortfile"
+    if [ -n "$_bisect_forced" ]; then
+        printf '%s\n' "$_bisect_forced" | awk '{printf "0 000000000 0000000000 %s %s\n", $1, $2}' \
+            > "$sortfile"
+        printf 'batch %s: bisect in progress — forcing cut to recorded half (%d member(s))\n' \
+            "$name" "$(printf '%s\n' "$_bisect_forced" | grep -c .)"
+    else
+        PRIO_JSON="$prio_json" queue_sort_rows "$repo" "$base_sha" \
+            < <(printf '%s\n' "$certs") > "$sortfile"
+    fi
 
     # Build batch in a worktree starting at the land ref.
     local wt
