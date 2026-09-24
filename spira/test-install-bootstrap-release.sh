@@ -87,6 +87,15 @@ for _s in $(grep -h "ExecStart=\|ExecStartPre=" "$REAL_REPO/systemd/"*.service 2
 done
 unset _s
 
+# Executable stubs for @SPIRA_PROD_ROOT@ scripts. SPIRA_PROD_ROOT resolves as
+# dirname(SPIRA_PROD); after bootstrap that is the release directory itself, a copy
+# of $FIXTURE — so stubs placed at $FIXTURE's own root land there automatically.
+for _s in $(grep -h "ExecStart=\|ExecStartPre=" "$REAL_REPO/systemd/"*.service 2>/dev/null \
+            | grep "@SPIRA_PROD_ROOT@" | sed 's|.*@SPIRA_PROD_ROOT@/||' | sed 's/ .*//' | sort -u); do
+    [ -e "$FIXTURE/$_s" ] || { printf '#!/usr/bin/env bash\nexit 0\n' > "$FIXTURE/$_s"; chmod +x "$FIXTURE/$_s"; }
+done
+unset _s
+
 # Required stubs for install.sh phases.
 cat > "$SPIRA_DIR/doctor.sh" <<'EOF'
 #!/usr/bin/env bash
