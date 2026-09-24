@@ -5,6 +5,7 @@ members = [
     "broker",
     "czar-pass",
     "supervise",
+    "spira-config",
 ]
 resolver = "2"
 
