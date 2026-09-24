@@ -9,11 +9,19 @@
 # hooks/pre-commit, and law-beads-is-never-public rests on it, but no suite drove it
 # before this one (gap 4 in docs/test-plan/safety-fences.md).
 #
-# FAIL-CLOSED ROWS FIRST. `filter` and `scope` both refuse an input that carries no
-# harness signature (boundary + gate.sh + lib.sh together) rather than silently
-# filtering nothing — that refusal is asserted before any "clean input passes" row, so
-# a `filter` that always exits 0 cannot pass this suite by accident
-# (law-absence-needs-a-positive-control).
+# FAIL-CLOSED ROWS FIRST. `filter` refuses an input that carries no harness signature
+# (boundary + gate.sh + lib.sh together) rather than silently filtering nothing — that
+# refusal is asserted before any "clean input passes" row, so a `filter` that always
+# exits 0 cannot pass this suite by accident (law-absence-needs-a-positive-control).
+#
+# KNOWN GAP, DOCUMENTED RATHER THAN FIXED (sp-aoads). `filter` computes its scope with
+# the raw, unwidened `scope_from_paths`, while `scope`/`check`/`staged`/`install` all
+# widen a harness one level under the root to ".". In the harness's current layout
+# (boundary/gate.sh/lib.sh under `spira/`, one level under the repo root) that means
+# `git ls-files | exclude.sh filter` — gate-spira.sh's own landing-gate call — never
+# scans the repository ROOT, while `check` and the pre-commit `staged` hook both do.
+# The "no-widen" row below asserts the CURRENT (buggy) behaviour; flip it once sp-aoads
+# lands.
 #
 # tier: T2
 # covers: spira/exclude.sh UC-safety-fences-23
@@ -32,7 +40,9 @@ EXCLUDE="$HERE/exclude.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # A path list carrying the harness signature (boundary + gate.sh + lib.sh in one
-# directory), so `filter`/`scope` can resolve a scope with no filesystem access.
+# directory, "spira/") so `filter` can resolve a scope with no filesystem access.
+# `filter`'s scope is NOT widened (see the gap note above), so it stays "spira" —
+# every in-scope row below is written under that prefix on purpose.
 SIGNATURE=$'spira/boundary\nspira/gate.sh\nspira/lib.sh\n'
 
 filter_with() { printf '%s' "$1" | bash "$EXCLUDE" filter; }
@@ -49,21 +59,21 @@ want "no signature: says why"                                  "nothing to guard
 echo
 echo "POSITIVE CONTROL — filter names every forbidden shape once a scope resolves:"
 # ===========================================================================
-list="${SIGNATURE}.beads/config.yaml
-.dolt/noms/manifest
-embeddeddolt/x
-proxieddb/y
-export.jsonl
-state.db
-state.db-wal
-state.sqlite3
-.beads-credential-key
-sub/dir/.beads/metadata.json"
+list="${SIGNATURE}spira/.beads/config.yaml
+spira/.dolt/noms/manifest
+spira/embeddeddolt/x
+spira/proxieddb/y
+spira/export.jsonl
+spira/state.db
+spira/state.db-wal
+spira/state.sqlite3
+spira/.beads-credential-key
+spira/sub/dir/.beads/metadata.json"
 out="$(filter_with "$list")"; rc=$?
 is   "mixed list: filter exits 0 (found offenders)" "0" "$rc"
-for p in .beads/config.yaml .dolt/noms/manifest embeddeddolt/x proxieddb/y \
-         export.jsonl state.db state.db-wal state.sqlite3 .beads-credential-key \
-         sub/dir/.beads/metadata.json; do
+for p in spira/.beads/config.yaml spira/.dolt/noms/manifest spira/embeddeddolt/x \
+         spira/proxieddb/y spira/export.jsonl spira/state.db spira/state.db-wal \
+         spira/state.sqlite3 spira/.beads-credential-key spira/sub/dir/.beads/metadata.json; do
     want "POSITIVE: flags $p" "$p" "$out"
 done
 
@@ -72,30 +82,44 @@ echo
 echo "clean paths are never flagged, once the positive control above is trusted:"
 # ===========================================================================
 clean="${SIGNATURE}spira/aeon.sh
-docs/readme.md
-sub/dir/notes.md
-a.jsonline.txt"
+spira/docs/readme.md
+spira/sub/dir/notes.md
+spira/a.jsonline.txt"
 out="$(filter_with "$clean")"; rc=$?
 is     "clean list: filter exits 1 (nothing forbidden)" "1" "$rc"
 is     "clean list: prints nothing"                     "" "$out"
 
 # ===========================================================================
 echo
-echo "scope is derived from the signature, not listed: a harness one level under the"
-echo "root widens the scope to '.'; buried deeper, only its own subtree is in scope:"
+echo "in_scope narrows what filter reports: a path outside the signature's directory"
+echo "is not this fence's business, whether or not it looks forbidden:"
 # ===========================================================================
-out="$(printf '%s' "${SIGNATURE}.beads/x" | bash "$EXCLUDE" scope 2>&1)"
-is "harness at root: scope is '.'" "." "$out"
-
-nested=$'wiki/.claude/spira/boundary\nwiki/.claude/spira/gate.sh\nwiki/.claude/spira/lib.sh\n'
-out="$(printf '%s' "$nested" | bash "$EXCLUDE" scope 2>&1)"
-is "harness buried deeper: scope stays that directory" "wiki/.claude/spira" "$out"
-
-# A .beads/ tree OUTSIDE the resolved scope is another repository's business, not this
-# fence's — in_scope must actually narrow what filter reports.
-out="$(printf '%s' "${nested}outside/.beads/config.yaml" | bash "$EXCLUDE" filter 2>&1)"; rc=$?
+out="$(filter_with "${SIGNATURE}outside/.beads/config.yaml")"; rc=$?
 is     "out-of-scope .beads/ is not flagged" "1" "$rc"
 nowant "out-of-scope .beads/ is not flagged" "outside/.beads" "$out"
+
+# ===========================================================================
+echo
+echo "KNOWN GAP (sp-aoads) — filter does not widen scope the way check/staged do:"
+echo "a repo-root offender outside the one-level-under-root harness dir is missed by"
+echo "filter today, even though check and staged both catch the identical tree:"
+# ===========================================================================
+GAPROOT="$TMP/gaproot"
+mkdir -p "$GAPROOT/spira" "$GAPROOT/.beads"
+: > "$GAPROOT/spira/boundary"; : > "$GAPROOT/spira/gate.sh"; : > "$GAPROOT/spira/lib.sh"
+echo secret > "$GAPROOT/.beads/config.yaml"
+git init -q -b main "$GAPROOT"
+git -C "$GAPROOT" config user.email t@t
+git -C "$GAPROOT" config user.name t
+git -C "$GAPROOT" add -A
+git -C "$GAPROOT" commit -q -m init
+
+out="$(git -C "$GAPROOT" ls-files | bash "$EXCLUDE" filter 2>&1)"; rc=$?
+is     "sp-aoads: filter on a root-level .beads/ (current, buggy) reports clean" "1" "$rc"
+is     "sp-aoads: filter prints nothing"                                        "" "$out"
+
+crc=0; bash "$EXCLUDE" check "$GAPROOT" >/dev/null 2>&1 || crc=$?
+is "check on the identical tree still refuses (scope is widened there)" "1" "$crc"
 
 # ===========================================================================
 echo
@@ -112,14 +136,15 @@ git -C "$REPO" config user.name t
 git -C "$REPO" add -A
 git -C "$REPO" commit -q -m init
 
-# POSITIVE CONTROL: a staged offender is refused before a clean stage is trusted.
+# POSITIVE CONTROL: a staged offender (even at the repo root, outside spira/ — staged
+# uses the WIDENED scope, unlike filter) is refused before a clean stage is trusted.
 mkdir -p "$REPO/.beads"
 echo x > "$REPO/.beads/config.yaml"
 git -C "$REPO" add -A
 out="$(bash "$EXCLUDE" staged "$REPO" 2>&1)"; rc=$?
-is   "POSITIVE: staged .beads/config.yaml → staged refuses" "1" "$rc"
-want "POSITIVE: refusal names the offending path"           ".beads/config.yaml" "$out"
-want "POSITIVE: refusal names the override"                 "git restore --staged" "$out"
+is   "POSITIVE: staged root-level .beads/config.yaml → staged refuses" "1" "$rc"
+want "POSITIVE: refusal names the offending path"                      ".beads/config.yaml" "$out"
+want "POSITIVE: refusal names the override"                            "git restore --staged" "$out"
 git -C "$REPO" reset -q --hard
 git -C "$REPO" clean -qfdx
 
