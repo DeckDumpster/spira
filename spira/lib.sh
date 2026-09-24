@@ -3418,6 +3418,30 @@ for line in sys.stdin:
 # OUTPUT NAMES THE BEAD, ITS PREFERENCE AND THE REJECTION REASON so the fix is one label.
 # Format: UNCLAIMABLE <id> — <reason>
 detect_unclaimable_ready() {
+    # Config must come from the production checkout — not from a worktree whose
+    # conf.sh carries a different SPIRA_PLAN_LABEL or other partition label.
+    # _spira_gitstore returns the shared .git dir; its parent is the main worktree.
+    # If that differs from our SPIRA_REPO, re-run via the main checkout with the
+    # label vars unset so the production conf.sh defaults take effect.
+    local _duc_gcd _duc_prod_root
+    _duc_gcd="$(_spira_gitstore "$SPIRA_HOME")" || _duc_gcd=""
+    if [ -n "$_duc_gcd" ]; then
+        _duc_prod_root="$(cd "$_duc_gcd/.." 2>/dev/null && pwd -P)" || _duc_prod_root=""
+        if [ -n "$_duc_prod_root" ] && [ "$_duc_prod_root" != "$SPIRA_REPO" ]; then
+            local _duc_prod_home="$_duc_prod_root/${SPIRA_HOME#$SPIRA_REPO/}"
+            if [ -f "$_duc_prod_home/lib.sh" ]; then
+                env -u SPIRA_PLAN_LABEL -u SPIRA_INCIDENT_LABEL \
+                    -u SPIRA_SCOPE_LABEL -u SPIRA_CI_LABEL \
+                    -u SPIRA_ASK_LABEL -u SPIRA_NO_LOOP_LABEL \
+                    -u SPIRA_CZAR_LABEL -u SPIRA_GROOMER_LABEL \
+                    -u SPIRA_MAECHEN_LABEL -u SPIRA_SPIKE_LABEL \
+                    SPIRA_HOME="$_duc_prod_home" \
+                    bash -c ". \"$_duc_prod_home/lib.sh\"; detect_unclaimable_ready"
+                return $?
+            fi
+        fi
+    fi
+
     local parts="" all_parts="" f inc exc
     for f in $(spira_fayths); do
         inc="$(fayth_get "$f" FAYTH_LABELS)"
