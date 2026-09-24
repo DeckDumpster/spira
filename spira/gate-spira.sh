@@ -108,7 +108,7 @@ BODY
 # ---------------------------------------------------------------------------------------
 # 1. THE FENCES — first, and independently of everything below.
 # ---------------------------------------------------------------------------------------
-for fence in spira/exclude.sh spira/inventory.sh spira/scratch-fence.sh spira/literal-lint.sh spira/suite-state-fence.sh spira/orphan-test.sh; do
+for fence in spira/exclude.sh spira/inventory.sh spira/scratch-fence.sh spira/wiki-add-fence.sh spira/literal-lint.sh spira/suite-state-fence.sh spira/orphan-test.sh; do
     [ -r "$fence" ] || { say "$fence is missing — refusing to land unchecked"; exit 1; }
 done
 
@@ -139,6 +139,17 @@ if ! scr="$(bash spira/scratch-fence.sh 2>&1)"; then
     exit 1
 fi
 printf '%s\n' "$scr" >&2
+
+# WIKI BLANKET-ADD FENCE. Blanket staging on the wiki checkout (git add -A, git add .,
+# git commit -a) sweeps another actor's uncommitted work into the commit and manufactures
+# false attribution (incident: sp-4fl2e). wiki-commit.sh is the canonical path and stages
+# files explicitly; this fence keeps that pattern in force.
+[ -r spira/wiki-add-fence.sh ] || { say "spira/wiki-add-fence.sh is missing — refusing to land unchecked"; exit 1; }
+if ! waf="$(bash spira/wiki-add-fence.sh 2>&1)"; then
+    printf '%s\n' "$waf" >&2
+    exit 1
+fi
+printf '%s\n' "$waf" >&2
 
 # THE SOP SHELF. `sop.sh write` validates; `bd remember sop-<slug>` does not — it is the
 # back door this check closes. Lint reads every sop- key and applies the same rules, so a

@@ -84,6 +84,12 @@ spira/test-literal-lint.sh
 # a clean tree.
 spira/test-scratch-fence.sh
 
+# THE WIKI BLANKET-ADD FENCE'S OWN POSITIVE CONTROL. wiki-add-fence.sh refuses any
+# non-comment code line that pairs SPIRA_WIKI with a blanket staging form (add -A, add .,
+# commit -a). This suite plants each offender (SEEN RED), withdraws it (SEEN GREEN), and
+# verifies that comment lines are not flagged, confirming the matcher fires on code only.
+spira/test-wiki-add-fence.sh
+
 # SCRATCH-FENCE AT CERTIFICATION: a root-level scratch file is refused before a CERTIFIED
 # record is written. The cost of a fence violation escaping certification is a full CI run
 # (image build + suites) blocked for every branch in the batch — sp-zmd3u-sop-verification.md
