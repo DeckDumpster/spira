@@ -252,8 +252,24 @@ _cmd_halt() {
         "${phase:--}" "${repo:--}" "$elapsed"
 }
 
+_cmd_sweep_red() {
+    local f id state tip at reason
+    [ -d "$LANDSTATE" ] || { printf 'sweep-red: landstate dir not found: %s\n' "$LANDSTATE" >&2; exit 1; }
+    local found=0
+    for f in "$LANDSTATE"/*; do
+        [ -f "$f" ] || continue
+        id="$(basename "$f")"
+        read -r state tip at reason < "$f" 2>/dev/null; [ -n "$state" ] || continue
+        [ "$state" = "RED" ] || continue
+        found=$(( found + 1 ))
+        printf '%s\t%s\t%s\t%s\n' "$id" "$tip" "$at" "${reason:-}"
+    done
+    [ "$found" -gt 0 ] || printf 'sweep-red: no RED landstate entries found\n'
+}
+
 case "${1:-}" in
-halt) shift; _cmd_halt "$@" ;;
+halt)       shift; _cmd_halt "$@" ;;
+sweep-red)  _cmd_sweep_red; exit ;;
 esac
 
 trap finish EXIT
@@ -841,6 +857,12 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
             fi
             bump_requeue "$id" merge-conflict >/dev/null 2>&1
             _rq_n="$(requeues_of "$id")"
+            if [ "${_ls_st:-}" = RED ] && [ "${_ls_reason%%@*}" = "no-rebase" ]; then
+                spira_ask_red_recurring "$id" "$br" "$name" "no-rebase" "${_ls_at:-0}"
+                progress "escalated $id — no-rebase RED recurring on $br"
+                land_mark "$id" RED "$_cur_br_tip" "no-rebase@${_cur_base_sha}"
+                continue
+            fi
             if [ "${_rq_n:-0}" -ge "${SPIRA_REBASE_ESCALATE_AT:-3}" ]; then
                 spira_ask_rebase_loop "$id" "$br" "$name" "$_rq_n" "${REBASE_CONFLICTS:-unknown}" "$_other_beads"
                 progress "escalated $id — rebase conflict x${_rq_n} on $br"
@@ -1173,6 +1195,12 @@ for i in d:
             _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
             bump_requeue "$id" merge-conflict >/dev/null 2>&1
             _rq_n="$(requeues_of "$id")"
+            if [ "${_ls_st:-}" = RED ] && [ "${_ls_reason%%@*}" = "no-rebase" ]; then
+                spira_ask_red_recurring "$id" "$br" "$name" "no-rebase" "${_ls_at:-0}"
+                progress "escalated $id — no-rebase RED recurring on $br"
+                land_mark "$id" RED "$tip" "no-rebase@${_cur_base_sha}"
+                continue
+            fi
             if [ "${_rq_n:-0}" -ge "${SPIRA_REBASE_ESCALATE_AT:-3}" ]; then
                 spira_ask_rebase_loop "$id" "$br" "$name" "$_rq_n" "${REBASE_CONFLICTS:-unknown}" "$_other_beads"
                 progress "escalated $id — rebase conflict x${_rq_n} on $br"
