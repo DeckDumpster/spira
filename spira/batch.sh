@@ -148,6 +148,51 @@ if d and d[0].get("status")=="closed": print("closed")' 2>/dev/null)" || _crl_st
     done
 }
 
+# _landed_false <repo-path> <base-ref> — print "<id> <tip>" for each LANDED landstate
+# whose tip is neither an ancestor of base nor provably its content (law-landed-is-content).
+# THE SWEEP for sp-dgaig's defect: a LANDED record written on a REMOVED reap-log line alone,
+# or on landed()'s old any-mention match, never actually reached base. Both writers are fixed
+# elsewhere in this file and in lib.sh; this finds any record either left behind before the
+# fix, or that a caller not yet audited still manages to write.
+_landed_false() {
+    local repo="$1" base="$2" f id st tip
+    [ -d "$LANDSTATE" ] || return 0
+    for f in "$LANDSTATE/"*; do
+        [ -f "$f" ] || continue
+        id="$(basename "$f")"
+        case "$id" in .*|*/*) continue ;; esac
+        st=""; tip=""
+        { read -r st tip _ < "$f"; } 2>/dev/null || [ -n "$st" ] || continue
+        [ "$st" = "LANDED" ] || continue
+        [ -n "${tip:-}" ] && [ "$tip" != none ] || continue
+        git -C "$repo" merge-base --is-ancestor "$tip" "$base" 2>/dev/null && continue
+        content_landed "$repo" "$tip" "$base" 2>/dev/null && continue
+        printf '%s %s\n' "$id" "$tip"
+    done
+}
+
+# _landed_false_restore <id> — if a branch spira/<id> exists locally in any managed
+# repository, or on that repository's own remote-tracking ref, print its tip sha. Restores
+# the local ref from the remote-tracking one first, matching the by-hand recovery this
+# replaces (`git branch spira/<id> <remote>/spira/<id>`; sp-dgaig).
+_landed_false_restore() {
+    local id="$1" rn rp rem
+    for rn in $(spira_repos); do
+        rp="$(repo_root "$rn" 2>/dev/null)" || continue
+        if git -C "$rp" show-ref --verify -q "refs/heads/spira/$id" 2>/dev/null; then
+            git -C "$rp" rev-parse "refs/heads/spira/$id" 2>/dev/null
+            return 0
+        fi
+        rem="$(ref_remote "$(spira_landref "$rp" 2>/dev/null)" 2>/dev/null)" || continue
+        if git -C "$rp" show-ref --verify -q "refs/remotes/$rem/spira/$id" 2>/dev/null &&
+           git -C "$rp" branch "spira/$id" "refs/remotes/$rem/spira/$id" 2>/dev/null; then
+            git -C "$rp" rev-parse "refs/heads/spira/$id" 2>/dev/null
+            return 0
+        fi
+    done
+    return 1
+}
+
 # _certified_list <repo-path> — delegates to queue_certified_list in lib.sh.
 # Kept as a local alias so callers inside this file do not need updating.
 _certified_list() { queue_certified_list "$@"; }
@@ -245,6 +290,39 @@ main() {
             2>/dev/null || true
     fi
 
+    # LANDED landstate whose tip never reached base — the shape sp-dgaig fixed two writers
+    # of. Report every one found, and recover what can be: if a branch for the id still
+    # exists anywhere this harness can reach (locally, or on that repository's own remote),
+    # restore it and re-certify so the queue picks the real work back up (law-a-sweep-is-not-
+    # a-bead: this runs every batch pass rather than waiting to be noticed by hand).
+    local _lf_id _lf_tip _lf_entry _lf_entries _lf_list=""
+    _lf_entries="$(_landed_false "$repo" "$base_sha")"
+    if [ -n "${_lf_entries:-}" ]; then
+        while IFS= read -r _lf_entry; do
+            [ -n "$_lf_entry" ] || continue
+            _lf_id="${_lf_entry%% *}"
+            local _lf_restored
+            if _lf_restored="$(_landed_false_restore "$_lf_id")" && [ -n "$_lf_restored" ]; then
+                land_mark "$_lf_id" CERTIFIED "$_lf_restored" recertified-false-landed
+                printf 'batch %s: WARN false-landed %s — tip never reached %s; branch found and RE-CERTIFIED at %s\n' \
+                    "$name" "$_lf_id" "$base" "$_lf_restored"
+            else
+                printf 'batch %s: WARN false-landed %s — tip never reached %s; no branch found anywhere, needs manual recovery\n' \
+                    "$name" "$_lf_id" "$base"
+            fi
+            local _lf_title
+            _lf_title="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$_lf_id" --json 2>/dev/null \
+                | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print(d.get("title") or "")' 2>/dev/null || true)"
+            _lf_list="${_lf_list}- ${_lf_id}${_lf_title:+ — ${_lf_title}}\n"
+        done <<< "$_lf_entries"
+        printf '## Note\nBead(s) for %s were recorded LANDED but their tip never reached %s:\n\n%bSee the batch log for which were re-certified and which need recovery by hand.\n' \
+            "$name" "$base" "$_lf_list" \
+        | bash "$HERE/mail.sh" send operator \
+            --from "Spira Queue <queue@spira>" \
+            --subject "Merge queue: $name — LANDED record(s) never reached base" \
+            2>/dev/null || true
+    fi
+
     # Mark CERTIFIED records whose branches are gone so they drop from the queue view.
     # This runs before the open-batch guard so stale records are converged even while a
     # batch PR is pending — without this, a long CI run leaves them accumulating
@@ -289,14 +367,19 @@ main() {
                 printf 'batch %s: %s tip already in %s (orphan) — LANDED\n' \
                     "$name" "$_lid" "$base"
             else
-                # The Sending reaps branches it verified as landed/superseded; a REMOVED
-                # entry here means the content landed even if the tip is not an ancestor
-                # (rebased or squash-merged). Without an entry, the deletion was unexpected.
-                if [ -f "${SPIRA_REAPLOG:-$SPIRA_RUN/reap.log}" ] && \
-                       awk -v id="$_lid" '$2 == "REMOVED" && $3 == id {found=1} END {exit !found}' \
-                           "${SPIRA_REAPLOG:-$SPIRA_RUN/reap.log}" 2>/dev/null; then
-                    land_mark "$_lid" LANDED "${_ltip:-none}" reaped-orphan
-                    printf 'batch %s: %s has no branch — LANDED (reaped-orphan)\n' "$name" "$_lid"
+                # A REMOVED reap-log entry says something with this id was deleted, not that
+                # its content is the content on base — the entry carries no tip and no date,
+                # so it was true of any tip ever reaped under this id. Ask the question
+                # content_landed asks instead, against the certified tip itself: it accepts
+                # any commit-ish, so a tip whose branch is gone is judged the same way a live
+                # one would be. A tip that was pruned (object no longer exists) fails the git
+                # calls inside content_landed and this falls to LOST — refuse rather than
+                # guess (sp-dgaig: a REMOVED-alone reading marked five reaped branches LANDED
+                # though none of their content had reached base).
+                if content_landed "$repo" "${_ltip:-none}" "$base_sha" 2>/dev/null; then
+                    land_mark "$_lid" LANDED "${_ltip:-none}" content-landed-orphan
+                    printf 'batch %s: %s has no branch — content on %s (orphan) — LANDED\n' \
+                        "$name" "$_lid" "$base"
                 else
                     land_mark "$_lid" LOST "${_ltip:-none}" branch-gone
                     printf 'batch %s: %s has no branch — LOST (branch-gone)\n' "$name" "$_lid"

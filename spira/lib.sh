@@ -3092,7 +3092,7 @@ if notes:
 # times. It reached attempt 4 against a poison threshold of 3: the harness was one pass from
 # escalating a finished, merged deliverable as a failure.
 landed() {
-    local id="$1" repo="${2:-$(repo_root)}" commit refs
+    local id="$1" repo="${2:-$(repo_root)}" refs _landed_subj
     # THE REPOSITORY'S OWN LAND REF, not `main`, and its local counterpart alongside it. The
     # sentinel lands by pushing from the .landing worktree straight to the remote, and
     # nothing in the harness ever pulls the shared checkout, so the local ref there is
@@ -3102,12 +3102,22 @@ landed() {
     # landed bead and being reopened. spira_landrefs keeps only refs that resolve, so a
     # repository with no local copy of its base still works.
     refs="$(spira_landrefs "$repo")" || return 2
-    # Full-history search: no window limit. -n1 stops git after the first hit, so this is
-    # O(depth of first matching commit), not O(total history). Not found over full history is
-    # definitive — rc 1 (not landed). rc 2 is reserved for the refs-unresolvable case above.
+    # A LANDING RECORD, NOT A MENTION. --grep over the full message treated any commit that
+    # named the id ANYWHERE — a dependency list, a "Fixes: <id> (analysis)" cross-reference, a
+    # "Filed <id>" note in an unrelated bead's own commit — as proof that id had landed. Five
+    # certified branches were reaped and their landstate written LANDED on exactly this: a
+    # commit that talked about the bead, not one that landed it (sp-dgaig). --grep is still
+    # used to narrow full history to candidates cheaply; only the SUBJECT of each candidate is
+    # then trusted, and only two shapes count: the queue's own merge subject
+    # ("spira: land <id>", produced by batch.sh/landing.sh), or an aeon's own commit for its
+    # own bead ("<id>: ..." — never a substring, the colon must follow immediately).
     # shellcheck disable=SC2086
-    commit="$(git -C "$repo" log --format='%H' -n1 --grep="$id" $refs 2>/dev/null)"
-    [ -n "$commit" ] && return 0
+    while IFS= read -r _landed_subj; do
+        case "$_landed_subj" in
+            "spira: land $id") return 0 ;;
+            "$id":*) return 0 ;;
+        esac
+    done < <(git -C "$repo" log --format='%s' --grep="$id" -F $refs 2>/dev/null)
     return 1
 }
 
