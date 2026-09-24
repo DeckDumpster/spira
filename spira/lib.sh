@@ -385,6 +385,24 @@ Reason: $reason.
 MAILEOF
 }
 
+# spira_ask_budget_deferred — branch deferred by budget exhaustion N consecutive passes.
+spira_ask_budget_deferred() {  # <branch> <repo> <count>
+    local br="$1" name="$2" n="$3"
+    [ -x "$SPIRA_HOME/mail.sh" ] || return 0
+    ask_already_open "$br budget-deferred" && return 0
+    local _subj="$br budget-deferred: $n consecutive passes in $name"
+    "$SPIRA_HOME/mail.sh" send operator \
+        --from "Landing gate <gate@spira>" \
+        --subject "$_subj" \
+        --kind alert <<MAILEOF >/dev/null 2>&1
+## Alert
+$_subj
+
+Branch $br has been deferred by budget exhaustion $n consecutive landing passes in $name.
+The pass runs out of gate budget before reaching this branch.
+MAILEOF
+}
+
 # spira_ask_refresh_loop — escalate a pr-mode branch that will not merge despite being
 # repeatedly refreshed onto the base.
 #
