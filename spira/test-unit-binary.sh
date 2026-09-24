@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# covers: spira/build-bins.sh systemd/*.service .github/workflows/gate.yml
+# covers: systemd/*.service .github/workflows/gate.yml
 #
 # Verifies the unit-to-binary contract: every binary crate in the repo must
 # have a corresponding executable in bin/ before suites run. The build job
@@ -130,18 +130,10 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Mechanism: build-bins.sh exists and is executable — it is what produces bin/.
-# gate.yml has a build job that calls build-bins.sh before suites run.
+# Mechanism: gate.yml has a build job that calls make build before suites run.
 # ---------------------------------------------------------------------------
-if [ -x "$HERE/build-bins.sh" ]; then
-    ok "build-bins.sh exists and is executable"
-else
-    bad "build-bins.sh exists and is executable" \
-        "not found or not executable at $HERE/build-bins.sh"
-fi
-
-want "gate.yml build job calls build-bins.sh" \
-    "build-bins.sh" \
+want "gate.yml build job calls make build" \
+    "make build" \
     "$(cat "$REPO/.github/workflows/gate.yml" 2>/dev/null)"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
