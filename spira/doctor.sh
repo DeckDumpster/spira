@@ -82,7 +82,7 @@ fi
 # jq and zstd each have a working fallback (python3 for JSON, gzip for archives), so their
 # absence is a warning about a slower or less convenient path, never about a broken one.
 # They are checked here because they are DECLARED — test-bin-manifest.sh fails if anything
-# in SPIRA_BINS is examined by nothing, which is how bd-embedded went a week unnoticed.
+# in deps.toml is examined by nothing, which is how bd-embedded went a week unnoticed.
 for b in gh "${SPIRA_AGENT:-claude}" tmux node jq zstd; do
     if command -v "$b" >/dev/null 2>&1; then OK "$b — $(command -v "$b")"
     else WARN "$b is not on PATH — $(spira_bin_purpose "$b")" \
@@ -229,8 +229,7 @@ _dr_dev_mode=0
 [ "${1:-}" = "--dev" ] && _dr_dev_mode=1
 echo
 echo "development dependencies (not needed to run the loop)"
-for b in $SPIRA_BINS; do
-    [ "$(spira_bin_tier "$b")" = dev ] || continue
+for b in $(spira_deps_list dev); do
     _dr_found="$(command -v "$b" 2>/dev/null || true)"
     if [ -n "$_dr_found" ]; then
         OK "$b — $_dr_found"
