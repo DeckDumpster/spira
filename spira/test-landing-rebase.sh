@@ -273,18 +273,50 @@ is   "which stays closed"                               closed "$(status_of sp-h
 want "and the pass counts what the sweep did"           "1 survivor(s) rebased after a landing, 0 conflicted" "$out"
 drop_branch sp-held; drop_branch sp-lands
 
-# THE SWEEP MUST STILL REOPEN A REAL DISAGREEMENT.
+# THE SWEEP MUST ESCALATE A REAL DISAGREEMENT — never hand back unchanged.
 seed; branch sp-cheld shared.txt "from the held branch"
 branch sp-clands shared.txt "from the branch that lands"
 withhold_gate sp-cheld
 out="$(landing)"
-want "the branch behind it still lands"            "landed spira/sp-clands" "$out"
-want "and the survivor that truly conflicts is reopened" "reopened sp-cheld" "$out"
-is   "its bead goes back to open"                  open "$(status_of sp-cheld)"
-want "the note names the file that collided"       "shared.txt" "$(notes_of sp-cheld)"
-want "and names the landing that moved the base"   "after spira/sp-clands landed" "$(notes_of sp-cheld)"
-want "and the pass counts the conflict separately" "0 survivor(s) rebased after a landing, 1 conflicted" "$out"
+want "the branch behind it still lands"                   "landed spira/sp-clands" "$out"
+want "and the survivor that truly conflicts is escalated"  "escalated sp-cheld" "$out"
+is   "its bead stays closed"                              closed "$(status_of sp-cheld)"
+want "and the pass counts the conflict separately"        "0 survivor(s) rebased after a landing, 1 conflicted" "$out"
 drop_branch sp-cheld; drop_branch sp-clands
+
+# RE-CUT MOVES THE MERGE-BASE EVEN WHEN SOME COMMITS CONFLICT.
+# Branch has two commits: C1 creates a unique file (no conflict), C2 modifies a shared
+# file that main also changes. recut_onto must apply C1 and update the branch ref to
+# origin/main + C1, making origin/main an ancestor. Without the re-cut, the branch would
+# remain on the old base and on_base would return "no" — the test is seen to fail first.
+seed
+branch_two_commits() {
+    local id="$1"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$RUN/worktree/$id" main
+    printf 'unique content\n' > "$RUN/worktree/$id/unique-${id}.txt"
+    git -C "$RUN/worktree/$id" add -A
+    git -C "$RUN/worktree/$id" commit -q -m "feat: $id — unique file"
+    printf 'branch version\n' > "$RUN/worktree/$id/shared-recut.txt"
+    git -C "$RUN/worktree/$id" add -A
+    git -C "$RUN/worktree/$id" commit -q -m "feat: $id — shared file"
+    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
+        "$id" "$id" "$id" | testdb_seed
+}
+branch_two_commits sp-recut2
+printf 'main version\n' > "$REPO/shared-recut.txt"
+git -C "$REPO" add shared-recut.txt
+git -C "$REPO" commit -q -m "main writes shared-recut.txt"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+: > "$EMITTED"
+out="$(SPIRA_REBASE_DECOMPOSE_FILES=1 landing)"
+want "the pass escalates the partial-conflict branch"   "escalated sp-recut2" "$out"
+is   "the merge-base moved to current main after recut" yes "$(on_base sp-recut2)"
+is   "the bead stays closed"                            closed "$(status_of sp-recut2)"
+# A BRANCH WIDE ENOUGH TO RACE EVERY LANDING IS TOLD TO SPLIT, NOT REBASE AGAIN.
+# sp-recut2 touches 2 files; with the threshold lowered to 1 the escalation must say so.
+want "and the escalation suggests decomposition, not another hand rebase" \
+     "smaller beads" "$(cat "$EMITTED")"
+drop_branch sp-recut2
 
 # A BRANCH AN AEON TOOK WHILE THE PASS RAN IS NEVER REWRITTEN.
 seed; branch sp-taken taken.txt; branch sp-tlands tlands.txt

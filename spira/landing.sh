@@ -661,8 +661,7 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
                 log "CHECK6 $id: $br does not rebase onto $base, but its pull request is merged — landed, not stuck"
                 continue
             fi
-            n_swept_conflict=$(( n_swept_conflict + 1 ))
-            local _other_beads _reopen_note _rq_n _rn_sweep _cur_br_tip _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason
+            local _cur_br_tip _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason _other_beads _rq_n
             _cur_br_tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
             _cur_base_sha="$(git -C "$repo" rev-parse "$base" 2>/dev/null)"
             read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
@@ -671,31 +670,24 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
                 log "CHECK6 $id: tip and base unchanged since last RED mark — skipping duplicate bump"
                 continue
             fi
-            _rn_sweep="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
-            _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
-            _reopen_note="Reopened by sentinel: $br does not rebase onto $base in $name after $landed landed; conflicts in ${REBASE_CONFLICTS:-unknown}. The branch carries $_rn_sweep commit(s) from the previous session — resume from the existing work."
-            if [ -n "$_other_beads" ]; then
-                _reopen_note="$_reopen_note Those files were changed on $base by $_other_beads — check whether this work is already landed before resolving."
-            else
-                _reopen_note="$_reopen_note A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it."
-            fi
             bump_requeue "$id" merge-conflict >/dev/null 2>&1
             _rq_n="$(requeues_of "$id")"
-            if [ "${_ls_st:-}" = RED ] && [ "${_ls_reason%%@*}" = "no-rebase" ]; then
-                spira_ask_red_recurring "$id" "$br" "$name" "no-rebase" "${_ls_at:-0}"
-                progress "escalated $id — no-rebase RED recurring on $br"
-                land_mark "$id" RED "$_cur_br_tip" "no-rebase@${_cur_base_sha}"
+            # Re-cut: cherry-pick commits onto the new base so merge-base always moves. A
+            # sweep survivor's bead is already closed — there is no aeon holding it to hand
+            # a reopen to, so any conflict the recut cannot clear escalates immediately
+            # rather than reopening a closed bead for a session that isn't there.
+            if recut_onto "$br" "$base" "$repo" "$name"; then
+                n_swept=$(( n_swept + 1 ))
+                _cur_br_tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
+                land_mark "$id" REBASED "$_cur_br_tip" "recut-swept"
+                log "CHECK6 $id: re-cut $br onto $base after $landed landed (${RECUT_APPLIED_COUNT:-0} commit(s)) — still landable"
                 continue
             fi
-            if [ "${_rq_n:-0}" -ge "${SPIRA_REBASE_ESCALATE_AT:-3}" ]; then
-                spira_ask_rebase_loop "$id" "$br" "$name" "$_rq_n" "${REBASE_CONFLICTS:-unknown}" "$_other_beads" "$repo" "$base"
-                progress "escalated $id — rebase conflict x${_rq_n} on $br"
-            else
-                bead_reopen "$id" rebase-conflict "$_reopen_note"
-                progress "reopened $id — does not rebase onto $base"
-                spira_event bead.reopened "$id" "reopened $id — $br does not rebase onto $base in $name" \
-                    "conflicts in ${REBASE_CONFLICTS:-unknown}; the next aeon is handed the rebase" || true
-            fi
+            n_swept_conflict=$(( n_swept_conflict + 1 ))
+            _cur_br_tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
+            _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${RECUT_CONFLICTS:-${REBASE_CONFLICTS:-}}")"
+            spira_ask_rebase_loop "$id" "$br" "$name" "${_rq_n:-1}" "${RECUT_CONFLICTS:-${REBASE_CONFLICTS:-unknown}}" "$_other_beads" "$repo" "$base"
+            progress "escalated $id — re-cut conflicted on $br after ${_rq_n:-1} attempt(s); ${RECUT_APPLIED_COUNT:-0} commit(s) moved to $base"
             land_mark "$id" RED "$_cur_br_tip" "no-rebase@${_cur_base_sha}"
             continue
         fi
@@ -1033,7 +1025,7 @@ for i in d:
                 log "CHECK6 $id: $br does not rebase onto $base, but its pull request is merged — landed, not stuck"
                 continue
             fi
-            local _other_beads _reopen_note _rq_n _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason
+            local _other_beads _reopen_note _rq_n _cur_base_sha _ls_st _ls_tip _ls_at _ls_reason _ls_reason_class
             _cur_base_sha="$(git -C "$repo" rev-parse "$base" 2>/dev/null)"
             read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
             if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$tip" ] && \
@@ -1041,27 +1033,36 @@ for i in d:
                 log "CHECK6 $id: tip and base unchanged since last RED mark — skipping duplicate bump"
                 continue
             fi
-            _reopen_note="$(conflict_reopen_note "$repo" "$br" "$base" "$name" "${REBASE_CONFLICTS:-}" "sentinel")"
-            _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
             bump_requeue "$id" merge-conflict >/dev/null 2>&1
             _rq_n="$(requeues_of "$id")"
-            if [ "${_ls_st:-}" = RED ] && [ "${_ls_reason%%@*}" = "no-rebase" ]; then
-                spira_ask_red_recurring "$id" "$br" "$name" "no-rebase" "${_ls_at:-0}"
-                progress "escalated $id — no-rebase RED recurring on $br"
-                land_mark "$id" RED "$tip" "no-rebase@${_cur_base_sha}"
+            _ls_reason_class="${_ls_reason%%@*}"
+            _reopen_note="$(conflict_reopen_note "$repo" "$br" "$base" "$name" "${REBASE_CONFLICTS:-}" "sentinel" "${_rq_n:-1}")"
+            _other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "${REBASE_CONFLICTS:-}")"
+            # Re-cut: cherry-pick commits onto the new base so merge-base always moves.
+            # All committed: fall through to gate. Partial (some applied, some conflict):
+            # escalate immediately — surviving work is in the branch, needs human judgment.
+            # Total failure: if same reason class as previous RED, escalate (recurring);
+            # otherwise reopen up to SPIRA_REBASE_ESCALATE_AT, then escalate.
+            if ! recut_onto "$br" "$base" "$repo" "$name"; then
+                if [ "${RECUT_APPLIED_COUNT:-0}" -gt 0 ]; then
+                    spira_ask_rebase_loop "$id" "$br" "$name" "${_rq_n:-1}" "${RECUT_CONFLICTS:-${REBASE_CONFLICTS:-unknown}}" "$_other_beads" "$repo" "$base"
+                    progress "escalated $id — re-cut conflicted on $br after ${_rq_n:-1} attempt(s); ${RECUT_APPLIED_COUNT:-0} commit(s) moved to $base"
+                elif [ "${_ls_st:-}" = RED ] && [ "${_ls_reason_class:-}" = "no-rebase" ]; then
+                    spira_ask_red_recurring "$id" "$br" "$name" "no-rebase" "${_ls_at:-0}"
+                    progress "escalated $id — recurring no-rebase on $br after ${_rq_n:-1} attempt(s)"
+                elif [ "${_rq_n:-0}" -ge "${SPIRA_REBASE_ESCALATE_AT:-3}" ]; then
+                    spira_ask_rebase_loop "$id" "$br" "$name" "${_rq_n:-1}" "${REBASE_CONFLICTS:-unknown}" "$_other_beads" "$repo" "$base"
+                    progress "escalated $id — rebase conflict x${_rq_n} on $br"
+                else
+                    bead_reopen "$id" rebase-conflict "$_reopen_note"
+                    progress "reopened $id — does not rebase onto $base"
+                    spira_event bead.reopened "$id" "reopened $id — $br does not rebase onto $base in $name" \
+                        "conflicts in ${REBASE_CONFLICTS:-unknown}; the next aeon is handed the rebase" || true
+                fi
+                land_mark "$id" RED "$(git -C "$repo" rev-parse "$br" 2>/dev/null)" "no-rebase@${_cur_base_sha}"
                 continue
             fi
-            if [ "${_rq_n:-0}" -ge "${SPIRA_REBASE_ESCALATE_AT:-3}" ]; then
-                spira_ask_rebase_loop "$id" "$br" "$name" "$_rq_n" "${REBASE_CONFLICTS:-unknown}" "$_other_beads" "$repo" "$base"
-                progress "escalated $id — rebase conflict x${_rq_n} on $br"
-            else
-                bead_reopen "$id" rebase-conflict "$_reopen_note"
-                progress "reopened $id — does not rebase onto $base"
-                spira_event bead.reopened "$id" "reopened $id — $br does not rebase onto $base in $name" \
-                    "conflicts in ${REBASE_CONFLICTS:-unknown}; the next aeon is handed the rebase" || true
-            fi
-            land_mark "$id" RED "$tip" "no-rebase@${_cur_base_sha}"
-            continue
+            log "CHECK6 $id: re-cut $br onto $base (${RECUT_APPLIED_COUNT:-0} commit(s)) — falling through to gate"
         fi
         tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
         judged["$br"]=1
