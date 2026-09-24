@@ -21,6 +21,13 @@ flock "${_wc_lockfd}"
 
 while IFS= read -r f; do
     [ -n "$f" ] || continue
+    # A directory path stages everything beneath it — every file a caller never named,
+    # indistinguishable from `git add -A` for that subtree. Callers name files; refuse
+    # anything that isn't one rather than silently sweeping it in.
+    if [ -d "$wiki/$f" ]; then
+        printf 'wiki-commit.sh: refusing directory path %s — name the files, not the directory\n' "$f" >&2
+        continue
+    fi
     git -C "$wiki" add -- "$f" 2>/dev/null || true
 done <<< "$files"
 
