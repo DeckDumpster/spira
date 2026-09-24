@@ -65,7 +65,7 @@ EOF
 roster() { # roster <function>
     env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
         SPIRA_HOME="$TMP" SPIRA_FAYTHS="worker laner human humanlane" \
-        bash -c '. "$2"/lib.sh 2>/dev/null; "$1"' _ "$1" "$HARNESS" 2>/dev/null
+        bash -c '. "$2"/lib.sh 2>/dev/null; "$1"' _ "$1" "$HERE" 2>/dev/null
 }
 # The fixture chamber must sit under SPIRA_HOME, which is where fayth_get and fayth_names look.
 ln -sfn "$CH" "$TMP/chamber"
@@ -89,8 +89,8 @@ echo "the shipped concierge — real persona, summoned by nobody"
 
 ship() { # ship <function>   — the REAL chamber, with the concierge listed in the roster
     env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_HOME="$HARNESS" SPIRA_FAYTHS="builder ops concierge" \
-        bash -c '. "$2"/lib.sh 2>/dev/null; "$1"' _ "$1" "$HARNESS" 2>/dev/null
+        SPIRA_HOME="$HERE" SPIRA_FAYTHS="builder ops concierge" \
+        bash -c '. "$2"/lib.sh 2>/dev/null; "$1"' _ "$1" "$HERE" 2>/dev/null
 }
 # LISTED IN $SPIRA_FAYTHS ON PURPOSE. No host lists it today, so the roster alone would keep
 # it out — and that is a second reason, not the one under test. Naming it here removes the
@@ -148,7 +148,7 @@ HOOK="$HERE/hooks/session.sh"
 # in-force guard passes; everything else is moved to non-defaults.
 HOOK_CONF="$SID_HOOK_DIR/spira.conf"
 cat > "$HOOK_CONF" <<EOF
-SPIRA_PROD = $HARNESS
+SPIRA_PROD = $HERE
 SPIRA_RUN = $SID_HOOK_DIR/run
 SPIRA_WATCHERS = $SID_HOOK_DIR/no-watchers
 EOF
@@ -198,7 +198,7 @@ echo "session hook: SPIRA_PROD resolves through a symlink"
 # SPIRA_PROD compared unequal to SPIRA_HOME (a resolved path) and the hook silently exited 0,
 # recording nothing and leaving the concierge unable to resume after any session reset.
 SID_LINK_DIR="$TMP/hookrun_link"; mkdir -p "$SID_LINK_DIR/run"
-ln -sfn "$HARNESS" "$SID_LINK_DIR/spira-link"
+ln -sfn "$HERE" "$SID_LINK_DIR/spira-link"
 HOOK_CONF_LINK="$SID_LINK_DIR/spira.conf"
 cat > "$HOOK_CONF_LINK" <<EOF
 SPIRA_PROD = $SID_LINK_DIR/spira-link

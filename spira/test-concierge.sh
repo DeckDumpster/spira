@@ -261,7 +261,7 @@ echo "convergence — a live holder with no tmux session is HEADLESS, not conver
 CONV_SID="conv-test-$(date +%s)"
 CONV_DIR="$(mktemp -d)"; mkdir -p "$CONV_DIR/bin"
 printf '#!/bin/sh\necho STUB_CLAUDE_RAN\n' > "$CONV_DIR/bin/claude"; chmod +x "$CONV_DIR/bin/claude"
-CONV_BRAIN="$(bash -c ". '$HARNESS/conf.sh' >/dev/null 2>&1; printf %s \"\${SPIRA_WIKI:-\$SPIRA_REPO}\"")"
+CONV_BRAIN="$(bash -c ". '$HERE/conf.sh' >/dev/null 2>&1; printf %s \"\${SPIRA_WIKI:-\$SPIRA_REPO}\"")"
 printf '%s\n%s\n' "$CONV_SID" "$CONV_BRAIN" > "$CONV_DIR/concierge-session"
 bash -c "exec -a claude python3 -c 'import time; time.sleep(60)' --resume ${CONV_SID}" &
 CONV_PID=$!
