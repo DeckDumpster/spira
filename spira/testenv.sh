@@ -73,10 +73,9 @@ _image_tag() {
         # changes the migration count may invalidate schema expectations in the test suites, so
         # the image must be rebuilt when the pin changes.
         [ -f "$_pin" ] && cat "$_pin"
-        # Dependency manifest: SPIRA_BINS and spira_bin_tier. When a program is added or its
-        # tier changes, doctor-check.sh's FATAL/WARN sets move — the tag must move first so a
-        # build fires.
-        sed -n '/^SPIRA_BINS=/,/^}/p' "$HERE/conf.sh" 2>/dev/null || true
+        # Dependency manifest: deps.toml. When a program is added or its tier changes,
+        # doctor-check.sh's FATAL/WARN sets move — the tag must move first so a build fires.
+        sha256sum < "$HERE/deps.toml" 2>/dev/null || true
     } | sha256sum | cut -c1-12
 }
 

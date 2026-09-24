@@ -6,13 +6,12 @@
 #   ./test-bin-manifest.sh
 #
 # THE DEFECT THIS SUITE GUARDS AGAINST. A manifest entry with a name but no way to read its
-# version cannot be checked for drift — the whole point of shipping a manifest instead of a
-# hardcoded list. Before sp-y24c5, SPIRA_BINS carried names and a tier with no version data
-# at all: an ancient bd on a box that "has bd" looked identical to a current one.
+# version cannot be checked for drift — the whole point of shipping a manifest at all. An
+# ancient binary on a box that merely "has" it looks identical to a current one.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control). A scan for missing fields first
 # proves it can find one: an undeclared program probed through the same functions must come
-# back untiered and unpursed, or the scan is not looking at anything.
+# back untiered and unpurposed, or the scan is not looking at anything.
 #
 # covers: spira/conf.sh spira/deps.toml
 set -uo pipefail
