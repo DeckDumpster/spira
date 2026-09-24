@@ -347,6 +347,24 @@ sys.exit(0 if b.get("status") == "closed" and has_delivers else 1)' 2>/dev/null;
                     send_branch "$id" "$br" "REAPED"
                     continue
                 fi
+                # OPEN BEAD WITH ZERO AHEAD: an open bead with n=0 that is an ancestor of
+                # the landing ref has its work already on main. Even if landed() did not find
+                # a commit explicitly naming the bead, the branch itself is reachable from the
+                # base, so reap it. This handles cases where work lands through a batch commit
+                # or other mechanism that does not name the individual bead.
+                if ! printf '%s\n' "$_bead_json" | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+sys.exit(0 if d and d[0].get("status") == "closed" else 1)' 2>/dev/null; then
+                    if [ "$DRY" = 1 ]; then
+                        say "WOULD  $id  reap branch $br (open, 0 ahead, already on $LANDREF)"
+                        continue
+                    fi
+                    send_branch "$id" "$br" "REAPED"
+                    continue
+                fi
             fi
             # LANDED BY OTHER PR. A batch commit that names this bead satisfies landed()
             # even when the bead's own PR was closed unmerged and the branch conflicts with
