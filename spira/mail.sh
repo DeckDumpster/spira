@@ -16,6 +16,11 @@
 # kind requires, has an empty required section, or is urgent without
 # "## Why it is urgent".  Each refusal names the rule.
 # Override: SPIRA_MAIL_LINT_CONSIDERED=<reason>, recorded in X-Spira-Lint-Override.
+#
+# Any bead named by --bead, or found anywhere in the subject or body, is resolved
+# against the store and rendered as a block at the top of the sent message — the
+# producer's own prose can no longer be the only place the bead's details live. A
+# bead the store cannot resolve renders "unresolved: <id>"; the send still succeeds.
 
 set -uo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh"
@@ -25,6 +30,69 @@ _bead_id_re="${SPIRA_ID_PREFIX:-sp}-[a-z0-9]{4,}"
 _mail_dir()    { printf '%s/%s' "${SPIRA_MAIL}" "$1"; }
 _mail_ensure() { local d; d="$(_mail_dir "$1")"; mkdir -p "$d/tmp" "$d/new" "$d/cur"; }
 _mail_msgid()  { printf '%s.%s.%s' "$(date +%s)" "$RANDOM" "$$"; }
+
+# _render_bead_block <id> — title, status, priority, type, repo, branch, and the
+# close reason or last note, truncated. "unresolved: <id>" if the store can't
+# resolve it (no SPIRA_DB, bd fails, or the id doesn't exist) — never a send failure.
+_render_bead_block() {
+    local id="$1" json
+    [ -n "${SPIRA_DB:-}" ] || { printf 'unresolved: %s\n' "$id"; return; }
+    json="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$id" --json 2>/dev/null)"
+    [ -n "$json" ] || { printf 'unresolved: %s\n' "$id"; return; }
+    printf '%s' "$json" | python3 -c '
+import json, sys
+id_ = sys.argv[1]
+try:
+    d = json.load(sys.stdin)
+    d = d[0] if isinstance(d, list) else d
+    if not d or "error" in d or not d.get("id"):
+        raise ValueError
+except Exception:
+    print("unresolved: " + id_)
+    sys.exit(0)
+
+title = d.get("title") or ""
+status = d.get("status") or ""
+priority = d.get("priority")
+itype = d.get("issue_type") or ""
+labels = d.get("labels") or []
+repo = next((l[len("repo:"):] for l in labels if l.startswith("repo:")), "")
+branch = next((l[len("branch:"):] for l in labels if l.startswith("branch:")), "")
+
+reason = (d.get("close_reason") or "").strip()
+if not reason:
+    notes = d.get("notes")
+    if isinstance(notes, str):
+        notes = [n for n in notes.split("\n") if n.strip()]
+    elif isinstance(notes, list):
+        notes = [(n.get("text") if isinstance(n, dict) else str(n)) for n in notes]
+    else:
+        notes = []
+    if notes:
+        reason = str(notes[-1]).strip()
+reason = reason.splitlines()[0].strip() if reason else ""
+if len(reason) > 300:
+    reason = reason[:300] + "…"
+
+print("%s: %s" % (id_, title))
+line = "Status: %s" % status
+if priority not in (None, ""):
+    line += "  ·  Priority: P%s" % priority
+if itype:
+    line += "  ·  Type: %s" % itype
+print(line)
+meta = []
+if repo:
+    meta.append("Repo: %s" % repo)
+if branch:
+    meta.append("Branch: %s" % branch)
+if meta:
+    print("  ·  ".join(meta))
+if reason:
+    print("")
+    print(reason)
+' "$id" 2>/dev/null || printf 'unresolved: %s\n' "$id"
+}
 
 _kind_file()    { printf '%s/%s.md' "${SPIRA_MAIL_KINDS}" "$1"; }
 _kind_exists()  { [ -f "$(_kind_file "$1")" ]; }
@@ -299,6 +367,15 @@ cmd_send() {
             fi
         fi
         [ -n "$dec_bead" ] && x_bead="$dec_bead"
+    fi
+
+    # Render the cited bead's details above the producer's own prose — the id given by
+    # --bead if any, else the first bead id found anywhere in the subject or body, so a
+    # producer that never learned about --bead still sends a usable message.
+    local _render_id="$bead"
+    [ -n "$_render_id" ] || _render_id="$(printf '%s\n%s\n' "$subject" "$body" | grep -oE "${_bead_id_re}" | head -1)"
+    if [ -n "$_render_id" ]; then
+        body="$(printf '%s\n\n%s' "$(_render_bead_block "$_render_id")" "$body")"
     fi
 
     {

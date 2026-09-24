@@ -116,6 +116,10 @@ state_of()       { grep -E "^$1 \|" "$SH/suite-state" 2>/dev/null | awk -F'|' '{
 bead_of_state()  { grep -E "^$1 \|" "$SH/suite-state" 2>/dev/null | awk -F'|' '{print $4}' | tr -d ' ' || echo ""; }
 obs_count()      { wc -l < "$STATE/$1.flakeobs" 2>/dev/null || echo 0; }
 mail_count_op()  { SPIRA_MAIL="$MAIL" SPIRA_MAIL_KINDS="$SH/mail/kinds" bash "$SH/mail.sh" count operator 2>/dev/null || echo 0; }
+latest_mail_body_op() {
+    local f; f="$(ls -t "$MAIL/operator/new"/* "$MAIL/operator/cur"/* 2>/dev/null | head -1)"
+    [ -n "$f" ] && cat "$f"
+}
 # Inspect the auto-quarantine branch for a suite (quarantine is no longer written to production checkout).
 branch_state_of() {
     local _br _tmp _r
@@ -178,6 +182,11 @@ is "second obs reaches threshold: suite quarantined on branch" "quarantined" "$b
 want "auto-quarantine message emitted" "auto-quarantine" "$out2"
 bid_after_quarantine="$(branch_bead_of test-hygiene-foo.sh)"
 isnz "auto-quarantine: branch carries non-empty bead id" "${#bid_after_quarantine}"
+if [ -n "${bid_after_quarantine:-}" ]; then
+    q_body="$(latest_mail_body_op)"
+    want "auto-quarantine mail's rendered block leads with the filed bead's id and title" \
+        "$bid_after_quarantine: why does test-hygiene-foo.sh fail intermittently" "$q_body"
+fi
 
 # -- same run_id twice: dedup fires, only one observation recorded --
 echo
@@ -254,6 +263,9 @@ except Exception: pass
     st5="$(state_of test-hygiene-bar.sh)"
     is "bead LANDED + $CLEAN_RUNS clean runs: reactivated" "active" "$st5"
     want "hygiene reports reactivation" "reactivated" "$out_hyg"
+    react_body="$(latest_mail_body_op)"
+    want "reactivation mail's rendered block leads with the bead's id and title" \
+        "$bead_id: test-hygiene: fix test-hygiene-bar.sh" "$react_body"
 
     # -- bead not LANDED + N clean runs → not reactivated --
     echo
@@ -305,6 +317,11 @@ if [ -n "${old_since:-}" ]; then
     sut hygiene >/dev/null 2>&1
     m1="$(mail_count_op)"
     isnz "max-age exceeded: operator receives mail" "$m1"
+    if [ -n "${bead_id:-}" ]; then
+        maxage_body="$(latest_mail_body_op)"
+        want "max-age mail's rendered block leads with the bead's id and title" \
+            "$bead_id: test-hygiene: fix test-hygiene-bar.sh" "$maxage_body"
+    fi
 
     # Second hygiene pass: must NOT send another mail.
     sut hygiene >/dev/null 2>&1

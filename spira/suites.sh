@@ -1505,12 +1505,11 @@ PAYLOAD
         printf 'auto-quarantine: queue submit failed for %s — branch %s exists\n' "$suite" "$branch"
     printf 'auto-quarantine: %s quarantined on branch %s (bead: %s)\n' \
         "$suite" "$branch" "${bead_id:-(none filed)}"
-    printf '## Note\n%s was automatically quarantined.\n\nReason: %s\nBead: %s\nBranch: %s\n' \
-        "$suite" "$reason" "${bead_id:-(none filed)}" "$branch" \
-    | SPIRA_MAIL_LINT_CONSIDERED="auto-quarantine" \
-      bash "$HERE/mail.sh" send operator \
-        --from "Suite hygiene <hygiene@spira>" \
-        --subject "$suite quarantined: $reason" \
+    local _mail_args=(--from "Suite hygiene <hygiene@spira>" --subject "$suite quarantined: $reason")
+    [ -n "${bead_id:-}" ] && _mail_args+=(--bead "$bead_id")
+    printf '## Note\n%s was automatically quarantined.\n\nReason: %s\nBranch: %s\n' \
+        "$suite" "$reason" "$branch" \
+    | bash "$HERE/mail.sh" send operator "${_mail_args[@]}" \
         2>/dev/null || true
 }
 
@@ -1574,12 +1573,12 @@ except Exception:
                     rm -f "$(cleanruns_file "$s")" "$(maxage_mailed_file "$s")" 2>/dev/null || true
                     printf 'hygiene: %s reactivated (bead %s LANDED, %d clean runs)\n' \
                         "$s" "$bead" "$cr"
-                    printf '## Note\n%s was reactivated after bead %s LANDED with %d consecutive clean runs.\n' \
-                        "$s" "$bead" "$cr" \
-                    | SPIRA_MAIL_LINT_CONSIDERED="suite-reactivated" \
-                      bash "$HERE/mail.sh" send operator \
+                    printf '## Note\n%s was reactivated after LANDING with %d consecutive clean runs.\n' \
+                        "$s" "$cr" \
+                    | bash "$HERE/mail.sh" send operator \
                         --from "Suite hygiene <hygiene@spira>" \
                         --subject "$s reactivated" \
+                        --bead "$bead" \
                         2>/dev/null || true
                     activated=$(( activated + 1 ))
                     continue
@@ -1593,12 +1592,12 @@ except Exception:
         [ -n "${since_epoch:-}" ] || continue
         since_age=$(( now - since_epoch ))
         if [ "$since_age" -ge "$max_age" ] && [ ! -f "$mailed_flag" ]; then
-            printf 'quarantine for %s exceeds %d days.\n\nBead: %s\nSince: %s\n' \
-                "$s" $(( max_age / 86400 )) "${bead:-(unknown)}" "$since" \
-                | SPIRA_MAIL_LINT_CONSIDERED="suites-hygiene automated" \
-                  bash "$HERE/mail.sh" send operator \
-                    --from "Suite hygiene <hygiene@spira>" \
-                    --subject "$s quarantine exceeds $(( max_age / 86400 ))d" \
+            local _mail_args=(--from "Suite hygiene <hygiene@spira>" \
+                --subject "$s quarantine exceeds $(( max_age / 86400 ))d")
+            [ -n "${bead:-}" ] && _mail_args+=(--bead "$bead")
+            printf 'quarantine for %s exceeds %d days.\n\nSince: %s\n' \
+                "$s" $(( max_age / 86400 )) "$since" \
+                | bash "$HERE/mail.sh" send operator "${_mail_args[@]}" \
                     2>/dev/null && touch "$mailed_flag" 2>/dev/null || true
             if [ -f "$mailed_flag" ]; then
                 printf 'hygiene: mailed operator about %s (age %ds)\n' "$s" "$since_age"
