@@ -1,0 +1,14 @@
+[package]
+name = "landing-pass"
+version = "1.0.0"
+edition = "2021"
+description = "Landing pass — pr-mode repository landing on a short timer, no local gate."
+
+[dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

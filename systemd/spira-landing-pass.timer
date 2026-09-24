@@ -1,0 +1,15 @@
+[Unit]
+Description=Spira landing pass — pr-mode landing every 90 seconds
+
+[Timer]
+# 90 SECONDS. The pass rebases branches, checks confinement, pushes, and opens pull
+# requests — all deterministic local operations. Nothing in it blocks on a lock or a
+# container, so it runs this often without competing with the landing loop.
+# The flock in landing-pass prevents overlap when a pass takes longer than expected.
+OnBootSec=120s
+OnUnitActiveSec=90s
+AccuracySec=15s
+Unit=spira-landing-pass.service
+
+[Install]
+WantedBy=timers.target
