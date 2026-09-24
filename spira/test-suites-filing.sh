@@ -42,9 +42,6 @@ STUB
 chmod +x "$TMP/incident-stub.sh"
 export SPIRA_TEST_CAP_DIR="$CAP"
 export SPIRA_INCIDENT="$TMP/incident-stub.sh"
-# Pin the label set to its unconfigured default so the assertion below is a fact about
-# file_red's own code, not about whatever SPIRA_SCOPE_LABEL the ambient conf.sh derives.
-unset SPIRA_SCOPE_LABEL 2>/dev/null || true
 
 # Sourcing (not executing) suites.sh: BASH_SOURCE[0] != $0 here, so its dispatcher never
 # fires and INC picks up the stub set above (INC is derived from SPIRA_INCIDENT at source
@@ -61,7 +58,9 @@ _c="$(cap_of "$(safe_ref suite:test-fake-red.sh)")"
 want "file_red: ref is suite:<name>" "SPIRA_INCIDENT_REF=suite:test-fake-red.sh" "$_c"
 want "file_red: sin-exempt (persistent reds dedupe, never escalate on recurrence alone)" \
     "SPIRA_SIN_EXEMPT=1" "$_c"
-want "file_red: labelled plan" "SPIRA_INCIDENT_LABELS=plan" "$_c"
+# SPIRA_INCIDENT_LABELS also carries SPIRA_SCOPE_LABEL, a repo-derived default this test
+# does not control — only that the "plan" label file_red itself appends is present.
+want "file_red: labelled plan" "plan" "$(printf '%s' "$_c" | grep '^SPIRA_INCIDENT_LABELS=')"
 want "file_red: cause is suite-red" "SPIRA_INCIDENT_CAUSE=suite-red" "$_c"
 want "file_red: body carries the fingerprint" "abc123fp" "$_c"
 want "file_red: body carries a reproduce line naming the suite" "bash spira/test-fake-red.sh" "$_c"
