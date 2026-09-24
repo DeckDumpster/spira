@@ -126,47 +126,27 @@ want "build-tarball.sh uses --name" "--name"
 
 # ============================================================================
 echo
-echo "7. Producer/consumer agreement — every --*-bin required by build-tarball.sh is passed"
+echo "7. Producer/consumer agreement — build-tarball.sh is invoked with --workspace"
 # ============================================================================
-# Extract the --*-bin flags that build-tarball.sh considers required. These are
-# identified by the error-message pattern: "pass --X-bin <path>" appears exactly
-# once per required flag and never for optional ones.
-required_bins="$(grep -oE 'pass --[a-z]+-bin' "$TARBALL_SH" | grep -oE -- '--[a-z]+-bin' | sort -u)"
+# The workflow must use --workspace so new crates ship automatically. Explicit
+# --*-bin flags require a hand-written list that diverges when crates are added.
 
-if [ -z "$required_bins" ]; then
-    bad "required bins extracted from build-tarball.sh" \
-        "no required --*-bin flags found — check the grep pattern"
+# Positive control: a fixture without --workspace is detected as missing.
+FIXTURE="$TMP/fixture-release.yml"
+grep -v -- '--workspace' "$WORKFLOW" > "$FIXTURE"
+if ! grep -qF -- '--workspace' "$FIXTURE"; then
+    ok "positive control: fixture without --workspace is correctly identified"
 else
-    # Positive control: a fixture workflow missing --broker-bin must be detected.
-    FIXTURE="$TMP/fixture-release.yml"
-    grep -v -- '--broker-bin' "$WORKFLOW" > "$FIXTURE"
-    fixture_passed="$(grep -oE -- '--[a-z]+-bin' "$FIXTURE" | sort -u)"
-    ctrl_detected=0
-    for flag in $required_bins; do
-        if ! printf '%s\n' "$fixture_passed" | grep -qF -- "$flag"; then
-            ctrl_detected=1
-            break
-        fi
-    done
-    if [ "$ctrl_detected" -eq 1 ]; then
-        ok "positive control: fixture without --broker-bin is detected as missing"
-    else
-        bad "positive control: fixture without --broker-bin is detected as missing" \
-            "check did not detect absence of --broker-bin in fixture (positive control failed)"
-    fi
+    bad "positive control: fixture without --workspace" \
+        "fixture still contains --workspace — cannot be a valid negative control"
+fi
 
-    # Real check: the actual workflow passes every required flag.
-    passed_bins="$(grep -oE -- '--[a-z]+-bin' "$WORKFLOW" | sort -u)"
-    all_present=1
-    for flag in $required_bins; do
-        if printf '%s\n' "$passed_bins" | grep -qF -- "$flag"; then
-            ok "release.yml passes $flag"
-        else
-            bad "release.yml passes $flag" \
-                "$flag is required by build-tarball.sh but absent from release.yml"
-            all_present=0
-        fi
-    done
+# Real check: the actual workflow uses --workspace.
+if grep -qF -- '--workspace' "$WORKFLOW"; then
+    ok "release.yml passes --workspace to build-tarball.sh"
+else
+    bad "release.yml passes --workspace to build-tarball.sh" \
+        "--workspace not found — per-crate --*-bin flags miss newly added crates"
 fi
 
 # ============================================================================
