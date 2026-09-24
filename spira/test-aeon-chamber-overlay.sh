@@ -81,6 +81,16 @@ make_bead() {
         -l "$_labels" 2>/dev/null \
         | grep -oE 'sp-[a-z0-9]+' | head -1
 }
+# The stub claude never closes its bead, so aeon.sh's cleanup releases it straight back to
+# ready — and being the OLDEST ready bead with this label set, it would be reclaimed ahead
+# of the next section's freshly created one. Close it for real between sections so each
+# aeon() call below is provably claiming and rendering the bead this test just made.
+close_bead() {
+    bd -C "$SPIRA_DB" close "$1" --reason-file - >/dev/null 2>&1 <<'REASON'
+OUTCOME: submitted
+Test scaffolding cleanup — not a real session.
+REASON
+}
 
 # ==========================================================================================
 echo "test-aeon-chamber-overlay.sh"
@@ -96,6 +106,7 @@ nowant "SEEN RED CONTROL: no gate-run.sh anywhere in the rendered brief" "gate-r
 nowant "and no stray {{GATE}} placeholder"                                "{{GATE}}"    "$task_g"
 want   "the Tests section's own instruction is still there"       "DO NOT run the full landing" "$task_g"
 want   "and testenv-batch.sh is the verification path"            "testenv-batch.sh"            "$task_g"
+close_bead "$BID_G"
 
 # ==========================================================================================
 echo
@@ -116,6 +127,7 @@ want   "SEEN RED CONTROL: the section overlay text appears"  "run only test-fixt
 nowant "and the release Tests text it replaced is gone"      "DO NOT run the full landing"     "$task_o"
 want   "the append overlay text appears"                     "standing local note for every builder" "$task_o"
 want   "surrounding release content is untouched"            "## The bead"                     "$task_o"
+close_bead "$BID_O"
 
 # ==========================================================================================
 echo
@@ -133,6 +145,7 @@ task_w="$(cat "$SPIRA_RUN/$BID_W.task.md" 2>/dev/null)"
 want   "SEEN RED CONTROL: the whole-file overlay text appears" "Whole-file operator brief" "$task_w"
 nowant "and release-only text is gone"                          "Guardian"                  "$task_w"
 rm -f "$SPIRA_CHAMBER_OVERLAY/builder.md"
+close_bead "$BID_W"
 
 # ==========================================================================================
 echo
@@ -147,6 +160,7 @@ aeon builder
 task_b="$(cat "$SPIRA_RUN/$BID_B.task.md" 2>/dev/null)"
 want "SEEN RED CONTROL: the block overlay text appears" "Operator override of the park block" "$task_b"
 rm -f "$SPIRA_CHAMBER_OVERLAY/blocks/PARK.md"
+close_bead "$BID_B"
 
 # ==========================================================================================
 echo
