@@ -84,6 +84,33 @@ ledger() {
     printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LEDGER"
 }
 
+# rapid_recur_check — when the last SPIRA_RAPID_RECUR_THRESHOLD done lines for BEAD_ID
+# all show wall_s=? or wall_s<10, each summon is dying before doing real work. Fire a note
+# on the bead so the operator sees it without reading the ledger.
+rapid_recur_check() {
+    local _threshold="${SPIRA_RAPID_RECUR_THRESHOLD:-3}"
+    [ -n "${BEAD_ID:-}" ] || return 0
+    [ -f "${LEDGER:-}" ] || return 0
+    local _count
+    _count=$(grep " done [^ ]* $BEAD_ID " "$LEDGER" | tail -"$_threshold" | python3 -c '
+import sys, re
+count = 0
+for line in sys.stdin:
+    m = re.search(r"wall_s=(\?|[0-9.]+)", line)
+    if m and (m.group(1) == "?" or float(m.group(1)) < 10.0):
+        count += 1
+    else:
+        count = 0
+print(count)' 2>/dev/null) || return 0
+    [ "${_count:-0}" -ge "$_threshold" ] || return 0
+    log "$FAYTH: $BEAD_ID RAPID-RECUR: $_count consecutive sub-10s runs — setup loop likely"
+    bdq note "$BEAD_ID" \
+        "RAPID-RECUR: $_count consecutive sub-10s aeon runs on $BEAD_ID. Each summon dies before meaningful work, suggesting a setup loop — the defect recurs on every retry. Check: worktree path, conflicting branches, or box state. Details in aeon-ledger." \
+        >/dev/null 2>&1 || true
+    spira_event aeon.rapid-recur "$BEAD_ID" \
+        "Rapid-recur: $BEAD_ID — $_count consecutive sub-10s aeon summons (setup loop)" || true
+}
+
 # ledger_done <rc> <status> — an aeon's disposition line, with what its session SPENT.
 #
 # THE SPEND IS ON THIS LINE BECAUSE NOTHING ELSE KEEPS IT. The client writes duration, turns,
@@ -99,6 +126,7 @@ ledger() {
 # ran and cost nothing.
 ledger_done() {
     ledger "done $FAYTH $BEAD_ID rc=$1 status=$2 $(session_result_fields "${LOGF:-}")"
+    rapid_recur_check || true
 }
 
 # Bounded here rather than by logrotate: this file is read in full on every cockpit pass,
@@ -884,6 +912,9 @@ sys.exit(0)' 2>/dev/null; then
         # identically on every retry until box state changes (law-a-retry-must-change-an-input).
         # Charge an attempt so repeated pre-session deaths reach the poison threshold.
         if [ "${SESSION_STARTED:-0}" = 0 ]; then
+            # rc=0 with wall_s=? is structurally impossible: if the session never ran, the
+            # exit was a failure. Override any accidental zero so the ledger invariant holds.
+            [ "$rc" -eq 0 ] && rc=1
             bdq note "$BEAD_ID" "Pre-session death (rc=$rc): the aeon died during setup before its Claude session started. Attempt charged — this failure repeats until the box state changes." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID pre-session death (rc=$rc) — attempt charged"
             release_own_claim "$BEAD_ID"
