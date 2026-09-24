@@ -67,21 +67,10 @@ jobs:
             exit 1
           }
 
-      - name: Build loom
-        run: cargo build --release
-        working-directory: loom
-
-      - name: Build panel
-        run: cargo build --release
-        working-directory: cockpit/panel
-
-      - name: Build broker
-        run: cargo build --release
-        working-directory: broker
-
-      - name: Build supervise
-        run: cargo build --release
-        working-directory: supervise
+      - name: Build all binary crates
+        # build-bins.sh discovers every crate with src/main.rs — no
+        # hand-maintained list. A new crate is built and shipped automatically.
+        run: bash spira/build-bins.sh . bin/
 
       - name: Build release tarball
         id: tarball
@@ -92,10 +81,7 @@ jobs:
           # Tarball stem: spira-<YYYYMMDDTHHMMSSZ>
           ts="${tag##*-}"
           tarball=$(bash spira/build-tarball.sh build \
-            --loom-bin loom/target/release/loom \
-            --panel-bin cockpit/panel/target/release/panel \
-            --broker-bin broker/target/release/broker \
-            --supervise-bin supervise/target/release/spira-supervise \
+            --bin-dir bin/ \
             --output /tmp/artifacts \
             --name "spira-${ts}")
           printf 'path=%s\n' "$tarball" >> "$GITHUB_OUTPUT"

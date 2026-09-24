@@ -302,7 +302,9 @@ if [ -z "$_gate_verdict_block" ]; then
 else
     ok "the gate verdict job block was located (positive control)"
 fi
-want "gate needs both provision and suites" "provision, suites"  "$_gate_verdict_block"
+want "gate needs provision"                 "provision"          "$_gate_verdict_block"
+want "gate needs suites"                    "suites"             "$_gate_verdict_block"
+want "gate needs build"                     "build"              "$_gate_verdict_block"
 want "gate runs even when needs failed"     "!cancelled()"       "$_gate_verdict_block"
 want "gate runs on a hosted runner"         "ubuntu-latest"      "$_gate_verdict_block"
 want "gate exits 75 on provision fault"     "75"                 "$_gate_verdict_block"
