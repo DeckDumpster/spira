@@ -172,30 +172,32 @@ lacks "needs-ryan bead not flagged by unclaimable check" "sp-unc6b" "$out"
 
 # ==========================================================================================
 echo
-echo "case 8 — file_unclaimable_incidents: a P1 incident is filed for the unclaimable bead"
+echo "case 8 — file_unclaimable_incidents: a P1 incident is filed in the Groomer partition"
 # ==========================================================================================
-# The sentinel surfaces the finding in the log, but the log is only as visible as the log.
-# file_unclaimable_incidents must file an incident bead that Ops can claim and fix. A mock
-# incident.sh captures the calls; the real one is not invoked.
+# file_unclaimable_incidents must file into the Groomer partition (SPIRA_GROOMER_LABEL) so
+# the Groomer — not Ops — receives the work. Only the Groomer can discharge it: it can add
+# the scope label, correct the fayth:, or close the row. Ops cannot; it is the diagnostician
+# but not the terminus. The mock captures SPIRA_INCIDENT_LABELS so the partition is verifiable.
 testdb_reset
 testdb_seed <<JSONL
 {"id":"sp-unc8a","title":"unclaimable: fayth:ops on plan labels","status":"open","issue_type":"task","labels":["fayth:ops","plan","repo:spira","${SPIRA_SCOPE_LABEL}"]}
 JSONL
 
-# The mock writes its args to a file whose path is embedded at write time (unquoted heredoc).
+# The mock writes its env and args to a file whose path is embedded at write time.
 INC_LOG8="$TMP/inc8.log"
 : > "$INC_LOG8"
 cat > "$TMP/mock-incident8.sh" <<MOCK
 #!/usr/bin/env bash
-printf 'file %s\n' "\$*" >> "$INC_LOG8"
+printf 'LABELS=%s file %s\n' "\${SPIRA_INCIDENT_LABELS:-}" "\$*" >> "$INC_LOG8"
 MOCK
 chmod +x "$TMP/mock-incident8.sh"
 
 unc="$(detect_unclaimable_ready 2>/dev/null)"
 SPIRA_INCIDENT_SH="$TMP/mock-incident8.sh" file_unclaimable_incidents "$unc"
 inc_out="$(cat "$INC_LOG8")"
-has  "incident filed for unclaimable bead"         "sp-unc8a"    "$inc_out"
-has  "incident title contains UNCLAIMABLE prefix"  "UNCLAIMABLE:" "$inc_out"
+has  "incident filed for unclaimable bead"                "sp-unc8a"                       "$inc_out"
+has  "incident title contains UNCLAIMABLE prefix"         "UNCLAIMABLE:"                   "$inc_out"
+has  "incident filed in Groomer partition (positive ctrl)" "${SPIRA_GROOMER_LABEL:-groom}" "$inc_out"
 
 # ==========================================================================================
 echo
