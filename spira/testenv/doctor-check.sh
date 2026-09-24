@@ -5,11 +5,9 @@
 #
 # Usage: doctor-check.sh <path/to/conf.sh> [<path/to/waivers>]
 #
-# THE MANIFEST IS conf.sh's SPIRA_BINS, TIERED BY spira_bin_tier — not a copy of it. Before
-# sp-utt1i, this script parsed doctor.sh's own hardcoded program loops; doctor.sh no longer
-# carries build-input checks at all (make and this manifest own them), so the loops it used
-# to parse are gone. Reading conf.sh directly means a program added to SPIRA_BINS fails the
-# image build until the image carries it, with no second list that must agree with the first.
+# THE MANIFEST IS conf.sh's deps.toml (loaded via spira_deps_list/spira_bin_tier) — not a
+# copy of it. Reading conf.sh directly means a program added to deps.toml fails the image
+# build until the image carries it, with no second list that must agree with the first.
 #
 #   runtime            FATAL: any absence fails the image build
 #   optional, operator  WARN: present or waived, with a written reason
@@ -58,13 +56,13 @@ fi
 # must not decide what the image is checked against (law-gates-run-in-a-clean-environment).
 manifest="$(env -i HOME="${HOME:-/root}" PATH="$PATH" SPIRA_CONF=/nonexistent bash -c '
     . '"$(printf '%q' "$CONF")"' 2>/dev/null
-    for b in $SPIRA_BINS; do
+    for b in $(spira_deps_list); do
         printf "%s %s\n" "$b" "$(spira_bin_tier "$b")"
     done
 ')"
 
 if [ -z "$manifest" ]; then
-    printf 'doctor-check: could not read a manifest from %s (no SPIRA_BINS)\n' "$CONF" >&2
+    printf 'doctor-check: could not read a manifest from %s (deps.toml did not load)\n' "$CONF" >&2
     exit 1
 fi
 
