@@ -544,8 +544,7 @@ spira_conf_defaults() {
     : "${SPIRA_REBASE_ESCALATE_AT:=3}"
     # HOW MANY FILES A REBASE-LOOP ESCALATION CALLS "SEVERAL HOT FILES" — past this, the
     # branch is not unlucky, its scope is racing every landing that touches the same files.
-    # sp-m6jhx carried nine files including four of the most frequently landed in the repo;
-    # a re-cut that cannot clear the conflict is telling the operator to split the bead, not
+    # A re-cut that cannot clear the conflict is telling the operator to split the bead, not
     # to try the rebase by hand again (law-decompose-by-deliverable).
     : "${SPIRA_REBASE_DECOMPOSE_FILES:=4}"
     # .invalid: not a real domain. @spira.local trips is_aeon_email in branch-guard.sh.
