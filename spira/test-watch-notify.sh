@@ -35,16 +35,17 @@
 # SHIPPED vocabulary — so a filter expression written into the code instead of read from
 # configuration fails here rather than passing by coincidence.
 #
-# defect: sp-ee4
-# covers: spira/watchd.sh spira/watchers systemd/*
+# A deliberate world halt (UC-operator-channel-30) is folded in here rather than kept as its
+# own file (test-watchd-halt-health.sh, D6): it shares this fixture, and its "notify escalates
+# without a halt stamp" control duplicates the "matured unhealthy watcher escalates" case below.
+#
+# defect: sp-ee4 sp-c6tb
+# tier: T2
+# covers: spira/watchd.sh spira/watchers spira/world.sh UC-operator-channel-28 UC-operator-channel-29 UC-operator-channel-30 UC-operator-channel-31
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-ROOT="$(cd "$HERE/.." && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
-bad() { printf '  FAIL  %s\n        got: %s\n' "$1" "$2"; fail=$((fail+1)); }
-is()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want [$2] got [$3]"; fi; }
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "$2" ;; esac; }
 hasnt() { case "$2" in *"$3"*) bad "$1" "$2" ;; *) ok "$1" ;; esac; }
 
@@ -60,7 +61,6 @@ cp "$HERE/conf.sh" "$HERE/watchd.sh" "$HERE/mail-health.sh" "$CLONE/spira/"
 NOMAIL="$TMP/nomail"
 mkdir -p "$NOMAIL"
 cp "$HERE/conf.sh" "$HERE/watchd.sh" "$NOMAIL/"
-cp -r "$ROOT/systemd" "$CLONE/systemd"
 
 # EVERY CONFIGURED VALUE IS PINNED TO A NON-DEFAULT. SPIRA_RUN would derive to
 # $CLONE/.runtime/spira and SPIRA_COCKPIT to $CLONE/cockpit; both are moved somewhere
@@ -90,11 +90,18 @@ MAN="$TMP/watchers"
 # FILTER PINNED TO A NON-DEFAULT WORD. Nothing in the shipped SPIRA_ACTIONABLE matches it.
 FILTER="WAKEME"
 
+# THE CLOCK, INJECTED RATHER THAN SLEPT FOR. `watchd.sh`'s notion of "now" (_wd_now) honours
+# SPIRA_NOW, so a suite that must prove two passes are not identical from the suppression
+# fingerprint's point of view advances this by a couple of seconds instead of paying a real
+# `sleep 1` — starting from the real clock so the ISO8601-stamp cases later, which parse
+# real `date`-produced timestamps, still see a "now" in the right neighbourhood.
+NOW="$(date +%s)"
+
 # notify <age> [manifest] -> rc; stdout in $TMP/out, stderr in $TMP/err
 notify() {
     env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" \
         SPIRA_WATCHERS="${2:-$MAN}" SPIRA_ACTIONABLE="${FILTER_OVERRIDE-$FILTER}" \
-        SPIRA_NOTIFY_AGE="$1" \
+        SPIRA_NOTIFY_AGE="$1" SPIRA_NOW="$NOW" \
         NOTIFY_LOG="$ASKS" ${NOTIFY_REFUSE:+NOTIFY_REFUSE=1} \
         bash "$CLONE/spira/watchd.sh" notify > "$TMP/out" 2> "$TMP/err"
 }
@@ -190,14 +197,14 @@ hasnt "the decoy line is not in the evidence"          "$(cat "$ASKS")" "shipped
 # =======================================================================================
 echo
 echo "a standing backlog is escalated once, not once per pass"
-# THE PASSES ARE SPACED, and that second of wall clock is the whole test. Run back to back
-# they land in the same second, so anything volatile the suppression key happened to contain
-# would still match and the suite would pass on a timer that asks again every five minutes —
-# which is the failure this section exists to catch, not a hypothetical one: the age WAS in
-# the key at one point and this section, unspaced, said nothing.
-sleep 1
+# THE PASSES ARE SPACED IN THE INJECTED CLOCK, and that gap is the whole test. Run with an
+# identical "now" they would still match on anything volatile the suppression key happened to
+# contain, and the suite would pass on a timer that asks again every five minutes — which is
+# the failure this section exists to catch, not a hypothetical one: the age WAS in the key at
+# one point and this section, unspaced, said nothing.
+NOW=$((NOW + 2))
 notify 1; is "a second pass over the same backlog escalates again"       "1" "$?"
-sleep 1
+NOW=$((NOW + 2))
 notify 1; is "and a third"                                               "1" "$?"
 is "but no further ask was raised"                     "1" "$(asks)"
 # A LINE ARRIVING BEHIND A STANDING ONE IS THE SAME BACKLOG. The oldest unread event is still
@@ -403,113 +410,6 @@ is "an unexpected argument is refused"                 "3" "$?"
 has "with the usage"                                   "$(cat "$TMP/err")" "usage: watchd.sh notify"
 
 # =======================================================================================
-# The unit. law-fence-loops-on-shared-hardware: anything that polls gets a quota BEFORE it is
-# enabled, and no path in a unit may be anything but configuration.
-# =======================================================================================
-echo
-echo "the unit is fenced, configured, and enabled"
-mkdir -p "$TMP/render-home"
-RCONF="$TMP/render.conf"
-# SPIRA_PROD pinned to empty: render() falls back to SPIRA_HOME ($CLONE/spira), so the
-# ExecStart path comes from the clone and not a derived $WORKSPACES/clone-prod path that
-# does not exist in the test tree (sp-82jo added the executability fence; sp-kteb).
-printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PROD = \n' \
-    "$RUN" "$COCKPIT" "$MAN" > "$RCONF"
-rendered="$(env -i HOME="$TMP/render-home" PATH="$PATH" SPIRA_CONF="$RCONF" \
-    bash "$CLONE/systemd/install.sh" --render 2>/dev/null)"
-is "the renderer produced units" "yes" "$([ -n "$rendered" ] && echo yes || echo no)"
-# sp-fo38 added per-instance unit suffixes; extract the prod-instance name (default).
-svc="$(awk '/^===== spira-watch-notify-prod.service =====$/{f=1;next} /^===== /{f=0} f' <<< "$rendered")"
-tmr="$(awk '/^===== spira-watch-notify-prod.timer =====$/{f=1;next} /^===== /{f=0} f' <<< "$rendered")"
-is "the service is rendered"  "yes" "$([ -n "$svc" ] && echo yes || echo no)"
-is "and so is the timer"      "yes" "$([ -n "$tmr" ] && echo yes || echo no)"
-has "it runs the dispatcher's notify verb"      "$svc" "$CLONE/spira/watchd.sh notify"
-has "it is CPU-fenced"                          "$svc" "CPUQuota="
-has "and niced"                                 "$svc" "Nice="
-# A STANDING BACKLOG IS NOT A UNIT FAILURE. Exit 1 means the condition was found and the
-# decision is already in front of the operator; a unit left permanently red is one whose next
-# genuine failure nobody looks at.
-has "a finding does not leave the unit red"     "$svc" "SuccessExitStatus=1"
-hasnt "no placeholder survives into the unit"   "$svc" "@"
-hasnt "and none into the timer"                 "$tmr" "@"
-# NO PATH IS HARDCODED. Every absolute path in the rendered unit must lie under a value that
-# came from the config above, which pins both to non-defaults.
-stray=""
-while IFS= read -r p; do
-    [ -n "$p" ] || continue
-    case "$p" in "$CLONE/spira"/*|"$RUN"/*) ;; *) stray="$stray $p" ;; esac
-done < <(sed 's|file://|file:|' <<< "$svc" | grep -oE '[=:]/[^ ]+' | sed 's/^[=:]//')
-is "every path in it came from configuration"   "" "$stray"
-
-# THE PERIOD MUST BE WELL UNDER THE THRESHOLD, or the granularity with which staleness is
-# noticed doubles the wait the threshold was set to allow.
-period="$(sed -n 's/^OnUnitActiveSec=\([0-9]*\)min$/\1/p' <<< "$tmr")"
-default_age="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent" \
-    bash -c ". '$CLONE/spira/conf.sh'; printf '%s' \"\$SPIRA_NOTIFY_AGE\"")"
-is "the timer states a period in minutes" "yes" "$([ -n "$period" ] && echo yes || echo no)"
-is "the threshold has a default"          "yes" "$([ -n "$default_age" ] && echo yes || echo no)"
-is "and a pass happens several times inside it" "yes" \
-   "$([ "$(( period * 60 * 3 ))" -le "$default_age" ] && echo yes || echo no)"
-
-# THE TIMER IS ENABLED. A unit that is installed and never started is a mechanism that exists
-# only in the repository — which is the shape of every defect this whole design is about.
-STUB="$TMP/stub"; mkdir -p "$STUB"
-# The stub logs every non-query systemctl call so the assertions below can grep it.
-# is-active returns "inactive" until a unit is enabled (enable --now) or restarted, then
-# "active" — this is the correct sequence for a fresh install: units do not exist before
-# install.sh runs, so the ENABLE loop uses "enable --now" rather than "enable"+"restart".
-# After that the sp-syub end-state check calls is-active for every ENABLE unit and expects
-# "active", which the stateful stub provides once the unit has been enabled (sp-kteb).
-# list-* calls (list-units, list-timers, list-unit-files) are informational and not asserted.
-cat > "$STUB/systemctl" <<EOF
-#!/usr/bin/env bash
-mkdir -p "$TMP/active"
-case "\$*" in
-    *"is-active"*)
-        _u="\${*##* }"
-        [ -f "$TMP/active/\$_u" ] && printf 'active\n' || printf 'inactive\n'
-        ;;
-    *"list-"*) : ;;
-    *)
-        printf '%s\n' "\$*" >> "$TMP/systemctl.log"
-        case "\$*" in
-            *"enable --now "*) touch "$TMP/active/\${*##*enable --now }" ;;
-            *"restart "*)      touch "$TMP/active/\${*##*restart }" ;;
-        esac
-        ;;
-esac
-exit 0
-EOF
-printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/loginctl"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB/spira-supervise"
-chmod +x "$STUB/systemctl" "$STUB/loginctl" "$STUB/spira-supervise"
-IHOME="$TMP/ihome"; mkdir -p "$IHOME"
-: > "$TMP/systemctl.log"
-# Reached through SPIRA_PATH and not PATH: conf.sh REPLACES PATH outright, so a directory
-# handed in through the environment is gone before install.sh runs anything.
-# SPIRA_PROD points to the real harness so the sp-82jo executability fence finds real scripts.
-# SPIRA_INSTALL_FORCE=1 bypasses the sp-mlcd landref check; the clone is not a git repo.
-# SPIRA_COCKPIT points to the real cockpit dir so cockpit-ensure.service's ExecStart target
-# (layout.sh) resolves to an executable file; the synthetic $COCKPIT dir has none (sp-kteb).
-printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s\nSPIRA_PROD = %s\n' \
-    "$RUN" "$ROOT/cockpit" "$MAN" "$STUB" "$HERE" > "$TMP/install.conf"
-# SPIRA_HOME is set so @SPIRA_HOME@ units (auron, watch-refresh) point at real scripts;
-# conf.sh otherwise derives it from the clone, where only conf.sh and watchd.sh exist.
-env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" \
-    SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" \
-    "SPIRA_SUPERVISE_BIN=$STUB/spira-supervise" \
-    bash "$CLONE/systemd/install.sh" > "$TMP/install.out" 2>&1
-log="$(cat "$TMP/systemctl.log")"
-has "the install ran"                           "$log" "daemon-reload"
-# sp-fo38 added per-instance unit suffixes; the default instance is "prod".
-has "and enabled the notify timer"              "$log" "enable --now spira-watch-notify-prod.timer"
-# The .service behind a .timer is started BY the timer; enabling it as well would also run it
-# once at boot, outside the schedule.
-hasnt "but not the service behind it"           "$log" "enable --now spira-watch-notify-prod.service"
-has "and the unit files are installed"          "$(ls "$IHOME/.config/systemd/user")" "spira-watch-notify-prod.timer"
-
-
-# =======================================================================================
 # THE PRODUCER'S OWN CLOCK. First sighting is the wrong clock for a backlog written all at
 # once when a dead watcher recovers: answers given during the outage are the most overdue
 # and would be handed a fresh grace period. A `[<ISO8601>]` prefix is believed instead.
@@ -601,10 +501,16 @@ chmod +x "$STUBBIN/systemctl"
 notify_d() {
     env -i HOME="$TMP/home" PATH="$PATH" SPIRA_PATH="$STUBBIN" SPIRA_CONF="$CONF" \
         SPIRA_WATCHERS="$MAND" SPIRA_ACTIONABLE="$FILTER" \
-        SPIRA_NOTIFY="$TMP/notify.sh" SPIRA_NOTIFY_AGE="$1" \
+        SPIRA_NOTIFY_AGE="$1" SPIRA_NOW="$NOW" \
         SC_STATE="$SC_STATE" SC_NR="$SC_NR" SC_SILENT="$SC_SILENT" \
         NOTIFY_LOG="$ASKS" \
         bash "$CLONE/spira/watchd.sh" notify > "$TMP/out" 2> "$TMP/err"
+}
+# status_d — the same daemon manifest through `status` (UC-operator-channel-30: HALTED vs
+# DEGRADED), reusing the fixture above rather than a fixture of its own.
+status_d() {
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_PATH="$STUBBIN" SPIRA_CONF="$CONF" \
+        SPIRA_WATCHERS="$MAND" bash "$CLONE/spira/watchd.sh" status 2>/dev/null
 }
 mature_unhealthy() {
     local f at
@@ -647,7 +553,7 @@ has "and the last line the watcher wrote"              "$(cat "$ASKS")" "already
 has "and a default that says what to do"               "$(cat "$ASKS")" "--default"
 has "which names the second-copy case"                 "$(cat "$ASKS")" "second copy"
 
-sleep 1
+NOW=$((NOW + 2))
 notify_d 3600
 is "a standing fault does not ask again"               "1" "$(asks)"
 
@@ -695,6 +601,36 @@ is "as two asks, not one"                              "2" "$(asks)"
 is "from two separate suppression stamps"              "1" \
    "$(ls "$RUN/watchd/notify.escalated" "$RUN/watchd/notify-health.escalated" >/dev/null 2>&1 && echo 1 || echo 0)"
 
+# =======================================================================================
+# A DELIBERATE HALT (world.sh stop --hard) IS NOT A FAULT (UC-operator-channel-30, sp-c6tb).
+# Before this fix, watchd.sh classified any inactive daemon unit as DEGRADED without
+# consulting the halt stamp, so a deliberate halt started paging the operator for every
+# stopped watcher once SPIRA_NOTIFY_AGE elapsed. Merged in from test-watchd-halt-health.sh
+# (D6): its "notify escalates without a halt stamp" control is the same case as "once it has
+# been unwell for the threshold, it escalates" above, so only the halt-specific half is new.
+# =======================================================================================
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+echo "a deliberate halt reads HALTED, not DEGRADED, and notify goes quiet during it"
+reset
+rm -f "$RUN/world.halted"
+printf 'inactive\n' > "$SC_STATE"
+out="$(status_d)"
+has   "an inactive daemon with no halt stamp is DEGRADED" "$out" "DEGRADED"
+hasnt "and not HALTED"                                    "$out" "HALTED"
+
+printf '%s\nwhy: test fixture\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$RUN/world.halted"
+out="$(status_d)"
+has   "the same daemon during a halt reads HALTED"        "$out" "HALTED"
+hasnt "and not DEGRADED"                                  "$out" "DEGRADED"
+
+# NOTIFY GOES QUIET TOO, and the clock it would otherwise accumulate toward SPIRA_NOTIFY_AGE
+# is cleared rather than left running for whenever the halt ends.
+mkdir -p "$RUN/watchd"
+printf '%s\n' "$(( $(date +%s) - 3600 ))" > "$RUN/watchd/gamma.unhealthy"
+notify_d 3600
+is "notify escalates nothing during a deliberate halt"    "0" "$(asks)"
+is "and the unhealthy clock is cleared, not left running" "no" \
+   "$([ -e "$RUN/watchd/gamma.unhealthy" ] && echo yes || echo no)"
+rm -f "$RUN/world.halted"
+
+tl_summary
