@@ -8,7 +8,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/conf.sh"
 if [ ! -x "${SPIRA_CZAR_PASS_BIN:-}" ]; then
     printf 'czar: binary not found at %s\n' "${SPIRA_CZAR_PASS_BIN:-<unset>}" >&2
-    printf 'czar: run: %s/build.sh\n' "$SPIRA_REPO" >&2
+    printf 'czar: run: make build (in %s)\n' "$SPIRA_REPO" >&2
     exit 2
 fi
 exec "${SPIRA_CZAR_PASS_BIN}" "$@"

@@ -207,14 +207,14 @@ done
 
 # ============================================================================
 echo
-echo "5. release.yml contains a 'Build supervise' step"
+echo "5. release.yml builds with 'make build' (no per-crate build steps)"
 # ============================================================================
 RELEASE_YML="$REPO_ROOT/.github/workflows/release.yml"
-if [ -f "$RELEASE_YML" ] && grep -q "Build supervise" "$RELEASE_YML"; then
-    ok "release.yml has 'Build supervise' step"
+if [ -f "$RELEASE_YML" ] && grep -q "make build" "$RELEASE_YML"; then
+    ok "release.yml uses 'make build'"
 else
-    bad "release.yml has 'Build supervise' step" \
-        "step absent — supervise binary will not be built in CI"
+    bad "release.yml uses 'make build'" \
+        "not found — per-crate build steps miss newly added crates"
 fi
 
 # ============================================================================

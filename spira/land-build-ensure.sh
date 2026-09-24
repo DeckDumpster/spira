@@ -24,7 +24,7 @@ if [ -n "$_be_base_ref" ]; then
     _be_prev="$(git -C "${SPIRA_REPO:-}" rev-parse "${_be_base_ref}@{1}" 2>/dev/null || true)"
     if [ -n "$_be_prev" ]; then
         git -C "${SPIRA_REPO:-}" diff --name-only "$_be_prev" HEAD 2>/dev/null \
-            | grep -qE '^(broker|loom|cockpit/panel|czar-pass)/' \
+            | grep -qE '\.rs$' \
             && _be_src_changed=1 || true
     fi
 fi

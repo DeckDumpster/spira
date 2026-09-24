@@ -3,19 +3,17 @@
 # build-tarball.sh — build a Spira release tarball from a source checkout.
 #
 # USAGE
-#   build-tarball.sh build [--output <dir>] [--loom-bin <path>]
-#                          [--panel-bin <path>] [<commit> [<repo>]]
+#   build-tarball.sh build [--output <dir>] [--workspace <path>] [<commit> [<repo>]]
 #   build-tarball.sh verify <release-dir> --repo <git-repo>
 #
 #   The 'build' subcommand is the default: omitting it is equivalent.
+#   --workspace <path>: auto-discover all [[bin]] targets via cargo metadata.
+#   Legacy: --loom-bin, --panel-bin, --broker-bin, --supervise-bin still accepted.
 #
 # TARBALL CONTENTS
 #   Every file tracked by git at the given commit, plus:
-#     bin/loom            — prebuilt linux-x86_64 binary (required via --loom-bin)
-#     bin/panel           — prebuilt linux-x86_64 binary (required via --panel-bin)
-#     bin/broker          — prebuilt linux-x86_64 binary (required via --broker-bin)
-#     bin/spira-supervise — prebuilt linux-x86_64 binary (required via --supervise-bin)
-#     MANIFEST            — one line: "commit <40-hex-sha>", one line: "timestamp <ts>"
+#     bin/<name>  — one entry per workspace [[bin]] target (or per explicit --*-bin)
+#     MANIFEST    — commit sha, timestamp, and sha256 per binary
 #
 #   Scratch files (sp-*, *.fixed) at the repo root are not present once
 #   sp-tlv7 lands. The builder does not exclude them — they are deleted, not
@@ -56,6 +54,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # ---------------------------------------------------------------------------
 do_build() {
     local outdir="." loom_bin="" panel_bin="" broker_bin="" supervise_bin="" commit="" repo="" name_override=""
+    local workspace=""  # workspace root for auto-discovery via cargo metadata
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -64,6 +63,7 @@ do_build() {
             --panel-bin)     panel_bin="$2";     shift 2 ;;
             --broker-bin)    broker_bin="$2";    shift 2 ;;
             --supervise-bin) supervise_bin="$2"; shift 2 ;;
+            --workspace)     workspace="$2";     shift 2 ;;
             --name)          name_override="$2"; shift 2 ;;
             -h|--help)   _usage; exit 0 ;;
             -*) printf 'build-tarball.sh: unknown option: %s\n' "$1" >&2; exit 2 ;;
@@ -78,8 +78,12 @@ do_build() {
 
     # Default repo: the git checkout this script lives in.
     if [ -z "$repo" ]; then
-        repo="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)" \
-            || repo="$(cd "$HERE/.." && pwd -P)"
+        if [ -n "$workspace" ]; then
+            repo="$workspace"
+        else
+            repo="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)" \
+                || repo="$(cd "$HERE/.." && pwd -P)"
+        fi
     fi
 
     # Resolve commit.
@@ -92,26 +96,65 @@ do_build() {
             printf 'build-tarball.sh: cannot resolve HEAD in %s\n' "$repo" >&2; exit 1; }
     fi
 
-    # Validate binary paths: all three are required.
-    if [ -z "$loom_bin" ] || [ ! -f "$loom_bin" ]; then
-        printf 'build-tarball.sh: loom binary not found: %s\n' \
-            "${loom_bin:-(not specified; pass --loom-bin <path>)}" >&2
-        exit 1
-    fi
-    if [ -z "$panel_bin" ] || [ ! -f "$panel_bin" ]; then
-        printf 'build-tarball.sh: panel binary not found: %s\n' \
-            "${panel_bin:-(not specified; pass --panel-bin <path>)}" >&2
-        exit 1
-    fi
-    if [ -z "$broker_bin" ] || [ ! -f "$broker_bin" ]; then
-        printf 'build-tarball.sh: broker binary not found: %s\n' \
-            "${broker_bin:-(not specified; pass --broker-bin <path>)}" >&2
-        exit 1
-    fi
-    if [ -z "$supervise_bin" ] || [ ! -f "$supervise_bin" ]; then
-        printf 'build-tarball.sh: spira-supervise binary not found: %s\n' \
-            "${supervise_bin:-(not specified; pass --supervise-bin <path>)}" >&2
-        exit 1
+    # Binary resolution: --workspace auto-discovers from cargo metadata;
+    # explicit --*-bin flags are the legacy path kept for backwards compat.
+    local -a _bin_names=()
+    local -a _bin_paths=()
+
+    if [ -n "$workspace" ]; then
+        command -v cargo >/dev/null 2>&1 || {
+            printf 'build-tarball.sh: cargo not on PATH (required for --workspace)\n' >&2; exit 1; }
+        local _meta
+        _meta="$(cargo metadata --format-version=1 --no-deps \
+            --manifest-path "$workspace/Cargo.toml" 2>/dev/null)" || {
+            printf 'build-tarball.sh: cargo metadata failed for %s/Cargo.toml\n' "$workspace" >&2; exit 1; }
+        local _binname
+        while IFS= read -r _binname; do
+            [ -n "$_binname" ] || continue
+            local _binpath="$workspace/target/release/$_binname"
+            if [ ! -f "$_binpath" ]; then
+                printf 'build-tarball.sh: binary not built: %s\n' "$_binpath" >&2
+                printf 'build-tarball.sh:   run: make build\n' >&2
+                exit 1
+            fi
+            _bin_names+=("$_binname")
+            _bin_paths+=("$_binpath")
+        done < <(printf '%s' "$_meta" | python3 -c "
+import json, sys
+meta = json.load(sys.stdin)
+for pkg in meta['packages']:
+    for t in pkg['targets']:
+        if 'bin' in t['kind']:
+            print(t['name'])
+" | sort)
+        if [ "${#_bin_names[@]}" -eq 0 ]; then
+            printf 'build-tarball.sh: no binary targets found in workspace %s\n' "$workspace" >&2
+            exit 1
+        fi
+    else
+        # Legacy explicit flags — all four are required.
+        if [ -z "$loom_bin" ] || [ ! -f "$loom_bin" ]; then
+            printf 'build-tarball.sh: loom binary not found: %s\n' \
+                "${loom_bin:-(not specified; pass --loom-bin <path>)}" >&2
+            exit 1
+        fi
+        if [ -z "$panel_bin" ] || [ ! -f "$panel_bin" ]; then
+            printf 'build-tarball.sh: panel binary not found: %s\n' \
+                "${panel_bin:-(not specified; pass --panel-bin <path>)}" >&2
+            exit 1
+        fi
+        if [ -z "$broker_bin" ] || [ ! -f "$broker_bin" ]; then
+            printf 'build-tarball.sh: broker binary not found: %s\n' \
+                "${broker_bin:-(not specified; pass --broker-bin <path>)}" >&2
+            exit 1
+        fi
+        if [ -z "$supervise_bin" ] || [ ! -f "$supervise_bin" ]; then
+            printf 'build-tarball.sh: spira-supervise binary not found: %s\n' \
+                "${supervise_bin:-(not specified; pass --supervise-bin <path>)}" >&2
+            exit 1
+        fi
+        _bin_names=(loom panel broker spira-supervise)
+        _bin_paths=("$loom_bin" "$panel_bin" "$broker_bin" "$supervise_bin")
     fi
 
     # Generate name and timestamp. --name overrides auto-generation and pins the
@@ -143,14 +186,18 @@ do_build() {
     git -C "$repo" archive "$sha" | tar -x -C "$stage"
 
     # Add prebuilt binaries under bin/.
-    cp "$loom_bin"      "$stage/bin/loom"
-    cp "$panel_bin"     "$stage/bin/panel"
-    cp "$broker_bin"    "$stage/bin/broker"
-    cp "$supervise_bin" "$stage/bin/spira-supervise"
-    chmod +x "$stage/bin/loom" "$stage/bin/panel" "$stage/bin/broker" "$stage/bin/spira-supervise"
+    local _i
+    for _i in "${!_bin_names[@]}"; do
+        cp "${_bin_paths[$_i]}" "$stage/bin/${_bin_names[$_i]}"
+        chmod +x "$stage/bin/${_bin_names[$_i]}"
+    done
 
-    # Write MANIFEST — the source of truth for which commit this came from.
+    # Write MANIFEST — commit, timestamp, and sha256 per binary.
     printf 'commit %s\ntimestamp %s\n' "$sha" "$ts" > "$stage/MANIFEST"
+    for _i in "${!_bin_names[@]}"; do
+        local _h; _h="$(sha256sum "$stage/bin/${_bin_names[$_i]}" | awk '{print $1}')"
+        printf 'bin/%s %s\n' "${_bin_names[$_i]}" "$_h" >> "$stage/MANIFEST"
+    done
 
     # Pack. -C to the parent so the top-level entry is the versioned directory.
     tar -czf "$outfile" -C "$tmp" "$name"

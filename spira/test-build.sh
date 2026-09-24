@@ -1,26 +1,23 @@
 #!/usr/bin/env bash
 #
-# test-build.sh — build.sh produces both Rust binaries with a stubbed cargo.
+# test-build.sh — build.sh delegates to make build; tests correct behaviour.
 #
-# POSITIVE CONTROL FIRST. Before asserting correct behaviour, the test verifies that
-# build.sh exists and is executable — so a tree without it produces a failure rather
-# than vacuous success. That is the form of "fail-first" for a new script: the test that
-# would catch its absence comes before any test of what it does.
+# POSITIVE CONTROL FIRST. Before asserting correct behaviour, the test verifies
+# that build.sh exists and is executable.
 #
 # WHAT IS TESTED
 # 1. POSITIVE CONTROL: build.sh is present and executable.
-# 2. Absent cargo: build.sh exits 0 and names the feature lost; the harness loop continues.
-# 3. Ordering: loom is built before the panel; verified from build.sh's own output messages.
-# 4. Binaries exist at the paths doctor.sh checks after a normal run.
-# 5. Idempotence: a second run completes without error.
-# 6. --skip-build exits 0 without invoking cargo.
+# 2. Absent cargo: build.sh exits non-zero (make build fails without cargo).
+# 3. Normal run: all five workspace binaries produced at target/release/.
+# 4. Idempotence: a second run completes without error.
+# 5. --skip-build exits 0 without invoking cargo.
 #
-# A real cargo is never called. A stub on PATH creates the expected output files. Ordering
-# is read from build.sh's own "building loom" / "building panel" lines.
+# A real cargo is never called. A stub on PATH creates the expected output files.
 #
 # covers: spira/build.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+REPO_ROOT="$(cd "$HERE/.." && pwd -P)"
 pass=0; fail=0
 ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
@@ -35,61 +32,45 @@ mkdir -p "$TMP/home"
 echo
 echo "POSITIVE CONTROL — build.sh exists and is executable:"
 # =========================================================================
-# This is the assertion that would fail before the fix, against the original tree.
 if [ -f "$HERE/build.sh" ] && [ -x "$HERE/build.sh" ]; then
     ok "build.sh is present and executable"
 else
     bad "build.sh is present and executable" \
-        "not found or not executable at $HERE/build.sh (positive control: fails before the fix)"
+        "not found or not executable at $HERE/build.sh"
 fi
 
 # =========================================================================
 # SHARED FIXTURE
 # =========================================================================
-# Harness dir: holds symlinks to the real build.sh and conf.sh. SPIRA_HOME will be set
-# to this directory so conf.sh resolves SPIRA_REPO and SPIRA_COCKPIT from our overrides.
 HARNESS="$TMP/h"
 mkdir -p "$HARNESS"
 ln -s "$HERE/build.sh" "$HARNESS/build.sh"
 ln -s "$HERE/conf.sh"  "$HARNESS/conf.sh"
-# Minimal stubs so conf.sh resolves cleanly without complaining about missing files:
 printf '# empty\n' > "$HARNESS/repo-map.example"
 printf '# empty\n' > "$HARNESS/prefix-map"
 printf '# empty\n' > "$HARNESS/watchers"
 
-# Source directories build.sh will cd into.
-LOOM_SRC="$TMP/repo/loom"
-PANEL_SRC="$TMP/cockpit/panel"
-BROKER_SRC="$TMP/repo/broker"
-CZAR_PASS_SRC="$TMP/repo/czar-pass"
-SUPERVISE_SRC="$TMP/repo/supervise"
-mkdir -p "$LOOM_SRC" "$PANEL_SRC" "$BROKER_SRC" "$CZAR_PASS_SRC" "$SUPERVISE_SRC"
-# Minimal Cargo.toml so the stub can read the package name (spira-supervise != supervise).
-printf '[package]\nname = "spira-supervise"\n' > "$SUPERVISE_SRC/Cargo.toml"
+mkdir -p "$TMP/repo"
+# Use the real Makefile from the repo root.
+ln -s "$REPO_ROOT/Makefile" "$TMP/repo/Makefile"
 
-# Stub cargo: creates target/release/<name> relative to the caller's working directory.
-# The name comes from Cargo.toml when present, otherwise from the directory basename.
-# This matches what cargo build --release actually produces.
+# Stub cargo: creates target/release/ binaries relative to CWD.
+# When invoked as 'cargo build --release --workspace' from the repo root,
+# CWD is $TMP/repo, so binaries land at $TMP/repo/target/release/.
 mkdir -p "$TMP/stub"
 cat > "$TMP/stub/cargo" << 'ENDSTUB'
 #!/usr/bin/env bash
 d="$(pwd)/target/release"
 mkdir -p "$d"
-if [ -f Cargo.toml ]; then
-    bin="$(grep '^name' Cargo.toml | head -1 | sed 's/.*= *"//;s/"//')"
-fi
-bin="${bin:-$(basename "$(pwd)")}"
-touch "$d/$bin"
-chmod +x "$d/$bin"
+for b in loom panel broker czar-pass spira-supervise; do
+    touch "$d/$b"
+    chmod +x "$d/$b"
+done
 ENDSTUB
 chmod +x "$TMP/stub/cargo"
 
-# run_build: invoke build.sh in a clean, controlled environment with the stub cargo on PATH.
-# SPIRA_REPO and SPIRA_COCKPIT are overridden so conf.sh derives SPIRA_LOOM_BIN and
-# SPIRA_PANEL inside our temp tree instead of the operator's real paths.
-# SPIRA_PATH is used (not the raw PATH) because conf.sh reassembles PATH as:
-#   "${SPIRA_PATH:+$SPIRA_PATH:}$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
-# — so a stub placed only in the initial PATH would be dropped after conf.sh runs.
+# run_build: invoke build.sh in a clean environment with the stub cargo on PATH.
+# SPIRA_PATH is prepended to PATH by conf.sh, making the stub cargo visible.
 run_build() {
     env -i \
         PATH="/usr/local/bin:/usr/bin:/bin" \
@@ -104,8 +85,7 @@ run_build() {
         bash "$HARNESS/build.sh" "$@" 2>&1
 }
 
-# run_build_nocargo: same as run_build but with no cargo in SPIRA_PATH, to exercise the
-# absent-cargo path. SPIRA_PATH is left empty so no stub is prepended.
+# run_build_nocargo: no cargo in PATH — exercises the absent-cargo failure path.
 run_build_nocargo() {
     env -i \
         PATH="/usr/local/bin:/usr/bin:/bin" \
@@ -121,77 +101,42 @@ run_build_nocargo() {
 
 # =========================================================================
 echo
-echo "absent cargo — build.sh exits 0 and names the feature lost:"
+echo "absent cargo — build.sh exits non-zero:"
 # =========================================================================
 nocargo_out="$(run_build_nocargo 2>&1)"; nocargo_rc=$?
 
-is "absent cargo exits 0" "0" "$nocargo_rc"
-want "absent cargo names the feature lost" "features lost" "$nocargo_out"
-want "absent cargo says the loop continues" "loop" "$nocargo_out"
+if [ "$nocargo_rc" -ne 0 ]; then
+    ok "absent cargo exits non-zero (exit $nocargo_rc)"
+else
+    bad "absent cargo exits non-zero" "exited 0 — cargo absence should be fatal"
+fi
+want "absent cargo mentions Rust install" "Rust" "$nocargo_out"
 
 # =========================================================================
 echo
-echo "normal run — all five binaries produced, loom before panel before broker before czar-pass and spira-supervise:"
+echo "normal run — all five workspace binaries produced:"
 # =========================================================================
-rm -rf "$TMP/repo/loom/target" "$TMP/cockpit/panel/target" \
-       "$TMP/repo/broker/target" "$TMP/repo/czar-pass/target" \
-       "$TMP/repo/supervise/target"
+rm -rf "$TMP/repo/target"
 
 normal_out="$(run_build 2>&1)"; normal_rc=$?
 
 is "normal run exits 0" "0" "$normal_rc"
 
-# Ordering: loom before panel before broker before czar-pass and supervise.
-loom_line="$(printf '%s\n' "$normal_out" | grep -n 'building loom' | head -1 | cut -d: -f1)"
-panel_line="$(printf '%s\n' "$normal_out" | grep -n 'building panel' | head -1 | cut -d: -f1)"
-broker_line="$(printf '%s\n' "$normal_out" | grep -n 'building broker' | head -1 | cut -d: -f1)"
-czar_pass_line="$(printf '%s\n' "$normal_out" | grep -n 'building czar-pass' | head -1 | cut -d: -f1)"
-super_line="$(printf '%s\n' "$normal_out" | grep -n 'building spira-supervise' | head -1 | cut -d: -f1)"
-if [ -n "${loom_line:-}" ] && [ -n "${panel_line:-}" ] && \
-   [ "$loom_line" -lt "$panel_line" ] 2>/dev/null; then
-    ok "loom announced before panel (line $loom_line vs $panel_line)"
-else
-    bad "loom announced before panel" \
-        "loom_line='$loom_line' panel_line='$panel_line' in output: $normal_out"
-fi
-if [ -n "${panel_line:-}" ] && [ -n "${broker_line:-}" ] && \
-   [ "$panel_line" -lt "$broker_line" ] 2>/dev/null; then
-    ok "panel announced before broker (line $panel_line vs $broker_line)"
-else
-    bad "panel announced before broker" \
-        "panel_line='$panel_line' broker_line='$broker_line' in output: $normal_out"
-fi
-if [ -n "${broker_line:-}" ] && [ -n "${czar_pass_line:-}" ] && \
-   [ "$broker_line" -lt "$czar_pass_line" ] 2>/dev/null; then
-    ok "broker announced before czar-pass (line $broker_line vs $czar_pass_line)"
-else
-    bad "broker announced before czar-pass" \
-        "broker_line='$broker_line' czar_pass_line='$czar_pass_line' in output: $normal_out"
-fi
-if [ -n "${broker_line:-}" ] && [ -n "${super_line:-}" ] && \
-   [ "$broker_line" -lt "$super_line" ] 2>/dev/null; then
-    ok "broker announced before spira-supervise (line $broker_line vs $super_line)"
-else
-    bad "broker announced before spira-supervise" \
-        "broker_line='$broker_line' super_line='$super_line' in output: $normal_out"
-fi
-
-# All four binaries exist at the paths build.sh derives from SPIRA_REPO and SPIRA_COCKPIT.
-LOOM_BIN="$TMP/repo/loom/target/release/loom"
-PANEL_BIN="$TMP/cockpit/panel/target/release/panel"
-BROKER_BIN="$TMP/repo/broker/target/release/broker"
-CZAR_PASS_BIN="$TMP/repo/czar-pass/target/release/czar-pass"
-SUPERVISE_BIN="$TMP/repo/supervise/target/release/spira-supervise"
-[ -x "$LOOM_BIN" ]      && ok "loom binary exists at SPIRA_LOOM_BIN path" \
-    || bad "loom binary exists at SPIRA_LOOM_BIN path" "not found or not executable at $LOOM_BIN"
-[ -x "$PANEL_BIN" ]     && ok "panel binary exists at SPIRA_PANEL path" \
-    || bad "panel binary exists at SPIRA_PANEL path" "not found or not executable at $PANEL_BIN"
-[ -x "$BROKER_BIN" ]    && ok "broker binary exists at SPIRA_BROKER_BIN path" \
-    || bad "broker binary exists at SPIRA_BROKER_BIN path" "not found or not executable at $BROKER_BIN"
-[ -x "$CZAR_PASS_BIN" ] && ok "czar-pass binary exists at SPIRA_CZAR_PASS_BIN path" \
-    || bad "czar-pass binary exists at SPIRA_CZAR_PASS_BIN path" "not found or not executable at $CZAR_PASS_BIN"
-[ -x "$SUPERVISE_BIN" ] && ok "spira-supervise binary exists at SPIRA_SUPERVISE_BIN path" \
-    || bad "spira-supervise binary exists at SPIRA_SUPERVISE_BIN path" "not found or not executable at $SUPERVISE_BIN"
+LOOM_BIN="$TMP/repo/target/release/loom"
+PANEL_BIN="$TMP/repo/target/release/panel"
+BROKER_BIN="$TMP/repo/target/release/broker"
+CZAR_PASS_BIN="$TMP/repo/target/release/czar-pass"
+SUPERVISE_BIN="$TMP/repo/target/release/spira-supervise"
+[ -x "$LOOM_BIN" ]      && ok "loom binary at workspace target/release/" \
+    || bad "loom binary at workspace target/release/" "not found at $LOOM_BIN"
+[ -x "$PANEL_BIN" ]     && ok "panel binary at workspace target/release/" \
+    || bad "panel binary at workspace target/release/" "not found at $PANEL_BIN"
+[ -x "$BROKER_BIN" ]    && ok "broker binary at workspace target/release/" \
+    || bad "broker binary at workspace target/release/" "not found at $BROKER_BIN"
+[ -x "$CZAR_PASS_BIN" ] && ok "czar-pass binary at workspace target/release/" \
+    || bad "czar-pass binary at workspace target/release/" "not found at $CZAR_PASS_BIN"
+[ -x "$SUPERVISE_BIN" ] && ok "spira-supervise binary at workspace target/release/" \
+    || bad "spira-supervise binary at workspace target/release/" "not found at $SUPERVISE_BIN"
 
 # =========================================================================
 echo
@@ -200,17 +145,11 @@ echo "idempotence — second run completes without error:"
 second_out="$(run_build 2>&1)"; second_rc=$?
 
 is "second run exits 0" "0" "$second_rc"
-want "second run mentions loom"      "loom"            "$second_out"
-want "second run mentions panel"     "panel"           "$second_out"
-want "second run mentions broker"    "broker"          "$second_out"
-want "second run mentions czar-pass" "czar-pass"       "$second_out"
-want "second run mentions supervise" "spira-supervise" "$second_out"
 
 # =========================================================================
 echo
 echo "--skip-build exits 0 and does not invoke cargo:"
 # =========================================================================
-# Replace stub cargo with one that fails loudly on any call.
 cat > "$TMP/stub/cargo" << 'FAILSTUB'
 #!/usr/bin/env bash
 printf 'cargo: unexpectedly invoked with: %s\n' "$*" >&2

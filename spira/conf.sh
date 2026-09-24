@@ -640,7 +640,7 @@ spira_conf_defaults() {
         if [ -f "$SPIRA_REPO/bin/loom" ]; then
             SPIRA_LOOM_BIN="$SPIRA_REPO/bin/loom"
         else
-            SPIRA_LOOM_BIN="$SPIRA_REPO/loom/target/release/loom"
+            SPIRA_LOOM_BIN="$SPIRA_REPO/target/release/loom"
         fi
     fi
     # THE SPIKE PARTITION, in one place because it is read in four: the spike fayth's
@@ -751,28 +751,28 @@ spira_conf_defaults() {
         if [ -f "$SPIRA_REPO/bin/panel" ]; then
             SPIRA_PANEL="$SPIRA_REPO/bin/panel"
         else
-            SPIRA_PANEL="$SPIRA_COCKPIT/panel/target/release/panel"
+            SPIRA_PANEL="$SPIRA_REPO/target/release/panel"
         fi
     fi
     if [ -z "${SPIRA_BROKER_BIN:-}" ]; then
         if [ -f "$SPIRA_REPO/bin/broker" ]; then
             SPIRA_BROKER_BIN="$SPIRA_REPO/bin/broker"
         else
-            SPIRA_BROKER_BIN="$SPIRA_REPO/broker/target/release/broker"
+            SPIRA_BROKER_BIN="$SPIRA_REPO/target/release/broker"
         fi
     fi
     if [ -z "${SPIRA_CZAR_PASS_BIN:-}" ]; then
         if [ -f "$SPIRA_REPO/bin/czar-pass" ]; then
             SPIRA_CZAR_PASS_BIN="$SPIRA_REPO/bin/czar-pass"
         else
-            SPIRA_CZAR_PASS_BIN="$SPIRA_REPO/czar-pass/target/release/czar-pass"
+            SPIRA_CZAR_PASS_BIN="$SPIRA_REPO/target/release/czar-pass"
         fi
     fi
     if [ -z "${SPIRA_SUPERVISE_BIN:-}" ]; then
         if [ -f "$SPIRA_REPO/bin/spira-supervise" ]; then
             SPIRA_SUPERVISE_BIN="$SPIRA_REPO/bin/spira-supervise"
         else
-            SPIRA_SUPERVISE_BIN="$SPIRA_REPO/supervise/target/release/spira-supervise"
+            SPIRA_SUPERVISE_BIN="$SPIRA_REPO/target/release/spira-supervise"
         fi
     fi
     : "${SPIRA_OPERATOR:=the operator}"
