@@ -310,10 +310,10 @@ _suppressed_classes > "$_TMPDIR/suppressed.txt"
 : > "$_TMPDIR/orphaned_closed.txt"
 
 # Process classified remedies, separating into suppressed and orphaned files.
-while IFS=' ' read -r _class _type _bead_id _class2; do
-    case "$_class" in
-        suppressed) printf '%s\n' "$_type" >> "$_TMPDIR/suppressed_closed.txt" ;;
-        orphaned) printf '%s %s\n' "$_bead_id" "$_class2" >> "$_TMPDIR/orphaned_closed.txt" ;;
+while IFS=' ' read -r _type _id1 _id2; do
+    case "$_type" in
+        suppressed) printf '%s\n' "$_id1" >> "$_TMPDIR/suppressed_closed.txt" ;;
+        orphaned) printf '%s %s\n' "$_id1" "$_id2" >> "$_TMPDIR/orphaned_closed.txt" ;;
     esac
 done < <(_suppressed_closed_classes)
 
