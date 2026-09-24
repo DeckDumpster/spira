@@ -102,7 +102,9 @@ printf '  ok    test-fx-p ran\n'; exit 0
 EOF
 
 # B12 fixture: coordination via shared /tmp files inside the container.
-# test-fx-b12a writes start/done markers; test-fx-b12b (exclusive) checks them.
+# test-fx-b12a writes a start marker; test-fx-b12b (exclusive, listed AFTER a)
+# checks it is absent — proving exclusive suites are front-loaded ahead of the
+# parallel pool regardless of their position in the selection list.
 # test-fx-b12p/q: same pattern without the exclusive declaration (positive control).
 cat > "$REMOTE/spira/test-fx-b12a.sh" << 'EOF'
 #!/usr/bin/env bash
@@ -116,9 +118,8 @@ cat > "$REMOTE/spira/test-fx-b12b.sh" << 'EOF'
 #!/usr/bin/env bash
 # exclusive: isolation test
 # covers: b12-fixture.sh
-[ -f /tmp/b12-a-start ] || { printf 'FAIL: a-start absent\n'; exit 1; }
-[ -f /tmp/b12-a-done  ] || { printf 'FAIL: a-done absent (drain did not wait)\n'; exit 1; }
-printf '  ok  exclusive: a finished before b started\n'
+[ -f /tmp/b12-a-start ] && { printf 'FAIL: a-start present (b was not front-loaded ahead of a)\n'; exit 1; }
+printf '  ok  exclusive: b ran before a started, despite being listed after it\n'
 exit 0
 EOF
 cat > "$REMOTE/spira/test-fx-b12p.sh" << 'EOF'
@@ -1302,24 +1303,30 @@ STUBEOF
 fi
 
 # ---------------------------------------------------------------------------
-# B12: EXCLUSIVE SUITE ISOLATION
+# B12: EXCLUSIVE SUITE ISOLATION AND SCHEDULING ORDER
 #
-# An exclusive suite drains all in-flight parallel jobs before it starts and
-# holds the pool alone until it finishes. This prevents OOM when a heavy suite
-# (e.g. a cargo build) would push total container memory over the host limit
-# when running alongside other parallel suites.
+# Exclusive suites are front-loaded ahead of the parallel pool — scheduled
+# before any non-exclusive suite starts, regardless of where they sit in the
+# selection list — and the pool is held empty until each finishes. This
+# prevents OOM when a heavy suite (e.g. a cargo build) would push total
+# container memory over the host limit alongside other parallel suites, and
+# it means the drain never waits out a pool that already had time to fill
+# (sp-rbulh: a mid-list exclusive suite cost 13% of a full-corpus gate this way).
 #
 # POSITIVE CONTROL: B12a runs WITHOUT the exclusive declaration.  Suite q
 # reads /tmp/b12-p-done; suite p writes it only after a 5-second sleep.
 # With maxpar=2 and no exclusive drain, q starts while p is still sleeping and
 # FAILS — proving the test CAN detect missing isolation.
 #
-# B12b runs WITH the exclusive declaration on b.  Suite b reads /tmp/b12-a-done;
-# suite a writes it only after a 5-second sleep.  The exclusive drain holds b
-# until a finishes, so b PASSES — proving the mechanism works.
+# B12b runs WITH the exclusive declaration on b, listed AFTER a in the suite
+# list — the worst case for list-order scheduling. Suite b checks that
+# /tmp/b12-a-start is absent when it runs; a only touches it on start. If b
+# were scheduled at its list position (after a), a would already be running
+# and the marker would exist. b PASSES only because front-loading ran it
+# before a ever started — proving the mechanism works.
 #
-# The 5-second sleep makes the positive-control failure reliable: podman exec
-# overhead is well under 5 seconds, so q starts before p completes.
+# The 5-second sleep on a makes the positive-control failure reliable: podman
+# exec overhead is well under 5 seconds, so q starts before p completes.
 # ---------------------------------------------------------------------------
 echo
 echo "B12: exclusive suite isolation"
@@ -1348,7 +1355,8 @@ SPIRA_BATCH_MAXPAR=2 \
     || bad "B12a positive-control: non-exclusive q fails" \
            "got exit 0 — test cannot detect isolation violation (p may have finished first)"
 
-# B12b: with exclusive declaration, a drains before b starts → b passes.
+# B12b: b is exclusive and listed AFTER a — front-loading must still run b
+# first, so a has not started when b's absence-check runs.
 RESULTS_ROOT_B12="$TMP/results-B12"
 rc_b12=0
 SPIRA_BATCH_SUITE_DIR="$SUITE_B12" \
@@ -1361,14 +1369,14 @@ SPIRA_BATCH_MAXPAR=2 \
     --suites test-fx-b12a.sh,test-fx-b12b.sh \
     topic "$FIXTURE" || rc_b12=$?
 
-iszero "B12b: exclusive suite batch exits 0 (drain waited for a)" "$rc_b12"
+iszero "B12b: exclusive suite batch exits 0 (b front-loaded ahead of a)" "$rc_b12"
 
 RD_B12="$(find_results_dir "$RESULTS_ROOT_B12")"
 if [ -n "$RD_B12" ] && [ -f "$RD_B12/test-fx-b12b.sh.result" ]; then
     _st_b12b="$(awk '{print $1}' "$RD_B12/test-fx-b12b.sh.result")"
     [ "$_st_b12b" = ok ] \
-        && ok "B12b: exclusive suite b passed (a-done existed when b ran)" \
-        || bad "B12b: exclusive suite b passed" \
+        && ok "B12b: exclusive suite b ran before a started, despite list position" \
+        || bad "B12b: exclusive suite b ran before a started" \
                "got $_st_b12b ($(cat "$RD_B12/test-fx-b12b.sh.out" 2>/dev/null))"
 fi
 

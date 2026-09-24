@@ -1045,7 +1045,23 @@ else
         awk -v v="$_v" -v t="$_t" 'BEGIN{exit(v+0>t+0)?0:1}'
     }
 
-    for s in $SELECTED; do
+    # SCHEDULING ORDER: exclusive suites run first, ahead of the parallel pool.
+    # The drain below only pays for suites already in flight — an exclusive suite
+    # sitting at its alphabetical position mid-list drains a pool that has had time
+    # to fill, so the drain waits out whichever suites started first (sp-rbulh:
+    # measured at 13% of a full-corpus gate). Moving exclusive suites to the front
+    # means the drain always finds an empty pool: this loop only reorders, the
+    # exclusive/non-exclusive selection made below is unaffected.
+    _par_order=""
+    for _os in $SELECTED; do
+        [ -n "$(suite_exclusive_of "$SUITE_DIR/$_os")" ] && _par_order="$_par_order $_os"
+    done
+    for _os in $SELECTED; do
+        [ -z "$(suite_exclusive_of "$SUITE_DIR/$_os")" ] && _par_order="$_par_order $_os"
+    done
+    _par_order="$(echo $_par_order)"
+
+    for s in $_par_order; do
         # Exclusive suites drain all in-flight parallel jobs and run alone — prevents OOM
         # when a heavy suite (e.g. a cargo build) runs alongside others in the same container.
         _excl_reason="$(suite_exclusive_of "$SUITE_DIR/$s")"
