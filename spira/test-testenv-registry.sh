@@ -9,7 +9,7 @@
 # before building.
 #
 # THE PROPERTY THAT MUST NOT BE LOST. The tag is the hash of the build closure —
-# Containerfile, bd pin, and doctor.sh's program lists. Acquiring an image by
+# Containerfile, bd pin, and conf.sh's dependency manifest. Acquiring an image by
 # pulling that tag is exactly as safe as building it, and for the same reason:
 # a change to any input produces a different tag, so a stale image is
 # unreachable rather than merely unlikely. Pushing under a floating tag would
@@ -48,7 +48,6 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 FIXTURE="$TMP/spira"
 mkdir -p "$FIXTURE/testenv" "$TMP/bin"
 cp "$HERE/testenv.sh"            "$FIXTURE/testenv.sh"
-cp "$HERE/doctor.sh"             "$FIXTURE/doctor.sh"
 cp "$HERE/conf.sh"               "$FIXTURE/conf.sh"
 cp "$HERE/testenv/Containerfile" "$FIXTURE/testenv/Containerfile"
 PIN="$TMP/bd-pin"; printf 'BD_PIN_MIGRATIONS=42\n' > "$PIN"

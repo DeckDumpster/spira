@@ -126,11 +126,9 @@ printf '200 5ms\n'
 LPEOF
 chmod +x '${STUBS_CTR}/loom-probe'
 
-# Create a fake prod checkout OUTSIDE /workspace so doctor.sh sees split-checkout mode.
-# doctor.sh FAILs when SPIRA_PROD (CONFIGURE_PROD) is inside SPIRA_REPO (/workspace).
-# Must be a real copy, not a symlink: doctor.sh uses pwd -P which resolves symlinks back
-# into /workspace. install.sh also checks that ExecStart targets are executable, so the
-# scripts must be present.
+# Create a fake prod checkout OUTSIDE /workspace for SPIRA_PROD (CONFIGURE_PROD) to
+# name — a split-checkout SPIRA_PROD is what configure.sh writes by default. install.sh
+# checks that ExecStart targets are executable, so the scripts must be present.
 mkdir -p /tmp/spira-prod && cp -a /workspace/spira /tmp/spira-prod/
 " >&2
 iszero "stubs created inside container" "$?"
@@ -140,10 +138,8 @@ echo
 echo "configure — non-interactive spira.conf bootstrap:"
 # ===========================================================================
 # CONFIGURE_PROD=/tmp/spira-prod/spira is a fake prod path OUTSIDE SPIRA_REPO
-# (/workspace). doctor.sh FAILs when SPIRA_PROD is inside SPIRA_REPO (single-
-# checkout mode); using a separate /tmp path satisfies the split-checkout check.
-# The directory was created in the stubs block above so doctor.sh sees it as
-# an existing directory and reports OK rather than WARN.
+# (/workspace) — a split-checkout SPIRA_PROD. The directory was created in the
+# stubs block above so it already exists when configure.sh writes it out.
 # CONFIGURE_DOLT_DATA="" suppresses the dolt-beads.service unit (no Dolt here).
 "${CEXEC[@]}" \
     -e "CONFIGURE_PROD=/tmp/spira-prod/spira" \
@@ -221,12 +217,13 @@ want "sentinel timer active" "active" "$active_out"
     && ok "world not halted (stamp absent)" \
     || bad "world not halted" "world.halted still present after removal"
 
-# 4. doctor.sh exits 0 (stub bd on PATH satisfies the fatal-binary check for bd,
-#    git and python3 are real, flock is from util-linux in the container image).
+# 4. doctor.sh exits 0 — the stub bd/store fixture created above satisfies its
+#    runtime-health checks (store reachable, no failed units, snapshot warns but
+#    does not FAIL since the collector has not run yet).
 doc_out="$("${CEXEC[@]}" "$CNAME" bash /workspace/spira/doctor.sh 2>&1)"
 doc_rc=$?
 iszero "doctor.sh exits 0" "$doc_rc"
-notwant "doctor.sh: bd not a FAIL" "FAIL  bd" "$doc_out"
+notwant "doctor.sh: no FAIL at all" "FAIL" "$doc_out"
 
 # 5. ready.sh exits 0 with stubs. SPIRA_LOOM_BIN points to the stub loom binary
 #    so the binary-present gate passes; SPIRA_LOOM_PROBE then returns "200 5ms".
