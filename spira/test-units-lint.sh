@@ -51,7 +51,9 @@ printf 'test-units-lint.sh\n'
 rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" \
     bash "$CLONE/systemd/install.sh" --render 2>"$TMP/render.err")"
 is "the render pass produced units" "yes" "$([ -n "$rendered" ] && echo yes || echo no)"
-is "and reported no error" "" "$(cat "$TMP/render.err")"
+# `note:` lines are install.sh commenting on units this suite does not touch (an unbuilt
+# Rust binary elsewhere in UNITS, not rendered here) — informational, not a render failure.
+is "and reported no error" "" "$(grep -v '^note:\|^      Build it:' "$TMP/render.err")"
 
 block() {  # block <unit-name> -> its rendered content
     awk -v m="===== $1 =====" 'index($0,m)==1{f=1;next} /^===== /{f=0} f' <<< "$rendered"
