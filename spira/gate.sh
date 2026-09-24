@@ -572,6 +572,10 @@ run_gate() {             # run_gate <ref-being-tested> -> the command's own stat
     # aeon's systemd unit, which carries a CPUQuota. nproc inside the gate measures the
     # quota (ceil(quota/100%), minimum 1) rather than the host. A repository whose CI
     # preflight asserts a minimum core count fails that assertion — and fails it on the base
+    # SPIRA_GATE_SUITES MUST BE ON THIS LIST. landing.sh sets it for fences-only certification
+    # and gate-touched.sh reads it; without this line env -i dropped it and #281 ran full
+    # suites for an hour while reporting nothing wrong (2026-09-24).
+    #
     # too, producing BASE_FAIL against every branch. SPIRA_GATE_HOST_CORES is set here from
     # host_cores(), which reads getconf and is immune to the quota. A repository's CI can
     # substitute it for nproc where the raw host count is what it needs.
@@ -583,6 +587,7 @@ run_gate() {             # run_gate <ref-being-tested> -> the command's own stat
         SPIRA_GATE_HOST_CORES="$(host_cores)" \
         SPIRA_GATE_EJECTED_SUITES="${ejected_suites:-}" \
         SPIRA_GATE_ALL="${SPIRA_GATE_ALL:-0}" \
+        SPIRA_GATE_SUITES="${SPIRA_GATE_SUITES:-on}" \
         SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
         SPIRA_VERDICT_REPEAT_CONSIDERED="${SPIRA_VERDICT_REPEAT_CONSIDERED:-}" \
         timeout "${SPIRA_GATE_TIMEOUT:-2700}" bash -c "$CMD" 9>&- ) 2>&1
