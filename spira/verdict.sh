@@ -219,6 +219,7 @@ _attr_eject() {  # _attr_eject <id> <tip> <suites-csv> <pr-n> <name> [fail-lines
         _note="$(printf '%s\n\nFailing assertions:\n%s' "$_note" "$fail_lines")"
     fi
     bead_reopen "$id" queue-eject "$_note" >/dev/null 2>&1 || true
+    bdq label remove "$id" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
     land_mark "$id" EJECTED "$tip" "$suites"
     printf '%s' "$suites" > "$LANDSTATE/$id.ejected.$$" 2>/dev/null \
         && mv -f "$LANDSTATE/$id.ejected.$$" "$LANDSTATE/$id.ejected" 2>/dev/null || true
@@ -829,6 +830,7 @@ main() {
                         _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
                         land_mark "$_mid" LANDED "$_mtip"
                         gh_issue_closeout "$_mid" "$batch_head" "$repo" || true
+                        bead_close_on_land "$_mid" "$batch_head" || true
                     done
                     while IFS= read -r _line; do
                         case "$_line" in
@@ -914,6 +916,7 @@ main() {
                                "$current_base" 2>/dev/null; then
                             land_mark "$_mid" LANDED "$_mtip" already-in-base
                             gh_issue_closeout "$_mid" "${current_base}" "$repo" || true
+                            bead_close_on_land "$_mid" "${current_base}" || true
                             printf 'verdict %s: %s already in moved base — LANDED\n' \
                                 "$name" "$_mid"
                         else

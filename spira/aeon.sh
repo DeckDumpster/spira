@@ -158,6 +158,9 @@ if os.access(fence, os.X_OK):
 guard = os.path.join(spira_home, 'bd-close-unacked-guard.sh')
 if os.access(guard, os.X_OK):
     pre_hooks.append({'type': 'command', 'command': guard, 'timeout': 5})
+outcome_guard = os.path.join(spira_home, 'bd-close-outcome-guard.sh')
+if os.access(outcome_guard, os.X_OK):
+    pre_hooks.append({'type': 'command', 'command': outcome_guard, 'timeout': 5})
 if pre_hooks:
     hooks['PreToolUse'] = [{'hooks': pre_hooks}]
 print(json.dumps({'hooks': hooks}))
@@ -905,6 +908,25 @@ sys.exit(0)' 2>/dev/null; then
             log "$FAYTH: $BEAD_ID operator-wait — sent kind-question mail, released, no attempt charged"
             release_own_claim "$BEAD_ID"
             ledger_done "$rc" "operator-wait"
+            exit $rc
+        fi
+        # SUBMITTED IS NOT UNLANDED. bd-close-outcome-guard.sh converts a builder's
+        # OUTCOME: submitted close into this label instead of allowing the close
+        # (bead_close_on_land, lib.sh, closes it for real once the commit lands). The bead
+        # is open by design here; charging an attempt would poison work that is done and
+        # simply hasn't landed yet.
+        if bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
+import sys, json, os
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+labels = (d[0].get("labels") or []) if d else []
+sys.exit(0 if os.environ.get("SPIRA_SUBMITTED_LABEL", "spira-submitted") in labels else 1)
+' 2>/dev/null; then
+            bdq note "$BEAD_ID" "Submitted: work committed on branch and marked submitted; the landing pass closes this bead when it lands, citing the merge commit. No attempt charged." >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID submitted — no attempt charged"
+            release_own_claim "$BEAD_ID"
+            ledger_done "$rc" submitted
             exit $rc
         fi
         # YIELD-HEADLESS IS NAMED, NOT GENERIC UNLANDED. rc=0 with the bead open reads
