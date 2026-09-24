@@ -109,7 +109,7 @@ echo "POSITIVE CONTROL: mapped repo passes through (non-work kind)"
 out="$(run_bead "an event" --kind event --repo mapped-two)"; rc=$?
 is   "mapped event: exits 0"          "0"             "$rc"
 want "mapped event: bd create called" "create"        "$(cat "$BD_LOG")"
-want "mapped event: repo label added" "repo:mapped-two" "$(cat "$BD_LOG")"
+want "mapped event: repo label present" "repo:mapped-two" "$(cat "$BD_LOG")"
 
 # ==========================================================================================
 echo
