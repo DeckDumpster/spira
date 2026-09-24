@@ -202,6 +202,77 @@ out="$(printf 'the ask below carries the failure\n\n## Question\n\nChange the ap
 isz  "SEEN GREEN: body promises ask below and has a Question section" "$rc"
 
 # ==========================================================================
+# LINT: RFC 5322 From validation — bare display name  (SEEN RED then SEEN GREEN)
+# ==========================================================================
+echo
+echo "lint: From with no address — bare display name (SEEN RED then SEEN GREEN)"
+
+out="$(echo "body" | run send lint-from-noaddr --from "Archivist" --subject "Hello" 2>&1)"; rc=$?
+isnz "SEEN RED: bare display name is refused"     "$rc"
+want "refusal mentions no address"  "no address"  "$out"
+want "refusal names the From value" "Archivist"   "$out"
+
+out="$(echo "body" | run send lint-from-noaddr \
+    --from "the archivist from session abc123-def456" --subject "Hello" 2>&1)"; rc=$?
+isnz "SEEN RED: free-text phrase with no @ is refused" "$rc"
+want "refusal mentions no address"  "no address"  "$out"
+
+out="$(echo "body" | run send lint-from-noaddr --from "Archivist <archivist@spira>" --subject "Hello" 2>&1)"; rc=$?
+isz  "SEEN GREEN: display-name addr-spec is accepted" "$rc"
+
+out="$(echo "body" | run send lint-from-noaddr --from "archivist@spira" --subject "Hello" 2>&1)"; rc=$?
+isz  "SEEN GREEN: bare addr-spec is accepted" "$rc"
+
+# ==========================================================================
+# LINT: RFC 5322 From validation — group syntax  (SEEN RED then SEEN GREEN)
+# ==========================================================================
+echo
+echo "lint: From with group syntax (SEEN RED then SEEN GREEN)"
+
+out="$(echo "body" | run send lint-from-group --from "Archivist:;" --subject "Hello" 2>&1)"; rc=$?
+isnz "SEEN RED: RFC 6854 group syntax is refused"  "$rc"
+want "refusal mentions RFC 6854"  "RFC 6854"  "$out"
+
+out="$(echo "body" | run send lint-from-group --from "Archivist <archivist@spira>" --subject "Hello" 2>&1)"; rc=$?
+isz  "SEEN GREEN: mailbox form accepted after group test" "$rc"
+
+# ==========================================================================
+# SPIRA_MAIL_FROM default — omitting --from uses the environment value
+# ==========================================================================
+echo
+echo "SPIRA_MAIL_FROM: omitted --from defaults from environment (SEEN RED then SEEN GREEN)"
+
+# SEEN RED: no --from, no env → lint refuses (still requires a sender)
+out="$(echo "body" | run send lint-mailfrom-env --subject "Hello" 2>&1)"; rc=$?
+isnz "SEEN RED: missing --from with no SPIRA_MAIL_FROM is refused" "$rc"
+
+# SEEN GREEN: no --from, env set → accepted; From header carries the env value
+out="$(echo "body" | SPIRA_MAIL_FROM="Aeon <aeon@spira>" run send lint-mailfrom-env \
+    --subject "Hello" 2>&1)"; rc=$?
+isz  "SEEN GREEN: omitted --from with SPIRA_MAIL_FROM is accepted" "$rc"
+# Verify the From header landed in the mailbox
+msg="$(cat "$SPIRA_MAIL/lint-mailfrom-env/new"/* 2>/dev/null)"
+want "SEEN GREEN: From header carries SPIRA_MAIL_FROM value" "Aeon <aeon@spira>" "$msg"
+
+# ==========================================================================
+# Harness senders — all pass the new From check
+# ==========================================================================
+echo
+echo "harness senders: existing Name <local@spira> addresses all pass"
+
+for sender in \
+    "Archivist <archivist@spira>" \
+    "Sentinel <sentinel@spira>" \
+    "Spira Queue <queue@spira>" \
+    "Landing gate <gate@spira>" \
+    "Builder <builder@spira>" \
+    "Incident <incident@spira>" \
+    "Suite hygiene <hygiene@spira>"; do
+    out="$(echo "body" | run send harness-senders --from "$sender" --subject "Test" 2>&1)"; rc=$?
+    isz "harness sender passes: $sender" "$rc"
+done
+
+# ==========================================================================
 # LINT OVERRIDE — SPIRA_MAIL_LINT_CONSIDERED=1 bypasses all checks
 # ==========================================================================
 echo

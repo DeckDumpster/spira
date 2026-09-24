@@ -307,6 +307,7 @@ home.}"
         # working directory, so this is what keeps the archivist's own transcript inside
         # $SPIRA_RUN and therefore outside its own sweep.
         cd "$ARC/cwd" || exit 1
+        export SPIRA_MAIL_FROM="Archivist <archivist@spira>"
         arc_sysfile="$SPIRA_RUN/archivist-$sid.system.md"
         arc_taskfile="$SPIRA_RUN/archivist-$sid.task.md"
         FAYTH_SYSTEM_PROMPT=replace

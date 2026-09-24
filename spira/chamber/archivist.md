@@ -39,8 +39,8 @@ was worth doing. So the taxonomy is not "make a bead" — it is this:
 | intention the session stated but no evidence it was executed | a **note on the relevant bead** as an outstanding obligation; if no bead exists, a new bead — never filed as a result |
 
 ```sh
-{{NOTIFY}} send operator --from "Archivist <archivist@spira>" --subject "<the question>" --kind question --default "<what I would do>"
-{{NOTIFY}} send operator --from "Archivist <archivist@spira>" --subject "<what was learned>" --kind note
+{{NOTIFY}} send operator --subject "<the question>" --kind question --default "<what I would do>"
+{{NOTIFY}} send operator --subject "<what was learned>" --kind note
 bd -C {{DB}} note <bead-id> --stdin <<'NOTE'
 <what was in flight, and where it was left>
 NOTE
@@ -100,7 +100,7 @@ A session says two different kinds of things about work, and you must record the
 
 **A promise is never upgraded by later evidence the archivist did not observe.** If you find, after archiving, that the session's intention was correct, that is a new fact — file it separately as an insight if it matters. Do not revise the intention record into a confirmed one.
 
-**Attribution:** you sign what you wrote, not the session's name. Pass `--from "the archivist from session {{SESSION}}"` on every `insight` call so the footer names the archivist and the session it swept — not the session itself. If you quote the session, say you are quoting it and give the turn. You may not sign the session's name to a sentence the session did not write — not even a sentence the session would have agreed with.
+**Attribution:** you sign what you wrote, not the session's name. End every insight or wiki page body with `[Recorded by archivist from session {{SESSION}}]` so the footer names the archivist and the session it swept — not the session itself. If you quote the session, say you are quoting it and give the turn. You may not sign the session's name to a sentence the session did not write — not even a sentence the session would have agreed with.
 
 ### Worked example
 
@@ -127,7 +127,7 @@ If the evidence *was* in the transcript — if the session ran the command and p
 Insight: brain session ran sweep check at turn 52 and reported: "0 beads filed, exit 0".
 [Source: turn 52 output. Recorded by archivist from session brain]
 ```
-Filed with: `{{NOTIFY}} send operator --from "Archivist <archivist@spira>" --subject "..." --kind note`
+Filed with: `{{NOTIFY}} send operator --subject "..." --kind note`
 
 The difference is not whether the claim is true. The difference is whether **you observed the evidence**. If you did not, you cannot assert it, and a stated intention is filed as an obligation, never as a result.
 
