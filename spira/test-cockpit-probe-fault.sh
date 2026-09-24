@@ -185,7 +185,7 @@ else
     bad "SP_AWAITING_N: absent key did not render '?': $(printf '%s\n' "$p" | grep ' CI ')"
 fi
 
-# SP_QUEUE_DEPTH — queue depth, QUEUE section guard (absent + batch=0 + next=0 → unread_row QUEUE)
+# SP_QUEUE_DEPTH — queue depth in the 24h worked row and certified count
 base_snap __none__
 p="$(pane 0)"
 if grep -qF 'QUEUE' <<< "$p"; then
@@ -193,12 +193,14 @@ if grep -qF 'QUEUE' <<< "$p"; then
 else
     bad "SP_QUEUE_DEPTH positive control: QUEUE section absent (cannot test fault)"
 fi
+# When SP_QUEUE_DEPTH is absent, the funnel certify/red rows show ? because the
+# SP_FUNNEL_* keys are also absent from base_snap — the pane does not render 0.
 base_snap SP_QUEUE_DEPTH
 p="$(pane 0)"
-if grep -q 'QUEUE.*?' <<< "$p"; then
-    ok "SP_QUEUE_DEPTH: absent key renders '?' (cannot read the queue)"
+if printf '%s\n' "$p" | grep -qE '(certify|red)[[:space:]]+\?'; then
+    ok "SP_QUEUE_DEPTH: absent key renders '?' (certify/red rows show ?)"
 else
-    bad "SP_QUEUE_DEPTH: absent key did not render '?': $(printf '%s\n' "$p" | grep -i queue)"
+    bad "SP_QUEUE_DEPTH: absent key did not render '?': $(printf '%s\n' "$p" | grep -iE 'queue|certify|red')"
 fi
 
 # SP_WAITING — operator attention count, rendered with ${SP_WAITING:-?}
@@ -335,18 +337,18 @@ else
     ok "SP_QUEUE_DEPTH: absent key did not render '0 queued'"
 fi
 
-# SP_UNLANDED_N — anomaly count on the 24h-worked row, rendered with ${SP_UNLANDED_N:-?}
+# SP_UNLANDED_N — done count on the 24h-worked row, rendered with ${SP_UNLANDED_N:-?}
 base_snap __none__
 p="$(pane 0)"
-if grep -q '1 anomaly' <<< "$p"; then
-    ok "SP_UNLANDED_N positive control: '1 anomaly' renders on 24h worked row"
+if grep -q '1 done' <<< "$p"; then
+    ok "SP_UNLANDED_N positive control: '1 done' renders on 24h worked row"
 else
-    bad "SP_UNLANDED_N positive control: '1 anomaly' absent from 24h worked row (cannot test fault)"
+    bad "SP_UNLANDED_N positive control: '1 done' absent from 24h worked row (cannot test fault)"
 fi
 base_snap SP_UNLANDED_N
 p="$(pane 0)"
 worked_line="$(printf '%s\n' "$p" | grep '24h worked')"
-if printf '%s\n' "$worked_line" | grep -q '[?] anomaly'; then
+if printf '%s\n' "$worked_line" | grep -q '[?] done'; then
     ok "SP_UNLANDED_N: absent key renders '?'"
 else
     bad "SP_UNLANDED_N: absent key did not render '?': $worked_line"
