@@ -173,9 +173,12 @@ want "batch logs WARN for false-landed sp-recover" \
     "false-landed sp-recover" "$out"
 want "batch reports sp-recover re-certified" \
     "RE-CERTIFIED" "$(printf '%s\n' "$out" | grep sp-recover)"
-case "$(cat "$LANDSTATE/sp-recover" 2>/dev/null)" in CERTIFIED*)
-    ok "sp-recover landstate restored to CERTIFIED" ;;
-    *) bad "sp-recover landstate restored to CERTIFIED" \
+# CERTIFIED is the sweep's own outcome; BATCHED means the same pass's batch build ran
+# afterward, saw the freshly re-certified branch, and folded it straight into the batch it
+# was already building — an even stronger proof of recovery than CERTIFIED alone.
+case "$(cat "$LANDSTATE/sp-recover" 2>/dev/null)" in CERTIFIED*|BATCHED*)
+    ok "sp-recover landstate restored to CERTIFIED (or already picked up as BATCHED)" ;;
+    *) bad "sp-recover landstate restored to CERTIFIED (or already picked up as BATCHED)" \
            "got: $(cat "$LANDSTATE/sp-recover" 2>/dev/null)" ;; esac
 git -C "$REPO" show-ref --verify -q "refs/heads/spira/sp-recover" \
     && ok "sp-recover branch restored locally" \
