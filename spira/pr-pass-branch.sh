@@ -37,6 +37,11 @@ if submitted "$id" "$tip"; then
             fi
             refresh="$PR_REFRESH_N"
             ;;
+        stale)
+            git -C "$repo" merge-base --is-ancestor "$baseref" "refs/heads/$br" 2>/dev/null \
+                || log "$id: $br is behind $baseref and already escalated — leaving it standing"
+            exit 6
+            ;;
         *)
             exit 6
             ;;
