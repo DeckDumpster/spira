@@ -1045,6 +1045,23 @@ express_ready_in_task_pool() {
     return 1
 }
 
+# check7_pool_decision <throttled:0|1> <free> <express-ready:0|1> -> the task pool CHECK 7
+# grants for this pass.
+#
+# An express grant sets the pool to EXACTLY 1, never to whatever free happened to hold — the
+# old inline form only ever raised a throttled pool toward 1 (`[ pool -lt 1 ] && pool=1`), so
+# a free value already at or above 1 passed through untouched and the throttle did nothing
+# the one pass an express bead was ready (sp-zcvh1). One express grant claims one express
+# bead; a second cannot be summoned until the next pass re-evaluates readiness.
+check7_pool_decision() {
+    local throttled="$1" free="$2" express_ready="$3"
+    if [ "$throttled" = 1 ]; then
+        if [ "$express_ready" = 1 ]; then printf '1'; else printf '0'; fi
+    else
+        printf '%s' "$free"
+    fi
+}
+
 # mark_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on beads whose closed blocker
 # is in the queue pipeline (CERTIFIED or BATCHED) and has not yet reached LANDED.
 #
@@ -1381,14 +1398,21 @@ fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partitio
     return 0
 }
 
-# summon_fayth <fayth> -> 0 if an aeon was started, 1 otherwise.
+# summon_fayth <fayth> [pool-remaining] [require-label] -> 0 if an aeon was started, 1
+# otherwise.
+#
+# require-label is passed to the aeon as SPIRA_REQUIRE_LABEL, which it adds to its own
+# FAYTH_LABELS before claiming (aeon.sh). Set it only when the slot itself is restricted —
+# an express grant, say — so the aeon summoned under it cannot claim a bead outside that
+# restriction. A normal summon leaves it unset and claims under the fayth's own predicate
+# exactly as before.
 #
 # THE STATUS IS THE ANSWER, not a word on stdout. A caller that captured the output to look
 # for "summoned" would swallow the log lines below with it, and the sentinel's stdout IS the
 # sentinel log — so the one pass that did something would be the one that explained itself
 # least.
-summon_fayth() {         # summon_fayth <fayth> [pool-remaining]
-    local f="$1" pool="${2:-}" r free
+summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
+    local f="$1" pool="${2:-}" require_label="${3:-}" r free
     # HALTED — world.sh stop writes this stamp; only world.sh start removes it.
     # Checked before drain: halt is indefinite and requires explicit operator action.
     if [ -f "${SPIRA_RUN:-}/world.halted" ]; then
@@ -1554,12 +1578,13 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining]
     # pass finishes — which killed the first aeon it summoned within the same second, after
     # 1.6s of CPU, leaving an empty log and a sentinel that cheerfully reported "summoned"
     # every two minutes. systemd-run puts the aeon in its own cgroup, quota and journal.
-    log "CHECK7 $f: $r ready, $free free — summoning"
+    log "CHECK7 $f: $r ready, $free free — summoning${require_label:+, restricted to '$require_label'}"
     "${SPIRA_SUMMON:-systemd-run}" --user --collect --quiet \
         --unit="spira-aeon-$f-$(date +%s)" \
         --property=CPUQuota="${SPIRA_AEON_CPU_QUOTA:-70%}" --property=Nice=10 \
         --property=TimeoutStartSec="$(fayth_get "$f" FAYTH_TIMEOUT_SECONDS 3600)" \
         --setenv=PATH="$PATH" --setenv=HOME="$HOME" \
+        ${require_label:+--setenv=SPIRA_REQUIRE_LABEL="$require_label"} \
         "$SPIRA_HOME/aeon.sh" "$f" 2>/dev/null
 }
 
