@@ -19,19 +19,23 @@ git init -q "$TMP/repo"
 
 # A gh stand-in that answers `pr view --json statusCheckRollup` with the rollup in $ROLLUP,
 # returns jobs from $JOBS_JSON for runs-jobs queries (default: one job id=99, no name),
-# and serves $ANNOTATIONS for annotations.
+# serves $ANNOTATIONS for annotations, and artifact list/zip from $ARTIFACTS_JSON/$ARTIFACT_ZIP.
 cat > "$TMP/gh" <<'GH'
 #!/usr/bin/env bash
 case "$*" in
-    *statusCheckRollup*)      cat "$ROLLUP" ;;
-    *actions/runs*jobs*)      [ -n "${JOBS_JSON:-}" ] && cat "$JOBS_JSON" || printf '{"jobs":[{"id":99}]}\n' ;;
-    *check-runs*annotations*) [ -n "${ANNOTATIONS:-}" ] && cat "$ANNOTATIONS" || printf '[]\n' ;;
-    *)                        printf '{}\n' ;;
+    *statusCheckRollup*)       cat "$ROLLUP" ;;
+    *actions/runs*artifacts*)  [ -n "${ARTIFACTS_JSON:-}" ] && cat "$ARTIFACTS_JSON" || printf '{"artifacts":[]}\n' ;;
+    *actions/artifacts*zip*)   [ -n "${ARTIFACT_ZIP:-}" ] && cat "$ARTIFACT_ZIP" || true ;;
+    *actions/runs*jobs*)       [ -n "${JOBS_JSON:-}" ] && cat "$JOBS_JSON" || printf '{"jobs":[{"id":99}]}\n' ;;
+    *check-runs*annotations*)  [ -n "${ANNOTATIONS:-}" ] && cat "$ANNOTATIONS" || printf '[]\n' ;;
+    *)                         printf '{}\n' ;;
 esac
 GH
 chmod +x "$TMP/gh"
 ANNOTATIONS=""
 JOBS_JSON=""
+ARTIFACTS_JSON=""
+ARTIFACT_ZIP=""
 
 rollup() {   # rollup <gate status> <gate conclusion>
     printf '{"headRefOid":"abc123def456abc123def456abc123def456abc123","statusCheckRollup":[{"__typename":"CheckRun","name":"suites","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://example.invalid/actions/runs/1/job/2"},{"__typename":"CheckRun","name":"gate","status":"%s","conclusion":"%s","detailsUrl":"https://example.invalid/actions/runs/1/job/3"}]}\n' "$1" "$2" > "$TMP/rollup.json"
@@ -40,12 +44,14 @@ status() {
     env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" ROLLUP="$TMP/rollup.json" \
         ANNOTATIONS="${ANNOTATIONS:-}" JOBS_JSON="${JOBS_JSON:-}" \
+        ARTIFACTS_JSON="${ARTIFACTS_JSON:-}" ARTIFACT_ZIP="${ARTIFACT_ZIP:-}" \
         bash "$HERE/forge.sh" check-status "$TMP/repo" 7 2>/dev/null | head -1
 }
 status_all() {
     env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" ROLLUP="$TMP/rollup.json" \
         ANNOTATIONS="${ANNOTATIONS:-}" JOBS_JSON="${JOBS_JSON:-}" \
+        ARTIFACTS_JSON="${ARTIFACTS_JSON:-}" ARTIFACT_ZIP="${ARTIFACT_ZIP:-}" \
         bash "$HERE/forge.sh" check-status "$TMP/repo" 7 2>/dev/null
 }
 
@@ -163,6 +169,57 @@ grep -q 'run cancel' "$RERUN_LOG" \
 grep -q -- '--failed' "$RERUN_LOG" \
     && bad "rerun: no --failed when in_progress" "found --failed in: $(cat "$RERUN_LOG")" \
     || ok  "rerun: no --failed when in_progress"
+
+echo
+echo "artifact-based suite list: 28 suites in artifact, only 10 in annotations:"
+rollup COMPLETED FAILURE
+python3 -c "
+import zipfile, json, io, sys
+buf = io.BytesIO()
+suites = ['test-suite-%02d.sh' % i for i in range(1, 29)]
+with zipfile.ZipFile(buf, 'w') as z:
+    z.writestr('red-suites.json', json.dumps({'red': suites, 'flaky': [], 'red_count': 28}))
+buf.seek(0)
+sys.stdout.buffer.write(buf.read())
+" > "$TMP/artifact-28.zip"
+_ann10='[{"annotation_level":"failure","title":"","path":"spira/test-aaa-01.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-02.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-03.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-04.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-05.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-06.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-07.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-08.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-09.sh","message":"x"},{"annotation_level":"failure","title":"","path":"spira/test-aaa-10.sh","message":"x"}]'
+printf '%s\n' "$_ann10" > "$TMP/ann-10.json"
+ANNOTATIONS="$TMP/ann-10.json"
+ARTIFACTS_JSON='{"artifacts":[{"id":7,"name":"batch-results-1"}]}'
+ARTIFACT_ZIP="$TMP/artifact-28.zip"
+_out28="$(status_all)"
+is "artifact path: overall status is red" "red" "$(printf '%s\n' "$_out28" | head -1)"
+_cnt28="$(printf '%s\n' "$_out28" | grep -c '^red-suite: ' || true)"
+is "artifact path: all 28 red-suite lines emitted" "28" "$_cnt28"
+ANNOTATIONS="" ARTIFACTS_JSON="" ARTIFACT_ZIP=""
+
+echo
+echo "positive control — no artifact falls back to annotations:"
+rollup COMPLETED FAILURE
+ANNOTATIONS="$TMP/ann-10.json"
+ARTIFACTS_JSON=""
+_out_fb="$(status_all)"
+is "annotation fallback: status still red" "red" "$(printf '%s\n' "$_out_fb" | head -1)"
+_cnt_fb="$(printf '%s\n' "$_out_fb" | grep -c '^red-suite: ' || true)"
+is "annotation fallback: 10 lines from annotations" "10" "$_cnt_fb"
+ANNOTATIONS="" ARTIFACTS_JSON=""
+
+echo
+echo "truncated artifact (red_count > len) → harness_fault:"
+rollup COMPLETED FAILURE
+python3 -c "
+import zipfile, json, io, sys
+buf = io.BytesIO()
+suites = ['test-suite-%02d.sh' % i for i in range(1, 11)]
+with zipfile.ZipFile(buf, 'w') as z:
+    z.writestr('red-suites.json', json.dumps({'red': suites, 'flaky': [], 'red_count': 28}))
+buf.seek(0)
+sys.stdout.buffer.write(buf.read())
+" > "$TMP/artifact-truncated.zip"
+ARTIFACTS_JSON='{"artifacts":[{"id":8,"name":"batch-results-1"}]}'
+ARTIFACT_ZIP="$TMP/artifact-truncated.zip"
+is "truncated artifact → harness_fault" "harness_fault" "$(status)"
+ARTIFACTS_JSON="" ARTIFACT_ZIP=""
 
 echo
 echo "test-forge-check-status.sh: $pass passed, $fail failed"

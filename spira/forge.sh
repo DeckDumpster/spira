@@ -139,11 +139,68 @@ except Exception:
                 fi
             fi
         fi
+        # When red, read the full suite list from the batch-results artifact.
+        # GitHub caps per-step annotations at 10; the artifact carries the whole list.
+        _artifact_out=""
+        if [ "$status" = "red" ] && [ -n "${run_id:-}" ]; then
+            _art_id="$( cd "$repo" && ghq api \
+                "repos/{owner}/{repo}/actions/runs/$run_id/artifacts" 2>/dev/null \
+                | python3 -c "
+import json, sys
+try:
+    for a in json.load(sys.stdin).get('artifacts', []):
+        if (a.get('name') or '').startswith('batch-results-'):
+            print(a['id']); break
+except: pass
+" 2>/dev/null )" || _art_id=""
+            if [ -n "${_art_id:-}" ]; then
+                _art_tmp="$(mktemp -d)"
+                if ( cd "$repo" && ghq api \
+                    "repos/{owner}/{repo}/actions/artifacts/$_art_id/zip" 2>/dev/null ) \
+                    > "$_art_tmp/b.zip" 2>/dev/null && [ -s "$_art_tmp/b.zip" ]; then
+                    _artifact_out="$(python3 - "$_art_tmp/b.zip" <<'PYEOF' 2>/dev/null
+import zipfile, json, sys
+try:
+    with zipfile.ZipFile(sys.argv[1]) as z:
+        rs = next((n for n in z.namelist() if n.endswith('red-suites.json')), None)
+        if rs is None:
+            sys.exit(0)
+        d = json.loads(z.read(rs))
+        red = d.get('red', [])
+        flaky = d.get('flaky', [])
+        red_count = int(d.get('red_count', len(red)))
+        if len(red) < red_count:
+            print('artifact-truncated: ' + str(len(red)) + '/' + str(red_count))
+        else:
+            for s in red:
+                print('red-suite: ' + s)
+            for s in flaky:
+                print('flaky: ' + s)
+except Exception:
+    pass
+PYEOF
+)"
+                fi
+                rm -rf "$_art_tmp" 2>/dev/null || true
+            fi
+            case "${_artifact_out:-}" in
+                "artifact-truncated:"*)
+                    # Artifact incomplete — fail closed so attribution retries rather
+                    # than ejecting against a partial list.
+                    status="harness_fault"
+                    _artifact_out=""
+                    ;;
+            esac
+        fi
         printf '%s\n' "$status"
         [ -n "${head_sha:-}" ] && printf 'head-sha: %s\n' "$head_sha"
         [ "$status" = "green" ] || [ "$status" = "red" ] || exit 0
         [ -n "${run_id:-}" ] || exit 0
-        printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
+        if [ -n "${_artifact_out:-}" ]; then
+            printf '%s\n' "$_artifact_out"
+        else
+            # Fall back to per-job annotations (capped at 10 per step by GitHub).
+            printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
 import json, sys
 try:
     for j in json.load(sys.stdin).get('jobs', []):
@@ -151,10 +208,10 @@ try:
 except Exception:
     pass
 " 2>/dev/null \
-        | while IFS= read -r _jid; do
-            ( cd "$repo" && ghq api \
-                "repos/{owner}/{repo}/check-runs/$_jid/annotations" 2>/dev/null ) \
-            | python3 -c "
+            | while IFS= read -r _jid; do
+                ( cd "$repo" && ghq api \
+                    "repos/{owner}/{repo}/check-runs/$_jid/annotations" 2>/dev/null ) \
+                | python3 -c "
 import json, sys
 try:
     for a in json.load(sys.stdin):
@@ -173,7 +230,8 @@ try:
 except Exception:
     pass
 " 2>/dev/null || true
-        done
+            done
+        fi
         ;;
     run-id)
         branch="${1:-}"
