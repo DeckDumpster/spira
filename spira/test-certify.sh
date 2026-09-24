@@ -371,6 +371,10 @@ stub queue.sh 'exit 0'
 # idle case: forge reports 0 active runs → gate bypassed, branch certified directly.
 stub forge.sh 'case "${1:-}" in runs-active) echo 0 ;; *) exit 0 ;; esac'
 
+# Clean landstate from previous test sections so queue_certified_list returns 0,
+# simulating an empty cert queue (the precondition for the idle-skip).
+rm -f "$RUN/landstate/"*
+
 write_map
 seed; branch sp-idle-skip
 rm -f "$GATE_COUNT"
