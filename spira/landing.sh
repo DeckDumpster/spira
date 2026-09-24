@@ -259,7 +259,7 @@ _cmd_sweep_red() {
     for f in "$LANDSTATE"/*; do
         [ -f "$f" ] || continue
         id="$(basename "$f")"
-        read -r state tip at reason < "$f" 2>/dev/null || continue
+        read -r state tip at reason < "$f" 2>/dev/null; [ -n "$state" ] || continue
         [ "$state" = "RED" ] || continue
         found=$(( found + 1 ))
         printf '%s\t%s\t%s\t%s\n' "$id" "$tip" "$at" "${reason:-}"
@@ -269,7 +269,7 @@ _cmd_sweep_red() {
 
 case "${1:-}" in
 halt)       shift; _cmd_halt "$@" ;;
-sweep-red)  _cmd_sweep_red ;;
+sweep-red)  _cmd_sweep_red; exit ;;
 esac
 
 trap finish EXIT
