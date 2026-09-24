@@ -2,7 +2,7 @@
 #
 # test-verdict.sh — merge-queue verdict: fast-forward landing pass.
 #
-# Twenty-six cases:
+# Twenty-eight cases:
 #   1. No open batch → forge is never reached.
 #   2. Pending within CI max → nothing happens.
 #   3. Pending, run old and stuck → run cancelled explicitly; no workflow-rerun.
@@ -11,7 +11,8 @@
 #      removed, mail sent once; second pass sends no second mail.
 #   6. Green, base unchanged, flaky annotation → fast-forward push; members LANDED;
 #      flake observed; batch record removed.
-#   7. Green, base moved → PR closed; members returned to CERTIFIED; batch removed.
+#   7. Green, base moved (non-conflicting) → batch rebuilt on new base, re-pushed
+#      to same PR; members stay BATCHED; no pr-close.
 #   8. Red naming no suite, multi-member → bisect by halving; members CERTIFIED,
 #      batch removed (sp-swux6).
 #   9. Batch branch cleanup: branch deleted after green fast-forward.
@@ -41,6 +42,8 @@
 #  26. Red-suite ineligible for quarantine: gate's red-twice verdict blocks observe-flake.
 #  27. Provision fault: forge returns provision_fault; treated as harness_fault (rerun,
 #      no ejection, no bisect).
+#  28. Green, base moved (conflicting) → PR closed; members returned to CERTIFIED;
+#      conflict member named in log.
 #
 # The forge seam is a local fixture; no network is reached.
 # mail.sh and suites.sh are stubbed to capture calls.
@@ -363,24 +366,28 @@ clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
 # =============================================================================
-# 7. GREEN, BASE MOVED — PR closed; members returned to CERTIFIED; batch removed.
+# 7. GREEN, BASE MOVED (NON-CONFLICTING) — batch rebuilt on new base and
+#    re-pushed to same PR; members stay BATCHED; no pr-close issued.
+#    POSITIVE CONTROL (case 28): conflicting base move still closes+requeues.
 # =============================================================================
 batch_head="$(build_batch sp-vd-m1 sp-vd-m2)"
-# Advance the remote's main AFTER the batch was built, simulating a concurrent
-# landing. Use a detached-HEAD worktree to guarantee a fast-forward push.
 advance_base
-before_remote_main="$(remote_main)"
 printf 'green\n' > "$FORGE_STATUS_FILE"
 out="$(verdict "$REPONAME")"
-want "7. moved: pr-close called"       "close" "$(cat "$FORGE_LOG")"
-case "$(landstate sp-vd-m1)" in CERTIFIED*) ok "7. moved: sp-vd-m1 CERTIFIED" ;;
-    *) bad "7. moved: sp-vd-m1 CERTIFIED" "got: $(landstate sp-vd-m1)" ;; esac
-case "$(landstate sp-vd-m2)" in CERTIFIED*) ok "7. moved: sp-vd-m2 CERTIFIED" ;;
-    *) bad "7. moved: sp-vd-m2 CERTIFIED" "got: $(landstate sp-vd-m2)" ;; esac
-is   "7. moved: batch record removed"  "0" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
-is   "7. moved: remote main not advanced to batch" \
-     "$before_remote_main" "$(remote_main)"
-want "7. moved: base-moved reported"   "base moved" "$out"
+nowant "7. moved-rebuild: pr-close NOT called"      "close" "$(cat "$FORGE_LOG")"
+case "$(landstate sp-vd-m1)" in BATCHED*) ok "7. moved-rebuild: sp-vd-m1 stays BATCHED" ;;
+    *) bad "7. moved-rebuild: sp-vd-m1 stays BATCHED" "got: $(landstate sp-vd-m1)" ;; esac
+case "$(landstate sp-vd-m2)" in BATCHED*) ok "7. moved-rebuild: sp-vd-m2 stays BATCHED" ;;
+    *) bad "7. moved-rebuild: sp-vd-m2 stays BATCHED" "got: $(landstate sp-vd-m2)" ;; esac
+is   "7. moved-rebuild: batch record kept"  "1" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+new_batch_head7="$(grep '^head=' "$(batch_file)" | cut -d= -f2)"
+[ "$new_batch_head7" != "$batch_head" ] \
+    && ok "7. moved-rebuild: batch head updated to new rebuild commit" \
+    || bad "7. moved-rebuild: batch head updated" "head unchanged: $batch_head"
+new_batch_base7="$(grep '^base=' "$(batch_file)" | cut -d= -f2)"
+is "7. moved-rebuild: batch base updated to new main" \
+    "$(git -C "$REMOTE" rev-parse main 2>/dev/null)" "$new_batch_base7"
+want "7. moved-rebuild: rebuilt log line"   "rebuilt on moved base" "$out"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
@@ -1151,6 +1158,58 @@ case "$(landstate sp-vd-pf1)" in BATCHED*) ok "27. provision_fault: pf1 still BA
     *) bad "27. provision_fault: pf1 still BATCHED" "got: $(landstate sp-vd-pf1)" ;; esac
 case "$(landstate sp-vd-pf2)" in BATCHED*) ok "27. provision_fault: pf2 still BATCHED" ;;
     *) bad "27. provision_fault: pf2 still BATCHED" "got: $(landstate sp-vd-pf2)" ;; esac
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 28. GREEN, BASE MOVED (CONFLICTING) — one member conflicts with the new base;
+#     PR closed, members returned to CERTIFIED, conflict member named in log.
+#     POSITIVE CONTROL: case 7 proves non-conflicting base move is rebuilt.
+# =============================================================================
+# sp-vd-c1 touches only c1.txt; sp-vd-c2 touches conflict.txt="from-c2".
+# The base advance writes conflict.txt="from-base", creating a merge conflict.
+base_sha28="$(git -C "$REPO" rev-parse origin/main)"
+bwt28_c1="$RUN/worktree/sp-vd-c1"
+bwt28_c2="$RUN/worktree/sp-vd-c2"
+git -C "$REPO" worktree add -q -b "spira/sp-vd-c1" "$bwt28_c1" origin/main 2>/dev/null || true
+git -C "$REPO" worktree add -q -b "spira/sp-vd-c2" "$bwt28_c2" origin/main 2>/dev/null || true
+printf 'sp-vd-c1\n' > "$bwt28_c1/c1.txt"
+git -C "$bwt28_c1" add -A && git -C "$bwt28_c1" commit -q -m "sp-vd-c1: work"
+printf 'from-c2\n' > "$bwt28_c2/conflict.txt"
+git -C "$bwt28_c2" add -A && git -C "$bwt28_c2" commit -q -m "sp-vd-c2: work"
+tip28_c1="$(git -C "$REPO" rev-parse "spira/sp-vd-c1")"
+tip28_c2="$(git -C "$REPO" rev-parse "spira/sp-vd-c2")"
+wt28="$RUN/worktree/.b28"
+git -C "$REPO" worktree add -q --detach "$wt28" "$base_sha28" 2>/dev/null || true
+git -C "$wt28" merge -q --no-edit --no-ff -m "spira: land sp-vd-c1" "$tip28_c1" >/dev/null 2>&1
+git -C "$wt28" merge -q --no-edit --no-ff -m "spira: land sp-vd-c2" "$tip28_c2" >/dev/null 2>&1
+batch_head28="$(git -C "$wt28" rev-parse HEAD)"
+git -C "$REPO" worktree remove -f "$wt28" 2>/dev/null || true
+printf 'BATCHED %s %s\n' "$tip28_c1" "$(date +%s)" > "$LANDSTATE/sp-vd-c1"
+printf 'BATCHED %s %s\n' "$tip28_c2" "$(date +%s)" > "$LANDSTATE/sp-vd-c2"
+{ printf 'pr=95\nhead=%s\nbase=%s\nmembers=sp-vd-c1:%s sp-vd-c2:%s\nopened=%s\nbranch=spira/queue/test28\n' \
+    "$batch_head28" "$base_sha28" "$tip28_c1" "$tip28_c2" "$(date +%s)"; } > "$(batch_file)"
+# Advance main with a conflicting commit: same file, different content.
+bwt28_adv="$RUN/worktree/.adv28"
+git -C "$REPO" worktree remove -f "$bwt28_adv" 2>/dev/null || true
+git -C "$REPO" worktree add -q --detach "$bwt28_adv" origin/main
+printf 'from-base\n' > "$bwt28_adv/conflict.txt"
+git -C "$bwt28_adv" add -A
+git -C "$bwt28_adv" commit -q -m "other: conflicting landing"
+git -C "$bwt28_adv" push -q origin "HEAD:main"
+git -C "$REPO" worktree remove -f "$bwt28_adv" 2>/dev/null || true
+git -C "$REPO" fetch -q origin
+
+printf 'green\n' > "$FORGE_STATUS_FILE"
+out="$(verdict "$REPONAME")"
+want "28. moved-conflict: pr-close called"        "close"      "$(cat "$FORGE_LOG")"
+case "$(landstate sp-vd-c1)" in CERTIFIED*) ok "28. moved-conflict: sp-vd-c1 CERTIFIED" ;;
+    *) bad "28. moved-conflict: sp-vd-c1 CERTIFIED" "got: $(landstate sp-vd-c1)" ;; esac
+case "$(landstate sp-vd-c2)" in CERTIFIED*) ok "28. moved-conflict: sp-vd-c2 CERTIFIED" ;;
+    *) bad "28. moved-conflict: sp-vd-c2 CERTIFIED" "got: $(landstate sp-vd-c2)" ;; esac
+is   "28. moved-conflict: batch record removed"   "0" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+want "28. moved-conflict: conflict member named"  "sp-vd-c2"   "$out"
+want "28. moved-conflict: base-moved reported"    "base moved"  "$out"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 

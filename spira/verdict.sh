@@ -38,6 +38,13 @@ _batch_reseal() {   # _batch_reseal <file> <new_head> <new_members>
         > "$f.$$" && mv -f "$f.$$" "$f"
 }
 
+_batch_reseal_rebased() {   # _batch_reseal_rebased <file> <new_head> <new_members_str> <new_base>
+    local f="$1" new_head="$2" new_members="$3" new_base="$4"
+    { grep -vE '^(head|members|retries|base)=' "$f"
+      printf 'head=%s\nretries=0\nmembers=%s\nbase=%s\n' "$new_head" "$new_members" "$new_base"; } \
+        > "$f.$$" && mv -f "$f.$$" "$f"
+}
+
 # ---------------------------------------------------------------------------
 # ATTRIBUTION — local per-member reproduction on a red batch.
 # ---------------------------------------------------------------------------
@@ -818,28 +825,78 @@ main() {
                     return 1
                 fi
             else
-                "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
-                printf 'verdict %s: PR %s base moved (%s) — closed, members requeued\n' \
-                    "$name" "$pr_n" "${current_base:-unknown}"
-                local _mm _mid _mtip
-                for _mm in $members_str; do
-                    _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
-                    # If the member's tip is already an ancestor of the new base, the batch
-                    # PR was merged externally before this verdict pass ran. Mark LANDED
-                    # rather than re-queuing: re-queuing creates an orphaned CERTIFIED
-                    # record once sending.sh reaps the now-landed branch.
-                    if [ -n "${current_base:-}" ] && \
-                       git -C "$repo" merge-base --is-ancestor "$_mtip" "$current_base" \
-                           2>/dev/null; then
-                        land_mark "$_mid" LANDED "$_mtip" already-in-base
-                        gh_issue_closeout "$_mid" "${current_base}" "$repo" || true
-                        printf 'verdict %s: %s already in moved base — LANDED\n' \
-                            "$name" "$_mid"
-                    else
-                        land_mark "$_mid" CERTIFIED "$_mtip"
+                # Base has moved. If no member tip is already in the new base,
+                # try rebuilding the batch on the new base and force-pushing to
+                # the same PR so CI re-runs without discarding the queue position.
+                # When any tip is already in the new base the batch was merged
+                # externally; skip rebuild and fall through to LANDED/CERTIFIED.
+                local _any_in_base=0 _rebmm _rebtip
+                for _rebmm in $members_str; do
+                    _rebtip="${_rebmm##*:}"
+                    if git -C "$repo" merge-base --is-ancestor "$_rebtip" \
+                            "$current_base" 2>/dev/null; then
+                        _any_in_base=1; break
                     fi
                 done
-                rm -f "$batch_file"
+
+                local _rebased=0
+                if [ "$_any_in_base" -eq 0 ] && [ -n "${branch_name:-}" ] \
+                        && [ -n "${current_base:-}" ]; then
+                    local _rwt="${SPIRA_RUN}/worktree/.batch-$(basename "$repo")-mov$$"
+                    git -C "$repo" worktree remove -f "$_rwt" 2>/dev/null || true
+                    if git -C "$repo" worktree add -q --detach "$_rwt" \
+                            "$current_base" 2>/dev/null; then
+                        local _rok=1 _conflict_member="" _rebmid="" _new_reb_head=""
+                        for _rebmm in $members_str; do
+                            _rebmid="${_rebmm%%:*}"; _rebtip="${_rebmm##*:}"
+                            if ! git -C "$_rwt" merge -q --no-edit --no-ff \
+                                    -m "spira: land $_rebmid" "$_rebtip" \
+                                    >/dev/null 2>&1; then
+                                git -C "$_rwt" merge --abort 2>/dev/null || true
+                                _rok=0; _conflict_member="$_rebmid"; break
+                            fi
+                        done
+                        [ "$_rok" -eq 1 ] && \
+                            _new_reb_head="$(git -C "$_rwt" rev-parse HEAD)"
+                        git -C "$repo" worktree remove -f "$_rwt" 2>/dev/null || true
+                        if [ "$_rok" -eq 1 ] && [ -n "$_new_reb_head" ]; then
+                            if git -C "$repo" push -f "$remote" \
+                                    "${_new_reb_head}:refs/heads/${branch_name}" \
+                                    2>/dev/null; then
+                                _batch_reseal_rebased "$batch_file" "$_new_reb_head" \
+                                    "$members_str" "$current_base"
+                                _rebased=1
+                                printf 'verdict %s: PR %s rebuilt on moved base (%s) — re-pushed (head %s)\n' \
+                                    "$name" "$pr_n" "$current_base" "$_new_reb_head"
+                            fi
+                        elif [ "$_rok" -eq 0 ]; then
+                            printf 'verdict %s: PR %s base moved — conflict in %s; closing and requeuing\n' \
+                                "$name" "$pr_n" "${_conflict_member:-?}"
+                        fi
+                    fi
+                fi
+
+                if [ "$_rebased" -eq 0 ]; then
+                    "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
+                    printf 'verdict %s: PR %s base moved (%s) — closed, members requeued\n' \
+                        "$name" "$pr_n" "${current_base:-unknown}"
+                    local _mm _mid _mtip
+                    for _mm in $members_str; do
+                        _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
+                        # Tip already in new base: externally merged; LANDED not CERTIFIED.
+                        if [ -n "${current_base:-}" ] && \
+                           git -C "$repo" merge-base --is-ancestor "$_mtip" \
+                               "$current_base" 2>/dev/null; then
+                            land_mark "$_mid" LANDED "$_mtip" already-in-base
+                            gh_issue_closeout "$_mid" "${current_base}" "$repo" || true
+                            printf 'verdict %s: %s already in moved base — LANDED\n' \
+                                "$name" "$_mid"
+                        else
+                            land_mark "$_mid" CERTIFIED "$_mtip"
+                        fi
+                    done
+                    rm -f "$batch_file"
+                fi
             fi
             ;;
         red)
