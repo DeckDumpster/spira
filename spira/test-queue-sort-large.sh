@@ -85,5 +85,10 @@ is "a small PRIO_JSON still sorts by priority" "sp-t002 sp-t001 " "$got"
 got="$(PRIO_JSON='{not json' queue_sort_rows "$TMP/repo" "$base" < "$rows" 2>/dev/null | grep -c .)"
 is "unparseable PRIO_JSON still returns every row" "$N" "$got"
 
+# 5. FAIL-OPEN WARNING. The caller must know ranking was skipped; silent degradation is the
+#    shape of the original bug. Verify the warning reaches stderr.
+warn="$(PRIO_JSON='{not json' queue_sort_rows "$TMP/repo" "$base" < "$rows" 2>&1 >/dev/null)"
+is "fail-open emits a warning to stderr" 1 "$(printf '%s' "$warn" | grep -c 'ranking failed')"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
