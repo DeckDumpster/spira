@@ -21,6 +21,7 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 . "$HERE/testdb.sh"
 testdb_require test-poison-edge
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — seeds a requeued event via bd sql and the poison threshold reads attempts_of via bd sql, both refused in embedded mode
 export SPIRA_TESTDB_MODE=server
 testdb_up poison-edge || {
     printf 'SKIP test-poison-edge: server testdb not available\n' >&2

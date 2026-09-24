@@ -35,6 +35,7 @@ lack() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$1"
 . "$HERE/testdb.sh"
 testdb_require test-census
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — census.sh reads counts through census_events_run_sql (bd sql), which embedded mode refuses
 export SPIRA_TESTDB_MODE=server
 testdb_up census || {
     printf 'SKIP test-census: server testdb not available\n' >&2

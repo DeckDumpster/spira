@@ -133,6 +133,8 @@ echo "apply makes a bare store correct, and a second apply changes nothing"
 # embedded fixture the section above already dropped, so every statement below failed with
 # "cannot use -C directory ...: no such file or directory". Its stderr goes to a file
 # instead, which is the only thing the substitution was buying.
+# testdb-mode: server — the generated column and CHECK constraint are applied through
+# bd sql, which embedded mode refuses; the section above already pins that refusal.
 _srv_err=""
 _srv_log="$T/server-fixture.log"
 if [ -z "${SPIRA_TESTDB_DATA:-}" ]; then

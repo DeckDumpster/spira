@@ -39,6 +39,7 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 . "$HERE/testdb.sh"
 testdb_require test-sin-exempt
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — recurs_of (via lib.sh) reads the events table via bd sql, which embedded mode refuses
 export SPIRA_TESTDB_MODE=server
 testdb_up sinex || {
     printf 'SKIP test-sin-exempt: server testdb not available\n' >&2

@@ -27,9 +27,8 @@ printf 'test-gh-issue-closeout.sh\n\n'
 . "$HERE/testdb.sh"
 testdb_require test-gh-issue-closeout
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-export SPIRA_TESTDB_MODE=server
 testdb_up gh-closeout || {
-    printf 'SKIP test-gh-issue-closeout: server testdb not available\n' >&2
+    printf 'SKIP test-gh-issue-closeout: testdb not available\n' >&2
     exit 77
 }
 
