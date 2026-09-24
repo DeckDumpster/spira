@@ -166,8 +166,8 @@ FAYTH_MAX_CONCURRENT=1
 FAYTH_TIMEOUT_SECONDS=3600
 FAYTH2
 done
-# Stubs: pilgrimage, strand, sending, governor, reflect all exit 0 with no output.
-for _s in pilgrimage.sh strand.sh sending.sh governor.sh reflect.sh; do
+# Stubs: pilgrimage, strand, sending, reflect all exit 0 with no output.
+for _s in pilgrimage.sh strand.sh sending.sh reflect.sh; do
     printf '#!/bin/sh\n' > "$TMP/stubs2/$_s"; chmod +x "$TMP/stubs2/$_s"
 done
 # systemctl stub: says unit is inactive so the landing dispatch path runs cleanly.

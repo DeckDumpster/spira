@@ -164,7 +164,6 @@ stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; 
 stub pilgrimage.sh 'printf "%s" "${PILGRIMAGE_OUT:-}"'
 stub strand.sh     'printf "%s" "${STRAND_OUT:-}"'
 stub sending.sh    'printf "%s" "${SENDING_OUT:-}"'
-stub governor.sh   'exit 0'
 stub gate.sh       'exit ${GATE_RC:-0}'
 stub reflect.sh    'true'
 stub mail.sh       '[ "${1:-}" = send ] || exit 0'

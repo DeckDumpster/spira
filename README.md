@@ -262,18 +262,19 @@ a repository is how work aimed at the harness lands in it, passes its gate, and 
 
 | program | question it answers |
 |---|---|
-| `governor.sh` | how much of this machine may Spira use, and what did it get for it |
+| `watchtower.sh` | is the pipeline moving, and is the box itself about to run out of disk or memory |
 | `capacity.sh` | is the rate-limit window shut, and which attempts did that cost |
 | `tokens.sh` | what is actually spent, and on what |
 | `attempts.sh` | what every claimable bead carries on the retry ladder, and why |
 | `yield.sh` | what the gate is *worth*, recorded beside what it costs |
 | `ctx-meter.sh` | how much context a session carries, and how close that is to the edge |
 
-The governor only ever *withholds* — a persona's own concurrency stays the ceiling — and it
-averages `/proc` across passes rather than sampling, because a single two-second reading lands
-on or between a test suite at random and swings the budget between 0 and 2 at a constant worker
-count. Attempts charged while the rate-limit window was shut are given back, but only where the
-session log that proves it survives; reclassification refuses to reason about the rest.
+The admission throttle (sentinel CHECK 7) is the only summon gate; it holds the task pool at
+zero when the queue is deep and draining, and never touches an aeon already working. Disk and
+memory are watchtower's vital signs, not a gate: a full root disk kills everything on the box,
+so crossing either threshold escalates directly rather than waiting for an Ops session to read
+the sweep. Attempts charged while the rate-limit window was shut are given back, but only where
+the session log that proves it survives; reclassification refuses to reason about the rest.
 
 ---
 
@@ -540,7 +541,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 
 | path | what it is |
 |---|---|
-| `spira/` | the harness proper — aeon runner, sentinel and its checks, gate, governor, sending, strand, drain, the chamber and its fayth format, lib.sh, and the test suites that hold them |
+| `spira/` | the harness proper — aeon runner, sentinel and its checks, gate, watchtower, sending, strand, drain, the chamber and its fayth format, lib.sh, and the test suites that hold them |
 | `spira/boundary` | this manifest — it describes the harness, so it travels with it |
 | `spira/boundary.sh` | renders this manifest into every document that publishes it; the wiki-side target is configured and skipped when unset, per rule 2 |
 | `spira/conf.sh` | the one configuration surface: the loader, the key allowlist, the derived defaults, and `spira_require`, which names a missing program instead of dying as a shell error |

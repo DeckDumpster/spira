@@ -61,7 +61,6 @@ stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; 
 stub pilgrimage.sh 'exit 0'
 stub strand.sh     'exit 0'
 stub sending.sh    'exit 0'
-stub governor.sh   'exit 0'
 stub reflect.sh    'exit 0'
 stub ask.sh        'true'
 printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/t.fayth"
