@@ -794,7 +794,7 @@ REPRO_CALLS_LOG="$TMP/repro-calls-16"; : > "$REPRO_CALLS_LOG"
 # overlap rather than serializing.
 export REPRO_CALLS_LOG SPIRA_BATCH_MAXPAR=8
 out16="$(verdict "$REPONAME")"
-unset REPRO_CALLS_LOG SPIRA_BATCH_MAXPAR
+unset SPIRA_BATCH_MAXPAR
 
 for id in sp-at-p1 sp-at-p2 sp-at-p3 sp-at-p4 sp-at-p5; do
     is   "16. all-fault: $id requeued, not ejected" "CERTIFIED" "$(land_state_of "$id")"
@@ -822,6 +822,7 @@ n_refs16="$(head -n 5 "$REPRO_CALLS_LOG" | awk '{print $1}' | sort -u | wc -l | 
 is   "16. all-fault: 5 concurrent members tested 5 distinct refs" "5" "$n_refs16"
 n_resdirs16="$(awk '{print $2}' "$REPRO_CALLS_LOG" | sort -u | wc -l | tr -d ' ')"
 is   "16. all-fault: every repro call used its own result dir" "$n_calls16" "$n_resdirs16"
+unset REPRO_CALLS_LOG
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
