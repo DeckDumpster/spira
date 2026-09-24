@@ -54,10 +54,14 @@
 #                             coverage — law-absence-needs-a-positive-control still
 #                             governs the timed run)
 #
-# FILE BUCKETS (select-globs.sh, overridable via SPIRA_SELECT_INERT / SPIRA_SELECT_SOURCE)
-#   inert   matches SELECT_INERT  → skipped; selects nothing, no fallback
-#   source  matches SELECT_SOURCE → must be claimed; unclaimed exits 1 and names the file
-#   unknown everything else       → all-suites fallback when unclaimed (today's behaviour)
+# FILE BUCKETS (select-globs.sh, overridable via SPIRA_SELECT_INERT / SPIRA_SELECT_SOURCE /
+# SPIRA_SELECT_PLUMBING)
+#   inert    matches SELECT_INERT    → skipped; selects nothing, no fallback
+#   source   matches SELECT_SOURCE   → must be claimed; unclaimed exits 1 and names the file
+#   plumbing matches SELECT_PLUMBING → all-suites fallback even when a suite claims it —
+#                                     a covers: map can be wrong about which suite actually
+#                                     exercises shared build/install/runtime scaffolding
+#   unknown  everything else         → all-suites fallback when unclaimed (today's behaviour)
 #
 # covers: spira/suite-covers.sh spira/select-globs.sh spira/gate-spira.sh spira/testenv-batch.sh
 set -uo pipefail
@@ -340,6 +344,17 @@ if [ -z "$_cv_live" ]; then
 fi
 _cv_changed="$_cv_live"
 
+# Plumbing files force the all-suites fallback regardless of whether some
+# suite's covers: line claims them — see select-globs.sh for why.
+_cv_plumbing=""
+set -f
+for _cv_f in $_cv_changed; do
+    for _cv_pat in $SELECT_PLUMBING; do
+        case "$_cv_f" in $_cv_pat) _cv_plumbing="$_cv_plumbing $_cv_f"; break ;; esac
+    done
+done
+set +f
+
 # Collect always-run (no # covers:) suites.
 _cv_nocov=""
 for _s in $_all; do
@@ -456,16 +471,20 @@ if [ -n "$_cv_unclaimed_src" ]; then
     exit 1
 fi
 
-if [ -n "$_cv_unmapped" ] && [ "$_ARG_NO_FALLBACK" -eq 0 ]; then
-    # UNMAPPED FILE FALLBACK. At least one changed file is claimed by no suite.
-    # Run all suites — absence of a declaration must not read as a pass on the
-    # changed file (law-absence-needs-a-positive-control). The selector decides
-    # this; the runner does not carry this policy.
+if { [ -n "$_cv_unmapped" ] || [ -n "$_cv_plumbing" ]; } && [ "$_ARG_NO_FALLBACK" -eq 0 ]; then
+    # ALL-SUITES FALLBACK. At least one changed file is claimed by no suite, or
+    # is plumbing whose claim cannot be trusted (see select-globs.sh). Run all
+    # suites — absence or unreliability of a declaration must not read as a
+    # pass on the changed file (law-absence-needs-a-positive-control). The
+    # selector decides this; the runner does not carry this policy.
     # Suppressed by --no-all-fallback for callers (e.g. the landing gate) that
     # keep the gate cheap: the timed runner without --no-all-fallback handles
     # thorough coverage; the gate runs covered+nocov suites only.
     for _cv_f in $_cv_unmapped; do
         printf 'select: %s → [all: unmapped]\n' "$_cv_f" >&2
+    done
+    for _cv_f in $_cv_plumbing; do
+        printf 'select: %s → [all: plumbing]\n' "$_cv_f" >&2
     done
     _cv_n_all=0; for _s in $_all; do _cv_n_all=$((_cv_n_all+1)); done
     printf 'select: fallback — running all %d suites\n' "$_cv_n_all" >&2
