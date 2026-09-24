@@ -14,6 +14,7 @@
 #   (b) bead confirmed open before reply
 #   (c) bead confirmed closed after reply
 
+# covers: spira/mail.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0
