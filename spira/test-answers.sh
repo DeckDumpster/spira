@@ -126,15 +126,17 @@ else
     ok "watchd.sh's own stamp matcher was located"
     # PINNED AWAY FROM THE BEADS' OWN CLOSED_AT so a stamp reading the pass clock would fail.
     out_stamped="$(ANSWERS_NOW=2001-01-01T00:00:00Z run_answers monitor "$FIXTURE")"
-    for _pair in "verdict:$VID:2026-09-10T00:00:00Z:ANSWERED $VID" \
-                 "rejection:$PID:2026-09-10T00:02:00Z:REJECTED THE PREMISE $PID"; do
-        _what="${_pair%%:*}"; _rest="${_pair#*:}"
-        _id="${_rest%%:*}"; _rest="${_rest#*:}"
-        _closed_at="${_rest%%:*}"; _grep="${_rest#*:}"
-        _line="$(printf '%s\n' "$out_stamped" | grep -F "$_grep" | head -1)"
+    # Parallel arrays, not a colon-packed string: an ISO8601 timestamp carries colons of its
+    # own, so encoding one as a colon-delimited field truncates it at "HH".
+    _whats=(verdict rejection)
+    _ids=("$VID" "$PID")
+    _closed_ats=("2026-09-10T00:00:00Z" "2026-09-10T00:02:00Z")
+    _greps=("ANSWERED $VID" "REJECTED THE PREMISE $PID")
+    for _i in 0 1; do
+        _line="$(printf '%s\n' "$out_stamped" | grep -F "${_greps[$_i]}" | head -1)"
         _stamp="$(printf '%s\n' "$_line" | sed -n "$STAMP_RE")"
-        is "the $_what headline's stamp is $_id's own closed_at" "$_closed_at" "$_stamp"
-        nowant "the $_what stamp is the pass's clock, not the bead's" "2001-01-01" "$_stamp"
+        is "the ${_whats[$_i]} headline's stamp is ${_ids[$_i]}'s own closed_at" "${_closed_ats[$_i]}" "$_stamp"
+        nowant "the ${_whats[$_i]} stamp is the pass's clock, not the bead's" "2001-01-01" "$_stamp"
     done
 fi
 
