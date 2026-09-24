@@ -352,6 +352,7 @@ testdb_reset; mkdir -p "$TMP/run"
 
 REF1="incident:watcher-dep-$$"
 file_watcher_incident "$REF1" "watcher dep test"
+B list --status open --limit 0 --label spira,incident --json 1>&2
 INC1="$(find_bead "$REF1")"
 [ -n "$INC1" ] && ok "watcher incident filed" || bad "watcher incident filed" "no bead id"
 
