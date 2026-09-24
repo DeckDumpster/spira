@@ -71,7 +71,8 @@ SHIM
 chmod +x "$BIN/claude-no-dec"
 
 # Shim B (decision-blocked case): creates a decision bead blocking the claimed bead,
-# then exits non-zero — simulating an aeon that filed a question via mail.sh.
+# then exits non-zero — simulating an aeon that filed a question via mail.sh for a
+# decision bead (blocking edge is correct when the cited bead is a decision).
 # The dep is added AFTER the bead is claimed (in_progress); bd ready only returns
 # unblocked beads, so a pre-existing dep would prevent the claim entirely.
 cat > "$BIN/claude-with-dec" <<'SHIM'
@@ -94,6 +95,34 @@ printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000
 exit 1
 SHIM
 chmod +x "$BIN/claude-with-dec"
+
+# Shim C (relates-to case): creates a decision bead and links it via bd dep relate,
+# mirroring what mail.sh does when the cited bead is a non-decision task.  The
+# relates-to edge must NOT be treated as a blocker by aeon.sh — the bead must be
+# worked (attempt charged), not released.
+cat > "$BIN/claude-with-relates" <<'SHIM'
+#!/usr/bin/env bash
+cat /dev/stdin > /dev/null
+printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
+_bd="${SPIRA_BD:-bd}"
+id="$(BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" list --json 2>/dev/null \
+    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
+      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
+if [ -n "$id" ]; then
+    # bd q outputs the bare id — use it so we can wire the dep in a second call.
+    dec_id="$(BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" q \
+        "Relates-to question about $id" \
+        -l "${SPIRA_ASK_LABEL:-needs-operator},overseer" \
+        --type decision 2>/dev/null)" || dec_id=""
+    if [ -n "$dec_id" ]; then
+        # Mirror mail.sh: dep relate creates the bidirectional relates_to link.
+        BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" dep relate "$dec_id" "$id" >/dev/null 2>&1 || true
+    fi
+fi
+printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
+exit 1
+SHIM
+chmod +x "$BIN/claude-with-relates"
 
 seed() {
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
@@ -156,6 +185,23 @@ want "note says no attempt charged" "No attempt charged" "$notes2"
 lacks "note does not say Unlanded" "Unlanded" "$notes2"
 want "ledger says decision-blocked" "decision-blocked" \
     "$(grep 'done builder sp-db-2' "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null)"
+
+# ======================================================================================
+# CASE: relates-to ask dep — must be WORKED (attempt charged), not released.
+# This is the sp-dvsqc defect: aeon.sh ignored dependency_type and treated every
+# open ask-labelled dep as a blocker, including relates-to edges wired by mail.sh.
+# ======================================================================================
+echo
+echo "SEEN RED (unfixed): ask-labelled dep via relates-to edge — must charge attempt, not release"
+
+ln -sf "$BIN/claude-with-relates" "$BIN/claude"
+fresh; seed sp-db-3
+rc="$(run_aeon)"
+notes3="$(bead_notes sp-db-3)"
+want "SEEN RED: attempt IS charged (Unlanded, not released)" "Unlanded" "$notes3"
+lacks "SEEN RED: not released as decision-blocked" "No attempt charged" "$notes3"
+lacks "SEEN RED: ledger must not say decision-blocked" "decision-blocked" \
+    "$(grep 'done builder sp-db-3' "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null)"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
