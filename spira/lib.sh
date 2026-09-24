@@ -308,14 +308,47 @@ MAILEOF
 # branch whose correct resolution was "drop it". The repetition is the signal: a bead that
 # cannot rebase N times in a row is not learning from the reopen, and repeating it is
 # machinery cycling on itself (law-alerts-must-be-actionable at the machinery level).
-spira_ask_rebase_loop() {  # <bead> <branch> <repo-name> <requeue-count> <conflicts> <other-beads>
+spira_ask_rebase_loop() {  # <bead> <branch> <repo-name> <requeue-count> <conflicts> <other-beads> [<repo-dir> <base>]
     local id="$1" br="$2" name="$3" n="$4" conflicts="$5" others="$6"
+    local repo_dir="${7:-}" base_ref="${8:-}"
     [ -x "$SPIRA_HOME/mail.sh" ] || return 0
     ask_already_open "$br rebase loop" && return 0
+    # Fetch bead title and status so the escalation names the work and its current state.
+    local bead_title bead_status
+    bead_title="$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: print(""); sys.exit()
+d = d if isinstance(d, list) else [d]
+print(d[0].get("title", "") if d else "")' 2>/dev/null)"
+    bead_status="$(spira_bead_status "$id")"
+    # Commits-ahead and branch tip when repo coordinates are available.
+    local tip_short="" ahead=""
+    if [ -n "$repo_dir" ] && [ -n "$base_ref" ]; then
+        tip_short="$(git -C "$repo_dir" rev-parse --short "$br" 2>/dev/null || true)"
+        ahead="$(git -C "$repo_dir" rev-list --count "$base_ref..$br" 2>/dev/null || echo '?')"
+    fi
     local ctx=""
     [ -n "$others" ] && ctx=" The conflicted files were also changed on the base by $others."
-    local _subj="$br rebase loop: $n rebase failures on $id in $name"
-    local _dflt="check whether $br is a duplicate of $others and close it if so; if the work is genuinely new, rebase by hand and push"
+    # Subject: title first so the operator knows what the work is (law-escalations-lead-with-the-bead).
+    local _subj
+    if [ -n "$bead_title" ]; then
+        _subj="${bead_title}: $br rebase loop x$n in $name"
+    else
+        _subj="$br rebase loop x$n in $name"
+    fi
+    # Default: no empty slots — omit the duplicate clause when others is empty.
+    local _dflt
+    if [ -n "$others" ]; then
+        _dflt="check whether $br is a duplicate of $others and close it if so; if the work is genuinely new, rebase by hand and push"
+    else
+        _dflt="rebase $br by hand and push, or close it if the work is already landed"
+    fi
+    # Extra lines for the body: status and branch info.
+    local _extra=""
+    [ -n "$bead_status" ] && _extra="${_extra}Status: ${bead_status}."$'\n'
+    [ -n "$tip_short" ] && [ -n "$ahead" ] && \
+        _extra="${_extra}Branch: ${tip_short} (${ahead} commit(s) ahead of ${base_ref})."$'\n'
     "$SPIRA_HOME/mail.sh" send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
@@ -328,7 +361,7 @@ $_subj
 $_dflt
 
 $id has been reopened for a rebase conflict $n times and the loop is not converging. Conflicts in: ${conflicts:-unknown}.$ctx
-MAILEOF
+${_extra}MAILEOF
 }
 
 # spira_ask_rebase_refused — one deduplicated ask per closed bead the harness cannot rebase.

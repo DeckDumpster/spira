@@ -842,7 +842,7 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
             bump_requeue "$id" merge-conflict >/dev/null 2>&1
             _rq_n="$(requeues_of "$id")"
             if [ "${_rq_n:-0}" -ge "${SPIRA_REBASE_ESCALATE_AT:-3}" ]; then
-                spira_ask_rebase_loop "$id" "$br" "$name" "$_rq_n" "${REBASE_CONFLICTS:-unknown}" "$_other_beads"
+                spira_ask_rebase_loop "$id" "$br" "$name" "$_rq_n" "${REBASE_CONFLICTS:-unknown}" "$_other_beads" "$repo" "$base"
                 progress "escalated $id — rebase conflict x${_rq_n} on $br"
             else
                 bead_reopen "$id" rebase-conflict "$_reopen_note"
@@ -1174,7 +1174,7 @@ for i in d:
             bump_requeue "$id" merge-conflict >/dev/null 2>&1
             _rq_n="$(requeues_of "$id")"
             if [ "${_rq_n:-0}" -ge "${SPIRA_REBASE_ESCALATE_AT:-3}" ]; then
-                spira_ask_rebase_loop "$id" "$br" "$name" "$_rq_n" "${REBASE_CONFLICTS:-unknown}" "$_other_beads"
+                spira_ask_rebase_loop "$id" "$br" "$name" "$_rq_n" "${REBASE_CONFLICTS:-unknown}" "$_other_beads" "$repo" "$base"
                 progress "escalated $id — rebase conflict x${_rq_n} on $br"
             else
                 bead_reopen "$id" rebase-conflict "$_reopen_note"
