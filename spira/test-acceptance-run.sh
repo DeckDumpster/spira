@@ -35,8 +35,8 @@ echo "2. Structural: SPIRA_OPERATED=0 in each phase's install environment"
 
 wantre "phase A _install_env includes SPIRA_OPERATED=0" \
     '_install_env=\(.*SPIRA_OPERATED=0'
-wantre "phase B _prev_env includes SPIRA_OPERATED=0" \
-    '_prev_env=\(.*SPIRA_OPERATED=0'
+wantre "phase B _install_env used for install.sh (tarball path)" \
+    'env.*_install_env.*install\.sh.*--skip-build'
 wantre "phase D _aged_env includes SPIRA_OPERATED=0" \
     '_aged_env=\(.*SPIRA_OPERATED=0'
 want "SPIRA_OPERATED = 0 written to spira.conf" \
@@ -177,14 +177,14 @@ grep -qE 'git -C.*SPIRA_DB.*config beads\.role maintainer' "$REAL_REPO/install.s
 
 # ===========================================================================
 echo
-echo "7. ready.sh: clone path used, not workspace path"
+echo "7. ready.sh: release path used, not workspace path"
 # ===========================================================================
 
-# Structural: the fixed code invokes $_clone/spira/ready.sh, not $HERE/ready.sh.
-wantre "phase A: ready.sh invocation uses \$_clone path" \
-    'bash.*\$_clone/spira/ready\.sh'
-wantre "phase D: ready.sh invocation uses \$_aged_clone path" \
-    'bash.*\$_aged_clone/spira/ready\.sh'
+# Structural: the fixed code invokes $_releases/current/spira/ready.sh.
+wantre "phase A: ready.sh invocation uses \$_releases/current path" \
+    'bash.*\$_releases/current/spira/ready\.sh'
+wantre "phase D: ready.sh invocation uses \$_releases/current path" \
+    'bash.*\$_releases/current/spira/ready\.sh'
 
 # $HERE/ready.sh must not appear in any bash invocation (may appear in comments).
 if grep -E 'bash[^#]*\$HERE/ready\.sh' "$SCRIPT" | grep -qv '^\s*#'; then
@@ -194,48 +194,42 @@ else
     ok 'workspace $HERE/ready.sh removed from bash invocations'
 fi
 
-# Behavioral pair: clone ready.sh=0, workspace ready.sh=1 → check passes.
-_clone_dir="$SCRATCH/clone-v1"
-mkdir -p "$_clone_dir/spira"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$_clone_dir/spira/ready.sh"
-chmod +x "$_clone_dir/spira/ready.sh"
-
-_ws_ready="$SCRATCH/ws-ready.sh"
-printf '#!/usr/bin/env bash\nexit 1\n' > "$_ws_ready"
-chmod +x "$_ws_ready"
-
-# Positive control: workspace ready.sh does exit 1.
-_ws_rc=0; bash "$_ws_ready" 2>/dev/null || _ws_rc=$?
-if [ "$_ws_rc" -ne 0 ]; then
-    ok "positive-control: workspace ready.sh exits 1"
+# No git clone in phase A: the tarball path must be used exclusively.
+if grep -E 'git clone.*\$tag' "$SCRIPT" | grep -qv '^\s*#'; then
+    bad 'no git clone for phase A tag' \
+        "still present: $(grep -E 'git clone.*\$tag' "$SCRIPT" | grep -v '^\s*#' | head -1)"
 else
-    bad "positive-control: workspace ready.sh exits 1" "got exit 0"
+    ok 'no git clone for phase A tag'
 fi
 
-# Clone ready.sh exits 0 → passes (proves the clone path is decisive).
-_clone_rc=0; bash "$_clone_dir/spira/ready.sh" 2>/dev/null || _clone_rc=$?
-if [ "$_clone_rc" -eq 0 ]; then
-    ok "clone ready.sh=0: check passes even when workspace ready.sh exits 1"
+# No CONFIGURE_PROD or SPIRA_INSTALL_PROD_GIT_CONSIDERED in the script.
+if grep -qE 'CONFIGURE_PROD|SPIRA_INSTALL_PROD_GIT_CONSIDERED' "$SCRIPT"; then
+    bad 'no single-checkout mode variables' \
+        "still present: $(grep -E 'CONFIGURE_PROD|SPIRA_INSTALL_PROD_GIT_CONSIDERED' "$SCRIPT" | head -1)"
 else
-    bad "clone ready.sh=0: check passes even when workspace ready.sh exits 1" \
-        "clone exit=$_clone_rc"
+    ok 'no CONFIGURE_PROD or SPIRA_INSTALL_PROD_GIT_CONSIDERED'
 fi
 
-# Reverse pair: clone ready.sh=1 → fails and failure names clone path.
-printf '#!/usr/bin/env bash\nprintf "ready: FAIL nothing works\n"; exit 1\n' \
-    > "$_clone_dir/spira/ready.sh"
-chmod +x "$_clone_dir/spira/ready.sh"
+# Confirm bad() names the release path for phase A ready.sh failure.
+wantre "phase A bad() names release path" \
+    'bad.*ready\.sh.*\$_releases/current/spira/ready\.sh'
 
-_fail_rc=0; _fail_out="$(bash "$_clone_dir/spira/ready.sh" 2>&1)" || _fail_rc=$?
-if [ "$_fail_rc" -ne 0 ]; then
-    ok "clone ready.sh=1: check fails"
+# Structural: gh release download is used in acceptance-run.sh.
+want "gh release download present" "gh release download" "$(cat "$SCRIPT")"
+
+# Structural: sha256 computation present.
+if grep -qE 'sha256sum|shasum.*256' "$SCRIPT"; then
+    ok "sha256 computation present"
 else
-    bad "clone ready.sh=1: check fails" "got exit 0"
+    bad "sha256 computation present" "neither sha256sum nor shasum -a 256 found"
 fi
 
-# Confirm the clone path appears in the bad() call for phase A.
-wantre "phase A bad() names clone path" \
-    'bad.*ready\.sh.*\$_clone/spira/ready\.sh'
+# Structural: _check_release_bins function defined.
+want "_check_release_bins function defined" "_check_release_bins()" "$(cat "$SCRIPT")"
+
+# Structural: install.sh called with --skip-build (no cargo needed).
+want "install.sh --skip-build in phase A" \
+    'install.sh" --skip-build' "$(cat "$SCRIPT")"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

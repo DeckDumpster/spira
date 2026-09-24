@@ -38,7 +38,7 @@
 #  20. Phase A: bead labels carry plan+scope so builder predicate matches.
 #  21. Phase A: claimability check uses bd ready, not sentinel --report polling.
 #  22. Phase B: install.sh output not discarded on failure.
-#  23. Phase B: install env mirrors phase A — CONFIGURE_PROD and SPIRA_INSTALL_PROD_GIT_CONSIDERED.
+#  23. Phase B: install uses tarball + shared _install_env (same as phase A).
 #  24. Phase B: deploy gated on install success (dead Dolt blamed on install, not deploy).
 #
 # covers: spira/acceptance-run.sh spira/acceptance-agent.sh
@@ -235,10 +235,14 @@ fi
 
 # ============================================================================
 echo
-echo "16. Phase A and D: CONFIGURE_PROD set to harness subdir (not clone root)"
+echo "16. Phase A and D: install uses \$_releases/current path (not bare releases root)"
 # ============================================================================
-want "phase A CONFIGURE_PROD includes /spira suffix" 'CONFIGURE_PROD=$_clone/spira'
-want "phase D CONFIGURE_PROD includes /spira suffix" 'CONFIGURE_PROD=$_aged_clone/spira'
+# The tarball-based approach unpacks into $releases/current via activate.sh;
+# install.sh must be called from that versioned path, not from $releases directly.
+wantre "phase A install uses \$_releases/current path" \
+    '_releases/current/install\.sh'
+wantre "phase D install uses \$_releases/current path" \
+    '_releases/current/install\.sh'
 
 # ============================================================================
 echo
@@ -260,23 +264,22 @@ fi
 
 # ============================================================================
 echo
-echo "18. Phase A and D: ready.sh call uses clone path, not workspace path"
+echo "18. Phase A and D: ready.sh call uses release path, not workspace path"
 # ============================================================================
-# The old code called bash "\$HERE/ready.sh" which read workspace paths; the
-# clone's own ready.sh (with clone paths) was never consulted, so install-side
-# fixes to ready.sh never changed the acceptance verdict.
-wantre "phase A calls clone's ready.sh" \
-    'bash.*\$_clone/spira/ready\.sh'
-wantre "phase A failure names clone's ready.sh path" \
-    'bad.*\$_clone.*ready\.sh'
-wantre "phase D calls aged clone's ready.sh" \
-    'bash.*\$_aged_clone/spira/ready\.sh'
-wantre "phase D failure names aged clone's ready.sh path" \
-    'bad.*\$_aged_clone.*ready\.sh'
-# Workspace's ready.sh must not appear on the capture line.
+# activate.sh unpacks the tarball into $releases/current; ready.sh from that
+# unpacked tree must be called, not $HERE/ready.sh from the workspace.
+wantre "phase A calls release ready.sh" \
+    'bash.*\$_releases/current/spira/ready\.sh'
+wantre "phase A failure names release ready.sh path" \
+    'bad.*\$_releases/current/spira/ready\.sh'
+wantre "phase D calls release ready.sh" \
+    'bash.*\$_releases/current/spira/ready\.sh'
+wantre "phase D failure names release ready.sh path" \
+    'bad.*\$_releases/current/spira/ready\.sh'
+# Workspace's ready.sh must not appear on a bash invocation line.
 if grep -E 'bash.*\$HERE/ready\.sh' "$SCRIPT" 2>/dev/null; then
     bad "ready.sh call does not use workspace path" \
-        "found bash \$HERE/ready.sh — must use clone path"
+        "found bash \$HERE/ready.sh — must use release path"
 else
     ok "ready.sh call does not use workspace path"
 fi
@@ -404,20 +407,23 @@ rm -rf "$_pb_tmp"
 
 # ============================================================================
 echo
-echo "23. Phase B: install env mirrors phase A — CONFIGURE_PROD and SPIRA_INSTALL_PROD_GIT_CONSIDERED"
+echo "23. Phase B: install uses tarball + shared _install_env (same as phase A)"
 # ============================================================================
-# Phase B previously called install.sh with only SPIRA_OPERATED=0; without
-# CONFIGURE_PROD=$_prev_clone/spira, install.sh reaches phase 4 (units) and
-# exits 2 because SPIRA_PROD points to a git checkout. Phase 4 is where
-# dolt-beads.service is installed and started. A phase 4 exit leaves Dolt down,
-# and every subsequent call that sources conf.sh gets connection refused.
-want "phase B _prev_env built with SPIRA_OPERATED=0" '_prev_env=('
-want "phase B sets CONFIGURE_PROD for prev_clone" \
-    'CONFIGURE_PROD=$_prev_clone/spira'
-want "phase B sets SPIRA_INSTALL_PROD_GIT_CONSIDERED=1 for prev install" \
-    'SPIRA_INSTALL_PROD_GIT_CONSIDERED=1'
-want "phase B uses env to pass _prev_env to install.sh" \
-    'env "${_prev_env[@]}" bash "$_prev_clone/install.sh"'
+# Phase B installs the previous release from its tarball via _install_from_tarball,
+# then calls install.sh from $releases/current using the same _install_env array as
+# phase A. No git clone, no CONFIGURE_PROD, no SPIRA_INSTALL_PROD_GIT_CONSIDERED.
+want "phase B downloads prev tarball" '_prev_tarball_file'
+want "phase B installs from prev tarball via _install_from_tarball" \
+    '_install_from_tarball "$_prev_tarball_file"'
+want "phase B uses shared _install_env for install.sh" \
+    'env "${_install_env[@]}" bash "$_releases/current/install.sh"'
+# Must NOT use the old git-clone approach.
+if grep -qF 'SPIRA_INSTALL_PROD_GIT_CONSIDERED' "$SCRIPT" 2>/dev/null; then
+    bad "phase B does not use SPIRA_INSTALL_PROD_GIT_CONSIDERED" \
+        "found SPIRA_INSTALL_PROD_GIT_CONSIDERED — tarball install must not use git-clone mode"
+else
+    ok "phase B does not use SPIRA_INSTALL_PROD_GIT_CONSIDERED"
+fi
 
 # ============================================================================
 echo

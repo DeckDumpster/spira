@@ -12,11 +12,10 @@
 # needed. It commits acceptance-probe.txt and closes the bead — proving the full
 # sentinel → summon → claim → branch → commit → land path deterministically.
 #
-# SINGLE-CHECKOUT MODE. --agent passes CONFIGURE_PROD=<clone> so install.sh treats
-# the cloned tag as its own production checkout. This skips the promote.sh path
-# (which does not apply on a clean machine without a tarball-based release) and
-# keeps the acceptance test self-contained: nothing touches GitHub beyond the
-# workflow run itself.
+# TARBALL INSTALL. Phase A downloads the candidate tarball from the draft GitHub
+# release created by release.yml and installs via activate.sh + install.sh --skip-build.
+# On PASS the draft is published (undrafted). On FAIL the draft is deleted and the
+# tag is retracted so no incomplete release is left visible.
 #
 # RECORDING. acceptance-run.sh --record writes refs/notes/acceptance on the tag.
 # When --prev-tag is given, the note also includes an aged-install from=<prev> line
@@ -170,6 +169,28 @@ jobs:
                  --record)
           [ -n "${_prev:-}" ] && _args+=(--prev-tag "$_prev")
           bash spira/acceptance-ci.sh "${_args[@]}"
+
+      - name: Publish release on PASS
+        # The release was created as a draft by release.yml so acceptance could test the
+        # exact artifact. Undraft it now that acceptance passed.
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          _tag="${{ inputs.tag || github.ref_name }}"
+          gh release edit "$_tag" --draft=false --repo "$GITHUB_REPOSITORY"
+          printf 'acceptance: published %s\n' "$_tag"
+
+      - name: Retract release and tag on FAIL
+        # Delete the draft release and the tag so no broken release is left visible.
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          _tag="${{ inputs.tag || github.ref_name }}"
+          gh release delete "$_tag" --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$_tag" 2>/dev/null || true
+          printf 'acceptance: retracted draft release and tag %s\n' "$_tag"
 
   # ---------------------------------------------------------------------------
   # Destroy the machine. Runs even when provision or acceptance fail.
