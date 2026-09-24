@@ -45,11 +45,12 @@ FAYTH_STATUTE_CORE="law-tests-run-only-through-testenv-batch"
 # more finished beads per window than a wider pool did: four slots was tried and returned to
 # three ninety minutes later because a slot is only throughput if the aeon in it can finish.
 #
-# VERIFIED, NOT ASSUMED: `claude --model claude-sonnet-4-6 -p ...` answers on this box. An id
+# VERIFIED, NOT ASSUMED: `claude --model claude-sonnet-5 -p ...` answers on this box (CLI
+# 2.1.281, 2026-09-24; Sonnet 4.6 -> Sonnet 5 per the operator). An id
 # the CLI rejects does not fail loudly here — every summon dies and the pool looks merely
 # idle, which is the shape of outage this harness is worst at noticing. Probe a candidate id
 # before writing it: claude-haiku-5 is rejected by the catalog at CLI 2.1.263.
-FAYTH_MODEL=claude-sonnet-4-6
+FAYTH_MODEL=claude-sonnet-5
 # Three. Raised to four on 2026-09-07 and returned to three ninety minutes later, by the
 # operator, with the measurement that settles it: a slot is only throughput if the aeon in it
 # can finish, and right now it cannot. In the 46 minutes at four, twenty-two aeons were
