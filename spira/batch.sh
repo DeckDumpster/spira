@@ -80,6 +80,31 @@ _batch_open_file() { printf '%s/%s/open' "${SPIRA_QUEUE_DIR:?}" "$1"; }
 
 _batch_is_open() { [ -f "$(_batch_open_file "$1")" ]; }
 
+# _abandon_open_batch <name> <forge> <repo> <ob_file> <pr_n> <members_val> <comment>
+# Closes PR, returns innocent members to CERTIFIED, archives the open record.
+# Single abandonment path — used by DIRTY and express eviction alike.
+_abandon_open_batch() {
+    local name="$1" forge="$2" repo="$3" ob_file="$4" pr_n="$5" members_val="$6" comment_text="${7:-Batch abandoned.}"
+    local _m mid mtip cur_state
+    for _m in $members_val; do
+        mid="${_m%%:*}"; mtip="${_m##*:}"
+        cur_state=""
+        [ -f "$LANDSTATE/$mid" ] && { read -r cur_state _ < "$LANDSTATE/$mid" 2>/dev/null || true; }
+        case "${cur_state:-}" in
+        RED|EJECTED)
+            printf 'batch %s: %s left at %s\n' "$name" "$mid" "$cur_state" ;;
+        *)
+            land_mark "$mid" CERTIFIED "$mtip"
+            printf 'batch %s: %s returned to CERTIFIED\n' "$name" "$mid" ;;
+        esac
+    done
+    "$forge" pr-comment "$repo" "$pr_n" "$comment_text" 2>/dev/null || true
+    "$forge" pr-close   "$repo" "$pr_n" 2>/dev/null || true
+    local ob_stamp; ob_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    mv "$ob_file" "$(dirname "$ob_file")/closed-pr${pr_n}-${ob_stamp}" \
+        2>/dev/null || rm -f "$ob_file"
+}
+
 # _certified_orphans <repo-path> — print id for each CERTIFIED landstate with no branch ref
 _certified_orphans() {
     local f id st
@@ -262,6 +287,7 @@ main() {
         done
     fi
 
+    local _evict_for_express=0 _ob_express_ids=()
     if _batch_is_open "$name"; then
         local _ob_forge="${SPIRA_FORGE:-$HERE/forge.sh}"
         local _ob_file; _ob_file="$(_batch_open_file "$name")"
@@ -274,30 +300,12 @@ main() {
             if [ "${_ob_mstat:-UNKNOWN}" = "DIRTY" ]; then
                 printf 'batch %s: PR %s is DIRTY (merge conflicts) — abandoning\n' \
                     "$name" "$_ob_pr"
-                local _ob_members _ob_m _ob_mid _ob_mtip _ob_cur
-                _ob_members="$(grep '^members=' "$_ob_file" 2>/dev/null | head -1)"
-                _ob_members="${_ob_members#members=}"
-                for _ob_m in $_ob_members; do
-                    _ob_mid="${_ob_m%%:*}"; _ob_mtip="${_ob_m##*:}"
-                    _ob_cur=""
-                    [ -f "$LANDSTATE/$_ob_mid" ] && \
-                        { read -r _ob_cur _ < "$LANDSTATE/$_ob_mid" 2>/dev/null || true; }
-                    case "${_ob_cur:-}" in
-                    RED|EJECTED)
-                        printf 'batch %s: %s left at %s\n' "$name" "$_ob_mid" "$_ob_cur" ;;
-                    *)
-                        land_mark "$_ob_mid" CERTIFIED "$_ob_mtip"
-                        printf 'batch %s: %s returned to CERTIFIED\n' "$name" "$_ob_mid" ;;
-                    esac
-                done
-                "$_ob_forge" pr-comment "$repo" "$_ob_pr" \
-                    "Batch abandoned: PR had merge conflicts (DIRTY). Members returned to CERTIFIED for re-batching." \
-                    2>/dev/null || true
-                "$_ob_forge" pr-close "$repo" "$_ob_pr" 2>/dev/null || true
-                local _ob_stamp; _ob_stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-                mv "$_ob_file" \
-                    "$(dirname "$_ob_file")/closed-pr${_ob_pr}-${_ob_stamp}" \
-                    2>/dev/null || rm -f "$_ob_file"
+                local _ob_dirty_members
+                _ob_dirty_members="$(grep '^members=' "$_ob_file" 2>/dev/null | head -1)"
+                _ob_dirty_members="${_ob_dirty_members#members=}"
+                _abandon_open_batch "$name" "$_ob_forge" "$repo" "$_ob_file" "$_ob_pr" \
+                    "$_ob_dirty_members" \
+                    "Batch abandoned: PR had merge conflicts (DIRTY). Members returned to CERTIFIED for re-batching."
                 printf '## Note\nBatch PR %s for %s was found unmergeable (DIRTY) and has been abandoned.\n\nMembers returned to CERTIFIED and will be re-batched on the next pass.\n' \
                     "$_ob_pr" "$name" \
                 | bash "$HERE/mail.sh" send operator \
@@ -307,8 +315,55 @@ main() {
                 return 0
             fi
         fi
-        printf 'batch %s: open batch exists — skipping\n' "$name"
-        return 0
+
+        # Check if a certified express branch is waiting — if so, evict the open batch
+        # so the fast lane is not blocked by an in-flight CI run it did not ask for.
+        local _ob_ev_certs _ob_ev_ids=() _ob_ev_id _ob_ev_prio
+        _ob_ev_certs="$(_certified_list "$repo")"
+        if [ -n "${_ob_ev_certs:-}" ]; then
+            while read -r _ob_ev_id _ _; do _ob_ev_ids+=("$_ob_ev_id"); done <<< "$_ob_ev_certs"
+            if [ "${#_ob_ev_ids[@]}" -gt 0 ]; then
+                _ob_ev_prio="$(bdjson show "${_ob_ev_ids[@]}" 2>/dev/null)" || _ob_ev_prio="[]"
+                local _elab="${SPIRA_EXPRESS_LABEL:-express}"
+                while IFS= read -r _ob_ev_id; do
+                    [ -n "$_ob_ev_id" ] && _ob_express_ids+=("$_ob_ev_id")
+                done < <(PRIO_JSON="$_ob_ev_prio" EXPRESS_LABEL="$_elab" python3 -c '
+import sys, json, os
+d = json.loads(os.environ.get("PRIO_JSON", "[]") or "[]")
+d = d if isinstance(d, list) else [d]
+lbl = os.environ.get("EXPRESS_LABEL", "express")
+for b in d:
+    if lbl in (b.get("labels") or []):
+        print(b.get("id", ""))
+' 2>/dev/null)
+            fi
+        fi
+
+        if [ "${#_ob_express_ids[@]}" -eq 0 ]; then
+            printf 'batch %s: open batch exists — skipping\n' "$name"
+            return 0
+        fi
+
+        # Express branch is certified; evict the open batch so the fast lane is not delayed.
+        local _ob_ev_members
+        _ob_ev_members="$(grep '^members=' "$_ob_file" 2>/dev/null | head -1)"
+        _ob_ev_members="${_ob_ev_members#members=}"
+        printf 'batch %s: express branch certified — evicting open batch PR %s\n' \
+            "$name" "${_ob_pr:-?}"
+        _abandon_open_batch "$name" "$_ob_forge" "$repo" "$_ob_file" "${_ob_pr:-}" \
+            "$_ob_ev_members" \
+            "Batch evicted: an express branch became certified and has displaced this batch. Members returned to CERTIFIED for re-batching."
+        printf '## Note\nAn express branch is certified for %s; the open batch (PR %s) has been evicted.\n\nEvicted members are CERTIFIED and will be in the next batch after the express one.\nThis costs one wasted CI run on the evicted batch.\n' \
+            "$name" "${_ob_pr:-?}" \
+        | bash "$HERE/mail.sh" send operator \
+            --from "Spira Queue <queue@spira>" \
+            --subject "Merge queue: $name — batch evicted (express lane)" \
+            2>/dev/null || true
+        printf 'QUEUE EVICT %s repo=%s pr=%s reason=express\n' \
+            "$(date +%s)" "$name" "${_ob_pr:-?}" \
+            >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+        _evict_for_express=1
+        # Fall through: cut the express batch now.
     fi
 
     local certs
@@ -342,6 +397,22 @@ main() {
             fi
         done <<< "$certs"
         certs="${_filt%$'\n'}"
+    fi
+
+    # Express eviction: build the express batch from only the branches that triggered the
+    # eviction. Evicted members are CERTIFIED and will be included in the next batch.
+    if [ "${_evict_for_express:-0}" = 1 ] && [ "${#_ob_express_ids[@]}" -gt 0 ]; then
+        local _ecerts="" _ecl _ecid _is_express _eid
+        while IFS= read -r _ecl; do
+            [ -n "$_ecl" ] || continue
+            read -r _ecid _ <<< "$_ecl"
+            _is_express=0
+            for _eid in "${_ob_express_ids[@]}"; do
+                [ "$_ecid" = "$_eid" ] && { _is_express=1; break; }
+            done
+            [ "$_is_express" -eq 1 ] && _ecerts="${_ecerts}${_ecl}"$'\n'
+        done <<< "$certs"
+        certs="${_ecerts%$'\n'}"
     fi
 
     if [ -z "${certs:-}" ]; then
@@ -393,6 +464,7 @@ main() {
 
     [ "$count" -ge "${SPIRA_QUEUE_BATCH_MAX:-8}" ] && triggered=1
     [ "$age"   -ge "${SPIRA_QUEUE_BATCH_WAIT:-1800}" ] && triggered=1
+    [ "${_evict_for_express:-0}" = 1 ] && triggered=1
 
     # THIRD TRIGGER: CI IS IDLE, SO WAITING BUYS NOTHING. The wait exists to let certified
     # branches accumulate into one CI run instead of spending a run each. That trade is only
