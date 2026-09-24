@@ -90,18 +90,20 @@ MAN="$TMP/watchers"
 # FILTER PINNED TO A NON-DEFAULT WORD. Nothing in the shipped SPIRA_ACTIONABLE matches it.
 FILTER="WAKEME"
 
-# THE CLOCK, INJECTED RATHER THAN SLEPT FOR. `watchd.sh`'s notion of "now" (_wd_now) honours
-# SPIRA_NOW, so a suite that must prove two passes are not identical from the suppression
-# fingerprint's point of view advances this by a couple of seconds instead of paying a real
-# `sleep 1` — starting from the real clock so the ISO8601-stamp cases later, which parse
-# real `date`-produced timestamps, still see a "now" in the right neighbourhood.
-NOW="$(date +%s)"
+# THE CLOCK, BUMPED RATHER THAN SLEPT FOR. `watchd.sh`'s notion of "now" (_wd_now) honours
+# SPIRA_NOW, computed fresh off the real clock plus CLOCK_BUMP every call — 0 by default, so
+# every existing assertion (including the ISO8601-stamp cases, which parse real `date`-produced
+# timestamps and need "now" to track the real clock) sees exactly what it always did. Only the
+# few cases that must prove two passes are not identical from the suppression fingerprint's
+# point of view raise CLOCK_BUMP, in place of a real `sleep 1` between them.
+CLOCK_BUMP=0
+_spira_now() { printf '%s' "$(( $(date +%s) + CLOCK_BUMP ))"; }
 
 # notify <age> [manifest] -> rc; stdout in $TMP/out, stderr in $TMP/err
 notify() {
     env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" \
         SPIRA_WATCHERS="${2:-$MAN}" SPIRA_ACTIONABLE="${FILTER_OVERRIDE-$FILTER}" \
-        SPIRA_NOTIFY_AGE="$1" SPIRA_NOW="$NOW" \
+        SPIRA_NOTIFY_AGE="$1" SPIRA_NOW="$(_spira_now)" \
         NOTIFY_LOG="$ASKS" ${NOTIFY_REFUSE:+NOTIFY_REFUSE=1} \
         bash "$CLONE/spira/watchd.sh" notify > "$TMP/out" 2> "$TMP/err"
 }
@@ -202,9 +204,9 @@ echo "a standing backlog is escalated once, not once per pass"
 # contain, and the suite would pass on a timer that asks again every five minutes — which is
 # the failure this section exists to catch, not a hypothetical one: the age WAS in the key at
 # one point and this section, unspaced, said nothing.
-NOW=$((NOW + 2))
+CLOCK_BUMP=$((CLOCK_BUMP + 2))
 notify 1; is "a second pass over the same backlog escalates again"       "1" "$?"
-NOW=$((NOW + 2))
+CLOCK_BUMP=$((CLOCK_BUMP + 2))
 notify 1; is "and a third"                                               "1" "$?"
 is "but no further ask was raised"                     "1" "$(asks)"
 # A LINE ARRIVING BEHIND A STANDING ONE IS THE SAME BACKLOG. The oldest unread event is still
@@ -501,7 +503,7 @@ chmod +x "$STUBBIN/systemctl"
 notify_d() {
     env -i HOME="$TMP/home" PATH="$PATH" SPIRA_PATH="$STUBBIN" SPIRA_CONF="$CONF" \
         SPIRA_WATCHERS="$MAND" SPIRA_ACTIONABLE="$FILTER" \
-        SPIRA_NOTIFY_AGE="$1" SPIRA_NOW="$NOW" \
+        SPIRA_NOTIFY_AGE="$1" SPIRA_NOW="$(_spira_now)" \
         SC_STATE="$SC_STATE" SC_NR="$SC_NR" SC_SILENT="$SC_SILENT" \
         NOTIFY_LOG="$ASKS" \
         bash "$CLONE/spira/watchd.sh" notify > "$TMP/out" 2> "$TMP/err"
@@ -553,7 +555,7 @@ has "and the last line the watcher wrote"              "$(cat "$ASKS")" "already
 has "and a default that says what to do"               "$(cat "$ASKS")" "--default"
 has "which names the second-copy case"                 "$(cat "$ASKS")" "second copy"
 
-NOW=$((NOW + 2))
+CLOCK_BUMP=$((CLOCK_BUMP + 2))
 notify_d 3600
 is "a standing fault does not ask again"               "1" "$(asks)"
 
