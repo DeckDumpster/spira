@@ -1014,7 +1014,7 @@ queue_section() {
     local _q_hdr_done=0
 
     if [ "${SP_QUEUE_DEPTH:-?}" = "?" ] && [ "$_bpr" = "0" ] && [ "$_nn" = "0" ] \
-       && [ "$_uln" = "?" ] && [ "$_fn_certify" = "?" ] && [ "$_fn_red" = "?" ]; then
+       && [ "$_uln" = "0" ] && [ "$_fn_certify" = "?" ] && [ "$_fn_red" = "?" ]; then
         unread_row QUEUE "cannot read the queue"
         return
     fi
