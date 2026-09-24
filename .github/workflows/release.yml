@@ -79,6 +79,10 @@ jobs:
         run: cargo build --release
         working-directory: broker
 
+      - name: Build supervise
+        run: cargo build --release
+        working-directory: supervise
+
       - name: Build release tarball
         id: tarball
         run: |
@@ -91,6 +95,7 @@ jobs:
             --loom-bin loom/target/release/loom \
             --panel-bin cockpit/panel/target/release/panel \
             --broker-bin broker/target/release/broker \
+            --supervise-bin supervise/target/release/spira-supervise \
             --output /tmp/artifacts \
             --name "spira-${ts}")
           printf 'path=%s\n' "$tarball" >> "$GITHUB_OUTPUT"
