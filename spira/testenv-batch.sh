@@ -52,6 +52,14 @@
 #                           (default: the spira/ directory beside this script)
 #   SPIRA_BATCH_SKIP_INSTALL  if non-empty, skip configure+install; suites that
 #                             need installed units will skip (exit 77)
+#   SPIRA_BATCH_TIERS       comma-separated # tier: values to run here; default
+#                           "T2,T3" — batch and main CI run the integration and
+#                           cross-component tiers (docs/test-plan/README.md); T0/T1
+#                           already ran at certification. A suite with no # tier:
+#                           declaration always runs, so this is a no-op until a
+#                           suite carries the header. Only applies to diff-derived
+#                           selection; --suites names an explicit list unaffected
+#                           by tier.
 #   SPIRA_VERDICTS          verdict-cache directory (shared with gate.sh)
 #   SPIRA_VERDICT_TTL       cache TTL in seconds; 0 = disabled (default: 86400)
 #   SPIRA_VERDICT_REPEAT_CONSIDERED  override when a prior verdict (green or red)
@@ -301,6 +309,7 @@ else
         --repo "$REPO" \
         --suite-dir "$SUITE_DIR" \
         --no-all-fallback \
+        --tiers "${SPIRA_BATCH_TIERS:-T2,T3}" \
         --mode-file "$_mf" \
         2>/dev/null || true)"
     _SELECTION_TYPE="$(cat "$_mf" 2>/dev/null || echo diff)"

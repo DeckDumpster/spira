@@ -11,6 +11,13 @@
 # SPIRA_GATE_EJECTED_SUITES  comma-separated suite names always included.
 # SPIRA_GATE_SELECT_CAP      maximum suite count (0 = no cap). Ejected suites
 #                             are always kept; excluded suites are logged to stderr.
+# SPIRA_GATE_TIERS           comma-separated # tier: values to run here; default
+#                             "T0,T1" — certification runs the cheap tiers, batch
+#                             and main CI run T2/T3 (docs/test-plan/README.md). A
+#                             suite with no # tier: declaration always runs, so
+#                             this is a no-op until a suite carries the header.
+#                             Ejected suites are exempt: a suite that proved red
+#                             reruns regardless of tier (law-a-retry-must-change-an-input).
 set -uo pipefail
 BASE="${1:?usage: gate-touched.sh <base> <head>}"
 # SPIRA_GATE_SUITES=off: select NOTHING, so the gate command's `[ -n "$_s" ] || exit 0`
@@ -23,6 +30,7 @@ fi
 HEAD="${2:?usage: gate-touched.sh <base> <head>}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo="${SPIRA_GATE_REPO:-.}"
+_tiers="${SPIRA_GATE_TIERS:-T0,T1}"
 
 if [ -f "${SPIRA_GATE_FILES:-}" ]; then
     # Build corpus from BASE tree so suites added by the branch are not self-selected
@@ -42,11 +50,11 @@ if [ -f "${SPIRA_GATE_FILES:-}" ]; then
         _corpus="$_suite_dir"
     fi
     _covered="$(bash "$HERE/select.sh" --files "$SPIRA_GATE_FILES" --suite-dir "$_corpus" \
-        --repo "$repo" --no-all-fallback 2>/dev/null || true)"
+        --repo "$repo" --no-all-fallback --tiers "$_tiers" 2>/dev/null || true)"
     [ "$_corpus" = "$_tmp_corpus" ] && rm -rf "$_tmp_corpus" 2>/dev/null || true
 else
     _covered="$(bash "$HERE/select.sh" --base "$BASE" --head "$HEAD" --repo "$repo" \
-        --no-all-fallback 2>/dev/null || true)"
+        --no-all-fallback --tiers "$_tiers" 2>/dev/null || true)"
 fi
 
 _ejected=""

@@ -27,6 +27,14 @@ covers_hit() {
     return 1
 }
 
+# is_uc_token <token>: exits 0 for a UC-<area>-NN token (never a file path).
+# plan-lint.sh validates these against docs/test-plan/*.md, not the filesystem —
+# a UC id would otherwise read as an unresolvable path.
+is_uc_token() {
+    case "$1" in UC-*-[0-9][0-9]) return 0 ;; esac
+    return 1
+}
+
 # --- positive control -------------------------------------------------------
 # Plant a bad token and require the checker to find it before trusting a silent result.
 _tmpdir="$(mktemp -d)"; trap 'rm -rf "$_tmpdir"' EXIT
@@ -50,6 +58,7 @@ for _sf in "$HERE"/test-*.sh; do
     _checked=$((_checked+1))
     read -ra _toks <<< "$_cov"
     for _tok in "${_toks[@]}"; do
+        is_uc_token "$_tok" && continue
         if ! covers_hit "$_tok"; then
             bad "$(basename "$_sf")" "# covers: token '$_tok' matches no file under $ROOT"
             _bad=$((_bad+1))
