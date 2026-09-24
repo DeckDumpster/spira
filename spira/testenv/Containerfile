@@ -1,10 +1,11 @@
 # spira/testenv/Containerfile — Ubuntu 24.04 with system and user systemd,
-# Rust, and every dependency the manifest in conf.sh declares.
+# Rust, and every dependency the manifest in deps.toml declares.
 #
 # THE IMAGE IS VERIFIED, NOT ASSERTED. After installation, doctor-check.sh reads conf.sh's
-# SPIRA_BINS, tiered by spira_bin_tier, and fails the build on any runtime-tier absence or
-# any un-waived optional/operator-tier absence. A program added to the manifest fails this
-# build until the image carries it — the mechanism is self-maintaining in the right direction.
+# deps.toml manifest, tiered by spira_bin_tier, and fails the build on any runtime-tier
+# absence or any un-waived optional/operator-tier absence. A program added to the manifest
+# fails this build until the image carries it — the mechanism is self-maintaining in the
+# right direction.
 #
 # SIZING. Only what the tests need to run against. The caller's checkout is
 # bind-mounted by testenv.sh at /workspace; this image provides only the runtime.
@@ -216,6 +217,7 @@ RUN printf '#!/bin/sh\n# testenv stub: satisfies command -v claude and spira_req
 # to verify every manifest program is present or explicitly waived.
 # The scripts are deleted after; they are a build-time gate, not a runtime tool.
 COPY conf.sh /tmp/doctor-check/conf.sh
+COPY deps.toml /tmp/doctor-check/deps.toml
 COPY testenv/doctor-check.sh /tmp/doctor-check/doctor-check.sh
 COPY testenv/doctor-waivers /tmp/doctor-check/doctor-waivers
 RUN bash /tmp/doctor-check/doctor-check.sh \
