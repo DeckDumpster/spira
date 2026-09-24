@@ -35,8 +35,8 @@ echo "2. Structural: SPIRA_OPERATED=0 in each phase's install environment"
 
 wantre "phase A _install_env includes SPIRA_OPERATED=0" \
     '_install_env=\(.*SPIRA_OPERATED=0'
-wantre "phase B passes SPIRA_OPERATED=0 to install.sh directly" \
-    'SPIRA_OPERATED=0 bash.*_prev_clone.*install\.sh'
+wantre "phase B _prev_env includes SPIRA_OPERATED=0" \
+    '_prev_env=\(.*SPIRA_OPERATED=0'
 wantre "phase D _aged_env includes SPIRA_OPERATED=0" \
     '_aged_env=\(.*SPIRA_OPERATED=0'
 want "SPIRA_OPERATED = 0 written to spira.conf" \

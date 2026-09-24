@@ -359,9 +359,32 @@ else
             >/dev/null 2>&1
         is0 "phase B: git clone --branch $prev_tag" "$?"
 
+        # Mirror the env that phase A's install uses: CONFIGURE_PROD and
+        # SPIRA_INSTALL_PROD_GIT_CONSIDERED=1 are required when --agent is set so
+        # that install.sh bypasses the git-checkout guard and reaches phase 4 (units),
+        # which starts dolt-beads.service. Without them install.sh exits 2 at phase 4
+        # and Dolt is never started, causing deploy.sh to fail with connection refused.
+        _prev_env=(SPIRA_HOME_REPO="$(basename "$scratch_repo")" SPIRA_OPERATED=0)
+        if [ -n "$_agent" ]; then
+            _prev_env+=(
+                "CONFIGURE_PROD=$_prev_clone/spira"
+                "SPIRA_INSTALL_PROD_GIT_CONSIDERED=1"
+            )
+        fi
         _prev_install_rc=0
-        SPIRA_OPERATED=0 bash "$_prev_clone/install.sh" 2>&1 | tee "$TMP/prev-install.log" || _prev_install_rc=$?
+        env "${_prev_env[@]}" bash "$_prev_clone/install.sh" 2>&1 \
+            | tee "$TMP/prev-install.log" || _prev_install_rc=$?
         is0 "phase B: install.sh ($prev_tag) exits 0" "$_prev_install_rc"
+        unset _prev_env
+
+        # Guard: a failed install leaves the database service down; deploy.sh would
+        # then report connection refused — which looks like an upgrade failure rather
+        # than an install failure. Gate phases B and C on install success so the
+        # failure is attributed to the right phase.
+        if [ "$_prev_install_rc" -ne 0 ]; then
+            bad "phase B+C: skipped — install failed; database service not started" \
+                "prev_install_rc=$_prev_install_rc"
+        else
 
         # Capture unit set BEFORE upgrade.
         _units_pre_upgrade="$(systemctl --user list-unit-files --no-legend 2>/dev/null \
@@ -410,6 +433,8 @@ else
         # Final uninstall.
         bash "$HERE/uninstall.sh" --yes >/dev/null 2>&1
         is0 "phase C: uninstall.sh --yes after rollback exits 0" "$?"
+
+        fi  # end guard: phase B install succeeded
     fi
 fi
 
