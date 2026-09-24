@@ -1123,25 +1123,12 @@ function drawOps(){
     String(jud).startsWith('NEVER')?bad(jud):dim(E(String(jud))+' passes ago');
   h+=row('SELF',dim('judgement')+' '+judH);
 
-  /* BOX */
-  h+=row('BOX',
-    dim('disk ')+numC(q('SP_DISK_ROOT_PCT'),85,'%')+'  '+
-    dim('ws ')+numC(q('SP_DISK_WS_PCT'),85,'%')+'  '+
-    dim('cpu ')+str('SP_CPU_IDLE')+dim('% idle  load ')+str('SP_LOAD1'));
-
-  /* GOV */
+  /* GOV — the account's own five-hour window. Concurrency and disk/memory pressure are
+     reported by watchtower's sweep, not here. */
   if(String(q('SP_CAPACITY_PAUSED'))==='1'){
     const cl=q('SP_CAPACITY_LEFT'),cm=cl!==null?Math.floor(parseInt(cl,10)/60):'?';
     h+=row('GOV',bad('ACCOUNT OUT OF CAPACITY')+dim(' until ')+str('SP_CAPACITY_AT')+
       dim(` (${E(String(cm))}m)  summoning paused`));
-  } else {
-    const hr=q('SP_HEADROOM')!==null?q('SP_HEADROOM'):q('SP_BUDGET');
-    let gv=bold(str('SP_GOVERNOR_MODE'))+dim(' mode  ');
-    if(hr!==null&&parseInt(hr,10)===0)
-      gv+=warn('would withhold — '+E(sq('SP_BUDGET_REASON')||'no headroom'));
-    else
-      gv+=ok(hr!==null?E(String(hr)):'?')+dim(' more aeon(s) affordable  idle avg ')+str('SP_CPU_IDLE_AVG')+dim('%');
-    h+=row('GOV',gv);
   }
 
   /* OPS */
@@ -1150,9 +1137,7 @@ function drawOps(){
   /* File freshness footer */
   h+=sep();
   const ceA=q('cockpit_env_age_s'),ceE=q('cockpit_env_error');
-  const beA=q('budget_env_age_s'),beE=q('budget_env_error');
-  h+=sub(dim('cockpit.env ')+(ceE?bad('error: '+E(String(ceE))):ageS(ceA,300))+
-    '  '+dim('budget.env ')+(beE?bad('error: '+E(String(beE))):ageS(beA,300)));
+  h+=sub(dim('cockpit.env ')+(ceE?bad('error: '+E(String(ceE))):ageS(ceA,300)));
 
   h+='</div>';
   el.innerHTML=h;

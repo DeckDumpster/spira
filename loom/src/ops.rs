@@ -63,7 +63,7 @@ pub fn parse_shell_value(s: &str) -> Option<String> {
 
 /// Parse a KEY='VALUE' shell env file. Returns (data, age_s, error).
 ///
-/// Only SP_* keys are captured. cockpit.sh and budget.sh both use this format.
+/// Only SP_* keys are captured. cockpit.sh uses this format.
 pub fn parse_env_file(path: &str) -> (HashMap<String, String>, Option<u64>, Option<String>) {
     let age_s = std::fs::metadata(path)
         .ok()

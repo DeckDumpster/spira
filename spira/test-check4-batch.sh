@@ -54,7 +54,6 @@ stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; 
 stub pilgrimage.sh 'printf "%s" "${PILGRIMAGE_OUT:-}"'
 stub strand.sh     'printf "%s" "${STRAND_OUT:-}"'
 stub sending.sh    'printf "%s" "${SENDING_OUT:-}"'
-stub governor.sh   'exit 0'
 stub reflect.sh    'true'
 stub mail.sh       '[ "${1:-}" = send ] || exit 0'
 printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' \

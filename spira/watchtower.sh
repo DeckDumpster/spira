@@ -880,8 +880,23 @@ elif [ "${SPIRA_QUEUE_THROTTLE_OVERRIDE:-}" = "off" ]; then
 fi
 
 # /tmp usage — EDQUOT fires before df says full (per-user quota on tmpfs).
-_tmp_pct="$(df /tmp 2>/dev/null | awk 'NR==2{print $5}' || true)"
+DF_BIN="${SPIRA_DF:-df}"
+_tmp_pct="$("$DF_BIN" /tmp 2>/dev/null | awk 'NR==2{print $5}' || true)"
 [ -n "$_tmp_pct" ] || _tmp_pct="?"
+
+# DISK AND MEMORY — vital signs, this being the only place that watches them. A full root
+# disk kills everything running on the box, so the default threshold is severe (90% used,
+# 10% free). SPIRA_DF names the binary rather than a path, the same seam SPIRA_GH and
+# SPIRA_BD carry for their own commands, so a suite can point it at a stub.
+DISK_WARN_PCT="${SPIRA_DISK_WARN_PCT:-90}"
+MEM_WARN_MB="${SPIRA_MEM_WARN_MB:-1500}"
+MEMINFO="${SPIRA_MEMINFO:-/proc/meminfo}"
+disk_root_pct="$("$DF_BIN" --output=pcent / 2>/dev/null | tail -1 | tr -dc '0-9')"
+[ -n "$disk_root_pct" ] || disk_root_pct="?"
+disk_ws_pct="$("$DF_BIN" --output=pcent "$SPIRA_WORKSPACES" 2>/dev/null | tail -1 | tr -dc '0-9')"
+[ -n "$disk_ws_pct" ] || disk_ws_pct="?"
+mem_avail_mb="$(awk '/MemAvailable/{printf "%d", $2/1024}' "$MEMINFO" 2>/dev/null)"
+[ -n "$mem_avail_mb" ] || mem_avail_mb="?"
 
 snapshot() {
 cat <<EOF
@@ -932,6 +947,9 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
 
 ### The workers
 
+  disk used on / (warn >= ${DISK_WARN_PCT}%)   ${disk_root_pct}
+  disk used on workspaces (warn >= ${DISK_WARN_PCT}%)   ${disk_ws_pct}
+  memory available, MB (warn <= ${MEM_WARN_MB})   ${mem_avail_mb}
   /tmp used (? = cannot read)         ${_tmp_pct}
   throttle                            ${throttle_since:-clear}      (stamp: queue-throttled; depth at engage: ${throttle_depth:-—})
   draining since (? = cannot read)    ${drain_mins}      minutes   (stamp: world.draining)
@@ -1022,11 +1040,12 @@ fi
 
 # ---------------------------------------------------------------------------------------
 # SKIP WHEN NOMINAL. Every signal computed above is a positive measurement; '?' means a
-# probe failed. Nominal requires all four: no lapses since the last pass (lapsed_count=0),
-# a fresh readable snapshot (snap_age is numeric and below its limit), no stuck no-verdict
-# branches (nv_worst=0), and no drain in force. A single '?' or a nonzero count anywhere
-# in that set means not-nominal — the model session is reserved for conditions the cheap
-# checks can see but cannot resolve.
+# probe failed. Nominal requires: no lapses since the last pass (lapsed_count=0), a fresh
+# readable snapshot (snap_age is numeric and below its limit), no stuck no-verdict branches
+# (nv_worst=0), no drain or throttle in force, disk below its warn threshold on both / and
+# the workspaces volume, and memory available above its warn floor. A single '?' or a
+# nonzero/out-of-range reading anywhere in that set means not-nominal — the model session
+# is reserved for conditions the cheap checks can see but cannot resolve.
 #
 # When nominal: write a SWEEP:NOMINAL marker so the ops service can skip the model call
 # rather than paying a full context to confirm a green report is green. The marker line
@@ -1041,7 +1060,10 @@ if [ "$lapsed_count" = "0" ] && \
    [ "$snap_age" != "?" ] && [ "$snap_age" -lt "$SNAP_AGE_MAX" ] 2>/dev/null && \
    [ "$nv_worst" = "0" ] && \
    [ -z "$drain_since" ] && \
-   [ -z "$throttle_since" ]; then
+   [ -z "$throttle_since" ] && \
+   [ "$disk_root_pct" != "?" ] && [ "$disk_root_pct" -lt "$DISK_WARN_PCT" ] 2>/dev/null && \
+   [ "$disk_ws_pct" != "?" ] && [ "$disk_ws_pct" -lt "$DISK_WARN_PCT" ] 2>/dev/null && \
+   [ "$mem_avail_mb" != "?" ] && [ "$mem_avail_mb" -gt "$MEM_WARN_MB" ] 2>/dev/null; then
     nominal=1
 fi
 
@@ -1103,6 +1125,69 @@ if [ -n "$drain_since" ] && [ "$drain_mins" != "?" ] && \
         log "watchtower: drain escalation filed (${drain_mins}m >= ${DRAIN_WARN_MINS}m threshold)"
     else
         log "watchtower: $INC is missing — drain escalation not filed"
+    fi
+fi
+
+# ---------------------------------------------------------------------------------------
+# DISK AND MEMORY ESCALATIONS. A direct, severity-1 escalation the moment either crosses
+# its threshold, deduped by a stable ref so a sustained condition bumps a recurrence rather
+# than filing again every pass. ONLY WHEN NUMERIC (law-absence-needs-a-positive-control) —
+# a `?` means the probe failed, not that the disk or memory is fine.
+# ---------------------------------------------------------------------------------------
+if [ "$disk_root_pct" != "?" ] && [ "$disk_root_pct" -ge "$DISK_WARN_PCT" ] 2>/dev/null; then
+    if [ -x "$INC" ] || [ -r "$INC" ]; then
+        printf 'Disk usage on / is %s%% (warn threshold %s%%).\n\nA full root disk kills everything running on this box — landing, the sentinel, every aeon. Investigate and free space now.\n' \
+            "$disk_root_pct" "$DISK_WARN_PCT" | \
+        SPIRA_DB="$SPIRA_DB" \
+        SPIRA_INCIDENT_TYPE=task \
+        SPIRA_INCIDENT_PRIORITY=1 \
+        SPIRA_INCIDENT_ACTOR=watchtower \
+        SPIRA_SIN_EXEMPT=1 \
+        SPIRA_INCIDENT_REPO=spira \
+        SPIRA_INCIDENT_REF=incident:disk-usage-root \
+        SPIRA_INCIDENT_CAUSE=disk-usage-root \
+        bash "$INC" file "DISK: / at ${disk_root_pct}% (>= ${DISK_WARN_PCT}% threshold)" - >/dev/null || true
+        log "watchtower: disk escalation filed (/ at ${disk_root_pct}% >= ${DISK_WARN_PCT}%)"
+    else
+        log "watchtower: $INC is missing — disk escalation not filed"
+    fi
+fi
+
+if [ "$disk_ws_pct" != "?" ] && [ "$disk_ws_pct" -ge "$DISK_WARN_PCT" ] 2>/dev/null; then
+    if [ -x "$INC" ] || [ -r "$INC" ]; then
+        printf 'Disk usage on the workspaces volume (%s) is %s%% (warn threshold %s%%).\n\nWorktrees, gate runs and test fixtures all live there; a full volume stalls every gate. Investigate and free space now.\n' \
+            "$SPIRA_WORKSPACES" "$disk_ws_pct" "$DISK_WARN_PCT" | \
+        SPIRA_DB="$SPIRA_DB" \
+        SPIRA_INCIDENT_TYPE=task \
+        SPIRA_INCIDENT_PRIORITY=1 \
+        SPIRA_INCIDENT_ACTOR=watchtower \
+        SPIRA_SIN_EXEMPT=1 \
+        SPIRA_INCIDENT_REPO=spira \
+        SPIRA_INCIDENT_REF=incident:disk-usage-workspaces \
+        SPIRA_INCIDENT_CAUSE=disk-usage-workspaces \
+        bash "$INC" file "DISK: workspaces at ${disk_ws_pct}% (>= ${DISK_WARN_PCT}% threshold)" - >/dev/null || true
+        log "watchtower: disk escalation filed (workspaces at ${disk_ws_pct}% >= ${DISK_WARN_PCT}%)"
+    else
+        log "watchtower: $INC is missing — disk escalation not filed"
+    fi
+fi
+
+if [ "$mem_avail_mb" != "?" ] && [ "$mem_avail_mb" -le "$MEM_WARN_MB" ] 2>/dev/null; then
+    if [ -x "$INC" ] || [ -r "$INC" ]; then
+        printf 'Memory available is %sMB (warn floor %sMB).\n\nLow memory risks the OOM killer taking the sentinel, an aeon mid-gate, or a systemd unit at random. Investigate what is holding memory.\n' \
+            "$mem_avail_mb" "$MEM_WARN_MB" | \
+        SPIRA_DB="$SPIRA_DB" \
+        SPIRA_INCIDENT_TYPE=task \
+        SPIRA_INCIDENT_PRIORITY=1 \
+        SPIRA_INCIDENT_ACTOR=watchtower \
+        SPIRA_SIN_EXEMPT=1 \
+        SPIRA_INCIDENT_REPO=spira \
+        SPIRA_INCIDENT_REF=incident:memory-pressure \
+        SPIRA_INCIDENT_CAUSE=memory-pressure \
+        bash "$INC" file "MEMORY: ${mem_avail_mb}MB available (<= ${MEM_WARN_MB}MB threshold)" - >/dev/null || true
+        log "watchtower: memory escalation filed (${mem_avail_mb}MB <= ${MEM_WARN_MB}MB)"
+    else
+        log "watchtower: $INC is missing — memory escalation not filed"
     fi
 fi
 

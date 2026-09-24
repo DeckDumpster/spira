@@ -65,7 +65,6 @@ stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; 
 stub pilgrimage.sh 'printf "%s" "${PILGRIMAGE_OUT:-}"'
 stub strand.sh     'printf "%s" "${STRAND_OUT:-}"'
 stub sending.sh    'printf "%s" "${SENDING_OUT:-}"'
-stub governor.sh   'exit 0'
 stub gate.sh       'exit ${GATE_RC:-0}'
 stub reflect.sh    'touch "$SPIRA_RUN/reflect.fired"'
 # mail.sh is RECORDED, not merely swallowed: half of what poisoning must do is reach the

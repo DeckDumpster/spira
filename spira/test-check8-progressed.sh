@@ -68,7 +68,7 @@ JSONL
 STUBS="$TMP/stubs"
 mkdir -p "$STUBS/chamber"   # empty chamber → no fayths → no CHECK 7 act()s
 
-for _name in pilgrimage.sh strand.sh governor.sh; do
+for _name in pilgrimage.sh strand.sh; do
     printf '#!/bin/sh\n# hermetic-ok: stub for test-check8-progressed\n' \
         > "$STUBS/$_name"
     chmod +x "$STUBS/$_name"
