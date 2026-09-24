@@ -547,6 +547,11 @@ spira_conf_defaults() {
     # cycles the machinery while an aeon session is spent on every turn. At this threshold the
     # landing pass labels the bead needs-operator and asks rather than reopening again.
     : "${SPIRA_REBASE_ESCALATE_AT:=3}"
+    # HOW MANY FILES A REBASE-LOOP ESCALATION CALLS "SEVERAL HOT FILES" — past this, the
+    # branch is not unlucky, its scope is racing every landing that touches the same files.
+    # A re-cut that cannot clear the conflict is telling the operator to split the bead, not
+    # to try the rebase by hand again (law-decompose-by-deliverable).
+    : "${SPIRA_REBASE_DECOMPOSE_FILES:=4}"
     # .invalid: not a real domain. @spira.local trips is_aeon_email in branch-guard.sh.
     : "${SPIRA_GIT_NAME:=spira}"
     : "${SPIRA_GIT_EMAIL:=spira@spira.invalid}"
