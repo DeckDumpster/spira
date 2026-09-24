@@ -1,0 +1,172 @@
+# ops.fayth — the Ops persona: receives production events, works out what is wrong, and
+# files it. It is the only persona whose work arrives from outside the plan.
+#
+# IT DOES NOT REPAIR (per the operator, 2026-09-18). Ops used to match a runbook and
+# execute it. That ended when an Ops aeon, told it must produce a fix, deleted every
+# branch in the repository and destroyed 24 beads of unlanded work (sp-q27cp). Its
+# output now is a diagnosis in the graph: a bead a builder can pick up, gated and
+# reviewed like any other change. What it may still do by hand is read.
+#
+# A fayth is a persona DEFINITION; an aeon is one summoned instance of it. Four things:
+# a predicate carving its partition out of the graph, the memories it must read, the tools
+# it may use, and what wakes it.
+
+FAYTH_NAME=ops
+FAYTH_DESC="Ops — the diagnostician: claims incidents and sweeps, works out what is wrong, and files it"
+
+# The partition. Incidents are filed by incident.sh from a systemd OnFailure, never by
+# hand and never by the plan, so this can only ever see production events. The escalation
+# label is excluded for the same reason it is everywhere: an escalation must never be dispatched as
+# if it were work.
+#
+# SPIRA_INCIDENT_LABEL, not the literal "incident". The same reason builder uses
+# SPIRA_PLAN_LABEL: a literal cannot be changed at runtime and cannot be validated at write
+# time, while a configured variable keeps the fayth, the sentinel and every reader in
+# agreement on which label means "production event for ops" (law-schema-over-code).
+FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_INCIDENT_LABEL"
+FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+
+# BOTH BOOKS. Statutes are how to behave; SOPs are how to fix — and Ops is the only
+# persona that needs the second. The builder reads `law-` alone, which is what keeps a
+# growing shelf of runbooks out of the context of every agent that will never execute one.
+FAYTH_MEMORY_PREFIXES="law-,sop-"
+
+# THE CLOSING RULE, AS A MECHANISM RATHER THAN A SENTENCE IN THE BRIEF. An incident closed
+# without a runbook coming out of it has its close UNDONE by aeon.sh: reopened, labelled
+# spira-poison, and the reason written on the bead. The brief has called this rule "not
+# optional" since it was written and it was disobeyed six times in one day, which is the
+# difference between an instruction and a fence.
+#
+# Three ways to satisfy it, and one of them costs a single command:
+#
+#   nothing on the shelf fit; I diagnosed something new   ->  sop.sh write
+#   an SOP fit but was incomplete                         ->  sop.sh write   (the upsert)
+#   an SOP fit and its CHECK confirmed                    ->  sop.sh applied --check pass
+#
+# The third row is what keeps this from firing on a good session. "It matched, it held, it
+# taught us nothing new" is a complete outcome and must not be punished — SILENCE is what is
+# outlawed, not brevity. So recording the truth is always the cheapest way out, whatever the
+# truth was: `--held no` and `--held unknown` satisfy this exactly as `--held yes` does, and
+# deliberately, because demanding an amendment on top of an honest "it did not hold" would
+# make `--held yes` the cheapest exit and corrupt the one field the whole shelf is measured
+# by. The one record that does NOT satisfy it is `--check fail` alone: that is the session's
+# own statement that nothing on the shelf applied, which is row one, whose exit is a write.
+#
+# DECLARED HERE, NOT KEYED ON A PERSONA'S NAME IN aeon.sh. Ops is the only role that
+# executes a runbook; a builder that closes a bead without touching an SOP is doing exactly
+# its job, and a check that recognised "ops" by string would bind the wrong persona the day
+# this one is renamed or a second healer is added beside it.
+# RETIRED 2026-09-18, per the operator: "FAYTH_SOP_REQUIRED is fucking stupid."
+#
+# Everything above is why it looked like a good idea, and it was wrong in a way that
+# cost 24 beads. The rule made SILENCE the one outcome a session could not choose:
+# close an incident without producing a runbook and the close is UNDONE, the bead
+# reopened and labelled spira-poison. Put that on the smallest model, under an eight
+# minute wall, holding an unrestricted shell, and "I looked and there is nothing to
+# fix" becomes the single most expensive thing it can conclude. So it does not
+# conclude it. On 2026-09-18 at 02:05 an Ops aeon under exactly that pressure wrote a
+# cleanup script that classified every branch in the repository as garbage and deleted
+# all of them — then wrote up its success.
+#
+# A mechanism that punishes doing nothing will get something done to you. The honest
+# outcome the old rule was built to protect — "it matched, it held, it taught us
+# nothing new" — is available for free the moment nothing is demanded.
+#
+# Ops may still write an SOP whenever it learns something, and should. It is no longer
+# marked for punishment when it does not.
+FAYTH_SOP_REQUIRED=0
+
+# NO FAYTH_REPO. The repository comes from the BEAD — a `repo:<name>` label resolved
+# through .claude/spira/repo-map — because a repository pinned per persona is a
+# persona that can only ever work one of them, and every fayth here named the same
+# one. A bead with no `repo:` label is the home repo, which is what Spira's own plan
+# beads are.
+# HAIKU (per the operator, 2026-09-08). Ops recognises a known failure off the shelf and
+# writes down what it found — recognition and description, which is the shape the small
+# model is for. It no longer executes the runbook it matched; see the header. It is also the persona that runs most often: it wakes on every sweep whether or not
+# anything is wrong, and one such no-op sweep was measured at 1.8M cache-read tokens and
+# $2.23 to conclude the pipeline was fine. The account's five-hour window is Spira's real
+# throughput ceiling, so a persistent role spending it on routine confirmation takes capacity
+# from the builders (law-alerts-must-be-actionable, in its cost form).
+#
+# THE TRADE IS REAL AND ACCEPTED. The subtlest Ops session so far — the one that worked out
+# that a sweep's recurrence count measures ten-minute intervals rather than failed fixes —
+# was diagnosis, not procedure, and is the kind of pass this may do less well. That is why
+# the closing rule below is a mechanism rather than an instruction: an Ops session that
+# learns something must leave an SOP behind, so what a cheaper model works out once is on
+# the shelf for every session after it.
+#
+# VERIFIED, NOT ASSUMED: `claude --model claude-haiku-4-5-20251001 -p ...` answers on this
+# box, and the DATED id is the one that answers — the catalog at CLI 2.1.263 rejects
+# claude-haiku-5 and claude-haiku-4-6 outright. An id the CLI rejects does not fail loudly:
+# every summon dies and the role looks merely quiet, which is the shape of outage this
+# harness is worst at noticing. Probe a candidate id before writing it here.
+FAYTH_MODEL=claude-haiku-4-5-20251001
+FAYTH_MAX_CONCURRENT=1
+
+# THE OPS LANE — the declared configuration for what FAYTH_ROLE=party expressed implicitly.
+# Ops is in the ops lane, which means it draws from its own FAYTH_MAX_CONCURRENT rather
+# than from SPIRA_MAX_AEONS. The builder pool can be 100% occupied and Ops still has room,
+# because a lane fayth is never competing for the pool's slots.
+#
+# This is the shippe example of a priority lane: a persona that must be reachable even when
+# the rest of the party is fully engaged. The ops lane is declared in SPIRA_LANES (default:
+# "ops"), and a user who wants ops-level scheduling for their own persona names their lane
+# there and sets FAYTH_LANE=<name> in their fayth file — without editing this one.
+#
+# WHY FAYTH_ROLE=party IS GONE. The old property was a binary: party-or-task. A lane is a
+# named partition that any number of fayths can join, with configurable semantics. The
+# mechanism is the same — not drawn from SPIRA_MAX_AEONS — but the declaration is now
+# something an operator can read, set, and reason about rather than an opaque per-fayth flag.
+FAYTH_LANE=ops
+
+# BOUNDED BY THE SWEEP INTERVAL, which is the number that actually constrains this persona.
+# A sweep arrives every `OnUnitActiveSec` in systemd/spira-watchtower.timer — THIRTY MINUTES,
+# and that timer is the only place the cadence is written; there is no SPIRA_WATCH_EVERY key
+# to read. An Ops session that can run for an hour, which is what the default
+# TIMEOUT_SECONDS of 3600 allows, would still be working one snapshot while the next arrived
+# behind it. Observed at six minutes and climbing on the first live sweep. Sessions must not
+# outlive the cadence that produces their work.
+#
+# EIGHT MINUTES, HARD. systemd kills the unit at TIMEOUT_SECONDS, so this is a wall rather
+# than a request.
+#
+# IT IS NOT RAISED TO MATCH THE WIDER INTERVAL, and that is the decision rather than an
+# oversight. A longer wall would only buy longer sessions, and a longer session is more spend
+# on the same routine confirmation — the opposite of why the cadence widened. The invariant
+# the pair has to satisfy is that a session ends before the next sweep arrives, and eight
+# under thirty satisfies it with room that ten never gave it.
+#
+# THE BOUND IS A FEATURE, not a compromise. An Ops aeon that cannot finish must write what it
+# found into the graph as beads and let the next sweep continue — which is what we want it
+# doing anyway. Findings held in a session that gets killed are lost; findings cut into beads
+# survive and are what the next aeon starts from.
+#
+# THE LEASE MATCHES THE WALL, so a killed session's bead is reclaimable promptly rather than
+# sitting held while the next sweep waits on work nobody is doing.
+FAYTH_TIMEOUT_SECONDS=480
+FAYTH_LEASE_MINUTES=10
+FAYTH_HEARTBEAT_SECONDS=30
+FAYTH_LEASE_SECONDS=600
+FAYTH_STALL_BEATS=6
+
+# DIAGNOSE AND FILE — Ops does not repair (per the operator, 2026-09-18).
+#
+# Edit and Write are gone. Ops reads the machine, works out what is wrong, and puts
+# that into the graph as a bead for a builder to work. It does not change the
+# repository, and it has no business touching a branch, a worktree or a ref: it holds
+# a worktree per bead, but a worktree isolates the WORKING TREE and nothing else —
+# every worktree in this repository shares one ref namespace and one object store, so
+# a single `git branch -D` from inside one reaches every other aeon's unlanded work.
+# That is how 24 beads were destroyed (sp-q27cp), and the reference-transaction hook
+# now refuses it whoever runs it.
+#
+# Bash is restricted to a diagnostic allowlist (sp-39pqw): reads the machine and
+# records findings in the graph. Not in the list: rm, git write operations, systemd
+# mutations. The ref guard (sp-q27cp) remains the floor for git refs.
+FAYTH_TOOLS="Bash(systemctl status*),Bash(systemctl show*),Bash(systemctl list-*),Bash(systemctl is-*),Bash(systemctl cat*),Bash(journalctl*),Bash(ls*),Bash(cat *),Bash(head *),Bash(tail *),Bash(grep *),Bash(awk *),Bash(find *),Bash(wc *),Bash(sort *),Bash(uniq *),Bash(sed *),Bash(python3 *),Bash(echo *),Bash(printf *),Bash(date*),Bash(basename *),Bash(dirname *),Bash(bd *),Bash(git log*),Bash(git show*),Bash(git status*),Bash(git diff*),Bash(git fetch*),Bash(git for-each-ref*),Bash(git rev-parse*),Bash(git -C * log*),Bash(git -C * show*),Bash(git -C * status*),Bash(git -C * diff*),Bash(git -C * fetch*),Bash(git -C * for-each-ref*),Bash(git -C * rev-parse*),Bash(*sop.sh*),Bash(*incident.sh*),Bash(*mail.sh*),Bash(*suites.sh*),Bash(*testenv-batch.sh*),Read,Glob,Grep,TodoWrite"
+FAYTH_PROJECT_INSTRUCTIONS=none
+
+# REPLACE: Ops reads, diagnoses, and files — never writes code. The default coding
+# guidance adds noise and competes with the standing constraints.
+FAYTH_SYSTEM_PROMPT=replace

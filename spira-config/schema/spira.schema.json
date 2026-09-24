@@ -1,0 +1,491 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SpiraToml",
+  "description": "The root of `spira.toml`.",
+  "type": "object",
+  "properties": {
+    "persona": {
+      "default": {},
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/PersonaSection"
+      }
+    },
+    "repo": {
+      "default": {},
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/definitions/RepoSection"
+      }
+    },
+    "spira": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/SpiraSection"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "CzarStage": {
+      "description": "A czar stage: shadow investigates and writes CZAR-WOULD notes; act permits mutation. One representative key (`czar_stage_deadlock`) ships here — the other six `SPIRA_CZAR_STAGE_*` classes are the same enum and widen with the rest of `[spira]`.",
+      "type": "string",
+      "enum": [
+        "shadow",
+        "act"
+      ]
+    },
+    "LandMode": {
+      "description": "How a landed branch reaches its base — see `repo-map.example`'s own `land` column.",
+      "type": "string",
+      "enum": [
+        "push",
+        "pr",
+        "hold",
+        "queue"
+      ]
+    },
+    "Lane": {
+      "description": "A persona lane a repository admits — the explicit form of `repo-map.example`'s `lanes` column. A row's shorthand mode (`consume`/`develop`/`self`) is expanded to this array by the converter; the schema itself only ever sees the expanded list.",
+      "type": "string",
+      "enum": [
+        "plan",
+        "incident",
+        "groom",
+        "maechen-sweep",
+        "spike",
+        "czar-trigger"
+      ]
+    },
+    "Lease": {
+      "description": "The claim TTL and heartbeat cadence a persona's lease runs on.",
+      "type": "object",
+      "properties": {
+        "heartbeat_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "minutes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "OnOff": {
+      "description": "on/off, spelled as an enum rather than a bool so a TOML reader sees the word `spira.conf` already used (`SPIRA_CERTIFY_SUITES = off`) instead of learning a second spelling for it.",
+      "type": "string",
+      "enum": [
+        "on",
+        "off"
+      ]
+    },
+    "PersonaSection": {
+      "description": "`[persona.<name>]` — a fayth, cut down to what the harness itself reads to summon and dispatch it. `model` is the one field with no sensible default: an aeon summoned under no model is not a cheaper aeon, it is a dead one, so it is required.",
+      "type": "object",
+      "required": [
+        "model"
+      ],
+      "properties": {
+        "labels": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "lane": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lease": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Lease"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "system_prompt": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SystemPromptMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tools": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "RepoSection": {
+      "description": "`[repo.<name>]` — a checkout the harness may work in. `path` and `mode` are the two facts nothing can derive: where the checkout is, and what a green gate does with a branch. Everything else has a sensible empty reading (no format, no explicit base to resolve, no extra lanes).",
+      "type": "object",
+      "required": [
+        "mode",
+        "path"
+      ],
+      "properties": {
+        "base": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "forge": {
+          "description": "Overrides the host's default forge script for this one repository. Absent means \"use `[spira]`'s own\", which is every repository today.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gate": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lanes": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Lane"
+          }
+        },
+        "mode": {
+          "$ref": "#/definitions/LandMode"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SpiraSection": {
+      "description": "`[spira]` — host-wide keys. Every field is optional: `conf.sh` derives a default for each of these from where the harness is installed, and a clean clone sets none of them.",
+      "type": "object",
+      "properties": {
+        "actionable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ask_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "batch_maxpar": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "cert_idle_skip": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "certify_par": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "certify_suites": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/OnOff"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ci_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cockpit_bottom_pct": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "cockpit_right_pct": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "czar_stage_deadlock": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CzarStage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "db": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dolt_data": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fayths": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "gh_intake_repo": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "goal": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "home_repo": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "loom_addr": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "loom_budget_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "mail_readers": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_aeons": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "max_live_aeons": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "notify_age": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "operator": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "operator_actor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prod": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "queue_batch_max": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "queue_batch_wait": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "queue_ci_maxsec": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "queue_local_gate": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "queue_throttle_release_at": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "run": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "suites_budget": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "tz": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verdict_ttl": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "view": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "wiki": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "wiki_hook": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspaces": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "SystemPromptMode": {
+      "description": "`append` keeps Claude Code's own coding guidance underneath the persona layer; `replace` is for a persona narrow enough that the default guidance would mislead it.",
+      "type": "string",
+      "enum": [
+        "append",
+        "replace"
+      ]
+    }
+  }
+}
