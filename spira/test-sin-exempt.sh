@@ -124,7 +124,7 @@ for i in $(seq 1 "$(( SIN_AT + 1 ))"); do
 done
 
 # Find the bead by its external ref.  --external-ref is dev-build only; filter in Python.
-bid="$(B list --status open --limit 0 --label spira,incident --json 2>/dev/null \
+bid="$(B list --status open --limit 0 --label spira,partition:incident --json 2>/dev/null \
     | python3 -c '
 import json,sys
 target=sys.argv[1]
@@ -156,7 +156,7 @@ for i in $(seq 1 "$(( SIN_AT + 1 ))"); do
     file_incident "$ref" "$title" "payload $i" SPIRA_SIN_AT="$SIN_AT" SPIRA_SIN_EXEMPT=1 >/dev/null
 done
 
-bid="$(B list --status open --limit 0 --label spira,incident --json 2>/dev/null \
+bid="$(B list --status open --limit 0 --label spira,partition:incident --json 2>/dev/null \
     | python3 -c '
 import json,sys
 target=sys.argv[1]

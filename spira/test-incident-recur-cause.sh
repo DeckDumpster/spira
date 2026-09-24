@@ -102,7 +102,7 @@ testdb_reset; mkdir -p "$TMP/run"
 ref="incident:test-default-cause"
 file_incident "$ref" "default cause test" "payload 1" >/dev/null
 
-bid="$(B list --status open --limit 0 --label spira,incident --json 2>/dev/null \
+bid="$(B list --status open --limit 0 --label spira,partition:incident --json 2>/dev/null \
     | python3 -c '
 import json,sys
 target=sys.argv[1]
@@ -126,7 +126,7 @@ ref2="incident:test-named-cause"
 file_incident "$ref2" "named cause test" "payload 1" SPIRA_INCIDENT_CAUSE=suite-red >/dev/null
 file_incident "$ref2" "named cause test" "payload 2" SPIRA_INCIDENT_CAUSE=suite-red >/dev/null
 
-bid2="$(B list --status open --limit 0 --label spira,incident --json 2>/dev/null \
+bid2="$(B list --status open --limit 0 --label spira,partition:incident --json 2>/dev/null \
     | python3 -c '
 import json,sys
 target=sys.argv[1]
@@ -148,7 +148,7 @@ echo "3. backfill-recur-causes converts bare sp-recur-N to sp-recur-N-unrecorded
 testdb_reset; mkdir -p "$TMP/run"
 # Plant a bead manually with a bare sp-recur-1 label (simulates pre-change code).
 bare_id="$(B create "bare recur test" --type bug --priority 2 \
-    --labels spira,incident --external-ref "incident:bare-recur" --silent 2>/dev/null \
+    --labels spira,partition:incident --external-ref "incident:bare-recur" --silent 2>/dev/null \
     | tr -d '[:space:]')"
 [ -n "$bare_id" ] || { bad "planted bare-recur bead" "create failed"; \
     printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
@@ -157,7 +157,7 @@ B label add "$bare_id" "sp-recur-2" >/dev/null 2>&1
 
 # Also plant a bead already carrying a typed label — backfill must leave it alone.
 typed_id="$(B create "typed recur test" --type bug --priority 2 \
-    --labels spira,incident --external-ref "incident:typed-recur" --silent 2>/dev/null \
+    --labels spira,partition:incident --external-ref "incident:typed-recur" --silent 2>/dev/null \
     | tr -d '[:space:]')"
 [ -n "$typed_id" ] || { bad "planted typed-recur bead" "create failed"; \
     printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
@@ -223,7 +223,7 @@ for _i in 1 2 3 4; do
 done
 
 # Resolve the bead id (the ask log does not carry it directly).
-bid5="$(B list --status open --limit 0 --label spira,incident --json 2>/dev/null \
+bid5="$(B list --status open --limit 0 --label spira,partition:incident --json 2>/dev/null \
     | python3 -c '
 import json,sys
 target=sys.argv[1]
