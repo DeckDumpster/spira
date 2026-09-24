@@ -32,6 +32,8 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 echo "test-skew-check-release.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+# Create HOME directory to prevent git write failures in batch isolation
+mkdir -p "$TMP/home"
 
 # ---------------------------------------------------------------------------
 # SPIRA_REPO: a git checkout with two commits and two release tags.
@@ -62,24 +64,33 @@ git -C "$REPO" tag -a "spira-release-spira-${TS2}" "$COMMIT2" \
     -m "$(printf 'spira release: spira\nbase: main (%s)\nprev: spira-release-spira-%s\n\nbead: sp-test2' "$COMMIT2" "$TS1")"
 
 # ---------------------------------------------------------------------------
-# Releases directory: two unpacked release directories, current symlink.
+# Releases directory template: two unpacked release directories, current symlink.
+# This will be copied per-run to isolate concurrent batch executions.
 # ---------------------------------------------------------------------------
-RELEASES="$TMP/releases"
-mkdir -p "$RELEASES"
+RELEASES_TEMPLATE="$TMP/releases-template"
+mkdir -p "$RELEASES_TEMPLATE"
 
-REL1_DIR="$RELEASES/spira-${TS1}"
+REL1_DIR="$RELEASES_TEMPLATE/spira-${TS1}"
 mkdir -p "$REL1_DIR/spira"
 printf 'commit %s\ntimestamp %s\n' "$COMMIT1" "$TS1" > "$REL1_DIR/MANIFEST"
 
-REL2_DIR="$RELEASES/spira-${TS2}"
+REL2_DIR="$RELEASES_TEMPLATE/spira-${TS2}"
 mkdir -p "$REL2_DIR/spira"
 printf 'commit %s\ntimestamp %s\n' "$COMMIT2" "$TS2" > "$REL2_DIR/MANIFEST"
 
 # ---------------------------------------------------------------------------
 # run_skew: check in a minimal isolated environment.
+# Each invocation gets its own copy of the releases directory to prevent
+# interference between concurrent batch executions.
 # ---------------------------------------------------------------------------
 run_skew() {
-    local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    local run_dir releases_dir
+    run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    releases_dir="$(mktemp -d "$TMP/releases-XXXXX")"
+
+    # Copy the template to the per-run releases directory (including hidden directories like .tags)
+    (cd "$RELEASES_TEMPLATE" && cp -r . "$releases_dir/")
+
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -88,7 +99,7 @@ run_skew() {
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
+        SPIRA_RELEASES="$releases_dir" \
         "${@}" \
         bash "$HERE/skew.sh" check 2>&1
     return "${PIPESTATUS[0]:-$?}"
@@ -99,9 +110,9 @@ echo
 echo "positive control — activated is NOT latest → NOT-LATEST reported:"
 # (no sidecar — commit-based fallback must find the tag and report NOT-LATEST)
 # ===========================================================================
-rm -f "$RELEASES/current"
-ln -s "spira-${TS1}" "$RELEASES/current"
-rm -rf "$RELEASES/.tags"
+rm -f "$RELEASES_TEMPLATE/current"
+ln -s "spira-${TS1}" "$RELEASES_TEMPLATE/current"
+rm -rf "$RELEASES_TEMPLATE/.tags"
 
 stale_out="$(run_skew)"; stale_rc=$?
 is   "not-latest: exits 1"                    "1"                         "$stale_rc"
@@ -114,10 +125,10 @@ echo
 echo "positive control — MANIFEST commit does not match release tag (sidecar present):"
 # (sidecar identifies the tag; MANIFEST disagrees with what that tag points at)
 # ===========================================================================
-rm -f "$RELEASES/current"
-ln -s "spira-${TS2}" "$RELEASES/current"
-mkdir -p "$RELEASES/.tags"
-printf 'spira-release-spira-%s\n' "$TS2" > "$RELEASES/.tags/spira-${TS2}"
+rm -f "$RELEASES_TEMPLATE/current"
+ln -s "spira-${TS2}" "$RELEASES_TEMPLATE/current"
+mkdir -p "$RELEASES_TEMPLATE/.tags"
+printf 'spira-release-spira-%s\n' "$TS2" > "$RELEASES_TEMPLATE/.tags/spira-${TS2}"
 WRONG_COMMIT="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 printf 'commit %s\ntimestamp %s\n' "$WRONG_COMMIT" "$TS2" > "$REL2_DIR/MANIFEST"
 
@@ -129,14 +140,14 @@ want "manifest-mismatch: names the tag commit"             "$COMMIT2"           
 
 # Restore MANIFEST to correct state; remove sidecar.
 printf 'commit %s\ntimestamp %s\n' "$COMMIT2" "$TS2" > "$REL2_DIR/MANIFEST"
-rm -f "$RELEASES/.tags/spira-${TS2}"
+rm -f "$RELEASES_TEMPLATE/.tags/spira-${TS2}"
 
 # ===========================================================================
 echo
 echo "silence when activated is latest and MANIFEST matches (via sidecar):"
 # ===========================================================================
-mkdir -p "$RELEASES/.tags"
-printf 'spira-release-spira-%s\n' "$TS2" > "$RELEASES/.tags/spira-${TS2}"
+mkdir -p "$RELEASES_TEMPLATE/.tags"
+printf 'spira-release-spira-%s\n' "$TS2" > "$RELEASES_TEMPLATE/.tags/spira-${TS2}"
 
 clean_out="$(run_skew)"; clean_rc=$?
 is     "clean: exits 0"                   "0"                  "$clean_rc"
@@ -144,13 +155,13 @@ want   "clean: 'in effect' message"       "in effect"          "$clean_out"
 nowant "clean: no NOT-LATEST"             "NOT-LATEST"         "$clean_out"
 nowant "clean: no MANIFEST-MISMATCH"      "MANIFEST-MISMATCH"  "$clean_out"
 
-rm -f "$RELEASES/.tags/spira-${TS2}"
+rm -f "$RELEASES_TEMPLATE/.tags/spira-${TS2}"
 
 # ===========================================================================
 echo
 echo "silence when activated is latest and MANIFEST matches (commit fallback, no sidecar):"
 # ===========================================================================
-rm -rf "$RELEASES/.tags"
+rm -rf "$RELEASES_TEMPLATE/.tags"
 
 clean_nosidecar_out="$(run_skew)"; clean_nosidecar_rc=$?
 is     "clean-nosidecar: exits 0"              "0"                 "$clean_nosidecar_rc"
@@ -164,7 +175,13 @@ nowant "clean-nosidecar: no MANIFEST-MISMATCH" "MANIFEST-MISMATCH" "$clean_nosid
 NO_GIT_REPO="$TMP/no-git-repo"
 mkdir -p "$NO_GIT_REPO"
 run_skew_noart() {
-    local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    local run_dir releases_dir
+    run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    releases_dir="$(mktemp -d "$TMP/releases-XXXXX")"
+
+    # Copy the template to the per-run releases directory (including hidden directories like .tags)
+    (cd "$RELEASES_TEMPLATE" && cp -r . "$releases_dir/")
+
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -173,7 +190,7 @@ run_skew_noart() {
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
+        SPIRA_RELEASES="$releases_dir" \
         "${@}" \
         bash "$HERE/skew.sh" check 2>&1
     return "${PIPESTATUS[0]:-$?}"
@@ -225,7 +242,13 @@ ARTIFACT_REPO="$TMP/artifact-repo"
 mkdir -p "$ARTIFACT_REPO"
 
 run_skew_artifact() {
-    local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    local run_dir releases_dir
+    run_dir="$(mktemp -d "$TMP/run-XXXXX")"
+    releases_dir="$(mktemp -d "$TMP/releases-XXXXX")"
+
+    # Copy the template to the per-run releases directory (including hidden directories like .tags)
+    (cd "$RELEASES_TEMPLATE" && cp -r . "$releases_dir/")
+
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -235,7 +258,7 @@ run_skew_artifact() {
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$RELEASES" \
+        SPIRA_RELEASES="$releases_dir" \
         "${@}" \
         bash "$HERE/skew.sh" check 2>&1
     return "${PIPESTATUS[0]:-$?}"
@@ -248,10 +271,10 @@ echo
 echo "artifact positive control — NOT-LATEST reported via gh release list (SPIRA_GH_INTAKE_REPO):"
 # (sidecar present so activated release is identified; gh returns both tags)
 # ===========================================================================
-rm -f "$RELEASES/current"
-ln -s "spira-${TS1}" "$RELEASES/current"
-mkdir -p "$RELEASES/.tags"
-printf 'spira-release-spira-%s\n' "$TS1" > "$RELEASES/.tags/spira-${TS1}"
+rm -f "$RELEASES_TEMPLATE/current"
+ln -s "spira-${TS1}" "$RELEASES_TEMPLATE/current"
+mkdir -p "$RELEASES_TEMPLATE/.tags"
+printf 'spira-release-spira-%s\n' "$TS1" > "$RELEASES_TEMPLATE/.tags/spira-${TS1}"
 printf 'commit %s\ntimestamp %s\n' "$COMMIT1" "$TS1" > "$REL1_DIR/MANIFEST"
 
 art_stale_out="$(run_skew_artifact \
@@ -291,10 +314,10 @@ is "artifact-gh-empty: exits 3 when gh returns no tags" "3" "$art_empty_rc"
 echo
 echo "artifact mode — activated is latest → exits 0:"
 # ===========================================================================
-rm -f "$RELEASES/current"
-ln -s "spira-${TS2}" "$RELEASES/current"
-mkdir -p "$RELEASES/.tags"
-printf 'spira-release-spira-%s\n' "$TS2" > "$RELEASES/.tags/spira-${TS2}"
+rm -f "$RELEASES_TEMPLATE/current"
+ln -s "spira-${TS2}" "$RELEASES_TEMPLATE/current"
+mkdir -p "$RELEASES_TEMPLATE/.tags"
+printf 'spira-release-spira-%s\n' "$TS2" > "$RELEASES_TEMPLATE/.tags/spira-${TS2}"
 printf 'commit %s\ntimestamp %s\n' "$COMMIT2" "$TS2" > "$REL2_DIR/MANIFEST"
 
 art_clean_out="$(run_skew_artifact \
