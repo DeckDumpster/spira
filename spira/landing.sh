@@ -1202,11 +1202,35 @@ for i in d:
         # With certify_pass_par > 1, branches are collected here and gated in parallel
         # after the loop; with certify_pass_par == 1, the serial path runs inline.
         if [ "$mode" = queue ]; then
-            # MID-PASS VERDICT (hotfix, concierge 2026-09-21, sp-len2q): PR 180 went red at
-            # 03:47Z during a pass that started at 03:35Z and could not be attributed until
-            # the pass ended. One queue step costs a few seconds; a gate costs ten minutes.
-            bash "$SPIRA_HOME/queue.sh" step "$name" 2>&1 \
-                | while IFS= read -r _bl; do log "$_bl"; done || true
+            # IDLE-SKIP (sp-a5jpo): when the cert queue is empty and CI is idle, this
+            # branch would be the sole batch member. At batch size 1 the bisect argument
+            # for per-branch certification is vacuous — CI runs the same work anyway. Skip
+            # the local gate and certify directly; the CI gate is the only authority.
+            # cert queue is checked first (local file reads) so the forge call is only
+            # made when there is actually something to skip.
+            if [ "${SPIRA_CERT_IDLE_SKIP:-1}" = 1 ]; then
+                _cq_n="$(queue_certified_list "$repo" 2>/dev/null | grep -c . || true)"
+                if [ "${_cq_n:-1}" -eq 0 ]; then
+                    _ci_act="$("${SPIRA_FORGE:-$SPIRA_HOME/forge.sh}" runs-active "$repo" 2>/dev/null)" || _ci_act="?"
+                    if [ "${_ci_act:-?}" = 0 ]; then
+                        _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
+import sys,json
+try:d=json.load(sys.stdin)
+except:raise SystemExit
+d=d if isinstance(d,list) else [d]
+print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
+                        if [ "${_cur_st:-}" = "closed" ]; then
+                            log "CHECK6 $id: CI idle, sole batch member — skipping certification gate"
+                            land_mark "$id" CERTIFIED "$tip"
+                            mark_submitted "$id" "$tip" certified
+                            progress "certified $br in $name — CI idle, sole batch member"
+                        else
+                            log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not certifying $br"
+                        fi
+                        continue
+                    fi
+                fi
+            fi
             if [ "${certify_pass_par:-1}" -le 1 ]; then
                 if ! gate_fits; then
                     case "${_scan_extref[$id]:-}" in

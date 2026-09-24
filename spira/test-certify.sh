@@ -349,5 +349,58 @@ want "par=1: sp-co-fast certified"                      "certified spira/sp-co-f
 before "par=1: slow certified before fast (serial)" \
     "certified spira/sp-co-slow" "certified spira/sp-co-fast" "$co_out"
 
+# -----------------------------------------------------------------------------------------
+# IDLE-SKIP: when CI is idle (forge returns 0 for runs-active) and the cert queue is
+# empty, landing.sh certifies without calling gate.sh.
+#
+# TWO CASES:
+#   idle: forge returns 0 — gate must NOT be called; branch must be CERTIFIED.
+#   busy: forge returns 1 — gate IS called normally (positive control).
+#
+# SEEN RED WITHOUT THE FIX: removing the SPIRA_CERT_IDLE_SKIP block causes the gate
+# to be called even when CI is idle, so the "gate not called" assertion below fails.
+# -----------------------------------------------------------------------------------------
+
+# Restore normal (passing) gate and a counting queue stub.
+stub gate.sh '
+printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
+printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
+exit 0'
+stub queue.sh 'exit 0'
+
+# idle case: forge reports 0 active runs → gate bypassed, branch certified directly.
+stub forge.sh 'case "${1:-}" in runs-active) echo 0 ;; *) exit 0 ;; esac'
+
+write_map
+seed; branch sp-idle-skip
+rm -f "$GATE_COUNT"
+idle_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
+    SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" \
+    SPIRA_FORGE="$SH/forge.sh" \
+        bash "$SH/landing.sh" 2>&1)"
+is   "idle: gate not called"    "0"        "$(gate_n)"
+want "idle: certify reported"   "certified spira/sp-idle-skip" "$idle_out"
+want "idle: says sole batch"    "sole batch member" "$idle_out"
+case "$(landstate sp-idle-skip)" in
+    CERTIFIED*) ok "idle: landstate says CERTIFIED" ;;
+    *)          bad "idle: landstate says CERTIFIED" "got: $(landstate sp-idle-skip)" ;;
+esac
+
+# busy case: forge reports 1 active run → gate IS called (positive control).
+stub forge.sh 'case "${1:-}" in runs-active) echo 1 ;; *) exit 0 ;; esac'
+
+# Clean previous landstate so the branch is re-evaluated.
+rm -f "$RUN/landstate/sp-idle-skip" "$RUN/submitted/sp-idle-skip" 2>/dev/null || true
+seed; branch sp-busy-gate
+rm -f "$GATE_COUNT"
+busy_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
+    SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map" \
+    SPIRA_FORGE="$SH/forge.sh" \
+        bash "$SH/landing.sh" 2>&1)"
+is   "busy: gate called"        "1"        "$(gate_n)"
+want "busy: certify reported"   "certified spira/sp-busy-gate" "$busy_out"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
