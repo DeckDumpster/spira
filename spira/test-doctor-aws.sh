@@ -12,6 +12,15 @@
 # 3. aws v1 present: doctor.sh produces a warn line naming the version requirement.
 # 4. aws v2 present: doctor.sh produces an ok line reporting the version.
 #
+# PATH NOTE. conf.sh (sourced by doctor.sh) rebuilds PATH as:
+#   ${SPIRA_PATH:+$SPIRA_PATH:}$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+# The initial PATH set by env -i is overwritten. Two consequences:
+#   • bd/systemctl fakes go in $BIN; SPIRA_PATH=$BIN keeps them in the rebuilt PATH.
+#   • aws stubs go in $HOME/.local/bin (= $TMP/home/.local/bin), which conf.sh places
+#     before /usr/local/bin. This shadows any real aws installed in the testenv image.
+# For the "absent aws" scenario the stub returns no output, so doctor.sh falls to the
+# v-unknown WARN path — functionally equivalent to truly absent for all test assertions.
+#
 # covers: spira/doctor.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -27,6 +36,11 @@ mkdir -p "$TMP/home" "$TMP/db/.beads" "$TMP/run"
 
 BIN="$TMP/bin"
 mkdir -p "$BIN"
+
+# HOME_BIN: the directory conf.sh places before /usr/local/bin.
+# aws stubs go here to shadow any real aws in the testenv image.
+HOME_BIN="$TMP/home/.local/bin"
+mkdir -p "$HOME_BIN"
 
 # Fake bd: handles list and migrate schema so doctor.sh does not fail on unrelated sections.
 cat > "$BIN/bd" <<'FAKESCRIPT'
@@ -52,29 +66,41 @@ exit 0
 FAKESCRIPT
 chmod +x "$BIN/systemctl"
 
-# make_aws VERSION — write a stub aws to $BIN/aws that reports the given version string.
+# make_aws VERSION — write a stub aws to $HOME_BIN/aws reporting the given version.
+# Placed in HOME_BIN so it precedes /usr/local/bin after conf.sh rebuilds PATH.
 make_aws() {
     local ver="$1"
-    cat > "$BIN/aws" <<STUB
+    cat > "$HOME_BIN/aws" <<STUB
 #!/usr/bin/env bash
 case "\$*" in
     "--version") printf 'aws-cli/%s Python/3.12.7 Linux/6.1.0 exe/x86_64\n' "$ver"; exit 0 ;;
     *) exit 0 ;;
 esac
 STUB
-    chmod +x "$BIN/aws"
+    chmod +x "$HOME_BIN/aws"
 }
 
-# run_doctor — run doctor.sh in a clean env with BIN prepended.
+# make_aws_absent — write a stub that returns no version output, simulating an
+# unusable aws. Used in place of removing the stub so that any real aws installed
+# in the testenv image (at /usr/local/bin/aws) is shadowed rather than exposed.
+make_aws_absent() {
+    printf '#!/bin/sh\n' > "$HOME_BIN/aws"
+    chmod +x "$HOME_BIN/aws"
+}
+
+# run_doctor — run doctor.sh in a clean env.
+# SPIRA_PATH=$BIN keeps bd and systemctl fakes in PATH after conf.sh's rebuild.
+# HOME=$TMP/home means conf.sh prepends $TMP/home/.local/bin (= HOME_BIN) to PATH.
 run_doctor() {
     env -i \
-        PATH="$BIN:/usr/local/bin:/usr/bin:/bin" \
         HOME="$TMP/home" \
+        SPIRA_PATH="$BIN" \
         SPIRA_CONF=/nonexistent \
         SPIRA_DB="$TMP/db" \
         SPIRA_RUN="$TMP/run" \
         SPIRA_DOCTOR_INSTALLING=1 \
         SPIRA_SYSTEMCTL="$BIN/systemctl" \
+        PATH="/usr/local/bin:/usr/bin:/bin" \
         bash "$HERE/doctor.sh" 2>&1 || true
 }
 
@@ -92,7 +118,9 @@ nowant "POSITIVE CONTROL: no ok for aws v1" "ok    aws" "$out"
 echo
 echo "absent aws — warn line names the dependency:"
 # ============================================================================
-rm -f "$BIN/aws"
+# A no-output stub shadows any real aws at /usr/local/bin/aws. Doctor.sh falls
+# to the v-unknown WARN path, which is functionally equivalent to truly absent.
+make_aws_absent
 out="$(run_doctor)"
 want "absent aws: warn line" "warn" "$out"
 want "absent aws: names aws" "aws" "$out"
