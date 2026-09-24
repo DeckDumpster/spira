@@ -201,6 +201,7 @@ fn parse_lane_token(tok: &str) -> Option<Lane> {
         "plan" => Lane::Plan,
         "incident" => Lane::Incident,
         "groom" => Lane::Groom,
+        // literal-ok: matches the repo-map lane token this old format actually writes
         "maechen-sweep" => Lane::MaechenSweep,
         "spike" => Lane::Spike,
         "czar-trigger" => Lane::CzarTrigger,
@@ -410,10 +411,13 @@ fn shell_expand(input: &str, vars: &BTreeMap<String, String>) -> String {
 /// narrower than `conf.sh`'s full allowlist) carries only some of the label keys.
 fn label_defaults() -> BTreeMap<String, String> {
     [
+        // literal-ok: mirrors conf.sh's own derived default (this binary cannot source schema.sh)
         ("SPIRA_ASK_LABEL", "needs-operator"),
+        // literal-ok: mirrors conf.sh's own derived default; see above
         ("SPIRA_CI_LABEL", "awaiting-ci"),
         ("SPIRA_SPIKE_LABEL", "spike"),
         ("SPIRA_GROOMER_LABEL", "groom"),
+        // literal-ok: mirrors conf.sh's own derived defaults; see above
         ("SPIRA_MAECHEN_LABEL", "maechen-sweep"),
         ("SPIRA_PLAN_LABEL", "plan"),
         ("SPIRA_INCIDENT_LABEL", "incident"),
