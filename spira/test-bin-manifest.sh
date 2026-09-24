@@ -39,11 +39,23 @@ echo "test-bin-manifest.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 eval "$(env -i HOME="$HOME" PATH="$PATH" SPIRA_CONF="$TMP/none.conf" bash -c '
     . '"$HERE"'/conf.sh 2>/dev/null
-    printf "MANIFEST=%q\n" "$SPIRA_BINS"
-    for b in $SPIRA_BINS; do
-        printf "TIER_%s=%q\n"    "${b//-/_}" "$(spira_bin_tier    "$b")"
-        printf "PURPOSE_%s=%q\n" "${b//-/_}" "$(spira_bin_purpose "$b")"
-        printf "ABSENT_%s=%q\n"  "${b//-/_}" "$(spira_bin_absent  "$b")"
+    _manifest="$(spira_deps_list)"
+    printf "MANIFEST=%q\n" "$_manifest"
+    for b in $_manifest; do
+        printf "TIER_%s=%q\n"     "${b//-/_}" "$(spira_bin_tier    "$b")"
+        printf "PURPOSE_%s=%q\n"  "${b//-/_}" "$(spira_bin_purpose "$b")"
+        printf "ABSENT_%s=%q\n"   "${b//-/_}" "$(spira_bin_absent  "$b")"
+        printf "VPROBE_%s=%q\n"   "${b//-/_}" "$(
+            python3 - '"$HERE"'/deps.toml "$b" 2>/dev/null <<'"'"'_PY'"'"'
+import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    data = tomllib.load(f)
+for d in data.get("dep", []):
+    if d["name"] == sys.argv[2]:
+        print(d.get("version_probe", ""))
+        break
+_PY
+        )"
     done
 ')"
 
@@ -55,7 +67,7 @@ echo "POSITIVE CONTROL — the manifest actually loaded:"
 # while proving nothing at all.
 _n=0; for _b in ${MANIFEST:-}; do _n=$((_n+1)); done
 [ "$_n" -ge 8 ] && ok "manifest loaded ($_n programs)" \
-                || bad "manifest loaded" "only $_n programs — conf.sh did not export SPIRA_BINS"
+                || bad "manifest loaded" "only $_n programs — deps.toml did not load"
 
 # ======================================================================================
 echo
@@ -89,13 +101,26 @@ echo "doctor.sh checks every program the manifest declares:"
 _unchecked=""
 for _b in ${MANIFEST:-}; do
     grep -q -- "$_b" "$HERE/doctor.sh" 2>/dev/null || {
-        # The manifest-driven loop covers any dev-tier program without naming it.
+        # The manifest-driven loop covers all dev-tier programs via spira_deps_list.
         _k="${_b//-/_}"; _t="TIER_$_k"
-        [ "${!_t:-}" = dev ] && grep -q 'spira_bin_tier "$b"' "$HERE/doctor.sh" && continue
+        [ "${!_t:-}" = dev ] && grep -q 'spira_deps_list dev' "$HERE/doctor.sh" && continue
         _unchecked="$_unchecked $_b"
     }
 done
 is "no declared program is unchecked by doctor.sh" "" "$_unchecked"
+
+# ======================================================================================
+echo
+echo "every declared program has a version probe (T1):"
+# ======================================================================================
+# A manifest entry with no version_probe cannot satisfy T1. Every dep must declare HOW
+# to read its version so a future version-check can run the probe.
+_noprobe=""
+for _b in ${MANIFEST:-}; do
+    _k="${_b//-/_}"; _v="VPROBE_$_k"
+    [ -n "${!_v:-}" ] || _noprobe="$_noprobe $_b"
+done
+is "every program has a version probe" "" "$_noprobe"
 
 # ======================================================================================
 echo
