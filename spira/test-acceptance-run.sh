@@ -237,5 +237,56 @@ fi
 wantre "phase A bad() names clone path" \
     'bad.*ready\.sh.*\$_clone/spira/ready\.sh'
 
+# ===========================================================================
+echo
+echo "8. staged checks: old 900s/600s loops gone, stages 2-5 present with tight budgets"
+# ===========================================================================
+
+# Positive control: pattern that would match the old 900s loop.
+_old_900="$(grep -c '_aeon_wait' "$SCRIPT" 2>/dev/null || true)"
+is_eq "positive-control: old 900s loop is gone from phase A" "0" "$_old_900"
+
+_old_600="$(grep -c '_aged_land_wait' "$SCRIPT" 2>/dev/null || true)"
+is_eq "positive-control: old 600s loop is gone from phase D" "0" "$_old_600"
+
+# Stage 2: sentinel is started directly.
+want "stage 2: sentinel started directly" \
+    'systemctl --user start spira-sentinel.service'
+
+# Stage 2: branch show-ref check (summoned signal).
+want "stage 2: polls for aeon branch via show-ref" \
+    'refs/heads/spira/$_bead_id'
+
+# Stage 3: commit check on branch.
+wantre "stage 3: polls for commit on spira/bead branch" \
+    'git.*log.*spira/\$_bead_id'
+
+# Stage 3 bad() names stage 3.
+wantre "stage 3: FAIL names stage 3" \
+    'bad.*stage 3.*commit'
+
+# Stage 4: bd show --json status check.
+want "stage 4: bd show --json polls closed status" \
+    'show "$_bead_id" --json'
+
+# Stage 5: sentinel kicked again before landing poll (appears twice — stage 2 and 5).
+want "stage 5: sentinel kicked before landing poll" \
+    'spira-sentinel.service'
+
+# Stage 2 budget: 60s (not 900).
+want "stage 2 budget is 60s" \
+    '_a_t2 )) -lt 60'
+
+# Stage 5 budget: 120s (not 900).
+want "stage 5 budget is 120s" \
+    '_a_t5 )) -lt 120'
+
+# Phase D: same staged structure.
+wantre "phase D stage 3: FAIL names stage 3" \
+    'bad.*phase D stage 3'
+
+want "phase D stage 5: landed message" \
+    'phase D stage 5: bead'
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

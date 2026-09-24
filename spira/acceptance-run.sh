@@ -300,29 +300,83 @@ except Exception:
             "bead $_bead_id not found in 'bd ready --label ${_a_scope_label},${_a_plan_label}' — builder predicate does not match bead labels"
     fi
 
-    # Wait for the aeon to land the bead (up to 15 minutes).
-    _aeon_wait=0
-    _landed=0
-    while [ "$_aeon_wait" -lt 900 ]; do
-        # Check landing by ancestry: did a new commit appear on the scratch repo's
-        # land ref that descends from _base_sha_before?
-        git -C "$scratch_repo" fetch origin >/dev/null 2>&1 || true
-        _base_sha_now="$(git -C "$scratch_repo" rev-parse "origin/${_land_ref}" 2>/dev/null)" || \
-            _base_sha_now="$_base_sha_before"
-        if [ "$_base_sha_now" != "$_base_sha_before" ] \
-            && git -C "$scratch_repo" log --format='%s' "${_base_sha_before}..${_base_sha_now}" \
-               | grep -qF "$_bead_id" 2>/dev/null; then
-            _landed=1; break
-        fi
-        sleep 30
-        _aeon_wait=$((_aeon_wait + 30))
+    # Stage 2: Summoned — start sentinel directly, poll for aeon branch.
+    _a_t2=$(date +%s)
+    systemctl --user start spira-sentinel.service 2>/dev/null || true
+    _a_summoned=0
+    while [ $(( $(date +%s) - _a_t2 )) -lt 60 ]; do
+        git -C "$scratch_repo" show-ref --verify -q \
+            "refs/heads/spira/$_bead_id" 2>/dev/null && { _a_summoned=1; break; }
+        sleep 2
     done
-
-    if [ "$_landed" -eq 1 ]; then
-        ok "phase A: bead $_bead_id landed on $scratch_repo:$_land_ref by ancestry"
+    _a_s2_elapsed=$(( $(date +%s) - _a_t2 ))
+    if [ "$_a_summoned" -eq 1 ]; then
+        ok "phase A stage 2: aeon summoned for $_bead_id — branch created (${_a_s2_elapsed}s)"
     else
-        bad "phase A: bead $_bead_id landed on $scratch_repo:$_land_ref by ancestry" \
-            "no commit containing bead id appeared on origin/$_land_ref after ${_aeon_wait}s"
+        bad "phase A stage 2: aeon summoned for $_bead_id" \
+            "branch spira/$_bead_id not created after ${_a_s2_elapsed}s"
+    fi
+
+    # Stage 3: Committed — branch has a commit naming the bead.
+    _a_t3=$(date +%s)
+    _a_committed=0
+    while [ $(( $(date +%s) - _a_t3 )) -lt 60 ]; do
+        git -C "$scratch_repo" log --oneline "spira/$_bead_id" 2>/dev/null \
+            | grep -qF "$_bead_id" && { _a_committed=1; break; }
+        sleep 2
+    done
+    _a_s3_elapsed=$(( $(date +%s) - _a_t3 ))
+    if [ "$_a_committed" -eq 1 ]; then
+        ok "phase A stage 3: commit on spira/$_bead_id for $_bead_id (${_a_s3_elapsed}s)"
+    else
+        bad "phase A stage 3: commit on spira/$_bead_id for $_bead_id" \
+            "no commit naming bead id on branch after ${_a_s3_elapsed}s"
+    fi
+
+    # Stage 4: Closed — bead status is closed.
+    _a_t4=$(date +%s)
+    _a_closed=0
+    while [ $(( $(date +%s) - _a_t4 )) -lt 30 ]; do
+        _a_s4_st="$(bd -C "$bd_db" show "$_bead_id" --json 2>/dev/null \
+            | sed -n '/^[[{]/,$p' \
+            | python3 -c 'import json,sys
+try:
+    d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
+    print(d[0].get("status","") if d else "")
+except Exception: print("")' 2>/dev/null)" || _a_s4_st=""
+        [ "$_a_s4_st" = "closed" ] && { _a_closed=1; break; }
+        sleep 2
+    done
+    _a_s4_elapsed=$(( $(date +%s) - _a_t4 ))
+    if [ "$_a_closed" -eq 1 ]; then
+        ok "phase A stage 4: bead $_bead_id closed (${_a_s4_elapsed}s)"
+    else
+        bad "phase A stage 4: bead $_bead_id closed" \
+            "not closed after ${_a_s4_elapsed}s"
+    fi
+
+    # Stage 5: Landed — commit on origin/$_land_ref by ancestry.
+    # Kick sentinel: CHECK 6 dispatches landing.sh on the closed branch.
+    systemctl --user start spira-sentinel.service 2>/dev/null || true
+    _a_t5=$(date +%s)
+    _a_landed=0
+    while [ $(( $(date +%s) - _a_t5 )) -lt 120 ]; do
+        git -C "$scratch_repo" fetch origin >/dev/null 2>&1 || true
+        _base_sha_now="$(git -C "$scratch_repo" rev-parse "origin/${_land_ref}" 2>/dev/null)" \
+            || _base_sha_now="$_base_sha_before"
+        if [ "$_base_sha_now" != "$_base_sha_before" ] \
+            && git -C "$scratch_repo" log --format='%s' "$_base_sha_before..$_base_sha_now" 2>/dev/null \
+               | grep -qF "$_bead_id"; then
+            _a_landed=1; break
+        fi
+        sleep 5
+    done
+    _a_s5_elapsed=$(( $(date +%s) - _a_t5 ))
+    if [ "$_a_landed" -eq 1 ]; then
+        ok "phase A stage 5: bead $_bead_id landed on $scratch_repo:$_land_ref (${_a_s5_elapsed}s)"
+    else
+        bad "phase A stage 5: bead $_bead_id landed on $scratch_repo:$_land_ref" \
+            "no commit with bead id on origin/$_land_ref after ${_a_s5_elapsed}s"
     fi
 fi
 
@@ -611,26 +665,85 @@ else
                 | sed -n 's/.*Created issue: \([a-z0-9]*-[a-z0-9]*\).*/\1/p' | head -1)"
             if [ -n "$_aged_probe_id" ]; then
                 ok "phase D: post-upgrade bead filed ($_aged_probe_id)"
-                _aged_land_wait=0; _aged_landed=0
-                while [ "$_aged_land_wait" -lt 600 ]; do
+
+                # Stage 2: Summoned — start sentinel, poll for aeon branch.
+                _d_t2=$(date +%s)
+                systemctl --user start spira-sentinel.service 2>/dev/null || true
+                _d_summoned=0
+                while [ $(( $(date +%s) - _d_t2 )) -lt 60 ]; do
+                    git -C "$scratch_repo" show-ref --verify -q \
+                        "refs/heads/spira/$_aged_probe_id" 2>/dev/null \
+                        && { _d_summoned=1; break; }
+                    sleep 2
+                done
+                _d_s2_elapsed=$(( $(date +%s) - _d_t2 ))
+                if [ "$_d_summoned" -eq 1 ]; then
+                    ok "phase D stage 2: aeon summoned for $_aged_probe_id — branch created (${_d_s2_elapsed}s)"
+                else
+                    bad "phase D stage 2: aeon summoned for $_aged_probe_id" \
+                        "branch spira/$_aged_probe_id not created after ${_d_s2_elapsed}s"
+                fi
+
+                # Stage 3: Committed — branch has a commit naming the bead.
+                _d_t3=$(date +%s)
+                _d_committed=0
+                while [ $(( $(date +%s) - _d_t3 )) -lt 60 ]; do
+                    git -C "$scratch_repo" log --oneline "spira/$_aged_probe_id" 2>/dev/null \
+                        | grep -qF "$_aged_probe_id" && { _d_committed=1; break; }
+                    sleep 2
+                done
+                _d_s3_elapsed=$(( $(date +%s) - _d_t3 ))
+                if [ "$_d_committed" -eq 1 ]; then
+                    ok "phase D stage 3: commit on spira/$_aged_probe_id (${_d_s3_elapsed}s)"
+                else
+                    bad "phase D stage 3: commit on spira/$_aged_probe_id" \
+                        "no commit naming bead id on branch after ${_d_s3_elapsed}s"
+                fi
+
+                # Stage 4: Closed — bead status is closed.
+                _d_t4=$(date +%s)
+                _d_closed=0
+                while [ $(( $(date +%s) - _d_t4 )) -lt 30 ]; do
+                    _d_s4_st="$(bd -C "$bd_db" show "$_aged_probe_id" --json 2>/dev/null \
+                        | sed -n '/^[[{]/,$p' \
+                        | python3 -c 'import json,sys
+try:
+    d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
+    print(d[0].get("status","") if d else "")
+except Exception: print("")' 2>/dev/null)" || _d_s4_st=""
+                    [ "$_d_s4_st" = "closed" ] && { _d_closed=1; break; }
+                    sleep 2
+                done
+                _d_s4_elapsed=$(( $(date +%s) - _d_t4 ))
+                if [ "$_d_closed" -eq 1 ]; then
+                    ok "phase D stage 4: bead $_aged_probe_id closed (${_d_s4_elapsed}s)"
+                else
+                    bad "phase D stage 4: bead $_aged_probe_id closed" \
+                        "not closed after ${_d_s4_elapsed}s"
+                fi
+
+                # Stage 5: Landed — commit on origin/land_ref by ancestry.
+                systemctl --user start spira-sentinel.service 2>/dev/null || true
+                _d_t5=$(date +%s)
+                _aged_landed=0
+                while [ $(( $(date +%s) - _d_t5 )) -lt 120 ]; do
                     git -C "$scratch_repo" fetch origin >/dev/null 2>&1 || true
                     _aged_sha_now="$(git -C "$scratch_repo" \
                         rev-parse "origin/${_land_ref:-main}" 2>/dev/null)" \
                         || _aged_sha_now="${_aged_land_base:-}"
                     if [ -n "${_aged_land_base:-}" ] \
                         && [ "$_aged_sha_now" != "$_aged_land_base" ] \
-                        && git -C "$scratch_repo" log --format='%s' \
-                               "${_aged_land_base}..${_aged_sha_now}" 2>/dev/null \
+                        && git -C "$scratch_repo" log --format='%s' "$_aged_land_base..$_aged_sha_now" 2>/dev/null \
                            | grep -qF "$_aged_probe_id"; then
                         _aged_landed=1; break
                     fi
-                    sleep 30
-                    _aged_land_wait=$((_aged_land_wait + 30))
+                    sleep 5
                 done
+                _d_s5_elapsed=$(( $(date +%s) - _d_t5 ))
                 [ "$_aged_landed" -eq 1 ] \
-                    && ok "phase D: post-upgrade bead landed by ancestry" \
-                    || bad "phase D: post-upgrade bead landed by ancestry" \
-                           "no commit with $_aged_probe_id on origin/${_land_ref:-main} after ${_aged_land_wait}s"
+                    && ok "phase D stage 5: bead $_aged_probe_id landed by ancestry (${_d_s5_elapsed}s)" \
+                    || bad "phase D stage 5: bead $_aged_probe_id landed by ancestry" \
+                           "no commit with $_aged_probe_id on origin/${_land_ref:-main} after ${_d_s5_elapsed}s"
             else
                 bad "phase D: post-upgrade bead filed" "output: $_aged_probe_out"
             fi
