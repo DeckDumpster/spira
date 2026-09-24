@@ -14,11 +14,23 @@ printf 'test-covers-entries.sh\n'
 
 # covers_hit <token>: exits 0 if any path under ROOT matches the token as a bash glob.
 # $token must be unquoted when passed to `for` so the shell expands wildcards.
+# A UC-<area>-NN token names an entry in the use-case catalogue (sp-qu948), not a file —
+# it shares the # covers: line with path globs (testlib.sh's header convention) and is
+# told apart from one by its "UC-" prefix, so it is never resolved as a path.
 covers_hit() {
     local tok="$1" _f
+    case "$tok" in UC-*) return 0 ;; esac
     for _f in "$ROOT/"$tok; do
         [ -e "$_f" ] && return 0
     done
+    return 1
+}
+
+# is_uc_token <token>: exits 0 for a UC-<area>-NN token (never a file path).
+# plan-lint.sh validates these against docs/test-plan/*.md, not the filesystem —
+# a UC id would otherwise read as an unresolvable path.
+is_uc_token() {
+    case "$1" in UC-*-[0-9][0-9]) return 0 ;; esac
     return 1
 }
 
@@ -45,6 +57,7 @@ for _sf in "$HERE"/test-*.sh; do
     _checked=$((_checked+1))
     read -ra _toks <<< "$_cov"
     for _tok in "${_toks[@]}"; do
+        is_uc_token "$_tok" && continue
         if ! covers_hit "$_tok"; then
             bad "$(basename "$_sf")" "# covers: token '$_tok' matches no file under $ROOT"
             _bad=$((_bad+1))
