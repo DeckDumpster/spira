@@ -2,6 +2,8 @@
 
 > **2026-09-24: `test-gate-tree.sh` deleted** (sp-78xpb; per Ryan, "delete tests with extreme prejudice"). Its wall-clock concurrency assertion flipped on unrelated batches. UCs 16, 17 and 18 below lost their only coverage and need a deterministic test if they are wanted back.
 
+> **2026-09-24: `test-gate-locks.sh` deleted** (sp-fxvgo): it flipped red-then-green in PR 331's CI. UC 19 (lock report) lost its coverage.
+
 Part of [[test-plan-2026-09-23]], section 5. Area id `gate-verdict`; use-case ids are `UC-gate-verdict-NN`.
 
 Subject scripts: `spira/gate.sh` (761 lines), `gate-touched.sh` (96), `gate-locks.sh` (119), `gate-sweep.sh` (114), `yield.sh` (486), `lib.sh:host_cores`, `governor.sh` (host-core sizing only).
