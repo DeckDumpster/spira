@@ -40,6 +40,9 @@ SNAP="$SPIRA_RUN/cockpit.env"
 # every registered repository — see spira_repos / repo_root in lib.sh.
 WINDOW_HOURS="${SPIRA_COCKPIT_WINDOW_HOURS:-24}"
 INTERVAL="${SPIRA_COCKPIT_INTERVAL:-60}"
+# Test seam, mirroring collect.sh's COCK slow mode: a hermetic pass (env -i, no real bd/git)
+# would otherwise finish before a kill can land mid-probe.
+PROBE_TEST_SLEEP="${SPIRA_COCKPIT_TEST_SLEEP:-0}"
 
 # THE SNAPSHOT HAS EXACTLY ONE WRITER: spira-cockpit.service. A second writer — an aeon
 # running the collector from its worktree, a retired brain collector calling a vendored copy,
@@ -106,6 +109,7 @@ probe() {
     # existing per-subcommand functions, keeping cockpit.sh once/loop working unchanged.
     # SP_AT FIRST: now_keys emits it as its very first output line.
     local _probe_start; _probe_start=$(date +%s)
+    [ "$PROBE_TEST_SLEEP" != 0 ] && sleep "$PROBE_TEST_SLEEP"
     now_keys
     core_detail_keys
     core_counts_keys

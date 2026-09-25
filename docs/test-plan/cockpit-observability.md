@@ -42,6 +42,16 @@
 > sweep and `test-drain-banner.sh` (cluster 12, booked in instance-lifecycle) are unchanged —
 > neither fits render-many's one-environment-per-process model or is this bead's job.
 
+> **2026-09-25 (sp-s088v.10): row 06 demoted; rows 02 and cluster 9 confirmed already
+> closed.** Row 06: `cockpit.sh` gets a `SPIRA_COCKPIT_TEST_SLEEP` seam in `probe()` —
+> mirroring `collect.sh`'s `COCK` slow mode — so `test-cockpit-tmp.sh` can run under `env -i`
+> against a fixture conf/DB instead of the real ambient ones, with the seam holding each
+> killed pass open long enough to land the signal. T3 non-hermetic 11 s → T2 hermetic 6 s.
+> Row 02: already correct — the tiered-collector duplicate it names left with cluster 7, and
+> `SP_COLLECTOR_REV` is `collect.sh`'s own key, not cockpit.sh's, so it stays tested where it
+> is stamped. Cluster 9: already merged into `test-conf-watch.sh` by sp-s088v.8, before this
+> branch forked — no `test-cockpit-conf-change.sh`/`test-loom-conf-change.sh` remain.
+
 Part of [[test-plan-2026-09-23]], section 5. Area id `cockpit-observability`; use-case ids are `UC-cockpit-observability-NN`.
 
 **Scope:** 67 primary records: 59 bash suites, 7 Rust test sources, and 1 dead fixture. There is 1 secondary suite, `test-statute-projection.sh`.
