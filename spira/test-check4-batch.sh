@@ -57,7 +57,7 @@ stub strand.sh     'printf "%s" "${STRAND_OUT:-}"'
 stub sending.sh    'printf "%s" "${SENDING_OUT:-}"'
 stub reflect.sh    'true'
 stub mail.sh       '[ "${1:-}" = send ] || exit 0'
-printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' \
+printf 'FAYTH_LABELS="spira,${SPIRA_PLAN_LABEL}"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' \
     > "$SH/chamber/t.fayth"
 
 lib_predicate() {

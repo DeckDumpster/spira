@@ -62,7 +62,7 @@ capacity_paused() { return 1; }
 
 cat > "$T/chamber/worker.fayth" <<'F'
 FAYTH_NAME=worker
-FAYTH_LABELS="spira,plan"
+FAYTH_LABELS="spira,${SPIRA_PLAN_LABEL}"
 FAYTH_EXCLUDE_LABELS="spira-poison"
 FAYTH_MAX_CONCURRENT=2
 FAYTH_ELASTIC=1

@@ -64,7 +64,7 @@ except: print("")
 }
 
 find_bead() {
-    B list --status open,in_progress --limit 0 --label spira,incident --json 2>/dev/null \
+    B list --status open,in_progress --limit 0 --label spira,partition:incident --json 2>/dev/null \
       | python3 -c '
 import sys, json
 target = sys.argv[1]
@@ -92,7 +92,7 @@ echo "positive control — direct note appends produce measurable notes (validat
 REF_PC="incident:test-recur-bounded-posctrl"
 testdb_reset; mkdir -p "$TMP/run"
 _pc_id="$(B create "recur-bounded positive control" --type bug --priority 2 \
-    --labels spira,incident --external-ref "$REF_PC" --silent 2>/dev/null \
+    --labels spira,partition:incident --external-ref "$REF_PC" --silent 2>/dev/null \
     | tr -d '[:space:]')"
 [ -n "$_pc_id" ] || { bad "positive control: bead created" "create failed"; \
     printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }

@@ -60,7 +60,7 @@ capacity_paused() { return 1; }  # no outage
 # bound to the declaration, not to a hardcoded name.
 cat > "$T/chamber/worker.fayth" <<'F'
 FAYTH_NAME=worker
-FAYTH_LABELS="spira,plan"
+FAYTH_LABELS="spira,${SPIRA_PLAN_LABEL}"
 FAYTH_EXCLUDE_LABELS="spira-poison"
 FAYTH_MAX_CONCURRENT=2
 FAYTH_ELASTIC=1
@@ -69,7 +69,7 @@ F
 
 cat > "$T/chamber/guardian.fayth" <<'F'
 FAYTH_NAME=guardian
-FAYTH_LABELS="spira,incident"
+FAYTH_LABELS="spira,${SPIRA_INCIDENT_LABEL}"
 FAYTH_EXCLUDE_LABELS="spira-poison"
 FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=60

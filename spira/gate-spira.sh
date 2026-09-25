@@ -95,7 +95,7 @@ print(match[0]["id"] if match else "")
         bdq create \
             "gate: budget exceeded — ${over}s over (${total}s vs ${budget}s); something must leave gate-suites before anything joins" \
             --type chore --priority 2 \
-            --labels "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan,repo:spira" \
+            --labels "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}partition:${SPIRA_PLAN_LABEL},repo:spira" \
             --external-ref "$ref" \
             --body - --silent >/dev/null 2>&1 <<'BODY'
 The gate has run longer than SPIRA_GATE_BUDGET. Before adding any suite to
