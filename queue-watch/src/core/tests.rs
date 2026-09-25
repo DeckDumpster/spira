@@ -165,8 +165,10 @@ fn a_head_that_never_moves_stalls_once() {
         s.ci = Some(Ci::Pending);
         s
     };
+    // The first poll is a baseline and records CI silently; only the stall is news.
     let evs = replay(&[mk(0), mk(1000), mk(2800), mk(4000)]);
-    assert_eq!(kinds(&evs), vec!["ci", "stall"]);
+    assert_eq!(kinds(&evs), vec!["stall"]);
+    assert!(evs[0].text.contains("unchanged for 46m (CI running)"), "{}", evs[0].text);
 }
 
 /// A poll that could not read the forge must never read as a quiet queue.
