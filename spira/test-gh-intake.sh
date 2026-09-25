@@ -433,6 +433,10 @@ echo "12. GH_INTAKE_LIB=1: the triage/dedup functions run directly, no fetch or 
 printf '[{"event":"labeled","actor":{"login":"direct-caller"},"label":{"name":"spira:accept"}}]' \
     > "$STATE/events_json"
 : > "$STATE/created_work"
+# The bd/curl stubs are separate processes; they read STATE from their own environment,
+# not this shell's — a plain (unexported) STATE was invisible to them here even though
+# run() above worked, because run() passes STATE= as an explicit env prefix on each call.
+export STATE BDLOG CURLLOG
 export GH_INTAKE_LIB=1 SPIRA_BD=bd SPIRA_DB=fixture SPIRA_GH_INTAKE_REPO=DeckDumpster/spira \
     SPIRA_GH_INTAKE_BEAD_REPO="$FIXTURE_REPO" SPIRA_REPO_MAP="$TMP/repo-map" \
     SPIRA_GH_INTAKE_API=https://api.github.com SPIRA_GH_INTAKE_PRIORITY=3 \
