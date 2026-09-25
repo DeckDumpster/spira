@@ -451,7 +451,7 @@ git -C "$LREPO" remote add origin "$REMOTE"
 git -C "$LREPO" push -q origin main
 git -C "$LREPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
-cp "$HERE/landing.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/confine.sh" "$SH/"
+cp "$HERE/landing.sh" "$HERE/landing-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/confine.sh" "$SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/gate.sh"; chmod +x "$SH/gate.sh"
 printf 'home | %s | push | origin/main | |\n' "$LREPO" > "$SH/repo-map"
 
