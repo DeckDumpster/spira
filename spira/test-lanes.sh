@@ -78,25 +78,6 @@ F
 
 # ==========================================================================================
 echo
-echo "spira_lane_fayths / spira_task_fayths — the roster split"
-# ==========================================================================================
-export SPIRA_FAYTHS="worker guardian"
-
-lane="$(spira_lane_fayths)"
-task="$(spira_task_fayths)"
-
-is "spira_lane_fayths returns the FAYTH_LANE fayth"      "guardian" "$lane"
-is "spira_task_fayths excludes the FAYTH_LANE fayth"     "worker"   "$task"
-nowant "the lane fayth does not appear in task fayths"   "guardian" "$task"
-nowant "the task fayth does not appear in lane fayths"   "worker"   "$lane"
-
-# POSITIVE CONTROL: both functions return something, so absence above is the exclusion
-# working and not both functions returning empty.
-is "there is at least one lane fayth"  "1" "$([ -n "$lane" ] && echo 1 || echo 0)"
-is "there is at least one task fayth"  "1" "$([ -n "$task" ] && echo 1 || echo 0)"
-
-# ==========================================================================================
-echo
 echo "criterion 1 — lane fayth is summonable when task pool is saturated"
 # ==========================================================================================
 # A pool of 0 means the task pool is exhausted. summon_fayth for a task fayth with pool=0
@@ -227,16 +208,7 @@ echo "criterion 3 — ops.fayth declares FAYTH_LANE=ops and is excluded from the
 want "ops.fayth declares FAYTH_LANE=ops" "FAYTH_LANE=ops" "$(cat "$HERE/chamber/ops.fayth")"
 nowant "ops.fayth no longer uses FAYTH_ROLE=party" "FAYTH_ROLE=party" "$(grep -v '^#' "$HERE/chamber/ops.fayth")"
 
-# With the real fayth roster, ops is in lane fayths and NOT in task fayths.
-export SPIRA_FAYTHS="builder ops"
-export SPIRA_HOME="$HERE"      # point at the real chamber
-
-real_task="$(spira_task_fayths)"
-real_lane="$(spira_lane_fayths)"
-
-want   "ops appears in lane fayths" "ops" "$real_lane"
-nowant "ops does NOT appear in task fayths" "ops" "$real_task"
-want   "builder is still in the task pool" "builder" "$real_task"
+# The real-roster split (ops in lane fayths, builder in task fayths) is a test-fayth.sh row.
 
 # The ops lane is declared in conf.sh's key list (SPIRA_CONF_KEYS) and defaults.
 want "SPIRA_LANES is a recognised conf key" "SPIRA_LANES" "$(cat "$HERE/conf.sh")"

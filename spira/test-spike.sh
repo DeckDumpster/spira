@@ -223,14 +223,8 @@ done
 want "while the ops fayth is the one that declares it" "FAYTH_TIMEOUT_SECONDS" \
      "$(grep -v '^[[:space:]]*#' "$HERE/chamber/ops.fayth")"
 
-# The fayth's own fields. The predicate is built from the configured label rather than a
-# literal, which is the property that keeps the fayth, the brief and the fence agreeing.
-fayth_src="$(cat "$HERE/chamber/spike.fayth")"
-want "the predicate is built from the configured label" 'FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_SPIKE_LABEL"' "$fayth_src"
-nowant "and does not hardcode one"                      'FAYTH_LABELS="spira,spike"'               "$fayth_src"
-want "a spike may search the web"                       "WebSearch"                                "$fayth_src"
-want "and it may build"                                 "Bash"                                     "$fayth_src"
-want "and edit"                                         "Edit"                                     "$fayth_src"
+# The fayth's own fields (predicate built from the configured label, tool list) are a
+# test-fayth.sh row.
 
 # ======================================================================================
 echo
