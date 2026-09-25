@@ -40,6 +40,7 @@
 # Poisoned/unclaimable beads have status != closed and are already excluded.
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
+. "$(dirname "$0")/landing-lib.sh"
 
 STATUS="$SPIRA_RUN/landing.status"
 MAILBOX="$SPIRA_RUN/landing.progress"
@@ -501,22 +502,13 @@ find "${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}" -maxdepth 1 -type f \
 # red suite on a base means changing code, and Ops has eight minutes and a runbook.
 INC="${SPIRA_INCIDENT:-$SPIRA_HOME/incident.sh}"
 
-# Returns 0 if the branch is a certified base-fix (caller should certify it).
-# A base-fix branch has external_ref=basefail:<name>:<suite> and its gate output
-# shows the failing suite as green in the branch trial. Reads _scan_extref from
-# the calling land_repo's dynamic scope.
+# Returns 0 if the branch is a certified base-fix (caller should certify it). The
+# decision itself is basefail_fix_decision (landing-lib.sh), a pure function of the
+# external_ref string and the gate transcript; this wrapper's only job is reading
+# _scan_extref out of the calling land_repo's dynamic scope, since every call site here
+# already has the id, not the ref.
 _basefail_fix_check() {  # _basefail_fix_check <id> <gate_out> <gate_suite> <name>
-    local _id="$1" _gate_out="$2" _gate_suite="$3" _name="$4" _fse _br_had
-    _fse="${_scan_extref[$_id]:-}"
-    case "$_fse" in basefail:"$_name":*) : ;; *) return 1 ;; esac
-    _fse="${_fse#basefail:$_name:}"
-    [ -n "$_fse" ] && [ "$_fse" != "-" ] || return 1
-    _br_had="$(printf '%s' "$_gate_out" | awk -v s="$_fse" '
-        /^--- this branch/{p=1;next}
-        p&&/^(---|gate:)/{p=0}
-        p{for(i=1;i<NF;i++) if($i==s&&($(i+1)~/^(RED|TIMEOUT|FAILED)$/||($(i+1)=="was"&&$(i+2)=="killed"))){print "yes";exit}}
-    ')"
-    [ -z "$_br_had" ]
+    basefail_fix_decision "${_scan_extref[$1]:-}" "$4" "$2"
 }
 
 base_incident() {        # base_incident <repo> <suite> <reason> <branch> <base> <gate output>
@@ -832,19 +824,25 @@ for i in d:
     print(f"{bid}\t{st}\t{repo}\t{sup}\t{cat}\t{pri}\t{extref}\t{labels}")
 ' "$(spira_home_repo)" 2>/dev/null)
     fi
-    # Base-fix branches (external_ref=basefail:<name>:*) sort before all others so a
-    # budget cut cannot defer the fix that unblocks every held branch. Within each group,
-    # certify oldest-closed first within each priority tier so no branch starves.
-    local _fix_front=""
-    brs="$(
-        for _br in $brs; do
-            _id="${_br#spira/}"
-            _fk=1; case "${_scan_extref[$_id]:-}" in basefail:"$name":*) _fk=0 ;; esac
-            printf '%s\t%s\t%s\t%s\n' "$_fk" \
-                "${_scan_priority[$_id]:-9999}" \
-                "${_scan_closed_at[$_id]:-9999-99-99}" "$_br"
-        done | sort -t$'\t' -k1,1n -k2,2n -k3,3 | awk -F'\t' '{print $4}'
-    )"
+    # CERTIFICATION ORDER (certify_order, landing-lib.sh): base-fix branches
+    # (external_ref=basefail:<name>:*) first, so a budget cut cannot defer the fix that
+    # unblocks every held branch; express-labelled branches second, so a critical bead
+    # does not wait behind alphabetical refname order; everyone else last. Each bucket is
+    # sorted oldest-closed-first within its priority tier so no branch starves.
+    local _exp_label_land="${SPIRA_EXPRESS_LABEL:-express}"
+    local _fix_front="" _expr_brs="" _order_rows="" _expr_flag
+    for _br in $brs; do
+        _id="${_br#spira/}"
+        case " ${_scan_labels[$_id]:-} " in
+            *" $_exp_label_land "*) _expr_flag=1 ;;
+            *) _expr_flag=0 ;;
+        esac
+        _order_rows="$_order_rows$_id"$'\t'"$_br"$'\t'"${_scan_priority[$_id]:-9999}"$'\t'"${_scan_closed_at[$_id]:-9999-99-99}"$'\t'"${_scan_extref[$_id]:--}"$'\t'"$_expr_flag"$'\n'
+    done
+    brs="$(printf '%s' "$_order_rows" | certify_order "$name")"
+    # THE LOG LINES ARE READ OFF THE ORDER ITSELF, not recomputed by a second
+    # classification: certify_order's three buckets are contiguous in its output, so a
+    # single scan that stops at the first branch outside the bucket is exact.
     for _br in $brs; do
         case "${_scan_extref[${_br#spira/}]:-}" in
             basefail:"$name":*) _fix_front="${_fix_front:+$_fix_front }$_br" ;;
@@ -852,28 +850,16 @@ for i in d:
         esac
     done
     [ -n "$_fix_front" ] && log "CHECK6 $name: base-fix branch(es) at front of queue: $_fix_front"
-
-    # EXPRESS SECOND: branches whose beads carry the express label are certified after
-    # base-fix but before everything else, so a critical bead does not wait behind
-    # alphabetical refname order. Base-fix stays first (three-bucket partition).
-    local _exp_label_land="${SPIRA_EXPRESS_LABEL:-express}"
-    local _fix_brs="" _expr_brs="" _tail_brs="" _br_sort
-    for _br_sort in $brs; do
-        _bid_sort="${_br_sort#spira/}"
-        case "${_scan_extref[$_bid_sort]:-}" in
-            basefail:"$name":*) _fix_brs="$_fix_brs $_br_sort"; continue ;;
-        esac
-        case " ${_scan_labels[$_bid_sort]:-} " in
-            *" $_exp_label_land "*) _expr_brs="$_expr_brs $_br_sort" ;;
-            *) _tail_brs="$_tail_brs $_br_sort" ;;
+    for _br in $brs; do
+        _id="${_br#spira/}"
+        case "${_scan_extref[$_id]:-}" in basefail:"$name":*) continue ;; esac
+        case " ${_scan_labels[$_id]:-} " in
+            *" $_exp_label_land "*) _expr_brs="$_expr_brs $_br" ;;
+            *) break ;;
         esac
     done
     [ -n "$_expr_brs" ] && \
         log "CHECK6 $name: express branch(es) certified first:${_expr_brs}"
-    brs=""
-    [ -n "$_fix_brs"  ] && brs="${_fix_brs# }"
-    [ -n "$_expr_brs" ] && brs="${brs:+$brs }${_expr_brs# }"
-    [ -n "$_tail_brs" ] && brs="${brs:+$brs }${_tail_brs# }"
 
     for br in $brs; do
         id="${br#spira/}"
@@ -1109,7 +1095,10 @@ for i in d:
                 _cq_n="$(queue_certified_list "$repo" 2>/dev/null | grep -c . || true)"
                 if [ "${_cq_n:-1}" -eq 0 ]; then
                     _ci_act="$("${SPIRA_FORGE:-$SPIRA_HOME/forge.sh}" runs-active "$repo" 2>/dev/null)" || _ci_act="?"
-                    if [ "${_ci_act:-?}" = 0 ]; then
+                    # certify_needs_gate (landing-lib.sh): the decision itself, over counts
+                    # already fetched above — the forge call is paid for only when there is
+                    # something to skip (cert queue empty), never to make this comparison.
+                    if [ "$(certify_needs_gate 1 "$_cq_n" "$_ci_act")" = skip ]; then
                         _cur_st="$(bdjson show "$id" 2>/dev/null | python3 -c '
 import sys,json
 try:d=json.load(sys.stdin)
@@ -1906,7 +1895,11 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
         local -a _t0_brs=() _t0_ids=() _t0_tips=()
         local -a _t1_brs=() _t1_ids=() _t1_tips=()
         local -a _t2_brs=() _t2_ids=() _t2_tips=()
-        local _p2_skip=0 _p2_ls _p2_ls_st _p2_ls_tip _p2_ls_at _p2_ls_reason _p2_ci _p2_br _p2_id _p2_tip _p2_stale_base _p2_base_ct
+        local _p2_skip=0 _p2_ls _p2_ls_st _p2_ls_tip _p2_ls_at _p2_ls_reason _p2_ci _p2_br _p2_id _p2_tip _p2_base_ct _p2_tier_out _p2_tier _p2_tag
+        # Read once: every branch in this phase-2 pass is classified against the same
+        # base, so one git log replaces what used to be a fresh read per conflicts-with-
+        # base candidate.
+        _p2_base_ct="$(git -C "$repo" log --format="%ct" -1 "$base" 2>/dev/null)"
         for _p2_ci in "${!_cert_brs[@]}"; do
             _p2_br="${_cert_brs[$_p2_ci]}"
             _p2_id="${_cert_beadids[$_p2_ci]}"
@@ -1914,30 +1907,21 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
             _p2_ls_st=""; _p2_ls_tip=""; _p2_ls_at=""; _p2_ls_reason=""
             _p2_ls="$(land_state "$_p2_id" 2>/dev/null || true)"
             read -r _p2_ls_st _p2_ls_tip _p2_ls_at _p2_ls_reason <<< "$_p2_ls"
-            if [ -z "${_p2_ls_st:-}" ]; then
+            # certify_tier (landing-lib.sh): the classification itself, over a landstate
+            # record already read and a base timestamp already fetched above.
+            _p2_tier_out="$(certify_tier "${_p2_ls_st:-}" "${_p2_ls_tip:-}" "${_p2_ls_at:-}" "${_p2_ls_reason:-}" "$_p2_tip" "${_p2_base_ct:-}")"
+            _p2_tier="${_p2_tier_out#tier=}"; _p2_tier="${_p2_tier%% *}"
+            _p2_tag="${_p2_tier_out#*reason=}"
+            if [ "$_p2_tier" = 0 ]; then
+                case "$_p2_tag" in
+                    cwb-stale-base) log "CHECK6 $_p2_id: RED conflicts-with-base stale (base advanced since ${_p2_ls_at}) — treating as never-gated" ;;
+                    tip-stale) log "CHECK6 $_p2_id: RED record tip stale (was ${_p2_ls_tip:-none}) — treating as never-gated" ;;
+                esac
                 _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip")
-            elif [ "${_p2_ls_st:-}" = RED ] && [ "${_p2_ls_reason:-}" = "conflicts-with-base" ]; then
-                # Base advancement check before tip check: an advancing base causes a rebase that changes the tip.
-                _p2_base_ct="$(git -C "$repo" log --format="%ct" -1 "$base" 2>/dev/null)"
-                if [ -n "${_p2_ls_at:-}" ] && [ -n "${_p2_base_ct:-}" ] && \
-                   [ "${_p2_base_ct:-0}" -gt "${_p2_ls_at:-0}" ] 2>/dev/null; then
-                    log "CHECK6 $_p2_id: RED conflicts-with-base stale (base advanced since ${_p2_ls_at}) — treating as never-gated"
-                    _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip")
-                elif [ "${_p2_ls_tip:-}" != "$_p2_tip" ]; then
-                    log "CHECK6 $_p2_id: RED record tip stale (was ${_p2_ls_tip:-none}) — treating as never-gated"
-                    _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip")
-                else
-                    _p2_skip=$(( _p2_skip + 1 ))
-                    log "CHECK6 $_p2_id: tip unchanged since RED mark (reason=conflicts-with-base) — skipping re-gate of $_p2_br"
-                fi
-            elif [ "${_p2_ls_st:-}" = RED ] && [ "${_p2_ls_tip:-}" != "$_p2_tip" ]; then
-                log "CHECK6 $_p2_id: RED record tip stale (was ${_p2_ls_tip:-none}) — treating as never-gated"
-                _t0_brs+=("$_p2_br"); _t0_ids+=("$_p2_id"); _t0_tips+=("$_p2_tip")
-            elif [ "${_p2_ls_st:-}" = RED ] && [ "${_p2_ls_tip:-}" = "$_p2_tip" ] && \
-                 [ "${_p2_ls_reason:-}" != "base-red" ]; then
+            elif [ "$_p2_tier" = skip ]; then
                 _p2_skip=$(( _p2_skip + 1 ))
                 log "CHECK6 $_p2_id: tip unchanged since RED mark (reason=${_p2_ls_reason:-unknown}) — skipping re-gate of $_p2_br"
-            elif [ "${_p2_ls_st:-}" = RED ]; then
+            elif [ "$_p2_tier" = 2 ]; then
                 _t2_brs+=("$_p2_br"); _t2_ids+=("$_p2_id"); _t2_tips+=("$_p2_tip")
             else
                 _t1_brs+=("$_p2_br"); _t1_ids+=("$_p2_id"); _t1_tips+=("$_p2_tip")
