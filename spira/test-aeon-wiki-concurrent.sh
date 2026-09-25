@@ -102,7 +102,13 @@ exec {_hold_fd}>"$WIKI/.git/spira-commit.lock"
 flock "$_hold_fd"
 
 # writer-a: write its file and attempt to commit — blocks on our held lock.
+# Each subshell inherits our $_hold_fd by fork(2): flock(2) locks belong to the open file
+# DESCRIPTION, not a single descriptor, so the lock stays held until every fd referring to
+# it is closed — closing our own copy below is not enough while a writer's inherited copy
+# is still open. Close it here first, or both writers deadlock on a lock nobody holds on
+# purpose, forever.
 (
+    exec {_hold_fd}>&-
     export GIT_AUTHOR_NAME=writer-a GIT_AUTHOR_EMAIL=writer-a@spira.local
     export GIT_COMMITTER_NAME=writer-a GIT_COMMITTER_EMAIL=writer-a@spira.local
     printf 'content-a\n' > "$WIKI/wiki/concurrent-a.md"
@@ -112,6 +118,7 @@ pid_a=$!
 
 # writer-b: write its file and attempt to commit — blocks on the same held lock.
 (
+    exec {_hold_fd}>&-
     export GIT_AUTHOR_NAME=writer-b GIT_AUTHOR_EMAIL=writer-b@spira.local
     export GIT_COMMITTER_NAME=writer-b GIT_COMMITTER_EMAIL=writer-b@spira.local
     printf 'content-b\n' > "$WIKI/wiki/concurrent-b.md"
