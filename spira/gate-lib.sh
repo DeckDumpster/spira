@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Sourced, never executed.
 # gate-lib.sh — the pure functions gate.sh's verdict depends on, split out so a T1 suite
 # can call them directly instead of paying for a full gate trial (git worktree, a branch
 # command, on a red a base command too) to exercise one branch of one function.
