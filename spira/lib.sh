@@ -2542,6 +2542,91 @@ outcome_charges() {      # outcome_charges <outcome> -> rc 0 when it may charge 
     case "${1:-}" in unlanded) return 0 ;; *) return 1 ;; esac
 }
 
+# bead_has_label <bd-show-json> <label> -> rc 0 if the label is present on the first row.
+# Pulled out of the read-after-claim poison check so it is a table row, not a grep.
+bead_has_label() {
+    python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+sys.exit(0 if d and sys.argv[1] in (d[0].get("labels") or []) else 1)' "${2:-}" <<<"${1:-}"
+}
+
+# aeon_disposition — the teardown decision for an OPEN bead at the end of one aeon.sh run,
+# pulled out of cleanup() so the precedence between its branches is a table, not read order
+# in a 300-line if-chain. cleanup() gathers every input below (each one is either a file the
+# heartbeat/harness left behind, or one more read of state cleanup() already needed) and
+# performs the side effects the returned verdict names; this function decides only.
+#
+# CHARGING IS DEFAULT-DENY: an attempt counts toward poison only when the trace can say the
+# WORK failed. Capacity loss, a slay, a thrash, an unfinished gate, a decision/operator wait,
+# a lane-cap timeout and a harness requeue are all evidence about something other than the
+# work, so they are exempted (free) and read `-` for requeue-cause when nothing offsets the
+# claim event, or that cause's own value when the caller must call bump_requeue/bump_lapsed
+# with it. Only `unlanded` (ran to its own end, left the bead open) and a lease lapse charge.
+#
+# Inputs, in precedence order (each yes/no unless noted, `-` standing in for "empty" so a
+# fixed-width read never loses a field to word-splitting):
+#   status            the bd-show status of the still-open bead (used only by the fallthrough)
+#   capacity_rc       0 if capacity_reset_at succeeded against this session's trace
+#   slain             .slain marker present
+#   thrash            .thrash marker present
+#   thrash_charged    the same branch's tip has now thrashed SPIRA_THRASH_STREAK_CAP times
+#   lapsed            .lapsed marker present
+#   gate_unfinished   gate_unfinished succeeded (a gate for this branch is still deciding)
+#   decision_blocked  the bead carries an open ask-labelled `blocks` dependency
+#   session_rc        SESSION_RC (claude CLI's own exit code)
+#   committed         "yes" if the verdict block found a commit naming this bead
+#   requeue_cause     REQUEUE_CAUSE if the harness itself reopened this bead, else `-`
+#   operator_wait     .operator-wait marker present
+#   yield_headless    session_yield_headless on this session's trace
+#   session_started   0 if the aeon died before the claude session ever ran
+#   outcome           session_outcome on this session's trace, else `-` when never started
+#
+# Output: one line, "<ledger-status> <charge|free> <requeue-cause> <note-key>".
+aeon_disposition() {
+    local status="$1" capacity_rc="$2" slain="$3" thrash="$4" thrash_charged="$5" \
+        lapsed="$6" gate_unfinished="$7" decision_blocked="$8" session_rc="$9" \
+        committed="${10}" requeue_cause="${11}" operator_wait="${12}" \
+        yield_headless="${13}" session_started="${14}" outcome="${15}"
+    [ "$requeue_cause" = "-" ] && requeue_cause=""
+    [ "$outcome" = "-" ] && outcome=""
+
+    if [ "$capacity_rc" = 0 ]; then printf 'capacity free - capacity\n'; return 0; fi
+    if [ "$slain" = yes ]; then printf 'slain free - slain\n'; return 0; fi
+    if [ "$thrash" = yes ]; then
+        if [ "$thrash_charged" = yes ]; then
+            printf 'requeue-thrash-charged charge thrash-stale thrash-charged\n'
+        else
+            printf 'requeue-thrash free thrash thrash\n'
+        fi
+        return 0
+    fi
+    # LEASE LAPSE IS A VERDICT — the one marker-driven branch that charges. See aeon.sh cleanup().
+    if [ "$lapsed" = yes ]; then printf 'lapsed charge - lapsed\n'; return 0; fi
+    if [ "$gate_unfinished" = yes ]; then printf 'gate-unfinished free - gate-unfinished\n'; return 0; fi
+    if [ "$decision_blocked" = yes ]; then
+        printf 'decision-blocked free unjudged-decision-blocked decision-blocked\n'; return 0
+    fi
+    if [ "$session_rc" = 124 ] && [ "$committed" != yes ]; then
+        printf 'timeout free - timeout\n'; return 0
+    fi
+    if [ -n "$requeue_cause" ]; then
+        printf 'requeue-%s free %s requeue\n' "$requeue_cause" "$requeue_cause"; return 0
+    fi
+    if [ "$operator_wait" = yes ]; then
+        printf 'operator-wait free unjudged-operator-wait operator-wait\n'; return 0
+    fi
+    if [ "$yield_headless" = yes ]; then printf 'yield-headless charge - yield-headless\n'; return 0; fi
+    if [ "$session_started" = 0 ]; then printf 'pre-session charge - pre-session\n'; return 0; fi
+    if outcome_charges "$outcome"; then
+        printf '%s charge - unlanded\n' "${status:-?}"
+    else
+        printf '%s free unjudged-%s not-judged\n' "${status:-?}" "$outcome"
+    fi
+}
+
 # session_yield_headless <logfile> -> 0 if the session's last turn ended waiting for a
 # background task notification. In headless mode there is no such channel: the session
 # terminates and background tasks are killed, leaving rc=0 with no diagnostic signal.
