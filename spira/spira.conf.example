@@ -99,6 +99,17 @@
 #
 # SPIRA_MAX_LIVE_AEONS = 6
 
+# ---- GITHUB APP IDENTITY ---------------------------------------------------------------
+# When set, git pushes from the harness are attributed to the App rather than to the
+# operator's SSH key. Set SPIRA_GH_APP_ID and SPIRA_GH_APP_INSTALLATION_ID here (or in
+# SPIRA_GH_APP_CONFIG), and point SPIRA_GH_APP_KEY at the private key PEM file.
+# See spira/git-credential-app.sh for credential resolution order.
+#
+# SPIRA_GH_APP_ID = 12345
+# SPIRA_GH_APP_INSTALLATION_ID = 67890
+# SPIRA_GH_APP_KEY = ~/.config/spira/github-app-key.pem
+# SPIRA_GH_APP_CONFIG = ~/.config/spira/github-app.env
+
 # ---- TIMEZONE -------------------------------------------------------------------------
 # Dates in logs and escalations. Empty means the host's local zone.
 #

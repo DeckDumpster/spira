@@ -624,7 +624,7 @@ ${_line#build-error: }" ;;
                 [ "$_rok" -eq 1 ] && _new_head="$(git -C "$_rwt" rev-parse HEAD)"
                 git -C "$repo" worktree remove -f "$_rwt" 2>/dev/null || true
                 if [ "$_rok" -eq 1 ] && [ -n "$_new_head" ]; then
-                    if git -C "$repo" push -f "$remote" \
+                    if spira_git_push "$repo" -f "$remote" \
                             "${_new_head}:refs/heads/${branch_name}" 2>/dev/null; then
                         _batch_reseal "$batch_file" "$_new_head" "${survivors[*]}"
                         _repushed=1
@@ -872,7 +872,7 @@ main() {
             current_base="$(git -C "$repo" rev-parse "$base" 2>/dev/null)" || current_base=""
 
             if [ "$current_base" = "$base_sha" ]; then
-                if git -C "$repo" push "$remote" "${batch_head}:${base_branch}" 2>/dev/null; then
+                if spira_git_push "$repo" "$remote" "${batch_head}:${base_branch}" 2>/dev/null; then
                     printf 'verdict %s: PR %s landed by fast-forward (%s)\n' \
                         "$name" "$pr_n" "$batch_head"
                     local _mm _mid _mtip
@@ -896,7 +896,7 @@ main() {
                     rm -f "$batch_file"
                     # Delete the batch branch now that the base has advanced past it.
                     if [ -n "${branch_name:-}" ]; then
-                        git -C "$repo" push -q "$remote" --delete "$branch_name" 2>/dev/null || true
+                        spira_git_push "$repo" -q "$remote" --delete "$branch_name" 2>/dev/null || true
                         if SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$branch_name" 2>/dev/null; then
                             printf 'verdict %s: deleted batch branch %s\n' "$name" "$branch_name"
                         else
@@ -944,7 +944,7 @@ main() {
                             _new_reb_head="$(git -C "$_rwt" rev-parse HEAD)"
                         git -C "$repo" worktree remove -f "$_rwt" 2>/dev/null || true
                         if [ "$_rok" -eq 1 ] && [ -n "$_new_reb_head" ]; then
-                            if git -C "$repo" push -f "$remote" \
+                            if spira_git_push "$repo" -f "$remote" \
                                     "${_new_reb_head}:refs/heads/${branch_name}" \
                                     2>/dev/null; then
                                 _batch_reseal_rebased "$batch_file" "$_new_reb_head" \
