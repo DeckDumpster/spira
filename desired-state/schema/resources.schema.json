@@ -1,0 +1,256 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "KindSpec",
+  "description": "The union of every kind's spec, published as one JSON Schema (`schema/resources.schema.json`).",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "Fleet"
+      ],
+      "properties": {
+        "Fleet": {
+          "$ref": "#/definitions/FleetSpec"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "Units"
+      ],
+      "properties": {
+        "Units": {
+          "$ref": "#/definitions/UnitsSpec"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "Store"
+      ],
+      "properties": {
+        "Store": {
+          "$ref": "#/definitions/StoreSpec"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "Cockpit"
+      ],
+      "properties": {
+        "Cockpit": {
+          "$ref": "#/definitions/CockpitSpec"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "Release"
+      ],
+      "properties": {
+        "Release": {
+          "$ref": "#/definitions/ReleaseSpec"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "Queue"
+      ],
+      "properties": {
+        "Queue": {
+          "$ref": "#/definitions/QueueSpec"
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "Flow"
+      ],
+      "properties": {
+        "Flow": {
+          "$ref": "#/definitions/FlowSpec"
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
+  "definitions": {
+    "CockpitSpec": {
+      "type": "object",
+      "properties": {
+        "dashboards": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "FleetSpec": {
+      "type": "object",
+      "required": [
+        "ceiling",
+        "lane_cap"
+      ],
+      "properties": {
+        "ceiling": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "lane_cap": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "partition_minimum": {
+          "default": {},
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "FlowSpec": {
+      "type": "object",
+      "properties": {
+        "dwell_limit_seconds": {
+          "default": {},
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          }
+        },
+        "velocity_floor": {
+          "default": {},
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0.0
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "QueueSpec": {
+      "type": "object",
+      "required": [
+        "base_gate_green",
+        "batch_width",
+        "cadence_seconds",
+        "max_stale_batches"
+      ],
+      "properties": {
+        "base_gate_green": {
+          "type": "boolean"
+        },
+        "batch_width": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "cadence_seconds": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "max_stale_batches": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ReleaseSpec": {
+      "type": "object",
+      "required": [
+        "release"
+      ],
+      "properties": {
+        "allow_override": {
+          "default": false,
+          "type": "boolean"
+        },
+        "release": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "StoreSpec": {
+      "type": "object",
+      "required": [
+        "reachable",
+        "schema_version"
+      ],
+      "properties": {
+        "reachable": {
+          "type": "boolean"
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "UnitSpec": {
+      "type": "object",
+      "required": [
+        "active",
+        "enabled",
+        "name"
+      ],
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "UnitsSpec": {
+      "type": "object",
+      "properties": {
+        "units": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/UnitSpec"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
