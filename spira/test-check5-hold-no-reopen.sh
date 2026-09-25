@@ -48,7 +48,7 @@ stub sending.sh    'exit 0'
 stub reflect.sh    'exit 0'
 stub ask.sh        'true'
 
-printf 'FAYTH_LABELS="spira,${SPIRA_PLAN_LABEL}"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/t.fayth"
+printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/t.fayth"
 
 PUSH_NAME="$(basename "$PUSH_REPO")"
 HOLD_NAME="$(basename "$HOLD_REPO")"
