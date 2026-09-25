@@ -203,8 +203,30 @@ prune2_log="$(cat "$SCTL_LOG")"
 # The watcher prune handles spira-watch-*; the non-watcher prune must skip it.
 # (The watcher prune will also disable it since it is not in the manifest.)
 # Either way: verify the non-watcher prune did not emit a second 'pruned' line for it.
-nowant "watcher-skip: non-watcher prune loop did not emit pruned for watcher unit" \
-       "pruned    $WATCHER_UNIT" "$prune2_out"
+# A STRUCTURED CHECK, not a literal-whitespace substring: install.sh's non-watcher
+# prune line is `printf 'pruned    %s (...)\n' "$u"`, and matching that exact run of
+# spaces ties the test to formatting that has nothing to do with the property under
+# test (whether the non-watcher loop double-prunes a watcher unit). Field-splitting
+# is whitespace-insensitive, so a later reformat of the message does not desync this
+# from what it actually means.
+#
+# POSITIVE CONTROL: prove the matcher can find a real "pruned <unit>" line before
+# trusting its silence on $prune2_out.
+if printf 'pruned    %s (no longer in the manifest)\n' "$WATCHER_UNIT" \
+        | awk -v u="$WATCHER_UNIT" '$1 == "pruned" && $2 == u { found=1 } END { exit !found }'; then
+    ok "watcher-skip: positive control — the matcher detects a real pruned line"
+else
+    bad "watcher-skip: positive control — the matcher detects a real pruned line" \
+        "matcher was silent on a synthetic 'pruned $WATCHER_UNIT' line"
+fi
+
+if printf '%s\n' "$prune2_out" \
+        | awk -v u="$WATCHER_UNIT" '$1 == "pruned" && $2 == u { found=1 } END { exit !found }'; then
+    bad "watcher-skip: non-watcher prune loop did not emit pruned for watcher unit" \
+        "found a 'pruned $WATCHER_UNIT' line in: $prune2_out"
+else
+    ok "watcher-skip: non-watcher prune loop did not emit pruned for watcher unit"
+fi
 
 # ==========================================================================
 echo
