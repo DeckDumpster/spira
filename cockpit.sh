@@ -132,7 +132,10 @@ cockpit_intact() {
 ensure_concierge() {
     local c="$HERE/concierge.sh"
     [ -x "$c" ] || { echo "  concierge: no concierge.sh at $c" >&2; return 0; }
-    bash "$c" start 2>&1 | sed 's/^/  /'
+    # CONCIERGE_RECOVER_HEADLESS: a claude that outlived its tmux server is replaced (resumed by
+    # id) instead of refusing — the operator ran this to be put in a working cockpit, and a
+    # printed recovery recipe is the hand step this command exists to remove.
+    CONCIERGE_RECOVER_HEADLESS=1 bash "$c" start 2>&1 | sed 's/^/  /'
 }
 
 # THE SESSION PANE MUST BE A CLIENT OF THE CONCIERGE. Under Option A (concierge.sh) the
@@ -157,7 +160,12 @@ pane_is_concierge_client() {
 }
 ensure_session_pane() {
     local p; p="$(session_pane)"
-    if [ -z "$p" ]; then echo "  session pane: none in ${DASH_SESSION}:0 — layout is wrong" >&2; return 1; fi
+    if [ -z "$p" ]; then
+        # The pane exits when its concierge client does; layout.sh ensure reopens it.
+        bash "$HERE/cockpit/layout.sh" ensure 2>&1 | sed 's/^/  /'
+        p="$(session_pane)"
+        [ -n "$p" ] || { echo "  session pane: none in ${DASH_SESSION}:0 and ensure did not reopen it" >&2; return 1; }
+    fi
     if pane_is_concierge_client "$p"; then echo "  session pane: attached to the concierge"; return 0; fi
     [ -x "$HERE/concierge.sh" ] || { echo "  session pane: no concierge.sh" >&2; return 1; }
     tmux respawn-pane -k -t "$p" "$HERE/concierge.sh here" 2>/dev/null || { echo "  session pane: respawn failed" >&2; return 1; }
@@ -185,9 +193,11 @@ attach_operator() {
 
 if [ "$FORCE" != 1 ] && cockpit_intact; then
     echo "cockpit: already up — healing in place (no dashboards respawned)"
-    bash "$HERE/cockpit/layout.sh" ensure 2>&1 | sed 's/^/  /'
+    # The concierge first: the session pane is a client of it, and a pane opened onto a
+    # concierge that is not there exits at once and leaves the cockpit without it.
     ensure_concierge
-    ensure_session_pane
+    bash "$HERE/cockpit/layout.sh" ensure 2>&1 | sed 's/^/  /'
+    ensure_session_pane || echo "cockpit: WARNING — the session pane is not attached to the concierge (see above)" >&2
     attach_operator
     exit 0
 fi
@@ -203,6 +213,6 @@ bash "$REBUILD" "${_ck_args[@]}"; _ck_rc=$?
 # rebuild.sh cannot see.
 ensure_concierge
 [ "$_ck_rc" = 0 ] || cockpit_intact || { echo "cockpit: rebuild failed (rc $_ck_rc); not attaching" >&2; exit "$_ck_rc"; }
-ensure_session_pane
+ensure_session_pane || echo "cockpit: WARNING — the session pane is not attached to the concierge (see above)" >&2
 attach_operator
 exit "$_ck_rc"

@@ -203,7 +203,15 @@ concierge_live_pid() {
         [ "$pid" = "$$" ] && continue
         # guard the read: the glob races process exit, and the shell's own error precedes tr's.
         [ -r "$f" ] || continue
-        { tr '\0' '\n' < "$f" | grep -qF -- "$sid"; } 2>/dev/null || continue
+        # IDENTITY, NOT A SUBSTRING. Any process whose command line merely MENTIONS the id —
+        # a `tail -F` of the transcript, a shell the session itself spawned — matched here and
+        # was reported as a headless concierge, refusing every start until it was killed by
+        # hand (2026-09-25). A holder is a claude executable resumed ON this id.
+        local argv0 args
+        argv0="$(tr '\0' '\n' < "$f" 2>/dev/null | head -1)" || continue
+        [ "${argv0##*/}" = claude ] || continue
+        args="$(tr '\0' '\n' < "$f" 2>/dev/null)" || continue
+        [[ "$args" == *$'\n'--resume$'\n'"$sid"* ]] || continue
         printf '%s' "$pid"
         return 0
     done
@@ -274,7 +282,14 @@ start)
                 "$RESUME_ID" "$_live" "$SOCKET" >&2
             printf '  the claude client outlived its tmux server; it cannot be attached to.\n' >&2
             printf '  recover:  kill %s && %s start\n' "$_live" "$0" >&2
-            exit 3
+            # cockpit.sh sets this: the operator's one command performs the recovery above
+            # rather than printing it. The conversation is resumed by id, so nothing is lost
+            # but the turn in flight — and a headless one cannot be reached locally anyway.
+            [ "${CONCIERGE_RECOVER_HEADLESS:-0}" = 1 ] || exit 3
+            printf '  recovering: killing headless pid %s\n' "$_live" >&2
+            kill "$_live" 2>/dev/null
+            for _i in 1 2 3 4 5 6 7 8 9 10; do [ -d "/proc/$_live" ] || break; sleep 0.5; done
+            [ -d "/proc/$_live" ] && { printf '  pid %s did not exit; not starting a second\n' "$_live" >&2; exit 3; }
         }
     fi
     command -v claude >/dev/null || { echo "concierge: claude not on PATH" >&2; exit 1; }
