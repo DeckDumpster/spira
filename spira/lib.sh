@@ -3498,6 +3498,37 @@ for i in (d if isinstance(d, list) else [d]):
     return 0
 }
 
+# check4_closed_branched -> closed beads in fayth partitions with a branch: label.
+# id TAB comma-separated-labels, one per line; deduped. Used by sentinel CHECK 4 to
+# find beads that cycle closed without landing so the requeue cap can reach them.
+check4_closed_branched() {
+    local labels exclude
+    {
+        while IFS=$'\t' read -r labels exclude; do
+            [ -n "$labels" ] || continue
+            bdjson list --limit 0 --label "$labels" --status closed 2>/dev/null \
+            | SPIRA_EXCL="$exclude" python3 -c '
+import json, os, sys
+excl = {x for x in (os.environ.get("SPIRA_EXCL") or "").split(",") if x}
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+for i in (d if isinstance(d, list) else [d]):
+    if i.get("status") != "closed":
+        continue
+    if i.get("issue_type") in ("epic", "event"):
+        continue
+    if excl & set(i.get("labels") or []):
+        continue
+    lbls = i.get("labels") or []
+    if not any(l.startswith("branch:") for l in lbls):
+        continue
+    print(i["id"] + "\t" + ",".join(lbls))
+' 2>/dev/null
+        done < <(fayth_partitions)
+    } | awk -F'\t' 'NF && !seen[$1]++'
+    return 0
+}
+
 # _check4_bulk_sql <in-clause> -> SQL returning attempts and reopens for each id in the clause
 _check4_bulk_sql() {
     printf "select issue_id, greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end), 0) as att, sum(case when event_type='reopened' then 1 else 0 end) as rep from events where issue_id in (%s) group by issue_id" "$1"
