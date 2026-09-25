@@ -511,6 +511,34 @@ fi
 # enough and an escalation bead is worth the noise.
 DRAIN_WARN_MINS="${SPIRA_DRAIN_WARN_MINS:-15}"
 
+# ---------------------------------------------------------------------------------------
+# FAILED SYSTEMD UNITS (sp-niqjl). doctor.sh's doctor_check_failed_units does the one-pass
+# read of `systemctl --user list-units --state=failed`; this is that same read, direct
+# rather than through the collector, because the escalation below needs the CURRENT list,
+# not a snapshot that could be stale by exactly the margin an unwatched failing unit sat
+# for (spira-czar-pass-prod.service: four days, 11,000 failures, nothing looked).
+#
+# PROBE FAILURE RENDERS ?, NEVER 0 (law-absence-needs-a-positive-control): an unreachable
+# systemd user manager is not the same fact as "no failed units", and must not read as
+# a clean bill of health.
+# ---------------------------------------------------------------------------------------
+SYSTEMCTL="${SPIRA_SYSTEMCTL:-systemctl}"
+failed_units=()
+SP_FAILED_UNITS="?"
+if _fu_raw="$("$SYSTEMCTL" --user list-units --state=failed --no-legend 'spira-*' 2>/dev/null)"; then
+    SP_FAILED_UNITS=0
+    while IFS= read -r _fu_line; do
+        [ -n "$_fu_line" ] || continue
+        failed_units+=("${_fu_line%% *}")
+        SP_FAILED_UNITS=$((SP_FAILED_UNITS + 1))
+    done <<< "$_fu_raw"
+fi
+_fu_names="${failed_units[*]:-}"
+
+# How old (in minutes) a persistently failing unit must be before it becomes an anomaly
+# handed to Ops — see the escalation below, after the prompt file is written.
+FAILED_UNITS_WARN_MINS="${SPIRA_FAILED_UNITS_WARN_MINS:-15}"
+
 # How old the oldest unsent branch must be (in hours) before the Sending escalation fires.
 # An unsent branch belonging to a live in_progress bead is work in flight; the escalation is
 # for branches that have been waiting far longer than any single bead should take.
@@ -977,6 +1005,7 @@ reading \`?\` is one this pass COULD NOT READ — never treat it as a zero.
   throttle                            ${throttle_since:-clear}      (stamp: queue-throttled; depth at engage: ${throttle_depth:-—})
   draining since (? = cannot read)    ${drain_mins}      minutes   (stamp: world.draining)
   aeons alive                         ${aeons_live}      (counted now, not from the snapshot)
+  FAILED UNITS                        $(g SP_FAILED_UNITS)      ${_fu_names:-}   (>${FAILED_UNITS_WARN_MINS}m failing escalates; ? = systemctl unreachable)
   beads in progress                   $(g SP_INPROG)
   ready to claim                      $(g SP_READY)
   poisoned                            $(g SP_POISON)
@@ -1061,6 +1090,78 @@ if [ -n "$halt_since" ]; then
     exit 0
 fi
 
+# SPIRA_INCIDENT_SH overrides the path so test suites can inject a mock without reaching
+# a real database. Same seam sentinel.sh carries for systemctl. Defined here, ahead of the
+# nominal check below, because the failed-units escalation runs on every non-halted pass —
+# nominal or not, a unit that just started failing still needs its clock started.
+INC="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
+
+# ---------------------------------------------------------------------------------------
+# FAILED UNITS ESCALATION. systemd's own timestamps cannot answer "how long has this been
+# down" for a unit crash-looping every 30s — RestartSec re-enters "activating" and then
+# "failed" again on every cycle, so ActiveEnterTimestamp et al. never age past one restart
+# interval. FAILED_UNITS_STATE persists the first pass each unit was SEEN failing, so age
+# survives across sweeps regardless of how often systemd itself resets.
+#
+# ONE ANOMALY PER FAILURE, NOT PER PASS. The state file's third field is an "escalated"
+# flag: once set, later passes see the same unit still failing and do not file again — a
+# unit failing every 30s must produce one open incident, not thousands (sp-niqjl). A unit
+# that recovers (absent from the current failed list) is dropped from the state file, so a
+# later, unrelated failure of the same unit starts its own clock and can escalate again.
+#
+# RUN UNCONDITIONALLY ON EVERY NON-HALTED PASS, nominal or not — a nominal pass exits
+# early below, and a unit that just started failing (age below threshold, so still
+# "nominal" by the check above) would never get its first-seen timestamp recorded if this
+# ran only on the non-nominal path, making every unit's very first failed minute invisible.
+#
+# ONLY WHEN THE PROBE SUCCEEDED (SP_FAILED_UNITS != ?). Writing to the state file on an
+# unreadable probe would either wipe every unit's clock (nothing to iterate) or leave a
+# stale flag stuck past the unit's real recovery; skipping costs only that pass's row.
+# ---------------------------------------------------------------------------------------
+FAILED_UNITS_STATE="${SPIRA_FAILED_UNITS_STATE:-$SPIRA_RUN/failed-units.state}"
+JOURNALCTL="${SPIRA_JOURNALCTL:-journalctl}"
+if [ "$SP_FAILED_UNITS" != "?" ]; then
+    _fu_now="$(date +%s)"
+    _fu_new_state=""
+    for _fu_unit in "${failed_units[@]:-}"; do
+        [ -n "$_fu_unit" ] || continue
+        _fu_first="$_fu_now"; _fu_esc=0
+        _fu_prev="$(awk -v u="$_fu_unit" '$1==u{print $2, $3}' "$FAILED_UNITS_STATE" 2>/dev/null)"
+        if [ -n "$_fu_prev" ]; then
+            _fu_first="${_fu_prev%% *}"
+            _fu_esc="${_fu_prev##* }"
+        fi
+        case "$_fu_first" in ''|*[!0-9]*) _fu_first="$_fu_now" ;; esac
+        case "$_fu_esc" in 0|1) : ;; *) _fu_esc=0 ;; esac
+        _fu_age_mins=$(( (_fu_now - _fu_first) / 60 ))
+        if [ "$_fu_esc" -eq 0 ] && [ "$_fu_age_mins" -ge "$FAILED_UNITS_WARN_MINS" ]; then
+            if [ -x "$INC" ] || [ -r "$INC" ]; then
+                _fu_logs="$("$JOURNALCTL" --user -u "$_fu_unit" -n 3 --no-pager 2>&1)"
+                _fu_first_disp="$(date -u -d "@$_fu_first" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '@%s' "$_fu_first")"
+                printf '%s has been failing for %sm (first seen failing %s)\n\nLast 3 log lines:\n%s\n\nCheck: journalctl --user -u %s -n 50\n' \
+                    "$_fu_unit" "$_fu_age_mins" "$_fu_first_disp" "$_fu_logs" "$_fu_unit" | \
+                SPIRA_DB="$SPIRA_DB" \
+                SPIRA_INCIDENT_TYPE=task \
+                SPIRA_INCIDENT_PRIORITY=1 \
+                SPIRA_INCIDENT_ACTOR=watchtower \
+                SPIRA_SIN_EXEMPT=1 \
+                SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
+                SPIRA_INCIDENT_REF="incident:failed-unit-${_fu_unit}" \
+                SPIRA_INCIDENT_CAUSE=failed-unit \
+                bash "$INC" file "FAILED UNIT: ${_fu_unit} failing for ${_fu_age_mins}m" - >/dev/null || true
+                log "watchtower: failed-unit escalation filed (${_fu_unit}, ${_fu_age_mins}m)"
+            else
+                log "watchtower: $INC is missing — failed-unit escalation not filed"
+            fi
+            _fu_esc=1
+        fi
+        _fu_new_state="${_fu_new_state}${_fu_unit} ${_fu_first} ${_fu_esc}
+"
+    done
+    printf '%s' "$_fu_new_state" > "${FAILED_UNITS_STATE}.tmp" 2>/dev/null && \
+        mv -f "${FAILED_UNITS_STATE}.tmp" "$FAILED_UNITS_STATE" 2>/dev/null || true
+fi
+
 # ---------------------------------------------------------------------------------------
 # SKIP WHEN NOMINAL. Every signal computed above is a positive measurement; '?' means a
 # probe failed. Nominal requires all four: no lapses since the last pass (lapsed_count=0),
@@ -1084,13 +1185,11 @@ if [ "$lapsed_count" = "0" ] && \
    [ -z "$drain_since" ] && \
    [ -z "$throttle_since" ] && \
    [ "$_disk_breach" = 0 ] && \
-   [ "$_mem_breach" = 0 ]; then
+   [ "$_mem_breach" = 0 ] && \
+   [ "$SP_FAILED_UNITS" = "0" ]; then
     nominal=1
 fi
 
-# SPIRA_INCIDENT_SH overrides the path so test suites can inject a mock without reaching
-# a real database. Same seam sentinel.sh carries for systemctl.
-INC="${SPIRA_INCIDENT_SH:-$(dirname "$0")/incident.sh}"
 PROMPT_FILE="${SPIRA_WATCH_PROMPT_FILE:-$SPIRA_RUN/ops-sweep-prompt.txt}"
 
 if [ "$nominal" = "1" ]; then
