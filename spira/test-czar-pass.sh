@@ -73,6 +73,9 @@ CZAR_PASS_ROOT="$HERE/../czar-pass"
 CZAR_PASS_BIN="$CZAR_PASS_ROOT/target/release/czar-pass"
 if [ ! -x "$CZAR_PASS_BIN" ]; then
     cp -r "$CZAR_PASS_ROOT/." "$T/czar-pass-src"
+    # czar-pass depends on ../reconciler-engine (a path dependency, sp-pu7v6) — copied as
+    # a sibling of the isolated build tree so that relative path still resolves.
+    cp -r "$HERE/../reconciler-engine" "$T/reconciler-engine"
     printf '  (building czar-pass into %s)\n' "$T/czar-pass-target"
     CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/czar-pass-target" \
         "$CARGO_BIN" build --release \
