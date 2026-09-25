@@ -1126,12 +1126,13 @@ spira_conf_defaults() {
     # tree they carry rather than the installed copy. Transitions are written by
     # suites.sh quarantine|disable|activate, which commit the file on a branch.
     : "${SPIRA_SUITE_STATE_FILE:=spira/suite-state}"
-    # AUTOMATIC-QUARANTINE THRESHOLDS. The queue quarantines a suite once it has
-    # SPIRA_FLAKE_QUARANTINE_AT flake observations within SPIRA_FLAKE_WINDOW seconds.
+    # FLAKE-REPORT THRESHOLD. suites.sh observe-flake files a bead once a suite has
+    # SPIRA_FLAKE_QUARANTINE_AT flake observations within SPIRA_FLAKE_WINDOW seconds. It never
+    # writes suite-state itself — only a human-driven `suites.sh quarantine` does that.
     : "${SPIRA_FLAKE_QUARANTINE_AT:=2}"
     : "${SPIRA_FLAKE_WINDOW:=604800}"
-    # HOW MANY CONSECUTIVE CLEAN HOURLY RUNS lift an automatic quarantine, and how
-    # long a quarantine may stand before the operator is mailed.
+    # HOW MANY CONSECUTIVE CLEAN HOURLY RUNS lift a hand-placed quarantine, and how
+    # long one may stand before the operator is mailed.
     : "${SPIRA_QUARANTINE_CLEAN_RUNS:=10}"
     : "${SPIRA_QUARANTINE_MAX_AGE:=604800}"
     # ---- MERGE QUEUE (queue land mode) -------------------------------------------------
