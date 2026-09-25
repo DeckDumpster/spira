@@ -162,7 +162,7 @@ def main():
     if cmd == "sql":
         query = argv[1]
         m = re.search(
-            r"INSERT INTO events .*VALUES \('([^']*)', '([^']*)', '([^']*)', '([^']*)', '([^']*)', NOW\(\)\)",
+            r"INSERT INTO events .*VALUES \('([^']*)', '([^']*)', '([^']*)', '([^']*)', '([^']*)', \w+\(\)\)",
             query,
         )
         if m:
