@@ -22,8 +22,13 @@
 # act-mode acceptance. A fence that silently allows both modes is indistinguishable
 # from a fence that is absent.
 #
+# The 11 static conf/fayth/brief grep rows this suite used to carry (czar.fayth names
+# czar-fence.sh, czar.md names CZAR-WOULD/shadow/czar-fence.sh, and all 7 stage keys are in
+# conf.sh's allowlist) moved to test-czar-lint.sh (T0) — they read text, not behaviour, and
+# gap 11 of docs/test-plan/safety-fences.md is the citation for the move.
+#
 # tier: T1
-# covers: spira/czar-fence.sh spira/conf.sh spira/chamber/czar.fayth spira/chamber/czar.md spira/queue.sh spira/lib.sh spira/aeon.sh spira/watchtower.sh UC-safety-fences-31
+# covers: spira/czar-fence.sh spira/queue.sh spira/lib.sh spira/aeon.sh spira/watchtower.sh UC-safety-fences-31
 # hermetic-ok: no database, no systemd; queue.sh fence fires before any db access
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -112,45 +117,6 @@ for pair in "attribution-failed:ATTRIBUTION_FAILED" \
     rc=0; eval "${var}=act \"$FENCE\" \"$cls\"" >/dev/null 2>&1 && rc=0 || rc=$?
     [ "$rc" -eq 0 ] && ok "$cls → $var (act mode)" \
                     || bad "$cls → $var: expected exit 0 in act, got $rc"
-done
-
-# ==========================================================================================
-echo
-echo "czar.fayth FAYTH_TOOLS includes czar-fence.sh"
-# ==========================================================================================
-fayth_file="$HERE/chamber/czar.fayth"
-if [ -f "$fayth_file" ]; then
-    tools_line="$(grep '^FAYTH_TOOLS=' "$fayth_file" 2>/dev/null || true)"
-    want "FAYTH_TOOLS includes czar-fence.sh" "czar-fence.sh" "$tools_line"
-else
-    bad "czar.fayth not found at $fayth_file"
-fi
-
-# ==========================================================================================
-echo
-echo "czar.md brief mentions CZAR-WOULD note format and czar-fence.sh"
-# ==========================================================================================
-brief_file="$HERE/chamber/czar.md"
-if [ -f "$brief_file" ]; then
-    content="$(cat "$brief_file" 2>/dev/null)"
-    want "czar.md mentions CZAR-WOULD" "CZAR-WOULD" "$content"
-    want "czar.md mentions shadow" "shadow" "$content"
-    want "czar.md mentions czar-fence.sh" "czar-fence.sh" "$content"
-else
-    bad "czar.md not found at $brief_file"
-fi
-
-# ==========================================================================================
-echo
-echo "all 7 SPIRA_CZAR_STAGE_* keys in SPIRA_CONF_KEYS allowlist"
-# ==========================================================================================
-conf_sh="$HERE/conf.sh"
-[ -f "$conf_sh" ] || { bad "conf.sh not found"; }
-for sfx in DEADLOCK ATTRIBUTION_FAILED SORT_FAILED LOOP_STALLED CI_STALLED STARVED CI_RED; do
-    key="SPIRA_CZAR_STAGE_${sfx}"
-    grep -q "$key" "$conf_sh" 2>/dev/null \
-        && ok "$key in SPIRA_CONF_KEYS" \
-        || bad "$key missing from SPIRA_CONF_KEYS"
 done
 
 echo

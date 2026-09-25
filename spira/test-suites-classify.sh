@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: spira/suites.sh UC-test-infrastructure-25 UC-test-infrastructure-26 UC-test-infrastructure-29
+# covers: spira/suites.sh spira/host-check.sh UC-test-infrastructure-25 UC-test-infrastructure-26 UC-test-infrastructure-29 UC-safety-fences-27
 # host-reason: sources suites.sh's pure functions (classify, fingerprint, cause_fp, record_*,
 #   unreached_*) directly, through its source guard; no container, no process, no database.
 #
@@ -104,5 +104,27 @@ wantrc "unreached_clear: read fails again" 1 \
     "$(unreached_read test-fake-b.sh >/dev/null 2>&1; echo $?)"
 is "unreached_clear: the .result verdict it sat beside survives the clear" red \
     "$(record_read test-fake-b.sh | awk '{print $1}')"
+
+# --- cmd_status: the host-reason/wave-2 migration lines (UC-safety-fences-27, gap 12) -----
+# Moved from safety-fences' test-host-reason.sh, which owns host-check.sh's own fence rows;
+# this is the suites.sh side, and it runs UNCONDITIONALLY. The rows it replaces sat inside an
+# `if [[ "$status_out" =~ ... ]]` that silently skipped the value-format check whenever the
+# label text was absent — gap 12's own description of a silent skip. Here the label's
+# presence is asserted first with `want` (which fails loudly, not skips, if it is gone), and
+# the value-format check always runs, `bad` on an empty match rather than never running.
+status_out="$(cmd_status)"
+want "cmd_status names the host-reason line" "host suites without # host-reason:" "$status_out"
+hr_val="$(printf '%s\n' "$status_out" | sed -n 's/.*host suites without # host-reason:[[:space:]]*//p')"
+case "$hr_val" in
+    [0-9]*|'?') ok "host-reason count renders a number or ? [$hr_val]" ;;
+    *) bad "host-reason count renders a number or ?" "got [$hr_val]" ;;
+esac
+
+want "cmd_status includes the wave-2 migration line" "copying/stubbing" "$status_out"
+wave2_val="$(printf '%s\n' "$status_out" | grep 'copying/stubbing' | grep -oE '[0-9]+|\?' | head -1)"
+case "${wave2_val:-}" in
+    [0-9]*|'?') ok "wave-2 copying count renders a number or ? [${wave2_val:-?}]" ;;
+    *) bad "wave-2 copying count renders a number or ?" "got [${wave2_val:-}]" ;;
+esac
 
 tl_summary
