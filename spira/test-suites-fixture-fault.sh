@@ -56,7 +56,7 @@ _BD_REAL="$(command -v bd 2>/dev/null || true)"
 
 SH="$TMP/spira"; RUN="$TMP/run"; STATE="$TMP/state"; GATEF="$TMP/gate-suites"
 mkdir -p "$SH" "$RUN" "$STATE" "$TMP/repo"
-cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" \
+cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$HERE/incident-dedup-decision.py" \
    "$HERE/testdb.sh" "$HERE/suite-covers.sh" "$HERE/suite-state.sh" "$SH/"
 # SCAR: sp-5l05i — the fixture's cp list omitted suite-covers.sh; lib.sh sources it at boot,
 # so without it suite_covers_of was undefined and suites.sh misclassified suites.

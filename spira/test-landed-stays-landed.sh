@@ -179,8 +179,8 @@ if grep -qF "log --format='%s' -n 1" "$_window_probe"; then
     _probe_out="$(sentinel)"
     _probe_status="$(status_of sp-deep)"
     cp "$SENTINEL_REAL" "$SH/sentinel.sh"   # restore from pristine copy, not from $SH
-    probe_is "probe: windowed sentinel reopens sp-deep" open "$_probe_status"
-    probe_want "probe: pass says reopened sp-deep" "reopened sp-deep" "$_probe_out"
+    is "probe: windowed sentinel reopens sp-deep" open "$_probe_status"
+    want "probe: pass says reopened sp-deep" "reopened sp-deep" "$_probe_out"
     # Reset db cleanly — bead was modified by the probe; git state (commits) stays.
     testdb_reset
     testdb_seed <<JSONL2 || { echo "reseed after probe failed"; exit 1; }

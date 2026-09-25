@@ -51,7 +51,7 @@ testdb_up suites-unreached || { echo "test-suites-unreached: could not build a f
 
 SH="$TMP/spira"; RUN="$TMP/run"; STATE="$TMP/state"; GATEF="$TMP/gate-suites"
 mkdir -p "$SH" "$RUN" "$STATE" "$TMP/home" "$TMP/repo"
-cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$SH/"
+cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$HERE/incident-dedup-decision.py" "$SH/"
 
 # Knobs — every one pinned away from the shipped default.
 BUDGET=60; PERSUITE=5; STALE=3600; PRIO=3; REPONAME=unreached-fixture
