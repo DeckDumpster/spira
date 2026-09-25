@@ -16,7 +16,9 @@
 #   3. POSITIVE CONTROL. No fix bead. All branches held by BASE_FAIL. None certified; no
 #      fix-front log.
 #
-#   4. BUDGET EXEMPT. With tight budget, fix branch gated; ten others deferred.
+#   4. BUDGET EXEMPT. With tight budget, fix branch is gated anyway; ten others are not
+#      certified. gate_fits' own budget-cut log is covered by test-landing-gate-wait.sh,
+#      not here.
 #
 # defect: sp-lnprs
 # covers: spira/landing.sh spira/lib.sh
@@ -267,7 +269,9 @@ out="$(landing_tight)"
 
 want "budget-exhaustion bypass logged"     "base-fix branch — gating despite budget exhaustion" "$out"
 want "fix branch certified despite budget" "certified spira/sp-fix"                             "$out"
-want "budget cut logged for others"        "budget cut at"                                      "$out"
+for i in $(seq -w 0 9); do
+    nowant "sp-other-$i not certified under tight budget" "certified spira/sp-other-$i" "$out"
+done
 
 drop_branch sp-fix; drop_others; rm -rf "$RUN/submitted"
 
