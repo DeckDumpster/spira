@@ -15,18 +15,20 @@
 #       from ghost classification.
 #
 #   test-check2-reclaim.sh verifies the skip label is applied/removed by protect_waiting.
-#   test-strand-partition.sh verifies strand-classify.py respects the labels in isolation
-#   (D7: merged in from the now-deleted test-reclaim-needs-ryan.sh).
+#   test-strand-partition.sh's ghost-classifier cases verify strand-classify.py respects
+#   the labels in isolation (D7: merged from the now-deleted test-reclaim-needs-ryan.sh).
 #   THIS TEST verifies the chain end-to-end: protect_waiting labels the bead in the real
 #   database, the label is present in the data extracted from the database and fed to the
 #   ghost check, and the ghost check does not raise ghost for the labeled bead.
 #
-# THREE CASES (all sides exercised — law-absence-needs-a-positive-control):
+# THREE CASES (all sides exercised — law-absence-needs-a-positive-control). The plain
+# dead-worker positive control lives with the rest of the classifier table in
+# test-strand-partition.sh (D7) — this file keeps only the chain a hermetic classifier
+# fixture cannot exercise: a real database write reaching the classifier's input.
 #
 #   1. CHAIN — BEFORE PROTECTION: work bead has expired lease + ask dep, but protect_waiting
-#      has not run yet (no SKIP label on the bead). Ghost IS raised. This is this suite's own
-#      positive control (D7 dropped the fixture-only duplicate of test-strand-partition.sh's
-#      control) AND proves the fix below was necessary.
+#      has not run yet (no SKIP label on the bead). Ghost IS raised — proving the fix was
+#      necessary and that a stale-lease work bead is ghost-eligible by default.
 #
 #   2. CHAIN — PROTECTED: protect_waiting applies SKIP to the work bead (the ask dep is
 #      still open). The same bead, re-extracted from the real database, is NOT ghost. This
@@ -37,21 +39,17 @@
 #      re-extracted, IS ghost again — confirming the protection is lifted once an answer
 #      arrives and the bead is returned to the reaper for normal reclaim.
 #
-# All three cases run against a real fixture database (testdb.sh) for protect_waiting; JSON
-# is extracted from the database and fed to strand-classify.py. A past lease is injected into
-# the extracted JSON so the time condition in the ghost check fires; the rest of the data is
-# live from the DB.
+# A real fixture database (testdb.sh) drives protect_waiting; JSON extracted from it feeds
+# strand-classify.py. A past lease is injected into the extracted JSON so the time condition
+# in the ghost check fires; the rest of the data is live from the DB.
 #
+# tier: T2
 # defect: sp-9zpm
-# covers: spira/lib.sh spira/strand-classify.py
+# covers: spira/lib.sh spira/strand-classify.py UC-dispatch-21
 # hermetic-ok: uses a fixture database, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -102,7 +100,7 @@ echo "test-reclaim-escalated.sh"
 
 # ======================================================================================
 echo
-echo "case 1 — chain before protection (also this suite's positive control): work bead without skip label IS ghost:"
+echo "case 1 — chain before protection: work bead without skip label IS ghost:"
 # ======================================================================================
 # This is the exact pre-fix state: the work bead is IN_PROGRESS with an ask dep, but
 # neither the ask label nor the skip label appears on the work bead itself. The ghost
@@ -152,5 +150,4 @@ out="$(classify_with_lease "$raw_json")"
 want   "after answer: ghost IS raised"  "ghost"    "$out"
 want   "after answer: bead named"      "sp-work0"  "$out"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

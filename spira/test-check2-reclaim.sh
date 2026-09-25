@@ -11,32 +11,33 @@
 # summoned a new aeon, which re-derived the same diagnosis and exited — a ~180m-period
 # loop. check2_protect_waiting (lib.sh) labels the bead SPIRA_RECLAIM_SKIP_LABEL while its
 # only open dep carries the ask label, so the reaper's --exclude-label skips it. The label
-# is removed when the dep closes, so the reaper's exclude-label no longer matches it.
+# is removed when the dep closes, letting the reaper reclaim the stale lease on that pass.
 #
-# THREE CASES. THE REAPER ITSELF IS NEVER INVOKED — every case asserts on
-# check2_protect_waiting's label state, not on a reclaim actually firing. D7: dropped the
-# protected / unprotected-after-close cases — test-reclaim-escalated.sh's T2 chain already
-# re-asserts both labels through a real database AND the ghost-check effect they exist for:
-#   1. POSITIVE CONTROL (dead worker, no deps) — not given the skip label.
+# THREE CASES, THE ONES check2_protect_waiting's DEP-SHAPE LOGIC NEEDS AND THE
+# END-TO-END CHAIN DOES NOT ALREADY COVER. The two cases that only re-asserted "skip label
+# applied" / "skip label removed" are dropped here (D7, docs/test-plan/dispatch.md row 21):
+# test-reclaim-escalated.sh's chain cases 1 and 2 call this same check2_protect_waiting
+# against this same dep shape and already assert the label on a real database — carrying
+# the assertion on to the classifier besides, which this file's dropped cases did not.
+#   1. POSITIVE CONTROL (dead worker, no deps) — no protection, reclaim can fire.
 #      Without this, a protect-everything implementation reads as correct.
-#   4. NOT PROTECTED (open dep without ask label) — no skip label applied.
-#   5. MIXED DEPS (one ask dep, one non-ask open dep) — no skip label applied.
+#   2. NOT PROTECTED (open dep without ask label) — no skip label, reaper can fire.
+#   3. MIXED DEPS (one ask dep + one non-ask open dep) — no skip label: "protect" requires
+#      EVERY open dep to carry the ask label, and cases 2/3 are the two ways one doesn't.
 #
 # A REAL bd ON A FIXTURE DATABASE (law-prefer-the-real-dependency). check2_protect_waiting
 # calls bd label add/remove and bd show; a stub would drift silently and prove nothing
 # about the real label path.
 #
+# tier: T2
 # defect: sp-rzyl
 # covers: spira/sentinel.sh spira/lib.sh
 # hermetic-ok: uses a fixture database, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-has()  { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-lacks(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
+has()  { want "$@"; }
+lacks(){ nowant "$@"; }
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -81,7 +82,7 @@ is    "dead worker: no act recorded" "0" "$acted"
 
 # ======================================================================================
 echo
-echo "case 4 — not protected: open dep without ask label → no skip label:"
+echo "case 2 — not protected: open dep without ask label → no skip label:"
 # ======================================================================================
 # The bead has an open dep that is NOT a needs-ryan bead (a normal work dep). The aeon
 # did not correctly-pause on a ryan dep; it may be a genuine dead worker. No protection.
@@ -97,7 +98,7 @@ is    "non-ryan dep: no act recorded" "0" "$acted"
 
 # ======================================================================================
 echo
-echo "case 5 — mixed deps: one ask dep + one non-ask open dep → not protected:"
+echo "case 3 — mixed deps: one ask dep + one non-ask open dep → not protected:"
 # ======================================================================================
 # The bead has BOTH a ryan dep AND a regular dep open. The condition for protection is
 # "all open deps carry the ask label". One non-ask dep disqualifies it.
@@ -112,5 +113,4 @@ check2_protect_waiting
 lacks "mixed deps: skip label not applied" "$SKIP" "$(B label list sp-work4 2>/dev/null)"
 is    "mixed deps: no act recorded" "0" "$acted"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
