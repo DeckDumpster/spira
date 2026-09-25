@@ -1,0 +1,15 @@
+[package]
+name = "reconciler"
+version = "1.0.0"
+edition = "2021"
+description = "Structural-invariant control loop: desired state vs observed state, gaps and deterministic remedies."
+
+[dependencies]
+reconciler-engine = { path = "../reconciler-engine" }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

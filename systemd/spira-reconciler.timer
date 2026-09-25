@@ -1,0 +1,15 @@
+[Unit]
+Description=Spira reconciler — structural-invariant pass every 60 seconds
+
+[Timer]
+# SIXTY SECONDS: comfortably faster than the 5-minute grace (SPIRA_RECONCILER_GRACE_SECS)
+# every invariant is judged against, so a streak gets several passes to clear on its own
+# before the reconciler acts or escalates. The flock in reconciler --pass prevents overlap
+# when a pass takes longer than expected.
+OnBootSec=90s
+OnUnitActiveSec=60s
+AccuracySec=10s
+Unit=spira-reconciler.service
+
+[Install]
+WantedBy=timers.target

@@ -466,6 +466,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "reconciler"
+version = "1.0.0"
+dependencies = [
+ "reconciler-engine",
+ "serde_json",
+]
+
+[[package]]
 name = "reconciler-engine"
 version = "1.0.0"
 dependencies = [
