@@ -218,6 +218,34 @@ want "commit: no SPIRA_WIKI prints manual-commit hint" \
     "Commit wiki/notes/common-law.md to replicate it off this box." "$out_cl_nowiki"
 
 # ==========================================================================
+# PAGE_N FIXTURE (UC-18, docs/test-plan/cockpit-observability.md): a small wiki tree with
+# a committed common-law.md, 10 mock statutes. Built unconditionally — the cockpit.sh
+# statute_keys section below reads it directly and must not depend on a reachable brain
+# checkout, only the law-synth.sh section further down does.
+# ==========================================================================
+WIKI_TMP="$TMP/wiki"
+mkdir -p "$WIKI_TMP/wiki/notes"
+git -C "$WIKI_TMP" init -q 2>/dev/null
+git -C "$WIKI_TMP" config user.email "test@spira" 2>/dev/null
+git -C "$WIKI_TMP" config user.name "test" 2>/dev/null
+
+{
+    echo "---"
+    echo "type: note"
+    echo "updated: 2026-01-01"
+    echo "---"
+    echo ""
+    for i in $(seq 1 10); do
+        echo "### Statute $i"
+        echo ""
+        echo "Text of statute $i."
+        echo ""
+    done
+} > "$WIKI_TMP/wiki/notes/common-law.md"
+git -C "$WIKI_TMP" add wiki/notes/common-law.md 2>/dev/null
+git -C "$WIKI_TMP" commit -q -m "test: baseline common-law" 2>/dev/null
+
+# ==========================================================================
 echo
 echo "=== law-synth.sh: wrong-database guard ==="
 # ==========================================================================
@@ -225,30 +253,6 @@ echo "=== law-synth.sh: wrong-database guard ==="
 if [ -z "$LAW_SYNTH_SH" ]; then
     echo "  SKIP (law-synth.sh not reachable)"
 else
-    # We need a small wiki tree with a committed common-law.md to test against.
-    WIKI_TMP="$TMP/wiki"
-    mkdir -p "$WIKI_TMP/wiki/notes"
-    git -C "$WIKI_TMP" init -q 2>/dev/null
-    git -C "$WIKI_TMP" config user.email "test@spira" 2>/dev/null
-    git -C "$WIKI_TMP" config user.name "test" 2>/dev/null
-
-    # Write a committed page with 10 mock statutes.
-    {
-        echo "---"
-        echo "type: note"
-        echo "updated: 2026-01-01"
-        echo "---"
-        echo ""
-        for i in $(seq 1 10); do
-            echo "### Statute $i"
-            echo ""
-            echo "Text of statute $i."
-            echo ""
-        done
-    } > "$WIKI_TMP/wiki/notes/common-law.md"
-    git -C "$WIKI_TMP" add wiki/notes/common-law.md 2>/dev/null
-    git -C "$WIKI_TMP" commit -q -m "test: baseline common-law" 2>/dev/null
-
     run_synth() {
         SPIRA_DB="$SPIRA_DB" BRAIN="$WIKI_TMP" bash "$LAW_SYNTH_SH" 2>&1
     }
@@ -327,32 +331,41 @@ want   "statute_keys: no wiki → SP_STATUTE_DB_N=?"    "SP_STATUTE_DB_N=?"    "
 want   "statute_keys: no wiki → SP_STATUTE_PAGE_N=?"  "SP_STATUTE_PAGE_N=?"  "$out_no_wiki"
 want   "statute_keys: no wiki → SP_STATUTE_SKEW=?"    "SP_STATUTE_SKEW=?"    "$out_no_wiki"
 
-if [ -n "$LAW_SYNTH_SH" ] && [ -d "${WIKI_TMP:-}" ]; then
-    # POSITIVE CONTROL: fixture db has 3 law- entries (from floor test above); committed
-    # page has 10 ### headings (from the baseline commit we made). 3 < 10/2 → MISMATCH.
-    out_mismatch=$(run_statute_keys "$WIKI_TMP")
-    want   "statute_keys: mismatch → SP_STATUTE_SKEW contains MISMATCH" "MISMATCH" "$out_mismatch"
-    nowant "statute_keys: mismatch → SP_STATUTE_SKEW is not OK"         "SKEW=OK"  "$out_mismatch"
+# UC-18: the MISMATCH/OK cases below seed their own db state instead of reusing the
+# law-synth section's (which only runs when LAW_SYNTH_SH — a reachable brain checkout —
+# is found), so SP_STATUTE_PAGE_N/SKEW are exercised against WIKI_TMP whether or not
+# brain is reachable in this environment.
+testdb_reset || { bad "testdb_reset (statute_keys fixture)" "failed"; }
 
-    # Add 8 more law- entries so db has 11 (>= 10/2 = 5, in fact exceeds page).
-    for i in $(seq 4 11); do
-        "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-ok-test-$i" \
-            "OK test statute $i." >/dev/null 2>&1 || true
-    done
+# 3 law- entries against WIKI_TMP's 10 ### headings: 3 < 10/2 → MISMATCH.
+for i in 1 2 3; do
+    "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-statute-keys-mismatch-test-$i" \
+        "Mismatch test statute $i." >/dev/null 2>&1 || true
+done
 
-    # POSITIVE CONTROL: db has 11, page has 10 → OK (11 >= 10/2 and not drastically below).
-    out_ok=$(run_statute_keys "$WIKI_TMP")
-    want   "statute_keys: counts match → SP_STATUTE_SKEW=OK"   "SKEW=OK" "$out_ok"
-    nowant "statute_keys: counts match → not MISMATCH"          "MISMATCH" "$out_ok"
+out_mismatch=$(run_statute_keys "$WIKI_TMP")
+want   "statute_keys: mismatch → SP_STATUTE_SKEW contains MISMATCH" "MISMATCH" "$out_mismatch"
+nowant "statute_keys: mismatch → SP_STATUTE_SKEW is not OK"         "SKEW=OK"  "$out_mismatch"
 
-    # SP_STATUTE_DB_N and SP_STATUTE_PAGE_N must both be numeric.
-    db_n="$(printf '%s' "$out_ok" | grep '^SP_STATUTE_DB_N=' | cut -d= -f2)"
-    page_n="$(printf '%s' "$out_ok" | grep '^SP_STATUTE_PAGE_N=' | cut -d= -f2)"
-    case "$db_n" in ''|*[!0-9]*) bad "SP_STATUTE_DB_N is numeric" "got: $db_n" ;;
-        *) ok "SP_STATUTE_DB_N is numeric ($db_n)" ;; esac
-    case "$page_n" in ''|*[!0-9]*) bad "SP_STATUTE_PAGE_N is numeric" "got: $page_n" ;;
-        *) ok "SP_STATUTE_PAGE_N is numeric ($page_n)" ;; esac
-fi
+# Add 8 more law- entries so db has 11 (>= 10/2 = 5, in fact exceeds page).
+for i in $(seq 4 11); do
+    "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-statute-keys-ok-test-$i" \
+        "OK test statute $i." >/dev/null 2>&1 || true
+done
+
+# POSITIVE CONTROL: db has 11, page has 10 → OK (11 >= 10/2 and not drastically below).
+out_ok=$(run_statute_keys "$WIKI_TMP")
+want   "statute_keys: counts match → SP_STATUTE_SKEW=OK"   "SKEW=OK" "$out_ok"
+nowant "statute_keys: counts match → not MISMATCH"          "MISMATCH" "$out_ok"
+
+# SP_STATUTE_DB_N and SP_STATUTE_PAGE_N must both be numeric.
+db_n="$(printf '%s' "$out_ok" | grep '^SP_STATUTE_DB_N=' | cut -d= -f2)"
+page_n="$(printf '%s' "$out_ok" | grep '^SP_STATUTE_PAGE_N=' | cut -d= -f2)"
+case "$db_n" in ''|*[!0-9]*) bad "SP_STATUTE_DB_N is numeric" "got: $db_n" ;;
+    *) ok "SP_STATUTE_DB_N is numeric ($db_n)" ;; esac
+case "$page_n" in ''|*[!0-9]*) bad "SP_STATUTE_PAGE_N is numeric" "got: $page_n" ;;
+    *) ok "SP_STATUTE_PAGE_N is numeric ($page_n)" ;; esac
+is "SP_STATUTE_PAGE_N=10 (from the WIKI_TMP fixture)" "10" "$page_n"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
