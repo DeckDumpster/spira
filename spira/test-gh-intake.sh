@@ -437,11 +437,14 @@ printf '[{"event":"labeled","actor":{"login":"direct-caller"},"label":{"name":"s
 # not this shell's — a plain (unexported) STATE was invisible to them here even though
 # run() above worked, because run() passes STATE= as an explicit env prefix on each call.
 export STATE BDLOG CURLLOG
+# conf.sh (sourced by gh-intake.sh) unconditionally rewrites PATH from SPIRA_PATH — the
+# same variable run() above passes on every invocation — so exporting PATH directly here
+# would be silently overwritten the moment the script is sourced.
+export PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin"
 export GH_INTAKE_LIB=1 SPIRA_BD=bd SPIRA_DB=fixture SPIRA_GH_INTAKE_REPO=DeckDumpster/spira \
     SPIRA_GH_INTAKE_BEAD_REPO="$FIXTURE_REPO" SPIRA_REPO_MAP="$TMP/repo-map" \
     SPIRA_GH_INTAKE_API=https://api.github.com SPIRA_GH_INTAKE_PRIORITY=3 \
     SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}"
-export PATH="$TMP/bin:$PATH"
 # shellcheck disable=SC1090
 . "$SCRIPT"
 if declare -f _accept_actor >/dev/null 2>&1 && declare -f _create_work >/dev/null 2>&1 \
