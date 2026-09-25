@@ -1,0 +1,19 @@
+[package]
+name = "batcher-cut"
+version = "0.1.0"
+edition = "2021"
+description = "batcher-cut — the IO seam (git, testenv-batch, the forge, the bead store) that drives the batcher crate's pure core, wired into the queue in place of batch.sh's cut (sp-jzfog)."
+
+[[bin]]
+name = "batcher"
+path = "src/main.rs"
+
+[dependencies]
+batcher = { path = "../batcher" }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

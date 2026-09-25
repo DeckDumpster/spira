@@ -21,7 +21,11 @@ pub struct Member {
 
 /// Lowest number is most urgent; an unknown priority sorts last so it never manufactures an
 /// inversion. Express always outranks rank (REQUIREMENTS: express ranks first).
-fn order_key(m: &Member) -> (u8, u8, u64) {
+///
+/// Public so the IO seam can sort the pool into the same order *before* attempting git
+/// merges — combine() only sorts what already merged, but merge order decides who wins a
+/// batch-accumulation conflict, and that has to be the same express/priority/arrival order.
+pub fn order_key(m: &Member) -> (u8, u8, u64) {
     (if m.express { 0 } else { 1 }, m.priority.unwrap_or(u8::MAX), m.certified_at)
 }
 
