@@ -97,14 +97,16 @@ spira/test-wiki-add-fence.sh
 # gate-spira.sh is wired to call the fence (law-a-documented-control-must-exist).
 spira/test-suite-state-fence.sh
 
-# THE MISSING-CMD PREFLIGHT'S OWN POSITIVE CONTROL. gate.sh resolves every bash <path>
-# in the repo-map gate command against the base tree before running any trial; a path absent
-# from the base returns a distinct config-error verdict rather than BASE_FAIL. This class of
-# defect (gate command naming a file not yet on the base) blocked 22 branches with a
-# misleading verdict (sp-lkzl). This suite plants an absent path (SEEN RED), requires the
-# named file to appear in the output, and confirms the verdict is not BASE_FAIL. The positive
-# control adds the file to the base and requires the gate to reach the suites.
-spira/test-gate-missing-cmd.sh
+# THE PREFLIGHT CHECKS' OWN POSITIVE CONTROL, including the missing-cmd path (formerly
+# test-gate-missing-cmd.sh, folded in by sp-ajxg3 per docs/test-plan/gate-verdict.md
+# section 4 cluster #2). gate.sh resolves every bash <path> in the repo-map gate command
+# against the base tree before running any trial; a path absent from the base returns a
+# distinct config-error verdict rather than BASE_FAIL. This class of defect (gate command
+# naming a file not yet on the base) blocked 22 branches with a misleading verdict
+# (sp-lkzl). This suite plants an absent path (SEEN RED), requires the named file to
+# appear in the output, and confirms the verdict is not BASE_FAIL. The positive control
+# adds the file to the base and requires the gate to reach the suites.
+spira/test-gate-preflight.sh
 
 # THE LANDING REBASE LIFECYCLE'S OWN FIXTURE INITIALIZATION. test-landing-rebase.sh covers
 # rebase_branch classification, the survivor sweep, the loop-defer guard, and checkout
