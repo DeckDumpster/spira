@@ -9,15 +9,15 @@
 #
 #   A. NON-CODE DELIVERS, EMPTY BRANCH. A bead that carries a delivers: label (note,
 #      beads, action, etc.) was never expected to commit. Its branch is 0 ahead and an
-#      ancestor of the base. Previously sending.sh required landed() to return 0, but
-#      no commit on the base ever names it. Now: closed + delivers: + 0-ahead + ancestor
-#      = REAPED.
+#      ancestor of the base. content_landed now returns 0 for any ancestor branch
+#      (sp-bf31a), so the branch is reaped via the plain content-landed path — SENT,
+#      not REAPED, since the delivers:-specific arm is never reached.
 #
 #   B. SUPERSEDED BEAD, EMPTY BRANCH. A closed duplicate with a supersedes edge and a
-#      zero-ahead branch. Previously the safety check ran merge-tree on the empty branch;
-#      merge-tree trivially exits 0 on nothing and reported "unsafe to reap". Now: n=0
-#      skips merge-tree and the branch is reaped. Positive control: a superseded bead
-#      with n>0 and unique content (no conflict) is still KEPT.
+#      zero-ahead branch. content_landed's ancestor check (sp-bf31a) reaps it the same
+#      way as shape A, before sending.sh's superseded-specific arm is ever reached — SENT,
+#      not REAPED. Positive control: a superseded bead with n>0 and unique content (no
+#      conflict) is still KEPT.
 #
 #   C. LANDED BY OTHER PR. A closed bead whose work was included in a batch PR commit
 #      that names the bead id. The bead's own PR was closed unmerged; its branch has
@@ -52,7 +52,7 @@ git -C "$REPO" remote set-head origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/sending.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/sending.sh" "$HERE/suite-covers.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
 stub gh 'exit 1'
@@ -139,9 +139,9 @@ echo "test-sending-closed-reap.sh"
 . "$SH/lib.sh"
 
 if content_landed "$REPO" "spira/sp-groom" "origin/main"; then
-    bad "sp-groom: content_landed must return non-zero for 0-ahead branch" "returned 0"
+    ok "sp-groom: content_landed correctly returns 0 (ancestor branch, sp-bf31a)"
 else
-    ok "sp-groom: content_landed correctly returns non-zero (0-ahead branch)"
+    bad "sp-groom: content_landed must return 0 for an ancestor (0-ahead) branch" "returned non-zero"
 fi
 if content_landed "$REPO" "spira/sp-btch" "origin/main"; then
     bad "sp-btch: content_landed must return non-zero (conflict after base moved)" "returned 0"
@@ -168,7 +168,7 @@ out="$(sending)"
 printf '%s\n' "$out" >&2
 
 # Shape A
-want   "A: sp-groom is REAPED (non-code delivers)"          "REAPED sp-groom"  "$out"
+want   "A: sp-groom is SENT (ancestor branch, sp-bf31a)"    "SENT sp-groom"    "$out"
 nowant "A: sp-groom is not KEPT"                            "KEEP   sp-groom"  "$out"
 if git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-groom" 2>/dev/null; then
     bad "A: sp-groom branch is gone" "spira/sp-groom still exists after reap"
@@ -177,7 +177,7 @@ else
 fi
 
 # Shape B
-want   "B: sp-sup0 is REAPED (empty + superseded)"          "REAPED sp-sup0"   "$out"
+want   "B: sp-sup0 is SENT (ancestor branch, sp-bf31a)"     "SENT sp-sup0"     "$out"
 nowant "B: sp-sup0 is not KEPT"                             "KEEP   sp-sup0"   "$out"
 if git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-sup0" 2>/dev/null; then
     bad "B: sp-sup0 branch is gone" "spira/sp-sup0 still exists after reap"

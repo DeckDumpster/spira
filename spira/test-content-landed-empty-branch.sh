@@ -52,7 +52,7 @@ git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$SH"
 
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/sending.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/sending.sh" "$HERE/suite-covers.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
 stub gh 'exit 1'
