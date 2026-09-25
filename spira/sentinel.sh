@@ -735,117 +735,20 @@ while IFS=$'\x1f' read -r id r_name superseded dropped sentcontent delivers star
     # the counter that exists to bound the loop was being outrun by it.
     [ "${sentcontent:-0}" = 1 ] && continue
     # A BEAD CARRYING delivers:TYPE DECLARED WHAT IT PRODUCED INSTEAD OF A COMMIT. Verify
-    # each declared output is actually present; if all verify, accept the close. If any
+    # each declared output is actually present via delivers_verdict (lib.sh); if any
     # evidence is absent, reopen — a delivers: declaration with nothing behind it is a bead
-    # closed on nothing, which is precisely what this check exists to catch.
-    #
-    # This supersedes no-payload (sp-ail7). no-payload exempted unconditionally, so a sweep
-    # that failed silently after one command was indistinguishable from one that filed twenty
-    # beads. delivers:TYPE is the typed-and-verified form: the aeon declares what it produced
-    # and this check confirms it is there.
-    #
-    # RECOGNISED TYPES:
-    #   delivers:beads             — at least one child bead names $id as its parent
-    #   delivers:note:/abs/path    — the file at that path exists and was written in the bead's
-    #   delivers:report:/abs/path    window (mtime after started_at)
-    #   delivers:check:<command>   — the command exits 0; proves machine state the bead
-    #                                established. No constraint on when that state was
-    #                                established — only on how long checking it may take:
-    #                                bounded by SPIRA_DELIVERS_CHECK_TIMEOUT (default 60s), a
-    #                                timeout scoring exactly like a non-zero exit. The command
-    #                                runs in the sentinel's environment (SPIRA_HOME, SPIRA_PROD
-    #                                and conf.sh exports are set). Written at filing, not at
-    #                                close — so the aeon cannot pick a check it already
-    #                                satisfied (law-a-regression-test-must-be-seen-to-fail shape:
-    #                                the filer chose the criterion before knowing the outcome).
-    #
-    # Unknown types are treated as unverifiable and cause a reopen. A label that cannot be
-    # checked is not evidence; treating unknown types as passing would recreate the no-payload
-    # hole under a longer name.
+    # closed on nothing, which is precisely what this check exists to catch. This supersedes
+    # no-payload (sp-ail7), which exempted unconditionally.
     if [ -n "${delivers:-}" ]; then
-        _delivers_ok=1
-        _delivers_fail=""
-        _IFS_SAVE="$IFS"; IFS=';'
-        # shellcheck disable=SC2206
-        _deliver_arr=( ${delivers} )
-        IFS="$_IFS_SAVE"
-        for _deliver in "${_deliver_arr[@]}"; do
-            [ -n "$_deliver" ] || continue
-            _dtype="${_deliver%%:*}"
-            _dval="${_deliver#*:}"   # path for note/report; same as _dtype for beads
-            case "$_dtype" in
-                beads)
-                    # Child bead count via a per-bead query. Only reached for beads that
-                    # declared this type, so the extra call is bounded and justified.
-                    _cnt="$(bdjson children "$id" 2>/dev/null | python3 -c '
-import sys,json
-try: d=json.load(sys.stdin)
-except Exception: print(0); sys.exit()
-print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/dev/null)" || _cnt=0
-                    if [ "${_cnt:-0}" -le 0 ] 2>/dev/null; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:beads declared but no child beads name $id as source"
-                    fi
-                    ;;
-                note|report)
-                    # Path must be distinct from the type name (i.e. a colon-separated path
-                    # must follow), the file must exist, and its mtime must be after the
-                    # bead's started_at — so that a file written before this session does not
-                    # satisfy a claim the aeon is making about work it did in this session.
-                    if [ "$_dval" = "$_dtype" ]; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:$_dtype has no file path — use delivers:$_dtype:/absolute/path"
-                    elif [ ! -f "$_dval" ]; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:$_dtype: $_dval does not exist"
-                    elif [ -n "${started_at:-}" ]; then
-                        _se="$(date -d "$started_at" +%s 2>/dev/null)" || _se=0
-                        _mt="$(stat -c %Y "$_dval" 2>/dev/null)" || _mt=0
-                        if [ "${_mt:-0}" -le "${_se:-0}" ] 2>/dev/null; then
-                            _delivers_ok=0
-                            _delivers_fail="delivers:$_dtype: $_dval exists but was not written in this bead's window (mtime $(date -d "@${_mt:-0}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown) <= started_at $started_at)"
-                        fi
-                    fi
-                    ;;
-                check)
-                    # Command must follow the colon. Run it in the sentinel's environment;
-                    # exit 0 confirms the machine state is in place, non-zero means not yet.
-                    # No time window — machine state is either present or not, regardless of
-                    # when it was established. Shell variables in the command (e.g. $SPIRA_HOME)
-                    # expand at check time from the sentinel's environment.
-                    #
-                    # BOUNDED BY A TIMEOUT. Run inline with no bound, one hanging command
-                    # stalls every bead behind it in this pass. A timeout scores exactly like
-                    # a non-zero exit — not yet — rather than hang the pass.
-                    if [ "$_dval" = "$_dtype" ]; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:check has no command — use delivers:check:<command>"
-                    else
-                        timeout "${SPIRA_DELIVERS_CHECK_TIMEOUT:-60}" bash -c "$_dval" >/dev/null 2>&1
-                        _drc=$?
-                        if [ "$_drc" = 124 ]; then
-                            _delivers_ok=0
-                            _delivers_fail="delivers:check: command timed out after ${SPIRA_DELIVERS_CHECK_TIMEOUT:-60}s: $_dval"
-                        elif [ "$_drc" != 0 ]; then
-                            _delivers_ok=0
-                            _delivers_fail="delivers:check: command exited non-zero: $_dval"
-                        fi
-                    fi
-                    ;;
-                action)
-                    # The bead's work was done by action on the box, not by committing code.
-                    # The close reason carries the evidence; no machine check is run here.
-                    # Filed at bead creation time by the producer (e.g. watchtower.sh), not
-                    # chosen by the aeon, so the criterion cannot be gamed by picking a check
-                    # that is already satisfied (law-a-regression-test-must-be-seen-to-fail shape).
-                    ;;
-                *)
-                    _delivers_ok=0
-                    _delivers_fail="delivers:$_dtype is not a recognised type (beads, note, report, check, action)"
-                    ;;
-            esac
-            [ "$_delivers_ok" = 1 ] || break
-        done
+        # delivers_verdict (lib.sh) is the one case block for delivers:TYPE evidence,
+        # shared with aeon.sh's own post-session check (UC-aeon-execution-13: the two
+        # decide delivers types identically because it is the same function). since-epoch
+        # here is the bead's own started_at, converted once — CHECK5 judges a bead across
+        # whatever window has passed since it started, not a session it is not running.
+        _se=0
+        [ -n "${started_at:-}" ] && _se="$(date -d "$started_at" +%s 2>/dev/null)" || _se=0
+        _dv="$(delivers_verdict "$id" "$delivers" "${_se:-0}")"
+        _delivers_ok="${_dv%%|*}"; _delivers_fail="${_dv#*|}"
         if [ "$_delivers_ok" = 1 ]; then
             log "CHECK5 $id: delivers ($delivers) verified — not reopened"
             continue
