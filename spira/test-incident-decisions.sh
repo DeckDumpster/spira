@@ -135,8 +135,10 @@ inc_env() {   # inc_env VAR=val [VAR=val ...] -- assignments only; ref comes fro
         "$@" bash "$INC" file "decisions repo test" - >/dev/null 2>&1
 }
 
-# POSITIVE CONTROL: a declared repo is stamped.
-printf 'p1' | inc_env SPIRA_INCIDENT_REPO=brain SPIRA_INCIDENT_REF="incident:repo-declared"
+# POSITIVE CONTROL: a declared repo matching the home repo is stamped without needing a
+# repo-map entry (SPIRA_HOME_REPO pinned, non-default: outside a real git checkout
+# spira_home_repo() would otherwise derive some unrelated basename of $TMP).
+printf 'p1' | inc_env SPIRA_HOME_REPO=brain SPIRA_INCIDENT_REPO=brain SPIRA_INCIDENT_REF="incident:repo-declared"
 bid_repo="$(python3 -c '
 import json
 d = json.load(open("'"$STUB_BD_STATE"'"))
