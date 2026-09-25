@@ -6,6 +6,7 @@
 # pr-number <repo-dir> <head>                  prints the open PR number, or empty
 # pr-list-queue <repo-dir>                     prints PR numbers with head spira/queue/*, one per line
 # pr-mergeability <repo-dir> <pr-number>       prints: DIRTY | CLEAN | UNKNOWN
+# pr-state <repo-dir> <pr-number>              prints: open | merged | closed | unknown
 # check-status <repo-dir> <pr-number>          prints: pending | green | red | harness_fault | provision_fault
 #                                              then "flaky: <suite>" for each flaky annotation, and
 #                                              "build-error: <line>" per line of a failed build job's error
@@ -148,6 +149,20 @@ try:
 except Exception:
     pass
 " 2>/dev/null
+        ;;
+    pr-state)
+        # pr-state <repo-dir> <pr-number> → what became of a PR. queue-watch asks this when a
+        # batch stops being the open one, because the queue itself does not always record
+        # why (an express eviction closes the PR and writes nothing). Anything it cannot read
+        # is `unknown`, never a guess.
+        pr_n="${1:-}"
+        result="$( cd "$repo" && ghq pr view "$pr_n" --json state -q .state 2>/dev/null )" || result=""
+        case "$result" in
+            OPEN)   printf 'open\n' ;;
+            MERGED) printf 'merged\n' ;;
+            CLOSED) printf 'closed\n' ;;
+            *)      printf 'unknown\n' ;;
+        esac
         ;;
     pr-mergeability)
         pr_n="${1:-}"

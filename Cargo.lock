@@ -387,6 +387,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "queue-watch"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "spira-config",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
