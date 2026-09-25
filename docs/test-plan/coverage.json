@@ -1,0 +1,1452 @@
+{
+  "api_version": "test-plan-matrix/v1",
+  "areas": [
+    {
+      "area": "aeon-execution",
+      "use_cases": [
+        {
+          "id": "UC-aeon-execution-01",
+          "tier": "T3",
+          "statement": "a bead is worked in a worktree cut from freshly fetched `origin/<landref>`; a stale foreign worktree is moved aside, never removed",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-02",
+          "tier": "T3",
+          "statement": "a worktree-creation failure is a pre-session death: FATAL, attempt charged, ledger `pre-session`, no free resummon loop",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-03",
+          "tier": "T1",
+          "statement": "a bead poisoned right after claim is released before workspace setup, ledger `poison-raced`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-04",
+          "tier": "T1",
+          "statement": "the world-stop fence refuses a `world-stop` bead with a live aeon and releases the claim; with none it runs stop → session → start",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-05",
+          "tier": "T1",
+          "statement": "sweep mode claims nothing, sets no `branch:` label, and refuses when capacity is paused or the world is draining",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-06",
+          "tier": "T1",
+          "statement": "launch argv is a pure function of the fayth's system-prompt, project-instructions and settings knobs",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-07",
+          "tier": "T1",
+          "statement": "brief rendering leaves no unrendered `{{placeholder}}`; RESUME/SLAIN/DEADLINE/ALREADY_DONE each render correctly",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-08",
+          "tier": "T1",
+          "statement": "the lease renews on trace growth and lapses on silence past `FAYTH_LEASE_SECONDS`, killing `-$$`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-09",
+          "tier": "T1",
+          "statement": "the thrash wall trips only when the fuse and the session age both clear the wall",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-10",
+          "tier": "T1",
+          "statement": "session outcome classification (refused/unknown/killed/unlanded/yield-headless) and its charge default-deny",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-11",
+          "tier": "T1",
+          "statement": "open-bead teardown disposition runs its 13 branches in precedence order and charges only `unlanded`-family outcomes",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-12",
+          "tier": "T3",
+          "statement": "a harness reopen after a rebase conflict on a closed, committed bead is a requeue, not an attempt",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-13",
+          "tier": "T1",
+          "statement": "the close verdict (commit-naming keeps closed; no commit reopens) is decided identically by aeon and sentinel",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-14",
+          "tier": "T1",
+          "statement": "an eviction-race reopen fires only for a live eviction reason at the current tip, capped at 2/hour",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-15",
+          "tier": "T1",
+          "statement": "closing with the gate still running, FAIL, or no gate run leaves a distinct note but does not reopen",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-16",
+          "tier": "T1",
+          "statement": "the four close guards (prod-dirty, close-reason override, SOP, groom-escalation) bind to their knob, not the persona name",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-17",
+          "tier": "T1",
+          "statement": "wiki writes at exit are committed under an `aeon-` author, excluding pre-dirty files and `wiki/tasks.md`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-18",
+          "tier": "T1",
+          "statement": "the aeon's exit code and ledger `done` line reflect the real rc, status and spend fields, `?` never 0 when missing",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-19",
+          "tier": "T2",
+          "statement": "attempts are counted from the bd events trail only, never from a label, and `check4_bulk_data` agrees with per-bead queries",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-20",
+          "tier": "T2",
+          "statement": "claim release is compare-and-swap on the claiming actor; naming the fayth leaves it held",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-21",
+          "tier": "T1",
+          "statement": "CHECK 4 poisons at `POISON_AT`, clears stale poison, and skips epics/partition-excluded/mid-pass-closed beads",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-22",
+          "tier": "T1",
+          "statement": "the poison ask is sent once per (bead, attempt count); a label clear does not re-arm it",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-23",
+          "tier": "T1",
+          "statement": "the requeue cap and reclaim cap each send one deduplicated mail at their threshold and never add poison",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-24",
+          "tier": "T2",
+          "statement": "`attempts.sh deadlocked` lists mergeable poisoned beads and `--apply` lifts poison without losing the attempt record",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-25",
+          "tier": "T1",
+          "statement": "a repeated lane-cap timeout asks about the lane, not the approach",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-aeon-execution-26",
+          "tier": "T2",
+          "statement": "`slay.sh` writes `.slain` first; its default/`--close`/`--keep-work` modes and argument refusals are exact",
+          "covering_suites": []
+        }
+      ]
+    },
+    {
+      "area": "dispatch",
+      "use_cases": [
+        {
+          "id": "UC-dispatch-01",
+          "tier": "T1",
+          "statement": "`bead.sh file --for/--repo` files exactly the persona's labels plus `repo:`, or refuses",
+          "covering_suites": [
+            {
+              "path": "spira/test-bead-file.sh",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-dispatch-02",
+          "tier": "T1",
+          "statement": "non-work kinds map to their `bd --type`, scope label, no partition label",
+          "covering_suites": [
+            {
+              "path": "spira/test-bead-file.sh",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-dispatch-03",
+          "tier": "T1",
+          "statement": "a persona files only against a repo whose lanes admit its partition",
+          "covering_suites": [
+            {
+              "path": "spira/test-bead-file.sh",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-dispatch-04",
+          "tier": "T1",
+          "statement": "`bead.sh lint` reports every stored bead lacking `repo:`/partition, unreadable ids named as such",
+          "covering_suites": [
+            {
+              "path": "spira/test-bead-lint.sh",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-dispatch-05",
+          "tier": "T0",
+          "statement": "no harness script passes a bare `-` body to `bd note`/`bd create -d`",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-dispatch-06",
+          "tier": "T1",
+          "statement": "GitHub intake never mutates GitHub, dedups idempotently, promotes only on write access",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-dispatch-07",
+          "tier": "T1",
+          "statement": "the roster is discovered from `chamber/*.fayth`; lane xor task xor operator, never two",
+          "covering_suites": [
+            {
+              "path": "spira/test-fayth.sh",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-dispatch-08",
+          "tier": "T1",
+          "statement": "every auto-summoned predicate is built from `$SPIRA_*_LABEL`, never a literal",
+          "covering_suites": [
+            {
+              "path": "spira/test-fayth.sh",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-dispatch-09",
+          "tier": "T1",
+          "statement": "`summon_fayth` asks each persona's own predicate; partitions don't cross-leak",
+          "covering_suites": [
+            {
+              "path": "spira/test-summon-fayth.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-dispatch-10",
+          "tier": "T1",
+          "statement": "the `summon_fayth` refusal ladder runs in order and logs its real reason",
+          "covering_suites": [
+            {
+              "path": "spira/test-summon-fayth.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-dispatch-11",
+          "tier": "T1",
+          "statement": "`fayth_free` arithmetic: elastic pool remainder, non-elastic cap-minus-running, governor clamp",
+          "covering_suites": [
+            {
+              "path": "spira/test-summon-fayth.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-dispatch-12",
+          "tier": "T1",
+          "statement": "a live drain gates every summon; an expired drain is lifted and logged",
+          "covering_suites": [
+            {
+              "path": "spira/test-summon-fayth.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-dispatch-13",
+          "tier": "T1",
+          "statement": "effective lanes are the intersection of `.spira/modes`, repo-map lanes and `SPIRA_FAYTHS`",
+          "covering_suites": [
+            {
+              "path": "spira/test-fayth.sh",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-dispatch-14",
+          "tier": "T1",
+          "statement": "CHECK 7 draws lanes round-robin then fills the task pool in roster order, capped",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-dispatch-15",
+          "tier": "T1",
+          "statement": "`escape.sh` summons directly on ready work, bypassing pool and lane caps",
+          "covering_suites": [
+            {
+              "path": "spira/test-summon-fayth.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-dispatch-16",
+          "tier": "T1",
+          "statement": "CHECK 7c reports an unclaimable ready bead once, naming the rejection reason",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-dispatch-17",
+          "tier": "T1",
+          "statement": "the cockpit's NEXT attribution agrees with the CHECK 7c claimability verdict",
+          "covering_suites": [
+            {
+              "path": "spira/test-cockpit-unclaimable.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-dispatch-18",
+          "tier": "T1",
+          "statement": "CHECK 8 fires only when nothing progressed and plan is starved, subject to cooldown",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-dispatch-19",
+          "tier": "T1",
+          "statement": "a pass that cannot read the database exits 1 and never reports goal reached",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-dispatch-20",
+          "tier": "T1",
+          "statement": "a stale lease in every persona's partition is reclaimed and charged; orphans released",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-dispatch-21",
+          "tier": "T1",
+          "statement": "the ghost classifier never reclaims a bead carrying the ask or reclaim-skip label",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-dispatch-22",
+          "tier": "T1",
+          "statement": "an unmapped-repo bead is parked with ask+overseer before its claim is released",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-dispatch-23",
+          "tier": "T1",
+          "statement": "summoning passes `CPUQuota`, `FAYTH_TIMEOUT_SECONDS` and `--setting-sources` correctly",
+          "covering_suites": [
+            {
+              "path": "spira/test-summon-fayth.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-dispatch-24",
+          "tier": "T0",
+          "statement": "ops tools are an allowlist of `Bash(pattern)` entries, never bare `Bash`",
+          "covering_suites": []
+        }
+      ]
+    },
+    {
+      "area": "gate-verdict",
+      "use_cases": [
+        {
+          "id": "UC-gate-verdict-01",
+          "tier": "T1",
+          "statement": "Every exit goes through `verdict()`, which prints exactly one anchored `gate: VERDICT=<PASS|FAIL|BASE_FAIL|NO_VERDICT> reason=<slug> branch= repo= suite=` line and exits 0/1/76/75 to match.",
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-unit.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-02",
+          "tier": "T1",
+          "statement": "A FAIL that carries no message is downgraded to NO_VERDICT with `reason=no-evidence:<orig>` (sp-io5j backstop).",
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-unit.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-03",
+          "tier": "T1",
+          "statement": "An unreadable repo-map gives NO_VERDICT `no-repo-map-file` (this used to be a silent PASS). A repo absent from the map gives NO_VERDICT `no-repo-map`.",
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-preflight.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-04",
+          "tier": "T2",
+          "statement": "An unresolvable branch or base gives NO_VERDICT (`no-diff` / `no-base`), exit 75. The message names `base...branch`, the repo and git's `fatal:` line.",
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-preflight.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-05",
+          "tier": "T2",
+          "statement": "Universal layer: a changed `*.sh` that fails `bash -n` gives FAIL `syntax`. So does beads data anywhere in the branch tree (`beads-data`). A branch that vendors a foreign harness copy gives FAIL `foreign-harness`. If `exclude.sh` or `skew.sh` is missing, or skew exits 3, the result is NO_VERDICT (`missing-exclude`, `missing-skew`, `skew-init-fault`).",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-gate-verdict-06",
+          "tier": "T2",
+          "statement": "A repo whose map row has an empty gate column passes with `reason=syntax-only`, and the VERDICT line is still printed.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-gate-verdict-07",
+          "tier": "T2",
+          "statement": "If a gate command names `bash <path>` and that path is absent from the base, the result is NO_VERDICT `cmd-missing-file` naming the path, never BASE_FAIL. Once the path exists, the command runs. (sp-lkzl)",
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-missing-cmd.sh",
+              "tier": "T0",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-08",
+          "tier": "T1",
+          "statement": "covers:-based selection. A suite is selected when its covers: names a changed file, or when it has no covers:, or when it is a meta suite covering `spira/test-*.sh`. A suite covering only unchanged files is not selected. A suite added by the branch is present on the branch tree and absent on the base. `SPIRA_GATE_FILES` overrides the computed diff.",
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-touched.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-09",
+          "tier": "T1",
+          "statement": "Suites in `SPIRA_GATE_EJECTED_SUITES` (CSV) are always added. A suite that is both covered and ejected appears once. An ejected suite that no longer exists is skipped. (sp-px6ng)",
+          "covering_suites": [
+            {
+              "path": "spira/test-reopen-queue-eject.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-10",
+          "tier": "T2",
+          "statement": "The gate command receives the env contract: `SPIRA_GATE_BRANCH`, `_BASE`, `_SELECT_HEAD` (= the branch on *both* trials), `_FILES`, `_HOST_CORES` (= `host_cores()`, not `nproc`), `_EJECTED_SUITES`, `_SUITES`.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-gate-verdict-11",
+          "tier": "T1",
+          "statement": "`host_cores` returns `getconf _NPROCESSORS_ONLN` even when `nproc` is cgroup-limited. `governor.sh` writes `SP_CORES` from it.",
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-unit.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-12",
+          "tier": "T1",
+          "statement": "Base-trial attribution. Branch red and base green gives FAIL `branch-red`. The same suite red on both gives BASE_FAIL `base-red`, naming the suite and carrying the base output. Base reds that are all timeouts give NO_VERDICT `base-timeout`. Genuine reds plus timeouts give BASE_FAIL. Suites red only on the branch give FAIL even when the base is red elsewhere. An unnamed red on both gives `suite=-`. A base trial that exits 75/124 or cannot check out gives NO_VERDICT `base-untestable`.",
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-unit.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-13",
+          "tier": "T2",
+          "statement": "A branch trial killed at `SPIRA_GATE_TIMEOUT` gives NO_VERDICT `timeout`, naming the budget and the command, and is not cached. A branch trial exiting 75 gives NO_VERDICT `harness-fault`. (sp-p4rl)",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-gate-verdict-14",
+          "tier": "T2",
+          "statement": "A red verdict carries the command's full early diagnostics, not a `tail -20` window. A passing gate does not print them.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-gate-verdict-15",
+          "tier": "T1",
+          "statement": "Verdict cache. The key is repo + tree + changed files + command + harness bytes (gate.sh, exclude.sh, skew.sh) + `SPIRA_GATE_SUITES`. Only PASS is cached. Reuse is metered `rc=0 cached`. A landing on the base does not invalidate an un-rebased branch. A restored command finds its old entry. A verdict older than `SPIRA_VERDICT_TTL` is refused, as is an entry without `at=` or a non-numeric TTL. (sp-0v8)",
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-unit.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-16",
+          "tier": "T3",
+          "statement": "Gates on different branches run concurrently in separate trees and never see each other's content. Gates on the same branch serialise, and the wait is metered `waited=Ns`. (sp-64v0)",
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-unit.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-17",
+          "tier": "T2",
+          "statement": "A gate that cannot get its tree lock within `SPIRA_GATE_LOCK_WAIT` gives NO_VERDICT `lock-timeout` (\"not a fault\") and never removes the holder's tree. Missing `flock` or an unopenable lockfile gives NO_VERDICT (`no-flock`, `no-lockfile`). (sp-d8h0r)",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-gate-verdict-18",
+          "tier": "T2",
+          "statement": "Tree lifecycle. PASS keeps the detached worktree for reuse. Non-PASS removes it, but only when this process held the lock. A worktree that cannot be created gives NO_VERDICT `tree-unidentified`.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-gate-verdict-19",
+          "tier": "T2",
+          "statement": "`gate-locks.sh` reports FREE, HELD (with PID) or STALE. A lock whose holder PID is dead but whose PGID has a live member (inherited fd) is HELD. A lock that does not exist is not listed.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-gate-verdict-20",
+          "tier": "T2",
+          "statement": "`gate-sweep.sh` removes stale `.gate.<repo>[.<key>]` worktrees and orphaned `/tmp/spira-batch-*` homes. It keeps any tree whose lock is held (and says so), young trees, and homes with a live container. (sp-ic8n, sp-q7d72)",
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-sweep.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-21",
+          "tier": "T3",
+          "statement": "Under contention (N aeon gates plus a landing pass with a small lock wait), every gate reaches a verdict. None is starved to 75, no tree is crossed, landing verdicts come from the cache, and the whole soak finishes inside its deadline.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-gate-verdict-22",
+          "tier": "T2",
+          "statement": "Yield recording. Every non-PASS verdict is recorded with branch, bead, suite and tree. Gating the same tree twice records one red. A red tree changed to PASS becomes inferred DEFECT. BASE_FAIL arrives as GATE_FAULT. A failing recorder never changes the verdict or the exit code. (sp-1xb0)",
+          "covering_suites": [
+            {
+              "path": "spira/test-yield.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-23",
+          "tier": "T1",
+          "statement": "Yield reporting. The configured window (`SPIRA_YIELD_WINDOW`) excludes older reds. A stated `classify` overrides an inferred one and keeps its reason. Classify refuses an unknown branch or an invalid verdict. Cost is split solo vs contended and excludes cached passes. An absent record or log renders `?`, never 0. A recorder that shows reds in the meter log but has an empty record is reported `silent` and withholds its counts.",
+          "covering_suites": [
+            {
+              "path": "spira/test-yield.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-24",
+          "tier": "T0",
+          "statement": "Yield reaches Ops and the cockpit: `watchtower --show` carries the yield columns, and every `SP_YIELD_*` key is written by the collector, read by the pane and defaults to `?`.",
+          "covering_suites": [
+            {
+              "path": "spira/test-yield.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-gate-verdict-25",
+          "tier": "T2",
+          "statement": "Metering. Every verdict reached after the lock writes one `gate.log` row (rc, waited, ran). Preflight refusals write none. The EXIT trap is disarmed so a verdict is never metered twice, and a `set -e` death or signal is still metered once.",
+          "covering_suites": []
+        }
+      ]
+    },
+    {
+      "area": "operator-channel",
+      "use_cases": [
+        {
+          "id": "UC-operator-channel-01",
+          "tier": "T2",
+          "statement": "send delivers atomically via tmp/ into new/; read prints headers+body and moves new→cur; read with nothing unread fails; list [--unread], count and unread-age…",
+          "covering_suites": [
+            {
+              "path": "spira/test-mail.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-02",
+          "tier": "T1",
+          "statement": "Lint refuses a message with no From or no Subject, a subject that is or starts with a bead id, a context-free bead id in the body (key:value metadata allowed),…",
+          "covering_suites": [
+            {
+              "path": "spira/test-mail.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-03",
+          "tier": "T1",
+          "statement": "Kinds are data. An unknown kind is refused and named. template <kind> prints the skeleton. The requires: fields in a kind file drive validation:…",
+          "covering_suites": [
+            {
+              "path": "spira/test-mail.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-04",
+          "tier": "T1",
+          "statement": "SPIRA_MAIL_LINT_CONSIDERED bypasses lint and records X-Spira-Lint-Override: <reason>.",
+          "covering_suites": [
+            {
+              "path": "spira/test-mail.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-05",
+          "tier": "T2",
+          "statement": "Every message a real harness sender emits (lib.sh, sentinel, watchd, reflect, strand, pilgrimage, skew, incident, archivist) passes lint.",
+          "covering_suites": [
+            {
+              "path": "spira/test-mail-real-senders.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-06",
+          "tier": "T1",
+          "statement": "Operator-mailbox repeat guard: a send whose normalised subject matches one inside SPIRA_MAIL_REPEAT_WINDOW is refused, names the override and is recorded under…",
+          "covering_suites": [
+            {
+              "path": "spira/test-mail.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-07",
+          "tier": "T2",
+          "statement": "done sets the Maildir R flag idempotently (it fails on an unknown id), and a sendmail reply marks the original R.",
+          "covering_suites": [
+            {
+              "path": "spira/test-mail.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-08",
+          "tier": "T2",
+          "statement": "tidy keeps open-ask mail (label from SPIRA_ASK_LABEL), fresh unread mail and X-Spira-Urgent mail younger than 7 days, plus only the newest of a repeated…",
+          "covering_suites": [
+            {
+              "path": "spira/test-mail-tidy.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-09",
+          "tier": "T2",
+          "statement": "Aged unread backlog in a registered mailbox alerts the operator once, clears when drained, and re-arms on recurrence. Fresh mail never alerts.",
+          "covering_suites": [
+            {
+              "path": "spira/test-mail-health.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-10",
+          "tier": "T2",
+          "statement": "The delivery daemon treats a SIGTERM exit (143) as clean, and world.sh start revives an enabled-but-inactive mail-deliver without restarting an active one.…",
+          "covering_suites": [
+            {
+              "path": "spira/test-mail-deliver.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-11",
+          "tier": "T2",
+          "statement": "Aeon mailbox: the PostToolUse hook injects each message into the running session exactly once (new→cur) and stays silent on an empty mailbox or empty BEAD_ID.…",
+          "covering_suites": [
+            {
+              "path": "spira/test-mail-aeon-hook.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-12",
+          "tier": "T3",
+          "statement": "bead.sh amend on an in-progress bead mails its live aeon and sends nothing when no aeon is alive. The aeon's mailbox is removed when the aeon exits.",
+          "covering_suites": [
+            {
+              "path": "spira/test-mail-aeon.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-13",
+          "tier": "T0",
+          "statement": "Chamber briefs never tell an agent to pass a send option that cmd_send does not accept. No caller of the retired cockpit/ask.sh remains.",
+          "covering_suites": [
+            {
+              "path": "spira/test-brief-mail-options.sh",
+              "tier": "T0",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-migrate-ask.sh",
+              "tier": "T0",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-14",
+          "tier": "T3",
+          "statement": "send --kind question|decision --bead W files a separate decision bead, names it in X-Spira-Bead, and links it to W as relates_to, never as a blocking dependency.",
+          "covering_suites": [
+            {
+              "path": "spira/test-verdict-flow.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-15",
+          "tier": "T3",
+          "statement": "A reply to a message carrying X-Spira-Bead closes that bead, leaves the work bead open and writes the verdict and reply body into the work bead's notes. Under…",
+          "covering_suites": [
+            {
+              "path": "spira/test-verdict-flow.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-16",
+          "tier": "T3",
+          "statement": "The mail client's accept-default key (aerc/accept-default.sh) closes the decision with the message's X-Spira-Default as the verdict, using a real spira.conf.",
+          "covering_suites": [
+            {
+              "path": "spira/test-verdict-flow.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-17",
+          "tier": "T2",
+          "statement": "Reply routing: a reply goes to the sender's mailbox when one exists. It goes to concierge when the sender is a chamber persona, when the sender has no mailbox,…",
+          "covering_suites": [
+            {
+              "path": "spira/test-mail.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-18",
+          "tier": "T1",
+          "statement": "Suit verdict words (uphold / retire / amend) close the suit bead, each with its own close reason (upheld/retired/amended).",
+          "covering_suites": [
+            {
+              "path": "spira/test-verdict-flow.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-19",
+          "tier": "T2",
+          "statement": "If the bead close fails, sendmail exits non-zero naming the bead and leaves the original message unmarked.",
+          "covering_suites": [
+            {
+              "path": "spira/test-verdict-flow.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-20",
+          "tier": "T1",
+          "statement": "answers.py renders a verdict as RYAN ANSWERED / verdict on. A premise rejection (label premise-rejected OR reason prefix premise-rejected:) renders as RYAN…",
+          "covering_suites": [
+            {
+              "path": "spira/test-answers.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-21",
+          "tier": "T1",
+          "statement": "Every monitor headline carries the bead's own closed_at, in the format watchd.sh parses.",
+          "covering_suites": [
+            {
+              "path": "spira/test-answers.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-22",
+          "tier": "T1",
+          "statement": "Answer-reader cursors: a cold start seeds silently and writes the cursor. Crash recovery (witness present, cursors absent) prints SEEDED AT with the count…",
+          "covering_suites": [
+            {
+              "path": "spira/test-answers.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-23",
+          "tier": "T2",
+          "statement": "watch-answers.sh loop wakes the reader exactly once per pass that found answers, and an empty SPIRA_WAKE wakes nobody. The loop exits 1 when a pass fails (so…",
+          "covering_suites": [
+            {
+              "path": "spira/test-answers.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-24",
+          "tier": "T3",
+          "statement": "land_escalate reaches the operator unless an OPEN ask with the same subject exists. A closed ask does not suppress it (sp-yki4).",
+          "covering_suites": [
+            {
+              "path": "spira/test-verdict-flow.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-25",
+          "tier": "T2",
+          "statement": "Component escalations (for example skew.sh check --escalate) carry ## Question and ## Default. A missing or failing mailer is reported with its rc and output,…",
+          "covering_suites": [
+            {
+              "path": "spira/test-skew-escalate.sh",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-26",
+          "tier": "T1",
+          "statement": "verify-asks.sh --apply closes an open ask whose VERIFY: command exits 0 (the close reason quotes the command). It leaves failing or VERIFY-less asks open,…",
+          "covering_suites": [
+            {
+              "path": "spira/test-verify-asks.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-27",
+          "tier": "T2",
+          "statement": "watchd tail allows one reader per watcher. A second reader refuses at once (exit 3) and names the holder pid and --takeover. Each event is delivered exactly…",
+          "covering_suites": [
+            {
+              "path": "spira/test-mail-dismiss-sweep.sh",
+              "tier": "T2",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-watchd-tail.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-28",
+          "tier": "T2",
+          "statement": "notify events half: an actionable line (matching SPIRA_ACTIONABLE from config) unread longer than SPIRA_NOTIFY_AGE is escalated once, with its text and…",
+          "covering_suites": [
+            {
+              "path": "spira/test-watch-notify.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-29",
+          "tier": "T2",
+          "statement": "notify health half: a daemon watcher that is inactive, failed or failing its probe beyond the threshold is escalated once with NRestarts, its last log line and…",
+          "covering_suites": [
+            {
+              "path": "spira/test-watch-notify.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-30",
+          "tier": "T2",
+          "statement": "During a world halt ($SPIRA_RUN/world.halted), status reads HALTED rather than DEGRADED, and notify escalates nothing and clears the unhealthy clocks.",
+          "covering_suites": [
+            {
+              "path": "spira/test-watch-notify.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-31",
+          "tier": "T2",
+          "statement": "notify exits 3 rather than passing when the manifest is malformed or missing, the filter is empty, the threshold is non-numeric, it gets an argument, or there…",
+          "covering_suites": [
+            {
+              "path": "spira/test-watch-notify.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-32",
+          "tier": "T1",
+          "statement": "watch-refresh restarts an active daemon watcher when its target, a sibling library, the config, conf.sh, the manifest, the dispatcher or its unit's ExecStart…",
+          "covering_suites": [
+            {
+              "path": "spira/test-watch-refresh.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-33",
+          "tier": "T1",
+          "statement": "A refresh pass fails loudly and restarts nothing when systemctl show fails, the start time is unreadable or the manifest is malformed. The orphan reaper…",
+          "covering_suites": [
+            {
+              "path": "spira/test-watch-refresh.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-34",
+          "tier": "T1",
+          "statement": "health-ids reads the id prefix from the database's issue_prefix, not from the goal (sp-c57o), and falls back to SPIRA_ID_PREFIX. A state file with none of our…",
+          "covering_suites": [
+            {
+              "path": "spira/test-watchd-health-ids.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-35",
+          "tier": "T1",
+          "statement": "prune removes the runtime files of watcher names that are no longer in the manifest and keeps active ones. A malformed manifest removes nothing, and a missing…",
+          "covering_suites": [
+            {
+              "path": "spira/test-watchd-prune.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-36",
+          "tier": "T1",
+          "statement": "A watcher-filed incident refiled while blocked by an open dependency stays open, records no reopen event and stays out of bd ready. A closed incident refiled…",
+          "covering_suites": [
+            {
+              "path": "spira/test-incident-recur-cause.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-37",
+          "tier": "T0",
+          "statement": "Watcher and notifier units (spira-watch@, -notify, -refresh, -pr-notify, -mail-tidy) render with CPUQuota, Nice, reachable restart limits, no @ placeholders…",
+          "covering_suites": [
+            {
+              "path": "spira/test-units-lint.sh",
+              "tier": "T0",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-38",
+          "tier": "T1",
+          "statement": "pr-notify classifies each PR in a pr-mode repo as GREEN, RED or skipped (pending, null or empty checks) and ignores push/hold repos. It reports a spira/*…",
+          "covering_suites": [
+            {
+              "path": "spira/test-pr-notify.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-operator-channel-39",
+          "tier": "T1",
+          "statement": "A fayth with FAYTH_SUMMON=operator never enters the task pool or the lanes. The shipped concierge is operator-only and the builder stays summonable.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-operator-channel-40",
+          "tier": "T1",
+          "statement": "Concierge resume: the resume id is used only when the recorded cwd matches the brain dir. The SessionStart hook records the session only when SPIRA_CONCIERGE=1…",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-operator-channel-41",
+          "tier": "T1",
+          "statement": "The composed brief has no surviving {{, names an executable mail.sh and bead.sh (the harness one when SPIRA_WIKI is unset), and carries the statutes. A missing…",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-operator-channel-42",
+          "tier": "T1",
+          "statement": "render_memories renders SPIRA_STATUTE_CORE in full and every other statute as exactly one slug line. An over-budget core statute falls back to a slug. The…",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-operator-channel-43",
+          "tier": "T2",
+          "statement": "rule.sh enact prints \"Statute is live\" only when the synth hook succeeds. A failing, missing or non-executable hook is non-zero and prints \"NOT regenerated\".…",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-operator-channel-44",
+          "tier": "T1",
+          "statement": "SOP validation (write and lint): SYMPTOM/CHECK/FIX present, MATCH is a valid ERE, 250-word cap, no operator-specific /home path, METRIC well-formed. Each rule…",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-operator-channel-45",
+          "tier": "T2",
+          "statement": "The SOP ledger: applied appends one complete JSON record at the configured path, append-only in epoch order, and refuses bad arguments while writing nothing. A…",
+          "covering_suites": []
+        }
+      ]
+    },
+    {
+      "area": "test-infrastructure",
+      "use_cases": [
+        {
+          "id": "UC-test-infrastructure-01",
+          "tier": "T1",
+          "statement": "The header parser extracts `# covers:` (first line), `# requires:` (comma or space separated), `# exclusive:`, `# timeout:`, `# priority:` and `# selects-on:`, and returns empty with no declaration or a missing file.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-02",
+          "tier": "T0",
+          "statement": "Every declared `# covers:` token (every line, not only the first) resolves to an existing file, and every suite metadata key is well-formed.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-03",
+          "tier": "T1",
+          "statement": "Selection over a changed-file set works as follows. A covered file selects its covering suites plus the always-run suites. An unmapped file selects all suites (`mode=all`) unless `--no-all-fallback` is set. An empty diff selects only the always-run suites. Inert files select nothing. `selects-on: added,mode` fires only on A or mode changes. `--files` and `--base/--head` give identical output.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-04",
+          "tier": "T2",
+          "statement": "`file#func` covers narrow selection to hunks inside that function. A global hunk selects all of the file's suites. `--files` mode is conservative.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-05",
+          "tier": "T1",
+          "statement": "A changed file matching `SPIRA_SELECT_SOURCE` that no suite claims makes selection fail, naming the file. `--report-file` lists unclaimed and unplaced files.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-06",
+          "tier": "T2",
+          "statement": "A queue-branch diff selects the union of its members' suites and falls back to all if any member is unmapped.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-07",
+          "tier": "T0",
+          "statement": "`gate-spira.sh`, `testenv-batch.sh`, `gate-touched.sh`, `suites.sh names` and gate.yml all delegate to `select.sh`. There is one selector with no private copy.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-08",
+          "tier": "T1",
+          "statement": "The image tag is a content hash of the build closure (Containerfile, doctor.sh program list, bd pin). It is path-independent and unchanged by unrelated files.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-09",
+          "tier": "T1",
+          "statement": "Image acquisition pulls the closure tag from the registry when one is configured. It builds on a miss (not an error) and builds with no registry configured. Publish pushes exactly the closure tag and never `:latest`. Callers get one `localhost/` ref regardless of source.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-11",
+          "tier": "T1",
+          "statement": "Batch argument contract: an unknown `--mode` or a missing branch exits 2. `--mode=x` is accepted and the default is parallel. `--suites a,b` and `--suites -` run exactly the named suites (`producer=explicit`). An unknown name exits non-zero and names it. Empty stdin means \"nothing to run\" and exits 0. With no `--suites`, `producer=diff`, or `all` on fallback.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-12",
+          "tier": "T2",
+          "statement": "The batch runs the suites **as they exist on the named branch**, not the caller's working tree.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-13",
+          "tier": "T2",
+          "statement": "Exit contract: all green exits 0. Any red exits 1 (branch fault). A container death, start failure or exec storm exits 2 (harness fault), recording unrun suites as `unreached` without overwriting completed results. gate.yml maps 2 to 75.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-14",
+          "tier": "T2",
+          "statement": "Liveness: one failed `podman inspect` is not death. `Running=false` is death and the container is removed. Zero-second empty exec failures with a live container are a harness fault, not reds. On parallel death, in-flight reds become unreached.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-15",
+          "tier": "T2",
+          "statement": "Isolation: in parallel mode each suite gets a distinct HOME, SPIRA_INSTANCE and SPIRA_RUN (in serial mode they share). No suite inherits `$TMUX`. Runner-injected vars are stripped from the primary launch. A suite cannot read host files.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-16",
+          "tier": "T1",
+          "statement": "`# exclusive:` suites drain the parallel pool before starting. Maxpar = min(nproc, ⌊(MemAvailable−reserve)/per-suite⌋) and names its binding resource. `SPIRA_BATCH_MAXPAR` is a ceiling only.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-17",
+          "tier": "T1",
+          "statement": "`# requires:` unmet means the suite is recorded `skip-req` with the missing token in the fingerprint and not run. It stays distinct from a plain `skip` (77). Neither makes the batch red.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-18",
+          "tier": "T2",
+          "statement": "Per-suite `SPIRA_SUITE_TIMEOUT` reaps a suite as `timeout` (fingerprint `timeout:*`). Later suites continue, the batch exits non-zero, and 0 disables the limit.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-19",
+          "tier": "T2",
+          "statement": "Verdict cache: a repeat attempt at the same (branch, sha, mode, selection) key after red is refused with exit 2 unless the override carries a reason of at least 10 characters, which is recorded. A refusal files one incident per branch (deduplicated).",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-20",
+          "tier": "T0",
+          "statement": "Constants mirrored from `testenv.sh` match, and every `_CONTAINER_*` used is declared. The batch cleanup trap removes the fixture home and owner file on TERM and on normal exit.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-21",
+          "tier": "T2",
+          "statement": "The batch builds one shared bd baseline and hands suites `TESTDB_SHARED/BASELINE/BD`. `testdb_up` gives each borrower a private copy distinct from the baseline and from other concurrent borrowers. `testdb_drop` removes it.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-22",
+          "tier": "T1",
+          "statement": "A vanished baseline makes `testdb_up` exit 75 (fixture-fault). On any `testdb_up` failure, SPIRA_DB is unset, so no suite can write to production. A fixture that cannot be built causes a skip (77), never a pass.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-23",
+          "tier": "T2",
+          "statement": "`testenv.sh scratch` prints a new, empty, working DB distinct from SPIRA_DB. `testenv.sh shell [-c]` points SPIRA_DB at a fixture and tears down SPIRA_DB, SPIRA_RUN and SPIRA_SPOOL on exit.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-24",
+          "tier": "T1",
+          "statement": "Discovery is the `test-*.sh` glob. Gated suites are not re-run and the pass says so. Suites without covers are named as omissions and still run. Every real suite is claimed by the gate or the timed run. The real `gate-suites` names only suites that exist, and an unreadable gate list refuses with rc 1, runs nothing and shows status `?`.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-25",
+          "tier": "T1",
+          "statement": "Classification of one suite outcome from (rc, output, watchdog-killed, shared-fixture, trailer, budget): ok, red, skip, timeout (even when TERM is trapped), setup-fault (ASSERTIONS 0 and rc≠0), red when the trailer is missing, fixture-fault (75 with shared fixture, else red), red-unconfirmed (no budget to confirm). Signal exits map to 124.",
+          "covering_suites": [
+            {
+              "path": "spira/test-suites-classify.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-suites-timeout.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-test-infrastructure-26",
+          "tier": "T1",
+          "statement": "The failure fingerprint is stable across ISO timestamps, per-suite slice length and debris output. The cause fingerprint (normalised first FAIL line) groups same-cause suites.",
+          "covering_suites": [
+            {
+              "path": "spira/test-suites-classify.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-test-infrastructure-27",
+          "tier": "T1",
+          "statement": "Filing: each red files one bead with ref `suite:<name>`, sin-exempt, labelled plan + `repo:`, at the declared priority, with its output. If there is no output, the body carries a \"no output\" sentinel. A recurring or changed failure stays on one bead and logs a recurrence. Same-cause reds file one cluster bead naming all members, with a stable ref and a suppressed count reported. Fixture-faults file one bead naming all borrowers. Setup-faults name the suite, not the covered file. Timeouts name the limit. Greens and skips file nothing.",
+          "covering_suites": [
+            {
+              "path": "spira/test-suites-filing.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-test-infrastructure-28",
+          "tier": "T2",
+          "statement": "Environment confirmation: a red under the runner is re-run with the runner vars stripped. It is confirmed red (suite-defect bead), passes (environment-finding bead via `file_env_red`), or is recorded red-unconfirmed with nothing filed when the budget is short.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-29",
+          "tier": "T1",
+          "statement": "Budget is a wall. `MAXSEC` caps the budget (MAXSEC−60) and never raises it. A suite whose last runtime exceeds the remaining budget, or whose `# timeout:` exceeds it, is `unreached` (not TIMEOUT). The cursor names where the next pass starts. Unreached never overwrites the last verdict or runtime and is cleared when the suite is next reached.",
+          "covering_suites": [
+            {
+              "path": "spira/test-suites-classify.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-suites-timeout.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-test-infrastructure-30",
+          "tier": "T2",
+          "statement": "The per-suite watchdog kills a hung suite at its limit (process group). The runner continues. A leaky background child holding stdout does not wedge the pass and marks its suite red.",
+          "covering_suites": [
+            {
+              "path": "spira/test-suites-timeout.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-test-infrastructure-31",
+          "tier": "T1",
+          "statement": "Quarantine lifecycle. Two distinct flake runs inside the window, with a run_id counted once, quarantine the suite on a `spira-suite-state/auto-*` branch submitted to the queue, never in the checkout. Reactivation needs both bead LANDED and N clean runs. The max-age mail is sent once per period. A nonexistent suite is refused.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-32",
+          "tier": "T1",
+          "statement": "The suite-state file parser, `state_of`, write, clear and lint behave as specified: replace never duplicates, `active` stores nothing, and bad lines are ignored. The fence refuses a quarantine that has no bead, no reason, a missing suite or a **CLOSED** bead, and passes an empty file.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-33",
+          "tier": "T0",
+          "statement": "The suites systemd unit runs `suites.sh run` periodically. It injects `SPIRA_SUITES_MAXSEC = TimeoutStartSec`, and the conf default budget is under it. It treats exit 2 as success. It is installed only under `SPIRA_SELF_TEST`.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-34",
+          "tier": "T1",
+          "statement": "**One report grammar.** Every suite emits `ok`/`FAIL` lines in one format and an `ASSERTIONS n` trailer through `suite-assert.sh`. The runner writes one `.result` schema (`status ts secs fp mode producer rc`) and one `suite-times.tsv` row per suite (run_id, suite, rc, wall, bd_calls, and — new — pass/fail/skip counts). The row is persisted to `refs/notes/suite-times`. `suite-times.sh` reports the Top 20 slowest, the sum and wall time, and movers above 25%.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-35",
+          "tier": "T1",
+          "statement": "CI serial retry. Only red and timed-out suites are re-run once, serially, at the same sha, with timeouts given `GATE_RETRY_RERUN_TIMEOUT`. Red then green is a pass with a `flaky suite` warning. Red twice fails with a `red-twice suite` error. Structural failure (more than max, or more than half hard-red, timeouts excluded) fails without retry. A harness fault passes through.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-36",
+          "tier": "T1",
+          "statement": "Red diagnostics. For each red suite, print its FAIL lines, a tail excerpt, `::group::`/`::error file=` annotations, and a step-summary table of reds only showing rc and red-green/red-red. A red with no output shows `(no output)`. An all-green batch prints nothing and exits 0.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-37",
+          "tier": "T1",
+          "statement": "`gate-check.sh` files one bead per `flaky suite` annotation, and one P1 bead per `red-twice suite` annotation on failed main runs. It deduplicates on rescans and raises an existing lower-priority bead to P1. The annotation strings match what `gate-retry.sh` emits (producer/consumer contract).",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-38",
+          "tier": "T0",
+          "statement": "Workflow shape. The real gate runs (inventory, literal-lint, scratch-fence, testenv-batch). PRs run the diff selection, a main push runs the corpus, empty selection skips provisioning and exits 0, and a provision failure fails the job with 75. There is a per-run VM that is always torn down, with every required action input passed. Release is gated on main via `workflow_call` with a pinned toolchain, no `continue-on-error`, all `--*-bin` flags and tag retraction on publish failure. Acceptance is dispatched with an App token. The suites job has `packages: write` and does not pin maxpar.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-39",
+          "tier": "T1",
+          "statement": "The CI runner host check (`runner-deps.sh --check`) refuses a broken container runtime with a non-75 exit, a MISSING line and \"branch not at fault\". A working host passes. Mutating steps are gated behind check-only.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-40",
+          "tier": "T1",
+          "statement": "The citation report classifies each suite's `# defect:` as resolved (with status), unresolved or uncited.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-41",
+          "tier": "T0",
+          "statement": "Every non-test, non-sourced operator script is executable.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-42",
+          "tier": "T1",
+          "statement": "Certification budget. `gate-spira.sh` times itself. Over `SPIRA_GATE_BUDGET`, or an unmeasurable cost, files one harness bead (\"something must leave gate-suites\") and is not a branch failure. **Untested today (see Gaps).**",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-test-infrastructure-43",
+          "tier": "T1",
+          "statement": "A suite skipping (77) on consecutive timed passes files a `suite-skip:<name>` bead, so that \"a check that cannot run is not a check that passed\". A skip must exit 77, never 0. **Untested today.**",
+          "covering_suites": [
+            {
+              "path": "spira/test-suites-filing.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

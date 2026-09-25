@@ -35,6 +35,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # HEAD positionally without setting either env var.
 SPIRA_GATE_BASE="${SPIRA_GATE_BASE:-$BASE}" bash "$HERE/build-fence.sh" || exit 1
 
+# THE TEST PLAN'S OWN FENCE, for the same reason build-fence.sh sits here: a suite deletion
+# that silently drops a use case's last coverage, or a coverage matrix that no longer matches
+# its own inputs, is a defect in the tree, not something a suite run would catch.
+bash "$HERE/plan-matrix-fence.sh" "$BASE" || exit 1
+
 HEAD="${2:?usage: gate-touched.sh <base> <head>}"
 repo="${SPIRA_GATE_REPO:-.}"
 _tiers="${SPIRA_GATE_TIERS:-T0,T1}"

@@ -26,7 +26,7 @@ covers_hit() {
 }
 
 # is_uc_token <token>: exits 0 for a UC-<area>-NN token (never a file path).
-# plan-lint.sh validates these against docs/test-plan/*.md, not the filesystem —
+# plan-lint.sh validates these against docs/test-plan/*.toml, not the filesystem —
 # a UC id would otherwise read as an unresolvable path.
 is_uc_token() {
     case "$1" in UC-*-[0-9][0-9]) return 0 ;; esac

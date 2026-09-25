@@ -1,0 +1,22 @@
+[package]
+name = "test-plan"
+version = "1.0.0"
+edition = "2021"
+description = "test-plan — typed UC catalogue: schema, validate, coverage matrix, render."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+serde_json = "1"
+serde_path_to_error = "0.1"
+schemars = "0.8"
+
+[[bin]]
+name = "test-plan"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

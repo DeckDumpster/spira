@@ -1,0 +1,191 @@
+# Coverage matrix
+
+Generated from docs/test-plan/*.toml, every suite's # tier:/# covers: header, and run/tsd/ suite timings. Regenerate with `spira/plan-matrix.sh`; never hand-edit — a stale copy fails the gate.
+
+## aeon-execution
+
+| UC | tier | statement | covering suites | status |
+|---|---|---|---|---|
+| UC-aeon-execution-01 | T3 | a bead is worked in a worktree cut from freshly fetched `origin/<landref>`; a stale foreign worktree is moved aside, never removed | — | **GAP** |
+| UC-aeon-execution-02 | T3 | a worktree-creation failure is a pre-session death: FATAL, attempt charged, ledger `pre-session`, no free resummon loop | — | **GAP** |
+| UC-aeon-execution-03 | T1 | a bead poisoned right after claim is released before workspace setup, ledger `poison-raced` | — | **GAP** |
+| UC-aeon-execution-04 | T1 | the world-stop fence refuses a `world-stop` bead with a live aeon and releases the claim; with none it runs stop → session → start | — | **GAP** |
+| UC-aeon-execution-05 | T1 | sweep mode claims nothing, sets no `branch:` label, and refuses when capacity is paused or the world is draining | — | **GAP** |
+| UC-aeon-execution-06 | T1 | launch argv is a pure function of the fayth's system-prompt, project-instructions and settings knobs | — | **GAP** |
+| UC-aeon-execution-07 | T1 | brief rendering leaves no unrendered `{{placeholder}}`; RESUME/SLAIN/DEADLINE/ALREADY_DONE each render correctly | — | **GAP** |
+| UC-aeon-execution-08 | T1 | the lease renews on trace growth and lapses on silence past `FAYTH_LEASE_SECONDS`, killing `-$$` | — | **GAP** |
+| UC-aeon-execution-09 | T1 | the thrash wall trips only when the fuse and the session age both clear the wall | — | **GAP** |
+| UC-aeon-execution-10 | T1 | session outcome classification (refused/unknown/killed/unlanded/yield-headless) and its charge default-deny | — | **GAP** |
+| UC-aeon-execution-11 | T1 | open-bead teardown disposition runs its 13 branches in precedence order and charges only `unlanded`-family outcomes | — | **GAP** |
+| UC-aeon-execution-12 | T3 | a harness reopen after a rebase conflict on a closed, committed bead is a requeue, not an attempt | — | **GAP** |
+| UC-aeon-execution-13 | T1 | the close verdict (commit-naming keeps closed; no commit reopens) is decided identically by aeon and sentinel | — | **GAP** |
+| UC-aeon-execution-14 | T1 | an eviction-race reopen fires only for a live eviction reason at the current tip, capped at 2/hour | — | **GAP** |
+| UC-aeon-execution-15 | T1 | closing with the gate still running, FAIL, or no gate run leaves a distinct note but does not reopen | — | **GAP** |
+| UC-aeon-execution-16 | T1 | the four close guards (prod-dirty, close-reason override, SOP, groom-escalation) bind to their knob, not the persona name | — | **GAP** |
+| UC-aeon-execution-17 | T1 | wiki writes at exit are committed under an `aeon-` author, excluding pre-dirty files and `wiki/tasks.md` | — | **GAP** |
+| UC-aeon-execution-18 | T1 | the aeon's exit code and ledger `done` line reflect the real rc, status and spend fields, `?` never 0 when missing | — | **GAP** |
+| UC-aeon-execution-19 | T2 | attempts are counted from the bd events trail only, never from a label, and `check4_bulk_data` agrees with per-bead queries | — | **GAP** |
+| UC-aeon-execution-20 | T2 | claim release is compare-and-swap on the claiming actor; naming the fayth leaves it held | — | **GAP** |
+| UC-aeon-execution-21 | T1 | CHECK 4 poisons at `POISON_AT`, clears stale poison, and skips epics/partition-excluded/mid-pass-closed beads | — | **GAP** |
+| UC-aeon-execution-22 | T1 | the poison ask is sent once per (bead, attempt count); a label clear does not re-arm it | — | **GAP** |
+| UC-aeon-execution-23 | T1 | the requeue cap and reclaim cap each send one deduplicated mail at their threshold and never add poison | — | **GAP** |
+| UC-aeon-execution-24 | T2 | `attempts.sh deadlocked` lists mergeable poisoned beads and `--apply` lifts poison without losing the attempt record | — | **GAP** |
+| UC-aeon-execution-25 | T1 | a repeated lane-cap timeout asks about the lane, not the approach | — | **GAP** |
+| UC-aeon-execution-26 | T2 | `slay.sh` writes `.slain` first; its default/`--close`/`--keep-work` modes and argument refusals are exact | — | **GAP** |
+
+## dispatch
+
+| UC | tier | statement | covering suites | status |
+|---|---|---|---|---|
+| UC-dispatch-01 | T1 | `bead.sh file --for/--repo` files exactly the persona's labels plus `repo:`, or refuses | spira/test-bead-file.sh | covered |
+| UC-dispatch-02 | T1 | non-work kinds map to their `bd --type`, scope label, no partition label | spira/test-bead-file.sh | covered |
+| UC-dispatch-03 | T1 | a persona files only against a repo whose lanes admit its partition | spira/test-bead-file.sh | covered |
+| UC-dispatch-04 | T1 | `bead.sh lint` reports every stored bead lacking `repo:`/partition, unreadable ids named as such | spira/test-bead-lint.sh | covered |
+| UC-dispatch-05 | T0 | no harness script passes a bare `-` body to `bd note`/`bd create -d` | — | **GAP** |
+| UC-dispatch-06 | T1 | GitHub intake never mutates GitHub, dedups idempotently, promotes only on write access | — | **GAP** |
+| UC-dispatch-07 | T1 | the roster is discovered from `chamber/*.fayth`; lane xor task xor operator, never two | spira/test-fayth.sh | covered |
+| UC-dispatch-08 | T1 | every auto-summoned predicate is built from `$SPIRA_*_LABEL`, never a literal | spira/test-fayth.sh | covered |
+| UC-dispatch-09 | T1 | `summon_fayth` asks each persona's own predicate; partitions don't cross-leak | spira/test-summon-fayth.sh | covered |
+| UC-dispatch-10 | T1 | the `summon_fayth` refusal ladder runs in order and logs its real reason | spira/test-summon-fayth.sh | covered |
+| UC-dispatch-11 | T1 | `fayth_free` arithmetic: elastic pool remainder, non-elastic cap-minus-running, governor clamp | spira/test-summon-fayth.sh | covered |
+| UC-dispatch-12 | T1 | a live drain gates every summon; an expired drain is lifted and logged | spira/test-summon-fayth.sh | covered |
+| UC-dispatch-13 | T1 | effective lanes are the intersection of `.spira/modes`, repo-map lanes and `SPIRA_FAYTHS` | spira/test-fayth.sh | covered |
+| UC-dispatch-14 | T1 | CHECK 7 draws lanes round-robin then fills the task pool in roster order, capped | — | **GAP** |
+| UC-dispatch-15 | T1 | `escape.sh` summons directly on ready work, bypassing pool and lane caps | spira/test-summon-fayth.sh | covered |
+| UC-dispatch-16 | T1 | CHECK 7c reports an unclaimable ready bead once, naming the rejection reason | — | **GAP** |
+| UC-dispatch-17 | T1 | the cockpit's NEXT attribution agrees with the CHECK 7c claimability verdict | spira/test-cockpit-unclaimable.sh | covered |
+| UC-dispatch-18 | T1 | CHECK 8 fires only when nothing progressed and plan is starved, subject to cooldown | — | **GAP** |
+| UC-dispatch-19 | T1 | a pass that cannot read the database exits 1 and never reports goal reached | — | **GAP** |
+| UC-dispatch-20 | T1 | a stale lease in every persona's partition is reclaimed and charged; orphans released | — | **GAP** |
+| UC-dispatch-21 | T1 | the ghost classifier never reclaims a bead carrying the ask or reclaim-skip label | — | **GAP** |
+| UC-dispatch-22 | T1 | an unmapped-repo bead is parked with ask+overseer before its claim is released | — | **GAP** |
+| UC-dispatch-23 | T1 | summoning passes `CPUQuota`, `FAYTH_TIMEOUT_SECONDS` and `--setting-sources` correctly | spira/test-summon-fayth.sh | covered |
+| UC-dispatch-24 | T0 | ops tools are an allowlist of `Bash(pattern)` entries, never bare `Bash` | — | **GAP** |
+
+## gate-verdict
+
+| UC | tier | statement | covering suites | status |
+|---|---|---|---|---|
+| UC-gate-verdict-01 | T1 | Every exit goes through `verdict()`, which prints exactly one anchored `gate: VERDICT=<PASS\|FAIL\|BASE_FAIL\|NO_VERDICT> reason=<slug> branch= repo= suite=` line and exits 0/1/76/75 to match. | spira/test-gate-unit.sh | covered |
+| UC-gate-verdict-02 | T1 | A FAIL that carries no message is downgraded to NO_VERDICT with `reason=no-evidence:<orig>` (sp-io5j backstop). | spira/test-gate-unit.sh | covered |
+| UC-gate-verdict-03 | T1 | An unreadable repo-map gives NO_VERDICT `no-repo-map-file` (this used to be a silent PASS). A repo absent from the map gives NO_VERDICT `no-repo-map`. | spira/test-gate-preflight.sh | covered |
+| UC-gate-verdict-04 | T2 | An unresolvable branch or base gives NO_VERDICT (`no-diff` / `no-base`), exit 75. The message names `base...branch`, the repo and git's `fatal:` line. | spira/test-gate-preflight.sh | covered |
+| UC-gate-verdict-05 | T2 | Universal layer: a changed `*.sh` that fails `bash -n` gives FAIL `syntax`. So does beads data anywhere in the branch tree (`beads-data`). A branch that vendors a foreign harness copy gives FAIL `foreign-harness`. If `exclude.sh` or `skew.sh` is missing, or skew exits 3, the result is NO_VERDICT (`missing-exclude`, `missing-skew`, `skew-init-fault`). | — | **GAP** |
+| UC-gate-verdict-06 | T2 | A repo whose map row has an empty gate column passes with `reason=syntax-only`, and the VERDICT line is still printed. | — | **GAP** |
+| UC-gate-verdict-07 | T2 | If a gate command names `bash <path>` and that path is absent from the base, the result is NO_VERDICT `cmd-missing-file` naming the path, never BASE_FAIL. Once the path exists, the command runs. (sp-lkzl) | spira/test-gate-missing-cmd.sh | covered |
+| UC-gate-verdict-08 | T1 | covers:-based selection. A suite is selected when its covers: names a changed file, or when it has no covers:, or when it is a meta suite covering `spira/test-*.sh`. A suite covering only unchanged files is not selected. A suite added by the branch is present on the branch tree and absent on the base. `SPIRA_GATE_FILES` overrides the computed diff. | spira/test-gate-touched.sh | covered |
+| UC-gate-verdict-09 | T1 | Suites in `SPIRA_GATE_EJECTED_SUITES` (CSV) are always added. A suite that is both covered and ejected appears once. An ejected suite that no longer exists is skipped. (sp-px6ng) | spira/test-reopen-queue-eject.sh | covered |
+| UC-gate-verdict-10 | T2 | The gate command receives the env contract: `SPIRA_GATE_BRANCH`, `_BASE`, `_SELECT_HEAD` (= the branch on *both* trials), `_FILES`, `_HOST_CORES` (= `host_cores()`, not `nproc`), `_EJECTED_SUITES`, `_SUITES`. | — | **GAP** |
+| UC-gate-verdict-11 | T1 | `host_cores` returns `getconf _NPROCESSORS_ONLN` even when `nproc` is cgroup-limited. `governor.sh` writes `SP_CORES` from it. | spira/test-gate-unit.sh | covered |
+| UC-gate-verdict-12 | T1 | Base-trial attribution. Branch red and base green gives FAIL `branch-red`. The same suite red on both gives BASE_FAIL `base-red`, naming the suite and carrying the base output. Base reds that are all timeouts give NO_VERDICT `base-timeout`. Genuine reds plus timeouts give BASE_FAIL. Suites red only on the branch give FAIL even when the base is red elsewhere. An unnamed red on both gives `suite=-`. A base trial that exits 75/124 or cannot check out gives NO_VERDICT `base-untestable`. | spira/test-gate-unit.sh | covered |
+| UC-gate-verdict-13 | T2 | A branch trial killed at `SPIRA_GATE_TIMEOUT` gives NO_VERDICT `timeout`, naming the budget and the command, and is not cached. A branch trial exiting 75 gives NO_VERDICT `harness-fault`. (sp-p4rl) | — | **GAP** |
+| UC-gate-verdict-14 | T2 | A red verdict carries the command's full early diagnostics, not a `tail -20` window. A passing gate does not print them. | — | **GAP** |
+| UC-gate-verdict-15 | T1 | Verdict cache. The key is repo + tree + changed files + command + harness bytes (gate.sh, exclude.sh, skew.sh) + `SPIRA_GATE_SUITES`. Only PASS is cached. Reuse is metered `rc=0 cached`. A landing on the base does not invalidate an un-rebased branch. A restored command finds its old entry. A verdict older than `SPIRA_VERDICT_TTL` is refused, as is an entry without `at=` or a non-numeric TTL. (sp-0v8) | spira/test-gate-unit.sh | covered |
+| UC-gate-verdict-16 | T3 | Gates on different branches run concurrently in separate trees and never see each other's content. Gates on the same branch serialise, and the wait is metered `waited=Ns`. (sp-64v0) | spira/test-gate-unit.sh | covered |
+| UC-gate-verdict-17 | T2 | A gate that cannot get its tree lock within `SPIRA_GATE_LOCK_WAIT` gives NO_VERDICT `lock-timeout` ("not a fault") and never removes the holder's tree. Missing `flock` or an unopenable lockfile gives NO_VERDICT (`no-flock`, `no-lockfile`). (sp-d8h0r) | — | **GAP** |
+| UC-gate-verdict-18 | T2 | Tree lifecycle. PASS keeps the detached worktree for reuse. Non-PASS removes it, but only when this process held the lock. A worktree that cannot be created gives NO_VERDICT `tree-unidentified`. | — | **GAP** |
+| UC-gate-verdict-19 | T2 | `gate-locks.sh` reports FREE, HELD (with PID) or STALE. A lock whose holder PID is dead but whose PGID has a live member (inherited fd) is HELD. A lock that does not exist is not listed. | — | **GAP** |
+| UC-gate-verdict-20 | T2 | `gate-sweep.sh` removes stale `.gate.<repo>[.<key>]` worktrees and orphaned `/tmp/spira-batch-*` homes. It keeps any tree whose lock is held (and says so), young trees, and homes with a live container. (sp-ic8n, sp-q7d72) | spira/test-gate-sweep.sh | covered |
+| UC-gate-verdict-21 | T3 | Under contention (N aeon gates plus a landing pass with a small lock wait), every gate reaches a verdict. None is starved to 75, no tree is crossed, landing verdicts come from the cache, and the whole soak finishes inside its deadline. | — | **GAP** |
+| UC-gate-verdict-22 | T2 | Yield recording. Every non-PASS verdict is recorded with branch, bead, suite and tree. Gating the same tree twice records one red. A red tree changed to PASS becomes inferred DEFECT. BASE_FAIL arrives as GATE_FAULT. A failing recorder never changes the verdict or the exit code. (sp-1xb0) | spira/test-yield.sh | covered |
+| UC-gate-verdict-23 | T1 | Yield reporting. The configured window (`SPIRA_YIELD_WINDOW`) excludes older reds. A stated `classify` overrides an inferred one and keeps its reason. Classify refuses an unknown branch or an invalid verdict. Cost is split solo vs contended and excludes cached passes. An absent record or log renders `?`, never 0. A recorder that shows reds in the meter log but has an empty record is reported `silent` and withholds its counts. | spira/test-yield.sh | covered |
+| UC-gate-verdict-24 | T0 | Yield reaches Ops and the cockpit: `watchtower --show` carries the yield columns, and every `SP_YIELD_*` key is written by the collector, read by the pane and defaults to `?`. | spira/test-yield.sh | covered |
+| UC-gate-verdict-25 | T2 | Metering. Every verdict reached after the lock writes one `gate.log` row (rc, waited, ran). Preflight refusals write none. The EXIT trap is disarmed so a verdict is never metered twice, and a `set -e` death or signal is still metered once. | — | **GAP** |
+
+## operator-channel
+
+| UC | tier | statement | covering suites | status |
+|---|---|---|---|---|
+| UC-operator-channel-01 | T2 | send delivers atomically via tmp/ into new/; read prints headers+body and moves new→cur; read with nothing unread fails; list [--unread], count and unread-age… | spira/test-mail.sh | covered |
+| UC-operator-channel-02 | T1 | Lint refuses a message with no From or no Subject, a subject that is or starts with a bead id, a context-free bead id in the body (key:value metadata allowed),… | spira/test-mail.sh | covered |
+| UC-operator-channel-03 | T1 | Kinds are data. An unknown kind is refused and named. template <kind> prints the skeleton. The requires: fields in a kind file drive validation:… | spira/test-mail.sh | covered |
+| UC-operator-channel-04 | T1 | SPIRA_MAIL_LINT_CONSIDERED bypasses lint and records X-Spira-Lint-Override: <reason>. | spira/test-mail.sh | covered |
+| UC-operator-channel-05 | T2 | Every message a real harness sender emits (lib.sh, sentinel, watchd, reflect, strand, pilgrimage, skew, incident, archivist) passes lint. | spira/test-mail-real-senders.sh | covered |
+| UC-operator-channel-06 | T1 | Operator-mailbox repeat guard: a send whose normalised subject matches one inside SPIRA_MAIL_REPEAT_WINDOW is refused, names the override and is recorded under… | spira/test-mail.sh | covered |
+| UC-operator-channel-07 | T2 | done sets the Maildir R flag idempotently (it fails on an unknown id), and a sendmail reply marks the original R. | spira/test-mail.sh | covered |
+| UC-operator-channel-08 | T2 | tidy keeps open-ask mail (label from SPIRA_ASK_LABEL), fresh unread mail and X-Spira-Urgent mail younger than 7 days, plus only the newest of a repeated… | spira/test-mail-tidy.sh | covered |
+| UC-operator-channel-09 | T2 | Aged unread backlog in a registered mailbox alerts the operator once, clears when drained, and re-arms on recurrence. Fresh mail never alerts. | spira/test-mail-health.sh | covered |
+| UC-operator-channel-10 | T2 | The delivery daemon treats a SIGTERM exit (143) as clean, and world.sh start revives an enabled-but-inactive mail-deliver without restarting an active one.… | spira/test-mail-deliver.sh | covered |
+| UC-operator-channel-11 | T2 | Aeon mailbox: the PostToolUse hook injects each message into the running session exactly once (new→cur) and stays silent on an empty mailbox or empty BEAD_ID.… | spira/test-mail-aeon-hook.sh | covered |
+| UC-operator-channel-12 | T3 | bead.sh amend on an in-progress bead mails its live aeon and sends nothing when no aeon is alive. The aeon's mailbox is removed when the aeon exits. | spira/test-mail-aeon.sh | covered |
+| UC-operator-channel-13 | T0 | Chamber briefs never tell an agent to pass a send option that cmd_send does not accept. No caller of the retired cockpit/ask.sh remains. | spira/test-brief-mail-options.sh<br>spira/test-migrate-ask.sh | covered |
+| UC-operator-channel-14 | T3 | send --kind question\|decision --bead W files a separate decision bead, names it in X-Spira-Bead, and links it to W as relates_to, never as a blocking dependency. | spira/test-verdict-flow.sh | covered |
+| UC-operator-channel-15 | T3 | A reply to a message carrying X-Spira-Bead closes that bead, leaves the work bead open and writes the verdict and reply body into the work bead's notes. Under… | spira/test-verdict-flow.sh | covered |
+| UC-operator-channel-16 | T3 | The mail client's accept-default key (aerc/accept-default.sh) closes the decision with the message's X-Spira-Default as the verdict, using a real spira.conf. | spira/test-verdict-flow.sh | covered |
+| UC-operator-channel-17 | T2 | Reply routing: a reply goes to the sender's mailbox when one exists. It goes to concierge when the sender is a chamber persona, when the sender has no mailbox,… | spira/test-mail.sh | covered |
+| UC-operator-channel-18 | T1 | Suit verdict words (uphold / retire / amend) close the suit bead, each with its own close reason (upheld/retired/amended). | spira/test-verdict-flow.sh | covered |
+| UC-operator-channel-19 | T2 | If the bead close fails, sendmail exits non-zero naming the bead and leaves the original message unmarked. | spira/test-verdict-flow.sh | covered |
+| UC-operator-channel-20 | T1 | answers.py renders a verdict as RYAN ANSWERED / verdict on. A premise rejection (label premise-rejected OR reason prefix premise-rejected:) renders as RYAN… | spira/test-answers.sh | covered |
+| UC-operator-channel-21 | T1 | Every monitor headline carries the bead's own closed_at, in the format watchd.sh parses. | spira/test-answers.sh | covered |
+| UC-operator-channel-22 | T1 | Answer-reader cursors: a cold start seeds silently and writes the cursor. Crash recovery (witness present, cursors absent) prints SEEDED AT with the count… | spira/test-answers.sh | covered |
+| UC-operator-channel-23 | T2 | watch-answers.sh loop wakes the reader exactly once per pass that found answers, and an empty SPIRA_WAKE wakes nobody. The loop exits 1 when a pass fails (so… | spira/test-answers.sh | covered |
+| UC-operator-channel-24 | T3 | land_escalate reaches the operator unless an OPEN ask with the same subject exists. A closed ask does not suppress it (sp-yki4). | spira/test-verdict-flow.sh | covered |
+| UC-operator-channel-25 | T2 | Component escalations (for example skew.sh check --escalate) carry ## Question and ## Default. A missing or failing mailer is reported with its rc and output,… | spira/test-skew-escalate.sh | covered |
+| UC-operator-channel-26 | T1 | verify-asks.sh --apply closes an open ask whose VERIFY: command exits 0 (the close reason quotes the command). It leaves failing or VERIFY-less asks open,… | spira/test-verify-asks.sh | covered |
+| UC-operator-channel-27 | T2 | watchd tail allows one reader per watcher. A second reader refuses at once (exit 3) and names the holder pid and --takeover. Each event is delivered exactly… | spira/test-mail-dismiss-sweep.sh<br>spira/test-watchd-tail.sh | covered |
+| UC-operator-channel-28 | T2 | notify events half: an actionable line (matching SPIRA_ACTIONABLE from config) unread longer than SPIRA_NOTIFY_AGE is escalated once, with its text and… | spira/test-watch-notify.sh | covered |
+| UC-operator-channel-29 | T2 | notify health half: a daemon watcher that is inactive, failed or failing its probe beyond the threshold is escalated once with NRestarts, its last log line and… | spira/test-watch-notify.sh | covered |
+| UC-operator-channel-30 | T2 | During a world halt ($SPIRA_RUN/world.halted), status reads HALTED rather than DEGRADED, and notify escalates nothing and clears the unhealthy clocks. | spira/test-watch-notify.sh | covered |
+| UC-operator-channel-31 | T2 | notify exits 3 rather than passing when the manifest is malformed or missing, the filter is empty, the threshold is non-numeric, it gets an argument, or there… | spira/test-watch-notify.sh | covered |
+| UC-operator-channel-32 | T1 | watch-refresh restarts an active daemon watcher when its target, a sibling library, the config, conf.sh, the manifest, the dispatcher or its unit's ExecStart… | spira/test-watch-refresh.sh | covered |
+| UC-operator-channel-33 | T1 | A refresh pass fails loudly and restarts nothing when systemctl show fails, the start time is unreadable or the manifest is malformed. The orphan reaper… | spira/test-watch-refresh.sh | covered |
+| UC-operator-channel-34 | T1 | health-ids reads the id prefix from the database's issue_prefix, not from the goal (sp-c57o), and falls back to SPIRA_ID_PREFIX. A state file with none of our… | spira/test-watchd-health-ids.sh | covered |
+| UC-operator-channel-35 | T1 | prune removes the runtime files of watcher names that are no longer in the manifest and keeps active ones. A malformed manifest removes nothing, and a missing… | spira/test-watchd-prune.sh | covered |
+| UC-operator-channel-36 | T1 | A watcher-filed incident refiled while blocked by an open dependency stays open, records no reopen event and stays out of bd ready. A closed incident refiled… | spira/test-incident-recur-cause.sh | covered |
+| UC-operator-channel-37 | T0 | Watcher and notifier units (spira-watch@, -notify, -refresh, -pr-notify, -mail-tidy) render with CPUQuota, Nice, reachable restart limits, no @ placeholders… | spira/test-units-lint.sh | covered |
+| UC-operator-channel-38 | T1 | pr-notify classifies each PR in a pr-mode repo as GREEN, RED or skipped (pending, null or empty checks) and ignores push/hold repos. It reports a spira/*… | spira/test-pr-notify.sh | covered |
+| UC-operator-channel-39 | T1 | A fayth with FAYTH_SUMMON=operator never enters the task pool or the lanes. The shipped concierge is operator-only and the builder stays summonable. | — | **GAP** |
+| UC-operator-channel-40 | T1 | Concierge resume: the resume id is used only when the recorded cwd matches the brain dir. The SessionStart hook records the session only when SPIRA_CONCIERGE=1… | — | **GAP** |
+| UC-operator-channel-41 | T1 | The composed brief has no surviving {{, names an executable mail.sh and bead.sh (the harness one when SPIRA_WIKI is unset), and carries the statutes. A missing… | — | **GAP** |
+| UC-operator-channel-42 | T1 | render_memories renders SPIRA_STATUTE_CORE in full and every other statute as exactly one slug line. An over-budget core statute falls back to a slug. The… | — | **GAP** |
+| UC-operator-channel-43 | T2 | rule.sh enact prints "Statute is live" only when the synth hook succeeds. A failing, missing or non-executable hook is non-zero and prints "NOT regenerated".… | — | **GAP** |
+| UC-operator-channel-44 | T1 | SOP validation (write and lint): SYMPTOM/CHECK/FIX present, MATCH is a valid ERE, 250-word cap, no operator-specific /home path, METRIC well-formed. Each rule… | — | **GAP** |
+| UC-operator-channel-45 | T2 | The SOP ledger: applied appends one complete JSON record at the configured path, append-only in epoch order, and refuses bad arguments while writing nothing. A… | — | **GAP** |
+
+## test-infrastructure
+
+| UC | tier | statement | covering suites | status |
+|---|---|---|---|---|
+| UC-test-infrastructure-01 | T1 | The header parser extracts `# covers:` (first line), `# requires:` (comma or space separated), `# exclusive:`, `# timeout:`, `# priority:` and `# selects-on:`, and returns empty with no declaration or a missing file. | — | **GAP** |
+| UC-test-infrastructure-02 | T0 | Every declared `# covers:` token (every line, not only the first) resolves to an existing file, and every suite metadata key is well-formed. | — | **GAP** |
+| UC-test-infrastructure-03 | T1 | Selection over a changed-file set works as follows. A covered file selects its covering suites plus the always-run suites. An unmapped file selects all suites (`mode=all`) unless `--no-all-fallback` is set. An empty diff selects only the always-run suites. Inert files select nothing. `selects-on: added,mode` fires only on A or mode changes. `--files` and `--base/--head` give identical output. | — | **GAP** |
+| UC-test-infrastructure-04 | T2 | `file#func` covers narrow selection to hunks inside that function. A global hunk selects all of the file's suites. `--files` mode is conservative. | — | **GAP** |
+| UC-test-infrastructure-05 | T1 | A changed file matching `SPIRA_SELECT_SOURCE` that no suite claims makes selection fail, naming the file. `--report-file` lists unclaimed and unplaced files. | — | **GAP** |
+| UC-test-infrastructure-06 | T2 | A queue-branch diff selects the union of its members' suites and falls back to all if any member is unmapped. | — | **GAP** |
+| UC-test-infrastructure-07 | T0 | `gate-spira.sh`, `testenv-batch.sh`, `gate-touched.sh`, `suites.sh names` and gate.yml all delegate to `select.sh`. There is one selector with no private copy. | — | **GAP** |
+| UC-test-infrastructure-08 | T1 | The image tag is a content hash of the build closure (Containerfile, doctor.sh program list, bd pin). It is path-independent and unchanged by unrelated files. | — | **GAP** |
+| UC-test-infrastructure-09 | T1 | Image acquisition pulls the closure tag from the registry when one is configured. It builds on a miss (not an error) and builds with no registry configured. Publish pushes exactly the closure tag and never `:latest`. Callers get one `localhost/` ref regardless of source. | — | **GAP** |
+| UC-test-infrastructure-11 | T1 | Batch argument contract: an unknown `--mode` or a missing branch exits 2. `--mode=x` is accepted and the default is parallel. `--suites a,b` and `--suites -` run exactly the named suites (`producer=explicit`). An unknown name exits non-zero and names it. Empty stdin means "nothing to run" and exits 0. With no `--suites`, `producer=diff`, or `all` on fallback. | — | **GAP** |
+| UC-test-infrastructure-12 | T2 | The batch runs the suites **as they exist on the named branch**, not the caller's working tree. | — | **GAP** |
+| UC-test-infrastructure-13 | T2 | Exit contract: all green exits 0. Any red exits 1 (branch fault). A container death, start failure or exec storm exits 2 (harness fault), recording unrun suites as `unreached` without overwriting completed results. gate.yml maps 2 to 75. | — | **GAP** |
+| UC-test-infrastructure-14 | T2 | Liveness: one failed `podman inspect` is not death. `Running=false` is death and the container is removed. Zero-second empty exec failures with a live container are a harness fault, not reds. On parallel death, in-flight reds become unreached. | — | **GAP** |
+| UC-test-infrastructure-15 | T2 | Isolation: in parallel mode each suite gets a distinct HOME, SPIRA_INSTANCE and SPIRA_RUN (in serial mode they share). No suite inherits `$TMUX`. Runner-injected vars are stripped from the primary launch. A suite cannot read host files. | — | **GAP** |
+| UC-test-infrastructure-16 | T1 | `# exclusive:` suites drain the parallel pool before starting. Maxpar = min(nproc, ⌊(MemAvailable−reserve)/per-suite⌋) and names its binding resource. `SPIRA_BATCH_MAXPAR` is a ceiling only. | — | **GAP** |
+| UC-test-infrastructure-17 | T1 | `# requires:` unmet means the suite is recorded `skip-req` with the missing token in the fingerprint and not run. It stays distinct from a plain `skip` (77). Neither makes the batch red. | — | **GAP** |
+| UC-test-infrastructure-18 | T2 | Per-suite `SPIRA_SUITE_TIMEOUT` reaps a suite as `timeout` (fingerprint `timeout:*`). Later suites continue, the batch exits non-zero, and 0 disables the limit. | — | **GAP** |
+| UC-test-infrastructure-19 | T2 | Verdict cache: a repeat attempt at the same (branch, sha, mode, selection) key after red is refused with exit 2 unless the override carries a reason of at least 10 characters, which is recorded. A refusal files one incident per branch (deduplicated). | — | **GAP** |
+| UC-test-infrastructure-20 | T0 | Constants mirrored from `testenv.sh` match, and every `_CONTAINER_*` used is declared. The batch cleanup trap removes the fixture home and owner file on TERM and on normal exit. | — | **GAP** |
+| UC-test-infrastructure-21 | T2 | The batch builds one shared bd baseline and hands suites `TESTDB_SHARED/BASELINE/BD`. `testdb_up` gives each borrower a private copy distinct from the baseline and from other concurrent borrowers. `testdb_drop` removes it. | — | **GAP** |
+| UC-test-infrastructure-22 | T1 | A vanished baseline makes `testdb_up` exit 75 (fixture-fault). On any `testdb_up` failure, SPIRA_DB is unset, so no suite can write to production. A fixture that cannot be built causes a skip (77), never a pass. | — | **GAP** |
+| UC-test-infrastructure-23 | T2 | `testenv.sh scratch` prints a new, empty, working DB distinct from SPIRA_DB. `testenv.sh shell [-c]` points SPIRA_DB at a fixture and tears down SPIRA_DB, SPIRA_RUN and SPIRA_SPOOL on exit. | — | **GAP** |
+| UC-test-infrastructure-24 | T1 | Discovery is the `test-*.sh` glob. Gated suites are not re-run and the pass says so. Suites without covers are named as omissions and still run. Every real suite is claimed by the gate or the timed run. The real `gate-suites` names only suites that exist, and an unreadable gate list refuses with rc 1, runs nothing and shows status `?`. | — | **GAP** |
+| UC-test-infrastructure-25 | T1 | Classification of one suite outcome from (rc, output, watchdog-killed, shared-fixture, trailer, budget): ok, red, skip, timeout (even when TERM is trapped), setup-fault (ASSERTIONS 0 and rc≠0), red when the trailer is missing, fixture-fault (75 with shared fixture, else red), red-unconfirmed (no budget to confirm). Signal exits map to 124. | spira/test-suites-classify.sh<br>spira/test-suites-timeout.sh | covered |
+| UC-test-infrastructure-26 | T1 | The failure fingerprint is stable across ISO timestamps, per-suite slice length and debris output. The cause fingerprint (normalised first FAIL line) groups same-cause suites. | spira/test-suites-classify.sh | covered |
+| UC-test-infrastructure-27 | T1 | Filing: each red files one bead with ref `suite:<name>`, sin-exempt, labelled plan + `repo:`, at the declared priority, with its output. If there is no output, the body carries a "no output" sentinel. A recurring or changed failure stays on one bead and logs a recurrence. Same-cause reds file one cluster bead naming all members, with a stable ref and a suppressed count reported. Fixture-faults file one bead naming all borrowers. Setup-faults name the suite, not the covered file. Timeouts name the limit. Greens and skips file nothing. | spira/test-suites-filing.sh | covered |
+| UC-test-infrastructure-28 | T2 | Environment confirmation: a red under the runner is re-run with the runner vars stripped. It is confirmed red (suite-defect bead), passes (environment-finding bead via `file_env_red`), or is recorded red-unconfirmed with nothing filed when the budget is short. | — | **GAP** |
+| UC-test-infrastructure-29 | T1 | Budget is a wall. `MAXSEC` caps the budget (MAXSEC−60) and never raises it. A suite whose last runtime exceeds the remaining budget, or whose `# timeout:` exceeds it, is `unreached` (not TIMEOUT). The cursor names where the next pass starts. Unreached never overwrites the last verdict or runtime and is cleared when the suite is next reached. | spira/test-suites-classify.sh<br>spira/test-suites-timeout.sh | covered |
+| UC-test-infrastructure-30 | T2 | The per-suite watchdog kills a hung suite at its limit (process group). The runner continues. A leaky background child holding stdout does not wedge the pass and marks its suite red. | spira/test-suites-timeout.sh | covered |
+| UC-test-infrastructure-31 | T1 | Quarantine lifecycle. Two distinct flake runs inside the window, with a run_id counted once, quarantine the suite on a `spira-suite-state/auto-*` branch submitted to the queue, never in the checkout. Reactivation needs both bead LANDED and N clean runs. The max-age mail is sent once per period. A nonexistent suite is refused. | — | **GAP** |
+| UC-test-infrastructure-32 | T1 | The suite-state file parser, `state_of`, write, clear and lint behave as specified: replace never duplicates, `active` stores nothing, and bad lines are ignored. The fence refuses a quarantine that has no bead, no reason, a missing suite or a **CLOSED** bead, and passes an empty file. | — | **GAP** |
+| UC-test-infrastructure-33 | T0 | The suites systemd unit runs `suites.sh run` periodically. It injects `SPIRA_SUITES_MAXSEC = TimeoutStartSec`, and the conf default budget is under it. It treats exit 2 as success. It is installed only under `SPIRA_SELF_TEST`. | — | **GAP** |
+| UC-test-infrastructure-34 | T1 | **One report grammar.** Every suite emits `ok`/`FAIL` lines in one format and an `ASSERTIONS n` trailer through `suite-assert.sh`. The runner writes one `.result` schema (`status ts secs fp mode producer rc`) and one `suite-times.tsv` row per suite (run_id, suite, rc, wall, bd_calls, and — new — pass/fail/skip counts). The row is persisted to `refs/notes/suite-times`. `suite-times.sh` reports the Top 20 slowest, the sum and wall time, and movers above 25%. | — | **GAP** |
+| UC-test-infrastructure-35 | T1 | CI serial retry. Only red and timed-out suites are re-run once, serially, at the same sha, with timeouts given `GATE_RETRY_RERUN_TIMEOUT`. Red then green is a pass with a `flaky suite` warning. Red twice fails with a `red-twice suite` error. Structural failure (more than max, or more than half hard-red, timeouts excluded) fails without retry. A harness fault passes through. | — | **GAP** |
+| UC-test-infrastructure-36 | T1 | Red diagnostics. For each red suite, print its FAIL lines, a tail excerpt, `::group::`/`::error file=` annotations, and a step-summary table of reds only showing rc and red-green/red-red. A red with no output shows `(no output)`. An all-green batch prints nothing and exits 0. | — | **GAP** |
+| UC-test-infrastructure-37 | T1 | `gate-check.sh` files one bead per `flaky suite` annotation, and one P1 bead per `red-twice suite` annotation on failed main runs. It deduplicates on rescans and raises an existing lower-priority bead to P1. The annotation strings match what `gate-retry.sh` emits (producer/consumer contract). | — | **GAP** |
+| UC-test-infrastructure-38 | T0 | Workflow shape. The real gate runs (inventory, literal-lint, scratch-fence, testenv-batch). PRs run the diff selection, a main push runs the corpus, empty selection skips provisioning and exits 0, and a provision failure fails the job with 75. There is a per-run VM that is always torn down, with every required action input passed. Release is gated on main via `workflow_call` with a pinned toolchain, no `continue-on-error`, all `--*-bin` flags and tag retraction on publish failure. Acceptance is dispatched with an App token. The suites job has `packages: write` and does not pin maxpar. | — | **GAP** |
+| UC-test-infrastructure-39 | T1 | The CI runner host check (`runner-deps.sh --check`) refuses a broken container runtime with a non-75 exit, a MISSING line and "branch not at fault". A working host passes. Mutating steps are gated behind check-only. | — | **GAP** |
+| UC-test-infrastructure-40 | T1 | The citation report classifies each suite's `# defect:` as resolved (with status), unresolved or uncited. | — | **GAP** |
+| UC-test-infrastructure-41 | T0 | Every non-test, non-sourced operator script is executable. | — | **GAP** |
+| UC-test-infrastructure-42 | T1 | Certification budget. `gate-spira.sh` times itself. Over `SPIRA_GATE_BUDGET`, or an unmeasurable cost, files one harness bead ("something must leave gate-suites") and is not a branch failure. **Untested today (see Gaps).** | — | **GAP** |
+| UC-test-infrastructure-43 | T1 | A suite skipping (77) on consecutive timed passes files a `suite-skip:<name>` bead, so that "a check that cannot run is not a check that passed". A skip must exit 77, never 0. **Untested today.** | spira/test-suites-filing.sh | covered |
+

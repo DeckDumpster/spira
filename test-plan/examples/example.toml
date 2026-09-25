@@ -1,0 +1,17 @@
+api_version = "test-plan/v1"
+area = "example"
+
+[[use_case]]
+id = "UC-example-01"
+tier = "T1"
+statement = "a shipped example the crate's own tests validate against"
+
+[[use_case]]
+id = "UC-example-02"
+tier = "T2"
+statement = "a use case with no covering suite yet, explicitly waived"
+
+[use_case.uncovered]
+reason = "suite not written yet"
+date = "2026-09-25"
+bead = "sp-example"

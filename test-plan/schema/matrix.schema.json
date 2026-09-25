@@ -1,0 +1,140 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MatrixDoc",
+  "description": "The whole derived coverage matrix — `docs/test-plan/coverage.json` in full. Regenerated whole from the catalogues, the suite headers and the timings; never hand-edited.",
+  "type": "object",
+  "required": [
+    "api_version",
+    "areas"
+  ],
+  "properties": {
+    "api_version": {
+      "type": "string"
+    },
+    "areas": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/AreaMatrix"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "AreaMatrix": {
+      "type": "object",
+      "required": [
+        "area",
+        "use_cases"
+      ],
+      "properties": {
+        "area": {
+          "type": "string"
+        },
+        "use_cases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/UseCaseMatrix"
+          }
+        }
+      }
+    },
+    "SuiteRef": {
+      "description": "One covering suite's row in the derived matrix.",
+      "type": "object",
+      "required": [
+        "over_budget",
+        "path"
+      ],
+      "properties": {
+        "over_budget": {
+          "type": "boolean"
+        },
+        "p50_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "path": {
+          "type": "string"
+        },
+        "tier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "Tier": {
+      "description": "The cheapest tier that would catch a regression in a use case's behaviour — `docs/test-plan/README.md`'s own table. Spelled as the exact uppercase token every suite header and catalogue line already uses, so no rename table can drift from it.",
+      "type": "string",
+      "enum": [
+        "T0",
+        "T1",
+        "T2",
+        "T3",
+        "T4"
+      ]
+    },
+    "Uncovered": {
+      "description": "Why a T0–T3 use case has no covering suite right now. Every field is required: an uncovered marker with no reason, date or bead is not a record, it is a suppression.",
+      "type": "object",
+      "required": [
+        "bead",
+        "date",
+        "reason"
+      ],
+      "properties": {
+        "bead": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "UseCaseMatrix": {
+      "description": "One use case's row in the derived matrix: its statement and tier from the catalogue, every suite that covers it, and its uncovered marker if it has one.",
+      "type": "object",
+      "required": [
+        "covering_suites",
+        "id",
+        "statement",
+        "tier"
+      ],
+      "properties": {
+        "covering_suites": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SuiteRef"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "tier": {
+          "$ref": "#/definitions/Tier"
+        },
+        "uncovered": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Uncovered"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

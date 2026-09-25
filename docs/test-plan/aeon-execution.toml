@@ -1,0 +1,132 @@
+api_version = "test-plan/v1"
+area = "aeon-execution"
+
+[[use_case]]
+id = "UC-aeon-execution-01"
+tier = "T3"
+statement = "a bead is worked in a worktree cut from freshly fetched `origin/<landref>`; a stale foreign worktree is moved aside, never removed"
+
+[[use_case]]
+id = "UC-aeon-execution-02"
+tier = "T3"
+statement = "a worktree-creation failure is a pre-session death: FATAL, attempt charged, ledger `pre-session`, no free resummon loop"
+
+[[use_case]]
+id = "UC-aeon-execution-03"
+tier = "T1"
+statement = "a bead poisoned right after claim is released before workspace setup, ledger `poison-raced`"
+
+[[use_case]]
+id = "UC-aeon-execution-04"
+tier = "T1"
+statement = "the world-stop fence refuses a `world-stop` bead with a live aeon and releases the claim; with none it runs stop → session → start"
+
+[[use_case]]
+id = "UC-aeon-execution-05"
+tier = "T1"
+statement = "sweep mode claims nothing, sets no `branch:` label, and refuses when capacity is paused or the world is draining"
+
+[[use_case]]
+id = "UC-aeon-execution-06"
+tier = "T1"
+statement = "launch argv is a pure function of the fayth's system-prompt, project-instructions and settings knobs"
+
+[[use_case]]
+id = "UC-aeon-execution-07"
+tier = "T1"
+statement = "brief rendering leaves no unrendered `{{placeholder}}`; RESUME/SLAIN/DEADLINE/ALREADY_DONE each render correctly"
+
+[[use_case]]
+id = "UC-aeon-execution-08"
+tier = "T1"
+statement = "the lease renews on trace growth and lapses on silence past `FAYTH_LEASE_SECONDS`, killing `-$$`"
+
+[[use_case]]
+id = "UC-aeon-execution-09"
+tier = "T1"
+statement = "the thrash wall trips only when the fuse and the session age both clear the wall"
+
+[[use_case]]
+id = "UC-aeon-execution-10"
+tier = "T1"
+statement = "session outcome classification (refused/unknown/killed/unlanded/yield-headless) and its charge default-deny"
+
+[[use_case]]
+id = "UC-aeon-execution-11"
+tier = "T1"
+statement = "open-bead teardown disposition runs its 13 branches in precedence order and charges only `unlanded`-family outcomes"
+
+[[use_case]]
+id = "UC-aeon-execution-12"
+tier = "T3"
+statement = "a harness reopen after a rebase conflict on a closed, committed bead is a requeue, not an attempt"
+
+[[use_case]]
+id = "UC-aeon-execution-13"
+tier = "T1"
+statement = "the close verdict (commit-naming keeps closed; no commit reopens) is decided identically by aeon and sentinel"
+
+[[use_case]]
+id = "UC-aeon-execution-14"
+tier = "T1"
+statement = "an eviction-race reopen fires only for a live eviction reason at the current tip, capped at 2/hour"
+
+[[use_case]]
+id = "UC-aeon-execution-15"
+tier = "T1"
+statement = "closing with the gate still running, FAIL, or no gate run leaves a distinct note but does not reopen"
+
+[[use_case]]
+id = "UC-aeon-execution-16"
+tier = "T1"
+statement = "the four close guards (prod-dirty, close-reason override, SOP, groom-escalation) bind to their knob, not the persona name"
+
+[[use_case]]
+id = "UC-aeon-execution-17"
+tier = "T1"
+statement = "wiki writes at exit are committed under an `aeon-` author, excluding pre-dirty files and `wiki/tasks.md`"
+
+[[use_case]]
+id = "UC-aeon-execution-18"
+tier = "T1"
+statement = "the aeon's exit code and ledger `done` line reflect the real rc, status and spend fields, `?` never 0 when missing"
+
+[[use_case]]
+id = "UC-aeon-execution-19"
+tier = "T2"
+statement = "attempts are counted from the bd events trail only, never from a label, and `check4_bulk_data` agrees with per-bead queries"
+
+[[use_case]]
+id = "UC-aeon-execution-20"
+tier = "T2"
+statement = "claim release is compare-and-swap on the claiming actor; naming the fayth leaves it held"
+
+[[use_case]]
+id = "UC-aeon-execution-21"
+tier = "T1"
+statement = "CHECK 4 poisons at `POISON_AT`, clears stale poison, and skips epics/partition-excluded/mid-pass-closed beads"
+
+[[use_case]]
+id = "UC-aeon-execution-22"
+tier = "T1"
+statement = "the poison ask is sent once per (bead, attempt count); a label clear does not re-arm it"
+
+[[use_case]]
+id = "UC-aeon-execution-23"
+tier = "T1"
+statement = "the requeue cap and reclaim cap each send one deduplicated mail at their threshold and never add poison"
+
+[[use_case]]
+id = "UC-aeon-execution-24"
+tier = "T2"
+statement = "`attempts.sh deadlocked` lists mergeable poisoned beads and `--apply` lifts poison without losing the attempt record"
+
+[[use_case]]
+id = "UC-aeon-execution-25"
+tier = "T1"
+statement = "a repeated lane-cap timeout asks about the lane, not the approach"
+
+[[use_case]]
+id = "UC-aeon-execution-26"
+tier = "T2"
+statement = "`slay.sh` writes `.slain` first; its default/`--close`/`--keep-work` modes and argument refusals are exact"

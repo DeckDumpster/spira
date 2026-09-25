@@ -12,6 +12,7 @@ members = [
     "batcher",
     "batcher-cut",
     "tsd",
+    "test-plan",
 ]
 resolver = "2"
 

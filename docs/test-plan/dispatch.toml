@@ -1,0 +1,122 @@
+api_version = "test-plan/v1"
+area = "dispatch"
+
+[[use_case]]
+id = "UC-dispatch-01"
+tier = "T1"
+statement = "`bead.sh file --for/--repo` files exactly the persona's labels plus `repo:`, or refuses"
+
+[[use_case]]
+id = "UC-dispatch-02"
+tier = "T1"
+statement = "non-work kinds map to their `bd --type`, scope label, no partition label"
+
+[[use_case]]
+id = "UC-dispatch-03"
+tier = "T1"
+statement = "a persona files only against a repo whose lanes admit its partition"
+
+[[use_case]]
+id = "UC-dispatch-04"
+tier = "T1"
+statement = "`bead.sh lint` reports every stored bead lacking `repo:`/partition, unreadable ids named as such"
+
+[[use_case]]
+id = "UC-dispatch-05"
+tier = "T0"
+statement = "no harness script passes a bare `-` body to `bd note`/`bd create -d`"
+
+[[use_case]]
+id = "UC-dispatch-06"
+tier = "T1"
+statement = "GitHub intake never mutates GitHub, dedups idempotently, promotes only on write access"
+
+[[use_case]]
+id = "UC-dispatch-07"
+tier = "T1"
+statement = "the roster is discovered from `chamber/*.fayth`; lane xor task xor operator, never two"
+
+[[use_case]]
+id = "UC-dispatch-08"
+tier = "T1"
+statement = "every auto-summoned predicate is built from `$SPIRA_*_LABEL`, never a literal"
+
+[[use_case]]
+id = "UC-dispatch-09"
+tier = "T1"
+statement = "`summon_fayth` asks each persona's own predicate; partitions don't cross-leak"
+
+[[use_case]]
+id = "UC-dispatch-10"
+tier = "T1"
+statement = "the `summon_fayth` refusal ladder runs in order and logs its real reason"
+
+[[use_case]]
+id = "UC-dispatch-11"
+tier = "T1"
+statement = "`fayth_free` arithmetic: elastic pool remainder, non-elastic cap-minus-running, governor clamp"
+
+[[use_case]]
+id = "UC-dispatch-12"
+tier = "T1"
+statement = "a live drain gates every summon; an expired drain is lifted and logged"
+
+[[use_case]]
+id = "UC-dispatch-13"
+tier = "T1"
+statement = "effective lanes are the intersection of `.spira/modes`, repo-map lanes and `SPIRA_FAYTHS`"
+
+[[use_case]]
+id = "UC-dispatch-14"
+tier = "T1"
+statement = "CHECK 7 draws lanes round-robin then fills the task pool in roster order, capped"
+
+[[use_case]]
+id = "UC-dispatch-15"
+tier = "T1"
+statement = "`escape.sh` summons directly on ready work, bypassing pool and lane caps"
+
+[[use_case]]
+id = "UC-dispatch-16"
+tier = "T1"
+statement = "CHECK 7c reports an unclaimable ready bead once, naming the rejection reason"
+
+[[use_case]]
+id = "UC-dispatch-17"
+tier = "T1"
+statement = "the cockpit's NEXT attribution agrees with the CHECK 7c claimability verdict"
+
+[[use_case]]
+id = "UC-dispatch-18"
+tier = "T1"
+statement = "CHECK 8 fires only when nothing progressed and plan is starved, subject to cooldown"
+
+[[use_case]]
+id = "UC-dispatch-19"
+tier = "T1"
+statement = "a pass that cannot read the database exits 1 and never reports goal reached"
+
+[[use_case]]
+id = "UC-dispatch-20"
+tier = "T1"
+statement = "a stale lease in every persona's partition is reclaimed and charged; orphans released"
+
+[[use_case]]
+id = "UC-dispatch-21"
+tier = "T1"
+statement = "the ghost classifier never reclaims a bead carrying the ask or reclaim-skip label"
+
+[[use_case]]
+id = "UC-dispatch-22"
+tier = "T1"
+statement = "an unmapped-repo bead is parked with ask+overseer before its claim is released"
+
+[[use_case]]
+id = "UC-dispatch-23"
+tier = "T1"
+statement = "summoning passes `CPUQuota`, `FAYTH_TIMEOUT_SECONDS` and `--setting-sources` correctly"
+
+[[use_case]]
+id = "UC-dispatch-24"
+tier = "T0"
+statement = "ops tools are an allowlist of `Bash(pattern)` entries, never bare `Bash`"
