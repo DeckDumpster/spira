@@ -136,8 +136,8 @@ want "SPIRA_INCIDENT_CAUSE=suite-flaky" "$_c" && pass "observe(2): cause is suit
     || fail "observe(2): cause missing or wrong: $_c"
 want "SPIRA_SIN_EXEMPT=1" "$_c" && pass "observe(2): sin-exempt (recurring flakes dedupe, never escalate alone)" \
     || fail "observe(2): not sin-exempt: $_c"
-want "why does test-flaky.sh fail intermittently" "$out2" && pass "observe(2): filing named the question, not a quarantine" \
-    || fail "observe(2): output did not name the question: $out2"
+want "why does test-flaky.sh fail intermittently" "$_c" && pass "observe(2): filing named the question, not a quarantine" \
+    || fail "observe(2): filing did not name the question: $_c"
 want "reported (bead: sp-stubfake1)" "$out2" && pass "observe(2): output reports the filed bead id" \
     || fail "observe(2): output did not report the bead id: $out2"
 
