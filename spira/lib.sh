@@ -3918,6 +3918,93 @@ world_stop_decide() {
     printf 'stop'
 }
 
+# sop_rule_verdict <before-ok:0|1> <shelf-before> <after-ok:0|1> <shelf-after> <applied-rc>
+#   -> "<wrote> <verdict>", wrote is yes|no|unreadable, verdict is satisfied|decline|poison
+#
+# The closing rule (FAYTH_SOP_REQUIRED): an incident closed with no runbook behind it has
+# its close undone. <shelf-before>/<shelf-after> are `sop.sh digest` lines taken either side
+# of the session; a line present after and absent before is a write or an amendment. A
+# retirement (shelf shrinks, no new line) does not discharge the rule — curation is not the
+# thing the incident was supposed to leave behind. <applied-rc> is `sop.sh log --bead <id>
+# --check pass --since <session-epoch>`'s own exit code: 0 recorded, 1 read and no such
+# record, anything else unreadable.
+#
+#   satisfied — a write/amendment was seen, or an application was recorded (either honest
+#               ending is enough; `--held no` still counts, `--check fail` alone does not)
+#   decline   — the shelf or the ledger could not be read either side: absence is not
+#               proven, so nothing is poisoned (law-absence-needs-a-positive-control)
+#   poison    — neither: the session closed the incident and left nothing behind
+sop_rule_verdict() {
+    local before_ok="$1" before="$2" after_ok="$3" after="$4" applied="$5"
+    local wrote=no
+    if [ "$before_ok" = 1 ] && [ "$after_ok" = 1 ]; then
+        local l
+        while IFS= read -r l; do
+            [ -n "$l" ] || continue
+            grep -qxF -- "$l" <<< "$before" || { wrote=yes; break; }
+        done <<< "$after"
+    else
+        wrote=unreadable
+    fi
+    local verdict
+    if [ "$wrote" = yes ] || [ "$applied" = 0 ]; then
+        verdict=satisfied
+    elif [ "$wrote" = unreadable ] || [ "$applied" != 1 ]; then
+        verdict=decline
+    else
+        verdict=poison
+    fi
+    printf '%s %s' "$wrote" "$verdict"
+}
+
+# groom_claims_verified <new-log-lines> <ask-json> <epoch> -> "" (nothing claimed, or every
+# claim verified) | comma-space-separated ids claimed but unproven
+#
+# A groom pass that writes ESCALATED, inquiry or flagged for bead X in its log without a
+# matching ask bead created in the same session (type=decision, SPIRA_ASK_LABEL, created at
+# or after <epoch>, with X in its title or description) has not escalated — it has claimed
+# to. <new-log-lines> is the window: lines this session itself wrote (the caller's own
+# GROOM_LOG_LINES_BEFORE slice), never the whole log.
+groom_claims_verified() {
+    local log="${1:-}" ask_json="${2:-[]}" epoch="${3:-0}"
+    [ -n "$log" ] || return 0
+    python3 -c '
+import sys, json, re, datetime
+log, ask_json, epoch = sys.argv[1], sys.argv[2], int(sys.argv[3])
+ids = []
+seen = set()
+for line in log.splitlines():
+    if re.search(r"ESCALATED|inquiry|flagged", line, re.IGNORECASE):
+        for m in re.findall(r"sp-[a-z0-9-]+", line):
+            if m not in seen:
+                seen.add(m); ids.append(m)
+if not ids:
+    sys.exit(0)
+try:
+    d = json.loads(ask_json)
+except Exception:
+    d = []
+if not isinstance(d, list):
+    d = [d]
+found = set()
+for i in d:
+    ca = i.get("created_at") or ""
+    try:
+        dt = datetime.datetime.fromisoformat(ca.replace("Z", "+00:00"))
+        if int(dt.timestamp()) < epoch:
+            continue
+    except Exception:
+        continue
+    title = i.get("title") or ""
+    desc = i.get("description") or ""
+    for cid in ids:
+        if cid in title or cid in desc:
+            found.add(cid)
+unproven = [i for i in ids if i not in found]
+print(", ".join(unproven))
+' "$log" "$ask_json" "$epoch" 2>/dev/null
+}
+
 # aeon_settings -> the --settings JSON that wires aeon-fence.sh and the mail/unacked-comment
 # delivery hooks into a claude session. Reads only $SPIRA_HOME (which hooks exist and are
 # executable), so both the sweep and the claimed-bead launch call the one function and carry

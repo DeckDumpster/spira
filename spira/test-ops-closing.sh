@@ -56,13 +56,8 @@
 # defect: sp-9pyr
 # covers: spira/aeon.sh spira/sop.sh spira/close-reason-flags.py spira/chamber/ops.fayth spira/chamber/ops.md spira/test-ops-closing.sh
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
 echo "test-ops-closing.sh"
 
@@ -345,33 +340,59 @@ want "aeon.sh binds the check to that key"   "FAYTH_SOP_REQUIRED"   "$(cat "$HER
 nowant "and not to the persona's name"       "FAYTH\" = \"ops"      "$(cat "$HERE/aeon.sh")"
 
 echo
-echo "a close reason with a statute phrase is refused — this is the close-reason fence:"
-# THE FENCE IS UNIVERSAL. It applies to every aeon regardless of FAYTH_SOP_REQUIRED.
-# Using `builder` here (the persona that opted OUT of the SOP rule) proves the fence is
-# bound to the close reason text, not to the persona's contract.
-# POSITIVE CONTROL FIRST: a clean reason keeps the bead closed.
-fresh sp-oc-12; run_aeon builder none
-is   "a clean reason stays closed"              closed "$(field sp-oc-12 status)"
-nowant "and the fence did not fire"             "REOPENED" "$(cat "$TMP/out")"
+echo "T1: close-reason-flags.py, unit directly — no aeon run, no bd"
+# ===========================================================================================
+# THE FENCE AND detect_invalid_closed IN lib.sh SHARE THIS FILE so they cannot disagree
+# about which phrase triggers a refusal. Testing it directly, rather than only through a
+# full aeon run per case, is what "already standalone" is for.
+crf() {   # crf <reason> -> sets CRF_RC and CRF_OUT (the matched phrase, if any)
+    CRF_OUT="$(python3 "$HERE/close-reason-flags.py" "$1" 2>/dev/null)"; CRF_RC=$?
+}
 
-# THE FENCE: a statute phrase triggers a reopen.
+crf "done"
+wantrc "a clean reason: no match" 1 "$CRF_RC"
+
+crf "TEMPORARY WORKAROUND: x is set until y lands"
+wantrc "a plain admit matches" 0 "$CRF_RC"
+is     "and names the matched phrase" "TEMPORARY WORKAROUND" "$CRF_OUT"
+
+crf 'pair added — bad-reason ("TEMPORARY WORKAROUND") is reopened; clean reason stays closed'
+wantrc "a double-quoted mention is masked, not an admission" 1 "$CRF_RC"
+
+crf "the thing (a TEMPORARY WORKAROUND) was avoided entirely"
+wantrc "a parenthetical mention is masked too" 1 "$CRF_RC"
+
+crf 'the `TEMPORARY WORKAROUND` phrase, avoided'
+wantrc "a backtick-quoted mention is masked too" 1 "$CRF_RC"
+
+crf "see close-reason-flags.py for the TEMPORARY WORKAROUND check"
+wantrc "a line naming this file is a mention, not an admission" 1 "$CRF_RC"
+
+crf "PERMANENT FIX NEEDED here"
+wantrc "PERMANENT FIX NEEDED matches" 0 "$CRF_RC"
+
+crf "mitigated-only for now"
+wantrc "mitigated-only matches" 0 "$CRF_RC"
+
+crf "TODO: fix this properly"
+wantrc "a bare TODO matches" 0 "$CRF_RC"
+
+crf "temporarily fixed the issue for the release"
+wantrc "temporarily fixed matches" 0 "$CRF_RC"
+
+crf "a TEMPORARY workaround was used, in lowercase"
+wantrc "matching is case-insensitive" 0 "$CRF_RC"
+
+# ===========================================================================================
+echo
+echo "T3: a close reason with a statute phrase is refused — the fence is wired to aeon.sh:"
+# ===========================================================================================
+# THE FENCE IS UNIVERSAL. It applies to every aeon regardless of FAYTH_SOP_REQUIRED. Using
+# `builder` here (the persona that opted OUT of the SOP rule) proves the fence is bound to
+# the close reason text, not to the persona's contract.
 fresh sp-oc-13; run_aeon builder bad-reason
 is   "a statute phrase reopens the bead"        open   "$(field sp-oc-13 status)"
 want "the note names the matched phrase"        "TEMPORARY WORKAROUND" "$(notes sp-oc-13)"
 want "the log names the override"              "SPIRA_CLOSE_REASON_OVERRIDE" "$(cat "$TMP/out")"
 
-echo
-echo "the fence fires on a plain ADMIT but not on a quoted MENTION:"
-# POSITIVE CONTROL: a reason that admits the phrase directly is refused.
-fresh sp-oc-14; run_aeon builder bad-reason-admit
-is   "an admit reopens the bead"                open   "$(field sp-oc-14 status)"
-want "the note names the matched phrase"        "TEMPORARY WORKAROUND" "$(notes sp-oc-14)"
-
-# NEGATIVE CONTROL: the same phrase inside a parenthetical is a mention, not an admission.
-fresh sp-oc-15; run_aeon builder bad-reason-mention
-is   "a quoted mention stays closed"            closed "$(field sp-oc-15 status)"
-nowant "and the fence did not fire"             "REOPENED" "$(cat "$TMP/out")"
-
-echo
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

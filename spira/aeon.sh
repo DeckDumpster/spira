@@ -2264,28 +2264,16 @@ if [ "$SOP_REQUIRED" = 1 ] && [ "$st" = "closed" ] && [ "$superseded" != 1 ]; th
     shelf_after=""; shelf_after_ok=0
     if shelf_after="$("$SPIRA_HOME/sop.sh" digest 2>/dev/null)"; then shelf_after_ok=1; fi
 
-    # A LINE PRESENT AFTER AND ABSENT BEFORE — a new SOP or an amended one. A retirement
-    # produces no such line and correctly does not discharge the rule: removing a runbook is
-    # curation, not the thing this incident was supposed to leave behind.
-    sop_wrote=no
-    if [ "$SHELF_BEFORE_OK" = 1 ] && [ "$shelf_after_ok" = 1 ]; then
-        while IFS= read -r l; do
-            [ -n "$l" ] || continue
-            grep -qxF -- "$l" <<< "$SHELF_BEFORE" || { sop_wrote=yes; break; }
-        done <<< "$shelf_after"
-    else
-        sop_wrote=unreadable
-    fi
-
     # 0 recorded, 1 read and no such record, 2 unreadable. Anything else is sop.sh itself
     # failing to run, which is the same answer as unreadable: not an absence.
     sop_applied=0
     "$SPIRA_HOME/sop.sh" log --bead "$BEAD_ID" --check pass --since "$SESSION_EPOCH" \
         >/dev/null 2>&1 || sop_applied=$?
+    read -r sop_wrote sop_verdict <<< "$(sop_rule_verdict "$SHELF_BEFORE_OK" "$SHELF_BEFORE" "$shelf_after_ok" "$shelf_after" "$sop_applied")"
     printf '%s spira: %s: %s closing-rule wrote=%s applied=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAYTH" "$BEAD_ID" "$sop_wrote" "$sop_applied"
-    if [ "$sop_wrote" = yes ] || [ "$sop_applied" = 0 ]; then
+    if [ "$sop_verdict" = satisfied ]; then
         :
-    elif [ "$sop_wrote" = unreadable ] || [ "$sop_applied" != 1 ]; then
+    elif [ "$sop_verdict" = decline ]; then
         printf '%s spira: %s: %s closing rule NOT judged — the shelf or the applications ledger could not be read (wrote=%s applied=%s). Absence is not proven, so nothing is poisoned.\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAYTH" "$BEAD_ID" "$sop_wrote" "$sop_applied"
     else
         # The close is undone AND the bead is taken out of circulation, because this is not
@@ -2369,58 +2357,24 @@ if [ "$GROOM_ESCALATION_CHECK" = 1 ] && [ "$st" = "closed" ] && [ "$superseded" 
     if [ -f "$_groom_log_path" ]; then
         _groom_new="$(tail -n +"$((GROOM_LOG_LINES_BEFORE + 1))" "$_groom_log_path" 2>/dev/null)"
     fi
-    if [ -n "$_groom_new" ]; then
-        _groom_claimed_ids="$(printf '%s\n' "$_groom_new" \
-            | python3 -c '
-import sys, re
-ids = []; seen = set()
-for line in sys.stdin:
-    if re.search(r"ESCALATED|inquiry|flagged", line, re.IGNORECASE):
-        for m in re.findall(r"sp-[a-z0-9-]+", line):
-            if m not in seen:
-                seen.add(m); ids.append(m)
-print("\n".join(ids))
-' 2>/dev/null)"
-        if [ -n "$_groom_claimed_ids" ]; then
-            _ask_json="$(bdq list --type decision \
-                --label "$SPIRA_ASK_LABEL" --json 2>/dev/null)" || _ask_json=""
-            _unproven=""
-            while IFS= read -r _gcid; do
-                [ -n "$_gcid" ] || continue
-                _gask_found="$(printf '%s\n' "${_ask_json:-[]}" \
-                    | _GCID="$_gcid" _GEPOCH="$SESSION_EPOCH" python3 -c '
-import sys, json, os, datetime
-cid = os.environ["_GCID"]
-epoch = int(os.environ.get("_GEPOCH", "0"))
-try: d = json.load(sys.stdin)
-except: raise SystemExit
-if not isinstance(d, list): d = [d]
-for i in d:
-    ca = i.get("created_at") or ""
-    try:
-        dt = datetime.datetime.fromisoformat(ca.replace("Z","+00:00"))
-        if int(dt.timestamp()) < epoch: continue
-    except: continue
-    if cid in (i.get("title") or "") or cid in (i.get("description") or ""):
-        print("found"); break
-' 2>/dev/null)"
-                [ -z "$_gask_found" ] && _unproven="${_unproven:+$_unproven, }$_gcid"
-            done <<< "$_groom_claimed_ids"
-            if [ -n "$_unproven" ]; then
-                bead_reopen "$BEAD_ID" no-groom-ask \
-                    "Reopened and poisoned: groom log claimed ESCALATED for $_unproven but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail.sh send operator --kind question, then re-run the pass."
-                bdq label add "$BEAD_ID" spira-poison >/dev/null 2>&1
-                printf '%s spira: %s: %s REOPENED and POISONED — groom log claimed ESCALATED for %s but no ask bead found in this session\n' \
-                    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAYTH" "$BEAD_ID" "$_unproven"
-                GROOM_SILENT=1
-                if [ "$committed" = "yes" ]; then
-                    REQUEUE_CAUSE="groom-silent"
-                    REQUEUE_WHY="Groom log claimed escalation for $_unproven without a matching ask bead; the close was undone and the trigger poisoned."
-                fi
-            else
-                printf '%s spira: %s: %s groom-escalation-check: all claimed escalations verified\n' \
-                    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAYTH" "$BEAD_ID"
+    if [ -n "$_groom_new" ] && grep -qiE 'ESCALATED|inquiry|flagged' <<< "$_groom_new"; then
+        _ask_json="$(bdq list --type decision \
+            --label "$SPIRA_ASK_LABEL" --json 2>/dev/null)" || _ask_json=""
+        _unproven="$(groom_claims_verified "$_groom_new" "${_ask_json:-[]}" "$SESSION_EPOCH")"
+        if [ -n "$_unproven" ]; then
+            bead_reopen "$BEAD_ID" no-groom-ask \
+                "Reopened and poisoned: groom log claimed ESCALATED for $_unproven but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail.sh send operator --kind question, then re-run the pass."
+            bdq label add "$BEAD_ID" spira-poison >/dev/null 2>&1
+            printf '%s spira: %s: %s REOPENED and POISONED — groom log claimed ESCALATED for %s but no ask bead found in this session\n' \
+                "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAYTH" "$BEAD_ID" "$_unproven"
+            GROOM_SILENT=1
+            if [ "$committed" = "yes" ]; then
+                REQUEUE_CAUSE="groom-silent"
+                REQUEUE_WHY="Groom log claimed escalation for $_unproven without a matching ask bead; the close was undone and the trigger poisoned."
             fi
+        else
+            printf '%s spira: %s: %s groom-escalation-check: all claimed escalations verified\n' \
+                "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FAYTH" "$BEAD_ID"
         fi
     fi
 fi
