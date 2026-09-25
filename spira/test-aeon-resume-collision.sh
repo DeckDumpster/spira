@@ -118,10 +118,37 @@ second_id="sp-cc-b"; [ "$first_id" = "sp-cc-b" ] && second_id="sp-cc-a"
     && ok  "setup: both candidates present and ordered ($first_id then $second_id)" \
     || bad "setup: both candidates present and ordered" "order_ids=[$order_ids]"
 
-# ANOTHER AEON already holds the one this aeon would try first — a real atomic claim, not
-# a stub, so this run's own resume attempt on it genuinely loses the race.
-BEADS_ACTOR="aeon-other" bd -C "$SPIRA_DB" update "$first_id" --claim >/dev/null 2>&1 \
-    || { echo "test-aeon-resume-collision: setup could not pre-claim $first_id" >&2; exit 1; }
+# A PRE-CLAIM BEFORE aeon.sh RUNS DOES NOT REPRODUCE THE RACE: `bd ready` lists only
+# UNCLAIMED beads, so a bead claimed before aeon.sh's own resume query runs never appears
+# as a candidate at all — the "collision" would never be attempted, only skipped, and the
+# test would pass for the wrong reason (the loser is never a candidate, not a candidate
+# that lost). The race this bug is about happens BETWEEN aeon.sh's own read and its own
+# write, so it has to be manufactured at that exact point.
+#
+# SPIRA_BD WRAPS THE REAL bd. Every call passes straight through to the real embedded
+# binary except the one this test cares about: the moment aeon.sh itself asks to claim
+# $first_id, the wrapper claims it FIRST, as a different actor, using the real bd's own
+# atomicity — so aeon.sh's own subsequent claim on that id genuinely loses, the same way
+# it would against a second live aeon, not a fabricated empty response.
+REAL_BD="$(command -v bd)"
+BIN_BD="$TMP/bin"; mkdir -p "$BIN_BD"
+STOLEN_MARK="$TMP/stolen"
+cat > "$BIN_BD/bd" <<STUB
+#!/usr/bin/env bash
+is_target=0 has_update=0 has_claim=0
+for a in "\$@"; do
+    [ "\$a" = "update" ] && has_update=1
+    [ "\$a" = "$first_id" ] && is_target=1
+    [ "\$a" = "--claim" ] && has_claim=1
+done
+if [ "\$has_update" = 1 ] && [ "\$is_target" = 1 ] && [ "\$has_claim" = 1 ] && [ ! -f "$STOLEN_MARK" ]; then
+    touch "$STOLEN_MARK"
+    BEADS_ACTOR="aeon-other" "$REAL_BD" -C "$SPIRA_DB" update "$first_id" --claim >/dev/null 2>&1
+fi
+exec "$REAL_BD" "\$@"
+STUB
+chmod +x "$BIN_BD/bd"
+export SPIRA_BD="$BIN_BD/bd"
 
 run_aeon
 
