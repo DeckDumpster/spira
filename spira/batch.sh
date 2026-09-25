@@ -70,7 +70,10 @@ _pf_run() {
     local flag; flag="$(mktemp)"; rm -f "$flag"
     setsid "$@" &
     local pid=$!
-    ( sleep "$secs"; : > "$flag"; kill -TERM -"$pid" 2>/dev/null; sleep 15; kill -KILL -"$pid" 2>/dev/null ) \
+    # `sleep && …`, never `sleep; …`: cancelling the watchdog kills its sleep, and a killed
+    # sleep must END the watchdog — with `;` it would fall through, flag the wall and kill a
+    # command that had already finished, turning every fast red into a false timeout.
+    ( sleep "$secs" && { : > "$flag"; kill -TERM -"$pid" 2>/dev/null; sleep 15 && kill -KILL -"$pid" 2>/dev/null; } ) \
         </dev/null >/dev/null 2>&1 &
     local dog=$!
     wait "$pid"; local rc=$?
