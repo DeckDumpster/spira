@@ -11,14 +11,16 @@
 # summoned a new aeon, which re-derived the same diagnosis and exited — a ~180m-period
 # loop. check2_protect_waiting (lib.sh) labels the bead SPIRA_RECLAIM_SKIP_LABEL while its
 # only open dep carries the ask label, so the reaper's --exclude-label skips it. The label
-# is removed when the dep closes, letting the reaper reclaim the stale lease on that pass.
+# is removed when the dep closes, so the reaper's exclude-label no longer matches it.
 #
-# FOUR CASES, ALL SIDES EXERCISED:
-#   1. POSITIVE CONTROL (dead worker, no deps) — reclaim fires.
+# FIVE CASES. THE REAPER ITSELF IS NEVER INVOKED — every case asserts on
+# check2_protect_waiting's label state, not on a reclaim actually firing:
+#   1. POSITIVE CONTROL (dead worker, no deps) — not given the skip label.
 #      Without this, a protect-everything implementation reads as correct.
-#   2. PROTECTED (only open dep carries ask label) — skip label applied, reaper skips.
-#   3. UNPROTECTED AFTER DEP CLOSES — skip label removed, reaper reclaims on same pass.
-#   4. NOT PROTECTED (open dep without ask label) — no skip label, reaper can fire.
+#   2. PROTECTED (only open dep carries ask label) — skip label applied.
+#   3. UNPROTECTED AFTER DEP CLOSES — skip label removed.
+#   4. NOT PROTECTED (open dep without ask label) — no skip label applied.
+#   5. MIXED DEPS (one ask dep, one non-ask open dep) — no skip label applied.
 #
 # A REAL bd ON A FIXTURE DATABASE (law-prefer-the-real-dependency). check2_protect_waiting
 # calls bd label add/remove and bd show; a stub would drift silently and prove nothing
@@ -98,7 +100,8 @@ echo
 echo "case 3 — unprotected after dep closes: skip label removed, reaper can fire:"
 # ======================================================================================
 # Ryan answered. The dep closed. check2_protect_waiting must remove the skip label so the
-# reaper reclaims the stale lease on this same pass (the exclude-label no longer applies).
+# reaper's --exclude-label no longer matches (the reaper itself is not invoked here — its
+# reclaim on the next pass is the caller's property, not this suite's).
 testdb_reset
 testdb_seed <<JSONL
 {"id":"sp-ask2","title":"a decision","status":"closed","issue_type":"decision","labels":["$ASK","plan","spira"]}
