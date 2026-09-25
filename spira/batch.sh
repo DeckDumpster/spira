@@ -591,14 +591,27 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
     fi
 
     # RED-MAIN HOLD: a batch that would otherwise cut is held while main's most recent
-    # push gate is red, unless a certified member carries SPIRA_RED_MAIN_LABEL — the
-    # fix for that red state must be allowed through, or the queue can never land the
-    # thing that recovers it (sp-221n8: a batch landed on a red main with nothing then
-    # stopping the next batch doing the same).
+    # push gate is red or unknown, unless a certified member carries SPIRA_RED_MAIN_LABEL
+    # — the fix for that red state must be allowed through, or the queue can never land
+    # the thing that recovers it (sp-221n8: a batch landed on a red main with nothing
+    # then stopping the next batch doing the same).
+    #
+    # PENDING NEVER HOLDS THE CUT (sp-wmn0w). A push gate for main's current head that is
+    # simply still running is not evidence of anything — the hold that matters is at
+    # LANDING (verdict.sh's fast-forward), which waits for that same gate to resolve
+    # before this batch's own green touches main. Holding the cut here as well would
+    # serialise every batch's CI behind main's, for a state that isn't red.
     local _mgs
     _mgs="$("${SPIRA_FORGE:-$HERE/forge.sh}" main-gate-status "$repo" 2>/dev/null)" || _mgs=""
     case "${_mgs:-unknown}" in
         green*) : ;;
+        pending*)
+            printf 'batch %s: base gate pending (%s) — cut, landing waits\n' \
+                "$name" "${_mgs:-pending}"
+            printf 'QUEUE INFO %s repo=%s reason=base-gate-pending status=%s\n' \
+                "$(date +%s)" "$name" "${_mgs:-pending}" \
+                >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+            ;;
         *)
             local _rlab="${SPIRA_RED_MAIN_LABEL:-fixes-red-main}"
             if PRIO_JSON="$prio_json" RED_MAIN_LABEL="$_rlab" python3 -c '
@@ -611,8 +624,12 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
                 printf 'batch %s: main push gate is %s but a certified member carries %s — landing anyway\n' \
                     "$name" "${_mgs:-unknown}" "$_rlab"
             else
-                printf 'batch %s: HOLD — main push gate is %s and no certified member carries %s\n' \
-                    "$name" "${_mgs:-unknown}" "$_rlab"
+                case "${_mgs:-unknown}" in
+                    red*)     printf 'batch %s: HOLD — base gate red — no certified member carries %s\n' \
+                                  "$name" "$_rlab" ;;
+                    *)        printf 'batch %s: HOLD — base gate unknown (%s) — no certified member carries %s\n' \
+                                  "$name" "${_mgs:-unknown}" "$_rlab" ;;
+                esac
                 printf 'QUEUE HOLD %s repo=%s reason=red-main status=%s\n' \
                     "$(date +%s)" "$name" "${_mgs:-unknown}" \
                     >> "$SPIRA_RUN/landing.log" 2>/dev/null || true

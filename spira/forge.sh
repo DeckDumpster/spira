@@ -23,7 +23,8 @@
 # pr-comment <repo-dir> <pr-number> <body>     posts a comment to the PR
 # branch-protect <repo-dir> <branch>           set: required gate check, no force-push, no delete
 # branch-protection-status <repo-dir> <branch> prints: protected | unprotected
-# main-gate-status <repo-dir>                  prints: "red <sha>" | "green <sha>" | "unknown"
+# main-gate-status <repo-dir>                  prints: "red <sha>" | "green <sha>" |
+#                                              "pending <sha>" | "unknown (<reason>)"
 #                                              — the most recent push-gate run on main
 
 set -uo pipefail
@@ -465,36 +466,40 @@ print(sum(1 for r in runs if r.get('event') == 'pull_request' and r.get('status'
 " 2>/dev/null || printf '?\n'
         ;;
     main-gate-status)
-        # main-gate-status <repo-dir> → is main's most recent PUSH gate run red?
-        # Used by batch.sh to hold the queue: a landed batch can put main behind a
-        # red gate, and nothing else stops the next batch landing on top of it.
+        # main-gate-status <repo-dir> → the state of main's most recent PUSH gate run.
+        # Used by batch.sh (cut) and verdict.sh (landing) to hold the queue: a landed
+        # batch can put main behind a red gate, and nothing else stops the next batch
+        # landing on top of it.
         #
-        # PRINTS unknown ON ANYTHING IT CANNOT CONFIRM GREEN — an unreachable API,
-        # an unparsed payload, a still-running run, or no push run at all. A caller
-        # that read any of those as green would land straight through the outage
-        # that made this exist (law-a-control-that-cannot-check-must-refuse).
+        # THREE STATES, NOT TWO. "unknown" (cannot confirm anything — unreachable API,
+        # unparsed payload, no push run at all, or a provision fault that means the
+        # branch was never tested) fails closed the same as before
+        # (law-a-control-that-cannot-check-must-refuse). "pending" (a gate run for the
+        # base head is queued or in progress) is a new, distinct answer: the caller
+        # knows the check is simply not finished yet, and unlike unknown it must not be
+        # read as red.
         run_json="$( cd "$repo" && ghq run list --branch main --workflow gate.yml \
             --event push --limit 1 --json status,conclusion,headSha,databaseId \
-            2>/dev/null )" || { printf 'unknown\n'; exit 0; }
-        [ -n "${run_json:-}" ] || { printf 'unknown\n'; exit 0; }
+            2>/dev/null )" || { printf 'unknown (forge unreachable)\n'; exit 0; }
+        [ -n "${run_json:-}" ] || { printf 'unknown (forge unreachable)\n'; exit 0; }
         decision="$(printf '%s\n' "$run_json" | python3 -c "
 import json, sys
 try:
     runs = json.load(sys.stdin)
     if not isinstance(runs, list) or not runs:
-        print('unknown'); sys.exit(0)
+        print('unknown (no gate run found)'); sys.exit(0)
     r = runs[0]
     sha = r.get('headSha') or '?'
     if r.get('status') != 'completed':
-        print('unknown ' + sha)
+        print('pending ' + sha)
     elif r.get('conclusion') == 'success':
         print('green ' + sha)
     else:
         print('maybe-red ' + sha + ' ' + str(r.get('databaseId') or ''))
 except Exception:
-    print('unknown')
+    print('unknown (unparsed response)')
 " 2>/dev/null)" || decision=""
-        [ -n "${decision:-}" ] || decision="unknown"
+        [ -n "${decision:-}" ] || decision="unknown (unparsed response)"
         case "$decision" in
             "maybe-red "*)
                 # A completed run that concluded failure still might never have tested
@@ -519,7 +524,7 @@ except Exception:
 " 2>/dev/null)"
                 fi
                 if [ "${_prov_failed:-}" = "yes" ]; then
-                    printf 'unknown %s\n' "$sha"
+                    printf 'unknown (provision fault %s)\n' "$sha"
                 else
                     printf 'red %s\n' "$sha"
                 fi
