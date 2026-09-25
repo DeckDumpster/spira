@@ -717,8 +717,15 @@ jobs:
             exit 0
           fi
           printf 'cut: %s (prev: %s)\n' "$tag" "${_prev:-none}"
-          # App token push fires acceptance.yml's push trigger (unlike GITHUB_TOKEN).
-          git push origin "refs/tags/$tag"
+          # git ignores GH_TOKEN — it authenticates with whatever credential
+          # actions/checkout persisted, which is GITHUB_TOKEN. A bare `git push`
+          # here would push the tag with GITHUB_TOKEN and GitHub's anti-recursion
+          # rule would swallow it silently, so the App token must be handed to
+          # git explicitly via a credential helper (sp-db8sw, sp-njr3s).
+          git -c http.https://github.com/.extraheader= \
+              -c credential.helper= \
+              -c credential.helper='!f(){ echo username=x-access-token; echo "password=$GH_TOKEN"; }; f' \
+              push origin "refs/tags/$tag"
           printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
           printf 'prev-tag=%s\n' "${_prev:-}" >> "$GITHUB_OUTPUT"
 

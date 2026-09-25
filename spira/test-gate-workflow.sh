@@ -460,6 +460,17 @@ fi
 want "cut mints App token"           "app-tok"                  "$_cut_block"
 want "cut reads App private key"     "SPIRA_GH_APP_PRIVATE_KEY" "$_cut_block"
 want "cut tag push uses App token"   "app-tok.outputs.token"    "$_cut_block"
+# Minting the token into GH_TOKEN is not enough: git ignores GH_TOKEN and
+# authenticates with whatever credential actions/checkout persisted (GITHUB_TOKEN),
+# so the token must be handed to git explicitly. Positive control first: a bare
+# push (the pre-fix shape) must fail the checks below, or they are vacuous.
+_bare_push_fixture='git push origin "refs/tags/$tag"'
+nowant "positive control: bare push lacks a credential helper" \
+       "credential.helper" "$_bare_push_fixture"
+want "cut tag push clears the checkout-persisted credential" \
+     "extraheader" "$_cut_block"
+want "cut tag push routes through a credential helper" \
+     "credential.helper" "$_cut_block"
 # The cut job must output prev-tag so acceptance.yml can derive the upgrade path.
 _cut_out_block="$(echo "$_cut_block" \
   | awk '/^    outputs:/{g=1;next} g&&/^    [a-z_-]+:/{exit} g{print}')"
