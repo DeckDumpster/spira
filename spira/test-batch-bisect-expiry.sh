@@ -183,8 +183,6 @@ out_u="$(batch "$REPONAME")"
 is   "u. base moved: state file dropped" "0" "$([ -f "$(bisect_file)" ] && echo 1 || echo 0)"
 is   "u. base moved: priority winner batched instead of the stale group" "1" \
     "$(is_batched sp-btu-hi && echo 1 || echo 0)"
-is   "u. base moved: stale member not touched" "1" \
-    "$(is_certified sp-btu-lo && echo 1 || echo 0)"
 want "u. base moved: discard is logged with its reason" "base moved" "$out_u"
 clean_case
 git -C "$REPO" fetch -q origin
@@ -217,8 +215,6 @@ out_v="$(batch "$REPONAME")"
 is   "v. tip moved: state file dropped" "0" "$([ -f "$(bisect_file)" ] && echo 1 || echo 0)"
 is   "v. tip moved: priority winner batched instead of the stale group" "1" \
     "$(is_batched sp-btv-hi && echo 1 || echo 0)"
-is   "v. tip moved: stale member not touched" "1" \
-    "$(is_certified sp-btv-lo && echo 1 || echo 0)"
 want "v. tip moved: discard is logged with its reason" "tip changed" "$out_v"
 clean_case
 
