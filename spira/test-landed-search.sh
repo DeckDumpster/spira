@@ -4,17 +4,17 @@
 # git repository (no bd, no sentinel, no CHECK 5 fixture).
 #
 # Absorbs test-census-window.sh (SPIRA_VERDICT_WINDOW is ignored) and the search-only cases
-# of test-check5-body-search.sh / test-landed-stays-landed.sh (body-only match, depth with
-# no window) — landed() is the one implementation both `landed <id> <repo>` callers and
-# CHECK 5's inlined walk are built from, so proving the property here proves it for both.
-# The CHECK 5-level positive controls (a bare closed bead reopened by a real sentinel pass)
-# stay in the CHECK 5 suites; those exercise the caller, not the search.
+# of test-check5-body-search.sh / test-landed-stays-landed.sh (mention vs. landing record,
+# depth with no window) — landed() is the one implementation both `landed <id> <repo>`
+# callers and CHECK 5's inlined walk are built from, so proving the property here proves it
+# for both. The CHECK 5-level positive controls (a bare closed bead reopened by a real
+# sentinel pass) stay in the CHECK 5 suites; those exercise the caller, not the search.
 #
 # The deep-history fixture is built with one `git fast-import` process, not 401 spawned
 # `git commit` processes — it proves "no depth window" with a genuinely deep commit, not
 # with SPIRA_VERDICT_WINDOW, which landed() never reads at all (see case 1).
 #
-# defect: sp-d9x93 sp-796o sp-m0s7 sp-a9g sp-37q
+# defect: sp-d9x93 sp-796o sp-m0s7 sp-a9g sp-37q sp-dgaig
 # tier: T2
 # covers: spira/lib.sh UC-landed-audit-reaping-01 UC-landed-audit-reaping-02 UC-landed-audit-reaping-03
 # hermetic-ok: no database, no systemd, no gh
@@ -99,7 +99,11 @@ is "landed() returns 1 (not 0) for an id no commit names" 1 "$_rc"
 
 # ======================================================================================
 echo
-echo "2. landed() searches the full message, not just the subject (UC-01; sp-m0s7):"
+echo "2. landed() trusts a landing record, not a body mention (UC-01; sp-dgaig):"
+# A commit that MENTIONS a bead in its body — a "This resolves <id>" cross-reference — is
+# not a landing record. sp-dgaig traced five certified branches marked LANDED and reaped
+# on exactly this shape of match; landed() now trusts only two subject shapes ("spira:
+# land <id>" or "<id>: ..."), never a body substring.
 # ======================================================================================
 BODY_ID="sp-body-search-test"
 git -C "$REPO" commit -q --allow-empty -m "$(printf 'refactor: cleanup\n\nThis resolves %s — the underlying work was\nalready applied in a prior squash.' "$BODY_ID")"
@@ -108,20 +112,16 @@ git -C "$REPO" fetch -q origin
 
 _rc=1
 landed "$BODY_ID" "$REPO" && _rc=0
-is "landed() finds a body-only reference" 0 "$_rc"
+is "landed() does not find a body-only reference" 1 "$_rc"
 
 # ======================================================================================
 echo
-echo "3. KNOWN DEFECT — prefix collision (UC-02; gap, no fix here):"
-# landed() matches via 'git log --grep=\$id', an unanchored substring/regex search. A
-# commit naming sp-prefix-collision-testXX satisfies a query for sp-prefix-collision-test,
-# so a closed-but-unlanded bead whose id is a prefix of a landed one is never reopened.
-# This is exactly the failure law-closed-is-not-landed exists to catch.
-#
-# This test documents the CURRENT (defective) behaviour rather than silently fixing the
-# matcher: a test-plan bead may not carry a product fix (see docs/test-plan/
-# landed-audit-reaping.md, gap 1). Fix tracked as sp-ogogs; update this case to assert the
-# corrected behaviour once it lands, rather than deleting it.
+echo "3. prefix collision is no longer a defect (UC-02; sp-dgaig, was sp-ogogs):"
+# The old 'git log --grep=\$id' was an unanchored substring/regex search: a commit naming
+# sp-prefix-collision-testXX satisfied a query for sp-prefix-collision-test, so a
+# closed-but-unlanded bead whose id was a prefix of a landed one was never reopened. The
+# subject-shape match added for sp-dgaig requires the colon to follow the id immediately
+# ("$id: ..."), which "sp-prefix-collision-testXX: ..." does not — fixed as a side effect.
 # ======================================================================================
 git -C "$REPO" commit -q --allow-empty -m "sp-prefix-collision-testXX: unrelated work"
 git -C "$REPO" push -q origin main
@@ -129,7 +129,7 @@ git -C "$REPO" fetch -q origin
 
 _rc=1
 landed sp-prefix-collision-test "$REPO" && _rc=0
-is "KNOWN DEFECT: a longer id's commit satisfies its own prefix (see the tracking bead)" 0 "$_rc"
+is "a longer id's commit no longer satisfies its own prefix" 1 "$_rc"
 
 # ======================================================================================
 echo

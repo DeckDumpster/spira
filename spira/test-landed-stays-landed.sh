@@ -1,19 +1,24 @@
 #!/usr/bin/env bash
 #
 # test-landed-stays-landed.sh — end-to-end: a closed bead whose commit is on origin/<base>
-#   is never reopened by CHECK 5, across the two failure modes that historically caused it.
+#   is never reopened by CHECK 5, and one only MENTIONED by an unrelated commit IS reopened.
 #
 # WHY THIS EXISTS. sp-d9x93 and sp-796o caused CHECK 5 to reopen 34 beads whose work had
 #   genuinely landed on the base branch:
 #
 #   WINDOW DEFECT (sp-d9x93): CHECK 5 used git log -n 400 (400-commit window). A bead
 #   whose commit was commit 401+ from the tip was invisible and reopened as
-#   closed-without-landing. sp-a9g hit this at commit 401, sp-37q at commit 400.
+#   closed-without-landing. sp-a9g hit this at commit 401, sp-37q at commit 400. Fixed:
+#   CHECK 5 walks the full ancestry, no window.
 #
-#   BODY DEFECT (sp-d9x93): CHECK 5 searched --format='%s' (subject line only). A bead id
-#   appearing only in the commit body was not found and the bead was reopened. sp-m0s7.
-#
-#   The fix: sentinel's CHECK 5 now walks the full ancestry with --format='%B'.
+#   That fix also widened the match from the subject line to the whole commit body
+#   (--format='%B'), on the theory that a landing record could name a bead there instead.
+#   It went too far the other way: sp-dgaig traced five certified branches marked LANDED
+#   and reaped though none of their content had reached base, because a commit that only
+#   MENTIONED a bead in passing — a dependency list, "Fixes: <id> (analysis)" — was read
+#   as that bead having landed. CHECK 5 now trusts only two subject shapes: the queue's
+#   own merge subject ("spira: land <id>") or an aeon's own commit for its own bead
+#   ("<id>: ..."); case 3 below asserts a body-only mention no longer suffices.
 #
 # THE E2E INVARIANT. This suite asserts the property directly: land a real commit naming a
 #   bead on origin/<base>, run the sentinel, bead stays closed. The deep-history case pads
@@ -22,16 +27,18 @@
 # CASES (law-absence-needs-a-positive-control):
 #   1. POSITIVE CONTROL — closed bead with no commit IS reopened (CHECK 5 is live)
 #   2. DEEP COMMIT — commit 401+ back stays closed (window-free search)
-#   3. BODY-ONLY — bead id only in commit body stays closed (full %B search)
+#   3. MENTION-ONLY — bead id only in another commit's body IS reopened (sp-dgaig)
 #   4. TWO PASSES — stays closed on second pass (no state accumulated between passes)
 #
-# SEEN TO FAIL AGAINST UNFIXED CODE. Both probe sections below install a patched sentinel
-#   with the old window/format and confirm the test WOULD HAVE FAILED:
+# SEEN TO FAIL AGAINST UNFIXED CODE. Case 2's probe installs a patched sentinel with the
+#   old window and confirms it WOULD HAVE reopened sp-deep:
 #     PROBE FAIL deep: bugged sentinel reopens sp-deep (window=1) — wanted [open] got ...
-#     PROBE FAIL body: subject-only sentinel reopens sp-body — wanted [open] got ...
-#   Both probes were confirmed to fire before this test was committed (sp-wg6hi).
+#   That probe was confirmed to fire before this test was committed (sp-wg6hi). Case 3's
+#   regression coverage (a mention-only match wrongly satisfying landed()) lives in
+#   test-check5-body-search.sh's MENTION-ONLY case, which exercises the same CHECK 5 code
+#   this suite does; it is not duplicated here.
 #
-# defect: sp-d9x93 sp-796o
+# defect: sp-d9x93 sp-796o sp-dgaig
 # covers: spira/sentinel.sh spira/lib.sh
 # hermetic-ok: uses a fixture database and a local git repo, no systemd or gh
 set -uo pipefail
@@ -159,13 +166,13 @@ else
     bad "landing confirmed" "commit $land_sha is NOT an ancestor of origin/main — fixture is wrong"
 fi
 
-# PROBE: install a windowed, subject-only sentinel and confirm it reopens sp-deep.
+# PROBE: install a windowed sentinel and confirm it reopens sp-deep.
 # This is the "SEEN TO FAIL AGAINST UNFIXED CODE" check for the window defect.
-# The old sentinel used: git log --format='%B' $subj_refs  (no -n limit)
+# The real sentinel uses: git log --format='%s' $subj_refs  (no -n limit)
 # We simulate the old window by: git log --format='%s' -n 1 $subj_refs
 # A commit 401+ back is invisible to a window of 1, so the probe must reopen the bead.
 _window_probe="$TMP/sentinel-window-probe.sh"
-sed "s|log --format='%B' \\\$subj_refs|log --format='%s' -n 1 \$subj_refs|g" \
+sed "s|log --format='%s' \\\$subj_refs|log --format='%s' -n 1 \$subj_refs|g" \
     "$SENTINEL_REAL" > "$_window_probe" && chmod +x "$_window_probe"
 if grep -qF "log --format='%s' -n 1" "$_window_probe"; then
     cp "$_window_probe" "$SH/sentinel.sh"
@@ -203,50 +210,29 @@ is "pass 2: no attempt label charged" "" "$att2"
 
 # ======================================================================================
 echo
-echo "BODY-ONLY — bead id only in commit body stays closed (full %B search):"
+echo "MENTION-ONLY — bead id only in another commit's body IS reopened (sp-dgaig):"
 #
-# THE FIXTURE. The commit subject does NOT contain "sp-body"; the id appears only in the
-# body. The old subject-only search (%s) would not find it and would reopen the bead.
-#
-# THE PROBE. A subject-only patched sentinel is confirmed to reopen the bead.
+# THE FIXTURE. An unrelated commit's subject names ITS OWN bead; the body only mentions
+# sp-mention in passing — the exact shape that stranded sp-dgaig's five certified branches
+# ("Fixes: <id> (analysis)"-style cross-references read as that bead having landed). CHECK
+# 5 must not treat this as sp-mention's own landing record.
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL || { echo "seed failed"; exit 1; }
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"$PAST"}
-{"id":"sp-body","title":"body-only id","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-body","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-mention","title":"mentioned but not landed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-mention","depends_on_id":"sp-goal","type":"parent-child"}]}
 JSONL
-touch "$RUN/sp-body.log"
+touch "$RUN/sp-mention.log"
 
-# Commit subject does NOT contain "sp-body"; the id appears only in the body paragraph.
-git -C "$REPO" commit -q --allow-empty -m "$(printf 'refactor: cleanup\n\nThis carries sp-body — the underlying change\nwas squashed into this commit by the reviewer.')"
+# Commit subject names an unrelated bead of its own; sp-mention appears only in the body.
+git -C "$REPO" commit -q --allow-empty -m "$(printf 'sp-other: unrelated work\n\nFixes: sp-mention (root cause analysis)\nThis commit does not carry sp-mentions own changes.')"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 
-# PROBE: subject-only search cannot find a body-only reference.
-_body_probe="$TMP/sentinel-body-probe.sh"
-sed "s|log --format='%B' \\\$subj_refs|log --format='%s' \$subj_refs|g" \
-    "$SENTINEL_REAL" > "$_body_probe" && chmod +x "$_body_probe"
-if grep -qF "log --format='%s'" "$_body_probe"; then
-    cp "$_body_probe" "$SH/sentinel.sh"
-    _probe_out="$(sentinel)"
-    _probe_status="$(status_of sp-body)"
-    cp "$SENTINEL_REAL" "$SH/sentinel.sh"
-    probe_is "probe: subject-only sentinel reopens sp-body" open "$_probe_status"
-    probe_want "probe: pass says reopened sp-body" "reopened sp-body" "$_probe_out"
-    testdb_reset
-    testdb_seed <<JSONL3 || { echo "reseed after probe failed"; exit 1; }
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"$PAST"}
-{"id":"sp-body","title":"body-only id","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-body","depends_on_id":"sp-goal","type":"parent-child"}]}
-JSONL3
-    touch "$RUN/sp-body.log"
-else
-    bad "probe: could not build subject-only sentinel for body probe" ""
-fi
-
-is "sp-body restored to closed before real pass" closed "$(status_of sp-body)"
+is "sp-mention starts closed" closed "$(status_of sp-mention)"
 out="$(sentinel)"
-is "body-only NOT reopened" closed "$(status_of sp-body)"
-nowant "the pass does not say reopened" "reopened sp-body" "$out"
+is "mention-only IS reopened" open "$(status_of sp-mention)"
+want "the pass says so" "reopened sp-mention" "$out"
 
 echo
 printf 'test-landed-stays-landed.sh: %d passed, %d failed\n' "$pass" "$fail"

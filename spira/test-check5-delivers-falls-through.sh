@@ -100,7 +100,7 @@ testdb_seed <<JSONL
 {"id":"sp-cmt","title":"committed work with a stale delivers label","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO","delivers:note:$GONE"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-cmt","depends_on_id":"sp-goal","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-cmt.log"
-git -C "$REPO" commit -q --allow-empty -m "fix: sp-cmt — the work"
+git -C "$REPO" commit -q --allow-empty -m "sp-cmt: the work"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 [ ! -e "$GONE" ] || { echo "fixture error: $GONE should not exist"; exit 1; }

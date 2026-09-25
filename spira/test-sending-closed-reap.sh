@@ -97,10 +97,12 @@ printf 'shared-content-v1\n' > "$REPO/shared.txt"
 git -C "$REPO" add shared.txt
 git -C "$REPO" commit -q -m "sp-btch: add shared content"
 git -C "$REPO" checkout -q main
-# Batch PR squash: a commit naming sp-btch lands the content.
+# Batch merge: a "spira: land <id>" commit carries the same content onto main. This is the
+# only subject shape landed() trusts (law-a-matcher-reads-code-not-prose / sp-dgaig) — a
+# commit that merely mentions the id in prose or a trailer is not a landing record.
 printf 'shared-content-v1\n' > "$REPO/shared.txt"
 git -C "$REPO" add shared.txt
-git -C "$REPO" commit -q -m "batch: sp-btch landed here"
+git -C "$REPO" commit -q -m "spira: land sp-btch"
 # Base moves on the same file — sp-btch's branch now conflicts with main.
 printf 'shared-content-v2\n' > "$REPO/shared.txt"
 git -C "$REPO" add shared.txt

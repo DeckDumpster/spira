@@ -253,10 +253,12 @@ want "closed-unlanded remedy annotated [suppressed: remedy closed, not landed]" 
     "[suppressed: remedy closed, not landed]" "$out3_pre_s"
 want "suppressed class appears in annotated output" "sp-recur-suite-red" "$out3_pre_s"
 
-# Land the remedy: add a commit naming the bead to the base.
+# Land the remedy: add a landing-record commit naming the bead to the base. landed() now
+# trusts only two subject shapes (law-a-matcher-reads-code-not-prose / sp-dgaig); a
+# cross-reference like "fix: <id> closes <class>" is a mention, not a landing record.
 GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=t@t \
     git -C "$FIXTURE_REPO" commit --allow-empty -q \
-    -m "fix: $remedy_id closes sp-recur-suite-red" 2>/dev/null
+    -m "spira: land $remedy_id" 2>/dev/null
 
 out3="$(run_census_fixture)"
 want "sp-recur-suite-red reappears once remedy commit is on base" \

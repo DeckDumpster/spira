@@ -19,7 +19,14 @@
 # SEEN RED WITHOUT THE FIX.  Removing _certified_orphans from batch.sh causes the WARN and
 # mail lines to be absent; the "want" assertions below then fail.
 #
-# defect: sp-e5ow0
+# ALSO COVERS sp-dgaig: what an orphan (branch gone, tip not an ancestor of base) is
+# reconciled to. sp-reaped carries a REMOVED reap-log entry but an unverifiable tip and
+# must fall to LOST — a log entry alone is not proof the content reached base. sp-content
+# carries no such entry but a tip whose content content_landed can verify directly, and
+# must reach LANDED. Before the fix, the REMOVED entry alone decided LANDED regardless of
+# content, which is exactly backwards from these two outcomes.
+#
+# defect: sp-e5ow0, sp-dgaig
 # covers: spira/batch.sh spira/conf.sh spira/landing.sh
 # scar: batch.sh iterated refs/heads/spira/* and silently dropped CERTIFIED landstate records whose ref was gone; no log line, no mail.
 set -uo pipefail
@@ -125,11 +132,32 @@ printf 'CERTIFIED fakeshafakeshabrakeshabrakebrakefakeshabrakebra %s' "$(date +%
 _base_tip="$(git -C "$REPO" rev-parse origin/main)"
 printf 'CERTIFIED %s %s' "$_base_tip" "$(date +%s)" > "$LANDSTATE/sp-in-base"
 
-# ─── Fixture: sp-reaped — CERTIFIED orphan, tip NOT in base, Sending reaped it ─
-# Tip not an ancestor (rebased/squash-merged); reap log records REMOVED.
+# ─── Fixture: sp-reaped — CERTIFIED orphan, fake tip, REMOVED entry but NO real content ──
+# sp-dgaig's defect: a REMOVED reap-log line alone used to mark this LANDED regardless of
+# whether the tip's content ever reached base. This tip does not even exist as a git
+# object, so content_landed cannot prove it and the record must fall to LOST — the REMOVED
+# entry is present precisely to prove it is no longer sufficient by itself.
 printf 'CERTIFIED fakeshafakeshabrakeshabrakebrakefakeshb %s' "$(date +%s)" > "$LANDSTATE/sp-reaped"
 printf '2026-09-17T23:20:12Z REMOVED    sp-reaped              branch spira/sp-reaped [by sentinel.sh -> sending.sh]\n' \
     > "$RUN/reap.log"
+
+# ─── Fixture: sp-content — CERTIFIED orphan, branch gone, content PROVABLY on base ──
+# A real orphan: the branch that carried this tip is gone, but its content reached base
+# through another commit (squash/rebase elsewhere). content_landed can still prove it
+# because the tip commit object itself survives (unreachable, not yet gc'd).
+git -C "$REPO" checkout -q -b spira/sp-content main
+printf 'shared-content\n' > "$REPO/sp-content-shared.txt"
+git -C "$REPO" add sp-content-shared.txt
+git -C "$REPO" commit -q -m "sp-content: shared change"
+_content_tip="$(git -C "$REPO" rev-parse spira/sp-content)"
+git -C "$REPO" checkout -q main
+printf 'shared-content\n' > "$REPO/sp-content-shared.txt"
+git -C "$REPO" add sp-content-shared.txt
+git -C "$REPO" commit -q -m "spira: land sp-content"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+git -C "$REPO" branch -D spira/sp-content >/dev/null
+printf 'CERTIFIED %s %s' "$_content_tip" "$(date +%s)" > "$LANDSTATE/sp-content"
 
 echo "test-batch-certified-orphan.sh"
 
@@ -179,21 +207,38 @@ case "$(cat "$LANDSTATE/sp-gone" 2>/dev/null)" in LOST*)
            "got: $(cat "$LANDSTATE/sp-gone" 2>/dev/null)" ;; esac
 
 # =============================================================================
-# REAPED ORPHAN — branch gone, tip NOT in base, REMOVED in reap log → LANDED.
-#   Positive control: sp-gone (no reap entry) stays LOST, proving the ancestry
-#   and reap-log checks both fire (a path that always writes LANDED would fail
-#   the sp-gone assertion above).
+# A REMOVED REAP-LOG LINE ALONE IS NOT PROOF (sp-dgaig). sp-reaped has exactly the log
+# entry the old code trusted on its own, but its tip does not exist as a git object, so
+# content_landed cannot verify it. It must fall to LOST, the same as sp-gone (which has
+# no reap-log entry at all) — proving the log entry no longer changes the outcome by
+# itself. This is the regression test for the defect this bead fixed.
 # =============================================================================
 echo
-echo "reaped orphan — sp-reaped (reap log entry, tip not in base) → LANDED:"
+echo "REMOVED log entry alone — sp-reaped (fake tip, unverifiable) stays LOST:"
 
-case "$(cat "$LANDSTATE/sp-reaped" 2>/dev/null)" in LANDED*)
-    ok "orphan-reaped: sp-reaped marked LANDED" ;;
-    *) bad "orphan-reaped: sp-reaped marked LANDED" \
+case "$(cat "$LANDSTATE/sp-reaped" 2>/dev/null)" in LOST*)
+    ok "orphan-reaped: sp-reaped marked LOST, not LANDED" ;;
+    *) bad "orphan-reaped: sp-reaped marked LOST, not LANDED" \
            "got: $(cat "$LANDSTATE/sp-reaped" 2>/dev/null)" ;; esac
 
-want "batch logs LANDED for sp-reaped" \
-    "sp-reaped has no branch — LANDED (reaped-orphan)" "$out"
+want "batch logs LOST for sp-reaped" \
+    "sp-reaped has no branch — LOST (branch-gone)" "$out"
+
+# =============================================================================
+# CONTENT-PROVABLE ORPHAN — branch gone, tip not an ancestor, but content_landed proves
+# the tip's changes are already on base (the tip commit object still exists). This is the
+# legitimate case the REMOVED-log shortcut used to stand in for, now answered directly.
+# =============================================================================
+echo
+echo "content-provable orphan — sp-content (branch gone, content on base) → LANDED:"
+
+case "$(cat "$LANDSTATE/sp-content" 2>/dev/null)" in LANDED*)
+    ok "orphan-content: sp-content marked LANDED" ;;
+    *) bad "orphan-content: sp-content marked LANDED" \
+           "got: $(cat "$LANDSTATE/sp-content" 2>/dev/null)" ;; esac
+
+want "batch logs LANDED for sp-content" \
+    "sp-content has no branch — content on" "$out"
 
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]
