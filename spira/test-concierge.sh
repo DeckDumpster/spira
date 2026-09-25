@@ -106,6 +106,22 @@ want   "the shipped concierge IS an operator persona"    "concierge" "$(ship spi
 want   "and the other personas are still summonable"     "builder"   "$(ship spira_task_fayths)"
 
 echo
+echo "the escalation list — three classes, not the old five (sp-3dggv)"
+
+# SEEN TO FAIL FIRST: before sp-3dggv, concierge.md escalated on five-plus classes, including
+# "anything that will page him" and "a product decision about what a feature IS or what a
+# number MEANS" — prose the operator's verdict retired. Pin the persona text to the amended
+# law-escalate-decisions-not-problems statute so the two cannot drift apart silently.
+CM="$(cat "$HERE/chamber/concierge.md")"
+want   "names PERMISSIONS"                                          "PERMISSIONS" "$CM"
+want   "names POLICY"                                                "POLICY"      "$CM"
+want   "names DESTRUCTIVE"                                           "DESTRUCTIVE" "$CM"
+nowant "no longer escalates on 'anything that will page'"            "anything that will page" "$CM"
+nowant "no longer escalates on the retired product-decision class"   "product decision about what a feature IS" "$CM"
+nowant "no longer escalates on work outside an approved design's intent" "approved design" "$CM"
+nowant "no longer escalates on a choice between defensible options"  "choice between defensible options" "$CM"
+
+echo
 echo "the brief — argument handling"
 
 # BRIEF REJECTS EXTRA ARGUMENTS: 'brief --resume' exits 2 and names the working composition.

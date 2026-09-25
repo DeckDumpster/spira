@@ -83,9 +83,10 @@ the fix is to move those commits to a branch of their own — not to argue with 
 
 ## Escalating
 
-If answering the question needs a credential, an account or a console only the operator
-holds — or turns on a product decision about what something IS or what a number MEANS —
-post the decision the moment you know it, rather than leaving it in the bead to be found:
+If answering the question needs a credential, an account, a console or a grant only the
+operator holds — or turns on a change to the declared desired state, or a destructive or
+irreversible action on production data — post the decision the moment you know it, rather
+than leaving it in the bead to be found:
 
     {{ASK}} send operator --from "Spike <spike@spira>" --subject "<the question>" --kind question --default "<what you would do>"
 
