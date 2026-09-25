@@ -18,7 +18,7 @@
 # the same question CHECK 7 already asks. A non-elastic fayth gets no pool argument, so
 # fayth_free falls through to FAYTH_MAX_CONCURRENT exactly as the old inline check did.
 #
-# T1, over the shared function (fayth_free itself is already covered by test-fayth-free.sh):
+# T1, over the shared function (fayth_free itself is already covered by test-summon-fayth.sh):
 #   1. elastic, pool=6, 5 live  -> allowed (aeon proceeds past the capacity gate)
 #   2. elastic, pool=6, 6 live  -> refused ("at capacity (6/6)")
 #   3. non-elastic (no pool draw), MAX_CONCURRENT=2: 1 live -> allowed, 2 live -> refused
