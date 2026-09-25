@@ -3933,6 +3933,84 @@ file_unclaimable_incidents() {   # file_unclaimable_incidents <detect_unclaimabl
     done <<< "$1"
 }
 
+# detect_branch_collisions -> "COLLISION <id> <repo> <branch> <holder-id> <holder-path>" for
+# every open bead whose recorded branch (bead_branch) is checked out in a DIFFERENT bead's
+# canonical worktree ($SPIRA_RUN/worktree/<id>).
+#
+# aeon.sh's worktree-attach guard (law-one-aeon-one-worktree) reacts correctly once a bead is
+# claimed — it self-corrects a mislabeled child onto a fresh branch of its own, or dies naming
+# the true holder — but reacting is not preventing: nothing in the store changes between
+# failed claims, so dispatch re-derives the identical collision every cycle
+# (law-a-retry-must-change-an-input). A bead whose own DEFAULT branch is the one squatted (a
+# parent shadowed by a child that inherited its name before groomer.sh stopped copying it) can
+# never self-correct at all, because its own default IS the squatted name. Read here, before
+# a claim is spent, rather than at aeon.sh's refusal.
+#
+# Already-parked beads (carrying SPIRA_ASK_LABEL) are excluded so a repeat sentinel pass
+# stays silent once a bead has been escalated — the point is ONE escalation, not one per pass.
+detect_branch_collisions() {
+    local _bc_raw _bc_ids
+    _bc_raw="$(bdjson list --status open --limit 0 --exclude-type epic,event 2>/dev/null)"
+    [ -n "$_bc_raw" ] || return 0
+    _bc_ids="$(printf '%s' "$_bc_raw" | SPIRA_ASK_LABEL="${SPIRA_ASK_LABEL:-}" python3 -c '
+import json, os, sys
+ask = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
+try: d = json.load(sys.stdin)
+except Exception: d = []
+for i in (d if isinstance(d, list) else [d]):
+    labels = i.get("labels") or []
+    if ask in labels:
+        continue
+    repo = next((l[5:] for l in labels if l.startswith("repo:")), "")
+    print("%s\t%s" % (i["id"], repo))
+' 2>/dev/null)"
+    [ -n "$_bc_ids" ] || return 0
+
+    local -A _bc_maps
+    local _bc_id _bc_repo _bc_root _bc_br _bc_holder _bc_holder_id
+    while IFS=$'\t' read -r _bc_id _bc_repo; do
+        [ -n "$_bc_id" ] || continue
+        _bc_repo="${_bc_repo:-$(spira_home_repo)}"
+        if [ -z "${_bc_maps[$_bc_repo]+x}" ]; then
+            _bc_root="$(repo_root "$_bc_repo" 2>/dev/null)"
+            if [ -n "$_bc_root" ] && { [ -d "$_bc_root/.git" ] || [ -f "$_bc_root/.git" ]; }; then
+                _bc_maps[$_bc_repo]="$(git -C "$_bc_root" worktree list --porcelain 2>/dev/null \
+                    | awk '/^worktree /{w=$2} /^branch /{print $2"\t"w}')"
+            else
+                _bc_maps[$_bc_repo]=""
+            fi
+        fi
+        [ -n "${_bc_maps[$_bc_repo]}" ] || continue
+        _bc_br="$(bead_branch "$_bc_id")"
+        _bc_holder="$(awk -v b="refs/heads/$_bc_br" -F'\t' '$1==b{print $2; exit}' <<< "${_bc_maps[$_bc_repo]}")"
+        [ -n "$_bc_holder" ] || continue
+        case "$_bc_holder" in
+            "$SPIRA_RUN/worktree/"*) _bc_holder_id="${_bc_holder#"$SPIRA_RUN/worktree/"}" ;;
+            *) continue ;;
+        esac
+        [ "$_bc_holder_id" != "$_bc_id" ] || continue
+        printf 'COLLISION %s %s %s %s %s\n' "$_bc_id" "$_bc_repo" "$_bc_br" "$_bc_holder_id" "$_bc_holder"
+    done <<< "$_bc_ids"
+}
+
+# park_branch_collisions <detect_branch_collisions output> — labels each COLLISION bead
+# $SPIRA_ASK_LABEL and overseer, once, so dispatch stops spending a claim on a condition that
+# cannot change until a human frees the holder or corrects the branch: label. Idempotent
+# (re-checks the label directly) so calling this on stale output does not re-note a bead
+# detect_branch_collisions itself would already have excluded.
+park_branch_collisions() {
+    local line id repo branch holder_id holder_path labels
+    while IFS= read -r line; do
+        case "$line" in COLLISION\ *) ;; *) continue ;; esac
+        read -r _ id repo branch holder_id holder_path <<< "$line"
+        labels="$(bdq label list "$id" 2>/dev/null)"
+        case "$labels" in *"${SPIRA_ASK_LABEL:-needs-operator}"*) continue ;; esac
+        bdq label add "$id" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
+        bdq label add "$id" "overseer" >/dev/null 2>&1 || true
+        bdq note "$id" "Parked by detect_branch_collisions: recorded branch $branch is checked out in $holder_id's worktree at $holder_path, not this bead's own canonical path. Every summon reaches aeon.sh's law-one-aeon-one-worktree refusal (or a no-op self-correct, when this bead's own default branch is the squatted one) before a session can start, and nothing about the input changes on retry. Labeled $SPIRA_ASK_LABEL and overseer so dispatch stops spending a claim here — free $holder_path or correct the branch: label, then remove $SPIRA_ASK_LABEL." >/dev/null 2>&1 || true
+    done <<< "$1"
+}
+
 # detect_livelocked -> one LIVELOCK line per open bead that cannot make progress.
 #
 # THE PROBLEM. A bead is livelocked when it is open but will never advance unless a human

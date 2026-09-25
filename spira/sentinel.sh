@@ -1438,6 +1438,25 @@ if [ -n "$unclaimable_out" ]; then
 fi
 fi  # SPIRA_SKIP_RECLAIM
 
+# ======================================================================================
+# CHECK 7d — open beads whose recorded branch: is checked out in a DIFFERENT bead's
+# worktree. aeon.sh's law-one-aeon-one-worktree refusal at claim time is correct; what it
+# cannot do is stop the NEXT summon, because nothing about the input changes between
+# claims (law-a-retry-must-change-an-input). Unlike CHECK 7c's label mismatches, the remedy
+# here is mechanical, not a human judgement call — so this parks the bead directly with
+# $SPIRA_ASK_LABEL rather than waiting on a Groomer incident.
+# ======================================================================================
+if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ]; then
+collision_out="$(detect_branch_collisions 2>/dev/null)"
+if [ -n "$collision_out" ]; then
+    printf '%s\n' "$collision_out"
+    n_col="$(grep -c '^COLLISION' <<< "$collision_out" || true)"
+    log "CHECK7d: $n_col bead(s) whose recorded branch is held by another bead's worktree — parking with $SPIRA_ASK_LABEL"
+    act "parked $n_col branch-collision bead(s)"
+    park_branch_collisions "$collision_out"
+fi
+fi  # SPIRA_SKIP_RECLAIM
+
 if [ "$GOAL_REACHED" = 1 ]; then
     log "pass complete — $acted action(s), $progressed progress, goal reached"
     exit 0
