@@ -11,7 +11,9 @@
 # already covers. Fingerprint stability and the pure classify()/record_write() decisions are
 # now a table over fake inputs in test-suites-classify.sh — cheaper and no longer bound to a
 # real kill; only the wiring — the runner making the kill/defer decision against a real
-# clock and a real process group — needs a real process here.
+# clock and a real process group — needs a real process here. Also carries the leaked-
+# background-child case UC-30 itself names, which test-suites.sh covered before it was
+# deleted whole for flipping (sp-wqdse).
 #
 # POSITIVE CONTROL IS FIRST throughout (law-absence-needs-a-positive-control): a suite is
 # shown to hang, or to fit the budget, before its killed or deferred shape is trusted.
@@ -216,6 +218,44 @@ want "the body names the per-suite limit that killed it"  "killed at ${PERSUITE}
           "wanted < $(( PERSUITE * 10 + 30 ))s"
 
 rm -f "$SH/test-fx-hung.sh" "$SH/test-fx-zzz-after.sh"
+
+# ======================================================================================
+echo "behavioral: a leaked background child does not wedge the pass, and marks its suite red (sp-pdwve):"
+# ======================================================================================
+# THE SWEEP THIS PINS. A suite that backgrounds a child inheriting the process group and
+# exits 0 without reaping it leaves an orphan; the runner samples the group right after
+# wait() returns, kills any orphan it finds, and marks the SUITE red for the leak — not just
+# the child. Uncovered since test-suites.sh, which carried this case, was deleted whole for
+# flipping (sp-wqdse) before the case moved with the rest of UC-30's minification.
+#
+# THE SECOND SUITE IS THE ASSERTION THAT MATTERS: a leak that only mis-scores its own suite
+# costs one result; a leak that wedges the runner's read of the whole pass (sp-a8c5) costs
+# every suite after it — so require the next one to still get a result.
+clear_state
+plant test-fx-leaky.sh <<'S'
+#!/usr/bin/env bash
+sleep 300 &
+echo "leaky ran"
+exit 0
+S
+plant test-fx-zzz-after-leak.sh <<'S'
+#!/usr/bin/env bash
+echo "  ok    suite after the leaker ran"
+S
+
+out="$(sut run)"
+
+is "the leaker is marked red for the leak, despite its own exit 0" \
+    "red" "$(result_status test-fx-leaky.sh)"
+want "the pass output names it RED" "RED" "$out"
+want "and names the suite" "test-fx-leaky.sh" "$out"
+is "the suite after the leaker still ran (the pass did not wedge on the orphan)" \
+    "ok" "$(result_status test-fx-zzz-after-leak.sh)"
+want "and the pass output names it" "test-fx-zzz-after-leak.sh" "$out"
+_c="$(cap_of suite:test-fx-leaky.sh)"
+want "the filed body names the leak, not a bare failure" "left background jobs" "$_c"
+
+rm -f "$SH/test-fx-leaky.sh" "$SH/test-fx-zzz-after-leak.sh"
 
 # ======================================================================================
 echo "behavioral: a TERM-trapping suite is classified timeout, never red (sp-prhs2):"
