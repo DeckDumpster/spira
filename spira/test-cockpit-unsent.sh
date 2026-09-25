@@ -160,8 +160,9 @@ is   "SP_PROTECTED counts exactly the two namespaced branches" "2" "$(val SP_PRO
 # ======================================================================================
 # THE POSITIVE CONTROL: the probe found SOMETHING. An empty output would pass all the
 # negative assertions above, which is the shape law-absence-needs-a-positive-control warns
-# about.
-want "output contains SP_AT" "SP_AT=" "$out"
+# about. SP_AT is not one of unsent_keys' own keys — it is stamped by probe(), which the
+# `unsent` subcommand does not run — so the control names a key this function actually emits.
+want "output contains SP_BRANCH_DONE" "SP_BRANCH_DONE=" "$out"
 want "output contains SP_UNSENT" "SP_UNSENT=" "$out"
 
 # ======================================================================================
@@ -272,7 +273,7 @@ echo "probe-fault — a failed bead lookup lands in SP_PROBE_FAIL, not SP_UNADOP
 out_fail="$(unsent "$TMP/does-not-exist.json")"
 valf() { printf '%s' "$out_fail" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 
-want "bd-fail output has SP_AT (probe ran)" "SP_AT=" "$out_fail"
+want "bd-fail output has SP_PROTECTED (probe ran)" "SP_PROTECTED=" "$out_fail"
 _pf="$(valf SP_PROBE_FAIL)"
 if [ "${_pf:-0}" -gt 0 ] 2>/dev/null; then
     ok "bd-fail: SP_PROBE_FAIL > 0 — failed lookups counted as probe faults"

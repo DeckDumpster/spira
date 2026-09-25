@@ -181,8 +181,10 @@ is "SP_UNLANDED_N is 0 when no anomalies" "0" "$(val_z SP_UNLANDED_N)"
 is "SP_LANDED is 1 for sp-eee" "1" "$(val_z SP_LANDED)"
 
 # ======================================================================================
-# POSITIVE CONTROL
-want "output contains SP_AT" "SP_AT=" "$out"
+# POSITIVE CONTROL. SP_AT is not one of unsent_keys' own keys — it is stamped by probe(),
+# which the `unsent` subcommand does not run — so the control names a key this function
+# actually emits.
+want "output contains SP_CLOSED" "SP_CLOSED=" "$out"
 want "output contains SP_UNLANDED_N" "SP_UNLANDED_N=" "$out"
 
 echo
