@@ -117,29 +117,14 @@ observed="$(cat "$LABELS_FILE" 2>/dev/null)"
 want "ops predicate was asked even when plan_ready=0" "incident" "$observed"
 
 # ==========================================================================================
-# summon_fayth — SPIRA_AEON_CPU_QUOTA is passed to the summon command
+# A quota-recording mock: the CPUQuota=70%/90% rows this fixture used to carry moved to
+# test-summon-fayth.sh (D2/UC-dispatch-23). The express-grant test below still needs an
+# argv-capturing mock, so it stays.
 # ==========================================================================================
 ARGS_FILE="$T/summon-args"
 MOCK_QUOTA="$T/summon-quota"
 printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\nexit 0\n' "$ARGS_FILE" > "$MOCK_QUOTA"
 chmod +x "$MOCK_QUOTA"
-export SPIRA_SUMMON="$MOCK_QUOTA"
-
-MOCK_READY=1; rm -f "$ARGS_FILE" "$LABELS_FILE"
-unset SPIRA_AEON_CPU_QUOTA 2>/dev/null || true
-summon_fayth ops >/dev/null 2>&1 || true
-args="$(cat "$ARGS_FILE" 2>/dev/null)"
-want "default quota: CPUQuota=70% appears in args" "CPUQuota=70%" "$args"
-
-MOCK_READY=1; rm -f "$ARGS_FILE" "$LABELS_FILE"
-export SPIRA_AEON_CPU_QUOTA=90%
-summon_fayth ops >/dev/null 2>&1 || true
-args="$(cat "$ARGS_FILE" 2>/dev/null)"
-want "custom quota: CPUQuota=90% appears in args"    "CPUQuota=90%" "$args"
-nowant "custom quota: CPUQuota=70% is absent from args" "CPUQuota=70%" "$args"
-
-export SPIRA_SUMMON="$MOCK_SUMMON"
-unset SPIRA_AEON_CPU_QUOTA
 
 # ==========================================================================================
 # summon_fayth — an express grant passes the label to the claim predicate (sp-zcvh1)
