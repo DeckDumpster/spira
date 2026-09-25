@@ -161,6 +161,10 @@ for f in "${files[@]}"; do
         *.json)                                          continue ;;
     esac
     [ -f "$ROOT/$f" ] || continue
+    # A COMPILED BINARY IS NOT SOURCE. Its source is linted where it lives; the binary has no
+    # line to annotate literal-ok, and grepping it reads null bytes. PR 331 failed on
+    # bin/queue-watch carrying a default label name as a string constant.
+    LC_ALL=C grep -qI . "$ROOT/$f" 2>/dev/null || continue
     hits="$(scan "$ROOT/$f")"
     [ -n "$hits" ] || continue
     bad=1
