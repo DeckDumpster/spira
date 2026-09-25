@@ -1,5 +1,5 @@
 use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{json, Value};
@@ -179,27 +179,7 @@ fn process_intent(
 }
 
 fn repo_map_lookup(repo: &str) -> Option<String> {
-    // SPIRA_REPO_MAP: the repo-map file path, or fall back to SPIRA_HOME/repo-map.
-    let map_path: PathBuf = {
-        let v = std::env::var("SPIRA_REPO_MAP").unwrap_or_default();
-        if !v.is_empty() {
-            PathBuf::from(v)
-        } else {
-            let home = std::env::var("SPIRA_HOME").unwrap_or_default();
-            PathBuf::from(home).join("repo-map")
-        }
-    };
-
-    let content = std::fs::read_to_string(&map_path).ok()?;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with('#') || line.is_empty() { continue; }
-        let fields: Vec<&str> = line.splitn(6, '|').map(str::trim).collect();
-        if fields.len() >= 2 && fields[0] == repo {
-            return Some(fields[1].to_string());
-        }
-    }
-    None
+    crate::repo_map::lookup(repo)
 }
 
 fn czar_fence_check(spira_home: &str, class: &str) -> Result<bool, String> {
@@ -226,20 +206,26 @@ fn check_batch_pr(repo_path: &str, number: &str) -> Result<bool, String> {
     Ok(branch.starts_with("spira/queue/"))
 }
 
+// The gh argv for each verb. Pulled out of gh_exec so it can be asserted without spawning a
+// process — a wrong flag here (e.g. --body instead of --comment) fails silently against the
+// gh stub used elsewhere, since both are accepted CLI flags on different subcommands.
+fn build_gh_args(verb: &Verb, number: &str, reason: &str) -> Vec<String> {
+    match verb {
+        Verb::RunRerun     => vec!["run".into(), "rerun".into(), number.into()],
+        Verb::RunCancel    => vec!["run".into(), "cancel".into(), number.into()],
+        Verb::PrClose      => vec!["pr".into(), "close".into(), number.into(), "--comment".into(), reason.into()],
+        Verb::PrComment    => vec!["pr".into(), "comment".into(), number.into(), "--body".into(), reason.into()],
+        Verb::IssueComment => vec!["issue".into(), "comment".into(), number.into(), "--body".into(), reason.into()],
+        Verb::IssueClose   => vec!["issue".into(), "close".into(), number.into(), "--comment".into(), reason.into()],
+    }
+}
+
 fn gh_exec(verb: &Verb, repo_path: &str, number: &str, reason: &str) -> Result<String, String> {
     let gh = gh_bin();
     let mut cmd = Command::new(&gh);
     cmd.current_dir(repo_path);
     cmd.envs(crate::token::gh_env());
-
-    match verb {
-        Verb::RunRerun     => { cmd.args(["run", "rerun", number]); }
-        Verb::RunCancel    => { cmd.args(["run", "cancel", number]); }
-        Verb::PrClose      => { cmd.args(["pr", "close", number, "--comment", reason]); }
-        Verb::PrComment    => { cmd.args(["pr", "comment", number, "--body", reason]); }
-        Verb::IssueComment => { cmd.args(["issue", "comment", number, "--body", reason]); }
-        Verb::IssueClose   => { cmd.args(["issue", "close", number, "--comment", reason]); }
-    }
+    cmd.args(build_gh_args(verb, number, reason));
 
     let output = cmd.output()
         .map_err(|e| format!("gh failed: {e}"))?;
@@ -324,4 +310,114 @@ fn write_cockpit_fragment(run_dir: &str, refusal_count: u64) {
         cockpit_d.join("broker.env"),
         format!("BROKER_REFUSALS={}\n", refusal_count),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn run_rerun_argv_has_no_reason() {
+        assert_eq!(build_gh_args(&Verb::RunRerun, "42", "ignored"), vec!["run", "rerun", "42"]);
+    }
+
+    #[test]
+    fn run_cancel_argv_has_no_reason() {
+        assert_eq!(build_gh_args(&Verb::RunCancel, "42", "ignored"), vec!["run", "cancel", "42"]);
+    }
+
+    #[test]
+    fn pr_close_argv_uses_comment_flag() {
+        assert_eq!(
+            build_gh_args(&Verb::PrClose, "7", "batch red"),
+            vec!["pr", "close", "7", "--comment", "batch red"]
+        );
+    }
+
+    #[test]
+    fn pr_comment_argv_uses_body_flag_not_comment() {
+        assert_eq!(
+            build_gh_args(&Verb::PrComment, "7", "hello"),
+            vec!["pr", "comment", "7", "--body", "hello"]
+        );
+    }
+
+    #[test]
+    fn issue_comment_argv_uses_body_flag() {
+        assert_eq!(
+            build_gh_args(&Verb::IssueComment, "9", "hello"),
+            vec!["issue", "comment", "9", "--body", "hello"]
+        );
+    }
+
+    #[test]
+    fn issue_close_argv_uses_comment_flag() {
+        assert_eq!(
+            build_gh_args(&Verb::IssueClose, "9", "done"),
+            vec!["issue", "close", "9", "--comment", "done"]
+        );
+    }
+
+    fn write_audit_lines(path: &Path, lines: &[Value]) {
+        let body: String = lines.iter().map(|l| format!("{}\n", l)).collect();
+        std::fs::write(path, body).unwrap();
+    }
+
+    fn scratch_audit_path(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "broker-execute-test-{}-{}-{}",
+            name,
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join("audit.jsonl")
+    }
+
+    #[test]
+    fn rate_limit_counts_only_the_same_fayth_in_the_window() {
+        let path = scratch_audit_path("rate-same-fayth");
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let mut lines = Vec::new();
+        for i in 0..RATE_LIMIT_MAX {
+            lines.push(json!({"fayth": "czar", "submitted_at": now - i}));
+        }
+        // A different fayth's activity must not count toward czar's limit.
+        lines.push(json!({"fayth": "builder", "submitted_at": now}));
+        write_audit_lines(&path, &lines);
+        assert!(over_rate_limit(&path, "czar"));
+        assert!(!over_rate_limit(&path, "builder"));
+    }
+
+    #[test]
+    fn rate_limit_ignores_entries_outside_the_window() {
+        let path = scratch_audit_path("rate-window");
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let mut lines = Vec::new();
+        for _ in 0..RATE_LIMIT_MAX {
+            lines.push(json!({"fayth": "czar", "submitted_at": now.saturating_sub(RATE_LIMIT_WINDOW_S + 3600)}));
+        }
+        write_audit_lines(&path, &lines);
+        assert!(!over_rate_limit(&path, "czar"));
+    }
+
+    #[test]
+    fn rate_limit_missing_audit_file_is_not_over_limit() {
+        let path = std::env::temp_dir().join("broker-execute-test-no-such-audit.jsonl");
+        let _ = std::fs::remove_file(&path);
+        assert!(!over_rate_limit(&path, "czar"));
+    }
+
+    #[test]
+    fn refusal_count_includes_refused_and_czar_would_not_done() {
+        let path = scratch_audit_path("refusal-count");
+        write_audit_lines(&path, &[
+            json!({"outcome": "REFUSED"}),
+            json!({"outcome": "CZAR-WOULD"}),
+            json!({"outcome": "DONE"}),
+        ]);
+        assert_eq!(count_audit_refusals(&path), 2);
+    }
 }

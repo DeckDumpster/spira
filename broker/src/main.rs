@@ -1,6 +1,7 @@
 mod execute;
 mod policy;
 mod read;
+mod repo_map;
 mod submit;
 mod token;
 

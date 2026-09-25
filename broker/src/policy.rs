@@ -85,3 +85,82 @@ pub fn check_fayth(verb: &Verb, fayth: &str) -> PolicyResult {
         PolicyResult::Allowed
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ALL_VERBS: [Verb; 6] = [
+        Verb::RunRerun, Verb::RunCancel, Verb::PrClose,
+        Verb::PrComment, Verb::IssueComment, Verb::IssueClose,
+    ];
+
+    #[test]
+    fn verb_parse_round_trips_through_as_str() {
+        for v in ALL_VERBS {
+            assert_eq!(Verb::parse(v.as_str()), Some(v));
+        }
+    }
+
+    #[test]
+    fn verb_parse_rejects_unknown_strings() {
+        assert_eq!(Verb::parse("run-explode"), None);
+        assert_eq!(Verb::parse(""), None);
+        assert_eq!(Verb::parse("Run-Rerun"), None); // case-sensitive: no silent normalization
+    }
+
+    #[test]
+    fn read_verb_parse_round_trips() {
+        assert_eq!(ReadVerb::parse("run-view"), Some(ReadVerb::RunView));
+        assert_eq!(ReadVerb::parse("artifact-download"), Some(ReadVerb::ArtifactDownload));
+        assert_eq!(ReadVerb::parse("run-rerun"), None); // a write verb is not a read verb
+    }
+
+    #[test]
+    fn only_the_named_three_verbs_are_czar_only() {
+        for v in &ALL_VERBS {
+            let expect_czar_only = matches!(v, Verb::RunRerun | Verb::RunCancel | Verb::PrClose);
+            assert_eq!(v.czar_only(), expect_czar_only, "{:?}", v);
+        }
+    }
+
+    #[test]
+    fn czar_fence_applies_exactly_where_czar_only_does() {
+        // needs_czar_fence is a separate method from czar_only so the two CAN diverge, but
+        // today's policy has them agree; this pins that until a verb deliberately splits them.
+        for v in &ALL_VERBS {
+            assert_eq!(v.needs_czar_fence(), v.czar_only(), "{:?}", v);
+        }
+    }
+
+    #[test]
+    fn only_pr_close_requires_a_batch_pr() {
+        for v in &ALL_VERBS {
+            assert_eq!(v.requires_batch_pr(), matches!(v, Verb::PrClose), "{:?}", v);
+        }
+    }
+
+    #[test]
+    fn czar_only_verb_refuses_a_non_czar_fayth() {
+        match check_fayth(&Verb::RunRerun, "builder") {
+            PolicyResult::Refused(msg) => {
+                assert!(msg.contains("builder"));
+                assert!(msg.contains("run-rerun"));
+                assert!(msg.contains("czar only"));
+            }
+            PolicyResult::Allowed => panic!("builder should be refused for a czar-only verb"),
+        }
+    }
+
+    #[test]
+    fn czar_only_verb_allows_the_czar_fayth() {
+        assert!(matches!(check_fayth(&Verb::RunRerun, "czar"), PolicyResult::Allowed));
+    }
+
+    #[test]
+    fn non_czar_only_verb_allows_any_fayth() {
+        assert!(matches!(check_fayth(&Verb::PrComment, "builder"), PolicyResult::Allowed));
+        assert!(matches!(check_fayth(&Verb::PrComment, "czar"), PolicyResult::Allowed));
+        assert!(matches!(check_fayth(&Verb::PrComment, ""), PolicyResult::Allowed));
+    }
+}
