@@ -25,12 +25,7 @@
 # covers: spira/mail.sh spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-isz()  { [ "$2" = 0 ]  && ok "$1" || bad "$1" "wanted exit 0, got $2"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-lacks(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-mail-bead-render.sh"
 
@@ -72,7 +67,7 @@ echo "--bead flag: rendered block leads the body"
 out="$(printf 'Some prose about the work, unrelated to the id.\n' \
     | run send operator --from "Builder <builder@spira>" --subject "Status update" \
         --bead "$KNOWN_ID" 2>&1)"; rc=$?
-isz "--bead: send succeeds" "$rc"
+wantrc "--bead: send succeeds" 0 "$rc"
 body="$(body_of operator)"
 want "block leads with id and title" "$KNOWN_ID: $KNOWN_TITLE" "$body"
 want "block carries status"          "Status: open"            "$body"
@@ -92,10 +87,10 @@ echo "unresolvable bead id: renders 'unresolved: <id>', send still succeeds"
 
 out="$(printf 'Blocked on %s until infra is fixed.\n' "$UNKNOWN_ID" \
     | run send operator --from "Builder <builder@spira>" --subject "Infra blocker" 2>&1)"; rc=$?
-isz "unresolvable id: send still succeeds (exit 0)" "$rc"
+wantrc "unresolvable id: send still succeeds (exit 0)" 0 "$rc"
 body2="$(body_of operator)"
 want "body renders unresolved marker for the unknown id" "unresolved: $UNKNOWN_ID" "$body2"
-lacks "unresolved case carries no title (nothing to render)" "$KNOWN_TITLE" "$body2"
+nowant "unresolved case carries no title (nothing to render)" "$KNOWN_TITLE" "$body2"
 
 # ==========================================================================
 # 3. bead id anywhere in body (no --bead) — resolved and rendered the same way.
@@ -105,7 +100,7 @@ echo "bead id named only in the body (no --bead): resolved and rendered"
 
 out="$(printf 'The work in %s is blocked on infra.\n' "$KNOWN_ID" \
     | run send operator --from "Builder <builder@spira>" --subject "Infra blocker 2" 2>&1)"; rc=$?
-isz "body-only id: send succeeds" "$rc"
+wantrc "body-only id: send succeeds" 0 "$rc"
 body3="$(body_of operator)"
 want "body-only id: rendered block present with real title" "$KNOWN_ID: $KNOWN_TITLE" "$body3"
 
@@ -128,11 +123,9 @@ _dflt="post a comment explaining the resolution and close the issue"
 out="$(printf '## Question\n%s\n\n## Default\n%s\n' "$_subj" "$_dflt" \
     | run send operator --from "Landing gate <gate@spira>" --subject "$_subj" \
         --kind question --default "$_dflt" --bead "$REG_ID" 2>&1)"; rc=$?
-isz "regression: send succeeds" "$rc"
+wantrc "regression: send succeeds" 0 "$rc"
 body4="$(body_of operator)"
 want "regression: rendered block carries the bead's real title" "$REG_TITLE"    "$body4"
 want "regression: rendered block carries its status"            "Status: closed" "$body4"
 
-echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
