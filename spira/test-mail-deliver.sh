@@ -229,6 +229,11 @@ unit_resolved="${unit_resolved//@SPIRA_RUN@/$LOGRUN}"
 is "4b: unit's StandardOutput is the path _wd_logfile computes" "$expected_logfile" "$unit_resolved"
 
 # ---------------------------------------------------------------------------
+# _wake_count <file> -> lines containing "wake sent". Not `grep -c ... || echo 0`: grep -c
+# already prints 0 on no match, but also exits 1 on no match, so the fallback fires anyway
+# and doubles the output.
+_wake_count() { grep -c 'wake sent' "$1" 2>/dev/null; true; }
+
 # _bg_exited <pid> <max 0.1s ticks> -> 0 once the pid is gone, 1 if it outlives the budget.
 _bg_exited() {
     local pid="$1" n="${2:-50}"
@@ -263,7 +268,7 @@ LOOP1_PID=$!
 
 start=$SECONDS
 tries=0
-while [ "$(grep -c 'wake sent' "$ATT1" 2>/dev/null || echo 0)" -lt 3 ] && [ "$tries" -lt 150 ]; do
+while [ "$(_wake_count "$ATT1")" -lt 3 ] && [ "$tries" -lt 150 ]; do
     sleep 0.1
     tries=$((tries+1))
 done
@@ -271,7 +276,7 @@ elapsed=$(( SECONDS - start ))
 kill "$LOOP1_PID" 2>/dev/null
 _bg_exited "$LOOP1_PID" 20
 
-attempts1="$(grep -c 'wake sent' "$ATT1" 2>/dev/null || echo 0)"
+attempts1="$(_wake_count "$ATT1")"
 calls1="$(wc -l < "$CALLS1" 2>/dev/null | tr -d ' ')"
 last_msg="$(tail -1 "$CALLS1" | cut -f2-)"
 
@@ -303,18 +308,18 @@ env -i HOME="$TMP/home" PATH="$PATH" SPIRA_RUN="$WRUN2" SPIRA_MAIL="$WMAIL2" \
 LOOP2_PID=$!
 
 tries=0
-while [ "$(grep -c 'wake sent' "$ATT2" 2>/dev/null || echo 0)" -lt 1 ] && [ "$tries" -lt 150 ]; do
+while [ "$(_wake_count "$ATT2")" -lt 1 ] && [ "$tries" -lt 150 ]; do
     sleep 0.1
     tries=$((tries+1))
 done
-first_seen="$(grep -c 'wake sent' "$ATT2" 2>/dev/null || echo 0)"
+first_seen="$(_wake_count "$ATT2")"
 
 env -i HOME="$TMP/home" PATH="$PATH" SPIRA_MAIL="$WMAIL2" SPIRA_CONF=/nonexistent \
     bash "$HERE/mail.sh" read wakebox >/dev/null 2>&1
 
 sleep 2.5
 loop_exited=0; _bg_exited "$LOOP2_PID" 30 && loop_exited=1
-after_read="$(grep -c 'wake sent' "$ATT2" 2>/dev/null || echo 0)"
+after_read="$(_wake_count "$ATT2")"
 
 is "6a: at least one wake fired before the mail was read" "1" "$([ "$first_seen" -ge 1 ] && echo 1 || echo 0)"
 is "6b: the wake loop exits once the mail is read, no retry ceiling needed" "1" "$loop_exited"
