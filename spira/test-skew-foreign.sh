@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: T2
 #
 # test-skew-foreign.sh — the landing gate's foreign-harness fence, proved in both directions.
 #
@@ -28,12 +29,7 @@
 # covers: spira/skew.sh spira/gate.sh spira/exclude.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -214,5 +210,4 @@ SPIRA_REPO="$WS/home" SPIRA_HOME_REPO=home \
     bash "$TMP/broken-spira/skew.sh" foreign "$WS/guest" main touches-harness >/dev/null 2>&1
 is "an init failure (conf.sh exit 1) exits 3, not 1" 3 "$?"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
