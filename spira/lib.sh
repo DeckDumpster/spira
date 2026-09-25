@@ -6240,6 +6240,45 @@ MAILEOF
     fi
 }
 
+# _gh_resolve_stale_asks — an open "Close GitHub issue" ask whose issue is now CLOSED
+# (by gh_issue_closeout above, or by a human directly) is an answered question still
+# sitting in the operator's queue. ask_already_open only checks whether one is open;
+# nothing else ever closed it (law-close-the-loop-on-confirmation).
+_gh_resolve_stale_asks() {
+    local _tmp _ask_id _ext _bid _gh_part _gh_repo _issue_n _st
+    _tmp="$(mktemp)" || return 0
+    bdjson list --status open --label "${SPIRA_ASK_LABEL:?SPIRA_ASK_LABEL is unset — source conf.sh}" --limit 0 2>/dev/null \
+        | python3 -c '
+import sys, json, re
+try: d = json.load(sys.stdin)
+except Exception: raise SystemExit(0)
+rows = d if isinstance(d, list) else [d]
+pat = re.compile(r"^Close GitHub issue (\S+) for bead (\S+)$")
+for r in rows:
+    m = pat.match(r.get("title") or "")
+    if not m: continue
+    aid = r.get("id", "")
+    if not aid: continue
+    print(f"{aid}\t{m.group(1)}\t{m.group(2)}")
+' 2>/dev/null > "$_tmp" || { rm -f "$_tmp"; return 0; }
+
+    while IFS=$'\t' read -r _ask_id _ext _bid; do
+        [ -n "$_ask_id" ] || continue
+        _gh_part="${_ext#github:}"
+        _gh_repo="${_gh_part%%#*}"
+        _issue_n="${_gh_part##*#}"
+        case "$_issue_n" in ''|*[!0-9]*) continue ;; esac
+        _st="$(ghq issue view "$_issue_n" --repo "$_gh_repo" --json state -q .state 2>/dev/null)" || _st=""
+        [ "${_st:-}" = CLOSED ] || continue
+        mkdir -p "${SPIRA_RUN}/gh-closed" 2>/dev/null || true
+        : > "${SPIRA_RUN}/gh-closed/$_bid"
+        printf '%s is closed on GitHub — resolved automatically; nothing further for the operator.\n' "$_ext" \
+            | bdq close "$_ask_id" --reason-file - >/dev/null 2>&1
+        log "gh-closeout $_bid: $_ext found closed — resolved stale ask $_ask_id"
+    done < "$_tmp"
+    rm -f "$_tmp"
+}
+
 # _gh_unlanded_scan — run at the end of a landing pass to ask about GitHub issues
 # whose beads closed without a landing. Called once per pass; one ask per issue
 # via ask_already_open (and ask_closed_subject once answered).
@@ -6249,12 +6288,15 @@ MAILEOF
 # SAME id that goes RED against the base overwrites a correct LANDED entry with a
 # wrong one — the file then contradicts the commit graph rather than merely lagging
 # it. landed_sha() answers the only question that matters — is a commit naming this
-# id an ancestor of the repository's own land ref — and when it can, that answer
-# wins over whatever landstate says.
+# id an ancestor of the repository's own land ref, for the bead or for its superseder —
+# and when it can, that answer wins over whatever landstate says.
 _gh_unlanded_scan() {
-    local _tmp _id _ext _superseder _repo_label _repo_path _land_sha
+    local _tmp _id _ext _superseder _repo_label _repo_path _land_sha _closed_at
     local _ls_file _ls_st _sup_ls _sup_st _sup_sha _draft
-    local _wait_dir _wait_file _now _last
+    local _wait_dir _wait_file _now _last _age _grace
+
+    _gh_resolve_stale_asks
+
     _tmp="$(mktemp)" || return 0
     _wait_dir="${SPIRA_RUN:-/tmp}/gh-wait-log"
     # \x01-SEPARATED, NOT TAB. bash's `read` treats tab as IFS WHITESPACE regardless of
@@ -6281,10 +6323,10 @@ for r in rows:
     for l in (r.get("labels") or []):
         if l.startswith("repo:"):
             repo_label = l[5:]; break
-    print(f"{bid}\x01{ext}\x01{superseder}\x01{repo_label}")
+    print(f"{bid}\x01{ext}\x01{superseder}\x01{repo_label}\x01{r.get(\"closed_at\") or \"\"}")
 ' 2>/dev/null > "$_tmp" || { rm -f "$_tmp"; return 0; }
 
-    while IFS=$'\x01' read -r _id _ext _superseder _repo_label; do
+    while IFS=$'\x01' read -r _id _ext _superseder _repo_label _closed_at; do
         [ -n "$_id" ] || continue
         [ -e "${SPIRA_RUN}/gh-closed/$_id" ] && continue
 
@@ -6295,8 +6337,19 @@ for r in rows:
                 gh_issue_closeout "$_id" "$_land_sha" "$_repo_path" || true
                 continue
             fi
+            if [ -n "${_superseder:-}" ]; then
+                _land_sha="$(landed_sha "$_superseder" "$_repo_path" 2>/dev/null)"
+                if [ -n "$_land_sha" ]; then
+                    gh_issue_closeout "$_id" "$_land_sha" "$_repo_path" || true
+                    continue
+                fi
+            fi
         fi
 
+        # Repo unresolvable, or the commit graph plainly does not have it: landstate is
+        # the fallback, not the first word — a cache can be stale in the other direction
+        # too (written LANDED for a squash whose subject grep missed), but only when the
+        # commit graph itself could not be asked.
         _ls_file="$SPIRA_RUN/landstate/$_id"
         _ls_st=""
         [ -r "$_ls_file" ] && { read -r _ls_st _ < "$_ls_file" 2>/dev/null || true; }
@@ -6326,6 +6379,22 @@ for r in rows:
                 read -r _sup_st _sup_sha _ < "$_sup_ls" 2>/dev/null || true
                 [ "${_sup_st:-}" = LANDED ] \
                     && _draft="This issue was fixed by $_superseder (${_sup_sha:0:8})"
+            fi
+        fi
+
+        # GRACE PERIOD. Closing the bead and landing its commit are separate passes; a
+        # bead closed a moment ago has simply not had its turn yet, and asking about it
+        # immediately is the same false alarm as trusting a stale landstate — just on a
+        # clock instead of a cache. Only once no landing has shown up for a while does
+        # "closed, no commit on the base" become a fact worth the operator's attention
+        # rather than a timing artifact.
+        _grace="${SPIRA_GH_ASK_GRACE_SECS:-3600}"
+        if [ -n "${_closed_at:-}" ]; then
+            _now="$(date -u +%s)"
+            _last="$(date -u -d "$_closed_at" +%s 2>/dev/null)" || _last=""
+            if [ -n "$_last" ]; then
+                _age=$(( _now - _last ))
+                [ "$_age" -lt "$_grace" ] && continue
             fi
         fi
 

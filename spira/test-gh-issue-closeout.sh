@@ -89,7 +89,9 @@ BEAD4=sp-tgh4
 # Set landstate: BEAD1 is LANDED; BEAD2 and BEAD4 have no landstate yet
 printf 'LANDED %s %s push\n' "$LANDED_SHA" "$(date +%s)" > "$RUN/landstate/$BEAD1"
 
-# Source lib.sh for the functions under test.
+# Source lib.sh for the functions under test. bead_repo/repo_root (used by
+# _gh_unlanded_scan's landed() check) need the same repo mapping the backfill
+# subprocess calls above are given inline, but in-process this time.
 export SPIRA_HOME="$SH"
 # Explicit, or a container with a real installed harness leaves SPIRA_REPO_MAP already
 # set and conf.sh's "only resolve when unset" guard never looks at $SH/repo-map at all
@@ -248,7 +250,7 @@ printf '\n9. _gh_unlanded_scan: CERTIFIED landstate logs waiting, sends no ask:\
 : > "$RUN/gh-closed/sp-tgh2"
 # Seed a closed bead with CERTIFIED landstate.
 testdb_seed <<JSONL
-{"id":"sp-scan1","title":"Scan CERTIFIED bead","status":"closed","issue_type":"task","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#91","updated_at":"2026-09-05T00:00:00Z"}
+{"id":"sp-scan1","title":"Scan CERTIFIED bead","status":"closed","issue_type":"task","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#91","updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z"}
 JSONL
 printf 'CERTIFIED abc1234 %s\n' "$(date +%s)" > "$RUN/landstate/sp-scan1"
 export SPIRA_ASK_LABEL=needs-operator
@@ -278,7 +280,7 @@ fi
 
 printf '\n10. _gh_unlanded_scan: mail.sh refuse logs ask refused with reason:\n'
 testdb_seed <<JSONL
-{"id":"sp-scan2","title":"Scan unlanded bead","status":"closed","issue_type":"task","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#92","updated_at":"2026-09-05T00:00:00Z"}
+{"id":"sp-scan2","title":"Scan unlanded bead","status":"closed","issue_type":"task","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#92","updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z"}
 JSONL
 # Restore gh stub to return OPEN for issue view.
 : > "$GHLOG"
@@ -342,7 +344,7 @@ fi
 
 printf '\n12. gh_issue_ask_unlanded: issue already closed on forge writes marker, no mail:\n'
 testdb_seed <<JSONL
-{"id":"sp-scan3","title":"Forge-closed bead","status":"closed","issue_type":"task","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#93","updated_at":"2026-09-05T00:00:00Z"}
+{"id":"sp-scan3","title":"Forge-closed bead","status":"closed","issue_type":"task","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#93","updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z"}
 JSONL
 # Stub gh to return CLOSED for issue 93's view only. _gh_unlanded_scan rescans the
 # WHOLE backlog every call, sp-scan2's ask included, so a stub that answered CLOSED
@@ -384,13 +386,14 @@ else
     ok "forge-closed: no mail sent"
 fi
 
-printf '\n13. _gh_unlanded_scan: stale RED landstate is overridden by the commit graph (Defect 1):\n'
+printf '\n13. _gh_unlanded_scan: land commit on base, no landstate — closed by ancestry, no ask:\n'
+# POSITIVE CONTROL for law-landed-is-content: a bead whose commit IS on the land ref but
+# has NO landstate file at all (the exact shape of the 20 false asks this bead fixes).
 git -C "$REPO" commit -q --allow-empty -m "spira: land sp-scan4"
 testdb_seed <<JSONL
-{"id":"sp-scan4","title":"Scan stale-RED landed bead","status":"closed","issue_type":"task","labels":["spira","plan","repo:fixture"],"external_ref":"github:fixture/testrepo#94","updated_at":"2026-09-05T00:00:00Z"}
+{"id":"sp-scan4","title":"Scan landed-by-commit bead","status":"closed","issue_type":"task","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#94","closed_at":"2026-09-05T00:00:00Z"}
 JSONL
-printf 'RED 0000000000000000000000000000000000000000 %s conflicts-with-base\n' "$(date +%s)" \
-    > "$RUN/landstate/sp-scan4"
+rm -f "$RUN/landstate/sp-scan4"
 : > "$GHLOG"
 cat > "$TMP/bin/gh" <<'GHSTUB'
 #!/usr/bin/env bash
@@ -409,22 +412,21 @@ echo called >> $MAIL_CALLS3
 exit 0
 MAILSTUB
 chmod +x "$SH/mail.sh"
-scan_out="$(_gh_unlanded_scan 2>&1)"
-if grep -q "issue close 94" "$GHLOG" 2>/dev/null; then
-    ok "stale-RED bead closed out by the live scan via the commit graph"
+_gh_unlanded_scan >/dev/null 2>&1
+if grep -q "issue comment 94" "$GHLOG" 2>/dev/null && grep -q "issue close 94" "$GHLOG" 2>/dev/null; then
+    ok "landed-by-commit: issue closed via ancestry, not landstate"
 else
-    bad "stale-RED bead closed out by the live scan via the commit graph" \
-        "issue 94 not closed — scan_out: $scan_out, ghlog: $(cat "$GHLOG" 2>/dev/null)"
+    bad "landed-by-commit: issue closed via ancestry, not landstate" "GHLOG: $(cat "$GHLOG" 2>/dev/null)"
 fi
 if [ -e "$RUN/gh-closed/sp-scan4" ]; then
-    ok "close marker written despite stale RED landstate"
+    ok "landed-by-commit: close marker written"
 else
-    bad "close marker written despite stale RED landstate" "no marker at $RUN/gh-closed/sp-scan4"
+    bad "landed-by-commit: close marker written" "no marker at $RUN/gh-closed/sp-scan4"
 fi
 if [ -s "$MAIL_CALLS3" ]; then
-    bad "no ask sent for a bead the graph says landed" "mail.sh was called: $(cat "$MAIL_CALLS3")"
+    bad "landed-by-commit: no ask sent" "mail.sh was called: $(cat "$MAIL_CALLS3")"
 else
-    ok "no ask sent for a bead the graph says landed"
+    ok "landed-by-commit: no ask sent"
 fi
 
 printf '\n14. _gh_unlanded_scan: a bead with no commit anywhere still produces exactly one ask (positive control):\n'
@@ -443,11 +445,38 @@ scan_out="$(_gh_unlanded_scan 2>&1)"
 want "positive control: ask sent for the unlanded bead" "asked operator about github:fixture/testrepo#95" "$scan_out"
 # Simulate the tracking bead mail.sh would have created, so later scans in this file
 # dedupe sp-scan5 through ask_already_open instead of re-asking on every pass.
-"${SPIRA_BD:-bd}" -C "$SPIRA_DB" create \
+ASK_ID="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" create \
     "Close GitHub issue github:fixture/testrepo#95 for bead sp-scan5" \
-    -l "needs-operator,overseer" --type decision --silent >/dev/null 2>&1 || true
+    -l "needs-operator,overseer" --type decision --silent 2>/dev/null)"
 
-printf '\n15. _gh_unlanded_scan: a repo whose default branch is master behaves identically (law-the-base-branch-is-not-always-main):\n'
+printf '\n15. an existing open ask is resolved once its issue is found CLOSED:\n'
+: > "$GHLOG"
+cat > "$TMP/bin/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHLOG"
+case " $* " in
+    *" issue view 95 "*) printf '{"state":"CLOSED"}\n' ;;
+    *" issue view "*)    printf '{"state":"OPEN"}\n' ;;
+esac
+exit 0
+GHSTUB
+chmod +x "$TMP/bin/gh"
+scan_out="$(_gh_unlanded_scan 2>&1)"
+if [[ "$scan_out" == *"resolved stale ask"* ]]; then
+    ok "stale ask: resolution logged"
+else
+    bad "stale ask: resolution logged" "got: $scan_out"
+fi
+ask_status="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "${ASK_ID:-__none__}" --json 2>/dev/null \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print(d.get("status",""))' 2>/dev/null)"
+is "stale ask: ask bead closed" closed "$ask_status"
+if [ -e "$RUN/gh-closed/sp-scan5" ]; then
+    ok "stale ask: gh-closed marker written for the bead"
+else
+    bad "stale ask: gh-closed marker written for the bead" "no marker at $RUN/gh-closed/sp-scan5"
+fi
+
+printf '\n16. _gh_unlanded_scan: a repo whose default branch is master behaves identically (law-the-base-branch-is-not-always-main):\n'
 REPO2="$TMP/repo-master"
 git init -q -b master "$REPO2"
 git -C "$REPO2" commit -q --allow-empty -m "initial"
@@ -468,7 +497,7 @@ esac
 exit 0
 GHSTUB
 chmod +x "$TMP/bin/gh"
-scan_out="$(_gh_unlanded_scan 2>&1)"
+_gh_unlanded_scan >/dev/null 2>&1
 if grep -q "issue close 96" "$GHLOG" 2>/dev/null; then
     ok "master-branch repo: landed bead closed out via the graph, not a hardcoded main"
 else
@@ -476,7 +505,32 @@ else
         "issue 96 not closed — ghlog: $(cat "$GHLOG" 2>/dev/null)"
 fi
 
-printf '\n16. gh_issue_ask_unlanded: answering the ask writes the durable marker (Defect 2 regression):\n'
+printf '\n17. an open bead with an external_ref never produces an ask:\n'
+testdb_seed <<JSONL
+{"id":"sp-scan7","title":"Still-open bead","status":"open","issue_type":"task","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#97"}
+JSONL
+: > "$GHLOG"
+MAIL_CALLS4="$TMP/mail.calls4"
+: > "$MAIL_CALLS4"
+cat > "$SH/mail.sh" <<MAILSTUB
+#!/usr/bin/env bash
+echo called >> $MAIL_CALLS4
+exit 0
+MAILSTUB
+chmod +x "$SH/mail.sh"
+_gh_unlanded_scan >/dev/null 2>&1
+if grep -q "97" "$GHLOG" 2>/dev/null; then
+    bad "open bead: no gh call for its issue" "GHLOG: $(cat "$GHLOG" 2>/dev/null)"
+else
+    ok "open bead: no gh call for its issue"
+fi
+if [ -s "$MAIL_CALLS4" ]; then
+    bad "open bead: no ask sent" "mail.sh was called: $(cat "$MAIL_CALLS4")"
+else
+    ok "open bead: no ask sent"
+fi
+
+printf '\n18. gh_issue_ask_unlanded: answering the ask writes the durable marker (Defect 2 regression):\n'
 # The tracking ask bead for sp-scan2 (github:fixture/testrepo#92) is OPEN, left behind
 # by test 11's simulated mail reply. REGRESSION: without the fix, closing it — what the
 # operator does to answer the mail — writes nothing, and the very next scan files an
@@ -506,11 +560,11 @@ esac
 exit 0
 GHSTUB
     chmod +x "$TMP/bin/gh"
-    MAIL_CALLS4="$TMP/mail.calls4"
-    : > "$MAIL_CALLS4"
+    MAIL_CALLS5="$TMP/mail.calls5"
+    : > "$MAIL_CALLS5"
     cat > "$SH/mail.sh" <<MAILSTUB
 #!/usr/bin/env bash
-echo called >> $MAIL_CALLS4
+echo called >> $MAIL_CALLS5
 exit 0
 MAILSTUB
     chmod +x "$SH/mail.sh"
@@ -520,8 +574,8 @@ MAILSTUB
     else
         bad "answering the ask wrote the gh-closed marker" "no marker at $RUN/gh-closed/sp-scan2"
     fi
-    if [ -s "$MAIL_CALLS4" ]; then
-        bad "no new ask filed after the first was answered" "mail.sh was called: $(cat "$MAIL_CALLS4")"
+    if [ -s "$MAIL_CALLS5" ]; then
+        bad "no new ask filed after the first was answered" "mail.sh was called: $(cat "$MAIL_CALLS5")"
     else
         ok "no new ask filed after the first was answered"
     fi
