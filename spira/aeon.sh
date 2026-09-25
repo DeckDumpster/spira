@@ -1106,13 +1106,16 @@ export BEAD_ID SPIRA_MAIL="${SPIRA_MAIL:-}" SPIRA_MAIL_FROM="${FAYTH^} <${FAYTH}
         wait "$_hb_s" 2>/dev/null || break
         _cur_mtime="$(stat -c %Y "$LOGF" 2>/dev/null || echo 0)"
         _now="$(date +%s)"
-        if [ "$_cur_mtime" != "$_prev_mtime" ]; then
+        _dwall="${SPIRA_THRASH_MINUTES:-20}"
+        _dfuse="$(aeon_fuse_minutes "$BEAD_ID" "$SPIRA_RUN/worktree/$BEAD_ID" "$REPO_NAME" 2>/dev/null)"
+        case "$(hb_tick "$_prev_mtime" "$_cur_mtime" "$_now" "${_deadline:-0}" "${_dfuse:-?}" "$_dwall" "$_session_start")" in
+        renew)
             # Trace grew — renew the lease in full.
             _prev_mtime="$_cur_mtime"
             _deadline=$((_now + _lease_dur))
             printf '%s' "$_deadline" > "${_lease_file}.tmp" && mv "${_lease_file}.tmp" "$_lease_file"
-        fi
-        if [ "$_now" -ge "${_deadline:-0}" ]; then
+            ;;
+        lapse)
             # Lease lapsed. Write the marker first so cleanup() takes the lapse path,
             # then kill the process group ($$=parent PID is also the PGID, so -$$ reaches
             # the claude session, aeon.sh, and this subshell together).
@@ -1122,28 +1125,24 @@ export BEAD_ID SPIRA_MAIL="${SPIRA_MAIL:-}" SPIRA_MAIL_FROM="${FAYTH^} <${FAYTH}
             log "$FAYTH: $BEAD_ID lease lapsed (trace quiet ${_quiet}s, last: ${_trailing:-?}) — killing"
             kill -TERM -$$ 2>/dev/null
             exit 0
-        fi
-        # DELIVERABLE-PROGRESS WALL. Catches an aeon whose turns advance (trace grows,
-        # lease renews) while commits and worktree writes do not. Orthogonal to the lease:
-        # the lease catches silence, the wall catches motion-without-progress.
-        #
-        # BOTH the fuse AND the session's own elapsed time must exceed the wall. A bead
-        # reclaimed after sitting idle has a stale fuse — the session cannot have stalled
-        # for longer than it has been alive. sp-sv34w.
-        #
-        # Kill the process group (-$$), same as the lease-lapse path above. A kill to $$
-        # alone defers: bash defers TERM while waiting for a foreground process, so the
-        # claude session runs on past the declared stall until it exits on its own.
-        _dfuse="$(aeon_fuse_minutes "$BEAD_ID" "$SPIRA_RUN/worktree/$BEAD_ID" "$REPO_NAME" 2>/dev/null)"
-        _dwall="${SPIRA_THRASH_MINUTES:-20}"
-        _dsess=$(( (_now - _session_start) / 60 ))
-        if [[ "${_dfuse:-?}" =~ ^[0-9]+$ ]] && [ "$_dfuse" -ge "$_dwall" ] && [ "$_dsess" -ge "$_dwall" ] 2>/dev/null; then
+            ;;
+        thrash)
+            # DELIVERABLE-PROGRESS WALL. Catches an aeon whose turns advance (trace grows,
+            # lease renews) while commits and worktree writes do not — both the fuse AND
+            # the session's own elapsed time must exceed the wall (sp-sv34w): a bead
+            # reclaimed after sitting idle has a stale fuse, and the session cannot have
+            # stalled for longer than it has been alive. Kill the process group (-$$), same
+            # as the lease-lapse path: a kill to $$ alone defers, since bash defers TERM
+            # while waiting for a foreground process, so the claude session runs on past
+            # the declared stall until it exits on its own.
+            _dsess=$(( (_now - _session_start) / 60 ))
             _dlast="$(trace_last "$LOGF" 2>/dev/null | head -c 300)"
             printf '%s\n' "${_dlast:-no last action}" > "$SPIRA_RUN/$BEAD_ID.thrash"
             log "$FAYTH: $BEAD_ID deliverable stalled ${_dfuse}m session ${_dsess}m (wall ${_dwall}m) — requeueing for thrash"
             kill -TERM -$$ 2>/dev/null
             exit 0
-        fi
+            ;;
+        esac
         bdq heartbeat "$BEAD_ID" >/dev/null 2>&1 || exit 0
     done
 ) & HB_PID=$!
