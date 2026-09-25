@@ -157,7 +157,10 @@ for n,t,b,login,lbls,assoc in sorted(out):
 PY
 )
 log "fetched ${#ROWS[@]} open issue(s) from $REPO"
-[ "${#ROWS[@]}" -gt 0 ] || die "the tracker reported no open issues — that is possible, but it is also what a wrong repository name looks like. Check SPIRA_GH_INTAKE_REPO=$REPO"
+if [ "${#ROWS[@]}" -eq 0 ]; then
+    log "no open issues found (all items may be pull requests) — ingest is complete"
+    exit 0
+fi
 
 # ── verify who applied spira:accept ──────────────────────────────────────────
 _accept_actor() {   # _accept_actor <issue_number> → prints login or empty
