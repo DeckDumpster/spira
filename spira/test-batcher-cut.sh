@@ -11,8 +11,8 @@
 #                       opens, and the queue's open-batch record reads exactly what
 #                       verdict.sh's own key=value format expects.
 #   B. double-red     — the stub corpus reports one suite red on both the first run and the
-#                       re-run: no PR opens, the member stays CERTIFIED, for judgement (not
-#                       this seam) to resolve.
+#                       re-run: no PR opens, the member stays CERTIFIED, and a bead is filed
+#                       for the batcher persona (sp-47kq1) to resolve by judgement.
 #   C. stale member    — an express-certified member whose branch conflicts with the base
 #                       itself (not just batch accumulation) is reopened for rebase at once
 #                       (section F), landstate RED, bump_requeue stamped.
@@ -21,7 +21,7 @@
 #                       second PR (law-queue-back-pressure-is-an-open-pr).
 #
 # tier: T2
-# covers: batcher-cut/src/*.rs batcher/src/*.rs spira/queue.sh spira/conf.sh spira/lib.sh
+# covers: batcher-cut/src/*.rs batcher/src/*.rs spira/queue.sh spira/conf.sh spira/lib.sh spira/bead.sh spira/chamber/batcher.fayth spira/chamber/batcher.md
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -93,6 +93,12 @@ mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 # spira_landref rather than re-deriving their side effects.
 cp "$HERE"/*.sh "$SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/mail.sh"; chmod +x "$SH/mail.sh"
+
+# A REAL COPY OF THE CHAMBER, so bead.sh's own --for batcher can read batcher.fayth the same
+# way it would in production — file_judgement (io.rs) files through bead.sh's contract, never
+# bd create directly, so the fayth's own FAYTH_LABELS is what a fake chamber has to supply.
+mkdir -p "$SH/chamber"
+cp "$HERE/chamber/batcher.fayth" "$SH/chamber/"
 
 cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |
@@ -257,6 +263,18 @@ want "B: reports the double-red"        "double-red"  "$out_b"
 nowant "B: does not report a PR opening" "PR "         "$out_b"
 is   "B: no open-batch file"            "0" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
 is   "B: sp-cbbb2 still CERTIFIED"      "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cbbb2")"
+
+# THE SUMMON (sp-47kq1): a double-red the crate cannot resolve mechanically files a bead for
+# the batcher persona through bead.sh's own contract, never bd create directly, so its
+# partition label comes from batcher.fayth rather than being guessed here a second time.
+want "B: reports the judgement bead it filed" "filed sp-" "$out_b"
+judgement_id="$(printf '%s\n' "$out_b" | sed -n 's/.*filed \(sp-[a-z0-9.]*\) for judgement.*/\1/p')"
+is   "B: exactly one bead filed for judgement" "1" \
+    "$(B list --all --label batch-judgement --label "repo:$REPONAME" --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d if isinstance(d,list) else [d]))')"
+want "B: judgement bead title names the repo and suite" "$REPONAME" "$(B show "$judgement_id" --json 2>/dev/null)"
+want "B: judgement bead title names the failing suite" "test-b.sh" "$(B show "$judgement_id" --json 2>/dev/null)"
+want "B: judgement bead body names the culprit member" "sp-cbbb2" "$(B show "$judgement_id" --long --json 2>/dev/null)"
+
 land_mark_before="$(grep -c '^pr-create' "$FORGE_LOG")"
 is   "B: forge pr-create not called again" "$land_mark_before" "$(grep -c '^pr-create' "$FORGE_LOG")"
 

@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use batcher::core::{Classification, Member, MergeResult, PoolHistory, SuiteOutcome, SuiteRun, SuiteVerdict};
+use batcher::core::{Member, MergeResult, PoolHistory, SuiteOutcome, SuiteRun};
 
 #[derive(Clone, Debug)]
 pub struct Repo {
@@ -493,10 +493,6 @@ pub fn red_names(verdicts: &[SuiteRun]) -> Vec<String> {
     verdicts.iter().filter(|s| s.outcome == SuiteOutcome::Red).map(|s| s.name.clone()).collect()
 }
 
-pub fn double_reds(verdicts: &[SuiteVerdict]) -> Vec<&SuiteVerdict> {
-    verdicts.iter().filter(|v| v.classification == Classification::DoubleRed).collect()
-}
-
 // ---------------------------------------------------------------------------------------
 // The forge seam: open a PR, exactly as batch.sh's own pr-create call.
 // ---------------------------------------------------------------------------------------
@@ -541,6 +537,60 @@ pub fn tsd_append_round(env: &Env, fields: &[(&str, String)]) {
         cmd.arg("--field-str").arg(format!("{k}={v}"));
     }
     let _ = cmd.status();
+}
+
+// ---------------------------------------------------------------------------------------
+// Judgement: file a bead through bead.sh's own contract (never `bd create` directly) so the
+// batcher persona's partition labels come from its fayth, the same way every other filed
+// bead in this harness does (sp-47kq1).
+// ---------------------------------------------------------------------------------------
+
+/// File a judgement bead for the summoned batcher persona and return its id. The body is
+/// written to a scratch file under `env.run/tmp` rather than passed inline, matching every
+/// other `--body-file` caller in this harness (arbitrary suite output as a shell argument is
+/// how a stray backtick becomes command substitution).
+pub fn file_judgement(env: &Env, repo: &Repo, j: &batcher::core::Judgement, members: &[String], evidence: &str) -> Result<String, String> {
+    use batcher::core::{judgement_body, RedSource};
+    let title = format!(
+        "batcher: {} double-red in {} needs judgement ({})",
+        match j.source {
+            RedSource::Local => "local",
+            RedSource::Ci => "CI",
+        },
+        repo.name,
+        j.suites.join(",")
+    );
+    let body = judgement_body(&repo.name, j, members, evidence);
+    let tmp_dir = env.run.join("tmp");
+    fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
+    let tmp = tmp_dir.join(format!("judgement-{}-{}.txt", repo.name, now()));
+    fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let out = run(
+        Command::new("bash")
+            .arg(env.home.join("bead.sh"))
+            .arg("file")
+            .arg(&title)
+            .arg("--for")
+            .arg("batcher")
+            .arg("--repo")
+            .arg(&repo.name)
+            .arg("--body-file")
+            .arg(&tmp)
+            .arg("--json"),
+        "bead.sh file",
+    );
+    let _ = fs::remove_file(&tmp);
+    let out = out?;
+    // THE ID COMES FROM PARSING THE JSON, not scanning human output for an id-shaped token
+    // (law-never-derive-an-id-from-output): `bd create` without --silent prints an advisory
+    // that echoes the title before the id, and this title itself names suites and a repo.
+    let start = out.find('{').ok_or_else(|| format!("bead.sh file: no JSON in output: {out}"))?;
+    let v: serde_json::Value = serde_json::from_str(&out[start..]).map_err(|e| format!("bead.sh file: unparsed output: {e}"))?;
+    let v = match v {
+        serde_json::Value::Array(a) => a.into_iter().next().ok_or("bead.sh file: empty JSON array")?,
+        o => o,
+    };
+    v.get("id").and_then(|i| i.as_str()).map(str::to_string).ok_or_else(|| format!("bead.sh file: no id in output: {out}"))
 }
 
 // ---------------------------------------------------------------------------------------

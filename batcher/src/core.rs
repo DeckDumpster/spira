@@ -417,6 +417,74 @@ pub fn abandoned_event(id: &Id, why: &str) -> Event {
     ev("abandoned", vec![id.clone()], format!("{id} abandoned: {why}"))
 }
 
+// ---------------------------------------------------------------------------------------
+// Judgement: a red the corpus or CI produced that this crate cannot resolve mechanically —
+// re-run already happened (classify), delete-if-it-flips already didn't apply. What is left
+// is Scope C: pin it to a member, fix it, sequence it behind a dependency, or revert main.
+// That authority belongs to the summoned persona (sp-47kq1), not this crate; this core only
+// says when a summon is warranted and what the summoned aeon needs to start.
+// ---------------------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RedSource {
+    /// The full local corpus, run before a PR ever opens.
+    Local,
+    /// CI on an already-opened, batcher-owned PR (the producer is verdict.sh, sp-lomk3).
+    Ci,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Judgement {
+    pub source: RedSource,
+    pub suites: Vec<Id>,
+}
+
+/// Every suite still DoubleRed after `classify`'s own re-run is a judgement call: re-run
+/// already happened, so a flip would have shown up as `Flip`, not this.
+pub fn judgement_for(verdicts: &[SuiteVerdict]) -> Option<Judgement> {
+    let suites: Vec<Id> = verdicts.iter().filter(|v| v.classification == Classification::DoubleRed).map(|v| v.name.clone()).collect();
+    if suites.is_empty() {
+        None
+    } else {
+        Some(Judgement { source: RedSource::Local, suites })
+    }
+}
+
+/// A CI-only red: the local corpus was green (or this member skipped it), CI came back red
+/// on the batch PR anyway. `red_suites` is read off CI by the caller (verdict.sh, sp-lomk3);
+/// this core only says what judgement looks like once it arrives.
+pub fn judgement_for_ci(red_suites: &[Id]) -> Option<Judgement> {
+    if red_suites.is_empty() {
+        None
+    } else {
+        Some(Judgement { source: RedSource::Ci, suites: red_suites.to_vec() })
+    }
+}
+
+pub fn judgement_event(j: &Judgement, repo: &str) -> Event {
+    let where_ = match j.source {
+        RedSource::Local => "local corpus",
+        RedSource::Ci => "CI",
+    };
+    ev("judgement", vec![], format!("{repo}: {where_} double-red ({}) — summoned batcher for judgement", j.suites.join(",")))
+}
+
+/// The body of the bead filed for the summoned aeon: everything a person doing this by hand
+/// on 2026-09-24 had in front of them — repo, where the red was seen, which suites, which
+/// members were in the round (a double-red's culprit is one of these), and where the
+/// evidence lives (a local results dir, or a CI run link once sp-lomk3 supplies one).
+pub fn judgement_body(repo: &str, j: &Judgement, members: &[Id], evidence: &str) -> String {
+    let members_line = if members.is_empty() { "(none)".to_string() } else { members.join(", ") };
+    let where_ = match j.source {
+        RedSource::Local => "local corpus (pre-PR)",
+        RedSource::Ci => "CI (batcher-owned batch PR)",
+    };
+    format!(
+        "Repo: {repo}\nSource: {where_}\nFailing suite(s): {}\nRound member(s): {members_line}\nEvidence: {evidence}\n",
+        j.suites.join(", ")
+    )
+}
+
 #[cfg(test)]
 #[path = "core/tests.rs"]
 mod tests;

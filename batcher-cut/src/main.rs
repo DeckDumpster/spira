@@ -10,11 +10,11 @@
 //! SPIRA_REPO_MAP-backed lookups, not spira.toml — see find_repo.
 //!
 //! NOT COVERED (left to later beads): a main-red trigger has no producer wired here yet
-//! (always false); a member sequenced behind a dependency by an earlier round's judgement
-//! (E, test_ahead_of_code) is not re-checked here — the pure core exposes it, a later
-//! persona bead (sp-47kq1) drives it; a local double-red does not bisect — it is left
-//! CERTIFIED and reported, for that same persona to resolve by judgement rather than by
-//! blind reproduction.
+//! (always false); test_ahead_of_code (E) is not re-run here — the pure core exposes it, and
+//! it is the summoned batcher persona (sp-47kq1, see summon_judgement below) that reads a
+//! double-red's own failing assertions and applies it, by judgement rather than blind
+//! reproduction; a CI-only red on an opened batch PR has no producer here at all — that is
+//! verdict.sh's own read of CI, wired to the same persona by sp-lomk3.
 
 mod io;
 
@@ -211,17 +211,19 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
     let batch_br = format!("spira/queue/{stamp}");
     io::set_branch(repo, &batch_br, &batch_head);
 
-    let verdicts = run_corpus_and_classify(env_, repo, &batch_br, &format!("{}-{stamp}", repo.name))?;
-    let dreds: Vec<&str> = io::double_reds(&verdicts).into_iter().map(|v| v.name.as_str()).collect();
-    if !dreds.is_empty() {
-        println!("batcher {}: local corpus double-red ({}) — not opening a PR; handed to judgement", repo.name, dreds.join(","));
+    let results_key = format!("{}-{stamp}", repo.name);
+    let verdicts = run_corpus_and_classify(env_, repo, &batch_br, &results_key)?;
+    if let Some(j) = batcher::core::judgement_for(&verdicts) {
+        let members: Vec<String> = combined.merged.iter().map(|m| m.id.clone()).collect();
+        let evidence = env_.run.join("batch-results").join(&results_key).display().to_string();
+        summon_judgement(env_, repo, &j, &members, &evidence);
         io::tsd_append_round(
             env_,
             &[
                 ("repo", repo.name.clone()),
                 ("verdict", "doublered".to_string()),
                 ("members", combined.merged.len().to_string()),
-                ("suites", dreds.join(",")),
+                ("suites", j.suites.join(",")),
                 ("duration_ms", ((now() - round_start) * 1000).to_string()),
                 ("base", base_sha.clone()),
             ],
@@ -303,10 +305,13 @@ fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason,
     io::set_branch(repo, &ob.branch, &new_head);
 
     let stamp = format!("{round_start}-stack");
-    let verdicts = run_corpus_and_classify(env_, repo, &ob.branch, &format!("{}-{stamp}", repo.name))?;
-    let dreds: Vec<&str> = io::double_reds(&verdicts).into_iter().map(|v| v.name.as_str()).collect();
-    if !dreds.is_empty() {
-        println!("batcher {}: stacked round double-red ({}) — PR {} left as-is; handed to judgement", repo.name, dreds.join(","), ob.pr);
+    let results_key = format!("{}-{stamp}", repo.name);
+    let verdicts = run_corpus_and_classify(env_, repo, &ob.branch, &results_key)?;
+    if let Some(j) = batcher::core::judgement_for(&verdicts) {
+        let mut members: Vec<String> = ob.members.iter().map(|(id, _)| id.clone()).collect();
+        members.extend(combined.merged.iter().map(|m| m.id.clone()));
+        let evidence = env_.run.join("batch-results").join(&results_key).display().to_string();
+        summon_judgement(env_, repo, &j, &members, &evidence);
         io::tsd_append_round(
             env_,
             &[
@@ -314,7 +319,7 @@ fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason,
                 ("verdict", "doublered".to_string()),
                 ("pr", ob.pr.clone()),
                 ("stacked", "true".to_string()),
-                ("suites", dreds.join(",")),
+                ("suites", j.suites.join(",")),
                 ("duration_ms", ((now() - round_start) * 1000).to_string()),
             ],
         );
@@ -346,6 +351,17 @@ fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason,
         ],
     );
     Ok(())
+}
+
+/// File a judgement bead for the summoned batcher persona (sp-47kq1) and print the result.
+/// Best-effort like the round's own TSD write: a filing failure is reported, never fatal —
+/// the round already stopped short of a PR, and a human still has the printed suites and
+/// evidence path to go on even if the bead itself did not get filed.
+fn summon_judgement(env_: &Env, repo: &Repo, j: &batcher::core::Judgement, members: &[String], evidence: &str) {
+    match io::file_judgement(env_, repo, j, members, evidence) {
+        Ok(id) => println!("batcher {}: double-red ({}) — filed {} for judgement", repo.name, j.suites.join(","), id),
+        Err(e) => println!("batcher {}: double-red ({}) — could not file for judgement: {}", repo.name, j.suites.join(","), e),
+    }
 }
 
 /// Run the full corpus, then re-run only the reds, and classify. The core's E and bisect

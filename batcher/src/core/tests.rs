@@ -448,3 +448,97 @@ fn a_full_round_from_trigger_through_pr_record() {
     let events = [cut_event(&reason, &combined), evicted_event(&combined.set_aside[0]), opened_event(&pr)];
     assert_eq!(events.iter().map(|e| e.kind).collect::<Vec<_>>(), vec!["cut", "evicted", "opened"]);
 }
+
+// -- Judgement: when the crate cannot resolve a red mechanically, summon the persona --------
+
+#[test]
+fn judgement_for_is_none_when_nothing_survives_the_rerun_as_double_red() {
+    let first = vec![suite("test-flaky", SuiteOutcome::Red, &[]), suite("test-fine", SuiteOutcome::Green, &[])];
+    let rerun = vec![suite("test-flaky", SuiteOutcome::Green, &[])];
+    let verdicts = classify(&first, &rerun);
+    assert_eq!(judgement_for(&verdicts), None);
+}
+
+#[test]
+fn judgement_for_names_every_surviving_double_red() {
+    let first = vec![
+        suite("test-a", SuiteOutcome::Red, &["a failed"]),
+        suite("test-b", SuiteOutcome::Red, &["b failed"]),
+        suite("test-c", SuiteOutcome::Green, &[]),
+    ];
+    let verdicts = classify(&first, &[]); // nothing re-run: fails closed to DoubleRed (B)
+    let j = judgement_for(&verdicts).expect("two suites are still red after the re-run");
+    assert_eq!(j.source, RedSource::Local);
+    assert_eq!(j.suites, vec!["test-a".to_string(), "test-b".to_string()]);
+}
+
+#[test]
+fn judgement_for_ci_is_none_on_an_empty_red_list() {
+    assert_eq!(judgement_for_ci(&[]), None);
+}
+
+#[test]
+fn judgement_for_ci_wraps_the_suites_ci_reported_red() {
+    let j = judgement_for_ci(&["test-x".to_string()]).expect("ci reported a red suite");
+    assert_eq!(j.source, RedSource::Ci);
+    assert_eq!(j.suites, vec!["test-x".to_string()]);
+}
+
+#[test]
+fn judgement_event_names_source_and_suites() {
+    let j = Judgement { source: RedSource::Ci, suites: vec!["test-x".into(), "test-y".into()] };
+    let e = judgement_event(&j, "spira");
+    assert_eq!(e.kind, "judgement");
+    assert!(e.text.contains("spira"));
+    assert!(e.text.contains("CI"));
+    assert!(e.text.contains("test-x,test-y"));
+}
+
+#[test]
+fn judgement_body_carries_repo_suites_members_and_evidence() {
+    let j = Judgement { source: RedSource::Local, suites: vec!["test-real".into()] };
+    let body = judgement_body("spira", &j, &["sp-a".to_string(), "sp-x".to_string()], "/run/batch-results/spira-123");
+    assert!(body.contains("Repo: spira"));
+    assert!(body.contains("local corpus"));
+    assert!(body.contains("test-real"));
+    assert!(body.contains("sp-a, sp-x"));
+    assert!(body.contains("/run/batch-results/spira-123"));
+}
+
+#[test]
+fn judgement_body_renders_no_members_explicitly() {
+    let j = Judgement { source: RedSource::Local, suites: vec!["test-real".into()] };
+    let body = judgement_body("spira", &j, &[], "/evidence");
+    assert!(body.contains("Round member(s): (none)"));
+}
+
+/// The recorded round 1 of 2026-09-24: three E-shaped double-reds (sp-ui46l, sp-29g55,
+/// sp-q4swv — see `each_recorded_test_ahead_of_code_shape_sequences_behind_its_dependency`
+/// above). What was actually done for each was sequencing behind its named dependency, never
+/// a persona summon — so `judgement_for` must flag exactly these three by name (the crate's
+/// half of the record), and `test_ahead_of_code` must still resolve each to the same
+/// dependency a person resolved it to by hand (the persona's half, exercised without a live
+/// aeon). Together they are round 1 replayed end to end through this bead's own additions.
+#[test]
+fn round_1s_three_double_reds_are_flagged_for_judgement_and_resolve_like_what_was_done() {
+    let round1 = [
+        ("test-census", "sp-ui46l", "sp-zc2a", "expected census.sh orphaned remedy from sp-zc2a, got nothing"),
+        ("test-probe", "sp-29g55", "sp-kc9v4", "probe defect fixed by sp-kc9v4 not yet on main"),
+        ("test-lint", "sp-q4swv", "sp-e19x2", "lint expects the guard landed in sp-e19x2"),
+    ];
+    let first: Vec<SuiteRun> = round1.iter().map(|(suite_name, _, _, assertion)| suite(suite_name, SuiteOutcome::Red, &[assertion])).collect();
+    let verdicts = classify(&first, &first); // re-run reproduces the same failure: still red both times
+    for (suite_name, ..) in round1 {
+        assert_eq!(verdicts.iter().find(|v| v.name == suite_name).unwrap().classification, Classification::DoubleRed);
+    }
+
+    let j = judgement_for(&verdicts).expect("round 1 has three surviving double-reds");
+    assert_eq!(j.source, RedSource::Local);
+    assert_eq!(j.suites.len(), 3);
+
+    for (suite_name, member, dep, assertion) in round1 {
+        let own = vec![suite(suite_name, SuiteOutcome::Red, &[assertion])];
+        let sa = test_ahead_of_code(&member.to_string(), &own).expect("round 1's shape always names a dependency");
+        assert_eq!(sa.reason, SetAsideReason::TestAheadOfCode { waits_on: dep.into() }, "{member} must resolve exactly as it did on 2026-09-24");
+    }
+}
