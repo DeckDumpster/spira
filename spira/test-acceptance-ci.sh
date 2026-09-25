@@ -174,5 +174,40 @@ _xdg_seen="$(cat "$SCRATCH/xdg-seen" 2>/dev/null || true)"
 want "XDG_RUNTIME_DIR passes through to acceptance-run.sh" \
     "/run/user/1001" "$_xdg_seen"
 
+# --- SPIRA_ACCEPTANCE_FORENSICS: acceptance-ci.sh sets the dir before calling
+# acceptance-run.sh so the forensics survive the acceptance-run.sh TMP cleanup.
+CI_HOME7="$SCRATCH/home7"
+mkdir -p "$CI_HOME7"
+STUB7="$SCRATCH/stub7.sh"
+cat > "$STUB7" <<STUB7_BODY
+#!/usr/bin/env bash
+printf '%s\n' "\${SPIRA_ACCEPTANCE_FORENSICS:-UNSET}" > "$SCRATCH/forensics-seen"
+exit 0
+STUB7_BODY
+chmod +x "$STUB7"
+HOME="$CI_HOME7" STUB_RC=0 \
+    SPIRA_ACCEPTANCE_RUN="$STUB7" \
+    XDG_CONFIG_HOME="$CI_HOME7/.config" \
+    bash "$HERE/acceptance-ci.sh" "any-tag" --bd-db "$SCRATCH/bd7" \
+    >/dev/null 2>&1 || true
+
+_fseen="$(cat "$SCRATCH/forensics-seen" 2>/dev/null || true)"
+want "SPIRA_ACCEPTANCE_FORENSICS is set before calling acceptance-run.sh" \
+    "$CI_HOME7/acceptance-forensics" "$_fseen"
+
+# The forensics dir must be created (not just exported) before acceptance-run.sh runs.
+[ -d "$CI_HOME7/acceptance-forensics" ] \
+    && ok "acceptance-forensics dir created by acceptance-ci.sh" \
+    || bad "acceptance-forensics dir created by acceptance-ci.sh" "directory not found"
+
+# --- acceptance.yml: upload-artifact step present under if: always() ---
+_yml="$(cat "$HERE/../.github/workflows/acceptance.yml" 2>/dev/null || true)"
+want "acceptance.yml: upload-artifact step present" \
+    "upload-artifact" "$_yml"
+want "acceptance.yml: upload runs under if: always()" \
+    "if: always()" "$_yml"
+want "acceptance.yml: artifact named after tag" \
+    "acceptance-forensics-" "$_yml"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
