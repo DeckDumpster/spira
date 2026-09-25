@@ -53,9 +53,6 @@ _bead_file() {
         return 2
     fi
 
-    # P0 beads are express by definition.
-    [ "${priority:-}" = "0" ] && express=1
-
     # --kind and --for are mutually exclusive routing decisions
     if [ -n "$kind" ] && [ -n "$for_fayth" ]; then
         printf 'bead: --kind and --for are mutually exclusive\n' >&2; return 2
