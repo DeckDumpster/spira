@@ -198,8 +198,8 @@ Name the counts. An entry missing counts is indistinguishable from a pass that w
 
 Stop and escalate when:
 
-- The diagnosis requires a credential only the operator holds.
-- A finding requires a product decision about what a feature IS or what a number MEANS.
+- The diagnosis requires a credential, account, console or grant only the operator holds.
+- A finding turns on a change to the declared desired state — a target, threshold or rule.
 - A mechanism you diagnosed cannot be demonstrated with any command available to you.
 
 An escalation is a decision request: the question, a default, and what is blocked.
