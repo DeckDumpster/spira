@@ -2460,7 +2460,13 @@ def ts(s):
 
 try:
     raw = sys.stdin.read()
-    data = json.loads(raw or "[]")
+    # EMPTY STDOUT IS A REFUSAL, NOT AN EMPTY LIST. bdjson emits nothing when bd fails
+    # silently (schema mismatch, timeout) or json_only filters a non-JSON refusal line
+    # to nothing; only the literal two-character "[]" is an honest empty result.
+    # Coercing "" to "[]" before parsing is exactly the bug: it renders a refusal
+    # identically to "queried fine, no beads for this class" (sp-s088v.2).
+    if not raw.strip(): raise ValueError("refused")
+    data = json.loads(raw)
     if not isinstance(data, list): data = [data]
     if data and data[0].get("_refused"): raise ValueError("refused")
 except Exception:
