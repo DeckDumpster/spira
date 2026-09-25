@@ -99,6 +99,13 @@ scope_from_paths() {                # [all] — stdin: paths -> stdout: harness 
     '
 }
 
+# widen — a harness ONE LEVEL UNDER THE ROOT means the whole repository is the harness.
+# Shared by scope_of_root and filter so the two cannot drift into judging different scopes
+# for the identical tree (sp-aoads).
+widen() {                           # widen <dir> -> "." if one level under root, else <dir>
+    case "$1" in */*|.) printf '%s\n' "$1" ;; *) printf '%s\n' "." ;; esac
+}
+
 harness_of_root() {                 # harness_of_root <root> -> the harness DIRECTORY, or exit 3
     local root="$1" d c
     d="$(git -C "$root" ls-files 2>/dev/null | scope_from_paths)"
@@ -128,8 +135,7 @@ harness_of_root() {                 # harness_of_root <root> -> the harness DIRE
 scope_of_root() {                   # scope_of_root <root> -> the prefix, or exit 3
     local d
     d="$(harness_of_root "$1")" || return 3
-    case "$d" in */*|.) ;; *) d="." ;; esac
-    printf '%s\n' "$d"
+    widen "$d"
 }
 
 # in_scope "." <path> is always true; otherwise the path must sit under the prefix.
@@ -165,7 +171,9 @@ case "$cmd" in
 # same list when it carries the harness signature, so the gate can hand it a branch's whole
 # tree and get an answer with no filesystem access and no assumption about where the
 # harness sits in THAT ref. With no signature in the list it filters nothing and says so,
-# rather than quietly passing everything.
+# rather than quietly passing everything. Widened with the same rule as scope_of_root
+# (sp-aoads), or a harness one level under the root would scan only its own directory here
+# while check/staged/install all scan the whole tree for the identical layout.
 # ---------------------------------------------------------------------------------------
 filter)
     input="$(cat)"
@@ -174,6 +182,7 @@ filter)
         echo "exclude: no harness tree in the path list — nothing to guard" >&2
         exit 3
     fi
+    d="$(widen "$d")"
     rc=1
     while IFS= read -r p; do
         [ -n "$p" ] || continue
