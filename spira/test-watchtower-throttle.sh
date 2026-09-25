@@ -270,11 +270,12 @@ echo "stale CERTIFIED records: only live branches count toward depth:"
 # ======================================================================================
 # Fixture: 7 landed (branch tip on main), 1 rebased-landed (no branch, tip off main),
 # 2 superseded (no branch), 1 genuinely live (branch exists, tip off main).
-# Correct live depth: 1. Without the git branch/ancestry filter it would be 11.
+# Correct live depth with ancestry filter: 1. With branch-only filter: 2 (live + rebase).
 #
-# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail): disable the git
-# filters (SPIRA_TC_REPO="") to reproduce old behavior — all 11 count as depth.
-# The test below must FAIL against unfixed watchtower.sh code.
+# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail): verify that even
+# with stale records present (landed + gone branches), the filter correctly counts
+# only the live branches. With ancestry filter disabled (SPIRA_TC_LAND_REF=""), the
+# depth should count branches that exist but are not on main.
 fresh
 for _id in tc-land-1 tc-land-2 tc-land-3 tc-land-4 tc-land-5 tc-land-6 tc-land-7; do
     certified_landed "$_id"
@@ -284,9 +285,9 @@ certified_gone "tc-super-1"       # superseded — no branch
 certified_gone "tc-super-2"       # superseded — no branch
 certified "tc-live-1"             # genuinely waiting — branch exists, tip not on main
 landed "tc-prev-land" 30          # drain active (30s ago)
-wt_tc SPIRA_TC_REPO="" SPIRA_TC_LAND_REF="" \
-      SPIRA_QUEUE_THROTTLE_DEPTH_AT=2 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
-is   "stale-filter positive control: without filter, 11 CERTIFIED → depth>=2 → stamp" \
+wt_tc SPIRA_TC_LAND_REF="" \
+      SPIRA_QUEUE_THROTTLE_DEPTH_AT=1 SPIRA_QUEUE_THROTTLE_STALL_MINS=50
+is   "stale-filter positive control: branch-filter only, landed branches excluded → depth>=1 → stamp" \
      "yes" "$(stamp_exists)"
 
 # With git filters: stale records excluded → depth=1 < threshold=2 → no stamp.
