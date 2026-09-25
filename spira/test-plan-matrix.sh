@@ -35,7 +35,9 @@ if ! "$CARGO_BIN" build --release --manifest-path "$REAL_ROOT/test-plan/Cargo.to
     echo "FAIL building the real test-plan binary: cargo build failed" >&2
     exit 1
 fi
-export SPIRA_TEST_PLAN_BIN="$REAL_ROOT/target/release/test-plan"
+# CARGO_TARGET_DIR, when set (the testenv container points it off the bind mount), is where
+# the build above actually landed; only its absence means cargo used $REAL_ROOT/target.
+export SPIRA_TEST_PLAN_BIN="${CARGO_TARGET_DIR:-$REAL_ROOT/target}/release/test-plan"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 ROOT="$TMP/root"

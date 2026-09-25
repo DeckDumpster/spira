@@ -26,5 +26,8 @@ resolve_test_plan_bin() {
         printf 'test-plan-bin: building test-plan failed\n' >&2
         return 1
     fi
-    printf '%s\n' "$ROOT/target/release/test-plan"
+    # CARGO_TARGET_DIR, when set (the testenv container points it off the bind mount — see
+    # testenv.sh's own note — so the build above never wrote under $ROOT at all), is where
+    # cargo actually put the binary; only its absence means cargo used $ROOT/target.
+    printf '%s\n' "${CARGO_TARGET_DIR:-$ROOT/target}/release/test-plan"
 }
