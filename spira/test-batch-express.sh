@@ -248,5 +248,40 @@ is     "nontakeover: no attributing file"      "0" "$(ls "$QUEUEDIR/$REPONAME"/a
 is     "nontakeover: norm1 still BATCHED"      "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm1")"
 is     "nontakeover: norm2 still BATCHED"      "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm2")"
 
+# ── case: express lookup itself fails — must not read as "no express beads" ──
+# bd fails (store lock, timeout, an unknown id among many) while checking which
+# certified branches carry the express label. Before the fix, bdjson's own exit
+# code came from the pipe's last stage (sed), not bd's, so the failure was
+# swallowed and the pass printed the ordinary "open batch exists — skipping"
+# line — indistinguishable from a genuine absence of express beads
+# (law-a-control-that-cannot-check-must-refuse).
+clear_batch
+write_open_batch 88 "sp-norm1:${tip_n} sp-norm2:${tip_n2}"
+printf 'BATCHED %s %s\n' "$tip_n"  "$NOW" > "$LANDSTATE/sp-norm1"
+printf 'BATCHED %s %s\n' "$tip_n2" "$NOW" > "$LANDSTATE/sp-norm2"
+rm -f "$LANDSTATE/sp-expr1" "$LANDSTATE/sp-norm3"
+printf 'green\n' > "$FORGE_STATUS_FILE"
+certify_expr
+
+cat > "$SH/bd-fail-show" <<BDFAIL
+#!/usr/bin/env bash
+for a in "\$@"; do
+    if [ "\$a" = show ]; then
+        printf 'bd: simulated store lock\n' >&2
+        exit 1
+    fi
+done
+exec "$TESTDB_BD" "\$@"
+BDFAIL
+chmod +x "$SH/bd-fail-show"
+
+out="$(SPIRA_BD="$SH/bd-fail-show" batch "$REPONAME")"
+want   "lookup-fail: names the failure"       "express lookup FAILED"        "$out"
+nowant "lookup-fail: no plain skip line"      "open batch exists — skipping" "$out"
+nowant "lookup-fail: no takeover"             "takes over"                   "$out"
+is     "lookup-fail: open batch untouched"    "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
+is     "lookup-fail: no attributing file"     "0" "$(ls "$QUEUEDIR/$REPONAME"/attributing-* 2>/dev/null | wc -l)"
+is     "lookup-fail: express still CERTIFIED" "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-expr1")"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
