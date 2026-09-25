@@ -197,6 +197,8 @@ if [ "${1:-}" = "--throttle-check" ]; then
         fi
     elif [ "$_tc_throttled" = "1" ] && [ "$_tc_depth" -lt "$_tc_release_at" ] 2>/dev/null; then
         # LIFT: depth below release threshold.
+        # The condition is only true on transition: stamp existed at check start, now being removed.
+        # On next check, stamp won't exist, so this condition won't trigger again.
         rm -f "$_tc_stamp"
         log "watchtower: throttle lifted — depth=${_tc_depth}<${_tc_release_at}"
         [ -r "$_tc_inc" ] && \
