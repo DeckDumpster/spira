@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-held.sh — held.sh reports branches waiting on a human in land=hold repos.
 #
-# THREE PROPERTIES UNDER TEST:
+# FOUR PROPERTIES UNDER TEST:
 #
 #   1. CLASSIFICATION: HELD (ahead > 0, bead exists), EMPTY (ahead == 0, bead exists),
 #      and ORPHAN (no bead in store) are each labelled correctly in the table output.
@@ -12,10 +12,14 @@
 #
 #   3. SUMMARY MODE: --summary emits a HOLD line when branches are held; silent when none.
 #
+#   4. FAIL CLOSED: a branch whose bead cannot be read (bd itself refuses, not merely a
+#      bead the store has never heard of) is reported UNKNOWN, never downgraded to ORPHAN,
+#      and held.sh exits non-zero (law-a-control-that-cannot-check-must-refuse).
+#
 # A REAL bd ON A THROWAWAY DATABASE and a real git repo in a temp dir
 # (law-prefer-the-real-dependency, law-a-regression-test-must-be-seen-to-fail).
 #
-# defect: sp-v4f42
+# defect: sp-v4f42, sp-f84wv
 # covers: spira/held.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -138,6 +142,43 @@ printf 'fixture | %s | hold | | |\nfixture2 | %s | hold | | |\n' \
 tbl_named="$(bash "$HERE/held.sh" fixture 2>&1)"
 want "named arg shows fixture"           "fixture"         "$tbl_named"
 want "named arg shows HELD verdict"      "HELD"            "$tbl_named"
+
+# ===========================================================================
+# SECTION 5 — bd unreadable: UNKNOWN, never ORPHAN, exit non-zero (sp-f84wv).
+# SPIRA_BD is the seam lib.sh documents for exactly this: a stub that fails for one
+# bead id and delegates every other call to the real bd, so only that branch's lookup
+# is affected.
+# ===========================================================================
+printf '\nbd unreadable -> UNKNOWN, never ORPHAN, exit non-zero:\n'
+
+git -C "$REPO" checkout -q -b spira/tst-unknown
+git -C "$REPO" commit --allow-empty -m "unknown work"
+git -C "$REPO" checkout -q "$BASE_BR"
+
+REAL_BD="$(command -v bd)"
+STUB_BD="$TMP/bd-stub"
+cat > "$STUB_BD" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+    [ "\$a" = "tst-unknown" ] && { printf 'bd-stub: simulated store failure\n' >&2; exit 1; }
+done
+exec "$REAL_BD" "\$@"
+EOF
+chmod +x "$STUB_BD"
+
+# Positive control: with a working bd, this same never-seeded id is legitimately ORPHAN —
+# proving the matcher can tell "gone" from "unreadable" apart (law-absence-needs-a-positive-control).
+baseline_line="$(bash "$HERE/held.sh" fixture 2>&1 | grep 'tst-unknown')"
+want "tst-unknown is ORPHAN when bd works and the bead is absent" "ORPHAN" "$baseline_line"
+
+unk_tbl="$(SPIRA_BD="$STUB_BD" bash "$HERE/held.sh" fixture 2>&1)"; unk_rc=$?
+if [ "$unk_rc" -ne 0 ]; then ok "held.sh exits non-zero when bd is unreadable"
+else bad "held.sh exits non-zero when bd is unreadable: got exit 0"; fi
+
+unk_line="$(printf '%s\n' "$unk_tbl" | grep 'tst-unknown')"
+want   "tst-unknown row shows UNKNOWN when bd fails"          "UNKNOWN" "$unk_line"
+nowant "tst-unknown row is never reported ORPHAN when bd fails" "ORPHAN" "$unk_line"
+want "table names the unknown count" "unknown — bd could not be read" "$unk_tbl"
 
 # ===========================================================================
 # SUMMARY
