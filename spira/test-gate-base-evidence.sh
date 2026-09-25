@@ -100,7 +100,8 @@ want "SELECT_HEAD names the branch on the branch trial" "SELECT_HEAD=$BR" "$bran
 want "SELECT_HEAD names the branch on the base trial too" "SELECT_HEAD=$BR" "$base_env"
 want "the branch trial sees the changed file"      "f1.txt"               "$branch_env"
 want "HOST_CORES is the real host count, not a cgroup-limited one" "HOST_CORES=$real_cores" "$branch_env"
-want "SUITES defaults to on"                       "SUITES=on"            "$branch_env"
+want "SUITES defaults to conf.sh's gate-suites path" "SUITES=/" "$branch_env"
+want "and names gate-suites"                         "gate-suites"          "$branch_env"
 
 # --------------------------------------------------------------------------------------
 # UC-gate-verdict-14 — THE FULL OUTPUT SURVIVES, NOT A `tail -20` WINDOW (folds in
