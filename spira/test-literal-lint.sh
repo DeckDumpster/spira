@@ -94,6 +94,18 @@ nowant "conf.sh is not flagged"                              "conf.sh:"         
 nowant "test-ci.sh is not flagged"                           "test-ci"           "$out"
 nowant "json files are not flagged"                          "labels.json"       "$out"
 
+# A COMPILED BINARY IS NOT SOURCE. bin/queue-watch carried the default label name as a string
+# constant and failed PR 331; its source is linted, and a binary has no line to annotate.
+mkdir -p "$ROOT/bin"
+printf '\177ELF\0\0\0label=awaiting-ci\0\0' > "$ROOT/bin/tool"
+git -C "$ROOT" add bin/tool
+git -C "$ROOT" commit -q -m "add a binary"
+out="$(lint_at "$ROOT")"
+want   "plant still reported alongside a binary"                "spira/planted.sh" "$out"
+nowant "a compiled binary is not flagged"                       "bin/tool"          "$out"
+git -C "$ROOT" rm -q bin/tool
+git -C "$ROOT" commit -q -m "remove binary"
+
 # The exemption does not extend to a neighbouring name.
 printf '#!/usr/bin/env bash\nDB_LABEL=awaiting-ci\n' > "$ROOT/spira/test-ci-extra.sh"
 printf '#!/usr/bin/env bash\nNOT_EXEMPT=awaiting-ci\n' > "$ROOT/spira/uses-literal-2.sh"
