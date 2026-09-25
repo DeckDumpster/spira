@@ -2,7 +2,7 @@
 #
 # test-verdict.sh — merge-queue verdict: fast-forward landing pass.
 #
-# Twenty-eight cases:
+# Thirty-three cases:
 #   1. No open batch → forge is never reached.
 #   2. Pending within CI max → nothing happens.
 #   3. Pending, run old and stuck → run cancelled explicitly; no workflow-rerun.
@@ -51,6 +51,10 @@
 #      and a build-error annotation is logged on the ejected bead.
 #  31. A batch matching the bisect's current forced group lands green → the
 #      bisect advances to the sibling parked at the split.
+#  32. Stale queue-ref reaping: a green landing cleans up local spira/queue/*
+#      refs already ancestors of the base; a non-ancestor ref survives.
+#  33. Green but check-status omits head-sha → cannot verify the sealed head
+#      was tested; no push, no pr-close, batch held for retry.
 #
 # The forge seam is a local fixture; no network is reached.
 # mail.sh and suites.sh are stubbed to capture calls.
@@ -359,7 +363,7 @@ clean_case
 #    forge-fixture-never.sh from case 1 is not in use.
 # =============================================================================
 batch_head="$(build_batch sp-vd-g1 sp-vd-g2)"
-printf 'green\nflaky: test-flaky-suite.sh\n' > "$FORGE_STATUS_FILE"
+printf 'green\nhead-sha: %s\nflaky: test-flaky-suite.sh\n' "$batch_head" > "$FORGE_STATUS_FILE"
 out="$(verdict "$REPONAME")"
 is   "6. green: remote main advanced"  "$batch_head" "$(remote_main)"
 case "$(landstate sp-vd-g1)" in LANDED*) ok "6. green: sp-vd-g1 LANDED" ;;
@@ -380,7 +384,7 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 # =============================================================================
 batch_head="$(build_batch sp-vd-m1 sp-vd-m2)"
 advance_base
-printf 'green\n' > "$FORGE_STATUS_FILE"
+printf 'green\nhead-sha: %s\n' "$batch_head" > "$FORGE_STATUS_FILE"
 out="$(verdict "$REPONAME")"
 nowant "7. moved-rebuild: pr-close NOT called"      "close" "$(cat "$FORGE_LOG")"
 case "$(landstate sp-vd-m1)" in BATCHED*) ok "7. moved-rebuild: sp-vd-m1 stays BATCHED" ;;
@@ -498,7 +502,7 @@ git -C "$REPO" fetch -q origin
     printf 'branch=spira/queue/test9\n'
 } > "$(batch_file).$$" && mv -f "$(batch_file).$$" "$(batch_file)"
 
-printf 'green\n' > "$FORGE_STATUS_FILE"
+printf 'green\nhead-sha: %s\n' "$batch_head9" > "$FORGE_STATUS_FILE"
 verdict "$REPONAME" > /dev/null
 is "9. cleanup: batch branch gone locally" "0" \
     "$(git -C "$REPO" show-ref --verify "refs/heads/spira/queue/test9" >/dev/null 2>&1 && echo 1 || echo 0)"
@@ -579,7 +583,7 @@ clean_case
 # =============================================================================
 batch_head13="$(build_batch sp-vd-n1 sp-vd-n2)"
 merge_batch_externally "$batch_head13"
-printf 'green\n' > "$FORGE_STATUS_FILE"
+printf 'green\nhead-sha: %s\n' "$batch_head13" > "$FORGE_STATUS_FILE"
 out="$(verdict "$REPONAME")"
 want "13. moved-in-base: pr-close called"        "close"   "$(cat "$FORGE_LOG")"
 case "$(landstate sp-vd-n1)" in LANDED*) ok "13. moved-in-base: sp-vd-n1 LANDED" ;;
@@ -1207,7 +1211,7 @@ git -C "$bwt28_adv" push -q origin "HEAD:main"
 git -C "$REPO" worktree remove -f "$bwt28_adv" 2>/dev/null || true
 git -C "$REPO" fetch -q origin
 
-printf 'green\n' > "$FORGE_STATUS_FILE"
+printf 'green\nhead-sha: %s\n' "$batch_head28" > "$FORGE_STATUS_FILE"
 out="$(verdict "$REPONAME")"
 want "28. moved-conflict: pr-close called"        "close"      "$(cat "$FORGE_LOG")"
 case "$(landstate sp-vd-c1)" in CERTIFIED*) ok "28. moved-conflict: sp-vd-c1 CERTIFIED" ;;
@@ -1270,7 +1274,7 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 #     forced group lands clean; the group is innocent, so the bisect advances
 #     to the sibling parked when it was split.
 # =============================================================================
-build_batch sp-vd-bg1 sp-vd-bg2 > /dev/null
+batch_head31="$(build_batch sp-vd-bg1 sp-vd-bg2)"
 bg1_tip="$(git -C "$REPO" rev-parse spira/sp-vd-bg1)"
 bg2_tip="$(git -C "$REPO" rev-parse spira/sp-vd-bg2)"
 mkdir -p "$QUEUEDIR/$REPONAME"
@@ -1278,7 +1282,7 @@ mkdir -p "$QUEUEDIR/$REPONAME"
     printf 'sp-vd-bg1:%s sp-vd-bg2:%s\n' "$bg1_tip" "$bg2_tip"
     printf 'sp-vd-bg3:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n'
 } > "$QUEUEDIR/$REPONAME/bisect"
-printf 'green\n' > "$FORGE_STATUS_FILE"
+printf 'green\nhead-sha: %s\n' "$batch_head31" > "$FORGE_STATUS_FILE"
 out="$(verdict "$REPONAME")"
 want "31. bisect resolve: fast-forward landed" "landed by fast-forward" "$out"
 is   "31. bisect resolve: advances to sibling" "sp-vd-bg3:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" \
@@ -1318,7 +1322,7 @@ git -C "$REPO" fetch -q origin
     printf 'branch=spira/queue/test32\n'
 } > "$(batch_file).$$" && mv -f "$(batch_file).$$" "$(batch_file)"
 
-printf 'green\n' > "$FORGE_STATUS_FILE"
+printf 'green\nhead-sha: %s\n' "$batch_head32" > "$FORGE_STATUS_FILE"
 verdict "$REPONAME" > /dev/null
 is "32. reap: stale ancestor queue ref cleaned up" "0" \
     "$(git -C "$REPO" show-ref --verify "refs/heads/spira/queue/stale-32" >/dev/null 2>&1 && echo 1 || echo 0)"
@@ -1326,6 +1330,29 @@ is "32. reap (pair): non-ancestor queue ref survives" "1" \
     "$(git -C "$REPO" show-ref --verify "refs/heads/spira/queue/live-32" >/dev/null 2>&1 && echo 1 || echo 0)"
 # Cleanup the surviving live branch before clean_case (which skips spira/queue/*).
 git -C "$REPO" branch -D "spira/queue/live-32" 2>/dev/null || true
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 33. GREEN, CHECK-STATUS OMITS HEAD-SHA — a missing head-sha means we cannot
+#     confirm CI tested the sealed batch head, so it must be treated as
+#     unverifiable: no push, no pr-close, batch held for retry next pass.
+#     POSITIVE CONTROL: without the fix, an empty ci_head fails the "!="
+#     mismatch test vacuously and falls through to fast-forward landing —
+#     before the fix this case pushes main and closes batch_file.
+# =============================================================================
+build_batch sp-vd-hs1 sp-vd-hs2 > /dev/null
+printf 'green\n' > "$FORGE_STATUS_FILE"
+before_main33="$(remote_main)"
+out="$(verdict "$REPONAME")"
+is   "33. missing-sha: no push"              "$before_main33" "$(remote_main)"
+nowant "33. missing-sha: no pr-close"        "close"          "$(cat "$FORGE_LOG")"
+case "$(landstate sp-vd-hs1)" in BATCHED*) ok "33. missing-sha: sp-vd-hs1 stays BATCHED" ;;
+    *) bad "33. missing-sha: sp-vd-hs1 stays BATCHED" "got: $(landstate sp-vd-hs1)" ;; esac
+case "$(landstate sp-vd-hs2)" in BATCHED*) ok "33. missing-sha: sp-vd-hs2 stays BATCHED" ;;
+    *) bad "33. missing-sha: sp-vd-hs2 stays BATCHED" "got: $(landstate sp-vd-hs2)" ;; esac
+is   "33. missing-sha: batch record kept"    "1" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
+want "33. missing-sha: reported"             "head-sha missing" "$out"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
