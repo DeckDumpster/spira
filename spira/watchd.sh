@@ -72,7 +72,7 @@ set -uo pipefail
 # was paid for once already in conf.sh's own allowlist; the collapse is what stops it costing
 # anything the next time the list outgrows a line.
 WATCHD_KEYS="SPIRA_HOME SPIRA_REPO SPIRA_RUN SPIRA_COCKPIT SPIRA_DB SPIRA_WORKSPACES
-SPIRA_TOWN SPIRA_WIKI SPIRA_ANSWER_STATE SPIRA_VIEW SPIRA_VIEW_SESSION"
+SPIRA_TOWN SPIRA_WIKI SPIRA_ANSWER_STATE SPIRA_VIEW SPIRA_VIEW_SESSION SPIRA_QUEUE_WATCH_BIN"
 WATCHD_KEYS="$(echo $WATCHD_KEYS)"
 
 # Where the two files a reader latches onto live. Under SPIRA_RUN, which is gitignored: a
