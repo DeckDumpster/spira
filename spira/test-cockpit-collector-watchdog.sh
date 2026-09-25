@@ -146,5 +146,60 @@ want "inactive plain unit: restart still fires" "cockpit-prod" "$result"
 result=$(run_watchdog 1000 60 "prod" "NONEXISTENT_UNIT_SUFFIX")
 nowant "no active unit: no restart attempted" "cockpit" "$result"
 
+# ── Test 5: REPLACED DURING A PASS (sp-vjiug, gap #10) ─────────────────────────
+# The two tests above are each a single, static snapshot: source age and process age set
+# once, then checked once. The untested case is the one a promotion actually produces: a
+# long-running collector that was checked and found FRESH, and cockpit.sh is then replaced
+# WHILE that same process keeps running with no restart in between — the watchdog's next
+# check must catch the replacement using the process's ORIGINAL start time, not treat the
+# process as new just because an earlier check passed it.
+echo ""
+echo "replaced during a pass: a promotion after an earlier fresh check is still caught"
+
+PROC_START_LOG="$TMP/proc_start.log"
+run_watchdog_twice() {
+    # Same MOCK_PS_ELAPSED (so proc_start resolves to the same instant) across both calls —
+    # one collector process, checked twice, exactly as the live timer does every minute.
+    local elapsed_s="$1" src_age_1="$2" src_age_2="$3"
+    rm -f "$RESTART_LOG" "$HEAL_LOG"
+    local now; now=$(date +%s)
+    touch -d "@$(( now - src_age_1 ))" "$PROD/cockpit.sh"
+    PATH="$BIN:$PATH" SPIRA_INSTANCE=prod SPIRA_PROD="$PROD" \
+        MOCK_ACTIVE_SFX=prod MOCK_RESTART_LOG="$RESTART_LOG" MOCK_PS_ELAPSED="$elapsed_s" \
+        bash <<DRIVER
+heal_log() { :; }
+proc_start() {
+    local e; e=\$(ps -o etimes= -p "\$1" 2>/dev/null | tr -d ' ')
+    [ -n "\$e" ] || return 1
+    echo \$(( \$(date +%s) - e ))
+}
+${FUNC_BODY}
+restart_spira_collector_if_stale
+DRIVER
+    # cockpit.sh REPLACED — promoted a second time — while the collector process (per
+    # MOCK_PS_ELAPSED, unchanged) has kept running the whole time with no restart between
+    # the two checks.
+    touch -d "@$(( now - src_age_2 ))" "$PROD/cockpit.sh"
+    PATH="$BIN:$PATH" SPIRA_INSTANCE=prod SPIRA_PROD="$PROD" \
+        MOCK_ACTIVE_SFX=prod MOCK_RESTART_LOG="$RESTART_LOG" MOCK_PS_ELAPSED="$elapsed_s" \
+        bash <<DRIVER
+heal_log() { :; }
+proc_start() {
+    local e; e=\$(ps -o etimes= -p "\$1" 2>/dev/null | tr -d ' ')
+    [ -n "\$e" ] || return 1
+    echo \$(( \$(date +%s) - e ))
+}
+${FUNC_BODY}
+restart_spira_collector_if_stale
+DRIVER
+    cat "$RESTART_LOG" 2>/dev/null || true
+}
+
+# The process started 1000s ago. First promotion is 2000s old — predates the process, so the
+# first check (not asserted on its own here) finds it fresh. The second promotion is 60s
+# old — postdates the process — landing WHILE the same process is still running.
+result=$(run_watchdog_twice 1000 2000 60)
+want "second check after a mid-run promotion: restart fires" "spira-cockpit" "$result"
+
 printf '\ntest-cockpit-collector-watchdog: %d ok, %d fail\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
