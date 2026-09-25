@@ -265,3 +265,40 @@ because they need the testlib/plan-lint dependencies actually present in `origin
 Verified: `bash spira/testenv-batch.sh --suites test-host-reason.sh,test-gate-verdict.sh
 spira/sp-eq8a4` in testenv (the two gate suites that scan the whole tree for exactly this kind
 of change — a deleted suite, an edited doctor.sh, a new doc).
+
+### sp-eq8a4.2.2 (hb_tick, D1, G2)
+
+`spira/testlib.sh` and `spira/plan-lint.sh` are reachable from `origin/main` by the time this
+slice ran, so the deferral above no longer applies to it.
+
+Landed: `hb_tick` in lib.sh (renew/lapse/thrash, called by both aeon.sh's heartbeat subshell
+and test-aeon-lease.sh — §5's "Heartbeat tick" row). test-thrash-wall.sh deleted, merged into
+test-aeon-lease.sh (D10, D11). test-thrash.sh trimmed to the `aeon_fuse_minutes` probe alone.
+G2 (thrash teardown behaviour) closed by the new test-thrash-teardown.sh, which drives the
+real aeon.sh through two thrash requeues on one bead rather than grepping cleanup()'s source.
+D1 partially collapsed: test-check4-events.sh's criterion 3 (a full duplicate sentinel.sh
+CHECK4 pass proving the same "poisons at the events-based threshold" fact test-poison.sh
+already proves) is deleted.
+
+D1 NOT fully collapsed into a `check4-unit` table: that table needs `check4_decide` extracted
+from sentinel.sh first, which is sp-eq8a4.2.4's scope (open, not yet landed) and the larger of
+the two "biggest cost cluster" seams named in §5. test-poison-edge.sh's own "three real
+failures still poison" line stays — it is the positive control for that file's thrash-exemption
+case, not a free-standing duplicate (law-absence-needs-a-positive-control). test-check4-batch.sh's
+criterion 3 stays whole — it is the only surviving test of the requeue-cap firing path
+(test-requeue-cap.sh and test-requeue-cap-accept.sh were deleted for flakiness by sp-wqdse
+before this slice, so D2/G11 have no coverage at all right now, not merely duplicate coverage).
+Untangling its one poison assertion from its one requeue-cap assertion without the shared
+`check4_decide` seam would cost more than the line it would save.
+
+Suite-seconds, measured via `testenv-batch.sh` (embedded testdb where the suite allows it):
+test-aeon-lease.sh 4s (was, lease alone) + test-thrash-wall.sh 3s -> test-aeon-lease.sh 3s.
+test-thrash.sh 30s -> 2s + test-thrash-teardown.sh 28s (new, real coverage where there was
+none). test-check4-events.sh 127s -> 31s. Net for these five files: 164s -> 64s, against §7's
+projection that the hb_tick/lease/thrash cluster and its share of the D1 cluster fall to
+single digits once `check4_decide` also lands (sp-eq8a4.2.4) and the file-consolidation bead
+(sp-eq8a4.2.6) runs.
+
+Verified: `bash spira/testenv-batch.sh --suites test-aeon-lease.sh,test-thrash.sh,
+test-thrash-teardown.sh,test-check4-events.sh,test-timeout.sh,test-attempts.sh,
+test-aeon-heartbeat.sh spira/sp-eq8a4.2.2` in testenv.

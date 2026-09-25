@@ -34,7 +34,8 @@
 # (law-prefer-the-real-dependency).
 #
 # defect: sp-lzt
-# covers: spira/*.sh
+# tier: T2
+# covers: spira/*.sh UC-aeon-execution-19
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

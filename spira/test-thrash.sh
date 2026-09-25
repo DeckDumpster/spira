@@ -11,7 +11,8 @@
 # (requeue, no attempt / attempt-charged streak) is test-thrash-teardown.sh (G2). This
 # suite is left with what those two do not cover: the probe aeon_fuse_minutes itself.
 #
-# covers: spira/lib.sh spira/aeon.sh spira/cockpit.sh spira/cockpit-metrics.py
+# tier: T1
+# covers: spira/lib.sh spira/aeon.sh spira/cockpit.sh spira/cockpit-metrics.py UC-aeon-execution-09
 # scar: unrecorded
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

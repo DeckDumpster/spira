@@ -15,7 +15,8 @@
 # No database, no network, under a second.
 #
 # defect: sp-9ix, sp-sv34w
-# covers: spira/lib.sh spira/aeon.sh spira/cockpit.sh cockpit/health.sh
+# tier: T1
+# covers: spira/lib.sh spira/aeon.sh spira/cockpit.sh cockpit/health.sh UC-aeon-execution-08 UC-aeon-execution-09
 # scar: the STALL_BEATS/model_idle apparatus was replaced by a liveness lease on trace growth; suites covering the old mechanism were testing code that no longer ran.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
