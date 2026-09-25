@@ -1,0 +1,87 @@
+# The canonical default document — what a fresh install converges to. `spira apply
+# desired-state/examples/default.toml` hands this to a brand-new Spira as its whole desired
+# state; a running federation of producers supersedes it kind by kind from there (see
+# src/main.rs's own note on why `apply` never merges with anything already installed).
+
+[producer]
+producer = "spira-default"
+version = "1"
+time = "2026-09-25T00:00:00Z"
+
+[[resources]]
+apiVersion = "spira/v1"
+kind = "Fleet"
+[resources.metadata]
+name = "fleet"
+[resources.spec]
+ceiling = 8
+lane_cap = 2
+
+[[resources]]
+apiVersion = "spira/v1"
+kind = "Units"
+[resources.metadata]
+name = "units"
+[[resources.spec.units]]
+name = "spira-sentinel.timer"
+enabled = true
+active = true
+[[resources.spec.units]]
+name = "spira-landing-pass.timer"
+enabled = true
+active = true
+[[resources.spec.units]]
+name = "spira-suites.timer"
+enabled = true
+active = true
+[[resources.spec.units]]
+name = "spira-watchtower.timer"
+enabled = true
+active = true
+
+[[resources]]
+apiVersion = "spira/v1"
+kind = "Store"
+[resources.metadata]
+name = "store"
+[resources.spec]
+reachable = true
+schema_version = 61
+
+[[resources]]
+apiVersion = "spira/v1"
+kind = "Cockpit"
+[resources.metadata]
+name = "cockpit"
+[resources.spec]
+dashboards = ["health", "queue"]
+
+[[resources]]
+apiVersion = "spira/v1"
+kind = "Release"
+[resources.metadata]
+name = "release"
+[resources.spec]
+release = "latest"
+allow_override = true
+
+[[resources]]
+apiVersion = "spira/v1"
+kind = "Queue"
+[resources.metadata]
+name = "queue"
+[resources.spec]
+cadence_seconds = 1800
+batch_width = 4
+base_gate_green = true
+max_stale_batches = 0
+
+[[resources]]
+apiVersion = "spira/v1"
+kind = "Flow"
+[resources.metadata]
+name = "flow"
+[resources.spec.velocity_floor]
+queue = 1
+[resources.spec.dwell_limit_seconds]
+review = 3600
