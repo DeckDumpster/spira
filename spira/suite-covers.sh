@@ -33,6 +33,24 @@ suite_exclusive_of() {  # suite_exclusive_of <file-path> -> reason string, or em
     sed -n '/^set -/q;s/^# *exclusive: *//p' "$1" 2>/dev/null | head -1 || true
 }
 
+suite_tier_of() {  # suite_tier_of <file-path> -> the # tier: value (T0..T4), or empty
+    # Empty return means undeclared — suites.sh's `list` reports the omission; nothing
+    # here treats an empty tier as T-anything.
+    sed -n 's/^# *tier: *//p' "$1" 2>/dev/null | head -1 | tr -d '[:space:]' || true
+}
+
+suite_uc_of() {  # suite_uc_of <file-path> -> space-separated UC-<area>-NN ids, or empty
+    # UC ids share the # covers: line with path globs (testlib.sh's header convention)
+    # and are told apart from a glob by the "UC-" prefix, so this filters suite_covers_of's
+    # output rather than parsing a second directive that could drift out of step with it.
+    local cov
+    cov="$(suite_covers_of "$1")"
+    [ -n "$cov" ] || return 0
+    # || true: grep exits 1 when no token matches "UC-"; under a caller's pipefail that
+    # would make this pipeline's status 1 for the ordinary case of no UC ids declared.
+    printf '%s\n' "$cov" | tr ' ' '\n' | { grep '^UC-' || true; } | tr '\n' ' ' | sed 's/ $//'
+}
+
 suite_selects_on_of() {  # suite_selects_on_of <file-path> -> space-separated event tokens, or empty
     # Tokens are "added" and "mode". A suite with this declaration is selected when a
     # file matching its # covers: glob undergoes one of the listed diff events, instead
