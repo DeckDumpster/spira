@@ -102,6 +102,27 @@ exit 0
 EOF
 chmod +x "$COCKPIT_DIR/layout.sh"
 
+# Generic no-op ExecStart targets — every script phase 4's unit render checks
+# for executability (systemd/install.sh refuses to write a unit whose target
+# is not +x). None of these run for real in this suite; they exist so phase 4
+# succeeds and execution reaches phase 5, the subject under test.
+for _s in aeon.sh archive.sh archivist.sh auron.sh broker.sh czar.sh \
+          gate-check.sh gh-intake.sh groom-trigger.sh maechen-trigger.sh \
+          loom.sh mail.sh pr-notify.sh sentinel.sh spira-mail-deliver.sh \
+          spira-verdict.sh suites.sh watch-refresh.sh watchtower.sh; do
+    printf '#!/usr/bin/env bash\ntrue\n' > "$SPIRA_DIR/$_s"
+    chmod +x "$SPIRA_DIR/$_s"
+done
+for _s in moot-sweep.sh verify-asks.sh; do
+    printf '#!/usr/bin/env bash\ntrue\n' > "$COCKPIT_DIR/$_s"
+    chmod +x "$COCKPIT_DIR/$_s"
+done
+for _s in beads-push.sh concierge.sh; do
+    printf '#!/usr/bin/env bash\ntrue\n' > "$FIXTURE/$_s"
+    chmod +x "$FIXTURE/$_s"
+done
+unset _s
+
 # POISON EXCLUDE.SH — records every invocation. Case 1 asserts this file is
 # never written: the positive control that proves the skip branch, not luck,
 # kept exclude.sh from running (law-absence-needs-a-positive-control).
