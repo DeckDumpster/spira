@@ -191,6 +191,13 @@ tl_summary() {
     [ "$_TL_FAIL" -eq 0 ]
 }
 
+# A suite declaring `# requires: testenv` (systemctl on a user manager, install/uninstall,
+# production paths) refuses here, before any of its own code runs, when SPIRA_IN_TESTENV
+# is not 1 — the one thing a statute could not stop (sp-nxvjm) a structural check can.
+if suite_testenv_unmet "${BASH_SOURCE[1]:-$0}"; then
+    bail "requires: testenv — run via spira/testenv-batch.sh, not directly (SPIRA_IN_TESTENV != 1)"
+fi
+
 # TAP version 14 MUST be the first line of output, so it is printed at SOURCE time
 # rather than lazily on first use: a suite that prints its own name (the common
 # convention this library inherits) does so after `. testlib.sh`, never before.

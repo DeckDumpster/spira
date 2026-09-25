@@ -22,7 +22,20 @@ suite_covers_of() {  # suite_covers_of <file-path> -> the # covers: globs, or em
 suite_requires_of() {  # suite_requires_of <file-path> -> space-separated requirement tokens, or empty
     # Commas are treated as delimiters so both "claude, bd" and "claude bd" work.
     # Empty return means no declared requirements — the suite runs unconditionally.
-    sed -n 's/^# *requires: *//p' "$1" 2>/dev/null | head -1 | tr ',' ' ' || true
+    # Stop at "set -" so heredocs inside the suite body (fixture suites are common
+    # here) cannot spoof the declaration — the same guard suite_exclusive_of and
+    # suite_selects_on_of already carry.
+    sed -n '/^set -/q;s/^# *requires: *//p' "$1" 2>/dev/null | head -1 | tr ',' ' ' || true
+}
+
+suite_testenv_unmet() {  # suite_testenv_unmet <file-path> -> true iff the suite declares
+    # `# requires: testenv` and SPIRA_IN_TESTENV is not 1. testenv-batch.sh sets that
+    # var on every suite it execs inside the container (sp-nxvjm); a suite reading
+    # false here is being run some other way, most often by hand on the host.
+    case " $(suite_requires_of "$1") " in
+        *" testenv "*) [ "${SPIRA_IN_TESTENV:-}" != 1 ] ;;
+        *) return 1 ;;
+    esac
 }
 
 suite_exclusive_of() {  # suite_exclusive_of <file-path> -> reason string, or empty
