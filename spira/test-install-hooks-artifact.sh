@@ -67,6 +67,15 @@ exit 0
 EOF
 chmod +x "$SPIRA_DIR/doctor.sh"
 
+cat > "$SPIRA_DIR/configure.sh" <<'EOF'
+#!/usr/bin/env bash
+_out="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
+if [ -f "$_out" ]; then exit 1; fi
+mkdir -p "$(dirname "$_out")"
+printf 'SPIRA_PROD = %s\n' "${CONFIGURE_PROD:-/nonexistent}" > "$_out"
+EOF
+chmod +x "$SPIRA_DIR/configure.sh"
+
 cat > "$SPIRA_DIR/build.sh" <<'EOF'
 #!/usr/bin/env bash
 exit 0
