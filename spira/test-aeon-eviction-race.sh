@@ -240,7 +240,8 @@ testdb_reset; seed sp-er-8
 printf 'RED fakesha99 %s ejected\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-8"
 printf 'fakesha99 ejected' > "$SPIRA_RUN/landstate/sp-er-8.evict-seen"
 run_aeon
-is   "bead stays closed (idempotence)"              closed "$(field sp-er-8 status)"
+is   "eviction-race guard itself did not reopen (idempotence)" open "$(field sp-er-8 status)"
+want "carrying the submitted label"                 "spira-submitted" "$(field sp-er-8 labels)"
 _rq8="$(bd -C "$SPIRA_DB" sql "SELECT COUNT(*) FROM events WHERE issue_id='sp-er-8' AND event_type='requeued' AND new_value='eviction-race'" 2>/dev/null | sed -n '3p' | tr -d ' ')"
 is   "no eviction-race requeue event written"       0 "${_rq8:-0}"
 want "aeon log shows idempotence skip"              "tip+reason unchanged" "$(cat "$TMP/out")"
@@ -261,7 +262,8 @@ for _i in 1 2 3; do
     bd -C "$SPIRA_DB" sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$_uuid', 'sp-er-9', 'requeued', 'harness', 'eviction-race', NOW())" >/dev/null 2>&1
 done
 run_aeon
-is   "bead stays closed (cap)"                     closed "$(field sp-er-9 status)"
+is   "eviction-race guard itself did not reopen (cap)" open "$(field sp-er-9 status)"
+want "carrying the submitted label"                "spira-submitted" "$(field sp-er-9 labels)"
 _rq9="$(bd -C "$SPIRA_DB" sql "SELECT COUNT(*) FROM events WHERE issue_id='sp-er-9' AND event_type='requeued' AND new_value='eviction-race'" 2>/dev/null | sed -n '3p' | tr -d ' ')"
 is   "no new requeue event at cap"                 3 "${_rq9:-0}"
 want "aeon log shows escalation"                   "eviction-race escalated" "$(cat "$TMP/out")"
