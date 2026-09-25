@@ -12,6 +12,8 @@
 #   e. Local gate red, no member reproduces: PR IS opened; CI adjudicates.
 #   f. Local gate red, one member reproduces: rebuild happens (ejection path not bypassed).
 #   d. Meter line written for (b) and (c); queue.sh stats reports local_red_rate.
+#   r. A CERTIFIED branch that conflicts with base but rebases cleanly is handed to
+#      the landing pass rather than gated inline under the queue lock (sp-5yw3b).
 #
 # The forge seam is a local fixture that records pr-create calls and returns
 # incrementing PR numbers; no network is reached.
@@ -68,15 +70,21 @@ chmod +x "$SH/gate.sh"
 
 # Repro stub: always green (no branch reproduces by default).
 # Tests that need a red member write the branch name to REPRO_FAIL_FILE.
+# Every invocation is also appended to REPRO_CALL_LOG, so a test can assert the
+# seam was never reached (case r).
 REPRO_FAIL_FILE="$TMP/repro-fail-file"
 : > "$REPRO_FAIL_FILE"
 export REPRO_FAIL_FILE
+REPRO_CALL_LOG="$TMP/repro-call-log"
+: > "$REPRO_CALL_LOG"
+export REPRO_CALL_LOG
 cat > "$SH/repro-stub.sh" <<'REPRO'
 #!/usr/bin/env bash
 br=""
 while [ $# -gt 0 ]; do
     case "$1" in --mode|--suites) shift 2 ;; *) br="$1"; shift ;; esac
 done
+printf '%s\n' "$br" >> "${REPRO_CALL_LOG:-/dev/null}"
 fail_list="$(cat "${REPRO_FAIL_FILE}" 2>/dev/null || true)"
 for f in $fail_list; do [ "$f" = "$br" ] && exit 1; done
 exit 0
@@ -230,6 +238,7 @@ clean_case() {
     : > "$COMMENT_LOG"
     : > "$GATE_COUNT"
     : > "$REPRO_FAIL_FILE"
+    : > "$REPRO_CALL_LOG"
     find "$LANDSTATE" -maxdepth 1 -type f 2>/dev/null -delete
     # Remove the batch worktree cleanly first (unregisters AND deletes the dir).
     local wt="$RUN/worktree/.batch-$(basename "$REPO")"
@@ -1136,6 +1145,83 @@ out_q="$(batch "$REPONAME")"
 is   "q. stale bisect: state file dropped" "0" "$([ -f "$(bisect_file)" ] && echo 1 || echo 0)"
 is   "q. stale bisect: real certified branch still batched" "1" "$(batch_pr)"
 want "q. stale bisect: log reports advance" "bisect group already resolved elsewhere" "$out_q"
+clean_case
+
+# =============================================================================
+# r. REBASE HANDED TO LANDING PASS (sp-5yw3b): a CERTIFIED branch whose tip no
+#    longer merges onto the moved base, but whose commits rebase cleanly onto
+#    it, is never suite-gated inline under the queue lock. batch.sh moves the
+#    ref to the rebased tip, records RED at the OLD tip (conflicts-with-base),
+#    and leaves it for the landing pass — which treats a stale RED record as
+#    never-gated (spira/landing.sh CHECK6) and re-certifies it in parallel.
+#
+#    The certified tip carries two commits: the first duplicates a change main
+#    also picked up independently (same file, same final content, different
+#    commit), so a plain merge --no-ff conflicts; git rebase drops that first
+#    commit as already-upstream and applies the second cleanly. That is a real
+#    git divergence between the two operations, not a stubbed one.
+#
+#    POSITIVE CONTROL for "repro seam never called": the log is primed with a
+#    direct stub invocation first, proving it records calls when they happen,
+#    then cleared — so a silent log after the real run means nothing ran, not
+#    that nothing could have been recorded.
+#
+#    sp-btr's own worktree (created above to build its commits) is left
+#    checked out on spira/sp-btr for the rest of this case — the same shape
+#    as an aeon's live worktree for the bead being batched. `git branch -f`
+#    refuses to move a ref checked out anywhere, so this branch also proves
+#    the ref-move survives that.
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"; OLD_R=$(( NOW - 1800 - 1 ))
+
+# shared.txt exists before the branch forks, so both sides modify one blob
+# instead of independently adding it.
+printf 'base\n' > "$REPO/shared.txt"
+git -C "$REPO" add shared.txt
+git -C "$REPO" commit -q -m "main: add shared.txt"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+
+git -C "$REPO" worktree add -q -b "spira/sp-btr" \
+    "$RUN/worktree/sp-btr" main 2>/dev/null || true
+printf 'base\nshared\n' > "$RUN/worktree/sp-btr/shared.txt"
+git -C "$RUN/worktree/sp-btr" add -A
+git -C "$RUN/worktree/sp-btr" commit -q -m "sp-btr: add shared line"
+printf 'base\nshared\nbranch-only\n' > "$RUN/worktree/sp-btr/shared.txt"
+git -C "$RUN/worktree/sp-btr" add -A
+git -C "$RUN/worktree/sp-btr" commit -q -m "sp-btr: add branch-only line"
+tip_r="$(git -C "$REPO" rev-parse "spira/sp-btr")"
+printf 'CERTIFIED %s %s\n' "$tip_r" "$OLD_R" > "$LANDSTATE/sp-btr"
+plant_bead "sp-btr"
+
+# Advance main with sp-btr's first commit's exact change, made independently
+# (e.g. another bead touched the same shared line).
+printf 'base\nshared\n' > "$REPO/shared.txt"
+git -C "$REPO" add shared.txt
+git -C "$REPO" commit -q -m "main: add shared line independently"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+
+bash "$SH/repro-stub.sh" "spira/sp-btr" >/dev/null 2>&1 || true
+is   "r. positive control: repro log records a direct call" "1" \
+    "$(grep -c '^spira/sp-btr$' "$REPRO_CALL_LOG" 2>/dev/null || echo 0)"
+: > "$REPRO_CALL_LOG"
+
+out_r="$(batch "$REPONAME" 2>&1)"
+
+is   "r. rebase-handoff: repro seam never called"      "0" \
+    "$(grep -c '^spira/sp-btr$' "$REPRO_CALL_LOG" 2>/dev/null)"
+is   "r. rebase-handoff: landstate is RED"             "RED" \
+    "$(awk '{print $1}' "$LANDSTATE/sp-btr" 2>/dev/null)"
+is   "r. rebase-handoff: landstate tip is the OLD tip" "$tip_r" \
+    "$(awk '{print $2}' "$LANDSTATE/sp-btr" 2>/dev/null)"
+new_tip_r="$(git -C "$REPO" rev-parse "spira/sp-btr" 2>/dev/null)"
+is   "r. rebase-handoff: branch ref moved to a new tip" "1" \
+    "$([ -n "$new_tip_r" ] && [ "$new_tip_r" != "$tip_r" ] && echo 1 || echo 0)"
+want "r. rebase-handoff: no PR opened"                 "QUEUE NOCUT" "$(landing_log)"
+want "r. rebase-handoff: log names the handoff"        "handed to the landing pass" "$out_r"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
