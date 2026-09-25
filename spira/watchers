@@ -91,3 +91,11 @@ pr-notify|log|@SPIRA_RUN@/watchd/pr-notify.log
 # concierge replies older than SPIRA_NOTIFY_AGE, notify escalates once
 # (law-answers-need-a-delivery-path).
 mail-deliver|extern|mail-deliver|@SPIRA_HOME@/mail.sh unread-age concierge
+
+# queue-watch — merge-queue transitions for every `mode = "queue"` repository: batch opened,
+# CI, ejected, re-pushed, landed (verified on base), closed without landing, forced cuts,
+# priority inversions and stalls. Derived from queue state and the forge, never from the
+# queue's log, which misses whole transitions. Latch on with `watchd.sh tail queue-watch`.
+# The health probe fails when the last poll is stale or was blind, so silence is never
+# mistaken for a quiet queue.
+queue-watch|daemon|@SPIRA_QUEUE_WATCH_BIN@ watch --run @SPIRA_RUN@ --db @SPIRA_DB@ --home @SPIRA_HOME@|@SPIRA_QUEUE_WATCH_BIN@ health --run @SPIRA_RUN@

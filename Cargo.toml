@@ -6,6 +6,7 @@ members = [
     "czar-pass",
     "supervise",
     "spira-config",
+    "queue-watch",
 ]
 resolver = "2"
 

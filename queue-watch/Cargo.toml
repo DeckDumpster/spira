@@ -1,0 +1,16 @@
+[package]
+name = "queue-watch"
+version = "1.0.0"
+edition = "2021"
+description = "queue-watch — streams merge-queue transitions for every mode=queue repo, derived from queue state and the forge, never from log lines."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+spira-config = { path = "../spira-config" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

@@ -211,15 +211,26 @@ fi
 # names (e.g., "spira-watch-testview-prod.service") for the prune membership check below.
 _watch_names=()
 watch_units=" "
+# A DAEMON ROW WHOSE PROGRAM IS NOT BUILT IS NOT INSTALLED — the same hazard as loom below:
+# watchd.sh is executable, but it execs a binary that is not there, so the unit cycles in
+# activating forever and fails the install. Say so, as loom does, rather than skip silently.
+_watch_manifest="$("$SPIRA_HOME/watchd.sh" manifest 2>/dev/null)" || _watch_manifest=""
 if watch_list="$("$SPIRA_HOME/watchd.sh" units)"; then
     for _wu in $watch_list; do
         _wname="${_wu#spira-watch@}"; _wname="${_wname%.service}"
         _inst_wu="$(inst_watch_name "$_wname")"
+        _wtarget="$(printf '%s\n' "$_watch_manifest" | awk -F'|' -v n="$_wname" '$1==n{print $3; exit}')"
+        _wbin="${_wtarget%% *}"
+        if [ -n "$_wbin" ] && [ ! -x "$_wbin" ]; then
+            echo "note: watcher $_wname: $_wbin is not built — not installing $_inst_wu." >&2
+            echo "      Build it: cd \$SPIRA_REPO && make build, then re-run install.sh." >&2
+            continue
+        fi
         ENABLE+=("$_inst_wu")
         watch_units="$watch_units$_inst_wu "
         _watch_names+=("$_wname")
     done
-    unset _wu _wname _inst_wu
+    unset _wu _wname _inst_wu _wtarget _wbin
 else
     echo "install: the watcher manifest is malformed — installing none of it" >&2
     # `return` rather than `exit` because this file is sourced: `exit` here would
