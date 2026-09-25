@@ -159,5 +159,40 @@ rc_ok="$(lint_rc sp-lint-ok2)"
 is   "properly labelled bead passes (positive control)"   "0" "$rc_ok"
 nowant "properly labelled bead not reported"              "sp-lint-ok2" "$out_ok"
 
+# ==========================================================================================
+echo
+echo "branch: label naming ANOTHER bead is flagged; naming itself is not (sp-om71s)"
+# ==========================================================================================
+# `bd create --parent` copies every label from the parent onto a child, including branch: —
+# a child that keeps it names its PARENT's worktree, not its own, and the resume preference
+# reads that label first, so a mislabeled bead is claimed ahead of everything else ready.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-lint-br-sib","title":"sibling, owns its own branch","status":"open","issue_type":"task","labels":["repo:spira","plan","branch:spira/sp-lint-br-sib"],"updated_at":"2026-09-25T00:00:00Z"}
+{"id":"sp-lint-br-bad","title":"child, wrongly recorded onto the sibling's branch","status":"open","issue_type":"task","labels":["repo:spira","plan","branch:spira/sp-lint-br-sib"],"updated_at":"2026-09-25T00:00:00Z"}
+{"id":"sp-lint-br-good","title":"a bead whose branch: label names itself","status":"open","issue_type":"task","labels":["repo:spira","plan","branch:spira/sp-lint-br-good"],"updated_at":"2026-09-25T00:00:00Z"}
+JSONL
+
+# POSITIVE CONTROL: the sibling's own branch: label (naming itself) must NOT be flagged —
+# otherwise every correctly-labelled bead in the database would fail lint.
+out="$(lint sp-lint-br-sib)"
+rc="$(lint_rc sp-lint-br-sib)"
+is   "a branch: label naming itself passes (positive control)" "0" "$rc"
+nowant "not reported as mislabeled" "branch: label names" "$out"
+
+out="$(lint sp-lint-br-good)"
+rc="$(lint_rc sp-lint-br-good)"
+is   "another correctly self-named branch: passes"             "0" "$rc"
+
+# THE OFFENDER: sp-lint-br-bad's branch: label names sp-lint-br-sib, an EXISTING different bead.
+out="$(lint sp-lint-br-bad)"
+rc="$(lint_rc sp-lint-br-bad)"
+is   "branch: label naming another bead exits 1"        "1" "$rc"
+want "branch: label naming another bead is reported"    "sp-lint-br-bad: branch: label names sp-lint-br-sib, not itself" "$out"
+
+out="$(lint --all)"
+nowant "--all does not flag the correctly self-named beads" "sp-lint-br-sib: branch:" "$out"
+want   "--all flags the mislabeled child"                   "sp-lint-br-bad: branch: label names sp-lint-br-sib, not itself" "$out"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

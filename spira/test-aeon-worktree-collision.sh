@@ -15,8 +15,12 @@
 # already-committed fix — caught only because that session diffed its tree before closing.
 #
 # TWO CASES, positive and negative (law-absence-needs-a-positive-control):
-#   1. Two beads recorded onto the SAME branch: the second bead's summon must FAIL, and must
-#      never create a worktree for it — not merely log something.
+#   1. Two beads recorded onto the SAME branch: the second bead must never create a worktree
+#      inside the first bead's directory, and must never die over it either — `bd create
+#      --parent` copies branch: onto every child, so this is not a rare hand-mistake, and a
+#      FATAL here is what starved a whole fleet to ~2 builders when 18 children inherited one
+#      parent's branch (sp-om71s). The second bead corrects its own recorded branch, cuts a
+#      FRESH worktree under its own id, and does its work there.
 #   2. One bead whose OWN branch is checked out at a path that isn't its canonical worktree
 #      (a leftover from a previous naming convention, or a hand-made tree): the summon must
 #      move that tree ASIDE — never delete it — and cut a fresh worktree at the canonical path.
@@ -25,7 +29,7 @@
 # assertion is about `git worktree add`'s actual refusal and aeon.sh's actual response to it
 # (law-prefer-the-real-dependency) — a stub of either would test the stub.
 #
-# defect: sp-gseub
+# defect: sp-om71s
 # covers: spira/aeon.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -97,7 +101,8 @@ run_aeon() { "$SPIRA_HOME/aeon.sh" builder > "$TMP/out" 2>&1; }
 
 # ======================================================================================
 echo
-echo "CASE 1 (positive control): two beads recorded onto the SAME branch — the second's summon FAILS:"
+echo "CASE 1 (positive control): a bead recorded onto ANOTHER LIVE BEAD's branch — a mislabel,"
+echo "                           not a resume — starts fresh instead of dying:"
 # ======================================================================================
 testdb_reset
 rm -rf "$SPIRA_RUN/worktree"
@@ -108,39 +113,40 @@ run_aeon
     && ok "setup: bead A got its own worktree, still registered after closing" \
     || bad "setup: bead A got its own worktree" "missing $SPIRA_RUN/worktree/sp-cw-a/.git; out=$(cat "$TMP/out" 2>/dev/null)"
 
+# THE PLANTED OFFENDER: bead B's branch: label names bead A's branch — exactly what `bd
+# create --parent` hands a child that inherits its parent's label (bead.sh lint, groomer.sh).
 seed sp-cw-b
 bd -C "$SPIRA_DB" set-state sp-cw-b "branch=spira/sp-cw-a" >/dev/null 2>&1
 run_aeon
 out2="$(cat "$TMP/out" 2>/dev/null)"
 
-if [ -e "$SPIRA_RUN/worktree/sp-cw-b" ]; then
-    bad "case 1: second bead never got a workspace" "found $SPIRA_RUN/worktree/sp-cw-b"
-else
-    ok "case 1: second bead never got a workspace"
-fi
-want "case 1: log names the branch"     "spira/sp-cw-a"                  "$out2"
-want "case 1: log names the holder id"  "sp-cw-a"                        "$out2"
-want "case 1: log names the holder path" "$SPIRA_RUN/worktree/sp-cw-a"   "$out2"
+# THE DISCRIMINATING CHECK (law-absence-needs-a-positive-control): bead B must get a NEW
+# worktree named for ITSELF — not nothing (the old die), and not $SPIRA_RUN/worktree/sp-cw-a
+# (the older adoption bug). Either of those wrong answers fails this exact assertion.
+[ -e "$SPIRA_RUN/worktree/sp-cw-b/.git" ] \
+    && ok "case 1: bead B got its OWN fresh worktree instead of dying" \
+    || bad "case 1: bead B got its OWN fresh worktree instead of dying" "missing $SPIRA_RUN/worktree/sp-cw-b/.git; out=$out2"
+want "case 1: log names the mislabeled branch"    "spira/sp-cw-a" "$out2"
+want "case 1: log names the branch's true holder" "sp-cw-a"       "$out2"
+want "case 1: log says it took a fresh branch instead of dying" "taking a fresh branch instead of dying" "$out2"
 
-# THE DISCRIMINATING CHECK: "never got a workspace" alone is also true of the OLD adoption
-# bug — it redirected bead B into bead A's EXISTING directory rather than creating a NEW one
-# named sp-cw-b, so that check alone cannot tell refusal from silent adoption. What tells
-# them apart is whether bead B's session ever reached the model at all: refused, it never
-# does, and the bead is never closed; adopted, the shim closes it from inside A's worktree.
 b_status="$(bd -C "$SPIRA_DB" show sp-cw-b --json 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(0)
 d = d if isinstance(d, list) else [d]
 print(d[0].get("status","") if d else "")' 2>/dev/null)"
-[ "$b_status" != "closed" ] \
-    && ok "case 1: bead B was never closed — its summon never reached the model" \
-    || bad "case 1: bead B was never closed — its summon never reached the model" "status=$b_status"
+[ "$b_status" = "closed" ] \
+    && ok "case 1: bead B's summon reached the model and closed the bead — no FATAL" \
+    || bad "case 1: bead B's summon reached the model and closed the bead — no FATAL" "status=$b_status"
 
-# The other bead's worktree must be untouched — refusal, not repair.
+b_branch="$(bd -C "$SPIRA_DB" state sp-cw-b branch 2>/dev/null)"
+is "case 1: bead B's recorded branch was corrected to its own" "spira/sp-cw-b" "$b_branch"
+
+# The other bead's worktree must be untouched — correction, not repair-in-place of A's.
 [ -e "$SPIRA_RUN/worktree/sp-cw-a/.git" ] \
-    && ok "case 1: bead A's worktree is untouched by B's refused summon" \
-    || bad "case 1: bead A's worktree is untouched by B's refused summon" "gone"
+    && ok "case 1: bead A's worktree is untouched by B's correction" \
+    || bad "case 1: bead A's worktree is untouched by B's correction" "gone"
 
 # ======================================================================================
 echo

@@ -168,6 +168,11 @@ except Exception: print("")
     # piece's own branch right after creation is enough to undo whatever create inherited.
     # The id (and so the branch name) is not known until create returns it, which is why
     # this cannot be folded into a single bd call.
+    #
+    # delivers: is not single-valued, so nothing overwrites it the way set-state overwrites
+    # branch: — it is stripped explicitly. It is an evidence claim scoped to ONE bead
+    # (aeon.sh, sentinel.sh CHECK 5); a piece that inherits it would claim delivery of
+    # evidence — a file path, a child-bead link — that was never its own to verify against.
     id="${1:-}"; [ $# -gt 0 ] && shift
     [ -z "$id" ] && { printf 'groomer: split-piece: original bead id required\n' >&2; exit 1; }
     new_id="$("$BD_CMD" -C "$DB" create --parent "$id" --silent "$@")" \
@@ -175,6 +180,15 @@ except Exception: print("")
     [ -n "$new_id" ] || { printf 'groomer: split-piece: bd create returned no id\n' >&2; exit 1; }
     "$BD_CMD" -C "$DB" set-state "$new_id" "branch=spira/$new_id" >/dev/null \
         || { printf 'groomer: split-piece: could not record branch on %s\n' "$new_id" >&2; exit 1; }
+    _sp_inherited_delivers="$("$BD_CMD" -C "$DB" show "$new_id" --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
+    print(",".join(l for l in (d[0].get("labels") or []) if l.startswith("delivers:")))
+except Exception: pass
+' 2>/dev/null)"
+    [ -n "$_sp_inherited_delivers" ] \
+        && "$BD_CMD" -C "$DB" label remove "$new_id" "$_sp_inherited_delivers" >/dev/null 2>&1
     printf '%s\n' "$new_id"
     ;;
 
