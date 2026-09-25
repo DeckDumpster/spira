@@ -209,5 +209,67 @@ want "acceptance.yml: upload runs under if: always()" \
 want "acceptance.yml: artifact named after tag" \
     "acceptance-forensics-" "$_yml"
 
+# --- regression: remote already has a notes ref → push succeeds, note not lost ---
+# law-a-regression-test-must-be-seen-to-fail:
+# Old code: 'git push origin refs/notes/acceptance 2>/dev/null || true' pushes from CWD
+# (not from $SPIRA_NOTES_REPO), so the fake-token push to the real origin silently fails
+# and the note never reaches the local bare repo.
+# Fixed code: uses SPIRA_NOTES_REPO with a pre-fetch + retry, so the push succeeds.
+
+# Create a bare remote and seed it with a prior run's notes commit.
+_notes_bare="$SCRATCH/notes-bare.git"
+_notes_seed="$SCRATCH/notes-seed"
+git init --bare --initial-branch=main "$_notes_bare" >/dev/null 2>&1
+git clone "$_notes_bare" "$_notes_seed" >/dev/null 2>&1
+git -C "$_notes_seed" config user.email "t@spira" 2>/dev/null || true
+git -C "$_notes_seed" config user.name "T" 2>/dev/null || true
+git -C "$_notes_seed" commit --allow-empty -m "prior-base" >/dev/null 2>&1
+git -C "$_notes_seed" notes --ref=acceptance add \
+    -m "FAIL prior-run 0 passed, 1 failed" HEAD >/dev/null 2>&1
+# actions/checkout gives a fresh clone the tagged commit itself (just not its
+# notes), so main must reach the bare repo too — not only the notes ref —
+# or the fresh clone's HEAD is unborn and can't be annotated at all.
+git -C "$_notes_seed" push origin main >/dev/null 2>&1
+git -C "$_notes_seed" push origin 'refs/notes/acceptance' >/dev/null 2>&1
+
+# Fresh clone: simulates actions/checkout — no refs/notes/acceptance locally.
+_notes_fresh="$SCRATCH/notes-fresh"
+git clone "$_notes_bare" "$_notes_fresh" >/dev/null 2>&1
+git -C "$_notes_fresh" config user.email "t@spira" 2>/dev/null || true
+git -C "$_notes_fresh" config user.name "T" 2>/dev/null || true
+
+# Stub: writes a note to SPIRA_NOTES_REPO, matching the object acceptance-run.sh
+# writes (HEAD, which is the same commit in both the seed and fresh clones).
+_stub_reg="$SCRATCH/stub-reg.sh"
+cat > "$_stub_reg" <<STUB_REG_BODY
+#!/usr/bin/env bash
+_nr="\${SPIRA_NOTES_REPO:-}"
+[ -n "\$_nr" ] || exit 0
+git -C "\$_nr" notes --ref=acceptance add -f \
+    -m "PASS new-run 3 passed, 0 failed" HEAD 2>/dev/null || true
+exit 0
+STUB_REG_BODY
+chmod +x "$_stub_reg"
+
+CI_HOME_REG="$SCRATCH/home-reg"
+mkdir -p "$CI_HOME_REG"
+git config --file "$CI_HOME_REG/.gitconfig" user.email "t@spira" 2>/dev/null || true
+git config --file "$CI_HOME_REG/.gitconfig" user.name "T" 2>/dev/null || true
+
+HOME="$CI_HOME_REG" \
+SPIRA_ACCEPTANCE_RUN="$_stub_reg" \
+SPIRA_NOTES_REPO="$_notes_fresh" \
+GH_TOKEN="test-notes-push" \
+XDG_CONFIG_HOME="$CI_HOME_REG/.config" \
+    bash "$HERE/acceptance-ci.sh" "test-tag-regression" \
+    --bd-db "$SCRATCH/bd-reg" >/dev/null 2>&1 || true
+
+# Verify: the note must now be on the remote bare repo, not only in the local clone.
+git -C "$_notes_seed" fetch origin \
+    'refs/notes/acceptance:refs/notes/acceptance' >/dev/null 2>&1 || true
+_reg_note="$(git -C "$_notes_seed" notes --ref=acceptance show HEAD 2>/dev/null || true)"
+want "regression: verdict note pushed to remote when remote already has notes ref" \
+    "PASS new-run" "$_reg_note"
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

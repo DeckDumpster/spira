@@ -40,6 +40,9 @@ done
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 export PATH="$HOME/.local/bin:$PATH"
 
+# Overridable for testing; in production matches the checkout this script lives in.
+_NOTES_REPO="${SPIRA_NOTES_REPO:-$HERE/..}"
+
 git init --bare --initial-branch=main "$HOME/scratch-repo.git"
 git clone "$HOME/scratch-repo.git" "$HOME/scratch-repo"
 git -C "$HOME/scratch-repo" config user.email "acceptance@spira.local"
@@ -70,21 +73,49 @@ file "$HOME/.local/bin/bd" 2>/dev/null || printf '  (file: not found)\n'
 findmnt -T "$HOME/.local/bin" -o TARGET,OPTIONS 2>/dev/null || printf '  (findmnt unavailable)\n'
 printf -- '--- end ---\n'
 
-git -C "$HERE/.." config user.email "acceptance@spira.local" 2>/dev/null || true
-git -C "$HERE/.." config user.name "Spira Acceptance" 2>/dev/null || true
+git -C "$_NOTES_REPO" config user.email "acceptance@spira.local" 2>/dev/null || true
+git -C "$_NOTES_REPO" config user.name "Spira Acceptance" 2>/dev/null || true
+
+# actions/checkout does not fetch refs/notes/*; fetch before acceptance-run.sh writes
+# so the note appends onto the remote's history and the push is a fast-forward.
+if [ -n "${GH_TOKEN:-}" ]; then
+    git -C "$_NOTES_REPO" fetch origin \
+        'refs/notes/acceptance:refs/notes/acceptance' 2>/dev/null || true
+fi
 
 _run_rc=0
 bash "${SPIRA_ACCEPTANCE_RUN:-$HERE/acceptance-run.sh}" "${_run_args[@]}" || _run_rc=$?
 
+_push_ok=0
 if [ -n "${GH_TOKEN:-}" ]; then
-    git push origin 'refs/notes/acceptance' 2>/dev/null || true
+    for _attempt in 1 2 3; do
+        _push_rc=0
+        git -C "$_NOTES_REPO" push origin 'refs/notes/acceptance' 2>&1 || _push_rc=$?
+        if [ "$_push_rc" -eq 0 ]; then _push_ok=1; break; fi
+        # Concurrent run pushed between our fetch and push: re-fetch and re-apply.
+        _saved_note="$(git -C "$_NOTES_REPO" notes --ref=acceptance show \
+            "refs/tags/$_tag" 2>/dev/null || true)"
+        git -C "$_NOTES_REPO" fetch origin \
+            'refs/notes/acceptance:refs/notes/acceptance' 2>/dev/null || true
+        [ -n "$_saved_note" ] && \
+            git -C "$_NOTES_REPO" notes --ref=acceptance add -f -m "$_saved_note" \
+                "refs/tags/$_tag" 2>/dev/null || true
+    done
 fi
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
-    _note="$(git notes --ref=acceptance show "refs/tags/$_tag" 2>/dev/null \
-        || printf '(no note written)')"
+    _note="$(git -C "$_NOTES_REPO" notes --ref=acceptance show "refs/tags/$_tag" \
+        2>/dev/null || printf '(no note written)')"
     printf '## Acceptance: %s\n\n```\n%s\n```\n' "$_tag" "$_note" \
         >> "$GITHUB_STEP_SUMMARY"
+    [ "$_push_ok" -eq 1 ] && printf 'pushed refs/notes/acceptance\n' \
+        >> "$GITHUB_STEP_SUMMARY"
+fi
+
+if [ -n "${GH_TOKEN:-}" ] && [ "$_push_ok" -eq 0 ]; then
+    printf 'error: could not push refs/notes/acceptance after %d attempts\n' \
+        "$_attempt" >&2
+    exit 1
 fi
 
 exit "$_run_rc"
