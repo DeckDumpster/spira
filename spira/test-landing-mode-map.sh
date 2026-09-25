@@ -75,7 +75,7 @@ done < <(find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-landing-mode-map.sh
 # column 0) and every mode pattern is grepped against that extract only.
 # ---------------------------------------------------------------------------
 land_repo_body() {
-    awk '/^land_repo\(\) \{/{f=1} f{print} f && /^}/{exit}' "$1"
+    sed -n '/^land_repo() {/,/^}/p' "$1"
 }
 
 echo
@@ -173,7 +173,7 @@ else
             if printf '%s' "$real_body" | grep -q '"$mode" = queue'; then
                 ok "mode 'queue' handled (early return in land_repo)"
             else
-                bad "mode 'queue' handled" "no '\"$mode\" = queue' in land_repo"
+                bad "mode 'queue' handled" "no '\\\$mode = queue' in land_repo"
                 unhandled=$(( unhandled + 1 ))
             fi
             ;;
