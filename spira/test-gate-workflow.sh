@@ -497,5 +497,12 @@ want "gate exits cleanly on empty selection"         "exit 0"                   
 want "gate checks select output before provision"    "select.outputs.suites"       "$_gate_verdict_block"
 
 echo
+echo "20. the provision job raises the guest-agent wait above the 120s default:"
+# provision.sh's guest-agent wait defaults to 120s, and that sits inside the
+# normal boot range on a busy hypervisor -- a fault, not a defect in the guest.
+want "provision sets AGENT_TIMEOUT"        "AGENT_TIMEOUT"       "$_prov_block"
+want "provision raises it to 300"          "AGENT_TIMEOUT: 300"  "$_prov_block"
+
+echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
