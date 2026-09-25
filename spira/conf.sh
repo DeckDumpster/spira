@@ -228,12 +228,23 @@ spira_conf_defaults() {
     # In a worktree, rev-parse --git-common-dir returns an absolute path to the
     # shared .git; dirname of that is the main repo, so basename is its identity.
     # In a plain checkout it returns a relative path — fall back to SPIRA_REPO.
-    local _spira_gcd
-    _spira_gcd="$(git -C "$SPIRA_REPO" rev-parse --git-common-dir 2>/dev/null)" || _spira_gcd=""
-    case "$_spira_gcd" in
-        /*)  : "${SPIRA_HOME_REPO:=$(basename "$(dirname "$_spira_gcd")")}" ;;
-        *)   : "${SPIRA_HOME_REPO:=$(basename "$SPIRA_REPO")}" ;;
-    esac
+    local _spira_gcd _spira_gcd_rc
+    _spira_gcd="$(git -C "$SPIRA_REPO" rev-parse --git-common-dir 2>/dev/null)"; _spira_gcd_rc=$?
+    if [ "$_spira_gcd_rc" -eq 0 ]; then
+        case "$_spira_gcd" in
+            /*)  : "${SPIRA_HOME_REPO:=$(basename "$(dirname "$_spira_gcd")")}" ;;
+            *)   : "${SPIRA_HOME_REPO:=$(basename "$SPIRA_REPO")}" ;;
+        esac
+    elif [ -z "${SPIRA_HOME_REPO:-}" ]; then
+        # SPIRA_REPO is not a git checkout at all — an installed release, unpacked from a
+        # tarball into a directory named spira-<timestamp>. That name changes on every
+        # upgrade (law-scope-is-a-runtime-key), so it cannot be the identity: build-tarball.sh
+        # stamps the real one into MANIFEST at build time, stable across every release of the
+        # same repository. Without that stamp, refuse rather than fall back to the directory
+        # name — leaving SPIRA_HOME_REPO (and the scope label derived from it) unset is a
+        # known, tested state, not a silent wrong answer.
+        SPIRA_HOME_REPO="$(awk '$1=="repo"{print $2; exit}' "$SPIRA_REPO/MANIFEST" 2>/dev/null)"
+    fi
     # THE INSTANCE NAME. Two instances (e.g. 'prod' and 'test') may run side by side on
     # one machine; each reads its own database and writes its own runtime tree. 'prod' is
     # the default so every existing installation is unaffected by this key's existence.

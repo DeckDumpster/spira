@@ -78,10 +78,16 @@ jobs:
           # Tag form: spira-release-<reponame>-<YYYYMMDDTHHMMSSZ>
           # Tarball stem: spira-<YYYYMMDDTHHMMSSZ>
           ts="${tag##*-}"
+          # --repo-name carries the tag's reponame into MANIFEST, so an installed
+          # release resolves its identity from that stamp rather than from its own
+          # directory name (spira-<timestamp>, which changes on every upgrade).
+          reponame="${tag#spira-release-}"
+          reponame="${reponame%-"$ts"}"
           tarball=$(bash spira/build-tarball.sh build \
             --workspace . \
             --output /tmp/artifacts \
-            --name "spira-${ts}")
+            --name "spira-${ts}" \
+            --repo-name "$reponame")
           printf 'path=%s\n' "$tarball" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release (draft)

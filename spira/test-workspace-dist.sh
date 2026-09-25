@@ -12,6 +12,8 @@
 #   2. Adding a throwaway crate ships its binary without any flag change.
 #   3. MANIFEST contains sha256 entries for each binary.
 #   4. POSITIVE CONTROL: a missing pre-built binary is refused, not silently skipped.
+#   5. --repo-name stamps MANIFEST's `repo` line; omitted, it falls back to the
+#      source checkout's own git identity (law-scope-is-a-runtime-key).
 #
 # covers: spira/build-tarball.sh Cargo.toml Makefile
 set -uo pipefail
@@ -192,6 +194,42 @@ if [ "$missing_rc" -ne 0 ]; then
 else
     bad "missing binary causes non-zero exit (positive control)" \
         "exited 0 with output: $missing_out"
+fi
+
+# ============================================================================
+echo
+echo "5. --repo-name stamps MANIFEST; omitted, falls back to git identity"
+# ============================================================================
+# Restore the throwaway binary removed by case 4.
+printf '#!/usr/bin/env bash\necho throwaway\n' > "$WS/target/release/throwaway"
+chmod +x "$WS/target/release/throwaway"
+
+named_out="$(run_build build --workspace "$WS" --output "$TMP/out-named" --repo-name myrepo 2>&1)"
+named_rc=$?
+is "build --repo-name exits 0" "0" "$named_rc"
+
+tarball_named="$(find "$TMP/out-named" -name 'spira-*.tar.gz' | head -1)"
+UNPACK_NAMED="$TMP/unpack-named"; mkdir -p "$UNPACK_NAMED"
+[ -f "${tarball_named:-}" ] && tar -xzf "$tarball_named" -C "$UNPACK_NAMED"
+stem_named="${tarball_named:+$(basename "${tarball_named%.tar.gz}")}"
+TREE_NAMED="${stem_named:+$UNPACK_NAMED/$stem_named}"
+
+if grep -qx "repo myrepo" "${TREE_NAMED:-/dev/null}/MANIFEST" 2>/dev/null; then
+    ok "MANIFEST repo line is the explicit --repo-name value"
+else
+    bad "MANIFEST repo line is the explicit --repo-name value" \
+        "$(cat "${TREE_NAMED:-/dev/null}/MANIFEST" 2>/dev/null)"
+fi
+
+# Without --repo-name, the repo line falls back to the source checkout's own git
+# identity (basename of the workspace here) rather than being absent or the
+# tarball's own timestamped name.
+ws_identity="$(basename "$WS")"
+if grep -qx "repo $ws_identity" "${TREE2:-/dev/null}/MANIFEST" 2>/dev/null; then
+    ok "MANIFEST repo line defaults to the source checkout's git identity"
+else
+    bad "MANIFEST repo line defaults to the source checkout's git identity" \
+        "wanted [repo $ws_identity] in $(cat "${TREE2:-/dev/null}/MANIFEST" 2>/dev/null)"
 fi
 
 # ============================================================================

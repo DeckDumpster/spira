@@ -216,5 +216,35 @@ isne  "worktree: SPIRA_HOME_REPO is not the worktree dir name" "wtest-worktree-x
 
 # ==========================================================================
 echo
+echo "installed release — SPIRA_HOME_REPO comes from MANIFEST's stamp, not the release dir name:"
+# ==========================================================================
+# An installed release is an unpacked tarball named spira-<timestamp>, which changes on
+# every upgrade (law-scope-is-a-runtime-key). basename(SPIRA_REPO) must never be used
+# here — that was sp-j4vi0: every upgrade made every existing bead unclaimable.
+RELEASE_DIR="$TMP/spira-20990101T000000Z"
+mkdir -p "$RELEASE_DIR"
+
+# T1: with the stamp, SPIRA_HOME_REPO resolves to the stamped identity.
+printf 'commit 0000000000000000000000000000000000000000\ntimestamp 20990101T000000Z\nrepo spira\n' \
+    > "$RELEASE_DIR/MANIFEST"
+release_got="$(conf_val SPIRA_HOME_REPO SPIRA_REPO="$RELEASE_DIR")"
+is   "stamped release: SPIRA_HOME_REPO resolves to the stamp (spira)" "spira" "$release_got"
+isne "stamped release: SPIRA_HOME_REPO is not the release dir name" "spira-20990101T000000Z" "$release_got"
+
+# Without the stamp, conf.sh refuses to fall back to the directory name.
+rm -f "$RELEASE_DIR/MANIFEST"
+unstamped_got="$(conf_val SPIRA_HOME_REPO SPIRA_REPO="$RELEASE_DIR")"
+isne "unstamped release: SPIRA_HOME_REPO is not the release dir name" "spira-20990101T000000Z" "$unstamped_got"
+is   "unstamped release: SPIRA_HOME_REPO is refused (empty), not guessed" "" "$unstamped_got"
+
+# A MANIFEST present but without a `repo` line is the same as no stamp at all.
+printf 'commit 0000000000000000000000000000000000000000\ntimestamp 20990101T000000Z\n' \
+    > "$RELEASE_DIR/MANIFEST"
+norepo_got="$(conf_val SPIRA_HOME_REPO SPIRA_REPO="$RELEASE_DIR")"
+isne "MANIFEST without repo line: SPIRA_HOME_REPO is not the release dir name" "spira-20990101T000000Z" "$norepo_got"
+is   "MANIFEST without repo line: SPIRA_HOME_REPO is refused (empty)" "" "$norepo_got"
+
+# ==========================================================================
+echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
