@@ -9,6 +9,7 @@
 #   mail.sh count <mailbox>              number of unread messages
 #   mail.sh unread-age <mailbox>         seconds since oldest unread; empty if none
 #   mail.sh sendmail                     RFC 5322 on stdin; closes tracking bead on reply
+#   mail.sh sweep-dismissed [mailbox]    close asks whose mail was deleted (default operator)
 #
 # Send refuses a message that is missing From, missing Subject, has a Subject
 # that is or leads with a bead id, has a body mentioning a bead id without enough
@@ -32,6 +33,16 @@ _bead_id_re="${SPIRA_ID_PREFIX:-sp}-[a-z0-9]{4,}"
 _mail_dir()    { printf '%s/%s' "${SPIRA_MAIL}" "$1"; }
 _mail_ensure() { local d; d="$(_mail_dir "$1")"; mkdir -p "$d/tmp" "$d/new" "$d/cur"; }
 _mail_msgid()  { printf '%s.%s.%s' "$(date +%s)" "$RANDOM" "$$"; }
+
+# _index_record <mailbox> <msgid> <bead> <kind> <default> — append-only, one line per ask
+# mail that carries a bead. TSV; fields cannot contain tabs or newlines (subject/default
+# text is never stored here, only the message-id and bead id needed to find them again).
+_index_record() {
+    local mailbox="$1" msgid="$2" bead="$3" kind="$4" default="$5"
+    mkdir -p "$(dirname "${SPIRA_MAIL_INDEX}")"
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+        "$mailbox" "$msgid" "$bead" "$kind" "${default//$'\t'/ }" >> "${SPIRA_MAIL_INDEX}"
+}
 
 # _render_bead_block <id> — title, status, priority, type, repo, branch, and the
 # close reason or last note, truncated. "unresolved: <id>" if the store can't
@@ -411,6 +422,14 @@ cmd_send() {
         if { [ "$kind" = "question" ] || [ "$kind" = "decision" ]; } \
                 && [ -n "${BEAD_ID:-}" ] && [ -n "${SPIRA_RUN:-}" ]; then
             touch "$SPIRA_RUN/$BEAD_ID.operator-wait"
+        fi
+        # Record msgid -> bead so a later deletion of this file can be told apart from a
+        # reply or a move (cmd_sweep_dismissed). Only asks: a notice with no bead carries
+        # nothing to dismiss, and closing on kind besides question/decision would treat an
+        # FYI's disappearance as a verdict nobody gave.
+        if { [ "$kind" = "question" ] || [ "$kind" = "decision" ]; } \
+                && [ -n "$x_bead" ]; then
+            _index_record "$mailbox" "$msgid@spira" "$x_bead" "$kind" "$default"
         fi
     fi
 }
@@ -828,6 +847,94 @@ for x in d:
     printf 'tidy: archived %d, kept %d\n' "$archived" "$kept"
 }
 
+# _bead_status <id> -> status string, empty if the store can't resolve it.
+_bead_status() {
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$1" --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    d = d[0] if isinstance(d, list) else d
+    print(d.get("status") or "")
+except Exception:
+    pass
+' 2>/dev/null
+}
+
+# _bead_replied <id> -> "yes" if any audit event on the bead was authored by the operator
+# actor — a reply outranks a deleted mail even when something else left the bead open.
+_bead_replied() {
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" history "$1" --events --json 2>/dev/null | python3 -c '
+import json, sys
+actor = sys.argv[1]
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+d = d if isinstance(d, list) else [d]
+for e in d:
+    if e.get("actor") == actor:
+        print("yes")
+        break
+' "${SPIRA_OPERATOR_ACTOR:-operator}" 2>/dev/null
+}
+
+# cmd_sweep_dismissed [mailbox] — an ask mail that was deleted (not moved, not replied to)
+# is the operator's verdict: dismissed, default taken. Reads _index_record's append-only log
+# so a deleted file can be told apart from one that was never sent at all.
+#
+# FAIL CLOSED: an unreadable store or index closes nothing (law-a-control-that-cannot-check-
+# must-refuse) — a false "nothing to dismiss" here would silently strand every open ask.
+cmd_sweep_dismissed() {
+    local mailbox="${1:-operator}"
+
+    if [ -z "${SPIRA_DB:-}" ]; then
+        printf 'sweep-dismissed: bead store not configured — refusing to dismiss anything\n' >&2
+        return 1
+    fi
+    if [ -e "${SPIRA_MAIL_INDEX}" ] && [ ! -r "${SPIRA_MAIL_INDEX}" ]; then
+        printf 'sweep-dismissed: index unreadable — refusing to dismiss anything\n' >&2
+        return 1
+    fi
+    if [ ! -f "${SPIRA_MAIL_INDEX}" ]; then
+        printf 'sweep-dismissed: nothing to dismiss\n'
+        return 0
+    fi
+
+    local dismissed=0 kept=0
+    local idx_mailbox msgid bead kind default status reason
+    while IFS=$'\t' read -r idx_mailbox msgid bead kind default; do
+        [ -n "$msgid" ] || continue
+        [ "$idx_mailbox" = "$mailbox" ] || continue
+
+        status="$(_bead_status "$bead")"
+        [ -n "$status" ] || continue
+        case "$status" in
+            closed) continue ;;
+        esac
+
+        # Still findable by message-id anywhere (its own mailbox, or moved elsewhere): not
+        # a deletion.
+        if _find_message_by_id "$msgid" >/dev/null 2>&1; then
+            kept=$((kept+1))
+            continue
+        fi
+
+        if [ -n "$(_bead_replied "$bead")" ]; then
+            kept=$((kept+1))
+            continue
+        fi
+
+        reason="dismissed by operator (mail deleted) — default taken: ${default:-<none given>}"
+        if "${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$bead" --reason-file - <<< "$reason" >/dev/null 2>&1; then
+            dismissed=$((dismissed+1))
+        else
+            printf 'sweep-dismissed: failed to close %s\n' "$bead" >&2
+        fi
+    done < "${SPIRA_MAIL_INDEX}"
+
+    printf 'sweep-dismissed: dismissed %d, kept %d\n' "$dismissed" "$kept"
+}
+
 # Sourced (not executed) by a test that wants _lint_check, _repeat_check, cmd_tidy et al.
 # as callable functions without forking `mail.sh send` per case (spira/testlib.sh consumers).
 [ "${BASH_SOURCE[0]}" = "${0}" ] || return 0
@@ -842,5 +949,6 @@ case "${1:-}" in
     done)       shift; cmd_done "$@" ;;
     sendmail)   shift; cmd_sendmail "$@" ;;
     tidy)       shift; cmd_tidy "$@" ;;
+    sweep-dismissed) shift; cmd_sweep_dismissed "$@" ;;
     *)          printf 'mail.sh: unknown command: %s\n' "${1:-}" >&2; exit 1 ;;
 esac
