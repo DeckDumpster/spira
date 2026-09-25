@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # covers: spira/acceptance-ci.sh .github/workflows/acceptance.yml
+# requires: testenv
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# The prereq-pass case below runs the real acceptance-run.sh (no SPIRA_ACCEPTANCE_RUN
+# stub), which reaches systemctl --user for real against whatever XDG_RUNTIME_DIR/
+# DBUS_SESSION_BUS_ADDRESS is ambient — the operator's real session outside a container.
+. "$HERE/testenv-guard.sh"
 
 pass=0; fail=0
 ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }

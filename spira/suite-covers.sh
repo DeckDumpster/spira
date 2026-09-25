@@ -22,7 +22,29 @@ suite_covers_of() {  # suite_covers_of <file-path> -> the # covers: globs, or em
 suite_requires_of() {  # suite_requires_of <file-path> -> space-separated requirement tokens, or empty
     # Commas are treated as delimiters so both "claude, bd" and "claude bd" work.
     # Empty return means no declared requirements — the suite runs unconditionally.
-    sed -n 's/^# *requires: *//p' "$1" 2>/dev/null | head -1 | tr ',' ' ' || true
+    # Stop at "set -" so heredocs inside the suite body (fixture suites are common
+    # here) cannot spoof the declaration — the same guard suite_exclusive_of and
+    # suite_selects_on_of already carry.
+    sed -n '/^set -/q;s/^# *requires: *//p' "$1" 2>/dev/null | head -1 | tr ',' ' ' || true
+}
+
+# suite_in_container — true only with STRUCTURAL evidence of running inside a container:
+# podman writes /run/.containerenv (docker, /.dockerenv) and an unprivileged user cannot
+# create either on the host. SPIRA_IN_TESTENV alone is NOT evidence: on 2026-09-25 the aeon
+# writing this very guard set SPIRA_IN_TESTENV=1 by hand on the host and stopped the live
+# bead database with an install suite. A variable is forgeable by exactly the actor the
+# guard exists to bind (law-guard-binds-the-caller).
+suite_in_container() {
+    [ -e /run/.containerenv ] || [ -e /.dockerenv ]
+}
+
+suite_testenv_unmet() {  # suite_testenv_unmet <file-path> -> true iff the suite declares
+    # `# requires: testenv` and it is NOT inside the test container — the container must be
+    # evidenced structurally AND testenv-batch.sh must have set SPIRA_IN_TESTENV=1 (sp-nxvjm).
+    case " $(suite_requires_of "$1") " in
+        *" testenv "*) ! { [ "${SPIRA_IN_TESTENV:-}" = 1 ] && suite_in_container; } ;;
+        *) return 1 ;;
+    esac
 }
 
 suite_exclusive_of() {  # suite_exclusive_of <file-path> -> reason string, or empty

@@ -636,12 +636,19 @@ _bd_shim_path="${_bd_shim_dir}:/usr/local/bin:/usr/bin:/bin"
 # Each unique token is checked exactly once via `command -v` inside the
 # container; the result is cached so a token shared by several suites costs
 # one podman exec, not one per suite.
+#
+# "testenv" is not a binary: it declares that the suite touches a user
+# manager, an install/uninstall path, or production paths (sp-nxvjm) and must
+# refuse outside this container. Reaching this loop at all means we already
+# are inside it, so the token is always met here — `command -v testenv` would
+# find nothing and wrongly skip-req every suite that declares it.
 # ---------------------------------------------------------------------------
 _req_all_tokens=""
 for _rs in $SELECTED; do
     _reqs="$(suite_requires_of "$SUITE_DIR/$_rs")"
     for _tok in $_reqs; do
         [ -n "$_tok" ] || continue
+        [ "$_tok" = testenv ] && continue
         case " $_req_all_tokens " in
             *" $_tok "*) ;;
             *) _req_all_tokens="$_req_all_tokens $_tok" ;;
