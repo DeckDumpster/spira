@@ -257,3 +257,37 @@ CURRENT STATE:
 - No duplicates found
 - No splits needed
 - 2 groom-asked beads skipped (operator answer pending)
+
+---
+
+GROOM PASS sp-7o95g
+===================
+
+TRIGGER: UNCLAIMABLE: sp-1pez5 — fix the fayth: or partition label
+
+SWEEP: groomer.sh sweep found 1 LIVELOCK row (sp-1pez5 unclaimable); acted on 0
+(sweep does not handle unclaimable beads with descriptions).
+
+LIVELOCK ROWS HANDLED: 1
+
+PARTITION LABELS FIXED:
+
+1. sp-1pez5 — repeat attempt: no change — spira/sp-av1xy
+   - Problem: had 'partition:incident' but not 'incident'; unclaimable by ops
+     persona (FAYTH_LABELS=spira,incident requires standalone 'incident' label)
+   - Same recurring pattern as previous passes (root cause tracked under sp-ui46l)
+   - Fix: added 'incident' label, removed 'partition:incident' label
+   - Verified: detect_livelocked returns 0 rows after fix
+
+GROOM-ASKED (skipped per rules, operator answer pending):
+
+1. sp-he29a — [bug] sp-y2ml8: test-census.sh timeouts
+2. sp-ui46l — [bug] sp-thgax: Add partition: prefix to SPIRA_INCIDENT_LABELS
+
+CURRENT STATE:
+- 166 open beads examined
+- 1 LIVELOCK row resolved (sp-1pez5: incident label corrected)
+- No premise-gone closures
+- No duplicates found
+- No splits needed
+- 2 groom-asked beads skipped (operator answer pending)
