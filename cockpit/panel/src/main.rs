@@ -43,6 +43,8 @@
 mod model;
 mod render;
 mod store;
+#[cfg(test)]
+mod test_support;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal;

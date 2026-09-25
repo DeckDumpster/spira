@@ -1095,4 +1095,119 @@ mod tests {
         assert_eq!(PREMISE_REJECTED, "premise-rejected");
     }
 
+    // =========================================================================================
+    // PANEL WRITE PATHS (gap #3, docs/test-plan/cockpit-observability.md): close_decision,
+    // comment and run_as are the pane's only bead-state-changing calls, and none of them had
+    // ever run against anything but the real `bd`. crate::test_support::StubBd records every
+    // invocation's argv and BEADS_ACTOR on SPIRA_PATH, the same seam `bin()` already resolves
+    // through.
+    // =========================================================================================
+
+    #[test]
+    fn close_decision_success_closes_with_force_as_the_operator() {
+        let stub = crate::test_support::StubBd::new().env("SPIRA_OPERATOR_ACTOR", "optest");
+        let r = close_decision("/fake/db", "sp-x1", "raise the pool to 32");
+        assert!(r.is_ok(), "{r:?}");
+        let log = stub.argv_log();
+        want(&log, "close sp-x1");
+        want(&log, "--reason raise the pool to 32");
+        want(&log, "--force");
+        want(&log, "ACTOR: optest");
+    }
+
+    /// THE FAILURE-RELAY CASE. `bd close` refuses (e.g. a blocked-issue guard); the pane must
+    /// fall back to `bd comments add` so the typed answer is not thrown away, and the error
+    /// returned to the UI must carry `bd`'s own message verbatim plus what happened to the
+    /// answer — never a generic "something went wrong" that loses both facts.
+    #[test]
+    fn close_decision_failure_falls_back_to_a_comment() {
+        let stub = crate::test_support::StubBd::new()
+            .env("BD_CLOSE_RC", "1")
+            .env("BD_CLOSE_ERR", "cannot close blocked issue: sp-x1 is blocked by [sp-x0]");
+        let r = close_decision("/fake/db", "sp-x1", "my answer");
+        let e = r.expect_err("close should have failed");
+        want(&e, "cannot close blocked issue");
+        want(&e, "still open; your answer is kept as a comment");
+        want(&stub.argv_log(), "comments add sp-x1 my answer");
+    }
+
+    /// Both calls fail: the error must say the answer was NOT saved, and must still carry the
+    /// answer text — it is the last place the operator's typed verdict can be recovered from.
+    #[test]
+    fn close_decision_double_failure_says_the_answer_was_not_saved() {
+        let _stub = crate::test_support::StubBd::new()
+            .env("BD_CLOSE_RC", "1")
+            .env("BD_CLOSE_ERR", "cannot close blocked issue")
+            .env("BD_COMMENTS_RC", "1")
+            .env("BD_COMMENTS_ERR", "database is locked");
+        let r = close_decision("/fake/db", "sp-x1", "my important answer");
+        let e = r.expect_err("close should have failed");
+        want(&e, "AND THE ANSWER WAS NOT SAVED");
+        want(&e, "my important answer");
+    }
+
+    #[test]
+    fn comment_on_notifications_refuses_without_touching_bd() {
+        let stub = crate::test_support::StubBd::new();
+        let item = an_alert(&["alert"]);
+        let r = comment(View::Notifications, &item, "text");
+        assert!(r.is_err());
+        assert_eq!(stub.argv_log(), "", "must not shell to bd at all");
+    }
+
+    #[test]
+    fn comment_on_other_views_adds_a_bd_comment_as_the_operator() {
+        let stub = crate::test_support::StubBd::new()
+            .env("SPIRA_DB", "/fake/db")
+            .env("SPIRA_OPERATOR_ACTOR", "optest");
+        let item = an_alert(&["alert"]);
+        let r = comment(View::Alerts, &item, "known, chasing it");
+        assert!(r.is_ok(), "{r:?}");
+        let log = stub.argv_log();
+        want(&log, "comments add sp-a1 known, chasing it");
+        want(&log, "ACTOR: optest");
+    }
+
+    /// `enact`'s other write path: `rule.sh` first, THEN the citation label — never the other
+    /// way, or a re-filed finding could be told from a first one for a statute that was never
+    /// actually written. `crate::test_support::StubBd::rule()` stubs `rule.sh` too, on the
+    /// same log, so the order is checkable from one string.
+    #[test]
+    fn enact_writes_the_statute_before_citing_it_on_the_insight() {
+        let stub = crate::test_support::StubBd::new()
+            .rule()
+            .env("SPIRA_DB", "/fake/db");
+        let item = an_alert(&["insight"]);
+        let r = enact(&item, "law-foo", "a new statute");
+        assert!(r.is_ok(), "{r:?}");
+        let log = stub.argv_log();
+        want(&log, "RULE: enact law-foo a new statute");
+        want(&log, "update sp-a1");
+        want(&log, "--add-label enacted:law-foo");
+        want(&log, "--add-label archived");
+        let rule_at = log.find("RULE:").expect("rule.sh call logged");
+        let label_at = log.find("update sp-a1").expect("bd update logged");
+        assert!(rule_at < label_at, "rule.sh must run BEFORE the citation label: {log:?}");
+    }
+
+    /// A `rule.sh` refusal (over the word limit, malformed slug, …) must leave the insight
+    /// UNLABELLED — enacting a citation for a statute that was never written would claim a
+    /// case history that does not exist.
+    #[test]
+    fn enact_failure_never_labels_the_insight() {
+        let stub = crate::test_support::StubBd::new()
+            .rule()
+            .env("RULE_RC", "1")
+            .env("RULE_ERR", "refused: over 130 words");
+        let item = an_alert(&["insight"]);
+        let r = enact(&item, "law-foo", "a new statute");
+        let e = r.expect_err("a refused rule.sh must fail enact");
+        want(&e, "refused: over 130 words");
+        let log = stub.argv_log();
+        assert!(!log.contains("update"), "must not label on a failed enact: {log:?}");
+    }
+
+    fn want(haystack: &str, needle: &str) {
+        assert!(haystack.contains(needle), "wanted {needle:?} in {haystack:?}");
+    }
 }

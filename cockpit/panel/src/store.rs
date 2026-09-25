@@ -1518,4 +1518,58 @@ mod tests {
         let decision_ids = ids(view_items(&d, View::Decisions, false, NOW));
         assert_eq!(decision_ids, ["sp-new-d", "sp-old-d"], "decisions must be newest-first");
     }
+
+    // =========================================================================================
+    // REFRESH (gap #3, docs/test-plan/cockpit-observability.md): the bd subprocess call
+    // underneath every view had no test at all. crate::test_support::StubBd puts a recording
+    // `bd` on SPIRA_PATH via the same lookup `bin()` already does.
+    // =========================================================================================
+
+    fn wait_for<F: Fn() -> bool>(cond: F) {
+        for _ in 0..200 {
+            if cond() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        panic!("refresh did not complete within 2s");
+    }
+
+    #[test]
+    fn refresh_populates_beads_from_the_real_bd_shape() {
+        let stub = crate::test_support::StubBd::new()
+            .env("SPIRA_DB", "/fake/db")
+            .env(
+                "BD_LIST_OUT",
+                r#"{"issues":[{"id":"sp-r1","status":"open","labels":[]}]}"#,
+            );
+        let shared: Shared = Arc::new(Mutex::new(Snapshot::default()));
+        refresh(&shared);
+        wait_for(|| shared.lock().unwrap().at.is_some());
+        let s = shared.lock().unwrap();
+        assert_eq!(s.beads_err, None, "{:?}", s.beads_err);
+        let beads = s.beads.as_ref().expect("beads populated");
+        assert_eq!(beads.len(), 1);
+        assert_eq!(beads[0]["id"], "sp-r1");
+        drop(s);
+        let log = stub.argv_log();
+        assert!(log.contains("list --all"), "{log}");
+    }
+
+    /// A failing `bd list` must surface as `beads_err`, verbatim, never a silent empty list —
+    /// an empty list reads as "nothing is waiting" over a queue that was never actually read.
+    #[test]
+    fn refresh_relays_a_bd_failure_verbatim() {
+        let _stub = crate::test_support::StubBd::new()
+            .env("SPIRA_DB", "/fake/db")
+            .env("BD_LIST_RC", "1")
+            .env("BD_LIST_ERR", "schema version mismatch: database is at v61");
+        let shared: Shared = Arc::new(Mutex::new(Snapshot::default()));
+        refresh(&shared);
+        wait_for(|| shared.lock().unwrap().at.is_some());
+        let s = shared.lock().unwrap();
+        assert!(s.beads.is_none(), "a failed fetch must not populate beads");
+        let e = s.beads_err.as_ref().expect("beads_err set");
+        assert!(e.contains("schema version mismatch"), "{e}");
+    }
 }
