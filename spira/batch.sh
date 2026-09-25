@@ -253,6 +253,83 @@ _base_conflict() {
     return $rc
 }
 
+# batch_cut_reason_cheap <count> <age-seconds> <max> <wait-seconds> <evict-for-express 0|1>
+# -> prints the trigger reason (count|age|evict-express) and returns 0, or prints
+# nothing and returns 1. Pure: the caller already resolved every input, so this needs
+# no repo, no forge, no bd. Covers the two triggers that cost nothing to check and the
+# internal express-eviction re-cut, in the order main() has always evaluated them.
+batch_cut_reason_cheap() {
+    local count="$1" age="$2" max="$3" wait="$4" evict="$5"
+    if [ "$count" -ge "$max" ]; then printf 'count\n'; return 0; fi
+    if [ "$age" -ge "$wait" ]; then printf 'age\n'; return 0; fi
+    if [ "$evict" = 1 ]; then printf 'evict-express\n'; return 0; fi
+    return 1
+}
+
+# batch_cut_idle <runs-active> -> 0 (cut) iff runs-active is the literal string "0".
+# "?" and anything non-numeric must read as busy, never as idle — a forge that cannot
+# answer must never be read as an empty queue (law-absence-needs-a-positive-control).
+batch_cut_idle() {
+    case "${1:-?}" in
+        0) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# queue_last_moved <landstate-dir> -> the newest epoch among BATCHED/LANDED records,
+# or 0 when none exist. land_mark writes without a trailing newline, so `read` hits EOF
+# without a delimiter and returns non-zero on the very record this must not skip — every
+# read here is checked by content (a parsed epoch), never by read's own exit status.
+queue_last_moved() {
+    local dir="$1" last=0 f st tip epoch
+    [ -d "$dir" ] || { printf '0\n'; return 0; }
+    for f in "$dir"/*; do
+        [ -f "$f" ] || continue
+        st=""; tip=""; epoch=""
+        read -r st tip epoch _ < "$f" 2>/dev/null || true
+        case "$st" in BATCHED|LANDED) : ;; *) continue ;; esac
+        case "${epoch:-}" in ''|*[!0-9]*) continue ;; esac
+        [ "$epoch" -gt "$last" ] && last="$epoch"
+    done
+    printf '%s\n' "$last"
+}
+
+# queue_stuck_action <last-moved> <now> <stuck-age-threshold> <flag-exists 0|1> [<stall-from>]
+# -> one of:
+#   no-history   nothing has ever moved; the check cannot tell stall from a brand-new
+#                queue, so it refuses rather than guessing (law-a-control-that-cannot-check-must-refuse)
+#   not-stuck    recent movement; clear any stale flag
+#   alert        newly stalled; mail once and set the flag
+#   already-alerted  still stalled but the flag is already set; stay quiet
+# <stall-from>, when given, is the clock the stuck_age is measured from — the caller may
+# advance it past <last-moved> (never before it) when nothing was waiting yet at the last
+# move, so a deep but draining queue doesn't page on depth (sp-w4tyd). The no-history gate
+# still reads <last-moved> itself: a brand-new queue must refuse regardless of that clock.
+queue_stuck_action() {
+    local last_moved="$1" now="$2" threshold="$3" flag_exists="$4" stall_from="${5:-$1}" stuck_age
+    if [ "$last_moved" -eq 0 ]; then printf 'no-history\n'; return 0; fi
+    stuck_age=$(( now - stall_from ))
+    if [ "$stuck_age" -lt "$threshold" ]; then
+        printf 'not-stuck\n'
+    elif [ "$flag_exists" = 0 ]; then
+        printf 'alert\n'
+    else
+        printf 'already-alerted\n'
+    fi
+}
+
+# batch_cut_express <prio-json> <express-label> -> 0 iff any bead in prio-json carries
+# the label. prio-json is the same bdjson-show array the sort step already fetched.
+batch_cut_express() {
+    PRIO_JSON="$1" EXPRESS_LABEL="$2" python3 -c '
+import sys, json, os
+d = json.loads(os.environ.get("PRIO_JSON", "[]") or "[]")
+d = d if isinstance(d, list) else [d]
+lbl = os.environ.get("EXPRESS_LABEL", "express")
+sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
+' 2>/dev/null
+}
+
 main() {
     local name="${1:-}"
     [ -n "$name" ] || { printf 'batch.sh: repo name required\n' >&2; exit 1; }
@@ -653,34 +730,26 @@ for b in d:
     # Measure time since the queue last made progress (BATCHED or LANDED), not the
     # age of the oldest waiting branch. A deep but draining queue has old certs
     # yet recent movement; measuring the cert age alone fires on depth, not stall.
-    local last_moved=0 _mf _ms _mt _me
-    if [ -d "$LANDSTATE" ]; then
-        for _mf in "$LANDSTATE"/*; do
-            [ -f "$_mf" ] || continue
-            # land_mark omits trailing newline; read returns non-zero at EOF (watchtower.sh:218).
-            _ms=""; _mt=""; _me=""
-            read -r _ms _mt _me _ < "$_mf" 2>/dev/null || true
-            case "$_ms" in BATCHED|LANDED) : ;; *) continue ;; esac
-            case "${_me:-}" in ''|*[!0-9]*) continue ;; esac
-            [ "$_me" -gt "$last_moved" ] && last_moved="$_me"
-        done
-    fi
+    local last_moved; last_moved="$(queue_last_moved "$LANDSTATE")"
 
-    local _stuck_flag="$SPIRA_RUN/queue-stuck-$name"
-    if [ "$last_moved" -eq 0 ]; then
-        printf 'batch %s: no BATCHED/LANDED record — stuck check skipped\n' "$name"
-    else
-        # A queue can only be stuck on work that has been waiting: if the oldest
-        # certification is newer than the last BATCHED/LANDED move, the stall clock
-        # starts there, not at the move — otherwise an idle stretch with no waiting
-        # work pages the moment the first branch is certified (sp-w4tyd).
-        local _stall_from="$last_moved"
-        [ "$oldest_epoch" -gt "$_stall_from" ] && _stall_from="$oldest_epoch"
-        local stuck_age
-        stuck_age=$(( now - _stall_from ))
-        if [ "$stuck_age" -lt "${SPIRA_QUEUE_STUCK_AGE:-7200}" ]; then
+    local _stuck_flag="$SPIRA_RUN/queue-stuck-$name" _stuck_exists=0 _stuck_action
+    [ -f "$_stuck_flag" ] && _stuck_exists=1
+    # A queue can only be stuck on work that has been waiting: if the oldest
+    # certification is newer than the last BATCHED/LANDED move, the stall clock
+    # starts there, not at the move — otherwise an idle stretch with no waiting
+    # work pages the moment the first branch is certified (sp-w4tyd).
+    local _stall_from="$last_moved"
+    [ "$oldest_epoch" -gt "$_stall_from" ] && _stall_from="$oldest_epoch"
+    _stuck_action="$(queue_stuck_action "$last_moved" "$now" "${SPIRA_QUEUE_STUCK_AGE:-7200}" "$_stuck_exists" "$_stall_from")"
+    case "$_stuck_action" in
+        no-history)
+            printf 'batch %s: no BATCHED/LANDED record — stuck check skipped\n' "$name"
+            ;;
+        not-stuck)
             rm -f "$_stuck_flag" 2>/dev/null || true
-        elif [ ! -f "$_stuck_flag" ]; then
+            ;;
+        alert)
+            local stuck_age=$(( now - _stall_from ))
             printf '## Note\nThe merge queue for %s has not made progress in %ds (threshold %ds).\n\nQueue depth: %d branch(es). This may indicate a conflict loop or a stalled batch builder.\n' \
                 "$name" "$stuck_age" "${SPIRA_QUEUE_STUCK_AGE:-7200}" "$count" \
             | bash "$HERE/mail.sh" send operator \
@@ -689,12 +758,13 @@ for b in d:
                 2>/dev/null && touch "$_stuck_flag" 2>/dev/null || true
             [ -f "$_stuck_flag" ] && \
                 printf 'batch %s: mailed operator about stuck queue (stuck_age %ds)\n' "$name" "$stuck_age"
-        fi
-    fi
+            ;;
+        already-alerted) : ;;
+    esac
 
-    [ "$count" -ge "${SPIRA_QUEUE_BATCH_MAX:-8}" ] && triggered=1
-    [ "$age"   -ge "${SPIRA_QUEUE_BATCH_WAIT:-1800}" ] && triggered=1
-    [ "${_takeover_for_express:-0}" = 1 ] && triggered=1
+    local _cheap_reason
+    _cheap_reason="$(batch_cut_reason_cheap "$count" "$age" "${SPIRA_QUEUE_BATCH_MAX:-8}" \
+        "${SPIRA_QUEUE_BATCH_WAIT:-1800}" "${_takeover_for_express:-0}")" && triggered=1
 
     # BISECT: a prior red with no attributable suite already narrowed the
     # culprit by persisted binary search (queue_bisect_split, run from
@@ -730,12 +800,11 @@ for b in d:
     local _active=""
     if [ -z "$triggered" ] && [ "${SPIRA_QUEUE_BATCH_IDLE_CUT:-1}" = 1 ] && [ "$count" -gt 0 ]; then
         _active="$("${SPIRA_FORGE:-$HERE/forge.sh}" runs-active "$repo" 2>/dev/null)" || _active="?"
-        case "${_active:-?}" in
-            0) triggered=1
-               printf 'batch %s: CI idle (0 runs queued or in progress) — cutting %d certified branch(es) without waiting\n' \
-                   "$name" "$count" ;;
-            ''|*[!0-9]*) : ;;   # ? or anything unparseable: assume busy, wait it out
-        esac
+        if batch_cut_idle "$_active"; then
+            triggered=1
+            printf 'batch %s: CI idle (0 runs queued or in progress) — cutting %d certified branch(es) without waiting\n' \
+                "$name" "$count"
+        fi
     fi
 
     # Collect IDs for a bulk priority/labels query (also used for the express check).
@@ -747,14 +816,7 @@ for b in d:
     # EXPRESS: a certified express branch triggers a batch immediately.
     # A batch of one spends a full CI run on a single bead; knowingly accepted.
     if [ -z "$triggered" ]; then
-        local _elab="${SPIRA_EXPRESS_LABEL:-express}"
-        if PRIO_JSON="$prio_json" EXPRESS_LABEL="$_elab" python3 -c '
-import sys, json, os
-d = json.loads(os.environ.get("PRIO_JSON", "[]") or "[]")
-d = d if isinstance(d, list) else [d]
-lbl = os.environ.get("EXPRESS_LABEL", "express")
-sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
-' 2>/dev/null; then
+        if batch_cut_express "$prio_json" "${SPIRA_EXPRESS_LABEL:-express}"; then
             printf 'batch %s: express certified branch — triggering immediate batch\n' "$name"
             triggered=1
         fi
@@ -1187,4 +1249,8 @@ print((t[:120] if t else '(title unavailable)') or '(title unavailable)')
     printf '%s\n' "$_ob_opened_msg" >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
 }
 
-main "$@"
+# Sourced (a T1 suite wants batch_cut_reason_cheap et al. without a real batch run) vs
+# executed: main runs only when this file is the entry point.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    main "$@"
+fi

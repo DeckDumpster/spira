@@ -41,6 +41,54 @@
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 
+# gate_fits and gate_lock_wait live here, ABOVE the source guard below, so a T1 suite can
+# source this file for the arithmetic alone without a live pass ever starting. Each takes
+# its inputs as optional parameters, defaulting to the pass globals (PASS_START, LAND_MAXSEC,
+# LAND_GATE_RESERVE, set further down) and env (SPIRA_GATE_TIMEOUT, SPIRA_GATE_LOCK_WAIT) —
+# every real call site below still calls them with zero arguments and gets the exact same
+# globals it always read.
+
+# gate_fits [maxsec] [pass-start] [reserve] -> 0 if there is room for another gate in this
+# pass, 1 if the pass should stop. ZERO OR NEGATIVE MAXSEC MEANS NO LIMIT, which is how a
+# hand-run pass (no RuntimeMaxSec at all) behaves: an operator draining a backlog must not
+# be told there is no time left by a budget that is not being enforced on them.
+gate_fits() {
+    local maxsec="${1:-${LAND_MAXSEC:-0}}" pass_start="${2:-${PASS_START:-0}}" \
+        reserve="${3:-${LAND_GATE_RESERVE:-1200}}"
+    [ "$maxsec" -gt 0 ] 2>/dev/null || return 0
+    local spent=$(( $(date +%s) - pass_start ))
+    [ $(( maxsec - spent )) -ge "$reserve" ]
+}
+
+# gate_lock_wait [maxsec] [pass-start] [gate-timeout] [explicit-wait] — sets _gate_wait to
+# how long this pass may wait for the gate tree (not stdout, so log() messages are not
+# consumed by a $() caller).
+#
+# DERIVED FROM THE GATE TIMEOUT, not the pass budget. gate.sh documents why the wait must
+# be at least 2 * gate-timeout: one holder can legitimately run two full trials (branch +
+# base), so a shorter wait times out against a healthy holder. An explicit wait is honored
+# so the operator can size the two independently. When the remaining pass budget is shorter
+# than the ideal, the wait is capped and logged so rc=75 is readable as contention rather
+# than as a branch fault.
+gate_lock_wait() {
+    local maxsec="${1:-${LAND_MAXSEC:-0}}" pass_start="${2:-${PASS_START:-0}}" \
+        timeout="${3:-${SPIRA_GATE_TIMEOUT:-2700}}" explicit="${4:-${SPIRA_GATE_LOCK_WAIT:-}}"
+    if [ -n "$explicit" ]; then
+        _gate_wait="$explicit"
+        return
+    fi
+    local ideal=$(( timeout * 2 ))
+    if [ "$maxsec" -gt 0 ]; then
+        local remaining=$(( maxsec - ($(date +%s) - pass_start) ))
+        if [ "$remaining" -lt "$ideal" ]; then
+            log "landing: gate lock wait capped at ${remaining}s by pass budget (ideal ${ideal}s); rc=75 should be read as contention"
+            _gate_wait="$remaining"
+            return
+        fi
+    fi
+    _gate_wait="$ideal"
+}
+
 STATUS="$SPIRA_RUN/landing.status"
 MAILBOX="$SPIRA_RUN/landing.progress"
 LAND_RUN="$SPIRA_RUN/landing.run"
@@ -311,43 +359,10 @@ _land_state
 export SPIRA_LANDING_CONTAINERS="$LAND_CONTAINERS"
 : > "$LAND_CONTAINERS" 2>/dev/null || true
 LAND_GATE_RESERVE="${SPIRA_LAND_GATE_RESERVE:-1200}"
-
-# gate_fits -> 0 if there is room for another gate in this pass, 1 if the pass should stop.
-# ZERO OR NEGATIVE MEANS NO LIMIT, which is how a hand-run pass (no RuntimeMaxSec at all)
-# behaves: an operator draining a backlog must not be told there is no time left by a budget
-# that is not being enforced on them.
-gate_fits() {
-    [ "${LAND_MAXSEC:-0}" -gt 0 ] 2>/dev/null || return 0
-    local spent=$(( $(date +%s) - PASS_START ))
-    [ $(( LAND_MAXSEC - spent )) -ge "$LAND_GATE_RESERVE" ]
-}
-
-# gate_lock_wait — sets _gate_wait to how long this pass may wait for the gate tree.
-#
-# DERIVED FROM THE GATE TIMEOUT, not the pass budget. gate.sh documents why the wait must
-# be at least 2 * SPIRA_GATE_TIMEOUT: one holder can legitimately run two full trials
-# (branch + base), so a shorter wait times out against a healthy holder. An explicit
-# SPIRA_GATE_LOCK_WAIT is honored so the operator can size the two independently. When the
-# remaining pass budget is shorter than the ideal, the wait is capped and logged so rc=75
-# is readable as contention rather than as a branch fault.
-#
-# Sets _gate_wait (not stdout) so log() messages are not consumed by a $() caller.
-gate_lock_wait() {
-    if [ -n "${SPIRA_GATE_LOCK_WAIT:-}" ]; then
-        _gate_wait="$SPIRA_GATE_LOCK_WAIT"
-        return
-    fi
-    local ideal=$(( ${SPIRA_GATE_TIMEOUT:-2700} * 2 ))
-    if [ "${LAND_MAXSEC:-0}" -gt 0 ]; then
-        local remaining=$(( LAND_MAXSEC - ($(date +%s) - PASS_START) ))
-        if [ "$remaining" -lt "$ideal" ]; then
-            log "landing: gate lock wait capped at ${remaining}s by pass budget (ideal ${ideal}s); rc=75 should be read as contention"
-            _gate_wait="$remaining"
-            return
-        fi
-    fi
-    _gate_wait="$ideal"
-}
+# gate_fits and gate_lock_wait are defined above the source guard, right after `. lib.sh`,
+# so a T1 suite can source this file without a live pass; every call site below still
+# calls them with zero arguments and gets PASS_START/LAND_MAXSEC/LAND_GATE_RESERVE (set
+# above this line) as their defaults.
 
 # HOW MANY CERTIFICATION GATES RUN IN PARALLEL THIS PASS. Derived from the box when
 # SPIRA_CERTIFY_PAR is unset: min(nproc --all/4, free-memory/400MiB), at least 1.
