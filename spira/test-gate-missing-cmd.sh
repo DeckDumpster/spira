@@ -20,7 +20,7 @@
 # defect: sp-lkzl
 # host-reason: creates scratch git repos to test gate.sh; no container-hosted state
 # tier: T0
-# covers: spira/gate.sh spira/conf.sh
+# covers: spira/gate.sh spira/conf.sh UC-gate-verdict-07
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

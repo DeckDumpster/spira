@@ -7,7 +7,7 @@
 #
 # defect: sp-ic8n
 # tier: T1
-# covers: spira/gate-sweep.sh spira/gate.sh
+# covers: spira/gate-sweep.sh spira/gate.sh UC-gate-verdict-20
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

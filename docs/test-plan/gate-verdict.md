@@ -186,6 +186,7 @@ Every `verdict` reason in gate.sh was grepped across all `test-*.sh`. Nothing as
 13. **Output bound**. Base output is `tail -c 8000` and branch output `tail -c 4000` (L746–748). `test-gate-fixture-diag.sh` proves there is no `tail -20`, but a diagnostic more than 8 KB before the end is still cut. Nothing states whether that is intended.
 14. **Yield bookkeeping cannot change the verdict** (L82–86, L126–138). No test makes `yield.sh` fail or hang and asserts that the exit code is unchanged. A *hang* would change it, because `yield_note` runs synchronously without a timeout.
 15. **`test-reopen-queue-eject.sh` sp-px6ng section is vacuous**. The regression it names (the `.ejected` sidecar surviving a RED overwrite, read by the gate) is unguarded until a writer→reader behaviour test exists.
+16. **UC-16/17/18/19 have no covering suite at all.** `test-gate-tree.sh` (sp-78xpb) and `test-gate-locks.sh` (sp-fxvgo) — the files §3/§4 describe as KEEP — were deleted for flipping under wall-clock timing (`law-a-test-that-flips-is-deleted`), which is exactly the marker-based rewrite §4 point 3 calls for; neither has been rebuilt since. Deferred to the gate-verdict consolidation follow-up: rebuilding them is the rewrite, not a tagging exercise.
 
 ---
 

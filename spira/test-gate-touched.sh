@@ -2,7 +2,7 @@
 # test-gate-touched.sh — gate-touched.sh: coverage-based landing gate suite selector.
 #
 # tier: T1
-# covers: spira/gate-touched.sh spira/select.sh
+# covers: spira/gate-touched.sh spira/select.sh UC-gate-verdict-08
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
