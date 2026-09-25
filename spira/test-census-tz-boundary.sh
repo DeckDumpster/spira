@@ -121,6 +121,30 @@ _after_count="$(printf '%s\n' "$_since"  | grep -c 'tz-after'  || true)"
 is "only event after watermark counted (before absent)" "0" "$_before_count"
 is "event after watermark is counted (after present)"   "1" "$_after_count"
 
+# ==============================================================================
+echo
+echo "PART 3 — write side: bump_requeue stamps created_at in UTC, not server-local"
+# ==============================================================================
+# sp-yyih8: _bump_write_event_try / bump_reopen used NOW(), which on a box whose dolt
+# server has no TZ set returns server-local wall clock while the column is read as UTC.
+# UTC_TIMESTAMP() is unaffected by @@system_time_zone. A container's own system tz may
+# happen to be UTC, in which case NOW() and UTC_TIMESTAMP() agree there and the
+# behavioural check below cannot see the class — so check the source text first, the
+# same way PART 1 checks _census_events_sql's text rather than relying on the read side
+# landing on a skewed box.
+_now_count="$(grep -c "created_at) VALUES.*NOW())" "$HERE/lib.sh" || true)"
+is "no write-side event INSERT uses NOW()" "0" "$_now_count"
+
+bump_requeue "sp-tz1" "tz-write-check"
+_lag="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+    "SELECT ABS(TIMESTAMPDIFF(SECOND, MAX(created_at), MAX(UTC_TIMESTAMP()))) FROM events WHERE issue_id='sp-tz1' AND event_type='requeued' AND new_value='tz-write-check'" \
+    2>/dev/null | sed -n '3p' | tr -d ' ')"
+if [ -n "$_lag" ] && [ "$_lag" -le 5 ] 2>/dev/null; then
+    ok "bump_requeue created_at within 5s of UTC_TIMESTAMP()"
+else
+    bad "bump_requeue created_at within 5s of UTC_TIMESTAMP()" "lag_s=${_lag:-<empty>}"
+fi
+
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]
