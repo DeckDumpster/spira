@@ -47,6 +47,12 @@ F="$SPIRA_HOME/chamber/$FAYTH.fayth"
 # shellcheck disable=SC1090
 . "$F"
 
+# SPIRA_REQUIRE_LABEL — set by summon_fayth when the SLOT itself is restricted (an express
+# grant under the admission throttle, sp-zcvh1). Folded into FAYTH_LABELS before the fence
+# and the claim below, so both see it: a bead that does not carry it is not this aeon's to
+# take, no matter how the fayth's own predicate reads.
+[ -n "${SPIRA_REQUIRE_LABEL:-}" ] && FAYTH_LABELS="${FAYTH_LABELS:+$FAYTH_LABELS,}$SPIRA_REQUIRE_LABEL"
+
 # ---- the fence -----------------------------------------------------------------------
 # Bound to the actor that would do the damage. An installation that imported a predecessor's
 # beads has a ready queue full of work that predecessor is still doing, and the only thing
