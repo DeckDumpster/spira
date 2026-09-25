@@ -30,8 +30,12 @@
 # the testenv container as spirauser) or user systemd is not responding.
 #
 # covers: systemd/install.sh
+# requires: testenv
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# The XDG_RUNTIME_DIR check below is a UID heuristic, not an identity check — it passes
+# on any host whose real user happens to have UID 1001 (sp-nxvjm). This is the guard.
+. "$HERE/testenv-guard.sh"
 pass=0; fail=0
 ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
