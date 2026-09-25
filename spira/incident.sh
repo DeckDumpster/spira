@@ -305,8 +305,14 @@ file_one() {
         # (law-a-rename-repoints-no-reader): _recur_n was 0 on every recurrence and n was 1
         # every time. recurs_of queries the events table; the larger of the two is taken so
         # a bead filed by older code that still carries sp-recur-N labels counts correctly.
+        #
+        # A FAILED QUERY IS NOT ZERO RECURRENCES. recurs_of renders '?' when bd sql fails
+        # (sp-39yd3); folding that into 0 here would read a driver outage as a fresh bead
+        # and silently defeat the Sin threshold below. _ev_unknown gates that check instead
+        # of the count.
         _ev_n="$(recurs_of "$id" 2>/dev/null)"
-        case "$_ev_n" in ''|*[!0-9]*) _ev_n=0 ;; esac
+        _ev_unknown=0
+        case "$_ev_n" in ''|*[!0-9]*) _ev_unknown=1; _ev_n=0 ;; esac
         [ "$_ev_n" -gt "$_recur_n" ] && _recur_n="$_ev_n"
         n=$((_recur_n + 1))
         if [ "$_was_closed" = 1 ]; then
@@ -357,7 +363,12 @@ $(head -c 2000 "$pf")" >/dev/null 2>&1
         # AN EXEMPT REF NEVER REACHES THIS BLOCK. The recurrence counter and the notes have
         # already been written above, so the signal is preserved; what is removed is its ability
         # to raise an ask against the operator. The log still says the threshold was crossed.
-        if [ "$SIN_EXEMPT" = 1 ] && [ "$n" -ge "$SIN_AT" ]; then
+        if [ "$_ev_unknown" = 1 ]; then
+            # BLIND, NOT SILENT. The events query failed, so the true recurrence count is
+            # unknown; crossing SIN_AT cannot be judged this cycle. Say so on the record
+            # rather than deciding "not crossed" on a count that was never measured.
+            ilog "$ref: recurrence count unknown — events query failed; Sin is blind this cycle"
+        elif [ "$SIN_EXEMPT" = 1 ] && [ "$n" -ge "$SIN_AT" ]; then
             ilog "$ref crossed SIN_AT=$SIN_AT ($n recurrences) but is exempt — no escalation"
         elif [ "$n" -ge "$SIN_AT" ] && ! bdq label list "$id" 2>/dev/null | grep -q '\bsin\b'; then
             bdq label add "$id" sin >/dev/null 2>&1

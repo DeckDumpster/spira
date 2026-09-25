@@ -192,7 +192,9 @@ except Exception:
 
     if _bump_write_event_try "$id" "$etype" "doctor" >/dev/null 2>&1; then wrote=1; else wrote=0; fi
     count="$(_counter_events_query "$id" "$etype")"
-    if [ "${count:-0}" -gt 0 ]; then
+    # count is '?' (not a digit) when the read itself failed — that is a round-trip
+    # failure too, not zero events, so the numeric guard below must not choke on it.
+    if [ "${count:-0}" -gt 0 ] 2>/dev/null; then
         OK "events write/read round trip"
         return
     fi
