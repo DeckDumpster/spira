@@ -83,10 +83,10 @@ chmod +x "$SPIRA_HOME_FIXTURE/hooks/aeon-fence.sh" \
          "$SPIRA_HOME_FIXTURE/bd-close-unacked-guard.sh"
 
 # aeon.sh has no argument for "just define functions" — the top-level script
-# requires a fayth and dies without one — so the function body is extracted
-# directly rather than sourcing the whole script.
+# requires a fayth and dies without one — so lib.sh (which aeon_settings lives in,
+# shared with the sweep call site) is sourced directly instead.
 REAL_JSON="$(SPIRA_HOME="$SPIRA_HOME_FIXTURE" bash -c '
-    eval "$(sed -n "/^aeon_settings() {/,/^}/p" "$1/aeon.sh")"
+    . "$1/lib.sh"
     aeon_settings
 ' -- "$HERE")"
 
