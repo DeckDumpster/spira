@@ -4004,7 +4004,7 @@ park_branch_collisions() {
         case "$line" in COLLISION\ *) ;; *) continue ;; esac
         read -r _ id repo branch holder_id holder_path <<< "$line"
         labels="$(bdq label list "$id" 2>/dev/null)"
-        case "$labels" in *"${SPIRA_ASK_LABEL:-needs-operator}"*) continue ;; esac
+        case "$labels" in *"${SPIRA_ASK_LABEL}"*) continue ;; esac
         bdq label add "$id" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
         bdq label add "$id" "overseer" >/dev/null 2>&1 || true
         bdq note "$id" "Parked by detect_branch_collisions: recorded branch $branch is checked out in $holder_id's worktree at $holder_path, not this bead's own canonical path. Every summon reaches aeon.sh's law-one-aeon-one-worktree refusal (or a no-op self-correct, when this bead's own default branch is the squatted one) before a session can start, and nothing about the input changes on retry. Labeled $SPIRA_ASK_LABEL and overseer so dispatch stops spending a claim here — free $holder_path or correct the branch: label, then remove $SPIRA_ASK_LABEL." >/dev/null 2>&1 || true
