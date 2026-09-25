@@ -1012,8 +1012,9 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 # =============================================================================
 build_batch sp-vd-bo1 > /dev/null
 bo1_tip="$(git -C "$REPO" rev-parse spira/sp-vd-bo1)"
+base_sha_30="$(grep '^base=' "$(batch_file)" | cut -d= -f2)"
 mkdir -p "$QUEUEDIR/$REPONAME"
-printf 'sp-vd-bo1:%s\n' "$bo1_tip" > "$QUEUEDIR/$REPONAME/bisect"
+printf '%s sp-vd-bo1:%s\n' "$base_sha_30" "$bo1_tip" > "$QUEUEDIR/$REPONAME/bisect"
 { printf 'red\n'; printf 'build-error: error: could not compile `spira-core`\n'; } > "$FORGE_STATUS_FILE"
 verdict "$REPONAME" > /dev/null
 case "$(landstate sp-vd-bo1)" in
@@ -1034,15 +1035,16 @@ git -C "$REPO" fetch -q origin 2>/dev/null || true
 batch_head31="$(build_batch sp-vd-bg1 sp-vd-bg2)"
 bg1_tip="$(git -C "$REPO" rev-parse spira/sp-vd-bg1)"
 bg2_tip="$(git -C "$REPO" rev-parse spira/sp-vd-bg2)"
+base_sha_31="$(grep '^base=' "$(batch_file)" | cut -d= -f2)"
 mkdir -p "$QUEUEDIR/$REPONAME"
 {
-    printf 'sp-vd-bg1:%s sp-vd-bg2:%s\n' "$bg1_tip" "$bg2_tip"
-    printf 'sp-vd-bg3:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n'
+    printf '%s sp-vd-bg1:%s sp-vd-bg2:%s\n' "$base_sha_31" "$bg1_tip" "$bg2_tip"
+    printf '%s sp-vd-bg3:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n' "$base_sha_31"
 } > "$QUEUEDIR/$REPONAME/bisect"
 printf 'green\nhead-sha: %s\n' "$batch_head31" > "$FORGE_STATUS_FILE"
 out="$(verdict "$REPONAME")"
 want "31. bisect resolve: fast-forward landed" "landed by fast-forward" "$out"
-is   "31. bisect resolve: advances to sibling" "sp-vd-bg3:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" \
+is   "31. bisect resolve: advances to sibling" "$base_sha_31 sp-vd-bg3:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" \
      "$(head -1 "$QUEUEDIR/$REPONAME/bisect" 2>/dev/null)"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
