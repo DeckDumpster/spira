@@ -11,8 +11,12 @@
 # the account capacity is paused. A pass archives at most SPIRA_ARCHIVIST_PER_PASS sessions,
 # choosing the most drifted first. No two archives run concurrently, even across entry points.
 #
+# Also guards the daily digest (sp-9zthk): `record` queues one line per durably-filed
+# finding, `digest-send` mails at most one `--kind note` a day and empties the queue only on
+# a successful send, and a second call the same day leaves everything queued for the next one.
+#
 # defect: sp-mebw
-# covers: spira/archivist.sh spira/conf.sh spira/hooks/session.sh spira/ctx-meter.sh
+# covers: spira/archivist.sh spira/conf.sh spira/hooks/session.sh spira/ctx-meter.sh spira/mail.sh spira/chamber/archivist.md
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ARC="$HERE/archivist.sh"
@@ -628,6 +632,61 @@ has "SPIRA_ARCHIVIST_TIMEOUT_RETRIES is in the key list" "$out" "SPIRA_ARCHIVIST
 val="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_RUN="$T/run" \
     bash -c '. "'"$HERE"'/conf.sh" && echo "$SPIRA_ARCHIVIST_TIMEOUT_RETRIES"' 2>/dev/null)"
 is "default SPIRA_ARCHIVIST_TIMEOUT_RETRIES" "3" "$val"
+
+adigest() {  # adigest <archivist.sh args...>
+    env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+        SPIRA_RUN="$T/run" SPIRA_MAIL="$T/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
+        SPIRA_TOKEN_PROJECTS="$T/projects" SPIRA_TZ=UTC \
+        bash "$ARC" "$@" 2>&1
+}
+
+# ==========================================================================================
+echo
+echo "digest: record queues a line; digest-send mails it once and clears the queue"
+# ==========================================================================================
+rm -rf "$T/run" "$T/mail"
+mkdir -p "$T/run"
+
+adigest record "sp-aaaa: first finding" >/dev/null
+adigest record "sp-bbbb: second finding" >/dev/null
+adigest record "wiki/scars/thing.md: third finding" >/dev/null
+is "three record calls queue three lines" "3" \
+    "$(wc -l < "$T/run/archivist/digest.pending" 2>/dev/null | tr -d ' ')"
+
+out="$(adigest digest-send)"; rc=$?
+is "digest-send exits 0" 0 "$rc"
+op_count="$(ls "$T/mail/operator/new" 2>/dev/null | wc -l | tr -d ' ')"
+is "digest-send delivers exactly one mail" "1" "$op_count"
+digest_msg="$(cat "$T/mail/operator/new"/* 2>/dev/null)"
+has "digest names the first finding"  "$digest_msg" "sp-aaaa: first finding"
+has "digest names the second finding" "$digest_msg" "sp-bbbb: second finding"
+has "digest names the third finding"  "$digest_msg" "wiki/scars/thing.md: third finding"
+has "digest is sent as kind note"     "$digest_msg" "X-Spira-Kind: note"
+has "digest carries X-Spira-Digest"   "$digest_msg" "X-Spira-Digest: yes"
+is "the queue is emptied after a successful send" "" "$(cat "$T/run/archivist/digest.pending" 2>/dev/null)"
+
+# ==========================================================================================
+echo
+echo "digest: a second call the same day sends nothing more, however much is queued"
+# ==========================================================================================
+adigest record "sp-cccc: fourth finding" >/dev/null
+out="$(adigest digest-send)"
+has "second same-day digest-send declines to send" "$out" "already sent today"
+op_count2="$(ls "$T/mail/operator/new" 2>/dev/null | wc -l | tr -d ' ')"
+is "no second digest mail is delivered the same day" "1" "$op_count2"
+is "the fourth finding stays queued for tomorrow" "1" \
+    "$(wc -l < "$T/run/archivist/digest.pending" 2>/dev/null | tr -d ' ')"
+
+# ==========================================================================================
+echo
+echo "digest: an empty queue sends nothing (positive control for the emptiness check)"
+# ==========================================================================================
+rm -rf "$T/run" "$T/mail"
+mkdir -p "$T/run"
+out="$(adigest digest-send)"; rc=$?
+is "digest-send on an empty queue exits 0" 0 "$rc"
+has "digest-send on an empty queue says nothing pending" "$out" "nothing pending"
+is "no mail is delivered from an empty queue" "" "$(ls "$T/mail/operator/new" 2>/dev/null)"
 
 echo
 echo "  $pass passed, $fail failed"

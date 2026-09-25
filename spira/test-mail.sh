@@ -124,6 +124,20 @@ want "refusal mentions urgency" "urgent" "$out"
 lint_case "SEEN GREEN: urgent message with ## Why it is urgent is accepted" 0 "Sender <s@s>" "Urgent matter" "note" "" 1 \
     "$(printf '## Note\n\nContent.\n\n## Why it is urgent\n\nThe system is on fire.\n')" >/dev/null
 
+# -- archivist per-finding note vs the daily digest (sp-9zthk) --
+finding_body="$(printf '## Note\n\nFound something.\n')"
+out="$(_lint_check "Archivist <archivist@spira>" "What I found" "note" "" "" "$finding_body" 2>&1)"; rc=$?
+[ "$rc" != 0 ] && ok "SEEN RED: archivist per-finding note is refused" \
+                || bad "SEEN RED: archivist per-finding note is refused" "exit 0"
+want "refusal names the rule (archivist note)" "law-fail-closed-at-the-source" "$out"
+out="$(_lint_check "Archivist <archivist@spira>" "Not a note" "question" "default" "" \
+    "$(printf '## Question\n\nOK?\n\n## Default\n\nYes.\n')" 2>&1)"
+is "SEEN GREEN: archivist question (not a note) is unaffected" 0 "$?"
+out="$(_lint_check "Sender <s@s>" "What I found" "note" "" "" "$finding_body" 2>&1)"
+is "SEEN GREEN: the same note from a non-archivist sender is unaffected" 0 "$?"
+out="$(_lint_check "Archivist <archivist@spira>" "Today's digest" "note" "" "" "$finding_body" "1" 2>&1)"
+is "SEEN GREEN: archivist note sent with --digest is accepted" 0 "$?"
+
 # -- "the ask below" promise with no section --
 lint_case "SEEN RED: body promises ask below but has no section" 1 "Sentinel <sentinel@spira>" "Some event" "" "" "" \
     "$(printf 'not retried until a human changes the approach; the ask below carries the failure\n')" >/dev/null
@@ -447,6 +461,30 @@ race_fp1="$_REPEAT_FP"
 _REPEAT_FP=""
 _repeat_check operator "$CONC_SUBJ" >/dev/null 2>&1; race_rc2=$?
 is "known gap: two racing checks for the same subject both pass before either stamps" "0 0" "$race_rc1 $race_rc2"
+
+# ==========================================================================
+# T2 — ARCHIVIST DIGEST GUARD END TO END (sp-9zthk)
+# ==========================================================================
+echo
+echo "archivist digest guard end to end: refused without --digest, delivered and headered with it"
+
+finding_body="$(printf '## Note\n\nFound something loose in a transcript.\n')"
+out="$(printf '%s' "$finding_body" | run send operator --from "Archivist <archivist@spira>" \
+    --subject "A finding straight from a transcript" --kind note 2>&1)"; rc=$?
+[ "$rc" != 0 ] && ok "archivist per-finding note is refused end to end" \
+                || bad "archivist per-finding note is refused end to end" "exit 0"
+want "refusal names the rule end to end" "law-fail-closed-at-the-source" "$out"
+before_count="$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l | tr -d ' ')"
+
+out="$(printf '%s' "$finding_body" | run send operator --from "Archivist <archivist@spira>" \
+    --subject "Archivist digest: 1 item recorded today" --kind note --digest 2>&1)"; rc=$?
+is "archivist digest note is delivered end to end" 0 "$rc"
+after_count="$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l | tr -d ' ')"
+is "the refused note landed nothing; the digest landed one message" \
+    "$((before_count + 1))" "$after_count"
+digest_file="$(ls -t "$SPIRA_MAIL/operator/new/" 2>/dev/null | head -1)"
+digest_msg="$(cat "$SPIRA_MAIL/operator/new/$digest_file" 2>/dev/null)"
+want "delivered digest carries X-Spira-Digest" "X-Spira-Digest: yes" "$digest_msg"
 
 echo
 tl_summary

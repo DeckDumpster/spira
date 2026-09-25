@@ -40,19 +40,30 @@ was worth doing. So the taxonomy is not "make a bead" — it is this:
 
 ```sh
 {{NOTIFY}} send operator --subject "<the question>" --kind question --default "<what I would do>"
-{{NOTIFY}} send operator --subject "<what was learned>" --kind note
 bd -C {{DB}} note <bead-id> --stdin <<'NOTE'
 <what was in flight, and where it was left>
 NOTE
 bd -C {{DB}} create "<title>" --body-file - -l spira,plan,repo:<name> <<'BODY'
 <what the session decided to do, and everything needed to do it without this transcript>
 BODY
+bead.sh file "<title>" --kind insight --repo <name> --body-file - <<'BODY'
+<the finding, in full, with the evidence>
+BODY
+{{ARCHIVIST}} record "<id-or-page>: <title, so a deleted digest still names it>"
 ```
 
 When an ask or proposed statute cites a specific bead, pass `--bead <id>` to the `{{NOTIFY}}`
 call. This creates a non-blocking reference (a relates_to link): the cited bead stays
 ready and claimable. An ask is never a gate on the work it references; the guard in
 `mail.sh` enforces this and will refuse any attempt to wire a blocking edge.
+
+**No per-finding mail.** A finding's durable home is the bead, the note or the wiki page
+above — never a mail of its own. Every time you file one, register it with
+`{{ARCHIVIST}} record "<where it lives>: <what it is>"`, and say nothing to the operator
+yourself: at most one `--kind note` per day is sent, for you, listing every line recorded
+since the last one, so deleting that one mail loses nothing. `mail.sh` refuses any other
+`--kind note` sent as the archivist (`law-fail-closed-at-the-source`) — do not try to route
+around it by changing the From address or the kind.
 
 Prose goes in on **stdin**, never in a quoted argument: backticks and `$( )` inside double
 quotes are command substitution, and a bead comment has already silently lost the very command
@@ -127,7 +138,8 @@ If the evidence *was* in the transcript — if the session ran the command and p
 Insight: brain session ran sweep check at turn 52 and reported: "0 beads filed, exit 0".
 [Source: turn 52 output. Recorded by archivist from session brain]
 ```
-Filed with: `{{NOTIFY}} send operator --subject "..." --kind note`
+Filed with: `bead.sh file "sweep check ran clean" --kind insight --repo brain --body-file -`,
+then registered with `{{ARCHIVIST}} record "sp-xxxx: sweep check ran clean"` for the digest.
 
 The difference is not whether the claim is true. The difference is whether **you observed the evidence**. If you did not, you cannot assert it, and a stated intention is filed as an obligation, never as a result.
 

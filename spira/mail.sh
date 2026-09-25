@@ -2,7 +2,7 @@
 # mail.sh — Maildir mailboxes for operator/concierge messages.
 #
 #   mail.sh send <mailbox> --from "<s>" --subject "<s>" [--kind K] [--urgent]
-#                          [--default D] [--bead ID] < body
+#                          [--default D] [--bead ID] [--digest] < body
 #   mail.sh template <kind>              print the kind's body skeleton
 #   mail.sh list <mailbox> [--unread]
 #   mail.sh read <mailbox> [<message>]   prints, moves new -> cur
@@ -13,8 +13,10 @@
 # Send refuses a message that is missing From, missing Subject, has a Subject
 # that is or leads with a bead id, has a body mentioning a bead id without enough
 # context to say what the work is, has an unknown kind, is missing a header the
-# kind requires, has an empty required section, or is urgent without
-# "## Why it is urgent".  Each refusal names the rule.
+# kind requires, has an empty required section, is urgent without
+# "## Why it is urgent", or is a --kind note from the archivist sent without --digest
+# (findings go to a bead or the wiki first; only the daily digest mails a note).
+# Each refusal names the rule.
 # Override: SPIRA_MAIL_LINT_CONSIDERED=<reason>, recorded in X-Spira-Lint-Override.
 #
 # Any bead named by --bead, or found anywhere in the subject or body, is resolved
@@ -191,7 +193,7 @@ _repeat_stamp() {
 }
 
 _lint_check() {
-    local from="$1" subject="$2" kind="$3" default="$4" urgent="$5" body="$6"
+    local from="$1" subject="$2" kind="$3" default="$4" urgent="$5" body="$6" digest="${7:-}"
     [ -n "${SPIRA_MAIL_LINT_CONSIDERED:-}" ] && return 0
     local fail=0
 
@@ -272,6 +274,16 @@ _lint_check() {
         fi
     fi
 
+    # THE ARCHIVIST'S OWN GUARD RAIL. A per-finding note is the defect sp-9zthk exists to stop:
+    # findings must land on a bead or the wiki first, and the operator sees them only in the one
+    # digest a day. A producer that can tell it is about to make this mistake refuses at the
+    # source rather than trusting a reader to catch it later (law-fail-closed-at-the-source).
+    # --digest is how the digest itself sends its one permitted note.
+    if [ "$kind" = "note" ] && [[ "$from" == *"archivist@spira"* ]] && [ -z "$digest" ]; then
+        printf 'mail: lint: archivist note refused — findings go to a bead or the wiki first; only the daily digest (--digest) may mail a note (law-fail-closed-at-the-source)\n' >&2
+        fail=1
+    fi
+
     # A mail body that promises "the ask below" or "the question below" but contains no
     # ## Question or ## Decision section is lying. The ask must be in the same message or
     # the promise must be removed.
@@ -298,7 +310,7 @@ cmd_send() {
             fi
             ;;
     esac
-    local from="" subject="" kind="" default="" bead="" urgent=""
+    local from="" subject="" kind="" default="" bead="" urgent="" digest=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --from)    from="$2";    shift 2 ;;
@@ -307,6 +319,7 @@ cmd_send() {
             --default) default="$2"; shift 2 ;;
             --bead)    bead="$2";    shift 2 ;;
             --urgent)  urgent=1;     shift ;;
+            --digest)  digest=1;     shift ;;
             *) printf 'mail.sh send: unknown option: %s\n' "$1" >&2; return 1 ;;
         esac
     done
@@ -316,7 +329,7 @@ cmd_send() {
     if [ "$mailbox" = "operator" ]; then
         _repeat_check "$mailbox" "$subject" || return 1
     fi
-    _lint_check "$from" "$subject" "${kind:-}" "${default:-}" "${urgent:-}" "$body" || return 1
+    _lint_check "$from" "$subject" "${kind:-}" "${default:-}" "${urgent:-}" "$body" "${digest:-}" || return 1
 
     _mail_ensure "$mailbox"
     local dir; dir="$(_mail_dir "$mailbox")"
@@ -381,6 +394,7 @@ cmd_send() {
         [ -n "$kind" ]    && printf 'X-Spira-Kind: %s\n' "$kind"
         [ -n "$default" ] && printf 'X-Spira-Default: %s\n' "$default"
         [ -n "$urgent" ]  && printf 'X-Spira-Urgent: yes\n'
+        [ -n "$digest" ]  && printf 'X-Spira-Digest: yes\n'
         [ -n "$x_bead" ]  && printf 'X-Spira-Bead: %s\n' "$x_bead"
         [ -n "${SPIRA_MAIL_LINT_CONSIDERED:-}" ] && printf 'X-Spira-Lint-Override: %s\n' "${SPIRA_MAIL_LINT_CONSIDERED}"
         [ -n "${SPIRA_MAIL_REPEAT_CONSIDERED:-}" ] && printf 'X-Spira-Repeat-Override: %s\n' "${SPIRA_MAIL_REPEAT_CONSIDERED}"
