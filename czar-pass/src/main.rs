@@ -1365,4 +1365,47 @@ mod tests {
         let mtime = file_mtime(&f).expect("freshly written file must have an mtime");
         assert!(mtime <= now && now - mtime < 30, "mtime {} vs now {}", mtime, now);
     }
+
+    #[test]
+    fn read_new_lines_with_no_marker_returns_the_tail() {
+        let dir = scratch_dir("read-new-lines-no-marker");
+        let log = dir.join("landing.log");
+        fs::write(&log, "2026-01-01T00:00:00Z spira: verdict\n").unwrap();
+        assert!(read_new_lines(&log, "").contains("verdict"));
+    }
+
+    #[test]
+    fn read_new_lines_excludes_lines_at_or_before_the_marker() {
+        // The two-pass sequence run_pass() actually performs: pass 1 sees the line with
+        // no marker, then writes cfg.now_iso as the marker; pass 2 must not see the same
+        // line again, so a marker at or after the line's own timestamp excludes it.
+        let dir = scratch_dir("read-new-lines-marker");
+        let log = dir.join("landing.log");
+        let line_ts = "2026-01-01T00:00:00Z";
+        fs::write(&log, format!("{} spira: verdict\n", line_ts)).unwrap();
+
+        assert!(read_new_lines(&log, "").contains("verdict"));
+
+        let marker_after_first_pass = "2026-01-01T00:00:01Z";
+        let second = read_new_lines(&log, marker_after_first_pass);
+        assert!(
+            !second.contains("verdict"),
+            "same line must not re-fire once the marker has advanced past it: got {:?}",
+            second
+        );
+    }
+
+    #[test]
+    fn read_new_lines_includes_lines_strictly_after_the_marker() {
+        let dir = scratch_dir("read-new-lines-after-marker");
+        let log = dir.join("landing.log");
+        fs::write(
+            &log,
+            "2026-01-01T00:00:00Z spira: old\n2026-01-01T00:00:02Z spira: new\n",
+        )
+        .unwrap();
+        let out = read_new_lines(&log, "2026-01-01T00:00:01Z");
+        assert!(!out.contains("old"), "line before the marker must be excluded: {:?}", out);
+        assert!(out.contains("new"), "line after the marker must be included: {:?}", out);
+    }
 }

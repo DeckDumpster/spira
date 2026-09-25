@@ -23,6 +23,12 @@
 #      test-watch-refresh.sh), a same-red second pass computing the same dedupe ref,
 #      and an unreadable base — grace-suppressed at first, then filed as unreadable
 #      (never treated as green) once it outlasts the grace window.
+#  22-25. deadlock/attribution-failed/sort-failed/loop-stalled: the four log-pattern
+#      detectors, ported from test-watchtower-queue.sh (UC-23) — this suite is now the
+#      one place that exercises them against the real binary.
+#  26. marker advances after each pass — the same landing.log line is not re-detected.
+#  27. ci-stalled and starved: the dedupe ref is stable across passes even when the
+#      measured duration changes (ported from test-watchtower-queue.sh).
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): for detectors 4 and 5,
 # the test first verifies NO detection with an empty/fresh fixture, then adds the
@@ -500,6 +506,183 @@ for key in SPIRA_BASE_CI_UNREADABLE_GRACE_SECS SPIRA_CZAR_STAGE_BASE_RED; do
         && ok "$key in SPIRA_CONF_KEYS" \
         || bad "$key missing from conf.sh"
 done
+
+# ==========================================================================================
+printf '\n%s\n' "22. DEADLOCK: no suites identified; leaving batch open"
+# ==========================================================================================
+# POSITIVE CONTROL first: an unrelated log line must not fire the detector.
+cat > "$STUB_FORGE" <<'FEOF22'
+#!/usr/bin/env bash
+exit 0
+FEOF22
+chmod +x "$STUB_FORGE"
+
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
+printf '%s spira: verdict spira: PR 72 red — suites identified; failing attribution\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "deadlock: DETECTED=no when no 'no suites' line" "CLASS=deadlock DETECTED=no" "$_log"
+
+# SEEN RED: the fixture line fires the detector and files an incident in act mode.
+printf '%s spira: verdict spira: PR 72 red — no suites identified; leaving batch open\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$SPIRA_RUN/landing.log"
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
+SPIRA_CZAR_STAGE_DEADLOCK=act bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+_inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
+want "deadlock: DETECTED=yes on 'no suites identified' fixture" "CLASS=deadlock DETECTED=yes" "$_log"
+want "deadlock: incident filed with cause=deadlock" "cause=deadlock" "$_inc_log"
+
+# ==========================================================================================
+printf '\n%s\n' "23. ATTRIBUTION-FAILED: ejected 0, requeued N"
+# ==========================================================================================
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
+printf '%s spira: verdict spira: PR 73 — ejected 2, requeued 1\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "attribution-failed: DETECTED=no when ejected is non-zero" \
+    "CLASS=attribution-failed DETECTED=no" "$_log"
+
+printf '%s spira: verdict spira: PR 73 — ejected 0, requeued 5\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$SPIRA_RUN/landing.log"
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
+SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED=act bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+_inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
+want "attribution-failed: DETECTED=yes on ejected 0, requeued 5" \
+    "CLASS=attribution-failed DETECTED=yes" "$_log"
+want "attribution-failed: incident filed with cause=attribution-failed" \
+    "cause=attribution-failed" "$_inc_log"
+
+# ==========================================================================================
+printf '\n%s\n' "24. SORT-FAILED: queue_sort_rows ranking failed"
+# ==========================================================================================
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
+printf '%s spira: verdict spira: PR 74 red\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "sort-failed: DETECTED=no when ranking did not fail" "CLASS=sort-failed DETECTED=no" "$_log"
+
+printf '%s spira: queue_sort_rows: ranking failed (rc=1) -- returning rows unranked\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$SPIRA_RUN/landing.log"
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
+SPIRA_CZAR_STAGE_SORT_FAILED=act bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+_inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
+want "sort-failed: DETECTED=yes on ranking-failed fixture" "CLASS=sort-failed DETECTED=yes" "$_log"
+want "sort-failed: incident filed with cause=sort-failed" "cause=sort-failed" "$_inc_log"
+
+# ==========================================================================================
+printf '\n%s\n' "25. LOOP-STALLED: no landing pass complete within the threshold"
+# ==========================================================================================
+# Stub systemctl so is-failed is deterministic: non-zero → inference branch, not det-restart.
+STUB_SC="$T/stub-systemctl.sh"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$STUB_SC"
+chmod +x "$STUB_SC"
+
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
+_recent_ts="$(date -u -d '@'"$(( $(date +%s) - 100 ))" +%Y-%m-%dT%H:%M:%SZ)"
+printf '%s spira: landing: pass complete — 3 branch(es) seen, 0 movement(s)\n' \
+    "$_recent_ts" > "$SPIRA_RUN/landing.log"
+SPIRA_SYSTEMCTL="$STUB_SC" bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "loop-stalled: DETECTED=no when last pass is 100s old (threshold 3000s)" \
+    "CLASS=loop-stalled DETECTED=no" "$_log"
+
+_old_ts="$(date -u -d '@'"$(( $(date +%s) - 4000 ))" +%Y-%m-%dT%H:%M:%SZ)"
+printf '%s spira: landing: pass complete — 3 branch(es) seen, 0 movement(s)\n' \
+    "$_old_ts" > "$SPIRA_RUN/landing.log"
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
+SPIRA_SYSTEMCTL="$STUB_SC" SPIRA_CZAR_STAGE_LOOP_STALLED=act bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+_inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
+want "loop-stalled: DETECTED=yes when last pass is 4000s old (threshold 3000s)" \
+    "CLASS=loop-stalled DETECTED=yes" "$_log"
+want "loop-stalled: incident filed with cause=loop-stalled" "cause=loop-stalled" "$_inc_log"
+
+# ==========================================================================================
+printf '\n%s\n' "26. marker advances after each pass — same landing.log line not re-detected"
+# ==========================================================================================
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
+printf '%s spira: verdict spira: PR 72 red — no suites identified; leaving batch open\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
+SPIRA_CZAR_STAGE_DEADLOCK=act bash "$CZAR" --pass >/dev/null 2>&1
+_log1="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "marker: first pass detects the line" "CLASS=deadlock DETECTED=yes" "$_log1"
+
+rm -f "$SPIRA_RUN/czar.log"
+SPIRA_CZAR_STAGE_DEADLOCK=act bash "$CZAR" --pass >/dev/null 2>&1
+_log2="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+lack "marker: second pass does not re-detect the same line" "CLASS=deadlock DETECTED=yes" "$_log2"
+
+# ==========================================================================================
+printf '\n%s\n' "27. ci-stalled and starved: dedupe ref stable across passes with different measured durations"
+# ==========================================================================================
+# format!("ci-stalled-{}", repo) / format!("starved-{}", partition) must depend only on the
+# identifier, never on the measured duration — otherwise every pass files a fresh bead
+# instead of bumping incident.sh's recurrence count. Same proof as row 18 (base-red),
+# applied to the two classes the retirement plan named explicitly.
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
+mkdir -p "$SPIRA_RUN/queue/refstable"
+printf 'branch=spira/queue/refstable-test\n' > "$SPIRA_RUN/queue/refstable/open"
+mkdir -p "$T/refstable"
+printf 'refstable | %s | push | origin/main | |\n' "$T/refstable" >> "$SPIRA_REPO_MAP"
+
+_qs1=$(( $(date +%s) - 700 ))
+cat > "$STUB_FORGE" <<FEOF27A
+#!/usr/bin/env bash
+cmd="\${1:-}"
+case "\$cmd" in
+    batch-ci-status) printf 'queued-since: ${_qs1}\n' ;;
+esac
+exit 0
+FEOF27A
+chmod +x "$STUB_FORGE"
+SPIRA_CZAR_STAGE_CI_STALLED=act bash "$CZAR" --pass >/dev/null 2>&1
+_ref_a="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
+
+rm -f "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
+_qs2=$(( $(date +%s) - 5000 ))
+cat > "$STUB_FORGE" <<FEOF27B
+#!/usr/bin/env bash
+cmd="\${1:-}"
+case "\$cmd" in
+    batch-ci-status) printf 'queued-since: ${_qs2}\n' ;;
+esac
+exit 0
+FEOF27B
+chmod +x "$STUB_FORGE"
+SPIRA_CZAR_STAGE_CI_STALLED=act bash "$CZAR" --pass >/dev/null 2>&1
+_ref_b="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
+is "ci-stalled: dedupe ref stable across passes with different queued durations" \
+    "$_ref_a" "$_ref_b"
+want "ci-stalled ref names the repo" "refstable" "$_ref_a"
+
+rm -f "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
+_sv1=$(( $(date +%s) - 1500 ))
+python3 -c "
+import json
+st = {'plan,refstable:starved:-': {'first': $_sv1}}
+print(json.dumps(st))
+" > "$SPIRA_RUN/strands.json"
+SPIRA_CZAR_STAGE_STARVED=act bash "$CZAR" --pass >/dev/null 2>&1
+_ref_c="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
+
+rm -f "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
+_sv2=$(( $(date +%s) - 9000 ))
+python3 -c "
+import json
+st = {'plan,refstable:starved:-': {'first': $_sv2}}
+print(json.dumps(st))
+" > "$SPIRA_RUN/strands.json"
+SPIRA_CZAR_STAGE_STARVED=act bash "$CZAR" --pass >/dev/null 2>&1
+_ref_d="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
+is "starved: dedupe ref stable across passes with different starved durations" \
+    "$_ref_c" "$_ref_d"
+want "starved ref names the partition" "refstable" "$_ref_c"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
