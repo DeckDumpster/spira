@@ -118,7 +118,7 @@ has_label_like() { local all; all="$(B label list "$1" 2>/dev/null)"; [[ "$all" 
 # (SIN_EXEMPT=1). Uses env (not env -i) to preserve SPIRA_BD so the subprocess's bdq uses
 # the server-mode binary and can write to the events table via bd sql.
 file_watcher_incident() {
-    local ref="$1" title="$2"; shift 2
+    local ref="$1" title="$2" _fwi_rc; shift 2
     printf 'watcher payload' | \
         env SPIRA_CONF="$TMP/no-conf" \
         SPIRA_DB="$SPIRA_DB" \
@@ -130,17 +130,21 @@ file_watcher_incident() {
         SPIRA_SIN_EXEMPT=1 \
         SPIRA_INCIDENT_CAUSE=watchtower \
         "$@" \
-        bash "$INC" file "$title" - >/dev/null 2>&1
+        bash "$INC" file "$title" - >"$TMP/fwi-out" 2>"$TMP/fwi-err"
+    _fwi_rc=$?
+    printf 'DEBUG fwi rc=%s ref=%s\n-- stdout --\n%s\n-- stderr --\n%s\n' \
+        "$_fwi_rc" "$ref" "$(cat "$TMP/fwi-out")" "$(cat "$TMP/fwi-err")"
+    return "$_fwi_rc"
 }
 
 # find_bead <ref> — print bead id (open, in_progress or closed) by external_ref. Uses the
-# same broad spira,incident label query the rest of this file already relies on (sections
-# 1/2/5), rather than the ref:<hash> label-keyed lookup incident.sh itself uses internally —
-# that path is what is under test here, so this helper does not depend on it.
+# same broad spira,partition:incident label query the rest of this file already relies on
+# (sections 1/2/5), rather than the ref:<hash> label-keyed lookup incident.sh itself uses
+# internally — that path is what is under test here, so this helper does not depend on it.
 find_bead() {
     local ref="$1" _id
     for _status in open in_progress closed; do
-        _id="$(B list --status "$_status" --limit 0 --label spira,incident --json 2>/dev/null \
+        _id="$(B list --status "$_status" --limit 0 --label spira,partition:incident --json 2>/dev/null \
           | python3 -c '
 import sys, json
 target = sys.argv[1]
