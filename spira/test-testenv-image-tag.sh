@@ -4,11 +4,11 @@
 #
 # WHAT THIS TESTS
 # ---------------
-# 1. DEPENDENCY MANIFEST: editing conf.sh's SPIRA_BINS/spira_bin_tier section changes the tag.
+# 1. DEPENDENCY MANIFEST: editing deps.toml changes the tag.
 # 2. BD PIN: editing the bd pin file changes the tag.
 # 3. UNRELATED FILE: a file outside the closure does not change the tag.
 # 4. POSITIVE CONTROL: with the closure narrowed back to the Containerfile only (the old
-#    behaviour), a conf.sh edit does NOT change the tag — proving that the widening in
+#    behaviour), a deps.toml edit does NOT change the tag — proving that the widening in
 #    the fixed _image_tag() is what produces the correct result above.
 #
 # FIXTURES
@@ -23,7 +23,7 @@
 # SKIP CONDITION: none — only sha256sum is required.
 #
 # defect: sp-2v7v
-# covers: spira/testenv.sh spira/conf.sh
+# covers: spira/testenv.sh spira/conf.sh spira/deps.toml
 # covers: spira/testenv/Containerfile
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -45,6 +45,7 @@ FIXTURE="$TMP/spira"
 mkdir -p "$FIXTURE/testenv"
 cp "$HERE/testenv.sh"             "$FIXTURE/testenv.sh"
 cp "$HERE/conf.sh"                "$FIXTURE/conf.sh"
+cp "$HERE/deps.toml"              "$FIXTURE/deps.toml"
 cp "$HERE/testenv/Containerfile"  "$FIXTURE/testenv/Containerfile"
 
 # Fixture pin file. conf.sh will skip it because SPIRA_BD_PIN is already in the
@@ -73,13 +74,12 @@ tag_base=$(get_tag)
 echo
 echo "dependency manifest → tag changes:"
 # ──────────────────────────────────────────────────────────────────────────────
-# Add a harmless program name to SPIRA_BINS. _image_tag() hashes the SPIRA_BINS/
-# spira_bin_tier section, so the hash must change when it changes.
-sed -i 's/^SPIRA_BINS="\${SPIRA_BINS:-/SPIRA_BINS="${SPIRA_BINS:-testprog /' \
-    "$FIXTURE/conf.sh"
+# Add a harmless program entry to deps.toml. _image_tag() hashes the manifest file, so
+# the hash must change when it changes.
+printf '\n[[dep]]\nname = "testprog"\ntier = "optional"\n' >> "$FIXTURE/deps.toml"
 tag_manifest=$(get_tag)
 differs "manifest edit changes tag" "$tag_base" "$tag_manifest"
-cp "$HERE/conf.sh" "$FIXTURE/conf.sh"   # restore
+cp "$HERE/deps.toml" "$FIXTURE/deps.toml"   # restore
 
 # ──────────────────────────────────────────────────────────────────────────────
 echo
@@ -105,18 +105,17 @@ echo
 echo "positive control — narrow closure (Containerfile only) ignores conf.sh:"
 # ──────────────────────────────────────────────────────────────────────────────
 # The old _image_tag() was:  sha256sum "$TESTENV_DIR/Containerfile" | cut -c1-12
-# With that narrow closure, editing conf.sh must NOT change the tag.
+# With that narrow closure, editing deps.toml must NOT change the tag.
 # This proves that it is the closure widening — not some other difference — that
 # makes the three tests above pass.
 narrow_hash() {
     sha256sum "$FIXTURE/testenv/Containerfile" 2>/dev/null | cut -c1-12
 }
 narrow_base=$(narrow_hash)
-sed -i 's/^SPIRA_BINS="\${SPIRA_BINS:-/SPIRA_BINS="${SPIRA_BINS:-testprog /' \
-    "$FIXTURE/conf.sh"
+printf '\n[[dep]]\nname = "testprog"\ntier = "optional"\n' >> "$FIXTURE/deps.toml"
 narrow_after=$(narrow_hash)
-same "positive control: narrow closure unchanged by conf.sh edit" "$narrow_base" "$narrow_after"
-cp "$HERE/conf.sh" "$FIXTURE/conf.sh"   # restore
+same "positive control: narrow closure unchanged by deps.toml edit" "$narrow_base" "$narrow_after"
+cp "$HERE/deps.toml" "$FIXTURE/deps.toml"   # restore
 
 # ──────────────────────────────────────────────────────────────────────────────
 echo
@@ -131,6 +130,7 @@ OTHER="$TMP/elsewhere/spira"
 mkdir -p "$OTHER/testenv"
 cp "$FIXTURE/testenv.sh"            "$OTHER/testenv.sh"
 cp "$FIXTURE/conf.sh"               "$OTHER/conf.sh"
+cp "$FIXTURE/deps.toml"             "$OTHER/deps.toml"
 cp "$FIXTURE/testenv/Containerfile" "$OTHER/testenv/Containerfile"
 tag_elsewhere="$(SPIRA_BD_PIN="$PIN" bash "$OTHER/testenv.sh" tag 2>/dev/null)"
 same "same content at another path gives the same tag" "$tag_base" "$tag_elsewhere"

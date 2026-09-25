@@ -1590,86 +1590,65 @@ spira_require() {        # spira_require <bin> [<bin>...] -> 0, or 1 having name
 }
 
 # --------------------------------------------------------------------------------------
-# THE DEPENDENCY MANIFEST — three functions over one list of programs.
+# THE DEPENDENCY MANIFEST — three functions backed by deps.toml.
 #
 #   spira_bin_purpose <bin>   what it is for
-#   spira_bin_tier    <bin>   runtime | optional | dev
+#   spira_bin_tier    <bin>   runtime | optional | dev | operator
 #   spira_bin_absent  <bin>   what actually happens on a box without it
+#   spira_deps_list [tier]    emit all known program names, optionally filtered
 #
-# WHY A TIER. "Dependency" conflated two different things: what is needed to RUN the loop
-# and what is needed to DEVELOP it. Nothing recorded the difference, so the development set
-# was never checked anywhere — and a program that only the test path uses could go missing
-# on a box that looked, by every check that existed, completely healthy.
-#
-# WHY A THIRD FIELD FOR ABSENCE. `tier` says who needs it; it does not say what its absence
-# DOES, and those come apart in the case that matters. A missing program usually fails
-# loudly or turns one named feature off. But `bd-embedded` missing does neither: the fixture
-# builder silently falls back to a shared Dolt server, which is not "tests off" — it is
-# tests running on the architecture that was deleted for failing 5 of 6 concurrent builds.
-# A downgrade nobody announces is indistinguishable from health, and stayed that way here
-# for a week while it produced a hundred beads that read as ordinary test failures.
-#
-# So: anything whose absence CHANGES BEHAVIOUR rather than stopping it must say so here,
-# and doctor.sh prints that sentence rather than a generic "not found".
+# The data lives in deps.toml (same directory as this file), loaded once at
+# source time into per-program shell variables. doctor.sh reads from these
+# rather than carrying its own hardcoded lists.
 # --------------------------------------------------------------------------------------
 
-# Every program the harness or its tests invoke, in one list. doctor.sh iterates this rather
-# than carrying its own copy — two lists is how the development set came to be checked by
-# nothing at all.
-SPIRA_BINS="${SPIRA_BINS:-bd git python3 flock dolt gh tmux node claude cargo jq zstd aws bd-embedded podman go inotifywait aerc hunk}"
+_SPIRA_DEPS="$SPIRA_HOME/deps.toml"
+_spira_dep_names=""
 
-spira_bin_tier() {
-    case "$1" in
-        # runtime: the loop cannot run at all.
-        bd|git|python3|flock)      echo runtime ;;
-        # optional: the loop runs; one named feature is off.
-        dolt|gh|tmux|node|claude|cargo|jq|zstd|aws) echo optional ;;
-        # operator: needed on an operated instance (SPIRA_OPERATED=1) — a headless box
-        # (SPIRA_OPERATED=0) has no operator reading the cockpit these serve.
-        inotifywait|aerc|hunk|go)  echo operator ;;
-        # dev: needed to DEVELOP or TEST Spira, never to run it.
-        bd-embedded|podman)        echo dev ;;
-        *)                         echo optional ;;
-    esac
+# Load all dep fields from deps.toml with one python3 call.
+if [ -f "$_SPIRA_DEPS" ] && command -v python3 >/dev/null 2>&1; then
+    _spira_deps_raw="$(python3 - "$_SPIRA_DEPS" 2>/dev/null <<'_DEPS_PY'
+import sys, tomllib, shlex
+with open(sys.argv[1], "rb") as f:
+    data = tomllib.load(f)
+names = []
+for d in data.get("dep", []):
+    n = d["name"].replace("-", "_")
+    names.append(d["name"])
+    print(f"_spira_dep_tier_{n}={shlex.quote(d.get('tier', 'optional'))}")
+    print(f"_spira_dep_purpose_{n}={shlex.quote(d.get('purpose', 'required by the harness'))}")
+    print(f"_spira_dep_absent_{n}={shlex.quote(d.get('absent', ''))}")
+print(f"_spira_dep_names={shlex.quote(' '.join(names))}")
+_DEPS_PY
+)"
+    while IFS= read -r _spira_deps_line; do
+        eval "$_spira_deps_line"
+    done <<< "$_spira_deps_raw"
+    unset _spira_deps_raw _spira_deps_line
+fi
+
+spira_deps_list() {
+    local _tier="${1:-}" _b
+    for _b in $_spira_dep_names; do
+        if [ -z "$_tier" ]; then
+            printf '%s\n' "$_b"
+        else
+            local _k="_spira_dep_tier_${_b//-/_}"
+            [ "${!_k:-optional}" = "$_tier" ] && printf '%s\n' "$_b"
+        fi
+    done
 }
 
-# What a box without this program actually does. Empty means the ordinary case — it fails
-# loudly, or the one feature named in spira_bin_purpose is simply off.
-spira_bin_absent() {
-    case "$1" in
-        bd-embedded)
-            echo "test fixtures fall back to a shared Dolt server instead of a private embedded store per fixture. Not a feature off: concurrent fixture builds contend on one schema lock, measured at 610s with 5 of 6 failing, against 25s with 0 failing on embedded. Suites fail in ways that read as defects in the code under test. Restore with build-bd.sh --install (needs a Go toolchain)." ;;
-        podman)
-            echo "every suite that builds a container fixture cannot run; testenv.sh and the suites that use it fail rather than skip." ;;
-        inotifywait)
-            echo "no mail is delivered to registered readers mid-session — escalations and verdict replies wait for the next session start." ;;
-        *) echo "" ;;
-    esac
+spira_bin_tier() {
+    local _k="_spira_dep_tier_${1//-/_}"; echo "${!_k:-optional}"
 }
 
 spira_bin_purpose() {
-    case "$1" in
-        bd)      echo "the beads issue tracker — the substrate; nothing runs without it" ;;
-        bd-embedded) echo "the CGO build of bd that opens an embedded Dolt store — the test fixture engine" ;;
-        podman)  echo "container fixtures for the suites that need a whole machine" ;;
-        go)      echo "building the pinned bd from source when no prebuilt exists for this platform; without it a bd mismatch cannot be recovered locally" ;;
-        dolt)    echo "the SQL server beads stores its database in" ;;
-        git)     echo "every repository operation" ;;
-        gh)      echo "opening and landing pull requests (repos whose land mode is 'pr')" ;;
-        claude)  echo "the agent an aeon is a session of" ;;
-        tmux)    echo "the cockpit panes" ;;
-        python3) echo "every JSON payload this harness parses" ;;
-        cargo)   echo "building the decisions panel; not needed to run the loop" ;;
-        node)    echo "gating the browser page's view model; the loop itself never needs it" ;;
-        jq)      echo "optional JSON convenience" ;;
-        aws)     echo "the AWS CLI v2 — required when the runner pool spills to EC2; without it, spilled gate runs cannot authenticate to AWS" ;;
-        flock)   echo "serialising writers that share one path — the transcript archive, and the landing gate's per-repository tree" ;;
-        zstd)    echo "compressing archived transcripts; gzip is used when it is absent" ;;
-        inotifywait) echo "delivering mail the moment it arrives (inotify-tools); without it mail waits for the next session start" ;;
-        hunk)    echo "the review pane: designs and diffs are read and commented on in hunk (npm hunkdiff, needs node)" ;;
-        aerc)    echo "the operator's mail client for reading and answering; any Maildir client works" ;;
-        *)       echo "required by the harness" ;;
-    esac
+    local _k="_spira_dep_purpose_${1//-/_}"; echo "${!_k:-required by the harness}"
+}
+
+spira_bin_absent() {
+    local _k="_spira_dep_absent_${1//-/_}"; echo "${!_k:-}"
 }
 
 # watch_unit_name <watcher-name> -> the installed systemd unit name for a daemon watcher.
