@@ -39,8 +39,11 @@ TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up batchercut || { echo "test-batcher-cut: could not build fixture database"; exit 1; }
 
 # ── build the batcher binary (law-absence-needs-a-positive-control: no binary, no suite) ──
-printf 'DIAG PATH=%s\n' "$PATH" >&2
-printf 'DIAG ls /usr/local/cargo/bin: %s\n' "$(ls /usr/local/cargo/bin 2>&1)" >&2
+# RESOLVE THE TOOLCHAIN DIRECTORY, NOT JUST cargo's OWN PATH. cargo execs `rustc` BY NAME,
+# and testdb.sh (sourced above) pulls in conf.sh, which overwrites PATH wholesale — so
+# finding cargo's path is not enough; its own directory has to go back on PATH for the
+# `rustc` it execs to resolve (same fix test-batcher.sh's own comment describes, needed
+# here because this suite, unlike that one, sources testdb.sh).
 CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
 [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
 [ -z "$CARGO_BIN" ] && [ -x "/usr/local/cargo/bin/cargo" ] && CARGO_BIN="/usr/local/cargo/bin/cargo"
@@ -48,6 +51,7 @@ if [ -z "$CARGO_BIN" ]; then
     echo "SKIP test-batcher-cut: cargo not found — the batcher binary cannot be built"
     exit 77
 fi
+PATH="$(dirname "$CARGO_BIN"):$PATH"; export PATH
 BATCHER_BIN="$ROOT/target/release/batcher"
 if [ ! -x "$BATCHER_BIN" ]; then
     printf '  (building batcher-cut into %s)\n' "$BATCHER_BIN"
