@@ -6251,6 +6251,23 @@ spira_live_aeons() {
         | grep -E "^spira-aeon-[^[:space:]]+-${SPIRA_INSTANCE}\.service$" | sort -u || true
 }
 
+# _prune_candidates <releases-dir> <keep> <current-target> -> names beyond the keep
+# window, newest-first, one per line. Never names <current-target>: activate.sh calls
+# this AFTER swinging current to the just-unpacked release, so that release is always
+# within the keep window and this exclusion never fires there — it exists for whatever
+# activate.sh is told is current, not for what the integration path happens to produce.
+_prune_candidates() {
+    local releases="$1" keep="$2" cur_target="$3"
+    local count=0 rdir rname
+    while IFS= read -r rdir; do
+        count=$((count + 1))
+        [ "$count" -le "$keep" ] && continue
+        rname="$(basename "$rdir")"
+        [ "$rname" = "$cur_target" ] && continue
+        printf '%s\n' "$rname"
+    done < <(find "$releases" -mindepth 1 -maxdepth 1 -type d -name 'spira-*' 2>/dev/null | sort -r)
+}
+
 LANDSTATE="${SPIRA_RUN}/landstate"
 # Reasons written by the batch/queue eviction machinery. Only these warrant the eviction-race
 # reopen in aeon.sh; no-rebase@*, gate and confine are landing.sh REDs with their own paths.
