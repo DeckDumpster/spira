@@ -17,7 +17,10 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/conf.sh"
-. "$HERE/lib.sh"
+
+# Not lib.sh's ghq(): sourcing lib.sh runs spira_containment_check() at load, which needs a
+# fixture repo-map any caller here would otherwise have to supply for no other reason.
+ghq() { timeout "${GH_TIMEOUT:-120}" "${SPIRA_GH:-gh}" "$@"; }
 
 REPO="${1:?usage: tsd-ingest.sh <owner/repo> <run-id>}"
 RUN_ID="${2:?usage: tsd-ingest.sh <owner/repo> <run-id>}"

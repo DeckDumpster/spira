@@ -204,7 +204,7 @@ case "$cmd" in
             )
             SELECT
                 (SELECT run_id FROM latest) AS run_id,
-                (SELECT COALESCE(sum(wall_secs), 0) FROM read_ndjson_auto('$path')
+                (SELECT CAST(COALESCE(sum(wall_secs), 0) AS BIGINT) FROM read_ndjson_auto('$path')
                     WHERE run_id = (SELECT run_id FROM latest) AND suite != '__batch__') AS sum_wall,
                 (SELECT wall_secs FROM read_ndjson_auto('$path')
                     WHERE run_id = (SELECT run_id FROM latest) AND suite = '__batch__'

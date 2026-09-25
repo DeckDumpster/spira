@@ -290,10 +290,10 @@ else
     qout9() { SPIRA_HOME="$T" SPIRA_RUN="$RUN9" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
                 bash "$HERE/tsd-query.sh" "$@" 2>&1; }
 
-    "$TSD_BIN" --family suite-timing --root "$RUN9" --host local-dev --ts 2026-09-24T22:00:00Z \
+    "$TSD_BIN" --family suite-timing --root "$RUN9" --host ancient-local --ts 2026-09-24T22:00:00Z \
         --field-str suite=acc.sh --field-str run_id=old1 --field-str branch=spira/sp-x \
         --field wall_secs=9999 --field rc=0 --field-str mode=parallel
-    "$TSD_BIN" --family suite-timing --root "$RUN9" --host gha-runner-1 --ts 2026-09-24T22:30:00Z \
+    "$TSD_BIN" --family suite-timing --root "$RUN9" --host ancient-ci --ts 2026-09-24T22:30:00Z \
         --field-str suite=acc.sh --field-str run_id=old2 --field-str branch=spira/sp-x \
         --field wall_secs=9999 --field rc=0 --field-str mode=parallel
 
@@ -341,8 +341,10 @@ else
     want "last-run: batch_wall is the __batch__ row's wall_secs" '"batch_wall":15' "$out"
 
     out="$(qout9 slow-in-branch spira/sp-x 3)"
-    want "slow-in-branch: the two 9999s lead, __batch__ excluded" \
-        '[{"suite":"acc.sh","wall_secs":9999},{"suite":"acc.sh","wall_secs":9999}' "$out"
+    is "slow-in-branch: the two 9999s lead" \
+        "9999 9999" "$(printf '%s' "$out" | python3 -c 'import json,sys; print(" ".join(str(r["wall_secs"]) for r in json.load(sys.stdin)[:2]))')"
+    is "slow-in-branch: __batch__ never appears" \
+        "0" "$(printf '%s' "$out" | python3 -c 'import json,sys; print(sum(1 for r in json.load(sys.stdin) if r["suite"]=="__batch__"))')"
 fi
 
 printf '\ntest-tsd.sh: %d passed, %d failed\n' "$pass" "$fail"
