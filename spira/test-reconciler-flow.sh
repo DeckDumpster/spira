@@ -133,7 +133,11 @@ else:
     print(last.get(field))
 ' "$SPIRA_RUN/reconciler-status.jsonl" "$1" "$2"
 }
-mail_count() { grep -c '^CALL send concierge' "$MAIL_LOG" 2>/dev/null || printf 0; }
+mail_count() {
+    local n
+    n="$(grep -c '^CALL send concierge' "$MAIL_LOG" 2>/dev/null)"
+    printf '%s' "${n:-0}"
+}
 
 epoch_iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ; }
 emit_event() {
