@@ -950,6 +950,22 @@ for i in d:
             log "CHECK6 $id: $br is superseded — its work landed under the successor's id; leaving it for the Sending to reap"
             continue
         fi
+        # EJECTED BEAD NEVER RE-QUEUED. batch.sh writes EJECTED landstate when a batch member
+        # fails the local gate and ejects the bead; the aeon is expected to fix the failure and
+        # re-queue. If the bead was closed before the aeon acted, the EJECTED state is never
+        # cleared and the bead sits stranded. Reopen it so a fresh aeon can address the failure.
+        if [ -r "$LANDSTATE/$id" ]; then
+            local _ej_st _ej_tip
+            { read -r _ej_st _ej_tip _ < "$LANDSTATE/$id"; } 2>/dev/null || true
+            if [ "${_ej_st:-}" = EJECTED ]; then
+                log "CHECK6 $id: closed but landstate is EJECTED — reopening so the aeon can fix the batch gate failure"
+                land_mark "$id" RED "${_ej_tip:-none}" "ejected-not-requeued"
+                bead_reopen "$id" batch-eject \
+                    "Reopened by sentinel: batch gate failure recorded but bead closed before aeon could fix it."
+                progress "reopened $id — ejected-not-requeued"
+                continue
+            fi
+        fi
         # WHETHER THE BASE ALREADY HOLDS THIS WORK IS THE WHOLE QUESTION, and ancestry is
         # only one of the two ways the answer is yes. A branch already merged has nothing to
         # land; re-merging it is a no-op that still logs an ACT, and that re-landed
@@ -2007,6 +2023,56 @@ while IFS= read -r repo_name; do
     [ -n "$repo_name" ] || continue
     land_repo "$repo_name"
 done <<< "$_land_repos"
+
+# PRUNE LANDSTATE FILES WHOSE BEAD HAS NO LIVE BRANCH. A bead that is closed and has no
+# branch in any repo will never be visited by CHECK6's branch loop again, so its landstate
+# file accumulates indefinitely (every landed bead ends up in exactly this state once its
+# branch is reaped). Runs once per pass, after every repo's own scan above, and reads
+# every candidate id with one bulk bdjson show rather than one per file — the same
+# "one query not N" reasoning as the per-repo scan. Skip sidecar files (.ejected etc.) —
+# they share the bead's id but are cleaned up by the branch they belong to.
+if [ -d "${SPIRA_RUN}/landstate" ]; then
+    _ls_ids="" _ls_files=""
+    while IFS= read -r _ls_file; do
+        _ls_id="$(basename "$_ls_file")"
+        [[ "$_ls_id" == *.* ]] && continue   # skip sidecars
+        _ls_ids="$_ls_ids $_ls_id"
+        _ls_files="$_ls_files$_ls_file"$'\n'
+    done < <(find "${SPIRA_RUN}/landstate" -maxdepth 1 -type f 2>/dev/null | sort)
+    if [ -n "${_ls_ids// /}" ]; then
+        declare -A _ls_status=()
+        # shellcheck disable=SC2086
+        while IFS=$'\t' read -r _ls_sid _ls_sst; do
+            [ -n "${_ls_sid:-}" ] || continue
+            _ls_status["$_ls_sid"]="$_ls_sst"
+        done < <(bdjson show $_ls_ids 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: raise SystemExit
+d = d if isinstance(d, list) else [d]
+for i in d:
+    bid = i.get("id", "")
+    if bid: print("%s\t%s" % (bid, i.get("status", "")))' 2>/dev/null)
+        while IFS= read -r _ls_file; do
+            [ -n "$_ls_file" ] || continue
+            _ls_id="$(basename "$_ls_file")"
+            [ "${_ls_status[$_ls_id]:-}" = "closed" ] || continue
+            _ls_has_branch=0
+            for _ls_repo in $(spira_repos 2>/dev/null); do
+                _ls_rpath="$(repo_root "$_ls_repo" 2>/dev/null)" || continue
+                git -C "$_ls_rpath" show-ref --verify --quiet "refs/heads/spira/$_ls_id" 2>/dev/null \
+                    && { _ls_has_branch=1; break; }
+            done
+            if [ "$_ls_has_branch" -eq 0 ]; then
+                _ls_st_val=""
+                { read -r _ls_st_val _ < "$_ls_file"; } 2>/dev/null || true
+                log "landing: pruning landstate/$_ls_id — closed bead with no branch (state was ${_ls_st_val:-?})"
+                rm -f "$_ls_file" "${_ls_file}.ejected" 2>/dev/null || true
+            fi
+        done <<< "$_ls_files"
+        unset _ls_status
+    fi
+fi
 
 # After all certification passes, settle each queue-mode repo's open batch and open the next.
 for repo_name in $(spira_repos); do
