@@ -101,7 +101,7 @@ fixture-repo | $REPO | push | |
 MAP
 
 branch() {
-    local id="$1" f="${2:-$id.txt}" c="${3:-$id}"
+    local id="$1" f="${2:-$1.txt}" c="${3:-$1}"
     git -C "$REPO" worktree add -q -b "spira/$id" "$RUN/worktree/$id" main
     printf '%s\n' "$c" > "$RUN/worktree/$id/$f"
     git -C "$RUN/worktree/$id" add -A
