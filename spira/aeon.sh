@@ -1970,7 +1970,10 @@ else
 fi
 log "$FAYTH: $BEAD_ID status=$st committed=$committed superseded=$superseded delivers=${delivers:-none}"
 
-# EVICTION RACE. Fires only for LAND_EVICTION_REASONS; stale tip (record≠branch) and cap (>2/hr) skip the reopen.
+# EVICTION RACE. Fires only for LAND_EVICTION_REASONS. Three brakes, checked in order:
+# idempotence (sidecar tip+reason unchanged since the last reopen — a byte-identical
+# repeat, skip), stale tip (record predates a newer commit — close stands), cap
+# (SPIRA_EVICTION_ESCALATE_AT prior requeues — escalate instead of reopening again).
 if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ "$superseded" != 1 ]; then
     _evict_ls="$(land_state "$BEAD_ID" 2>/dev/null)" || _evict_ls=""
     _evict_state="" _evict_tip="" _evict_at="" _evict_reason=""
@@ -1985,28 +1988,37 @@ if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ "$superseded" != 1 ]; t
         done
     fi
     if [ "$_is_eviction" = "1" ]; then
-        _cur_tip="$(git -C "$REPO" rev-parse "$BRANCH" 2>/dev/null)" || _cur_tip=""
-        if [ -n "$_evict_tip" ] && [ "$_evict_tip" != "none" ] && [ -n "$_cur_tip" ] && [ "$_evict_tip" != "$_cur_tip" ]; then
-            log "$FAYTH: $BEAD_ID closed with landstate=$_evict_state — record tip $_evict_tip ≠ branch tip $_cur_tip, stale record, close stands"
+        _evict_seen_f="$LANDSTATE/$BEAD_ID.evict-seen"
+        _evict_seen="$(cat "$_evict_seen_f" 2>/dev/null)" || _evict_seen=""
+        if [ -n "$_evict_seen" ] && [ "$_evict_seen" = "$_evict_tip $_evict_reason" ]; then
+            log "$FAYTH: $BEAD_ID closed with landstate=$_evict_state — tip+reason unchanged since the last eviction-race reopen, duplicate skipped"
         else
-            _evict_count="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
-                "SELECT COUNT(*) FROM events WHERE issue_id='$BEAD_ID' AND event_type='reopen' AND new_value='eviction-race' AND created_at > FROM_UNIXTIME(UNIX_TIMESTAMP() - 3600)" \
-                2>/dev/null | sed -n '3p' | tr -d ' ')" || _evict_count=0
-            _evict_count="${_evict_count:-0}"
-            if printf '%d' "$_evict_count" >/dev/null 2>&1 && [ "$_evict_count" -gt 2 ]; then
-                bdq label add "$BEAD_ID" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
-                bdq note "$BEAD_ID" "Eviction-race guard capped: reopened $_evict_count time(s) in the last hour. Guard defect suspected. Labeled $SPIRA_ASK_LABEL." >/dev/null 2>&1 || true
-                log "$FAYTH: $BEAD_ID eviction-race cap reached ($_evict_count in 1h) — labeled $SPIRA_ASK_LABEL"
+            _cur_tip="$(git -C "$REPO" rev-parse "$BRANCH" 2>/dev/null)" || _cur_tip=""
+            if [ -n "$_evict_tip" ] && [ "$_evict_tip" != "none" ] && [ -n "$_cur_tip" ] && [ "$_evict_tip" != "$_cur_tip" ]; then
+                log "$FAYTH: $BEAD_ID closed with landstate=$_evict_state — record tip $_evict_tip ≠ branch tip $_cur_tip, stale record, close stands"
             else
-                bead_reopen "$BEAD_ID" eviction-race "Reopened by aeon.sh: bead closed while landstate is $_evict_state — the branch was evicted from the batch while this session was in flight. The close is valid but the work cannot re-enter the queue while the bead is closed. Recertify the branch to re-enter the merge queue."
-                log "$FAYTH: $BEAD_ID REOPENED — closed with landstate=$_evict_state (eviction race)"
-                st="open"
-                REQUEUE_CAUSE="eviction-race"
-                REQUEUE_WHY="Batch evicted the branch while this aeon was in flight; the bead was re-closed on a stale pass. Recertify the branch."
+                _evict_count="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+                    "SELECT COUNT(*) FROM events WHERE issue_id='$BEAD_ID' AND event_type='requeued' AND new_value='eviction-race'" \
+                    2>/dev/null | sed -n '3p' | tr -d ' ')" || _evict_count=0
+                _evict_count="${_evict_count:-0}"
+                if printf '%d' "$_evict_count" >/dev/null 2>&1 && [ "$_evict_count" -ge "${SPIRA_EVICTION_ESCALATE_AT:-3}" ]; then
+                    bdq label add "$BEAD_ID" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
+                    bdq note "$BEAD_ID" "Eviction-race guard capped: reopened $_evict_count time(s) already. Recertify the branch by hand and clear the $SPIRA_ASK_LABEL label; the guard will not reopen it again on its own." >/dev/null 2>&1 || true
+                    log "$FAYTH: $BEAD_ID eviction-race escalated — $_evict_count prior requeue(s) ≥ ${SPIRA_EVICTION_ESCALATE_AT:-3}, labeled $SPIRA_ASK_LABEL instead of reopening"
+                    printf '%s %s' "$_evict_tip" "$_evict_reason" > "$_evict_seen_f" 2>/dev/null || true
+                else
+                    bead_reopen "$BEAD_ID" eviction-race "Reopened by aeon.sh: bead closed while landstate is $_evict_state — the branch was evicted from the batch while this session was in flight. The close is valid but the work cannot re-enter the queue while the bead is closed. Recertify the branch to re-enter the merge queue."
+                    log "$FAYTH: $BEAD_ID REOPENED — closed with landstate=$_evict_state (eviction race)"
+                    st="open"
+                    REQUEUE_CAUSE="eviction-race"
+                    REQUEUE_WHY="Batch evicted the branch while this aeon was in flight; the bead was re-closed on a stale pass. Recertify the branch."
+                    printf '%s %s' "$_evict_tip" "$_evict_reason" > "$_evict_seen_f" 2>/dev/null || true
+                fi
+                unset _evict_count
             fi
-            unset _evict_count
+            unset _cur_tip
         fi
-        unset _cur_tip
+        unset _evict_seen _evict_seen_f
     fi
     unset _evict_ls _evict_state _evict_tip _evict_at _evict_reason _is_eviction _er
 fi

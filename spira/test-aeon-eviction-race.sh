@@ -20,16 +20,31 @@
 #   (c) RED reason=ejected at current tip  → reopened     (eviction, tip matches)
 #   EJECTED at current tip                 → reopened     (EJECTED is always batch eviction)
 #
+# THE UNBOUNDED LOOP (sp-r1501). The reopen at (c) charges no attempt (by design — the
+# harness's own requeue must not poison finished work) but had no cap and no idempotence
+# check either: a bead whose landstate record never gets recertified reopens on every pass,
+# forever, each cycle spending a lane. Two further brakes:
+#   - idempotence: the landstate's own tip+reason is compared to a sidecar
+#     ($LANDSTATE/<id>.evict-seen) written at the last reopen/escalation. Unchanged means
+#     this exact record was already acted on — skip, mirroring landing.sh CHECK6.
+#   - cap: at SPIRA_EVICTION_ESCALATE_AT prior eviction-race requeues, label the bead
+#     needs-operator instead of reopening again.
+#
 # POSITIVE CONTROLS (law-absence-needs-a-positive-control):
 #   - closed+committed with NO landstate file → stays closed
 #   - closed+committed with landstate=CERTIFIED → stays closed
 #
 # The shim writes the landstate after committing (so the recorded tip matches the real
 # branch tip) when a per-bead control file exists. For the stale-tip case the landstate is
-# written before the aeon runs, with a dummy tip, and the shim's commit makes it stale.
+# written before the aeon runs, with a dummy tip, and the shim's commit makes it stale. The
+# idempotence case also writes the landstate before the aeon runs, with a dummy tip that
+# matches a pre-seeded sidecar exactly — the idempotence check compares those two records to
+# each other, not to the real branch tip, so it fires before the stale-tip check ever runs.
 #
-# defect: sp-htw4r sp-ygvu0
-# covers: spira/aeon.sh spira/lib.sh
+# testdb-mode: server — the cap case seeds requeued events via bd sql, refused in embedded mode
+#
+# defect: sp-htw4r sp-ygvu0 sp-r1501
+# covers: spira/aeon.sh spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -44,7 +59,11 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 testdb_require test-aeon-eviction-race
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up aeonevictionrace || { echo "test-aeon-eviction-race: could not build fixture database"; exit 1; }
+export SPIRA_TESTDB_MODE=server
+testdb_up aeonevictionrace || {
+    printf 'SKIP test-aeon-eviction-race: server testdb not available\n' >&2
+    exit 77
+}
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
@@ -202,6 +221,44 @@ is     "bead stays closed (stale eviction record)"     closed "$(field sp-er-7 s
 nowant "no eviction-race reopen fired"                 "eviction-race" "$(cat "$TMP/out")"
 want   "aeon log mentions stale record"                "stale record" "$(cat "$TMP/out")"
 rm -f "$SPIRA_RUN/landstate/sp-er-7"
+
+# =============================================================================
+echo
+echo "closed+committed+landstate=RED, sidecar matches — skip (idempotence):"
+# =============================================================================
+# When tip+reason in the sidecar match the current landstate, the reopen is a
+# duplicate — the condition has not changed since the last reopen. The second
+# pass must not write another requeued event.
+testdb_reset; seed sp-er-8
+printf 'RED fakesha99 %s ejected\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-8"
+printf 'fakesha99 ejected' > "$SPIRA_RUN/landstate/sp-er-8.evict-seen"
+run_aeon
+is   "bead stays closed (idempotence)"              closed "$(field sp-er-8 status)"
+_rq8="$(bd -C "$SPIRA_DB" sql "SELECT COUNT(*) FROM events WHERE issue_id='sp-er-8' AND event_type='requeued' AND new_value='eviction-race'" 2>/dev/null | sed -n '3p' | tr -d ' ')"
+is   "no eviction-race requeue event written"       0 "${_rq8:-0}"
+want "aeon log shows idempotence skip"              "tip+reason unchanged" "$(cat "$TMP/out")"
+rm -f "$SPIRA_RUN/landstate/sp-er-8" "$SPIRA_RUN/landstate/sp-er-8.evict-seen"
+
+# =============================================================================
+echo
+echo "closed+committed+landstate=RED, cap reached — escalate, no requeue:"
+# =============================================================================
+# At SPIRA_EVICTION_ESCALATE_AT requeues the guard must escalate to the operator
+# instead of requeueing, so the bead does not loop indefinitely. The landstate is written
+# by the shim AFTER it commits (ejected-cur), so the tip is current and the stale-tip
+# check does not intercept this before the cap check runs.
+testdb_reset; seed sp-er-9
+echo "ejected-cur" > "$TMP/evict-ctrl/sp-er-9"
+for _i in 1 2 3; do
+    _uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"
+    bd -C "$SPIRA_DB" sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$_uuid', 'sp-er-9', 'requeued', 'harness', 'eviction-race', NOW())" >/dev/null 2>&1
+done
+run_aeon
+is   "bead stays closed (cap)"                     closed "$(field sp-er-9 status)"
+_rq9="$(bd -C "$SPIRA_DB" sql "SELECT COUNT(*) FROM events WHERE issue_id='sp-er-9' AND event_type='requeued' AND new_value='eviction-race'" 2>/dev/null | sed -n '3p' | tr -d ' ')"
+is   "no new requeue event at cap"                 3 "${_rq9:-0}"
+want "aeon log shows escalation"                   "eviction-race escalated" "$(cat "$TMP/out")"
+rm -f "$SPIRA_RUN/landstate/sp-er-9" "$SPIRA_RUN/landstate/sp-er-9.evict-seen" "$TMP/evict-ctrl/sp-er-9"
 
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]
