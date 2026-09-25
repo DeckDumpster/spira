@@ -202,6 +202,27 @@ want "rapid-recur note on bead after 3 short runs" "RAPID"              "$_note3
 
 # ======================================================================================
 echo
+echo "CASE 4: rapid-recur PARKS the bead — dispatch stops re-summoning it, not just annotates:"
+# ======================================================================================
+_labels3b="$(bd -C "$SPIRA_DB" label list sp-pd-1 2>/dev/null)"
+want "rapid-recur labeled the bead $SPIRA_ASK_LABEL" "$SPIRA_ASK_LABEL" "$_labels3b"
+want "rapid-recur labeled the bead overseer"          "overseer"        "$_labels3b"
+
+# builder.fayth excludes $SPIRA_ASK_LABEL, so a fourth summon must find nothing ready —
+# the bead is parked, not merely annotated — and must charge no further attempt.
+_rc4="$(run_aeon)"
+_out4="$(cat "$TMP/out")"
+_count4="$(done_lines_for sp-pd-1 | grep -c 'status=pre-session' 2>/dev/null || echo 0)"
+_note4="$(bd -C "$SPIRA_DB" show sp-pd-1 --json 2>/dev/null \
+    | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("notes","") if d else "")' 2>/dev/null)"
+_n_rapid_notes="$(grep -c 'RAPID-RECUR' <<< "$_note4" || true)"
+
+want "fourth summon finds nothing ready (bead is parked)"  "nothing ready"      "$_out4"
+is   "no fourth pre-session death charged"                 "3"                  "$_count4"
+is   "rapid-recur note not re-appended once parked"         "1"                  "$_n_rapid_notes"
+
+# ======================================================================================
+echo
 echo "POSITIVE CONTROL — ref restored: session runs, no pre-session death:"
 # ======================================================================================
 git -C "$REPO" update-ref refs/remotes/origin/main "$_origin_main_sha"
