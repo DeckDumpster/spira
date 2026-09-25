@@ -45,7 +45,7 @@ Stuck-bead escalation decisions (subject beads now closed):
   sp-l49vi  — ref sp-4rzlw CLOSED
   sp-gewuc  — ref sp-aygfc CLOSED
 
-UNSURE NOTES:
+BEADS EXAMINED: 223 open/in_progress beads scanned.
 
 1. UNSURE sp-psenn — 'Lint failure test subject for repeat guard'
    - aeon-valefor created, placeholder description ('Detailed context goes here.')
@@ -60,3 +60,41 @@ CURRENT STATE:
 - 1 UNSURE note written (sp-psenn, pass 1)
 - No duplicates found
 - No splits needed
+
+---
+
+GROOM PASS sp-cvn6j - Graph Hygiene Results
+============================================
+
+TRIGGER: UNCLAIMABLE: sp-lf6lv — fix the fayth: or partition label
+
+SWEEP: groomer.sh sweep reported sp-lf6lv unclaimable; acted on 0 beads (sweep handles litter only).
+
+LIVELOCK ROWS HANDLED: 1
+
+1. LIVELOCK sp-lf6lv (unclaimable)
+   - Title: delivers:beads label wrongly inherited onto sp-9ce60.2's children (sp-9ce60.2.2..2.5)
+   - Problem: Had 'repo:spira' and 'spira' labels but no partition label
+   - Fix: Added 'groom' partition label (task is groomer work: stripping mislabeled delivers:beads from child beads)
+   - Now claimable by groom persona
+   - Root cause: partition label missing at filing time
+
+DUPLICATE SCAN:
+- No duplicates found for sp-lf6lv (search on 'delivers:beads' found only the one bead)
+- No obvious duplicates identified in the broader list
+
+LITTER SCAN:
+- sp-gpdb4 has empty description but non-trivial title and sentinel activity; not fixture-shaped litter
+
+WRONG LABELS:
+- sp-m4uko carries 'partition:incident' (dead label from old SOP) but also has real 'incident' label; not causing livelock; background tracked by sp-e2u7d
+
+NO ACTIONS NEEDED:
+- No premise-gone cases found
+- No split candidates identified (all beads in list are independently landable single tasks)
+- No lane corrections beyond sp-lf6lv
+
+CURRENT STATE:
+- 184 beads examined (open + in_progress)
+- 1 LIVELOCK row resolved: sp-lf6lv corrected (added groom partition label)
+- No duplicates, no premise-gone cases, no fixture-shaped litter
