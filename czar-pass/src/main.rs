@@ -288,8 +288,8 @@ fn infer(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str) {
 // A red base blocks every branch of its own repository, not one batch's members, so it is
 // filed at P0 + express against the REPOSITORY THAT IS RED rather than at czar-pass's usual
 // P1 against "spira" — a red main.py needs a builder in the failing repo, at the front of
-// the queue, not a routine queue-health ticket. The express label is added explicitly:
-// incident.sh's `bd create` does not go through bead.sh's "P0 implies express" default.
+// the queue, not a routine queue-health ticket. Priority does not imply express — the label
+// is added explicitly, since incident.sh's `bd create` does not route through bead.sh.
 fn infer_urgent(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str, repo: &str) {
     match cfg.stage(class) {
         Stage::Shadow => czar_would_log(cfg, class, "inference", subj),
