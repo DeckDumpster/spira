@@ -118,6 +118,7 @@ nowant "SEEN RED: does not say base-red reason" "reason=base-red" "$out"
 # base. If the gate still refused after this, case 3 would be proving nothing.
 # --------------------------------------------------------------------------------------
 RUNS="$TMP/runs"; : > "$RUNS"
+mkdir -p "$(dirname "$REPO/$GATE_FILE")"
 printf '#!/usr/bin/env bash\nprintf "ran\\n" >> %s\necho ok\n' "$RUNS" > "$REPO/$GATE_FILE"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "add check.sh"
 git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
