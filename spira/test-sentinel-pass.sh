@@ -69,6 +69,10 @@ printf '#!/bin/sh\necho inactive\n'  > "$STUBS/mock-systemctl"; chmod +x "$STUBS
 printf '#!/bin/sh\nexit 0\n'         > "$STUBS/mock-launch";    chmod +x "$STUBS/mock-launch"
 printf '#!/bin/sh\nexit 0\n'         > "$STUBS/mock-notify";    chmod +x "$STUBS/mock-notify"
 touch "$STUBS/repo-map"   # empty: no repos, Sending finds nothing to walk
+# THE REAL CHAMBER, symlinked once up front: `ln -sf` onto a directory that already
+# exists creates the link INSIDE it instead of replacing it, so this must run before
+# anything else ever creates $STUBS/chamber as a plain directory.
+ln -s "$HERE/chamber" "$STUBS/chamber"
 
 echo "test-sentinel-pass.sh"
 
@@ -80,7 +84,6 @@ echo "DB unreadable — no fixture needed, a failing SPIRA_BD shim fails fast (U
 # shape of "bd cannot reach the database", without spending a Dolt build to prove it.
 FAILING_BD="$TMP/failing-bd"
 printf '#!/bin/sh\nexit 1\n' > "$FAILING_BD"; chmod +x "$FAILING_BD"
-mkdir -p "$STUBS/chamber"
 _run_unreadable="$TMP/run-unreadable"; mkdir -p "$_run_unreadable"
 out_unreadable="$(env -i \
     PATH="$PATH" HOME="$HOME" \
@@ -120,7 +123,6 @@ JSONL
 
 SUMMON_LOG="$TMP/summon.log"
 SENDING_LOG="$TMP/sending.log"
-ln -sf "$HERE/chamber" "$STUBS/chamber"
 # sending.sh records each invocation so assertions can verify whether it was called.
 printf '#!/bin/sh\necho called >> "$SENDING_LOG"\n' > "$STUBS/sending.sh"; chmod +x "$STUBS/sending.sh"
 # mock-summon records each summon so the fill assertion can count them.

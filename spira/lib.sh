@@ -1195,7 +1195,15 @@ lane_rotate() {
         else before="$before $lf"
         fi
     done
-    printf '%s' "${after# }${before:+ }${before# }"
+    after="${after# }"; before="${before# }"
+    # <last> absent from <lanes> leaves $found=0, so every lane fell into $before and
+    # $after is empty — the branch below then prints $before verbatim, i.e. $lanes
+    # unchanged, without a special case for "not found".
+    if [ -n "$after" ] && [ -n "$before" ]; then
+        printf '%s %s' "$after" "$before"
+    else
+        printf '%s' "${after}${before}"
+    fi
 }
 
 # ck7_pool <max-aeons> <task-live> -> the task pool CHECK 7 starts a pass with, before any
