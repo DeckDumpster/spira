@@ -413,6 +413,20 @@ declare -A _CHANGED=()  # units whose rendered content differs from what is inst
 declare -A _MASKED=()   # units masked by the operator — skipped, never overwritten
 declare -A _NEW=()      # units that did not exist before this run — safe to enable fresh
 _n_unchanged=0
+
+# CONTROL PLANE, READ ONCE. ctrl.sh check sources conf.sh and spawns python3 per call; asking
+# it once per unit (4 call sites below, over dozens of units) made that dozens of process
+# starts per install. CTRL_LIB=1 sources ctrl.sh for its functions only (no CLI dispatch);
+# ctrl_load_suspended does the one python3 read and ctrl_is_suspended decides per unit in pure
+# bash — the same predicate world.sh start now uses (cluster 6, docs/test-plan/instance-lifecycle.md).
+# A fallback definition covers the pre-existing "ctrl.sh absent or fails -> enabled normally"
+# contract when the file is not executable.
+ctrl_is_suspended() { return 1; }
+declare -A _CTRL_SUSPENDED=()
+if [ -x "$SPIRA_HOME/ctrl.sh" ]; then
+    CTRL_LIB=1 . "$SPIRA_HOME/ctrl.sh"
+    ctrl_load_suspended _CTRL_SUSPENDED
+fi
 for u in "${UNITS[@]}"; do
     [ "$u" = "spira-watch@.service" ] && continue
     inst="$(inst_name "$u")"
@@ -429,8 +443,7 @@ for u in "${UNITS[@]}"; do
     _cs_check="${inst%"-${SPIRA_INSTANCE}.service"}"; _cs_check="${_cs_check%"-${SPIRA_INSTANCE}.timer"}"
     _cs_check="${_cs_check%.service}"; _cs_check="${_cs_check%.timer}"
     _unit_suspended=0
-    [ -x "$SPIRA_HOME/ctrl.sh" ] && \
-        "$SPIRA_HOME/ctrl.sh" check "$_cs_check" >/dev/null 2>&1 && _unit_suspended=1
+    ctrl_is_suspended _CTRL_SUSPENDED "$_cs_check" >/dev/null && _unit_suspended=1
     # REFUSE AN UNEXECUTABLE ExecStart TARGET before writing a single byte. The failure mode
     # this prevents is 203/EXEC: systemd accepts the unit, a timer reports 'active', and the
     # service never runs. Every path is in hand at render time; an unresolved @KEY@ raises an
@@ -663,13 +676,13 @@ if [ -f "$SPIRA_RUN/world.halted" ]; then
         fi
         # CONTROL PLANE: a unit declared suspended in $SPIRA_CTRL is not enabled, even when
         # the world is halted. The subject is the base unit name without instance suffix or
-        # extension (e.g. "spira-suites" from "spira-suites-prod.timer"). ctrl.sh check exits
-        # 0 when a suspension is in force. If ctrl.sh is absent or fails, the unit is enabled
-        # normally — a missing control tool is not a reason to refuse enabling everything.
+        # extension (e.g. "spira-suites" from "spira-suites-prod.timer"). ctrl_is_suspended
+        # reads the single load done above the UNITS loop. If ctrl.sh was absent, the fallback
+        # defined there always says "not suspended" — a missing control tool is not a reason
+        # to refuse enabling everything.
         _cs="${u%"-${SPIRA_INSTANCE}.service"}"; _cs="${_cs%"-${SPIRA_INSTANCE}.timer"}"
         _cs="${_cs%.service}"; _cs="${_cs%.timer}"
-        if [ -x "$SPIRA_HOME/ctrl.sh" ] && \
-                "$SPIRA_HOME/ctrl.sh" check "$_cs" >/dev/null 2>&1; then
+        if ctrl_is_suspended _CTRL_SUSPENDED "$_cs" >/dev/null; then
             printf 'install: %s is suspended (ctrl: %s) — skipping\n' "$u" "$_cs"; continue
         fi
         _en="$(systemctl --user is-enabled "$u" 2>/dev/null || true)"
@@ -694,8 +707,7 @@ else
         # See the HALTED branch above for the full rationale.
         _cs="${u%"-${SPIRA_INSTANCE}.service"}"; _cs="${_cs%"-${SPIRA_INSTANCE}.timer"}"
         _cs="${_cs%.service}"; _cs="${_cs%.timer}"
-        if [ -x "$SPIRA_HOME/ctrl.sh" ] && \
-                "$SPIRA_HOME/ctrl.sh" check "$_cs" >/dev/null 2>&1; then
+        if ctrl_is_suspended _CTRL_SUSPENDED "$_cs" >/dev/null; then
             printf 'install: %s is suspended (ctrl: %s) — skipping\n' "$u" "$_cs"; continue
         fi
         # AN OPERATOR-DISABLED UNIT IS LEFT AT ITS CURRENT STATE. A freshly installed unit
@@ -843,8 +855,7 @@ if [ ! -f "$SPIRA_RUN/world.halted" ]; then
         [ "${_MASKED[$u]:-}" = "1" ] && continue
         _cs="${u%"-${SPIRA_INSTANCE}.service"}"; _cs="${_cs%"-${SPIRA_INSTANCE}.timer"}"
         _cs="${_cs%.service}"; _cs="${_cs%.timer}"
-        if [ -x "$SPIRA_HOME/ctrl.sh" ] && \
-                "$SPIRA_HOME/ctrl.sh" check "$_cs" >/dev/null 2>&1; then
+        if ctrl_is_suspended _CTRL_SUSPENDED "$_cs" >/dev/null; then
             continue
         fi
         _en="$(systemctl --user is-enabled "$u" 2>/dev/null || true)"

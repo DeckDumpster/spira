@@ -45,6 +45,48 @@ set -uo pipefail
 # systemctl behind a seam so test suites can stub it without reaching the box.
 SC="${SPIRA_SYSTEMCTL:-systemctl}"
 
+# ctrl_load_suspended <array-name> -> populate the caller's associative array with
+# subject=reason for every currently suspended subject, in ONE python3 call.
+#
+# world.sh start and install.sh's per-unit apply loop each used to run `ctrl.sh check
+# <subject>` once per timer/unit — every call sourcing conf.sh and spawning python3 fresh.
+# Over a run touching dozens of units that is dozens of process starts to answer a question
+# whose answer does not change between them: the control file on disk. Read it once here;
+# ctrl_is_suspended below then answers in pure bash (sp-rnps9).
+ctrl_load_suspended() {
+    local _out="$1" _subject _reason
+    local -n _arr="$_out"
+    _arr=()
+    [ -f "${SPIRA_CTRL}" ] || return 0
+    while IFS=$'\t' read -r _subject _reason; do
+        [ -n "$_subject" ] || continue
+        _arr["$_subject"]="$_reason"
+    done < <(python3 - "${SPIRA_CTRL}" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+for subject, ops in data.items():
+    s = ops.get('suspend')
+    if s:
+        print("%s\t%s" % (subject, s.get('reason', '')))
+PY
+)
+}
+
+# ctrl_is_suspended <array-name> <subject> -> exit 0 and print the reason if suspended,
+# exit 1 (silent) if not. Pure bash over an array ctrl_load_suspended already populated —
+# the single predicate cluster 6 of docs/test-plan/instance-lifecycle.md asks for, shared
+# by world.sh start and systemd/install.sh's suspended/enabled check.
+ctrl_is_suspended() {
+    local -n _arr="$1"
+    local _subject="$2"
+    [ -n "${_arr[$_subject]+x}" ] || return 1
+    printf '%s' "${_arr[$_subject]}"
+}
+
 _usage() {
     printf 'ctrl.sh — operational control plane\n\n' >&2
     printf '  ctrl.sh suspend <subject> --reason <text> --owner <bead>\n' >&2
@@ -293,14 +335,19 @@ PY
     return 0
 }
 
-[ $# -ge 1 ] || _usage
-cmd="$1"; shift
-case "$cmd" in
-    suspend)    do_suspend "$@" ;;
-    resume)     do_resume  "$@" ;;
-    check)      do_check   "$@" ;;
-    reason)     do_reason  "$@" ;;
-    list)       do_list ;;
-    divergence) do_divergence ;;
-    *)          _usage ;;
-esac
+# CTRL_LIB=1 sources this file for its functions (ctrl_load_suspended, ctrl_is_suspended,
+# do_check, ...) without running the CLI dispatch below — world.sh and install.sh both do
+# this to read the control file once instead of spawning `ctrl.sh check` per unit.
+if [ "${CTRL_LIB:-0}" != "1" ]; then
+    [ $# -ge 1 ] || _usage
+    cmd="$1"; shift
+    case "$cmd" in
+        suspend)    do_suspend "$@" ;;
+        resume)     do_resume  "$@" ;;
+        check)      do_check   "$@" ;;
+        reason)     do_reason  "$@" ;;
+        list)       do_list ;;
+        divergence) do_divergence ;;
+        *)          _usage ;;
+    esac
+fi
