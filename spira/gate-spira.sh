@@ -108,7 +108,7 @@ BODY
 # ---------------------------------------------------------------------------------------
 # 1. THE FENCES — first, and independently of everything below.
 # ---------------------------------------------------------------------------------------
-for fence in spira/exclude.sh spira/inventory.sh spira/scratch-fence.sh spira/wiki-add-fence.sh spira/literal-lint.sh spira/testdb-mode-lint.sh spira/bd-stdin-lint.sh spira/suite-state-fence.sh spira/orphan-test.sh; do
+for fence in spira/exclude.sh spira/inventory.sh spira/scratch-fence.sh spira/wiki-add-fence.sh spira/literal-lint.sh spira/testdb-mode-lint.sh spira/bd-stdin-lint.sh spira/incident-cause-lint.sh spira/suite-state-fence.sh spira/orphan-test.sh; do
     [ -r "$fence" ] || { say "$fence is missing — refusing to land unchecked"; exit 1; }
 done
 
@@ -192,6 +192,15 @@ fi
 [ -r spira/bd-stdin-lint.sh ] || { say "spira/bd-stdin-lint.sh is missing — refusing to land unchecked"; exit 1; }
 if ! bsl="$(bash spira/bd-stdin-lint.sh 2>&1)"; then
     printf '%s\n' "$bsl" >&2
+    exit 1
+fi
+
+# INCIDENT-CAUSE FENCE. A SPIRA_INCIDENT_REF filing site with no SPIRA_INCIDENT_CAUSE files
+# recurrences into the undifferentiated "unrecorded" bucket, collapsing the census taxonomy
+# a remedy needs to rank failure classes.
+[ -r spira/incident-cause-lint.sh ] || { say "spira/incident-cause-lint.sh is missing — refusing to land unchecked"; exit 1; }
+if ! icl="$(bash spira/incident-cause-lint.sh 2>&1)"; then
+    printf '%s\n' "$icl" >&2
     exit 1
 fi
 

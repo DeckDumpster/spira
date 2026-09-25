@@ -55,6 +55,7 @@ echo "test-incident.sh"
 testdb_require test-incident
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up incident || { echo "test-incident: could not build a fixture database"; exit 1; }
+BD_REAL="${SPIRA_BD:-bd}"
 
 # Create a minimal repo-map so bdq can validate repo: labels in the test.
 # Format is name|path (pipe-separated), with comments starting with #.
@@ -197,6 +198,49 @@ mkdir -p "$RUN"
 
 # ======================================================================================
 echo
+echo "BSD date -v fallback — the lookback boundary still resolves without GNU date -d:"
+# ======================================================================================
+# _dedup_incident computes its lookback boundary with GNU \`date -d\`, falling back to BSD's
+# \`date -v\` when -d is unsupported. A PATH with no GNU date must not silently skip the
+# closed-bead lookback (which would make every close-then-refile file a fresh bead) — it
+# must still resolve a boundary date via the BSD form.
+_gnu_date="$(command -v date)"
+DATEDIR="$TMP/no-gnu-date"; mkdir -p "$DATEDIR"
+cat > "$DATEDIR/date" <<DATESHIM
+#!/usr/bin/env bash
+# Reject GNU-style -d, forcing the caller's own fallback branch; answer -v like BSD date.
+for _a in "\$@"; do [ "\$_a" = "-d" ] && { echo "date: illegal option -- d" >&2; exit 1; }; done
+exec "$_gnu_date" "\$@"
+DATESHIM
+chmod +x "$DATEDIR/date"
+_bsd_since="$(PATH="$DATEDIR:$PATH" bash -c 'date -u -v -7d "+%Y-%m-%d" 2>/dev/null')"
+is "the BSD date -v shim itself resolves a boundary" "yes" "$([ -n "$_bsd_since" ] && echo yes || echo no)"
+
+printf 'bsd-date first payload\n' | PATH="$DATEDIR:$PATH" inc >/dev/null
+_bd_id="$(bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
+  | python3 -c '
+import sys, json
+target = sys.argv[1]
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+for i in (d if isinstance(d, list) else [d]):
+    if i.get("external_ref") == target:
+        print(i["id"]); break
+' 'incident:the-test-sweep')"
+[ -n "${_bd_id:-}" ] && bd -C "$SPIRA_DB" close "$_bd_id" --reason "resolved, within lookback" >/dev/null 2>&1
+> "$ILOG"
+printf 'bsd-date second payload\n' | PATH="$DATEDIR:$PATH" inc >/dev/null
+n_bsd_all="$(count_all 'incident:the-test-sweep')"
+is "with no GNU date -d, the BSD fallback still finds the closed bead within lookback" "1" "$n_bsd_all"
+log_bsd_reopen="$(grep -c 'reopened from closed' "$ILOG" 2>/dev/null || true)"
+is "and reopens it rather than filing fresh" "1" "$log_bsd_reopen"
+
+testdb_reset
+mkdir -p "$RUN"
+> "$ILOG"
+
+# ======================================================================================
+echo
 echo "the concurrent case — two simultaneous filers of the same ref create exactly one bead:"
 # ======================================================================================
 # THE INCIDENT CASE, REPRODUCED. Both processes call open_incident before either calls
@@ -205,12 +249,22 @@ echo "the concurrent case — two simultaneous filers of the same ref create exa
 # open_incident inside the lock, finds the bead the first caller just created, and records
 # a recurrence instead.
 #
-# Both processes are started with no sleep between them. Dolt's query latency is enough to
-# widen the race window so this is not a lucky ordering — it is the same shape as the
-# incident, just in a test database.
-printf 'concurrent A\n' | inc >/dev/null &
+# A DETERMINISTIC BARRIER (gap G11), not a hope that Dolt's own query latency happens to
+# widen the race window on whatever machine this runs on. SLOW_BD wraps the real bd binary
+# and sleeps before every `create` call — inside the section the flock protects — so the
+# second caller is guaranteed to still be waiting on the lock (or, if the lock were removed,
+# guaranteed to overlap the first caller's create) regardless of how fast the fixture
+# database answers today.
+SLOW_BD="$TMP/slow-bd"
+cat > "$SLOW_BD" <<WRAP
+#!/usr/bin/env bash
+for _a in "\$@"; do [ "\$_a" = create ] && sleep 0.3 && break; done
+exec "$BD_REAL" "\$@"
+WRAP
+chmod +x "$SLOW_BD"
+printf 'concurrent A\n' | inc SPIRA_BD="$SLOW_BD" >/dev/null &
 pid_a=$!
-printf 'concurrent B\n' | inc >/dev/null &
+printf 'concurrent B\n' | inc SPIRA_BD="$SLOW_BD" >/dev/null &
 pid_b=$!
 wait "$pid_a" || true
 wait "$pid_b" || true
@@ -219,85 +273,6 @@ n="$(count_open 'incident:the-test-sweep')"
 is "two concurrent filers create exactly one bead" "1" "$n"
 recur_count="$(grep -c 'recurred' "$ILOG" 2>/dev/null || true)"
 is "the second caller recorded a recurrence, not a second filing" "1" "$recur_count"
-
-testdb_reset
-mkdir -p "$RUN"
-> "$ILOG"
-
-# A separate wrapper that accepts extra env vars as leading positional args (env(1)
-# treats leading VAR=val tokens as environment assignments). Stdout is discarded; use
-# find_bead to locate what was filed.
-inc_env() {
-    env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
-        SPIRA_CONF="$TMP/nonexistent.conf" \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_REPO_MAP="$REPO_MAP" \
-        SPIRA_SPOOL="$SPOOL" \
-        SPIRA_INCIDENT_LOG="$ILOG" \
-        SPIRA_INCIDENT_LOCK="$LOCK" \
-        SPIRA_RUN="$RUN" \
-        SPIRA_HOME="$HERE" \
-        SPIRA_MAIL="$TMP/mail" \
-        "$@" \
-        bash "$HERE/incident.sh" file "harness repo test" - >/dev/null 2>&1
-}
-
-# Find the bead by its external ref (the ref incident.sh derives from the title).
-# NOTE: bd-embedded does not support --external-ref server-side filtering, so filter
-# client-side via JSON.
-find_bead() {   # find_bead <external-ref> -> bead id or empty
-    bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
-      | python3 -c '
-import sys, json
-target = sys.argv[1]
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-for i in (d if isinstance(d, list) else [d]):
-    if i.get("external_ref") == target:
-        print(i["id"]); break
-' "$1"
-}
-
-# ======================================================================================
-echo
-echo "the repo: label — a declared repo is stamped on the bead (positive control):"
-# ======================================================================================
-# POSITIVE CONTROL (law-absence-needs-a-positive-control). File an incident that names
-# a repository and assert the resulting bead carries the repo: label.
-# Without this, a mis-set SPIRA_DB, a broken label command, or an absent code path all
-# look like "no label" to an assertion that only checks for its absence.
-printf 'repo test payload\n' | inc_env SPIRA_INCIDENT_REPO=brain
-id_repo="$(find_bead 'incident:harness-repo-test')"
-if [ -n "${id_repo:-}" ]; then
-    labels_repo="$(bd -C "$SPIRA_DB" label list "$id_repo" 2>/dev/null || true)"
-    want "repo:brain on a bead filed with SPIRA_INCIDENT_REPO=brain" "repo:brain" "$labels_repo"
-else
-    bad "repo label: positive control" "incident.sh filed nothing (no bead at incident:harness-repo-test)"
-fi
-
-testdb_reset
-mkdir -p "$RUN"
-> "$ILOG"
-
-# ======================================================================================
-echo
-echo "the repo: label — an undeclared repo is marked needs-repo-triage, not silently defaulted:"
-# ======================================================================================
-# WHERE THE CALLER DECLARES NO REPO the bead must carry needs-repo-triage rather than
-# silently going to the home-repo fallback. A wrong repo is not indistinguishable from a
-# right one (sp-io5e, law-a-split-repoints-nothing).
-printf 'no-repo payload\n' | inc_env
-id_norep="$(find_bead 'incident:harness-repo-test')"
-if [ -n "${id_norep:-}" ]; then
-    labels_norep="$(bd -C "$SPIRA_DB" label list "$id_norep" 2>/dev/null || true)"
-    want "needs-repo-triage when no SPIRA_INCIDENT_REPO declared" "needs-repo-triage" "$labels_norep"
-    case "$labels_norep" in
-        *"repo:"*) bad "no-repo: must carry no repo: label when repo undeclared" "got: $labels_norep" ;;
-        *) ok "no-repo: no repo: label present when repo undeclared" ;;
-    esac
-else
-    bad "no-repo: positive control" "incident.sh filed nothing (no bead at incident:harness-repo-test)"
-fi
 
 testdb_reset
 mkdir -p "$RUN"
@@ -351,157 +326,10 @@ testdb_reset
 mkdir -p "$RUN"
 > "$ILOG"
 
-# ======================================================================================
-echo
-echo "undeclared-repo escalation — a mail is sent when repo is not declared:"
-# ======================================================================================
-NOREP_MAIL="$TMP/norep-mail"
-inc_norep() {
-    env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
-        SPIRA_CONF="$TMP/nonexistent.conf" \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_SPOOL="$SPOOL" \
-        SPIRA_INCIDENT_LOG="$ILOG" \
-        SPIRA_INCIDENT_LOCK="$LOCK" \
-        SPIRA_RUN="$RUN" \
-        SPIRA_HOME="$HERE" \
-        SPIRA_MAIL="$NOREP_MAIL" \
-        "$@" bash "$HERE/incident.sh" file "undeclared repo test" - >/dev/null 2>&1
-}
-n_norep_mails() { ls "$NOREP_MAIL/operator/new/" 2>/dev/null | wc -l | tr -d ' '; }
-norep_mail_content() { cat "$NOREP_MAIL/operator/new/"* 2>/dev/null; }
-
-echo
-echo "  positive control — single filing sends one mail:"
-printf 'first payload\n' | inc_norep
-n="$(n_norep_mails)"
-is "single undeclared-repo incident sends exactly one mail" "1" "$n"
-
-testdb_reset; mkdir -p "$RUN"; > "$ILOG"
-
-# ======================================================================================
-echo
-echo "provenance — undeclared-repo mail leads with unit+host+path, not the ref slug:"
-# ======================================================================================
-# THE REJECTED ASKS (sp-fzxk9, sp-dmjge). Four escalations in one hour were rejected as
-# unreadable. The leading line was the external_ref slug — a dedupe key, not a sentence.
-# "is this from a test container?" was asked three times. This verifies the fix:
-# the mail subject now leads with "<unit> on <host>: <path>", making the origin unmistakable.
-rm -rf "$NOREP_MAIL"
-printf 'provenance payload\n' | inc_norep SPIRA_INCIDENT_PATH="$HERE/test-incident.sh"
-_mail_subj="$(norep_mail_content | sed -n 's/^Subject:[[:space:]]*//p' | head -1)"
-case "$_mail_subj" in
-    "undeclared repo:"*) bad "provenance: mail subject starts with ref slug (not provenance)" "got: $_mail_subj" ;;
-    *)                   ok "provenance: mail subject does not start with ref slug" ;;
-esac
-case "$_mail_subj" in
-    *" on "*) ok "provenance: mail subject contains provenance marker ' on '" ;;
-    *)        bad "provenance: mail subject must contain ' on '" "got: $_mail_subj" ;;
-esac
-case "$_mail_subj" in
-    *"test-incident.sh"*) ok "provenance: mail subject contains the declared SPIRA_INCIDENT_PATH" ;;
-    *)  bad "provenance: declared path (test-incident.sh) must appear in mail subject" "got: $_mail_subj" ;;
-esac
-
-testdb_reset; mkdir -p "$RUN"; > "$ILOG"
-
-# ======================================================================================
-echo
-echo "dedup efficiency — O(1) bd show calls regardless of open-incident queue depth (sp-80br6):"
-# ======================================================================================
-# THE PROBLEM. The dedup path formerly called bd show once per candidate returned by
-# bd list --label <labels>. N open incidents meant N sequential subprocess calls inside
-# the intake flock, measured at ~202ms each: 10 open incidents added ~2s per new filing,
-# exactly when the queue is deepest.
-#
-# THE FIX. Each bead now carries ref:<hash-of-external-ref> at filing time. _dedup_incident
-# queries bd list --label ref:<hash>, returning at most 1 candidate, and reads external_ref
-# directly from bd list --json output — no bd show per candidate.
-#
-# POSITIVE CONTROL (law-absence-needs-a-positive-control). The naive O(N) approach must
-# visibly show N bd show calls for N candidates, proving the counter wrapper is working.
-# A counter that always returns 0 would make any code look efficient; the positive control
-# distinguishes "nothing calls bd show" from "the counter is broken."
-#
-# THE COUNTER WRAPS $SPIRA_BD. incident.sh uses bdq (which wraps $SPIRA_BD) for all bd
-# calls; replacing SPIRA_BD with a counting wrapper captures every bd show invocation.
-# The wrapper writes to SHOW_COUNT_FILE atomically enough for this single-process test.
-
-SHOW_COUNT_FILE="$TMP/show-count"
-BD_REAL="${SPIRA_BD:-bd}"
-
-BD_COUNTER="$TMP/bd-counter"
-# The wrapper must use the original bd binary ($BD_REAL), not itself recursively.
-# Scan all args for 'show': bdq prepends -C $SPIRA_DB, so 'show' is not always at $1.
-cat > "$BD_COUNTER" <<WRAPPER
-#!/usr/bin/env bash
-for _a in "\$@"; do
-    if [ "\$_a" = "show" ]; then
-        _c=\$(cat "$SHOW_COUNT_FILE" 2>/dev/null || echo 0)
-        printf '%d\n' \$((_c+1)) > "$SHOW_COUNT_FILE"
-        break
-    fi
-done
-exec "$BD_REAL" "\$@"
-WRAPPER
-chmod +x "$BD_COUNTER"
-
-# POSITIVE CONTROL: a naive O(N) function that calls bd show for each candidate in the
-# open incident list — the shape of the OLD dedup path. Proves the counter captures shows.
-_naive_dedup_show_count() {
-    local search_labels
-    search_labels="$(printf '%s' "${LABELS:-spira,incident}" | tr ',' '\n' | grep -v '^repo:' | paste -sd, -)"
-    printf '0\n' > "$SHOW_COUNT_FILE"
-    "$BD_COUNTER" -C "$SPIRA_DB" list --status open,in_progress --limit 0 \
-        --label "$search_labels" --json 2>/dev/null \
-      | python3 -c "
-import sys, json, subprocess
-bd_bin = sys.argv[1]
-spira_db = sys.argv[2]
-try:
-    for bead in json.load(sys.stdin):
-        bid = bead.get('id')
-        if not bid: continue
-        subprocess.run([bd_bin, '-C', spira_db, 'show', bid, '--json'], capture_output=True)
-except: pass
-" "$BD_COUNTER" "$SPIRA_DB" 2>/dev/null
-    cat "$SHOW_COUNT_FILE" 2>/dev/null || echo 0
-}
-
-# Plant N beads with different refs so the naive loop has N candidates to bd-show.
-N_BENCH=5
-for _i in $(seq 1 $N_BENCH); do
-    "$BD_REAL" -C "$SPIRA_DB" create "bench-incident-$_i" \
-        --type bug --priority 2 --labels spira,incident \
-        --external-ref "incident:bench-ref-$_i" --silent >/dev/null 2>&1
-done
-
-naive_shows="$(_naive_dedup_show_count)"
-is "positive control: naive O(N) approach calls bd show $N_BENCH times for $N_BENCH candidates" \
-   "$N_BENCH" "$naive_shows"
-
-testdb_reset; mkdir -p "$RUN"; > "$ILOG"
-
-# NEW CODE: file via incident.sh (which uses the label-keyed path) alongside N-1 noise
-# beads that lack the ref: label. The dedup path on the second filing should issue
-# exactly 0 bd show calls — the label query returns 1 candidate and external_ref is
-# read directly from bd list --json output.
-for _i in $(seq 2 $N_BENCH); do
-    "$BD_REAL" -C "$SPIRA_DB" create "bench-noise-$_i" \
-        --type bug --priority 2 --labels spira,incident \
-        --external-ref "incident:noise-ref-$_i" --silent >/dev/null 2>&1
-done
-
-# File the target ref via incident.sh; it creates the bead and adds ref:<hash> label.
-printf 'seed\n' | inc SPIRA_INCIDENT_REF="incident:bench-target" >/dev/null 2>&1 || true
-
-# Second filing on same ref (the dedup recurrence path). Count bd show calls.
-printf '0\n' > "$SHOW_COUNT_FILE"
-printf 'recur\n' | SPIRA_BD="$BD_COUNTER" inc SPIRA_INCIDENT_REF="incident:bench-target" >/dev/null 2>&1 || true
-new_shows="$(cat "$SHOW_COUNT_FILE" 2>/dev/null || echo 0)"
-is "label-keyed dedup issues 0 bd show calls with $N_BENCH open candidates" "0" "$new_shows"
-
-testdb_reset; mkdir -p "$RUN"; > "$ILOG"
+# UC-05 (declared repo:brain / undeclared needs-repo-triage + mail) and UC-04 (0 bd show
+# calls under load) are demoted to T1 stub-bd rows in test-incident-decisions.sh — neither
+# needs a real fixture database to be true. Only the fallback path below (a bead filed
+# before the ref: label existed) stays here, exercising the real end-to-end label promotion.
 
 # FALLBACK TEST: a bead filed without the ref: label (older code) still dedupes.
 # The fallback path (sub-path B) handles this case correctly.
@@ -529,6 +357,88 @@ print(count)
 is "a bead filed without ref: label is still found via the fallback path" "1" "$n_fb"
 recur_fb="$(grep -c 'recurred' "$ILOG" 2>/dev/null || true)"
 is "fallback-found bead was treated as recurrence, not new filing" "1" "$recur_fb"
+
+testdb_reset; mkdir -p "$RUN"; > "$ILOG"
+
+# ======================================================================================
+echo
+echo "external_ref in bd list --json — the field the dedup query reads must be present (sp-csvzn):"
+# ======================================================================================
+# THE DEFECT (sp-csvzn). bd list --json once omitted external_ref, so every candidate's
+# bead.get('external_ref') was None and _dedup_incident always returned nothing — every
+# filing looked like "no open incident" and filed a fresh bead (17-18+ surplus per ref,
+# merged from test-incident-dedup.sh).
+bd -C "$SPIRA_DB" create "external-ref field probe" \
+    --type bug --priority 2 --labels spira,partition:incident \
+    --external-ref "probe:external-ref-field-check" --silent >/dev/null 2>&1
+_has_field="$(bd -C "$SPIRA_DB" list --status open --limit 0 --json 2>/dev/null | python3 -c '
+import sys, json
+try:
+    for r in json.load(sys.stdin):
+        if r.get("external_ref") == "probe:external-ref-field-check":
+            print("yes"); raise SystemExit(0)
+    print("no")
+except SystemExit: raise
+except Exception:
+    print("no")
+')"
+is "bd list --json includes external_ref with the correct value" "yes" "$_has_field"
+
+testdb_reset; mkdir -p "$RUN"; > "$ILOG"
+
+# ======================================================================================
+echo
+echo "dedup with SPIRA_INCIDENT_REF set — the explicit-ref path resolves against \$SPIRA_DB, not a literal (sp-ew54u):"
+# ======================================================================================
+# THE DEFECT (sp-ew54u, merged from test-incident-dedup.sh). \$SPIRA_DB inside a
+# single-quoted Python heredoc was never shell-expanded, so the query addressed the
+# caller's default store instead of the configured one and every filing found nothing.
+# The current code passes it as a sys.argv positional, never inside a Python string
+# literal; this exercises exactly that path.
+EXPLICIT_REF="incident:explicit-ref-dedup-test"
+for _i in 1 2 3; do
+    printf 'explicit ref filing %d\n' "$_i" | inc SPIRA_INCIDENT_REF="$EXPLICIT_REF" >/dev/null
+done
+n_explicit="$(count_open "$EXPLICIT_REF")"
+is "3 filings with SPIRA_INCIDENT_REF produce exactly one bead (sp-ew54u)" "1" "$n_explicit"
+
+testdb_reset; mkdir -p "$RUN"; > "$ILOG"
+
+# ======================================================================================
+echo
+echo "recurrence notes are bounded for an unchanged payload (UC-06, one real row — the decision itself is T1 above):"
+# ======================================================================================
+# The pure note-size decision (_recur_note_body) is table-tested with no database in
+# test-incident-decisions.sh; this is the one real row proving the wiring — that file_one
+# actually calls it and that the resulting bead's notes field reflects the decision.
+REF_BOUND="incident:test-recur-bounded"
+PAYLOAD500="$(python3 -c 'print("x" * 500, end="")')"
+for _i in 1 2 3; do
+    printf '%s' "$PAYLOAD500" | inc SPIRA_INCIDENT_REF="$REF_BOUND" >/dev/null
+done
+_bound_id="$(bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
+  | python3 -c '
+import sys, json
+target = sys.argv[1]
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+for i in (d if isinstance(d, list) else [d]):
+    if i.get("external_ref") == target: print(i["id"]); break
+' "$REF_BOUND")"
+[ -n "${_bound_id:-}" ] || bad "recur-bounded bead was created" "none found"
+# The first recurrence has no prior payload-hash label, so it writes the payload once; the
+# second recurrence's payload is byte-identical, so it must NOT write it again — that is the
+# whole property _recur_note_body exists to enforce. A copy count of exactly 1 (not 0, not 2)
+# proves both halves at once: the payload was recorded at all, and it was not re-recorded.
+_payload_copies="$(bd -C "$SPIRA_DB" show "${_bound_id:-?}" --json 2>/dev/null | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
+    notes = (d[0].get("notes") or "") if d else ""
+    print(notes.count("x" * 500))
+except Exception: print(-1)
+')"
+is "an unchanged 500-byte payload is recorded exactly once across 3 identical filings" "1" "$_payload_copies"
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"

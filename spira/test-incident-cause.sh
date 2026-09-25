@@ -1,43 +1,28 @@
 #!/usr/bin/env bash
 #
-# test-incident-cause.sh — every SPIRA_INCIDENT_REF filing site also exports
-# SPIRA_INCIDENT_CAUSE (law-producers-declare-what-they-know).
+# test-incident-cause.sh — the fence that refuses a SPIRA_INCIDENT_REF site with no
+# SPIRA_INCIDENT_CAUSE (UC-ops-detection-remediation-09).
 #
-# THE PROPERTY. A producer that sets SPIRA_INCIDENT_REF without SPIRA_INCIDENT_CAUSE
-# files recurrences into the undifferentiated "unrecorded" bucket, collapsing the
-# census taxonomy and preventing Maechen's ranking step from telling causes apart.
-# This check ensures each filing site carries both variables.
+#   ./test-incident-cause.sh
 #
-# THE ACCEPTANCE CRITERION. The grep finds every SPIRA_INCIDENT_REF= assignment in
-# spira/*.sh (excluding test suites), then checks whether any of the surrounding 14
-# lines (10 before, 3 after) contain SPIRA_INCIDENT_CAUSE. A site with no cause is
-# UNDECLARED. After this fix the set must be empty.
+# incident-cause-lint.sh is now a gate fence (spira/gate-spira.sh), not a suite of its
+# own: like literal-lint.sh and testdb-mode-lint.sh, it costs nothing to run on every
+# push and belongs in the T0 lint stage rather than the certification suite list.
 #
-# THE POSITIVE CONTROL (law-absence-needs-a-positive-control). Before asserting that
-# the real spira/ tree is clean, this suite plants one offending site in a temporary
-# script and requires the checker to name it. A mis-scoped glob, an off-by-one window,
-# or a grep that finds nothing all look like "clean" without the control.
+# THE POSITIVE CONTROL IS FIRST (law-absence-needs-a-positive-control). A checker that
+# reports the real tree clean is indistinguishable from a mis-scoped glob, an off-by-one
+# window, or a grep that matches nothing — a planted offender in a scratch directory must
+# be named before the shipped tree's silence means anything.
 #
-# defect: sp-crov
-# covers: spira/*.sh
+# tier: T1
+# covers: spira/incident-cause-lint.sh spira/gate-spira.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+. "$HERE/testlib.sh"
 
 echo "test-incident-cause.sh"
 
-# check_undeclared <dir> — emit one "UNDECLARED <file>:<line>" per SPIRA_INCIDENT_REF
-# site that lacks a SPIRA_INCIDENT_CAUSE in its surrounding 14 lines.
-check_undeclared() {
-    local dir="$1"
-    grep -rn "SPIRA_INCIDENT_REF=" --include='*.sh' "$dir" | grep -v '/test-' | \
-    while IFS=: read -r f l r; do
-        [ "$(sed -n "$((l-10)),$((l+3))p" "$f" | grep -c SPIRA_INCIDENT_CAUSE)" -eq 0 ] \
-            && printf 'UNDECLARED %s:%s\n' "$f" "$l"
-    done
-}
+LINT="$HERE/incident-cause-lint.sh"
 
 # --- positive control: the checker must find a planted offender -----------------
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -53,21 +38,22 @@ SPIRA_INCIDENT_REF=incident:planted-offender \
 bash incident.sh file "planted test" -
 SCRIPT
 
-control_out="$(check_undeclared "$TMP" 2>/dev/null)"
-if printf '%s\n' "$control_out" | grep -q "UNDECLARED.*offender.sh"; then
-    ok "positive control: checker finds the planted offender"
-else
-    bad "positive control" "checker did not find offender.sh; out=[${control_out:-<empty>}]"
-fi
+out="$(bash "$LINT" --dir "$TMP" 2>&1)"; rc=$?
+is "SEEN RED: positive control — planted offender is refused" "1" "$rc"
+want "and it names the file"                                  "offender.sh" "$out"
 
-# --- real property: no undeclared sites in spira/ --------------------------------
-real_out="$(check_undeclared "$HERE" 2>/dev/null)"
-if [ -z "$real_out" ]; then
-    ok "spira/ has no SPIRA_INCIDENT_REF sites without SPIRA_INCIDENT_CAUSE"
-else
-    bad "undeclared sites in spira/" "$(printf '%s\n' "$real_out")"
-fi
+# Withdraw the plant; only now is a clean scan evidence of anything.
+rm -f "$OFFENDER"
+out="$(bash "$LINT" --dir "$TMP" 2>&1)"; rc=$?
+is "GREEN AFTER: an empty scratch directory is clean" "0" "$rc"
 
-# --- summary ---------------------------------------------------------------------
-printf '\n%s: %d passed, %d failed\n' "test-incident-cause.sh" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+# --- real property: the shipped tree has no undeclared sites ---------------------
+out="$(bash "$LINT" 2>&1)"; rc=$?
+is   "the shipped spira/ tree is clean" "0" "$rc"
+[ "$rc" = 0 ] || printf '%s\n' "$out" >&2
+
+# --- gate integration: a fence nothing invokes is a file --------------------------
+want "the gate names this fence"     "spira/incident-cause-lint.sh" "$(cat "$HERE/gate-spira.sh")"
+is   "and the fence script is readable" "0" "$([ -r "$LINT" ]; echo $?)"
+
+tl_summary
