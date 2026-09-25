@@ -67,8 +67,8 @@ stub reflect.sh    'touch "$SPIRA_RUN/reflect.fired"'
 stub mail.sh       'printf "%s\n" "$*" >> "$MAIL_LOG"; cat >/dev/null'
 
 # TWO PERSONAS to prove the check is not hardcoded to one partition.
-printf 'FAYTH_LABELS="spira,${SPIRA_PLAN_LABEL}"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/t.fayth"
-printf 'FAYTH_LABELS="spira,${SPIRA_INCIDENT_LABEL}"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/tinc.fayth"
+printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/t.fayth"
+printf 'FAYTH_LABELS="spira,incident"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/tinc.fayth"
 
 B() { bd -C "$SPIRA_DB" "$@"; }
 export MAIL_LOG="$TMP/mail.log"; : > "$MAIL_LOG"
