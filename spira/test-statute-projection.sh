@@ -150,6 +150,74 @@ want "positive pair: prints 'Statute is live'" "Statute is live" "$out_pair"
 
 # ==========================================================================
 echo
+echo "=== rule.sh: commits wiki/notes/common-law.md itself (sp-4fl2e) ==="
+# ==========================================================================
+# Without this, synth()'s write to common-law.md sits dirty in the shared wiki checkout
+# until some other actor's session exits and sweeps it up under the wrong authorship.
+# rule.sh must commit that one path itself, immediately, under a `law: enact/retire <key>`
+# message — a real git checkout is required to prove the tree ends up clean, not a stub.
+
+WIKI_CL_ORIGIN="$TMP/wiki-cl.git"; git init -q --bare -b main "$WIKI_CL_ORIGIN"
+WIKI_CL="$TMP/wiki-cl"; git clone -q "$WIKI_CL_ORIGIN" "$WIKI_CL" 2>/dev/null
+git -C "$WIKI_CL" config user.email "test@spira"; git -C "$WIKI_CL" config user.name "test"
+mkdir -p "$WIKI_CL/wiki/notes"
+printf '# common law\n' > "$WIKI_CL/wiki/notes/common-law.md"
+git -C "$WIKI_CL" add wiki/notes/common-law.md
+git -C "$WIKI_CL" commit -qm "seed common-law"
+git -C "$WIKI_CL" push -q origin main 2>/dev/null
+
+# Stands in for law-synth.sh: appends to common-law.md the way a real regenerate would.
+CL_HOOK="$TMP/cl-hook.sh"
+printf '#!/bin/sh\nprintf "\\n### new entry\\n" >> "%s/wiki/notes/common-law.md"\necho "wrote common-law.md"\n' \
+    "$WIKI_CL" > "$CL_HOOK"
+chmod +x "$CL_HOOK"
+
+run_enact_wiki() {
+    SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$CL_HOOK" SPIRA_WIKI="$WIKI_CL" \
+        bash "$RULE_SH" enact "$1" "$2" 2>&1
+}
+run_retire_wiki() {
+    SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$CL_HOOK" SPIRA_WIKI="$WIKI_CL" \
+        bash "$RULE_SH" retire "$1" 2>&1
+}
+
+# POSITIVE CONTROL: enact commits common-law.md itself and leaves the tree clean.
+out_cl_enact=$(run_enact_wiki "sp-4fl2e-commit-test" "Canary for rule.sh self-commit."); rc_cl_enact=$?
+if [ $rc_cl_enact -eq 0 ]; then
+    ok "commit: enact exits 0"
+else
+    bad "commit: enact exits 0" "rc=$rc_cl_enact output=$out_cl_enact"
+fi
+want "commit: enact prints committed confirmation" "wiki/notes/common-law.md committed" "$out_cl_enact"
+is "commit: enact leaves wiki checkout clean" "" \
+    "$(git -C "$WIKI_CL" status --short --untracked-files=all 2>/dev/null)"
+is "commit: enact commit message names the statute" "law: enact law-sp-4fl2e-commit-test" \
+    "$(git -C "$WIKI_CL" log --format=%s -1 -- wiki/notes/common-law.md 2>/dev/null)"
+is "commit: enact commit touches only common-law.md" "wiki/notes/common-law.md" \
+    "$(git -C "$WIKI_CL" show --name-only --format='' HEAD 2>/dev/null)"
+
+# POSITIVE CONTROL: retire commits common-law.md itself too.
+out_cl_retire=$(run_retire_wiki "sp-4fl2e-commit-test"); rc_cl_retire=$?
+if [ $rc_cl_retire -eq 0 ]; then
+    ok "commit: retire exits 0"
+else
+    bad "commit: retire exits 0" "rc=$rc_cl_retire output=$out_cl_retire"
+fi
+is "commit: retire leaves wiki checkout clean" "" \
+    "$(git -C "$WIKI_CL" status --short --untracked-files=all 2>/dev/null)"
+is "commit: retire commit message names the statute" "law: retire law-sp-4fl2e-commit-test" \
+    "$(git -C "$WIKI_CL" log --format=%s -1 -- wiki/notes/common-law.md 2>/dev/null)"
+
+# NEGATIVE CONTROL: no SPIRA_WIKI → no auto-commit attempted, manual-commit hint printed
+# (unchanged behaviour — this is the "rule.sh: synth failure propagation" section's own
+# GOOD_HOOK, which never touches a wiki checkout at all).
+out_cl_nowiki=$(SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$GOOD_HOOK" SPIRA_WIKI="" \
+    bash "$RULE_SH" enact "sp-4fl2e-commit-nowiki" "No wiki canary." 2>&1)
+want "commit: no SPIRA_WIKI prints manual-commit hint" \
+    "Commit wiki/notes/common-law.md to replicate it off this box." "$out_cl_nowiki"
+
+# ==========================================================================
+echo
 echo "=== law-synth.sh: wrong-database guard ==="
 # ==========================================================================
 
