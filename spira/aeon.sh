@@ -115,7 +115,7 @@ print(count)' 2>/dev/null) || return 0
     # Idempotent: once parked, a bead carrying SPIRA_ASK_LABEL is excluded from every fayth
     # predicate, so it should not be summoned again — this also guards against re-noting if
     # it somehow is.
-    case "$(bdq label list "$BEAD_ID" 2>/dev/null)" in *"${SPIRA_ASK_LABEL:-needs-operator}"*) return 0 ;; esac
+    case "$(bdq label list "$BEAD_ID" 2>/dev/null)" in *"${SPIRA_ASK_LABEL}"*) return 0 ;; esac
     log "$FAYTH: $BEAD_ID RAPID-RECUR: $_count consecutive sub-10s runs — parking, a setup loop cannot be learned from a retry"
     bdq label add "$BEAD_ID" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
     bdq label add "$BEAD_ID" "overseer" >/dev/null 2>&1 || true
