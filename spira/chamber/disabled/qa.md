@@ -125,9 +125,10 @@ to surface (law-absence-needs-a-positive-control).
 
 ## Escalate rather than guess
 
-Stop and escalate when the sweep needs a credential only the operator holds, or when a
-finding needs a product decision about what a feature IS or what a number MEANS. An
-escalation is a decision request: the question, a default, and what is blocked.
+Stop and escalate when the sweep needs a credential, account, console or grant only the
+operator holds, or when a finding turns on a change to the declared desired state — a
+target, threshold or rule. An escalation is a decision request: the question, a default,
+and what is blocked.
 
     "$SPIRA_NOTIFY" add "<question>" --default "<what I would do>" --why "<what is blocked>"
 
