@@ -27,13 +27,21 @@
 #
 # USAGE
 #   testenv-batch.sh [--mode parallel|serial] [--suites <suite1.sh,suite2.sh,...|->]
-#                    [--report [N]]
+#                    [--with-bins] [--report [N]]
 #                    <branch> [<repo-name-or-path>]
 #
 #   --suites -  reads suite names from stdin, one per line (blank lines ignored).
 #               Empty stdin means "nothing to run" — exit 0, not an error.
 #               Composes with a selector:
 #                 select.sh --base X --head Y | testenv-batch.sh --suites - <branch> [<repo>]
+#   --with-bins builds the branch's own Rust workspace (make build) and copies every
+#               executable under target/release/ into the branch worktree's bin/,
+#               mirroring the gate's build job exactly (.github/workflows/gate.yml)
+#               so a suite that reads shipped binaries (e.g. literal-lint's
+#               shipped-mirror scan) sees locally what CI's shipped tree would ship
+#               for THIS branch. Without this flag, only $REPO/bin (if present) is
+#               copied in — the pre-sp-hr5kj behavior, which never reflects Rust
+#               changes made on the branch itself.
 #   --report N  print the top-20 report over the last N runs from the suite-times ledger;
 #               no branch or container is required. Delegates to suite-times.sh.
 #
@@ -42,10 +50,15 @@
 #   1   suites ran, some were red
 #   2   container did not come up, or died mid-batch (harness fault — not the branch)
 #   3   install inside the container failed (harness fault — not the branch)
+#   4   --with-bins: the candidate's workspace failed to build (branch fault — not harness)
 #
 # ENVIRONMENT (all optional)
 #   SPIRA_BATCH_RESULTS     host root for result directories
 #                           (default: SPIRA_RUN/batch-results)
+#   SPIRA_BATCH_BINS_TARGET_DIR  CARGO_TARGET_DIR used by --with-bins (default:
+#                           SPIRA_RUN/cargo-target-bins). Persistent across runs so
+#                           repeat builds are incremental; the branch worktree's own
+#                           target/ is not used, so nothing here survives worktree cleanup.
 #   SPIRA_BATCH_INSTANCE    container instance name; determines CNAME and the
 #                           install instance; default: first 12 chars of the batch key
 #   SPIRA_BATCH_SUITE_DIR   where to look for test-*.sh on the host
@@ -117,6 +130,7 @@ _CONTAINER_WORKSPACE="/workspace"
 # ---------------------------------------------------------------------------
 MODE="parallel"  # default: parallel is safer and the normal operating mode
 SUITES_EXPLICIT=""  # empty: use diff-derived selection; non-empty: use this comma-list
+WITH_BINS=0  # --with-bins: build the branch's own workspace binaries into its bin/
 _BATCH_REPORT=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -125,6 +139,8 @@ while [ $# -gt 0 ]; do
             MODE="$2"; shift 2 ;;
         --mode=*)
             MODE="${1#--mode=}"; shift ;;
+        --with-bins)
+            WITH_BINS=1; shift ;;
         --suites)
             [ $# -ge 2 ] || { printf 'batch: --suites requires an argument\n' >&2; exit 2; }
             [ -z "$SUITES_EXPLICIT" ] || {
@@ -145,7 +161,7 @@ while [ $# -gt 0 ]; do
             shift; break ;;
         -*)
             printf 'batch: unknown option: %s\n' "$1" >&2
-            printf 'usage: testenv-batch.sh [--mode parallel|serial] [--suites <list|->] [--report [N]] <branch> [<repo-name>]\n' >&2
+            printf 'usage: testenv-batch.sh [--mode parallel|serial] [--suites <list|->] [--with-bins] [--report [N]] <branch> [<repo-name>]\n' >&2
             exit 2 ;;
         *)  break ;;
     esac
@@ -163,7 +179,7 @@ esac
 BR="${1:-}"
 REPO_ARG="${2:-}"
 [ -n "$BR" ] || {
-    printf 'usage: testenv-batch.sh [--mode parallel|serial] <branch> [<repo-name>]\n' >&2
+    printf 'usage: testenv-batch.sh [--mode parallel|serial] [--with-bins] <branch> [<repo-name>]\n' >&2
     exit 2
 }
 
@@ -231,7 +247,29 @@ trap _wt_cleanup EXIT INT TERM
 # into the branch worktree so conf.sh's preference for $SPIRA_REPO/bin/<name>
 # finds the real compiled binary instead of a suite falling back to building
 # its own.
-if [ -d "$REPO/bin" ]; then
+#
+# --with-bins supersedes this: $REPO/bin reflects whatever was last built there
+# (often stale, or absent entirely outside CI), never necessarily this branch's
+# own Rust source. Build the branch's own workspace instead, mirroring the
+# gate's build job exactly (make build; copy every executable directly under
+# target/release/), so a suite reading bin/ sees this branch's binaries, not a
+# leftover from a previous one. A build failure is the candidate's fault.
+if [ "$WITH_BINS" = 1 ]; then
+    command -v cargo >/dev/null 2>&1 || {
+        printf 'batch: --with-bins requires cargo on PATH\n' >&2
+        exit 4
+    }
+    _bins_target_dir="${SPIRA_BATCH_BINS_TARGET_DIR:-$SPIRA_RUN/cargo-target-bins}"
+    mkdir -p "$_bins_target_dir" 2>/dev/null || true
+    log "batch: --with-bins: building workspace binaries for $BR"
+    if ! CARGO_TARGET_DIR="$_bins_target_dir" make -C "$BRANCH_WT" build >&2; then
+        printf 'batch: --with-bins: workspace failed to build — candidate fault\n' >&2
+        exit 4
+    fi
+    mkdir -p "$BRANCH_WT/bin"
+    find "$_bins_target_dir/release" -maxdepth 1 -type f -executable \
+        -exec cp -p {} "$BRANCH_WT/bin/" \; 2>/dev/null || true
+elif [ -d "$REPO/bin" ]; then
     mkdir -p "$BRANCH_WT/bin"
     cp -p "$REPO"/bin/* "$BRANCH_WT/bin/" 2>/dev/null || true
 fi
@@ -356,7 +394,10 @@ _batch_key() {
     [ -n "$harness_h" ] || return 1
     # MODE and _SELECTION_TYPE are included: a serial-green must not replay for a
     # parallel run; a partial-selection green must not replay for an all-corpus run.
-    printf '%s\n' "$REPO_NAME $tree $IMG_TAG $sel_h $harness_h $MODE $_SELECTION_TYPE" | sha256sum | cut -d' ' -f1
+    # WITH_BINS is included: a green with $REPO/bin's stale binaries must not replay
+    # for a run that builds the branch's own — the two can see different bin/ content
+    # for the identical tree.
+    printf '%s\n' "$REPO_NAME $tree $IMG_TAG $sel_h $harness_h $MODE $_SELECTION_TYPE $WITH_BINS" | sha256sum | cut -d' ' -f1
 }
 BATCH_KEY="$(_batch_key 2>/dev/null || true)"
 
