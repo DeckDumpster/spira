@@ -49,15 +49,15 @@ command -v duckdb >/dev/null 2>&1 || { echo "SKIP test-reconciler-flow: duckdb n
 
 CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
 [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
+# A testenv container installs the toolchain at /usr/local/cargo/bin (spira/testenv/
+# Containerfile) but `podman exec` does not carry the image's own PATH into the exec'd
+# process — only bare command -v/$HOME lookups above find it when run outside a container.
+[ -z "$CARGO_BIN" ] && [ -x /usr/local/cargo/bin/cargo ] && CARGO_BIN=/usr/local/cargo/bin/cargo
 if [ -z "$CARGO_BIN" ]; then
-    echo "DEBUG PATH=$PATH"
-    echo "DEBUG HOME=$HOME"
-    ls -la "$HOME/.cargo/bin" 2>&1 | head -5
-    ls -la /usr/local/cargo/bin 2>&1 | head -5
-    which -a cargo 2>&1
     echo "SKIP test-reconciler-flow: cargo not found — reconciler-flow binary cannot be built"
     exit 77
 fi
+export PATH="$(dirname "$CARGO_BIN"):$PATH"
 
 T="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$T"' EXIT INT TERM
