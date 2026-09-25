@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Sourced, never executed.
 # testenv-guard.sh — tiny prelude for suites that declare `# requires: testenv` but do
 # not source testlib.sh. Refuses before any of the suite's own code runs, when
 # SPIRA_IN_TESTENV is not 1. testlib.sh carries the same check (suite_testenv_unmet in
