@@ -49,6 +49,7 @@ git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 
 cp "$HERE"/*.sh "$SH/"
+cp "$HERE/bdsim.py" "$SH/"   # bdq's SPIRA_BDJSON_FIXTURE seam looks beside its own lib.sh
 
 cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |
@@ -110,7 +111,7 @@ chmod +x "$SH/bd-title-stub.sh"
 batch() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="/nonexistent" \
     SPIRA_BD="$SH/bd-title-stub.sh" \
-    SPIRA_BDJSON_FIXTURE="$BD_FIXTURE" \
+    SPIRA_BDJSON_FIXTURE="${_RC_BD_FIXTURE:-$BD_FIXTURE}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
     SPIRA_QUEUE_BATCH_MAX="${_RC_BATCH_MAX:-8}" \
@@ -155,7 +156,11 @@ printf 'CERTIFIED %s %s' "$_base_tip" "$(date +%s)" > "$LANDSTATE/sp-in-base"
 printf 'CERTIFIED fakeshafakeshabrakeshabrakebrakefakeshb %s' "$(date +%s)" > "$LANDSTATE/sp-reaped"
 printf '2026-09-17T23:20:12Z REMOVED    sp-reaped              branch spira/sp-reaped [by sentinel.sh -> sending.sh]\n' \
     > "$RUN/reap.log"
-_content_tip="$(mkbranch sp-content)"
+git -C "$REPO" checkout -q -b spira/sp-content main
+printf 'shared-content\n' > "$REPO/sp-content-shared.txt"
+git -C "$REPO" add sp-content-shared.txt
+git -C "$REPO" commit -q -m "sp-content: shared change"
+_content_tip="$(git -C "$REPO" rev-parse spira/sp-content)"
 git -C "$REPO" checkout -q main
 printf 'shared-content\n' > "$REPO/sp-content-shared.txt"
 git -C "$REPO" add sp-content-shared.txt
@@ -404,6 +409,26 @@ _RC_STUCK_AGE=300 _RC_BATCH_MAX=100 _RC_BATCH_WAIT=86400 outG="$(batch "$REPONAM
 nowant "post-landing: no stuck mail" "mailed operator" "$outG"
 is    "post-landing: stuck flag absent" "0" \
     "$([ -f "$RUN/queue-stuck-$REPONAME" ] && echo 1 || echo 0)"
+clean_case
+
+# =============================================================================
+# GAP G8 — a bd failure while batching is invisible. prio_json="$(bdjson show
+# …)" || prio_json="[]" fails open with no log line: only the priority sort's
+# OWN fail-open (an unparseable PRIO_JSON) is covered today, not bd itself
+# being unreachable. This pins that as today's actual behaviour — a fix that
+# adds a WARN here should update this case, not silently invalidate it.
+# =============================================================================
+echo
+echo "gap G8: bd unreachable during the priority sort — batch proceeds, nothing logs it:"
+clean_case
+NOW8="$(date +%s)"; OLD8=$(( NOW8 - 1800 - 1 ))
+_g8_tip="$(mkbranch sp-g8-real)"
+printf 'CERTIFIED %s %s\n' "$_g8_tip" "$OLD8" > "$LANDSTATE/sp-g8-real"
+
+out_g8="$(_RC_BD_FIXTURE="$TMP/does-not-exist.json" batch "$REPONAME")"
+is "G8: batch still opens the PR despite the bd failure" "1" \
+    "$(grep -c '^pr=' "$QUEUEDIR/$REPONAME/open" 2>/dev/null || echo 0)"
+nowant "G8: the bd failure is not logged anywhere" "WARN" "$out_g8"
 clean_case
 
 printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
