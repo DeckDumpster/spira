@@ -85,6 +85,20 @@ want "file_fixture_fault: ref names the fixture, not a suite" \
 want "file_fixture_fault: one bead names every affected suite" "test-a.sh test-b.sh test-c.sh" "$_c"
 want "file_fixture_fault: body says these are not red suites" "not red suites" "$_c"
 
+# --- file_flake (sp-n2ax8: reported, never quarantined) --------------------------------------
+_id="$(file_flake test-fake-flaky.sh 2 604800)"
+is "file_flake: returns the stub's id" sp-stubfake1 "$_id"
+_c="$(cap_of "$(safe_ref flake:test-fake-flaky.sh)")"
+want "file_flake: ref is flake:<name>" "SPIRA_INCIDENT_REF=flake:test-fake-flaky.sh" "$_c"
+want "file_flake: sin-exempt (recurring flakes dedupe, never escalate on recurrence alone)" \
+    "SPIRA_SIN_EXEMPT=1" "$_c"
+want "file_flake: cause is suite-flaky" "SPIRA_INCIDENT_CAUSE=suite-flaky" "$_c"
+want "file_flake: title is a question, not a quarantine notice" \
+    "why does test-fake-flaky.sh fail intermittently" "$_c"
+want "file_flake: body carries the observation count and window" "2 flake observation(s) within the 604800s window" "$_c"
+want "file_flake: body carries a reproduce line naming the suite" "bash spira/test-fake-flaky.sh" "$_c"
+want "file_flake: body states nothing is quarantined" "nothing is" "$_c"
+
 # --- file_skip (GAP G3) ----------------------------------------------------------------------
 _id="$(file_skip test-fake-skip.sh 2 'exit 77 — no display available')"
 is "file_skip: returns the stub's id" sp-stubfake1 "$_id"
@@ -104,5 +118,7 @@ wantrc "file_red: refuses (rc=1) when INC is unreadable" 1 \
     "$(file_red test-x.sh red 1 1 fp out >/dev/null 2>&1; echo $?)"
 wantrc "file_skip: refuses (rc=1) when INC is unreadable" 1 \
     "$(file_skip test-x.sh 1 out >/dev/null 2>&1; echo $?)"
+wantrc "file_flake: refuses (rc=1) when INC is unreadable" 1 \
+    "$(file_flake test-x.sh 2 604800 >/dev/null 2>&1; echo $?)"
 
 tl_summary
