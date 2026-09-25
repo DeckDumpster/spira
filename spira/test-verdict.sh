@@ -1298,9 +1298,10 @@ JSONL
 build_batch sp-vd-em3 > /dev/null
 em3_tip="$(git -C "$REPO" rev-parse spira/sp-vd-em3)"
 mkdir -p "$QUEUEDIR/$REPONAME"
+base_sha_37="$(grep '^base=' "$(batch_file)" | cut -d= -f2)"
 {
-    printf 'sp-vd-em3:%s\n' "$em3_tip"
-    printf 'sp-vd-em3-sibling:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n'
+    printf '%s sp-vd-em3:%s\n' "$base_sha_37" "$em3_tip"
+    printf '%s sp-vd-em3-sibling:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n' "$base_sha_37"
 } > "$QUEUEDIR/$REPONAME/bisect"
 {
     printf 'red\n'
