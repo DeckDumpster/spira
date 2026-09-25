@@ -1406,9 +1406,12 @@ cmd_corpus() {
 #
 # Flake observations: per-suite files at $STATE/<suite>.flakeobs, one "<epoch> <run_id>"
 # per line. observe-flake deduplicates on (suite, run_id); the count is distinct run_ids
-# within SPIRA_FLAKE_WINDOW. Quarantines when count reaches SPIRA_FLAKE_QUARANTINE_AT.
+# within SPIRA_FLAKE_WINDOW. Files a finding when count reaches SPIRA_FLAKE_QUARANTINE_AT —
+# it never quarantines the suite itself; only `suites.sh quarantine`, run by an operator or
+# Ops session with a bead in hand, writes suite-state.
 #
-# Clean-run counters: $STATE/<suite>.clean-runs, incremented by cmd_run each time a
+# Clean-run counters and quarantine hygiene below apply to whatever a human quarantined by
+# hand. Clean-run counters: $STATE/<suite>.clean-runs, incremented by cmd_run each time a
 # quarantined suite runs green, reset on red. cmd_hygiene reactivates when the bead
 # is LANDED and the count reaches SPIRA_QUARANTINE_CLEAN_RUNS.
 #
@@ -1456,83 +1459,55 @@ cleanruns_get() {    # cleanruns_get <suite> -> count
 cleanruns_inc()   { printf '%d\n' $(( $(cleanruns_get "$1") + 1 )) > "$(cleanruns_file "$1")"; }
 cleanruns_reset() { mkdir -p "$STATE" 2>/dev/null; printf '0\n' > "$(cleanruns_file "$1")"; }
 
-# _suite_auto_quarantine <suite> <reason>
-# Creates a branch, writes the quarantine entry there, commits, and submits to the queue.
-# The production checkout is never modified. Fails closed: any step failing leaves the suite active.
-_suite_auto_quarantine() {
-    local suite="$1" reason="$2"
-    local repo; repo="$(cd "$HERE/.." && pwd -P)"
-    local bead_id=""
-    if [ -r "$INC" ]; then
-        local out_inc rc_inc
-        out_inc="$(SPIRA_INCIDENT_TYPE=bug \
-              SPIRA_INCIDENT_PRIORITY=2 \
-              SPIRA_INCIDENT_ACTOR=suites \
-              SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" \
-              SPIRA_INCIDENT_REPO="$SPIRA_HOME_REPO" \
-              SPIRA_INCIDENT_REF="flake:$suite" \
-              SPIRA_SIN_EXEMPT=1 \
-              SPIRA_INCIDENT_CAUSE=suite-flaky \
-              SPIRA_DB="$SPIRA_DB" \
-              bash "$INC" file "why does $suite fail intermittently" - <<PAYLOAD
-$suite is auto-quarantined.
+# file_flake <suite> <count> <window_s>
+# Files a finding once a suite's flake observations cross the threshold, through incident.sh
+# (same dedupe/recurrence/Sin machinery as file_red). Writes no suite-state, creates no
+# branch, submits nothing to the queue: every automatic quarantine on record was either a real
+# defect the quarantine hid or never examined at all
+# (docs/spikes/test-identity-lifecycle-and-trust.md §4.2), so a flaky suite is reported and
+# attributed, never silently taken out of the corpus.
+file_flake() {    # file_flake <basename> <count> <window_s>
+    local s="$1" count="$2" window="$3" id=""
+    if [ ! -r "$INC" ]; then
+        log "suites: no intake at $INC — $s flake finding reaches nobody"
+        return 1
+    fi
+    local out_inc rc_inc
+    out_inc="$(SPIRA_INCIDENT_TYPE=bug \
+          SPIRA_INCIDENT_PRIORITY="$(priority_of "$s")" \
+          SPIRA_INCIDENT_ACTOR=suites \
+          SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan" \
+          SPIRA_INCIDENT_REPO="$SPIRA_HOME_REPO" \
+          SPIRA_INCIDENT_REF="flake:$s" \
+          SPIRA_SIN_EXEMPT=1 \
+          SPIRA_INCIDENT_PATH="$HERE/$s" \
+          SPIRA_INCIDENT_CAUSE=suite-flaky \
+          SPIRA_DB="$SPIRA_DB" \
+          bash "$INC" file "why does $s fail intermittently" - <<PAYLOAD
+$s has $count flake observation(s) within the ${window}s window. It is filed and nothing is
+quarantined: the suite keeps running in every batch, so a repeat failure still reaches the
+gate instead of being hidden.
 
-Reason: $reason
+  suite            $s
+  observations     $count in ${window}s
+  reproduce        bash spira/$s
 
-Reproduce: bash spira/$suite
+The dedupe ref is flake:$s — a later observation bumps recurrence on this bead rather than
+filing another.
 PAYLOAD
-        )"; rc_inc=$?
-        if [ "$rc_inc" -eq 0 ]; then
-            bead_id="$(printf '%s\n' "$out_inc" | tail -n 1 | tr -d '[:space:]')"
-            case "${bead_id:-}" in ''|*[!A-Za-z0-9-]*|-*|*-) bead_id="" ;; esac
-        fi
-    fi
-    local stamp; stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-    local branch="spira-suite-state/auto-${suite%.sh}-${stamp}"
-    # Use a subdirectory so git worktree add creates the leaf (it rejects an existing dir).
-    local wt_parent; wt_parent="$(mktemp -d)" || {
-        printf 'auto-quarantine: cannot create temp dir — %s stays active\n' "$suite"
-        return 1
-    }
-    local wt="$wt_parent/wt"
-    if ! git -C "$repo" worktree add "$wt" -b "$branch" HEAD >/dev/null 2>&1; then
-        rm -rf "$wt_parent" 2>/dev/null || true
-        printf 'auto-quarantine: cannot create branch — %s stays active\n' "$suite"
+)"; rc_inc=$?
+    if [ "$rc_inc" -ne 0 ]; then
+        log "suites: the intake could not file flake finding for $s — it stays spooled and drain will retry"
         return 1
     fi
-    local wt_statefile; wt_statefile="$(suite_state_file "$wt")"
-    if ! suite_state_write "$wt_statefile" "$suite" quarantined "${bead_id:-}" "$reason"; then
-        git -C "$repo" worktree remove --force "$wt" 2>/dev/null || true
-        git -C "$repo" branch -D "$branch" 2>/dev/null || true
-        rm -rf "$wt_parent" 2>/dev/null || true
-        printf 'auto-quarantine: state write failed — %s stays active\n' "$suite"
-        return 1
-    fi
-    git -C "$wt" add -- "${SPIRA_SUITE_STATE_FILE:-spira/suite-state}" >/dev/null 2>&1
-    if ! git -C "$wt" commit --no-gpg-sign \
-         -m "auto-quarantine: $suite  ${bead_id:-}" >/dev/null 2>&1; then
-        git -C "$repo" worktree remove --force "$wt" 2>/dev/null || true
-        git -C "$repo" branch -D "$branch" 2>/dev/null || true
-        rm -rf "$wt_parent" 2>/dev/null || true
-        printf 'auto-quarantine: commit failed — %s stays active\n' "$suite"
-        return 1
-    fi
-    git -C "$repo" worktree remove "$wt" >/dev/null 2>&1 || true
-    rm -rf "$wt_parent" 2>/dev/null || true
-    cleanruns_reset "$suite"
-    bash "$HERE/queue.sh" submit "$branch" 2>/dev/null || \
-        printf 'auto-quarantine: queue submit failed for %s — branch %s exists\n' "$suite" "$branch"
-    printf 'auto-quarantine: %s quarantined on branch %s (bead: %s)\n' \
-        "$suite" "$branch" "${bead_id:-(none filed)}"
-    local _mail_args=(--from "Suite hygiene <hygiene@spira>" --subject "$suite quarantined: $reason")
-    [ -n "${bead_id:-}" ] && _mail_args+=(--bead "$bead_id")
-    printf '## Note\n%s was automatically quarantined.\n\nReason: %s\nBranch: %s\n' \
-        "$suite" "$reason" "$branch" \
-    | bash "$HERE/mail.sh" send operator "${_mail_args[@]}" \
-        2>/dev/null || true
+    id="$(printf '%s\n' "$out_inc" | tail -n 1 | tr -d '[:space:]')"
+    case "${id:-}" in
+        ''|*[!A-Za-z0-9-]*|-*|*-) log "suites: the intake returned no id for $s flake finding"; return 1 ;;
+    esac
+    printf '%s' "$id"
 }
 
-# cmd_observe_flake — record one flake observation; quarantine when threshold is reached.
+# cmd_observe_flake — record one flake observation; report once threshold is reached.
 cmd_observe_flake() {
     local suite="${1:-}" run_id="${2:-}"
     [ -n "$suite" ]  || { printf 'suites observe-flake: suite name required\n' >&2; return 2; }
@@ -1542,19 +1517,17 @@ cmd_observe_flake() {
         return 2
     }
     flakeobs_record "$suite" "$run_id"
-    local count threshold
+    local count threshold window
     count="$(flakeobs_in_window "$suite")"
     threshold="${SPIRA_FLAKE_QUARANTINE_AT:-2}"
+    window="${SPIRA_FLAKE_WINDOW:-604800}"
     printf 'observe-flake: %s: %s observation(s) in window (threshold %s)\n' \
         "$suite" "$count" "$threshold"
     [ "$count" -ge "$threshold" ] || return 0
-    local repo; repo="$(cd "$HERE/.." && pwd -P)"
-    local statefile; statefile="$(suite_state_file "$repo")"
-    if [ "$(suite_state_of "$statefile" "$suite")" = "quarantined" ]; then
-        printf 'observe-flake: %s is already quarantined\n' "$suite"
-    else
-        _suite_auto_quarantine "$suite" "auto: $count flake observations in the window"
-    fi
+    local id
+    id="$(file_flake "$suite" "$count" "$window")" && \
+        printf 'observe-flake: %s reported (bead: %s)\n' "$suite" "$id" || \
+        printf 'observe-flake: %s crossed threshold but the finding could not be filed\n' "$suite"
 }
 
 # cmd_hygiene — reactivation and max-age checks for all quarantined suites.
