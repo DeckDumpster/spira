@@ -2104,7 +2104,7 @@ _bump_write_event_try() {
     local actor="${BEADS_ACTOR:-harness}"
     local uuid q
     uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 1
-    q="INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', '$actor', '$cause', NOW())"
+    q="INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', '$actor', '$cause', UTC_TIMESTAMP())"
     "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" >/dev/null 2>&1 && return 0
     return 1
 }
@@ -2123,7 +2123,7 @@ bump_reopen()  {
     local actor="${BEADS_ACTOR:-harness}" uuid
     uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 0
     "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
-        "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'reopened', '$actor', '', NOW())" \
+        "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'reopened', '$actor', '', UTC_TIMESTAMP())" \
         >/dev/null 2>&1; return 0
 }
 
