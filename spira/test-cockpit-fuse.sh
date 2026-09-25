@@ -295,26 +295,10 @@ else
     bad "absent LEASE key did not render '?': $(printf '%s\n' "$row_miss" | grep 'sp-miss')"
 fi
 
-# THE BEAD ROW MUST NOT EXCEED THE PANE WIDTH. The lease adds a right-aligned field
-# whose width depends on the value; the title budget must shrink by the same amount.
-over_by() { python3 -c '
-import sys
-w = int(sys.argv[1])
-print("\n".join("%d: %s" % (len(l), l) for l in sys.stdin.read().splitlines() if len(l) > w))' "$1"; }
-{ printf 'SP_AEON_N=1\nSP_AEON0_NAME=longname\nSP_AEON0_FAYTH=builder\nSP_AEON0_BEAD=sp-wide\n'
-  printf 'SP_AEON0_MIN=999\nSP_AEON0_TURNS=999\nSP_AEON0_CTX=999999\nSP_AEON0_FILES=9\n'
-  printf 'SP_AEON0_QUIET=100\nSP_AEON0_ACT=Bash %s\n' "$(printf 'a%.0s' $(seq 1 120))"
-  printf 'SP_AEON0_TITLE=%s\n' "$(printf 't%.0s' $(seq 1 120))"
-  printf 'SP_AEON0_LEASE=10\n'
-  printf 'SP_NEXT_N=0\nSP_AWAITING_N=0\n'; } | snap
-for w in 70 96; do
-    over="$(pane 40 "$w" | over_by "$w")"
-    if [ -z "$over" ]; then
-        ok "bead row (lease=10m) fits within $w columns"
-    else
-        bad "bead row exceeded $w columns: $over"
-    fi
-done
+# Fitting the bead row to 70/96 columns is test-now.sh's job (cluster 8, docs/test-plan/
+# cockpit-observability.md, row 22): it already golden-frames row width at several pane
+# sizes, and a second copy here tested the same "no row exceeds the pane" property, not
+# anything specific to the lease field.
 
 fi  # pane exists
 

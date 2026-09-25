@@ -98,6 +98,7 @@ base_snap_to() {
         printf 'SP_QUEUE_NEXT_N=0\nSP_QUEUE_NEXT_MAX=8\nSP_QUEUE_QUARANTINE_N=0\n'
         [ "$omit" = SP_WAITING     ] || printf 'SP_WAITING=1\n'
         [ "$omit" = SP_UNANSWERED  ] || printf 'SP_UNANSWERED=0\n'
+        [ "$omit" = SP_MAIL_UNREAD ] || printf 'SP_MAIL_UNREAD=2\nSP_MAIL_N=0\nSP_MAIL_OLDEST_AGE=-\n'
         [ "$omit" = SP_UNSENT      ] || printf 'SP_UNSENT=2\nSP_UNSENT_OLDEST_H=1\nSP_BRANCH_DONE=1\nSP_UNADOPTED=0\nSP_ORPHAN_WORK=0\n'
         [ "$omit" = SP_CLOSED_24H  ] || printf 'SP_CLOSED_24H=5\n'
         [ "$omit" = SP_OPENED_24H  ] || printf 'SP_OPENED_24H=3\n'
@@ -131,6 +132,7 @@ base_snap_to omit-SP_AWAITING_N      SP_AWAITING_N
 base_snap_to omit-SP_QUEUE_DEPTH     SP_QUEUE_DEPTH
 base_snap_to omit-SP_WAITING         SP_WAITING
 base_snap_to omit-SP_UNANSWERED      SP_UNANSWERED
+base_snap_to omit-SP_MAIL_UNREAD     SP_MAIL_UNREAD
 base_snap_to omit-SP_UNSENT          SP_UNSENT
 base_snap_to omit-SP_CLOSED_24H      SP_CLOSED_24H
 base_snap_to omit-SP_OPENED_24H      SP_OPENED_24H
@@ -145,6 +147,28 @@ printf "SP_TOK_ARC_WIN='10000'\nSP_TOK_ARC_TURNS='2'\nSP_TOK_ARC_CTX='25000'\n" 
 
 base_snap_to arc-skew __none__
 printf "SP_COLLECTOR_REV='a1b2c3d'\n" >> "$FIXDIR/arc-skew.env"
+
+# ---- Part 4 fixtures: a timed-out probe renders STALE, not FAULT ------------------------
+# Moved from test-cockpit-collector-quota.sh (cluster 8, UC-24, docs/test-plan/cockpit-
+# observability.md) — this is the same "? not 0"-shaped badge question as Parts 1 and 3,
+# just keyed on a timed-out probe rather than an absent key.
+STALE_AT=$(( $(date +%s) - 120 ))
+printf "SP_AT='%s'\n" "$STALE_AT" > "$FIXDIR/stale-fault.env"
+{
+    printf "SP_AT='%s'\n" "$STALE_AT"
+    printf "_PROBE_STATUS_core='timeout'\n"
+    printf "SP_PROBE_KILLED_core='3'\n"
+} > "$FIXDIR/stale-timeout.env"
+
+# ---- self-removed fixture: the SELF section (REPEATING/BIRTH/STALL) never renders -------
+# Moved from test-cockpit-self.sh (cluster 8, UC-16/21, docs/test-plan/cockpit-
+# observability.md): every SELF trip condition set at once proves the section is gone in one
+# row, where the original tested "nothing tripped", "repeating only", "stillborn only" and
+# "starved only" as four separate, identically-asserting renders.
+base_snap_to self-removed __none__
+printf "SP_SELF_REPEATING_N='1'\nSP_SELF_REPEATING0='handled 1 stranded item(s) × 3 passes (6m)'\n" >> "$FIXDIR/self-removed.env"
+printf "SP_SELF_STILLBORN_W='1'\nSP_SELF_STILLBORN_LAST='3m ago'\n" >> "$FIXDIR/self-removed.env"
+printf "SP_SELF_STARVED_W='2'\nSP_SELF_STARVED_LAST='7m ago'\n" >> "$FIXDIR/self-removed.env"
 
 # ---- e2e fixture: what the fixed collector emits when bdjson returns nothing ------------
 # Used by "Part 2 summary" below to prove the collector's ? propagates to the pane's ?,
@@ -172,6 +196,7 @@ RENDER_ALL="$(env -i PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_REPO="$PD/repo" \
     SPIRA_RUN="$PD/repo/.runtime/spira" \
     SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
+    SPIRA_SNAP_STALE_S=60 \
     bash "$PANE" render-many "$FIXDIR" 0 0 2>/dev/null \
   | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g')"
 
@@ -283,6 +308,24 @@ if printf '%s\n' "$attn2_line" | grep -q '[?]$\|[?] '; then
     ok "SP_UNANSWERED: absent key renders '?'"
 else
     bad "SP_UNANSWERED: absent key did not render '?': $attn2_line"
+fi
+
+# SP_MAIL_UNREAD — mailbox unread count, rendered with ${SP_MAIL_UNREAD:-?}. This row used to
+# be test-mail-pane.sh's job, checked so weakly (any '?' anywhere in the frame) that it would
+# have passed against a MAIL row that never failed at all (cluster 8, docs/test-plan/
+# cockpit-observability.md).
+p="$(block full)"
+if grep -qF ' MAIL ' <<< "$p"; then
+    ok "SP_MAIL_UNREAD positive control: MAIL row renders"
+else
+    bad "SP_MAIL_UNREAD positive control: MAIL row absent (cannot test fault)"
+fi
+p="$(block omit-SP_MAIL_UNREAD)"
+mail_line="$(printf '%s\n' "$p" | grep ' MAIL ')"
+if printf '%s\n' "$mail_line" | grep -qF '? cannot read mailbox'; then
+    ok "SP_MAIL_UNREAD: absent key renders '? cannot read mailbox'"
+else
+    bad "SP_MAIL_UNREAD: absent key did not render '? cannot read mailbox': $mail_line"
 fi
 
 # SP_UNSENT — unsent branch count, rendered with ${SP_UNSENT:-?}
@@ -514,3 +557,113 @@ done
 echo
 echo "end-to-end: collector ? propagates to pane ?"
 e2e_pane="$(block e2e)"
+e2e_worked="$(printf '%s\n' "$e2e_pane" | grep '24h worked')"
+if printf '%s\n' "$e2e_worked" | grep -q '[?] done'; then
+    ok "end-to-end: collector SP_UNLANDED_N=? propagates to pane '? done'"
+else
+    bad "end-to-end: collector SP_UNLANDED_N=? did not propagate to pane '? done': $e2e_worked"
+fi
+if printf '%s\n' "$e2e_worked" | grep -q '0 done'; then
+    bad "end-to-end: pane rendered '0 done' despite SP_UNLANDED_N=?"
+else
+    ok "end-to-end: pane did not render '0 done'"
+fi
+
+echo
+echo "Part 3: collector skew — absent key with SP_COLLECTOR_REV renders 'coll <rev>', not ?"
+echo
+
+# POSITIVE CONTROL: SP_TOK_ARC_WIN present → archivist row shows the real value, no skew marker.
+p_arc_pos="$(block arc-positive)"
+arc_pos_line="$(printf '%s\n' "$p_arc_pos" | grep archivist)"
+if [[ "${arc_pos_line:-}" != *"coll "* ]]; then
+    ok "collector skew/positive control: archivist row renders normally (no coll marker)"
+else
+    bad "collector skew/positive control: archivist row shows coll marker when ARC keys present: $arc_pos_line"
+fi
+
+# SKEW CASE: absent SP_TOK_ARC_WIN with SP_COLLECTOR_REV set to a known-old rev.
+# The row must show 'coll <rev>' instead of '?' so the operator can distinguish a schema
+# gap from a probe failure.
+p_skew="$(block arc-skew)"
+arc_skew_line="$(printf '%s\n' "$p_skew" | grep archivist)"
+if [[ "${arc_skew_line:-}" == *"coll a1b2c3d"* ]]; then
+    ok "collector skew: archivist row shows 'coll a1b2c3d'"
+else
+    bad "collector skew: archivist row did not show 'coll a1b2c3d': ${arc_skew_line:-<no archivist line>}"
+fi
+if [[ "${arc_skew_line:-}" == *"?"* ]]; then
+    bad "collector skew: archivist row showed '?' — indistinguishable from probe failure"
+else
+    ok "collector skew: archivist row did not show '?'"
+fi
+
+echo
+echo "Part 4: timed-out probe renders STALE, not FAULT (moved from test-cockpit-collector-quota.sh)"
+echo
+
+# POSITIVE CONTROL: stale snapshot without probe timeout renders FAULT, not STALE.
+p_fault="$(block stale-fault)"
+if printf '%s\n' "$p_fault" | grep -q 'FAULT ('; then
+    ok "positive control: stale + no timeout renders FAULT"
+else
+    bad "positive control: stale + no timeout did not render FAULT: $p_fault"
+fi
+if printf '%s\n' "$p_fault" | grep -q 'STALE'; then
+    bad "positive control: STALE present when no probe timeout"
+else
+    ok "positive control: STALE absent when no probe timeout"
+fi
+
+# MAIN CASE: stale snapshot with a timed-out core probe renders a STALE line, not FAULT.
+p_stale="$(block stale-timeout)"
+if printf '%s\n' "$p_stale" | grep -q 'STALE'; then
+    ok "timeout probe: header badge is STALE"
+else
+    bad "timeout probe: header badge is not STALE: $p_stale"
+fi
+if printf '%s\n' "$p_stale" | grep -q 'FAULT ('; then
+    bad "timeout probe: FAULT badge present"
+else
+    ok "timeout probe: FAULT badge absent"
+fi
+if printf '%s\n' "$p_stale" | grep -q 'core: timeout'; then
+    ok "timeout probe: STALE line names probe"
+else
+    bad "timeout probe: STALE line did not name probe: $p_stale"
+fi
+if printf '%s\n' "$p_stale" | grep -qF '×3'; then
+    ok "timeout probe: STALE line shows kill count"
+else
+    bad "timeout probe: STALE line did not show kill count: $p_stale"
+fi
+
+echo
+echo "Part 5: SELF section removed — REPEATING/BIRTH/STALL never render (moved from test-cockpit-self.sh)"
+echo
+
+p_self="$(block self-removed)"
+if printf '%s\n' "$p_self" | grep -q 'REPEATING'; then
+    bad "SELF removed: REPEATING row present despite SP_SELF_REPEATING_N=1"
+else
+    ok "SELF removed: no REPEATING row"
+fi
+if printf '%s\n' "$p_self" | grep -q 'BIRTH'; then
+    bad "SELF removed: BIRTH row present despite SP_SELF_STILLBORN_W=1"
+else
+    ok "SELF removed: no BIRTH row"
+fi
+if printf '%s\n' "$p_self" | grep -q 'STALL'; then
+    bad "SELF removed: STALL row present despite SP_SELF_STARVED_W=2"
+else
+    ok "SELF removed: no STALL row"
+fi
+if printf '%s\n' "$p_self" | grep -q ' SELF '; then
+    bad "SELF removed: SELF label present"
+else
+    ok "SELF removed: no SELF label"
+fi
+
+echo
+printf '%d passed, %d failed\n' "$pass" "$fail"
+[ "$fail" -eq 0 ]
