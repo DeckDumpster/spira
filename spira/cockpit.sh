@@ -2546,8 +2546,8 @@ from datetime import datetime, timedelta, timezone
 
 ledger_path = sys.argv[1]
 window_h = float(sys.argv[2]) if len(sys.argv) > 2 else 24.0
-since = datetime.now(timezone.utc) - timedelta(hours=window_h)
-now_epoch = int(time.time())
+now_epoch = int(os.environ.get("SPIRA_NOW") or time.time())
+since = datetime.fromtimestamp(now_epoch, tz=timezone.utc) - timedelta(hours=window_h)
 
 try:
     shelf = json.load(sys.stdin)
