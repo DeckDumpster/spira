@@ -10,13 +10,17 @@
 # else's work under its own author. The fix: aeon.sh commits wiki writes at exit,
 # attributed to the aeon that produced them.
 #
-# FOUR CASES:
+# FIVE CASES:
 #   1. (positive control) aeon writes a wiki page, exits → page is committed with
 #      aeon author, wiki checkout is clean.
 #   2. Wiki page was dirty BEFORE the session started → aeon does NOT commit it (not
 #      its work); wiki stays dirty but attribution is preserved.
 #   3. SPIRA_WIKI not set → no failure; bead closes normally.
 #   4. wiki/tasks.md is dirty → NOT committed by the aeon (generated view, excluded).
+#   5. Another actor dirties a DIFFERENT wiki page while this session is live, with no
+#      tool_use record of its own → NOT committed; the aeon's own tracked write still is
+#      (sp-4fl2e: a before/after dirty diff cannot tell these two apart, only the
+#      transcript can).
 #
 # SEEN RED FIRST. Case 1 is the positive control: a shim that writes a wiki page and
 # exits without committing it. Before the fix, the wiki is left dirty and the test
@@ -100,13 +104,23 @@ grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
 # Shim behaviour driven by $TMP/shim-mode:
 #   wiki-write      — write a wiki page and close the bead, without committing the wiki
 #   wiki-preexist   — wiki page already dirty; write a DIFFERENT wiki page and close
+#   wiki-concurrent — own tracked write, plus another actor's untracked write mid-session
 #   no-wiki-write   — commit bead work only; do not touch the wiki
 #   wiki-tasks-only — dirty wiki/tasks.md only; close the bead
+#
+# emit_write prints the same tool_use shape aeon.sh's wiki_write_paths (lib.sh) reads from
+# the real transcript, so this shim can claim a write as its own the way a real Edit/Write
+# tool call would. A file this shim dirties WITHOUT calling emit_write stands in for a
+# concurrent actor's write, which the harness must never attribute to this session.
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
 id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
 printf '%s' "$id" > "$TMP/last-bead"
+
+emit_write() {
+    printf '{"type":"assistant","message":{"id":"m%s","content":[{"type":"tool_use","name":"Write","input":{"file_path":"%s"}}]}}\n' "$RANDOM" "$1"
+}
 
 # Commit the bead's own work in the bead repo.
 printf 'my work\n' >> f
@@ -117,11 +131,21 @@ case "$(cat "$TMP/shim-mode" 2>/dev/null)" in
         # Write a wiki page in SPIRA_WIKI WITHOUT committing it.
         # This is the positive control: the harness must commit it for us.
         printf '# SOP for %s\n' "$id" > "$WIKI/wiki/notes/sop-$id.md"
+        emit_write "$WIKI/wiki/notes/sop-$id.md"
         ;;
     wiki-preexist)
         # wiki/notes/preexist.md is already dirty (written before the session).
         # Write a NEW page as well. Only the new page should be committed.
         printf '# New page for %s\n' "$id" > "$WIKI/wiki/notes/new-$id.md"
+        emit_write "$WIKI/wiki/notes/new-$id.md"
+        ;;
+    wiki-concurrent)
+        # This session's own write, tracked with a tool_use record.
+        printf '# New page for %s\n' "$id" > "$WIKI/wiki/notes/new-$id.md"
+        emit_write "$WIKI/wiki/notes/new-$id.md"
+        # A DIFFERENT actor's write landing while this session is live — no tool_use
+        # record, standing in for the archivist or any other concurrent writer.
+        printf '# Written by someone else entirely\n' > "$WIKI/wiki/notes/concurrent-other.md"
         ;;
     wiki-tasks-only)
         # Only dirty wiki/tasks.md — the generated view. Must NOT be committed.
@@ -229,6 +253,32 @@ is "tasks-only: wiki/tasks.md NOT committed by aeon" "wiki/tasks.md" "$_tasks_di
 # Clean up.
 git -C "$WIKI" checkout -q -- "wiki/tasks.md" 2>/dev/null || true
 poison_bead "$b4"
+
+# ============================================================
+echo
+echo "CASE 5: another actor dirties a wiki file mid-session — aeon must NOT commit it:"
+echo "-----------------------------------------------------------------------"
+# SEEN RED FIRST. Before the fix, any file dirty at session end and absent from a
+# start-of-session snapshot was swept in regardless of who dirtied it. Here the concurrent
+# file is dirtied strictly AFTER this session starts, with no tool_use record — the old
+# before/after diff could not tell it apart from the aeon's own tracked write.
+printf 'wiki-concurrent' > "$TMP/shim-mode"
+b5="$(bd -C "$SPIRA_DB" create --title "test: concurrent wiki write" --type task \
+        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+[ -n "$b5" ] || { bad "case 5 bead created" "(bead-create failed)"; true; }
+bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
+is "concurrent: bead is closed" "closed" "$(bead_status "$b5")"
+# The aeon's own tracked write must be committed.
+is "concurrent: own tracked write committed" "" \
+    "$(git -C "$WIKI" diff --name-only HEAD -- "wiki/notes/new-$b5.md" 2>/dev/null)"
+_author5="$(commit_author_of "$WIKI" "wiki/notes/new-$b5.md")"
+want "concurrent: own write has aeon author" "aeon-" "$_author5"
+# The other actor's untracked write must NOT be committed and must remain dirty.
+_concurrent_dirty="$(git -C "$WIKI" status --short --untracked-files=all -- wiki/notes/concurrent-other.md 2>/dev/null | cut -c4-)"
+is "concurrent: other actor's file NOT committed and still dirty" "wiki/notes/concurrent-other.md" "$_concurrent_dirty"
+# Clean up.
+rm -f "$WIKI/wiki/notes/concurrent-other.md"
+poison_bead "$b5"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
