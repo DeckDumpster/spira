@@ -30,6 +30,14 @@
 #   4. FREE-SLOT POSITIVE PATH — a fleet with live aeons but spare capacity still
 #      escalates, confirming the saturated-fleet suppression is narrowly scoped.
 #
+#   5. FULL STACK — strand.sh check --from end-to-end, same partition-isolation property
+#      as case 2 but through the shell layer and mail.sh, not just the classifier.
+#
+#   6-8. D7 MERGE (from test-reclaim-needs-ryan.sh, deleted): the ghost half of the same
+#      classifier. 6 is the positive control (plain dead worker IS ghost); 7 and 8 are the
+#      two exemptions (the ask label directly, and check2_protect_waiting's skip label) that
+#      stop CHECK 2b from re-reclaiming a bead CHECK 2 already excluded (sp-2k5a, sp-qsa1).
+#
 # PRE-FIX FAILURE (run against unfixed strand-classify.py):
 #
 #   FAIL  saturated fleet: fleet-saturated IS emitted: wanted [fleet-saturated] in [starved\t...]
@@ -73,6 +81,21 @@ classify() {
     CAPACITY_PAUSED=0 \
         python3 "$HERE/strand-classify.py"
     rm -f "$tmpb" "$tmpr"
+}
+
+# classify_ghost <beads-json> — the ghost half of the classifier, in isolation: an expired
+# lease (PAST, well outside GHOST_GRACE=0), no live holder, no ready set at all. D7: merged
+# in from test-reclaim-needs-ryan.sh, which drove exactly this shape.
+PAST="2020-01-01T00:00:00Z"
+classify_ghost() {
+    printf '%s' "$1" > "$TMP/ghost-beads.json"
+    printf '[]' > "$TMP/ghost-ready.json"
+    BEADS_FILE="$TMP/ghost-beads.json" \
+    READY_FILE="$TMP/ghost-ready.json" \
+    HOLDERS="" LIVE=1 GHOST_GRACE=0 \
+    SPIRA_ASK_LABEL=needs-operator \
+    SPIRA_RECLAIM_SKIP_LABEL=spira-waiting-operator \
+        python3 "$HERE/strand-classify.py"
 }
 
 echo "test-strand-partition.sh"
@@ -185,6 +208,49 @@ want   "full stack partition A: title names plan partition" "spira,plan" "$args_
 want   "full stack partition B: sp-pb1 in evidence" "sp-pb1" "$args_b"
 nowant "full stack partition B: sp-pa1 NOT in evidence" "sp-pa1" "$args_b"
 want   "full stack partition B: title names incident partition" "spira,incident" "$args_b"
+
+# ======================================================================================
+echo
+echo "case 6 — D7 merge, positive control: plain dead worker IS classified ghost:"
+# ======================================================================================
+# A bead whose aeon died with no special protection. ghost must fire — without this, an
+# implementation that never raises ghost is indistinguishable from a correct one.
+out="$(classify_ghost '[
+  {"id":"sp-dead","title":"dead worker","status":"in_progress",
+   "labels":["spira","plan"],"assignee":"aeon-dead",
+   "lease_expires_at":"'"$PAST"'"}
+]')"
+want  "plain dead worker: ghost raised"  "ghost"    "$out"
+want  "plain dead worker: bead named"    "sp-dead"  "$out"
+
+echo
+echo "case 7 — D7 merge: bead carrying the ask label directly is NOT ghost:"
+# ======================================================================================
+# sp-2k5a: an aeon filed a needs-ryan decision bead and exited. The work bead carries
+# needs-operator, its lease is stale, no live aeon holds it. Reclaiming it re-summons a
+# session that immediately re-derives the same diagnosis and exits (the respawn loop).
+out="$(classify_ghost '[
+  {"id":"sp-ask","title":"escalated bead","status":"in_progress",
+   "labels":["needs-operator","spira","plan"],"assignee":"aeon-x",
+   "lease_expires_at":"'"$PAST"'"}
+]')"
+nowant "ask-labeled bead: ghost NOT raised"  "ghost"   "$out"
+nowant "ask-labeled bead: bead NOT named"    "sp-ask"  "$out"
+
+echo
+echo "case 8 — D7 merge: bead carrying check2_protect_waiting's skip label is NOT ghost:"
+# ======================================================================================
+# check2_protect_waiting labels a work bead with spira-waiting-operator when its only open
+# dep carries the ask label, so the sentinel's --exclude-label skips it in CHECK 2. The
+# ghost check (CHECK 2b) must honour the same exclusion, or it reclaims what CHECK 2
+# explicitly protected.
+out="$(classify_ghost '[
+  {"id":"sp-protected","title":"waiting for ryan","status":"in_progress",
+   "labels":["spira-waiting-operator","spira","plan"],"assignee":"aeon-y",
+   "lease_expires_at":"'"$PAST"'"}
+]')"
+nowant "skip-labeled bead: ghost NOT raised"   "ghost"        "$out"
+nowant "skip-labeled bead: bead NOT named"     "sp-protected" "$out"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
