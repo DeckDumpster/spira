@@ -1298,7 +1298,7 @@ else
         if [ -n "${_peak_bytes:-}" ] && [ "${_peak_bytes}" -gt 0 ] 2>/dev/null; then
             _peak_mib=$(( _peak_bytes / 1048576 ))
             _per_slot_mib=$(( _maxpar > 0 ? _peak_mib / _maxpar : _peak_mib ))
-            log "batch: cgroup peak ${_peak_mib}MiB (maxpar ${_maxpar:-?}, ~${_per_slot_mib}MiB/slot; budget ${_mem_per_suite_mib:-512}MiB/suite)"
+            log "batch: cgroup peak ${_peak_mib}MiB (maxpar ${_maxpar:-?}, ~${_per_slot_mib}MiB/slot; budget ${_mem_per_suite_mib:-192}MiB/suite)"
         fi
     fi
 
