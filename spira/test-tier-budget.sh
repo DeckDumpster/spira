@@ -23,7 +23,7 @@
 # budget, new/raised allowlist entry, bad suite name) is paired with the accepting case
 # right beside it.
 #
-# covers: spira/tier-budget.sh spira/testenv-batch.sh spira/tier-budget-allowlist spira/conf.sh
+# covers: spira/tier-budget.sh spira/testenv-batch.sh spira/gate-touched.sh spira/tier-budget-allowlist spira/conf.sh
 # tier: T2
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -204,7 +204,7 @@ is "a removed entry passes the lint" "0" "$rc"
 printf 'test-a.sh\tT1\t2.5\ntest-b.sh\tT2\t12.0\n' > "$CUR_D"
 out="$(SPIRA_TIER_ALLOWLIST="$CUR_D" TBS lint-allowlist --prior "$PRIOR_D" 2>&1)"; rc=$?
 is  "a raised recorded time fails the lint" "1" "$rc"
-want "the failure names the suite and both times" "test-a.sh raised 2.0s -> 2.5s" "$out"
+want "the failure names the suite and both times" "test-a.sh raised 2.0 -> 2.5" "$out"
 
 # D5: a new entry not in the prior state fails the lint.
 printf 'test-a.sh\tT1\t2.0\ntest-b.sh\tT2\t12.0\ntest-c.sh\tT1\t3.0\n' > "$CUR_D"
@@ -256,6 +256,65 @@ fi
 # E2: testenv-batch.sh is wired to invoke tier-budget.sh check-batch (structural).
 want "testenv-batch.sh calls tier-budget.sh check-batch" \
      "tier-budget.sh\" check-batch" "$(cat "$HERE/testenv-batch.sh")"
+
+# E3: gate-touched.sh runs both allowlist ratchets and check-areas regardless of
+# SPIRA_GATE_SUITES mode (structural — same wiring point and same reason as build-fence.sh,
+# tested the same way in test-build-fence.sh; the ratchets' own pass/fail behavior is covered
+# in D and F).
+GT="$(cat "$HERE/gate-touched.sh")"
+want "gate-touched.sh calls tier-budget.sh lint-allowlist" "tier-budget.sh\" lint-allowlist" "$GT"
+want "gate-touched.sh lints the area allowlist too"        "lint-allowlist --base \"\$BASE\" --area" "$GT"
+want "gate-touched.sh calls tier-budget.sh check-areas"     "tier-budget.sh\" check-areas" "$GT"
+
+# ============================================================================================
+printf '\n%s\n' "F. check-areas and the --area allowlist ratchet: at most one T3 suite per area"
+# ============================================================================================
+AREA_DIR="$T/area-suites"; mkdir -p "$AREA_DIR"
+area_suite() {  # area_suite <name> <tier> [<uc-id>] — <name> gets a test- prefix: check-areas
+    # globs test-*.sh, the same convention plan-lint.sh's own corpus walk uses.
+    {
+        printf '#!/usr/bin/env bash\n# tier: %s\n' "$2"
+        [ -n "${3:-}" ] && printf '# covers: spira/fixture.sh %s\n' "$3"
+        printf 'set -uo pipefail\n'
+    } > "$AREA_DIR/test-$1"
+}
+area_suite one-t3.sh   T3 UC-alpha-01
+out="$(TBS check-areas --suite-dir "$AREA_DIR" 2>&1)"; rc=$?
+is "a single T3 suite in an area passes" "0" "$rc"
+
+area_suite two-t3.sh   T3 UC-alpha-02
+out="$(TBS check-areas --suite-dir "$AREA_DIR" 2>&1)"; rc=$?
+is  "a second T3 suite in the same area fails" "1" "$rc"
+want "the failure names the area"    "area alpha"                     "$out"
+want "the failure names both suites" "test-one-t3.sh,test-two-t3.sh"  "$out"
+
+area_suite other-t3.sh T3 UC-beta-01
+out="$(TBS check-areas --suite-dir "$AREA_DIR" 2>&1)"; rc=$?
+is "a T3 suite in an unrelated area does not join the count" "1" "$rc"
+lack "the unrelated area is never named" "area beta" "$out"
+
+# An allowlisted area is judged against its recorded count, same shape as the suite ledger.
+AL_F="$T/area-allowlist-f"
+printf 'alpha\t2\n' > "$AL_F"
+out="$(SPIRA_TIER_AREA_ALLOWLIST="$AL_F" TBS check-areas --suite-dir "$AREA_DIR" 2>&1)"; rc=$?
+is "an area allowlisted at its own count passes" "0" "$rc"
+
+area_suite third-t3.sh T3 UC-alpha-03
+out="$(SPIRA_TIER_AREA_ALLOWLIST="$AL_F" TBS check-areas --suite-dir "$AREA_DIR" 2>&1)"; rc=$?
+is "an area past its allowlisted count still fails" "1" "$rc"
+
+# --area lints SPIRA_TIER_AREA_ALLOWLIST, same shrink-only rule as the suite ledger (D above).
+PRIOR_F="$T/area-allowlist-prior"
+printf 'alpha\t2\n' > "$PRIOR_F"
+CUR_F="$T/area-allowlist-cur"
+printf 'alpha\t2\n' > "$CUR_F"
+out="$(SPIRA_TIER_AREA_ALLOWLIST="$CUR_F" TBS lint-allowlist --area --prior "$PRIOR_F" 2>&1)"; rc=$?
+is "an unchanged area allowlist passes --area" "0" "$rc"
+
+printf 'alpha\t3\n' > "$CUR_F"
+out="$(SPIRA_TIER_AREA_ALLOWLIST="$CUR_F" TBS lint-allowlist --area --prior "$PRIOR_F" 2>&1)"; rc=$?
+is  "a raised area count fails --area" "1" "$rc"
+want "the failure names the area and both counts" "alpha raised 2 -> 3" "$out"
 
 printf '\ntest-tier-budget.sh: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
