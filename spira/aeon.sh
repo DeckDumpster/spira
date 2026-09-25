@@ -777,17 +777,39 @@ print(d[0].get("status","") if d else "")' 2>/dev/null)"
             ledger_done "$rc" slain
             exit $rc
         fi
-        # THRASH IS NOT FAILURE. attempts_of subtracts requeued/thrash events, so the
-        # claim that preceded the thrash is net-zero. The .thrash file carries the last
-        # action for the next aeon.
+        # THRASH IS NOT FAILURE, ONCE. attempts_of subtracts requeued/thrash events, so the
+        # claim that preceded a single thrash is net-zero — the aeon was killed for stalling,
+        # not judged on its work. That reading breaks down for a bead thrashing repeatedly at
+        # the SAME commit: nothing distinguishes one unlucky aeon from a bead nothing is
+        # moving, so the exemption never expired and the attempt cap and poison threshold
+        # never tripped (sp-gs24i: five summons across seven hours, none charged).
+        #
+        # thrash_streak_bump compares this branch's tip to the tip recorded at the LAST
+        # thrash on this bead (bead metadata, survives across summons unlike $SPIRA_RUN). Same
+        # tip bumps the streak; a moved tip — including a bead's first-ever thrash — resets it
+        # to 1. At or over SPIRA_THRASH_STREAK_CAP consecutive same-tip thrashes, the requeue
+        # is charged as an attempt like any other failed session (a cause other than the bare
+        # "thrash" the SQL exemption matches), so the bead reaches the same poison threshold a
+        # bead that kept genuinely failing would.
         if [ -f "$SPIRA_RUN/$BEAD_ID.thrash" ]; then
             _thrash_note="$(cat "$SPIRA_RUN/$BEAD_ID.thrash" 2>/dev/null)"
             rm -f "$SPIRA_RUN/$BEAD_ID.thrash"
             release_own_claim "$BEAD_ID"
-            bump_requeue "$BEAD_ID" thrash
-            bdq note "$BEAD_ID" "Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m while turns advanced. Last action: ${_thrash_note:-?}. No attempt charged — the next aeon should start from this sticking point." >/dev/null 2>&1
-            log "$FAYTH: $BEAD_ID thrash-requeued — no attempt charged (last: ${_thrash_note:-?})"
-            ledger_done "$rc" "requeue-thrash"
+            _thrash_tip="$(git -C "${WORK:-/dev/null}" rev-parse --short HEAD 2>/dev/null || echo ?)"
+            _thrash_streak="$(thrash_streak_bump "$BEAD_ID" "$_thrash_tip" "${_thrash_note:-?}")"
+            if [ "${_thrash_streak:-0}" -ge "${SPIRA_THRASH_STREAK_CAP:-2}" ] 2>/dev/null; then
+                bump_requeue "$BEAD_ID" thrash-stale
+                bdq note "$BEAD_ID" "STICKING POINT: ${_thrash_note:-?}
+
+Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m while turns advanced, and this is the ${_thrash_streak}th consecutive thrash with branch $BRANCH still at $_thrash_tip — nothing has been committed since the last one. An attempt IS charged this time: the sticking point above is the next aeon's first move, not something to rediscover by reading back through this bead's notes." >/dev/null 2>&1
+                log "$FAYTH: $BEAD_ID thrash-requeued — attempt charged (streak $_thrash_streak, tip $_thrash_tip unchanged; last: ${_thrash_note:-?})"
+                ledger_done "$rc" "requeue-thrash-charged"
+            else
+                bump_requeue "$BEAD_ID" thrash
+                bdq note "$BEAD_ID" "Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m while turns advanced. Last action: ${_thrash_note:-?}. No attempt charged — the next aeon should start from this sticking point." >/dev/null 2>&1
+                log "$FAYTH: $BEAD_ID thrash-requeued — no attempt charged (streak $_thrash_streak, tip $_thrash_tip; last: ${_thrash_note:-?})"
+                ledger_done "$rc" "requeue-thrash"
+            fi
             exit $rc
         fi
         # LEASE LAPSE IS A VERDICT. The heartbeat writes this file when the trace has been
@@ -1658,6 +1680,22 @@ FIXTURE_BRIEF="$(block_overlay FIXTURE "$FIXTURE_BRIEF")"
 DEADLINE_BRIEF="$(block_overlay DEADLINE "$DEADLINE_BRIEF")"
 
 BEAD_BODY="$(bdq show "$BEAD_ID" 2>/dev/null | grep -vE '^💡|^warning|^  Fix|^  Or')"
+# A THRASHED BEAD'S BRIEF LEADS WITH THE STICKING POINT, not with a bare bead body the aeon
+# has to scroll a note history to find it in. Only when this session's own worktree tip still
+# matches the tip recorded at the last thrash — a moved tip means the sticking point is
+# already stale, and repeating it would waste the turn it was meant to save.
+_thrash_meta_streak="$(bead_metadata "$BEAD_ID" thrash_streak)"
+if [ -n "$_thrash_meta_streak" ] && [ "$_thrash_meta_streak" -ge 1 ] 2>/dev/null; then
+    _thrash_meta_tip="$(bead_metadata "$BEAD_ID" thrash_tip)"
+    _thrash_cur_tip="$(git -C "$WORK" rev-parse --short HEAD 2>/dev/null || echo ?)"
+    if [ -n "$_thrash_meta_tip" ] && [ "$_thrash_meta_tip" = "$_thrash_cur_tip" ]; then
+        _thrash_meta_last="$(bead_metadata "$BEAD_ID" thrash_last)"
+        BEAD_BODY="STICKING POINT ($_thrash_meta_streak consecutive thrash(es), nothing committed since): ${_thrash_meta_last:-?}
+Start there — do not spend a turn rediscovering it from the note history below.
+
+$BEAD_BODY"
+    fi
+fi
 PROMPT="$(sed -e "s|{{BEAD_ID}}|$BEAD_ID|g" -e "s|{{BRANCH}}|$BRANCH|g" \
               -e "s|{{REPO}}|$WORK|g" -e "s|{{REPO_NAME}}|$REPO_NAME|g" \
               -e "s|{{HOME_REPO}}|$(spira_home_repo)|g" \
