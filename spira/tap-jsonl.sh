@@ -1,5 +1,5 @@
-# tap-jsonl.sh — turn one suite's captured output into results.jsonl rows. Sourced,
-# never executed.
+# tap-jsonl.sh — turn one suite's captured output into results.jsonl rows.
+# Sourced, never executed.
 #
 # ONE PARSER, ONE PLACE (same reasoning as suite-covers.sh, which this sources): gate-
 # diag.sh and suites.sh both need this and neither should carry its own copy.
