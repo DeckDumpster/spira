@@ -108,7 +108,7 @@ BODY
 # ---------------------------------------------------------------------------------------
 # 1. THE FENCES — first, and independently of everything below.
 # ---------------------------------------------------------------------------------------
-for fence in spira/exclude.sh spira/inventory.sh spira/scratch-fence.sh spira/wiki-add-fence.sh spira/literal-lint.sh spira/testdb-mode-lint.sh spira/suite-state-fence.sh spira/orphan-test.sh; do
+for fence in spira/exclude.sh spira/inventory.sh spira/scratch-fence.sh spira/wiki-add-fence.sh spira/literal-lint.sh spira/testdb-mode-lint.sh spira/bd-stdin-lint.sh spira/suite-state-fence.sh spira/orphan-test.sh; do
     [ -r "$fence" ] || { say "$fence is missing — refusing to land unchecked"; exit 1; }
 done
 
@@ -182,6 +182,16 @@ fi
 [ -r spira/testdb-mode-lint.sh ] || { say "spira/testdb-mode-lint.sh is missing — refusing to land unchecked"; exit 1; }
 if ! tml="$(bash spira/testdb-mode-lint.sh 2>&1)"; then
     printf '%s\n' "$tml" >&2
+    exit 1
+fi
+
+# BD-STDIN FENCE. `bd note <id> - <<EOF` and `bd create ... -d - <<EOF` store the literal
+# "-" and discard the heredoc body that follows it — six beads shipped with a dash where
+# their body or notes should be (sp-j5z3). The stdin forms (--stdin, --body-file -) are
+# required wherever spira/ or chamber/ pass a heredoc body to bd note or bd create.
+[ -r spira/bd-stdin-lint.sh ] || { say "spira/bd-stdin-lint.sh is missing — refusing to land unchecked"; exit 1; }
+if ! bsl="$(bash spira/bd-stdin-lint.sh 2>&1)"; then
+    printf '%s\n' "$bsl" >&2
     exit 1
 fi
 
