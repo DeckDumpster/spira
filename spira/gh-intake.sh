@@ -61,20 +61,6 @@ UNTRUSTED_LABEL="gh-untrusted"
 die() { printf 'gh-intake: %s\n' "$1" >&2; exit 1; }
 log() { printf 'gh-intake: %s\n' "$1"; }
 
-if [ -z "$REPO" ]; then
-    log "SPIRA_GH_INTAKE_REPO is not set — nothing to ingest"
-    exit 0
-fi
-
-_rr="$(repo_root "$BEAD_REPO" 2>/dev/null)" || _rr=""
-if [ -z "$_rr" ] || [ ! -e "$_rr/.git" ]; then
-    die "repo:$BEAD_REPO does not resolve to a checkout through $SPIRA_REPO_MAP.
-       Every ingested bead would be parked by aeon.sh on first claim and left for a
-       human. Add $BEAD_REPO to the repo-map, or set SPIRA_GH_INTAKE_BEAD_REPO to a
-       name that resolves."
-fi
-log "beads will be filed against repo:$BEAD_REPO ($_rr)"
-
 # ── what the store already holds ─────────────────────────────────────────────
 _ingested() {
     "$BD" -C "$DB" list --all --limit 0 --json 2>/dev/null | python3 -c '
@@ -94,70 +80,6 @@ try: d=json.load(sys.stdin)
 except Exception: print(0); sys.exit(0)
 rows=d if isinstance(d,list) else d.get("issues",d.get("data",[]))
 print(len(rows))'; }
-
-before_total="$(_total)"
-[ "$before_total" -gt 0 ] || die "the store reports zero beads — the query is broken, not the store empty"
-
-all_ingested="$(_ingested)"
-# Work beads have the scope label and github: prefix
-known_work="$(printf '%s\n' "$all_ingested" | awk -v s="$SCOPE" '$2 ~ /^github:/ {
-    n=split($3,a,","); for(i=1;i<=n;i++) if(a[i]==s){print $2; break} }')"
-# Untrusted records have github-untrusted: prefix; we need both id and ref for promotion/skip
-known_untrusted="$(printf '%s\n' "$all_ingested" | awk '$2 ~ /^github-untrusted:/ {print $1 " " $2}')"
-
-log "store holds $before_total bead(s); $(printf '%s\n' "$known_work" | grep -c . || true) work, $(printf '%s\n' "$known_untrusted" | grep -c . || true) untrusted"
-
-# ── fetch open issues ─────────────────────────────────────────────────────────
-FEED="$(mktemp -d)"; trap 'rm -rf "$FEED"' EXIT INT TERM
-page=1
-while :; do
-    body="$(curl -sS --max-time 30 \
-        "$API/repos/$REPO/issues?state=open&per_page=100&page=$page" 2>/dev/null)" || \
-        die "could not reach $API — no issues were read"
-    n="$(printf '%s' "$body" | python3 -c '
-import sys,json
-try: d=json.load(sys.stdin)
-except Exception: print("ERR"); sys.exit(0)
-if isinstance(d,dict):
-    print("MSG:"+str(d.get("message",""))); sys.exit(0)
-print(len(d))' )"
-    case "$n" in
-        ERR)       die "the API returned something that is not JSON — refusing to guess at it" ;;
-        MSG:*)     die "the API refused: ${n#MSG:}" ;;
-    esac
-    printf '%s' "$body" > "$FEED/page-$page.json"
-    [ "$n" -ge 100 ] || break
-    page=$((page+1))
-    [ "$page" -le 20 ] || die "more than 2000 open issues — refusing to page further"
-done
-
-# Extract issues with author login, association, and current label list. Pull requests excluded.
-mapfile -t ROWS < <(python3 - "$FEED" "$REPO" <<'PY'
-import sys,json,os,glob
-feed,repo=sys.argv[1],sys.argv[2]
-out=[]
-for f in sorted(glob.glob(os.path.join(feed,"page-*.json"))):
-    try: d=json.load(open(f))
-    except Exception: continue
-    if not isinstance(d,list): continue
-    for i in d:
-        if "pull_request" in i: continue
-        labels=[l.get("name","") for l in (i.get("labels") or [])]
-        assoc=i.get("author_association") or "NONE"
-        out.append((i["number"],
-                    i.get("title") or "",
-                    i.get("body") or "",
-                    (i.get("user") or {}).get("login") or "",
-                    labels,
-                    assoc))
-for n,t,b,login,lbls,assoc in sorted(out):
-    print(json.dumps({"ref":"github:%s#%d"%(repo,n),"title":t,"body":b,
-                       "login":login,"labels":lbls,"number":n,
-                       "author_association":assoc}))
-PY
-)
-log "fetched ${#ROWS[@]} open issue(s) from $REPO"
-[ "${#ROWS[@]}" -gt 0 ] || die "the tracker reported no open issues — that is possible, but it is also what a wrong repository name looks like. Check SPIRA_GH_INTAKE_REPO=$REPO"
 
 # ── verify who applied spira:accept ──────────────────────────────────────────
 _accept_actor() {   # _accept_actor <issue_number> → prints login or empty
@@ -227,6 +149,92 @@ _create_untrusted() {   # _create_untrusted <number> <title> <body> <login>
           -p 4 \
           --body-file - >/dev/null 2>&1
 }
+
+# GH_INTAKE_LIB=1 — for tests: stop here, after every triage/dedup function is defined but
+# before any network call or store read. `_accept_actor`, `_ingested`, `_create_work` and
+# `_create_untrusted` read BD/DB/REPO/SCOPE/LANE/API/... from the variables set above, exactly
+# as they do at call time when this script runs standalone — a test sources this file with
+# those variables and its own bd/curl stubs already exported, then calls the functions
+# directly over fixture JSON instead of driving ~15 full script invocations through python3.
+if [ "${GH_INTAKE_LIB:-0}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
+
+if [ -z "$REPO" ]; then
+    log "SPIRA_GH_INTAKE_REPO is not set — nothing to ingest"
+    exit 0
+fi
+
+_rr="$(repo_root "$BEAD_REPO" 2>/dev/null)" || _rr=""
+if [ -z "$_rr" ] || [ ! -e "$_rr/.git" ]; then
+    die "repo:$BEAD_REPO does not resolve to a checkout through $SPIRA_REPO_MAP.
+       Every ingested bead would be parked by aeon.sh on first claim and left for a
+       human. Add $BEAD_REPO to the repo-map, or set SPIRA_GH_INTAKE_BEAD_REPO to a
+       name that resolves."
+fi
+log "beads will be filed against repo:$BEAD_REPO ($_rr)"
+
+before_total="$(_total)"
+[ "$before_total" -gt 0 ] || die "the store reports zero beads — the query is broken, not the store empty"
+
+all_ingested="$(_ingested)"
+# Work beads have the scope label and github: prefix
+known_work="$(printf '%s\n' "$all_ingested" | awk -v s="$SCOPE" '$2 ~ /^github:/ {
+    n=split($3,a,","); for(i=1;i<=n;i++) if(a[i]==s){print $2; break} }')"
+# Untrusted records have github-untrusted: prefix; we need both id and ref for promotion/skip
+known_untrusted="$(printf '%s\n' "$all_ingested" | awk '$2 ~ /^github-untrusted:/ {print $1 " " $2}')"
+
+log "store holds $before_total bead(s); $(printf '%s\n' "$known_work" | grep -c . || true) work, $(printf '%s\n' "$known_untrusted" | grep -c . || true) untrusted"
+
+# ── fetch open issues ─────────────────────────────────────────────────────────
+FEED="$(mktemp -d)"; trap 'rm -rf "$FEED"' EXIT INT TERM
+page=1
+while :; do
+    body="$(curl -sS --max-time 30 \
+        "$API/repos/$REPO/issues?state=open&per_page=100&page=$page" 2>/dev/null)" || \
+        die "could not reach $API — no issues were read"
+    n="$(printf '%s' "$body" | python3 -c '
+import sys,json
+try: d=json.load(sys.stdin)
+except Exception: print("ERR"); sys.exit(0)
+if isinstance(d,dict):
+    print("MSG:"+str(d.get("message",""))); sys.exit(0)
+print(len(d))' )"
+    case "$n" in
+        ERR)       die "the API returned something that is not JSON — refusing to guess at it" ;;
+        MSG:*)     die "the API refused: ${n#MSG:}" ;;
+    esac
+    printf '%s' "$body" > "$FEED/page-$page.json"
+    [ "$n" -ge 100 ] || break
+    page=$((page+1))
+    [ "$page" -le 20 ] || die "more than 2000 open issues — refusing to page further"
+done
+
+# Extract issues with author login, association, and current label list. Pull requests excluded.
+mapfile -t ROWS < <(python3 - "$FEED" "$REPO" <<'PY'
+import sys,json,os,glob
+feed,repo=sys.argv[1],sys.argv[2]
+out=[]
+for f in sorted(glob.glob(os.path.join(feed,"page-*.json"))):
+    try: d=json.load(open(f))
+    except Exception: continue
+    if not isinstance(d,list): continue
+    for i in d:
+        if "pull_request" in i: continue
+        labels=[l.get("name","") for l in (i.get("labels") or [])]
+        assoc=i.get("author_association") or "NONE"
+        out.append((i["number"],
+                    i.get("title") or "",
+                    i.get("body") or "",
+                    (i.get("user") or {}).get("login") or "",
+                    labels,
+                    assoc))
+for n,t,b,login,lbls,assoc in sorted(out):
+    print(json.dumps({"ref":"github:%s#%d"%(repo,n),"title":t,"body":b,
+                       "login":login,"labels":lbls,"number":n,
+                       "author_association":assoc}))
+PY
+)
+log "fetched ${#ROWS[@]} open issue(s) from $REPO"
+[ "${#ROWS[@]}" -gt 0 ] || die "the tracker reported no open issues — that is possible, but it is also what a wrong repository name looks like. Check SPIRA_GH_INTAKE_REPO=$REPO"
 
 # ── process issues ────────────────────────────────────────────────────────────
 created=0; skipped=0; untrusted_created=0

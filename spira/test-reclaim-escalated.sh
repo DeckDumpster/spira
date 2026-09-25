@@ -15,33 +15,32 @@
 #       from ghost classification.
 #
 #   test-check2-reclaim.sh verifies the skip label is applied/removed by protect_waiting.
-#   test-reclaim-needs-ryan.sh verifies strand-classify.py respects the labels in isolation.
+#   test-strand-partition.sh verifies strand-classify.py respects the labels in isolation
+#   (D7: merged in from the now-deleted test-reclaim-needs-ryan.sh).
 #   THIS TEST verifies the chain end-to-end: protect_waiting labels the bead in the real
 #   database, the label is present in the data extracted from the database and fed to the
 #   ghost check, and the ghost check does not raise ghost for the labeled bead.
 #
-# FOUR CASES (all sides exercised — law-absence-needs-a-positive-control):
+# THREE CASES (all sides exercised — law-absence-needs-a-positive-control):
 #
-#   1. POSITIVE CONTROL: a plain dead-worker bead (no labels, expired lease) IS ghost.
-#      Without this, a broken ghost classifier that never fires passes silently.
+#   1. CHAIN — BEFORE PROTECTION: work bead has expired lease + ask dep, but protect_waiting
+#      has not run yet (no SKIP label on the bead). Ghost IS raised. This is this suite's own
+#      positive control (D7 dropped the fixture-only duplicate of test-strand-partition.sh's
+#      control) AND proves the fix below was necessary.
 #
-#   2. CHAIN — BEFORE PROTECTION: work bead has expired lease + ask dep, but protect_waiting
-#      has not run yet (no SKIP label on the bead). Ghost IS raised — proving the fix was
-#      necessary and the positive control is asserting the right thing.
-#
-#   3. CHAIN — PROTECTED: protect_waiting applies SKIP to the work bead (the ask dep is
+#   2. CHAIN — PROTECTED: protect_waiting applies SKIP to the work bead (the ask dep is
 #      still open). The same bead, re-extracted from the real database, is NOT ghost. This
 #      is the core assertion: the real-database label from protect_waiting propagates
 #      correctly through to the ghost-check input.
 #
-#   4. CHAIN — AFTER ANSWER: the ask dep closes. protect_waiting removes SKIP. The bead,
+#   3. CHAIN — AFTER ANSWER: the ask dep closes. protect_waiting removes SKIP. The bead,
 #      re-extracted, IS ghost again — confirming the protection is lifted once an answer
 #      arrives and the bead is returned to the reaper for normal reclaim.
 #
-# CASE 1: fixture file only (no database) — fast isolation of the ghost classifier.
-# CASES 2–4: real fixture database (testdb.sh) for protect_waiting, JSON extracted from the
-#   database and fed to strand-classify.py. A past lease is injected into the extracted JSON
-#   so the time condition in the ghost check fires; the rest of the data is live from the DB.
+# All three cases run against a real fixture database (testdb.sh) for protect_waiting; JSON
+# is extracted from the database and fed to strand-classify.py. A past lease is injected into
+# the extracted JSON so the time condition in the ghost check fires; the rest of the data is
+# live from the DB.
 #
 # defect: sp-9zpm
 # covers: spira/lib.sh spira/strand-classify.py
@@ -103,20 +102,7 @@ echo "test-reclaim-escalated.sh"
 
 # ======================================================================================
 echo
-echo "case 1 — positive control: plain dead worker IS classified ghost:"
-# ======================================================================================
-# An unprotected bead with an expired lease. ghost must fire — without this, an
-# implementation that never raises ghost is indistinguishable from a correct one.
-out="$(classify_with_lease '[
-  {"id":"sp-ctrl","title":"dead worker","status":"in_progress",
-   "labels":["spira","plan"],"assignee":"aeon-dead"}
-]')"
-want  "positive control: ghost raised"  "ghost"    "$out"
-want  "positive control: bead named"    "sp-ctrl"  "$out"
-
-# ======================================================================================
-echo
-echo "case 2 — chain before protection: work bead without skip label IS ghost:"
+echo "case 1 — chain before protection (also this suite's positive control): work bead without skip label IS ghost:"
 # ======================================================================================
 # This is the exact pre-fix state: the work bead is IN_PROGRESS with an ask dep, but
 # neither the ask label nor the skip label appears on the work bead itself. The ghost
@@ -135,7 +121,7 @@ want   "before protection: bead named"   "sp-work0"  "$out"
 
 # ======================================================================================
 echo
-echo "case 3 — chain after protection: protect_waiting applies skip → NOT ghost:"
+echo "case 2 — chain after protection: protect_waiting applies skip → NOT ghost:"
 # ======================================================================================
 # protect_waiting runs (ask dep is still open). It labels sp-work0 with SKIP.
 # We re-extract from the real database — the SKIP label is now present in the live data.
@@ -151,7 +137,7 @@ nowant "after protection: bead NOT named"   "sp-work0"  "$out"
 
 # ======================================================================================
 echo
-echo "case 4 — chain after answer: dep closes, skip removed → ghost IS raised:"
+echo "case 3 — chain after answer: dep closes, skip removed → ghost IS raised:"
 # ======================================================================================
 # The operator answers. The ask dep closes. protect_waiting re-runs and removes SKIP
 # from sp-work0 because no open dep still carries the ask label.

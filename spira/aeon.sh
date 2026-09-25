@@ -596,18 +596,7 @@ unset _world_stop_label
 REPO_NAME="${BEAD_REPO:-$(spira_home_repo)}"
 if ! REPO="$(repo_root "$REPO_NAME")" || [ ! -e "$REPO/.git" ]; then
     log "$FAYTH: $BEAD_ID names repo:$REPO_NAME, which repo-map does not resolve to a checkout"
-    # PARK, NOT RELEASE. release_own_claim alone puts the bead back on the ready queue, where
-    # the sentinel re-summons an aeon within two minutes — an infinite loop burning the pool.
-    # Adding the ask label first makes every fayth's --exclude-label filter skip it, so the
-    # bead sits open but unclaimed until a human corrects the label or the repo-map. Scar:
-    # sp-nlhy accumulated four identical notes, one per summon, before a keyboard session
-    # fixed the label by hand. (sp-4l0d)
-    # overseer keeps the bead visible in the decisions pane; without it the bead is excluded
-    # from every fayth predicate and invisible to the operator.
-    bdq label add "$BEAD_ID" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
-    bdq label add "$BEAD_ID" "overseer"          >/dev/null 2>&1 || true
-    bdq note "$BEAD_ID" "Parked by aeon.sh: this bead carries repo:$REPO_NAME, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Labeled $SPIRA_ASK_LABEL and overseer — no aeon will claim it again until a human corrects the label or adds the repo to the map and removes that label. Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." >/dev/null 2>&1
-    release_own_claim "$BEAD_ID"
+    park_unmapped "$BEAD_ID" "$REPO_NAME"
     ledger_done 1 unmapped-repo
     exit 1
 fi
