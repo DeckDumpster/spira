@@ -17,6 +17,12 @@
 #  10. spira-czar-pass.timer and .service exist in systemd/.
 #  11. watchtower.sh --queue-checks is retired (stub response only).
 #  12. sentinel.sh no longer calls watchtower --queue-checks.
+#  16-21. base-red: the base ref's OWN gate run, not a batch's. Positive control
+#      (green base → no bead), red base → P0+express bead naming the failing suites
+#      (replaying the 2026-09-24 shape: test-install-bootstrap-release.sh and
+#      test-watch-refresh.sh), a same-red second pass computing the same dedupe ref,
+#      and an unreadable base — grace-suppressed at first, then filed as unreadable
+#      (never treated as green) once it outlasts the grace window.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): for detectors 4 and 5,
 # the test first verifies NO detection with an empty/fresh fixture, then adds the
@@ -90,8 +96,9 @@ export FORGE_LOG="$T/forge-calls.log"
 STUB_INC="$T/incident.sh"
 cat > "$STUB_INC" <<'IEOF'
 #!/usr/bin/env bash
-printf 'incident: cause=%s ref=%s subj=%s\n' \
-    "${SPIRA_INCIDENT_CAUSE:-}" "${SPIRA_INCIDENT_REF:-}" "${2:-}" >> "$INC_LOG"
+printf 'incident: cause=%s ref=%s subj=%s priority=%s labels=%s\n' \
+    "${SPIRA_INCIDENT_CAUSE:-}" "${SPIRA_INCIDENT_REF:-}" "${2:-}" \
+    "${SPIRA_INCIDENT_PRIORITY:-}" "${SPIRA_INCIDENT_LABELS:-}" >> "$INC_LOG"
 exit 0
 IEOF
 chmod +x "$STUB_INC"
@@ -367,6 +374,131 @@ bash "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "coexistence: ci-stalled still DETECTED=yes" "CLASS=ci-stalled DETECTED=yes" "$_log"
 want "coexistence: ci-red stays DETECTED=no (run only 60s red)" "CLASS=ci-red DETECTED=no" "$_log"
+
+# ==========================================================================================
+printf '\n%s\n' "16. base-red: green base → DETECTED=no (POSITIVE CONTROL)"
+# ==========================================================================================
+# Open batch on its own branch; the stub answers batch-ci-status only for branch=main
+# (the repo's base, from repo-map column 4) so ci-stalled/ci-red on the batch's own
+# branch stay silent and this section isolates base-red alone.
+_now_e3="$(date +%s)"
+_br_dir="$SPIRA_RUN/queue/baseredrepo"
+mkdir -p "$_br_dir"
+printf 'branch=spira/queue/baseredtest\n' > "$_br_dir/open"
+mkdir -p "$T/baseredrepo"
+printf 'baseredrepo | %s | queue | origin/main | |\n' "$T/baseredrepo" >> "$SPIRA_REPO_MAP"
+
+cat > "$STUB_FORGE" <<'FEOF16'
+#!/usr/bin/env bash
+cmd="${1:-}"; branch_arg="${3:-}"
+case "$cmd" in
+    batch-ci-status)
+        if [ "$branch_arg" = "main" ]; then
+            printf 'run-id: 55555\n'
+            printf 'run-conclusion: success\n'
+            printf 'head-sha: deadbeef\n'
+        fi
+        ;;
+esac
+exit 0
+FEOF16
+chmod +x "$STUB_FORGE"
+
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "base-red: DETECTED=no when base's own run is green" "CLASS=base-red DETECTED=no" "$_log"
+lack "base-red: no bead filed for a green base" "cause=base-red" "$(cat "$INC_LOG" 2>/dev/null || true)"
+
+# ==========================================================================================
+printf '\n%s\n' "17. base-red: red base → P0+express bead naming the failing suites"
+# ==========================================================================================
+# Replays the 2026-09-24 shape: a batch lands, the base's own full-corpus run comes
+# back red on suites the batch's own diff-selected run never touched.
+cat > "$STUB_FORGE" <<'FEOF17'
+#!/usr/bin/env bash
+cmd="${1:-}"; branch_arg="${3:-}"
+case "$cmd" in
+    batch-ci-status)
+        if [ "$branch_arg" = "main" ]; then
+            printf 'run-id: 55556\n'
+            printf 'run-conclusion: failure\n'
+            printf 'head-sha: cafef00d\n'
+            printf 'run-url: https://example.invalid/actions/runs/55556\n'
+            printf 'red-suite: test-watch-refresh.sh\n'
+            printf 'red-suite: test-install-bootstrap-release.sh\n'
+        fi
+        ;;
+esac
+exit 0
+FEOF17
+chmod +x "$STUB_FORGE"
+
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
+SPIRA_CZAR_STAGE_BASE_RED=act bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+_inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
+want "base-red: DETECTED=yes when base's own run is red" "CLASS=base-red DETECTED=yes" "$_log"
+want "base-red: bead filed with cause=base-red" "cause=base-red" "$_inc_log"
+want "base-red: filed at priority 0 (P0)" "priority=0" "$_inc_log"
+want "base-red: filed with the express label" "labels=" "$_inc_log"
+want "base-red: express label present in filed labels" "express" "$_inc_log"
+want "base-red: subject names a failing suite" "test-watch-refresh.sh" "$_inc_log"
+want "base-red: subject names the other failing suite" "test-install-bootstrap-release.sh" "$_inc_log"
+_ref17="$(printf '%s\n' "$_inc_log" | grep -o 'ref=[^ ]*' | tail -1)"
+
+# ==========================================================================================
+printf '\n%s\n' "18. base-red: still red on a second pass → same dedupe ref (recurrence, not a new bead)"
+# ==========================================================================================
+# incident.sh itself owns dedupe-on-external_ref (tested in test-incident.sh); this
+# proves czar-pass computes the SAME ref on repeated passes for an unchanged suite set,
+# which is the half of the dedupe contract that lives in this seam.
+rm -f "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
+SPIRA_CZAR_STAGE_BASE_RED=act bash "$CZAR" --pass >/dev/null 2>&1
+_ref18="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
+is "base-red: dedupe ref is stable across passes with the same suite set" "$_ref17" "$_ref18"
+
+# ==========================================================================================
+printf '\n%s\n' "19. base-red: unreadable status, still inside grace → DETECTED=no (POSITIVE CONTROL)"
+# ==========================================================================================
+# The forge seam returns nothing for the base branch at all (no run-id) — the same shape
+# as a genuine API failure OR a push whose run GitHub has not created yet. A fresh
+# first-seen marker (age 0) must not page: that would fire on every ordinary landing.
+cat > "$STUB_FORGE" <<'FEOF19'
+#!/usr/bin/env bash
+exit 0
+FEOF19
+chmod +x "$STUB_FORGE"
+
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "base-red: DETECTED=no while unreadable is still inside grace" \
+    "CLASS=base-red DETECTED=no" "$_log"
+lack "base-red: no bead filed while still inside grace" "cause=base-red" \
+    "$(cat "$INC_LOG" 2>/dev/null || true)"
+
+# ==========================================================================================
+printf '\n%s\n' "20. base-red: unreadable past grace → filed as unreadable, not treated as green"
+# ==========================================================================================
+_old_unreadable=$(( _now_e3 - 200 ))   # 200s > default 120s grace
+printf '%s\n' "$_old_unreadable" > "$SPIRA_RUN/czar-pass-first.base-red-unreadable-baseredrepo"
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
+SPIRA_CZAR_STAGE_BASE_RED=act bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+_inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
+want "base-red: DETECTED=yes once unreadable outlasts grace" "CLASS=base-red DETECTED=yes" "$_log"
+want "base-red: bead says status could not be read" "could not be read" "$_inc_log"
+want "base-red: unreadable bead still filed at P0" "priority=0" "$_inc_log"
+
+# ==========================================================================================
+printf '\n%s\n' "21. SPIRA_BASE_CI_UNREADABLE_GRACE_SECS and SPIRA_CZAR_STAGE_BASE_RED in conf.sh allowlist"
+# ==========================================================================================
+for key in SPIRA_BASE_CI_UNREADABLE_GRACE_SECS SPIRA_CZAR_STAGE_BASE_RED; do
+    grep -q "$key" "$conf_sh" 2>/dev/null \
+        && ok "$key in SPIRA_CONF_KEYS" \
+        || bad "$key missing from conf.sh"
+done
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
