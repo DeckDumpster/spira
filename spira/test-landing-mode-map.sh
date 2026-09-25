@@ -113,13 +113,13 @@ for m in $modes_from_table; do
         }
         ;;
     push)
-        printf '%s' "$syn_body" | grep -qE '^\s*\*\)' || {
+        printf '%s' "$syn_body" | grep -qE '^[[:space:]]*\*\)' || {
             printf '  synthetic: mode %s (catch-all) not handled\n' "$m"
             unhandled_in_syn=$(( unhandled_in_syn + 1 ))
         }
         ;;
     *)
-        printf '%s' "$syn_body" | grep -qE "^\s+${m}\)" || {
+        printf '%s' "$syn_body" | grep -qE "^[[:space:]]+${m}\)" || {
             printf '  synthetic: mode %s not handled\n' "$m"
             unhandled_in_syn=$(( unhandled_in_syn + 1 ))
         }
@@ -154,7 +154,7 @@ other_func() {
 SH
 
 scope_body="$(land_repo_body "$SYN_SCOPE")"
-if printf '%s' "$scope_body" | grep -qE '^\s+pr\)'; then
+if printf '%s' "$scope_body" | grep -qE '^[[:space:]]+pr\)'; then
     bad "scoped check ignores an arm outside land_repo" \
         "pr) matched inside land_repo's own extracted body"
 else
@@ -184,7 +184,7 @@ else
             fi
             ;;
         push)
-            if printf '%s' "$real_body" | grep -qE '^\s+\*\)'; then
+            if printf '%s' "$real_body" | grep -qE '^[[:space:]]+\*\)'; then
                 ok "mode 'push' handled (catch-all *) in land_repo)"
             else
                 bad "mode 'push' handled" "no catch-all *) case in land_repo"
@@ -192,7 +192,7 @@ else
             fi
             ;;
         *)
-            if printf '%s' "$real_body" | grep -qE "^\s+${m}\)"; then
+            if printf '%s' "$real_body" | grep -qE "^[[:space:]]+${m}\)"; then
                 ok "mode '$m' handled (${m}) case in land_repo)"
             else
                 bad "mode '$m' handled" "no ${m}) case in land_repo"
