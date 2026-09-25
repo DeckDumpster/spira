@@ -21,9 +21,16 @@
 # cases already live in the fixture-driven suite for that probe.
 #
 # tier: T2
-# covers: spira/cockpit.sh spira/bdsim.py
+# covers: spira/cockpit.sh spira/bdsim.py cockpit/panel/src/store.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Resolved BEFORE testdb.sh, which sources conf.sh, which rebuilds PATH from SPIRA_PATH +
+# $HOME/.local/bin + /usr/local/bin + /usr/bin + /bin — dropping wherever this box's cargo
+# actually lives (gap #4's row below needs it after that rebuild has already happened).
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+    CARGO_BIN="$HOME/.cargo/bin/cargo"
+fi
 . "$HERE/testdb.sh"
 testdb_require test-cockpit-bd-contract
 TMP="$(mktemp -d)"
@@ -121,6 +128,42 @@ testdb_seed <<JSONL
 JSONL
 out="$(run_probe core)"
 is "real bd: SP_READY=2 with two ready beads seeded" "2" "$(field "$out" SP_READY)"
+
+# ======================================================================================
+echo
+echo "gap #4: the panel's own Snapshot parsing (store.rs::fetch_beads) against a real"
+echo "bd list --all --json, not the hand-shaped literal store.rs's own unit test stubs:"
+# ======================================================================================
+PANEL_MANIFEST="$(dirname "$HERE")/cockpit/panel/Cargo.toml"
+if [ -z "$CARGO_BIN" ]; then
+    printf '  skip  gap #4: cargo not found on PATH or at ~/.cargo/bin — install Rust: https://rustup.rs/\n'
+elif ! PATH="$(dirname "$CARGO_BIN"):$PATH" "$CARGO_BIN" build --manifest-path "$PANEL_MANIFEST" --quiet 2>"$TMP/panel-build.err"; then
+    bad "panel binary builds for the real-bd contract row" "cargo build failed: $(tail -5 "$TMP/panel-build.err")"
+else
+    PANEL_TARGET="${CARGO_TARGET_DIR:-$(dirname "$PANEL_MANIFEST")/target}"
+    PANEL_BIN="$PANEL_TARGET/debug/panel"
+    testdb_reset
+    testdb_seed <<'JSONL'
+{"id":"sp-cbdump1","title":"real bd through the panel's own Snapshot parsing","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-08T00:00:00Z"}
+JSONL
+    # No PANEL_FIXTURE: the panel shells out to the real `bd` this run's SPIRA_PATH/SPIRA_DB
+    # point at, exactly as store.rs::db()/bin() resolve it live, and --dump prints whatever
+    # fetch_beads()'s parsing made of that real payload.
+    out="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+        SPIRA_DB="$SPIRA_DB" SPIRA_PATH="$SPIRA_PATH" \
+        "$PANEL_BIN" --dump 2>"$TMP/panel-dump.err")"
+    title="$(printf '%s' "$out" | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    beads = d.get("beads") or []
+    print(next((b.get("title", "") for b in beads if b.get("id") == "sp-cbdump1"), ""))
+except Exception:
+    print("")
+' 2>/dev/null)"
+    is "real bd list --all --json parses through store.rs::fetch_beads into the panel's own Snapshot" \
+       "real bd through the panel's own Snapshot parsing" "$title"
+fi
 
 echo
 printf 'test-cockpit-bd-contract: %d ok, %d fail\n' "$pass" "$fail"
