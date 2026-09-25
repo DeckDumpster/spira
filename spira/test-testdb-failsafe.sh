@@ -24,7 +24,7 @@
 #
 # covers: spira/testdb.sh spira/test-cockpit-landed.sh spira/test-cockpit-unlanded.sh
 #         spira/test-cockpit-unsent.sh spira/test-loom-page.sh
-#         spira/test-landing.sh spira/test-timeout.sh spira/test-bd-close-unacked-guard.sh
+#         spira/test-landing.sh spira/test-timeout.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"
@@ -119,10 +119,10 @@ suite_env=(
 # with `testdb_up ... || exit 1`; they are included here to confirm the failsafe
 # protects them when the shared-fixture reset fails and SPIRA_DB is left unset.
 #
-# test-bd-close-unacked-guard.sh writes real beads into $SPIRA_DB too, and was never
-# exercised here — so a regression in its own testdb_up handling had no suite that
-# could have caught it before a fixture bead reached production.
-for suite in test-cockpit-landed test-cockpit-unlanded test-cockpit-unsent test-landing test-timeout test-bd-close-unacked-guard; do
+# test-bd-close-unacked-guard.sh (its testdb-backed predecessor) was merged into
+# spira/test-guards.sh by sp-qsr44, which drives the guard through a stub bd instead
+# of testdb_up — it no longer has this failure mode to protect against.
+for suite in test-cockpit-landed test-cockpit-unlanded test-cockpit-unsent test-landing test-timeout; do
     out="$("${suite_env[@]}" bash "$HERE/$suite.sh" 2>&1)"; rc=$?
     if [ $rc -ne 0 ]; then
         ok "$suite exits non-zero when testdb_up fails (rc=$rc)"
