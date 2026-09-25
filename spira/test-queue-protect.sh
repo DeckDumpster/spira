@@ -6,6 +6,10 @@
 # section removed by sp-utt1i; repo-map/config validation is the config-store-preflight
 # area's job now (sp-n071y), not doctor's.
 #
+# NOT YET DEMOTED TO T1 (sp-s088v.16, UC-32): the plan's precondition — doctor.sh
+# gaining a --section repositories selector — does not hold; doctor.sh has no
+# repositories section at all post sp-utt1i, let alone a selector for one.
+#
 # covers: spira/queue.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -78,6 +82,42 @@ want "protect: receipt contains branch" "main" \
 want "protect: reports success" "protection set" "$protect_out"
 want "protect: attribution note present" "attribution note" "$protect_out"
 want "protect: bisect fallback mentioned" "bisect" "$protect_out"
+
+# ===========================================================================
+# GAP G5 — forge exits non-zero: no receipt is written, and the error names
+# the failure (not a silent return or a receipt written on a call that failed).
+# ===========================================================================
+echo
+echo "gap G5: forge branch-protect fails — no receipt, named error:"
+cat > "$BIN/forge-fixture-fail.sh" <<FAILSCRIPT
+#!/usr/bin/env bash
+cmd="\${1:-}"
+case "\$cmd" in
+    branch-protect) exit 1 ;;
+    *) exit 1 ;;
+esac
+FAILSCRIPT
+chmod +x "$BIN/forge-fixture-fail.sh"
+rm -f "$TMP/run/queue-protected-$QNAME"
+
+fail_out="$(
+    env -i \
+        PATH="/usr/local/bin:/usr/bin:/bin" \
+        HOME="$FAKE_HOME" \
+        SPIRA_CONF=/nonexistent \
+        SPIRA_PATH="$BIN" \
+        SPIRA_REPO_MAP="$RMAP" \
+        SPIRA_RUN="$TMP/run" \
+        SPIRA_FORGE="$BIN/forge-fixture-fail.sh" \
+        bash "$HERE/queue.sh" protect "$QNAME" 2>&1
+)"; fail_rc=$?
+
+[ "$fail_rc" -ne 0 ] && ok "G5: exits non-zero when forge fails" \
+    || bad "G5: exits non-zero when forge fails" "rc=$fail_rc"
+want "G5: names the failure" "forge branch-protect failed" "$fail_out"
+[ ! -f "$TMP/run/queue-protected-$QNAME" ] \
+    && ok  "G5: no receipt written on forge failure" \
+    || bad "G5: no receipt written on forge failure" "receipt exists"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
