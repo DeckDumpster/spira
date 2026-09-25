@@ -480,12 +480,22 @@ lp() { SPIRA_RUN="$TMP" SPIRA_WIKI="$TMP/fakebrain" SPIRA_CONF="$TMP/no.conf" \
 is "no pid for an id no process holds" "" "$(lp "definitely-not-in-any-cmdline-$$")"
 
 # THE PROPERTY UNDER TEST: launch a background sleep with the id in its argv and find its pid.
-bash -c "exec -a claude-resume-${LP_SID} sleep 10" &
+bash -c "exec -a claude python3 -c 'import time; time.sleep(10)' --resume ${LP_SID}" &
 LP_PID=$!
+sleep 0.3
 trap 'kill "$LP_PID" 2>/dev/null; rm -rf "$TMP"' EXIT
 
 found="$(lp "$LP_SID")" || found=""
 is "live pid is found when a process holds the id" "$LP_PID" "$found"
+
+# IDENTITY, NOT A MENTION (2026-09-25): a process that only has the id somewhere in its
+# command line — a tail of the transcript, the caller's own shell — is not a holder. The old
+# substring scan reported one as a HEADLESS concierge and refused every start.
+LP_MENTION="mention-only-$(date +%s)-$$"
+bash -c "exec python3 -c 'import time; time.sleep(10)' $LP_MENTION" &
+LP_MPID=$!; sleep 0.3
+is "a process that only mentions the id is not a holder" "" "$(lp "$LP_MENTION")"
+kill "$LP_MPID" 2>/dev/null; wait "$LP_MPID" 2>/dev/null || true
 
 # PROCESS GONE: pid is no longer returned after the process exits.
 kill "$LP_PID" 2>/dev/null; wait "$LP_PID" 2>/dev/null || true
@@ -507,8 +517,9 @@ echo "convergence — live holder with no tmux session is HEADLESS, not converge
 CONV_SID="conv-test-$(date +%s)"
 CONV_BRAIN="$TMP/convbrain"; mkdir -p "$CONV_BRAIN"
 printf '%s\n%s\n' "$CONV_SID" "$CONV_BRAIN" > "$TMP/concierge-session"
-bash -c "exec -a claude-resume-${CONV_SID} sleep 10" &
+bash -c "exec -a claude python3 -c 'import time; time.sleep(10)' --resume ${CONV_SID}" &
 CONV_PID=$!
+sleep 0.3
 trap 'kill "$CONV_PID" 2>/dev/null; rm -rf "$TMP"' EXIT
 CONV_SOCK="conv-no-second-$$"
 tmux -L "$CONV_SOCK" kill-server 2>/dev/null || true
@@ -703,7 +714,7 @@ _ocwd="$(bash -c ". '$HARNESS/spira/conf.sh' >/dev/null 2>&1; printf %s \"\${SPI
 printf '%s\n%s\n' "$_oid" "$_ocwd" > "$_odir/concierge-session"
 mkdir -p "$_odir/bin"
 printf '#!/bin/sh\necho STUB_CLAUDE_RAN\n' > "$_odir/bin/claude"; chmod +x "$_odir/bin/claude"
-python3 -c 'import sys,time; time.sleep(60)' "$_oid" &
+bash -c "exec -a claude python3 -c 'import time; time.sleep(60)' --resume $_oid" &
 _opid=$!
 sleep 0.3
 _oout="$(PATH="$_odir/bin:$PATH" SPIRA_RUN="$_odir" \
