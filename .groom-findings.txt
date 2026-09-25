@@ -45,3 +45,33 @@ CURRENT STATE:
 - 1 groom-asked bead skipped (sp-m4uko; sp-niqjl now on main — default action met)
 - No duplicates found
 - No splits needed
+
+---
+
+GROOM PASS sp-uwz9z - Graph Hygiene Results
+============================================
+
+TRIGGER: UNCLAIMABLE: sp-3z0bl — fix the fayth: or partition label
+
+SWEEP: groomer.sh sweep found 1 LIVELOCK row (sp-3z0bl); acted on 0 (sweep does
+not handle unclaimable beads with descriptions).
+
+LIVELOCK ROWS HANDLED: 1
+
+PARTITION LABELS FIXED:
+
+1. sp-3z0bl — FAILED UNIT: spira-watch-answers-prod.service failing for 30m
+   - Problem: had 'partition:incident' but not 'incident'; unclaimable by ops
+     persona (FAYTH_LABELS=spira,incident requires standalone 'incident' label)
+   - Same recurring pattern as sp-zx68c and sp-5d0s6 (previous passes)
+   - Root cause tracked under sp-ui46l (partition: prefix vs bare label in
+     incident.sh/SPIRA_INCIDENT_LABELS)
+   - Fix: added 'incident' label
+   - Verified: detect_livelocked returns 0 rows after fix
+
+CURRENT STATE:
+- ~175 open beads examined (at time of scan)
+- 1 LIVELOCK row resolved (sp-3z0bl: added 'incident' label)
+- No premise-gone closures
+- No duplicates found
+- No splits needed
