@@ -20,14 +20,60 @@
 # covers: spira/slay.sh spira/lib.sh
 # scar: slay.sh left the bead in an inconsistent state after terminating the aeon and did not salvage uncommitted work from the worktree.
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
+SLAY="$HERE/slay.sh"
 
+# ===========================================================================================
+echo "T1: argument parsing — before testdb/bd is ever touched, no store"
+# ===========================================================================================
+# slay.sh's own first bd call is the "bead must exist" check, AFTER the whole argv loop
+# has already accepted or refused the shape. Every refusal below is provable with SPIRA_DB
+# pointed at a path nothing could ever answer from — if parsing reached bd first, these
+# would fail with a store error instead of the usage message asserted for.
+T1TMP="$(mktemp -d)"; trap 'rm -rf "$T1TMP"' EXIT INT TERM
+slay_noargv() {   # slay_noargv <args...> -> stdout+stderr, with SLAY_RC set
+    SLAY_OUT="$(env -i PATH="$PATH" HOME="$T1TMP" LC_ALL=C.UTF-8 \
+        SPIRA_CONF="$T1TMP/no.conf" SPIRA_RUN="$T1TMP/run" SPIRA_DB="$T1TMP/no-such-store" \
+        bash "$SLAY" "$@" 2>&1)"
+    SLAY_RC=$?
+}
+
+slay_noargv --bogus-flag
+wantrc "an unknown flag exits 2" 2 "$SLAY_RC"
+want   "and names it" "unknown flag" "$SLAY_OUT"
+nowant "without ever reaching a store error" "no-such-store" "$SLAY_OUT"
+
+slay_noargv --bead sp-x "a positional sentence"
+wantrc "a positional argument exits 2" 2 "$SLAY_RC"
+want   "refuses it by name" "unexpected argument" "$SLAY_OUT"
+want   "points at --bead" "--bead" "$SLAY_OUT"
+want   "points at --why" "--why" "$SLAY_OUT"
+
+slay_noargv --bead sp-x --bead sp-y
+wantrc "--bead given twice exits 2" 2 "$SLAY_RC"
+want   "names both values" "given twice" "$SLAY_OUT"
+
+slay_noargv
+wantrc "no --bead at all exits 2" 2 "$SLAY_RC"
+want   "and says it is required" "--bead is required" "$SLAY_OUT"
+
+slay_noargv --close
+nowant "--close with no reason does not proceed to slay anything" "slain:" "$SLAY_OUT"
+
+slay_noargv -h
+wantrc "-h exits 0, no store needed" 0 "$SLAY_RC"
+for _f in --bead --why --keep-work --close --reopen; do
+    want "-h documents $_f" "$_f" "$SLAY_OUT"
+done
+want "-h gives the exit codes" "EXIT" "$SLAY_OUT"
+
+rm -rf "$T1TMP"; trap - EXIT INT TERM
+
+# ===========================================================================================
+echo
+echo "T2: real bd, real git — the rest of slay.sh's behaviour"
+# ===========================================================================================
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
 testdb_require test-slay
@@ -308,33 +354,15 @@ nowant "bogus id does not report a slaying" "slain: sp-nosuchbead9" "$out"
 is   "bogus id leaves no .slain marker"    no \
      "$([ -f "$SPIRA_RUN/sp-nosuchbead9.slain" ] && echo yes || echo no)"
 
-# --- a reason passed where the id used to go ---------------------------------------
-# There are no positionals at all now, so the sentence is refused as an unexpected
-# argument rather than mistaken for a second id. The message must name BOTH flags,
-# because the operator who typed this wanted --why and reached for the wrong shape.
+# --- a reason passed where the id used to go, against a REAL bead --------------------
+# The T1 section above proves the parse itself refuses this shape with no store in reach
+# at all; this is the one thing only a real bead can prove — that the refusal happens
+# before any mutation even when --bead names a bead that genuinely exists.
 seed sp-s8
 out="$(bash "$SLAY" --bead sp-s8 "blocked on the P0 fixes" 2>&1)"; rc=$?
 is   "a positional argument exits 2"       2 "$rc"
 want "refuses it by name"                  'unexpected argument' "$out"
-want "says the tool takes named arguments" 'named arguments only' "$out"
-want "points at --bead"                    '--bead' "$out"
-want "points at --why"                     '--why' "$out"
 is   "the real bead was NOT touched"       in_progress "$(status_of sp-s8)"
-
-# --- --bead twice is also refused ---------------------------------------------------
-out="$(bash "$SLAY" --bead sp-s8 --bead sp-s9 2>&1)"; rc=$?
-is   "--bead twice exits 2"                2 "$rc"
-want "names both values"                   'given twice' "$out"
-
-# --- -h lists every argument --------------------------------------------------------
-# It was `sed -n '2,12p' $0`, a fixed line range of the header: editing the header
-# silently truncated the help, which is how a flag comes to be undocumented.
-out="$(bash "$SLAY" -h 2>&1)"; rc=$?
-is   "-h exits 0"                          0 "$rc"
-for _f in --bead --why --keep-work --close --reopen; do
-    want "-h documents $_f"                "$_f" "$out"
-done
-want "-h gives the exit codes"             'EXIT' "$out"
 
 # --- POSITIVE CONTROL --------------------------------------------------------------
 # Without this, a slay.sh that refused EVERYTHING would pass both cases above.
@@ -344,5 +372,4 @@ is   "and the bead is released"            open "$(status_of sp-s8)"
 teardown sp-s8
 
 # ======================================================================================
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
