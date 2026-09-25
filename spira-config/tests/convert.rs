@@ -31,7 +31,8 @@ fn converts_conf_repo_map_and_fayths() {
             ("builder.fayth", builder.as_str()),
             ("ops.fayth", ops.as_str()),
         ],
-    );
+    )
+    .expect("fixture repo-map has no unknown lane tokens");
 
     assert!(
         warnings.0.is_empty(),
@@ -125,5 +126,48 @@ fn converts_conf_repo_map_and_fayths() {
     assert_eq!(
         rendered, golden,
         "converter output no longer matches the golden file"
+    );
+}
+
+// POSITIVE CONTROL for the two refusal tests below: a valid mode word and a valid explicit
+// lane list both still convert, so a check pointed at the wrong thing and a check that found
+// nothing look different (law-absence-needs-a-positive-control).
+#[test]
+fn valid_lane_mode_and_label_convert() {
+    let repo_map = "alpha | /tmp/alpha | push | origin/main | | true | develop\n\
+                     beta  | /tmp/beta  | push | origin/main | | true | plan,groom\n";
+    let (doc, _warnings) =
+        convert("", "/opt/fixture-home", repo_map, &[]).expect("valid lanes must convert");
+    assert_eq!(
+        doc.repo.get("alpha").unwrap().lanes,
+        vec![Lane::Plan, Lane::Incident, Lane::Groom, Lane::Spike]
+    );
+    assert_eq!(
+        doc.repo.get("beta").unwrap().lanes,
+        vec![Lane::Plan, Lane::Groom]
+    );
+}
+
+#[test]
+fn unknown_lane_mode_is_refused_not_warned() {
+    let repo_map = "alpha | /tmp/alpha | push | origin/main | | true | fullaccess\n";
+    let errors = convert("", "/opt/fixture-home", repo_map, &[])
+        .expect_err("an unknown lane-mode word must refuse the whole convert");
+    assert!(
+        errors.iter().any(|e| e.contains("alpha") && e.contains("fullaccess")),
+        "expected an error naming the row and the bad token, got {errors:?}"
+    );
+}
+
+#[test]
+fn unknown_lane_label_is_refused_not_warned() {
+    let repo_map = "alpha | /tmp/alpha | push | origin/main | | true | plan,bogus-lane\n";
+    let errors = convert("", "/opt/fixture-home", repo_map, &[])
+        .expect_err("an unknown lane label must refuse the whole convert");
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("alpha") && e.contains("bogus-lane")),
+        "expected an error naming the row and the bad token, got {errors:?}"
     );
 }
