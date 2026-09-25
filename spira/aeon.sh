@@ -2106,8 +2106,8 @@ sup = 1 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
 # reopened for lacking a commit.
 lab = d[0].get("labels") or []
 delivers = ";".join(l[len("delivers:"):] for l in lab if l.startswith("delivers:"))
-print("%s\t%s\t%s" % (d[0].get("status",""), sup, delivers))' 2>/dev/null)"
-st="${verdict%%	*}"; _vrest="${verdict#*	}"; superseded="${_vrest%%	*}"; delivers="${_vrest#*	}"
+print("%s\t%s\t%s\t%s" % (d[0].get("status",""), sup, delivers, d[0].get("issue_type") or ""))' 2>/dev/null)"
+st="${verdict%%	*}"; _vrest="${verdict#*	}"; superseded="${_vrest%%	*}"; _vrest="${_vrest#*	}"; delivers="${_vrest%%	*}"; _vd_issue_type="${_vrest#*	}"
 # NEVER `git log | grep -q` under `set -o pipefail`. grep -q exits on the first match and
 # closes the pipe; git log then dies of SIGPIPE and pipefail propagates 141 as the
 # pipeline's status, so a MATCH reads as a failure. This exact line reported "closed with
@@ -2199,7 +2199,15 @@ if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ "$superseded" != 1 ]; t
     unset _evict_ls _evict_state _evict_tip _evict_at _evict_reason _is_eviction _er
 fi
 
-if [ "$st" = "closed" ] && [ "$committed" = "no" ] && [ "$superseded" != 1 ]; then
+# WORK TYPES SKIP THIS DECISION ENTIRELY. A work bead's close is never trusted at face
+# value any more, commit or delivers: evidence or not — cleanup()'s own teardown (the
+# EXIT trap, which runs after this) converts it back to open with SPIRA_SUBMITTED_LABEL
+# unconditionally, superseded excepted. Reopening it here first, on the old evidence-based
+# reading, would race that conversion with a stale "closed-without-commit" note and leave
+# the bead open WITHOUT the submitted label — invisible to bead_close_on_land and to
+# CHECK 5's LANDED invariant alike.
+if [ "$st" = "closed" ] && [ "$committed" = "no" ] && [ "$superseded" != 1 ] \
+       && ! bead_is_work_type "${_vd_issue_type:-}"; then
     if [ -n "${delivers:-}" ]; then
         # VERIFY EACH DECLARED DELIVERABLE. An aeon that set delivers:TYPE labels must have
         # produced the declared evidence, or the close is on nothing and the bead is reopened.
