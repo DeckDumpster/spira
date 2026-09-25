@@ -1,0 +1,15 @@
+[package]
+name = "reconciler-engine"
+version = "1.0.0"
+edition = "2021"
+description = "reconciler-engine — pure invariant engine: (desired, observed) in, per-invariant gaps and remedy verdicts out, with hysteresis and unobservable as a first-class result."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
