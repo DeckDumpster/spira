@@ -19,7 +19,10 @@
 #    creates an embedded store — not the one the harness needs.
 # 3. MANAGED DOLT SERVER. SPIRA_DOLT_DATA set: directory + dolt-server.yaml + active service
 #    all ok; a missing directory or inactive service FAILs (WARN under INSTALLING, naming
-#    phases 3 and 4).
+#    phases 3 and 4). bd unable to read an existing store while the service is inactive FAILs
+#    the same way, and also downgrades to WARN under INSTALLING — a prior install left the
+#    store on disk with its service stopped, which is exactly what install.sh's own preflight
+#    sees on a reinstall.
 # 4. UNMANAGED DOLT SERVER. SPIRA_DOLT_DATA empty: a live TCP listener at the recorded
 #    host:port is ok; nothing answering is a FAIL naming the host:port. No metadata at all
 #    is "managed independently", not a fault.
@@ -42,14 +45,19 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"; [ -n "$SRV_PID" ] && kill "$SRV_PID" 2>
 BIN="$TMP/bin"
 mkdir -p "$BIN" "$TMP/run" "$TMP/home"
 
-cat > "$BIN/bd" <<'FAKESCRIPT'
+make_bd() {
+    local list_result="${1:-ok}"   # "ok" or "fail"
+    cat > "$BIN/bd" <<MOCK
 #!/usr/bin/env bash
-case "$*" in
-    *"list"*"--limit"*|*"list"*"--json"*) printf '[]\n'; exit 0 ;;
+case "\$*" in
+    *"list"*"--limit"*|*"list"*"--json"*)
+        [ "$list_result" = ok ] && { printf '[]\n'; exit 0; } || exit 1 ;;
     *) exit 0 ;;
 esac
-FAKESCRIPT
-chmod +x "$BIN/bd"
+MOCK
+    chmod +x "$BIN/bd"
+}
+make_bd ok
 
 make_systemctl() {
     local dolt_result="${1:-active}"   # "active" or "inactive"
@@ -150,7 +158,27 @@ nowant "installing: no FAIL at all" "FAIL" "$inst2_store"
 
 # ==========================================================================
 echo
-echo "7. UNMANAGED SERVER — no metadata at all: managed independently, no FAIL:"
+echo "7. POSITIVE CONTROL — bd cannot read an existing store, service inactive, FAILs:"
+# ==========================================================================
+make_bd fail
+inactive_read_out="$(SPIRA_DOLT_DATA_OVERRIDE="$DOLT_DIR" run_doctor || true)"
+inactive_read_store="$(store_section "$inactive_read_out")"
+want "positive control: bd-cannot-read FAILs" "FAIL  bd cannot read" "$inactive_read_store"
+
+# ==========================================================================
+echo
+echo "8. INSTALLING — bd cannot read (server not yet started) downgrades to WARN:"
+# ==========================================================================
+inst3_out="$(SPIRA_DOLT_DATA_OVERRIDE="$DOLT_DIR" run_doctor "SPIRA_DOCTOR_INSTALLING=1" || true)"
+inst3_store="$(store_section "$inst3_out")"
+want   "installing: bd-cannot-read WARN names phase 4" "bd cannot read $TMP/db — dolt-beads.service not active; install.sh will start it in phase 4" "$inst3_store"
+nowant "installing: no FAIL for bd-cannot-read" "FAIL  bd cannot read" "$inst3_store"
+make_bd ok
+make_systemctl active
+
+# ==========================================================================
+echo
+echo "9. UNMANAGED SERVER — no metadata at all: managed independently, no FAIL:"
 # ==========================================================================
 rm -f "$TMP/db/.beads/metadata.json"
 make_systemctl active
@@ -161,7 +189,7 @@ nowant "unmanaged: no FAIL" "FAIL" "$unmanaged_store"
 
 # ==========================================================================
 echo
-echo "8. UNMANAGED SERVER — a live listener at the recorded host:port is ok:"
+echo "10. UNMANAGED SERVER — a live listener at the recorded host:port is ok:"
 # ==========================================================================
 mkfifo "$TMP/srv-port"
 python3 -c "
@@ -187,7 +215,7 @@ kill "$SRV_PID" 2>/dev/null; wait "$SRV_PID" 2>/dev/null; SRV_PID=""
 
 # ==========================================================================
 echo
-echo "9. UNMANAGED SERVER — nothing answering FAILs, naming host:port:"
+echo "11. UNMANAGED SERVER — nothing answering FAILs, naming host:port:"
 # ==========================================================================
 DEAD_PORT="$(python3 -c "
 import socket; s = socket.socket()
@@ -204,7 +232,7 @@ want "not answering: names host:port" "127.0.0.1:$DEAD_PORT" "$dead_store"
 
 # ==========================================================================
 echo
-echo "10. EMBEDDED MODE — positive control: FAILs naming cost and remedy:"
+echo "12. EMBEDDED MODE — positive control: FAILs naming cost and remedy:"
 # ==========================================================================
 printf '{"dolt_mode":"embedded","dolt_database":"db","project_id":"test-ec2t"}\n' \
     > "$TMP/db/.beads/metadata.json"

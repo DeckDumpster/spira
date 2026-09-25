@@ -68,6 +68,10 @@ doctor_check_store() {
         local out
         if out="$(timeout 60 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --limit 1 --json 2>&1)"; then
             OK "bd can read it"
+        elif [ -n "${SPIRA_DOCTOR_INSTALLING:-}" ] && [ -n "${SPIRA_DOLT_DATA:-}" ] \
+                && ! systemctl --user is-active --quiet dolt-beads.service 2>/dev/null; then
+            WARN "bd cannot read $SPIRA_DB — dolt-beads.service not active; install.sh will start it in phase 4" \
+                 "$(printf '%s' "$out" | head -2)"
         else
             FAIL "bd cannot read $SPIRA_DB" "$(printf '%s' "$out" | head -2)
         A Dolt server may be down. Try: bd -C $SPIRA_DB dolt start"
