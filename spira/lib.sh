@@ -5690,10 +5690,15 @@ queue_is_suite_transition() {
 
 # queue_sort_rows <repo-path> <base-sha>
 # Read "<id> <tip> <epoch>" lines from stdin; write sort-key rows sorted by batcher order:
-#   "<trans_flag> <prio_pad> <epoch_pad> <id> <tip>"
-# Set PRIO_JSON env to a bdjson array for priority lookups (defaults to []).
-# Sort order: suite-transition first (flag=0), then priority asc, then epoch asc.
-# This is the canonical batcher sort used by both batch.sh and the cockpit.
+#   "<express_flag> <trans_flag> <prio_pad> <epoch_pad> <id> <tip>"
+# Set PRIO_JSON env to a bdjson array for priority (and label) lookups (defaults to []).
+# Sort order: express first (flag=0), then suite-transition (flag=0), then priority asc,
+# then epoch asc. This is the canonical batcher sort used by both batch.sh and the cockpit.
+#
+# EXPRESS RANKS FIRST, AHEAD OF EVERYTHING ELSE (sp-ebx8b). batch.sh's express trigger only
+# guarantees a cut HAPPENS when an express bead is certified; without an express key here,
+# the sort could still leave that bead out of the cut it triggered, behind older same-priority
+# beads at BATCH_MAX.
 #
 # PRIO_JSON NEVER REACHES A CHILD PROCESS. Callers pass the full `bd show --json` of every
 # certified bead, and at 40 beads that was 266 KiB -- past Linux's 128 KiB limit on a single
@@ -5715,6 +5720,8 @@ queue_sort_rows() {
     printf '%s' "$_pj" > "$_pjf"
     _pj=""
 
+    local _elab="${SPIRA_EXPRESS_LABEL:-express}"
+
     local _id _tip _epoch _is_trans _buf=""
     while read -r _id _tip _epoch; do
         _is_trans=0
@@ -5722,33 +5729,36 @@ queue_sort_rows() {
         _buf="${_buf}${_id} ${_tip} ${_epoch%% *} ${_is_trans}"$'\n'
     done
 
-    _out="$(printf '%s' "$_buf" | PRIO_FILE="$_pjf" python3 -c "
+    _out="$(printf '%s' "$_buf" | PRIO_FILE="$_pjf" EXPRESS_LABEL="$_elab" python3 -c "
 import sys, json, os
 try:
     with open(os.environ['PRIO_FILE']) as f: prios = json.load(f)
 except Exception: sys.exit(1)
 prios = prios if isinstance(prios, list) else [prios]
+lbl = os.environ.get('EXPRESS_LABEL', 'express')
 prio_map = {}
+express_map = {}
 for x in prios:
     if not isinstance(x, dict) or not x.get('id'): continue
     try: prio_map[x['id']] = int(x.get('priority', 9))
     except (TypeError, ValueError): prio_map[x['id']] = 9
+    express_map[x['id']] = int(lbl in (x.get('labels') or []))
 rows = []
 for line in sys.stdin:
     parts = line.strip().split()
     if len(parts) < 4: continue
     bid, tip, epoch, is_trans = parts[0], parts[1], int(parts[2]), int(parts[3])
-    rows.append((1 - is_trans, prio_map.get(bid, 9), epoch, bid, tip))
+    rows.append((1 - express_map.get(bid, 0), 1 - is_trans, prio_map.get(bid, 9), epoch, bid, tip))
 rows.sort()
 for r in rows:
-    print('%d %09d %010d %s %s' % r)
+    print('%d %d %09d %010d %s %s' % r)
 ")"
     _rc=$?
     rm -f "$_pjf"
 
     if [ "$_rc" -ne 0 ] || { [ -z "$_out" ] && [ -n "$_buf" ]; }; then
         printf 'queue_sort_rows: ranking failed (rc=%s) -- returning rows unranked\n' "$_rc" >&2
-        printf '%s' "$_buf" | awk 'NF >= 4 { printf "%d %09d %010d %s %s\n", 1 - $4, 9, $3, $1, $2 }'
+        printf '%s' "$_buf" | awk 'NF >= 4 { printf "%d %d %09d %010d %s %s\n", 1, 1 - $4, 9, $3, $1, $2 }'
         return 0
     fi
     [ -n "$_out" ] && printf '%s\n' "$_out"

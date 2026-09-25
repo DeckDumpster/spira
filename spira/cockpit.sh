@@ -1695,10 +1695,11 @@ else:
         [ -n "${_cert_ids:-}" ] || continue
         # shellcheck disable=SC2086
         _pj="$(bdjson show $_cert_ids 2>/dev/null)" || _pj="[]"
-        # Sort and emit rows. Each sort row: "<flag> <prio_pad> <epoch_pad> <id> <tip>"
+        # Sort and emit rows. Each sort row:
+        #   "<express_flag> <trans_flag> <prio_pad> <epoch_pad> <id> <tip>"
         while IFS= read -r _srow && [ "$_next_n" -lt 20 ]; do
             [ -n "$_srow" ] || continue
-            read -r _ _ _ _nid _ <<< "$_srow"
+            read -r _ _ _ _ _nid _ <<< "$_srow"
             [ -n "$_nid" ] || continue
             _ndata="$(printf '%s\n' "$_pj" | python3 -c "
 import sys, json, re
