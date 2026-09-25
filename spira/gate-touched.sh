@@ -37,8 +37,12 @@ SPIRA_GATE_BASE="${SPIRA_GATE_BASE:-$BASE}" bash "$HERE/build-fence.sh" || exit 
 
 # THE TEST PLAN'S OWN FENCE, for the same reason build-fence.sh sits here: a suite deletion
 # that silently drops a use case's last coverage, or a coverage matrix that no longer matches
-# its own inputs, is a defect in the tree, not something a suite run would catch.
-bash "$HERE/plan-matrix-fence.sh" "$BASE" || exit 1
+# its own inputs, is a defect in the tree, not something a suite run would catch. Its stdout
+# is redirected to stderr: plan-lint.sh/plan-matrix.sh print status text on success (fine for
+# standalone use) but gate-touched.sh's own stdout contract is the selected suite list only —
+# build-fence.sh keeps to that by writing every message of its own to stderr; this fence's
+# children do not, so the redirection is done here instead.
+bash "$HERE/plan-matrix-fence.sh" "$BASE" >&2 || exit 1
 
 HEAD="${2:?usage: gate-touched.sh <base> <head>}"
 repo="${SPIRA_GATE_REPO:-.}"
