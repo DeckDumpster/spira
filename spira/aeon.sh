@@ -91,8 +91,11 @@ ledger() {
 }
 
 # rapid_recur_check — when the last SPIRA_RAPID_RECUR_THRESHOLD done lines for BEAD_ID
-# all show wall_s=? or wall_s<10, each summon is dying before doing real work. Fire a note
-# on the bead so the operator sees it without reading the ledger.
+# all show wall_s=? or wall_s<10, each summon is dying before doing real work: a setup loop
+# that recurs identically on every retry (law-a-retry-must-change-an-input), so a fourth
+# summon cannot learn anything the third did not. Park with $SPIRA_ASK_LABEL rather than
+# only annotating — an annotation left dispatch free to keep re-summoning into the same
+# fault, re-appending the same note forever.
 rapid_recur_check() {
     local _threshold="${SPIRA_RAPID_RECUR_THRESHOLD:-3}"
     [ -n "${BEAD_ID:-}" ] || return 0
@@ -109,12 +112,18 @@ for line in sys.stdin:
         count = 0
 print(count)' 2>/dev/null) || return 0
     [ "${_count:-0}" -ge "$_threshold" ] || return 0
-    log "$FAYTH: $BEAD_ID RAPID-RECUR: $_count consecutive sub-10s runs — setup loop likely"
+    # Idempotent: once parked, a bead carrying SPIRA_ASK_LABEL is excluded from every fayth
+    # predicate, so it should not be summoned again — this also guards against re-noting if
+    # it somehow is.
+    case "$(bdq label list "$BEAD_ID" 2>/dev/null)" in *"${SPIRA_ASK_LABEL:-needs-operator}"*) return 0 ;; esac
+    log "$FAYTH: $BEAD_ID RAPID-RECUR: $_count consecutive sub-10s runs — parking, a setup loop cannot be learned from a retry"
+    bdq label add "$BEAD_ID" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
+    bdq label add "$BEAD_ID" "overseer" >/dev/null 2>&1 || true
     bdq note "$BEAD_ID" \
-        "RAPID-RECUR: $_count consecutive sub-10s aeon runs on $BEAD_ID. Each summon dies before meaningful work, suggesting a setup loop — the defect recurs on every retry. Check: worktree path, conflicting branches, or box state. Details in aeon-ledger." \
+        "RAPID-RECUR: $_count consecutive sub-10s aeon runs on $BEAD_ID. Each summon dies before meaningful work, suggesting a setup loop — the defect recurs identically on every retry. Parked with $SPIRA_ASK_LABEL and overseer instead of only annotated: a fourth summon cannot learn anything the third did not. Check: worktree path, conflicting branches, or box state. Details in aeon-ledger." \
         >/dev/null 2>&1 || true
     spira_event aeon.rapid "$BEAD_ID" \
-        "Rapid-recur: $BEAD_ID — $_count consecutive sub-10s aeon summons (setup loop)" || true
+        "Rapid-recur: $BEAD_ID — $_count consecutive sub-10s aeon summons (setup loop) — parked" || true
 }
 
 # ledger_done <rc> <status> — an aeon's disposition line, with what its session SPENT.
