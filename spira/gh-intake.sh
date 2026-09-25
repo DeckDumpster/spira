@@ -234,7 +234,12 @@ for n,t,b,login,lbls,assoc in sorted(out):
 PY
 )
 log "fetched ${#ROWS[@]} open issue(s) from $REPO"
-[ "${#ROWS[@]}" -gt 0 ] || die "the tracker reported no open issues — that is possible, but it is also what a wrong repository name looks like. Check SPIRA_GH_INTAKE_REPO=$REPO"
+# An empty list is a real answer: a wrong repository name comes back from the API as
+# {"message":"Not Found"} and dies on the MSG: path above, never as [].
+if [ "${#ROWS[@]}" -eq 0 ]; then
+    log "no open issues found (all items may be pull requests) — ingest is complete"
+    exit 0
+fi
 
 # ── process issues ────────────────────────────────────────────────────────────
 created=0; skipped=0; untrusted_created=0
