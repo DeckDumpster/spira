@@ -24,12 +24,14 @@
 # assumes when bd cannot reach the database.
 #
 # TWO DOLT PASSES, ONE FIXTURE, REUSED RUN DIR:
-#   pass 1 "fill+order": pool=3 + 5 ready builder beads, fresh run dir (no stamp yet) ->
-#     3 summons, CHECK7 logged before "sending:", sending.sh called (no stamp -> walks).
+#   pass 1 "fill": pool=3 + 5 ready builder beads, fresh run dir (no stamp yet) -> 3
+#     summons, sending.sh called (no stamp -> walks, which also writes the base stamp).
 #     This is also the positive control that the database IS reachable (no "DATABASE
 #     UNREADABLE"), which used to need its own pass in test-sentinel-capacity.sh.
-#   pass 2 "stamp-skip": same run dir, same fixture -> the base-unchanged stamp pass 1
-#     wrote now matches, so sending.sh is not called and the log says so.
+#   pass 2 "order+stamp-skip": same run dir, same fixture -> the base-unchanged stamp
+#     pass 1 wrote now matches, so sending.sh is not called and the log says so. The skip
+#     path is also the only one that logs a literal "sending:" line, so the CHECK7-
+#     before-sending order assertion runs against this pass, not pass 1's walk.
 #
 # ONE NO-DATABASE CHECK: SPIRA_BD points at a shim that always fails, so `bdq list` fails
 # the way a real outage would without paying for a Dolt fixture at all (UC-dispatch-19).
@@ -159,20 +161,23 @@ rm -f "$SUMMON_LOG" "$SENDING_LOG"
 pass1_out="$(run_pass "$_run")"
 is   "pass 1 fill: pool=3 + 5 ready beads -> 3 summons" \
      "3" "$(grep -c . "$SUMMON_LOG" 2>/dev/null || echo 0)"
-want "pass 1 order: CHECK7 line appears in log"   "CHECK7"   "$pass1_out"
-want "pass 1 order: sending: line appears in log" "sending:" "$pass1_out"
-before "CHECK7" "sending:" "$pass1_out"
+want "pass 1 order: CHECK7 line appears in log" "CHECK7" "$pass1_out"
 is   "pass 1 sending: no stamp yet -> sending.sh called" \
      "1" "$(grep -c . "$SENDING_LOG" 2>/dev/null || echo 0)"
 lack "pass 1 sending: log does NOT say base unchanged" "base unchanged" "$pass1_out"
 lack "pass 1: does NOT report DATABASE UNREADABLE (positive control: DB is readable)" \
      "DATABASE UNREADABLE" "$pass1_out"
 
+# pass 1's walk just wrote the base stamp, so pass 2 (same run dir, same fixture) takes
+# the skip path — which is also the only path that logs a literal "sending:" line, so the
+# CHECK7-before-sending order check runs here rather than against pass 1's walk.
 rm -f "$SUMMON_LOG" "$SENDING_LOG"
 pass2_out="$(run_pass "$_run")"
 is   "pass 2 stamp-skip: base unchanged -> sending.sh not called" \
      "0" "$(grep -c . "$SENDING_LOG" 2>/dev/null || echo 0)"
 want "pass 2 stamp-skip: log says base unchanged" "base unchanged" "$pass2_out"
+want   "pass 2 order: sending: line appears in log" "sending:" "$pass2_out"
+before "CHECK7" "sending:" "$pass2_out"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
