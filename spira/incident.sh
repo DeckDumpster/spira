@@ -439,7 +439,12 @@ MAILEOF
     # bd label add allowed). Done immediately after creation so the bead never exists without
     # its repo dimension in the open state.
     if [ "${INCIDENT_REPO_DECLARED:-0}" = 1 ] && [ -n "${_irepo:-}" ]; then
-        bdq set-state "$id" "repo=${_irepo}" >/dev/null 2>&1
+        _irepo_eff="$_irepo"
+        if [ "$_irepo" != "$(spira_home_repo)" ] && ! repo_names 2>/dev/null | grep -qxF "$_irepo"; then
+            ilog "warning: SPIRA_INCIDENT_REPO=${_irepo} has no repo-map entry; using $(spira_home_repo)"
+            _irepo_eff="$(spira_home_repo)"
+        fi
+        bdq set-state "$id" "repo=${_irepo_eff}" >/dev/null 2>&1
     fi
     # DELIVERS LABEL. When an Ops session commits code naming the bead, the sentinel's
     # commit-naming check accepts the close and this label is never consulted. When no

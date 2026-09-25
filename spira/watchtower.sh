@@ -160,7 +160,7 @@ if [ "${1:-}" = "--throttle-check" ]; then
                     SPIRA_INCIDENT_PRIORITY=2 \
                     SPIRA_INCIDENT_ACTOR=watchtower \
                     SPIRA_SIN_EXEMPT=1 \
-                    SPIRA_INCIDENT_REPO=spira \
+                    SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
                     SPIRA_INCIDENT_REF=incident:queue-throttle-engaged \
                     SPIRA_INCIDENT_CAUSE=throttle-engaged \
                     bash "$_tc_inc" file \
@@ -197,7 +197,7 @@ if [ "${1:-}" = "--throttle-check" ]; then
                     SPIRA_INCIDENT_PRIORITY=1 \
                     SPIRA_INCIDENT_ACTOR=watchtower \
                     SPIRA_SIN_EXEMPT=1 \
-                    SPIRA_INCIDENT_REPO=spira \
+                    SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
                     SPIRA_INCIDENT_REF=incident:queue-throttle-stall \
                     SPIRA_INCIDENT_CAUSE=throttle-stall \
                     bash "$_tc_inc" file \
@@ -219,7 +219,7 @@ if [ "${1:-}" = "--throttle-check" ]; then
             SPIRA_INCIDENT_PRIORITY=2 \
             SPIRA_INCIDENT_ACTOR=watchtower \
             SPIRA_SIN_EXEMPT=1 \
-            SPIRA_INCIDENT_REPO=spira \
+            SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
             SPIRA_INCIDENT_REF=incident:queue-throttle-lifted \
             SPIRA_INCIDENT_CAUSE=throttle-lifted \
             bash "$_tc_inc" file \
@@ -342,7 +342,7 @@ PYEOF
             SPIRA_INCIDENT_PRIORITY=1 \
             SPIRA_INCIDENT_ACTOR=watchtower \
             SPIRA_SIN_EXEMPT=1 \
-            SPIRA_INCIDENT_REPO=spira \
+            SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
             SPIRA_INCIDENT_REF="incident:czar-unclaimed-${_co_id}" \
             SPIRA_INCIDENT_CAUSE="czar-unclaimed" \
             bash "$_co_inc" file \
@@ -358,7 +358,7 @@ PYEOF
             SPIRA_INCIDENT_PRIORITY=1 \
             SPIRA_INCIDENT_ACTOR=watchtower \
             SPIRA_SIN_EXEMPT=1 \
-            SPIRA_INCIDENT_REPO=spira \
+            SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
             SPIRA_INCIDENT_REF="incident:czar-not-cleared-${_co_id}" \
             SPIRA_INCIDENT_CAUSE="czar-not-cleared" \
             bash "$_co_inc" file \
@@ -427,7 +427,7 @@ if [ "${1:-}" = "--pr-stall-check" ]; then
                 SPIRA_INCIDENT_PRIORITY=1 \
                 SPIRA_INCIDENT_ACTOR=watchtower \
                 SPIRA_SIN_EXEMPT=1 \
-                SPIRA_INCIDENT_REPO=spira \
+                SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
                 SPIRA_INCIDENT_REF="incident:pr-stall-auto-merge-off:${_psc_repo}" \
                 SPIRA_INCIDENT_CAUSE=pr-stall-auto-merge-off \
                 bash "$_psc_inc" file \
@@ -1141,7 +1141,7 @@ if [ -n "$drain_since" ] && [ "$drain_mins" != "?" ] && \
         SPIRA_INCIDENT_PRIORITY=1 \
         SPIRA_INCIDENT_ACTOR=watchtower \
         SPIRA_SIN_EXEMPT=1 \
-        SPIRA_INCIDENT_REPO=spira \
+        SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
         bash "$INC" file "DRAINING: world.sh summons gated" - >/dev/null || true
         log "watchtower: drain escalation filed (${drain_mins}m >= ${DRAIN_WARN_MINS}m threshold)"
     else
@@ -1180,7 +1180,7 @@ if [ "$_unsent_oldest" != "?" ] && [ "$_unsent_oldest" -ge "$UNSENT_WARN_H" ] 2>
         SPIRA_INCIDENT_PRIORITY=1 \
         SPIRA_INCIDENT_ACTOR=watchtower \
         SPIRA_SIN_EXEMPT=1 \
-        SPIRA_INCIDENT_REPO=spira \
+        SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
         SPIRA_INCIDENT_REF=incident:sending-oldest-unsent \
         SPIRA_INCIDENT_CAUSE=oldest-unsent \
         bash "$INC" file "SENDING: oldest unsent branch above threshold" - >/dev/null || true
@@ -1199,7 +1199,7 @@ if [ "$_unadopted" != "?" ] && [ "$_unadopted" -gt 0 ] 2>/dev/null; then
         SPIRA_INCIDENT_PRIORITY=2 \
         SPIRA_INCIDENT_ACTOR=watchtower \
         SPIRA_SIN_EXEMPT=1 \
-        SPIRA_INCIDENT_REPO=spira \
+        SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
         SPIRA_INCIDENT_REF=incident:sending-unadopted-refs \
         SPIRA_INCIDENT_CAUSE=unadopted-refs \
         SPIRA_INCIDENT_DELIVERS=action \
@@ -1229,7 +1229,7 @@ if [ "$_batched_stranded" != "?" ] && [ "$_batched_stranded" -gt 0 ] 2>/dev/null
         SPIRA_INCIDENT_PRIORITY=1 \
         SPIRA_INCIDENT_ACTOR=watchtower \
         SPIRA_SIN_EXEMPT=1 \
-        SPIRA_INCIDENT_REPO=spira \
+        SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
         SPIRA_INCIDENT_REF=incident:sending-batched-stranded \
         SPIRA_INCIDENT_CAUSE=batched-stranded \
         bash "$INC" file "SENDING: BATCHED branch absent from open batch" - >/dev/null || true
@@ -1255,7 +1255,7 @@ if [ "$_batched_too_long" != "?" ] && [ "$_batched_too_long" -gt 0 ] 2>/dev/null
         SPIRA_INCIDENT_PRIORITY=1 \
         SPIRA_INCIDENT_ACTOR=watchtower \
         SPIRA_SIN_EXEMPT=1 \
-        SPIRA_INCIDENT_REPO=spira \
+        SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
         SPIRA_INCIDENT_REF=incident:queue-batched-too-long \
         SPIRA_INCIDENT_CAUSE=batched-too-long \
         bash "$INC" file "QUEUE: BATCHED branch not resolved (too long)" - >/dev/null || true
@@ -1286,7 +1286,7 @@ if [ "$_closed_stranded_oldest" != "?" ] && \
         SPIRA_INCIDENT_PRIORITY=2 \
         SPIRA_INCIDENT_ACTOR=watchtower \
         SPIRA_SIN_EXEMPT=1 \
-        SPIRA_INCIDENT_REPO=spira \
+        SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
         SPIRA_INCIDENT_REF=incident:sending-closed-stranded \
         SPIRA_INCIDENT_CAUSE=closed-stranded \
         SPIRA_INCIDENT_DELIVERS=action \
@@ -1329,7 +1329,7 @@ if [ "$_dup_refs" != "?" ] && [ "$_dup_refs" -gt 0 ] 2>/dev/null; then
         SPIRA_INCIDENT_PRIORITY=1 \
         SPIRA_INCIDENT_ACTOR=watchtower \
         SPIRA_SIN_EXEMPT=1 \
-        SPIRA_INCIDENT_REPO=spira \
+        SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
         SPIRA_INCIDENT_REF=incident:dedup-meter-nonzero \
         SPIRA_INCIDENT_CAUSE=dedup-meter \
         bash "$INC" file "DEDUP: duplicate incident refs detected (${_dup_refs} refs, ${_dup_beads} surplus)" - >/dev/null || true
