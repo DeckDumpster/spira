@@ -93,6 +93,7 @@ SPIRA_REVIEWER_MODEL SPIRA_REVIEWER_VERDICTS SPIRA_REVIEWER_TIMEOUT SPIRA_REVIEW
 SPIRA_REVIEW_LABEL
 SPIRA_CAPACITY_PROBE_MODEL SPIRA_CAPACITY_PROBE_INTERVAL SPIRA_CAPACITY_PROBE_WINDOW SPIRA_CAPACITY_PROBE_TIMEOUT
 SPIRA_SELF_WINDOW
+SPIRA_DELIVERS_CHECK_TIMEOUT
 SPIRA_CERT_WINDOW_MINS
 SPIRA_AGENT
 SPIRA_STATUTE_CORE
@@ -1280,6 +1281,11 @@ spira_conf_defaults() {
     # enough to suppress a burst that ended hours ago; wide enough to cover the ~2-minute
     # sentinel cadence across a meaningful run of passes.
     : "${SPIRA_SELF_WINDOW:=60}"
+
+    # DELIVERS:CHECK TIMEOUT: seconds allowed for one delivers:check:<command> to run in
+    # CHECK 5. A hanging command must not stall the whole sentinel pass behind it; a timeout
+    # is scored the same as a non-zero exit — not yet — rather than left to hang.
+    : "${SPIRA_DELIVERS_CHECK_TIMEOUT:=60}"
 
     # THE AGENT CLI BINARY. Named once so every tool that invokes it reads the same setting.
     # The invocation shape (-p --output-format stream-json --verbose --model ...) is NOT
