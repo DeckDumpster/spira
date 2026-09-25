@@ -97,6 +97,19 @@ SIN_EXEMPT="${SPIRA_SIN_EXEMPT:-0}"
 # is classified as closed-while-live rather than recurrence. Reads from conf.sh
 # (SPIRA_WATCHER_INTERVAL_S); env override keeps tests isolated.
 WATCHER_INTERVAL_S="${SPIRA_WATCHER_INTERVAL_S:-1800}"
+
+# _reopen_cause <closed-epoch> <now-epoch> <interval-s> -> "closed-while-live" or "recurrence"
+#
+# A bead closed less than <interval-s> ago when the same failure fingerprint recurred was
+# still live: Ops had not yet had the interval's worth of time to see whether the close held.
+# Past the interval, the same event is an ordinary recurrence.
+_reopen_cause() {
+    if [ "$(( $2 - $1 ))" -lt "$3" ]; then
+        printf 'closed-while-live'
+    else
+        printf 'recurrence'
+    fi
+}
 # THE CAUSE CARRIED BY EACH RECURRENCE RUNG. Callers that know the kind of event they are
 # filing set SPIRA_INCIDENT_CAUSE to a short slug (suite-red, systemd-fail, etc.). When not
 # set, the rung records unrecorded rather than omitting the cause field — a recurrence must
@@ -297,20 +310,19 @@ file_one() {
         [ "$_ev_n" -gt "$_recur_n" ] && _recur_n="$_ev_n"
         n=$((_recur_n + 1))
         if [ "$_was_closed" = 1 ]; then
-            _reopen_cause=recurrence
+            _cause=recurrence
             _close_raw="$(bdq show "$id" --json 2>/dev/null \
                 | python3 -c 'import sys,json; d=json.load(sys.stdin); b=d if isinstance(d,dict) else (d[0] if d else {}); print(b.get("closed_at",""))' 2>/dev/null || true)"
             [ -z "$_close_raw" ] && _close_raw="${_closed_at_raw:-}"
             _close_ts="$([ -n "$_close_raw" ] && date -u -d "$_close_raw" +%s 2>/dev/null || true)"
             if [ -n "$_close_ts" ]; then
                 _now_ts="$(date -u +%s)"
-                _delta=$(( _now_ts - _close_ts ))
-                ilog "reopen classify $id: closed_at=${_close_raw} delta=${_delta}s interval=${WATCHER_INTERVAL_S}s"
-                [ "$_delta" -lt "$WATCHER_INTERVAL_S" ] && _reopen_cause=closed-while-live
+                _cause="$(_reopen_cause "$_close_ts" "$_now_ts" "$WATCHER_INTERVAL_S")"
+                ilog "reopen classify $id: closed_at=${_close_raw} delta=$(( _now_ts - _close_ts ))s interval=${WATCHER_INTERVAL_S}s"
             else
                 ilog "reopen classify $id: closed_at=${_close_raw:-empty} unparseable → recurrence"
             fi
-            bead_reopen "$id" "$_reopen_cause" "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ) — same failure fingerprint, dedup within ${DEDUP_LOOKBACK_DAYS}-day window"
+            bead_reopen "$id" "$_cause" "Recurrence $n at $(date -u +%Y-%m-%dT%H:%M:%SZ) — same failure fingerprint, dedup within ${DEDUP_LOOKBACK_DAYS}-day window"
         fi
         # sp-recur-N-<cause> labels are no longer written; recurrence count is derived
         # from event history. The note below records the recurrence (sp-lzt).
@@ -590,6 +602,11 @@ drain_one() {            # drain_one <spool-path>
     rm -f "$body"; return 1
 }
 
+# SOURCEABLE, AND SILENT WHEN IT IS. Without this guard, `. incident.sh` from a test wanting
+# only _reopen_cause would run the dispatcher against the caller's own arguments (or none,
+# landing on the `*)` branch below and exiting the sourcing shell) — the same seam watchd.sh
+# already opens before its own dispatch.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 case "${1:-}" in
 
 systemd)
@@ -855,3 +872,4 @@ except: pass
 
 *) sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
+fi

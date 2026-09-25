@@ -79,6 +79,17 @@ WATCHD_KEYS="$(echo $WATCHD_KEYS)"
 # watcher's log carries whatever it was watching.
 watchd_dir() { printf '%s/watchd' "$SPIRA_RUN"; }
 
+# _wd_now -> the current epoch second, or SPIRA_NOW when set. A test driving the once-per-
+# backlog clock across passes otherwise has to sleep a real second between them for the
+# suppression key to differ, which is the only reason that assertion used to cost wall time.
+_wd_now() {
+    case "${SPIRA_NOW:-}" in
+        ''|*[!0-9]*) printf -v _wd_now_v '%(%s)T' -1 ;;
+        *) _wd_now_v="$SPIRA_NOW" ;;
+    esac
+    printf '%s' "$_wd_now_v"
+}
+
 # _wd_logfile <name> <kind> <target> — where this watcher's events actually are.
 #
 # A `daemon` row's log is ours: the unit's `StandardOutput=append:` writes it. A `log` row's
@@ -657,7 +668,7 @@ cmd_status() {
             [ -n "$path" ] && mtime["$path"]="$ts"
         done < <(stat -c '%Y %n' -- "${present[@]}" 2>/dev/null)
     fi
-    local now; printf -v now '%(%s)T' -1
+    local now; now="$(_wd_now)"
 
     printf '%-14s %-10s %-8s %7s %10s %8s  %s\n' NAME UNIT HEALTH UNREAD LAST-EVENT RESTARTS LOG
     local i u=0 lf total pos state age restarts
@@ -1251,7 +1262,7 @@ _wd_orphan_lock() {
 # loop shows a still number there. systemd's own NRestarts is the fact that discriminates.
 _wd_notify_health() {
     local rows; rows="$(watchd_rows)" || return 3
-    local now; printf -v now '%(%s)T' -1
+    local now; now="$(_wd_now)"
 
     local name kind target health
     local -a units=() unames=() ukind=() utarget=() uhealth=()
@@ -1373,7 +1384,7 @@ cmd_notify() {
     esac
     local re; re="$(_wd_filter)" || return 3
     local rows; rows="$(watchd_rows)" || return 3
-    local now; printf -v now '%(%s)T' -1
+    local now; now="$(_wd_now)"
 
     local name kind target health lf total pos chunk hit off line apos pend
     local stamp_age oldest stamp_at

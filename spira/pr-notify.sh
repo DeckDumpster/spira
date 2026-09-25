@@ -139,6 +139,10 @@ _scan_repo() {
     done < <(git -C "$repo_dir" branch -r 2>/dev/null)
 }
 
+# SOURCEABLE, AND SILENT WHEN IT IS. A T1 test wanting only _PR_PY (the classifier, a pure
+# function of stdin JSON) or _scan_repo would otherwise trigger a live repo-map scan on
+# source — the same seam watchd.sh and incident.sh already open before their own dispatch.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
 # Iterate pr-mode repos in the repo-map.
 # push-mode and hold-mode repos are not scanned: a push-mode repo merges directly through
 # the gate (no PR exists), and hold-mode branches are the operator's own (no timer noise).
@@ -149,3 +153,4 @@ while IFS= read -r name; do
     base="$(repo_base "$name" 2>/dev/null)"; [ -n "$base" ] || base="main"
     _scan_repo "$repo" "$name" "$base"
 done < <(repo_names 2>/dev/null)
+fi
