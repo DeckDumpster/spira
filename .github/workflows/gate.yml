@@ -199,6 +199,13 @@ jobs:
       # the caller presents none. Unwired, every run would leak its VM under
       # `if: always()` while reporting success.
       vm-token: ${{ steps.vm.outputs.vm-token }}
+    # provision.sh's guest-agent wait defaults to 120s. Three consecutive boots of
+    # the same template on a busy host measured ~117s, >120s (fault), then ~20s --
+    # the default sits inside the normal range, so any busy moment is a fault and
+    # a queue retry, not a defect in the guest. 300s covers the measured range
+    # with headroom instead of chasing the host's instantaneous load.
+    env:
+      AGENT_TIMEOUT: 300
     steps:
       - uses: DeckDumpster/ephemeral-ci/provision@v1
         id: vm
