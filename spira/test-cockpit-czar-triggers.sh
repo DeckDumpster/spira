@@ -9,11 +9,10 @@
 # mentioned SP_CZAR or czar_triggers at all. Runs the real `cockpit.sh czar_triggers`
 # subcommand (registered in collect.sh's PROBES, not a full `once`) against a stub bd.
 #
-# A DOCUMENTED DEFECT, NOT FIXED HERE (per this bead's instructions): a bd call that
-# produces no parseable JSON — empty stdout, or a schema-mismatch line that bdjson's
-# json_only filters to nothing — is indistinguishable downstream from "queried fine, no
-# beads for this class", so every key renders `-` (looks like "never fired") instead of
-# `?` (honest unknown). Filed as sp-s088v.2.
+# sp-s088v.2: a bd call that produces no parseable JSON — empty stdout, or a
+# schema-mismatch line that bdjson's json_only filters to nothing — must render `?`
+# (honest unknown), not `-` (looks like "never fired"). Fixed by treating empty stdout
+# as a refusal before it can be coerced into the literal "[]".
 #
 # tier: T1
 # covers: spira/cockpit.sh
@@ -60,14 +59,13 @@ is "SP_CZAR_DEADLOCK_BY=- on empty"    "-" "$(field "$out" SP_CZAR_DEADLOCK_BY)"
 is "SP_CZAR_STALL_OUTCOME=- on empty"  "-" "$(field "$out" SP_CZAR_STALL_OUTCOME)"
 
 # =============================================================================
-# DOCUMENTED DEFECT: silent refusal (bd exits 0, empty stdout — probe-fault.sh's own
-# "failure mode 2") is indistinguishable from the empty-list case above, so it renders
-# "-" too. A collector reading "-" cannot tell "no incident has ever fired" from
-# "the query never ran" — exactly the confusion law-absence-needs-a-positive-control
-# exists to prevent. Wanted: "?". Got, and asserted here as current behaviour: "-".
+# silent refusal (bd exits 0, empty stdout — probe-fault.sh's own "failure mode 2")
+# must render "?", not "-": a collector reading "-" cannot tell "no incident has ever
+# fired" from "the query never ran" — exactly the confusion
+# law-absence-needs-a-positive-control exists to prevent.
 # =============================================================================
 echo ""
-echo "DOCUMENTED DEFECT: silent-empty-output refusal reads as never-fired, not ?"
+echo "silent-empty-output refusal reads as ?, not never-fired"
 
 BD_SILENT="$TMP/bd-silent"
 cat > "$BD_SILENT" <<'EOF'
@@ -77,17 +75,17 @@ EOF
 chmod +x "$BD_SILENT"
 
 out="$(run_czar "$BD_SILENT")"
-is "current (defective) behaviour: SP_CZAR_DEADLOCK_FIRED=-" "-" "$(field "$out" SP_CZAR_DEADLOCK_FIRED)"
+is "SP_CZAR_DEADLOCK_FIRED=? on silent refusal" "?" "$(field "$out" SP_CZAR_DEADLOCK_FIRED)"
 
 # =============================================================================
-# DOCUMENTED DEFECT, same root cause: a schema-mismatch message never reaches the
+# Same root cause, different trigger: a schema-mismatch message never reaches the
 # python parser at all — bdjson's json_only only passes lines starting with [ or {, so
 # the error text is filtered to nothing before czar_triggers_keys ever sees it. Same
-# "-" result as the two cases above, proving this is one defect with two triggers, not
-# two separate ones.
+# "?" result as the silent-refusal case above, proving this is one defect with two
+# triggers, not two separate ones.
 # =============================================================================
 echo ""
-echo "DOCUMENTED DEFECT: a schema-mismatch refusal message reads as never-fired too"
+echo "schema-mismatch refusal message reads as ? too"
 
 BD_SCHEMA="$TMP/bd-schema"
 cat > "$BD_SCHEMA" <<'EOF'
@@ -98,7 +96,7 @@ EOF
 chmod +x "$BD_SCHEMA"
 
 out="$(run_czar "$BD_SCHEMA")"
-is "current (defective) behaviour: SP_CZAR_ATTRIB_FIRED=-" "-" "$(field "$out" SP_CZAR_ATTRIB_FIRED)"
+is "SP_CZAR_ATTRIB_FIRED=? on schema-mismatch refusal" "?" "$(field "$out" SP_CZAR_ATTRIB_FIRED)"
 
 # =============================================================================
 # POSITIVE CONTROL for the refusal cases above: a bd that returns JSON the parser
