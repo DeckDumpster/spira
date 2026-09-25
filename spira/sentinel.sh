@@ -1261,11 +1261,12 @@ close_landed_queue_waiters 2>/dev/null || true
 # they draw on this. `live` is counted the same way, over the task roster alone, or a running
 # Ops would consume a slot it was never taking from.
 TASK_FAYTHS="$(spira_task_fayths)"
-pool="${SPIRA_MAX_AEONS:-}"
-if [ -n "$pool" ]; then
+if [ -n "${SPIRA_MAX_AEONS:-}" ]; then
     task_live=0; for f in $TASK_FAYTHS; do task_live=$((task_live + $(aeon_count "$f"))); done
-    pool=$(( pool > task_live ? pool - task_live : 0 ))
+    pool="$(ck7_pool "$SPIRA_MAX_AEONS" "$task_live")"
     log "CHECK7 pool: ${SPIRA_MAX_AEONS} slot(s), $task_live live, $pool free — order: $TASK_FAYTHS"
+else
+    pool=""
 fi
 # LANE FAYTHS DRAW FIRST. A lane is a partition with work no builder will ever take, and
 # builders always have a queue — so whichever loop runs first takes every free slot, and
@@ -1283,16 +1284,7 @@ LANE_FAYTHS="$(spira_lane_fayths)"
 # collective cap over successive passes. State: the last summoned lane fayth name.
 _lane_rr="$SPIRA_RUN/lane-round-robin"
 _lane_last="$(cat "$_lane_rr" 2>/dev/null)"
-if [ -n "$_lane_last" ] && [ -n "$LANE_FAYTHS" ]; then
-    _lbefore="" _lafter="" _lfound=0
-    for _lf in $LANE_FAYTHS; do
-        if [ "$_lfound" = 1 ]; then _lafter="$_lafter $_lf"
-        elif [ "$_lf" = "$_lane_last" ]; then _lbefore="$_lbefore $_lf"; _lfound=1
-        else _lbefore="$_lbefore $_lf"
-        fi
-    done
-    LANE_FAYTHS="${_lafter# }${_lbefore:+ }${_lbefore# }"
-fi
+LANE_FAYTHS="$(lane_rotate "$_lane_last" $LANE_FAYTHS)"
 # WHEN INDIVIDUAL BD CALLS ARE SLOW, a partition the pass did not reach is absent from
 # the log — absent looks identical to "nothing ready" in strand.sh. Track elapsed time
 # and log remaining fayths as not-evaluated when the budget runs out so strand.sh can
@@ -1318,7 +1310,8 @@ done
 # the queue is over capacity, not that lane work is unneeded (sp-h7zzx).
 _tc_stamp_ck7="${SPIRA_THROTTLE_STAMP:-$SPIRA_RUN/queue-throttled}"
 _ck7_express_label=""
-if [ -f "$_tc_stamp_ck7" ] && [ "${SPIRA_QUEUE_THROTTLE_OVERRIDE:-}" != "off" ]; then
+_ck7_stamp_exists=0; [ -f "$_tc_stamp_ck7" ] && _ck7_stamp_exists=1
+if [ "$(ck7_throttled "$_ck7_stamp_exists" "${SPIRA_QUEUE_THROTTLE_OVERRIDE:-}")" = 1 ]; then
     _ck7_express_ready=0
     express_ready_in_task_pool "$TASK_FAYTHS" "${SPIRA_EXPRESS_LABEL:-express}" && _ck7_express_ready=1
     pool="$(check7_pool_decision 1 "${pool:-0}" "$_ck7_express_ready")"
@@ -1339,8 +1332,7 @@ for f in $TASK_FAYTHS; do
         act "summoned a $f aeon"
         [ -n "$pool" ] && pool=$(( pool > 0 ? pool - 1 : 0 ))
         _fill=$(( _fill + 1 ))
-        [ -n "$pool" ] && [ "$pool" -le 0 ] && break
-        [ "$_fill" -ge "${SPIRA_MAX_LIVE_AEONS:-4}" ] && break
+        [ "$(ck7_fill_cap "$_fill" "$pool")" = stop ] && break
         [ $(( $(date +%s) - _ck7_start )) -ge "$_ck7_budget" ] && break
     done
 done
@@ -1462,31 +1454,28 @@ if [ "$GOAL_REACHED" = 1 ]; then
     exit 0
 fi
 
-# The plan's own readiness, and only the plan's, gates the judgement tier below: ready plan
-# work means the DAG is moving whether or not an aeon was free to take it, which is
-# throughput rather than starvation. A ready INCIDENT says nothing about the plan, so it
-# must not silence CHECK 8 either.
-if [ "$plan_ready" -gt 0 ]; then
-    log "pass complete — $acted action(s), $progressed progress"
-    exit 0
-fi
-
 # ======================================================================================
-# CHECK 8 — JUDGEMENT. Everything above passed, work remains, and nothing is ready or
-# running. There is no rule left to apply: that is the definition of needing judgement.
-# Rate-limited, because inference is a cost centre and a loop that reasons every minute is
-# a loop that reasons about nothing.
+# CHECK 8 — JUDGEMENT. Everything above passed, and there is no rule left to apply unless
+# nothing progressed and the plan is starved: check8_should_judge(plan_ready, plan_inprog,
+# n_open, progressed, last, now, every) alone decides — the plan's own readiness gates it
+# (a ready INCIDENT says nothing about the plan and must not silence it), and rate-limiting
+# keeps inference, a cost centre, from reasoning every minute about nothing.
 # ======================================================================================
-if [ "$plan_inprog" -eq 0 ] && [ "$n_open" -gt 0 ] && [ "$progressed" -eq 0 ]; then
-    now="$(date +%s)"; last=0; [ -f "$COOLDOWN" ] && last="$(cat "$COOLDOWN" 2>/dev/null || echo 0)"
-    if [ $(( now - last )) -lt "$INFERENCE_EVERY" ]; then
-        log "starved, but inference is in cooldown ($(( INFERENCE_EVERY - now + last ))s left)"
+_ck8_now="$(date +%s)"
+_ck8_last=0; [ -f "$COOLDOWN" ] && _ck8_last="$(cat "$COOLDOWN" 2>/dev/null || echo 0)"
+case "$(check8_should_judge "$plan_ready" "$plan_inprog" "$n_open" "$progressed" \
+            "$_ck8_last" "$_ck8_now" "$INFERENCE_EVERY")" in
+    cooldown)
+        log "starved, but inference is in cooldown ($(( INFERENCE_EVERY - _ck8_now + _ck8_last ))s left)"
+        log "pass complete — $acted action(s), $progressed progress"
         exit 0
-    fi
-    echo "$now" > "$COOLDOWN"
-    log "STARVED — $n_open open, 0 ready, 0 running. Dropping to inference."
-    "$SPIRA_HOME/reflect.sh" "$open_children" >> "$SPIRA_RUN/reflect.log" 2>&1
-    act "invoked reflection"
-fi
+        ;;
+    yes)
+        echo "$_ck8_now" > "$COOLDOWN"
+        log "STARVED — $n_open open, 0 ready, 0 running. Dropping to inference."
+        "$SPIRA_HOME/reflect.sh" "$open_children" >> "$SPIRA_RUN/reflect.log" 2>&1
+        act "invoked reflection"
+        ;;
+esac
 
 log "pass complete — $acted action(s), $progressed progress"
