@@ -13,11 +13,9 @@ printf 'test-covers-entries.sh\n'
 
 # covers_hit <token>: exits 0 if any path under ROOT matches the token as a bash glob.
 # $token must be unquoted when passed to `for` so the shell expands wildcards.
-# A UC-<area>-NN token names a use-case catalogue entry (sp-qu948, testlib.sh's header
-# convention), not a file — it shares the # covers: line with path globs and is told
-# apart by its "UC-" prefix, so it is never resolved as a path. The catalogue's own lint
-# (plan-lint.sh) is not yet landed here; until it is, this suite trusts the token rather
-# than rejecting it.
+# A UC-<area>-NN token names an entry in the use-case catalogue (sp-qu948), not a file —
+# it shares the # covers: line with path globs (testlib.sh's header convention) and is
+# told apart from one by its "UC-" prefix, so it is never resolved as a path.
 covers_hit() {
     local tok="$1" _f
     case "$tok" in UC-*-[0-9][0-9]) return 0 ;; esac
