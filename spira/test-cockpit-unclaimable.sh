@@ -16,16 +16,19 @@
 # rather than the persona that won the label query but cannot actually claim the work.
 #
 # defect: sp-f8vry
-# covers: spira/cockpit.sh
+# tier: T1
+# covers: spira/cockpit.sh spira/unclaimable.py UC-dispatch-17
 # hermetic-ok: mock bd binary, no systemd or database
 # scar: a bead carrying fayth:ops on spira,plan labels appeared in builder's partition query; the panel said "builder" for fifteen hours while the bead was unclaimable by any persona.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
+
+# line_for_id <id> <sp_next-output> -> the one line naming <id>, or empty if absent.
+# Case 4 needs to know WHICH line a given id landed on, not merely whether a label
+# string appears anywhere in the whole block (that could not tell sp-uc4a's line
+# apart from sp-uc4b's).
+line_for_id() { printf '%s\n' "$2" | grep -F "$1" || true; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -121,18 +124,29 @@ echo
 echo "case 4 — mixed: claimable and unclaimable beads in the same partition query"
 # ========================================================================================
 # Both beads appear in builder's query (both have spira,plan labels). One has fayth:ops
-# and is unclaimable; the other has no preference and is claimable. Both must render
-# correctly in the same SP_NEXT output: the claimable one shows "builder", the
-# unclaimable one shows "unclaimable".
-make_bd "$TMP/bd-4" "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}plan" \
-    '[{"id":"sp-uc4a","title":"claimable: no pref","status":"open","issue_type":"task","priority":1,"labels":["plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]},{"id":"sp-uc4b","title":"unclaimable: fayth:ops","status":"open","issue_type":"task","priority":1,"labels":["fayth:ops","plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
+# and is unclaimable; the other has no preference and is claimable. Asserting that both
+# label strings appear SOMEWHERE in the output cannot tell which id got which label — an
+# implementation that swapped them would still pass. Each id's OWN line is checked instead.
+CASE4_JSON='[{"id":"sp-uc4a","title":"claimable: no pref","status":"open","issue_type":"task","priority":1,"labels":["plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]},{"id":"sp-uc4b","title":"unclaimable: fayth:ops","status":"open","issue_type":"task","priority":1,"labels":["fayth:ops","plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
+make_bd "$TMP/bd-4" "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}plan" "$CASE4_JSON"
 
 out="$(run_core "$TMP/bd-4")"
-want   "mixed: claimable bead in NEXT"              "sp-uc4a"       "$out"
-want   "mixed: unclaimable bead in NEXT"            "sp-uc4b"       "$out"
-want   "mixed: claimable shows builder"             "builder"       "$out"
-want   "mixed: unclaimable shows unclaimable"       "unclaimable"   "$out"
+line_a="$(line_for_id sp-uc4a "$out")"
+line_b="$(line_for_id sp-uc4b "$out")"
+want   "mixed: sp-uc4a's own line shows builder"              "builder"      "$line_a"
+nowant "mixed: sp-uc4a's own line does NOT show unclaimable"  "unclaimable"  "$line_a"
+want   "mixed: sp-uc4b's own line shows unclaimable"          "unclaimable"  "$line_b"
+nowant "mixed: sp-uc4b's own line does NOT show builder"      "builder"      "$line_b"
 
-echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+# UC-dispatch-17: the cockpit's per-id attribution must agree with the UC-16 classifier
+# (spira/unclaimable.py) run over the same two beads, not merely with itself.
+UC16_PARTS="builder|${SPIRA_SCOPE_LABEL},plan|
+ops|${SPIRA_SCOPE_LABEL},incident|
+"
+uc16_out="$(PARTS="$UC16_PARTS" ALL_PARTS="$UC16_PARTS" \
+    SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_CI_LABEL=awaiting-ci SPIRA_ASK_LABEL=needs-ryan \
+    python3 "$HERE/unclaimable.py" <<< "$CASE4_JSON")"
+nowant "UC-16 classifier agrees sp-uc4a is claimable"    "sp-uc4a"               "$uc16_out"
+want   "UC-16 classifier agrees sp-uc4b is unclaimable"  "UNCLAIMABLE sp-uc4b"   "$uc16_out"
+
+tl_summary
