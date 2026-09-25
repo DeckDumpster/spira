@@ -1,0 +1,160 @@
+# spira/deps.toml — every external program this harness or its tests invoke.
+#
+# Fields:
+#   name          the program name as found on PATH
+#   tier          runtime | optional | dev | operator
+#   purpose       one sentence: what it does for the harness
+#   version_min   minimum acceptable version string (empty = any)
+#   version_probe shell command that emits the program's version on stdout
+# Optional:
+#   absent        what actually happens when the program is missing, if more
+#                 than one named feature going off — doctor.sh prints this
+#
+# Tiers:
+#   runtime   the loop cannot run at all without this
+#   optional  the loop runs; one named feature is off
+#   operator  needed on an operated instance (SPIRA_OPERATED=1)
+#   dev       needed to develop or test Spira; not needed to run it
+
+[[dep]]
+name = "bd"
+tier = "runtime"
+purpose = "the beads issue tracker — the substrate; nothing runs without it"
+version_min = ""
+version_probe = "bd --version"
+
+[[dep]]
+name = "git"
+tier = "runtime"
+purpose = "every repository operation"
+version_min = ""
+version_probe = "git --version"
+
+[[dep]]
+name = "python3"
+tier = "runtime"
+purpose = "every JSON payload this harness parses"
+version_min = ""
+version_probe = "python3 --version"
+
+[[dep]]
+name = "flock"
+tier = "runtime"
+purpose = "serialising writers that share one path — the transcript archive, and the landing gate's per-repository tree"
+version_min = ""
+version_probe = "flock --version"
+
+[[dep]]
+name = "dolt"
+tier = "optional"
+purpose = "the SQL server beads stores its database in"
+version_min = ""
+version_probe = "dolt version"
+
+[[dep]]
+name = "gh"
+tier = "optional"
+purpose = "opening and landing pull requests (repos whose land mode is 'pr')"
+version_min = ""
+version_probe = "gh --version"
+
+[[dep]]
+name = "openssl"
+tier = "optional"
+purpose = "signing GitHub App JWTs to mint installation tokens (broker and app-token.sh) — needed only for repos whose land mode is 'pr'"
+version_min = ""
+version_probe = "openssl version"
+
+[[dep]]
+name = "tmux"
+tier = "optional"
+purpose = "the cockpit panes"
+version_min = ""
+version_probe = "tmux -V"
+
+[[dep]]
+name = "node"
+tier = "optional"
+purpose = "gating the browser page's view model; the loop itself never needs it"
+version_min = ""
+version_probe = "node --version"
+
+[[dep]]
+name = "cargo"
+tier = "optional"
+purpose = "building the decisions panel; not needed to run the loop"
+version_min = "1.78.0"
+version_probe = "cargo --version"
+
+[[dep]]
+name = "jq"
+tier = "optional"
+purpose = "optional JSON convenience"
+version_min = ""
+version_probe = "jq --version"
+
+[[dep]]
+name = "zstd"
+tier = "optional"
+purpose = "compressing archived transcripts; gzip is used when it is absent"
+version_min = ""
+version_probe = "zstd --version"
+
+[[dep]]
+name = "aws"
+tier = "optional"
+purpose = "the AWS CLI v2 — required when the runner pool spills to EC2; without it, spilled gate runs cannot authenticate to AWS"
+version_min = ""
+version_probe = "aws --version"
+
+[[dep]]
+name = "claude"
+tier = "optional"
+purpose = "the agent an aeon is a session of"
+version_min = ""
+version_probe = "claude --version"
+
+[[dep]]
+name = "bd-embedded"
+tier = "dev"
+purpose = "the CGO build of bd that opens an embedded Dolt store — the test fixture engine"
+version_min = ""
+version_probe = "bd-embedded version"
+absent = "test fixtures fall back to a shared Dolt server instead of a private embedded store per fixture. Not a feature off: concurrent fixture builds contend on one schema lock, measured at 610s with 5 of 6 failing, against 25s with 0 failing on embedded. Suites fail in ways that read as defects in the code under test. Restore with build-bd.sh --install (needs a Go toolchain)."
+
+[[dep]]
+name = "podman"
+tier = "dev"
+purpose = "container fixtures for the suites that need a whole machine"
+version_min = ""
+version_probe = "podman --version"
+absent = "every suite that builds a container fixture cannot run; testenv.sh and the suites that use it fail rather than skip."
+
+[[dep]]
+name = "inotifywait"
+tier = "operator"
+purpose = "delivering mail the moment it arrives (inotify-tools); without it mail waits for the next session start"
+version_min = ""
+version_probe = "inotifywait --version"
+absent = "no mail is delivered to registered readers mid-session — escalations and verdict replies wait for the next session start."
+
+[[dep]]
+name = "aerc"
+tier = "operator"
+purpose = "the operator's mail client for reading and answering; any Maildir client works"
+version_min = ""
+version_probe = "aerc --version"
+
+[[dep]]
+name = "hunk"
+tier = "operator"
+purpose = "the review pane: designs and diffs are read and commented on in hunk (npm hunkdiff, needs node)"
+version_min = ""
+version_probe = "hunk --version"
+
+[[dep]]
+name = "go"
+tier = "operator"
+purpose = "building the pinned bd from source when no prebuilt exists for this platform; without it a bd mismatch cannot be recovered locally"
+version_min = ""
+version_probe = "go version"
