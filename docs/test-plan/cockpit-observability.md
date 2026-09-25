@@ -1,5 +1,7 @@
 # Test plan — Cockpit telemetry and operator views (`cockpit-observability`)
 
+> **2026-09-25: `test-snap-stale-threshold.sh` deleted** (law-a-test-that-flips-is-deleted): same tree green in round 6, red twice after. The watchtower/doctor snapshot-staleness threshold has no coverage until a deterministic test replaces it.
+
 Part of [[test-plan-2026-09-23]], section 5. Area id `cockpit-observability`; use-case ids are `UC-cockpit-observability-NN`.
 
 **Scope:** 67 primary records: 59 bash suites, 7 Rust test sources, and 1 dead fixture. There is 1 secondary suite, `test-statute-projection.sh`.
