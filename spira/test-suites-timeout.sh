@@ -140,6 +140,10 @@ cap_of() { cat "$CAP/$(printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_')" 2>/dev/null
 # assignment to a shell function for the duration of that one call, same as a builtin).
 BUDGET=20; PERSUITE=1; STALE=3600; PRIO=4
 
+# RUNNER_VARS pinned to a name nothing sets: otherwise the confirming-run/env-mismatch
+# machinery (matching against the real default SPIRA_HOME/SPIRA_DB, which this fixture must
+# set) fires on any generic red and reruns it outside this harness's own kill/sweep logic,
+# reporting a coincidental env difference instead of the property under test.
 sut() {
     local cmd="$1"; shift
     env -i PATH="$PATH" HOME="$TMP/home" \
@@ -151,6 +155,7 @@ sut() {
         SPIRA_SUITES_STALE="$STALE" SPIRA_SUITES_PRIORITY="$PRIO" \
         SPIRA_INCIDENT="$SH/incident-stub.sh" SPIRA_TEST_CAP_DIR="$CAP" \
         SPIRA_SUITES_INLINE=1 SPIRA_SUITES_SKIP_TESTDB=1 \
+        SPIRA_SUITES_RUNNER_VARS="SPIRA_TEST_UNSET_$$" \
         "$@" bash "$SH/suites.sh" "$cmd" 2>&1
 }
 plant() { cat > "$SH/$1"; chmod +x "$SH/$1"; }
