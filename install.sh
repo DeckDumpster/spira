@@ -701,16 +701,25 @@ unset _linger_user _cur_linger _linger_stamp
 
 # ---------------------------------------------------------------------------
 # PHASE 5 — HOOKS
-# Git hooks armed unconditionally (idempotent); session hook skipped under
-# --ephemeral / --no-session-hook.
+# Git hooks armed unconditionally (idempotent) in a git checkout; session hook
+# skipped under --ephemeral / --no-session-hook.
+#
+# A release tarball unpacks with no .git — there is no commit path to guard,
+# so exclude.sh (which requires a git repo, sp-nakod) has nothing to arm here.
+# Skipped, not failed: this is the install-side sibling of the doctor-side
+# check GitHub #315 / sp-bwaxb removed for the same reason.
 # ---------------------------------------------------------------------------
 phase_start "phase 5: hooks"
 
-if [ "$_dry" = 1 ]; then
-    phase_info "would run: spira/exclude.sh install $SPIRA_REPO"
+if [ -d "$SPIRA_REPO/.git" ] || [ -f "$SPIRA_REPO/.git" ]; then
+    if [ "$_dry" = 1 ]; then
+        phase_info "would run: spira/exclude.sh install $SPIRA_REPO"
+    else
+        "$SPIRA_HOME/exclude.sh" install "$SPIRA_REPO" 2>&1 | sed 's/^/  /' \
+            || _phase_fail "hooks" "exclude.sh install failed — core.hooksPath not set"
+    fi
 else
-    "$SPIRA_HOME/exclude.sh" install "$SPIRA_REPO" 2>&1 | sed 's/^/  /' \
-        || _phase_fail "hooks" "exclude.sh install failed — core.hooksPath not set"
+    phase_skip "no git checkout at $SPIRA_REPO — no commit hooks to arm"
 fi
 
 if [ "$_ephemeral" = 1 ] || [ "$_no_hook" = 1 ]; then
