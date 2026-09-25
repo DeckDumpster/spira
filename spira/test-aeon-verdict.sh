@@ -9,17 +9,20 @@
 #
 # THE DEFECT THIS REPRODUCES (sp-qsona). Only the queue closes a work bead, when its batch
 # lands — bead_close_on_land (lib.sh) is the one place that happens, called from the
-# landing pass once a commit is actually on the base. An aeon's own close of a work bead is
-# therefore never trusted at face value, regardless of whether it committed, or labelled
-# delivers:TYPE: it is converted back to open with SPIRA_SUBMITTED_LABEL, and the landing
-# pass closes it for real when (and if) the work lands. The one exemption is a bead retired
-# with `bd supersede`: such a bead will NEVER have a commit naming it — its work was
-# carried onto the successor's branch — so converting it to submitted would make a
-# permanent zombie nothing ever lands to close.
+# landing pass once a commit is actually on the base. An aeon's own close of a work bead
+# that is headed for that pipeline is therefore never trusted at face value, committed or
+# not: it is converted back to open with SPIRA_SUBMITTED_LABEL, and the landing pass closes
+# it for real when (and if) the work lands. TWO EXEMPTIONS leave the close standing instead:
+#   - `bd supersede`: such a bead will NEVER have a commit naming it — its work was carried
+#     onto the successor's branch — so converting it would make a permanent zombie.
+#   - a delivers:TYPE label: groom-trigger.sh, maechen-trigger.sh and incident.sh file
+#     task/bug beads that close on a note, an action, or child beads — never a commit,
+#     never a repo:, never a queue claim. The legacy commit-or-delivers audit (sp-dvlq)
+#     still judges these, exactly as before this bead.
 #
-# EVERY CASE IS A PAIR (law-absence-needs-a-positive-control). The exemption is only
-# meaningful if the check it exempts is shown to fire: the superseded bead is asserted to
-# survive beside an identical one that is NOT superseded and is converted.
+# EVERY CASE IS A PAIR (law-absence-needs-a-positive-control). Each exemption is only
+# meaningful if the check it exempts is shown to fire: a superseded or delivers:-labelled
+# bead is asserted to survive beside an identical one that carries neither and is converted.
 #
 # Driven through the REAL aeon.sh against a real bd on a throwaway fixture, with a shim
 # standing in for the model, because what is under test is a query's shape and a branch's
@@ -139,7 +142,7 @@ echo "closed WITH a commit naming the bead — converted to submitted anyway; on
 testdb_reset; seed sp-vd-1; shim 1 close; run_aeon
 is   "the bead is converted back to open"  open "$(field sp-vd-1 status)"
 want "carrying the submitted label"        "spira-submitted" "$(field sp-vd-1 labels)"
-want "and the verdict says so"              "closed a work bead directly — converted to submitted" "$(cat "$TMP/out")"
+want "and the verdict says so"              "converted to submitted" "$(cat "$TMP/out")"
 
 echo
 echo "closed with NOTHING committed — same conversion; commit status no longer decides the outcome:"
@@ -163,31 +166,38 @@ nowant "so no submitted label is added"      "spira-submitted" "$(field sp-vd-3 
 
 # ======================================================================================
 echo
-echo "delivers:beads with child beads — CONVERTED anyway; delivers: no longer exempts a work bead (sp-qsona):"
+echo "delivers:beads with child beads — left closed; delivers: exempts a work bead from the submitted pipeline (sp-qsona):"
 # ======================================================================================
-# THE MECHANISM THIS TESTS. delivers:TYPE used to be the typed-and-verified way for a
-# work bead to close without a commit (a diagnosis that files child beads instead of
-# landing code). Only the queue closes a work bead now — supersede is the sole exemption
-# — so a work bead's delivers: labels no longer change the outcome, evidence or not.
+# THE MECHANISM THIS TESTS. delivers:TYPE is the typed-and-verified way for a work bead
+# to close without a commit — a diagnosis that files child beads instead of landing code,
+# same shape as groom-trigger.sh's own trigger beads. Such a bead never carries a repo: or
+# a branch the queue could ever land, so the submitted conversion excludes it and the
+# legacy commit-or-delivers audit (sp-dvlq, below) judges the close instead — unchanged
+# from before this bead.
 testdb_reset; seed sp-vd-db; shim 0 delivers-beads:close; run_aeon
-is   "the bead is converted back to open despite delivers:beads" open "$(field sp-vd-db status)"
-want "carrying the submitted label"                               "spira-submitted" "$(field sp-vd-db labels)"
+is     "the bead stays closed"             closed "$(field sp-vd-db status)"
+want   "the verdict records the exemption" "delivers" "$(cat "$TMP/out")"
+nowant "so nothing is reopened"            "REOPENED" "$(cat "$TMP/out")"
+nowant "and no submitted label is added"   "spira-submitted" "$(field sp-vd-db labels)"
 
 # ======================================================================================
 echo
-echo "delivers:beads WITHOUT child beads — same conversion; evidence was never the question:"
+echo "delivers:beads WITHOUT child beads — IS reopened by the legacy audit; evidence missing:"
 # ======================================================================================
 testdb_reset; seed sp-vd-dbe; shim 0 delivers-beads-empty:close; run_aeon
-is   "the bead is converted back to open" open "$(field sp-vd-dbe status)"
-want "carrying the submitted label"       "spira-submitted" "$(field sp-vd-dbe labels)"
+is   "the bead is reopened"                    open "$(field sp-vd-dbe status)"
+want "the verdict names the missing evidence"  "REOPENED — delivers not verified" "$(cat "$TMP/out")"
+nowant "not the submitted conversion"          "spira-submitted" "$(field sp-vd-dbe labels)"
 
 # ======================================================================================
 echo
-echo "delivers:action — same conversion; a work bead's own close is never trusted at face value:"
+echo "delivers:action — left closed; close reason carries the evidence (sp-vkozc):"
 # ======================================================================================
 testdb_reset; seed sp-vd-da; shim 0 delivers-action:close; run_aeon
-is   "the bead is converted back to open" open "$(field sp-vd-da status)"
-want "carrying the submitted label"       "spira-submitted" "$(field sp-vd-da labels)"
+is     "the bead stays closed"              closed "$(field sp-vd-da status)"
+want   "the verdict records the acceptance" "delivers" "$(cat "$TMP/out")"
+nowant "so nothing is reopened"             "REOPENED"     "$(cat "$TMP/out")"
+nowant "and no submitted label is added"    "spira-submitted" "$(field sp-vd-da labels)"
 
 # ======================================================================================
 echo

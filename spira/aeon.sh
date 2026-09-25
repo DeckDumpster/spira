@@ -1115,16 +1115,19 @@ print("%s\t%s\t%s" % (d[0].get("issue_type") or "", sup, deliv))' 2>/dev/null)" 
     rm -f "$PIDFILE" "${PIDFILE%.pid}.name"
     rm -rf "${SPIRA_MAIL:-}/aeon-${BEAD_ID:-}" 2>/dev/null || true
     ledger_done "${SESSION_RC:-$rc}" "${st:-?}"
-    # A CLOSED BEAD IS A SUCCEEDED TASK. SESSION_RC is the claude CLI's exit code, held
-    # separately because `rc=$?` at trap time reflects the verdict block's LAST COMMAND —
-    # which may be a `bdq note` or `git` that returned non-zero for cosmetic reasons —
-    # not the session's verdict. A named unit (spira-ops, spira-qa) left in FAILED state
-    # because of a stray command exit code shows up in every `systemctl --state=failed`
-    # check and drowns genuine failures (law-alerts-must-be-actionable).
-    # Exit 0 when the bead is closed: the work succeeded.
+    # A CLOSED BEAD IS A SUCCEEDED TASK, AND SO IS A SUBMITTED ONE. SESSION_RC is the
+    # claude CLI's exit code, held separately because `rc=$?` at trap time reflects the
+    # verdict block's LAST COMMAND — which may be a `bdq note` or `git` that returned
+    # non-zero for cosmetic reasons — not the session's verdict. A named unit (spira-ops,
+    # spira-qa) left in FAILED state because of a stray command exit code shows up in
+    # every `systemctl --state=failed` check and drowns genuine failures
+    # (law-alerts-must-be-actionable). st=submitted is set above when a work bead's close
+    # was converted to the submitted pipeline instead of left closed — the work still
+    # succeeded, only the bead's own status differs now.
+    # Exit 0 when the bead is closed or submitted: the work succeeded.
     # Exit SESSION_RC otherwise: a session that ran and did not close the bead is a
     # genuine failure, and SESSION_RC carries the claude CLI's actual exit code.
-    [ "${st:-}" = "closed" ] && exit 0
+    { [ "${st:-}" = "closed" ] || [ "${st:-}" = "submitted" ]; } && exit 0
     exit "${SESSION_RC:-$rc}"
 }
 # WHY THE HARNESS ITSELF PUT THIS BEAD BACK, if it did. Set by the verdict block at the foot
