@@ -11,6 +11,8 @@
 #   ahead    counted against spira_landref, never a hardcoded branch name
 #   EMPTY    only when ahead == 0; only empties are offered for bulk removal
 #   ORPHAN   branch whose bead no longer exists — more dangerous to drop, not less
+#   UNKNOWN  the bead store could not be read at all — never downgraded to ORPHAN,
+#            since "gone" and "unreachable" call for opposite actions; exits non-zero
 #   NO REMOTE  printed unconditionally first; changes every other judgement on the page
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -56,12 +58,14 @@ _hold_repos() {
     done
 }
 
-# Bead status string, or "(none)" when the bead does not exist in the store.
+# Bead status string: "(none)" when bd ran and found no such bead, "(unknown)" when
+# bd's output could not even be parsed as JSON — the store itself was unreadable, which
+# must never be read as "(none)" (ORPHAN is for a bead that is confirmed gone).
 _bead_status() {
     bdjson show "$1" 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
-except Exception: print("(none)"); sys.exit()
+except Exception: print("(unknown)"); sys.exit()
 d = d if isinstance(d, list) else [d]
 s = d[0].get("status", "") if d else ""
 print(s.upper() if s else "(none)")' 2>/dev/null
@@ -72,7 +76,8 @@ _behind() { git -C "$1" rev-list --count "$2..${3}"  2>/dev/null || printf '?'; 
 
 # _collect <repo-name> — populate branch arrays and summary counts from a hold-mode repo.
 # Writes: BRANCHES BEAD_IDS STATES AHEAD_COUNTS BEHIND_COUNTS WORKTREES VERDICTS
-#         _repo_path _base_ref _has_remote total_commits empty_count orphan_count held_count
+#         _repo_path _base_ref _has_remote total_commits empty_count orphan_count
+#         unknown_count held_count
 _collect() {
     local name="$1"
     _repo_path="$(repo_root "$name" 2>/dev/null)" \
@@ -83,7 +88,7 @@ _collect() {
 
     BRANCHES=(); BEAD_IDS=(); STATES=(); AHEAD_COUNTS=(); BEHIND_COUNTS=()
     WORKTREES=(); VERDICTS=()
-    total_commits=0; empty_count=0; orphan_count=0
+    total_commits=0; empty_count=0; orphan_count=0; unknown_count=0
 
     local branch bead_id ahead behind bead_state wt wt_display verdict
     while IFS= read -r branch; do
@@ -95,7 +100,10 @@ _collect() {
         wt="$(worktree_of "$branch" "$_repo_path" 2>/dev/null)"
         wt_display="${wt:+live}"; wt_display="${wt_display:--}"
 
-        if [ "$bead_state" = "(none)" ]; then
+        if [ "$bead_state" = "(unknown)" ]; then
+            verdict="UNKNOWN — bd unreadable"
+            unknown_count=$(( unknown_count + 1 ))
+        elif [ "$bead_state" = "(none)" ]; then
             verdict="ORPHAN — bead is gone"
             orphan_count=$(( orphan_count + 1 ))
         elif [ "${ahead:-0}" -eq 0 ] 2>/dev/null; then
@@ -116,7 +124,7 @@ _collect() {
     done < <(git -C "$_repo_path" for-each-ref \
         --format='%(refname:short)' 'refs/heads/spira/' 2>/dev/null | sort)
 
-    held_count=$(( ${#BRANCHES[@]} - empty_count - orphan_count ))
+    held_count=$(( ${#BRANCHES[@]} - empty_count - orphan_count - unknown_count ))
 }
 
 _print_table() {
@@ -154,6 +162,8 @@ _print_table() {
         "$total_commits" "$([ "$total_commits" -eq 1 ] || printf 's')"
     [ "$empty_count" -gt 0 ]  && printf '  %d empty.\n'  "$empty_count"
     [ "$orphan_count" -gt 0 ] && printf '  %d orphan.\n' "$orphan_count"
+    [ "$unknown_count" -gt 0 ] && \
+        printf '  %d unknown — bd could not be read; verdict withheld.\n' "$unknown_count"
 
     if [ "$held_count" -gt 0 ] || [ "$orphan_count" -gt 0 ]; then
         printf '\n'
@@ -164,31 +174,35 @@ _print_table() {
 
 # ---- TABLE MODE -----------------------------------------------------------------------
 if [ "$MODE" = table ]; then
-    first=1
+    first=1; any_unknown=0
     while IFS= read -r repo_name; do
         BRANCHES=(); BEAD_IDS=(); STATES=(); AHEAD_COUNTS=(); BEHIND_COUNTS=()
         WORKTREES=(); VERDICTS=()
         _repo_path=""; _base_ref=""; _has_remote=""; total_commits=0
-        empty_count=0; orphan_count=0; held_count=0
+        empty_count=0; orphan_count=0; unknown_count=0; held_count=0
 
         _collect "$repo_name" || continue
         [ "$first" -eq 1 ] || printf '\n'
         first=0
         _print_table "$repo_name"
+        [ "$unknown_count" -gt 0 ] && any_unknown=1
     done < <(_hold_repos)
-    exit 0
+    [ "$any_unknown" -eq 0 ]
+    exit $?
 fi
 
 # ---- SUMMARY MODE ---------------------------------------------------------------------
 if [ "$MODE" = summary ]; then
+    any_unknown=0
     while IFS= read -r repo_name; do
         BRANCHES=(); BEAD_IDS=(); STATES=(); AHEAD_COUNTS=(); BEHIND_COUNTS=()
         WORKTREES=(); VERDICTS=()
         _repo_path=""; _base_ref=""; _has_remote=""; total_commits=0
-        empty_count=0; orphan_count=0; held_count=0
+        empty_count=0; orphan_count=0; unknown_count=0; held_count=0
 
         _collect "$repo_name" 2>/dev/null || continue
         [ "${#BRANCHES[@]}" -eq 0 ] && continue
+        [ "$unknown_count" -gt 0 ] && any_unknown=1
 
         s="HOLD   ${repo_name}"
         [ -z "$_has_remote" ] && s="$s · no remote"
@@ -196,9 +210,11 @@ if [ "$MODE" = summary ]; then
             s="$s · $held_count branch$([ "$held_count" -eq 1 ] || printf 'es') · $total_commits commit$([ "$total_commits" -eq 1 ] || printf 's') awaiting you"
         [ "$empty_count" -gt 0 ]  && s="$s · $empty_count empty"
         [ "$orphan_count" -gt 0 ] && s="$s · $orphan_count orphan"
+        [ "$unknown_count" -gt 0 ] && s="$s · $unknown_count unknown — bd unreadable"
         printf '%s\n' "$s"
     done < <(_hold_repos)
-    exit 0
+    [ "$any_unknown" -eq 0 ]
+    exit $?
 fi
 
 # ---- DROP-EMPTY MODE ------------------------------------------------------------------
@@ -208,7 +224,7 @@ if [ "$MODE" = drop-empty ]; then
         BRANCHES=(); BEAD_IDS=(); STATES=(); AHEAD_COUNTS=(); BEHIND_COUNTS=()
         WORKTREES=(); VERDICTS=()
         _repo_path=""; _base_ref=""; _has_remote=""; total_commits=0
-        empty_count=0; orphan_count=0; held_count=0
+        empty_count=0; orphan_count=0; unknown_count=0; held_count=0
 
         _collect "$repo_name" || continue
         [ "$empty_count" -eq 0 ] && continue
@@ -245,7 +261,7 @@ if [ "$MODE" = merge ]; then
         BRANCHES=(); BEAD_IDS=(); STATES=(); AHEAD_COUNTS=(); BEHIND_COUNTS=()
         WORKTREES=(); VERDICTS=()
         _repo_path=""; _base_ref=""; _has_remote=""; total_commits=0
-        empty_count=0; orphan_count=0; held_count=0
+        empty_count=0; orphan_count=0; unknown_count=0; held_count=0
 
         _collect "$repo_name" 2>/dev/null || continue
         for i in "${!BRANCHES[@]}"; do
