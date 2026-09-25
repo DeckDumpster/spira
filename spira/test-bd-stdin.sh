@@ -1,125 +1,143 @@
 #!/usr/bin/env bash
 #
-# test-bd-stdin.sh — bd note and bd create must use --stdin / --body-file for prose on stdin.
+# test-bd-stdin.sh — the fence that refuses a bare "-" body on bd note / bd create (UC-05).
 #
-# WHAT THIS SUITE IS GUARDING
-# ----------------------------
-# `bd note <id> - <<'EOF'` records the literal "-" and discards the heredoc body:
-# bd note takes prose as positional arguments, so "-" is stored verbatim and exits 0.
-# Likewise `bd create ... -d - <<'EOF'` — -d/--description is a plain string flag.
+#   ./test-bd-stdin.sh
 #
-# The correct forms:
-#   bd note  <id>    --stdin       <<'EOF'
-#   bd create <title> --body-file - <<'EOF'
+# WHAT THIS SUITE IS FOR
+# ----------------------
+# bd-stdin-lint.sh refuses a bare-dash body: `bd note <id> - <<EOF` and
+# `bd create ... -d - <<EOF` store the literal "-" and discard the heredoc that follows —
+# six beads shipped with a dash where their body or notes should be (sp-j5z3). The check
+# used to live inside this suite as two separate grep -r passes over spira/ and chamber/
+# (one per pattern); it is now the fence gate-spira.sh runs directly, in one pass, and this
+# suite is its positive control (UC-dispatch-05, T0).
 #
-# This defect produced six beads with a dash where their body or notes should be (sp-j5z3).
-#
-# THE POSITIVE CONTROL IS FIRST. We plant a synthetic file containing the bad pattern and
-# confirm the check catches it. Only after that do we run the check over the real sources.
-# A check that finds nothing is indistinguishable from one pointed at the wrong place.
+# THE POSITIVE CONTROL IS FIRST. A fence that reports a clean tree is indistinguishable
+# from one whose matcher never fires — a bad pattern is planted in a scratch repository,
+# the fence is required to name its file and line, the plant is withdrawn, and only then is
+# the shipped tree's silence evidence of anything (law-absence-needs-a-positive-control).
 #
 # defect: sp-j5z3
-# covers: spira/chamber/archivist.md spira/chamber/builder.md spira/chamber/spike.md
-# covers: spira/chamber/ops.md spira/*.sh
+# tier: T0
+# covers: spira/bd-stdin-lint.sh spira/gate-spira.sh UC-dispatch-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want(){ case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in [$3]"; esac; }
-
-echo "test-bd-stdin.sh"
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-# --------------------------------------------------------------------------
-# Helpers: scan a file or directory for the two bad patterns.
-# Returns lines matching the pattern, empty string if none found.
-# --------------------------------------------------------------------------
-
-# Bad pattern 1: `bd note <id> - <<`  (bare dash as body, heredoc discarded).
-# Skips comment lines (leading #) so documentation in this file does not self-report.
-scan_note_dash() {
-    grep -rnE 'bd[[:space:]].*note[[:space:]].*[[:space:]]-[[:space:]]<<' "$@" 2>/dev/null \
-        | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' || true
+lint() { env -i PATH="$PATH" HOME="$TMP" TERM=dumb bash "$HERE/bd-stdin-lint.sh" "$@" 2>&1; }
+lint_at() {
+    local root="$1"; shift
+    env -i PATH="$PATH" HOME="$TMP" TERM=dumb bash "$root/spira/bd-stdin-lint.sh" "$@" 2>&1
 }
 
-# Bad pattern 2: `bd create ... -d - ` or `bd create ... --description -`.
-# Same comment-line exclusion.
-scan_create_dash() {
-    grep -rnE 'bd[[:space:]].*create[[:space:]].*(-d[[:space:]]+-|-d-|--description[[:space:]]+-)[[:space:]]*(<|$|[^-])' "$@" 2>/dev/null \
-        | grep -v '^[^:]*:[0-9]*:[[:space:]]*#' || true
-}
+# ---------------------------------------------------------------------------------------
+# THE POSITIVE CONTROL — a whole scratch repository, because the walker's job is finding
+# the files, and one combined pass over both patterns is what replaced the double scan.
+# ---------------------------------------------------------------------------------------
+ROOT="$TMP/root"; mkdir -p "$ROOT/spira" "$ROOT/chamber"
+cp "$HERE/bd-stdin-lint.sh" "$ROOT/spira/bd-stdin-lint.sh"
+git init -q -b main "$ROOT"
+git -C "$ROOT" config user.email t@t; git -C "$ROOT" config user.name t
 
-# ==========================================================================
-echo
-echo "positive control — the scanner detects the bad patterns in synthetic files:"
-# ==========================================================================
+out="$(lint_at "$ROOT")"; rc=$?
+is   "no files tracked refuses to report clean" "3" "$rc"
+want "and says why"                              "refusing to report clean" "$out"
 
-# Plant bad note pattern.
-BAD_NOTE="$TMP/bad-note.sh"
-cat > "$BAD_NOTE" <<'EOF'
-#!/usr/bin/env bash
-bd -C /db note sp-abc - <<'NOTE'
-some text
-NOTE
-EOF
+# Plant both bad shapes, in spira/ and chamber/, so the walker proves it covers both trees.
+printf '#!/usr/bin/env bash\nbd -C /db note sp-abc - <<%sNOTE%s\nsome text\nNOTE\n' "'" "'" > "$ROOT/spira/planted.sh"
+printf 'bd -C {{DB}} create "title" -d - -l plan <<%sBODY%s\nprose here\nBODY\n' "'" "'" > "$ROOT/chamber/planted.md"
+git -C "$ROOT" add .
+git -C "$ROOT" commit -q -m init
 
-# Plant bad create pattern.
-BAD_CREATE="$TMP/bad-create.md"
-cat > "$BAD_CREATE" <<'EOF'
-bd -C {{DB}} create "title" -d - -l plan <<'BODY'
-prose here
-BODY
-EOF
+out="$(lint_at "$ROOT")"; rc=$?
+is   "SEEN RED: a bare-dash note is refused"      "1"                          "$rc"
+want "and it names the spira/ file and line"      "spira/planted.sh:2"        "$out"
+want "and it names the chamber/ file and line"    "chamber/planted.md:1"      "$out"
+want "and it names the escape hatch"              "--stdin"                   "$out"
 
-# Plant a clean file that uses --stdin / --body-file correctly.
-CLEAN="$TMP/clean.sh"
-cat > "$CLEAN" <<'EOF'
-#!/usr/bin/env bash
+# ---------------------------------------------------------------------------------------
+# THE CORRECT FORMS ARE SILENT, even sitting right next to the plants.
+# ---------------------------------------------------------------------------------------
+cat >> "$ROOT/spira/planted.sh" <<'EOF'
 bd -C /db note sp-abc --stdin <<'NOTE'
-some text
+clean
 NOTE
 bd -C /db create "title" --body-file - -l plan <<'BODY'
-prose here
+clean
 BODY
 EOF
+git -C "$ROOT" add .
+git -C "$ROOT" commit -q -m "add clean usage beside the plants"
 
-hit_note="$(scan_note_dash "$BAD_NOTE")"
-[ -n "$hit_note" ] && ok "scanner catches bare-dash note in synthetic file" \
-    || bad "scanner catches bare-dash note in synthetic file" "no match returned"
+out="$(lint_at "$ROOT")"
+want   "the plants are still reported"   "spira/planted.sh:2" "$out"
+nowant "the --stdin form is not flagged" "note sp-abc --stdin" "$out"
+nowant "the --body-file form is not flagged" "body-file - -l plan" "$out"
 
-hit_create="$(scan_create_dash "$BAD_CREATE")"
-[ -n "$hit_create" ] && ok "scanner catches bare-dash create in synthetic file" \
-    || bad "scanner catches bare-dash create in synthetic file" "no match returned"
+# A commented-out example (documentation showing the bad shape) is not a live invocation.
+printf '# bd -C /db note sp-abc - <<EOF\n' > "$ROOT/spira/doc.sh"
+git -C "$ROOT" add .
+git -C "$ROOT" commit -q -m "add commented-out example"
+out="$(lint_at "$ROOT")"
+nowant "a commented-out example is not flagged" "spira/doc.sh" "$out"
 
-# Confirm the scanner is silent on clean usage — a scanner that fires on --stdin is broken.
-clean_note="$(scan_note_dash "$CLEAN")"
-[ -z "$clean_note" ] && ok "scanner is silent on --stdin usage" \
-    || bad "scanner is silent on --stdin usage" "false positive: $clean_note"
+# Withdrawn, and only now is a green reading evidence of anything.
+git -C "$ROOT" rm -q spira/planted.sh chamber/planted.md
+git -C "$ROOT" commit -q -m clean
 
-clean_create="$(scan_create_dash "$CLEAN")"
-[ -z "$clean_create" ] && ok "scanner is silent on --body-file usage" \
-    || bad "scanner is silent on --body-file usage" "false positive: $clean_create"
+out="$(lint_at "$ROOT")"; rc=$?
+is   "GREEN AFTER: the same tree without the plants passes" "0" "$rc"
+want "and reports how many files it checked"                "clean" "$out"
 
-# ==========================================================================
-echo
-echo "real sources — no bare-dash bd note or bd create in chamber or scripts:"
-# ==========================================================================
+# ---------------------------------------------------------------------------------------
+# THE SHIPPED TREE. Read through the control above, this now means something.
+# ---------------------------------------------------------------------------------------
+# In the gate container the worktree's .git FILE resolves to the host, which is not
+# bind-mounted inside the container: git exits non-zero and bd-stdin-lint.sh exits 3.
+# Build a portable mirror from the real files and run lint_at against that instead — the
+# set of files is identical; only the git plumbing differs.
+out="$(lint)"; rc=$?
+if [ "$rc" = 3 ]; then
+    MIRROR="$TMP/shipped-mirror"
+    mkdir -p "$MIRROR"
+    SHIPPED="$(cd "$HERE/.." && pwd -P)"
+    cp -a "$SHIPPED/." "$MIRROR/"
+    rm -rf "$MIRROR/.git"
+    git init -q -b main "$MIRROR"
+    git -C "$MIRROR" config user.email t@t
+    git -C "$MIRROR" config user.name t
+    git -C "$MIRROR" add .
+    git -C "$MIRROR" commit -q -m mirror
+    out="$(lint_at "$MIRROR")"; rc=$?
+fi
+is   "the shipped tree passes" "0" "$rc"
+[ "$rc" = 0 ] || printf '%s\n' "$out"
 
-SOURCES=("$HERE" "$HERE/chamber")
-THIS="$(basename "$0")"   # exclude this file — it embeds the bad patterns as positive-control fixtures
+# ---------------------------------------------------------------------------------------
+# --scan: matcher, one file at a time; exit 0 either way; one pass covers both shapes.
+# ---------------------------------------------------------------------------------------
+PROBE="$TMP/probe.sh"
 
-found_note="$(scan_note_dash "${SOURCES[@]}" | grep -v "/$THIS:")"
-[ -z "$found_note" ] && ok "no bare-dash bd note in sources" \
-    || bad "no bare-dash bd note in sources" "$(printf '\n%s' "$found_note")"
+printf '#!/usr/bin/env bash\nbd -C /db note sp-abc - <<%sNOTE%s\ntext\nNOTE\n' "'" "'" > "$PROBE"
+out="$(lint --scan "$PROBE")"
+want "--scan finds the bare-dash note and reports its line" "2:" "$out"
+want "and includes the matching text"                        "note sp-abc -" "$out"
 
-found_create="$(scan_create_dash "${SOURCES[@]}" | grep -v "/$THIS:")"
-[ -z "$found_create" ] && ok "no bare-dash bd create in sources" \
-    || bad "no bare-dash bd create in sources" "$(printf '\n%s' "$found_create")"
+printf '%s\n' 'bd -C {{DB}} create "title" -d - -l plan <<BODY' > "$PROBE"
+out="$(lint --scan "$PROBE")"
+want "--scan finds the bare-dash create too, same pass" "create \"title\" -d -" "$out"
 
-# ==========================================================================
-echo
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+printf '#!/usr/bin/env bash\nbd -C /db note sp-abc --stdin <<%sNOTE%s\ntext\nNOTE\n' "'" "'" > "$PROBE"
+is   "--scan is silent on --stdin usage" "" "$(lint --scan "$PROBE")"
+
+# ---------------------------------------------------------------------------------------
+# GATE INTEGRATION. A fence nothing invokes is a file; this is the one property no amount
+# of matcher testing can establish.
+# ---------------------------------------------------------------------------------------
+want "the gate names this fence" "spira/bd-stdin-lint.sh" "$(cat "$HERE/gate-spira.sh")"
+is   "and it is executable"      "0" "$([ -x "$HERE/bd-stdin-lint.sh" ]; echo $?)"
+
+tl_summary
