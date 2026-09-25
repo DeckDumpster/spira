@@ -5191,8 +5191,32 @@ spira_destroy_branch() {
 # checkouts of the same repository are legitimately different directories, and a worktree
 # always shares its parent's object store — so the common dir is the one identity that
 # answers "is this tree part of that repository" without a guess.
+# worktree_move_aside <path> <suffix> -> move a worktree directory aside, never delete it,
+# printing the new path. rc 0 = moved, 2 = refused (both move and mv failed).
+#
+# The one mechanism every eviction in this file uses, factored out so a second caller with a
+# different reason to evict (law-one-aeon-one-worktree: a bead's own branch found at a path
+# that isn't its canonical one) reuses it rather than growing its own copy.
+#
+# `worktree move` keeps the OWNING repository's registration pointing at the tree, which a
+# prune of the wanted repository cannot do. `repair` is the same job after a plain mv, and it
+# is BEST EFFORT: once the directory has moved the eviction has happened, and reporting
+# "refused" for a failed re-registration would make the caller die over a tree already out of
+# the way.
+worktree_move_aside() {
+    local work="$1" suffix="$2" aside
+    aside="$work.${suffix:-aside}"
+    [ -e "$aside" ] && aside="$aside.$(date +%s)"
+    if ! git -C "$work" worktree move "$work" "$aside" >/dev/null 2>&1; then
+        mv "$work" "$aside" 2>/dev/null || return 2
+        git -C "$aside" worktree repair "$aside" >/dev/null 2>&1 || true
+    fi
+    printf '%s' "$aside"
+    return 0
+}
+
 worktree_evict_foreign() {
-    local work="$1" repo="$2" have want other aside
+    local work="$1" repo="$2" have want other
     [ -e "$work/.git" ] || return 1
     want="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
     [ -n "$want" ] || return 1
@@ -5206,20 +5230,7 @@ worktree_evict_foreign() {
     [ "$have" != "$want" ] || return 1
 
     other="$(basename "$(dirname "$have")")"
-    aside="$work.${other:-foreign}"
-    [ -e "$aside" ] && aside="$aside.$(date +%s)"
-    # `worktree move` keeps the OWNING repository's registration pointing at the tree, which a
-    # prune of the wanted repository cannot do — the foreign tree is registered in the foreign
-    # repo, so pruning this one leaves that one advertising a path that has gone. `repair` is
-    # the same job after a plain mv, and it is BEST EFFORT: once the directory has moved the
-    # eviction has happened, and reporting "refused" for a failed re-registration would make
-    # the caller die over a tree that is already out of the way.
-    if ! git -C "$work" worktree move "$work" "$aside" >/dev/null 2>&1; then
-        mv "$work" "$aside" 2>/dev/null || return 2
-        git -C "$aside" worktree repair "$aside" >/dev/null 2>&1 || true
-    fi
-    printf '%s' "$aside"
-    return 0
+    worktree_move_aside "$work" "${other:-foreign}"
 }
 
 # spira_prune_worktrees <repo> — `git worktree prune`, with the one case it gets wrong.

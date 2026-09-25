@@ -3,6 +3,7 @@
 # groomer.sh — graph hygiene operations for the Spira DAG.
 #
 #   groomer.sh sweep          [--dry-run]                                     apply mechanical livelock remedies
+#   groomer.sh split-piece    <original-id> [bd create args...]              file one piece of a split, on its own branch
 #   groomer.sh supersede      <id> --with <successor>                        mark a bead superseded by another
 #   groomer.sh close          <id> --evidence <text>                         close a bead whose premise is gone
 #   groomer.sh correct-lane   <id> --lane <lane>                             correct a mislabelled lane label
@@ -17,10 +18,15 @@
 #   It does NOT re-prioritise. Priority management is Ryan's or the scheduler's.
 #
 # SPLIT AND MERGE:
-#   Split and merge are compositional operations the aeon performs by calling bd
-#   create (for new pieces), supersede (for the original) and this script. They
-#   do not have their own subcommands because they are not atomic operations —
-#   they are sequences, and each step records its own evidence on the bead.
+#   Split and merge are compositional operations the aeon performs by calling
+#   split-piece (for new pieces), supersede (for the original) and this
+#   script. They do not have a single atomic subcommand because they are not
+#   one operation — they are sequences, and each step records its own
+#   evidence on the bead. split-piece exists, rather than a bare `bd create
+#   --parent`, because that call inherits every label from the parent
+#   (law-one-aeon-one-worktree: a bead's branch IS a label, so an unguarded
+#   split hands every piece the PARENT's branch, and four children of one
+#   bead resolved to one branch by construction).
 #
 # EXIT:
 #   0  success
@@ -37,7 +43,7 @@ BD_CMD="${SPIRA_BD:-bd}"
 DB="${SPIRA_DB:-.}"
 
 usage() {
-    printf 'usage: groomer.sh sweep|supersede|close|correct-lane|depends-on-fix|unwanted ...\n' >&2
+    printf 'usage: groomer.sh sweep|split-piece|supersede|close|correct-lane|depends-on-fix|unwanted ...\n' >&2
     exit 1
 }
 
@@ -146,6 +152,30 @@ except Exception: print("")
     done <<< "$_sw_ll"
 
     _sw_log "sweep complete; acted on $_sw_n bead(s)"
+    ;;
+
+  split-piece)
+    # groomer.sh split-piece <original-id> [bd create args...]
+    #
+    # `bd create --parent` inherits every label from the parent by default, and a bead's
+    # branch affinity IS a label (`branch:<name>` — bead_branch, lib.sh): sp-zs04v was split
+    # into four children this way and all four inherited branch:spira/sp-zs04v, resolving to
+    # the PARENT's branch by construction and putting three live aeon sessions in one
+    # worktree (law-one-aeon-one-worktree).
+    #
+    # bd set-state removes the previous branch: label atomically — it is a single-valued
+    # dimension, the same guarantee correct-lane above relies on — so recording the new
+    # piece's own branch right after creation is enough to undo whatever create inherited.
+    # The id (and so the branch name) is not known until create returns it, which is why
+    # this cannot be folded into a single bd call.
+    id="${1:-}"; [ $# -gt 0 ] && shift
+    [ -z "$id" ] && { printf 'groomer: split-piece: original bead id required\n' >&2; exit 1; }
+    new_id="$("$BD_CMD" -C "$DB" create --parent "$id" --silent "$@")" \
+        || { printf 'groomer: split-piece: bd create failed\n' >&2; exit 1; }
+    [ -n "$new_id" ] || { printf 'groomer: split-piece: bd create returned no id\n' >&2; exit 1; }
+    "$BD_CMD" -C "$DB" set-state "$new_id" "branch=spira/$new_id" >/dev/null \
+        || { printf 'groomer: split-piece: could not record branch on %s\n' "$new_id" >&2; exit 1; }
+    printf '%s\n' "$new_id"
     ;;
 
   supersede)
