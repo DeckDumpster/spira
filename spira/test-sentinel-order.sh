@@ -50,7 +50,7 @@ STUBS="$TMP/stubs"
 mkdir -p "$STUBS"
 ln -s "$HERE/chamber" "$STUBS/chamber"
 
-for _s in pilgrimage.sh strand.sh governor.sh reflect.sh; do
+for _s in pilgrimage.sh strand.sh reflect.sh; do
     printf '#!/bin/sh\n' > "$STUBS/$_s"; chmod +x "$STUBS/$_s"
 done
 printf '#!/bin/sh\necho inactive\n'  > "$STUBS/mock-systemctl"; chmod +x "$STUBS/mock-systemctl"

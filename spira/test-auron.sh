@@ -183,12 +183,9 @@ check "ready work, zero aeons, nothing summoned, 5+ passes" summon-starved \
 mklog 4 15 0 0 1 $(( NOW - 60 )) > "$TMP/starved4.log"
 check "four starved passes is not yet sustained" - "$(obs "$TMP/starved4.log")"
 
-# The two deliberate withholds. Neither is a stall: one is the governor deciding this
-# machine cannot afford an aeon, the other is the account's own five-hour window. A
-# watchdog that alerts through a decision the harness made on purpose is pure noise.
-mklog 6 15 0 0 1 $(( NOW - 60 )) "CHECK7 builder: 15 ready, withheld by the governor — no headroom" \
-    > "$TMP/gov.log"
-check "the governor withholding is not starvation" - "$(obs "$TMP/gov.log")"
+# The deliberate withhold. It is not a stall: it is the account's own five-hour window
+# declining. A watchdog that alerts through a decision the harness made on purpose is pure
+# noise.
 mklog 6 15 0 0 1 $(( NOW - 60 )) "CHECK7 builder: the account is out of capacity for another 900s — not summoning" \
     > "$TMP/cap.log"
 check "an exhausted account is not starvation" - "$(obs "$TMP/cap.log")"

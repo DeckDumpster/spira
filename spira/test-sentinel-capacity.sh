@@ -63,7 +63,7 @@ GOAL_DB="$SPIRA_DB"
 STUBS="$TMP/stubs"
 mkdir -p "$STUBS/chamber"     # empty chamber → no fayths from filesystem
 
-for _name in pilgrimage.sh strand.sh sending.sh governor.sh reflect.sh; do
+for _name in pilgrimage.sh strand.sh sending.sh reflect.sh; do
     printf '#!/bin/sh\n# hermetic-ok: stub for test-sentinel-capacity\n' \
         > "$STUBS/$_name"
     chmod +x "$STUBS/$_name"
