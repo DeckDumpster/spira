@@ -1031,12 +1031,17 @@ sys.exit(0 if os.environ.get("SPIRA_SUBMITTED_LABEL", "spira-submitted") in labe
             log "$FAYTH: $BEAD_ID never judged ($cause) — no attempt charged"
         fi
         release_own_claim "$BEAD_ID"
-    elif bead_is_work_type "$(bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
+    elif read -r _wct_type _wct_sup _wct_delivers <<< "$(bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
+except Exception: print("\t0\t0"); sys.exit()
 d = d if isinstance(d, list) else [d]
-print((d[0].get("issue_type") or "") if d else "")' 2>/dev/null)"; then
+if not d: print("\t0\t0"); sys.exit()
+sup = 1 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
+               for x in (d[0].get("dependencies") or [])) else 0
+deliv = 1 if any(l.startswith("delivers:") for l in (d[0].get("labels") or [])) else 0
+print("%s\t%s\t%s" % (d[0].get("issue_type") or "", sup, deliv))' 2>/dev/null)" \
+           && bead_is_work_type "${_wct_type:-}" && [ "${_wct_delivers:-0}" != 1 ]; then
         # A WORK BEAD DOES NOT CLOSE HERE. bead_close_on_land (lib.sh) is the only place
         # one closes for a landed reason, called once its commit is actually on the base —
         # so a close reaching this point was the builder's own hand and is converted back
@@ -1046,19 +1051,18 @@ print((d[0].get("issue_type") or "") if d else "")' 2>/dev/null)"; then
         # teardown, which runs on every exit path and undoes the close before anything
         # downstream can read it as a verdict about the work.
         #
-        # EXCEPT SUPERSEDED. A superseded bead's work was carried onto the successor's
-        # branch and lands under the successor's id — it will never have a commit of its
-        # own, so converting it to submitted would make a permanent zombie: open, labelled
-        # submitted, and nothing ever lands to close it. Leave the close standing, same as
-        # CHECK 5's own exemption (sentinel.sh).
-        if bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(1)
-d = d if isinstance(d, list) else [d]
-if not d: sys.exit(1)
-sup = any((x.get("dependency_type") or x.get("type")) == "supersedes" for x in (d[0].get("dependencies") or []))
-sys.exit(0 if sup else 1)' 2>/dev/null; then
+        # NEITHER SUPERSEDED NOR CARRYING A delivers: LABEL reaches this branch at all — the
+        # elif condition above already excludes delivers:, and the check below excludes
+        # supersede. A superseded bead's work was carried onto the successor's branch and
+        # lands under the successor's id — it will never have a commit of its own, so
+        # converting it to submitted would make a permanent zombie: open, labelled
+        # submitted, and nothing ever lands to close it. delivers:TYPE is the same shape for
+        # a different reason: groom-trigger.sh, maechen-trigger.sh and incident.sh all file
+        # task/bug beads that close on a note, an action taken, or child beads filed — never
+        # a commit, never a repo: label, never a queue claim. Forcing those through the
+        # submitted/landed pipeline would zombie every one of them; the legacy
+        # commit-or-delivers audit below (sp-dvlq) still judges them, unchanged.
+        if [ "${_wct_sup:-0}" = 1 ]; then
             log "$FAYTH: $BEAD_ID closed a superseded work bead — not converted, close stands"
         else
             # THE GATE'S OWN VERDICT IS STILL WORTH NAMING, even though the outcome (convert
@@ -2224,15 +2228,22 @@ if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ "$superseded" != 1 ]; t
     unset _evict_ls _evict_state _evict_tip _evict_at _evict_reason _is_eviction _er
 fi
 
-# WORK TYPES SKIP THIS DECISION ENTIRELY. A work bead's close is never trusted at face
-# value any more, commit or delivers: evidence or not — cleanup()'s own teardown (the
+# A WORK TYPE WITH NO delivers: LABEL SKIPS THIS DECISION ENTIRELY. Such a bead's close is
+# never trusted at face value any more, committed or not — cleanup()'s own teardown (the
 # EXIT trap, which runs after this) converts it back to open with SPIRA_SUBMITTED_LABEL
 # unconditionally, superseded excepted. Reopening it here first, on the old evidence-based
 # reading, would race that conversion with a stale "closed-without-commit" note and leave
 # the bead open WITHOUT the submitted label — invisible to bead_close_on_land and to
 # CHECK 5's LANDED invariant alike.
+#
+# A delivers: LABEL EXEMPTS EVEN A WORK-TYPE BEAD FROM THAT SKIP. groom-trigger.sh,
+# maechen-trigger.sh and incident.sh file task/bug beads that declare delivers:note,
+# delivers:action or delivers:beads and close without ever cutting a branch — no repo:
+# label, no queue claim, nothing bead_close_on_land will ever see land. Cleanup()'s
+# conversion excludes them too (same delivers: check); this legacy audit is the only thing
+# that ever judges their close, exactly as before this bead.
 if [ "$st" = "closed" ] && [ "$committed" = "no" ] && [ "$superseded" != 1 ] \
-       && ! bead_is_work_type "${_vd_issue_type:-}"; then
+       && { [ -n "${delivers:-}" ] || ! bead_is_work_type "${_vd_issue_type:-}"; }; then
     if [ -n "${delivers:-}" ]; then
         # VERIFY EACH DECLARED DELIVERABLE. An aeon that set delivers:TYPE labels must have
         # produced the declared evidence, or the close is on nothing and the bead is reopened.

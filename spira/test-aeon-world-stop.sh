@@ -153,7 +153,7 @@ echo "1. no world-stop label — aeon claims and works the bead normally:"
 testdb_reset; seed sp-ws-1   # no world-stop label
 run_aeon
 out="$(cat "$TMP/out")"
-is   "bead is closed"                  closed "$(field sp-ws-1 status)"
+is   "bead is converted to submitted, not left closed" open "$(field sp-ws-1 status)"
 nowant "world.sh not called"           "stop"  "$(cat "$WORLD_CALLS")"
 nowant "world-stop-fence not logged"   "world-stop-fence" "$out"
 
@@ -208,7 +208,7 @@ testdb_reset; seed sp-ws-3 "world-stop"
 run_aeon
 world_calls="$(cat "$WORLD_CALLS")"
 
-is   "bead is closed after session"    closed "$(field sp-ws-3 status)"
+is   "bead is converted to submitted, not left closed" open "$(field sp-ws-3 status)"
 want "world.sh stop was called"        "stop"  "$world_calls"
 want "world.sh start was called"       "start" "$world_calls"
 # STOP must precede START — the session ran between them.
@@ -240,7 +240,7 @@ SPIRA_WORLD_STOP_SKIP=1 "$SPIRA_HOME/aeon.sh" builder > "$TMP/out" 2>&1
 out="$(cat "$TMP/out")"
 world_calls="$(cat "$WORLD_CALLS")"
 
-is   "bead is closed despite live aeon (override)" closed "$(field sp-ws-4 status)"
+is   "bead is converted to submitted despite live aeon (override)" open "$(field sp-ws-4 status)"
 want "world.sh stop was called with override"      "stop"  "$world_calls"
 want "world.sh start was called after"             "start" "$world_calls"
 want "log notes the override"                      "SPIRA_WORLD_STOP_SKIP" "$out"

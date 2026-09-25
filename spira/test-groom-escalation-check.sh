@@ -149,8 +149,13 @@ labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }
 
 # seed a trigger bead for the scrubber/tiler lane.
 # repo:fixture matches the repo map entry so aeon.sh resolves the workspace.
+# delivers:note:$GROOM_LOG mirrors the real groom-trigger.sh (and maechen-trigger.sh),
+# which files exactly this label on a task bead that closes on a log, never a commit —
+# without it a work-type close with nothing committed goes through the submitted
+# conversion instead of the legacy commit/delivers audit this suite means to exercise
+# (sp-qsona: delivers: exempts a work bead from the submitted pipeline).
 seed_trigger() {  # seed_trigger <id>
-    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"$GROOM_LABEL\",\"repo:fixture\""
+    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"$GROOM_LABEL\",\"repo:fixture\",\"delivers:note:$GROOM_LOG\""
     printf '{"id":"%s","title":"Groomer pass","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-20T00:00:00Z"}\n' \
         "$1" "$_lbl" | testdb_seed
 }

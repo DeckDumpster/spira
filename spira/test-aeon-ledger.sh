@@ -125,12 +125,12 @@ echo
 echo "a session that ran to its end — the done line carries what it spent:"
 fresh; testdb_reset; seed sp-lg-1; session 1 1 <<< "$FULL"; run_aeon
 line="$(done_line)"
-is   "the bead closed as usual"        closed \
+is   "the bead is converted to submitted, not left closed" open \
      "$(bd -C "$SPIRA_DB" show sp-lg-1 --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status") or "")' 2>/dev/null)"
 want "the disposition is still the first thing said" "done builder sp-lg-1 rc=" "$line"
-want "and it is the disposition the bead reached"       "status=closed" "$line"
+want "and it is the disposition the bead reached"       "status=submitted" "$line"
 want "wall clock, in seconds"          "wall_s=90"            "$line"
 want "of which the API held"           "api_s=61"             "$line"
 want "the turn count"                  "turns=7"              "$line"

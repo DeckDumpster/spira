@@ -676,10 +676,16 @@ for i in (d if isinstance(d, list) else [d]):
 # under a fact this check cannot see would throw away finished work for nothing.
 #
 # NOT CHECKED: superseded (bd supersede records the relation; the work lands under the
-# successor's name) and spira-dropped (the operator's verdict that no branch is ever
-# coming). NOT CHECKED AT ALL: non-code types. Only SPIRA_WORK_CLOSE_TYPES beads go
-# through the submitted/landed pipeline this invariant polices — spike, ask, insight,
-# investigation, event, chore and epic close by the agent's own hand, same as always.
+# successor's name), spira-dropped (the operator's verdict that no branch is ever coming),
+# and any delivers:TYPE label. NOT CHECKED AT ALL: non-code types. Only SPIRA_WORK_CLOSE_TYPES
+# beads go through the submitted/landed pipeline this invariant polices — spike, ask,
+# insight, investigation, event, chore and epic close by the agent's own hand, same as
+# always. delivers: is the same shape for a different reason: groom-trigger.sh,
+# maechen-trigger.sh and incident.sh file task/bug beads that close on a note, an action
+# taken, or child beads filed — never a commit, never a repo: label, never a queue claim.
+# aeon.sh's own teardown exempts them from the submitted conversion for the same reason
+# (bead_is_work_type call site); this invariant must agree, or it files a false Ops
+# incident against every one of them, forever, since none will ever get a LANDED record.
 #
 # Skipped when SPIRA_SKIP_CLOSED_CHECK=1, same reason as before: a fixture that seeds all
 # beads directly has none of them in $SPIRA_RUN/<id>.log, so every row is skipped anyway —
@@ -687,13 +693,14 @@ for i in (d if isinstance(d, list) else [d]):
 # ======================================================================================
 if [ "${SPIRA_SKIP_CLOSED_CHECK:-0}" != 1 ]; then
 _c5_absent_repos=""
-while IFS=$'\x1f' read -r id r_name superseded dropped; do
+while IFS=$'\x1f' read -r id r_name superseded dropped delivers; do
     [ -n "$id" ] || continue
     # Only beads an aeon worked — anything closed by hand outside the pipeline has its own
     # evidence, and this check has no branch of its own to judge it against.
     [ -f "$SPIRA_RUN/$id.log" ] || continue
     [ "$superseded" = 1 ] && continue
     [ "$dropped" = 1 ] && continue
+    [ -n "${delivers:-}" ] && continue
     r_path="$(repo_root "${r_name:-}")" || {
         case $'\n'"$_c5_absent_repos" in
             *$'\n'"$r_name"$'\n'*) ;;
@@ -753,7 +760,8 @@ for i in (d if isinstance(d, list) else [d]):
     sup = 1 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
                    for x in (i.get("dependencies") or [])) else 0
     drop = 1 if "spira-dropped" in (i.get("labels") or []) else 0
-    print("\x1f".join([i["id"], repo, str(sup), str(drop)]))' "$home_repo" \
+    deliv = "1" if any(l.startswith("delivers:") for l in (i.get("labels") or [])) else ""
+    print("\x1f".join([i["id"], repo, str(sup), str(drop), deliv]))' "$home_repo" \
             "${SPIRA_WORK_CLOSE_TYPES:-task bug feature}" 2>/dev/null
     done <<< "$PARTITIONS" |
     sort -u -t$'\x1f' -k2,2 -k1,1
