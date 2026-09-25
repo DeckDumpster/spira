@@ -550,6 +550,26 @@ for b in d:
     local certs
     certs="$(_certified_list "$repo")"
 
+    # SECOND LINE OF DEFENCE: refuse admission whatever the landstate says if bd
+    # confirms the bead is not closed. An empty answer (bd unreachable) is not a
+    # confirmation — it is treated as "unknown", not "not closed" (gap G8 already
+    # pins bd-unreachable as fail-open elsewhere in this pass).
+    if [ -n "${certs:-}" ]; then
+        local _sf_filt="" _sf_cl _sf_id _sf_st
+        while IFS= read -r _sf_cl; do
+            [ -n "$_sf_cl" ] || continue
+            _sf_id="${_sf_cl%% *}"
+            _sf_st="$(spira_bead_status "$_sf_id")"
+            if [ -n "$_sf_st" ] && [ "$_sf_st" != closed ]; then
+                printf 'batch %s: WARN not-closed %s — CERTIFIED landstate but bead status=%s; refusing admission\n' \
+                    "$name" "$_sf_id" "$_sf_st"
+                continue
+            fi
+            _sf_filt="${_sf_filt}${_sf_cl}"$'\n'
+        done <<< "$certs"
+        certs="${_sf_filt%$'\n'}"
+    fi
+
     # Mark already-in-base certified tips LANDED so they do not consume batch slots
     # or inflate the wait trigger.
     if [ -n "${certs:-}" ]; then
