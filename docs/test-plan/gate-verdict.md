@@ -1,8 +1,11 @@
 # Test plan — Per-branch gate verdict (`gate-verdict`)
 
-> **2026-09-24: `test-gate-tree.sh` deleted** (sp-78xpb; per Ryan, "delete tests with extreme prejudice"). Its wall-clock concurrency assertion flipped on unrelated batches. UCs 16, 17 and 18 below lost their only coverage and need a deterministic test if they are wanted back.
-
-> **2026-09-24: `test-gate-locks.sh` deleted** (sp-fxvgo): it flipped red-then-green in PR 331's CI. UC 19 (lock report) lost its coverage.
+> **2026-09-25: `test-gate-tree.sh` and `test-gate-locks.sh` rebuilt** (sp-fm2wn), closing
+> gap #16. `test-gate-tree.sh` (deleted as sp-78xpb) now proves concurrency with start/end
+> marker overlap detection instead of an elapsed-time threshold — a busy host slows every
+> run by the same amount, which a wall-clock threshold read as "serialised"; markers read
+> the actual command windows instead. `test-gate-locks.sh` (deleted as sp-fxvgo) is
+> unchanged in shape and adds the genuine STALE positive gap #11 asked for.
 
 Part of [[test-plan-2026-09-23]], section 5. Area id `gate-verdict`; use-case ids are `UC-gate-verdict-NN`.
 
@@ -110,10 +113,10 @@ ci_secs are from main-push run 35947142904. "Level now" is the mapper's classifi
 | 13 timeout / harness-fault | `test-gate-verdict.sh::deadline is NO_VERDICT`, `::timeout not cached` | T2, part of 7 s | KEEP. Add the harness-fault row (GAP). |
 | 14 full output | `test-gate-fixture-diag.sh::positive control`, `::gate exits 1 / builder diagnostic survives`, `::diagnostic absent from a passing gate` | T2, 3 s | MERGE-INTO the `test-gate-base-evidence.sh` wiring run. The "positive control" is the same invocation as the assertion, so it is not a control; drop it. |
 | 15 verdict cache | `test-gate-verdict.sh` (15 cases) | T2, 7 s | KEEP the T2 reuse loop (first run, cached, base landing, changed tree, red not cached). DEMOTE-TO-T1 the key and TTL rows (changed command, restored command, changed harness, expired, longer TTL, no `at=`). Add the `SPIRA_GATE_SUITES`-in-key and non-numeric-TTL rows. |
-| 16 concurrent / serialised trees | `test-gate-tree.sh::gate 1/2 reached a verdict`, `::ran concurrently`, `::neither observed the other's branch`, `::serialised`, `::wait metered`; `test-soak.sh::no gate judged another branch's tree` | T3, 30 s (+15 s) | KEEP `test-gate-tree.sh` but rewrite: replace the elapsed-time thresholds (flake-prone) with start/end marker overlap detection, cut `GATE_SECS` 3 → 1, and delete the local `tree_key()/branch_key()` re-implementations in favour of the T1-tested helper. |
-| 17 lock-timeout | `test-gate-tree.sh::lock timeout NO_VERDICT` (case 3), `::timeout does not remove holder's tree` (case 5, a second identical `LOCK_WAIT=1` run); `test-landing-gate-wait.sh`; `test-auron.sh` | T2, part of 30 s | MERGE case 5 into case 3 (one timed-out run, assert both). Landing/auron copies belong to their areas and assert the consumer side, so leave them. |
-| 18 tree lifecycle | `test-gate-tree.sh::pass keeps tree`, `::fail removes tree` | T2 | KEEP (inside test-gate-tree). `tree-unidentified` is a GAP. |
-| 19 lock report | `test-gate-locks.sh` 1-pos … 4c | T2, 5 s | KEEP. Add a genuine STALE row (GAP). |
+| 16 concurrent / serialised trees | `test-gate-tree.sh::gate 1/2 reached a verdict`, `::ran concurrently`, `::neither observed the other's branch`, `::serialised`, `::wait metered`; `test-soak.sh::no gate judged another branch's tree` | T2/T3, 9 s (+15 s) | DONE (sp-fm2wn). Rewrote `test-gate-tree.sh`: start/end marker overlap detection (keyed on `SPIRA_GATE_BRANCH`, the one label that survives gate.sh's own `env -i`) replaces the elapsed-time thresholds, `GATE_SECS` cut 3 → 1, `TREE_KEY` now calls `gate_tree_key()` from `gate-lib.sh` instead of a local re-implementation. |
+| 17 lock-timeout | `test-gate-tree.sh::a gate that cannot get the tree returns NO_VERDICT` (one run, both assertions) | T2, part of 9 s | DONE (sp-fm2wn). The old case 3 and case 5 (two separate `LOCK_WAIT=1` runs) are merged into one held-lock run asserting both the NO_VERDICT/lock-timeout/"not a fault" message and holder-tree survival. Landing/auron copies belong to their areas and assert the consumer side, so left alone. |
+| 18 tree lifecycle | `test-gate-tree.sh::gate exits 0/1 on a passing/failing branch`, worktree kept/removed | T2 | DONE (sp-fm2wn), inside the rebuilt test-gate-tree. `tree-unidentified` is still a GAP. |
+| 19 lock report | `test-gate-locks.sh` 1-pos … 5d | T2, 12 s | DONE (sp-fm2wn). Added the genuine STALE row: a holder file naming a dead PID and a dead PGID while an unrelated process still holds the flock. |
 | 20 sweep | `test-gate-sweep.sh` (7 cases) | T2, 6 s | KEEP. Already has `SPIRA_BATCH_HOME_GLOB` and `SPIRA_PODMAN_PS_FILE` seams. |
 | 21 soak | `test-soak.sh` (7 cases) | T3, 15 s | KEEP, but move off the per-push lane to nightly/batch (tunable via `SOAK_*`). Fix its `covers: landing.sh` header, which is false because only gate.sh runs. |
 | 22 yield recording | `test-yield.sh::the gate blames the branch`, `::recorded UNKNOWN`, `::record names branch/bead/suite`, `::does not double the red`, `::byproduct classification`, `::BASE_FAIL lands as GATE FAULT` | T2, part of 34 s | KEEP as a T2 wiring file with 2 gate runs (red then amended-pass, and base-red). Replace the other ~3 gate runs with planted records. |
@@ -181,12 +184,12 @@ Every `verdict` reason in gate.sh was grepped across all `test-*.sh`. Nothing as
 8. **`SPIRA_GATE_SUITES` in the cache key** (L377). A fences-only certification pass must not be able to serve a cached full-suite PASS, or the reverse. No test varies it.
 9. **Non-numeric `SPIRA_VERDICT_TTL`** is treated as 0 (L398). Untested.
 10. **`eval` of cached `when/by/at` values** (L403). The entry file is parsed with `sed` into an `eval`, and a `when=` containing `"$(…)"` would execute. There is no test and no hardening. This is a correctness and safety gap for a T1 `cache_fresh` row.
-11. **gate-locks STALE positive**. Every STALE assertion in `test-gate-locks.sh` is a `nowant`. Nothing shows STALE is ever *reported* for a dead PID and dead PGID holding an unacquirable lock.
+11. ~~**gate-locks STALE positive**.~~ CLOSED (sp-fm2wn): `test-gate-locks.sh` case 5 now shows STALE is reported for a dead PID and dead PGID holding a lock a different, unrelated process still holds.
 12. **Double metering / trap path** (L68–71). No test kills a gate mid-run (`set -e` death or signal) and asserts exactly one `gate.log` row. No test asserts that preflight refusals write no meter row.
 13. **Output bound**. Base output is `tail -c 8000` and branch output `tail -c 4000` (L746–748). `test-gate-fixture-diag.sh` proves there is no `tail -20`, but a diagnostic more than 8 KB before the end is still cut. Nothing states whether that is intended.
 14. **Yield bookkeeping cannot change the verdict** (L82–86, L126–138). No test makes `yield.sh` fail or hang and asserts that the exit code is unchanged. A *hang* would change it, because `yield_note` runs synchronously without a timeout.
 15. **`test-reopen-queue-eject.sh` sp-px6ng section is vacuous**. The regression it names (the `.ejected` sidecar surviving a RED overwrite, read by the gate) is unguarded until a writer→reader behaviour test exists.
-16. **UC-16/17/18/19 have no covering suite at all.** `test-gate-tree.sh` (sp-78xpb) and `test-gate-locks.sh` (sp-fxvgo) — the files §3/§4 describe as KEEP — were deleted for flipping under wall-clock timing (`law-a-test-that-flips-is-deleted`), which is exactly the marker-based rewrite §4 point 3 calls for; neither has been rebuilt since. Deferred to the gate-verdict consolidation follow-up: rebuilding them is the rewrite, not a tagging exercise.
+16. ~~**UC-16/17/18/19 have no covering suite at all.**~~ CLOSED (sp-fm2wn): `test-gate-tree.sh` and `test-gate-locks.sh` are rebuilt with the marker-based rewrite §4 point 3 called for, and UC-16/17/18/19 are tagged on them.
 
 ---
 
@@ -209,15 +212,16 @@ Projected after the verdicts. Estimates assume one shared git fixture per file, 
 | `test-gate-unit.sh` (new T1: attribution, verdict(), gate_key, cache_fresh, tree_key, host_cores, governor cores) | rows lifted from the above + gate-verdict + governor-host-cores 4 | 2 | pure functions, one `source` |
 | `test-gate-preflight.sh` (merged) | preflight 3 + missing-cmd 6 = 9 | 4 | one fixture, 4 runs |
 | `test-gate-verdict.sh` (T2 reuse loop only) | 7 | 4 | ~17 runs → ~8 |
-| `test-gate-tree.sh` (barrier-based, GATE_SECS=1, one timeout run) | 30 | 8 | 4×3 s sleeps → 4×1 s; drop a 1 s lock-wait run |
-| `test-gate-locks.sh` | 5 | 5 | unchanged |
+| `test-gate-tree.sh` (marker-based, GATE_SECS=1, one timeout run) | 30 | 9 (measured, sp-fm2wn) | 4×3 s sleeps → 4×1 s; the two lock-timeout runs merged into one |
+| `test-gate-locks.sh` (adds the STALE row) | 5 | 12 (measured, sp-fm2wn) | one more scenario (dead PID + dead PGID) added over the unchanged four |
 | `test-gate-sweep.sh` | 6 | 6 | unchanged |
 | `test-gate-touched.sh` (T1 table + 1 diff row, absorbs eject selection) | touched 1 + reopen-queue-eject 2 = 3 | 1 | |
 | `test-soak.sh` | 15 | 0 per push (15 nightly) | moved off lane |
 | `test-yield.sh` → T2 wiring (2 gate runs) + T1 report file | 34 | 7 (6 + 1) | ~5 gate runs → 2; watchtower rows move to test-watchtower (~+2 s there) |
 
 ```
-3 + 2 + 4 + 4 + 8 + 5 + 6 + 1 + 0 + 7 = 40 s per push   (vs 125 s; −85 s, −68 %)
+3 + 2 + 4 + 4 + 9 + 12 + 6 + 1 + 0 + 7 = 48 s per push   (vs 125 s; −77 s, −62 %; gate-tree/
+gate-locks are measured post-rewrite, sp-fm2wn — the rest of this row is still projected)
 off-lane: soak 15 s nightly/batch; +~2 s moved into test-watchtower.sh (another area)
 ```
 
