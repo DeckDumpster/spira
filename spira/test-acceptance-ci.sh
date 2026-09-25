@@ -14,6 +14,7 @@ bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
 notzero() { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit"; }
 want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 echo "test-acceptance-ci.sh"
 
@@ -270,6 +271,41 @@ git -C "$_notes_seed" fetch origin \
 _reg_note="$(git -C "$_notes_seed" notes --ref=acceptance show HEAD 2>/dev/null || true)"
 want "regression: verdict note pushed to remote when remote already has notes ref" \
     "PASS new-run" "$_reg_note"
+
+# --- acceptance.yml: prev-tag is derived via acceptance-prev-tag.sh (excludes
+# drafts), not the old raw sorted-git-tag-list which included them. ---------
+_yml="$(cat "$HERE/../.github/workflows/acceptance.yml" 2>/dev/null || true)"
+want "acceptance.yml: derives prev-tag via acceptance-prev-tag.sh" \
+    "acceptance-prev-tag.sh" "$_yml"
+notwant "acceptance.yml: no longer derives prev-tag from the raw git tag list" \
+    "git tag -l 'spira-release-*' | sort -V" "$_yml"
+
+# --- acceptance.yml: waive-upgrade workflow_dispatch input, tag-push never waives ---
+want "acceptance.yml: waive-upgrade workflow_dispatch input declared" \
+    "waive-upgrade:" "$_yml"
+want "acceptance.yml: waive-upgrade passed to acceptance-ci.sh on true" \
+    "--waive-upgrade" "$_yml"
+
+# --- acceptance-ci.sh: --waive-upgrade passes through to acceptance-run.sh ---
+CI_HOME8="$SCRATCH/home8"
+mkdir -p "$CI_HOME8"
+git config --file "$CI_HOME8/.gitconfig" user.email "t@spira" 2>/dev/null || true
+git config --file "$CI_HOME8/.gitconfig" user.name "T" 2>/dev/null || true
+STUB8="$SCRATCH/stub8.sh"
+cat > "$STUB8" <<STUB8_BODY
+#!/usr/bin/env bash
+printf '%s\n' "\$*" > "$SCRATCH/stub8-args"
+exit 0
+STUB8_BODY
+chmod +x "$STUB8"
+HOME="$CI_HOME8" \
+    SPIRA_ACCEPTANCE_RUN="$STUB8" \
+    XDG_CONFIG_HOME="$CI_HOME8/.config" \
+    bash "$HERE/acceptance-ci.sh" "any-tag" --bd-db "$SCRATCH/bd8" \
+    --waive-upgrade >/dev/null 2>&1 || true
+_args8="$(cat "$SCRATCH/stub8-args" 2>/dev/null || true)"
+want "acceptance-ci.sh: --waive-upgrade passed through to acceptance-run.sh" \
+    "--waive-upgrade" "$_args8"
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

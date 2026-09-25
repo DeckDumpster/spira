@@ -3,7 +3,7 @@
 # Tested by test-acceptance-ci.sh; called by acceptance.yml.
 #
 # Usage: acceptance-ci.sh <tag> [--prev-tag <t>] [--bd-db <path>]
-#                                [--agent <path>] [--record]
+#                                [--agent <path>] [--record] [--waive-upgrade]
 #
 # Override acceptance-run.sh for testing: SPIRA_ACCEPTANCE_RUN=<path>
 set -uo pipefail
@@ -13,6 +13,7 @@ _prev_tag=""
 _bd_db="$HOME/.local/share/spira/db"
 _agent=""
 _do_record=0
+_waive_upgrade=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -23,6 +24,7 @@ while [ $# -gt 0 ]; do
         --agent)      _agent="${2:-}"; shift 2 ;;
         --agent=*)    _agent="${1#--agent=}"; shift ;;
         --record)     _do_record=1; shift ;;
+        --waive-upgrade) _waive_upgrade=1; shift ;;
         -*)           printf 'acceptance-ci: unknown option: %s\n' "$1" >&2; exit 2 ;;
         *)
             if [ -z "$_tag" ]; then _tag="$1"
@@ -61,6 +63,7 @@ _run_args=("$_tag" --scratch-repo "$HOME/scratch-repo" --bd-db "$_bd_db")
 [ -n "$_agent" ]        && _run_args+=(--agent "$_agent")
 [ "$_do_record" -eq 1 ] && _run_args+=(--record)
 [ -n "$_prev_tag" ]     && _run_args+=(--prev-tag "$_prev_tag")
+[ "$_waive_upgrade" -eq 1 ] && _run_args+=(--waive-upgrade)
 
 printf -- '--- runner env ---\n'
 printf 'whoami: %s\n' "$(whoami 2>/dev/null || echo unknown)"

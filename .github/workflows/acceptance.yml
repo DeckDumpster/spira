@@ -4,8 +4,13 @@
 # TRIGGERS
 #   push to spira-release-* tags: fired by gate.yml's cut job, which pushes the
 #     tag using a GitHub App installation token so the anti-recursion rule does
-#     not apply. prev-tag is derived from sorted git tags when not provided.
+#     not apply. prev-tag is derived by acceptance-prev-tag.sh, which excludes
+#     drafts, when not provided.
 #   workflow_dispatch: for manual runs or testing outside the release pipeline.
+#     The waive-upgrade input skips derivation and phases B/C/D entirely — an
+#     operator escape hatch for when no predecessor has ever passed acceptance;
+#     the recorded verdict says so, so a waived publish is never mistaken for a
+#     tested upgrade.
 #
 # THE STUB AGENT. acceptance-agent.sh replaces claude so no model credential is
 # needed. It commits acceptance-probe.txt and closes the bead — proving the full
@@ -42,6 +47,11 @@ on:
         description: Previous tag for upgrade/rollback/aged-install phases (optional)
         required: false
         default: ''
+      waive-upgrade:
+        description: Skip prev-tag derivation and phases B/C/D entirely (operator waiver)
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: acceptance-${{ inputs.tag || github.ref }}
@@ -162,16 +172,25 @@ jobs:
           set -uo pipefail
           _tag="${{ inputs.tag || github.ref_name }}"
           _prev="${{ inputs.prev-tag || '' }}"
-          # When triggered by a tag push the prev-tag input is unavailable; derive
-          # it from the sorted release tag list so upgrade/rollback phases still run.
-          if [ -z "${_prev:-}" ]; then
-            _prev="$(git tag -l 'spira-release-*' | sort -V | grep -v "^${_tag}\$" | tail -1 || true)"
-          fi
+          _waive="${{ inputs.waive-upgrade || 'false' }}"
           _args=("$_tag"
                  --bd-db  "$HOME/.local/share/spira/db"
                  --agent  "$GITHUB_WORKSPACE/spira/acceptance-agent.sh"
                  --record)
-          [ -n "${_prev:-}" ] && _args+=(--prev-tag "$_prev")
+          if [ "$_waive" = "true" ]; then
+            # Operator waiver (workflow_dispatch only, never a tag push): skip
+            # derivation entirely so no prev-tag is passed at all, and acceptance-run.sh
+            # prints its existing "skip phase B+C / phase D" lines.
+            _args+=(--waive-upgrade)
+          else
+            # When triggered by a tag push the prev-tag input is unavailable; derive
+            # the newest PUBLISHED predecessor so upgrade/rollback phases test a tag
+            # that actually passed acceptance, never an unaccepted draft.
+            if [ -z "${_prev:-}" ]; then
+              _prev="$(bash spira/acceptance-prev-tag.sh "$_tag" --repo "$GITHUB_REPOSITORY" || true)"
+            fi
+            [ -n "${_prev:-}" ] && _args+=(--prev-tag "$_prev")
+          fi
           bash spira/acceptance-ci.sh "${_args[@]}"
 
       - name: Upload forensics
