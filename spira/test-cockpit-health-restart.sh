@@ -101,8 +101,11 @@ tmux kill-pane -t "$HP" 2>/dev/null || true
 # `ensure` refuses to run from anywhere but SPIRA_COCKPIT/layout.sh (a copy must not heal
 # the operator's live cockpit) — so, as in test-cockpit-layout-mail.sh, it runs from a copy
 # of layout.sh installed alongside the stub, not from the worktree path directly.
-ROOT="$TMP/root"; mkdir -p "$ROOT/cockpit"
+# conf.sh comes along too, at the same `../spira` remove layout.sh expects: with it
+# missing, layout.sh silently loses every config-derived default rather than failing loud.
+ROOT="$TMP/root"; mkdir -p "$ROOT/cockpit" "$ROOT/spira"
 cp "$COCKPIT_DIR/layout.sh" "$COCKPIT_DIR/tmux-env.sh" "$ROOT/cockpit/"
+cp "$HERE/conf.sh" "$ROOT/spira/"
 printf '#!/usr/bin/env bash\nsleep 300\n' > "$ROOT/cockpit/health.sh"
 chmod +x "$ROOT/cockpit/health.sh"
 
