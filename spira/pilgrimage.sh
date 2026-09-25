@@ -307,6 +307,11 @@ cmd_list() {
     [ "$any" = 1 ] || echo "no open pilgrimages labelled $SPIRA_EPIC_LABELS"
 }
 
+# EXECUTABLE FROM HERE. A test sources this file to call pilgrimage_branches_landed
+# directly against a stubbed children_ids/spira_repos, and sourcing it must not also run
+# `check` as a side effect of the `.` (the same trap landing.sh's own guard exists for).
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0 2>/dev/null || true; fi
+
 case "${1:-check}" in
     check)          shift || true; cmd_check "$@" ;;
     watch)          shift; cmd_watch "$@" ;;

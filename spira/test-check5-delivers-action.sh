@@ -11,7 +11,7 @@
 #   2. delivers:action — NOT reopened; the close reason carries the evidence.
 #
 # defect: sp-2d14d
-# covers: spira/sentinel.sh spira/incident.sh spira/watchtower.sh
+# covers: spira/sentinel.sh
 # hermetic-ok: uses a fixture database and a local git repo, no systemd or gh
 # timeout: 60
 set -uo pipefail

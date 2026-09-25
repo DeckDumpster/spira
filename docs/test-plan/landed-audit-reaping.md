@@ -252,11 +252,44 @@ brief, and each noting the dependency it is blocked on:
   reduces to deleting branches of LANDED beads, tested as T1" — that is sp-qsona's
   simplification, not yet on `origin/main`; building `send_disposition` against the current,
   pre-simplification `sweep_repo` would be reshaping code this plan is about to replace.
-- **UC-24** (pilgrimage epic-close gate extraction), **UC-25** (held.sh stub-bd
-  reclassification), **UC-26/UC-27** (reassigning check2-reclaim and dependents to their
-  correct areas): sp-fcdru. Not blocked on the above three beads, but out of scope for this
-  slice on size grounds.
 - **B2 (testlib migration)**: `spira/testlib.sh` does not exist on `origin/main` yet
   (sp-qvjzb, closed, unlanded); `test-landed-search.sh` and the `test-destroy-branch.sh`
   additions use the existing per-suite `ok/bad/is/want` convention and should be swept into
   testlib by sp-qvjzb's own migration once it lands, the same as every other suite.
+
+### UC-24, UC-25, UC-26, UC-27 (added by sp-fcdru)
+
+- **UC-24** (pilgrimage epic-close gate): `pilgrimage.sh` gained the same
+  `BASH_SOURCE[0] != $0` guard `landing.sh` already carries, so a suite can source it and
+  call `pilgrimage_branches_landed` directly. `test-pilgrimage.sh` now has a T2 section (git
+  + files, `children_ids`/`spira_repos` stubbed) covering the sp-qj8n landstate assertion in
+  four rows — missing entry, GATED, LANDED, pr-mode-not-checked — and a T3 section with one
+  bd seed carrying all three CLI-path epics (announce/close, unfinished, alien), asserted
+  across two `check` passes instead of four `testdb_reset`s.
+- **UC-25** (held.sh): the fail-open misreport gap 9 describes was already fixed
+  (sp-f84wv, landed before this bead ran) — only the test reshape and the missing assertion
+  remained. `test-held.sh` replaces `testdb_up` with a hand-written `SPIRA_BD` stub answering
+  held.sh's one bd seam (`bdjson show <id>`), and adds the "named-repo argument excludes the
+  other repo" assertion the coverage map calls out as missing.
+- **UC-26** (test-check2-reclaim.sh, dispatch/reclaim's CHECK 2 ask-protection): not
+  reassigned to a new bead here — `docs/test-plan/dispatch.md` already exists, already
+  catalogues this ground as `UC-dispatch-21`/gap D7 including an explicit note ("other area
+  test-check2-reclaim"), and `sp-9ce60.2.6` is already filed and open to fold it into
+  dispatch's own strand-classify table. Filing a second bead for the same suite would
+  duplicate work already in flight. This bead only fixed the suite's stale header claims
+  (gap 10: the "FOUR CASES" count was five, and three comments claimed the reaper reclaims
+  in the same pass when the reaper is never invoked here).
+- **UC-27** (test-dependents.sh, landing-merge-queue's queue-wait holding):
+  `docs/test-plan/landing-merge-queue.md` does not exist on `origin/main` yet (`sp-ulr4e` was
+  in_progress writing it when this bead ran), so the DEMOTE-TO-T1-plus-one-bd-seed verdict
+  is filed forward as `sp-a0zfz`, the same "area page doesn't exist yet" deferral `sp-cb39h`
+  used for `sp-pyowh`/`sp-rg46a`.
+- **Gap 10, the rest.** Fixed independently of UC-26/27 because the bead named these
+  fragments explicitly: `test-check5-delivers-action.sh` and `test-check5-delivers-check.sh`
+  claimed to cover `incident.sh`/`watchtower.sh`/`aeon.sh` on their `# covers:` lines, but
+  none of those files are copied into either suite's fixture (only `sentinel.sh`, `lib.sh`,
+  `landing.sh`, `conf.sh` are, plus a handful of scripts stubbed to `exit 0`) — trimmed.
+  `test-check5-landstate.sh` claimed `batch.sh`, which is never touched either — trimmed;
+  `conf.sh` stayed, since that one genuinely is copied and sourced. `test-sending-
+  landstate-assert.sh`'s "NO DATABASE" header claim was stale — it builds a testdb — and was
+  reworded.

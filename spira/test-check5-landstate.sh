@@ -21,7 +21,7 @@
 #   - CERTIFIED-RESTORE case: bead reopened instead of branch restored → assertion fails.
 #
 # defect: sp-e0ugn
-# covers: spira/sentinel.sh spira/batch.sh spira/conf.sh
+# covers: spira/sentinel.sh spira/conf.sh
 # hermetic-ok: uses a fixture database and a local git repo, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
