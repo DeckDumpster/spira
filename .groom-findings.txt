@@ -105,3 +105,34 @@ CURRENT STATE:
 - 0 LIVELOCK rows
 - 1 escalation: sp-m4uko (groom-asked)
 - No duplicates, no premise-gone cases, no fixture-shaped litter
+
+---
+
+GROOM PASS sp-lf6lv (continuation — session 4)
+===============================================
+
+SWEEP: groomer.sh sweep clean — 0 LIVELOCK rows (2026-09-25T13:28:58Z).
+
+LIVELOCK ROWS HANDLED: 0 (detect_livelocked returned nothing)
+
+ACTIONS TAKEN:
+
+1. CLOSED sp-m4uko — premise resolved
+   - sp-niqjl landed on origin/main (commit 8d654bdb, confirmed 2026-09-25)
+   - sp-m4uko was a repeat-refused incident for sp-niqjl; now resolved
+   - sp-iuwwu (test-snap-stale-threshold.sh stub restoration) remains open as
+     independent follow-on work — not a blocker for closing the incident
+   - Closed with bd close --force (blocking edge to sp-iuwwu was advisory)
+
+2. sp-psenn — SKIPPED (pass 3+, groom-asked set, awaiting operator response)
+
+BEADS EXAMINED: 183 open spira-labeled beads
+
+delivers:beads status: CLEAN — sp-9ce60 alone carries the label (legitimately)
+
+CURRENT STATE:
+- 183 beads examined
+- 0 LIVELOCK rows
+- 1 closure: sp-m4uko (premise resolved)
+- sp-psenn awaiting operator (groom-asked)
+- No duplicates, no new premise-gone cases, no fixture-shaped litter
