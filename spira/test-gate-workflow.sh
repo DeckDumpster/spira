@@ -515,5 +515,47 @@ want "provision sets AGENT_TIMEOUT"        "AGENT_TIMEOUT"       "$_prov_block"
 want "provision raises it to 300"          "AGENT_TIMEOUT: 300"  "$_prov_block"
 
 echo
+echo "21. every workflow using ephemeral-ci teardown passes the provision job's vm-token (db-rzdr):"
+# vm-token is `required: false` in teardown-action.yml (an unwired caller must
+# still degrade instead of refusing), so section 17's required-input check
+# cannot catch an omission. Guard 4b refuses any VM that carries an ownership
+# token when the caller presents none -- and provision always stamps one -- so
+# every teardown call paired with this pinned provision leaks its VM unless the
+# workflow forwards it explicitly.
+_vm_token_wired() {
+    # $1 = workflow block containing both provision and teardown jobs
+    case "$1" in
+        *'vm-token: ${{ steps.vm.outputs.vm-token }}'*) ;;
+        *) return 1 ;;
+    esac
+    case "$1" in
+        *'vm-token:'*'needs.provision.outputs.vm-token'*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+# Positive control: a teardown block with the vm-token line stripped must fail.
+_fixture_unwired="$(printf '%s' "$_gate_prov_block$_gate_tear_block" | grep -v 'vm-token')"
+if _vm_token_wired "$_fixture_unwired"; then
+    bad "positive control: a teardown missing vm-token is detected" \
+        "the check passed against a fixture with vm-token stripped"
+else
+    ok "positive control: a teardown missing vm-token is detected"
+fi
+if _vm_token_wired "$G"; then
+    ok "gate.yml passes provision's vm-token to teardown"
+else
+    bad "gate.yml passes provision's vm-token to teardown" \
+        "provision must output vm-token and teardown must receive needs.provision.outputs.vm-token"
+fi
+if [ -r "$ACC_YML" ]; then
+    if _vm_token_wired "$(cat "$ACC_YML")"; then
+        ok "acceptance.yml passes provision's vm-token to teardown"
+    else
+        bad "acceptance.yml passes provision's vm-token to teardown" \
+            "provision must output vm-token and teardown must receive needs.provision.outputs.vm-token"
+    fi
+fi
+
+echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
