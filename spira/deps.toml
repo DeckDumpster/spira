@@ -52,6 +52,13 @@ version_min = ""
 version_probe = "dolt version"
 
 [[dep]]
+name = "duckdb"
+tier = "runtime"
+purpose = "the query layer over run/tsd/'s append-only JSONL files — trailing baselines, rates and dwell percentiles for the reconciler's flow invariants (tsd-query.sh)"
+version_min = ""
+version_probe = "duckdb --version"
+
+[[dep]]
 name = "gh"
 tier = "optional"
 purpose = "opening and landing pull requests (repos whose land mode is 'pr')"

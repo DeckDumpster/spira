@@ -866,6 +866,21 @@ _append_suite_times() {
     printf '%s\n' "$_row" >> "$RESULTS/suite-times.tsv"
     mkdir -p "${SPIRA_SUITE_TIMES_LOG%/*}" 2>/dev/null || true
     printf '%s\n' "$_row" >> "${SPIRA_SUITE_TIMES_LOG:-$SPIRA_RUN/suite-times.log}" 2>/dev/null || true
+    _tsd_suite_timing "$1" "$2" "$3" "$4" "$5" "$6"
+}
+
+# _tsd_suite_timing <suite> <rc> <wall_secs> <bd_calls> <bd_ms> <mode>
+# Best-effort sibling of the row above, into the run/tsd/ suite-timing family (sp-sbc6o) so
+# DuckDB can query trailing baselines across runs. An unbuilt tsd-write leaves the family
+# file simply absent — the tsv/log above stay the record of truth either way.
+_tsd_suite_timing() {
+    local bin="${SPIRA_TSD_BIN:-}"
+    [ -n "$bin" ] && [ -x "$bin" ] || return 0
+    "$bin" --family suite-timing --root "${SPIRA_RUN:-}" \
+        --field-str "run_id=${_BATCH_RUN_ID:-}" --field-str "branch=${BR:-}" \
+        --field-str "suite=$1" --field "rc=$2" --field "wall_secs=$3" \
+        --field "bd_calls=$4" --field "bd_ms=$5" --field-str "mode=$6" \
+        >/dev/null 2>&1 || true
 }
 
 _suites_t0="$(date +%s)"
