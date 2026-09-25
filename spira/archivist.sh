@@ -10,6 +10,8 @@
 #   archivist.sh state [<s>]      print what the status line and the dashboard are reading
 #   archivist.sh digest <t> [<from-turn>] [--full]
 #                                 the transcript rendered small enough for an agent to read
+#   archivist.sh record <line>    register one durably-filed finding for today's digest
+#   archivist.sh digest-send      mail today's digest (at most once a day) and empty the queue
 #
 # WHAT PROBLEM THIS IS. Context is re-read in full on every turn, so a long session costs many
 # times a fresh one for identical work, and the fix — clearing — is exactly what nobody dares
@@ -339,6 +341,7 @@ home.}"
             set_covered "$sid" "$at"
             rm -f "$tc_file"
             log "archivist: $sid safe to clear — $items item(s) filed"
+            digest_send
         elif [ "$rc" -eq 124 ]; then
             # TIMED OUT IS NOT FAILED. A run that was killed by the clock will not break on the
             # same input next pass — the next pass may simply be faster, or get a scaled timeout.
@@ -384,6 +387,51 @@ home.}"
         fi
         exit "$rc"
     ) 8>"$ARC_LOCK" 9>"$ARC/$sid.lock"
+}
+
+# ---- the daily digest --------------------------------------------------------------------
+# EVERY FINDING'S DURABLE HOME IS A BEAD OR A WIKI PAGE, NEVER A MAIL — that is the whole
+# fix in sp-9zthk. `record` is how the running archivist tells the digest where a finding
+# now lives, one line at a time; `digest_send` empties that queue into at most one
+# `--kind note` a day. Deleting the digest therefore never loses a finding: the finding's
+# home is the bead or page named in the line, and the digest is only ever an index of those.
+DIGEST_PENDING="$ARC/digest.pending"
+DIGEST_SENT="$ARC/digest.sent"
+DIGEST_LOCK="$ARC/digest.lock"
+
+digest_record() {        # digest_record <line>
+    mkdir -p "$ARC" || return 1
+    ( flock 9; printf '%s\n' "$1" >> "$DIGEST_PENDING" ) 9>"$DIGEST_LOCK"
+}
+
+digest_send() {
+    mkdir -p "$ARC" || return 1
+    (
+        flock 9
+        [ -s "$DIGEST_PENDING" ] || { log "archivist: digest — nothing pending"; exit 0; }
+        # ONE PER CALENDAR DAY. Checked inside the lock so two sweeps finishing at once cannot
+        # both read "not sent yet" and mail the digest twice.
+        local today; today="$(TZ="${SPIRA_TZ:-UTC}" date +%F)"
+        local sent_on=""; [ -f "$DIGEST_SENT" ] && sent_on="$(cat "$DIGEST_SENT" 2>/dev/null)"
+        local n; n="$(grep -c . "$DIGEST_PENDING" 2>/dev/null || true)"; n="${n:-0}"
+        if [ "$sent_on" = "$today" ]; then
+            log "archivist: digest — already sent today ($today); $n item(s) held for the next one"
+            exit 0
+        fi
+        local body
+        body="$(printf '## Note\nRecorded today, and where:\n\n'; cat "$DIGEST_PENDING")"
+        if [ -x "$SPIRA_HOME/mail.sh" ] && printf '%s\n' "$body" | "$SPIRA_HOME/mail.sh" send operator \
+                --from "Archivist <archivist@spira>" \
+                --subject "Archivist digest: $n item(s) recorded today" \
+                --kind note --digest; then
+            printf '%s\n' "$today" > "$DIGEST_SENT"
+            : > "$DIGEST_PENDING"
+            log "archivist: digest sent — $n item(s)"
+        else
+            log "archivist: digest send failed — $n item(s) left pending"
+            exit 1
+        fi
+    ) 9>"$DIGEST_LOCK"
 }
 
 # ---- the modes ---------------------------------------------------------------------------
@@ -690,6 +738,15 @@ state)
                 "$(state_key "$s" items_filed)"
         done
     fi
+    ;;
+
+record)
+    line="${2:?record needs a line: <where the finding now lives>: <what it is>}"
+    digest_record "$line"
+    ;;
+
+digest-send)
+    digest_send
     ;;
 
 *) sed -n '3,10p' "$0" >&2; exit 2 ;;
