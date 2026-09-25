@@ -23,7 +23,6 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 COCKPIT_DIR="$(dirname "$HERE")/cockpit"
-LAYOUT="$COCKPIT_DIR/layout.sh"
 HEALTH="$COCKPIT_DIR/health.sh"
 
 pass=0; fail=0
@@ -80,10 +79,10 @@ alive=$(tmux list-panes -t "$WIN" -F '#{pane_id}' | grep -Fxc "$HP")
 is "A: health pane survives a config change" "1" "$alive"
 is "A: health pane keeps its @cockpit tag" "health" "$(tmux display -p -t "$HP" '#{@cockpit}' 2>/dev/null)"
 
-out="$(tmux capture-pane -p -t "$HP" 2>/dev/null)"
-[[ "$out" == *"config changed"* ]] \
-    && ok "A: pane logged the restart" \
-    || bad "A: pane logged the restart" "pane output: $out"
+# NOT asserted here: the "config changed" message on stderr. paint()'s very next repaint
+# homes the cursor and erases to end of screen, which overwrites that line before a
+# capture-pane could ever observe it — true of the old exit path too. test-conf-watch.sh
+# already covers the message against a redirected stderr, off the pty entirely.
 
 # Prove it is genuinely still looping (a new process), not a dead shell about to be
 # reaped: give it two more ticks and confirm it is still alive and still tagged.
@@ -98,14 +97,19 @@ tmux kill-pane -t "$HP" 2>/dev/null || true
 # A stub stands in for health.sh here: this case is about `ensure` recognising an up
 # window with no tagged pane left, not about the real loop's own restart behaviour
 # (Case A already covers that against the genuine script).
-FAKE_COCK="$TMP/fake-cockpit"; mkdir -p "$FAKE_COCK"
-printf '#!/usr/bin/env bash\nsleep 300\n' > "$FAKE_COCK/health.sh"
-chmod +x "$FAKE_COCK/health.sh"
+#
+# `ensure` refuses to run from anywhere but SPIRA_COCKPIT/layout.sh (a copy must not heal
+# the operator's live cockpit) — so, as in test-cockpit-layout-mail.sh, it runs from a copy
+# of layout.sh installed alongside the stub, not from the worktree path directly.
+ROOT="$TMP/root"; mkdir -p "$ROOT/cockpit"
+cp "$COCKPIT_DIR/layout.sh" "$COCKPIT_DIR/tmux-env.sh" "$ROOT/cockpit/"
+printf '#!/usr/bin/env bash\nsleep 300\n' > "$ROOT/cockpit/health.sh"
+chmod +x "$ROOT/cockpit/health.sh"
 
 tmux new-session -d -s brain -x 200 -y 50
 WIN2=brain:0
 SESS2=$(tmux list-panes -t "$WIN2" -F '#{pane_id}')
-HP2=$(tmux split-window -P -F '#{pane_id}' -d -h -t "$SESS2" "bash '$FAKE_COCK/health.sh' loop")
+HP2=$(tmux split-window -P -F '#{pane_id}' -d -h -t "$SESS2" "bash '$ROOT/cockpit/health.sh' loop")
 tmux set-option -p -t "$HP2" @cockpit health
 # What `up` sets on a real cockpit — marks the WINDOW, independent of any pane tag.
 tmux set-option -w -t "$WIN2" @cockpit_up 1
@@ -117,13 +121,13 @@ sleep 0.2
 is "SEEN RED: no pane in the window is tagged" "" \
     "$(tmux list-panes -t "$WIN2" -F '#{@cockpit}' 2>/dev/null | grep -v '^$')"
 
-SPIRA_COCKPIT="$FAKE_COCK" \
+SPIRA_COCKPIT="$ROOT/cockpit" \
 SPIRA_REPO="$TMP" \
 SPIRA_RUN="$TMP/.runtime" \
 SPIRA_HOME="$HERE" \
 SPIRA_CONF="$TMP/no.conf" \
 COCKPIT_CLIENT_IDLE_SECS=0 \
-    bash "$LAYOUT" ensure >/dev/null 2>&1 || true
+    bash "$ROOT/cockpit/layout.sh" ensure >/dev/null 2>&1 || true
 sleep 0.5
 
 is "B: ensure recreated the health pane" "1" \
