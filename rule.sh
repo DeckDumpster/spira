@@ -34,11 +34,26 @@
 # narrative of how we got here.
 set -uo pipefail
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/spira" && pwd -P)/conf.sh"
+SPIRA_HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/spira" && pwd -P)"
+. "$SPIRA_HOME_DIR/conf.sh"
 export BEADS_NO_AUTO_IMPORT=1
 DB="$SPIRA_DB"
 
 usage() { sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+
+# Commits wiki/notes/common-law.md itself, immediately after synth() regenerates it, naming
+# only that path under a `law: enact <key>` / `law: retire <key>` message — so it never sits
+# dirty for some other actor's exit to sweep up under the wrong authorship (sp-4fl2e).
+# Best-effort: no SPIRA_WIKI, or nothing to stage (synth wrote no change), are not failures.
+#   0 = committed   1 = skipped (no wiki checkout)   2 = commit attempt failed
+commit_common_law() {
+    local verb="$1" key="$2"
+    [ -n "${SPIRA_WIKI:-}" ] && [ -d "$SPIRA_WIKI/.git" ] || return 1
+    printf 'wiki/notes/common-law.md\n' \
+        | bash "$SPIRA_HOME_DIR/wiki-commit.sh" "$SPIRA_WIKI" "law: $verb $key" \
+        || return 2
+    return 0
+}
 
 # SYNTHESIS IS REQUIRED, NOT OPTIONAL. A missing or non-executable hook is an error: if you
 # are running `rule.sh enact`, you expect the wiki page to be regenerated. Silently succeeding
@@ -85,7 +100,12 @@ enact)
     if synth; then
         echo
         echo "Statute is live in every agent session at its next summon."
-        echo "Commit wiki/notes/common-law.md to replicate it off this box."
+        commit_common_law enact "$key"; _cc_rc=$?
+        case "$_cc_rc" in
+            0) echo "wiki/notes/common-law.md committed (law: enact $key)." ;;
+            1) echo "Commit wiki/notes/common-law.md to replicate it off this box." ;;
+            *) echo "wiki/notes/common-law.md commit FAILED — commit it manually." >&2 ;;
+        esac
     else
         echo >&2
         echo "Statute IS in the book — the database write succeeded." >&2
@@ -106,6 +126,12 @@ retire)
         echo
         echo "Retired. Do not leave a retired statute standing with a correction attached —"
         echo "that is the same defect as a correction banner on a stale page."
+        commit_common_law retire "$key"; _cc_rc=$?
+        case "$_cc_rc" in
+            0) echo "wiki/notes/common-law.md committed (law: retire $key)." ;;
+            1) echo "Commit wiki/notes/common-law.md to replicate it off this box." ;;
+            *) echo "wiki/notes/common-law.md commit FAILED — commit it manually." >&2 ;;
+        esac
     else
         echo >&2
         echo "Statute IS removed from the book — the database write succeeded." >&2

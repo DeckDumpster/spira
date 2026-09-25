@@ -2616,6 +2616,47 @@ with fh:
 PY
 }
 
+# wiki_write_paths <logfile> <wiki-dir> -> paths under <wiki-dir>, one per line, named by
+# Edit/Write/NotebookEdit tool calls in the CURRENT attempt of <logfile>. Relative to
+# <wiki-dir>, matching `git status` output there.
+#
+# THE TRANSCRIPT, NOT A DIRTY SNAPSHOT. A snapshot taken at session start cannot tell this
+# session's own write from a concurrent actor's — both are just "dirty now, clean at the
+# watermark" (sp-4fl2e). The transcript names only what this session's own tool calls touched.
+wiki_write_paths() {
+    local f="${1:-}" wiki="${2:-}"
+    [ -n "$wiki" ] && [ -r "$f" ] || return 0
+    attempt_trace "$f" 0 2>/dev/null | python3 -c '
+import sys, json, os
+
+wiki = os.path.realpath(sys.argv[1])
+EDITS = ("Edit", "Write", "NotebookEdit")
+seen = set()
+for line in sys.stdin:
+    line = line.strip()
+    if not line.startswith("{"):
+        continue
+    try:
+        e = json.loads(line)
+    except Exception:
+        continue
+    if e.get("type") != "assistant":
+        continue
+    for c in (e.get("message") or {}).get("content") or []:
+        if c.get("type") != "tool_use" or c.get("name") not in EDITS:
+            continue
+        inp = c.get("input") or {}
+        fp = inp.get("file_path") or inp.get("notebook_path")
+        if not fp:
+            continue
+        rp = os.path.realpath(fp)
+        if rp != wiki and rp.startswith(wiki + os.sep):
+            seen.add(os.path.relpath(rp, wiki))
+for p in sorted(seen):
+    print(p)
+' "$wiki" 2>/dev/null
+}
+
 # --------------------------------------------------------------------------------------
 # trace_last <logfile> -> the last thing the session actually did, one line.
 # --------------------------------------------------------------------------------------
