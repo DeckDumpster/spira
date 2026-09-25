@@ -5932,11 +5932,33 @@ LANDSTATE="${SPIRA_RUN}/landstate"
 # reopen in aeon.sh; no-rebase@*, gate and confine are landing.sh REDs with their own paths.
 LAND_EVICTION_REASONS="ejected conflicts-with-base rebase-suite-red"
 
+# _tsd_landing_event <id> <state> <tip> [reason]
+# Best-effort: appends a landing-event row (run/tsd/) via tsd-write. Never affects the
+# caller's exit status — an unbuilt or missing binary means the family stays unwritten, not
+# that landing itself fails.
+_tsd_landing_event() {
+    local bin="${SPIRA_TSD_BIN:-}"
+    [ -n "$bin" ] && [ -x "$bin" ] || return 0
+    local id="$1" state="$2" tip="${3:-none}" reason="${4:-}"
+    if [ -n "$reason" ]; then
+        "$bin" --family landing-event --root "${SPIRA_RUN:-}" \
+            --field-str "bead=$id" --field-str "state=$state" --field-str "tip=$tip" \
+            --field-str "reason=$reason" >/dev/null 2>&1 || true
+    else
+        "$bin" --family landing-event --root "${SPIRA_RUN:-}" \
+            --field-str "bead=$id" --field-str "state=$state" --field-str "tip=$tip" \
+            >/dev/null 2>&1 || true
+    fi
+}
+
 land_mark() {    # land_mark <id> <state> <tip> [reason]
     mkdir -p "$(dirname "$LANDSTATE/$1")" 2>/dev/null || return 0
     printf '%s %s %s %s' "$2" "${3:-none}" "$(date +%s)" "${4:-}" \
         > "$LANDSTATE/$1.$$" 2>/dev/null \
         && mv -f "$LANDSTATE/$1.$$" "$LANDSTATE/$1" 2>/dev/null
+    local rc=$?
+    _tsd_landing_event "$1" "$2" "${3:-}" "${4:-}"
+    return "$rc"
 }
 
 land_mark_at() { # land_mark_at <id> <state> <tip> <epoch>

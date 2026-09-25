@@ -43,14 +43,14 @@ install:
 	    $(CARGO) build --release --workspace; \
 	    mkdir -p "$$_rel/bin"; \
 	    git archive "$$_sha" | tar -x -C "$$_rel"; \
-	    for _b in loom broker czar-pass queue-watch spira-supervise spira-config spira; do \
+	    for _b in loom broker czar-pass queue-watch spira-supervise spira-config spira tsd-write; do \
 	        cp "$$_root/target/release/$$_b" "$$_rel/bin/$$_b"; \
 	        chmod +x "$$_rel/bin/$$_b"; \
 	    done; \
 	    cp "$$_root/cockpit/panel/target/release/panel" "$$_rel/bin/panel"; \
 	    chmod +x "$$_rel/bin/panel"; \
 	    { printf 'commit %%s\n' "$$_sha"; \
-	      for _b in loom broker czar-pass queue-watch spira-supervise spira-config spira panel; do \
+	      for _b in loom broker czar-pass queue-watch spira-supervise spira-config spira tsd-write panel; do \
 	          _h="$$(sha256sum "$$_rel/bin/$$_b" | awk '{print $$1}')"; \
 	          printf 'bin/%%s %%s\n' "$$_b" "$$_h"; \
 	      done; } > "$$_rel/MANIFEST"; \
