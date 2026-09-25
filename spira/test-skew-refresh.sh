@@ -2,9 +2,10 @@
 #
 # test-skew-refresh.sh — stage-and-swap refresh advances regardless of live aeon leases;
 # running processes keep their old inode; dirty tracked files are stashed; gap reports
-# commits behind with a positive control that verifies the ref is resolvable.
+# commits behind with a positive control that verifies the ref is resolvable; a queue-mode
+# repo's checkout is advanced by the landing pass's own refresh loop.
 #
-# covers: spira/skew.sh
+# covers: spira/skew.sh spira/landing.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0
@@ -224,6 +225,73 @@ out7="$(run_skew_release "$RUN7" refresh "$REPO")"; rc7=$?
 is   "release-mode already-current: exits 0"        "0"       "$rc7"
 want "release-mode already-current: reports current" "already" "$out7"
 nowant "release-mode already-current: no make call"  "stub-install" "$out7"
+
+# ===========================================================================
+echo
+echo "landing pass — a queue-mode repo's checkout is advanced by the refresh loop:"
+# ===========================================================================
+# verdict.sh advances a queue-mode repo's base by a fast-forward push; nothing else pulls
+# the shared checkout, so it lags origin/<base> until landing.sh's own end-of-pass loop
+# (landing.sh: "ADVANCE THE CHECKOUT HUMANS READ") calls skew.sh refresh on it — push and
+# queue repos both, because those are the two modes that advance the base through Spira.
+#
+# MINIMUM LANDSTATE: one repo-map row with land=queue and no spira/* branches. land_repo
+# reads the branch list first and returns immediately when it is empty (before touching
+# bd, gate.sh or confine.sh), so reaching the refresh loop needs none of those — just
+# landing.sh, lib.sh, conf.sh and the real skew.sh, wired through a repo-map whose only
+# row is the queue repo itself, doubling as the home repo so nothing else is visited.
+#
+# THE POSITIVE CONTROL IS THE CONSTRUCTION. origin/main is advanced by one commit while
+# the queue repo's checkout stays behind; a false-clean result — HEAD already at
+# origin/main before the pass — is impossible because the extra commit is added
+# explicitly, so silence means the refresh loop never fired.
+QORIGIN="$TMP/qorigin.git"; QREPO="$TMP/qland-repo"; QSH="$TMP/qland-spira"; QRUN="$TMP/qland-run"
+git init -q --bare -b main "$QORIGIN"
+git init -q -b main "$QREPO"
+git -C "$QREPO" config user.email "test@test"
+git -C "$QREPO" config user.name "test"
+git -C "$QREPO" commit -q --allow-empty -m "queue base"
+git -C "$QREPO" remote add origin "$QORIGIN"
+git -C "$QREPO" push -q origin main
+git -C "$QREPO" fetch -q origin
+git -C "$QREPO" remote set-head origin --auto >/dev/null 2>&1 || true
+
+# Advance origin/main while QREPO's checkout stays behind.
+_QCLONE="$(mktemp -d "$TMP/qclone-XXXXX")"
+git clone -q "$QORIGIN" "$_QCLONE"
+git -C "$_QCLONE" commit -q --allow-empty -m "origin advances"
+git -C "$_QCLONE" push -q origin main
+rm -rf "$_QCLONE"
+git -C "$QREPO" fetch -q origin
+
+QUEUE_NEW="$(git -C "$QREPO" rev-parse origin/main)"
+[ "$(git -C "$QREPO" rev-parse HEAD)" != "$QUEUE_NEW" ] \
+    || bad "queue-mode refresh setup" "checkout is already at origin/main before the pass"
+
+mkdir -p "$QSH" "$QRUN"
+cp "$HERE/landing.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/skew.sh" "$QSH/"
+cat > "$QSH/repo-map" <<MAP
+qfixture | $QREPO | queue | |
+MAP
+
+q_out="$(env -i PATH="$PATH" \
+    HOME="$TMP/home" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_HOME="$QSH" \
+    SPIRA_RUN="$QRUN" \
+    SPIRA_DB="$TMP/qland-no-db" \
+    SPIRA_REPO="$QREPO" \
+    SPIRA_HOME_REPO=qfixture \
+    SPIRA_REPO_MAP="$QSH/repo-map" \
+    SPIRA_DOLT_DATA="" \
+    SPIRA_TESTDB_DATA="" \
+    bash "$QSH/landing.sh" 2>&1)"
+
+QUEUE_AFTER="$(git -C "$QREPO" rev-parse HEAD)"
+[ "$QUEUE_AFTER" = "$QUEUE_NEW" ] \
+    && ok  "a queue-mode repo's checkout is advanced to origin/main by the landing pass" \
+    || bad "queue-mode refresh" "checkout at $(git -C "$QREPO" rev-parse --short HEAD), expected $(printf '%.7s' "$QUEUE_NEW")"
+want "and the pass reports the refresh" "skew: refreshed to" "$q_out"
 
 echo
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
