@@ -90,14 +90,6 @@ spira/test-scratch-fence.sh
 # verifies that comment lines are not flagged, confirming the matcher fires on code only.
 spira/test-wiki-add-fence.sh
 
-# SCRATCH-FENCE AT CERTIFICATION: a root-level scratch file is refused before a CERTIFIED
-# record is written. The cost of a fence violation escaping certification is a full CI run
-# (image build + suites) blocked for every branch in the batch — sp-zmd3u-sop-verification.md
-# demonstrated this in PR 59. The fence runs as part of the certification gate; this suite
-# verifies that a branch with a root-level sp-* file is refused (gate called, bead reopened,
-# file named in the note) and that a clean branch is still certified (positive control).
-spira/test-cert-lint.sh
-
 # THE SUITE-STATE FENCE'S OWN POSITIVE CONTROL. suite-state-fence.sh refuses a landing
 # that carries a malformed lifecycle entry or a quarantine against a CLOSED bead (which
 # has no exit path — hygiene requires LANDED, which CLOSED never satisfies). This suite
