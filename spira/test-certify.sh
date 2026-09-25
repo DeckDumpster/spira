@@ -12,7 +12,7 @@
 # confine.sh is a stub; the real db is testdb.sh with an embedded engine.
 # The bare remote is real git so ancestry checks are real.
 #
-# covers: spira/landing.sh spira/conf.sh
+# covers: spira/landing.sh spira/conf.sh spira/scratch-fence.sh
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -160,6 +160,92 @@ case "$(landstate sp-cert-red)" in
     *)    bad "landstate says RED for gate failure" "got: $(landstate sp-cert-red)" ;;
 esac
 # Restore the passing stub for subsequent tests.
+stub gate.sh '
+printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
+printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
+exit 0'
+
+# -----------------------------------------------------------------------------------------
+# SCRATCH-FENCE AT CERTIFICATION: the gate stub below runs the real scratch-fence.sh against
+# the branch worktree instead of returning a canned verdict, so this exercises the actual
+# mechanism. A branch carrying a root-level aeon scratch file must be refused before a
+# CERTIFIED record is written, and the reopen note must name the offending file.
+#
+# SEEN RED FIRST (law-a-regression-test-must-be-seen-to-fail): before sp-hm2vw, queue-mode
+# certification ran no gate at all, so a branch like sp-scratch-drt below would have
+# certified silently (PR 59, run 35272201543).
+#
+# scratch-fence.sh locates the git root via its own script path ($0), so it is placed inside
+# the worktree at .test-spira/ — that subdir resolves to the worktree root via
+# `git rev-parse --show-toplevel`. It is untracked (created after the branch commit), so it
+# does not appear in `git ls-files`.
+# -----------------------------------------------------------------------------------------
+stub gate.sh '
+id="${1#spira/}"
+tree="'"$RUN"'/worktree/$id"
+printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
+scr_dir="$tree/.test-spira"
+mkdir -p "$scr_dir"
+cp "'"$SH"'/scratch-fence.sh" "$scr_dir/scratch-fence.sh"
+if ! fence_out="$(bash "$scr_dir/scratch-fence.sh" 2>&1)"; then
+    printf "%s\n" "$fence_out" >&2
+    printf "gate: VERDICT=FAIL reason=scratch-fence branch=%s repo=%s\n" "$1" "${2:-?}" >&2
+    exit 1
+fi
+printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
+exit 0'
+
+bead_for() {
+    local id="$1"
+    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
+        "$id" "$id" "$id" | testdb_seed
+}
+
+seed
+git -C "$REPO" worktree add -q -b "spira/sp-scratch-drt" "$RUN/worktree/sp-scratch-drt" main
+printf 'real work\n' > "$RUN/worktree/sp-scratch-drt/work.txt"
+printf 'aeon working note\n' > "$RUN/worktree/sp-scratch-drt/sp-scratch-drt.txt"
+git -C "$RUN/worktree/sp-scratch-drt" add -A
+git -C "$RUN/worktree/sp-scratch-drt" commit -q -m "sp-t8tmq sp-scratch-drt — adds scratch note at root"
+bead_for sp-scratch-drt
+
+before="$(main_tip)"
+out="$(landing)"
+is   "gate called for scratch-file branch"       "1"        "$(gate_n)"
+want "scratch branch is reopened"                "reopened sp-scratch-drt" "$out"
+is   "reopened bead status is open"              "open"     "$(status_of sp-scratch-drt)"
+is   "remote main unchanged after refusal"       "$before"  "$(main_tip)"
+case "$(landstate sp-scratch-drt)" in
+    RED*) ok "landstate is RED for scratch-fence failure" ;;
+    *)    bad "landstate is RED for scratch-fence failure" "got: $(landstate sp-scratch-drt)" ;;
+esac
+# The reopen note must name the scratch file so the next aeon knows what to remove.
+note_out="$(B show sp-scratch-drt --json 2>/dev/null \
+    | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+d = d if isinstance(d, list) else [d]
+print(d[0].get("notes", "") if d else "")' 2>/dev/null || true)"
+want "reopen note names the scratch file"        "sp-scratch-drt.txt" "$note_out"
+
+# POSITIVE CONTROL: under the same real scratch-fence gate, a clean branch still certifies —
+# proves the gate does not refuse everything.
+seed
+git -C "$REPO" worktree add -q -b "spira/sp-scratch-cln" "$RUN/worktree/sp-scratch-cln" main
+printf 'real work, no scratch file\n' > "$RUN/worktree/sp-scratch-cln/work.txt"
+git -C "$RUN/worktree/sp-scratch-cln" add -A
+git -C "$RUN/worktree/sp-scratch-cln" commit -q -m "sp-t8tmq sp-scratch-cln — clean branch"
+bead_for sp-scratch-cln
+
+out="$(landing)"
+is   "gate called for clean branch"              "1"        "$(gate_n)"
+want "clean branch is certified"                 "certified spira/sp-scratch-cln" "$out"
+case "$(landstate sp-scratch-cln)" in
+    CERTIFIED*) ok "landstate is CERTIFIED for clean branch" ;;
+    *)          bad "landstate is CERTIFIED for clean branch" "got: $(landstate sp-scratch-cln)" ;;
+esac
+
+# Restore the fast passing stub for subsequent tests.
 stub gate.sh '
 printf "%s\n" "$1" >> "'"$GATE_COUNT"'"
 printf "gate: VERDICT=PASS reason=stub branch=%s repo=%s\n" "$1" "${2:-?}" >&2
