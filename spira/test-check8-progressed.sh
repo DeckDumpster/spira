@@ -23,13 +23,11 @@
 # had no test before this extraction — only the acted/progressed distinction did.
 #
 # defect: sp-acted-conflation
+# tier: T1
 # covers: spira/sentinel.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 # Isolated per call: check8_should_judge takes every input as an argument and touches no
 # ambient state, but lib.sh itself must still be sourced somewhere clean
@@ -95,5 +93,4 @@ echo "boundary — plan_inprog > 0 or n_open == 0 also withhold judgement:"
 is "plan_inprog>0: no judgement" "no" "$(libcall 'check8_should_judge 0 1 1 0 0 100000 3600')"
 is "n_open==0: no judgement"     "no" "$(libcall 'check8_should_judge 0 0 0 0 0 100000 3600')"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
