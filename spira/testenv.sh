@@ -179,12 +179,74 @@ _ensure_image() {
         printf 'testenv: %s is not in the registry — building it\n' "$remote" >&2
     fi
 
-    printf 'testenv: building image %s\n' "$img" >&2
-    podman build -q -t "$img" -f "$TESTENV_DIR/Containerfile" "$HERE" >&2 || {
-        printf 'testenv: image build failed — check Containerfile in %s\n' "$TESTENV_DIR" >&2
-        return 1
-    }
+    _build_image "$img" || return 1
     printf '%s' "$img"
+}
+
+# Seconds between heartbeat lines while an image builds. A build that goes silent for longer
+# than this and one that is genuinely hung become indistinguishable: the cold build compiles
+# bd and its Dolt dependencies in Go from source and prints nothing between the module
+# download and the finished binary.
+_BUILD_HEARTBEAT_SECONDS="${SPIRA_TESTENV_BUILD_HEARTBEAT:-60}"
+
+_free_disk() { df -Ph "$HERE" 2>/dev/null | awk 'NR==2{print $4}'; }
+_free_mem()  { free -h 2>/dev/null | awk '/^Mem:/{print $7}'; }
+
+# One heartbeat line: the furthest build STEP seen in the log so far (podman's own
+# progress, which a cold build can go many minutes between), elapsed time, and free
+# disk/memory — so a real resource exhaustion is named rather than looking like a hang.
+_build_heartbeat() {
+    local start="$1" buildlog="$2" now elapsed stage
+    now=$(date +%s)
+    elapsed=$((now - start))
+    stage="$(grep -o '^STEP [0-9]*/[0-9]*:.*' "$buildlog" 2>/dev/null | tail -1)"
+    [ -n "$stage" ] || stage="(no build output yet)"
+    printf 'testenv: building — %s — elapsed %ss — disk %s free, memory %s free\n' \
+        "$stage" "$elapsed" "$(_free_disk)" "$(_free_mem)" >&2
+}
+
+# Build $1 (the local image ref). Runs `podman build` in the background and prints a
+# heartbeat line at least every _BUILD_HEARTBEAT_SECONDS until it finishes, so silence
+# never means "unknown state" — it either means "under the heartbeat interval" or the
+# process is dead and the exit status below explains why.
+_build_image() {
+    local img="$1"
+    printf 'testenv: COLD build of %s — the tag is a hash of %s/Containerfile, the bd pin\n' \
+        "$img" "$(basename "$TESTENV_DIR")" >&2
+    printf 'testenv: and deps.toml, so this VM has nothing to pull and must build it. Cold\n' >&2
+    printf 'testenv: builds compile a Go and a Rust toolchain from source and have taken\n' >&2
+    printf 'testenv: close to twenty minutes; a heartbeat line follows at least every %ss —\n' \
+        "$_BUILD_HEARTBEAT_SECONDS" >&2
+    printf 'testenv: silence past that means stuck, not slow.\n' >&2
+
+    local buildlog; buildlog="$(mktemp)"
+    local start; start=$(date +%s)
+
+    podman build -t "$img" -f "$TESTENV_DIR/Containerfile" "$HERE" >"$buildlog" 2>&1 &
+    local build_pid=$!
+
+    while kill -0 "$build_pid" 2>/dev/null; do
+        sleep "$_BUILD_HEARTBEAT_SECONDS" &
+        wait $!
+        kill -0 "$build_pid" 2>/dev/null || break
+        _build_heartbeat "$start" "$buildlog"
+    done
+
+    wait "$build_pid"
+    local rc=$?
+    if [ "$rc" -ne 0 ]; then
+        if grep -qi 'no space left on device\|ENOSPC' "$buildlog"; then
+            printf 'testenv: image build failed — disk exhausted on this VM (%s free)\n' \
+                "$(_free_disk)" >&2
+        else
+            printf 'testenv: image build failed — check Containerfile in %s\n' "$TESTENV_DIR" >&2
+            tail -n 40 "$buildlog" >&2
+        fi
+        rm -f "$buildlog"
+        return 1
+    fi
+    rm -f "$buildlog"
+    return 0
 }
 
 # Wait up to N half-second ticks for CMD ARGS to exit 0.
