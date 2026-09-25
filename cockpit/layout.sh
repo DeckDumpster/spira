@@ -66,13 +66,15 @@
 # ---------------------------------
 # `cockpit-remote watch` calls this on its poll loop so the layout self-heals: the session
 # pane runs the concierge and exits when it detaches; `ensure` reopens it with the same
-# command so the desk view is always the concierge. It repairs only a cockpit that is ALREADY
-# UP — a window with `@cockpit` panes but no session pane left.
+# command so the desk view is always the concierge. It heals wherever the tagged panes
+# actually are rather than at a hardcoded `brain:0`.
 #
-# The absence of any `@cockpit` pane means `down` was run, and `ensure` must leave that
-# alone. An unattended process that rebuilds the dashboards the operator just dismissed is not a fence,
-# it is a fight. Same reason it heals wherever the tagged panes actually are rather than
-# at a hardcoded `brain:0`.
+# THE ABSENCE OF EVERY `@cockpit` PANE IS AMBIGUOUS ON ITS OWN: it is what `down` leaves
+# behind, and it is also what a crash leaves behind — every session gone, nothing tagged
+# anywhere. `down` therefore records the deliberate state in `DOWN_MARKER`; `ensure` rebuilds
+# from nothing (`rebuild.sh`) only when that marker is ABSENT, and stays silent when it is
+# there. `up` clears the marker on entry — asking for the cockpit back is what retires the
+# deliberate state, whether or not `up` goes on to succeed.
 #
 # It is SILENT on a healthy cockpit — a heartbeat that prints "fine" every 15s buries the
 # one line that says it repaired something. Repairs are logged to `.runtime/cockpit-heal.log`,
@@ -91,6 +93,10 @@ if [ -z "${SPIRA_DEV_RENDERER:-}" ] && [ -n "${SPIRA_PROD:-}" ] && ! spira_singl
     [ -d "$_prod_cock" ] && COCK="$_prod_cock"
 fi
 RUN="$SPIRA_RUN"
+# Records that `down` was deliberate, so `ensure` can tell that apart from every session
+# having crashed — both leave zero `@cockpit` panes anywhere, which is the one fact
+# `cockpit_windows()` can see. See the `ensure` header comment above.
+DOWN_MARKER="$RUN/cockpit.down"
 
 # SPIRA_CONF, when set, points to the config file for this instance. Pane commands carry it
 # in the command string so a respawn — from tmux itself or from the ensure timer — uses the
@@ -504,6 +510,9 @@ case "$ACTION" in
 
 up)
     tmux has-session -t "${WINDOW%%:*}" 2>/dev/null || { echo "no tmux session for '$WINDOW'" >&2; exit 1; }
+    # Asking for the cockpit back retires the deliberate-down state, whether or not the
+    # rest of this succeeds — a failed repair should not read as "still down on purpose".
+    rm -f "$DOWN_MARKER" 2>/dev/null || true
     adopt_untagged
     # Before `kill-pane` runs over every tagged pane: a tag on a pane that runs no dashboard
     # would make that pane — usually the session — one of the ones killed.
@@ -563,6 +572,10 @@ down)
     fi
     for p in $(all_tagged); do tmux kill-pane -t "$p" 2>/dev/null || true; done
     tmux select-pane -t "$sess" 2>/dev/null || true
+    # Record that this absence is deliberate. Written after the kill loop, not before: a
+    # `down` that failed to remove anything should not leave the marker claiming it did.
+    mkdir -p "$RUN" 2>/dev/null || true
+    printf '%s\n' "$(TZ="${SPIRA_TZ:-${TZ:-}}" date '+%Y-%m-%dT%H:%M:%S')" > "$DOWN_MARKER" 2>/dev/null || true
     echo "cockpit: down in $WINDOW"
     ;;
 
@@ -592,10 +605,26 @@ ensure)
     apply_mouse_mode
     # Defence in depth: ensure window-size largest is set for every session hosting a cockpit
     # window. This survives a ghost that reconnects between two ensure runs.
-    for w in $(cockpit_windows); do
+    _cw="$(cockpit_windows)"
+    for w in $_cw; do
         tmux set-option -t "${w%%:*}" window-size largest 2>/dev/null || true
     done
-    for w in $(cockpit_windows); do
+    if [ -z "$_cw" ]; then
+        # Zero `@cockpit` panes ANYWHERE is what `down` leaves behind, and it is also what a
+        # crash leaves behind — the tag scan cannot tell the two apart, only the marker can.
+        if [ -f "$DOWN_MARKER" ]; then
+            : # deliberate — `down` was run, and rebuilding it is a fight, not a repair.
+        elif heal_ready; then
+            : >"$HEAL_STAMP"
+            heal_log "no cockpit window found anywhere, and no down marker — rebuilding from scratch"
+            if out=$("$COCK/rebuild.sh" 2>&1); then
+                heal_log "rebuild: $(printf '%s' "$out" | tr '\n' ' ')"
+            else
+                heal_log "rebuild FAILED — $(printf '%s' "$out" | tr '\n' ' ')"
+            fi
+        fi
+    fi
+    for w in $_cw; do
         WINDOW="$w"
         adopt_untagged
         retag_dashboards
