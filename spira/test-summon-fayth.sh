@@ -469,7 +469,7 @@ summon_fayth stretchy >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"
 want "default quota: CPUQuota=70% appears in args" "CPUQuota=70%" "$args"
 
-export SPIRA_AEON_CPU_QUOTA=90%
+export SPIRA_AEON_CPU_QUOTA=90
 rm -f "$ARGS_FILE"
 summon_fayth stretchy >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"

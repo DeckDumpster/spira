@@ -152,6 +152,10 @@ ledger_done() {
     && { tail -n 5000 "$LEDGER" > "$LEDGER.trim" && mv -f "$LEDGER.trim" "$LEDGER"; }
 ledger "born $FAYTH $$"
 
+# aeon_settings and aeon_claude_argv (the claude CLI argv both launch sites share) live in
+# lib.sh next to summon_argv (the systemd-run argv summon_fayth and escape.sh share) — one
+# seam per shared invocation, testable without running this script's own claim/work/close body.
+
 # ---- sweep mode: a beadless session --------------------------------------------------
 # A SWEEP RUNS THE PERSONA WITHOUT A BEAD. The bead lifecycle — claim, lease, close,
 # verdict, attempt — does not apply. What does apply is the capacity check, the draining

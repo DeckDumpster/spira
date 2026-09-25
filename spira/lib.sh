@@ -1669,39 +1669,34 @@ fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partitio
 # for "summoned" would swallow the log lines below with it, and the sentinel's stdout IS the
 # sentinel log — so the one pass that did something would be the one that explained itself
 # least.
-summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
-    local f="$1" pool="${2:-}" require_label="${3:-}" r free
-    # HALTED — world.sh stop writes this stamp; only world.sh start removes it.
-    # Checked before drain: halt is indefinite and requires explicit operator action.
+# world_gate <fayth> <log-prefix> -> 0 if summons are permitted, 1 if halted or draining.
+# Shared by every path that launches an aeon (summon_fayth, escape.sh) so a halt or an
+# expired drain is honoured identically no matter which one is asked.
+#
+# HALTED — world.sh stop writes this stamp; only world.sh start removes it. Checked before
+# drain: halt is indefinite and requires explicit operator action.
+#
+# DRAINING — the operator asked for an empty pool and is waiting on it. Checked ahead of
+# capacity and readiness, because it is the only condition here a person is actively
+# blocked on: a rollout that must not kill work in flight needs the pool to reach zero, and
+# it never does while summons continue.
+#
+# A DRAIN EXPIRES, AND THIS IS WHAT EXPIRES IT. A drain is a held breath: right for the
+# minutes an operation needs, never for an hour. Whoever sets one can die before lifting it
+# — 2026-09-09, an Ops sweep drained at 18:02:03, finished its SOP at 18:04:29, exited
+# without resuming, and the world sat gated for 59 minutes with 25 beads ready and no aeons,
+# every pass logging "pass complete — goal reached" because a drain is a MODE and nothing
+# treated the mode as a fault.
+#
+# LIFTING IT HERE IS LOUD, NEVER SILENT — a quiet lift would hide the forgotten resume,
+# which is the defect worth seeing. A STAMP WITH NO `expires` LINE expires at stamp-mtime +
+# TTL, so a drain written by the older world.sh cannot wedge the loop forever either.
+world_gate() {
+    local f="$1" prefix="$2" _dstamp _dexp _dmt
     if [ -f "${SPIRA_RUN:-}/world.halted" ]; then
-        log "CHECK7 $f: halted — not summoning (world.sh start to lift)"
+        log "$prefix $f: halted — not summoning (world.sh start to lift)"
         return 1
     fi
-    # DRAINING — the operator asked for an empty pool and is waiting on it. Checked FIRST,
-    # ahead of capacity and readiness, because it is the only condition here a person is
-    # actively blocked on: a rollout that must not kill work in flight — install.sh, a schema
-    # change, swapping the checkout aeon.sh itself is read from — needs the pool to reach
-    # zero, and it never does while summons continue.
-    #
-    # THE GATE IS HERE, NOT ON THE TIMER, and that is the whole design. Landing is a LEG of
-    # the sentinel pass (sentinel.sh starts spira-landing) and not a timer of its own, so
-    # stopping spira-sentinel.timer to halt summons also halts landing and strands every
-    # finished branch — measured 2026-09-08, three branches unlanded across a 16-minute
-    # hand-drain. Gate the spawn; leave the loop running.
-    # A DRAIN EXPIRES, AND THE GATE IS WHAT EXPIRES IT. A drain is a held breath: right for
-    # the minutes an operation needs, never for an hour. Whoever sets one can die before
-    # lifting it, and on 2026-09-09 one did — an Ops sweep drained at 18:02:03, finished its
-    # SOP at 18:04:29, exited without resuming, and the world sat gated for 59 minutes with
-    # 25 beads ready and no aeons. Every pass logged "pass complete — goal reached" while it
-    # happened, because a drain is a MODE and nothing treated the mode as a fault.
-    #
-    # LIFTING IT HERE IS LOUD, NEVER SILENT. An expiry that quietly resumed would hide the
-    # forgotten resume, and the forgotten resume is the defect worth seeing.
-    #
-    # A STAMP WITH NO `expires` LINE IS TREATED AS EXPIRED AT stamp-mtime + TTL, so a drain
-    # written by the older world.sh cannot wedge the loop forever either. Fail toward
-    # summoning: one aeon summoned during an operation costs an attempt, and a stuck gate
-    # costs the whole pipeline.
     _dstamp="${SPIRA_RUN:-}/world.draining"
     if [ -f "$_dstamp" ]; then
         _dexp="$(sed -n 's/^expires \([0-9][0-9]*\)$/\1/p' "$_dstamp" 2>/dev/null | head -1)"
@@ -1711,12 +1706,56 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
         fi
         if [ "$(date +%s)" -ge "$_dexp" ]; then
             rm -f "$_dstamp"
-            log "CHECK7 $f: DRAIN EXPIRED — lifting a drain nobody resumed (deadline $(date -d "@$_dexp" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo '?'), TTL ${SPIRA_DRAIN_TTL:-1800}s). Whoever drained did not resume; summons are live again."
+            log "$prefix $f: DRAIN EXPIRED — lifting a drain nobody resumed (deadline $(date -d "@$_dexp" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo '?'), TTL ${SPIRA_DRAIN_TTL:-1800}s). Whoever drained did not resume; summons are live again."
         else
-            log "CHECK7 $f: draining — not summoning (world.sh resume to lift)"
+            log "$prefix $f: draining — not summoning (world.sh resume to lift)"
             return 1
         fi
     fi
+    return 0
+}
+
+# summon_argv <fayth> -> systemd-run --property/--setenv flags shared by every summon path
+# (summon_fayth, escape.sh), one argv token per line. The caller supplies its own --unit
+# name and the aeon.sh invocation that follows.
+summon_argv() {
+    local f="$1"
+    printf '%s\n' \
+        --property=CPUQuota="${SPIRA_AEON_CPU_QUOTA:-70}%" --property=Nice=10 \
+        --property=TimeoutStartSec="$(fayth_get "$f" FAYTH_TIMEOUT_SECONDS 3600)" \
+        --setenv=PATH="$PATH" --setenv=HOME="$HOME"
+}
+
+# aeon_settings -> the --settings JSON that wires aeon-fence.sh and the mail/unacked-comment
+# delivery hooks into a claude session. Called by both of aeon.sh's launch sites (sweep,
+# bead) so both sessions carry the same guards (law-guard-binds-the-caller).
+aeon_settings() {
+    python3 -c "
+import json, os
+spira_home = '$SPIRA_HOME'
+hooks = {}
+mail    = os.path.join(spira_home, 'hooks', 'aeon-mail-deliver.sh')
+deliver = os.path.join(spira_home, 'bd-unacked-comment-deliver.sh')
+post_hooks = [{'type': 'command', 'command': mail, 'timeout': 5}]
+if os.access(deliver, os.X_OK):
+    post_hooks.append({'type': 'command', 'command': deliver, 'timeout': 5})
+hooks['PostToolUse'] = [{'hooks': post_hooks}]
+pre_hooks = []
+fence = os.path.join(spira_home, 'hooks', 'aeon-fence.sh')
+if os.access(fence, os.X_OK):
+    pre_hooks.append({'type': 'command', 'command': fence, 'timeout': 5})
+guard = os.path.join(spira_home, 'bd-close-unacked-guard.sh')
+if os.access(guard, os.X_OK):
+    pre_hooks.append({'type': 'command', 'command': guard, 'timeout': 5})
+if pre_hooks:
+    hooks['PreToolUse'] = [{'hooks': pre_hooks}]
+print(json.dumps({'hooks': hooks}))
+" 2>/dev/null
+}
+
+summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
+    local f="$1" pool="${2:-}" require_label="${3:-}" r free
+    world_gate "$f" CHECK7 || return 1
     # THE ACCOUNT BEFORE THE QUEUE. A summon during a capacity outage cannot succeed, and it
     # does not fail for free: the aeon it starts claims a bead, is refused by the API, and
     # the bead pays an attempt to discover a fact the harness already knew. Asked first, and
@@ -1837,11 +1876,10 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
     # 1.6s of CPU, leaving an empty log and a sentinel that cheerfully reported "summoned"
     # every two minutes. systemd-run puts the aeon in its own cgroup, quota and journal.
     log "CHECK7 $f: $r ready, $free free — summoning${require_label:+, restricted to '$require_label'}"
+    local _sargv; mapfile -t _sargv < <(summon_argv "$f")
     "${SPIRA_SUMMON:-systemd-run}" --user --collect --quiet \
         --unit="spira-aeon-$f-$(date +%s)" \
-        "--property=CPUQuota=${SPIRA_AEON_CPU_QUOTA:-70}%" --property=Nice=10 \
-        --property=TimeoutStartSec="$(fayth_get "$f" FAYTH_TIMEOUT_SECONDS 3600)" \
-        --setenv=PATH="$PATH" --setenv=HOME="$HOME" \
+        "${_sargv[@]}" \
         ${require_label:+--setenv=SPIRA_REQUIRE_LABEL="$require_label"} \
         "$SPIRA_HOME/aeon.sh" "$f" 2>/dev/null
 }
