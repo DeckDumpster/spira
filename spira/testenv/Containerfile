@@ -175,6 +175,17 @@ RUN curl -fsSL -o /tmp/dolt.tar.gz \
     install -m 0755 /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt && \
     rm -rf /tmp/dolt.tar.gz /tmp/dolt-linux-amd64
 
+# ── duckdb — the query layer over run/tsd/'s JSONL files (sp-sbc6o) ───────────────────────
+# A single static binary from the project's own GitHub releases; gzip-compressed, no package
+# manager involved. Runtime-tier in deps.toml: tsd-query.sh has no fallback path, so an
+# image without it fails the doctor-check step below rather than shipping a silent gap.
+ARG DUCKDB_VERSION=1.5.5
+RUN curl -fsSL -o /tmp/duckdb.gz \
+    "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.gz" && \
+    gunzip -c /tmp/duckdb.gz > /usr/local/bin/duckdb && \
+    chmod 0755 /usr/local/bin/duckdb && \
+    rm -f /tmp/duckdb.gz
+
 # ── aws CLI v2 ────────────────────────────────────────────────────────────
 # Required when the runner pool spills to EC2. Installed system-wide.
 # Key fingerprint: FB5D B77F D5C1 18B8 0511 ADA8 A631 0ACC 4672 475C
