@@ -1,0 +1,21 @@
+[Unit]
+Description=Spira reconciler flow pass — backlog trend, stage velocity, stage dwell, round health
+Documentation=file://@SPIRA_HOME@/reconciler-flow/src/main.rs
+After=default.target
+
+[Service]
+Type=oneshot
+ExecStart=@SPIRA_RECONCILER_FLOW_BIN@ --pass
+# A pass runs a handful of duckdb queries over run/tsd/, one bd list and at most one mail
+# send per gap. 60s is generous for all of that on a quiet box.
+TimeoutStartSec=60
+# Nice=10 is the fence (law-fence-loops-on-shared-hardware).
+Nice=10
+Environment=SPIRA_HOME=@SPIRA_PROD@
+Environment=SPIRA_RUN=@SPIRA_RUN@
+Environment=SPIRA_DB=@SPIRA_DB@
+StandardOutput=append:@SPIRA_RUN@/reconciler-flow.log
+StandardError=append:@SPIRA_RUN@/reconciler-flow.log
+
+[Install]
+WantedBy=default.target

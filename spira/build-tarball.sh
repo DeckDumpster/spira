@@ -9,7 +9,8 @@
 #   The 'build' subcommand is the default: omitting it is equivalent.
 #   --workspace <path>: auto-discover all [[bin]] targets via cargo metadata.
 #   --repo-name <name>: the identity stamped into MANIFEST's `repo` line (see below).
-#   Legacy: --loom-bin, --panel-bin, --broker-bin, --supervise-bin still accepted.
+#   Legacy: --loom-bin, --panel-bin, --broker-bin, --supervise-bin, --landing-pass-bin,
+#   --reconciler-flow-bin still accepted.
 #
 # TARBALL CONTENTS
 #   Every file tracked by git at the given commit, plus:
@@ -61,7 +62,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # build — produce the tarball
 # ---------------------------------------------------------------------------
 do_build() {
-    local outdir="." loom_bin="" panel_bin="" broker_bin="" supervise_bin="" landing_pass_bin="" commit="" repo="" name_override="" repo_name=""
+    local outdir="." loom_bin="" panel_bin="" broker_bin="" supervise_bin="" landing_pass_bin="" reconciler_flow_bin="" commit="" repo="" name_override="" repo_name=""
     local workspace=""  # workspace root for auto-discovery via cargo metadata
 
     while [ $# -gt 0 ]; do
@@ -72,6 +73,7 @@ do_build() {
             --broker-bin)        broker_bin="$2";        shift 2 ;;
             --supervise-bin)     supervise_bin="$2";     shift 2 ;;
             --landing-pass-bin)  landing_pass_bin="$2";  shift 2 ;;
+            --reconciler-flow-bin) reconciler_flow_bin="$2"; shift 2 ;;
             --workspace)         workspace="$2";         shift 2 ;;
             --name)              name_override="$2";     shift 2 ;;
             --repo-name)         repo_name="$2";         shift 2 ;;
@@ -183,8 +185,13 @@ for pkg in meta['packages']:
                 "${landing_pass_bin:-(not specified; pass --landing-pass-bin <path>)}" >&2
             exit 1
         fi
-        _bin_names=(loom panel broker spira-supervise landing-pass)
-        _bin_paths=("$loom_bin" "$panel_bin" "$broker_bin" "$supervise_bin" "$landing_pass_bin")
+        if [ -z "$reconciler_flow_bin" ] || [ ! -f "$reconciler_flow_bin" ]; then
+            printf 'build-tarball.sh: reconciler-flow binary not found: %s\n' \
+                "${reconciler_flow_bin:-(not specified; pass --reconciler-flow-bin <path>)}" >&2
+            exit 1
+        fi
+        _bin_names=(loom panel broker spira-supervise landing-pass reconciler-flow)
+        _bin_paths=("$loom_bin" "$panel_bin" "$broker_bin" "$supervise_bin" "$landing_pass_bin" "$reconciler_flow_bin")
     fi
 
     # Generate name and timestamp. --name overrides auto-generation and pins the
