@@ -41,6 +41,18 @@ _bead_file() {
         esac
         shift
     done
+
+    # A repo: label absent from the map is refused here, before bd is ever called, so
+    # no bead is filed for a repository the harness has no row for
+    # (law-a-refusal-names-its-exit). Read through repo_names(), the same accessor
+    # every other repo-scoped lookup in the harness uses.
+    if [ -n "$repo" ] && ! repo_names 2>/dev/null | grep -qxF "$repo"; then
+        local _valid; _valid="$(repo_names 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')"
+        printf 'bead: repo:%s is not in the repo map; valid keys: %s\n' \
+            "$repo" "${_valid:-<map not found>}" >&2
+        return 2
+    fi
+
     # P0 beads are express by definition.
     [ "${priority:-}" = "0" ] && express=1
 

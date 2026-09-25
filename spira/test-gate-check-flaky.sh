@@ -42,6 +42,10 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
 mkdir -p "$TMP/sbin" "$TMP/run" "$TMP/run/events"
 
+# bead.sh refuses a repo: label absent from the map (spira/test-bead-repo-guard.sh); the
+# home repo is $(basename "$TMP") here, so it must have its own row like any other.
+printf '%s | %s | push | origin/main |  |\n' "$(basename "$TMP")" "$TMP" > "$TMP/repo-map"
+
 # Count beads whose title starts with "flaky suite:".
 count_flaky() {
     B list --json 2>/dev/null | python3 -c '
@@ -61,7 +65,7 @@ run_gate_check() {
     SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" \
         SPIRA_BD="$SPIRA_BD" \
         SPIRA_PATH="$TMP/sbin" \
-        SPIRA_REPO_MAP="$TMP/empty-map" SPIRA_CONF="$TMP/no.conf" \
+        SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_CONF="$TMP/no.conf" \
         SPIRA_FLAKY_GH_REPO="test-org/test-repo" \
         bash "$HERE/gate-check.sh" 2>/dev/null
 }
