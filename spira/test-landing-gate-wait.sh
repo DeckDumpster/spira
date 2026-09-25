@@ -141,5 +141,24 @@ received="$(cat "$WAIT_LOG" 2>/dev/null)"
     || bad "clamped: expected wait > 0, got $received"
 drop_branch sp-gwclamped
 
+# --------------------------------------------------------------------------------------
+# BUDGET CUT: gate_fits itself, not gate_lock_wait. LAND_MAXSEC=1 with RESERVE=2 makes
+# gate_fits return false before the first gate call (1-0=1 < 2) — deterministic without
+# wall-clock timing. The pass must log the cut, defer the branch, certify nothing, and
+# never reach gate.sh at all: WAIT_LOG only exists if the stub ran, so its absence is the
+# proof.
+# --------------------------------------------------------------------------------------
+seed; branch sp-gwcut
+export SPIRA_LAND_MAXSEC=1 SPIRA_LAND_GATE_RESERVE=2
+out="$(run_landing)"
+unset SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE
+want   "budget cut: pass logs the cut"      "budget cut at spira/sp-gwcut" "$out"
+want   "budget cut: reports deferred count" "1 branch(es) deferred"       "$out"
+nowant "budget cut: branch not certified"   "certified"                   "$out"
+[ ! -e "$WAIT_LOG" ] \
+    && ok  "budget cut: gate.sh never invoked" \
+    || bad "budget cut: gate.sh never invoked" "found $WAIT_LOG"
+drop_branch sp-gwcut
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
