@@ -25,7 +25,7 @@
 # real output is trusted as evidence of compliance.
 #
 # tier: T1
-# covers: spira/aeon.sh UC-safety-fences-16
+# covers: spira/aeon.sh spira/lib.sh UC-safety-fences-16
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0
@@ -74,7 +74,7 @@ echo
 echo "the real aeon_settings() output names no guard outside the allow-list:"
 # ===========================================================================
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-SPIRA_HOME_FIXTURE="$TMP/home"; mkdir -p "$SPIRA_HOME_FIXTURE/hooks"
+SPIRA_HOME_FIXTURE="$TMP/home"; mkdir -p "$SPIRA_HOME_FIXTURE/hooks" "$TMP/run"
 cp "$HERE/hooks/aeon-fence.sh" "$SPIRA_HOME_FIXTURE/hooks/aeon-fence.sh"
 cp "$HERE/hooks/aeon-mail-deliver.sh" "$SPIRA_HOME_FIXTURE/hooks/aeon-mail-deliver.sh"
 cp "$HERE/bd-close-unacked-guard.sh" "$SPIRA_HOME_FIXTURE/bd-close-unacked-guard.sh"
@@ -82,10 +82,10 @@ chmod +x "$SPIRA_HOME_FIXTURE/hooks/aeon-fence.sh" \
          "$SPIRA_HOME_FIXTURE/hooks/aeon-mail-deliver.sh" \
          "$SPIRA_HOME_FIXTURE/bd-close-unacked-guard.sh"
 
-# aeon.sh has no argument for "just define functions" — the top-level script
-# requires a fayth and dies without one — so lib.sh (which aeon_settings lives in,
-# shared with the sweep call site) is sourced directly instead.
-REAL_JSON="$(SPIRA_HOME="$SPIRA_HOME_FIXTURE" bash -c '
+# aeon_settings lives in lib.sh (shared with aeon_claude_argv, sourced by both of aeon.sh's
+# launch sites), so it is sourced directly rather than extracted out of a script that
+# requires a fayth and dies without one.
+REAL_JSON="$(SPIRA_HOME="$SPIRA_HOME_FIXTURE" SPIRA_CONF="$TMP/no-such.conf" SPIRA_RUN="$TMP/run" bash -c '
     . "$1/lib.sh"
     aeon_settings
 ' -- "$HERE")"
