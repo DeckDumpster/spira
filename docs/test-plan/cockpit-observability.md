@@ -13,6 +13,8 @@
 > file is deleted). Rows 09 (unsent/unadopted), 10/11 (landed/unlanded/queue/queue-section)
 > and 33's real-bd arm are unconverted; see sp-s088v.7's follow-up child bead.
 
+> **2026-09-25: gap #13 closed.** `spira/test-cockpit-rust.sh` replaces `test-panel.sh` and rebuilds the deleted `test-loom.sh`'s fixture-building role: one `cargo test -p panel -p loom` run, parsed into one TAP14/JSONL row per Rust test (UC-27..29, UC-31..32) instead of one collapsed ok/FAIL line. Cluster 11's three geometry sweeps are merged into `render.rs::every_view_fits_every_geometry`; the tautological `the_store_order_stays_oldest_first` and the two `reject_premise_reason_*` cases are deleted (rows 27–29).
+
 Part of [[test-plan-2026-09-23]], section 5. Area id `cockpit-observability`; use-case ids are `UC-cockpit-observability-NN`.
 
 **Scope:** 67 primary records: 59 bash suites, 7 Rust test sources, and 1 dead fixture. There is 1 secondary suite, `test-statute-projection.sh`.

@@ -1095,27 +1095,4 @@ mod tests {
         assert_eq!(PREMISE_REJECTED, "premise-rejected");
     }
 
-    /// With a reason, the close_reason carries the prefix so a human or model reads why first.
-    #[test]
-    fn reject_premise_reason_carries_the_prefix() {
-        let why = "not a decision for me to make";
-        let reason = format!("{PREMISE_REJECTED}: {why}");
-        assert!(reason.starts_with("premise-rejected: "), "{reason:?}");
-        assert!(reason.contains(why), "{reason:?}");
-    }
-
-    /// Without a reason, the close_reason is the constant alone — parseable and correct.
-    #[test]
-    fn reject_premise_reason_without_why_is_the_constant() {
-        // Empty or whitespace-only `why` → bare constant, not "premise-rejected: ".
-        for empty in ["", "  ", "\t"] {
-            let trimmed = empty.trim();
-            let reason = if trimmed.is_empty() {
-                PREMISE_REJECTED.to_string()
-            } else {
-                format!("{PREMISE_REJECTED}: {trimmed}")
-            };
-            assert_eq!(reason, "premise-rejected", "empty why={empty:?} produced {reason:?}");
-        }
-    }
 }

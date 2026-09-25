@@ -1199,20 +1199,70 @@ three")]);
         }
     }
 
-    /// The pane is exactly h rows and no row overflows w. A row too long wraps, the terminal
-    /// scrolls, and the top row — the tab bar naming the view — silently disappears.
+    /// The pane is exactly h rows and no row overflows w, at every view, in list mode and
+    /// comment mode, with a long single-line item, a threaded reply, and (for ALERTS) a
+    /// dismissed toggle — one sweep replacing the three that each repeated the same
+    /// geometries (cluster 11: `every_row_fits_the_pane`, `a_threaded_item_fits_the_pane`,
+    /// `the_alerts_view_fits_every_geometry`).
     #[test]
-    fn every_row_fits_the_pane() {
+    fn every_view_fits_every_geometry() {
         let long = "word ".repeat(400);
-        let items = Ok(vec![item(&long, &long), item("second", "b")]);
+        let mut long_thread = threaded();
+        long_thread.thread[0].2 = "word ".repeat(200);
+        let mut long_alert = alert(&long, &long);
+        long_alert.labels.push("flaps:12".into());
+
+        for view in View::ALL {
+            let long_item = if view == View::Alerts { long_alert.clone() } else { item(&long, &long) };
+            let other = if view == View::Alerts { alert("second", "b") } else { item("second", "b") };
+            let items = Ok(vec![long_item.clone(), other]);
+
+            for (w, h) in [(107, 19), (100, 16), (60, 8), (40, 5)] {
+                for mode in [false, true] {
+                    let mut f = a_frame(&items, w, h);
+                    f.view = view;
+                    f.mode = if mode { Some("comment") } else { None };
+                    let rows = frame(&f);
+                    assert_eq!(rows.len(), h, "{view:?} {w}x{h} mode={mode} produced {} rows", rows.len());
+                    for (i, r) in rows.iter().enumerate() {
+                        assert!(strip_len(r) <= w, "{view:?} {w}x{h} row {i} is {} wide", strip_len(r));
+                    }
+                }
+                let (lines, _) = reader(&long_item, view, NOW, 0, w, h);
+                assert_eq!(lines.len(), h, "{view:?} reader {w}x{h}");
+                for r in &lines {
+                    assert!(strip_len(r) <= w);
+                }
+            }
+        }
+
+        // The threaded shape gets its own pass — the content dimension the per-view sweep
+        // above does not vary.
+        let items = Ok(vec![long_thread.clone(), item("second", "b")]);
         for (w, h) in [(107, 19), (100, 16), (60, 8), (40, 5)] {
-            for mode in [false, true] {
-                let mut f = a_frame(&items, w, h);
-                f.mode = if mode { Some("comment") } else { None };
+            let rows = frame(&a_frame(&items, w, h));
+            assert_eq!(rows.len(), h, "threaded {w}x{h} produced {} rows", rows.len());
+            for (i, r) in rows.iter().enumerate() {
+                assert!(strip_len(r) <= w, "threaded {w}x{h} row {i} is {} wide", strip_len(r));
+            }
+            let (lines, _) = reader(&long_thread, View::Decisions, NOW, 0, w, h);
+            assert_eq!(lines.len(), h, "threaded reader {w}x{h}");
+            for r in &lines {
+                assert!(strip_len(r) <= w);
+            }
+        }
+
+        // And ALERTS' dismissed toggle, the one dimension unique to that view.
+        let items = Ok(vec![long_alert.clone(), alert("second", "b")]);
+        for (w, h) in [(107, 19), (100, 16), (60, 8), (40, 5)] {
+            for dismissed in [false, true] {
+                let mut f = alert_frame(&items, dismissed);
+                f.w = w;
+                f.h = h;
                 let rows = frame(&f);
-                assert_eq!(rows.len(), h, "{w}x{h} mode={mode} produced {} rows", rows.len());
+                assert_eq!(rows.len(), h, "dismissed={dismissed} {w}x{h} produced {} rows", rows.len());
                 for (i, r) in rows.iter().enumerate() {
-                    assert!(strip_len(r) <= w, "{w}x{h} row {i} is {} wide", strip_len(r));
+                    assert!(strip_len(r) <= w, "dismissed={dismissed} {w}x{h} row {i} is {} wide", strip_len(r));
                 }
             }
         }
@@ -1527,15 +1577,6 @@ three")]);
         assert!(at(&d, "NEWEST reply") < at(&d, "OLDEST reply"));
     }
 
-    /// And the STORE order is untouched, because the list's turn marker reads `thread.last()`
-    /// to decide whose ball it is. Reversing the display must not reverse that.
-    #[test]
-    fn the_store_order_stays_oldest_first() {
-        let it = threaded();
-        assert_eq!(it.thread.first().unwrap().2, "OLDEST reply");
-        assert_eq!(it.thread.last().unwrap().2, "NEWEST reply");
-    }
-
     /// The recommended default keeps the top of the strip. It is the one line that lets an
     /// item be answered without opening it, so the thread goes under it, not over it.
     #[test]
@@ -1699,26 +1740,6 @@ three")]);
             at(&rows, "NEWEST reply") < at(&rows, "THE-ASK first"),
             "thread not visible before the body in the frame"
         );
-    }
-
-    /// A threaded item still fits its pane exactly, at every geometry the pane is used at.
-    #[test]
-    fn a_threaded_item_fits_the_pane() {
-        let mut long = threaded();
-        long.thread[0].2 = "word ".repeat(200);
-        let items = Ok(vec![long.clone(), item("second", "b")]);
-        for (w, h) in [(107, 19), (100, 16), (60, 8), (40, 5)] {
-            let rows = frame(&a_frame(&items, w, h));
-            assert_eq!(rows.len(), h, "{w}x{h} produced {} rows", rows.len());
-            for (i, r) in rows.iter().enumerate() {
-                assert!(strip_len(r) <= w, "{w}x{h} row {i} is {} wide", strip_len(r));
-            }
-            let (lines, _) = reader(&long, View::Decisions, NOW, 0, w, h);
-            assert_eq!(lines.len(), h);
-            for r in &lines {
-                assert!(strip_len(r) <= w);
-            }
-        }
     }
 
     // ── FYI: an insight is a record, not a request ────────────────────────────────────
@@ -1981,32 +2002,6 @@ three")]);
         it.badge = "alert ×7".into();
         let (lines, _) = reader(&it, View::Alerts, NOW, 0, 107, 19);
         assert!(text(&lines).join("\n").contains("the condition"));
-    }
-
-    /// A fourth tab is a wider header and a longer footer. Both are cut from the right, and a
-    /// row that overflows wraps the terminal and scrolls the tab bar away.
-    #[test]
-    fn the_alerts_view_fits_every_geometry() {
-        let mut long = alert(&"word ".repeat(400), &"word ".repeat(400));
-        long.labels.push("flaps:12".into());
-        let items = Ok(vec![long.clone(), alert("second", "b")]);
-        for (w, h) in [(107, 19), (100, 16), (60, 8), (40, 5)] {
-            for dismissed in [false, true] {
-                let mut f = alert_frame(&items, dismissed);
-                f.w = w;
-                f.h = h;
-                let rows = frame(&f);
-                assert_eq!(rows.len(), h, "{w}x{h} produced {} rows", rows.len());
-                for (i, r) in rows.iter().enumerate() {
-                    assert!(strip_len(r) <= w, "{w}x{h} row {i} is {} wide", strip_len(r));
-                }
-            }
-            let (lines, _) = reader(&long, View::Alerts, NOW, 0, w, h);
-            assert_eq!(lines.len(), h);
-            for r in &lines {
-                assert!(strip_len(r) <= w);
-            }
-        }
     }
 
     /// `iso` is the exact inverse of `epoch`, and `epoch` is checked against the system
