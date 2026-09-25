@@ -248,12 +248,22 @@ heal_log() {
     printf '%s %s\n' "$(TZ="${SPIRA_TZ:-${TZ:-}}" date '+%Y-%m-%dT%H:%M:%S')" "$*" | tee -a "$HEAL_LOG"
 }
 
-# One target per DISTINCT window holding cockpit panes. Dedup is by window_id, not by
-# name: `cockpit:2` and `brain:0` are the same window object, so a name-keyed scan would
-# find the break twice and repair it twice.
+# One target per DISTINCT window holding cockpit panes OR marked up. Dedup is by window_id,
+# not by name: `cockpit:2` and `brain:0` are the same window object, so a name-keyed scan
+# would find the break twice and repair it twice.
+#
+# THE WINDOW OPTION IS WHAT MAKES A FULLY-DEAD DASHBOARD REPAIRABLE. A window with only a
+# health pane, once that pane exits, carries no `@cockpit` tag anywhere — a pane-tag-only
+# scan then finds no trace of the window at all, so `ensure` never visits it again and the
+# dashboard stays gone forever. `up` marks the window itself with `@cockpit_up`; that survives
+# every dashboard pane dying, so the window keeps showing up here for `ensure` to heal.
 cockpit_windows() {
-    tmux list-panes -a -F '#{window_id}|#{session_name}:#{window_index}|#{@cockpit}' 2>/dev/null \
-        | awk -F'|' '$3=="health" || $3=="mail" { if (!seen[$1]++) print $2 }'
+    {
+        tmux list-panes -a -F '#{window_id}|#{session_name}:#{window_index}|#{@cockpit}' 2>/dev/null \
+            | awk -F'|' '$3=="health" || $3=="mail" {print $1"|"$2}'
+        tmux list-windows -a -F '#{window_id}|#{session_name}:#{window_index}|#{@cockpit_up}' 2>/dev/null \
+            | awk -F'|' '$3=="1" {print $1"|"$2}'
+    } | awk -F'|' '!seen[$1]++ {print $2}'
 }
 
 # A repair that fails repeatedly must not be retried on every poll.
@@ -551,6 +561,9 @@ up)
     fi
 
     echo "cockpit: up in $WINDOW (session $sess · health $hea${mai:+ · mail $mai})"
+    # Marks the window itself as a cockpit, independent of which dashboard panes are
+    # currently alive — see cockpit_windows for why that survives a dead health pane.
+    tmux set-option -w -t "$WINDOW" @cockpit_up 1 2>/dev/null || true
     # window-size largest so the operator's terminal (always the tallest) governs the cockpit
     # window height regardless of which client was most recently active. See detach_idle_clients
     # for the full rationale.
@@ -571,6 +584,7 @@ down)
         exit 1
     fi
     for p in $(all_tagged); do tmux kill-pane -t "$p" 2>/dev/null || true; done
+    tmux set-option -w -u -t "$WINDOW" @cockpit_up 2>/dev/null || true
     tmux select-pane -t "$sess" 2>/dev/null || true
     # Record that this absence is deliberate. Written after the kill loop, not before: a
     # `down` that failed to remove anything should not leave the marker claiming it did.

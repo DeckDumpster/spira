@@ -1886,8 +1886,11 @@ loop)
         paint
         sleep "$_tick"
         if conf_changed "$_conf_file" "$_conf_mtime_0"; then
-            printf 'health.sh: config changed — exiting for restart\n' >&2
-            exit 0
+            # Unlike loom.sh and collect.sh, nothing supervises this process — it IS the
+            # tmux pane. Exiting would close the pane and take its @cockpit tag with it, so
+            # re-exec in place: the pane persists and the new process re-sources conf.sh.
+            printf 'health.sh: config changed — restarting\n' >&2
+            exec bash "$0" loop
         fi
     done
     ;;
