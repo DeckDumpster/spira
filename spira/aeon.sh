@@ -1013,12 +1013,9 @@ sys.exit(0)' 2>/dev/null; then
     elif [ -f "$SPIRA_HOME/gate-run.sh" ]; then
         local gate_st _cert_ahead _cert_tip _cert_ls_state _cert_ls_tip _cert_out _cert_rc
         gate_why="$(bash "$SPIRA_HOME/gate-run.sh" --status "$BRANCH" "$REPO_NAME" 2>/dev/null)"; gate_st=$?
-        # WHETHER THIS BRANCH EVER REACHES THE QUEUE MUST NOT DEPEND ON WHETHER THE MODEL,
-        # INSIDE ITS OWN TURN, HAPPENED TO CALL queue.sh submit. Two sessions closed
-        # identically — committed, closed, nothing else run — and one ended CERTIFIED because
-        # the session itself submitted, the other had no landstate at all and was never going
-        # to queue or land on its own (sp-u9f82). A branch with commits ahead of the base gets
-        # certified here, by the harness, unless it is certified already.
+        # A CLOSED, COMMITTED BRANCH MUST NOT DEPEND ON THE SESSION HAVING CALLED
+        # queue.sh submit ITSELF (sp-u9f82). A branch ahead of the base is certified here,
+        # by the harness, unless it is CERTIFIED already.
         _cert_ahead="$(git -C "$REPO" rev-list --count "$BASE_FQREF..$BRANCH" 2>/dev/null)" || _cert_ahead=0
         case "$gate_st" in
             2)  # CLOSED WITH THE GATE STILL RUNNING is not reopened: the work is committed,
