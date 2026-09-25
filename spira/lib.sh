@@ -868,9 +868,62 @@ READY_ARGS=(ready --limit 0 --exclude-type epic,event -u)
 [[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
 
 # ready_count <labels> <exclude-labels> -> how many beads that predicate can claim.
+#
+# A FAILED QUERY IS NOT A ZERO. bd's own circuit breaker or a Dolt lock can refuse the read
+# outright; treating that refusal the same as "the predicate matched nothing" is what made a
+# transient store failure read as an empty queue (sp-3ntca). This still prints '0' on stdout
+# on failure, so a caller that only reads the count (sentinel.sh's plan_ready) is unaffected,
+# but now returns 1 and puts the bd error on its OWN stderr — the fayth_ready subshell
+# captures exactly that line.
 ready_count() {
-    bdq "${READY_ARGS[@]}" --label "$1" --exclude-label "$2" \
-        --json 2>/dev/null | json_only | json_count
+    local out rc _errtmp
+    _errtmp="$(mktemp)"
+    out="$(bdq "${READY_ARGS[@]}" --label "$1" --exclude-label "$2" --json 2>"$_errtmp")"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        printf 'ready_count: query failed: %s\n' "$(head -1 "$_errtmp" 2>/dev/null)" >&2
+        rm -f "$_errtmp"
+        printf '0'
+        return 1
+    fi
+    rm -f "$_errtmp"
+    printf '%s' "$out" | json_only | json_count
+}
+
+# claim_retry <bdq claim args...> -> stdout: bd's JSON result (already through json_only).
+# Empty stdout with rc 0 is a REAL empty result — bd ran the query and it matched nothing.
+# rc 1 means every retry failed to complete at all; the first line of bd's own stderr from
+# the last attempt is written to THIS function's stderr, one line, prefixed — never to a
+# global variable, because every caller here reads claim_retry through a command
+# substitution, and a command substitution is a subshell: an assignment made inside it is
+# gone the instant the substitution completes. A caller that wants the message captures
+# this function's stderr directly (a `{ claim_retry ...; } 2>"$errfile"` around the call,
+# not a plain variable read afterward).
+#
+# CONCURRENT CLAIMS ARE EXPECTED CONTENTION, NOT AN EMPTY QUEUE. Aeons are summoned seconds
+# apart and read the same store; a lock or commit collision at that instant is a different
+# fact from a query that ran cleanly and found zero rows, and collapsing the two is what let
+# a transient bd failure report as "nothing ready to claim" while ~90 beads were ready
+# (sp-3ntca). A short retry absorbs the ordinary case — another aeon's claim landing between
+# this one's read and write — before the failure is trusted at all.
+claim_retry() {
+    local out rc _errtmp _attempt=1 _tries="${SPIRA_CLAIM_RETRIES:-3}" _delay="${SPIRA_CLAIM_RETRY_DELAY_S:-1}"
+    _errtmp="$(mktemp)"
+    while [ "$_attempt" -le "$_tries" ]; do
+        out="$(bdq "$@" --json 2>"$_errtmp")"
+        rc=$?
+        if [ "$rc" -eq 0 ]; then
+            rm -f "$_errtmp"
+            printf '%s' "$out" | json_only
+            return 0
+        fi
+        [ "$_attempt" -lt "$_tries" ] && sleep "$_delay"
+        _attempt=$((_attempt + 1))
+    done
+    printf 'claim_retry: query failed after %s attempt(s): %s\n' \
+        "$_tries" "$(head -1 "$_errtmp" 2>/dev/null)" >&2
+    rm -f "$_errtmp"
+    return 1
 }
 
 # check2_protect_waiting — protect IN_PROGRESS beads blocked solely on operator-ask deps
@@ -1018,12 +1071,38 @@ fayth_exclude() {        # fayth_exclude <fayth> -> comma-separated exclusions
     printf '%s' "$out"
 }
 
-fayth_ready() {          # fayth_ready <fayth> -> claimable beads under ITS OWN predicate
-    local f="$1" F="$SPIRA_HOME/chamber/$1.fayth"
-    [ -f "$F" ] || { printf '0'; return 1; }
+# fayth_ready <fayth> -> claimable beads under ITS OWN predicate, on stdout.
+#
+# EXIT CODE NAMES WHICH OF TWO DIFFERENT THINGS WENT WRONG, because "no fayth in the
+# chamber" and "the ready query itself failed" used to collapse into the same caller branch
+# and the same log line — so a transient bd failure was reported to the operator as a
+# missing persona file, the one description that cannot be true while the persona is
+# actively summoning (sp-3ntca). 2: no such fayth file. 1: the file exists but ready_count
+# could not complete. 0: a real count, zero included.
+#
+# THE REASON GOES TO THIS FUNCTION'S OWN STDERR, NEVER A GLOBAL. Every caller reads
+# fayth_ready through a command substitution (`r="$(fayth_ready "$f")"`), which is a
+# subshell — an assignment made inside fayth_ready during that call cannot reach the
+# caller's shell at all, so a global here would silently read as whatever it held before
+# (this is the same trap claim_retry documents). A caller that wants the reason redirects
+# this function's stderr to a file around the call, same as claim_retry's callers do.
+fayth_ready() {
+    local f="$1" F="$SPIRA_HOME/chamber/$1.fayth" out rc _errtmp
+    if [ ! -f "$F" ]; then
+        printf '0'
+        printf 'fayth_ready: no fayth in the chamber: %s\n' "$F" >&2
+        return 2
+    fi
+    _errtmp="$(mktemp)"
     # shellcheck disable=SC1090
-    ( . "$F" 2>/dev/null
-      ready_count "${FAYTH_LABELS:-}" "$(fayth_exclude "$f" "${FAYTH_EXCLUDE_LABELS:-}")" )
+    out="$( ( . "$F" 2>/dev/null
+              ready_count "${FAYTH_LABELS:-}" "$(fayth_exclude "$f" "${FAYTH_EXCLUDE_LABELS:-}")" \
+      ) 2>"$_errtmp" )"
+    rc=$?
+    [ "$rc" -ne 0 ] && cat "$_errtmp" >&2
+    rm -f "$_errtmp"
+    printf '%s' "$out"
+    return "$rc"
 }
 
 # express_ready_in_task_pool <task-fayths> <express-label>
@@ -1579,7 +1658,17 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
             fi
         fi
     fi
-    r="$(fayth_ready "$f")" || { log "CHECK7 $f: no fayth in the chamber — skipped"; return 1; }
+    local _fr_err; _fr_err="$(mktemp)"
+    r="$(fayth_ready "$f" 2>"$_fr_err")"; local _fr_rc=$? _fr_errmsg
+    _fr_errmsg="$(cat "$_fr_err" 2>/dev/null)"
+    rm -f "$_fr_err"
+    if [ "$_fr_rc" -eq 2 ]; then
+        log "CHECK7 $f: no fayth in the chamber — skipped"
+        return 1
+    elif [ "$_fr_rc" -ne 0 ]; then
+        log "CHECK7 $f: ready query failed: ${_fr_errmsg:-bd gave no reason} — skipped, not counted as zero ready"
+        return 1
+    fi
     if [ "${r:-0}" -eq 0 ]; then log "CHECK7 $f: nothing ready in its partition"; return 1; fi
     free="$(fayth_free "$f" "$pool")"
     if [ "${free:-0}" -eq 0 ]; then

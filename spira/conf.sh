@@ -72,6 +72,7 @@ SPIRA_VIEW SPIRA_VIEW_SESSION
 SPIRA_ALERT_GLOB
 SPIRA_BD SPIRA_BD_PIN SPIRA_BD_TAG
 SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_LANES_MAX_LIVE SPIRA_QA_DEPTH SPIRA_THRASH_MINUTES SPIRA_RAPID_RECUR_THRESHOLD
+SPIRA_CLAIM_RETRIES SPIRA_CLAIM_RETRY_DELAY_S
 SPIRA_TOKEN_WINDOW_H SPIRA_TOKEN_PROJECTS SPIRA_CTX_WARN SPIRA_CTX_HIGH SPIRA_CTX_LIMIT
 SPIRA_ARCHIVE
 SPIRA_ARCHIVIST_EVERY SPIRA_ARCHIVIST_IDLE SPIRA_ARCHIVIST_MODEL SPIRA_ARCHIVIST_TIMEOUT
@@ -589,6 +590,12 @@ spira_conf_defaults() {
     # Four is the sum of what the two shipped personas declared, so this default changes
     # nothing on a host that was already running them and starts enforcing an order.
     : "${SPIRA_MAX_AEONS:=4}"
+    # HOW MANY TIMES A CLAIM QUERY IS RETRIED BEFORE BEING TREATED AS A REAL FAILURE. Aeons
+    # summoned seconds apart contend for the same store; a claim that errors under that
+    # contention is not the same fact as a claim that succeeded and returned zero rows, and
+    # only the retries exhausted case may be reported as a failure (sp-3ntca).
+    : "${SPIRA_CLAIM_RETRIES:=3}"
+    : "${SPIRA_CLAIM_RETRY_DELAY_S:=1}"
     # THE CPU QUOTA APPLIED TO EACH AEON UNIT. Raise this when aeons run real builds that
     # saturate their slice; SPIRA_GATE_HOST_CORES controls parallelism inside the gate while
     # this controls how much of one core each aeon may use.
