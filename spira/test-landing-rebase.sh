@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
-# test-landing-rebase.sh — rebase_branch classification (no-branch, no-base, conflict,
-# rebase-refused, identity fix), the survivor sweep (rebased when a landing moves the
-# base under a withheld branch), the loop-defer guard (live aeon holds the bead), and
-# the checkout refresh (skew.sh keeps the operator's working copy current).
+# test-landing-rebase.sh — the survivor sweep (rebased when a landing moves the base
+# under a withheld branch), the loop-defer guard (live aeon holds the bead), and the
+# checkout refresh (skew.sh keeps the operator's working copy current) — cases that need
+# landing.sh's own fixture (repo-map, gate stub, testdb).
 #
 # The static "every rebase-failure arm reads the kind" fence moved to
-# test-landing-mode-map.sh (T0, no fixture needed).
+# test-landing-mode-map.sh (T0, no fixture needed). rebase_branch's own classification
+# and identity fallback moved to test-rebase-branch.sh (T2, git-only).
 #
 # Extracted from test-landing.sh to reduce the critical-path suite time.
 #
@@ -128,118 +129,9 @@ on_base()       { git -C "$REPO" merge-base --is-ancestor origin/main "spira/$1"
 
 echo "test-landing-rebase.sh"
 
-# --------------------------------------------------------------------------------------
-# THE CLASSIFICATION BOTH GUARDS REST ON. rebase_branch returns 1 four ways and only one of
-# them is a fact about the branch; before it said which, every caller that reopens on a
-# rebase failure reopened for all four. Asserted directly, because the pass can only be
-# steered into two of these and a guard reading a value nothing pins is a guard on a comment.
-# --------------------------------------------------------------------------------------
-echo
-classify() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    bash -c '. "$1/lib.sh" >/dev/null 2>&1
-             if rebase_branch "$2" "$3" "$4" fixture >/dev/null 2>&1
-             then printf clean; else printf "%s" "${REBASE_FAILURE:-unset}"; fi' \
-        _ "$SH" "$1" "$2" "$REPO" 2>/dev/null
-}
-seed; branch sp-kind
-is "a ref that is not there is named no-branch" no-branch "$(classify spira/sp-nothere origin/main)"
-is "a base that does not resolve is named no-base" no-base "$(classify spira/sp-kind refs/heads/no-such-base)"
-is "a branch that rebases cleanly records no failure" clean "$(classify spira/sp-kind origin/main)"
-drop_branch sp-kind
-
-seed; branch sp-kindclash shared.txt "from the branch"
-printf '%s\n' "and the base disagrees" > "$REPO/shared.txt"
-git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base writes shared.txt again"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
-is "and a real disagreement is named conflict" conflict "$(classify spira/sp-kindclash origin/main)"
-drop_branch sp-kindclash
-
-# THE REFUSED CASE: git declines to rebase (untracked file would be overwritten) without
-# leaving any unmerged file. A non-conflict rebase failure must not reopen a finished bead,
-# so it needs a name that is not "conflict". The fix sets REBASE_FAILURE=rebase-refused and
-# captures git's first stderr line in REBASE_REFUSED_REASON.
-classify_ext() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_REPO_MAP="$SH/repo-map" \
-    bash -c '. "$1/lib.sh" >/dev/null 2>&1
-             rebase_branch "$2" "$3" "$4" fixture >/dev/null 2>&1
-             printf "%s|%s|%s" \
-                 "${REBASE_FAILURE:-unset}" \
-                 "${REBASE_REFUSED_REASON:-}" \
-                 "${REBASE_CONFLICTS:-}"' \
-        _ "$SH" "$1" "$2" "$REPO" 2>/dev/null
-}
-
-seed; branch sp-refused
-printf 'base version\n' > "$REPO/blocked.txt"
-git -C "$REPO" add blocked.txt
-git -C "$REPO" commit -q -m "base adds blocked.txt"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
-printf 'untracked\n' > "$RUN/worktree/sp-refused/blocked.txt"
-_ext="$(classify_ext spira/sp-refused origin/main)"
-_ext_fail="${_ext%%|*}"; _ext_rest="${_ext#*|}"; _ext_reason="${_ext_rest%%|*}"; _ext_conflicts="${_ext_rest#*|}"
-is   "a rebase blocked by an untracked file is named rebase-refused" rebase-refused "$_ext_fail"
-want "and git's refusal message is captured in REBASE_REFUSED_REASON" "untracked" "$_ext_reason"
-is   "and REBASE_CONFLICTS is empty for a non-conflict failure" "" "$_ext_conflicts"
-drop_branch sp-refused
-
-seed; branch sp-kindconflicts shared2.txt "from the branch"
-printf '%s\n' "base disagrees" > "$REPO/shared2.txt"
-git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base writes shared2.txt"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
-_ext="$(classify_ext spira/sp-kindconflicts origin/main)"
-_ext_fail="${_ext%%|*}"; _ext_rest="${_ext#*|}"; _ext_conflicts="${_ext_rest#*|}"
-is   "a real content conflict still produces REBASE_FAILURE=conflict"    conflict "$(classify spira/sp-kindconflicts origin/main)"
-want "and REBASE_CONFLICTS names the colliding file"                      "shared2.txt" "$_ext_conflicts"
-drop_branch sp-kindconflicts
-
-# THE IDENTITY FIX. The landing pass runs without an ambient git identity; git refuses any
-# rebase that must replay a commit. After the fix, the harness passes -c user.name/user.email
-# from SPIRA_GIT_NAME and SPIRA_GIT_EMAIL.
-rebase_id_classify() {
-    local _home; _home="$(mktemp -d)"
-    local _out
-    _out="$(env -i \
-        HOME="$_home" \
-        PATH="$PATH" \
-        SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$_home/nodb" \
-        SPIRA_REPO="$REPO" SPIRA_REPO_MAP="$SH/repo-map" \
-        SPIRA_GIT_NAME=testharness SPIRA_GIT_EMAIL=testharness@test.invalid \
-        bash -c '. "$1/lib.sh" >/dev/null 2>&1
-                 rebase_branch "$2" "$3" "$4" fixture >/dev/null 2>&1; _rc=$?
-                 _cn="$(git -C "$4" log -1 --format=%cn "$2" 2>/dev/null)"
-                 _ce="$(git -C "$4" log -1 --format=%ce "$2" 2>/dev/null)"
-                 printf "%s|%s|%s|%s" "$_rc" "$_cn" "$_ce" "${REBASE_FAILURE:-}"' \
-        _ "$SH" "$1" "$2" "$REPO" 2>/dev/null)"
-    rm -rf "$_home"
-    printf '%s' "$_out"
-}
-
-seed; branch sp-ident
-printf 'base step\n' > "$REPO/ident-base.txt"
-git -C "$REPO" add ident-base.txt
-git -C "$REPO" commit -q -m "base adds ident-base.txt"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
-_ri="$(rebase_id_classify spira/sp-ident origin/main)"
-_ri_rc="${_ri%%|*}"; _ri_rest="${_ri#*|}"; _ri_cn="${_ri_rest%%|*}"; _ri_rest2="${_ri_rest#*|}"; _ri_ce="${_ri_rest2%%|*}"
-is   "rebase succeeds in a clean env when SPIRA_GIT_NAME and SPIRA_GIT_EMAIL are set" "0" "$_ri_rc"
-is   "the rebased commit's committer name is taken from SPIRA_GIT_NAME"  "testharness" "$_ri_cn"
-is   "the rebased commit's committer email is taken from SPIRA_GIT_EMAIL" "testharness@test.invalid" "$_ri_ce"
-drop_branch sp-ident
-
-seed; branch sp-ident-clash shared-ic.txt "branch content"
-printf 'base content\n' > "$REPO/shared-ic.txt"
-git -C "$REPO" add shared-ic.txt
-git -C "$REPO" commit -q -m "base also writes shared-ic.txt"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
-_ri_clash="$(rebase_id_classify spira/sp-ident-clash origin/main)"
-_ri_clash_fail="${_ri_clash##*|}"
-is "a real conflict returns REBASE_FAILURE=conflict even with identity set" "conflict" "$_ri_clash_fail"
-drop_branch sp-ident-clash
-
-cp "$TMP/gate-full.sh" "$SH/gate.sh"
+# rebase_branch's own classification (no-branch, no-base, conflict, rebase-refused) and
+# its committer-identity fallback (SPIRA_GIT_NAME/EMAIL) moved to test-rebase-branch.sh
+# (T2, git-only, UC-landing-merge-queue-16) — they never touched this fixture.
 
 # --------------------------------------------------------------------------------------
 # THE SURVIVORS ARE REBASED WHEN THE BASE MOVES, not when some later pass reaches them.
