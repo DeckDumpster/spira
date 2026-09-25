@@ -3307,12 +3307,13 @@ other_beads_on_conflicts() {
 
 conflict_reopen_note() {
     local repo="$1" br="$2" base="$3" name="$4" conflicts="$5" actor="$6" rq_n="${7:-1}"
-    local rn other_beads note
+    local rn other_beads note base_display
+    base_display="${base#refs/remotes/}"
     rn="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
     other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "$conflicts")"
-    note="Reopened by $actor: $br does not rebase onto $base in $name; conflicts in ${conflicts:-unknown}. This is rebase-conflict attempt $rq_n on this bead. The branch carries $rn commit(s) from the previous session — resume from the existing work."
+    note="Reopened by $actor: $br does not rebase onto $base_display in $name; conflicts in ${conflicts:-unknown}. This is rebase-conflict attempt $rq_n on this bead. The branch carries $rn commit(s) from the previous session — resume from the existing work."
     if [ -n "$other_beads" ]; then
-        note="$note Those files were changed on $base by $other_beads — check whether this work is already landed before resolving."
+        note="$note Those files were changed on $base_display by $other_beads — check whether this work is already landed before resolving."
     else
         note="$note A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it."
     fi
@@ -4625,6 +4626,16 @@ ref_remote() {           # ref_remote <ref> -> its remote, or non-zero if the re
 }
 ref_branch() {           # ref_branch <ref> -> the branch name, without any remote
     printf '%s' "${1#*/}"
+}
+qualify_base_ref() {     # qualify_base_ref <ref> <repo> -> refs/remotes/... or original
+    # A bare origin/main is ambiguous when refs/heads/origin/main also exists. Use the
+    # fully-qualified remote-tracking ref so git commands resolve it deterministically.
+    local ref="$1" repo="$2" remote branch fq
+    remote="$(ref_remote "$ref")" || { printf '%s' "$ref"; return 0; }
+    branch="$(ref_branch "$ref")"
+    fq="refs/remotes/$remote/$branch"
+    git -C "$repo" rev-parse --verify -q "$fq" >/dev/null 2>&1 \
+        && printf '%s' "$fq" || printf '%s' "$ref"
 }
 
 # spira_landrefs <repo> -> the land ref, plus its local counterpart when that exists.
@@ -6040,9 +6051,10 @@ pr_state() {             # pr_state <repo> <branch> -> OPEN|MERGED|CLOSED, non-z
 
 # needs_refresh — 0 when this already-submitted branch should be rebased and force-pushed.
 needs_refresh() {        # needs_refresh <repo> <name> <branch> <id> <base> <tip>
-    local repo="$1" name="$2" br="$3" id="$4" base="$5" tip="$6" st n
+    local repo="$1" name="$2" br="$3" id="$4" base="$5" tip="$6" st n base_fq
+    base_fq="$(qualify_base_ref "$base" "$repo")"
     PR_REFRESH_N=0
-    git -C "$repo" merge-base --is-ancestor "$base" "refs/heads/$br" 2>/dev/null && return 1
+    git -C "$repo" merge-base --is-ancestor "$base_fq" "refs/heads/$br" 2>/dev/null && return 1
     case "$(submitted_rec "$id" state)" in
         stale) log "$id: $br is behind $base and already escalated — leaving it standing"; return 1 ;;
         done)  return 1 ;;
@@ -6058,7 +6070,7 @@ needs_refresh() {        # needs_refresh <repo> <name> <branch> <id> <base> <tip
     n="$(submitted_rec "$id" refreshes)"
     case "${n:-}" in ''|*[!0-9]*) n=0 ;; esac
     if [ "$n" -ge "$PR_REFRESH_MAX" ]; then
-        spira_ask_refresh_loop "$repo" "$name" "$br" "$id" "$base" "$n"
+        spira_ask_refresh_loop "$repo" "$name" "$br" "$id" "$base_fq" "$n"
         mark_submitted "$id" "$tip" stale "$n"
         log "$id: escalated — its pull request will not merge after $n refresh(es)"
         return 1

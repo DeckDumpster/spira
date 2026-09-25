@@ -1127,6 +1127,7 @@ if [ -n "$BASE_REMOTE" ]; then
     git -C "$REPO" fetch -q "$BASE_REMOTE" 2>/dev/null \
         || log "$FAYTH: fetch of $BASE_REMOTE failed — basing on a possibly stale $BASE"
 fi
+BASE_FQREF="$(qualify_base_ref "$BASE" "$REPO")"
 
 # A WORKTREE PATH IS KEYED ON THE BEAD, AND A BEAD'S REPOSITORY CAN CHANGE. `repo:` is a
 # label, and repointing one is a deliberate mechanism: the landing gate refuses a branch cut
@@ -1184,7 +1185,7 @@ if [ ! -d "$WORK/.git" ] && [ ! -f "$WORK/.git" ]; then
         rm -f "$_wt_tmp"; unset _wt_tmp
     else
         _wt_tmp="$(mktemp)"; _wt_err=""
-        if ! git -C "$REPO" worktree add -q -b "$BRANCH" "$WORK" "$BASE" 2>"$_wt_tmp"; then
+        if ! git -C "$REPO" worktree add -q -b "$BRANCH" "$WORK" "$BASE_FQREF" 2>"$_wt_tmp"; then
             _wt_err="$(cat "$_wt_tmp" 2>/dev/null)"
             die "could not create a worktree at $WORK from $BASE${_wt_err:+: $_wt_err}"
         fi
@@ -1202,7 +1203,7 @@ fi
 # judgement an aeon is for and the alternative is a branch that fails its landing three
 # times and poisons a bead nobody needed to look at.
 REBASE_BRIEF=""
-if ! rebase_branch "$BRANCH" "$BASE" "$REPO" "$REPO_NAME"; then
+if ! rebase_branch "$BRANCH" "$BASE_FQREF" "$REPO" "$REPO_NAME"; then
     log "$FAYTH: $BRANCH does not rebase onto $BASE — conflicts in ${REBASE_CONFLICTS:-unknown}"
     REBASE_BRIEF="## Rebase your branch first
 
@@ -1230,7 +1231,7 @@ fi
 # ZERO MEANS FRESH. A branch the harness just created from the base has no prior commits
 # and gets no brief — "resume rather than restart" is noise when there is nothing to resume.
 RESUME_BRIEF=""
-_n_prior="$(git -C "$REPO" rev-list --count "$BASE..$BRANCH" 2>/dev/null || true)"
+_n_prior="$(git -C "$REPO" rev-list --count "$BASE_FQREF..$BRANCH" 2>/dev/null || true)"
 case "${_n_prior:-0}" in
     0|'?') ;;
     *)  _prior_log="$(git -C "$REPO" log --format='  %h %s' -n 5 "$BRANCH" 2>/dev/null)"
@@ -1258,7 +1259,7 @@ if [ "${_n_prior:-0}" -gt 0 ] 2>/dev/null; then
             _slay_when="$(git -C "$REPO" log --format='%ci' -1 "$BRANCH" 2>/dev/null)"
             _slay_why="${_last_subject##*salvaged at slay (}"
             _slay_why="${_slay_why%)}"
-            _wip_diffstat="$(git -C "$REPO" diff --stat "$BASE" "$BRANCH" 2>/dev/null | tail -1)"
+            _wip_diffstat="$(git -C "$REPO" diff --stat "$BASE_FQREF" "$BRANCH" 2>/dev/null | tail -1)"
             SLAIN_BRIEF="## A previous attempt was slain
 
 A prior session was slain at ${_slay_when:-unknown time} (${_slay_why:-unknown reason}). The branch carries **$_n_prior** commit(s) beyond \`$BASE\`${_wip_diffstat:+ ($_wip_diffstat)}; the last is a salvaged wip commit — review it before building on it.
@@ -2408,13 +2409,13 @@ if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ -z "$SOP_SILENT" ] && [
         git -C "$REPO" fetch -q "$BASE_REMOTE" 2>/dev/null \
             || log "$FAYTH: fetch of $BASE_REMOTE failed — judging currency against a possibly stale $BASE"
     fi
-    if git -C "$REPO" merge-base --is-ancestor "$BASE" "refs/heads/$BRANCH" 2>/dev/null; then
+    if git -C "$REPO" merge-base --is-ancestor "$BASE_FQREF" "refs/heads/$BRANCH" 2>/dev/null; then
         log "$FAYTH: $BEAD_ID closed current with $BASE"
-    elif rebase_branch "$BRANCH" "$BASE" "$REPO" "$REPO_NAME"; then
+    elif rebase_branch "$BRANCH" "$BASE_FQREF" "$REPO" "$REPO_NAME"; then
         log "$FAYTH: $BEAD_ID closed behind $BASE — rebased by the harness after close (the session did not)"
         bdq note "$BEAD_ID" "Rebased onto $BASE by aeon.sh after the session closed the bead without doing so. The replay was clean; the landing gate judges the rebased tree." >/dev/null 2>&1 || true
     else
-        _cited_sha="$(bead_cited_commit_on_base "$BEAD_ID" "$REPO" "$BASE" 2>/dev/null)" || _cited_sha=""
+        _cited_sha="$(bead_cited_commit_on_base "$BEAD_ID" "$REPO" "$BASE_FQREF" 2>/dev/null)" || _cited_sha=""
         if [ -n "$_cited_sha" ]; then
             log "$FAYTH: $BEAD_ID closed behind $BASE but notes cite $_cited_sha on $BASE — retiring as landed"
             land_mark "$BEAD_ID" LANDED "$_cited_sha" "cited-on-main"
