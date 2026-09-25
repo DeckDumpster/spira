@@ -31,7 +31,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 # A GUARD ON THE GUARD: the script must exist or a missing file gives a false pass via a
 # different error path.
 [ -f "$COCKPIT/resolve.sh" ] || {
-  echo "SKIP: cockpit/resolve.sh not found at $COCKPIT/resolve.sh" >&2; exit 0
+  echo "SKIP: cockpit/resolve.sh not found at $COCKPIT/resolve.sh" >&2; exit 77
 }
 
 # Two separate paths: COCKPIT_DB has .beads/ so cockpit_db() accepts it; SPIRA_DB has no
