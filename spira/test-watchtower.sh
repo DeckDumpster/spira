@@ -1205,6 +1205,42 @@ IFS='|' read -r t1_disk t1_mem t1_diskb t1_memb <<<"$(disk_mem_t1 SPIRA_MEMINFO_
 is "T1: memory below the warn threshold is a FAULT" "FAULT (500MB, warn below 1500MB)" "$t1_mem"
 is "T1: ...and is flagged as a breach"              "1" "$t1_memb"
 
+# ======================================================================================
+echo
+echo "collect_czar_block() (UC-26, sp-m0qeh) is a T1 seam: sourcing watchtower.sh must define
+it without running the sweep, and it must render each of the four trigger classes from the
+SP_CZAR_* variables the same way cockpit.env's eval leaves them, missing keys included:"
+# ======================================================================================
+czar_block_t1() {   # czar_block_t1 [VAR=val ...] -> $czar_block
+    ( cd "$HERE" && env -i HOME="$TMP" SPIRA_CONF=/nonexistent "$@" \
+        bash -c 'set -uo pipefail
+                 . ./watchtower.sh
+                 collect_czar_block
+                 printf "%s" "$czar_block"' )
+}
+czar_row() { printf '%s\n' "$1" | grep -F "$2"; }
+
+fresh
+rm -f "$TMP/ops-prompt"
+czar_block_t1 >/dev/null
+[ ! -e "$TMP/ops-prompt" ] \
+    && ok "sourcing watchtower.sh for collect_czar_block files no sweep" \
+    || bad "sourcing watchtower.sh for collect_czar_block files no sweep" "ops-prompt was written"
+
+block="$(czar_block_t1)"
+row="$(czar_row "$block" deadlock)"
+want "T1: a class with no SP_CZAR_* keys set renders ? throughout" \
+     "?" "$(printf '%s\n' "$row" | awk '{print $2}')"
+
+block="$(czar_block_t1 SP_CZAR_DEADLOCK_FIRED=2026-09-20T10:00Z SP_CZAR_DEADLOCK_BY=aeon-fake SP_CZAR_DEADLOCK_OUTCOME=pending)"
+row="$(czar_row "$block" deadlock)"
+nowant "T1: a fired class does not fall back to ?" "?" "$row"
+want "T1: ...and carries who handled it through"    "aeon-fake" "$(printf '%s\n' "$row" | awk '{print $3}')"
+
+row="$(czar_row "$block" loop-stalled)"
+want "T1: an unrelated class is untouched by another class's keys" \
+     "?" "$(printf '%s\n' "$row" | awk '{print $2}')"
+
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]

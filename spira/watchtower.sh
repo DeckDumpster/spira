@@ -508,6 +508,17 @@ collect_disk_mem() {
     [ "$_mem_breach" = 1 ] && _mem_disp="FAULT (${_mem_avail_mb}MB, warn below ${MEM_WARN_MB}MB)"
 }
 
+# THE CZAR TRIGGER TABLE — per-class display of the four queue-check trigger classes. Read
+# from cockpit.env (written by czar_triggers_keys via collect.sh). A missing key renders ?
+# (law-absence-needs-a-positive-control). _cz_row() is hoisted above the main guard.
+collect_czar_block() {
+    czar_block="$(printf '  %-22s %-22s %-12s %s\n' class "last fired" "handled by" outcome)
+$(_cz_row deadlock          DEADLOCK)
+$(_cz_row attribution-failed ATTRIB)
+$(_cz_row sort-failed        SORT)
+$(_cz_row loop-stalled       STALL)"
+}
+
 snapshot() {
 cat <<EOF
 ## Spira pipeline, $(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -967,14 +978,9 @@ if [ -r "$GUARD_SH" ]; then
     esac
 fi
 
-# THE CZAR TRIGGER TABLE — per-class display of the four queue-check trigger classes. Read
-# from cockpit.env (written by czar_triggers_keys via collect.sh). A missing key renders ?
-# (law-absence-needs-a-positive-control). _cz_row() is hoisted above the main guard.
-czar_block="$(printf '  %-22s %-22s %-12s %s\n' class "last fired" "handled by" outcome)
-$(_cz_row deadlock          DEADLOCK)
-$(_cz_row attribution-failed ATTRIB)
-$(_cz_row sort-failed        SORT)
-$(_cz_row loop-stalled       STALL)"
+# THE CZAR TRIGGER TABLE. collect_czar_block() is hoisted above the main guard so a test can
+# call it directly against fixture SP_CZAR_* variables.
+collect_czar_block
 
 # Pre-computed so the heredoc below can reference it as a plain variable. A trailing
 # newline is intentional: the heredoc adds one more, giving a blank line between the halt
