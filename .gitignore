@@ -31,6 +31,10 @@ spira/repo-map.local
 # rather than an inventory refusal.
 wiki/
 
+# A groom pass's findings belong in bd notes on its trigger bead and in
+# $SPIRA_RUN/groom.log, never in a file every branch would share and conflict on.
+.groom-findings.txt
+
 # Editor and OS litter.
 *.swp
 *.swo
