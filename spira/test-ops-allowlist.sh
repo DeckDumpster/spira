@@ -39,6 +39,13 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 echo "test-ops-allowlist.sh"
 
+# ops.fayth and czar.fayth build FAYTH_LABELS/FAYTH_EXCLUDE_LABELS from these — under `set -u`
+# an unset one aborts the source, not just the assignment, so it must be defined even though
+# this suite reads neither field. Sourcing conf.sh for its defaults would work too, but that
+# is exactly the weight UC-safety-fences-30 asks this suite to stop paying.
+export SPIRA_SCOPE_LABEL=spira SPIRA_INCIDENT_LABEL=incident SPIRA_ASK_LABEL=needs-operator \
+       SPIRA_CI_LABEL=awaiting-ci SPIRA_CZAR_LABEL=czar-trigger
+
 # fayth_tools <persona> -> its FAYTH_TOOLS field, read from the fayth ALONE — the same
 # subshell-source lib.sh's own fayth_get uses (lib.sh:856), but without paying to source all
 # 5,000-odd lines of lib.sh just to read one variable out of one file (UC-safety-fences-30).
