@@ -396,7 +396,13 @@ export GIT_COMMITTER_NAME="aeon-$AEON" GIT_COMMITTER_EMAIL="aeon-$AEON@spira.loc
 # first priority change, so it does not silently depend on `bd ready` returning rows in
 # priority order — an ordering nothing promises and one this file already learned not to
 # trust for the claim itself.
-resume_id=""
+# EVERY RESUMABLE CANDIDATE IN THE TOP BAND IS KEPT, not just the first: aeons summoned
+# seconds apart run this same query and reach the same first candidate, so a fallback that
+# gives up the instant that one claim is lost sends the loser straight to the general claim
+# — which may or may not pick a different bead — instead of the NEXT resumable one it already
+# knows about (sp-3ntca). One `git rev-list` per candidate in the band, which is the same
+# work the old break-on-first form paid up to its one candidate.
+resume_ids=()
 for cand in $(bdjson "${READY_ARGS[@]}" --label "$FAYTH_LABELS" \
                   --exclude-label "$FAYTH_EXCLUDE_LABELS" 2>/dev/null | python3 -c '
 import sys, json
@@ -424,18 +430,48 @@ for i in rows:
     # Ahead of its base is the test — a branch that exists but adds nothing is not
     # resumable work, it is a leftover.
     n="$(git -C "$croot" rev-list --count "$cbase..$cbr" 2>/dev/null || echo 0)"
-    if [ "${n:-0}" -gt 0 ]; then resume_id="$cid"; RESUME_PRIO="$cprio"; break; fi
+    if [ "${n:-0}" -gt 0 ]; then resume_ids+=("$cid"); RESUME_PRIO="$cprio"; fi
 done
 
-if [ -n "$resume_id" ]; then
-    claimed="$(bdq update "$resume_id" --claim --json 2>/dev/null | json_only)"
+# claim_retry's own diagnostic on a failed attempt goes to ITS stderr, not a variable a
+# command substitution would just discard — so every call site here redirects that stderr to
+# a scratch file and reads it back, rather than reading a global claim_retry could never have
+# set (see claim_retry, lib.sh).
+_claim_err="$SPIRA_RUN/.claim-err.$$"
+
+claimed=""
+for resume_id in "${resume_ids[@]:-}"; do
+    [ -n "$resume_id" ] || continue
+    claimed="$(claim_retry update "$resume_id" --claim 2>"$_claim_err")"
+    claim_rc=$?
+    claim_errmsg="$(cat "$_claim_err" 2>/dev/null)"
+    if [ "$claim_rc" -ne 0 ]; then
+        log "$FAYTH/$AEON: claim query failed for resume candidate $resume_id: ${claim_errmsg:-bd gave no reason} — trying the next resumable candidate"
+        claimed=""
+        continue
+    fi
     if [ -n "$claimed" ]; then
         log "$FAYTH/$AEON: resuming $resume_id (P${RESUME_PRIO:-?}, the top ready priority) — it already has work on its branch"
-    else
-        claimed="$(bdq "${claim_args[@]}" --json 2>/dev/null | json_only)"
+        break
+    fi
+    log "$FAYTH/$AEON: resume candidate $resume_id was claimed by another aeon between read and claim — trying the next resumable candidate"
+done
+
+# THE GENERAL CLAIM. Reached when no resume candidate existed or every one of them lost its
+# race. A bd ERROR here is not an empty queue — see claim_retry above — so only a query that
+# actually completed and returned zero rows may read as idle below.
+if [ -z "$claimed" ]; then
+    claimed="$(claim_retry "${claim_args[@]}" 2>"$_claim_err")"
+    claim_rc=$?
+    claim_errmsg="$(cat "$_claim_err" 2>/dev/null)"
+    rm -f "$_claim_err"
+    if [ "$claim_rc" -ne 0 ]; then
+        log "$FAYTH: claim-error ${claim_errmsg:-bd gave no reason} — retries exhausted, not reporting idle for a query that never completed"
+        ledger "awake $FAYTH claim-error ${claim_errmsg:-bd gave no reason}"
+        exit 1
     fi
 else
-    claimed="$(bdq "${claim_args[@]}" --json 2>/dev/null | json_only)"
+    rm -f "$_claim_err"
 fi
 # THE ID AND THE REPOSITORY, FROM THE SAME PAYLOAD. `bd ready --claim` already handed us
 # the bead's labels, so asking the database again for the one it just gave us would be a
