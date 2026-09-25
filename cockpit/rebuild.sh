@@ -95,6 +95,9 @@ pane_has_brief() {
     for q in "$pid" $(pgrep -P "$pid" 2>/dev/null); do
         cmdline="$(tr '\0' '\n' < "/proc/$q/cmdline" 2>/dev/null)" || continue
         [[ "$cmdline" == *"--append-system-prompt"* ]] && return 0
+        # Option A: the pane is a client of the concierge's own server (`concierge.sh here`
+        # execs `tmux -L <socket> attach`); the composed claude runs there, not under the pane.
+        [[ "$cmdline" == *tmux$'\n'-L$'\n'"${CONCIERGE_SOCKET:-concierge}"$'\n'attach* ]] && return 0
     done
     return 1
 }
