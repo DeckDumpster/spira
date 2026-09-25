@@ -65,6 +65,15 @@ else bad "the whole process group is killed: grandchild ${gc:-?} still alive"; k
 
 _pf_run 10 bash -c 'exit 3'; rc=$?
 wantrc "a command inside the wall keeps its status" 3 "$rc"
+
+# The watchdog must not outlive a command that finished: its sleep inherits every open
+# descriptor, including batch.sh's queue lock. Hold a lock on fd 9, finish fast, and the
+# lock must be free the moment _pf_run returns.
+exec 9>"$T/lock"; flock -n 9 || bail "could not take the fixture lock"
+_pf_run 30 true
+exec 9>&-
+flock -n "$T/lock" true && ok "no watchdog child holds an inherited lock after a fast finish" \
+    || bad "a watchdog child still holds the inherited lock after _pf_run returned"
 _pf_run 0 true; rc=$?
 wantrc "no time left is the wall, not a run"  124 "$rc"
 

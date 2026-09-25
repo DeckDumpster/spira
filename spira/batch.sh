@@ -74,7 +74,11 @@ _pf_run() {
         </dev/null >/dev/null 2>&1 &
     local dog=$!
     wait "$pid"; local rc=$?
-    kill "$dog" 2>/dev/null; wait "$dog" 2>/dev/null
+    # CANCEL THE WATCHDOG'S CHILDREN TOO. Its `sleep` inherited every open descriptor —
+    # including the queue lock batch.sh holds — so killing only the subshell leaves that
+    # sleep holding the lock for the rest of the wall, and every later cut finds the queue
+    # "held by another operation".
+    pkill -P "$dog" 2>/dev/null; kill "$dog" 2>/dev/null; wait "$dog" 2>/dev/null
     if [ -e "$flag" ]; then rm -f "$flag"; return 124; fi
     return "$rc"
 }
