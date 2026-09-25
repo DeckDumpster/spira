@@ -35,6 +35,12 @@ mkdir -p "$SPIRA_RUN"
 # silently and its gaps surface as failures in correct code. It exists as an env var rather
 # than a PATH entry because lib.sh overwrites PATH outright, as it must to run under
 # systemd, so a directory prepended by a test would be thrown away by the export above.
+#
+# SPIRA_BDJSON_FIXTURE is the one sanctioned exception: a read-only, per-probe test that
+# needs a pure classification result, not bd's own filtering behaviour, points it at a
+# canned-JSON file and bdsim.py answers `list`/`show`/`memories` from that file instead of a
+# live store. Query shapes bdsim.py does not simulate stay on real bd, in
+# test-cockpit-bd-contract.sh.
 bdq() {
     # Refuse a repo: label at create time if it has no repo-map entry, naming valid keys.
     # A bad label is refused here, before bd is called, so no bead is created and no summon
@@ -56,6 +62,10 @@ bdq() {
                     bash "$(dirname "${BASH_SOURCE[0]}")/czar-fence.sh" "${SPIRA_CZAR_CLASS}" || return 1
                 fi ;;
         esac
+    fi
+    if [ -n "${SPIRA_BDJSON_FIXTURE:-}" ]; then
+        python3 "$(dirname "${BASH_SOURCE[0]}")/bdsim.py" "$SPIRA_BDJSON_FIXTURE" "$@"
+        return $?
     fi
     timeout "${BD_TIMEOUT:-180}" "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"
 }
