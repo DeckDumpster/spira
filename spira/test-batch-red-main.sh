@@ -72,7 +72,11 @@ printf '%s\n' "$cmd" >> "$CALL_LOG"
 case "$cmd" in
     runs-active) printf '1\n' ;;
     main-gate-status) printf '%s\n' "${FIXTURE_GATE_STATUS:-green deadbeef}" ;;
-    check-status) printf '%s\n' "${FIXTURE_CHECK_STATUS:-green}" ;;
+    # Report the open batch's head the way the real forge does: verdict.sh now refuses to
+    # land a green batch whose check-status omits head-sha (sp-2711c).
+    check-status) printf '%s\n' "${FIXTURE_CHECK_STATUS:-green}"
+        _h="$(sed -n 's/^head=//p' "${SPIRA_QUEUE_DIR:-/nonexistent}"/*/open 2>/dev/null | head -1)"
+        [ -n "$_h" ] && printf 'head-sha: %s\n' "$_h" ;;
     pr-create)
         n=$(( $(wc -l < "$FORGE_LOG" 2>/dev/null || echo 0) + 1 ))
         printf '%s\n' "$n" >> "$FORGE_LOG"
