@@ -257,3 +257,38 @@ CURRENT STATE:
 - No duplicates found
 - No splits needed
 - 2 groom-asked beads skipped (operator answer pending)
+
+================================================================================
+GROOM PASS: sp-wcfah (2026-09-25T19:16Z)
+Trigger: UNCLAIMABLE sp-d3hx1
+================================================================================
+
+LIVELOCK ROWS RESOLVED:
+
+1. sp-d3hx1 unclaimable — had partition:incident but not bare 'incident' label
+   - Added 'incident' label; bead is now claimable by incident persona
+   - Recurring pattern: incident.sh creates beads with partition:incident but
+     personas match against plain 'incident' label
+
+2. sp-kcn9k unclaimable — same pattern (partition:incident, missing 'incident')
+   - Added 'incident' label; bead is now claimable by incident persona
+
+PREMISE-GONE CLOSURES:
+
+1. sp-5zw7p — "UNCLAIMABLE: sp-qgtra — rebase loop x3"
+   - Decision bead asking whether sp-3o1dy was a duplicate of sp-jv2y3/sp-o6utk/sp-qgtra
+   - All four beads (sp-3o1dy, sp-qgtra, sp-jv2y3, sp-o6utk) are now closed
+   - Decision is moot; closed with evidence
+
+GROOM-ASKED (skipped per rules, operator answer pending):
+
+1. sp-psenn — Lint failure test subject for repeat guard (has groom-asked label)
+
+CURRENT STATE:
+- 240 open beads examined
+- 2 LIVELOCK rows resolved (sp-d3hx1, sp-kcn9k: added 'incident' labels)
+- 1 premise-gone bead closed (sp-5zw7p)
+- No duplicates found
+- No splits needed
+- 1 groom-asked bead skipped (sp-psenn)
+
