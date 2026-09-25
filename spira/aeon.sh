@@ -1680,20 +1680,22 @@ FIXTURE_BRIEF="$(block_overlay FIXTURE "$FIXTURE_BRIEF")"
 DEADLINE_BRIEF="$(block_overlay DEADLINE "$DEADLINE_BRIEF")"
 
 BEAD_BODY="$(bdq show "$BEAD_ID" 2>/dev/null | grep -vE '^💡|^warning|^  Fix|^  Or')"
-# A THRASHED BEAD'S BRIEF LEADS WITH THE STICKING POINT, not with a bare bead body the aeon
-# has to scroll a note history to find it in. Only when this session's own worktree tip still
-# matches the tip recorded at the last thrash — a moved tip means the sticking point is
-# already stale, and repeating it would waste the turn it was meant to save.
+# A THRASHED BEAD'S BRIEF LEADS WITH THE STICKING POINT, ahead of the "## The bead" heading
+# itself — not folded into {{BEAD}}, which lands AFTER that heading, still above a bare bead
+# body the aeon would otherwise have to scroll a note history to find it in. Only when this
+# session's own worktree tip still matches the tip recorded at the last thrash — a moved tip
+# means the sticking point is already stale, and repeating it would waste the turn it was
+# meant to save.
+_thrash_banner=""
 _thrash_meta_streak="$(bead_metadata "$BEAD_ID" thrash_streak)"
 if [ -n "$_thrash_meta_streak" ] && [ "$_thrash_meta_streak" -ge 1 ] 2>/dev/null; then
     _thrash_meta_tip="$(bead_metadata "$BEAD_ID" thrash_tip)"
     _thrash_cur_tip="$(git -C "$WORK" rev-parse --short HEAD 2>/dev/null || echo ?)"
     if [ -n "$_thrash_meta_tip" ] && [ "$_thrash_meta_tip" = "$_thrash_cur_tip" ]; then
         _thrash_meta_last="$(bead_metadata "$BEAD_ID" thrash_last)"
-        BEAD_BODY="STICKING POINT ($_thrash_meta_streak consecutive thrash(es), nothing committed since): ${_thrash_meta_last:-?}
+        _thrash_banner="STICKING POINT ($_thrash_meta_streak consecutive thrash(es), nothing committed since): ${_thrash_meta_last:-?}
 Start there — do not spend a turn rediscovering it from the note history below.
-
-$BEAD_BODY"
+"
     fi
 fi
 PROMPT="$(sed -e "s|{{BEAD_ID}}|$BEAD_ID|g" -e "s|{{BRANCH}}|$BRANCH|g" \
@@ -1717,6 +1719,19 @@ PROMPT="${PROMPT/\{\{BEAD\}\}/$BEAD_BODY}"
 PROMPT="${PROMPT/\{\{PARK\}\}/$PARK_BRIEF}"
 PROMPT="${PROMPT/\{\{FIXTURE\}\}/$FIXTURE_BRIEF}"
 PROMPT="${PROMPT/\{\{DEADLINE\}\}/$DEADLINE_BRIEF}"
+# The banner belongs in task.md, not system.md — system_prompt_split (lib.sh) cuts PROMPT at
+# the FIRST "<!-- task -->" marker, so a plain prepend to PROMPT would land the banner in the
+# system half. Insert it just after that marker instead; a persona with no marker puts its
+# whole prompt in task.md anyway, so prepending is equivalent there.
+if [ -n "$_thrash_banner" ]; then
+    if [[ "$PROMPT" == *'<!-- task -->'* ]]; then
+        PROMPT="${PROMPT/<!-- task -->/<!-- task -->
+$_thrash_banner}"
+    else
+        PROMPT="$_thrash_banner
+$PROMPT"
+    fi
+fi
 
 # The memory book. Every agent reads it on every session; this is the delivery mechanism
 # for an aeon, standing in for the SessionStart hook an interactive session gets.

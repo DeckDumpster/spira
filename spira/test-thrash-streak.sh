@@ -117,7 +117,11 @@ echo
 
 seed sp-ts4
 tip=aaa
-for i in 1 2 3; do
+# Poisoning needs THREE charged attempts (spira/conf.sh). The first same-tip thrash stays
+# exempt (streak 1, below SPIRA_THRASH_STREAK_CAP=2); every one after it is charged, so
+# reaching poison via thrash alone takes 1 exempt + 3 charged = 4 consecutive same-tip
+# thrashes, not 3.
+for i in 1 2 3 4; do
     streak="$(thrash_streak_bump sp-ts4 "$tip" "still stuck, round $i")"
     if [ "$streak" -ge 2 ]; then
         cycle_thrash sp-ts4 "$tip" thrash-stale
@@ -125,7 +129,7 @@ for i in 1 2 3; do
         cycle_thrash sp-ts4 "$tip" thrash
     fi
 done
-is "three same-tip thrashes (1 exempt + 2 charged) reach the poison threshold" \
+is "four same-tip thrashes (1 exempt + 3 charged) reach the poison threshold" \
    yes "$(poisons sp-ts4)"
 
 echo
