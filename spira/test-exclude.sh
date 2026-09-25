@@ -14,14 +14,11 @@
 # refusal is asserted before any "clean input passes" row, so a `filter` that always
 # exits 0 cannot pass this suite by accident (law-absence-needs-a-positive-control).
 #
-# KNOWN GAP, DOCUMENTED RATHER THAN FIXED (sp-aoads). `filter` computes its scope with
-# the raw, unwidened `scope_from_paths`, while `scope`/`check`/`staged`/`install` all
-# widen a harness one level under the root to ".". In the harness's current layout
-# (boundary/gate.sh/lib.sh under `spira/`, one level under the repo root) that means
-# `git ls-files | exclude.sh filter` — gate-spira.sh's own landing-gate call — never
-# scans the repository ROOT, while `check` and the pre-commit `staged` hook both do.
-# The "no-widen" row below asserts the CURRENT (buggy) behaviour; flip it once sp-aoads
-# lands.
+# WIDENING PARITY (sp-aoads). `filter` widens a harness one level under the root to "."
+# with the same rule `scope`/`check`/`staged`/`install` use, so a `.beads/` at the
+# repository root is caught by `git ls-files | exclude.sh filter` — gate-spira.sh's own
+# landing-gate call — exactly when `check` and the pre-commit `staged` hook would also
+# catch it. The "widened" row below asserts that parity against an identical tree.
 #
 # tier: T2
 # covers: spira/exclude.sh UC-safety-fences-23
@@ -41,9 +38,14 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # A path list carrying the harness signature (boundary + gate.sh + lib.sh in one
 # directory, "spira/") so `filter` can resolve a scope with no filesystem access.
-# `filter`'s scope is NOT widened (see the gap note above), so it stays "spira" —
-# every in-scope row below is written under that prefix on purpose.
+# "spira" sits one level under the root, so `filter`'s scope WIDENS to "." (see the
+# parity note above) — every row below is in scope no matter what prefix it carries.
 SIGNATURE=$'spira/boundary\nspira/gate.sh\nspira/lib.sh\n'
+
+# A signature nested TWO levels under the root ("vendor/spira/") does NOT widen, so it
+# is used below to test in_scope narrowing on its own — widening would otherwise make
+# every path in scope and the narrowing assertion vacuous.
+NESTED_SIGNATURE=$'vendor/spira/boundary\nvendor/spira/gate.sh\nvendor/spira/lib.sh\n'
 
 filter_with() { printf '%s' "$1" | bash "$EXCLUDE" filter; }
 
@@ -91,35 +93,38 @@ is     "clean list: prints nothing"                     "" "$out"
 
 # ===========================================================================
 echo
-echo "in_scope narrows what filter reports: a path outside the signature's directory"
-echo "is not this fence's business, whether or not it looks forbidden:"
+echo "in_scope narrows what filter reports: a path outside a NESTED (non-widening)"
+echo "harness directory is not this fence's business, whether or not it looks forbidden:"
 # ===========================================================================
-out="$(filter_with "${SIGNATURE}outside/.beads/config.yaml")"; rc=$?
+out="$(filter_with "${NESTED_SIGNATURE}outside/.beads/config.yaml")"; rc=$?
 is     "out-of-scope .beads/ is not flagged" "1" "$rc"
 nowant "out-of-scope .beads/ is not flagged" "outside/.beads" "$out"
+out="$(filter_with "${NESTED_SIGNATURE}vendor/spira/.beads/config.yaml")"; rc=$?
+is   "in-scope (under nested harness dir) .beads/ is flagged" "0" "$rc"
+want "in-scope (under nested harness dir) .beads/ is flagged" "vendor/spira/.beads/config.yaml" "$out"
 
 # ===========================================================================
 echo
-echo "KNOWN GAP (sp-aoads) — filter does not widen scope the way check/staged do:"
-echo "a repo-root offender outside the one-level-under-root harness dir is missed by"
-echo "filter today, even though check and staged both catch the identical tree:"
+echo "WIDENING PARITY (sp-aoads) — filter widens scope the same way check/staged do:"
+echo "a repo-root offender outside a one-level-under-root harness dir is caught by"
+echo "filter, exactly as check and staged both catch it on the identical tree:"
 # ===========================================================================
-GAPROOT="$TMP/gaproot"
-mkdir -p "$GAPROOT/spira" "$GAPROOT/.beads"
-: > "$GAPROOT/spira/boundary"; : > "$GAPROOT/spira/gate.sh"; : > "$GAPROOT/spira/lib.sh"
-echo secret > "$GAPROOT/.beads/config.yaml"
-git init -q -b main "$GAPROOT"
-git -C "$GAPROOT" config user.email t@t
-git -C "$GAPROOT" config user.name t
-git -C "$GAPROOT" add -A
-git -C "$GAPROOT" commit -q -m init
+WIDEROOT="$TMP/wideroot"
+mkdir -p "$WIDEROOT/spira" "$WIDEROOT/.beads"
+: > "$WIDEROOT/spira/boundary"; : > "$WIDEROOT/spira/gate.sh"; : > "$WIDEROOT/spira/lib.sh"
+echo secret > "$WIDEROOT/.beads/config.yaml"
+git init -q -b main "$WIDEROOT"
+git -C "$WIDEROOT" config user.email t@t
+git -C "$WIDEROOT" config user.name t
+git -C "$WIDEROOT" add -A
+git -C "$WIDEROOT" commit -q -m init
 
-out="$(git -C "$GAPROOT" ls-files | bash "$EXCLUDE" filter 2>&1)"; rc=$?
-is     "sp-aoads: filter on a root-level .beads/ (current, buggy) reports clean" "1" "$rc"
-is     "sp-aoads: filter prints nothing"                                        "" "$out"
+out="$(git -C "$WIDEROOT" ls-files | bash "$EXCLUDE" filter 2>&1)"; rc=$?
+is   "sp-aoads: filter on a root-level .beads/ (widened) reports it" "0" "$rc"
+want "sp-aoads: filter names the offending path"                     ".beads/config.yaml" "$out"
 
-crc=0; bash "$EXCLUDE" check "$GAPROOT" >/dev/null 2>&1 || crc=$?
-is "check on the identical tree still refuses (scope is widened there)" "1" "$crc"
+crc=0; bash "$EXCLUDE" check "$WIDEROOT" >/dev/null 2>&1 || crc=$?
+is "check on the identical tree also refuses (same scope as filter now)" "1" "$crc"
 
 # ===========================================================================
 echo
@@ -137,7 +142,7 @@ git -C "$REPO" add -A
 git -C "$REPO" commit -q -m init
 
 # POSITIVE CONTROL: a staged offender (even at the repo root, outside spira/ — staged
-# uses the WIDENED scope, unlike filter) is refused before a clean stage is trusted.
+# uses the widened scope, same as filter now) is refused before a clean stage is trusted.
 mkdir -p "$REPO/.beads"
 echo x > "$REPO/.beads/config.yaml"
 git -C "$REPO" add -A
