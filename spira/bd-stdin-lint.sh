@@ -62,9 +62,7 @@ for f in "${files[@]}"; do
     [ -n "$hits" ] || continue
     bad=1
     while IFS=: read -r ln text; do
-        _line="$(printf '%s:%s: %s' "$f" "$ln" "$(printf '%s' "$text" | sed 's/^[[:space:]]*//')")"
-        printf '%s\n' "$_line"
-        _offenders+=("$_line")
+        _offenders+=("$(printf '%s:%s: %s' "$f" "$ln" "$(printf '%s' "$text" | sed 's/^[[:space:]]*//')")")
     done <<< "$hits"
 done
 
