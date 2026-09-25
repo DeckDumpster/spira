@@ -267,7 +267,12 @@ is   "B: forge pr-create not called again" "$land_mark_before" "$(grep -c '^pr-c
 # =============================================================================
 echo
 echo "C. stale member: base conflict reopens the bead at once:"
-is "C: positive control — requeue spy silent before this case" "0" "$(grep -c '^sp-cccc3 ' "$REQUEUE_SPY" 2>/dev/null || echo 0)"
+is "C: positive control — requeue spy silent before this case" "0" "$(grep -c '^sp-cccc3 ' "$REQUEUE_SPY" 2>/dev/null)"
+# sp-cbbb2 (case B) is still CERTIFIED by design — a double-red leaves it be. Case C is
+# about a DIFFERENT member's base conflict in isolation, so retire sp-cbbb2 first the way
+# a builder eventually would (fix and re-certify elsewhere, or abandon); otherwise it would
+# merge cleanly into case C's round and open a PR neither case is testing for.
+rm -f "$LANDSTATE/sp-cbbb2"
 plant sp-cccc3 express
 git -C "$REPO" worktree add -q -b spira/sp-cccc3 "$RUN/worktree/sp-cccc3" main
 printf 'branch-version\n' > "$RUN/worktree/sp-cccc3/conflict.txt"
