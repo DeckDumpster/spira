@@ -1247,7 +1247,32 @@ if [ ! -d "$WORK/.git" ] && [ ! -f "$WORK/.git" ]; then
             if [ -z "$_held" ] || [ ! -d "$_held" ]; then
                 die "could not attach a worktree at $WORK to existing branch $BRANCH${_wt_err:+: $_wt_err}"
             elif [ -n "$_held_id" ] && [ "$_held_id" != "$BEAD_ID" ]; then
-                die "$BEAD_ID: $BRANCH is checked out at $_held, which belongs to $_held_id, not $BEAD_ID — refusing to work $BEAD_ID in another bead's worktree (law-one-aeon-one-worktree)"
+                # THE RECORDED branch: LABEL NAMED SOMEONE ELSE'S LIVE WORKTREE. `bd create
+                # --parent` copies every label from the parent onto a child, including
+                # branch: — a bead can carry a recorded branch it never created and that is
+                # live under another bead's id right now. Dying here treated that mislabel as
+                # fatal to the attempt: 18 mislabeled children died within a minute of being
+                # claimed and outranked every other ready bead — the resume preference tries
+                # them FIRST — running the whole fleet at ~2 builders for about an hour. The
+                # label was wrong, not the bead, so correct it and take a fresh branch of this
+                # bead's own rather than refusing the attempt.
+                log "$FAYTH: $BEAD_ID: recorded branch $BRANCH is checked out at $_held, which belongs to $_held_id, not $BEAD_ID — a mislabeled branch:, not a resume; taking a fresh branch instead of dying"
+                bdq note "$BEAD_ID" "Corrected by aeon.sh: this bead's recorded branch: label named $BRANCH, which belongs to $_held_id, not $BEAD_ID. Reset to spira/$BEAD_ID and started fresh." >/dev/null 2>&1
+                BRANCH="spira/$BEAD_ID"
+                bdq set-state "$BEAD_ID" "branch=$BRANCH" >/dev/null 2>&1
+                unset _held _held_id aside
+                rm -f "$_wt_tmp"; _wt_tmp="$(mktemp)"; _wt_err=""
+                if git -C "$REPO" show-ref --verify -q "refs/heads/$BRANCH"; then
+                    if ! git -C "$REPO" worktree add -q "$WORK" "$BRANCH" 2>"$_wt_tmp"; then
+                        _wt_err="$(cat "$_wt_tmp" 2>/dev/null)"
+                        die "could not attach a worktree at $WORK to this bead's own branch $BRANCH after correcting a mislabeled branch${_wt_err:+: $_wt_err}"
+                    fi
+                else
+                    if ! git -C "$REPO" worktree add -q -b "$BRANCH" "$WORK" "$BASE_FQREF" 2>"$_wt_tmp"; then
+                        _wt_err="$(cat "$_wt_tmp" 2>/dev/null)"
+                        die "could not create a worktree at $WORK from $BASE after correcting a mislabeled branch${_wt_err:+: $_wt_err}"
+                    fi
+                fi
             else
                 aside="$(worktree_move_aside "$_held" prior)"
                 if [ -z "$aside" ]; then

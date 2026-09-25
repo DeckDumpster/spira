@@ -206,6 +206,23 @@ print(d.get("issue_type") or "")
         labels="$(printf '%s\n' "$show_parsed" | sed -n '1p')"
         bead_status="$(printf '%s\n' "$show_parsed" | sed -n '2p')"
         bead_type="$(printf '%s\n' "$show_parsed" | sed -n '3p')"
+        # A branch: label names ONE bead's own worktree and must never be inherited. `bd
+        # create --parent` copies every label from the parent onto a child by default, so a
+        # child can carry a branch: that names its parent (or a sibling) instead of itself —
+        # the resume preference reads that label first, so a mislabeled bead is claimed
+        # ahead of everything else ready, and aeon.sh finds the branch already held by the
+        # bead it actually names.
+        local _br_lbl="" _br_tok _br_cand
+        for _br_tok in $labels; do
+            case "$_br_tok" in branch:*) _br_lbl="$_br_tok"; break ;; esac
+        done
+        if [ -n "$_br_lbl" ]; then
+            _br_cand="${_br_lbl#branch:}"; _br_cand="${_br_cand#spira/}"
+            if [ -n "$_br_cand" ] && [ "$_br_cand" != "$id" ] && bdq show "$_br_cand" --json >/dev/null 2>&1; then
+                printf 'bead: %s: branch: label names %s, not itself\n' "$id" "$_br_cand" >&2
+                bad=$((bad+1)); rc=1
+            fi
+        fi
         # repo: is required only for routable work beads. Non-work kinds (event,
         # escalation, proposal, gate) carry no routing obligation and may omit it.
         case " task bug feature epic chore spike " in
