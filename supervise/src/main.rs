@@ -95,6 +95,36 @@ fn snapshot_age_secs(snap: &PathBuf) -> Option<u64> {
     SystemTime::now().duration_since(mtime).ok().map(|d| d.as_secs())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::SystemTime;
+
+    fn scratch_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "supervise-test-{}-{}-{}",
+            name,
+            std::process::id(),
+            SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ))
+    }
+
+    #[test]
+    fn missing_snapshot_has_no_age() {
+        let p = scratch_path("missing");
+        assert_eq!(snapshot_age_secs(&p), None);
+    }
+
+    #[test]
+    fn freshly_written_snapshot_is_a_few_seconds_old_at_most() {
+        let p = scratch_path("fresh");
+        fs::write(&p, "x").unwrap();
+        let age = snapshot_age_secs(&p).expect("freshly written file must have an age");
+        assert!(age < 5, "age was {age}s");
+        let _ = fs::remove_file(&p);
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {

@@ -13,8 +13,12 @@
 #   2. A call without credentials fails with a named message before any curl call.
 #   3. A call with a missing cacert refuses rather than falling back to insecure.
 #
-# Positive control: a deliberately wrong path assertion is verified to fail,
-# proving the path checks are actually exercising the right thing.
+# Positive control: `want` is proven capable of failing before it is trusted to
+# pass. A check that only ever asserts against the real output — even a negated
+# one, like "url does not contain wrongpath" — never demonstrates it CAN catch a
+# regression; it just happens to always be true. So this fires `want` against a
+# fixture it must fail, in a sub-shell that cannot touch the real pass/fail
+# counters, and requires that failure.
 #
 # defect: sp-imqd4
 # covers: spira/pve.sh spira/conf.sh
@@ -84,7 +88,8 @@ write_task_shim() {
     # Heredoc is unquoted so ${upid} expands here.
     cat > "$SHIM_DIR/curl" <<SHIM
 #!/usr/bin/env bash
-call_n=\$(grep -c '^===$' "\$CURL_LOG_PATH" 2>/dev/null || echo 0)
+call_n=\$(grep -c '^===$' "\$CURL_LOG_PATH" 2>/dev/null)
+call_n="\${call_n:-0}"
 { printf '%s\n' "\$@"; echo '==='; } >> "\$CURL_LOG_PATH"
 out_file=""; next=0
 for a in "\$@"; do
@@ -145,10 +150,12 @@ out="$(run_pve '{"data":"999"}' nextid)"
 want "nextid: output contains 999" "999" "$out"
 want "nextid: calls /cluster/nextid" "/cluster/nextid" "$(nth_url)"
 
-# Positive control: a deliberately wrong assertion would fail.
 url="$(nth_url)"
-[[ "$url" != *"/cluster/wrongpath"* ]] && ok "positive-control: wrong-path check would fail" \
-    || bad "positive-control" "url matched wrong path"
+if ( fail=0; want() { [[ "$3" == *"$2"* ]] || fail=1; }; want _ "/cluster/wrongpath" "$url"; exit "$fail" ); then
+    bad "positive-control: wrong-path check would fail" "want did not fail on a non-matching fixture"
+else
+    ok "positive-control: wrong-path check would fail"
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Missing credentials are caught before any curl call.
@@ -216,6 +223,10 @@ want "config: /config path" "/config" "$(nth_url)"
 write_task_shim "UPID:testnode:1:1:1:qmclone:200:root@pam:"
 reset_log; run_pve "" clone 9110 200 test-clone --pool mypool >/dev/null 2>&1 || true
 want "clone: first call to /clone" "/clone" "$(nth_url 1)"
+is "clone: exactly two curl calls (clone + poll)" "2" "$(call_count)"
+want "clone: second call polls the task status" "/tasks/" "$(nth_url 2)"
+want "clone: poll URL names the UPID" "qmclone" "$(nth_url 2)"
+want "clone: poll URL is the status endpoint" "/status" "$(nth_url 2)"
 write_simple_shim
 
 # ---------------------------------------------------------------------------

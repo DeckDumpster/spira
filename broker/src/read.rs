@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::process::Command;
 use crate::policy::ReadVerb;
 
@@ -76,9 +75,19 @@ pub fn run(raw: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+// run-view's argv, pulled out so the "safe fields only, never --log" property is a value
+// a test can inspect rather than something only provable by spawning gh.
+fn run_view_args(run_id: &str) -> Vec<String> {
+    vec!["run".into(), "view".into(), run_id.into(), "--json".into(), RUN_VIEW_FIELDS.into()]
+}
+
+fn artifact_download_args(run_id: &str, name: &str, dir: &str) -> Vec<String> {
+    vec!["run".into(), "download".into(), run_id.into(), "-n".into(), name.into(), "-D".into(), dir.into()]
+}
+
 fn gh_run_view(repo_path: &str, run_id: &str) -> Result<String, String> {
     let output = Command::new(gh_bin())
-        .args(["run", "view", run_id, "--json", RUN_VIEW_FIELDS])
+        .args(run_view_args(run_id))
         .current_dir(repo_path)
         .envs(crate::token::gh_env())
         .output()
@@ -95,7 +104,7 @@ fn gh_run_view(repo_path: &str, run_id: &str) -> Result<String, String> {
 
 fn gh_artifact_download(repo_path: &str, run_id: &str, name: &str, dir: &str) -> Result<(), String> {
     let output = Command::new(gh_bin())
-        .args(["run", "download", run_id, "-n", name, "-D", dir])
+        .args(artifact_download_args(run_id, name, dir))
         .current_dir(repo_path)
         .envs(crate::token::gh_env())
         .output()
@@ -118,23 +127,33 @@ fn gh_bin() -> String {
 }
 
 fn repo_map_lookup(repo: &str) -> Option<String> {
-    let map_path: PathBuf = {
-        let v = std::env::var("SPIRA_REPO_MAP").unwrap_or_default();
-        if !v.is_empty() {
-            PathBuf::from(v)
-        } else {
-            let home = std::env::var("SPIRA_HOME").unwrap_or_default();
-            PathBuf::from(home).join("repo-map")
-        }
-    };
-    let content = std::fs::read_to_string(&map_path).ok()?;
-    for line in content.lines() {
-        let line = line.trim();
-        if line.starts_with('#') || line.is_empty() { continue; }
-        let fields: Vec<&str> = line.splitn(6, '|').map(str::trim).collect();
-        if fields.len() >= 2 && fields[0] == repo {
-            return Some(fields[1].to_string());
-        }
+    crate::repo_map::lookup(repo)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_view_asks_for_safe_fields_only() {
+        let args = run_view_args("12345");
+        assert_eq!(args, vec!["run", "view", "12345", "--json", RUN_VIEW_FIELDS]);
     }
-    None
+
+    #[test]
+    fn run_view_never_requests_log_output() {
+        // gh run view --log returns whatever the run printed; secrets leak there. The field
+        // list is a const, so this is really a guard against someone appending to it.
+        assert!(!run_view_args("12345").iter().any(|a| a == "--log"));
+        assert!(!RUN_VIEW_FIELDS.contains("log"));
+    }
+
+    #[test]
+    fn artifact_download_names_the_artifact_and_output_dir() {
+        let args = artifact_download_args("12345", "batch-results", "/tmp/out");
+        assert_eq!(
+            args,
+            vec!["run", "download", "12345", "-n", "batch-results", "-D", "/tmp/out"]
+        );
+    }
 }

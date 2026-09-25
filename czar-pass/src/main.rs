@@ -1203,3 +1203,166 @@ fn detect_starved<'a>(cfg: &Config, check7: &str) -> (&'a str, &'a str, &'a str)
 
     (if detected { "yes" } else { "no" }, remedy, tier)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // A private scratch directory per test, so parallel `cargo test` threads never collide
+    // on the same path (the real callers always get SPIRA_RUN handed to them by the caller,
+    // never a shared ambient default).
+    fn scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "czar-pass-test-{}-{}-{}",
+            name,
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn parse_field_reads_the_named_key() {
+        let out = "run-id: 42\nrun-conclusion: failure\nhead-sha: abc123\n";
+        assert_eq!(parse_field(out, "run-id"), Some("42".to_string()));
+        assert_eq!(parse_field(out, "run-conclusion"), Some("failure".to_string()));
+    }
+
+    #[test]
+    fn parse_field_is_anchored_to_the_prefix_not_a_substring() {
+        // "run-id" must not match inside "run-id-extra: x" — the prefix carries ": ".
+        let out = "run-id-extra: x\n";
+        assert_eq!(parse_field(out, "run-id"), None);
+    }
+
+    #[test]
+    fn parse_field_missing_key_is_none() {
+        assert_eq!(parse_field("run-id: 42\n", "queued-since"), None);
+    }
+
+    #[test]
+    fn parse_iso_to_epoch_reads_a_known_instant() {
+        // 2021-01-01T00:00:00Z is a fixed, well-known epoch value.
+        assert_eq!(parse_iso_to_epoch("2021-01-01T00:00:00Z"), Some(1_609_459_200));
+    }
+
+    #[test]
+    fn parse_iso_to_epoch_rejects_garbage() {
+        assert_eq!(parse_iso_to_epoch("not-a-timestamp"), None);
+    }
+
+    #[test]
+    fn fs_path_replaces_class_separators_that_would_escape_the_directory() {
+        let dir = PathBuf::from("/tmp/spira-run");
+        let p = fs_path(&dir, "queue/red,flaky");
+        assert_eq!(p, PathBuf::from("/tmp/spira-run/czar-pass-first.queue-red-flaky"));
+    }
+
+    #[test]
+    fn fs_record_is_first_write_wins() {
+        let dir = scratch_dir("fs-record-first-write-wins");
+        fs_record(&dir, "deadlock", 100);
+        fs_record(&dir, "deadlock", 200); // must not overwrite the first timestamp
+        assert_eq!(fs_get(&dir, "deadlock"), Some(100));
+    }
+
+    #[test]
+    fn fs_clear_removes_the_marker() {
+        let dir = scratch_dir("fs-clear");
+        fs_record(&dir, "deadlock", 100);
+        fs_clear(&dir, "deadlock");
+        assert_eq!(fs_get(&dir, "deadlock"), None);
+    }
+
+    #[test]
+    fn latency_secs_is_zero_with_no_recorded_first_sighting() {
+        let dir = scratch_dir("latency-no-record");
+        assert_eq!(latency_secs(&dir, "deadlock", 500), 0);
+    }
+
+    #[test]
+    fn latency_secs_measures_from_the_first_sighting() {
+        let dir = scratch_dir("latency-measures");
+        fs_record(&dir, "deadlock", 100);
+        assert_eq!(latency_secs(&dir, "deadlock", 350), 250);
+    }
+
+    #[test]
+    fn repo_root_finds_the_named_repo() {
+        let dir = scratch_dir("repo-root");
+        let map = dir.join("repo-map");
+        fs::write(&map, "spira | /srv/checkouts/spira | queue | origin/main | | \n").unwrap();
+        assert_eq!(
+            repo_root("spira", &Some(map)),
+            Some(PathBuf::from("/srv/checkouts/spira"))
+        );
+    }
+
+    #[test]
+    fn repo_root_with_no_map_configured_is_none() {
+        assert_eq!(repo_root("spira", &None), None);
+    }
+
+    #[test]
+    fn repo_base_reduces_a_full_ref_to_a_bare_branch_name() {
+        let dir = scratch_dir("repo-base");
+        let map = dir.join("repo-map");
+        fs::write(&map, "spira | /srv/checkouts/spira | queue | origin/main | | \n").unwrap();
+        assert_eq!(repo_base("spira", &Some(map)), Some("main".to_string()));
+    }
+
+    #[test]
+    fn repo_base_empty_column_means_let_the_caller_resolve_it() {
+        let dir = scratch_dir("repo-base-empty");
+        let map = dir.join("repo-map");
+        fs::write(&map, "spira | /srv/checkouts/spira | queue | | | \n").unwrap();
+        assert_eq!(repo_base("spira", &Some(map)), None);
+    }
+
+    #[test]
+    fn find_open_files_lists_only_queue_dirs_that_have_an_open_marker() {
+        let dir = scratch_dir("find-open-files");
+        fs::create_dir_all(dir.join("spira")).unwrap();
+        fs::write(dir.join("spira").join("open"), "branch=spira/queue/x\n").unwrap();
+        fs::create_dir_all(dir.join("other-repo")).unwrap(); // no open marker: not returned
+
+        let mut found = find_open_files(&dir);
+        found.sort();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, "spira");
+    }
+
+    #[test]
+    fn read_branch_reads_the_branch_line() {
+        let dir = scratch_dir("read-branch");
+        let open = dir.join("open");
+        fs::write(&open, "opened_at=100\nbranch=spira/queue/abc123\n").unwrap();
+        assert_eq!(read_branch(&open), Some("spira/queue/abc123".to_string()));
+    }
+
+    #[test]
+    fn read_branch_missing_line_is_none() {
+        let dir = scratch_dir("read-branch-missing");
+        let open = dir.join("open");
+        fs::write(&open, "opened_at=100\n").unwrap();
+        assert_eq!(read_branch(&open), None);
+    }
+
+    #[test]
+    fn file_mtime_is_none_for_a_missing_file() {
+        let dir = scratch_dir("file-mtime-missing");
+        assert_eq!(file_mtime(&dir.join("does-not-exist")), None);
+    }
+
+    #[test]
+    fn file_mtime_is_recent_for_a_freshly_written_file() {
+        let dir = scratch_dir("file-mtime-fresh");
+        let f = dir.join("f");
+        fs::write(&f, "x").unwrap();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let mtime = file_mtime(&f).expect("freshly written file must have an mtime");
+        assert!(mtime <= now && now - mtime < 30, "mtime {} vs now {}", mtime, now);
+    }
+}
