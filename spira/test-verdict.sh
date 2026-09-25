@@ -845,7 +845,6 @@ want "20. always-red: ejection reported" "ejected" "$out"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
-# =============================================================================
 # 21. TERM TRAP: a verdict.sh process interrupted by TERM during attribution
 #     writes "attribution of PR ... interrupted after ...s" to landing.log.
 #
@@ -1289,6 +1288,49 @@ out="$(verdict "$REPONAME")"
 want "31. bisect resolve: fast-forward landed" "landed by fast-forward" "$out"
 is   "31. bisect resolve: advances to sibling" "sp-vd-bg3:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" \
      "$(head -1 "$QUEUEDIR/$REPONAME/bisect" 2>/dev/null)"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 32. STALE QUEUE REF REAPING — after a green verdict, local spira/queue/*
+#     refs whose tips are already on the base are cleaned up by
+#     _reap_stale_queue_refs. A ref whose tip is NOT on the base (from an
+#     ejected or pending batch) must survive.
+#
+#     POSITIVE CONTROL: the stale ref must actually be gone.
+#     PAIR: the live ref (not an ancestor) must still be present.
+# =============================================================================
+batch_head32="$(build_batch sp-vd-ra sp-vd-rb)"
+# stale-32: tip is the original base — already on main after the batch lands.
+stale_sha32="$(git -C "$REPO" rev-parse origin/main 2>/dev/null)"
+git -C "$REPO" branch "spira/queue/stale-32" "$stale_sha32"
+# live-32: tip is a commit that is NOT on main yet.
+{
+    git -C "$REPO" worktree add -q --detach "$RUN/worktree/.live32" origin/main
+    printf 'live\n' > "$RUN/worktree/.live32/live32.txt"
+    git -C "$RUN/worktree/.live32" add -A
+    git -C "$RUN/worktree/.live32" commit -q -m "live32: pending work"
+    live32_sha="$(git -C "$RUN/worktree/.live32" rev-parse HEAD)"
+    git -C "$REPO" worktree remove -f "$RUN/worktree/.live32" 2>/dev/null || true
+} 2>/dev/null
+git -C "$REPO" branch "spira/queue/live-32" "$live32_sha"
+# Point the current batch at a unique branch name.
+git -C "$REPO" branch -f "spira/queue/test32" "$batch_head32"
+git -C "$REPO" push -q origin "spira/queue/test32"
+git -C "$REPO" fetch -q origin
+{
+    grep -v '^branch=' "$(batch_file)"
+    printf 'branch=spira/queue/test32\n'
+} > "$(batch_file).$$" && mv -f "$(batch_file).$$" "$(batch_file)"
+
+printf 'green\n' > "$FORGE_STATUS_FILE"
+verdict "$REPONAME" > /dev/null
+is "32. reap: stale ancestor queue ref cleaned up" "0" \
+    "$(git -C "$REPO" show-ref --verify "refs/heads/spira/queue/stale-32" >/dev/null 2>&1 && echo 1 || echo 0)"
+is "32. reap (pair): non-ancestor queue ref survives" "1" \
+    "$(git -C "$REPO" show-ref --verify "refs/heads/spira/queue/live-32" >/dev/null 2>&1 && echo 1 || echo 0)"
+# Cleanup the surviving live branch before clean_case (which skips spira/queue/*).
+git -C "$REPO" branch -D "spira/queue/live-32" 2>/dev/null || true
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
