@@ -22,8 +22,7 @@
 # The assertion "bead count unchanged" failed. That failure was observed before applying
 # the fix, confirming this test detects the leak rather than passing for an unrelated reason.
 #
-# covers: spira/testdb.sh spira/test-cockpit-landed.sh spira/test-cockpit-unlanded.sh
-#         spira/test-cockpit-unsent.sh spira/test-loom-page.sh
+# covers: spira/testdb.sh spira/test-loom-page.sh
 #         spira/test-landing.sh spira/test-timeout.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -122,7 +121,12 @@ suite_env=(
 # test-bd-close-unacked-guard.sh (its testdb-backed predecessor) was merged into
 # spira/test-guards.sh by sp-qsr44, which drives the guard through a stub bd instead
 # of testdb_up — it no longer has this failure mode to protect against.
-for suite in test-cockpit-landed test-cockpit-unlanded test-cockpit-unsent test-landing test-timeout; do
+# test-cockpit-unlanded.sh and test-cockpit-unsent.sh moved onto bdjson fixtures (sp-s088v.19)
+# and no longer call testdb_up, so they have no testdb failure mode to protect.
+# test-cockpit-landed.sh no longer exists; a missing suite exited 127 here and read as a
+# pass, so the loop now refuses a suite that is not there.
+for suite in test-landing test-timeout; do
+    [ -f "$HERE/$suite.sh" ] || { bad "$suite is listed but does not exist" "missing $HERE/$suite.sh"; continue; }
     out="$("${suite_env[@]}" bash "$HERE/$suite.sh" 2>&1)"; rc=$?
     if [ $rc -ne 0 ]; then
         ok "$suite exits non-zero when testdb_up fails (rc=$rc)"
