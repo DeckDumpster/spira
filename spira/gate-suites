@@ -128,6 +128,15 @@ spira/test-landing-rebase.sh
 # is indistinguishable from one that passes a clean tree.
 spira/test-deps-lint.sh
 
+# THE BUILD FENCE'S OWN POSITIVE CONTROL. build-fence.sh runs `make build` under the
+# pinned toolchain whenever a diff touches Cargo.toml, Cargo.lock, a crate's src/,
+# rust-toolchain, or the Makefile — the check fences-only certification (SPIRA_GATE_SUITES=off)
+# used to skip entirely, which let sp-upkae certify green and then break the whole batch's
+# build job (sp-9uro3). This suite plants a real, deliberately uncompilable crate (SEEN RED),
+# fixes it (SEEN GREEN), and confirms build-fence.sh is wired into gate-touched.sh so it runs
+# regardless of SPIRA_GATE_SUITES.
+spira/test-build-fence.sh
+
 # NOT IN THE GATE (budget): test-watchtower, test-soak, test-owned, test-uninstall, test-ready,
 # test-install-conflicts, test-configure. test-watchtower (~263s) was moved to the
 # timed set to bring the gate under SPIRA_GATE_BUDGET (sp-6ceo); the pipeline-stall detection

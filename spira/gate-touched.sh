@@ -20,6 +20,21 @@
 #                             reruns regardless of tier (law-a-retry-must-change-an-input).
 set -uo pipefail
 BASE="${1:?usage: gate-touched.sh <base> <head>}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# THE BUILD FENCE RUNS REGARDLESS OF SPIRA_GATE_SUITES. A compile is a static check of the
+# tree, not a suite — sp-upkae certified green under fences-only certification
+# (SPIRA_GATE_SUITES=off) and then broke the whole batch's build job, because that path never
+# invokes cargo at all. build-fence.sh skips itself when the diff touches nothing that can
+# move a build's result (sp-9uro3). This is the one place in the repo-map's fence chain that
+# runs on every call regardless of mode, so wiring it here needs no repo-map change.
+#
+# SPIRA_GATE_BASE DEFAULTS TO THIS SCRIPT'S OWN $BASE ARGUMENT. gate.sh's real invocation
+# already exports SPIRA_GATE_BASE (and SPIRA_GATE_FILES, which build-fence.sh prefers), so
+# this default only matters for a direct call — like a test's own — that passes BASE and
+# HEAD positionally without setting either env var.
+SPIRA_GATE_BASE="${SPIRA_GATE_BASE:-$BASE}" bash "$HERE/build-fence.sh" || exit 1
+
 # SPIRA_GATE_SUITES=off: select NOTHING, so the gate command's `[ -n "$_s" ] || exit 0`
 # passes after its fences have run. landing.sh sets it for queue-mode certification when
 # SPIRA_CERTIFY_SUITES=off; the batch's CI run is then where the suites run.
@@ -28,7 +43,6 @@ if [ "${SPIRA_GATE_SUITES:-on}" = off ]; then
     exit 0
 fi
 HEAD="${2:?usage: gate-touched.sh <base> <head>}"
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo="${SPIRA_GATE_REPO:-.}"
 _tiers="${SPIRA_GATE_TIERS:-T0,T1}"
 
