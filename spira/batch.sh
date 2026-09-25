@@ -109,16 +109,6 @@ _pf_over() {
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
 }
 
-_lg_repro_is_red() {   # _lg_repro_is_red <suites-csv> <repo-dir> <branch> -> 0 if red
-    local suites="$1" repo="$2" br="$3" tmp rc
-    tmp="$(mktemp -d)"
-    SPIRA_BATCH_RESULTS="$tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
-        --mode serial --suites "$suites" "$br" >/dev/null 2>&1
-    rc=$?
-    rm -rf "$tmp"
-    [ "$rc" -eq 1 ]
-}
-
 _lg_red_suites() {   # _lg_red_suites <gate-output> -> comma-separated suite names
     printf '%s\n' "$1" | awk '{
         for (i = 1; i < NF; i++)
