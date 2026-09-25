@@ -59,6 +59,13 @@ version_min = ""
 version_probe = "gh --version"
 
 [[dep]]
+name = "openssl"
+tier = "optional"
+purpose = "signing GitHub App JWTs to mint installation tokens (broker and app-token.sh) — needed only for repos whose land mode is 'pr'"
+version_min = ""
+version_probe = "openssl version"
+
+[[dep]]
 name = "tmux"
 tier = "optional"
 purpose = "the cockpit panes"
