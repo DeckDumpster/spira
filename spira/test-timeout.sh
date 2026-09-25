@@ -38,7 +38,7 @@ echo "structural:"
 # record on SIGTERM), which would charge an attempt if it ran first.
 timeout_line="$(grep -n 'SESSION_RC:-0.*124' "$HERE/aeon.sh" | grep -v '^\s*#' | sed -n 1p | cut -d: -f1)"
 requeue_line="$(grep -n 'REQUEUE_CAUSE" \]; then' "$HERE/aeon.sh" | sed -n 1p | cut -d: -f1)"
-outcome_line="$(grep -n 'cause="\$(session_outcome' "$HERE/aeon.sh" | sed -n 1p | cut -d: -f1)"
+outcome_line="$(grep -n '_d_outcome="\$(session_outcome' "$HERE/aeon.sh" | sed -n 1p | cut -d: -f1)"
 is "timeout check appears before REQUEUE_CAUSE check" yes \
    "$( [ -n "$timeout_line" ] && [ -n "$requeue_line" ] && [ "$timeout_line" -lt "$requeue_line" ] && echo yes || echo no)"
 is "timeout check appears before session_outcome" yes \

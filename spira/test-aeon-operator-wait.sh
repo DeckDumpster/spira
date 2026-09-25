@@ -152,15 +152,10 @@ echo "mail.sh code: writes operator-wait marker when kind=question/decision"
 is "mail.sh writes operator-wait for kind=question" "1" \
     "$(grep -c 'BEAD_ID.*operator-wait\|operator-wait.*BEAD_ID' "$HERE/mail.sh" 2>/dev/null || true)"
 
-# ======================================================================================
-# Code assertion: aeon.sh decision-blocked path writes unjudged-decision-blocked.
-# ======================================================================================
-echo
-echo "aeon.sh code: decision-blocked path writes unjudged requeue event"
-
-dec_blocked_line="$(grep -n 'decision-blocked' "$HERE/aeon.sh" | grep 'bump_requeue' | head -1 | cut -d: -f1)"
-is "aeon.sh decision-blocked path writes bump_requeue unjudged-decision-blocked" "1" \
-    "$([ -n "$dec_blocked_line" ] && echo 1 || echo 0)"
+# The decision-blocked path's requeue cause moved into aeon_disposition's own output
+# (lib.sh) as part of sp-eq8a4.2.1, so "unjudged-decision-blocked" is no longer a literal
+# beside a bump_requeue call in aeon.sh; behaviour is covered by test-aeon-disposition.sh's
+# "open decision blocker is free" row instead of a source-order grep here.
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
