@@ -39,7 +39,7 @@ is "no explicit wait, no maxsec: 2x gate timeout" "5400" "$_gate_wait"
 gate_lock_wait 0 0 2700 "900"
 is "explicit wait wins outright" "900" "$_gate_wait"
 
-gate_lock_wait 3600 "$(( now - 100 ))" 2700 ""
+gate_lock_wait 20000 "$(( now - 100 ))" 2700 ""
 is "plenty of budget: still 2x timeout, uncapped" "5400" "$_gate_wait"
 
 gate_lock_wait 3600 "$(( now - 3000 ))" 2700 ""
