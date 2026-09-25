@@ -7,6 +7,7 @@
 # Usage:
 #   acceptance-run.sh <tag> --scratch-repo <path> [--prev-tag <tag>] [--record]
 #                           [--file-defects] [--bd-db <path>] [--agent <path>]
+#                           [--waive-upgrade]
 #
 # Arguments:
 #   <tag>                  release tag to test (spira-release-spira-*)
@@ -16,6 +17,10 @@
 #                          rollback (phase C), and aged-install upgrade (phase D)
 #   --record               write PASS/FAIL as a git note on <tag>
 #                          under refs/notes/acceptance
+#   --waive-upgrade        operator waiver: ignore any --prev-tag and skip
+#                          phases B/C/D, recording that the waiver happened so
+#                          the verdict note can't be mistaken for a tested
+#                          upgrade
 #   --file-defects         file a builder bead per FAIL, linked discovered-from sp-ewwwq
 #   --bd-db <path>         bd database path (default: ~/spira-acceptance-test-db).
 #                          In CI, pass the instance's own db so phase D migration
@@ -154,6 +159,7 @@ scratch_repo=""
 prev_tag=""
 do_record=0
 do_file_defects=0
+do_waive_upgrade=0
 bd_db="${HOME}/spira-acceptance-test-db"
 _agent=""
 
@@ -169,6 +175,7 @@ while [ $# -gt 0 ]; do
         --agent=*)       _agent="${1#--agent=}"; shift ;;
         --record)        do_record=1; shift ;;
         --file-defects)  do_file_defects=1; shift ;;
+        --waive-upgrade) do_waive_upgrade=1; shift ;;
         -*)              printf 'acceptance-run: unknown option: %s\n' "$1" >&2; exit 2 ;;
         *)
             if [ -z "$tag" ]; then tag="$1"; else
@@ -186,6 +193,10 @@ if [ -z "$scratch_repo" ]; then
     printf 'acceptance-run: --scratch-repo is required\n' >&2
     exit 2
 fi
+
+# Waiver overrides any --prev-tag: phases B/C/D skip via the same empty-prev_tag
+# path they already take when no predecessor exists.
+[ "$do_waive_upgrade" -eq 1 ] && prev_tag=""
 
 # Derive the repo root (this file is in spira/, one level below the repo root).
 REPO_ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -964,6 +975,9 @@ if [ "$do_record" -eq 1 ]; then
     if [ -n "$prev_tag" ]; then
         _note="$(printf '%s\naged-install from=%s: %s\n' "$_note" "$prev_tag" "$verdict")"
     fi
+    # A waived publish must never be mistaken for a tested upgrade.
+    [ "$do_waive_upgrade" -eq 1 ] && \
+        _note="$(printf '%s\nupgrade phases waived by operator\n' "$_note")"
     git -C "${SPIRA_NOTES_REPO:-$REPO_ROOT}" notes --ref=acceptance add -f -m "$_note" \
         "refs/tags/$tag" \
         && printf 'recorded: git notes --ref=acceptance show refs/tags/%s\n' "$tag" \

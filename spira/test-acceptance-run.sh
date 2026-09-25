@@ -370,5 +370,15 @@ wantre "_take_snapshot: mkdir failure returns cleanly" \
     'mkdir -p.*_sdir.*|| return 0'
 chmod 755 "$_snap_dir_ro" 2>/dev/null || true
 
+echo
+echo "4. Structural: --waive-upgrade overrides --prev-tag and marks the verdict note"
+
+wantre "--waive-upgrade is a recognized flag" \
+    'waive-upgrade\) do_waive_upgrade=1'
+wantre "waiver clears prev_tag regardless of --prev-tag" \
+    'do_waive_upgrade.*-eq 1.*&&.*prev_tag=""'
+want "verdict note records the waiver" \
+    "upgrade phases waived by operator"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
