@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# covers: systemd/install.sh systemd/concierge.service systemd/beads-push.service
+# covers: systemd/render.py systemd/concierge.service systemd/beads-push.service
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -23,25 +23,13 @@ _prod="$_tmp/releases/current/spira"
 _prod_root="$_tmp/releases/current"
 mkdir -p "$_repo" "$_prod" "$_prod_root/cockpit"
 
-# Render using the same Python logic as install.sh (kept in sync by grep test below).
+# Render using render.py directly — the actual module install.sh and unit-ensure.sh
+# both call, not a copy of its substitution logic.
 render_py() {
     local template="$1"
-    python3 - "$template" \
-        "$_repo" "$_repo" "$_tmp/run" "$_tmp/db" "$_prod_root/cockpit" \
-        "" "" "" "$_prod" "test" "" "" "" <<'PYEOF'
-import os, re, sys
-keys = ["SPIRA_HOME", "SPIRA_REPO", "SPIRA_RUN", "SPIRA_DB", "SPIRA_COCKPIT",
-        "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "DOLT", "SPIRA_PROD", "SPIRA_INSTANCE",
-        "SPIRA_TESTDB_PORT", "SPIRA_SUPERVISE_BIN", "SPIRA_SNAP_STALE_S"]
-m = dict(zip(keys, sys.argv[2:15]))
-if not m["SPIRA_PROD"]:
-    m["SPIRA_PROD"] = m["SPIRA_HOME"]
-m["SPIRA_PROD_COCK"] = os.path.dirname(m["SPIRA_PROD"]) + "/cockpit"
-m["SPIRA_PROD_ROOT"] = os.path.dirname(m["SPIRA_PROD"])
-text = open(sys.argv[1]).read()
-out = re.sub(r"@([A-Z_]+)@", lambda x: m.get(x.group(1), x.group(0)), text)
-sys.stdout.write(out)
-PYEOF
+    python3 "$ROOT/systemd/render.py" "$template" \
+        --home "$_repo" --repo "$_repo" --run "$_tmp/run" --db "$_tmp/db" \
+        --cockpit "$_prod_root/cockpit" --prod "$_prod" --instance test
 }
 
 # Positive control: a synthetic template with @SPIRA_REPO@ must render to the repo path.
@@ -53,13 +41,6 @@ if echo "$_rendered_bad" | grep -q "ExecStart=$_repo/"; then
     ok "positive control: @SPIRA_REPO@ renders to checkout path — detector fires"
 else
     fail "positive control: @SPIRA_REPO@ did NOT render to checkout path — check is broken"
-fi
-
-# T0a — install.sh render dict must include SPIRA_PROD_ROOT mapped to dirname(SPIRA_PROD).
-if grep -q 'SPIRA_PROD_ROOT.*dirname.*SPIRA_PROD' "$ROOT/systemd/install.sh"; then
-    ok "install.sh: SPIRA_PROD_ROOT = dirname(SPIRA_PROD) is present"
-else
-    fail "install.sh: SPIRA_PROD_ROOT = dirname(SPIRA_PROD) is missing"
 fi
 
 # T0b/c — service templates must use @SPIRA_PROD_ROOT@, not @SPIRA_REPO@, in ExecStart.
