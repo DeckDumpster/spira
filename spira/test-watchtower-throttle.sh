@@ -306,21 +306,57 @@ is   "1 live cert at threshold=1 → stamp written (positive control for filter)
 
 # ======================================================================================
 echo
-echo "sentinel.sh CHECK7: throttle stamp gates task pool to 0:"
+echo "sentinel.sh CHECK7: throttle stamp gates task pool to 0 — real behaviour rows (G2):"
 # ======================================================================================
-# Verify that sentinel.sh references the stamp before the task fayth loop.
-# This is a structural check: the mechanism is the stamp + pool=0 in sentinel.sh.
-# We verify that the sentinel code path reads the stamp and would set pool=0.
+# lib.sh functions, not a source grep: ck7_pool (pool minus task-live), ck7_throttled
+# (stamp + override -> throttled flag) and ck7_fill_cap (per-persona fill cap, G3).
 #
-# Direct integration: confirm the sentinel code contains the pool gate and stamp read.
+# Sourced in an isolated child process per call, never into this suite's own shell — this
+# suite's main process must not inherit a real SPIRA_CONF/SPIRA_RUN (law-gates-run-in-a-
+# clean-environment); wt_tc above already isolates the same way for a full watchtower run.
+libcall() {   # libcall '<shell code calling one of the lib.sh functions above>'
+    env -i PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/libcall-run" \
+        bash -c '. "'"$HERE"'/lib.sh" >/dev/null 2>&1 || exit 1
+'"$1"
+}
+
+# POSITIVE CONTROL: ck7_pool subtracts task-live from the configured pool.
+is "ck7_pool: 4 max, 1 live -> 3 free" "3" "$(libcall 'ck7_pool 4 1')"
+is "ck7_pool: task-live at or above max floors at 0" "0" "$(libcall 'ck7_pool 4 4')"
+is "ck7_pool: no pool configured -> empty (today's behaviour unchanged)" \
+   "" "$(libcall 'ck7_pool "" 0')"
+
+# ck7_throttled: the stamp alone throttles; SPIRA_QUEUE_THROTTLE_OVERRIDE=off pins it clear.
+is "ck7_throttled: stamp present, no override -> throttled" "1" "$(libcall 'ck7_throttled 1 ""')"
+is "ck7_throttled: no stamp -> not throttled" "0" "$(libcall 'ck7_throttled 0 ""')"
+is "ck7_throttled: stamp present but override=off -> NOT throttled" \
+   "0" "$(libcall 'ck7_throttled 1 off')"
+
+# check7_pool_decision composes with ck7_throttled: throttled pool holds at 0 unless an
+# express bead is ready, in which case it grants exactly 1 (already covered in
+# test-express-lane.sh; these rows are the override=off case reaching an unthrottled pool).
+is "override=off: pool stays the ck7_pool value, untouched by check7_pool_decision" \
+   "3" "$(libcall 'check7_pool_decision "$(ck7_throttled 1 off)" "$(ck7_pool 4 1)" 0')"
+is "no override: stamp forces the same pool to 0 (no express bead ready)" \
+   "0" "$(libcall 'check7_pool_decision "$(ck7_throttled 1 "")" "$(ck7_pool 4 1)" 0')"
+
+# ck7_fill_cap: the per-persona fill cap that stops an unbounded summon loop on a host
+# with no pool configured (G3 — this had no test at all before this extraction).
+is "ck7_fill_cap: below the cap, no pool -> continue" \
+   "continue" "$(libcall 'SPIRA_MAX_LIVE_AEONS=2 ck7_fill_cap 1 ""')"
+is "ck7_fill_cap: at the cap, no pool -> stop" \
+   "stop" "$(libcall 'SPIRA_MAX_LIVE_AEONS=2 ck7_fill_cap 2 ""')"
+is "ck7_fill_cap: pool exhausted before the cap -> stop" \
+   "stop" "$(libcall 'SPIRA_MAX_LIVE_AEONS=2 ck7_fill_cap 0 0')"
+is "ck7_fill_cap: unset SPIRA_MAX_LIVE_AEONS defaults to 4" \
+   "stop" "$(libcall 'ck7_fill_cap 4 ""')"
+
+# Structural control retained: lanes must still precede the pool gate in sentinel.sh, since
+# ck7_throttled/check7_pool_decision replacing the pool are only reached after the lane
+# loop — a real behaviour row cannot see file ordering, so this stays a source check.
 sentinel="$HERE/sentinel.sh"
-want "sentinel reads throttle stamp before task fayth loop" \
-     "SPIRA_THROTTLE_STAMP" "$(grep -o 'SPIRA_THROTTLE_STAMP' "$sentinel" 2>/dev/null || true)"
-want "sentinel gates the task pool via check7_pool_decision when stamp active" \
-     "check7_pool_decision" "$(grep -o 'check7_pool_decision' "$sentinel" 2>/dev/null || true)"
-# Confirm lanes loop is before the pool gate (LANE_FAYTHS loop precedes the gate in the file)
 lane_line="$(grep -n 'for f in \$LANE_FAYTHS' "$sentinel" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
-gate_line="$(grep -n 'check7_pool_decision' "$sentinel" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
+gate_line="$(grep -n 'ck7_throttled' "$sentinel" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
 if [ -n "$lane_line" ] && [ -n "$gate_line" ] && \
    [ "$lane_line" -gt 0 ] && [ "$gate_line" -gt 0 ] && \
    [ "$lane_line" -lt "$gate_line" ]; then

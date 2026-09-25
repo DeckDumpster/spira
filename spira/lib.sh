@@ -1176,6 +1176,75 @@ check7_pool_decision() {
     fi
 }
 
+# lane_rotate <last> <lanes...> -> the lane evaluation order for this pass, on stdout.
+# <last> is the lane fayth summoned on the previous pass (empty on the first pass, or when
+# it no longer appears in <lanes>). Rotates it and everything before it to the end, so a
+# lane that won last pass draws last this pass and the collective cap cannot be monopolised
+# by whichever lane happens to sort first (G1: this used to be reimplemented inside
+# test-lane-ceiling.sh rather than exercised, so a broken rotation here would still pass).
+lane_rotate() {
+    local last="$1"; shift
+    local lanes="$*" lf before="" after="" found=0
+    if [ -z "$last" ] || [ -z "$lanes" ]; then
+        printf '%s' "$lanes"
+        return 0
+    fi
+    for lf in $lanes; do
+        if [ "$found" = 1 ]; then after="$after $lf"
+        elif [ "$lf" = "$last" ]; then before="$before $lf"; found=1
+        else before="$before $lf"
+        fi
+    done
+    printf '%s' "${after# }${before:+ }${before# }"
+}
+
+# ck7_pool <max-aeons> <task-live> -> the task pool CHECK 7 starts a pass with, before any
+# throttle is applied: <max-aeons> (SPIRA_MAX_AEONS) minus the task fayths already live,
+# floored at 0. Empty when <max-aeons> is empty — no pool configured means every persona's
+# own concurrency cap applies unchanged, exactly as before this pool existed.
+ck7_pool() {
+    local max_aeons="$1" task_live="${2:-0}"
+    [ -n "$max_aeons" ] || return 0
+    printf '%s' "$(( max_aeons > task_live ? max_aeons - task_live : 0 ))"
+}
+
+# ck7_throttled <stamp-exists:0|1> <override> -> 1 when the admission throttle stamp
+# holds the task pool at 0 this pass, 0 otherwise. SPIRA_QUEUE_THROTTLE_OVERRIDE=off pins
+# the pass unthrottled regardless of the stamp (G2).
+ck7_throttled() {
+    local stamp_exists="$1" override="${2:-}"
+    if [ "$stamp_exists" = 1 ] && [ "$override" != off ]; then printf 1; else printf 0; fi
+}
+
+# ck7_fill_cap <fill-count-this-persona> <pool> -> "stop" once the pool (if bounded) is
+# spent or <fill-count-this-persona> has reached SPIRA_MAX_LIVE_AEONS (default 4), else
+# "continue". The cap is what stops an unbounded summon loop for one persona on a host
+# that sets no pool at all — summon_fayth's own concurrency check is the only other guard,
+# and it is per-persona configuration, not a pass-wide backstop (G3).
+ck7_fill_cap() {
+    local fill="$1" pool="${2:-}"
+    if [ -n "$pool" ] && [ "$pool" -le 0 ]; then printf stop; return 0; fi
+    if [ "$fill" -ge "${SPIRA_MAX_LIVE_AEONS:-4}" ]; then printf stop; return 0; fi
+    printf continue
+}
+
+# check8_should_judge <plan_ready> <plan_inprog> <n_open> <progressed> <last> <now> <every>
+#   -> yes / cooldown / no. CHECK 8 fires (yes) only when the plan's own queue is starved —
+# plan_inprog=0, n_open>0, plan_ready=0 — and nothing progressed this pass; `acted>0` never
+# suppresses it, only `progressed` does. A ready plan bead (plan_ready>0) means the DAG is
+# moving whether or not an aeon was free to take it, so it exits before judgement even when
+# an incident is ready (G15). `cooldown` means starved but within <every> seconds of <last>.
+check8_should_judge() {
+    local plan_ready="$1" plan_inprog="$2" n_open="$3" progressed="$4"
+    local last="$5" now="$6" every="$7"
+    [ "$plan_ready" -gt 0 ] && { printf no; return 0; }
+    if [ "$plan_inprog" -eq 0 ] && [ "$n_open" -gt 0 ] && [ "$progressed" -eq 0 ]; then
+        if [ $(( now - last )) -lt "$every" ]; then printf cooldown; else printf yes; fi
+        return 0
+    fi
+    printf no
+}
+
 # mark_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on beads whose closed blocker
 # is in the queue pipeline (CERTIFIED or BATCHED) and has not yet reached LANDED.
 #
