@@ -12,7 +12,7 @@
 #
 # THE WHOLE-TREE WALK IS OVER A SCRATCH REPOSITORY — plan-lint.sh resolves
 # its ROOT via git from its own location, so copying it (with suite-covers.sh,
-# test-plan-bin.sh and suite-coverage-json.sh) into a throwaway git repo is
+# plan-bin.sh and suite-coverage-json.sh) into a throwaway git repo is
 # enough to isolate every assertion from the real, not-yet-migrated spira/
 # corpus. SPIRA_TEST_PLAN_BIN is exported to a binary built ONCE from the
 # real repository's own test-plan/ crate — the scratch repo never needs
@@ -21,7 +21,7 @@
 # host-reason: reads suite source and scratch git repos only; no database, no systemd
 #
 # tier: T1
-# covers: spira/plan-lint.sh spira/suite-covers.sh spira/plan-matrix-fence.sh spira/test-plan-bin.sh spira/suite-coverage-json.sh
+# covers: spira/plan-lint.sh spira/suite-covers.sh spira/plan-matrix-fence.sh spira/plan-bin.sh spira/suite-coverage-json.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REAL_ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -53,7 +53,7 @@ ROOT="$TMP/root"
 mkdir -p "$ROOT/spira" "$ROOT/docs/test-plan"
 cp "$HERE/plan-lint.sh" "$ROOT/spira/plan-lint.sh"
 cp "$HERE/suite-covers.sh" "$ROOT/spira/suite-covers.sh"
-cp "$HERE/test-plan-bin.sh" "$ROOT/spira/test-plan-bin.sh"
+cp "$HERE/plan-bin.sh" "$ROOT/spira/plan-bin.sh"
 cp "$HERE/suite-coverage-json.sh" "$ROOT/spira/suite-coverage-json.sh"
 git init -q -b main "$ROOT"
 git -C "$ROOT" config user.email t@t; git -C "$ROOT" config user.name t
@@ -165,7 +165,7 @@ rm "$ROOT/spira/test-covers-02.sh"
 EMPTY_ROOT="$TMP/empty"; mkdir -p "$EMPTY_ROOT/spira" "$EMPTY_ROOT/docs/test-plan"
 cp "$HERE/plan-lint.sh" "$EMPTY_ROOT/spira/plan-lint.sh"
 cp "$HERE/suite-covers.sh" "$EMPTY_ROOT/spira/suite-covers.sh"
-cp "$HERE/test-plan-bin.sh" "$EMPTY_ROOT/spira/test-plan-bin.sh"
+cp "$HERE/plan-bin.sh" "$EMPTY_ROOT/spira/plan-bin.sh"
 cp "$HERE/suite-coverage-json.sh" "$EMPTY_ROOT/spira/suite-coverage-json.sh"
 git init -q -b main "$EMPTY_ROOT"
 git -C "$EMPTY_ROOT" config user.email t@t; git -C "$EMPTY_ROOT" config user.name t

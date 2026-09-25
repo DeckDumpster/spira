@@ -30,14 +30,14 @@
 # by grepping markdown. Per-suite header presence stays a bash string check:
 # it is about a suite file, not the catalogue.
 #
-# covers: spira/suite-covers.sh spira/plan-lint.sh spira/suite-coverage-json.sh spira/test-plan-bin.sh docs/test-plan/*.toml
+# covers: spira/suite-covers.sh spira/plan-lint.sh spira/suite-coverage-json.sh spira/plan-bin.sh docs/test-plan/*.toml
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)"
 [ -n "$ROOT" ] || ROOT="$(cd "$HERE/.." && pwd -P)"
 [ -r "$HERE/suite-covers.sh" ] || { printf 'plan-lint: suite-covers.sh is missing\n' >&2; exit 1; }
 . "$HERE/suite-covers.sh"
-. "$HERE/test-plan-bin.sh"
+. "$HERE/plan-bin.sh"
 DOCS_DIR="$ROOT/docs/test-plan"
 
 # catalogue_ucs -> "<uc-id> <tier>" one pair per line, from every docs/test-plan/*.toml

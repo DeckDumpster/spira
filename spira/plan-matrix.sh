@@ -15,7 +15,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)"
 [ -n "$ROOT" ] || ROOT="$(cd "$HERE/.." && pwd -P)"
-. "$HERE/test-plan-bin.sh"
+. "$HERE/plan-bin.sh"
 DOCS_DIR="$ROOT/docs/test-plan"
 JSON_OUT="$DOCS_DIR/coverage.json"
 MD_OUT="$DOCS_DIR/COVERAGE.md"

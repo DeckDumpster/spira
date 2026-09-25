@@ -42,7 +42,7 @@ export SPIRA_TEST_PLAN_BIN="${CARGO_TARGET_DIR:-$REAL_ROOT/target}/release/test-
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 ROOT="$TMP/root"
 mkdir -p "$ROOT/spira" "$ROOT/docs/test-plan"
-for f in plan-matrix.sh plan-lint.sh suite-covers.sh test-plan-bin.sh suite-coverage-json.sh tsd-timings-json.sh; do
+for f in plan-matrix.sh plan-lint.sh suite-covers.sh plan-bin.sh suite-coverage-json.sh tsd-timings-json.sh; do
     cp "$HERE/$f" "$ROOT/spira/$f"
 done
 

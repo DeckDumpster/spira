@@ -1,4 +1,4 @@
-# test-plan-bin.sh — resolve_test_plan_bin, shared by plan-lint.sh and plan-matrix.sh so
+# plan-bin.sh — resolve_test_plan_bin, shared by plan-lint.sh and plan-matrix.sh so
 # there is one place that knows how to find or build the test-plan binary. Sourced, never
 # executed; requires ROOT to already be set by the caller.
 
@@ -17,13 +17,13 @@ resolve_test_plan_bin() {
         cargo_bin="$HOME/.cargo/bin/cargo"
     fi
     if [ -z "$cargo_bin" ]; then
-        printf 'test-plan-bin: cargo not found on PATH or at ~/.cargo/bin — cannot build test-plan\n' >&2
+        printf 'plan-bin: cargo not found on PATH or at ~/.cargo/bin — cannot build test-plan\n' >&2
         return 1
     fi
     if ! PATH="$(dirname "$cargo_bin"):$PATH" "$cargo_bin" build --release \
         --manifest-path "$ROOT/test-plan/Cargo.toml" >&2
     then
-        printf 'test-plan-bin: building test-plan failed\n' >&2
+        printf 'plan-bin: building test-plan failed\n' >&2
         return 1
     fi
     # CARGO_TARGET_DIR, when set (the testenv container points it off the bind mount — see
