@@ -54,7 +54,7 @@ found=0; closed=0
 while IFS=$'\t' read -r id cmd; do
   [ -n "$id" ] || continue
   found=$((found+1))
-  out=$(timeout 120 bash -c "$cmd" 2>&1); rc=$?
+  out=$(timeout "${SPIRA_VERIFY_TIMEOUT:-120}" bash -c "$cmd" 2>&1); rc=$?
   short=$(printf '%s' "$out" | head -c 400)
   if [ "$rc" -eq 0 ]; then
     echo "  SATISFIED  $id  ($cmd)"

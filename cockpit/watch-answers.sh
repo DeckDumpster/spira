@@ -57,7 +57,10 @@ INTERVAL="${ANSWER_POLL:-45}"
 mkdir -p "$SPIRA_RUN" "$(dirname "$WITNESS")"
 VERDICT_CURSOR="${VERDICT_CURSOR:-$SPIRA_RUN/.verdict-cursor}"
 COMMENT_CURSOR="${COMMENT_CURSOR:-$SPIRA_RUN/.comment-cursor}"
-ANSWERS="$(cd "$(dirname "$0")/../spira" && pwd -P)/answers.py"
+# ANSWERS_BIN is the seam a suite drives to test this loop's own contract (does it print, does
+# it wake, does it exit 1 on a failing pass) without paying for a real bd round trip through
+# the actual answers.py on every case.
+ANSWERS="${ANSWERS_BIN:-$(cd "$(dirname "$0")/../spira" && pwd -P)/answers.py}"
 
 emit() {
     # NARROWED BY THE SERVER. This ran every 45 seconds against every bead in the database and
@@ -66,7 +69,9 @@ emit() {
     # database — hold silence rather than render a broken check as all-clear.
     local raw
     raw=$(cockpit_attention_beads) || return 0
-    printf '%s' "$raw" | python3 "$ANSWERS" \
+    # Run through its own shebang rather than a hardcoded `python3 "$ANSWERS"`, so ANSWERS_BIN
+    # can point at a non-Python stub for a loop test that has no need of the real logic.
+    printf '%s' "$raw" | "$ANSWERS" \
         "bd=$BD" "db=$COCKPIT_DB" \
         "ask_label=$SPIRA_ASK_LABEL" \
         "operator_actor=${SPIRA_OPERATOR_ACTOR:-operator}" \

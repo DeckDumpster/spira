@@ -7,10 +7,10 @@
 #
 # WHAT THIS SUITE IS FOR
 # ----------------------
-# escalate() in skew.sh was swallowing both streams of the SPIRA_NOTIFY call
-# (>/dev/null 2>&1), so a failing ask.sh produced no output in skew.log and the
+# escalate() in skew.sh was swallowing both streams of the mail.sh call
+# (>/dev/null 2>&1), so a failing send produced no output in skew.log and the
 # divergence went unreported for an entire day while the timer ran every hour.
-# This suite proves the fix: a failing notify, and a missing notify path, both
+# This suite proves the fix: a failing send, and a missing mail.sh path, both
 # produce output on stdout and return non-zero.
 #
 # THE POSITIVE CONTROL IS FIRST (law-absence-needs-a-positive-control). Before
@@ -24,7 +24,7 @@
 # and calls escalate(). No shared state with the installed harness is used
 # (law-gates-run-in-a-clean-environment).
 #
-# covers: spira/skew.sh
+# covers: spira/skew.sh UC-operator-channel-25
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0
