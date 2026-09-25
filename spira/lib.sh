@@ -5923,29 +5923,74 @@ for r in rows:
 # than by re-running the priority sort, which would just re-select the same
 # culprit forever (sp-y931m: PRs 302-304 cycled the same P0 build-breaker).
 #
-# State is one group ("id:tip id:tip ...") per line in $SPIRA_QUEUE_DIR/<repo>/bisect.
-# Line 1 is the group batch.sh must cut next; later lines are untested siblings
-# parked by an earlier split, most-recently-parked first (a LIFO worklist), so a
-# nested split finishes the branch it is on before returning to an outer sibling.
+# State is one group ("base-sha id:tip id:tip ...") per line in
+# $SPIRA_QUEUE_DIR/<repo>/bisect. Line 1 is the group batch.sh must cut next;
+# later lines are untested siblings parked by an earlier split, most-recently-
+# parked first (a LIFO worklist), so a nested split finishes the branch it is
+# on before returning to an outer sibling.
+#
+# A group is only meaningful against the exact commits it was split from: the
+# base it recorded, and each member's branch tip at that moment. Either
+# moving invalidates the reasoning (sp-55j4m: a 13-hour-old group forced a
+# stale cut over nine certified P0s), so queue_bisect_current discards a
+# group that no longer matches before it can force a cut.
 # ---------------------------------------------------------------------------
 
 queue_bisect_file() { printf '%s/%s/bisect' "${SPIRA_QUEUE_DIR:?}" "$1"; }
 
-# queue_bisect_current <repo-name> -> the forced-next group ("id:tip id:tip"),
-# one line. Empty output (rc 1) means no bisect is in progress.
+# queue_bisect_current <repo-name> [<repo-path> <base-sha>] -> the forced-next
+# group ("id:tip id:tip"), one line. Empty output (rc 1) means no bisect is
+# in progress.
+#
+# With <repo-path> and <base-sha> given, validates line 1 first: its recorded
+# base must equal <base-sha>, and each recorded member tip must equal that
+# branch's live tip in <repo-path>. A mismatch means the base advanced (a
+# batch landed) or a member was rebuilt since the split, so the group can no
+# longer yield the information the bisect needs — discard it, log why, and
+# check the next parked group in its place. Without those two arguments no
+# validation runs, for callers that already know the current group is valid.
 queue_bisect_current() {
-    local f; f="$(queue_bisect_file "$1")"
-    [ -s "$f" ] || return 1
-    head -1 "$f"
+    local name="$1" repo_path="${2:-}" cur_base="${3:-}"
+    local f; f="$(queue_bisect_file "$name")"
+    local _line _rec_base _members _bl _id _tip _live _reason
+    while :; do
+        [ -s "$f" ] || return 1
+        _line="$(head -1 "$f")"
+        _rec_base="${_line%% *}"
+        _members="${_line#* }"
+        if [ -n "$repo_path" ]; then
+            _reason=""
+            if [ "$_rec_base" != "$cur_base" ]; then
+                _reason="base moved: recorded $_rec_base, now $cur_base"
+            else
+                for _bl in $_members; do
+                    _id="${_bl%%:*}"; _tip="${_bl##*:}"
+                    _live="$(git -C "$repo_path" rev-parse -q --verify "refs/heads/spira/$_id" 2>/dev/null)" || _live=""
+                    if [ "$_live" != "$_tip" ]; then
+                        _reason="member $_id tip changed: recorded $_tip, now ${_live:-gone}"
+                        break
+                    fi
+                done
+            fi
+            if [ -n "$_reason" ]; then
+                printf 'bisect %s: discarding stale group (%s) -- %s\n' "$name" "$_members" "$_reason"
+                queue_bisect_advance "$name"
+                continue
+            fi
+        fi
+        printf '%s\n' "$_members"
+        return 0
+    done
 }
 
 # queue_bisect_current_certified <repo-name> <certs-blob>
 # Print "<id> <tip>" for each member of the current forced group that is still
 # CERTIFIED, using its live certified tip from <certs-blob> (lines "id tip
-# epoch", as queue_certified_list prints) rather than the tip recorded when the
-# group was split — a member re-certified since then is tested at its current
-# head. A member no longer CERTIFIED (ejected or landed another way) is
-# dropped silently; an empty result means the group has nothing left to cut.
+# epoch", as queue_certified_list prints). Call this only after
+# queue_bisect_current has validated the group (its recorded tip already
+# equals the live one), so this is purely a still-CERTIFIED filter: a member
+# ejected or landed another way since the split is dropped silently. An empty
+# result means the group has nothing left to cut.
 queue_bisect_current_certified() {
     local name="$1" certs="$2" _line _bl _id
     _line="$(queue_bisect_current "$name" 2>/dev/null)" || return 0
@@ -5955,14 +6000,16 @@ queue_bisect_current_certified() {
     done
 }
 
-# queue_bisect_split <repo-name> <id:tip> [<id:tip> ...]
+# queue_bisect_split <repo-name> <base-sha> <id:tip> [<id:tip> ...]
 # The given members just came back red together with no attributable suite.
 # Halve them (first half smaller or equal, matching the batcher's existing
-# epoch convention) and record the first half as the next forced cut. Any
-# group still pending from an earlier split is kept beneath the new second
-# half, so it is tested once the branch just opened resolves.
+# epoch convention) and record the first half as the next forced cut, tagged
+# with <base-sha> — the commit the split was made against — so a later reader
+# can tell whether the group is still describing anything real. Any group
+# still pending from an earlier split is kept beneath the new second half, so
+# it is tested once the branch just opened resolves.
 queue_bisect_split() {
-    local name="$1"; shift
+    local name="$1" base_sha="$2"; shift 2
     local members=("$@")
     local half=$(( ${#members[@]} / 2 )) i
     local a=() b=()
@@ -5974,8 +6021,8 @@ queue_bisect_split() {
     [ -s "$f" ] && rest="$(tail -n +2 "$f")"
     mkdir -p "$(dirname "$f")" 2>/dev/null || true
     {
-        printf '%s\n' "${a[*]}"
-        printf '%s\n' "${b[*]}"
+        printf '%s %s\n' "$base_sha" "${a[*]}"
+        printf '%s %s\n' "$base_sha" "${b[*]}"
         [ -n "$rest" ] && printf '%s\n' "$rest"
         true
     } > "$f.$$" && mv -f "$f.$$" "$f"

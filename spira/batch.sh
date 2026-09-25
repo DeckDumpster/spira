@@ -683,7 +683,7 @@ for b in d:
     # priority-sorted cut would just re-select the same culprit forever
     # (sp-y931m: PRs 302-304 cycled the same P0 build-breaker).
     local _bisect_forced=""
-    if [ -n "$(queue_bisect_current "$name" 2>/dev/null)" ]; then
+    if [ -n "$(queue_bisect_current "$name" "$repo" "$base_sha" 2>/dev/null)" ]; then
         _bisect_forced="$(queue_bisect_current_certified "$name" "$certs")"
         if [ -z "$_bisect_forced" ]; then
             queue_bisect_advance "$name"

@@ -73,13 +73,17 @@ pub fn read_bisect(dir: &Path) -> Result<Option<(Vec<String>, u64)>, String> {
         Err(e) => return Err(format!("{}: {e}", p.display())),
     };
     let Some(first) = text.lines().find(|l| !l.trim().is_empty()) else { return Ok(None) };
+    // Line 1 is "<base-sha> id:tip id:tip ..." (sp-55j4m): the base commit the split was
+    // made against, recorded so batch.sh can tell whether the group is still valid. Watching
+    // only reports membership, so skip that leading field.
+    let members_field = first.split_once(' ').map_or("", |(_, rest)| rest);
     let mtime = fs::metadata(&p)
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    Ok(Some((members(first).into_iter().map(|m| m.id).collect(), mtime)))
+    Ok(Some((members(members_field).into_iter().map(|m| m.id).collect(), mtime)))
 }
 
 /// Every bead whose landstate record reads CERTIFIED. Records are shared across repos; the

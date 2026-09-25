@@ -392,7 +392,7 @@ ${_line#build-error: }" ;;
     local -A _ej_method=() _ej_detail=()
     local _eject_fail_dir; _eject_fail_dir="$(mktemp -d)"
     local _mm _mid _mtip
-    local _bisect_current; _bisect_current="$(queue_bisect_current "$name" 2>/dev/null)" || _bisect_current=""
+    local _bisect_current; _bisect_current="$(queue_bisect_current "$name" "$repo" "$base_sha" 2>/dev/null)" || _bisect_current=""
 
     _verdict_trap_pr="$pr_n"
 
@@ -411,7 +411,7 @@ ${_line#build-error: }" ;;
             fi
             _i=$(( _i + 1 ))
         done
-        queue_bisect_split "$name" "${members_arr[@]}"
+        queue_bisect_split "$name" "$base_sha" "${members_arr[@]}"
         "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
         rm -f "$batch_file"
         local _all_ids; _all_ids="$(printf '%s\n' "${members_arr[@]}" | cut -d: -f1 | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
@@ -647,7 +647,7 @@ ${_line#build-error: }" ;;
                     fi
                     i=$(( i + 1 ))
                 done
-                queue_bisect_split "$name" "${members_arr[@]}"
+                queue_bisect_split "$name" "$base_sha" "${members_arr[@]}"
                 "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
                 rm -f "$batch_file"
                 printf 'verdict %s: PR %s together-only red — halved (%d+%d)\n' \
