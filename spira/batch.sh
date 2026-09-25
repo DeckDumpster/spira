@@ -430,7 +430,7 @@ main() {
         done
     fi
 
-    local _evict_for_express=0 _ob_express_ids=()
+    local _takeover_for_express=0 _ob_express_ids=()
     if _batch_is_open "$name"; then
         local _ob_forge="${SPIRA_FORGE:-$HERE/forge.sh}"
         local _ob_file; _ob_file="$(_batch_open_file "$name")"
@@ -459,8 +459,14 @@ main() {
             fi
         fi
 
-        # Check if a certified express branch is waiting — if so, evict the open batch
-        # so the fast lane is not blocked by an in-flight CI run it did not ask for.
+        # An open batch is never evicted for express (Ryan, 2026-09-24): a batch that
+        # might still land green is not spent to save an express bead a wait — it takes
+        # the next slot instead, once this one closes (below, certs sort express-first).
+        # The one exception is a batch CI has already resolved as not-green: waiting for
+        # its local attribution to finish before cutting the express batch defeats the
+        # fast lane, so a certified express branch takes the freed slot immediately and
+        # the failed batch's own attribution — eject the culprit, re-certify survivors —
+        # keeps running separately (verdict.sh, against the file this stashes it in).
         local _ob_ev_certs _ob_ev_ids=() _ob_ev_id _ob_ev_prio
         _ob_ev_certs="$(_certified_list "$repo")"
         if [ -n "${_ob_ev_certs:-}" ]; then
@@ -482,31 +488,42 @@ for b in d:
             fi
         fi
 
-        if [ "${#_ob_express_ids[@]}" -eq 0 ]; then
+        if [ "${#_ob_express_ids[@]}" -gt 0 ] && [ -n "$_ob_pr" ]; then
+            local _ob_status_out _ob_status
+            _ob_status_out="$("$_ob_forge" check-status "$repo" "$_ob_pr" 2>/dev/null)" \
+                || _ob_status_out="pending"
+            _ob_status="$(printf '%s\n' "$_ob_status_out" | head -1)"
+            _ob_status="${_ob_status:-pending}"
+            case "$_ob_status" in
+            green|pending) ;;   # may still land clean — express waits for the slot
+            *)
+                # Not green (red, harness_fault, provision_fault, or an unreadable
+                # check-status): stash the open batch's record for verdict.sh to
+                # attribute on its own, and free the slot for the express batch.
+                local _ob_atdir; _ob_atdir="$(dirname "$_ob_file")"
+                if mv -f "$_ob_file" "$_ob_atdir/attributing-$_ob_pr" 2>/dev/null; then
+                    printf 'batch %s: open batch PR %s is %s — certified express branch takes over; its attribution continues separately\n' \
+                        "$name" "$_ob_pr" "${_ob_status:-unknown}"
+                    printf '## Note\nOpen batch PR %s for %s resolved %s.\n\nAn express branch is certified and has taken the next batch slot rather than waiting for local attribution to finish. The failed batch keeps attributing on its own; its survivors will be re-batched once the express batch lands.\n' \
+                        "$_ob_pr" "$name" "${_ob_status:-unknown}" \
+                    | bash "$HERE/mail.sh" send operator \
+                        --from "Spira Queue <queue@spira>" \
+                        --subject "Merge queue: $name — express takes over from batch $_ob_pr ($_ob_status)" \
+                        2>/dev/null || true
+                    printf 'QUEUE TAKEOVER %s repo=%s pr=%s reason=express status=%s\n' \
+                        "$(date +%s)" "$name" "$_ob_pr" "${_ob_status:-unknown}" \
+                        >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+                    _takeover_for_express=1
+                fi
+                ;;
+            esac
+        fi
+
+        if [ "$_takeover_for_express" -eq 0 ]; then
             printf 'batch %s: open batch exists — skipping\n' "$name"
             return 0
         fi
-
-        # Express branch is certified; evict the open batch so the fast lane is not delayed.
-        local _ob_ev_members
-        _ob_ev_members="$(grep '^members=' "$_ob_file" 2>/dev/null | head -1)"
-        _ob_ev_members="${_ob_ev_members#members=}"
-        printf 'batch %s: express branch certified — evicting open batch PR %s\n' \
-            "$name" "${_ob_pr:-?}"
-        _abandon_open_batch "$name" "$_ob_forge" "$repo" "$_ob_file" "${_ob_pr:-}" \
-            "$_ob_ev_members" \
-            "Batch evicted: an express branch became certified and has displaced this batch. Members returned to CERTIFIED for re-batching."
-        printf '## Note\nAn express branch is certified for %s; the open batch (PR %s) has been evicted.\n\nEvicted members are CERTIFIED and will be in the next batch after the express one.\nThis costs one wasted CI run on the evicted batch.\n' \
-            "$name" "${_ob_pr:-?}" \
-        | bash "$HERE/mail.sh" send operator \
-            --from "Spira Queue <queue@spira>" \
-            --subject "Merge queue: $name — batch evicted (express lane)" \
-            2>/dev/null || true
-        printf 'QUEUE EVICT %s repo=%s pr=%s reason=express\n' \
-            "$(date +%s)" "$name" "${_ob_pr:-?}" \
-            >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-        _evict_for_express=1
-        # Fall through: cut the express batch now.
+        # Fall through: cut the express batch now, into the freed slot.
     fi
 
     local certs
@@ -562,9 +579,9 @@ for b in d:
         certs="${_filt%$'\n'}"
     fi
 
-    # Express eviction: build the express batch from only the branches that triggered the
-    # eviction. Evicted members are CERTIFIED and will be included in the next batch.
-    if [ "${_evict_for_express:-0}" = 1 ] && [ "${#_ob_express_ids[@]}" -gt 0 ]; then
+    # Express takeover: build the batch from only the branches that triggered it — the
+    # freed slot belongs to express, not to whatever else is CERTIFIED alongside it.
+    if [ "${_takeover_for_express:-0}" = 1 ] && [ "${#_ob_express_ids[@]}" -gt 0 ]; then
         local _ecerts="" _ecl _ecid _is_express _eid
         while IFS= read -r _ecl; do
             [ -n "$_ecl" ] || continue
@@ -630,7 +647,7 @@ for b in d:
 
     [ "$count" -ge "${SPIRA_QUEUE_BATCH_MAX:-8}" ] && triggered=1
     [ "$age"   -ge "${SPIRA_QUEUE_BATCH_WAIT:-1800}" ] && triggered=1
-    [ "${_evict_for_express:-0}" = 1 ] && triggered=1
+    [ "${_takeover_for_express:-0}" = 1 ] && triggered=1
 
     # BISECT: a prior red with no attributable suite already narrowed the
     # culprit by persisted binary search (queue_bisect_split, run from

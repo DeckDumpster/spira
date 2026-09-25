@@ -60,18 +60,22 @@ MAIL
 chmod +x "$SH/mail.sh"
 
 # Forge stub: pr-create returns incrementing PR numbers; runs-active returns 1 (CI busy)
-# so the CI-idle trigger cannot interfere with these tests.
+# so the CI-idle trigger cannot interfere with these tests. check-status reads
+# FORGE_STATUS_FILE (default green, so a scenario that never sets it keeps the
+# open-batch guard's default reading as "may still land clean").
 FORGE_LOG="$TMP/forge-log"; : > "$FORGE_LOG"
-cat > "$SH/forge-fixture.sh" <<'FORGE'
+FORGE_STATUS_FILE="$TMP/forge-status"; printf 'green\n' > "$FORGE_STATUS_FILE"
+cat > "$SH/forge-fixture.sh" <<FORGE
 #!/usr/bin/env bash
-cmd="${1:-}"; shift; shift  # skip repo arg
-case "$cmd" in
+cmd="\${1:-}"; shift; shift  # skip repo arg
+case "\$cmd" in
     runs-active) printf '1\n' ;;
     main-gate-status) printf 'green deadbeef\n' ;;
+    check-status) cat "$FORGE_STATUS_FILE" 2>/dev/null || printf 'green\n' ;;
     pr-create)
-        n=$(( $(wc -l < "$FORGE_LOG" 2>/dev/null || echo 0) + 1 ))
-        printf '%s\n' "$n" >> "$FORGE_LOG"
-        printf '%s\n' "$n"
+        n=\$(( \$(wc -l < "$FORGE_LOG" 2>/dev/null || echo 0) + 1 ))
+        printf '%s\n' "\$n" >> "$FORGE_LOG"
+        printf '%s\n' "\$n"
         ;;
     *) exit 0 ;;
 esac
@@ -117,7 +121,11 @@ git -C "$REPO" checkout -q main
 
 certify_expr() { printf 'CERTIFIED %s %s' "$tip_e" "$NOW" > "$LANDSTATE/sp-expr1"; }
 certify_norm() { printf 'CERTIFIED %s %s' "$tip_n" "$NOW" > "$LANDSTATE/sp-norm1"; }
-clear_batch()  { rm -f "$QUEUEDIR/$REPONAME/open"; : > "$FORGE_LOG"; }
+clear_batch()  {
+    rm -f "$QUEUEDIR/$REPONAME/open" "$QUEUEDIR/$REPONAME"/attributing-*
+    : > "$FORGE_LOG"
+    printf 'green\n' > "$FORGE_STATUS_FILE"
+}
 
 # Additional branches for eviction tests.
 testdb_seed <<JSONL
@@ -166,55 +174,79 @@ out="$(EXPRESS_LABEL=other-label batch "$REPONAME")"
 nowant "label-off: express reason absent"   "express certified branch" "$out"
 is     "label-off: no batch opened"   "0" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
 
-# ── case: express eviction — open batch has two innocent members ──────────────
-# An express branch certifies while two normal branches are batched.
-# Accepted: old PR closed, both members CERTIFIED at their batched tips, new express batch open.
+# ── case: open batch is green-bound — never evicted for express ───────────────
+# An express branch certifies while two normal branches are batched and the open
+# PR's CI is still green (or pending). The verdict (Ryan, 2026-09-24): a batch
+# that might still land clean is not spent to save an express bead a wait.
 clear_batch
 write_open_batch 99 "sp-norm1:${tip_n} sp-norm2:${tip_n2}"
 printf 'BATCHED %s %s\n' "$tip_n"  "$NOW" > "$LANDSTATE/sp-norm1"
 printf 'BATCHED %s %s\n' "$tip_n2" "$NOW" > "$LANDSTATE/sp-norm2"
 rm -f "$LANDSTATE/sp-expr1" "$LANDSTATE/sp-norm3"
+printf 'green\n' > "$FORGE_STATUS_FILE"
 certify_expr; : > "$FORGE_LOG"
 out="$(batch "$REPONAME")"
-want "evict: names express reason"             "express branch certified"  "$out"
-want "evict: names eviction action"            "evicting open batch"       "$out"
-is   "evict: norm1 CERTIFIED"                  "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm1")"
-is   "evict: norm1 CERTIFIED at batched tip"   "$tip_n"    "$(cut -d' ' -f2 < "$LANDSTATE/sp-norm1")"
-is   "evict: norm2 CERTIFIED"                  "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm2")"
-is   "evict: norm2 CERTIFIED at batched tip"   "$tip_n2"   "$(cut -d' ' -f2 < "$LANDSTATE/sp-norm2")"
-is   "evict: new batch opened"                 "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
-is   "evict: expr1 BATCHED in new batch"       "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-expr1")"
+nowant "no-evict: no takeover in log"          "takes over"            "$out"
+want   "no-evict: skipping message present"    "open batch exists"     "$out"
+is     "no-evict: open batch intact"           "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
+is     "no-evict: no attributing file"         "0" "$(ls "$QUEUEDIR/$REPONAME"/attributing-* 2>/dev/null | wc -l)"
+is     "no-evict: norm1 still BATCHED"         "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm1")"
+is     "no-evict: norm2 still BATCHED"         "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm2")"
+is     "no-evict: express still CERTIFIED"     "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-expr1")"
 
-# ── pair: non-express certifies while batch open — batch untouched ───────────
-# Same open batch (sp-norm1, sp-norm2 batched) but sp-norm3 (non-express) certifies.
+# ── pair: once the (green) open batch closes, express takes the next slot ────
+# Same setup, but this time the batch has landed (as verdict.sh would leave it):
+# no open record, members LANDED. The express branch — still the only thing
+# CERTIFIED — gets the very next cut.
+printf 'LANDED %s %s\n' "$tip_n"  "$NOW" > "$LANDSTATE/sp-norm1"
+printf 'LANDED %s %s\n' "$tip_n2" "$NOW" > "$LANDSTATE/sp-norm2"
+rm -f "$QUEUEDIR/$REPONAME/open"
+out="$(batch "$REPONAME")"
+want "next-slot: names the reason"             "express certified branch" "$out"
+is   "next-slot: new batch opened"             "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
+is   "next-slot: expr1 BATCHED"                "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-expr1")"
+
+# ── case: open batch is red — express takes over without waiting for attribution ─
+# The open PR's CI has already resolved red. Waiting for local attribution to
+# finish before cutting the express batch would defeat the fast lane, so the
+# express branch takes the freed slot immediately; the old record is stashed
+# for verdict.sh to attribute on its own (test-verdict.sh case 33).
 clear_batch
-write_open_batch 99 "sp-norm1:${tip_n} sp-norm2:${tip_n2}"
+write_open_batch 77 "sp-norm1:${tip_n} sp-norm2:${tip_n2}"
+printf 'BATCHED %s %s\n' "$tip_n"  "$NOW" > "$LANDSTATE/sp-norm1"
+printf 'BATCHED %s %s\n' "$tip_n2" "$NOW" > "$LANDSTATE/sp-norm2"
+rm -f "$LANDSTATE/sp-expr1" "$LANDSTATE/sp-norm3"
+printf 'red\n' > "$FORGE_STATUS_FILE"
+certify_expr; : > "$FORGE_LOG"
+out="$(batch "$REPONAME")"
+want "takeover: names the reason"              "express branch takes over" "$out"
+nowant "takeover: no eviction wording"         "evicting"                  "$out"
+is   "takeover: stashed for attribution"       "1" "$(ls "$QUEUEDIR/$REPONAME/attributing-77" 2>/dev/null | wc -l)"
+is   "takeover: stashed record keeps its members" "sp-norm1:${tip_n} sp-norm2:${tip_n2}" \
+     "$(grep '^members=' "$QUEUEDIR/$REPONAME/attributing-77" | cut -d= -f2-)"
+is   "takeover: old members untouched (still BATCHED)" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm1")"
+is   "takeover: new batch opened"              "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
+is   "takeover: expr1 BATCHED in new batch"    "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-expr1")"
+is   "takeover: new batch has only the express member" "sp-expr1:${tip_e}" \
+     "$(grep '^members=' "$QUEUEDIR/$REPONAME/open" | cut -d= -f2-)"
+
+# ── pair: non-express certifies while the open batch is red — no takeover ────
+# Only express bypasses the open-batch wait; an ordinary certification must not.
+clear_batch
+write_open_batch 77 "sp-norm1:${tip_n} sp-norm2:${tip_n2}"
 printf 'BATCHED %s %s\n' "$tip_n"  "$NOW" > "$LANDSTATE/sp-norm1"
 printf 'BATCHED %s %s\n' "$tip_n2" "$NOW" > "$LANDSTATE/sp-norm2"
 rm -f "$LANDSTATE/sp-expr1"
 printf 'CERTIFIED %s %s' "$tip_n3" "$NOW" > "$LANDSTATE/sp-norm3"
+printf 'red\n' > "$FORGE_STATUS_FILE"
 : > "$FORGE_LOG"
 out="$(batch "$REPONAME")"
-nowant "nonevict: no eviction in log"          "evicting open batch"   "$out"
-want  "nonevict: skipping message present"     "open batch exists"     "$out"
-is    "nonevict: open batch intact"            "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
-is    "nonevict: norm1 still BATCHED"          "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm1")"
-is    "nonevict: norm2 still BATCHED"          "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm2")"
-
-# ── case: RED member of evicted batch stays RED ───────────────────────────────
-# sp-norm1 is innocent (BATCHED), sp-norm2 has RED landstate.
-# After eviction: sp-norm1 → CERTIFIED, sp-norm2 stays RED.
-clear_batch
-write_open_batch 99 "sp-norm1:${tip_n} sp-norm2:${tip_n2}"
-printf 'BATCHED %s %s\n' "$tip_n"  "$NOW" > "$LANDSTATE/sp-norm1"
-printf 'RED     %s %s\n' "$tip_n2" "$NOW" > "$LANDSTATE/sp-norm2"
-rm -f "$LANDSTATE/sp-norm3"
-certify_expr; : > "$FORGE_LOG"
-out="$(batch "$REPONAME")"
-want "red-member: eviction fired"             "evicting open batch"  "$out"
-is   "red-member: norm1 returned CERTIFIED"   "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm1")"
-is   "red-member: norm2 stays RED"            "RED"       "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm2")"
-is   "red-member: new batch opened"           "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
+nowant "nontakeover: no takeover in log"       "takes over"            "$out"
+want   "nontakeover: skipping message present" "open batch exists"     "$out"
+is     "nontakeover: open batch intact"        "1" "$(ls "$QUEUEDIR/$REPONAME/open" 2>/dev/null | wc -l)"
+is     "nontakeover: no attributing file"      "0" "$(ls "$QUEUEDIR/$REPONAME"/attributing-* 2>/dev/null | wc -l)"
+is     "nontakeover: norm1 still BATCHED"      "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm1")"
+is     "nontakeover: norm2 still BATCHED"      "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-norm2")"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

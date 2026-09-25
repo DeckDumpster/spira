@@ -1354,6 +1354,79 @@ case "$(landstate sp-vd-hs2)" in BATCHED*) ok "33. missing-sha: sp-vd-hs2 stays 
 is   "33. missing-sha: batch record kept"    "1" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
 want "33. missing-sha: reported"             "head-sha missing" "$out"
 clean_case
+
+# =============================================================================
+# 34. ATTRIBUTING A STASHED BATCH (express takeover, sp-os27w) — batch.sh moves
+#     a not-green open batch to attributing-<pr> instead of waiting on it, and
+#     verdict.sh must still run it through the same dispatch (here: red-no-suite
+#     bisect, as case 8), after releasing the shared queue lock — a slow local
+#     reproduction here must never hold up batch.sh (or a later verdict pass)
+#     working the rest of the queue.
+#
+#     POSITIVE CONTROL: case 8 proves this dispatch against the primary
+#     batch_file; this proves the identical outcome against an attributing-<pr>
+#     file, plus the lock release the primary path never needed.
+# =============================================================================
+build_batch sp-vd-at1 sp-vd-at2 > /dev/null
+mv -f "$(batch_file)" "$QUEUEDIR/$REPONAME/attributing-42"
+printf 'red\n' > "$FORGE_STATUS_FILE"
+
+LOCK_PROBE_FILE="$TMP/lock-probe"; export LOCK_PROBE_FILE
+: > "$LOCK_PROBE_FILE"
+cp "$SH/forge-fixture.sh" "$TMP/forge-fixture.sh.bak"
+# Same fixture as above, but check-status sleeps: long enough that a probe taken
+# partway through it (forked below, own subshell) can tell whether $name's shared
+# queue lock is held or free while this (attribution's) check-status is in flight.
+cat > "$SH/forge-fixture.sh" <<'FORGE'
+#!/usr/bin/env bash
+cmd="${1:-}"; shift; repo="${1:-}"; shift
+case "$cmd" in
+    check-status)
+        ( sleep 1
+          if flock -n "${SPIRA_QUEUE_DIR}/fixture-repo/lock" true 2>/dev/null; then
+              printf 'free\n' > "${LOCK_PROBE_FILE}"
+          else
+              printf 'held\n' > "${LOCK_PROBE_FILE}"
+          fi
+        ) &
+        sleep 3
+        cat "${FORGE_STATUS_FILE}" 2>/dev/null || printf 'pending\n'
+        ;;
+    run-id)
+        printf 'run-99\n'
+        ;;
+    run-metadata)
+        cat "${FORGE_RUN_METADATA_FILE}" 2>/dev/null || true
+        ;;
+    run-cancel)
+        printf '%s\tcancel\n' "${1:-}" >> "$FORGE_LOG"
+        ;;
+    workflow-rerun)
+        printf '%s\trerun\n' "${1:-}" >> "$FORGE_LOG"
+        ;;
+    pr-close)
+        printf '%s\tclose\n' "${1:-}" >> "$FORGE_LOG"
+        ;;
+    *) printf 'forge-fixture: unknown command: %s\n' "$cmd" >&2; exit 1 ;;
+esac
+FORGE
+chmod +x "$SH/forge-fixture.sh"
+
+out="$(verdict "$REPONAME")"
+mv -f "$TMP/forge-fixture.sh.bak" "$SH/forge-fixture.sh"
+chmod +x "$SH/forge-fixture.sh"
+
+is   "34. attributing: queue lock free during attribution" "free" \
+     "$(cat "$LOCK_PROBE_FILE" 2>/dev/null)"
+want "34. attributing: names the stashed PR"   "attributing stashed batch PR 42" "$out"
+want "34. attributing: bisect reported"        "bisect halved"                   "$out"
+is   "34. attributing: file removed" "0" \
+     "$([ -f "$QUEUEDIR/$REPONAME/attributing-42" ] && echo 1 || echo 0)"
+case "$(landstate sp-vd-at1)" in CERTIFIED*) ok "34. attributing: sp-vd-at1 CERTIFIED" ;;
+    *) bad "34. attributing: sp-vd-at1 CERTIFIED" "got: $(landstate sp-vd-at1)" ;; esac
+case "$(landstate sp-vd-at2)" in CERTIFIED*) ok "34. attributing: sp-vd-at2 CERTIFIED" ;;
+    *) bad "34. attributing: sp-vd-at2 CERTIFIED" "got: $(landstate sp-vd-at2)" ;; esac
+clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"

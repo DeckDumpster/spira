@@ -718,7 +718,21 @@ main() {
 
     local batch_file
     batch_file="$(_batch_open_file "$name")"
-    [ -f "$batch_file" ] || return 0
+    [ -f "$batch_file" ] && _verdict_process "$name" "$repo" "$batch_file"
+
+    # Release the shared lock before attributing any stashed batch (an express
+    # takeover — batch.sh moved it here instead of waiting on it, sp-os27w): each
+    # attributes under its own per-PR lock, below, so a slow local reproduction
+    # never holds this repo's queue lock and blocks batch.sh from cutting the next one.
+    flock -u 9 2>/dev/null || true
+    _verdict_process_attributing "$name" "$repo"
+}
+
+# _verdict_process <name> <repo> <batch_file> — full verdict handling (green/pending/
+# harness_fault/red) for one batch record. Called once for the primary open batch and
+# again, unlocked, for each batch stashed by an express takeover.
+_verdict_process() {
+    local name="$1" repo="$2" batch_file="$3"
 
     local pr_n batch_head base_sha members_str opened run_retries branch_name
     pr_n="$(_batch_field pr "$batch_file")"
@@ -999,6 +1013,36 @@ main() {
             printf 'verdict %s: PR %s unknown check status: %s\n' "$name" "$pr_n" "$status" >&2
             ;;
     esac
+}
+
+# _verdict_process_attributing <name> <repo> — attribute every batch stashed by an
+# express takeover (batch.sh, on finding the open batch not green, moves it to
+# attributing-<pr> and cuts the express batch into the freed slot rather than waiting
+# here). Each file gets its own lock: a slow local reproduction on one must not
+# contend with $name's shared queue lock, which the caller has already released, or
+# with another attribution running on a different stashed PR.
+_verdict_process_attributing() {
+    local name="$1" repo="$2"
+    local qdir="${SPIRA_QUEUE_DIR:?}/$name"
+    [ -d "$qdir" ] || return 0
+    local f pr lockf
+    for f in "$qdir"/attributing-*; do
+        [ -f "$f" ] || continue
+        case "$f" in *.lock) continue ;; esac
+        pr="$(basename "$f")"; pr="${pr#attributing-}"
+        lockf="$qdir/attributing-$pr.lock"
+        { exec {_vpa_fd}>"$lockf"; } 2>/dev/null || continue
+        if ! flock -n "$_vpa_fd"; then
+            exec {_vpa_fd}>&-
+            continue
+        fi
+        if [ -f "$f" ]; then
+            printf 'verdict %s: attributing stashed batch PR %s (express took over its slot)\n' \
+                "$name" "$pr"
+            _verdict_process "$name" "$repo" "$f"
+        fi
+        exec {_vpa_fd}>&-
+    done
 }
 
 main "$@"
