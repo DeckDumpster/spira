@@ -53,6 +53,13 @@
 #                             a fast gate where the timed runner handles thorough
 #                             coverage — law-absence-needs-a-positive-control still
 #                             governs the timed run)
+#   --no-nocov                suppress always-run (no # covers: line) suites from
+#                             the result — the selection then names only suites
+#                             whose # covers: glob actually matched a changed
+#                             file. For a caller that wants a small, targeted set
+#                             (a carve-out inside a suites-off mode) rather than
+#                             the normal "everything with no declared coverage
+#                             runs too" behaviour.
 #   --tiers <csv>             restrict output to suites whose # tier: is in this
 #                             comma-separated list (docs/test-plan/README.md).
 #                             A suite with no # tier: declaration is always kept —
@@ -135,6 +142,7 @@ _ARG_HEAD=""
 _ARG_FILES=""
 _ARG_ALL=0
 _ARG_NO_FALLBACK=0
+_ARG_NO_NOCOV=0
 TIERS=""
 _all=""
 _cv_unmapped=""
@@ -217,6 +225,8 @@ while [ $# -gt 0 ]; do
             REPORT_FILE="${1#--report-file=}"; shift ;;
         --no-all-fallback)
             _ARG_NO_FALLBACK=1; shift ;;
+        --no-nocov)
+            _ARG_NO_NOCOV=1; shift ;;
         --tiers)
             [ $# -ge 2 ] || { printf 'select: --tiers requires an argument\n' >&2; exit 2; }
             TIERS="$(printf '%s' "$2" | tr ',' ' ')"; shift 2 ;;
@@ -337,10 +347,12 @@ fi
 if [ -z "$_cv_changed" ]; then
     # No changed files: only always-run (no # covers:) suites.
     _write_mode diff
-    for _s in $_all; do
-        _cov="${_COV[$_s]-}"
-        [ -z "$_cov" ] && _tier_ok "$_s" && printf '%s\n' "$_s"
-    done
+    if [ "$_ARG_NO_NOCOV" -eq 0 ]; then
+        for _s in $_all; do
+            _cov="${_COV[$_s]-}"
+            [ -z "$_cov" ] && _tier_ok "$_s" && printf '%s\n' "$_s"
+        done
+    fi
     exit 0
 fi
 
@@ -359,10 +371,12 @@ if [ -z "$_cv_live" ]; then
     # All changed files are inert — no suite coverage decisions to make, but
     # always-run (no covers:) suites still run. Same as the empty-diff case.
     _write_mode diff
-    for _s in $_all; do
-        _cov="$(suite_covers_of "$SUITE_DIR/$_s")"
-        [ -z "$_cov" ] && _tier_ok "$_s" && printf '%s\n' "$_s"
-    done
+    if [ "$_ARG_NO_NOCOV" -eq 0 ]; then
+        for _s in $_all; do
+            _cov="$(suite_covers_of "$SUITE_DIR/$_s")"
+            [ -z "$_cov" ] && _tier_ok "$_s" && printf '%s\n' "$_s"
+        done
+    fi
     exit 0
 fi
 _cv_changed="$_cv_live"
@@ -559,8 +573,10 @@ done
 set +f
 
 # Merge coverage-selected suites with always-run (no-covers) suites; deduplicate.
+# --no-nocov drops the always-run half — only suites an actual # covers: match named.
 _write_mode diff
 _cv_deduped=""
+[ "$_ARG_NO_NOCOV" -eq 1 ] && _cv_nocov=""
 for _s in $_cv_selected $_cv_nocov; do
     case " $_cv_deduped " in
         *" $_s "*) ;;

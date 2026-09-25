@@ -35,16 +35,73 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # HEAD positionally without setting either env var.
 SPIRA_GATE_BASE="${SPIRA_GATE_BASE:-$BASE}" bash "$HERE/build-fence.sh" || exit 1
 
-# SPIRA_GATE_SUITES=off: select NOTHING, so the gate command's `[ -n "$_s" ] || exit 0`
-# passes after its fences have run. landing.sh sets it for queue-mode certification when
-# SPIRA_CERTIFY_SUITES=off; the batch's CI run is then where the suites run.
-if [ "${SPIRA_GATE_SUITES:-on}" = off ]; then
-    printf 'gate-touched: SPIRA_GATE_SUITES=off — no suites here; the batch CI run is the suite gate\n' >&2
-    exit 0
-fi
 HEAD="${2:?usage: gate-touched.sh <base> <head>}"
 repo="${SPIRA_GATE_REPO:-.}"
 _tiers="${SPIRA_GATE_TIERS:-T0,T1}"
+
+# SPIRA_GATE_SUITES=off: select NOTHING beyond SPIRA_CERTIFY_ALWAYS_COVERS, so the gate
+# command's `[ -n "$_s" ] || exit 0` passes after its fences have run. landing.sh sets it for
+# queue-mode certification when SPIRA_CERTIFY_SUITES=off; the batch's CI run is where the rest
+# of the suites run.
+#
+# THE CARVE-OUT MATCHES covers: GLOBS AGAINST THE CRITICAL LIST DIRECTLY, not against the
+# diff via select.sh. sp-dgaig's landed() rewrite in spira/lib.sh was certified with NO suite
+# run at all (SPIRA_GATE_SUITES=off dropped everything) and broke test-landed-search.sh and
+# test-landed-stays-landed.sh only when batch 323's CI caught it — both declare
+# `# covers: spira/lib.sh`. Running select.sh's normal diff-mode selection here instead
+# (even restricted to lib.sh as the only "changed" file) re-selected well over a hundred
+# suites, because many carry function-level patterns like `spira/lib.sh#landed` and
+# select.sh's function-diff narrowing needs a real base/head pair it cannot supply from a
+# single named file — so every such suite ran unnarrowed. A shared library is the
+# highest-fanout file in the tree for exactly this reason, which is why its covering suites
+# must run here at all, but the fanout is also why a full re-selection defeats the off
+# switch's purpose. Matching the declared glob against the critical list, file-part only,
+# keeps the carve-out to suites that named this file — the same suites sp-dgaig should have
+# broken certification against.
+if [ "${SPIRA_GATE_SUITES:-on}" = off ]; then
+    _crit_globs="${SPIRA_CERTIFY_ALWAYS_COVERS:-spira/lib.sh}"
+    _crit_files=""
+    set -f
+    while IFS= read -r _crit_ln || [ -n "$_crit_ln" ]; do
+        [ -n "$_crit_ln" ] || continue
+        case "$_crit_ln" in *"	"*) _crit_f="${_crit_ln#*	}" ;; *) _crit_f="$_crit_ln" ;; esac
+        for _crit_pat in $_crit_globs; do
+            case "$_crit_f" in $_crit_pat) _crit_files="$_crit_files $_crit_f"; break ;; esac
+        done
+    done < <(
+        if [ -f "${SPIRA_GATE_FILES:-}" ]; then
+            cat "$SPIRA_GATE_FILES"
+        else
+            git -C "$repo" diff --name-only "${BASE}...${HEAD}" 2>/dev/null || true
+        fi
+    )
+    set +f
+    if [ -z "$_crit_files" ]; then
+        printf 'gate-touched: SPIRA_GATE_SUITES=off — no suites here; the batch CI run is the suite gate\n' >&2
+        exit 0
+    fi
+    printf 'gate-touched: SPIRA_GATE_SUITES=off but the diff touches%s — running its covering suite(s) anyway\n' \
+        "$_crit_files" >&2
+    . "$HERE/suite-covers.sh"
+    _crit_dir="${SPIRA_BATCH_SUITE_DIR:-$HERE}"
+    for _crit_s in "$_crit_dir"/test-*.sh; do
+        [ -r "$_crit_s" ] || continue
+        _crit_cov="$(suite_covers_of "$_crit_s")"
+        [ -n "$_crit_cov" ] || continue
+        set -f
+        for _crit_tok in $_crit_cov; do
+            _crit_tok="${_crit_tok%%\#*}"
+            [ -n "$_crit_tok" ] || continue
+            for _crit_f in $_crit_files; do
+                case "$_crit_f" in
+                    $_crit_tok) printf '%s\n' "$(basename "$_crit_s")"; set +f; continue 3 ;;
+                esac
+            done
+        done
+        set +f
+    done | sort -u
+    exit 0
+fi
 
 if [ -f "${SPIRA_GATE_FILES:-}" ]; then
     # Build corpus from BASE tree so suites added by the branch are not self-selected

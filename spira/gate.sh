@@ -557,6 +557,7 @@ run_gate() {             # run_gate <ref-being-tested> -> the command's own stat
         SPIRA_GATE_EJECTED_SUITES="${ejected_suites:-}" \
         SPIRA_GATE_ALL="${SPIRA_GATE_ALL:-0}" \
         SPIRA_GATE_SUITES="${SPIRA_GATE_SUITES:-on}" \
+        SPIRA_CERTIFY_ALWAYS_COVERS="${SPIRA_CERTIFY_ALWAYS_COVERS:-}" \
         SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
         SPIRA_VERDICT_REPEAT_CONSIDERED="${SPIRA_VERDICT_REPEAT_CONSIDERED:-}" \
         timeout "${SPIRA_GATE_TIMEOUT:-2700}" bash -c "$CMD" 9>&- ) 2>&1
