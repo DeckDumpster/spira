@@ -2,7 +2,7 @@
 # test-reopen-queue-eject.sh — re-certification after ejection runs the ejecting suite.
 #
 # tier: T1
-# covers: spira/gate-touched.sh spira/verdict.sh spira/gate.sh
+# covers: spira/gate-touched.sh spira/verdict.sh spira/gate.sh UC-gate-verdict-09
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

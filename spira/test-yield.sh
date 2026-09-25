@@ -30,7 +30,7 @@
 #
 # defect: sp-1xb0
 # tier: T1
-# covers: spira/yield.sh spira/gate.sh spira/watchtower.sh cockpit/health.sh
+# covers: spira/yield.sh spira/gate.sh spira/watchtower.sh cockpit/health.sh UC-gate-verdict-22 UC-gate-verdict-23 UC-gate-verdict-24
 # scar: yield.sh was absent; gate faults landed in the wrong column and no count existed, so the gate's cost-vs-catch ratio was unmeasured.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
