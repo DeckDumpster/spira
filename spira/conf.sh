@@ -81,6 +81,7 @@ SPIRA_TESTDB_LIB SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT
 SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY SPIRA_GH_INTAKE_BEAD_REPO SPIRA_FLAKY_GH_REPO SPIRA_RELEASE_REPO
 SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET SPIRA_GATE_SELECT_CAP SPIRA_AEON_CPU_QUOTA
 SPIRA_GATE_SUITES SPIRA_SUITE_STATE_FILE SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
+SPIRA_TIER_BUDGET_T0_MS SPIRA_TIER_BUDGET_T1_MS SPIRA_TIER_BUDGET_T2_MS SPIRA_TIER_BUDGET_T3_MS SPIRA_TIER_BUDGET_WINDOW SPIRA_TIER_ALLOWLIST_MARGIN_PCT SPIRA_TIER_ALLOWLIST
 SPIRA_BATCH_MEM_RESERVE_MIB SPIRA_BATCH_MEM_PER_SUITE_MIB SPIRA_BATCH_MEM_AVAIL_MIB SPIRA_BATCH_PSI_THRESHOLD SPIRA_BATCH_ORPHAN_MIN_AGE
 SPIRA_BATCH_ARTIFACT_DAYS SPIRA_BATCH_TAIL_LINES SPIRA_SUITE_TIMES_LOG SPIRA_BATCH_LEDGER
 SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST SPIRA_INCIDENT_PRIORITY SPIRA_WATCHER_INTERVAL_S
@@ -1130,6 +1131,24 @@ spira_conf_defaults() {
     # end-to-end wall time for the run. suite-times.sh reads this to produce reports.
     : "${SPIRA_SUITE_TIMES_LOG:=$SPIRA_RUN/suite-times.log}"
     : "${SPIRA_BATCH_LEDGER:=$SPIRA_RUN/batch-timing.tsv}"
+    # PER-TIER WALL-TIME BUDGETS, in milliseconds (law-unit-tests-run-under-a-second; test
+    # plan §4.1). An untagged suite is judged as T1 — tier-budget.sh's own rule, not a default
+    # to rely on elsewhere.
+    : "${SPIRA_TIER_BUDGET_T0_MS:=1000}"
+    : "${SPIRA_TIER_BUDGET_T1_MS:=1000}"
+    : "${SPIRA_TIER_BUDGET_T2_MS:=10000}"
+    : "${SPIRA_TIER_BUDGET_T3_MS:=60000}"
+    # HOW MANY TRAILING tsd ROWS tier-budget.sh MEDIANS OVER, per suite. A single sample
+    # is noisy; a median across recent runs is what tells a slow box from a slow suite.
+    : "${SPIRA_TIER_BUDGET_WINDOW:=20}"
+    # HOW FAR AN ALLOWLISTED SUITE MAY DRIFT ABOVE ITS RECORDED TIME before it fails, as a
+    # percent. The allowlist itself may only shrink (spira/tier-budget.sh lint-allowlist);
+    # this margin is what still catches a violator getting worse while grandfathered in.
+    : "${SPIRA_TIER_ALLOWLIST_MARGIN_PCT:=20}"
+    # THE CHECKED-IN RATCHET: today's budget violators and the time each was measured at.
+    # spira/tier-budget.sh is the only writer a human should need — every other write is a
+    # lint failure.
+    : "${SPIRA_TIER_ALLOWLIST:=$SPIRA_HOME/tier-budget-allowlist}"
     # THE PRIORITY A RED FROM THE TIMED PASS IS FILED AT. Routine by default: the timed pass
     # blocks nothing and reopens nothing, and by law-reversibility-outranks-coverage a failure
     # caught twenty minutes after landing is fine when a revert undoes it. A suite that covers

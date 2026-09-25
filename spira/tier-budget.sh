@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+#
+# tier-budget.sh — per-tier suite wall-time budgets, with a shrink-only allowlist for
+# today's violators (law-unit-tests-run-under-a-second; test plan §4.1; sp-5m133).
+#
+#   tier-budget.sh check <suite> [--suite-dir DIR] [--root RUN_ROOT] [--window N]
+#       Trailing-median check for one suite against its tier budget or allowlist entry.
+#       Exits 1 naming tier, budget and measured time on a violation; 2 if it cannot judge
+#       (no duckdb, no data) — a control that cannot check must refuse, not pass silently.
+#
+#   tier-budget.sh check-batch --suite-dir DIR --tsv FILE [--root RUN_ROOT] [--window N]
+#       Same check for every suite named in FILE (testenv-batch.sh's suite-times.tsv),
+#       one duckdb call for the whole batch. Exits 1 naming every violator.
+#
+#   tier-budget.sh lint-allowlist [--base REF] [--prior FILE]
+#       T0: the checked-in allowlist may only shrink. Fails if any entry is new or any
+#       recorded time is higher than at REF (default: spira_landref). Missing REF or no
+#       allowlist there is treated as an empty prior state — permitted only because that is
+#       exactly the shape of this file's own introducing commit. --prior FILE reads the prior
+#       state from FILE instead of `git show REF:path` — a stand-in for tests, the same role
+#       broker-allowlist-lint.sh's --scan-conf plays for conf.sh.
+#
+# BUDGETS (ms): T0/T1 SPIRA_TIER_BUDGET_T0_MS/T1_MS (default 1000), T2 …T2_MS (10000),
+# T3 …T3_MS (60000). An untagged suite counts as T1 (never as "no budget").
+#
+# ALLOWLIST: SPIRA_TIER_ALLOWLIST, tab-separated `<suite> <tier> <seconds>`. An allowlisted
+# suite's budget is its recorded seconds * (1 + SPIRA_TIER_ALLOWLIST_MARGIN_PCT/100), which
+# replaces the tier budget rather than adding to it — the whole point of grandfathering a
+# violator in is that its tier budget alone would already fail it.
+#
+# MEASUREMENT: a DuckDB trailing median over the suite's last SPIRA_TIER_BUDGET_WINDOW rows
+# in run/tsd/suite-timing.jsonl (sp-sbc6o), which absorbs load noise better than comparing
+# one sample. The row tsd_suite_timing() in testenv-batch.sh writes for THIS run is expected
+# to already be there by the time this runs, so a suite with no prior history still gets a
+# median — of one.
+#
+# covers: spira/testenv-batch.sh spira/suite-covers.sh spira/tier-budget-allowlist spira/conf.sh
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/lib.sh"
+. "$HERE/suite-covers.sh"
+
+SUITE_RE='^[A-Za-z0-9][A-Za-z0-9._-]*$'
+TIER_RE='^T[0-3]$'
+
+_tier_budget_ms() {  # _tier_budget_ms <tier> -> budget in ms
+    case "$1" in
+        T0) printf '%s' "${SPIRA_TIER_BUDGET_T0_MS:-1000}" ;;
+        T1) printf '%s' "${SPIRA_TIER_BUDGET_T1_MS:-1000}" ;;
+        T2) printf '%s' "${SPIRA_TIER_BUDGET_T2_MS:-10000}" ;;
+        T3) printf '%s' "${SPIRA_TIER_BUDGET_T3_MS:-60000}" ;;
+        *)  printf '%s' "${SPIRA_TIER_BUDGET_T1_MS:-1000}" ;;
+    esac
+}
+
+# _suite_tier <suite-dir> <suite> -> "T0".."T3"; untagged or unknown counts as T1.
+_suite_tier() {
+    local t
+    t="$(suite_tier_of "$1/$2" 2>/dev/null || true)"
+    [[ "$t" =~ $TIER_RE ]] && printf '%s' "$t" || printf 'T1'
+}
+
+# _allowlist_secs <suite> -> the recorded seconds, or empty if not allowlisted.
+_allowlist_secs() {
+    local f="${SPIRA_TIER_ALLOWLIST:-}"
+    [ -r "$f" ] || return 0
+    awk -F'\t' -v s="$1" '!/^[[:space:]]*#/ && !/^[[:space:]]*$/ && $1==s {print $3; exit}' "$f"
+}
+
+# _budget_secs <suite> <tier> -> the seconds this suite must stay under right now.
+_budget_secs() {
+    local suite="$1" tier="$2" allow
+    allow="$(_allowlist_secs "$suite")"
+    if [ -n "$allow" ]; then
+        awk -v a="$allow" -v m="${SPIRA_TIER_ALLOWLIST_MARGIN_PCT:-20}" \
+            'BEGIN{printf "%.3f", a * (1 + m/100)}'
+        return 0
+    fi
+    awk -v ms="$(_tier_budget_ms "$tier")" 'BEGIN{printf "%.3f", ms/1000}'
+}
+
+_family_path() { printf '%s/tsd/suite-timing.jsonl' "${1:-$SPIRA_RUN}"; }
+
+# _trailing_medians <root> <window> -> "<suite>\t<median>" one per line, over every suite
+# with at least one row. One duckdb call regardless of how many suites are being judged.
+_trailing_medians() {
+    local path window="$2"
+    path="$(_family_path "$1")"
+    [ -f "$path" ] || return 0
+    duckdb -json -c "
+        WITH ranked AS (
+            SELECT suite, wall_secs,
+                   row_number() OVER (PARTITION BY suite ORDER BY ts DESC) AS rn
+            FROM read_ndjson_auto('$path')
+        )
+        SELECT suite, median(wall_secs) AS m FROM ranked WHERE rn <= $window GROUP BY suite;
+    " 2>/dev/null | python3 -c '
+import json, sys
+for row in json.load(sys.stdin):
+    print(str(row["suite"]) + "\t" + str(row["m"]))
+' 2>/dev/null
+}
+
+# _judge <suite> <tier> <median> -> prints a violation line and returns 1, or returns 0.
+_judge() {
+    local suite="$1" tier="$2" median="$3" budget
+    budget="$(_budget_secs "$suite" "$tier")"
+    awk -v m="$median" -v b="$budget" 'BEGIN{exit !(m>b)}' || return 0
+    printf 'tier-budget: %s tier=%s budget=%ss measured=%ss — over budget\n' \
+        "$suite" "$tier" "$budget" "$median"
+    return 1
+}
+
+cmd_check() {
+    local suite="" suite_dir="$HERE" root="${SPIRA_RUN:-}" window="${SPIRA_TIER_BUDGET_WINDOW:-20}"
+    suite="${1:?suite required}"; shift || true
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --suite-dir) suite_dir="$2"; shift 2 ;;
+            --root)      root="$2"; shift 2 ;;
+            --window)    window="$2"; shift 2 ;;
+            *) printf 'tier-budget: unknown arg: %s\n' "$1" >&2; return 2 ;;
+        esac
+    done
+    [[ "$suite" =~ $SUITE_RE ]] || { printf 'tier-budget: bad suite name %q\n' "$suite" >&2; return 2; }
+    spira_require duckdb python3 || return 2
+    local tier medians med
+    tier="$(_suite_tier "$suite_dir" "$suite")"
+    medians="$(_trailing_medians "$root" "$window")"
+    med="$(printf '%s\n' "$medians" | awk -F'\t' -v s="$suite" '$1==s{print $2; exit}')"
+    if [ -z "$med" ]; then
+        printf 'tier-budget: no tsd suite-timing rows for %s — cannot judge\n' "$suite" >&2
+        return 2
+    fi
+    _judge "$suite" "$tier" "$med"
+}
+
+cmd_check_batch() {
+    local suite_dir="$HERE" root="${SPIRA_RUN:-}" window="${SPIRA_TIER_BUDGET_WINDOW:-20}" tsv=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --suite-dir) suite_dir="$2"; shift 2 ;;
+            --root)      root="$2"; shift 2 ;;
+            --window)    window="$2"; shift 2 ;;
+            --tsv)       tsv="$2"; shift 2 ;;
+            *) printf 'tier-budget: unknown arg: %s\n' "$1" >&2; return 2 ;;
+        esac
+    done
+    [ -r "$tsv" ] || { printf 'tier-budget: no such tsv: %s\n' "$tsv" >&2; return 2; }
+    spira_require duckdb python3 || return 2
+    local medians bad=0 suite tier med
+    medians="$(_trailing_medians "$root" "$window")"
+    while IFS=$'\t' read -r _run _branch suite _rc _wall _bdc _bdms _mode; do
+        [ -n "$suite" ] || continue
+        [ "$suite" = "__batch__" ] && continue
+        [[ "$suite" =~ $SUITE_RE ]] || continue
+        tier="$(_suite_tier "$suite_dir" "$suite")"
+        med="$(printf '%s\n' "$medians" | awk -F'\t' -v s="$suite" '$1==s{print $2; exit}')"
+        [ -n "$med" ] || continue
+        _judge "$suite" "$tier" "$med" || bad=1
+    done < "$tsv"
+    [ "$bad" = 0 ]
+}
+
+cmd_lint_allowlist() {
+    local base="" prior_file=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --base)   base="$2"; shift 2 ;;
+            --prior)  prior_file="$2"; shift 2 ;;  # stand-in for `git show base:path`, for tests
+            *) printf 'tier-budget: unknown arg: %s\n' "$1" >&2; return 2 ;;
+        esac
+    done
+    local allowlist="${SPIRA_TIER_ALLOWLIST:-}"
+    [ -r "$allowlist" ] || { printf 'tier-budget: no allowlist at %s\n' "$allowlist" >&2; return 2; }
+
+    # prior_found distinguishes "no allowlist existed at the base at all" (this file's own
+    # introducing commit — nothing to compare against, not a violation) from "an allowlist
+    # existed there but does not mention this suite" (a genuine new entry). Conflating the
+    # two would fail this file's own seed commit on every one of its lines.
+    local prior="" prior_found=0
+    if [ -n "$prior_file" ]; then
+        if [ -r "$prior_file" ]; then prior="$(cat "$prior_file")"; prior_found=1; fi
+    else
+        [ -n "$base" ] || base="$(spira_landref 2>/dev/null || true)"
+        local relpath repo_root
+        repo_root="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || true)"
+        if [ -n "$repo_root" ]; then
+            relpath="${allowlist#"$repo_root"/}"
+        else
+            relpath="spira/tier-budget-allowlist"
+        fi
+        if [ -n "$base" ] && [ -n "$repo_root" ]; then
+            if prior="$(git -C "$repo_root" show "$base:$relpath" 2>/dev/null)"; then
+                prior_found=1
+            fi
+        fi
+    fi
+    if [ "$prior_found" = 0 ]; then
+        printf 'tier-budget: lint-allowlist: no prior allowlist found — treating this as its introducing commit\n'
+        return 0
+    fi
+
+    local bad=0
+    while IFS=$'\t' read -r suite tier secs; do
+        case "$suite" in ''|'#'*) continue ;; esac
+        [ -n "$suite" ] || continue
+        local prior_secs
+        prior_secs="$(printf '%s\n' "$prior" | \
+            awk -F'\t' -v s="$suite" '!/^[[:space:]]*#/ && $1==s {print $3; exit}')"
+        if [ -z "$prior_secs" ]; then
+            printf 'tier-budget: lint-allowlist: new entry %s — the allowlist may only shrink\n' "$suite"
+            bad=1
+            continue
+        fi
+        if awk -v now="$secs" -v was="$prior_secs" 'BEGIN{exit !(now>was)}'; then
+            printf 'tier-budget: lint-allowlist: %s raised %ss -> %ss — the allowlist may only shrink\n' \
+                "$suite" "$prior_secs" "$secs"
+            bad=1
+        fi
+    done < <(grep -v '^[[:space:]]*#' "$allowlist" | grep -v '^[[:space:]]*$')
+    [ "$bad" = 0 ]
+}
+
+usage() {
+    sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+case "${1:-}" in
+    check)          shift; cmd_check "$@" ;;
+    check-batch)    shift; cmd_check_batch "$@" ;;
+    lint-allowlist) shift; cmd_lint_allowlist "$@" ;;
+    --help|-h|'')   usage; exit 0 ;;
+    *) printf 'tier-budget.sh: unknown command: %s\n' "$1" >&2; usage >&2; exit 2 ;;
+esac

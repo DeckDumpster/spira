@@ -917,10 +917,15 @@ _append_suite_times() {
 _tsd_suite_timing() {
     local bin="${SPIRA_TSD_BIN:-}"
     [ -n "$bin" ] && [ -x "$bin" ] || return 0
+    # tier (law-producers-declare-what-they-know): the header at measurement time, not
+    # whatever the file says when the row is queried later. Untagged is recorded as-is
+    # (empty) — tier-budget.sh's "untagged counts as T1" rule lives with the reader, once,
+    # not duplicated into every writer.
     "$bin" --family suite-timing --root "${SPIRA_RUN:-}" \
         --field-str "run_id=${_BATCH_RUN_ID:-}" --field-str "branch=${BR:-}" \
         --field-str "suite=$1" --field "rc=$2" --field "wall_secs=$3" \
         --field "bd_calls=$4" --field "bd_ms=$5" --field-str "mode=$6" \
+        --field-str "tier=$(suite_tier_of "$SUITE_DIR/$1" 2>/dev/null || true)" \
         >/dev/null 2>&1 || true
 }
 
@@ -1513,6 +1518,28 @@ _bd_timing_raw="$(
         printf '%s\t%s\t%s\t%s\n' "$_ts" "$_ts_wall" "$_ts_st" "$_ts_bd"
     done
 } > "$RESULTS/timing.tsv" 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# TIER BUDGETS (sp-5m133) — every suite's trailing median wall time against its tier's
+# budget or its shrink-only allowlist entry. Runs on the host (tsd-write and the suite-
+# timing family are host-side, like suite-times.tsv above), against the row just written
+# for every suite in this batch. Skips, rather than fails the batch, when duckdb is not on
+# this host's PATH — the check needs it to judge, but not every box running testenv-batch.sh
+# carries it, and a control that cannot check must refuse ONLY the check, not the batch that
+# asked for one (spira/tier-budget.sh already refuses its own callers on this).
+# ---------------------------------------------------------------------------
+if command -v duckdb >/dev/null 2>&1 && [ -s "$RESULTS/suite-times.tsv" ]; then
+    _tier_budget_out="$(bash "$HERE/tier-budget.sh" check-batch \
+        --suite-dir "$SUITE_DIR" --tsv "$RESULTS/suite-times.tsv" 2>&1)"
+    _tier_budget_rc=$?
+    if [ "$_tier_budget_rc" != 0 ]; then
+        log "batch: tier budget violation(s):"
+        printf '%s\n' "$_tier_budget_out" | while IFS= read -r _tbl; do log "  $_tbl"; done
+        _batch_red=$((_batch_red + 1))
+    fi
+else
+    log "batch: tier-budget check skipped — duckdb not on PATH or no suite-times.tsv rows"
+fi
 
 # ---------------------------------------------------------------------------
 # VERDICT — three distinguishable outcomes.
