@@ -1168,6 +1168,45 @@ mod tests {
         want(&log, "ACTOR: optest");
     }
 
+    /// `enact`'s other write path: `rule.sh` first, THEN the citation label — never the other
+    /// way, or a re-filed finding could be told from a first one for a statute that was never
+    /// actually written. `crate::test_support::StubBd::rule()` stubs `rule.sh` too, on the
+    /// same log, so the order is checkable from one string.
+    #[test]
+    fn enact_writes_the_statute_before_citing_it_on_the_insight() {
+        let stub = crate::test_support::StubBd::new()
+            .rule()
+            .env("SPIRA_DB", "/fake/db");
+        let item = an_alert(&["insight"]);
+        let r = enact(&item, "law-foo", "a new statute");
+        assert!(r.is_ok(), "{r:?}");
+        let log = stub.argv_log();
+        want(&log, "RULE: enact law-foo a new statute");
+        want(&log, "update sp-a1");
+        want(&log, "--add-label enacted:law-foo");
+        want(&log, "--add-label archived");
+        let rule_at = log.find("RULE:").expect("rule.sh call logged");
+        let label_at = log.find("update sp-a1").expect("bd update logged");
+        assert!(rule_at < label_at, "rule.sh must run BEFORE the citation label: {log:?}");
+    }
+
+    /// A `rule.sh` refusal (over the word limit, malformed slug, …) must leave the insight
+    /// UNLABELLED — enacting a citation for a statute that was never written would claim a
+    /// case history that does not exist.
+    #[test]
+    fn enact_failure_never_labels_the_insight() {
+        let stub = crate::test_support::StubBd::new()
+            .rule()
+            .env("RULE_RC", "1")
+            .env("RULE_ERR", "refused: over 130 words");
+        let item = an_alert(&["insight"]);
+        let r = enact(&item, "law-foo", "a new statute");
+        let e = r.expect_err("a refused rule.sh must fail enact");
+        want(&e, "refused: over 130 words");
+        let log = stub.argv_log();
+        assert!(!log.contains("update"), "must not label on a failed enact: {log:?}");
+    }
+
     fn want(haystack: &str, needle: &str) {
         assert!(haystack.contains(needle), "wanted {needle:?} in {haystack:?}");
     }

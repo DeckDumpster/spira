@@ -90,6 +90,34 @@ exit "$rc"
         self
     }
 
+    /// Also installs a `rule.sh` stub beside the `bd` one and points `SPIRA_RULE` at it, for
+    /// `enact`/`enact_law`/`suit_verdict` — the panel's other bead-state-changing surface,
+    /// which shells to `rule.sh` before it ever touches `bd`. Argv goes to the SAME log,
+    /// prefixed `RULE:`, so a test can assert the enact-then-label ORDER, not just that both
+    /// ran. Controlled by `RULE_RC` / `RULE_ERR`.
+    pub fn rule(mut self) -> Self {
+        let script = self.dir.join("rule.sh");
+        std::fs::write(
+            &script,
+            format!(
+                r#"#!/usr/bin/env bash
+printf 'RULE: %s\n' "$*" >> {log:?}
+rc="${{RULE_RC:-0}}"; err="${{RULE_ERR:-}}"
+[ -n "$err" ] && printf '%s\n' "$err" >&2
+exit "$rc"
+"#,
+                log = self.log
+            ),
+        )
+        .expect("write stub rule.sh");
+        let mut perm = std::fs::metadata(&script).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
+        std::fs::set_permissions(&script, perm).expect("chmod stub rule.sh");
+        std::env::set_var("SPIRA_RULE", &script);
+        self.set_vars.push("SPIRA_RULE".to_string());
+        self
+    }
+
     pub fn argv_log(&self) -> String {
         std::fs::read_to_string(&self.log).unwrap_or_default()
     }
