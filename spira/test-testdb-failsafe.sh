@@ -22,7 +22,7 @@
 # The assertion "bead count unchanged" failed. That failure was observed before applying
 # the fix, confirming this test detects the leak rather than passing for an unrelated reason.
 #
-# covers: spira/testdb.sh spira/test-loom-page.sh
+# covers: spira/testdb.sh spira/test-cockpit-bd-contract.sh
 #         spira/test-landing.sh spira/test-timeout.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -125,7 +125,10 @@ suite_env=(
 # and no longer call testdb_up, so they have no testdb failure mode to protect.
 # test-cockpit-landed.sh no longer exists; a missing suite exited 127 here and read as a
 # pass, so the loop now refuses a suite that is not there.
-for suite in test-landing test-timeout; do
+# test-loom-page.sh dropped its testdb_up arm (moved to test-cockpit-bd-contract.sh's
+# real-bd row for loom's model.js — coverage row 33): it now runs a fixture-only
+# node --test and never touches SPIRA_DB, so it has nothing left to protect here.
+for suite in test-cockpit-bd-contract test-landing test-timeout; do
     [ -f "$HERE/$suite.sh" ] || { bad "$suite is listed but does not exist" "missing $HERE/$suite.sh"; continue; }
     out="$("${suite_env[@]}" bash "$HERE/$suite.sh" 2>&1)"; rc=$?
     if [ $rc -ne 0 ]; then
@@ -135,16 +138,6 @@ for suite in test-landing test-timeout; do
         printf '  output: %s\n' "$(printf '%s' "$out" | head -5)"
     fi
 done
-
-# test-loom-page.sh needs node; skip the stand-in write check for it if node is unavailable,
-# but still verify that its testdb_up branch exits non-zero.
-loom_rc=0
-"${suite_env[@]}" bash "$HERE/test-loom-page.sh" 2>/dev/null; loom_rc=$?
-if [ $loom_rc -ne 0 ]; then
-    ok "test-loom-page.sh exits non-zero when testdb_up fails (rc=$loom_rc)"
-else
-    bad "test-loom-page.sh must exit non-zero when testdb_up fails" "exited 0"
-fi
 
 # After all four suites ran against the stand-in, its bead count must be unchanged.
 count_after="$("$PROD_BD" -C "$PROD_DB" list --limit 0 --json 2>/dev/null \

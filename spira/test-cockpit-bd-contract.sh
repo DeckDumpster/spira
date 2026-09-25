@@ -21,7 +21,7 @@
 # cases already live in the fixture-driven suite for that probe.
 #
 # tier: T2
-# covers: spira/cockpit.sh spira/bdsim.py cockpit/panel/src/store.rs
+# covers: spira/cockpit.sh spira/bdsim.py cockpit/panel/src/store.rs loom/static/model.js
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # Resolved BEFORE testdb.sh, which sources conf.sh, which rebuilds PATH from SPIRA_PATH +
@@ -163,6 +163,43 @@ except Exception:
 ' 2>/dev/null)"
     is "real bd list --all --json parses through store.rs::fetch_beads into the panel's own Snapshot" \
        "real bd through the panel's own Snapshot parsing" "$title"
+fi
+
+# ======================================================================================
+echo
+echo "loom's model.js parses what the tracker actually emits (UC-33's real-bd arm,"
+echo "moved here from test-loom-page.sh, whose other 12 arms run over a fixture"
+echo "through node --test):"
+# ======================================================================================
+NODE="$(command -v node || command -v nodejs || true)"
+if [ -z "$NODE" ]; then
+    printf '  skip  loom real-bd arm: no node on PATH — the view model cannot be exercised\n'
+else
+    LOOM="$HERE/../loom/static"
+    testdb_reset
+    testdb_seed <<'JSONL'
+{"id":"sp-cbloom1","title":"a bead that blocks another","status":"open","issue_type":"task","labels":["repo:alpha"],"updated_at":"2026-09-08T00:00:00Z"}
+{"id":"sp-cbloom2","title":"the bead it blocks","status":"open","issue_type":"task","labels":["repo:alpha"],"updated_at":"2026-09-08T00:00:00Z","dependencies":[{"issue_id":"sp-cbloom2","depends_on_id":"sp-cbloom1","type":"blocks"}]}
+JSONL
+    "${SPIRA_BD:-bd-embedded}" -C "$SPIRA_DB" list --limit 0 --json > "$TMP/live.json" 2>/dev/null
+    R="$("$NODE" -e '
+const M = require(process.argv[1] + "/model.js");
+const m = M.derive(JSON.parse(require("fs").readFileSync(process.argv[2], "utf8")), {});
+console.log([m.stats.live, m.edges.length, m.components.length,
+             m.components[0] ? m.components[0].depth : 0,
+             m.repos[0] ? m.repos[0].repo : ""].join(" "));
+' "$LOOM" "$TMP/live.json" 2>"$TMP/liveerr")"
+    if [ -z "$R" ]; then
+        bad "loom's model.js derives from real bd JSON" "$(head -5 "$TMP/liveerr")"
+    else
+        ok "loom's model.js derives from real bd JSON"
+        set -- $R
+        is "real bd: both beads are live"         "2"     "$1"
+        is "real bd: the blocking edge was found" "1"     "$2"
+        is "real bd: they form one component"     "1"     "$3"
+        is "real bd: two layers deep"              "2"     "$4"
+        is "real bd: the repo label groups them"   "alpha" "$5"
+    fi
 fi
 
 echo
