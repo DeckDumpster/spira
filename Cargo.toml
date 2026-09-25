@@ -11,7 +11,7 @@ members = [
     "desired-state",
     "batcher",
     "batcher-cut",
-    "tsd",
+    "reconciler-engine",
 ]
 resolver = "2"
 
