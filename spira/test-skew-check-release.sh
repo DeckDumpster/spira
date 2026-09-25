@@ -272,12 +272,13 @@ ARTIFACT_REPO="$TMP/artifact-repo"
 mkdir -p "$ARTIFACT_REPO"
 
 run_skew_artifact() {
-    local run_dir releases_dir
+    local run_dir
     run_dir="$(mktemp -d "$TMP/run-XXXXX")"
-    releases_dir="$(mktemp -d "$TMP/releases-XXXXX")"
 
-    # Copy the template to the per-run releases directory (including hidden directories like .tags)
-    (cd "$RELEASES_TEMPLATE" && cp -r . "$releases_dir/")
+    # The artifact cases build their scenario (current, .tags, MANIFEST) in $RELEASES just
+    # before calling this, so it must read $RELEASES — not a fresh copy of the bare template,
+    # which has no `current` and made every artifact case exit 3 ("no release is activated").
+    # sp-fghps made the same change to run_skew and missed this one.
 
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
@@ -288,7 +289,7 @@ run_skew_artifact() {
         SPIRA_RUN="$run_dir" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        SPIRA_RELEASES="$releases_dir" \
+        SPIRA_RELEASES="$RELEASES" \
         "${@}" \
         bash "$HERE/skew.sh" check 2>&1
     return "${PIPESTATUS[0]:-$?}"
