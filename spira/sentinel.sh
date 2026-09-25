@@ -929,14 +929,28 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
             log "CHECK5 $id: repo ${r_name:-} is land=hold — standing branch is terminal; not reopening"
             continue
         fi
-        if git -C "$r_path" show-ref --verify -q "refs/heads/spira/$id"; then
+        # THE RECORDED AFFINITY, NOT THE ID-DERIVED DEFAULT. Sibling subtask beads normally
+        # share one branch (bead_branch, lib.sh — law-branch-affinity-is-recorded); their own
+        # refs/heads/spira/$id never exists, so a commit landed on the shared branch was
+        # invisible here and the bead was reopened despite the commit matching CHECK 5's own
+        # rule. bead_branch falls back to spira/$id when no affinity was ever recorded, so
+        # this subsumes the plain own-branch case rather than replacing it.
+        _c5_aff="$(bead_branch "$id")"
+        if git -C "$r_path" show-ref --verify -q "refs/heads/$_c5_aff"; then
+            # A COMMIT NAMING THE BEAD ON ITS AFFINITY BRANCH IS WORK-IN-FLIGHT even before
+            # it is ahead of the base by CHECK 5's count — the same rule the subject walk
+            # above applies to the base itself.
+            if git -C "$r_path" log --format='%s' "$_c5_aff" 2>/dev/null | grep -q "^${id}:"; then
+                log "CHECK5 $id: commit on affinity branch $_c5_aff matches ^${id}: — not reopening"
+                continue
+            fi
             # ZERO COMMITS AHEAD IS NOT WORK ON A BRANCH. An empty branch kept by the
             # Sending (content_landed now returns non-zero for zero-ahead) looks like "work
             # on a branch" from here, but has no commits to land and CHECK 6 cannot advance
             # it. Only exempt when the branch actually has commits of its own.
             _c5_base="${subj_base:-}"
             _c5_ahead="$(git -C "$r_path" rev-list --count \
-                "${_c5_base:+${_c5_base}..}spira/$id" 2>/dev/null)" || _c5_ahead=0
+                "${_c5_base:+${_c5_base}..}$_c5_aff" 2>/dev/null)" || _c5_ahead=0
             [ "${_c5_ahead:-0}" -gt 0 ] 2>/dev/null && continue  # work exists; CHECK 6 lands it
         else
             # BRANCH MISSING. Restore from the landstate tip or remote tracking ref so
@@ -974,7 +988,7 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
         # has been charged yet and this is genuinely a failed attempt at the work.
         # Counter labels (sp-attempt-N) no longer written; the events trail records
         # this reopening as a future attempt when the bead is next claimed (sp-lzt).
-        bead_reopen "$id" closed-without-commit "Reopened by sentinel:${_c5_delivers_fail:+ ${_c5_delivers_fail}, and} closed, but no commit on ${subj_base:-the base} or on spira/$id names it in $r_name. Closed is not landed; the next claim counts toward the poison threshold via the events trail. If this bead was closed because another bead did the work, record it with: bd supersede $id --with <successor> — a close reason alone is not read by this check."
+        bead_reopen "$id" closed-without-commit "Reopened by sentinel:${_c5_delivers_fail:+ ${_c5_delivers_fail}, and} closed, but no commit on ${subj_base:-the base} or on ${_c5_aff:-spira/$id} (recorded branch affinity) names it in $r_name. Closed is not landed; the next claim counts toward the poison threshold via the events trail. If this bead was closed because another bead did the work, record it with: bd supersede $id --with <successor> — a close reason alone is not read by this check."
         progress "reopened $id — closed without landing"
     fi
 done < <(
