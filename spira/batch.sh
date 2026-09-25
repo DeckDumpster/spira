@@ -794,7 +794,7 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
                 fi
                 if [ -z "$_cited_sha" ]; then
                     # Attempt rebase onto base before reopening.
-                    local _rbwt _rbtip _rbtmp _rbrc _rbsrc _rbfp _rbconf _wtconf
+                    local _rbwt _rbtip _rbrc _rbfp _rbconf
                     _rbwt="$SPIRA_RUN/worktree/.batch-rb-$$"
                     _rbtip="" _rbrc=1 _rbconf=""
                     if git -C "$repo" worktree add -q --detach "$_rbwt" "$_btip" 2>/dev/null; then
@@ -813,44 +813,13 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
                         git -C "$repo" worktree remove -f "$_rbwt" 2>/dev/null || true
                     fi
                     if [ "$_rbrc" -eq 0 ] && [ -n "$_rbtip" ]; then
-                        git -C "$repo" branch -f "spira/$_bid" "$_rbtip" 2>/dev/null || true
-                        _rbtmp="$(mktemp -d)"
-                        SPIRA_BATCH_RESULTS="$_rbtmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
-                            --mode serial "spira/$_bid" >/dev/null 2>&1; _rbsrc=$?
-                        rm -rf "$_rbtmp"
-                        if [ "$_rbsrc" -eq 0 ]; then
-                            land_mark "$_bid" CERTIFIED "$_rbtip"
-                            _rbck="$(compute_gate_key "$repo" "$name" "spira/$_bid" "$base" 2>/dev/null || true)"
-                            [ -n "${_rbck:-}" ] && printf '%s\n' "$_rbck" > "$LANDSTATE/$_bid.gate-key"
-                            unset _rbck
-                            if git -C "$wt" merge --no-edit --no-ff \
-                                   -m "spira: land $_bid" "$_rbtip" >/dev/null 2>&1; then
-                                members+=("$_bid:$_rbtip")
-                                member_ids+=("$_bid")
-                                taken=$(( taken + 1 ))
-                                printf 'batch %s: %s rebased onto %s — batched\n' \
-                                    "$name" "$_bid" "$base"
-                            else
-                                _wtconf="$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
-                                _wtconf="${_wtconf% }"
-                                git -C "$wt" merge --abort 2>/dev/null || true
-                                bump_requeue "$_bid" merge-conflict >/dev/null 2>&1 || true
-                                bead_reopen "$_bid" rebase-conflict \
-                                    "$(conflict_reopen_note "$repo" "spira/$_bid" "$base" "$name" "$_wtconf" "batch builder")" \
-                                    >/dev/null 2>&1 || true
-                                land_mark "$_bid" RED "$_rbtip" conflicts-with-base
-                                printf 'batch %s: %s conflicts with %s after rebase — reopened\n' \
-                                    "$name" "$_bid" "$base"
-                            fi
-                        else
-                            bump_requeue "$_bid" merge-conflict >/dev/null 2>&1 || true
-                            bead_reopen "$_bid" rebase-conflict \
-                                "Reopened by batch builder: branch spira/$_bid failed suites after rebase in $name." \
-                                >/dev/null 2>&1 || true
-                            land_mark "$_bid" RED "$_rbtip" rebase-suite-red
-                            printf 'batch %s: %s suite-red after rebase — reopened\n' \
-                                "$name" "$_bid"
-                        fi
+                        # update-ref, not branch -f: the aeon's own worktree for this
+                        # bead may still have spira/$_bid checked out, and branch -f
+                        # refuses to move a ref checked out anywhere.
+                        git -C "$repo" update-ref "refs/heads/spira/$_bid" "$_rbtip" 2>/dev/null || true
+                        land_mark "$_bid" RED "$_btip" conflicts-with-base
+                        printf 'batch %s: %s rebased onto %s — handed to the landing pass to re-certify outside the queue lock\n' \
+                            "$name" "$_bid" "$base"
                     else
                         bump_requeue "$_bid" merge-conflict >/dev/null 2>&1 || true
                         bead_reopen "$_bid" rebase-conflict \
@@ -859,7 +828,7 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
                         land_mark "$_bid" RED "$_btip" conflicts-with-base
                         printf 'batch %s: %s conflicts with %s — reopened\n' "$name" "$_bid" "$base"
                     fi
-                    unset _rbwt _rbtip _rbtmp _rbrc _rbsrc _rbfp _rbconf _wtconf
+                    unset _rbwt _rbtip _rbrc _rbfp _rbconf
                 fi
                 unset _cited_result _cited_sha _cited_rule _unlanded_ahead
             else
