@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# test-conf-watch.sh — health.sh, loom.sh and collect.sh all exit cleanly, once, when
-# SPIRA_CONF's file changes under them (law-long-lived-processes-pin-their-config).
+# test-conf-watch.sh — health.sh, loom.sh and collect.sh all notice, once, when SPIRA_CONF's
+# file changes under them (law-long-lived-processes-pin-their-config).
 #
 # ONE TABLE OVER THE THREE LOOPS. test-cockpit-conf-change.sh (health.sh), test-loom-
 # conf-change.sh (loom.sh) and test-cockpit-tiered-collector.sh::10 (collect.sh) each timed
@@ -10,9 +10,16 @@
 # SPIRA_LOOM_TICK, SPIRA_COCKPIT_TICK — through the shared `conf_changed` helper in conf.sh,
 # so both the positive control and the change case run in well under a second per script.
 #
+# loom.sh and collect.sh run under systemd (Restart=always) and exit 0 for the supervisor to
+# restart them. health.sh IS its tmux pane, with no supervisor — exiting would close the pane
+# and take its @cockpit tag with it (sp-94yqa), so it re-execs itself in place instead and
+# never voluntarily exits; `timeout` is what ends it here. See test-cockpit-health-restart.sh
+# for the pane-survival half of that contract, which this process-level suite cannot see.
+#
 # WHAT IS EXERCISED, per script:
 #   1. NEGATIVE CASE (positive control): the loop stays running when the config is unchanged.
-#   2. CHANGE CASE: the loop exits 0 and logs "config changed" when the config's mtime moves.
+#   2. CHANGE CASE: each logs "config changed" when the config's mtime moves; loom.sh and
+#      collect.sh then exit 0, while health.sh keeps running (timeout reaps it instead).
 #
 # tier: T1
 # covers: cockpit/health.sh spira/loom.sh spira/collect.sh UC-cockpit-observability-07
@@ -100,7 +107,13 @@ for name in health loom collect; do
     err_log="$TMP/$name-err.log"
     "run_$name" "$CONF_CHG" "$WIN_CHANGE" >/dev/null 2>"$err_log" || ec_chg=$?
     wait "$touch_pid" 2>/dev/null || true
-    is   "$label: config change — exits 0"           "0" "$ec_chg"
+    if [ "$name" = health ]; then
+        # No supervisor restarts a tmux pane, so health.sh re-execs itself instead of
+        # exiting; it never returns control here, and $WIN_CHANGE's `timeout` reaps it.
+        is "$label: config change — re-execs, timeout reaps it" "124" "$ec_chg"
+    else
+        is "$label: config change — exits 0" "0" "$ec_chg"
+    fi
     want "$label: config change — message on stderr" "config changed" "$(cat "$err_log" 2>/dev/null)"
 done
 
