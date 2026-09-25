@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: systemd/spira-mail-deliver.service spira/world.sh spira/watchd.sh spira/watchers UC-operator-channel-10
+# covers: systemd/spira-mail-deliver.service spira/world.sh spira/watchd.sh spira/watchers spira/spira-mail-deliver.sh spira/mail.sh spira/conf.sh UC-operator-channel-10
 #
 # PROPERTIES UNDER TEST
 # ---------------------
@@ -13,11 +13,21 @@
 # 3. DETECTOR: watchd notify files exactly one escalation when the delivery daemon is
 #    inactive AND there are unread concierge replies older than SPIRA_NOTIFY_AGE.  With
 #    no unread mail the compound condition is not met and no escalation fires.
+# 4. LOG PATH: the unit's StandardOutput path is the exact path watchd.sh's own _wd_logfile
+#    computes for this row — sp-12uu8's fixed defect, where the two literals had drifted apart
+#    and nothing was ever appended to the path the watcher health row advertised as its log.
+# 5. WAKE RETRY: a mailbox with unread mail and nobody reading gets woken again on
+#    SPIRA_MAIL_WAKE_BACKOFF, not once and forgotten (T1); reading the mail is what stops
+#    the retries, not a retry ceiling (T2). sp-12uu8: "confirm delivery and retry" alone is
+#    exactly-once in spirit — dropped in favour of at-least-once-until-read.
 #
 # systemctl is mocked so no real unit manager is touched.
 #
 # scar: sp-m3zxv — mail delivery daemon died in a world halt and stayed dead for 26h;
 # seven operator verdicts reached nobody.
+# scar: sp-12uu8 — two operator replies produced no notification; the wake was a fire-and-
+# forget tmux keystroke with no ack, and the log the watcher health row named was never
+# written to.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -199,5 +209,120 @@ backdate "$MD_UF"
 run_notify || true
 is "no escalation when mailbox is empty" "0" "$(asks)"
 # Prove the path was reachable: 3a already fired with the same setup minus the mail.
+
+# ---------------------------------------------------------------------------
+echo
+echo "4. LOG PATH — the unit's StandardOutput is the path watchd.sh's own _wd_logfile computes:"
+
+# Ask watchd.sh's own function what path an extern row named "mail-deliver" logs to,
+# rather than re-typing the "watchd/<name>.log" convention as a second literal here.
+LOGRUN="$TMP/logpath-run"
+expected_logfile="$(
+    env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_RUN="$LOGRUN" \
+        bash -c '. "$1"; _wd_logfile mail-deliver extern mail-deliver' _ "$WATCHD"
+)"
+is "4a: _wd_logfile computes the log under watchd/" "$LOGRUN/watchd/mail-deliver.log" "$expected_logfile"
+
+unit_line="$(grep -m1 '^StandardOutput=append:' "$SERVICE")"
+unit_resolved="${unit_line#StandardOutput=append:}"
+unit_resolved="${unit_resolved//@SPIRA_RUN@/$LOGRUN}"
+is "4b: unit's StandardOutput is the path _wd_logfile computes" "$expected_logfile" "$unit_resolved"
+
+# ---------------------------------------------------------------------------
+# _wake_count <file> -> lines containing "wake sent". Not `grep -c ... || echo 0`: grep -c
+# already prints 0 on no match, but also exits 1 on no match, so the fallback fires anyway
+# and doubles the output.
+_wake_count() { grep -c 'wake sent' "$1" 2>/dev/null; true; }
+
+# _bg_exited <pid> <max 0.1s ticks> -> 0 once the pid is gone, 1 if it outlives the budget.
+_bg_exited() {
+    local pid="$1" n="${2:-50}"
+    while kill -0 "$pid" 2>/dev/null; do
+        n=$((n-1))
+        [ "$n" -le 0 ] && return 1
+        sleep 0.1
+    done
+    return 0
+}
+
+echo
+echo "5. WAKE RETRY — T1: nobody reads; the wake is not fired once and forgotten:"
+
+WMAIL1="$TMP/wake-mail-1"; mkdir -p "$WMAIL1/wakebox/new" "$WMAIL1/wakebox/cur" "$WMAIL1/wakebox/tmp"
+WRUN1="$TMP/wake-run-1"; mkdir -p "$WRUN1"
+: > "$WMAIL1/wakebox/new/msg1"
+
+CALLS1="$TMP/wake-calls-t1.log"; : > "$CALLS1"
+cat > "$TMP/wake-stub-t1.sh" <<STUB
+#!/usr/bin/env bash
+printf '%s\t%s\n' "\$(date +%s)" "\$1" >> "$CALLS1"
+STUB
+chmod +x "$TMP/wake-stub-t1.sh"
+
+ATT1="$TMP/wake-attempts-t1.log"; : > "$ATT1"
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_RUN="$WRUN1" SPIRA_MAIL="$WMAIL1" \
+    SPIRA_CONF=/nonexistent SPIRA_MAIL_WAKE_BACKOFF="1 1 1 1" \
+    bash -c '. "$1"; _wake_loop wakebox "$2"' _ "$HERE/spira-mail-deliver.sh" "$TMP/wake-stub-t1.sh" \
+    > "$ATT1" 2>&1 &
+LOOP1_PID=$!
+
+start=$SECONDS
+tries=0
+while [ "$(_wake_count "$ATT1")" -lt 3 ] && [ "$tries" -lt 150 ]; do
+    sleep 0.1
+    tries=$((tries+1))
+done
+elapsed=$(( SECONDS - start ))
+kill "$LOOP1_PID" 2>/dev/null
+_bg_exited "$LOOP1_PID" 20
+
+attempts1="$(_wake_count "$ATT1")"
+calls1="$(wc -l < "$CALLS1" 2>/dev/null | tr -d ' ')"
+last_msg="$(tail -1 "$CALLS1" | cut -f2-)"
+
+is "5a: wake fires more than once while unread and unread" "1" "$([ "$attempts1" -ge 3 ] && echo 1 || echo 0)"
+is "5b: the stub wake command was actually invoked each time" "$attempts1" "${calls1:-0}"
+is "5c: backoff delays retries (3 attempts at 1s steps takes >=2s, not 0)" "1" "$([ "$elapsed" -ge 2 ] && echo 1 || echo 0)"
+want "5d: the wake message says how many are unread" "You have 1 unread messages" "$last_msg"
+want "5e: the wake message says how old the oldest unread is" "oldest" "$last_msg"
+
+echo
+echo "6. WAKE RETRY — T2: reading the mail stops it (reading is the ack, not the wake):"
+
+WMAIL2="$TMP/wake-mail-2"; mkdir -p "$WMAIL2/wakebox/new" "$WMAIL2/wakebox/cur" "$WMAIL2/wakebox/tmp"
+WRUN2="$TMP/wake-run-2"; mkdir -p "$WRUN2"
+: > "$WMAIL2/wakebox/new/msg1"
+
+CALLS2="$TMP/wake-calls-t2.log"; : > "$CALLS2"
+cat > "$TMP/wake-stub-t2.sh" <<STUB
+#!/usr/bin/env bash
+printf '%s\t%s\n' "\$(date +%s)" "\$1" >> "$CALLS2"
+STUB
+chmod +x "$TMP/wake-stub-t2.sh"
+
+ATT2="$TMP/wake-attempts-t2.log"; : > "$ATT2"
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_RUN="$WRUN2" SPIRA_MAIL="$WMAIL2" \
+    SPIRA_CONF=/nonexistent SPIRA_MAIL_WAKE_BACKOFF="1 1 1 1" \
+    bash -c '. "$1"; _wake_loop wakebox "$2"' _ "$HERE/spira-mail-deliver.sh" "$TMP/wake-stub-t2.sh" \
+    > "$ATT2" 2>&1 &
+LOOP2_PID=$!
+
+tries=0
+while [ "$(_wake_count "$ATT2")" -lt 1 ] && [ "$tries" -lt 150 ]; do
+    sleep 0.1
+    tries=$((tries+1))
+done
+first_seen="$(_wake_count "$ATT2")"
+
+env -i HOME="$TMP/home" PATH="$PATH" SPIRA_MAIL="$WMAIL2" SPIRA_CONF=/nonexistent \
+    bash "$HERE/mail.sh" read wakebox >/dev/null 2>&1
+
+sleep 2.5
+loop_exited=0; _bg_exited "$LOOP2_PID" 30 && loop_exited=1
+after_read="$(_wake_count "$ATT2")"
+
+is "6a: at least one wake fired before the mail was read" "1" "$([ "$first_seen" -ge 1 ] && echo 1 || echo 0)"
+is "6b: the wake loop exits once the mail is read, no retry ceiling needed" "1" "$loop_exited"
+is "6c: no further wake after the mail was read" "$first_seen" "$after_read"
 
 tl_summary
