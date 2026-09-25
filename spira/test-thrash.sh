@@ -142,6 +142,45 @@ case "$dead_gate_fuse" in
     *)    bad "dead gate pid: unexpected value [$dead_gate_fuse]" ;;
 esac
 
+# ---- Part 4b: a gate that just finished resets the fuse (sp-l99q6) ------------------
+echo
+echo "aeon_fuse_minutes: a gate that finished counts as progress, not just one still running"
+
+# THE DEFECT: the live-gate exemption (Part 4) masks the fuse while the gate runs, but
+# records nothing — so the instant the gate exits, the still-stale worktree mtime is
+# exposed and the fuse reads as if nothing had happened for the gate's whole runtime.
+# The fix folds the gate-run directory's own timestamps (rc/out/started) into the
+# fuse's "last moved" clock, so a verdict that just landed resets it like a commit would.
+
+BEAD5="sp-gatefin-x"
+WT5="$RUN/worktree/$BEAD5"
+mkdir -p "$WT5"
+touch -d "60 minutes ago" "$WT5/old.txt"
+touch -d "60 minutes ago" "$WT5"
+GATE5_DIR="$RUN/gate-run/testname.spira_${BEAD5}"
+mkdir -p "$GATE5_DIR"
+
+# A. no gate activity at all — the stale worktree must still trip (positive control:
+#    proves this fixture's staleness alone is enough to read past the wall).
+no_gate_fuse5="$(fuse "$BEAD5" "$WT5")"
+if [[ "$no_gate_fuse5" =~ ^[0-9]+$ ]] && [ "$no_gate_fuse5" -ge 55 ] 2>/dev/null; then
+    ok "no gate activity: stale worktree reads ~60m (positive control, got $no_gate_fuse5)"
+else
+    bad "no gate activity: expected ~60m, got [$no_gate_fuse5] (positive control)"
+fi
+
+# B. gate rc/out/started files written just now, but no live gate process (it exited).
+#    The worktree is still stale — only the gate-run directory is fresh.
+printf '0\n' > "$GATE5_DIR/rc"
+printf 'gate output\n' > "$GATE5_DIR/out"
+printf '%s\n' "$(date +%s)" > "$GATE5_DIR/started"
+finished_fuse5="$(fuse "$BEAD5" "$WT5")"
+if [[ "$finished_fuse5" =~ ^[0-9]+$ ]] && [ "$finished_fuse5" -lt 5 ] 2>/dev/null; then
+    ok "gate just finished: fuse resets from the gate's own timestamps (got $finished_fuse5)"
+else
+    bad "gate just finished: expected a fuse near 0, got [$finished_fuse5]"
+fi
+
 # ---- Part 5: structural — .thrash appears after .slain in cleanup --------------------
 echo
 echo "aeon.sh structural: .thrash handler appears after .slain in cleanup function"
