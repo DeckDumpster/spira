@@ -1249,11 +1249,6 @@ close_landed_queue_waiters 2>/dev/null || true
 # cap and nothing coordinated them. The order is the priority: Ops is named first because an
 # on-call persona that has to wait behind feature work is not on call.
 #
-# Ops also RESERVES a slot (FAYTH_RESERVE in its .fayth), which is the half that ordering
-# alone cannot do: builders hold their beads for ~10 minutes (p50 9.4 min, p90 18.6 min measured over 28 runs), so a pass that merely asked
-# Ops first would still find every slot occupied by sessions that started an hour ago. The
-# reserve is subtracted from what the others may see whether or not Ops is using it.
-#
 # A HOST THAT SETS NO POOL BEHAVES EXACTLY AS BEFORE — an empty pool is passed as empty, and
 # every cap below it is the persona's own.
 # THE POOL IS FOR AEONS, NOT FOR THE PARTY. Party members travel with you and are summoned by
