@@ -1,30 +1,32 @@
-GROOM PASS sp-wy13t - Graph Hygiene Results
+GROOM PASS sp-xfrzm - Graph Hygiene Results
 ============================================
 
-TRIGGER: UNCLAIMABLE: sp-5h46a — fix the fayth: or partition label
+TRIGGER: UNCLAIMABLE: sp-l757d — fix the fayth: or partition label
 
-SWEEP: No litter, no LIVELOCK rows found by groomer.sh sweep.
+SWEEP: groomer.sh sweep reported sp-l757d unclaimable; acted on 0 beads (sweep handles litter only).
 
-UNCLAIMABLE BEADS FIXED:
+LIVELOCK ROWS HANDLED:
 
-1. FIXED sp-5h46a (unclaimable)
-   - Title: repeat attempt: no change — spira/sp-r1501
+1. LIVELOCK sp-l757d (unclaimable)
+   - Title: [bug] sp-xgut3: push-mode gate invocation test now passes
    - Problem: Had 'partition:incident' label but missing 'incident' label
-   - Fix: Added 'incident' label so ops fayth (FAYTH_LABELS=spira,incident) can claim it
-   - Root cause tracked by sp-ui46l (incident.sh creating beads with wrong label)
+   - Fix: Added 'incident' label, removed 'partition:incident' label
+   - Now claimable by ops persona (FAYTH_LABELS=spira,incident)
+   - Same root cause as sp-wy13t pass: incident.sh creating beads with wrong label (tracked by sp-ui46l)
 
-2. FIXED sp-q4swv (unclaimable)
-   - Title: [bug] sp-ulr4e: Update test-testlib-migrated.sh exception lists after migrations
-   - Problem: Had 'partition:incident' label but missing 'incident' label (same root cause)
-   - Fix: Added 'incident' label
-   - Note: Blocks sp-220fh (ops aeon currently working it)
+UNSURE NOTES:
 
-VERIFY: detect_unclaimable_ready (production checkout) reports zero unclaimable beads after fix.
+1. UNSURE sp-ui46l — operator instruction conflict
+   - Ryan said "close sp-ui46l if it bounced again" (recorded in sp-oipkt triage 2026-09-24)
+   - sp-oipkt close reason states "It is closed"
+   - But bead was subsequently reopened by Concierge (2026-09-25, overseer comment) because
+     batch 327 partial landing broke main on test-scope-label; 5778068f reverted by sp-3532w
+   - Pass 1 note written on sp-ui46l; pass 2 will escalate to operator
 
 CURRENT STATE:
-- 189 open beads examined across all partitions
+- ~50 open beads examined
 - No duplicates found
 - No premise-gone cases found
 - No fixture-shaped litter found
-- Two unclaimable beads corrected
-- Root cause for mislabelling is being addressed by sp-ui46l
+- One unclaimable bead corrected (sp-l757d)
+- Root cause for mislabelling being addressed by sp-ui46l (sp-wy13t pass also fixed same pattern)
