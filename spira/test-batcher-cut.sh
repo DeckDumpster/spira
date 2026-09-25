@@ -39,8 +39,11 @@ TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up batchercut || { echo "test-batcher-cut: could not build fixture database"; exit 1; }
 
 # ── build the batcher binary (law-absence-needs-a-positive-control: no binary, no suite) ──
+printf 'DIAG PATH=%s\n' "$PATH" >&2
+printf 'DIAG ls /usr/local/cargo/bin: %s\n' "$(ls /usr/local/cargo/bin 2>&1)" >&2
 CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
 [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
+[ -z "$CARGO_BIN" ] && [ -x "/usr/local/cargo/bin/cargo" ] && CARGO_BIN="/usr/local/cargo/bin/cargo"
 if [ -z "$CARGO_BIN" ]; then
     echo "SKIP test-batcher-cut: cargo not found — the batcher binary cannot be built"
     exit 77
