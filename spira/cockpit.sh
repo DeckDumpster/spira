@@ -64,6 +64,15 @@ cockpit_may_write() {
     return 1
 }
 
+# `loop`'s own fence, same rule as `once`'s but fatal: a loop that started unsupervised
+# would otherwise stamp a wrong SP_WRITER every INTERVAL forever instead of just once.
+_loop_guard() {
+    cockpit_may_write || {
+        echo "cockpit.sh loop: write refused — not the supervised process. Set SPIRA_COCKPIT_FORCE=1 to override." >&2
+        exit 1
+    }
+}
+
 # count <bd-args...> -> number of rows, or `?` if the query or the parse failed.
 count() {
     bdq "$@" --json 2>/dev/null | json_only | python3 -c '
@@ -2808,6 +2817,9 @@ print("SP_MAIL_N=%d" % min(len(rows), 5))
 PY
 }
 
+# Sourced (BASH_SOURCE[0] != $0) skips dispatch entirely — the seam test-cockpit.sh uses
+# to call cockpit_may_write and _loop_guard directly, without a full `once`/`loop` run.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 case "${1:-}" in
 ""|once)
     if cockpit_may_write; then
@@ -2843,10 +2855,7 @@ history)
     echo "spira cockpit: $HIST ($(( $(wc -l < "$HIST") - 1 )) rows)"
     ;;
 loop)
-    cockpit_may_write || {
-        echo "cockpit.sh loop: write refused — not the supervised process. Set SPIRA_COCKPIT_FORCE=1 to override." >&2
-        exit 1
-    }
+    _loop_guard
     sweep_stale_tmps
     while :; do write_snapshot; sleep "$INTERVAL"; done
     ;;
@@ -2938,3 +2947,4 @@ czar_triggers)
    echo "  (no args: collect once then attach to the concierge; SPIRA_COCKPIT_NO_ATTACH=1 skips the attach)" >&2
    exit 1 ;;
 esac
+fi
