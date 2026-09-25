@@ -2,10 +2,12 @@
 #
 # test-verdict.sh — merge-queue verdict: fast-forward landing pass.
 #
-# Thirty-three cases:
+# Twenty-six cases (of the original thirty-three; see below for where the rest
+# went):
 #   1. No open batch → forge is never reached.
 #   2. Pending within CI max → nothing happens.
 #   3. Pending, run old and stuck → run cancelled explicitly; no workflow-rerun.
+#      Kept as an assembly control alongside case 1 (see test-verdict-action.sh).
 #   4. Harness fault, retries remaining → re-run called, counter bumped.
 #   5. Harness fault, retries exhausted → PR closed, members CERTIFIED, batch
 #      removed, mail sent once; second pass sends no second mail.
@@ -19,29 +21,18 @@
 #  10. Green, CI head SHA mismatches sealed batch head → no push; members CERTIFIED;
 #      PR closed; operator mailed. (positive control for SHA mismatch detection)
 #  11. Green, CI head SHA matches sealed batch head → normal fast-forward landing.
-#  12. PR old, run freshly started → no cancellation. Regression: verdict was ageing
-#      the PR instead of the run; healthy CI was cancelled when opened exceeded the
-#      threshold, regardless of whether the current run was making progress.
 #  13. Green, base moved, member tips already in new base → members LANDED, not
 #      re-queued. Positive control with case 7: case 7 proves CERTIFIED when tips
 #      are NOT in the new base; this proves LANDED when they ARE.
-#  14. PR old, run old, but last-activity recent → run still progressing; no cancel.
 #  15. All-suites repro ejects a member whose diff is claimed by no suite, before
 #      the batch-head halve is attempted.
 #  16. Positive control for case 15: same batch shape with no offender — members
 #      CERTIFIED; no halve.
-#  17. Single-step job: run.updated_at recent, job/step timestamps stale → MAX taken.
-#  18. Per-repo CI_MAXSEC override: SPIRA_QUEUE_CI_MAXSEC_<NAME> cancels run early.
 #  19. Flaky suite: fails once then passes on retry → member not ejected; flaky_suites=.
 #  20. Always-red control: suite fails twice → member ejected (retry doesn't suppress).
-#  21. TERM TRAP: TERM during attribution writes "interrupted after ...s" to landing.log.
-#  22. Parallel wall-time: 3 members × 8s stub → total ≤ 85% of serial with MAXPAR=3.
-#  23. Serial pair: same 3 members with MAXPAR=1 → total ≥ 6s (positive control).
 #  24. Could-not-judge: rc=2 member doesn't shield others; guilty member ejected.
 #  25. Deterministic: ejected set identical across two runs with different completion order.
 #  26. Red-suite ineligible for quarantine: gate's red-twice verdict blocks observe-flake.
-#  27. Provision fault: forge returns provision_fault; treated as harness_fault (rerun,
-#      no ejection, no bisect).
 #  28. Green, base moved (conflicting) → PR closed; members returned to CERTIFIED;
 #      conflict member named in log.
 #  29. Red naming no suite, multi-member → the halving in case 8 also persists
@@ -55,6 +46,12 @@
 #      refs already ancestors of the base; a non-ancestor ref survives.
 #  33. Green but check-status omits head-sha → cannot verify the sealed head
 #      was tested; no push, no pr-close, batch held for retry.
+#
+# MOVED (docs/test-plan/landing-merge-queue.md UC-43/44/49, section 4 cluster 1):
+#   Cases 12, 14, 17, 18, 27 (age/idle/retry classification over verdict_action,
+#   verdict_parse_run_metadata, verdict_repo_threshold, verdict_normalize_status)
+#   demoted to T1 in test-verdict-action.sh. Cases 21-23 (TERM trap; MAXPAR
+#   concurrency) moved to test-verdict-replay.sh (tier T3, off the per-push path).
 #
 # The forge seam is a local fixture; no network is reached.
 # mail.sh and suites.sh are stubbed to capture calls.
@@ -549,29 +546,8 @@ want "11. sha-match: landed reported"       "landed by fast-forward" "$out"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
-# =============================================================================
-# 12. PR OLD, RUN FRESHLY STARTED — no cancellation.
-#     Regression: verdict was using PR opened time instead of run start time.
-#     A batch PR is always older than CI_MAXSEC (pre-flight alone takes 14-40m),
-#     so every pending PR was cancelled by the old code regardless of run health.
-#     Positive control: case 3 verifies a genuinely old, stuck run IS cancelled.
-#     This case verifies that a fresh run on an old PR is NOT cancelled.
-# =============================================================================
-build_batch sp-vd-u1 sp-vd-u2 > /dev/null
-{
-    grep -v '^opened=' "$(batch_file)"
-    printf 'opened=%s\n' "$(( $(date +%s) - 7200 ))"
-} > "$(batch_file).$$" && mv -f "$(batch_file).$$" "$(batch_file)"
-# Run started 60s ago — well within CI_MAXSEC=3600.
-printf 'started-at: %s\n' "$(( $(date +%s) - 60 ))" > "$FORGE_RUN_METADATA_FILE"
-printf 'pending\n' > "$FORGE_STATUS_FILE"
-before_main12="$(remote_main)"
-out="$(verdict "$REPONAME")"
-is     "12. fresh-run: no push"         "$before_main12" "$(remote_main)"
-nowant "12. fresh-run: no cancel"       "cancel"         "$(cat "$FORGE_LOG")"
-nowant "12. fresh-run: no rerun"        "rerun"          "$(cat "$FORGE_LOG")"
-want   "12. fresh-run: reported"        "pending"        "$out"
-clean_case
+# Case 12 (PR old, run freshly started → no cancellation) demoted to T1:
+# test-verdict-action.sh case 3.
 
 # =============================================================================
 # 13. GREEN, BASE MOVED, MEMBER TIPS ALREADY IN NEW BASE — members LANDED.
@@ -596,27 +572,8 @@ want "13. moved-in-base: already-in-base logged" "already in moved base" "$out"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
-# =============================================================================
-# 14. PR OLD, RUN OLD, LAST-ACTIVITY RECENT — run still progressing; no cancel.
-#     Positive control for the activity guard: cancelling a progressing run
-#     would surface as an unexplained runner shutdown with cancel-in-progress.
-#     The run started 3700s ago (past MAXSEC), but a step completed 30s ago.
-# =============================================================================
-build_batch sp-vd-v1 sp-vd-v2 > /dev/null
-{
-    grep -v '^opened=' "$(batch_file)"
-    printf 'opened=%s\n' "$(( $(date +%s) - 7200 ))"
-} > "$(batch_file).$$" && mv -f "$(batch_file).$$" "$(batch_file)"
-printf 'started-at: %s\nlast-activity: %s\n' \
-    "$(( $(date +%s) - 3700 ))" "$(( $(date +%s) - 30 ))" > "$FORGE_RUN_METADATA_FILE"
-printf 'pending\n' > "$FORGE_STATUS_FILE"
-before_main14="$(remote_main)"
-out="$(verdict "$REPONAME")"
-is     "14. progressing: no push"       "$before_main14" "$(remote_main)"
-nowant "14. progressing: no cancel"     "cancel"         "$(cat "$FORGE_LOG")"
-nowant "14. progressing: no rerun"      "rerun"          "$(cat "$FORGE_LOG")"
-want   "14. progressing: reported"      "progressing"    "$out"
-clean_case
+# Case 14 (PR old, run old, last-activity recent → progressing, no cancel)
+# demoted to T1: test-verdict-action.sh case 4.
 
 # =============================================================================
 # 15. ALL-SUITES REPRO EJECTS GUILTY MEMBER BEFORE HALVING.
@@ -707,53 +664,10 @@ nowant "16. all-suites-ctrl: no ejection" "ejected" "$out"
 nowant "16. all-suites-ctrl: no halve"    "halved"  "$out"
 clean_case
 
-# =============================================================================
-# 17. SINGLE-STEP JOB: run.updated_at recent, job/step timestamps stale.
-#     Forge emits two last-activity lines: one from run.updated_at (recent) and
-#     one from job/step timestamps (stale, because the single step hasn't finished).
-#     Verdict must take the MAX — the run is progressing, not stuck.
-#     POSITIVE CONTROL: the older last-activity line alone would exceed IDLE_SEC
-#     and trigger cancellation; the fact that it doesn't proves max is taken.
-# =============================================================================
-build_batch sp-vd-w1 sp-vd-w2 > /dev/null
-{
-    grep -v '^opened=' "$(batch_file)"
-    printf 'opened=%s\n' "$(( $(date +%s) - 7200 ))"
-} > "$(batch_file).$$" && mv -f "$(batch_file).$$" "$(batch_file)"
-printf 'started-at: %s\nlast-activity: %s\nlast-activity: %s\n' \
-    "$(( $(date +%s) - 3700 ))" \
-    "$(( $(date +%s) - 30 ))" \
-    "$(( $(date +%s) - 3700 ))" \
-    > "$FORGE_RUN_METADATA_FILE"
-printf 'pending\n' > "$FORGE_STATUS_FILE"
-before_main17="$(remote_main)"
-out="$(verdict "$REPONAME")"
-is     "17. single-step: no push"     "$before_main17" "$(remote_main)"
-nowant "17. single-step: no cancel"   "cancel"         "$(cat "$FORGE_LOG")"
-want   "17. single-step: progressing" "progressing"    "$out"
-clean_case
-
-# =============================================================================
-# 18. PER-REPO CI_MAXSEC OVERRIDE: SPIRA_QUEUE_CI_MAXSEC_<NAME> used when set.
-#     POSITIVE CONTROL: run started 120s ago is within global MAXSEC=3600 and
-#     would NOT be cancelled without the per-repo override. With the override
-#     (FIXTURE_REPO=60), it is past the repo's limit and is cancelled.
-# =============================================================================
-build_batch sp-vd-x1 sp-vd-x2 > /dev/null
-printf 'started-at: %s\n' "$(( $(date +%s) - 120 ))" > "$FORGE_RUN_METADATA_FILE"
-printf 'pending\n' > "$FORGE_STATUS_FILE"
-before_main18="$(remote_main)"
-# Positive control: without the override the run is within global MAXSEC=3600.
-out="$(verdict "$REPONAME")"
-is     "18. per-repo ctrl: no cancel without override" "$before_main18" "$(remote_main)"
-nowant "18. per-repo ctrl: no cancel"  "cancel"  "$(cat "$FORGE_LOG")"
-want   "18. per-repo ctrl: pending"    "pending" "$out"
-# Now set the per-repo override: 60s limit, run is 120s old → stuck.
-: > "$FORGE_LOG"
-out="$(SPIRA_QUEUE_CI_MAXSEC_FIXTURE_REPO=60 verdict "$REPONAME")"
-want "18. per-repo: cancel with override" "cancel" "$(cat "$FORGE_LOG")"
-want "18. per-repo: stuck reported"       "stuck"  "$out"
-clean_case
+# Case 17 (single-step job: max of two last-activity lines) demoted to T1:
+# test-verdict-action.sh case 5.
+# Case 18 (per-repo CI_MAXSEC override) demoted to T1: test-verdict-action.sh
+# case 6.
 
 # =============================================================================
 # 19. FLAKY SUITE — batch of 2 members, suite fails once then passes on retry.
@@ -844,150 +758,10 @@ want "20. always-red: ejection reported" "ejected" "$out"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
-# 21. TERM TRAP: a verdict.sh process interrupted by TERM during attribution
-#     writes "attribution of PR ... interrupted after ...s" to landing.log.
-#
-#     POSITIVE CONTROL: the repro stub writes its own PID to a flag file before
-#     sleeping. The test waits for that file before sending TERM, proving that
-#     TERM arrives while the replay is genuinely in progress.
-# =============================================================================
-_repro21_pid_file="$RUN/repro21-pid"
-rm -f "$_repro21_pid_file"
-
-cat > "$SH/repro-slow.sh" <<REPRO
-#!/usr/bin/env bash
-printf '%s\n' "\$\$" > "$_repro21_pid_file"
-sleep 60
-REPRO
-chmod +x "$SH/repro-slow.sh"
-
-base_sha21t="$(git -C "$REPO" rev-parse origin/main)"
-bwt21t="$RUN/worktree/sp-vd-t1"
-git -C "$REPO" worktree add -q -b "spira/sp-vd-t1" "$bwt21t" origin/main 2>/dev/null || true
-printf 'sp-vd-t1\n' > "$bwt21t/sp-vd-t1.txt"
-git -C "$bwt21t" add -A
-git -C "$bwt21t" commit -q -m "sp-vd-t1: work"
-tip_t1="$(git -C "$REPO" rev-parse "spira/sp-vd-t1")"
-printf 'BATCHED %s %s\n' "$tip_t1" "$(date +%s)" > "$LANDSTATE/sp-vd-t1"
-{ printf 'pr=99\nhead=%s\nbase=%s\nmembers=sp-vd-t1:%s\nopened=%s\n' \
-    "$tip_t1" "$base_sha21t" "$tip_t1" "$(date +%s)"; } > "$(batch_file)"
-printf 'red\nred-suite: test-slow-suite.sh\n' > "$FORGE_STATUS_FILE"
-: > "$RUN/landing.log"
-
-# Run verdict.sh directly to get its exact PID (not through the verdict() wrapper)
-SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-SPIRA_REPO_MAP="$SH/repo-map" \
-SPIRA_QUEUE_DIR="$QUEUEDIR" \
-SPIRA_FORGE="$SH/forge-fixture.sh" \
-SPIRA_QUEUE_REPRO_BATCH="$SH/repro-slow.sh" \
-    bash "$SH/verdict.sh" "$REPONAME" &
-vd_pid=$!
-
-_w=0
-while [ ! -f "$_repro21_pid_file" ] && [ "$_w" -lt 100 ]; do
-    sleep 0.1; _w=$((_w+1))
-done
-if [ -f "$_repro21_pid_file" ]; then
-    ok "21. TERM trap: positive control — repro started before TERM"
-else
-    bad "21. TERM trap: positive control — repro started before TERM" \
-        "repro stub never wrote PID file (verdict may have exited early)"
-fi
-
-# Send TERM to verdict.sh (sets a pending TERM), then kill the repro stub so the
-# blocking command substitution returns and bash processes the pending TERM trap.
-_repro_pid="$(cat "$_repro21_pid_file" 2>/dev/null || true)"
-kill -TERM "$vd_pid" 2>/dev/null || true
-[ -n "$_repro_pid" ] && kill -9 "$_repro_pid" 2>/dev/null || true
-wait "$vd_pid" 2>/dev/null || true
-
-want "21. TERM trap: interrupted line in landing.log" \
-    "attribution of PR 99 interrupted" \
-    "$(cat "$RUN/landing.log" 2>/dev/null)"
-clean_case
-git -C "$REPO" fetch -q origin 2>/dev/null || true
-
-# =============================================================================
-# 22. PARALLEL WALL-TIME — 3 members, repro stub sleeps 8s each.
-#     With SPIRA_BATCH_MAXPAR=3 all run concurrently; wall time ≤ 85% of serial.
-#     Positive control is case 23: MAXPAR=1 forces serial; total wall time ≥ 6s.
-#     Sleep 8s: _repro_is_red retries on red (doubles per-member sleep to 16s);
-#     8s makes the sleep signal dominate over worktree/merge overhead under load.
-# =============================================================================
-cat > "$SH/repro-sleep.sh" <<'REPRO'
-#!/usr/bin/env bash
-sleep 8; exit 1
-REPRO
-chmod +x "$SH/repro-sleep.sh"
-
-base_sha21="$(git -C "$REPO" rev-parse origin/main)"
-for id in sp-vd-p1 sp-vd-p2 sp-vd-p3; do
-    bwt21="$RUN/worktree/$id"
-    git -C "$REPO" worktree add -q -b "spira/$id" "$bwt21" origin/main 2>/dev/null || true
-    printf '%s\n' "$id" > "$bwt21/$id.txt"
-    git -C "$bwt21" add -A
-    git -C "$bwt21" commit -q -m "$id: work"
-    printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" > "$LANDSTATE/$id"
-done
-tip_p1="$(git -C "$REPO" rev-parse "spira/sp-vd-p1")"
-tip_p2="$(git -C "$REPO" rev-parse "spira/sp-vd-p2")"
-tip_p3="$(git -C "$REPO" rev-parse "spira/sp-vd-p3")"
-wt21="$RUN/worktree/.b21"
-git -C "$REPO" worktree add -q --detach "$wt21" "$base_sha21" 2>/dev/null || true
-git -C "$wt21" merge -q --no-edit --no-ff -m "spira: land sp-vd-p1" "$tip_p1" >/dev/null 2>&1
-git -C "$wt21" merge -q --no-edit --no-ff -m "spira: land sp-vd-p2" "$tip_p2" >/dev/null 2>&1
-git -C "$wt21" merge -q --no-edit --no-ff -m "spira: land sp-vd-p3" "$tip_p3" >/dev/null 2>&1
-batch_head21="$(git -C "$wt21" rev-parse HEAD)"
-git -C "$REPO" worktree remove -f "$wt21" 2>/dev/null || true
-{ printf 'pr=81\nhead=%s\nbase=%s\nmembers=sp-vd-p1:%s sp-vd-p2:%s sp-vd-p3:%s\nopened=%s\n' \
-    "$batch_head21" "$base_sha21" "$tip_p1" "$tip_p2" "$tip_p3" "$(date +%s)"; } > "$(batch_file)"
-printf 'red\nred-suite: test-sleep.sh\n' > "$FORGE_STATUS_FILE"
-_t21_start="$(date +%s)"
-SPIRA_QUEUE_REPRO_BATCH="$SH/repro-sleep.sh" SPIRA_BATCH_MAXPAR=3 verdict "$REPONAME" >/dev/null
-_t21=$(( $(date +%s) - _t21_start ))
-# Comparison against serial time (_t22) happens after case 23 runs.
-clean_case
-git -C "$REPO" fetch -q origin 2>/dev/null || true
-
-# =============================================================================
-# 23. SERIAL PAIR (positive control for case 22) — same 3-sleep members but
-#     MAXPAR=1 forces one at a time; wall time ≥ 6s.
-# =============================================================================
-base_sha22="$(git -C "$REPO" rev-parse origin/main)"
-for id in sp-vd-q1 sp-vd-q2 sp-vd-q3; do
-    bwt22="$RUN/worktree/$id"
-    git -C "$REPO" worktree add -q -b "spira/$id" "$bwt22" origin/main 2>/dev/null || true
-    printf '%s\n' "$id" > "$bwt22/$id.txt"
-    git -C "$bwt22" add -A
-    git -C "$bwt22" commit -q -m "$id: work"
-    printf 'BATCHED %s %s\n' "$(git -C "$REPO" rev-parse "spira/$id")" "$(date +%s)" > "$LANDSTATE/$id"
-done
-tip_q1="$(git -C "$REPO" rev-parse "spira/sp-vd-q1")"
-tip_q2="$(git -C "$REPO" rev-parse "spira/sp-vd-q2")"
-tip_q3="$(git -C "$REPO" rev-parse "spira/sp-vd-q3")"
-wt22="$RUN/worktree/.b22"
-git -C "$REPO" worktree add -q --detach "$wt22" "$base_sha22" 2>/dev/null || true
-git -C "$wt22" merge -q --no-edit --no-ff -m "spira: land sp-vd-q1" "$tip_q1" >/dev/null 2>&1
-git -C "$wt22" merge -q --no-edit --no-ff -m "spira: land sp-vd-q2" "$tip_q2" >/dev/null 2>&1
-git -C "$wt22" merge -q --no-edit --no-ff -m "spira: land sp-vd-q3" "$tip_q3" >/dev/null 2>&1
-batch_head22="$(git -C "$wt22" rev-parse HEAD)"
-git -C "$REPO" worktree remove -f "$wt22" 2>/dev/null || true
-{ printf 'pr=82\nhead=%s\nbase=%s\nmembers=sp-vd-q1:%s sp-vd-q2:%s sp-vd-q3:%s\nopened=%s\n' \
-    "$batch_head22" "$base_sha22" "$tip_q1" "$tip_q2" "$tip_q3" "$(date +%s)"; } > "$(batch_file)"
-printf 'red\nred-suite: test-sleep.sh\n' > "$FORGE_STATUS_FILE"
-_t22_start="$(date +%s)"
-SPIRA_QUEUE_REPRO_BATCH="$SH/repro-sleep.sh" SPIRA_BATCH_MAXPAR=1 verdict "$REPONAME" >/dev/null
-_t22=$(( $(date +%s) - _t22_start ))
-[ "$_t22" -ge 6 ] && ok "23. serial-pair: MAXPAR=1 forced serial, wall-time ${_t22}s ≥ 6s" \
-    || bad "23. serial-pair: wall-time" "expected ≥ 6s, got ${_t22}s"
-# Parallel must be meaningfully faster than serial: ≤ 85% of serial wall time.
-_t21_bound=$(( _t22 * 17 / 20 ))
-[ "$_t21" -le "$_t21_bound" ] \
-    && ok "22. parallel: 3 members concurrent, wall-time ${_t21}s ≤ ${_t21_bound}s (85% of serial ${_t22}s)" \
-    || bad "22. parallel: wall-time" "expected ≤ ${_t21_bound}s (85% of serial ${_t22}s), got ${_t21}s"
-clean_case
-git -C "$REPO" fetch -q origin 2>/dev/null || true
+# Cases 21-23 (TERM trap during replay; MAXPAR bounding concurrent replays)
+# moved to test-verdict-replay.sh (tier T3, off the per-push path): they cost
+# 8s sleeps x3 members x2 batches here, and the parallel-vs-serial assertion
+# was a load-sensitive wall-clock ratio rather than a deterministic count.
 
 # =============================================================================
 # 24. COULD-NOT-JUDGE MEMBER — rc=2 from one member does not exonerate others;
@@ -1150,27 +924,10 @@ nowant "26. red-suite-no-quarantine: observe-flake not called" \
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
-# =============================================================================
-# 27. PROVISION_FAULT — forge returns provision_fault; treated as harness_fault:
-#     workflow re-run, retries counter incremented, no ejection or bisect.
-#     POSITIVE CONTROL: case 8 proves red with no annotations bisects; this proves
-#     provision_fault does not, even for a multi-member batch.
-# =============================================================================
-build_batch sp-vd-pf1 sp-vd-pf2 > /dev/null
-printf 'provision_fault\n' > "$FORGE_STATUS_FILE"
-before_main="$(remote_main)"
-out="$(verdict "$REPONAME")"
-is   "27. provision_fault: no push"      "$before_main" "$(remote_main)"
-want "27. provision_fault: rerun"        "rerun"        "$(cat "$FORGE_LOG")"
-is   "27. provision_fault: retries=1" "1" \
-     "$(grep '^retries=' "$(batch_file)" | cut -d= -f2)"
-nowant "27. provision_fault: no bisect"  "bisect"       "$out"
-case "$(landstate sp-vd-pf1)" in BATCHED*) ok "27. provision_fault: pf1 still BATCHED" ;;
-    *) bad "27. provision_fault: pf1 still BATCHED" "got: $(landstate sp-vd-pf1)" ;; esac
-case "$(landstate sp-vd-pf2)" in BATCHED*) ok "27. provision_fault: pf2 still BATCHED" ;;
-    *) bad "27. provision_fault: pf2 still BATCHED" "got: $(landstate sp-vd-pf2)" ;; esac
-clean_case
-git -C "$REPO" fetch -q origin 2>/dev/null || true
+# Case 27 (provision_fault normalized to harness_fault: rerun, no bisect)
+# demoted to T1: test-verdict-action.sh case 7 (verdict_normalize_status +
+# verdict_action). verdict_normalize_status is a single case arm called once,
+# at the top of _verdict_process, before the status dispatch below it runs.
 
 # =============================================================================
 # 28. GREEN, BASE MOVED (CONFLICTING) — one member conflicts with the new base;
