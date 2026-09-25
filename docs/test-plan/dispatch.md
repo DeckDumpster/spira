@@ -180,39 +180,64 @@ Nothing in this area needs T4. Acceptance already runs real sentinel passes on t
 
 ---
 
-## 9. Implementation status (sp-9ce60, this slice)
+## 9. Implementation status (sp-9ce60, landed)
 
-This worktree forked from `origin/main` before its own listed dependencies actually reached
-`main`: `spira/testlib.sh` (sp-yivi7), the mechanical testlib migration (sp-qvjzb), the
-`docs/test-plan/` schema plus `spira/plan-lint.sh` (sp-qu948), the governor deletion
-(sp-8mzsh) and the repo-map `--repo` refusal (sp-pnhtt) are all closed but none is reachable
-from `main` in this tree (`git branch --contains <their commits>` names only their own
-branches). Closed is not landed. Concretely: `spira/governor.sh` still exists and is wired
-into `lib.sh`/`sentinel.sh`, `spira/bead.sh` still accepts an unmapped `--repo`, and
-`spira/testlib.sh` does not exist to source.
-
-Landed in this slice, none of which needs the above:
+The five dependencies this bead forked ahead of (`spira/testlib.sh`/sp-yivi7,
+sp-qvjzb, sp-qu948, sp-8mzsh, sp-pnhtt) are all reachable from `origin/main` now.
+Everything the first slice deferred pending them has since landed, across this bead's
+own children (sp-9ce60.1 through .8) and this closing session's rebase onto `origin/main`:
 
 - This page, `docs/test-plan/dispatch.md`, verbatim per the approved design, with the
-  `spira/plan-lint.sh`-readable `UC-dispatch-NN` declarations in §2 added.
-- **UC-dispatch-22 verdict applied**: `spira/test-unmapped-repo-park.sh` deleted (G13 already
-  named it as exercising only `bd`'s own `--exclude-label`, never `aeon.sh`).
+  `spira/plan-lint.sh`-readable `UC-dispatch-NN` declarations in §2, and every suite below
+  tagged `# tier:`/`# covers: UC-dispatch-NN`.
+- **D1–D8 applied.** D1: `test-bead-file-kinds.sh` + `test-bead-lane-guard.sh` →
+  `test-bead-file.sh` (adds the G12 refusal rows and UC-dispatch-03's unmapped-repo
+  refusal, sp-pnhtt). D2/D3/D4/D5: `test-elastic-ceiling.sh`, `test-lane-ceiling.sh`,
+  `test-drain-expiry.sh`, `test-fayth-free.sh`, `test-lanes.sh` and
+  `test-fayth-predicates.sh` → `test-summon-fayth.sh` (arithmetic) and `test-fayth.sh`
+  (roster/predicates), one `lib.sh` source and one stub set instead of six. D6:
+  `test-unclaimable-bead.sh` + `test-unclaimable-cycle.sh` → `test-unclaimable.sh`, the
+  classifier body moved to `spira/unclaimable.py`. D7: `test-reclaim-needs-ryan.sh` merged
+  into `test-strand-partition.sh`'s classifier table and `test-reclaim-escalated.sh`'s T2
+  chain. D8: `test-sentinel-order.sh` + `test-sentinel-capacity.sh` + the two full-pass
+  cases from `test-check8-progressed.sh` → `test-sentinel-pass.sh` (T3, 2 Dolt passes
+  instead of 9).
+- **Row 05/06 verdicts applied** via dedicated fences rather than one combined grep
+  script: `test-bd-stdin.sh` now tests `spira/bd-stdin-lint.sh` (T0, wired into
+  `spira/gate-fences.sh`); `gh-intake.sh` gained the `GH_INTAKE_LIB=1` seam so
+  `test-gh-intake.sh` drives `_accept_actor`/`_ingested`/`_create_work` directly, and its
+  static rows moved to `spira/gh-intake-lint.sh`.
+- **G1–G3, G9, G10, G13–G18 closed.** `lane_rotate`, `ck7_pool`, `ck7_fill_cap`,
+  `check8_should_judge`, `check2_reclaim_stale` and `parse_reclaimed` are `lib.sh` seams
+  with direct T1 tables (`test-summon-fayth.sh`, `test-watchtower-throttle.sh`,
+  `test-check8-progressed.sh`, `test-check2-reaper.sh`). G4 (`FAYTH_RESERVE`): the dead
+  comment describing an unimplemented reservation was removed; there is no feature to
+  test. G5/G6: the halt gate and the plain fleet-ceiling refusal each have a positive
+  control plus a refusal row in `test-summon-fayth.sh`. G7 (governor withholding): moot,
+  `spira/governor.sh` is deleted (sp-8mzsh) and `test-summon-fayth.sh` asserts its absence.
+  G8 (escape.sh vs. halt/drain): characterized as current behaviour in
+  `test-summon-fayth.sh`, filed as a decision bead (sp-6rv05) rather than changed here; the
+  `CPUQuota` half of G8 (hard-coded 70%) is fixed and tested. G11: `bead.sh file` now
+  refuses an unmapped `--repo` before calling `bd create` (sp-pnhtt), tested in
+  `test-bead-file.sh`. G13: `spira/test-unmapped-repo-park.sh` deleted (it exercised only
+  `bd`'s own `--exclude-label`); `park_unmapped` is extracted and tested directly. G14:
+  `bead.sh contract` output has its own suite (`test-bead-contract.sh`). G16:
+  `fayth_exclude` has a direct table in `test-fayth.sh`. G17/G18: bead-mode
+  `--setting-sources` and the acted/progressed distinction each have a direct row.
+- **C1 applied**: `spira/governor.sh` is gone from `main`; no governor-related test rows
+  remain to delete.
+- **UC-dispatch-22 verdict applied**: `spira/test-unmapped-repo-park.sh` deleted (G13
+  already named it as exercising only `bd`'s own `--exclude-label`, never `aeon.sh`).
 
-Deferred, as follow-up beads under this bead's epic (`sp-s088v`), because they need the
-testlib/plan-lint/governor/repo-map dependencies actually present in `origin/main` first:
+Not applicable: the "implement verdict V7 via C2 (depend on it; do not duplicate it)"
+instruction was raised to the operator (mail `sp-38xyc`, 2026-09-24) — the dispatch page's
+own numbering has no "V7" or "C2", those ids belong to the epic's section 9 master list
+this bead cannot read. No reply arrived; per that mail's stated default, treated as not
+applicable to this area (a likely copy-paste from another area's instructions) and worked
+accordingly across every child bead without further escalation.
 
-- The file consolidations in §3/§4 (D1–D8) and the seam extractions in §5, all of which
-  require `spira/testlib.sh` to exist for the AC's "suites all use testlib" requirement.
-- The gap tests in §6, in particular the fail-closed rows (G5 halt, G6 fleet ceiling, G19
-  DB-unreadable, G9/G10 reclaim) which the deliverable calls out to write failing-first.
-- Deleting the governor-related test rows (the review's C1 instruction) — deferred until
-  `spira/governor.sh` is actually gone from `main`; deleting that coverage first would remove
-  real protection for code that is still live in this tree.
-- The G11 unmapped-repo-refusal rows and UC-dispatch-03's `SPIRA_BEAD_LANE_OVERRIDE` refusal
-  rows — deferred until sp-pnhtt's fix is reachable from `main`, to avoid re-implementing the
-  same refusal logic in parallel and landing a conflicting copy.
+Deferred, as follow-up work under this bead's epic (`sp-s088v`), not blocking this close:
 
-The review's "implement verdict V7 via C2 (depend on it; do not duplicate it)" instruction
-references ids from the epic's section 9 that are not present in this bead's own text (the
-UC/D/G numbering above is local to this area page); this bead cannot resolve which verdict/
-cluster that refers to without brain access. Raised to the operator rather than guessed at.
+- G6's cooldown/`plan_ready` combination and any UC this page marks T2/T3-only (UC-06
+  trusted-credential rows, UC-16's real-`bd`-shape row) stay at their assigned tier; this
+  bead did not lower tiers the plan did not ask for.

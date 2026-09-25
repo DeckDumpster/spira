@@ -24,7 +24,7 @@
 #
 # defect: sp-acted-conflation
 # tier: T1
-# covers: spira/sentinel.sh spira/lib.sh
+# covers: spira/sentinel.sh spira/lib.sh UC-dispatch-18
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
