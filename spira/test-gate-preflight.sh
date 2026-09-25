@@ -15,50 +15,33 @@
 # trial that never ran. Nothing exercised this path before now. It runs first among the
 # fail-closed cases, per the bead's "fail-closed rows first" instruction.
 #
-# defect: sp-io5j
+# CASES 3-4 (SEEN RED / SEEN GREEN) ABSORB test-gate-missing-cmd.sh (sp-ajxg3, per
+# docs/test-plan/gate-verdict.md section 4 cluster #2: "a passing gate run on a fresh
+# fixture" was five suites each building their own remote-plus-clone to prove one
+# positive control). gate.sh resolves every `bash <path>` in the repo-map gate command
+# against the base tree before running any trial; a path absent from the base returns a
+# distinct config-error verdict rather than BASE_FAIL. Naming BASE_FAIL for a file that
+# does not exist yet sends diagnosis toward a failing suite that was never run — this
+# blocked 22 branches with a misleading verdict (sp-lkzl).
+#
+# defect: sp-io5j sp-lkzl
 # tier: T1
-# covers: spira/gate.sh UC-gate-verdict-03 UC-gate-verdict-04
+# covers: spira/gate.sh UC-gate-verdict-03 UC-gate-verdict-04 UC-gate-verdict-07
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+. "$HERE/testlib/gate-fixture.sh"
 
 command -v flock >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH"; exit 77; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-REPO="$TMP/repo"; REMOTE="$TMP/remote.git"; RUN="$TMP/run"; SH="$TMP/spira"
-MAP="$TMP/repo-map"; VDIR="$TMP/verdicts"; GATELOG="$TMP/gate.log"; HOMEDIR="$TMP/home"
-mkdir -p "$RUN/worktree" "$HOMEDIR" "$SH"
-
-cp "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" \
-   "$HERE/yield.sh" "$SH/"
-
-git init -q --bare -b main "$REMOTE"
-git init -q -b main "$REPO"
-printf 'base\n' > "$REPO/marker"
-git -C "$REPO" add -A; git -C "$REPO" commit -q -m base
-git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+gate_fixture_init "$TMP"
 
 # A real branch so the positive control can pass.
 BR=spira/sp-pre1
-W="$TMP/work"
-git -C "$REPO" worktree add -q -b "$BR" "$W" origin/main
-printf 'work\n' > "$W/f1.txt"
-git -C "$W" add -A; git -C "$W" commit -q -m "feat: sp-pre1 — work"
-git -C "$REPO" worktree remove --force "$W"
+gate_fixture_branch "$BR"
 
-printf 'repo | %s | push | origin/main |  | true\n' "$REPO" > "$MAP"
-
-rungate() {              # rungate <branch> [VAR=VAL ...]
-    local br="$1"; shift
-    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
-        GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
-        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" SPIRA_GATE_LOG="$GATELOG" \
-        SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL=0 \
-        "$@" bash "$SH/gate.sh" "$br" repo 2>&1
-}
+rungate() { gate_fixture_run "$1" repo "${@:2}"; }  # rungate <branch> [VAR=VAL ...]
 
 echo "test-gate-preflight.sh — the gate's preflight checks fire with their evidence"
 
@@ -76,11 +59,7 @@ want "and says PASS"                   "VERDICT=PASS" "$out"
 # unmounted home, or a map a bad install deleted must never read as "no gate command" —
 # it must refuse to judge at all. FAIL-CLOSED, RUN FIRST.
 # --------------------------------------------------------------------------------------
-out="$(env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
-    SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-    SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$TMP/no-such-repo-map" \
-    SPIRA_GATE_LOG="$GATELOG" SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL=0 \
-    bash "$SH/gate.sh" "$BR" repo 2>&1)"; rc=$?
+out="$(rungate "$BR" SPIRA_REPO_MAP="$TMP/no-such-repo-map")"; rc=$?
 is   "an unreadable repo-map exits NO_VERDICT, never PASS"    75 "$rc"
 want "and names the reason no-repo-map-file"                  "reason=no-repo-map-file" "$out"
 want "and the verdict line says NO_VERDICT"                   "VERDICT=NO_VERDICT" "$out"
@@ -90,11 +69,7 @@ nowant "and never says PASS"                                  "VERDICT=PASS" "$o
 # CASE 0b — A REPO ABSENT FROM THE MAP (UC-gate-verdict-03's second half). The map IS
 # readable; it simply names no entry for this repository.
 # --------------------------------------------------------------------------------------
-out="$(env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
-    SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-    SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" \
-    SPIRA_GATE_LOG="$GATELOG" SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL=0 \
-    bash "$SH/gate.sh" "$BR" no-such-repo-name 2>&1)"; rc=$?
+out="$(gate_fixture_run "$BR" no-such-repo-name)"; rc=$?
 is   "a repo absent from the map exits NO_VERDICT"             75 "$rc"
 want "and names the reason no-repo-map"                        "reason=no-repo-map" "$out"
 
@@ -120,6 +95,38 @@ printf 'repo | %s | push | refs/remotes/origin/no-such-base |  | true\n' "$REPO"
 out="$(rungate "$BR")"; rc=$?
 is   "an unresolvable base exits NO_VERDICT"          75 "$rc"
 want "with reason no-diff or no-base"                 "NO_VERDICT" "$out"
+
+# Restore the map for the missing-cmd cases below.
+printf 'repo | %s | push | origin/main |  | true\n' "$REPO" > "$MAP"
+
+# --------------------------------------------------------------------------------------
+# CASE 3 — SEEN RED: THE GATE COMMAND NAMES A FILE ABSENT FROM THE BASE. The branch trial
+# exits 127 (no such file) and so would a base trial run the same command, which is
+# indistinguishable from BASE_FAIL unless the gate checks the base tree first.
+# --------------------------------------------------------------------------------------
+GATE_FILE="tools/check.sh"
+printf 'repo | %s | push | origin/main |  | bash %s\n' "$REPO" "$GATE_FILE" > "$MAP"
+gate_fixture_branch repo/sp-t1 missing-cmd.txt change
+out="$(rungate repo/sp-t1)"; rc=$?
+nowant "SEEN RED: gate does not pass" "VERDICT=PASS" "$out"
+want   "SEEN RED: names the missing file" "$GATE_FILE" "$out"
+nowant "SEEN RED: does not say BASE_FAIL" "BASE_FAIL" "$out"
+nowant "SEEN RED: does not say base-red reason" "reason=base-red" "$out"
+
+# --------------------------------------------------------------------------------------
+# CASE 4 — SEEN GREEN (positive control for case 3): the same file, now present on the
+# base. If the gate still refused after this, case 3 would be proving nothing.
+# --------------------------------------------------------------------------------------
+RUNS="$TMP/runs"; : > "$RUNS"
+mkdir -p "$(dirname "$REPO/$GATE_FILE")"
+printf '#!/usr/bin/env bash\nprintf "ran\\n" >> %s\necho ok\n' "$RUNS" > "$REPO/$GATE_FILE"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m "add check.sh"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+gate_fixture_branch repo/sp-t2 missing-cmd2.txt change2
+out="$(rungate repo/sp-t2)"; rc=$?
+is     "SEEN GREEN: gate passes when file is present" 0 "$rc"
+is     "SEEN GREEN: CMD was actually executed (ran file counted)" 1 "$(wc -l < "$RUNS" | tr -d ' ')"
+nowant "SEEN GREEN: no config-error in output" "configuration error" "$out"
 
 # Restore the map for any future cases.
 printf 'repo | %s | push | origin/main |  | true\n' "$REPO" > "$MAP"
