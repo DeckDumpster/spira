@@ -5108,7 +5108,7 @@ spira_event() {          # spira_event <kind> <target|-> <title> [detail]
     mkdir -p "$dir" 2>/dev/null || return 1
     key="$(printf '%s@%s' "$kind" "${target:-plan}" | tr -c 'a-zA-Z0-9._@-' '_')"
     f="$dir/$key"
-    now="$(date -u +%s)"
+    now="${SPIRA_NOW:-$(date -u +%s)}"
     find "$dir" -maxdepth 1 -type f -mmin +"$(( (SPIRA_EVENT_COOLDOWN * 2) / 60 + 1 ))" -delete 2>/dev/null
     [ -s "$f" ] && read -r last supp < "$f"
     case "${last:-}" in ''|*[!0-9]*) last=0 ;; esac

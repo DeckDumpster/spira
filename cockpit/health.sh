@@ -1881,15 +1881,13 @@ loop)
     printf '\e[?25l\e[?7l' 2>/dev/null
     _conf_file="${SPIRA_CONF_FILE:-}"
     _conf_mtime_0="$(stat --format='%Y' "$_conf_file" 2>/dev/null || echo 0)"
+    _tick="${SPIRA_HEALTH_TICK:-2}"
     while :; do
         paint
-        sleep 2
-        if [ -n "$_conf_file" ]; then
-            _conf_mtime_now="$(stat --format='%Y' "$_conf_file" 2>/dev/null || echo 0)"
-            if [ "$_conf_mtime_now" != "$_conf_mtime_0" ]; then
-                printf 'health.sh: config changed — exiting for restart\n' >&2
-                exit 0
-            fi
+        sleep "$_tick"
+        if conf_changed "$_conf_file" "$_conf_mtime_0"; then
+            printf 'health.sh: config changed — exiting for restart\n' >&2
+            exit 0
         fi
     done
     ;;

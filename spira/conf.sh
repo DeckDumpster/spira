@@ -1718,3 +1718,13 @@ spira_unit() {
         printf '?'
     fi
 }
+
+# conf_changed <path> <mtime0> -> 0 if <path>'s mtime now differs from <mtime0>, 1 otherwise.
+# The one shared implementation of law-long-lived-processes-pin-their-config's watch loop:
+# health.sh, loom.sh and collect.sh each capture their own mtime0 at startup and poll this
+# on their own tick, rather than each repeating the same `stat` comparison.
+conf_changed() {   # conf_changed <path> <mtime0>
+    local path="$1" mtime0="$2"
+    [ -n "$path" ] || return 1
+    [ "$(stat --format='%Y' "$path" 2>/dev/null || echo 0)" != "$mtime0" ]
+}

@@ -343,72 +343,12 @@ chmod 755 "$LOOP_READONLY"
 _loop_err="$(cat "$TMP/loop_merge_err.log" 2>/dev/null)"
 want "loop exit message names merge failures" "consecutive merge failures" "$_loop_err"
 
-# ============================================================
-echo
-echo "10. exit on config file change (positive control first):"
-
-# POSITIVE CONTROL: config file unchanged → loop keeps running.
-LOOP_CONF_RUN="$TMP/loop_conf_run"
-mkdir -p "$LOOP_CONF_RUN"
-LOOP_CONF_FRAG="$LOOP_CONF_RUN/cockpit.d"
-mkdir -p "$LOOP_CONF_FRAG"
-CONF_FILE="$TMP/test.conf"
-printf '# test config\n' > "$CONF_FILE"
-_ec_conf=0
-timeout 3 env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$CONF_FILE" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$LOOP_CONF_RUN" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
-    SPIRA_COCKPIT="$TMP" \
-    SPIRA_COCKPIT_FORCE=1 \
-    SPIRA_COCKPIT_TICK=0 \
-    FRAG_DIR="$LOOP_CONF_FRAG" \
-    bash "$HERE/collect.sh" loop >/dev/null 2>&1 || _ec_conf=$?
-if [ "${_ec_conf:-0}" -eq 124 ]; then
-    ok "loop keeps running when config is unchanged"
-else
-    bad "loop exited ${_ec_conf:-?} while config was not changed" "wanted timeout (124)"
-fi
-
-# CHANGE CASE: touch the config file while the loop is running → loop must exit 0.
-LOOP_CONF2_RUN="$TMP/loop_conf2_run"
-mkdir -p "$LOOP_CONF2_RUN"
-LOOP_CONF2_FRAG="$LOOP_CONF2_RUN/cockpit.d"
-mkdir -p "$LOOP_CONF2_FRAG"
-for _pn in now sphere repo_labels strands ratelim core core_detail sops livelock dup_refs unsent; do
-    printf '_PROBE_AT=0\n_PROBE_STATUS=never\n' > "$LOOP_CONF2_FRAG/${_pn}.env"
-done
-CONF_FILE2="$TMP/test2.conf"
-# Pre-date the config to ensure mtime changes when we touch it.
-printf '# test config\n' > "$CONF_FILE2"
-touch -d "5 seconds ago" "$CONF_FILE2"
-(
-    sleep 1
-    touch "$CONF_FILE2"
-) &
-_touch_pid=$!
-_ec_change=0
-timeout 5 env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$CONF_FILE2" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-    SPIRA_RUN="$LOOP_CONF2_RUN" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
-    SPIRA_COCKPIT="$TMP" \
-    SPIRA_COCKPIT_FORCE=1 \
-    SPIRA_COCKPIT_TICK=0 \
-    FRAG_DIR="$LOOP_CONF2_FRAG" \
-    bash "$HERE/collect.sh" loop >/dev/null 2>"$TMP/loop_conf_err.log" || _ec_change=$?
-wait "$_touch_pid" 2>/dev/null || true
-if [ "$_ec_change" -eq 0 ]; then
-    ok "loop exits 0 on config change"
-else
-    bad "loop exited ${_ec_change} on config change" "wanted 0"
-fi
-_conf_err="$(cat "$TMP/loop_conf_err.log" 2>/dev/null)"
-want "loop config-change message present" "config changed" "$_conf_err"
+# Config-change exit is now covered by test-conf-watch.sh, alongside health.sh and
+# loom.sh's own loops (duplicate cluster 9, docs/test-plan/cockpit-observability.md).
 
 # ============================================================
 echo
-echo "11. SP_COLLECTOR_REV stamped in merged snapshot:"
+echo "10. SP_COLLECTOR_REV stamped in merged snapshot:"
 
 # POSITIVE CONTROL: a probe with ok status contributes values so the merge ran at all.
 rm -f "$FRAG_DIR"/*.env
@@ -432,7 +372,7 @@ fi
 
 # ============================================================
 echo
-echo "12. temp cleanup: external kill leaves no temp in cockpit.d:"
+echo "11. temp cleanup: external kill leaves no temp in cockpit.d:"
 
 # POSITIVE CONTROL: a slow probe in a subshell creates a temp before being killed.
 # Kill it and verify the temp is gone.
@@ -475,7 +415,7 @@ n_kill_tmps="$(find "$KILL_FRAG" -maxdepth 1 -name '.*' | wc -l)"
 
 # ============================================================
 echo
-echo "13. killed counter: timeout increments _PROBE_KILLED, success resets to 0:"
+echo "12. killed counter: timeout increments _PROBE_KILLED, success resets to 0:"
 
 KILLED_FRAG="$TMP/killed_frag"
 mkdir -p "$KILLED_FRAG"
@@ -519,7 +459,7 @@ want "13/success: _PROBE_KILLED=0" "_PROBE_KILLED=0" "$frag_k3"
 
 # ============================================================
 echo
-echo "14. startup sweep: old temps in cockpit.d removed on loop start:"
+echo "13. startup sweep: old temps in cockpit.d removed on loop start:"
 
 SWEEP_RUN="$TMP/sweep_run"
 mkdir -p "$SWEEP_RUN"
@@ -555,7 +495,7 @@ fi
 
 # ============================================================
 echo
-echo "15. SP_PROBE_KILLED_<name> appears in merged snapshot:"
+echo "14. SP_PROBE_KILLED_<name> appears in merged snapshot:"
 
 rm -f "$FRAG_DIR"/*.env
 printf '_PROBE_AT=1\n_PROBE_STATUS=timeout\n_PROBE_KILLED=3\n' > "$FRAG_DIR/core.env"

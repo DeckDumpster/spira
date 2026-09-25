@@ -21,8 +21,13 @@
 # (question/decision mails) are sent directly by the callers that have the context to write
 # them properly (claims, reopens, landings belong in the log; the mailbox holds only decisions).
 #
+# The taxonomy and call-site wiring are pure source greps and live in
+# test-event-taxonomy.sh (T0) instead — coverage-map row 20,
+# docs/test-plan/cockpit-observability.md.
+#
 # defect: sp-gvm
-# covers: spira/*.sh
+# tier: T1
+# covers: spira/lib.sh UC-cockpit-observability-20
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -53,6 +58,7 @@ emit() {   # emit <kind> <target|-> <title> [detail]
     SPIRA_CONF=/nonexistent SPIRA_HOME="${HOME_OVERRIDE:-$SH}" SPIRA_REPO="$TMP" SPIRA_RUN="$RUN" \
     SPIRA_DB=/nonexistent-spira-db \
     SPIRA_EVENT_COOLDOWN="${COOLDOWN:-3600}" \
+    SPIRA_NOW="${NOW:-$(date -u +%s)}" \
         bash "$TMP/emit" "$@" 2>&1
 }
 emitted()  { cat "$RUN/events.log" 2>/dev/null; }
@@ -117,20 +123,27 @@ echo "suppressed is not dropped — the count rides out on the next one"
 # A window that expires with a run of suppressions behind it must SAY so. A panel that
 # renders a storm as one quiet row is a check reporting all-clear on the thing it exists to
 # show (law-alerts-must-be-actionable).
+#
+# THE CLOCK IS INJECTED (SPIRA_NOW / NOW above), NOT SLEPT THROUGH. The rate limiter's
+# window is real-seconds arithmetic on `now`, so an emit at a fixed NOW and one two seconds
+# later exercise exactly the code path two real `sleep 2`s did, without spending them.
 fresh
-COOLDOWN=1 emit branch.reclaimed sp-b0c "reclaimed sp-b0c — reclaim 1" >/dev/null
-for n in 2 3 4; do COOLDOWN=999 emit branch.reclaimed sp-b0c "reclaimed sp-b0c — reclaim $n" >/dev/null; done
+NOW=1000 COOLDOWN=1 emit branch.reclaimed sp-b0c "reclaimed sp-b0c — reclaim 1" >/dev/null
+for n in 2 3 4; do NOW=1000 COOLDOWN=999 emit branch.reclaimed sp-b0c "reclaimed sp-b0c — reclaim $n" >/dev/null; done
 is "three repeats are held" "1" "$(rows)"
-sleep 2
-COOLDOWN=1 emit branch.reclaimed sp-b0c "reclaimed sp-b0c — reclaim 5" >/dev/null
+NOW=1002 COOLDOWN=1 emit branch.reclaimed sp-b0c "reclaimed sp-b0c — reclaim 5" >/dev/null
 is   "the expired window emits again"     "2"            "$(rows)"
 want "carrying what it held back"         "+3 more since" "$(emitted)"
 
 # And the window belongs to the FIRST emission, not the last suppression: refreshing it on
 # every repeat is how a loop faster than the window goes permanently silent.
 fresh
-COOLDOWN=2 emit branch.reclaimed sp-hot "reclaimed sp-hot — 1" >/dev/null
-for n in 2 3 4 5; do sleep 1; COOLDOWN=2 emit branch.reclaimed sp-hot "reclaimed sp-hot — $n" >/dev/null; done
+NOW=1000 COOLDOWN=2 emit branch.reclaimed sp-hot "reclaimed sp-hot — 1" >/dev/null
+_hot_now=1000
+for n in 2 3 4 5; do
+    _hot_now=$((_hot_now + 1))
+    NOW=$_hot_now COOLDOWN=2 emit branch.reclaimed sp-hot "reclaimed sp-hot — $n" >/dev/null
+done
 [ "$(rows)" -ge 2 ] && ok "a loop faster than the window still surfaces" \
                     || bad "a loop faster than the window still surfaces" "got $(rows) rows"
 
@@ -145,63 +158,6 @@ is "and nothing is written"             "0" "$(rows)"
 out="$(emit bead.landed sp-x "")"; rc=$?
 is "an outcome with no title is refused" "1" "$rc"
 is "and nothing is written for it either" "0" "$(rows)"
-
-# --------------------------------------------------------------------------------------
-echo
-echo "the taxonomy — every kind the harness emits is one the emitter accepts"
-# --------------------------------------------------------------------------------------
-# A typo'd kind is refused at send time. Catching it at the gate is the difference between
-# a taxonomy and free text, so the vocabulary is declared here and every call site checked
-# against it — adding a kind is then a deliberate act, which is what a taxonomy is.
-KINDS="aeon.claimed bead.landed bead.poisoned bead.reopened branch.reclaimed ci.failed"
-KINDS="$KINDS pilgrimage.complete note aeon.rapid"
-
-sites="$(grep -rhE '[^#]spira_event [a-z0-9.]+' "$HERE"/*.sh 2>/dev/null \
-         | grep -v '^\s*#' \
-         | grep -oE 'spira_event [a-z0-9.]+' \
-         | sed -E 's/.* //' | sort -u)"
-[ -n "$sites" ] && ok "the call sites can be found at all" \
-                || bad "the call sites can be found at all" "the grep matched nothing — it is measuring itself, not the harness"
-
-for k in $sites; do
-    case " $KINDS " in
-        *" $k "*) ;;
-        *) bad "kind '$k' is in the declared taxonomy" \
-               "an emitted kind nobody declared — add it to KINDS here, or fix the call site" ;;
-    esac
-done
-case "$sites" in *bead.landed*) ok "the emitted kinds are all declared" ;; esac
-
-# Each kind must be lowercase dotted segments, no longer than 32 characters (the db column).
-for k in $KINDS; do
-    case "$k" in
-        *[!a-z0-9.]*|.*|*.|*..*) bad "kind '$k' is valid" "not lowercase dotted segments" ;;
-        *) [ "${#k}" -le 32 ] || bad "kind '$k' fits 32-char limit" "${#k} chars" ;;
-    esac
-done
-ok "every declared kind is lowercase dotted and fits the column"
-
-# --------------------------------------------------------------------------------------
-echo
-echo "the call sites — every outcome the harness has is wired to one"
-# --------------------------------------------------------------------------------------
-# aeon.claimed cannot be driven by a suite: aeon.sh launches a Claude session, so every
-# suite stubs it. The other five are exercised through their own scripts in test-landing.sh,
-# test-poison.sh and test-ci-park.sh. What is checkable here is that the claim is still
-# wired, and wired AFTER the ledger — the ledger is what aeon_count and the born/awake
-# positive control read, and it must not come to depend on a database being reachable.
-claim="$(grep -n -A14 '^ledger "awake \$FAYTH \$BEAD_ID"' "$HERE/aeon.sh" 2>/dev/null)"
-want "a claim is emitted"          "spira_event aeon.claimed" "$claim"
-want "and only after the ledger"   "ledger \"awake"           "$claim"
-
-for site in \
-    "landing.sh:bead.landed"    "landing.sh:bead.reopened" \
-    "sentinel.sh:bead.poisoned" "gate-check.sh:ci.failed" \
-    "strand.sh:branch.reclaimed"; do
-    f="${site%%:*}"; k="${site##*:}"
-    grep -q "spira_event $k " "$HERE/$f" \
-        && ok "$f emits $k" || bad "$f emits $k" "no call site"
-done
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
