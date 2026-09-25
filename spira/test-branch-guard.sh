@@ -264,7 +264,7 @@ echo "test-branch-guard.sh — hooks/pre-commit: the tracked hook runs exclude.s
 HREPO="$TMP/hrepo"
 mkdir -p "$HREPO/hooks"
 git init -q -b main "$HREPO"
-cp "$HERE/boundary" "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
+cp "$HERE/boundary" "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" \
    "$HERE/exclude.sh" "$HERE/scratch-fence.sh" "$HERE/branch-guard.sh" "$HREPO/"
 cp "$HERE/hooks/pre-commit" "$HREPO/hooks/pre-commit"
 chmod +x "$HREPO/exclude.sh" "$HREPO/scratch-fence.sh" "$HREPO/branch-guard.sh" "$HREPO/hooks/pre-commit"
@@ -295,7 +295,10 @@ commit_through_hook() {   # commit_through_hook <email> <name> <message> -> stdo
 
 echo "SEEN RED: exclude.sh, through the real hook, refuses beads data:"
 printf '{}\n' > "$HREPO/export.jsonl"
-git -C "$HREPO" add export.jsonl
+# -f: exclude.sh install's own .gitignore stanza already ignores *.jsonl; without -f
+# `git add` would silently skip it, and the commit would fail with nothing staged —
+# a false pass that never reached exclude.sh at all.
+git -C "$HREPO" add -f export.jsonl
 out="$(commit_through_hook op@example.com op "sp-test: stage beads export")"; rc=$?
 is   "hook run: exclude.sh refuses a staged .jsonl export" "1" "$rc"
 want "hook run: refusal names exclude.sh" "exclude.sh" "$out"
