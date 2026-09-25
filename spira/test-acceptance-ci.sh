@@ -226,6 +226,10 @@ git -C "$_notes_seed" config user.name "T" 2>/dev/null || true
 git -C "$_notes_seed" commit --allow-empty -m "prior-base" >/dev/null 2>&1
 git -C "$_notes_seed" notes --ref=acceptance add \
     -m "FAIL prior-run 0 passed, 1 failed" HEAD >/dev/null 2>&1
+# actions/checkout gives a fresh clone the tagged commit itself (just not its
+# notes), so main must reach the bare repo too — not only the notes ref —
+# or the fresh clone's HEAD is unborn and can't be annotated at all.
+git -C "$_notes_seed" push origin main >/dev/null 2>&1
 git -C "$_notes_seed" push origin 'refs/notes/acceptance' >/dev/null 2>&1
 
 # Fresh clone: simulates actions/checkout — no refs/notes/acceptance locally.
