@@ -68,6 +68,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       vmid:  ${{ steps.vm.outputs.vmid }}
+      vm-token: ${{ steps.vm.outputs.vm-token }}
       label: ${{ steps.vm.outputs.label }}
     steps:
       - uses: DeckDumpster/ephemeral-ci/provision@v1
@@ -246,3 +247,4 @@ jobs:
           pve-ca-cert:        ${{ vars.PVE_CA_CERT }}
           pve-node:           ${{ vars.PVE_NODE }}
           template-vmid:      ${{ vars.TEMPLATE_VMID }}
+          vm-token:           ${{ needs.provision.outputs.vm-token }}
