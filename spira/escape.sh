@@ -31,12 +31,7 @@ DRY_FLAG="${2:-}"
 F="$SPIRA_HOME/chamber/$FAYTH.fayth"
 [ -f "$F" ] || die "no such fayth: $F"
 
-# THE WORLD GATE FIRST, same as every scheduled summon path: this script reaches around a
-# broken scheduler, not around an operator holding the world open on purpose (halted or
-# draining honoured exactly as summon_fayth honours them — G8).
-world_gate "$FAYTH" escape.sh || exit 1
-
-# CAPACITY NEXT. An account outage is not a scheduling bug; spending a bead attempt on
+# CAPACITY FIRST. An account outage is not a scheduling bug; spending a bead attempt on
 # it is still wrong. aeon.sh checks this too, but checking here avoids the summon entirely.
 if capacity_paused; then
     log "escape.sh $FAYTH: account out of capacity for another ${SPIRA_CAPACITY_LEFT}s — not summoning"
