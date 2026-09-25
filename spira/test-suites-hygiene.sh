@@ -4,9 +4,11 @@
 #
 # FOUR PROPERTIES VERIFIED.
 #
-# 1. FLAKE THRESHOLD: two distinct runs inside the window quarantine; one does not;
-#    two runs whose timestamps fall outside the window do not. Same run_id twice counts
-#    as one (dedup).
+# 1. FLAKE THRESHOLD (sp-n2ax8): two distinct runs inside the window file a report through
+#    incident.sh; the suite is never written to suite-state and no branch is created — a red
+#    suite is reported and attributed, never silently quarantined. One run does not report;
+#    two runs whose timestamps fall outside the window do not either. Same run_id twice
+#    counts as one (dedup).
 #
 # 2. REACTIVATION: a quarantined suite whose bead is LANDED and whose clean-run count
 #    reaches SPIRA_QUARANTINE_CLEAN_RUNS is activated; either condition alone is not enough.
@@ -78,8 +80,8 @@ touch "$SH/suite-state"
 # Touch the suite files referenced by observe-flake so the existence check passes.
 touch "$SH/test-hygiene-foo.sh"
 
-# Init the fixture root as a git repo so _suite_auto_quarantine can create worktree branches.
-# _suite_auto_quarantine derives repo from HERE/.., which is $TMP when suites.sh runs from $SH.
+# Init the fixture root as a git repo — a regression control for PART 1: crossing the flake
+# threshold must never create a branch or touch this checkout (sp-n2ax8).
 git init -q "$TMP"
 git -C "$TMP" config user.email "flake-test@example.invalid"
 git -C "$TMP" config user.name "Test"
@@ -120,28 +122,18 @@ latest_mail_body_op() {
     local f; f="$(ls -t "$MAIL/operator/new"/* "$MAIL/operator/cur"/* 2>/dev/null | head -1)"
     [ -n "$f" ] && cat "$f"
 }
-# Inspect the auto-quarantine branch for a suite (quarantine is no longer written to production checkout).
-branch_state_of() {
-    local _br _tmp _r
-    _br="$(git -C "$TMP" branch --list "spira-suite-state/auto-${1%.sh}-*" 2>/dev/null \
-        | tail -1 | tr -d ' *')"
-    [ -n "$_br" ] || { printf ''; return 0; }
-    _tmp="$(mktemp)"
-    git -C "$TMP" show "$_br:spira/suite-state" > "$_tmp" 2>/dev/null
-    _r="$(grep -E "^$1 \|" "$_tmp" | awk -F'|' '{print $2}' | tr -d ' ')"
-    rm -f "$_tmp"
-    printf '%s' "${_r:-active}"
-}
-branch_bead_of() {
-    local _br _tmp _bid
-    _br="$(git -C "$TMP" branch --list "spira-suite-state/auto-${1%.sh}-*" 2>/dev/null \
-        | tail -1 | tr -d ' *')"
-    [ -n "$_br" ] || { printf ''; return 0; }
-    _tmp="$(mktemp)"
-    git -C "$TMP" show "$_br:spira/suite-state" > "$_tmp" 2>/dev/null
-    _bid="$(grep -E "^$1 \|" "$_tmp" | awk -F'|' '{print $4}' | tr -d ' ')"
-    rm -f "$_tmp"
-    printf '%s' "${_bid:-}"
+# No branch is ever created by observe-flake (sp-n2ax8: the whole mechanism is gone).
+any_branch_created() { git -C "$TMP" branch --list 'spira-suite-state/*' 2>/dev/null | head -1 | tr -d ' *'; }
+bead_id_of_report() { printf '%s' "$1" | grep -oE 'bead: [a-z]+-[a-z0-9]+' | awk '{print $2}'; }
+bead_title() {
+    B show "$1" --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
+    print(d.get("title") or "")
+except Exception:
+    pass
+' 2>/dev/null
 }
 
 # Reset helpers.
@@ -163,29 +155,30 @@ out_ne="$(sut observe-flake no-such-suite.sh run-1 2>&1)"; rc_ne=$?
 isnz "non-existent suite: non-zero exit" "$rc_ne"
 want "non-existent suite: error names the suite" "no such suite" "$out_ne"
 
-# -- positive control: two runs inside the window quarantine --
+# -- positive control: two runs inside the window file a report, never quarantine --
 echo
-echo "two runs inside window → quarantined:"
+echo "two runs inside window → reported, never quarantined:"
 reset_statefile; reset_state
 
-# First call (run-1): count=1, below threshold=2, no quarantine.
+# First call (run-1): count=1, below threshold=2, no report.
 out1="$(sut observe-flake test-hygiene-foo.sh run-1 2>&1)"
 st1="$(state_of test-hygiene-foo.sh)"
-is "SEEN RED: first run: 1 in window, not quarantined yet" "active" "$st1"
+is "SEEN RED: first run: 1 in window, not reported yet" "active" "$st1"
+nowant "first run: no report filed below threshold" "reported (bead:" "$out1"
 
-# Second call: count=2 = threshold, quarantine goes to a branch (not the production checkout).
+# Second call: count=2 = threshold. Filed through incident.sh; suite-state and the checkout
+# are never touched, and no branch is created.
 out2="$(sut observe-flake test-hygiene-foo.sh run-2 2>&1)"
 st2="$(state_of test-hygiene-foo.sh)"
-is "second obs: production checkout stays clean" "active" "$st2"
-bst2="$(branch_state_of test-hygiene-foo.sh)"
-is "second obs reaches threshold: suite quarantined on branch" "quarantined" "$bst2"
-want "auto-quarantine message emitted" "auto-quarantine" "$out2"
-bid_after_quarantine="$(branch_bead_of test-hygiene-foo.sh)"
-isnz "auto-quarantine: branch carries non-empty bead id" "${#bid_after_quarantine}"
-if [ -n "${bid_after_quarantine:-}" ]; then
-    q_body="$(latest_mail_body_op)"
-    want "auto-quarantine mail's rendered block leads with the filed bead's id and title" \
-        "$bid_after_quarantine: why does test-hygiene-foo.sh fail intermittently" "$q_body"
+is "second obs: suite-state never written (stays active)" "active" "$st2"
+nobranch="$(any_branch_created)"
+is "second obs reaches threshold: no branch created" "" "$nobranch"
+want "flake report filed through incident.sh" "reported (bead:" "$out2"
+bid_reported="$(bead_id_of_report "$out2")"
+isnz "flake report: bead id captured" "${#bid_reported}"
+if [ -n "${bid_reported:-}" ]; then
+    want "flake report bead is titled as a question, not a quarantine notice" \
+        "why does test-hygiene-foo.sh fail intermittently" "$(bead_title "$bid_reported")"
 fi
 
 # -- same run_id twice: dedup fires, only one observation recorded --
