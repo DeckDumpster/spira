@@ -850,7 +850,14 @@ main() {
             while IFS= read -r _csline; do
                 case "$_csline" in "head-sha: "*) ci_head="${_csline#head-sha: }" ;; esac
             done <<< "$status_out"
-            if [ -n "${ci_head:-}" ] && [ "$ci_head" != "$batch_head" ]; then
+            if [ -z "${ci_head:-}" ]; then
+                # Unverifiable green (no head-sha to check against the sealed batch
+                # head): fail closed rather than land blind.
+                printf 'verdict %s: PR %s green but head-sha missing — cannot verify sealed head; holding batch\n' \
+                    "$name" "$pr_n"
+                return 0
+            fi
+            if [ "$ci_head" != "$batch_head" ]; then
                 "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
                 local _mm _mid _mtip
                 for _mm in $members_str; do
