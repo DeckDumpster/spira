@@ -14,9 +14,11 @@
 # reopens it as an eviction. The fix: skip RED reason=gate (normal path); skip when the
 # record tip is older than the current branch tip (session pushed past the eviction).
 #
-# FIXTURE CASES (sp-ygvu0):
-#   (a) RED reason=gate   at current tip   → stays closed (gate-red, not eviction)
-#   (b) RED reason=ejected at stale tip    → stays closed (session pushed past eviction)
+# FIXTURE CASES (sp-ygvu0). "Stays closed" below means the eviction-race guard itself does
+# not fire — cleanup()'s later, unconditional submitted conversion (sp-qsona) still applies
+# to a work bead either way, so the bead ends up open+submitted rather than closed:
+#   (a) RED reason=gate   at current tip   → stays closed here (gate-red, not eviction)
+#   (b) RED reason=ejected at stale tip    → stays closed here (session pushed past eviction)
 #   (c) RED reason=ejected at current tip  → reopened     (eviction, tip matches)
 #   EJECTED at current tip                 → reopened     (EJECTED is always batch eviction)
 #
@@ -31,8 +33,8 @@
 #     needs-operator instead of reopening again.
 #
 # POSITIVE CONTROLS (law-absence-needs-a-positive-control):
-#   - closed+committed with NO landstate file → stays closed
-#   - closed+committed with landstate=CERTIFIED → stays closed
+#   - closed+committed with NO landstate file → stays closed here
+#   - closed+committed with landstate=CERTIFIED → stays closed here
 #
 # The shim writes the landstate after committing (so the recorded tip matches the real
 # branch tip) when a per-bead control file exists. For the stale-tip case the landstate is
@@ -165,61 +167,66 @@ rm -f "$TMP/evict-ctrl/sp-er-2" "$SPIRA_RUN/landstate/sp-er-2"
 
 # =============================================================================
 echo
-echo "closed+committed, no landstate file — stays closed (positive control):"
+echo "closed+committed, no landstate file — converted to submitted, not the eviction-race reopen (positive control):"
 # =============================================================================
 testdb_reset; seed sp-er-3
 rm -f "$SPIRA_RUN/landstate/sp-er-3"
 run_aeon
-is     "bead stays closed (no landstate)"              closed "$(field sp-er-3 status)"
-nowant "no eviction-race reopen fired"                 "eviction-race" "$(cat "$TMP/out")"
+is     "bead converted, not left closed (no landstate)" open "$(field sp-er-3 status)"
+want   "carrying the submitted label"                   "spira-submitted" "$(field sp-er-3 labels)"
+nowant "no eviction-race reopen fired"                  "eviction-race" "$(cat "$TMP/out")"
 
 # =============================================================================
 echo
-echo "closed+committed+landstate=CERTIFIED — stays closed (positive control):"
+echo "closed+committed+landstate=CERTIFIED — converted to submitted, not the eviction-race reopen (positive control):"
 # =============================================================================
 testdb_reset; seed sp-er-4
 printf 'CERTIFIED faksha %s certified\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-4"
 run_aeon
-is     "bead stays closed (landstate=CERTIFIED)"       closed "$(field sp-er-4 status)"
-nowant "no eviction-race reopen fired"                 "eviction-race" "$(cat "$TMP/out")"
+is     "bead converted, not left closed (landstate=CERTIFIED)" open "$(field sp-er-4 status)"
+want   "carrying the submitted label"                           "spira-submitted" "$(field sp-er-4 labels)"
+nowant "no eviction-race reopen fired"                          "eviction-race" "$(cat "$TMP/out")"
 rm -f "$SPIRA_RUN/landstate/sp-er-4"
 
 # =============================================================================
 echo
-echo "closed+committed+landstate=RED no-rebase@<sha> — stays closed (landing.sh owns this):"
+echo "closed+committed+landstate=RED no-rebase@<sha> — converted to submitted, not the eviction-race reopen (landing.sh owns this):"
 # =============================================================================
 # no-rebase@ is not in LAND_EVICTION_REASONS; the guard exits before checking the tip.
 testdb_reset; seed sp-er-5
 printf 'RED faksha %s no-rebase@deadbeef\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-5"
 run_aeon
-is     "bead stays closed (no-rebase@ RED)"           closed "$(field sp-er-5 status)"
-nowant "no eviction-race reopen fired"                 "eviction-race" "$(cat "$TMP/out")"
+is     "bead converted, not left closed (no-rebase@ RED)" open "$(field sp-er-5 status)"
+want   "carrying the submitted label"                      "spira-submitted" "$(field sp-er-5 labels)"
+nowant "no eviction-race reopen fired"                     "eviction-race" "$(cat "$TMP/out")"
 rm -f "$SPIRA_RUN/landstate/sp-er-5"
 
 # =============================================================================
 echo
-echo "(a) closed+committed+landstate=RED reason=gate — stays closed:"
+echo "(a) closed+committed+landstate=RED reason=gate — converted to submitted, not the eviction-race reopen:"
 # =============================================================================
 # gate is not in LAND_EVICTION_REASONS; same shape as no-rebase@.
 testdb_reset; seed sp-er-6
 printf 'RED faksha %s gate\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-6"
 run_aeon
-is     "bead stays closed (gate RED)"                 closed "$(field sp-er-6 status)"
+is     "bead converted, not left closed (gate RED)"   open "$(field sp-er-6 status)"
+want   "carrying the submitted label"                  "spira-submitted" "$(field sp-er-6 labels)"
 nowant "no eviction-race reopen fired"                 "eviction-race" "$(cat "$TMP/out")"
 rm -f "$SPIRA_RUN/landstate/sp-er-6"
 
 # =============================================================================
 echo
-echo "(b) closed+committed+landstate=RED reason=ejected at STALE tip — stays closed:"
+echo "(b) closed+committed+landstate=RED reason=ejected at STALE tip — converted to submitted, not the eviction-race reopen:"
 # =============================================================================
 # Landstate is written before the shim runs with a fake tip. The shim's commit changes the
-# branch tip, making the record stale. Stale record → close stands.
+# branch tip, making the record stale. Stale record → close stands (then converts).
 testdb_reset; seed sp-er-7
 printf 'RED faksha %s ejected\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-er-7"
 run_aeon
-is     "bead stays closed (stale eviction record)"     closed "$(field sp-er-7 status)"
-nowant "no eviction-race reopen fired"                 "eviction-race" "$(cat "$TMP/out")"
-want   "aeon log mentions stale record"                "stale record" "$(cat "$TMP/out")"
+is     "bead converted, not left closed (stale eviction record)" open "$(field sp-er-7 status)"
+want   "carrying the submitted label"                              "spira-submitted" "$(field sp-er-7 labels)"
+nowant "no eviction-race reopen fired"                             "eviction-race" "$(cat "$TMP/out")"
+want   "aeon log mentions stale record"                            "stale record" "$(cat "$TMP/out")"
 rm -f "$SPIRA_RUN/landstate/sp-er-7"
 
 # =============================================================================

@@ -1085,6 +1085,10 @@ sys.exit(0 if sup else 1)' 2>/dev/null; then
             bdq label add "$BEAD_ID" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID $_wcc_log"
             unset _wcc_note _wcc_log _wcc_gate_why
+            # $st DRIVES THE FINAL LEDGER LINE (ledger_done "${SESSION_RC:-$rc}" "${st:-?}"
+            # below) — left at its snapshot value of "closed" it would report a status the
+            # bead no longer has, the same misreport eviction-race avoids by setting st=open.
+            st=submitted
         fi
     elif [ -f "$SPIRA_HOME/gate-run.sh" ]; then
         local gate_st

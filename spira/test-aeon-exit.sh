@@ -132,7 +132,7 @@ echo "bead closed, claude exits 0 — aeon exits 0 (baseline):"
 fresh; seed sp-ex-1
 printf commit-close > "$TMP/shim-act"; printf 0 > "$TMP/shim-rc"
 rc="$(run_aeon)"
-is "bead is closed"      "closed" "$(field sp-ex-1 status)"
+is "bead is converted to submitted, not left closed" "open" "$(field sp-ex-1 status)"
 is "aeon exits 0"        "0"      "$rc"
 
 # ======================================================================================
@@ -145,10 +145,10 @@ echo "bead closed, claude exits 1 — aeon still exits 0 (the fix):"
 fresh; seed sp-ex-2
 printf commit-close > "$TMP/shim-act"; printf 1 > "$TMP/shim-rc"
 rc="$(run_aeon)"
-is "bead is closed"      "closed" "$(field sp-ex-2 status)"
+is "bead is converted to submitted, not left closed" "open" "$(field sp-ex-2 status)"
 is "aeon exits 0 despite claude rc=1" "0" "$rc"
 want "ledger still records the real rc" "rc=1" "$(grep 'done builder sp-ex-2' "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null)"
-want "and records the closed status"   "status=closed" "$(grep 'done builder sp-ex-2' "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null)"
+want "and records the submitted status" "status=submitted" "$(grep 'done builder sp-ex-2' "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null)"
 
 # ======================================================================================
 echo
