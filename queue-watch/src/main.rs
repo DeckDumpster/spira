@@ -3,7 +3,9 @@
 //!
 //!   queue-watch watch  [--interval S] [--ticks N] [--json]   loop; one line per event
 //!   queue-watch health                                      exit non-zero when the last
-//!                                                           poll is stale or was blind
+//!                                                           poll is stale or was blind;
+//!                                                           an install with no queue-mode
+//!                                                           repo is idle, and healthy
 //!
 //! Common flags: --run DIR (SPIRA_RUN), --db DIR (SPIRA_DB), --home DIR (SPIRA_HOME, where
 //! forge.sh lives), --config FILE (spira.toml; default search: SPIRA_TOML, $SPIRA_REPO,
@@ -74,9 +76,9 @@ fn parse() -> Result<Opts, String> {
     Ok(o)
 }
 
-fn find_config(o: &Opts) -> Result<PathBuf, String> {
+fn find_config(o: &Opts) -> Option<PathBuf> {
     if let Some(c) = &o.config {
-        return Ok(c.clone());
+        return Some(c.clone());
     }
     let mut cands = Vec::new();
     if let Some(r) = env::var_os("SPIRA_REPO") {
@@ -89,17 +91,23 @@ fn find_config(o: &Opts) -> Result<PathBuf, String> {
         cands.push(x.join("spira/spira.toml"));
     }
     cands.push(PathBuf::from("/etc/spira/spira.toml"));
-    cands
-        .into_iter()
-        .find(|p| p.is_file())
-        .ok_or_else(|| "no spira.toml found (pass --config)".to_string())
+    cands.into_iter().find(|p| p.is_file())
 }
 
-/// Every `mode = "queue"` repository. Refuses an install with none: a watcher over zero
-/// repositories reports nothing forever, which is indistinguishable from a quiet queue.
-fn queue_repos(cfg: &Path, home: &Path) -> Result<Vec<Repo>, String> {
-    let text = fs::read_to_string(cfg).map_err(|e| format!("{}: {e}", cfg.display()))?;
-    let doc = spira_config::validate(&text).map_err(|e| format!("{}: {e}", cfg.display()))?;
+/// Why there is nothing to watch, as opposed to something being wrong.
+enum NoRepos {
+    Idle(String),
+    Fatal(String),
+}
+
+/// Every `mode = "queue"` repository. An install with none, or with no spira.toml yet, is
+/// IDLE — a fact about the install, said once and reported by health — never a crash loop.
+/// A spira.toml that does not parse is fatal: that is a fault someone must fix.
+fn queue_repos(cfg: Option<PathBuf>, home: &Path) -> Result<Vec<Repo>, NoRepos> {
+    let Some(cfg) = cfg else { return Err(NoRepos::Idle("no spira.toml found".into())) };
+    let cfg = cfg.as_path();
+    let text = fs::read_to_string(cfg).map_err(|e| NoRepos::Fatal(format!("{}: {e}", cfg.display())))?;
+    let doc = spira_config::validate(&text).map_err(|e| NoRepos::Fatal(format!("{}: {e}", cfg.display())))?;
     // A repo may name its own forge script; otherwise the harness's own (SPIRA_FORGE, which
     // conf.sh defaults to forge.sh beside the rest of the harness).
     let default_forge = env::var_os("SPIRA_FORGE").map(PathBuf::from).unwrap_or_else(|| home.join("forge.sh"));
@@ -115,7 +123,7 @@ fn queue_repos(cfg: &Path, home: &Path) -> Result<Vec<Repo>, String> {
         })
         .collect();
     if repos.is_empty() {
-        return Err(format!("{}: no repository has mode = \"queue\"", cfg.display()));
+        return Err(NoRepos::Idle(format!("{}: no repository has mode = \"queue\"", cfg.display())));
     }
     Ok(repos)
 }
@@ -148,6 +156,30 @@ fn render(t: u64, repo: &str, e: &Event, json: bool) -> String {
     }
 }
 
+/// Nothing to watch: say it once, keep the health record fresh, and stay up so a daemon row
+/// on an install without a queue does not become a restart loop.
+fn idle(o: &Opts, run: &Path, why: &str) -> Result<(), String> {
+    println!("{} - idle: {why}; nothing to watch", iso(now()));
+    let mut tick = 0u64;
+    loop {
+        write_idle(run, now(), o.interval, why);
+        tick += 1;
+        if o.ticks.map(|n| tick >= n).unwrap_or(false) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_secs(o.interval));
+    }
+}
+
+fn write_idle(run: &Path, t: u64, interval: u64, why: &str) {
+    let p = health_file(run);
+    let _ = fs::create_dir_all(p.parent().unwrap());
+    let tmp = p.with_extension("health.tmp");
+    if fs::write(&tmp, format!("idle {t} {interval} 0 {}\n", why.replace(char::is_whitespace, "_"))).is_ok() {
+        let _ = fs::rename(&tmp, &p);
+    }
+}
+
 fn health_file(run: &Path) -> PathBuf {
     run.join("watchd").join("queue-watch.health")
 }
@@ -169,7 +201,11 @@ fn write_health(run: &Path, t: u64, interval: u64, repos: usize, blind: &[String
 fn watch(o: &Opts) -> Result<(), String> {
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
-    let repos = queue_repos(&find_config(o)?, &home)?;
+    let repos = match queue_repos(find_config(o), &home) {
+        Ok(r) => r,
+        Err(NoRepos::Fatal(e)) => return Err(e),
+        Err(NoRepos::Idle(why)) => return idle(o, &run, &why),
+    };
     let env_ = Env {
         queue_dir: env::var_os("SPIRA_QUEUE_DIR").map(PathBuf::from).unwrap_or_else(|| run.join("queue")),
         landstate: run.join("landstate"),
@@ -225,10 +261,14 @@ fn health(o: &Opts) -> Result<(), String> {
     if age > 3 * iv {
         return Err(format!("last poll {age}s ago (interval {iv}s) — the watcher is hung or dead"));
     }
-    if st != "ok" {
-        return Err(format!("last poll was blind: {}", f.get(4).unwrap_or(&"?")));
+    match st {
+        "ok" => Ok(()),
+        "idle" => {
+            println!("idle: {}", f.get(4).unwrap_or(&"?").replace('_', " "));
+            Ok(())
+        }
+        _ => Err(format!("last poll was blind: {}", f.get(4).unwrap_or(&"?"))),
     }
-    Ok(())
 }
 
 fn main() -> ExitCode {

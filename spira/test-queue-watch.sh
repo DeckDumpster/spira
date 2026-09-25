@@ -13,7 +13,9 @@
 #      sequence is deterministic with no sleeps to race.
 #   3. health: passes after a good poll, fails when the last poll was blind, and fails when
 #      it has never polled — silence must never read as a quiet queue.
-#   4. A spira.toml with no mode=queue repository is refused, not watched forever.
+#   4. An install with no mode=queue repository (or no spira.toml yet) is IDLE: it says so,
+#      stays up, and health passes — a daemon row must not crash-loop an install without a
+#      queue. A spira.toml that does not parse is fatal.
 #   5. The watchd manifest row expands, and conf.sh resolves SPIRA_QUEUE_WATCH_BIN.
 #
 # QUEUE_WATCH_BIN may point at another binary; pointing it at a stub that prints nothing is
@@ -179,11 +181,18 @@ herr="$("$BIN" health --run "$T/never" 2>&1)"; hrc=$?
 [ "$hrc" -ne 0 ] && ok "health fails when it has never polled" || bad "health fails when it has never polled (rc=$hrc)"
 want "never-polled is named"                      "never polled" "$herr"
 
-# --- 4. nothing to watch is refused ----------------------------------------------------------
+# --- 4. nothing to watch is idle, not a crash loop -------------------------------------------
 printf '[repo.p]\npath = "%s"\nmode = "push"\n' "$T/repo" > "$FX/push-only.toml"
-rout="$("$BIN" watch --ticks 1 --run "$RUN" --home "$FX" --config "$FX/push-only.toml" 2>&1)"; rrc=$?
-[ "$rrc" -ne 0 ] && ok "no queue-mode repository is refused" || bad "no queue-mode repository is refused (rc=$rrc)"
-want "refusal names why"                          'no repository has mode = "queue"' "$rout"
+IRUN="$T/idle-run"
+rout="$("$BIN" watch --ticks 1 --interval 1 --run "$IRUN" --home "$FX" --config "$FX/push-only.toml" 2>&1)"; rrc=$?
+[ "$rrc" -eq 0 ] && ok "no queue-mode repository is idle, not an exit" || bad "no queue-mode repository is idle, not an exit (rc=$rrc)"
+want "idle says why"                              'idle: '"$FX"'/push-only.toml: no repository has mode = "queue"' "$rout"
+hout="$("$BIN" health --run "$IRUN" 2>&1)"; hrc=$?
+[ "$hrc" -eq 0 ] && ok "health passes when idle" || bad "health passes when idle (rc=$hrc)"
+want "health names the idle reason"               "idle:" "$hout"
+printf 'not = [valid\n' > "$FX/broken.toml"
+bout="$("$BIN" watch --ticks 1 --run "$IRUN" --home "$FX" --config "$FX/broken.toml" 2>&1)"; brc=$?
+[ "$brc" -ne 0 ] && ok "an unparseable spira.toml is fatal" || bad "an unparseable spira.toml is fatal (rc=$brc)"
 
 # --- 5. wiring -------------------------------------------------------------------------------
 row="$(command grep -E '^queue-watch\|daemon\|' "$HERE/watchers" || true)"
