@@ -924,6 +924,44 @@ _tsd_suite_timing() {
         >/dev/null 2>&1 || true
 }
 
+# _lpt_order <space-separated suite list> — print the same suites reordered
+# longest-first (LPT), using historical wall_secs from the run/tsd/
+# suite-timing family (sp-sbc6o) via tsd-query.sh's by-group query. LPT alone
+# brings a parallel pool's makespan close to
+# max(longest suite, total-suite-seconds/maxpar) (sp-ezkp3) — but only once
+# the slowest suites start first instead of draining an emptying pool at the
+# tail (sp-rbulh).
+#
+# A suite absent from the ledger — new, or the ledger unreadable at all —
+# sorts as if it were the longest suite on record: an unmeasured suite is
+# exactly the one a late start costs the most, so absence never falls back to
+# list order for everyone, it only ever grows the set treated as longest.
+_lpt_order() {
+    local _pool="$1"
+    [ -z "$_pool" ] && return 0
+    local _tab; _tab="$(printf '\t')"
+    local _durations=""
+    if [ -x "$HERE/tsd-query.sh" ]; then
+        _durations="$(bash "$HERE/tsd-query.sh" by-group suite-timing suite wall_secs 2>/dev/null)"
+    fi
+    local _longest=0 _lg_s _lg_d
+    while IFS="$_tab" read -r _lg_s _lg_d; do
+        case "${_lg_d:-}" in ''|*[!0-9.]*) continue ;; esac
+        awk -v a="$_lg_d" -v b="$_longest" 'BEGIN{exit !(a>b)}' && _longest="$_lg_d"
+    done < <(printf '%s\n' "$_durations")
+    local _sentinel; _sentinel="$(awk -v m="$_longest" 'BEGIN{printf "%.6f", m+1}')"
+
+    local _idx=0 _s _d _rows=""
+    for _s in $_pool; do
+        _idx=$((_idx+1))
+        _d="$(printf '%s\n' "$_durations" | awk -F'\t' -v s="$_s" '$1==s{print $2; exit}')"
+        case "${_d:-}" in ''|*[!0-9.]*) _d="$_sentinel" ;; esac
+        _rows="${_rows}${_d}${_tab}${_idx}${_tab}${_s}
+"
+    done
+    printf '%s' "$_rows" | sort -t "$_tab" -k1,1nr -k2,2n | awk -F'\t' '{printf "%s ", $3}'
+}
+
 _suites_t0="$(date +%s)"
 _timing_cpu0="$(awk '/^cpu /{s=0;for(i=2;i<=NF;i++)s+=$i;idle=$6+$7;printf "%d %d",s,idle;exit}' \
     /proc/stat 2>/dev/null || printf '0 0')"
@@ -1147,13 +1185,18 @@ else
     # measured at 13% of a full-corpus gate). Moving exclusive suites to the front
     # means the drain always finds an empty pool: this loop only reorders, the
     # exclusive/non-exclusive selection made below is unaffected.
+    # Within the parallel pool the suites are further ordered longest-first (LPT):
+    # the slowest suites start first so a long tail never forms behind a pool that
+    # has already had time to drain empty (sp-ezkp3, following sp-rbulh above).
     _par_order=""
     for _os in $SELECTED; do
         [ -n "$(suite_exclusive_of "$SUITE_DIR/$_os")" ] && _par_order="$_par_order $_os"
     done
+    _par_pool=""
     for _os in $SELECTED; do
-        [ -z "$(suite_exclusive_of "$SUITE_DIR/$_os")" ] && _par_order="$_par_order $_os"
+        [ -z "$(suite_exclusive_of "$SUITE_DIR/$_os")" ] && _par_pool="$_par_pool $_os"
     done
+    _par_order="$_par_order $(_lpt_order "$_par_pool")"
     _par_order="$(echo $_par_order)"
 
     for s in $_par_order; do

@@ -10,6 +10,11 @@
 #   tsd-query.sh rate     <family> <hours>                 rows/hour over the trailing window
 #   tsd-query.sh dwell    <family> <field> <p> [<hours>]   p-quantile of field (p in 0..1),
 #                                                           over the trailing window, or all rows
+#   tsd-query.sh by-group <family> <group> <field> [<hours>]
+#                                                           avg(field) per distinct value of
+#                                                           <group>, longest-first, tab-separated
+#                                                           "<group>\t<avg>" with no header —
+#                                                           meant for a shell caller, not a human
 #
 # <family>/<field> are read straight from a shell command line and interpolated into SQL, so
 # both are restricted to a tight identifier charset before they ever reach a query string —
@@ -33,6 +38,7 @@ usage:
   tsd-query.sh baseline <family> <field> <hours>
   tsd-query.sh rate     <family> <hours>
   tsd-query.sh dwell    <family> <field> <p> [<hours>]
+  tsd-query.sh by-group <family> <group> <field> [<hours>]
 USAGE
 }
 
@@ -101,6 +107,24 @@ case "$cmd" in
             SELECT quantile_cont(\"$field\", $p) AS \"p$p\", count(*) AS n
             FROM read_ndjson_auto('$path')
             $where;
+        "
+        ;;
+    by-group)
+        family="${1:?family required}"; group="${2:?group required}"; field="${3:?field required}"
+        hours="${4:-}"
+        _check_field "$group"; _check_field "$field"
+        path="$(_check_family "$family")" || exit $?
+        where=""
+        if [ -n "$hours" ]; then
+            _check_hours "$hours"
+            where="WHERE CAST(ts AS TIMESTAMP) >= now() - INTERVAL '$hours hours'"
+        fi
+        duckdb -csv -separator '	' -noheader -c "
+            SELECT \"$group\", avg(\"$field\")
+            FROM read_ndjson_auto('$path')
+            $where
+            GROUP BY \"$group\"
+            ORDER BY 2 DESC;
         "
         ;;
     *)
