@@ -42,7 +42,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --window) WINDOW_DAYS="${2:-}"; shift ;;
         --graph) GRAPH_FILE="${2:-}"; shift ;;
-        -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
         -*) printf 'released-defects.sh: unknown flag %s\n' "$1" >&2; exit 2 ;;
     esac
     shift
