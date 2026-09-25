@@ -26,10 +26,14 @@
 #
 #   4. delivers:check (no command) — IS reopened; malformed label is not evidence.
 #
+#   5. delivers:check:<hanging command> — IS reopened as a failed check, and the pass
+#      returns within the configured SPIRA_DELIVERS_CHECK_TIMEOUT plus epsilon rather than
+#      waiting out the full command (sp-bhpjs: an unbounded check stalled the whole pass).
+#
 # defect: sp-hivwr
 # covers: spira/sentinel.sh spira/aeon.sh
 # hermetic-ok: uses a fixture database and a local git repo, no systemd or gh
-# timeout: 60
+# timeout: 90
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -92,6 +96,7 @@ sentinel() {
     SPIRA_NOTIFY="$SH/ask.sh" SPIRA_REPO_MAP="$TMP/repo-map" \
     SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
     SPIRA_CONF="$TMP/no-such-conf" \
+    SPIRA_DELIVERS_CHECK_TIMEOUT="${SPIRA_DELIVERS_CHECK_TIMEOUT:-60}" \
     SPIRA_SKIP_RECLAIM=1 \
         bash "$SH/sentinel.sh" 2>&1
 }
@@ -167,6 +172,27 @@ out="$(sentinel)"
 is "sp-chk-bare is reopened (no command)" open "$(status_of sp-chk-bare)"
 want "the pass says so" "reopened sp-chk-bare" "$out"
 want "the reason says no command" "has no command" "$out"
+
+# ======================================================================================
+echo
+echo "delivers:check:<hanging command> — IS reopened as a failed check within timeout+epsilon:"
+# ======================================================================================
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"$PAST"}
+{"id":"sp-chk-hang","title":"check hangs","status":"closed","issue_type":"task","labels":["spira","plan","delivers:check:sleep 30","repo:$HOME_REPO"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-chk-hang","depends_on_id":"sp-goal","type":"parent-child"}]}
+JSONL
+touch "$RUN/sp-chk-hang.log"
+is "sp-chk-hang starts closed" closed "$(status_of sp-chk-hang)"
+_t0="$(date +%s)"
+out="$(SPIRA_DELIVERS_CHECK_TIMEOUT=1 sentinel)"
+_t1="$(date +%s)"
+_elapsed=$(( _t1 - _t0 ))
+is "sp-chk-hang is reopened (command timed out)" open "$(status_of sp-chk-hang)"
+want "the pass says so" "reopened sp-chk-hang" "$out"
+want "the reason names the timeout" "timed out" "$out"
+[ "$_elapsed" -lt 30 ] && ok "the pass did not wait out the 30s sleep (took ${_elapsed}s)" \
+    || bad "the pass did not wait out the 30s sleep" "took ${_elapsed}s"
 
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"

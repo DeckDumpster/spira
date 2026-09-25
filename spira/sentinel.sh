@@ -747,11 +747,13 @@ while IFS=$'\x1f' read -r id r_name superseded dropped sentcontent delivers star
     #   delivers:note:/abs/path    — the file at that path exists and was written in the bead's
     #   delivers:report:/abs/path    window (mtime after started_at)
     #   delivers:check:<command>   — the command exits 0; proves machine state the bead
-    #                                established. No time constraint — state is present or not.
-    #                                The command runs in the sentinel's environment (SPIRA_HOME,
-    #                                SPIRA_PROD and conf.sh exports are set). Shell variables in
-    #                                the command expand at check time via eval. Written at filing,
-    #                                not at close — so the aeon cannot pick a check it already
+    #                                established. No constraint on when that state was
+    #                                established — only on how long checking it may take:
+    #                                bounded by SPIRA_DELIVERS_CHECK_TIMEOUT (default 60s), a
+    #                                timeout scoring exactly like a non-zero exit. The command
+    #                                runs in the sentinel's environment (SPIRA_HOME, SPIRA_PROD
+    #                                and conf.sh exports are set). Written at filing, not at
+    #                                close — so the aeon cannot pick a check it already
     #                                satisfied (law-a-regression-test-must-be-seen-to-fail shape:
     #                                the filer chose the criterion before knowing the outcome).
     #
@@ -809,12 +811,23 @@ print(len([x for x in (d if isinstance(d,list) else [d]) if x.get("id")]))' 2>/d
                     # No time window — machine state is either present or not, regardless of
                     # when it was established. Shell variables in the command (e.g. $SPIRA_HOME)
                     # expand at check time from the sentinel's environment.
+                    #
+                    # BOUNDED BY A TIMEOUT. Run inline with no bound, one hanging command
+                    # stalls every bead behind it in this pass. A timeout scores exactly like
+                    # a non-zero exit — not yet — rather than hang the pass.
                     if [ "$_dval" = "$_dtype" ]; then
                         _delivers_ok=0
                         _delivers_fail="delivers:check has no command — use delivers:check:<command>"
-                    elif ! eval "$_dval" >/dev/null 2>&1; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:check: command exited non-zero: $_dval"
+                    else
+                        timeout "${SPIRA_DELIVERS_CHECK_TIMEOUT:-60}" bash -c "$_dval" >/dev/null 2>&1
+                        _drc=$?
+                        if [ "$_drc" = 124 ]; then
+                            _delivers_ok=0
+                            _delivers_fail="delivers:check: command timed out after ${SPIRA_DELIVERS_CHECK_TIMEOUT:-60}s: $_dval"
+                        elif [ "$_drc" != 0 ]; then
+                            _delivers_ok=0
+                            _delivers_fail="delivers:check: command exited non-zero: $_dval"
+                        fi
                     fi
                     ;;
                 action)

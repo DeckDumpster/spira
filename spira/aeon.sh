@@ -2063,12 +2063,22 @@ print(len([x for x in (d if isinstance(d,list) else [d])
                     # Command must follow the colon. Run it in the aeon's environment;
                     # exit 0 confirms the machine state is in place. No time window — machine
                     # state is either present or not, independent of when this session started.
+                    #
+                    # BOUNDED BY A TIMEOUT (SPIRA_DELIVERS_CHECK_TIMEOUT). A timeout scores
+                    # exactly like a non-zero exit — not yet — rather than hang the session.
                     if [ "$_dval" = "$_dtype" ]; then
                         _delivers_ok=0
                         _delivers_fail="delivers:check has no command — use delivers:check:<command>"
-                    elif ! eval "$_dval" >/dev/null 2>&1; then
-                        _delivers_ok=0
-                        _delivers_fail="delivers:check: command exited non-zero: $_dval"
+                    else
+                        timeout "${SPIRA_DELIVERS_CHECK_TIMEOUT:-60}" bash -c "$_dval" >/dev/null 2>&1
+                        _drc=$?
+                        if [ "$_drc" = 124 ]; then
+                            _delivers_ok=0
+                            _delivers_fail="delivers:check: command timed out after ${SPIRA_DELIVERS_CHECK_TIMEOUT:-60}s: $_dval"
+                        elif [ "$_drc" != 0 ]; then
+                            _delivers_ok=0
+                            _delivers_fail="delivers:check: command exited non-zero: $_dval"
+                        fi
                     fi
                     ;;
                 action)
