@@ -635,12 +635,15 @@ printf 'branch=spira/queue/refstable-test\n' > "$SPIRA_RUN/queue/refstable/open"
 mkdir -p "$T/refstable"
 printf 'refstable | %s | push | origin/main | |\n' "$T/refstable" >> "$SPIRA_REPO_MAP"
 
+# Other open batches from earlier sections (testrepo, redrepo, baseredrepo) are still on
+# disk — SPIRA_RUN is never wiped between sections — so the stub must answer only for
+# refstable's own branch, never for whichever repo happens to iterate last.
 _qs1=$(( $(date +%s) - 700 ))
 cat > "$STUB_FORGE" <<FEOF27A
 #!/usr/bin/env bash
-cmd="\${1:-}"
-case "\$cmd" in
-    batch-ci-status) printf 'queued-since: ${_qs1}\n' ;;
+cmd="\${1:-}"; branch_arg="\${3:-}"
+case "\$cmd:\$branch_arg" in
+    batch-ci-status:*refstable*) printf 'queued-since: ${_qs1}\n' ;;
 esac
 exit 0
 FEOF27A
@@ -652,9 +655,9 @@ rm -f "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
 _qs2=$(( $(date +%s) - 5000 ))
 cat > "$STUB_FORGE" <<FEOF27B
 #!/usr/bin/env bash
-cmd="\${1:-}"
-case "\$cmd" in
-    batch-ci-status) printf 'queued-since: ${_qs2}\n' ;;
+cmd="\${1:-}"; branch_arg="\${3:-}"
+case "\$cmd:\$branch_arg" in
+    batch-ci-status:*refstable*) printf 'queued-since: ${_qs2}\n' ;;
 esac
 exit 0
 FEOF27B
@@ -751,12 +754,14 @@ printf 'branch=spira/queue/ci30-test\n' > "$_ci30_dir/open"
 mkdir -p "$T/ci30repo"
 printf 'ci30repo | %s | push | origin/main | |\n' "$T/ci30repo" >> "$SPIRA_REPO_MAP"
 
+# Other open batches from earlier sections are still on disk — SPIRA_RUN is never wiped
+# between sections — so every stub below answers only for ci30repo's own branch.
 _ci30_below=$(( $(date +%s) - 100 ))   # 100s < default 600s threshold
 cat > "$STUB_FORGE" <<FEOF30A
 #!/usr/bin/env bash
-cmd="\${1:-}"
-case "\$cmd" in
-    batch-ci-status) printf 'run-id: 1\nqueued-since: ${_ci30_below}\n' ;;
+cmd="\${1:-}"; branch_arg="\${3:-}"
+case "\$cmd:\$branch_arg" in
+    batch-ci-status:*ci30*) printf 'run-id: 1\nqueued-since: ${_ci30_below}\n' ;;
 esac
 exit 0
 FEOF30A
@@ -782,14 +787,12 @@ _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "ci-stalled: DETECTED=no when forge returns no queued-since (nothing queued)" \
     "CLASS=ci-stalled DETECTED=no" "$_log"
 
+# A missing branch= means read_branch() returns None and the loop skips this open dir
+# before ever calling forge.sh for it — so the stub is never queried for ci30repo at all;
+# it must still answer nothing for every OTHER open repo, or one of those would fire instead.
 printf 'opened_at=100\n' > "$_ci30_dir/open"   # malformed: no branch= field
-_ci30_old=$(( $(date +%s) - 700 ))
-cat > "$STUB_FORGE" <<FEOF30C
+cat > "$STUB_FORGE" <<'FEOF30C'
 #!/usr/bin/env bash
-cmd="\${1:-}"
-case "\$cmd" in
-    batch-ci-status) printf 'run-id: 1\nqueued-since: ${_ci30_old}\n' ;;
-esac
 exit 0
 FEOF30C
 chmod +x "$STUB_FORGE"
