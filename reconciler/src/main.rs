@@ -333,13 +333,18 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
             continue;
         }
 
-        // A daemon row: needs to be active. Enabled-but-not-active is restarted; active-but-
-        // not-enabled is enabled WITHOUT --now, so a unit already running is never bounced
-        // just to satisfy its enablement bit.
-        let raw = if is_active {
+        // A daemon row: needs to be both enabled and active (sp-ocmes evidence, 2026-09-25:
+        // several *.service rows were found disabled, not merely stopped). An inactive
+        // daemon is restarted; an active-but-not-enabled one is enabled WITHOUT --now, so a
+        // unit already running is never bounced just to satisfy its enablement bit.
+        let raw = if is_active && is_enabled {
             RawStatus::Satisfied
         } else {
-            RawStatus::Gap { desired: "active".into(), observed: active.clone(), since_hint: None }
+            RawStatus::Gap {
+                desired: "enabled,active".into(),
+                observed: format!("{},{}", enabled, active),
+                since_hint: None,
+            }
         };
         let remedy = if !is_active {
             Remedy::Command {
