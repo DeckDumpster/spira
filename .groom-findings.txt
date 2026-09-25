@@ -1,62 +1,47 @@
-GROOM PASS sp-g58d6 - Graph Hygiene Results
+GROOM PASS sp-3qcpz - Graph Hygiene Results
 ============================================
 
-TRIGGER: UNCLAIMABLE: sp-87csm — fix the fayth: or partition label
+TRIGGER: UNCLAIMABLE: sp-zx68c — fix the fayth: or partition label
 
-SWEEP: groomer.sh sweep found no livelocked beads; acted on 0 beads.
+SWEEP: groomer.sh sweep found 2 livelocked beads (sp-zx68c, sp-5d0s6); acted on 0 (sweep
+does not handle unclaimable beads with descriptions).
 
-LIVELOCK ROWS HANDLED: 0
+LIVELOCK ROWS HANDLED: 2
 
-PARTITION LABEL FIXED:
+PARTITION LABELS FIXED:
 
-1. sp-87csm — [bug] worktree disappeared mid-session, losing uncommitted work
-   - Problem: no partition label; unclaimable by any persona
-   - Fix: added 'plan' label (matches pattern of other spira repo bugs)
-   - Now claimable by builder persona (FAYTH_LABELS=spira,plan)
+1. sp-zx68c — repeat attempt: no change — spira/sp-fhzib
+   - Problem: had 'partition:incident' but not 'incident'; unclaimable by ops persona
+     (FAYTH_LABELS=spira,incident requires standalone 'incident' label)
+   - Fix: added 'incident' label
+   - Now claimable by ops persona
 
-PREMISE-GONE CLOSURES (23 beads):
+2. sp-5d0s6 — repeat attempt: no change — spira/sp-keupw
+   - Problem: same as sp-zx68c — had 'partition:incident' but not 'incident'
+   - Fix: added 'incident' label
+   - Now claimable by ops persona
 
-Undeclared-repo decisions (subject beads now closed):
-  sp-6phlw — ref sp-2lox4 CLOSED
-  sp-k8zu7 — ref sp-w9nsr CLOSED
-  sp-yatp2 — ref sp-tinev CLOSED
+PREMISE-GONE CLOSURES:
 
-Rebase-loop / red-recurring decisions (subject beads now closed):
-  sp-jalyg  — ref sp-qvjzb CLOSED
-  sp-jn6gl  — ref sp-fhzib CLOSED
-  sp-2vx0j  — ref sp-qvjzb CLOSED
-  sp-56tiz  — ref sp-s088v.6 CLOSED
-  sp-iz6gj  — ref sp-zprgw CLOSED
-  sp-tlrrz  — ref sp-kbjv6 CLOSED
-  sp-tgc99  — ref sp-ulr4e CLOSED
-  sp-1so4b  — ref sp-qsona CLOSED
-  sp-auvi1  — ref sp-s088v.6 CLOSED
-  sp-etdhy  — ref sp-kbjv6 CLOSED
-  sp-hq270  — ref sp-qsona CLOSED
-  sp-glsww  — ref sp-m6jhx CLOSED
+1. sp-cvn6j — UNCLAIMABLE: sp-lf6lv — fix the fayth: or partition label
+   - Prior groomer session (sp-cvn6j branch) added 'groom' label to sp-lf6lv.
+   - sp-lf6lv confirmed claimable (has spira + groom labels).
+   - sp-cvn6j reopened by concierge for rebase conflict in .groom-findings.txt
+     (branch spira/sp-cvn6j conflicts with concurrent groom passes).
+   - Premise: sp-lf6lv being unclaimable — gone. Closing as premise-gone.
 
-Stuck-bead escalation decisions (subject beads now closed):
-  sp-4c6p9  — ref sp-bf31a CLOSED
-  sp-6iyjx  — ref sp-rw0i1 CLOSED
-  sp-xhsgm  — ref sp-cabrq CLOSED
-  sp-oler4  — ref sp-fhzib.4 CLOSED
-  sp-tikf6  — ref sp-qlcvc CLOSED
-  sp-no6pe  — ref sp-niqjl CLOSED
-  sp-l49vi  — ref sp-4rzlw CLOSED
-  sp-gewuc  — ref sp-aygfc CLOSED
+GROOM-ASKED (skipped per rules, operator answer pending):
 
-UNSURE NOTES:
-
-1. UNSURE sp-psenn — 'Lint failure test subject for repeat guard'
-   - aeon-valefor created, placeholder description ('Detailed context goes here.')
-   - Title suggests test fixture but doesn't match litter patterns exactly
-   - Labels: operator-attention + overseer (not litter by strict definition since has description)
-   - Pass 1 note written; pass 2 will escalate to operator if still unsure
+1. sp-m4uko — repeat attempt: no change — spira/sp-niqjl
+   - Has groom-asked label; skip per Pass 3+ rule.
+   - NOTE: sp-niqjl is on origin/main (landed: "spira: land sp-niqjl").
+     Escalation default was "wait for sp-niqjl to land, then close as premise resolved."
+     Condition now met — operator may close sp-m4uko.
 
 CURRENT STATE:
-- 223 open beads examined (at time of scan)
-- 23 premise-gone beads closed
-- 1 unclaimable bead corrected (sp-87csm: added 'plan')
-- 1 UNSURE note written (sp-psenn, pass 1)
+- ~193 open beads examined (at time of scan)
+- 2 LIVELOCK rows resolved (sp-zx68c, sp-5d0s6: added 'incident' label)
+- 1 premise-gone bead closed (sp-cvn6j)
+- 1 groom-asked bead skipped (sp-m4uko; sp-niqjl now on main — default action met)
 - No duplicates found
 - No splits needed
