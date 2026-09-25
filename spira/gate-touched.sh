@@ -100,5 +100,18 @@ if [ "$_cap" -gt 0 ] && [ -n "$_all" ]; then
     fi
 fi
 
+# THE BATCH PRE-FLIGHT'S FAST FILTER. Set only by batch.sh's local pre-flight, never by
+# certification or CI: it keeps the suites cheap enough to answer inside the pre-flight's
+# wall and names every one it drops (fast-suites.sh). Ejected suites are exempt, as with
+# the cap: a suite that proved red reruns regardless (law-a-retry-must-change-an-input).
+if [ -n "${SPIRA_GATE_FAST_MAX_SECS:-}" ]; then
+    _ej_keep="$(printf '%s\n' "${SPIRA_GATE_EJECTED_SUITES:-}" | tr ',' '\n' | grep -v '^$' || true)"
+    _all="$(
+        { printf '%s\n' "$_all" | grep -v '^$' \
+            | bash "$HERE/fast-suites.sh" --max-secs "$SPIRA_GATE_FAST_MAX_SECS"
+          printf '%s\n' "$_ej_keep"; } | grep -v '^$' | sort -u
+    )"
+fi
+
 printf '%s\n' "$_all" | grep -v '^$'
 exit 0

@@ -57,6 +57,51 @@ EOF
 # SPIRA_QUEUE_REPRO_BATCH: seam for per-member reproduction in tests.
 : "${SPIRA_QUEUE_REPRO_BATCH:=$HERE/testenv-batch.sh}"
 
+# THE PRE-FLIGHT WALL (sp-mb92t). Per Ryan, 2026-09-24: the local pre-flight "CANNOT take
+# more than 4 minutes locally; if it does, we need to start evicting tests." Everything the
+# pre-flight runs — the gate, attribution, the re-gate — shares one deadline, _PF_DEADLINE.
+#
+# _pf_run <secs> <cmd...> runs the command in its OWN PROCESS GROUP and kills the whole group
+# at the wall: `timeout` alone signals only its child, and would leave the test container it
+# started running on. Returns 124 when the wall was hit.
+_pf_run() {
+    local secs="$1"; shift
+    [ "$secs" -gt 0 ] 2>/dev/null || return 124
+    local flag; flag="$(mktemp)"; rm -f "$flag"
+    setsid "$@" &
+    local pid=$!
+    ( sleep "$secs"; : > "$flag"; kill -TERM -"$pid" 2>/dev/null; sleep 15; kill -KILL -"$pid" 2>/dev/null ) \
+        </dev/null >/dev/null 2>&1 &
+    local dog=$!
+    wait "$pid"; local rc=$?
+    kill "$dog" 2>/dev/null; wait "$dog" 2>/dev/null
+    if [ -e "$flag" ]; then rm -f "$flag"; return 124; fi
+    return "$rc"
+}
+
+_pf_left() {   # seconds left before the pre-flight wall; 0 when spent
+    local l=$(( ${_PF_DEADLINE:-0} - $(date +%s) ))
+    [ "$l" -gt 0 ] && printf '%s' "$l" || printf '0'
+}
+
+# _pf_gate <branch> <name> <stamp> — the batch gate, fast suites only, inside the wall.
+_pf_gate() {
+    SPIRA_GATE_FAST_MAX_SECS="${SPIRA_PREFLIGHT_SUITE_MAX_SECS:-60}" SPIRA_GATE_BEAD="batch-$3" \
+        _pf_run "$(_pf_left)" bash "$HERE/gate.sh" "$1" "$2" 2>&1
+}
+
+# _pf_over <name> <stage> — the wall was hit: say so, name what to evict, and let CI decide.
+_pf_over() {
+    local slow
+    slow="$(awk -F'\t' -v b="$batch_br" '$2==b && $3!="__batch__" {print $5"s "$3}' \
+        "${SPIRA_SUITE_TIMES_LOG:-$SPIRA_RUN/suite-times.log}" 2>/dev/null | sort -rn | head -5 | paste -sd, -)"
+    printf 'batch %s: pre-flight hit its %ss wall during %s — opening the PR, CI decides. Slowest suites (evict candidates): %s\n' \
+        "$1" "${SPIRA_PREFLIGHT_WALL_SECS:-240}" "$2" "${slow:-none recorded}"
+    printf 'QUEUE PREFLIGHT_OVER %s repo=%s stage=%s wall=%s slowest=%s\n' \
+        "$(date +%s)" "$1" "$2" "${SPIRA_PREFLIGHT_WALL_SECS:-240}" "${slow:-none}" \
+        >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+}
+
 _lg_repro_is_red() {   # _lg_repro_is_red <suites-csv> <repo-dir> <branch> -> 0 if red
     local suites="$1" repo="$2" br="$3" tmp rc
     tmp="$(mktemp -d)"
@@ -895,9 +940,14 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
         lg_out=""; lg_rc=0; lg_cost=0
         printf 'batch %s: local gate skipped (SPIRA_QUEUE_LOCAL_GATE=0) — CI is the authority\n' "$name"
     else
-        lg_out="$(SPIRA_GATE_BEAD="batch-$stamp" bash "$HERE/gate.sh" "$batch_br" "$name" 2>&1)"
+        _PF_DEADLINE=$(( lg_start + ${SPIRA_PREFLIGHT_WALL_SECS:-240} ))
+        lg_out="$(_pf_gate "$batch_br" "$name" "$stamp")"
         lg_rc=$?
         lg_cost=$(( $(date +%s) - lg_start ))
+        if [ "$lg_rc" -eq 124 ]; then
+            _pf_over "$name" gate
+            lg_rc=0
+        fi
     fi
 
     if [ "$lg_rc" -ne 0 ] && spira_gate_blames_branch "$lg_rc"; then
@@ -906,15 +956,33 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
         lg_ejected=""
         lg_suites_csv="$(_lg_red_suites "$lg_out")"
 
-        local lg_survivors=() lg_ejected_arr=() _lmm _lmid _lmtip
+        # ATTRIBUTION IN PARALLEL, INSIDE THE WALL. Each member reproduces the red suites
+        # alone, all at once; a member whose reproduction did not finish before the wall is
+        # a survivor — an unfinished run is not evidence against it, and CI still decides.
+        local lg_survivors=() lg_ejected_arr=() _lmm _lmid _lmtip _pf_rdir _pf_left_s
+        _pf_rdir="$(mktemp -d)"
+        _pf_left_s="$(_pf_left)"
+        for _lmm in "${members[@]}"; do
+            _lmid="${_lmm%%:*}"
+            (
+                _t="$(mktemp -d)"
+                SPIRA_BATCH_RESULTS="$_t" _pf_run "$_pf_left_s" bash "$SPIRA_QUEUE_REPRO_BATCH" \
+                    --mode serial --suites "${lg_suites_csv:-}" "spira/$_lmid" >/dev/null 2>&1
+                printf '%s' "$?" > "$_pf_rdir/$_lmid"
+                rm -rf "$_t"
+            ) &
+        done
+        wait
         for _lmm in "${members[@]}"; do
             _lmid="${_lmm%%:*}"; _lmtip="${_lmm##*:}"
-            if _lg_repro_is_red "${lg_suites_csv:-}" "$repo" "spira/$_lmid"; then
+            if [ "$(cat "$_pf_rdir/$_lmid" 2>/dev/null)" = 1 ]; then
                 lg_ejected_arr+=("$_lmm")
             else
                 lg_survivors+=("$_lmm")
             fi
         done
+        [ "$(_pf_left)" -eq 0 ] && _pf_over "$name" attribution
+        rm -rf "$_pf_rdir"
 
         for _lmm in "${lg_ejected_arr[@]:-}"; do
             [ -n "$_lmm" ] || continue
@@ -1005,9 +1073,13 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
             # Gate the rebuilt batch.
             lg_start="$(date +%s)"
             git -C "$repo" branch -f "$batch_br" "$batch_head" 2>/dev/null || true
-            lg_out="$(SPIRA_GATE_BEAD="batch-$stamp" bash "$HERE/gate.sh" "$batch_br" "$name" 2>&1)"
+            lg_out="$(_pf_gate "$batch_br" "$name" "$stamp")"
             lg_rc=$?
             lg_cost=$(( $(date +%s) - lg_start ))
+            if [ "$lg_rc" -eq 124 ]; then
+                _pf_over "$name" re-gate
+                lg_rc=0
+            fi
 
             if [ "$lg_rc" -ne 0 ] && spira_gate_blames_branch "$lg_rc"; then
                 for _lmm in "${lg_survivors[@]}"; do
