@@ -502,8 +502,7 @@ ab01_assignee="$(field sp-ab01 assignee)"
 [ "$ab01_assignee" = "aeon-holder" ] && ok "G7: sp-ab01 assignee untouched by abandon" \
     || bad "G7: sp-ab01 assignee untouched" "got $ab01_assignee"
 ab01_comments="$(B comments sp-ab01 2>/dev/null || true)"
-[ -z "$ab01_comments" ] && ok "G7: abandon posted no comment to sp-ab01" \
-    || bad "G7: no comment from abandon" "got $ab01_comments"
+want "G7: abandon posted no comment to sp-ab01" "No comments" "$ab01_comments"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
