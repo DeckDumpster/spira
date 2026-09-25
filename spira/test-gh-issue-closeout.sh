@@ -91,6 +91,13 @@ printf 'LANDED %s %s push\n' "$LANDED_SHA" "$(date +%s)" > "$RUN/landstate/$BEAD
 
 # Source lib.sh for the functions under test.
 export SPIRA_HOME="$SH"
+# Explicit, or a container with a real installed harness leaves SPIRA_REPO_MAP already
+# set and conf.sh's "only resolve when unset" guard never looks at $SH/repo-map at all
+# (law-gates-run-in-a-clean-environment) — tests 6-8 dodge this by overriding it only on
+# the gh-issue-backfill.sh subshell; direct calls to _gh_unlanded_scan need it too.
+export SPIRA_REPO_MAP="$SH/repo-map"
+export SPIRA_HOME_REPO=fixture
+export SPIRA_REPO="$REPO"
 . "$SH/lib.sh"
 
 printf '1. gh_issue_closeout is defined:\n'
@@ -337,13 +344,17 @@ printf '\n12. gh_issue_ask_unlanded: issue already closed on forge writes marker
 testdb_seed <<JSONL
 {"id":"sp-scan3","title":"Forge-closed bead","status":"closed","issue_type":"task","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#93","updated_at":"2026-09-05T00:00:00Z"}
 JSONL
-# Stub gh to return CLOSED for issue view.
+# Stub gh to return CLOSED for issue 93's view only. _gh_unlanded_scan rescans the
+# WHOLE backlog every call, sp-scan2's ask included, so a stub that answered CLOSED
+# for every issue view — not just #93's — would silently mark every other pending
+# bead gh-closed too, sp-scan2 among them, in this one pass.
 : > "$GHLOG"
 cat > "$TMP/bin/gh" <<'GHSTUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GHLOG"
 case " $* " in
-    *" issue view "*) printf 'CLOSED\n' ;;
+    *" issue view 93 "*) printf 'CLOSED\n' ;;
+    *" issue view "*)    printf '{"state":"OPEN"}\n' ;;
 esac
 exit 0
 GHSTUB
@@ -371,6 +382,150 @@ if [ -s "$MAIL_CALLS2" ]; then
     bad "forge-closed: no mail sent" "mail.sh was called: $(cat "$MAIL_CALLS2")"
 else
     ok "forge-closed: no mail sent"
+fi
+
+printf '\n13. _gh_unlanded_scan: stale RED landstate is overridden by the commit graph (Defect 1):\n'
+git -C "$REPO" commit -q --allow-empty -m "spira: land sp-scan4"
+testdb_seed <<JSONL
+{"id":"sp-scan4","title":"Scan stale-RED landed bead","status":"closed","issue_type":"task","labels":["spira","plan","repo:fixture"],"external_ref":"github:fixture/testrepo#94","updated_at":"2026-09-05T00:00:00Z"}
+JSONL
+printf 'RED 0000000000000000000000000000000000000000 %s conflicts-with-base\n' "$(date +%s)" \
+    > "$RUN/landstate/sp-scan4"
+: > "$GHLOG"
+cat > "$TMP/bin/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHLOG"
+case " $* " in
+    *" issue view "*) printf '{"state":"OPEN"}\n' ;;
+esac
+exit 0
+GHSTUB
+chmod +x "$TMP/bin/gh"
+MAIL_CALLS3="$TMP/mail.calls3"
+: > "$MAIL_CALLS3"
+cat > "$SH/mail.sh" <<MAILSTUB
+#!/usr/bin/env bash
+echo called >> $MAIL_CALLS3
+exit 0
+MAILSTUB
+chmod +x "$SH/mail.sh"
+scan_out="$(_gh_unlanded_scan 2>&1)"
+if grep -q "issue close 94" "$GHLOG" 2>/dev/null; then
+    ok "stale-RED bead closed out by the live scan via the commit graph"
+else
+    bad "stale-RED bead closed out by the live scan via the commit graph" \
+        "issue 94 not closed — scan_out: $scan_out, ghlog: $(cat "$GHLOG" 2>/dev/null)"
+fi
+if [ -e "$RUN/gh-closed/sp-scan4" ]; then
+    ok "close marker written despite stale RED landstate"
+else
+    bad "close marker written despite stale RED landstate" "no marker at $RUN/gh-closed/sp-scan4"
+fi
+if [ -s "$MAIL_CALLS3" ]; then
+    bad "no ask sent for a bead the graph says landed" "mail.sh was called: $(cat "$MAIL_CALLS3")"
+else
+    ok "no ask sent for a bead the graph says landed"
+fi
+
+printf '\n14. _gh_unlanded_scan: a bead with no commit anywhere still produces exactly one ask (positive control):\n'
+# Proves test 13's silence means something: the same scan, on a bead that really
+# is not landed, still asks (law-absence-needs-a-positive-control).
+testdb_seed <<JSONL
+{"id":"sp-scan5","title":"Scan truly unlanded bead","status":"closed","issue_type":"task","labels":["spira","plan","repo:fixture"],"external_ref":"github:fixture/testrepo#95","updated_at":"2026-09-05T00:00:00Z"}
+JSONL
+: > "$GHLOG"
+cat > "$SH/mail.sh" <<'MAILSTUB'
+#!/usr/bin/env bash
+exit 0
+MAILSTUB
+chmod +x "$SH/mail.sh"
+scan_out="$(_gh_unlanded_scan 2>&1)"
+want "positive control: ask sent for the unlanded bead" "asked operator about github:fixture/testrepo#95" "$scan_out"
+# Simulate the tracking bead mail.sh would have created, so later scans in this file
+# dedupe sp-scan5 through ask_already_open instead of re-asking on every pass.
+"${SPIRA_BD:-bd}" -C "$SPIRA_DB" create \
+    "Close GitHub issue github:fixture/testrepo#95 for bead sp-scan5" \
+    -l "needs-operator,overseer" --type decision --silent >/dev/null 2>&1 || true
+
+printf '\n15. _gh_unlanded_scan: a repo whose default branch is master behaves identically (law-the-base-branch-is-not-always-main):\n'
+REPO2="$TMP/repo-master"
+git init -q -b master "$REPO2"
+git -C "$REPO2" commit -q --allow-empty -m "initial"
+git -C "$REPO2" commit -q --allow-empty -m "spira: land sp-scan6"
+printf 'master-fixture | %s\n' "$REPO2" >> "$SH/repo-map"
+testdb_seed <<JSONL
+{"id":"sp-scan6","title":"Scan master-branch landed bead","status":"closed","issue_type":"task","labels":["spira","plan","repo:master-fixture"],"external_ref":"github:fixture/testrepo#96","updated_at":"2026-09-05T00:00:00Z"}
+JSONL
+printf 'RED 0000000000000000000000000000000000000000 %s conflicts-with-base\n' "$(date +%s)" \
+    > "$RUN/landstate/sp-scan6"
+: > "$GHLOG"
+cat > "$TMP/bin/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHLOG"
+case " $* " in
+    *" issue view "*) printf '{"state":"OPEN"}\n' ;;
+esac
+exit 0
+GHSTUB
+chmod +x "$TMP/bin/gh"
+scan_out="$(_gh_unlanded_scan 2>&1)"
+if grep -q "issue close 96" "$GHLOG" 2>/dev/null; then
+    ok "master-branch repo: landed bead closed out via the graph, not a hardcoded main"
+else
+    bad "master-branch repo: landed bead closed out via the graph, not a hardcoded main" \
+        "issue 96 not closed — ghlog: $(cat "$GHLOG" 2>/dev/null)"
+fi
+
+printf '\n16. gh_issue_ask_unlanded: answering the ask writes the durable marker (Defect 2 regression):\n'
+# The tracking ask bead for sp-scan2 (github:fixture/testrepo#92) is OPEN, left behind
+# by test 11's simulated mail reply. REGRESSION: without the fix, closing it — what the
+# operator does to answer the mail — writes nothing, and the very next scan files an
+# identical ask again (law-a-regression-test-must-be-seen-to-fail).
+_ask2_subj="Close GitHub issue github:fixture/testrepo#92 for bead sp-scan2"
+_ask2_id="$(bdjson list --status open --label needs-operator --limit 0 | python3 -c '
+import sys, json
+d = json.load(sys.stdin); rows = d if isinstance(d, list) else [d]
+want = sys.argv[1]
+for i in rows:
+    if want in (i.get("title") or ""):
+        print(i.get("id") or "")
+        break' "$_ask2_subj" 2>/dev/null)"
+if [ -z "$_ask2_id" ]; then
+    bad "found the open tracking ask for sp-scan2" "none found — cannot run regression test"
+else
+    ok "found the open tracking ask for sp-scan2 ($_ask2_id)"
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" close "$_ask2_id" --reason-file - \
+        <<< "answered: closed the github issue by hand" >/dev/null 2>&1
+    : > "$GHLOG"
+    cat > "$TMP/bin/gh" <<'GHSTUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$GHLOG"
+case " $* " in
+    *" issue view "*) printf '{"state":"OPEN"}\n' ;;
+esac
+exit 0
+GHSTUB
+    chmod +x "$TMP/bin/gh"
+    MAIL_CALLS4="$TMP/mail.calls4"
+    : > "$MAIL_CALLS4"
+    cat > "$SH/mail.sh" <<MAILSTUB
+#!/usr/bin/env bash
+echo called >> $MAIL_CALLS4
+exit 0
+MAILSTUB
+    chmod +x "$SH/mail.sh"
+    scan_out="$(_gh_unlanded_scan 2>&1)"
+    if [ -e "$RUN/gh-closed/sp-scan2" ]; then
+        ok "answering the ask wrote the gh-closed marker"
+    else
+        bad "answering the ask wrote the gh-closed marker" "no marker at $RUN/gh-closed/sp-scan2"
+    fi
+    if [ -s "$MAIL_CALLS4" ]; then
+        bad "no new ask filed after the first was answered" "mail.sh was called: $(cat "$MAIL_CALLS4")"
+    else
+        ok "no new ask filed after the first was answered"
+    fi
+    want "log names the already-answered ask" "already answered" "$scan_out"
 fi
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"

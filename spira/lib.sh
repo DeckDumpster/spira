@@ -261,6 +261,32 @@ print(sum(1 for i in rows if want in (i.get("title") or "")))' "$subject" 2>/dev
     [ "${hits:-0}" -gt 0 ] 2>/dev/null
 }
 
+# ask_closed_subject <subject> -> prints the id of a CLOSED operator ask carrying that
+# subject, or nothing.
+#
+# NOT EVERY ASK'S ANSWER IS "NEW INFORMATION" ON RECURRENCE. ask_already_open's own
+# comment is right for most callers — an alert whose condition returns after being
+# closed is telling him something changed. gh_issue_ask_unlanded's condition ("this
+# bead's commit is not yet on the base") does not change just because he closed the
+# ask; closing it IS the answer, and a caller whose only dedupe is "no ask is open"
+# re-files the identical ask every pass forever. This finds that already-answered ask
+# so the caller can write a durable marker instead of re-asking.
+ask_closed_subject() {   # ask_closed_subject <subject>
+    local subject="$1"
+    [ -n "$subject" ] || return 1
+    bdjson list --status closed --label "${SPIRA_ASK_LABEL:?SPIRA_ASK_LABEL is unset — source conf.sh}" --limit 0 2>/dev/null \
+        | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: raise SystemExit(0)
+rows = d if isinstance(d, list) else [d]
+want = sys.argv[1]
+for i in rows:
+    if want in (i.get("title") or ""):
+        print(i.get("id") or "")
+        break' "$subject" 2>/dev/null
+}
+
 # spira_ask_machinery — escalate a judgement that repeatedly could not be made.
 #
 # THE CASE THIS EXISTS FOR. A gate that withholds its verdict is correct to let the branch
@@ -3370,6 +3396,22 @@ landed() {
     return 1
 }
 
+# landed_sha <id> <repo> -> the sha of the commit landed() would say yes about, so a
+# caller that needs to CITE the landing (a GitHub comment) gets the same commit the
+# ancestry check trusted, never a second guess at which one that was.
+landed_sha() {
+    local id="$1" repo="${2:-$(repo_root)}" refs _sha _subj
+    refs="$(spira_landrefs "$repo")" || return 2
+    # shellcheck disable=SC2086
+    while IFS=$'\t' read -r _sha _subj; do
+        case "$_subj" in
+            "spira: land $id") printf '%s' "$_sha"; return 0 ;;
+            "$id":*) printf '%s' "$_sha"; return 0 ;;
+        esac
+    done < <(git -C "$repo" log --format='%H%x09%s' --grep="$id" -F $refs 2>/dev/null)
+    return 1
+}
+
 # content_landed <repo> <branch> <baseref> -> 0 if <baseref> already contains every change
 # <branch> makes, 1 if it does not.
 #
@@ -6119,10 +6161,15 @@ if d: print(d[0].get("external_ref") or "")' 2>/dev/null)" || ext_ref=""
 # gh_issue_ask_unlanded — ask the operator what to do about a GitHub issue whose
 # bead closed without a commit landing on the base branch.
 #
-# One ask per issue, deduped through ask_already_open.
+# One ask per issue, deduped through ask_already_open while it is still open — and
+# through ask_closed_subject once he has answered it. Answering closes the tracking
+# decision bead but writes nothing else, so a scan that only checked ask_already_open
+# saw no open ask and filed an identical one next pass, forever — the same GitHub
+# issue re-asked several times in one afternoon. Finding the answered ask and writing
+# gh-closed/<id> here is what makes answering it actually stick.
 gh_issue_ask_unlanded() {  # gh_issue_ask_unlanded <bead-id> <external-ref> [draft]
     local id="$1" ext_ref="$2" draft="${3:-}"
-    local _subj _dflt gh_part gh_repo issue_n _st _err _rc
+    local _subj _dflt gh_part gh_repo issue_n _st _err _rc _answered
 
     gh_part="${ext_ref#github:}"
     gh_repo="${gh_part%%#*}"
@@ -6145,6 +6192,14 @@ gh_issue_ask_unlanded() {  # gh_issue_ask_unlanded <bead-id> <external-ref> [dra
     [ -x "${SPIRA_HOME}/mail.sh" ] || return 0
     _subj="Close GitHub issue $ext_ref for bead $id"
     ask_already_open "$_subj" && return 0
+
+    _answered="$(ask_closed_subject "$_subj")"
+    if [ -n "$_answered" ]; then
+        mkdir -p "${SPIRA_RUN}/gh-closed" 2>/dev/null || true
+        : > "$closed_mark"
+        log "gh-closeout $id: ask $_answered already answered — marker written, no re-ask"
+        return 0
+    fi
 
     _dflt="${draft:-post a comment explaining the resolution and close the issue}"
 
@@ -6176,12 +6231,25 @@ MAILEOF
 
 # _gh_unlanded_scan — run at the end of a landing pass to ask about GitHub issues
 # whose beads closed without a landing. Called once per pass; one ask per issue
-# via ask_already_open.
+# via ask_already_open (and ask_closed_subject once answered).
+#
+# THE GRAPH IS CONSULTED BEFORE THE LANDSTATE FILE, NEVER THE OTHER WAY. landstate is
+# a record of the last branch seen for a bead id, and a second, later branch for the
+# SAME id that goes RED against the base overwrites a correct LANDED entry with a
+# wrong one — the file then contradicts the commit graph rather than merely lagging
+# it. landed_sha() answers the only question that matters — is a commit naming this
+# id an ancestor of the repository's own land ref — and when it can, that answer
+# wins over whatever landstate says.
 _gh_unlanded_scan() {
-    local _tmp _id _ext _superseder _ls_file _ls_st _sup_ls _sup_st _sup_sha _draft
+    local _tmp _id _ext _superseder _repo_label _repo_path _land_sha
+    local _ls_file _ls_st _sup_ls _sup_st _sup_sha _draft
     local _wait_dir _wait_file _now _last
     _tmp="$(mktemp)" || return 0
     _wait_dir="${SPIRA_RUN:-/tmp}/gh-wait-log"
+    # \x01-SEPARATED, NOT TAB. bash's `read` treats tab as IFS WHITESPACE regardless of
+    # what IFS is set to, so a run of them — an empty field followed by a non-empty one,
+    # e.g. no superseder but a repo: label — collapses and every field after the gap
+    # shifts left. \x01 is not whitespace to `read`, so an empty field stays a field.
     bdjson list --all --limit 0 2>/dev/null | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -6198,12 +6266,25 @@ for r in rows:
         if (dep.get("dependency_type") or dep.get("type")) == "supersedes":
             superseder = dep.get("id") or dep.get("blocked_by") or ""
             break
-    print(f"{bid}\t{ext}\t{superseder}")
+    repo_label = ""
+    for l in (r.get("labels") or []):
+        if l.startswith("repo:"):
+            repo_label = l[5:]; break
+    print(f"{bid}\x01{ext}\x01{superseder}\x01{repo_label}")
 ' 2>/dev/null > "$_tmp" || { rm -f "$_tmp"; return 0; }
 
-    while IFS=$'\t' read -r _id _ext _superseder; do
+    while IFS=$'\x01' read -r _id _ext _superseder _repo_label; do
         [ -n "$_id" ] || continue
         [ -e "${SPIRA_RUN}/gh-closed/$_id" ] && continue
+
+        _repo_path="$(repo_root "$_repo_label" 2>/dev/null)" || _repo_path=""
+        if [ -n "$_repo_path" ]; then
+            _land_sha="$(landed_sha "$_id" "$_repo_path" 2>/dev/null)"
+            if [ -n "$_land_sha" ]; then
+                gh_issue_closeout "$_id" "$_land_sha" "$_repo_path" || true
+                continue
+            fi
+        fi
 
         _ls_file="$SPIRA_RUN/landstate/$_id"
         _ls_st=""
