@@ -15,6 +15,7 @@
 #   doctor_check_events_probe     — does a write/read round trip on the events substrate
 #   doctor_check_failed_units     — are any spira-* systemd units in the failed state
 #   doctor_check_snapshot_fresh   — is the cockpit collector still writing
+#   doctor_check_operator_channel — can this operated instance actually reach its operator
 #
 # ONE WRITE. The events substrate probe writes a single sentinel event to the store and reads
 # it back. That one write cannot collide with production state: the sentinel id is reserved
@@ -252,6 +253,65 @@ doctor_check_snapshot_fresh() {
     fi
 }
 
+# --------------------------------------------------------------------------------------
+# OPERATOR CHANNEL. inotifywait, the configured mail client (COCKPIT_MAIL), hunk (when
+# COCKPIT_SESSIONS uses it), and go are runtime health for an OPERATED instance, not build
+# inputs: their absence does not stop the loop, it silently kills the path an operator
+# reads and answers escalations through (law-answers-need-a-delivery-path). doctor-check.sh
+# WARNs on these at image-build time because a container has no operator reading it; here,
+# on a box that is actually running, SPIRA_OPERATED=1 (default) makes the same absence FAIL.
+# SPIRA_OPERATED=0 downgrades to WARN for a headless fixture or CI box.
+# --------------------------------------------------------------------------------------
+doctor_check_operator_channel() {
+    local level=FAIL; [ "${SPIRA_OPERATED:-1}" = 0 ] && level=WARN
+
+    if command -v inotifywait >/dev/null 2>&1; then
+        OK "inotifywait — $(command -v inotifywait)"
+    else
+        "$level" "inotifywait is not on PATH — no mail reaches you until a session starts" \
+                  "Install: apt install inotify-tools"
+    fi
+
+    if [ -n "${COCKPIT_MAIL:-}" ]; then
+        if command -v "$COCKPIT_MAIL" >/dev/null 2>&1; then
+            OK "$COCKPIT_MAIL (COCKPIT_MAIL) — $(command -v "$COCKPIT_MAIL")"
+        else
+            "$level" "$COCKPIT_MAIL (COCKPIT_MAIL) is not on PATH — the cockpit mail pane is dead; escalations and answers have no delivery path" \
+                      "Install $COCKPIT_MAIL, or set COCKPIT_MAIL in ${CONF:-spira.conf} to a mail client that is present."
+        fi
+    fi
+
+    case " ${COCKPIT_SESSIONS:-} " in
+        *" hunk "*)
+            if command -v hunk >/dev/null 2>&1; then
+                OK "hunk — $(command -v hunk)"
+            else
+                "$level" "hunk is not on PATH — the cockpit review pane is unavailable; rebuild.sh creates a hunk session with no program behind it" \
+                          "Install: npm install -g --prefix ~/.local hunkdiff (bin lands at ~/.local/bin/hunk; ensure ~/.local/bin is in SPIRA_PATH in ${CONF:-spira.conf})"
+            fi ;;
+    esac
+
+    local go_found="" c
+    for c in "${GO:-}" "$HOME/.local/go/bin/go" "$(command -v go 2>/dev/null || true)"; do
+        [ -n "$c" ] && [ -x "$c" ] && { go_found="$c"; break; }
+    done
+    if [ -n "$go_found" ]; then
+        OK "go — $go_found"
+    else
+        local bd_ok=0 bd_ver arch prebuilt=0
+        bd_ver="$(timeout 5 "${SPIRA_BD:-bd}" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+        [ "${bd_ver:-}" = "${SPIRA_BD_TAG#v}" ] && bd_ok=1
+        arch="$(uname -m)"
+        case "$arch" in x86_64|aarch64) prebuilt=1 ;; esac
+        if [ "$bd_ok" -eq 0 ] && [ "$prebuilt" -eq 0 ]; then
+            "$level" "go is not on PATH — $(spira_bin_purpose go)" \
+                      "bd is mismatched (need $SPIRA_BD_TAG) and no prebuilt exists for $arch. Install Go: https://go.dev/dl/ or use $HOME/.local/go/bin/go"
+        else
+            OK "go absent — bd $( [ "$bd_ok" -eq 1 ] && echo current || echo mismatched ); prebuilt $( [ "$prebuilt" -eq 1 ] && echo available || echo unavailable ) for $arch"
+        fi
+    fi
+}
+
 echo "spira doctor"
 
 echo
@@ -273,6 +333,10 @@ doctor_check_failed_units
 echo
 echo "the cockpit"
 doctor_check_snapshot_fresh
+
+echo
+echo "operator channel"
+doctor_check_operator_channel
 
 echo
 if [ "$fatal" -gt 0 ]; then
