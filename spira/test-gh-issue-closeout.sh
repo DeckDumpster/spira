@@ -431,9 +431,12 @@ fi
 
 printf '\n14. _gh_unlanded_scan: a bead with no commit anywhere still produces exactly one ask (positive control):\n'
 # Proves test 13's silence means something: the same scan, on a bead that really
-# is not landed, still asks (law-absence-needs-a-positive-control).
+# is not landed, still asks (law-absence-needs-a-positive-control). closed_at must be
+# explicit and past the grace period: bd import stamps an absent closed_at with the
+# import time, which would put this bead inside SPIRA_GH_ASK_GRACE_SECS and suppress
+# the very ask this test exists to prove.
 testdb_seed <<JSONL
-{"id":"sp-scan5","title":"Scan truly unlanded bead","status":"closed","issue_type":"task","labels":["spira","plan","repo:fixture"],"external_ref":"github:fixture/testrepo#95","updated_at":"2026-09-05T00:00:00Z"}
+{"id":"sp-scan5","title":"Scan truly unlanded bead","status":"closed","issue_type":"task","labels":["spira","plan","repo:fixture"],"external_ref":"github:fixture/testrepo#95","updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z"}
 JSONL
 : > "$GHLOG"
 cat > "$SH/mail.sh" <<'MAILSTUB'
