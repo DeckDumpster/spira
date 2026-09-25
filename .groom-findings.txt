@@ -75,3 +75,32 @@ CURRENT STATE:
 - No premise-gone closures
 - No duplicates found
 - No splits needed
+
+---
+
+GROOM PASS sp-xdmf4 - Graph Hygiene Results
+============================================
+
+TRIGGER: UNCLAIMABLE: sp-zvehe — fix the fayth: or partition label
+
+SWEEP: groomer.sh sweep found 1 LIVELOCK row (sp-zvehe); acted on 0 (sweep does
+not handle unclaimable beads with descriptions).
+
+LIVELOCK ROWS HANDLED: 1
+
+PARTITION LABELS FIXED:
+
+1. sp-zvehe — repeat attempt: no change — spira/sp-55j4m
+   - Problem: had 'partition:incident' but not 'incident'; unclaimable by ops
+     persona (FAYTH_LABELS=spira,incident requires standalone 'incident' label)
+   - Same recurring pattern as sp-zx68c, sp-5d0s6, sp-3z0bl (prior passes)
+   - Root cause tracked under sp-ui46l (groom-asked — skip per Pass 3+ rule)
+   - Fix: added 'incident' label, removed 'partition:incident' label
+   - Verified: groomer.sh sweep and detect_livelocked both return clean
+
+CURRENT STATE:
+- ~244 open beads examined (at time of scan)
+- 1 LIVELOCK row resolved (sp-zvehe: incident label corrected)
+- No premise-gone closures
+- No duplicates found
+- No splits needed
