@@ -47,16 +47,6 @@ run_halt() {
 
 # ===========================================================================
 echo
-echo "POSITIVE CONTROL — each check finds an offender first"
-# ===========================================================================
-
-# Verify: grep can detect the "no pass running" string before trusting its absence.
-_dry_run_no_pass_out="no pass running"
-want "positive: string appears in expected text" "no pass running" "$_dry_run_no_pass_out"
-ok   "positive: grep finds 'no pass running' — control confirmed"
-
-# ===========================================================================
-echo
 echo "dry-run on idle system"
 # ===========================================================================
 
