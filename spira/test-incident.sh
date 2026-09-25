@@ -88,7 +88,7 @@ inc() {
 # NOTE: bd-embedded does not support --external-ref server-side filtering, so filter
 # client-side via JSON, exactly as incident.sh open_incident does.
 count_open() {
-    bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label spira,incident --json 2>/dev/null \
+    bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label spira,partition:incident --json 2>/dev/null \
       | python3 -c '
 import sys, json
 target = sys.argv[1]
@@ -106,7 +106,7 @@ print(count)
 # Used by the close-then-refile regression: after the fix the closed bead is reopened so
 # the total count stays 1; under the unfixed code a new bead is created and the count is 2.
 count_all() {
-    bd -C "$SPIRA_DB" list --all --status open,in_progress,closed --limit 0 --label spira,incident --json 2>/dev/null \
+    bd -C "$SPIRA_DB" list --all --status open,in_progress,closed --limit 0 --label spira,partition:incident --json 2>/dev/null \
       | python3 -c '
 import sys, json
 target = sys.argv[1]

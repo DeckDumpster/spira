@@ -73,37 +73,37 @@ lack "scope with empty home repo does NOT produce spira" "spira" "$got"
 
 # ==========================================================================================
 echo
-echo "default (SPIRA_SCOPE_LABEL=spira) — builder predicate is spira,plan"
+echo "default (SPIRA_SCOPE_LABEL=spira) — builder predicate is spira,partition:plan"
 # ==========================================================================================
 got="$(fayth_get_with_scope "spira" builder FAYTH_LABELS)"
-is "builder FAYTH_LABELS with scope=spira is spira,plan" "spira,plan" "$got"
+is "builder FAYTH_LABELS with scope=spira is spira,partition:plan" "spira,partition:plan" "$got"
 
 # ==========================================================================================
 echo
-echo "custom scope (SPIRA_SCOPE_LABEL=other) — builder sees other,plan, NOT spira,plan"
+echo "custom scope (SPIRA_SCOPE_LABEL=other) — builder sees other,partition:plan, NOT spira,partition:plan"
 # ==========================================================================================
 # THE DISCRIMINATING TEST. A predicate that ignores SPIRA_SCOPE_LABEL entirely would produce
-# "spira,plan" for both the default and this case. This assertion fails for that no-op.
+# "spira,partition:plan" for both the default and this case. This assertion fails for that no-op.
 got="$(fayth_get_with_scope "other" builder FAYTH_LABELS)"
-is   "builder FAYTH_LABELS with scope=other is other,plan" "other,plan" "$got"
-lack "builder FAYTH_LABELS with scope=other does NOT contain spira,plan" "spira,plan" "$got"
+is   "builder FAYTH_LABELS with scope=other is other,partition:plan" "other,partition:plan" "$got"
+lack "builder FAYTH_LABELS with scope=other does NOT contain spira,partition:plan" "spira,partition:plan" "$got"
 
 # Same check for ops (uses a different partition label).
 got="$(fayth_get_with_scope "other" ops FAYTH_LABELS)"
-is   "ops FAYTH_LABELS with scope=other is other,incident" "other,incident" "$got"
+is   "ops FAYTH_LABELS with scope=other is other,partition:incident" "other,partition:incident" "$got"
 
 # ==========================================================================================
 echo
-echo "empty scope (SPIRA_SCOPE_LABEL=) — builder predicate is plan alone, no leading comma"
+echo "empty scope (SPIRA_SCOPE_LABEL=) — builder predicate is partition:plan alone, no leading comma"
 # ==========================================================================================
 # A leading comma is an empty label and would match nothing, looking like "no work ready".
 got="$(fayth_get_with_scope "" builder FAYTH_LABELS)"
-is   "builder FAYTH_LABELS with scope= is just plan"   "plan" "$got"
-lack "builder FAYTH_LABELS with scope= has no comma"   ","    "$got"
+is   "builder FAYTH_LABELS with scope= is just partition:plan"   "partition:plan" "$got"
+lack "builder FAYTH_LABELS with scope= has no leading comma"   ",partition:"    "$got"
 lack "builder FAYTH_LABELS with scope= has no spira"   "spira" "$got"
 
 got="$(fayth_get_with_scope "" ops FAYTH_LABELS)"
-is   "ops FAYTH_LABELS with scope= is just incident" "incident" "$got"
+is   "ops FAYTH_LABELS with scope= is just partition:incident" "partition:incident" "$got"
 
 # ==========================================================================================
 echo

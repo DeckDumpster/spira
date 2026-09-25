@@ -413,7 +413,7 @@ except Exception:
         "review finding: ${title}" \
         --type bug \
         --priority 2 \
-        --labels "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan,${REVIEW_LABEL}" \
+        --labels "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}partition:${SPIRA_PLAN_LABEL},${REVIEW_LABEL}" \
         --external-ref "$ref" \
         --body-file "$tmpbody" \
         --silent 2>/dev/null | tr -d '[:space:]')"
