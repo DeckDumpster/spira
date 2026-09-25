@@ -33,6 +33,7 @@ testdb_up statute-proj || { echo "testdb_up failed" >&2; exit 1; }
 pass=0; fail=0
 ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 exits0() { local rc; "$@" >/dev/null 2>&1; rc=$?; [ $rc -eq 0 ] && ok "$1 (exits 0)" || bad "$1 (exits 0)" "rc=$rc"; }
