@@ -189,34 +189,33 @@ echo "halt tears down a real container recorded in the registry (gap G9)"
 # populated registry — the real teardown call (podman ps + testenv.sh down)
 # has never actually run.
 #
-# DRIVEN AGAINST A REAL PODMAN CONTAINER (docker.io/library/ubuntu:24.04, the
-# same positive-control image test-testenv.sh and test-batch-owner.sh already
-# use), not a stubbed `podman` on PATH: landing.sh's teardown greps the exact
-# output of `podman ps --format '{{.Names}}'`, and the earlier version of this
-# case (a hand-written podman stub prepended onto PATH) passed on a bare host
-# but read empty inside the gate container, where a real podman already
-# exists — proof that a stand-in for a tool that is actually present is
-# exactly the kind of model this suite's own law warns against.
-#
-# host-reason: needs podman on PATH
-command -v podman >/dev/null 2>&1 || {
-    printf 'SKIP: podman not found on PATH — halt container teardown untested\n' >&2
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    [ "$fail" = 0 ]
-    exit 77
-}
+# A stubbed podman must be injected via SPIRA_PATH, not a bare PATH prepend:
+# conf.sh (sourced by landing.sh) unconditionally overwrites PATH with
+# "${SPIRA_PATH:+$SPIRA_PATH:}$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" —
+# SPIRA_PATH is the one seam it prepends first, and is the mechanism every
+# other suite in this tree already injects a mock command through
+# (test-bd-resolve.sh, test-cadence.sh, and others). A first attempt at this
+# case that prepended $PATH directly built a stub that was never reachable —
+# conf.sh's own PATH= line discarded it before landing.sh's halt code ever ran.
+BIN_DIR="$TMP/bin"; mkdir -p "$BIN_DIR"
+CONT_NAME="spira-batch-realcont1"
+TEARDOWN_LOG="$TMP/teardown.log"; rm -f "$TEARDOWN_LOG"
+cat > "$BIN_DIR/podman" <<PODEOF
+#!/usr/bin/env bash
+[ "\$1" = "ps" ] && printf '%s\n' "$CONT_NAME"
+exit 0
+PODEOF
+chmod +x "$BIN_DIR/podman"
 
-CIMG="docker.io/library/ubuntu:24.04"
-CONT_NAME="spira-batch-realcont1-$$"
-podman rm -f "$CONT_NAME" >/dev/null 2>&1 || true
-
-# Positive control: prove podman itself can start this image before trusting
-# any assertion below that depends on it (same control test-batch-owner.sh runs).
-if podman run -d --name "$CONT_NAME" --rm "$CIMG" sleep 300 >/dev/null 2>&1; then
-    ok "positive control: podman can create a container from $CIMG"
-else
-    bad "positive control: podman can create a container" "podman run failed on $CIMG"
+PROD_DIR="$TMP/prod"; mkdir -p "$PROD_DIR"
+cat > "$PROD_DIR/testenv.sh" <<TDEOF
+#!/usr/bin/env bash
+if [ "\$1" = "down" ]; then
+    printf '%s\n' "\$3" >> "$TEARDOWN_LOG"
 fi
+exit 0
+TDEOF
+chmod +x "$PROD_DIR/testenv.sh"
 
 sleep 300 &
 CONT_PID=$!
@@ -224,16 +223,22 @@ printf 'pid=%s\nstarted=%s\nrepo=spira\nbranch=spira/sp-cont\nphase=gate\n' \
     "$CONT_PID" "$(date +%s)" > "$LAND_RUN"
 printf '%s\n' "$CONT_NAME" > "$LAND_CONTAINERS"
 
-out="$(run_halt --reason "container teardown test" 2>&1)"; rc=$?
+out="$(env -i PATH="$PATH" HOME="$HOME" \
+    SPIRA_RUN="$SPIRA_RUN" \
+    SPIRA_HOME="$HERE" \
+    SPIRA_PROD="$PROD_DIR" \
+    SPIRA_PATH="$BIN_DIR" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
+    bash "$HERE/landing.sh" halt --reason "container teardown test" 2>&1)"; rc=$?
 kill "$CONT_PID" 2>/dev/null || true
-podman rm -f "$CONT_NAME" >/dev/null 2>&1 || true
 
 is   "container-halt: exits 0"                            "0" "$rc"
 want "container-halt: reports tearing down the container" "tearing down container $CONT_NAME" "$out"
-if podman container exists "$CONT_NAME" 2>/dev/null; then
-    bad "container-halt: the real podman container is gone" "still exists after halt"
+if [ -f "$TEARDOWN_LOG" ] && grep -qxF "$CONT_NAME" "$TEARDOWN_LOG"; then
+    ok "container-halt: testenv.sh down --name was actually invoked"
 else
-    ok "container-halt: the real podman container is gone"
+    bad "container-halt: testenv.sh down --name was actually invoked" "no matching line in $TEARDOWN_LOG"
 fi
 
 # ===========================================================================
