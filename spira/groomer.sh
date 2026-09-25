@@ -11,8 +11,8 @@
 #   groomer.sh unwanted       ...                                            REFUSED — exits 2 always
 #
 # WHAT IT DOES NOT DO:
-#   It does NOT close a bead as unwanted. Unwanted is a product decision about
-#   what the system should do, and it belongs to Ryan by the escalation policy.
+#   It does NOT close a bead as unwanted. Unwanted changes the backlog's declared
+#   desired state — a POLICY call — and it belongs to Ryan by the escalation policy.
 #   This refusal is in this code, not in a sentence in the brief.
 #
 #   It does NOT re-prioritise. Priority management is Ryan's or the scheduler's.
@@ -314,11 +314,11 @@ except Exception: pass
     ;;
 
   unwanted)
-    # REFUSED. Closing a bead as unwanted is a product decision about what the system
-    # should do, not a hygiene decision. That judgement belongs to Ryan by the escalation
-    # policy (law-escalate-decisions-not-problems). This refusal is in the code, not in
-    # a sentence in the brief.
-    printf 'groomer: REFUSED — closing a bead as unwanted is a product decision, not a hygiene operation.\n' >&2
+    # REFUSED. Closing a bead as unwanted changes the backlog's declared desired state —
+    # a POLICY call, not a hygiene decision. That judgement belongs to Ryan by the
+    # escalation policy (law-escalate-decisions-not-problems). This refusal is in the
+    # code, not in a sentence in the brief.
+    printf 'groomer: REFUSED — closing a bead as unwanted is a policy decision, not a hygiene operation.\n' >&2
     printf 'groomer: escalate to Ryan: "$SPIRA_HOME/mail.sh" send operator --from "<sender>" --subject "<question>" --kind question --default "close <id> as unwanted"\n' >&2
     exit 2
     ;;
