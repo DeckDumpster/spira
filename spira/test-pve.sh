@@ -88,7 +88,8 @@ write_task_shim() {
     # Heredoc is unquoted so ${upid} expands here.
     cat > "$SHIM_DIR/curl" <<SHIM
 #!/usr/bin/env bash
-call_n=\$(grep -c '^===$' "\$CURL_LOG_PATH" 2>/dev/null || echo 0)
+call_n=\$(grep -c '^===$' "\$CURL_LOG_PATH" 2>/dev/null)
+call_n="\${call_n:-0}"
 { printf '%s\n' "\$@"; echo '==='; } >> "\$CURL_LOG_PATH"
 out_file=""; next=0
 for a in "\$@"; do
