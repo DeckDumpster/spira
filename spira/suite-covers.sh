@@ -28,12 +28,21 @@ suite_requires_of() {  # suite_requires_of <file-path> -> space-separated requir
     sed -n '/^set -/q;s/^# *requires: *//p' "$1" 2>/dev/null | head -1 | tr ',' ' ' || true
 }
 
+# suite_in_container — true only with STRUCTURAL evidence of running inside a container:
+# podman writes /run/.containerenv (docker, /.dockerenv) and an unprivileged user cannot
+# create either on the host. SPIRA_IN_TESTENV alone is NOT evidence: on 2026-09-25 the aeon
+# writing this very guard set SPIRA_IN_TESTENV=1 by hand on the host and stopped the live
+# bead database with an install suite. A variable is forgeable by exactly the actor the
+# guard exists to bind (law-guard-binds-the-caller).
+suite_in_container() {
+    [ -e /run/.containerenv ] || [ -e /.dockerenv ]
+}
+
 suite_testenv_unmet() {  # suite_testenv_unmet <file-path> -> true iff the suite declares
-    # `# requires: testenv` and SPIRA_IN_TESTENV is not 1. testenv-batch.sh sets that
-    # var on every suite it execs inside the container (sp-nxvjm); a suite reading
-    # false here is being run some other way, most often by hand on the host.
+    # `# requires: testenv` and it is NOT inside the test container — the container must be
+    # evidenced structurally AND testenv-batch.sh must have set SPIRA_IN_TESTENV=1 (sp-nxvjm).
     case " $(suite_requires_of "$1") " in
-        *" testenv "*) [ "${SPIRA_IN_TESTENV:-}" != 1 ] ;;
+        *" testenv "*) ! { [ "${SPIRA_IN_TESTENV:-}" = 1 ] && suite_in_container; } ;;
         *) return 1 ;;
     esac
 }

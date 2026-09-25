@@ -67,6 +67,25 @@ else
     ok "A2: requires:testenv + SPIRA_IN_TESTENV=1 -> met"
 fi
 
+# A-FORGED. The aeon that wrote this guard set SPIRA_IN_TESTENV=1 by hand ON THE HOST
+# (2026-09-25 08:03 UTC) and stopped the live bead database. The variable is forgeable, so
+# the guard also needs structural evidence of the container. Simulate "not in a container"
+# by overriding the detection FUNCTION — not by setting a variable, which is the point.
+eval "_real_$(declare -f suite_in_container)"
+suite_in_container() { return 1; }
+SPIRA_IN_TESTENV=1
+if suite_testenv_unmet "$TMP/fx-req-testenv.sh"; then
+    ok "A-FORGED: SPIRA_IN_TESTENV=1 on a host (no container evidence) -> still refused"
+else
+    bad "A-FORGED: SPIRA_IN_TESTENV=1 on a host (no container evidence) -> still refused" "returned met"
+fi
+eval "$(declare -f _real_suite_in_container | sed '1s/_real_suite_in_container/suite_in_container/')"
+if suite_in_container; then
+    ok "A-CONTAINER: this suite runs inside the test container (positive control)"
+else
+    bad "A-CONTAINER: this suite runs inside the test container (positive control)" "no /run/.containerenv or /.dockerenv"
+fi
+
 SPIRA_IN_TESTENV=
 if suite_testenv_unmet "$TMP/fx-req-other.sh"; then
     bad "A3: requires:bash (no testenv token) -> never unmet" "returned true"
