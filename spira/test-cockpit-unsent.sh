@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 #
-# test-cockpit-unsent.sh — the unsent backlog counts across repositories, not just the first.
-#
-#   ./test-cockpit-unsent.sh
+# test-cockpit-unsent.sh — the unsent backlog counts across repositories, not just the first,
+# and harness-owned namespaces (queue/*, suite-state/*) are never counted as orphans.
 #
 # THE FAILURE THIS SUITE EXISTS FOR. SP_BRANCH_DONE was echoed inside the per-repo loop and
 # write_snapshot's first-wins dedup pinned it to the first repository's count, which was always
@@ -15,39 +14,38 @@
 # when the probe distinguishes it from real work. This suite drives a TWO-repo fixture and
 # plants both shapes.
 #
-# defect: sp-884p
+# ALSO ABSORBED (coverage row 12 / cluster 4, formerly test-cockpit-unadopted-queue.sh): an
+# aeon following sop-unadopted-refs-stale-db once deleted spira/queue/<stamp> while its CI was
+# running. The probe counted the branch as SP_UNADOPTED (no bead resolves for a queue suffix),
+# the watchtower filed an incident, and the SOP said to delete it. The local deletion did no
+# damage only because origin kept the ref. (sp-ctag9) The reapable set is defined positively:
+# only spira/sp-* refs (bead-id shaped) are candidates for the unadopted check. Harness-owned
+# namespaces skip the check entirely and are counted in SP_PROTECTED.
+#
+# SPIRA_BDJSON_FIXTURE, NOT A REAL STORE. unsent_keys' only bd reads are `show <id>` per
+# branch and the closed-beads `list` folded into the same function; the query shape itself is
+# covered once in test-cockpit-bd-contract.sh, against real bd. Git stays real — it is cheap,
+# and the branch-walking half of this probe is exactly what a mocked bd cannot exercise.
+#
+# defect: sp-884p sp-ctag9
 # covers: spira/cockpit.sh
 # scar: SP_BRANCH_DONE was overwritten per-repo so only the first repository's zero survived; SP_UNSENT counted every ref under refs/heads/spira/* regardless of whether the suffix resolved to a bead.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-. "$HERE/testdb.sh"
-testdb_require cockpit-unsent
-testdb_up cockpit-unsent || exit 1
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT INT TERM
 
 pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
+bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
-TMP="$(mktemp -d)"
-trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 # Git identity for fixture commits — required in the container (no ~/.gitconfig).
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 BASE_PATH="$PATH"
-# conf.sh (sourced by testdb.sh) knows where bd lives; pass it through so the probe can find it.
-BD_PATH="${SPIRA_PATH:-}"
-# Resolve the binary testdb_up selected (bd-embedded for embedded mode, bd for server mode)
-# to an absolute path now, while PATH is still expanded to include TESTDB_BIN. An absolute
-# path is required because env -i strips PATH; a bare command name would fail to resolve.
-# Using SPIRA_BD (set by testdb_up) is the correct choice: it is already the binary that can
-# open the testdb. The original `command -v bd` found the CGO_ENABLED=0 binary, which cannot
-# open the embedded store and caused conf.sh's `bd migrate schema` to fail at startup —
-# killing the probe before it emitted a single key (defect sp-gzufi).
-REAL_BD="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null)"
-[ -n "$REAL_BD" ] || { echo "SKIP cockpit-unsent: no bd binary" >&2; exit 77; }
 
 # Two git repos. `alpha` is the home repo (listed first by spira_repos), `beta` is the second.
 ALPHA="$TMP/alpha"; BETA="$TMP/beta"
@@ -64,11 +62,13 @@ beta  | $BETA  | push | | |
 MAP
 RUN="$TMP/run"; mkdir -p "$RUN"
 
-# A closed bead in BETA, with a branch in beta. Nothing in alpha.
-testdb_seed <<'JSONL'
-{"id":"sp-aaa","title":"work in beta","status":"closed","labels":["spira","plan","repo:beta"]}
-{"id":"sp-bbb","title":"open work in beta","status":"in_progress","labels":["spira","plan","repo:beta"]}
-JSONL
+# A closed bead and an open bead in BETA, with branches in beta. Nothing bead-backed in alpha.
+cat > "$TMP/beads.json" <<'JSON'
+[
+  {"id":"sp-aaa","title":"work in beta","status":"closed","issue_type":"task","labels":["spira","plan","repo:beta"]},
+  {"id":"sp-bbb","title":"open work in beta","status":"in_progress","issue_type":"task","labels":["spira","plan","repo:beta"]}
+]
+JSON
 
 git -C "$BETA" checkout -q -b spira/sp-aaa
 git -C "$BETA" commit --allow-empty -m "sp-aaa work" -q
@@ -89,18 +89,42 @@ git -C "$ALPHA" checkout -q main 2>/dev/null || git -C "$ALPHA" checkout -q mast
 # Positive control for SP_UNADOPTED: the detector must count this one.
 git -C "$ALPHA" branch spira/sp-true-stray   # same commit as main; no new work
 
-# Run the probe in a minimal environment. cockpit.sh once without INVOCATION_ID prints keys
-# to stdout rather than writing a snapshot, which is what we want to parse.
-out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
-    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$REAL_BD" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
-    SPIRA_PATH="$BD_PATH" \
-    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+# spira/queue/<stamp> — a live batch PR branch. Its tip is already on main (same commit),
+# so a name-blind probe would count it as SP_UNADOPTED. It must be SP_PROTECTED instead.
+QSTAMP="20260917T173304Z"
+git -C "$ALPHA" branch "spira/queue/$QSTAMP"
 
-# Extract keys from output.
-val() { printf '%s' "$out" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
+# spira-suite-state/<name> — written by the quarantine path. Same shape: tip on main.
+SUITE_BR="test-reclaim-slay-branch-guard-20260917T164605Z"
+git -C "$ALPHA" branch "spira-suite-state/$SUITE_BR"
+
+# Open batch record naming the queue branch — the belt-and-suspenders path protects it
+# regardless of name, even though the namespace scan above already would.
+mkdir -p "$RUN/queue/alpha"
+{
+    printf 'pr=56\n'
+    printf 'head=abc\n'
+    printf 'base=def\n'
+    printf 'members=sp-foo:abc\n'
+    printf 'opened=1726598000\n'
+    printf 'branch=spira/queue/%s\n' "$QSTAMP"
+} > "$RUN/queue/alpha/open"
+
+# Run cockpit.sh unsent — the probe's own subcommand, not a full `once` — with bd reads
+# answered from a canned-JSON fixture rather than a live store.
+unsent() {    # unsent <fixture-file>
+    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
+        SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
+        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
+        SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_QUEUE_DIR="$RUN/queue" \
+        SPIRA_BDJSON_FIXTURE="$1" \
+        bash "$HERE/cockpit.sh" unsent 2>/dev/null
+}
+
+out="$(unsent "$TMP/beads.json")"
+val() { printf '%s' "$out" | grep "^$1=" | head -1 | sed "s/^$1=//; s/^'//; s/'\$//"; }
 
 echo "unsent backlog — two-repo fixture:"
 
@@ -125,10 +149,20 @@ want "SP_UNADOPTED_NAMES names the stray branch" "sp-true-stray" "$(val SP_UNADO
 nowant "SP_UNADOPTED_NAMES excludes orphan work" "tmp-stray" "$(val SP_UNADOPTED_NAMES)"
 
 # ======================================================================================
+# ABSORBED FROM test-cockpit-unadopted-queue.sh: harness-owned namespaces are never
+# counted as unadopted, even though their tip is already on base.
+nowant "SP_UNADOPTED_NAMES excludes queue branch"       "queue/"              "$(val SP_UNADOPTED_NAMES)"
+nowant "SP_UNADOPTED_NAMES excludes suite-state branch" "spira-suite-state/"  "$(val SP_UNADOPTED_NAMES)"
+want "SP_PROTECTED_NAMES names the queue branch"        "queue/$QSTAMP"                "$(val SP_PROTECTED_NAMES)"
+want "SP_PROTECTED_NAMES names the suite-state branch"  "spira-suite-state/$SUITE_BR"  "$(val SP_PROTECTED_NAMES)"
+is   "SP_PROTECTED counts exactly the two namespaced branches" "2" "$(val SP_PROTECTED)"
+
+# ======================================================================================
 # THE POSITIVE CONTROL: the probe found SOMETHING. An empty output would pass all the
 # negative assertions above, which is the shape law-absence-needs-a-positive-control warns
-# about.
-want "output contains SP_AT" "SP_AT=" "$out"
+# about. SP_AT is not one of unsent_keys' own keys — it is stamped by probe(), which the
+# `unsent` subcommand does not run — so the control names a key this function actually emits.
+want "output contains SP_BRANCH_DONE" "SP_BRANCH_DONE=" "$out"
 want "output contains SP_UNSENT" "SP_UNSENT=" "$out"
 
 # ======================================================================================
@@ -137,7 +171,7 @@ echo "BATCHED-stranded detection:"
 # ======================================================================================
 # BATCHED branch absent from any open batch → SP_BATCHED_STRANDED=1.
 # This is the sp-kogm shape: sp-bbb in beta has in_progress status; we mark its landstate
-# BATCHED and provide no open batch file. The probe must count it as stranded.
+# BATCHED and provide no open batch file naming it. The probe must count it as stranded.
 #
 # POSITIVE CONTROL FIRST: a run with BATCHED state and no open batch must report 1.
 # Only after that do we verify the BATCHED-in-batch case reports 0 — an all-zero result
@@ -145,30 +179,18 @@ echo "BATCHED-stranded detection:"
 mkdir -p "$RUN/landstate"
 printf 'BATCHED %s %s' "$(git -C "$BETA" rev-parse spira/sp-bbb 2>/dev/null)" "$(date +%s)" \
     > "$RUN/landstate/sp-bbb"
-out2="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
-    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$REAL_BD" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
-    SPIRA_PATH="$BD_PATH" \
-    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+out2="$(unsent "$TMP/beads.json")"
 val2() { printf '%s' "$out2" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 is "BATCHED with no open batch → SP_BATCHED_STRANDED=1" "1" "$(val2 SP_BATCHED_STRANDED)"
 want "SP_BATCHED_STRANDED_NAMES names the branch" "sp-bbb" "$(val2 SP_BATCHED_STRANDED_NAMES)"
 
 # BATCHED branch present in the open batch → SP_BATCHED_STRANDED=0.
-# Create an open batch file whose members= line includes sp-bbb:<tip>.
+# Create an open batch file for beta whose members= line includes sp-bbb:<tip>.
 _bbb_tip="$(git -C "$BETA" rev-parse spira/sp-bbb 2>/dev/null)"
 mkdir -p "$RUN/queue/beta"
 printf 'pr=1\nopened=%s\nmembers=sp-bbb:%s\nbranch=spira/queue/test\n' \
     "$(date +%s)" "$_bbb_tip" > "$RUN/queue/beta/open"
-out3="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
-    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$REAL_BD" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
-    SPIRA_PATH="$BD_PATH" \
-    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+out3="$(unsent "$TMP/beads.json")"
 val3() { printf '%s' "$out3" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 is "BATCHED present in open batch → SP_BATCHED_STRANDED=0" "0" "$(val3 SP_BATCHED_STRANDED)"
 rm -f "$RUN/queue/beta/open" "$RUN/landstate/sp-bbb"
@@ -182,26 +204,14 @@ mkdir -p "$RUN/landstate"
 _old_epoch=$(( $(date +%s) - 1801 ))
 _bbb_tip="$(git -C "$BETA" rev-parse spira/sp-bbb 2>/dev/null)"
 printf 'BATCHED %s %s' "$_bbb_tip" "$_old_epoch" > "$RUN/landstate/sp-bbb"
-out_btl="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
-    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$REAL_BD" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
-    SPIRA_PATH="$BD_PATH" \
-    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+out_btl="$(unsent "$TMP/beads.json")"
 val_btl() { printf '%s' "$out_btl" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 is "BATCHED older than wait → SP_BATCHED_TOO_LONG=1" "1" "$(val_btl SP_BATCHED_TOO_LONG)"
 want "SP_BATCHED_TOO_LONG_NAMES names the branch" "sp-bbb" "$(val_btl SP_BATCHED_TOO_LONG_NAMES)"
 
 # Fresh BATCHED epoch → SP_BATCHED_TOO_LONG=0 (positive control that the 0 is real).
 printf 'BATCHED %s %s' "$_bbb_tip" "$(date +%s)" > "$RUN/landstate/sp-bbb"
-out_btl2="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
-    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$REAL_BD" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
-    SPIRA_PATH="$BD_PATH" \
-    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+out_btl2="$(unsent "$TMP/beads.json")"
 val_btl2() { printf '%s' "$out_btl2" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 is "fresh BATCHED epoch → SP_BATCHED_TOO_LONG=0" "0" "$(val_btl2 SP_BATCHED_TOO_LONG)"
 rm -f "$RUN/landstate/sp-bbb"
@@ -251,31 +261,19 @@ echo
 echo "probe-fault — a failed bead lookup lands in SP_PROBE_FAIL, not SP_UNADOPTED:"
 # ======================================================================================
 # DEFECT: a failed bdjson call returned empty, which the probe read as "no bead exists"
-# and routed to SP_UNADOPTED. Closed beads appeared as unadopted strays.
-# TWO FAILURE MODES: (1) bd exits non-zero, (2) bd exits 0 but emits nothing
-# (the bd-zero-empty shape: a pipeline ending in sed inherits sed's exit status so a
-# refusing bd still exits 0). Both must land in SP_PROBE_FAIL, never SP_UNADOPTED.
-# (sp-kc9v4)
-
+# and routed to SP_UNADOPTED. Closed beads appeared as unadopted strays. (sp-kc9v4)
+#
+# An unreadable fixture makes bdsim.py exit 1 with no stdout — the same shape bdjson sees
+# from a real bd that cannot reach its store, whether bd exits non-zero or exits 0 with
+# nothing printed (json_only strips anything that is not a JSON line either way).
+#
 # POSITIVE CONTROL FIRST: the fixture already proves SP_UNADOPTED=1 (sp-true-stray)
-# when bd works (asserted in the first section above). Now prove that with a broken bd
-# the same branch does NOT feed SP_UNADOPTED.
-
-FAIL_BD="$TMP/bd-fail-uat"
-# Pass migrate so conf.sh's schema check succeeds; fail everything else (show, list, ...).
-printf '#!/bin/sh\nfor a; do [ "$a" = migrate ] && exit 0; done\nexit 1\n' > "$FAIL_BD"
-chmod +x "$FAIL_BD"
-
-out_fail="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
-    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$FAIL_BD" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
-    SPIRA_PATH="$BD_PATH" BD_TIMEOUT=1 \
-    bash "$HERE/cockpit.sh" once 2>/dev/null)"
+# when bd works (asserted above). Now prove that with an unreadable store the same branch
+# does NOT feed SP_UNADOPTED.
+out_fail="$(unsent "$TMP/does-not-exist.json")"
 valf() { printf '%s' "$out_fail" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 
-want "bd-fail output has SP_AT (probe ran)" "SP_AT=" "$out_fail"
+want "bd-fail output has SP_PROTECTED (probe ran)" "SP_PROTECTED=" "$out_fail"
 _pf="$(valf SP_PROBE_FAIL)"
 if [ "${_pf:-0}" -gt 0 ] 2>/dev/null; then
     ok "bd-fail: SP_PROBE_FAIL > 0 — failed lookups counted as probe faults"
@@ -283,27 +281,6 @@ else
     bad "bd-fail: SP_PROBE_FAIL not > 0" "got '${_pf:-<absent>}'"
 fi
 is "bd-fail: SP_UNADOPTED=0 — failed lookup never feeds unadopted count" "0" "$(valf SP_UNADOPTED)"
-
-EMPTY_BD="$TMP/bd-zero-empty-uat"
-printf '#!/bin/sh\nprintf ""\nexit 0\n' > "$EMPTY_BD"
-chmod +x "$EMPTY_BD"
-
-out_empty="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
-    SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
-    SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$EMPTY_BD" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
-    SPIRA_PATH="$BD_PATH" BD_TIMEOUT=1 \
-    bash "$HERE/cockpit.sh" once 2>/dev/null)"
-valz() { printf '%s' "$out_empty" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
-
-_pf2="$(valz SP_PROBE_FAIL)"
-if [ "${_pf2:-0}" -gt 0 ] 2>/dev/null; then
-    ok "bd-zero-empty: SP_PROBE_FAIL > 0 — empty-output lookup counted as probe fault"
-else
-    bad "bd-zero-empty: SP_PROBE_FAIL not > 0" "got '${_pf2:-<absent>}'"
-fi
-is "bd-zero-empty: SP_UNADOPTED=0 — empty lookup never feeds unadopted count" "0" "$(valz SP_UNADOPTED)"
 
 echo
 printf 'test-cockpit-unsent: %d ok, %d fail\n' "$pass" "$fail"
