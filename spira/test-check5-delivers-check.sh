@@ -31,7 +31,7 @@
 #      waiting out the full command (sp-bhpjs: an unbounded check stalled the whole pass).
 #
 # defect: sp-hivwr
-# covers: spira/sentinel.sh spira/aeon.sh
+# covers: spira/sentinel.sh
 # hermetic-ok: uses a fixture database and a local git repo, no systemd or gh
 # timeout: 90
 set -uo pipefail
