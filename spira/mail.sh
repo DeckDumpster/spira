@@ -323,12 +323,11 @@ cmd_send() {
     local msgid; msgid="$(_mail_msgid)"
 
     # For question/decision kinds with a live database: file a tracking decision bead
-    # so the operator's reply closes it — not the cited bead (if any).
-    # If a bead is cited:
-    #   - GUARD: a blocking edge onto a non-decision bead makes work beads unclaimable while
-    #   - law questions wait (sp-aybfy, law-blocking-edges-are-real-dependencies). Refuse it
-    #   - and wire relates_to instead. Override: SPIRA_MAIL_ALLOW_BLOCKING=1 (not in any
-    #   - agent brief; the archivist cannot use it without explicit operator instruction).
+    # so the operator's reply closes it — not the cited bead (if one exists).
+    # GUARD: a blocking edge onto a non-decision bead makes work beads unclaimable while
+    # law questions wait (sp-aybfy, law-blocking-edges-are-real-dependencies). Refuse it
+    # and wire relates_to instead. Override: SPIRA_MAIL_ALLOW_BLOCKING=1 (not in any
+    # agent brief; the archivist cannot use it without explicit operator instruction).
     # If no bead is cited, no edge is wired.
     local x_bead="$bead"
     if { [ "$kind" = "question" ] || [ "$kind" = "decision" ]; } \
@@ -349,8 +348,6 @@ cmd_send() {
                 printf 'mail: blocking edge refused — %s has type %s, not decision; wiring relates_to instead (override: SPIRA_MAIL_ALLOW_BLOCKING=1)\n' \
                     "$bead" "${_cited_type:-unknown}" >&2
             fi
-        else
-            _do_block=0
         fi
 
         dec_bead="$(printf '%s\n' "$body" \
@@ -359,10 +356,10 @@ cmd_send() {
                 --type decision \
                 --body-file - \
                 --silent 2>/dev/null)" || dec_bead=""
-        if [ -n "$dec_bead" ] && [ -n "$bead" ]; then
-            if [ "$_do_block" -eq 1 ]; then
+        if [ -n "$dec_bead" ]; then
+            if [ -n "$bead" ] && [ "$_do_block" -eq 1 ]; then
                 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep add "$bead" "$dec_bead" >/dev/null 2>&1 || true
-            else
+            elif [ -n "$bead" ]; then
                 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep relate "$dec_bead" "$bead" >/dev/null 2>&1 || true
             fi
         fi
