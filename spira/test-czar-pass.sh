@@ -29,6 +29,10 @@
 #  26. marker advances after each pass — the same landing.log line is not re-detected.
 #  27. ci-stalled and starved: the dedupe ref is stable across passes even when the
 #      measured duration changes (ported from test-watchtower-queue.sh).
+#  28-31. attribution-failed/loop-stalled/ci-stalled/starved: each detector's own
+#      trigger-condition boundary (requeued=0 no-op, multi-digit requeued, missing/silent
+#      log, configurable threshold, below-threshold, malformed open file, wrong kind) —
+#      ported from test-watchtower-queue.sh, which is retired once these land (UC-23).
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): for detectors 4 and 5,
 # the test first verifies NO detection with an empty/fresh fixture, then adds the
@@ -683,6 +687,154 @@ _ref_d="$(grep -o 'ref=[^ ]*' "$INC_LOG" 2>/dev/null | tail -1)"
 is "starved: dedupe ref stable across passes with different starved durations" \
     "$_ref_c" "$_ref_d"
 want "starved ref names the partition" "refstable" "$_ref_c"
+
+# ==========================================================================================
+printf '\n%s\n' "28. ATTRIBUTION-FAILED: requeued 0 is a no-op; multi-digit requeued still fires"
+# ==========================================================================================
+# Ported from test-watchtower-queue.sh (UC-23): requeued 0 means nothing was actually
+# requeued (no-op, not a failure to attribute), and the pattern must not be anchored at a
+# single-digit boundary.
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
+printf '%s spira: verdict spira: PR 75 — ejected 0, requeued 0\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "attribution-failed: DETECTED=no when requeued is 0 (no-op)" \
+    "CLASS=attribution-failed DETECTED=no" "$_log"
+
+printf '%s spira: verdict spira: PR 76 — ejected 0, requeued 10\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$SPIRA_RUN/landing.log"
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
+SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED=act bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "attribution-failed: multi-digit requeued count (10) still fires" \
+    "CLASS=attribution-failed DETECTED=yes" "$_log"
+
+# ==========================================================================================
+printf '\n%s\n' "29. LOOP-STALLED: no log at all, a log with no pass-complete line, configurable threshold"
+# ==========================================================================================
+# Ported from test-watchtower-queue.sh (UC-23): a missing or silent landing.log cannot tell
+# stalled from never-started, so it must not page — and the threshold read from
+# SPIRA_LOOP_STALL_SECS must actually change the outcome, not just exist in the allowlist.
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* \
+      "$INC_LOG" "$SPIRA_RUN/landing.log"
+SPIRA_SYSTEMCTL="$STUB_SC" bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "loop-stalled: DETECTED=no when landing.log does not exist" \
+    "CLASS=loop-stalled DETECTED=no" "$_log"
+
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
+printf '%s spira: verdict spira: PR 72 red\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$SPIRA_RUN/landing.log"
+SPIRA_SYSTEMCTL="$STUB_SC" bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "loop-stalled: DETECTED=no when the log has no 'pass complete' line" \
+    "CLASS=loop-stalled DETECTED=no" "$_log"
+
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
+_thresh_ts="$(date -u -d '@'"$(( $(date +%s) - 100 ))" +%Y-%m-%dT%H:%M:%SZ)"
+printf '%s spira: landing: pass complete — 3 branch(es) seen, 0 movement(s)\n' \
+    "$_thresh_ts" > "$SPIRA_RUN/landing.log"
+SPIRA_SYSTEMCTL="$STUB_SC" SPIRA_LOOP_STALL_SECS=50 bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "loop-stalled: configurable threshold — 100s age fires at threshold=50s" \
+    "CLASS=loop-stalled DETECTED=yes" "$_log"
+
+# ==========================================================================================
+printf '\n%s\n' "30. CI-STALLED: below threshold, forge returns nothing queued, malformed open file"
+# ==========================================================================================
+# Ported from test-watchtower-queue.sh (UC-23): none of these are the shared marker/ref
+# mechanism (row 27) — each is ci-stalled's own trigger-condition boundary.
+_ci30_dir="$SPIRA_RUN/queue/ci30repo"
+mkdir -p "$_ci30_dir"
+printf 'branch=spira/queue/ci30-test\n' > "$_ci30_dir/open"
+mkdir -p "$T/ci30repo"
+printf 'ci30repo | %s | push | origin/main | |\n' "$T/ci30repo" >> "$SPIRA_REPO_MAP"
+
+_ci30_below=$(( $(date +%s) - 100 ))   # 100s < default 600s threshold
+cat > "$STUB_FORGE" <<FEOF30A
+#!/usr/bin/env bash
+cmd="\${1:-}"
+case "\$cmd" in
+    batch-ci-status) printf 'run-id: 1\nqueued-since: ${_ci30_below}\n' ;;
+esac
+exit 0
+FEOF30A
+chmod +x "$STUB_FORGE"
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "ci-stalled: DETECTED=no when queued only 100s (threshold 600s)" \
+    "CLASS=ci-stalled DETECTED=no" "$_log"
+
+cat > "$STUB_FORGE" <<'FEOF30B'
+#!/usr/bin/env bash
+cmd="${1:-}"
+case "$cmd" in
+    batch-ci-status) exit 0 ;;
+esac
+exit 0
+FEOF30B
+chmod +x "$STUB_FORGE"
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "ci-stalled: DETECTED=no when forge returns no queued-since (nothing queued)" \
+    "CLASS=ci-stalled DETECTED=no" "$_log"
+
+printf 'opened_at=100\n' > "$_ci30_dir/open"   # malformed: no branch= field
+_ci30_old=$(( $(date +%s) - 700 ))
+cat > "$STUB_FORGE" <<FEOF30C
+#!/usr/bin/env bash
+cmd="\${1:-}"
+case "\$cmd" in
+    batch-ci-status) printf 'run-id: 1\nqueued-since: ${_ci30_old}\n' ;;
+esac
+exit 0
+FEOF30C
+chmod +x "$STUB_FORGE"
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "ci-stalled: DETECTED=no when the open file has no branch= field" \
+    "CLASS=ci-stalled DETECTED=no" "$_log"
+printf 'branch=spira/queue/ci30-test\n' > "$_ci30_dir/open"   # restore for later sections
+
+# ==========================================================================================
+printf '\n%s\n' "31. STARVED: below threshold, wrong kind (ghost, not starved)"
+# ==========================================================================================
+# Ported from test-watchtower-queue.sh (UC-23): both are starved's own trigger-condition
+# boundary, not the shared marker/ref mechanism already proven generically in row 27.
+cat > "$STUB_FORGE" <<'FEOF31'
+#!/usr/bin/env bash
+exit 0
+FEOF31
+chmod +x "$STUB_FORGE"
+
+_sv31_recent=$(( $(date +%s) - 300 ))   # 5 minutes, threshold 20 minutes
+python3 -c "
+import json
+st = {'plan,spira:starved:-': {'first': $_sv31_recent}}
+print(json.dumps(st))
+" > "$SPIRA_RUN/strands.json"
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."*
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "starved: DETECTED=no when starved only 5m (threshold 20m)" \
+    "CLASS=starved DETECTED=no" "$_log"
+
+_sv31_old=$(( $(date +%s) - 1500 ))   # 25 minutes — old enough to fire, if it were "starved"
+python3 -c "
+import json
+st = {'plan,spira:ghost:sp-123': {'first': $_sv31_old}}
+print(json.dumps(st))
+" > "$SPIRA_RUN/strands.json"
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept"
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "starved: DETECTED=no for a ghost entry, however old (wrong kind)" \
+    "CLASS=starved DETECTED=no" "$_log"
+rm -f "$SPIRA_RUN/strands.json"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
