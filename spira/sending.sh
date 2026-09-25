@@ -260,6 +260,22 @@ sys.exit(0 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
                 if [ "${_sup_n:-?}" != "0" ] && git -C "$REPO" merge-tree --write-tree "$LANDREF" "$br" >/dev/null 2>&1; then
                     _sup_files="$(git -C "$REPO" diff --name-only "$LANDREF" "$br" 2>/dev/null | head -5)"
                     say "KEEP   $id  superseded but $_sup_n unlanded commit(s) add content absent from $LANDREF: ${_sup_files:-unknown files}"
+                    # THE BRANCH STAYS; THE WORKTREE DOES NOT. spira_destroy_branch refuses a
+                    # branch "checked out at <worktree>" regardless of whether the branch
+                    # itself is safe to reap, so a KEPT branch's own worktree stands forever
+                    # once its aeon exits — the worktree was never what made this branch
+                    # unsafe. The holder witness at the top of this loop already established
+                    # no live aeon is inside it, so freeing the worktree here costs nothing
+                    # and lets a later correction (a fixed supersede mark, a content_landed
+                    # fix) reap the branch without a hand clearing worktrees first.
+                    _sup_w="$(worktree_of "$br" "$REPO")"
+                    if [ -n "$_sup_w" ]; then
+                        if [ "$DRY" = 1 ]; then
+                            say "WOULD  $id  free worktree $_sup_w (branch kept)"
+                        else
+                            spira_destroy_worktree "$id" "$_sup_w" "$REPO" "branch $id kept as superseded; worktree freed"
+                        fi
+                    fi
                     continue
                 fi
                 if [ "$DRY" = 1 ]; then

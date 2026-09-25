@@ -207,6 +207,14 @@ if git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-unique" 2>/dev/
 else
     bad "branch with unique content survives a sending pass" "branch was reaped — unique-file.txt would be lost"
 fi
+# The branch is kept, but nothing needs to hold its worktree open any longer — a
+# standing worktree is what made spira_destroy_branch refuse a later, correctly
+# superseded branch (sp-bf31a).
+if [ -e "$RUN/worktree/sp-unique" ]; then
+    bad "kept branch's worktree is freed" "worktree still present after sending"
+else
+    ok "kept branch's worktree is freed (branch itself untouched)"
+fi
 git -C "$REPO" worktree remove --force "$RUN/worktree/sp-unique" >/dev/null 2>&1 || true
 git -C "$REPO" branch -D "spira/sp-unique" >/dev/null 2>&1 || true
 
