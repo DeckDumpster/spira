@@ -133,7 +133,7 @@ rm -f "$Q/open"
 EOF
 # After poll 3: PR 51 forced to a stale bisect group of P3 work while a P0 waits.
 cat > "$FX/step-3.sh" <<EOF
-printf 'sp-c:cccc\nsp-b:bbbb\n' > "$Q/bisect"
+printf 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef sp-c:cccc\nsp-b:bbbb\n' > "$Q/bisect"
 touch -d '3 hours ago' "$Q/bisect"
 printf 'pr=51\nhead=h3\nmembers=sp-c:cccc\n' > "$Q/open"
 echo "CERTIFIED dddd 1" > "$RUN/landstate/sp-d"
