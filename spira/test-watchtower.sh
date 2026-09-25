@@ -88,6 +88,15 @@ chmod +x "$DF_CLEAN/df"
 MEMINFO_CLEAN="$TMP/meminfo-clean"
 printf 'MemAvailable:   16000000 kB\n' > "$MEMINFO_CLEAN"
 
+# A CLEAN SYSTEMCTL, DEFAULT FOR EVERY wt()/wt_file()/wt_file_multi() CALL — same reasoning
+# as DF_CLEAN above. Without a stub, `systemctl --user list-units --state=failed` runs for
+# real and this suite's idea of "nominal" starts depending on whatever units are actually
+# failed on the box running it (sp-niqjl's own failed-units check is not what this suite
+# covers — that is test-watchtower-failed-units.sh).
+SYSTEMCTL_CLEAN="$TMP/systemctl-clean"
+printf '#!/bin/sh\nexit 0\n' > "$SYSTEMCTL_CLEAN"
+chmod +x "$SYSTEMCTL_CLEAN"
+
 # The program under test, in an environment holding nothing but what it needs. `--show`
 # gathers and prints and touches nothing, so nothing here can reach a database or file a bead.
 wt() {                   # wt [VAR=val ...] -> the snapshot
@@ -95,7 +104,7 @@ wt() {                   # wt [VAR=val ...] -> the snapshot
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
-        SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" \
+        SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         "$@" bash "$HERE/watchtower.sh" --show 2>/dev/null
 }
 # THE LABEL IS MATCHED LITERALLY, never with a `.*`. The value is separated from the label
@@ -413,7 +422,7 @@ wt_file() {   # wt_file [VAR=val ...] -> $TMP/ops-prompt written; $TMP/incident-
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_INCIDENT_SH="$mock" \
-        SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" \
+        SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         "$@" bash "$HERE/watchtower.sh" 2>/dev/null
 }
 
@@ -546,7 +555,7 @@ wt_file_multi() {   # wt_file_multi [VAR=val ...] -> appends incident subjects t
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
-        SPIRA_SUITES_SH="$MOCK_SUITES" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         SPIRA_INCIDENT_SH="$mock" \
         "$@" bash "$HERE/watchtower.sh" 2>/dev/null
 }
@@ -562,7 +571,7 @@ wt_refs_multi() {   # wt_refs_multi [VAR=val ...] -> appends SPIRA_INCIDENT_REF 
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
-        SPIRA_SUITES_SH="$MOCK_SUITES" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         SPIRA_INCIDENT_SH="$mock" \
         "$@" bash "$HERE/watchtower.sh" 2>/dev/null
 }
@@ -576,7 +585,7 @@ wt_body_unadopted() {  # wt_body_unadopted [VAR=val ...] -> writes unadopted esc
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
-        SPIRA_SUITES_SH="$MOCK_SUITES" \
+        SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         SPIRA_INCIDENT_SH="$mock" \
         "$@" bash "$HERE/watchtower.sh" 2>/dev/null
 }
