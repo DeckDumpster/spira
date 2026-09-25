@@ -127,6 +127,11 @@ ask bead and escalate:
 **Re-prioritise.** Priority management is the scheduler's and Ryan's. Leave priorities as
 you find them. The groomer lane exists to reconcile structure, not to sort a queue.
 
+**Record findings in a file tracked by the repository.** Every open groom pass shares one
+base, so a repository-tracked findings file is a conflict waiting for the next pass to land
+first. The bead notes below and `$SPIRA_RUN/groom.log` are outside the tree for exactly this
+reason — use them, not a file you `git add`.
+
 ## Before you scan: mechanical sweep
 
 Run the sweep first so beads with mechanical remedies are resolved before you read the graph:
