@@ -2127,6 +2127,59 @@ bump_reopen()  {
         >/dev/null 2>&1; return 0
 }
 
+# bead_metadata <id> <key> -> the value bd update --set-metadata wrote, or empty when unset.
+# --long is required: bd show --json omits metadata by default (sp-4rzlw).
+bead_metadata() {
+    local id="${1:-}" key="${2:-}"
+    [ -n "$id" ] && [ -n "$key" ] || { printf ''; return 0; }
+    bdjson show "$id" --long 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: d = []
+d = d if isinstance(d, list) else [d]
+m = (d[0].get("metadata") or {}) if d else {}
+print(m.get(sys.argv[1], ""))' "$key" 2>/dev/null
+}
+
+# THRASH STREAK — how many consecutive thrash requeues have landed on this bead with its
+# branch tip unchanged. Stored as bead metadata (thrash_tip, thrash_streak, thrash_last)
+# because it must survive between aeon summons — unlike $SPIRA_RUN, which is this session's
+# scratch, and unlike spira-poison, this is never read at selection time so it does not need
+# a label's visibility.
+#
+# A thrash requeue is exempted from the poison count on the theory that the aeon was killed
+# for stalling, not judged on its work (aeon.sh, THRASH IS NOT FAILURE). That theory holds
+# for one requeue; it does not hold for a bead requeued again and again at the SAME commit,
+# which is a bead nothing is moving rather than one aeon that got unlucky — sp-gs24i got five
+# summons across seven hours this way and none of them charged, because "no new commit" was
+# never checked.
+#
+# thrash_streak_bump <id> <tip> <note> -> the streak AFTER this bump (an integer, printed).
+# Same tip as last time bumps the streak; any other tip (including the first thrash ever, or
+# one that moved) resets it to 1. The caller decides what a streak at or over the configured
+# cap means — see aeon.sh's .thrash handler.
+thrash_streak_bump() {
+    local id="${1:-}" tip="${2:-?}" note="${3:-}" prev_tip prev_streak streak
+    [ -n "$id" ] || { printf '0'; return 0; }
+    prev_tip="$(bead_metadata "$id" thrash_tip)"
+    prev_streak="$(bead_metadata "$id" thrash_streak)"
+    if [ -n "$tip" ] && [ "$tip" != "?" ] && [ "$tip" = "$prev_tip" ]; then
+        streak=$(( ${prev_streak:-0} + 1 ))
+    else
+        streak=1
+    fi
+    # printf, not a herestring: <<< appends its own trailing newline, which tr would turn
+    # into a trailing space that survives the cut below (command substitution only strips
+    # trailing NEWLINES, not spaces).
+    note="$(printf '%s' "$note" | tr '\n\r' '  ' | cut -c1-300)"
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" update "$id" \
+        --set-metadata "thrash_tip=$tip" \
+        --set-metadata "thrash_streak=$streak" \
+        --set-metadata "thrash_last=$note" \
+        >/dev/null 2>&1
+    printf '%d' "$streak"
+}
+
 # DIAGNOSTIC ACCESSORS — requeue/reclaim/recur counters are read from the events
 # table via bd sql (sp-2lk). timeouts_of returns 0 (no census role; events-based
 # timeout detection is a separate future deliverable).

@@ -219,6 +219,63 @@ else
     printf '  skip  groomer bead creation failed (groomer partition not ready)\n'
 fi
 
+# ==========================================================================================
+echo
+echo "sp-4rzlw: a bead carrying an unresolved thrash streak leads its brief with the sticking point:"
+# ==========================================================================================
+# A DEDICATED LABEL, not $T_LABEL. Two beads created against the shared pool would leave
+# selection order between them unspecified, and only ONE of the two assertions below needs a
+# SPECIFIC bead claimed — the positive case. Isolating both onto their own label removes the
+# ambiguity instead of relying on an undocumented "ready" ordering.
+ST_LABEL="test-layers-sticking-bead"
+make_fayth testlayers-sticking "FAYTH_SYSTEM_PROMPT=append"
+# make_fayth writes $T_LABEL already expanded (the heredoc is unquoted), so the substitution
+# below targets its literal value, not the variable name.
+sed -i "s/$T_LABEL/$ST_LABEL/" "$SPIRA_HOME/chamber/testlayers-sticking.fayth"
+make_sticking_bead() {
+    BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "sticking-point test bead" --type task \
+        -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}$ST_LABEL,repo:fixture" 2>/dev/null \
+        | grep -oE 'sp-[a-z0-9]+' | head -1
+}
+
+BID_S="$(make_sticking_bead)"
+[ -n "$BID_S" ] || { printf 'test-aeon-prompt-layers: could not create sticking-point bead\n' >&2; exit 1; }
+
+# The tip aeon.sh's fresh worktree checks out is origin/main's own tip: this bead's branch has
+# never been worked, so it is created from there — the same tip a real thrash requeue would
+# have recorded metadata against on this bead's last (simulated) summon.
+tip0="$(git -C "$REPO" rev-parse --short origin/main)"
+bd -C "$SPIRA_DB" update "$BID_S" \
+    --set-metadata "thrash_tip=$tip0" \
+    --set-metadata "thrash_streak=2" \
+    --set-metadata "thrash_last=stuck rerunning the full landing gate locally instead of testenv-batch.sh" \
+    >/dev/null 2>&1
+
+aeon testlayers-sticking
+
+task_s="$(cat "$SPIRA_RUN/$BID_S.task.md" 2>/dev/null)"
+want "task.md carries the STICKING POINT banner"   "STICKING POINT"                                              "$task_s"
+want "task.md carries the recorded sticking point" "stuck rerunning the full landing gate locally"               "$task_s"
+
+# "At the top" (the bead) — before "## The bead", not merely present somewhere below it.
+sp_pos="$(grep -abo 'STICKING POINT' <<<"$task_s" | head -1 | cut -d: -f1)"
+bead_pos="$(grep -abo '## The bead' <<<"$task_s" | head -1 | cut -d: -f1)"
+if [ -n "$sp_pos" ] && [ -n "$bead_pos" ] && [ "$sp_pos" -lt "$bead_pos" ]; then
+    ok "STICKING POINT appears before '## The bead', not buried in the notes below it"
+else
+    bad "STICKING POINT appears before '## The bead', not buried in the notes below it" \
+        "sp_pos=$sp_pos bead_pos=$bead_pos"
+fi
+
+# NEGATIVE CONTROL, SAME LABEL, SAME FAYTH: a bead with no thrash metadata gets no banner at
+# all — the positive assertions above prove the banner can appear; this proves it is
+# conditional on the metadata, not unconditional boilerplate the template always renders.
+BID_CLEAN="$(make_sticking_bead)"
+[ -n "$BID_CLEAN" ] || { printf 'test-aeon-prompt-layers: could not create clean bead\n' >&2; exit 1; }
+aeon testlayers-sticking
+task_clean="$(cat "$SPIRA_RUN/$BID_CLEAN.task.md" 2>/dev/null)"
+nowant "a bead with no thrash history gets no STICKING POINT banner" "STICKING POINT" "$task_clean"
+
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]

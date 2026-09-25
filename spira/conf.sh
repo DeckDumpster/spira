@@ -71,7 +71,7 @@ SPIRA_TOWN SPIRA_MIRROR SPIRA_EXPORTER SPIRA_DESIGN SPIRA_WIKI SPIRA_WIKI_HOOK S
 SPIRA_VIEW SPIRA_VIEW_SESSION
 SPIRA_ALERT_GLOB
 SPIRA_BD SPIRA_BD_PIN SPIRA_BD_TAG
-SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_LANES_MAX_LIVE SPIRA_QA_DEPTH SPIRA_THRASH_MINUTES SPIRA_RAPID_RECUR_THRESHOLD
+SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_LANES_MAX_LIVE SPIRA_QA_DEPTH SPIRA_THRASH_MINUTES SPIRA_THRASH_STREAK_CAP SPIRA_RAPID_RECUR_THRESHOLD
 SPIRA_CLAIM_RETRIES SPIRA_CLAIM_RETRY_DELAY_S
 SPIRA_TOKEN_WINDOW_H SPIRA_TOKEN_PROJECTS SPIRA_CTX_WARN SPIRA_CTX_HIGH SPIRA_CTX_LIMIT
 SPIRA_ARCHIVE
@@ -640,6 +640,15 @@ spira_conf_defaults() {
     # the default; the case that motivated this would have been freed at ~20 rather than 76.
     # A gate suppresses the fuse, so a correct mid-review aeon is never tripped.
     : "${SPIRA_THRASH_MINUTES:=20}"
+    # HOW MANY CONSECUTIVE thrash requeues at an UNCHANGED branch tip a bead tolerates
+    # before the requeue stops being free. A thrash requeue charges no attempt (the aeon
+    # was killed for stalling, not judged on its work), and that exemption is unbounded
+    # unless something notices the branch never moved between them — sp-gs24i got five
+    # summons across seven hours the same way, none of them charged. At this count the
+    # requeue is charged as an attempt instead, same as any other failed session, so the
+    # ordinary poison threshold eventually reaches a bead that keeps thrashing on the
+    # same commit.
+    : "${SPIRA_THRASH_STREAK_CAP:=2}"
     # HOW MANY CONSECUTIVE sub-10s aeon runs on one bead trigger the rapid-recur alert.
     # Three in quick succession is already a setup loop; lower means earlier but noisier.
     : "${SPIRA_RAPID_RECUR_THRESHOLD:=3}"

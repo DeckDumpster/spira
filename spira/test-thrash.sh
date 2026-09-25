@@ -199,14 +199,27 @@ else
         bad ".thrash check (line $thrash_line) should come after .slain (line $slain_line)"
     fi
 
-    # Confirm no attempt is charged: aeon.sh must not call increment_attempt or touch the
-    # attempt counter anywhere in the .thrash handler. The handler is the fi-block after
-    # the line that tests for the .thrash marker file.
-    thrash_block="$(awk '/BEAD_ID\.thrash/{f=1} f{print; if(/^[[:space:]]*fi$/){exit}}' "$AEON")"
+    # The handler now branches on the thrash streak (sp-4rzlw): below the cap it must still
+    # requeue with the bare "thrash" cause the SQL exemption matches (no attempt), and at or
+    # over the cap it must requeue with a DIFFERENT cause so the exemption does not apply (an
+    # attempt is charged). The block runs from the .thrash marker line through its OUTER fi —
+    # two standalone "fi" lines now live inside it (the streak if/else and the marker if), so
+    # the extraction must not stop at the first one the way a single flat block would.
+    thrash_block="$(awk '/BEAD_ID\.thrash/{f=1} f{print; if(/^[[:space:]]*fi$/){n++; if(n==2) exit}}' "$AEON")"
     if grep -q 'increment_attempt\|ATTEMPTS\b' <<< "${thrash_block:-}" 2>/dev/null; then
-        bad "aeon.sh thrash region references attempt increment — no attempt should be charged"
+        bad "aeon.sh thrash region references attempt increment — nothing here should touch a counter directly"
     else
-        ok "thrash cleanup block does not increment attempts"
+        ok "thrash cleanup block does not increment attempts directly"
+    fi
+    if grep -q 'bump_requeue "\$BEAD_ID" thrash$' <<< "${thrash_block:-}" 2>/dev/null; then
+        ok "below-cap path still requeues with the bare 'thrash' cause (no attempt)"
+    else
+        bad "below-cap path no longer requeues with the bare 'thrash' cause"
+    fi
+    if grep -q 'bump_requeue "\$BEAD_ID" thrash-stale' <<< "${thrash_block:-}" 2>/dev/null; then
+        ok "at/over-cap path requeues with a cause the SQL exemption does not match (attempt charged)"
+    else
+        bad "at/over-cap path does not requeue with a distinct, non-exempt cause"
     fi
 
     # Confirm ledger_done is called with requeue-thrash status anywhere in the file.
