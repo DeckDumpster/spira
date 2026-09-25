@@ -17,9 +17,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SCRIPT="$HERE/acceptance-run.sh"
 AGENT="$HERE/acceptance-agent.sh"
 
-wantfile()   { grep -qF "$2" "$3" 2>/dev/null && ok "$1" || bad "$1" "not found: $2"; }
-wantrefile() { grep -qE "$2" "$3" 2>/dev/null && ok "$1" || bad "$1" "pattern not found: $2"; }
-nowantfile() { grep -qE "$2" "$3" 2>/dev/null && bad "$1" "still present: $2" || ok "$1"; }
+wantfile()   { grep -qF -- "$2" "$3" 2>/dev/null && ok "$1" || bad "$1" "not found: $2"; }
+wantrefile() { grep -qE -- "$2" "$3" 2>/dev/null && ok "$1" || bad "$1" "pattern not found: $2"; }
+nowantfile() { grep -qE -- "$2" "$3" 2>/dev/null && bad "$1" "still present: $2" || ok "$1"; }
 
 echo "test-acceptance-run.sh"
 

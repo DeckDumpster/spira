@@ -100,7 +100,11 @@ _rr_out2="$(_lib_run_ready "$STUB_OK")"; _rr_rc2=$?
 is "exit 0 is captured" "0" "$_rr_rc2"
 
 STUB_ENV="$SCRATCH/ready-env.sh"
-printf '#!/bin/sh\nprintf "OPERATED=%s\\n" "$SPIRA_OPERATED"\nexit 0\n' > "$STUB_ENV"
+cat > "$STUB_ENV" <<'EOF'
+#!/bin/sh
+printf 'OPERATED=%s\n' "$SPIRA_OPERATED"
+exit 0
+EOF
 chmod +x "$STUB_ENV"
 want "env pairs are forwarded to the ready script" \
     "OPERATED=0" "$(_lib_run_ready "$STUB_ENV" SPIRA_OPERATED=0)"
@@ -184,7 +188,7 @@ _checks_out="$(bash -c '
     is_same "i" x y
     printf "pass=%s fail=%s\n" "$pass" "$fail"
 ' "$LIB")"
-is "is0/not0/want/notwant/is_same: 5 pass, 4 fail" "pass=5 fail=4" "$_checks_out"
+want "is0/not0/want/notwant/is_same: 5 pass, 4 fail" "pass=5 fail=4" "$_checks_out"
 
 # ===========================================================================
 echo
@@ -205,7 +209,7 @@ _fw_out="$(bash -c '
     bad "phase-2 first fail" "x"
     printf "pass=%s fail=%s snap=%s\n" "$pass" "$fail" "$_snap_count"
 ' "$LIB" "$_jfile")"
-is "framework tally: 2 pass, 3 fail" "pass=2 fail=3 snap=2" "$_fw_out"
+want "framework tally: 2 pass, 3 fail" "pass=2 fail=3 snap=2" "$_fw_out"
 
 _jlines="$(wc -l < "$_jfile" | tr -d ' ')"
 is "JSONL: one line per check (5 checks -> 5 lines)" "5" "$_jlines"
