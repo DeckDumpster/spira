@@ -45,8 +45,6 @@ Stuck-bead escalation decisions (subject beads now closed):
   sp-l49vi  — ref sp-4rzlw CLOSED
   sp-gewuc  — ref sp-aygfc CLOSED
 
-UNSURE NOTES:
-
 1. UNSURE sp-psenn — 'Lint failure test subject for repeat guard'
    - aeon-valefor created, placeholder description ('Detailed context goes here.')
    - Title suggests test fixture but doesn't match litter patterns exactly
@@ -60,3 +58,50 @@ CURRENT STATE:
 - 1 UNSURE note written (sp-psenn, pass 1)
 - No duplicates found
 - No splits needed
+
+---
+
+GROOM PASS sp-lf6lv - Graph Hygiene Results
+============================================
+
+TRIGGER: delivers:beads label wrongly inherited onto sp-9ce60.2's children
+
+SWEEP: groomer.sh sweep clean — 0 LIVELOCK rows.
+
+LIVELOCK ROWS HANDLED: 0 (detect_livelocked returned nothing)
+
+ACTIONS TAKEN:
+
+1. ESCALATED sp-m4uko (pass 2 → groom-asked)
+   - Title: repeat attempt: no change — spira/sp-niqjl
+   - sp-niqjl is CLOSED (submitted) but not yet on origin/main
+   - Root cause (test-snap-stale-threshold.sh flakiness) filed as sp-iuwwu
+   - sp-m4uko DEPENDS ON sp-iuwwu
+   - Question sent to operator; default: wait for sp-niqjl to land, then close
+   - Label groom-asked added
+
+BEADS EXAMINED: ~174 open spira-labeled beads
+
+DUPLICATE SCAN:
+- No obvious duplicates found
+
+LITTER SCAN:
+- No fixture-shaped litter found
+- sp-psenn already carries groom-asked (escalated previous pass); skipped
+
+LABELS CHECKED:
+- delivers:beads: clean (all wrongly-inherited labels stripped in previous pass)
+- No new lane corrections needed
+
+NOTE: Previous pass (same bead, same session) performed the primary work:
+- Stripped delivers:beads from sp-9ce60.2.2, .2.3, .2.4, .2.5
+- Stripped delivers:beads from sp-9ce60.2.6, .2.8, .2.9, .3, .4, .5, .6, .7
+- Closed sp-djm5y (premise gone)
+- Filed UNSURE note on sp-m4uko (pass 1)
+This pass closes the bead with a commit.
+
+CURRENT STATE:
+- 174 beads examined
+- 0 LIVELOCK rows
+- 1 escalation: sp-m4uko (groom-asked)
+- No duplicates, no premise-gone cases, no fixture-shaped litter
