@@ -48,7 +48,16 @@ case " $* " in
         rc="${{BD_COMMENTS_LIST_RC:-0}}"; err="${{BD_COMMENTS_LIST_ERR:-}}"; out="${{BD_COMMENTS_LIST_OUT:-[]}}" ;;
     *" list "*)
         rc="${{BD_LIST_RC:-0}}"; err="${{BD_LIST_ERR:-}}"
-        if [ -n "${{BD_LIST_OUT:-}}" ]; then out="$BD_LIST_OUT"; else out='{{"issues":[]}}'; fi ;;
+        # No explicit BD_LIST_OUT: succeed with an empty list, or fail with EMPTY stdout —
+        # store.rs's run() only treats a nonzero exit as an error when stdout is empty too,
+        # the same "failed but printed something" shape a real bd can produce.
+        if [ -n "${{BD_LIST_OUT:-}}" ]; then
+            out="$BD_LIST_OUT"
+        elif [ "$rc" = "0" ]; then
+            out='{{"issues":[]}}'
+        else
+            out=""
+        fi ;;
     *)
         rc=0; err=""; out="" ;;
 esac
