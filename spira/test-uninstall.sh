@@ -33,6 +33,7 @@ REAL_COCKPIT="$(cd "$HERE/../cockpit" && pwd -P)"
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0, got $2"; }
 nonzero() { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit, got 0"; }
 isfile()  { [ -f "$2" ] && ok "$1" || bad "$1" "expected file: $2"; }
+isdir()   { [ -d "$2" ] && ok "$1" || bad "$1" "expected dir: $2"; }
 nofile()  { [ ! -e "$2" ] && ok "$1" || bad "$1" "expected absent: $2"; }
 
 echo "test-uninstall.sh"
@@ -491,7 +492,7 @@ wrong_out="$(un_purgedb "99" --purge-database)"
 wrong_rc=$?
 nonzero "purge-database: wrong count exits non-zero"           "$wrong_rc"
 want    "purge-database: wrong count reports the mismatch"     "count mismatch" "$wrong_out"
-isfile  "purge-database: wrong count leaves .beads intact"     "$PURGEDB_DIR/.beads"
+isdir   "purge-database: wrong count leaves .beads intact"     "$PURGEDB_DIR/.beads"
 
 # Right count: database, Dolt data and test Dolt data are all removed; exit 0.
 _seed_purgedb
@@ -508,7 +509,7 @@ plain_out="$(un_purgedb "3" --purge)"
 plain_rc=$?
 iszero "purge-database: plain --purge exits 0"                     "$plain_rc"
 nowant "purge-database: plain --purge does not prompt for a count" "Type the count" "$plain_out"
-isfile "purge-database: plain --purge leaves .beads intact"        "$PURGEDB_DIR/.beads"
+isdir  "purge-database: plain --purge leaves .beads intact"        "$PURGEDB_DIR/.beads"
 
 rm -rf "$PURGEDB_DIR" "$PURGEDB_DOLT" "$PURGEDB_TESTDB"
 
