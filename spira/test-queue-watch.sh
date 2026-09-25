@@ -27,11 +27,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
 
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL — %s\n' "$1"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1: wanted [$2] in [$3]"; }
-lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
 if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
@@ -58,7 +54,7 @@ if [ -z "$BIN" ]; then
         --manifest-path "$ROOT/queue-watch/Cargo.toml" >/dev/null 2>&1
     BIN="$T/target/release/queue-watch"
 fi
-[ -x "$BIN" ] || { bad "queue-watch binary built at $BIN"; printf '%d passed, %d failed\n' "$pass" "$fail"; exit 1; }
+[ -x "$BIN" ] || bail "queue-watch binary was not built at $BIN"
 
 # --- fixtures --------------------------------------------------------------------------------
 RUN="$T/run"; FX="$T/fx"; Q="$RUN/queue/q"
@@ -156,7 +152,7 @@ printf '%s\n' "$out" | sed 's/^/    | /'
 # --- 2. the event stream ---------------------------------------------------------------------
 want "baseline names the open batch"             "q watching: PR 50 open with 2 member(s)" "$out"
 want "baseline strips a foreign bead-id prefix"   "sp-b (P3) beta work" "$out"
-lack "another repo's certified bead is not counted" "sp-o" "$out"
+nowant "another repo's certified bead is not counted" "sp-o" "$out"
 want "CI red reported"                            "q ci: PR 50 CI red" "$out"
 want "ejection reported from state"               "q ejected: sp-b (P3) beta work ejected from PR 50 after a red run" "$out"
 want "re-push reported"                           "q repushed: PR 50 re-pushed with 1 member(s)" "$out"
@@ -165,7 +161,7 @@ want "new batch reported"                         "q opened: PR 51 opened with 1
 want "stale bisect group named as a forced cut"   "q forced-cut: PR 51's membership was forced by a bisect group recorded 180m ago" "$out"
 want "priority inversion names the waiting P0"    "q priority-inversion: PR 51 took P3 work while 1 more urgent certified bead(s) wait: sp-d (P0 express) delta urgent" "$out"
 want "close without landing reported from state"  "q closed-unlanded: PR 51 closed without landing: all members back in CERTIFIED" "$out"
-lack "the push-mode repo is not watched"          " p watching" "$out"
+nowant "the push-mode repo is not watched"          " p watching" "$out"
 
 # --- 3. health -------------------------------------------------------------------------------
 "$BIN" health --run "$RUN" >/dev/null 2>&1 && ok "health passes after a good poll" || bad "health passes after a good poll"
@@ -201,5 +197,4 @@ want "watchd row carries a health probe"          "@SPIRA_QUEUE_WATCH_BIN@ healt
 want "watchd knows the placeholder"               "SPIRA_QUEUE_WATCH_BIN" "$(command grep -E '^WATCHD_KEYS=|SPIRA_QUEUE_WATCH_BIN"' "$HERE/watchd.sh")"
 want "conf.sh resolves the binary"                'SPIRA_QUEUE_WATCH_BIN="$SPIRA_REPO/target/release/queue-watch"' "$(cat "$HERE/conf.sh")"
 
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
