@@ -45,16 +45,28 @@ SYSTEMD_DIR="$FIXTURE/systemd"
 COCKPIT_DIR="$FIXTURE/cockpit"
 mkdir -p "$SPIRA_DIR" "$COCKPIT_DIR" "$SYSTEMD_DIR"
 
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
+for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../systemd/"*.yaml; do
     [ -e "$f" ] || continue
     ln -s "$f" "$SYSTEMD_DIR/$(basename "$f")" 2>/dev/null || true
 done
 ln -s "$HERE/../systemd/install.sh" "$SYSTEMD_DIR/install.sh"
 ln -s "$HERE/../systemd/units.sh"   "$SYSTEMD_DIR/units.sh"
 
-ln -s "$HERE/conf.sh"   "$SPIRA_DIR/conf.sh"
-ln -s "$HERE/lib.sh"    "$SPIRA_DIR/lib.sh"
-ln -s "$HERE/watchd.sh" "$SPIRA_DIR/watchd.sh"
+ln -s "$HERE/conf.sh"         "$SPIRA_DIR/conf.sh"
+ln -s "$HERE/lib.sh"          "$SPIRA_DIR/lib.sh"
+ln -s "$HERE/suite-covers.sh" "$SPIRA_DIR/suite-covers.sh"
+ln -s "$HERE/watchd.sh"       "$SPIRA_DIR/watchd.sh"
+
+# ctrl.sh: report every unit as suspended, so phase 4's ExecStart-is-executable check
+# (which the built Rust/Python binaries this fixture never builds would otherwise fail)
+# is skipped for all of them. Phase 4's own correctness is covered elsewhere (e.g.
+# test-units-lint.sh); this fixture only needs it to succeed so execution reaches phase 5.
+cat > "$SPIRA_DIR/ctrl.sh" <<'EOF'
+#!/usr/bin/env bash
+[ "${1:-}" = check ] && exit 0
+exit 1
+EOF
+chmod +x "$SPIRA_DIR/ctrl.sh"
 printf '# empty\n' > "$SPIRA_DIR/watchers"
 printf '# empty\n' > "$SPIRA_DIR/repo-map.example"
 mkdir -p "$SPIRA_DIR/statutes"
@@ -166,6 +178,12 @@ cat > "$MOCK_BIN/tmux" <<'EOF'
 exit 1
 EOF
 chmod +x "$MOCK_BIN/tmux"
+
+cat > "$MOCK_BIN/dolt" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$MOCK_BIN/dolt"
 
 cat > "$MOCK_BIN/bd" <<'EOF'
 #!/usr/bin/env bash
