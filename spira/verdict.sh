@@ -265,9 +265,61 @@ Unjudged branches (harness fault): $unjudged_ids"
         2>/dev/null || true
 }
 
-_attr_eject() {  # _attr_eject <id> <tip> <suites-csv> <pr-n> <name> [fail-lines]
-    local id="$1" tip="$2" suites="$3" pr_n="$4" name="$5" fail_lines="${6:-}"
-    local _note="Ejected by merge-queue attribution: spira/$id reproduced failure ($suites) from PR $pr_n in $name."
+# _attr_bead_title <id> <member-json> -> title, truncated, or empty.
+# <member-json> is one `bd show <id1> <id2> ...` call shared across a whole
+# batch's ejections (batch.sh:1065 uses the same shape for its PR body).
+_attr_bead_title() {
+    local id="$1" json="$2"
+    printf '%s\n' "$json" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    items = data if isinstance(data, list) else [data]
+    t = next((str(i.get('title','')) for i in items if i.get('id') == '$id'), '') or ''
+    print(t.strip()[:120])
+except Exception:
+    pass
+" 2>/dev/null
+}
+
+# _attr_bead_summary <id> <member-json> -> the bead's own description, first
+# paragraph only, truncated. verdict.sh has no way to write a fresh summary of
+# the change — this is the closest honest substitute already on the bead.
+_attr_bead_summary() {
+    local id="$1" json="$2"
+    printf '%s\n' "$json" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    items = data if isinstance(data, list) else [data]
+    d = str(next((i.get('description','') for i in items if i.get('id') == '$id'), '') or '').strip()
+    para = d.split(chr(10)+chr(10))[0].strip()
+    print(para[:400] if para else '(no description)')
+except Exception:
+    print('(no description)')
+" 2>/dev/null
+}
+
+# _attr_eject <id> <tip> <suites-csv> <pr-n> <name> <method> <detail> <title>
+#             <summary> <diffstat> <run-url> <rest-of-batch> [fail-lines]
+#
+# <method> is one of the attribution procedures verdict.sh actually runs:
+#   reproduced-alone  — suites were rerun against this branch alone and failed
+#   suite-overlap     — not reproduced; attributed via the diff/suite-name
+#                        overlap CI reported (law-a-pattern-match-is-not-an-identity-check
+#                        applies here: overlap is evidence, not proof)
+#   bisect-split       — not reproduced; binary search narrowed the batch to
+#                        this branch alone while it stayed red
+# The mail states the method by name so it never claims a reproduction that
+# did not happen (the defect this replaced: every ejection mail said
+# "after reproducing CI failures" regardless of which of these ran).
+_attr_eject() {
+    local id="$1" tip="$2" suites="$3" pr_n="$4" name="$5" method="$6" detail="$7"
+    local title="$8" summary="$9" diffstat="${10}" run_url="${11}" rest_of_batch="${12}"
+    local fail_lines="${13:-}"
+
+    local _note="Ejected by merge-queue attribution ($method): spira/$id ($suites) from PR $pr_n in $name."
+    [ -n "$detail" ] && _note="$(printf '%s\n\n%s' "$_note" "$detail")"
     if [ -n "$fail_lines" ]; then
         _note="$(printf '%s\n\nFailing assertions:\n%s' "$_note" "$fail_lines")"
     fi
@@ -278,16 +330,35 @@ _attr_eject() {  # _attr_eject <id> <tip> <suites-csv> <pr-n> <name> [fail-lines
     printf 'QUEUE ESCAPED %s branch=%s\n' "$(date +%s)" "$id" \
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
 
-    local _fail_section=""
-    [ -n "$fail_lines" ] && _fail_section="$(printf '\n\nFailing assertions:\n%s' "$fail_lines")"
-    printf '## Note\n%s was ejected from the merge queue after reproducing CI failures in PR %s (%s).\n\nFailing suites: %s\n\nNext: reopened as queue-eject; goes back to a builder.\n\nRun those suites against spira/%s to reproduce.%s\n' \
-        "$id" "$pr_n" "$name" "$suites" "$id" "$_fail_section" \
+    local _method_line
+    case "$method" in
+        reproduced-alone)
+            _method_line="Reproduced alone: suites ($suites) were rerun directly against spira/$id and failed the same way." ;;
+        bisect-split)
+            _method_line="Ejected as part of a bisection split, not reproduced against a named suite." ;;
+        suite-overlap)
+            _method_line="Not reproduced: attributed by suite-overlap between the red suite(s) and this branch's diff." ;;
+        *)
+            _method_line="Attribution method: $method." ;;
+    esac
+    [ -n "$detail" ] && _method_line="$(printf '%s\n%s' "$_method_line" "$detail")"
+
+    local _fail_section="(not reproduced locally; no assertion output to show)"
+    [ -n "$fail_lines" ] && _fail_section="$(printf 'Failing assertions:\n%s' "$fail_lines")"
+
+    local _run_line="not available"
+    [ -n "$run_url" ] && _run_line="$run_url"
+
+    printf '## Note\nspira/%s was ejected from the merge queue in PR %s (%s).\n\n**The change:** %s\n\n%s\n\nDiffstat: %s\n\n**How it was chosen:** %s\n\n**The evidence:**\nFailing suites: %s\n%s\nCI run: %s\n\n**The rest of the batch:**%s\n\nNext: reopened as queue-eject; goes back to a builder.\n\nRun those suites against spira/%s to reproduce.\n' \
+        "$id" "$pr_n" "$name" \
+        "${title:-(title unavailable)}" "${summary:-(no description)}" "${diffstat:-(diffstat unavailable)}" \
+        "$_method_line" "$suites" "$_fail_section" "$_run_line" "$rest_of_batch" "$id" \
     | bash "$HERE/mail.sh" send operator \
         --from "Spira Queue <queue@spira>" \
         --subject "Merge queue: $id ejected from $name" \
         --bead "$id" \
         2>/dev/null || true
-    printf 'verdict %s: ejected %s (suites: %s)\n' "$name" "$id" "$suites"
+    printf 'verdict %s: ejected %s (suites: %s, method: %s)\n' "$name" "$id" "$suites" "$method"
 }
 
 _q_attribute() {
@@ -297,13 +368,14 @@ _q_attribute() {
 
     local attr_start; attr_start="$(date +%s)"
 
-    # Parse red suite names from check-status output.
-    local red_suites="" build_error="" _line
+    # Parse red suite names and the CI run link from check-status output.
+    local red_suites="" build_error="" run_url="" _line
     while IFS= read -r _line; do
         case "$_line" in
             "red-suite: "*) red_suites="$red_suites ${_line#red-suite: }" ;;
             "build-error: "*) build_error="$build_error
 ${_line#build-error: }" ;;
+            "run-url: "*) run_url="${_line#run-url: }" ;;
         esac
     done <<< "$status_out"
     red_suites="${red_suites# }"
@@ -314,6 +386,10 @@ ${_line#build-error: }" ;;
     local mc="${#members_arr[@]}"
     local caught=0 escaped=0
     local ejected=() survivors=() unjudged=()
+    # How each ejected member was attributed, and any method-specific detail
+    # (e.g. the bisect sibling), keyed by bead id — read back by the ejection
+    # loop below so the mail never claims reproduction that did not happen.
+    local -A _ej_method=() _ej_detail=()
     local _eject_fail_dir; _eject_fail_dir="$(mktemp -d)"
     local _mm _mid _mtip
     local _bisect_current; _bisect_current="$(queue_bisect_current "$name" 2>/dev/null)" || _bisect_current=""
@@ -361,6 +437,13 @@ ${_line#build-error: }" ;;
             # unreproduced-red two-strikes track below. Eject on the first strike.
             [ -n "$build_error" ] && printf '%s\n' "$build_error" > "$_eject_fail_dir/$_mid"
             ejected+=("$_mm")
+            _ej_method["$_mid"]="bisect-split"
+            local _bs_sibling; _bs_sibling="$(sed -n '2p' "$(queue_bisect_file "$name")" 2>/dev/null || true)"
+            if [ -n "$_bs_sibling" ]; then
+                _ej_detail["$_mid"]="Ejected as part of a bisection split: the batch was halved by binary search until only spira/$_mid remained, still red. The sibling half from that split ($_bs_sibling) was left pending — not implicated, not tested against this failure."
+            else
+                _ej_detail["$_mid"]="Ejected as part of a bisection split: the batch was halved by binary search until only spira/$_mid remained, still red. No sibling half remains pending; this was the last group in the bisection."
+            fi
             queue_bisect_advance "$name"
             printf 'verdict %s: %s — bisected to a single member, still red with no suite annotation; ejecting\n' \
                 "$name" "$_mid"
@@ -374,6 +457,7 @@ ${_line#build-error: }" ;;
         if [ "$_sm_rc" -eq 0 ]; then
             rm -f "$_sm_flaky_f"
             ejected+=("$_mm")
+            _ej_method["$_mid"]="reproduced-alone"
             _any_suite_in_selection "$red_suites" "$repo" "$base_sha" "$_mtip" \
                 && caught=$(( caught + 1 )) || escaped=$(( escaped + 1 ))
         elif [ "$_sm_rc" -eq 3 ]; then
@@ -386,12 +470,16 @@ ${_line#build-error: }" ;;
             if _suite_directly_in_diff "$red_suites" "$repo" "$base_sha" "$_mtip"; then
                 ejected+=("$_mm")
                 caught=$(( caught + 1 ))
+                _ej_method["$_mid"]="suite-overlap"
+                _ej_detail["$_mid"]="Not reproduced: the local repro faulted, but this branch's diff directly modifies the failing suite's own file ($red_suites), so it is attributed by that overlap rather than by rerunning it."
                 rm -f "$_unrep_f" 2>/dev/null || true
             else
                 local _prev_tip; _prev_tip="$(cat "$_unrep_f" 2>/dev/null || true)"
                 if [ "${_prev_tip:-}" = "$_mtip" ]; then
                     ejected+=("$_mm")
                     escaped=$(( escaped + 1 ))
+                    _ej_method["$_mid"]="suite-overlap"
+                    _ej_detail["$_mid"]="Not reproduced: this tip was named red against the same suite selection twice in a row, but the local repro was never conclusive. Ejected on the second occurrence by suite-overlap attribution, not reproduction."
                     rm -f "$_unrep_f" 2>/dev/null || true
                 else
                     mkdir -p "$_unrep_dir"
@@ -407,6 +495,8 @@ ${_line#build-error: }" ;;
                 # for a second occurrence (repro unavailable).
                 ejected+=("$_mm")
                 caught=$(( caught + 1 ))
+                _ej_method["$_mid"]="suite-overlap"
+                _ej_detail["$_mid"]="Not reproduced: repro was unavailable, but this branch's diff directly modifies the failing suite's own file ($red_suites), so it is attributed by that overlap rather than by rerunning it."
                 rm -f "$_unrep_f" 2>/dev/null || true
             else
                 local _prev_tip; _prev_tip="$(cat "$_unrep_f" 2>/dev/null || true)"
@@ -414,6 +504,8 @@ ${_line#build-error: }" ;;
                     # Second unreproduced red on same tip → eject.
                     ejected+=("$_mm")
                     escaped=$(( escaped + 1 ))
+                    _ej_method["$_mid"]="suite-overlap"
+                    _ej_detail["$_mid"]="Not reproduced: this tip was named red against the same suite selection twice in a row, but repro was never available to confirm it. Ejected on the second occurrence by suite-overlap attribution, not reproduction."
                     rm -f "$_unrep_f" 2>/dev/null || true
                 else
                     # First unreproduced red → record and requeue.
@@ -453,6 +545,7 @@ ${_line#build-error: }" ;;
                 if [ "$_mrc" -eq 0 ]; then
                     ejected+=("$_mid|$_mtip|$_mcsv")
                     caught=$(( caught + 1 ))
+                    _ej_method["$_mid"]="reproduced-alone"
                 elif [ "$_mrc" -eq 3 ]; then
                     local _fs; _fs="$(cat "$_eject_fail_dir/$_mid.flaky" 2>/dev/null || true)"
                     rm -f "$_eject_fail_dir/$_mid.flaky"
@@ -479,6 +572,8 @@ ${_line#build-error: }" ;;
                 if _suite_directly_in_diff "$red_suites" "$repo" "$base_sha" "$_mtip"; then
                     ejected+=("$_mm")
                     caught=$(( caught + 1 ))
+                    _ej_method["$_mid"]="suite-overlap"
+                    _ej_detail["$_mid"]="No member reproduced the failure directly; ejected because this branch's diff directly modifies the failing suite's own file ($red_suites)."
                 fi
             done
         fi
@@ -498,6 +593,7 @@ ${_line#build-error: }" ;;
                 if [ "$_mrc" -eq 0 ]; then
                     ejected+=("$_mid|$_mtip|$_mcsv")
                     caught=$(( caught + 1 ))
+                    _ej_method["$_mid"]="reproduced-alone"
                 elif [ "$_mrc" -eq 3 ]; then
                     local _fs; _fs="$(cat "$_eject_fail_dir/$_mid.flaky" 2>/dev/null || true)"
                     rm -f "$_eject_fail_dir/$_mid.flaky"
@@ -523,6 +619,7 @@ ${_line#build-error: }" ;;
                 if [ "$_mrc" -eq 0 ]; then
                     ejected+=("$_mid|$_mtip|$_mcsv")
                     caught=$(( caught + 1 ))
+                    _ej_method["$_mid"]="reproduced-alone"
                 elif [ "$_mrc" -eq 3 ]; then
                     local _fs; _fs="$(cat "$_eject_fail_dir/$_mid.flaky" 2>/dev/null || true)"
                     rm -f "$_eject_fail_dir/$_mid.flaky"
@@ -583,6 +680,19 @@ ${_line#build-error: }" ;;
         fi
     fi
 
+    # Fetch title + description for every batch member once — reused for every
+    # ejection mail's "what changed" and "rest of the batch" sections, rather
+    # than one bd call per ejected member.
+    local _all_ids="" _mm
+    for _mm in "${members_arr[@]}"; do _all_ids="$_all_ids ${_mm%%:*}"; done
+    _all_ids="${_all_ids# }"
+    local _member_json="[]"
+    if [ -n "$_all_ids" ]; then
+        # shellcheck disable=SC2086
+        _member_json="$(bdjson show $_all_ids 2>/dev/null)" || _member_json="[]"
+    fi
+    local _ejected_id_set=" $(printf '%s\n' "${ejected[@]}" | sed 's/[:|].*//' | tr '\n' ' ')"
+
     # Eject guilty members.
     local _ej _ej_id _ej_tip _ej_csv _ej_rest _ej_fail_lines
     for _ej in "${ejected[@]}"; do
@@ -596,7 +706,30 @@ ${_line#build-error: }" ;;
         esac
         _ej_fail_lines=""
         [ -f "$_eject_fail_dir/$_ej_id" ] && _ej_fail_lines="$(cat "$_eject_fail_dir/$_ej_id")"
-        _attr_eject "$_ej_id" "$_ej_tip" "$_ej_csv" "$pr_n" "$name" "$_ej_fail_lines"
+
+        local _ej_title _ej_summary _ej_diffstat _ej_rest_text _bm _bid _bt _bstatus
+        _ej_title="$(_attr_bead_title "$_ej_id" "$_member_json")"
+        _ej_summary="$(_attr_bead_summary "$_ej_id" "$_member_json")"
+        _ej_diffstat="$(git -C "$repo" diff --stat "$base_sha" "$_ej_tip" 2>/dev/null | tail -1)"
+
+        _ej_rest_text=""
+        for _bm in "${members_arr[@]}"; do
+            _bid="${_bm%%:*}"
+            [ "$_bid" = "$_ej_id" ] && continue
+            _bt="$(_attr_bead_title "$_bid" "$_member_json")"
+            case "$_ejected_id_set" in *" $_bid "*) _bstatus="ejected, same run" ;;
+                *) _bstatus="requeued — went back in" ;;
+            esac
+            _ej_rest_text="$_ej_rest_text
+- $_bid — ${_bt:-(title unavailable)} ($_bstatus)"
+        done
+        [ -n "$_ej_rest_text" ] || _ej_rest_text="
+(no other members — this batch was this one branch)"
+
+        _attr_eject "$_ej_id" "$_ej_tip" "$_ej_csv" "$pr_n" "$name" \
+            "${_ej_method[$_ej_id]:-suite-overlap}" "${_ej_detail[$_ej_id]:-}" \
+            "$_ej_title" "$_ej_summary" "$_ej_diffstat" "$run_url" "$_ej_rest_text" \
+            "$_ej_fail_lines"
     done
 
     # When ejection leaves survivors, rebuild on the same base and re-push to

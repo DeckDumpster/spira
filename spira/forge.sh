@@ -211,20 +211,23 @@ import json, sys
 try: print(json.load(sys.stdin).get('headRefOid', ''))
 except: pass
 " 2>/dev/null)"
-        run_id="" jobs_json="" build_err=""
+        run_id="" run_url="" jobs_json="" build_err=""
         if [ "$status" = "green" ] || [ "$status" = "red" ]; then
-            run_id="$(printf '%s\n' "${rollup_json:-"{}"}" | python3 -c "
+            _gate_url_id="$(printf '%s\n' "${rollup_json:-"{}"}" | python3 -c "
 import json, sys, re
 try:
     checks = (json.load(sys.stdin).get('statusCheckRollup') or [])
     gate = next((c for c in checks if c.get('name') == 'gate'), None)
     if gate:
         url = gate.get('detailsUrl') or ''
+        print(url)
         m = re.search(r'/runs/(\d+)', url)
         if m: print(m.group(1))
 except Exception:
     pass
 " 2>/dev/null)"
+            run_url="$(printf '%s\n' "$_gate_url_id" | sed -n '1p')"
+            run_id="$(printf '%s\n' "$_gate_url_id" | sed -n '2p')"
             if [ -n "${run_id:-}" ]; then
                 jobs_json="$( cd "$repo" && ghq api \
                     "repos/{owner}/{repo}/actions/runs/$run_id/jobs" 2>/dev/null )" \
@@ -284,6 +287,7 @@ except Exception:
         fi
         printf '%s\n' "$status"
         [ -n "${head_sha:-}" ] && printf 'head-sha: %s\n' "$head_sha"
+        [ -n "${run_url:-}" ] && printf 'run-url: %s\n' "$run_url"
         if [ -n "${build_err:-}" ]; then
             while IFS= read -r _beline; do
                 [ -n "$_beline" ] && printf 'build-error: %s\n' "$_beline"

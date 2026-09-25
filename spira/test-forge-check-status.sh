@@ -108,6 +108,21 @@ printf '%s\n' "$_out4" | grep -qF "head-sha:" \
     || ok "no head-sha when headRefOid absent"
 
 echo
+echo "the gate's run URL is reported as run-url (verdict.sh's ejection mail links it):"
+rollup COMPLETED SUCCESS
+_out3b="$(status_all)"
+printf '%s\n' "$_out3b" | grep -qF "run-url: https://example.invalid/actions/runs/1/job/3" \
+    && ok "run-url line present for a completed gate" \
+    || bad "run-url line present for a completed gate" "not in output: [$_out3b]"
+
+echo "positive control — no run-url line while the gate is still pending:"
+rollup IN_PROGRESS ""
+_out3c="$(status_all)"
+printf '%s\n' "$_out3c" | grep -qF "run-url:" \
+    && bad "no run-url while pending" "found run-url in: [$_out3c]" \
+    || ok "no run-url while pending"
+
+echo
 echo "provision_fault: red run with failed provision job → provision_fault:"
 rollup COMPLETED FAILURE
 printf '{"jobs":[{"id":99,"name":"provision","conclusion":"failure"},{"id":100,"name":"gate","conclusion":"failure"}]}\n' \

@@ -46,6 +46,14 @@
 #      refs already ancestors of the base; a non-ancestor ref survives.
 #  33. Green but check-status omits head-sha → cannot verify the sealed head
 #      was tested; no push, no pr-close, batch held for retry.
+#  35. Ejection mail names "reproduced-alone" (sp-bdkbw): the failure really
+#      was rerun and reproduced, so the mail says so, plus the bead's title,
+#      a diffstat against base, the failing assertion line, and the CI run.
+#  36. Ejection mail names "suite-overlap" when nothing was reproduced: the
+#      suite's own file is in the diff, so it is attributed by overlap, and
+#      the mail says exactly that instead of claiming reproduction.
+#  37. Ejection mail names "bisect-split" for a bisect-singleton eject, and
+#      lists the sibling half that was left pending, not implicated.
 #
 # MOVED (docs/test-plan/landing-merge-queue.md UC-43/44/49, section 4 cluster 1):
 #   Cases 12, 14, 17, 18, 27 (age/idle/retry classification over verdict_action,
@@ -1183,6 +1191,130 @@ case "$(landstate sp-vd-at1)" in CERTIFIED*) ok "34. attributing: sp-vd-at1 CERT
     *) bad "34. attributing: sp-vd-at1 CERTIFIED" "got: $(landstate sp-vd-at1)" ;; esac
 case "$(landstate sp-vd-at2)" in CERTIFIED*) ok "34. attributing: sp-vd-at2 CERTIFIED" ;;
     *) bad "34. attributing: sp-vd-at2 CERTIFIED" "got: $(landstate sp-vd-at2)" ;; esac
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 35. EJECTION MAIL — REPRODUCED-ALONE METHOD (sp-bdkbw). Ryan on a prior
+#     ejection mail: "this email doesn't help me understand why the bead was
+#     ejected... what was the change and how was it determined to be the one
+#     ejected?" The mail must name the method actually used, the bead's title,
+#     a diffstat against the base, and the failing assertion lines.
+#     Same shape as case 20 (always-red): the repro genuinely reruns the
+#     suite and it fails again, so "Reproduced alone" is the honest claim.
+#     Each assertion here fails against the pre-fix body, which only ever
+#     said "after reproducing CI failures" with no title, diffstat or method.
+# =============================================================================
+testdb_seed <<JSONL
+{"id":"sp-vd-em1","title":"fix the frobnicator overflow","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"description":"The frobnicator overflows under sustained load and corrupts the output buffer."}
+JSONL
+
+cat > "$SH/repro-em1.sh" <<'REPRO'
+#!/usr/bin/env bash
+printf 'FAIL: test_frobnicator_overflow (expected 200 got 500)\n'
+exit 1
+REPRO
+chmod +x "$SH/repro-em1.sh"
+
+base_sha35="$(git -C "$REPO" rev-parse origin/main)"
+bwt35="$RUN/worktree/sp-vd-em1"
+git -C "$REPO" worktree add -q -b "spira/sp-vd-em1" "$bwt35" origin/main 2>/dev/null || true
+printf 'sp-vd-em1\n' > "$bwt35/sp-vd-em1.txt"
+git -C "$bwt35" add -A
+git -C "$bwt35" commit -q -m "sp-vd-em1: work"
+tip_em1="$(git -C "$REPO" rev-parse "spira/sp-vd-em1")"
+printf 'BATCHED %s %s\n' "$tip_em1" "$(date +%s)" > "$LANDSTATE/sp-vd-em1"
+{ printf 'pr=91\nhead=%s\nbase=%s\nmembers=sp-vd-em1:%s\nopened=%s\n' \
+    "$tip_em1" "$base_sha35" "$tip_em1" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-always-red.sh\nrun-url: https://example.invalid/actions/runs/9001\n' \
+    > "$FORGE_STATUS_FILE"
+SPIRA_QUEUE_REPRO_BATCH="$SH/repro-em1.sh" verdict "$REPONAME" > /dev/null
+mail35="$(cat "$MAIL_LOG")"
+case "$(landstate sp-vd-em1)" in EJECTED*) ok "35. reproduced-alone: sp-vd-em1 ejected" ;;
+    *) bad "35. reproduced-alone: sp-vd-em1 ejected" "got: $(landstate sp-vd-em1)" ;; esac
+want   "35. reproduced-alone: names the method"  "Reproduced alone"                            "$mail35"
+want   "35. reproduced-alone: names the title"   "fix the frobnicator overflow"                "$mail35"
+want   "35. reproduced-alone: shows a diffstat"  "file changed"                                "$mail35"
+want   "35. reproduced-alone: failing assertion" "test_frobnicator_overflow"                   "$mail35"
+want   "35. reproduced-alone: CI run link"       "https://example.invalid/actions/runs/9001"   "$mail35"
+want   "35. reproduced-alone: single-member batch noted" "this batch was this one branch"      "$mail35"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 36. EJECTION MAIL — SUITE-OVERLAP METHOD (sp-bdkbw). The local repro faults
+#     (harness fault, never actually reran the suite), but the branch's diff
+#     directly modifies the failing suite's own file — attributed by overlap,
+#     not reproduction. The mail must say so and must NOT claim "Reproduced
+#     alone", which would be a false claim of work the verdict never did.
+# =============================================================================
+testdb_seed <<JSONL
+{"id":"sp-vd-em2","title":"quarantine the flaky uploader suite","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"description":"Marks the uploader suite flaky pending a real fix."}
+JSONL
+
+cat > "$SH/repro-fault2.sh" <<'REPRO'
+#!/usr/bin/env bash
+exit 2
+REPRO
+chmod +x "$SH/repro-fault2.sh"
+
+base_sha36="$(git -C "$REPO" rev-parse origin/main)"
+bwt36="$RUN/worktree/sp-vd-em2"
+git -C "$REPO" worktree add -q -b "spira/sp-vd-em2" "$bwt36" origin/main 2>/dev/null || true
+mkdir -p "$bwt36/spira"
+printf 'x\n' > "$bwt36/spira/test-vd-em2.sh"
+git -C "$bwt36" add -A
+git -C "$bwt36" commit -q -m "sp-vd-em2: work"
+tip_em2="$(git -C "$REPO" rev-parse "spira/sp-vd-em2")"
+printf 'BATCHED %s %s\n' "$tip_em2" "$(date +%s)" > "$LANDSTATE/sp-vd-em2"
+{ printf 'pr=92\nhead=%s\nbase=%s\nmembers=sp-vd-em2:%s\nopened=%s\n' \
+    "$tip_em2" "$base_sha36" "$tip_em2" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: spira/test-vd-em2.sh\nrun-url: https://example.invalid/actions/runs/9002\n' \
+    > "$FORGE_STATUS_FILE"
+SPIRA_QUEUE_REPRO_BATCH="$SH/repro-fault2.sh" verdict "$REPONAME" > /dev/null
+mail36="$(cat "$MAIL_LOG")"
+case "$(landstate sp-vd-em2)" in EJECTED*) ok "36. suite-overlap: sp-vd-em2 ejected" ;;
+    *) bad "36. suite-overlap: sp-vd-em2 ejected" "got: $(landstate sp-vd-em2)" ;; esac
+want   "36. suite-overlap: names the method"        "suite-overlap"                          "$mail36"
+want   "36. suite-overlap: names the title"         "quarantine the flaky uploader suite"    "$mail36"
+want   "36. suite-overlap: shows a diffstat"        "file changed"                            "$mail36"
+nowant "36. suite-overlap: no false reproduction claim" "Reproduced alone"                     "$mail36"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 37. EJECTION MAIL — BISECT-SPLIT METHOD (sp-bdkbw). A bisect-singleton eject
+#     (case 30's shape) is not a reproduction and not a suite-overlap match —
+#     it is a binary-search narrowing. The mail must say "bisection split" and
+#     name the sibling half left pending (not implicated), matching the Fix's
+#     "ejected as part of a split group ... which half went back in".
+# =============================================================================
+testdb_seed <<JSONL
+{"id":"sp-vd-em3","title":"tighten the batch bisector's halving math","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"description":"Bisection halved the wrong side when the batch size was odd."}
+JSONL
+
+build_batch sp-vd-em3 > /dev/null
+em3_tip="$(git -C "$REPO" rev-parse spira/sp-vd-em3)"
+mkdir -p "$QUEUEDIR/$REPONAME"
+{
+    printf 'sp-vd-em3:%s\n' "$em3_tip"
+    printf 'sp-vd-em3-sibling:deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n'
+} > "$QUEUEDIR/$REPONAME/bisect"
+{
+    printf 'red\n'
+    printf 'build-error: error: could not compile `spira-widget`\n'
+    printf 'run-url: https://example.invalid/actions/runs/9003\n'
+} > "$FORGE_STATUS_FILE"
+verdict "$REPONAME" > /dev/null
+mail37="$(cat "$MAIL_LOG")"
+case "$(landstate sp-vd-em3)" in EJECTED*) ok "37. bisect-split: sp-vd-em3 ejected" ;;
+    *) bad "37. bisect-split: sp-vd-em3 ejected" "got: $(landstate sp-vd-em3)" ;; esac
+want   "37. bisect-split: names the method"         "bisection split"                              "$mail37"
+want   "37. bisect-split: names the title"          "tighten the batch bisector's halving math"    "$mail37"
+want   "37. bisect-split: shows a diffstat"         "file changed"                                  "$mail37"
+want   "37. bisect-split: build-error evidence"     "could not compile"                             "$mail37"
+want   "37. bisect-split: names the sibling half"   "sp-vd-em3-sibling"                              "$mail37"
+nowant "37. bisect-split: no false reproduction claim" "Reproduced alone"                            "$mail37"
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
