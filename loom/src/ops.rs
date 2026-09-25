@@ -2,7 +2,7 @@
 //!
 //! NEVER CALLS bd, git OR A PROBE. That is health.sh's own rule and the reason the
 //! collector exists: those sources cost seconds a pass and a pane that shelled out would
-//! freeze on every repaint. This route reads two small files, checks two stamps, and calls
+//! freeze on every repaint. This route reads one small file, checks its stamp, and calls
 //! systemctl once — all inside the 5-second cache.
 //!
 //! PARSE cockpit.env; DO NOT SOURCE IT. The format is KEY='VALUE' with '\'' for an embedded
@@ -63,7 +63,7 @@ pub fn parse_shell_value(s: &str) -> Option<String> {
 
 /// Parse a KEY='VALUE' shell env file. Returns (data, age_s, error).
 ///
-/// Only SP_* keys are captured. cockpit.sh and budget.sh both use this format.
+/// Only SP_* keys are captured. cockpit.sh uses this format.
 pub fn parse_env_file(path: &str) -> (HashMap<String, String>, Option<u64>, Option<String>) {
     let age_s = std::fs::metadata(path)
         .ok()
@@ -184,15 +184,8 @@ pub struct OpsSnapshot {
 
 impl OpsSnapshot {
     pub async fn take(run: &str, instance: &str, systemctl: &str) -> OpsSnapshot {
-        let (mut data, cockpit_age_s, cockpit_error) =
+        let (data, cockpit_age_s, cockpit_error) =
             parse_env_file(&format!("{run}/cockpit.env"));
-        let (budget_data, budget_age_s, budget_error) =
-            parse_env_file(&format!("{run}/budget.env"));
-        // budget.env keys merged in; cockpit.env wins on conflicts — cockpit.sh already
-        // sourced budget.env, so its snapshot contains those values with the same logic applied.
-        for (k, v) in budget_data {
-            data.entry(k).or_insert(v);
-        }
         let world = read_world_state(run, instance, systemctl).await;
 
         let mut obj = Map::new();
@@ -206,14 +199,6 @@ impl OpsSnapshot {
         obj.insert(
             "cockpit_env_error".into(),
             cockpit_error.map_or(Value::Null, Value::String),
-        );
-        obj.insert(
-            "budget_env_age_s".into(),
-            budget_age_s.map_or(Value::Null, |a| a.into()),
-        );
-        obj.insert(
-            "budget_env_error".into(),
-            budget_error.map_or(Value::Null, Value::String),
         );
         obj.insert("halted".into(), Value::Bool(world.halted));
         if let Some(s) = world.halted_since {

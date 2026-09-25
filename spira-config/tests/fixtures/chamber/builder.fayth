@@ -70,7 +70,7 @@ FAYTH_MODEL=claude-sonnet-5
 # occupying the slot is a gate that cannot complete.
 #
 # Aeons work in separate worktrees and claim atomically, so the risk is contention in a
-# shared repo, not lost work; the governor will withhold in enforce mode if that proves wrong.
+# shared repo, not lost work.
 # SPIRA_MAX_AEONS in spira.conf is the pool ceiling: the sentinel reads it and draws
 # it down across the task roster. This number is the fallback for a host with no pool.
 FAYTH_MAX_CONCURRENT=3

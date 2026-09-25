@@ -102,9 +102,8 @@
 # to this file, then next to conf.sh, then falls back to `repo-map.example`.
 # SPIRA_REPO_MAP = $HOME/.config/spira/repo-map
 
-# Where your checkouts live. Used for the disk-headroom check the governor runs and for
-# classifying repositories during a migration — not for locating anything, which is repo-map's
-# job.
+# Where your checkouts live. Used for classifying repositories during a migration — not for
+# locating anything, which is repo-map's job.
 # Default: the parent of the checkout the harness is installed in.
 # SPIRA_WORKSPACES = /srv/checkouts
 
@@ -495,7 +494,7 @@
 # the defaults it was written to check (law-gates-run-in-a-clean-environment).
 # SPIRA_FAYTHS = builder ops
 
-# !! How many aeons may run at once, before the governor's own headroom checks narrow it further.
+# !! How many aeons may run at once.
 # Default 4. See TRAP KEYS section above.
 # SPIRA_MAX_AEONS = 4
 

@@ -52,11 +52,10 @@ STATE = re.compile(r"^state: goal=\S+ open=(\d+) (?:plan_)?ready=(\d+) in_progre
 # CHECK 7 logs exactly one line per fayth per pass, so their ABSENCE means the pass
 # never reached the summon check at all.
 SUMMONED = "— summoning"
-# A deliberate withhold is not a stall. The governor and the account's own five-hour
-# window are the two authorities allowed to say "ready work, no aeon, and that is
-# correct", and a watchdog that alerts through them is alerting on a decision the
-# harness made on purpose.
-WITHHELD = ("withheld by the governor", "out of capacity")
+# A deliberate withhold is not a stall. The account's own five-hour window is the one
+# authority allowed to say "ready work, no aeon, and that is correct", and a watchdog
+# that alerts through it is alerting on a decision the harness made on purpose.
+WITHHELD = ("out of capacity",)
 
 
 def iso_to_epoch(s):
@@ -252,7 +251,7 @@ def main():
                       "PASSES    %d consecutive, spanning %s\n"
                       "READY     %d claimable beads at the last pass\n"
                       "AEONS     0 — every slot is free, so this is not the concurrency cap\n"
-                      "WITHHELD  no — neither the governor nor the account's window declined\n"
+                      "WITHHELD  no — the account's window did not decline\n"
                       "NOISE     2 passes of 962 matched this rule over 33 hours, in one "
                       "streak of 2; the threshold is %d\n\n"
                       "The loop is running and is refusing to start work it has capacity for.\n"
