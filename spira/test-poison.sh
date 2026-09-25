@@ -1,53 +1,63 @@
 #!/usr/bin/env bash
 #
-# test-poison.sh — does the poison valve cover every bead the summoner can dispatch?
+# test-poison.sh — the sole T3 sentinel pass over CHECK 4: does the poison valve cover
+#   every bead the summoner can dispatch, end to end, through the real sentinel.sh?
 #
 #   ./test-poison.sh
 #
-# THE DEFECT THIS REPRODUCES. There were two predicates for "which beads are ours" and they
-# disagreed. Summoning goes through fayth_ready, which asks each persona its own
-# FAYTH_LABELS; the valve that stops a bead failing forever iterated the goal epic's
+# THE ORIGINAL DEFECT THIS REPRODUCES. There were two predicates for "which beads are
+# ours" and they disagreed. Summoning goes through fayth_ready, which asks each persona its
+# own FAYTH_LABELS; the valve that stops a bead failing forever iterated the goal epic's
 # children. A bead carrying a partition's labels but parented outside the goal was therefore
 # dispatchable and unpoisonable — summoned every pass, failing every time, never reaching the
-# valve that exists to stop exactly that. Measured on one live database: 8 children examined
-# standing for 66 beads dispatched, with one bead at 9 attempts against a threshold of 3.
+# valve that exists to stop exactly that.
+#
+# MERGED (sp-eq8a4.2.4, duplicate cluster D1/D3/D4, UC-aeon-execution-21/22/23): every case
+# in test-poison-edge.sh (ask title/BRANCH wording, stale poison clear, thrash exemption, the
+# POISON_AT=0 edge) and test-poison-ask.sh (ask-once-per-count dedup, closed-mid-pass, empty
+# chamber) now lives here, in ONE SQL-seeded store, one bead per row, two sentinel passes —
+# not three files each re-seeding the same ~100-line fixture. The per-decision arithmetic
+# these files also asserted (threshold, dedup, cap math) moved to check4_decide and is
+# covered at T1 by test-check4-unit.sh; what stays here is that the REAL sentinel.sh wires
+# check4_decide's output to a real label, a real mail, a real event — the seam actually
+# reaching the store, not a model of it.
+#
+# G11 (reclaim cap, sentinel.sh ~382-394): SPIRA_RECLAIM_AT was set by the now-deleted
+# test-requeue-cap-accept.sh but nothing ever asserted it fired, and the sentinel's own loop
+# hardcoded reclaims=0 — dead code standing in for the wiring. Closed below: a real
+# 'reclaimed' event reaches check4_bulk_data's fourth column and a real mail goes out.
+#
+# G13 (cross-partition requeue cap, ex test-requeue-cap.sh mapper note): the `tinc` persona
+# below is not decoration — a bead in ITS partition is cycled past the requeue cap too, so
+# a green result cannot be a check that only happens to work for the one partition it was
+# written against.
 #
 # EVERY CASE HERE IS A PAIR, because the whole defect is a set that LOOKS complete. Each
 # poisoned bead is also asserted absent from goal_open_children — that is the proof the old
 # code could not have found it — and each bead the valve must leave alone is paired with one
 # it must take (law-absence-needs-a-positive-control).
 #
-# AND THE STATUS FILTER IS NOT THE BUG, which matters because a fix aimed at it would change
-# nothing and read as a fix. goal_open_children returns every non-closed child, in_progress
-# included; the first assertion below is what rules that out before anything else.
-#
 # The database is a REAL bd on a fixture dropped by a trap, because what is under test is
 # which beads a query returns and a model of bd would be a second implementation of the
 # thing in question (law-prefer-the-real-dependency). The sub-programs ARE stubs: what they
 # do is not under test here, only which beads the valve reaches.
 #
-# defect: sp-mqnf
+# tier: T3
+# defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez
 # covers: spira/sentinel.sh spira/lib.sh spira/chamber/*
-# timeout: 300
+# timeout: 240
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-# shellcheck disable=SC1090
 . "$HERE/testdb.sh"
+testdb_available || skip "no fixture database reachable"
 testdb_require test-poison
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-# testdb-mode: server — sentinel's poison threshold reads attempts_of via bd sql, which embedded mode refuses
+# testdb-mode: server — sentinel's poison threshold reads attempts_of/check4_bulk_data via
+# bd sql, which embedded mode refuses.
 export SPIRA_TESTDB_MODE=server
-testdb_up poison || {
-    printf 'SKIP test-poison: server testdb not available\n' >&2
-    exit 77
-}
+testdb_up poison || skip "server testdb not available"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 REPO="$TMP/repo"; RUN="$TMP/run"; REMOTE="$TMP/remote.git"; SH="$TMP/spira"
@@ -82,7 +92,8 @@ if [ -n "${ASK_CLOSES:-}" ]; then case "$*" in *"$ASK_CLOSES"*) ;;
 
 # TWO PERSONAS, EACH WITH A PARTITION OF ITS OWN, because a single-persona chamber cannot
 # tell a valve that sweeps THE CHAMBER apart from one that sweeps a hardcoded partition —
-# which is what this one was, by another route.
+# which is what this one was, by another route. It also carries G13: `tinc`'s partition is
+# exercised by name below, not left as an unused fixture.
 #
 # EACH DECLARES ITS OWN EXCLUSIONS, unexpanded, exactly as a shipped fayth does: the string
 # is evaluated when the fayth is sourced, so the suite pins the escalation and CI labels to
@@ -148,7 +159,7 @@ seed() {   # seed — the goal, one unclaimable child of it, and that child's bl
     testdb_reset
     # The ask's suppression is a mark in the run directory and testdb_reset does not reach it,
     # so a case that did not clear it would inherit the previous case's silence.
-    rm -rf "$RUN/poison-asked"
+    rm -rf "$RUN/poison-asked" "$RUN/requeue-asked" "$RUN/reclaim-asked"
     testdb_seed <<JSONL
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 {"id":"sp-block","title":"the blocker","status":"open","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
@@ -174,6 +185,14 @@ cycle() {   # cycle <id> <n> — create n status_changed(in_progress) events via
     while [ "$i" -lt "$n" ]; do
         B update "$id" --status in_progress >/dev/null 2>&1
         B update "$id" --status open >/dev/null 2>&1
+        i=$((i+1))
+    done
+}
+seedn() {   # seedn <id> <event_type> <new_value> <n> — n raw events via bd sql
+    local id="$1" et="$2" nv="$3" n="${4:-1}" i=0 uuid
+    while [ "$i" -lt "$n" ]; do
+        uuid="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+        B sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$et', 'harness', '$nv', NOW())" >/dev/null 2>&1
         i=$((i+1))
     done
 }
@@ -208,7 +227,6 @@ out="$(sentinel)"
 ispoisoned  "a dispatchable bead at the threshold is poisoned"  sp-orphan
 want        "and the pass says so"          "poisoned sp-orphan after 3 attempts" "$out"
 # sp-attempt-N labels removed (sp-lzt); sentinel no longer reports per-cause breakdown.
-# deleted: "unrecorded x3 (3 attempts)" — old label-derived cause summary in ask title.
 want        "and the operator is asked what to do about it"  "3 in_progress transition(s) without landing (3 attempts)" "$(cat "$MAIL_LOG")"
 # THE QUESTION MAIL CARRIES THE BEAD TITLE AND A DEFAULT LINE. The operator must be able to
 # act without opening a second pane: the title says what the work was for, and the default
@@ -216,14 +234,9 @@ want        "and the operator is asked what to do about it"  "3 in_progress tran
 want "the question mail body has the bead title"   "TITLE"       "$(cat "$MAIL_LOG")"
 want "and a Default line the operator can follow"  "## Default"  "$(cat "$MAIL_LOG")"
 want "and carries a failure excerpt (session log)" "--- last session log" "$(cat "$MAIL_LOG")"
-# THE POISONING IS RECORDED AS AN EVENT in events.log, not the operator mailbox. The ask is
-# the operator notification; the event log records the transition for audit. The transition
-# fires once — on entry to poisoned; the label is now on the bead, so every later pass takes
-# the other branch.
+# THE POISONING IS RECORDED AS AN EVENT in events.log, not the operator mailbox.
 want "and the poisoning is recorded as an event" "kind: bead.poisoned" "$(cat "$RUN/events.log" 2>/dev/null)"
 want "against the bead that poisoned"            "target: sp-orphan"   "$(cat "$RUN/events.log" 2>/dev/null)"
-# THE EVENT DOES NOT MAIL. The operator mailbox holds the question (the ask); the event log
-# holds the record of the transition. Neither must bleed into the other.
 nowant "the event mail is not in the operator mailbox" "kind: bead.poisoned" "$(cat "$MAIL_LOG")"
 # AND ONLY ON THE TRANSITION. The next pass sees spira-poison on the bead and takes the `;;`
 # branch — the spira_event call is never reached.
@@ -255,21 +268,12 @@ notpoisoned "an epic is never poisoned" sp-epic
 # The lease is a REAL one taken by `bd ready --claim`, because what is under test is that
 # the valve does not cut it: unclaiming here would pull the lease out from under a session
 # still writing, and the aeon releases on its own exit path anyway.
-#
-# ONE DISPATCHABLE BEAD IN THE PARTITION, so the claim is deterministic and — the half that
-# matters — so the CHECK 7 assertion below is about THIS bead and not a second one that
-# happened to be ready. The base fixture's own plan bead is blocked, so it is neither. The
-# holder is named by the suite rather than inherited: bd takes the assignee from
-# BEADS_ACTOR, so a suite run from inside a live aeon would assert against that session.
 # --------------------------------------------------------------------------------------
 seed_held() {
     seed
     testdb_seed <<JSONL
 {"id":"sp-orphan","title":"dispatchable, unparented","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
-    # sp-attempt-N labels retired (sp-lzt); cycle creates status_changed events.
-    # cycle 3 creates 3 events; the subsequent B ready --claim creates a 4th (claimed event).
-    # attempts_of() counts both; 4 >= POISON_AT=3 triggers poisoning.
     cycle sp-orphan 3
     BEADS_ACTOR=aeon-holder B ready --claim --limit 0 --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan}" >/dev/null 2>&1
 }
@@ -281,22 +285,11 @@ out="$(sentinel)"
 ispoisoned "a held bead at the threshold is still poisoned" sp-orphan
 is   "but it is not unclaimed under its holder" "in_progress" "$(status_of sp-orphan)"
 is   "and the holder is untouched"              "aeon-holder" "$(assignee_of sp-orphan)"
-# WHITESPACE-NORMALISED, because `bd show` WRAPS a note to the terminal width: the phrase
-# being looked for is in the bead, but a newline lands in the middle of it as soon as
-# anything earlier in the note changes its length. Matching the rendering rather than the
-# content makes an unrelated edit fail a test that is not about it.
 flat() { tr -s ' \n\t' ' ' <<<"$1"; }
 want "the note says the holder keeps its claim" "releases on its own exit path" \
      "$(flat "$(B show sp-orphan 2>/dev/null)")"
-# sp-lzt removed the per-cause breakdown from the poison note; the note now says
-# "Poisoned after N in_progress transition(s)" rather than "charged by: N#cause".
-# deleted: "and names the outcomes that charged it" via "charged by: 3#unrecorded"
 
-# ...and once the holder lets go, CHECK 7 declines to summon for it. The pair is the point:
-# the same fixture with the label cleared IS summoned for, so a green result here cannot be
-# a fayth that had nothing ready for some other reason. The control raises the threshold
-# rather than lowering the bead's attempts, so CHECK 4 does not simply re-poison it before
-# CHECK 7 is reached and exactly one thing differs at CHECK 7: the label.
+# ...and once the holder lets go, CHECK 7 declines to summon for it.
 release() { B update sp-orphan --status open >/dev/null 2>&1; B update sp-orphan --assignee "" >/dev/null 2>&1; }
 release; out="$(sentinel)"
 want "CHECK 7 declines to summon for a poisoned bead" "t: nothing ready in its partition" "$out"
@@ -305,5 +298,167 @@ release; out="$(SPIRA_POISON_AT=99 sentinel)"
 nowant "and would have summoned for it unpoisoned" "t: nothing ready in its partition" "$out"
 want   "the same bead unpoisoned is ready for its fayth" "t: 1 ready" "$out"
 
-printf '\ntest-poison.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+# --------------------------------------------------------------------------------------
+# ACCEPTANCE (sp-njwb, ex test-poison-edge.sh): ask title leads with charge reason; BRANCH
+# line shows commit count.
+# --------------------------------------------------------------------------------------
+echo
+seed_poison; rm -rf "$RUN/poison-asked"; : > "$MAIL_LOG"
+git -C "$REPO" checkout -q -b "spira/sp-orphan" 2>/dev/null
+git -C "$REPO" checkout -q main 2>/dev/null
+out="$(sentinel)"
+want "ask title shows attempt count not 'failed'" \
+     "3 in_progress transition(s) without landing (3 attempts)" "$(cat "$MAIL_LOG")"
+nowant "title does not contain 'failed N times'" \
+       "failed 3 times" "$(cat "$MAIL_LOG")"
+want "BRANCH line says no commits when branch is empty" \
+     "no commits" "$(cat "$MAIL_LOG")"
+nowant "BRANCH line does not claim work exists" \
+       "with work on it" "$(cat "$MAIL_LOG")"
+
+git -C "$REPO" checkout -q "spira/sp-orphan" 2>/dev/null
+git -C "$REPO" commit -q --allow-empty -m "one unit of work" 2>/dev/null
+git -C "$REPO" checkout -q main 2>/dev/null
+seed_poison; rm -rf "$RUN/poison-asked"
+: > "$MAIL_LOG"; out="$(sentinel)"
+want "branch with one commit reports its count" "1 commit" "$(cat "$MAIL_LOG")"
+nowant "and does not say no commits" "no commits" "$(cat "$MAIL_LOG")"
+git -C "$REPO" branch -D "spira/sp-orphan" 2>/dev/null || true
+
+# --------------------------------------------------------------------------------------
+# STALE POISON CLEAR (sp-fx1p, ex test-poison-edge.sh): a bead whose attempt count drops
+# below the threshold must have its spira-poison label removed automatically.
+# --------------------------------------------------------------------------------------
+echo
+seed; rm -rf "$RUN/poison-asked"
+testdb_seed <<JSONL
+{"id":"sp-stale","title":"stale poison — count below threshold","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","spira-poison"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-live","title":"live poison — count at threshold","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","spira-poison"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+cycle sp-stale 1
+cycle sp-live 3
+out="$(SPIRA_POISON_AT=3 sentinel)"
+notpoisoned "a poisoned bead with count below threshold has its label cleared"  sp-stale
+ispoisoned  "a poisoned bead with count at threshold keeps its label"           sp-live
+want        "the pass records the stale clear" "stale poison cleared" "$out"
+
+# --------------------------------------------------------------------------------------
+# THRASH REQUEUES DO NOT POISON (sp-pi3ez, ex test-poison-edge.sh).
+# --------------------------------------------------------------------------------------
+echo
+seed; rm -rf "$RUN/poison-asked"
+testdb_seed <<JSONL
+{"id":"sp-thrash","title":"thrash-only","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-real","title":"real failures","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+for i in 1 2 3; do
+    B update sp-thrash --status in_progress >/dev/null 2>&1
+    seedn sp-thrash requeued thrash 1
+    B update sp-thrash --status open >/dev/null 2>&1
+done
+cycle sp-real 3
+out="$(sentinel)"
+notpoisoned "three thrash requeues do not poison the bead"  sp-thrash
+ispoisoned  "CONTROL: three real failures still poison"     sp-real
+
+# --------------------------------------------------------------------------------------
+# ZERO CHARGED ATTEMPTS SENDS NO MAIL (POISON_AT=0 EDGE CASE, ex test-poison-edge.sh).
+# --------------------------------------------------------------------------------------
+echo
+seed; rm -rf "$RUN/poison-asked"; : > "$MAIL_LOG"
+testdb_seed <<JSONL
+{"id":"sp-zero","title":"zero attempts","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-one","title":"one attempt","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+cycle sp-one 1
+out="$(SPIRA_POISON_AT=0 sentinel)"
+notpoisoned "a bead with zero attempts is not poisoned even at POISON_AT=0" sp-zero
+nowant      "and no mail is sent for it"                                    "sp-zero" "$(cat "$MAIL_LOG")"
+ispoisoned  "CONTROL: a bead with one attempt is poisoned at POISON_AT=0"  sp-one
+want        "and the operator is asked"                                     "sp-one"  "$(cat "$MAIL_LOG")"
+
+# --------------------------------------------------------------------------------------
+# THE ASK IS FILED ONCE PER (BEAD, ATTEMPT COUNT), EVER (ex test-poison-ask.sh) — and its
+# suppression is not the poison label.
+# --------------------------------------------------------------------------------------
+echo
+seed_poison; : > "$MAIL_LOG"; out="$(sentinel)"
+is "the first pass over the threshold asks exactly once" "1" \
+   "$(grep -cE '^send.*Spira bead sp-orphan.*3 attempts' "$MAIL_LOG")"
+out="$(sentinel)"
+is "a second pass over the same count asks nothing more" "1" \
+   "$(grep -cE '^send.*Spira bead sp-orphan.*3 attempts' "$MAIL_LOG")"
+
+B label remove sp-orphan spira-poison >/dev/null 2>&1
+out="$(sentinel)"
+ispoisoned "the bead is poisoned again, because it is still over the threshold" sp-orphan
+is "but clearing the label did NOT re-arm the ask" "1" \
+   "$(grep -cE '^send.*Spira bead sp-orphan.*3 attempts' "$MAIL_LOG")"
+
+B label remove sp-orphan spira-poison >/dev/null 2>&1
+cycle sp-orphan 1
+out="$(sentinel)"
+is "a fourth attempt is a new fact and asks again" "1" \
+   "$(grep -cE '^send.*Spira bead sp-orphan.*4 attempts' "$MAIL_LOG")"
+
+# --------------------------------------------------------------------------------------
+# A CLOSED BEAD NEVER POISONS AND NEVER ASKS (ex test-poison-ask.sh).
+# --------------------------------------------------------------------------------------
+echo
+seed_poison; : > "$MAIL_LOG"
+testdb_seed <<JSONL
+{"id":"sp-late","title":"closed while the pass ran","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","incident"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+cycle sp-late 3
+out="$(ASK_CLOSES=sp-late sentinel)"
+is          "the fixture really did close it mid-pass" "closed" "$(status_of sp-late)"
+ispoisoned  "the bead that was still open is poisoned" sp-orphan
+notpoisoned "the one that closed mid-pass is not"      sp-late
+nowant "and the operator is not asked to drop landed work" "Spira bead sp-late" "$(cat "$MAIL_LOG")"
+
+# --------------------------------------------------------------------------------------
+# AN EMPTY CHAMBER POISONS NOTHING AND SAYS SO (ex test-poison-ask.sh).
+# --------------------------------------------------------------------------------------
+echo
+seed_poison; out="$(ROSTER=nosuchfayth sentinel)"
+notpoisoned "an empty chamber poisons nothing" sp-orphan
+want "and says no bead is being examined" "no bead is dispatchable" "$out"
+
+# --------------------------------------------------------------------------------------
+# G11 — THE RECLAIM CAP, WIRED END TO END. Before this seam, sentinel.sh's own per-bead
+# loop hardcoded reclaims=0, so RECLAIM_AT could never fire no matter how many 'reclaimed'
+# events a bead carried. This asserts the real event, the real bulk query and the real mail.
+# --------------------------------------------------------------------------------------
+echo
+seed; rm -rf "$RUN/poison-asked" "$RUN/reclaim-asked"; : > "$MAIL_LOG"
+testdb_seed <<JSONL
+{"id":"sp-reclaimed","title":"the box keeps killing its worker","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+seedn sp-reclaimed reclaimed '' 5
+out="$(SPIRA_RECLAIM_AT=5 sentinel)"
+want "the reclaim cap fires a real mail from real reclaimed events" \
+     "5 aeons died holding it, work never judged" "$(cat "$MAIL_LOG")"
+want "the mail says the box, not the work, is at fault" \
+     "the box cannot run it" "$(cat "$MAIL_LOG")"
+notpoisoned "a reclaim cap alone does not poison" sp-reclaimed
+is "the reclaim ask is marked so a second pass does not repeat it" "yes" \
+   "$([ -s "$RUN/reclaim-asked/sp-reclaimed" ] && echo yes || echo no)"
+: > "$MAIL_LOG"; out="$(SPIRA_RECLAIM_AT=5 sentinel)"
+nowant "a second pass over the same count sends nothing more" "sp-reclaimed" "$(cat "$MAIL_LOG")"
+
+# --------------------------------------------------------------------------------------
+# G13 — THE REQUEUE CAP IS NOT HARD-CODED TO ONE PARTITION. `tinc` is the second fayth in
+# this fixture's chamber; a bead carrying ITS labels, cycled past REQUEUE_AT, must be
+# escalated exactly like a `t`-partition bead is.
+# --------------------------------------------------------------------------------------
+echo
+seed; rm -rf "$RUN/poison-asked" "$RUN/requeue-asked"; : > "$MAIL_LOG"
+testdb_seed <<JSONL
+{"id":"sp-tinc-req","title":"an incident-partition bead over the requeue cap","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","incident"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+seedn sp-tinc-req reopened '' 5
+out="$(SPIRA_REQUEUE_AT=5 sentinel)"
+want "the requeue cap fires for the tinc partition's own bead too" \
+     "sp-tinc-req — completed and requeued 5 times" "$(cat "$MAIL_LOG")"
+
+tl_summary

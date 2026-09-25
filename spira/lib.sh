@@ -3918,14 +3918,15 @@ for i in (d if isinstance(d, list) else [d]):
     return 0
 }
 
-# _check4_bulk_sql <in-clause> -> SQL returning attempts and reopens for each id in the clause
+# _check4_bulk_sql <in-clause> -> SQL returning attempts, reopens and reclaims for each id
 _check4_bulk_sql() {
-    printf "select issue_id, greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end), 0) as att, sum(case when event_type='reopened' then 1 else 0 end) as rep from events where issue_id in (%s) group by issue_id" "$1"
+    printf "select issue_id, greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end), 0) as att, sum(case when event_type='reopened' then 1 else 0 end) as rep, sum(case when event_type='reclaimed' then 1 else 0 end) as rcl from events where issue_id in (%s) group by issue_id" "$1"
 }
 
-# check4_bulk_data <dispatchable-output> -> id TAB attempts TAB reopens, one per bead
-# One GROUP BY replaces attempts_of and reopens_of called per bead in the CHECK 4 loop.
-# Beads with no events are absent from the output; callers default missing entries to 0.
+# check4_bulk_data <dispatchable-output> -> id TAB attempts TAB reopens TAB reclaims, one per bead
+# One GROUP BY replaces attempts_of, reopens_of and reclaims_of called per bead in the CHECK 4
+# loop — the per-bead cost sp-f1m7f removed. Beads with no events are absent from the output;
+# callers default missing entries to 0.
 check4_bulk_data() {
     local input="${1:-}"; [ -n "$input" ] || return 0
     local in_clause
@@ -3941,23 +3942,85 @@ for line in sys.stdin:
         if s.lstrip().startswith("+-"):
             continue
         cols = [c.strip() for c in s.strip("|").split("|")]
-        if len(cols) >= 3 and cols[0] and cols[0] not in ("issue_id",):
+        if len(cols) >= 4 and cols[0] and cols[0] not in ("issue_id",):
             try:
-                print(cols[0] + "\t" + str(int(cols[1] or 0)) + "\t" + str(int(cols[2] or 0)))
+                print(cols[0] + "\t" + str(int(cols[1] or 0)) + "\t" + str(int(cols[2] or 0)) + "\t" + str(int(cols[3] or 0)))
             except (ValueError, IndexError):
                 pass
     else:
         parts = s.split("\t") if "\t" in s else s.split()
-        if len(parts) >= 3:
+        if len(parts) >= 4:
             try:
                 a = int(parts[1].strip())
                 r = int(parts[2].strip())
+                c = int(parts[3].strip())
                 bid = parts[0].strip()
                 if bid:
-                    print(bid + "\t" + str(a) + "\t" + str(r))
+                    print(bid + "\t" + str(a) + "\t" + str(r) + "\t" + str(c))
             except (ValueError, IndexError):
                 pass
 ' 2>/dev/null
+}
+
+# --------------------------------------------------------------------------------------
+# check4_decide <attempts> <requeues> <reclaims> <labels> <asked-stamp> -> decision tokens
+#   asked-stamp = "<requeue-already-asked 0|1>:<reclaim-already-asked 0|1>:<poison-already-asked-at-n 0|1>"
+#   thresholds come from POISON_AT/REQUEUE_AT/RECLAIM_AT, sentinel.sh's own shell vars,
+#   defaulted here so a caller (a test) need not export them.
+#
+#   -> a space-separated subset of: requeue-mail reclaim-mail poison clear ask
+#      "none" when nothing applies.
+#
+# CHECK 4'S DECISION, EXTRACTED. The per-bead loop used to make this call inline against a
+# `bd sql`/label read per bead across 7 server-mode suites (~1,400s, sp-f1m7f's motive);
+# every input here now comes from ONE bulk query (check4_bulk_data) plus the labels
+# dispatchable_open already carries, so this function itself issues no query at all — the
+# cost sp-f1m7f removed cannot silently come back through this seam.
+#
+# ONE FUNCTION FOR THREE CALL SITES in sentinel.sh: the main dispatch loop, the
+# closed-but-unlanded requeue supplement, and the stale-poison-clear scan. The three
+# concerns are independent BY DESIGN (a bead over the requeue cap is not thereby exempt
+# from poisoning, and vice versa — "distinct" per the comments this replaces), so each
+# token is decided on its own rather than one skipping the rest via a shared early exit.
+# --------------------------------------------------------------------------------------
+check4_decide() {
+    local n="${1:-0}" requeues="${2:-0}" reclaims="${3:-0}" labels="${4:-}" stamp="${5:-0:0:0}"
+    local rq_asked="0" rc_asked="0" po_asked="0"
+    IFS=: read -r rq_asked rc_asked po_asked <<<"$stamp"
+    local p_at="${POISON_AT:-3}" r_at="${REQUEUE_AT:-5}" c_at="${RECLAIM_AT:-5}"
+    local out=""
+
+    case "$labels" in
+        *'delivers:action'*) ;;  # closes without a commit; reopens are not landing stalls
+        *)
+            if [ "$requeues" -ge "$r_at" ] && [ "${rq_asked:-0}" != 1 ]; then
+                out="$out requeue-mail"
+            fi
+            ;;
+    esac
+
+    if [ "$reclaims" -ge "$c_at" ] && [ "${rc_asked:-0}" != 1 ]; then
+        out="$out reclaim-mail"
+    fi
+
+    case "$labels" in
+        *spira-poison*)
+            # A bead at the threshold with zero charged attempts means POISON_AT=0 and
+            # nothing failed — but a labeled bead cannot be at n=0 by that route, so the
+            # clear condition needs only the threshold, not the n>0 guard poison/ask need.
+            if [ "$n" -lt "$p_at" ]; then out="$out clear"; fi
+            ;;
+        *)
+            if [ "$n" -ge "$p_at" ] && [ "$n" -gt 0 ]; then out="$out poison"; fi
+            ;;
+    esac
+
+    if [ "$n" -ge "$p_at" ] && [ "$n" -gt 0 ] && [ "${po_asked:-0}" != 1 ]; then
+        out="$out ask"
+    fi
+
+    out="${out# }"
+    printf '%s' "${out:-none}"
 }
 
 # detect_unclaimable_ready -> one UNCLAIMABLE line per ready bead no persona can claim.

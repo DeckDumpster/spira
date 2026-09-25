@@ -216,72 +216,15 @@ is "attempts counts an aeon claim" "1" \
 is "attempts also counts a hand-driven in_progress transition" "1" \
    "$(grep -c 'status_changed' <<<"$body_sql" || true)"
 
-FX="$TMP/attfx"; mkdir -p "$FX"
-( cd "$FX" && dolt init -b main >/dev/null 2>&1 )
-dolt --data-dir "$FX" sql -q "create database fx; use fx; create table events (issue_id varchar(64), event_type varchar(32), new_value longtext);
-insert into events values
- ('b1','claimed',null),
- ('b1','claimed',null),
- ('b1','status_changed','{\"status\":\"in_progress\"}'),
- ('b1','status_changed','{\"status\":\"closed\"}'),
- ('b1','label_added','mentions in_progress in a comment'),
- ('b2','created',null),
- -- b3: THREE claims, THREE successful closes. A harness requeue is not a failed attempt:
- -- sp-7tj completed three groom passes and was poisoned for it because raw claims were
- -- counted. Expect 0.
- ('b3','claimed',null),('b3','closed',null),
- ('b3','claimed',null),('b3','closed',null),
- ('b3','claimed',null),('b3','closed',null),
- -- b4: three claims, never closed. A genuinely failing bead. Expect 3.
- ('b4','claimed',null),('b4','claimed',null),('b4','claimed',null),
- -- b5: THREE claim+thrash pairs — the class sp-requeue-thrash reports. Expect 0.
- -- Against the unfixed tree this returns 3, proving the fix is necessary.
- ('b5','claimed',null),('b5','requeued','thrash'),
- ('b5','claimed',null),('b5','requeued','thrash'),
- ('b5','claimed',null),('b5','requeued','thrash'),
- -- b6: two thrash pairs then one real failure. Expect 1.
- ('b6','claimed',null),('b6','requeued','thrash'),
- ('b6','claimed',null),('b6','requeued','thrash'),
- ('b6','claimed',null),
- -- b7: THREE claims, each ended by a worker that died before judging (aeon.sh notes
- -- 'Not judged ... NO attempt was charged'). sp-wfqha was poisoned this way on 2026-09-19
- -- and re-poisoned six seconds after a hand clear. Expect 0.
- ('b7','claimed',null),('b7','requeued','unjudged-refused'),
- ('b7','claimed',null),('b7','requeued','unjudged-refused'),
- ('b7','claimed',null),('b7','requeued','unjudged-no-trace'),
- -- b8: two unjudged deaths then one real failure. Expect 1.
- ('b8','claimed',null),('b8','requeued','unjudged-refused'),
- ('b8','claimed',null),('b8','requeued','unjudged-refused'),
- ('b8','claimed',null);" >/dev/null 2>&1
-# THE FIXTURE MUST RUN THE SHIPPED QUERY, NOT A COPY OF IT. The first version of this block
-# built its own `mk()` with the correct SQL inlined, so reverting lib.sh to the broken
-# predicate left it passing — a fixture that tests a string the test itself wrote proves
-# only that the test agrees with itself. Source the real builder.
-( . "$HERE/lib.sh" >/dev/null 2>&1 || true )
-mk(){ ( . "$HERE/lib.sh" >/dev/null 2>&1; _attempts_sql_query "$1" ); }
-got_b1="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b1)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
-got_b2="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b2)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
-is "fixture: two claims + one hand transition = 3 attempts" "3" "$got_b1"
-is "fixture control: a bead with only a created event = 0" "0" "$got_b2"
-got_b3="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b3)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
-got_b4="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b4)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
-is "three claims each closed successfully = 0 attempts (a requeue is not an attempt)" "0" "$got_b3"
-is "CONTROL: three claims and never closed = 3 attempts" "3" "$got_b4"
-got_b5="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b5)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
-got_b6="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b6)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
-is "three claim+thrash pairs = 0 attempts (thrash is not a failure)" "0" "$got_b5"
-is "CONTROL: two thrash + one real failure = 1 attempt" "1" "$got_b6"
-got_b7="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b7)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
-got_b8="$(dolt --data-dir "$FX" sql -q "use fx; $(mk b8)" 2>/dev/null | sed -n '4p' | tr -d '| ')"
-is "three claims each ended unjudged = 0 attempts (a dead worker is not a verdict)" "0" "$got_b7"
-is "CONTROL: two unjudged + one real failure = 1 attempt" "1" "$got_b8"
+# THE b1..b8 FIXTURE (hand-rolled dolt schema, one row per attempt-counting scenario:
+# harness-requeue vs genuine failure, thrash pairs, unjudged deaths) moved to
+# test-attempts-sql.sh (sp-eq8a4.2.4), seeded through real bd events instead of a copy of
+# the events schema — the same fixture, testing the real store rather than a model of it.
+#
 # The note says no attempt was charged; the counter reads events, so the branch must write one.
 body_unjudged="$(grep -n 'Not judged (' "$HERE/aeon.sh" | head -1 | cut -d: -f1)"
 is "aeon.sh's not-judged branch records an unjudged requeue event" "1" \
    "$(sed -n "$(( ${body_unjudged:-1} - 6 )),${body_unjudged:-1}p" "$HERE/aeon.sh" | grep -c 'bump_requeue "\$BEAD_ID" "unjudged-' || true)"
-body_attempts="$(sed -n '/^attempts_of()/,/^}/p' "$HERE/lib.sh" 2>/dev/null)"
-is "attempts_of delegates to the SQL builder" "1" \
-   "$(grep -c '_attempts_sql_query' <<<"$body_attempts" || true)"
 
 # ======================================================================================
 # The counters and the release, against a real bd.
