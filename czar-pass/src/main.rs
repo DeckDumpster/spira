@@ -7,6 +7,8 @@
 // record, landstate, CHECK7's last reason from sentinel.log, and at most 2 gh API
 // calls (forge.sh batch-ci-status) for the open batch's run.
 
+use reconciler_engine::core::{last_remedy, record_remedy, step, HysteresisState, RawStatus, Verdict};
+use reconciler_engine::io::{append_status, load_state, save_state, StateMap};
 use serde_json::Value;
 use std::env;
 use std::fs::{self, OpenOptions};
@@ -58,6 +60,8 @@ struct Config {
     ci_red_max: u64,
     base_unreadable_grace: u64,
     lock_path: PathBuf,
+    reconciler_state: PathBuf,
+    reconciler_status_log: PathBuf,
     spira_db: String,
     scope_label: String,
     czar_label: String,
@@ -120,6 +124,12 @@ impl Config {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(120),
             lock_path: spira_run.join("czar-pass.lock"),
+            reconciler_state: env::var("SPIRA_RECONCILER_STATE")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| spira_run.join("reconciler-state.json")),
+            reconciler_status_log: env::var("SPIRA_RECONCILER_STATUS_LOG")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| spira_run.join("reconciler-status.jsonl")),
             spira_db: env::var("SPIRA_DB").unwrap_or_default(),
             scope_label: env::var("SPIRA_SCOPE_LABEL").unwrap_or_default(),
             czar_label: env::var("SPIRA_CZAR_LABEL")
@@ -191,42 +201,41 @@ fn append_czar_log(path: &Path, content: &str) {
     }
 }
 
-// First-seen state files: czar-pass-first.<sanitized-class>
-fn fs_path(spira_run: &Path, class: &str) -> PathBuf {
-    let safe = class.replace(['/', ','], "-");
-    spira_run.join(format!("czar-pass-first.{}", safe))
-}
-
-fn fs_get(spira_run: &Path, class: &str) -> Option<u64> {
-    fs::read_to_string(fs_path(spira_run, class))
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-}
-
-fn fs_record(spira_run: &Path, class: &str, now: u64) {
-    let p = fs_path(spira_run, class);
-    if !p.exists() {
-        let _ = fs::write(&p, format!("{}\n", now));
-    }
-}
-
-fn fs_clear(spira_run: &Path, class: &str) {
-    let _ = fs::remove_file(fs_path(spira_run, class));
-}
-
-fn latency_secs(spira_run: &Path, class: &str, now: u64) -> u64 {
-    fs_get(spira_run, class)
-        .map(|first| now.saturating_sub(first))
-        .unwrap_or(0)
-}
-
-fn telem(cfg: &Config, class: &str, detected: &str, remedy: &str, tier: &str) {
-    let lat = latency_secs(&cfg.spira_run, class, cfg.now_secs);
+fn telem(cfg: &Config, class: &str, verdict: &Verdict, remedy: &str, tier: &str) {
+    let detected = if verdict.is_gap { "yes" } else { "no" };
+    let lat = verdict.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
     let line = format!(
-        "{} CLASS={} DETECTED={} REMEDY={} TIER={} LATENCY={}s\n",
-        cfg.now_iso, class, detected, remedy, tier, lat
+        "{} CLASS={} DETECTED={} STATUS={} REMEDY={} TIER={} LATENCY={}s\n",
+        cfg.now_iso, class, detected, status_word(verdict), remedy, tier, lat
     );
     append_czar_log(&cfg.czar_log, &line);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// The reconciler invariant engine seam: every detector's hysteresis and remedy-
+// verification runs through here instead of its own hand-rolled first-seen marker file
+// (sp-pu7v6). `evaluate` does exactly three things: advance `key`'s HysteresisState by one
+// pass, record the raw reading to the time series (every pass, not only when it changes —
+// UNOBSERVABLE IS NEVER SATISFIED, so a forge call that failed is never indistinguishable
+// from "nothing going on"), and return the Verdict a detector decides its action from.
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn evaluate(cfg: &Config, state: &mut StateMap, key: &str, raw: RawStatus, grace_secs: u64) -> Verdict {
+    let prev = state.remove(key).unwrap_or_default();
+    let (verdict, next) = step(cfg.now_secs, raw, grace_secs, prev);
+    append_status(&cfg.reconciler_status_log, &cfg.now_iso, key, &verdict);
+    if next != HysteresisState::default() {
+        state.insert(key.to_string(), next);
+    }
+    verdict
+}
+
+fn status_word(v: &Verdict) -> &'static str {
+    match &v.status {
+        RawStatus::Satisfied => "satisfied",
+        RawStatus::Gap { .. } => "gap",
+        RawStatus::Unobservable { .. } => "unobservable",
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -449,17 +458,23 @@ fn file_mtime(path: &Path) -> Option<u64> {
         .map(|d| d.as_secs())
 }
 
-fn run_forge(forge_sh: &str, args: &[&str]) -> String {
+// A failed forge call and "nothing going on" must stay distinguishable (sp-pu7v6): a
+// spawn failure, a non-zero exit or invalid UTF-8 all report Err, so a caller can report
+// its invariant unobservable instead of silently reading the failure as "satisfied".
+fn run_forge(forge_sh: &str, args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("bash");
     cmd.arg(forge_sh);
     for a in args {
         cmd.arg(a);
     }
-    cmd.stderr(Stdio::null())
+    let output = cmd
+        .stderr(Stdio::null())
         .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .unwrap_or_default()
+        .map_err(|e| format!("forge.sh spawn failed: {}", e))?;
+    if !output.status.success() {
+        return Err(format!("forge.sh exited {}", output.status));
+    }
+    String::from_utf8(output.stdout).map_err(|e| format!("forge.sh: non-utf8 output: {}", e))
 }
 
 fn parse_field(output: &str, key: &str) -> Option<String> {
@@ -514,42 +529,42 @@ fn run_pass() -> Result<(), String> {
     // CHECK7 reason from sentinel.log — used by the starved detector.
     let check7 = read_check7(&cfg.spira_run);
 
+    // Every invariant's hysteresis lives in one persisted state map, loaded once per pass
+    // and saved once per pass (sp-pu7v6) — replacing a flat first-seen marker file per class.
+    let mut state = load_state(&cfg.reconciler_state);
+
     // ── DETECTOR: deadlock ────────────────────────────────────────────────────
-    let (dl_det, dl_rem, dl_tier) =
-        detect_deadlock(&cfg, &new_lines);
+    let (dl_v, dl_rem, dl_tier) = detect_deadlock(&cfg, &mut state, &new_lines);
 
     // ── DETECTOR: attribution-failed ──────────────────────────────────────────
-    let (af_det, af_rem, af_tier) =
-        detect_attribution_failed(&cfg, &new_lines);
+    let (af_v, af_rem, af_tier) = detect_attribution_failed(&cfg, &mut state, &new_lines);
 
     // ── DETECTOR: sort-failed ─────────────────────────────────────────────────
-    let (sf_det, sf_rem, sf_tier) =
-        detect_sort_failed(&cfg, &new_lines);
+    let (sf_v, sf_rem, sf_tier) = detect_sort_failed(&cfg, &mut state, &new_lines);
 
     // ── DETECTOR: loop-stalled ────────────────────────────────────────────────
-    let (ls_det, ls_rem, ls_tier) =
-        detect_loop_stalled(&cfg);
+    let (ls_v, ls_rem, ls_tier) = detect_loop_stalled(&cfg, &mut state);
 
     // ── DETECTORS: ci-stalled + ci-red (shared forge calls) ──────────────────
-    let (cis_det, cis_rem, cis_tier, cir_det, cir_rem, cir_tier) =
-        detect_ci(&cfg);
+    let (cis_v, cis_rem, cis_tier, cir_v, cir_rem, cir_tier) = detect_ci(&cfg, &mut state);
 
     // ── DETECTOR: base-red (the base ref's own gate run, not a batch's) ──────
-    let (br_det, br_rem, br_tier) = detect_base_red(&cfg);
+    let (br_v, br_rem, br_tier) = detect_base_red(&cfg, &mut state);
 
     // ── DETECTOR: starved ─────────────────────────────────────────────────────
-    let (sv_det, sv_rem, sv_tier) =
-        detect_starved(&cfg, &check7);
+    let (sv_v, sv_rem, sv_tier) = detect_starved(&cfg, &mut state, &check7);
 
     // Telemetry — one line per class per pass.
-    telem(&cfg, "deadlock",           dl_det,  dl_rem,  dl_tier);
-    telem(&cfg, "attribution-failed", af_det,  af_rem,  af_tier);
-    telem(&cfg, "sort-failed",        sf_det,  sf_rem,  sf_tier);
-    telem(&cfg, "loop-stalled",       ls_det,  ls_rem,  ls_tier);
-    telem(&cfg, "ci-stalled",         cis_det, cis_rem, cis_tier);
-    telem(&cfg, "ci-red",             cir_det, cir_rem, cir_tier);
-    telem(&cfg, "base-red",           br_det,  br_rem,  br_tier);
-    telem(&cfg, "starved",            sv_det,  sv_rem,  sv_tier);
+    telem(&cfg, "deadlock",           &dl_v,  dl_rem,  dl_tier);
+    telem(&cfg, "attribution-failed", &af_v,  af_rem,  af_tier);
+    telem(&cfg, "sort-failed",        &sf_v,  sf_rem,  sf_tier);
+    telem(&cfg, "loop-stalled",       &ls_v,  ls_rem,  ls_tier);
+    telem(&cfg, "ci-stalled",         &cis_v, cis_rem, cis_tier);
+    telem(&cfg, "ci-red",             &cir_v, cir_rem, cir_tier);
+    telem(&cfg, "base-red",           &br_v,  br_rem,  br_tier);
+    telem(&cfg, "starved",            &sv_v,  sv_rem,  sv_tier);
+
+    let _ = save_state(&cfg.reconciler_state, &state);
 
     // Marker
     let _ = fs::write(&cfg.marker, format!("{}\n", cfg.now_iso));
@@ -603,80 +618,88 @@ fn read_check7(spira_run: &Path) -> String {
 // Individual detectors — return (detected_str, remedy_str, tier_str)
 // ──────────────────────────────────────────────────────────────────────────────
 
-fn detect_deadlock<'a>(cfg: &Config, new_lines: &str) -> (&'a str, &'a str, &'a str) {
+fn detect_deadlock(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verdict, &'static str, &'static str) {
     let trigger = "no suites identified; leaving batch open";
-    if new_lines.contains(trigger) {
-        fs_record(&cfg.spira_run, "deadlock", cfg.now_secs);
-        let ctx: String = new_lines
-            .lines()
-            .filter(|l| l.contains(trigger))
-            .rev()
-            .take(3)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("\n");
-        let first = fs_get(&cfg.spira_run, "deadlock").unwrap_or(cfg.now_secs);
-        let age = cfg.now_secs.saturating_sub(first);
+    let raw = if new_lines.contains(trigger) {
+        RawStatus::Gap {
+            desired: "batch closed or requeued".into(),
+            observed: trigger.into(),
+            since_hint: None,
+        }
+    } else {
+        RawStatus::Satisfied
+    };
+    let verdict = evaluate(cfg, state, "deadlock", raw, 0);
+    if !verdict.is_gap {
+        return (verdict, "none", "det");
+    }
 
-        // Attempt a deterministic remedy (workflow-rerun) if age < 90s.
-        let mut run_id = String::new();
-        let mut repo_path = String::new();
-        if age < 90 && cfg.queue_dir.is_dir() {
-            'outer: for (repo_name, open_path) in find_open_files(&cfg.queue_dir) {
-                if let Some(branch) = read_branch(&open_path) {
-                    if let Some(rp) = repo_root(&repo_name, &cfg.repo_map) {
-                        let rp_str = rp.to_string_lossy().to_string();
-                        let out = run_forge(
-                            &cfg.forge_sh,
-                            &["run-id", &rp_str, &branch],
-                        );
-                        let rid = out.trim().to_string();
-                        if !rid.is_empty() {
-                            run_id = rid;
-                            repo_path = rp_str;
-                            break 'outer;
-                        }
+    let ctx: String = new_lines
+        .lines()
+        .filter(|l| l.contains(trigger))
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // A deterministic remedy is attempted once per streak; if it is still a gap on the
+    // next pass, remedy_failed says so and this pass escalates instead of retrying blind.
+    let mut run_id = String::new();
+    let mut repo_path = String::new();
+    if !verdict.remedy_failed && cfg.queue_dir.is_dir() {
+        'outer: for (repo_name, open_path) in find_open_files(&cfg.queue_dir) {
+            if let Some(branch) = read_branch(&open_path) {
+                if let Some(rp) = repo_root(&repo_name, &cfg.repo_map) {
+                    let rp_str = rp.to_string_lossy().to_string();
+                    let out = run_forge(&cfg.forge_sh, &["run-id", &rp_str, &branch]);
+                    let rid = out.map(|s| s.trim().to_string()).unwrap_or_default();
+                    if !rid.is_empty() {
+                        run_id = rid;
+                        repo_path = rp_str;
+                        break 'outer;
                     }
                 }
             }
         }
+    }
 
-        if !run_id.is_empty() && age < 90 {
-            let forge = cfg.forge_sh.clone();
-            let rid = run_id.clone();
-            let rp = repo_path.clone();
-            det_action(cfg, "deadlock", &format!("workflow-rerun {}", run_id), move || {
-                let _ = Command::new("bash")
-                    .arg(&forge)
-                    .args(["workflow-rerun", &rp, &rid])
-                    .status();
-            });
-            ("yes", "det-rerun", "det")
-        } else {
-            let body = format!(
-                "verdict left the batch PR open after a red with no attributable suite.\n\
-                 The queue cannot advance until the batch is closed or requeued by hand.\n\n\
-                 Recent log lines:\n{}\n",
-                ctx
-            );
-            infer(
-                cfg,
-                "deadlock",
-                "deadlock-batch-open",
-                "QUEUE: batch open — no suites identified (DEADLOCK)",
-                &body,
-            );
-            ("yes", "inference", "inf")
+    if !run_id.is_empty() {
+        let desc = format!("workflow-rerun {}", run_id);
+        let forge = cfg.forge_sh.clone();
+        let rid = run_id.clone();
+        let rp = repo_path.clone();
+        det_action(cfg, "deadlock", &desc, move || {
+            let _ = Command::new("bash").arg(&forge).args(["workflow-rerun", &rp, &rid]).status();
+        });
+        if let Some(st) = state.get_mut("deadlock") {
+            record_remedy(st, cfg.now_secs, &desc);
         }
+        (verdict, "det-rerun", "det")
     } else {
-        fs_clear(&cfg.spira_run, "deadlock");
-        ("no", "none", "det")
+        let tried = last_remedy(state.get("deadlock").unwrap_or(&HysteresisState::default()))
+            .map(|d| format!("\nLast remedy tried: {}\n", d))
+            .unwrap_or_default();
+        let body = format!(
+            "verdict left the batch PR open after a red with no attributable suite.\n\
+             The queue cannot advance until the batch is closed or requeued by hand.\n\
+             {}\nRecent log lines:\n{}\n",
+            tried, ctx
+        );
+        infer(
+            cfg,
+            "deadlock",
+            "deadlock-batch-open",
+            "QUEUE: batch open — no suites identified (DEADLOCK)",
+            &body,
+        );
+        (verdict, "inference", "inf")
     }
 }
 
-fn detect_attribution_failed<'a>(cfg: &Config, new_lines: &str) -> (&'a str, &'a str, &'a str) {
+fn detect_attribution_failed(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verdict, &'static str, &'static str) {
     // grep -qE 'ejected 0, requeued [1-9]'
     let detected = new_lines.lines().any(|l| {
         if let Some(pos) = l.find("ejected 0, requeued ") {
@@ -686,72 +709,86 @@ fn detect_attribution_failed<'a>(cfg: &Config, new_lines: &str) -> (&'a str, &'a
             false
         }
     });
-    if detected {
-        fs_record(&cfg.spira_run, "attribution-failed", cfg.now_secs);
-        let ctx: String = new_lines
-            .lines()
-            .filter(|l| l.contains("ejected 0, requeued"))
-            .rev()
-            .take(3)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("\n");
-        let body = format!(
-            "Attribution found no branch to isolate the offender.\n\
-             The entire batch was requeued with the failing member still in it; this loops.\n\n\
-             Recent log lines:\n{}\n",
-            ctx
-        );
-        infer(
-            cfg,
-            "attribution-failed",
-            "attribution-failed-requeue",
-            "QUEUE: attribution ejected 0, requeued whole batch",
-            &body,
-        );
-        ("yes", "inference", "inf")
+    let raw = if detected {
+        RawStatus::Gap {
+            desired: "attribution ejects the offender".into(),
+            observed: "ejected 0, requeued the whole batch".into(),
+            since_hint: None,
+        }
     } else {
-        fs_clear(&cfg.spira_run, "attribution-failed");
-        ("no", "none", "det")
+        RawStatus::Satisfied
+    };
+    let verdict = evaluate(cfg, state, "attribution-failed", raw, 0);
+    if !verdict.is_gap {
+        return (verdict, "none", "det");
     }
+    let ctx: String = new_lines
+        .lines()
+        .filter(|l| l.contains("ejected 0, requeued"))
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let body = format!(
+        "Attribution found no branch to isolate the offender.\n\
+         The entire batch was requeued with the failing member still in it; this loops.\n\n\
+         Recent log lines:\n{}\n",
+        ctx
+    );
+    infer(
+        cfg,
+        "attribution-failed",
+        "attribution-failed-requeue",
+        "QUEUE: attribution ejected 0, requeued whole batch",
+        &body,
+    );
+    (verdict, "inference", "inf")
 }
 
-fn detect_sort_failed<'a>(cfg: &Config, new_lines: &str) -> (&'a str, &'a str, &'a str) {
-    if new_lines.contains("queue_sort_rows: ranking failed") {
-        fs_record(&cfg.spira_run, "sort-failed", cfg.now_secs);
-        let ctx: String = new_lines
-            .lines()
-            .filter(|l| l.contains("queue_sort_rows: ranking failed"))
-            .rev()
-            .take(3)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("\n");
-        let body = format!(
-            "The queue sorter failed and fell back to unranked order.\n\
-             Priority ordering is suspended until the sorter recovers.\n\n\
-             Recent log lines:\n{}\n",
-            ctx
-        );
-        infer(
-            cfg,
-            "sort-failed",
-            "sort-failed-ranking",
-            "QUEUE: queue_sort_rows ranking failed",
-            &body,
-        );
-        ("yes", "inference", "inf")
+fn detect_sort_failed(cfg: &Config, state: &mut StateMap, new_lines: &str) -> (Verdict, &'static str, &'static str) {
+    let raw = if new_lines.contains("queue_sort_rows: ranking failed") {
+        RawStatus::Gap {
+            desired: "queue sorted by priority".into(),
+            observed: "queue_sort_rows: ranking failed".into(),
+            since_hint: None,
+        }
     } else {
-        fs_clear(&cfg.spira_run, "sort-failed");
-        ("no", "none", "det")
+        RawStatus::Satisfied
+    };
+    let verdict = evaluate(cfg, state, "sort-failed", raw, 0);
+    if !verdict.is_gap {
+        return (verdict, "none", "det");
     }
+    let ctx: String = new_lines
+        .lines()
+        .filter(|l| l.contains("queue_sort_rows: ranking failed"))
+        .rev()
+        .take(3)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
+    let body = format!(
+        "The queue sorter failed and fell back to unranked order.\n\
+         Priority ordering is suspended until the sorter recovers.\n\n\
+         Recent log lines:\n{}\n",
+        ctx
+    );
+    infer(
+        cfg,
+        "sort-failed",
+        "sort-failed-ranking",
+        "QUEUE: queue_sort_rows ranking failed",
+        &body,
+    );
+    (verdict, "inference", "inf")
 }
 
-fn detect_loop_stalled<'a>(cfg: &Config) -> (&'a str, &'a str, &'a str) {
+fn detect_loop_stalled(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'static str) {
     let last_ts: Option<String> = if cfg.qc_log.exists() {
         fs::read_to_string(&cfg.qc_log)
             .ok()
@@ -766,74 +803,99 @@ fn detect_loop_stalled<'a>(cfg: &Config) -> (&'a str, &'a str, &'a str) {
         None
     };
 
-    if let Some(ts) = last_ts {
-        if let Some(ts_epoch) = parse_iso_to_epoch(&ts) {
-            let age = cfg.now_secs.saturating_sub(ts_epoch);
-            if age > cfg.stall_secs {
-                fs_record(&cfg.spira_run, "loop-stalled", cfg.now_secs);
-                let unit_service = format!("{}.service", cfg.land_unit);
-                let is_failed = Command::new(&cfg.systemctl)
-                    .args(["--user", "is-failed", &unit_service])
-                    .stderr(Stdio::null())
-                    .output()
-                    .ok()
-                    .and_then(|o| String::from_utf8(o.stdout).ok())
-                    .map(|s| s.trim() == "failed")
-                    .unwrap_or(false);
-
-                return if is_failed {
-                    let sc = cfg.systemctl.clone();
-                    let svc = unit_service.clone();
-                    det_action(
-                        cfg,
-                        "loop-stalled",
-                        &format!("reset-failed + start {}", cfg.land_unit),
-                        move || {
-                            let _ = Command::new(&sc)
-                                .args(["--user", "reset-failed", &svc])
-                                .status();
-                            let _ = Command::new(&sc)
-                                .args(["--user", "start", &svc])
-                                .status();
-                        },
-                    );
-                    ("yes", "det-restart", "det")
+    // No log yet, or no pass-complete line yet, is a legitimate fresh-install absence —
+    // not a failure to observe. An unparseable timestamp IS a failure to observe: the old
+    // code silently read that as "satisfied", which is exactly the bug this engine closes
+    // (law-a-control-that-cannot-check-must-refuse).
+    let raw = match &last_ts {
+        None => RawStatus::Satisfied,
+        Some(ts) => match parse_iso_to_epoch(ts) {
+            None => RawStatus::Unobservable { reason: format!("landing.log timestamp unparseable: {:?}", ts) },
+            Some(ts_epoch) => {
+                let age = cfg.now_secs.saturating_sub(ts_epoch);
+                if age > cfg.stall_secs {
+                    RawStatus::Gap {
+                        desired: format!("a landing pass within {}s", cfg.stall_secs),
+                        observed: format!("last pass {}s ago ({})", age, ts),
+                        since_hint: Some(ts_epoch),
+                    }
                 } else {
-                    let body = format!(
-                        "No landing: pass complete in the last {}s (threshold: {}s).\n\
-                         Last pass: {}\n\nSee: {}\n",
-                        age,
-                        cfg.stall_secs,
-                        ts,
-                        cfg.qc_log.display()
-                    );
-                    infer(
-                        cfg,
-                        "loop-stalled",
-                        "loop-stalled",
-                        &format!(
-                            "QUEUE: landing loop stalled — no pass for {}s",
-                            age
-                        ),
-                        &body,
-                    );
-                    ("yes", "inference", "inf")
-                };
+                    RawStatus::Satisfied
+                }
             }
-        }
+        },
+    };
+
+    let verdict = evaluate(cfg, state, "loop-stalled", raw, 0);
+    if !verdict.is_gap {
+        return (verdict, "none", "det");
+    }
+    if matches!(verdict.status, RawStatus::Unobservable { .. }) {
+        return (verdict, "none", "det");
     }
 
-    fs_clear(&cfg.spira_run, "loop-stalled");
-    ("no", "none", "det")
+    let age = verdict.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
+    let unit_service = format!("{}.service", cfg.land_unit);
+    let is_failed = Command::new(&cfg.systemctl)
+        .args(["--user", "is-failed", &unit_service])
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim() == "failed")
+        .unwrap_or(false);
+
+    if is_failed && !verdict.remedy_failed {
+        let sc = cfg.systemctl.clone();
+        let svc = unit_service.clone();
+        let desc = format!("reset-failed + start {}", cfg.land_unit);
+        det_action(cfg, "loop-stalled", &desc, move || {
+            let _ = Command::new(&sc).args(["--user", "reset-failed", &svc]).status();
+            let _ = Command::new(&sc).args(["--user", "start", &svc]).status();
+        });
+        if let Some(st) = state.get_mut("loop-stalled") {
+            record_remedy(st, cfg.now_secs, &desc);
+        }
+        (verdict, "det-restart", "det")
+    } else {
+        let body = format!(
+            "No landing: pass complete in the last {}s (threshold: {}s).\n\nSee: {}\n",
+            age,
+            cfg.stall_secs,
+            cfg.qc_log.display()
+        );
+        infer(
+            cfg,
+            "loop-stalled",
+            "loop-stalled",
+            &format!("QUEUE: landing loop stalled — no pass for {}s", age),
+            &body,
+        );
+        (verdict, "inference", "inf")
+    }
 }
 
-fn detect_ci<'a>(cfg: &Config) -> (&'a str, &'a str, &'a str, &'a str, &'a str, &'a str) {
-    let mut cis_detected = false;
-    let mut cis_remedy: &'a str = "none";
-    let mut cis_tier: &'a str = "det";
-    let mut cir_detected = false;
-    let mut cir_remedy: &'a str = "none";
-    let mut cir_tier: &'a str = "det";
+/// The worst reading across a set of per-repo readings for one invariant class: a real gap
+/// outranks "could not tell", which outranks satisfied. Used only to roll per-repo verdicts
+/// up into the one CLASS= line czar.log has always printed per invariant; each repo's own
+/// verdict — and its own hysteresis — is still tracked and recorded separately.
+fn worst_of(statuses: Vec<RawStatus>) -> RawStatus {
+    if let Some(gap) = statuses.iter().find(|s| matches!(s, RawStatus::Gap { .. })) {
+        return gap.clone();
+    }
+    if let Some(unobs) = statuses.into_iter().find(|s| matches!(s, RawStatus::Unobservable { .. })) {
+        return unobs;
+    }
+    RawStatus::Satisfied
+}
+
+fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'static str, Verdict, &'static str, &'static str) {
+    let mut cis_remedy: &'static str = "none";
+    let mut cis_tier: &'static str = "det";
+    let mut cir_remedy: &'static str = "none";
+    let mut cir_tier: &'static str = "det";
+    let mut cis_statuses: Vec<RawStatus> = Vec::new();
+    let mut cir_statuses: Vec<RawStatus> = Vec::new();
 
     if cfg.queue_dir.is_dir() {
         for (repo_name, open_path) in find_open_files(&cfg.queue_dir) {
@@ -846,119 +908,126 @@ fn detect_ci<'a>(cfg: &Config) -> (&'a str, &'a str, &'a str, &'a str, &'a str, 
                 None => continue,
             };
             let repo_path_str = repo_path.to_string_lossy().to_string();
+            let repo_safe = repo_name.replace(',', "-");
+            let cis_key = format!("ci-stalled:{}", repo_safe);
+            let cir_key = format!("ci-red:{}", repo_safe);
 
-            let ci_out = run_forge(
-                &cfg.forge_sh,
-                &["batch-ci-status", &repo_path_str, &branch],
-            );
+            let ci_out = match run_forge(&cfg.forge_sh, &["batch-ci-status", &repo_path_str, &branch]) {
+                Ok(out) => out,
+                Err(e) => {
+                    // A failed forge call is not "no CI activity": both invariants for this
+                    // repo are unobservable this pass, never silently read as satisfied.
+                    let reason = format!("{}: batch-ci-status: {}", repo_name, e);
+                    let v1 = evaluate(cfg, state, &cis_key, RawStatus::Unobservable { reason: reason.clone() }, 0);
+                    cis_statuses.push(v1.status);
+                    let v2 = evaluate(cfg, state, &cir_key, RawStatus::Unobservable { reason }, 0);
+                    cir_statuses.push(v2.status);
+                    continue;
+                }
+            };
             let run_id = parse_field(&ci_out, "run-id").unwrap_or_default();
-            let queued_since = parse_field(&ci_out, "queued-since");
+            let queued_since = parse_field(&ci_out, "queued-since").and_then(|s| s.parse::<u64>().ok());
 
             // ci-stalled: job queued with no runner > threshold
-            if let Some(qs_str) = queued_since {
-                if let Ok(qs) = qs_str.parse::<u64>() {
+            let cis_raw = match queued_since {
+                Some(qs) => {
                     let stalled_s = cfg.now_secs.saturating_sub(qs);
                     if stalled_s > cfg.ci_queued_max {
-                        cis_detected = true;
-                        fs_record(&cfg.spira_run, "ci-stalled", cfg.now_secs);
-                        if !run_id.is_empty() {
-                            let forge = cfg.forge_sh.clone();
-                            let rp = repo_path_str.clone();
-                            let rid = run_id.clone();
-                            det_action(
-                                cfg,
-                                "ci-stalled",
-                                &format!(
-                                    "workflow-rerun {} ({}, queued {}s)",
-                                    run_id, repo_name, stalled_s
-                                ),
-                                move || {
-                                    let _ = Command::new("bash")
-                                        .arg(&forge)
-                                        .args(["workflow-rerun", &rp, &rid])
-                                        .status();
-                                },
-                            );
-                            cis_remedy = "det-rerun";
-                        } else {
-                            let repo_safe = repo_name.replace(',', "-");
-                            let body = format!(
-                                "A CI job for the open batch in {} has been queued for {}s \
-                                 (threshold: {}s).\nBranch: {}\n\n\
-                                 Cancel the stuck run and re-dispatch the whole workflow.\n\
-                                 Never rerun --failed: that strands the run on the torn-down VM label.\n",
-                                repo_name, stalled_s, cfg.ci_queued_max, branch
-                            );
-                            infer(
-                                cfg,
-                                "ci-stalled",
-                                &format!("ci-stalled-{}", repo_safe),
-                                &format!(
-                                    "QUEUE: CI job queued with no runner for {}s ({})",
-                                    stalled_s, repo_name
-                                ),
-                                &body,
-                            );
-                            cis_remedy = "inference";
-                            cis_tier = "inf";
+                        RawStatus::Gap {
+                            desired: format!("CI job picked up within {}s", cfg.ci_queued_max),
+                            observed: format!("{}: queued {}s", repo_name, stalled_s),
+                            since_hint: Some(qs),
                         }
-                        continue;
+                    } else {
+                        RawStatus::Satisfied
                     }
+                }
+                None => RawStatus::Satisfied,
+            };
+            let cis_v = evaluate(cfg, state, &cis_key, cis_raw, 0);
+            cis_statuses.push(cis_v.status.clone());
+            if cis_v.is_gap {
+                let stalled_s = cis_v.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
+                if !run_id.is_empty() && !cis_v.remedy_failed {
+                    let desc = format!("workflow-rerun {} ({}, queued {}s)", run_id, repo_name, stalled_s);
+                    let forge = cfg.forge_sh.clone();
+                    let rp = repo_path_str.clone();
+                    let rid = run_id.clone();
+                    det_action(cfg, "ci-stalled", &desc, move || {
+                        let _ = Command::new("bash").arg(&forge).args(["workflow-rerun", &rp, &rid]).status();
+                    });
+                    if let Some(st) = state.get_mut(&cis_key) {
+                        record_remedy(st, cfg.now_secs, &desc);
+                    }
+                    cis_remedy = "det-rerun";
+                } else {
+                    let body = format!(
+                        "A CI job for the open batch in {} has been queued for {}s \
+                         (threshold: {}s).\nBranch: {}\n\n\
+                         Cancel the stuck run and re-dispatch the whole workflow.\n\
+                         Never rerun --failed: that strands the run on the torn-down VM label.\n",
+                        repo_name, stalled_s, cfg.ci_queued_max, branch
+                    );
+                    infer(
+                        cfg,
+                        "ci-stalled",
+                        &format!("ci-stalled-{}", repo_safe),
+                        &format!("QUEUE: CI job queued with no runner for {}s ({})", stalled_s, repo_name),
+                        &body,
+                    );
+                    cis_remedy = "inference";
+                    cis_tier = "inf";
                 }
             }
 
             // ci-red: run completed failure, verdict not acting.
             // Measures from run-completed-at (CI completion), not from batch open mtime.
-            // If run-completed-at is absent, skip: safe default.
+            // If run-completed-at is absent, that reading is Satisfied: a batch's own gate
+            // hasn't reported a conclusion, distinct from base-red's "no run at all" case
+            // below, which is a repo's base ref, not a batch's PR, and unobservable there.
             let conclusion = parse_field(&ci_out, "run-conclusion");
-            if conclusion.as_deref() == Some("failure") {
-                if let Some(completed_str) = parse_field(&ci_out, "run-completed-at") {
-                    if let Ok(completed_secs) = completed_str.trim().parse::<u64>() {
-                        let red_age = cfg.now_secs.saturating_sub(completed_secs);
-                        if red_age > cfg.ci_red_max {
-                            cir_detected = true;
-                            fs_record(&cfg.spira_run, "ci-red", cfg.now_secs);
-                            let repo_safe = repo_name.replace(',', "-");
-                            let body = format!(
-                                "CI run completed red for the open batch in {}.\n\
-                                 Red for {}s (threshold {}s); verdict has not acted.\n\
-                                 Branch: {}\nInvestigate the red and act.\n",
-                                repo_name, red_age, cfg.ci_red_max, branch
-                            );
-                            infer(
-                                cfg,
-                                "ci-red",
-                                &format!("ci-red-{}", repo_safe),
-                                &format!(
-                                    "QUEUE: CI run completed red, verdict not acting for {}s ({})",
-                                    red_age, repo_name
-                                ),
-                                &body,
-                            );
-                            cir_remedy = "inference";
-                            cir_tier = "inf";
+            let completed_secs = parse_field(&ci_out, "run-completed-at").and_then(|s| s.trim().parse::<u64>().ok());
+            let cir_raw = match (conclusion.as_deref(), completed_secs) {
+                (Some("failure"), Some(completed_secs)) => {
+                    let red_age = cfg.now_secs.saturating_sub(completed_secs);
+                    if red_age > cfg.ci_red_max {
+                        RawStatus::Gap {
+                            desired: "verdict acts on a red run".into(),
+                            observed: format!("{}: red for {}s", repo_name, red_age),
+                            since_hint: Some(completed_secs),
                         }
+                    } else {
+                        RawStatus::Satisfied
                     }
                 }
+                _ => RawStatus::Satisfied,
+            };
+            let cir_v = evaluate(cfg, state, &cir_key, cir_raw, 0);
+            cir_statuses.push(cir_v.status.clone());
+            if cir_v.is_gap {
+                let red_age = cir_v.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
+                let body = format!(
+                    "CI run completed red for the open batch in {}.\n\
+                     Red for {}s (threshold {}s); verdict has not acted.\n\
+                     Branch: {}\nInvestigate the red and act.\n",
+                    repo_name, red_age, cfg.ci_red_max, branch
+                );
+                infer(
+                    cfg,
+                    "ci-red",
+                    &format!("ci-red-{}", repo_safe),
+                    &format!("QUEUE: CI run completed red, verdict not acting for {}s ({})", red_age, repo_name),
+                    &body,
+                );
+                cir_remedy = "inference";
+                cir_tier = "inf";
             }
         }
     }
 
-    if !cis_detected {
-        fs_clear(&cfg.spira_run, "ci-stalled");
-    }
-    if !cir_detected {
-        fs_clear(&cfg.spira_run, "ci-red");
-    }
-
-    (
-        if cis_detected { "yes" } else { "no" },
-        cis_remedy,
-        cis_tier,
-        if cir_detected { "yes" } else { "no" },
-        cir_remedy,
-        cir_tier,
-    )
+    let cis_agg = evaluate(cfg, state, "ci-stalled", worst_of(cis_statuses), 0);
+    let cir_agg = evaluate(cfg, state, "ci-red", worst_of(cir_statuses), 0);
+    (cis_agg, cis_remedy, cis_tier, cir_agg, cir_remedy, cir_tier)
 }
 
 // The base ref's OWN gate run, as opposed to ci-red above (a batch's PR run). A batch PR
@@ -972,10 +1041,10 @@ fn detect_ci<'a>(cfg: &Config) -> (&'a str, &'a str, &'a str, &'a str, &'a str, 
 // seam returns no run at all for the base branch, that is filed too, distinctly, once it
 // has persisted past base_unreadable_grace — long enough that it is not just GitHub not
 // yet having created the run row for a push that landed seconds ago.
-fn detect_base_red<'a>(cfg: &Config) -> (&'a str, &'a str, &'a str) {
-    let mut detected = false;
-    let mut remedy: &'a str = "none";
-    let mut tier: &'a str = "det";
+fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'static str) {
+    let mut remedy: &'static str = "none";
+    let mut tier: &'static str = "det";
+    let mut statuses: Vec<RawStatus> = Vec::new();
 
     if cfg.queue_dir.is_dir() {
         for (repo_name, _open_path) in find_open_files(&cfg.queue_dir) {
@@ -989,20 +1058,23 @@ fn detect_base_red<'a>(cfg: &Config) -> (&'a str, &'a str, &'a str) {
             };
             let repo_path_str = repo_path.to_string_lossy().to_string();
             let repo_safe = repo_name.replace(',', "-");
-            let unreadable_class = format!("base-red-unreadable-{}", repo_safe);
+            let key = format!("base-red:{}", repo_safe);
 
-            let ci_out = run_forge(
-                &cfg.forge_sh,
-                &["batch-ci-status", &repo_path_str, &base_branch],
-            );
-            let run_id = parse_field(&ci_out, "run-id");
+            let ci_out = run_forge(&cfg.forge_sh, &["batch-ci-status", &repo_path_str, &base_branch]);
+            let run_id = ci_out.as_ref().ok().and_then(|out| parse_field(out, "run-id"));
 
             if run_id.is_none() {
-                fs_record(&cfg.spira_run, &unreadable_class, cfg.now_secs);
-                let age = latency_secs(&cfg.spira_run, &unreadable_class, cfg.now_secs);
-                if age >= cfg.base_unreadable_grace {
-                    detected = true;
-                    fs_record(&cfg.spira_run, "base-red", cfg.now_secs);
+                // No run at all for the base branch — the same grace period the old code
+                // gave a fresh marker file applies here as the engine's own grace_secs, so
+                // an ordinary push whose run GitHub has not created yet stays quiet.
+                let reason = match &ci_out {
+                    Err(e) => format!("{}'s base ({}): {}", repo_name, base_branch, e),
+                    Ok(_) => format!("{}'s base ({}) CI status returned no run information", repo_name, base_branch),
+                };
+                let v = evaluate(cfg, state, &key, RawStatus::Unobservable { reason }, cfg.base_unreadable_grace);
+                statuses.push(v.status.clone());
+                if v.is_gap {
+                    let age = v.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
                     let body = format!(
                         "{}'s base ({}) CI status could not be read for {}s — the forge \
                          seam returned no run information for that branch.\n\
@@ -1014,10 +1086,7 @@ fn detect_base_red<'a>(cfg: &Config) -> (&'a str, &'a str, &'a str) {
                         cfg,
                         "base-red",
                         &format!("{}:unreadable", repo_name),
-                        &format!(
-                            "QUEUE: {}'s base CI status could not be read",
-                            repo_name
-                        ),
+                        &format!("QUEUE: {}'s base CI status could not be read", repo_name),
                         &body,
                         &repo_name,
                     );
@@ -1026,33 +1095,31 @@ fn detect_base_red<'a>(cfg: &Config) -> (&'a str, &'a str, &'a str) {
                 }
                 continue;
             }
-            fs_clear(&cfg.spira_run, &unreadable_class);
+            let ci_out = ci_out.expect("run_id.is_some() implies ci_out was Ok");
 
             let conclusion = parse_field(&ci_out, "run-conclusion");
-            if conclusion.as_deref() == Some("failure") {
-                detected = true;
-                fs_record(&cfg.spira_run, "base-red", cfg.now_secs);
-
-                let sha = parse_field(&ci_out, "head-sha")
-                    .unwrap_or_else(|| "unknown".to_string());
-                let run_url = parse_field(&ci_out, "run-url")
-                    .unwrap_or_else(|| "(no run url)".to_string());
+            let raw = if conclusion.as_deref() == Some("failure") {
+                RawStatus::Gap {
+                    desired: format!("{}'s base gate is green", repo_name),
+                    observed: format!("{}'s base ({}) gate run completed red", repo_name, base_branch),
+                    since_hint: None,
+                }
+            } else {
+                RawStatus::Satisfied
+            };
+            let v = evaluate(cfg, state, &key, raw, 0);
+            statuses.push(v.status.clone());
+            if v.is_gap {
+                let sha = parse_field(&ci_out, "head-sha").unwrap_or_else(|| "unknown".to_string());
+                let run_url = parse_field(&ci_out, "run-url").unwrap_or_else(|| "(no run url)".to_string());
                 let mut suites: Vec<String> = ci_out
                     .lines()
                     .filter_map(|l| l.strip_prefix("red-suite: ").map(|s| s.to_string()))
                     .collect();
                 suites.sort();
                 suites.dedup();
-                let suite_key = if suites.is_empty() {
-                    "unknown".to_string()
-                } else {
-                    suites.join(",")
-                };
-                let suite_list = if suites.is_empty() {
-                    "(suite names unavailable)".to_string()
-                } else {
-                    suites.join(", ")
-                };
+                let suite_key = if suites.is_empty() { "unknown".to_string() } else { suites.join(",") };
+                let suite_list = if suites.is_empty() { "(suite names unavailable)".to_string() } else { suites.join(", ") };
 
                 let body = format!(
                     "{}'s own base ({}) gate run completed red.\n\n\
@@ -1078,33 +1145,45 @@ fn detect_base_red<'a>(cfg: &Config) -> (&'a str, &'a str, &'a str) {
         }
     }
 
-    if !detected {
-        fs_clear(&cfg.spira_run, "base-red");
-    }
-    (if detected { "yes" } else { "no" }, remedy, tier)
+    let agg = evaluate(cfg, state, "base-red", worst_of(statuses), 0);
+    (agg, remedy, tier)
 }
 
-fn detect_starved<'a>(cfg: &Config, check7: &str) -> (&'a str, &'a str, &'a str) {
+fn detect_starved(cfg: &Config, state: &mut StateMap, check7: &str) -> (Verdict, &'static str, &'static str) {
     if !cfg.strands_state.exists() {
-        return ("no", "none", "det");
+        let v = evaluate(cfg, state, "starved", RawStatus::Satisfied, 0);
+        return (v, "none", "det");
     }
 
+    // A missing file is a legitimate "nothing tracked yet" absence; a file that exists but
+    // cannot be read or parsed is a failure to observe, not evidence every partition is
+    // fine (law-a-control-that-cannot-check-must-refuse) — the old code read both the same
+    // way, silently, as "no".
     let content = match fs::read_to_string(&cfg.strands_state) {
         Ok(c) => c,
-        Err(_) => return ("no", "none", "det"),
+        Err(e) => {
+            let v = evaluate(cfg, state, "starved", RawStatus::Unobservable { reason: format!("strands.json: {}", e) }, 0);
+            return (v, "none", "det");
+        }
     };
-    let json: Value = match serde_json::from_str(&content) {
-        Ok(v) => v,
-        Err(_) => return ("no", "none", "det"),
-    };
-    let obj = match json.as_object() {
+    let parsed: Result<Value, _> = serde_json::from_str(&content);
+    let obj = match parsed.as_ref().ok().and_then(|v| v.as_object()) {
         Some(o) => o,
-        None => return ("no", "none", "det"),
+        None => {
+            let v = evaluate(
+                cfg,
+                state,
+                "starved",
+                RawStatus::Unobservable { reason: "strands.json: not a JSON object".into() },
+                0,
+            );
+            return (v, "none", "det");
+        }
     };
 
-    let mut detected = false;
-    let mut remedy: &'a str = "none";
-    let mut tier: &'a str = "det";
+    let mut remedy: &'static str = "none";
+    let mut tier: &'static str = "det";
+    let mut statuses: Vec<RawStatus> = Vec::new();
 
     for (key, val) in obj {
         let parts: Vec<&str> = key.splitn(3, ':').collect();
@@ -1115,15 +1194,19 @@ fn detect_starved<'a>(cfg: &Config, check7: &str) -> (&'a str, &'a str, &'a str)
             Some(f) => f as u64,
             None => continue,
         };
-        let age = cfg.now_secs.saturating_sub(first_val);
-        if age <= cfg.starved_max_s {
-            continue;
-        }
-
-        detected = true;
         let part = parts[0];
         let sv_safe = part.replace(',', "-").replace(' ', "-");
-        fs_record(&cfg.spira_run, "starved", cfg.now_secs);
+        let raw = RawStatus::Gap {
+            desired: "ready work has a serving aeon".into(),
+            observed: format!("partition [{}] starved", part),
+            since_hint: Some(first_val),
+        };
+        let v = evaluate(cfg, state, &format!("starved:{}", sv_safe), raw, cfg.starved_max_s);
+        statuses.push(v.status.clone());
+        if !v.is_gap {
+            continue;
+        }
+        let age = v.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
 
         match cfg.stage("starved") {
             Stage::Shadow => {
@@ -1197,11 +1280,8 @@ fn detect_starved<'a>(cfg: &Config, check7: &str) -> (&'a str, &'a str, &'a str)
         }
     }
 
-    if !detected {
-        fs_clear(&cfg.spira_run, "starved");
-    }
-
-    (if detected { "yes" } else { "no" }, remedy, tier)
+    let agg = evaluate(cfg, state, "starved", worst_of(statuses), 0);
+    (agg, remedy, tier)
 }
 
 #[cfg(test)]

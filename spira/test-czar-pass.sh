@@ -33,12 +33,17 @@
 #      trigger-condition boundary (requeued=0 no-op, multi-digit requeued, missing/silent
 #      log, configurable threshold, below-threshold, malformed open file, wrong kind) —
 #      ported from test-watchtower-queue.sh, which is retired once these land (UC-23).
+#  32. reconciler engine wiring: a failed forge call reports STATUS=unobservable, never
+#      STATUS=satisfied — the old code could not distinguish that from no CI activity.
+#  33. reconciler engine wiring: a deterministic remedy that does not close its gap by
+#      the next pass escalates instead of being retried blind.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): for detectors 4 and 5,
 # the test first verifies NO detection with an empty/fresh fixture, then adds the
 # trigger and verifies detection. A detector that fires on empty data is not a detector.
 #
-# covers: czar-pass/src/main.rs spira/czar.sh spira/conf.sh spira/sentinel.sh spira/watchtower.sh
+# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/czar.sh spira/conf.sh
+#         spira/sentinel.sh spira/watchtower.sh
 #         spira/systemd/spira-czar-pass.service spira/systemd/spira-czar-pass.timer
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -493,7 +498,13 @@ lack "base-red: no bead filed while still inside grace" "cause=base-red" \
 printf '\n%s\n' "20. base-red: unreadable past grace → filed as unreadable, not treated as green"
 # ==========================================================================================
 _old_unreadable=$(( _now_e3 - 200 ))   # 200s > default 120s grace
-printf '%s\n' "$_old_unreadable" > "$SPIRA_RUN/czar-pass-first.base-red-unreadable-baseredrepo"
+# The reconciler's hysteresis lives in one persisted state file, keyed per invariant
+# (sp-pu7v6) — seeding "since" 200s in the past replays what a marker file used to do.
+python3 -c "
+import json
+st = {'base-red:baseredrepo': {'since': $_old_unreadable, 'remedy_attempted_at': None, 'remedy_desc': None}}
+print(json.dumps(st))
+" > "$SPIRA_RUN/reconciler-state.json"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
 SPIRA_CZAR_STAGE_BASE_RED=act bash "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
@@ -838,6 +849,78 @@ _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "starved: DETECTED=no for a ghost entry, however old (wrong kind)" \
     "CLASS=starved DETECTED=no" "$_log"
 rm -f "$SPIRA_RUN/strands.json"
+
+# ==========================================================================================
+printf '\n%s\n' "32. ci-stalled: a forge call failure is unobservable, never satisfied"
+# ==========================================================================================
+# POSITIVE CONTROL is test 4 (forge succeeds, empty → DETECTED=no STATUS=satisfied). Here
+# the forge call itself fails (non-zero exit): the old code read that identically to "no CI
+# activity" (empty stdout either way) and reported DETECTED=no — silently treating a broken
+# instrument as a quiet queue. STATUS=unobservable must appear instead, and it must never
+# be STATUS=satisfied while the forge seam cannot be read.
+cat > "$STUB_FORGE" <<'FEOF22'
+#!/usr/bin/env bash
+cmd="${1:-}"
+case "$cmd" in
+    batch-ci-status) exit 1 ;;
+    *) exit 0 ;;
+esac
+FEOF22
+chmod +x "$STUB_FORGE"
+
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+_cis_line="$(printf '%s\n' "$_log" | grep 'CLASS=ci-stalled ' | tail -1)"
+want "ci-stalled: STATUS=unobservable when the forge call fails" "STATUS=unobservable" "$_cis_line"
+lack "ci-stalled: never STATUS=satisfied when the forge call fails" "STATUS=satisfied" "$_cis_line"
+
+# ==========================================================================================
+printf '\n%s\n' "33. ci-stalled: a remedy that doesn't close its gap escalates on the next pass"
+# ==========================================================================================
+_now_e23="$(date +%s)"
+_old_queued23=$(( _now_e23 - 700 ))
+mkdir -p "$SPIRA_RUN/queue/remedyrepo"
+printf 'branch=spira/queue/remedy-test\n' > "$SPIRA_RUN/queue/remedyrepo/open"
+mkdir -p "$T/remedyrepo"
+printf 'remedyrepo | %s | push | origin/main | |\n' "$T/remedyrepo" >> "$SPIRA_REPO_MAP"
+
+# Scoped to remedy-test's own branch so the other repos left open by earlier sections
+# (testrepo, redrepo, baseredrepo) stay quiet and cannot steal this pass's aggregate
+# REMEDY=/TIER= fields — find_open_files has no ordering guarantee across repos.
+cat > "$STUB_FORGE" <<FEOF23
+#!/usr/bin/env bash
+cmd="\${1:-}"; branch_arg="\${3:-}"
+case "\$cmd" in
+    batch-ci-status)
+        if [ "\$branch_arg" = "spira/queue/remedy-test" ]; then
+            printf 'run-id: 77777\n'
+            printf 'queued-since: ${_old_queued23}\n'
+        fi
+        ;;
+    workflow-rerun) printf 'stub: workflow-rerun %s\n' "\${3:-}" >> "\$FORGE_LOG" ;;
+esac
+exit 0
+FEOF23
+chmod +x "$STUB_FORGE"
+
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG" "$FORGE_LOG"
+SPIRA_CZAR_STAGE_CI_STALLED=act bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+_forge_calls_1="$(cat "$FORGE_LOG" 2>/dev/null || true)"
+want "remedy pass 1: ci-stalled DETECTED=yes" "CLASS=ci-stalled DETECTED=yes" "$_log"
+want "remedy pass 1: deterministic rerun attempted" "REMEDY=det-rerun" "$_log"
+want "remedy pass 1: workflow-rerun called" "workflow-rerun" "$_forge_calls_1"
+
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG" "$FORGE_LOG"
+SPIRA_CZAR_STAGE_CI_STALLED=act bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+_inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
+_forge_calls_2="$(cat "$FORGE_LOG" 2>/dev/null || true)"
+want "remedy pass 2: still stalled, still DETECTED=yes" "CLASS=ci-stalled DETECTED=yes" "$_log"
+want "remedy pass 2: escalates instead of retrying" "REMEDY=inference" "$_log"
+want "remedy pass 2: incident filed with cause=ci-stalled" "cause=ci-stalled" "$_inc_log"
+lack "remedy pass 2: does not rerun the workflow a second time" "workflow-rerun" "$_forge_calls_2"
 
 printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
