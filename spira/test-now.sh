@@ -722,15 +722,19 @@ is_n "the model is read from the init event" "claude-opus-4-6" \
 is_n "an unreadable trace is ? , not - and not a model" "?" \
      "$(field "$(stats "$TD/nonexistent.log")" MODEL)"
 
-# model_short — what the pane actually prints. Extracted from the pane rather than
-# reimplemented, so this cannot pass against a copy that has drifted from the real one.
-eval "$(sed -n '/^model_short() {/,/^}/p' "$PANE")"
-is_n "a dated id keeps its version and loses its date" "haiku 4.5"  "$(model_short claude-haiku-4-5-20251001)"
-is_n "a two-part version reads as a version"           "opus 4.6"   "$(model_short claude-opus-4-6)"
-is_n "a one-part version keeps its single number"      "sonnet 5"   "$(model_short claude-sonnet-5)"
-is_n "an unknown id is printed as it came"             "weird-thing" "$(model_short weird-thing)"
-is_n "? passes straight through"                       "?"          "$(model_short '?')"
-is_n "- passes straight through"                       "-"          "$(model_short '-')"
+# model_short — what the pane actually prints. Sourced from the pane itself (health.sh skips
+# its own dispatch case when sourced — BASH_SOURCE[0] != $0), so this calls the real function
+# rather than a sed+eval extraction that can silently drift from it.
+model_short_of() {
+    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
+        bash -c '. "$1"; model_short "$2"' _ "$PANE" "$1" 2>/dev/null
+}
+is_n "a dated id keeps its version and loses its date" "haiku 4.5"  "$(model_short_of claude-haiku-4-5-20251001)"
+is_n "a two-part version reads as a version"           "opus 4.6"   "$(model_short_of claude-opus-4-6)"
+is_n "a one-part version keeps its single number"      "sonnet 5"   "$(model_short_of claude-sonnet-5)"
+is_n "an unknown id is printed as it came"             "weird-thing" "$(model_short_of weird-thing)"
+is_n "? passes straight through"                       "?"          "$(model_short_of '?')"
+is_n "- passes straight through"                       "-"          "$(model_short_of '-')"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
