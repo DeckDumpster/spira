@@ -108,3 +108,46 @@ CURRENT STATE:
 - No duplicates found
 - No splits needed
 - 2 groom-asked beads skipped (operator answer pending)
+
+---
+
+GROOM PASS sp-3o1dy (session 2 — rebase conflict resolved)
+===========================================================
+
+TRIGGER: UNCLAIMABLE: sp-qgtra — fix the fayth: or partition label
+(Previous session did the work; this session resolves the rebase conflict and
+handles the new LIVELOCK row that appeared since then.)
+
+SWEEP: groomer.sh sweep found 1 bead (sp-jv2y3 unclaimable); acted on 0 (sweep
+does not handle unclaimable beads with descriptions).
+
+LIVELOCK ROWS HANDLED: 1
+
+PARTITION LABELS FIXED:
+
+1. sp-jv2y3 — DRAINING: world.sh summons gated
+   - Problem: had 'partition:incident' but not 'incident'; unclaimable by ops
+     persona (FAYTH_LABELS=spira,incident requires standalone 'incident' label)
+   - Same recurring pattern as previous passes (root cause tracked under sp-ui46l)
+   - Fix: added 'incident' label
+   - Verified: detect_livelocked returns 0 rows after fix
+
+PREMISE-GONE CLOSURES:
+
+1. sp-o6utk — UNCLAIMABLE: sp-jv2y3 — fix the fayth: or partition label
+   - Sentinel filed sp-o6utk to fix sp-jv2y3's partition label
+   - sp-jv2y3 was fixed in this pass (added 'incident' label)
+   - Premise gone; closed with evidence
+
+GROOM-ASKED (skipped per rules, operator answer pending):
+
+1. sp-he29a — [bug] sp-y2ml8: test-census.sh timeouts
+2. sp-ui46l — [bug] sp-thgax: Add partition: prefix to SPIRA_INCIDENT_LABELS
+
+CURRENT STATE:
+- 189 open beads examined
+- 1 LIVELOCK row resolved (sp-jv2y3: added 'incident' label)
+- 1 premise-gone bead closed (sp-o6utk)
+- No duplicates found
+- No splits needed
+- 2 groom-asked beads skipped (operator answer pending)
