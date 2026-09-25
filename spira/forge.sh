@@ -270,6 +270,30 @@ except Exception:
                             | awk '!seen[$0]++' | head -5 )"
                     fi
                 fi
+                # The suites job hitting gate.yml's own job timeout (or being cancelled
+                # outright) is read by the gate job as a plain step failure (exit 1), so
+                # the rollup's conclusion is FAILURE like any red suite — but no suite ever
+                # completed, so there is nothing to attribute. Read the job's own
+                # conclusion rather than the rollup's: a cancelled/timed-out suites job is
+                # a harness fault (rerun the batch), never a verdict on its members.
+                if [ "$status" = "red" ]; then
+                    _suites_job_fault="$(printf '%s\n' "${jobs_json:-"{}"}" | python3 -c "
+import json, sys
+FAULT = ('cancelled', 'timed_out')
+try:
+    for j in json.load(sys.stdin).get('jobs', []):
+        if j.get('name') != 'suites':
+            continue
+        if (j.get('conclusion') or '').lower() in FAULT:
+            print('yes'); sys.exit()
+        for s in j.get('steps') or []:
+            if s.get('name') == 'Suites' and (s.get('conclusion') or '').lower() in FAULT:
+                print('yes'); sys.exit()
+except Exception:
+    pass
+" 2>/dev/null)"
+                    [ "${_suites_job_fault:-}" = "yes" ] && status="harness_fault"
+                fi
             fi
         fi
         # When red, read the full suite list from the batch-results artifact.
