@@ -1391,6 +1391,24 @@ release_own_claim() {
     bdq update "$id" --status open --assignee "" >/dev/null 2>&1
 }
 
+# park_unmapped <id> <repo-name> — repo-map has no checkout for the bead's repo:<repo-name>.
+#
+# PARK, NOT RELEASE. release_own_claim alone puts the bead back on the ready queue, where
+# the sentinel re-summons an aeon within two minutes — an infinite loop burning the pool.
+# Adding the ask label first makes every fayth's --exclude-label filter skip it, so the
+# bead sits open but unclaimed until a human corrects the label or the repo-map. Scar:
+# sp-nlhy accumulated four identical notes, one per summon, before a keyboard session
+# fixed the label by hand. (sp-4l0d)
+# overseer keeps the bead visible in the decisions pane; without it the bead is excluded
+# from every fayth predicate and invisible to the operator.
+park_unmapped() {
+    local id="$1" repo_name="$2"
+    bdq label add "$id" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
+    bdq label add "$id" "overseer"          >/dev/null 2>&1 || true
+    bdq note "$id" "Parked by aeon.sh: this bead carries repo:$repo_name, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Labeled $SPIRA_ASK_LABEL and overseer — no aeon will claim it again until a human corrects the label or adds the repo to the map and removes that label. Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." >/dev/null 2>&1
+    release_own_claim "$id"
+}
+
 # orphan_claims [labels] -> "<id>\t<assignee>" for every bead holding a claim nobody works.
 #
 # The predicate is status=open AND an assignee AND no lease in the future. in_progress is
@@ -1422,6 +1440,23 @@ release_orphan_claims() {   # release_orphan_claims [labels] -> a RELEASED line 
         # an action it did not take.
         release_claim "$id" && printf 'RELEASED\t%s\t%s\n' "$id" "$who"
     done < <(orphan_claims "${1:-${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan}")
+    return 0
+}
+
+# release_orphan_claims_partitions <partitions-tsv> -> a RELEASED line per bead freed, across
+# every partition named (first field of each "<labels>\t<exclude-labels>" line, the shape
+# fayth_partitions produces).
+#
+# ONE SWEEP PER PARTITION, ASKED THROUGH THE CHAMBER — the same fix fayth_partitions already
+# gave CHECK 2's reclaim loop. A single call hardcoded to `${SPIRA_SCOPE_LABEL},plan` left
+# orphaned claims in ops, spike or groom partitions unreleased forever: nothing else in the
+# harness sweeps them.
+release_orphan_claims_partitions() {
+    local partitions="${1:-}" part rest
+    while IFS=$'\t' read -r part rest; do
+        [ -n "$part" ] || continue
+        release_orphan_claims "$part"
+    done <<< "$partitions"
     return 0
 }
 
@@ -2159,6 +2194,23 @@ bump_requeue() { _bump_write_event "${1:-}" requeued  "${2:-unrecorded}"; }
 bump_timeout() { return 0; }
 bump_recur()   { _bump_write_event "${1:-}" recurred  "${2:-unrecorded}"; }
 bump_lapsed()  { _bump_write_event "${1:-}" lapsed    "${2:-unrecorded}"; }
+
+# parse_reclaimed <bd-reclaim-output> -> prints the number of reclaimed leases; charges
+# each one through bump_reclaim as it goes.
+#
+# Match the SUCCESS shape ("✓ ..." / "Reclaimed ..."), not the word "reclaim" — the idle
+# message ("No stale leases to reclaim in the filtered scope") contains the word too, so a
+# substring match would charge a reclaim that never happened. A line whose id cannot be
+# parsed still counts toward the total (the reclaim happened) but is not charged.
+parse_reclaimed() {
+    local out="${1:-}" line rid n=0
+    while IFS= read -r line; do
+        n=$((n+1))
+        rid="$(printf '%s' "$line" | grep -oE '[a-z]+-[a-z0-9]+' | head -1 || true)"
+        [ -n "$rid" ] && bump_reclaim "$rid" stale-lease >/dev/null 2>&1
+    done < <(grep -E '^(✓|Reclaimed)' <<< "$out")
+    printf '%d' "$n"
+}
 bump_reopen()  {
     # new_value is intentionally empty for reopened events — cannot use _bump_write_event
     # which defaults to 'unrecorded' when the cause argument is empty or absent.

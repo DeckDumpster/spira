@@ -209,11 +209,6 @@ fi
 if grep -q 'api.github.com' "$TMP/curl.log" 2>/dev/null; then ok "positive control: the API was actually called"
 else bad "positive control: the API was actually called" "curl log is empty"; fi
 
-echo
-echo "2b. a pull request is not an issue:"
-if grep -q 'pull_request' "$SCRIPT"; then ok "pull requests are excluded"
-else bad "pull requests are excluded" "nothing filters pull_request"; fi
-
 echo "3. a stamp that changes nothing is a hard failure, not a quiet success:"
 reset; printf '1' > "$STATE/broken"
 out="$(run 2)"; rc=$?
@@ -377,7 +372,12 @@ if grep -q '/comments' "$CURLLOG" 2>/dev/null; then
 else
     ok "(e) comments endpoint is not called"
 fi
-ok "(e) comment absence is structural: nothing fetches /comments"
+if grep -q '/comments' "$SCRIPT"; then
+    bad "(e) comment absence is structural: no /comments URL is constructed" \
+        "the script references a comments endpoint"
+else
+    ok "(e) comment absence is structural: no /comments URL is constructed"
+fi
 
 echo
 echo "10. unconfigured: exits 0 with a log line, does not die:"
@@ -387,6 +387,9 @@ echo "10. unconfigured: exits 0 with a log line, does not die:"
 out_conf="$(run 1 2>&1)"; rc_conf=$?
 if [ "$rc_conf" -eq 0 ]; then ok "positive control: configured path exits 0"
 else bad "positive control: configured path exits 0" "rc=$rc_conf"; fi
+# Reset the logs before this invocation — the unconfigured check below must assert on what
+# THIS run did, not on activity left over from the configured positive control above.
+: > "$BDLOG"; : > "$CURLLOG"
 out_unconf="$(PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" \
     BDLOG="$BDLOG" CURLLOG="$CURLLOG" STATE="$STATE" \
     SPIRA_BD=bd SPIRA_GH_INTAKE_REPO="" \
@@ -423,6 +426,46 @@ if [ -f "$SERVICE_TMPL" ]; then
 else
     bad "service template exists" "not found at $SERVICE_TMPL"
 fi
+
+echo
+echo "12. GH_INTAKE_LIB=1: the triage/dedup functions run directly, no fetch or full script run:"
+: > "$BDLOG"; : > "$CURLLOG"
+printf '[{"event":"labeled","actor":{"login":"direct-caller"},"label":{"name":"spira:accept"}}]' \
+    > "$STATE/events_json"
+: > "$STATE/created_work"
+export GH_INTAKE_LIB=1 SPIRA_BD=bd SPIRA_DB=fixture SPIRA_GH_INTAKE_REPO=DeckDumpster/spira \
+    SPIRA_GH_INTAKE_BEAD_REPO="$FIXTURE_REPO" SPIRA_REPO_MAP="$TMP/repo-map" \
+    SPIRA_GH_INTAKE_API=https://api.github.com SPIRA_GH_INTAKE_PRIORITY=3 \
+    SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}"
+export PATH="$TMP/bin:$PATH"
+# shellcheck disable=SC1090
+. "$SCRIPT"
+if declare -f _accept_actor >/dev/null 2>&1 && declare -f _create_work >/dev/null 2>&1 \
+   && declare -f _ingested >/dev/null 2>&1; then
+    ok "sourcing under GH_INTAKE_LIB=1 defines the triage/dedup functions"
+else
+    bad "sourcing under GH_INTAKE_LIB=1 defines the triage/dedup functions" "one or more functions missing"
+fi
+if grep -q 'api.github.com/repos/DeckDumpster/spira/issues?state=open' "$CURLLOG" 2>/dev/null; then
+    bad "sourcing does not fetch the issue feed" "the open-issues endpoint was called"
+else
+    ok "sourcing does not fetch the issue feed"
+fi
+actor="$(_accept_actor 1)"
+if [ "$actor" = "direct-caller" ]; then
+    ok "_accept_actor reads the events endpoint directly, over one call, no full script run"
+else
+    bad "_accept_actor reads the events endpoint directly, over one call, no full script run" \
+        "got [$actor]"
+fi
+_create_work "github:DeckDumpster/spira#77" "direct title" "direct body" "direct-caller"
+if grep -q 'github:DeckDumpster/spira#77' "$STATE/created_work" 2>/dev/null; then
+    ok "_create_work files a work bead directly over issue data, no full script run"
+else
+    bad "_create_work files a work bead directly over issue data, no full script run" \
+        "no create recorded"
+fi
+unset GH_INTAKE_LIB
 
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"

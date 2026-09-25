@@ -203,12 +203,8 @@ while IFS=$'\t' read -r part _; do
     n_parts=$((n_parts+1))
     out="$(bdq reclaim --older-than 180m --label "$part" --exclude-label "$SPIRA_RECLAIM_SKIP_LABEL" 2>&1)"
     grep -q 'No stale leases' <<< "$out" && continue
-    n="$(grep -cE '^(✓|Reclaimed)' <<< "$out" || true)"
+    n="$(parse_reclaimed "$out")"
     n_reclaimed=$(( n_reclaimed + ${n:-0} ))
-    while IFS= read -r _rline; do
-        _rid="$(printf '%s' "$_rline" | grep -oE '[a-z]+-[a-z0-9]+' | head -1 || true)"
-        [ -n "$_rid" ] && bump_reclaim "$_rid" stale-lease >/dev/null 2>&1
-    done < <(grep -E '^(✓|Reclaimed)' <<< "$out")
 done <<< "$PARTITIONS"
 # A REAPER WITH NOTHING TO REAP OVER SAYS SO. With no partition declared this writes nothing
 # and returns clean, which reads exactly like a harness with no dead leases.
@@ -258,9 +254,13 @@ n_escal="$(grep -cE '^STRANDED' <<< "$stranded" || true)"
 # (law-absence-needs-a-positive-control).
 #
 # Skipped when SPIRA_SKIP_RECLAIM=1 — see CHECK 2 above.
+#
+# ONE SWEEP PER PARTITION, ASKED THROUGH THE CHAMBER — see release_orphan_claims_partitions
+# (lib.sh). A single hardcoded `${SPIRA_SCOPE_LABEL},plan` call left orphaned claims in ops,
+# spike or groom partitions unreleased forever: nothing else in the harness sweeps them.
 # ======================================================================================
 if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ]; then
-released="$(release_orphan_claims "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}plan")"
+released="$(release_orphan_claims_partitions "$PARTITIONS")"
 [ -n "$released" ] && printf '%s\n' "$released"
 n_rel="$(grep -c '^RELEASED' <<< "$released" || true)"
 if [ "${n_rel:-0}" -gt 0 ]; then
