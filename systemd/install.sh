@@ -43,6 +43,20 @@ set -uo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
+# _seed_instance_conf <conf-file> <instance> -> append SPIRA_INSTANCE=<instance> unless
+# that exact line is already there. APPEND, NOT OVERWRITE: the file may carry operator
+# settings, and appending overrides any earlier value (spira_conf_read: last write wins)
+# without disturbing lines placed before it. Defined before conf.sh is sourced so a test
+# can source this file (BASH_SOURCE[0] != $0) and call it directly.
+_seed_instance_conf() {
+    local file="$1" inst="$2"
+    grep -qxF "SPIRA_INSTANCE=$inst" "$file" 2>/dev/null && return 0
+    printf 'SPIRA_INSTANCE=%s\n' "$inst" >> "$file"
+    printf 'install: seeded %s with SPIRA_INSTANCE=%s\n' "$file" "$inst"
+}
+
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0 2>/dev/null || true; fi
+
 # PARSE THE INSTANCE ARGUMENT AND THE MODE FLAG BEFORE SOURCING conf.sh SO THAT conf.sh
 # DERIVES SPIRA_RUN, SPIRA_DB, ETC. FOR THE CORRECT INSTANCE. conf.sh reads SPIRA_INSTANCE
 # from the environment before the config file, so setting it here in the environment wins.
@@ -417,9 +431,6 @@ _place_dolt_yaml() {  # args: <template-name> <data-dir>
 # Writing SPIRA_INSTANCE=<instance> to dirname($SPIRA_PROD)/spira.conf closes the gap: every
 # path the sentinel derives from it (SPIRA_DB, SPIRA_RUN, etc.) inherits the instance
 # qualifier automatically, and the containment check fires as intended.
-# APPEND, NOT OVERWRITE. The file may already exist with operator settings; appending
-# SPIRA_INSTANCE at the end overrides any earlier value (spira_conf_read: last write wins)
-# without disturbing lines the operator placed before it.
 if [ "$SPIRA_INSTANCE" != "prod" ] && [ -n "${SPIRA_PROD:-}" ]; then
     _prod_root="$(dirname "$SPIRA_PROD")"
     _home_root="$(dirname "$SPIRA_HOME")"
@@ -428,12 +439,7 @@ if [ "$SPIRA_INSTANCE" != "prod" ] && [ -n "${SPIRA_PROD:-}" ]; then
     # fixture or a no-split install. In real usage the prod tree lives in a sibling
     # directory (e.g. spira-harness-test/) and the two parents differ.
     if [ "$_prod_root" != "$_home_root" ]; then
-        _prod_repo_conf="$_prod_root/spira.conf"
-        if ! { [ -f "$_prod_repo_conf" ] && grep -qxF "SPIRA_INSTANCE=$SPIRA_INSTANCE" "$_prod_repo_conf"; }; then
-            printf 'SPIRA_INSTANCE=%s\n' "$SPIRA_INSTANCE" >> "$_prod_repo_conf"
-            printf 'install: seeded %s with SPIRA_INSTANCE=%s\n' "$_prod_repo_conf" "$SPIRA_INSTANCE"
-        fi
-        unset _prod_repo_conf
+        _seed_instance_conf "$_prod_root/spira.conf" "$SPIRA_INSTANCE"
     fi
     unset _prod_root _home_root
 fi

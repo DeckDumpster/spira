@@ -72,6 +72,49 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # ---------------------------------------------------------------------------
+# GUARD FUNCTIONS — defined before anything else runs so a test can source this
+# file (BASH_SOURCE[0] != $0) and call them directly, without running install.
+# ---------------------------------------------------------------------------
+
+# _configure_prod_guard <path> -> 0 when unset or holds conf.sh, 1 (refuse) otherwise.
+# CONFIGURE_PROD must be the harness subdir, not the clone root.
+_configure_prod_guard() {
+    local path="${1:-}"
+    [ -n "$path" ] || return 0
+    [ -f "$path/conf.sh" ] && return 0
+    printf 'install: CONFIGURE_PROD (%s) does not contain conf.sh\n' "$path" >&2
+    printf 'install:   set CONFIGURE_PROD to the harness subdir: %s/spira\n' "$path" >&2
+    return 1
+}
+
+# _prod_guard <path> -> 0 when clear (or overridden), 2 (refuse) when <path> is a git
+# checkout. A git pull there would be a silent deploy with no audit trail — the release
+# model requires SPIRA_PROD to resolve through SPIRA_RELEASES/current, the symlink
+# activate.sh swaps atomically on each deployment. Override: SPIRA_INSTALL_PROD_GIT_CONSIDERED=1
+_prod_guard() {
+    local path="${1:-}"
+    [ -n "${SPIRA_INSTALL_PROD_GIT_CONSIDERED:-}" ] && return 0
+    [ -n "$path" ] && [ -e "$path" ] || return 0
+    local walk="$path" in_git=0
+    while [ "$walk" != "/" ] && [ -n "$walk" ]; do
+        if [ -d "$walk/.git" ] || [ -f "$walk/.git" ]; then
+            in_git=1; break
+        fi
+        walk="$(dirname "$walk")"
+    done
+    [ "$in_git" = 1 ] || return 0
+    printf 'install: REFUSING — SPIRA_PROD (%s) is a git checkout\n' "$path" >&2
+    printf 'install:   The release model requires SPIRA_PROD to resolve through\n' >&2
+    printf 'install:   %s/current (the symlink activate.sh swaps on each deploy).\n' \
+        "${SPIRA_RELEASES:-}" >&2
+    printf 'install:   Activate a release tarball first: bash spira/activate.sh <tarball>\n' >&2
+    printf 'install:   Override: SPIRA_INSTALL_PROD_GIT_CONSIDERED=1\n' >&2
+    return 2
+}
+
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0 2>/dev/null || true; fi
+
+# ---------------------------------------------------------------------------
 # ARGUMENT PARSING — before sourcing conf.sh so SPIRA_INSTANCE is in the
 # environment when conf.sh derives instance-qualified paths.
 # ---------------------------------------------------------------------------
@@ -350,13 +393,7 @@ if [ -z "${SPIRA_INSTALL_CONFLICT_CONSIDERED:-}" ]; then
     unset _live_aeon_pid _gate_lock _conf_instance _conf_inst_val _our_unit
 fi  # end conflict checks
 
-# Refuse a CONFIGURE_PROD that does not contain conf.sh — must be the harness
-# subdir, not the clone root.
-if [ -n "${CONFIGURE_PROD:-}" ] && [ ! -f "${CONFIGURE_PROD}/conf.sh" ]; then
-    printf 'install: CONFIGURE_PROD (%s) does not contain conf.sh\n' "$CONFIGURE_PROD" >&2
-    printf 'install:   set CONFIGURE_PROD to the harness subdir: %s/spira\n' "$CONFIGURE_PROD" >&2
-    exit 1
-fi
+_configure_prod_guard "${CONFIGURE_PROD:-}" || exit 1
 
 # ---------------------------------------------------------------------------
 # PHASE 1 — CONFIG (configure.sh)
@@ -556,31 +593,7 @@ fi
 # ---------------------------------------------------------------------------
 phase_start "phase 4: units"
 
-# REFUSE a SPIRA_PROD that is inside a git checkout — a git pull would be a silent
-# deploy with no audit trail. The release model requires SPIRA_PROD to resolve through
-# SPIRA_RELEASES/current, the symlink activate.sh swaps atomically on each deployment.
-# Override: SPIRA_INSTALL_PROD_GIT_CONSIDERED=1
-if [ -z "${SPIRA_INSTALL_PROD_GIT_CONSIDERED:-}" ] && [ -n "${SPIRA_PROD:-}" ] && [ -e "$SPIRA_PROD" ]; then
-    _prod_walk="$SPIRA_PROD"
-    _prod_in_git=0
-    while [ "$_prod_walk" != "/" ] && [ -n "$_prod_walk" ]; do
-        if [ -d "$_prod_walk/.git" ] || [ -f "$_prod_walk/.git" ]; then
-            _prod_in_git=1; break
-        fi
-        _prod_walk="$(dirname "$_prod_walk")"
-    done
-    if [ "$_prod_in_git" = 1 ]; then
-        printf 'install: REFUSING — SPIRA_PROD (%s) is a git checkout\n' \
-            "$SPIRA_PROD" >&2
-        printf 'install:   The release model requires SPIRA_PROD to resolve through\n' >&2
-        printf 'install:   %s/current (the symlink activate.sh swaps on each deploy).\n' \
-            "$SPIRA_RELEASES" >&2
-        printf 'install:   Activate a release tarball first: bash spira/activate.sh <tarball>\n' >&2
-        printf 'install:   Override: SPIRA_INSTALL_PROD_GIT_CONSIDERED=1\n' >&2
-        exit 2
-    fi
-    unset _prod_walk _prod_in_git
-fi
+_prod_guard "${SPIRA_PROD:-}" || exit 2
 
 # SPIRA_PROD must exist before systemd/install.sh renders units. When it is missing on
 # a fresh install:
