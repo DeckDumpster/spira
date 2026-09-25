@@ -93,7 +93,7 @@ fi
 
 # ======================================================================================
 echo
-echo "P0 auto-express — P0 bead automatically gets the express label"
+echo "P0 does not imply express — priority is not a designation"
 # ======================================================================================
 testdb_reset
 testdb_seed <<'SEED'
@@ -105,9 +105,25 @@ out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID" ]; then
     LABELS="$(labels_of "$BID")"
-    want "P0 auto-express: express label present" "express" "$LABELS"
+    nowant "P0 alone: no express label" "express" "$LABELS"
 else
-    bad "P0 auto-express: could not create bead" "output: $out"
+    bad "P0 alone: could not create bead" "output: $out"
+fi
+
+# Pair: P0 + --express still gets the label, explicitly.
+testdb_reset
+testdb_seed <<'SEED'
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+SEED
+out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
+    bash "$SH/bead.sh" file "P0 blocker, express" \
+    --for builder --repo fixture-repo --priority 0 --express 2>&1)" || true
+BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
+if [ -n "$BID" ]; then
+    LABELS="$(labels_of "$BID")"
+    want "P0 --express: express label present" "express" "$LABELS"
+else
+    bad "P0 --express: could not create bead" "output: $out"
 fi
 
 # Pair: P1 does NOT get express automatically.
