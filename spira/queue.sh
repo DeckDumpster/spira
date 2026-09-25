@@ -254,13 +254,10 @@ cmd_eject() {
         printf 'queue.sh eject: no such repo: %s\n' "$name" >&2; return 1
     }
 
-    local open_file="${SPIRA_QUEUE_DIR:?}/$name/open"
-    [ -f "$open_file" ] || {
-        printf 'queue.sh eject: no open batch for %s\n' "$name" >&2; return 1
-    }
-
     # Take the per-repo lock — eject racing a batch build produces the
-    # two-PRs-one-batch state the lock exists to prevent.
+    # two-PRs-one-batch state the lock exists to prevent. Held for both paths below:
+    # a batch build can race either an ejection from the open batch or a withdrawal
+    # of a certified-but-unbatched bead.
     local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
     mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
     { exec 9>"$lockfile"; } 2>/dev/null \
@@ -270,27 +267,58 @@ cmd_eject() {
         return 1
     fi
 
-    local members_val pr_n tip="" found=0 new_members=""
-    members_val="$(grep '^members=' "$open_file" | head -1)"
-    members_val="${members_val#members=}"
-    pr_n="$(grep '^pr=' "$open_file" | head -1)"; pr_n="${pr_n#pr=}"
+    local open_file="${SPIRA_QUEUE_DIR:?}/$name/open"
+    local members_val="" pr_n="" tip="" found=0 new_members=""
+    if [ -f "$open_file" ]; then
+        members_val="$(grep '^members=' "$open_file" | head -1)"
+        members_val="${members_val#members=}"
+        pr_n="$(grep '^pr=' "$open_file" | head -1)"; pr_n="${pr_n#pr=}"
 
-    local _m mid mtip
-    for _m in $members_val; do
-        mid="${_m%%:*}"; mtip="${_m##*:}"
-        if [ "$mid" = "$id" ]; then
-            found=1; tip="$mtip"
-        else
-            new_members="${new_members}${new_members:+ }$_m"
-        fi
-    done
+        local _m mid mtip
+        for _m in $members_val; do
+            mid="${_m%%:*}"; mtip="${_m##*:}"
+            if [ "$mid" = "$id" ]; then
+                found=1; tip="$mtip"
+            else
+                new_members="${new_members}${new_members:+ }$_m"
+            fi
+        done
+    fi
 
     if [ "$found" -eq 0 ]; then
-        printf 'queue.sh eject: %s is not a member of the open batch for %s\n' "$id" "$name" >&2
-        local _ids=""
-        for _m in $members_val; do _ids="${_ids}${_ids:+ }${_m%%:*}"; done
-        printf 'batch members: %s\n' "${_ids:-<none>}" >&2
-        return 1
+        # Not a member of any open batch (or none is open) — a CERTIFIED bead that
+        # has not yet been picked up by a batch build is still withdrawable, through
+        # the same mechanism a reopen uses (bead_reopen clears CERTIFIED to WITHDRAWN).
+        local _cert_st _cert_tip
+        read -r _cert_st _cert_tip _ <<< "$(land_state "$id" 2>/dev/null)"
+
+        if [ "${_cert_st:-}" != CERTIFIED ]; then
+            printf 'queue.sh eject: %s is not a member of the open batch for %s and is not CERTIFIED\n' "$id" "$name" >&2
+            local _ids=""
+            for _m in $members_val; do _ids="${_ids}${_ids:+ }${_m%%:*}"; done
+            printf 'batch members: %s\n' "${_ids:-<none>}" >&2
+            return 1
+        fi
+
+        if [ "$dry_run" -eq 1 ]; then
+            printf 'dry-run: %s is CERTIFIED but not yet batched for %s (tip=%s)\n' "$id" "$name" "$_cert_tip"
+            printf 'dry-run: would write WITHDRAWN to %s/%s\n' "$LANDSTATE" "$id"
+            printf 'dry-run: would reopen bead %s and clear assignee\n' "$id"
+            printf 'dry-run: would post comment to %s\n' "$id"
+            bdq show "$id" >/dev/null 2>&1 || {
+                printf 'dry-run: ERROR: cannot resolve bead %s\n' "$id" >&2; return 1
+            }
+            return 0
+        fi
+
+        bead_reopen "$id" "eject"
+
+        local _comment
+        _comment="Ejected while certified but not yet batched in $name.${reason:+$'\n\n'${reason}}"$'\n\n'"Landstate written as WITHDRAWN. Recertify the branch before it can rejoin the queue."
+        printf '%s' "$_comment" | bdq comment "$id" --stdin >/dev/null 2>&1 || true
+
+        printf 'queue.sh eject: ejected %s (certified, not yet batched) for %s (landstate=WITHDRAWN)\n' "$id" "$name"
+        return 0
     fi
 
     if [ "$dry_run" -eq 1 ]; then

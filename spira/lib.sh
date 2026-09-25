@@ -1335,6 +1335,13 @@ except Exception:
 # rows are distinct and the census never double-counts a harness reopen.
 bead_reopen() {
     local id="$1" cause="${2:-unrecorded}" note="${3:-}" rc=0
+    # A CERTIFIED bead reopened here must stop being admissible: the batch builder
+    # selects on landstate alone, and WITHDRAWN is a state it never admits. Every
+    # reopen goes through this one function, so this is the one place that can't
+    # be skipped by a caller that forgot.
+    local _wd_st _wd_tip
+    read -r _wd_st _wd_tip _ <<< "$(land_state "$id" 2>/dev/null)"
+    [ "${_wd_st:-}" = CERTIFIED ] && land_mark "$id" WITHDRAWN "${_wd_tip:-none}" "$cause"
     bdq reopen "$id" >/dev/null 2>&1 || rc=1
     release_claim "$id" || rc=1
     _bump_write_event "$id" reopen "$cause" || rc=1

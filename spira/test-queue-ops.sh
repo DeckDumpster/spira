@@ -157,6 +157,50 @@ members_now="$(grep '^members=' "$OPEN_FILE" | head -1)"
 [ ! -f "$LANDSTATE/sp-nonexist" ] && ok "no landstate written for non-member" || bad "no landstate" "file exists"
 
 echo
+echo "eject: CERTIFIED, unbatched bead is withdrawn — no open batch exists at all:"
+rm -f "$OPEN_FILE"
+printf 'CERTIFIED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ej-cert"
+> "$BD_LOG"
+out="$(run eject sp-ej-cert --reason 'holding for a fix')"; rc=$?
+[ "$rc" -eq 0 ] && ok "exit 0 for certified, unbatched bead" || bad "exit 0" "rc=$rc out=$out"
+want "reports the certified-unbatched case" "certified, not yet batched" "$out"
+st="$(awk '{print $1}' "$LANDSTATE/sp-ej-cert" 2>/dev/null || true)"
+[ "$st" = "WITHDRAWN" ] && ok "landstate WITHDRAWN after eject" || bad "landstate WITHDRAWN" "got $st"
+tp="$(awk '{print $2}' "$LANDSTATE/sp-ej-cert" 2>/dev/null || true)"
+[ "$tp" = "$TIP03" ] && ok "tip preserved across withdrawal" || bad "tip preserved" "got $tp"
+want "bd reopen called" "reopen sp-ej-cert" "$(cat "$BD_LOG")"
+rm -f "$LANDSTATE/sp-ej-cert"
+
+echo
+echo "eject: CERTIFIED, unbatched bead — an unrelated open batch does not block it:"
+write_eject_batch
+printf 'BATCHED %s %s\n'   "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ej01"
+printf 'BATCHED %s %s\n'   "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ej02"
+printf 'CERTIFIED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ej-cert2"
+out="$(run eject sp-ej-cert2)"; rc=$?
+[ "$rc" -eq 0 ] && ok "exit 0 while an unrelated batch is open" || bad "exit 0" "rc=$rc out=$out"
+st="$(awk '{print $1}' "$LANDSTATE/sp-ej-cert2" 2>/dev/null || true)"
+[ "$st" = "WITHDRAWN" ] && ok "landstate WITHDRAWN, unrelated batch untouched" || bad "landstate WITHDRAWN" "got $st"
+members_now="$(grep '^members=' "$OPEN_FILE" | head -1)"
+[[ "$members_now" == *"sp-ej01:"* && "$members_now" == *"sp-ej02:"* ]] \
+    && ok "unrelated open batch members unchanged" || bad "unrelated batch unchanged" "$members_now"
+rm -f "$LANDSTATE/sp-ej-cert2"
+
+echo
+echo "eject: dry-run for a CERTIFIED, unbatched bead prints plan and changes nothing:"
+rm -f "$OPEN_FILE"
+printf 'CERTIFIED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ej-cert3"
+> "$BD_LOG"
+out="$(run eject sp-ej-cert3 --dry-run)"; rc=$?
+[ "$rc" -eq 0 ] && ok "dry-run exits 0 for certified, unbatched bead" || bad "dry-run exit 0" "rc=$rc"
+want "dry-run mentions WITHDRAWN write" "would write WITHDRAWN" "$out"
+want "dry-run mentions bead reopen"     "would reopen bead sp-ej-cert3" "$out"
+st="$(awk '{print $1}' "$LANDSTATE/sp-ej-cert3" 2>/dev/null || true)"
+[ "$st" = "CERTIFIED" ] && ok "dry-run did not change landstate" || bad "dry-run no change" "got $st"
+nowant "dry-run: bd reopen not called" "reopen sp-ej-cert3" "$(cat "$BD_LOG")"
+rm -f "$LANDSTATE/sp-ej-cert3"
+
+echo
 echo "eject: landstate round-trips through the reader (format check):"
 write_eject_batch
 printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ej01"
@@ -474,6 +518,26 @@ assignee="$(field sp-ej01 assignee)"
 [ -z "$assignee" ] && ok "real bd: assignee cleared" || bad "real bd: assignee cleared" "got $assignee"
 comment_out="$(B comments sp-ej01 2>/dev/null || true)"
 [ -n "$comment_out" ] && ok "real bd: comment posted to bead" || bad "real bd: comment posted" "no output from bd comments"
+
+echo
+echo "real bd: eject on a CERTIFIED, unbatched bead withdraws it (no open batch at all):"
+testdb_seed <<'JSONL'
+{"id":"sp-ej-cert","title":"ej-cert","status":"closed","issue_type":"task","labels":[],"assignee":"aeon-someone-else","updated_at":"2026-09-17T00:00:00Z","closed_at":"2026-09-17T00:00:00Z"}
+JSONL
+rm -f "$OPEN_FILE"
+printf 'CERTIFIED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ej-cert"
+
+out="$(real_run eject sp-ej-cert --reason 'holding for a fix')"; rc=$?
+[ "$rc" -eq 0 ] && ok "real bd: eject exit 0 for certified, unbatched bead" || bad "real bd: eject exit 0" "rc=$rc out=$out"
+bead_st="$(field sp-ej-cert status)"
+[ "$bead_st" = "open" ] && ok "real bd: certified-unbatched bead reopened" || bad "real bd: bead open" "status=$bead_st"
+assignee="$(field sp-ej-cert assignee)"
+[ -z "$assignee" ] && ok "real bd: certified-unbatched assignee cleared" || bad "real bd: assignee cleared" "got $assignee"
+comment_out2="$(B comments sp-ej-cert 2>/dev/null || true)"
+[ -n "$comment_out2" ] && ok "real bd: comment posted to certified-unbatched bead" || bad "real bd: comment posted" "no output"
+st="$(awk '{print $1}' "$LANDSTATE/sp-ej-cert" 2>/dev/null || true)"
+[ "$st" = "WITHDRAWN" ] && ok "real bd: landstate WITHDRAWN" || bad "real bd: landstate WITHDRAWN" "got $st"
+rm -f "$LANDSTATE/sp-ej-cert"
 
 echo
 echo "real bd — gap G7: abandon's return-to-CERTIFIED path makes no bd call at all:"
