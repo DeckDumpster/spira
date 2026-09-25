@@ -629,8 +629,14 @@ for b in d:
     if [ "$last_moved" -eq 0 ]; then
         printf 'batch %s: no BATCHED/LANDED record — stuck check skipped\n' "$name"
     else
+        # A queue can only be stuck on work that has been waiting: if the oldest
+        # certification is newer than the last BATCHED/LANDED move, the stall clock
+        # starts there, not at the move — otherwise an idle stretch with no waiting
+        # work pages the moment the first branch is certified (sp-w4tyd).
+        local _stall_from="$last_moved"
+        [ "$oldest_epoch" -gt "$_stall_from" ] && _stall_from="$oldest_epoch"
         local stuck_age
-        stuck_age=$(( now - last_moved ))
+        stuck_age=$(( now - _stall_from ))
         if [ "$stuck_age" -lt "${SPIRA_QUEUE_STUCK_AGE:-7200}" ]; then
             rm -f "$_stuck_flag" 2>/dev/null || true
         elif [ ! -f "$_stuck_flag" ]; then

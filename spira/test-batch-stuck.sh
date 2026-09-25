@@ -16,6 +16,11 @@
 #         fallback to oldest cert age fires the alert seconds after a landing.
 #   h.    Brand-new queue: no BATCHED/LANDED at all → stuck check skipped, no mail
 #         (law-a-control-that-cannot-check-must-refuse).
+#   i.    IDLE then FRESH CERT (sp-w4tyd, github#321): old BATCHED (idle stretch,
+#         nothing waiting), then a single fresh certification → no mail. The stall
+#         clock must start at the newer of last-moved and oldest-cert, not at
+#         last-moved alone — a queue idle for hours with nothing queued is not
+#         "stuck" the instant something is finally certified.
 #
 # covers: spira/batch.sh
 # timeout: 120
@@ -242,6 +247,24 @@ outH="$(SPIRA_QUEUE_STUCK_AGE=$STUCK_AGE SPIRA_QUEUE_BATCH_MAX=$BATCH_MAX \
     SPIRA_QUEUE_BATCH_WAIT=$BATCH_WAIT batch "$REPONAME" 2>&1)"
 nowant "h. no-history: no stuck mail" "mailed operator" "$outH"
 want   "h. no-history: skipped log"   "no BATCHED/LANDED record" "$outH"
+clean_case
+
+# ============================================================================
+# i. IDLE then FRESH CERT (sp-w4tyd): old BATCHED far in the past (idle stretch,
+#    nothing was waiting), then one branch certified moments ago.
+#    Expected: no mail — nothing has actually been waiting.
+#    Before fix: stuck_age measured from last_moved alone (~7200s ≥ threshold),
+#    paging the operator seconds after the first certification of the day.
+# ============================================================================
+seed
+mark_moved "sp-i-idle" BATCHED "$OLD"
+branch "sp-i1" "$RECENT"
+
+outI="$(SPIRA_QUEUE_STUCK_AGE=$STUCK_AGE SPIRA_QUEUE_BATCH_MAX=$BATCH_MAX \
+    SPIRA_QUEUE_BATCH_WAIT=$BATCH_WAIT batch "$REPONAME" 2>&1)"
+nowant "i. idle-then-fresh-cert: no stuck mail" "mailed operator" "$outI"
+is    "i. idle-then-fresh-cert: stuck flag absent" "0" \
+    "$([ -f "$RUN/queue-stuck-$REPONAME" ] && echo 1 || echo 0)"
 clean_case
 
 printf '\nresults: %d passed, %d failed\n' "$pass" "$fail"
