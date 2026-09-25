@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# test-aeon-wiki-dirty.sh — an aeon that writes to SPIRA_WIKI commits those writes at exit.
-#
-#   ./test-aeon-wiki-dirty.sh
+# test-aeon-wiki-dirty.sh — wiki_commit_paths (lib.sh) selects which of this session's OWN
+#   wiki writes (wiki_write_paths, read from the transcript) an aeon may commit at exit:
+#   only those still dirty now, and never wiki/tasks.md.
 #
 # THE DEFECT. An aeon that calls sop.sh synth or writes any wiki page and exits without
 # committing leaves brain's shared checkout dirty. The next session to touch brain is
@@ -10,46 +10,85 @@
 # else's work under its own author. The fix: aeon.sh commits wiki writes at exit,
 # attributed to the aeon that produced them.
 #
-# FIVE CASES:
-#   1. (positive control) aeon writes a wiki page, exits → page is committed with
-#      aeon author, wiki checkout is clean.
-#   2. Wiki page was dirty BEFORE the session started → aeon does NOT commit it (not
-#      its work); wiki stays dirty but attribution is preserved.
-#   3. SPIRA_WIKI not set → no failure; bead closes normally.
-#   4. wiki/tasks.md is dirty → NOT committed by the aeon (generated view, excluded).
-#   5. Another actor dirties a DIFFERENT wiki page while this session is live, with no
-#      tool_use record of its own → NOT committed; the aeon's own tracked write still is
-#      (sp-4fl2e: a before/after dirty diff cannot tell these two apart, only the
-#      transcript can).
+# SNAPSHOT-DIFF WAS TRIED AND REJECTED (sp-4fl2e): a before/after dirty-snapshot diff
+# cannot tell "this session's own write" from "a concurrent actor's write that landed
+# while this session was live" — both are just "dirty now, clean at the start". Only the
+# transcript (wiki_write_paths) can. wiki_commit_paths is the intersection of what the
+# transcript claims with what is actually dirty now, minus the generated view.
 #
-# SEEN RED FIRST. Case 1 is the positive control: a shim that writes a wiki page and
-# exits without committing it. Before the fix, the wiki is left dirty and the test
-# fails (the page is not committed). After the fix, the harness commits it.
-#
-# Driven through the REAL aeon.sh against a real bd on a throwaway fixture.
-#
-# covers: spira/aeon.sh
+# defect: sp-4fl2e
+# covers: spira/aeon.sh spira/lib.sh
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+
+echo "test-aeon-wiki-dirty.sh"
+
+wcp() {   # wcp <write-paths> <dirty-paths> -> wiki_commit_paths's own output
+    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
+        bash -c '. "$1"/lib.sh; wiki_commit_paths "$2" "$3"' _ "$HERE" "$1" "$2" 2>/dev/null
+}
+
+# ===========================================================================================
+echo
+echo "T1: wiki_commit_paths <write-paths> <dirty-paths> — no aeon run, no bd"
+# ===========================================================================================
+out="$(wcp "$(printf 'wiki/notes/new.md')" "$(printf 'wiki/notes/new.md')")"
+is "positive control: an own write that is still dirty is selected" "wiki/notes/new.md" "$out"
+
+# CASE 2: pre-existing dirty file not among this session's own writes — never selected,
+# regardless of it being dirty; only entries that are BOTH an own write AND dirty qualify.
+out="$(wcp "$(printf 'wiki/notes/new.md')" "$(printf 'wiki/notes/preexist.md\nwiki/notes/new.md')")"
+is "an own write among several dirty files: only the own write is selected" "wiki/notes/new.md" "$out"
+nowant "a pre-existing dirty file the session never wrote is not selected" \
+    "preexist.md" "$out"
+
+# An own write that is NO LONGER dirty (reverted, or already committed by someone else)
+# has nothing left to stage.
+out="$(wcp "$(printf 'wiki/notes/reverted.md')" "$(printf 'wiki/notes/other.md')")"
+is "an own write that is not currently dirty is not selected" "" "$out"
+
+# CASE 4: wiki/tasks.md is excluded even when it IS this session's own write and dirty —
+# the generated view is never authored by an aeon.
+out="$(wcp "$(printf 'wiki/tasks.md')" "$(printf 'wiki/tasks.md')")"
+is "wiki/tasks.md is never selected, even as an own dirty write" "" "$out"
+
+out="$(wcp "$(printf 'wiki/tasks.md\nwiki/notes/new.md')" "$(printf 'wiki/tasks.md\nwiki/notes/new.md')")"
+is "wiki/tasks.md is excluded from a mixed list; the real write still is not" \
+   "wiki/notes/new.md" "$out"
+
+# CASE 5: a concurrent actor's write — dirty, but never named by this session's own
+# transcript — is never selected, no matter how it is ordered in the dirty list.
+out="$(wcp "$(printf 'wiki/notes/mine.md')" "$(printf 'wiki/notes/concurrent-other.md\nwiki/notes/mine.md')")"
+is "own write selected" "wiki/notes/mine.md" "$out"
+nowant "a concurrent actor's write is never selected" "concurrent-other.md" "$out"
+
+# Multiple own writes, all dirty: every one is selected, order preserved from write-paths.
+out="$(wcp "$(printf 'wiki/a.md\nwiki/b.md\nwiki/c.md')" "$(printf 'wiki/c.md\nwiki/a.md\nwiki/b.md')")"
+is "multiple own writes are all selected, in write-paths order" \
+   "$(printf 'wiki/a.md\nwiki/b.md\nwiki/c.md')" "$out"
+
+# No writes at all: nothing selected.
+out="$(wcp "" "$(printf 'wiki/notes/concurrent-other.md')")"
+is "no own writes at all: nothing selected" "" "$out"
+
+# ===========================================================================================
+echo
+echo "T3: one real aeon run proves the wiring — commit, author, message"
+# ===========================================================================================
+# testdb-mode: default (embedded).
 unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_BIN \
       TESTDB_MODE TESTDB_STARTED_SERVICE SPIRA_DB
-
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
 testdb_require test-aeon-wiki-dirty
-TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up aeonwikidirty || { echo "test-aeon-wiki-dirty: could not build fixture"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
-# ---- harness repo (SPIRA_REPO) --------------------------------------------------------
 HARNESS_ORIGIN="$TMP/harness.git"; git init -q --bare -b main "$HARNESS_ORIGIN"
 HARNESS="$TMP/harness"; git clone -q "$HARNESS_ORIGIN" "$HARNESS" 2>/dev/null
 git -C "$HARNESS" config user.email t@t; git -C "$HARNESS" config user.name t
@@ -59,7 +98,6 @@ git -C "$HARNESS" commit -qm "seed harness"
 git -C "$HARNESS" push -q origin main 2>/dev/null
 export SPIRA_REPO="$HARNESS"
 
-# ---- bead target repo (separate from SPIRA_REPO) --------------------------------------
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
 REPO="$TMP/repo"; git clone -q "$ORIGIN" "$REPO" 2>/dev/null
 git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
@@ -67,7 +105,6 @@ printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed
 git -C "$REPO" push -q origin main 2>/dev/null
 
-# ---- wiki repo (SPIRA_WIKI) -----------------------------------------------------------
 WIKI_ORIGIN="$TMP/wiki.git"; git init -q --bare -b main "$WIKI_ORIGIN"
 WIKI="$TMP/wiki"; git clone -q "$WIKI_ORIGIN" "$WIKI" 2>/dev/null
 git -C "$WIKI" config user.email t@t; git -C "$WIKI" config user.name t
@@ -79,7 +116,6 @@ git -C "$WIKI" commit -qm "seed wiki"
 git -C "$WIKI" push -q origin main 2>/dev/null
 export SPIRA_WIKI="$WIKI"
 
-# ---- harness setup --------------------------------------------------------------------
 export SPIRA_HOME="$HARNESS/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/wiki-commit.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
@@ -95,191 +131,36 @@ FAYTH_HEARTBEAT_SECONDS=600
 FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
-# ---- shim: stands in for the model ---------------------------------------------------
-# SPIRA_AGENT must be set; conf.sh replaces $PATH so a PATH shim runs the real model.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP HARNESS WIKI ORIGIN REPO
 grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
     || { echo "test-aeon-wiki-dirty: aeon.sh has no SPIRA_AGENT injection point" >&2; exit 1; }
-
-# Shim behaviour driven by $TMP/shim-mode:
-#   wiki-write      — write a wiki page and close the bead, without committing the wiki
-#   wiki-preexist   — wiki page already dirty; write a DIFFERENT wiki page and close
-#   wiki-concurrent — own tracked write, plus another actor's untracked write mid-session
-#   no-wiki-write   — commit bead work only; do not touch the wiki
-#   wiki-tasks-only — dirty wiki/tasks.md only; close the bead
-#
-# emit_write prints the same tool_use shape aeon.sh's wiki_write_paths (lib.sh) reads from
-# the real transcript, so this shim can claim a write as its own the way a real Edit/Write
-# tool call would. A file this shim dirties WITHOUT calling emit_write stands in for a
-# concurrent actor's write, which the harness must never attribute to this session.
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
 id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
-printf '%s' "$id" > "$TMP/last-bead"
-
-emit_write() {
-    printf '{"type":"assistant","message":{"id":"m%s","content":[{"type":"tool_use","name":"Write","input":{"file_path":"%s"}}]}}\n' "$RANDOM" "$1"
-}
-
-# Commit the bead's own work in the bead repo.
 printf 'my work\n' >> f
 git add f && git -c user.email=a@a -c user.name=aeon commit -qm "$id: the work"
-
-case "$(cat "$TMP/shim-mode" 2>/dev/null)" in
-    wiki-write)
-        # Write a wiki page in SPIRA_WIKI WITHOUT committing it.
-        # This is the positive control: the harness must commit it for us.
-        printf '# SOP for %s\n' "$id" > "$WIKI/wiki/notes/sop-$id.md"
-        emit_write "$WIKI/wiki/notes/sop-$id.md"
-        ;;
-    wiki-preexist)
-        # wiki/notes/preexist.md is already dirty (written before the session).
-        # Write a NEW page as well. Only the new page should be committed.
-        printf '# New page for %s\n' "$id" > "$WIKI/wiki/notes/new-$id.md"
-        emit_write "$WIKI/wiki/notes/new-$id.md"
-        ;;
-    wiki-concurrent)
-        # This session's own write, tracked with a tool_use record.
-        printf '# New page for %s\n' "$id" > "$WIKI/wiki/notes/new-$id.md"
-        emit_write "$WIKI/wiki/notes/new-$id.md"
-        # A DIFFERENT actor's write landing while this session is live — no tool_use
-        # record, standing in for the archivist or any other concurrent writer.
-        printf '# Written by someone else entirely\n' > "$WIKI/wiki/notes/concurrent-other.md"
-        ;;
-    wiki-tasks-only)
-        # Only dirty wiki/tasks.md — the generated view. Must NOT be committed.
-        printf '# tasks regenerated\n' >> "$WIKI/wiki/tasks.md"
-        ;;
-    *)
-        # no-wiki-write: nothing to write in wiki
-        ;;
-esac
-
+printf '# SOP for %s\n' "$id" > "$WIKI/wiki/notes/sop-$id.md"
+printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Write","input":{"file_path":"%s"}}]}}\n' \
+    "$WIKI/wiki/notes/sop-$id.md"
 bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
 SHIM
 chmod +x "$BIN/claude"
 
-bead_status() {
-    bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
-        | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status","") if d else "")' 2>/dev/null
-}
-commit_author_of() {  # commit_author_of <git-dir> <file>
-    git -C "$1" log --format="%ae" -1 -- "$2" 2>/dev/null
-}
-wiki_clean() {
-    [ -z "$(git -C "$WIKI" diff --name-only HEAD 2>/dev/null)" ]
-}
-poison_bead() {
-    bd -C "$SPIRA_DB" label add "$1" spira-poison >/dev/null 2>&1 || true
-}
+_lbl="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:fixture"
 
-# ============================================================
-echo
-echo "CASE 1 (positive control): aeon writes a wiki page — must be committed with aeon author:"
-echo "-----------------------------------------------------------------------"
-# SEEN RED FIRST. Without the wiki commit check in aeon.sh, this case produces
-# an uncommitted wiki/notes/sop-<id>.md and fails the assertions below.
-printf 'wiki-write' > "$TMP/shim-mode"
-b1="$(bd -C "$SPIRA_DB" create --title "test: wiki write" --type task \
-        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
-[ -n "$b1" ] || { bad "case 1 bead created" "(bead-create failed)"; true; }
+testdb_reset
+b1="$(bd -C "$SPIRA_DB" create --title "test: wiki write" --type task -l "$_lbl" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+[ -n "$b1" ] || { bad "bead created" "(bead-create failed)"; }
+rm -rf "$SPIRA_RUN/worktree"
 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
-is "wiki-write: bead is closed" "closed" "$(bead_status "$b1")"
+bead_status="$(bd -C "$SPIRA_DB" show "$b1" --json 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status","") if d else "")' 2>/dev/null)"
+is "wiki-write: bead is closed" "closed" "$bead_status"
 is "wiki-write: wiki checkout is clean after exit" "" \
     "$(git -C "$WIKI" diff --name-only HEAD 2>/dev/null)"
-_author1="$(commit_author_of "$WIKI" "wiki/notes/sop-$b1.md")"
-want "wiki-write: wiki commit has aeon author" "aeon-" "$_author1"
-_msg1="$(git -C "$WIKI" log --format="%s" -1 -- "wiki/notes/sop-$b1.md" 2>/dev/null)"
-want "wiki-write: wiki commit message names the bead" "$b1" "$_msg1"
-poison_bead "$b1"
+author="$(git -C "$WIKI" log --format="%ae" -1 -- "wiki/notes/sop-$b1.md" 2>/dev/null)"
+want "wiki-write: wiki commit has aeon author" "aeon-" "$author"
+msg="$(git -C "$WIKI" log --format="%s" -1 -- "wiki/notes/sop-$b1.md" 2>/dev/null)"
+want "wiki-write: wiki commit message names the bead" "$b1" "$msg"
 
-# ============================================================
-echo
-echo "CASE 2: pre-existing dirty wiki file — aeon must NOT commit it:"
-echo "-----------------------------------------------------------------------"
-# wiki/notes/preexist.md was dirty before the session started.
-# The shim also writes a NEW page. Only the new page should be committed.
-printf 'pre-existing content\n' > "$WIKI/wiki/notes/preexist.md"
-git -C "$WIKI" add "wiki/notes/preexist.md" 2>/dev/null || true
-# Unstage it: we want it tracked-but-dirty (modified after last commit).
-# Actually we want it as an untracked modification. Let's do: create the file,
-# commit it, then modify it again.
-git -C "$WIKI" commit -qm "add preexist.md" 2>/dev/null || true
-git -C "$WIKI" push -q 2>/dev/null || true
-printf 'modified content\n' >> "$WIKI/wiki/notes/preexist.md"
-
-printf 'wiki-preexist' > "$TMP/shim-mode"
-b2="$(bd -C "$SPIRA_DB" create --title "test: preexist wiki" --type task \
-        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
-[ -n "$b2" ] || { bad "case 2 bead created" "(bead-create failed)"; true; }
-bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
-is "preexist: bead is closed" "closed" "$(bead_status "$b2")"
-# preexist.md was dirty before the session; it must remain uncommitted.
-_preexist_dirty="$(git -C "$WIKI" diff --name-only HEAD -- wiki/notes/preexist.md 2>/dev/null)"
-is "preexist: pre-existing dirty file NOT committed" "wiki/notes/preexist.md" "$_preexist_dirty"
-# The new page the aeon wrote MUST be committed.
-is "preexist: new wiki page committed" "" \
-    "$(git -C "$WIKI" diff --name-only HEAD -- "wiki/notes/new-$b2.md" 2>/dev/null)"
-# Clean up the preexist file.
-git -C "$WIKI" checkout -q -- "wiki/notes/preexist.md" 2>/dev/null || true
-poison_bead "$b2"
-
-# ============================================================
-echo
-echo "CASE 3: SPIRA_WIKI not set — aeon must close normally:"
-echo "-----------------------------------------------------------------------"
-printf 'no-wiki-write' > "$TMP/shim-mode"
-b3="$(bd -C "$SPIRA_DB" create --title "test: no wiki" --type task \
-        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
-[ -n "$b3" ] || { bad "case 3 bead created" "(bead-create failed)"; true; }
-SPIRA_WIKI="" bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
-is "no-wiki: bead is closed" "closed" "$(bead_status "$b3")"
-poison_bead "$b3"
-
-# ============================================================
-echo
-echo "CASE 4: wiki/tasks.md dirty — must NOT be committed by the aeon:"
-echo "-----------------------------------------------------------------------"
-printf 'wiki-tasks-only' > "$TMP/shim-mode"
-b4="$(bd -C "$SPIRA_DB" create --title "test: tasks.md dirty" --type task \
-        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
-[ -n "$b4" ] || { bad "case 4 bead created" "(bead-create failed)"; true; }
-bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
-is "tasks-only: bead is closed" "closed" "$(bead_status "$b4")"
-# tasks.md must still be dirty after the aeon exits.
-_tasks_dirty="$(git -C "$WIKI" diff --name-only HEAD -- wiki/tasks.md 2>/dev/null)"
-is "tasks-only: wiki/tasks.md NOT committed by aeon" "wiki/tasks.md" "$_tasks_dirty"
-# Clean up.
-git -C "$WIKI" checkout -q -- "wiki/tasks.md" 2>/dev/null || true
-poison_bead "$b4"
-
-# ============================================================
-echo
-echo "CASE 5: another actor dirties a wiki file mid-session — aeon must NOT commit it:"
-echo "-----------------------------------------------------------------------"
-# SEEN RED FIRST. Before the fix, any file dirty at session end and absent from a
-# start-of-session snapshot was swept in regardless of who dirtied it. Here the concurrent
-# file is dirtied strictly AFTER this session starts, with no tool_use record — the old
-# before/after diff could not tell it apart from the aeon's own tracked write.
-printf 'wiki-concurrent' > "$TMP/shim-mode"
-b5="$(bd -C "$SPIRA_DB" create --title "test: concurrent wiki write" --type task \
-        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
-[ -n "$b5" ] || { bad "case 5 bead created" "(bead-create failed)"; true; }
-bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
-is "concurrent: bead is closed" "closed" "$(bead_status "$b5")"
-# The aeon's own tracked write must be committed.
-is "concurrent: own tracked write committed" "" \
-    "$(git -C "$WIKI" diff --name-only HEAD -- "wiki/notes/new-$b5.md" 2>/dev/null)"
-_author5="$(commit_author_of "$WIKI" "wiki/notes/new-$b5.md")"
-want "concurrent: own write has aeon author" "aeon-" "$_author5"
-# The other actor's untracked write must NOT be committed and must remain dirty.
-_concurrent_dirty="$(git -C "$WIKI" status --short --untracked-files=all -- wiki/notes/concurrent-other.md 2>/dev/null | cut -c4-)"
-is "concurrent: other actor's file NOT committed and still dirty" "wiki/notes/concurrent-other.md" "$_concurrent_dirty"
-# Clean up.
-rm -f "$WIKI/wiki/notes/concurrent-other.md"
-poison_bead "$b5"
-
-echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

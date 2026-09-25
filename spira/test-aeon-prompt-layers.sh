@@ -1,36 +1,95 @@
 #!/usr/bin/env bash
 #
-# test-aeon-prompt-layers.sh — aeon.sh uses --system-prompt-file (replace) or
-#   --append-system-prompt-file (append/default) based on FAYTH_SYSTEM_PROMPT;
-#   system.md carries the statutes; task.md carries the bead body and no statutes.
-#
-# WHAT IS UNDER TEST
-# ------------------
-# aeon.sh:
-#   - reads FAYTH_SYSTEM_PROMPT from the sourced fayth (replace | append | absent)
-#   - calls system_prompt_split() to write $BEAD_ID.system.md and $BEAD_ID.task.md
-#   - launches claude with --system-prompt-file (replace) or --append-system-prompt-file (append)
-#   - puts task.md contents on stdin; system.md goes via the flag, not stdin
-#
-# POSITIVE CONTROL: a stub records exactly what claude receives. The test first
-# verifies the stub can detect the flags it is asked to detect — without that
-# confirmation the absence assertions below prove nothing.
+# test-aeon-prompt-layers.sh — aeon_claude_argv (lib.sh) builds the claude CLI argv from the
+#   fayth's own knobs: FAYTH_SYSTEM_PROMPT picks --system-prompt-file (replace) or
+#   --append-system-prompt-file (append/default, via system_prompt_split's SPIRA_SYSTEM_FLAG);
+#   FAYTH_PROJECT_INSTRUCTIONS=none adds --setting-sources user; --settings is added only
+#   when aeon_settings() has a hook to wire in. system.md carries the statutes; task.md
+#   carries the bead body and no statutes.
 #
 # defect: sp-d0rnp
 # covers: spira/aeon.sh spira/lib.sh spira/chamber/*.fayth
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+
+echo "test-aeon-prompt-layers.sh"
+
+# ===========================================================================================
+echo
+echo "T1: system_prompt_split + aeon_claude_argv — no aeon run, no bd"
+# ===========================================================================================
+FAYTH_HOME="$TMP/argv-home"; mkdir -p "$FAYTH_HOME/hooks"
+
+argv_for() {   # argv_for <FAYTH_SYSTEM_PROMPT> <FAYTH_PROJECT_INSTRUCTIONS> [model] [tools]
+    local sp="$1" pi="$2" model="${3:-}" tools="${4:-}"
+    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_HOME="$FAYTH_HOME" SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
+        ${sp:+FAYTH_SYSTEM_PROMPT="$sp"} ${pi:+FAYTH_PROJECT_INSTRUCTIONS="$pi"} \
+        ${model:+FAYTH_MODEL="$model"} ${tools:+FAYTH_TOOLS="$tools"} \
+        bash -c '. "$1"/lib.sh
+sysfile="$2/sys.md"; taskfile="$2/task.md"
+system_prompt_split "$sysfile" "$taskfile" "statutes" "prompt <!-- task --> body"
+aeon_claude_argv "$SPIRA_SYSTEM_FLAG" "$sysfile"' _ "$HERE" "$TMP" 2>/dev/null
+}
+
+out="$(argv_for replace '')"
+want   "replace: --system-prompt-file in argv"          "--system-prompt-file" "$out"
+nowant "replace: no --append-system-prompt-file"         "--append-system-prompt-file" "$out"
+nowant "replace, no project-instructions knob: no --setting-sources" "--setting-sources" "$out"
+
+out="$(argv_for append '')"
+want   "append: --append-system-prompt-file in argv"     "--append-system-prompt-file" "$out"
+nowant "append: no --system-prompt-file"                 "--system-prompt-file" "$out"
+
+out="$(argv_for '' '')"
+want   "no-knob: behaves as append (default)"             "--append-system-prompt-file" "$out"
+nowant "no-knob: no --system-prompt-file"                  "--system-prompt-file" "$out"
+
+out="$(argv_for replace none)"
+want "FAYTH_PROJECT_INSTRUCTIONS=none: --setting-sources user, in EITHER system-prompt mode" \
+     "$(printf -- '--setting-sources\nuser')" "$out"
+out="$(argv_for append none)"
+want "same in append mode too — the knob is independent of the system-prompt flag" \
+     "$(printf -- '--setting-sources\nuser')" "$out"
+
+out="$(argv_for replace repo)"
+nowant "FAYTH_PROJECT_INSTRUCTIONS=repo: no --setting-sources" "--setting-sources" "$out"
+
+out="$(argv_for replace '')"
+want "the static flags are always present: --dangerously-skip-permissions" "--dangerously-skip-permissions" "$out"
+want "and --system-prompt-snapshot on"                                      "$(printf -- '--system-prompt-snapshot\non')" "$out"
+want "the default model"                                                    "claude-opus-5" "$out"
+want "the default tool allowlist"                                           "Bash,Read,Edit,Write,Glob,Grep" "$out"
+
+out="$(argv_for replace '' claude-sonnet-5 'Bash,Read')"
+want   "FAYTH_MODEL overrides the default"       "claude-sonnet-5" "$out"
+nowant "and the default model is not also present" "claude-opus-5" "$out"
+want   "FAYTH_TOOLS overrides the default"       "$(printf -- '--allowedTools\nBash,Read')" "$out"
+
+# --settings is present only when aeon_settings() (lib.sh) finds a hook to wire in — proved
+# both ways, or the absence rows above would mean nothing (law-absence-needs-a-positive-control).
+out="$(argv_for replace '')"
+nowant "no hooks installed: no --settings" "--settings" "$out"
+cat > "$FAYTH_HOME/hooks/aeon-fence.sh" <<'HOOK'
+#!/usr/bin/env bash
+exit 0
+HOOK
+chmod +x "$FAYTH_HOME/hooks/aeon-fence.sh"
+out="$(argv_for replace '')"
+want "aeon-fence.sh installed: --settings appears" "--settings" "$out"
+want "and names the fence hook"                    "aeon-fence.sh" "$out"
+rm -f "$FAYTH_HOME/hooks/aeon-fence.sh"
+
+# ===========================================================================================
+echo
+echo "T3: real fayth files wire the same mechanism end to end"
+# ===========================================================================================
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
 testdb_require test-aeon-prompt-layers
-TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up aeonlayers || { echo "test-aeon-prompt-layers: could not build fixture database"; exit 1; }
 
@@ -96,19 +155,6 @@ make_bead() {           # make_bead -> prints bead id
 }
 
 # ==========================================================================================
-echo "test-aeon-prompt-layers.sh"
-echo
-echo "POSITIVE CONTROL — stub can report flags it sees:"
-# ==========================================================================================
-# Run a no-op that passes the flags the real code would pass, and confirm the stub records
-# them. Without this the absence assertions below would pass vacuously.
-printf 'ARGV: --system-prompt-file /dev/null\n' > "$TMP/claude-argv"
-want "positive: stub records --system-prompt-file"    "--system-prompt-file"    "$(cat "$TMP/claude-argv")"
-printf 'ARGV: --append-system-prompt-file /dev/null\n' > "$TMP/claude-argv"
-want "positive: stub records --append-system-prompt-file" "--append-system-prompt-file" "$(cat "$TMP/claude-argv")"
-printf '' > "$TMP/claude-argv"; printf '' > "$TMP/claude-stdin"
-
-# ==========================================================================================
 echo
 echo "replace fayth: --system-prompt-file in argv, bead body on stdin, no statute in stdin"
 # ==========================================================================================
@@ -130,30 +176,6 @@ want "replace: system.md has 'Memories in force'" "Memories in force"       "$sy
 want "replace: system.md has standing rule"       "never guess"             "$sys_r"
 nowant "replace: task.md has no statute text"     "Memories in force"       "$(cat "$SPIRA_RUN/$BID_R.task.md" 2>/dev/null)"
 
-# ==========================================================================================
-echo
-echo "append fayth: --append-system-prompt-file in argv"
-# ==========================================================================================
-make_fayth testlayers-append "FAYTH_SYSTEM_PROMPT=append"
-BID_A="$(make_bead)"
-[ -n "$BID_A" ] || { printf 'test-aeon-prompt-layers: could not create append bead\n' >&2; exit 1; }
-
-aeon testlayers-append
-
-argv_a="$(cat "$TMP/claude-argv" 2>/dev/null)"
-want "append: argv has --append-system-prompt-file" "--append-system-prompt-file" "$argv_a"
-nowant "append: argv has no --system-prompt-file"   "--system-prompt-file"        "$argv_a"
-
-# ==========================================================================================
-echo
-echo "no-knob fayth: behaves as append (default)"
-# ==========================================================================================
-make_fayth testlayers-noknob ""
-BID_N="$(make_bead)"
-[ -n "$BID_N" ] || { printf 'test-aeon-prompt-layers: could not create no-knob bead\n' >&2; exit 1; }
-
-aeon testlayers-noknob
-
 argv_n="$(cat "$TMP/claude-argv" 2>/dev/null)"
 want "no-knob: argv has --append-system-prompt-file (default)" "--append-system-prompt-file" "$argv_n"
 nowant "no-knob: argv has no --system-prompt-file"             "--system-prompt-file"        "$argv_n"
@@ -164,36 +186,6 @@ echo "system.md and task.md are written beside the session log:"
 # ==========================================================================================
 want "replace: system.md exists beside log" "1" "$([ -f "$SPIRA_RUN/$BID_R.system.md" ] && printf 1 || printf 0)"
 want "replace: task.md exists beside log"   "1" "$([ -f "$SPIRA_RUN/$BID_R.task.md"   ] && printf 1 || printf 0)"
-
-# ==========================================================================================
-echo
-echo "real fayth files declare FAYTH_SYSTEM_PROMPT:"
-# ==========================================================================================
-for f in builder spike ops groomer maechen czar; do
-    fayth_file="$HERE/chamber/$f.fayth"
-    if [ -f "$fayth_file" ]; then
-        grep -q 'FAYTH_SYSTEM_PROMPT=' "$fayth_file" \
-            && ok "$f.fayth declares FAYTH_SYSTEM_PROMPT" \
-            || bad "$f.fayth declares FAYTH_SYSTEM_PROMPT" "key not found in $fayth_file"
-    fi
-done
-
-# ==========================================================================================
-echo
-echo "replace fayths use --system-prompt-file; append fayths use --append-:"
-# ==========================================================================================
-for f in ops groomer maechen czar; do
-    fayth_file="$HERE/chamber/$f.fayth"
-    [ -f "$fayth_file" ] || continue
-    val="$(grep 'FAYTH_SYSTEM_PROMPT=' "$fayth_file" | tail -1 | sed 's/.*FAYTH_SYSTEM_PROMPT=//' | tr -d '"'"'"' ')"
-    is "$f.fayth: FAYTH_SYSTEM_PROMPT=replace" "replace" "$val"
-done
-for f in builder spike; do
-    fayth_file="$HERE/chamber/$f.fayth"
-    [ -f "$fayth_file" ] || continue
-    val="$(grep 'FAYTH_SYSTEM_PROMPT=' "$fayth_file" | tail -1 | sed 's/.*FAYTH_SYSTEM_PROMPT=//' | tr -d '"'"'"' ')"
-    is "$f.fayth: FAYTH_SYSTEM_PROMPT=append" "append" "$val"
-done
 
 # ==========================================================================================
 echo
@@ -276,6 +268,4 @@ aeon testlayers-sticking
 task_clean="$(cat "$SPIRA_RUN/$BID_CLEAN.task.md" 2>/dev/null)"
 nowant "a bead with no thrash history gets no STICKING POINT banner" "STICKING POINT" "$task_clean"
 
-echo
-printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

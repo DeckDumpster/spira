@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 #
 # test-fayth-project-instructions.sh — FAYTH_PROJECT_INSTRUCTIONS=none gets
-#   --setting-sources user; archivist gets --add-dir for brain's CLAUDE.md.
+#   --setting-sources user (aeon_claude_argv, lib.sh — the one function both the sweep and
+#   the bead call site build their argv through); archivist gets --add-dir for brain's
+#   CLAUDE.md.
 #
 #   ./test-fayth-project-instructions.sh
 #
 # WHAT IS TESTED
 # --------------
-# 1. A fayth with FAYTH_PROJECT_INSTRUCTIONS=none produces a --setting-sources user
-#    flag on the claude invocation (both sweep and bead modes share the mechanism;
-#    sweep mode is tested as a proxy).
-#    Positive control: a repo fayth's launch does NOT get --setting-sources.
+# 1. aeon_claude_argv with FAYTH_PROJECT_INSTRUCTIONS=none produces --setting-sources user;
+#    repo (or unset) does not. See test-aeon-prompt-layers.sh for the rest of
+#    aeon_claude_argv's table (this file keeps the mechanism's own name in its history).
 # 2. Each production fayth declares the right value: ops/maechen/groomer/czar → none,
 #    builder/spike → repo.
 # 3. archivist.sh passes --add-dir <wiki> when SPIRA_WIKI is set.
@@ -20,31 +21,17 @@
 # PATH shim would reach the real model — SPIRA_AGENT is the only safe injection point.
 #
 # defect: sp-1f56o
-# covers: spira/aeon.sh spira/archivist.sh spira/chamber/ops.fayth
+# covers: spira/aeon.sh spira/lib.sh spira/archivist.sh spira/chamber/ops.fayth
 #   spira/chamber/maechen.fayth spira/chamber/groomer.fayth spira/chamber/czar.fayth
 #   spira/chamber/builder.fayth spira/chamber/spike.fayth
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/aeon.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
-cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"
-# Empty scope label so any non-empty FAYTH_LABELS passes the fence (not a claim test).
-export SPIRA_SCOPE_LABEL=""
-
-grep -q 'SPIRA_AGENT' "$HERE/aeon.sh" \
-    || { printf 'test-fayth-project-instructions: aeon.sh has no SPIRA_AGENT injection point\n' >&2; exit 1; }
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
 export SPIRA_AGENT="$BIN/claude" TMP
@@ -57,50 +44,28 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 
-aeon() { bash "$SPIRA_HOME/aeon.sh" "$@" 2>/dev/null; }
-
 echo "test-fayth-project-instructions.sh"
 
 # ==========================================================================================
 echo
-echo "POSITIVE CONTROL — none fayth sweep gets --setting-sources user:"
+echo "T1: aeon_claude_argv — FAYTH_PROJECT_INSTRUCTIONS=none gets --setting-sources user"
 # ==========================================================================================
-# Run first: proves the stub can detect the flag before any absence assertion.
-cat > "$SPIRA_HOME/chamber/testnone.fayth" <<'FAYTH'
-FAYTH_NAME=testnone
-FAYTH_LABELS=test-pi-none
-FAYTH_EXCLUDE_LABELS=""
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH_PROJECT_INSTRUCTIONS=none
-FAYTH
-printf 'sweep prompt\n' > "$SPIRA_HOME/chamber/testnone.md"
+# The full argv table (model, tools, --settings gating on aeon_settings) lives in
+# test-aeon-prompt-layers.sh; this row is kept here under its original defect id.
+ARGV_HOME="$TMP/argv-home"; mkdir -p "$ARGV_HOME/hooks"
+argv_for_pi() {   # argv_for_pi <FAYTH_PROJECT_INSTRUCTIONS>
+    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+        SPIRA_HOME="$ARGV_HOME" SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
+        ${1:+FAYTH_PROJECT_INSTRUCTIONS="$1"} \
+        bash -c '. "$1"/lib.sh; aeon_claude_argv --append-system-prompt-file /dev/null' \
+        _ "$HERE" 2>/dev/null
+}
 
-rm -f "$TMP/claude-argv"
-aeon testnone --sweep --prompt "check" || true
-argv_none="$(cat "$TMP/claude-argv" 2>/dev/null || true)"
-
+argv_none="$(argv_for_pi none)"
 want "none fayth: --setting-sources in argv"  "--setting-sources" "$argv_none"
-want "none fayth: sources value is user"      "user"              "$argv_none"
+want "none fayth: sources value is user"      "$(printf -- '--setting-sources\nuser')" "$argv_none"
 
-# ==========================================================================================
-echo
-echo "repo fayth sweep does NOT get --setting-sources:"
-# ==========================================================================================
-cat > "$SPIRA_HOME/chamber/testrepo.fayth" <<'FAYTH'
-FAYTH_NAME=testrepo
-FAYTH_LABELS=test-pi-repo
-FAYTH_EXCLUDE_LABELS=""
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH_PROJECT_INSTRUCTIONS=repo
-FAYTH
-printf 'sweep prompt\n' > "$SPIRA_HOME/chamber/testrepo.md"
-
-rm -f "$TMP/claude-argv"
-aeon testrepo --sweep --prompt "check" || true
-argv_repo="$(cat "$TMP/claude-argv" 2>/dev/null || true)"
-
+argv_repo="$(argv_for_pi repo)"
 nowant "repo fayth: --setting-sources absent" "--setting-sources" "$argv_repo"
 
 # ==========================================================================================
@@ -171,7 +136,4 @@ argv_arc_nowiki="$(cat "$TMP/claude-argv" 2>/dev/null || true)"
 
 nowant "archivist: no --add-dir when SPIRA_WIKI unset" "--add-dir" "$argv_arc_nowiki"
 
-# ==========================================================================================
-echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ] || exit 1
+tl_summary

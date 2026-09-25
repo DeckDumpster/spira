@@ -152,33 +152,6 @@ ledger_done() {
     && { tail -n 5000 "$LEDGER" > "$LEDGER.trim" && mv -f "$LEDGER.trim" "$LEDGER"; }
 ledger "born $FAYTH $$"
 
-# Build the --settings JSON that wires aeon-fence.sh and the mail/unacked-comment delivery
-# hooks into a claude session. Called by both the sweep and the claimed-bead launch so that
-# both sessions carry the same guards (law-guard-binds-the-caller).
-aeon_settings() {
-    python3 -c "
-import json, os
-spira_home = '$SPIRA_HOME'
-hooks = {}
-mail    = os.path.join(spira_home, 'hooks', 'aeon-mail-deliver.sh')
-deliver = os.path.join(spira_home, 'bd-unacked-comment-deliver.sh')
-post_hooks = [{'type': 'command', 'command': mail, 'timeout': 5}]
-if os.access(deliver, os.X_OK):
-    post_hooks.append({'type': 'command', 'command': deliver, 'timeout': 5})
-hooks['PostToolUse'] = [{'hooks': post_hooks}]
-pre_hooks = []
-fence = os.path.join(spira_home, 'hooks', 'aeon-fence.sh')
-if os.access(fence, os.X_OK):
-    pre_hooks.append({'type': 'command', 'command': fence, 'timeout': 5})
-guard = os.path.join(spira_home, 'bd-close-unacked-guard.sh')
-if os.access(guard, os.X_OK):
-    pre_hooks.append({'type': 'command', 'command': guard, 'timeout': 5})
-if pre_hooks:
-    hooks['PreToolUse'] = [{'hooks': pre_hooks}]
-print(json.dumps({'hooks': hooks}))
-" 2>/dev/null
-}
-
 # ---- sweep mode: a beadless session --------------------------------------------------
 # A SWEEP RUNS THE PERSONA WITHOUT A BEAD. The bead lifecycle — claim, lease, close,
 # verdict, attempt — does not apply. What does apply is the capacity check, the draining
@@ -259,21 +232,11 @@ if [ "$SWEEP" = 1 ]; then
     SWEEP_TASK_FILE="$SPIRA_RUN/sweep-$FAYTH-$$.task.md"
     system_prompt_split "$SWEEP_SYSTEM_FILE" "$SWEEP_TASK_FILE" "$SWEEP_STATUTES" "$SWEEP_PROMPT"
 
-    _SWEEP_PI=""
-    [ "${FAYTH_PROJECT_INSTRUCTIONS:-}" = "none" ] && _SWEEP_PI="user"
-    _SWEEP_SETTINGS="$(aeon_settings)" || _SWEEP_SETTINGS=""
+    mapfile -t _SWEEP_ARGV < <(aeon_claude_argv "$SPIRA_SYSTEM_FLAG" "$SWEEP_SYSTEM_FILE")
     set +e
     cat "$SWEEP_TASK_FILE" | \
         ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
-        "${SPIRA_AGENT:-claude}" -p --output-format stream-json --verbose \
-               --include-partial-messages \
-               --system-prompt-snapshot on \
-               "$SPIRA_SYSTEM_FLAG" "$SWEEP_SYSTEM_FILE" \
-               --model "${FAYTH_MODEL:-claude-opus-5}" \
-               --allowedTools "${FAYTH_TOOLS:-Bash,Read,Edit,Write,Glob,Grep}" \
-               --dangerously-skip-permissions \
-               ${_SWEEP_PI:+--setting-sources "$_SWEEP_PI"} \
-               ${_SWEEP_SETTINGS:+--settings "$_SWEEP_SETTINGS"} \
+        "${SPIRA_AGENT:-claude}" "${_SWEEP_ARGV[@]}" \
         >> "$SWEEP_LOGF" 2>&1
     exit $?
 fi
@@ -520,14 +483,7 @@ spira_event aeon.claimed "$BEAD_ID" "$AEON claimed $BEAD_ID" "summoned from the 
 # Read-after-claim is the only reliable check: re-read the bead's labels the moment after
 # claiming and release if spira-poison is present. The window is short enough that the
 # check is virtually free, and the cost of missing it is a retried-identical session.
-if bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-d = d if isinstance(d, list) else [d]
-if d and "spira-poison" in (d[0].get("labels") or []): sys.exit(1)' 2>/dev/null; then
-    : # no poison — proceed
-else
+if bead_has_label "$(bdjson show "$BEAD_ID" 2>/dev/null)" spira-poison; then
     release_own_claim "$BEAD_ID"
     log "$FAYTH/$AEON: $BEAD_ID carries spira-poison — released immediately after claim (race with the label)"
     ledger_done 0 poison-raced
@@ -554,42 +510,39 @@ fi
 # every pidfile we find here belongs to a peer, not to ourselves.
 WORLD_WAS_STOPPED=0
 _world_stop_label="$SPIRA_WORLD_STOP_LABEL"
-if bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-d = d if isinstance(d, list) else [d]
-if d and "'"$_world_stop_label"'" in (d[0].get("labels") or []): sys.exit(1)
-sys.exit(0)' 2>/dev/null; then
-    : # no halting label — proceed normally
-else
-    _world_live=""
-    for _pf in "$SPIRA_RUN"/aeon-*.pid; do
-        [ -e "$_pf" ] || continue
-        _pid="$(cat "$_pf" 2>/dev/null)" || continue
-        [ -n "$_pid" ] && [ -d "/proc/$_pid" ] || { rm -f "$_pf"; continue; }
-        _world_live="${_world_live:+$_world_live, }$(basename "$_pf" .pid)"
-    done
-    unset _pf _pid
-    if [ -n "$_world_live" ] && [ -z "${SPIRA_WORLD_STOP_SKIP:-}" ]; then
-        # REFUSE, NOT PROCEED. Live aeons write to the database; running world.sh stop
-        # under them is what produced the three-minute outage this bead was filed to
-        # prevent. The fence releases the claim so the bead goes back to the ready queue,
-        # where it will be picked up once the live aeons finish naturally.
-        release_own_claim "$BEAD_ID"
-        log "$FAYTH/$AEON: $BEAD_ID carries $_world_stop_label — live aeons present ($_world_live) — released. Set SPIRA_WORLD_STOP_SKIP=1 to override."
-        bdq note "$BEAD_ID" "Released by aeon.sh: this bead carries $_world_stop_label and requires the world halted while it runs. Live aeons are present ($_world_live) and the world was not stopped. Wait for them to finish, or set SPIRA_WORLD_STOP_SKIP=1 to proceed with live aeons." >/dev/null 2>&1
-        ledger_done 0 world-stop-fence  # literal-ok: internal ledger category, not a label predicate
-        exit 0
-    fi
+_world_has_label=0
+bead_has_label "$(bdjson show "$BEAD_ID" 2>/dev/null)" "$_world_stop_label" && _world_has_label=1
+_world_live=""
+for _pf in "$SPIRA_RUN"/aeon-*.pid; do
+    [ -e "$_pf" ] || continue
+    _pid="$(cat "$_pf" 2>/dev/null)" || continue
+    [ -n "$_pid" ] && [ -d "/proc/$_pid" ] || { rm -f "$_pf"; continue; }
+    _world_live="${_world_live:+$_world_live, }$(basename "$_pf" .pid)"
+done
+unset _pf _pid
+_world_skip=0
+[ -n "${SPIRA_WORLD_STOP_SKIP:-}" ] && _world_skip=1
+case "$(world_stop_decide "$_world_has_label" "$_world_live" "$_world_skip")" in
+refuse)
+    # REFUSE, NOT PROCEED. Live aeons write to the database; running world.sh stop
+    # under them is what produced the three-minute outage this bead was filed to
+    # prevent. The fence releases the claim so the bead goes back to the ready queue,
+    # where it will be picked up once the live aeons finish naturally.
+    release_own_claim "$BEAD_ID"
+    log "$FAYTH/$AEON: $BEAD_ID carries $_world_stop_label — live aeons present ($_world_live) — released. Set SPIRA_WORLD_STOP_SKIP=1 to override."
+    bdq note "$BEAD_ID" "Released by aeon.sh: this bead carries $_world_stop_label and requires the world halted while it runs. Live aeons are present ($_world_live) and the world was not stopped. Wait for them to finish, or set SPIRA_WORLD_STOP_SKIP=1 to proceed with live aeons." >/dev/null 2>&1
+    ledger_done 0 world-stop-fence  # literal-ok: internal ledger category, not a label predicate
+    exit 0
+    ;;
+stop)
     # No live aeons (or operator override set): stop the world before the session.
     log "$FAYTH/$AEON: $BEAD_ID carries $_world_stop_label — stopping the world before this session${_world_live:+ (SPIRA_WORLD_STOP_SKIP set, live: $_world_live)}"
     "$SPIRA_HOME/world.sh" stop --why "$_world_stop_label bead $BEAD_ID" >/dev/null 2>&1 \
         || log "$FAYTH/$AEON: $BEAD_ID world.sh stop returned non-zero — proceeding"
     WORLD_WAS_STOPPED=1
-    unset _world_live
-fi
-unset _world_stop_label
+    ;;
+esac
+unset _world_stop_label _world_has_label _world_live _world_skip
 
 # ---- the workspace -------------------------------------------------------------------
 # THE REPOSITORY COMES FROM THE BEAD. A fayth supplies the persona, the statutes and the
@@ -1341,44 +1294,28 @@ fi
 #
 # ZERO MEANS FRESH. A branch the harness just created from the base has no prior commits
 # and gets no brief — "resume rather than restart" is noise when there is nothing to resume.
-RESUME_BRIEF=""
 _n_prior="$(git -C "$REPO" rev-list --count "$BASE_FQREF..$BRANCH" 2>/dev/null || true)"
+_prior_log=""
 case "${_n_prior:-0}" in
     0|'?') ;;
-    *)  _prior_log="$(git -C "$REPO" log --format='  %h %s' -n 5 "$BRANCH" 2>/dev/null)"
-        RESUME_BRIEF="## Prior work on this branch
-
-\`$BRANCH\` carries **$_n_prior** commit(s) from a previous session:
-
-\`\`\`
-$_prior_log
-\`\`\`
-
-Run \`git -C $WORK log --oneline\` and read the bead's notes (shown in \"The bead\" above)
-before doing any work. The notes record why the previous session did not land. Fix that
-specific problem — do not redo work that is already committed."
-        ;;
+    *) _prior_log="$(git -C "$REPO" log --format='  %h %s' -n 5 "$BRANCH" 2>/dev/null)" ;;
 esac
+RESUME_BRIEF="$(render_resume_brief "$BRANCH" "$WORK" "$_n_prior" "$_prior_log")"
 
 # SLAIN_BRIEF — when the last commit is a wip salvage from a slain session, the next aeon
 # needs to know so it reviews it before building on it rather than assuming it is finished.
 SLAIN_BRIEF=""
 if [ "${_n_prior:-0}" -gt 0 ] 2>/dev/null; then
     _last_subject="$(git -C "$REPO" log --format='%s' -1 "$BRANCH" 2>/dev/null)"
+    _slay_when="" _wip_diffstat=""
     case "$_last_subject" in
         *": wip — salvaged at slay ("*)
             _slay_when="$(git -C "$REPO" log --format='%ci' -1 "$BRANCH" 2>/dev/null)"
-            _slay_why="${_last_subject##*salvaged at slay (}"
-            _slay_why="${_slay_why%)}"
             _wip_diffstat="$(git -C "$REPO" diff --stat "$BASE_FQREF" "$BRANCH" 2>/dev/null | tail -1)"
-            SLAIN_BRIEF="## A previous attempt was slain
-
-A prior session was slain at ${_slay_when:-unknown time} (${_slay_why:-unknown reason}). The branch carries **$_n_prior** commit(s) beyond \`$BASE\`${_wip_diffstat:+ ($_wip_diffstat)}; the last is a salvaged wip commit — review it before building on it.
-
-Prior transcript (do not inline; read only if needed): \`$LOGF\`"
             ;;
     esac
-    unset _last_subject _slay_when _slay_why _wip_diffstat
+    SLAIN_BRIEF="$(render_slain_brief "$_last_subject" "$_n_prior" "$BASE" "$_slay_when" "$_wip_diffstat" "$LOGF")"
+    unset _last_subject _slay_when _wip_diffstat
 fi
 unset _n_prior _prior_log
 
@@ -1670,19 +1607,10 @@ fi
 # here. An aeon that has to estimate its remaining time will estimate it generously.
 if [ -n "${FAYTH_TIMEOUT_SECONDS:-}" ]; then
     DEADLINE_AT=$(( AEON_T0 + FAYTH_TIMEOUT_SECONDS ))
-    DEADLINE_LEFT=$(( DEADLINE_AT - $(date +%s) ))
-    DEADLINE_BRIEF="**This session is killed at $(date -d "@$DEADLINE_AT" +'%H:%M:%S %Z' 2>/dev/null || printf 'epoch %s' "$DEADLINE_AT") — $DEADLINE_LEFT seconds from now.**
-The kill comes from outside the session, on a clock, and it is a wall rather than a request:
-work in progress is discarded and anything you learned that is not written down goes with it.
-Do not estimate what is left — read it, as often as you need to:
-
-    echo \$(( $DEADLINE_AT - \$(date +%s) ))"
 else
-    DEADLINE_BRIEF="**This session has no wall-clock deadline.** It runs until its work is
-done. What ends a session that is not moving is the heartbeat: it stops when nothing has
-observably changed for several checks, the lease then expires, and the bead returns to the
-queue. So a long session is fine and a silent one is not."
+    DEADLINE_AT=""
 fi
+DEADLINE_BRIEF="$(render_deadline_brief "$DEADLINE_AT" "$(date +%s)")"
 
 # ---- chamber overlay: an operator's own copy of a brief outlives a release --------------
 # A hand edit made straight into the release checkout is reverted by the next skew refresh
@@ -1965,19 +1893,10 @@ export GH_CONFIG_DIR="$_AEON_GH_EMPTY"
 unset GH_TOKEN GITHUB_TOKEN
 export GIT_SSH_COMMAND="echo 'aeon: no SSH credentials — landing.sh and batch.sh handle forge writes' >&2; exit 1"
 export GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false
-_AEON_SETTINGS="$(aeon_settings)" || _AEON_SETTINGS=""
-_BEAD_PI=""
-[ "${FAYTH_PROJECT_INSTRUCTIONS:-}" = "none" ] && _BEAD_PI="user"
+mapfile -t _AEON_ARGV < <(aeon_claude_argv "$SPIRA_SYSTEM_FLAG" "$SYSTEM_FILE")
 SESSION_STARTED=1
 cat "$TASK_FILE" | ${FAYTH_TIMEOUT_SECONDS:+timeout $FAYTH_TIMEOUT_SECONDS} \
-    "${SPIRA_AGENT:-claude}" -p --output-format stream-json --verbose --include-partial-messages \
-           --system-prompt-snapshot on \
-           "$SPIRA_SYSTEM_FLAG" "$SYSTEM_FILE" \
-           --model "${FAYTH_MODEL:-claude-opus-5}" \
-           --allowedTools "${FAYTH_TOOLS:-Bash,Read,Edit,Write,Glob,Grep}" \
-           --dangerously-skip-permissions \
-           ${_BEAD_PI:+--setting-sources "$_BEAD_PI"} \
-           ${_AEON_SETTINGS:+--settings "$_AEON_SETTINGS"} \
+    "${SPIRA_AGENT:-claude}" "${_AEON_ARGV[@]}" \
     >> "$LOGF" 2>&1
 rc=$?
 SESSION_RC=$rc   # held for cleanup, which sees only $? at the time the trap fires
@@ -2002,13 +1921,7 @@ if [ -n "${SPIRA_WIKI:-}" ] && [ -d "$SPIRA_WIKI" ]; then
     _wc_real="$(cd "$SPIRA_WIKI" 2>/dev/null && pwd -P)"
     if [ -n "${_wc_main:-}" ] && [ "${_wc_real:-}" = "$_wc_main" ]; then
         _wc_dirty="$(git -C "$SPIRA_WIKI" status --short --untracked-files=all 2>/dev/null | cut -c4- | sort -u)"
-        _wc_new=""
-        while IFS= read -r _wp; do
-            [ -n "$_wp" ] || continue
-            [ "$_wp" = "wiki/tasks.md" ] && continue
-            grep -qxF -- "$_wp" <<< "$_wc_dirty" 2>/dev/null || continue
-            _wc_new="${_wc_new:+$_wc_new$'\n'}$_wp"
-        done < <(wiki_write_paths "$LOGF" "$SPIRA_WIKI")
+        _wc_new="$(wiki_commit_paths "$(wiki_write_paths "$LOGF" "$SPIRA_WIKI")" "$_wc_dirty")"
         if [ -n "$_wc_new" ]; then
             _wc_count="$(printf '%s\n' "$_wc_new" | grep -c .)"
             if printf '%s\n' "$_wc_new" | bash "$SPIRA_HOME/wiki-commit.sh" \
@@ -2020,7 +1933,7 @@ if [ -n "${SPIRA_WIKI:-}" ] && [ -d "$SPIRA_WIKI" ]; then
             unset _wc_count
         fi
     fi
-    unset _wc_main _wc_real _wc_new _wc_dirty _wp
+    unset _wc_main _wc_real _wc_new _wc_dirty
 fi
 
 # ---- verdict -------------------------------------------------------------------------
@@ -2091,57 +2004,48 @@ else
 fi
 log "$FAYTH: $BEAD_ID status=$st committed=$committed superseded=$superseded delivers=${delivers:-none}"
 
-# EVICTION RACE. Fires only for LAND_EVICTION_REASONS. Three brakes, checked in order:
-# idempotence (sidecar tip+reason unchanged since the last reopen — a byte-identical
-# repeat, skip), stale tip (record predates a newer commit — close stands), cap
-# (SPIRA_EVICTION_ESCALATE_AT prior requeues — escalate instead of reopening again).
+# EVICTION RACE. eviction_reopen (lib.sh) decides reopen/stale/cap/none from the landstate
+# record, the current branch tip and the prior eviction-race requeue count; this block is
+# the side effects (idempotence sidecar, the reopen/escalate calls, the log lines).
 if [ "$st" = "closed" ] && [ "$committed" = "yes" ] && [ "$superseded" != 1 ]; then
     _evict_ls="$(land_state "$BEAD_ID" 2>/dev/null)" || _evict_ls=""
-    _evict_state="" _evict_tip="" _evict_at="" _evict_reason=""
-    read -r _evict_state _evict_tip _evict_at _evict_reason <<< "$_evict_ls"
-    _evict_state="${_evict_state:-}"; _evict_reason="${_evict_reason:-}"
-    _is_eviction=0
-    if [ "$_evict_state" = "EJECTED" ]; then
-        _is_eviction=1
-    elif [ "$_evict_state" = "RED" ]; then
-        for _er in $LAND_EVICTION_REASONS; do
-            [ "$_evict_reason" = "$_er" ] && { _is_eviction=1; break; }
-        done
-    fi
-    if [ "$_is_eviction" = "1" ]; then
+    if [ -n "$_evict_ls" ] && [ "$(eviction_reopen "$_evict_ls" "" 0)" != none ]; then
+        _evict_state="" _evict_tip="" _evict_at="" _evict_reason=""
+        read -r _evict_state _evict_tip _evict_at _evict_reason <<< "$_evict_ls"
         _evict_seen_f="$LANDSTATE/$BEAD_ID.evict-seen"
         _evict_seen="$(cat "$_evict_seen_f" 2>/dev/null)" || _evict_seen=""
         if [ -n "$_evict_seen" ] && [ "$_evict_seen" = "$_evict_tip $_evict_reason" ]; then
             log "$FAYTH: $BEAD_ID closed with landstate=$_evict_state — tip+reason unchanged since the last eviction-race reopen, duplicate skipped"
         else
             _cur_tip="$(git -C "$REPO" rev-parse "$BRANCH" 2>/dev/null)" || _cur_tip=""
-            if [ -n "$_evict_tip" ] && [ "$_evict_tip" != "none" ] && [ -n "$_cur_tip" ] && [ "$_evict_tip" != "$_cur_tip" ]; then
+            _evict_count="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+                "SELECT COUNT(*) FROM events WHERE issue_id='$BEAD_ID' AND event_type='requeued' AND new_value='eviction-race'" \
+                2>/dev/null | sed -n '3p' | tr -d ' ')" || _evict_count=0
+            _evict_count="${_evict_count:-0}"
+            case "$(eviction_reopen "$_evict_ls" "$_cur_tip" "$_evict_count")" in
+            stale)
                 log "$FAYTH: $BEAD_ID closed with landstate=$_evict_state — record tip $_evict_tip ≠ branch tip $_cur_tip, stale record, close stands"
-            else
-                _evict_count="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
-                    "SELECT COUNT(*) FROM events WHERE issue_id='$BEAD_ID' AND event_type='requeued' AND new_value='eviction-race'" \
-                    2>/dev/null | sed -n '3p' | tr -d ' ')" || _evict_count=0
-                _evict_count="${_evict_count:-0}"
-                if printf '%d' "$_evict_count" >/dev/null 2>&1 && [ "$_evict_count" -ge "${SPIRA_EVICTION_ESCALATE_AT:-3}" ]; then
-                    bdq label add "$BEAD_ID" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
-                    bdq note "$BEAD_ID" "Eviction-race guard capped: reopened $_evict_count time(s) already. Recertify the branch by hand and clear the $SPIRA_ASK_LABEL label; the guard will not reopen it again on its own." >/dev/null 2>&1 || true
-                    log "$FAYTH: $BEAD_ID eviction-race escalated — $_evict_count prior requeue(s) ≥ ${SPIRA_EVICTION_ESCALATE_AT:-3}, labeled $SPIRA_ASK_LABEL instead of reopening"
-                    printf '%s %s' "$_evict_tip" "$_evict_reason" > "$_evict_seen_f" 2>/dev/null || true
-                else
-                    bead_reopen "$BEAD_ID" eviction-race "Reopened by aeon.sh: bead closed while landstate is $_evict_state — the branch was evicted from the batch while this session was in flight. The close is valid but the work cannot re-enter the queue while the bead is closed. Recertify the branch to re-enter the merge queue."
-                    log "$FAYTH: $BEAD_ID REOPENED — closed with landstate=$_evict_state (eviction race)"
-                    st="open"
-                    REQUEUE_CAUSE="eviction-race"
-                    REQUEUE_WHY="Batch evicted the branch while this aeon was in flight; the bead was re-closed on a stale pass. Recertify the branch."
-                    printf '%s %s' "$_evict_tip" "$_evict_reason" > "$_evict_seen_f" 2>/dev/null || true
-                fi
-                unset _evict_count
-            fi
-            unset _cur_tip
+                ;;
+            cap)
+                bdq label add "$BEAD_ID" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
+                bdq note "$BEAD_ID" "Eviction-race guard capped: reopened $_evict_count time(s) already. Recertify the branch by hand and clear the $SPIRA_ASK_LABEL label; the guard will not reopen it again on its own." >/dev/null 2>&1 || true
+                log "$FAYTH: $BEAD_ID eviction-race escalated — $_evict_count prior requeue(s) ≥ ${SPIRA_EVICTION_ESCALATE_AT:-3}, labeled $SPIRA_ASK_LABEL instead of reopening"
+                printf '%s %s' "$_evict_tip" "$_evict_reason" > "$_evict_seen_f" 2>/dev/null || true
+                ;;
+            reopen)
+                bead_reopen "$BEAD_ID" eviction-race "Reopened by aeon.sh: bead closed while landstate is $_evict_state — the branch was evicted from the batch while this session was in flight. The close is valid but the work cannot re-enter the queue while the bead is closed. Recertify the branch to re-enter the merge queue."
+                log "$FAYTH: $BEAD_ID REOPENED — closed with landstate=$_evict_state (eviction race)"
+                st="open"
+                REQUEUE_CAUSE="eviction-race"
+                REQUEUE_WHY="Batch evicted the branch while this aeon was in flight; the bead was re-closed on a stale pass. Recertify the branch."
+                printf '%s %s' "$_evict_tip" "$_evict_reason" > "$_evict_seen_f" 2>/dev/null || true
+                ;;
+            esac
+            unset _cur_tip _evict_count
         fi
         unset _evict_seen _evict_seen_f
     fi
-    unset _evict_ls _evict_state _evict_tip _evict_at _evict_reason _is_eviction _er
+    unset _evict_ls _evict_state _evict_tip _evict_at _evict_reason
 fi
 
 if [ "$st" = "closed" ] && [ "$committed" = "no" ] && [ "$superseded" != 1 ]; then
