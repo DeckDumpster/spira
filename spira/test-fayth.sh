@@ -419,9 +419,14 @@ rm -f "$EL_REPO/.spira/modes"
 # ==========================================================================================
 # Restore the real chamber for the remaining, chamber-file-level sections
 # ==========================================================================================
+# conf.sh is idempotent (SPIRA_CONF_LOADED guards it), so re-sourcing lib.sh here does NOT
+# recompute the SPIRA_*_LABEL defaults. The real chamber fayths reference several of them as
+# BARE variables (builder.fayth's FAYTH_EXCLUDE_LABELS uses $SPIRA_ASK_LABEL/$SPIRA_CI_LABEL
+# with no `:-` guard), so unsetting one here would make fayth_get's sourcing subshell die on
+# an unbound variable under `set -u` and return empty for every field on every fayth — every
+# persona then misreads as an operator persona. The block above pinned each of these to
+# exactly conf.sh's own default, so they are left set rather than unset.
 unset SPIRA_FAYTHS SPIRA_REPO_MAP SPIRA_DB
-unset SPIRA_PLAN_LABEL SPIRA_INCIDENT_LABEL SPIRA_GROOMER_LABEL
-unset SPIRA_MAECHEN_LABEL SPIRA_SPIKE_LABEL SPIRA_CZAR_LABEL
 export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
