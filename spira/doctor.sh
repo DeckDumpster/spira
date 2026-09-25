@@ -314,6 +314,33 @@ doctor_check_operator_channel() {
     fi
 }
 
+# --------------------------------------------------------------------------------------
+# CONCIERGE SINGLETON (sp-rig42). Two live processes answering to the same Remote Control
+# name "concierge" is invisible from the phone — both show as the one session — and the
+# mail wake only ever reaches the managed one, so an operator talking to the stray never
+# sees a reply arrive. concierge.sh refuses to START a second one; this is the read-only
+# check for a stray that got there some other way (a bare `claude --remote-control
+# concierge` typed by hand into a dead cockpit pane, which is how this happened both times
+# it was seen).
+# --------------------------------------------------------------------------------------
+doctor_check_concierge_singleton() {
+    local conc="$SPIRA_REPO/concierge.sh" stray
+    if [ ! -x "$conc" ]; then
+        WARN "no concierge.sh at $conc — cannot check for a second concierge"
+        return
+    fi
+    stray="$(bash "$conc" _stray-holders 2>/dev/null)"
+    if [ -n "$stray" ]; then
+        FAIL "a second concierge is live outside the managed session" \
+             "pid(s): $(printf '%s' "$stray" | tr '\n' ' ')
+        Mail wakes reach only the managed session; this one will never see a reply. Inspect:
+        ps -o pid,tty,lstart,cmd -p <pid>. If it should be the managed one, kill it and run:
+        $conc start"
+    else
+        OK "Remote Control name 'concierge' held by no more than the managed session"
+    fi
+}
+
 echo "spira doctor"
 
 echo
@@ -339,6 +366,10 @@ doctor_check_snapshot_fresh
 echo
 echo "operator channel"
 doctor_check_operator_channel
+
+echo
+echo "concierge"
+doctor_check_concierge_singleton
 
 echo
 if [ "$fatal" -gt 0 ]; then

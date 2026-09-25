@@ -35,13 +35,18 @@ _wake_loop() {
         age="$("$SPIRA_HOME/mail.sh" unread-age "$mailbox" 2>/dev/null)"
         case "$age" in ''|*[!0-9]*) age=0 ;; esac
         attempt=$((attempt+1))
+        local wake_err
         # shellcheck disable=SC2086  # wake_cmd may be multi-word
-        if $wake_cmd "You have $count unread messages in $mailbox, oldest ${age}s old — mail.sh list $mailbox --unread" 2>/dev/null; then
+        if wake_err="$($wake_cmd "You have $count unread messages in $mailbox, oldest ${age}s old — mail.sh list $mailbox --unread" 2>&1)"; then
             printf '%s spira-mail-deliver: %s: wake sent (attempt %d, %d unread, oldest %ss)\n' \
                 "$(date -u +%FT%TZ)" "$mailbox" "$attempt" "$count" "$age"
         else
-            printf '%s spira-mail-deliver: %s: wake failed (attempt %d, reader not running?)\n' \
-                "$(date -u +%FT%TZ)" "$mailbox" "$attempt" >&2
+            # THE REASON, NOT JUST THE FACT. A wake command that refuses says why on stderr
+            # (e.g. concierge.sh wake: the pane exists but its process has exited) — losing
+            # that behind 2>/dev/null left every failure reading as "reader not running?"
+            # whether or not that was true.
+            printf '%s spira-mail-deliver: %s: wake failed (attempt %d): %s\n' \
+                "$(date -u +%FT%TZ)" "$mailbox" "$attempt" "${wake_err:-reader not running?}" >&2
         fi
         local idx=$((attempt-1))
         [ "$idx" -ge "${#backoff[@]}" ] && idx=$(( ${#backoff[@]} - 1 ))
