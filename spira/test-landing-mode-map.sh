@@ -172,6 +172,11 @@ else
     real_modes="${real_modes_line#\# land-modes:}"
     real_body="$(land_repo_body "$HERE/landing.sh")"
     [ -n "$real_body" ] || bad "land_repo_body extracted non-empty text" "extraction returned nothing"
+    printf 'DEBUG: real_body lines=%s first=[%s] last=[%s]\n' \
+        "$(printf '%s\n' "$real_body" | wc -l)" \
+        "$(printf '%s\n' "$real_body" | head -1)" \
+        "$(printf '%s\n' "$real_body" | tail -1)" >&2
+    printf 'DEBUG: sed --version: %s\n' "$(sed --version 2>&1 | head -1)" >&2
     unhandled=0
     for m in $real_modes; do
         case "$m" in
