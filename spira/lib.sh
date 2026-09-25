@@ -3004,6 +3004,18 @@ aeon_fuse_minutes() {
         _mt="$(find "$wt" -not -path '*/.git*' -printf '%T@\n' 2>/dev/null \
                | sort -rn | head -1 | cut -d. -f1)"
         [ -n "${_mt:-}" ] && [ "${_mt:-0}" -gt "$_last_t" ] && _last_t="$_mt"
+        # A GATE THAT JUST FINISHED IS ALSO PROGRESS, not merely one that is still
+        # running: the live-gate exemption above covers the gate's own runtime, but the
+        # moment it exits, its rc/out/started mtimes are the newest fact the session has
+        # to act on and must reset the fuse the same as a commit or a write would.
+        for _gd in "$SPIRA_RUN/gate-run/"*"_${bead}"/; do
+            [ -d "$_gd" ] || continue
+            for _gf in "$_gd/rc" "$_gd/out" "$_gd/started"; do
+                local _gt
+                _gt="$(stat -c %Y "$_gf" 2>/dev/null)" || continue
+                [ "${_gt:-0}" -gt "$_last_t" ] && _last_t="$_gt"
+            done
+        done
         if [ "${_last_t:-0}" -gt 0 ] 2>/dev/null; then
             _fuse=$(( ( $(date +%s) - _last_t ) / 60 ))
         fi
