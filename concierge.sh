@@ -208,9 +208,9 @@ concierge_live_pid() {
         # was reported as a headless concierge, refusing every start until it was killed by
         # hand (2026-09-25). A holder is a claude executable resumed ON this id.
         local argv0 args
-        argv0="$(tr '\0' '\n' < "$f" 2>/dev/null | head -1)" || continue
+        args="$( { tr '\0' '\n' < "$f"; } 2>/dev/null )" || continue
+        argv0="${args%%$'\n'*}"
         [ "${argv0##*/}" = claude ] || continue
-        args="$(tr '\0' '\n' < "$f" 2>/dev/null)" || continue
         [[ "$args" == *$'\n'--resume$'\n'"$sid"* ]] || continue
         printf '%s' "$pid"
         return 0
