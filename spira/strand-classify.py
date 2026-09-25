@@ -79,6 +79,14 @@ _pass_truncated = os.environ.get("PASS_TRUNCATED", "0") == "1"
 # exercise this path directly.
 _pool_paused = os.environ.get("POOL_PAUSED", "0") == "1"
 
+# ADMISSION THROTTLE AWARENESS. THROTTLE_STATE is set by throttle_state() in strand.sh from
+# the stamp watchtower.sh --throttle-check writes: "shut" while the certified queue is over
+# depth and aeons are deliberately withheld (sp-h7zzx), "open" when there is no stamp, and
+# "unreadable" when the stamp exists but could not be read — a state this classifier must
+# not fold into either of the other two (law-a-control-that-cannot-check-must-refuse).
+_throttle_state = os.environ.get("THROTTLE_STATE", "open")
+_throttle_detail = os.environ.get("THROTTLE_DETAIL", "")
+
 # FLEET SLOT AWARENESS. A starved partition under a saturated fleet is queue ordering,
 # not starvation — every slot is held by another persona doing real work. Escalating it
 # pages the operator about correct behaviour: a busy builder holds the only aeon slot
@@ -181,6 +189,16 @@ if ready and live == 0:
             "%d bead(s) ready but the last sentinel pass was truncated before evaluating this partition: %s" % (
                 len(ready), " ".join(sorted(ready)[:6])),
             "the pass was slow — check bd lock contention; this partition will be evaluated next pass")
+    elif _throttle_state == "shut":
+        row("throttled", "-", "info",
+            "throttled: %s — %d bead(s) ready but admission is deliberately withheld: %s" % (
+                _throttle_detail, len(ready), " ".join(sorted(ready)[:6])),
+            "none — lifts automatically once certified depth drops below the release threshold")
+    elif _throttle_state == "unreadable":
+        row("throttle-unreadable", "-", "escalate",
+            "%d bead(s) ready and no live aeon, and the queue throttle state could not be read (%s) — this detector will not guess whether admission is open or shut" % (
+                len(ready), _throttle_detail),
+            "check permissions on the queue-throttled stamp file ($SPIRA_RUN/queue-throttled)")
     elif _max_aeons > 0 and _total_live >= _max_aeons:
         # Every slot is held by another partition. This is queue ordering, not a fault;
         # do not page the operator. The row is still emitted (as info) so strand.sh report

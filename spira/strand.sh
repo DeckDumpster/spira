@@ -7,6 +7,8 @@
 #                               where it is not
 #   strand.sh check --dry-run   classify and print, change nothing
 #   strand.sh check --from <f>  classify a saved TSV instead of the live graph
+#   strand.sh throttle-state    print "open|shut|unreadable<TAB>detail" — what classify_one
+#                               reads before calling withheld aeons a strand
 #
 # WHAT THIS REPLACES, AND THE TWO DEFECTS IT DOES NOT INHERIT
 # ----------------------------------------------------------
@@ -96,7 +98,7 @@ MODE=report; JSON=0; DRY=0; FROM=
 # runbook reaches for — died with "line 76: $1: unbound variable" while `strand.sh check`
 # worked. The loop was fine and the human entry point was not.
 MODE="${1:-report}"
-case "$MODE" in report|check) shift 2>/dev/null || true ;; *) MODE=report ;; esac
+case "$MODE" in report|check|throttle-state) shift 2>/dev/null || true ;; *) MODE=report ;; esac
 while [ $# -gt 0 ]; do
     case "$1" in
         --json)    JSON=1 ;;
@@ -141,6 +143,29 @@ live_aeons() {   # live_aeons <labels> -> live aeons working THAT partition
     [ -n "${fs// /}" ] || fs="$(spira_fayths)"
     for f in $fs; do n=$((n + $(aeon_count "$f"))); done
     printf '%d' "$n"
+}
+
+# throttle_state -> "open|shut|unreadable" and a detail, tab-separated. Reads the stamp
+# watchtower.sh --throttle-check writes (SPIRA_THROTTLE_STAMP, same file CHECK7 in
+# sentinel.sh gates the pool on) rather than recomputing depth — that computation belongs
+# to the one place that ENGAGES the throttle, not to every reader of it.
+#
+# A stamp that exists but cannot be read is neither "open" nor "shut": guessing either way
+# is the defect this exists to fix (law-a-control-that-cannot-check-must-refuse), so it
+# gets its own state and its own row rather than being folded into one of the other two.
+throttle_state() {
+    local stamp="${SPIRA_THROTTLE_STAMP:-$SPIRA_RUN/queue-throttled}" line depth
+    if [ -e "$stamp" ]; then
+        if line="$(head -1 "$stamp" 2>/dev/null)" && [ -n "$line" ]; then
+            depth="$(printf '%s' "$line" | grep -oE 'depth=[0-9]+' | cut -d= -f2)"
+            printf 'shut\tdepth %s >= release-at %s\n' \
+                "${depth:-?}" "${SPIRA_QUEUE_THROTTLE_RELEASE_AT:-8}"
+        else
+            printf 'unreadable\t%s exists but could not be read\n' "$stamp"
+        fi
+    else
+        printf 'open\t\n'
+    fi
 }
 
 # THE PARTITIONS THIS RUN COVERS: one "<labels>\t<exclude-labels>" a line. SPIRA_LABELS
@@ -272,6 +297,13 @@ print("\n".join(r["id"] for r in rows if r.get("status") == "in_progress"))' 2>/
     local _total_live _pool_paused=0
     [ "${SPIRA_MAX_AEONS:-}" = "0" ] && _pool_paused=1
     _total_live="$(aeons_live_total)"
+    # ADMISSION THROTTLE. Withholding aeons while the certified queue is over depth is
+    # deliberate (sp-h7zzx) — the same class of correct refusal as CAPACITY_PAUSED above,
+    # and reporting it as 'starved' pages the operator about the harness doing its job
+    # (sp-0ua6w: "the [spira,plan] queue is stranded (starved)" while CHECK7 logged
+    # "throttle active" in the very same pass).
+    local _throttle_state _throttle_detail
+    IFS=$'\t' read -r _throttle_state _throttle_detail < <(throttle_state)
     # DID THE LAST PASS EVALUATE THIS PARTITION? Find "not evaluated (pass budget
     # exhausted)" in the most recent sentinel pass for any fayth whose partition is
     # $labels. If present, "starved" is wrong — the pass never reached this partition.
@@ -295,6 +327,7 @@ print("\n".join(r["id"] for r in rows if r.get("status") == "in_progress"))' 2>/
     TOTAL_LIVE="$_total_live" MAX_AEONS="${SPIRA_MAX_LIVE_AEONS:-0}" \
     GHOST_GRACE="$GHOST_GRACE" CAPACITY_PAUSED="$_cap_paused" CAPACITY_DETAIL="$_cap_detail" \
     PASS_TRUNCATED="$_truncated" POOL_PAUSED="$_pool_paused" \
+    THROTTLE_STATE="$_throttle_state" THROTTLE_DETAIL="$_throttle_detail" \
     python3 "$HERE/strand-classify.py"
     local rc=$?
     rm -rf "$tmp"
@@ -568,6 +601,7 @@ cmd_check() {
 }
 
 case "$MODE" in
-    report) cmd_report ;;
-    check)  cmd_check ;;
+    report)          cmd_report ;;
+    check)           cmd_check ;;
+    throttle-state)  throttle_state ;;
 esac
