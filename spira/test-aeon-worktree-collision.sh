@@ -122,6 +122,21 @@ want "case 1: log names the branch"     "spira/sp-cw-a"                  "$out2"
 want "case 1: log names the holder id"  "sp-cw-a"                        "$out2"
 want "case 1: log names the holder path" "$SPIRA_RUN/worktree/sp-cw-a"   "$out2"
 
+# THE DISCRIMINATING CHECK: "never got a workspace" alone is also true of the OLD adoption
+# bug — it redirected bead B into bead A's EXISTING directory rather than creating a NEW one
+# named sp-cw-b, so that check alone cannot tell refusal from silent adoption. What tells
+# them apart is whether bead B's session ever reached the model at all: refused, it never
+# does, and the bead is never closed; adopted, the shim closes it from inside A's worktree.
+b_status="$(bd -C "$SPIRA_DB" show sp-cw-b --json 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+d = d if isinstance(d, list) else [d]
+print(d[0].get("status","") if d else "")' 2>/dev/null)"
+[ "$b_status" != "closed" ] \
+    && ok "case 1: bead B was never closed — its summon never reached the model" \
+    || bad "case 1: bead B was never closed — its summon never reached the model" "status=$b_status"
+
 # The other bead's worktree must be untouched — refusal, not repair.
 [ -e "$SPIRA_RUN/worktree/sp-cw-a/.git" ] \
     && ok "case 1: bead A's worktree is untouched by B's refused summon" \
