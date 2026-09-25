@@ -19,15 +19,11 @@
 #
 # defect: sp-lkzl
 # host-reason: creates scratch git repos to test gate.sh; no container-hosted state
+# tier: T0
 # covers: spira/gate.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 command -v flock >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH"; exit 77; }
 
@@ -40,7 +36,7 @@ mkdir -p "$RUN/worktree" "$SH"
 # THE GATE UNDER TEST IS A COPY. lib.sh, conf.sh, exclude.sh, skew.sh, yield.sh and
 # suite-covers.sh travel with it because gate.sh fails closed on their absence and
 # lib.sh sources suite-covers.sh on startup.
-cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" \
+cp "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" \
    "$HERE/skew.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" "$SH/"
 
 git init -q --bare -b main "$REMOTE"
@@ -111,6 +107,4 @@ is   "SEEN GREEN: gate passes when file is present" "0" "$rc2"
 runs="$(wc -l < "$RUNS" | tr -d ' ')"
 is   "SEEN GREEN: CMD was actually executed (ran file counted)" "1" "$runs"
 nowant "SEEN GREEN: no config-error in output" "configuration error" "$out2"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

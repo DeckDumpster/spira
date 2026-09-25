@@ -29,16 +29,12 @@
 # one column and the number stops meaning anything.
 #
 # defect: sp-1xb0
+# tier: T1
 # covers: spira/yield.sh spira/gate.sh spira/watchtower.sh cockpit/health.sh
 # scar: yield.sh was absent; gate faults landed in the wrong column and no count existed, so the gate's cost-vs-catch ratio was unmeasured.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-yield.sh"
 
@@ -420,5 +416,4 @@ else
 fi
 
 echo
-echo "test-yield.sh: $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+tl_summary

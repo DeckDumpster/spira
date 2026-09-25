@@ -18,14 +18,11 @@
 # verifies that the offender (the diagnostic token) is correctly identified, then Case
 # 1 verifies it survives a run where tail -20 would have lost it.
 #
+# tier: T1
 # covers: spira/gate.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want(){ [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 gone(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] absent in [$3]"; }
 
 command -v flock >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH"; exit 77; }
@@ -38,7 +35,7 @@ mkdir -p "$RUN/worktree" "$HOMEDIR" "$SH"
 
 # The gate under test is a copy — the harness's own bytes are part of the verdict key,
 # so the installed copy must not be what is tested.
-cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" \
+cp "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" \
    "$HERE/yield.sh" "$HERE/suite-covers.sh" "$SH/"
 
 git init -q --bare -b main "$REMOTE"
@@ -117,6 +114,4 @@ want "generic failure message also present"                      "could not buil
 printf 'repo | %s | push | origin/main |  | exit 0\n' "$REPO" > "$MAP"
 pass_out="$(rungate "spira/sp-t1" 2>&1)"
 gone "diagnostic absent from a passing gate" "$DIAG_TOKEN" "$pass_out"
-
-printf '\n%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

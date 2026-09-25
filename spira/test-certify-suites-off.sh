@@ -18,13 +18,11 @@
 #   4. landing.sh passes the switch on both queue-mode certification calls, and not on the
 #      push-mode call, which lands straight on the base and must keep its suites.
 #
+# tier: T1
 # covers: spira/gate-touched.sh spira/gate.sh spira/landing.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-certify-suites-off.sh"
 # ITS OWN GIT REPOSITORY. The suite container is not a git checkout (its first run, on main
@@ -64,7 +62,9 @@ if [ -z "$fn" ]; then
     bad "gate_key located (positive control)" "awk extracted nothing"
 else
     ok "gate_key located (positive control)"
-    key() { ( eval "$fn"; REPO="$FIX"; BR=HEAD; files="spira/gate.sh"; CMD="bash x"
+    # gate_key() now calls gate_key_hash() (gate-lib.sh) for the pure hashing step —
+    # sourced here too, since $fn is only the gate_key() body, extracted by awk.
+    key() { ( . "$HERE/gate-lib.sh"; eval "$fn"; REPO="$FIX"; BR=HEAD; files="spira/gate.sh"; CMD="bash x"
               EXCLUDE="$HERE/gate.sh"; SKEW="$HERE/gate.sh"; REPO_NAME=spira
               SPIRA_GATE_SUITES="$1" gate_key ); }
     k_on="$(key on)"; k_on2="$(key on)"; k_off="$(key off)"
@@ -89,6 +89,4 @@ n_cert="$(grep -c 'SPIRA_GATE_SUITES="${SPIRA_CERTIFY_SUITES:-on}"' "$HERE/landi
 is "both queue-mode certification calls pass the switch" "2" "$n_cert"
 n_gate="$(grep -c '"$SPIRA_HOME/gate.sh"' "$HERE/landing.sh")"
 is "positive control: landing.sh has three gate.sh calls" "3" "$n_gate"
-
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 # test-gate-touched.sh — gate-touched.sh: coverage-based landing gate suite selector.
 #
+# tier: T1
 # covers: spira/gate-touched.sh spira/select.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 iszero()  { [ "$2" = 0 ]    && ok "$1" || bad "$1" "expected 0, got $2"; }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -55,7 +52,7 @@ echo "Part A: coverage-based selection on branch tree"
 want    "A1: covering suite selected"           "test-a.sh"   "$(sel)"
 want    "A2: branch-added suite selected"       "test-a2.sh"  "$(sel)"
 want    "A3: always-run suite selected"         "test-c.sh"   "$(sel)"
-notwant "A4: unrelated suite not selected"      "test-b.sh"   "$(sel)"
+nowant "A4: unrelated suite not selected"      "test-b.sh"   "$(sel)"
 want    "A5: meta suite selected (test file in diff)" "test-meta.sh" "$(sel)"
 
 # ---------------------------------------------------------------------------
@@ -68,7 +65,7 @@ echo "Part B: suite added by branch is absent on base tree"
 git -C "$R" checkout -q main
 base_sel="$(cd "$R" && SPIRA_GATE_REPO="$R" SPIRA_BATCH_SUITE_DIR="$R/spira" \
     bash "$TOUCHED" main br 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')"
-notwant "B1: branch-added suite absent on base" "test-a2.sh" "$base_sel"
+nowant "B1: branch-added suite absent on base" "test-a2.sh" "$base_sel"
 want    "B2: base suite still selected on base" "test-a.sh"  "$base_sel"
 git -C "$R" checkout -q br
 
@@ -84,9 +81,8 @@ printf 'spira/changed.sh\n' > "$FLIST"
 fsel="$(cd "$R" && SPIRA_GATE_FILES="$FLIST" SPIRA_GATE_REPO="$R" SPIRA_BATCH_SUITE_DIR="$R/spira" \
     bash "$TOUCHED" main br 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')"
 want    "C1: GATE_FILES: covering suite selected"     "test-a.sh"  "$fsel"
-notwant "C2: GATE_FILES: branch-added suite excluded" "test-a2.sh" "$fsel"
-notwant "C3: GATE_FILES: unrelated suite excluded"    "test-b.sh"  "$fsel"
+nowant "C2: GATE_FILES: branch-added suite excluded" "test-a2.sh" "$fsel"
+nowant "C3: GATE_FILES: unrelated suite excluded"    "test-b.sh"  "$fsel"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

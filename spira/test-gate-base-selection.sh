@@ -4,14 +4,11 @@
 # Run against the base, a diff-selecting gate command sees an empty diff, selects nothing and
 # passes, so every red suite reads as the branch's own. The gate therefore hands both trials
 # the branch as the selection head.
+# tier: T1
 # covers: spira/gate.sh spira/testenv-batch.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want(){ [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 command -v flock >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH"; exit 77; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -19,7 +16,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"; RUN="$TMP/run"; SH="$TMP/spira"
 MAP="$TMP/repo-map"; HOMEDIR="$TMP/home"; RUNS="$TMP/invocations"
 mkdir -p "$RUN/worktree" "$HOMEDIR" "$SH"; : > "$RUNS"
-cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" "$HERE/yield.sh" "$SH/"
+cp "$HERE/gate.sh" "$HERE/gate-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" "$HERE/yield.sh" "$SH/"
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
@@ -50,5 +47,4 @@ isnt_branch="$(printf '%s' "$base_line" | cut -d' ' -f1)"
 is   "and the base trial also selects from the branch" "$BR" "$(printf '%s' "$base_line" | cut -d' ' -f2)"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
