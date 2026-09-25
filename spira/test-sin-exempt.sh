@@ -20,82 +20,49 @@
 # (measured sp-kufh). SPIRA_SIN_EXEMPT=1 is the brake: the watchtower sets it so its ref
 # cannot reach the SIN escalation.
 #
-# A REAL bd ON A FIXTURE DATABASE (law-prefer-the-real-dependency), because the test is about
-# what labels and notes incident.sh writes through bd.
+# DEMOTED TO T1 (UC-ops-detection-remediation-07). recurs_of -> _counter_events_query needs
+# only row 3 of `bd sql`'s output, which embedded testdb refuses entirely (it answers every
+# `bd sql` with "not yet supported") and server-mode testdb costs ~110s to prove it. Neither
+# is needed: incident-stub-bd.py is a genuinely stateful fake bd (a second filing must see
+# the first filing's write, and a bump_recur event must be counted by the next recurs_of
+# call), so the whole sequence — create, recur, recur, escalate — runs against it exactly as
+# it would against real bd, without a fixture database at all.
+#
+# The DRAINING-escalation exemption claim ("watchtower.sh sets SPIRA_SIN_EXEMPT=1") is
+# SOURCE-GREPPED from test-watchtower.sh instead of here, which already captures the
+# incident env on that call site.
 #
 # defect: sp-kufh
-# covers: spira/incident.sh spira/watchtower.sh
-# hermetic-ok: uses a fixture database, no systemd or gh
+# tier: T1
+# covers: spira/incident.sh spira/incident-stub-bd.py
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
-# shellcheck disable=SC1090
-. "$HERE/testdb.sh"
-testdb_require test-sin-exempt
-TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-# testdb-mode: server — recurs_of (via lib.sh) reads the events table via bd sql, which embedded mode refuses
-export SPIRA_TESTDB_MODE=server
-testdb_up sinex || {
-    printf 'SKIP test-sin-exempt: server testdb not available\n' >&2
-    exit 77
-}
-# lib.sh provides recurs_of for event-based recurrence counting (sp-recur-N labels
-# are no longer written; sp-lzt moved the count to the events table).
-# shellcheck disable=SC1090
-. "$HERE/lib.sh"
+echo "test-sin-exempt.sh"
 
 INC="$HERE/incident.sh"
-B() { bd -C "$SPIRA_DB" "$@"; }
-mkdir -p "$TMP/run"
+STUB_BD="$HERE/incident-stub-bd.py"
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+mkdir -p "$TMP/home" "$TMP/run"
 
-# mail.sh stub records sends rather than reaching a real escalation path.
-mkdir -p "$TMP/sinex-home"
-export MAIL_LOG="$TMP/mail.log"
-cat > "$TMP/sinex-home/mail.sh" <<'M'
+export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log" MAIL_LOG="$TMP/mail.log"
+cat > "$TMP/home/mail.sh" <<'M'
 #!/usr/bin/env bash
 [ "${1:-}" = send ] || exit 0
 printf '%s\n' "$*" >> "$MAIL_LOG"
 cat >> "$MAIL_LOG"
 M
-chmod +x "$TMP/sinex-home/mail.sh"
+chmod +x "$TMP/home/mail.sh"
 
-labels_of() { B show "$1" --json 2>/dev/null | python3 -c '
-import json, sys
-d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-print(" ".join(d[0].get("labels") or []))'; }
-has_label() { [[ " $(labels_of "$1") " == *" $2 "* ]]; }
-# recur_max: how many recurrences the store has recorded against a bead.
-#
-# THIS USED TO READ sp-recur-N LABELS, AND THEY ARE NOT WRITTEN ANY MORE (sp-lzt). incident.sh
-# records a recurrence as an `recurred` EVENT and says so in its own comment; the labels went
-# away with it. The label read kept working — it found nothing, returned 0, and every
-# assertion here compared 0 against the expected count, so five FAILs pointed at the sin
-# escalation while the thing they were reading had simply moved. test-suites.sh was updated
-# for the same change; this suite was missed.
-#
-# recurs_of is lib.sh's own reader for that counter (bd sql against the events table).
-# Using it rather than a private query is also what keeps this suite honest when the storage
-# moves again.
-# shellcheck disable=SC1090
-. "$HERE/lib.sh" 2>/dev/null || true
-recur_max() {
-    local _n; _n="$(recurs_of "$1" 2>/dev/null)"
-    case "$_n" in ''|*[!0-9]*) echo 0 ;; *) echo "$_n" ;; esac
-}
-
-# file_incident <ref> <title> <payload> [VAR=val ...]
-# Runs incident.sh file once with the given ref and title on stdin.
-file_incident() {
+file_incident() {  # file_incident <ref> <title> <payload> [VAR=val ...]
     local ref="$1" title="$2" payload="$3"; shift 3
     printf '%s' "$payload" | \
-        env SPIRA_DB="$SPIRA_DB" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
-        SPIRA_HOME="$TMP/sinex-home" \
+        env -i HOME="$HOME" PATH="$PATH" \
+        SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
+        MAIL_LOG="$MAIL_LOG" \
+        SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" \
+        SPIRA_HOME="$TMP/home" \
         SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/sinex-test.lock" \
         SPIRA_INCIDENT_REPO= \
@@ -103,7 +70,29 @@ file_incident() {
         bash "$INC" file "$title" - 2>/dev/null
 }
 
-echo "test-sin-exempt.sh"
+bead_of() {  # bead_of <ref> -> id
+    python3 -c '
+import json
+d = json.load(open("'"$STUB_BD_STATE"'"))
+for b in d["beads"].values():
+    if b.get("external_ref") == "'"$1"'": print(b["id"]); break
+'
+}
+labels_of() {
+    python3 -c '
+import json
+d = json.load(open("'"$STUB_BD_STATE"'"))
+print(" ".join(d["beads"].get("'"$1"'", {}).get("labels", [])))
+'
+}
+has_label() { [[ " $(labels_of "$1") " == *" $2 "* ]]; }
+recur_max() {
+    python3 -c '
+import json
+d = json.load(open("'"$STUB_BD_STATE"'"))
+print(sum(1 for e in d["events"] if e["issue_id"] == "'"$1"'" and e["event_type"] == "recurred"))
+'
+}
 
 # ======================================================================================
 echo
@@ -112,11 +101,7 @@ echo "the positive control — a non-exempt ref reaches SIN:"
 # File the same ref SIN_AT + 1 times. SIN_AT counts RECURRENCES, not sightings — incident.sh
 # escalates "past SIN_AT recurrences" and its counter starts at zero on the filing that
 # CREATES the bead. So reaching a count of SIN_AT takes one create plus SIN_AT recurring
-# filings. Filing SIN_AT times left the counter at SIN_AT - 1, one short of the threshold, so
-# the sin label was correctly withheld and this positive control asserted against a state the
-# loop never produced.
-testdb_reset
-: > "$MAIL_LOG"
+# filings.
 SIN_AT=3
 ref="incident:test-nonexempt-sin"
 title="non-exempt incident"
@@ -124,17 +109,7 @@ for i in $(seq 1 "$(( SIN_AT + 1 ))"); do
     file_incident "$ref" "$title" "payload $i" SPIRA_SIN_AT="$SIN_AT" >/dev/null
 done
 
-# Find the bead by its external ref.  --external-ref is dev-build only; filter in Python.
-bid="$(B list --status open --limit 0 --label spira,partition:incident --json 2>/dev/null \
-    | python3 -c '
-import json,sys
-target=sys.argv[1]
-try: d=json.load(sys.stdin)
-except: sys.exit(0)
-d=d if isinstance(d,list) else [d]
-for i in d:
-    if i.get("external_ref")==target: print(i["id"]); break
-' "$ref" 2>/dev/null)"
+bid="$(bead_of "$ref")"
 [ -n "$bid" ] && ok "the bead was created" || bad "the bead was created" "no bead found for ref $ref"
 
 if [ -n "$bid" ]; then
@@ -148,25 +123,14 @@ fi
 echo
 echo "an exempt ref does NOT reach SIN:"
 # ======================================================================================
-# Same SIN_AT+1 total filings as the positive control, to reach recurs_of == SIN_AT.
-testdb_reset
-: > "$MAIL_LOG"
+rm -f "$STUB_BD_STATE" "$STUB_BD_LOG"; : > "$MAIL_LOG"
 ref="incident:test-exempt-sin"
 title="exempt incident"
 for i in $(seq 1 "$(( SIN_AT + 1 ))"); do
     file_incident "$ref" "$title" "payload $i" SPIRA_SIN_AT="$SIN_AT" SPIRA_SIN_EXEMPT=1 >/dev/null
 done
 
-bid="$(B list --status open --limit 0 --label spira,partition:incident --json 2>/dev/null \
-    | python3 -c '
-import json,sys
-target=sys.argv[1]
-try: d=json.load(sys.stdin)
-except: sys.exit(0)
-d=d if isinstance(d,list) else [d]
-for i in d:
-    if i.get("external_ref")==target: print(i["id"]); break
-' "$ref" 2>/dev/null)"
+bid="$(bead_of "$ref")"
 [ -n "$bid" ] && ok "the exempt bead was created" || bad "the exempt bead was created" "no bead found for ref $ref"
 
 if [ -n "$bid" ]; then
@@ -180,7 +144,6 @@ fi
 echo
 echo "an exempt ref past the threshold still increments:"
 # ======================================================================================
-# File one more beyond SIN_AT. The counter should still advance.
 file_incident "$ref" "$title" "payload extra" SPIRA_SIN_AT="$SIN_AT" SPIRA_SIN_EXEMPT=1 >/dev/null
 if [ -n "$bid" ]; then
     is "the counter advances past SIN_AT" "$(( SIN_AT + 1 ))" "$(recur_max "$bid")"
@@ -189,16 +152,4 @@ if [ -n "$bid" ]; then
         || ok "still no sin label after passing SIN_AT"
 fi
 
-# ======================================================================================
-echo
-echo "the watchtower sets SPIRA_SIN_EXEMPT=1:"
-# ======================================================================================
-# Structural: the routine snapshot | pipe was removed (sp-8wshp); verify that the
-# DRAINING escalation — the first incident.sh call that remains — still carries the
-# exemption, so drain beads cannot reach the SIN escalation either.
-want "watchtower.sh sets SPIRA_SIN_EXEMPT=1 on the DRAINING escalation" "SPIRA_SIN_EXEMPT=1" \
-    "$(grep -B5 'file "DRAINING:' "$HERE/watchtower.sh" 2>/dev/null)"
-
-echo
-printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
