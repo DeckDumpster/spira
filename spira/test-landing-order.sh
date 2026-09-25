@@ -4,25 +4,18 @@
 # (priority ASC, closed_at ASC) order, not refname order, so late-alphabet
 # high-priority branches cannot starve when a budget cut ends the pass early.
 #
-# THREE PROPERTIES UNDER TEST:
+# TWO PROPERTIES UNDER TEST:
 #
 #   1. ORDER. With four closed branches spanning two priority tiers and two
 #      close dates each, a pass with no budget constraint certifies them
 #      oldest-first within each tier: P1-oldest, P1-newer, P2-oldest, P2-newer.
 #
-#   2. BUDGET CUT LOG. With a budget that expires before any gate runs
-#      (LAND_MAXSEC=1, RESERVE=2), the pass logs the cut once, names the
-#      first deferred branch, and reports the count of unvisited branches.
-#      The positive control: with no budget constraint the same branches
-#      all certify and no cut message appears.
-#
-#   3. DISJOINT PASSES. After pass 1 certifies the two P1 branches,
+#   2. DISJOINT PASSES. After pass 1 certifies the two P1 branches,
 #      pass 2 (with the P1 branches now submitted/skipped) certifies
 #      the two P2 branches — the passes cover disjoint sets.
 #
-# The gate stub is instant (no sleep). Budget tests use LAND_MAXSEC=1 with
-# RESERVE=2, which makes gate_fits return false before the very first gate
-# call (1-0=1 < 2). This is deterministic without wall-clock timing.
+# The gate stub is instant (no sleep). gate_fits' own budget-cut behavior is
+# covered by test-landing-gate-wait.sh, not here.
 #
 # defect: sp-fm3rl
 # covers: spira/landing.sh spira/lib.sh
@@ -90,15 +83,6 @@ landing() {
         bash "$SH/landing.sh" 2>&1
 }
 
-landing_tight() {
-    rm -f "$RUN/landing.progress"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO="$REPO" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
-    SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
-    SPIRA_LAND_MAXSEC=1 SPIRA_LAND_GATE_RESERVE=2 \
-        bash "$SH/landing.sh" 2>&1
-}
-
 # branch_at <id> <priority> <closed_at> — a closed bead with a git branch
 branch_at() {
     local id="$1" pri="$2" cat="$3"
@@ -156,26 +140,6 @@ before "P2-oldest before P2-newest"  "certified spira/sp-ord-a" "certified spira
 # Discriminating test: sp-ord-d (P1) must come before sp-ord-a (P2) even though
 # 'a' < 'd' in refname order. This is the case that proves sorting beats alphabet.
 before "P1 branch before same-date P2 branch" "certified spira/sp-ord-d" "certified spira/sp-ord-a" "$out"
-
-nowant "no budget-cut message on a full pass" "budget cut" "$out"
-
-drop_branch sp-ord-d; drop_branch sp-ord-b; drop_branch sp-ord-a; drop_branch sp-ord-c
-
-# -----------------------------------------------------------------------
-# BUDGET CUT: with LAND_MAXSEC=1 and RESERVE=2, gate_fits returns false
-# before the first gate call (1-0=1 < 2). The pass must log the cut once,
-# name the first branch in sorted order (sp-ord-d), and count all four
-# as unvisited. Positive control: the full-budget test above showed all
-# four certify when budget is not tight.
-# -----------------------------------------------------------------------
-echo
-echo "budget cut test:"
-seed_order
-out="$(landing_tight)"
-want "tight-budget pass logs a cut" "budget cut at" "$out"
-want "cut names the first sorted branch" "budget cut at spira/sp-ord-d" "$out"
-want "cut reports unvisited count" "4 branch(es) deferred" "$out"
-nowant "tight-budget pass does not certify any branch" "certified" "$out"
 
 drop_branch sp-ord-d; drop_branch sp-ord-b; drop_branch sp-ord-a; drop_branch sp-ord-c
 
