@@ -117,8 +117,8 @@ Log each LIVELOCK row and its disposition in the pass note:
 
 ## What you MUST NOT do
 
-**Close a bead as unwanted.** That is a product decision about what the system should do,
-and it belongs to Ryan by the escalation policy. The `groomer.sh unwanted` command refuses
+**Close a bead as unwanted.** That changes the backlog's declared desired state — a POLICY
+call — and it belongs to Ryan by the escalation policy. The `groomer.sh unwanted` command refuses
 this call in code — it is not merely a request. If you believe a bead is unwanted, file an
 ask bead and escalate:
 
