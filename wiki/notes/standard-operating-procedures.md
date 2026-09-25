@@ -148,7 +148,7 @@ bd show $bead_id | grep -i "delivers:action"
 
 **Symptom** — Incident filed claiming host_cores() function is missing from lib.sh or gate.sh
 
-**Check** — grep -q "^host_cores() {" /path/to/lib.sh && /path/to/test-gate-host-cores.sh
+**Check** — grep -q "^host_cores() {" /path/to/lib.sh && /path/to/test-gate-unit.sh
 
 **Fix** — No fix needed — the function was already implemented in sp-79ww9 (commit 818c218, 2026-09-17). Verify it exists and the test passes. This is a duplicate incident.
 

@@ -26,7 +26,7 @@
 #
 # defect: sp-io5j sp-lkzl
 # tier: T1
-# covers: spira/gate.sh UC-gate-verdict-03 UC-gate-verdict-04 UC-gate-verdict-07
+# covers: spira/gate.sh UC-gate-verdict-03 UC-gate-verdict-04 UC-gate-verdict-06 UC-gate-verdict-07
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -127,6 +127,18 @@ out="$(rungate repo/sp-t2)"; rc=$?
 is     "SEEN GREEN: gate passes when file is present" 0 "$rc"
 is     "SEEN GREEN: CMD was actually executed (ran file counted)" 1 "$(wc -l < "$RUNS" | tr -d ' ')"
 nowant "SEEN GREEN: no config-error in output" "configuration error" "$out"
+
+# --------------------------------------------------------------------------------------
+# CASE 5 — SYNTAX-ONLY PASS (UC-gate-verdict-06). A repo-map row with an empty gate column
+# has been fully judged by the universal layer (bash -n, beads-data, foreign-harness) — its
+# trial IS syntax alone, and that is a PASS, not "no gate configured". The VERDICT line must
+# still print: a caller must never have to tell "passed" from "exited early" (gate.sh L228).
+# --------------------------------------------------------------------------------------
+printf 'repo | %s | push | origin/main |  | \n' "$REPO" > "$MAP"
+out="$(rungate "$BR")"; rc=$?
+is   "an empty gate column exits PASS"          0 "$rc"
+want "and names the reason syntax-only"         "reason=syntax-only" "$out"
+want "and the verdict line still prints"        "VERDICT=PASS" "$out"
 
 # Restore the map for any future cases.
 printf 'repo | %s | push | origin/main |  | true\n' "$REPO" > "$MAP"
