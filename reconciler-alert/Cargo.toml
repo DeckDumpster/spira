@@ -1,0 +1,16 @@
+[package]
+name = "reconciler-alert"
+version = "1.0.0"
+edition = "2021"
+description = "reconciler-alert — the alert path's IO seam: an evidence-carrying wake to the Concierge, deduplicated per gap, and an operator escalation path refused for any class but permissions, policy or destructive."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reconciler-engine = { path = "../reconciler-engine" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

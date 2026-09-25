@@ -12,6 +12,7 @@ members = [
     "batcher",
     "batcher-cut",
     "reconciler-engine",
+    "reconciler-alert",
 ]
 resolver = "2"
 
