@@ -1,31 +1,30 @@
-GROOM PASS sp-ijhpj - Graph Hygiene Results
+GROOM PASS sp-wy13t - Graph Hygiene Results
 ============================================
 
-COMPLETED ACTIONS (from prior passes, now recorded):
+TRIGGER: UNCLAIMABLE: sp-5h46a — fix the fayth: or partition label
 
-1. CLOSED sp-xiuzi
-   - Title: The QA persona is running again despite your disable
-   - Premise: QA persona timer has been successfully disabled and removed from systemd
-   - Evidence: Commits 99c8dde, 2ee9468, 708bbce show work completed
-   - Status: CLOSED with proper close reason
+SWEEP: No litter, no LIVELOCK rows found by groomer.sh sweep.
 
-2. MERGED sp-jzpnw → sp-s4f8f
-   - sp-jzpnw: Gatekeeper persona for qa-proposed (unratified design)
-   - sp-s4f8f: qa-proposed gatekeeper persona (approved design + Ryan's decision)
-   - Action: sp-jzpnw work superseded by sp-s4f8f
-   - Status: Merge recorded in bead graph
+UNCLAIMABLE BEADS FIXED:
 
-3. DECISION ESCALATION sp-zgk83
-   - Question: Close QA beads or keep record?
-   - Status: Correctly left OPEN for Ryan to decide
+1. FIXED sp-5h46a (unclaimable)
+   - Title: repeat attempt: no change — spira/sp-r1501
+   - Problem: Had 'partition:incident' label but missing 'incident' label
+   - Fix: Added 'incident' label so ops fayth (FAYTH_LABELS=spira,incident) can claim it
+   - Root cause tracked by sp-ui46l (incident.sh creating beads with wrong label)
+
+2. FIXED sp-q4swv (unclaimable)
+   - Title: [bug] sp-ulr4e: Update test-testlib-migrated.sh exception lists after migrations
+   - Problem: Had 'partition:incident' label but missing 'incident' label (same root cause)
+   - Fix: Added 'incident' label
+   - Note: Blocks sp-220fh (ops aeon currently working it)
+
+VERIFY: detect_unclaimable_ready (production checkout) reports zero unclaimable beads after fix.
 
 CURRENT STATE:
-- 140 open beads across all partitions
-- Graph structure: healthy
-- Test timeout beads: distinct issues, not duplicates
-- Epic structures: well-formed
-- Lane alignment: correct
-
-NO NEW HYGIENE ISSUES FOUND in current pass.
-
-Graph ready for continued work.
+- 189 open beads examined across all partitions
+- No duplicates found
+- No premise-gone cases found
+- No fixture-shaped litter found
+- Two unclaimable beads corrected
+- Root cause for mislabelling is being addressed by sp-ui46l
