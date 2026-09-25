@@ -1,0 +1,13 @@
+[package]
+name = "batcher"
+version = "0.1.0"
+edition = "2021"
+description = "batcher — pure core: round membership, set-asides, green/flip/double-red classification, adaptive triggers and stacking. The IO seam (git, testenv-batch, the forge, the bead store) lives in a separate crate."
+
+[dependencies]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

@@ -9,6 +9,7 @@ members = [
     "queue-watch",
     "desired-state",
     "tsd",
+    "batcher",
 ]
 resolver = "2"
 
