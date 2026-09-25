@@ -175,6 +175,35 @@ sentinel >/dev/null 2>&1 || true
 nowant "count 4 (higher count) sends no mail — per-bead dedup, not per-count" \
        "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
 
+# CLOSED-BEAD REQUEUE CAP. A bead that ends each sentinel cycle closed-and-unlanded is
+# never in dispatchable_open, so the cap above cannot fire for it. A supplement reads
+# closed beads with a branch: label; it must escalate those at or above the cap.
+echo
+echo "requeue cap for closed beads (supplement):"
+
+seed_bead sp-rq-closed-below
+B set-state sp-rq-closed-below "branch=spira/sp-rq-closed-below" --reason "branch" >/dev/null 2>&1
+reopen_cycle sp-rq-closed-below 2
+B close sp-rq-closed-below --reason "done" >/dev/null 2>&1 || true
+sentinel >/dev/null 2>&1 || true
+nowant "closed bead with 2 reopens (below cap 3) fires no escalation" \
+       "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+
+seed_bead sp-rq-closed-at
+B set-state sp-rq-closed-at "branch=spira/sp-rq-closed-at" --reason "branch" >/dev/null 2>&1
+reopen_cycle sp-rq-closed-at 3
+B close sp-rq-closed-at --reason "done" >/dev/null 2>&1 || true
+sentinel >/dev/null 2>&1 || true
+want "closed bead with 3 reopens (at cap) fires the requeue escalation" \
+     "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+want "closed-bead escalation names the reopen count" \
+     "requeued 3 times" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+
+: > "$MAIL_LOG"
+sentinel >/dev/null 2>&1 || true
+nowant "second pass sends no mail for closed bead (dedup stamp)" \
+       "completed and requeued" "$(cat "$MAIL_LOG" 2>/dev/null || true)"
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" = 0 ]
