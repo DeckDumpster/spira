@@ -5973,7 +5973,7 @@ queue_bisect_current() {
                 done
             fi
             if [ -n "$_reason" ]; then
-                printf 'bisect %s: discarding stale group (%s) -- %s\n' "$name" "$_members" "$_reason"
+                printf 'bisect %s: discarding stale group (%s) -- %s\n' "$name" "$_members" "$_reason" >&2
                 queue_bisect_advance "$name"
                 continue
             fi

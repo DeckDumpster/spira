@@ -392,7 +392,7 @@ ${_line#build-error: }" ;;
     local -A _ej_method=() _ej_detail=()
     local _eject_fail_dir; _eject_fail_dir="$(mktemp -d)"
     local _mm _mid _mtip
-    local _bisect_current; _bisect_current="$(queue_bisect_current "$name" "$repo" "$base_sha" 2>/dev/null)" || _bisect_current=""
+    local _bisect_current; _bisect_current="$(queue_bisect_current "$name" "$repo" "$base_sha")" || _bisect_current=""
 
     _verdict_trap_pr="$pr_n"
 
