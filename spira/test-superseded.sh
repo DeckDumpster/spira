@@ -45,7 +45,7 @@ git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 
 cp "$HERE/landing.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" \
-   "$HERE/skew.sh" "$HERE/sending.sh" "$SH/"
+   "$HERE/skew.sh" "$HERE/sending.sh" "$HERE/suite-covers.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
 stub gate.sh 'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'
@@ -237,6 +237,46 @@ git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-drysup" \
     && ok "dry-run leaves the branch intact" \
     || bad "dry-run leaves the branch intact" "branch was deleted despite --dry-run"
 drop_branch sp-drysup
+
+# --------------------------------------------------------------------------------------
+# SUPERSEDED ANCESTOR BRANCH (sp-bf31a). A superseded branch with zero commits ahead of
+# the base (is-ancestor) was kept forever before the content_landed fix. With the fix,
+# content_landed returns 0 for ancestor branches, so the Sending reaches the content-
+# landed path and reaps the branch via SENT (not REAPED — the superseded block is not
+# entered when content_landed returns 0).
+# --------------------------------------------------------------------------------------
+seed
+git -C "$REPO" fetch -q origin
+# Build a superseded branch with one commit, then fast-forward the base past it so
+# the branch tip becomes an ancestor of origin/main (ahead=0, --is-ancestor).
+git -C "$REPO" worktree add -q -b "spira/sp-anc" "$RUN/worktree/sp-anc" main
+printf 'anc\n' > "$RUN/worktree/sp-anc/anc.txt"
+git -C "$RUN/worktree/sp-anc" add -A
+git -C "$RUN/worktree/sp-anc" commit -q -m "feat: sp-anc"
+printf '{"id":"sp-anc","title":"sp-anc","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-anc","depends_on_id":"sp-goal","type":"parent-child"},{"issue_id":"sp-anc","depends_on_id":"sp-succ","type":"supersedes"}]}' \
+    | testdb_seed
+# Fast-forward origin/main past sp-anc by pushing sp-anc's commit there, then adding more.
+git -C "$REPO" push -q origin "spira/sp-anc:main"
+advance_base anc2.txt "extra commit past sp-anc"
+git -C "$REPO" fetch -q origin
+# Now: spira/sp-anc tip is an ancestor of origin/main, ahead=0, --is-ancestor true.
+_anc_ahead="$(git -C "$REPO" rev-list --count "origin/main..spira/sp-anc" 2>/dev/null)"
+if [ "${_anc_ahead:-?}" = 0 ]; then
+    ok "sp-anc fixture: zero commits ahead (is-ancestor confirmed)"
+else
+    bad "sp-anc fixture" "expected 0 ahead, got ${_anc_ahead:-?}"
+fi
+git -C "$REPO" worktree remove --force "$RUN/worktree/sp-anc" >/dev/null 2>&1 || true
+out="$(sending)"
+echo "$out" | head -20 >&2
+
+want   "the Sending reaps a superseded ancestor branch"  "SENT sp-anc"  "$out"
+nowant "it does not keep it"                             "KEEP   sp-anc" "$out"
+if git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-anc" 2>/dev/null; then
+    bad "the superseded ancestor branch is gone" "spira/sp-anc still exists"
+else
+    ok "the superseded ancestor branch is gone"
+fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

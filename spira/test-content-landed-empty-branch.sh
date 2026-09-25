@@ -5,29 +5,24 @@
 #
 #   ./test-content-landed-empty-branch.sh
 #
-# THE DEFECT (sp-qc4kn). content_landed's first test is:
-#   git merge-base --is-ancestor "$br" "$base"
-# A branch on which nothing was committed IS an ancestor of the base, so it returns 0 —
-# the same answer it gives for work that genuinely merged by fast-forward. The Sending then
-# reaps the empty branch (without adding a content-landed label, since _ahead=0), and the
-# bead cycles without any attempt ever being charged: the aeon's own cleanup reopens it
-# before CHECK 5 can see it as closed.
+# THE ORIGINAL DEFECT (sp-qc4kn): content_landed's is-ancestor check came before the
+# ahead>0 guard, so it returned 0 for empty branches (ahead=0, is-ancestor), causing
+# the Sending to reap them and the bead to cycle without an attempt being charged.
+#
+# REVISED BEHAVIOR (sp-bf31a): ancestor branches are landed by definition — moving the
+# is-ancestor check before the ahead=0 guard makes content_landed return 0 for all
+# ancestor branches, including empty ones. The Sending reaps them; CHECK 5 reopens the
+# bead when no commit on the base names it (the normal reopening path). This is correct:
+# a closed bead with an empty branch never had work done, so it should be reopened.
 #
 # THREE CASES for content_landed, plus one for sending.sh:
 #
-#   1. POSITIVE CONTROL — ancestry alone returns 0 for an empty branch (proves the defect
-#      is real and the fixture is correct).
-#   2. EMPTY BRANCH     — content_landed returns non-zero for a branch with zero commits
-#      ahead of the base. This is the arm SEEN TO FAIL against the unfixed code.
+#   1. POSITIVE CONTROL — ancestry alone returns 0 for an empty branch (fixture is correct).
+#   2. EMPTY BRANCH     — content_landed returns 0 for an ancestor branch (sp-bf31a).
 #   3. FF-MERGED        — a branch whose commits reached the base via push-mode landing
-#      (zero commits ahead, commit on base names the bead) is still reaped by sending.sh.
+#      is reaped by sending.sh; the empty branch is also reaped (ancestor → landed).
 #   4. SQUASH-MERGED    — a branch whose content reached the base as a squash commit
 #      still returns 0 from content_landed (commits ahead, merge-tree same).
-#
-# FAILURE TEXT (against unfixed lib.sh, before this commit):
-#   FAIL  empty branch: content_landed must return non-zero: it returned 0
-#   FAIL  sending reaps ff-merged branch: wanted [SENT sp-ff] in [KEEP   sp-ff  ...]
-#   2 passed, 2 failed
 #
 # covers: spira/lib.sh spira/sending.sh
 # hermetic-ok: uses a fixture database and a local git repo, no systemd or gh
@@ -57,7 +52,7 @@ git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$SH"
 
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/sending.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/sending.sh" "$HERE/suite-covers.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
 stub gh 'exit 1'
@@ -153,15 +148,15 @@ else
 fi
 
 # --------------------------------------------------------------------------------------
-# CASE 2: EMPTY BRANCH — content_landed must return non-zero (not landed).
-# This is the arm SEEN TO FAIL against the unfixed code.
+# CASE 2: EMPTY BRANCH — content_landed returns 0 for an ancestor branch (sp-bf31a).
+# An empty branch IS an ancestor of the base; ancestor implies landed.
 # --------------------------------------------------------------------------------------
 echo
-echo "empty branch — content_landed must return non-zero:"
+echo "empty branch — content_landed returns 0 for an ancestor branch (sp-bf31a):"
 if content_landed "$REPO" "spira/sp-empty" "origin/main"; then
-    bad "empty branch: content_landed must return non-zero" "it returned 0"
+    ok "content_landed returns 0 for an ancestor branch (ancestor implies landed)"
 else
-    ok "content_landed correctly returns non-zero for a branch with zero commits ahead"
+    bad "content_landed must return 0 for an ancestor branch" "it returned non-zero"
 fi
 
 # --------------------------------------------------------------------------------------
@@ -181,12 +176,13 @@ fi
 out="$(sending)"
 printf '%s\n' "$out" | head -20 >&2
 
-want   "sending reaps the ff-merged branch"       "SENT sp-ff"  "$out"
-nowant "sending does not report ff-merged as kept" "KEEP   sp-ff" "$out"
+want   "sending reaps the ff-merged branch"        "SENT sp-ff"    "$out"
+nowant "sending does not report ff-merged as kept" "KEEP   sp-ff"  "$out"
 
-# The empty branch must not be reaped: it has no commit naming it, so the
-# bead's own aeon cleanup must handle the reopen.
-nowant "sending does not reap the empty branch"   "SENT sp-empty"  "$out"
+# sp-bf31a: the empty branch is also an ancestor (ahead=0), so content_landed returns 0
+# and the Sending reaps it too. CHECK 5 will reopen the bead (no commit on base names it).
+want   "sending reaps the empty ancestor branch (sp-bf31a)" "SENT sp-empty" "$out"
+nowant "sending does not keep the empty branch"             "KEEP   sp-empty" "$out"
 
 # Verify git refs directly
 if git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-ff" 2>/dev/null; then
@@ -195,9 +191,9 @@ else
     ok "the ff-merged branch is gone (correctly reaped)"
 fi
 if git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-empty" 2>/dev/null; then
-    ok "the empty branch still exists (correctly kept for the aeon to reopen)"
+    bad "the empty ancestor branch is gone" "spira/sp-empty still exists after reap (sp-bf31a)"
 else
-    bad "the empty branch still exists" "spira/sp-empty was deleted — bead cannot be reopened by aeon cleanup"
+    ok "the empty ancestor branch is gone (reaped as ancestor, bead will be reopened by CHECK 5)"
 fi
 
 # --------------------------------------------------------------------------------------

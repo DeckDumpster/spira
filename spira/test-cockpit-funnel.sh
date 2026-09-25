@@ -110,6 +110,11 @@ val() { printf '%s' "$out" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 
 echo "--- (a) funnel stage counts ---"
 is "SP_UNLANDED_N is 3 (sp-d1..3: done)"     "3"  "$(val SP_UNLANDED_N)"
+# sp-bf31a: SP_UNLANDED_N splits into stranded (older than the cert window) and cert
+# (within it). sp-d1/sp-d2 closed 2h ago are stranded; sp-d3 closed 65m ago is not
+# (default window is 90m).
+is "SP_STRANDED_N is 2 (sp-d1,sp-d2 closed 2h ago)" "2"  "$(val SP_STRANDED_N)"
+is "SP_CERT_N is 1 (sp-d3 closed 65m ago)"          "1"  "$(val SP_CERT_N)"
 is "SP_FUNNEL_CERTIFY_N is 2 (sp-g1..2)"      "2"  "$(val SP_FUNNEL_CERTIFY_N)"
 is "SP_FUNNEL_RED_N is 5 (sp-r1..5)"          "5"  "$(val SP_FUNNEL_RED_N)"
 is "SP_QUEUE_DEPTH is 1 (sp-c1 CERTIFIED)"    "1"  "$(val SP_QUEUE_DEPTH)"
@@ -163,7 +168,9 @@ pane="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     bash "$PANE" once 0 120 2>/dev/null)"
 
 want "pane renders QUEUE label"    "QUEUE"   "$pane"
-want "pane shows done row"         "done  3" "$pane"
+# sp-bf31a: the done row's count is the STRANDED anomaly (SP_STRANDED_N=2), not the raw
+# SP_UNLANDED_N=3 — a bead still inside the cert window (sp-d3) is not yet actionable.
+want "pane shows done row"         "done  2" "$pane"
 want "pane shows certify row"      "certify" "$pane"
 want "pane shows red row"          "red  5"  "$pane"
 want "pane shows timeout in red"   "timeout" "$pane"
