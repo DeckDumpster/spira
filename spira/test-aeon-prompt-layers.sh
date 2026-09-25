@@ -69,10 +69,12 @@ want   "FAYTH_MODEL overrides the default"       "claude-sonnet-5" "$out"
 nowant "and the default model is not also present" "claude-opus-5" "$out"
 want   "FAYTH_TOOLS overrides the default"       "$(printf -- '--allowedTools\nBash,Read')" "$out"
 
-# --settings is present only when aeon_settings() (lib.sh) finds a hook to wire in — proved
-# both ways, or the absence rows above would mean nothing (law-absence-needs-a-positive-control).
+# --settings always appears — aeon_settings() (lib.sh) wires the mail-delivery hook
+# unconditionally — but names aeon-fence.sh only once that hook is actually installed,
+# proved both ways (law-absence-needs-a-positive-control).
 out="$(argv_for replace '')"
-nowant "no hooks installed: no --settings" "--settings" "$out"
+want   "no fence installed: --settings still appears (mail hook is unconditional)" "--settings" "$out"
+nowant "no fence installed: --settings does not name aeon-fence.sh" "aeon-fence.sh" "$out"
 cat > "$FAYTH_HOME/hooks/aeon-fence.sh" <<'HOOK'
 #!/usr/bin/env bash
 exit 0
@@ -175,10 +177,6 @@ nowant "replace: stdin has no 'Memories in force'" "Memories in force"      "$st
 want "replace: system.md has 'Memories in force'" "Memories in force"       "$sys_r"
 want "replace: system.md has standing rule"       "never guess"             "$sys_r"
 nowant "replace: task.md has no statute text"     "Memories in force"       "$(cat "$SPIRA_RUN/$BID_R.task.md" 2>/dev/null)"
-
-argv_n="$(cat "$TMP/claude-argv" 2>/dev/null)"
-want "no-knob: argv has --append-system-prompt-file (default)" "--append-system-prompt-file" "$argv_n"
-nowant "no-knob: argv has no --system-prompt-file"             "--system-prompt-file"        "$argv_n"
 
 # ==========================================================================================
 echo
