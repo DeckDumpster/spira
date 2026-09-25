@@ -1061,9 +1061,30 @@ sup = any((x.get("dependency_type") or x.get("type")) == "supersedes" for x in (
 sys.exit(0 if sup else 1)' 2>/dev/null; then
             log "$FAYTH: $BEAD_ID closed a superseded work bead — not converted, close stands"
         else
-            bead_reopen "$BEAD_ID" work-close-converted "Submitted: work committed on branch; marked submitted instead of closed. The landing pass closes this bead when it lands, citing the merge commit."
+            # THE GATE'S OWN VERDICT IS STILL WORTH NAMING, even though the outcome (convert
+            # to submitted) no longer depends on it — the landing pass gates the branch again
+            # regardless. A close against a FAIL verdict, or with the gate still running, or
+            # with none ever run, is a fact about how this session behaved that the note
+            # would otherwise lose entirely by converting unconditionally.
+            _wcc_note="Submitted: work committed on branch; marked submitted instead of closed. The landing pass closes this bead when it lands, citing the merge commit."
+            _wcc_log="closed a work bead directly — converted to submitted"
+            if [ -f "$SPIRA_HOME/gate-run.sh" ]; then
+                local _wcc_gate_st
+                _wcc_gate_why="$(bash "$SPIRA_HOME/gate-run.sh" --status "$BRANCH" "$REPO_NAME" 2>/dev/null)"; _wcc_gate_st=$?
+                case "$_wcc_gate_st" in
+                    2)  _wcc_note="$_wcc_note Closed by the session while its landing gate was still running — $_wcc_gate_why."
+                        _wcc_log="closed with its gate still running ($_wcc_gate_why) — converted to submitted" ;;
+                    1)  _wcc_note="$_wcc_note Closed against a recorded FAIL verdict for this exact tree — ${_wcc_gate_why:-gate returned fail}."
+                        _wcc_log="closed against a recorded FAIL gate verdict — converted to submitted" ;;
+                    3)  _wcc_note="$_wcc_note Closed without ever obtaining a gate verdict — no gate ran or finished for this branch."
+                        _wcc_log="closed with no gate verdict (none ran) — converted to submitted" ;;
+                esac
+                unset _wcc_gate_st
+            fi
+            bead_reopen "$BEAD_ID" work-close-converted "$_wcc_note"
             bdq label add "$BEAD_ID" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1
-            log "$FAYTH: $BEAD_ID closed a work bead directly — converted to submitted"
+            log "$FAYTH: $BEAD_ID $_wcc_log"
+            unset _wcc_note _wcc_log _wcc_gate_why
         fi
     elif [ -f "$SPIRA_HOME/gate-run.sh" ]; then
         local gate_st
