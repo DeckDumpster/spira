@@ -7,18 +7,13 @@
 #   - re-fires after clear: backlog gone clears state; new backlog fires again
 #   - silent below threshold: fresh message never triggers
 #
-# covers: spira/mail-health.sh spira/mail.sh spira/conf.sh
+# tier: T2
+# covers: spira/mail-health.sh spira/mail.sh spira/conf.sh UC-operator-channel-09
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-isz()    { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0 got $2"; }
-is1()    { [ "$2" = 1 ] && ok "$1" || bad "$1" "wanted exit 1 got $2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-
-echo "test-mail-health.sh"
+. "$HERE/testlib.sh"
+isz()    { is "$1" 0 "$2"; }
+is1()    { is "$1" 1 "$2"; }
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
@@ -118,9 +113,4 @@ isz "exits 0 when age below threshold" "$rc"
 count4="$(op_count)"
 is "no message for fresh mail" "2" "$count4"
 
-echo
-if [ "$fail" -gt 0 ]; then
-    printf '\n%d passed, %d FAILED\n' "$pass" "$fail"
-    exit 1
-fi
-printf '\n%d passed\n' "$pass"
+tl_summary
