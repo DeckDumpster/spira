@@ -94,7 +94,30 @@ NO ACTIONS NEEDED:
 - No split candidates identified (all beads in list are independently landable single tasks)
 - No lane corrections beyond sp-lf6lv
 
+LIVELOCK RESOLVED (this session — rebase + rescan):
+
+2. LIVELOCK sp-ezeiy (unclaimable)
+   - Had 'partition:incident' (old dead label) but not 'incident' partition label
+   - Fix: Added 'incident' partition label
+   - Trigger bead sp-ha08i closed as premise-gone
+
+3. LIVELOCK sp-q3r3c (unclaimable)
+   - Had 'partition:incident' (old dead label) but not 'incident' partition label
+   - Fix: Added 'incident' partition label
+   - Trigger bead sp-y2sz9 closed as premise-gone
+
+BEADS EXAMINED: ~190 open/in_progress beads scanned (post-rebase rescan).
+
+SKIPPED: sp-psenn has 'groom-asked' label — operator answer pending.
+
+NO FURTHER ACTIONS NEEDED:
+- No duplicates found
+- No splits needed
+- No premise-gone cases beyond what was handled
+
 CURRENT STATE:
-- 184 beads examined (open + in_progress)
-- 1 LIVELOCK row resolved: sp-lf6lv corrected (added groom partition label)
-- No duplicates, no premise-gone cases, no fixture-shaped litter
+- ~190 beads examined (open + in_progress)
+- 1 LIVELOCK row resolved (session 1): sp-lf6lv corrected (added groom partition label)
+- 2 LIVELOCK rows resolved (session 2): sp-ezeiy and sp-q3r3c corrected (added incident partition labels)
+- 2 premise-gone beads closed: sp-ha08i and sp-y2sz9
+- No duplicates, no splits needed, no fixture-shaped litter
