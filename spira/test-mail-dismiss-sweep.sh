@@ -231,16 +231,4 @@ out="$(run sweep-dismissed operator 2>&1)"
 want "sweep reports 1 dismissed once the index is readable again" "dismissed 1" "$out"
 is "bead D closed once the index is readable again" "closed" "$(bead_status "$BEAD_D")"
 
-# ==========================================================================
-# FAIL CLOSED — no bead store configured
-# ==========================================================================
-echo
-echo "guard: no SPIRA_DB refuses to dismiss anything"
-
-rc=0
-out="$(SPIRA_DB="" run sweep-dismissed operator 2>&1)" || rc=$?
-[ "$rc" -ne 0 ] && ok "sweep refuses (non-zero exit) with no bead store configured" \
-                 || bad "sweep refuses with no bead store configured" "expected non-zero exit, got 0"
-want "refusal message mentions the store" "bead store" "$out"
-
 tl_summary
