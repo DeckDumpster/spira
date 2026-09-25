@@ -727,6 +727,8 @@ bead with what you know and escalate to branch owner for investigation.
 
 **Matches** `repeat-refused.*test.*`
 
+**Applied** — sp-26f5j (2026-09-25): verdict cache refusal on sp-4rzlw; branch held legitimate code fixes for test-thrash-streak.sh and aeon.sh. SOP guided re-run with SPIRA_VERDICT_REPEAT_CONSIDERED to distinguish repeatable defect from transient environmental issue. Procedural closure via SOP ledger.
+
 ### Verdict requeue on repro fail
 
 `sop-verdict-requeue-on-repro-fail`
