@@ -1,172 +1,103 @@
 #!/usr/bin/env bash
 #
-# test-timer-templates.sh — every .timer template in systemd/ is in units.sh's
-# UNITS and _ENABLE_TMPL lists, fires periodically, and (when systemd is
-# available) has been observed to have fired.
+# test-timer-templates.sh — the T0 unit-file lint: every property of a shipped systemd/
+# template that a static read of the file (or of units.sh) can prove, in one pass over the
+# unit files instead of six suites each re-reading them.
 #
-#   ./test-timer-templates.sh
+# tier: T0
+# covers: systemd/*.timer systemd/*.service systemd/units.sh systemd/install.sh systemd/concierge.service systemd/beads-push.service spira/spira-verdict.sh spira/collect.sh supervise/** UC-instance-lifecycle-31
 #
-# WHAT THIS GUARDS
-# ----------------
-# Defect sp-7gklu: timer template files existed in systemd/ but were absent from
-# units.sh's UNITS array, so install.sh never wrote them to disk on a fresh install.
-# skew.sh reported MISSING but nothing automatically verified that the full chain
-# template → UNITS → _ENABLE_TMPL → installed → enabled was intact for every timer.
+# WHAT THIS GUARDS. Defect sp-7gklu: a timer template existed in systemd/ but was absent from
+# units.sh's UNITS array, so install.sh never wrote it to disk. Defect sp-mplcb: WatchdogSec
+# was wired onto a bash ExecStart target, which cannot deliver the heartbeat systemd needs.
+# Defect sp-vhvyi: spira-verdict.service's TimeoutStartSec was too short for a full replay.
+# Defect sp-tv7ue: nothing proved the verdict timer's service actually called queue.sh step.
+# Split-checkout deploys: an ExecStart pointing at @SPIRA_REPO@ resolves into the git checkout
+# instead of the release tree.
 #
-# THREE STATIC PROPERTIES (run in CI with no systemd):
-#
-#   1. EVERY TEMPLATE IS IN UNITS. A template absent from UNITS is never written
-#      to ~/.config/systemd/user — it exists only on the machine where someone
-#      added it by hand. Every other operator's install silently lacks it.
-#
-#   2. EVERY TEMPLATE IS IN _ENABLE_TMPL. A unit installed but not enabled starts
-#      only when triggered manually. After any reboot it is silent, and its
-#      silence is indistinguishable from the silence of a unit that was never
-#      installed.
-#
-#   3. EVERY TEMPLATE HAS A PERIODIC FIRING MECHANISM. A timer with only
-#      OnBootSec fires once at boot and then never again — the same silence, and
-#      the same invisible failure.
-#
-# ONE LIVE PROPERTY (when systemd --user is reachable):
-#
-#   4. EVERY INSTALLED TIMER HAS A RECORDED LastTriggerUSec. An installed, enabled
-#      timer with no LastTriggerUSec has never fired since boot — the exact failure
-#      law-timers-active-is-not-running guards against. ActiveState is explicitly
-#      NOT checked: a timer reads active while every run of its service fails.
-#
-# POSITIVE CONTROLS ARE FIRST (law-absence-needs-a-positive-control). The UNITS
-# and _ENABLE_TMPL parsers are confirmed against spira-sentinel.timer (a known
-# entry) before any absence verdict is trusted. A parser that returns empty or
-# wrong content would make every timer look absent; the positive control catches
-# that before a silent all-clear is emitted.
-#
-# THE STATIC CHECKS ARE THE PRIMARY ASSERTIONS. They work in any environment.
-# The live section runs only when `systemctl --user` succeeds and is skipped
-# gracefully when it does not.
-#
-# covers: systemd/*.timer systemd/units.sh
+# POSITIVE CONTROLS ARE FIRST (law-absence-needs-a-positive-control) in every section: a
+# parser or extractor that returns empty or wrong content would make every absence verdict
+# below look like a pass for the wrong reason.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 UNIT_DIR="$HERE/../systemd"
 UNITS_SH="$UNIT_DIR/units.sh"
-
-pass=0; fail=0; skip=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-note() { skip=$((skip+1)); printf '  skip  %s\n' "$1"; }
 
 echo "test-timer-templates.sh"
 
 # ============================================================================
 echo
-echo "Parse units.sh — extract UNITS and _ENABLE_TMPL:"
+echo "Parse units.sh — UNITS, ENABLE and OPTIONAL:"
 # ============================================================================
 
-[ -r "$UNITS_SH" ] || { printf '  FAIL  units.sh not readable at %s\n' "$UNITS_SH"; exit 1; }
+[ -r "$UNITS_SH" ] || bail "units.sh not readable at $UNITS_SH"
 
 units_block="$(awk '/^UNITS=\(/{found=1} found{print} found && /\)/{found=0}' "$UNITS_SH")"
 enable_block="$(awk '/_ENABLE_TMPL=\(/{found=1} found{print} found && /\)/{found=0}' "$UNITS_SH")"
-
-# CONDITIONAL UNITS ARE STILL INSTALLED UNITS. Some units belong on a box only in a
-# particular shape — promote.sh has nothing to do where development and production are
-# one checkout — so units.sh appends them with UNITS+=/ENABLE+= inside an if, and records
-# the declined case in OPTIONAL+=. The static blocks above cannot see those lines, and a
-# parser that stops at the literal array would report a correctly conditional timer as
-# missing, which is the same cry-wolf this suite exists to prevent.
-#
-# So the membership test reads the appends too, and a timer that is ONLY conditional must
-# ALSO appear in an OPTIONAL+= line. That keeps the original invariant intact — a unit is
-# never silently absent — while letting a box decline one on purpose and say so.
-units_appends="$(grep -E '^[[:space:]]*UNITS\+=\(' "$UNITS_SH")"
-enable_appends="$(grep -E '^[[:space:]]*ENABLE\+=\(' "$UNITS_SH")"
-optional_block="$(grep -E '^[[:space:]]*OPTIONAL\+=\(' "$UNITS_SH")"
-units_all="$units_block
-$units_appends"
-enable_all="$enable_block
-$enable_appends"
-
-if [ -z "$units_block" ]; then
-    bad "UNITS block parseable" "awk found nothing — remaining checks are invalid"
-    printf '\n%d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skip"
-    exit 1
-fi
+[ -n "$units_block" ] || bail "UNITS block parseable — awk found nothing; remaining checks are invalid"
+[ -n "$enable_block" ] || bail "_ENABLE_TMPL block parseable — awk found nothing; remaining checks are invalid"
 ok "UNITS block parseable (${#units_block} bytes)"
-
-if [ -z "$enable_block" ]; then
-    bad "_ENABLE_TMPL block parseable" "awk found nothing — remaining checks are invalid"
-    printf '\n%d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skip"
-    exit 1
-fi
 ok "_ENABLE_TMPL block parseable (${#enable_block} bytes)"
 
-# POSITIVE CONTROLS. spira-sentinel.timer is the canary: it must appear in both
-# blocks before any absence verdict is trusted. If the parsers are broken or the
-# blocks are misidentified, the canary fails loudly rather than silently passing.
-case "$units_block" in
-    *spira-sentinel.timer*)
-        ok "positive control: spira-sentinel.timer is in UNITS" ;;
-    *)
-        bad "positive control: spira-sentinel.timer is in UNITS — parser may be broken" ""
-        printf '\n%d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skip"
-        exit 1 ;;
-esac
+# CONDITIONAL UNITS ARE STILL INSTALLED UNITS. units.sh appends some template names inside an
+# `if` (UNITS+=/ENABLE+=) and records the declined case in OPTIONAL+=. The static array
+# literal above cannot see those lines, so the membership tests below also read every
+# UNITS+=/ENABLE+= append line, and a timer that is only conditional must appear in an
+# OPTIONAL+= line too — that keeps "never silently absent" true while letting a box decline
+# a unit on purpose and say so.
+units_all="$units_block
+$(grep -E '^[[:space:]]*UNITS\+=\(' "$UNITS_SH")"
+enable_all="$enable_block
+$(grep -E '^[[:space:]]*ENABLE\+=\(' "$UNITS_SH")"
+optional_block="$(grep -E '^[[:space:]]*OPTIONAL\+=\(' "$UNITS_SH")"
+is_optional() { case "$optional_block" in *"$1"*) return 0 ;; *) return 1 ;; esac; }
 
-case "$enable_block" in
-    *spira-sentinel.timer*)
-        ok "positive control: spira-sentinel.timer is in _ENABLE_TMPL" ;;
-    *)
-        bad "positive control: spira-sentinel.timer is in _ENABLE_TMPL — parser may be broken" ""
-        printf '\n%d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skip"
-        exit 1 ;;
-esac
+# POSITIVE CONTROL: spira-sentinel.timer is the canary. If the parsers are broken or the
+# blocks misidentified, it fails loudly here rather than making every absence verdict below
+# a silent all-clear.
+want "positive control: spira-sentinel.timer is in UNITS" "spira-sentinel.timer" "$units_block"
+want "positive control: spira-sentinel.timer is in _ENABLE_TMPL" "spira-sentinel.timer" "$enable_block"
 
 # ============================================================================
 echo
-echo "Every .timer template in systemd/ is in UNITS (will be installed):"
+echo "Every .timer template is in UNITS (or its decline recorded in OPTIONAL):"
 # ============================================================================
 
 timer_count=0
 for tmr in "$UNIT_DIR"/*.timer; do
     [ -e "$tmr" ] || continue
     name="$(basename "$tmr")"
-    timer_count=$((timer_count+1))
+    timer_count=$((timer_count + 1))
     case "$units_all" in
         *"$name"*)
             case "$units_block" in
                 *"$name"*) ok "UNITS: $name" ;;
                 *)
-                    # Conditional: permitted, but the declined case must be recorded.
-                    case "$optional_block" in
-                        *"$name"*) ok "UNITS: $name (conditional, declined case in OPTIONAL)" ;;
-                        *) bad "UNITS: $name" "added conditionally but never recorded in OPTIONAL — a box that declines it cannot tell 'not installed here' from 'nobody listed it'" ;;
-                    esac ;;
+                    if is_optional "$name"; then
+                        ok "UNITS: $name (conditional, declined case in OPTIONAL)"
+                    else
+                        bad "UNITS: $name" "added conditionally but never recorded in OPTIONAL — a box that declines it cannot tell 'not installed here' from 'nobody listed it'"
+                    fi ;;
             esac ;;
-        *)
-            bad "UNITS: $name" "absent from UNITS — install.sh will not write it to disk on a fresh install" ;;
+        *) bad "UNITS: $name" "absent from UNITS — install.sh will not write it to disk on a fresh install" ;;
     esac
 done
-
-if [ "$timer_count" -eq 0 ]; then
-    bad "at least one .timer file in $UNIT_DIR" "glob matched nothing — check the path"
-else
-    ok "$timer_count .timer templates found and checked against UNITS"
-fi
+[ "$timer_count" -gt 0 ] \
+    && ok "$timer_count .timer templates found and checked against UNITS" \
+    || bad "at least one .timer file in $UNIT_DIR" "glob matched nothing — check the path"
 
 # ============================================================================
 echo
-echo "Every .timer template in systemd/ is in _ENABLE_TMPL (will be enabled):"
+echo "Every .timer template is in _ENABLE_TMPL (will be enabled):"
 # ============================================================================
 
 for tmr in "$UNIT_DIR"/*.timer; do
     [ -e "$tmr" ] || continue
     name="$(basename "$tmr")"
     case "$enable_all" in
-        *"$name"*)
-            ok "_ENABLE_TMPL: $name" ;;
-        *)
-            bad "_ENABLE_TMPL: $name" \
-                "absent — install.sh will install but not enable it; the timer will not fire" ;;
+        *"$name"*) ok "_ENABLE_TMPL: $name" ;;
+        *) bad "_ENABLE_TMPL: $name" "absent — install.sh will install but not enable it; the timer will not fire" ;;
     esac
 done
 
@@ -179,121 +110,300 @@ for tmr in "$UNIT_DIR"/*.timer; do
     [ -e "$tmr" ] || continue
     name="$(basename "$tmr")"
     periodic="$(grep -E '^OnUnitActiveSec=|^OnCalendar=' "$tmr" 2>/dev/null | head -1)"
-    if [ -z "$periodic" ]; then
-        bad "periodic: $name" \
-            "OnUnitActiveSec and OnCalendar both absent — fires once at boot and then never again"
-    else
+    if [ -n "$periodic" ]; then
         ok "periodic: $name (${periodic%%=*})"
+    else
+        bad "periodic: $name" "OnUnitActiveSec and OnCalendar both absent — fires once at boot and then never again"
     fi
 done
 
 # ============================================================================
 echo
-echo "Live: every installed timer has a recorded LastTriggerUSec:"
+echo "Restarting services have a reachable start limiter in [Unit]:"
 # ============================================================================
+# A Restart=always unit with RestartSec=N can never trip systemd's default 10s limiter when
+# N*(burst-1) > 10, so the burst never accumulates and the unit loops instead of landing in
+# failed. StartLimitIntervalSec must exceed RestartSec*(StartLimitBurst-1), and the directives
+# must live in [Unit] — systemd silently ignores them under [Service].
 
-# SC is the systemctl command. When the caller sets SPIRA_SYSTEMCTL (e.g. to a
-# real systemctl for manual verification against the live box), that is used.
-# Otherwise a hermetic stub is created in a scratch directory: it simulates a
-# fully-installed Spira so the assertion logic is exercised without depending
-# on box state, which would make the gate's verdict a fact about the machine
-# rather than the branch (law-gates-run-in-a-clean-environment).
-_sc_tmp="$(mktemp -d)"
-trap 'rm -rf "$_sc_tmp"' EXIT
-if [ -z "${SPIRA_SYSTEMCTL:-}" ]; then
-    cat > "$_sc_tmp/systemctl" << 'STUB'
-#!/usr/bin/env bash
-# Hermetic stub: simulates systemd --user for test-timer-templates.sh.
-shift  # remove --user
-case "$1" in
-    status)
-        exit 0 ;;
-    list-unit-files)
-        # $2 is the unit name; $3 is --no-legend (ignored)
-        printf '%s enabled\n' "${2:-unknown.timer}"
-        exit 0 ;;
-    show)
-        printf 'LastTriggerUSec=Thu 2026-09-11 10:00:00 PDT\n'
-        exit 0 ;;
-    *)
-        exit 1 ;;
-esac
-STUB
-    chmod +x "$_sc_tmp/systemctl"
-fi
-SC="${SPIRA_SYSTEMCTL:-$_sc_tmp/systemctl}"
+# check_unit_limiter <file> -> 0 and a summary on stdout if the limiter is reachable; 1 and
+# the reason if not; 0 with no output for a unit that does not restart.
+check_unit_limiter() {
+    local unit="$1" code restart rsec burst window missing sect need
+    code="$(grep -vE '^[[:space:]]*#' "$unit")"
+    restart="$(printf '%s\n' "$code" | sed -n 's/^[[:space:]]*Restart=\([a-z-]*\).*/\1/p' | tail -1)"
+    case "$restart" in always | on-failure) ;; *) return 0 ;; esac
 
-# POSITIVE CONTROL for the live section. Confirm the stub/systemctl responds to
-# "status" before trusting absence verdicts below. A stub that always fails here
-# would make every timer appear uninstalled.
-if ! "$SC" --user status >/dev/null 2>&1; then
-    note "systemctl --user unreachable — skipping live-system assertions"
-    printf '\n%d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skip"
-    [ "$fail" -eq 0 ]
-    exit
-fi
+    rsec="$(printf '%s\n' "$code" | sed -n 's/^[[:space:]]*RestartSec=\([0-9][0-9]*\).*/\1/p' | tail -1)"
+    burst="$(printf '%s\n' "$code" | sed -n 's/^[[:space:]]*StartLimitBurst=\([0-9][0-9]*\).*/\1/p' | tail -1)"
+    window="$(printf '%s\n' "$code" | sed -n 's/^[[:space:]]*StartLimitIntervalSec=\([0-9][0-9]*\).*/\1/p' | tail -1)"
+    missing=""
+    [ -n "$rsec" ] || missing="$missing RestartSec"
+    [ -n "$burst" ] || missing="$missing StartLimitBurst"
+    [ -n "$window" ] || missing="$missing StartLimitIntervalSec"
+    if [ -n "$missing" ]; then printf 'missing:%s\n' "$missing"; return 1; fi
 
-# Mirrors inst_name() from units.sh: spira-*.timer → spira-*-<instance>.timer;
-# shared units (beads-push, cockpit-ensure, concierge) keep their template name.
-# SPIRA_INSTANCE from the environment takes precedence; the default is prod.
-: "${SPIRA_INSTANCE:=prod}"
-_live_inst_name() {
-    local u="$1"
-    case "$u" in
-        spira-*.timer) printf '%s-%s.timer' "${u%.timer}" "$SPIRA_INSTANCE" ;;
-        *)             printf '%s' "$u" ;;
-    esac
+    need=$((rsec * (burst - 1)))
+    if [ "$window" -le "$need" ]; then
+        printf '%d starts at RestartSec=%ds span %ds but StartLimitIntervalSec=%ds — limiter never fires\n' \
+            "$burst" "$rsec" "$need" "$window"
+        return 1
+    fi
+
+    sect="$(printf '%s\n' "$code" | awk '/^\[/{s=$0} /^[[:space:]]*StartLimit/{print s}' | sort -u)"
+    if [ "$sect" != "[Unit]" ]; then
+        printf 'StartLimit directives under %s, not [Unit] — systemd ignores them there\n' "${sect:-nothing}"
+        return 1
+    fi
+    printf 'Restart=%s RestartSec=%ds burst=%d window=%ds\n' "$restart" "$rsec" "$burst" "$window"
+    return 0
 }
 
-sentinel_inst="$(_live_inst_name spira-sentinel.timer)"
-sentinel_list="$("$SC" --user list-unit-files "$sentinel_inst" --no-legend 2>/dev/null)"
-if [ -z "$sentinel_list" ]; then
-    note "live positive control: $sentinel_inst not in list-unit-files — skipping live checks"
-    printf '\n%d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skip"
-    [ "$fail" -eq 0 ]
-    exit
+# NEGATIVE CONTROL: the checker must flag a unit whose window cannot hold burst starts
+# (law-a-check-that-finds-nothing-must-first-prove-it-could-have-found-something).
+_rl_tmp="$(mktemp -d)"
+cat > "$_rl_tmp/unreachable-limiter.service" << 'EOF'
+[Unit]
+Description=Test unit with unreachable limiter
+StartLimitIntervalSec=10
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/bin/true
+Restart=always
+RestartSec=15
+EOF
+if check_unit_limiter "$_rl_tmp/unreachable-limiter.service" >/dev/null 2>&1; then
+    bad "negative control: checker rejects unreachable limiter" "checker passed when it should fail"
+else
+    ok "negative control: checker rejects unreachable limiter (window=10s < 5 starts at RestartSec=15s)"
 fi
-ok "live positive control: $sentinel_inst is in list-unit-files"
+rm -rf "$_rl_tmp"
 
-for tmr in "$UNIT_DIR"/*.timer; do
-    [ -e "$tmr" ] || continue
-    name="$(basename "$tmr")"
-    installed="$(_live_inst_name "$name")"
-
-    # INSTALLED — appears in list-unit-files. Absent means install.sh was never
-    # run for this template, or the template was added after the last install.
-    list_out="$("$SC" --user list-unit-files "$installed" --no-legend 2>/dev/null)"
-    if [ -z "$list_out" ]; then
-        bad "live installed: $installed" "not in systemctl --user list-unit-files"
-        continue
-    fi
-    ok "live installed: $installed"
-
-    # ENABLED — install.sh's enable step ran for this unit. A unit in list-unit-
-    # files with state 'disabled' was written to disk but never enabled; it will
-    # not start at login and will never fire.
-    state="$(printf '%s' "$list_out" | awk '{print $2}')"
-    if [ "$state" = "enabled" ]; then
-        ok "live enabled: $installed"
+_rl_found=0
+for svc in "$UNIT_DIR"/*.service; do
+    [ -e "$svc" ] || continue
+    name="$(basename "$svc")"
+    code="$(grep -vE '^[[:space:]]*#' "$svc")"
+    restart="$(printf '%s\n' "$code" | sed -n 's/^[[:space:]]*Restart=\([a-z-]*\).*/\1/p' | tail -1)"
+    case "$restart" in always | on-failure) ;; *) continue ;; esac
+    _rl_found=$((_rl_found + 1))
+    if result="$(check_unit_limiter "$svc" 2>&1)"; then
+        ok "restart limiter: $name: $result"
     else
-        bad "live enabled: $installed" "state is '$state', not 'enabled'"
-    fi
-
-    # HAS FIRED — LastTriggerUSec is non-empty. ActiveState is deliberately not
-    # checked here: a timer reads active even while every run of its service
-    # fails (law-timers-active-is-not-running). LastTriggerUSec records the last
-    # actual activation; an empty value means the timer has never fired since boot.
-    last_trigger="$("$SC" --user show "$installed" \
-                        --property=LastTriggerUSec 2>/dev/null \
-                    | sed 's/^LastTriggerUSec=//')"
-    if [ -n "$last_trigger" ] && [ "$last_trigger" != "n/a" ]; then
-        ok "live has fired: $installed (LastTriggerUSec=$last_trigger)"
-    else
-        bad "live has fired: $installed" \
-            "LastTriggerUSec is empty — timer has not fired since boot"
+        bad "restart limiter: $name" "$result"
     fi
 done
+[ "$_rl_found" -gt 0 ] || bad "at least one restarting unit exists in systemd/" "none found — positive control missing"
 
+# ============================================================================
 echo
-printf '%d passed, %d failed, %d skipped\n' "$pass" "$fail" "$skip"
-[ "$fail" -eq 0 ]
+echo "WatchdogSec appears only on a non-shell ExecStart target:"
+# ============================================================================
+# Only the main PID's own datagram is credited by the manager; bash cannot satisfy that
+# constraint (sp-3az9w). The fence checks the ExecStart TARGET only, not its arguments — a
+# Rust supervisor may pass a .sh file as a child argument without that making bash the
+# tracked PID.
+
+# execstart_target <unit-body> -> the ExecStart target (first word, leading '-' stripped),
+# or empty. Shared by the real loop and its controls so a control can never drift from the
+# extraction it is meant to prove (the earlier version of this fence copied this case
+# statement three times).
+execstart_target() {
+    local body="$1" line target=""
+    while IFS= read -r line; do
+        case "$line" in
+            ExecStart=*)
+                target="${line#ExecStart=}"
+                target="${target#-}"
+                target="${target%% *}"
+                break ;;
+        esac
+    done <<< "$body"
+    printf '%s' "$target"
+}
+
+# POSITIVE CONTROL: a synthetic bash ExecStart with WatchdogSec must be flagged.
+_wd_bad="$(execstart_target '[Service]
+ExecStart=/usr/bin/bash /some/script.sh
+WatchdogSec=60')"
+case "$_wd_bad" in
+    *bash* | *.sh) ok "positive control: bash ExecStart target is extracted" ;;
+    *) bad "positive control: bash ExecStart target is extracted" "got [$_wd_bad]" ;;
+esac
+
+# NEGATIVE CONTROL: a Rust binary passing a .sh argument must not be flagged as its target.
+_wd_ok="$(execstart_target '[Service]
+ExecStart=/usr/local/bin/spira-supervise /path/collect.sh loop
+WatchdogSec=60')"
+case "$_wd_ok" in
+    *bash* | *.sh) bad "negative control: Rust supervisor with .sh argument is not flagged" "got [$_wd_ok]" ;;
+    *) ok "negative control: Rust supervisor with .sh argument is not flagged" ;;
+esac
+
+_wd_checked=0
+for svc in "$UNIT_DIR"/*.service; do
+    [ -e "$svc" ] || continue
+    name="$(basename "$svc")"
+    body="$(grep -v '^[[:space:]]*#' "$svc")"
+    target="$(execstart_target "$body")"
+    case "$target" in *bash* | *.sh) ;; *) continue ;; esac
+    _wd_checked=$((_wd_checked + 1))
+    nowant "watchdog: $name bash ExecStart target has no WatchdogSec" "WatchdogSec=" "$body"
+done
+[ "$_wd_checked" -gt 0 ] || bad "at least one bash/shell ExecStart unit was examined" "none found — are ExecStart patterns still .sh or bash?"
+
+# spira-cockpit.service is the one unit that MUST carry WatchdogSec (sp-mplcb wires
+# spira-supervise, a Rust binary, as its ExecStart, so the fence above does not apply to it).
+_wd_cockpit="$UNIT_DIR/spira-cockpit.service"
+if [ -r "$_wd_cockpit" ]; then
+    want "spira-cockpit.service: WatchdogSec present (Rust supervisor is main PID)" \
+        "WatchdogSec=" "$(grep -v '^[[:space:]]*#' "$_wd_cockpit")"
+else
+    bad "spira-cockpit.service is readable" "not found at $_wd_cockpit"
+fi
+
+# ============================================================================
+echo
+echo "The verdict service: driver wiring, TimeoutStartSec>=3600, no CPUQuota:"
+# ============================================================================
+# defect sp-tv7ue: nothing proved the service called queue.sh step (which settles the open
+# batch then opens the next) rather than verdict.sh alone (which would skip batch.sh and
+# leave no new batch after a landing). defect sp-vhvyi: TimeoutStartSec was too short for a
+# full red-batch replay, and CPUQuota would throttle one if it were ever added.
+_vd_svc="$UNIT_DIR/spira-verdict.service"
+_vd_driver="$HERE/spira-verdict.sh"
+
+if [ -r "$_vd_svc" ]; then
+    _vd_execstart="$(grep '^ExecStart=' "$_vd_svc" 2>/dev/null | head -1)"
+    if [ -n "$_vd_execstart" ]; then
+        want "spira-verdict.service ExecStart invokes spira-verdict.sh" "spira-verdict.sh" "$_vd_execstart"
+    else
+        bad "spira-verdict.service has an ExecStart line" "none found"
+    fi
+
+    # POSITIVE CONTROL for the Timeout/CPUQuota checks below: a readable Type= line proves
+    # the file is non-empty before any absence verdict about CPUQuota is trusted.
+    if grep -q '^Type=' "$_vd_svc" 2>/dev/null; then
+        ok "positive control: spira-verdict.service Type= is present (file is readable)"
+    else
+        bad "positive control: spira-verdict.service Type= is present" "not found — file may be empty or unparseable"
+    fi
+
+    _vd_timeout="$(grep '^TimeoutStartSec=' "$_vd_svc" 2>/dev/null | head -1)"
+    if [ -n "$_vd_timeout" ]; then
+        _vd_timeout_val="${_vd_timeout#TimeoutStartSec=}"
+        if [ "${_vd_timeout_val}" -ge 3600 ] 2>/dev/null; then
+            ok "spira-verdict.service TimeoutStartSec >= 3600s (covers red-batch replay per member)"
+        else
+            bad "spira-verdict.service TimeoutStartSec >= 3600s" "${_vd_timeout_val}s < 3600s — systemd kills every replay at two minutes (sp-vhvyi)"
+        fi
+    else
+        bad "spira-verdict.service has TimeoutStartSec" "directive absent"
+    fi
+
+    if grep -q '^CPUQuota=' "$_vd_svc" 2>/dev/null; then
+        bad "spira-verdict.service has no CPUQuota (replay runs at full CPU)" \
+            "found CPUQuota — throttles containers during red-batch replay (sp-vhvyi)"
+    else
+        ok "spira-verdict.service has no CPUQuota (replay runs at full CPU)"
+    fi
+else
+    bad "spira-verdict.service is readable" "not found at $_vd_svc"
+fi
+
+if [ -r "$_vd_driver" ]; then
+    _vd_src="$(cat "$_vd_driver")"
+    if [ -n "$_vd_src" ]; then
+        # POSITIVE CONTROL: a script sourcing nothing cannot call spira_repos or repo_land.
+        want "positive control: spira-verdict.sh sources lib.sh" "lib.sh" "$_vd_src"
+        want "spira-verdict.sh calls queue.sh step" 'queue.sh" step' "$_vd_src"
+        want "spira-verdict.sh iterates repos" "spira_repos" "$_vd_src"
+    else
+        bad "spira-verdict.sh is non-empty" "empty or unreadable"
+    fi
+else
+    bad "spira-verdict.sh is readable" "not found at $_vd_driver"
+fi
+
+# ============================================================================
+echo
+echo "install.sh renders shared units against the release root, not the git checkout:"
+# ============================================================================
+# In a split-checkout deployment SPIRA_REPO is the git checkout and SPIRA_PROD is the
+# release tree; an ExecStart using @SPIRA_REPO@ points into the checkout, which a release
+# activation does not update. @SPIRA_PROD_ROOT@ (dirname of SPIRA_PROD) is the placeholder
+# that resolves into the release tree instead.
+
+want "install.sh: SPIRA_PROD_ROOT = dirname(SPIRA_PROD) is present" \
+    "SPIRA_PROD_ROOT" "$(grep 'SPIRA_PROD_ROOT.*dirname.*SPIRA_PROD' "$UNIT_DIR/install.sh")"
+
+_rd_tmp="$(mktemp -d)"
+_rd_repo="$_rd_tmp/repo"
+_rd_prod="$_rd_tmp/releases/current/spira"
+_rd_prod_root="$_rd_tmp/releases/current"
+mkdir -p "$_rd_repo" "$_rd_prod" "$_rd_prod_root/cockpit"
+
+# Renders using the same @KEY@ substitution install.sh performs (kept in sync by the grep
+# check above: a renamed placeholder key breaks that check before this one goes stale).
+render_unit() {
+    python3 - "$1" "$_rd_repo" "$_rd_repo" "$_rd_tmp/run" "$_rd_tmp/db" "$_rd_prod_root/cockpit" \
+        "" "" "" "$_rd_prod" "test" "" "" "" << 'PYEOF'
+import os, re, sys
+keys = ["SPIRA_HOME", "SPIRA_REPO", "SPIRA_RUN", "SPIRA_DB", "SPIRA_COCKPIT",
+        "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "DOLT", "SPIRA_PROD", "SPIRA_INSTANCE",
+        "SPIRA_TESTDB_PORT", "SPIRA_SUPERVISE_BIN", "SPIRA_SNAP_STALE_S"]
+m = dict(zip(keys, sys.argv[2:15]))
+if not m["SPIRA_PROD"]:
+    m["SPIRA_PROD"] = m["SPIRA_HOME"]
+m["SPIRA_PROD_COCK"] = os.path.dirname(m["SPIRA_PROD"]) + "/cockpit"
+m["SPIRA_PROD_ROOT"] = os.path.dirname(m["SPIRA_PROD"])
+text = open(sys.argv[1]).read()
+sys.stdout.write(re.sub(r"@([A-Z_]+)@", lambda x: m.get(x.group(1), x.group(0)), text))
+PYEOF
+}
+
+# POSITIVE CONTROL: a synthetic @SPIRA_REPO@ template must render to the checkout path, so
+# the detector is proven to fire before its silence on the real templates is trusted.
+_rd_bad="$_rd_tmp/bad.service"
+printf '[Service]\nExecStart=@SPIRA_REPO@/something.sh\n' > "$_rd_bad"
+want "positive control: @SPIRA_REPO@ renders to checkout path — detector fires" \
+    "ExecStart=$_rd_repo/" "$(render_unit "$_rd_bad")"
+
+for svc in concierge.service beads-push.service; do
+    _rd_execline="$(grep -E '^ExecStart=' "$UNIT_DIR/$svc")"
+    nowant "$svc: ExecStart does not use @SPIRA_REPO@" "@SPIRA_REPO@" "$_rd_execline"
+    want "$svc: ExecStart uses @SPIRA_PROD_ROOT@" "@SPIRA_PROD_ROOT@" "$_rd_execline"
+
+    _rd_rendered="$(render_unit "$UNIT_DIR/$svc" | grep -E '^ExecStart=')"
+    nowant "$svc: rendered ExecStart does not point into git checkout" "$_rd_repo" "$_rd_rendered"
+    want "$svc: rendered ExecStart points into release root" "$_rd_prod_root" "$_rd_rendered"
+done
+rm -rf "$_rd_tmp"
+
+# ============================================================================
+echo
+echo "ExecStart @*_BIN@ tokens (OPTIONAL derived from units.sh, not a hand-copied list):"
+# ============================================================================
+# The old test-tarball-bins.sh hand-copied its list of OPTIONAL unit names; it silently fell
+# out of sync with units.sh (missing spira-landing-pass.service/.timer). Reusing is_optional
+# from the units.sh parse above means this scan and the UNITS/_ENABLE_TMPL checks above can
+# never disagree about which units are conditional.
+
+_tb_found=0
+for svc in "$UNIT_DIR"/*.service; do
+    [ -e "$svc" ] || continue
+    name="$(basename "$svc")"
+    is_optional "$name" && continue
+    for tok in $(grep '^ExecStart=' "$svc" 2>/dev/null | grep -oE '@[A-Z_]+_BIN@' | tr -d '@'); do
+        _tb_found=$((_tb_found + 1))
+        ok "non-optional $name references @${tok}@ in ExecStart"
+    done
+done
+[ "$_tb_found" -gt 0 ] \
+    && ok "positive control: at least one @*_BIN@ token found in a non-optional unit's ExecStart" \
+    || bad "at least one @*_BIN@ token in non-optional ExecStart" \
+        "none found — either all units are optional or ExecStart references were removed; positive control failed"
+
+tl_summary

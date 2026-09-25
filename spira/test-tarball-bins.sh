@@ -3,26 +3,24 @@
 # test-tarball-bins.sh — every binary named in a non-optional unit's ExecStart
 # is shipped in the tarball; build-tarball.sh enforces all four required bins.
 #
-# POSITIVE CONTROL FIRST (law-absence-needs-a-positive-control):
-# We first confirm at least one @*_BIN@ token appears in a non-optional unit's
-# ExecStart (so silence is not vacuous success), and that building without
-# --supervise-bin is refused (so the requirement is actually enforced).
+# The structural claim — that a scanned @*_BIN@ token is at least known to this table —
+# and its own positive control now live in test-timer-templates.sh's T0 unit-lint, which
+# runs without paying for a build. What is left here needs the built tarball itself:
 #
 # CASES
-#   1. POSITIVE CONTROL: at least one non-optional unit references @*_BIN@ in ExecStart.
-#   2. POSITIVE CONTROL: build without --supervise-bin exits non-zero.
-#   3. Build with all four bins: tarball contains bin/spira-supervise.
-#   4. Each @*_BIN@ token found in non-optional unit ExecStart lines corresponds to
+#   1. POSITIVE CONTROL: build without --supervise-bin exits non-zero.
+#   2. Build with all four bins: tarball contains bin/spira-supervise.
+#   3. Each @*_BIN@ token found in non-optional unit ExecStart lines corresponds to
 #      a binary present in the built tarball.
-#   5. release.yml names a 'Build supervise' step.
+#   4. release.yml names a 'Build supervise' step.
 #
 # WHAT WOULD HAVE CAUGHT sp-mplcb:
 #   sp-mplcb added @SPIRA_SUPERVISE_BIN@ to spira-cockpit.service ExecStart without
-#   adding --supervise-bin to build-tarball.sh. Case 2 (build refused without
-#   --supervise-bin) or case 3 (bin/spira-supervise absent from tarball) would have
-#   been RED. Case 4 provides the structural claim for any future addition.
+#   adding --supervise-bin to build-tarball.sh. Case 1 (build refused without
+#   --supervise-bin) or case 2 (bin/spira-supervise absent from tarball) would have
+#   been RED. Case 3 provides the structural claim for any future addition.
 #
-# covers: spira/build-tarball.sh .github/workflows/release.yml systemd/*.service
+# covers: spira/build-tarball.sh .github/workflows/release.yml systemd/*.service systemd/units.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REPO_ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -42,7 +40,7 @@ export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 # ---------------------------------------------------------------------------
 # Mapping table: @TOKEN@ → bin/<name>.
 # Add an entry here whenever a new @*_BIN@ token appears in a unit ExecStart.
-# If this table is missing a token found in systemd/*.service, case 4 reports
+# If this table is missing a token found in systemd/*.service, case 3 reports
 # it as unknown and the test fails — forcing the developer to update both this
 # table and build-tarball.sh together.
 declare -A TOKEN_TO_BIN=(
@@ -51,26 +49,17 @@ declare -A TOKEN_TO_BIN=(
 )
 
 # ---------------------------------------------------------------------------
-# OPTIONAL units (keep in sync with systemd/units.sh OPTIONAL logic).
-# A unit in this list is excluded from the ExecStart scan.
-OPTIONAL_UNITS=(
-    spira-promote.service spira-promote.timer
-    spira-suites.service spira-suites.timer
-    spira-mail-deliver.service
-    dolt-beads.service
-    dolt-beads-test.service
-    spira-loom.service
-    spira-broker.service spira-broker.timer
-)
-
-is_optional() {
-    local u="$1"
-    for o in "${OPTIONAL_UNITS[@]}"; do [ "$u" = "$o" ] && return 0; done
-    return 1
-}
+# OPTIONAL units, derived from systemd/units.sh itself (not a hand-copied list — the old
+# list silently fell out of sync, missing spira-landing-pass.service/.timer). Every
+# OPTIONAL+= line units.sh can ever emit is read, regardless of which conditions this box
+# happens to evaluate true, matching test-timer-templates.sh's UNITS/_ENABLE_TMPL parse.
+OPTIONAL_BLOCK="$(grep -E '^[[:space:]]*OPTIONAL\+=\(' "$REPO_ROOT/systemd/units.sh")"
+is_optional() { case "$OPTIONAL_BLOCK" in *"$1"*) return 0 ;; *) return 1 ;; esac; }
 
 # ---------------------------------------------------------------------------
-# Scan: collect @*_BIN@ tokens from ExecStart lines of non-optional units.
+# Scan: collect @*_BIN@ tokens from ExecStart lines of non-optional units. The positive
+# control for this scan (at least one token found) lives in test-timer-templates.sh, which
+# runs the same scan without needing a build.
 declare -A FOUND_TOKENS=()
 while IFS= read -r svc; do
     fname="$(basename "$svc")"
@@ -82,17 +71,6 @@ while IFS= read -r svc; do
         done
     done < "$svc"
 done < <(find "$REPO_ROOT/systemd" -name '*.service' 2>/dev/null)
-
-# ============================================================================
-echo
-echo "1. POSITIVE CONTROL — at least one non-optional unit references @*_BIN@ in ExecStart"
-# ============================================================================
-if [ "${#FOUND_TOKENS[@]}" -gt 0 ]; then
-    ok "found ${#FOUND_TOKENS[@]} @*_BIN@ token(s): ${!FOUND_TOKENS[*]}"
-else
-    bad "at least one @*_BIN@ token in non-optional ExecStart" \
-        "none found — either all units are optional or ExecStart references were removed; positive control failed"
-fi
 
 # ---------------------------------------------------------------------------
 # GIT FIXTURE
@@ -141,7 +119,7 @@ mkdir -p "$TMP/home" "$TMP/out-full"
 
 # ============================================================================
 echo
-echo "2. POSITIVE CONTROL — build without --supervise-bin exits non-zero"
+echo "1. POSITIVE CONTROL — build without --supervise-bin exits non-zero"
 # ============================================================================
 # Before the fix, build-tarball.sh did not require --supervise-bin and would
 # exit 0 here, causing this positive control to fail (test RED before fix).
@@ -161,7 +139,7 @@ fi
 
 # ============================================================================
 echo
-echo "3. Build with all bins — bin/spira-supervise and bin/landing-pass are present"
+echo "2. Build with all bins — bin/spira-supervise and bin/landing-pass are present"
 # ============================================================================
 build_out="$(run_build build \
     --output "$TMP/out-full" \
@@ -198,7 +176,7 @@ fi
 
 # ============================================================================
 echo
-echo "4. Each @*_BIN@ token in non-optional ExecStart maps to a bin/ in the tarball"
+echo "3. Each @*_BIN@ token in non-optional ExecStart maps to a bin/ in the tarball"
 # ============================================================================
 for tok in "${!FOUND_TOKENS[@]}"; do
     bin_name="${TOKEN_TO_BIN[$tok]:-}"
@@ -217,7 +195,7 @@ done
 
 # ============================================================================
 echo
-echo "5. release.yml builds with 'make build' (no per-crate build steps)"
+echo "4. release.yml builds with 'make build' (no per-crate build steps)"
 # ============================================================================
 RELEASE_YML="$REPO_ROOT/.github/workflows/release.yml"
 if [ -f "$RELEASE_YML" ] && grep -q "make build" "$RELEASE_YML"; then
