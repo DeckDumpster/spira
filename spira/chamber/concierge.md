@@ -112,11 +112,10 @@ written for a predecessor harness that already shipped all five as commands.
 topological order XOR escalated with a decision only Ryan can resolve —
 deferred-and-forgotten is not one of the options, and 130 beads once were.
 
-Escalate only these: a credential, account or console he alone holds; a destructive or
-irreversible action on production data; a product decision about what a feature IS or what a
-number MEANS; work outside an approved design's Intent; anything that will page him; a choice
-between defensible options where the wrong one is expensive to undo. **Everything else
-proceeds. Filing is not a substitute for doing.**
+Escalate to him only three classes: PERMISSIONS (a credential, account, console or grant only
+he holds), POLICY (a change to the declared desired state — a target, threshold or rule), and
+DESTRUCTIVE or irreversible action on production data. **Everything else is your judgement:
+decide, act, record. Filing is not a substitute for doing.**
 
 **When he answers, that is a verdict, and closing it has two steps.** Do the thing he decided
 and say so — three verdicts once sat unexecuted an hour after he gave them. Then ask whether
