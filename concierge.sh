@@ -210,12 +210,57 @@ concierge_live_pid() {
     return 1
 }
 
+# concierge_stray_holders -> pids of live processes registered under `--remote-control
+# $SESSION` other than the one this socket manages, one per line.
+#
+# THE GAP concierge_live_pid DOESN'T COVER. That check finds a process holding the RECORDED
+# resume id; it finds nothing for a process that was never resumed. A bare `claude
+# --remote-control concierge` typed by hand in a dead cockpit pane holds no resume id, so it
+# is invisible to the convergence check above and answers to the same Remote Control name
+# and the same phone session list as the managed one (sp-rig42). This scans for the NAME
+# instead of an id, wherever the process is running.
+concierge_stray_holders() {
+    local managed f pid args
+    managed="$($TM list-panes -t "$SESSION" -F '#{pane_pid}' 2>/dev/null | head -1)"
+    for f in /proc/*/cmdline; do
+        pid="${f%/cmdline}"; pid="${pid##*/}"
+        case "$pid" in *[!0-9]*) continue ;; esac
+        [ "$pid" = "$$" ] && continue
+        [ -n "$managed" ] && [ "$pid" = "$managed" ] && continue
+        [ -r "$f" ] || continue
+        args="$(tr '\0' '\n' < "$f" 2>/dev/null)" || continue
+        printf '%s\n' "$args" | awk -v s="$SESSION" '
+            $0 == "--remote-control" { want = 1; next }
+            want { if ($0 == s) found = 1; want = 0 }
+            END  { exit !found }
+        ' || continue
+        printf '%s\n' "$pid"
+    done
+}
+
 case "${1:-status}" in
 
 start)
     if $TM has-session -t "$SESSION" 2>/dev/null; then
         echo "concierge: already running (tmux -L $SOCKET attach -t $SESSION)"
         exit 0
+    fi
+    # THE SINGLETON GUARD (sp-rig42). has-session above only sees THIS socket. A second
+    # concierge started by hand — the recurring hazard: a bare `claude --remote-control
+    # concierge` typed into a dead cockpit pane — runs on a different tmux server entirely
+    # and is invisible to that check. It still answers to the Remote Control name, so the
+    # phone shows one session and the operator has no way to tell which one they are
+    # talking to; the mail wake always reaches THIS socket's session and never that one.
+    # Refuse rather than start a third session into the same confusion.
+    _stray="$(concierge_stray_holders)"
+    if [ -n "$_stray" ]; then
+        printf "concierge: refusing to start — Remote Control name '%s' is already held outside this managed session:\n" "$SESSION" >&2
+        while IFS= read -r _sp; do
+            printf '  pid %s  %s\n' "$_sp" "$(ps -o tty=,lstart= -p "$_sp" 2>/dev/null)" >&2
+        done <<<"$_stray"
+        printf '  wakes sent by "%s wake" go to socket %s and never reach this pid.\n' "$0" "$SOCKET" >&2
+        printf '  inspect it, then either kill it and retry, or attach to it directly.\n' >&2
+        exit 4
     fi
     # CONVERGENCE CHECK BEFORE BRIEF. A live process holding the recorded session id means
     # the concierge is already up (possibly on a different socket). Starting a second claude
@@ -320,6 +365,16 @@ attach)  exec $TM attach -t "$SESSION" ;;
 wake)
     [ -n "${2:-}" ] || { echo "usage: concierge.sh wake \"<text>\"" >&2; exit 2; }
     $TM has-session -t "$SESSION" 2>/dev/null || { echo "concierge: not running" >&2; exit 1; }
+    # FAIL LOUDLY RATHER THAN TYPE INTO A SESSION NOBODY IS READING (sp-rig42). has-session
+    # only proves the tmux session exists; the pane inside it can hold a dead client — the
+    # process exited and tmux left the pane open — and send-keys into a dead pane exits 0
+    # having delivered nothing. #{pane_dead} is tmux's own liveness bit for the pane process.
+    _wdead="$($TM list-panes -t "$SESSION" -F '#{pane_dead}' 2>/dev/null | head -1)"
+    if [ "$_wdead" = "1" ]; then
+        printf 'concierge: refusing to wake — the session exists but its pane process has exited\n' >&2
+        printf '  tmux -L %s attach -t %s   # see what is left, then: %s start\n' "$SOCKET" "$SESSION" "$0" >&2
+        exit 1
+    fi
     # -l sends the text literally; Enter is a separate key so a prompt mid-turn is queued, not split.
     $TM send-keys -t "$SESSION" -l -- "$2" && $TM send-keys -t "$SESSION" Enter
     ;;
@@ -361,8 +416,9 @@ status)
 
 stop)    $TM kill-session -t "$SESSION" 2>/dev/null && echo "concierge: stopped" ;;
 
-_resume-id)  concierge_resume_id ;;   # internal: used by test suite
-_live-pid)   concierge_live_pid "${2:-}" ;;  # internal: used by test suite
+_resume-id)      concierge_resume_id ;;      # internal: used by test suite
+_live-pid)       concierge_live_pid "${2:-}" ;;      # internal: used by test suite
+_stray-holders)  concierge_stray_holders ;;  # internal: used by test suite and doctor.sh
 
 *)       sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

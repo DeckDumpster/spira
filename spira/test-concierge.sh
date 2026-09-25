@@ -758,6 +758,74 @@ STUB
     is   "start exits 0 after fresh retry" 0                     "$_drc"
 fi
 
+echo
+echo "singleton — a bare, hand-started holder is detected by name, not by resume id (sp-rig42)"
+
+# THE GAP concierge_live_pid DOESN'T COVER. That check finds a process holding the RECORDED
+# resume id. A bare `claude --remote-control <name>` typed into a dead cockpit pane holds no
+# resume id at all — it was never resumed — so it is invisible to that check even though it
+# answers to the same Remote Control name and the same phone session. concierge_stray_holders
+# scans for the NAME instead, via the internal _stray-holders subcommand.
+SH_SESS="stray-test-$$"
+SH_TMP="$TMP/stray"; mkdir -p "$SH_TMP"
+SH_FAKE="$SH_TMP/fakeclaude"
+printf '#!/bin/sh\nsleep 30\n' > "$SH_FAKE"; chmod +x "$SH_FAKE"
+
+sh_holders() { SPIRA_RUN="$SH_TMP" SPIRA_WIKI="$SH_TMP" SPIRA_CONF="$TMP/no.conf" \
+    CONCIERGE_SOCKET="$SH_SESS" CONCIERGE_SESSION="$SH_SESS" \
+    bash "$HARNESS/concierge.sh" _stray-holders 2>/dev/null; }
+
+# POSITIVE CONTROL: before any process registers under this made-up session name, none found.
+is "no stray holders before one exists" "" "$(sh_holders)"
+
+bash -c "exec -a claude-strayx '$SH_FAKE' --remote-control '$SH_SESS'" &
+SH_PID=$!
+trap 'kill "$SH_PID" 2>/dev/null; rm -rf "$TMP"' EXIT
+sleep 0.3
+
+is "the bare holder is found by name, with no resume id involved" "$SH_PID" "$(sh_holders)"
+
+# start REFUSES rather than launching a third session on top of the confusion, and it does
+# so before compose_brief — the statute book need not be present for this check to fire.
+out_start="$(SPIRA_RUN="$SH_TMP" SPIRA_WIKI="$SH_TMP" SPIRA_CONF="$TMP/no.conf" \
+    CONCIERGE_SOCKET="$SH_SESS" CONCIERGE_SESSION="$SH_SESS" \
+    bash "$HARNESS/concierge.sh" start 2>&1)"; rc_start=$?
+is   "start refuses (exit 4) when a stray holder is live" 4 "$rc_start"
+want "and names the holding pid"                           "$SH_PID" "$out_start"
+
+kill "$SH_PID" 2>/dev/null; wait "$SH_PID" 2>/dev/null || true
+trap 'rm -rf "$TMP"' EXIT
+is "no stray holders once the process exits" "" "$(sh_holders)"
+
+echo
+echo "wake — refuses rather than typing into a dead pane (sp-rig42)"
+
+# has-session proves the tmux session exists; it says nothing about whether the process
+# inside the pane is still alive. remain-on-exit keeps a dead pane around instead of tmux
+# tearing the whole session down with it, which is what lets this be tested directly.
+WK_SOCK="test-wake-dead-$$"
+tmux -L "$WK_SOCK" kill-server 2>/dev/null || true
+tmux -L "$WK_SOCK" new-session -d -s "$WK_SOCK" -x 80 -y 24
+tmux -L "$WK_SOCK" set-option -t "$WK_SOCK" remain-on-exit on
+tmux -L "$WK_SOCK" send-keys -t "$WK_SOCK" -l -- "exit" && tmux -L "$WK_SOCK" send-keys -t "$WK_SOCK" Enter
+sleep 0.5
+
+out_wake="$(CONCIERGE_SOCKET="$WK_SOCK" CONCIERGE_SESSION="$WK_SOCK" \
+    bash "$HARNESS/concierge.sh" wake "hi" 2>&1)"; rc_wake=$?
+is   "wake refuses on a dead pane"  1                      "$rc_wake"
+want "and says why"                 "pane process has exited" "$out_wake"
+tmux -L "$WK_SOCK" kill-server 2>/dev/null || true
+
+# POSITIVE CONTROL: against a live pane, wake still succeeds — the refusal fires on
+# deadness, not on every call.
+WK_LIVE="test-wake-live-$$"
+tmux -L "$WK_LIVE" kill-server 2>/dev/null || true
+tmux -L "$WK_LIVE" new-session -d -s "$WK_LIVE" "sleep 30"
+rc_wake_live=0
+CONCIERGE_SOCKET="$WK_LIVE" CONCIERGE_SESSION="$WK_LIVE" \
+    bash "$HARNESS/concierge.sh" wake "hi" >/dev/null 2>&1 || rc_wake_live=$?
+is "wake succeeds against a live pane (positive control)" 0 "$rc_wake_live"
+tmux -L "$WK_LIVE" kill-server 2>/dev/null || true
 
 echo
 echo "concierge self-test: $pass passed, $fail failed"
