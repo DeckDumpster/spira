@@ -66,6 +66,58 @@ else
 fi
 
 # ======================================================================================
+# POSITIVE SUPERVISED PATH (gap #8, docs/test-plan/cockpit-observability.md): every case
+# above is a refusal. A fence that refused every INVOCATION_ID, including one that legitimately
+# matches the service, would pass all of them — this is the only case that would catch that.
+echo
+echo "with INVOCATION_ID matching the service (supervised):"
+
+BIN="$TMP/bin"; mkdir -p "$BIN"
+cat > "$BIN/systemctl" <<'SH'
+#!/usr/bin/env bash
+# `systemctl --user show <unit> -p InvocationID --value`
+case " $* " in
+    *" show spira-cockpit.service "*"--value"*)
+        echo "$MOCK_INVOCATION_ID"; exit 0 ;;
+esac
+exit 1
+SH
+chmod +x "$BIN/systemctl"
+
+rm -f "$RUN/cockpit.env"
+env -i PATH="$BASE_PATH" SPIRA_PATH="$BIN" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    INVOCATION_ID="inv-42" MOCK_INVOCATION_ID="inv-42" \
+    bash "$HERE/cockpit.sh" once >/dev/null 2>&1
+if [ -f "$RUN/cockpit.env" ]; then
+    ok "matching INVOCATION_ID: snapshot IS written"
+else
+    bad "matching INVOCATION_ID: snapshot IS written" "file does not exist"
+fi
+snap="$(cat "$RUN/cockpit.env" 2>/dev/null)"
+want "SP_WRITER is set"                    "SP_WRITER="                "$snap"
+want "SP_WRITER names the real unit"       "spira-cockpit.service"     "$snap"
+nowant "SP_WRITER does not say force"      "force"                     "$snap"
+
+# A mismatched INVOCATION_ID against the same, otherwise-working systemctl must still refuse
+# — the negative twin, so this case isn't just "any systemctl output writes".
+rm -f "$RUN/cockpit.env"
+env -i PATH="$BASE_PATH" SPIRA_PATH="$BIN" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    INVOCATION_ID="inv-imposter" MOCK_INVOCATION_ID="inv-42" \
+    bash "$HERE/cockpit.sh" once >/dev/null 2>&1
+if [ ! -f "$RUN/cockpit.env" ]; then
+    ok "mismatched INVOCATION_ID (same working systemctl): snapshot is NOT written"
+else
+    bad "mismatched INVOCATION_ID (same working systemctl): snapshot is NOT written" \
+        "file exists at $RUN/cockpit.env"
+fi
+
+# ======================================================================================
 echo
 echo "with SPIRA_COCKPIT_FORCE=1:"
 
