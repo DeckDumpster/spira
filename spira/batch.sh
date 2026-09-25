@@ -725,14 +725,14 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
         return 0
     fi
 
-    # Sort: suite-transition first, then priority asc, then epoch asc.
+    # Sort: express first, then suite-transition, then priority asc, then epoch asc.
     # queue_sort_rows (lib.sh) is the canonical implementation shared with the cockpit.
     # A forced bisect group bypasses this sort entirely — see the BISECT trigger above.
     local sortfile; sortfile="$(mktemp)"
     # shellcheck disable=SC2064
     trap "rm -f '$sortfile'" RETURN
     if [ -n "$_bisect_forced" ]; then
-        printf '%s\n' "$_bisect_forced" | awk '{printf "0 000000000 0000000000 %s %s\n", $1, $2}' \
+        printf '%s\n' "$_bisect_forced" | awk '{printf "0 0 000000000 0000000000 %s %s\n", $1, $2}' \
             > "$sortfile"
         printf 'batch %s: bisect in progress — forcing cut to recorded half (%d member(s))\n' \
             "$name" "$(printf '%s\n' "$_bisect_forced" | grep -c .)"
@@ -760,7 +760,7 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
     local _bid _btip
 
     while IFS= read -r _line && [ "$taken" -lt "$max" ]; do
-        read -r _ _ _ _bid _btip <<< "$_line"
+        read -r _ _ _ _ _bid _btip <<< "$_line"
         # Warn when the branch head has moved past the certified tip (sp-hm2vw). The
         # batch uses the certified tip; commits pushed after certification are not included
         # until the branch is re-certified.

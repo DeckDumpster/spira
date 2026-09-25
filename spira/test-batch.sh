@@ -216,6 +216,20 @@ branch_p() {
         "$id" "$id" "$priority" "$id" | testdb_seed
 }
 
+# branch_p_express <id> <priority> [epoch] — branch_p, with the express label added.
+branch_p_express() {
+    local id="$1" priority="$2" epoch="${3:-$(date +%s)}"
+    local wt="$RUN/worktree/$id"
+    git -C "$REPO" worktree add -q -b "spira/$id" "$wt" main 2>/dev/null || true
+    printf '%s\n' "$id" > "$wt/$id.txt"
+    git -C "$wt" add -A
+    git -C "$wt" commit -q -m "$id: work"
+    local tip; tip="$(git -C "$REPO" rev-parse "spira/$id")"
+    printf 'CERTIFIED %s %s\n' "$tip" "$epoch" > "$LANDSTATE/$id"
+    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","priority":%d,"labels":["express"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
+        "$id" "$id" "$priority" "$id" | testdb_seed
+}
+
 tip_of() { git -C "$REPO" rev-parse "spira/$1" 2>/dev/null; }
 bisect_file() { printf '%s/%s/bisect' "$QUEUEDIR" "$REPONAME"; }
 
@@ -1222,6 +1236,55 @@ is   "r. rebase-handoff: branch ref moved to a new tip" "1" \
     "$([ -n "$new_tip_r" ] && [ "$new_tip_r" != "$tip_r" ] && echo 1 || echo 0)"
 want "r. rebase-handoff: no PR opened"                 "QUEUE NOCUT" "$(landing_log)"
 want "r. rebase-handoff: log names the handoff"        "handed to the landing pass" "$out_r"
+
+# =============================================================================
+# s. EXPRESS TAKES A SLOT (sp-ebx8b): BATCH_MAX older certified P0s plus one
+#    newer express P0 — the cut must include the express bead rather than leave
+#    it behind the cap on age alone.
+#
+#    POSITIVE CONTROL: the express branch has the NEWEST epoch of the nine,
+#    tied on priority with the rest. Without the express-first sort key it is
+#    the one branch age would exclude at BATCH_MAX; this assertion fails
+#    against unfixed batch.sh rather than passing vacuously.
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"
+for i in $(seq 1 8); do
+    branch_p "sp-btr-old$i" 0 "$(( NOW - 900 + i * 100 ))"
+done
+branch_p_express "sp-btr-express" 0 "$NOW"
+
+batch "$REPONAME" > /dev/null
+is "s. express+cap: PR opened" "1" "$(batch_pr)"
+is "s. express+cap: express branch BATCHED" "1" \
+    "$(is_batched sp-btr-express && echo 1 || echo 0)"
+is "s. express+cap: newest old branch stays CERTIFIED" "1" \
+    "$(is_certified sp-btr-old8 && echo 1 || echo 0)"
+is "s. express+cap: exactly 7 of the 8 old branches batched" "7" \
+    "$(for i in $(seq 1 8); do is_batched "sp-btr-old$i" && echo x; done | grep -c x)"
+clean_case
+
+# =============================================================================
+# t. EXPRESS GROUP KEEPS ITS OWN ORDER: two express beads still sort by the
+#    existing key (priority, then epoch) between themselves — the express flag
+#    only changes ranking against non-express beads, not the tie-break inside
+#    the express set.
+# =============================================================================
+clean_case
+seed
+NOW="$(date +%s)"
+branch_p_express "sp-bts-hi" 0 "$NOW"
+branch_p_express "sp-bts-lo" 4 "$(( NOW - 100 ))"
+
+batch "$REPONAME" > /dev/null
+batch_br_s="$(git -C "$REPO" for-each-ref --format='%(refname:short)' \
+    'refs/heads/spira/queue/*' 2>/dev/null | tail -1)"
+is "t. two express: PR opened" "1" "$(batch_pr)"
+first_merged_s="$(git -C "$REPO" log --format='%s' "origin/main..$batch_br_s" \
+    | grep '^spira: land sp-bts-' | tail -1)"
+want "t. higher-priority express lands before lower-priority express" \
+    "sp-bts-hi" "$first_merged_s"
 clean_case
 
 printf '\n%s passed, %s failed\n' "$pass" "$fail"

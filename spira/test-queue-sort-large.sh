@@ -71,13 +71,13 @@ is "all $N rows survive a PRIO_JSON past 128 KiB" "$N" "$got"
 
 # 2. PRIORITY IS STILL HONOURED when the payload is large. Priority 0 beads sort first.
 first_prio="$(PRIO_JSON="$big_json" queue_sort_rows "$TMP/repo" "$base" < "$rows" 2>/dev/null \
-              | head -1 | awk '{print $2+0}')"
+              | head -1 | awk '{print $3+0}')"
 is "priority still orders the rows" "0" "$first_prio"
 
 # 3. THE SMALL CASE, so the fix is not a regression on the path that always worked.
 small='[{"id":"sp-t001","priority":2},{"id":"sp-t002","priority":0}]'
 got="$(printf 'sp-t001 %s 1\nsp-t002 %s 2\n' "$base" "$base" \
-       | PRIO_JSON="$small" queue_sort_rows "$TMP/repo" "$base" 2>/dev/null | awk '{print $4}' | tr '\n' ' ')"
+       | PRIO_JSON="$small" queue_sort_rows "$TMP/repo" "$base" 2>/dev/null | awk '{print $5}' | tr '\n' ' ')"
 is "a small PRIO_JSON still sorts by priority" "sp-t002 sp-t001 " "$got"
 
 # 4. FAIL OPEN. Ranking is an optimisation; if it breaks, the rows must still come out.
