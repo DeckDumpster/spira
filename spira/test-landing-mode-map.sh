@@ -107,19 +107,19 @@ unhandled_in_syn=0
 for m in $modes_from_table; do
     case "$m" in
     queue)
-        printf '%s' "$syn_body" | grep -q '"$mode" = queue' || {
+        grep -q '"$mode" = queue' <<<"$syn_body" || {
             printf '  synthetic: mode %s not handled\n' "$m"
             unhandled_in_syn=$(( unhandled_in_syn + 1 ))
         }
         ;;
     push)
-        printf '%s' "$syn_body" | grep -qE '^[[:space:]]*\*\)' || {
+        grep -qE '^[[:space:]]*\*\)' <<<"$syn_body" || {
             printf '  synthetic: mode %s (catch-all) not handled\n' "$m"
             unhandled_in_syn=$(( unhandled_in_syn + 1 ))
         }
         ;;
     *)
-        printf '%s' "$syn_body" | grep -qE "^[[:space:]]+${m}\)" || {
+        grep -qE "^[[:space:]]+${m}\)" <<<"$syn_body" || {
             printf '  synthetic: mode %s not handled\n' "$m"
             unhandled_in_syn=$(( unhandled_in_syn + 1 ))
         }
@@ -154,7 +154,7 @@ other_func() {
 SH
 
 scope_body="$(land_repo_body "$SYN_SCOPE")"
-if printf '%s' "$scope_body" | grep -qE '^[[:space:]]+pr\)'; then
+if grep -qE '^[[:space:]]+pr\)' <<<"$scope_body"; then
     bad "scoped check ignores an arm outside land_repo" \
         "pr) matched inside land_repo's own extracted body"
 else
@@ -172,16 +172,11 @@ else
     real_modes="${real_modes_line#\# land-modes:}"
     real_body="$(land_repo_body "$HERE/landing.sh")"
     [ -n "$real_body" ] || bad "land_repo_body extracted non-empty text" "extraction returned nothing"
-    printf 'DEBUG: real_body lines=%s first=[%s] last=[%s]\n' \
-        "$(printf '%s\n' "$real_body" | wc -l)" \
-        "$(printf '%s\n' "$real_body" | head -1)" \
-        "$(printf '%s\n' "$real_body" | tail -1)" >&2
-    printf 'DEBUG: sed --version: %s\n' "$(sed --version 2>&1 | head -1)" >&2
     unhandled=0
     for m in $real_modes; do
         case "$m" in
         queue)
-            if printf '%s' "$real_body" | grep -q '"$mode" = queue'; then
+            if grep -q '"$mode" = queue' <<<"$real_body"; then
                 ok "mode 'queue' handled (early return in land_repo)"
             else
                 bad "mode 'queue' handled" "no '\\\$mode = queue' in land_repo"
@@ -189,7 +184,7 @@ else
             fi
             ;;
         push)
-            if printf '%s' "$real_body" | grep -qE '^[[:space:]]+\*\)'; then
+            if grep -qE '^[[:space:]]+\*\)' <<<"$real_body"; then
                 ok "mode 'push' handled (catch-all *) in land_repo)"
             else
                 bad "mode 'push' handled" "no catch-all *) case in land_repo"
@@ -197,7 +192,7 @@ else
             fi
             ;;
         *)
-            if printf '%s' "$real_body" | grep -qE "^[[:space:]]+${m}\)"; then
+            if grep -qE "^[[:space:]]+${m}\)" <<<"$real_body"; then
                 ok "mode '$m' handled (${m}) case in land_repo)"
             else
                 bad "mode '$m' handled" "no ${m}) case in land_repo"
@@ -246,10 +241,10 @@ PLANT_REBASE="$TMP/plant-rebase"; mkdir -p "$PLANT_REBASE"
 printf '#!/usr/bin/env bash\ngit -C "$land" rebase -q "$base"\n'    > "$PLANT_REBASE/one.sh"
 printf '#!/usr/bin/env bash\ncd "$land" && git rebase -q "$base"\n' > "$PLANT_REBASE/two.sh"
 _offend_planted="$(offends "$PLANT_REBASE")"
-printf '%s' "$_offend_planted" | grep -q "one.sh" \
+grep -q "one.sh" <<<"$_offend_planted" \
     && ok "the fence names a git -C \$land rebase" \
     || bad "the fence names a git -C \$land rebase" "$_offend_planted"
-printf '%s' "$_offend_planted" | grep -q "two.sh" \
+grep -q "two.sh" <<<"$_offend_planted" \
     && ok "and a cd \$land followed by git rebase" \
     || bad "and a cd \$land followed by git rebase" "$_offend_planted"
 
@@ -285,10 +280,10 @@ printf '#!/usr/bin/env bash\ngit -C "$repo" fetch -q "$remote" 2>/dev/null\n' \
 printf '#!/usr/bin/env bash\ngit -C "$repo" fetch -q "$remote" 2>/dev/null\n' \
     > "$PLANT_FETCH/skew.sh"
 _bare_planted="$(bare_fetch_in "$PLANT_FETCH")"
-printf '%s' "$_bare_planted" | grep -q "landing.sh" \
+grep -q "landing.sh" <<<"$_bare_planted" \
     && ok "the fence catches a bare fetch in landing.sh" \
     || bad "the fence catches a bare fetch in landing.sh" "$_bare_planted"
-printf '%s' "$_bare_planted" | grep -q "skew.sh" \
+grep -q "skew.sh" <<<"$_bare_planted" \
     && ok "and a bare fetch in skew.sh" \
     || bad "and a bare fetch in skew.sh" "$_bare_planted"
 
@@ -318,7 +313,7 @@ echo "positive control — an unguarded arm is detected:"
 printf '%s\n' 'if ! rebase_branch "$br" "$base"; then' '    bead_reopen "$id" "conflicts"' 'fi' \
     > "$TMP/plant-arm.sh"
 _arms_planted="$(arms "$TMP/plant-arm.sh")"
-printf '%s' "$_arms_planted" | grep -q "line 1" \
+grep -q "line 1" <<<"$_arms_planted" \
     && ok "the fence can see an arm that does not read the kind" \
     || bad "the fence can see an arm that does not read the kind" "$_arms_planted"
 
