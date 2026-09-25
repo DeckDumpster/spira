@@ -52,15 +52,23 @@ if [ -z "$CARGO_BIN" ]; then
     exit 77
 fi
 PATH="$(dirname "$CARGO_BIN"):$PATH"; export PATH
-BATCHER_BIN="$ROOT/target/release/batcher"
+# PIN CARGO_TARGET_DIR EXPLICITLY. A suite runs inside testenv-batch.sh's own podman exec,
+# which sets its own CARGO_TARGET_DIR for the suites that build Rust under test — trusting
+# $ROOT/target here would silently build into that redirected directory instead, and this
+# suite's own binary lookup would find nothing there (SEEN RED without this: the build
+# reported "Finished" while $ROOT/target/release/batcher stayed absent).
+CARGO_TARGET_DIR_FOR_BUILD="$TMP/cargo-target"
+BATCHER_BIN="$CARGO_TARGET_DIR_FOR_BUILD/release/batcher"
 if [ ! -x "$BATCHER_BIN" ]; then
     printf '  (building batcher-cut into %s)\n' "$BATCHER_BIN"
-    CARGO_TERM_COLOR=never "$CARGO_BIN" build --release --manifest-path "$ROOT/Cargo.toml" -p batcher-cut 2>&1 | tail -10
+    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
+        "$CARGO_BIN" build --release --manifest-path "$ROOT/Cargo.toml" -p batcher-cut 2>&1 | tail -10
 fi
 [ -x "$BATCHER_BIN" ] || { echo "test-batcher-cut: batcher binary did not build"; exit 1; }
-TSD_BIN="$ROOT/target/release/tsd-write"
+TSD_BIN="$CARGO_TARGET_DIR_FOR_BUILD/release/tsd-write"
 if [ ! -x "$TSD_BIN" ]; then
-    CARGO_TERM_COLOR=never "$CARGO_BIN" build --release --manifest-path "$ROOT/Cargo.toml" -p tsd 2>&1 | tail -10
+    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
+        "$CARGO_BIN" build --release --manifest-path "$ROOT/Cargo.toml" -p tsd 2>&1 | tail -10
 fi
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
