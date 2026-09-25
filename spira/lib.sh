@@ -1727,7 +1727,7 @@ summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-label]
     log "CHECK7 $f: $r ready, $free free — summoning${require_label:+, restricted to '$require_label'}"
     "${SPIRA_SUMMON:-systemd-run}" --user --collect --quiet \
         --unit="spira-aeon-$f-$(date +%s)" \
-        --property=CPUQuota="${SPIRA_AEON_CPU_QUOTA:-70%}" --property=Nice=10 \
+        "--property=CPUQuota=${SPIRA_AEON_CPU_QUOTA:-70}%" --property=Nice=10 \
         --property=TimeoutStartSec="$(fayth_get "$f" FAYTH_TIMEOUT_SECONDS 3600)" \
         --setenv=PATH="$PATH" --setenv=HOME="$HOME" \
         ${require_label:+--setenv=SPIRA_REQUIRE_LABEL="$require_label"} \
