@@ -455,8 +455,8 @@ cat > "$TMP/bin/gh" <<'GHSTUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$GHLOG"
 case " $* " in
-    *" issue view 95 "*) printf '{"state":"CLOSED"}\n' ;;
-    *" issue view "*)    printf '{"state":"OPEN"}\n' ;;
+    *" issue view 95 "*) printf 'CLOSED\n' ;;
+    *" issue view "*)    printf 'OPEN\n' ;;
 esac
 exit 0
 GHSTUB

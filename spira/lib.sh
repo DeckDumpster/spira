@@ -6323,7 +6323,8 @@ for r in rows:
     for l in (r.get("labels") or []):
         if l.startswith("repo:"):
             repo_label = l[5:]; break
-    print(f"{bid}\x01{ext}\x01{superseder}\x01{repo_label}\x01{r.get(\"closed_at\") or \"\"}")
+    ca = r.get("closed_at") or ""
+    print(f"{bid}\x01{ext}\x01{superseder}\x01{repo_label}\x01{ca}")
 ' 2>/dev/null > "$_tmp" || { rm -f "$_tmp"; return 0; }
 
     while IFS=$'\x01' read -r _id _ext _superseder _repo_label _closed_at; do
