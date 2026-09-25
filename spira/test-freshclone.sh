@@ -33,7 +33,8 @@
 #   never read the key would pass just as well.
 #
 # defect: sp-cmn
-# covers: spira/conf.sh spira/doctor.sh spira/*.sh spira/chamber/*.fayth
+# tier: T0
+# covers: spira/conf.sh spira/doctor.sh spira/*.sh spira/chamber/*.fayth UC-safety-fences-34
 # covers: spira/statutes/law-ships-for-a-colleague.txt
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

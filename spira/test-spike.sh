@@ -40,7 +40,8 @@
 # either.
 #
 # defect: sp-qkf
-# covers: spira/confine.sh spira/landing.sh spira/chamber/*
+# tier: T3
+# covers: spira/confine.sh spira/landing.sh spira/chamber/* UC-safety-fences-32
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0

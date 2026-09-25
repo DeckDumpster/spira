@@ -20,7 +20,8 @@
 #
 # host-reason: tests the scratch-fence using scratch git repos; no container-hosted state
 #
-# covers: spira/scratch-fence.sh spira/gate-spira.sh
+# tier: T1
+# covers: spira/scratch-fence.sh spira/gate-spira.sh UC-safety-fences-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
