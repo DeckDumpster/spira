@@ -15,40 +15,29 @@
 #   2. `git add -- <own-path>` succeeds and the dirty file is absent from the commit.
 #   3. SPIRA_ALLOW_DIRTY_STAGE=1 overrides the guard — the fence names its own bypass.
 #
-# Driven against pre-commit-guard.sh directly, without a full aeon.sh invocation. The hook
-# is what enforces the rule; testing via aeon.sh would test that the harness invoked a
-# model, not that the guard actually fires.
+# Driven through `worktree-hooks.sh install` — the composed hook aeon.sh actually arms
+# (canonical exclude.sh/scratch-fence.sh/branch-guard.sh, then pre-commit-guard.sh) —
+# rather than a hand-written wrapper that calls pre-commit-guard.sh alone. A hand-written
+# hook proves this guard fires in isolation; it does not prove aeon.sh's real install
+# composes it correctly (UC-safety-fences-21 covers that composition directly; this suite
+# exercises the dirty-path guard's own behaviour through the same install).
 #
-# CONTAINER. Real git in an isolated container guards against ambient gitconfig on the host.
-# When invoked on the host (IN_TESTENV unset), this script starts testenv, re-runs itself
-# inside (IN_TESTENV=1), then tears the container down. Inside the container the block is
-# skipped and the assertions run directly.
+# `# requires: testenv` (below, read by testlib.sh) replaces a from-scratch podman
+# re-exec that keyed on IN_TESTENV while CI sets SPIRA_IN_TESTENV — the suite silently
+# never ran under CI (gap 10, docs/test-plan/safety-fences.md). testenv-batch.sh already
+# provides the container and sets SPIRA_IN_TESTENV=1; GIT_CONFIG_GLOBAL/GIT_CONFIG_NOSYSTEM
+# below keep ambient host gitconfig out of the real git this suite drives.
 #
-# covers: spira/aeon.sh spira/pre-commit-guard.sh
+# requires: testenv
+# tier: T2
+# covers: spira/aeon.sh spira/pre-commit-guard.sh spira/worktree-hooks.sh UC-safety-fences-17
 # defect: sp-rbxr
 # scar: an aeon ran `git add -A` and staged a pre-existing dirty file; the commit named the bead but carried another process's uncommitted work instead of the aeon's own.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-if [ "${IN_TESTENV:-}" != "1" ]; then
-    command -v podman >/dev/null 2>&1 || {
-        printf 'SKIP test-aeon-dirty-commit.sh: podman not found on PATH\n' >&2
-        exit 77
-    }
-    TESTENV="$HERE/testenv.sh"
-    CNAME="spira-testenv-dc-$$"
-    bash "$TESTENV" up --name "$CNAME" >&2
-    rc=0
-    bash "$TESTENV" exec --name "$CNAME" -- \
-        env IN_TESTENV=1 bash /workspace/spira/test-aeon-dirty-commit.sh || rc=$?
-    bash "$TESTENV" down --name "$CNAME" >/dev/null 2>&1 || true
-    exit "$rc"
-fi
-
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 TMP="$(mktemp -d)"
@@ -56,7 +45,7 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # A GUARD ON THE GUARD: the hook must exist; testing with a missing hook would give a false
 # pass on every case (no hook = no refusal = commits succeed = looks like "excluded").
-[ -f "$HERE/pre-commit-guard.sh" ] || { echo "SKIP: pre-commit-guard.sh not found beside this suite" >&2; exit 0; }
+[ -f "$HERE/pre-commit-guard.sh" ] || bail "pre-commit-guard.sh not found beside this suite"
 
 # Repo with a remote, matching what aeon.sh creates.
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
@@ -86,12 +75,11 @@ SNAP="$WGD/spira-dirty-before"
   git -C "$WORK" ls-files --others --exclude-standard 2>/dev/null
 } | sort -u > "$SNAP"
 
-# Install the hook into the worktree-specific dir and point the worktree at it.
-# A wrapper that calls the live script (not a copy) so the test exercises the current guard.
-HOOK_DIR="$WGD/hooks"; mkdir -p "$HOOK_DIR"
-printf '#!/usr/bin/env bash\nexec bash "%s/pre-commit-guard.sh"\n' "$HERE" > "$HOOK_DIR/pre-commit"
-chmod +x "$HOOK_DIR/pre-commit"
-git -C "$WORK" config --worktree core.hooksPath "$HOOK_DIR"
+# COMPOSE THE REAL HOOK, THE WAY aeon.sh DOES. worktree-hooks.sh install arms the
+# canonical fences (exclude.sh staged, scratch-fence.sh, branch-guard.sh staged) ahead of
+# pre-commit-guard.sh in one generated pre-commit — not a wrapper that calls
+# pre-commit-guard.sh alone, which would pass even if aeon.sh's own install were broken.
+SPIRA_HOME="$HERE" bash "$HERE/worktree-hooks.sh" install "$WORK" >/dev/null
 
 # Verify setup: the snapshot must contain the archivist file or the test proves nothing.
 if grep -qF "wiki/notes/archivist-2026-09-08.md" "$SNAP"; then
@@ -114,11 +102,7 @@ else
     bad "commit is refused when a dirty file is staged via git add -A" \
         "commit succeeded; the hook did not fire"
 fi
-if printf '%s' "$commit_out" | grep -qF "archivist-2026-09-08.md"; then
-    ok "the refusal names the offending file"
-else
-    bad "the refusal names the offending file" "hook output: $commit_out"
-fi
+want "the refusal names the offending file" "archivist-2026-09-08.md" "$commit_out"
 git -C "$WORK" reset -q HEAD 2>/dev/null  # unstage everything before the next case
 
 # ======================================================================================
@@ -127,16 +111,10 @@ echo "CASE 2: git add -- <own-path> only — dirty file absent from commit:"
 # ======================================================================================
 git -C "$WORK" add -- aeon-output.txt
 git -C "$WORK" commit -qm 'sp-test: aeon work only' 2>/dev/null
-if git -C "$WORK" show --name-only HEAD | grep -qF "archivist-2026-09-08.md"; then
-    bad "dirty file is absent from commit" "archivist file appeared in the commit"
-else
-    ok "dirty file is absent from commit"
-fi
-if git -C "$WORK" show --name-only HEAD | grep -qF "aeon-output.txt"; then
-    ok "aeon's own file is present in the commit"
-else
-    bad "aeon's own file is present in the commit" "aeon-output.txt not found in commit"
-fi
+nowant "dirty file is absent from commit" "archivist-2026-09-08.md" \
+    "$(git -C "$WORK" show --name-only HEAD)"
+want "aeon's own file is present in the commit" "aeon-output.txt" \
+    "$(git -C "$WORK" show --name-only HEAD)"
 
 # ======================================================================================
 echo
@@ -162,6 +140,4 @@ else
         "commit refused even with SPIRA_ALLOW_DIRTY_STAGE=1"
 fi
 
-echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary
