@@ -18,8 +18,9 @@ SuccessExitStatus=143
 # inotifywait is a poll-on-event; one wakeup per delivery, negligible CPU.
 CPUQuota=5%
 Nice=10
-StandardOutput=append:@SPIRA_RUN@/mail-deliver.log
-StandardError=append:@SPIRA_RUN@/mail-deliver.log
+# Same path watchd.sh's own _wd_logfile computes for an `extern` row: @SPIRA_RUN@/watchd/%name%.log.
+StandardOutput=append:@SPIRA_RUN@/watchd/mail-deliver.log
+StandardError=append:@SPIRA_RUN@/watchd/mail-deliver.log
 
 [Install]
 WantedBy=default.target
