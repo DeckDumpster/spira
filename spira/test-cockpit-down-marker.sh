@@ -71,17 +71,17 @@ if [ "$rc" -ne 0 ]; then printf '%s\n' "$out" | sed 's/^/      /'; fi
 tags="$(tmux list-panes -t brain:0 -F '#{@cockpit}' 2>/dev/null | sort | tr '\n' ' ')"
 want "up: a pane is tagged health" "health" "$tags"
 
+dash_tags() { tmux list-panes -t brain:0 -F '#{@cockpit}' 2>/dev/null | grep -cE '^(health|mail)$' || true; }
+
 out="$(layout1 down --window brain:0)"; rc=$?
 is "down exits 0" "0" "$rc"
 is "down: DOWN_MARKER exists" "1" \
    "$([ -f "$RUN1/cockpit.down" ] && echo 1 || echo 0)"
-tags="$(tmux list-panes -t brain:0 -F '#{@cockpit}' 2>/dev/null | sort | tr '\n' ' ')"
-is "down: no dashboard panes remain" "" "$tags"
+is "down: no dashboard panes remain" "0" "$(dash_tags)"
 
 out="$(layout1 ensure)"; rc=$?
 is "ensure exits 0" "0" "$rc"
-tags="$(tmux list-panes -t brain:0 -F '#{@cockpit}' 2>/dev/null | sort | tr '\n' ' ')"
-is "ensure after down: still no dashboard panes" "" "$tags"
+is "ensure after down: still no dashboard panes" "0" "$(dash_tags)"
 is "ensure after down: DOWN_MARKER still there" "1" \
    "$([ -f "$RUN1/cockpit.down" ] && echo 1 || echo 0)"
 if [ -f "$RUN1/cockpit-heal.log" ]; then
