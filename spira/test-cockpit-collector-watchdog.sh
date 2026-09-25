@@ -18,8 +18,13 @@
 #      uses the active unit. This is the first bug this suite closes: the old code had a
 #      literal spira-cockpit.service, which is inactive on every migrated box.
 #
-# The watchdog function is extracted from layout.sh at runtime — not copied — so the suite
-# stays in sync when the function changes.
+# THE WATCHDOG IS SOURCED, NOT EXTRACTED. This used to awk out the function body between
+# its `^restart_spira_collector_if_stale()` line and the first unindented `}`, so a rename
+# or a missing function left FUNC_BODY empty and the suite printed SKIP and exited 0 — a
+# green run that never called the watchdog at all (gap #11). The main guard in layout.sh
+# ([[ ${BASH_SOURCE[0]} == $0 ]]) lets a test `.` the real file and call the real function
+# by name instead: if it is gone, `restart_spira_collector_if_stale` is an unknown command
+# and the run fails loudly, the way any other missing dependency does.
 #
 # defect: sp-vjiug
 # covers: cockpit/layout.sh
@@ -38,22 +43,14 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 TMP="$(mktemp -d)"
 BIN="$TMP/bin"
 PROD="$TMP/prod"
+RUN="$TMP/run"
 mkdir -p "$BIN" "$PROD"
 RESTART_LOG="$TMP/restart.log"
-HEAL_LOG="$TMP/heal.log"
 
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
 echo "test-cockpit-collector-watchdog.sh"
-
-# Extract the watchdog function from layout.sh. The function has no nested function
-# definitions, so the first bare '}' (no leading whitespace) closes it.
-FUNC_BODY=$(awk '/^restart_spira_collector_if_stale\(\)/{p=1} p{print} p && /^\}$/{exit}' "$LAYOUT")
-if [ -z "$FUNC_BODY" ]; then
-    echo "SKIP: restart_spira_collector_if_stale not found in layout.sh" >&2
-    exit 0
-fi
 
 # ── Permanent mock commands ────────────────────────────────────────────────────
 # systemctl reads MOCK_ACTIVE_SFX and MOCK_RESTART_LOG from the environment.
@@ -96,30 +93,26 @@ chmod +x "$BIN/ps"
 #   instance   : SPIRA_INSTANCE value (default: prod)
 #   active_sfx : substring that makes the mock systemctl report a unit as active
 # Prints the contents of the restart log (empty when no restart was requested).
+# Sources the real layout.sh in a pinned environment and calls the real function by
+# name — no tmux involved, since the watchdog only ever shells out to systemctl and ps.
 run_watchdog() {
     local elapsed_s="$1" src_age_s="$2" instance="${3:-prod}" active_sfx="${4:-prod}"
-    rm -f "$RESTART_LOG" "$HEAL_LOG"
+    rm -f "$RESTART_LOG"
 
     # Set cockpit.sh mtime to src_age_s seconds ago.
     local now; now=$(date +%s)
     touch -d "@$(( now - src_age_s ))" "$PROD/cockpit.sh"
 
-    PATH="$BIN:$PATH" \
-    SPIRA_INSTANCE="$instance" \
-    SPIRA_PROD="$PROD" \
-    MOCK_ACTIVE_SFX="$active_sfx" \
-    MOCK_RESTART_LOG="$RESTART_LOG" \
-    MOCK_PS_ELAPSED="$elapsed_s" \
-    bash <<DRIVER
-heal_log() { printf '%s %s\n' "\$(date '+%Y-%m-%dT%H:%M:%S')" "\$*" >> "$HEAL_LOG"; }
-proc_start() {
-    local e; e=\$(ps -o etimes= -p "\$1" 2>/dev/null | tr -d ' ')
-    [ -n "\$e" ] || return 1
-    echo \$(( \$(date +%s) - e ))
-}
-${FUNC_BODY}
-restart_spira_collector_if_stale
-DRIVER
+    env -i HOME="$TMP" PATH="$BIN:/usr/bin:/bin" \
+        SPIRA_REPO="$TMP" SPIRA_COCKPIT="$TMP/cockpit" SPIRA_RUN="$RUN" \
+        SPIRA_LOOM_BIN="" COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
+        COCKPIT_MAIL="" \
+        SPIRA_INSTANCE="$instance" \
+        SPIRA_PROD="$PROD" \
+        MOCK_ACTIVE_SFX="$active_sfx" \
+        MOCK_RESTART_LOG="$RESTART_LOG" \
+        MOCK_PS_ELAPSED="$elapsed_s" \
+        bash -c '. "'"$LAYOUT"'"; restart_spira_collector_if_stale' >/dev/null 2>&1
 
     cat "$RESTART_LOG" 2>/dev/null || true
 }
@@ -156,42 +149,29 @@ nowant "no active unit: no restart attempted" "cockpit" "$result"
 echo ""
 echo "replaced during a pass: a promotion after an earlier fresh check is still caught"
 
-PROC_START_LOG="$TMP/proc_start.log"
+run_watchdog_once() {
+    env -i HOME="$TMP" PATH="$BIN:/usr/bin:/bin" \
+        SPIRA_REPO="$TMP" SPIRA_COCKPIT="$TMP/cockpit" SPIRA_RUN="$RUN" \
+        SPIRA_LOOM_BIN="" COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
+        COCKPIT_MAIL="" \
+        SPIRA_INSTANCE=prod SPIRA_PROD="$PROD" \
+        MOCK_ACTIVE_SFX=prod MOCK_RESTART_LOG="$RESTART_LOG" MOCK_PS_ELAPSED="$1" \
+        bash -c '. "'"$LAYOUT"'"; restart_spira_collector_if_stale' >/dev/null 2>&1
+}
+
 run_watchdog_twice() {
     # Same MOCK_PS_ELAPSED (so proc_start resolves to the same instant) across both calls —
     # one collector process, checked twice, exactly as the live timer does every minute.
     local elapsed_s="$1" src_age_1="$2" src_age_2="$3"
-    rm -f "$RESTART_LOG" "$HEAL_LOG"
+    rm -f "$RESTART_LOG"
     local now; now=$(date +%s)
     touch -d "@$(( now - src_age_1 ))" "$PROD/cockpit.sh"
-    PATH="$BIN:$PATH" SPIRA_INSTANCE=prod SPIRA_PROD="$PROD" \
-        MOCK_ACTIVE_SFX=prod MOCK_RESTART_LOG="$RESTART_LOG" MOCK_PS_ELAPSED="$elapsed_s" \
-        bash <<DRIVER
-heal_log() { :; }
-proc_start() {
-    local e; e=\$(ps -o etimes= -p "\$1" 2>/dev/null | tr -d ' ')
-    [ -n "\$e" ] || return 1
-    echo \$(( \$(date +%s) - e ))
-}
-${FUNC_BODY}
-restart_spira_collector_if_stale
-DRIVER
+    run_watchdog_once "$elapsed_s"
     # cockpit.sh REPLACED — promoted a second time — while the collector process (per
     # MOCK_PS_ELAPSED, unchanged) has kept running the whole time with no restart between
     # the two checks.
     touch -d "@$(( now - src_age_2 ))" "$PROD/cockpit.sh"
-    PATH="$BIN:$PATH" SPIRA_INSTANCE=prod SPIRA_PROD="$PROD" \
-        MOCK_ACTIVE_SFX=prod MOCK_RESTART_LOG="$RESTART_LOG" MOCK_PS_ELAPSED="$elapsed_s" \
-        bash <<DRIVER
-heal_log() { :; }
-proc_start() {
-    local e; e=\$(ps -o etimes= -p "\$1" 2>/dev/null | tr -d ' ')
-    [ -n "\$e" ] || return 1
-    echo \$(( \$(date +%s) - e ))
-}
-${FUNC_BODY}
-restart_spira_collector_if_stale
-DRIVER
+    run_watchdog_once "$elapsed_s"
     cat "$RESTART_LOG" 2>/dev/null || true
 }
 

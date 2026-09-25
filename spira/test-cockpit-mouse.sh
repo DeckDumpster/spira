@@ -7,25 +7,30 @@
 # option. This suite pins that the cockpit sets it itself, and that an operator who
 # prefers terminal-native drag-select can still turn it off.
 #
-# Asserted against the SCRIPT and the CONFIG, not against a live tmux server: a suite
-# that drove the real server would flip a setting under whoever is attached to it.
+# DEMOTED TO T1 (BEHAVIOUR, NOT SOURCE-GREP). apply_mouse_mode's opt-out case used to be
+# asserted by grepping layout.sh for `off\|no\|0)` -- a pattern any case arm matches,
+# whether or not it does what the arm says. Sourcing layout.sh and calling
+# apply_mouse_mode with $TMUX_BIN pointed at a shim that records argv instead of a real
+# server proves what the function actually DOES for each COCKPIT_MOUSE value, with no
+# tmux server involved.
 #
-# MATCHERS READ CODE, NOT PROSE (law-a-matcher-reads-code-not-prose). The comments in
-# layout.sh and conf.sh name `mouse` and COCKPIT_MOUSE repeatedly to explain why they
-# are there, so a whole-file grep matches the explanation as readily as the mechanism
-# and passes against a file it was deleted from.
+# The config-surface checks (key exists, defaults on, reaches layout.sh through the
+# manifest) stay source greps: they are about wiring a key through conf.sh's allowlist,
+# which has no runtime behaviour to call.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 LAYOUT="$HERE/../cockpit/layout.sh"
 CONF="$HERE/conf.sh"
 
 code() { grep -vE '^[[:space:]]*#' "$1"; }
-LAYOUT_CODE="$(code "$LAYOUT")"
 CONF_CODE="$(code "$CONF")"
+LAYOUT_CODE="$(code "$LAYOUT")"
 
 pass=0; fail=0
 ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
+want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 echo "test-cockpit-mouse.sh"
 echo
@@ -51,16 +56,7 @@ else
 fi
 
 echo
-echo "layout.sh turns it on itself, rather than trusting the operator's dotfiles:"
-if grep -qE 'set-option +-g +mouse +on' <<< "$LAYOUT_CODE"; then
-    ok "layout.sh sets mouse on"
-else
-    bad "layout.sh sets mouse on" "no 'set-option -g mouse on'; the cockpit depends on a ~/.tmux.conf that need not exist"
-fi
-
-# ENSURE IS THE ONE THAT MATTERS. A tmux server restarted by hand comes back with
-# mouse off, and `up` may never run on it again -- so a cockpit that has only been
-# ensured would stay unclickable forever.
+echo "the call sites -- wiring, not behaviour, so this stays a grep:"
 for verb in up ensure; do
     _block="$(awk -v v="$verb" '$0 ~ "^"v"\\)" {f=1} f {print} f && /^    ;;/ {exit}' \
         <<< "$LAYOUT_CODE")"
@@ -72,20 +68,55 @@ for verb in up ensure; do
 done
 
 echo
-echo "the operator can still refuse it:"
-if grep -qE 'off\|no\|0\)' <<< "$LAYOUT_CODE"; then
-    ok "COCKPIT_MOUSE=off opts out"
-else
-    bad "COCKPIT_MOUSE=off opts out" "no opt-out branch; mouse mode costs terminal-native drag-select and that is per-operator"
-fi
+echo "behaviour: apply_mouse_mode, against a PATH shim instead of a real server"
 
-# It is called from a timer. A cosmetic option must never fail the caller.
-if grep -qE 'set-option +-g +mouse +on[^|]*\|\| *true' <<< "$LAYOUT_CODE"; then
-    ok "it never fails the caller"
-else
-    bad "it never fails the caller" "an unclickable cockpit is degraded, not broken; layout.sh runs from a timer"
-fi
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 
-echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
+SHIM="$TMP/tmux-shim"
+LOG="$TMP/argv.log"
+# Records every invocation's argv, one line per call, then exits per $SHIM_RC (0 by
+# default) so the case "it never fails the caller" can also make the shim fail.
+cat > "$SHIM" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$SHIM_LOG"
+exit "${SHIM_RC:-0}"
+SH
+chmod +x "$SHIM"
+
+# call_mouse <COCKPIT_MOUSE value, or "" for unset> [SHIM_RC] — sources layout.sh in a
+# pinned environment and calls apply_mouse_mode once. Prints its exit code on stdout's
+# last line and leaves $LOG holding whatever the shim recorded.
+call_mouse() {
+    local mouse="$1" rc="${2:-0}"
+    : > "$LOG"
+    local -a extra=()
+    [ -n "$mouse" ] && extra=(COCKPIT_MOUSE="$mouse")
+    env -i HOME="$TMP" PATH="/usr/bin:/bin" \
+        SPIRA_REPO="$TMP" SPIRA_COCKPIT="$TMP/cockpit" SPIRA_RUN="$TMP/run" \
+        SPIRA_INSTANCE=fixture SPIRA_LOOM_BIN="" COCKPIT_CWD="$TMP" \
+        COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 COCKPIT_MAIL="" \
+        TMUX_BIN="$SHIM" SHIM_LOG="$LOG" SHIM_RC="$rc" \
+        "${extra[@]}" \
+        bash -c '. "'"$LAYOUT"'"; apply_mouse_mode; echo "RC=$?"'
+}
+
+out="$(call_mouse "")"
+want "default (unset): turns mouse on" "set-option -g mouse on" "$(cat "$LOG")"
+want "default (unset): exits 0" "RC=0" "$out"
+
+for off in off no 0; do
+    out="$(call_mouse "$off")"
+    [ ! -s "$LOG" ] && ok "COCKPIT_MOUSE=$off: tmux is never called" \
+        || bad "COCKPIT_MOUSE=$off: tmux is never called" "shim saw: $(cat "$LOG")"
+    want "COCKPIT_MOUSE=$off: exits 0" "RC=0" "$out"
+done
+
+out="$(call_mouse on)"
+want "COCKPIT_MOUSE=on: turns mouse on" "set-option -g mouse on" "$(cat "$LOG")"
+
+out="$(call_mouse on 1)"
+want "the shim failing still exits 0: it never fails the caller" "RC=0" "$out"
+
+printf '\n  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

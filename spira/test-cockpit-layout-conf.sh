@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# test-cockpit-layout-conf.sh — SPIRA_CONF propagates to pane commands in layout.sh up.
+# test-cockpit-layout-conf.sh — SPIRA_CONF, and the split-checkout renderer choice,
+# propagate into the health pane's command.
 #
 # THE FAILURE THIS SUITE EXISTS FOR. layout.sh spawns health.sh in a tmux pane. tmux gives
 # each new pane the server's environment, which is set once at server start and does not
@@ -8,163 +9,69 @@
 # expects a test pane; without this fix the pane respawns with no SPIRA_CONF and reads the
 # prod config instead — the wrong runtime tree, silently, with no visible error.
 #
+# DEMOTED TO T1: build_health_cmd() is the whole string layout.sh hands tmux for the health
+# pane. Sourcing layout.sh and calling it directly needs no tmux server, no pane, no sleep —
+# the four cases below used to drive a real fixture server and read #{pane_start_command}
+# back off it (T2, ~4s); this reads the same string with no process spawned at all.
+#
 # covers: cockpit/layout.sh
 set -uo pipefail
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "$0")" && pwd -P)"
 COCKPIT_DIR="$(dirname "$HERE")/cockpit"
 LAYOUT="$COCKPIT_DIR/layout.sh"
 
 pass=0; fail=0
 ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
 want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-skip() { printf '  skip  %s\n' "$1"; }
-
-if ! command -v tmux >/dev/null 2>&1; then
-    echo "SKIP: tmux not available" >&2
-    exit 0
-fi
-if ! command -v script >/dev/null 2>&1; then
-    echo "SKIP: 'script' not available" >&2
-    exit 0
-fi
+nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 TMP="$(mktemp -d)"
-TMUXDIR="$TMP/tmux-fixture"
-mkdir -p "$TMUXDIR"
-FIXTURE_UP=0
+trap 'rm -rf "$TMP"' EXIT
 
-cleanup() {
-    [ "$FIXTURE_UP" -eq 1 ] && TMUX_TMPDIR="$TMUXDIR" tmux kill-server 2>/dev/null || true
-    rm -rf "$TMP"
+FAKE_COCK="$TMP/cockpit"; mkdir -p "$FAKE_COCK"
+FAKE_PROD="$TMP/prodroot/cockpit"; mkdir -p "$FAKE_PROD"
+FAKE_DEV_REPO="$TMP/devrepo"; mkdir -p "$FAKE_DEV_REPO"
+
+# health_cmd <extra env...> — sources layout.sh in a pinned, empty environment (so no
+# ambient spira.conf or SPIRA_PROD can decide the verdict) and prints build_health_cmd's
+# output. TMUX_BIN is /bin/false: this never has to succeed, since nothing here calls it.
+# SPIRA_CONF and SPIRA_PROD are NOT set here: each case states its own, including "absent".
+health_cmd() {
+    env -i HOME="$TMP" PATH="/usr/bin:/bin" \
+        SPIRA_REPO="$TMP" SPIRA_COCKPIT="$FAKE_COCK" \
+        SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=fixture \
+        SPIRA_LOOM_BIN="" COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
+        COCKPIT_MAIL="" TMUX_BIN=/bin/false \
+        "$@" \
+        bash -c '. "'"$LAYOUT"'"; build_health_cmd'
 }
-trap cleanup EXIT
 
-# ── Fake cockpit scripts ────────────────────────────────────────────────────
-# health.sh just sleeps so the pane stays alive for inspection.
-# The test only needs to read pane_start_command; the script need not do anything.
-FAKE_COCK="$TMP/cockpit"
-mkdir -p "$FAKE_COCK"
-printf '#!/usr/bin/env bash\nsleep 60\n' > "$FAKE_COCK/health.sh"
-chmod +x "$FAKE_COCK/health.sh"
+echo "test-cockpit-layout-conf.sh"
 
-# ── Fixture tmux server ─────────────────────────────────────────────────────
-export TMUX_TMPDIR="$TMUXDIR"
-unset TMUX
+echo
+echo "SPIRA_CONF propagates into the health pane command:"
+out1="$(health_cmd env SPIRA_CONF="$TMP/myinstance.conf" SPIRA_PROD="$TMP/noprod")"
+want "carries SPIRA_CONF=" "SPIRA_CONF=" "$out1"
+want "carries the conf path" "$TMP/myinstance.conf" "$out1"
 
-TMUX_TMPDIR="$TMUXDIR" tmux start-server
-FIXTURE_UP=1
+echo
+echo "no SPIRA_CONF: no prefix at all:"
+out2="$(health_cmd env SPIRA_PROD="$TMP/noprod")"
+nowant "no SPIRA_CONF prefix when unset" "SPIRA_CONF=" "$out2"
+want "still runs this checkout's health.sh" "$FAKE_COCK/health.sh loop" "$out2"
 
-# Create the session layout.sh will operate on. A 214×53 window matches the layout comment.
-TMUX_TMPDIR="$TMUXDIR" tmux new-session -d -s cockpit -x 214 -y 53
+echo
+echo "split-checkout mode: SPIRA_PROD outside SPIRA_REPO selects the prod renderer:"
+out3="$(health_cmd env SPIRA_REPO="$FAKE_DEV_REPO" SPIRA_PROD="$TMP/prodroot")"
+want "uses SPIRA_PROD's cockpit" "$FAKE_PROD/health.sh" "$out3"
+nowant "does not use the dev checkout's cockpit" "$FAKE_COCK/health.sh" "$out3"
 
-# ── Run layout.sh up with SPIRA_CONF set ────────────────────────────────────
-CONF_PATH="$TMP/myinstance.conf"
-
-SPIRA_COCKPIT="$FAKE_COCK" \
-SPIRA_REPO="$TMP" \
-SPIRA_HOME="$HERE" \
-SPIRA_CONF="$CONF_PATH" \
-COCKPIT_CWD="$TMP" \
-    bash "$LAYOUT" up --window cockpit:0 2>/dev/null || true
-
-# Allow panes a moment to start.
-sleep 0.3
-
-# ── Read what command the pane was given ─────────────────────────────────────
-# #{pane_start_command} is the full command string passed to split-window; it survives
-# respawn as the command tmux would reuse, so it is the canonical record of what
-# SPIRA_CONF will be set to on every restart.
-health_cmd=$(TMUX_TMPDIR="$TMUXDIR" \
-    tmux list-panes -t cockpit:0 \
-    -F '#{@cockpit}|#{pane_start_command}' 2>/dev/null \
-    | awk -F'|' '$1=="health"{print $2; exit}')
-
-want "health pane command carries SPIRA_CONF" "SPIRA_CONF=" "$health_cmd"
-want "health pane command carries the conf path" "$CONF_PATH" "$health_cmd"
-
-# ── Verify the absence case: no SPIRA_CONF → no prefix in the command ───────
-TMUX_TMPDIR="$TMUXDIR" tmux kill-server 2>/dev/null || true
-FIXTURE_UP=0
-
-TMUX_TMPDIR="$TMUXDIR" tmux start-server
-FIXTURE_UP=1
-TMUX_TMPDIR="$TMUXDIR" tmux new-session -d -s cockpit2 -x 214 -y 53
-
-SPIRA_COCKPIT="$FAKE_COCK" \
-SPIRA_REPO="$TMP" \
-SPIRA_HOME="$HERE" \
-COCKPIT_CWD="$TMP" \
-    bash "$LAYOUT" up --window cockpit2:0 2>/dev/null || true
-
-sleep 0.3
-
-health_cmd2=$(TMUX_TMPDIR="$TMUXDIR" \
-    tmux list-panes -t cockpit2:0 \
-    -F '#{@cockpit}|#{pane_start_command}' 2>/dev/null \
-    | awk -F'|' '$1=="health"{print $2; exit}')
-
-# WITHOUT SPIRA_CONF: command must not contain a SPIRA_CONF= prefix.
-[[ "${health_cmd2:-}" != *"SPIRA_CONF="* ]] \
-    && ok "health pane command has no SPIRA_CONF when var is unset" \
-    || bad "health pane command has no SPIRA_CONF when var is unset" \
-           "got [$health_cmd2]"
-
-# ── Test 3: split-checkout mode uses SPIRA_PROD/cockpit, not this checkout ──
-# When SPIRA_PROD is set and lies outside SPIRA_REPO, layout.sh must spawn the pane
-# from $SPIRA_PROD/cockpit/health.sh so the renderer and collector come from the same
-# release and agree on the snapshot schema (the defect in sp-00dv9).
-FAKE_PROD="$TMP/prodroot"
-mkdir -p "$FAKE_PROD/cockpit"
-printf '#!/usr/bin/env bash\nsleep 60\n' > "$FAKE_PROD/cockpit/health.sh"
-chmod +x "$FAKE_PROD/cockpit/health.sh"
-
-FAKE_DEV_REPO="$TMP/devrepo"
-mkdir -p "$FAKE_DEV_REPO"
-
-TMUX_TMPDIR="$TMUXDIR" tmux new-session -d -s cockpit3 -x 214 -y 53
-
-SPIRA_COCKPIT="$FAKE_COCK" \
-SPIRA_REPO="$FAKE_DEV_REPO" \
-SPIRA_HOME="$HERE" \
-SPIRA_PROD="$FAKE_PROD" \
-COCKPIT_CWD="$TMP" \
-    bash "$LAYOUT" up --window cockpit3:0 2>/dev/null || true
-
-sleep 0.3
-
-health_cmd3=$(TMUX_TMPDIR="$TMUXDIR" \
-    tmux list-panes -t cockpit3:0 \
-    -F '#{@cockpit}|#{pane_start_command}' 2>/dev/null \
-    | awk -F'|' '$1=="health"{print $2; exit}')
-
-want "split-checkout: pane command uses SPIRA_PROD cockpit" "$FAKE_PROD/cockpit/health.sh" "$health_cmd3"
-if [[ "${health_cmd3:-}" != *"$FAKE_COCK"* ]]; then
-    ok "split-checkout: pane command does not use dev checkout cockpit"
-else
-    bad "split-checkout: pane command used dev checkout cockpit instead of prod" "got [$health_cmd3]"
-fi
-
-# Dev opt-out: SPIRA_DEV_RENDERER=1 must keep the dev checkout's renderer.
-TMUX_TMPDIR="$TMUXDIR" tmux new-session -d -s cockpit4 -x 214 -y 53
-
-SPIRA_COCKPIT="$FAKE_COCK" \
-SPIRA_REPO="$FAKE_DEV_REPO" \
-SPIRA_HOME="$HERE" \
-SPIRA_PROD="$FAKE_PROD" \
-SPIRA_DEV_RENDERER=1 \
-COCKPIT_CWD="$TMP" \
-    bash "$LAYOUT" up --window cockpit4:0 2>/dev/null || true
-
-sleep 0.3
-
-health_cmd4=$(TMUX_TMPDIR="$TMUXDIR" \
-    tmux list-panes -t cockpit4:0 \
-    -F '#{@cockpit}|#{pane_start_command}' 2>/dev/null \
-    | awk -F'|' '$1=="health"{print $2; exit}')
-
-want "dev opt-out: SPIRA_DEV_RENDERER=1 keeps dev cockpit" "$FAKE_COCK/health.sh" "$health_cmd4"
+echo
+echo "SPIRA_DEV_RENDERER=1 opts back into the dev checkout even with SPIRA_PROD set:"
+out4="$(health_cmd env SPIRA_REPO="$FAKE_DEV_REPO" SPIRA_PROD="$TMP/prodroot" SPIRA_DEV_RENDERER=1)"
+want "keeps the dev checkout's renderer" "$FAKE_COCK/health.sh" "$out4"
 
 printf '\ntest-cockpit-layout-conf: %d ok, %d fail\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

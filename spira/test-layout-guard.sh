@@ -13,6 +13,14 @@
 # EVERY CASE CARRIES ITS POSITIVE CONTROL. The guard must fire when a copy is run, and must
 # NOT fire when the installed copy is run. Both must be observed, not just one.
 #
+# HERMETIC: TMUX_TMPDIR IS PINNED TO A FIXTURE DIR. Both `ensure` runs below call
+# cockpit_windows(), which is `tmux list-panes -a` — every pane on the server, not scoped
+# to a session. Without a pinned socket that reaches whatever tmux server the box already
+# has, including the operator's live cockpit, and a positive-control run (the copy) would
+# then iterate its panes. No fixture server is started here — an empty, unreachable
+# TMUX_TMPDIR is enough to make `tmux list-panes -a` find nothing, which is what both cases
+# below expect (the guard fires or does not fire before cockpit_windows ever runs a query).
+#
 # defect: sp-zp8
 # covers: cockpit/layout.sh
 set -uo pipefail
@@ -52,7 +60,8 @@ CONF
 
 INST="$(mktemp -d)"
 COPY="$(mktemp -d)"
-trap 'rm -rf "$INST" "$COPY"' EXIT
+TMUXDIR="$(mktemp -d)"
+trap 'rm -rf "$INST" "$COPY" "$TMUXDIR"' EXIT
 
 make_tree "$INST"
 make_tree "$COPY"
@@ -60,8 +69,10 @@ make_tree "$COPY"
 echo "positive control: a copy refuses ensure"
 
 # Run ensure from the copy, with SPIRA_COCKPIT pointing at the installed cockpit dir.
-# The guard must fire, exit 0, and write the refusal to stderr.
-err="$(SPIRA_COCKPIT="$INST/cockpit" bash "$COPY/cockpit/layout.sh" ensure 2>&1 1>/dev/null)"
+# The guard must fire, exit 0, and write the refusal to stderr. TMUX_TMPDIR is pinned to
+# an empty, never-started fixture dir so cockpit_windows (tmux list-panes -a) cannot
+# reach the box's real tmux server.
+err="$(SPIRA_COCKPIT="$INST/cockpit" TMUX_TMPDIR="$TMUXDIR" bash "$COPY/cockpit/layout.sh" ensure 2>&1 1>/dev/null)"
 rc=$?
 
 [ "$rc" -eq 0 ] && ok "copy: ensure exits 0" || bad "copy: ensure exited $rc, expected 0"
@@ -78,8 +89,9 @@ echo
 echo "installed copy: ensure does not refuse"
 
 # Run ensure from the installed cockpit itself. The guard must NOT fire.
-# cockpit_windows returns nothing (no tmux server here), so ensure exits 0 silently.
-err_installed="$(SPIRA_COCKPIT="$INST/cockpit" bash "$INST/cockpit/layout.sh" ensure 2>&1 1>/dev/null)"
+# cockpit_windows returns nothing (no tmux server on the pinned fixture socket), so
+# ensure exits 0 silently.
+err_installed="$(SPIRA_COCKPIT="$INST/cockpit" TMUX_TMPDIR="$TMUXDIR" bash "$INST/cockpit/layout.sh" ensure 2>&1 1>/dev/null)"
 rc_installed=$?
 
 [ "$rc_installed" -eq 0 ] && ok "installed: ensure exits 0" \
