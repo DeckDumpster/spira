@@ -1,5 +1,7 @@
 # Test plan — Test and CI infrastructure (`test-infrastructure`)
 
+> **2026-09-25: `test-testenv-publish.sh` deleted** (sp-2076n; law-a-test-that-flips-is-deleted). It flipped in the full-corpus round 6 run. Its coverage — the suites job holding packages:write, and publish pushing the closure tag rather than :latest — is lost until a deterministic test is written.
+
 Part of [[test-plan-2026-09-23]], section 5. Area id `test-infrastructure`; use-case ids are `UC-test-infrastructure-NN`.
 
 Scope: the machinery that selects, runs and reports suites. That covers `select.sh` and suite header metadata (`# covers:`, `# requires:`, `# exclusive:`, `# timeout:`, `# priority:`, `# selects-on:`, `# host-reason:`, `# defect:`). It also covers `testenv.sh` (image and container), `testenv-batch.sh` (runner, verdict cache, parallelism), `testdb.sh` fixtures, `suites.sh` (timed runner: budget, watchdog, red classification, filing, quarantine hygiene), `suite-assert.sh` (ASSERTIONS trailer), `suite-state*.sh`, `suite-times.sh`, `gate-retry.sh`, `gate-diag.sh` and `gate-check.sh` (annotation to bead), and the `gate.yml`/`release.yml`/`acceptance.yml`/`testenv-image.yml` workflows.
