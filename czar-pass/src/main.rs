@@ -875,18 +875,28 @@ fn detect_loop_stalled(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static
     }
 }
 
-/// The worst reading across a set of per-repo readings for one invariant class: a real gap
-/// outranks "could not tell", which outranks satisfied. Used only to roll per-repo verdicts
-/// up into the one CLASS= line czar.log has always printed per invariant; each repo's own
-/// verdict — and its own hysteresis — is still tracked and recorded separately.
-fn worst_of(statuses: Vec<RawStatus>) -> RawStatus {
-    if let Some(gap) = statuses.iter().find(|s| matches!(s, RawStatus::Gap { .. })) {
-        return gap.clone();
+/// Rolls per-repo verdicts up into the one CLASS= line czar.log has always printed per
+/// invariant. Each repo's own verdict — its own since-when, its own grace period, its own
+/// remedy history — is tracked and recorded separately; this never re-derives is_gap from a
+/// fresh grace check (that already bypassed a per-repo grace period once — sp-pu7v6 — by
+/// re-running the worst raw reading through the engine at grace_secs=0 regardless of what
+/// grace the per-repo verdict itself was actually judged against). A gap already past its
+/// own grace outranks one still inside it, which outranks "could not tell", which outranks
+/// satisfied.
+fn rollup(verdicts: &[Verdict]) -> Verdict {
+    if let Some(v) = verdicts.iter().find(|v| v.is_gap) {
+        return v.clone();
     }
-    if let Some(unobs) = statuses.into_iter().find(|s| matches!(s, RawStatus::Unobservable { .. })) {
-        return unobs;
+    if let Some(v) = verdicts.iter().find(|v| !matches!(v.status, RawStatus::Satisfied)) {
+        return v.clone();
     }
-    RawStatus::Satisfied
+    Verdict {
+        status: RawStatus::Satisfied,
+        since: None,
+        is_gap: false,
+        just_closed: verdicts.iter().any(|v| v.just_closed),
+        remedy_failed: false,
+    }
 }
 
 fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'static str, Verdict, &'static str, &'static str) {
@@ -894,8 +904,8 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
     let mut cis_tier: &'static str = "det";
     let mut cir_remedy: &'static str = "none";
     let mut cir_tier: &'static str = "det";
-    let mut cis_statuses: Vec<RawStatus> = Vec::new();
-    let mut cir_statuses: Vec<RawStatus> = Vec::new();
+    let mut cis_verdicts: Vec<Verdict> = Vec::new();
+    let mut cir_verdicts: Vec<Verdict> = Vec::new();
 
     if cfg.queue_dir.is_dir() {
         for (repo_name, open_path) in find_open_files(&cfg.queue_dir) {
@@ -919,9 +929,9 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
                     // repo are unobservable this pass, never silently read as satisfied.
                     let reason = format!("{}: batch-ci-status: {}", repo_name, e);
                     let v1 = evaluate(cfg, state, &cis_key, RawStatus::Unobservable { reason: reason.clone() }, 0);
-                    cis_statuses.push(v1.status);
+                    cis_verdicts.push(v1);
                     let v2 = evaluate(cfg, state, &cir_key, RawStatus::Unobservable { reason }, 0);
-                    cir_statuses.push(v2.status);
+                    cir_verdicts.push(v2);
                     continue;
                 }
             };
@@ -945,7 +955,7 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
                 None => RawStatus::Satisfied,
             };
             let cis_v = evaluate(cfg, state, &cis_key, cis_raw, 0);
-            cis_statuses.push(cis_v.status.clone());
+            cis_verdicts.push(cis_v.clone());
             if cis_v.is_gap {
                 let stalled_s = cis_v.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
                 if !run_id.is_empty() && !cis_v.remedy_failed {
@@ -1003,7 +1013,7 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
                 _ => RawStatus::Satisfied,
             };
             let cir_v = evaluate(cfg, state, &cir_key, cir_raw, 0);
-            cir_statuses.push(cir_v.status.clone());
+            cir_verdicts.push(cir_v.clone());
             if cir_v.is_gap {
                 let red_age = cir_v.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
                 let body = format!(
@@ -1025,9 +1035,7 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
         }
     }
 
-    let cis_agg = evaluate(cfg, state, "ci-stalled", worst_of(cis_statuses), 0);
-    let cir_agg = evaluate(cfg, state, "ci-red", worst_of(cir_statuses), 0);
-    (cis_agg, cis_remedy, cis_tier, cir_agg, cir_remedy, cir_tier)
+    (rollup(&cis_verdicts), cis_remedy, cis_tier, rollup(&cir_verdicts), cir_remedy, cir_tier)
 }
 
 // The base ref's OWN gate run, as opposed to ci-red above (a batch's PR run). A batch PR
@@ -1044,7 +1052,7 @@ fn detect_ci(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'st
 fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'static str) {
     let mut remedy: &'static str = "none";
     let mut tier: &'static str = "det";
-    let mut statuses: Vec<RawStatus> = Vec::new();
+    let mut verdicts: Vec<Verdict> = Vec::new();
 
     if cfg.queue_dir.is_dir() {
         for (repo_name, _open_path) in find_open_files(&cfg.queue_dir) {
@@ -1072,7 +1080,7 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
                     Ok(_) => format!("{}'s base ({}) CI status returned no run information", repo_name, base_branch),
                 };
                 let v = evaluate(cfg, state, &key, RawStatus::Unobservable { reason }, cfg.base_unreadable_grace);
-                statuses.push(v.status.clone());
+                verdicts.push(v.clone());
                 if v.is_gap {
                     let age = v.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
                     let body = format!(
@@ -1108,7 +1116,7 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
                 RawStatus::Satisfied
             };
             let v = evaluate(cfg, state, &key, raw, 0);
-            statuses.push(v.status.clone());
+            verdicts.push(v.clone());
             if v.is_gap {
                 let sha = parse_field(&ci_out, "head-sha").unwrap_or_else(|| "unknown".to_string());
                 let run_url = parse_field(&ci_out, "run-url").unwrap_or_else(|| "(no run url)".to_string());
@@ -1145,8 +1153,7 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
         }
     }
 
-    let agg = evaluate(cfg, state, "base-red", worst_of(statuses), 0);
-    (agg, remedy, tier)
+    (rollup(&verdicts), remedy, tier)
 }
 
 fn detect_starved(cfg: &Config, state: &mut StateMap, check7: &str) -> (Verdict, &'static str, &'static str) {
@@ -1183,7 +1190,7 @@ fn detect_starved(cfg: &Config, state: &mut StateMap, check7: &str) -> (Verdict,
 
     let mut remedy: &'static str = "none";
     let mut tier: &'static str = "det";
-    let mut statuses: Vec<RawStatus> = Vec::new();
+    let mut verdicts: Vec<Verdict> = Vec::new();
 
     for (key, val) in obj {
         let parts: Vec<&str> = key.splitn(3, ':').collect();
@@ -1202,7 +1209,7 @@ fn detect_starved(cfg: &Config, state: &mut StateMap, check7: &str) -> (Verdict,
             since_hint: Some(first_val),
         };
         let v = evaluate(cfg, state, &format!("starved:{}", sv_safe), raw, cfg.starved_max_s);
-        statuses.push(v.status.clone());
+        verdicts.push(v.clone());
         if !v.is_gap {
             continue;
         }
@@ -1280,8 +1287,7 @@ fn detect_starved(cfg: &Config, state: &mut StateMap, check7: &str) -> (Verdict,
         }
     }
 
-    let agg = evaluate(cfg, state, "starved", worst_of(statuses), 0);
-    (agg, remedy, tier)
+    (rollup(&verdicts), remedy, tier)
 }
 
 #[cfg(test)]
