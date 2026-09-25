@@ -23,6 +23,28 @@ import json, sys
 try: d = json.load(sys.stdin); print(d.get("tool_name",""))
 except Exception: print("")' 2>/dev/null)"
 
+# Write/Edit carry no shell command to parse, but they can still land bytes in
+# $SPIRA_PROD the same as a Bash redirect (sp-qsr44 gap 6: this guard used to
+# inspect Bash only, so Write/Edit into prod passed through unrefused).
+if [ "$tool" = "Write" ] || [ "$tool" = "Edit" ]; then
+    if [ -n "${SPIRA_PROD:-}" ]; then
+        file_path="$(printf '%s' "$payload" | python3 -c '
+import json, sys
+try: d = json.load(sys.stdin); print(d.get("tool_input",{}).get("file_path",""))
+except Exception: print("")' 2>/dev/null)"
+        case "$file_path" in
+            "${SPIRA_PROD}"|"${SPIRA_PROD}"/*)
+                reason="aeons may not write to the production checkout \$SPIRA_PROD via $tool (sp-kz8ob: use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"
+                printf 'aeon-fence: BLOCKED aeon=%s bead=%s: %s\n' \
+                    "${SPIRA_AEON:-?}" "${BEAD_ID:-?}" "$reason" >&2
+                printf '{"decision":"block","reason":"%s"}\n' \
+                    "$(printf '%s' "$reason" | sed 's/"/\\"/g')"
+                ;;
+        esac
+    fi
+    exit 0
+fi
+
 [ "$tool" = "Bash" ] || exit 0
 
 cmd="$(printf '%s' "$payload" | python3 -c '
