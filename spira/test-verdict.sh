@@ -119,9 +119,6 @@ cat > "$SH/forge-fixture.sh" <<'FORGE'
 #!/usr/bin/env bash
 cmd="${1:-}"; shift; repo="${1:-}"; shift
 case "$cmd" in
-    main-gate-status)
-        printf '%s\n' "${FIXTURE_MAIN_GATE_STATUS:-green deadbeef}"
-        ;;
     check-status)
         cat "${FORGE_STATUS_FILE}" 2>/dev/null || printf 'pending\n'
         ;;
@@ -172,8 +169,6 @@ verdict() {
     SPIRA_QUEUE_CI_MAXSEC=3600 \
     SPIRA_QUEUE_CI_IDLE_SEC=600 \
     SPIRA_QUEUE_INFRA_RETRIES=2 \
-    SPIRA_RED_MAIN_LABEL="${SPIRA_RED_MAIN_LABEL:-fixes-red-main}" \
-    FIXTURE_MAIN_GATE_STATUS="${FIXTURE_MAIN_GATE_STATUS:-green deadbeef}" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
         bash "$SH/verdict.sh" "$@" 2>&1
 }
