@@ -7,6 +7,10 @@
 #   health.sh once <rows> [cols]
 #                         paint one frame sized for a pane <rows> tall and <cols> wide, and
 #                         exit — the seam the test suite drives the sizing through
+#   health.sh render-many <dir> [rows [cols]]
+#                         paint one frame per *.env fragment in <dir>, each preceded by a
+#                         "=== <fragment-name> ===" line — the seam a table-driven test drives
+#                         to render N fixture snapshots in one process
 #
 # Reads the snapshots written by `spira/cockpit.sh` under `spira-cockpit.service`, all of them
 # under $SPIRA_RUN. NEVER calls `bd` or `git` itself: the expensive sources cost seconds a pass
@@ -1877,6 +1881,24 @@ case "${1:-loop}" in
 # suite would have to fake a TTY of a given height to see how the rows were divided, and
 # an allocator nobody has watched divide anything is a hypothesis.
 once) render "${2:-0}" "${3:-0}" ;;
+# render-many <dir> [rows [cols]] — one frame per *.env fragment in <dir>, in one process.
+# The seam section 5 of docs/test-plan/cockpit-observability.md calls for: a renderer suite
+# that wants N cases against N snapshots used to pay for N `health.sh once` process starts
+# (1,844 lines + conf.sh each), which is the cost this repeats instead of a fixture directory.
+#
+# Each frame is a plain `render` call with SPIRA_SNAP repointed at that fragment — no
+# subshell isolation is needed between fragments because `render` already runs `frame` (which
+# sources SPIRA_SNAP via load_snapshot) through process substitution, so every SP_* variable
+# a fragment sets lives only inside that fragment's own subshell and cannot leak into the next.
+render-many)
+    _dir="${2:?render-many needs a directory of *.env fragments}"
+    for _frag in "$_dir"/*.env; do
+        [ -e "$_frag" ] || continue
+        printf '=== %s ===\n' "$(basename "$_frag" .env)"
+        SPIRA_SNAP="$_frag"
+        render "${3:-0}" "${4:-0}"
+    done
+    ;;
 loop)
     printf '\e[?25l\e[?7l' 2>/dev/null
     _conf_file="${SPIRA_CONF_FILE:-}"
@@ -1894,5 +1916,5 @@ loop)
         fi
     done
     ;;
-*) echo "usage: health.sh [once [rows [cols]]|loop]" >&2; exit 1 ;;
+*) echo "usage: health.sh [once [rows [cols]]|render-many <dir> [rows [cols]]|loop]" >&2; exit 1 ;;
 esac
