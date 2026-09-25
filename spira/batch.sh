@@ -467,16 +467,30 @@ main() {
         # fast lane, so a certified express branch takes the freed slot immediately and
         # the failed batch's own attribution — eject the culprit, re-certify survivors —
         # keeps running separately (verdict.sh, against the file this stashes it in).
-        local _ob_ev_certs _ob_ev_ids=() _ob_ev_id _ob_ev_prio
+        local _ob_ev_certs _ob_ev_ids=() _ob_ev_id _ob_ev_prio _ob_ev_errfile _ob_ev_lookup_failed=0
         _ob_ev_certs="$(_certified_list "$repo")"
         if [ -n "${_ob_ev_certs:-}" ]; then
             while read -r _ob_ev_id _ _; do _ob_ev_ids+=("$_ob_ev_id"); done <<< "$_ob_ev_certs"
             if [ "${#_ob_ev_ids[@]}" -gt 0 ]; then
-                _ob_ev_prio="$(bdjson show "${_ob_ev_ids[@]}" 2>/dev/null)" || _ob_ev_prio="[]"
-                local _elab="${SPIRA_EXPRESS_LABEL:-express}"
-                while IFS= read -r _ob_ev_id; do
-                    [ -n "$_ob_ev_id" ] && _ob_express_ids+=("$_ob_ev_id")
-                done < <(PRIO_JSON="$_ob_ev_prio" EXPRESS_LABEL="$_elab" python3 -c '
+                # bdq show, not bdjson: bdjson swallows bdq's own stderr internally, and a
+                # `|| fallback="[]"` here cannot be told apart from bdq genuinely finding no
+                # express beads — both read as "nothing express", the case
+                # law-a-control-that-cannot-check-must-refuse names. A failed lookup must
+                # say so and refuse to fall through to the ordinary skip line.
+                _ob_ev_errfile="$(mktemp)"
+                if _ob_ev_prio="$(bdq show "${_ob_ev_ids[@]}" --json 2>"$_ob_ev_errfile" | json_only)"; then
+                    :
+                else
+                    _ob_ev_lookup_failed=1
+                    printf 'batch %s: express lookup FAILED: %s\n' \
+                        "$name" "$(tr '\n' ' ' < "$_ob_ev_errfile")"
+                fi
+                rm -f "$_ob_ev_errfile"
+                if [ "$_ob_ev_lookup_failed" -eq 0 ]; then
+                    local _elab="${SPIRA_EXPRESS_LABEL:-express}"
+                    while IFS= read -r _ob_ev_id; do
+                        [ -n "$_ob_ev_id" ] && _ob_express_ids+=("$_ob_ev_id")
+                    done < <(PRIO_JSON="$_ob_ev_prio" EXPRESS_LABEL="$_elab" python3 -c '
 import sys, json, os
 d = json.loads(os.environ.get("PRIO_JSON", "[]") or "[]")
 d = d if isinstance(d, list) else [d]
@@ -485,7 +499,12 @@ for b in d:
     if lbl in (b.get("labels") or []):
         print(b.get("id", ""))
 ' 2>/dev/null)
+                fi
             fi
+        fi
+
+        if [ "$_ob_ev_lookup_failed" -eq 1 ]; then
+            return 0
         fi
 
         if [ "${#_ob_express_ids[@]}" -gt 0 ] && [ -n "$_ob_pr" ]; then
@@ -500,18 +519,20 @@ for b in d:
                 # Not green (red, harness_fault, provision_fault, or an unreadable
                 # check-status): stash the open batch's record for verdict.sh to
                 # attribute on its own, and free the slot for the express batch.
-                local _ob_atdir; _ob_atdir="$(dirname "$_ob_file")"
+                local _ob_atdir _ob_ev_csv
+                _ob_atdir="$(dirname "$_ob_file")"
+                _ob_ev_csv="$(IFS=,; echo "${_ob_express_ids[*]}")"
                 if mv -f "$_ob_file" "$_ob_atdir/attributing-$_ob_pr" 2>/dev/null; then
-                    printf 'batch %s: open batch PR %s is %s — certified express branch takes over; its attribution continues separately\n' \
-                        "$name" "$_ob_pr" "${_ob_status:-unknown}"
-                    printf '## Note\nOpen batch PR %s for %s resolved %s.\n\nAn express branch is certified and has taken the next batch slot rather than waiting for local attribution to finish. The failed batch keeps attributing on its own; its survivors will be re-batched once the express batch lands.\n' \
-                        "$_ob_pr" "$name" "${_ob_status:-unknown}" \
+                    printf 'batch %s: open batch PR %s is %s — certified express branch takes over (%s); its attribution continues separately\n' \
+                        "$name" "$_ob_pr" "${_ob_status:-unknown}" "$_ob_ev_csv"
+                    printf '## Note\nOpen batch PR %s for %s resolved %s.\n\nExpress bead(s) %s took the next batch slot rather than waiting for local attribution to finish. The failed batch keeps attributing on its own; its survivors will be re-batched once the express batch lands.\n' \
+                        "$_ob_pr" "$name" "${_ob_status:-unknown}" "$_ob_ev_csv" \
                     | bash "$HERE/mail.sh" send operator \
                         --from "Spira Queue <queue@spira>" \
                         --subject "Merge queue: $name — express takes over from batch $_ob_pr ($_ob_status)" \
                         2>/dev/null || true
-                    printf 'QUEUE TAKEOVER %s repo=%s pr=%s reason=express status=%s\n' \
-                        "$(date +%s)" "$name" "$_ob_pr" "${_ob_status:-unknown}" \
+                    printf 'QUEUE TAKEOVER %s repo=%s pr=%s reason=express express=%s status=%s\n' \
+                        "$(date +%s)" "$name" "$_ob_pr" "$_ob_ev_csv" "${_ob_status:-unknown}" \
                         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
                     _takeover_for_express=1
                 fi
@@ -1136,8 +1157,14 @@ print((t[:120] if t else '(title unavailable)') or '(title unavailable)')
     done
     rm -f "$SPIRA_RUN/queue-stuck-$name" 2>/dev/null || true
 
-    printf 'batch %s: PR %s opened — %d branches (%s)\n' \
-        "$name" "$pr_n" "${#members[@]}" "$batch_br"
+    # QUEUE BATCH's verdict=green line is written before push/PR-create can still fail,
+    # so it cannot stand in for "a PR actually opened" — a watch on landing.log needs its
+    # own line naming the PR number once one exists.
+    local _ob_opened_msg
+    _ob_opened_msg="$(printf 'batch %s: PR %s opened — %d branches (%s)' \
+        "$name" "$pr_n" "${#members[@]}" "$batch_br")"
+    printf '%s\n' "$_ob_opened_msg"
+    printf '%s\n' "$_ob_opened_msg" >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
 }
 
 main "$@"
