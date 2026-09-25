@@ -154,6 +154,49 @@ _bead_contract() {
     fi
 }
 
+# _bead_lint_judge <labels> <status> <type> <partitions> -> one diagnostic line per
+# defect on stdout (no "bead: <id>: " prefix — only the caller has the id), rc = defect
+# count. Pure: no bd, no I/O. <labels>/<partitions> are space-separated.
+_bead_lint_judge() {
+    local labels="$1" bead_status="$2" bead_type="$3" partitions="$4"
+    local bad=0
+
+    # repo: is required only for routable work beads. Non-work kinds (event,
+    # escalation, proposal, gate) carry no routing obligation and may omit it.
+    case " task bug feature epic chore spike " in
+        *" $bead_type "*)
+            case " $labels " in
+                *" repo:"*) ;;
+                *) printf 'no repo: label\n'; bad=$((bad+1)) ;;
+            esac
+            ;;
+    esac
+
+    # Open claimable-type beads without a partition label are unclaimable unless
+    # marked no-loop. epic and event are excluded from bd ready and need no check.
+    if [ "$bead_status" = "open" ]; then
+        case " task bug feature chore spike " in
+            *" $bead_type "*)
+                local _no_loop="${SPIRA_NO_LOOP_LABEL:-}"
+                local _has_noloop=0
+                [ -n "$_no_loop" ] && case " $labels " in *" $_no_loop "*) _has_noloop=1 ;; esac
+                if [ "$_has_noloop" -eq 0 ]; then
+                    local _has=0 _pp
+                    for _pp in $partitions; do
+                        case " $labels " in *" $_pp "*) _has=1; break ;; esac
+                    done
+                    if [ "$_has" -eq 0 ]; then
+                        printf 'no partition label%s\n' "${_no_loop:+; add one or mark $_no_loop}"
+                        bad=$((bad+1))
+                    fi
+                fi
+                ;;
+        esac
+    fi
+
+    return "$bad"
+}
+
 _bead_lint() {
     local rc=0 n=0 bad=0 id labels show_out show_rc show_parsed bead_status bead_type
     local ids=""
@@ -171,7 +214,7 @@ for d in (data if isinstance(data, list) else [data]):
     fi
 
     # Partition labels from the chamber — open work beads must carry one (or no-loop).
-    local _part="" _f _lbl _l _p _scope="${SPIRA_SCOPE_LABEL:-}" _no_loop="${SPIRA_NO_LOOP_LABEL:-}"
+    local _part="" _f _lbl _l _scope="${SPIRA_SCOPE_LABEL:-}"
     local _ifs_save="$IFS"
     for _f in $(fayth_names 2>/dev/null); do
         _lbl="$(fayth_get "$_f" FAYTH_LABELS "" 2>/dev/null)"
@@ -223,36 +266,15 @@ print(d.get("issue_type") or "")
                 bad=$((bad+1)); rc=1
             fi
         fi
-        # repo: is required only for routable work beads. Non-work kinds (event,
-        # escalation, proposal, gate) carry no routing obligation and may omit it.
-        case " task bug feature epic chore spike " in
-            *" $bead_type "*)
-                case " $labels " in
-                    *" repo:"*) ;;
-                    *) printf 'bead: %s: no repo: label\n' "$id" >&2; bad=$((bad+1)); rc=1 ;;
-                esac
-                ;;
-        esac
-        # Open claimable-type beads without a partition label are unclaimable unless
-        # marked no-loop. epic and event are excluded from bd ready and need no check.
-        if [ "$bead_status" = "open" ]; then
-            case " task bug feature chore spike " in
-                *" $bead_type "*)
-                    local _has_noloop=0
-                    [ -n "$_no_loop" ] && case " $labels " in *" $_no_loop "*) _has_noloop=1 ;; esac
-                    if [ "$_has_noloop" -eq 0 ]; then
-                        local _has=0
-                        for _p in $_part; do
-                            case " $labels " in *" $_p "*) _has=1; break ;; esac
-                        done
-                        if [ "$_has" -eq 0 ]; then
-                            printf 'bead: %s: no partition label%s\n' "$id" \
-                                "${_no_loop:+; add one or mark $_no_loop}" >&2
-                            bad=$((bad+1)); rc=1
-                        fi
-                    fi
-                    ;;
-            esac
+        local judge_out
+        judge_out="$(_bead_lint_judge "$labels" "$bead_status" "$bead_type" "$_part")"
+        if [ -n "$judge_out" ]; then
+            local _judge_line
+            while IFS= read -r _judge_line; do
+                [ -n "$_judge_line" ] || continue
+                printf 'bead: %s: %s\n' "$id" "$_judge_line" >&2
+                bad=$((bad+1)); rc=1
+            done <<< "$judge_out"
         fi
     done
     [ "$bad" = 0 ] && printf 'bead: %d bead(s) checked, ok\n' "$n"
@@ -302,15 +324,19 @@ _bead_amend() {
     done
 }
 
-case "${1:-}" in
-    file)     shift; _bead_file "$@" ;;
-    amend)    shift; _bead_amend "$@" ;;
-    contract) _bead_contract ;;
-    lint)     shift; _bead_lint "$@" ;;
-    *) printf 'usage: bead.sh file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F] [--express]\n' >&2
-       printf '       bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express]\n' >&2
-       printf '       bead.sh amend <id> [--note "<text>"] [--body-file F] [--express]\n' >&2
-       printf '       bead.sh lint [--all|<id>...]\n' >&2
-       printf '       bead.sh contract\n' >&2
-       exit 2 ;;
-esac
+# Guarded so a test can source this file to reach _bead_lint_judge directly without
+# also running the CLI dispatch against the sourcing shell's own positional params.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    case "${1:-}" in
+        file)     shift; _bead_file "$@" ;;
+        amend)    shift; _bead_amend "$@" ;;
+        contract) _bead_contract ;;
+        lint)     shift; _bead_lint "$@" ;;
+        *) printf 'usage: bead.sh file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F] [--express]\n' >&2
+           printf '       bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express]\n' >&2
+           printf '       bead.sh amend <id> [--note "<text>"] [--body-file F] [--express]\n' >&2
+           printf '       bead.sh lint [--all|<id>...]\n' >&2
+           printf '       bead.sh contract\n' >&2
+           exit 2 ;;
+    esac
+fi
