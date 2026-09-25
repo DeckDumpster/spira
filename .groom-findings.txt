@@ -1,32 +1,62 @@
-GROOM PASS sp-xfrzm - Graph Hygiene Results
+GROOM PASS sp-g58d6 - Graph Hygiene Results
 ============================================
 
-TRIGGER: UNCLAIMABLE: sp-l757d — fix the fayth: or partition label
+TRIGGER: UNCLAIMABLE: sp-87csm — fix the fayth: or partition label
 
-SWEEP: groomer.sh sweep reported sp-l757d unclaimable; acted on 0 beads (sweep handles litter only).
+SWEEP: groomer.sh sweep found no livelocked beads; acted on 0 beads.
 
-LIVELOCK ROWS HANDLED:
+LIVELOCK ROWS HANDLED: 0
 
-1. LIVELOCK sp-l757d (unclaimable)
-   - Title: [bug] sp-xgut3: push-mode gate invocation test now passes
-   - Problem: Had 'partition:incident' label but missing 'incident' label
-   - Fix: Added 'incident' label, removed 'partition:incident' label
-   - Now claimable by ops persona (FAYTH_LABELS=spira,incident)
-   - Same root cause as sp-wy13t pass: incident.sh creating beads with wrong label (tracked by sp-ui46l)
+PARTITION LABEL FIXED:
+
+1. sp-87csm — [bug] worktree disappeared mid-session, losing uncommitted work
+   - Problem: no partition label; unclaimable by any persona
+   - Fix: added 'plan' label (matches pattern of other spira repo bugs)
+   - Now claimable by builder persona (FAYTH_LABELS=spira,plan)
+
+PREMISE-GONE CLOSURES (23 beads):
+
+Undeclared-repo decisions (subject beads now closed):
+  sp-6phlw — ref sp-2lox4 CLOSED
+  sp-k8zu7 — ref sp-w9nsr CLOSED
+  sp-yatp2 — ref sp-tinev CLOSED
+
+Rebase-loop / red-recurring decisions (subject beads now closed):
+  sp-jalyg  — ref sp-qvjzb CLOSED
+  sp-jn6gl  — ref sp-fhzib CLOSED
+  sp-2vx0j  — ref sp-qvjzb CLOSED
+  sp-56tiz  — ref sp-s088v.6 CLOSED
+  sp-iz6gj  — ref sp-zprgw CLOSED
+  sp-tlrrz  — ref sp-kbjv6 CLOSED
+  sp-tgc99  — ref sp-ulr4e CLOSED
+  sp-1so4b  — ref sp-qsona CLOSED
+  sp-auvi1  — ref sp-s088v.6 CLOSED
+  sp-etdhy  — ref sp-kbjv6 CLOSED
+  sp-hq270  — ref sp-qsona CLOSED
+  sp-glsww  — ref sp-m6jhx CLOSED
+
+Stuck-bead escalation decisions (subject beads now closed):
+  sp-4c6p9  — ref sp-bf31a CLOSED
+  sp-6iyjx  — ref sp-rw0i1 CLOSED
+  sp-xhsgm  — ref sp-cabrq CLOSED
+  sp-oler4  — ref sp-fhzib.4 CLOSED
+  sp-tikf6  — ref sp-qlcvc CLOSED
+  sp-no6pe  — ref sp-niqjl CLOSED
+  sp-l49vi  — ref sp-4rzlw CLOSED
+  sp-gewuc  — ref sp-aygfc CLOSED
 
 UNSURE NOTES:
 
-1. UNSURE sp-ui46l — operator instruction conflict
-   - Ryan said "close sp-ui46l if it bounced again" (recorded in sp-oipkt triage 2026-09-24)
-   - sp-oipkt close reason states "It is closed"
-   - But bead was subsequently reopened by Concierge (2026-09-25, overseer comment) because
-     batch 327 partial landing broke main on test-scope-label; 5778068f reverted by sp-3532w
-   - Pass 1 note written on sp-ui46l; pass 2 will escalate to operator
+1. UNSURE sp-psenn — 'Lint failure test subject for repeat guard'
+   - aeon-valefor created, placeholder description ('Detailed context goes here.')
+   - Title suggests test fixture but doesn't match litter patterns exactly
+   - Labels: needs-ryan, overseer (not litter by strict definition since has description)
+   - Pass 1 note written; pass 2 will escalate to operator if still unsure
 
 CURRENT STATE:
-- ~50 open beads examined
+- 223 open beads examined (at time of scan)
+- 23 premise-gone beads closed
+- 1 unclaimable bead corrected (sp-87csm: added 'plan')
+- 1 UNSURE note written (sp-psenn, pass 1)
 - No duplicates found
-- No premise-gone cases found
-- No fixture-shaped litter found
-- One unclaimable bead corrected (sp-l757d)
-- Root cause for mislabelling being addressed by sp-ui46l (sp-wy13t pass also fixed same pattern)
+- No splits needed
