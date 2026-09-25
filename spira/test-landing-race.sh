@@ -58,7 +58,7 @@ mkdir -p "$RUN/worktree" "$SH"
 # without it, so a fixture harness that copies one and not the other fails at source time —
 # every case reporting exit 127 and no landing, which reads as landing being broken rather
 # than the fixture being incomplete.
-cp "$HERE/landing.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
+cp "$HERE/landing.sh" "$HERE/landing-lib.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 # The gate stub speaks the gate's PROTOCOL, not just its exit status: landing.sh reads the
 # machine-readable VERDICT line for the reason it records, so a stub that only exited would
