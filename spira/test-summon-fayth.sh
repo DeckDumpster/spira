@@ -629,7 +629,7 @@ bash "$HERE/escape.sh" stretchy 2>/dev/null || true
 want "escape.sh default CPUQuota=70%" "CPUQuota=70%" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
 
 rm -f "$QUOTA_ARGV"
-export SPIRA_AEON_CPU_QUOTA=55%
+export SPIRA_AEON_CPU_QUOTA=55
 bash "$HERE/escape.sh" stretchy 2>/dev/null || true
 want   "escape.sh honours a custom SPIRA_AEON_CPU_QUOTA" "CPUQuota=55%" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
 nowant "escape.sh no longer hard-codes 70%"               "CPUQuota=70%" "$(cat "$QUOTA_ARGV" 2>/dev/null)"
@@ -652,7 +652,7 @@ sargv="$(summon_argv anchor | tr '\n' ' ')"
 want "summon_argv: default CPUQuota=70%" "CPUQuota=70%" "$sargv"
 want "summon_argv: TimeoutStartSec from the fayth" \
      "TimeoutStartSec=$(fayth_get anchor FAYTH_TIMEOUT_SECONDS 3600)" "$sargv"
-export SPIRA_AEON_CPU_QUOTA=42%
+export SPIRA_AEON_CPU_QUOTA=42
 sargv2="$(summon_argv anchor | tr '\n' ' ')"
 want "summon_argv: SPIRA_AEON_CPU_QUOTA propagates" "CPUQuota=42%" "$sargv2"
 unset SPIRA_AEON_CPU_QUOTA
