@@ -1047,7 +1047,7 @@ sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
         return 0
     fi
 
-    if ! git -C "$repo" push -q "$remote" \
+    if ! spira_git_push "$repo" -q "$remote" \
            "${batch_head}:refs/heads/${batch_br}" 2>/dev/null; then
         printf 'batch %s: could not push %s\n' "$name" "$batch_br" >&2
         return 1

@@ -147,7 +147,7 @@ send_branch() {
     # names the base's own remote rather than assuming `origin`.
     local rem; rem="$(ref_remote "$LANDREF")" || rem=""
     if [ -n "$rem" ] && git -C "$REPO" rev-parse --verify -q "$rem/$br" >/dev/null 2>&1; then
-        git -C "$REPO" push -q "$rem" --delete "$br" 2>/dev/null \
+        spira_git_push "$REPO" -q "$rem" --delete "$br" 2>/dev/null \
             && say "  deleted $rem/$br"
     fi
 
