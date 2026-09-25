@@ -108,7 +108,8 @@ BODY
 # ---------------------------------------------------------------------------------------
 # 1. THE FENCES — first, and independently of everything below.
 # ---------------------------------------------------------------------------------------
-for fence in spira/exclude.sh spira/inventory.sh spira/scratch-fence.sh spira/wiki-add-fence.sh spira/literal-lint.sh spira/testdb-mode-lint.sh spira/bd-stdin-lint.sh spira/suite-state-fence.sh spira/orphan-test.sh; do
+. spira/gate-fences.sh
+for fence in $(gate_fence_list); do
     [ -r "$fence" ] || { say "$fence is missing — refusing to land unchecked"; exit 1; }
 done
 

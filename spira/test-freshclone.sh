@@ -33,7 +33,7 @@
 #   never read the key would pass just as well.
 #
 # defect: sp-cmn
-# covers: spira/conf.sh spira/doctor.sh spira/*.sh
+# covers: spira/conf.sh spira/doctor.sh spira/*.sh spira/chamber/*.fayth
 # covers: spira/statutes/law-ships-for-a-colleague.txt
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -65,17 +65,22 @@ fi
 echo
 echo "syntax check — every shipped shell script parses:"
 # ==========================================================================
-# Top-level and spira/ scripts. Other subdirectories (cockpit, loom, systemd) contain
-# non-shell content or template placeholders that bash -n would misread as syntax errors.
+# Top-level and spira/ scripts, plus the chamber's fayths (D8: absorbs test-spike.sh's
+# redundant bash -n rows over the same files — confine.sh is already caught by the
+# "$HERE"/*.sh glob below, so only the fayths, which are not *.sh, needed adding).
+# A fayth is a shell fragment SOURCED into the summoning process; a syntax error in one is
+# not a persona that misbehaves, it is a harness that dies mid-summon. Other subdirectories
+# (cockpit, loom, systemd) contain non-shell content or template placeholders that bash -n
+# would misread as syntax errors.
 syntax_fail=0
-for f in "$ROOT"/*.sh "$HERE"/*.sh; do
+for f in "$ROOT"/*.sh "$HERE"/*.sh "$HERE"/chamber/*.fayth; do
     [ -f "$f" ] || continue
     if ! bash -n "$f" 2>/dev/null; then
         bad "syntax: $(basename "$f")" "fails bash -n"
         syntax_fail=$((syntax_fail+1))
     fi
 done
-[ "$syntax_fail" -eq 0 ] && ok "all shipped shell scripts parse"
+[ "$syntax_fail" -eq 0 ] && ok "all shipped shell scripts and fayths parse"
 
 # ==========================================================================
 echo

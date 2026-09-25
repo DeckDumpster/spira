@@ -175,9 +175,10 @@ want "--patterns includes per-name pattern"     "per " "$out"
 # GATE INTEGRATION. gate-spira.sh:126 already runs `bash spira/inventory.sh` against the
 # shipped tree on every landing (UC-safety-fences-25, D6) — re-running that same check here
 # against a mirrored copy asserted nothing this suite's own rows and the gate's own run
-# don't already cover, twice, on every branch.
+# don't already cover, twice, on every branch. Whether the gate is still WIRED to
+# inventory.sh at all is test-gate-fences.sh's row (D7), reading gate_fence_list rather
+# than grepping this file's source for the name.
 # ---------------------------------------------------------------------------------------
-want "gate-spira.sh names inventory.sh" "spira/inventory.sh" "$(cat "$HERE/gate-spira.sh")"
 is   "inventory.sh is executable"       "0" "$([ -x "$HERE/inventory.sh" ]; echo $?)"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

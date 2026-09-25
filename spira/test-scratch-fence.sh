@@ -124,25 +124,13 @@ out="$(fence_at "$ROOT")"; rc=$?
 is   "sp-* in subdirectory does not trigger" "0" "$rc"
 
 # ---------------------------------------------------------------------------------------
-# GATE INTEGRATION: scratch-fence.sh is referenced in gate-spira.sh.
+# GATE INTEGRATION (D7): whether the gate is wired to scratch-fence.sh is
+# test-gate-fences.sh's row, reading gate_fence_list rather than grepping this file's
+# source for the name. PRE-COMMIT INTEGRATION: whether the hook calls scratch-fence.sh is
+# UC-safety-fences-22's commit-through-hook row (sp-pohf2) — a real commit through the
+# armed hook proves the wiring; a grep of the hook's source only proved the string was
+# still there.
 # ---------------------------------------------------------------------------------------
-gate="$HERE/gate-spira.sh"
-if grep -q "scratch-fence" "$gate" 2>/dev/null; then
-    ok "gate-spira.sh references scratch-fence.sh"
-else
-    bad "gate-spira.sh references scratch-fence.sh" "not found in $(basename "$gate")"
-fi
-
-# ---------------------------------------------------------------------------------------
-# PRE-COMMIT INTEGRATION: scratch-fence.sh is called from the pre-commit hook.
-# Without this, aeons land scratch files at the gate rather than at commit time.
-# ---------------------------------------------------------------------------------------
-hook="$HERE/hooks/pre-commit"
-if grep -q "scratch-fence" "$hook" 2>/dev/null; then
-    ok "pre-commit hook calls scratch-fence.sh"
-else
-    bad "pre-commit hook calls scratch-fence.sh" "not found in $(basename "$hook")"
-fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
