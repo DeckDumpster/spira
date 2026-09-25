@@ -50,6 +50,11 @@ command -v duckdb >/dev/null 2>&1 || { echo "SKIP test-reconciler-flow: duckdb n
 CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
 [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
 if [ -z "$CARGO_BIN" ]; then
+    echo "DEBUG PATH=$PATH"
+    echo "DEBUG HOME=$HOME"
+    ls -la "$HOME/.cargo/bin" 2>&1 | head -5
+    ls -la /usr/local/cargo/bin 2>&1 | head -5
+    which -a cargo 2>&1
     echo "SKIP test-reconciler-flow: cargo not found — reconciler-flow binary cannot be built"
     exit 77
 fi
