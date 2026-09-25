@@ -18,7 +18,7 @@ The error occurred because:
 **SOP Applied:** `sop-verdict-repeat-refused`
 - **CHECK:** pass
 - **HELD:** yes  
-- **Recorded:** 2026-09-25T10:48:25Z by aeon-cindy in `/home/ryan/spira/run/sop/applied.jsonl`
+- **Recorded:** 2026-09-25T10:48:25Z by aeon-cindy via SOP ledger
 
 The SOP correctly identified this as a **transient/environmental case** where the tests need re-running under controlled conditions to determine if failures are repeatable code defects or environmental noise.
 
