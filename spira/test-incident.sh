@@ -204,13 +204,35 @@ echo "BSD date -v fallback — the lookback boundary still resolves without GNU 
 # \`date -v\` when -d is unsupported. A PATH with no GNU date must not silently skip the
 # closed-bead lookback (which would make every close-then-refile file a fresh bead) — it
 # must still resolve a boundary date via the BSD form.
+# THE HOST HAS NO REAL BSD date — GNU date does not implement -v at all, so a shim that
+# merely forwarded -v to the real binary would fail identically to -d and prove nothing.
+# It translates BSD's `-v -Nd` into GNU's `-d "-N days"` against the same underlying
+# binary, so the shim is what emulates BSD, not what happens to work by accident.
 _gnu_date="$(command -v date)"
 DATEDIR="$TMP/no-gnu-date"; mkdir -p "$DATEDIR"
 cat > "$DATEDIR/date" <<DATESHIM
 #!/usr/bin/env bash
-# Reject GNU-style -d, forcing the caller's own fallback branch; answer -v like BSD date.
+# Reject GNU-style -d, forcing the caller's own fallback branch.
 for _a in "\$@"; do [ "\$_a" = "-d" ] && { echo "date: illegal option -- d" >&2; exit 1; }; done
-exec "$_gnu_date" "\$@"
+out=()
+while [ "\$#" -gt 0 ]; do
+    if [ "\$1" = "-v" ]; then
+        shift
+        off="\$1"; shift
+        sign="\${off%%[0-9]*}"; rest="\${off#"\$sign"}"
+        num="\${rest%%[a-zA-Z]*}"; unit="\${rest##*[0-9]}"
+        case "\$unit" in
+            d) word=days ;; H) word=hours ;; M) word=minutes ;; S) word=seconds ;;
+            m) word=months ;; y) word=years ;; w) word=weeks ;;
+            *) word=days ;;
+        esac
+        [ "\$sign" = "+" ] && sign=""
+        out+=(-d "\${sign}\${num} \${word}")
+    else
+        out+=("\$1"); shift
+    fi
+done
+exec "$_gnu_date" "\${out[@]}"
 DATESHIM
 chmod +x "$DATEDIR/date"
 _bsd_since="$(PATH="$DATEDIR:$PATH" bash -c 'date -u -v -7d "+%Y-%m-%d" 2>/dev/null')"
