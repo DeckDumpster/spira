@@ -405,7 +405,7 @@ _g1_tip="$(mkbranch sp-g1)"
 printf 'CERTIFIED %s %s\n' "$_g1_tip" "$(( $(date +%s) - 7200 ))" > "$LANDSTATE/sp-g1"
 printf 'LANDED none %s' "$(( $(date +%s) - 30 ))" > "$LANDSTATE/sp-g-landed"
 
-_RC_STUCK_AGE=300 _RC_BATCH_MAX=100 _RC_BATCH_WAIT=86400 outG="$(batch "$REPONAME")"
+outG="$(_RC_STUCK_AGE=300 _RC_BATCH_MAX=100 _RC_BATCH_WAIT=86400 batch "$REPONAME")"
 nowant "post-landing: no stuck mail" "mailed operator" "$outG"
 is    "post-landing: stuck flag absent" "0" \
     "$([ -f "$RUN/queue-stuck-$REPONAME" ] && echo 1 || echo 0)"
