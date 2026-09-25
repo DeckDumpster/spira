@@ -131,7 +131,7 @@ echo "1. Known label distribution → correct ranked class list"
 # ==============================================================================
 # Fixture distribution (one bump_recur/requeue/reclaim call = one event row):
 #   sp-recur-suite-red:    5  (bead-A: 3 events, bead-B: 2 events)
-#   sp-requeue-prod-dirty: 3  (bead-C: 3 events — three requeueings)
+#   sp-requeue-quota-exceeded: 3  (bead-C: 3 events — three requeueings)
 #   sp-reclaim:            2  (bead-D: 2 events — reclaimed twice)
 #   sp-recur-unrecorded:   1  (bead-E: 1 event)
 #
@@ -148,7 +148,7 @@ bid_b="$(plant_bead "bead-b")"
 bump_recur "$bid_b" suite-red; bump_recur "$bid_b" suite-red
 
 bid_c="$(plant_bead "bead-c")"
-bump_requeue "$bid_c" prod-dirty; bump_requeue "$bid_c" prod-dirty; bump_requeue "$bid_c" prod-dirty
+bump_requeue "$bid_c" quota-exceeded; bump_requeue "$bid_c" quota-exceeded; bump_requeue "$bid_c" quota-exceeded
 
 bid_d="$(plant_bead "bead-d")"
 bump_reclaim "$bid_d"; bump_reclaim "$bid_d"
@@ -159,11 +159,11 @@ bump_recur "$bid_e" unrecorded
 out1="$(run_census)"
 
 want "sp-recur-suite-red: 2 distinct beads, 5 detections"    "2 sp-recur-suite-red (5"    "$out1"
-want "sp-requeue-prod-dirty: 1 distinct bead, 3 detections"  "1 sp-requeue-prod-dirty (3" "$out1"
+want "sp-requeue-quota-exceeded: 1 distinct bead, 3 detections"  "1 sp-requeue-quota-exceeded (3" "$out1"
 want "sp-reclaim: 1 distinct bead, 2 detections"             "1 sp-reclaim (2"            "$out1"
 want "sp-recur-unrecorded: 1 distinct bead, 1 detection"     "1 sp-recur-unrecorded (1"   "$out1"
 
-# Ranking: sp-recur-suite-red (2 beads) must appear before sp-requeue-prod-dirty (1 bead)
+# Ranking: sp-recur-suite-red (2 beads) must appear before sp-requeue-quota-exceeded (1 bead)
 first_class="$(printf '%s\n' "$out1" | head -1 | awk '{print $2}')"
 is "highest-bead-count class is first" "sp-recur-suite-red" "$first_class"
 
@@ -184,7 +184,7 @@ remedy_id="$(B create "Fix sp-recur-suite-red recurring class" --type task --pri
 
 out2="$(run_census)"
 lack "sp-recur-suite-red excluded when remedy is open" "sp-recur-suite-red" "$out2"
-want "sp-requeue-prod-dirty still present after suppression" "sp-requeue-prod-dirty" "$out2"
+want "sp-requeue-quota-exceeded still present after suppression" "sp-requeue-quota-exceeded" "$out2"
 want "sp-reclaim still present after suppression"            "sp-reclaim"            "$out2"
 
 # With --with-suppressed the class appears annotated
