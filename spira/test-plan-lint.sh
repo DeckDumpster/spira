@@ -20,12 +20,9 @@
 # covers: spira/plan-lint.sh spira/suite-covers.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+. "$HERE/testlib.sh"
 isz()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0 got $2"; }
 isnz() { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit got 0"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 
 echo "test-plan-lint.sh"
 
@@ -135,5 +132,4 @@ env -i PATH="$PATH" HOME="$TMP" TERM=dumb bash "$EMPTY_ROOT/spira/plan-lint.sh" 
 [ "$rc_empty" = 3 ] && ok "empty corpus refuses to report clean (exit 3)" \
     || bad "empty corpus refuses to report clean (exit 3)" "got exit $rc_empty"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

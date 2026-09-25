@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
+# tier: T1
 # covers: spira/suite-covers.sh spira/test-*.sh
 # hermetic-ok: reads suite source and filesystem; no database, no systemd
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 . "$HERE/suite-covers.sh"
 
 ROOT="$(cd "$HERE/.." && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "$2"; }
 
 printf 'test-covers-entries.sh\n'
 
@@ -69,6 +68,4 @@ done
 [ "$_bad" -eq 0 ] \
     && ok "$_checked suite(s) with declarations all resolve; $_skipped without" \
     || printf '  %d unresolvable token(s) across %d suite(s)\n' "$_bad" "$_checked"
-
-printf '\ntest-covers-entries.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

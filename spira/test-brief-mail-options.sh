@@ -2,15 +2,13 @@
 # test-brief-mail-options.sh — every --flag on a send operator invocation in a chamber brief
 # is a known cmd_send option (law-a-matcher-reads-code-not-prose).
 #
-# covers: spira/mail.sh spira/chamber/*.md
+# tier: T0
+# covers: spira/mail.sh spira/chamber/*.md UC-operator-channel-13
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 MAIL="$HERE/mail.sh"
 CHAMBER="$HERE/chamber"
-
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s\n' "$1"; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
@@ -55,11 +53,15 @@ for o in sorted(opts):
 PY
 }
 
+# Parsed once, not once per brief (coverage-map row 13): mail.sh does not change between
+# the briefs in one suite run, so re-parsing it per file bought nothing but forks.
+KNOWN_OPTS="$(cmd_send_opts)"
+
 # Returns 0 if all --flags in $1 are known cmd_send options; 1 otherwise.
 # Prints any unknown options to stdout.
 check_brief() {
     local f="$1"
-    local known; known="$(cmd_send_opts)"
+    local known="$KNOWN_OPTS"
     local bad_opts="" opt
     while IFS= read -r opt; do
         [ -z "$opt" ] && continue
@@ -129,9 +131,7 @@ for f in "$CHAMBER"/*.md; do
 done
 
 if [ "$found_any" -eq 0 ]; then
-    bad "no .md files found in $CHAMBER — cannot verify"
+    bad "no .md files found in $CHAMBER — cannot verify" ""
 fi
 
-echo
-echo "  $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+tl_summary

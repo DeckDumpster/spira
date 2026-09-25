@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# covers: systemd/spira-mail-deliver.service spira/world.sh spira/watchd.sh spira/watchers
+# tier: T2
+# covers: systemd/spira-mail-deliver.service spira/world.sh spira/watchd.sh spira/watchers UC-operator-channel-10
 #
 # PROPERTIES UNDER TEST
 # ---------------------
 # 1. SERVICE UNIT: SuccessExitStatus=143 is set — a halt's SIGTERM exit is clean (inactive,
 #    not failed), so world.sh start can revive the unit.
-# 2. WORLD.SH START: the start branch revives spira-mail-deliver if enabled-but-inactive,
-#    matching how it revives watcher units.
+# 2. WORLD.SH START: behavioural — against a mocked systemctl, `start` revives
+#    spira-mail-deliver when it is enabled-but-inactive, leaves a disabled unit alone, and
+#    does not restart an already-active one (coverage-map row 10, SOURCE-GREP: a source
+#    grep proved the code MENTIONS these rules; running `start` proves it OBEYS them).
 # 3. DETECTOR: watchd notify files exactly one escalation when the delivery daemon is
 #    inactive AND there are unread concierge replies older than SPIRA_NOTIFY_AGE.  With
 #    no unread mail the compound condition is not met and no escalation fires.
@@ -17,20 +20,11 @@
 # seven operator verdicts reached nobody.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 SERVICE="$HERE/../systemd/spira-mail-deliver.service"
 WORLD="$HERE/world.sh"
 WATCHD="$HERE/watchd.sh"
 
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-
-echo "test-mail-deliver.sh"
-
-# ---------------------------------------------------------------------------
 echo
 echo "1. SERVICE UNIT — SuccessExitStatus=143:"
 
@@ -48,46 +42,76 @@ fi
 
 # ---------------------------------------------------------------------------
 echo
-echo "2. WORLD.SH START — revives mail-deliver when enabled-but-inactive:"
+echo "2. WORLD.SH START — behavioural, against a mocked systemctl:"
 
-CODE="$(grep -vE '^[[:space:]]*#' "$WORLD")"
-START_BLOCK="$(printf '%s' "$CODE" | awk '/^start\)/{f=1} f{print} f&&/^    ;;/{exit}')"
+WTMP="$(mktemp -d)"; trap 'rm -rf "$WTMP"' EXIT INT TERM
+WBIN="$WTMP/bin"; mkdir -p "$WBIN"
+WRUN="$WTMP/run"; mkdir -p "$WRUN"
+MD_UNIT="spira-mail-deliver.service"
+MOCK_LOG="$WTMP/systemctl-start.log"
 
-if [ "$(printf '%s' "$START_BLOCK" | wc -l)" -ge 5 ]; then
-    ok "the start branch was located (positive control)"
-else
-    bad "the start branch was located (positive control)" "extracted $(printf '%s' "$START_BLOCK" | wc -l) lines; assertions below would be vacuous"
-fi
+cat > "$WBIN/systemctl" <<MOCK
+#!/usr/bin/env bash
+shift  # --user
+cmd="\$1"; shift
+case "\$cmd" in
+    is-enabled)
+        u="\$1"
+        [ "\$u" = "$MD_UNIT" ] && echo "\${MD_ENABLED:-enabled}" || echo "enabled"
+        ;;
+    is-active)
+        u="\$1"
+        [ "\$u" = "$MD_UNIT" ] && echo "\${MD_ACTIVE:-inactive}" || echo "active"
+        ;;
+    list-unit-files)
+        case "\$1" in
+            *mail-deliver*) [ "\${MD_LISTED:-1}" = 1 ] && echo "$MD_UNIT" ;;
+            *) : ;;
+        esac
+        ;;
+    list-units) : ;;
+    show)
+        for a in "\$@"; do case "\$a" in *.service) printf 'Type=oneshot\n' ;; esac; done
+        ;;
+    start)
+        for u in "\$@"; do echo "start \$u" >> "$MOCK_LOG"; done
+        ;;
+esac
+exit 0
+MOCK
+chmod +x "$WBIN/systemctl"
 
-if printf '%s' "$START_BLOCK" | grep -q 'mail-deliver'; then
-    ok "start acts on the mail-deliver unit"
-else
-    bad "start acts on the mail-deliver unit" "world.sh stop --hard leaves it dead after a system halt"
-fi
+run_start() {
+    : > "$MOCK_LOG"
+    env -i HOME="$WTMP/home" PATH="$WBIN:$PATH" \
+        SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_RUN="$WRUN" \
+        SPIRA_SYSTEMCTL="$WBIN/systemctl" \
+        "${@}" bash "$WORLD" start >/dev/null 2>&1
+}
 
-if printf '%s' "$START_BLOCK" | grep -q 'list-unit-files'; then
-    ok "mail-deliver unit is queried from systemd, not hard-listed"
-else
-    bad "mail-deliver unit is queried from systemd" "a literal unit name won't match both the plain and instance-qualified forms"
-fi
+echo
+echo "2a. enabled + inactive -> revived:"
+run_start MD_ENABLED=enabled MD_ACTIVE=inactive
+started="$(grep -c "^start $MD_UNIT\$" "$MOCK_LOG" 2>/dev/null || true)"
+is "start revives an enabled-but-inactive mail-deliver unit" "1" "${started:-0}"
 
-if printf '%s' "$START_BLOCK" | grep -q 'is-enabled.*disabled\|disabled.*is-enabled'; then
-    ok "start skips a disabled mail-deliver unit"
-else
-    bad "start skips a disabled mail-deliver unit" "start must not override a deliberate disable (same guard the watcher block carries)"
-fi
+echo
+echo "2b. disabled -> left alone:"
+run_start MD_ENABLED=disabled MD_ACTIVE=inactive
+started="$(grep -c "^start $MD_UNIT\$" "$MOCK_LOG" 2>/dev/null || true)"
+is "start skips a disabled mail-deliver unit" "0" "${started:-0}"
 
-if printf '%s' "$START_BLOCK" | grep -q 'is-active.*active\|active.*is-active'; then
-    ok "start is idempotent for an already-active mail-deliver unit"
-else
-    bad "start is idempotent for an already-active mail-deliver unit" "restarting a running daemon drops in-flight inotify events"
-fi
+echo
+echo "2c. already active -> not restarted (idempotent):"
+run_start MD_ENABLED=enabled MD_ACTIVE=active
+started="$(grep -c "^start $MD_UNIT\$" "$MOCK_LOG" 2>/dev/null || true)"
+is "start is idempotent for an already-active mail-deliver unit" "0" "${started:-0}"
 
 # ---------------------------------------------------------------------------
 echo
 echo "3. DETECTOR — compound condition: daemon inactive AND unread concierge mail:"
 
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP" "$WTMP"' EXIT
 mkdir -p "$TMP/home"
 RUN="$TMP/run"; mkdir -p "$RUN"
 WDIR="$RUN/watchd"; mkdir -p "$WDIR"
@@ -155,7 +179,7 @@ backdate() { printf '%s\n' "$(( $(date +%s) - 3600 ))" > "$1"; }
 MD_UF="$WDIR/mail-deliver.unhealthy"
 
 echo
-echo "3a. POSITIVE CONTROL — daemon inactive + old unread mail → escalation fires:"
+echo "3a. POSITIVE CONTROL — daemon inactive + old unread mail -> escalation fires:"
 reset_run
 plant_mail
 backdate "$MD_UF"
@@ -163,12 +187,12 @@ run_notify || true
 is "escalation fires with inactive daemon and unread mail" "1" "$(asks)"
 
 echo
-echo "3b. DEDUP — second notify pass with same conditions → no new escalation:"
+echo "3b. DEDUP — second notify pass with same conditions -> no new escalation:"
 run_notify || true
 is "second notify does not file a duplicate escalation" "1" "$(asks)"
 
 echo
-echo "3c. COMPOUND CONDITION — daemon inactive but empty mailbox → no escalation:"
+echo "3c. COMPOUND CONDITION — daemon inactive but empty mailbox -> no escalation:"
 reset_run
 rm -f "$CONCIERGE_NEW"/* 2>/dev/null
 backdate "$MD_UF"
@@ -176,7 +200,4 @@ run_notify || true
 is "no escalation when mailbox is empty" "0" "$(asks)"
 # Prove the path was reachable: 3a already fired with the same setup minus the mail.
 
-# ---------------------------------------------------------------------------
-echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
