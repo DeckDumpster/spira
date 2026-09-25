@@ -50,7 +50,7 @@ UNSURE NOTES:
 1. UNSURE sp-psenn — 'Lint failure test subject for repeat guard'
    - aeon-valefor created, placeholder description ('Detailed context goes here.')
    - Title suggests test fixture but doesn't match litter patterns exactly
-   - Labels: needs-ryan, overseer (not litter by strict definition since has description)
+   - Labels: operator-attention + overseer (not litter by strict definition since has description)
    - Pass 1 note written; pass 2 will escalate to operator if still unsure
 
 CURRENT STATE:
