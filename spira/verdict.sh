@@ -868,51 +868,6 @@ main() {
                     2>/dev/null || true
                 return 0
             fi
-            # RED-MAIN LANDING HOLD (sp-wmn0w): the batch's own gate ran a different
-            # suite set than main's push gate, so a green batch can still be about to
-            # land on top of a base that gate will fail. batch.sh already let a pending
-            # base gate through at CUT time — this is where that wait actually happens,
-            # right before the fast-forward that would put this batch's commits on main.
-            # A member carrying SPIRA_RED_MAIN_LABEL is the one exception: the fix for a
-            # red base must be allowed to land, or nothing else ever clears it.
-            local _mgs
-            _mgs="$("$forge" main-gate-status "$repo" 2>/dev/null)" || _mgs=""
-            case "${_mgs:-unknown}" in
-                green*) : ;;
-                pending*)
-                    printf 'verdict %s: PR %s base gate pending (%s) — landing waits\n' \
-                        "$name" "$pr_n" "${_mgs:-pending}"
-                    return 0
-                    ;;
-                *)
-                    local _rlab="${SPIRA_RED_MAIN_LABEL:-fixes-red-main}"
-                    local _mm _mid _mids=()
-                    for _mm in $members_str; do _mids+=("${_mm%%:*}"); done
-                    local _mprio_json
-                    _mprio_json="$(bdjson show "${_mids[@]}" 2>/dev/null)" || _mprio_json="[]"
-                    if PRIO_JSON="$_mprio_json" RED_MAIN_LABEL="$_rlab" python3 -c '
-import sys, json, os
-d = json.loads(os.environ.get("PRIO_JSON", "[]") or "[]")
-d = d if isinstance(d, list) else [d]
-lbl = os.environ.get("RED_MAIN_LABEL", "fixes-red-main")
-sys.exit(0 if any(lbl in (b.get("labels") or []) for b in d) else 1)
-' 2>/dev/null; then
-                        printf 'verdict %s: PR %s base gate is %s but a member carries %s — landing anyway\n' \
-                            "$name" "$pr_n" "${_mgs:-unknown}" "$_rlab"
-                    else
-                        case "${_mgs:-unknown}" in
-                            red*) printf 'verdict %s: PR %s base gate red — hold\n' "$name" "$pr_n" ;;
-                            *)    printf 'verdict %s: PR %s base gate unknown (%s) — hold\n' \
-                                      "$name" "$pr_n" "${_mgs:-unknown}" ;;
-                        esac
-                        printf 'QUEUE HOLD %s repo=%s reason=red-main status=%s\n' \
-                            "$(date +%s)" "$name" "${_mgs:-unknown}" \
-                            >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-                        return 0
-                    fi
-                    ;;
-            esac
-
             local current_base
             current_base="$(git -C "$repo" rev-parse "$base" 2>/dev/null)" || current_base=""
 
