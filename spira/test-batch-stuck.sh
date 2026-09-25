@@ -4,18 +4,18 @@
 # mark_moved writes without a trailing newline (matching land_mark in lib.sh).
 # Readers that use "|| continue" on the read skip every production record and
 # leave last_moved=0, triggering the fallback to oldest_epoch and false-positive
-# mail. Cases e and g fail against the unfixed reader (law-a-regression-test-must-be-seen-to-fail).
+# mail. Case e fails against the unfixed reader (law-a-regression-test-must-be-seen-to-fail).
 #
 #   ctrl. Positive control: old BATCHED + old cert → mail fires (proves stub works).
 #   e.    DEEP but MOVING: old cert, recent BATCHED → no mail.
 #   f.    STALLED: old cert, old BATCHED (movement stopped long ago) → mail.
 #         f2. Recent BATCHED added → flag clears.
 #         f3. Recent BATCHED removed → re-fires.
-#   g.    Post-landing false positive (sp-wlt1r): recent LANDED + old cert → no mail.
-#         Fails pre-fix because the no-newline LANDED record is skipped, last_moved=0,
-#         fallback to oldest cert age fires the alert seconds after a landing.
 #   h.    Brand-new queue: no BATCHED/LANDED at all → stuck check skipped, no mail
 #         (law-a-control-that-cannot-check-must-refuse).
+#
+# Case g (post-landing false positive, sp-wlt1r) moved to test-batch-reconcile.sh
+# (sp-s088v.16), alongside the other pre-guard reconciliation shapes.
 #
 # covers: spira/batch.sh
 # timeout: 120
@@ -210,23 +210,6 @@ outF3="$(SPIRA_QUEUE_STUCK_AGE=$STUCK_AGE SPIRA_QUEUE_BATCH_MAX=$BATCH_MAX \
     SPIRA_QUEUE_BATCH_WAIT=$BATCH_WAIT batch "$REPONAME" 2>&1)"
 want "f3. re-stall: alert re-fires" "mailed operator" "$outF3"
 is   "f3. re-stall: flag re-created" "1" \
-    "$([ -f "$RUN/queue-stuck-$REPONAME" ] && echo 1 || echo 0)"
-clean_case
-
-# ============================================================================
-# g. Post-landing false positive (sp-wlt1r recurrence): recent LANDED record
-#    (no trailing newline, land_mark format) + old CERTIFIED cert → no mail.
-#    Before fix: no-newline LANDED record skipped, last_moved=0, fallback to
-#    oldest cert epoch (~7200s), stuck mail fires seconds after a landing.
-# ============================================================================
-seed
-branch "sp-g1" "$OLD"
-mark_moved "sp-g-landed" LANDED "$RECENT"
-
-outG="$(SPIRA_QUEUE_STUCK_AGE=$STUCK_AGE SPIRA_QUEUE_BATCH_MAX=$BATCH_MAX \
-    SPIRA_QUEUE_BATCH_WAIT=$BATCH_WAIT batch "$REPONAME" 2>&1)"
-nowant "g. post-landing: no stuck mail" "mailed operator" "$outG"
-is    "g. post-landing: stuck flag absent" "0" \
     "$([ -f "$RUN/queue-stuck-$REPONAME" ] && echo 1 || echo 0)"
 clean_case
 
