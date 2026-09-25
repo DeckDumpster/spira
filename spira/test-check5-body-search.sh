@@ -133,6 +133,31 @@ want "the pass says so" "reopened sp-mention" "$out"
 
 # ======================================================================================
 echo
+echo "QUEUE MERGE SUBJECT — the batch/verdict/landing writer form, gap G4:"
+# batch.sh, verdict.sh and landing.sh all write the SAME literal subject, "spira: land
+# <id>", for a queue-mode merge — never the aeon's own "<id>: ..." form this file's other
+# cases use. CHECK 5's inline copy of landed()'s match rule (sentinel.sh) claims to trust
+# both shapes, kept in sync by comment rather than by calling the shared function; nothing
+# before this case drove it with the shape it actually claims to trust.
+# ======================================================================================
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"$PAST"}
+{"id":"sp-qland","title":"landed via a queue merge","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-qland","depends_on_id":"sp-goal","type":"parent-child"}]}
+JSONL
+touch "$RUN/sp-qland.log"
+
+git -C "$REPO" commit -q --allow-empty -m "spira: land sp-qland"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+
+is "sp-qland starts closed" closed "$(status_of sp-qland)"
+out="$(sentinel)"
+is "queue-merge-subject NOT reopened" closed "$(status_of sp-qland)"
+nowant "the pass does not say reopened" "reopened sp-qland" "$out"
+
+# ======================================================================================
+echo
 echo "DEEP HISTORY — bead commit is 401 commits back from HEAD:"
 # Proves CHECK 5 has no window. The old -n 400 window would miss this commit and
 # reopen the bead as closed-without-landing.

@@ -181,5 +181,57 @@ else
 fi
 
 # ===========================================================================
+echo
+echo "halt tears down a real container recorded in the registry (gap G9)"
+# ===========================================================================
+# Every case above empties LAND_CONTAINERS before the real (non-dry-run) halt
+# runs, so only the dry-run "would tear down" listing (above) ever reads a
+# populated registry — the real teardown call (podman ps + testenv.sh down)
+# has never actually run. Stub both so this exercises the real code path
+# rather than re-testing the listing.
+CONT_NAME="spira-batch-realcont1"
+BIN_DIR="$TMP/bin"; mkdir -p "$BIN_DIR"
+cat > "$BIN_DIR/podman" <<PODEOF
+#!/usr/bin/env bash
+[ "\$1" = "ps" ] && printf '%s\n' "$CONT_NAME"
+exit 0
+PODEOF
+chmod +x "$BIN_DIR/podman"
+
+PROD_DIR="$TMP/prod"; mkdir -p "$PROD_DIR"
+TEARDOWN_LOG="$TMP/teardown.log"; rm -f "$TEARDOWN_LOG"
+cat > "$PROD_DIR/testenv.sh" <<TDEOF
+#!/usr/bin/env bash
+if [ "\$1" = "down" ]; then
+    printf '%s\n' "\$3" >> "$TEARDOWN_LOG"
+fi
+exit 0
+TDEOF
+chmod +x "$PROD_DIR/testenv.sh"
+
+sleep 300 &
+CONT_PID=$!
+printf 'pid=%s\nstarted=%s\nrepo=spira\nbranch=spira/sp-cont\nphase=gate\n' \
+    "$CONT_PID" "$(date +%s)" > "$LAND_RUN"
+printf '%s\n' "$CONT_NAME" > "$LAND_CONTAINERS"
+
+out="$(env -i PATH="$BIN_DIR:$PATH" HOME="$HOME" \
+    SPIRA_RUN="$SPIRA_RUN" \
+    SPIRA_HOME="$HERE" \
+    SPIRA_PROD="$PROD_DIR" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
+    bash "$HERE/landing.sh" halt --reason "container teardown test" 2>&1)"; rc=$?
+kill "$CONT_PID" 2>/dev/null || true
+
+is   "container-halt: exits 0"                            "0" "$rc"
+want "container-halt: reports tearing down the container" "tearing down container $CONT_NAME" "$out"
+if [ -f "$TEARDOWN_LOG" ] && grep -qxF "$CONT_NAME" "$TEARDOWN_LOG"; then
+    ok "container-halt: testenv.sh down --name was actually invoked"
+else
+    bad "container-halt: testenv.sh down --name was actually invoked" "no matching line in $TEARDOWN_LOG"
+fi
+
+# ===========================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
