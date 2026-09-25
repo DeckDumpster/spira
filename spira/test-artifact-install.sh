@@ -8,44 +8,31 @@
 #     source-checkout path, which does not exist in a tarball install — ready.sh
 #     would render UNKN for loom. This phase makes that gap visible before trusting
 #     the silence in phase 3.
-#   Phase 2 (build): cargo builds the real loom binary; build-tarball.sh packages it
-#     as bin/loom inside a spira-<timestamp>.tar.gz.
-#   Phase 3 (no-cargo): cargo is removed from PATH. activate.sh unpacks the tarball.
-#     conf.sh's fixed default resolves SPIRA_LOOM_BIN to bin/loom inside the release.
-#     Loom starts; /api/beads → 200. ready.sh exits 0.
+#   Phase 2 (package): build-tarball.sh packages the workspace's own prebuilt
+#     bin/loom (the gate's build job compiles it, sp-7r4rl) as bin/loom inside a
+#     spira-<timestamp>.tar.gz. A sha256 match against the source binary proves
+#     the packaged copy is that prebuilt one, not something rebuilt in its place.
+#   Phase 3 (no-cargo): activate.sh unpacks the tarball. conf.sh's fixed default
+#     resolves SPIRA_LOOM_BIN to bin/loom inside the release. Loom starts;
+#     /api/beads → 200. ready.sh exits 0.
 #
 # LAW-ABSENCE-NEEDS-A-POSITIVE-CONTROL: phase 1 proves the UNKN path fires before
 # phase 3 trusts that it does not.
 #
-# CARGO NOTES:
-#   This suite MUST resolve cargo before sourcing lib.sh, because conf.sh (sourced
-#   by lib.sh) replaces PATH with a restricted set that does not include cargo's bin.
-#   The toolchain cargo/rustc are invoked directly (not via the rustup proxy) to
-#   avoid proxy chain issues in the restricted-PATH environment.
-#   CARGO_HOME is set to a temp dir owned by the test user; the testenv named volume
-#   (/var/spira/cargo) is root-owned on first use and causes Permission denied.
+# NO CARGO BUILD HERE. conf.sh (sourced by lib.sh below) sets PATH from scratch
+# and never includes cargo's bin dir, so this suite never has cargo on PATH —
+# if a future edit reintroduces a `cargo build` call, it fails loudly rather
+# than silently reverting to the exclusive, several-GB-peak build this suite
+# used to run alone at the start of every batch.
 #
-# SKIP: cargo absent (not in testenv); XDG_RUNTIME_DIR absent (no user session).
+# SKIP: no prebuilt bin/loom in the workspace (the gate's build job did not run
+#   for this branch); XDG_RUNTIME_DIR absent (no user session).
 #
-# exclusive: cargo build peaks at several GB; runs alone to prevent container OOM
-# runtime: ~5m (cargo build dominates on first run; ~2m on re-runs)
-# covers: spira/conf.sh spira/activate.sh spira/loom.sh spira/ready.sh install.sh
-
-# === RESOLVE CARGO AND SAVE PATH BEFORE lib.sh SOURCING ===
-# conf.sh (sourced by lib.sh) overwrites PATH entirely; cargo must be resolved now.
-_ORIG_PATH="$PATH"
-_CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$_CARGO_BIN" ] && [ -x "/usr/local/cargo/bin/cargo" ]; then
-    _CARGO_BIN="/usr/local/cargo/bin/cargo"
-fi
+# covers: spira/conf.sh spira/activate.sh spira/loom.sh spira/ready.sh spira/testenv-batch.sh install.sh
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-[ -n "$_CARGO_BIN" ] || {
-    printf 'SKIP test-artifact-install.sh: cargo not found\n' >&2
-    exit 77
-}
 [ -n "${XDG_RUNTIME_DIR:-}" ] || {
     printf 'SKIP test-artifact-install.sh: XDG_RUNTIME_DIR not set (no user session)\n' >&2
     exit 77
@@ -69,6 +56,16 @@ if ! testdb_available; then
 fi
 
 WORKSPACE="$(cd "$HERE/.." && pwd -P)"   # /workspace inside testenv
+
+# The gate's build job compiles this; testenv-batch.sh copies it into the
+# branch worktree before the container starts (sp-7r4rl, sp-n1f5o). Without
+# it there is nothing to package and nothing this suite can prove.
+LOOM_BIN="$WORKSPACE/bin/loom"
+[ -x "$LOOM_BIN" ] || {
+    printf 'SKIP test-artifact-install.sh: no prebuilt %s (gate build job did not run for this branch)\n' \
+        "$LOOM_BIN" >&2
+    exit 77
+}
 
 # ---------------------------------------------------------------------------
 # SCRATCH — ephemeral; cleaned on exit.
@@ -135,60 +132,8 @@ want "positive-control: conf.sh resolves SPIRA_LOOM_BIN to bin/loom in tarball l
 
 # ===========================================================================
 echo ""
-echo "phase 2: build (cargo present)"
+echo "phase 2: package the prebuilt bin/loom"
 # ===========================================================================
-# Find the toolchain's cargo/rustc directly to bypass the rustup proxy.
-# The proxy relies on PATH containing its own bin dir; conf.sh stripped that.
-# Invoking the toolchain binary directly computes its sysroot from its own path
-# and finds rustc without PATH.
-RUSTUP_HOME="${RUSTUP_HOME:-/usr/local/rustup}"
-_TC_CARGO="$_CARGO_BIN"
-_TC_RUSTC=""
-for _tc_dir in $(ls -d "$RUSTUP_HOME/toolchains/"* 2>/dev/null); do
-    if [ -x "$_tc_dir/bin/cargo" ] && [ -x "$_tc_dir/bin/rustc" ]; then
-        _TC_CARGO="$_tc_dir/bin/cargo"
-        _TC_RUSTC="$_tc_dir/bin/rustc"
-        break
-    fi
-done
-
-# Use a user-writable target dir: /workspace is owned by the host user (uid=1000)
-# and spirauser (uid=1001) cannot write to it in rootless podman. A temp dir under
-# SCRATCH is always user-writable.
-LOOM_TARGET="$SCRATCH/loom-target"
-LOOM_BIN="$LOOM_TARGET/release/loom"
-
-if [ ! -x "$LOOM_BIN" ]; then
-    printf '  building loom (takes a few minutes)...\n'
-    # Use a temp CARGO_HOME to avoid testenv named-volume permission issues
-    # (fresh named volumes at /var/spira/cargo are root-owned; temp dir is user-owned).
-    _TC_CARGO_HOME="$SCRATCH/cargo-build"
-    mkdir -p "$_TC_CARGO_HOME" "$LOOM_TARGET"
-    if [ -n "$_TC_RUSTC" ]; then
-        CARGO_HOME="$_TC_CARGO_HOME" RUSTC="$_TC_RUSTC" \
-            "$_TC_CARGO" build --release \
-            --manifest-path "$WORKSPACE/loom/Cargo.toml" \
-            --target-dir "$LOOM_TARGET" >&2
-    else
-        CARGO_HOME="$_TC_CARGO_HOME" \
-            "$_TC_CARGO" build --release \
-            --manifest-path "$WORKSPACE/loom/Cargo.toml" \
-            --target-dir "$LOOM_TARGET" >&2
-    fi
-    build_rc=$?
-    iszero "cargo build loom" "$build_rc"
-    [ "$build_rc" -ne 0 ] && {
-        printf '%s passed, %s failed\n' "$pass" "$fail"; [ "$fail" = 0 ]; exit
-    }
-else
-    ok "loom binary already built at $LOOM_BIN"
-fi
-
-[ -x "$LOOM_BIN" ] || {
-    bad "loom binary" "not found at $LOOM_BIN after build"
-    printf '%s passed, %s failed\n' "$pass" "$fail"; [ "$fail" = 0 ]; exit
-}
-
 # Build the tarball manually.  Inside the testenv container, the workspace is a git
 # worktree whose common git directory lives on the host at an absolute path that is
 # not mounted in the container, so `git archive` (used by build-tarball.sh) fails.
@@ -201,10 +146,20 @@ mkdir -p "$_stage/bin"
 for _d in spira systemd loom cockpit; do
     [ -d "$WORKSPACE/$_d" ] && cp -rp "$WORKSPACE/$_d" "$_stage/" || true
 done
+_src_sha="$(sha256sum "$LOOM_BIN" | awk '{print $1}')"
 cp "$LOOM_BIN"   "$_stage/bin/loom"  && chmod +x "$_stage/bin/loom"
 cp "$STUB_PANEL" "$_stage/bin/panel" && chmod +x "$_stage/bin/panel"
 printf 'commit %s\ntimestamp %s\n' \
     "0000000000000000000000000000000000000000" "$_ts" > "$_stage/MANIFEST"
+
+# POSITIVE CONTROL: the packaged bin/loom is the prebuilt one, not a binary
+# built fresh in its place. A byte-for-byte match is the only proof that
+# survives a future edit reintroducing a build step here.
+_staged_sha="$(sha256sum "$_stage/bin/loom" | awk '{print $1}')"
+[ "$_src_sha" = "$_staged_sha" ] \
+    && ok "positive-control: packaged bin/loom matches the prebuilt binary (sha256 $_src_sha)" \
+    || bad "positive-control" "packaged bin/loom sha256 ($_staged_sha) != prebuilt ($_src_sha)"
+
 TARBALL="$SCRATCH/$_name.tar.gz"
 tar -czf "$TARBALL" -C "$SCRATCH" "$_name" \
     && ok "tarball produced: $(basename "$TARBALL")" \
@@ -212,7 +167,7 @@ tar -czf "$TARBALL" -C "$SCRATCH" "$_name" \
 
 # ===========================================================================
 echo ""
-echo "phase 3: activate and verify with cargo hidden from PATH"
+echo "phase 3: activate and verify without cargo"
 # ===========================================================================
 # Activate the tarball.  SPIRA_SYSTEMCTL stub prevents daemon-reload and restart
 # from touching any installed units; SPIRA_ACTIVATE_FORCE bypasses the live-aeon guard.
@@ -241,20 +196,17 @@ testdb_up "aifsp9b7i_$$" >/dev/null 2>&1
 iszero "testdb_up exits 0" "$?"
 
 # ---------------------------------------------------------------------------
-# Start loom from the tarball's bin/loom with cargo stripped from PATH.
+# Start loom from the tarball's bin/loom. PATH here is conf.sh's own — set from
+# scratch when lib.sh was sourced at the top of this suite — and it has never
+# included cargo's bin dir, so this proves the release runs without it.
 # Use a random high port so the test does not collide with any running loom.
 # ---------------------------------------------------------------------------
 LOOM_PORT="$((RANDOM % 10000 + 40000))"
 LOOM_ADDR="127.0.0.1:${LOOM_PORT}"
 
-# Build a PATH that has bd but no cargo/rustc.
-_PATH_NOCARGO="$(printf '%s\n' "$PATH" | tr ':' '\n' \
-    | grep -v 'cargo' | grep -v 'rustup' | tr '\n' ':' | sed 's/:$//')"
-
 SPIRA_DB="$SPIRA_DB" \
 SPIRA_BD="${SPIRA_BD:-$(command -v bd)}" \
 SPIRA_LOOM_ADDR="$LOOM_ADDR" \
-PATH="$_PATH_NOCARGO" \
     "$CURRENT/bin/loom" >"$SCRATCH/loom.log" 2>&1 &
 LOOM_PID=$!
 
