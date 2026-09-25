@@ -686,6 +686,82 @@ ${_line#build-error: }" ;;
     rm -rf "$_eject_fail_dir" 2>/dev/null || true
 }
 
+# verdict_normalize_status <status> — provision_fault means the branch was never
+# tested (gate exit 75); treat it as harness_fault so members are retried rather
+# than ejected or bisected.
+verdict_normalize_status() {
+    case "$1" in
+        provision_fault) printf 'harness_fault\n' ;;
+        *) printf '%s\n' "$1" ;;
+    esac
+}
+
+# verdict_repo_threshold <name> <suffix> <default> — SPIRA_QUEUE_<suffix>_<NAME>
+# overrides SPIRA_QUEUE_<suffix> overrides <default>.
+verdict_repo_threshold() {
+    local name="$1" suffix="$2" default="$3"
+    local key; key="$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')"
+    local per_repo="SPIRA_QUEUE_${suffix}_${key}" global="SPIRA_QUEUE_${suffix}"
+    local v="${!per_repo:-}"
+    [ -n "$v" ] && { printf '%s\n' "$v"; return 0; }
+    v="${!global:-}"
+    [ -n "$v" ] && { printf '%s\n' "$v"; return 0; }
+    printf '%s\n' "$default"
+}
+
+# verdict_parse_run_metadata <metadata-text> — reduces forge.sh run-metadata
+# output to the run's start time and the latest of any last-activity line (a
+# single step's own timestamp lags the job's, so the max is taken).
+verdict_parse_run_metadata() {
+    local meta="$1" started="" last_activity="" line t
+    while IFS= read -r line; do
+        case "$line" in
+            "started-at: "*) started="${line#started-at: }" ;;
+            "last-activity: "*)
+                t="${line#last-activity: }"
+                [ "${t:-0}" -gt "${last_activity:-0}" ] && last_activity="$t"
+                ;;
+        esac
+    done <<< "$meta"
+    printf 'started=%s\n' "$started"
+    printf 'last_activity=%s\n' "$last_activity"
+}
+
+# verdict_action <status> <run_age> <idle> <maxsec> <retries> [<idle_max>] [<max_retries>]
+# — the pure decision behind the pending and harness_fault branches of
+# _verdict_process. <run_age>/<idle> are seconds already elapsed, empty when
+# unknown, so the classifier needs no wall clock of its own. Prints one of:
+# wait-unknown, wait-running, wait-progressing, cancel (pending); rerun, close
+# (harness_fault).
+verdict_action() {
+    local status="$1" run_age="${2:-}" idle="${3:-}" maxsec="$4" retries="${5:-0}"
+    local idle_max="${6:-600}" max_retries="${7:-2}"
+    case "$status" in
+        pending)
+            if [ -z "$run_age" ]; then
+                printf 'wait-unknown\n'; return 0
+            fi
+            if [ "$run_age" -lt "$maxsec" ]; then
+                printf 'wait-running\n'; return 0
+            fi
+            if [ -n "$idle" ] && [ "$idle" -lt "$idle_max" ]; then
+                printf 'wait-progressing\n'; return 0
+            fi
+            printf 'cancel\n'
+            ;;
+        harness_fault)
+            if [ "$retries" -lt "$max_retries" ]; then
+                printf 'rerun\n'
+            else
+                printf 'close\n'
+            fi
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 main() {
     local name="${1:-}"
     [ -n "$name" ] || { printf 'verdict.sh: repo name required\n' >&2; exit 1; }
@@ -763,9 +839,7 @@ _verdict_process() {
     status_out="$("$forge" check-status "$repo" "$pr_n" 2>/dev/null)" || status_out="pending"
     status="$(printf '%s\n' "$status_out" | head -1)"
     status="${status:-pending}"
-    # provision_fault means the branch was never tested (gate exit 75); treat it as
-    # harness_fault so members are retried rather than ejected or bisected.
-    [ "$status" = "provision_fault" ] && status="harness_fault"
+    status="$(verdict_normalize_status "$status")"
 
     # Red with no suite annotations: multi-member batches bisect; single-member
     # falls through to the unreproduced-red track. Both converge without jamming
@@ -776,50 +850,50 @@ _verdict_process() {
 
     case "$status" in
         pending)
-            local _name_key; _name_key="$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')"
-            local _v _ci_maxsec _ci_idle _t
-            _v="SPIRA_QUEUE_CI_MAXSEC_${_name_key}"; _ci_maxsec="${!_v:-${SPIRA_QUEUE_CI_MAXSEC:-3600}}"
-            _v="SPIRA_QUEUE_CI_IDLE_SEC_${_name_key}"; _ci_idle="${!_v:-${SPIRA_QUEUE_CI_IDLE_SEC:-600}}"
-            local run_id run_started=0 run_last_act=0 _ml
+            local _ci_maxsec _ci_idle
+            _ci_maxsec="$(verdict_repo_threshold "$name" "CI_MAXSEC" 3600)"
+            _ci_idle="$(verdict_repo_threshold "$name" "CI_IDLE_SEC" 600)"
+            local run_id run_started="" run_last_act="" _pl
             run_id="$("$forge" run-id "$repo" "${branch_name:-}" 2>/dev/null)" || run_id=""
             if [ -n "${run_id:-}" ]; then
                 local _run_meta
                 _run_meta="$("$forge" run-metadata "$repo" "$run_id" 2>/dev/null)" || _run_meta=""
-                while IFS= read -r _ml; do
-                    case "$_ml" in
-                        "started-at: "*) run_started="${_ml#started-at: }" ;;
-                        "last-activity: "*)
-                            _t="${_ml#last-activity: }"
-                            [ "${_t:-0}" -gt "${run_last_act:-0}" ] && run_last_act="$_t"
-                            ;;
+                while IFS= read -r _pl; do
+                    case "$_pl" in
+                        started=*) run_started="${_pl#started=}" ;;
+                        last_activity=*) run_last_act="${_pl#last_activity=}" ;;
                     esac
-                done <<< "$_run_meta"
+                done <<< "$(verdict_parse_run_metadata "$_run_meta")"
             fi
 
-            local run_age
-            if [ "${run_started:-0}" -gt 0 ]; then
+            local run_age=""
+            if [ -n "${run_started:-}" ]; then
                 run_age=$(( now - run_started ))
             elif [ -z "${run_id:-}" ]; then
                 run_age=$(( now - ${opened:-0} ))
-            else
-                # Have a run but could not determine when it started — don't cancel.
-                printf 'verdict %s: PR %s pending (run %s age unknown)\n' \
-                    "$name" "$pr_n" "$run_id"
-                return 0
             fi
+            local _idle=""
+            [ -n "${run_last_act:-}" ] && _idle=$(( now - run_last_act ))
 
-            if [ "$run_age" -lt "$_ci_maxsec" ]; then
-                printf 'verdict %s: PR %s pending (run age %ds)\n' "$name" "$pr_n" "$run_age"
-                return 0
-            fi
-
-            local _idle=$(( now - ${run_last_act:-0} ))
-            if [ "${run_last_act:-0}" -gt 0 ] && \
-               [ "$_idle" -lt "$_ci_idle" ]; then
-                printf 'verdict %s: PR %s run %s progressing (last activity %ds ago)\n' \
-                    "$name" "$pr_n" "${run_id:-?}" "$_idle"
-                return 0
-            fi
+            local _paction
+            _paction="$(verdict_action pending "$run_age" "$_idle" "$_ci_maxsec" 0 "$_ci_idle")"
+            case "$_paction" in
+                wait-unknown)
+                    # Have a run but could not determine when it started — don't cancel.
+                    printf 'verdict %s: PR %s pending (run %s age unknown)\n' \
+                        "$name" "$pr_n" "$run_id"
+                    return 0
+                    ;;
+                wait-running)
+                    printf 'verdict %s: PR %s pending (run age %ds)\n' "$name" "$pr_n" "$run_age"
+                    return 0
+                    ;;
+                wait-progressing)
+                    printf 'verdict %s: PR %s run %s progressing (last activity %ds ago)\n' \
+                        "$name" "$pr_n" "${run_id:-?}" "$_idle"
+                    return 0
+                    ;;
+            esac
 
             # Run is stuck. Cancel it explicitly so the shutdown is logged, not an
             # unexplained runner signal. Next verdict pass handles the cancelled run
@@ -828,11 +902,11 @@ _verdict_process() {
                 "$forge" run-cancel "$repo" "$run_id" 2>/dev/null || true
             fi
             printf 'verdict %s: PR %s run stuck (%ds, idle %ds) — cancelled; will retry on next pass\n' \
-                "$name" "$pr_n" "$run_age" "$_idle"
+                "$name" "$pr_n" "$run_age" "${_idle:-0}"
             ;;
         harness_fault)
             local max_retries="${SPIRA_QUEUE_INFRA_RETRIES:-2}"
-            if [ "$run_retries" -lt "$max_retries" ]; then
+            if [ "$(verdict_action harness_fault "" "" 0 "$run_retries" 0 "$max_retries")" = "rerun" ]; then
                 local run_id
                 run_id="$("$forge" run-id "$repo" "${branch_name:-}" 2>/dev/null)" || run_id=""
                 if [ -n "${run_id:-}" ]; then
@@ -1045,4 +1119,8 @@ _verdict_process_attributing() {
     done
 }
 
-main "$@"
+# Sourced (a T1 suite wants the pure classifiers without a real verdict pass) vs
+# executed: main runs only when this file is the entry point.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    main "$@"
+fi
