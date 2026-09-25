@@ -49,7 +49,8 @@ printf '' > "$SPIRA_REPO_MAP"   # empty; amend does not need it
 run_bead() { SPIRA_HOME="$SPIRA_HOME" SPIRA_MAIL="$SPIRA_MAIL" SPIRA_RUN="$SPIRA_RUN" \
              bash "$HERE/bead.sh" "$@"; }
 
-BID2="$(bdq create "Test amend bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:fixture" --json 2>/dev/null \
+# File a bead in the fixture db, then claim it manually.
+BID2="$(bdq create "Test amend bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}partition:${SPIRA_PLAN_LABEL:-plan},repo:fixture" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d if isinstance(d,dict) else d[0])["id"])' 2>/dev/null)"
 [ -n "$BID2" ] || { bad "bead.sh amend: could not file test bead" ""; tl_summary; exit 1; }
 
@@ -76,7 +77,7 @@ rm -rf "$SPIRA_MAIL/aeon-$BID2"
 echo
 echo "bead.sh amend — open bead with no live aeon (c)"
 
-BID3="$(bdq create "Test no-aeon bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:fixture" --json 2>/dev/null \
+BID3="$(bdq create "Test no-aeon bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}partition:${SPIRA_PLAN_LABEL:-plan},repo:fixture" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d if isinstance(d,dict) else d[0])["id"])' 2>/dev/null)"
 [ -n "$BID3" ] || { bad "bead.sh amend (c): could not file test bead" ""; tl_summary; exit 1; }
 
@@ -108,7 +109,7 @@ export SPIRA_REPO_MAP="$SPIRA_HOME/repo-map"
 
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
+FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}partition:${SPIRA_PLAN_LABEL}"
 FAYTH_EXCLUDE_LABELS="spira-poison"
 FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600
@@ -138,7 +139,7 @@ printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":100,
 STUB
 chmod +x "$BIN/claude"
 
-BID4="$(bdq create "Test mailbox cleanup bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:fixture" --json 2>/dev/null \
+BID4="$(bdq create "Test mailbox cleanup bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}partition:${SPIRA_PLAN_LABEL:-plan},repo:fixture" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d if isinstance(d,dict) else d[0])["id"])' 2>/dev/null)"
 [ -n "$BID4" ] || { bad "(d): could not file test bead" ""; tl_summary; exit 1; }
 
