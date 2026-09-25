@@ -1045,9 +1045,26 @@ print((d[0].get("issue_type") or "") if d else "")' 2>/dev/null)"; then
         # succeeded: there is no PreToolUse hook refusing the tool call, only aeon.sh's own
         # teardown, which runs on every exit path and undoes the close before anything
         # downstream can read it as a verdict about the work.
-        bead_reopen "$BEAD_ID" work-close-converted "Submitted: work committed on branch; marked submitted instead of closed. The landing pass closes this bead when it lands, citing the merge commit."
-        bdq label add "$BEAD_ID" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1
-        log "$FAYTH: $BEAD_ID closed a work bead directly — converted to submitted"
+        #
+        # EXCEPT SUPERSEDED. A superseded bead's work was carried onto the successor's
+        # branch and lands under the successor's id — it will never have a commit of its
+        # own, so converting it to submitted would make a permanent zombie: open, labelled
+        # submitted, and nothing ever lands to close it. Leave the close standing, same as
+        # CHECK 5's own exemption (sentinel.sh).
+        if bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+if not d: sys.exit(1)
+sup = any((x.get("dependency_type") or x.get("type")) == "supersedes" for x in (d[0].get("dependencies") or []))
+sys.exit(0 if sup else 1)' 2>/dev/null; then
+            log "$FAYTH: $BEAD_ID closed a superseded work bead — not converted, close stands"
+        else
+            bead_reopen "$BEAD_ID" work-close-converted "Submitted: work committed on branch; marked submitted instead of closed. The landing pass closes this bead when it lands, citing the merge commit."
+            bdq label add "$BEAD_ID" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1
+            log "$FAYTH: $BEAD_ID closed a work bead directly — converted to submitted"
+        fi
     elif [ -f "$SPIRA_HOME/gate-run.sh" ]; then
         local gate_st
         gate_why="$(bash "$SPIRA_HOME/gate-run.sh" --status "$BRANCH" "$REPO_NAME" 2>/dev/null)"; gate_st=$?

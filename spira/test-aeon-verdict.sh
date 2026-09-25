@@ -1,32 +1,32 @@
 #!/usr/bin/env bash
 #
-# test-aeon-verdict.sh — a bead closed with nothing committed is reopened, UNLESS it was
-# superseded.
+# test-aeon-verdict.sh — a work bead (task/bug/feature) an aeon closes directly is
+# converted back to open, carrying the submitted label, UNLESS it was superseded. A
+# non-work bead (e.g. spike) is judged the old way: reopened when nothing committed and
+# no delivers: evidence verifies the close, UNLESS superseded.
 #
 #   ./test-aeon-verdict.sh
 #
-# THE DEFECT THIS REPRODUCES. Two checks ask the same question — "this bead says closed; is
-# there a commit that names it?" — one in aeon.sh at the end of a session, one in the
-# sentinel's closed-but-not-landed sweep. Both must exempt a bead retired with `bd
-# supersede`, because such a bead will NEVER have a commit naming it: its work was carried
-# onto the successor's branch and landed under the successor's id. The exemption was added
-# to the sentinel and not to aeon.sh, so a superseded bead was reopened the moment the
-# session that retired it exited, re-summoned, re-cut its branch, and spent a whole Opus
-# session rediscovering that it was a duplicate — seven times over on one bead before
-# anybody read the second check.
+# THE DEFECT THIS REPRODUCES (sp-qsona). Only the queue closes a work bead, when its batch
+# lands — bead_close_on_land (lib.sh) is the one place that happens, called from the
+# landing pass once a commit is actually on the base. An aeon's own close of a work bead is
+# therefore never trusted at face value, regardless of whether it committed, or labelled
+# delivers:TYPE: it is converted back to open with SPIRA_SUBMITTED_LABEL, and the landing
+# pass closes it for real when (and if) the work lands. The one exemption is a bead retired
+# with `bd supersede`: such a bead will NEVER have a commit naming it — its work was
+# carried onto the successor's branch — so converting it to submitted would make a
+# permanent zombie nothing ever lands to close.
 #
 # EVERY CASE IS A PAIR (law-absence-needs-a-positive-control). The exemption is only
 # meaningful if the check it exempts is shown to fire: the superseded bead is asserted to
-# survive beside an identical one that is NOT superseded and is reopened, and beside one
-# that committed and is therefore left alone for the other reason. A suite that only
-# asserted "still closed" would pass just as well against a check that never runs.
+# survive beside an identical one that is NOT superseded and is converted.
 #
 # Driven through the REAL aeon.sh against a real bd on a throwaway fixture, with a shim
 # standing in for the model, because what is under test is a query's shape and a branch's
 # commit graph and a model of either would be a second implementation of the thing in
 # question (law-prefer-the-real-dependency).
 #
-# defect: sp-dvlq
+# defect: sp-dvlq sp-qsona
 # covers: spira/aeon.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -123,10 +123,10 @@ exit 0
 SHIM
     chmod +x "$BIN/claude"
 }
-seed() {   # seed <id> [status]
+seed() {   # seed <id> [status] [issue_type]
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
-    printf '{"id":"%s","title":"t","status":"%s","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
-        "$1" "${2:-open}" "$_lbl" | testdb_seed
+    printf '{"id":"%s","title":"t","status":"%s","issue_type":"%s","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+        "$1" "${2:-open}" "${3:-task}" "$_lbl" | testdb_seed
 }
 run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_HOME/aeon.sh" builder > "$TMP/out" 2>&1; }
 field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
@@ -135,22 +135,22 @@ d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.a
 notes() { bd -C "$SPIRA_DB" show "$1" 2>/dev/null | tr '\n' ' '; }
 
 echo
-echo "closed WITH a commit naming the bead — the check is satisfied and does nothing:"
+echo "closed WITH a commit naming the bead — converted to submitted anyway; only the landing pass closes a work bead for real:"
 testdb_reset; seed sp-vd-1; shim 1 close; run_aeon
-is     "the bead stays closed"        closed "$(field sp-vd-1 status)"
-want   "and the verdict says it committed" "committed=yes" "$(cat "$TMP/out")"
-nowant "with no reopen"               "REOPENED"           "$(cat "$TMP/out")"
+is   "the bead is converted back to open"  open "$(field sp-vd-1 status)"
+want "carrying the submitted label"        "spira-submitted" "$(field sp-vd-1 labels)"
+want "and the verdict says so"              "closed a work bead directly — converted to submitted" "$(cat "$TMP/out")"
 
 echo
-echo "closed with NOTHING committed — reopened, because closed is not landed:"
+echo "closed with NOTHING committed — same conversion; commit status no longer decides the outcome:"
 testdb_reset; seed sp-vd-2; shim 0 close; run_aeon
-is   "the bead is open again"          open "$(field sp-vd-2 status)"
-is   "and its claim is released"       ""   "$(field sp-vd-2 assignee)"
-want "the verdict names the omission"  "REOPENED — closed with nothing committed" "$(cat "$TMP/out")"
-want "and the bead carries the reason" "closed without a commit naming sp-vd-2"   "$(notes sp-vd-2)"
+is   "the bead is converted back to open"  open "$(field sp-vd-2 status)"
+is   "and its claim is released"           ""   "$(field sp-vd-2 assignee)"
+want "carrying the submitted label"        "spira-submitted" "$(field sp-vd-2 labels)"
+want "and the bead carries the conversion reason" "marked submitted instead of closed" "$(notes sp-vd-2)"
 
 echo
-echo "SUPERSEDED with nothing committed — left closed, because its work landed under another id:"
+echo "SUPERSEDED — left closed, because its work landed under another id and would never get a commit of its own:"
 testdb_reset; seed sp-vd-3; seed sp-vd-succ closed; shim 0 supersede:sp-vd-succ; run_aeon
 is     "the successor relation was recorded" supersedes \
        "$(bd -C "$SPIRA_DB" show sp-vd-3 --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
@@ -158,48 +158,40 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 print(next((x.get("dependency_type") or x.get("type") for x in (d[0].get("dependencies") or [])), ""))' 2>/dev/null)"
 is     "the bead stays closed"               closed "$(field sp-vd-3 status)"
-want   "the verdict records the exemption"   "superseded=1" "$(cat "$TMP/out")"
-want   "and says why it declined to act"     "NOT reopened — superseded" "$(cat "$TMP/out")"
-nowant "so nothing is reopened"              "REOPENED"    "$(cat "$TMP/out")"
-nowant "and no reopen note is written"       "Closed is not landed" "$(notes sp-vd-3)"
+want   "the verdict records the exemption"   "closed a superseded work bead — not converted" "$(cat "$TMP/out")"
+nowant "so no submitted label is added"      "spira-submitted" "$(field sp-vd-3 labels)"
 
 # ======================================================================================
 echo
-echo "delivers:beads with child beads — left closed; the typed-and-verified form (sp-4z3s):"
+echo "delivers:beads with child beads — CONVERTED anyway; delivers: no longer exempts a work bead (sp-qsona):"
 # ======================================================================================
-# THE MECHANISM THIS TESTS. A bead that files child beads (a diagnosis that produces
-# action items, an ops sweep that files bug reports) cannot land a commit. delivers:beads
-# is the typed-and-verified replacement for no-payload: the aeon declares what it
-# produced and this check confirms the evidence is present. The two halves of the
-# contract are: children exist → stays closed; no children → reopened.
+# THE MECHANISM THIS TESTS. delivers:TYPE used to be the typed-and-verified way for a
+# work bead to close without a commit (a diagnosis that files child beads instead of
+# landing code). Only the queue closes a work bead now — supersede is the sole exemption
+# — so a work bead's delivers: labels no longer change the outcome, evidence or not.
 testdb_reset; seed sp-vd-db; shim 0 delivers-beads:close; run_aeon
-is     "the bead stays closed"             closed "$(field sp-vd-db status)"
-want   "the verdict records the exemption" "delivers" "$(cat "$TMP/out")"
-want   "and says why it declined to act"   "NOT reopened — delivers" "$(cat "$TMP/out")"
-nowant "so nothing is reopened"            "REOPENED" "$(cat "$TMP/out")"
-nowant "and no reopen note is written"     "Closed is not landed" "$(notes sp-vd-db)"
+is   "the bead is converted back to open despite delivers:beads" open "$(field sp-vd-db status)"
+want "carrying the submitted label"                               "spira-submitted" "$(field sp-vd-db labels)"
 
 # ======================================================================================
 echo
-echo "delivers:beads WITHOUT child beads — IS reopened; evidence missing:"
+echo "delivers:beads WITHOUT child beads — same conversion; evidence was never the question:"
 # ======================================================================================
 testdb_reset; seed sp-vd-dbe; shim 0 delivers-beads-empty:close; run_aeon
-is   "the bead is reopened"               open "$(field sp-vd-dbe status)"
-want "the verdict names the missing evidence" "REOPENED — delivers not verified" "$(cat "$TMP/out")"
+is   "the bead is converted back to open" open "$(field sp-vd-dbe status)"
+want "carrying the submitted label"       "spira-submitted" "$(field sp-vd-dbe labels)"
 
 # ======================================================================================
 echo
-echo "delivers:action — NOT reopened; close reason carries the evidence (sp-vkozc):"
+echo "delivers:action — same conversion; a work bead's own close is never trusted at face value:"
 # ======================================================================================
 testdb_reset; seed sp-vd-da; shim 0 delivers-action:close; run_aeon
-is     "the bead stays closed"              closed "$(field sp-vd-da status)"
-want   "the verdict records the acceptance" "delivers" "$(cat "$TMP/out")"
-want   "and says it was not reopened"       "NOT reopened" "$(cat "$TMP/out")"
-nowant "so nothing is reopened"             "REOPENED"     "$(cat "$TMP/out")"
+is   "the bead is converted back to open" open "$(field sp-vd-da status)"
+want "carrying the submitted label"       "spira-submitted" "$(field sp-vd-da labels)"
 
 # ======================================================================================
 echo
-echo "commit on base but past the branch-walk depth — left closed via landing refs (sp-fzfw):"
+echo "NON-WORK TYPE (spike) — commit on base but past the branch-walk depth — left closed via landing refs (sp-fzfw):"
 # ======================================================================================
 # THE DEFECT THIS REPRODUCES. aeon.sh walked -n 50 against the BRANCH only; the sentinel
 # walks -n SPIRA_VERDICT_WINDOW against spira_landrefs (base refs). When the branch
@@ -208,10 +200,15 @@ echo "commit on base but past the branch-walk depth — left closed via landing 
 # from the base tip. With window=5 the branch walk (prev3,prev2,prev1,tip,tip-1) misses
 # the bead commit at depth 6; the landing-refs walk (tip,tip-1,bead,seed) finds it at 3.
 #
+# A NON-WORK TYPE (spike), because a work bead never reaches this logic any more — it is
+# converted to submitted unconditionally above. The committed/delivers audit below still
+# governs the types that close by the agent's own hand (spike, ask, insight,
+# investigation, event), and this is the seam that tests it.
+#
 # Setup: land the bead commit on origin/main, then add 2 more commits so the bead sits
 # at depth 3 from origin/main. Create the branch with 3 "previous attempt" commits on top
 # of origin/main: branch-walk depth to bead = 3 (prev) + 3 (base before bead) = 6.
-testdb_reset; seed sp-vd-deep
+testdb_reset; seed sp-vd-deep open spike
 printf 'sp-vd-deep\n' >> "$REPO/f"
 git -C "$REPO" add f
 git -C "$REPO" commit -qm "sp-vd-deep — the work"
@@ -232,10 +229,10 @@ want   "committed=yes is recorded"                         "committed=yes" "$(ca
 nowant "no reopen triggered"                               "REOPENED"      "$(cat "$TMP/out")"
 
 echo
-echo "no commit anywhere — still reopened with the configurable window (sp-fzfw):"
+echo "NON-WORK TYPE (spike) — no commit anywhere — still reopened with the configurable window (sp-fzfw):"
 # THE OTHER HALF (law-absence-needs-a-positive-control). The landing-refs walk must not
 # suppress a legitimate reopen: a bead with no commit anywhere is still reopened.
-testdb_reset; seed sp-vd-nocommit
+testdb_reset; seed sp-vd-nocommit open spike
 shim 0 close; run_aeon
 is   "bead is open again (no commit found)"    open "$(field sp-vd-nocommit status)"
 want "REOPENED is still reported"              "REOPENED — closed with nothing committed" "$(cat "$TMP/out")"
@@ -355,15 +352,14 @@ git -C "$REPO" checkout -q main
 
 shim 0 supersede:sp-vd-winner; run_aeon
 is     "the superseded bead stays closed"              closed "$(field sp-vd-dup status)"
-want   "the verdict records the exemption"             "superseded=1" "$(cat "$TMP/out")"
-want   "and says why it declined to act"               "NOT reopened — superseded" "$(cat "$TMP/out")"
-nowant "so the bead is not reopened"                   "REOPENED" "$(cat "$TMP/out")"
+want   "the verdict records the exemption"             "closed a superseded work bead — not converted" "$(cat "$TMP/out")"
+nowant "so no submitted label is added"                "spira-submitted" "$(field sp-vd-dup labels)"
 
-# Positive control: without the supersede relation, a bare close-without-commit IS reopened.
+# Positive control: without the supersede relation, a bare close IS converted to submitted.
 testdb_reset; seed sp-vd-ctrl
 shim 0 close; run_aeon
-is   "a non-superseded bare close is reopened (positive control)"  open "$(field sp-vd-ctrl status)"
-want "and the REOPENED line appears"                               "REOPENED" "$(cat "$TMP/out")"
+is   "a non-superseded bare close is converted (positive control)"  open "$(field sp-vd-ctrl status)"
+want "carrying the submitted label"                                  "spira-submitted" "$(field sp-vd-ctrl labels)"
 
 echo
 echo "$pass passed, $fail failed"
