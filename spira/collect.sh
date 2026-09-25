@@ -285,13 +285,9 @@ _supervisor_loop() {
 
     while :; do
         # Config-change check: exit cleanly so the restart picks up the new config.
-        if [ -n "$_conf_file" ]; then
-            local _conf_mtime_now
-            _conf_mtime_now="$(stat --format='%Y' "$_conf_file" 2>/dev/null || echo 0)"
-            if [ "$_conf_mtime_now" != "$_conf_mtime_0" ]; then
-                printf 'collect.sh: config changed — exiting for restart\n' >&2
-                exit 0
-            fi
+        if conf_changed "$_conf_file" "$_conf_mtime_0"; then
+            printf 'collect.sh: config changed — exiting for restart\n' >&2
+            exit 0
         fi
 
         local _now; _now=$(date +%s)

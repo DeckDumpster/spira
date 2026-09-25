@@ -29,14 +29,11 @@ trap '
 
 while kill -0 "$_loom_pid" 2>/dev/null; do
     sleep "$_tick"
-    if [ -n "$_conf_file" ]; then
-        _conf_mtime_now="$(stat --format='%Y' "$_conf_file" 2>/dev/null || echo 0)"
-        if [ "$_conf_mtime_now" != "$_conf_mtime_0" ]; then
-            printf 'loom.sh: config changed — exiting for restart\n' >&2
-            kill "$_loom_pid" 2>/dev/null || true
-            wait "$_loom_pid" 2>/dev/null || true
-            exit 0
-        fi
+    if conf_changed "$_conf_file" "$_conf_mtime_0"; then
+        printf 'loom.sh: config changed — exiting for restart\n' >&2
+        kill "$_loom_pid" 2>/dev/null || true
+        wait "$_loom_pid" 2>/dev/null || true
+        exit 0
     fi
 done
 wait "$_loom_pid"
