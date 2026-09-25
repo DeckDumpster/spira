@@ -426,6 +426,73 @@ want  "all-fail: driver error in final message" "i/o timeout" "$_fail_err"
 
 rm -rf "$_fake_dir"
 
+# ======================================================================================
+echo
+echo "sp-ytw2h: bead_reopen eviction-race + bump_requeue eviction-race → one census class"
+# ======================================================================================
+# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail):
+# Unfixed (before lib.sh fold): census prints two lines — sp-reopen-eviction-race AND
+# sp-requeue-eviction-race. Fixed: one line, sp-reopen-eviction-race with 1 bead.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-ev1","title":"eviction bead","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-23T00:00:00Z"}
+JSONL
+bead_reopen   "sp-ev1" eviction-race "Eviction race test" >/dev/null 2>&1
+bump_requeue  "sp-ev1" eviction-race >/dev/null 2>&1
+
+out="$(census_out)"
+nowant "sp-requeue-eviction-race absent: folded into sp-reopen-eviction-race" "sp-requeue-eviction-race" "$out"
+want   "sp-reopen-eviction-race present for the paired eviction events" "1 sp-reopen-eviction-race" "$out"
+_evict_lines="$(printf '%s\n' "$out" | grep -c 'eviction-race' || true)"
+is "exactly one eviction-race class line" "1" "$_evict_lines"
+
+# ======================================================================================
+echo
+echo "sp-ytw2h: covers:sp-requeue-eviction-race suppresses sp-reopen-eviction-race"
+# ======================================================================================
+# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail):
+# Unfixed: sp-reopen-eviction-race appears unsuppressed even when a remedy bead carries
+# covers:sp-requeue-eviction-race, because the fold map has no eviction-race entry.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-ev2","title":"eviction bead 2","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-23T00:00:00Z"}
+{"id":"sp-evr","title":"remedy bead","status":"in_progress","issue_type":"task","labels":["spira","maechen-remedy","covers:sp-requeue-eviction-race"],"updated_at":"2026-09-23T00:00:00Z"}
+JSONL
+bead_reopen   "sp-ev2" eviction-race "Eviction race test" >/dev/null 2>&1
+bump_requeue  "sp-ev2" eviction-race >/dev/null 2>&1
+
+_evict_sup_out="$(SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy SPIRA_DB="$TESTDB_DIR" bash "$HERE/census.sh" --with-suppressed 2>/dev/null)"
+_evict_sup_line="$(printf '%s\n' "$_evict_sup_out" | grep 'sp-reopen-eviction-race' || true)"
+want   "covers:sp-requeue-eviction-race suppresses sp-reopen-eviction-race" "[suppressed" "$_evict_sup_line"
+nowant "sp-reopen-eviction-race not emitted unsuppressed" "sp-reopen-eviction-race" \
+    "$(printf '%s\n' "$_evict_sup_out" | grep -v '\[suppressed' || true)"
+
+# ======================================================================================
+echo
+echo "sp-ytw2h: structural — every same-string bead_reopen/REQUEUE_CAUSE pair in aeon.sh has a fold-map entry"
+# ======================================================================================
+# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail):
+# On the unfixed tree, _census_class_fold_map lacks sp-requeue-eviction-race (and others),
+# so this test fails for each cause that appears in both bead_reopen calls and REQUEUE_CAUSE=
+# assignments without a fold entry. Verified to fail before this commit.
+#
+# Parses aeon.sh — no database required.
+_aeon="$HERE/aeon.sh"
+_reopen_causes="$(grep 'bead_reopen' "$_aeon" | awk '{for(i=1;i<=NF;i++) if($i=="bead_reopen") {print $(i+2); break}}' | tr -d '"' | sort -u)"
+_requeue_causes="$(grep 'REQUEUE_CAUSE=' "$_aeon" | grep -v 'REQUEUE_CAUSE=""' | sed 's/.*REQUEUE_CAUSE="\([^"]*\)".*/\1/' | sort -u)"
+_fold_entries="$(_census_class_fold_map)"
+_pair_count=0
+for _cause in $_reopen_causes; do
+    printf '%s\n' "$_requeue_causes" | grep -qxF "$_cause" || continue
+    _pair_count=$((_pair_count + 1))
+    if printf '%s\n' "$_fold_entries" | grep -qE "^sp-requeue-${_cause}[[:space:]]"; then
+        ok "fold-map has sp-requeue-${_cause} for paired cause '${_cause}'"
+    else
+        bad "cause '${_cause}' in both bead_reopen and REQUEUE_CAUSE in aeon.sh but no fold-map entry for sp-requeue-${_cause}"
+    fi
+done
+[ "$_pair_count" -gt 0 ] || bad "structural check found no paired causes in aeon.sh — detection is broken"
+
 echo
 printf '  %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
