@@ -256,3 +256,15 @@ except Exception:
         --json databaseId,headSha \
         --jq '.[] | [(.databaseId|tostring), .headSha] | @tsv' 2>/dev/null || true)
 fi
+
+# STEP 5: TSD INGEST — pull each recently completed run's tsd/*.jsonl rows (sp-au8a7) into
+# the local run/tsd/ tree via tsd-ingest.sh, which is idempotent per run id on its own, so
+# reprocessing the same 20-run window every tick costs one marker-file stat per run, not a
+# re-download.
+if [ -n "${SPIRA_FLAKY_GH_REPO:-}" ] && command -v gh >/dev/null 2>&1; then
+    while IFS= read -r _tsd_run_id; do
+        [ -n "$_tsd_run_id" ] || continue
+        bash "$HERE/tsd-ingest.sh" "$SPIRA_FLAKY_GH_REPO" "$_tsd_run_id" 2>&1 || true
+    done < <(gh run list --repo "$SPIRA_FLAKY_GH_REPO" --status completed --limit 20 \
+        --json databaseId --jq '.[].databaseId' 2>/dev/null || true)
+fi

@@ -15,10 +15,22 @@
 #                                                           <group>, longest-first, tab-separated
 #                                                           "<group>\t<avg>" with no header —
 #                                                           meant for a shell caller, not a human
+#   tsd-query.sh suite-p50      <suite> <n>                p50 wall_secs over <suite>'s last
+#                                                           <n> suite-timing rows, every host
+#                                                           (local and CI) counted together
+#   tsd-query.sh suite-medians  <n>                        the same, for every suite in one
+#                                                           query: suite, median, n
+#   tsd-query.sh last-run                                  most recent run_id: sum(wall_secs)
+#                                                           over its suites, and its __batch__
+#                                                           row's wall_secs
+#   tsd-query.sh slow-in-branch <branch> <n>                the <n> slowest suite-timing rows
+#                                                           (raw, not deduped) for <branch>
 #
 # <family>/<field> are read straight from a shell command line and interpolated into SQL, so
 # both are restricted to a tight identifier charset before they ever reach a query string —
-# not sanitized, refused, the same choice tsd::valid_family makes for a path component.
+# not sanitized, refused, the same choice tsd::valid_family makes for a path component. A
+# suite name is not an identifier (it carries dots and slashes-as-hyphens from a path), so it
+# gets its own charset and is quoted as a SQL string literal, single quotes doubled.
 #
 # covers: tsd/src/lib.rs tsd/src/main.rs spira/deps.toml spira/conf.sh
 set -uo pipefail
@@ -31,16 +43,41 @@ FAMILY_RE='^[a-z][a-z0-9-]*$'
 FIELD_RE='^[a-z_][a-z0-9_]*$'
 NUM_RE='^[0-9]+$'
 FRAC_RE='^(0(\.[0-9]+)?|1(\.0+)?)$'
+SUITE_RE='^[A-Za-z0-9._-]+$'
+BRANCH_RE='^[A-Za-z0-9._/-]+$'
 
 usage() {
     cat >&2 <<'USAGE'
 usage:
-  tsd-query.sh baseline <family> <field> <hours>
-  tsd-query.sh rate     <family> <hours>
-  tsd-query.sh dwell    <family> <field> <p> [<hours>]
-  tsd-query.sh by-group <family> <group> <field> [<hours>]
+  tsd-query.sh baseline      <family> <field> <hours>
+  tsd-query.sh rate          <family> <hours>
+  tsd-query.sh dwell         <family> <field> <p> [<hours>]
+  tsd-query.sh by-group      <family> <group> <field> [<hours>]
+  tsd-query.sh suite-p50     <suite> <n>
+  tsd-query.sh suite-medians <n>
+  tsd-query.sh last-run
+  tsd-query.sh slow-in-branch <branch> <n>
 USAGE
 }
+
+_check_suite() {
+    [[ "$1" =~ $SUITE_RE ]] || { printf 'tsd-query: bad suite %q\n' "$1" >&2; exit 2; }
+}
+
+_check_branch() {
+    [[ "$1" =~ $BRANCH_RE ]] || { printf 'tsd-query: bad branch %q\n' "$1" >&2; exit 2; }
+}
+
+_check_n() {
+    [[ "$1" =~ $NUM_RE ]] && [ "$1" -ge 1 ] || {
+        printf 'tsd-query: bad n %q — must be a positive integer\n' "$1" >&2
+        exit 2
+    }
+}
+
+# SQL-quote: double every single quote, then wrap. Belt-and-suspenders alongside SUITE_RE —
+# the charset alone already refuses anything a quote could do damage with.
+_sqlstr() { printf "'%s'" "${1//\'/\'\'}"; }
 
 _family_path() {
     printf '%s/tsd/%s.jsonl' "$SPIRA_RUN" "$1"
@@ -125,6 +162,65 @@ case "$cmd" in
             $where
             GROUP BY \"$group\"
             ORDER BY 2 DESC;
+        "
+        ;;
+    suite-p50)
+        suite="${1:?suite required}"; n="${2:?n required}"
+        _check_suite "$suite"; _check_n "$n"
+        path="$(_check_family suite-timing)" || exit $?
+        duckdb -json -c "
+            WITH recent AS (
+                SELECT wall_secs
+                FROM read_ndjson_auto('$path')
+                WHERE suite = $(_sqlstr "$suite")
+                ORDER BY ts DESC
+                LIMIT $n
+            )
+            SELECT quantile_cont(wall_secs, 0.5) AS p50, count(*) AS n FROM recent;
+        "
+        ;;
+    suite-medians)
+        n="${1:?n required}"
+        _check_n "$n"
+        path="$(_check_family suite-timing)" || exit $?
+        duckdb -json -c "
+            WITH ranked AS (
+                SELECT suite, wall_secs,
+                       row_number() OVER (PARTITION BY suite ORDER BY ts DESC) AS rn
+                FROM read_ndjson_auto('$path')
+            )
+            SELECT suite, quantile_cont(wall_secs, 0.5) AS median, count(*) AS n
+            FROM ranked
+            WHERE rn <= $n
+            GROUP BY suite
+            ORDER BY suite;
+        "
+        ;;
+    last-run)
+        path="$(_check_family suite-timing)" || exit $?
+        duckdb -json -c "
+            WITH latest AS (
+                SELECT run_id FROM read_ndjson_auto('$path') ORDER BY ts DESC LIMIT 1
+            )
+            SELECT
+                (SELECT run_id FROM latest) AS run_id,
+                (SELECT COALESCE(sum(wall_secs), 0) FROM read_ndjson_auto('$path')
+                    WHERE run_id = (SELECT run_id FROM latest) AND suite != '__batch__') AS sum_wall,
+                (SELECT wall_secs FROM read_ndjson_auto('$path')
+                    WHERE run_id = (SELECT run_id FROM latest) AND suite = '__batch__'
+                    LIMIT 1) AS batch_wall;
+        "
+        ;;
+    slow-in-branch)
+        branch="${1:?branch required}"; n="${2:?n required}"
+        _check_branch "$branch"; _check_n "$n"
+        path="$(_check_family suite-timing)" || exit $?
+        duckdb -json -c "
+            SELECT suite, wall_secs
+            FROM read_ndjson_auto('$path')
+            WHERE branch = $(_sqlstr "$branch") AND suite != '__batch__'
+            ORDER BY wall_secs DESC
+            LIMIT $n;
         "
         ;;
     *)

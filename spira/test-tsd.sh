@@ -18,8 +18,8 @@
 #      MUST FAIL against the previous lib.sh, which had no such row.
 #   8. land_mark still succeeds, unchanged, when SPIRA_TSD_BIN names nothing executable —
 #      the tsd row is best-effort, landing itself never depends on it.
-#   9. testenv-batch.sh's suite-times hook appends a suite-timing row alongside the existing
-#      suite-times.tsv/log — same must-fail-against-the-previous-code property as land_mark.
+#   9. testenv-batch.sh's suite-times hook (_append_suite_times) appends a suite-timing row —
+#      the sole producer since the git-notes ledger and suite-times.sh were retired (sp-au8a7).
 #  10. tsd-query.sh: baseline (avg), rate (count/hours), dwell (quantile), and by-group
 #      (per-group avg, longest-first — sp-ezkp3's LPT lookup) against a synthetic fixture,
 #      plus refusals for a bad family, a missing family, and a bad field name.
@@ -205,15 +205,11 @@ sed -n '/^_append_suite_times() {/,/^}/p; /^_tsd_suite_timing() {/,/^}/p' \
 [ -s "$FUNCS" ] || bad "could not extract _append_suite_times/_tsd_suite_timing from testenv-batch.sh"
 RUN7="$T/run7"; mkdir -p "$RUN7"
 (
-    export SPIRA_RUN="$RUN7" SPIRA_TSD_BIN="$TSD_BIN" SPIRA_SUITE_TIMES_LOG="$RUN7/suite-times.log"
-    RESULTS="$T/results7"; mkdir -p "$RESULTS"
-    : > "$RESULTS/suite-times.tsv"
+    export SPIRA_RUN="$RUN7" SPIRA_TSD_BIN="$TSD_BIN"
     _BATCH_RUN_ID="run7"; BR="spira/sp-test"
     . "$FUNCS"
     _append_suite_times "test-example.sh" "0" "12" "3" "45" "parallel"
 )
-want "the existing tsv ledger still gets its row" \
-    "test-example.sh" "$(cat "$T/results7/suite-times.tsv" 2>/dev/null)"
 FAM7="$RUN7/tsd/suite-timing.jsonl"
 [ -f "$FAM7" ] && ok "suite-timing row appended" \
                 || bad "MUST-FAIL CHECK: no suite-timing row (old testenv-batch.sh behaviour)"
@@ -221,6 +217,8 @@ if [ -f "$FAM7" ]; then
     is "suite-timing: suite"     "test-example.sh" "$(jpy "$FAM7" 'rows[0]["suite"]')"
     is "suite-timing: rc"        "0"                "$(jpy "$FAM7" 'rows[0]["rc"]')"
     is "suite-timing: wall_secs" "12"                "$(jpy "$FAM7" 'rows[0]["wall_secs"]')"
+    is "suite-timing: run_id"    "run7"              "$(jpy "$FAM7" 'rows[0]["run_id"]')"
+    is "suite-timing: branch"    "spira/sp-test"     "$(jpy "$FAM7" 'rows[0]["branch"]')"
 fi
 
 # ============================================================================================
@@ -277,6 +275,74 @@ else
     out="$(qout by-group suite-timing "Bad Group" wall_secs)"; rc=$?
     [ "$rc" -ne 0 ] && ok "by-group: bad group field name refused" \
                     || bad "by-group: bad group field name accepted"
+fi
+
+# ============================================================================================
+printf '\n%s\n' "11. tsd-query.sh: suite-p50, suite-medians, last-run, slow-in-branch (sp-au8a7)"
+# ============================================================================================
+# ACCEPTANCE (sp-au8a7): one query answers p50 wall time of a suite over its last 10 runs,
+# local and CI both present. Two hosts stand in for "local" and "CI"; two older, out-of-window
+# rows prove the "last 10" limit is live, not decorative (law-absence-needs-a-positive-control).
+if [ -z "$DUCKDB_BIN" ]; then
+    echo "SKIP section 11: duckdb not found — tsd-query.sh needs it on PATH"
+else
+    RUN9="$T/run9"; mkdir -p "$RUN9"
+    qout9() { SPIRA_HOME="$T" SPIRA_RUN="$RUN9" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
+                bash "$HERE/tsd-query.sh" "$@" 2>&1; }
+
+    "$TSD_BIN" --family suite-timing --root "$RUN9" --host local-dev --ts 2026-09-24T22:00:00Z \
+        --field-str suite=acc.sh --field-str run_id=old1 --field-str branch=spira/sp-x \
+        --field wall_secs=9999 --field rc=0 --field-str mode=parallel
+    "$TSD_BIN" --family suite-timing --root "$RUN9" --host gha-runner-1 --ts 2026-09-24T22:30:00Z \
+        --field-str suite=acc.sh --field-str run_id=old2 --field-str branch=spira/sp-x \
+        --field wall_secs=9999 --field rc=0 --field-str mode=parallel
+
+    i=0
+    for w in 10 20 30 40 50 60 70 80 90 100; do
+        i=$((i + 1))
+        if [ $((i % 2)) -eq 1 ]; then h=local-dev; else h=gha-runner-1; fi
+        "$TSD_BIN" --family suite-timing --root "$RUN9" --host "$h" \
+            --ts "$(printf '2026-09-25T00:00:%02dZ' "$i")" \
+            --field-str suite=acc.sh --field-str "run_id=r$i" --field-str branch=spira/sp-x \
+            --field "wall_secs=$w" --field rc=0 --field-str mode=parallel
+    done
+    "$TSD_BIN" --family suite-timing --root "$RUN9" --host local-dev --ts 2026-09-25T00:00:11Z \
+        --field-str suite=quick.sh --field-str run_id=r11 --field-str branch=spira/sp-x \
+        --field wall_secs=5 --field rc=0 --field-str mode=parallel
+    "$TSD_BIN" --family suite-timing --root "$RUN9" --host local-dev --ts 2026-09-25T00:00:12Z \
+        --field-str suite=__batch__ --field-str run_id=r11 --field-str branch=spira/sp-x \
+        --field wall_secs=15 --field rc=0 --field-str mode=parallel
+
+    FAM9="$RUN9/tsd/suite-timing.jsonl"
+    is "fixture carries local-host rows"  "5" "$(jpy "$FAM9" 'sum(1 for r in rows if r["host"]=="local-dev" and r["suite"]=="acc.sh")')"
+    is "fixture carries CI-host rows"     "5" "$(jpy "$FAM9" 'sum(1 for r in rows if r["host"]=="gha-runner-1" and r["suite"]=="acc.sh")')"
+
+    out="$(qout9 suite-p50 acc.sh 10)"
+    want "suite-p50: p50 of last 10 runs (local+CI) is 55" '"p50":55' "$out"
+    want "suite-p50: n is 10, excludes the 2 older out-of-window rows" '"n":10' "$out"
+
+    out="$(qout9 suite-p50 acc.sh 12)"
+    lack "suite-p50 with n=12 is NOT 55 — proves the window limit is live, not decorative" \
+        '"p50":55' "$out"
+
+    out="$(qout9 suite-p50 "bad suite!" 10)"; rc=$?
+    [ "$rc" -ne 0 ] && ok "suite-p50: bad suite name refused" || bad "suite-p50: bad suite name accepted"
+
+    out="$(qout9 suite-p50 acc.sh 0)"; rc=$?
+    [ "$rc" -ne 0 ] && ok "suite-p50: n=0 refused" || bad "suite-p50: n=0 accepted"
+
+    out="$(qout9 suite-medians 10)"
+    want "suite-medians: acc.sh median is 55"   '"suite":"acc.sh","median":55' "$out"
+    want "suite-medians: quick.sh median is 5"  '"suite":"quick.sh","median":5' "$out"
+
+    out="$(qout9 last-run)"
+    want "last-run: run_id is the most recently stamped row"  '"run_id":"r11"' "$out"
+    want "last-run: sum_wall excludes __batch__ (5 from quick.sh)" '"sum_wall":5' "$out"
+    want "last-run: batch_wall is the __batch__ row's wall_secs" '"batch_wall":15' "$out"
+
+    out="$(qout9 slow-in-branch spira/sp-x 3)"
+    want "slow-in-branch: the two 9999s lead, __batch__ excluded" \
+        '[{"suite":"acc.sh","wall_secs":9999},{"suite":"acc.sh","wall_secs":9999}' "$out"
 fi
 
 printf '\ntest-tsd.sh: %d passed, %d failed\n' "$pass" "$fail"

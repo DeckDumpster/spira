@@ -42,8 +42,9 @@
 #               for THIS branch. Without this flag, only $REPO/bin (if present) is
 #               copied in — the pre-sp-hr5kj behavior, which never reflects Rust
 #               changes made on the branch itself.
-#   --report N  print the top-20 report over the last N runs from the suite-times ledger;
-#               no branch or container is required. Delegates to suite-times.sh.
+#   --report N  print each suite's median wall_secs over its last N run/tsd/ rows (default
+#               20), local and CI counted together; no branch or container is required.
+#               Delegates to tsd-query.sh suite-medians.
 #
 # EXIT STATUS
 #   0   all selected suites passed or skipped
@@ -153,8 +154,8 @@ while [ $# -gt 0 ]; do
             }
             SUITES_EXPLICIT="${1#--suites=}"; shift ;;
         --report)
-            _BATCH_REPORT="${2:-2}"
-            case "$_BATCH_REPORT" in [0-9]*) shift 2 ;; *) _BATCH_REPORT=2; shift ;; esac ;;
+            _BATCH_REPORT="${2:-20}"
+            case "$_BATCH_REPORT" in [0-9]*) shift 2 ;; *) _BATCH_REPORT=20; shift ;; esac ;;
         --report=*)
             _BATCH_REPORT="${1#--report=}"; shift ;;
         --)
@@ -167,9 +168,9 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# --report: delegate to suite-times.sh and exit; no branch or container needed.
+# --report: delegate to tsd-query.sh and exit; no branch or container needed.
 if [ -n "$_BATCH_REPORT" ]; then
-    exec bash "$HERE/suite-times.sh" report "$_BATCH_REPORT" "$@"
+    exec bash "$HERE/tsd-query.sh" suite-medians "$_BATCH_REPORT"
 fi
 case "$MODE" in
     parallel|serial) ;;
@@ -900,20 +901,14 @@ _batch_bd_read() {
 }
 
 # _append_suite_times <suite> <rc> <wall_secs> <bd_calls> <bd_ms> <mode>
+# The single producer of a suite's timing (sp-au8a7): appends into run/tsd/'s suite-timing
+# family. Best-effort — an unbuilt tsd-write leaves the family file simply absent, which
+# never fails the suite it is watching.
 _append_suite_times() {
-    local _row
-    _row="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
-        "$_BATCH_RUN_ID" "$BR" "$1" "$2" "$3" "$4" "$5" "$6")"
-    printf '%s\n' "$_row" >> "$RESULTS/suite-times.tsv"
-    mkdir -p "${SPIRA_SUITE_TIMES_LOG%/*}" 2>/dev/null || true
-    printf '%s\n' "$_row" >> "${SPIRA_SUITE_TIMES_LOG:-$SPIRA_RUN/suite-times.log}" 2>/dev/null || true
     _tsd_suite_timing "$1" "$2" "$3" "$4" "$5" "$6"
 }
 
 # _tsd_suite_timing <suite> <rc> <wall_secs> <bd_calls> <bd_ms> <mode>
-# Best-effort sibling of the row above, into the run/tsd/ suite-timing family (sp-sbc6o) so
-# DuckDB can query trailing baselines across runs. An unbuilt tsd-write leaves the family
-# file simply absent — the tsv/log above stay the record of truth either way.
 _tsd_suite_timing() {
     local bin="${SPIRA_TSD_BIN:-}"
     [ -n "$bin" ] && [ -x "$bin" ] || return 0
@@ -1451,16 +1446,11 @@ printf 'image_tag=%s\nbranch=%s\nbase=%s\nkey=%s\nmode=%s\nselection=%s\n' \
 
 # ---------------------------------------------------------------------------
 # SUITE-TIMES BATCH SUMMARY — one row per batch with the end-to-end wall time.
-# Suite name __batch__ is reserved for this row; suite-times.sh skips it in
-# per-suite output but uses it for the "wall" figure in per-run summaries.
+# Suite name __batch__ is reserved for this row; tsd-query.sh's last-run and
+# suite-medians both treat it as any other suite value, and callers filter it out.
 # ---------------------------------------------------------------------------
 _BATCH_WALL=$(( $(date +%s) - _BATCH_T0 ))
-_batch_times_row="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
-    "$_BATCH_RUN_ID" "$BR" "__batch__" "0" "$_BATCH_WALL" "0" "0" "$MODE")"
-printf '%s\n' "$_batch_times_row" >> "$RESULTS/suite-times.tsv"
-mkdir -p "${SPIRA_SUITE_TIMES_LOG%/*}" 2>/dev/null || true
-printf '%s\n' "$_batch_times_row" >> \
-    "${SPIRA_SUITE_TIMES_LOG:-$SPIRA_RUN/suite-times.log}" 2>/dev/null || true
+_tsd_suite_timing "__batch__" "0" "$_BATCH_WALL" "0" "0" "$MODE"
 log "batch: wall ${_BATCH_WALL}s"
 
 # ---------------------------------------------------------------------------

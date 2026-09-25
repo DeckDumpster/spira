@@ -16,7 +16,7 @@
 #   3. _pf_left counts down to a shared deadline and never goes negative.
 #   4. gate-touched.sh applies the fast filter only when SPIRA_GATE_FAST_MAX_SECS is set.
 #
-# covers: spira/fast-suites.sh spira/batch.sh spira/gate-touched.sh
+# covers: spira/fast-suites.sh spira/batch.sh spira/gate-touched.sh spira/tsd-query.sh
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -25,27 +25,42 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
 # --- 1. fast-suites.sh -----------------------------------------------------------------------
-LOG="$T/suite-times.log"
-{
-    for i in 1 2 3; do printf 'r%s\tb\tfast.sh\t0\t10\t0\t0\tparallel\n' "$i"; done
-    for i in 1 2 3; do printf 'r%s\tb\tslow.sh\t0\t300\t0\t0\tparallel\n' "$i"; done
-    for i in 1 2 3; do printf 'r%s\tb\tedge.sh\t0\t60\t0\t0\tparallel\n' "$i"; done
-    printf 'r1\tb\t__batch__\t0\t999\t0\t0\tparallel\n'
-} > "$LOG"
-out="$(printf 'fast.sh\nslow.sh\nedge.sh\nnew.sh\n' | bash "$HERE/fast-suites.sh" --max-secs 60 --log "$LOG" 2>"$T/err")"
-want   "keeps a suite under the cap"          "fast.sh" "$out"
-want   "keeps a suite exactly at the cap"     "edge.sh" "$out"
-want   "keeps a suite with no history"        "new.sh"  "$out"
-nowant "drops a suite over the cap"           "slow.sh" "$out"
-want   "names the dropped suite and median"   "dropped slow.sh (median 300s over 3 runs > 60s)" "$(cat "$T/err")"
-is     "reads all four suites from stdin"     "3" "$(printf '%s\n' "$out" | grep -c .)"
+# A hand-written run/tsd/suite-timing.jsonl fixture — no tsd-write build needed, just rows in
+# the shape it produces (test-tsd.sh covers the write path). suite-medians reads it straight.
+RUN="$T/run"; mkdir -p "$RUN/tsd"
+FAM="$RUN/tsd/suite-timing.jsonl"
+: > "$FAM"
+_row() { printf '{"ts":"2026-09-25T00:00:%02dZ","host":"h1","family":"suite-timing","suite":"%s","wall_secs":%s}\n' "$1" "$2" "$3" >> "$FAM"; }
+i=0
+for w in 10 10 10;  do _row $((i+=1)) fast.sh "$w"; done
+for w in 300 300 300; do _row $((i+=1)) slow.sh "$w"; done
+for w in 60 60 60;  do _row $((i+=1)) edge.sh "$w"; done
 
-out="$(printf 'a.sh\nb.sh\n' | bash "$HERE/fast-suites.sh" --max-secs 60 --log "$T/absent" 2>"$T/err")"
-is     "no timing log keeps everything"       "2" "$(printf '%s\n' "$out" | grep -c .)"
-want   "no timing log says so"                "no suite timing log" "$(cat "$T/err")"
+DUCKDB_BIN="$(command -v duckdb 2>/dev/null || true)"
+if [ -z "$DUCKDB_BIN" ]; then
+    echo "SKIP section 1: duckdb not found — fast-suites.sh needs tsd-query.sh's query layer"
+else
+    fs() { SPIRA_HOME="$T" SPIRA_RUN="$RUN" SPIRA_DB="$T/db" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
+               bash "$HERE/fast-suites.sh" "$@"; }
+    mkdir -p "$T/db"
 
-bash "$HERE/fast-suites.sh" --max-secs abc --log "$LOG" </dev/null >/dev/null 2>&1; rc=$?
-wantrc "a non-numeric cap is refused"         2 "$rc"
+    out="$(printf 'fast.sh\nslow.sh\nedge.sh\nnew.sh\n' | fs --max-secs 60 2>"$T/err")"
+    want   "keeps a suite under the cap"          "fast.sh" "$out"
+    want   "keeps a suite exactly at the cap"     "edge.sh" "$out"
+    want   "keeps a suite with no history"        "new.sh"  "$out"
+    nowant "drops a suite over the cap"           "slow.sh" "$out"
+    want   "names the dropped suite and median"   "dropped slow.sh (median 300s over 3 runs > 60s)" "$(cat "$T/err")"
+    is     "reads all four suites from stdin"     "3" "$(printf '%s\n' "$out" | grep -c .)"
+
+    EMPTY_RUN="$T/run-empty"; mkdir -p "$EMPTY_RUN"
+    out="$(SPIRA_HOME="$T" SPIRA_RUN="$EMPTY_RUN" SPIRA_DB="$T/db" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
+               bash "$HERE/fast-suites.sh" --max-secs 60 <<<$'a.sh\nb.sh' 2>"$T/err")"
+    is     "no timing history keeps everything"   "2" "$(printf '%s\n' "$out" | grep -c .)"
+    want   "no timing history says so"            "no suite-timing history" "$(cat "$T/err")"
+
+    fs --max-secs abc </dev/null >/dev/null 2>&1; rc=$?
+    wantrc "a non-numeric cap is refused"         2 "$rc"
+fi
 
 # --- 2 and 3. the wall -----------------------------------------------------------------------
 # Lift just the pre-flight helpers out of batch.sh (it runs main when sourced).

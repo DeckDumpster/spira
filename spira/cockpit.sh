@@ -1184,19 +1184,19 @@ else:
     echo "SP_YIELD_CONC_MED=$_y_conc"
     echo "SP_YIELD_TOP_FAULT=$_y_worst"
 
-    # ---- suite-times: last-run sum and wall from the ledger ---------------------------
-    local _st_log="${SPIRA_SUITE_TIMES_LOG:-$SPIRA_RUN/suite-times.log}"
+    # ---- suite-times: last-run sum and wall, from run/tsd/ (sp-au8a7) -----------------
     local _st_sum="?" _st_wall="?"
-    if [ -r "$_st_log" ]; then
-        read -r _st_sum _st_wall <<< "$(awk -F'\t' '
-        !/^#/ && NF>=8 {
-            rid=$1; suite=$3; wall=$5+0
-            if (!(rid in seen)) { seen[rid]=1; last_run=rid }
-            if (suite == "__batch__" && rid == last_run) { bwall=wall }
-            else if (suite != "__batch__" && rid == last_run) { sum += wall }
-        }
-        END { printf "%d %s\n", sum+0, (bwall ? bwall : "?") }
-        ' "$_st_log" 2>/dev/null)"
+    local _st_json; _st_json="$(bash "$HERE/tsd-query.sh" last-run 2>/dev/null)"
+    if [ -n "$_st_json" ]; then
+        read -r _st_sum _st_wall <<< "$(printf '%s' "$_st_json" | python3 -c '
+import json, sys
+try:
+    rows = json.load(sys.stdin)
+    row = rows[0] if rows else {}
+    print(row.get("sum_wall", "?"), row.get("batch_wall") if row.get("batch_wall") is not None else "?")
+except Exception:
+    print("? ?")
+' 2>/dev/null)"
     fi
     echo "SP_SUITE_LAST_SUM=${_st_sum:-?}"
     echo "SP_SUITE_LAST_WALL=${_st_wall:-?}"
