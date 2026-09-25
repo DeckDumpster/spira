@@ -41,8 +41,14 @@ lint_out="$(env -i PATH="$PATH" HOME="$TMP" TERM=dumb \
 # Gate-spira appends two trailer lines after the fence output.
 gate_out="$(printf '%s\ngate: the same command passes against origin/main\ngate: VERDICT=FAIL reason=literal-lint suite=-\n' "$lint_out")"
 
-# The reopen note is built from the last 20 lines (landing.sh:1155, landing.sh:1349).
-note="$(printf '%s' "$gate_out" | tail -20)"
+# The reopen note's window comes from landing.sh's own reopen-note line — a bare
+# `$(printf '%s' "$gate_out" | tail -N)"` at column 1, distinct from the `tail -3`
+# breadcrumb lines nearby — not a copy of N: a change to the window there must change
+# what this test asserts against.
+window="$(grep -oE '^\$\(printf .%s. "\$gate_out" \| tail -[0-9]+\)"$' "$HERE/landing.sh" \
+    | head -1 | grep -oE '[0-9]+')"
+[ -n "$window" ] || { echo "test-cert-gate-reopen-note.sh: no reopen-note tail -N found in landing.sh" >&2; exit 1; }
+note="$(printf '%s' "$gate_out" | tail -"$window")"
 
 # The offender line matches ^[^ ]+:[0-9]+: — must appear in the note.
 count="$(printf '%s' "$note" | grep -cE '^[^ ]+:[0-9]+: ' || true)"
