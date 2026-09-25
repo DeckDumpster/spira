@@ -540,8 +540,9 @@ gap() {
 #        1  at least one differs — the output names which
 #        3  the check itself could not run (install.sh missing, render failure)
 #
-# This is the standalone entry point; `check` includes it in its audit. It costs no database
-# call: install.sh --diff renders templates from conf.sh and diffs files on disk.
+# `check` does not call this — a released, activated tree cannot drift from its own
+# templates, so unit staleness is a checkout-mode question, not a release-mode one. It costs
+# no database call: install.sh --diff renders templates from conf.sh and diffs files on disk.
 # =======================================================================================
 units() {
     local installer stale_out stale_rc
