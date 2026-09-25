@@ -89,12 +89,17 @@
 #                           10, 0 = disabled). This is the guard the repo variable stood in
 #                           for: it slows admission when the guest is already under pressure
 #                           rather than preventing it by capping the pool statically.
+#   SPIRA_BATCH_ORPHAN_MIN_AGE  seconds a spira-batch-* container with no owner file must
+#                           have been running before the orphan sweep reaps it (default
+#                           3600). Guards a container mid-startup, whose owner file has not
+#                           been written yet, from being swept as if it were abandoned.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/lib.sh"
 . "$HERE/suite-covers.sh"
 . "$HERE/suite-state.sh"
+. "$HERE/batch-owner.sh"
 TESTENV="$HERE/testenv.sh"
 
 # ---------------------------------------------------------------------------
@@ -511,9 +516,14 @@ _BATCH_OWNER_FILE="/tmp/${CNAME}.owner"
 _BATCH_HOME="/tmp/spira-batch-${INSTANCE}"
 
 _batch_cleanup() {
-    bash "$TESTENV" down --name "$CNAME" >/dev/null 2>&1 || true
+    bash "$TESTENV" down --name "$CNAME" >/dev/null 2>&1 || \
+        log "batch: teardown failed for $CNAME — checking whether it survived"
     rm -rf "$_BATCH_HOME" 2>/dev/null || true
-    rm -f "$_BATCH_OWNER_FILE"
+    # _batch_owner_release unlinks the owner file only once the container is
+    # confirmed gone from podman — a failed teardown that leaves it running
+    # must leave the owner file too, or the orphan sweep below can never find it.
+    _batch_owner_release "$CNAME" "$_BATCH_OWNER_FILE" || \
+        log "batch: container $CNAME survived teardown — leaving owner file for the orphan sweep"
     _wt_cleanup
     rm -f "$_batch_tmp"
     [ -n "$_par_tmp" ] && rm -rf "$_par_tmp" || true
@@ -521,22 +531,24 @@ _batch_cleanup() {
 trap _batch_cleanup EXIT INT TERM
 
 # ---------------------------------------------------------------------------
-# ORPHAN SWEEP — remove spira-batch-* containers whose owner PID has exited.
-# Runs before we start our own container so a crashed previous run does not
-# consume memory for the duration of this one.
+# ORPHAN SWEEP — two arms, from batch-owner.sh. Runs before we start our own
+# container so a crashed previous run does not consume memory for the duration
+# of this one.
+#
+#   1. owner file present but the owner PID has exited (as before).
+#   2. a spira-batch-* container with NO owner file at all, older than
+#      SPIRA_BATCH_ORPHAN_MIN_AGE. A container can lose its owner file without
+#      ever dying — a failed `testenv down` used to delete it unconditionally,
+#      and /tmp is separately subject to systemd-tmpfiles ageing — and arm 1
+#      can never see a container with no owner file to read a PID from.
 # ---------------------------------------------------------------------------
-for _sw_f in /tmp/spira-batch-*.owner; do
-    [ -f "$_sw_f" ] || continue
-    _sw_pid="$(cat "$_sw_f" 2>/dev/null)" || continue
-    [ -n "$_sw_pid" ] || continue
-    [ -d "/proc/$_sw_pid" ] && continue  # still alive
-    _sw_cname="${_sw_f#/tmp/}"; _sw_cname="${_sw_cname%.owner}"
-    podman stop "$_sw_cname" >/dev/null 2>&1 || true
-    podman rm   "$_sw_cname" >/dev/null 2>&1 || true
-    rm -rf "/tmp/${_sw_cname}" 2>/dev/null || true
-    rm -f "$_sw_f"
-    log "batch: swept orphan container $_sw_cname (owner pid $_sw_pid gone)"
-done
+while IFS= read -r _sw_line; do
+    [ -n "$_sw_line" ] && log "batch: $_sw_line"
+done < <(_batch_sweep_dead_owners)
+
+while IFS= read -r _sw_line; do
+    [ -n "$_sw_line" ] && log "batch: $_sw_line"
+done < <(_batch_sweep_ownerless "${SPIRA_BATCH_ORPHAN_MIN_AGE:-3600}")
 
 printf '%s\n' "$$" > "$_BATCH_OWNER_FILE"
 mkdir -p "$_BATCH_HOME" 2>/dev/null || true
