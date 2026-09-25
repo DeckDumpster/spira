@@ -529,7 +529,10 @@ if _fu_raw="$("$SYSTEMCTL" --user list-units --state=failed --no-legend 'spira-*
     SP_FAILED_UNITS=0
     while IFS= read -r _fu_line; do
         [ -n "$_fu_line" ] || continue
-        failed_units+=("${_fu_line%% *}")
+        # systemctl outputs a bullet character (●) before the unit name; extract the first word
+        # that looks like a unit name (contains dots and hyphens typical of systemd units)
+        _fu_unit="$(printf '%s' "$_fu_line" | sed -E 's/^[^[:alnum:]]+ //; s/ .*//')"
+        [ -n "$_fu_unit" ] && failed_units+=("$_fu_unit")
         SP_FAILED_UNITS=$((SP_FAILED_UNITS + 1))
     done <<< "$_fu_raw"
 fi
