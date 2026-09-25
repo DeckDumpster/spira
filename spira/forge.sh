@@ -345,9 +345,12 @@ except Exception:
         # Uses 2-3 gh API calls: run list (run_id/conclusion/sha/url), jobs
         # (queued-since), and — on failure — the artifact/annotation suite list.
         # ci-stalled and ci-red in czar-pass share this output; base-red (reading it for
-        # the base ref itself rather than a batch's head) is a third.
+        # the base ref itself rather than a batch's head) is a third. --workflow Gate
+        # matters most for base-red: an unfiltered query returns the latest run of ANY
+        # workflow on the branch, and on main a green "Test image" run can mask a red
+        # Gate run for as long as it stays the most recent push.
         branch="${1:-}"
-        run_list="$( cd "$repo" && ghq run list --branch "$branch" \
+        run_list="$( cd "$repo" && ghq run list --branch "$branch" --workflow Gate \
             --json databaseId,conclusion,status,updatedAt,headSha,url --limit 1 2>/dev/null )" \
             || run_list="[]"
         run_id="$(printf '%s\n' "$run_list" | python3 -c "
