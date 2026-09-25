@@ -1170,6 +1170,41 @@ wt_file SPIRA_MEMINFO_PATH="$LOW_MEM"
 nowant "low memory prevents nominal skip" \
        "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
 
+# ======================================================================================
+echo
+echo "collect_disk_mem() (UC-26, sp-m0qeh) is a T1 seam: sourcing watchtower.sh must define it
+without running the sweep, and calling it directly must render the exact figures the T2 tests
+above just proved via a full subprocess run — same stub, same thresholds, in-process instead
+of forked:"
+# ======================================================================================
+disk_mem_t1() {           # disk_mem_t1 [VAR=val ...] -> "$_disk_disp|$_mem_disp|$_disk_breach|$_mem_breach"
+    ( cd "$HERE" && env -i HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_PATH="$DF_CLEAN" \
+        SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" "$@" \
+        bash -c 'set -uo pipefail
+                 . ./watchtower.sh
+                 collect_disk_mem
+                 printf "%s|%s|%s|%s" "$_disk_disp" "$_mem_disp" "$_disk_breach" "$_mem_breach"' )
+}
+
+fresh
+rm -f "$TMP/ops-prompt"
+disk_mem_t1 >/dev/null
+[ ! -e "$TMP/ops-prompt" ] \
+    && ok "sourcing watchtower.sh for collect_disk_mem files no sweep" \
+    || bad "sourcing watchtower.sh for collect_disk_mem files no sweep" "ops-prompt was written"
+
+IFS='|' read -r t1_disk t1_mem t1_diskb t1_memb <<<"$(disk_mem_t1)"
+is "T1: ordinary disk usage renders the plain percentage" "12%" "$t1_disk"
+is "T1: ordinary disk usage is not a breach"               "0"  "$t1_diskb"
+
+IFS='|' read -r t1_disk t1_mem t1_diskb t1_memb <<<"$(disk_mem_t1 WT_DISK_PCT=97)"
+is "T1: disk at or above the warn threshold is a FAULT" "FAULT (97%, warn at 90%)" "$t1_disk"
+is "T1: ...and is flagged as a breach"                  "1" "$t1_diskb"
+
+IFS='|' read -r t1_disk t1_mem t1_diskb t1_memb <<<"$(disk_mem_t1 SPIRA_MEMINFO_PATH="$LOW_MEM")"
+is "T1: memory below the warn threshold is a FAULT" "FAULT (500MB, warn below 1500MB)" "$t1_mem"
+is "T1: ...and is flagged as a breach"              "1" "$t1_memb"
+
 echo
 printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
 [ "$fail" -eq 0 ]

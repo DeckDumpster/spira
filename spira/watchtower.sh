@@ -460,335 +460,11 @@ if [ "${1:-}" = "--pr-stall-check" ]; then
     exit 0
 fi
 
-SNAP_AGE_MAX="${SPIRA_SNAP_STALE_S:-60}"
-now="$(date +%s)"
-
-# ---------------------------------------------------------------------------------------
-# HALTED? A deliberately stopped world must not manufacture incidents. Every pipeline
-# metric grows monotonically while nothing is wrong — time since last landing, queue depth
-# — so a sweep against a halted world describes a system that is broken when it is not.
-# cockpit/health.sh reads the same stamp directly for the same reason: a stale or absent
-# snapshot must not mask a deliberate halt.
-# ---------------------------------------------------------------------------------------
-HALT_STAMP="$SPIRA_RUN/world.halted"
-halt_since=""; halt_why=""
-if [ -f "$HALT_STAMP" ]; then
-    halt_since="$(head -1 "$HALT_STAMP" 2>/dev/null)"
-    halt_why="$(sed -n '2s/^why: //p' "$HALT_STAMP" 2>/dev/null)"
-fi
-
-# ---------------------------------------------------------------------------------------
-# DRAINING? Drain is lighter than halt — the loop, landing and reaping continue; only new
-# summons are gated. A drain left armed longer than intended has the same shape as
-# law-arm-before-you-retire: a stopped channel and a quiet one are indistinguishable from
-# outside, so the vital sign belongs here alongside the halt signal.
-#
-# READ THE STAMP DIRECTLY, NOT world.sh STATUS. world.sh status reads systemd unit names,
-# which are broken (sp-4biz, P0). drain and resume work correctly because they gate on the
-# stamp and never name a unit, so we do the same.
-#
-# MINUTES FROM MTIME, same as cockpit/health.sh: `stat -c %Y` returns epoch seconds the OS
-# recorded when the file was written, which needs no date parsing. A failed stat renders `?`
-# — never "not draining" (law-absence-needs-a-positive-control).
-# ---------------------------------------------------------------------------------------
-DRAIN_STAMP="$SPIRA_RUN/world.draining"
-# drain_since empty → no stamp → not draining; drain_mins "?" → stamp exists but unreadable.
-# Not-draining renders 0, not "?" — the ? convention is for a probe that FAILED, not for the
-# absence of the condition being probed (law-absence-needs-a-positive-control).
-drain_since=""; drain_mins=0
-if [ -f "$DRAIN_STAMP" ]; then
-    drain_since="$(head -1 "$DRAIN_STAMP" 2>/dev/null)"
-    _dmtime="$(stat -c %Y "$DRAIN_STAMP" 2>/dev/null)"
-    if [ -n "$_dmtime" ] && [ "$_dmtime" -gt 0 ] 2>/dev/null; then
-        drain_mins=$(( (now - _dmtime) / 60 ))
-    else
-        drain_mins="?"
-    fi
-fi
-
-# How long before a drain triggers its own incident. The normal sweep already carries the
-# drain state as a vital sign; this threshold is the point at which the sweep alone is not
-# enough and an escalation bead is worth the noise.
-DRAIN_WARN_MINS="${SPIRA_DRAIN_WARN_MINS:-15}"
-
-# ---------------------------------------------------------------------------------------
-# FAILED SYSTEMD UNITS (sp-niqjl). doctor.sh's doctor_check_failed_units does the one-pass
-# read of `systemctl --user list-units --state=failed`; this is that same read, direct
-# rather than through the collector, because the escalation below needs the CURRENT list,
-# not a snapshot that could be stale by exactly the margin an unwatched failing unit sat
-# for (spira-czar-pass-prod.service: four days, 11,000 failures, nothing looked).
-#
-# PROBE FAILURE RENDERS ?, NEVER 0 (law-absence-needs-a-positive-control): an unreachable
-# systemd user manager is not the same fact as "no failed units", and must not read as
-# a clean bill of health.
-# ---------------------------------------------------------------------------------------
-SYSTEMCTL="${SPIRA_SYSTEMCTL:-systemctl}"
-failed_units=()
-SP_FAILED_UNITS="?"
-if _fu_raw="$("$SYSTEMCTL" --user list-units --state=failed --no-legend 'spira-*' 2>/dev/null)"; then
-    SP_FAILED_UNITS=0
-    while IFS= read -r _fu_line; do
-        [ -n "$_fu_line" ] || continue
-        # systemctl outputs a bullet character (●) before the unit name; extract the first word
-        # that looks like a unit name (contains dots and hyphens typical of systemd units)
-        _fu_unit="$(printf '%s' "$_fu_line" | sed -E 's/^[^[:alnum:]]+ //; s/ .*//')"
-        [ -n "$_fu_unit" ] && failed_units+=("$_fu_unit")
-        SP_FAILED_UNITS=$((SP_FAILED_UNITS + 1))
-    done <<< "$_fu_raw"
-fi
-_fu_names="${failed_units[*]:-}"
-
-# How old (in minutes) a persistently failing unit must be before it becomes an anomaly
-# handed to Ops — see the escalation below, after the prompt file is written.
-FAILED_UNITS_WARN_MINS="${SPIRA_FAILED_UNITS_WARN_MINS:-15}"
-
-# How old the oldest unsent branch must be (in hours) before the Sending escalation fires.
-# An unsent branch belonging to a live in_progress bead is work in flight; the escalation is
-# for branches that have been waiting far longer than any single bead should take.
-UNSENT_WARN_H="${SPIRA_UNSENT_WARN_H:-24}"
-CLOSED_STRANDED_WARN_H="${SPIRA_CLOSED_STRANDED_WARN_H:-48}"
-
-# ---------------------------------------------------------------------------------------
-# THE COLLECTOR'S SNAPSHOT, and whether it can be believed at all. Every other number below
-# is read out of cockpit.env, so its freshness is the first fact — a stale file makes the
-# whole sweep a report about the past, and reporting the past as the present during an
-# outage is worse than reporting nothing.
-# ---------------------------------------------------------------------------------------
-ENVF="$SPIRA_RUN/cockpit/cockpit.env"
-[ -r "$ENVF" ] || ENVF="$SPIRA_RUN/cockpit.env"
-snap_age="?"
-if [ -r "$ENVF" ]; then
-    # shellcheck disable=SC1090
-    eval "$(sed -n 's/^\(SP_[A-Z_0-9]*\)=\(.*\)$/\1=\2/p' "$ENVF" 2>/dev/null)" 2>/dev/null || true
-    [ -n "${SP_AT:-}" ] && snap_age=$(( now - SP_AT ))
-fi
-snap_age_disp="${snap_age}s"
-if [ "$snap_age" != "?" ] && [ "$snap_age" -ge "$SNAP_AGE_MAX" ] 2>/dev/null; then
-    snap_age_disp="FAULT (${snap_age}s, stale above ${SNAP_AGE_MAX}s)"
-fi
+# FORMATTING HELPERS AND RENDERERS, hoisted above the main guard (UC-26/UC-27, sp-m0qeh) so a
+# test can source this file and call them directly against a hand-built fixture, at in-process
+# speed, instead of forking a whole watchtower.sh run to exercise one section's logic.
 g() { local v="${!1:-}"; [ -n "$v" ] && printf '%s' "$v" || printf '?'; }
-# In-flight count: total unsent minus the closed-bead stranded ones. Both must be numeric;
-# a `?` on either renders the in-flight figure as `?` rather than a false arithmetic result.
-_unsent_inflight="?"
-if [ "${SP_UNSENT:-?}" != "?" ] && [ "${SP_CLOSED_STRANDED:-?}" != "?" ] 2>/dev/null; then
-    _unsent_inflight=$(( SP_UNSENT - SP_CLOSED_STRANDED ))
-fi
-
-# ---------------------------------------------------------------------------------------
-# HOW LONG SINCE ANYTHING LANDED — the one number that says whether the pipeline works, and
-# the one nothing recorded until landing.sh began writing a landstate file per bead. Read
-# from those records rather than from the log, because a log line is prose and this has to
-# be arithmetic.
-# ---------------------------------------------------------------------------------------
-# THE RECORD HAS NO TRAILING NEWLINE, and `read` reports that as failure. land_mark writes
-# with `printf '%s %s %s %s'` deliberately — the in-tree reader strips newlines anyway — so
-# every landstate file ends mid-line, and `read` returns 1 at EOF-without-delimiter EVEN
-# THOUGH IT HAS ALREADY POPULATED EVERY VARIABLE. A `|| continue` on that status therefore
-# discarded a perfectly good record, and this field rendered `?  (last: none recorded)` on
-# every sweep ever filed, including passes where six beads had landed in the previous twelve
-# minutes. Three Ops sessions were woken by it, each one re-deriving the same directory by
-# hand to prove the pipeline was moving.
-#
-# So the reader tolerates the failed status and lets the guards below it judge the content:
-# a record is believed only if its state is LANDED and its timestamp is numeric, which a
-# truncated or empty file cannot satisfy. Do not "fix" this by adding a newline to the
-# writer — two readers already depend on the current format and the writer is not wrong.
-#
-# THE FOUR VARIABLES ARE RESET BEFORE EACH READ, and that is load-bearing rather than tidy:
-# `read` leaves the previous iteration's values in place when it fails early, so an
-# unreadable file would otherwise be judged on the LAST file's state and this loop would
-# attribute one bead's landing to another.
-last_land="?"; last_land_id=""
-if [ -d "$SPIRA_RUN/landstate" ]; then
-    while IFS= read -r f; do
-        [ -r "$f" ] || continue
-        st=""; _tip=""; at=""; _why=""
-        read -r st _tip at _why < "$f" 2>/dev/null || true
-        [ "$st" = LANDED ] || continue
-        case "$at" in ''|*[!0-9]*) continue ;; esac
-        if [ "$last_land" = "?" ] || [ "$at" -gt "$last_land" ]; then
-            last_land="$at"; last_land_id="$(basename "$f")"
-        fi
-    done < <(find "$SPIRA_RUN/landstate" -maxdepth 1 -type f 2>/dev/null)
-fi
-since_land="?"
-[ "$last_land" != "?" ] && since_land=$(( (now - last_land) / 60 ))
-
-# ---------------------------------------------------------------------------------------
-# WHAT IS STUCK, AND FOR HOW LONG. A queue depth on its own says nothing — a deep queue that
-# is moving is a busy system. The age of its oldest member is what tells them apart.
-# ---------------------------------------------------------------------------------------
-# THE WINDOW IS A DURATION, NEVER A ROW COUNT. "The worst wait in the last 50 rows" reads as
-# recent and is not: gate.log holds one row per gate run, so on a quiet day fifty rows are a
-# week and "recent" silently means "ever". That is not hypothetical either — this field spent
-# a day reporting 1584s from a wait produced by a locking topology the gate rebuild had
-# already deleted, while every row written since read `waited=0s`. A decommissioned
-# mechanism's worst case was being presented to Ops as a live signal, and three sweeps
-# re-investigated it.
-#
-# THE CUTOFF IS COMPARED AS A STRING, which is exactly as sound as arithmetic here and needs
-# no date parsing in awk: the meter writes `date -u +%Y-%m-%dT%H:%M:%SZ`, and ISO-8601 UTC
-# timestamps of fixed width sort lexicographically in chronological order. A row whose first
-# field is not such a timestamp — a truncated write, a line from some older format — falls
-# outside every window and is ignored rather than counted as now.
-#
-# NO ROW INSIDE THE WINDOW RENDERS `?`, NOT 0. "No gate has waited recently" and "no gate has
-# RUN recently" are opposite facts and a zero states the reassuring one (law-absence-needs-a-
-# positive-control); the second is what a stalled pipeline looks like from here.
-GATE_WINDOW="${SPIRA_WATCH_GATE_WINDOW:-21600}"
-# THROUGH THE SAME KEY THE METER WRITES. This read `$SPIRA_RUN/gate.log` directly, so an
-# operator who moved the log left this field reading `?` forever while the gate went on
-# writing somewhere else — a probe pointed at the wrong place, which is the failure the whole
-# `?` convention exists to make visible rather than one it is allowed to have.
-WT_GATE_LOG="${SPIRA_GATE_LOG:-$SPIRA_RUN/gate.log}"
-oldest_wait="?"; oldest_br=""
-if [ -r "$WT_GATE_LOG" ]; then
-    gate_since="$(date -u -d "@$(( now - GATE_WINDOW ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
-    if [ -n "$gate_since" ]; then
-        read -r oldest_wait oldest_br < <(awk -v since="$gate_since" '
-            $1 >= since && $1 ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z$/ &&
-            match($0, /waited=[0-9]+s/) {
-                w = substr($0, RSTART+7, RLENGTH-8) + 0
-                if (!n++ || w > m) { m = w; b = $3 }
-            } END { if (n) print m, b; else print "?", "" }' "$WT_GATE_LOG" 2>/dev/null)
-    fi
-fi
-# What the field PRINTS, decided here rather than in the heredoc, so that a `?` is not
-# rendered as `?s` — a unit on an unreadable field invites reading it as a measurement.
-gate_wait_disp="?"
-[ "$oldest_wait" = "?" ] || gate_wait_disp="${oldest_wait}s"
-# The window is NAMED in the field, because "recent" is the word that let this go wrong: a
-# reader who can see the bound can tell a quiet six hours from a broken probe.
-if [ "$GATE_WINDOW" -ge 3600 ] 2>/dev/null; then gate_win_label="last $(( GATE_WINDOW / 3600 ))h"
-else gate_win_label="last $(( GATE_WINDOW / 60 ))m"; fi
-
-# ---------------------------------------------------------------------------------------
-# IS THE GATE WORTH WHAT IT COSTS? The wait above says what the gate costs the queue; these
-# say whether it is buying anything. A gate whose reds are mostly its own fault has negative
-# value and can be deleted in a sentence on this evidence, instead of after twelve hours of
-# fallout — which is how the last one went (law-gate-earns-its-place).
-#
-# READ BY OPS, NOT ONLY BY A HUMAN AT A PANE. Ops is the actor that reads this sweep and cuts
-# beads from it; a yield that could only be seen by somebody who went looking would be the
-# same failure one layer up, since going to look is exactly what nobody did.
-#
-# yield.sh renders `?` for anything it could not read and this passes that through unchanged.
-# SPIRA_RUN is passed explicitly because conf.sh does not export it, and a child re-deriving
-# it would read a different directory and report a confident zero.
-YIELD_REDS="?"; YIELD_DEFECT="?"; YIELD_FAULT="?"; YIELD_UNKNOWN="?"; YIELD_RECORDER="?"
-YIELD_DEFECT_INFERRED="?"; YIELD_TOP_FAULT="?"
-YIELD_SOLO_N="?"; YIELD_SOLO_MED="?"; YIELD_SOLO_MAX="?"
-YIELD_CONC_N="?"; YIELD_CONC_MED="?"; YIELD_CONC_MAX="?"
-YIELD_SH="$(dirname "$0")/yield.sh"
-YIELD_WINDOW_S="${SPIRA_YIELD_WINDOW:-86400}"
-if [ -r "$YIELD_SH" ]; then
-    # shellcheck disable=SC1090
-    eval "$(SPIRA_RUN="$SPIRA_RUN" SPIRA_YIELD_WINDOW="$YIELD_WINDOW_S" \
-            bash "$YIELD_SH" report 2>/dev/null \
-            | sed -n 's/^\(YIELD_[A-Z_]*\)=\(.*\)$/\1="\2"/p')" 2>/dev/null || true
-fi
-if [ "$YIELD_WINDOW_S" -ge 86400 ] 2>/dev/null; then yield_win_label="last $(( YIELD_WINDOW_S / 86400 ))d"
-elif [ "$YIELD_WINDOW_S" -ge 3600 ] 2>/dev/null; then yield_win_label="last $(( YIELD_WINDOW_S / 3600 ))h"
-else yield_win_label="last $(( YIELD_WINDOW_S / 60 ))m"; fi
-# A UNIT ON AN UNREADABLE FIELD INVITES READING IT AS A MEASUREMENT — `?s` looks like a
-# duration somebody forgot to fill in, and this whole file exists because a reassuring
-# reading displaced a look.
 secs() { [ "${1:-?}" = "?" ] && printf '?' || printf '%ss' "$1"; }
-# A `?` WITH NO EXPLANATION SENDS OPS TO THE CODE. The yield's own positive control is the
-# gate meter, which writes a row on every red whether or not anything is measuring; when the
-# two disagree the count is withheld, and this is the sentence that says which of them was
-# silent so the sweep names the fault rather than the symptom.
-yield_note_txt=""
-case "$YIELD_RECORDER" in
-    silent) yield_note_txt="   <- the gate meter saw ${YIELD_LOG_REDS:-?} red(s) and none reached the record: THE RECORDER IS NOT RUNNING" ;;
-    absent) yield_note_txt="   <- nothing recorded here yet, and the meter has logged no reds either" ;;
-    '?')    yield_note_txt="   <- no positive control: the gate meter could not be read" ;;
-esac
-
-# Branches whose gate could not reach a verdict, and how many times in a row. Written by the
-# landing pass; three of one reason on one branch is what it escalates on.
-nv_worst=0; nv_worst_key=""
-if [ -d "$SPIRA_RUN/noverdict" ]; then
-    while IFS= read -r f; do
-        case "$f" in *.asked) continue ;; esac
-        n="$(cat "$f" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) continue ;; esac
-        [ "$n" -gt "$nv_worst" ] && { nv_worst="$n"; nv_worst_key="$(basename "$f")"; }
-    done < <(find "$SPIRA_RUN/noverdict" -maxdepth 1 -type f 2>/dev/null)
-fi
-
-# AEONS ARE COUNTED HERE, FROM /proc, NOT READ OUT OF THE SNAPSHOT. The collector's file is
-# up to a minute old, and the first live sweep reported "0 aeons" while two were running —
-# because the snapshot predated the summon. Every other number here tolerates being a minute
-# stale; this one does not, because "ready work and no workers" is the single shape that
-# most looks like a stalled loop, and reporting it wrongly sends Ops to diagnose a stall that
-# is not happening. It costs one pass over /proc.
-#
-# THROUGH aeon_count, THE HARNESS'S OWN PRIMITIVE, not a second implementation. The first
-# version of this scanned /proc for a command line containing "aeon.sh" and counted 7 where
-# there were 3 — because the scan matched the shell pipelines that were themselves grepping
-# for the string, this program's own diagnostics included. That is the `pgrep -f` failure
-# exactly, arriving in a hand-rolled shape, three lines under a comment warning about it.
-#
-# aeon_count reads the pidfiles, which are the authoritative record of a claim, and confirms
-# each against /proc on argv rather than on a substring. It is also what the sentinel's pool
-# arithmetic uses, so the number reported here and the number the loop acts on cannot drift.
-aeons_live=0
-for _f in $(spira_fayths 2>/dev/null); do
-    aeons_live=$(( aeons_live + $(aeon_count "$_f" 2>/dev/null || echo 0) ))
-done
-
-# ---------------------------------------------------------------------------------------
-# THE MENU. The sweep names scans for the Ops session to RUN; it does not run them here.
-#
-# That division is the whole point and it is not decoration. This program's contract is to be
-# deterministic and cheap, because the one thing a detector may not be is another thing that
-# is down during an outage — a several-minute test run inside it would make it exactly that,
-# and would push a ten-minute cadence past the interval that produces it. So the menu is a
-# NAME plus the cheap facts that say whether the scan is worth this pass, and the session
-# spends its own eight minutes on it.
-#
-# `suites.sh status` is a glob and a read per suite: no database, no network, nothing that
-# can hang. A pass that cannot produce it prints why rather than an empty section, because a
-# menu with nothing on it and a menu that could not be built read identically otherwise.
-# SPIRA_SUITES_SH overrides the path so test suites can inject a mock without paying the
-# host-check.sh walk on every watchtower.sh invocation. Same seam as SPIRA_INCIDENT_SH.
-SUITES="${SPIRA_SUITES_SH:-$(dirname "$0")/suites.sh}"
-suites_block="  (unavailable — $SUITES is missing, so nothing knows which suites run nowhere)"
-if [ -r "$SUITES" ]; then
-    suites_block="$(bash "$SUITES" status 2>/dev/null)"
-    [ -n "$suites_block" ] || suites_block="  (unreadable — suites.sh status produced nothing)"
-fi
-
-# THE STRAND LEDGER IS TWO LINES, NOT ONE. strands.json holds every disposition strand.sh
-# classifies, and only `ghost` is the labelled failure this line names — a claimed bead whose
-# holder is gone. This rendered the ledger's SIZE under that name, so a childless epic read
-# as a dead worker and a sweep spent four commands hunting for a holder that never existed.
-# The collector does the classifying (cockpit.sh strand_keys); this only renders it.
-#
-# A SNAPSHOT WRITTEN BY A COLLECTOR PREDATING THAT SPLIT RENDERS `?`, WHICH IS CORRECT: `g`
-# reports an absent key as unread, and during a rollout the two halves are briefly skewed.
-# `?` says this pass could not read it. A 0 would say there are none, which nobody checked.
-
-# BRANCH INTEGRITY — two cheap reads per registered repository: is the base branch's tip
-# a non-merge aeon commit, and is the shared checkout ahead of its remote? Both were
-# invisible on the day this defect was filed; both are one git command each.
-#
-# COMPUTED HERE AND NOT INLINE IN THE HEREDOC. Command substitution inside a here-doc
-# expands at the wrong time on some shells, and a multiline output inside $( ) would close
-# the here-doc prematurely. Pre-computed variables avoid both.
-#
-# MISSING GUARD RENDERS A NOTE, NEVER SILENCE. A guard whose script is absent is not the
-# same as a guard that ran and found nothing (law-absence-needs-a-positive-control).
-GUARD_SH="$(dirname "$0")/branch-guard.sh"
-guard_block="  (unavailable — branch-guard.sh is missing or unreadable)"
-if [ -r "$GUARD_SH" ]; then
-    guard_out="$(bash "$GUARD_SH" check 2>&1)"; guard_rc=$?
-    case "$guard_rc" in
-        0) guard_block="  $guard_out" ;;
-        3) guard_block="  (no registered repositories — nothing to audit)" ;;
-        *) guard_block="$(printf '%s\n' "$guard_out" | sed 's/^/  /')" ;;
-    esac
-fi
 
 # THE CZAR TRIGGER TABLE — per-class display of the four queue-check trigger classes.
 # Read from cockpit.env (written by czar_triggers_keys via collect.sh). A missing key
@@ -802,156 +478,35 @@ _cz_row() {  # _cz_row <label> <tag>  -> one table line
         "$(g "SP_CZAR_${_tag}_BY")" \
         "$(g "SP_CZAR_${_tag}_OUTCOME")"
 }
-czar_block="$(printf '  %-22s %-22s %-12s %s\n' class "last fired" "handled by" outcome)
-$(_cz_row deadlock          DEADLOCK)
-$(_cz_row attribution-failed ATTRIB)
-$(_cz_row sort-failed        SORT)
-$(_cz_row loop-stalled       STALL)"
-
-# Pre-computed so the heredoc below can reference it as a plain variable. A trailing
-# newline is intentional: the heredoc adds one more, giving a blank line between the halt
-# banner and the body text.
-halt_section=""
-if [ -n "$halt_since" ]; then
-    halt_section="!! HALTED since ${halt_since}"
-    [ -n "$halt_why" ] && halt_section="${halt_section}
-   why: ${halt_why}"
-    halt_section="${halt_section}
-   No incidents are filed while the halt is in force.
-"
-fi
-
-# ---------------------------------------------------------------------------------------
-# LAPSED AEONS — aeons the liveness lease killed since the previous sweep.
-#
-# sp-a8zy writes a record under $SPIRA_RUN/lapsed/ on each lapse, named
-# <bead-id>-<YYYYMMDDTHHmmSSZ>. This section reads those whose timestamp is newer than the
-# marker in $SPIRA_RUN/lapsed.swept (the previous sweep's cutoff), so each lapse appears in
-# exactly one sweep.
-#
-# ? WHEN THE DIRECTORY CANNOT BE READ — not 0, not silence. A section that renders empty
-# on a failed read displaces the suspicion that would prompt a look, which is the exact
-# failure mode this whole program is a response to (law-absence-needs-a-positive-control).
-#
-# THE MARKER IS CAPTURED NOW, before reading records, and written after the prompt file is
-# written atomically. That ordering ensures a lapse that arrives while this sweep is running
-# falls in the next pass rather than being lost — and that the marker never advances if the
-# write fails (so the record stays visible on retry).
-#
-# THE CUTOFF IS A LEXICOGRAPHIC COMPARISON. Timestamps are YYYYMMDDTHHmmSSZ — ISO-8601 UTC
-# compact format — which sorts correctly as strings. No date parsing is needed: a later
-# timestamp always sorts after an earlier one in this format.
-#
-# CONFIGURED PATHS, NOT LITERALS. `sop.sh write` scans for absolute paths; a literal would
-# fail the inventory gate on every landing and on every colleague's clone.
-# ---------------------------------------------------------------------------------------
-LAPSED_DIR="${SPIRA_LAPSED_DIR:-$SPIRA_RUN/lapsed}"
-LAPSED_MARKER="${SPIRA_LAPSED_MARKER:-$SPIRA_RUN/lapsed.swept}"
-_lapsed_prev="$(cat "$LAPSED_MARKER" 2>/dev/null || true)"
-_lapsed_now="$(date -u +%Y%m%dT%H%M%SZ)"
-
-lapsed_count="?"
-lapsed_section=""
-if [ ! -e "$LAPSED_DIR" ]; then
-    # No lapses ever recorded — the directory is created by aeon.sh on the first lapse.
-    lapsed_count=0
-    lapsed_section="  none since last sweep"
-elif [ ! -d "$LAPSED_DIR" ]; then
-    # Path exists but is not a directory — something replaced it; treat as unreadable.
-    lapsed_count="?"
-    lapsed_section="  ? (expected a directory at SPIRA_LAPSED_DIR — path exists but is not a directory)"
-else
-    # Directory exists; read records newer than the previous marker.
-    _lapsed_n=0
-    _lapsed_body=""
-    while IFS= read -r _lf; do
-        [ -r "$_lf" ] || continue
-        _lfname="$(basename "$_lf")"
-        # Timestamp suffix is the last 16 chars of the basename (YYYYMMDDTHHmmSSZ).
-        _lfts="$(printf '%s' "$_lfname" | grep -oE '[0-9]{8}T[0-9]{6}Z$' 2>/dev/null || true)"
-        [ -n "$_lfts" ] || continue
-        # Skip records at or before the previous marker (already shown in a prior sweep).
-        # String comparison on ISO-8601 timestamps is chronological — no date math needed.
-        [ -z "$_lapsed_prev" ] || [[ "$_lfts" > "$_lapsed_prev" ]] || continue
-        _lapsed_n=$(( _lapsed_n + 1 ))
-        _lapsed_body="${_lapsed_body}
-  [${_lfname}]
-$(sed 's/^/    /' "$_lf" 2>/dev/null)
-"
-    done < <(find "$LAPSED_DIR" -maxdepth 1 -type f 2>/dev/null | sort)
-    lapsed_count="$_lapsed_n"
-    if [ "$_lapsed_n" -eq 0 ]; then
-        lapsed_section="  none since last sweep"
-    else
-        [ "$_lapsed_n" -eq 1 ] && _lapse_word="lapse" || _lapse_word="lapses"
-        lapsed_section="  ${_lapsed_n} ${_lapse_word} since last sweep:
-${_lapsed_body}"
-    fi
-fi
-
-# Drain section: present only when the stamp exists. Unlike the halt section, a draining
-# world still files its sweep — the loop and landing continue. The section is a warning
-# banner, not a suppression notice.
-drain_section=""
-if [ -n "$drain_since" ]; then
-    drain_section="!! DRAINING since ${drain_since} (${drain_mins}m)
-   Summons gated; loop, landing and reaping continue. Lift with: world.sh resume
-"
-fi
-
-# THROTTLE STATE — read from the stamp file written by --throttle-check (called each sentinel
-# pass). A throttled queue and an empty queue are indistinguishable from outside without this.
-# READ DIRECTLY, NOT FROM cockpit.env: the stamp is written on the sentinel cadence (~2m), so
-# it is at most one pass stale, while the snapshot may be up to the collector interval stale.
-THROTTLE_STAMP="${SPIRA_THROTTLE_STAMP:-$SPIRA_RUN/queue-throttled}"
-throttle_since=""; throttle_depth=""; throttle_drain=""
-if [ -f "$THROTTLE_STAMP" ]; then
-    _ts_line="$(head -1 "$THROTTLE_STAMP" 2>/dev/null)"
-    throttle_since="$(printf '%s' "$_ts_line" | grep -oE 'since=[^ ]+' | cut -d= -f2)"
-    throttle_depth="$(printf '%s' "$_ts_line" | grep -oE 'depth=[0-9]+' | cut -d= -f2)"
-    throttle_drain="$(printf '%s' "$_ts_line" | grep -oE 'since_land=[0-9]+m' | cut -d= -f2)"
-fi
-throttle_section=""
-if [ -n "$throttle_since" ]; then
-    throttle_section="!! THROTTLED since ${throttle_since}
-   Builder admission held (depth=${throttle_depth:-?}, drain was ${throttle_drain:-?} ago). Lifts automatically.
-   Override: SPIRA_QUEUE_THROTTLE_OVERRIDE=off in spira.conf
-"
-elif [ "${SPIRA_QUEUE_THROTTLE_OVERRIDE:-}" = "off" ]; then
-    throttle_section="   throttle: OVERRIDE OFF (SPIRA_QUEUE_THROTTLE_OVERRIDE=off)
-"
-fi
-
-# /tmp usage — EDQUOT fires before df says full (per-user quota on tmpfs).
-_tmp_pct="$(df /tmp 2>/dev/null | awk 'NR==2{print $5}' || true)"
-[ -n "$_tmp_pct" ] || _tmp_pct="?"
 
 # ROOT DISK AND MEMORY. A full root disk kills every process on the box, not only Spira's —
 # this is a fact worth Ops seeing even though nothing here withholds a summon over it (that
-# is the admission throttle's job, CHECK 7 in sentinel.sh).
-DISK_WARN_PCT="${SPIRA_DISK_WARN_PCT:-90}"
-MEM_WARN_MB="${SPIRA_MEM_WARN_MB:-1500}"
-# SPIRA_MEMINFO_PATH is a seam for tests, the same idea as SPIRA_INCIDENT_SH and
-# SPIRA_SUITES_SH above: /proc/meminfo cannot be stubbed by PATH the way df can.
-MEMINFO="${SPIRA_MEMINFO_PATH:-/proc/meminfo}"
-_disk_root_pct="$(df --output=pcent / 2>/dev/null | tail -1 | tr -dc '0-9')"
-[ -n "$_disk_root_pct" ] || _disk_root_pct="?"
-_mem_avail_mb="$(awk '/MemAvailable/{printf "%d", $2/1024}' "$MEMINFO" 2>/dev/null)"
-[ -n "$_mem_avail_mb" ] || _mem_avail_mb="?"
+# is the admission throttle's job, CHECK 7 in sentinel.sh). SPIRA_MEMINFO_PATH is a seam for
+# tests, the same idea as SPIRA_INCIDENT_SH and SPIRA_SUITES_SH: /proc/meminfo cannot be
+# stubbed by PATH the way df can.
+collect_disk_mem() {
+    DISK_WARN_PCT="${SPIRA_DISK_WARN_PCT:-90}"
+    MEM_WARN_MB="${SPIRA_MEM_WARN_MB:-1500}"
+    MEMINFO="${SPIRA_MEMINFO_PATH:-/proc/meminfo}"
+    _disk_root_pct="$(df --output=pcent / 2>/dev/null | tail -1 | tr -dc '0-9')"
+    [ -n "$_disk_root_pct" ] || _disk_root_pct="?"
+    _mem_avail_mb="$(awk '/MemAvailable/{printf "%d", $2/1024}' "$MEMINFO" 2>/dev/null)"
+    [ -n "$_mem_avail_mb" ] || _mem_avail_mb="?"
 
-_disk_breach=0
-if [ "$_disk_root_pct" != "?" ] && [ "$_disk_root_pct" -ge "$DISK_WARN_PCT" ] 2>/dev/null; then
-    _disk_breach=1
-fi
-_disk_disp="${_disk_root_pct}%"
-[ "$_disk_breach" = 1 ] && _disk_disp="FAULT (${_disk_root_pct}%, warn at ${DISK_WARN_PCT}%)"
+    _disk_breach=0
+    if [ "$_disk_root_pct" != "?" ] && [ "$_disk_root_pct" -ge "$DISK_WARN_PCT" ] 2>/dev/null; then
+        _disk_breach=1
+    fi
+    _disk_disp="${_disk_root_pct}%"
+    [ "$_disk_breach" = 1 ] && _disk_disp="FAULT (${_disk_root_pct}%, warn at ${DISK_WARN_PCT}%)"
 
-_mem_breach=0
-if [ "$_mem_avail_mb" != "?" ] && [ "$_mem_avail_mb" -lt "$MEM_WARN_MB" ] 2>/dev/null; then
-    _mem_breach=1
-fi
-_mem_disp="${_mem_avail_mb}MB"
-[ "$_mem_breach" = 1 ] && _mem_disp="FAULT (${_mem_avail_mb}MB, warn below ${MEM_WARN_MB}MB)"
+    _mem_breach=0
+    if [ "$_mem_avail_mb" != "?" ] && [ "$_mem_avail_mb" -lt "$MEM_WARN_MB" ] 2>/dev/null; then
+        _mem_breach=1
+    fi
+    _mem_disp="${_mem_avail_mb}MB"
+    [ "$_mem_breach" = 1 ] && _mem_disp="FAULT (${_mem_avail_mb}MB, warn below ${MEM_WARN_MB}MB)"
+}
 
 snapshot() {
 cat <<EOF
@@ -1082,6 +637,466 @@ it — investigate why before filing a bead on the absence alone.
 Run the scans named in the menu above if you have wall time remaining.
 EOF
 }
+
+main() {
+SNAP_AGE_MAX="${SPIRA_SNAP_STALE_S:-60}"
+now="$(date +%s)"
+
+# ---------------------------------------------------------------------------------------
+# HALTED? A deliberately stopped world must not manufacture incidents. Every pipeline
+# metric grows monotonically while nothing is wrong — time since last landing, queue depth
+# — so a sweep against a halted world describes a system that is broken when it is not.
+# cockpit/health.sh reads the same stamp directly for the same reason: a stale or absent
+# snapshot must not mask a deliberate halt.
+# ---------------------------------------------------------------------------------------
+HALT_STAMP="$SPIRA_RUN/world.halted"
+halt_since=""; halt_why=""
+if [ -f "$HALT_STAMP" ]; then
+    halt_since="$(head -1 "$HALT_STAMP" 2>/dev/null)"
+    halt_why="$(sed -n '2s/^why: //p' "$HALT_STAMP" 2>/dev/null)"
+fi
+
+# ---------------------------------------------------------------------------------------
+# DRAINING? Drain is lighter than halt — the loop, landing and reaping continue; only new
+# summons are gated. A drain left armed longer than intended has the same shape as
+# law-arm-before-you-retire: a stopped channel and a quiet one are indistinguishable from
+# outside, so the vital sign belongs here alongside the halt signal.
+#
+# READ THE STAMP DIRECTLY, NOT world.sh STATUS. world.sh status reads systemd unit names,
+# which are broken (sp-4biz, P0). drain and resume work correctly because they gate on the
+# stamp and never name a unit, so we do the same.
+#
+# MINUTES FROM MTIME, same as cockpit/health.sh: `stat -c %Y` returns epoch seconds the OS
+# recorded when the file was written, which needs no date parsing. A failed stat renders `?`
+# — never "not draining" (law-absence-needs-a-positive-control).
+# ---------------------------------------------------------------------------------------
+DRAIN_STAMP="$SPIRA_RUN/world.draining"
+# drain_since empty → no stamp → not draining; drain_mins "?" → stamp exists but unreadable.
+# Not-draining renders 0, not "?" — the ? convention is for a probe that FAILED, not for the
+# absence of the condition being probed (law-absence-needs-a-positive-control).
+drain_since=""; drain_mins=0
+if [ -f "$DRAIN_STAMP" ]; then
+    drain_since="$(head -1 "$DRAIN_STAMP" 2>/dev/null)"
+    _dmtime="$(stat -c %Y "$DRAIN_STAMP" 2>/dev/null)"
+    if [ -n "$_dmtime" ] && [ "$_dmtime" -gt 0 ] 2>/dev/null; then
+        drain_mins=$(( (now - _dmtime) / 60 ))
+    else
+        drain_mins="?"
+    fi
+fi
+
+# How long before a drain triggers its own incident. The normal sweep already carries the
+# drain state as a vital sign; this threshold is the point at which the sweep alone is not
+# enough and an escalation bead is worth the noise.
+DRAIN_WARN_MINS="${SPIRA_DRAIN_WARN_MINS:-15}"
+
+# ---------------------------------------------------------------------------------------
+# FAILED SYSTEMD UNITS (sp-niqjl). doctor.sh's doctor_check_failed_units does the one-pass
+# read of `systemctl --user list-units --state=failed`; this is that same read, direct
+# rather than through the collector, because the escalation below needs the CURRENT list,
+# not a snapshot that could be stale by exactly the margin an unwatched failing unit sat
+# for (spira-czar-pass-prod.service: four days, 11,000 failures, nothing looked).
+#
+# PROBE FAILURE RENDERS ?, NEVER 0 (law-absence-needs-a-positive-control): an unreachable
+# systemd user manager is not the same fact as "no failed units", and must not read as
+# a clean bill of health.
+# ---------------------------------------------------------------------------------------
+SYSTEMCTL="${SPIRA_SYSTEMCTL:-systemctl}"
+failed_units=()
+SP_FAILED_UNITS="?"
+if _fu_raw="$("$SYSTEMCTL" --user list-units --state=failed --no-legend 'spira-*' 2>/dev/null)"; then
+    SP_FAILED_UNITS=0
+    while IFS= read -r _fu_line; do
+        [ -n "$_fu_line" ] || continue
+        # systemctl outputs a bullet character (●) before the unit name; extract the first word
+        # that looks like a unit name (contains dots and hyphens typical of systemd units)
+        _fu_unit="$(printf '%s' "$_fu_line" | sed -E 's/^[^[:alnum:]]+ //; s/ .*//')"
+        [ -n "$_fu_unit" ] && failed_units+=("$_fu_unit")
+        SP_FAILED_UNITS=$((SP_FAILED_UNITS + 1))
+    done <<< "$_fu_raw"
+fi
+_fu_names="${failed_units[*]:-}"
+
+# How old (in minutes) a persistently failing unit must be before it becomes an anomaly
+# handed to Ops — see the escalation below, after the prompt file is written.
+FAILED_UNITS_WARN_MINS="${SPIRA_FAILED_UNITS_WARN_MINS:-15}"
+
+# How old the oldest unsent branch must be (in hours) before the Sending escalation fires.
+# An unsent branch belonging to a live in_progress bead is work in flight; the escalation is
+# for branches that have been waiting far longer than any single bead should take.
+UNSENT_WARN_H="${SPIRA_UNSENT_WARN_H:-24}"
+CLOSED_STRANDED_WARN_H="${SPIRA_CLOSED_STRANDED_WARN_H:-48}"
+
+# ---------------------------------------------------------------------------------------
+# THE COLLECTOR'S SNAPSHOT, and whether it can be believed at all. Every other number below
+# is read out of cockpit.env, so its freshness is the first fact — a stale file makes the
+# whole sweep a report about the past, and reporting the past as the present during an
+# outage is worse than reporting nothing.
+# ---------------------------------------------------------------------------------------
+ENVF="$SPIRA_RUN/cockpit/cockpit.env"
+[ -r "$ENVF" ] || ENVF="$SPIRA_RUN/cockpit.env"
+snap_age="?"
+if [ -r "$ENVF" ]; then
+    # shellcheck disable=SC1090
+    eval "$(sed -n 's/^\(SP_[A-Z_0-9]*\)=\(.*\)$/\1=\2/p' "$ENVF" 2>/dev/null)" 2>/dev/null || true
+    [ -n "${SP_AT:-}" ] && snap_age=$(( now - SP_AT ))
+fi
+snap_age_disp="${snap_age}s"
+if [ "$snap_age" != "?" ] && [ "$snap_age" -ge "$SNAP_AGE_MAX" ] 2>/dev/null; then
+    snap_age_disp="FAULT (${snap_age}s, stale above ${SNAP_AGE_MAX}s)"
+fi
+# In-flight count: total unsent minus the closed-bead stranded ones. Both must be numeric;
+# a `?` on either renders the in-flight figure as `?` rather than a false arithmetic result.
+_unsent_inflight="?"
+if [ "${SP_UNSENT:-?}" != "?" ] && [ "${SP_CLOSED_STRANDED:-?}" != "?" ] 2>/dev/null; then
+    _unsent_inflight=$(( SP_UNSENT - SP_CLOSED_STRANDED ))
+fi
+
+# ---------------------------------------------------------------------------------------
+# HOW LONG SINCE ANYTHING LANDED — the one number that says whether the pipeline works, and
+# the one nothing recorded until landing.sh began writing a landstate file per bead. Read
+# from those records rather than from the log, because a log line is prose and this has to
+# be arithmetic.
+# ---------------------------------------------------------------------------------------
+# THE RECORD HAS NO TRAILING NEWLINE, and `read` reports that as failure. land_mark writes
+# with `printf '%s %s %s %s'` deliberately — the in-tree reader strips newlines anyway — so
+# every landstate file ends mid-line, and `read` returns 1 at EOF-without-delimiter EVEN
+# THOUGH IT HAS ALREADY POPULATED EVERY VARIABLE. A `|| continue` on that status therefore
+# discarded a perfectly good record, and this field rendered `?  (last: none recorded)` on
+# every sweep ever filed, including passes where six beads had landed in the previous twelve
+# minutes. Three Ops sessions were woken by it, each one re-deriving the same directory by
+# hand to prove the pipeline was moving.
+#
+# So the reader tolerates the failed status and lets the guards below it judge the content:
+# a record is believed only if its state is LANDED and its timestamp is numeric, which a
+# truncated or empty file cannot satisfy. Do not "fix" this by adding a newline to the
+# writer — two readers already depend on the current format and the writer is not wrong.
+#
+# THE FOUR VARIABLES ARE RESET BEFORE EACH READ, and that is load-bearing rather than tidy:
+# `read` leaves the previous iteration's values in place when it fails early, so an
+# unreadable file would otherwise be judged on the LAST file's state and this loop would
+# attribute one bead's landing to another.
+last_land="?"; last_land_id=""
+if [ -d "$SPIRA_RUN/landstate" ]; then
+    while IFS= read -r f; do
+        [ -r "$f" ] || continue
+        st=""; _tip=""; at=""; _why=""
+        read -r st _tip at _why < "$f" 2>/dev/null || true
+        [ "$st" = LANDED ] || continue
+        case "$at" in ''|*[!0-9]*) continue ;; esac
+        if [ "$last_land" = "?" ] || [ "$at" -gt "$last_land" ]; then
+            last_land="$at"; last_land_id="$(basename "$f")"
+        fi
+    done < <(find "$SPIRA_RUN/landstate" -maxdepth 1 -type f 2>/dev/null)
+fi
+since_land="?"
+[ "$last_land" != "?" ] && since_land=$(( (now - last_land) / 60 ))
+
+# ---------------------------------------------------------------------------------------
+# WHAT IS STUCK, AND FOR HOW LONG. A queue depth on its own says nothing — a deep queue that
+# is moving is a busy system. The age of its oldest member is what tells them apart.
+# ---------------------------------------------------------------------------------------
+# THE WINDOW IS A DURATION, NEVER A ROW COUNT. "The worst wait in the last 50 rows" reads as
+# recent and is not: gate.log holds one row per gate run, so on a quiet day fifty rows are a
+# week and "recent" silently means "ever". That is not hypothetical either — this field spent
+# a day reporting 1584s from a wait produced by a locking topology the gate rebuild had
+# already deleted, while every row written since read `waited=0s`. A decommissioned
+# mechanism's worst case was being presented to Ops as a live signal, and three sweeps
+# re-investigated it.
+#
+# THE CUTOFF IS COMPARED AS A STRING, which is exactly as sound as arithmetic here and needs
+# no date parsing in awk: the meter writes `date -u +%Y-%m-%dT%H:%M:%SZ`, and ISO-8601 UTC
+# timestamps of fixed width sort lexicographically in chronological order. A row whose first
+# field is not such a timestamp — a truncated write, a line from some older format — falls
+# outside every window and is ignored rather than counted as now.
+#
+# NO ROW INSIDE THE WINDOW RENDERS `?`, NOT 0. "No gate has waited recently" and "no gate has
+# RUN recently" are opposite facts and a zero states the reassuring one (law-absence-needs-a-
+# positive-control); the second is what a stalled pipeline looks like from here.
+GATE_WINDOW="${SPIRA_WATCH_GATE_WINDOW:-21600}"
+# THROUGH THE SAME KEY THE METER WRITES. This read `$SPIRA_RUN/gate.log` directly, so an
+# operator who moved the log left this field reading `?` forever while the gate went on
+# writing somewhere else — a probe pointed at the wrong place, which is the failure the whole
+# `?` convention exists to make visible rather than one it is allowed to have.
+WT_GATE_LOG="${SPIRA_GATE_LOG:-$SPIRA_RUN/gate.log}"
+oldest_wait="?"; oldest_br=""
+if [ -r "$WT_GATE_LOG" ]; then
+    gate_since="$(date -u -d "@$(( now - GATE_WINDOW ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
+    if [ -n "$gate_since" ]; then
+        read -r oldest_wait oldest_br < <(awk -v since="$gate_since" '
+            $1 >= since && $1 ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z$/ &&
+            match($0, /waited=[0-9]+s/) {
+                w = substr($0, RSTART+7, RLENGTH-8) + 0
+                if (!n++ || w > m) { m = w; b = $3 }
+            } END { if (n) print m, b; else print "?", "" }' "$WT_GATE_LOG" 2>/dev/null)
+    fi
+fi
+# What the field PRINTS, decided here rather than in the heredoc, so that a `?` is not
+# rendered as `?s` — a unit on an unreadable field invites reading it as a measurement.
+gate_wait_disp="?"
+[ "$oldest_wait" = "?" ] || gate_wait_disp="${oldest_wait}s"
+# The window is NAMED in the field, because "recent" is the word that let this go wrong: a
+# reader who can see the bound can tell a quiet six hours from a broken probe.
+if [ "$GATE_WINDOW" -ge 3600 ] 2>/dev/null; then gate_win_label="last $(( GATE_WINDOW / 3600 ))h"
+else gate_win_label="last $(( GATE_WINDOW / 60 ))m"; fi
+
+# ---------------------------------------------------------------------------------------
+# IS THE GATE WORTH WHAT IT COSTS? The wait above says what the gate costs the queue; these
+# say whether it is buying anything. A gate whose reds are mostly its own fault has negative
+# value and can be deleted in a sentence on this evidence, instead of after twelve hours of
+# fallout — which is how the last one went (law-gate-earns-its-place).
+#
+# READ BY OPS, NOT ONLY BY A HUMAN AT A PANE. Ops is the actor that reads this sweep and cuts
+# beads from it; a yield that could only be seen by somebody who went looking would be the
+# same failure one layer up, since going to look is exactly what nobody did.
+#
+# yield.sh renders `?` for anything it could not read and this passes that through unchanged.
+# SPIRA_RUN is passed explicitly because conf.sh does not export it, and a child re-deriving
+# it would read a different directory and report a confident zero.
+YIELD_REDS="?"; YIELD_DEFECT="?"; YIELD_FAULT="?"; YIELD_UNKNOWN="?"; YIELD_RECORDER="?"
+YIELD_DEFECT_INFERRED="?"; YIELD_TOP_FAULT="?"
+YIELD_SOLO_N="?"; YIELD_SOLO_MED="?"; YIELD_SOLO_MAX="?"
+YIELD_CONC_N="?"; YIELD_CONC_MED="?"; YIELD_CONC_MAX="?"
+YIELD_SH="$(dirname "$0")/yield.sh"
+YIELD_WINDOW_S="${SPIRA_YIELD_WINDOW:-86400}"
+if [ -r "$YIELD_SH" ]; then
+    # shellcheck disable=SC1090
+    eval "$(SPIRA_RUN="$SPIRA_RUN" SPIRA_YIELD_WINDOW="$YIELD_WINDOW_S" \
+            bash "$YIELD_SH" report 2>/dev/null \
+            | sed -n 's/^\(YIELD_[A-Z_]*\)=\(.*\)$/\1="\2"/p')" 2>/dev/null || true
+fi
+if [ "$YIELD_WINDOW_S" -ge 86400 ] 2>/dev/null; then yield_win_label="last $(( YIELD_WINDOW_S / 86400 ))d"
+elif [ "$YIELD_WINDOW_S" -ge 3600 ] 2>/dev/null; then yield_win_label="last $(( YIELD_WINDOW_S / 3600 ))h"
+else yield_win_label="last $(( YIELD_WINDOW_S / 60 ))m"; fi
+# A UNIT ON AN UNREADABLE FIELD INVITES READING IT AS A MEASUREMENT — `?s` looks like a
+# duration somebody forgot to fill in, and this whole file exists because a reassuring
+# reading displaced a look. secs() is hoisted above the main guard; see there.
+# A `?` WITH NO EXPLANATION SENDS OPS TO THE CODE. The yield's own positive control is the
+# gate meter, which writes a row on every red whether or not anything is measuring; when the
+# two disagree the count is withheld, and this is the sentence that says which of them was
+# silent so the sweep names the fault rather than the symptom.
+yield_note_txt=""
+case "$YIELD_RECORDER" in
+    silent) yield_note_txt="   <- the gate meter saw ${YIELD_LOG_REDS:-?} red(s) and none reached the record: THE RECORDER IS NOT RUNNING" ;;
+    absent) yield_note_txt="   <- nothing recorded here yet, and the meter has logged no reds either" ;;
+    '?')    yield_note_txt="   <- no positive control: the gate meter could not be read" ;;
+esac
+
+# Branches whose gate could not reach a verdict, and how many times in a row. Written by the
+# landing pass; three of one reason on one branch is what it escalates on.
+nv_worst=0; nv_worst_key=""
+if [ -d "$SPIRA_RUN/noverdict" ]; then
+    while IFS= read -r f; do
+        case "$f" in *.asked) continue ;; esac
+        n="$(cat "$f" 2>/dev/null)"; case "$n" in ''|*[!0-9]*) continue ;; esac
+        [ "$n" -gt "$nv_worst" ] && { nv_worst="$n"; nv_worst_key="$(basename "$f")"; }
+    done < <(find "$SPIRA_RUN/noverdict" -maxdepth 1 -type f 2>/dev/null)
+fi
+
+# AEONS ARE COUNTED HERE, FROM /proc, NOT READ OUT OF THE SNAPSHOT. The collector's file is
+# up to a minute old, and the first live sweep reported "0 aeons" while two were running —
+# because the snapshot predated the summon. Every other number here tolerates being a minute
+# stale; this one does not, because "ready work and no workers" is the single shape that
+# most looks like a stalled loop, and reporting it wrongly sends Ops to diagnose a stall that
+# is not happening. It costs one pass over /proc.
+#
+# THROUGH aeon_count, THE HARNESS'S OWN PRIMITIVE, not a second implementation. The first
+# version of this scanned /proc for a command line containing "aeon.sh" and counted 7 where
+# there were 3 — because the scan matched the shell pipelines that were themselves grepping
+# for the string, this program's own diagnostics included. That is the `pgrep -f` failure
+# exactly, arriving in a hand-rolled shape, three lines under a comment warning about it.
+#
+# aeon_count reads the pidfiles, which are the authoritative record of a claim, and confirms
+# each against /proc on argv rather than on a substring. It is also what the sentinel's pool
+# arithmetic uses, so the number reported here and the number the loop acts on cannot drift.
+aeons_live=0
+for _f in $(spira_fayths 2>/dev/null); do
+    aeons_live=$(( aeons_live + $(aeon_count "$_f" 2>/dev/null || echo 0) ))
+done
+
+# ---------------------------------------------------------------------------------------
+# THE MENU. The sweep names scans for the Ops session to RUN; it does not run them here.
+#
+# That division is the whole point and it is not decoration. This program's contract is to be
+# deterministic and cheap, because the one thing a detector may not be is another thing that
+# is down during an outage — a several-minute test run inside it would make it exactly that,
+# and would push a ten-minute cadence past the interval that produces it. So the menu is a
+# NAME plus the cheap facts that say whether the scan is worth this pass, and the session
+# spends its own eight minutes on it.
+#
+# `suites.sh status` is a glob and a read per suite: no database, no network, nothing that
+# can hang. A pass that cannot produce it prints why rather than an empty section, because a
+# menu with nothing on it and a menu that could not be built read identically otherwise.
+# SPIRA_SUITES_SH overrides the path so test suites can inject a mock without paying the
+# host-check.sh walk on every watchtower.sh invocation. Same seam as SPIRA_INCIDENT_SH.
+SUITES="${SPIRA_SUITES_SH:-$(dirname "$0")/suites.sh}"
+suites_block="  (unavailable — $SUITES is missing, so nothing knows which suites run nowhere)"
+if [ -r "$SUITES" ]; then
+    suites_block="$(bash "$SUITES" status 2>/dev/null)"
+    [ -n "$suites_block" ] || suites_block="  (unreadable — suites.sh status produced nothing)"
+fi
+
+# THE STRAND LEDGER IS TWO LINES, NOT ONE. strands.json holds every disposition strand.sh
+# classifies, and only `ghost` is the labelled failure this line names — a claimed bead whose
+# holder is gone. This rendered the ledger's SIZE under that name, so a childless epic read
+# as a dead worker and a sweep spent four commands hunting for a holder that never existed.
+# The collector does the classifying (cockpit.sh strand_keys); this only renders it.
+#
+# A SNAPSHOT WRITTEN BY A COLLECTOR PREDATING THAT SPLIT RENDERS `?`, WHICH IS CORRECT: `g`
+# reports an absent key as unread, and during a rollout the two halves are briefly skewed.
+# `?` says this pass could not read it. A 0 would say there are none, which nobody checked.
+
+# BRANCH INTEGRITY — two cheap reads per registered repository: is the base branch's tip
+# a non-merge aeon commit, and is the shared checkout ahead of its remote? Both were
+# invisible on the day this defect was filed; both are one git command each.
+#
+# COMPUTED HERE AND NOT INLINE IN THE HEREDOC. Command substitution inside a here-doc
+# expands at the wrong time on some shells, and a multiline output inside $( ) would close
+# the here-doc prematurely. Pre-computed variables avoid both.
+#
+# MISSING GUARD RENDERS A NOTE, NEVER SILENCE. A guard whose script is absent is not the
+# same as a guard that ran and found nothing (law-absence-needs-a-positive-control).
+GUARD_SH="$(dirname "$0")/branch-guard.sh"
+guard_block="  (unavailable — branch-guard.sh is missing or unreadable)"
+if [ -r "$GUARD_SH" ]; then
+    guard_out="$(bash "$GUARD_SH" check 2>&1)"; guard_rc=$?
+    case "$guard_rc" in
+        0) guard_block="  $guard_out" ;;
+        3) guard_block="  (no registered repositories — nothing to audit)" ;;
+        *) guard_block="$(printf '%s\n' "$guard_out" | sed 's/^/  /')" ;;
+    esac
+fi
+
+# THE CZAR TRIGGER TABLE — per-class display of the four queue-check trigger classes. Read
+# from cockpit.env (written by czar_triggers_keys via collect.sh). A missing key renders ?
+# (law-absence-needs-a-positive-control). _cz_row() is hoisted above the main guard.
+czar_block="$(printf '  %-22s %-22s %-12s %s\n' class "last fired" "handled by" outcome)
+$(_cz_row deadlock          DEADLOCK)
+$(_cz_row attribution-failed ATTRIB)
+$(_cz_row sort-failed        SORT)
+$(_cz_row loop-stalled       STALL)"
+
+# Pre-computed so the heredoc below can reference it as a plain variable. A trailing
+# newline is intentional: the heredoc adds one more, giving a blank line between the halt
+# banner and the body text.
+halt_section=""
+if [ -n "$halt_since" ]; then
+    halt_section="!! HALTED since ${halt_since}"
+    [ -n "$halt_why" ] && halt_section="${halt_section}
+   why: ${halt_why}"
+    halt_section="${halt_section}
+   No incidents are filed while the halt is in force.
+"
+fi
+
+# ---------------------------------------------------------------------------------------
+# LAPSED AEONS — aeons the liveness lease killed since the previous sweep.
+#
+# sp-a8zy writes a record under $SPIRA_RUN/lapsed/ on each lapse, named
+# <bead-id>-<YYYYMMDDTHHmmSSZ>. This section reads those whose timestamp is newer than the
+# marker in $SPIRA_RUN/lapsed.swept (the previous sweep's cutoff), so each lapse appears in
+# exactly one sweep.
+#
+# ? WHEN THE DIRECTORY CANNOT BE READ — not 0, not silence. A section that renders empty
+# on a failed read displaces the suspicion that would prompt a look, which is the exact
+# failure mode this whole program is a response to (law-absence-needs-a-positive-control).
+#
+# THE MARKER IS CAPTURED NOW, before reading records, and written after the prompt file is
+# written atomically. That ordering ensures a lapse that arrives while this sweep is running
+# falls in the next pass rather than being lost — and that the marker never advances if the
+# write fails (so the record stays visible on retry).
+#
+# THE CUTOFF IS A LEXICOGRAPHIC COMPARISON. Timestamps are YYYYMMDDTHHmmSSZ — ISO-8601 UTC
+# compact format — which sorts correctly as strings. No date parsing is needed: a later
+# timestamp always sorts after an earlier one in this format.
+#
+# CONFIGURED PATHS, NOT LITERALS. `sop.sh write` scans for absolute paths; a literal would
+# fail the inventory gate on every landing and on every colleague's clone.
+# ---------------------------------------------------------------------------------------
+LAPSED_DIR="${SPIRA_LAPSED_DIR:-$SPIRA_RUN/lapsed}"
+LAPSED_MARKER="${SPIRA_LAPSED_MARKER:-$SPIRA_RUN/lapsed.swept}"
+_lapsed_prev="$(cat "$LAPSED_MARKER" 2>/dev/null || true)"
+_lapsed_now="$(date -u +%Y%m%dT%H%M%SZ)"
+
+lapsed_count="?"
+lapsed_section=""
+if [ ! -e "$LAPSED_DIR" ]; then
+    # No lapses ever recorded — the directory is created by aeon.sh on the first lapse.
+    lapsed_count=0
+    lapsed_section="  none since last sweep"
+elif [ ! -d "$LAPSED_DIR" ]; then
+    # Path exists but is not a directory — something replaced it; treat as unreadable.
+    lapsed_count="?"
+    lapsed_section="  ? (expected a directory at SPIRA_LAPSED_DIR — path exists but is not a directory)"
+else
+    # Directory exists; read records newer than the previous marker.
+    _lapsed_n=0
+    _lapsed_body=""
+    while IFS= read -r _lf; do
+        [ -r "$_lf" ] || continue
+        _lfname="$(basename "$_lf")"
+        # Timestamp suffix is the last 16 chars of the basename (YYYYMMDDTHHmmSSZ).
+        _lfts="$(printf '%s' "$_lfname" | grep -oE '[0-9]{8}T[0-9]{6}Z$' 2>/dev/null || true)"
+        [ -n "$_lfts" ] || continue
+        # Skip records at or before the previous marker (already shown in a prior sweep).
+        # String comparison on ISO-8601 timestamps is chronological — no date math needed.
+        [ -z "$_lapsed_prev" ] || [[ "$_lfts" > "$_lapsed_prev" ]] || continue
+        _lapsed_n=$(( _lapsed_n + 1 ))
+        _lapsed_body="${_lapsed_body}
+  [${_lfname}]
+$(sed 's/^/    /' "$_lf" 2>/dev/null)
+"
+    done < <(find "$LAPSED_DIR" -maxdepth 1 -type f 2>/dev/null | sort)
+    lapsed_count="$_lapsed_n"
+    if [ "$_lapsed_n" -eq 0 ]; then
+        lapsed_section="  none since last sweep"
+    else
+        [ "$_lapsed_n" -eq 1 ] && _lapse_word="lapse" || _lapse_word="lapses"
+        lapsed_section="  ${_lapsed_n} ${_lapse_word} since last sweep:
+${_lapsed_body}"
+    fi
+fi
+
+# Drain section: present only when the stamp exists. Unlike the halt section, a draining
+# world still files its sweep — the loop and landing continue. The section is a warning
+# banner, not a suppression notice.
+drain_section=""
+if [ -n "$drain_since" ]; then
+    drain_section="!! DRAINING since ${drain_since} (${drain_mins}m)
+   Summons gated; loop, landing and reaping continue. Lift with: world.sh resume
+"
+fi
+
+# THROTTLE STATE — read from the stamp file written by --throttle-check (called each sentinel
+# pass). A throttled queue and an empty queue are indistinguishable from outside without this.
+# READ DIRECTLY, NOT FROM cockpit.env: the stamp is written on the sentinel cadence (~2m), so
+# it is at most one pass stale, while the snapshot may be up to the collector interval stale.
+THROTTLE_STAMP="${SPIRA_THROTTLE_STAMP:-$SPIRA_RUN/queue-throttled}"
+throttle_since=""; throttle_depth=""; throttle_drain=""
+if [ -f "$THROTTLE_STAMP" ]; then
+    _ts_line="$(head -1 "$THROTTLE_STAMP" 2>/dev/null)"
+    throttle_since="$(printf '%s' "$_ts_line" | grep -oE 'since=[^ ]+' | cut -d= -f2)"
+    throttle_depth="$(printf '%s' "$_ts_line" | grep -oE 'depth=[0-9]+' | cut -d= -f2)"
+    throttle_drain="$(printf '%s' "$_ts_line" | grep -oE 'since_land=[0-9]+m' | cut -d= -f2)"
+fi
+throttle_section=""
+if [ -n "$throttle_since" ]; then
+    throttle_section="!! THROTTLED since ${throttle_since}
+   Builder admission held (depth=${throttle_depth:-?}, drain was ${throttle_drain:-?} ago). Lifts automatically.
+   Override: SPIRA_QUEUE_THROTTLE_OVERRIDE=off in spira.conf
+"
+elif [ "${SPIRA_QUEUE_THROTTLE_OVERRIDE:-}" = "off" ]; then
+    throttle_section="   throttle: OVERRIDE OFF (SPIRA_QUEUE_THROTTLE_OVERRIDE=off)
+"
+fi
+
+# /tmp usage — EDQUOT fires before df says full (per-user quota on tmpfs).
+_tmp_pct="$(df /tmp 2>/dev/null | awk 'NR==2{print $5}' || true)"
+[ -n "$_tmp_pct" ] || _tmp_pct="?"
+
+# ROOT DISK AND MEMORY. collect_disk_mem() is hoisted above the main guard so a test can call
+# it directly against a fixture PATH/SPIRA_MEMINFO_PATH.
+collect_disk_mem
 
 [ "${1:-}" = "--show" ] && { snapshot; exit 0; }
 
@@ -1455,4 +1470,9 @@ if [ -r "$MOOT_SH" ]; then
     log "watchtower: moot-sweep ran"
 else
     log "watchtower: moot-sweep skipped — $MOOT_SH is missing or unreadable"
+fi
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
 fi
