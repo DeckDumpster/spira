@@ -114,18 +114,8 @@ drop_branch() {          # drop_branch <id> — leave the world as clean as we f
 
 echo "test-landing-race.sh"
 
-# --------------------------------------------------------------------------------------
-# THE POSITIVE CONTROL, first, because every silence below is read against it. An
-# uncontested land must reach the bare origin AS THE BRANCH — the assertion is ancestry in
-# the remote, not a line in a log (law-absence-needs-a-positive-control).
-# --------------------------------------------------------------------------------------
-seed; branch sp-plain; out="$(landing)"
-want "an uncontested land is reported" "landed spira/sp-plain" "$out"
-git -C "$REPO" fetch -q origin
-git -C "$REPO" merge-base --is-ancestor "spira/sp-plain" origin/main \
-    && ok  "and what landed is the branch itself" \
-    || bad "the uncontested land" "spira/sp-plain is not an ancestor of origin/main"
-drop_branch sp-plain
+# The uncontested-land positive control lives in test-landing.sh (duplicate cluster #10,
+# plan section 4): this file keeps only race cases, which is every check below.
 
 # --------------------------------------------------------------------------------------
 # THE RACE. The base moves between our fetch and our push — a statute synthesis, a mirror
@@ -221,81 +211,6 @@ is     "and the bead stays closed"                           closed "$(status_of
 nowant "and nothing claims to have landed"                   "landed spira/sp-nowt" "$out"
 want   "and the pass says which tree it could not find"      "no landing worktree" "$out"
 drop_branch sp-nowt
-
-# --------------------------------------------------------------------------------------
-# AND NOTHING IN THE HARNESS REBASES THE LANDING WORKTREE. The defect was one token — `git
-# -C "$land" rebase` where it had to be the branch — and the case above catches it only by
-# way of a hook, a race and an ancestry check three assertions apart. This catches it by
-# reading, for the reason a one-token edit deserves a one-line fence: it is trivial to
-# reintroduce and it fails silently for hours.
-#
-# The landing worktree is scratch, rebuilt from the base on every attempt, so it has no
-# history worth replaying; rebasing it produces COPIES of the branch's commits, and copies
-# land work under SHAs the branch ref does not point at. Comments are stripped rather than
-# excluded, because this file and landing.sh both explain the rule at length.
-# --------------------------------------------------------------------------------------
-offends() {              # offends <dir> -> "<file>: <hit>" lines, comments stripped
-    local d="$1" f hit out=""
-    for f in "$d"/*.sh; do
-        [ -e "$f" ] || continue
-        case "$(basename "$f")" in test-*) continue ;; esac
-        # The `cd` arm reaches PAST the connector on purpose. Written `[^;&|]*` — which is
-        # how the first draft of this fence had it — the alternation stops dead at the `&&`
-        # in `cd "$land" && git rebase`, so half the fence matched nothing and read as a
-        # clean tree. The positive control below is what caught that.
-        hit="$(sed 's/#.*//' "$f" | grep -nE 'git +-C +"\$land"[^;&|]*rebase|cd +"\$land".*git +rebase' || true)"
-        [ -n "$hit" ] && out="$out$(basename "$f"): $hit
-"
-    done
-    printf '%s' "$out"
-}
-is "no harness program rebases the landing worktree" "" "$(offends "$HERE")"
-
-# THE FENCE'S OWN POSITIVE CONTROL. A grep that reports a clean tree looks identical whether
-# its matcher fired or never could — and the whole value of this fence is its silence, so the
-# silence has to be earned. Plant one offender of each shape and require both to be named.
-PLANT="$TMP/plant"; mkdir -p "$PLANT"
-printf '#!/usr/bin/env bash\ngit -C "$land" rebase -q "$base"\n'     > "$PLANT/one.sh"
-printf '#!/usr/bin/env bash\ncd "$land" && git rebase -q "$base"\n'  > "$PLANT/two.sh"
-planted="$(offends "$PLANT")"
-want 'the fence names a git -C $land rebase'  "one.sh" "$planted"
-want 'and a cd $land followed by git rebase'  "two.sh" "$planted"
-
-# --------------------------------------------------------------------------------------
-# NO FETCH IN THE LANDING PATH WRITES FETCH_HEAD. Concurrent landing passes share the
-# same .git object store, so concurrent git-fetch calls race to write .git/FETCH_HEAD.
-# Under FETCH_HEAD lock contention a fetch can fail silently (2>/dev/null swallows it),
-# leaving local remote-tracking refs stale. A stale origin/main makes content_landed
-# return false when the content IS already there; the landing worktree's checkout then
-# picks up the current (newer) ref, the merge is a no-op, the push says "Everything
-# up-to-date" and exits 0 — merged=1 and pushed=1 both land, and "landed" fires with no
-# new commit on the base. --no-write-fetch-head removes the FETCH_HEAD write entirely,
-# eliminating the lock; the no-op merge guard above closes the remaining window.
-# --------------------------------------------------------------------------------------
-bare_fetch_in() {        # bare_fetch_in <dir> -> "<file>: <hit>" lines, comments stripped
-    local d="$1" f hit out=""
-    for f in "$d/landing.sh" "$d/skew.sh"; do
-        [ -e "$f" ] || continue
-        # Strip comments before grepping so a commented-out example does not trigger.
-        hit="$(sed 's/#.*//' "$f" | grep -nE '\bgit\b.*\bfetch\b' | grep -vE -- '--no-write-fetch-head' || true)"
-        [ -n "$hit" ] && out="$out$(basename "$f"): $hit
-"
-    done
-    printf '%s' "$out"
-}
-is "every fetch in the landing path uses --no-write-fetch-head" "" "$(bare_fetch_in "$HERE")"
-
-# THE FENCE'S OWN POSITIVE CONTROL. A grep that reports a clean result looks identical
-# whether the pattern matched nothing or it could not have matched — the silence has to
-# be earned. Plant one offender of each shape and require both to be named.
-PLANT2="$TMP/plant2"; mkdir -p "$PLANT2"
-printf '#!/usr/bin/env bash\ngit -C "$repo" fetch -q "$remote" 2>/dev/null\n' \
-    > "$PLANT2/landing.sh"
-printf '#!/usr/bin/env bash\ngit -C "$repo" fetch -q "$remote" 2>/dev/null\n' \
-    > "$PLANT2/skew.sh"
-planted2="$(bare_fetch_in "$PLANT2")"
-want 'the fence catches a bare fetch in landing.sh' "landing.sh" "$planted2"
-want 'and a bare fetch in skew.sh'                  "skew.sh"    "$planted2"
 
 # --------------------------------------------------------------------------------------
 # QUEUE-MODE REPOS ADVANCE THEIR CHECKOUT TOO. The refresh loop ran for `push` only;

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 #
 # test-landing-rebase.sh — rebase_branch classification (no-branch, no-base, conflict,
-# rebase-refused, identity fix, fence), the survivor sweep (rebased when a landing moves
-# the base under a withheld branch), the loop-defer guard (live aeon holds the bead), and
+# rebase-refused, identity fix), the survivor sweep (rebased when a landing moves the
+# base under a withheld branch), the loop-defer guard (live aeon holds the bead), and
 # the checkout refresh (skew.sh keeps the operator's working copy current).
+#
+# The static "every rebase-failure arm reads the kind" fence moved to
+# test-landing-mode-map.sh (T0, no fixture needed).
 #
 # Extracted from test-landing.sh to reduce the critical-path suite time.
 #
@@ -235,21 +238,6 @@ _ri_clash="$(rebase_id_classify spira/sp-ident-clash origin/main)"
 _ri_clash_fail="${_ri_clash##*|}"
 is "a real conflict returns REBASE_FAILURE=conflict even with identity set" "conflict" "$_ri_clash_fail"
 drop_branch sp-ident-clash
-
-# THE FENCE. Every route from a rebase failure to a reopen lives in landing.sh and must read
-# the classification first.
-arms() {
-    awk '
-        { c = $0; sub(/#.*/, "", c) }
-        c ~ /^[ \t]*$/ { next }
-        n { if (c ~ /REBASE_FAILURE/) guarded = 1
-            if (++k >= 6) { if (!guarded) print "line " n; n = 0 } }
-        c ~ /![ \t]*rebase_branch/ { n = NR; k = 0; guarded = 0 }
-        END { if (n && !guarded) print "line " n }' "$1"
-}
-is "every rebase failure arm in landing.sh reads the kind" "" "$(arms "$HERE/landing.sh")"
-printf '%s\n' 'if ! rebase_branch "$br" "$base"; then' '    bead_reopen "$id" "conflicts"' 'fi' > "$TMP/plant.sh"
-want "and the fence can see an arm that does not" "line 1" "$(arms "$TMP/plant.sh")"
 
 cp "$TMP/gate-full.sh" "$SH/gate.sh"
 
