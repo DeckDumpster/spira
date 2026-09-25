@@ -1218,29 +1218,59 @@ if [ ! -d "$WORK/.git" ] && [ ! -f "$WORK/.git" ]; then
     if git -C "$REPO" show-ref --verify -q "refs/heads/$BRANCH"; then
         # A retry: the branch survives from a previous attempt. Reuse it rather than
         # refusing, and bring it current below.
-        # A BRANCH CHECKED OUT SOMEWHERE ELSE IS ADOPTED, NOT FATAL. git refuses to attach a
-        # second worktree to one branch, so if anything — a hand-made tree, a slaying that
-        # left its directory, a previous name for this path — still holds $BRANCH, this
-        # `add` fails and the aeon dies three seconds after being summoned, having written
-        # only its trace mark. Measured 2026-09-07: worktree/sp-2tv.spira, made by hand while
-        # the stale brain tree occupied the real path, held spira/sp-2tv; every summon after
-        # the brain tree was cleared died here instead, and the bead reached attempt 20.
         #
-        # The other tree IS the work, so work in it rather than refusing to work at all.
+        # A BRANCH CHECKED OUT SOMEWHERE ELSE IS NEVER ADOPTED (law-one-aeon-one-worktree).
+        # git refuses to attach a second worktree to one branch, so this `add` can fail for
+        # two different reasons and they get two different answers:
+        #
+        #   - the holder is shaped like ANOTHER BEAD'S OWN canonical worktree ($SPIRA_RUN/
+        #     worktree/<other-id>) — every aeon computes that path the same way, so a live
+        #     match there names a live sibling, not a leftover. sp-zs04v's three sessions in
+        #     one directory came from adopting exactly this case; the fix is to refuse and
+        #     say whose worktree it is, not to work inside it.
+        #   - the holder is NOT shaped like any bead's canonical worktree — a hand-made tree,
+        #     a slaying that left its directory, a previous naming convention for this same
+        #     bead's own branch (measured 2026-09-07: worktree/sp-2tv.spira, made by hand
+        #     while the stale brain tree occupied the real path, held spira/sp-2tv; every
+        #     summon after the brain tree was cleared died here instead of moving it aside,
+        #     and the bead reached attempt 20). This one IS this bead's own stale tree: move
+        #     it aside — never delete, it may hold uncommitted work — and cut $WORK fresh.
         _wt_tmp="$(mktemp)"; _wt_err=""
         if ! git -C "$REPO" worktree add -q "$WORK" "$BRANCH" 2>"$_wt_tmp"; then
             _wt_err="$(cat "$_wt_tmp" 2>/dev/null)"
             _held="$(git -C "$REPO" worktree list --porcelain 2>/dev/null \
                      | awk -v b="refs/heads/$BRANCH" '''/^worktree /{w=$2} /^branch /{if ($2==b) print w}''' | head -1)"
-            if [ -n "$_held" ] && [ -d "$_held" ]; then
-                log "$FAYTH: $BEAD_ID — $BRANCH is checked out at $_held; working there instead of $WORK"
-                WORK="$_held"
-            else
+            _held_id=""
+            case "$_held" in
+                "$SPIRA_RUN/worktree/"*) _held_id="${_held#"$SPIRA_RUN/worktree/"}" ;;
+            esac
+            if [ -z "$_held" ] || [ ! -d "$_held" ]; then
                 die "could not attach a worktree at $WORK to existing branch $BRANCH${_wt_err:+: $_wt_err}"
+            elif [ -n "$_held_id" ] && [ "$_held_id" != "$BEAD_ID" ]; then
+                die "$BEAD_ID: $BRANCH is checked out at $_held, which belongs to $_held_id, not $BEAD_ID — refusing to work $BEAD_ID in another bead's worktree (law-one-aeon-one-worktree)"
+            else
+                aside="$(worktree_move_aside "$_held" prior)"
+                if [ -z "$aside" ]; then
+                    die "$BRANCH is checked out at $_held and could not be moved aside"
+                fi
+                # THE MOVE RELOCATES THE DIRECTORY; IT DOES NOT FREE THE BRANCH. Git allows
+                # exactly one worktree attached to a branch regardless of path, so the retry
+                # below would fail again — now against $aside instead of $_held — unless the
+                # moved tree's HEAD is detached first. Detaching changes only what ref HEAD
+                # names: same commit, same index, same working tree, so nothing uncommitted
+                # in $aside is touched.
+                git -C "$aside" checkout -q --detach >/dev/null 2>&1
+                log "$FAYTH: $BEAD_ID — $BRANCH was checked out at $_held (a previous path); moved aside to $aside, cutting $WORK fresh"
+                bdq note "$BEAD_ID" "Moved aside by aeon.sh: a stale worktree at $_held held this bead's own branch $BRANCH under a previous path. Preserved at $aside — nothing deleted — and a fresh worktree cut at $WORK." >/dev/null 2>&1
+                rm -f "$_wt_tmp"; _wt_tmp="$(mktemp)"
+                if ! git -C "$REPO" worktree add -q "$WORK" "$BRANCH" 2>"$_wt_tmp"; then
+                    _wt_err="$(cat "$_wt_tmp" 2>/dev/null)"
+                    die "could not attach a worktree at $WORK to existing branch $BRANCH after moving aside $_held${_wt_err:+: $_wt_err}"
+                fi
             fi
-            unset _held _wt_err
+            unset _held _held_id aside
         fi
-        rm -f "$_wt_tmp"; unset _wt_tmp
+        rm -f "$_wt_tmp"; unset _wt_tmp _wt_err
     else
         _wt_tmp="$(mktemp)"; _wt_err=""
         if ! git -C "$REPO" worktree add -q -b "$BRANCH" "$WORK" "$BASE_FQREF" 2>"$_wt_tmp"; then

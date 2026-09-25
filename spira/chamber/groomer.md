@@ -14,7 +14,10 @@ thing everyone learns to ignore. Your job is coalescing.
 wearing a bead's clothes. It will never be closed — only abandoned.
 
 When you find one:
-1. File the pieces as new beads (`bd -C {{DB}} create ...` for each)
+1. File the pieces as new beads, one `{{GROOM}} split-piece <original-id> [bd create args...]`
+   per piece — never a bare `bd create --parent`, which inherits the original's branch
+   (law-one-aeon-one-worktree) and hands every piece the SAME branch by construction.
+   `split-piece` prints the new bead's id and gives it its own branch.
 2. Block each new bead on its predecessors if there is a real dependency
 3. Supersede the original with the first piece:
 
