@@ -10,9 +10,9 @@
 # lib.sh-and-stub boilerplate:
 #   - test-elastic-ceiling.sh — all rows, minus criterion 3 (a verbatim duplicate of
 #     criterion 1's own positive control)
-#   - test-lane-ceiling.sh — criteria (a)(b)(c) and their controls, not (d) rotation,
-#     which reimplements sentinel.sh's CHECK 7 ordering itself rather than calling it —
-#     tracked as gap G1, owned by the sentinel-pass consolidation (sp-9ce60.2.7)
+#   - test-lane-ceiling.sh — criteria (a)(b)(c) and their controls, plus (d) rotation,
+#     rewritten to call the real lane_rotate (extracted from sentinel.sh's CHECK 7
+#     ordering into lib.sh) instead of reimplementing it — closes gap G1 (sp-9ce60.5)
 #   - test-drain-expiry.sh — every row, including the world.sh writer/reader seam
 #   - test-fayth-free.sh — every row but its own vacuous inline-arithmetic "positive
 #     control" (G18), replaced below with a row that calls fayth_free directly with
@@ -270,6 +270,73 @@ rm -f "$SUMMONED"
 summon_fayth tasker >/dev/null 2>&1 || true
 is "no lane cap: tasker fills last slot when SPIRA_LANES_MAX_LIVE unset" \
    "SUMMONED:tasker" "$(cat "$SUMMONED" 2>/dev/null)"
+
+# ======================================================================================
+echo
+echo "lane rotation (G1) — sentinel.sh's CHECK 7 ordering, via the real lane_rotate,"
+echo "  not a copy reimplemented in the test (sp-9ce60.5, closing test-lane-ceiling.sh's"
+echo "  gap: (d) rotation used to mirror sentinel.sh's logic by hand rather than call it)"
+# ======================================================================================
+cat > "$T/chamber/groomer.fayth" <<'F'
+FAYTH_NAME=groomer
+FAYTH_LABELS="test,groomer"
+FAYTH_MAX_CONCURRENT=1
+FAYTH_HEARTBEAT_SECONDS=60
+FAYTH_LANE=groomer
+F
+export SPIRA_FAYTHS="tasker laner groomer"
+export SPIRA_MAX_LIVE_AEONS=4
+export SPIRA_LANES_MAX_LIVE=1
+
+# Both lanes always ready. Over two simulated passes the rotation must give each one turn,
+# calling summon_fayth for each lane in the order the sentinel loop would, with rotation
+# applied through the real lane_rotate.
+MOCK_LIVE=0; MOCK_LIVE_LANES=0
+MOCK_READY_laner=1; MOCK_READY_groomer=1; MOCK_READY_tasker=0
+LANE_ORDER="laner groomer"
+_lane_rr="$T/run/lane-round-robin"
+rm -f "$_lane_rr" "$SUMMONED"
+
+# Pass 1: no prior rotation state -> laner goes first, is summoned (cap reached).
+pass1_summoned=""
+for _f in $LANE_ORDER; do
+    MOCK_LIVE_LANES="$([ -n "$pass1_summoned" ] && echo 1 || echo 0)"
+    rm -f "$SUMMONED"
+    summon_fayth "$_f" >/dev/null 2>&1 || true
+    if [ -f "$SUMMONED" ] && grep -qF "SUMMONED:$_f" "$SUMMONED" 2>/dev/null; then
+        pass1_summoned="$_f"
+        printf '%s' "$_f" > "$_lane_rr"
+        break
+    fi
+done
+is "rotation pass 1: a lane was summoned" "laner" "$pass1_summoned"
+
+# Pass 2: rotate through the real lane_rotate so laner goes last; groomer gets the slot.
+_last="$(cat "$_lane_rr" 2>/dev/null)"
+is "lane_rotate: laner (last-summoned) moves to the end" \
+   "groomer laner" "$(lane_rotate "$_last" $LANE_ORDER)"
+ROTATED="$(lane_rotate "$_last" $LANE_ORDER)"
+pass2_summoned=""
+MOCK_LIVE_LANES=0
+for _f in $ROTATED; do
+    rm -f "$SUMMONED"
+    summon_fayth "$_f" >/dev/null 2>&1 || true
+    if [ -f "$SUMMONED" ] && grep -qF "SUMMONED:$_f" "$SUMMONED" 2>/dev/null; then
+        pass2_summoned="$_f"
+        break
+    fi
+done
+is "rotation pass 2: the OTHER lane was summoned (rotation worked)" "groomer" "$pass2_summoned"
+
+# lane_rotate edge cases beyond the rotation exercised above.
+is "lane_rotate: no prior last — order unchanged" \
+   "laner groomer" "$(lane_rotate "" laner groomer)"
+is "lane_rotate: last not among lanes — order unchanged" \
+   "laner groomer" "$(lane_rotate "nosuchlane" laner groomer)"
+is "lane_rotate: single lane — unchanged regardless of last" \
+   "laner" "$(lane_rotate "laner" laner)"
+is "lane_rotate: no lanes at all — empty" \
+   "" "$(lane_rotate "laner")"
 
 unset SPIRA_MAX_LIVE_AEONS SPIRA_LANES_MAX_LIVE 2>/dev/null || true
 
