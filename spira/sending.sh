@@ -372,6 +372,15 @@ sys.exit(0 if d and d[0].get("status") == "closed" else 1)' 2>/dev/null; then
             # even when the bead's own PR was closed unmerged and the branch conflicts with
             # the base. Ask here, not only at n=0 (law-closed-is-not-landed, sp-v4652).
             # Works for OPEN beads with n=0 as well (sp-5lvh5).
+            #
+            # landed() ALONE IS NOT ENOUGH TO DELETE. It answers "a landing record names
+            # this bead", not "this branch's own commits are the ones that landed" — a
+            # correct record for a PRIOR push of this same branch stays true forever, even
+            # after the branch gained commits that record never saw. `git cherry` asks the
+            # question content_landed asks but per-commit: every commit unique to $br must
+            # already be patch-equivalent to something on $LANDREF ('-'), or this reap
+            # deletes real, unlanded work under a landed() that is true about the past
+            # (sp-dgaig).
             if printf '%s\n' "$_bead_json" | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -379,6 +388,15 @@ except Exception: sys.exit(1)
 d = d if isinstance(d, list) else [d]
 sys.exit(0 if d else 1)' 2>/dev/null \
                && landed "$id" "$REPO" 2>/dev/null; then
+                # NO -q: grep -q closes the pipe at its first match, and git cherry then
+                # dies of SIGPIPE — under pipefail that reads as "nothing found" exactly when
+                # something was (law-no-grep-q-under-pipefail). grep without -q drains the
+                # whole pipe every time, so git cherry always exits on its own.
+                _cherry_plus="$(git -C "$REPO" cherry "$LANDREF" "$br" 2>/dev/null | grep '^+')"
+                if [ -n "$_cherry_plus" ]; then
+                    say "KEEP   $id  $n commit(s) not in $LANDREF; landed() names it but git cherry finds unapplied commits — not safe to reap"
+                    continue
+                fi
                 if [ "$DRY" = 1 ]; then
                     say "WOULD  $id  send branch $br (commit on $LANDREF names it)"
                     continue

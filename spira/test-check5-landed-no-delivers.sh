@@ -99,7 +99,7 @@ testdb_seed <<JSONL
 {"id":"sp-land","title":"landed work","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-land","depends_on_id":"sp-goal","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-land.log"
-git -C "$REPO" commit -q --allow-empty -m "fix: sp-land — the work"
+git -C "$REPO" commit -q --allow-empty -m "sp-land: the work"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 is "sp-land starts closed" closed "$(status_of sp-land)"
