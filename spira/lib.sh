@@ -2046,7 +2046,12 @@ bump_reopen()  {
 _counter_events_sql() {
     printf "SELECT COUNT(*) FROM events WHERE issue_id='%s' AND event_type='%s'" "$1" "$2"
 }
-_counter_events_query() {   # _counter_events_query <id> <event_type> -> count
+_counter_events_query() {   # _counter_events_query <id> <event_type> -> count, or '?' if bd sql fails
+    # '?' ON FAILURE, NOT '0'. A query that cannot reach the events table and one that
+    # reached it and found nothing print the same digit if both return '0' — the reader
+    # cannot tell "no recurrences" from "the driver is down" (law-absence-needs-a-positive-
+    # control). recurs_of's caller (incident.sh's Sin decision) folded that silence into
+    # zero recurrences and would stay silent through an outage forever (sp-39yd3).
     local id="$1" etype="$2" q result=""
     q="$(_counter_events_sql "$id" "$etype")"
     if result="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>/dev/null | sed -n '3p' \
@@ -2054,7 +2059,8 @@ _counter_events_query() {   # _counter_events_query <id> <event_type> -> count
        && printf '%d' "$result" >/dev/null 2>&1; then
         printf '%d' "$result"; return 0
     fi
-    printf '0'
+    printf '?'
+    return 1
 }
 reclaims_of() { _counter_events_query "${1:-}" reclaimed; }
 requeues_of() { _counter_events_query "${1:-}" requeued;  }
