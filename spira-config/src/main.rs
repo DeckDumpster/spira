@@ -194,7 +194,15 @@ fn cmd_convert(args: &[String]) -> ExitCode {
         .map(|(p, t)| (p.as_str(), t.as_str()))
         .collect();
 
-    let (doc, warnings) = convert::convert(&conf_text, &home, &repo_map_text, &fayth_refs);
+    let (doc, warnings) = match convert::convert(&conf_text, &home, &repo_map_text, &fayth_refs) {
+        Ok(r) => r,
+        Err(errors) => {
+            for e in &errors {
+                eprintln!("spira-config convert: {e}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
     for w in &warnings.0 {
         eprintln!("spira-config convert: {w}");
     }

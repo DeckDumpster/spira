@@ -17,9 +17,10 @@ use std::collections::BTreeMap;
 use crate::{LandMode, Lane, Lease, OnOff, PersonaSection, RepoSection, SpiraSection, SpiraToml};
 
 /// Everything that came from the inputs but had nowhere to go in the schema: an unknown
-/// `spira.conf` key, an unparseable repo-map row, a fayth field this schema does not carry.
-/// Never fatal — matching `spira_conf_read`'s own "report, don't refuse" — but returned so a
-/// caller can show what a widened schema would still need to capture.
+/// `spira.conf` key, a row with an unknown land mode, a fayth field this schema does not
+/// carry. Never fatal — matching `spira_conf_read`'s own "report, don't refuse" — but
+/// returned so a caller can show what a widened schema would still need to capture. An
+/// unrecognized lane token is not among these: see [`convert`]'s `Err`.
 #[derive(Debug, Default, Clone)]
 pub struct ConvertWarnings(pub Vec<String>);
 
@@ -288,9 +289,41 @@ fn parse_repo_row(line: &str) -> Option<RepoRow> {
     })
 }
 
-/// Parses `repo-map` text into `[repo.<name>]` tables.
-pub fn repo_sections(text: &str, warnings: &mut ConvertWarnings) -> BTreeMap<String, RepoSection> {
+/// Expands one row's raw `lanes` column, refusing an unrecognized mode word or lane label
+/// instead of dropping it — the value's own source is where an agent that hallucinated a
+/// token gets backpressure, not lib.sh's now-narrowed reading of an already-expanded list
+/// (law-fail-closed-at-the-source). Empty means "no restriction": every lane.
+fn parse_lanes(row_name: &str, raw: &str) -> Result<Vec<Lane>, String> {
+    if raw.is_empty() {
+        return Ok(vec![Lane::Plan]);
+    }
+    let expanded = expand_lane_mode(raw);
+    if !expanded.is_empty() {
+        return Ok(expanded);
+    }
+    let mut lanes = Vec::new();
+    for tok in raw.split(',') {
+        let tok = tok.trim();
+        if tok.is_empty() {
+            continue;
+        }
+        match parse_lane_token(tok) {
+            Some(l) => lanes.push(l),
+            None => return Err(format!("repo-map: {row_name}: unknown lane {tok:?}")),
+        }
+    }
+    Ok(lanes)
+}
+
+/// Parses `repo-map` text into `[repo.<name>]` tables. `Err` names every row whose `lanes`
+/// column held an unrecognized mode word or lane label — collected across all rows, not just
+/// the first, so a sweep of a bad map fixes every offender in one pass.
+pub fn repo_sections(
+    text: &str,
+    warnings: &mut ConvertWarnings,
+) -> Result<BTreeMap<String, RepoSection>, Vec<String>> {
     let mut out = BTreeMap::new();
+    let mut errors = Vec::new();
     for line in text.lines() {
         let t = line.trim_start();
         if t.is_empty() || t.starts_with('#') {
@@ -312,30 +345,12 @@ pub fn repo_sections(text: &str, warnings: &mut ConvertWarnings) -> BTreeMap<Str
                 continue;
             }
         };
-        let lanes = if row.lanes_raw.is_empty() {
-            vec![Lane::Plan]
-        } else if let Some(expanded) = {
-            let e = expand_lane_mode(&row.lanes_raw);
-            if e.is_empty() {
-                None
-            } else {
-                Some(e)
+        let lanes = match parse_lanes(&row.name, &row.lanes_raw) {
+            Ok(lanes) => lanes,
+            Err(e) => {
+                errors.push(e);
+                continue;
             }
-        } {
-            expanded
-        } else {
-            let mut lanes = Vec::new();
-            for tok in row.lanes_raw.split(',') {
-                let tok = tok.trim();
-                if tok.is_empty() {
-                    continue;
-                }
-                match parse_lane_token(tok) {
-                    Some(l) => lanes.push(l),
-                    None => warnings.push(format!("repo-map: {}: unknown lane {tok:?}", row.name)),
-                }
-            }
-            lanes
         };
         out.insert(
             row.name.clone(),
@@ -362,7 +377,11 @@ pub fn repo_sections(text: &str, warnings: &mut ConvertWarnings) -> BTreeMap<Str
             },
         );
     }
-    out
+    if errors.is_empty() {
+        Ok(out)
+    } else {
+        Err(errors)
+    }
 }
 
 /// Expands the small subset of shell parameter expansion the fayth files actually use:
@@ -547,17 +566,19 @@ pub fn persona_section(
 }
 
 /// Converts a full set of legacy inputs into one `SpiraToml`, plus every warning collected
-/// along the way (an unknown `spira.conf` key, an unparseable repo-map row, ...).
+/// along the way (an unknown `spira.conf` key, an unparseable repo-map row, ...). `Err` means
+/// at least one repo-map row's `lanes` column named an unrecognized mode word or lane label —
+/// refused rather than silently narrowed, on this path and every other caller of `convert`.
 pub fn convert(
     conf_text: &str,
     home: &str,
     repo_map_text: &str,
     fayth_texts: &[(&str, &str)],
-) -> (SpiraToml, ConvertWarnings) {
+) -> Result<(SpiraToml, ConvertWarnings), Vec<String>> {
     let mut warnings = ConvertWarnings::default();
     let raw = read_conf(conf_text, home);
     let spira = spira_section(&raw, &mut warnings);
-    let repo = repo_sections(repo_map_text, &mut warnings);
+    let repo = repo_sections(repo_map_text, &mut warnings)?;
     let mut persona = BTreeMap::new();
     for (_path, text) in fayth_texts {
         let (name, section) = persona_section(text, &spira, &mut warnings);
@@ -567,12 +588,12 @@ pub fn convert(
         }
         persona.insert(name, section);
     }
-    (
+    Ok((
         SpiraToml {
             spira: Some(spira),
             repo,
             persona,
         },
         warnings,
-    )
+    ))
 }
