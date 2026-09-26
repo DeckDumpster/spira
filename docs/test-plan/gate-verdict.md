@@ -6,11 +6,18 @@
 > run by the same amount, which a wall-clock threshold read as "serialised"; markers read
 > the actual command windows instead. `test-gate-locks.sh` (deleted as sp-fxvgo) is
 > unchanged in shape and adds the genuine STALE positive gap #11 asked for.
+>
+> **2026-09-25: gaps #3 and #12 closed** (sp-9ael3), new files `test-gate-universal.sh`
+> (UC-05: syntax, beads-data, foreign-harness, missing-exclude, missing-skew,
+> skew-init-fault, all driven through a real `gate.sh` run) and `test-gate-metering.sh`
+> (UC-25: one meter row per verdict reached after the lock, none for a preflight refusal,
+> exactly one — not zero, not two — for a gate killed mid-run). UC-21 (soak) remains
+> deferred to nightly/batch, per every prior bead in this chain (§7 "off-lane").
 
 Part of [[test-plan-2026-09-23]], section 5. Area id `gate-verdict`; use-case ids are `UC-gate-verdict-NN`.
 
 Subject scripts: `spira/gate.sh` (761 lines), `gate-touched.sh` (96), `gate-locks.sh` (119), `gate-sweep.sh` (114), `yield.sh` (486), `lib.sh:host_cores`, `governor.sh` (host-core sizing only).
-Primary test files (14, was 15 — `test-gate-missing-cmd.sh` merged into `test-gate-preflight.sh` by sp-ajxg3; `test-gate-host-cores.sh` deleted by sp-ztxbr, its one non-duplicate assertion folded into `test-gate-base-evidence.sh`'s env-contract row, the rest already covered by `test-gate-unit.sh`): `test-gate-base-evidence.sh`, `test-gate-base-selection.sh`, `test-gate-fixture-diag.sh`, `test-gate-locks.sh`, `test-gate-preflight.sh`, `test-gate-sweep.sh`, `test-gate-touched.sh`, `test-gate-tree.sh`, `test-gate-unit.sh`, `test-gate-verdict.sh`, `test-governor-host-cores.sh`, `test-reopen-queue-eject.sh`, `test-soak.sh`, `test-yield.sh`. No file is secondary to this area.
+Primary test files (16, was 15 — `test-gate-missing-cmd.sh` merged into `test-gate-preflight.sh` by sp-ajxg3; `test-gate-host-cores.sh` deleted by sp-ztxbr, its one non-duplicate assertion folded into `test-gate-base-evidence.sh`'s env-contract row, the rest already covered by `test-gate-unit.sh`; `test-gate-universal.sh` and `test-gate-metering.sh` added by sp-9ael3 for UC-05 and UC-25): `test-gate-base-evidence.sh`, `test-gate-base-selection.sh`, `test-gate-fixture-diag.sh`, `test-gate-locks.sh`, `test-gate-metering.sh`, `test-gate-preflight.sh`, `test-gate-sweep.sh`, `test-gate-touched.sh`, `test-gate-tree.sh`, `test-gate-unit.sh`, `test-gate-universal.sh`, `test-gate-verdict.sh`, `test-governor-host-cores.sh`, `test-reopen-queue-eject.sh`, `test-soak.sh`, `test-yield.sh`. No file is secondary to this area.
 Tests in other areas that overlap this one: `test-select.sh` (19 s, covers:-selection), `test-certify-suites-off.sh` (6 s), `test-landing-gate-wait.sh` (17 s, lock-timeout), `test-auron.sh` (60 s, lock-timeout), `test-skew-foreign.sh` (3 s, skew exit 3), `test-landing-base-fail.sh` (34 s, BASE_FAIL consumer), `test-watchtower.sh`, `test-cockpit-probe-fault.sh`.
 
 Fixture facts (signals.tsv and the mapper records): no file in this area touches bd, Dolt, tmux, systemd or podman. The cost comes from git (13 of 15 files build a bare remote plus a clone), from repeated whole `gate.sh` runs (each doing worktree add, a branch trial and, on red, a base trial), and from wall-clock `sleep` in the concurrency suites. Every file uses its own copy of `ok()/bad()/want()`. None of them produces machine-readable output.
@@ -101,7 +108,7 @@ ci_secs are from main-push run 35947142904. "Level now" is the mapper's classifi
 | 02 no-evidence downgrade | **none** | — | GAP (§6) |
 | 03 repo-map unreadable/unknown | **none** at gate level | — | GAP |
 | 04 no-diff / no-base | `test-gate-preflight.sh::unresolvable branch`, `::unresolvable base`, `::valid branch passes` | T2, 3 s | KEEP, as the host file for the merged preflight suite |
-| 05 universal layer | `test-skew-foreign.sh::init failure exits 3` (skew side only, instance-lifecycle area) | — | GAP at gate level |
+| 05 universal layer | `test-gate-universal.sh` (6 cases, all through a real `gate.sh` run); `test-skew-foreign.sh::init failure exits 3` (skew side only, instance-lifecycle area) | T2 | DONE (sp-9ael3) |
 | 06 syntax-only PASS | `test-gate-preflight.sh::an empty gate column exits PASS` | T2, folded in | DONE (sp-ztxbr) |
 | 07 cmd-missing-file | `test-gate-preflight.sh::CASE 3/4` (was `test-gate-missing-cmd.sh::SEEN RED*`/`::SEEN GREEN*`) | T1, folded in | DONE (sp-ajxg3): merged into `test-gate-preflight.sh`, on the shared `gate-fixture.sh` builder; the SPIRA_HOME vs SPIRA_CONF env drift is resolved by always setting `SPIRA_CONF` to a nonexistent path |
 | 08 covers: selection | `test-gate-touched.sh::A1-A5`, `::B1-B2`, `::C1-C3`; `test-reopen-queue-eject.sh::positive control`; `test-select.sh` (test-infra area, 19 s) | T2, 1 s + 2 s | DEMOTE-TO-T1 for the `SPIRA_GATE_FILES` rows (no git). Keep one diff-derived row and the base-tree row at T2. Collapse the 5 `sel()` calls into 1. |
@@ -122,7 +129,7 @@ ci_secs are from main-push run 35947142904. "Level now" is the mapper's classifi
 | 22 yield recording | `test-yield.sh::the gate blames the branch`, `::recorded UNKNOWN`, `::record names branch/bead/suite`, `::does not double the red`, `::byproduct classification`, `::BASE_FAIL lands as GATE FAULT` | T2, part of 34 s | KEEP as a T2 wiring file with 2 gate runs (red then amended-pass, and base-red). Replace the other ~3 gate runs with planted records. |
 | 23 yield reporting | `test-yield.sh::unwritten record … ?`, `::window configured`, `::stated verdict overrides`, `::classify refusals`, `::window excludes`, `::wide window finds`, `::cost split`, `::cached passes left out`, `::missing gate log`, `::absent`, `::healthy meter`, `::recorder silent`, `::real record not withheld` | T2, most of 34 s | DEMOTE-TO-T1 (`yield.sh report/list/classify` over planted `record/` and `gate.log`; no git) |
 | 24 yield surfaced | `test-yield.sh::watchtower --show carries yield`, `::missing record reaches Ops as ?`; `::SP_YIELD_* written by collector and read by pane`, `::every yield field defaults to ?` | T2 + source-grep | MOVE the watchtower rows to `test-watchtower.sh`. SOURCE-GREP: replace the two grep rows with a behaviour test in cockpit-observability (run the collector against a planted yield record and render the pane). |
-| 25 metering | `test-gate-tree.sh::serialisation wait metered`; `test-gate-verdict.sh::same tree not judged twice` (gate log `rc=0 cached`) | T2 | KEEP. The double-meter and no-meter-on-preflight rows are a GAP. |
+| 25 metering | `test-gate-metering.sh` (3 cases: one row per pass, none for a preflight refusal, exactly one for a mid-run kill); `test-gate-tree.sh::serialisation wait metered`; `test-gate-verdict.sh::same tree not judged twice` (gate log `rc=0 cached`) | T2 | DONE (sp-9ael3) |
 
 ---
 
@@ -176,7 +183,7 @@ Every `verdict` reason in gate.sh was grepped across all `test-*.sh`. Nothing as
 
 1. **`no-repo-map-file`** (gate.sh L94–103). An unreadable `SPIRA_REPO_MAP` is NO_VERDICT. The comment records that this used to PASS every branch. No test covers it, so the most dangerous fail-open regression in the file is unguarded.
 2. **`no-evidence:` downgrade** (L48–52, sp-io5j backstop). FAIL with an empty message becomes NO_VERDICT. Untested. The related rule "a gate command that ran and printed nothing" (comment L43–44) is also untested.
-3. **Universal layer: `syntax`, `beads-data`, `missing-exclude`, `missing-skew`, `foreign-harness`, `skew-init-fault`** (L180–260). None is exercised through gate.sh. `test-skew-foreign.sh` proves skew exits 3 on a conf failure, but nothing proves gate.sh maps 3 to NO_VERDICT rather than FAIL (class `sp-gate-conf-fail-as-foreign-harness`). `beads-data` is law-beads-is-never-public, and its enforcement point has no test.
+3. ~~**Universal layer: `syntax`, `beads-data`, `missing-exclude`, `missing-skew`, `foreign-harness`, `skew-init-fault`** (L180–260).~~ CLOSED (sp-9ael3): `test-gate-universal.sh` drives all six through a real `gate.sh` run, including the `sp-gate-conf-fail-as-foreign-harness` class (skew exiting 3 maps to NO_VERDICT, never FAIL).
 4. **`syntax-only` PASS** for an empty gate column (L266–268). No test.
 5. **`harness-fault`**: a branch trial exiting 75 → NO_VERDICT (L681). `test-gate-workflow.sh` and `test-verdict.sh` test the consumers, but the gate side is untested.
 6. **`base-untestable`** (L752). It is reached by base exit 75, base killed at 124, or base checkout failure. `test-gate-base-evidence.sh::base NV` asserts only `NO_VERDICT`, not the reason slug, and the 124 and checkout-failure paths are never driven.
@@ -185,7 +192,7 @@ Every `verdict` reason in gate.sh was grepped across all `test-*.sh`. Nothing as
 9. **Non-numeric `SPIRA_VERDICT_TTL`** is treated as 0 (L398). Untested.
 10. **`eval` of cached `when/by/at` values** (L403). The entry file is parsed with `sed` into an `eval`, and a `when=` containing `"$(…)"` would execute. There is no test and no hardening. This is a correctness and safety gap for a T1 `cache_fresh` row.
 11. ~~**gate-locks STALE positive**.~~ CLOSED (sp-fm2wn): `test-gate-locks.sh` case 5 now shows STALE is reported for a dead PID and dead PGID holding a lock a different, unrelated process still holds.
-12. **Double metering / trap path** (L68–71). No test kills a gate mid-run (`set -e` death or signal) and asserts exactly one `gate.log` row. No test asserts that preflight refusals write no meter row.
+12. ~~**Double metering / trap path** (L68–71).~~ CLOSED (sp-9ael3): `test-gate-metering.sh` kills a gate mid-run by signal (sent to its whole process group via `setsid`) and asserts exactly one `gate.log` row, and asserts a preflight refusal writes none.
 13. **Output bound**. Base output is `tail -c 8000` and branch output `tail -c 4000` (L746–748). `test-gate-fixture-diag.sh` proves there is no `tail -20`, but a diagnostic more than 8 KB before the end is still cut. Nothing states whether that is intended.
 14. **Yield bookkeeping cannot change the verdict** (L82–86, L126–138). No test makes `yield.sh` fail or hang and asserts that the exit code is unchanged. A *hang* would change it, because `yield_note` runs synchronously without a timeout.
 15. **`test-reopen-queue-eject.sh` sp-px6ng section is vacuous**. The regression it names (the `.ejected` sidecar surviving a RED overwrite, read by the gate) is unguarded until a writer→reader behaviour test exists.
