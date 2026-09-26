@@ -127,7 +127,7 @@ want "positive-control: names the missing binary" \
 
 _rel_full="$SCRATCH/rel-full/bin"
 mkdir -p "$_rel_full"
-for _b in loom panel broker spira-supervise; do
+for _b in loom panel broker spira-supervise landing-pass; do
     printf '#!/bin/sh\n' > "$_rel_full/$_b" && chmod +x "$_rel_full/$_b"
 done
 is "pair: nothing missing -> empty" "" "$(_lib_check_bins "$(dirname "$_rel_full")")"
