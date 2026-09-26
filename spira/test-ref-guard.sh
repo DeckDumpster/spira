@@ -215,4 +215,20 @@ git -C "$TR/wt" add ordinary.txt >/dev/null 2>&1
 out="$(commit_in_wt 'sp-test: ordinary commit')"; rc=$?
 is "case 15: an ordinary commit is not refused" "0" "$rc"
 
+echo
+echo "CASE 16: THE FIX. git pack-refs --all --prune (what git gc runs) completes on a loose bead branch, and the branch still resolves to the same commit afterward — packing is a representation change, not a deletion:"
+git branch spira/sp-packme
+before="$(git rev-parse spira/sp-packme)"
+git pack-refs --all --prune >/dev/null 2>&1
+rc=$?
+is "case 16: pack-refs --all --prune exits 0" "0" "$rc"
+is "case 16: the branch still resolves after packing" "yes" "$(alive spira/sp-packme)"
+is "case 16: the branch still points at the same commit" "$before" "$(git rev-parse spira/sp-packme 2>/dev/null)"
+
+echo
+echo "CASE 17: NO OVERREACH IN THE OTHER DIRECTION. A now-packed bead branch is still refused an unsanctioned plain delete — the fix must not widen the hole a git-branch--D sweep walks through:"
+echo "SEEN TO FAIL before this fix: case 16 above (pack-refs --all --prune exits 1 and aborts)."
+git branch -D spira/sp-packme >/dev/null 2>&1
+is "case 17: unsanctioned delete of a now-packed bead branch is still refused" "yes" "$(alive spira/sp-packme)"
+
 tl_summary
