@@ -1,7 +1,7 @@
 ---
 type: note
 created: 2026-09-05
-updated: 2026-09-24
+updated: 2026-09-26
 tags: [spira, ops, sop, runbook, generated]
 aliases: [SOPs, Standard operating procedures, The shelf]
 ---
@@ -16,7 +16,7 @@ spira/sop.sh write <slug> -   # text on stdin
 
 Statutes are how to behave; SOPs are how to fix. They share one mechanism, split by prefix — `law-` and `sop-` — so the [[spira]] Ops persona reads its runbooks exactly the way every agent already reads [[common-law]]. Ops is summoned by an incident bead filed from a failed systemd unit, matches the payload against the `MATCH:` lines below, and executes the first one that fires.
 
-**40 SOP(s)** on the shelf as of 2026-09-24.
+**50 SOP(s)** on the shelf as of 2026-09-26.
 
 ## The closing rule
 
@@ -76,21 +76,63 @@ Statutes are how to behave; SOPs are how to fix. They share one mechanism, split
 
 `sop-closed-branch-cleanup-missed`
 
-**Symptom** — Bead is CLOSED but its local branch ref and/or worktree persist, causing repeated "unsent branch" alerts (sp-kogm recurrence). Commit is on origin/main (landed) but cleanup after merge did not run.
+**Symptom** — Bead is CLOSED but its local branch ref and/or worktree persist, causing repeated "unsent branch" alerts (sp-kogm recurrence, sp-pvafz recurrence). Commit is on origin/main (landed) but cleanup after merge did not run. May also indicate incomplete reap rules in sending.sh.
 
 **Check**
 
 ```
-bd show $ID | grep "CLOSED"; git merge-base --is-ancestor $COMMIT origin/main && echo "on main"; git rev-parse refs/heads/spira/$ID; ls $SPIRA_RUN/worktree/$ID
+bd show $ID | grep "CLOSED"; git merge-base --is-ancestor $COMMIT origin/main && echo "on main"; git rev-parse refs/heads/spira/$ID; ls $SPIRA_RUN/worktree/$ID; sending.sh --dry-run to verify reap rules match
 ```
 
-**Fix** — Delete local branch ref and worktree using git branch -D spira/$ID && git worktree remove -f $SPIRA_RUN/worktree/$ID. Add cleanup to queue.sh after merge success to prevent recurrence.
+**Fix** — Delete local branch ref and worktree using git branch -D spira/$ID && git worktree remove -f $SPIRA_RUN/worktree/$ID. For recurring incidents (held=no): run sending.sh --dry-run to identify problematic beads not matching reap rules (non-code-delivers, batch-landed, superseded). File sp-ob3ts-style bead for developer review of sending.sh reap logic. Add cleanup to queue.sh after merge success to prevent recurrence.
 
-**Escalate** — none — Ops cleanup task; systemic fix is queue/batch responsibility
+**Escalate** — Ops cleanup for symptom. Systemic fix (sending.sh reap rules) is developer responsibility.
 
-**Reference** — sp-0yqei (incident), sp-xruxc (systemic cleanup bead)
+**Reference** — sp-0yqei (incident), sp-xruxc (systemic cleanup bead), sp-pvafz (recurrence+root cause filing), sp-ob3ts (developer fix)
 
-**Matches** `CLOSED.*branch|branch.*CLOSED.*sp-.*not.*cleaned|sp-kogm.*CLOSED.*unsent`
+**Matches** `CLOSED.*branch|branch.*CLOSED.*sp-.*not.*cleaned|sp-kogm.*CLOSED.*unsent|SP_CLOSED_STRANDED_OLDEST`
+
+### Closed not landed false alarm
+
+`sop-closed-not-landed-false-alarm`
+
+**Symptom** — A watcher-filed incident reports that a closed bead has no LANDED record in the landing state database.
+
+**Check**
+
+```
+Verify that the bead's commit is actually on the base branch.
+```
+bead_id=sp-vcobo  # substitute the bead from the incident title
+commit=$(git log --all --oneline | grep "$bead_id" | head -1 | awk '{print $1}')
+git merge-base --is-ancestor "$commit" origin/main
+```
+If git merge-base returns 0, the work IS actually landed. The incident is a false alarm.
+```
+
+**Fix**
+
+```
+If the commit is on origin/main, the work is genuinely landed but may lack a LANDED record if:
+1. The landing pass didn't recognize the merge commit (wrong merge subject), or
+2. The landstate file was pruned (pruning happens after landing)
+
+Create the missing LANDED record retroactively:
+```
+export LANDSTATE="$SPIRA_RUN/landstate"
+source "$SPIRA_HOME/lib.sh"
+land_mark <bead_id> LANDED <commit_hash> "Retroactively marked: commit is on origin/main"
+```
+
+bead_close_on_land (lib.sh) calls land_mark LANDED after successfully closing the bead (sp-svkio fix).
+Root causes: merge commit had wrong subject (sp-vcobo case), or missing land_mark call, or pruned landstate files.
+```
+
+**Escalate** — To harden CHECK 5 against missed landstate records: always create the LANDED record when closing, regardless of merge subject. Also consider: if CHECK 5 already validates the commit is in the graph, creating the record is redundant — modify CHECK 5 to trust the graph walk instead of requiring a file.
+
+**Reference** — wiki/notes/standard-operating-procedures.md
+
+**Matches** `CLOSED NOT LANDED.*has no LANDED record|CHECK 5.*closed.*not.*landed`
 
 ### Conf schema grep q pipefail
 
@@ -148,7 +190,7 @@ bd show $bead_id | grep -i "delivers:action"
 
 **Symptom** — Incident filed claiming host_cores() function is missing from lib.sh or gate.sh
 
-**Check** — grep -q "^host_cores() {" /path/to/lib.sh && /path/to/test-gate-unit.sh
+**Check** — grep -q "^host_cores() {" /path/to/lib.sh && /path/to/test-governor-host-cores.sh
 
 **Fix** — No fix needed — the function was already implemented in sp-79ww9 (commit 818c218, 2026-09-17). Verify it exists and the test passes. This is a duplicate incident.
 
@@ -240,6 +282,67 @@ bd -C $SPIRA_DB list | grep sp-yuiuc; verify the incident has no_cause in the de
 
 **Matches** `left background jobs after exit|gate harness.*orphan|orphan.*gate.*false positive`
 
+### Gh intake no issues
+
+`sop-gh-intake-no-issues`
+
+**Symptom** — gh-intake.sh exits with code 1 when repository has no open issues to ingest
+
+**Check** — curl -s "https://api.github.com/repos/DeckDumpster/spira/issues?state=open" | python3 -c "import sys,json; d=json.load(sys.stdin); prs=[i for i in d if 'pull_request' in i]; issues=[i for i in d if 'pull_request' not in i]; print(f'PRs: {len(prs)}, Issues: {len(issues)}')"
+
+**Fix** — Change line 160 of gh-intake.sh from die to exit 0. This allows the service to complete successfully when there are no issues (including cases where all open items are pull requests, which are filtered by line 144). The store verification at line 99 still catches misconfiguration.
+
+**Escalate** — N/A — this is a policy decision (approved as Option A: exit 0 when no issues)
+
+**Reference** — wiki/notes/gh-intake-no-issues.md
+
+**Matches** `fetched 0 open issue.*gh-intake`
+
+### Orphaned branches blocking sending
+
+`sop-orphaned-branches-blocking-sending`
+
+**Symptom** — Branches exist in git with multiple commits but no corresponding bead in database. sending.sh reap cannot clean these branches because it requires a bead reference, so they persist indefinitely and block SP_UNSENT_OLDEST_H from clearing below alert threshold (~48h).
+
+**Check**
+
+```
+Verify orphaned branches exist with no bead entries:
+  cd $SPIRA_WORK
+  git branch | grep 'round-' | wc -l  # Should show branches
+  # Confirm with: bd -C $SPIRA_DB query branch:<name> returns empty
+```
+
+**Fix**
+
+```
+This requires operator decision between two options:
+
+  OPTION A (DESTRUCTIVE): Delete orphaned branches immediately
+    Effect: Clears refs, frees SP_UNSENT_OLDEST_H below 48h on next watcher tick
+    Risk: Irreversible without git reflog; unintended deletion of active branches
+    Command: for b in round-{12..34} allcert; do git branch -D spira/$b; done
+
+  OPTION B (SAFE): Enhance sending.sh to handle branches without beads
+    Effect: Future-proofs against orphaned branches recurring
+    Risk: Requires development effort; may delete branches unintentionally
+    Benefit: Prevents similar issues systematically
+```
+
+**Escalate**
+
+```
+Operator chooses between immediate cleanup (A) or systematic enhancement (B). Include context:
+  - Which branches are orphaned (have commits but no beads)
+  - Duration of orphan status
+  - Active development on any affected branches
+  - Risk/benefit of each path
+```
+
+**Reference** — sp-cc7gs
+
+**Matches** `SP_UNSENT_OLDEST_H remains high.*orphaned.*branch|sending\.sh.*blocked|round-[0-9]+.*no.*bead`
+
 ### Partition label no match
 
 `sop-partition-label-no-match`
@@ -260,9 +363,9 @@ bd -C $SPIRA_DB list | grep sp-yuiuc; verify the incident has no_cause in the de
 
 `sop-presession-death-test-regression`
 
-**Symptom** — test-aeon-teardown-e2e.sh's pre-session-death row fails with the FATAL line not present, attempt not charged, or error not propagated when run against sp-dd785 or similar pre-session death fixes.
+**Symptom** — Test-aeon-presession-death.sh fails with FATAL line not present, attempt not charged, or error not propagated when run against sp-dd785 or similar pre-session death fixes.
 
-**Check** — Run test-aeon-teardown-e2e.sh via testenv-batch.sh; grep output for "not ok.*error message is logged" and "status=pre-session" in the ledger
+**Check** — Run test-aeon-presession-death.sh directly; grep output for "FAIL.*FATAL" and "status=pre-session" in ledger
 
 **Fix**
 
@@ -277,7 +380,7 @@ The fix is incomplete in the target branch. Examine aeon.sh error handling path 
 
 **Reference** — wiki/notes/standard-operating-procedures.md
 
-**Matches** `test-aeon-teardown-e2e.sh.*not ok.*error message is logged`
+**Matches** `test-aeon-presession-death.sh.*FAIL.*FATAL`
 
 ### Queue eject
 
@@ -294,6 +397,22 @@ The fix is incomplete in the target branch. Examine aeon.sh error handling path 
 **Reference** — sp-sggv8
 
 **Matches** `member of open batch fails CI or gate; must be removed without closing the batch`
+
+### Queue throttle depth filtering
+
+`sop-queue-throttle-depth-filtering`
+
+**Symptom** — Queue throttle remains engaged because depth calculation never filters stale CERTIFIED records. SPIRA_TC_REPO env var is unset in production, causing the filtering logic (branch existence + merge-base check) to be skipped, so all CERTIFIED records are counted as depth regardless of staleness.
+
+**Check** — grep -A 20 "Filter stale records" spira/watchtower.sh | grep -E "(rev-parse|merge-base)" | head -2 | wc -l
+
+**Fix** — Move filtering logic outside the `if [ -n "$_tc_repo" ]` conditional. When _tc_repo is unset (production case), use auto-detection (bare `git` in current directory) instead of requiring explicit repo path. Filtering now applies unconditionally: for each CERTIFIED record, verify the branch exists and tip is not yet merged to the land ref, dropping stale records from depth count.
+
+**Escalate** — N/A
+
+**Reference** — sp-ihvh8, sp-5kwhr (prior attempt), incident:Queue-throttle--depth-calculation-never-filters-stale-CERTIF
+
+**Matches** `Queue throttle.*depth calculation.*SPIRA_TC_REPO|depth.*stale CERTIFIED.*throttle|watchtower.*_tc_repo.*empty`
 
 ### Queue throttle engaged
 
@@ -326,6 +445,22 @@ The fix is incomplete in the target branch. Examine aeon.sh error handling path 
 **Reference** — wiki/notes/queue-management.md
 
 **Matches** `^Queue throttle lifted:.*CERTIFIED depth now (\d+).*Builder admission is no longer throttled`
+
+### Queue throttle lifted recurrence
+
+`sop-queue-throttle-lifted-recurrence`
+
+**Symptom** — Watchtower repeatedly files "Queue throttle lifted" incidents (multiple times over days) even though the condition is normal queue recovery
+
+**Check** — Confirm queue depth is below release threshold (normal state), then check watchtower logs for repeated throttle-check runs with same CERTIFIED depth < release_at condition
+
+**Fix** — watchtower.sh --throttle-check lines 198-216 fire the incident on every timer interval when depth < release_at, not just on transition. Guard the incident filing (lines 202-215) to fire only once when the stamp is first removed. Option: check if stamp existed before removal, or remove the incident entirely since it's normal recovery with no action.
+
+**Escalate** — Feature request for watcher predicate; requires code change to watchtower.sh
+
+**Reference** — wiki/notes/queue-management.md
+
+**Matches** `^Queue throttle lifted:.*CERTIFIED depth now.*filed (\d+) times`
 
 ### Server testdb suite budget
 
@@ -548,6 +683,22 @@ Two issues:
 
 **Matches** `test suite.*pass.*individual.*fail.*batch|batch.*environment.*isolation.*test`
 
+### Testenv basic target transient retry
+
+`sop-testenv-basic-target-transient-retry`
+
+**Symptom** — testenv-batch.sh fails to start container with "systemd did not reach basic.target" timeout. Occurs sporadically under high concurrent container load (7+ containers); same containers boot successfully on retry.
+
+**Check** — podman run --systemd=true ubuntu:24.04 /lib/systemd/systemd; sleep 2; podman exec <container> systemctl is-active basic.target
+
+**Fix** — Wrap systemd basic.target check in retry loop with 2s backoff. If transient (retries succeed), distinction from permanent misconfiguration is established. If both attempts fail, issue is real. testenv.sh lines 333-356: add _wait_for retry on first timeout before giving up.
+
+**Escalate** — If retries still fail after code fix, escalate to infrastructure for resource limit diagnosis (pids, inotify, cgroup, systemd-in-podman limits under concurrent container load).
+
+**Reference** — wiki/notes/standard-operating-procedures.md
+
+**Matches** `testenv.*system systemd did not reach basic.target`
+
 ### Timer repair focus neutral
 
 `sop-timer-repair-focus-neutral`
@@ -637,6 +788,22 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 
 **Matches** `unclaimable.*no matching partition|no persona's partition labels`
 
+### Verdict cache collision
+
+`sop-verdict-cache-collision`
+
+**Symptom** — Bead closes successfully but cached verdict file persists on disk. When a different bead later produces the same tree hash (via rebase without code changes, or collision), it reads the stale cached verdict and incorrectly rejects a valid pass or accepts a failed one.
+
+**Check** — 1. Verify gate_key() in gate.sh line 365-378 omits bead ID and branch name. 2. Verify landing.sh line 383-386 only cleans verdicts by mtime TTL, never on bead close. 3. Count verdict cache files in $SPIRA_RUN/verdicts; old entries persist despite beads closing.
+
+**Fix** — Add bead ID to gate_key() cache key (eliminates cross-bead collision) OR add explicit cache invalidation in bead-close logic to rm $VERDICT_DIR/$GATE_KEY when bead closes. First option preferred: makes each bead have isolated cache entry.
+
+**Escalate** — Developer to implement cache key redesign (add $SPIRA_BEAD_ID to gate_key()) or close-time invalidation logic.
+
+**Reference** — wiki/notes/gate.sh#verdict-cache-key-design
+
+**Matches** `(gate\.sh verdict cache|verdict cache|gate_key|GATE_KEY|tree hash collision)`
+
 ### Verdict cache stale on closed bead
 
 `sop-verdict-cache-stale-on-closed-bead`
@@ -669,6 +836,22 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 
 **Matches** `red queue batch verdict produces no operator notification; together-only break (ejected=0, requeued=N) goes unreported`
 
+### Verdict repeat flaky
+
+`sop-verdict-repeat-flaky`
+
+**Symptom** — Suite failed initially, repeat attempt refused because SPIRA_VERDICT_REPEAT_CONSIDERED env var not set
+
+**Check** — SPIRA_VERDICT_REPEAT_CONSIDERED="diagnostic reason" bash spira/testenv-batch.sh --suites <suite> spira/<branch> && grep -E "all suites passed|PASS" <output>
+
+**Fix** — Set SPIRA_VERDICT_REPEAT_CONSIDERED environment variable when requesting verdict repeat to determine if failure is repeatable or transient
+
+**Escalate** — Not applicable — this is procedural
+
+**Reference** — sop-verdict-repeat-refused
+
+**Matches** `SPIRA_VERDICT_REPEAT_CONSIDERED not set.*test.*failed.*Repeat attempt was refused`
+
 ### Verdict repeat flaky tests
 
 `sop-verdict-repeat-flaky-tests`
@@ -689,48 +872,17 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 
 `sop-verdict-repeat-refused`
 
-**Symptom**
+**Symptom** — A re-run of the same test suite on the same tree was refused because SPIRA_VERDICT_REPEAT_CONSIDERED was not set or too short (min 10 chars). Multiple recurrences indicate environmental rather than code defects.
 
-```
-Repeat attempt refused. Gate tried to rerun a failed suite, got identical failure,
-but SPIRA_VERDICT_REPEAT_CONSIDERED was not set to explain the intentional retry.
-```
+**Check** — bash spira/testenv-batch.sh --suites <suite> <branch> and check if it passes. If it passes, the original red was environmental. NOTE: Aeons cannot run this CHECK due to lack of SSH credentials for remote branch access — escalate to operator for re-run or diagnose from available evidence.
 
-**Check**
+**Fix** — Re-run the suite with SPIRA_VERDICT_REPEAT_CONSIDERED="environmental: <reason>" if you need to test the same tree again, or commit a fix if there's a code defect. For recurrences with documented environmental causes (e.g., runner OOM), escalate to operator for re-run once condition clears.
 
-```
-Review the two failure instances. If they're identical (same error line, same
-assertions failed), this is a repeatable defect, not a transient environmental issue.
-Run: "bd show <branch-name> | grep -A5 'Red suites'" to see what failed.
-```
+**Escalate** — If the suite continues to fail after re-run with justification, file a new bead documenting the defect. For aeon-claimed beads with remote branch access needed, escalate to operator for re-run coordination.
 
-**Fix**
+**Reference** — wiki/notes/standard-operating-procedures.md
 
-```
-1. If failure is REPEATABLE across both runs:
-   - This is a code defect, not environmental variance
-   - File a child bead with diagnosis and root cause analysis
-   - Do NOT use SPIRA_VERDICT_REPEAT_CONSIDERED (that's for environmental transients)
-   - Close incident with dependency on the child bead
-   
-2. If failure is TRANSIENT (different error, or passes on re-run):
-   - This is environmental/flaky behavior
-   - Re-run with: SPIRA_VERDICT_REPEAT_CONSIDERED="<reason>" bash spira/testenv-batch.sh --suites <test> <branch>
-   - Record the reason (e.g., "AWS quota limit transient", "network timeout")
-```
-
-**Escalate**
-
-```
-If unable to determine whether failure is repeatable or transient, file child
-bead with what you know and escalate to branch owner for investigation.
-```
-
-**Reference** — law-a-retry-must-change-an-input, law-gates-never-disarm-a-check
-
-**Matches** `repeat-refused.*test.*`
-
-**Applied** — sp-26f5j (2026-09-25): verdict cache refusal on sp-4rzlw; branch held legitimate code fixes for test-thrash-streak.sh and aeon.sh. SOP guided re-run with SPIRA_VERDICT_REPEAT_CONSIDERED to distinguish repeatable defect from transient environmental issue. Procedural closure via SOP ledger.
+**Matches** `repeat.refused|repeat-refused`
 
 ### Verdict requeue on repro fail
 
@@ -747,5 +899,43 @@ bead with what you know and escalate to branch owner for investigation.
 **Reference** — sp-2f51e, sp-uu8oy
 
 **Matches** `verdict requeues all batch members instead of ejecting the broken one`
+
+### Watchtower unit bullet extraction
+
+`sop-watchtower-unit-bullet-extraction`
+
+**Symptom** — watchtower filed incidents with unit name "●" (UTF-8 bullet character) instead of the actual systemd unit name. Caused invalid journalctl commands in incident descriptions and SPIRA_INCIDENT_REF pointing to "incident:failed-unit-●".
+
+**Check** — journalctl --user -u spira-watch-answers-prod.service -n 5 >/dev/null 2>&1 && echo "Real unit is queryable"
+
+**Fix** — watchtower.sh lines 528-535: replace unit name extraction `${_fu_line%% *}` with sed-based extraction that skips non-alphanumeric leading characters (including systemctl's bullet). The fix: `sed -E 's/^[^[:alnum:]]+ //; s/ .*//'`
+
+**Escalate** — none
+
+**Reference** — sp-ezeiy: watchtower was extracting systemctl's formatting bullet as a unit name
+
+**Matches** `Invalid unit name "●" escaped|FAILED UNIT: ● failing`
+
+### World drain stall
+
+`sop-world-drain-stall`
+
+**Symptom** — World is in DRAINING state for extended period, blocking new aeon summons while in-flight aeons complete
+
+**Check** — SPIRA_AEON_OVERRIDE=1 world.sh drain --timeout 0
+
+**Fix**
+
+```
+If 16+ aeons have been live for >15 minutes during drain, summons are likely unnecessarily blocked.
+  Resume with: SPIRA_AEON_OVERRIDE=1 world.sh resume
+  Resuming does not kill in-flight aeons—they complete normally while new summons proceed.
+```
+
+**Escalate** — None (Ops owns this)
+
+**Reference** — wiki/notes/standard-operating-procedures.md
+
+**Matches** `DRAINING.*summons gated|world.sh.*drain.*NOT DRAINED`
 
 Related: [[spira]], [[common-law]], [[codified-judgement]]
