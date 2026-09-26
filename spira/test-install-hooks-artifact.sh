@@ -19,7 +19,7 @@
 # .hooksPath not set" — this is the install-side sibling of GitHub #315 /
 # sp-bwaxb, which removed the same unconditional assumption from doctor.sh.
 #
-# covers: install.sh spira/exclude.sh
+# covers: install.sh spira/exclude.sh spira/ctrl.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REAL_REPO="$(cd "$HERE/.." && pwd -P)"
@@ -61,10 +61,16 @@ ln -s "$HERE/watchd.sh"       "$SPIRA_DIR/watchd.sh"
 # (which the built Rust/Python binaries this fixture never builds would otherwise fail)
 # is skipped for all of them. Phase 4's own correctness is covered elsewhere (e.g.
 # test-units-lint.sh); this fixture only needs it to succeed so execution reaches phase 5.
+# install.sh now sources this under CTRL_LIB=1 (sp-rnps9) instead of running it as a CLI
+# per unit, so the stub must define the two functions that contract requires.
 cat > "$SPIRA_DIR/ctrl.sh" <<'EOF'
 #!/usr/bin/env bash
-[ "${1:-}" = check ] && exit 0
-exit 1
+ctrl_load_suspended() { local -n _a="$1"; _a=(); }
+ctrl_is_suspended() { printf 'stub\n'; return 0; }
+if [ "${CTRL_LIB:-0}" != "1" ]; then
+    [ "${1:-}" = check ] && exit 0
+    exit 1
+fi
 EOF
 chmod +x "$SPIRA_DIR/ctrl.sh"
 printf '# empty\n' > "$SPIRA_DIR/watchers"
