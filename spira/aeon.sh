@@ -773,17 +773,22 @@ print(d[0].get("status","") if d else "")' 2>/dev/null)"
         elif ! bdjson show "$BEAD_ID" 2>/dev/null | python3 -c '
 import sys, json, os
 ask = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
+bead_id = sys.argv[1] if len(sys.argv) > 1 else ""
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(0)
 d = d if isinstance(d, list) else [d]
 if not d: sys.exit(0)
 deps = d[0].get("dependencies") or []
+close_sfx = " for bead " + bead_id if bead_id else None
 open_ask = [x for x in deps
             if x.get("status") != "closed"
             and ask in (x.get("labels") or [])
-            and (x.get("dependency_type") or x.get("type")) == "blocks"]
+            and (x.get("dependency_type") or x.get("type")) == "blocks"
+            and not (close_sfx
+                     and "Close GitHub issue " in (x.get("title") or "")
+                     and close_sfx in (x.get("title") or ""))]
 if open_ask: sys.exit(1)
-sys.exit(0)' 2>/dev/null; then
+sys.exit(0)' "$BEAD_ID" 2>/dev/null; then
             _d_decision=yes
         elif [ "${SESSION_RC:-0}" = 124 ] && [ "${committed:-}" != yes ]; then
             : # timeout — aeon_disposition reads SESSION_RC/committed directly, nothing to gather
