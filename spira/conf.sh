@@ -641,10 +641,11 @@ spira_conf_defaults() {
     # next pass. Unbounded, a wrong reading of the evidence filed 138 in 30 minutes and pushed
     # the pass past its TimeoutStartSec, which stopped dispatch.
     : "${SPIRA_CHECK5_MAX_FILE:=5}"
-    # AT MOST THIS MANY "CLOSED NOT LANDED" INCIDENTS RESOLVED PER SENTINEL PASS (CHECK 5),
-    # same reason as SPIRA_CHECK5_MAX_FILE just above: a bulk clear of residue from one flood
-    # must not cost more than the filing side ever could, or it can blow TimeoutStartSec too.
-    : "${SPIRA_CHECK5_MAX_RESOLVE:=5}"
+    # AT MOST THIS MANY "CLOSED NOT LANDED" INCIDENTS RESOLVED PER SENTINEL PASS (CHECK 5).
+    # A resolve costs one `bd close`, ~1s, now that the lookup behind it is one map read per
+    # pass rather than one query per bead — so this cap can sit far above SPIRA_CHECK5_MAX_FILE
+    # without approaching TimeoutStartSec; 5 let 33 proven-landed incidents pile up unresolved.
+    : "${SPIRA_CHECK5_MAX_RESOLVE:=50}"
     : "${SPIRA_REMEDY_WINDOW:=30}"
     # MINUTES A PR-MODE BRANCH MAY SIT IN REBASED/pr-open BEFORE THE STALL DETECTOR FIRES.
     # Default 60 — long enough to let CI complete without false positives, short enough to catch
