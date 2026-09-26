@@ -2,6 +2,6 @@
 # release.yml). rustup reads this file automatically, so `cargo`/`rustc` run
 # from this workspace resolve to the same version CI does — a local `cargo
 # build` on a newer host toolchain cannot silently re-resolve Cargo.lock to a
-# crate the gate's toolchain cannot parse (sp-4kws1).
+# crate the gate's toolchain cannot parse.
 [toolchain]
 channel = "1.82.0"

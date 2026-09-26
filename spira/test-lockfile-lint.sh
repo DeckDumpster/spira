@@ -2,11 +2,10 @@
 #
 # test-lockfile-lint.sh — lockfile-lint.sh's own positive control.
 #
-# THE CASE (sp-4kws1). sp-47kq1 moved indexmap 2.6.0 -> 2.14.2 (edition2024) in Cargo.lock
-# with no Cargo.toml edit — a local `cargo build` under a newer, unpinned toolchain had
-# silently re-resolved the lockfile — and PR 361's build failed under the gate's pinned
-# toolchain. lockfile-lint.sh refuses a Cargo.lock version bump that carries no matching
-# Cargo.toml change.
+# A local `cargo build` under a newer, unpinned toolchain can silently re-resolve
+# Cargo.lock to a registry package version the gate's pinned toolchain cannot parse, with
+# no Cargo.toml edit to review. lockfile-lint.sh refuses a Cargo.lock version bump that
+# carries no matching Cargo.toml change (sp-4kws1).
 #
 # THE POSITIVE CONTROL IS FIRST (law-absence-needs-a-positive-control). A bumped Cargo.lock
 # is planted in a scratch git repository, the lint is required to name it (SEEN RED), and

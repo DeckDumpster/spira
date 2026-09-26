@@ -4,11 +4,10 @@
 #
 #   lockfile-lint.sh
 #
-# WHY THIS EXISTS (sp-4kws1). rust-toolchain.toml pins the toolchain, but a Cargo.lock
-# already on disk can still have been bumped by an earlier `cargo build` run under a
-# newer, unpinned cargo — resolving a registry package to a version the pinned toolchain
-# cannot parse, with no Cargo.toml edit to review (indexmap 2.6.0 -> 2.14.2,
-# edition2024, PR 361's build failure). This lint refuses that diff.
+# WHY THIS EXISTS. rust-toolchain.toml pins the toolchain, but a Cargo.lock already on
+# disk can still have been bumped by an earlier `cargo build` run under a newer, unpinned
+# cargo — resolving a registry package to a version the pinned toolchain cannot parse,
+# with no Cargo.toml edit to review. This lint refuses that diff (sp-4kws1).
 #
 # WHAT IT CHECKS. For every registry package whose locked version increases between
 # SPIRA_GATE_BASE and this tree's Cargo.lock, some Cargo.toml in the diff must mention
