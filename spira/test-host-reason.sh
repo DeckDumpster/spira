@@ -31,9 +31,15 @@
 # not yet fully migrated and running host-check.sh against them would produce noise
 # that teaches nothing about whether the fence itself is correct.
 #
+# The `suites.sh status` sweep line that renders these counts is a test-infrastructure
+# concern, not this fence's: it lives in test-suites-classify.sh now (UC-safety-fences-27,
+# gap 12), asserted unconditionally rather than inside an `if` that could silently skip when
+# the line text was absent — the exact shape gap 12 names.
+#
 # host-reason: tests the host-reason fence; assertions run on the host using scratch repos only
 #
-# covers: spira/host-check.sh spira/suites.sh
+# tier: T1
+# covers: spira/host-check.sh UC-safety-fences-27
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 pass=0; fail=0
@@ -203,31 +209,6 @@ is "host-reason suite is excluded from count-copying" "1" \
 rm "$COPY_SUITE"
 is "count-copying falls when the suite is migrated" "0" \
    "$(fence_at "$COPY_ROOT" --count-copying)"
-
-# ==========================================================================
-# suites.sh status renders both counts on the sweep.
-# ==========================================================================
-if [ -x "$HERE/suites.sh" ]; then
-    status_out="$(bash "$HERE/suites.sh" status 2>&1 || true)"
-    want "suites.sh status names the host-reason line" "host-reason" "$status_out"
-    # The undeclared count is either a number or ? — not blank, not "undeclared".
-    if [[ "$status_out" =~ "host suites without # host-reason:" ]]; then
-        val="$(printf '%s\n' "$status_out" | grep 'host suites without' | sed 's/.*# host-reason:[[:space:]]*//')"
-        case "$val" in
-            [0-9]*|'?') ok "sweep line carries a number or ? [$val]" ;;
-            *) bad "sweep line carries a number or ?" "got [$val]" ;;
-        esac
-    fi
-    # The wave-2 copying/stubbing count must appear and render as number or ?.
-    want "suites.sh status includes wave-2 migration line" "copying/stubbing" "$status_out"
-    if [[ "$status_out" =~ "copying/stubbing" ]]; then
-        wave2="$(printf '%s\n' "$status_out" | grep 'copying/stubbing' | grep -oE '[0-9]+|\?' | head -1)"
-        case "${wave2:-}" in
-            [0-9]*|'?') ok "wave-2 count is a number or ? [${wave2:-?}]" ;;
-            *) bad "wave-2 count is a number or ?" "got [${wave2:-}]" ;;
-        esac
-    fi
-fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

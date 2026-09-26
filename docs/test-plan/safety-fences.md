@@ -311,3 +311,60 @@ test-czar-shadow.sh: 1s → 3s (the positive-control fix does one more real subp
 call; cost is noise at this scale). test-exclude.sh: 0s → 1s (new coverage for a
 previously untested fence, gap 4). Net for this slice: +1s, all of it new coverage for
 a gap rather than avoidable cost.
+
+---
+
+## 9. Implementation status (added by sp-av1xy, not part of the approved plan text above)
+
+By the time this bead ran, sp-qsr44, sp-pohf2 and sp-rv8jt above had already landed:
+`spira/testlib.sh` exists, `test-guards.sh` and `test-exclude.sh` are in the tree, and
+`docs/test-plan/dispatch.md` had independently reached and landed (sp-9ce60) its own
+verdict on UC-32's partition rows — see below.
+
+**Landed in this slice (UC 27, 29, 30, 31 of this bead's scope):**
+- **UC-27 / gap 12 (the `suites.sh status` half).** test-host-reason.sh keeps only
+  host-check.sh's own fence rows. The two `suites.sh status` sweep-line assertions moved
+  to `test-suites-classify.sh` (test-infrastructure area, which already sources
+  `suites.sh`'s functions directly) and now run unconditionally via `cmd_status()` — the
+  prior form sat inside `if [[ "$status_out" =~ ... ]]`, which is precisely a silent skip
+  when the label text was ever absent. The focus-close-guard half of gap 12 is moot, as
+  this bead's own filing already noted: no live `test-focus-close-guard.sh` exists after
+  sp-fjsxb.
+- **UC-29.** `test-set-state-writers.sh` split: the static lint (no `label add`/
+  `SPIRA_INCIDENT_LABELS` writer for a dimension) stays as its own T0 suite under the same
+  name. The `bd set-state` semantics (atomicity, event trail) moved to a new
+  `test-set-state-semantics.sh` (T2, real db) — `test-bd-contract.sh` still does not exist,
+  so per the UC-29 verdict's fallback these rows keep their own suite rather than merging
+  into a file that isn't there.
+- **UC-30.** `test-ops-allowlist.sh` reads each persona's `FAYTH_TOOLS` by sourcing that
+  persona's fayth alone (the same one-line subshell `lib.sh`'s own `fayth_get` uses),
+  rather than sourcing all of `lib.sh` to read one variable. Its allow/deny table is now a
+  shared function driven by a per-persona row list, extended from ops-only to `ops` and
+  `czar` — the two personas UC-30's own requirement names.
+- **UC-31 / gap 11.** The 11 static conf/fayth/brief grep rows in `test-czar-shadow.sh`
+  moved to a new `test-czar-lint.sh` (T0); the behavioural shadow/act/eject rows stayed at
+  T1. The TI gap itself — `ops_allows`/`fayth_allows` is a test-local reimplementation of
+  the Claude CLI's own `Bash(pattern)` matcher — is **not closed**: the CLI exposes no
+  scriptable contract to check the reimplementation against, so the "single T2 contract
+  check" half of the plan's proposal has no seam to attach to yet. What this slice did
+  instead was make the reimplementation a single shared function exercised once per
+  restricted persona, rather than a second hand-rolled copy per persona, which is the
+  concrete half of the proposal ("one table per restricted persona") that a missing CLI
+  contract does not block.
+
+**Not touched, and why:**
+- **UC-24/UC-25.** Already KEEP; nothing in this bead's own filing asked for more here.
+- **UC-26.** Not in this bead's description bullets (the title's "26" does not appear in
+  the body text); `test-orphan-test.sh` is untouched.
+- **UC-32.** The 9 partition rows in `test-spike.sh` were **not** moved to
+  `test-fayth-predicates.sh` as this bead's filing proposed. `docs/test-plan/dispatch.md`
+  (the dispatch area's own test plan, row 09 of its coverage map) already reached and
+  landed a different, later verdict on the same rows: "the spike partition rows stay T2
+  and are owned by safety-fences." `test-fayth-predicates.sh` no longer exists — sp-9ce60
+  merged its runtime rows into `test-fayth.sh` — so there is no file to move these rows
+  into even if the older verdict still applied. Read narrowly: this is the dispatch area
+  overriding its own earlier proposal after the fact, not this bead declining the work.
+  `confine.sh` (T2) and the two landing rows (T3, main only) were already correctly
+  placed and needed nothing.
+- **Gap 10** (test-aeon-dirty-commit CI-dead fix) was never this bead's — the filing
+  above already moved it to sp-pohf2 before this bead ran.

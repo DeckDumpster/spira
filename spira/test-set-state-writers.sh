@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 #
-# test-set-state-writers.sh — Every harness path that sets a dimension writes it with
-# bd set-state, not bd label add or a constructed dim:val string. Verified by static
-# scan of source files and by live exercise of the set-state guarantee.
-#
-#   ./test-set-state-writers.sh
+# test-set-state-writers.sh — no harness path writes a dimension label with bd label add
+# or embeds one in SPIRA_INCIDENT_LABELS; bd set-state is the only writer.
 #
 # WHAT THIS GUARDS. bd set-state does three things that label add cannot do: it removes
 # the previous value atomically (single-valuedness), it writes an event bead as the source
@@ -16,27 +13,15 @@
 # result from a scanner that never finds anything looks identical to an empty result from a
 # scanner that found nothing — the only distinguishing fact is a positive control you planted.
 #
-# THE FUNCTIONAL TEST calls set-state twice on the same dimension and asserts one label
-# remains, not two, and that each call left an event bead. A test that passed on unfixed
-# code with label add would have proved nothing about atomicity; this one would have shown
-# two labels (the defect) where one was expected.
+# bd set-state's own semantics (atomicity, event trail) are exercised on a real database in
+# test-set-state-semantics.sh (T2), not here — this file is a pure lint and needs no fixture.
 #
-# covers: spira/*.sh
-# timeout: 120
+# tier: T0
+# covers: spira/*.sh UC-safety-fences-29
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "$2"; }
-eq()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-
-. "$HERE/testdb.sh"
-testdb_require test-set-state-writers
-TMP="$(mktemp -d)"
-trap 'testdb_drop; rm -rf "$TMP"' EXIT
-trap 'testdb_drop; rm -rf "$TMP"; exit 130' INT
-trap 'testdb_drop; rm -rf "$TMP"; exit 143' TERM
-testdb_up setstate || { echo "test-set-state-writers: could not build fixture database"; exit 1; }
+. "$HERE/testlib.sh"
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 echo "test-set-state-writers.sh"
 
@@ -103,47 +88,4 @@ done < <(find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-set-state-writers.s
     && ok "no harness file embeds a dimension label in SPIRA_INCIDENT_LABELS" \
     || bad "no harness file embeds a dimension label in SPIRA_INCIDENT_LABELS" "$inc_offenders offender(s) found (see above)"
 
-# ---------------------------------------------------------------------------
-# Functional — single-valuedness.
-# bd set-state removes the previous dim:val label before adding the new one.
-# Two successive calls must leave exactly one label for the dimension.
-# ---------------------------------------------------------------------------
-echo
-echo "set-state: two calls to the same dimension leave exactly one label:"
-b="$(bd -C "$SPIRA_DB" create "set-state atomicity test" -l plan --silent 2>/dev/null | tr -d '[:space:]')"
-[ -n "$b" ] || { bad "fixture bead created" "bd create returned nothing"; \
-                 printf 'test-set-state-writers.sh: %d passed, %d failed\n' "$pass" "$fail"; exit 1; }
-ok "fixture bead created ($b)"
-
-bd -C "$SPIRA_DB" set-state "$b" "branch=feat/first"  --reason "first"  >/dev/null 2>&1
-v1="$(bd -C "$SPIRA_DB" state "$b" branch 2>/dev/null)"
-eq "after first set-state: branch dimension is feat/first" "feat/first" "$v1"
-
-bd -C "$SPIRA_DB" set-state "$b" "branch=feat/second" --reason "second" >/dev/null 2>&1
-v2="$(bd -C "$SPIRA_DB" state "$b" branch 2>/dev/null)"
-eq "after second set-state: branch dimension is feat/second" "feat/second" "$v2"
-
-branch_count="$(bd -C "$SPIRA_DB" show "$b" --json 2>/dev/null \
-    | python3 -c 'import json,sys
-d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
-L=(d[0].get("labels") or []) if d else []
-print(sum(1 for l in L if l.startswith("branch:")))')"
-eq "exactly one branch: label after two set-state calls" "1" "$branch_count"
-
-# ---------------------------------------------------------------------------
-# Functional — event trail.
-# bd set-state creates an event bead per call; its id is <parent>.<n>.
-# Two calls on bead $b produce sp-<suffix>.1 and sp-<suffix>.2.
-# ---------------------------------------------------------------------------
-echo
-echo "set-state: each call creates an event bead:"
-event_count="$(bd -C "$SPIRA_DB" list --all --json 2>/dev/null \
-    | python3 -c "import json,sys
-d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
-parent='$b'
-print(sum(1 for i in d if (i.get('id') or '').startswith(parent + '.')))")"
-eq "two set-state calls on $b leave two event beads" "2" "$event_count"
-
-echo
-printf 'test-set-state-writers.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary
