@@ -294,7 +294,12 @@ _cmd_halt() {
         [ -n "$cname" ] || continue
         if podman ps --format '{{.Names}}' 2>/dev/null | grep -qxF "$cname"; then
             printf 'landing: tearing down container %s\n' "$cname"
-            bash "${SPIRA_PROD:-$SPIRA_HOME}/testenv.sh" down --name "$cname" >/dev/null 2>&1 \
+            # --force-foreign: the pass that owned this container was just signaled to
+            # death above, so its owner PID may still be alive as an orphan (a killed
+            # parent does not kill its children) with no ancestor relation to this
+            # process — the one case where halt, not an ad hoc loop, is the checked
+            # operator override the guard exists to require (law-guard-binds-the-caller).
+            bash "${SPIRA_PROD:-$SPIRA_HOME}/testenv.sh" down --name "$cname" --force-foreign >/dev/null 2>&1 \
                 || printf 'landing: WARNING — could not tear down container %s\n' "$cname"
         fi
     done

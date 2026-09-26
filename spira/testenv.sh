@@ -3,7 +3,7 @@
 #
 # USAGE
 #   testenv.sh up   [--name NAME] [--checkout PATH]
-#   testenv.sh down [--name NAME] [--volumes]
+#   testenv.sh down [--name NAME] [--volumes] [--force-foreign]
 #   testenv.sh exec [--name NAME] [--user USER] CMD ARGS...
 #   testenv.sh probe [--name NAME]
 #
@@ -261,6 +261,28 @@ _wait_for() {   # _wait_for N CMD ARGS... -> 0 if satisfied within N*0.5s, 1 if 
     return 1
 }
 
+# OWNER-FILE GUARD (law-guard-binds-the-caller). `up` records which process asked for a
+# container; `down` refuses to tear one down on behalf of a live process it is not that
+# process or a descendant of, so `for n in $(podman ps ...); do testenv.sh down --name "$n";
+# done` run from an unrelated shell can no longer sweep every aeon's and the Concierge's
+# containers off the host.
+_owner_file() { printf '/tmp/%s.owner' "$1"; }
+
+_pid_live() { [ -d "/proc/$1" ] 2>/dev/null; }
+
+_ppid_of() { awk '/^PPid:/{print $2; exit}' "/proc/$1/status" 2>/dev/null; }
+
+# True when $1 is this process's own PID or the PID of an ancestor of it — i.e. this
+# process is the owner or was spawned (directly or transitively) by the owner.
+_pid_is_caller_or_ancestor() {
+    local target="$1" pid=$$
+    while [ -n "$pid" ] && [ "$pid" != "0" ]; do
+        [ "$pid" = "$target" ] && return 0
+        pid="$(_ppid_of "$pid")"
+    done
+    return 1
+}
+
 cmd_up() {
     local name="$_DEFAULT_NAME" checkout=""
     while [[ $# -gt 0 ]]; do
@@ -302,6 +324,11 @@ cmd_up() {
         --volume "${vol_reg}:${_CONTAINER_CARGO}/registry" \
         --volume "${vol_git}:${_CONTAINER_CARGO}/git" \
         "$img" >/dev/null
+
+    # Record the owner, unless a caller (e.g. testenv-batch.sh) already claimed it before
+    # calling `up`. First writer wins; `up` never overwrites an existing owner file.
+    local ownerfile; ownerfile="$(_owner_file "$name")"
+    [ -f "$ownerfile" ] || printf '%s\n' "${PPID:-$$}" > "$ownerfile"
 
     # Wait for system systemd to reach basic.target (~1s normally). Failing here
     # means something is wrong with the image or the cgroup setup, not the test code.
@@ -354,19 +381,36 @@ cmd_up() {
 }
 
 cmd_down() {
-    local name="$_DEFAULT_NAME" rm_volumes=0
+    local name="$_DEFAULT_NAME" rm_volumes=0 force_foreign=0
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name)    name="$2"; shift 2 ;;
-            --volumes) rm_volumes=1; shift ;;
+            --name)           name="$2"; shift 2 ;;
+            --volumes)        rm_volumes=1; shift ;;
+            --force-foreign)  force_foreign=1; shift ;;
             *) printf 'testenv down: unknown argument: %s\n' "$1" >&2; return 1 ;;
         esac
     done
+
+    local ownerfile; ownerfile="$(_owner_file "$name")"
+    if [ "$force_foreign" != 1 ] && [ -f "$ownerfile" ]; then
+        local owner_pid; owner_pid="$(cat "$ownerfile" 2>/dev/null)"
+        if [ -n "$owner_pid" ] && _pid_live "$owner_pid" \
+                && ! _pid_is_caller_or_ancestor "$owner_pid"; then
+            printf 'testenv down: %s is owned by pid %s (not this process or an ancestor of it)\n' \
+                "$name" "$owner_pid" >&2
+            printf 'testenv down: refusing — pass --force-foreign to tear it down anyway\n' >&2
+            return 1
+        fi
+    fi
 
     # stop and rm are no-ops when the container does not exist, satisfying the
     # "second down exits 0" requirement without extra checks.
     podman stop "$name" >/dev/null 2>&1 || true
     podman rm   "$name" >/dev/null 2>&1 || true
+
+    # Only release the owner file once the container is actually gone — a failed
+    # teardown must leave both in place so an orphan sweep can still find them.
+    podman container exists "$name" 2>/dev/null || rm -f "$ownerfile"
 
     if [ "$rm_volumes" = 1 ]; then
         podman volume rm "${name}-cargo-reg" >/dev/null 2>&1 || true
@@ -528,7 +572,7 @@ case "${1:-}" in
     *)
         printf 'usage: testenv.sh up|down|exec|probe|scratch|shell|tag|image|publish [OPTIONS]\n' >&2
         printf '  up      [--name NAME] [--checkout PATH]\n' >&2
-        printf '  down    [--name NAME] [--volumes]\n' >&2
+        printf '  down    [--name NAME] [--volumes] [--force-foreign]\n' >&2
         printf '  exec    [--name NAME] [--user USER] CMD ARGS...\n' >&2
         printf '  probe   [--name NAME]\n' >&2
         printf '  scratch          # print a throwaway SPIRA_DB path; caller cleans up\n' >&2
