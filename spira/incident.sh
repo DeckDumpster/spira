@@ -61,7 +61,7 @@ set -uo pipefail
 # so it is the only safe prefilter. The unlabeled fallback (sub-path B in _dedup_incident)
 # uses no label filter at all, because those beads were filed before the ref: label existed
 # and carry no invariant label.
-LABELS="${SPIRA_INCIDENT_LABELS:-spira,partition:${SPIRA_INCIDENT_LABEL}}"
+LABELS="${SPIRA_INCIDENT_LABELS:-spira,${SPIRA_INCIDENT_LABEL}}"
 
 # THE REPOSITORY THIS INCIDENT BELONGS TO. Without a repo dimension a bead is worked in
 # the home-repo fallback (brain), which has not contained the harness since sp-9tal.
