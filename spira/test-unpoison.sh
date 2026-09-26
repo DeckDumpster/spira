@@ -61,7 +61,8 @@ nowant "label removed" "spira-poison" "$(labels_of pz1)"
 is   "attempt count floored to 0" "0" "$(attempts_of pz1)"
 nowant "check4 no longer decides poison" "poison" "$(decide pz1)"
 is   "the poisoning's operator ask is resolved" "closed" "$(status_of pzask)"
-want "the cause is recorded on the bead" "every session ended its turn" "$(bdq show pz1 2>/dev/null)"
+want "the cause is recorded on the bead" "every session ended its turn" "$(bdjson show pz1 | python3 -c 'import sys,json
+d=json.load(sys.stdin); b=(d if isinstance(d,list) else [d])[0]; print(b.get("notes") or "")')"
 
 echo
 echo "refusals:"
