@@ -136,6 +136,14 @@ print(hashlib.sha256(sys.stdin.read().encode("utf-8")).hexdigest())')"
           --body-file - >/dev/null 2>&1
 }
 
+# ── the store already holds this ref: note it and file nothing ───────────────
+_note_seen_again() {   # _note_seen_again <existing-id> <ref> <issue-number>
+    local id="$1" ref="$2" num="$3"
+    "$BD" -C "$DB" note "$id" \
+        "Seen again at intake: $ref (issue #$num) was re-ingested. A bead for this external ref already exists here, so no new bead was filed." \
+        >/dev/null 2>&1
+}
+
 # ── create untrusted record ───────────────────────────────────────────────────
 _create_untrusted() {   # _create_untrusted <number> <title> <body> <login>
     local num="$1" title="$2" raw_body="$3" login="$4"
@@ -176,9 +184,11 @@ before_total="$(_total)"
 [ "$before_total" -gt 0 ] || die "the store reports zero beads — the query is broken, not the store empty"
 
 all_ingested="$(_ingested)"
-# Work beads have the scope label and github: prefix
+# Work beads have the scope label and github: prefix. Carries both id and ref — the id is
+# needed to note the existing bead when the same ref is seen again (law-a-bead-with-a-fix-in-flight-depends-on-it:
+# a closed bead still counts as held, so --all above is load-bearing here).
 known_work="$(printf '%s\n' "$all_ingested" | awk -v s="$SCOPE" '$2 ~ /^github:/ {
-    n=split($3,a,","); for(i=1;i<=n;i++) if(a[i]==s){print $2; break} }')"
+    n=split($3,a,","); for(i=1;i<=n;i++) if(a[i]==s){print $1 " " $2; break} }')"
 # Untrusted records have github-untrusted: prefix; we need both id and ref for promotion/skip
 known_untrusted="$(printf '%s\n' "$all_ingested" | awk '$2 ~ /^github-untrusted:/ {print $1 " " $2}')"
 
@@ -255,9 +265,18 @@ for row in "${ROWS[@]}"; do
     gh_labels="$(printf '%s' "$row" | python3 -c 'import sys,json;print(" ".join(json.load(sys.stdin)["labels"]))')"
     uref="github-untrusted:$REPO#$number"
 
-    # Already a work bead?
-    if printf '%s\n' "$known_work" | grep -qxF "$ref"; then
-        skipped=$((skipped+1)); continue
+    # Already a work bead? The check is on the external ref alone — a closed bead still
+    # counts as held, since known_work is built from `list --all` above.
+    existing_id="$(printf '%s\n' "$known_work" | awk -v r="$ref" '$2==r{print $1; exit}')"
+    if [ -n "$existing_id" ]; then
+        skipped=$((skipped+1))
+        if [ "$DRY" -eq 1 ]; then
+            printf '  would note: %s already tracked as %s\n' "$ref" "$existing_id"
+        else
+            _note_seen_again "$existing_id" "$ref" "$number" \
+                || log "WARNING: could not note re-ingest of $ref on $existing_id"
+        fi
+        continue
     fi
 
     # Trusted when author_association is OWNER, MEMBER, or COLLABORATOR.
