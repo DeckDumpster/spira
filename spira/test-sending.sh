@@ -127,7 +127,7 @@ STATUS_FILE="$TMP/status-from"
 
 sending() {
     SPIRA_HOME="$HERE" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
-    SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$HOME_REPO" SPIRA_GH="${SPIRA_GH:-$TMP/no-such-gh}" \
+    SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$HOME_REPO" SPIRA_GH="$STUB_GH" \
     SPIRA_REPO_MAP="$TMP/repo-map" \
         bash "$HERE/sending.sh" --no-fetch --status-from "$STATUS_FILE" "$@" 2>&1
 }
@@ -194,6 +194,19 @@ printf 'line1\nline2\nline3\n' > "$REPO/shared-sq.txt"
 git -C "$REPO" add shared-sq.txt && git -C "$REPO" commit -q -m "unrelated: advance shared-sq.txt"
 bead sp-sq closed
 
+# The `gh` stub. sending.sh's ghq wrapper (lib.sh) calls ${SPIRA_GH:-gh}; keyed by branch
+# name, like test-sending-squash-merged.sh's own stub, so only sp-sq resolves to a merged
+# PR at its own tip.
+STUB_GH="$TMP/gh-stub"
+cat > "$STUB_GH" <<GHEOF
+#!/usr/bin/env bash
+case "\$3" in
+  spira/sp-sq) printf '%s\n' "$SQ_TIP"; exit 0 ;;
+  *)           exit 1 ;;
+esac
+GHEOF
+chmod +x "$STUB_GH"
+
 # sp-otherpr: a batch commit named this bead on the base (landed()=true), but the base has
 # since diverged so content_landed is false; every commit on the branch is already
 # patch-equivalent upstream (git cherry finds nothing unapplied). SEND other-pr.
@@ -257,8 +270,11 @@ git -C "$REPO" update-ref -d refs/heads/spira/sp-orphan
 git -C "$REPO" worktree add -q --detach "$RUN/worktree/.landing" main >/dev/null 2>&1
 
 # One live remote branch, to prove the Sending deletes it too (UC-19) — sp-cl1 is going to
-# be SENT, so give it a remote counterpart before the pass.
+# be SENT, so give it a remote counterpart before the pass. --no-fetch means sending.sh
+# will not fetch on its own, so the local tracking ref send_branch reads must already
+# exist here.
 git -C "$REPO" push -q origin spira/sp-cl1
+git -C "$REPO" fetch -q origin spira/sp-cl1
 # Give it a branch: label too, to prove the label is dropped once the ref is verifiably
 # gone (law-branch-affinity-is-recorded).
 bead sp-cl1 closed '[]' '["branch:spira/sp-cl1"]'
@@ -412,7 +428,7 @@ DHOME="$(basename "$DREPO")"
 printf '%s | %s | push | main | |\n' "$DHOME" "$DREPO" > "$TMP/dry-repo-map"
 
 dry_out="$(SPIRA_HOME="$HERE" SPIRA_RUN="$DRUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
-    SPIRA_REPO="$DREPO" SPIRA_HOME_REPO="$DHOME" \
+    SPIRA_REPO="$DREPO" SPIRA_HOME_REPO="$DHOME" SPIRA_REAPLOG="$DRUN/reap.log" \
     SPIRA_REPO_MAP="$TMP/dry-repo-map" \
         bash "$HERE/sending.sh" --dry-run --no-fetch 2>&1)"
 want "dry-run reports WOULD, not SENT"  "WOULD  sp-dry  send branch" "$dry_out"
@@ -482,7 +498,7 @@ FHOME="$(basename "$FREPO")"
 printf '%s | %s | push | main | |\n' "$FHOME" "$FREPO" > "$TMP/fail-repo-map"
 
 fail_out="$(SPIRA_HOME="$HERE" SPIRA_RUN="$FRUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$STUB_BD" \
-    SPIRA_REPO="$FREPO" SPIRA_HOME_REPO="$FHOME" \
+    SPIRA_REPO="$FREPO" SPIRA_HOME_REPO="$FHOME" SPIRA_REAPLOG="$FRUN/reap.log" \
     SPIRA_REPO_MAP="$TMP/fail-repo-map" \
         bash "$HERE/sending.sh" --no-fetch 2>&1)"
 fail_rc=$?
