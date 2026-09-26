@@ -476,9 +476,9 @@ except Exception: pass
 " 2>/dev/null
         ;;
     runs-active)
-        # runs-active <repo-dir> → how many PULL-REQUEST workflow runs are queued or in
-        # progress. Used by batch.sh to answer "is CI idle right now"; idle means waiting for
-        # company buys nothing, so cut the batch at once.
+        # runs-active <repo-dir> → how many PULL-REQUEST workflow runs, belonging to a
+        # still-open PR, are queued or in progress. Used by batch.sh to answer "is CI idle
+        # right now"; idle means waiting for company buys nothing, so cut the batch at once.
         #
         # ONLY pull_request RUNS COUNT. A main-branch gate (push), a release, or a dispatched
         # acceptance run is not competing with a batch for anything the wait could save: runners
@@ -487,17 +487,26 @@ except Exception: pass
         # flight were a main gate and an acceptance dispatch (per Ryan: "that's not what i
         # would consider 'CI isn't idle'. there are no open PRs").
         #
+        # ONLY OPEN PRs COUNT. A force-merged or closed PR's own gate keeps running after the
+        # merge, and that run is not competing with anything either — nobody is waiting on it.
+        # Counting it anyway reads as permanently busy until the orphaned run finishes on its
+        # own (sp-wo9yc). A run whose linked PR list is empty, or whose open-PR fetch failed,
+        # counts as active: absence of proof it's closed is not proof it's closed
+        # (law-absence-needs-a-positive-control).
+        #
         # PRINTS ? WHEN IT CANNOT TELL, NEVER 0. A failed API call, an unparseable payload and
         # a genuinely empty queue are three different answers, and only the third one means
         # idle. A caller that read a network failure as "nothing in CI" would cut a batch on
         # every pass while CI was busy, which is the opposite of what this exists for
         # (law-absence-needs-a-positive-control).
         runs_json="$( cd "$repo" && ghq api \
-            "repos/{owner}/{repo}/actions/runs?per_page=100&exclude_pull_requests=true" \
+            "repos/{owner}/{repo}/actions/runs?per_page=100" \
             2>/dev/null )" || { printf '?\n'; exit 0; }
         [ -n "${runs_json:-}" ] || { printf '?\n'; exit 0; }
+        open_pr_json="$( cd "$repo" && ghq pr list --state open --json number 2>/dev/null )"
+        export SPIRA_RUNS_ACTIVE_OPEN_PRS="${open_pr_json:-}"
         printf '%s\n' "$runs_json" | python3 -c "
-import json, sys
+import json, os, sys
 try:
     d = json.load(sys.stdin)
 except Exception:
@@ -505,7 +514,21 @@ except Exception:
 runs = d.get('workflow_runs')
 if runs is None:
     print('?'); sys.exit(0)
-print(sum(1 for r in runs if r.get('event') == 'pull_request' and r.get('status') in ('queued', 'in_progress', 'waiting', 'requested', 'pending')))
+open_numbers = None
+try:
+    open_numbers = {p['number'] for p in json.loads(os.environ.get('SPIRA_RUNS_ACTIVE_OPEN_PRS') or '')}
+except Exception:
+    open_numbers = None
+def belongs_to_open_pr(r):
+    if open_numbers is None:
+        return True
+    prs = r.get('pull_requests') or []
+    if not prs:
+        return True
+    return any(p.get('number') in open_numbers for p in prs)
+print(sum(1 for r in runs if r.get('event') == 'pull_request'
+          and r.get('status') in ('queued', 'in_progress', 'waiting', 'requested', 'pending')
+          and belongs_to_open_pr(r)))
 " 2>/dev/null || printf '?\n'
         ;;
     run-metadata)
