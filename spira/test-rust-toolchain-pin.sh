@@ -22,7 +22,15 @@ is "positive control: the extractor reads a planted version" "9.99.0" "$ctl"
 
 for wf in "$ROOT"/.github/workflows/*.yml; do
     grep -q 'dtolnay/rust-toolchain' "$wf" || continue
-    v="$(awk "/dtolnay\/rust-toolchain/{f=1} f&&/toolchain:/{gsub(/[' ]/,\"\",\$2); print \$2; exit}" FS=':' "$wf")"
-    is "$(basename "$wf") installs the pinned toolchain" "$pin" "${v:-none}"
+    # Look only at the lines belonging to the dtolnay/rust-toolchain step itself: an
+    # explicit `toolchain:` there can drift from the pin, but an omitted one defers to
+    # rust-toolchain.toml at run time (dtolnay/rust-toolchain's own behavior) and cannot.
+    block="$(awk '/dtolnay\/rust-toolchain/{f=1; n=0} f{print; n++} f&&n>=4{exit}' "$wf")"
+    v="$(printf '%s\n' "$block" | awk -F':' '/toolchain:/{gsub(/[\x27 ]/,"",$2); print $2; exit}')"
+    if [ -z "$v" ]; then
+        ok "$(basename "$wf") defers to rust-toolchain.toml (no explicit toolchain)"
+    else
+        is "$(basename "$wf") installs the pinned toolchain" "$pin" "$v"
+    fi
 done
 tl_summary
