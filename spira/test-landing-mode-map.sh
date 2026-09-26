@@ -24,9 +24,7 @@
 # timeout: 30
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "$2"; }
+. "$HERE/testlib.sh"
 
 echo "test-landing-mode-map.sh"
 
@@ -318,5 +316,4 @@ grep -q "line 1" <<<"$_arms_planted" \
     || bad "the fence can see an arm that does not read the kind" "$_arms_planted"
 
 echo
-printf 'test-landing-mode-map.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

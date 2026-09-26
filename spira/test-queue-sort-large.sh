@@ -22,10 +22,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
-pass=0; fail=0
-ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
-bad() { printf '  FAIL  %s\n' "$1"; fail=$((fail+1)); }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1: wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
@@ -89,6 +86,4 @@ is "unparseable PRIO_JSON still returns every row" "$N" "$got"
 #    shape of the original bug. Verify the warning reaches stderr.
 warn="$(PRIO_JSON='{not json' queue_sort_rows "$TMP/repo" "$base" < "$rows" 2>&1 >/dev/null)"
 is "fail-open emits a warning to stderr" 1 "$(printf '%s' "$warn" | grep -c 'ranking failed')"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

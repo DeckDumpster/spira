@@ -41,10 +41,7 @@
 # covers: spira/cockpit-metrics.py
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-sending-metrics.sh"
 
@@ -193,6 +190,4 @@ fixture_no_failures() {
 read -r f age <<< "$(fixture_no_failures | run_fixture_age)"
 is "no failures: count is 0" "0" "$f"
 is "no failures: age is ?" "?" "$age"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
