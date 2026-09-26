@@ -54,14 +54,14 @@ want "label-only clear: check4 still decides poison" "poison" "$(decide pz2)"
 
 echo
 echo "unpoison.sh clears so it sticks:"
-out="$(bash "$UNPOISON" --bead pz1 --cause "every session ended waiting for a background batch" 2>&1)"; rc=$?
+out="$(bash "$UNPOISON" --bead pz1 --cause "every session ended its turn 'waiting for' a background batch" 2>&1)"; rc=$?
 is   "exit 0" "0" "$rc"
 want "reports OK" "OK   pz1" "$out"
 nowant "label removed" "spira-poison" "$(labels_of pz1)"
 is   "attempt count floored to 0" "0" "$(attempts_of pz1)"
 nowant "check4 no longer decides poison" "poison" "$(decide pz1)"
 is   "the poisoning's operator ask is resolved" "closed" "$(status_of pzask)"
-want "the cause is recorded on the bead" "every session ended waiting" "$(bdq show pz1 2>/dev/null)"
+want "the cause is recorded on the bead" "every session ended its turn" "$(bdq show pz1 2>/dev/null)"
 
 echo
 echo "refusals:"
