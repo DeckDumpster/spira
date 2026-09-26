@@ -121,8 +121,8 @@ echo "=== mixed namespaces: law- and sop- each get their own retrieval command =
 
 # POSITIVE CONTROL for the offender this suite must catch: a sop- key delivered under a
 # header naming rule.sh (which prepends law- and refuses every sop- key) is unfetchable.
-seed_law "sop-rm-widget" "Widget runbook body."
-out_mixed="$(run_render "" "law-rm-,sop-rm-")"
+FIX_MIXED='{"law-rm-alpha":"Alpha statute body. This is the full text of alpha.","sop-rm-widget":"Widget runbook body."}'
+out_mixed="$(run_render "$FIX_MIXED" "" "law-rm-,sop-rm-")"
 
 law_section="$(printf '%s\n' "$out_mixed" | awk '/^## Statutes/{f=1} /^## Runbooks/{f=0} f')"
 sop_section="$(printf '%s\n' "$out_mixed" | awk '/^## Runbooks/{f=1} f')"
