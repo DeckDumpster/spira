@@ -186,6 +186,16 @@ else
     echo "      Build it: cd \$SPIRA_REPO/landing-pass && cargo build --release, then re-run install.sh." >&2
 fi
 
+# spira-reconciler-flow.service/.timer require the compiled reconciler-flow binary. Same hazard.
+if [ -x "${SPIRA_RECONCILER_FLOW_BIN:-}" ]; then
+    UNITS+=(spira-reconciler-flow.service spira-reconciler-flow.timer)
+    ENABLE+=("$(inst_name spira-reconciler-flow.timer)")
+else
+    OPTIONAL+=(spira-reconciler-flow.service spira-reconciler-flow.timer)
+    echo "note: reconciler-flow binary not built at ${SPIRA_RECONCILER_FLOW_BIN:-<path not set>} — not installing spira-reconciler-flow.service." >&2
+    echo "      Build it: cargo build --release --workspace, then re-run install.sh." >&2
+fi
+
 # ONE INSTANCE PER `daemon` ROW, AND THE MANIFEST DECIDES WHICH. `log` rows name a file
 # something else already writes, so they get no unit; enabling one would double up whatever
 # is already producing it.

@@ -41,7 +41,8 @@ render() {
         --testdb-data "$SPIRA_TESTDB_DATA" --dolt "$DOLT" --prod "$SPIRA_PROD" \
         --instance "$SPIRA_INSTANCE" --testdb-port "$SPIRA_TESTDB_PORT" \
         --supervise-bin "$SPIRA_SUPERVISE_BIN" --snap-stale-s "$SPIRA_SNAP_STALE_S" \
-        --landing-pass-bin "$SPIRA_LANDING_PASS_BIN" --watcher-name "${2:-}"
+        --landing-pass-bin "$SPIRA_LANDING_PASS_BIN" \
+        --reconciler-flow-bin "$SPIRA_RECONCILER_FLOW_BIN" --watcher-name "${2:-}"
 }
 
 declare -A _ue_new=()

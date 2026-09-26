@@ -1,0 +1,16 @@
+[Unit]
+Description=Reconciler flow pass every 30 minutes
+
+[Timer]
+# THIRTY MINUTES — Ryan's default window for the flow invariants (backlog trend, stage
+# velocity, stage dwell, round health): coarse enough that a duckdb baseline query is cheap
+# and a single quiet pass is not noise, fine enough that a stall is caught well inside an
+# operator's working session. The flock in reconciler-flow --pass prevents overlap when a
+# pass takes longer than expected.
+OnBootSec=5min
+OnUnitActiveSec=30min
+AccuracySec=1min
+Unit=spira-reconciler-flow.service
+
+[Install]
+WantedBy=timers.target

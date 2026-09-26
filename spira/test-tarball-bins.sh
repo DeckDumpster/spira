@@ -44,6 +44,7 @@ export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 declare -A TOKEN_TO_BIN=(
     [SPIRA_SUPERVISE_BIN]=spira-supervise
     [SPIRA_LANDING_PASS_BIN]=landing-pass
+    [SPIRA_RECONCILER_FLOW_BIN]=reconciler-flow
 )
 
 # ---------------------------------------------------------------------------
@@ -96,12 +97,14 @@ PANEL_BIN="$TMP/bins/panel"
 BROKER_BIN="$TMP/bins/broker"
 SUPERVISE_BIN="$TMP/bins/spira-supervise"
 LANDING_PASS_BIN="$TMP/bins/landing-pass"
+RECONCILER_FLOW_BIN="$TMP/bins/reconciler-flow"
 printf '#!/usr/bin/env bash\necho loom\n'            > "$LOOM_BIN"
 printf '#!/usr/bin/env bash\necho panel\n'           > "$PANEL_BIN"
 printf '#!/usr/bin/env bash\necho broker\n'          > "$BROKER_BIN"
 printf '#!/usr/bin/env bash\necho spira-supervise\n' > "$SUPERVISE_BIN"
 printf '#!/usr/bin/env bash\necho landing-pass\n'    > "$LANDING_PASS_BIN"
-chmod +x "$LOOM_BIN" "$PANEL_BIN" "$BROKER_BIN" "$SUPERVISE_BIN" "$LANDING_PASS_BIN"
+printf '#!/usr/bin/env bash\necho reconciler-flow\n' > "$RECONCILER_FLOW_BIN"
+chmod +x "$LOOM_BIN" "$PANEL_BIN" "$BROKER_BIN" "$SUPERVISE_BIN" "$LANDING_PASS_BIN" "$RECONCILER_FLOW_BIN"
 
 run_build() {
     env -i \
@@ -146,6 +149,7 @@ build_out="$(run_build build \
     --broker-bin "$BROKER_BIN" \
     --supervise-bin "$SUPERVISE_BIN" \
     --landing-pass-bin "$LANDING_PASS_BIN" \
+    --reconciler-flow-bin "$RECONCILER_FLOW_BIN" \
     HEAD "$REPO" 2>&1)"
 build_rc=$?
 is "build with all bins exits 0" "0" "$build_rc"
@@ -169,6 +173,12 @@ if [ -x "${TREE:-}/bin/landing-pass" ]; then
     ok "bin/landing-pass is present and executable"
 else
     bad "bin/landing-pass is present and executable" \
+        "not found or not executable (build output: $build_out)"
+fi
+if [ -x "${TREE:-}/bin/reconciler-flow" ]; then
+    ok "bin/reconciler-flow is present and executable"
+else
+    bad "bin/reconciler-flow is present and executable" \
         "not found or not executable (build output: $build_out)"
 fi
 
