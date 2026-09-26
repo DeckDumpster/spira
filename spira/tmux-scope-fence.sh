@@ -30,18 +30,17 @@ ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)"
 
 TMUX_CMDS='new-session|kill-server|kill-session|has-session|attach-session|attach|send-keys|list-sessions|list-panes|list-clients|set-option|respawn-pane|start-server|new-window|show-environment|split-window|select-pane|select-window|kill-window|rename-session|display-message|source-file'
 
-files="$(cd "$ROOT" && git ls-files -- 'spira/test-*.sh' 2>/dev/null)"
-count="$(printf '%s\n' "$files" | grep -c . || true)"
-if [ "${count:-0}" -lt 1 ]; then
+shopt -s nullglob
+suites=("$ROOT"/spira/test-*.sh)
+if [ "${#suites[@]}" -eq 0 ]; then
     printf 'tmux-scope-fence: refusing to report clean — no spira/test-*.sh files found\n' >&2
     exit 3
 fi
 
 offenders=""
-while IFS= read -r rel; do
-    [ -n "$rel" ] || continue
+for f in "${suites[@]}"; do
+    rel="${f#"$ROOT"/}"
     case "$rel" in */tmux-scope-fence.sh|tmux-scope-fence.sh) continue ;; esac
-    f="$ROOT/$rel"
 
     has_tmux_tmpdir=0
     grep -q 'TMUX_TMPDIR' "$f" 2>/dev/null && has_tmux_tmpdir=1
@@ -65,10 +64,10 @@ while IFS= read -r rel; do
 "
         done < <(grep -nE 'concierge\.sh["'"'"']?[[:space:]]+(start|wake|here|stop)\b' "$f" 2>/dev/null | grep -v ':[[:space:]]*#')
     fi
-done <<< "$files"
+done
 
 if [ -z "$offenders" ]; then
-    printf 'tmux-scope-fence: no unscoped tmux/concierge.sh invocation in %d suite(s)\n' "$count"
+    printf 'tmux-scope-fence: no unscoped tmux/concierge.sh invocation in %d suite(s)\n' "${#suites[@]}"
     exit 0
 fi
 
