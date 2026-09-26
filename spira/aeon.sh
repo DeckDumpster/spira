@@ -714,6 +714,16 @@ $out" >/dev/null 2>&1
 
 cleanup() {
     local rc=$? reset_at gate_why cause
+    # `set -e` IS DISARMED FOR THE WHOLE OF TEARDOWN, first line, before anything can fail.
+    # This ran under errexit and every step of it was one failing command away from being
+    # skipped in silence — which is what happened: a compare-and-swap release exits non-zero
+    # on a mismatch, so the shell died inside its own EXIT trap between the bump and the log
+    # line. A whole window of aeons wrote no `done` ledger line and released no bead, and the
+    # ledger's own measurement went with them. A teardown must run to the end regardless: it
+    # is the last chance to record what happened. Note that `[ -n "$X" ] && cmd` is itself
+    # one of those failing commands whenever $X is empty — which is why the re-entry guard
+    # below runs AFTER this line, not before it.
+    set +e
     # A SIGNAL-DELIVERED cleanup() can exit from inside an early-exit branch (thrash, lapsed,
     # operator-wait), and that exit fires the EXIT trap — cleanup() again, same process, same
     # $rc gone stale. The marker the first entry consumed is gone, so the second entry falls
@@ -723,15 +733,6 @@ cleanup() {
     # second one is refused, so nothing here is lost.
     [ -n "${CLEANUP_ENTERED:-}" ] && return 0
     CLEANUP_ENTERED=1
-    # `set -e` IS DISARMED FOR THE WHOLE OF TEARDOWN, first line, before anything can fail.
-    # This ran under errexit and every step of it was one failing command away from being
-    # skipped in silence — which is what happened: a compare-and-swap release exits non-zero
-    # on a mismatch, so the shell died inside its own EXIT trap between the bump and the log
-    # line. A whole window of aeons wrote no `done` ledger line and released no bead, and the
-    # ledger's own measurement went with them. A teardown must run to the end regardless: it
-    # is the last chance to record what happened. Note that `[ -n "$X" ] && cmd` is itself
-    # one of those failing commands whenever $X is empty.
-    set +e
     if [ -n "$HB_PID" ]; then
         # Kill the heartbeat's children (e.g., the current `sleep`) BEFORE signalling the
         # subshell. Without this, `kill "$HB_PID"` exits the subshell but leaves the
