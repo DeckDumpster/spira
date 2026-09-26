@@ -26,16 +26,14 @@
 # fires immediately without waiting for the 15-minute grace window.
 #
 # defect: sp-uq55c
+# tier: T1
 # covers: spira/strand.sh
 # hermetic-ok: no systemd, no gh; reads SPIRA_DB for conf.sh schema check only (read-only)
 set -uo pipefail
 # covers: spira/strand.sh
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -133,6 +131,4 @@ if grep -q "declining" "$LOG2" 2>/dev/null; then
 else
     bad "declining runner: decline message logged" "(not found in stdout; got: $(cat "$LOG2" 2>/dev/null))"
 fi
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

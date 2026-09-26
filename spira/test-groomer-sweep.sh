@@ -14,6 +14,7 @@
 # changing state; the real run applies the remedies and the after-run check verifies
 # the detector now returns only the two beads sweep cannot fix.
 #
+# tier: T1
 # covers: spira/groomer.sh spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -24,12 +25,7 @@ testdb_up sweep || { echo "test-groomer-sweep: could not build fixture database"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT
 trap 'exit 143' INT TERM
 
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 GROOMSH="$HERE/groomer.sh"
 MAP="$TMP/repo-map"
@@ -175,5 +171,4 @@ nowant "after sweep: ci-stuck bead no longer reported"     "sp-sw-ci"   "$after_
 nowant "after sweep: litter bead no longer reported"       "sp-sw-lit"  "$after_ll"
 
 echo
-printf 'test-groomer-sweep: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

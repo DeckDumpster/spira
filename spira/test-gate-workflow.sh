@@ -40,16 +40,13 @@
 #      previous release tag; actions/checkout defaults to depth 1 and fetches no
 #      tags, which makes every cut look like the first one.
 #
+# tier: T1
 # covers: .github/workflows/gate.yml .github/workflows/acceptance.yml .github/workflows/release.yml
 # covers: .github/workflows/testenv-image.yml spira/test-fixtures/ephemeral-ci-v1
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want() { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2]" ;; esac; }
-nowant() { case "$3" in *"$2"*) bad "$1" "must not contain [$2]" ;; *) ok "$1" ;; esac; }
+. "$HERE/testlib.sh"
 
 echo "test-gate-workflow.sh"
 
@@ -62,7 +59,7 @@ if [ -r "$GATE_YML" ]; then
     ok "gate.yml exists at .github/workflows/gate.yml"
 else
     bad "gate.yml exists at .github/workflows/gate.yml" "not found"
-    printf '\n  %d passed, %d failed\n' "$pass" "$fail"; exit 1
+    tl_summary; exit
 fi
 G="$(cat "$GATE_YML")"
 
@@ -557,5 +554,4 @@ if [ -r "$ACC_YML" ]; then
 fi
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

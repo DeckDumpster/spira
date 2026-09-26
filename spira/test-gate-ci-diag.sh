@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
 # test-gate-ci-diag.sh — gate-diag.sh emits FAIL lines, annotations, and summary.
+# tier: T1
 # covers: spira/gate-diag.sh .github/workflows/gate.yml spira/testenv-batch.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()    { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()   { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
+. "$HERE/testlib.sh"
 has()   { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2]"; esac; }
 lacks() { case "$3" in *"$2"*) bad "$1" "must not contain [$2]" ;; *) ok "$1"; esac; }
-is()    { [ "$2" = "$3" ] && ok "$1" || bad "$1" "want [$2] got [$3]"; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 DIAG="$HERE/gate-diag.sh"
@@ -38,7 +36,7 @@ echo "test-gate-ci-diag.sh"
 # POSITIVE CONTROL: the script must exist before any other check is meaningful.
 if [ ! -r "$DIAG" ]; then
     bad "gate-diag.sh exists at spira/gate-diag.sh" "not found"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"; exit 1
+    tl_summary; exit
 fi
 ok "gate-diag.sh exists at spira/gate-diag.sh"
 
@@ -129,5 +127,4 @@ else
 fi
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -42,18 +42,15 @@
 # the test first verifies NO detection with an empty/fresh fixture, then adds the
 # trigger and verifies detection. A detector that fires on empty data is not a detector.
 #
+# tier: T1
 # covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/czar.sh spira/conf.sh
 #         spira/sentinel.sh spira/watchtower.sh
 #         spira/systemd/spira-czar-pass.service spira/systemd/spira-czar-pass.timer
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL — %s\n' "$1"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1: wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in [$3]"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1: wanted [$2] got [$3]"; }
 
 CZAR="$HERE/czar.sh"
 [ -x "$CZAR" ] || { printf 'czar.sh not found or not executable: %s\n' "$CZAR" >&2; exit 2; }
@@ -925,5 +922,4 @@ want "remedy pass 2: escalates instead of retrying" "REMEDY=inference" "$_log"
 want "remedy pass 2: incident filed with cause=ci-stalled" "cause=ci-stalled" "$_inc_log"
 lack "remedy pass 2: does not rerun the workflow a second time" "workflow-rerun" "$_forge_calls_2"
 
-printf '\n  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

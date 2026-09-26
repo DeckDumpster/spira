@@ -15,15 +15,13 @@
 #
 # WHAT THIS SUITE DOES NOT USE. No bd, no systemd, no network. ready_count is stubbed.
 #
+# tier: T1
 # covers: spira/chamber/czar.fayth spira/lib.sh spira/conf.sh
 # hermetic-ok: no database, no systemd; ready_count and SPIRA_SUMMON are stubs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "$2"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
@@ -89,5 +87,4 @@ czar_lane="$(fayth_get czar FAYTH_LANE)"
 want "czar FAYTH_LANE is set to czar" "czar" "$czar_lane"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

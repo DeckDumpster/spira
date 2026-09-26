@@ -25,15 +25,12 @@
 # READY_FILE; HOLDERS carries the liveness signal strand.sh builds from /proc+pidfiles.
 #
 # defect: sp-nc74
+# tier: T1
 # covers: spira/strand-classify.py spira/aeon.sh
 # hermetic-ok: no database, no systemd, no network
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
@@ -75,6 +72,4 @@ echo "case 2 — mid-teardown: pidfile present (holder=1) with expired lease is 
 # alive until after the bead operations complete.
 out="$(classify "$BEAD" "sp-victim	1")"
 nowant "with-pidfile: ghost NOT raised" "ghost" "$out"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

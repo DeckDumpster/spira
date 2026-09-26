@@ -26,17 +26,13 @@
 # to a stub that records its argv to a file and exits 0. The stub proves groomer.sh passed
 # the right arguments; bd's own correctness is tested in suites that use testdb.sh.
 #
+# tier: T1
 # covers: spira/groomer.sh spira/conf.sh
 # defect: sp-gsmx.8
 # scar: groomer.sh lacked a hard refusal of unwanted-close; the only barrier against closing a bead as unwanted was a sentence in a brief.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in [$3]"; esac; }
-nowant() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$1" ;; esac; }
+. "$HERE/testlib.sh"
 
 GROOMSH="$HERE/groomer.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
@@ -253,5 +249,4 @@ else
 fi
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

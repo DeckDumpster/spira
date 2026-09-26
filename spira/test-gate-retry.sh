@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # test-gate-retry.sh — a red suite is re-run once serially; red twice fails, red then green passes.
+# tier: T1
 # covers: spira/gate-retry.sh .github/workflows/gate.yml
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "want [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "no [$3] in [$2]" ;; esac; }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
@@ -63,5 +61,4 @@ is  "timeout then green passes"                              "0" "$rc"
 is  "serial re-run uses the longer cap (1200 s by default)" "1200" "$(cat "$TMP/log.timeout")"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

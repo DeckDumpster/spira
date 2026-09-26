@@ -8,13 +8,11 @@
 # opened, closing a batch that never ran (sp-uwwt3). check-status instead looks up the
 # workflow run for the PR's own branch — unique per PR even when the commit is shared.
 #
+# tier: T1
 # covers: spira/forge.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-forge-check-status.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -322,5 +320,4 @@ is "suites job success (red suite failure) → still red" "red" "$(status)"
 JOBS_JSON=""
 
 echo
-echo "test-forge-check-status.sh: $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+tl_summary

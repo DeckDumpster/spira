@@ -12,14 +12,11 @@
 # so a sentinel id that matches no bead is refused with Error 1452. The probe must pick
 # a real bead id from bd list — a sentinel against a random uuid always fails.
 #
+# tier: T1
 # covers: spira/doctor.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want()   { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in output"; esac; }
-nowant() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in output" ;; *) ok "$1"; esac; }
+. "$HERE/testlib.sh"
 
 echo "test-doctor-events-probe.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -149,5 +146,4 @@ empty_events="$(printf '%s\n' "$empty_out" | sed -n '/^events substrate$/,/^$/p'
 nowant "server mode: an empty store is not a FAIL" "FAIL" "$empty_events"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

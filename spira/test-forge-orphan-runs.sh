@@ -14,13 +14,11 @@
 # (main's push gate, an acceptance dispatch) — those are exactly the runs sp-1p04d
 # requires the sweep to leave alone.
 #
+# tier: T1
 # covers: spira/forge.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-forge-orphan-runs.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -82,6 +80,4 @@ echo
 echo "runs-queue-branches: garbage payload yields no output, not a crash:"
 printf 'not json' > "$TMP/all-payload"
 is "no output on unparseable payload" "" "$(run_queue_branches)"
-
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
