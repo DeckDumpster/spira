@@ -34,6 +34,15 @@
 # deleting any ref outside that namespace are all untouched. A guard that refuses
 # more than its scar is a tax on every future session.
 #
+# PACK-REFS IS NOT A DELETION. `git gc`/`git pack-refs --all --prune` moves a loose ref
+# into packed-refs and then removes the now-redundant loose file — a representation
+# change, seen here as a "delete" of the loose ref. It performs that removal as a
+# compare-and-delete against the value it just packed, so the hook receives the real
+# old-oid. An ordinary `git branch -D` (what destroyed sp-q27cp) deletes unconditionally
+# and the hook receives an all-zero old-oid. That is the only signal this hook needs:
+# a zero old-oid alongside a zero new-oid is a real deletion; a non-zero old-oid is a
+# prune, and the ref still exists in packed-refs after it.
+#
 # THE OVERRIDE IS THE SANCTIONED PATH. spira_destroy_branch and batch.sh's queue
 # cleanup export SPIRA_REF_SANCTIONED=1, so they keep working and keep their own
 # guards. A fence is a polite refusal, not a wall — but the override is named, and
@@ -56,18 +65,21 @@ phase="${1:-}"
 [ "${SPIRA_REF_SANCTIONED:-0}" = "1" ] && exit 0
 
 zero='0000000000000000000000000000000000000000'
+zero256='0000000000000000000000000000000000000000000000000000000000000000'
+is_zero() { case "$1" in "$zero"|"$zero256") return 0 ;; *) return 1 ;; esac; }
 blocked=""
 
 while read -r old new ref; do
     [ -n "${ref:-}" ] || continue
     # Deletions only. An update or a create under this namespace is ordinary work.
-    case "$new" in
-        "$zero"|0000000000000000000000000000000000000000000000000000000000000000) ;;
+    is_zero "$new" || continue
+    case "$ref" in
+        refs/heads/spira/*) ;;
         *) continue ;;
     esac
-    case "$ref" in
-        refs/heads/spira/*) blocked="$blocked $ref" ;;
-    esac
+    # A non-zero old-oid means a verified compare-and-delete: pack-refs --prune, not a
+    # real loss. Only an unconditional delete (old-oid also zero) is refused.
+    is_zero "$old" && blocked="$blocked $ref"
 done
 
 [ -n "$blocked" ] || exit 0
