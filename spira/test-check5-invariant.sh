@@ -30,6 +30,9 @@
 #      unjudged, not read as unlanded.
 #  10. PARTITION ENUMERATION — a second persona's partition is examined too, not only the
 #      first; and a pass with no persona declaring a partition says so.
+#  11. CONTENT-LANDED — a closed bead labeled content-landed survives without a landstate
+#      record: the Sending reaps it by merge-tree equivalence, not a naming commit, and
+#      writes the label but no landstate/$id (sending.sh).
 #
 # None of these reopen the bead — the closed-work-bead close path now runs only through
 # bead_close_on_land (lib.sh), so a violation here is a landing-pass bug, not a verdict to
@@ -191,6 +194,24 @@ is "sp-supr stays closed" closed "$(status_of sp-supr)"
 inc_out="$(cat "$INC_LOG")"
 nowant "no incident for the dropped bead" "sp-drop" "$inc_out"
 nowant "no incident for the superseded bead" "sp-supr" "$inc_out"
+
+# ======================================================================================
+echo
+echo "CONTENT-LANDED — a closed bead labeled content-landed survives without a landstate record:"
+# ======================================================================================
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-cl","title":"content landed","status":"closed","issue_type":"task","labels":["spira","plan","content-landed","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-cl","depends_on_id":"sp-goal","type":"parent-child"}]}
+JSONL
+touch "$RUN/sp-cl.log"
+rm -f "$RUN/landstate/sp-cl"
+: > "$INC_LOG"
+
+sentinel >/dev/null
+is "sp-cl stays closed" closed "$(status_of sp-cl)"
+inc_out="$(cat "$INC_LOG")"
+nowant "no incident for the content-landed bead" "sp-cl" "$inc_out"
 
 # ======================================================================================
 echo
