@@ -19,11 +19,8 @@
 # covers: spira/aeon.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+# shellcheck disable=SC1090
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -109,9 +106,6 @@ print(d[0].get("notes", "") or "")' 2>/dev/null
 }
 num() { local v="$1"; printf '%d' "${v:-0}"; }
 
-echo "test-aeon-gate-unfinished-attempts.sh"
-echo
-
 seed sp-gua-1
 run_aeon
 
@@ -124,6 +118,4 @@ want "note says no attempt was charged"      "No attempt was charged" "$notes"
 # net-zero event, or the note above is a lie the count does not keep.
 is "attempts_of reads 0 after a gate-still-running release" "0" "$(num "$(attempts_of sp-gua-1)")"
 
-echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
