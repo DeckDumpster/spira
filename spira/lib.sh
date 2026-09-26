@@ -4984,6 +4984,139 @@ for i in (d if isinstance(d, list) else [d]):
     fi
 }
 
+# detect_landed_but_open -> "STATE <id> landed-but-open — <evidence>" for every open or
+# in_progress bead in the WHOLE graph — no partition, no label filter — whose repository's
+# base already carries a commit landing it. A bead's landed-but-open state does not depend
+# on which partition it happens to carry, so a scan bounded to one partition cannot see one
+# filed under another (sp-0qp7s: the groomer's scan read only its own trigger partition).
+detect_landed_but_open() {
+    local raw home
+    home="$(spira_home_repo)"
+    raw="$(bdjson list --status open,in_progress --limit 0 2>/dev/null)"
+    [ -n "$raw" ] || return 0
+    printf '%s\n' "$raw" | WORK_TYPES="${SPIRA_WORK_CLOSE_TYPES:-task bug feature}" python3 -c '
+import json, os, sys
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+work_types = set((os.environ.get("WORK_TYPES") or "task bug feature").split())
+home = sys.argv[1]
+for i in (d if isinstance(d, list) else [d]):
+    if (i.get("issue_type") or "") not in work_types:
+        continue
+    L = i.get("labels") or []
+    repo = next((l[5:] for l in L if l.startswith("repo:")), home)
+    print("%s\t%s" % (i["id"], repo))
+' "$home" 2>/dev/null | while IFS=$'\t' read -r id repo; do
+        [ -n "$id" ] || continue
+        local r_path sha
+        r_path="$(repo_root "${repo:-$home}" 2>/dev/null)" || continue
+        [ -n "$r_path" ] || continue
+        if landed "$id" "$r_path" 2>/dev/null; then
+            sha="$(landed_sha "$id" "$r_path" 2>/dev/null)"
+            printf 'STATE %s landed-but-open — %s names it on %s'"'"'s base; close it\n' \
+                "$id" "${sha:-a commit}" "$repo"
+        fi
+    done
+}
+
+# detect_closed_unlanded_states -> one STATE line per closed work bead, across every
+# partition this host watches (fayth_partitions — every persona's, not the caller's own),
+# that carries none of CHECK 5's recognised landing signals (supersedes, spira-dropped,
+# delivers:, content-landed) and that `landed()` cannot prove via the base's own commit
+# graph. Two shapes:
+#
+#   STATE <id> closed-no-branch          — no branch: label (or the label names a ref that
+#                                           was never pushed): nothing was ever committed.
+#   STATE <id> closed-never-landed <verdict> <repo> <branch> <base> — a branch: label names
+#                                           a real ref ahead of base; <verdict> is `conflict`
+#                                           when it does not merge cleanly (needs a rebase) or
+#                                           `batch-ready` when it does (ready to requeue as-is).
+#
+# This is the same exclusion set sentinel.sh CHECK 5 applies before filing an Ops incident —
+# CHECK 5 reports; this classifies for the groomer to act on with judgement (reopen for
+# rebase, or reopen as batch-ready).
+detect_closed_unlanded_states() {
+    local labels exclude home
+    home="$(spira_home_repo)"
+    {
+        while IFS=$'\t' read -r labels exclude; do
+            [ -n "$labels" ] || continue
+            bdjson list --limit 0 --label "$labels" --status closed 2>/dev/null \
+            | SPIRA_EXCL="$exclude" WORK_TYPES="${SPIRA_WORK_CLOSE_TYPES:-task bug feature}" python3 -c '
+import json, os, sys
+excl = {x for x in (os.environ.get("SPIRA_EXCL") or "").split(",") if x}
+work_types = set((os.environ.get("WORK_TYPES") or "task bug feature").split())
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+for i in (d if isinstance(d, list) else [d]):
+    if i.get("status") != "closed":
+        continue
+    if (i.get("issue_type") or "") not in work_types:
+        continue
+    L = i.get("labels") or []
+    if excl & set(L):
+        continue
+    if any(l.startswith("delivers:") for l in L):
+        continue
+    if "spira-dropped" in L or "content-landed" in L:
+        continue
+    if any((x.get("dependency_type") or x.get("type")) == "supersedes" for x in (i.get("dependencies") or [])):
+        continue
+    repo = next((l[5:] for l in L if l.startswith("repo:")), "")
+    br = next((l[7:] for l in L if l.startswith("branch:")), "")
+    print("%s\t%s\t%s" % (i["id"], repo, br))
+' 2>/dev/null
+        done < <(fayth_partitions)
+    } | awk -F'\t' '!seen[$1]++' | while IFS=$'\t' read -r id repo br; do
+        [ -n "$id" ] || continue
+        local r_path refs base
+        r_path="$(repo_root "${repo:-$home}" 2>/dev/null)" || continue
+        [ -n "$r_path" ] || continue
+        landed "$id" "$r_path" 2>/dev/null && continue
+        if [ -z "$br" ] || ! git -C "$r_path" show-ref --verify -q "refs/heads/$br" 2>/dev/null; then
+            printf 'STATE %s closed-no-branch — repo %s%s; nothing committed, no landing record\n' \
+                "$id" "${repo:-$home}" "${br:+ (branch: label $br names no ref)}"
+            continue
+        fi
+        refs="$(spira_landrefs "$r_path" 2>/dev/null)" || refs=""
+        base="${refs%% *}"
+        [ -n "$base" ] || continue
+        content_landed "$r_path" "$br" "$base" 2>/dev/null && continue
+        if git -C "$r_path" merge-tree --write-tree "$base" "$br" >/dev/null 2>&1; then
+            printf 'STATE %s closed-never-landed batch-ready %s %s %s — merges cleanly, ready to requeue\n' \
+                "$id" "${repo:-$home}" "$br" "$base"
+        else
+            printf 'STATE %s closed-never-landed conflict %s %s %s — does not merge, needs a rebase\n' \
+                "$id" "${repo:-$home}" "$br" "$base"
+        fi
+    done
+}
+
+# detect_false_blockers <blocker-ids> -> "STATE <id> blocked-by-unlanded <blocker> — <evidence>"
+# for every open or in_progress bead depending (type=blocks) on one of <blocker-ids> (newline
+# or space separated). detect_closed_unlanded_states names the blockers this reads: a closed
+# bead whose work never landed still counts as "done" to every dependent's `bd ready`, so its
+# dependents sit correctly-blocked forever on a false premise (sp-jzfog blocking sp-vsob2).
+# The remedy is the blocker's own — reopening it (task 2) is what clears this — so this
+# function only makes the false block visible on the bead it was holding shut.
+detect_false_blockers() {
+    local blockers="${1:-}" raw
+    [ -n "$blockers" ] || return 0
+    raw="$(bdjson list --status open,in_progress --limit 0 2>/dev/null)"
+    [ -n "$raw" ] || return 0
+    printf '%s\n' "$raw" | BLOCKERS="$blockers" python3 -c '
+import json, os, sys
+blockers = set((os.environ.get("BLOCKERS") or "").split())
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+for i in (d if isinstance(d, list) else [d]):
+    deps = [x.get("depends_on_id") for x in (i.get("dependencies") or [])
+            if (x.get("dependency_type") or x.get("type")) == "blocks"]
+    for b in blockers.intersection(deps):
+        print("STATE %s blocked-by-unlanded %s — depends on %s, which is closed but its work never landed" % (i["id"], b, b))
+' 2>/dev/null
+}
+
 # detect_invalid_closed -> INVALID-CLOSED and UNFILED-FOLLOW lines for closed beads whose
 # close reasons admit unfinished work or imply follow-on work that was never filed.
 #

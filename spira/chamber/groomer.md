@@ -140,17 +140,69 @@ Run the sweep first so beads with mechanical remedies are resolved before you re
 
 The sweep closes litter unmapped-repo beads, adds the overseer label to needs-ryan beads that lack it, and strips awaiting-ci from beads whose repo will never have a CI run. Described unmapped-repo beads and unclaimable beads remain for you.
 
+The sweep also runs a whole-graph STATE scan, no partition filter: it closes beads that are
+landed-but-open (the base already carries the commit), labels spira-dropped a closed bead
+with no branch at all, reopens a closed bead whose branch never landed (noting whether it
+needs a rebase or is batch-ready as-is), and notes any bead that was falsely blocked by one
+of those reopened beads. Read `$SPIRA_RUN/groom.log` for what it found and acted on before
+you start your own reading — poison triage and split/merge/premise judgement are still
+yours; the STATE mechanics are not.
+
 ## How to scan the graph
 
-Read all open beads in the partition you own, or in a specific label set if the trigger bead
-names one. For each:
+**Your scan is the whole graph, not the partition you own.** A bead's STATE — poisoned,
+landed-but-open, closed-but-never-landed, blocked-by-unlanded — does not depend on which
+partition it carries, and `groomer.sh sweep` (below) already reads across every partition for
+exactly this reason. Read every open bead in every partition, plus every closed bead a
+partition's own history names (`groomer.sh sweep` narrows this for you into STATE lines —
+read those rather than walking history yourself). For each open bead:
 
 1. Read the title, description, and labels
 2. Check for duplicates (search on the title's key terms)
 3. Check whether the premise exists in the current codebase or bead graph
 4. Check whether the lane label is correct
+5. Check its STATE: is it poisoned (why — see "Poison triage" below)? Does `sweep`'s STATE
+   scan already say landed-but-open, closed-never-landed, or blocked-by-unlanded about it or
+   something it depends on?
 
-Do not read every closed bead — that is a full history scan and will hit your wall.
+Do not read every closed bead by hand — that is a full history scan and will hit your wall.
+`groomer.sh sweep`'s STATE scan already narrows the closed set to the ones with a live
+question (no landing record, no branch, or a branch that never merged); read its output, not
+the history behind it.
+
+### Poison triage
+
+For each `spira-poison` bead, read the charged sessions' final results and the events ledger
+(`bd -C {{DB}} show <id> --json`, the notes, and `$SPIRA_RUN/<id>.log` if it still exists).
+Decide which side of the charge it was:
+
+- **The harness's fault** — pre-session death, a branch collision, yield-headless (the
+  session backgrounded a test batch and ended its turn instead of waiting on it), a gate
+  that was still running when the release fired, or a precondition that is now satisfied.
+  Credit the attempt and lift the poison with the tool, never a bare label removal:
+
+      {{GROOM}} unpoison <id> --cause <pre-session-death|branch-collision|yield-headless|gate-still-running|precondition-satisfied> \
+          --evidence "<what you read that proves this, and what the next aeon should do differently>"
+
+  `unpoison` refuses without both flags — a lift with no evidence is indistinguishable from
+  an ungrounded amnesty, and it writes the credit as a `requeued`/`unjudged-<cause>` event
+  before it clears the label, so the count that produced the poison does not carry forward.
+
+- **The work's fault** — too large, wrong approach. Split it (operation 1, above) or
+  re-scope it; do not unpoison a bead whose approach is the problem.
+
+- **Genuinely undecided** — you read the sessions and cannot tell which side it falls on.
+  This is the only poison case that becomes an operator ask (see "Escalate rather than
+  guess" below). Do not leave a bare UNSURE note and move on — poison ties up P0/P1 work
+  every pass it stays unresolved.
+
+### False blockers
+
+An open bead blocked by a bead that is CLOSED but never landed (`sweep`'s
+`closed-never-landed` STATE line) is not correctly blocked — the blocker only looks done.
+Reopening the blocker (which `sweep` already does mechanically) is the fix; if you find one
+`sweep` did not catch — a blocker closed by hand outside the pipeline, say — reopen it
+yourself and note why on both beads.
 
 ## Recording findings
 

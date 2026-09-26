@@ -435,13 +435,13 @@ print(d[0].get("status", "") if d else "")' 2>/dev/null)"
             # case match on the already-fetched label string has neither hazard.
             case " $decision " in *' poison '*)
                 bdq label add "$id" spira-poison >/dev/null 2>&1
-                bdq note "$id" "Poisoned after $n in_progress transition(s) without landing. Not retried until a human changes the approach. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the label stands." >/dev/null 2>&1
+                bdq note "$id" "Poisoned after $n in_progress transition(s) without landing. Triaged by the groomer, not a human: it reads the charged sessions' final results and either credits the harness-caused attempts and lifts the poison (groomer.sh unpoison) or splits/re-scopes the work. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the label stands." >/dev/null 2>&1
                 progress "poisoned $id after $n attempts"
                 # check4_decide only emits `poison` on the transition into poisoned (the
                 # `spira-poison` case in its label match), so this fires once — the bead
                 # keeps the label, and every later pass takes the other branch.
                 spira_event bead.poisoned "$id" "poisoned $id after $n attempts" \
-                    "not retried until a human changes the approach" || true
+                    "the groomer triages it, not a human" || true
                 ;;
             esac
 
