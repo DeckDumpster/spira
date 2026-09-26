@@ -4758,13 +4758,37 @@ for i in (d if isinstance(d, list) else [d]):
 # cannot change until a human frees the holder or corrects the branch: label. Idempotent
 # (re-checks the label directly) so calling this on stale output does not re-note a bead
 # detect_branch_collisions itself would already have excluded.
+#
+# BUT A CLOSED, CLEAN, UNHELD SQUATTER NEEDS NO HUMAN (sp-vcxmz): its aeon already
+# finished and left, so nothing but a stale worktree registration stands between the
+# blocked bead and a claim. Freed through the one destruction chokepoint
+# (spira_destroy_worktree) rather than a bare `git worktree remove` — same salvage and
+# liveness fence every other reap goes through, even though salvage will find nothing
+# because the clean check already ran. The branch and its commits are never touched.
+# Prints "FREED <id> <repo> <branch> <holder-id> <holder-path>" for each one freed, so a
+# caller can log and count it apart from what still parks. Open, dirty or live holders
+# fall through to the park below unchanged.
 park_branch_collisions() {
     local line id repo branch holder_id holder_path labels
+    local holder_status holder_dirty holder_repo_root
     while IFS= read -r line; do
         case "$line" in COLLISION\ *) ;; *) continue ;; esac
         read -r _ id repo branch holder_id holder_path <<< "$line"
         labels="$(bdq label list "$id" 2>/dev/null)"
         case "$labels" in *"${SPIRA_ASK_LABEL}"*) continue ;; esac
+
+        holder_status="$(spira_bead_status "$holder_id")"
+        if [ "$holder_status" = closed ] && ! holder_alive "$holder_id"; then
+            if holder_dirty="$(git -C "$holder_path" status --porcelain 2>/dev/null)" \
+               && [ -z "$holder_dirty" ] \
+               && holder_repo_root="$(repo_root "$repo" 2>/dev/null)" && [ -n "$holder_repo_root" ] \
+               && spira_destroy_worktree "$holder_id" "$holder_path" "$holder_repo_root" \
+                      "branch collision: $holder_id is closed and clean, squatting $branch, blocking $id"; then
+                printf 'FREED %s %s %s %s %s\n' "$id" "$repo" "$branch" "$holder_id" "$holder_path"
+                continue
+            fi
+        fi
+
         bdq label add "$id" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
         bdq label add "$id" "overseer" >/dev/null 2>&1 || true
         bdq note "$id" "Parked by detect_branch_collisions: recorded branch $branch is checked out in $holder_id's worktree at $holder_path, not this bead's own canonical path. Every summon reaches aeon.sh's law-one-aeon-one-worktree refusal (or a no-op self-correct, when this bead's own default branch is the squatted one) before a session can start, and nothing about the input changes on retry. Labeled $SPIRA_ASK_LABEL and overseer so dispatch stops spending a claim here — free $holder_path or correct the branch: label, then remove $SPIRA_ASK_LABEL." >/dev/null 2>&1 || true
