@@ -18,6 +18,10 @@
 # reopen on every pass forever. SPIRA_EVICTION_ESCALATE_AT caps it: at that many prior
 # eviction-race requeues, escalate to the operator instead of reopening again.
 #
+# NOT REOPENING IS NOT "STAYS CLOSED" (sp-qsona). A none/stale/cap verdict only means the
+# eviction-race guard itself does not fire; cleanup()'s later submitted conversion still
+# applies to a work bead, so an e2e run ends open+spira-submitted rather than closed.
+#
 # defect: sp-htw4r sp-ygvu0 sp-r1501
 # covers: spira/aeon.sh spira/lib.sh spira/conf.sh
 set -uo pipefail

@@ -155,7 +155,11 @@ b1="$(bd -C "$SPIRA_DB" create --title "test: wiki write" --type task -l "$_lbl"
 rm -rf "$SPIRA_RUN/worktree"
 bash "$SPIRA_HOME/aeon.sh" builder >/dev/null 2>&1 || true
 bead_status="$(bd -C "$SPIRA_DB" show "$b1" --json 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status","") if d else "")' 2>/dev/null)"
-is "wiki-write: bead is closed" "closed" "$bead_status"
+# A task bead's close is converted to open+spira-submitted at teardown (sp-qsona): only the
+# landing pass closes a work bead, so "open" here is the session's close having happened.
+is "wiki-write: bead's close was converted to submitted" "open" "$bead_status"
+want "wiki-write: carrying the submitted label" "spira-submitted" \
+    "$(bd -C "$SPIRA_DB" show "$b1" --json 2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(",".join(d[0].get("labels") or []) if d else "")' 2>/dev/null)"
 is "wiki-write: wiki checkout is clean after exit" "" \
     "$(git -C "$WIKI" diff --name-only HEAD 2>/dev/null)"
 author="$(git -C "$WIKI" log --format="%ae" -1 -- "wiki/notes/sop-$b1.md" 2>/dev/null)"

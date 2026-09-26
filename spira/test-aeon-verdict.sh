@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 #
 # test-aeon-verdict.sh — the close verdict: a bead closed with nothing committed is
-#   reopened, UNLESS superseded or its delivers:TYPE evidence verifies.
+#   reopened, UNLESS superseded or its delivers:TYPE evidence verifies. A WORK bead
+#   (task/bug/feature) an aeon closes directly never reaches that verdict's reopen: it is
+#   converted back to open carrying the submitted label (sp-qsona), UNLESS superseded or
+#   carrying a delivers: label.
 #
 #   ./test-aeon-verdict.sh
 #
@@ -15,16 +18,29 @@
 #
 # T1 — direct calls to close_verdict/delivers_verdict, no git, no aeon run.
 # T2 — verdict_committed against real git fixtures, no aeon run (the landref walk).
-# E2E — 2 rows only, through the real aeon.sh: a commit keeps a bead closed, no commit
-#   reopens it. Every other case the original 13-run suite carried end to end (superseded,
-#   delivers:beads, delivers:action, the deep-landref window) is now covered faster by T1
-#   or T2 against the same functions aeon.sh and sentinel.sh actually call.
+# E2E — through the real aeon.sh. The submitted conversion (sp-qsona) is aeon.sh teardown
+#   behaviour with no pure seam of its own, so its rows stay end to end: a work bead's
+#   close is converted, committed or not; a superseded or delivers:-labelled work bead is
+#   exempt; and a NON-work type (spike) with no commit is still reopened by close_verdict —
+#   the positive control that the legacy audit still fires where the conversion does not
+#   apply. Every other case the original 13-run suite carried end to end (delivers:beads,
+#   the deep-landref window) is covered faster by T1 or T2 against the same functions
+#   aeon.sh actually calls.
+#
+# ONLY THE QUEUE CLOSES A WORK BEAD (sp-qsona). bead_close_on_land (lib.sh) is the one place
+# that happens, called from the landing pass once a commit is actually on the base. TWO
+# EXEMPTIONS leave an aeon's close standing instead:
+#   - `bd supersede`: such a bead will NEVER have a commit naming it — its work was carried
+#     onto the successor's branch — so converting it would make a permanent zombie.
+#   - a delivers:TYPE label: groom-trigger.sh, maechen-trigger.sh and incident.sh file
+#     task/bug beads that close on a note, an action, or child beads — never a commit,
+#     never a repo:, never a queue claim. close_verdict still judges these.
 #
 # THE BRIEF-RENDERING CASES BELOW (persona wall/no-wall, already-done mentions) are a
 # different use case (UC-aeon-execution-07, brief rendering) that happens to live in this
 # file; this bead does not touch them.
 #
-# defect: sp-dvlq
+# defect: sp-dvlq sp-qsona
 # covers: spira/aeon.sh spira/sentinel.sh spira/lib.sh UC-aeon-execution-13
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -136,7 +152,10 @@ echo "STRUCTURAL — the shared functions replaced the duplicate case blocks (wh
 echo "test-delivers-parity.sh used to guard, now true by construction):"
 # ==========================================================================================
 want "aeon.sh calls delivers_verdict (via close_verdict)" "close_verdict " "$(cat "$HERE/aeon.sh")"
-want "sentinel.sh calls delivers_verdict directly"        "delivers_verdict " "$(cat "$HERE/sentinel.sh")"
+# sp-qsona: CHECK 5 is one invariant (a closed work bead needs a LANDED record) and skips
+# delivers:-labelled beads outright, so the sentinel no longer judges delivers: evidence at
+# all — aeon.sh's close_verdict is the one caller left.
+nowant "sentinel.sh no longer judges delivers: evidence (CHECK 5 is one invariant)" "delivers_verdict " "$(cat "$HERE/sentinel.sh")"
 nowant "aeon.sh carries no case \"\$_dtype\" of its own"     'case "$_dtype"' "$(cat "$HERE/aeon.sh")"
 nowant "sentinel.sh carries no case \"\$_dtype\" of its own" 'case "$_dtype"' "$(cat "$HERE/sentinel.sh")"
 
@@ -183,8 +202,8 @@ is "the SAME window correctly says no for a bead with no commit at all (positive
 
 # ==========================================================================================
 echo
-echo "E2E — the real aeon.sh, 2 rows only (everything else above is T1/T2 against the same"
-echo "functions aeon.sh actually calls):"
+echo "E2E — the real aeon.sh: the submitted conversion and its exemptions (sp-qsona), plus"
+echo "the legacy reopen's positive control (everything else above is T1/T2):"
 # ==========================================================================================
 # THE SHIM IS THE SESSION, running where the model would and finishing the bead the way the
 # case under test needs it finished. The guard below is not decoration: conf.sh replaces
@@ -201,8 +220,9 @@ FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600
 FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
-shim() {   # shim <commit:0|1>
+shim() {   # shim <commit:0|1> [finish: close (default) | supersede:<id> | delivers-action:close]
     printf '%s' "$1" > "$TMP/docommit"
+    printf '%s' "${2:-close}" > "$TMP/finish"
     cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -211,16 +231,24 @@ if [ "$(cat "$TMP/docommit")" = 1 ]; then
     printf 'my work\n' >> f
     git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
 fi
-bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
+finish="$(cat "$TMP/finish" 2>/dev/null)"
+case "${finish:-close}" in
+    close)       bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1 ;;
+    supersede:*) bd -C "$SPIRA_DB" supersede "$id" --with "${finish#supersede:}" >/dev/null 2>&1 ;;
+    delivers-action:close)
+        bd -C "$SPIRA_DB" label add "$id" "delivers:action" >/dev/null 2>&1
+        bd -C "$SPIRA_DB" close "$id" --reason "action taken on the box; no commit needed" >/dev/null 2>&1
+        ;;
+esac
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
 exit 0
 SHIM
     chmod +x "$BIN/claude"
 }
-seed() {   # seed <id> [status]
+seed() {   # seed <id> [status] [issue_type]
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
-    printf '{"id":"%s","title":"t","status":"%s","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
-        "$1" "${2:-open}" "$_lbl" | testdb_seed
+    printf '{"id":"%s","title":"t","status":"%s","issue_type":"%s","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+        "$1" "${2:-open}" "${3:-task}" "$_lbl" | testdb_seed
 }
 run_aeon() { rm -rf "$SPIRA_RUN/worktree"; "$SPIRA_HOME/aeon.sh" builder > "$TMP/out" 2>&1; }
 field() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
@@ -229,19 +257,48 @@ d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.a
 notes() { bd -C "$SPIRA_DB" show "$1" 2>/dev/null | tr '\n' ' '; }
 
 echo
-echo "closed WITH a commit naming the bead — the check is satisfied and does nothing:"
+echo "WORK bead closed WITH a commit — converted to submitted; only the landing pass closes it for real:"
 testdb_reset; seed sp-vd-1; shim 1; run_aeon
-is     "the bead stays closed"        closed "$(field sp-vd-1 status)"
-want   "and the verdict says it committed" "committed=yes" "$(cat "$TMP/out")"
-nowant "with no reopen"               "REOPENED"           "$(cat "$TMP/out")"
+is     "the bead is converted back to open"   open "$(field sp-vd-1 status)"
+want   "carrying the submitted label"         "spira-submitted" "$(field sp-vd-1 labels)"
+want   "and the verdict says it committed"    "committed=yes" "$(cat "$TMP/out")"
+want   "and says it converted"                "converted to submitted" "$(cat "$TMP/out")"
+nowant "with no evidence-based reopen"        "REOPENED"           "$(cat "$TMP/out")"
 
 echo
-echo "closed with NOTHING committed — reopened, because closed is not landed:"
+echo "WORK bead closed with NOTHING committed — same conversion; commit status no longer decides it:"
 testdb_reset; seed sp-vd-2; shim 0; run_aeon
-is   "the bead is open again"          open "$(field sp-vd-2 status)"
-is   "and its claim is released"       ""   "$(field sp-vd-2 assignee)"
-want "the verdict names the omission"  "REOPENED — closed with nothing committed" "$(cat "$TMP/out")"
-want "and the bead carries the reason" "closed without a commit naming sp-vd-2"   "$(notes sp-vd-2)"
+is     "the bead is converted back to open"   open "$(field sp-vd-2 status)"
+is     "and its claim is released"            ""   "$(field sp-vd-2 assignee)"
+want   "carrying the submitted label"         "spira-submitted" "$(field sp-vd-2 labels)"
+want   "and the bead carries the conversion reason" "marked submitted instead of closed" "$(notes sp-vd-2)"
+nowant "not the legacy closed-without-commit reopen" "REOPENED — closed with nothing committed" "$(cat "$TMP/out")"
+
+echo
+echo "NON-WORK type (spike) closed with NOTHING committed — reopened, because closed is not landed:"
+# THE POSITIVE CONTROL for the two rows above: close_verdict's closed-without-commit reopen
+# still fires for a type the submitted conversion does not cover.
+testdb_reset; seed sp-vd-nocommit open spike; shim 0; run_aeon
+is     "the bead is open again"          open "$(field sp-vd-nocommit status)"
+is     "and its claim is released"       ""   "$(field sp-vd-nocommit assignee)"
+want   "the verdict names the omission"  "REOPENED — closed with nothing committed" "$(cat "$TMP/out")"
+want   "and the bead carries the reason" "closed without a commit naming sp-vd-nocommit" "$(notes sp-vd-nocommit)"
+nowant "and it is not marked submitted"  "spira-submitted" "$(field sp-vd-nocommit labels)"
+
+echo
+echo "SUPERSEDED work bead — left closed; its work lands under the successor's id:"
+testdb_reset; seed sp-vd-3; seed sp-vd-succ closed; shim 0 supersede:sp-vd-succ; run_aeon
+is     "the bead stays closed"               closed "$(field sp-vd-3 status)"
+want   "the verdict records the exemption"   "closed a superseded work bead — not converted" "$(cat "$TMP/out")"
+nowant "so no submitted label is added"      "spira-submitted" "$(field sp-vd-3 labels)"
+
+echo
+echo "delivers:action work bead — left closed; delivers: exempts it from the submitted pipeline:"
+testdb_reset; seed sp-vd-da; shim 0 delivers-action:close; run_aeon
+is     "the bead stays closed"              closed "$(field sp-vd-da status)"
+want   "the verdict records the acceptance" "delivers" "$(cat "$TMP/out")"
+nowant "so nothing is reopened"             "REOPENED" "$(cat "$TMP/out")"
+nowant "and no submitted label is added"    "spira-submitted" "$(field sp-vd-da labels)"
 
 # ======================================================================================
 echo
