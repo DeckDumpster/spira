@@ -911,7 +911,7 @@ spira_conf_defaults() {
         if [ -f "$SPIRA_REPO/bin/landing-pass" ]; then
             SPIRA_LANDING_PASS_BIN="$SPIRA_REPO/bin/landing-pass"
         else
-            SPIRA_LANDING_PASS_BIN="$SPIRA_REPO/landing-pass/target/release/landing-pass"
+            SPIRA_LANDING_PASS_BIN="$SPIRA_REPO/target/release/landing-pass"
         fi
     fi
     # The run/tsd/ writer (sp-sbc6o). Every producer of an observation — land_mark's landing

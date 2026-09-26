@@ -16,6 +16,7 @@ members = [
     "reconciler",
     "test-plan",
     "reconciler-alert",
+    "landing-pass",
 ]
 resolver = "2"
 

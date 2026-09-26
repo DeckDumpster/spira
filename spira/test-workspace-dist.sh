@@ -14,6 +14,11 @@
 #   4. POSITIVE CONTROL: a missing pre-built binary is refused, not silently skipped.
 #   5. --repo-name stamps MANIFEST's `repo` line; omitted, it falls back to the
 #      source checkout's own git identity (law-scope-is-a-runtime-key).
+#   6. REGRESSION (sp-72nkl): the real repo's Cargo.toml lists every crate that
+#      ships a systemd unit as a workspace member — landing-pass was built as a
+#      standalone crate outside the workspace, so `make build` never built it and
+#      --workspace never discovered bin/landing-pass. Asserted directly against
+#      this repo's own Cargo.toml, not the synthetic fixture above.
 #
 # covers: spira/build-tarball.sh Cargo.toml Makefile
 set -uo pipefail
@@ -227,6 +232,33 @@ if grep -qx "repo $ws_identity" "${TREE2:-/dev/null}/MANIFEST" 2>/dev/null; then
 else
     bad "MANIFEST repo line defaults to the source checkout's git identity" \
         "wanted [repo $ws_identity] in $(cat "${TREE2:-/dev/null}/MANIFEST" 2>/dev/null)"
+fi
+
+# ============================================================================
+echo
+echo "6. REGRESSION — real repo's --workspace discovery names landing-pass"
+# ============================================================================
+REPO_ROOT="$(cd "$HERE/.." && pwd -P)"
+real_meta="$(env -i PATH="$PATH" HOME="$TMP/home" \
+    cargo metadata --format-version=1 --no-deps \
+    --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1)"
+if [ $? -eq 0 ]; then
+    if printf '%s' "$real_meta" | python3 -c "
+import json, sys
+meta = json.load(sys.stdin)
+for pkg in meta['packages']:
+    for t in pkg['targets']:
+        if 'bin' in t['kind'] and t['name'] == 'landing-pass':
+            sys.exit(0)
+sys.exit(1)
+"; then
+        ok "landing-pass is discovered as a workspace [[bin]] target"
+    else
+        bad "landing-pass is discovered as a workspace [[bin]] target" \
+            "not found in cargo metadata for $REPO_ROOT/Cargo.toml — add it to [workspace] members"
+    fi
+else
+    printf '  SKIP  cargo metadata failed against real repo: %s\n' "$real_meta"
 fi
 
 # ============================================================================

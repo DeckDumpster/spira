@@ -111,7 +111,7 @@ _take_snapshot() {
 # _check_release_bins <release-dir> — print comma-separated list of missing bin/ entries.
 _check_release_bins() {
     local _rd="$1" _missing=""
-    for _b in loom panel broker spira-supervise; do
+    for _b in loom panel broker spira-supervise landing-pass; do
         [ -x "$_rd/bin/$_b" ] || _missing="${_missing:+$_missing, }bin/$_b"
     done
     printf '%s' "$_missing"
