@@ -361,6 +361,63 @@ _attr_eject() {
     printf 'verdict %s: ejected %s (suites: %s, method: %s)\n' "$name" "$id" "$suites" "$method"
 }
 
+# _q_summon_batcher_ci <name> <pr-n> <batch-file> <status-out> <members-str> — the CI-red
+# producer for a batch PR the batcher itself opened (its open-batch record names
+# owner=batcher). Verdict's own split/ejection (_q_attribute) is for PRs it opened and owns
+# the attribution of; a batcher-owned red is the summoned persona's judgement call (sp-47kq1,
+# Scope C), so this only hands over the suites and a run link and leaves the PR and its
+# members exactly as they are.
+_q_summon_batcher_ci() {
+    local name="$1" pr_n="$2" batch_file="$3" status_out="$4" members_str="$5"
+
+    local already; already="$(_batch_field judgement "$batch_file")"
+    if [ -n "$already" ]; then
+        printf 'verdict %s: PR %s red — batcher-owned, judgement already summoned (%s)\n' \
+            "$name" "$pr_n" "$already"
+        return 0
+    fi
+
+    local red_suites="" run_url="" _line
+    while IFS= read -r _line; do
+        case "$_line" in
+            "red-suite: "*) red_suites="$red_suites ${_line#red-suite: }" ;;
+            "run-url: "*) run_url="${_line#run-url: }" ;;
+        esac
+    done <<< "$status_out"
+    red_suites="${red_suites# }"
+    local suites_csv; suites_csv="$(printf '%s\n' $red_suites | awk '!seen[$0]++' | tr '\n' ',' | sed 's/,$//')"
+
+    if [ -z "$suites_csv" ]; then
+        printf 'verdict %s: PR %s red — batcher-owned, no suite annotations; leaving for the batcher to re-check\n' \
+            "$name" "$pr_n"
+        return 0
+    fi
+
+    if [ -z "${SPIRA_BATCHER_BIN:-}" ] || [ ! -x "$SPIRA_BATCHER_BIN" ]; then
+        printf 'verdict %s: PR %s red (%s) — batcher-owned but SPIRA_BATCHER_BIN not available; cannot summon judgement\n' \
+            "$name" "$pr_n" "$suites_csv" >&2
+        return 1
+    fi
+
+    local member_ids; member_ids="$(printf '%s\n' $members_str | cut -d: -f1 | tr '\n' ',' | sed 's/,$//')"
+    local evidence="PR $pr_n"
+    [ -n "$run_url" ] && evidence="$evidence — $run_url"
+
+    local out id
+    out="$("$SPIRA_BATCHER_BIN" judgement-ci "$name" --suites "$suites_csv" --members "$member_ids" --evidence "$evidence" 2>&1)"
+    id="$(printf '%s\n' "$out" | sed -n 's/^id=//p' | head -1)"
+    if [ -n "$id" ]; then
+        { grep -v '^judgement=' "$batch_file" 2>/dev/null; printf 'judgement=%s\n' "$id"; } \
+            > "$batch_file.$$" && mv -f "$batch_file.$$" "$batch_file"
+        printf 'verdict %s: PR %s red (%s) — batcher-owned, summoned judgement (%s)\n' \
+            "$name" "$pr_n" "$suites_csv" "$id"
+    else
+        printf 'verdict %s: PR %s red (%s) — batcher-owned, judgement-ci failed: %s\n' \
+            "$name" "$pr_n" "$suites_csv" "$out" >&2
+        return 1
+    fi
+}
+
 _q_attribute() {
     local name="$1" repo="$2" pr_n="$3" batch_file="$4" branch_name="$5"
     local batch_head="$6" base_sha="$7" forge="$8" status_out="$9"
@@ -1212,9 +1269,13 @@ _verdict_process() {
             fi
             ;;
         red)
-            _q_attribute "$name" "$repo" "$pr_n" "$batch_file" "$branch_name" \
-                "$batch_head" "$base_sha" "$forge" "$status_out" "$members_str" \
-                "$remote" "$base"
+            if [ "$(_batch_field owner "$batch_file")" = batcher ]; then
+                _q_summon_batcher_ci "$name" "$pr_n" "$batch_file" "$status_out" "$members_str"
+            else
+                _q_attribute "$name" "$repo" "$pr_n" "$batch_file" "$branch_name" \
+                    "$batch_head" "$base_sha" "$forge" "$status_out" "$members_str" \
+                    "$remote" "$base"
+            fi
             ;;
         *)
             printf 'verdict %s: PR %s unknown check status: %s\n' "$name" "$pr_n" "$status" >&2

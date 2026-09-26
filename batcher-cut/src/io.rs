@@ -244,6 +244,11 @@ pub struct OpenBatch {
     pub members: Vec<(String, String)>,
     pub branch: String,
     pub opened: String,
+    /// "batcher" when this record was written by this crate; empty for a record batch.sh
+    /// wrote (batch.sh never writes this key, so its absence IS the legacy owner — no
+    /// separate default to keep in sync). verdict.sh reads it to decide whether a CI red
+    /// on this PR is its own attribution's or the summoned batcher persona's (sp-lomk3).
+    pub owner: String,
 }
 
 fn open_file(env: &Env, repo: &str) -> PathBuf {
@@ -282,6 +287,7 @@ pub fn read_open_batch(env: &Env, repo: &str) -> Result<Option<OpenBatch>, Strin
         members: parse_members(kv.get("members").map(String::as_str).unwrap_or("")),
         branch: kv.get("branch").cloned().unwrap_or_default(),
         opened: kv.get("opened").cloned().unwrap_or_default(),
+        owner: kv.get("owner").cloned().unwrap_or_default(),
     }))
 }
 
@@ -292,8 +298,8 @@ pub fn write_open_batch(env: &Env, repo: &str, ob: &OpenBatch) -> Result<(), Str
     }
     let members = ob.members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(" ");
     let body = format!(
-        "pr={}\nhead={}\nbase={}\nmembers={}\nopened={}\nbranch={}\n",
-        ob.pr, ob.head, ob.base, members, ob.opened, ob.branch
+        "pr={}\nhead={}\nbase={}\nmembers={}\nopened={}\nbranch={}\nowner={}\n",
+        ob.pr, ob.head, ob.base, members, ob.opened, ob.branch, ob.owner
     );
     let tmp = p.with_extension("tmp");
     fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;

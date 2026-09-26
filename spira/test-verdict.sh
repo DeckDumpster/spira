@@ -1321,5 +1321,100 @@ nowant "37. bisect-split: no false reproduction claim" "Reproduced alone"       
 clean_case
 git -C "$REPO" fetch -q origin 2>/dev/null || true
 
+# =============================================================================
+# 38. BATCHER-OWNED PR RED (sp-lomk3): a batch PR whose own open-batch record
+#     names owner=batcher is never split/ejected by verdict's own attribution —
+#     the summoned batcher persona (sp-47kq1) gets the failing suites and CI run
+#     link instead, via the batcher binary's judgement-ci subcommand. Case 39 is
+#     the positive control: the identical CI red on an owner-less (legacy) batch
+#     PR still runs today's ejection.
+# =============================================================================
+testdb_seed <<JSONL
+{"id":"sp-vd-bo1","title":"batcher-owned member","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"]}
+JSONL
+
+BATCHER_LOG="$TMP/batcher-log"; : > "$BATCHER_LOG"
+cat > "$SH/batcher-stub.sh" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$BATCHER_LOG"
+if [ "\${1:-}" = judgement-ci ]; then
+    printf 'id=sp-vd-judged\n'
+fi
+STUB
+chmod +x "$SH/batcher-stub.sh"
+export SPIRA_BATCHER_BIN="$SH/batcher-stub.sh"
+
+base_sha38="$(git -C "$REPO" rev-parse origin/main)"
+bwt38="$RUN/worktree/sp-vd-bo1"
+git -C "$REPO" worktree add -q -b "spira/sp-vd-bo1" "$bwt38" origin/main 2>/dev/null || true
+printf 'sp-vd-bo1\n' > "$bwt38/sp-vd-bo1.txt"
+git -C "$bwt38" add -A
+git -C "$bwt38" commit -q -m "sp-vd-bo1: work"
+tip_bo1="$(git -C "$REPO" rev-parse "spira/sp-vd-bo1")"
+printf 'BATCHED %s %s\n' "$tip_bo1" "$(date +%s)" > "$LANDSTATE/sp-vd-bo1"
+{ printf 'pr=93\nhead=%s\nbase=%s\nmembers=sp-vd-bo1:%s\nopened=%s\nowner=batcher\n' \
+    "$tip_bo1" "$base_sha38" "$tip_bo1" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-owned.sh\nrun-url: https://example.invalid/actions/runs/9004\n' \
+    > "$FORGE_STATUS_FILE"
+
+out38="$(verdict "$REPONAME")"
+want   "38. batcher-owned: summons judgement in the log" "summoned judgement" "$out38"
+want   "38. batcher-owned: judgement-ci called with the red suite" "test-owned.sh" "$(cat "$BATCHER_LOG")"
+want   "38. batcher-owned: judgement-ci called with the member" "sp-vd-bo1" "$(cat "$BATCHER_LOG")"
+want   "38. batcher-owned: judgement-ci called with the run link" \
+    "https://example.invalid/actions/runs/9004" "$(cat "$BATCHER_LOG")"
+case "$(landstate sp-vd-bo1)" in BATCHED*) ok "38. batcher-owned: member left BATCHED, not ejected" ;;
+    *) bad "38. batcher-owned: member left BATCHED, not ejected" "got: $(landstate sp-vd-bo1)" ;; esac
+is     "38. batcher-owned: no ejection mail sent" "" "$(cat "$MAIL_LOG")"
+is     "38. batcher-owned: PR never closed" "0" "$(grep -c 'close' "$FORGE_LOG")"
+is     "38. batcher-owned: open batch record records the judgement bead" "sp-vd-judged" \
+    "$(grep '^judgement=' "$(batch_file)" | cut -d= -f2-)"
+
+calls_before_38b="$(wc -l < "$BATCHER_LOG")"
+verdict "$REPONAME" > /dev/null
+is     "38b. batcher-owned: a second red pass does not re-summon judgement" \
+    "$calls_before_38b" "$(wc -l < "$BATCHER_LOG")"
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
+# =============================================================================
+# 39. POSITIVE CONTROL for case 38: the same CI red shape on a batch PR with no
+#     owner=batcher (today's batch.sh-cut record) still runs verdict's own
+#     attribution — proves case 38's routing is conditioned on the record, not
+#     a change to the default red path.
+# =============================================================================
+testdb_seed <<JSONL
+{"id":"sp-vd-bo2","title":"legacy-owned member","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"]}
+JSONL
+
+: > "$BATCHER_LOG"
+cat > "$SH/repro-fault-bo2.sh" <<'REPRO'
+#!/usr/bin/env bash
+exit 2
+REPRO
+chmod +x "$SH/repro-fault-bo2.sh"
+
+base_sha39="$(git -C "$REPO" rev-parse origin/main)"
+bwt39="$RUN/worktree/sp-vd-bo2"
+git -C "$REPO" worktree add -q -b "spira/sp-vd-bo2" "$bwt39" origin/main 2>/dev/null || true
+mkdir -p "$bwt39/spira"
+printf 'x\n' > "$bwt39/spira/test-owned.sh"
+git -C "$bwt39" add -A
+git -C "$bwt39" commit -q -m "sp-vd-bo2: work"
+tip_bo2="$(git -C "$REPO" rev-parse "spira/sp-vd-bo2")"
+printf 'BATCHED %s %s\n' "$tip_bo2" "$(date +%s)" > "$LANDSTATE/sp-vd-bo2"
+{ printf 'pr=94\nhead=%s\nbase=%s\nmembers=sp-vd-bo2:%s\nopened=%s\n' \
+    "$tip_bo2" "$base_sha39" "$tip_bo2" "$(date +%s)"; } > "$(batch_file)"
+printf 'red\nred-suite: test-owned.sh\nrun-url: https://example.invalid/actions/runs/9005\n' \
+    > "$FORGE_STATUS_FILE"
+
+SPIRA_QUEUE_REPRO_BATCH="$SH/repro-fault-bo2.sh" verdict "$REPONAME" > /dev/null
+is     "39. legacy-owned: judgement-ci never called" "0" "$(wc -l < "$BATCHER_LOG")"
+case "$(landstate sp-vd-bo2)" in EJECTED*) ok "39. legacy-owned: member ejected by verdict's own attribution" ;;
+    *) bad "39. legacy-owned: member ejected by verdict's own attribution" "got: $(landstate sp-vd-bo2)" ;; esac
+unset SPIRA_BATCHER_BIN
+clean_case
+git -C "$REPO" fetch -q origin 2>/dev/null || true
+
 printf '\n%s passed, %s failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
