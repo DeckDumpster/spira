@@ -351,9 +351,9 @@ except Exception:
 
     # Stage 2: Summoned — start sentinel directly, poll for aeon branch.
     _a_t2=$(date +%s)
-    systemctl --user start spira-sentinel.service 2>/dev/null || true
+    systemctl --user start "$(systemctl --user list-unit-files 'spira-sentinel*.service' --no-legend 2>/dev/null | awk 'NR==1{print $1}')" 2>/dev/null || true
     _a_summoned=0
-    while [ $(( $(date +%s) - _a_t2 )) -lt 60 ]; do
+    while [ $(( $(date +%s) - _a_t2 )) -lt "${SPIRA_ACCEPT_SUMMON_SECS:-180}" ]; do
         git -C "$scratch_repo" show-ref --verify -q \
             "refs/heads/spira/$_bead_id" 2>/dev/null && { _a_summoned=1; break; }
         sleep 2
@@ -406,7 +406,7 @@ except Exception: print("")' 2>/dev/null)" || _a_s4_st=""
 
     # Stage 5: Landed — commit on origin/$_land_ref by ancestry.
     # Kick sentinel: CHECK 6 dispatches landing.sh on the closed branch.
-    systemctl --user start spira-sentinel.service 2>/dev/null || true
+    systemctl --user start "$(systemctl --user list-unit-files 'spira-sentinel*.service' --no-legend 2>/dev/null | awk 'NR==1{print $1}')" 2>/dev/null || true
     _a_t5=$(date +%s)
     _a_landed=0
     while [ $(( $(date +%s) - _a_t5 )) -lt 120 ]; do
@@ -708,7 +708,7 @@ else
 
                 # Stage 2: Summoned — start sentinel, poll for aeon branch.
                 _d_t2=$(date +%s)
-                systemctl --user start spira-sentinel.service 2>/dev/null || true
+                systemctl --user start "$(systemctl --user list-unit-files 'spira-sentinel*.service' --no-legend 2>/dev/null | awk 'NR==1{print $1}')" 2>/dev/null || true
                 _d_summoned=0
                 while [ $(( $(date +%s) - _d_t2 )) -lt 60 ]; do
                     git -C "$scratch_repo" show-ref --verify -q \
@@ -763,7 +763,7 @@ except Exception: print("")' 2>/dev/null)" || _d_s4_st=""
                 fi
 
                 # Stage 5: Landed — commit on origin/land_ref by ancestry.
-                systemctl --user start spira-sentinel.service 2>/dev/null || true
+                systemctl --user start "$(systemctl --user list-unit-files 'spira-sentinel*.service' --no-legend 2>/dev/null | awk 'NR==1{print $1}')" 2>/dev/null || true
                 _d_t5=$(date +%s)
                 _aged_landed=0
                 while [ $(( $(date +%s) - _d_t5 )) -lt 120 ]; do
