@@ -117,6 +117,10 @@
 #                           have been running before the orphan sweep reaps it (default
 #                           3600). Guards a container mid-startup, whose owner file has not
 #                           been written yet, from being swept as if it were abandoned.
+#   SPIRA_BATCH_PEAK_WARN_FRAC  percent of /proc/meminfo MemTotal above which a logged
+#                           cgroup peak fires a WARNING (default 60; 0 disables). A peak
+#                           was logged every run for months while nothing read it, so a
+#                           template ran 3.7x its measured high-water mark undetected.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -1451,6 +1455,19 @@ else
             _peak_mib=$(( _peak_bytes / 1048576 ))
             _per_slot_mib=$(( _maxpar > 0 ? _peak_mib / _maxpar : _peak_mib ))
             log "batch: cgroup peak ${_peak_mib}MiB (maxpar ${_maxpar:-?}, ~${_per_slot_mib}MiB/slot; budget ${_mem_per_suite_mib:-192}MiB/suite)"
+
+            # A template oversized 3.7x its measured high-water mark ran undetected for
+            # months: the peak was logged but nothing read it. Fail loud when it drifts
+            # toward the runner's real ceiling.
+            #!peak-begin
+            if [ -n "$_peak_mib" ] && [ "${SPIRA_BATCH_PEAK_WARN_FRAC:-60}" -gt 0 ]; then
+                _memtotal_mib="$(awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo)"
+                _warn_ceil=$(( _memtotal_mib * ${SPIRA_BATCH_PEAK_WARN_FRAC:-60} / 100 ))
+                if [ "$_peak_mib" -gt "$_warn_ceil" ]; then
+                    log "batch: WARNING cgroup peak ${_peak_mib}MiB exceeds ${SPIRA_BATCH_PEAK_WARN_FRAC:-60}% of MemTotal (${_memtotal_mib}MiB) — SPIRA_BATCH_PEAK_WARN_FRAC or runner allocation needs adjustment"
+                fi
+            fi
+            #!peak-end
         fi
     fi
 
