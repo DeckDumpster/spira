@@ -1050,7 +1050,7 @@ _verdict_process() {
     local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
 
     local status_out status
-    status_out="$("$forge" check-status "$repo" "$pr_n" 2>/dev/null)" || status_out="pending"
+    status_out="$("$forge" check-status "$repo" "$pr_n" "${branch_name:-}" 2>/dev/null)" || status_out="pending"
     status="$(printf '%s\n' "$status_out" | head -1)"
     status="${status:-pending}"
     status="$(verdict_normalize_status "$status")"
