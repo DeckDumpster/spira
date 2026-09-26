@@ -23,6 +23,7 @@ pass=0; fail=0
 ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+want() { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted to contain [$2] got [$3]" ;; esac; }
 
 echo "test-conf-toml.sh"
 

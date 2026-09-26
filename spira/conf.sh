@@ -280,6 +280,7 @@ spira_toml_resolve() {
     fi
     [ -n "$conf" ] || { [ -n "$toml" ] && printf '%s' "$toml"; return 0; }
     target="${toml:-${SPIRA_TOML:-$(dirname "$conf")/spira.toml}}"
+    target="$(spira_config_writeback "$target")"
     conv_args=(--conf "$conf" --home "$HOME" --out "$target")
     rmap="${SPIRA_REPO_MAP:-$(_spira_repo_map_candidate)}"
     [ -n "$rmap" ] && conv_args+=(--repo-map "$rmap")
