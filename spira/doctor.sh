@@ -278,11 +278,19 @@ doctor_check_orphan_units() {
         [ -n "$name" ] && [ "$kind" = daemon ] && known="$known$name "
     done <<< "$rows"
 
+    # NO MATCH IS NOT A FAILED PROBE. systemd (255, Ubuntu 24.04) exits 1 and prints
+    # NOTHING when no unit file matches the pattern — the state of every fresh install,
+    # which has enabled no watcher yet. Read as a failed query it made install.sh's own
+    # phase-0 preflight refuse every fresh install. A manager that cannot be reached says
+    # so ("Failed to connect to bus: ..."), so a non-zero exit WITH output is still a FAIL.
     if ! out="$("$sc" --user list-unit-files --no-legend --state=enabled \
                     "spira-watch-*-${inst}.service" 2>&1)"; then
-        FAIL "cannot query watch unit files: $(printf '%s' "$out" | head -1)" \
-             "Check the systemd user manager: $sc --user status"
-        return
+        if [ -n "$out" ]; then
+            FAIL "cannot query watch unit files: $(printf '%s' "$out" | head -1)" \
+                 "Check the systemd user manager: $sc --user status"
+            return
+        fi
+        out=""
     fi
     local n=0 line unit wname
     while IFS= read -r line; do

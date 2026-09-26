@@ -43,7 +43,19 @@ write_systemctl() {
     # $1: the one line `list-unit-files --state=enabled` should print (no-legend form,
     # "<unit> enabled"); "PROBE_FAIL" makes systemctl itself fail as if the user manager
     # were unreachable.
-    if [ "$1" = PROBE_FAIL ]; then
+    if [ "$1" = NO_MATCH ]; then
+        # WHAT REAL systemd DOES WHEN NO UNIT FILE MATCHES: systemd 255 (Ubuntu 24.04, the
+        # testenv image and the acceptance runners) exits 1 and prints nothing. The mock
+        # used to answer "no match" with exit 0, which is why a fresh install's preflight
+        # failing on this check was invisible here.
+        cat > "$BIN/systemctl" <<'MOCK'
+#!/usr/bin/env bash
+case "$*" in
+    *"list-unit-files"*"--state=enabled"*) exit 1 ;;
+esac
+exit 0
+MOCK
+    elif [ "$1" = PROBE_FAIL ]; then
         cat > "$BIN/systemctl" <<'MOCK'
 #!/usr/bin/env bash
 case "$*" in
@@ -125,6 +137,20 @@ probe_out="$(run_doctor || true)"
 probe_sec="$(units_section "$probe_out")"
 want   "probe failure: FAIL fires"       "FAIL"                          "$probe_sec"
 nowant "probe failure: no false-clean ok" "no orphan spira-watch units" "$probe_sec"
+
+# ==========================================================================
+echo
+echo "5. FRESH BOX — no spira-watch unit enabled yet (systemd exits 1, prints nothing): ok:"
+# ==========================================================================
+# THE REGRESSION. On a fresh install nothing is enabled yet, so this probe matched nothing,
+# systemd exited 1, and doctor reported "cannot query watch unit files: " — a FAIL that
+# made install.sh's own phase-0 preflight refuse every fresh install.
+printf 'answers|daemon|/usr/bin/true\n' > "$MAN"
+write_systemctl NO_MATCH
+fresh_out="$(run_doctor || true)"
+fresh_sec="$(units_section "$fresh_out")"
+nowant "fresh: no FAIL"                 "FAIL"                         "$fresh_sec"
+want   "fresh: ok line"                 "no orphan spira-watch units"  "$fresh_sec"
 
 echo
 tl_summary
