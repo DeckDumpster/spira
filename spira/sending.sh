@@ -384,6 +384,14 @@ sweep_repo() {
         id="${br#spira/}"
         [ -z "$ONLY" ] || [ "$ONLY" = "$id" ] || [ "$ONLY" = "$br" ] || continue
 
+        # ROUND BRANCHES ARE NOT BEAD BRANCHES. spira/round-NN has no bead and no
+        # landstate record ever, so running it through send_disposition pays the same
+        # cost as a real bead and then fires the no-landstate ASSERT for a record that
+        # could never exist (sp-dxntp). Left for the Concierge's own toolchain to sweep.
+        case "$id" in
+            round-*) say "SKIP   $id  round branch, not a bead — swept by the Concierge's own toolchain"; continue ;;
+        esac
+
         # ONE WITNESS FUNCTION, the same one every deleter asks. Asked separately here, this
         # pass had two witnesses and no positive control on either — an unreachable database
         # answers "not in_progress" exactly as an open bead does, and that reads as permission.

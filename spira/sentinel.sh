@@ -696,6 +696,11 @@ for i in (d if isinstance(d, list) else [d]):
 # pass files the next batch. Filing is the rare path and must stay bounded however wrong the
 # evidence above turns out to be.
 #
+# THE CAP BOUNDS THE COUNT, NOT THE TIME — a store having a slow day can make even a
+# capped number of incident.sh calls cost minutes (sp-dxntp). SPIRA_CHECK5_BUDGET_SECS
+# bounds elapsed wall-clock the same way: whichever limit is hit first stops filing and
+# resolving, and the rest wait for the next pass.
+#
 # Skipped when SPIRA_SKIP_CLOSED_CHECK=1, same reason as before: a fixture that seeds all
 # beads directly has none of them in $SPIRA_RUN/<id>.log, so every row is skipped anyway —
 # but the query cost per partition is not worth paying to prove that.
@@ -705,6 +710,7 @@ _c5_absent_repos=""
 declare -A _c5_landed=()
 _c5_filed=0; _c5_capped=0; _c5_capped_ids=""; _c5_graph=0
 _c5_resolved=0; _c5_resolve_capped=0; _c5_resolve_capped_ids=""
+_c5_start="$(date +%s)"; _c5_budget="${SPIRA_CHECK5_BUDGET_SECS:-60}"; _c5_budget_hit=0
 _c5_max="${SPIRA_CHECK5_MAX_FILE:-5}"
 _c5_resolve_max="${SPIRA_CHECK5_MAX_RESOLVE:-5}"
 
@@ -724,6 +730,12 @@ _c5_resolve() {
     _inc_id="${_c5_incidents[$_hash]:-}"
     [ -n "${_inc_id:-}" ] || return 0
     if [ "$_c5_resolved" -ge "$_c5_resolve_max" ] 2>/dev/null; then
+        _c5_resolve_capped=$((_c5_resolve_capped + 1))
+        _c5_resolve_capped_ids+="${_c5_resolve_capped_ids:+ }$_id"
+        return 0
+    fi
+    if [ $(( $(date +%s) - _c5_start )) -ge "$_c5_budget" ] 2>/dev/null; then
+        _c5_budget_hit=1
         _c5_resolve_capped=$((_c5_resolve_capped + 1))
         _c5_resolve_capped_ids+="${_c5_resolve_capped_ids:+ }$_id"
         return 0
@@ -805,6 +817,11 @@ while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed; 
         _c5_capped=$((_c5_capped + 1)); _c5_capped_ids+="${_c5_capped_ids:+ }$id"
         continue
     fi
+    if [ $(( $(date +%s) - _c5_start )) -ge "$_c5_budget" ] 2>/dev/null; then
+        _c5_budget_hit=1
+        _c5_capped=$((_c5_capped + 1)); _c5_capped_ids+="${_c5_capped_ids:+ }$id"
+        continue
+    fi
     _c5_filed=$((_c5_filed + 1))
     log "CHECK5 $id: closed with no LANDED record on $r_name ($subj_base) — filing an Ops incident"
     SPIRA_DB="$SPIRA_DB" \
@@ -855,9 +872,11 @@ fi
 if [ "$_c5_resolve_capped" -gt 0 ]; then
     log "CHECK5: resolved $_c5_resolved incident(s), the cap (SPIRA_CHECK5_MAX_RESOLVE=$_c5_resolve_max); $_c5_resolve_capped more proven landed but not resolved this pass: $_c5_resolve_capped_ids"
 fi
+[ "$_c5_budget_hit" -eq 1 ] && log "CHECK5: pass budget exhausted (SPIRA_CHECK5_BUDGET_SECS=$_c5_budget) — remaining filings/resolves deferred to the next pass"
 unset -f _c5_resolve
 unset _c5_landed _c5_filed _c5_capped _c5_capped_ids _c5_graph _c5_max _c5_lid
 unset _c5_resolved _c5_resolve_capped _c5_resolve_capped_ids _c5_resolve_max
+unset _c5_start _c5_budget _c5_budget_hit
 fi  # SPIRA_SKIP_CLOSED_CHECK
 
 # ======================================================================================
