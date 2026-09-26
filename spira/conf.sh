@@ -715,7 +715,10 @@ spira_toml_resolve() {
 
     local bin target out
     bin="$(spira_config_bin)" || { [ -n "$toml" ] && printf '%s' "$toml"; return 0; }
-    target="${toml:-$SPIRA_REPO/spira.toml}"
+    # spira_config_writeback: $toml may resolve to the operator's real spira.toml
+    # (spira_toml_file checks $HOME before regenerating anything from this worktree's own
+    # fayths).
+    target="$(spira_config_writeback "${toml:-$SPIRA_REPO/spira.toml}")"
     local -a args=(--home "$HOME" --out "$target")
     for f in "${fayth_files[@]}"; do args+=(--fayth "$f"); done
     if out="$("$bin" convert "${args[@]}" 2>&1)"; then
