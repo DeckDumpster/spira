@@ -35,8 +35,8 @@
 # No database, no network, under a second.
 #
 # tier: T1
-# defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez sp-f1m7f sp-lzt
-# covers: spira/lib.sh spira/sentinel.sh
+# defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez sp-f1m7f sp-lzt sp-wiyr2
+# covers: spira/lib.sh spira/sentinel.sh spira/attempts.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -66,6 +66,39 @@ is "zero attempts at POISON_AT=0: no decision (nothing failed)" "none" \
    "$(c4d 0 0 0 "spira,plan" 0:0:0 0)"
 is "CONTROL: one attempt at POISON_AT=0 still poisons"      "poison ask" \
    "$(c4d 1 0 0 "spira,plan" 0:0:0 0)"
+
+echo
+echo "a recorded lift (sp-wiyr2): attempts.sh deadlocked takes the label off but not the"
+echo "count, so the fourth stamp field is what stops the very next pass poisoning it back:"
+
+is "lifted at this count, already asked: no re-poison"        "none" \
+   "$(c4d 3 0 0 "spira,plan" 0:0:1:1)"
+is "CONTROL: same count, no lift recorded: poison fires"       "poison" \
+   "$(c4d 3 0 0 "spira,plan" 0:0:1:0)"
+is "a missing fourth field (pre-fix caller) reads as not lifted: poison fires" "poison" \
+   "$(c4d 3 0 0 "spira,plan" 0:0:1)"
+
+# poison_lifted ITSELF is what keeps a genuinely new failure from being swallowed by an old
+# lift: check4_decide only sees the boolean the caller already resolved, so the "still
+# poisons past the lifted count" property has to be proven against the function that
+# resolves it, not against check4_decide's table.
+export SPIRA_RUN="$TMP/lifted-run"
+lifted() {
+    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_RUN="$SPIRA_RUN" \
+        bash -c '. "$1"/lib.sh; poison_lifted "$2" "$3" && echo yes || echo no' \
+        _ "$HERE" "$1" "$2" 2>/dev/null
+}
+mark() {
+    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_RUN="$SPIRA_RUN" \
+        bash -c '. "$1"/lib.sh; poison_lifted_mark "$2" "$3"' \
+        _ "$HERE" "$1" "$2" 2>/dev/null
+}
+is "before any lift is recorded: not lifted"           "no"  "$(lifted sp-x 3)"
+mark sp-x 3
+is "lifted at exactly the count it was recorded at"    "yes" "$(lifted sp-x 3)"
+is "a NEW failure past the lifted count is not covered" "no"  "$(lifted sp-x 4)"
+mark sp-x 5
+is "a later lift at a higher count re-covers the bead" "yes" "$(lifted sp-x 5)"
 
 echo
 echo "ask dedup is keyed on (bead, count), not the label (D4, UC-22):"

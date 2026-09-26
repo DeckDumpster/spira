@@ -213,11 +213,15 @@ deadlocked)
             continue
         fi
         # THE POISON ONLY. The rungs stay exactly where they are: they are the record of what
-        # happened to this bead and the reason its escalation was raised, and the next pass
-        # cannot re-poison it into the same deadlock because a bead whose branch is finished
-        # is landed by the landing pass rather than summoned for.
+        # happened to this bead and the reason its escalation was raised. Taking the label off
+        # does not touch the count feeding the threshold — it is read from the events trail,
+        # not the label — so CHECK 4 would otherwise see the same n against no label and
+        # re-poison within its next pass. poison_lifted_mark records the count this lift
+        # happened at; check4_decide will not re-poison as long as nothing has moved past it,
+        # and a genuinely new failure (one more claim after this lift) still poisons it again.
         if bdq label remove "$id" spira-poison >/dev/null 2>&1; then
             bdq note "$id" "Poison lifted by attempts.sh deadlocked: $br carries a commit naming $id and merges cleanly into $base, so this is finished, landable work. A poisoned bead stays open, an open bead carrying the label is claimed by nobody, and the landing pass lands only closed beads — so the label was holding completed work out of the queue permanently. The counters are left standing as the record of how it got here." >/dev/null 2>&1
+            att="$(attempts_of "$id")"; poison_lifted_mark "$id" "${att:-0}" || true
             n_done=$((n_done+1))
             printf 'RESTORED %-20s poison lifted; %s is finished and merges into %s\n' "$id" "$br" "$base"
         else
