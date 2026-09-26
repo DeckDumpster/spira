@@ -265,3 +265,26 @@ because they need the testlib/plan-lint dependencies actually present in `origin
 Verified: `bash spira/testenv-batch.sh --suites test-host-reason.sh,test-gate-verdict.sh
 spira/sp-eq8a4` in testenv (the two gate suites that scan the whole tree for exactly this kind
 of change — a deleted suite, an edited doctor.sh, a new doc).
+
+### sp-eq8a4.2.6's slice
+
+D11 (delete `test-aeon-heartbeat.sh` and lib.sh's three functions it alone exercised —
+`heartbeat_model_idle`, `youngest_in_subtree`, `subtree_has_flock`, superseded by the lease
+per sp-9ix) is applied: it touches neither `spira/lib.sh`'s seam regions nor any file the
+seam-extraction slices below touch, so it does not wait on them. Verified: `bash
+spira/testenv-batch.sh --suites test-attempts.sh spira/sp-eq8a4.2.6` (28s) as the regression
+check on the rest of `lib.sh`.
+
+D2, D3, D5-D8, D10, D12-D15 are NOT applied this slice. Each targets a table or suite this
+bead's own dependencies (sp-eq8a4.2.1-.2.5) build — `aeon_disposition`, `hb_tick`,
+`close_verdict`/`delivers_verdict`, `check4_decide`, the brief-render and fayth-schema seams —
+and each of the five files those commits touch (`test-attempts.sh`, `test-check4-events.sh`,
+`test-timeout.sh`, `test-aeon-prompt-layers.sh`, `test-fayth-project-instructions.sh`,
+`test-ops-closing.sh`, `test-groom-escalation-check.sh`, `spira/lib.sh` itself) is also
+touched by one of those branches. All five beads show closed via `bd show`, but closed is
+not landed: `git merge-base --is-ancestor <branch-tip> origin/main` says no for all five branch
+tips as of 2026-09-25, and each closed with "no gate ran or finished for this branch." Doing
+this slice's D-items now, against the pre-seam tree, would duplicate work these branches
+already did and guarantee a conflict against it once it lands. Deferred to a follow-up bead
+under sp-eq8a4.2 that re-checks landing status (git merge-base --is-ancestor, not `bd show`)
+before claiming.
