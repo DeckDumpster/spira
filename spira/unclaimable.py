@@ -36,11 +36,15 @@ scope_label = os.environ.get("SPIRA_SCOPE_LABEL", "spira")
 partition_labels = sorted({lab for inc, _ in all_parts.values() for lab in inc if lab != scope_label})
 ci_label = os.environ.get("SPIRA_CI_LABEL", "awaiting-ci")  # literal-ok: Python fallback for direct invocation without conf.sh
 ask_label = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
+groom_ask_label = os.environ.get("SPIRA_GROOM_ASK_LABEL", "groom-asked")  # literal-ok: Python fallback for direct invocation without conf.sh
 
 for bead in beads:
     L = set(bead.get("labels") or [])
     bid = bead.get("id", "?")
-    if L & {ask_label, "spira-poison"}:
+    # groom_ask_label marks a bead the groomer has already escalated to the operator — a
+    # deliberate parked state (law-a-deliberate-state-is-not-a-fault), not a fault this
+    # detector should keep re-reporting until the operator answers.
+    if L & {ask_label, groom_ask_label, "spira-poison"}:
         continue
     # A REPORT ABOUT AN UNCLAIMABLE BEAD IS NOT ITSELF A SUBJECT. The report is filed into
     # the incident partition, so whenever that partition is unservable the report is
