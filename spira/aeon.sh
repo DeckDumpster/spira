@@ -714,6 +714,15 @@ $out" >/dev/null 2>&1
 
 cleanup() {
     local rc=$? reset_at gate_why cause
+    # A SIGNAL-DELIVERED cleanup() can exit from inside an early-exit branch (thrash, lapsed,
+    # operator-wait), and that exit fires the EXIT trap — cleanup() again, same process, same
+    # $rc gone stale. The marker the first entry consumed is gone, so the second entry falls
+    # through to the generic branch and writes a second, contradictory requeue event
+    # (sp-u2ve1). One guard at the head binds every branch, present and future
+    # (law-bake-rules-into-tools); the first entry's work is already done by the time the
+    # second one is refused, so nothing here is lost.
+    [ -n "${CLEANUP_ENTERED:-}" ] && return 0
+    CLEANUP_ENTERED=1
     # `set -e` IS DISARMED FOR THE WHOLE OF TEARDOWN, first line, before anything can fail.
     # This ran under errexit and every step of it was one failing command away from being
     # skipped in silence — which is what happened: a compare-and-swap release exits non-zero
