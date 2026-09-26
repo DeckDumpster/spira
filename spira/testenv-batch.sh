@@ -89,11 +89,18 @@
 #                           runner can be held indefinitely by one runaway suite.
 #   SPIRA_BATCH_MAXPAR      max parallel suites in --mode parallel. When unset (the normal
 #                           case), derived from the guest's own hardware at run time:
-#                           min(nproc, floor((MemAvailable - reserve) / per_suite)).
+#                           min(cpu_ceiling, floor((MemAvailable - reserve) / per_suite)).
 #                           Memory is the binding resource in the guest: each parallel suite
 #                           runs inside the batch container, and a guest that exhausts RAM
 #                           dies with no annotation. The PID budget (container pids-limit
 #                           8192) is a ceiling, not the sizing input. Set to 0 for unlimited.
+#   SPIRA_BATCH_MAXPAR_CEILING  the cpu_ceiling term above (default: nproc). A gate measured
+#                           at 32.5% CPU busy at maxpar==nproc showed the corpus is mostly
+#                           waiting, not compute-bound, so nproc is a hardware fact, not a
+#                           measured safe concurrency. Raise this to run more suites than the
+#                           box has cores without buying idle ones — memory stays enforced
+#                           either way. Only raise it once measurement (not this box's core
+#                           count) says the corpus tolerates the higher concurrency.
 #   SPIRA_BATCH_MEM_RESERVE_MIB  MiB to hold back from the maxpar formula (default 1024).
 #   SPIRA_BATCH_MEM_PER_SUITE_MIB  per-suite memory budget in MiB (default 192; measured
 #                           cgroup peak was ~91 MiB across five full-corpus gate runs —
@@ -849,20 +856,28 @@ fi
 # home (XDG_RUNTIME_DIR check already acts as a container guard; HOME can extend it).
 # ---------------------------------------------------------------------------
 #!maxpar-begin
-# Derive maxpar from the guest's own hardware: min(nproc, floor((avail-reserve)/per_suite)).
+# Derive maxpar from the guest's own hardware: min(cpu_ceiling, floor((avail-reserve)/per_suite)).
+# cpu_ceiling defaults to nproc, but nproc is a hardware fact, not a measured safe
+# concurrency: a corpus that is mostly waiting on I/O can run more suites than it has cores
+# without buying idle ones. SPIRA_BATCH_MAXPAR_CEILING raises cpu_ceiling explicitly; memory
+# stays the enforced term either way, since it reflects a real per-slot cost.
 # SPIRA_BATCH_MAXPAR is a ceiling: when set, the result is min(N, hardware_maxpar).
 # An operator value set for a larger box cannot exceed what this box allows.
 # Setting it to 0 disables all capping (useful for small explicit selections or stress tests).
 _mem_reserve_mib="${SPIRA_BATCH_MEM_RESERVE_MIB:-1024}"
 _mem_per_suite_mib="${SPIRA_BATCH_MEM_PER_SUITE_MIB:-192}"
 _maxpar_cpu="$(nproc)"
+_cpu_ceiling="${_maxpar_cpu}"
+if [ -n "${SPIRA_BATCH_MAXPAR_CEILING:-}" ] && [ "${SPIRA_BATCH_MAXPAR_CEILING}" -gt 0 ] 2>/dev/null; then
+    _cpu_ceiling="${SPIRA_BATCH_MAXPAR_CEILING}"
+fi
 _mem_avail_mib="${SPIRA_BATCH_MEM_AVAIL_MIB:-$(awk '/^MemAvailable:/{printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0)}"
 _mem_budget=$(( _mem_avail_mib - _mem_reserve_mib ))
 [ "${_mem_budget:-0}" -lt "${_mem_per_suite_mib}" ] && _mem_budget="${_mem_per_suite_mib}"
 _mem_bound=$(( _mem_budget / _mem_per_suite_mib ))
 [ "${_mem_bound:-0}" -lt 1 ] && _mem_bound=1
-if [ "${_maxpar_cpu}" -le "${_mem_bound}" ]; then
-    _hardware_maxpar="${_maxpar_cpu}"
+if [ "${_cpu_ceiling}" -le "${_mem_bound}" ]; then
+    _hardware_maxpar="${_cpu_ceiling}"
     _hardware_binding="cpu"
 else
     _hardware_maxpar="${_mem_bound}"
@@ -972,7 +987,7 @@ if [ "$MODE" = parallel ]; then
             override)
                 log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar [override: SPIRA_BATCH_MAXPAR=${SPIRA_BATCH_MAXPAR:-?}; hardware was ${_hardware_binding}-bound at ${_hardware_maxpar}])" ;;
             *)
-                log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar [${_maxpar_binding}-bound: cpu=${_maxpar_cpu} mem=${_mem_avail_mib}MiB avail ${_mem_reserve_mib}MiB reserve ${_mem_per_suite_mib}MiB/suite])" ;;
+                log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: $_maxpar [${_maxpar_binding}-bound: cpu=${_maxpar_cpu} ceiling=${_cpu_ceiling} mem=${_mem_avail_mib}MiB avail ${_mem_reserve_mib}MiB reserve ${_mem_per_suite_mib}MiB/suite])" ;;
         esac
     else
         log "batch: running $_n_selected suite(s) in $CNAME (mode: $MODE, maxpar: unlimited)"
