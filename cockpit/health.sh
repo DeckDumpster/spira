@@ -418,6 +418,15 @@ header_line() {
             "$C_DIM" "$C_RST" "$C_BAD" "$C_B" "${SP_AURON_FIRING}" "$C_RST" \
             "$C_BAD" "$(printf '%s' "${SP_AURON_KEYS:-}" | tr ',' ' ')" "$C_RST"
     fi
+    # OPERATOR OVERRIDES (sp-qdh0x). Shown only when one is declared, so a box with none stays
+    # silent; a `?` means the probe could not read overrides.sh, never "none active".
+    if [ "${SP_OVERRIDES_N:-0}" = "?" ]; then
+        printf ' %soverrides%s  %s?%s — could not be read\n' "$C_DIM" "$C_RST" "$C_BAD" "$C_RST"
+    elif [ "${SP_OVERRIDES_N:-0}" != 0 ]; then
+        printf ' %soverrides%s  %s%s\n' "$C_DIM" "$C_RST" \
+            "$( [ "${SP_OVERRIDES_FAILED:-0}" != 0 ] && printf '%s%s failed%s  ' "$C_BAD" "$SP_OVERRIDES_FAILED" "$C_RST" )" \
+            "$(printf '%s' "${SP_OVERRIDES_LIST:-}" | tr ',' ' ')"
+    fi
     if [ -f "$SPIRA_SNAP" ]; then
         local _probe_info="" _pline _pname _pkilled
         while IFS= read -r _pline; do

@@ -287,6 +287,29 @@ for j, l in enumerate(lines[-n:]):
         echo "SP_AURON_KEYS=''"
     fi
 
+    # OPERATOR OVERRIDES (sp-qdh0x). overrides.sh list is the harness's own answer for what is
+    # active and what has failed; the pane must not keep a second model of that state.
+    if [ -x "$SPIRA_HOME/overrides.sh" ]; then
+        local _ov_out _ov_n=0 _ov_failed=0 _ov_line _ov_name _ov_bead _ov_state _ov_list=""
+        _ov_out="$("$SPIRA_HOME/overrides.sh" list 2>/dev/null)"
+        while IFS=' ' read -r _ov_name _ov_bead _ov_state; do
+            [ -n "${_ov_name:-}" ] || continue
+            case "$_ov_state" in
+                retired) continue ;;
+                failed:*) _ov_failed=$((_ov_failed+1)) ;;
+            esac
+            _ov_n=$((_ov_n+1))
+            _ov_list="${_ov_list:+$_ov_list,}${_ov_name}:${_ov_bead}"
+        done <<< "$_ov_out"
+        echo "SP_OVERRIDES_N=$_ov_n"
+        echo "SP_OVERRIDES_FAILED=$_ov_failed"
+        echo "SP_OVERRIDES_LIST='$_ov_list'"
+        unset _ov_out _ov_n _ov_failed _ov_line _ov_name _ov_bead _ov_state _ov_list
+    else
+        echo "SP_OVERRIDES_N=?"
+        echo "SP_OVERRIDES_FAILED=?"
+        echo "SP_OVERRIDES_LIST=''"
+    fi
 
     # gate-run/ — live gate runs. LIVENESS FROM /proc ON argv, never from directory existence
     # or pgrep -f (law-absence-needs-a-positive-control). Nothing prunes gate-run/, so stale
