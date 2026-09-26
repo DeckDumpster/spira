@@ -274,7 +274,10 @@ git -C "$REPO" worktree add -q --detach "$RUN/worktree/.landing" main >/dev/null
 # will not fetch on its own, so the local tracking ref send_branch reads must already
 # exist here.
 git -C "$REPO" push -q origin spira/sp-cl1
-git -C "$REPO" fetch -q origin spira/sp-cl1
+# A bare `fetch origin` (not `fetch origin spira/sp-cl1`), so the default refspec updates
+# refs/remotes/origin/spira/sp-cl1 — a single named branch on the command line only
+# populates FETCH_HEAD, never the tracking ref send_branch's remote-delete check reads.
+git -C "$REPO" fetch -q origin
 # Give it a branch: label too, to prove the label is dropped once the ref is verifiably
 # gone (law-branch-affinity-is-recorded).
 bead sp-cl1 closed '[]' '["branch:spira/sp-cl1"]'
