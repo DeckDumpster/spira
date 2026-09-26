@@ -167,7 +167,7 @@ is "sp-sweepstale starts closed" closed "$(status_of sp-sweepstale)"
 out="$(sentinel)"
 is "sp-sweepstale is reopened (file predates started_at)" open "$(status_of sp-sweepstale)"
 want "the pass says so" "sp-sweepstale" "$out"
-want "the reason mentions the time window" "was not written" "$out"
+want "the reason mentions the time window" "predates the window" "$out"
 
 # ======================================================================================
 # TRIGGER SECTION — uses stub bd (no fixture database needed)
