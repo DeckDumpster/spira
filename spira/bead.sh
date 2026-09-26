@@ -276,6 +276,9 @@ print(d.get("issue_type") or "")
         case " $labels " in
             *" $_ask_label "*)
                 local _blk_other _oid
+                # `dep list` shapes its --json rows differently for one id (a nested issue,
+                # keyed "id") than for a batch of ids (a flat record, keyed "depends_on_id") —
+                # read whichever key the single-id call actually returned.
                 _blk_other="$(bdq dep list "$id" --type blocks --json 2>/dev/null | python3 -c '
 import json, sys
 try:
@@ -283,7 +286,7 @@ try:
 except ValueError:
     data = []
 for d in data:
-    print(d.get("depends_on_id", ""))
+    print(d.get("depends_on_id") or d.get("id") or "")
 ' 2>/dev/null)"
                 while IFS= read -r _oid; do
                     [ -n "$_oid" ] || continue
