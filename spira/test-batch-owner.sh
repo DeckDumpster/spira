@@ -7,18 +7,22 @@
 #      confirmed gone from podman — the fix for the leak path (sp-mxvdd), where a
 #      failed teardown used to delete the owner file unconditionally.
 #   B. _batch_sweep_dead_owners: owner file present, PID gone -> container reaped.
-#   C. _batch_sweep_ownerless: a spira-batch-* container with NO owner file at all,
-#      older than a caller-given bound -> reaped. This is the second leak route:
-#      a container that lost its owner file (or never got one written before a
-#      crash) was invisible to every sweep that only walks *.owner files.
+#   C. _batch_sweep_ownerless: a container matching a name-prefix with NO owner file
+#      at all, older than a caller-given bound -> reaped. This is the second leak
+#      route: a container that lost its owner file (or never got one written before
+#      a crash) was invisible to every sweep that only walks *.owner files. Every
+#      call here scopes the sweep to a prefix unique to this test run, since at
+#      min-age=0 the age bound protects nothing an unscoped call would touch.
 #   D. INTEGRATION: the exact leak-then-sweep sequence from the bead — a "teardown"
 #      that fails leaves the owner file and the container both in place, and the
 #      next sweep pass reaps it.
 #
 # POSITIVE CONTROLS (law-absence-needs-a-positive-control)
-#   A0, B0, C3, C4: each sweep/release path is shown NOT to fire when its
+#   A0, B0, C3, C4, C5: each sweep/release path is shown NOT to fire when its
 #   condition is unmet, so a later "did not fire" result means the condition
-#   really was unmet, not that the matcher is silently broken.
+#   really was unmet, not that the matcher is silently broken. C5 is also this
+#   suite's acceptance case: an unrelated spira-batch-* container with no owner
+#   file, outside this run's prefix, survives the sweep untouched.
 #
 # Driven against real podman containers (docker.io/library/ubuntu:24.04, already
 # used as the positive-control image in test-testenv.sh) rather than a hand-written
@@ -154,14 +158,18 @@ want "B1: sweep reports the container it removed" "$CN_B_DEAD" "$_sweep_out_b"
 echo
 echo "C: _batch_sweep_ownerless (no owner file at all, age-bounded)"
 # ===========================================================================
+# PFX_C is unique to this test run and passed to every call below, so the sweep
+# can only ever touch containers this suite created — not another spira-batch-*
+# container on the host.
+PFX_C="spira-batch-test-$$-"
 
-CN_C="spira-batch-ownc-$$"
+CN_C="${PFX_C}ownc"
 _mk_container "$CN_C"
 rm -f "/tmp/${CN_C}.owner"   # already absent, but explicit: this container is ownerless
 
 # C3 POSITIVE CONTROL: a large min-age refuses to sweep a container that is
 # in fact only seconds old — proves the age bound is read, not ignored.
-_batch_sweep_ownerless 100000 >/dev/null
+_batch_sweep_ownerless 100000 "$PFX_C" >/dev/null
 if podman container exists "$CN_C" 2>/dev/null; then
     ok "C3: positive-control: young ownerless container is not swept under a large min-age"
 else
@@ -172,13 +180,21 @@ fi
 # CN_C4 has an owner file; it must be excluded from this arm even at min-age=0.
 # Swept in the SAME pass as CN_C below, so the exclusion is proven while the
 # sweep is actively reaping a sibling container, not merely when idle.
-CN_C4="spira-batch-ownc4-$$"
+CN_C4="${PFX_C}ownc4"
 _mk_container "$CN_C4"
 printf '%s\n' "$$" > "/tmp/${CN_C4}.owner"
 
-# C1 + C4: min-age=0 sweeps CN_C (ownerless) but must leave CN_C4 (owner file
-# present) alone in the same pass.
-_sweep_out_c="$(_batch_sweep_ownerless 0)"
+# CN_C5 is an "unrelated" container: it matches the production sweep's own
+# scope (spira-batch-) and has no owner file, but does NOT match PFX_C. This
+# is the acceptance case from the bead: an unrelated spira-batch-* container
+# with no owner file must survive a test run untouched.
+CN_C5="spira-batch-unrelated-$$"
+_mk_container "$CN_C5"
+rm -f "/tmp/${CN_C5}.owner"
+
+# C1 + C4 + C5: min-age=0 sweeps CN_C (ownerless, in scope) but must leave
+# CN_C4 (owner file present) and CN_C5 (out of scope) alone in the same pass.
+_sweep_out_c="$(_batch_sweep_ownerless 0 "$PFX_C")"
 
 if podman container exists "$CN_C" 2>/dev/null; then
     bad "C1: ownerless container is swept at min-age=0" "container still exists"
@@ -199,6 +215,18 @@ fi
 rm -f "/tmp/${CN_C4}.owner"
 podman rm -f "$CN_C4" >/dev/null 2>&1 || true
 _ALL_CNAMES="${_ALL_CNAMES/ $CN_C4/}"
+
+# C5 ACCEPTANCE: an unrelated ownerless spira-batch-* container outside PFX_C
+# survives a sweep run at min-age=0 — the scoped call never widens back out
+# to every container on the host.
+if podman container exists "$CN_C5" 2>/dev/null; then
+    ok "C5: unrelated ownerless spira-batch-* container outside the test prefix is untouched"
+else
+    bad "C5: unrelated container outside the test prefix is untouched" \
+        "container was removed — sweep escaped its name-prefix scope"
+fi
+podman rm -f "$CN_C5" >/dev/null 2>&1 || true
+_ALL_CNAMES="${_ALL_CNAMES/ $CN_C5/}"
 
 # ===========================================================================
 echo
