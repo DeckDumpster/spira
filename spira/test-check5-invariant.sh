@@ -20,12 +20,23 @@
 #   5. NON-CODE TYPE — a closed bead outside SPIRA_WORK_CLOSE_TYPES (issue_type=event) is
 #      never examined, landstate or not — its close does not run through the
 #      submitted/landed pipeline this invariant polices.
+#   6. DELIVERS — a closed bead carrying any delivers: label survives without a landstate
+#      record: its close never runs through the commit pipeline this invariant polices.
+#   7. HAND-CLOSED — a closed bead with no $SPIRA_RUN/<id>.log (closed outside the pipeline
+#      this harness worked) is never examined, landstate or not.
+#   8. UNMAPPED REPO — a closed bead whose repo: label names a repo absent from the
+#      repo-map is skipped, and the skip is logged once per repo per pass.
+#   9. CANNOT RESOLVE REF — a mapped repo whose land ref cannot be determined is left
+#      unjudged, not read as unlanded.
+#  10. PARTITION ENUMERATION — a second persona's partition is examined too, not only the
+#      first; and a pass with no persona declaring a partition says so.
 #
 # None of these reopen the bead — the closed-work-bead close path now runs only through
 # bead_close_on_land (lib.sh), so a violation here is a landing-pass bug, not a verdict to
 # retry. CHECK 5 reports it to Ops and leaves the bead exactly as it found it.
 #
 # defect: sp-qsona
+# tier: T3
 # covers: spira/sentinel.sh spira/lib.sh
 # timeout: 120
 # hermetic-ok: uses a fixture database and a local git repo, no systemd or gh
@@ -78,12 +89,21 @@ MOCK
 chmod +x "$TMP/mock-incident.sh"
 
 HOME_REPO="$(basename "$REPO")"
-printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$HOME_REPO" "$REPO" pr main '' '' > "$TMP/repo-map"
+
+# OTHER — a mapped repo whose land ref can never be determined: no remote (so rung 3 never
+# runs a network-shaped remote query) and no commit (so rung 4's HEAD is unborn and
+# rev-parse -verify fails). Both rungs return fast, purely from the ref store.
+OTHER="$TMP/other"
+git init -q -b main "$OTHER"
+
+printf '%s | %s | pr | main | |\n' "$HOME_REPO" "$REPO" > "$TMP/repo-map"
+printf '%s | %s | pr | | |\n' other "$OTHER" >> "$TMP/repo-map"
 
 sentinel() {
+    local faiths="${1:-t}"
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$HOME_REPO" \
-    SPIRA_GOAL=sp-goal SPIRA_FAYTHS="t" SPIRA_INFERENCE_EVERY=999999 \
+    SPIRA_GOAL=sp-goal SPIRA_FAYTHS="$faiths" SPIRA_INFERENCE_EVERY=999999 \
     SPIRA_NOTIFY="$SH/ask.sh" SPIRA_REPO_MAP="$TMP/repo-map" \
     SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
     SPIRA_CONF="$TMP/no-such-conf" \
@@ -189,5 +209,106 @@ sentinel >/dev/null
 is "sp-ev stays closed" closed "$(status_of sp-ev)"
 inc_out="$(cat "$INC_LOG")"
 nowant "no incident for a non-code type, landstate or not" "sp-ev" "$inc_out"
+
+# ======================================================================================
+echo
+echo "DELIVERS — a closed bead with a delivers: label survives without a landstate record:"
+# ======================================================================================
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-dlv","title":"delivered by note","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO","delivers:note:$RUN/sp-dlv.log"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-dlv","depends_on_id":"sp-goal","type":"parent-child"}]}
+JSONL
+touch "$RUN/sp-dlv.log"
+rm -f "$RUN/landstate/sp-dlv"
+: > "$INC_LOG"
+
+sentinel >/dev/null
+is "sp-dlv stays closed" closed "$(status_of sp-dlv)"
+inc_out="$(cat "$INC_LOG")"
+nowant "no incident for a delivers:-labeled close" "sp-dlv" "$inc_out"
+
+# ======================================================================================
+echo
+echo "HAND-CLOSED — a closed bead with no \$SPIRA_RUN/<id>.log is never examined:"
+# ======================================================================================
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-hand","title":"closed by hand","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-hand","depends_on_id":"sp-goal","type":"parent-child"}]}
+JSONL
+rm -f "$RUN/sp-hand.log" "$RUN/landstate/sp-hand"
+: > "$INC_LOG"
+
+sentinel >/dev/null
+is "sp-hand stays closed" closed "$(status_of sp-hand)"
+inc_out="$(cat "$INC_LOG")"
+nowant "no incident for a bead this harness never worked" "sp-hand" "$inc_out"
+
+# ======================================================================================
+echo
+echo "UNMAPPED REPO — a closed bead naming a repo absent from the repo-map is skipped:"
+# ======================================================================================
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-ghost","title":"ghost repo","status":"closed","issue_type":"task","labels":["spira","plan","repo:ghost"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-ghost","depends_on_id":"sp-goal","type":"parent-child"}]}
+JSONL
+touch "$RUN/sp-ghost.log"
+rm -f "$RUN/landstate/sp-ghost"
+: > "$INC_LOG"
+
+out="$(sentinel)"
+is "sp-ghost stays closed" closed "$(status_of sp-ghost)"
+want "the skip is logged, naming the repo" "repo:ghost is not in repo-map" "$out"
+inc_out="$(cat "$INC_LOG")"
+nowant "no incident for an unmapped repo" "sp-ghost" "$inc_out"
+
+# ======================================================================================
+echo
+echo "CANNOT RESOLVE REF — a mapped repo whose land ref cannot be determined is unjudged:"
+# ======================================================================================
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-other","title":"other repo, no resolvable ref","status":"closed","issue_type":"task","labels":["spira","plan","repo:other"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-other","depends_on_id":"sp-goal","type":"parent-child"}]}
+JSONL
+touch "$RUN/sp-other.log"
+rm -f "$RUN/landstate/sp-other"
+: > "$INC_LOG"
+
+out="$(sentinel)"
+is "sp-other stays closed" closed "$(status_of sp-other)"
+want "CHECK 5 declines to judge, not reopen" "cannot resolve the ref" "$out"
+inc_out="$(cat "$INC_LOG")"
+nowant "no incident when the base cannot be resolved" "sp-other" "$inc_out"
+
+# ======================================================================================
+echo
+echo "PARTITION ENUMERATION — a second persona's partition is examined too:"
+# ======================================================================================
+printf 'FAYTH_LABELS="ops"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/ops.fayth"
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["ops"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-opsbare","title":"bare closed, ops partition","status":"closed","issue_type":"task","labels":["ops","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-opsbare","depends_on_id":"sp-goal","type":"parent-child"}]}
+JSONL
+touch "$RUN/sp-opsbare.log"
+rm -f "$RUN/landstate/sp-opsbare"
+: > "$INC_LOG"
+
+sentinel "t ops" >/dev/null
+is "sp-opsbare stays closed" closed "$(status_of sp-opsbare)"
+inc_out="$(cat "$INC_LOG")"
+want "a partition other than the first persona's is examined too" "sp-opsbare" "$inc_out"
+rm -f "$SH/chamber/ops.fayth"
+
+# ======================================================================================
+echo
+echo "NO PARTITION DECLARED — a pass with no persona's fayth carrying labels says so:"
+# ======================================================================================
+out="$(sentinel ghost-persona)"
+want "the pass logs that no partition is being checked" \
+    "no persona in the chamber declares a partition" "$out"
 
 tl_summary
