@@ -175,7 +175,15 @@ echo
 echo "8. STATIC CHECK — covered scripts use spira_git_push"
 # =========================================================================
 for f in landing.sh batch.sh sending.sh verdict.sh queue.sh; do
-    if grep -qE 'spira_git_push' "$HERE/$f"; then
+    # sending.sh's own remote-branch delete moved into lib.sh's spira_reap_landed_branch
+    # (sp-jci6o), shared with bead_close_on_land's landing-time reap — spira_git_push is
+    # still what it calls, just one hop further away than a literal grep on this file sees.
+    if [ "$f" = "sending.sh" ]; then
+        want_sym='spira_git_push|spira_reap_landed_branch'
+    else
+        want_sym='spira_git_push'
+    fi
+    if grep -qE "$want_sym" "$HERE/$f"; then
         ok "$f: spira_git_push present"
     else
         bad "$f: spira_git_push present" "not found"
