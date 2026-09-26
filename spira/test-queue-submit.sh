@@ -24,7 +24,7 @@ GATE_LOG="$TMP/gate-calls.log"
 cp -r "$HERE" "$TMP/spira"
 cat > "$TMP/spira/gate.sh" <<FAKE
 #!/usr/bin/env bash
-printf 'gate-called branch=%s\n' "\${1:-}" >> "$GATE_LOG"
+printf 'gate-called branch=%s suites=%s\n' "\${1:-}" "\${SPIRA_GATE_SUITES:-unset}" >> "$GATE_LOG"
 exit 0
 FAKE
 chmod +x "$TMP/spira/gate.sh"
@@ -50,6 +50,18 @@ run() {
 
 git -C "$REPO" branch "spira/sp-abc01" main
 git -C "$REPO" branch "spira-suite-state/test-foo-20260101000000" main
+
+echo
+echo "certification honours SPIRA_CERTIFY_SUITES=off (fences only), as landing.sh does:"
+mkdir -p "$TMP/run/queue" "$TMP/run/landstate"
+: > "$GATE_LOG"
+git -C "$REPO" branch "spira/sp-cso01" main
+env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+    SPIRA_HOME_REPO=fixq SPIRA_REPO="$REPO" SPIRA_RUN="$TMP/run" \
+    SPIRA_QUEUE_DIR="$TMP/run/queue" SPIRA_REPO_MAP="$RMAP" SPIRA_CERTIFY_SUITES=off \
+    bash "$TMP/spira/queue.sh" submit spira/sp-cso01 >/dev/null 2>&1
+want "the gate is handed suites=off" "suites=off" "$(cat "$GATE_LOG")"
+rm -f "$TMP/run/landstate/sp-cso01"
 
 echo
 echo "positive control — gate is reachable for a valid spira/<id> branch (bead-less, UC-27):"

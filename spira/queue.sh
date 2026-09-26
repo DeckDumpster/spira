@@ -65,10 +65,14 @@ cmd_submit() {
     tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
     id="${br#spira/}"
 
-    # Certify: run the gate.
+    # Certify: run the gate. SPIRA_CERTIFY_SUITES=off keeps the fences and drops the suites,
+    # exactly as landing.sh's certification does. Without it this path — every aeon's own
+    # teardown self-certification (sp-u9f82) — ran the touched-suite selection on branch and
+    # base, 30-47 minutes per bead with the aeon holding its fleet slot throughout.
     local gate_out gate_rc gate_start
     gate_start="$(date +%s)"
-    gate_out="$(SPIRA_GATE_BEAD="$id" "$HERE/gate.sh" "$br" "$name" 2>&1)"
+    gate_out="$(SPIRA_GATE_BEAD="$id" SPIRA_GATE_SUITES="${SPIRA_CERTIFY_SUITES:-on}" \
+        "$HERE/gate.sh" "$br" "$name" 2>&1)"
     gate_rc=$?
 
     local gate_outcome
