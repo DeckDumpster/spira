@@ -4462,6 +4462,7 @@ detect_unclaimable_ready() {
                     -u SPIRA_SCOPE_LABEL -u SPIRA_CI_LABEL \
                     -u SPIRA_ASK_LABEL -u SPIRA_NO_LOOP_LABEL \
                     -u SPIRA_CZAR_LABEL -u SPIRA_GROOMER_LABEL \
+                    -u SPIRA_GROOM_ASK_LABEL \
                     -u SPIRA_MAECHEN_LABEL -u SPIRA_SPIKE_LABEL \
                     SPIRA_HOME="$_duc_prod_home" \
                     bash -c ". \"$_duc_prod_home/lib.sh\"; detect_unclaimable_ready"
@@ -4725,10 +4726,11 @@ try: d = json.load(sys.stdin)
 except Exception: raise SystemExit
 valid = set(os.environ.get("VALID_NAMES", "").split())
 ask_label = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
+groom_ask_label = os.environ.get("SPIRA_GROOM_ASK_LABEL", "groom-asked")  # literal-ok: Python fallback for direct invocation without conf.sh
 for i in (d if isinstance(d, list) else [d]):
     L = i.get("labels") or []
-    # Skip beads already handled by the unclaimable or needs-ryan checks.
-    if ask_label in L or "spira-poison" in L:
+    # Skip beads already handled by the unclaimable, needs-ryan or groom-ask checks.
+    if ask_label in L or groom_ask_label in L or "spira-poison" in L:
         continue
     repo_labels = [l[5:] for l in L if l.startswith("repo:")]
     if not repo_labels:

@@ -45,6 +45,7 @@ echo "test-unclaimable.sh"
 SCOPE=myscope
 ASK=needs-decision
 CI=ci-parked
+GROOM_ASK=parked-for-ryan
 
 # Small chamber: builder (plan), ops (incident), groom (groom), maechen (maechen-sweep) and
 # spike (spike). Mirrors chamber/*.fayth's FAYTH_LABELS/FAYTH_EXCLUDE_LABELS shape without
@@ -66,6 +67,7 @@ classify() {
     local beads_json="$1" parts="${2:-$FULL_PARTS}" all_parts="${3:-$FULL_PARTS}"
     PARTS="$parts" ALL_PARTS="$all_parts" \
     SPIRA_SCOPE_LABEL="$SCOPE" SPIRA_CI_LABEL="$CI" SPIRA_ASK_LABEL="$ASK" \
+    SPIRA_GROOM_ASK_LABEL="$GROOM_ASK" \
         python3 "$HERE/unclaimable.py" <<< "$beads_json"
 }
 
@@ -119,6 +121,17 @@ echo "case 7 — spira-poison and ask-label beads are excluded (have their own c
 out="$(classify "[$(bead sp-unc7a spira-poison), $(bead sp-unc7b "$ASK")]")"
 nowant "poisoned bead not flagged by unclaimable check"   "sp-unc7a" "$out"
 nowant "ask-label bead not flagged by unclaimable check"  "sp-unc7b" "$out"
+
+echo
+echo "case 7b — a groom-ask bead (already escalated to the operator) is excluded (sp-recur-unclaimable)"
+# sp-4bjrg carried only groom-asked, no scope/partition label, and was re-flagged on every
+# sentinel pass — 62 times on one incident — because the groomer's own escalation label was
+# not in this exclusion set. The negative control mirrors it exactly except for the label,
+# and must still be reported: the fix is an exclusion, not the check going blind.
+out="$(classify "[$(bead sp-unc7c "$GROOM_ASK")]")"
+nowant "groom-ask bead not flagged by unclaimable check"  "sp-unc7c" "$out"
+out2="$(classify "[$(bead sp-unc7d "")]")"
+want "otherwise-identical bead without the label is still flagged (positive control)" "UNCLAIMABLE sp-unc7d" "$out2"
 
 echo
 echo "case 10 — parked partition: bead claimable by a parked fayth is silent (not UNCLAIMABLE)"
