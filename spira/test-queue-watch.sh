@@ -42,11 +42,12 @@ export PATH="$(dirname "$CARGO_BIN"):$PATH"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
 # --- 1. unit replays -------------------------------------------------------------------------
-if out="$(CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/target" "$CARGO_BIN" test --manifest-path "$ROOT/queue-watch/Cargo.toml" 2>&1)"; then
-    ok "queue-watch unit replays pass"
-else
-    bad "queue-watch unit replays: $(printf '%s\n' "$out" | command grep -E 'FAILED|panicked|error' | head -5)"
-fi
+UNIT_OUT="$T/unit-test.out"
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/target" "$CARGO_BIN" test --no-fail-fast \
+    --manifest-path "$ROOT/queue-watch/Cargo.toml" > "$UNIT_OUT" 2>&1
+_rc=$?
+cat "$UNIT_OUT"
+report_cargo "$UNIT_OUT" "$_rc"
 
 BIN="${QUEUE_WATCH_BIN:-}"
 if [ -z "$BIN" ]; then

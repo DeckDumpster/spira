@@ -36,11 +36,12 @@ if [ -z "$CARGO_BIN" ]; then
 fi
 export PATH="$(dirname "$CARGO_BIN"):$PATH"
 
-if out="$("$CARGO_BIN" test --manifest-path "$CRATE/Cargo.toml" 2>&1)"; then
-    ok "test-plan crate tests passed"
-    printf '%s\n' "$out" | grep -E '^\s*(test |ok |FAILED|running)' || true
-else
-    bad "test-plan crate tests" "$(printf '%s\n' "$out" | tail -40)"
-fi
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+OUT="$TMP/cargo-test.out"
+CARGO_TERM_COLOR=never "$CARGO_BIN" test --manifest-path "$CRATE/Cargo.toml" \
+    --no-fail-fast > "$OUT" 2>&1
+_rc=$?
+cat "$OUT"
+report_cargo "$OUT" "$_rc"
 
 tl_summary

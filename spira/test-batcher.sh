@@ -6,9 +6,9 @@
 # replay tests are ordinary `cargo test` unit tests, so this suite is test-cockpit-rust.sh's
 # shape with the fixture database dropped — there is nothing here that needs one.
 #
-# `cargo test`'s stdout already names every test as it finishes (`test <path> ... ok` /
-# `... FAILED`); this suite parses those lines and calls testlib.sh's ok/bad once per Rust
-# test, so a red names the failing case instead of folding 40-odd tests into one line.
+# testlib.sh's report_cargo parses cargo test's own per-test lines and calls ok/bad once
+# per Rust test, so a red names the failing case instead of folding 40-odd tests into one
+# line.
 #
 # tier: T1
 # covers: batcher/src/*
@@ -28,32 +28,11 @@ fi
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-_report_cargo_tests() {
-    local out="$1" line name detail
-    while IFS= read -r line; do
-        case "$line" in
-            "test "*" ... ok")
-                name="${line#test }"; name="${name% ... ok}"
-                ok "$name"
-                ;;
-            "test "*" ... FAILED")
-                name="${line#test }"; name="${name% ... FAILED}"
-                detail="$(awk -v t="---- $name stdout ----" '
-                    $0 == t { grab=1; next }
-                    grab && /^----/ { exit }
-                    grab && /^failures:/ { exit }
-                    grab { print }
-                ' "$out" | head -5 | tr '\n' ' ')"
-                bad "$name" "${detail:-see cargo output above}"
-                ;;
-        esac
-    done < "$out"
-}
-
 OUT="$TMP/cargo-test.out"
 CARGO_TERM_COLOR=never "$CARGO_BIN" test --manifest-path "$ROOT/Cargo.toml" \
     -p batcher --no-fail-fast > "$OUT" 2>&1
+_rc=$?
 cat "$OUT"
-_report_cargo_tests "$OUT"
+report_cargo "$OUT" "$_rc"
 
 tl_summary

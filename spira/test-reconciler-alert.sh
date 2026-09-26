@@ -45,22 +45,24 @@ fi
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
 # --- 1. unit tests: the pure alert module, then the CLI's own arg parsing -------------------
-if out="$(CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/engine-target" "$CARGO_BIN" test --manifest-path "$ROOT/reconciler-engine/Cargo.toml" alert:: 2>&1)"; then
-    ok "reconciler-engine alert:: unit tests pass"
-else
-    bad "reconciler-engine alert:: unit tests" "$(printf '%s\n' "$out" | command grep -E 'FAILED|panicked|error' | head -5)"
-fi
+ENGINE_OUT="$T/engine-test.out"
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/engine-target" "$CARGO_BIN" test --no-fail-fast \
+    --manifest-path "$ROOT/reconciler-engine/Cargo.toml" alert:: > "$ENGINE_OUT" 2>&1
+_rc=$?
+cat "$ENGINE_OUT"
+report_cargo "$ENGINE_OUT" "$_rc"
 
 # reconciler-alert depends on ../reconciler-engine as a path dependency — copied as a
 # sibling of the isolated build tree so the relative path still resolves (same shape as
 # test-czar-pass.sh's isolated build for czar-pass).
 cp -r "$ROOT/reconciler-alert" "$T/reconciler-alert-src"
 cp -r "$ROOT/reconciler-engine" "$T/reconciler-engine"
-if out="$(CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/alert-target" "$CARGO_BIN" test --manifest-path "$T/reconciler-alert-src/Cargo.toml" 2>&1)"; then
-    ok "reconciler-alert unit tests pass"
-else
-    bad "reconciler-alert unit tests" "$(printf '%s\n' "$out" | command grep -E 'FAILED|panicked|error' | head -5)"
-fi
+ALERT_OUT="$T/alert-test.out"
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/alert-target" "$CARGO_BIN" test --no-fail-fast \
+    --manifest-path "$T/reconciler-alert-src/Cargo.toml" > "$ALERT_OUT" 2>&1
+_rc=$?
+cat "$ALERT_OUT"
+report_cargo "$ALERT_OUT" "$_rc"
 
 CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/alert-target" "$CARGO_BIN" build --release \
     --manifest-path "$T/reconciler-alert-src/Cargo.toml" >/dev/null 2>&1
