@@ -32,32 +32,9 @@ test-install-refusal.sh"
 # sp-qvjzb's 459 suites) is blocked until sp-l2be6 decides whether to migrate or exempt.
 # Track this in test-testlib-migrated.sh to prevent silent growth of unmigrated suites.
 DEFERRED_MIGRATION="test-aeon-base-ref-qualify.sh
-test-aeon-chamber-overlay.sh
-test-aeon-elastic-concurrency.sh
-test-aeon-gate-close-silent.sh
-test-aeon-launch-grammar.sh
-test-aeon-prod-dirty.sh
-test-aeon-resume-collision.sh
-test-aeon-sweep.sh
-test-aeon-wiki-concurrent.sh
-test-aeon-worktree-collision.sh
 test-archivist.sh
 test-attempts.sh
 test-auron.sh
-test-batch-bisect-expiry.sh
-test-batch-cited-commit.sh
-test-batch-conflict.sh
-test-batch-conflicting-pr.sh
-test-batch-express.sh
-test-batch-idle-cut.sh
-test-batch-landed-false.sh
-test-batch-maxpar.sh
-test-batch-nocut-reason.sh
-test-batch-owner.sh
-test-batch-reconcile.sh
-test-batch-stuck.sh
-test-batch-timing.sh
-test-batcher-cut.sh
 test-bd-lock-retry.sh
 test-bd-resolve.sh
 test-bd-schema-stamp.sh
@@ -78,7 +55,6 @@ test-cert-stale-gate-key.sh
 test-certified-withdraw.sh
 test-certify.sh
 test-chamber-repo-labels.sh
-test-check2-reaper.sh
 test-citations.sh
 test-claim-retry.sh
 test-closed-strand.sh
@@ -151,7 +127,6 @@ test-pr-stall.sh
 test-priority-bands.sh
 test-pve.sh
 test-ready.sh
-test-reclaim-slay-branch-guard.sh
 test-reconciler.sh
 test-repo-label.sh
 test-repo-lanes.sh
@@ -182,8 +157,6 @@ test-suites-hygiene.sh
 test-superseded.sh
 test-tarball-bins.sh
 test-thrash-streak.sh
-test-timeout-lint.sh
-test-timeout.sh
 test-tmux-env.sh
 test-tokens.sh
 test-tsd.sh
@@ -192,8 +165,6 @@ test-watchtower-czar-outcome.sh
 test-watchtower-failed-units.sh
 test-watchtower-lapse.sh
 test-watchtower.sh
-test-work-services-exclusion.sh
-test-workspace-dist.sh
 test-worktree-absent.sh"
 #
 # Shrink any list as a suite converts, and this check catches a name added to either

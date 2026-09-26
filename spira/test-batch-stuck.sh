@@ -22,16 +22,12 @@
 # Case g (post-landing false positive, sp-wlt1r) moved to test-batch-reconcile.sh
 # (sp-s088v.16), alongside the other pre-guard reconciliation shapes.
 #
+# tier: T1
 # covers: spira/batch.sh
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -249,6 +245,4 @@ nowant "i. idle-then-fresh-cert: no stuck mail" "mailed operator" "$outI"
 is    "i. idle-then-fresh-cert: stuck flag absent" "0" \
     "$([ -f "$RUN/queue-stuck-$REPONAME" ] && echo 1 || echo 0)"
 clean_case
-
-printf '\nresults: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

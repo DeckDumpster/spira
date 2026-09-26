@@ -25,12 +25,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -384,5 +379,4 @@ want "E: judgement bead body carries the evidence" "https://example.invalid/acti
 out_e2="$(judge_ci --suites '' --members sp-caaa1 --evidence x)"
 is "E: no suites given is refused, not filed" "1" "$([ -z "$(printf '%s\n' "$out_e2" | sed -n 's/^id=//p')" ] && echo 1 || echo 0)"
 
-printf '\n%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

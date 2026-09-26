@@ -51,12 +51,7 @@
 # covers: spira/aeon.sh spira/gate-run.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -395,5 +390,4 @@ is   "st=4: bead is not reopened — converted to submitted" "open" "$(bead_stat
 want "st=4: carrying the submitted label" "spira-submitted" "$(bead_labels sp-gcs-stale4)"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

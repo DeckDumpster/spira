@@ -21,14 +21,11 @@
 # otherwise look identical to one applied correctly.
 #
 # defect: sp-eibeu
+# tier: T1
 # covers: spira/aeon.sh spira/chamber/builder.md spira/conf.sh spira/doctor.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -181,5 +178,4 @@ out_none="$(SPIRA_HOME="$SPIRA_HOME" SPIRA_CHAMBER_OVERLAY="$EMPTY_OVERLAY" \
     SPIRA_DB="$SPIRA_DB" bash "$HERE/doctor.sh" 2>&1)"
 want "doctor reports none active when the overlay directory is empty" "none active" "$out_none"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

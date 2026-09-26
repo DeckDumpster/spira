@@ -25,11 +25,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 BATCH="$HERE/testenv-batch.sh"
 CONF_SH="$HERE/conf.sh"
@@ -169,7 +165,7 @@ for _key in SPIRA_BATCH_MAXPAR SPIRA_BATCH_MAXPAR_CEILING SPIRA_BATCH_MEM_RESERV
 done
 
 # Positive control: fabricated key is absent.
-notwant "B-pos: SPIRA_BATCH_NOEXIST absent (positive control)" \
+nowant "B-pos: SPIRA_BATCH_NOEXIST absent (positive control)" \
         "SPIRA_BATCH_NOEXIST" "$_conf_keys"
 
 # Verify a value from a conf file is picked up for a new key.
@@ -186,5 +182,4 @@ _from_conf="$(
 
 # ===========================================================================
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ] || exit 1
+tl_summary
