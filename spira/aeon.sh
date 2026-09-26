@@ -831,6 +831,7 @@ sys.exit(0)' "$BEAD_ID" 2>/dev/null; then
             # of its own.
             capacity_pause_set "$_d_reset" "$BEAD_ID"
             release_own_claim "$BEAD_ID"
+            bump_requeue "$BEAD_ID" "$_d_reqcause"
             bdq note "$BEAD_ID" "Returned unchanged by aeon.sh: the account's capacity window was spent mid-session, so this bead was never judged. No attempt was charged and nothing about the work is implied. Summoning is paused until the window reopens." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID returned unchanged — the account ran out of capacity, no attempt charged"
             ledger_done "$rc" "$_d_status"
@@ -875,6 +876,7 @@ Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m
             exit $rc ;;
         gate-unfinished)
             release_own_claim "$BEAD_ID"
+            bump_requeue "$BEAD_ID" "$_d_reqcause"
             bdq note "$BEAD_ID" "Released by aeon.sh: the session ended while its landing gate was still running, so it never held a verdict about its own work. No attempt was charged and nothing about the work is implied — $_d_gate_why. Run the gate through gate-run.sh, which waits in bounded slices, and do not end the session while it is unfinished." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID released with its gate still running — no attempt charged ($_d_gate_why)"
             ledger_done "$rc" "$_d_status"
@@ -893,6 +895,7 @@ Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m
             bdq note "$BEAD_ID" "Timeout: the session was killed by the lane cap (${FAYTH_TIMEOUT_SECONDS:-?}s) with nothing committed. This is the harness's clock ending the turn, not a verdict about the work. No attempt charged." >/dev/null 2>&1
             log "$FAYTH: $BEAD_ID timed out — no attempt charged"
             release_own_claim "$BEAD_ID"
+            bump_requeue "$BEAD_ID" "$_d_reqcause"
             ledger_done "$rc" "$_d_status"
             exit $rc ;;
         requeue)

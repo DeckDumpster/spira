@@ -2733,11 +2733,13 @@ sys.exit(0 if d and sys.argv[1] in (d[0].get("labels") or []) else 1)' "${2:-}" 
 # performs the side effects the returned verdict names; this function decides only.
 #
 # CHARGING IS DEFAULT-DENY: an attempt counts toward poison only when the trace can say the
-# WORK failed. Capacity loss, a slay, a thrash, an unfinished gate, a decision/operator wait,
-# a lane-cap timeout and a harness requeue are all evidence about something other than the
-# work, so they are exempted (free) and read `-` for requeue-cause when nothing offsets the
-# claim event, or that cause's own value when the caller must call bump_requeue/bump_lapsed
-# with it. Only `unlanded` (ran to its own end, left the bead open) and a lease lapse charge.
+# WORK failed. Capacity loss, a thrash, an unfinished gate, a decision/operator wait, a
+# lane-cap timeout and a harness requeue are all evidence about something other than the
+# work, so they are exempted (free). A free disposition whose note tells the bead no attempt
+# was charged must read a real `unjudged-<cause>` for requeue-cause, never `-`: the claim
+# event is already on record, and `-` means aeon.sh's case block has nothing to pass
+# bump_requeue, so no net-zero event is ever written and the claim charges anyway. Only
+# `unlanded` (ran to its own end, left the bead open) and a lease lapse charge.
 #
 # Inputs, in precedence order (each yes/no unless noted, `-` standing in for "empty" so a
 # fixed-width read never loses a field to word-splitting):
@@ -2769,7 +2771,7 @@ aeon_disposition() {
     [ "$requeue_cause" = "-" ] && requeue_cause=""
     [ "$outcome" = "-" ] && outcome=""
 
-    if [ "$capacity_rc" = 0 ]; then printf 'capacity free - capacity\n'; return 0; fi
+    if [ "$capacity_rc" = 0 ]; then printf 'capacity free unjudged-capacity capacity\n'; return 0; fi
     if [ "$slain" = yes ]; then printf 'slain free - slain\n'; return 0; fi
     if [ "$thrash" = yes ]; then
         if [ "$thrash_charged" = yes ]; then
@@ -2781,12 +2783,14 @@ aeon_disposition() {
     fi
     # LEASE LAPSE IS A VERDICT — the one marker-driven branch that charges. See aeon.sh cleanup().
     if [ "$lapsed" = yes ]; then printf 'lapsed charge - lapsed\n'; return 0; fi
-    if [ "$gate_unfinished" = yes ]; then printf 'gate-unfinished free - gate-unfinished\n'; return 0; fi
+    if [ "$gate_unfinished" = yes ]; then
+        printf 'gate-unfinished free unjudged-gate-unfinished gate-unfinished\n'; return 0
+    fi
     if [ "$decision_blocked" = yes ]; then
         printf 'decision-blocked free unjudged-decision-blocked decision-blocked\n'; return 0
     fi
     if [ "$session_rc" = 124 ] && [ "$committed" != yes ]; then
-        printf 'timeout free - timeout\n'; return 0
+        printf 'timeout free unjudged-timeout timeout\n'; return 0
     fi
     if [ -n "$requeue_cause" ]; then
         printf 'requeue-%s free %s requeue\n' "$requeue_cause" "$requeue_cause"; return 0

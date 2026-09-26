@@ -73,7 +73,7 @@ row "session ran to its own end, bead still open: unlanded charges" \
 # ---- free branches (G4, G5, thrash bare, G6, decision-blocked, G3, requeue, operator-wait) --
 
 row "G4 capacity loss mid-session is free" \
-    "capacity free - capacity" \
+    "capacity free unjudged-capacity capacity" \
     open 0 no no no no no no 0 no - no no 1 -
 
 row "G5 aeon-side slain is free" \
@@ -85,7 +85,7 @@ row "thrash below the streak cap is free (bare exemption)" \
     open 1 no yes no no no no 0 no - no no 1 -
 
 row "G6 gate still running on an open bead is free" \
-    "gate-unfinished free - gate-unfinished" \
+    "gate-unfinished free unjudged-gate-unfinished gate-unfinished" \
     open 1 no no no no yes no 0 no - no no 1 -
 
 row "open decision blocker is free" \
@@ -93,7 +93,7 @@ row "open decision blocker is free" \
     open 1 no no no no no yes 0 no - no no 1 -
 
 row "G3 timeout with nothing committed is free" \
-    "timeout free - timeout" \
+    "timeout free unjudged-timeout timeout" \
     open 1 no no no no no no 124 no - no no 1 -
 
 row "G3 timeout WITH a commit falls through to session_outcome, not the timeout branch" \
@@ -133,7 +133,7 @@ row "G15 not-judged: unknown" \
 # ---- G8: precedence — every adjacent pair, both markers set at once ------------------
 
 row "G8 capacity beats slain" \
-    "capacity free - capacity" \
+    "capacity free unjudged-capacity capacity" \
     open 0 yes no no no no no 0 no - no no 1 -
 
 row "G8 slain beats thrash" \
@@ -149,7 +149,7 @@ row "G8 lapsed beats gate-unfinished" \
     open 1 no no no yes yes no 0 no - no no 1 -
 
 row "G8 gate-unfinished beats decision-blocked" \
-    "gate-unfinished free - gate-unfinished" \
+    "gate-unfinished free unjudged-gate-unfinished gate-unfinished" \
     open 1 no no no no yes yes 0 no - no no 1 -
 
 row "G8 decision-blocked beats timeout" \
@@ -157,7 +157,7 @@ row "G8 decision-blocked beats timeout" \
     open 1 no no no no no yes 124 no - no no 1 -
 
 row "G8 timeout beats a harness requeue cause" \
-    "timeout free - timeout" \
+    "timeout free unjudged-timeout timeout" \
     open 1 no no no no no no 124 no rebase-conflict no no 1 -
 
 row "G8 a harness requeue cause beats operator-wait" \
