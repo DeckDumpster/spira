@@ -59,6 +59,16 @@ certify_tier() {
     if [ -z "${st:-}" ]; then
         printf 'tier=0 reason=never-gated\n'; return 0
     fi
+    # GATING is written the instant a dispatch starts (land_repo, landing.sh) and
+    # overwritten with the terminal verdict the instant it finishes. The unit that runs a
+    # pass is its own mutex, so a GATING record read at the top of a LATER pass can only be
+    # one a prior pass wrote and never got to overwrite — the pass that dispatched it was
+    # killed or restarted mid-gate. Treat it exactly like never-gated rather than tier 1, so
+    # a kill costs only the in-flight gate's own minutes, not a whole pass's wait behind
+    # every other candidate (sp-ob7uq, sp-ceemq).
+    if [ "$st" = GATING ]; then
+        printf 'tier=0 reason=inflight-restart\n'; return 0
+    fi
     if [ "$st" = RED ] && [ "${reason:-}" = "conflicts-with-base" ]; then
         if [ -n "${ls_at:-}" ] && [ -n "${base_ct:-}" ] && [ "${base_ct:-0}" -gt "${ls_at:-0}" ] 2>/dev/null; then
             printf 'tier=0 reason=cwb-stale-base\n'; return 0
