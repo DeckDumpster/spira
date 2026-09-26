@@ -370,10 +370,10 @@ chmod +x "$FA_BIN/claude"
 fa_reset; fa_seed sp-ex-2
 printf 1 > "$FA_TMP/shim-rc"
 rc="$(fa_run_aeon)"
-is "bead is closed"      "closed" "$(fa_status sp-ex-2)"
+is "bead is converted to submitted, not left closed" "open" "$(fa_status sp-ex-2)"
 is "aeon exits 0 despite claude rc=1 (the fix)" "0" "$rc"
 want "ledger still records the real rc" "rc=1" "$(fa_ledger_line sp-ex-2)"
-want "and records the closed status"    "status=closed" "$(fa_ledger_line sp-ex-2)"
+want "and records the submitted status" "status=submitted" "$(fa_ledger_line sp-ex-2)"
 # The positive control for this UC (bead not closed, claude rc=1, aeon exits non-zero) is
 # the "session did not close" row above (sp-rq-2) — the same discrimination, one fewer run.
 
