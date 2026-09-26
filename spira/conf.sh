@@ -657,11 +657,20 @@ spira_toml_file() {
 # A release install ships it at $SPIRA_REPO/bin/spira-config (make install's release
 # layout: bin/ is a sibling of the spira/ this file sits in, never inside it — see
 # pre-activate.sh's own $REL/bin/spira-config); a bare checkout has no such binary until
-# cargo builds one, so this falls back to building it once into the crate's own target dir.
-# Memoized in SPIRA_CONFIG_BIN so every persona_model call in one process doesn't each pay
-# a `cargo build` check.
+# cargo builds one, so this falls back to building it once into the crate's own target dir,
+# memoizing the result into SPIRA_CONFIG_BIN so every persona_model call in one process
+# doesn't each pay a `cargo build` check.
+#
+# AN EXPLICIT SPIRA_CONFIG_BIN IS AUTHORITATIVE, same as SPIRA_TOML in spira_toml_file: a
+# caller (a test fixture pinning "no binary available") means exactly that, and must not be
+# second-guessed by falling through to auto-discovery — the memoization write below is what
+# makes this the same variable on a second call, not a second, competing meaning of it.
 spira_config_bin() {
-    [ -n "${SPIRA_CONFIG_BIN:-}" ] && [ -x "$SPIRA_CONFIG_BIN" ] && { printf '%s' "$SPIRA_CONFIG_BIN"; return 0; }
+    if [ -n "${SPIRA_CONFIG_BIN+set}" ]; then
+        [ -x "$SPIRA_CONFIG_BIN" ] || return 1
+        printf '%s' "$SPIRA_CONFIG_BIN"
+        return 0
+    fi
     [ -x "$SPIRA_REPO/bin/spira-config" ] && { SPIRA_CONFIG_BIN="$SPIRA_REPO/bin/spira-config"; printf '%s' "$SPIRA_CONFIG_BIN"; return 0; }
     local crate="$SPIRA_REPO/spira-config" cargo
     [ -d "$crate" ] || return 1

@@ -42,11 +42,15 @@ echo "T0 — the file-scraping this resolver replaces is gone:"
 # POSITIVE CONTROL FIRST: prove the grep patterns below actually match the shape they are
 # meant to catch, against a deliberately reintroduced offender, before trusting their
 # silence on the real files (law-absence-needs-a-positive-control).
+# MATCHES A VARIABLE READ ($FAYTH_MODEL or ${FAYTH_MODEL), never a bare mention — prose
+# describing what this resolver replaces (persona_model's own comment, this suite's) says
+# "FAYTH_MODEL" too, and a matcher that fired on that would never be able to go green
+# (law-a-matcher-reads-code-not-prose).
 PC='--model "${FAYTH_MODEL:-claude-opus-5}"'
-case "$PC" in *'FAYTH_MODEL:-'*) ok "PC: the FAYTH_MODEL-fallback pattern matches its own offender" ;;
-              *) bad "PC: the FAYTH_MODEL-fallback pattern matches its own offender" "did not match" ;; esac
+case "$PC" in *'${FAYTH_MODEL'*) ok "PC: the FAYTH_MODEL-read pattern matches its own offender" ;;
+              *) bad "PC: the FAYTH_MODEL-read pattern matches its own offender" "did not match" ;; esac
 
-if grep -q 'FAYTH_MODEL' "$HARNESS/spira/lib.sh"; then
+if grep -qE '\$\{?FAYTH_MODEL' "$HARNESS/spira/lib.sh"; then
     bad "lib.sh no longer reads FAYTH_MODEL" "still present"
 else
     ok "lib.sh no longer reads FAYTH_MODEL"
@@ -54,7 +58,7 @@ fi
 want "aeon_claude_argv calls persona_model" \
      'persona_model "$FAYTH"' "$(cat "$HARNESS/spira/lib.sh")"
 
-if grep -q 'FAYTH_MODEL' "$HARNESS/concierge.sh"; then
+if grep -qE '\$\{?FAYTH_MODEL' "$HARNESS/concierge.sh"; then
     bad "concierge.sh no longer reads FAYTH_MODEL" "still present"
 else
     ok "concierge.sh no longer reads FAYTH_MODEL"
@@ -220,8 +224,13 @@ printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$T/repo-map"
 # persona.builder.model entry this section asserts on. aeon.sh sources
 # $SPIRA_HOME/chamber/$FAYTH.fayth directly for its other fields regardless of SPIRA_CHAMBER,
 # so the fixture fayth above still applies.
+# SPIRA_SCOPE_LABEL= (EMPTY, EXPLICITLY): fayth_fenced (lib.sh) otherwise requires
+# FAYTH_LABELS to carry it, and its default derives from basename($SPIRA_REPO) — here a
+# scratch mktemp dir, not a real checkout — which the fixture fayth above has no reason to
+# know about. An empty key is the documented way an operator disables scope restriction.
 export SPIRA_HOME="$SH" SPIRA_RUN="$T/run" SPIRA_REPO_MAP="$T/repo-map" SPIRA_CONF=/nonexistent \
-       SPIRA_CHAMBER="$T/empty-chamber" SPIRA_TOML="$TOML" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" T
+       SPIRA_CHAMBER="$T/empty-chamber" SPIRA_TOML="$TOML" SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
+       SPIRA_SCOPE_LABEL= T
 mkdir -p "$SPIRA_RUN"
 
 cat > "$BIN/claude" <<'SHIM'
