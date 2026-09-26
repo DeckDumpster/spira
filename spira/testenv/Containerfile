@@ -35,6 +35,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 ARG GO_VERSION=1.26.5
 ARG BD_TAG=v1.2.1
 ARG BD_REPO=https://github.com/steveyegge/beads.git
+# TARGETARCH is populated by the builder from --platform (amd64, arm64, ...) and matches
+# Go's own release naming, so no translation table is needed here.
+ARG TARGETARCH
 
 # Minimal toolchain for the build: curl+ca-certificates to download Go,
 # git to clone the source, build-essential for CGO_ENABLED=1 (gcc).
@@ -47,7 +50,7 @@ RUN apt-get update -q && \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL -o /tmp/go.tar.gz \
-    "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" && \
+    "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" && \
     tar -C /usr/local -xzf /tmp/go.tar.gz && \
     rm /tmp/go.tar.gz
 
@@ -84,6 +87,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 FROM docker.io/library/ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+# Same TARGETARCH as the bd-builder stage; each FROM starts a fresh ARG scope.
+ARG TARGETARCH
 
 # ── Rust toolchain from the builder stage ──────────────────────────────────
 # /usr/local/cargo: rustup bin shims (cargo, rustc, rustup, …).
@@ -170,10 +175,10 @@ https://cli.github.com/packages stable main" \
 # between server and client during server-mode test runs.
 ARG DOLT_VERSION=2.2.3
 RUN curl -fsSL -o /tmp/dolt.tar.gz \
-    "https://github.com/dolthub/dolt/releases/download/v${DOLT_VERSION}/dolt-linux-amd64.tar.gz" && \
+    "https://github.com/dolthub/dolt/releases/download/v${DOLT_VERSION}/dolt-linux-${TARGETARCH}.tar.gz" && \
     tar -C /tmp -xzf /tmp/dolt.tar.gz && \
-    install -m 0755 /tmp/dolt-linux-amd64/bin/dolt /usr/local/bin/dolt && \
-    rm -rf /tmp/dolt.tar.gz /tmp/dolt-linux-amd64
+    install -m 0755 "/tmp/dolt-linux-${TARGETARCH}/bin/dolt" /usr/local/bin/dolt && \
+    rm -rf /tmp/dolt.tar.gz "/tmp/dolt-linux-${TARGETARCH}"
 
 # ── duckdb — the query layer over run/tsd/'s JSONL files (sp-sbc6o) ───────────────────────
 # A single static binary from the project's own GitHub releases; gzip-compressed, no package
@@ -181,7 +186,7 @@ RUN curl -fsSL -o /tmp/dolt.tar.gz \
 # image without it fails the doctor-check step below rather than shipping a silent gap.
 ARG DUCKDB_VERSION=1.5.5
 RUN curl -fsSL -o /tmp/duckdb.gz \
-    "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-amd64.gz" && \
+    "https://github.com/duckdb/duckdb/releases/download/v${DUCKDB_VERSION}/duckdb_cli-linux-${TARGETARCH}.gz" && \
     gunzip -c /tmp/duckdb.gz > /usr/local/bin/duckdb && \
     chmod 0755 /usr/local/bin/duckdb && \
     rm -f /tmp/duckdb.gz
@@ -193,13 +198,19 @@ RUN curl -fsSL -o /tmp/duckdb.gz \
 # returns 404 as of 2026-09-23; the embedded key avoids the external dependency.
 ARG AWS_CLI_VERSION=2.37.1
 COPY testenv/awscli.pub /tmp/awscli.pub
-RUN apt-get update -q && \
+# awscli publishes under uname's arch names, not Debian's: x86_64 for amd64, aarch64 for arm64.
+RUN case "$TARGETARCH" in \
+        amd64) awscli_arch=x86_64 ;; \
+        arm64) awscli_arch=aarch64 ;; \
+        *) echo "testenv: no awscli build for TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
+    esac && \
+    apt-get update -q && \
     apt-get install -yq --no-install-recommends unzip && \
     rm -rf /var/lib/apt/lists/* && \
     curl -fsSL -o /tmp/awscliv2.zip \
-        "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip" && \
+        "https://awscli.amazonaws.com/awscli-exe-linux-${awscli_arch}-${AWS_CLI_VERSION}.zip" && \
     curl -fsSL -o /tmp/awscliv2.zip.sig \
-        "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-${AWS_CLI_VERSION}.zip.sig" && \
+        "https://awscli.amazonaws.com/awscli-exe-linux-${awscli_arch}-${AWS_CLI_VERSION}.zip.sig" && \
     mkdir -p /tmp/.gnupg && chmod 700 /tmp/.gnupg && \
     GNUPGHOME=/tmp/.gnupg gpg --batch --no-autostart --import /tmp/awscli.pub && \
     GNUPGHOME=/tmp/.gnupg gpg --batch --no-autostart --verify /tmp/awscliv2.zip.sig /tmp/awscliv2.zip && \
