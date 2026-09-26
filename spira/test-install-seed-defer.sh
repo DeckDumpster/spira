@@ -23,8 +23,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 echo "test-install-seed-defer.sh"
 
+# install.sh sets its own HERE (the repo root) when sourced; keep the path to it first.
+INSTALL_SH="$HERE/../install.sh"
 # shellcheck disable=SC1091
-. "$HERE/../install.sh"
+. "$INSTALL_SH"
 declare -f _seed_when >/dev/null \
     || { bad "install.sh defines _seed_when" "absent"; tl_summary; exit 1; }
 
@@ -35,7 +37,7 @@ is "existing server-mode database, server DOWN, defers to phase 4" defer "$(_see
 
 # THE WIRING: phase 4 runs the deferred seed after it has proven the store accepts connections,
 # and a failure then is not ignored (the server is up; a failure is real).
-_src="$(cat "$HERE/../install.sh")"
+_src="$(cat "$INSTALL_SH")"
 want "phase 3 records a deferred seed"                  '_seed_deferred=1' "$_src"
 want "phase 4 runs the deferred seed"                   'seeding statutes (deferred from phase 3' "$_src"
 want "a deferred seed that fails again fails the phase" 'seed.sh failed with the database server running' "$_src"
