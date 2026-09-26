@@ -16,12 +16,7 @@
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-is()     { [ "$2" = "$3" ]        && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]]   && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 before() {
     local la lb
     la=$(printf '%s\n' "$4" | grep -n "$2" | head -1 | cut -d: -f1)
@@ -500,5 +495,4 @@ busy_out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
 is   "busy: gate called"        "1"        "$(gate_n)"
 want "busy: certify reported"   "certified spira/sp-busy-gate" "$busy_out"
 
-printf '\n%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -33,11 +33,7 @@
 # hermetic-ok: no database, no systemd, no gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s\n' "$1"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1: wanted [$2] in output"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in output"; }
+. "$HERE/testlib.sh"
 isz()    { [ "$2" -eq 0 ] && ok "$1" || bad "$1: wanted exit 0, got $2"; }
 
 TMP="$(mktemp -d)"
@@ -211,8 +207,4 @@ want   "tst-unknown row shows UNKNOWN when bd fails"          "UNKNOWN" "$unk_li
 nowant "tst-unknown row is never reported ORPHAN when bd fails" "ORPHAN" "$unk_line"
 want "table names the unknown count" "unknown — bd could not be read" "$unk_tbl"
 
-# ===========================================================================
-# SUMMARY
-# ===========================================================================
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ] && exit 0 || exit 1
+tl_summary

@@ -6,11 +6,7 @@
 # covers: spira/deps-lint.sh spira/deps.toml spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want() { printf '%s' "$3" | grep -qF "$2" && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-deps-lint.sh"
 
@@ -90,6 +86,4 @@ is "shipped tree exits 0" "0" "$rc"
 [ -z "$out" ] && ok "no offenders reported" \
               || bad "no offenders reported" "got: $out"
 
-echo
-echo "test-deps-lint.sh: $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+tl_summary

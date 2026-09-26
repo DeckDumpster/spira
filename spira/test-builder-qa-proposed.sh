@@ -21,15 +21,13 @@
 # WHAT THIS SUITE DOES NOT USE. No bd, no systemd, no network. ready_count is stubbed
 # to capture its arguments without touching the database.
 #
+# tier: T1
 # covers: spira/chamber/builder.fayth spira/lib.sh
 # hermetic-ok: no database, no systemd; ready_count and SPIRA_SUMMON are stubs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "$2"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
@@ -88,5 +86,4 @@ lack "ops FAYTH_EXCLUDE_LABELS does not contain qa-proposed (distinct from build
      "qa-proposed" "$ops_excl"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

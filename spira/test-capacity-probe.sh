@@ -32,14 +32,12 @@
 # capacity_paused never calls capacity_probe_maybe or capacity_probe at all.
 #
 # defect: sp-m00m
+# tier: T1
 # covers: spira/lib.sh
 # hermetic-ok: agent stubbed via SPIRA_AGENT; no database, no systemd, no network
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 trap 'rm -rf "$T"; exit 130' INT TERM
@@ -142,6 +140,4 @@ capacity_paused; rc=$?
 is "close horizon: rc=0 (still paused)"         "0" "$rc"
 is "close horizon: probe NOT called"            "0" "$([ -f "$T/probe-calls" ] && echo 1 || echo 0)"
 is "close horizon: pause file still present"    "1" "$([ -f "$SPIRA_CAPACITY_PAUSE" ] && echo 1 || echo 0)"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

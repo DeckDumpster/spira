@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: T1
 # covers: spira/incident.sh spira/lib.sh
 #
 # REGRESSION: incident.sh stamped delivers:note:applied.jsonl on every incident by default,
@@ -20,9 +21,7 @@ LIB_JOINED="$(printf '%s' "$LIB_CODE" | sed -e :a -e '/\\$/N; s/\\\n//; ta')"
 has_inc() { grep -qE "$1" <<< "$INC_JOINED"; }
 has_lib() { grep -qE "$1" <<< "$LIB_JOINED"; }
 
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
+. "$HERE/testlib.sh"
 
 echo "test-incident-delivers-reopen-mismatch.sh"
 echo
@@ -69,5 +68,4 @@ else
 fi
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

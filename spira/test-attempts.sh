@@ -27,13 +27,11 @@
 # one thing being asked about (law-prefer-the-real-dependency).
 #
 # defect: sp-sc3
+# tier: T2
 # covers: spira/*.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 # ======================================================================================
 # session_outcome — what ended this session? Pure text over a trace file, so it runs with no
@@ -324,6 +322,4 @@ is "and leaves the bead held"            in_progress "$(status_of sp-r1)"
 if bdq unclaim sp-r1 --if-assignee aeon-cindy >/dev/null 2>&1; then r=0; else r=1; fi
 is "releasing as the aeon succeeds"      0    "$r"
 is "and the bead is claimable again"     open "$(status_of sp-r1)"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

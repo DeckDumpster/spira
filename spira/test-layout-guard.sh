@@ -22,15 +22,13 @@
 # below expect (the guard fires or does not fire before cockpit_windows ever runs a query).
 #
 # defect: sp-zp8
+# tier: T1
 # covers: cockpit/layout.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 LAYOUT="$HERE/../cockpit/layout.sh"
-
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s\n' "$1"; }
 
 # Minimal conf.sh stub — pin every key to a non-default so an ambient spira.conf cannot
 # silently decide the verdict (law-gates-run-in-a-clean-environment).
@@ -102,5 +100,4 @@ case "$err_installed" in
 esac
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -35,16 +35,12 @@
 # groom-trigger.sh sends the right arguments to bd; bd's correctness is tested in
 # suites that use testdb.sh.
 #
+# tier: T1
 # covers: spira/groom-trigger.sh spira/conf.sh
 # scar: groom-trigger.sh was absent, so the groomer never ran; without a trigger bead the groomer's partition was always empty.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in [$3]"; esac; }
-nowant() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$1" ;; esac; }
+. "$HERE/testlib.sh"
 
 TRIGSH="$HERE/groom-trigger.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
@@ -328,5 +324,4 @@ nowant "threshold=3, score=2: no create call"   "create"  "$(cat "$BD_LOG")"
 want   "threshold=3, score=2: logs no-pass"     "no-pass" "$out_t3"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -15,16 +15,14 @@
 # fresh — and reports `-` when the pointer is stale, never the aeon's.
 #
 # defect: sp-881
+# tier: T1
 # covers: spira/ctx-meter.sh
 # scar: ctx-meter env mode picked the newest-mtime transcript across every project; with aeons running it reported an aeon's worktree transcript rather than the operator's session.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 CTX="$HERE/ctx-meter.sh"
 
-pass=0; fail=0
-ok()  { pass=$((pass+1)); echo "  ok   — $1"; }
-bad() { fail=$((fail+1)); echo "  FAIL — $1${2:+: $2}"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "no [$3] in [$2]" ;; esac; }
 hasnt() { case "$2" in *"$3"*) bad "$1" "found [$3] in [$2]" ;; *) ok "$1" ;; esac; }
 
@@ -207,5 +205,4 @@ blob "op-session" "$OP_TP" 115000 | meter line "$((EPOCH + 30))" >/dev/null
 has "the holder refreshes its own timestamp" "$(cat "$PTR")" "ts=$((EPOCH + 30))"
 
 echo
-echo "  $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+tl_summary

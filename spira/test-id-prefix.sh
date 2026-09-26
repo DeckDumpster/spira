@@ -9,15 +9,11 @@
 # POSITIVE CONTROL FIRST (law-absence-needs-a-positive-control): prove the
 # detector fires before trusting the negative case.
 #
+# tier: T1
 # covers: spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in [$3]"; esac; }
-nowant() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$1"; esac; }
-wantrc() { if [ "$3" -eq "$2" ]; then ok "$1"; else bad "$1" "wanted rc=$2, got rc=$3"; fi; }
+. "$HERE/testlib.sh"
 
 echo "test-id-prefix.sh"
 
@@ -72,5 +68,4 @@ result_sp="$(
 )"
 nowant "sp-prefix branch does not match tt- ids on base"            "tt-abc123" "$result_sp"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

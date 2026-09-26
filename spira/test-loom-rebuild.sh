@@ -11,16 +11,14 @@
 # no effect") is indistinguishable from a broken implementation.
 #
 # sp-vo6r
+# tier: T1
 # covers: cockpit/layout.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 LAYOUT="$HERE/../cockpit/layout.sh"
 
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -148,6 +146,4 @@ MOCK_MAIN_PID=1 run_fn restart_loom_if_stale
 sysctl_skip="$(cat "$TMP/systemctl.log")"
 [ -z "$sysctl_skip" ] && ok "restart skipped when binary is not executable" \
     || bad "restart skipped when binary is not executable" "got: $sysctl_skip"
-
-printf '\ntest-loom-rebuild: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

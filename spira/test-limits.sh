@@ -29,16 +29,14 @@
 # (law-gates-run-in-a-clean-environment).
 #
 # defect: sp-0uu
+# tier: T1
 # covers: spira/ctx-meter.sh
 # scar: the rate-limit window projected from evenly-spaced samples, a cadence the hook never produces; the real uneven cadence produced a wrong fill projection.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 CTX="$HERE/ctx-meter.sh"
 
-pass=0; fail=0
-ok()  { pass=$((pass+1)); echo "  ok   — $1"; }
-bad() { fail=$((fail+1)); echo "  FAIL — $1${2:+: $2}"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "no [$3] in [$2]" ;; esac; }
 hasnt() { case "$2" in *"$3"*) bad "$1" "found [$3] in [$2]" ;; *) ok "$1" ;; esac; }
 
@@ -548,5 +546,4 @@ W="$(printf '%s' "$L" | wc -m)"
 [ "$W" -le 110 ] && ok "under 110 columns ($W)" || bad "under 110 columns" "$W"
 
 echo
-echo "  $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+tl_summary

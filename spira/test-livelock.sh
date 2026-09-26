@@ -39,9 +39,11 @@
 # EVERY CASE IS A PAIR (law-absence-needs-a-positive-control). The negative half proves
 # the check can read a true zero; the positive half proves it reads the real fault.
 #
+# tier: T2
 # covers: spira/lib.sh spira/cockpit.sh spira/close-reason-flags.py spira/chamber/builder.fayth spira/chamber/ops.fayth
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 . "$HERE/testdb.sh"
 testdb_require test-livelock
 TMP="$(mktemp -d)"
@@ -49,12 +51,6 @@ testdb_up livelock || { echo "test-livelock: could not build a fixture database"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT
 trap 'exit 143' INT TERM
 
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 # A repo-map with one push-mode entry (no PR) and one pr-mode entry.
 # PINNED TO NON-DEFAULT NAMES so the suite cannot pass on an accidentally matching literal.
@@ -417,5 +413,4 @@ out="$(run_ll)"
 nowant "blocked bead: sp-ll-blocked not in livelock output" "sp-ll-blocked" "$out"
 
 echo
-printf 'test-livelock: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

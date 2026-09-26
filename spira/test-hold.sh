@@ -14,13 +14,11 @@
 # with a status, a claim and an assignee (law-prefer-the-real-dependency).
 #
 # defect: sp-oz0b
+# tier: T2
 # covers: spira/hold.sh spira/unhold.sh spira/lib.sh spira/strand.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -224,6 +222,4 @@ rm -f "$SPIRA_RUN/hold-sp-h3.pid"
 # SUMMARY
 # ======================================================================================
 echo
-total=$((pass + fail))
-printf '%d/%d passed\n' "$pass" "$total"
-[ "$fail" -eq 0 ] && exit 0 || exit 1
+tl_summary

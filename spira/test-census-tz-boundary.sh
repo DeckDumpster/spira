@@ -32,16 +32,12 @@
 #   FAIL — since-watermark SQL uses no FROM_UNIXTIME: expected [0] got [1]
 #   FAIL — only event after watermark counted: expected [1] got [2]
 #
+# tier: T2
 # covers: spira/lib.sh
 # hermetic-ok: part-1 needs no db; part-2 uses a fixture database
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "${2:-}"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
-want() { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in [$3]"; esac; }
-nowant() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$1" ;; esac; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
@@ -85,8 +81,8 @@ export SPIRA_TESTDB_MODE=server
 testdb_up census-tz-boundary || {
     printf 'SKIP test-census-tz-boundary part-2: server testdb not available\n' >&2
     # Still report part-1 results before exiting.
-    printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-    [ "$fail" -eq 0 ]
+    printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$_TL_PASS" "$_TL_FAIL"
+    [ "$_TL_FAIL" -eq 0 ]
     exit $?
 }
 
@@ -146,5 +142,4 @@ else
 fi
 
 echo
-printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

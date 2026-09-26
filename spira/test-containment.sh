@@ -23,15 +23,12 @@
 #   B — a test clone that still has a real origin is refused.
 #   C — a prod config with the (example) repos loads unchanged.
 #
+# tier: T1
 # covers: spira/lib.sh spira/conf.sh
 # defect: sp-g2vl
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 must_pass()  { "$@" >/dev/null 2>&1 && ok "rc=0: $1" || bad "rc=0: $1" "exited non-zero"; }
 must_fail()  { "$@" >/dev/null 2>&1 && bad "rc!=0: $1" "unexpectedly succeeded" || ok "rc!=0: $1"; }
 
@@ -227,5 +224,4 @@ want "D2: ws=/ refusal mentions containment" "containment" "$out_d2"
 
 # ===========================================================================
 echo
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

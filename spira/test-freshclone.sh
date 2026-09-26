@@ -38,14 +38,9 @@
 # covers: spira/statutes/law-ships-for-a-colleague.txt
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 ROOT="$(cd "$HERE/.." && pwd)"
-pass=0; fail=0
-ok()    { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()   { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()    { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 isne()  { [ "$2" != "$3" ] && ok "$1" || bad "$1" "wanted anything but [$2]"; }
-want()  { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 echo "test-freshclone.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -138,5 +133,4 @@ want "SPIRA_ASK_LABEL default starts with needs-"    "needs-" "$shipped_label"
 nowant "SPIRA_ASK_LABEL default does not name ryan"    "ryan"   "$shipped_label"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -16,15 +16,13 @@
 # a successful send, and a second call the same day leaves everything queued for the next one.
 #
 # defect: sp-mebw
+# tier: T1
 # covers: spira/archivist.sh spira/conf.sh spira/hooks/session.sh spira/ctx-meter.sh spira/mail.sh spira/chamber/archivist.md
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 ARC="$HERE/archivist.sh"
 
-pass=0; fail=0
-ok()  { pass=$((pass+1)); echo "  ok   — $1"; }
-bad() { fail=$((fail+1)); echo "  FAIL — $1${2:+: $2}"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "no [$3] in [$2]" ;; esac; }
 hasnt() { case "$2" in *"$3"*) bad "$1" "found [$3] in [$2]" ;; *) ok "$1" ;; esac; }
 
@@ -705,5 +703,4 @@ stripped="${briefed//bd dep relate <rollup> <ask>/}"
 hasnt "positive control: stripping the phrase removes it" "$stripped" "bd dep relate <rollup> <ask>"
 
 echo
-echo "  $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+tl_summary

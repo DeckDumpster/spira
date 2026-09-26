@@ -10,13 +10,11 @@
 # a regression back to bd_${os}_${arch}.tar.gz breaks this suite because the stub only
 # serves the beads_... file.
 #
+# tier: T1
 # covers: spira/build-bd.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-build-bd-release.sh"
 
@@ -85,7 +83,7 @@ if [ -f "$STUB_DIR/$ASSET" ]; then
     ok "stub serves $ASSET (naming positive control)"
 else
     bad "stub serves $ASSET" "file not found — test cannot proceed"
-    printf '%s passed, %s failed\n' "$pass" "$fail"; [ "$fail" = 0 ]; exit
+    printf '%s passed, %s failed\n' "$_TL_PASS" "$_TL_FAIL"; [ "$_TL_FAIL" = 0 ]; exit
 fi
 
 rel_out="$(env -i PATH="$PATH" HOME="$FAKE_HOME" \
@@ -106,5 +104,4 @@ fi
 
 # ============================================================================
 echo ""
-printf '%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

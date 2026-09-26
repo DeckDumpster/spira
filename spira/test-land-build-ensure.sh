@@ -29,9 +29,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL — %s\n' "$1"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -193,5 +191,4 @@ else
     ok "a detached HEAD never reaches the reflog-based rebuild (symbolic-ref fails closed)"
 fi
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -35,10 +35,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
-
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
+. "$HERE/testlib.sh"
 
 echo "test-governor-deleted.sh"
 
@@ -98,6 +95,4 @@ for f in spira/governor.sh spira/governor-budget.py spira/test-governor-host-cor
     fi
 done
 
-echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -25,15 +25,11 @@
 # differently: --scan shows the matcher fires; the walk shows the root is resolved and
 # files are actually traversed.
 #
+# tier: T1
 # covers: spira/literal-lint.sh spira/gate-spira.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-literal-lint.sh"
 
@@ -215,6 +211,4 @@ want "SEEN RED: default literal refused with exported SPIRA_ASK_LABEL" "needs-op
 # ---------------------------------------------------------------------------------------
 want "the gate names this fence" "spira/literal-lint.sh" "$(cat "$HERE/gate-spira.sh")"
 is   "and it is executable"      "0" "$([ -x "$HERE/literal-lint.sh" ]; echo $?)"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
