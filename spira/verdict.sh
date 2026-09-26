@@ -486,6 +486,7 @@ _q_attribute() {
     local members_str="${10}" remote="${11:-}" base_ref="${12:-}"
 
     local attr_start; attr_start="$(date +%s)"
+    _verdict_trap_pr="$pr_n"
 
     # Parse red suite names and the CI run link from check-status output.
     local red_suites="" build_error="" run_url="" _line
@@ -532,8 +533,6 @@ ${_line#build-error: }" ;;
     local _eject_fail_dir; _eject_fail_dir="$(mktemp -d)"
     local _mm _mid _mtip
     local _bisect_current; _bisect_current="$(queue_bisect_current "$name" "$repo" "$base_sha")" || _bisect_current=""
-
-    _verdict_trap_pr="$pr_n"
 
     if [ -n "$suites_csv_all" ] && [ -z "$suites_csv" ]; then
         # Every suite CI named red was already red on the batch's own base — none of
