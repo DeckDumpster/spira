@@ -14,6 +14,7 @@ members = [
     "tsd",
     "reconciler-engine",
     "reconciler",
+    "test-plan",
 ]
 resolver = "2"
 

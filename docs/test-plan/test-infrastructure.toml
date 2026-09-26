@@ -1,0 +1,212 @@
+api_version = "test-plan/v1"
+area = "test-infrastructure"
+
+[[use_case]]
+id = "UC-test-infrastructure-01"
+tier = "T1"
+statement = "The header parser extracts `# covers:` (first line), `# requires:` (comma or space separated), `# exclusive:`, `# timeout:`, `# priority:` and `# selects-on:`, and returns empty with no declaration or a missing file."
+
+[[use_case]]
+id = "UC-test-infrastructure-02"
+tier = "T0"
+statement = "Every declared `# covers:` token (every line, not only the first) resolves to an existing file, and every suite metadata key is well-formed."
+
+[[use_case]]
+id = "UC-test-infrastructure-03"
+tier = "T1"
+statement = "Selection over a changed-file set works as follows. A covered file selects its covering suites plus the always-run suites. An unmapped file selects all suites (`mode=all`) unless `--no-all-fallback` is set. An empty diff selects only the always-run suites. Inert files select nothing. `selects-on: added,mode` fires only on A or mode changes. `--files` and `--base/--head` give identical output."
+
+[[use_case]]
+id = "UC-test-infrastructure-04"
+tier = "T2"
+statement = "`file#func` covers narrow selection to hunks inside that function. A global hunk selects all of the file's suites. `--files` mode is conservative."
+
+[[use_case]]
+id = "UC-test-infrastructure-05"
+tier = "T1"
+statement = "A changed file matching `SPIRA_SELECT_SOURCE` that no suite claims makes selection fail, naming the file. `--report-file` lists unclaimed and unplaced files."
+
+[[use_case]]
+id = "UC-test-infrastructure-06"
+tier = "T2"
+statement = "A queue-branch diff selects the union of its members' suites and falls back to all if any member is unmapped."
+
+[[use_case]]
+id = "UC-test-infrastructure-07"
+tier = "T0"
+statement = "`gate-spira.sh`, `testenv-batch.sh`, `gate-touched.sh`, `suites.sh names` and gate.yml all delegate to `select.sh`. There is one selector with no private copy."
+
+[[use_case]]
+id = "UC-test-infrastructure-08"
+tier = "T1"
+statement = "The image tag is a content hash of the build closure (Containerfile, doctor.sh program list, bd pin). It is path-independent and unchanged by unrelated files."
+
+[[use_case]]
+id = "UC-test-infrastructure-09"
+tier = "T1"
+statement = "Image acquisition pulls the closure tag from the registry when one is configured. It builds on a miss (not an error) and builds with no registry configured. Publish pushes exactly the closure tag and never `:latest`. Callers get one `localhost/` ref regardless of source."
+
+[[use_case]]
+id = "UC-test-infrastructure-11"
+tier = "T1"
+statement = "Batch argument contract: an unknown `--mode` or a missing branch exits 2. `--mode=x` is accepted and the default is parallel. `--suites a,b` and `--suites -` run exactly the named suites (`producer=explicit`). An unknown name exits non-zero and names it. Empty stdin means \"nothing to run\" and exits 0. With no `--suites`, `producer=diff`, or `all` on fallback."
+
+[[use_case]]
+id = "UC-test-infrastructure-12"
+tier = "T2"
+statement = "The batch runs the suites **as they exist on the named branch**, not the caller's working tree."
+
+[[use_case]]
+id = "UC-test-infrastructure-13"
+tier = "T2"
+statement = "Exit contract: all green exits 0. Any red exits 1 (branch fault). A container death, start failure or exec storm exits 2 (harness fault), recording unrun suites as `unreached` without overwriting completed results. gate.yml maps 2 to 75."
+
+[[use_case]]
+id = "UC-test-infrastructure-14"
+tier = "T2"
+statement = "Liveness: one failed `podman inspect` is not death. `Running=false` is death and the container is removed. Zero-second empty exec failures with a live container are a harness fault, not reds. On parallel death, in-flight reds become unreached."
+
+[[use_case]]
+id = "UC-test-infrastructure-15"
+tier = "T2"
+statement = "Isolation: in parallel mode each suite gets a distinct HOME, SPIRA_INSTANCE and SPIRA_RUN (in serial mode they share). No suite inherits `$TMUX`. Runner-injected vars are stripped from the primary launch. A suite cannot read host files."
+
+[[use_case]]
+id = "UC-test-infrastructure-16"
+tier = "T1"
+statement = "`# exclusive:` suites drain the parallel pool before starting. Maxpar = min(nproc, ⌊(MemAvailable−reserve)/per-suite⌋) and names its binding resource. `SPIRA_BATCH_MAXPAR` is a ceiling only."
+
+[[use_case]]
+id = "UC-test-infrastructure-17"
+tier = "T1"
+statement = "`# requires:` unmet means the suite is recorded `skip-req` with the missing token in the fingerprint and not run. It stays distinct from a plain `skip` (77). Neither makes the batch red."
+
+[[use_case]]
+id = "UC-test-infrastructure-18"
+tier = "T2"
+statement = "Per-suite `SPIRA_SUITE_TIMEOUT` reaps a suite as `timeout` (fingerprint `timeout:*`). Later suites continue, the batch exits non-zero, and 0 disables the limit."
+
+[[use_case]]
+id = "UC-test-infrastructure-19"
+tier = "T2"
+statement = "Verdict cache: a repeat attempt at the same (branch, sha, mode, selection) key after red is refused with exit 2 unless the override carries a reason of at least 10 characters, which is recorded. A refusal files one incident per branch (deduplicated)."
+
+[[use_case]]
+id = "UC-test-infrastructure-20"
+tier = "T0"
+statement = "Constants mirrored from `testenv.sh` match, and every `_CONTAINER_*` used is declared. The batch cleanup trap removes the fixture home and owner file on TERM and on normal exit."
+
+[[use_case]]
+id = "UC-test-infrastructure-21"
+tier = "T2"
+statement = "The batch builds one shared bd baseline and hands suites `TESTDB_SHARED/BASELINE/BD`. `testdb_up` gives each borrower a private copy distinct from the baseline and from other concurrent borrowers. `testdb_drop` removes it."
+
+[[use_case]]
+id = "UC-test-infrastructure-22"
+tier = "T1"
+statement = "A vanished baseline makes `testdb_up` exit 75 (fixture-fault). On any `testdb_up` failure, SPIRA_DB is unset, so no suite can write to production. A fixture that cannot be built causes a skip (77), never a pass."
+
+[[use_case]]
+id = "UC-test-infrastructure-23"
+tier = "T2"
+statement = "`testenv.sh scratch` prints a new, empty, working DB distinct from SPIRA_DB. `testenv.sh shell [-c]` points SPIRA_DB at a fixture and tears down SPIRA_DB, SPIRA_RUN and SPIRA_SPOOL on exit."
+
+[[use_case]]
+id = "UC-test-infrastructure-24"
+tier = "T1"
+statement = "Discovery is the `test-*.sh` glob. Gated suites are not re-run and the pass says so. Suites without covers are named as omissions and still run. Every real suite is claimed by the gate or the timed run. The real `gate-suites` names only suites that exist, and an unreadable gate list refuses with rc 1, runs nothing and shows status `?`."
+
+[[use_case]]
+id = "UC-test-infrastructure-25"
+tier = "T1"
+statement = "Classification of one suite outcome from (rc, output, watchdog-killed, shared-fixture, trailer, budget): ok, red, skip, timeout (even when TERM is trapped), setup-fault (ASSERTIONS 0 and rc≠0), red when the trailer is missing, fixture-fault (75 with shared fixture, else red), red-unconfirmed (no budget to confirm). Signal exits map to 124."
+
+[[use_case]]
+id = "UC-test-infrastructure-26"
+tier = "T1"
+statement = "The failure fingerprint is stable across ISO timestamps, per-suite slice length and debris output. The cause fingerprint (normalised first FAIL line) groups same-cause suites."
+
+[[use_case]]
+id = "UC-test-infrastructure-27"
+tier = "T1"
+statement = "Filing: each red files one bead with ref `suite:<name>`, sin-exempt, labelled plan + `repo:`, at the declared priority, with its output. If there is no output, the body carries a \"no output\" sentinel. A recurring or changed failure stays on one bead and logs a recurrence. Same-cause reds file one cluster bead naming all members, with a stable ref and a suppressed count reported. Fixture-faults file one bead naming all borrowers. Setup-faults name the suite, not the covered file. Timeouts name the limit. Greens and skips file nothing."
+
+[[use_case]]
+id = "UC-test-infrastructure-28"
+tier = "T2"
+statement = "Environment confirmation: a red under the runner is re-run with the runner vars stripped. It is confirmed red (suite-defect bead), passes (environment-finding bead via `file_env_red`), or is recorded red-unconfirmed with nothing filed when the budget is short."
+
+[[use_case]]
+id = "UC-test-infrastructure-29"
+tier = "T1"
+statement = "Budget is a wall. `MAXSEC` caps the budget (MAXSEC−60) and never raises it. A suite whose last runtime exceeds the remaining budget, or whose `# timeout:` exceeds it, is `unreached` (not TIMEOUT). The cursor names where the next pass starts. Unreached never overwrites the last verdict or runtime and is cleared when the suite is next reached."
+
+[[use_case]]
+id = "UC-test-infrastructure-30"
+tier = "T2"
+statement = "The per-suite watchdog kills a hung suite at its limit (process group). The runner continues. A leaky background child holding stdout does not wedge the pass and marks its suite red."
+
+[[use_case]]
+id = "UC-test-infrastructure-31"
+tier = "T1"
+statement = "Quarantine lifecycle. Two distinct flake runs inside the window, with a run_id counted once, quarantine the suite on a `spira-suite-state/auto-*` branch submitted to the queue, never in the checkout. Reactivation needs both bead LANDED and N clean runs. The max-age mail is sent once per period. A nonexistent suite is refused."
+
+[[use_case]]
+id = "UC-test-infrastructure-32"
+tier = "T1"
+statement = "The suite-state file parser, `state_of`, write, clear and lint behave as specified: replace never duplicates, `active` stores nothing, and bad lines are ignored. The fence refuses a quarantine that has no bead, no reason, a missing suite or a **CLOSED** bead, and passes an empty file."
+
+[[use_case]]
+id = "UC-test-infrastructure-33"
+tier = "T0"
+statement = "The suites systemd unit runs `suites.sh run` periodically. It injects `SPIRA_SUITES_MAXSEC = TimeoutStartSec`, and the conf default budget is under it. It treats exit 2 as success. It is installed only under `SPIRA_SELF_TEST`."
+
+[[use_case]]
+id = "UC-test-infrastructure-34"
+tier = "T1"
+statement = "**One report grammar.** Every suite emits `ok`/`FAIL` lines in one format and an `ASSERTIONS n` trailer through `suite-assert.sh`. The runner writes one `.result` schema (`status ts secs fp mode producer rc`) and one `suite-times.tsv` row per suite (run_id, suite, rc, wall, bd_calls, and — new — pass/fail/skip counts). The row is persisted to `refs/notes/suite-times`. `suite-times.sh` reports the Top 20 slowest, the sum and wall time, and movers above 25%."
+
+[[use_case]]
+id = "UC-test-infrastructure-35"
+tier = "T1"
+statement = "CI serial retry. Only red and timed-out suites are re-run once, serially, at the same sha, with timeouts given `GATE_RETRY_RERUN_TIMEOUT`. Red then green is a pass with a `flaky suite` warning. Red twice fails with a `red-twice suite` error. Structural failure (more than max, or more than half hard-red, timeouts excluded) fails without retry. A harness fault passes through."
+
+[[use_case]]
+id = "UC-test-infrastructure-36"
+tier = "T1"
+statement = "Red diagnostics. For each red suite, print its FAIL lines, a tail excerpt, `::group::`/`::error file=` annotations, and a step-summary table of reds only showing rc and red-green/red-red. A red with no output shows `(no output)`. An all-green batch prints nothing and exits 0."
+
+[[use_case]]
+id = "UC-test-infrastructure-37"
+tier = "T1"
+statement = "`gate-check.sh` files one bead per `flaky suite` annotation, and one P1 bead per `red-twice suite` annotation on failed main runs. It deduplicates on rescans and raises an existing lower-priority bead to P1. The annotation strings match what `gate-retry.sh` emits (producer/consumer contract)."
+
+[[use_case]]
+id = "UC-test-infrastructure-38"
+tier = "T0"
+statement = "Workflow shape. The real gate runs (inventory, literal-lint, scratch-fence, testenv-batch). PRs run the diff selection, a main push runs the corpus, empty selection skips provisioning and exits 0, and a provision failure fails the job with 75. There is a per-run VM that is always torn down, with every required action input passed. Release is gated on main via `workflow_call` with a pinned toolchain, no `continue-on-error`, all `--*-bin` flags and tag retraction on publish failure. Acceptance is dispatched with an App token. The suites job has `packages: write` and does not pin maxpar."
+
+[[use_case]]
+id = "UC-test-infrastructure-39"
+tier = "T1"
+statement = "The CI runner host check (`runner-deps.sh --check`) refuses a broken container runtime with a non-75 exit, a MISSING line and \"branch not at fault\". A working host passes. Mutating steps are gated behind check-only."
+
+[[use_case]]
+id = "UC-test-infrastructure-40"
+tier = "T1"
+statement = "The citation report classifies each suite's `# defect:` as resolved (with status), unresolved or uncited."
+
+[[use_case]]
+id = "UC-test-infrastructure-41"
+tier = "T0"
+statement = "Every non-test, non-sourced operator script is executable."
+
+[[use_case]]
+id = "UC-test-infrastructure-42"
+tier = "T1"
+statement = "Certification budget. `gate-spira.sh` times itself. Over `SPIRA_GATE_BUDGET`, or an unmeasurable cost, files one harness bead (\"something must leave gate-suites\") and is not a branch failure. **Untested today (see Gaps).**"
+
+[[use_case]]
+id = "UC-test-infrastructure-43"
+tier = "T1"
+statement = "A suite skipping (77) on consecutive timed passes files a `suite-skip:<name>` bead, so that \"a check that cannot run is not a check that passed\". A skip must exit 77, never 0. **Untested today.**"

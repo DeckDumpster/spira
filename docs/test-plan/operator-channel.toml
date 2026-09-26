@@ -1,0 +1,227 @@
+api_version = "test-plan/v1"
+area = "operator-channel"
+
+[[use_case]]
+id = "UC-operator-channel-01"
+tier = "T2"
+statement = "send delivers atomically via tmp/ into new/; read prints headers+body and moves new→cur; read with nothing unread fails; list [--unread], count and unread-age…"
+
+[[use_case]]
+id = "UC-operator-channel-02"
+tier = "T1"
+statement = "Lint refuses a message with no From or no Subject, a subject that is or starts with a bead id, a context-free bead id in the body (key:value metadata allowed),…"
+
+[[use_case]]
+id = "UC-operator-channel-03"
+tier = "T1"
+statement = "Kinds are data. An unknown kind is refused and named. template <kind> prints the skeleton. The requires: fields in a kind file drive validation:…"
+
+[[use_case]]
+id = "UC-operator-channel-04"
+tier = "T1"
+statement = "SPIRA_MAIL_LINT_CONSIDERED bypasses lint and records X-Spira-Lint-Override: <reason>."
+
+[[use_case]]
+id = "UC-operator-channel-05"
+tier = "T2"
+statement = "Every message a real harness sender emits (lib.sh, sentinel, watchd, reflect, strand, pilgrimage, skew, incident, archivist) passes lint."
+
+[[use_case]]
+id = "UC-operator-channel-06"
+tier = "T1"
+statement = "Operator-mailbox repeat guard: a send whose normalised subject matches one inside SPIRA_MAIL_REPEAT_WINDOW is refused, names the override and is recorded under…"
+
+[[use_case]]
+id = "UC-operator-channel-07"
+tier = "T2"
+statement = "done sets the Maildir R flag idempotently (it fails on an unknown id), and a sendmail reply marks the original R."
+
+[[use_case]]
+id = "UC-operator-channel-08"
+tier = "T2"
+statement = "tidy keeps open-ask mail (label from SPIRA_ASK_LABEL), fresh unread mail and X-Spira-Urgent mail younger than 7 days, plus only the newest of a repeated…"
+
+[[use_case]]
+id = "UC-operator-channel-09"
+tier = "T2"
+statement = "Aged unread backlog in a registered mailbox alerts the operator once, clears when drained, and re-arms on recurrence. Fresh mail never alerts."
+
+[[use_case]]
+id = "UC-operator-channel-10"
+tier = "T2"
+statement = "The delivery daemon treats a SIGTERM exit (143) as clean, and world.sh start revives an enabled-but-inactive mail-deliver without restarting an active one.…"
+
+[[use_case]]
+id = "UC-operator-channel-11"
+tier = "T2"
+statement = "Aeon mailbox: the PostToolUse hook injects each message into the running session exactly once (new→cur) and stays silent on an empty mailbox or empty BEAD_ID.…"
+
+[[use_case]]
+id = "UC-operator-channel-12"
+tier = "T3"
+statement = "bead.sh amend on an in-progress bead mails its live aeon and sends nothing when no aeon is alive. The aeon's mailbox is removed when the aeon exits."
+
+[[use_case]]
+id = "UC-operator-channel-13"
+tier = "T0"
+statement = "Chamber briefs never tell an agent to pass a send option that cmd_send does not accept. No caller of the retired cockpit/ask.sh remains."
+
+[[use_case]]
+id = "UC-operator-channel-14"
+tier = "T3"
+statement = "send --kind question|decision --bead W files a separate decision bead, names it in X-Spira-Bead, and links it to W as relates_to, never as a blocking dependency."
+
+[[use_case]]
+id = "UC-operator-channel-15"
+tier = "T3"
+statement = "A reply to a message carrying X-Spira-Bead closes that bead, leaves the work bead open and writes the verdict and reply body into the work bead's notes. Under…"
+
+[[use_case]]
+id = "UC-operator-channel-16"
+tier = "T3"
+statement = "The mail client's accept-default key (aerc/accept-default.sh) closes the decision with the message's X-Spira-Default as the verdict, using a real spira.conf."
+
+[[use_case]]
+id = "UC-operator-channel-17"
+tier = "T2"
+statement = "Reply routing: a reply goes to the sender's mailbox when one exists. It goes to concierge when the sender is a chamber persona, when the sender has no mailbox,…"
+
+[[use_case]]
+id = "UC-operator-channel-18"
+tier = "T1"
+statement = "Suit verdict words (uphold / retire / amend) close the suit bead, each with its own close reason (upheld/retired/amended)."
+
+[[use_case]]
+id = "UC-operator-channel-19"
+tier = "T2"
+statement = "If the bead close fails, sendmail exits non-zero naming the bead and leaves the original message unmarked."
+
+[[use_case]]
+id = "UC-operator-channel-20"
+tier = "T1"
+statement = "answers.py renders a verdict as RYAN ANSWERED / verdict on. A premise rejection (label premise-rejected OR reason prefix premise-rejected:) renders as RYAN…"
+
+[[use_case]]
+id = "UC-operator-channel-21"
+tier = "T1"
+statement = "Every monitor headline carries the bead's own closed_at, in the format watchd.sh parses."
+
+[[use_case]]
+id = "UC-operator-channel-22"
+tier = "T1"
+statement = "Answer-reader cursors: a cold start seeds silently and writes the cursor. Crash recovery (witness present, cursors absent) prints SEEDED AT with the count…"
+
+[[use_case]]
+id = "UC-operator-channel-23"
+tier = "T2"
+statement = "watch-answers.sh loop wakes the reader exactly once per pass that found answers, and an empty SPIRA_WAKE wakes nobody. The loop exits 1 when a pass fails (so…"
+
+[[use_case]]
+id = "UC-operator-channel-24"
+tier = "T3"
+statement = "land_escalate reaches the operator unless an OPEN ask with the same subject exists. A closed ask does not suppress it (sp-yki4)."
+
+[[use_case]]
+id = "UC-operator-channel-25"
+tier = "T2"
+statement = "Component escalations (for example skew.sh check --escalate) carry ## Question and ## Default. A missing or failing mailer is reported with its rc and output,…"
+
+[[use_case]]
+id = "UC-operator-channel-26"
+tier = "T1"
+statement = "verify-asks.sh --apply closes an open ask whose VERIFY: command exits 0 (the close reason quotes the command). It leaves failing or VERIFY-less asks open,…"
+
+[[use_case]]
+id = "UC-operator-channel-27"
+tier = "T2"
+statement = "watchd tail allows one reader per watcher. A second reader refuses at once (exit 3) and names the holder pid and --takeover. Each event is delivered exactly…"
+
+[[use_case]]
+id = "UC-operator-channel-28"
+tier = "T2"
+statement = "notify events half: an actionable line (matching SPIRA_ACTIONABLE from config) unread longer than SPIRA_NOTIFY_AGE is escalated once, with its text and…"
+
+[[use_case]]
+id = "UC-operator-channel-29"
+tier = "T2"
+statement = "notify health half: a daemon watcher that is inactive, failed or failing its probe beyond the threshold is escalated once with NRestarts, its last log line and…"
+
+[[use_case]]
+id = "UC-operator-channel-30"
+tier = "T2"
+statement = "During a world halt ($SPIRA_RUN/world.halted), status reads HALTED rather than DEGRADED, and notify escalates nothing and clears the unhealthy clocks."
+
+[[use_case]]
+id = "UC-operator-channel-31"
+tier = "T2"
+statement = "notify exits 3 rather than passing when the manifest is malformed or missing, the filter is empty, the threshold is non-numeric, it gets an argument, or there…"
+
+[[use_case]]
+id = "UC-operator-channel-32"
+tier = "T1"
+statement = "watch-refresh restarts an active daemon watcher when its target, a sibling library, the config, conf.sh, the manifest, the dispatcher or its unit's ExecStart…"
+
+[[use_case]]
+id = "UC-operator-channel-33"
+tier = "T1"
+statement = "A refresh pass fails loudly and restarts nothing when systemctl show fails, the start time is unreadable or the manifest is malformed. The orphan reaper…"
+
+[[use_case]]
+id = "UC-operator-channel-34"
+tier = "T1"
+statement = "health-ids reads the id prefix from the database's issue_prefix, not from the goal (sp-c57o), and falls back to SPIRA_ID_PREFIX. A state file with none of our…"
+
+[[use_case]]
+id = "UC-operator-channel-35"
+tier = "T1"
+statement = "prune removes the runtime files of watcher names that are no longer in the manifest and keeps active ones. A malformed manifest removes nothing, and a missing…"
+
+[[use_case]]
+id = "UC-operator-channel-36"
+tier = "T1"
+statement = "A watcher-filed incident refiled while blocked by an open dependency stays open, records no reopen event and stays out of bd ready. A closed incident refiled…"
+
+[[use_case]]
+id = "UC-operator-channel-37"
+tier = "T0"
+statement = "Watcher and notifier units (spira-watch@, -notify, -refresh, -pr-notify, -mail-tidy) render with CPUQuota, Nice, reachable restart limits, no @ placeholders…"
+
+[[use_case]]
+id = "UC-operator-channel-38"
+tier = "T1"
+statement = "pr-notify classifies each PR in a pr-mode repo as GREEN, RED or skipped (pending, null or empty checks) and ignores push/hold repos. It reports a spira/*…"
+
+[[use_case]]
+id = "UC-operator-channel-39"
+tier = "T1"
+statement = "A fayth with FAYTH_SUMMON=operator never enters the task pool or the lanes. The shipped concierge is operator-only and the builder stays summonable."
+
+[[use_case]]
+id = "UC-operator-channel-40"
+tier = "T1"
+statement = "Concierge resume: the resume id is used only when the recorded cwd matches the brain dir. The SessionStart hook records the session only when SPIRA_CONCIERGE=1…"
+
+[[use_case]]
+id = "UC-operator-channel-41"
+tier = "T1"
+statement = "The composed brief has no surviving {{, names an executable mail.sh and bead.sh (the harness one when SPIRA_WIKI is unset), and carries the statutes. A missing…"
+
+[[use_case]]
+id = "UC-operator-channel-42"
+tier = "T1"
+statement = "render_memories renders SPIRA_STATUTE_CORE in full and every other statute as exactly one slug line. An over-budget core statute falls back to a slug. The…"
+
+[[use_case]]
+id = "UC-operator-channel-43"
+tier = "T2"
+statement = "rule.sh enact prints \"Statute is live\" only when the synth hook succeeds. A failing, missing or non-executable hook is non-zero and prints \"NOT regenerated\".…"
+
+[[use_case]]
+id = "UC-operator-channel-44"
+tier = "T1"
+statement = "SOP validation (write and lint): SYMPTOM/CHECK/FIX present, MATCH is a valid ERE, 250-word cap, no operator-specific /home path, METRIC well-formed. Each rule…"
+
+[[use_case]]
+id = "UC-operator-channel-45"
+tier = "T2"
+statement = "The SOP ledger: applied appends one complete JSON record at the configured path, append-only in epoch order, and refuses bad arguments while writing nothing. A…"

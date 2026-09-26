@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Catalogue",
+  "description": "`docs/test-plan/<area>.toml` in full: one area's use cases, versioned so a future breaking change to this shape is a version bump, not a silent reinterpretation.",
+  "type": "object",
+  "required": [
+    "api_version",
+    "area"
+  ],
+  "properties": {
+    "api_version": {
+      "type": "string"
+    },
+    "area": {
+      "type": "string"
+    },
+    "use_case": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/UseCase"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "Tier": {
+      "description": "The cheapest tier that would catch a regression in a use case's behaviour — `docs/test-plan/README.md`'s own table. Spelled as the exact uppercase token every suite header and catalogue line already uses, so no rename table can drift from it.",
+      "type": "string",
+      "enum": [
+        "T0",
+        "T1",
+        "T2",
+        "T3",
+        "T4"
+      ]
+    },
+    "Uncovered": {
+      "description": "Why a T0–T3 use case has no covering suite right now. Every field is required: an uncovered marker with no reason, date or bead is not a record, it is a suppression.",
+      "type": "object",
+      "required": [
+        "bead",
+        "date",
+        "reason"
+      ],
+      "properties": {
+        "bead": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "UseCase": {
+      "description": "One row of a catalogue: `UC-<area>-NN`, its tier, the behaviour it states, and — only while nothing covers it — why.",
+      "type": "object",
+      "required": [
+        "id",
+        "statement",
+        "tier"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        },
+        "tier": {
+          "$ref": "#/definitions/Tier"
+        },
+        "uncovered": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Uncovered"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

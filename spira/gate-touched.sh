@@ -44,6 +44,27 @@ bash "$HERE/tier-budget.sh" lint-allowlist --base "$BASE" || exit 1
 bash "$HERE/tier-budget.sh" lint-allowlist --base "$BASE" --area || exit 1
 bash "$HERE/tier-budget.sh" check-areas --suite-dir "$HERE" || exit 1
 
+# THE TEST PLAN'S OWN FENCE, for the same reason build-fence.sh sits here: a suite deletion
+# that silently drops a use case's last coverage, or a coverage matrix that no longer matches
+# its own inputs, is a defect in the tree, not something a suite run would catch. Its stdout
+# is redirected to stderr: plan-lint.sh/plan-matrix.sh print status text on success (fine for
+# standalone use) but gate-touched.sh's own stdout contract is the selected suite list only —
+# build-fence.sh keeps to that by writing every message of its own to stderr; this fence's
+# children do not, so the redirection is done here instead.
+#
+# GATED ON SPIRA_GATE_REPO ACTUALLY BEING THIS REPO. Unlike build-fence.sh (whose failure
+# mode degrades harmlessly to "empty diff, skip" against any tree), this fence does real,
+# ref-sensitive work — docs/test-plan/*.toml and the suite corpus it reads are THIS repo's
+# own. A caller that points SPIRA_GATE_REPO at a different tree (test-gate-touched.sh's own
+# scratch fixture, proving selection logic against a throwaway repo) is not asking this
+# repo's test plan to be checked at all, and BASE there is a label meaningful only inside
+# that scratch tree — resolving it against this repo's own ref namespace would check the
+# wrong thing, not the right thing cautiously.
+_repo="${SPIRA_GATE_REPO:-.}"
+if [ "$_repo" = "." ] || [ "$(cd "$_repo" 2>/dev/null && pwd -P)" = "$(cd "$HERE/.." && pwd -P)" ]; then
+    bash "$HERE/plan-matrix-fence.sh" "$BASE" >&2 || exit 1
+fi
+
 HEAD="${2:?usage: gate-touched.sh <base> <head>}"
 repo="${SPIRA_GATE_REPO:-.}"
 _tiers="${SPIRA_GATE_TIERS:-T0,T1}"

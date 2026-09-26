@@ -49,32 +49,7 @@ Tiers: T0 static, T1 unit, T2 component, T3 integration, T4 acceptance. "cert" m
 | UC-dispatch-23 | Summoning passes `CPUQuota=${SPIRA_AEON_CPU_QUOTA:-70%}` and the fayth's `FAYTH_TIMEOUT_SECONDS`. Launch flags follow `FAYTH_PROJECT_INSTRUCTIONS` in both sweep mode and bead mode. | config-compat, contract | T1 argv builder / cert |
 | UC-dispatch-24 | Ops tools are an allowlist of `Bash(pattern)` entries, never bare `Bash`. Diagnostics are allowed. Writes and systemd mutations are not. | fail-closed, contract | T0 (bare-Bash scan) + T1 matcher / cert |
 
-Machine-readable declarations (read by `spira/plan-lint.sh` once sp-qu948 lands — see §9):
-
-* `UC-dispatch-01` [T1] — `bead.sh file --for/--repo` files exactly the persona's labels plus `repo:`, or refuses
-* `UC-dispatch-02` [T1] — non-work kinds map to their `bd --type`, scope label, no partition label
-* `UC-dispatch-03` [T1] — a persona files only against a repo whose lanes admit its partition
-* `UC-dispatch-04` [T1] — `bead.sh lint` reports every stored bead lacking `repo:`/partition, unreadable ids named as such
-* `UC-dispatch-05` [T0] — no harness script passes a bare `-` body to `bd note`/`bd create -d`
-* `UC-dispatch-06` [T1] — GitHub intake never mutates GitHub, dedups idempotently, promotes only on write access
-* `UC-dispatch-07` [T1] — the roster is discovered from `chamber/*.fayth`; lane xor task xor operator, never two
-* `UC-dispatch-08` [T1] — every auto-summoned predicate is built from `$SPIRA_*_LABEL`, never a literal
-* `UC-dispatch-09` [T1] — `summon_fayth` asks each persona's own predicate; partitions don't cross-leak
-* `UC-dispatch-10` [T1] — the `summon_fayth` refusal ladder runs in order and logs its real reason
-* `UC-dispatch-11` [T1] — `fayth_free` arithmetic: elastic pool remainder, non-elastic cap-minus-running
-* `UC-dispatch-12` [T1] — a live drain gates every summon; an expired drain is lifted and logged
-* `UC-dispatch-13` [T1] — effective lanes are the intersection of `.spira/modes`, repo-map lanes and `SPIRA_FAYTHS`
-* `UC-dispatch-14` [T1] — CHECK 7 draws lanes round-robin then fills the task pool in roster order, capped
-* `UC-dispatch-15` [T1] — `escape.sh` summons directly on ready work, bypassing pool and lane caps
-* `UC-dispatch-16` [T1] — CHECK 7c reports an unclaimable ready bead once, naming the rejection reason
-* `UC-dispatch-17` [T1] — the cockpit's NEXT attribution agrees with the CHECK 7c claimability verdict
-* `UC-dispatch-18` [T1] — CHECK 8 fires only when nothing progressed and plan is starved, subject to cooldown
-* `UC-dispatch-19` [T1] — a pass that cannot read the database exits 1 and never reports goal reached
-* `UC-dispatch-20` [T1] — a stale lease in every persona's partition is reclaimed and charged; orphans released
-* `UC-dispatch-21` [T1] — the ghost classifier never reclaims a bead carrying the ask or reclaim-skip label
-* `UC-dispatch-22` [T1] — an unmapped-repo bead is parked with ask+overseer before its claim is released
-* `UC-dispatch-23` [T1] — summoning passes `CPUQuota`, `FAYTH_TIMEOUT_SECONDS` and `--setting-sources` correctly
-* `UC-dispatch-24` [T0] — ops tools are an allowlist of `Bash(pattern)` entries, never bare `Bash`
+Machine-readable declarations live in `docs/test-plan/dispatch.toml` (schema: `test-plan/schema/catalogue.schema.json`), read by `spira/plan-lint.sh`.
 
 ---
 

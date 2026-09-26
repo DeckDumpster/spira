@@ -48,34 +48,7 @@ Where it runs: **cert** = certification/every commit, **batch** = batch CI, **ma
 | UC-aeon-execution-27 | The installed agent CLI accepts `--system-prompt-snapshot on` (the external contract `aeon.sh`/`archivist.sh` rely on). | K | doctor preflight (not CI) | doctor |
 
 
-Machine-readable declarations (read by `spira/plan-lint.sh` once sp-qu948 lands — see §9):
-
-* `UC-aeon-execution-01` [T3] — a bead is worked in a worktree cut from freshly fetched `origin/<landref>`; a stale foreign worktree is moved aside, never removed
-* `UC-aeon-execution-02` [T3] — a worktree-creation failure is a pre-session death: FATAL, attempt charged, ledger `pre-session`, no free resummon loop
-* `UC-aeon-execution-03` [T1] — a bead poisoned right after claim is released before workspace setup, ledger `poison-raced`
-* `UC-aeon-execution-04` [T1] — the world-stop fence refuses a `world-stop` bead with a live aeon and releases the claim; with none it runs stop → session → start
-* `UC-aeon-execution-05` [T1] — sweep mode claims nothing, sets no `branch:` label, and refuses when capacity is paused or the world is draining
-* `UC-aeon-execution-06` [T1] — launch argv is a pure function of the fayth's system-prompt, project-instructions and settings knobs
-* `UC-aeon-execution-07` [T1] — brief rendering leaves no unrendered `{{placeholder}}`; RESUME/SLAIN/DEADLINE/ALREADY_DONE each render correctly
-* `UC-aeon-execution-08` [T1] — the lease renews on trace growth and lapses on silence past `FAYTH_LEASE_SECONDS`, killing `-$$`
-* `UC-aeon-execution-09` [T1] — the thrash wall trips only when the fuse and the session age both clear the wall
-* `UC-aeon-execution-10` [T1] — session outcome classification (refused/unknown/killed/unlanded/yield-headless) and its charge default-deny
-* `UC-aeon-execution-11` [T1] — open-bead teardown disposition runs its 13 branches in precedence order and charges only `unlanded`-family outcomes
-* `UC-aeon-execution-12` [T3] — a harness reopen after a rebase conflict on a closed, committed bead is a requeue, not an attempt
-* `UC-aeon-execution-13` [T1] — the close verdict (commit-naming keeps closed; no commit reopens) is decided identically by aeon and sentinel
-* `UC-aeon-execution-14` [T1] — an eviction-race reopen fires only for a live eviction reason at the current tip, capped at 2/hour
-* `UC-aeon-execution-15` [T1] — closing with the gate still running, FAIL, or no gate run leaves a distinct note but does not reopen
-* `UC-aeon-execution-16` [T1] — the four close guards (prod-dirty, close-reason override, SOP, groom-escalation) bind to their knob, not the persona name
-* `UC-aeon-execution-17` [T1] — wiki writes at exit are committed under an `aeon-` author, excluding pre-dirty files and `wiki/tasks.md`
-* `UC-aeon-execution-18` [T1] — the aeon's exit code and ledger `done` line reflect the real rc, status and spend fields, `?` never 0 when missing
-* `UC-aeon-execution-19` [T2] — attempts are counted from the bd events trail only, never from a label, and `check4_bulk_data` agrees with per-bead queries
-* `UC-aeon-execution-20` [T2] — claim release is compare-and-swap on the claiming actor; naming the fayth leaves it held
-* `UC-aeon-execution-21` [T1] — CHECK 4 poisons at `POISON_AT`, clears stale poison, and skips epics/partition-excluded/mid-pass-closed beads
-* `UC-aeon-execution-22` [T1] — the poison ask is sent once per (bead, attempt count); a label clear does not re-arm it
-* `UC-aeon-execution-23` [T1] — the requeue cap and reclaim cap each send one deduplicated mail at their threshold and never add poison
-* `UC-aeon-execution-24` [T2] — `attempts.sh deadlocked` lists mergeable poisoned beads and `--apply` lifts poison without losing the attempt record
-* `UC-aeon-execution-25` [T1] — a repeated lane-cap timeout asks about the lane, not the approach
-* `UC-aeon-execution-26` [T2] — `slay.sh` writes `.slain` first; its default/`--close`/`--keep-work` modes and argument refusals are exact
+Machine-readable declarations live in `docs/test-plan/aeon-execution.toml` (schema: `test-plan/schema/catalogue.schema.json`), read by `spira/plan-lint.sh`.
 * `UC-aeon-execution-27` [doctor] — the installed agent CLI accepts `--system-prompt-snapshot on`, checked as a doctor preflight, not in CI
 
 ---
