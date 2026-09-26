@@ -28,11 +28,7 @@
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 before() {
     local la lb
     la=$(printf '%s\n' "$4" | grep -n "$2" | head -1 | cut -d: -f1)
@@ -219,6 +215,4 @@ want "full-budget pass certifies the branch" "certified" "$out"
 out="$(landing_tight_thresh "$THRESHOLD")"
 nowant "no re-escalation after deferral count reset" "budget-deferred" "$(cat "$EMITTED")"
 drop_branch sp-def-a "$REPO_A"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

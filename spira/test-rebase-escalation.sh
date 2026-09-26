@@ -17,12 +17,7 @@
 # hermetic-ok: uses a fixture database, stub mail.sh, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -145,6 +140,4 @@ printf '{"id":"sp-ask1","title":"spira/sp-t004 rebase loop x3 in spira","status"
 : > "$MAIL_LOG"
 spira_ask_rebase_loop "sp-t004" "spira/sp-t004" "spira" "4" "qux.sh" ""
 is "open ask suppresses duplicate" "" "$(cat "$MAIL_LOG")"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -15,12 +15,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { printf '%s' "$3" | grep -qF "$2" && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { ! printf '%s' "$3" | grep -qF "$2" && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-landing-halt.sh"
 
@@ -298,5 +293,4 @@ want "volumes: cargo-git volume is removed" \
     "volume rm ${FAKE_CNAME}-cargo-git" "$vol_log"
 
 # ===========================================================================
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

@@ -22,11 +22,7 @@
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 before() {  # before <label> <a> <b> <text> — verify <a> appears before <b>
     local la lb
     la=$(printf '%s\n' "$4" | grep -n "$2" | head -1 | cut -d: -f1)
@@ -186,5 +182,4 @@ before "pass 2 certifies P2-oldest before P2-newest" "certified spira/sp-ord-a" 
 drop_branch sp-ord-d; drop_branch sp-ord-b; drop_branch sp-ord-a; drop_branch sp-ord-c
 
 echo
-printf 'results: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
