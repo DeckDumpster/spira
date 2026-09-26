@@ -710,7 +710,7 @@ _c5_resolve_max="${SPIRA_CHECK5_MAX_RESOLVE:-5}"
 # filing used (SPIRA_INCIDENT_REF="closed-not-landed:$id"), so this finds exactly the bead
 # file_one would have deduped onto had it fired again — never a bead some other check filed.
 # Filing is bounded so a flood cannot file forever; this must be bounded the same way so a
-# large residue cannot be cleared in one pass that blows TimeoutStartSec=900.
+# large residue cannot be cleared in one pass that blows the service's TimeoutStartSec.
 _c5_resolve() {
     local _id="$1" _evidence="$2" _hash _inc_id
     _hash="$(printf '%s' "closed-not-landed:$_id" | sha256sum | cut -c1-8)"
