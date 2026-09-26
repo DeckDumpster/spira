@@ -289,4 +289,47 @@ _amiss_out="$(_lib_acquire "some-tag" "$SCRATCH/does-not-exist.tar.gz" "$_dl_dir
 _amiss_rc=$?
 is "pair: given path absent -> non-zero, nothing printed" "1:" "$_amiss_rc:$_amiss_out"
 
+# ===========================================================================
+echo
+echo "11. _bead_finished: closed, or submitted (sp-qsona) — the aeon's close either way"
+# ===========================================================================
+# Under sp-qsona an aeon's close of a work bead becomes open + spira-submitted and only the
+# landing pass closes it, so stage 4 ("the aeon closed it") polled for "closed" and failed
+# whenever landing took longer than its 30s window (local phase D, 2026-09-26).
+_bf_bd="$SCRATCH/bd-bf"
+cat > "$_bf_bd" <<'BD'
+#!/usr/bin/env bash
+case "${BF_CASE:-}" in
+    closed)    printf '[{"id":"x","status":"closed","labels":[]}]\n' ;;
+    submitted) printf '[{"id":"x","status":"open","labels":["spira","spira-submitted"]}]\n' ;;
+    open)      printf '[{"id":"x","status":"open","labels":["spira"]}]\n' ;;
+    *)         exit 1 ;;
+esac
+BD
+chmod +x "$_bf_bd"
+_lib_bf() { PATH="$SCRATCH/bfbin:$PATH" BF_CASE="$1" bash -c '. "$0"; _bead_finished db x' "$LIB"; }
+mkdir -p "$SCRATCH/bfbin"; cp "$_bf_bd" "$SCRATCH/bfbin/bd"
+_lib_bf closed;    wantrc "closed -> finished"                       0 $?
+_lib_bf submitted; wantrc "open + spira-submitted -> finished"       0 $?
+_lib_bf open;      wantrc "positive control: plain open -> not finished" 1 $?
+_lib_bf broken;    wantrc "unreadable -> not finished"               1 $?
+
+# ===========================================================================
+echo
+echo "12. _unit_set: installed spira-* unit files, transient units excluded"
+# ===========================================================================
+# A systemd-run transient (the landing pass's spira-landing.service) that happens to be alive
+# when one snapshot is taken is not part of the installed unit set; counting it made phase C's
+# "unit set after rollback matches" differ on timing alone ("19a20 > spira-landing.service
+# transient", 2026-09-26).
+_us_sc="$SCRATCH/usbin"; mkdir -p "$_us_sc"
+cat > "$_us_sc/systemctl" <<'SC'
+#!/usr/bin/env bash
+printf 'spira-b-prod.service enabled enabled\nspira-landing.service transient -\nspira-a-prod.timer enabled enabled\nother.service enabled enabled\n'
+SC
+chmod +x "$_us_sc/systemctl"
+is "only installed spira-* units, sorted, transient dropped" \
+   "$(printf 'spira-a-prod.timer enabled\nspira-b-prod.service enabled')" \
+   "$(PATH="$_us_sc:$PATH" bash -c '. "$0"; _unit_set' "$LIB")"
+
 tl_summary

@@ -117,6 +117,30 @@ _check_release_bins() {
     printf '%s' "$_missing"
 }
 
+# _bead_finished <db> <id> — 0 when the aeon's close of <id> is recorded: status closed, or
+# open carrying spira-submitted. Under sp-qsona a work bead's own close becomes submitted and
+# only the landing pass closes it, so "closed" alone failed stage 4 whenever landing took
+# longer than the poll window (local phase D, 2026-09-26). Unreadable is not finished.
+_bead_finished() {
+    bd -C "$1" show "$2" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
+    r = d[0] if d else {}
+except Exception:
+    sys.exit(1)
+sys.exit(0 if r.get("status") == "closed" or "spira-submitted" in (r.get("labels") or []) else 1)' 2>/dev/null
+}
+
+# _unit_set — the installed spira-* unit files, "name state" per line, sorted. TRANSIENT units
+# are excluded: a systemd-run pass (the landing pass's spira-landing.service) that happens to
+# be alive when a snapshot is taken is not part of what an install or a rollback put there,
+# and counting it made phase C's comparison differ on timing alone (2026-09-26).
+_unit_set() {
+    systemctl --user list-unit-files --no-legend 2>/dev/null \
+        | awk '$1 ~ /^spira-/ && $2 != "transient" {print $1, $2}' | sort
+}
+
 # _download_tarball <tag> <destdir> — download the release tarball; print path on stdout.
 _download_tarball() {
     local _dtag="$1" _ddir="$2"

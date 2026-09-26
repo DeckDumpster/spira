@@ -415,18 +415,12 @@ except Exception:
             "no commit naming bead id on branch after ${_a_s3_elapsed}s"
     fi
 
-    # Stage 4: Closed — bead status is closed.
+    # Stage 4: Closed — the aeon's close is recorded: closed, or submitted (sp-qsona), which
+    # the landing pass turns into closed when it lands (stage 5).
     _a_t4=$(date +%s)
     _a_closed=0
     while [ $(( $(date +%s) - _a_t4 )) -lt 30 ]; do
-        _a_s4_st="$(bd -C "$bd_db" show "$_bead_id" --json 2>/dev/null \
-            | sed -n '/^[[{]/,$p' \
-            | python3 -c 'import json,sys
-try:
-    d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
-    print(d[0].get("status","") if d else "")
-except Exception: print("")' 2>/dev/null)" || _a_s4_st=""
-        [ "$_a_s4_st" = "closed" ] && { _a_closed=1; break; }
+        _bead_finished "$bd_db" "$_bead_id" && { _a_closed=1; break; }
         sleep 2
     done
     _a_s4_elapsed=$(( $(date +%s) - _a_t4 ))
@@ -513,8 +507,7 @@ else
         else
 
         # Capture unit set BEFORE upgrade.
-        _units_pre_upgrade="$(systemctl --user list-unit-files --no-legend 2>/dev/null \
-            | awk '{print $1, $2}' | grep '^spira-' | sort || true)"
+        _units_pre_upgrade="$(_unit_set)"
 
         # Run deploy.sh to upgrade to newest tag.
         _deploy_rc=0
@@ -551,8 +544,7 @@ else
         is0 "phase C: deploy.sh $prev_tag (rollback) exits 0" "$_rollback_rc"
 
         # Capture unit set AFTER rollback.
-        _units_post_rollback="$(systemctl --user list-unit-files --no-legend 2>/dev/null \
-            | awk '{print $1, $2}' | grep '^spira-' | sort || true)"
+        _units_post_rollback="$(_unit_set)"
 
         # Verify the unit set is identical to the pre-upgrade snapshot.
         # sp-x6ygl: rollback must restore the prior release's ExecStart paths AND unit set.
@@ -778,18 +770,11 @@ else
                         "no commit naming bead id on branch after ${_d_s3_elapsed}s"
                 fi
 
-                # Stage 4: Closed — bead status is closed.
+                # Stage 4: Closed — the aeon's close is recorded: closed, or submitted.
                 _d_t4=$(date +%s)
                 _d_closed=0
                 while [ $(( $(date +%s) - _d_t4 )) -lt 30 ]; do
-                    _d_s4_st="$(bd -C "$bd_db" show "$_aged_probe_id" --json 2>/dev/null \
-                        | sed -n '/^[[{]/,$p' \
-                        | python3 -c 'import json,sys
-try:
-    d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
-    print(d[0].get("status","") if d else "")
-except Exception: print("")' 2>/dev/null)" || _d_s4_st=""
-                    [ "$_d_s4_st" = "closed" ] && { _d_closed=1; break; }
+                    _bead_finished "$bd_db" "$_aged_probe_id" && { _d_closed=1; break; }
                     sleep 2
                 done
                 _d_s4_elapsed=$(( $(date +%s) - _d_t4 ))
