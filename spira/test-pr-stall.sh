@@ -8,8 +8,12 @@
 # ---------------------
 # sp-790sv adds watchtower.sh --pr-stall-check, which scans landstate files for
 # REBASED pr-open:<repo> entries older than SPIRA_PR_STALL_MINS and acts:
+#   checks red        → escalate, deduped per bead (sp-45rmp: tested first — a red
+#                        request is the likeliest reason a PR sits past the threshold,
+#                        and arming auto-merge on it is a no-op that never fires).
 #   allow_auto_merge=false → escalate once per repo via incident.sh (deduped).
-#   allow_auto_merge=true  → arm auto-merge on the PR.
+#   CONFLICTING       → clear the landstate so landing.sh rebases on the next pass.
+#   otherwise         → arm auto-merge on the PR.
 #
 # doctor.sh's own allow_auto_merge FAIL (for any land=pr repo with it false) was part
 # of the "repositories" section removed by sp-utt1i; repo-map/config validation is the
@@ -20,8 +24,9 @@
 # requires the incident to fire. A detector that silently passes the "no new incidents"
 # test without ever filing one proves nothing (law-absence-needs-a-positive-control).
 #
-# THE ALLOW_AUTO_MERGE=FALSE PATH IS COVERED FIRST (it is the case that blocked
-# seven beads for 36 hours). The arm path is covered second.
+# THE RED-CHECKS PATH IS COVERED FIRST (sp-45rmp: a red request got auto-merge armed
+# and was never reported again). The allow_auto_merge=false path is covered second,
+# then CONFLICTING, then the arm path.
 #
 # tier: T1
 # covers: spira/watchtower.sh spira/sentinel.sh spira/doctor.sh spira/conf.sh spira/landing.sh
@@ -71,6 +76,8 @@ plant_certified() {  # plant_certified <id>
 # ---- Stub: gh --------------------------------------------------------------------------
 # SPIRA_GH is set to a stub binary so no real GitHub calls happen.
 # GH_ALLOW_AUTO_MERGE controls what `gh repo view --json allowAutoMerge` returns.
+# GH_MERGEABLE / GH_CONCLUSIONS control the combined `pr view --json mergeable,
+# statusCheckRollup` jq output (mergeable, then a comma-joined conclusions list).
 # GH_PR_MERGE_LOG captures `gh pr merge` calls.
 GH_BIN="$TMP/gh-stub"
 GH_PR_MERGE_LOG="$TMP/gh-pr-merge.log"
@@ -84,8 +91,8 @@ case "$*" in
         # jq-extracted value, not the JSON object; that is what real gh outputs with --jq.
         printf '%s\n' "${GH_ALLOW_AUTO_MERGE:-true}"
         printf '%s\n' "${GH_ALLOW_AUTO_MERGE:-true}" > "${GH_AAM_OUT:-/dev/null}" ;;
-    *"pr view"*"--json mergeable"*)
-        printf '%s\n' "${GH_MERGEABLE:-MERGEABLE}" ;;
+    *"pr view"*"--json mergeable,statusCheckRollup"*)
+        printf '%s\t%s\n' "${GH_MERGEABLE:-MERGEABLE}" "${GH_CONCLUSIONS:-}" ;;
     *"pr merge"*"--auto"*)
         printf '%s\n' "$*" >> "${GH_PR_MERGE_LOG:-/dev/null}" ;;
     *) : ;;
@@ -118,6 +125,7 @@ psc() {  # psc [VAR=val...]
         GH_LOG="$TMP/gh.log" \
         GH_ALLOW_AUTO_MERGE="${GH_ALLOW_AUTO_MERGE:-false}" \
         GH_MERGEABLE="${GH_MERGEABLE:-MERGEABLE}" \
+        GH_CONCLUSIONS="${GH_CONCLUSIONS:-}" \
         GH_AAM_OUT="$TMP/gh-aam-out" \
         GH_PR_MERGE_LOG="$GH_PR_MERGE_LOG" \
         INC_SUBJECTS="$INC_SUBJECTS" \
@@ -133,6 +141,52 @@ fresh() {
     > "$INC_SUBJECTS"; > "$INC_CAUSES"; > "$INC_REFS"
     > "$TMP/gh.log"; > "$GH_PR_MERGE_LOG"
 }
+
+# ====================================================================================
+echo
+echo "positive control: stale REBASED pr-open with a failing check → incident filed, not armed"
+# THE POSITIVE CONTROL for the red-checks path (sp-45rmp). allow_auto_merge=true and the
+# PR is not CONFLICTING — the two branches that existed before this fix — but a check has
+# failed, so arming auto-merge would be a no-op that can never fire.
+# ====================================================================================
+fresh
+plant_stale sp-testR
+GH_ALLOW_AUTO_MERGE=true GH_MERGEABLE=MERGEABLE GH_CONCLUSIONS=SUCCESS,FAILURE psc
+subjects="$(cat "$INC_SUBJECTS" 2>/dev/null)"
+causes="$(cat "$INC_CAUSES" 2>/dev/null)"
+refs="$(cat "$INC_REFS" 2>/dev/null)"
+want   "incident subject mentions PR STALL"          "PR STALL"                    "$subjects"
+want   "incident subject mentions the bead"          "sp-testR"                    "$subjects"
+want   "cause is pr-stall-checks-red"                 "pr-stall-checks-red"         "$causes"
+want   "ref scoped to repo and bead"                  "pr-stall-checks-red:testrepo:sp-testR" "$refs"
+nowant "arm command was NOT called"                   "pr merge"                    "$(cat "$GH_PR_MERGE_LOG")"
+
+# ====================================================================================
+echo
+echo "red-checks deduplication: same bead filed once per ref"
+# ====================================================================================
+fresh
+plant_stale sp-testR
+GH_ALLOW_AUTO_MERGE=true GH_CONCLUSIONS=FAILURE psc
+GH_ALLOW_AUTO_MERGE=true GH_CONCLUSIONS=FAILURE psc
+first_ref="$(head -1 "$INC_REFS" 2>/dev/null)"
+second_ref="$(tail -1 "$INC_REFS" 2>/dev/null)"
+is "dedup ref is stable across calls" "$first_ref" "$second_ref"
+
+# ====================================================================================
+echo
+echo "red checks outrank CONFLICTING and allow_auto_merge=false: red is reported"
+# Both an older branch (CONFLICTING) and the untouched branch (allow_auto_merge=false)
+# would otherwise apply; the red-checks branch is tested first and wins.
+# ====================================================================================
+fresh
+plant_stale sp-testR2
+GH_ALLOW_AUTO_MERGE=false GH_MERGEABLE=CONFLICTING GH_CONCLUSIONS=CANCELLED psc
+causes="$(cat "$INC_CAUSES" 2>/dev/null)"
+want   "cause is pr-stall-checks-red, not auto-merge-off" "pr-stall-checks-red" "$causes"
+nowant "auto-merge-off cause not filed"                   "pr-stall-auto-merge-off" "$causes"
+is     "landstate NOT cleared (red wins over CONFLICTING)" "exists" \
+    "$([ -f "$TMP/run/landstate/sp-testR2" ] && echo exists)"
 
 # ====================================================================================
 echo
