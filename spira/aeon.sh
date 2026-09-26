@@ -1685,50 +1685,37 @@ fi
 # between them, and the harness knows which is true because repo-map says so. Kept to one
 # line: brief bloat is compensation for missing context, and this is the context.
 case "$REPO_LAND" in
-    pr)   LANDING_BRIEF="the sentinel pushes \`$BRANCH\` and opens a pull request against \`$BASE_BRANCH\`; $REPO_NAME's own CI is the gate, so write the commit for a reviewer" ;;
+    pr)   LANDING_BRIEF="landing-pass pushes \`$BRANCH\` and opens a pull request against \`$BASE_BRANCH\`; $REPO_NAME's own CI is the gate, so write the commit for a reviewer" ;;
     hold) LANDING_BRIEF="Spira does not advance $REPO_NAME's \`$BASE_BRANCH\`, so the sentinel gates \`$BRANCH\` and leaves it for the operator to merge by hand" ;;
     *)    LANDING_BRIEF="the sentinel merges \`$BRANCH\` into \`$BASE_BRANCH\` and pushes it once the landing gate passes — there is no reviewer between your commit and \`$BASE\`" ;;
 esac
-# WHETHER THERE IS ANYTHING TO WAIT FOR IS ALSO PART OF THE BRIEF, and the same fact decides
-# it. Only `pr` opens a pull request; `push` merges the branch itself and `hold` leaves it for
-# a human, so in both of those the landing gate is the only gate and a park waits for an event
-# that cannot occur. A gate applied where no run exists is a permanent, invisible hold: not
-# claimable, not reported, and shown to the operator as "in CI", the one description that
-# stops anybody looking for the real cause.
+# WHETHER THERE IS ANYTHING TO WAIT FOR IS ALSO PART OF THE BRIEF, and in every mode the
+# answer is no: closing the bead is the whole job. `pr` used to be the exception — the aeon
+# pushed, opened the pull request, and parked the bead behind a hand-created gh:run gate for
+# a sweep to resolve later. That sweep is gone; `landing-pass` (a short-interval timer, not
+# this session) now owns a pr-mode branch end to end — rebase, push, open or refresh the
+# pull request, and, once it merges, the real close — and it acts only on a bead that is
+# closed. A gate applied on top of that is never read by anything and never resolves; a bead
+# left open per the old brief is invisible to landing-pass forever, since it only ever looks
+# at closed ones. Either way the branch never lands, and the two failures look identical:
+# work sitting on a branch nobody is watching.
 if [ "$REPO_LAND" = pr ]; then
-    PARK_BRIEF="## Your lifetime: do the work, cut the review, then exit
+    PARK_BRIEF="## Your lifetime: do the work, then exit
 
-**Do not sit and watch CI.** An Opus session idling for twenty-five minutes while a test
-suite runs is the most expensive way to wait that exists. When your work is pushed and its
-pull request is open, your job is done for now — exit cleanly and let the harness bring the
-bead back when there is something to decide.
+**There is no CI run for you to wait on.** \`landing-pass\` pushes \`$BRANCH\`, opens or
+refreshes its pull request, and — once that pull request merges — closes the bead for real,
+citing the landed commit. None of that is this session's job, and none of it needs \`gh\`
+credentials this session may not have.
 
-What makes that safe is the gate, not your memory of it. Before you exit:
+**So do not push the branch, do not open a pull request, and do not create a gh:run gate.**
+A gate here is never read by anything: nothing discovers or checks one for a bead landing-pass
+already owns. Leaving the bead open is just as inert, the opposite way — \`landing-pass\` acts
+only on a closed bead, so an open one is simply skipped, forever, by the one thing that would
+otherwise push it.
 
-1. push your branch and open or update its pull request
-2. create a gh:run gate to park the bead:
-
-   \`\`\`
-   GATE_ID=\$(bd gate create --type=gh:run --blocks \$BEAD_ID -r \"waiting for CI\" | grep -oP 'sp-\\w+')
-   bd update \$GATE_ID --set-metadata \"repo=\$(gh repo view --json nameWithOwner -q .nameWithOwner)\"
-   bd update \$GATE_ID --set-metadata \"branch=\$(git rev-parse --abbrev-ref HEAD)\"
-   \`\`\`
-
-3. leave the bead OPEN with a note saying what state it is in
-
-The gate makes the bead not ready — no reader has to remember to exclude a label —
-and the harness's gate-check sweep (running every two minutes on spira-gate-check.timer)
-finds the matching run via \`bd gate discover\` and resolves the gate via \`bd gate check\`.
-
-Green: the gate resolves, the bead returns to ready, and the sentinel lands it.
-Red: \`bd gate check\` escalates the gate; the bead returns to the queue at its own priority
-so the next aeon can fix it — same bead, same recorded branch, all your commits.
-
-**Set metadata.repo and metadata.branch** on the gate (step 2 above). The check command
-uses metadata.repo to call \`gh run view --repo <org/repo>\`, preventing a run from the
-wrong repository from resolving this gate. gate-check's discover step uses metadata.branch
-to query only that branch's CI runs, preventing a deployment run on the base branch from
-resolving the gate via time proximity."
+When the work is committed on your branch, close the bead with its evidence and exit.
+\$REPO_NAME's own CI runs against the pull request \`landing-pass\` opens — that pull request
+is the review, and its CI is the gate — but watching it is not a builder's job."
 else
     PARK_BRIEF="## Your lifetime: do the work, then exit
 
