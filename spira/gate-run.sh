@@ -13,6 +13,8 @@
 #   0  the gate passed              1  the gate failed, or could not be run
 #   2  still deciding — call the same command again
 #   3  (--status only) no gate is running for that branch and none has finished
+#   4  (--status only) a verdict is recorded, but for a different tree — a rebase, a new
+#      commit, or the base moving invalidated it. Not the same claim as 3: a gate DID run.
 #
 # WHY THIS EXISTS. An agent's Bash tool moves a foreground command to the background at a
 # fixed ceiling and hands the session back a task id. The gate outgrew that ceiling, so the
@@ -200,8 +202,13 @@ if [ "$MODE" = status ]; then
         exit 2
     fi
     if [ -d "$D" ]; then
-        # A finished run about a different tree answers nothing about this one.
-        if [ -f "$RCF" ] && stale_key; then exit 3; fi
+        # A finished run about a different tree holds a real verdict — just not this one's.
+        # That is not "no gate ran": it is its own exit code, so a caller who collapsed the
+        # two would tell the next reader the wrong story (a rebase, not a skipped gate).
+        if [ -f "$RCF" ] && stale_key; then
+            echo "gate-run: the recorded verdict for $BR is for a different tree — key was $(cat "$KEYF" 2>/dev/null), now $key. A rebase, a new commit, or the base moving invalidated it."
+            exit 4
+        fi
         report
     fi
     if p="$(unmanaged_gate)"; then

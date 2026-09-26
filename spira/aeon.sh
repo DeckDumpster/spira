@@ -998,6 +998,38 @@ $_cert_out"
                         fi
                     fi
                 fi ;;
+            4)  # A VERDICT WAS RECORDED, JUST NOT FOR THIS TREE. gate-run.sh's own key
+                # covers the branch tip and the base tip; either moving under a held PASS —
+                # most often this teardown's own rebase-behind-base fix, further down this
+                # same function — makes the key stale. That is not "no gate ran": the
+                # session's move was correct and the note must not accuse it of skipping a
+                # step it did not skip (law-a-deliberate-state-is-not-a-fault).
+                if [ "$_cert_mode" != queue ]; then
+                    bdq note "$BEAD_ID" "Closed holding a gate verdict that no longer applies — $gate_why. Something (most likely this teardown's own rebase onto $BASE after the close) changed the tree the verdict was for. This is not a missing gate run; the landing pass gates $BRANCH as it now stands." >/dev/null 2>&1
+                    log "$FAYTH: $BEAD_ID closed with a stale gate verdict ($gate_why)"
+                elif [ "$_cert_hasown" != 1 ]; then
+                    bdq note "$BEAD_ID" "Closed holding a gate verdict that no longer applies — $gate_why. $BRANCH carries no commit of $BEAD_ID's own ahead of $REPO_NAME's base, so there is nothing to certify. This is not a missing gate run." >/dev/null 2>&1
+                    log "$FAYTH: $BEAD_ID closed with a stale gate verdict ($gate_why) — nothing ahead of base to certify"
+                else
+                    _cert_tip="$(git -C "$REPO" rev-parse "$BRANCH" 2>/dev/null)"
+                    _cert_ls_state=""; _cert_ls_tip=""
+                    read -r _cert_ls_state _cert_ls_tip _ <<< "$(land_state "$BEAD_ID" 2>/dev/null)"
+                    if [ "${_cert_ls_state:-}" = CERTIFIED ] && [ -n "${_cert_tip:-}" ] && [ "${_cert_ls_tip:-}" = "$_cert_tip" ]; then
+                        log "$FAYTH: $BEAD_ID closed with a stale gate verdict, but $_cert_tip is already CERTIFIED — the session submitted it itself"
+                    else
+                        _cert_out="$(bash "$SPIRA_HOME/queue.sh" submit "$BRANCH" "$REPO_NAME" 2>&1)"; _cert_rc=$?
+                        if [ "$_cert_rc" -eq 0 ]; then
+                            bdq note "$BEAD_ID" "Certified by aeon.sh: the gate verdict this session held stopped applying to $BRANCH — $gate_why — so aeon.sh certified it itself rather than leave it stranded. This is not a missing gate run." >/dev/null 2>&1
+                            log "$FAYTH: $BEAD_ID certified by aeon.sh after a stale gate verdict — $_cert_out"
+                        else
+                            bead_reopen "$BEAD_ID" cert-gate-red "Reopened by aeon.sh: the gate verdict this session held stopped applying to $BRANCH ($gate_why), so aeon.sh certified it itself (queue.sh submit) and it failed.
+
+$_cert_out"
+                            st=open
+                            log "$FAYTH: $BEAD_ID REOPENED — self-certification failed after a stale gate verdict ($_cert_out)"
+                        fi
+                    fi
+                fi ;;
         esac
     fi
     # PIDFILE IS REMOVED HERE, after all bead operations, so holder_alive stays true for the
