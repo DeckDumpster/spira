@@ -105,7 +105,9 @@ fi
 
 # Resolve "latest" to the newest PUBLISHED (non-draft) spira-release-* release.
 # gh release list skips drafts by filtering isDraft; fall back to git tags if gh unavailable.
+_named_tag=1
 if [ "$tag" = "latest" ]; then
+    _named_tag=0
     tag=""
     git -C "$SPIRA_REPO" fetch --tags --quiet 2>/dev/null || true
     _rel_list="$(gh --repo "$_gh_repo" release list --json tagName,isDraft 2>/dev/null)" \
@@ -513,8 +515,28 @@ _deploy_failed=""
     || _deploy_failed="${_deploy_failed:+$_deploy_failed, }world status"
 SPIRA_DOCTOR=1 "$_DOCTOR" >/dev/null 2>&1 \
     || _deploy_failed="${_deploy_failed:+$_deploy_failed, }doctor"
-"$_SKEW" check >/dev/null 2>&1
+_skew_out="$("$_SKEW" check 2>/dev/null)"
 _skew_exit=$?
+# AN OLDER RELEASE THE OPERATOR NAMED IS NOT-LATEST BY CONSTRUCTION. skew.sh check answers
+# NOT-LATEST (exit 1) whenever a newer release tag exists — exactly the state a deliberate
+# rollback to a named release produces — and reading it as a failed health check undid every
+# such rollback (acceptance phase C, 2026-09-26). Accepted ONLY when the finding is nothing
+# but NOT-LATEST, the operator named $tag explicitly, and the release skew calls latest is a
+# DIFFERENT tag that sorts AFTER $tag: a genuinely newer release exists. A NOT-LATEST about the
+# release this deploy just made newest (skew misreading its own sidecar), MANIFEST-MISMATCH,
+# or NOT-LATEST after `latest` still fails.
+_skew_newer=""
+if [ "$_skew_exit" -eq 1 ] && [ "$_named_tag" = 1 ] \
+   && [ -z "$(printf '%s\n' "$_skew_out" | grep -v '^NOT-LATEST ' | grep -v '^[[:space:]]*$' || true)" ]; then
+    _skew_newer="$(printf '%s\n' "$_skew_out" \
+        | sed -n 's/^NOT-LATEST .* is not the latest published release \(spira-release-[^ ]*\)$/\1/p' | head -1)"
+    if [ -n "$_skew_newer" ] && [ "$_skew_newer" != "$tag" ] \
+       && [ "$(printf '%s\n%s\n' "$tag" "$_skew_newer" | sort | tail -1)" = "$_skew_newer" ]; then
+        log "deploy: skew: NOT-LATEST — a newer release ($_skew_newer) exists; expected, $tag was named explicitly"
+        _skew_exit=0
+    fi
+fi
+unset _skew_newer
 [ "$_skew_exit" -eq 0 ] \
     || _deploy_failed="${_deploy_failed:+$_deploy_failed, }skew (exit $_skew_exit)"
 

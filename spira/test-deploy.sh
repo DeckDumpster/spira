@@ -204,6 +204,7 @@ chmod +x "$BIN/doctor.sh"
 cat > "$BIN/skew.sh" <<'SEOF'
 #!/usr/bin/env bash
 printf 'skew %s\n' "$*" >> "${CALL_LOG:-/dev/null}"
+[ -n "${SKEW_OUT:-}" ] && printf '%s\n' "$SKEW_OUT"
 exit "${SKEW_EXIT:-0}"
 SEOF
 chmod +x "$BIN/skew.sh"
@@ -437,6 +438,35 @@ not0   "rollback-skew: exits non-zero" "$_rc"
 islink "rollback-skew: current restored to prior" "$RELEASES/current" "$PRIOR_RELEASE"
 want   "rollback-skew: restarts active unit onto prior release" \
        "SC --user restart spira-sentinel-prod.service" "$(cat "$SC_LOG")"
+
+# A DELIBERATE DEPLOY OF AN OLDER RELEASE IS NOT-LATEST BY CONSTRUCTION. skew.sh check
+# answers NOT-LATEST (exit 1) whenever a newer release tag exists, which is exactly the state a
+# rollback to a named older release produces; reading it as a failed health check undid every
+# deliberate rollback (acceptance phase C, 2026-09-26: "ROLLBACK — doctor, skew (exit 1)",
+# then "restored" the newer release). With an explicitly named tag a NOT-LATEST-only finding
+# is logged and accepted; MANIFEST-MISMATCH still rolls back, and so does NOT-LATEST after
+# `latest` (the check disagreeing with what deploy just resolved as newest).
+_notlatest="NOT-LATEST activated $NEW_RELEASE is not the latest published release spira-release-spira-20990101T000000Z"
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$_notlatest" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+is0    "older-named: a NOT-LATEST-only skew finding does not undo a named deploy" "$_rc"
+islink "older-named: current -> the named release"            "$RELEASES/current" "$NEW_RELEASE"
+want   "older-named: the finding is said, not swallowed"      "NOT-LATEST" "$_out"
+nowant "older-named: no rollback"                             "ROLLBACK" "$_out"
+
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$(printf '%s\nMANIFEST-MISMATCH MANIFEST records a but release tag t points at b' "$_notlatest")" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0   "older-named: a MANIFEST-MISMATCH still rolls back"    "$_rc"
+islink "older-named: current restored to prior"               "$RELEASES/current" "$PRIOR_RELEASE"
+
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_pub_list="[{\"tagName\":\"$NEW_TAG\",\"isDraft\":false}]"
+_out="$(run_deploy "SKEW_EXIT=1" "SKEW_OUT=$_notlatest" "GH_RELEASE_LIST=$_pub_list" -- latest 2>&1)"
+_rc=$?
+not0   "latest: NOT-LATEST after resolving latest still rolls back" "$_rc"
+unset _notlatest
 
 # ==========================================================================
 echo
