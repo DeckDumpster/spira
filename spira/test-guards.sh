@@ -49,6 +49,10 @@ bash_payload() {  # bash_payload <cmd> -> PreToolUse JSON for the Bash tool
 tool_payload() {  # tool_payload <tool_name> <file_path> -> PreToolUse JSON for Write/Edit/Read
     python3 -c 'import json,sys; print(json.dumps({"tool_name":sys.argv[1],"tool_input":{"file_path":sys.argv[2]}}))' "$1" "$2"
 }
+bash_rib_payload() {  # bash_rib_payload <cmd> <0|1> -> PreToolUse JSON for Bash with run_in_background set
+    python3 -c 'import json,sys
+print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1],"run_in_background":sys.argv[2]=="1"}}))' "$1" "$2"
+}
 
 # ---------------------------------------------------------------------------
 # Stub bd — implements only the three calls these two guards shell out to.
@@ -168,6 +172,47 @@ nowant "UC-safety-fences-01/blocked-name-as-git-file-arg-allowed" '"decision":"b
 
 out="$(fence_run "git add spira/landing.sh && bash spira/landing.sh push" SPIRA_AEON=test-aeon)"
 want "UC-safety-fences-01/compound-git-add-then-invocation-blocked" '"decision":"block"' "$out"
+
+# ===========================================================================
+echo
+echo "sp-4o925 — aeon session: Bash run_in_background refused structurally, not charged after the fact:"
+# ===========================================================================
+fence_rib() {  # fence_rib <cmd> <0|1> [ENV..] -> fence stdout for a Bash call with run_in_background set
+    local cmd="$1" rib="$2"; shift 2
+    bash_rib_payload "$cmd" "$rib" | env -i PATH="$PATH" HOME="$TMP" \
+        SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$FAKE_PROD" "$@" \
+        bash "$FENCE" 2>/dev/null
+}
+fence_rib_rc() {  # fence_rib_rc <cmd> <0|1> [ENV..] -> the fence process's own exit code
+    local cmd="$1" rib="$2"; shift 2
+    bash_rib_payload "$cmd" "$rib" | env -i PATH="$PATH" HOME="$TMP" \
+        SPIRA_RUN="$FAKE_RUN" SPIRA_PROD="$FAKE_PROD" "$@" \
+        bash "$FENCE" >/dev/null 2>&1
+    printf '%s' "$?"
+}
+
+pc="$(fence_rib "bash spira/testenv-batch.sh --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon)"
+want "sp-4o925/positive-control-run-in-background-blocked" '"decision":"block"' "$pc"
+
+out="$(fence_rib "bash spira/testenv-batch.sh --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon)"
+want "sp-4o925/run-in-background-blocked"        '"decision":"block"' "$out"
+want "sp-4o925/reason-names-sp-4o925"            "sp-4o925"           "$out"
+want "sp-4o925/reason-says-run-in-foreground"    "foreground"         "$out"
+
+rc="$(fence_rib_rc "bash spira/testenv-batch.sh --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon)"
+is "sp-4o925/blocked-protocol-still-exits-0" 0 "$rc"
+
+out="$(fence_rib "echo ordinary foreground command" 0 SPIRA_AEON=test-aeon)"
+nowant "sp-4o925/run-in-background-false-allowed" '"decision":"block"' "$out"
+
+out="$(fence_run "echo ordinary foreground command" SPIRA_AEON=test-aeon)"
+nowant "sp-4o925/run-in-background-absent-allowed" '"decision":"block"' "$out"
+
+out="$(fence_rib "bash spira/testenv-batch.sh --suites test-verdict.sh spira/sp-x" 1)"
+nowant "sp-4o925/no-SPIRA_AEON-run-in-background-allowed" '"decision":"block"' "$out"
+
+out="$(fence_rib "bash spira/testenv-batch.sh --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
+nowant "sp-4o925/override-bypasses-run-in-background-block" '"decision":"block"' "$out"
 
 # ===========================================================================
 echo
