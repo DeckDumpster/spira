@@ -194,20 +194,20 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 
+# FAYTH_LABELS reads $SPIRA_PLAN_LABEL/$SPIRA_SCOPE_LABEL, not a literal "plan" — a fixture
+# bead must carry whatever this environment actually configured, or "nothing ready to claim"
+# is indistinguishable from the wiring being broken.
+_t5_lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\""
+
 testdb_reset
 testdb_seed <<JSONL
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-20T00:00:00Z"}
-{"id":"tst-holder","title":"holder bead","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-20T00:00:00Z"}
-{"id":"tst-claim","title":"claim bead","description":"a case in spira/batch.sh needs one more branch","status":"open","issue_type":"task","labels":["spira","plan","repo:fixture"],"updated_at":"2026-09-20T00:00:00Z"}
+{"id":"tst-holder","title":"holder bead","status":"open","issue_type":"task","labels":[$_t5_lbl],"updated_at":"2026-09-20T00:00:00Z"}
+{"id":"tst-claim","title":"claim bead","description":"a case in spira/batch.sh needs one more branch","status":"open","issue_type":"task","labels":[$_t5_lbl,"repo:fixture"],"updated_at":"2026-09-20T00:00:00Z"}
 JSONL
 
 rm -rf "$SPIRA_RUN/worktree"
 "$SPIRA_HOME/aeon.sh" builder > "$TMP/out" 2>&1
-
-if [ ! -s "$TMP/prompt" ]; then
-    printf '# DEBUG aeon.sh output:\n' >&2
-    sed 's/^/# /' "$TMP/out" >&2
-fi
 
 want "the claiming aeon's prompt names the holds section" "Files already in flight" "$(cat "$TMP/prompt" 2>/dev/null)"
 want "and names the open bead already touching the file"  "tst-holder"              "$(cat "$TMP/prompt" 2>/dev/null)"
