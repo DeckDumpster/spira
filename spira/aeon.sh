@@ -685,6 +685,33 @@ gate_unfinished() {
     return 0
 }
 
+# self_cert_no_blame — the self-certification's queue.sh submit failed, but not the
+# branch's fault (NO_VERDICT or BASE_FAIL). Leave the bead closed, charge no attempt, note
+# why, and for NO_VERDICT feed the same repetition counter landing.sh escalates through
+# (law-verify-the-discriminating-fact, law-a-deliberate-state-is-not-a-fault).
+self_cert_no_blame() {   # self_cert_no_blame <bead> <branch> <repo> <cert_rc> <cert_out>
+    local id="$1" br="$2" repo="$3" rc="$4" out="$5" outcome reason
+    outcome="$(spira_gate_outcome "$rc")"
+    reason="$(printf '%s' "$out" | sed -n 's/^gate: VERDICT=[A-Z_]* reason=\([^ ]*\).*$/\1/p' | tail -1)"
+    bdq note "$id" "Not reopened by aeon.sh: closed without a settled gate verdict, so aeon.sh's self-certification ($br via queue.sh submit) came back $outcome (${reason:-unspecified}) — not the branch's fault, no attempt charged.
+
+$out" >/dev/null 2>&1
+    log "$FAYTH: $id left closed — self-certification returned $outcome, not a branch fault (${reason:-unspecified})"
+    [ "$rc" = "$SPIRA_GATE_NOVERDICT" ] || return 0
+    local nv_key nv_file nv_n
+    nv_key="$(printf '%s' "$br-${reason:-unspecified}" | tr -c 'A-Za-z0-9._-' '-')"
+    nv_file="$SPIRA_RUN/noverdict/$nv_key"
+    mkdir -p "$SPIRA_RUN/noverdict"
+    nv_n=$(( $(cat "$nv_file" 2>/dev/null || echo 0) + 1 ))
+    printf '%s\n' "$nv_n" > "$nv_file"
+    if [ "$nv_n" -ge "${SPIRA_NOVERDICT_MAX:-3}" ] && [ ! -e "$nv_file.asked" ]; then
+        : > "$nv_file.asked"
+        spira_ask_machinery "$id" "$br" "$repo" "$outcome" "${reason:-unspecified}" "$nv_n" "$out"
+        log "$FAYTH: escalated $id — $outcome x$nv_n on $br"
+    fi
+    return 0
+}
+
 cleanup() {
     local rc=$? reset_at gate_why cause
     # `set -e` IS DISARMED FOR THE WHOLE OF TEARDOWN, first line, before anything can fail.
@@ -1022,6 +1049,8 @@ $gate_why"
                         if [ "$_cert_rc" -eq 0 ]; then
                             bdq note "$BEAD_ID" "Certified by aeon.sh: closed without ever obtaining a gate verdict, so aeon.sh certified $BRANCH itself rather than leave it stranded — $_cert_out" >/dev/null 2>&1
                             log "$FAYTH: $BEAD_ID certified by aeon.sh — $_cert_out"
+                        elif ! spira_gate_blames_branch "$_cert_rc"; then
+                            self_cert_no_blame "$BEAD_ID" "$BRANCH" "$REPO_NAME" "$_cert_rc" "$_cert_out"
                         else
                             bead_reopen "$BEAD_ID" cert-gate-red "Reopened by aeon.sh: closed without ever obtaining a gate verdict, so aeon.sh certified $BRANCH itself (queue.sh submit) and it failed.
 
@@ -1054,6 +1083,8 @@ $_cert_out"
                         if [ "$_cert_rc" -eq 0 ]; then
                             bdq note "$BEAD_ID" "Certified by aeon.sh: the gate verdict this session held stopped applying to $BRANCH — $gate_why — so aeon.sh certified it itself rather than leave it stranded. This is not a missing gate run." >/dev/null 2>&1
                             log "$FAYTH: $BEAD_ID certified by aeon.sh after a stale gate verdict — $_cert_out"
+                        elif ! spira_gate_blames_branch "$_cert_rc"; then
+                            self_cert_no_blame "$BEAD_ID" "$BRANCH" "$REPO_NAME" "$_cert_rc" "$_cert_out"
                         else
                             bead_reopen "$BEAD_ID" cert-gate-red "Reopened by aeon.sh: the gate verdict this session held stopped applying to $BRANCH ($gate_why), so aeon.sh certified it itself (queue.sh submit) and it failed.
 

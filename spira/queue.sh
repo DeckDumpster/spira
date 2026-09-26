@@ -79,7 +79,7 @@ cmd_submit() {
         printf '%s\n' "$gate_out" >&2
         printf 'QUEUE CAUGHT %s branch=%s\n' "$(date +%s)" "$id" \
             >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
-        return 1
+        return "$gate_rc"
     fi
 
     local gate_cost=$(( $(date +%s) - gate_start ))
