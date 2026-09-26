@@ -94,7 +94,7 @@ case "${1:-}" in
     _cur="$(mktemp)"; _prev="$(mktemp)"; trap 'rm -f "$_cur" "$_prev"' EXIT
     bash "$HERE/suite-coverage-json.sh" > "$_cur"
     bash "$HERE/suite-coverage-json.sh" --ref "$baseref" > "$_prev"
-    "$bin" validate --catalogue-dir "$DOCS_DIR" --suites "$_cur" --prev-suites "$_prev"
+    "$bin" orphans --catalogue-dir "$DOCS_DIR" --suites "$_cur" --prev-suites "$_prev"
     exit $?
     ;;
 --gaps)

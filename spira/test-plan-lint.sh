@@ -179,10 +179,19 @@ env -i PATH="$PATH" HOME="$TMP" TERM=dumb SPIRA_TEST_PLAN_BIN="$SPIRA_TEST_PLAN_
 # --orphans <ref>: DELETION WRITES THE PLAN (item 2). A suite that was the
 # last cover of a use case is deleted; the lint fails against the ref before
 # the deletion, and passes again once the use case is marked uncovered.
+#
+# AN UNRELATED SUITE NAMING A UC ID NO CATALOGUE KNOWS (the everyday state of
+# every not-yet-migrated area on the real tree) STAYS IN THE CORPUS THROUGHOUT
+# THIS WHOLE SECTION. --orphans must never trip on it: that whole-corpus
+# unknown-UC check is `validate`'s and item 1's (sp-94lbj), deliberately not
+# wired into the gate yet (plan-matrix-fence.sh's own header) — a version that
+# ran it here would fail --orphans, and so the gate, on every branch today.
 # ==========================================================================
+printf '#!/usr/bin/env bash\n# tier: T1\n# covers: spira/unmigrated.sh UC-unmigrated-area-01\necho hi\n' \
+    > "$ROOT/spira/test-unmigrated-area.sh"
 printf '#!/usr/bin/env bash\n# tier: T2\n# covers: spira/dispatch.sh UC-dispatch-05\necho hi\n' \
     > "$ROOT/spira/test-covers-05.sh"
-commit "add the only cover of UC-dispatch-05"
+commit "add the only cover of UC-dispatch-05, plus an unrelated unmigrated-area suite"
 before_ref="$(git -C "$ROOT" rev-parse HEAD)"
 
 rm "$ROOT/spira/test-covers-05.sh"
@@ -191,6 +200,9 @@ commit "delete it, without marking the catalogue"
 out="$(lint --orphans "$before_ref")"; rc=$?
 isnz "SEEN RED: deleting the last cover orphans the use case" "$rc"
 want "and names the orphaned id" "UC-dispatch-05" "$out"
+[[ "$out" != *"UC-unmigrated-area-01"* ]] && \
+    ok "--orphans never flags the unrelated unmigrated-area suite's unknown UC id" || \
+    bad "--orphans never flags the unrelated unmigrated-area suite's unknown UC id" "$out"
 
 # Fix path 1: mark the use case uncovered.
 python3 - "$ROOT/docs/test-plan/dispatch.toml" <<'PY'

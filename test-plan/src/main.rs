@@ -9,6 +9,14 @@
 //!       catalogue load errors, then (with --suites) unknown UC ids on a suite's # covers:,
 //!       then (with --prev-suites too) use cases orphaned since --prev-suites' snapshot.
 //!       "ok" and exit 0 when clean; each violation printed and exit 1 otherwise.
+//!       NOTE: the unknown-UC check here is whole-corpus and not yet gate-wired (sp-94lbj);
+//!       the gate uses `orphans` below, which is narrower on purpose.
+//!
+//!   test-plan orphans --catalogue-dir DIR --suites FILE|- --prev-suites FILE|-
+//!       catalogue load errors, then use cases orphaned since --prev-suites' snapshot only —
+//!       never the whole-corpus unknown-UC check `validate` also runs, which would fail on
+//!       every branch today against areas `docs/test-plan/*.toml` hasn't migrated yet.
+//!       "ok" and exit 0 when clean; each violation printed and exit 1 otherwise.
 //!
 //!   test-plan matrix --catalogue-dir DIR --suites FILE|- [--timings FILE]
 //!       the derived coverage matrix as JSON, to stdout.
@@ -192,6 +200,53 @@ fn cmd_validate(rest: &[String]) -> ExitCode {
     }
 }
 
+fn cmd_orphans(rest: &[String]) -> ExitCode {
+    let a = match parse_args(rest) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("test-plan orphans: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let (Some(dir), Some(suites_spec), Some(prev_spec)) =
+        (a.catalogue_dir, a.suites, a.prev_suites)
+    else {
+        eprintln!("usage: test-plan orphans --catalogue-dir DIR --suites FILE|- --prev-suites FILE|-");
+        return ExitCode::FAILURE;
+    };
+    let cats = match load_or_report(&dir) {
+        Ok(c) => c,
+        Err(rc) => return rc,
+    };
+    let cur = match load_suites(&suites_spec) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("test-plan: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let prev = match load_suites(&prev_spec) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("test-plan: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mut bad = false;
+    for v in orphan_violations(&cats, &prev, &cur) {
+        eprintln!("test-plan: {v}");
+        bad = true;
+    }
+
+    if bad {
+        ExitCode::FAILURE
+    } else {
+        println!("ok");
+        ExitCode::SUCCESS
+    }
+}
+
 fn cmd_matrix(rest: &[String]) -> ExitCode {
     let a = match parse_args(rest) {
         Ok(a) => a,
@@ -293,10 +348,11 @@ fn cmd_schema(which: Option<&str>) -> ExitCode {
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: test-plan <catalogue-ids|validate|matrix|render|schema> ...\n\
+        "usage: test-plan <catalogue-ids|validate|orphans|matrix|render|schema> ...\n\
          \n\
          \x20 catalogue-ids --catalogue-dir DIR\n\
          \x20 validate --catalogue-dir DIR [--suites FILE|-] [--prev-suites FILE|-]\n\
+         \x20 orphans --catalogue-dir DIR --suites FILE|- --prev-suites FILE|-\n\
          \x20 matrix --catalogue-dir DIR --suites FILE|- [--timings FILE]\n\
          \x20 render [--matrix FILE|-]\n\
          \x20 schema <catalogue|matrix>"
@@ -309,6 +365,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("catalogue-ids") => cmd_catalogue_ids(&args[1..]),
         Some("validate") => cmd_validate(&args[1..]),
+        Some("orphans") => cmd_orphans(&args[1..]),
         Some("matrix") => cmd_matrix(&args[1..]),
         Some("render") => cmd_render(&args[1..]),
         Some("schema") => cmd_schema(args.get(1).map(String::as_str)),
