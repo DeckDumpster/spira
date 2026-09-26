@@ -177,24 +177,13 @@ LEDGER" "$(bash "$TMP/guarded.sh" 2>/dev/null)"
 # No harness script writes sp-attempt-*, sp-reclaim-*, sp-requeue-*, sp-timeout-*, or
 # sp-recur-* labels. The bump_* functions are no-ops.
 #
-# Two structural properties replace the original "two doors" count:
-#   1. No harness script writes a counter label (not even through bump_counter).
-#   2. The REQUEUE_CAUSE path in aeon.sh still exits before session_outcome is
-#      consulted — a reopened bead is not charged an attempt.
+# The ban-on-writing-a-counter-label check (D6) lives once, in test-attempts-sql.sh; what
+# stays here is the other structural property this file is about:
+#   The REQUEUE_CAUSE path in aeon.sh still exits before session_outcome is consulted —
+#   a reopened bead is not charged an attempt.
 # ======================================================================================
 echo
 echo "counter labels deleted — structural properties:"
-
-BANNED='sp-attempt-|sp-reclaim-|sp-requeue-|sp-timeout-|sp-recur-'
-found="$(grep -rlE "label add.*($BANNED)" "$HERE"/*.sh 2>/dev/null \
-    | grep -v '/test-' | grep -v '/lib\.sh$' | grep -v '/attempts\.sh$' || true)"
-is "no harness script writes counter labels directly" "" "$found"
-
-for fn in bump_attempt bump_reclaim bump_requeue bump_timeout bump_recur; do
-    body="$(sed -n "/^${fn}()/,/^}/p" "$HERE/lib.sh" 2>/dev/null)"
-    has_label_add="$(grep -c 'bdq label add\|bump_counter' <<<"$body" || true)"
-    is "$fn is a no-op — does not write a label" "0" "$has_label_add"
-done
 
 # The REQUEUE_CAUSE exemption must still be decided before session_outcome is consulted.
 # A bead that was put back by the harness must not be charged an attempt.
@@ -255,10 +244,12 @@ echo
 echo "counters (real bd) — events-based, no labels written:"
 
 seed sp-c1
-# THE POSITIVE CONTROL. A fresh bead with no status changes has zero attempts.
+# THE POSITIVE CONTROL. A fresh bead with no status changes has zero attempts, zero
+# reclaims and zero requeues. reclaims_of/requeues_of count real events (test-attempts-sql.sh
+# b10 proves a reclaimed event counts); timeouts_of alone is a hardcoded-0 stub.
 is "a fresh bead has no attempts"       0 "$(num "$(attempts_of sp-c1)")"
-is "reclaims_of is a diagnostic stub"  0 "$(num "$(reclaims_of sp-c1)")"
-is "requeues_of is a diagnostic stub"  0 "$(num "$(requeues_of sp-c1)")"
+is "a fresh bead has no reclaims"       0 "$(num "$(reclaims_of sp-c1)")"
+is "a fresh bead has no requeues"       0 "$(num "$(requeues_of sp-c1)")"
 
 # bump_* must not write any label. After bump_attempt the bead has no sp-attempt-* labels.
 bump_attempt sp-c1 unlanded
@@ -266,12 +257,10 @@ labels_c1="$(bdq label list sp-c1 2>/dev/null)" || labels_c1=""
 [[ "$labels_c1" != *"sp-attempt"* ]] && ok "bump_attempt writes no label" \
     || bad "bump_attempt writes no label" "got [$labels_c1]"
 
-# attempts_of reads events, not labels. One bd update to in_progress is one attempt.
-bdq update sp-c1 --status in_progress >/dev/null 2>&1
-is "one in_progress transition counts as 1" 1 "$(num "$(attempts_of sp-c1)")"
-
-# AND THE OTHER HALF: genuine failure still poisons via events. Three in_progress events
-# reach the threshold.
+# The single-transition case (one in_progress = 1 attempt) is test-attempts-sql.sh's sp-ev2;
+# what stays here is the multi-event, real-CLI-driven complement to that file's SQL-seeded
+# b3/b4 fixture: genuine failure still poisons via events, three in_progress events reach
+# the threshold.
 poisons() { local n; n="$(num "$(attempts_of "$1")")"; [ "$n" -ge 3 ] && echo yes || echo no; }
 seed sp-c2
 bdq update sp-c2 --status in_progress >/dev/null 2>&1

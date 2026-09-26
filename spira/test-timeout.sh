@@ -72,10 +72,8 @@ is "SESSION_RC is set after rc=\$?" yes \
 is "SESSION_RC is set before set -e" yes \
    "$( [ -n "$session_rc_set" ] && [ -n "$set_e" ] && [ "$session_rc_set" -lt "$set_e" ] && echo yes || echo no)"
 
-# THE aeon.sh CLEANUP DISARMS errexit BEFORE ANY PATH CAN FAIL (still holds with our addition).
-first="$(sed -n '/^cleanup() {/,/^}/p' "$HERE/aeon.sh" | tail -n +2 \
-          | grep -vE '^\s*(#|local |$)' | sed -n 1p)"
-is "cleanup still disarms errexit first" "    set +e" "$first"
+# The "cleanup disarms errexit first" check (D7) lives once, in test-attempts.sh, with the
+# hazard demonstration that shows why; this file only used a bare copy of the assertion.
 
 # ======================================================================================
 # COUNTERS: timeout counter vs attempt counter, against a real bd.
