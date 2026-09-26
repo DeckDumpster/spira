@@ -83,15 +83,20 @@ esac
 FORGE
 chmod +x "$SH/forge-fixture.sh"
 
+# _repro_is_red merges the member's tip onto base with --no-ff before testing, so the
+# ref this stub receives is a merge commit, not the branch tip itself. Identify the
+# member by parent commit (established idiom, test-verdict.sh case 24) rather than by
+# comparing branch names against a merge SHA, which never matches.
 cat > "$SH/repro-stub.sh" <<'REPRO'
 #!/usr/bin/env bash
-br=""
-while [ $# -gt 0 ]; do
-    case "$1" in --mode|--suites) shift 2 ;; *) br="$1"; shift ;; esac
-done
+while [[ "${1:-}" == --* ]]; do shift 2; done
+ref="${1:-}"
+parents="$(git -C "${SPIRA_REPO:-.}" log --no-walk --pretty="%P" "$ref" 2>/dev/null)"
 fail_list="$(cat "${REPRO_FAIL_FILE}" 2>/dev/null || true)"
 for f in $fail_list; do
-    if [ "$f" = "$br" ]; then
+    tip="$(git -C "${SPIRA_REPO:-.}" rev-parse "$f" 2>/dev/null || true)"
+    [ -n "$tip" ] || continue
+    if printf '%s' "$parents" | grep -qF "$tip"; then
         [ -n "${REPRO_FAIL_LINE:-}" ] && printf '%s\n' "$REPRO_FAIL_LINE"
         exit 1
     fi

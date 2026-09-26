@@ -1181,11 +1181,6 @@ for i in d:
                 fi
             fi
 
-            # MID-PASS VERDICT (hotfix, concierge 2026-09-21, sp-len2q): PR 180 went red at
-            # 03:47Z during a pass that started at 03:35Z and could not be attributed until
-            # the pass ended. One queue step costs a few seconds; a gate costs ten minutes.
-            bash "$SPIRA_HOME/queue.sh" step "$name" 2>&1 \
-                | while IFS= read -r _bl; do log "$_bl"; done || true
             local _ej_count=0 _ej_count_f="$SPIRA_RUN/eject-count/$id"
             { read -r _ej_count < "$_ej_count_f"; } 2>/dev/null || true
             local _gate_all=0

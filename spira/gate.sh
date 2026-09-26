@@ -132,8 +132,8 @@ if [ -n "${SPIRA_GATE_BEAD:-}" ]; then
     if [ -f "$_ej_file" ]; then
         { read -r ejected_suites < "$_ej_file"; } 2>/dev/null || true
     elif [ -f "${LANDSTATE:-/nonexistent}/${SPIRA_GATE_BEAD}" ]; then
-        _ej_st="" _ej_tip="" _ej_epoch="" _ej_csv=""
-        { read -r _ej_st _ej_tip _ej_epoch _ej_csv < "$LANDSTATE/$SPIRA_GATE_BEAD"; } 2>/dev/null || true
+        _ej_st="" _ej_tip="" _ej_epoch="" _ej_csv="" _ej_unattr=""
+        { read -r _ej_st _ej_tip _ej_epoch _ej_csv _ej_unattr < "$LANDSTATE/$SPIRA_GATE_BEAD"; } 2>/dev/null || true
         [ "$_ej_st" = EJECTED ] && ejected_suites="${_ej_csv:-}"
     fi
 fi
