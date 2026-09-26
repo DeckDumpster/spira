@@ -85,7 +85,7 @@ SPIRA_BATCH_MEM_RESERVE_MIB SPIRA_BATCH_MEM_PER_SUITE_MIB SPIRA_BATCH_MEM_AVAIL_
 SPIRA_BATCH_ARTIFACT_DAYS SPIRA_BATCH_TAIL_LINES SPIRA_SUITE_TIMES_LOG SPIRA_BATCH_LEDGER
 SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST SPIRA_INCIDENT_PRIORITY SPIRA_WATCHER_INTERVAL_S
 SPIRA_FLAKE_QUARANTINE_AT SPIRA_FLAKE_WINDOW SPIRA_QUARANTINE_CLEAN_RUNS SPIRA_QUARANTINE_MAX_AGE
-SPIRA_QUEUE_BATCH_MAX SPIRA_QUEUE_BATCH_WAIT SPIRA_QUEUE_BATCH_IDLE_CUT SPIRA_QUEUE_CI_MAXSEC SPIRA_QUEUE_CI_IDLE_SEC SPIRA_CI_QUEUED_MAX_SECS SPIRA_STARVED_MAX_MINS SPIRA_LOOP_STALL_SECS SPIRA_CI_RED_MAX_SECS SPIRA_BASE_CI_UNREADABLE_GRACE_SECS SPIRA_QUEUE_LOCAL_GATE SPIRA_PREFLIGHT_WALL_SECS SPIRA_PREFLIGHT_SUITE_MAX_SECS SPIRA_QUEUE_INFRA_RETRIES SPIRA_QUEUE_STUCK_AGE SPIRA_QUEUE_DIR SPIRA_FORGE SPIRA_FORGE_REPO SPIRA_QUEUE_WAIT_LABEL SPIRA_QUEUE_ACTIONS_APP_ID SPIRA_EXPRESS_LABEL SPIRA_CERT_IDLE_SKIP
+SPIRA_QUEUE_BATCH_MAX SPIRA_QUEUE_BATCH_WAIT SPIRA_QUEUE_BATCH_IDLE_CUT SPIRA_QUEUE_CI_MAXSEC SPIRA_QUEUE_CI_IDLE_SEC SPIRA_CI_QUEUED_MAX_SECS SPIRA_STARVED_MAX_MINS SPIRA_LOOP_STALL_SECS SPIRA_CI_RED_MAX_SECS SPIRA_BASE_CI_UNREADABLE_GRACE_SECS SPIRA_QUEUE_LOCAL_GATE SPIRA_PREFLIGHT_WALL_SECS SPIRA_PREFLIGHT_SUITE_MAX_SECS SPIRA_QUEUE_INFRA_RETRIES SPIRA_QUEUE_STUCK_AGE SPIRA_QUEUE_DIR SPIRA_FORGE SPIRA_FORGE_REPO SPIRA_QUEUE_WAIT_LABEL SPIRA_QUEUE_ACTIONS_APP_ID SPIRA_EXPRESS_LABEL SPIRA_CERT_IDLE_SKIP SPIRA_QUEUE_BATCHER SPIRA_BATCHER_BIN SPIRA_BATCH_JUDGEMENT_LABEL
 SPIRA_QUEUE_THROTTLE_DEPTH_AT SPIRA_QUEUE_THROTTLE_RELEASE_AT SPIRA_QUEUE_THROTTLE_STALL_MINS SPIRA_QUEUE_THROTTLE_OVERRIDE
 SPIRA_AURON_RESTARTS SPIRA_AURON_RESTART_WINDOW
 SPIRA_PROD SPIRA_INSTANCE
@@ -891,6 +891,15 @@ spira_conf_defaults() {
             SPIRA_TSD_BIN="$SPIRA_REPO/target/release/tsd-write"
         fi
     fi
+    # THE BATCHER'S CUT (sp-jzfog): the batcher-cut crate's `batcher` binary, called by
+    # queue.sh in place of batch.sh's own cut when SPIRA_QUEUE_BATCHER=1.
+    if [ -z "${SPIRA_BATCHER_BIN:-}" ]; then
+        if [ -f "$SPIRA_REPO/bin/batcher" ]; then
+            SPIRA_BATCHER_BIN="$SPIRA_REPO/bin/batcher"
+        else
+            SPIRA_BATCHER_BIN="$SPIRA_REPO/target/release/batcher"
+        fi
+    fi
     # SPIRA_GH: which gh-like binary ghq() calls. Empty means the system gh.
     # Set to <spira>/spira/gh-app.sh to have all harness gh calls act as the
     # GitHub App rather than as the operator's personal account.
@@ -1177,6 +1186,16 @@ spira_conf_defaults() {
     # HOW LONG THE BATCH BUILDER WAITS FOR MORE BRANCHES before closing a batch with
     # fewer than SPIRA_QUEUE_BATCH_MAX. In seconds.
     : "${SPIRA_QUEUE_BATCH_WAIT:=1800}"
+    # THE BATCHER CRATE'S CUT (sp-jzfog), in place of batch.sh's own inline one. Off by
+    # default: sp-vsob2 retires batch.sh's cut once the batcher is live, and that cutover
+    # is a deliberate act, not a config default flipped in the bead that builds the seam.
+    : "${SPIRA_QUEUE_BATCHER:=0}"
+    # THE BATCHER PERSONA'S PARTITION LABEL (sp-47kq1). A round the batcher-cut binary
+    # cannot resolve mechanically — a local double-red, or (once sp-lomk3 wires verdict.sh)
+    # a CI-only red on a batcher-owned batch PR — is filed through bead.sh --for batcher,
+    # which reads this label from batcher.fayth's own FAYTH_LABELS. A literal here is the
+    # same disagreement risk SPIRA_PLAN_LABEL exists to close (law-schema-over-code).
+    : "${SPIRA_BATCH_JUDGEMENT_LABEL:=batch-judgement}"
     # CUT IMMEDIATELY WHEN CI IS IDLE, ignoring the wait above. The wait trades a branch's
     # latency for a shared CI run; with nothing queued or in progress there is no run to
     # share, so the trade returns nothing and the wait is pure delay. 1 to enable (default),

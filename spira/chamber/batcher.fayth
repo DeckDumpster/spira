@@ -1,0 +1,47 @@
+# batcher.fayth — the Judge: summoned when the batcher-cut binary (or, once sp-lomk3 lands,
+# verdict.sh) cannot resolve a round's red mechanically — a local double-red that survived
+# its re-run, or a CI-only red on a batcher-owned batch PR.
+#
+# A fayth is a persona DEFINITION; an aeon is one summoned instance of it: a predicate
+# carving its partition out of the graph, the statutes it must read, the tools it may use,
+# and what wakes it.
+
+FAYTH_NAME=batcher
+FAYTH_DESC="Judge — settles a double-red or CI-only red with the authority design Scope C grants, never wider"
+
+# THE PARTITION. Filed only by bead.sh's own --for batcher (batcher-cut's file_judgement,
+# io.rs) — never by hand and never by the plan — so this can only ever see a round this crate
+# or verdict.sh could not resolve itself.
+FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_BATCH_JUDGEMENT_LABEL"
+FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+
+# Statutes only, same reasoning as builder: this persona writes code and pushes commits, it
+# never executes a runbook.
+FAYTH_MEMORY_PREFIXES="law-"
+
+# OPUS, PER THE DESIGN (sp-47kq1). Every other code-writing persona here is Sonnet; this one
+# is deliberately not — a double-red is exactly the case where a cheaper model's wrong guess
+# (delete the wrong test, pin the wrong member, revert main for a red that was never main's)
+# costs more than the model tier saved. Judgement is the product; a wrong one is a second
+# incident, not a faster one.
+FAYTH_MODEL=claude-opus-5-5
+
+# NOT ELASTIC. A double-red is rare — draining it fast does not need it to also absorb
+# whatever the pool has left over, and elastic here would compete with builder for slots on
+# every idle tick a judgement bead exists.
+FAYTH_MAX_CONCURRENT=1
+
+FAYTH_LEASE_MINUTES=90
+FAYTH_HEARTBEAT_SECONDS=30
+FAYTH_LEASE_SECONDS=600
+FAYTH_STALL_BEATS=10
+
+# NO FAYTH_REPO — same reasoning as builder: the repository comes from the bead's own
+# repo:<name> label, which file_judgement always sets.
+
+FAYTH_TOOLS="Bash,Read,Edit,Write,Glob,Grep,TodoWrite"
+FAYTH_PROJECT_INSTRUCTIONS=repo
+
+# APPEND: this persona writes code and git history across more than its own bead branch, so
+# Claude Code's default coding guidance stays underneath it rather than being replaced.
+FAYTH_SYSTEM_PROMPT=append
