@@ -1462,7 +1462,7 @@ else
             #!peak-begin
             if [ -n "$_peak_mib" ] && [ "${SPIRA_BATCH_PEAK_WARN_FRAC:-60}" -gt 0 ]; then
                 _memtotal_mib="$(awk '/^MemTotal:/{printf "%d", $2/1024}' /proc/meminfo)"
-                _warn_ceil=$(( _memtotal_mib * SPIRA_BATCH_PEAK_WARN_FRAC / 100 ))
+                _warn_ceil=$(( _memtotal_mib * ${SPIRA_BATCH_PEAK_WARN_FRAC:-60} / 100 ))
                 if [ "$_peak_mib" -gt "$_warn_ceil" ]; then
                     log "batch: WARNING cgroup peak ${_peak_mib}MiB exceeds ${SPIRA_BATCH_PEAK_WARN_FRAC:-60}% of MemTotal (${_memtotal_mib}MiB) — SPIRA_BATCH_PEAK_WARN_FRAC or runner allocation needs adjustment"
                 fi
