@@ -404,6 +404,14 @@ _rollback() {
             done < "${_pre_deploy_unit_state}"
             rm -f "${_pre_deploy_unit_state}" 2>/dev/null || true
         fi
+        # ExecStart is parameterized by the "current" symlink, never a release name, so the
+        # re-render above is a no-op diff and install.sh neither reloads nor restarts anything —
+        # already-running units must be restarted onto the prior release explicitly here.
+        "$_SC" --user daemon-reload 2>/dev/null || true
+        "$_SC" --user list-units "spira-*-${SPIRA_INSTANCE}.service" \
+            --state=active --no-legend 2>/dev/null \
+            | awk '{print $1}' | grep -v "spira-aeon-" \
+            | xargs -r "$_SC" --user restart 2>/dev/null || true
         "$_WORLD" resume 2>/dev/null || true
         printf 'deploy: restored %s\n' "$prev_release" >&2
     else

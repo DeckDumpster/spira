@@ -395,6 +395,11 @@ not0   "rollback: exits non-zero on health failure" "$_rc"
 want   "rollback: mentions ROLLBACK"                "ROLLBACK" "$_out"
 want   "rollback: names the failure"                "doctor"   "$_out"
 islink "rollback: current restored to prior"        "$RELEASES/current" "$PRIOR_RELEASE"
+# ExecStart is parameterized by the "current" symlink and never changes text across releases,
+# so install.sh's diff-based re-render alone restarts nothing — the already-active unit that
+# activate.sh restarted onto the new release must be restarted again onto the prior one.
+want   "rollback: restarts active unit onto prior release" \
+       "SC --user restart spira-sentinel-prod.service" "$(cat "$SC_LOG")"
 
 # The symlink alone does not prove the units re-rendered during rollback actually resolved
 # into the prior release's tree — the literal SPIRA_HOME/SPIRA_PROD string deploy.sh passes
@@ -427,6 +432,8 @@ _out="$(run_deploy "SKEW_EXIT=1" -- "$NEW_TAG" 2>&1)"
 _rc=$?
 not0   "rollback-skew: exits non-zero" "$_rc"
 islink "rollback-skew: current restored to prior" "$RELEASES/current" "$PRIOR_RELEASE"
+want   "rollback-skew: restarts active unit onto prior release" \
+       "SC --user restart spira-sentinel-prod.service" "$(cat "$SC_LOG")"
 
 # ==========================================================================
 echo
