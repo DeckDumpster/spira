@@ -17,6 +17,8 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
 . "$HERE/lib.sh"
+# shellcheck source=tap-jsonl.sh
+. "$HERE/tap-jsonl.sh"
 
 
 _batch_open_file() { printf '%s/%s/open' "${SPIRA_QUEUE_DIR:?}" "$1"; }
@@ -288,6 +290,37 @@ _meter_write() {  # _meter_write <repo> <members> <caught> <escaped> <start-epoc
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
 }
 
+# _attr_log_suite_verdicts <pr-n> <name> <all-red-suites-space> <baseline-red-space>
+# <attributed-suites-space> [note] — appends one JSONL row per suite in
+# <all-red-suites-space> to $SPIRA_RUN/attribution/results.jsonl: "excluded-baseline"
+# (already red on the batch's own base), "attributed" (pinned to an ejected member
+# elsewhere in this pass) or "unattributed". A suite this call is never reached for is
+# exactly the failure mode this exists to close: batch PR 297 (2026-09-24) went a third
+# CI cycle because two red suites got no verdict logged at all, and a human had to
+# notice the absence by reading the raw log (sp-yivi7 archivist note). Call this at
+# every exit of _q_attribute so a suite can never fall through unlogged.
+_attr_log_suite_verdicts() {
+    local pr_n="$1" name="$2" all="$3" baseline="$4" attributed="$5" note="${6:-}"
+    [ -n "$all" ] || return 0
+    local dir="$SPIRA_RUN/attribution"
+    mkdir -p "$dir" 2>/dev/null || return 0
+    local f="$dir/results.jsonl" s outcome
+    for s in $(printf '%s\n' $all | awk '!seen[$0]++'); do
+        case " $baseline " in
+            *" $s "*) outcome="excluded-baseline" ;;
+            *)
+                case " $attributed " in
+                    *" $s "*) outcome="attributed" ;;
+                    *)        outcome="unattributed" ;;
+                esac
+                ;;
+        esac
+        printf '{"suite":"%s","tier":"","case":"(attribution)","status":"%s","seconds":0,"uc":[],"pr":%s,"batch":"%s","detail":"%s"}\n' \
+            "$(_tap_json_escape "$s")" "$outcome" "$pr_n" "$(_tap_json_escape "$name")" "$(_tap_json_escape "$note")" \
+            >> "$f" 2>/dev/null
+    done
+}
+
 _attr_notify_red() {  # _attr_notify_red <pr-n> <name> <suites-csv> <decision> <ejected-ids> <requeued-ids> [unjudged-ids] [excluded-suites]
     local pr_n="$1" name="$2" suites="$3" decision="$4" ejected_ids="$5" requeued_ids="$6" unjudged_ids="${7:-}" excluded_suites="${8:-}"
     local body="## Note
@@ -500,6 +533,7 @@ ${_line#build-error: }" ;;
     done <<< "$status_out"
     red_suites="${red_suites# }"
     build_error="${build_error#$'\n'}"
+    local red_suites_orig="$red_suites"
 
     local suites_csv; suites_csv="$(printf '%s\n' $red_suites | awk '!seen[$0]++' | tr '\n' ',' | sed 's/,$//')"
 
@@ -549,6 +583,8 @@ ${_line#build-error: }" ;;
             "$name" "$pr_n" "$baseline_red"
         _attr_notify_red "$pr_n" "$name" "$suites_csv_all" \
             "Red on base, not attributable — all members requeued" "" "$_all_ids" "" "$baseline_red"
+        _attr_log_suite_verdicts "$pr_n" "$name" "$red_suites_orig" "$baseline_red" "" \
+            "Red on base, not attributable — all members requeued"
         _meter_write "$name" "$mc" 0 0 "$attr_start"
         rm -rf "$_eject_fail_dir" 2>/dev/null || true
         return 0
@@ -818,6 +854,8 @@ ${_line#build-error: }" ;;
                 # Notify on together-only red
                 local all_ids="$(printf '%s\n' "${members_arr[@]}" | cut -d: -f1 | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
                 _attr_notify_red "$pr_n" "$name" "$suites_csv_all" "Together-only red: batch halved, all members requeued" "" "$all_ids" "" "$baseline_red"
+                _attr_log_suite_verdicts "$pr_n" "$name" "$red_suites_orig" "$baseline_red" "" \
+                    "Together-only red: batch halved, all members requeued"
                 _meter_write "$name" "$mc" 0 0 "$attr_start"
                 rm -rf "$_eject_fail_dir" 2>/dev/null || true
                 return 0
@@ -976,6 +1014,19 @@ ${_line#build-error: }" ;;
     elif [ "${#ejected[@]}" -eq 0 ] && [ "${#survivors[@]}" -gt 0 ]; then
         decision_text="Flake: suites quarantined, all members requeued"
     fi
+
+    # A suite in red_suites_orig that no ejected member's csv names is exactly the
+    # sp-yivi7 archivist gap: it must appear below as "unattributed", never be absent.
+    local _attributed_suites="" _al_ej _al_rest _al_csv
+    for _al_ej in "${ejected[@]}"; do
+        case "$_al_ej" in
+            *"|"*) _al_rest="${_al_ej#*|}"; _al_csv="${_al_rest#*|}" ;;
+            *)     _al_csv="$suites_csv" ;;
+        esac
+        _attributed_suites="$_attributed_suites $(printf '%s' "$_al_csv" | tr ',' ' ')"
+    done
+    _attr_log_suite_verdicts "$pr_n" "$name" "$red_suites_orig" "$baseline_red" "$_attributed_suites" "$decision_text"
+
     _attr_notify_red "$pr_n" "$name" "$suites_csv_all" "$decision_text" "$ejected_ids" "$requeued_ids" "$unjudged_ids" "$baseline_red"
 
     _meter_write "$name" "$mc" "$caught" "$escaped" "$attr_start"

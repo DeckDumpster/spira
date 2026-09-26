@@ -529,7 +529,10 @@ $(trace_tail "$SPIRA_RUN/$id.log" 25)"
                 # MARKED ONLY IF THE MAIL WAS ACCEPTED. Stamping first would let mail.sh
                 # being absent silently swallow the one notification this count produces.
                 _po_subj="Spira bead $id — ${charge_summary} without landing (${n} attempts) — change the approach or drop it?"
-                _po_dflt="if the work is correct, re-label or split the bead and clear spira-poison; if it is not worth doing, close it"
+                # NAMES THE TOOL, NOT THE LABEL. `bd label remove` alone does not stick — CHECK
+                # 4 re-poisons on the very next pass from the unchanged count (sp-qd2ul) —
+                # attempts.sh clear also records the event the count is floored on.
+                _po_dflt="if the work is correct, re-label or split the bead and run attempts.sh clear $id --apply; if it is not worth doing, close it"
                 if [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
                       --from "Sentinel <sentinel@spira>" \
                       --subject "$_po_subj" \

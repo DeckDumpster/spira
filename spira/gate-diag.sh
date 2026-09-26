@@ -227,6 +227,23 @@ with open(sys.argv[3], 'w') as f:
     json.dump({'red': reds, 'flaky': flaky, 'red_count': len(reds)}, f)
 " "${_json_red:-}" "${_json_flaky:-}" "$ROOT/red-suites.json" 2>/dev/null || true
 
+# Append the same retry-adjusted verdict to results.jsonl, one "(verdict)" row per
+# suite: forge.sh's artifact reader prefers this over red-suites.json because it is
+# the one file every consumer of a batch's results already reads.
+python3 -c "
+import json, sys
+def row(s, status):
+    return json.dumps({'suite': s, 'tier': '', 'case': '(verdict)', 'status': status,
+                        'seconds': 0, 'uc': [], 'detail': ''}, separators=(',', ':'))
+reds = [s for s in sys.argv[1].split() if s]
+flaky = [s for s in sys.argv[2].split() if s]
+with open(sys.argv[3], 'a') as f:
+    for s in reds:
+        f.write(row(s, 'red-red') + '\n')
+    for s in flaky:
+        f.write(row(s, 'red-green') + '\n')
+" "${_json_red:-}" "${_json_flaky:-}" "$ROOT/results.jsonl" 2>/dev/null || true
+
 _hdr='| Suite | Duration | Verdict | First FAIL line |
 |-------|----------|---------|-----------------|'
 printf '\n%s\n' "$_hdr"
