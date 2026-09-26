@@ -32,16 +32,14 @@
 # fixture. So apply now runs twice against a throwaway from testdb.sh: the first run is the
 # positive control that it changes something, the second that it changes nothing.
 #
+# tier: T2
 # covers: spira/schema.sh spira/schema-apply.sh
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 . "$HERE/conf.sh" 2>/dev/null || true
 
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "$2"; }
-want(){ [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 echo "test-schema-apply.sh"
@@ -174,5 +172,4 @@ else
 fi
 
 echo
-printf 'test-schema-apply.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

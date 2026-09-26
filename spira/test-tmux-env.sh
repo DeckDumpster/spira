@@ -10,13 +10,12 @@
 # scratch socket and asserts a pane sees it, BEFORE asserting that the scrub takes it away.
 #
 # defect: sp-51j9b (the cockpit server forked by an archivist aeon on 2026-09-09)
+# tier: T1
 # covers: cockpit/tmux-env.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 TOOL="$HERE/../cockpit/tmux-env.sh"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 
 echo "test-tmux-env.sh"
 
@@ -98,6 +97,4 @@ fi
 # ---- idempotent -------------------------------------------------------------------------
 out="$(bash "$TOOL" scrub -L "$SOCK" 2>&1)"
 [ -z "$out" ] && ok "a second scrub is silent" || bad "a second scrub is silent" "said [$out]"
-
-printf '\n  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

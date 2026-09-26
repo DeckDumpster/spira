@@ -33,15 +33,11 @@
 # host-reason: builds a scratch git repository on the host filesystem; the container has no
 # git user config and this suite configures one explicitly.
 #
+# tier: T0
 # covers: spira/orphan-test.sh spira/gate-spira.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-orphan-test.sh"
 
@@ -228,7 +224,4 @@ git -C "$ROOT" update-ref refs/remotes/origin/main "$(git -C "$ROOT" rev-parse H
 out6="$(fence_at "$ROOT")"; rc6=$?
 is   "REFACTORED-TOKEN: token on - and + lines is not refused" "0" "$rc6"
 want "says clean for refactored token"                         "clean" "$out6"
-
-# SUMMARY
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ] || exit 1
+tl_summary

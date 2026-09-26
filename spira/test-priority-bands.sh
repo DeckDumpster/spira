@@ -14,13 +14,11 @@
 # The RELATIONSHIP is what is asserted. Either default can move; what may not happen is the
 # harness's own findings drawing an aeon ahead of a user's.
 #
+# tier: T1
 # covers: spira/conf.sh spira/suites.sh spira/gh-intake.sh spira/incident.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
+. "$HERE/testlib.sh"
 
 echo "test-priority-bands.sh"
 echo
@@ -41,7 +39,7 @@ case "$user_pri" in ''|*[!0-9]*) missing="$missing SPIRA_GH_INTAKE_PRIORITY" ;; 
 case "$inc_pri"  in ''|*[!0-9]*) missing="$missing SPIRA_INCIDENT_PRIORITY" ;; esac
 if [ -n "$missing" ]; then
     bad "both bands resolve to a number from a clean environment" "unreadable:$missing"
-    printf '\n  %d passed, %d failed\n' "$pass" "$fail"; exit 1
+    tl_summary; exit
 fi
 ok "every band resolves from a clean environment: suites=P$self_pri incidents=P$inc_pri intake=P$user_pri"
 
@@ -82,5 +80,4 @@ for pair in "suites.sh SPIRA_SUITES_PRIORITY" "gh-intake.sh SPIRA_GH_INTAKE_PRIO
 done
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

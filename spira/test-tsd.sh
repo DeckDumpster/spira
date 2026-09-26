@@ -32,13 +32,8 @@
 #         spira/lib.sh spira/testenv-batch.sh spira/testenv/Containerfile
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL — %s\n' "$1"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1: wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in [$3]"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1: wanted [$2] got [$3]"; }
 
 printf 'test-tsd.sh\n'
 
@@ -47,10 +42,7 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 # ── build tsd-write (law-absence-needs-a-positive-control: no binary, no suite) ────────────
 CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
 [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-tsd: cargo not found — tsd-write binary cannot be built"
-    exit 77
-fi
+[ -n "$CARGO_BIN" ] || skip "cargo not found — tsd-write binary cannot be built"
 TSD_ROOT="$HERE/../tsd"
 TSD_BIN="$TSD_ROOT/target/release/tsd-write"
 if [ ! -x "$TSD_BIN" ]; then
@@ -60,11 +52,7 @@ if [ ! -x "$TSD_BIN" ]; then
         "$CARGO_BIN" build --release --manifest-path "$T/tsd-src/Cargo.toml" 2>&1 | tail -5
     TSD_BIN="$T/tsd-target/release/tsd-write"
 fi
-if [ ! -x "$TSD_BIN" ]; then
-    printf 'tsd-write binary not found at %s\n' "$TSD_BIN" >&2
-    printf '0 passed, 1 failed\n'
-    exit 1
-fi
+[ -x "$TSD_BIN" ] || bail "tsd-write binary not found at $TSD_BIN"
 
 jpy() {  # jpy <file> <python-expr-on-"rows"> — rows is a list of parsed JSON lines
     python3 -c '
@@ -347,5 +335,4 @@ else
         "0" "$(printf '%s' "$out" | python3 -c 'import json,sys; print(sum(1 for r in json.load(sys.stdin) if r["suite"]=="__batch__"))')"
 fi
 
-printf '\ntest-tsd.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -29,16 +29,12 @@
 #
 # host-reason: Part A tests the parser on the host.
 #              Part B-D requires podman for container integration.
+# tier: T0
 # covers: spira/testenv-batch.sh spira/suite-covers.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()      { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 isfile()  { [ -f "$2" ] && ok "$1" || bad "$1" "file not found: $2"; }
 
 find_results_dir() {
@@ -108,7 +104,7 @@ if declare -f suite_requires_of >/dev/null 2>&1; then
     _reqs_a3="$(suite_requires_of "$TMP/fx-comma-req.sh")"
     want "A3: comma-separated tokens parsed" "claude" "$_reqs_a3"
     want "A3: second comma-token present"    "bd"     "$_reqs_a3"
-    notwant "A3: comma not present as literal char" "," "$_reqs_a3"
+    nowant "A3: comma not present as literal char" "," "$_reqs_a3"
 else
     bad "A3: comma-separated tokens parsed" "suite_requires_of not defined"
     bad "A3: second comma-token present"    "suite_requires_of not defined"
@@ -123,19 +119,19 @@ echo "Part B-D: container integration"
 
 command -v podman >/dev/null 2>&1 || {
     printf 'SKIP test-requires.sh Part B-D: podman not on PATH\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    { tl_summary; exit; }
 }
 
 # Pre-flight: spin up a container to verify the image and user systemd are available.
 PRE_CNAME="spira-req-preflight-$$"
 bash "$TESTENV" up --name "$PRE_CNAME" >&2 || {
     printf 'SKIP test-requires.sh Part B-D: container did not start\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    { tl_summary; exit; }
 }
 if ! bash "$TESTENV" probe --name "$PRE_CNAME" 2>/dev/null; then
     bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
     printf 'SKIP test-requires.sh Part B-D: user systemd not available\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    { tl_summary; exit; }
 fi
 bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
 ok "B0: pre-flight: container + user systemd available"
@@ -241,7 +237,7 @@ if [ -n "$RD" ]; then
         _fp_miss="$(awk '{print $4}' "$RD/test-fx-reqmiss.sh.result")"
         is   "C1: reqmiss status is skip-req"        "skip-req" "$_st_miss"
         want "C1: reqmiss fingerprint names the token" "spira-nonexistent-xyz" "$_fp_miss"
-        notwant "C1: reqmiss status is not plain 'skip'" "skip " "$_st_miss "
+        nowant "C1: reqmiss status is not plain 'skip'" "skip " "$_st_miss "
     fi
 
     # C2: test-fx-reqmet.sh must be ok (bash IS on the container PATH).
@@ -280,5 +276,4 @@ fi
 
 # ===========================================================================
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ] || exit 1
+tl_summary

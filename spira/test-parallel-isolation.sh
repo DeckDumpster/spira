@@ -22,18 +22,15 @@
 # host-reason: Part A plants and reads inside a live container; Part B drives
 #              testenv-batch.sh, which starts its own container.
 #
+# tier: T0
 # covers: spira/testenv-batch.sh spira/testenv.sh
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "expected 0, got $2"; }
 isexit1() { [ "$2" = 1 ] && ok "$1" || bad "$1" "expected 1, got $2"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 isfile()  { [ -f "$2" ] && ok "$1" || bad "$1" "file not found: $2"; }
 
 BATCH="$HERE/testenv-batch.sh"
@@ -57,7 +54,7 @@ echo "Part A: positive control — shared HOME (no isolation)"
 
 command -v podman >/dev/null 2>&1 || {
     printf 'SKIP test-parallel-isolation.sh: podman not on PATH\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    { tl_summary; exit; }
 }
 
 CTRL_CNAME="spira-par-ctrl-$$"
@@ -67,7 +64,7 @@ trap '_ctrl_cleanup; rm -rf "$TMP"' EXIT
 printf 'par-isolation: starting control container...\n' >&2
 bash "$TESTENV" up --name "$CTRL_CNAME" >&2 || {
     printf 'SKIP test-parallel-isolation.sh Part A: control container did not start\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    { tl_summary; exit; }
 }
 
 _SPIRA_USER=spirauser
@@ -125,7 +122,7 @@ PRE_CNAME="spira-par-pre-$$"
 printf 'par-isolation: pre-flight container check...\n' >&2
 bash "$TESTENV" up --name "$PRE_CNAME" >&2 || {
     printf 'SKIP test-parallel-isolation.sh Part B: container did not start\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    { tl_summary; exit; }
 }
 bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
 ok "B0: pre-flight: container available"
@@ -225,6 +222,4 @@ if [ -n "$RD_B1" ]; then
             || bad "B1: checker ran in parallel mode" "mode field: $_mode"
     fi
 fi
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

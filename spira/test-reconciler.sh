@@ -55,25 +55,17 @@
 #         systemd/spira-reconciler.service systemd/spira-reconciler.timer
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL — %s\n' "$1"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1: wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in [$3]"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1: wanted [$2] got [$3]"; }
 
 RECONCILER_SH="$HERE/reconciler.sh"
-[ -x "$RECONCILER_SH" ] || { printf 'reconciler.sh not found or not executable: %s\n' "$RECONCILER_SH" >&2; exit 2; }
+[ -x "$RECONCILER_SH" ] || bail "reconciler.sh not found or not executable: $RECONCILER_SH"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
 CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
 [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
-if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-reconciler: cargo not found — reconciler binary cannot be built"
-    exit 77
-fi
+[ -n "$CARGO_BIN" ] || skip "cargo not found — reconciler binary cannot be built"
 # THE WORKSPACE BINARY FIRST, THEN A LOCKED WORKSPACE BUILD. The shipped tree (and
 # testenv-batch --with-bins) already carries target/release/reconciler. Building the crate
 # out of a copy with no Cargo.lock re-resolved every dependency to its newest release, and
@@ -87,11 +79,7 @@ if [ ! -x "$RECONCILER_BIN" ]; then
         --manifest-path "$HERE/../Cargo.toml" 2>&1 | tail -5
     RECONCILER_BIN="$T/reconciler-target/release/reconciler"
 fi
-if [ ! -x "$RECONCILER_BIN" ]; then
-    printf 'reconciler binary not found at %s\n' "$RECONCILER_BIN" >&2
-    printf '0 passed, 1 failed\n'
-    exit 1
-fi
+[ -x "$RECONCILER_BIN" ] || bail "reconciler binary not found at $RECONCILER_BIN"
 export SPIRA_RECONCILER_BIN="$RECONCILER_BIN"
 
 export SPIRA_HOME="$HERE"
@@ -597,5 +585,4 @@ allow_override = true'
 bash "$RECONCILER_SH" --pass >/dev/null 2>&1
 want "allow_override lets a local override satisfy — a deliberate state is not a fault" '"key":"release","status":"satisfied"' "$(status_jsonl)"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -21,15 +21,12 @@
 # counters, and requires that failure.
 #
 # defect: sp-imqd4
+# tier: T1
 # covers: spira/pve.sh spira/conf.sh
 # hermetic-ok: mocks curl; no network calls, no systemd, no database
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 printf 'test-pve.sh\n'
 
@@ -244,7 +241,4 @@ want "no-verb: usage" "usage:" "$no_verb"
 
 bad_verb="$(run_pve "" unknownverb 2>&1)" || true
 want "unknown-verb: usage" "usage:" "$bad_verb"
-
-# ---------------------------------------------------------------------------
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

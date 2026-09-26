@@ -19,16 +19,14 @@
 # trusted. A check that only tests absence is indistinguishable from one pointed at the
 # wrong thing (law-absence-needs-a-positive-control).
 #
+# tier: T1
 # covers: spira/ready.sh spira/conf.sh
 # covers: spira/world.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0; skip=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
+. "$HERE/testlib.sh"
+skip=0
 skipped() { skip=$((skip+1)); printf '  skip  %s\n' "$1"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 BIN="$TMP/bin"; mkdir -p "$BIN"
@@ -701,5 +699,5 @@ run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
     || bad "exit-pass: should exit 0 when armed" "exited non-zero"
 
 # ===========================================================================
-printf '\ntest-ready: %d ok, %d fail, %d skip\n' "$pass" "$fail" "$skip"
-[ "$fail" -eq 0 ]
+printf '\ntest-ready: %d skip\n' "$skip"
+tl_summary

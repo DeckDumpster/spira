@@ -17,16 +17,13 @@
 # a working implementation from a no-op.
 #
 # defect: law-scope-is-a-runtime-key (sp-9xsjm), sp-4mpy6
+# tier: T1
 # covers: spira/conf.sh spira/lib.sh spira/chamber/*.fayth
 # hermetic-ok: no database, no systemd; fayth_get and fayth_fenced are tested from lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
@@ -147,5 +144,4 @@ SPIRA_SCOPE_LABEL="" fayth_fenced test-persona "" 2>/dev/null \
     || ok  "fayth_fenced fails on empty FAYTH_LABELS even with empty scope"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

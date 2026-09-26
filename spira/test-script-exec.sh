@@ -7,14 +7,12 @@
 # excluded. Everything else must have +x so a newly-added operator command cannot
 # ship silent.
 #
+# tier: T1
 # covers: spira/*.sh
 # selects-on: added,mode
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-script-exec.sh"
 
@@ -78,6 +76,4 @@ offenders="$(find_nonexec "$HERE")"
 is "spira/: no non-executable operator scripts" "" "$offenders"
 
 echo
-printf 'ASSERTIONS %d\n' $(( pass + fail ))
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -20,14 +20,12 @@
 #   --supervise-bin) or case 2 (bin/spira-supervise absent from tarball) would have
 #   been RED. Case 3 provides the structural claim for any future addition.
 #
+# tier: T1
 # covers: spira/build-tarball.sh .github/workflows/release.yml systemd/*.service systemd/units.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 REPO_ROOT="$(cd "$HERE/.." && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 echo "test-tarball-bins.sh"
 
@@ -205,6 +203,4 @@ else
         "not found — per-crate build steps miss newly added crates"
 fi
 
-# ============================================================================
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
