@@ -203,24 +203,18 @@ fi
 
 # ---------------------------------------------------------------------------
 # Prune old releases — best-effort: a failure here must not fail the activation.
-# Releases are named spira-<YYYYMMDDTHHMMSSZ>; reverse-sorted by name gives
-# newest first. The current symlink's target is never removed (defence in depth).
+# Selection is _prune_candidates (lib.sh): reverse-sorted by name, beyond $KEEP,
+# excluding whatever current points at (defence in depth).
 # ---------------------------------------------------------------------------
 {
     _cur_target="$(readlink "$CURRENT" 2>/dev/null || true)"
-    _count=0
-    while IFS= read -r _rdir; do
-        _count=$((_count + 1))
-        [ "$_count" -le "$KEEP" ] && continue
-        _rname="$(basename "$_rdir")"
-        if [ "$_rname" = "$_cur_target" ]; then
-            log "activate: prune: skipping current release: $_rname"
-            continue
-        fi
+    while IFS= read -r _rname; do
+        [ -n "$_rname" ] || continue
         log "activate: prune: removing $_rname"
+        _rdir="$RELEASES/$_rname"
         chmod -R u+w "$_rdir" 2>/dev/null || true   # un-read-only before removal
         rm -rf "$_rdir"
-    done < <(find "$RELEASES" -mindepth 1 -maxdepth 1 -type d -name 'spira-*' 2>/dev/null | sort -r)
+    done < <(_prune_candidates "$RELEASES" "$KEEP" "$_cur_target")
 } || log "activate: WARN: prune encountered an error — release count may exceed $KEEP"
 
 log "activate: done — $RELEASE_NAME is now current"

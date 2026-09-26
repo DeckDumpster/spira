@@ -7,25 +7,28 @@
 # 2. Previous release is still present after activation.
 # 3. The activated release directory is read-only.
 # 4. Prune removes releases beyond the keep limit.
-# 5. Prune never removes the current release (even if it is beyond the limit).
+# 5. Prune never removes the current release (even if it is beyond the limit) — a T1
+#    case on the extracted _prune_candidates (lib.sh), because activate.sh always swings
+#    current to the just-unpacked release before pruning runs, so the integration path
+#    above can never present a current target outside the keep window (gap G4).
 # 6. Refuses while aeons are live for this instance.
 # 7. SPIRA_ACTIVATE_FORCE=1 overrides the live-aeon guard.
-# 8. daemon-reload and restart are called after the symlink swap.
+# 8. daemon-reload precedes the restart of changed units (gap G5), and restart excludes
+#    aeon units.
 # 9. --dry-run reports intended actions without touching the release directory.
+# 10. Rollback is re-activation of an already-unpacked release: unpack is skipped and
+#     current swings back (merged from test-rollback.sh; UC-instance-lifecycle-11).
 #
 # FAIL-FIRST: each property is verified against the UNFIXED tree (no activate.sh)
 # before any fix is applied, confirming the suite catches the absence.
 #
-# covers: spira/activate.sh spira/conf.sh
+# tier: T2
+# covers: spira/activate.sh spira/conf.sh spira/lib.sh UC-instance-lifecycle-08 UC-instance-lifecycle-09 UC-instance-lifecycle-10 UC-instance-lifecycle-11
 # host-reason: exercises tmpfs atomic rename and a mock systemctl; fully self-contained
 #              in temp dirs — no real systemd or database required
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 is0()     { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
 not0()    { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero, got 0"; }
 islink()  {
@@ -48,8 +51,8 @@ ACTIVATE="$HERE/activate.sh"
 if [ ! -x "$ACTIVATE" ]; then
     bad "fail-first: activate.sh must exist and be executable at $ACTIVATE" \
         "file missing or not executable"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    exit 1
+    tl_summary
+    exit
 fi
 
 TMP="$(mktemp -d)"; trap 'chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT
@@ -205,18 +208,51 @@ else
         "old dirs still present after prune (keep=3)"
 fi
 
-# The release current points at (old name) must NOT have been deleted even if beyond keep.
-if [ -d "$RELEASES/spira-20260901T000000Z" ] || \
-   ! readlink "$RELEASES/current" | grep -q "$NEW_NAME"; then
-    : # current was remapped — check against new target instead
-fi
-# Simpler check: current target must exist.
+# current target must exist — activation always repoints current to the release it
+# just unpacked, so this never exercises "current beyond the keep window" (gap G4);
+# that case is a T1 call on _prune_candidates directly, below.
 _cur="$RELEASES/$(readlink "$RELEASES/current" 2>/dev/null)"
 if [ -d "$_cur" ]; then
     ok "prune: current target still present"
 else
     bad "prune: current target still present" "current -> $(readlink "$RELEASES/current") does not exist"
 fi
+
+# ==========================================================================
+echo
+echo "PROPERTY 5 (T1, gap G4): _prune_candidates never names the current release"
+# activate.sh swings current to the just-unpacked release BEFORE pruning, so the
+# integration path above can never present a current target outside the keep
+# window — the "protect current" branch in _prune_candidates is dead code there.
+# This calls the extracted function (lib.sh) directly with a current target held
+# apart from the newest releases, which the integration path cannot construct.
+# ==========================================================================
+PRUNE_DIR="$TMP/prune-candidates"; mkdir -p "$PRUNE_DIR"
+for i in 1 2 3 4 5; do
+    mkdir -p "$PRUNE_DIR/spira-2026090${i}T000000Z"
+done
+
+run_prune_candidates() {
+    env -i "PATH=$PATH" "HOME=$HOME" "SPIRA_HOME=$HERE" \
+        "SPIRA_DB=/nonexistent-spira-db" "SPIRA_RUN=$SPIRA_RUN_DIR" \
+        "SPIRA_CONF=/nonexistent" "SPIRA_INSTANCE=prod" \
+        bash -c '. "$SPIRA_HOME/lib.sh" && _prune_candidates "$@"' _ "$@"
+}
+
+# POSITIVE CONTROL: with no current target to protect, keep=1 proposes every
+# release older than the newest — including spira-20260901 (the one the property
+# below must exclude), proving the matcher can find an offender at all.
+_out="$(run_prune_candidates "$PRUNE_DIR" 1 "")"
+want "prune-candidates: positive control names the oldest release" \
+    "spira-20260901T000000Z" "$_out"
+
+# THE PROPERTY: current pinned to the oldest release (beyond keep=1) must never
+# appear among the candidates, while other excess releases still do.
+_out="$(run_prune_candidates "$PRUNE_DIR" 1 "spira-20260901T000000Z")"
+nowant "prune-candidates: never names the current release" \
+    "spira-20260901T000000Z" "$_out"
+want "prune-candidates: still names other excess releases" \
+    "spira-20260902T000000Z" "$_out"
 
 # ==========================================================================
 echo
@@ -277,6 +313,17 @@ else
     ok "restart: no aeon unit in restart"
 fi
 
+# Gap G5: daemon-reload is claimed to precede the restart of changed units, but that
+# order was never asserted — only that both calls happened somewhere in the log.
+_reload_at="$(grep -n 'daemon-reload' "$SC_LOG" | head -1 | cut -d: -f1)"
+_restart_at="$(grep -n -- '--user restart' "$SC_LOG" | head -1 | cut -d: -f1)"
+if [ -n "$_reload_at" ] && [ -n "$_restart_at" ] && [ "$_reload_at" -lt "$_restart_at" ]; then
+    ok "restart: daemon-reload precedes restart (gap G5)"
+else
+    bad "restart: daemon-reload precedes restart (gap G5)" \
+        "reload at line ${_reload_at:-none}, restart at line ${_restart_at:-none} in SC_LOG"
+fi
+
 # ==========================================================================
 echo
 echo "PROPERTY 9: --dry-run does not unpack or swap"
@@ -302,5 +349,33 @@ fi
 
 # ==========================================================================
 echo
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+echo "PROPERTY 10: rollback is re-activation of an already-unpacked release"
+# Rolling back IS activating the previous release: the same activate.sh code path in
+# both directions, with no separate rollback path (merged from test-rollback.sh — the
+# unique leg was this re-activation step; the rest duplicated properties 1-3 above).
+# SEEN RED against the unfixed tree: activate.sh exited 1 with "release already present".
+# ==========================================================================
+chmod -R u+w "$RELEASES" 2>/dev/null; rm -rf "$RELEASES"; mkdir -p "$RELEASES"
+TB_A="$(make_tarball "spira-20260915T180000Z")"
+REL_A="spira-20260915T180000Z"
+TB_B="$(make_tarball "spira-20260915T190000Z")"
+REL_B="spira-20260915T190000Z"
+
+run_activate -- "$TB_A" >/dev/null 2>&1
+run_activate -- "$TB_B" >/dev/null 2>&1
+islink "rollback: current -> B before rollback" "$RELEASES/current" "$REL_B"
+
+_out="$(run_activate -- "$TB_A")"
+_rc=$?
+is0    "rollback: re-activating A exits 0"            "$_rc"
+want   "rollback: skips unpack (dir already present)" "already present" "$_out"
+islink "rollback: current -> A again"                 "$RELEASES/current" "$REL_A"
+if grep -q 'restart' "$SC_LOG"; then
+    ok "rollback: units restarted after re-activation"
+else
+    bad "rollback: units restarted after re-activation" "not found in SC_LOG"
+fi
+
+# ==========================================================================
+echo
+tl_summary
