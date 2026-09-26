@@ -202,7 +202,7 @@ _bead_lint_judge() {
 
 _bead_lint() {
     local rc=0 n=0 bad=0 id labels show_out show_rc show_parsed bead_status bead_type
-    local ids="" _ask_label="${SPIRA_ASK_LABEL:-needs-operator}"
+    local ids="" _ask_label="$SPIRA_ASK_LABEL"
     local -A _ask_cache=()
     if [ "${1:-}" = "--all" ] || [ $# -eq 0 ]; then
         ids="$(bdq list --all --limit 0 --json 2>/dev/null \
