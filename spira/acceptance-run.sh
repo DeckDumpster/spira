@@ -56,100 +56,7 @@
 #   2  usage error or missing prerequisite
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-
-# ---------------------------------------------------------------------------
-pass=0; fail=0
-
-_json_escape() {
-    local _s="${1:-}"
-    _s="${_s//\\/\\\\}"
-    _s="${_s//\"/\\\"}"
-    _s="${_s//$'\n'/\\n}"
-    _s="${_s//$'\r'/\\r}"
-    printf '%s' "$_s"
-}
-
-ok() {
-    pass=$((pass+1))
-    printf '  ok    %s\n' "$1"
-    printf '{"phase":"%s","check":"%s","verdict":"ok","ts":"%s","elapsed":%d}\n' \
-        "${_cur_phase:-?}" "$(_json_escape "$1")" \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        "$(($(date +%s)-${_phase_start_ts:-0}))" >> "${_jsonl_file:-/dev/null}"
-}
-
-bad() {
-    fail=$((fail+1))
-    printf '  FAIL  %s: %s\n' "$1" "${2:-}"
-    printf '{"phase":"%s","check":"%s","verdict":"fail","reason":"%s","ts":"%s","elapsed":%d}\n' \
-        "${_cur_phase:-?}" "$(_json_escape "$1")" "$(_json_escape "${2:-}")" \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        "$(($(date +%s)-${_phase_start_ts:-0}))" >> "${_jsonl_file:-/dev/null}"
-    if [ "${_phase_snapped:-0}" = 0 ]; then
-        _phase_snapped=1
-        _take_snapshot "first-fail-${_cur_phase:-unknown}" || true
-    fi
-}
-
-is0()     { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
-not0()    { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
-is_same() { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-
-_take_snapshot() {
-    local _label="${1:-snap}"
-    _snap_count=$((_snap_count+1))
-    [ -n "${_forensics_dir:-}" ] || return 0
-    local _sdir
-    _sdir="$_forensics_dir/$(printf '%02d' "$_snap_count")-${_label}"
-    mkdir -p "$_sdir" 2>/dev/null || return 0
-    systemctl --user list-timers --all          > "$_sdir/timers.txt"      2>&1 || true
-    systemctl --user list-units 'spira-*' --all > "$_sdir/units.txt"       2>&1 || true
-    {
-        systemctl --user list-units 'spira-*' --all --no-legend 2>/dev/null \
-            | awk '{print $1}' \
-            | while read -r _u; do
-                printf '\n=== %s ===\n' "$_u"
-                systemctl --user status "$_u" --no-pager -l 2>&1 || true
-            done
-    } > "$_sdir/unit-status.txt" 2>/dev/null || true
-    journalctl --user --since="${_run_start_wall:-today}" --no-pager -l \
-        > "$_sdir/journal-full.txt" 2>&1 || true
-    mkdir -p "$_sdir/journal"
-    systemctl --user list-units 'spira-*' --all --no-legend 2>/dev/null \
-        | awk '{print $1}' \
-        | while read -r _u; do
-            journalctl --user -u "$_u" --since="${_run_start_wall:-today}" --no-pager -l \
-                > "$_sdir/journal/${_u}.txt" 2>&1 || true
-        done
-    command -v bd >/dev/null 2>&1 && {
-        bd -C "$bd_db" list --all --json            > "$_sdir/bd-list.json"    2>&1 || true
-        bd -C "$bd_db" ready --json                 > "$_sdir/bd-ready.json"   2>&1 || true
-        [ -n "${_bead_id:-}" ] && \
-            bd -C "$bd_db" show "$_bead_id" --json  > "$_sdir/bd-probe.json"   2>&1 || true
-    }
-    local _spira_run="${SPIRA_RUN:-${HOME}/.local/share/spira/run}"
-    if [ -d "$_spira_run" ]; then
-        ls -laR "$_spira_run"                       > "$_sdir/run-listing.txt" 2>&1 || true
-        find "$_spira_run" -name '*.log' 2>/dev/null \
-            | while read -r _lf; do cp "$_lf" "$_sdir/" 2>/dev/null || true; done
-        cp "$_spira_run/landstate" "$_sdir/"                                    2>/dev/null || true
-        cp "$_spira_run/queue"     "$_sdir/"                                    2>/dev/null || true
-    fi
-    cp "${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf" \
-        "$_sdir/spira.conf" 2>/dev/null || true
-    cp "${XDG_CONFIG_HOME:-$HOME/.config}/spira/repo-map" \
-        "$_sdir/repo-map"   2>/dev/null || true
-    git -C "${scratch_repo:-.}" rev-parse --git-dir >/dev/null 2>&1 && {
-        git -C "$scratch_repo" log --all --oneline  > "$_sdir/scratch-log.txt"  2>&1 || true
-        git -C "$scratch_repo" show-ref             > "$_sdir/scratch-refs.txt" 2>&1 || true
-    }
-    ps -ef --forest > "$_sdir/ps.txt"   2>&1 || true
-    free -m         > "$_sdir/free.txt" 2>&1 || true
-    df -h           > "$_sdir/df.txt"   2>&1 || true
-    printf 'snapshot: %s\n' "$_sdir"
-}
+. "$HERE/acceptance-lib.sh"
 
 # ---------------------------------------------------------------------------
 # ARG PARSING
@@ -219,33 +126,6 @@ if [ -z "$_ar_gh_repo" ]; then
     esac
     unset _ar_remote
 fi
-
-# _check_release_bins <release-dir> — print comma-separated list of missing bin/ entries.
-_check_release_bins() {
-    local _rd="$1" _missing=""
-    for _b in loom panel broker spira-supervise; do
-        [ -x "$_rd/bin/$_b" ] || _missing="${_missing:+$_missing, }bin/$_b"
-    done
-    printf '%s' "$_missing"
-}
-
-# _download_tarball <tag> <destdir> — download the release tarball; print path on stdout.
-_download_tarball() {
-    local _dtag="$1" _ddir="$2"
-    local _dl_args=()
-    [ -n "$_ar_gh_repo" ] && _dl_args+=(--repo "$_ar_gh_repo")
-    gh "${_dl_args[@]}" release download "$_dtag" \
-        --pattern 'spira-*.tar.gz' \
-        --dir "$_ddir" >/dev/null 2>&1 || return 1
-    ls "$_ddir"/spira-*.tar.gz 2>/dev/null | head -1
-}
-
-# _install_from_tarball <tarball> <releases-dir> <conf> — activate + install.sh --skip-build.
-_install_from_tarball() {
-    local _tb="$1" _rel="$2" _cf="$3"
-    SPIRA_CONF="$_cf" SPIRA_RELEASES="$_rel" SPIRA_ACTIVATE_FORCE=1 \
-        bash "$HERE/activate.sh" "$_tb" || return 1
-}
 
 _forensics_dir="${SPIRA_ACCEPTANCE_FORENSICS:-$TMP/forensics}"
 _jsonl_file="$_forensics_dir/checks.jsonl"
@@ -378,12 +258,7 @@ fi
 
 # Run install.sh from the activated release (--skip-build: binaries are in bin/).
 _install_rc=0
-_install_env=(SPIRA_OPERATED=0
-    SPIRA_CONF="$_conf"
-    SPIRA_RELEASES="$_releases"
-    SPIRA_HOME_REPO="$(basename "$scratch_repo")"
-)
-[ -n "$_agent" ] && _install_env+=(SPIRA_AGENT="$_agent")
+_phase_env _install_env "$_conf" "$_releases" "$(basename "$scratch_repo")" "$_agent"
 [ -d "$_releases/current" ] && \
     env "${_install_env[@]}" bash "$_releases/current/install.sh" --skip-build \
     2>&1 | tee "$TMP/install.log" || _install_rc=${PIPESTATUS[0]:-$?}
@@ -408,7 +283,7 @@ fi
 
 # After install, verify ready.sh exits 0.
 _ready_rc=0
-_ready_out="$(env "${_install_env[@]}" bash "$_releases/current/spira/ready.sh" 2>&1)" || _ready_rc=$?
+_ready_out="$(_run_ready "$_releases/current/spira/ready.sh" "${_install_env[@]}")" || _ready_rc=$?
 if [ "$_ready_rc" -eq 0 ]; then
     ok "phase A: ready.sh exits 0 after install"
 else
@@ -437,8 +312,7 @@ _bead_out="$(bd -C "$bd_db" create \
     --label "acceptance,${_a_plan_label},${_a_scope_label},repo:$(basename "$scratch_repo")" \
     --type task \
     2>&1)" || true
-_bead_id="$(printf '%s\n' "$_bead_out" \
-    | sed -n 's/.*Created issue: \([a-z0-9]*-[a-z0-9]*\).*/\1/p' | head -1)"
+_bead_id="$(_extract_bead_id "$_bead_out")"
 
 if [ -n "$_bead_id" ]; then
     ok "phase A: bead filed ($_bead_id)"
@@ -694,12 +568,7 @@ else
     # Conf already has SPIRA_RELEASES from phase A; surviving state is intentional.
     _aged_conf="$_conf"
     _aged_install_rc=0
-    _aged_env=(SPIRA_OPERATED=0
-        SPIRA_CONF="$_aged_conf"
-        SPIRA_RELEASES="$_releases"
-        SPIRA_HOME_REPO="$(basename "$scratch_repo")"
-    )
-    [ -n "$_agent" ] && _aged_env+=(SPIRA_AGENT="$_agent")
+    _phase_env _aged_env "$_aged_conf" "$_releases" "$(basename "$scratch_repo")" "$_agent"
 
     [ -f "${_aged_tarball_file:-}" ] && \
         _install_from_tarball "$_aged_tarball_file" "$_releases" "$_aged_conf" \
@@ -711,7 +580,7 @@ else
 
     # Verify ready.sh exits 0 after aged install.
     _aged_ready_rc=0
-    _aged_ready_out="$(env "${_aged_env[@]}" bash "$_releases/current/spira/ready.sh" 2>&1)" \
+    _aged_ready_out="$(_run_ready "$_releases/current/spira/ready.sh" "${_aged_env[@]}")" \
         || _aged_ready_rc=$?
     if [ "$_aged_ready_rc" -eq 0 ]; then
         ok "phase D: ready.sh exits 0 after aged install"
@@ -729,8 +598,7 @@ else
         _aged_seed2_out="$(bd -C "$bd_db" create \
             --title "aged-install: closed seed bead (pre-upgrade)" \
             --label "acceptance-seed" --type task 2>&1)" || true
-        _aged_seed2="$(printf '%s\n' "$_aged_seed2_out" \
-            | sed -n 's/.*Created issue: \([a-z0-9]*-[a-z0-9]*\).*/\1/p' | head -1)"
+        _aged_seed2="$(_extract_bead_id "$_aged_seed2_out")"
         [ -n "$_aged_seed2" ] && \
             bd -C "$bd_db" close "$_aged_seed2" \
                 --reason "acceptance: closed for aged-install migration test" \
@@ -833,8 +701,7 @@ else
                 --description "Prove world resumed and can land work after aged upgrade from $prev_tag to $tag." \
                 --label "acceptance,${_a_plan_label},${_a_scope_label},repo:$(basename "$scratch_repo")" \
                 --type task 2>&1)" || true
-            _aged_probe_id="$(printf '%s\n' "$_aged_probe_out" \
-                | sed -n 's/.*Created issue: \([a-z0-9]*-[a-z0-9]*\).*/\1/p' | head -1)"
+            _aged_probe_id="$(_extract_bead_id "$_aged_probe_out")"
             if [ -n "$_aged_probe_id" ]; then
                 ok "phase D: post-upgrade bead filed ($_aged_probe_id)"
 

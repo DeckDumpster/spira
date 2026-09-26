@@ -161,6 +161,37 @@ jobs:
             | tar -xz -C /tmp
           sudo install -m 0755 "/tmp/dolt-linux-${_arch}/bin/dolt" /usr/local/bin/dolt
 
+      - name: Install podman
+        # test-install-rehearsal.sh and test-cadence-tool.sh each build their own
+        # disposable container via spira/testenv.sh; they SKIP (exit 77) without
+        # podman, which is how they run nowhere on the shared batch runner today.
+        run: |
+          command -v podman >/dev/null 2>&1 || {
+            sudo apt-get update -q
+            sudo apt-get install -yq podman
+          }
+
+      - name: Run install-rehearsal and cadence-tool suites (gap G12)
+        # These properties are real-systemd-only (install/uninstall round trip,
+        # cadence "never disarms") and are NA everywhere else in CI; this ephemeral,
+        # single-tenant VM is the one place a container's real systemd session can
+        # be brought up and torn down without touching anything else's state.
+        # exit 77 is this harness's SKIP convention (testlib.sh, suites.sh); treated
+        # as informational here rather than a release blocker in case rootless
+        # podman is unavailable on this runner image.
+        run: |
+          set -uo pipefail
+          _g12_fail=0
+          for _s in test-install-rehearsal.sh test-cadence-tool.sh; do
+            _rc=0
+            bash "spira/$_s" || _rc=$?
+            if [ "$_rc" != 0 ] && [ "$_rc" != 77 ]; then
+              printf '%s: FAILED (exit %d)\n' "$_s" "$_rc"
+              _g12_fail=1
+            fi
+          done
+          exit "$_g12_fail"
+
       - name: Run acceptance (scratch repo, config, run, verdict)
         # acceptance-ci.sh creates the scratch repo with --initial-branch=main,
         # writes the repo-map, calls acceptance-run.sh, pushes notes, and writes

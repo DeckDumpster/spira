@@ -1,384 +1,194 @@
 #!/usr/bin/env bash
-# covers: spira/acceptance-run.sh install.sh
+# tier: T2
+# covers: spira/acceptance-run.sh spira/acceptance-agent.sh UC-instance-lifecycle-46 UC-instance-lifecycle-47
+#
+# This suite verifies the MECHANISM, not the runtime result — the runtime result
+# requires a clean machine with real bd/dolt/gh/claude and is what the operator
+# confirms (spira/acceptance-ci.sh, acceptance.yml). The phase structure itself —
+# bead-id extraction, phase env, the ready.sh rc-capture idiom, binary/tarball
+# checks — is extracted into spira/acceptance-lib.sh and unit-tested directly in
+# test-acceptance-lib.sh; this file covers only what only exists at the level of
+# the whole script: argument handling, the verdict line, phase wiring, and the
+# few behaviours (deploy gated on install, install output not discarded) that
+# live in acceptance-run.sh itself rather than in the extracted library.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-REAL_REPO="$(cd "$HERE/.." && pwd -P)"
+. "$HERE/testlib.sh"
 SCRIPT="$HERE/acceptance-run.sh"
+AGENT="$HERE/acceptance-agent.sh"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want()    { grep -qF  "$2" "$SCRIPT" && ok "$1" || bad "$1" "not found: [$2]"; }
-wantre()  { grep -qE  "$2" "$SCRIPT" && ok "$1" || bad "$1" "pattern not found: $2"; }
-iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
-is_eq()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+wantfile()   { grep -qF -- "$2" "$3" 2>/dev/null && ok "$1" || bad "$1" "not found: $2"; }
+wantrefile() { grep -qE -- "$2" "$3" 2>/dev/null && ok "$1" || bad "$1" "pattern not found: $2"; }
+nowantfile() { grep -qE -- "$2" "$3" 2>/dev/null && bad "$1" "still present: $2" || ok "$1"; }
 
 echo "test-acceptance-run.sh"
 
-SCRATCH="$(mktemp -d)"
-TMP="$SCRATCH"
-trap 'rm -rf "$SCRATCH"' EXIT INT TERM
-
 echo
-echo "1. POSITIVE CONTROL — acceptance-run.sh exists and is executable"
+echo "1. POSITIVE CONTROL — acceptance-run.sh and acceptance-lib.sh exist and wire together"
 
 if [ -f "$SCRIPT" ] && [ -x "$SCRIPT" ]; then
     ok "acceptance-run.sh exists and is executable"
 else
     bad "acceptance-run.sh exists and is executable" "missing or not executable"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    exit 1
+    tl_summary
 fi
+wantfile "acceptance-run.sh sources acceptance-lib.sh" \
+    '. "$HERE/acceptance-lib.sh"' "$SCRIPT"
 
 echo
-echo "2. Structural: SPIRA_OPERATED=0 in each phase's install environment"
+echo "2. Usage errors exit non-zero without running a phase"
 
-wantre "phase A _install_env includes SPIRA_OPERATED=0" \
-    '_install_env=\(.*SPIRA_OPERATED=0'
-wantre "phase B _install_env used for install.sh (tarball path)" \
-    'env.*_install_env.*install\.sh.*--skip-build'
-wantre "phase D _aged_env includes SPIRA_OPERATED=0" \
-    '_aged_env=\(.*SPIRA_OPERATED=0'
-want "SPIRA_OPERATED = 0 written to spira.conf" \
-    "SPIRA_OPERATED = 0"
+bash "$SCRIPT" >/dev/null 2>&1 && bad "no-arg invocation exits non-zero" "exit 0" \
+    || ok "no-arg invocation exits non-zero"
+bash "$SCRIPT" some-tag >/dev/null 2>&1 && bad "missing --scratch-repo exits non-zero" "exit 0" \
+    || ok "missing --scratch-repo exits non-zero"
 
 echo
-echo "3. Pair: stub doctor FAILs without SPIRA_OPERATED=0, passes with it"
+echo "3. PASS/FAIL verdict line"
 
-# Stub doctor.sh: exits 1 and emits FAIL lines when SPIRA_OPERATED is not 0.
-cat > "$SCRATCH/doctor.sh" <<'DOCTOR'
-#!/usr/bin/env bash
-if [ "${SPIRA_OPERATED:-1}" != "0" ]; then
-    printf 'FAIL  aerc (COCKPIT_MAIL) is not on PATH\n'
-    printf 'FAIL  hunk is not on PATH\n'
-    exit 1
-fi
-exit 0
-DOCTOR
-chmod +x "$SCRATCH/doctor.sh"
+wantfile "script emits a verdict line"             "verdict:"        "$SCRIPT"
+wantfile "verdict reports FAIL on any failure"     'verdict="FAIL"'  "$SCRIPT"
+wantfile "verdict reports PASS on zero failures"   'verdict="PASS"'  "$SCRIPT"
 
-# Stub install.sh: calls the stub doctor as preflight; refuses on non-zero.
-cat > "$SCRATCH/install.sh" <<INSTALL
-#!/usr/bin/env bash
-_out="\$("$SCRATCH/doctor.sh" 2>&1)"
-_rc=\$?
-printf '%s\n' "\$_out"
-[ "\$_rc" = 0 ] || { printf 'install: preflight failed\n' >&2; exit 1; }
-printf 'install: ok\n'
-exit 0
-INSTALL
-chmod +x "$SCRATCH/install.sh"
+echo
+echo "4. Positive-control self-check present"
 
-# Positive control: stub install refuses when SPIRA_OPERATED is unset.
-_out="$(bash "$SCRATCH/install.sh" 2>&1)" && _rc=0 || _rc=$?
-if [ "$_rc" -ne 0 ] && printf '%s' "$_out" | grep -qF 'COCKPIT_MAIL'; then
-    ok "positive-control: stub install refuses when SPIRA_OPERATED unset (names operator tool)"
+wantfile "positive-control self-check present" \
+    "positive-control: command -v catches missing tool" "$SCRIPT"
+
+echo
+echo "5. Landing is verified by ancestry, not bead status"
+
+wantrefile "ancestry check uses a SHA range" '_base_sha_before\.\.' "$SCRIPT"
+if grep -qE 'bead_status' "$SCRIPT" 2>/dev/null; then
+    bad "landing check does not rely on a bead_status shortcut" "found bead_status in $SCRIPT"
 else
-    bad "positive-control: stub install refuses when SPIRA_OPERATED unset" \
-        "exit=$_rc"
+    ok "landing check does not rely on a bead_status shortcut"
 fi
 
-# With SPIRA_OPERATED=0, stub install proceeds.
-_out2="$(SPIRA_OPERATED=0 bash "$SCRATCH/install.sh" 2>&1)" && _rc2=0 || _rc2=$?
-if [ "$_rc2" -eq 0 ]; then
-    ok "with SPIRA_OPERATED=0: stub install proceeds"
-else
-    bad "with SPIRA_OPERATED=0: stub install proceeds" \
-        "exit=$_rc2 output=$_out2"
-fi
-
-# ===========================================================================
 echo
-echo "4. bead-id extraction: warning before id line (positive control first)"
-# ===========================================================================
-# Helper: mirrors the extraction logic in acceptance-run.sh.
-_extract_bead_id() {
-    printf '%s\n' "$1" \
-        | sed -n 's/.*Created issue: \([a-z0-9]*-[a-z0-9]*\).*/\1/p' \
-        | head -1
-}
+echo "6. Phase A, B, C, D labels present"
 
-# Positive control: extractor finds nothing when output has no id.
-_ctrl="$(_extract_bead_id "warning: beads.role not configured (GH#2950)")"
-is_eq "positive-control: no id in warning-only output → empty" "" "$_ctrl"
-
-# Main case: warning lines before ✓ Created issue: sp-xxxx — the failing pattern from GH#2950.
-_out_with_warning="warning: beads.role not configured (GH#2950)
-Fix: git config beads.role maintainer
-Fix: git config --global beads.role maintainer
-✓ Created issue: sp-xxxx — acceptance test probe title
-  Priority: P2
-  Status: open"
-_extracted="$(_extract_bead_id "$_out_with_warning")"
-is_eq "bead-id extracted from output with warning prefix" "sp-xxxx" "$_extracted"
-
-# Structural check: acceptance-run.sh uses the same extraction pattern.
-wantre "acceptance-run.sh uses Created issue extraction" \
-    "sed -n 's/.*Created issue:"
-
-# ===========================================================================
-echo
-echo "5. bead-id extraction (pair): error with no id → empty"
-# ===========================================================================
-_out_error="error: cannot connect to database
-connection refused: dial tcp 127.0.0.1:3307"
-_from_error="$(_extract_bead_id "$_out_error")"
-is_eq "error output with no id extracts nothing" "" "$_from_error"
-
-# ===========================================================================
-echo
-echo "6. beads.role set by install.sh after bd init (real bd)"
-# ===========================================================================
-_real_bd="${SPIRA_BD:-$(command -v bd 2>/dev/null || true)}"
-if [ ! -x "${_real_bd:-}" ]; then
-    ok "beads.role: bd not found — skipping install fixture test"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    [ "$fail" -eq 0 ]; exit $?
-fi
-
-# Use /var/tmp so there is no .beads ancestor that bd would find by walking up.
-_fb_base="$(mktemp -d /var/tmp/test-accept-run-XXXXXX 2>/dev/null \
-    || mktemp -d /tmp/test-accept-run-XXXXXX)"
-trap 'rm -rf "$SCRATCH" "$_fb_base"' EXIT INT TERM
-
-_fb_db="$_fb_base/db"
-mkdir -p "$_fb_db"
-
-# Positive control: confirm no .beads ancestor (isolation required for meaningful result).
-_walk="$_fb_db"; _found=0
-while [ "$_walk" != "/" ] && [ -n "$_walk" ]; do
-    [ -d "$_walk/.beads" ] && { _found=1; break; }
-    _walk="$(dirname "$_walk")"
+for _p in A B C D; do
+    wantfile "phase $_p label present" "phase $_p" "$SCRIPT"
 done
-if [ "$_found" = 1 ]; then
-    ok "beads.role: parent .beads found — cannot isolate; skipping"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    [ "$fail" -eq 0 ]; exit $?
-fi
-unset _walk _found
-
-# Run bd init in file mode (cd form, as install.sh does).
-_init_out="$(cd "$_fb_db" && BD_NON_INTERACTIVE=1 "$_real_bd" init \
-    --non-interactive --prefix sp --skip-agents --skip-hooks -q 2>&1)"
-_init_rc=$?
-iszero "bd init exits 0 on fresh directory" "$_init_rc"
-
-# Apply the same git config that install.sh runs after bd init.
-git -C "$_fb_db" config beads.role maintainer 2>/dev/null || true
-
-_role="$(git -C "$_fb_db" config beads.role 2>/dev/null || true)"
-is_eq "beads.role set to maintainer in SPIRA_DB after init" "maintainer" "$_role"
-
-# Structural: install.sh sets beads.role in both modes.
-grep -qE 'git -C.*SPIRA_DB.*config beads\.role maintainer' "$REAL_REPO/install.sh" \
-    && ok "install.sh file mode: git config beads.role maintainer" \
-    || bad "install.sh file mode: git config beads.role maintainer" \
-           "pattern not found in install.sh"
-
-# ===========================================================================
-echo
-echo "7. ready.sh: release path used, not workspace path"
-# ===========================================================================
-
-# Structural: the fixed code invokes $_releases/current/spira/ready.sh.
-wantre "phase A: ready.sh invocation uses \$_releases/current path" \
-    'bash.*\$_releases/current/spira/ready\.sh'
-wantre "phase D: ready.sh invocation uses \$_releases/current path" \
-    'bash.*\$_releases/current/spira/ready\.sh'
-
-# $HERE/ready.sh must not appear in any bash invocation (may appear in comments).
-if grep -E 'bash[^#]*\$HERE/ready\.sh' "$SCRIPT" | grep -qv '^\s*#'; then
-    bad 'workspace $HERE/ready.sh not called directly' \
-        "still present: $(grep -E 'bash[^#]*\$HERE/ready\.sh' "$SCRIPT" | grep -v '^\s*#' | head -1)"
-else
-    ok 'workspace $HERE/ready.sh removed from bash invocations'
-fi
-
-# No git clone in phase A: the tarball path must be used exclusively.
-if grep -E 'git clone.*\$tag' "$SCRIPT" | grep -qv '^\s*#'; then
-    bad 'no git clone for phase A tag' \
-        "still present: $(grep -E 'git clone.*\$tag' "$SCRIPT" | grep -v '^\s*#' | head -1)"
-else
-    ok 'no git clone for phase A tag'
-fi
-
-# No CONFIGURE_PROD or SPIRA_INSTALL_PROD_GIT_CONSIDERED in the script.
-if grep -qE 'CONFIGURE_PROD|SPIRA_INSTALL_PROD_GIT_CONSIDERED' "$SCRIPT"; then
-    bad 'no single-checkout mode variables' \
-        "still present: $(grep -E 'CONFIGURE_PROD|SPIRA_INSTALL_PROD_GIT_CONSIDERED' "$SCRIPT" | head -1)"
-else
-    ok 'no CONFIGURE_PROD or SPIRA_INSTALL_PROD_GIT_CONSIDERED'
-fi
-
-# Confirm bad() names the release path for phase A ready.sh failure.
-wantre "phase A bad() names release path" \
-    'bad.*ready\.sh.*\$_releases/current/spira/ready\.sh'
-
-# Structural: gh release download is used in acceptance-run.sh.
-want "gh release download present" "gh release download" "$(cat "$SCRIPT")"
-
-# Structural: sha256 computation present.
-if grep -qE 'sha256sum|shasum.*256' "$SCRIPT"; then
-    ok "sha256 computation present"
-else
-    bad "sha256 computation present" "neither sha256sum nor shasum -a 256 found"
-fi
-
-# Structural: _check_release_bins function defined.
-want "_check_release_bins function defined" "_check_release_bins()" "$(cat "$SCRIPT")"
-
-# Structural: install.sh called with --skip-build (no cargo needed).
-want "install.sh --skip-build in phase A" \
-    'install.sh" --skip-build' "$(cat "$SCRIPT")"
-
-# ===========================================================================
-echo
-echo "8. staged checks: old 900s/600s loops gone, stages 2-5 present with tight budgets"
-# ===========================================================================
-
-# Positive control: pattern that would match the old 900s loop.
-_old_900="$(grep -c '_aeon_wait' "$SCRIPT" 2>/dev/null || true)"
-is_eq "positive-control: old 900s loop is gone from phase A" "0" "$_old_900"
-
-_old_600="$(grep -c '_aged_land_wait' "$SCRIPT" 2>/dev/null || true)"
-is_eq "positive-control: old 600s loop is gone from phase D" "0" "$_old_600"
-
-# Stage 2: sentinel is started directly.
-want "stage 2: sentinel started directly" \
-    'systemctl --user start spira-sentinel.service'
-
-# Stage 2: branch show-ref check (summoned signal).
-want "stage 2: polls for aeon branch via show-ref" \
-    'refs/heads/spira/$_bead_id'
-
-# Stage 3: commit check on branch.
-wantre "stage 3: polls for commit on spira/bead branch" \
-    'git.*log.*spira/\$_bead_id'
-
-# Stage 3 bad() names stage 3.
-wantre "stage 3: FAIL names stage 3" \
-    'bad.*stage 3.*commit'
-
-# Stage 4: bd show --json status check.
-want "stage 4: bd show --json polls closed status" \
-    'show "$_bead_id" --json'
-
-# Stage 5: sentinel kicked again before landing poll (appears twice — stage 2 and 5).
-want "stage 5: sentinel kicked before landing poll" \
-    'spira-sentinel.service'
-
-# Stage 2 budget: 60s (not 900).
-want "stage 2 budget is 60s" \
-    '_a_t2 )) -lt 60'
-
-# Stage 5 budget: 120s (not 900).
-want "stage 5 budget is 120s" \
-    '_a_t5 )) -lt 120'
-
-# Phase D: same staged structure.
-wantre "phase D stage 3: FAIL names stage 3" \
-    'bad.*phase D stage 3'
-
-want "phase D stage 5: landed message" \
-    'phase D stage 5: bead'
-
-# ===========================================================================
-echo
-echo "8. snapshot trigger and JSONL writer"
-# ===========================================================================
-
-# Structural: SPIRA_ACCEPTANCE_FORENSICS controls the forensics dir.
-wantre "SPIRA_ACCEPTANCE_FORENSICS used for forensics dir" \
-    'SPIRA_ACCEPTANCE_FORENSICS'
-
-# Structural: bad() triggers _take_snapshot on first phase FAIL.
-wantre "bad() calls _take_snapshot when _phase_snapped is 0" \
-    '_take_snapshot.*_cur_phase'
-
-# Structural: _take_snapshot is called with || true so its failure does not
-# propagate and change the verdict exit code.
-wantre "bad(): _take_snapshot failure does not propagate" \
-    '_take_snapshot.*|| true'
-
-# Structural: ok() and bad() both write to _jsonl_file.
-wantre "ok() appends JSONL line" \
-    '"verdict":"ok"'
-wantre "bad() appends JSONL line with verdict fail" \
-    '"verdict":"fail"'
-
-# Structural: end-of-run snapshot is taken before the final exit.
-want "end-of-run snapshot taken" '_take_snapshot "end-of-run"'
-
-# Behavioral pair: JSONL writer — one line per ok/bad, FAIL count matches.
-_jdir="$SCRATCH/jtest"
-mkdir -p "$_jdir"
-_jfile="$_jdir/checks.jsonl"
-: > "$_jfile"
-_jpass=0; _jfail=0
-_jsnap=0
-_jcur_phase="test"; _jphase_snapped=0; _jphase_start_ts="$(date +%s)"
-_j_escape() {
-    local _s="${1:-}"
-    _s="${_s//\\/\\\\}"; _s="${_s//\"/\\\"}"; printf '%s' "$_s"
-}
-_jok() {
-    _jpass=$((_jpass+1))
-    printf '{"phase":"%s","check":"%s","verdict":"ok","ts":"%s","elapsed":%d}\n' \
-        "$_jcur_phase" "$(_j_escape "$1")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        "$(($(date +%s)-_jphase_start_ts))" >> "$_jfile"
-}
-_jbad() {
-    _jfail=$((_jfail+1))
-    printf '{"phase":"%s","check":"%s","verdict":"fail","reason":"%s","ts":"%s","elapsed":%d}\n' \
-        "$_jcur_phase" "$(_j_escape "$1")" "$(_j_escape "${2:-}")" \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        "$(($(date +%s)-_jphase_start_ts))" >> "$_jfile"
-    if [ "$_jphase_snapped" = 0 ]; then
-        _jphase_snapped=1
-        _jsnap=$((_jsnap+1))
-    fi
-}
-
-_jok  "check passes"
-_jbad "check fails" "some reason"
-_jbad "second fail"  "another"   # should NOT re-trigger snapshot
-_jok  "another pass"
-
-_jlines="$(wc -l < "$_jfile" | tr -d ' ')"
-is_eq "JSONL: one line per check (4 checks → 4 lines)" "4" "$_jlines"
-
-_jfail_json="$(grep -c '"verdict":"fail"' "$_jfile" || true)"
-is_eq "JSONL: fail count matches bad() calls" "$_jfail" "$_jfail_json"
-
-is_eq "snapshot triggered once on first phase FAIL" "1" "$_jsnap"
-
-# Phase reset: new phase triggers snapshot again on next FAIL.
-_jcur_phase="phase-2"; _jphase_snapped=0
-_jbad "phase-2 first fail" "x"
-is_eq "snapshot triggered again after phase reset" "2" "$_jsnap"
-
-# Behavioral: snapshot mkdir failure does not change verdict.
-_snap_dir_ro="$SCRATCH/snapshots-ro"
-mkdir -p "$_snap_dir_ro"
-chmod 000 "$_snap_dir_ro" 2>/dev/null || true
-_snap_count=0
-_forensics_dir_save="${_forensics_dir:-}"
-_forensics_dir="$_snap_dir_ro/nope"
-# _take_snapshot is not locally defined here, but we can verify structurally
-# that acceptance-run.sh uses || return 0 on mkdir in _take_snapshot.
-wantre "_take_snapshot: mkdir failure returns cleanly" \
-    'mkdir -p.*_sdir.*|| return 0'
-chmod 755 "$_snap_dir_ro" 2>/dev/null || true
 
 echo
-echo "4. Structural: --waive-upgrade overrides --prev-tag and marks the verdict note"
+echo "7. --record writes a git note; --waive-upgrade overrides --prev-tag"
 
-wantre "--waive-upgrade is a recognized flag" \
-    'waive-upgrade\) do_waive_upgrade=1'
-wantre "waiver clears prev_tag regardless of --prev-tag" \
-    'do_waive_upgrade.*-eq 1.*&&.*prev_tag=""'
-want "verdict note records the waiver" \
-    "upgrade phases waived by operator"
+wantfile "--record writes a git note"        "git notes --ref=acceptance" "$SCRIPT"
+wantfile "--record note targets refs/tags/"  "refs/tags/"                 "$SCRIPT"
+wantrefile "--waive-upgrade is a recognized flag" \
+    'waive-upgrade\) do_waive_upgrade=1' "$SCRIPT"
+wantrefile "waiver clears prev_tag regardless of --prev-tag" \
+    'do_waive_upgrade.*-eq 1.*&&.*prev_tag=""' "$SCRIPT"
+wantfile "verdict note records the waiver" "upgrade phases waived by operator" "$SCRIPT"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+echo
+echo "8. Old unbounded polling loops are gone; staged checks have tight budgets"
+
+nowantfile "positive-control: old unbounded aeon-wait loop is gone" '_aeon_wait' "$SCRIPT"
+nowantfile "positive-control: old unbounded aged-land-wait loop is gone" '_aged_land_wait' "$SCRIPT"
+wantfile "stage 2 budget is 60s" '_a_t2 )) -lt 60' "$SCRIPT"
+wantfile "stage 5 budget is 120s" '_a_t5 )) -lt 120' "$SCRIPT"
+
+echo
+echo "9. Phase A: bead labels carry plan+scope; claimability uses bd ready"
+
+wantfile "phase A bead creation uses plan-label variable"  '"acceptance,${_a_plan_label}' "$SCRIPT"
+wantfile "phase A bead creation uses scope-label variable" '"acceptance,${_a_plan_label},${_a_scope_label}' "$SCRIPT"
+wantfile "phase A claimability check uses bd ready" 'bd -C "$bd_db" ready' "$SCRIPT"
+wantfile "claimability check filters by plan+scope label" \
+    '--label "${_a_scope_label},${_a_plan_label}"' "$SCRIPT"
+if grep -F 'sentinel --report' "$SCRIPT" 2>/dev/null | grep -qv '^\s*#'; then
+    bad "claimability does not rely on sentinel --report polling" "found sentinel --report in $SCRIPT"
+else
+    ok "claimability does not rely on sentinel --report polling"
+fi
+wantfile "phase A bead-not-claimable error names the predicate" \
+    'builder predicate does not match bead labels' "$SCRIPT"
+
+# ============================================================================
+echo
+echo "10. Phase B: install.sh output is streamed (tee), not discarded"
+# ============================================================================
+
+if grep -E 'env "\$\{_install_env\[@\]\}".*install\.sh.*>/dev/null' "$SCRIPT" 2>/dev/null; then
+    bad "phase B install.sh output not discarded" "found install.sh with >/dev/null"
+else
+    ok "phase B install.sh output not discarded"
+fi
+wantfile "phase A and B share one _phase_env-built _install_env (no per-phase copy)" \
+    '_phase_env _install_env' "$SCRIPT"
+wantfile "phase B installs from prev tarball via _install_from_tarball" \
+    '_install_from_tarball "$_prev_tarball_file"' "$SCRIPT"
+
+SCRATCH="$(mktemp -d)"
+trap 'rm -rf "$SCRATCH"' EXIT INT TERM
+mkdir -p "$SCRATCH/clone"
+printf '#!/bin/sh\nprintf "prev-install-failure-reason\\n"\nexit 1\n' \
+    > "$SCRATCH/clone/install.sh"
+chmod +x "$SCRATCH/clone/install.sh"
+_pb_out="$(
+    _prev_install_rc=0
+    SPIRA_OPERATED=0 bash "$SCRATCH/clone/install.sh" 2>&1 | tee "$SCRATCH/prev-install.log" \
+        || _prev_install_rc=$?
+    [ "$_prev_install_rc" -ne 0 ] && \
+        printf '  FAIL  phase B: install.sh exits 0: exit %d\n' "$_prev_install_rc"
+)"
+want "fixture: a failing phase B install.sh's output reaches the report" \
+    "prev-install-failure-reason" "$_pb_out"
+
+# ============================================================================
+echo
+echo "11. Phase B: deploy is gated on install success"
+# ============================================================================
+
+wantrefile "phase B deploys only when install succeeded" '_prev_install_rc.*-ne 0' "$SCRIPT"
+wantfile "phase B guard names database service not started" \
+    "database service not started" "$SCRIPT"
+
+_pg_out="$(
+    _prev_install_rc=1
+    [ "$_prev_install_rc" -ne 0 ] && \
+        printf '  FAIL  phase B+C: skipped — install failed; database service not started: prev_install_rc=%d\n' \
+            "$_prev_install_rc"
+)"
+want "fixture: guard names database-not-started when install fails" \
+    "database service not started" "$_pg_out"
+
+# ============================================================================
+echo
+echo "12. acceptance-agent.sh exists and drives the deterministic aeon path"
+# ============================================================================
+
+if [ -f "$AGENT" ] && [ -x "$AGENT" ]; then
+    ok "acceptance-agent.sh exists and is executable"
+else
+    bad "acceptance-agent.sh exists and is executable" "missing or not executable at $AGENT"
+fi
+wantfile "acceptance-agent.sh drains stdin"  "cat >/dev/null" "$AGENT"
+wantfile "acceptance-agent.sh commits probe" "acceptance-probe.txt" "$AGENT"
+wantfile "acceptance-agent.sh closes bead"   "close" "$AGENT"
+
+# ============================================================================
+echo
+echo "13. Upgrade, rollback and aged-install invariants (structural — each requires"
+echo "    a real deploy.sh/systemd/bd round trip only acceptance.yml can drive)"
+# ============================================================================
+
+wantfile "phase B checks .tag sidecar from .tags dir" ".tags/"            "$SCRIPT"
+wantfile "phase B checks SPIRA_PROD updated"          "SPIRA_PROD"        "$SCRIPT"
+wantfile "phase C captures pre-upgrade unit set"      "_units_pre_upgrade"  "$SCRIPT"
+wantfile "phase C captures post-rollback unit set"    "_units_post_rollback" "$SCRIPT"
+wantfile "phase C diffs pre vs post"                  "_unit_diff"        "$SCRIPT"
+wantfile "phase D checks bead count preserved"        "_aged_pre_beads"   "$SCRIPT"
+wantfile "phase D checks memory count preserved"      "_aged_pre_mems"    "$SCRIPT"
+wantfile "phase D runs doctor.sh"                     "_aged_doctor_rc"   "$SCRIPT"
+wantfile "phase D checks operator override survives"  "ACCEPTANCE_AGED_OVERRIDE" "$SCRIPT"
+wantfile "phase D checks for failed units"            "_aged_failed"      "$SCRIPT"
+wantfile "phase D checks world not halted"            "_aged_world_out"   "$SCRIPT"
+wantfile "phase D rollback-refused names the migration" "migrat"          "$SCRIPT"
+wantfile "aged-install (from, to) pair recorded in git note" "aged-install from=" "$SCRIPT"
+
+tl_summary
