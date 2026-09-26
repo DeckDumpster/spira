@@ -28,26 +28,20 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL — %s\n' "$1"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1: wanted [$2] in [$3]"; }
-lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in [$3]"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1: wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
+lack() { nowant "$@"; }
 
 printf 'test-tier-budget.sh\n'
 
 DUCKDB_BIN="$(command -v duckdb 2>/dev/null || true)"
 if [ -z "$DUCKDB_BIN" ]; then
-    echo "SKIP test-tier-budget: duckdb not found on PATH"
-    exit 77
+    skip "duckdb not found on PATH"
 fi
 
 CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
 [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
 if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-tier-budget: cargo not found — tsd-write cannot be built"
-    exit 77
+    skip "cargo not found — tsd-write cannot be built"
 fi
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
@@ -61,9 +55,7 @@ if [ ! -x "$TSD_BIN" ]; then
     TSD_BIN="$T/tsd-target/release/tsd-write"
 fi
 if [ ! -x "$TSD_BIN" ]; then
-    printf 'tsd-write binary not found at %s\n' "$TSD_BIN" >&2
-    printf '0 passed, 1 failed\n'
-    exit 1
+    bail "tsd-write binary not found at $TSD_BIN"
 fi
 
 # ── fixture suite dir: one file per tier, plus one untagged ────────────────────────────────
@@ -324,5 +316,4 @@ out="$(SPIRA_TIER_AREA_ALLOWLIST="$CUR_F" TBS lint-allowlist --area --prior "$PR
 is  "a raised area count fails --area" "1" "$rc"
 want "the failure names the area and both counts" "alpha raised 2 -> 3" "$out"
 
-printf '\ntest-tier-budget.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

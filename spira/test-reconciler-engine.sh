@@ -23,9 +23,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CRATE="$HERE/../reconciler-engine"
 
-pass=0; fail=0
-ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
-bad() { printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; fail=$((fail+1)); }
+. "$HERE/testlib.sh"
 
 # Resolve cargo/rustc BEFORE conf.sh (pulled in indirectly via lib.sh elsewhere in the
 # gate) can overwrite PATH with the harness's own tool directories, which do not include
@@ -35,9 +33,7 @@ if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
     CARGO_BIN="$HOME/.cargo/bin/cargo"
 fi
 if [ -z "$CARGO_BIN" ]; then
-    echo "SKIP test-reconciler-engine: cargo not found on PATH or at ~/.cargo/bin" >&2
-    echo "     install Rust: https://rustup.rs/" >&2
-    exit 77
+    skip "cargo not found on PATH or at ~/.cargo/bin — install Rust: https://rustup.rs/"
 fi
 export PATH="$(dirname "$CARGO_BIN"):$PATH"
 
@@ -48,5 +44,4 @@ else
     bad "reconciler-engine tests" "$(printf '%s\n' "$out" | tail -40)"
 fi
 
-printf '\n  %d ok, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
