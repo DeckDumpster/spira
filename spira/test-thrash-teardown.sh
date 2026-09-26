@@ -86,6 +86,20 @@ exit 0
 SHIM
 chmod +x "$BIN/claude-thrash"
 
+# Shim C: plants the marker, then hangs — standing in for a session the real heartbeat
+# hasn't killed YET, so a real `kill -TERM` sent to the process group from outside (below)
+# reaches aeon.sh itself as a signal, not as cleanup() running off the natural EXIT path.
+cat > "$BIN/claude-thrash-hang" <<'SHIM'
+#!/usr/bin/env bash
+cat /dev/stdin > /dev/null
+printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
+if [ -n "${BEAD_ID:-}" ] && [ -n "${SPIRA_RUN:-}" ]; then
+    printf 'stalled: no last action\n' > "$SPIRA_RUN/$BEAD_ID.thrash"
+fi
+sleep 300
+SHIM
+chmod +x "$BIN/claude-thrash-hang"
+
 seed() {
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
     printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
@@ -113,6 +127,7 @@ d = d if isinstance(d, list) else [d]
 print(d[0].get("notes", "") or "")' 2>/dev/null
 }
 ledger_line() { grep "done builder $1" "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null | tail -1; }
+ledger_count() { grep -c " done builder $1 " "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null; }
 fresh() { testdb_reset; }
 
 echo "test-thrash-teardown.sh"
@@ -158,6 +173,43 @@ notes2="$(bead_notes sp-tt-2)"
 want  "note names the sticking point"                "STICKING POINT"     "$notes2"
 want  "note says an attempt IS charged this time"    "attempt IS charged" "$notes2"
 want  "ledger status is requeue-thrash-charged"       "requeue-thrash-charged" "$(ledger_line sp-tt-2)"
+
+# ======================================================================================
+# CASE 3: a real SIGTERM to the process group mid-thrash must not re-enter cleanup() and
+# write a second, contradictory requeue event (sp-u2ve1). cleanup() runs once as the TERM
+# handler, takes the thrash branch, and its own `exit $rc` — from a signal handler, not the
+# natural EXIT path — used to fire the EXIT trap a second time in the SAME process, with the
+# marker already gone, falling through to a second bump_requeue as "unjudged-killed".
+# ======================================================================================
+echo
+echo "real SIGTERM to the process group mid-thrash — exactly one requeue event (sp-u2ve1)"
+
+ln -sf "$BIN/claude-thrash-hang" "$BIN/claude"
+fresh; seed sp-tt-3
+rm -rf "$SPIRA_RUN/worktree"
+marker="$SPIRA_RUN/sp-tt-3.thrash"
+rm -f "$marker"
+setsid "$HERE/aeon.sh" builder > "$TMP/out3" 2>&1 &
+aeon_pid=$!
+
+_waited=0
+while [ ! -f "$marker" ] && [ "$_waited" -lt 100 ]; do sleep 0.1; _waited=$((_waited + 1)); done
+if [ ! -f "$marker" ]; then
+    bad "thrash marker appeared before signalling" "not found after 10s"
+    kill -TERM -"$aeon_pid" 2>/dev/null
+else
+    kill -TERM -"$aeon_pid" 2>/dev/null
+fi
+
+_waited=0
+while kill -0 "$aeon_pid" 2>/dev/null && [ "$_waited" -lt 100 ]; do sleep 0.1; _waited=$((_waited + 1)); done
+wait "$aeon_pid" 2>/dev/null
+
+is    "bead is still open (requeued by the signal-delivered teardown)" "open" "$(bead_status sp-tt-3)"
+is    "exactly ONE ledger done-line for this run — one teardown, not two" "1" "$(ledger_count sp-tt-3)"
+notes3="$(bead_notes sp-tt-3)"
+want   "note says Requeued (thrash)"                       "Requeued (thrash)" "$notes3"
+nowant "note is NOT ALSO contaminated by the fallthrough's Not judged" "Not judged" "$notes3"
 
 # ======================================================================================
 # Structural: the thrash trip kills the process group (-$$), not just the parent shell —
