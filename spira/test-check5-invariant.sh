@@ -404,4 +404,105 @@ out="$(SPIRA_CHECK5_MAX_FILE=2 sentinel)"
 is   "(d) exactly SPIRA_CHECK5_MAX_FILE incidents are filed" 2 "$(grep -c 'REF=closed-not-landed:' "$INC_LOG")"
 want "(d) the pass logs how many the cap skipped" "1 more not filed" "$out"
 
+ref_hash() { printf '%s' "$1" | sha256sum | cut -c1-8; }
+
+# ======================================================================================
+echo
+echo "RESOLVE — proving a bead landed closes the incident this check filed for it:"
+# ======================================================================================
+# POSITIVE CONTROL FIRST: seed the incident bead CHECK 5 itself would have filed (same
+# ref:<hash> label file_one sets), a target bead proven landed by the commit graph, and
+# confirm the incident starts open — an incident already closed cannot demonstrate the
+# resolve path fired.
+testdb_reset
+INC_HASH="$(ref_hash "closed-not-landed:sp-old")"
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-old","title":"old","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-old","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-oldinc","title":"CLOSED NOT LANDED: sp-old has no LANDED record on $HOME_REPO","status":"open","issue_type":"bug","labels":["spira","incident","ref:$INC_HASH"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+touch "$RUN/sp-old.log"
+rm -f "$RUN/landstate/sp-old"
+git -C "$REPO" commit -q --allow-empty -m "spira: land sp-old"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+: > "$INC_LOG"
+
+is "the incident starts open" open "$(status_of sp-oldinc)"
+out="$(sentinel)"
+is "sp-old stays closed" closed "$(status_of sp-old)"
+is "the incident this check filed is now closed" closed "$(status_of sp-oldinc)"
+want "the log names both the bead and the incident it closed" "CHECK5 resolve sp-old -> sp-oldinc" "$out"
+inc_out="$(cat "$INC_LOG")"
+nowant "proving sp-old landed does not re-file it" "sp-old" "$inc_out"
+
+# ======================================================================================
+echo
+echo "RESOLVE — the same for the landstate proof, not only the commit-graph proof:"
+# ======================================================================================
+testdb_reset
+INC_HASH="$(ref_hash "closed-not-landed:sp-lsold")"
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-lsold","title":"landstate-old","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-lsold","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-lsoldinc","title":"CLOSED NOT LANDED: sp-lsold has no LANDED record on $HOME_REPO","status":"open","issue_type":"bug","labels":["spira","incident","ref:$INC_HASH"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+touch "$RUN/sp-lsold.log"
+git -C "$REPO" commit -q --allow-empty -m "sp-lsold: implement the work"
+lsold_sha="$(git -C "$REPO" rev-parse HEAD)"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+printf 'LANDED %s %s' "$lsold_sha" "$(date +%s)" > "$RUN/landstate/sp-lsold"
+: > "$INC_LOG"
+
+out="$(sentinel)"
+is "sp-lsold stays closed" closed "$(status_of sp-lsold)"
+is "the landstate-proven incident is closed too" closed "$(status_of sp-lsoldinc)"
+want "the log names both ids for the landstate proof" "CHECK5 resolve sp-lsold -> sp-lsoldinc" "$out"
+
+# ======================================================================================
+echo
+echo "RESOLVE HAS NO EFFECT WHEN NO INCIDENT WAS EVER FILED — proving landed alone closes nothing:"
+# ======================================================================================
+# This is the negative control for the resolve path: sp-qland/sp-cland above prove landed
+# with no incident on record, and must not error, log a resolve, or touch any bead.
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-noinc","title":"landed, never flagged","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-noinc","depends_on_id":"sp-goal","type":"parent-child"}]}
+JSONL
+touch "$RUN/sp-noinc.log"
+rm -f "$RUN/landstate/sp-noinc"
+git -C "$REPO" commit -q --allow-empty -m "spira: land sp-noinc"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+
+out="$(sentinel)"
+is "sp-noinc stays closed" closed "$(status_of sp-noinc)"
+nowant "no resolve is logged when no incident exists to resolve" "CHECK5 resolve sp-noinc" "$out"
+
+# ======================================================================================
+echo
+echo "RESOLVING IS BOUNDED TOO — N+1 provably-landed incidents resolve exactly N:"
+# ======================================================================================
+testdb_reset
+{
+    printf '{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}\n'
+    for n in 1 2 3; do
+        h="$(ref_hash "closed-not-landed:sp-rl$n")"
+        printf '{"id":"sp-rl%s","title":"resolve-flood","status":"closed","issue_type":"task","labels":["spira","plan","repo:%s"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-rl%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' "$n" "$HOME_REPO" "$n"
+        printf '{"id":"sp-rl%sinc","title":"CLOSED NOT LANDED: sp-rl%s has no LANDED record","status":"open","issue_type":"bug","labels":["spira","incident","ref:%s"],"updated_at":"2026-09-04T00:00:00Z"}\n' "$n" "$n" "$h"
+        touch "$RUN/sp-rl$n.log"; rm -f "$RUN/landstate/sp-rl$n"
+        git -C "$REPO" commit -q --allow-empty -m "spira: land sp-rl$n"
+    done
+} | testdb_seed
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+
+out="$(SPIRA_CHECK5_MAX_RESOLVE=2 sentinel)"
+resolved=0
+for n in 1 2 3; do [ "$(status_of "sp-rl${n}inc")" = closed ] && resolved=$((resolved+1)); done
+is   "(e) exactly SPIRA_CHECK5_MAX_RESOLVE incidents are resolved" 2 "$resolved"
+want "(e) the pass logs how many the cap left unresolved" "1 more proven landed but not resolved" "$out"
+
 tl_summary
