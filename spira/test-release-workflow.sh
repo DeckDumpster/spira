@@ -30,6 +30,8 @@
 #   6. build-tarball.sh is called with --name to stamp once per release.
 #   7. POSITIVE CONTROL + release.yml invokes build-tarball.sh with --workspace.
 #   8. POSITIVE CONTROL + gate.yml retracts the tag when publish fails.
+#   9. POSITIVE CONTROL + release.yml passes --repo-name, derived from the tag, so an
+#      installed release's identity does not come from its own directory name.
 #
 # covers: .github/workflows/release.yml .github/workflows/gate.yml spira/build-tarball.sh
 set -uo pipefail
@@ -173,6 +175,28 @@ else
     _check_retraction "$GATE_WORKFLOW" \
         && ok "gate.yml retracts orphan tag when publish fails" \
         || bad "gate.yml retracts orphan tag when publish fails" "needs.publish.result not found in gate.yml"
+fi
+
+# ============================================================================
+echo
+echo "9. release.yml passes --repo-name so an installed release's identity is stamped"
+# ============================================================================
+
+# Positive control: a fixture without --repo-name is detected as missing.
+FIXTURE9="$TMP/fixture-no-repo-name.yml"
+grep -v -- '--repo-name' "$WORKFLOW" > "$FIXTURE9"
+if ! grep -qF -- '--repo-name' "$FIXTURE9"; then
+    ok "positive control: fixture without --repo-name is correctly identified"
+else
+    bad "positive control: fixture without --repo-name" \
+        "fixture still contains --repo-name — cannot be a valid negative control"
+fi
+
+if grep -qF -- '--repo-name' "$WORKFLOW"; then
+    ok "release.yml passes --repo-name to build-tarball.sh"
+else
+    bad "release.yml passes --repo-name to build-tarball.sh" \
+        "--repo-name not found — an installed release would derive its identity from its own directory name"
 fi
 
 # ============================================================================

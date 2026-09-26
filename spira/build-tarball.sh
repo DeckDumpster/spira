@@ -8,12 +8,20 @@
 #
 #   The 'build' subcommand is the default: omitting it is equivalent.
 #   --workspace <path>: auto-discover all [[bin]] targets via cargo metadata.
+#   --repo-name <name>: the identity stamped into MANIFEST's `repo` line (see below).
 #   Legacy: --loom-bin, --panel-bin, --broker-bin, --supervise-bin still accepted.
 #
 # TARBALL CONTENTS
 #   Every file tracked by git at the given commit, plus:
 #     bin/<name>  — one entry per workspace [[bin]] target (or per explicit --*-bin)
-#     MANIFEST    — commit sha, timestamp, and sha256 per binary
+#     MANIFEST    — commit sha, timestamp, repo identity, and sha256 per binary
+#
+#   MANIFEST's `repo` line is the identity conf.sh reads back (SPIRA_HOME_REPO) once
+#   this tarball is unpacked and activated: an installed release is a directory named
+#   spira-<timestamp>, and that name changes on every upgrade, so it cannot be the
+#   identity a bead's repo: label is compared against (law-scope-is-a-runtime-key).
+#   --repo-name sets it explicitly; omitted, it is derived from the source checkout's
+#   own git identity, which is only correct when that checkout IS the named repository.
 #
 #   Scratch files (sp-*, *.fixed) at the repo root are not present once
 #   sp-tlv7 lands. The builder does not exclude them — they are deleted, not
@@ -53,7 +61,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # build — produce the tarball
 # ---------------------------------------------------------------------------
 do_build() {
-    local outdir="." loom_bin="" panel_bin="" broker_bin="" supervise_bin="" landing_pass_bin="" commit="" repo="" name_override=""
+    local outdir="." loom_bin="" panel_bin="" broker_bin="" supervise_bin="" landing_pass_bin="" commit="" repo="" name_override="" repo_name=""
     local workspace=""  # workspace root for auto-discovery via cargo metadata
 
     while [ $# -gt 0 ]; do
@@ -66,6 +74,7 @@ do_build() {
             --landing-pass-bin)  landing_pass_bin="$2";  shift 2 ;;
             --workspace)         workspace="$2";         shift 2 ;;
             --name)              name_override="$2";     shift 2 ;;
+            --repo-name)         repo_name="$2";         shift 2 ;;
             -h|--help)   _usage; exit 0 ;;
             -*) printf 'build-tarball.sh: unknown option: %s\n' "$1" >&2; exit 2 ;;
             *)
@@ -85,6 +94,21 @@ do_build() {
             repo="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)" \
                 || repo="$(cd "$HERE/.." && pwd -P)"
         fi
+    fi
+
+    # Resolve the repo identity to stamp into MANIFEST. --repo-name is authoritative
+    # (the release workflow passes it from the tag release.sh cut, which already went
+    # through conf.sh's full resolution including any operator override). Undeclared,
+    # fall back to the source checkout's own git identity — the same derivation
+    # conf.sh uses for a plain checkout — which is correct only when that checkout IS
+    # the named repository.
+    if [ -z "$repo_name" ]; then
+        local _btb_gcd
+        _btb_gcd="$(git -C "$repo" rev-parse --git-common-dir 2>/dev/null)" || _btb_gcd=""
+        case "$_btb_gcd" in
+            /*) repo_name="$(basename "$(dirname "$_btb_gcd")")" ;;
+            *)  repo_name="$(basename "$(cd "$repo" && pwd -P)")" ;;
+        esac
     fi
 
     # Resolve commit.
@@ -198,8 +222,8 @@ for pkg in meta['packages']:
         chmod +x "$stage/bin/${_bin_names[$_i]}"
     done
 
-    # Write MANIFEST — commit, timestamp, and sha256 per binary.
-    printf 'commit %s\ntimestamp %s\n' "$sha" "$ts" > "$stage/MANIFEST"
+    # Write MANIFEST — commit, timestamp, repo identity, and sha256 per binary.
+    printf 'commit %s\ntimestamp %s\nrepo %s\n' "$sha" "$ts" "$repo_name" > "$stage/MANIFEST"
     for _i in "${!_bin_names[@]}"; do
         local _h; _h="$(sha256sum "$stage/bin/${_bin_names[$_i]}" | awk '{print $1}')"
         printf 'bin/%s %s\n' "${_bin_names[$_i]}" "$_h" >> "$stage/MANIFEST"
