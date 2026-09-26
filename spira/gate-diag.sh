@@ -232,13 +232,16 @@ with open(sys.argv[3], 'w') as f:
 # the one file every consumer of a batch's results already reads.
 python3 -c "
 import json, sys
+def row(s, status):
+    return json.dumps({'suite': s, 'tier': '', 'case': '(verdict)', 'status': status,
+                        'seconds': 0, 'uc': [], 'detail': ''}, separators=(',', ':'))
 reds = [s for s in sys.argv[1].split() if s]
 flaky = [s for s in sys.argv[2].split() if s]
 with open(sys.argv[3], 'a') as f:
     for s in reds:
-        f.write(json.dumps({'suite': s, 'tier': '', 'case': '(verdict)', 'status': 'red-red', 'seconds': 0, 'uc': [], 'detail': ''}) + '\n')
+        f.write(row(s, 'red-red') + '\n')
     for s in flaky:
-        f.write(json.dumps({'suite': s, 'tier': '', 'case': '(verdict)', 'status': 'red-green', 'seconds': 0, 'uc': [], 'detail': ''}) + '\n')
+        f.write(row(s, 'red-green') + '\n')
 " "${_json_red:-}" "${_json_flaky:-}" "$ROOT/results.jsonl" 2>/dev/null || true
 
 _hdr='| Suite | Duration | Verdict | First FAIL line |
