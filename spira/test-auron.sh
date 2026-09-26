@@ -30,14 +30,14 @@
 # server, this suite exits 77 — the automake skip convention, which gate-brain.sh names in
 # the gate's output — but ONLY if everything that did run passed. A skip must never be able
 # to swallow a failure.
+# tier: T2
 # covers: spira/auron.sh spira/auron-classify.py spira/conf.sh spira/testdata/sentinel-healthy.log spira/testdata/sentinel-pre-check7.log
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 DATA="$HERE/testdata"
 pass=0; fail=0
 
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 
 # A fixed clock. Every threshold in the classifier is arithmetic on `now`, so a suite that
 # used the real one would drift into and out of its own windows.
@@ -802,5 +802,4 @@ case "$st_h" in *" open") ok "lifting the halt stamp restores normal alerting" ;
 unset st_h
 
 testdb_drop >/dev/null 2>&1
-printf '\n  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

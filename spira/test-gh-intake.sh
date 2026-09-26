@@ -23,10 +23,8 @@
 # covers: spira/gh-intake.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 SCRIPT="$HERE/gh-intake.sh"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
 
 echo "test-gh-intake.sh"
 echo
@@ -499,5 +497,4 @@ fi
 unset GH_INTAKE_LIB
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

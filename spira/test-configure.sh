@@ -21,15 +21,11 @@
 #   b. configure.sh must exist before any property above can be asserted.
 #
 # defect: sp-id7cx
+# tier: T1
 # covers: spira/configure.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 iszero() { [ "${2:-1}" -eq 0 ] && ok "$1" || bad "$1" "wanted exit 0, got ${2:-?}"; }
 
 echo "test-configure.sh"
@@ -242,5 +238,4 @@ want "output reports the existing repo-map" "already exists" "$_preserve_out"
 
 # ==========================================================================
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

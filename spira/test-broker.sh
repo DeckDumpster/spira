@@ -16,17 +16,14 @@
 # stubs can be invoked. What actually matters (a refused intent never reaches gh) is already
 # asserted below, on the real path, with a real refusal.
 #
+# tier: T1
 # covers: broker/* spira/broker.sh
 # hermetic-ok: no database required; gh is a stub; czar-fence.sh runs against a fixture env
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL — %s\n' "$1"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1: wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in [$3]"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1: wanted [$2] got [$3]"; }
 
 echo "test-broker.sh"
 
@@ -176,5 +173,4 @@ want "gh called with run view 12345" "run view 12345" "$(cat "$GH_LOG" 2>/dev/nu
 
 # =========================================================================
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

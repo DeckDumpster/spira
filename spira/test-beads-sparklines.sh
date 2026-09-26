@@ -13,13 +13,11 @@
 # No network. No real database. Under a second.
 #
 # defect: sp-mn8q
+# tier: T1
 # covers: spira/cockpit.sh spira/cockpit-sparklines.py cockpit/health.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 has() { printf '%s' "$2" | grep -qF "$3" && ok "$1" || bad "$1" "[$3] not found in [$2]"; }
 
 echo "test-beads-sparklines.sh"
@@ -180,5 +178,4 @@ is "opened bucket 1 (0 events, the min) renders the shortest glyph" "▁" "$shor
 
 # ---------------------------------------------------------------------------
 echo ""
-echo "RESULTS: $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+tl_summary

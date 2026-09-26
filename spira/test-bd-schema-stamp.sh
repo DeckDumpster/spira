@@ -8,14 +8,11 @@
 #   calls bd and increments the counter. Only then does an unchanged counter on the
 #   second source mean the cache worked — not that counting itself is broken.
 #
+# tier: T1
 # covers: spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 iseq()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 echo "test-bd-schema-stamp.sh"
@@ -123,5 +120,4 @@ nowant "binary swap: REACHED-PAST-GUARD absent (mismatch exits conf.sh)" "REACHE
 want   "binary swap: schema mismatch reported"                            "schema mismatch"    "$swap_out"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

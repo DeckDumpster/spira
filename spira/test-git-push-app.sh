@@ -14,13 +14,7 @@
 # covers: spira/git-credential-app.sh spira/lib.sh spira/landing.sh spira/batch.sh spira/sending.sh spira/verdict.sh spira/queue.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-lack()   { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
-is()     { [ "$2" = "$3" ]     && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-wantrc() { [ "$2" = "$3" ]     && ok "$1" || bad "$1" "wanted rc=$2 got rc=$3"; }
+. "$HERE/testlib.sh"
 
 echo "test-git-push-app.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -159,8 +153,8 @@ rm -f "$TMP/git-args"
 ) 2>/dev/null || true
 
 args_without="$(cat "$TMP/git-args" 2>/dev/null)"
-lack "no credential.helper without App creds"  "credential.helper"  "$args_without"
-lack "no insteadOf without App creds"          "insteadOf"          "$args_without"
+nowant "no credential.helper without App creds"  "credential.helper"  "$args_without"
+nowant "no insteadOf without App creds"          "insteadOf"          "$args_without"
 want "push still passes through"               "push"               "$args_without"
 
 # =========================================================================
@@ -196,5 +190,4 @@ for f in landing.sh batch.sh sending.sh verdict.sh queue.sh; do
     fi
 done
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

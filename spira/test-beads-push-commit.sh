@@ -34,15 +34,13 @@
 # After bootstrap, `bd memories --json` counts the target statute key.
 #
 # defect: sp-e1l1
+# tier: T2
 # covers: beads-push.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 ROOT="$(cd "$HERE/.." && pwd)"
 
-pass=0; fail=0
-ok()    { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()   { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-is()    { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 echo "test-beads-push-commit.sh"
 TMP="$(mktemp -d)"
@@ -160,5 +158,4 @@ manifest_after="$(cat "$MANIFEST" 2>/dev/null)"
 is "no-op: clean state produces no new commit" "$manifest_before" "$manifest_after"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

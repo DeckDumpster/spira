@@ -39,15 +39,13 @@
 #  17. CERTIFIED waiter stays open: a bead with CERTIFIED (not LANDED) is not closed.
 #
 # defect: sp-v890d sp-ya5nk sp-rvoun
+# tier: T2
 # covers: spira/lib.sh spira/sentinel.sh spira/conf.sh spira/strand.sh
 # hermetic-ok: uses a fixture database; mark_queue_waiters tested with real bd;
 #              assertion 10 uses stub ready_count (no db call needed for structural check)
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()    { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()   { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()    { [ "$2" = "$3" ]        && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 has()   { [[ "$3" == *"$2"* ]]   && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 lacks() { [[ "$3" != *"$2"* ]]   && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 gt0()   { [ "${2:-0}" -gt 0 ]    && ok "$1" || bad "$1" "wanted >0 got [$2]"; }
@@ -264,5 +262,4 @@ is "17: CERTIFIED waiter — still open (not closed by closeout pass)" \
    "open" "$(B show sp-certified-waiter --json 2>/dev/null | python3 -c \
        'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status",""))' 2>/dev/null)"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

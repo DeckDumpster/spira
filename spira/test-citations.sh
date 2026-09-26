@@ -22,15 +22,11 @@
 # write into a real Spira database (law-gates-run-in-a-clean-environment).
 #
 # defect: sp-gsmx.7
+# tier: T2
 # covers: spira/citations.sh spira/test-*.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-citations.sh"
 
@@ -130,5 +126,4 @@ want "resolve says does not resolve"         "does not resolve"       "$out"
 nowant "unresolved resolve does not say uncited" "uncited"            "$out"
 
 echo
-printf '%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

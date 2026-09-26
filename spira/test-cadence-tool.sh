@@ -29,16 +29,14 @@
 # EXIT trap for cleanup; a slain shell left stray units named after a dead pid. Container
 # isolation was the fix (sp-dah).
 #
+# tier: T1
 # covers: spira/cadence.sh
 # priority: 2
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 hasnt()  { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "found [$2] in [$3]"; }
 iszero() { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
 
@@ -272,5 +270,4 @@ diff_out="$(diff <(printf '%s\n' "$snap_before") <(printf '%s\n' "$snap_after") 
     || bad "host unit directory changed" "$(printf '%s\n' "$diff_out" | head -10)"
 
 echo
-printf '%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -20,11 +20,8 @@
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 CRATE="$HERE/../desired-state"
-
-pass=0; fail=0
-ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
-bad() { printf '  FAIL  %s\n        %s\n' "$1" "${2:-}"; fail=$((fail+1)); }
 
 # Resolve cargo/rustc BEFORE conf.sh (pulled in indirectly via lib.sh elsewhere in the
 # gate) can overwrite PATH with the harness's own tool directories, which do not include
@@ -47,5 +44,4 @@ else
     bad "desired-state tests" "$(printf '%s\n' "$out" | tail -40)"
 fi
 
-printf '\n  %d ok, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

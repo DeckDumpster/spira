@@ -15,18 +15,14 @@
 # activate.sh does not exist or does not apply chmod -R a-w, which is exactly
 # the gap sp-zwa7 was told "DO IT" about.
 #
+# tier: T2
 # covers: spira/sentinel.sh spira/lib.sh spira/conf.sh spira/activate.sh
 # SKIP: XDG_RUNTIME_DIR absent (testdb requires a user session)
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
-is()      { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 echo "test-loop-readonly.sh"
 
@@ -180,8 +176,8 @@ SENTINEL_OUT="$(
 )"
 SENTINEL_RC=$?
 iszero "sentinel.sh exits 0 from read-only release" "$SENTINEL_RC"
-notwant "no permission denied from release dir" "Permission denied" "$SENTINEL_OUT"
-notwant "no read-only filesystem error"         "Read-only file system" "$SENTINEL_OUT"
+nowant "no permission denied from release dir" "Permission denied" "$SENTINEL_OUT"
+nowant "no read-only filesystem error"         "Read-only file system" "$SENTINEL_OUT"
 
 _summon_calls=0
 [ -f "$SUMMON_LOG" ] && _summon_calls="$(wc -l < "$SUMMON_LOG" | tr -d ' ')"
@@ -202,5 +198,4 @@ is "sp-lr-work is in_progress (claimed from read-only release)" \
 
 # ===========================================================================
 echo ""
-printf '%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

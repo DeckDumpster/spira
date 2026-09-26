@@ -33,16 +33,12 @@
 # either would be a second implementation of the thing in question.
 #
 # defect: sp-cross-repo
+# tier: T2
 # covers: spira/aeon.sh spira/lib.sh
 # hermetic-ok: uses a fixture database, local git repos only, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -206,5 +202,4 @@ want "log shows the second repo path" "$SECOND_REPO" "$aeon_out"
 nowant "log does not say it used the home repo" "works repo:home" "$aeon_out"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -15,14 +15,11 @@
 # tested before any innocuous case, confirming the check fires on a known offender.
 #
 # defect: sp-6hdi
+# tier: T1
 # covers: spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()    { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()   { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()  { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-destructive-bead.sh"
 
@@ -222,5 +219,4 @@ want   "bdq schema-delete with needs-ryan: refused"      "schema_migrations"  "$
 nowant "bdq schema-delete with needs-ryan: bd not called" "bd-called"         "$e2e_schema"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
