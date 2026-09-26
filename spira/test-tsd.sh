@@ -20,8 +20,9 @@
 #      the tsd row is best-effort, landing itself never depends on it.
 #   9. testenv-batch.sh's suite-times hook appends a suite-timing row alongside the existing
 #      suite-times.tsv/log — same must-fail-against-the-previous-code property as land_mark.
-#  10. tsd-query.sh: baseline (avg), rate (count/hours), dwell (quantile) against a synthetic
-#      fixture, plus refusals for a bad family, a missing family, and a bad field name.
+#  10. tsd-query.sh: baseline (avg), rate (count/hours), dwell (quantile), and by-group
+#      (per-group avg, longest-first — sp-ezkp3's LPT lookup) against a synthetic fixture,
+#      plus refusals for a bad family, a missing family, and a bad field name.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): every refusal case (3, 4, 5, 8's
 # sibling in reverse) is paired with the accepting case, so a check that never fires is caught
@@ -223,7 +224,7 @@ if [ -f "$FAM7" ]; then
 fi
 
 # ============================================================================================
-printf '\n%s\n' "10. tsd-query.sh: baseline, rate, dwell, and their refusals"
+printf '\n%s\n' "10. tsd-query.sh: baseline, rate, dwell, by-group, and their refusals"
 # ============================================================================================
 DUCKDB_BIN="$(command -v duckdb 2>/dev/null || true)"
 if [ -z "$DUCKDB_BIN" ]; then
@@ -255,6 +256,27 @@ else
 
     out="$(qout baseline suite-timing "bad field" 1)"; rc=$?
     [ "$rc" -ne 0 ] && ok "bad field name refused" || bad "bad field name accepted"
+
+    # by-group: per-group avg, longest-first, tab-separated (sp-ezkp3's LPT lookup).
+    # other.sh (avg 150) must sort ahead of fixture.sh (avg 30) — proving GROUP BY
+    # actually separates the two suites rather than averaging across all rows.
+    "$TSD_BIN" --family suite-timing --root "$RUN8" --host h1 --ts 2026-09-25T00:00:01Z \
+        --field-str suite=other.sh --field "wall_secs=100"
+    "$TSD_BIN" --family suite-timing --root "$RUN8" --host h1 --ts 2026-09-25T00:00:02Z \
+        --field-str suite=other.sh --field "wall_secs=200"
+
+    out="$(qout by-group suite-timing suite wall_secs)"
+    is "by-group: first row is the higher-avg group (other.sh)" \
+       "other.sh" "$(printf '%s\n' "$out" | head -1 | cut -f1)"
+    want "by-group: other.sh's avg is 150" "150" "$(printf '%s\n' "$out" | head -1 | cut -f2)"
+    is "by-group: second row is fixture.sh" \
+       "fixture.sh" "$(printf '%s\n' "$out" | sed -n 2p | cut -f1)"
+    want "by-group: fixture.sh's avg is still 30 (unaffected by other.sh's rows)" \
+         "30" "$(printf '%s\n' "$out" | sed -n 2p | cut -f2)"
+
+    out="$(qout by-group suite-timing "Bad Group" wall_secs)"; rc=$?
+    [ "$rc" -ne 0 ] && ok "by-group: bad group field name refused" \
+                    || bad "by-group: bad group field name accepted"
 fi
 
 printf '\ntest-tsd.sh: %d passed, %d failed\n' "$pass" "$fail"
