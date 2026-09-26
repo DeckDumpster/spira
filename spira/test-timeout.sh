@@ -109,8 +109,9 @@ labels_of() { bdq label list "$1" 2>/dev/null | sed -n 's/^ *- //p' | tr '\n' ' 
 seed sp-t1
 # Counter labels (sp-timeout-N) are no longer written (sp-lzt).
 # timeouts_of is a diagnostic stub returning 0; bump_timeout is a no-op.
+# The fresh-bead/one-timeout/in_progress attempts_of cases moved to test-attempts-sql.sh
+# (sp-eq8a4.2.4) — what stays here is specific to timeouts_of/bump_timeout, not attempts_of.
 is "a fresh bead has no timeouts" 0 "$(num "$(timeouts_of sp-t1)")"
-is "a fresh bead has no attempts" 0 "$(num "$(attempts_of sp-t1)")"
 # bump_timeout must not write a label.
 bump_timeout sp-t1
 labels_t1="$(labels_of sp-t1)"
@@ -118,16 +119,6 @@ labels_t1="$(labels_of sp-t1)"
     || bad "bump_timeout writes no label" "got [$labels_t1]"
 # timeouts_of returns 0 regardless (diagnostic stub).
 is "timeouts_of is a stub returning 0" 0 "$(num "$(timeouts_of sp-t1)")"
-
-# TIMEOUTS DO NOT CHARGE ATTEMPTS — the events trail only records status_changed.
-# A timeout does not transition the bead to in_progress, so the count stays 0.
-is "one timeout costs the work no attempts" 0 "$(num "$(attempts_of sp-t1)")"
-
-# THE PAIR: an in_progress transition charges an attempt via events.
-seed sp-t2
-bdq update sp-t2 --status in_progress >/dev/null 2>&1
-is "an in_progress transition charges an attempt" 1 "$(num "$(attempts_of sp-t2)")"
-is "and leaves no timeout counter"                0 "$(num "$(timeouts_of sp-t2)")"
 
 # SPIRA_ASK_TIMEOUT_LOOP DEDUPLICATES ON (id, count).
 seed sp-t3

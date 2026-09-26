@@ -309,37 +309,41 @@ fi
 # ======================================================================================
 dispatchable="$(dispatchable_open)"
 log "CHECK4 examining $(printf '%s' "$dispatchable" | grep -c . || true) dispatchable bead(s), poison=$POISON_AT requeue=$REQUEUE_AT reclaim=$RECLAIM_AT"
-# ONE QUERY FOR ALL ATTEMPTS AND REOPENS. dispatchable_open already parsed each bead's
-# labels and emits them alongside the id; CHECK 4 reads them from there, not the store.
-# attempts_of and reopens_of are per-bead SQL calls; one GROUP BY returns the same numbers
-# for the whole dispatchable set. On a 59-bead set: 177 calls / 29,731 ms → 1 call / 178 ms.
-declare -A _c4_attempts _c4_reopens
-while IFS=$'\t' read -r _bid _batt _brep; do
+# ONE QUERY FOR ALL ATTEMPTS, REOPENS AND RECLAIMS. dispatchable_open already parsed each
+# bead's labels and emits them alongside the id; CHECK 4 reads them from there, not the
+# store. attempts_of/reopens_of/reclaims_of are per-bead SQL calls; one GROUP BY returns
+# the same numbers for the whole dispatchable set. On a 59-bead set: 177 calls / 29,731 ms
+# → 1 call / 178 ms.
+declare -A _c4_attempts _c4_reopens _c4_reclaims
+while IFS=$'\t' read -r _bid _batt _brep _brcl; do
     [ -n "$_bid" ] || continue
     _c4_attempts["$_bid"]="${_batt:-0}"
     _c4_reopens["$_bid"]="${_brep:-0}"
+    _c4_reclaims["$_bid"]="${_brcl:-0}"
 done < <(check4_bulk_data "$dispatchable")
 while IFS=$'\t' read -r id _labels; do
     [ -n "$id" ] || continue
-    # ATTEMPTS FROM THE EVENTS TRAIL; labels for poison, repo, and partition exclusions.
-    # Counter labels (sp-attempt-N, sp-reclaim-N, sp-requeue-N) are no longer written
-    # (sp-lzt). The attempt count comes from status_changed events in the bd events table;
-    # requeue cap is driven by reopened events (sp-6bop); reclaim cap has no event-based
-    # implementation yet.
+    # ATTEMPTS, REQUEUES AND RECLAIMS FROM THE EVENTS TRAIL; labels for poison, repo, and
+    # partition exclusions. Counter labels (sp-attempt-N, sp-reclaim-N, sp-requeue-N) are
+    # no longer written (sp-lzt) — every count here comes from the bulk pre-load above.
     n="${_c4_attempts[$id]:-0}"; n="${n:-0}"
-    _reclaims=0
+    _reclaims="${_c4_reclaims[$id]:-0}"; _reclaims="${_reclaims:-0}"
     _requeues="${_c4_reopens[$id]:-0}"; _requeues="${_requeues:-0}"
+
+    # THE DEDUP STATE IS I/O (a file read); check4_decide itself is not — see lib.sh. Read
+    # it once per bead and hand it to the pure decision as a bundled stamp.
+    _rq_asked=0; requeue_asked "$id" && _rq_asked=1
+    _rc_asked=0; reclaim_asked "$id" && _rc_asked=1
+    _po_asked=0; poison_asked "$id" "$n" && _po_asked=1
+    decision="$(check4_decide "$n" "$_requeues" "$_reclaims" "$_labels" "$_rq_asked:$_rc_asked:$_po_asked")"
 
     # REQUEUE CAP. A bead completed and requeued past the cap is stuck in a loop the harness
     # is causing: the session finished the work, closed the bead, and the harness put it back
     # each time because the branch could not rebase onto a base that had moved. The work may
-    # be correct; the queue cannot get it to land. Distinct from poison: no poison label is
-    # added; the close cancels the claim in attempts_of so no attempt is charged.
-    if [ "$_requeues" -ge "$REQUEUE_AT" ]; then
-        case "$_labels" in
-            *'delivers:action'*) ;;  # closes without a commit; reopens are not harness landing stalls
-            *)
-        requeue_asked "$id" "$_requeues" && continue
+    # be correct; the queue cannot get it to land. Distinct from poison and reclaim: check4_decide
+    # decides each of the three independently, so a bead over one cap is never silently
+    # exempted from the others.
+    case " $decision " in *' requeue-mail '*)
         _rq_causes="$(printf '%s' "$_labels" | tr ',' '\n' \
             | grep -E '^sp-requeue-[0-9]+(-|$)' \
             | sed -E 's/^sp-requeue-([0-9]+)$/\1 unrecorded/;s/^sp-requeue-([0-9]+)-(.*)$/\1 \2/' \
@@ -371,16 +375,14 @@ MAILEOF
         else
             log "CHECK4 $id: requeue escalation path refused the ask — retries next pass"
         fi
-            ;;
-        esac
-    fi
+        ;;
+    esac
 
     # RECLAIM CAP. A bead N aeons have died holding is on a box that cannot run it. The
     # sessions never judged the work; the infrastructure killed them. Different from a cycling
     # requeue: the issue is the box, not the queue. No poison label is added — the work is not
     # at fault.
-    if [ "$_reclaims" -ge "$RECLAIM_AT" ]; then
-        reclaim_asked "$id" "$_reclaims" && continue
+    case " $decision " in *' reclaim-mail '*)
         _rc_causes="$(printf '%s' "$_labels" | tr ',' '\n' \
             | grep -E '^sp-reclaim-[0-9]+(-|$)' \
             | sed -E 's/^sp-reclaim-([0-9]+)$/\1 unrecorded/;s/^sp-reclaim-([0-9]+)-(.*)$/\1 \2/' \
@@ -412,76 +414,64 @@ MAILEOF
         else
             log "CHECK4 $id: reclaim escalation path refused the ask — retries next pass"
         fi
-    fi
+        ;;
+    esac
 
-    [ "$n" -ge "$POISON_AT" ] || continue
-    # A bead at the threshold with zero charged attempts means POISON_AT=0; nothing failed and
-    # there is nothing to report. Do not poison and do not ask.
-    [ "$n" -gt 0 ] || continue
-
-    # A CLOSED BEAD NEVER POISONS AND NEVER ASKS. dispatchable_open excludes closed beads,
-    # but it is a SNAPSHOT and this loop makes several bd calls per bead — so a bead the
-    # landing pass finished a few seconds ago is still in the list, and the operator was
-    # asked whether to change the approach on work that had already landed. Re-read the one
-    # field that decides it, immediately before acting on it.
-    #
-    # ONE bdjson show IS ALSO USED FOR bead_context. When the ask fires (the first time at
-    # this count), the evidence block needs the full bead data anyway. Fetch it once and
-    # pass the JSON to both the status check and the context formatter rather than making a
-    # second identical bd call for the context alone.
-    _bd_json="$(bdjson show "$id" 2>/dev/null)" || _bd_json=""
-    _bead_st="$(printf '%s' "$_bd_json" | python3 -c '
+    # POISON AND ASK SHARE ONE GATE: a CLOSED bead never poisons and never asks.
+    # dispatchable_open excludes closed beads, but it is a SNAPSHOT and this loop makes
+    # several bd calls per bead — so a bead the landing pass finished a few seconds ago is
+    # still in the list, and the operator was asked whether to change the approach on work
+    # that had already landed. Re-read the one field that decides it, immediately before
+    # acting on it — and only when check4_decide found something to act on.
+    case " $decision " in *' poison '*|*' ask '*)
+        # ONE bdjson show IS ALSO USED FOR bead_context. When the ask fires (the first time
+        # at this count), the evidence block needs the full bead data anyway. Fetch it once
+        # and pass the JSON to both the status check and the context formatter rather than
+        # making a second identical bd call for the context alone.
+        _bd_json="$(bdjson show "$id" 2>/dev/null)" || _bd_json=""
+        _bead_st="$(printf '%s' "$_bd_json" | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
 except Exception: print(""); sys.exit()
 d = d if isinstance(d, list) else [d]
 print(d[0].get("status", "") if d else "")' 2>/dev/null)"
-    if [ "$_bead_st" = closed ]; then
-        log "CHECK4 $id: $n attempts, but it closed while this pass ran — not poisoned, not asked"
-        continue
-    fi
+        if [ "$_bead_st" = closed ]; then
+            log "CHECK4 $id: $n attempts, but it closed while this pass ran — not poisoned, not asked"
+        else
+            # THE POISON NAMES THE OUTCOMES THAT CHARGED IT, never just their count. Attempts
+            # are counted from the events trail (sp-lzt); the per-cause breakdown labels once
+            # provided is gone, the count itself is the signal.
+            #
+            # Check the poison label from _labels. `... | grep -q` under `set -o pipefail`
+            # hands back 141 when it MATCHES — grep exits at the first hit and the writer
+            # dies of SIGPIPE — so `if ! ... | grep -q spira-poison` read as "not poisoned"
+            # precisely when the bead was (law-no-grep-q-under-pipefail). check4_decide's
+            # case match on the already-fetched label string has neither hazard.
+            case " $decision " in *' poison '*)
+                bdq label add "$id" spira-poison >/dev/null 2>&1
+                bdq note "$id" "Poisoned after $n in_progress transition(s) without landing. Not retried until a human changes the approach. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the label stands." >/dev/null 2>&1
+                progress "poisoned $id after $n attempts"
+                # check4_decide only emits `poison` on the transition into poisoned (the
+                # `spira-poison` case in its label match), so this fires once — the bead
+                # keeps the label, and every later pass takes the other branch.
+                spira_event bead.poisoned "$id" "poisoned $id after $n attempts" \
+                    "not retried until a human changes the approach" || true
+                ;;
+            esac
 
-    # THE POISON NAMES THE OUTCOMES THAT CHARGED IT, never just their count. A poison nobody
-    # can audit takes a bead out of circulation for reasons that have already scrolled away,
-    # and "three attempts" is only a reason to stop if all three were the work failing. Rungs
-    # predating the cause label read `unrecorded`, which is honest rather than an assumption
-    # about what they were.
-    # Attempts are now counted from the events trail, not from labels (sp-lzt). The
-    # per-cause breakdown that labels provided is gone; the count itself is the signal.
-    charges="$n in_progress transition(s)"
-
-    # Check the poison label from _labels. `... | grep -q` under `set -o pipefail` hands
-    # back 141 when it MATCHES — grep exits at the first hit and the writer dies of SIGPIPE
-    # — so `if ! ... | grep -q spira-poison` read as "not poisoned" precisely when the bead
-    # was, and re-labelled and re-asked on a pass that should have done nothing
-    # (law-no-grep-q-under-pipefail). A case match on the already-fetched label string has
-    # neither the pipe nor the exit-code hazard.
-    case "$_labels" in
-        *spira-poison*) ;;
-        *)  bdq label add "$id" spira-poison >/dev/null 2>&1
-            bdq note "$id" "Poisoned after $n in_progress transition(s) without landing. Not retried until a human changes the approach. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the label stands." >/dev/null 2>&1
-            progress "poisoned $id after $n attempts"
-            # Inside the label guard, so it fires on the TRANSITION into poisoned and never
-            # again — the bead keeps the label, and every later pass takes the other branch.
-            spira_event bead.poisoned "$id" "poisoned $id after $n attempts" \
-                "not retried until a human changes the approach" || true
-            ;;
-    esac
-
-    # AT MOST ONE ASK PER (BEAD, ATTEMPT COUNT), EVER — and never "once per bead while it is
-    # unpoisoned", which is what the label test above used to be doing double duty as. The
-    # ask's own remedy is to clear the poison label, so keying on the label made every
-    # application of the remedy re-arm the ask (poison_asked, lib.sh).
-    poison_asked "$id" "$n" && continue
-
-    # The ask carries the failure itself. A path is not evidence: the operator reads this
-    # in a tmux pane and cannot open a file from it.
-    # THE BEAD FIRST, THEN THE FAILURE. A log tail says what broke; it cannot say
-    # what the work was for, and that is the question that has to be answered
-    # before "change the approach or drop it" means anything.
-    # The JSON was already fetched for the status check above — pipe it to the context
-    # formatter rather than calling bead_context (which would re-issue bdjson show).
-    ev="$(printf '%s' "$_bd_json" | python3 -c '
+            # AT MOST ONE ASK PER (BEAD, ATTEMPT COUNT), EVER — check4_decide applied that
+            # dedup via the asked-stamp above; poison_asked_mark below is the write half.
+            # The ask's own remedy is to clear the poison label, so keying dedup on the
+            # label (rather than the count) made every application of the remedy re-arm the
+            # ask (poison_asked, lib.sh).
+            case " $decision " in *' ask '*)
+                # The ask carries the failure itself. A path is not evidence: the operator
+                # reads this in a tmux pane and cannot open a file from it. THE BEAD FIRST,
+                # THEN THE FAILURE — a log tail says what broke, not what the work was for.
+                # The JSON was already fetched for the status check above — pipe it to the
+                # context formatter rather than calling bead_context (which would re-issue
+                # bdjson show).
+                ev="$(printf '%s' "$_bd_json" | python3 -c '
 import sys, json, datetime
 try:
     d = json.load(sys.stdin)
@@ -515,33 +505,34 @@ if notes:
     for n in notes[-3:]:
         print("  - %s" % str(n).strip()[:400])
 ' 2>/dev/null || printf '(could not read %s)' "$id")"
-    # THE BRANCH IS LOOKED FOR IN THE BEAD'S OWN REPOSITORY. Asking the home repo
-    # about another repository's bead answers "none — nothing was committed" for work that
-    # is sitting on a branch in another checkout, and the operator would be deciding whether
-    # to drop a bead on the strength of a fact from the wrong disk.
-    # r_name comes from the labels dispatchable_open emitted for this bead. _reclaims and
-    # _requeues are already set from the bulk pre-load above, before the threshold gate.
-    r_name="$(printf '%s' "$_labels" | tr ',' '\n' | sed -n 's/^repo://p' | head -1)"
-    r_name="${r_name:-$(spira_home_repo)}"
-    r_path="$(repo_root "$r_name")" || r_path=""
-    # COMMIT COUNT AND DIFFSTAT, NOT REF EXISTENCE. show-ref returns true for a branch
-    # that exists but has zero commits ahead of base — reporting "with work on it" when
-    # none exists sends the operator looking for output that was never written (sp-njwb).
-    branch_info='none — nothing was committed'
-    if [ -n "$r_path" ] && git -C "$r_path" show-ref --verify -q "refs/heads/spira/$id" 2>/dev/null; then
-        _base="$(spira_landref "$r_path" 2>/dev/null)" || _base=""
-        _range="${_base:+${_base}..}spira/$id"
-        _nc="$(git -C "$r_path" rev-list --count "$_range" 2>/dev/null)" || _nc="?"
-        if [ "${_nc}" = 0 ] || [ "${_nc}" = "?" ]; then
-            branch_info="spira/$id exists, no commits${_base:+ ahead of $_base}"
-        else
-            _ds="$(git -C "$r_path" diff --stat "$_range" 2>/dev/null | tail -1)"
-            branch_info="spira/$id — ${_nc} commit(s)${_ds:+; $_ds}"
-        fi
-    fi
-    # Attempts are from the events trail (sp-lzt): no per-cause breakdown.
-    charge_summary="$n in_progress transition(s)"
-    ev="$ev
+                # THE BRANCH IS LOOKED FOR IN THE BEAD'S OWN REPOSITORY. Asking the home
+                # repo about another repository's bead answers "none — nothing was
+                # committed" for work that is sitting on a branch in another checkout, and
+                # the operator would be deciding whether to drop a bead on the strength of a
+                # fact from the wrong disk. r_name comes from the labels dispatchable_open
+                # emitted for this bead.
+                r_name="$(printf '%s' "$_labels" | tr ',' '\n' | sed -n 's/^repo://p' | head -1)"
+                r_name="${r_name:-$(spira_home_repo)}"
+                r_path="$(repo_root "$r_name")" || r_path=""
+                # COMMIT COUNT AND DIFFSTAT, NOT REF EXISTENCE. show-ref returns true for a
+                # branch that exists but has zero commits ahead of base — reporting "with
+                # work on it" when none exists sends the operator looking for output that
+                # was never written (sp-njwb).
+                branch_info='none — nothing was committed'
+                if [ -n "$r_path" ] && git -C "$r_path" show-ref --verify -q "refs/heads/spira/$id" 2>/dev/null; then
+                    _base="$(spira_landref "$r_path" 2>/dev/null)" || _base=""
+                    _range="${_base:+${_base}..}spira/$id"
+                    _nc="$(git -C "$r_path" rev-list --count "$_range" 2>/dev/null)" || _nc="?"
+                    if [ "${_nc}" = 0 ] || [ "${_nc}" = "?" ]; then
+                        branch_info="spira/$id exists, no commits${_base:+ ahead of $_base}"
+                    else
+                        _ds="$(git -C "$r_path" diff --stat "$_range" 2>/dev/null | tail -1)"
+                        branch_info="spira/$id — ${_nc} commit(s)${_ds:+; $_ds}"
+                    fi
+                fi
+                # Attempts are from the events trail (sp-lzt): no per-cause breakdown.
+                charge_summary="$n in_progress transition(s)"
+                ev="$ev
 
 REPO      $r_name${r_path:+ ($r_path)}
 ATTEMPTS  $n (poison threshold $POISON_AT) — each in_progress transition from the events trail
@@ -549,15 +540,15 @@ BRANCH    $branch_info
 
 --- last session log (tail) ---
 $(trace_tail "$SPIRA_RUN/$id.log" 25)"
-    # MARKED ONLY IF THE MAIL WAS ACCEPTED. Stamping first would let mail.sh being absent
-    # silently swallow the one notification this count will ever produce.
-    _po_subj="Spira bead $id — ${charge_summary} without landing (${n} attempts) — change the approach or drop it?"
-    _po_dflt="if the work is correct, re-label or split the bead and clear spira-poison; if it is not worth doing, close it"
-    if [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
-          --from "Sentinel <sentinel@spira>" \
-          --subject "$_po_subj" \
-          --kind question \
-          --default "$_po_dflt" <<MAILEOF >/dev/null 2>&1; then
+                # MARKED ONLY IF THE MAIL WAS ACCEPTED. Stamping first would let mail.sh
+                # being absent silently swallow the one notification this count produces.
+                _po_subj="Spira bead $id — ${charge_summary} without landing (${n} attempts) — change the approach or drop it?"
+                _po_dflt="if the work is correct, re-label or split the bead and clear spira-poison; if it is not worth doing, close it"
+                if [ -x "$SPIRA_HOME/mail.sh" ] && "$SPIRA_HOME/mail.sh" send operator \
+                      --from "Sentinel <sentinel@spira>" \
+                      --subject "$_po_subj" \
+                      --kind question \
+                      --default "$_po_dflt" <<MAILEOF >/dev/null 2>&1; then
 ## Question
 $_po_subj
 
@@ -568,10 +559,15 @@ nothing downstream of it can proceed, and no aeon will take it again while it is
 
 $ev
 MAILEOF
-        poison_asked_mark "$id" "$n"
-    else
-        log "CHECK4 $id: the escalation path refused the ask — it stands, and the next pass retries it"
-    fi
+                    poison_asked_mark "$id" "$n"
+                else
+                    log "CHECK4 $id: the escalation path refused the ask — it stands, and the next pass retries it"
+                fi
+                ;;
+            esac
+        fi
+        ;;
+    esac
 done <<< "$dispatchable"
 
 # CHECK 4 SUPPLEMENT — requeue cap for closed-but-unlanded beads.
@@ -582,15 +578,19 @@ done <<< "$dispatchable"
 _c4_closed="$(check4_closed_branched)"
 if [ -n "$_c4_closed" ]; then
     declare -A _c4c_reopens
-    while IFS=$'\t' read -r _bid _batt _brep; do
+    while IFS=$'\t' read -r _bid _batt _brep _brcl; do
         [ -n "$_bid" ] || continue
         _c4c_reopens["$_bid"]="${_brep:-0}"
     done < <(check4_bulk_data "$_c4_closed")
     while IFS=$'\t' read -r id _labels; do
         [ -n "$id" ] || continue
-        _requeues="${_c4c_reopens[$id]:-0}"
-        [ "$_requeues" -ge "$REQUEUE_AT" ] || continue
-        case "$_labels" in *'delivers:action'*) continue ;; esac
+        _requeues="${_c4c_reopens[$id]:-0}"; _requeues="${_requeues:-0}"
+        # attempts and reclaims do not apply to a closed bead's requeue-mail decision; the
+        # reclaim/poison asked-flags are pinned true so check4_decide never emits
+        # poison/clear/ask/reclaim-mail here — this call site only ever wants requeue-mail.
+        _rq_asked=0; requeue_asked "$id" && _rq_asked=1
+        decision="$(check4_decide 0 "$_requeues" 0 "$_labels" "$_rq_asked:1:1")"
+        case " $decision " in *' requeue-mail '*) ;; *) continue ;; esac
         _r_name="$(printf '%s' "$_labels" | tr ',' '\n' | sed -n 's/^repo://p' | head -1)"
         _r_name="${_r_name:-$(spira_home_repo)}"
         _r_path="$(repo_root "$_r_name" 2>/dev/null)" || _r_path=""
@@ -598,7 +598,6 @@ if [ -n "$_c4_closed" ]; then
             log "CHECK4-closed $id: reopens=$_requeues but already landed — no escalation"
             continue
         fi
-        requeue_asked "$id" "$_requeues" && continue
         _rq_causes="$(printf '%s' "$_labels" | tr ',' '\n' \
             | grep -E '^sp-requeue-[0-9]+(-|$)' \
             | sed -E 's/^sp-requeue-([0-9]+)$/\1 unrecorded/;s/^sp-requeue-([0-9]+)-(.*)$/\1 \2/' \
@@ -642,11 +641,14 @@ fi
 # Scan all poisoned non-closed beads. Any whose count is now below the threshold is
 # released: the condition that warranted the hold is gone.
 # EVENTS-BASED COUNT: attempt count comes from status_changed events, not labels (sp-lzt).
-# Each poisoned bead is queried individually; the per-bead cost is one SQL call.
+# Each poisoned bead is queried individually; the per-bead cost is one SQL call. This scan
+# iterates the (usually small) poisoned set, not the whole dispatchable set — the N+1
+# query sp-f1m7f removed is the CHECK4 main loop above, not this one.
 while read -r id; do
     [ -n "$id" ] || continue
     n="$(attempts_of "$id")"; n="${n:-0}"
-    [ "$n" -lt "$POISON_AT" ] || continue
+    decision="$(check4_decide "$n" 0 0 "spira-poison" "1:1:1")"
+    case " $decision " in *' clear '*) ;; *) continue ;; esac
     bdq label remove "$id" spira-poison >/dev/null 2>&1
     progress "CHECK4 $id: stale poison cleared — $n attempt(s), below threshold $POISON_AT"
 done < <(bdjson list --limit 0 --label spira-poison 2>/dev/null \
