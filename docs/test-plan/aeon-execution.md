@@ -393,3 +393,57 @@ Verified: `bash spira/testenv-batch.sh --suites test-aeon-verdict.sh,test-check5
 test-check5-delivers-check.sh,test-check5-delivers-action.sh,
 test-check5-delivers-falls-through.sh,test-check5-sweep-delivers.sh,test-aeon-resume.sh
 spira/sp-eq8a4.2.3` in testenv.
+
+## 11. Implementation status (sp-eq8a4.2.7)
+
+By the time this slice ran, sp-eq8a4.2.1-.2.5 had all landed on `origin/main` (under
+rebased commits, not the SHAs sp-eq8a4.2.6 recorded — `bd show`'s closed status was never
+the unreliable half; the branch tips it named had simply been superseded by a later rebase
+of the same work). D2-D3, D5-D8, D10, D12-D15 were re-examined against the tree those five
+slices actually left behind, rather than the pre-seam tree sp-eq8a4.2.6 saw:
+
+**Already complete, no new work needed:**
+- D2 (requeue-cap dedup), D3 (stale poison clear): both are rows in `test-check4-unit.sh`,
+  built whole by sp-eq8a4.2.4 alongside `check4_decide`.
+- D5 (attempts_of counts in_progress events), D6 (counter-label ban): both are sections of
+  `test-attempts-sql.sh`, built by sp-eq8a4.2.4.
+- D10 (`aeon_fuse_minutes` probe): `test-thrash.sh` was already trimmed to exactly this by
+  sp-eq8a4.2.2.
+- D13 (rendered prompt text) and D14 (fayth knob declarations): re-checked against the
+  current files rather than assumed resolved. `test-aeon-resume.sh` already is the T1
+  brief-render suite D13 asks for (`render_resume_brief`/`render_deadline_brief`, extracted
+  by sp-eq8a4.2.5). What looked like duplication in test-aeon-verdict.sh's DEADLINE/
+  ALREADY_DONE rows and test-aeon-prompt-layers.sh's argv/STICKING POINT rows, on inspection,
+  is not: each asserts the prompt text a **real aeon.sh run** produces (template
+  substitution wired through a live fayth), which the T1 table cannot stand in for — the
+  T1/e2e split this test plan asks for elsewhere, not a leftover copy. Likewise D14: the
+  four files named (test-aeon-prompt-layers.sh, test-fayth-project-instructions.sh,
+  test-ops-closing.sh, test-groom-escalation-check.sh) each assert a *different* FAYTH_*
+  knob using a similar grep idiom, not the same fact twice; there was no duplicate assertion
+  left to collapse into a lint. Building one anyway would be an abstraction with no
+  coverage gain.
+
+**D7 (`cleanup()` disarms errexit first) and the D5/D6 residue**: still duplicated between
+`test-attempts.sh`/`test-timeout.sh` and `test-attempts.sh`/`test-attempts-sql.sh`
+respectively — sp-eq8a4.2.4's own consolidation left one copy behind in each case. Removed
+here; `test-attempts.sh` also had a stale comment claiming `reclaims_of`/`requeues_of` are
+diagnostic stubs (only `timeouts_of` is — the other two count real events, as
+`test-attempts-sql.sh`'s b10 case already proves), fixed in the same pass.
+
+**D8, D12 and D15 are one task, not three**, and are NOT applied this slice. D12's four
+files (test-aeon-ledger.sh, test-aeon-presession-death.sh, test-aeon-yield-headless.sh,
+test-aeon-exit.sh) are four of D15's full-aeon-fixture suites, and D8's "Unlanded e2e row"
+is exactly the disposition-table row `test-aeon-disposition.sh` already asserts at T1 —
+what remains is the e2e wiring proof, which is D15's shared fixture library and one
+consolidated suite, not a separate task. Confirmed by inspection: test-aeon-decision-blocked.sh,
+test-aeon-operator-wait.sh, test-requeue.sh and D12's four files all build the identical
+skeleton (bare origin, clone, claude shim, bd store) to assert one `aeon-ledger.log`
+`status=` line apiece — ~1,460 lines across 7 files for what §7 projects as one ~90s, ~16-row
+suite once the fixture is shared. This is real, substantial, unstarted work, not a residue
+of something already landed, and rushing a partial migration across 7 files whose fixtures
+back real git/bd state risks silently losing e2e coverage the T1 tables don't reach (the
+one thing law-a-regression-test-must-be-seen-to-fail exists to catch, and a half-migrated
+suite is exactly the shape that hides a miss). Filed as sp-eq8a4.2.8.
+
+Verified: `bash spira/testenv-batch.sh --suites test-attempts.sh,test-timeout.sh,
+test-attempts-sql.sh spira/sp-eq8a4.2.7` in testenv — all green.
