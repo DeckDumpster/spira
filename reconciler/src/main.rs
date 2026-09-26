@@ -1015,7 +1015,7 @@ mod tests {
         let escalated = dir.join("escalated");
         let stub_incident = dir.join("stub-incident.sh");
         fs::write(&stub_incident, format!("#!/usr/bin/env bash\ncat >/dev/null\ntouch {}\n", escalated.display())).unwrap();
-        Command::new("chmod").args(["+x", stub_incident.to_str().unwrap()]).status().unwrap();
+        std::fs::set_permissions(&stub_incident, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 
         let cfg1 = Config { grace_secs: 0, now_secs: 100, incident_sh: stub_incident.to_string_lossy().to_string(), ..test_config() };
         let mut state = StateMap::new();
@@ -1048,7 +1048,7 @@ mod tests {
         let escalated = dir.join("escalated");
         let stub_incident = dir.join("stub-incident.sh");
         fs::write(&stub_incident, format!("#!/usr/bin/env bash\ncat >/dev/null\ntouch {}\n", escalated.display())).unwrap();
-        Command::new("chmod").args(["+x", stub_incident.to_str().unwrap()]).status().unwrap();
+        std::fs::set_permissions(&stub_incident, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 
         let cfg = Config { grace_secs: 300, now_secs: 100, incident_sh: stub_incident.to_string_lossy().to_string(), ..test_config() };
         let mut state = StateMap::new();
@@ -1066,7 +1066,7 @@ mod tests {
         let escalated = dir.join("escalated");
         let stub_incident = dir.join("stub-incident.sh");
         fs::write(&stub_incident, format!("#!/usr/bin/env bash\ncat >/dev/null\ntouch {}\n", escalated.display())).unwrap();
-        Command::new("chmod").args(["+x", stub_incident.to_str().unwrap()]).status().unwrap();
+        std::fs::set_permissions(&stub_incident, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 
         let cfg = Config { grace_secs: 0, now_secs: 100, incident_sh: stub_incident.to_string_lossy().to_string(), ..test_config() };
         let mut state = StateMap::new();
