@@ -104,6 +104,12 @@ Where they run: **cert** = certification (every commit, local and gate), **batch
 | UC-instance-lifecycle-46 | `acceptance-ci.sh` builds a scratch repo on `main` with a git identity and a repo-map, puts `~/.local/bin` on PATH, passes `XDG_RUNTIME_DIR`, and propagates `acceptance-run.sh`'s exit code. | CON | T2 / cert |
 | UC-instance-lifecycle-47 | `acceptance-run.sh` runs install with `SPIRA_OPERATED=0`, runs the clone's own `ready.sh` (not masked by `\|\| true`), extracts bead ids robustly (GH#2950), proves landing by ancestry, and records a git note. It emits a single PASS/FAIL line. | CON, TI | T1 (extracted functions) cert + T4 accept |
 
+Machine-readable declarations (read by `spira/plan-lint.sh`), added as each UC gets a covering
+suite rather than all at once:
+
+* `UC-instance-lifecycle-31` [T0] — every timer template is in UNITS (or OPTIONAL) and in ENABLE, and fires periodically; restarting services have a reachable start limiter in `[Unit]`; WatchdogSec appears only on non-shell ExecStart; the verdict service has `TimeoutStartSec>=3600` and no CPUQuota
+* `UC-instance-lifecycle-32` [T1] — cadence.sh changes a timer's cadence via a revertible drop-in and never leaves it without a next elapse; it refuses unknown units, and verify refuses an empty sweep (the T4 real-systemd disarm case is acceptance-only, tracked separately)
+
 ---
 
 ## 3. Coverage map

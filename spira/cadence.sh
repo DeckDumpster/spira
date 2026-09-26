@@ -194,6 +194,23 @@ next_elapse() {          # next_elapse <unit> -> a printable next elapse, or emp
     case "$mono" in ''|n/a|infinity|0) printf '' ;; *) printf 'boot+%s' "${mono%%.*}" ;; esac
 }
 
+# _dropin_for <unit> <interval> <why> -> the full cadence.conf content, on stdout. Split out
+# of cmd_set so the drop-in text (comment header + render_schedule's [Timer] lines) can be
+# tested without systemd: its only non-pure input is the wall clock and $SPIRA_OPERATOR.
+_dropin_for() {
+    local u="$1" iv="$2" why="${3:-}"
+    printf '# Written by cadence.sh on %s by %s.\n' \
+        "$(TZ="${SPIRA_TZ:-UTC}" date '+%Y-%m-%d %H:%M %Z')" "${SPIRA_OPERATOR:-unknown}"
+    printf '#\n# Requested cadence: %s\n' "$iv"
+    [ -n "$why" ] && printf '# Why: %s\n' "$why"
+    printf '#\n# This is an OVERRIDE, not a new default. The shipped template asks for:\n'
+    printf '#   %s\n' "$(template_cadence "$u")"
+    printf '# Change the template only if this cadence is meant to be permanent.\n'
+    printf '#\n# REVERT: %s/cadence.sh clear %s\n' "$HERE" "$u"
+    printf '#\n[Timer]\n'
+    render_schedule "$iv"
+}
+
 timer_active() { $SYSTEMCTL is-active --quiet "$1" 2>/dev/null; }
 
 # service_running <timer> -> 0 when the unit this timer triggers is active or activating.
@@ -280,18 +297,7 @@ cmd_set() {
     local was_armed=0; is_armed "$u" && was_armed=1
 
     mkdir -p "$(dirname "$d")" 2>/dev/null || die "cannot create $(dirname "$d")"
-    {
-        printf '# Written by cadence.sh on %s by %s.\n' \
-            "$(TZ="${SPIRA_TZ:-UTC}" date '+%Y-%m-%d %H:%M %Z')" "${SPIRA_OPERATOR:-unknown}"
-        printf '#\n# Requested cadence: %s\n' "$iv"
-        [ -n "$why" ] && printf '# Why: %s\n' "$why"
-        printf '#\n# This is an OVERRIDE, not a new default. The shipped template asks for:\n'
-        printf '#   %s\n' "$(template_cadence "$u")"
-        printf '# Change the template only if this cadence is meant to be permanent.\n'
-        printf '#\n# REVERT: %s/cadence.sh clear %s\n' "$HERE" "$u"
-        printf '#\n[Timer]\n'
-        render_schedule "$iv"
-    } > "$d" || die "could not write $d"
+    _dropin_for "$u" "$iv" "$why" > "$d" || die "could not write $d"
 
     $SYSTEMCTL daemon-reload 2>/dev/null || die "daemon-reload failed"
     # Only restart a timer that is running. Restarting a stopped timer would start it, which
@@ -381,11 +387,16 @@ cmd_verify() {
     return 2
 }
 
-case "${1:-list}" in
-    list)   cmd_list ;;
-    show)   shift; cmd_show "$@" ;;
-    set)    shift; cmd_set "$@" ;;
-    clear)  shift; cmd_clear "$@" ;;
-    verify) shift; cmd_verify "$@" ;;
-    *) printf 'usage: cadence.sh [list|show <unit>|set <unit> <interval> [--why TEXT]|clear <unit>|verify [unit...]]\n' >&2; exit 2 ;;
-esac
+# Guarded so a test can source this file to reach render_schedule, resolve_unit and
+# _dropin_for directly, without also running the CLI dispatch against the sourcing shell's
+# own positional params.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    case "${1:-list}" in
+        list)   cmd_list ;;
+        show)   shift; cmd_show "$@" ;;
+        set)    shift; cmd_set "$@" ;;
+        clear)  shift; cmd_clear "$@" ;;
+        verify) shift; cmd_verify "$@" ;;
+        *) printf 'usage: cadence.sh [list|show <unit>|set <unit> <interval> [--why TEXT]|clear <unit>|verify [unit...]]\n' >&2; exit 2 ;;
+    esac
+fi
