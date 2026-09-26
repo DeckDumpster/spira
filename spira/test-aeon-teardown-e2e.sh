@@ -8,7 +8,7 @@
 # WIRING: that aeon.sh's own marks, mail.sh's own marker, and attempts_of's own SQL agree
 # with what those T1 tables predict.
 #
-# Replaces seven suites (docs/test-plan/aeon-execution.md D8, D12, D15 — sp-gcx3k):
+# Replaces seven suites (docs/test-plan/aeon-execution.md D8, D12, D15 — sp-g44ke):
 # test-aeon-decision-blocked.sh, test-aeon-operator-wait.sh, test-requeue.sh,
 # test-aeon-ledger.sh, test-aeon-presession-death.sh, test-aeon-yield-headless.sh,
 # test-aeon-exit.sh — ~1,460 lines, each building its own bare origin, clone, chamber and

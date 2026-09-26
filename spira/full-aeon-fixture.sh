@@ -50,7 +50,7 @@ fa_setup() {   # fa_setup <tag> — build the fixture once
     cat > "$FA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
 FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison,${SPIRA_ASK_LABEL:-needs-operator}"
+FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
 FAYTH_MAX_CONCURRENT=1
 FAYTH_HEARTBEAT_SECONDS=600
 FAYTH

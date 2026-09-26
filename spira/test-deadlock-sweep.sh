@@ -5,11 +5,10 @@
 # reason), changes nothing without --apply, and --apply lifts the poison while leaving the
 # attempt record standing as history.
 #
-# Split out of test-requeue.sh (sp-gcx3k, docs/test-plan/aeon-execution.md D15, UC-24): no
+# Split out of test-requeue.sh (sp-g44ke, docs/test-plan/aeon-execution.md D15, UC-24): no
 # aeon.sh run is needed here — the "deadlock" is a branch that already merges cleanly, built
 # with one real commit on a throwaway origin, never a live session.
 #
-# defect: sp-l7f5
 # tier: T2
 # covers: spira/attempts.sh spira/lib.sh UC-aeon-execution-24
 set -uo pipefail

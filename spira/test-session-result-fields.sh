@@ -2,7 +2,7 @@
 #
 # test-session-result-fields.sh — session_result_fields and trace_segment (lib.sh), the
 # pure parser and boundary-finder behind the aeon ledger's `done` spend fields. Split out
-# of test-aeon-ledger.sh (sp-gcx3k, docs/test-plan/aeon-execution.md D15): these two
+# of test-aeon-ledger.sh (sp-g44ke, docs/test-plan/aeon-execution.md D15): these two
 # functions need no aeon run and no bd, so they no longer pay for the real two-attempt
 # aeon run that only the trace-segment BOUNDARY case needs — that one case is now
 # test-aeon-teardown-e2e.sh's "ledger segment boundary" row, proving aeon.sh's own marks

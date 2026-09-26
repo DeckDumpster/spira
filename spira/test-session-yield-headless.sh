@@ -8,7 +8,7 @@
 # a yield. aeon.sh classifies it as yield-headless instead, so the cause is visible in the
 # ledger and the next summon gets a concrete repair.
 #
-# Split out of test-aeon-yield-headless.sh (sp-gcx3k, docs/test-plan/aeon-execution.md D15):
+# Split out of test-aeon-yield-headless.sh (sp-g44ke, docs/test-plan/aeon-execution.md D15):
 # this phrasing table needs no aeon run and no bd. The one case that does — a real aeon.sh
 # run proving the ledger status and bead note actually get written — is now
 # test-aeon-teardown-e2e.sh's "yield-headless" row.
