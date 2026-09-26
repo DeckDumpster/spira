@@ -24,11 +24,17 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # bbn <keep> <max-chars> <text> -> bound_bead_notes's own stdout, in a minimal environment.
+# <text> goes through a file, not argv or a here-string: a real bd show of a
+# thousand-note bead is well past Linux's ~128KB single-argument limit (T5 hit exactly
+# this as "Argument list too long"), and a here-string appends a newline the input may
+# not have had, which a byte-for-byte pass-through assertion (T3, T4) would then fail on.
 bbn() {
+    local keep="$1" max="$2" f="$TMP/bbn-in-$$-$RANDOM.txt"
+    printf '%s' "$3" > "$f"
     env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
-        bash -c '. "$1"/lib.sh; bound_bead_notes "$2" "$3" <<<"$4"' \
-        _ "$HERE" "$1" "$2" "$3"
+        bash -c '. "$1"/lib.sh; bound_bead_notes "$2" "$3" < "$4"' \
+        _ "$HERE" "$keep" "$max" "$f"
 }
 
 # A synthetic bd-show-shaped blob: N "Recurrence <i> at ..." notes between a NOTES header
@@ -108,8 +114,7 @@ echo "T4: a bead with no NOTES section at all is passed through unchanged"
 NONOTES="DESCRIPTION
   (none)
 
-LABELS: spira
-"
+LABELS: spira"
 OUT4="$(bbn 5 10 "$NONOTES")"
 is "T4: text with no NOTES header is returned as-is" "$NONOTES" "$OUT4"
 
@@ -147,10 +152,13 @@ RAW5="$(bd -C "$SPIRA_DB" show "$ID" 2>/dev/null)"
 
 # The shipped defaults (conf.sh), not test-chosen numbers — this is the bead's own
 # done-when: a bead carrying 1000 recurrence notes renders a brief under a fixed size.
+# RAW5 goes through a file, not argv: it is well past Linux's ~128KB single-argument
+# limit ("Argument list too long" is exactly what passing it as "$2" produces).
+printf '%s' "$RAW5" > "$TMP/raw5.txt"
 OUT5="$(env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
-    bash -c '. "$1"/conf.sh; . "$1"/lib.sh; bound_bead_notes "$SPIRA_BRIEF_KEEP_RECURRENCES" "$SPIRA_BRIEF_NOTES_MAX_CHARS" <<<"$2"' \
-    _ "$HERE" "$RAW5")"
+    bash -c '. "$1"/conf.sh; . "$1"/lib.sh; bound_bead_notes "$SPIRA_BRIEF_KEEP_RECURRENCES" "$SPIRA_BRIEF_NOTES_MAX_CHARS" < "$2"' \
+    _ "$HERE" "$TMP/raw5.txt")"
 
 [ "${#OUT5}" -lt 20000 ] && ok "T5: a real 1000-recurrence bead's brief is under 20000 chars" \
     || bad "T5: a real 1000-recurrence bead's brief is under 20000 chars" "len=${#OUT5}"
