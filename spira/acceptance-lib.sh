@@ -141,6 +141,19 @@ _unit_set() {
         | awk '$1 ~ /^spira-/ && $2 != "transient" {print $1, $2}' | sort
 }
 
+# _stage_release_source <dir> <tarball> <tag> — add a release to a LOCAL release source, the
+# form skew.sh reads when SPIRA_RELEASE_REPO is a path: the tarball, beside a <stem>.tag
+# naming its tag. The acceptance box's user units have no forge credential, so the run stages
+# every release it holds here and points SPIRA_RELEASE_REPO at the directory.
+_stage_release_source() {
+    local _rs_dir="$1" _rs_tb="$2" _rs_tag="$3" _rs_stem
+    [ -f "$_rs_tb" ] || return 1
+    mkdir -p "$_rs_dir" || return 1
+    _rs_stem="$(basename "$_rs_tb" .tar.gz)"
+    cp -f "$_rs_tb" "$_rs_dir/$_rs_stem.tar.gz" || return 1
+    printf '%s\n' "$_rs_tag" > "$_rs_dir/$_rs_stem.tag"
+}
+
 # _download_tarball <tag> <destdir> — download the release tarball; print path on stdout.
 _download_tarball() {
     local _dtag="$1" _ddir="$2"

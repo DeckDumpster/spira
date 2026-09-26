@@ -332,4 +332,24 @@ is "only installed spira-* units, sorted, transient dropped" \
    "$(printf 'spira-a-prod.timer enabled\nspira-b-prod.service enabled')" \
    "$(PATH="$_us_sc:$PATH" bash -c '. "$0"; _unit_set' "$LIB")"
 
+# ===========================================================================
+echo
+echo "13. _stage_release_source: a release tarball + its tag, as skew reads a local source"
+# ===========================================================================
+# The acceptance box's user units have no forge credential; the releases the run itself
+# downloads or builds are staged here, and spira.conf points SPIRA_RELEASE_REPO at it.
+_rs_dir="$SCRATCH/release-source"
+printf 'x\n' > "$SCRATCH/spira-20990101T000000Z.tar.gz"
+bash -c '. "$0"; _stage_release_source "$1" "$2" "$3"' "$LIB" \
+    "$_rs_dir" "$SCRATCH/spira-20990101T000000Z.tar.gz" spira-release-spira-20990101T000000Z
+wantrc "staging exits 0" 0 $?
+[ -f "$_rs_dir/spira-20990101T000000Z.tar.gz" ] \
+    && ok  "the tarball is in the source directory" \
+    || bad "the tarball is in the source directory" "$(ls "$_rs_dir" 2>&1)"
+is "its .tag sidecar names the release tag" "spira-release-spira-20990101T000000Z" \
+   "$(cat "$_rs_dir/spira-20990101T000000Z.tag" 2>/dev/null)"
+bash -c '. "$0"; _stage_release_source "$1" "$2" "$3"' "$LIB" \
+    "$_rs_dir" "$SCRATCH/absent.tar.gz" spira-release-spira-20990101T000001Z
+wantrc "a missing tarball is refused" 1 $?
+
 tl_summary

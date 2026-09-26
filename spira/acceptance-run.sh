@@ -241,10 +241,17 @@ _releases="$TMP/releases"
 mkdir -p "$_releases"
 _conf="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
 mkdir -p "$(dirname "$_conf")"
+# THE RELEASE SOURCE THIS BOX'S USER UNITS READ. They carry no forge credential (the workflow's
+# GH_TOKEN reaches its own steps only), so every release this run holds is staged into a local
+# source and SPIRA_RELEASE_REPO points at it — skew.sh's currency check reads it, and without
+# one it cannot check and fails (exit 3) by design.
+_release_src="$TMP/release-source"
+mkdir -p "$_release_src"
 {
     [ -n "$_agent" ] && printf 'SPIRA_AGENT = %s\n' "$_agent"
     printf 'SPIRA_OPERATED = 0\n'
     printf 'SPIRA_RELEASES = %s\n' "$_releases"
+    printf 'SPIRA_RELEASE_REPO = %s\n' "$_release_src"
 } > "$_conf"
 
 # Obtain the release tarball: --tarball skips the download entirely (a local
@@ -263,6 +270,8 @@ else
         && ok "phase A: tarball found: $(basename "$_tarball_file")" \
         || bad "phase A: tarball found" "no spira-*.tar.gz in $_tarball_dir"
 fi
+
+[ -f "${_tarball_file:-}" ] && _stage_release_source "$_release_src" "$_tarball_file" "$tag"
 
 # Compute sha256 of the candidate tarball (recorded in the acceptance note).
 _tarball_sha256=""
@@ -488,6 +497,7 @@ else
         bad "phase B: gh release download $prev_tag" "rc=$_prev_tarball_dl_rc"
     else
         ok "phase B: prev tarball downloaded: $(basename "$_prev_tarball_file")"
+        _stage_release_source "$_release_src" "$_prev_tarball_file" "$prev_tag"
 
         _install_from_tarball "$_prev_tarball_file" "$_releases" "$_conf" \
             2>&1 | tee "$TMP/prev-activate.log" || true

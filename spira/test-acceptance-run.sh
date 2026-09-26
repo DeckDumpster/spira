@@ -262,6 +262,16 @@ case " $_conf_keys " in
 esac
 wantfile "phase D checks operator override survives"  "_aged_override_got" "$SCRIPT"
 
+# THE BOX IS NEVER SOURCELESS. Its user units cannot read the forge (no credential reaches
+# them), so the run stages every release it holds into a local source and points
+# SPIRA_RELEASE_REPO at it in spira.conf; skew's release-currency check reads that.
+wantfile "phase A stages the release under test into the local release source" \
+    '_stage_release_source "$_release_src"' "$SCRIPT"
+wantfile "spira.conf points SPIRA_RELEASE_REPO at it" \
+    "SPIRA_RELEASE_REPO = %s" "$SCRIPT"
+wantrefile "phase B stages the predecessor too" \
+    '_stage_release_source "\$_release_src" "\$_prev_tarball_file"' "$SCRIPT"
+
 # THE RELEASE UNDER TEST IS A DRAFT until it passes, so every deploy of "$tag" must say
 # --allow-draft; deploy.sh refuses a draft otherwise and phases B-D could never pass.
 _draft_less="$(grep -E 'deploy\.sh"? .*"\$tag"' "$SCRIPT" | grep -v -- '--allow-draft' || true)"
