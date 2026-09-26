@@ -74,16 +74,17 @@ if [ -z "$CARGO_BIN" ]; then
     echo "SKIP test-reconciler: cargo not found — reconciler binary cannot be built"
     exit 77
 fi
-RECONCILER_ROOT="$HERE/../reconciler"
-RECONCILER_BIN="$RECONCILER_ROOT/target/release/reconciler"
+# THE WORKSPACE BINARY FIRST, THEN A LOCKED WORKSPACE BUILD. The shipped tree (and
+# testenv-batch --with-bins) already carries target/release/reconciler. Building the crate
+# out of a copy with no Cargo.lock re-resolved every dependency to its newest release, and
+# one of those needs edition2024 — which the pinned 1.82 toolchain cannot build, so the
+# suite went red the moment the test image stopped carrying a newer cargo.
+RECONCILER_BIN="$HERE/../target/release/reconciler"
 if [ ! -x "$RECONCILER_BIN" ]; then
-    cp -r "$RECONCILER_ROOT/." "$T/reconciler-src"
-    cp -r "$HERE/../reconciler-engine" "$T/reconciler-engine"
-    cp -r "$HERE/../desired-state" "$T/desired-state"
     printf '  (building reconciler into %s)\n' "$T/reconciler-target"
     CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/reconciler-target" \
-        "$CARGO_BIN" build --release \
-        --manifest-path "$T/reconciler-src/Cargo.toml" 2>&1 | tail -5
+        "$CARGO_BIN" build --release --locked -p reconciler \
+        --manifest-path "$HERE/../Cargo.toml" 2>&1 | tail -5
     RECONCILER_BIN="$T/reconciler-target/release/reconciler"
 fi
 if [ ! -x "$RECONCILER_BIN" ]; then
