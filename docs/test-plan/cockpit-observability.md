@@ -219,7 +219,7 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
 | 15 | test-cockpit-gate.sh (8); test-cockpit-fuse.sh (9) | T2: 14 + 5 | test-cockpit-gate.sh: **DEMOTE-TO-T1/T2**. Six full `once` runs against a missing DB are the whole 14 s; call the land/gate section function instead. KEEP fuse, and tighten `grep -q ?` to the exact column. |
 | 16 | test-cockpit.sh::ratelim ×2; test-cockpit-self.sh::repeating, stillborn ×7 | T2: 6 + 6 | **DEMOTE-TO-T1**: call the ratelim parser and cockpit-metrics.py functions with a fixed now. Replace the 4-fixture "no SELF rows" guard with one row in the UC-21 renderer table. |
 | 17 | test-cockpit-unclaimable.sh (4) | T2 stub, 3 | KEEP. Fix case 4 to assert per id (it currently matches `builder` anywhere). |
-| 18 | test-statute-projection.sh::statute_keys ×3 cases | T3 (secondary), 5 | KEEP under operator-channel. Note: MISMATCH/OK are silently skipped when law-synth.sh is unreachable. Seed `PAGE_N` from a fixture page instead of brain. |
+| 18 | test-statute-projection.sh::statute_keys ×3 cases | T3 (secondary), 5 | KEEP under operator-channel. `PAGE_N` is already seeded from the WIKI_TMP fixture page, not brain. |
 | 19 | test-beads-sparklines.sh (8) | T1, 3 | KEEP. Move the Python block into its own file (it is extracted today with awk by indentation). The "no HIST_COLS" source grep becomes T0. Add a bucket-distribution assertion. |
 | 20 | test-event.sh (15) | T1 + sleeps, 11 | **DEMOTE**: add an injected clock (≈7 s of real `sleep`). The taxonomy and call-site greps become **SOURCE-GREP to T0 lint**. Fix the unconditional "kind format" ok. |
 | 21 | test-cockpit-probe-fault.sh (renderer half, ~35 assertions); test-mail-pane.sh::? probe; test-now.sh::no trace ?; test-cockpit-reachable.sh::'? reachable' | T2, 13 (~25 `health.sh once` renders) | KEEP probe-fault as the **single** renderer FC table. **DEMOTE-TO-T1** via a health.sh seam that renders N snapshots per process. DELETE the weak bare-`?` duplicate in mail-pane. |
@@ -331,7 +331,6 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
     - test-resolve-output.sh: missing subject exits 0.
     - test-cockpit-layout-conf.sh, test-cockpit-layout-identity.sh and test-cockpit-layout.sh: missing tmux or PTY exits 0.
     - test-cockpit-collector-watchdog.sh: missing function exits 0.
-    - test-statute-projection.sh: the law-synth half and its MISMATCH/OK checks are skipped with a stderr note only.
 
     **Needed:** a T0 lint that `exit 0` is never preceded by `SKIP`.
 12. **Hermeticity leaks.** These suites can read or act on the live box:

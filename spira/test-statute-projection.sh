@@ -46,23 +46,10 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 RULE_SH="$(cd "$HERE/.." && pwd)/rule.sh"
 [ -f "$RULE_SH" ] || { echo "SKIP rule.sh not found at $RULE_SH" >&2; exit 77; }
 
-# law-synth.sh lives in brain's .claude/; locate it through BRAIN or SPIRA_WIKI.
-# BRAIN is set when this suite runs inside the brain session or under brain's own test runner.
-# SPIRA_WIKI is the configured wiki path in spira.conf — same location from the harness side.
-LAW_SYNTH_SH=""
-for _try_brain in "${BRAIN:-}" "${SPIRA_WIKI:-}"; do
-    [ -n "$_try_brain" ] || continue
-    _candidate="$_try_brain/.claude/law-synth.sh"
-    if [ -f "$_candidate" ]; then
-        LAW_SYNTH_SH="$_candidate"
-        break
-    fi
-done
-[ -f "${LAW_SYNTH_SH:-}" ] || {
-    printf 'SKIP law-synth.sh not reachable (BRAIN and SPIRA_WIKI not set, or law-synth.sh absent)\n' >&2
-    # Only skip the law-synth section; rule.sh and cockpit tests still run.
-    LAW_SYNTH_SH=""
-}
+# law-synth.sh ships in the harness itself (spira/law-synth.sh) — no other checkout involved,
+# so unlike the old brain-hosted copy this never needs to skip.
+LAW_SYNTH_SH="$HERE/law-synth.sh"
+[ -x "$LAW_SYNTH_SH" ] || { echo "SKIP law-synth.sh not found at $LAW_SYNTH_SH" >&2; exit 77; }
 
 echo "test-statute-projection.sh"
 
@@ -250,68 +237,99 @@ echo
 echo "=== law-synth.sh: wrong-database guard ==="
 # ==========================================================================
 
-if [ -z "$LAW_SYNTH_SH" ]; then
-    echo "  SKIP (law-synth.sh not reachable)"
+run_synth() {
+    SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" bash "$LAW_SYNTH_SH" 2>&1
+}
+run_synth_override() {
+    SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" LAW_SYNTH_OVERRIDE=1 bash "$LAW_SYNTH_SH" 2>&1
+}
+
+# T1: no SPIRA_WIKI configured at all → exits 0, says nothing was synthesised, no file
+# under brain/.claude (or anywhere else) is touched.
+out_synth_nowiki=$(SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="" bash "$LAW_SYNTH_SH" 2>&1); rc_synth_nowiki=$?
+if [ $rc_synth_nowiki -eq 0 ]; then
+    ok "law-synth: no SPIRA_WIKI exits 0"
 else
-    run_synth() {
-        SPIRA_DB="$SPIRA_DB" BRAIN="$WIKI_TMP" bash "$LAW_SYNTH_SH" 2>&1
-    }
-    run_synth_override() {
-        SPIRA_DB="$SPIRA_DB" BRAIN="$WIKI_TMP" LAW_SYNTH_OVERRIDE=1 bash "$LAW_SYNTH_SH" 2>&1
-    }
-
-    # POSITIVE CONTROL: pointed at real book (fixture db has law- entries from enact tests above).
-    out_synth_ok=$(run_synth); rc_synth_ok=$?
-    if [ $rc_synth_ok -eq 0 ]; then
-        ok "law-synth: pointed at real book exits 0"
-    else
-        bad "law-synth: pointed at real book exits 0" "rc=$rc_synth_ok output=$out_synth_ok"
-    fi
-    want "law-synth: real book writes output" "wrote" "$out_synth_ok"
-
-    # NEGATIVE CONTROL 1: empty database (reset to fresh, which has no law- memories).
-    testdb_reset || { bad "testdb_reset" "failed"; }
-
-    out_synth_empty=$(run_synth); rc_synth_empty=$?
-    if [ $rc_synth_empty -ne 0 ]; then
-        ok "law-synth: empty database exits non-zero"
-    else
-        bad "law-synth: empty database exits non-zero" "got rc=0"
-    fi
-    want   "law-synth: empty database: mentions refusing" "refusing" "$out_synth_empty"
-    nowant "law-synth: empty database: does NOT write"    "wrote"    "$out_synth_empty"
-
-    # Verify the committed page was NOT touched.
-    page_after_empty="$(git -C "$WIKI_TMP" diff HEAD -- wiki/notes/common-law.md 2>/dev/null)"
-    if [ -z "$page_after_empty" ]; then
-        ok "law-synth: empty database: committed page untouched"
-    else
-        bad "law-synth: empty database: committed page untouched" "page was modified"
-    fi
-
-    # NEGATIVE CONTROL 2: pointed at a database with far fewer laws than committed page.
-    # Add 3 law- entries (committed page has 10, so 3 < 10/2 = 5).
-    for i in 1 2 3; do
-        "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-floor-test-$i" \
-            "Floor test statute $i." >/dev/null 2>&1 || true
-    done
-
-    out_synth_floor=$(run_synth); rc_synth_floor=$?
-    if [ $rc_synth_floor -ne 0 ]; then
-        ok "law-synth: floor check (3 vs 10) exits non-zero"
-    else
-        bad "law-synth: floor check (3 vs 10) exits non-zero" "got rc=0"
-    fi
-    want "law-synth: floor check: mentions refusing" "refusing" "$out_synth_floor"
-
-    # POSITIVE CONTROL 2: same db but with LAW_SYNTH_OVERRIDE=1 → succeeds.
-    out_synth_force=$(run_synth_override); rc_synth_force=$?
-    if [ $rc_synth_force -eq 0 ]; then
-        ok "law-synth: LAW_SYNTH_OVERRIDE=1 overrides floor check"
-    else
-        bad "law-synth: LAW_SYNTH_OVERRIDE=1 overrides floor check" "rc=$rc_synth_force output=$out_synth_force"
-    fi
+    bad "law-synth: no SPIRA_WIKI exits 0" "rc=$rc_synth_nowiki output=$out_synth_nowiki"
 fi
+want   "law-synth: no SPIRA_WIKI: reports nothing synthesised" "nothing to synthesise" "$out_synth_nowiki"
+nowant "law-synth: no SPIRA_WIKI: does NOT write"               "wrote"                 "$out_synth_nowiki"
+
+# T1: pointed at real book, a fixture statute set renders into a temp wiki (WIKI_TMP, built
+# above with 10 mock statutes committed at HEAD).
+out_synth_ok=$(run_synth); rc_synth_ok=$?
+if [ $rc_synth_ok -eq 0 ]; then
+    ok "law-synth: pointed at real book exits 0"
+else
+    bad "law-synth: pointed at real book exits 0" "rc=$rc_synth_ok output=$out_synth_ok"
+fi
+want "law-synth: real book writes output" "wrote" "$out_synth_ok"
+[ -f "$WIKI_TMP/wiki/notes/common-law.md" ] \
+    && ok "law-synth: rendered common-law.md into the temp wiki" \
+    || bad "law-synth: rendered common-law.md into the temp wiki" "file missing"
+
+# Snapshot the page as the positive control above left it — the baseline the negative
+# control below must NOT move it from. (Not HEAD: the positive control above already
+# wrote a real, uncommitted regeneration over HEAD's 10-statute fixture page.)
+page_before_negative="$(cat "$WIKI_TMP/wiki/notes/common-law.md" 2>/dev/null)"
+
+# NEGATIVE CONTROL 1: empty database (reset to fresh, which has no law- memories).
+testdb_reset || { bad "testdb_reset" "failed"; }
+
+out_synth_empty=$(run_synth); rc_synth_empty=$?
+if [ $rc_synth_empty -ne 0 ]; then
+    ok "law-synth: empty database exits non-zero"
+else
+    bad "law-synth: empty database exits non-zero" "got rc=0"
+fi
+want   "law-synth: empty database: mentions refusing" "refusing" "$out_synth_empty"
+nowant "law-synth: empty database: does NOT write"    "wrote"    "$out_synth_empty"
+
+# Verify the page was NOT touched.
+page_after_empty="$(cat "$WIKI_TMP/wiki/notes/common-law.md" 2>/dev/null)"
+is "law-synth: empty database: page untouched" "$page_before_negative" "$page_after_empty"
+
+# NEGATIVE CONTROL 2: pointed at a database with far fewer laws than committed page.
+# Add 3 law- entries (committed page has 10, so 3 < 10/2 = 5).
+for i in 1 2 3; do
+    "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-floor-test-$i" \
+        "Floor test statute $i." >/dev/null 2>&1 || true
+done
+
+out_synth_floor=$(run_synth); rc_synth_floor=$?
+if [ $rc_synth_floor -ne 0 ]; then
+    ok "law-synth: floor check (3 vs 10) exits non-zero"
+else
+    bad "law-synth: floor check (3 vs 10) exits non-zero" "got rc=0"
+fi
+want "law-synth: floor check: mentions refusing" "refusing" "$out_synth_floor"
+
+# POSITIVE CONTROL 2: same db but with LAW_SYNTH_OVERRIDE=1 → succeeds.
+out_synth_force=$(run_synth_override); rc_synth_force=$?
+if [ $rc_synth_force -eq 0 ]; then
+    ok "law-synth: LAW_SYNTH_OVERRIDE=1 overrides floor check"
+else
+    bad "law-synth: LAW_SYNTH_OVERRIDE=1 overrides floor check" "rc=$rc_synth_force output=$out_synth_force"
+fi
+
+# rule.sh's default hook (SPIRA_WIKI_HOOK unset) is the harness's own spira/law-synth.sh —
+# no file under brain/.claude involved. A fresh, uncommitted temp dir so this does not
+# disturb WIKI_TMP's fixture state (its 10 committed headings are asserted on below).
+WIKI_DEFAULT_HOOK="$TMP/wiki-default-hook"
+mkdir -p "$WIKI_DEFAULT_HOOK"
+out_default_hook=$(SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_DEFAULT_HOOK" \
+    bash "$RULE_SH" enact "sp-fe3ee-default-hook-test" "Default hook canary statute." 2>&1)
+rc_default_hook=$?
+if [ $rc_default_hook -eq 0 ]; then
+    ok "rule.sh: default hook (no SPIRA_WIKI_HOOK) exits 0"
+else
+    bad "rule.sh: default hook (no SPIRA_WIKI_HOOK) exits 0" "rc=$rc_default_hook output=$out_default_hook"
+fi
+want   "rule.sh: default hook: statute is live"     "Statute is live" "$out_default_hook"
+nowant "rule.sh: default hook: no brain path named" "brain/.claude"   "$out_default_hook"
+[ -f "$WIKI_DEFAULT_HOOK/wiki/notes/common-law.md" ] \
+    && ok "rule.sh: default hook rendered common-law.md" \
+    || bad "rule.sh: default hook rendered common-law.md" "file missing"
 
 # ==========================================================================
 echo
@@ -331,10 +349,9 @@ want   "statute_keys: no wiki → SP_STATUTE_DB_N=?"    "SP_STATUTE_DB_N=?"    "
 want   "statute_keys: no wiki → SP_STATUTE_PAGE_N=?"  "SP_STATUTE_PAGE_N=?"  "$out_no_wiki"
 want   "statute_keys: no wiki → SP_STATUTE_SKEW=?"    "SP_STATUTE_SKEW=?"    "$out_no_wiki"
 
-# UC-18: the MISMATCH/OK cases below seed their own db state instead of reusing the
-# law-synth section's (which only runs when LAW_SYNTH_SH — a reachable brain checkout —
-# is found), so SP_STATUTE_PAGE_N/SKEW are exercised against WIKI_TMP whether or not
-# brain is reachable in this environment.
+# UC-18: the MISMATCH/OK cases below seed their own db state rather than reusing the
+# law-synth section's, so SP_STATUTE_PAGE_N/SKEW are exercised against WIKI_TMP independent
+# of whatever that section left the fixture db holding.
 testdb_reset || { bad "testdb_reset (statute_keys fixture)" "failed"; }
 
 # 3 law- entries against WIKI_TMP's 10 ### headings: 3 < 10/2 → MISMATCH.

@@ -987,6 +987,9 @@ spira_conf_defaults() {
     : "${SPIRA_MIRROR:=}"
     : "${SPIRA_EXPORTER:=}"
     : "${SPIRA_DESIGN:=}"
+    # OVERRIDES rule.sh's default synth hook (spira/law-synth.sh), which needs no config of
+    # its own — it already writes to SPIRA_WIKI. Set this only to run some other program in
+    # its place.
     : "${SPIRA_WIKI_HOOK:=}"
     # THE VIEW FOLLOWER: the program that keeps the attention surface pointed at whatever the
     # operator should be looking at right now. Empty means this installation has none, and the
