@@ -71,7 +71,10 @@ RUN mkdir /out && \
 # stage, which is discarded whole because bd is compiled once from a pinned
 # tag and only the binary is needed afterwards.
 FROM docker.io/library/ubuntu:24.04 AS rust-builder
-ARG RUST_VERSION=1.96.0
+# Matches rust-toolchain.toml (repo root): the pin the gate builds with, checked by
+# test-rust-toolchain-pin.sh. A mismatch here makes cargo try to fetch the pinned
+# channel into RUSTUP_HOME at test time, which is read-only for the runtime user.
+ARG RUST_VERSION=1.82.0
 RUN apt-get update -q && \
     apt-get install -yq --no-install-recommends curl ca-certificates && \
     rm -rf /var/lib/apt/lists/*

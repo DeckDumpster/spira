@@ -6,7 +6,7 @@
 # cannot build (PR 361, 2026-09-25: indexmap 2.14.2 needs edition2024, CI ran 1.82).
 #
 # tier: T0
-# covers: rust-toolchain.toml .github/workflows/gate.yml .github/workflows/release.yml
+# covers: rust-toolchain.toml .github/workflows/gate.yml .github/workflows/release.yml spira/testenv/Containerfile
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -33,4 +33,11 @@ for wf in "$ROOT"/.github/workflows/*.yml; do
         is "$(basename "$wf") installs the pinned toolchain" "$pin" "$v"
     fi
 done
+# THE TEST IMAGE'S OWN COMPILER. A container whose pre-installed toolchain differs from
+# the pin makes cargo fetch the pin into RUSTUP_HOME at test time, which is read-only for
+# the runtime user — every Rust suite goes red inside the container while passing on the
+# host, which has no such restriction.
+img_rust="$(awk -F'[= ]+' '/^ARG RUST_VERSION=/{print $3; exit}' "$ROOT/testenv/Containerfile" 2>/dev/null)"
+is "testenv Containerfile installs the pinned toolchain" "$pin" "$img_rust"
+
 tl_summary
