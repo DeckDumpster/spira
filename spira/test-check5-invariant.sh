@@ -346,11 +346,14 @@ testdb_seed <<JSONL
 {"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
 {"id":"sp-qland","title":"queue-landed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-qland","depends_on_id":"sp-goal","type":"parent-child"}]}
 {"id":"sp-cland","title":"colon-landed","status":"closed","issue_type":"bug","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-cland","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-mland","title":"merge-landed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-mland","depends_on_id":"sp-goal","type":"parent-child"}]}
 JSONL
-touch "$RUN/sp-qland.log" "$RUN/sp-cland.log"
-rm -f "$RUN/landstate/sp-qland" "$RUN/landstate/sp-cland"
+touch "$RUN/sp-qland.log" "$RUN/sp-cland.log" "$RUN/sp-mland.log"
+rm -f "$RUN/landstate/sp-qland" "$RUN/landstate/sp-cland" "$RUN/landstate/sp-mland"
 git -C "$REPO" commit -q --allow-empty -m "spira: land sp-qland"
 git -C "$REPO" commit -q --allow-empty -m "sp-cland: the fix"
+# A Concierge round merged a member under git's default subject (round.sh before its fix).
+git -C "$REPO" commit -q --allow-empty -m "Merge branch 'spira/sp-mland' into spira/round-9"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 : > "$INC_LOG"
@@ -361,6 +364,7 @@ nowant "(a) a 'spira: land <id>' subject on the base files no incident" "sp-qlan
 nowant "(b) an '<id>: ...' subject on the base files no incident"       "sp-cland" "$inc_out"
 is "(a) sp-qland stays closed" closed "$(status_of sp-qland)"
 is "(b) sp-cland stays closed" closed "$(status_of sp-cland)"
+nowant "(c) a \"Merge branch 'spira/<id>'\" subject on the base files no incident" "sp-mland" "$inc_out"
 
 # ======================================================================================
 echo
