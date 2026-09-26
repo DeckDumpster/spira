@@ -75,6 +75,33 @@ else
         "$_watermark_file" >&2
 fi
 
+# CLOCK SKEW GUARD (law-a-control-that-cannot-check-must-refuse). The window above is
+# bounded by true UTC, but every event it counts is stamped by the substrate's own
+# UTC_TIMESTAMP(). If that clock disagrees with UTC (sp-yyih8: a dolt server with no TZ
+# set returns local wall clock labelled UTC), the events within the skew are invisible
+# and a windowed count over them is not a ranking — rc=0 with an all-zero table looks
+# exactly like a quiet graph. Refuse instead, and refuse the same way when the check
+# itself cannot run: a control that cannot check must refuse, not pass silently.
+_skew_tolerance="${SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S:-120}"
+_skew_out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
+    "SELECT TIMESTAMPDIFF(SECOND, NOW(), UTC_TIMESTAMP()) AS skew_s, NOW() AS now_fn, UTC_TIMESTAMP() AS utc_fn" 2>&1)"
+_skew_rc=$?
+_skew_row="$(printf '%s\n' "$_skew_out" | sed -n '3p')"
+_skew_s="$(printf '%s\n' "$_skew_row" | awk -F'|' '{print $1}' | tr -d ' ')"
+if [ "$_skew_rc" -ne 0 ] || ! printf '%d' "${_skew_s:-}" >/dev/null 2>&1; then
+    printf 'census.sh: cannot verify the substrate clock against UTC — refusing to rank blind\n%s\n' \
+        "$_skew_out" >&2
+    exit 1
+fi
+_skew_abs=$(( _skew_s < 0 ? -_skew_s : _skew_s ))
+if [ "$_skew_abs" -gt "$_skew_tolerance" ]; then
+    printf 'census.sh: substrate clock skew is %ss (tolerance %ss) — %s\n' \
+        "$_skew_s" "$_skew_tolerance" \
+        "refusing to rank a windowed query over a clock that disagrees with UTC" >&2
+    printf 'census.sh: %s\n' "$_skew_row" >&2
+    exit 1
+fi
+
 # Build the ranked census: since-watermark when watermark is valid, all-time otherwise.
 # _census_raw exits non-zero when the events substrate is unreachable; fail closed rather
 # than report zero classes — a blind census is indistinguishable from a clean one.

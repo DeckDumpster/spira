@@ -145,8 +145,16 @@ cat > "$FAKE_BD" <<'STUB'
 [ "${1:-}" = "-C" ] && shift 2
 case "${1:-}" in
     sql)
-        cat "${CENSUS_SQL_FILE:-/dev/null}"
-        exit "${CENSUS_SQL_RC:-0}"
+        case "${2:-}" in
+            *skew_s*)
+                cat "${CENSUS_SKEW_FILE:-/dev/null}"
+                exit "${CENSUS_SKEW_RC:-0}"
+                ;;
+            *)
+                cat "${CENSUS_SQL_FILE:-/dev/null}"
+                exit "${CENSUS_SQL_RC:-0}"
+                ;;
+        esac
         ;;
     list)
         case " $* " in
@@ -162,6 +170,13 @@ chmod +x "$FAKE_BD"
 
 CENSUS_SQL_FILE="$T/sql_one_class.txt"
 printf 'recurred | fallback-test | 1 | 1\n' > "$CENSUS_SQL_FILE"
+
+# CENSUS_SKEW_FILE is the fake bd's answer to the clock-skew check (skew_s | now_fn |
+# utc_fn), same 3-row shape (header, separator, data) as census.sh's own sed -n '3p'
+# expects. Default: in sync, so tests unrelated to the skew guard see it pass through.
+CENSUS_SKEW_FILE="$T/skew_in_sync.txt"
+printf 'skew_s | now_fn | utc_fn\n------ | ------ | ------\n0 | 2026-01-01 00:00:00 +0000 UTC | 2026-01-01 00:00:00 +0000 UTC\n' \
+    > "$CENSUS_SKEW_FILE"
 RUN_NO_WM="$T/run-no-wm"; mkdir -p "$RUN_NO_WM"
 
 # SPIRA_REPO_MAP points at a scratch path that never exists: census.sh sources lib.sh,
@@ -181,6 +196,9 @@ run_census_fake() {   # run_census_fake <SPIRA_RUN> [census-args...]
         SPIRA_REPO_MAP="$T/no-repo-map" \
         CENSUS_SQL_FILE="$CENSUS_SQL_FILE" \
         CENSUS_SQL_RC="${CENSUS_SQL_RC:-0}" \
+        CENSUS_SKEW_FILE="$CENSUS_SKEW_FILE" \
+        CENSUS_SKEW_RC="${CENSUS_SKEW_RC:-0}" \
+        SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S="${SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S:-120}" \
         CENSUS_OPEN_JSON="${CENSUS_OPEN_JSON:-}" \
         CENSUS_CLOSED_JSON="${CENSUS_CLOSED_JSON:-}" \
         bash "$CENSUS" "$@"
@@ -209,6 +227,57 @@ CENSUS_SQL_RC=0
 is "unreachable substrate: exits non-zero, not a silent empty census" "1" "$unreachable_rc"
 is "unreachable substrate: no output" "" "$unreachable_out"
 want "unreachable substrate: stderr names it" "unreachable" "$(cat "$T/unreach.stderr")"
+
+# ==============================================================================
+echo
+echo "census.sh — clock skew guard: refuse a windowed ranking over a skewed clock (sp-ohd6h)"
+# ==============================================================================
+# POSITIVE CONTROL (law-absence-needs-a-positive-control, law-a-regression-test-must-be-
+# seen-to-fail): the in-sync fixture used by every test above must itself pass, proving
+# the guard can say yes before trusting it to say no.
+insync_out="$(run_census_fake "$RUN_NO_WM" 2>"$T/insync.stderr")"; insync_rc=$?
+is "clock in sync: exits zero" "0" "$insync_rc"
+want "clock in sync: ranking still produced" "1 sp-recur-fallback-test (1 detections)" "$insync_out"
+lack "clock in sync: no skew refusal on stderr" "clock skew" "$(cat "$T/insync.stderr")"
+
+# UNFIXED SIGNATURE: skew far outside tolerance, rc=0 from the skew query, ranking would
+# have been returned unfixed. FIXED SIGNATURE: refusal, no ranking, skew named on stderr.
+CENSUS_SKEW_FILE="$T/skew_skewed.txt"
+printf 'skew_s | now_fn | utc_fn\n------ | ------ | ------\n25200 | 2026-01-01 10:00:00 +0000 UTC | 2026-01-01 17:00:00 +0000 UTC\n' \
+    > "$CENSUS_SKEW_FILE"
+skewed_out="$(run_census_fake "$RUN_NO_WM" 2>"$T/skewed.stderr")"; skewed_rc=$?
+is "skew beyond tolerance: exits non-zero" "1" "$skewed_rc"
+is "skew beyond tolerance: no ranking emitted" "" "$skewed_out"
+want "skew beyond tolerance: measured skew named on stderr" "25200" "$(cat "$T/skewed.stderr")"
+want "skew beyond tolerance: both clock values named on stderr" \
+    "2026-01-01 10:00:00 +0000 UTC" "$(cat "$T/skewed.stderr")"
+
+# A negative skew (substrate ahead of UTC) refuses on magnitude, not sign.
+CENSUS_SKEW_FILE="$T/skew_negative.txt"
+printf 'skew_s | now_fn | utc_fn\n------ | ------ | ------\n-9000 | 2026-01-01 12:30:00 +0000 UTC | 2026-01-01 10:00:00 +0000 UTC\n' \
+    > "$CENSUS_SKEW_FILE"
+neg_out="$(run_census_fake "$RUN_NO_WM" 2>"$T/neg.stderr")"; neg_rc=$?
+is "negative skew beyond tolerance: exits non-zero" "1" "$neg_rc"
+is "negative skew beyond tolerance: no ranking emitted" "" "$neg_out"
+want "negative skew: measured skew named on stderr" "-9000" "$(cat "$T/neg.stderr")"
+
+# Tolerance is configurable: the same skew that refuses at the default passes when the
+# tolerance is widened past it.
+SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S=30000
+tolerant_out="$(run_census_fake "$RUN_NO_WM" 2>"$T/tolerant.stderr")"; tolerant_rc=$?
+SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S=120
+is "widened tolerance: same skew now passes" "0" "$tolerant_rc"
+want "widened tolerance: ranking produced" "1 sp-recur-fallback-test (1 detections)" "$tolerant_out"
+
+# A control that cannot check must refuse (law-a-control-that-cannot-check-must-refuse):
+# the skew query itself failing is not read as "in sync".
+CENSUS_SKEW_FILE="$T/skew_in_sync.txt"
+CENSUS_SKEW_RC=1
+unverifiable_out="$(run_census_fake "$RUN_NO_WM" 2>"$T/unverifiable.stderr")"; unverifiable_rc=$?
+CENSUS_SKEW_RC=0
+is "skew check unreachable: exits non-zero" "1" "$unverifiable_rc"
+is "skew check unreachable: no ranking emitted" "" "$unverifiable_out"
+want "skew check unreachable: stderr says so" "cannot verify" "$(cat "$T/unverifiable.stderr")"
 
 # ==============================================================================
 echo
