@@ -12,7 +12,7 @@
 # title (both come from classify_one's filtered `ready` set), and a saturated fleet is
 # queue ordering rather than starvation.
 #
-# FIVE CASES (law-absence-needs-a-positive-control):
+# EIGHT CASES (law-absence-needs-a-positive-control):
 #
 #   0. POSITIVE CONTROL — free fleet slot, starved partition → classifier DOES produce
 #      "starved". Proves the check can fire before we trust its silence in cases 1 and 2.
@@ -30,15 +30,20 @@
 #   4. FREE-SLOT POSITIVE PATH — a fleet with live aeons but spare capacity still
 #      escalates, confirming the saturated-fleet suppression is narrowly scoped.
 #
-#   5. FULL STACK — strand.sh check --from end-to-end, same partition-isolation property
-#      as case 2 but through the shell layer and mail.sh, not just the classifier.
+#   5. FULL STACK — strand.sh check --from exercises the whole escalation path, not just
+#      the classifier: partition A's escalation carries only A's bead.
 #
-#   6-8. D7 MERGE (from test-reclaim-needs-ryan.sh, deleted): the ghost half of the same
-#      classifier. 6 is the positive control (plain dead worker IS ghost); 7 and 8 are the
-#      two exemptions (the ask label directly, and check2_protect_waiting's skip label) that
-#      stop CHECK 2b from re-reclaiming a bead CHECK 2 already excluded (sp-2k5a, sp-qsa1).
+#   6-8. GHOST CLASSIFIER (D7, merged from test-reclaim-needs-ryan.sh — UC-dispatch-21):
+#      the /proc-based ghost check (CHECK 2b) exempts a bead carrying the ask label or the
+#      reclaim-skip label from the same stale-lease reclaim that CHECK 2's time-based reaper
+#      already exempts them from (check2_protect_waiting, sp-2k5a). test-reclaim-escalated.sh
+#      keeps the single T2 chain proving these labels reach the classifier from a real
+#      database; these three rows are the classifier's own table, hermetic and fixture-only:
+#        6. POSITIVE CONTROL — plain dead worker (no protecting label) IS ghost.
+#        7. PROTECTED (ask label directly on the bead) — NOT ghost.
+#        8. PROTECTED (skip label, applied by check2_protect_waiting) — NOT ghost.
 #
-# PRE-FIX FAILURE (run against unfixed strand-classify.py):
+# PRE-FIX FAILURE (run against unfixed strand-classify.py, cases 1-5):
 #
 #   FAIL  saturated fleet: fleet-saturated IS emitted: wanted [fleet-saturated] in [starved\t...]
 #   FAIL  saturated fleet: starved NOT emitted: did not want [starved] in [starved\t...]
@@ -46,16 +51,13 @@
 #   FAIL  partition A isolation: sp-pa1 cited in A escalation: wanted [sp-pa1] in []
 #   FAIL  partition B isolation: sp-pb1 NOT cited in A escalation: did not want [sp-pb1] in [sp-pb1]
 #
-# defect: sp-15u9f
-# covers: spira/strand-classify.py spira/strand.sh
+# tier: T1
+# defect: sp-15u9f sp-2k5a
+# covers: spira/strand-classify.py spira/strand.sh UC-dispatch-21
 # hermetic-ok: no database, no systemd, no network
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/run"
@@ -81,21 +83,6 @@ classify() {
     CAPACITY_PAUSED=0 \
         python3 "$HERE/strand-classify.py"
     rm -f "$tmpb" "$tmpr"
-}
-
-# classify_ghost <beads-json> — the ghost half of the classifier, in isolation: an expired
-# lease (PAST, well outside GHOST_GRACE=0), no live holder, no ready set at all. D7: merged
-# in from test-reclaim-needs-ryan.sh, which drove exactly this shape.
-PAST="2020-01-01T00:00:00Z"
-classify_ghost() {
-    printf '%s' "$1" > "$TMP/ghost-beads.json"
-    printf '[]' > "$TMP/ghost-ready.json"
-    BEADS_FILE="$TMP/ghost-beads.json" \
-    READY_FILE="$TMP/ghost-ready.json" \
-    HOLDERS="" LIVE=1 GHOST_GRACE=0 \
-    SPIRA_ASK_LABEL=needs-operator \
-    SPIRA_RECLAIM_SKIP_LABEL=spira-waiting-operator \
-        python3 "$HERE/strand-classify.py"
 }
 
 echo "test-strand-partition.sh"
@@ -209,48 +196,67 @@ want   "full stack partition B: sp-pb1 in evidence" "sp-pb1" "$args_b"
 nowant "full stack partition B: sp-pa1 NOT in evidence" "sp-pa1" "$args_b"
 want   "full stack partition B: title names incident partition" "spira,incident" "$args_b"
 
+# classify_ghost <bead-json-array> — the ghost half of the classifier (CHECK 2b), isolated
+# from the starved/saturated rows above: GHOST_GRACE=0 so any expired lease fires
+# immediately, SPIRA_RECLAIM_SKIP_LABEL set so case 8 can exercise the skip-label exemption
+# alongside the ask-label one classify() already asserts on (case 0's SPIRA_ASK_LABEL).
+PAST="2020-01-01T00:00:00Z"
+classify_ghost() {
+    local beads_json="$1" tmpb
+    tmpb="$(mktemp "$TMP/ghost-XXXXX.json")"
+    printf '%s' "$beads_json" > "$tmpb"
+    printf '[]' > "$TMP/ghost-ready.json"
+    BEADS_FILE="$tmpb" \
+    READY_FILE="$TMP/ghost-ready.json" \
+    HOLDERS="" LIVE=1 GHOST_GRACE=0 \
+    SPIRA_ASK_LABEL=needs-operator \
+    SPIRA_RECLAIM_SKIP_LABEL=spira-waiting-operator \
+        python3 "$HERE/strand-classify.py"
+    rm -f "$tmpb"
+}
+
 # ======================================================================================
 echo
-echo "case 6 — D7 merge, positive control: plain dead worker IS classified ghost:"
+echo "case 6 — ghost classifier positive control: plain dead worker IS ghost:"
 # ======================================================================================
-# A bead whose aeon died with no special protection. ghost must fire — without this, an
-# implementation that never raises ghost is indistinguishable from a correct one.
+# An aeon died with no protecting label. Without this, an implementation that never
+# raises ghost would read as correct once cases 7 and 8 assert its silence.
 out="$(classify_ghost '[
   {"id":"sp-dead","title":"dead worker","status":"in_progress",
    "labels":["spira","plan"],"assignee":"aeon-dead",
    "lease_expires_at":"'"$PAST"'"}
 ]')"
-want  "plain dead worker: ghost raised"  "ghost"    "$out"
-want  "plain dead worker: bead named"    "sp-dead"  "$out"
+want "case 6: plain dead worker: ghost raised" "ghost"   "$out"
+want "case 6: plain dead worker: bead named"   "sp-dead" "$out"
 
-echo
-echo "case 7 — D7 merge: bead carrying the ask label directly is NOT ghost:"
 # ======================================================================================
-# sp-2k5a: an aeon filed a needs-ryan decision bead and exited. The work bead carries
-# needs-operator, its lease is stale, no live aeon holds it. Reclaiming it re-summons a
-# session that immediately re-derives the same diagnosis and exits (the respawn loop).
+echo
+echo "case 7 — ghost classifier: ask-labeled bead (needs-operator) is NOT ghost:"
+# ======================================================================================
+# The replay of sp-2k5a: a work bead carrying the ask label directly is legitimately
+# waiting for an operator decision. Reclaiming it re-summons an aeon that immediately
+# re-derives the same diagnosis and exits — the loop that prompted the fix.
 out="$(classify_ghost '[
   {"id":"sp-ask","title":"escalated bead","status":"in_progress",
    "labels":["needs-operator","spira","plan"],"assignee":"aeon-x",
    "lease_expires_at":"'"$PAST"'"}
 ]')"
-nowant "ask-labeled bead: ghost NOT raised"  "ghost"   "$out"
-nowant "ask-labeled bead: bead NOT named"    "sp-ask"  "$out"
+nowant "case 7: ask-labeled bead: ghost NOT raised" "ghost"   "$out"
+nowant "case 7: ask-labeled bead: bead NOT named"   "sp-ask"  "$out"
 
-echo
-echo "case 8 — D7 merge: bead carrying check2_protect_waiting's skip label is NOT ghost:"
 # ======================================================================================
-# check2_protect_waiting labels a work bead with spira-waiting-operator when its only open
-# dep carries the ask label, so the sentinel's --exclude-label skips it in CHECK 2. The
-# ghost check (CHECK 2b) must honour the same exclusion, or it reclaims what CHECK 2
-# explicitly protected.
+echo
+echo "case 8 — ghost classifier: skip-labeled bead (check2_protect_waiting) is NOT ghost:"
+# ======================================================================================
+# check2_protect_waiting labels a work bead with the skip label when its only open dep
+# carries the ask label, so CHECK 2's --exclude-label skips it. The ghost check (CHECK 2b)
+# must honour the same exclusion, or it reclaims what CHECK 2 explicitly protected.
 out="$(classify_ghost '[
-  {"id":"sp-protected","title":"waiting for ryan","status":"in_progress",
+  {"id":"sp-protected","title":"waiting for the operator","status":"in_progress",
    "labels":["spira-waiting-operator","spira","plan"],"assignee":"aeon-y",
    "lease_expires_at":"'"$PAST"'"}
 ]')"
-nowant "skip-labeled bead: ghost NOT raised"   "ghost"        "$out"
-nowant "skip-labeled bead: bead NOT named"     "sp-protected" "$out"
+nowant "case 8: skip-labeled bead: ghost NOT raised" "ghost"        "$out"
+nowant "case 8: skip-labeled bead: bead NOT named"   "sp-protected" "$out"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

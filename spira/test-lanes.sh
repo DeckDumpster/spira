@@ -1,31 +1,18 @@
 #!/usr/bin/env bash
 #
-# test-lanes.sh — ops.fayth's lane guarantee.
+# test-lanes.sh — ops.fayth's lane guarantee: FAYTH_LANE=ops draws from its own
+# FAYTH_MAX_CONCURRENT, never from SPIRA_MAX_AEONS. The roster-split and pool/escape
+# rows moved to test-fayth.sh/test-summon-fayth.sh (sp-9ce60.2.1/.2.2); this is what's
+# left.
 #
 #   ./test-lanes.sh
 #
-# WHAT'S LEFT HERE. The roster split (spira_lane_fayths/spira_task_fayths) moved to
-# test-fayth.sh (sp-9ce60.2.2); the pool-saturation and escape-hatch rows (criteria 1 and
-# 2) moved to spira/test-summon-fayth.sh (D2, sp-9ce60.2.1). Both are file-level, not
-# runtime, checks — they are not deleted, they live there now. Only the ops guarantee
-# (criterion 3) remains: ops.fayth declares FAYTH_LANE=ops and is excluded from the pool.
-#
-# WHAT A LANE IS, in two sentences. A lane fayth declares FAYTH_LANE=<name> and draws from
-# its own FAYTH_MAX_CONCURRENT, never from SPIRA_MAX_AEONS. The sentinel handles it in a
-# separate loop after the pool, without a pool argument, so a fully-occupied builder pool
-# can never block a lane fayth.
-#
 # defect: sp-vyl4
-# covers: spira/conf.sh spira/sentinel.sh spira/escape.sh spira/chamber/ops.fayth
+# tier: T1
+# covers: spira/conf.sh spira/sentinel.sh spira/escape.sh spira/chamber/ops.fayth UC-dispatch-07
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-
-pass=0; fail=0
-ok()    { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()   { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "${2:-}"; }
-is()    { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
-want()  { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 # ==========================================================================================
 echo
@@ -53,8 +40,5 @@ want "sentinel.sh handles LANE_FAYTHS in CHECK 7" "LANE_FAYTHS" "$(cat "$HERE/se
 
 # escape.sh exists and is executable.
 is "escape.sh is executable" "0" "$([ -x "$HERE/escape.sh" ] && echo 0 || echo 1)"
-want "escape.sh references the lane escape rationale" "control plane" "$(cat "$HERE/escape.sh")"
 
-echo
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

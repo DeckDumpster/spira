@@ -28,7 +28,7 @@
 #
 # tier: T1
 # defect: sp-9zyu1 sp-f8vry
-# covers: spira/lib.sh spira/unclaimable.py spira/sentinel.sh
+# covers: spira/lib.sh spira/unclaimable.py spira/sentinel.sh UC-dispatch-16
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

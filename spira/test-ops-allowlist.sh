@@ -30,7 +30,7 @@
 #
 # defect: sp-39pqw
 # tier: T1
-# covers: spira/chamber/ops.fayth spira/chamber/czar.fayth UC-safety-fences-30 UC-safety-fences-31
+# covers: spira/chamber/ops.fayth spira/chamber/czar.fayth UC-safety-fences-30 UC-safety-fences-31 UC-dispatch-24
 # host-reason: hermetic — sources each fayth in a subshell; no database, no systemd, no
 #   Claude invocations
 set -uo pipefail

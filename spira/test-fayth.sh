@@ -21,6 +21,7 @@
 # lib.sh re-sourced) before the next section relies on the real chamber again.
 #
 # defect: sp-fayth-predicate sp-czsf4 sp-xrkuu
+# tier: T1
 # covers: spira/lib.sh spira/sentinel.sh spira/schema.sh spira/conf.sh spira/doctor.sh spira/chamber/*.fayth UC-dispatch-07 UC-dispatch-08 UC-dispatch-13
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

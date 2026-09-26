@@ -85,7 +85,6 @@ test-certified-withdraw.sh
 test-certify.sh
 test-chamber-repo-labels.sh
 test-check2-reaper.sh
-test-check2-reclaim.sh
 test-citations.sh
 test-claim-retry.sh
 test-closed-strand.sh
@@ -215,7 +214,6 @@ test-landing-rebase.sh
 test-landing-red-recurring.sh
 test-landing-starvation.sh
 test-landing.sh
-test-lanes.sh
 test-layout-guard.sh
 test-limits.sh
 test-literal-lint.sh
@@ -241,7 +239,6 @@ test-queue-sweep-orphan-runs.sh
 test-ready.sh
 test-rebase-branch.sh
 test-rebase-escalation.sh
-test-reclaim-escalated.sh
 test-reclaim-slay-branch-guard.sh
 test-reconciler.sh
 test-release-workflow.sh
@@ -272,7 +269,6 @@ test-strand-capacity.sh
 test-strand-deferred.sh
 test-strand-ghost-teardown.sh
 test-strand-lock.sh
-test-strand-partition.sh
 test-strand-pool-paused.sh
 test-strand-throttle.sh
 test-strand-truncated.sh

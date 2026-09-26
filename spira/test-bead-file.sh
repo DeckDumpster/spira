@@ -10,6 +10,7 @@
 # Each refusal case is preceded by a positive control on the same path
 # (law-absence-needs-a-positive-control).
 #
+# tier: T1
 # covers: spira/bead.sh spira/lib.sh spira/schema.sh UC-dispatch-01 UC-dispatch-02 UC-dispatch-03
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
