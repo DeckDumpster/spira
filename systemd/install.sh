@@ -45,9 +45,9 @@ SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # _seed_instance_conf <conf-file> <instance> -> append SPIRA_INSTANCE=<instance> unless
 # that exact line is already there. APPEND, NOT OVERWRITE: the file may carry operator
-# settings, and appending overrides any earlier value (spira_conf_read: last write wins)
-# without disturbing lines placed before it. Defined before conf.sh is sourced so a test
-# can source this file (BASH_SOURCE[0] != $0) and call it directly.
+# settings, and appending a later line overrides any earlier one without disturbing lines
+# placed before it. Defined before conf.sh is sourced so a test can source this file
+# (BASH_SOURCE[0] != $0) and call it directly.
 _seed_instance_conf() {
     local file="$1" inst="$2"
     grep -qxF "SPIRA_INSTANCE=$inst" "$file" 2>/dev/null && return 0
