@@ -515,4 +515,79 @@ rm -rf "$PURGEDB_DIR" "$PURGEDB_DOLT" "$PURGEDB_TESTDB"
 
 # ==========================================================================
 echo
+echo "TIMER RACE (T2, sp-6k3pr) — a timer firing mid-uninstall does not resurrect its service:"
+# ==========================================================================
+# spira-broker.service/.timer are only in the manifest when SPIRA_BROKER_BIN is
+# executable (units.sh); set it to a stub so owned.sh includes them exactly as
+# a real broker install would.
+RACE_UNIT_SVC="spira-broker-race.service"
+RACE_UNIT_TMR="spira-broker-race.timer"
+RACE_STATE="$TMP/race-state"
+RACE_BIN="$TMP/race-bin"
+mkdir -p "$RACE_STATE" "$RACE_BIN"
+printf '#!/bin/sh\n' > "$RACE_BIN/broker"; chmod +x "$RACE_BIN/broker"
+
+# Mock systemctl that tracks the service's running state on disk. Stopping the
+# SERVICE while its TIMER has not yet been stopped simulates the timer firing
+# concurrently and restarting it — the exact race sp-6k3pr describes. Stopping
+# the timer first (the fix) disarms this before the service is ever touched.
+cat > "$RACE_BIN/systemctl" <<MOCK
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$RACE_STATE/calls.log"
+case "\$*" in
+    *"stop $RACE_UNIT_TMR"*) : > "$RACE_STATE/timer_stopped" ;;
+    *"stop $RACE_UNIT_SVC"*)
+        rm -f "$RACE_STATE/active"
+        [ -e "$RACE_STATE/timer_stopped" ] || : > "$RACE_STATE/active"
+        ;;
+    *"start $RACE_UNIT_SVC"*) : > "$RACE_STATE/active" ;;
+    *"list-units"*) printf '' ;;
+esac
+exit 0
+MOCK
+chmod +x "$RACE_BIN/systemctl"
+
+# POSITIVE CONTROL: prove the mock reproduces the race under the pre-fix
+# order (service stopped before its timer) — a clean result below is
+# meaningless unless this mock can also report a dirty one.
+: > "$RACE_STATE/active"; rm -f "$RACE_STATE/timer_stopped"
+"$RACE_BIN/systemctl" --user stop "$RACE_UNIT_SVC" >/dev/null
+"$RACE_BIN/systemctl" --user stop "$RACE_UNIT_TMR" >/dev/null
+[ -e "$RACE_STATE/active" ] \
+    && ok  "race: positive control — service-before-timer order lets the firing resurrect it" \
+    || bad "race: positive control — service-before-timer order lets the firing resurrect it" \
+           "expected the mock to show the service resurrected"
+
+# THE REAL RUN: uninstall.sh must stop every .timer before any .service, so
+# by the time it reaches the broker service the firing can no longer happen.
+: > "$RACE_STATE/active"; rm -f "$RACE_STATE/timer_stopped"
+race_out="$(env -i \
+    "PATH=$PATH" \
+    "HOME=$TMP/home" \
+    SPIRA_CONF=/nonexistent \
+    "SPIRA_PATH=$RACE_BIN" \
+    "SPIRA_RUN=$SPIRA_RUN_DIR" \
+    "SPIRA_HOME=$FIXTURE/spira" \
+    "SPIRA_PROD=$FIXTURE/spira" \
+    "SPIRA_REPO=$FAKE_REPO" \
+    "SPIRA_COCKPIT=$REAL_COCKPIT" \
+    "SPIRA_INSTANCE=test" \
+    "SPIRA_BROKER_BIN=$RACE_BIN/broker" \
+    SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
+    "SPIRA_SYSTEMCTL=$RACE_BIN/systemctl" \
+    "SPIRA_LOGINCTL=$MOCK_BIN/loginctl" \
+    "SPIRA_TMUX=$MOCK_BIN/tmux" \
+    bash "$FIXTURE/spira/uninstall.sh" test --yes 2>&1)"
+race_rc=$?
+
+iszero "race: uninstall.sh --yes exits 0" "$race_rc"
+[ -e "$RACE_STATE/active" ] \
+    && bad "race: timer-fires-mid-uninstall does not resurrect the service (T2)" \
+           "service ended active — timer was not stopped before the service" \
+    || ok  "race: timer-fires-mid-uninstall does not resurrect the service (T2)"
+
+rm -rf "$RACE_STATE" "$RACE_BIN"
+
+# ==========================================================================
+echo
 tl_summary
