@@ -24,11 +24,7 @@
 set -uo pipefail
 set -m
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-world-drain-deadline.sh"
 
@@ -193,5 +189,4 @@ nowant "an already-active watcher is not restarted" "start spira-watch-active-pr
 want   "world.sh reports the revived watcher"       "started spira-watch-inactive-prod.service" "$g11_out"
 
 echo
-printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

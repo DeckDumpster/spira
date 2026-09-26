@@ -16,10 +16,7 @@
 # covers: spira/cockpit.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -115,6 +112,4 @@ is "SP_STRANDS=1 (the row is still counted)" "1" "$(field "$out" SP_STRANDS)"
 is "SP_STRAND_GHOST=? (unclassifiable key)"  "?" "$(field "$out" SP_STRAND_GHOST)"
 want_other="$(field "$out" SP_STRAND_OTHER)"
 is "SP_STRAND_OTHER reports the unclassified count" "unclassified=1" "$want_other"
-
-printf '\n  %d ok, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

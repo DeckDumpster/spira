@@ -24,20 +24,14 @@
 # covers: cockpit/health.sh spira/cockpit.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 PANE="$HERE/../cockpit/health.sh"
-pass=0; fail=0
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s\n' "$1"; }
-is_n() { if [ "$2" = "$3" ]; then pass=$((pass+1)); printf '  ok    %s\n' "$1"
-         else fail=$((fail+1)); printf '  FAIL  %s: want [%s] got [%s]\n' "$1" "$2" "$3"; fi; }
 
 # ---- pane helpers (same pattern as test-now.sh) ----------------------------------------
 
 if [ ! -f "$PANE" ]; then
-    bad "cannot find the pane at $PANE — nothing to test"
-    printf '%d passed, %d failed\n' "$pass" "$fail"; exit 1
+    bail "cannot find the pane at $PANE — nothing to test"
 fi
 
 PD="$TMP/pane"
@@ -665,5 +659,4 @@ else
 fi
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

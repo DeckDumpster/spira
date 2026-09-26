@@ -15,17 +15,15 @@
 # The real one is the positive control: a matcher that tags nothing would also pass the
 # "session stays untagged" assertion.
 #
+# tier: T1
 # covers: cockpit/layout.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 COCKPIT_DIR="$(dirname "$HERE")/cockpit"
 LAYOUT="$COCKPIT_DIR/layout.sh"
 
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux not available" >&2; exit 0; }
 
@@ -85,6 +83,4 @@ is "positive control: real health pane is tagged health" "health" \
 grep -q "runs no dashboard" "$TMP/.runtime/cockpit-heal.log" 2>/dev/null \
     && ok "heal log records the cleared tag" \
     || bad "heal log records the cleared tag" "$(cat "$TMP/.runtime/cockpit-heal.log" 2>/dev/null)"
-
-printf '\ntest-cockpit-layout-identity: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -20,11 +20,7 @@
 #   from an untested release (law-absence-needs-a-positive-control).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -161,5 +157,4 @@ want "newest noted release's verdict" "SP_ACCEPT_VERDICT=PASS" "$out"
 want "and its tag"                    "SP_ACCEPT_TAG=spira-release-spira-20260202T000000Z" "$out"
 want "nothing cut since it"           "SP_ACCEPT_SINCE=0" "$out"
 
-printf 'test-cockpit-accept: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

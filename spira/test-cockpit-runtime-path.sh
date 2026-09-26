@@ -18,12 +18,11 @@
 # any key falls under SPIRA_RUN, assert that SPIRA_RUN itself has a non-empty default — an
 # empty SPIRA_RUN would make every "starts with SPIRA_RUN" check vacuously true.
 #
+# tier: T1
 # covers: spira/conf.sh cockpit/answered-since.sh cockpit/watch-answers.sh cockpit/resolve.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+. "$HERE/testlib.sh"
 isne() { [ "$2" != "$3" ] && ok "$1" || bad "$1" "wanted NOT [$2] got [$3]"; }
 
 echo "test-cockpit-runtime-path.sh"
@@ -139,5 +138,4 @@ case "$val_pm" in
 esac
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

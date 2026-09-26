@@ -12,12 +12,8 @@
 # covers: spira/collect.sh spira/cockpit.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 # host-reason: collect.sh and cockpit.sh dispatch; no shared state or timed services.
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 TMP="$(mktemp -d)"
 trap 'chmod -R +w "$TMP" 2>/dev/null || true; rm -rf "$TMP"' EXIT
@@ -109,5 +105,4 @@ want "after merge: SP_QUEUE_EJECTED in cockpit.env"  "SP_QUEUE_EJECTED="   "$sna
 
 # ============================================================
 echo
-printf 'test-cockpit-collect-probes: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

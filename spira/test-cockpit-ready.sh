@@ -11,15 +11,12 @@
 # read the database at all, displacing the suspicion that would have prompted a look.
 #
 # defect: sp-vmh4
+# tier: T1
 # covers: spira/cockpit.sh
 # scar: bd exits 0 on a schema-version mismatch and emits the refusal to stdout; a probe counting output lines read the refusal as zero, and SP_READY showed 0 during a real outage.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -105,7 +102,4 @@ ref_out="$(run_probe "$BD_REFUSED")"
 want "SP_READY is ? on refusal"   "SP_READY=?"   "$ref_out"
 want "SP_NEXT_N is ? on refusal"  "SP_NEXT_N=?"  "$ref_out"
 want "SP_WAITING is ? on refusal" "SP_WAITING=?" "$ref_out"
-
-# ======================================================================================
-printf '\ntest-cockpit-ready: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

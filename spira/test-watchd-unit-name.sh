@@ -19,14 +19,13 @@
 # RUNS WITHOUT SYSTEMD. All assertions are against the naming formula; no unit
 # needs to be loaded or active.
 #
+# tier: T1
 # covers: spira/conf.sh
 # covers: spira/watchd.sh
 # covers: systemd/units.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: got [%s] want [%s]\n' "$1" "$2" "$3"; }
+. "$HERE/testlib.sh"
 eq()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "$2" "$3"; }
 ne()  { [ "$2" != "$3" ] && ok "$1" || bad "$1" "$2" "anything != $3"; }
 
@@ -116,4 +115,4 @@ unset _name got
 
 # ---------------------------------------------------------------------------
 echo
-[ "$fail" -eq 0 ] && printf 'PASS (%d)\n' "$pass" || { printf 'FAIL (%d of %d)\n' "$fail" "$((pass+fail))"; exit 1; }
+tl_summary

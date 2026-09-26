@@ -21,14 +21,13 @@
 # source — so a rename that updates every grep but not the say, or vice versa, is caught here.
 #
 # defect: sp-dcfm
+# tier: T1
 # covers: spira/sending.sh spira/sentinel.sh spira/cockpit-metrics.py
 
 # covers: spira/sending.sh spira/sentinel.sh spira/cockpit-metrics.py
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+. "$HERE/testlib.sh"
 
 echo "test-wire-token.sh"
 
@@ -83,6 +82,4 @@ if grep -q 'startswith("REAPED")' "$METRICS"; then
 else
     ok "cockpit-metrics.py does not startswith(\"REAPED\")"
 fi
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

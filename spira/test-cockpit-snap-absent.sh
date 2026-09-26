@@ -20,17 +20,12 @@
 # covers: cockpit/health.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 PANE="$HERE/../cockpit/health.sh"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s\n' "$1"; }
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-echo "test-cockpit-snap-absent.sh"
-
 if [ ! -f "$PANE" ]; then
-    fail=$((fail+1)); printf '  FAIL  cannot find pane at %s\n' "$PANE"
-    printf '%d passed, %d failed\n' "$pass" "$fail"; exit 1
+    bail "cannot find pane at $PANE"
 fi
 
 PD="$TMP/pane"
@@ -122,5 +117,4 @@ else
 fi
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
