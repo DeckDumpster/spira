@@ -695,9 +695,8 @@ rebase_survivors() {     # rebase_survivors <repo> <name> <base> <landed-branch>
             _cur_br_tip="$(git -C "$repo" rev-parse "$br" 2>/dev/null)"
             _cur_base_sha="$(git -C "$repo" rev-parse "$base_fq" 2>/dev/null)"
             read -r _ls_st _ls_tip _ls_at _ls_reason <<< "$(land_state "$id" 2>/dev/null || true)"
-            if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$_cur_br_tip" ] && \
-               [ "${_ls_reason:-}" = "no-rebase@${_cur_base_sha}" ]; then
-                log "CHECK6 $id: tip and base unchanged since last RED mark — skipping duplicate bump"
+            if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$_cur_br_tip" ]; then
+                log "CHECK6 $id: tip unchanged since last RED mark — skipping duplicate bump"
                 continue
             fi
             bump_requeue "$id" merge-conflict >/dev/null 2>&1
@@ -1084,14 +1083,17 @@ for i in d:
                 continue
             fi
             local _other_beads _reopen_note _rq_n _ls_reason_class
-            # _cur_base_sha and the land_state read above already answered this for the
-            # ordinary case (same tip, same base, same no-rebase mark) by skipping the
-            # rebase_branch call entirely; this re-check only still fires when something
-            # changed between here and there — e.g. rebase_branch itself just produced the
-            # mark this pass, or a different reason class than no-rebase led here.
-            if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$tip" ] && \
-               [ "${_ls_reason:-}" = "no-rebase@${_cur_base_sha}" ]; then
-                log "CHECK6 $id: tip and base unchanged since last RED mark — skipping duplicate bump"
+            # _cur_base_sha and the land_state read above already answered the ordinary case
+            # (same tip, same base, same no-rebase mark) by skipping the rebase_branch call
+            # entirely (sp-8mj7h). The duplicate-bump guard here keys on the branch tip ALONE
+            # (sp-cgklh): a base advance with an unchanged tip is not a new conflict, and
+            # counting it again is how sp-vjfv6's counter reached 23. The mark is refreshed to
+            # the current base so the walk's own skip above holds on the next pass instead of
+            # paying for the same failed rebase again.
+            if [ "${_ls_st:-}" = RED ] && [ "${_ls_tip:-}" = "$tip" ]; then
+                log "CHECK6 $id: tip unchanged since last RED mark — skipping duplicate bump"
+                [ "${_ls_reason:-}" = "no-rebase@${_cur_base_sha}" ] || \
+                    land_mark "$id" RED "$tip" "no-rebase@${_cur_base_sha}"
                 continue
             fi
             bump_requeue "$id" merge-conflict >/dev/null 2>&1
@@ -1112,6 +1114,10 @@ for i in d:
                     spira_ask_red_recurring "$id" "$br" "$name" "no-rebase" "${_ls_at:-0}"
                     progress "escalated $id — recurring no-rebase on $br after ${_rq_n:-1} attempt(s)"
                 elif [ "${_rq_n:-0}" -ge "${SPIRA_REBASE_ESCALATE_AT:-3}" ]; then
+                    # An aeon can still claim this bead — unlike the sweep survivor above,
+                    # the main loop reopens even on escalation, or the ask is a question
+                    # about a bead nothing can ever work.
+                    bead_reopen "$id" rebase-conflict "$_reopen_note"
                     spira_ask_rebase_loop "$id" "$br" "$name" "${_rq_n:-1}" "${REBASE_CONFLICTS:-unknown}" "$_other_beads" "$repo" "$base_fqref"
                     progress "escalated $id — rebase conflict x${_rq_n} on $br"
                 else

@@ -26,8 +26,11 @@ nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3
 . "$HERE/testdb.sh"
 testdb_require test-landing-rebase
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+# testdb-mode: server — asserts requeued-event counts via bump_requeue/requeues_of, which
+# read and write through bd sql; embedded mode refuses every bd sql call.
+export SPIRA_TESTDB_MODE=server
 testdb_up landing-rebase || {
-    printf 'SKIP test-landing-rebase: testdb not available\n' >&2
+    printf 'SKIP test-landing-rebase: server testdb not available\n' >&2
     exit 77
 }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -298,6 +301,69 @@ git -C "$REPO" branch -q -D detour 2>/dev/null
     && ok "a checkout not on the base branch is not clobbered" \
     || bad "a checkout not on the base branch is not clobbered" "checkout moved anyway"
 want "and the decline names the branch" "not main" "$out"
+
+# --------------------------------------------------------------------------------------
+# THE MAIN CHECK6 LOOP'S ESCALATE PATH MUST ALSO REOPEN (sp-cgklh,
+# law-a-regression-test-must-be-seen-to-fail). Past SPIRA_REBASE_ESCALATE_AT the escalate
+# branch was taken instead of the reopen branch, leaving the bead closed and unworkable —
+# sp-vjfv6 had 23 such escalations with no reopen ever recorded. This is the ordinary
+# per-bead loop, not the rebase_survivors sweep: an aeon can actually claim this bead, so
+# reopening it (in addition to asking) is what makes the escalation actionable rather than
+# a permanent, silent dead end. Run against the unfixed tree:
+#   FAIL  escalate path reopens the bead: wanted [open] got [closed]
+#   FAIL  and fires the escalation ask: wanted [rebase loop] in []
+# --------------------------------------------------------------------------------------
+echo
+seed; git -C "$REPO" fetch -q origin; reset_repo
+branch sp-escl shared-escl.txt "from-escalate"
+printf 'base-content\n' > "$REPO/shared-escl.txt"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base writes shared-escl.txt"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+# Pre-bump the lifetime requeue counter to AT-1 so the pass's own bump (below) brings it
+# to AT on the FIRST sighting of this conflict — land_state is not yet RED, so the
+# RED-recurring guard does not intercept it first.
+SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+SPIRA_REPO="$REPO" SPIRA_REPO_MAP="$SH/repo-map" \
+    bash -c '. "$1/lib.sh" >/dev/null 2>&1
+             bump_requeue sp-escl merge-conflict >/dev/null 2>&1
+             bump_requeue sp-escl merge-conflict >/dev/null 2>&1' \
+    _ "$SH"
+: > "$EMITTED"
+SPIRA_REBASE_ESCALATE_AT=3 landing >/dev/null 2>&1 || true
+is   "escalate path reopens the bead"   open "$(status_of sp-escl)"
+want "and fires the escalation ask"     "rebase loop" "$(cat "$EMITTED")"
+drop_branch sp-escl
+
+# --------------------------------------------------------------------------------------
+# DUPLICATE-BUMP GUARD KEYS ON TIP, NOT BASE SHA (sp-cgklh, law-a-regression-test-must-be-seen-to-fail).
+# A base advance with unchanged branch tip must not produce a second requeued event.
+# Run against the unfixed tree:
+#   FAIL  advancing the base with unchanged branch tip does not re-bump requeue count: wanted [1] got [2]
+# --------------------------------------------------------------------------------------
+echo
+seed; branch sp-dupl shared-dupl.txt "from-dupl"
+printf 'base-dupl-content\n' > "$REPO/shared-dupl.txt"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base writes shared-dupl.txt"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+_dupl_tip="$(git -C "$REPO" rev-parse spira/sp-dupl)"
+_dupl_base1="$(git -C "$REPO" rev-parse origin/main)"
+# Simulate first conflict detection: plant RED mark + one requeue event.
+SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+SPIRA_REPO="$REPO" SPIRA_REPO_MAP="$SH/repo-map" \
+    bash -c '. "$1/lib.sh" >/dev/null 2>&1
+             land_mark "$2" RED "$3" "no-rebase@$4"
+             bump_requeue "$2" merge-conflict >/dev/null 2>&1' \
+    _ "$SH" "sp-dupl" "$_dupl_tip" "$_dupl_base1"
+# Advance the base without changing the branch tip.
+printf 'unrelated\n' > "$REPO/advance-dupl.txt"
+git -C "$REPO" add -A; git -C "$REPO" commit -q -m "advance base"
+git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+landing >/dev/null 2>&1
+_rq="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    SPIRA_REPO="$REPO" SPIRA_REPO_MAP="$SH/repo-map" \
+    bash -c '. "$1/lib.sh" >/dev/null 2>&1; printf "%s" "$(requeues_of sp-dupl)"' _ "$SH")"
+is "advancing the base with unchanged branch tip does not re-bump requeue count" "1" "$_rq"
+drop_branch sp-dupl
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -326,14 +326,14 @@ want "first pass detects the conflict and escalates"     "escalated sp-nodupe" "
 is   "and writes exactly one merge-conflict event"       1 "$(mc_of sp-nodupe)"
 
 out2="$(SPIRA_REBASE_ESCALATE_AT=1 landing)"
-is   "a second pass with unchanged tip and base writes no new event" 1 "$(mc_of sp-nodupe)"
-want "and the log names the reason it skipped" "tip and base unchanged since last RED" "$out2"
+is   "a second pass writes no new event — bead is open after escalation" 1 "$(mc_of sp-nodupe)"
+want "and the log names the reason it skipped" "open and no aeon holds it" "$out2"
 
 printf '%s\n' "another base commit" >> "$REPO/shared.txt"
 git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base advances"
 git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
 out3="$(SPIRA_REBASE_ESCALATE_AT=1 landing)"
-is   "after base moves, a new event is written" 2 "$(mc_of sp-nodupe)"
+is   "advancing the base with unchanged tip does not re-bump" 1 "$(mc_of sp-nodupe)"
 drop_branch sp-nodupe
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
