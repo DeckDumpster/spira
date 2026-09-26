@@ -9,6 +9,9 @@
 #   The 'build' subcommand is the default: omitting it is equivalent.
 #   --workspace <path>: auto-discover all [[bin]] targets via cargo metadata.
 #   --repo-name <name>: the identity stamped into MANIFEST's `repo` line (see below).
+#   --release-repo <owner/repo>: the forge repository that publishes this release, stamped
+#     into MANIFEST's `release-repo` line; conf.sh reads it back as SPIRA_RELEASE_REPO when
+#     nothing sets that, so an installed release always has a release source for skew.sh.
 #   Legacy: --loom-bin, --panel-bin, --broker-bin, --supervise-bin still accepted.
 #
 # TARBALL CONTENTS
@@ -61,7 +64,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # build — produce the tarball
 # ---------------------------------------------------------------------------
 do_build() {
-    local outdir="." loom_bin="" panel_bin="" broker_bin="" supervise_bin="" landing_pass_bin="" commit="" repo="" name_override="" repo_name=""
+    local outdir="." loom_bin="" panel_bin="" broker_bin="" supervise_bin="" landing_pass_bin="" commit="" repo="" name_override="" repo_name="" release_repo=""
     local workspace=""  # workspace root for auto-discovery via cargo metadata
 
     while [ $# -gt 0 ]; do
@@ -75,6 +78,7 @@ do_build() {
             --workspace)         workspace="$2";         shift 2 ;;
             --name)              name_override="$2";     shift 2 ;;
             --repo-name)         repo_name="$2";         shift 2 ;;
+            --release-repo)      release_repo="$2";      shift 2 ;;
             -h|--help)   _usage; exit 0 ;;
             -*) printf 'build-tarball.sh: unknown option: %s\n' "$1" >&2; exit 2 ;;
             *)
@@ -224,6 +228,7 @@ for pkg in meta['packages']:
 
     # Write MANIFEST — commit, timestamp, repo identity, and sha256 per binary.
     printf 'commit %s\ntimestamp %s\nrepo %s\n' "$sha" "$ts" "$repo_name" > "$stage/MANIFEST"
+    [ -n "$release_repo" ] && printf 'release-repo %s\n' "$release_repo" >> "$stage/MANIFEST"
     for _i in "${!_bin_names[@]}"; do
         local _h; _h="$(sha256sum "$stage/bin/${_bin_names[$_i]}" | awk '{print $1}')"
         printf 'bin/%s %s\n' "${_bin_names[$_i]}" "$_h" >> "$stage/MANIFEST"

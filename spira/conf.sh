@@ -526,6 +526,12 @@ spira_conf_defaults() {
     # install this equals SPIRA_GH_INTAKE_REPO; a consuming install points issue intake
     # at its own tracker while this key names the release publisher independently.
     : "${SPIRA_RELEASE_REPO:=${SPIRA_GH_INTAKE_REPO}}"
+    # AN INSTALLED RELEASE IS NEVER SOURCELESS. release.yml stamps the publishing repository
+    # into MANIFEST (build-tarball.sh --release-repo); with nothing else set, that is where
+    # this release's successors are published, and skew.sh's currency check reads it.
+    if [ -z "$SPIRA_RELEASE_REPO" ] && [ -f "$SPIRA_REPO/MANIFEST" ]; then
+        SPIRA_RELEASE_REPO="$(awk '$1=="release-repo"{print $2; exit}' "$SPIRA_REPO/MANIFEST" 2>/dev/null)" || true
+    fi
     # THE TOOLCHAIN release.yml PINS ("Install Rust <version>", asserted exactly). Read by
     # acceptance-local.sh so a local rehearsal builds under the same compiler the release job
     # would use, not whatever `cargo` happens to resolve to on the machine running it — the

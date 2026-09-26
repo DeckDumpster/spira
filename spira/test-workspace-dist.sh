@@ -223,6 +223,20 @@ else
         "$(cat "${TREE_NAMED:-/dev/null}/MANIFEST" 2>/dev/null)"
 fi
 
+# THE RELEASE SOURCE. --release-repo stamps a `release-repo` line, which conf.sh reads back as
+# SPIRA_RELEASE_REPO so an installed release always knows where its releases are published.
+rel_out="$(run_build build --workspace "$WS" --output "$TMP/out-rel" --release-repo owner/publisher 2>&1)"
+is "build --release-repo exits 0" "0" "$?"
+tarball_rel="$(find "$TMP/out-rel" -name 'spira-*.tar.gz' | head -1)"
+UNPACK_REL="$TMP/unpack-rel"; mkdir -p "$UNPACK_REL"
+[ -f "${tarball_rel:-}" ] && tar -xzf "$tarball_rel" -C "$UNPACK_REL"
+stem_rel="${tarball_rel:+$(basename "${tarball_rel%.tar.gz}")}"
+if grep -qx "release-repo owner/publisher" "$UNPACK_REL/${stem_rel:-none}/MANIFEST" 2>/dev/null; then
+    ok "MANIFEST records --release-repo"
+else
+    bad "MANIFEST records --release-repo" "$(cat "$UNPACK_REL/${stem_rel:-none}/MANIFEST" 2>/dev/null)"
+fi
+
 # Without --repo-name, the repo line falls back to the source checkout's own git
 # identity (basename of the workspace here) rather than being absent or the
 # tarball's own timestamped name.

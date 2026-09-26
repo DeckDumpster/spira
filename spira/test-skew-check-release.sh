@@ -256,6 +256,7 @@ mkdir -p "$MOCK_BIN"
 cat > "$MOCK_BIN/gh" <<'GHEOF'
 #!/usr/bin/env bash
 if [ "${1:-}" = release ] && [ "${2:-}" = list ]; then
+    if [ -n "${GH_FAIL:-}" ]; then printf 'HTTP 401: Bad credentials\n' >&2; exit 1; fi
     printf '%s\n' "${GH_RELEASE_LIST:-[]}"
     exit 0
 fi
@@ -337,6 +338,50 @@ echo "artifact mode — no SPIRA_GH_INTAKE_REPO and no SPIRA_RELEASE_REPO → ex
 reset_releases
 art_no_intake_out="$(run_skew_artifact)"; art_no_intake_rc=$?
 is "artifact-no-intake: exits 3" "3" "$art_no_intake_rc"
+
+# ===========================================================================
+echo
+echo "LOCAL RELEASE SOURCE — SPIRA_RELEASE_REPO names a directory of tarballs + .tag sidecars:"
+# ===========================================================================
+# A box with no forge credential visible to its user units (every acceptance box) still has
+# a release source: the directory its releases were staged from. GH_RELEASE_LIST is left
+# empty, so reading the forge would find no tags and exit 3 — a verdict of 1 or 0 here can
+# only have come from the directory.
+LOCAL_SRC="$TMP/release-source"; rm -rf "$LOCAL_SRC"; mkdir -p "$LOCAL_SRC"
+: > "$LOCAL_SRC/spira-${TS1}.tar.gz"; printf 'spira-release-spira-%s\n' "$TS1" > "$LOCAL_SRC/spira-${TS1}.tag"
+: > "$LOCAL_SRC/spira-${TS2}.tar.gz"; printf 'spira-release-spira-%s\n' "$TS2" > "$LOCAL_SRC/spira-${TS2}.tag"
+reset_releases
+rm -f "$RELEASES/current"; ln -s "spira-${TS1}" "$RELEASES/current"
+mkdir -p "$RELEASES/.tags"; printf 'spira-release-spira-%s\n' "$TS1" > "$RELEASES/.tags/spira-${TS1}"
+printf 'commit %s\ntimestamp %s\n' "$COMMIT1" "$TS1" > "$REL1_DIR/MANIFEST"
+out="$(run_skew_artifact SPIRA_RELEASE_REPO="$LOCAL_SRC")"; rc=$?
+is   "local-dir: an older activated release -> exits 1"   "1"                          "$rc"
+want "local-dir: NOT-LATEST names the newer local tag"    "spira-release-spira-${TS2}" "$out"
+out="$(run_skew_artifact SPIRA_RELEASE_REPO="file://$LOCAL_SRC")"; rc=$?
+is   "local-dir (file:// form): same verdict"              "1"                          "$rc"
+rm -f "$LOCAL_SRC/spira-${TS2}.tag" "$LOCAL_SRC/spira-${TS2}.tar.gz"
+out="$(run_skew_artifact SPIRA_RELEASE_REPO="$LOCAL_SRC")"; rc=$?
+is   "local-dir: the activated release is the newest there -> exits 0" "0" "$rc"
+
+# ===========================================================================
+echo
+echo "NO RELEASE SOURCE, OR AN UNREADABLE FORGE — exit 3 names exactly what to set:"
+# ===========================================================================
+# law-a-control-that-cannot-check-must-refuse: could-not-check stays a failure (exit 3), and
+# the message names the grant — not "no release tags found", which says nothing about why.
+reset_releases
+rm -f "$RELEASES/current"; ln -s "spira-${TS1}" "$RELEASES/current"
+mkdir -p "$RELEASES/.tags"; printf 'spira-release-spira-%s\n' "$TS1" > "$RELEASES/.tags/spira-${TS1}"
+printf 'commit %s\ntimestamp %s\n' "$COMMIT1" "$TS1" > "$REL1_DIR/MANIFEST"
+out="$(run_skew_artifact)"; rc=$?
+is   "no source: exits 3"                            "3"                  "$rc"
+want "no source: names SPIRA_RELEASE_REPO"           "SPIRA_RELEASE_REPO" "$out"
+out="$(run_skew_artifact SPIRA_RELEASE_REPO=test/repo GH_FAIL=1)"; rc=$?
+is   "forge unreadable: exits 3"                     "3"                  "$rc"
+want "forge unreadable: says gh could not list it"   "could not list the releases of test/repo" "$out"
+want "forge unreadable: carries gh's own error"      "Bad credentials"    "$out"
+want "forge unreadable: names a gh credential visible to user units" "gh credential visible to user units" "$out"
+want "forge unreadable: and the local-directory alternative"         "SPIRA_RELEASE_REPO" "$out"
 
 # ===========================================================================
 echo

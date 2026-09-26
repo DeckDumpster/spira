@@ -194,5 +194,14 @@ else
         "--repo-name not found — an installed release would derive its identity from its own directory name"
 fi
 
+# 10. THE RELEASE SOURCE: release.yml stamps the publishing repository, so an installed
+# release reads SPIRA_RELEASE_REPO from its own MANIFEST and skew.sh is never sourceless.
+if grep -qF -- '--release-repo "$GITHUB_REPOSITORY"' "$WORKFLOW"; then
+    ok "release.yml passes --release-repo \$GITHUB_REPOSITORY to build-tarball.sh"
+else
+    bad "release.yml passes --release-repo \$GITHUB_REPOSITORY to build-tarball.sh" \
+        "not found — an installed release would not know where its releases are published"
+fi
+
 # ============================================================================
 tl_summary
