@@ -83,7 +83,10 @@ for id in "${IDS[@]}"; do
 
     # 1. The floor the attempt count is measured from (sp-qd2ul). Written FIRST, so a CHECK 4
     #    pass racing this script sees the reset count before it sees the missing label.
-    bump_poison_cleared "$id" "$CAUSE"
+    # The event value goes into SQL verbatim; a quote in the cause broke the write and left the
+    # count at the threshold (caught by step 6 on its first real run). The full cause still
+    # goes into the note below; the event carries a quote-free, bounded form.
+    bump_poison_cleared "$id" "$(printf '%s' "$CAUSE" | tr -d "'\"\\\\" | cut -c1-200)"
     # 2. The ask-dedup history, so a genuine future poisoning is asked about again.
     poison_asked_clear "$id"
     # 3. The label.
