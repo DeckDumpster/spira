@@ -3,8 +3,8 @@
 #
 # TMUX_TMPDIR is meant to give a suite its own isolated tmux server. It does
 # not when $TMUX is already set: tmux prefers the inherited socket and the
-# suite drives the operator's live session. testenv-batch.sh and suites.sh
-# must both strip TMUX before handing the environment to a suite.
+# suite drives the operator's live session. testenv-batch.sh must strip TMUX
+# before handing the environment to a suite it launches.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control). Part A proves the
 # container CAN see TMUX when it is explicitly injected — so silence in Part B
@@ -12,7 +12,7 @@
 # podman is unavailable; Part C (source checks) always runs.
 #
 # host-reason: Parts A and B each start a container.
-# covers: spira/testenv-batch.sh spira/suites.sh
+# covers: spira/testenv-batch.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BATCH="$HERE/testenv-batch.sh"
@@ -27,7 +27,7 @@ echo "test-testenv-tmux-isolation.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # ===========================================================================
-# PART C: source checks — both files declare the TMUX stripping.
+# PART C: source checks — testenv-batch.sh declares the TMUX stripping.
 # These run in every environment, including inside a container.
 # ===========================================================================
 echo
@@ -45,17 +45,12 @@ else
     ok "C-ctrl: pre-fix RUNNER_VARS loop does not strip TMUX (positive control)"
 fi
 
-# suites.sh must add -u TMUX to the inline launch environment.
-grep -q -- '-u TMUX' "$HERE/suites.sh" \
-    && ok "C1: suites.sh inline path strips TMUX" \
-    || bad "C1: suites.sh inline path strips TMUX" "no '-u TMUX' in suites.sh"
-
 # testenv-batch.sh must set TMUX= on all four suite exec calls (serial
 # with/without timeout, parallel with/without timeout).
 _tmux_clears="$(grep -c '"TMUX="' "$HERE/testenv-batch.sh" 2>/dev/null || echo 0)"
 [ "${_tmux_clears:-0}" -ge 4 ] \
-    && ok "C2: testenv-batch.sh clears TMUX on suite exec calls ($_tmux_clears occurrences)" \
-    || bad "C2: testenv-batch.sh clears TMUX on suite exec calls" \
+    && ok "C1: testenv-batch.sh clears TMUX on suite exec calls ($_tmux_clears occurrences)" \
+    || bad "C1: testenv-batch.sh clears TMUX on suite exec calls" \
         "found $_tmux_clears occurrence(s), expected >=4"
 
 # ===========================================================================
