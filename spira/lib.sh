@@ -4296,6 +4296,67 @@ queue. So a long session is fine and a silent one is not."
     fi
 }
 
+# bead_named_paths <text> <repo> -> path tokens in <text> that exist as tracked files in
+# <repo>, one per line, deduplicated. A bead usually names the files it is about in prose —
+# matching a bare regex against the tracked tree, rather than trusting the regex alone, is
+# what keeps a bead id or a stray URL from being read as a path.
+bead_named_paths() {
+    local text="$1" repo="$2" tracked tok clean
+    [ -e "$repo/.git" ] || return 0
+    tracked="$(git -C "$repo" ls-files 2>/dev/null)" || return 0
+    printf '%s\n' "$text" | grep -oE '[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+' 2>/dev/null \
+        | while IFS= read -r tok; do
+        clean="$tok"
+        while :; do
+            case "$clean" in
+                [\(\`]*) clean="${clean#?}" ;;
+                *) break ;;
+            esac
+        done
+        while :; do
+            case "$clean" in
+                *[.,\;:\)\`]) clean="${clean%?}" ;;
+                *) break ;;
+            esac
+        done
+        [ -n "$clean" ] && printf '%s\n' "$clean"
+    done | sort -u | while IFS= read -r clean; do
+        grep -qxF "$clean" <<<"$tracked" && printf '%s\n' "$clean"
+    done
+}
+
+# render_holds_brief <bead-id> <holds-rc> <holds-output> -> the HOLDS_BRIEF text: which open
+# beads already have a branch touching a path this bead names, or empty when the check ran
+# clean and found none. <holds-output> is holds.sh's own stdout (tab-separated
+# bead-id/path lines); a line naming <bead-id> itself is filtered here — a resumed session's
+# own branch already touches its own paths, and that is not another holder.
+#
+# A NONZERO <holds-rc> RENDERS A VISIBLE MARKER, NEVER SILENCE. A check that could not run is
+# not the same fact as a check that ran and found nothing
+# (law-a-control-that-cannot-check-must-refuse).
+render_holds_brief() {
+    local bead_id="$1" rc="$2" out="$3" lines
+    if [ "$rc" != 0 ]; then
+        printf '%s' "## Files already in flight — COULD NOT CHECK
+
+holds.sh could not complete the check (see its stderr). Treat this as unknown, not as clear —
+grep for other branches touching the same files yourself before you edit."
+        return 0
+    fi
+    lines="$(printf '%s\n' "$out" | grep -v '^$' | awk -F'\t' -v me="$bead_id" '$1 != me')"
+    [ -n "$lines" ] || return 0
+    {
+        printf '%s\n' "## Files already in flight
+
+Another open bead already has a branch touching one of the files this bead names. Read it
+before you edit — two branches converging on the same lines cannot both rebase to land.
+"
+        printf '%s\n' "$lines" | while IFS="$(printf '\t')" read -r bid path; do
+            printf '  %s  %s\n' "$bid" "$path"
+        done
+    }
+}
+
 # THE GOAL EPIC IS ONE PILGRIMAGE, NOT "THE WORK". This answers "is the pilgrimage under
 # $SPIRA_GOAL finished", which is what CHECK 1, CHECK 3 and CHECK 8 reason about. It is the
 # wrong question for anything that must cover what the harness DISPATCHES: a bead carrying a
