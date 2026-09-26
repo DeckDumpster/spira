@@ -37,12 +37,7 @@
 # hermetic-ok: uses a fixture database, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-incident-recur-cause.sh"
 
@@ -202,7 +197,7 @@ for i in d:
     if i.get("external_ref")==target: print(i["id"]); break
 ' "$ref" 2>/dev/null)"
 [ -n "$bid" ] && ok "bead was created for default-cause ref" \
-    || { bad "bead was created for default-cause ref" "none found"; printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
+    || { bad "bead was created for default-cause ref" "none found"; tl_summary; exit; }
 
 is "first filing has no recurrence event (only recurrences write events)" "0" "$(recurs_of "$bid")"
 
@@ -226,7 +221,7 @@ for i in d:
     if i.get("external_ref")==target: print(i["id"]); break
 ' "$ref2" 2>/dev/null)"
 [ -n "$bid2" ] && ok "bead was created for named-cause ref" \
-    || { bad "bead was created for named-cause ref" "none found"; printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"; exit 1; }
+    || { bad "bead was created for named-cause ref" "none found"; tl_summary; exit; }
 
 is "second filing produces exactly one recurrence event" "1" "$(recurs_of "$bid2")"
 
@@ -287,6 +282,4 @@ B close "$PC2" --reason "test" >/dev/null 2>&1
 file_watcher_incident "$REF_PC2" "pc2" SPIRA_WATCHER_INTERVAL_S=9999
 is "pc2: large interval → cause=closed-while-live" "closed-while-live" "$(sql_reopen_cause "$PC2")"
 
-echo
-printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
