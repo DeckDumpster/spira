@@ -34,14 +34,15 @@ _batch_sweep_dead_owners() {
     done
 }
 
-# _batch_sweep_ownerless <min-age-seconds> — arm 2: a spira-batch-* container with NO
-# owner file at all (teardown deleted it while the container survived, or /tmp's
-# tmpfiles ageing removed it out from under a live container), older than the given
-# bound. The bound protects a container that is mid-startup, whose owner file has not
-# been written yet. One line per sweep on stdout.
+# _batch_sweep_ownerless <min-age-seconds> [name-prefix] — arm 2: a container matching
+# <name-prefix> (default spira-batch-, the production scope) with NO owner file at all,
+# older than the given bound. name-prefix lets a test narrow the sweep to its own
+# containers: at min-age=0 the age bound protects nothing, so an unscoped call against
+# real podman stops every ownerless container on the host, not just the caller's own.
+# One line per sweep on stdout.
 _batch_sweep_ownerless() {
-    local min_age="${1:-3600}" _sw_cname _sw_started _sw_started_epoch _sw_age
-    for _sw_cname in $(podman ps -a --filter 'name=^spira-batch-' --format '{{.Names}}' 2>/dev/null); do
+    local min_age="${1:-3600}" name_prefix="${2:-spira-batch-}" _sw_cname _sw_started _sw_started_epoch _sw_age
+    for _sw_cname in $(podman ps -a --filter "name=^${name_prefix}" --format '{{.Names}}' 2>/dev/null); do
         [ -f "/tmp/${_sw_cname}.owner" ] && continue  # governed by the dead-owner arm
         _sw_started="$(podman container inspect --format '{{.State.StartedAt}}' "$_sw_cname" 2>/dev/null)" || continue
         _sw_started_epoch="$(date -d "$_sw_started" +%s 2>/dev/null)" || continue
