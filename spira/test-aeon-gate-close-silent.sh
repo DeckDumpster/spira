@@ -32,8 +32,13 @@
 #      itself) — aeon.sh does not re-certify.
 #   6. gate status 3, branch has no commits ahead of the base (a delivers-only close) —
 #      nothing to certify, no queue.sh call is made.
+#   7. gate-run.sh ITSELF (not the stub): a verdict recorded for one tree, read back after
+#      the base moved and the branch was rebased onto it, answers status 4 — never the
+#      same 3 it would answer for a branch that was never gated at all (sp-7uah8).
+#   8. gate status 4 through aeon.sh's own routing (the stub): self-certifies exactly as
+#      status 3 does, but the note names the stale verdict and never claims no gate ran.
 #
-# covers: spira/aeon.sh
+# covers: spira/aeon.sh spira/gate-run.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
@@ -41,6 +46,7 @@ ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -84,6 +90,7 @@ case "$code" in
        echo "gate-run: gate PASS covered suites: test-fixture.sh" ;;
     2) echo "gate-run: still running for fixture — 10s so far, pid $$" ;;
     1) echo "gate-run: FAILED fixture in fixture after 10s" ;;
+    4) echo "gate-run: the recorded verdict for fixture is for a different tree — key was oldtip oldbase, now newtip newbase. A rebase, a new commit, or the base moving invalidated it." ;;
 esac
 exit "$code"
 STUB
@@ -267,6 +274,65 @@ want "nothing-ahead: log says nothing to certify" "nothing to certify" "$(cat "$
 nowant "nothing-ahead: queue.sh submit was never called" "spira/sp-cert-nocommit" \
     "$(cat "$TMP/queue-calls.log" 2>/dev/null)"
 want "nothing-ahead: bead is left closed" "closed" "$(bead_status sp-cert-nocommit)"
+
+# ======================================================================================
+echo
+echo "gate-run.sh itself (not the stub): a verdict recorded for one tree answers 4, not"
+echo "3, once the base moves and the branch is rebased onto it — the two conditions"
+echo "gate-run.sh --status used to collapse into one exit code (sp-7uah8):"
+# ======================================================================================
+BR2="spira/sp-gcs-stalekey"
+git -C "$REPO" fetch -q origin
+git -C "$REPO" checkout -q -B "$BR2" origin/main >/dev/null 2>&1
+printf 'g\n' > "$REPO/g"; git -C "$REPO" add g
+git -C "$REPO" commit -qm "sp-gcs-stalekey work" >/dev/null
+tip1="$(git -C "$REPO" rev-parse "$BR2")"
+base1="$(git -C "$REPO" rev-parse origin/main)"
+
+slug2="$(printf '%s.%s' fixture "$BR2" | tr -c 'A-Za-z0-9._-' '_')"
+D2="$SPIRA_RUN/gate-run/$slug2"
+mkdir -p "$D2"
+printf '0' > "$D2/rc"
+printf '%s %s' "$tip1" "$base1" > "$D2/key"
+date +%s > "$D2/started"
+: > "$D2/out"
+
+out1="$(bash "$HERE/gate-run.sh" --status "$BR2" fixture 2>&1)"; rc1=$?
+is "hand-built key matches gate-run.sh's own — recorded PASS answers 0" "0" "$rc1"
+
+# A landing elsewhere moves the base, then this branch is rebased onto it — exactly the
+# sequence aeon.sh's own post-close rebase performs on a branch that was left behind.
+git -C "$REPO" checkout -q main
+printf 'h\n' > "$REPO/h"; git -C "$REPO" add h
+git -C "$REPO" commit -qm "unrelated landing" >/dev/null
+git -C "$REPO" push -q origin main
+git -C "$REPO" checkout -q "$BR2"
+git -C "$REPO" rebase -q origin/main >/dev/null
+
+out2="$(bash "$HERE/gate-run.sh" --status "$BR2" fixture 2>&1)"; rc2=$?
+is "rebased out from under a recorded PASS — status answers 4, not 3" "4" "$rc2"
+want "st=4: message names a different tree, not silence" "different tree" "$out2"
+
+# POSITIVE CONTROL — a branch that was truly never gated still answers 3, so 4 is not
+# just 3 renamed everywhere.
+BR3="spira/sp-gcs-nevergated"
+git -C "$REPO" branch -q "$BR3" origin/main 2>/dev/null || true
+out3="$(bash "$HERE/gate-run.sh" --status "$BR3" fixture 2>&1)"; rc3=$?
+is "never gated: status still answers 3" "3" "$rc3"
+
+# ======================================================================================
+echo
+echo "st=4 through aeon.sh's own routing (the stub): self-certifies like st=3, but the"
+echo "note names the stale verdict and never claims no gate ran (sp-7uah8):"
+# ======================================================================================
+fresh; seed sp-gcs-stale4
+run_aeon 4 0
+want "st=4: note names the stale verdict as the reason, not a missing gate" \
+    "stopped applying" "$(bead_notes sp-gcs-stale4)"
+nowant "st=4: note must never claim no gate ran" "no gate ran" "$(bead_notes sp-gcs-stale4)"
+want "st=4: log mentions certifying after a stale verdict" \
+    "certified by aeon.sh after a stale gate verdict" "$(cat "$TMP/out" 2>/dev/null)"
+want "st=4: bead is left closed" "closed" "$(bead_status sp-gcs-stale4)"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
