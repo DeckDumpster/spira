@@ -1605,7 +1605,7 @@
           "covering_suites": [
             {
               "path": "spira/test-czar-pass.sh",
-              "tier": "T2",
+              "tier": "T1",
               "over_budget": false
             }
           ]
@@ -1617,7 +1617,7 @@
           "covering_suites": [
             {
               "path": "spira/test-czar-pass.sh",
-              "tier": "T2",
+              "tier": "T1",
               "over_budget": false
             }
           ]
