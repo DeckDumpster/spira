@@ -457,8 +457,8 @@ nowant "gap8/bdclose-protocol-does-not-emit-decision-json"    '"decision":"block
 echo
 echo "Gap 2 — aeon_settings() fails open silently (python3 error, non-executable guard):"
 # ===========================================================================
-AEON_SH="$HERE/aeon.sh"
-extract_aeon_settings() { sed -n '/^aeon_settings() {/,/^}/p' "$AEON_SH"; }
+LIB_SH="$HERE/lib.sh"
+extract_aeon_settings() { sed -n '/^aeon_settings() {/,/^}/p' "$LIB_SH"; }
 
 GAP2_HOME="$TMP/gap2-home"; mkdir -p "$GAP2_HOME/hooks"
 cp "$FENCE" "$GAP2_HOME/hooks/aeon-fence.sh"

@@ -17,6 +17,15 @@
 # .git/spira-commit.lock before staging, so concurrent callers are serialised: each writer
 # commits only the paths it provided, under its own message.
 #
+# AN ACTUAL INTERLEAVE IS FORCED (gap G16's wiki half), not hoped for. Launching both
+# writers in the background and waiting can pass even with the lock removed, if the OS
+# scheduler simply happens to run one to completion before the other starts — no real
+# contention, no real test. Here the test itself pre-acquires spira-commit.lock BEFORE
+# either writer starts, so both are guaranteed to reach flock() and block on the SAME lock
+# this process holds; releasing it is what lets exactly one proceed at a time. Against an
+# unlocked wiki-commit.sh this hold has no effect at all — both writers race the git index
+# immediately, exactly as the positive control demonstrates.
+#
 # Requires only git and bash — no database fixture.
 #
 # covers: spira/wiki-commit.sh spira/aeon.sh
@@ -86,8 +95,20 @@ echo "-----------------------------------------------------------------------"
 # SEEN RED FIRST: without the flock in wiki-commit.sh this test fails because one process
 # commits the other's staged file or produces a commit with the wrong message.
 
-# writer-a: write its file and commit concurrently.
+# THE FORCED INTERLEAVE. Hold the exact lock wiki-commit.sh acquires BEFORE either writer
+# starts, so both are guaranteed to still be blocked in flock() when we release it below —
+# a real race on the real lock, not a hopeful backgrounding of two processes.
+exec {_hold_fd}>"$WIKI/.git/spira-commit.lock"
+flock "$_hold_fd"
+
+# writer-a: write its file and attempt to commit — blocks on our held lock.
+# Each subshell inherits our $_hold_fd by fork(2): flock(2) locks belong to the open file
+# DESCRIPTION, not a single descriptor, so the lock stays held until every fd referring to
+# it is closed — closing our own copy below is not enough while a writer's inherited copy
+# is still open. Close it here first, or both writers deadlock on a lock nobody holds on
+# purpose, forever.
 (
+    exec {_hold_fd}>&-
     export GIT_AUTHOR_NAME=writer-a GIT_AUTHOR_EMAIL=writer-a@spira.local
     export GIT_COMMITTER_NAME=writer-a GIT_COMMITTER_EMAIL=writer-a@spira.local
     printf 'content-a\n' > "$WIKI/wiki/concurrent-a.md"
@@ -95,14 +116,21 @@ echo "-----------------------------------------------------------------------"
 ) &
 pid_a=$!
 
-# writer-b: write its file and commit concurrently.
+# writer-b: write its file and attempt to commit — blocks on the same held lock.
 (
+    exec {_hold_fd}>&-
     export GIT_AUTHOR_NAME=writer-b GIT_AUTHOR_EMAIL=writer-b@spira.local
     export GIT_COMMITTER_NAME=writer-b GIT_COMMITTER_EMAIL=writer-b@spira.local
     printf 'content-b\n' > "$WIKI/wiki/concurrent-b.md"
     printf 'wiki/concurrent-b.md\n' | bash "$WIKI_COMMIT" "$WIKI" "writer-b: writes"
 ) &
 pid_b=$!
+
+# Give both background jobs time to reach flock() and start waiting on our hold (best
+# effort; the lock guarantees correctness regardless of exactly how long this is).
+sleep 0.3
+# Release: exactly one writer proceeds at a time from here.
+exec {_hold_fd}>&-
 
 wait "$pid_a" && rc_a=0 || rc_a=$?
 wait "$pid_b" && rc_b=0 || rc_b=$?
