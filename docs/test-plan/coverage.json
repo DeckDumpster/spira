@@ -1150,6 +1150,7 @@
           "covering_suites": [
             {
               "path": "spira/test-skew-escalate.sh",
+              "tier": "T1",
               "over_budget": false
             }
           ]
