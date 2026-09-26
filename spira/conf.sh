@@ -246,7 +246,8 @@ spira_conf_defaults() {
         # same repository. Without that stamp, refuse rather than fall back to the directory
         # name — leaving SPIRA_HOME_REPO (and the scope label derived from it) unset is a
         # known, tested state, not a silent wrong answer.
-        SPIRA_HOME_REPO="$(awk '$1=="repo"{print $2; exit}' "$SPIRA_REPO/MANIFEST" 2>/dev/null)"
+        # `|| true`: awk exits 2 on a missing MANIFEST, which aborts a `set -e` caller.
+        SPIRA_HOME_REPO="$(awk '$1=="repo"{print $2; exit}' "$SPIRA_REPO/MANIFEST" 2>/dev/null)" || true
         # Only a RELEASE directory's name is unusable. Any other non-git tree (a test
         # fixture, a scratch copy) keeps the old identity, its directory name; refusing
         # there emptied the scope label for every suite that builds one (round 24).
