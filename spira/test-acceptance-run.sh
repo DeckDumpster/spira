@@ -89,7 +89,21 @@ echo "8. Old unbounded polling loops are gone; staged checks have tight budgets"
 
 nowantfile "positive-control: old unbounded aeon-wait loop is gone" '_aeon_wait' "$SCRIPT"
 nowantfile "positive-control: old unbounded aged-land-wait loop is gone" '_aged_land_wait' "$SCRIPT"
-wantfile "stage 2 budget is 60s" '_a_t2 )) -lt 60' "$SCRIPT"
+wantfile "phase A stage 2 budget is configurable (summon window)" \
+    '_a_t2 )) -lt "${SPIRA_ACCEPT_SUMMON_SECS:-180}"' "$SCRIPT"
+wantfile "phase D stage 2 budget is configurable (summon window)" \
+    '_d_t2 )) -lt "${SPIRA_ACCEPT_SUMMON_SECS:-180}"' "$SCRIPT"
+nowantfile "positive-control: sentinel start no longer hardcodes the base unit name" \
+    'start spira-sentinel\.service' "$SCRIPT"
+_a_sentinel_starts="$(grep -c 'systemctl --user start' "$SCRIPT" 2>/dev/null || true)"
+_a_sentinel_resolved="$(grep -c "list-unit-files 'spira-sentinel\*.service'" "$SCRIPT" 2>/dev/null || true)"
+if [ -n "$_a_sentinel_starts" ] && [ "$_a_sentinel_starts" -gt 0 ] \
+    && [ "$_a_sentinel_starts" = "$_a_sentinel_resolved" ]; then
+    ok "every sentinel start resolves the installed unit by its real (instance-suffixed) name"
+else
+    bad "every sentinel start resolves the installed unit by its real (instance-suffixed) name" \
+        "$_a_sentinel_starts start(s), only $_a_sentinel_resolved resolved via list-unit-files"
+fi
 wantfile "stage 5 budget is 120s" '_a_t5 )) -lt 120' "$SCRIPT"
 
 echo
