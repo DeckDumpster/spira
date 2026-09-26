@@ -43,8 +43,8 @@
 # do is not under test here, only which beads the valve reaches.
 #
 # tier: T3
-# defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez
-# covers: spira/sentinel.sh spira/lib.sh spira/chamber/*
+# defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez sp-wiyr2
+# covers: spira/sentinel.sh spira/lib.sh spira/attempts.sh spira/chamber/*
 # timeout: 240
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -71,7 +71,7 @@ mkdir -p "$RUN/worktree" "$SH/chamber"
 
 # The program under test, run out of its own directory so it sources the real lib.sh but
 # finds stubbed sub-programs beside it.
-cp "$HERE/sentinel.sh" "$HERE/lib.sh" "$HERE/landing.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
+cp "$HERE/sentinel.sh" "$HERE/lib.sh" "$HERE/landing.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/attempts.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'printf "%s" "${PILGRIMAGE_OUT:-}"'
 stub strand.sh     'printf "%s" "${STRAND_OUT:-}"'
@@ -135,6 +135,13 @@ predicate() {   # predicate <fn> -> that lib predicate's output under the fixtur
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_GOAL=sp-goal \
     SPIRA_FAYTHS="${ROSTER:-t tinc}" \
         bash -c ". \"$SH/lib.sh\"; $1" 2>/dev/null
+}
+# attempts.sh under the same configuration as sentinel(), so a deadlock lift is made through
+# the real tool against the real fixture repo — not a model of what it would do.
+deadlocked() {
+    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
+    SPIRA_GOAL=sp-goal SPIRA_FAYTHS="${ROSTER:-t tinc}" \
+        bash "$SH/attempts.sh" deadlocked "$@" 2>&1
 }
 labels_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
@@ -460,5 +467,28 @@ seedn sp-tinc-req reopened '' 5
 out="$(SPIRA_REQUEUE_AT=5 sentinel)"
 want "the requeue cap fires for the tinc partition's own bead too" \
      "sp-tinc-req — completed and requeued 5 times" "$(cat "$MAIL_LOG")"
+
+# --------------------------------------------------------------------------------------
+# sp-wiyr2 — A LIFT BY attempts.sh deadlocked SURVIVES THE NEXT SENTINEL PASS. deadlocked
+# takes the spira-poison label off finished, mergeable work; it does not touch the attempt
+# count (the rungs are the record of how the bead got here). Without the fix CHECK 4 reads
+# that same unchanged count against a bead with no label on its very next pass and poisons
+# it right back — the finished-work exemption undone within minutes of being granted.
+# --------------------------------------------------------------------------------------
+echo
+seed_poison; : > "$MAIL_LOG"; out="$(sentinel)"
+ispoisoned "sp-orphan is poisoned by the first pass, same as always" sp-orphan
+# THE DEADLOCK ITSELF: a branch naming the bead that merges cleanly into what it lands on.
+git -C "$REPO" checkout -q -B spira/sp-orphan main
+printf 'finished work\n' > "$REPO/g"; git -C "$REPO" add g
+git -C "$REPO" commit -qm "sp-orphan — the work"
+git -C "$REPO" checkout -q main
+dl_out="$(deadlocked --apply)"
+want "the sweep finds it finished and lifts the poison" "RESTORED sp-orphan" "$dl_out"
+notpoisoned "the label is off right after the lift" sp-orphan
+: > "$MAIL_LOG"; out="$(sentinel)"
+notpoisoned "and it is STILL off after the very next sentinel pass" sp-orphan
+nowant "no fresh poison ask went out for it either" "sp-orphan" "$(cat "$MAIL_LOG")"
+want "the check log shows CHECK 4 actually examined the set" "CHECK4 examining" "$out"
 
 tl_summary

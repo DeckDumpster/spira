@@ -335,7 +335,8 @@ while IFS=$'\t' read -r id _labels; do
     _rq_asked=0; requeue_asked "$id" && _rq_asked=1
     _rc_asked=0; reclaim_asked "$id" && _rc_asked=1
     _po_asked=0; poison_asked "$id" "$n" && _po_asked=1
-    decision="$(check4_decide "$n" "$_requeues" "$_reclaims" "$_labels" "$_rq_asked:$_rc_asked:$_po_asked")"
+    _pl_lifted=0; poison_lifted "$id" "$n" && _pl_lifted=1
+    decision="$(check4_decide "$n" "$_requeues" "$_reclaims" "$_labels" "$_rq_asked:$_rc_asked:$_po_asked:$_pl_lifted")"
 
     # REQUEUE CAP. A bead completed and requeued past the cap is stuck in a loop the harness
     # is causing: the session finished the work, closed the bead, and the harness put it back

@@ -2977,6 +2977,28 @@ poison_asked_mark() {    # poison_asked_mark <id> <n>
     printf '%s\n' "$2" >> "$SPIRA_POISON_ASKED/$1"
 }
 
+# THE LIFT'S OWN DEDUP, FOR THE SAME REASON THE ASK NEEDS ONE. attempts.sh deadlocked takes
+# the label off; it does not and must not touch the attempt count (the rungs are the record
+# of how the bead got here, sp-rq-s in test-requeue.sh asserts the count survives). So the
+# next CHECK 4 pass reads the same n it always did, against a label that is no longer there,
+# and "poison" fires again within minutes of the lift — sp-wiyr2. Keying the suppression on
+# the count the lift happened at (not a bare boolean) means a genuinely new failure — a claim
+# that pushes n past what was lifted — still poisons the bead; only "nothing has changed
+# since the lift" is exempt.
+SPIRA_POISON_LIFTED="${SPIRA_POISON_LIFTED:-$SPIRA_RUN/poison-lifted}"
+
+poison_lifted() {       # poison_lifted <id> <n> -> 0 if lifted at a count >= n
+    local f="$SPIRA_POISON_LIFTED/$1" last
+    [ -r "$f" ] || return 1
+    last="$(tail -n1 "$f" 2>/dev/null)" || return 1
+    [ -n "$last" ] && [ "$last" -ge "${2:-0}" ] 2>/dev/null
+}
+
+poison_lifted_mark() {  # poison_lifted_mark <id> <n> — overwrites; only the latest lift counts
+    mkdir -p "$SPIRA_POISON_LIFTED" 2>/dev/null || return 1
+    printf '%s\n' "${2:-0}" > "$SPIRA_POISON_LIFTED/$1"
+}
+
 SPIRA_REQUEUE_ASKED="${SPIRA_REQUEUE_ASKED:-$SPIRA_RUN/requeue-asked}"
 
 requeue_asked() {        # requeue_asked <id> -> 0 if this bead already asked
@@ -4374,7 +4396,9 @@ for line in sys.stdin:
 
 # --------------------------------------------------------------------------------------
 # check4_decide <attempts> <requeues> <reclaims> <labels> <asked-stamp> -> decision tokens
-#   asked-stamp = "<requeue-already-asked 0|1>:<reclaim-already-asked 0|1>:<poison-already-asked-at-n 0|1>"
+#   asked-stamp = "<requeue-already-asked 0|1>:<reclaim-already-asked 0|1>:<poison-already-asked-at-n 0|1>:<poison-lifted-at-or-above-n 0|1>"
+#   the fourth field is optional (bash `read` leaves a missing trailing field empty, which
+#   this treats as "not lifted") so every existing three-field caller is unaffected.
 #   thresholds come from POISON_AT/REQUEUE_AT/RECLAIM_AT, sentinel.sh's own shell vars,
 #   defaulted here so a caller (a test) need not export them.
 #
@@ -4394,9 +4418,9 @@ for line in sys.stdin:
 # token is decided on its own rather than one skipping the rest via a shared early exit.
 # --------------------------------------------------------------------------------------
 check4_decide() {
-    local n="${1:-0}" requeues="${2:-0}" reclaims="${3:-0}" labels="${4:-}" stamp="${5:-0:0:0}"
-    local rq_asked="0" rc_asked="0" po_asked="0"
-    IFS=: read -r rq_asked rc_asked po_asked <<<"$stamp"
+    local n="${1:-0}" requeues="${2:-0}" reclaims="${3:-0}" labels="${4:-}" stamp="${5:-0:0:0:0}"
+    local rq_asked="0" rc_asked="0" po_asked="0" pl_lifted="0"
+    IFS=: read -r rq_asked rc_asked po_asked pl_lifted <<<"$stamp"
     local p_at="${POISON_AT:-3}" r_at="${REQUEUE_AT:-5}" c_at="${RECLAIM_AT:-5}"
     local out=""
 
@@ -4421,7 +4445,13 @@ check4_decide() {
             if [ "$n" -lt "$p_at" ]; then out="$out clear"; fi
             ;;
         *)
-            if [ "$n" -ge "$p_at" ] && [ "$n" -gt 0 ]; then out="$out poison"; fi
+            # A LIFT AT THIS COUNT OR HIGHER MEANS NOTHING NEW HAS FAILED SINCE. The count
+            # itself is not touched by the lift (the rungs are the record), so without this
+            # guard the very next pass reads the same n against a label that just came off
+            # and re-poisons inside minutes — the count was never the thing that changed.
+            if [ "$n" -ge "$p_at" ] && [ "$n" -gt 0 ] && [ "${pl_lifted:-0}" != 1 ]; then
+                out="$out poison"
+            fi
             ;;
     esac
 
