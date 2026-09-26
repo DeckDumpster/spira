@@ -1873,6 +1873,10 @@ paint() {
         printf '\e[J\e[?2026l'
     } 2>/dev/null
 }
+# Sourced (BASH_SOURCE[0] != $0) skips the trap and dispatch entirely — test-now.sh sources
+# this file to call model_short directly, and the EXIT trap would otherwise fire cleanup's
+# escape sequence into that call's captured output.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
 cleanup() { printf '\e[?25h\e[?7h\e[?2026l\n' 2>/dev/null; exit 0; }
 trap cleanup INT TERM HUP EXIT
 
@@ -1918,3 +1922,4 @@ loop)
     ;;
 *) echo "usage: health.sh [once [rows [cols]]|render-many <dir> [rows [cols]]|loop]" >&2; exit 1 ;;
 esac
+fi
