@@ -241,3 +241,17 @@ Deferred, as follow-up work under this bead's epic (`sp-s088v`), not blocking th
 - G6's cooldown/`plan_ready` combination and any UC this page marks T2/T3-only (UC-06
   trusted-credential rows, UC-16's real-`bd`-shape row) stay at their assigned tier; this
   bead did not lower tiers the plan did not ask for.
+
+**Measured suite-seconds (testenv, this closing session), against §7's projection.** The
+17 primary dispatch suites landed by this bead's children (`test-bd-stdin.sh`,
+`test-gh-intake-lint.sh`, `test-bead-file.sh`, `test-bead-lint.sh`, `test-fayth.sh`,
+`test-summon-fayth.sh`, `test-check8-progressed.sh`, `test-gh-intake.sh`,
+`test-reclaim-escalated.sh`, `test-strand-partition.sh`, `test-check2-reaper.sh`,
+`test-check2-reclaim.sh`, `test-sentinel-pass.sh`, `test-unclaimable.sh`,
+`test-park-unmapped.sh`, `test-lanes.sh`, `test-bead-contract.sh`) via
+`spira/testenv-batch.sh`: 158 s summed per-suite (§7's own "sum ci_secs" method), 93 s
+wall (serial, one container). Against the §7 baseline (240 s main-push, 168 s
+anomaly-free) that is −34% summed / −61% wall; against §7's 57 s projection, testenv's
+own per-suite container overhead (each suite here pays a fixed few seconds for fixture
+attach that the main-push measurement didn't isolate) accounts for most of the gap —
+the projection assumed main-push's accounting, not a containerized batch run's.
