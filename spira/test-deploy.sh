@@ -29,13 +29,7 @@
 # host-reason: mock components in isolated temp dirs; no real systemd, database, or network
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()      { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
-is()      { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 is0()     { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
 not0()    { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero, got 0"; }
 islink()  {
@@ -53,7 +47,7 @@ DEPLOY="$HERE/deploy.sh"
 # --- PROPERTY 1: self-check ---------------------------------------------------
 if [ ! -x "$DEPLOY" ]; then
     bad "self-check: deploy.sh must exist and be executable" "missing"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"; exit 1
+    tl_summary; exit 1
 fi
 
 TMP="$(mktemp -d)"
@@ -340,7 +334,7 @@ _rc=$?
 not0    "already-current: exits non-zero" "$_rc"
 want    "already-current: says already current" "already current" "$_out"
 islink  "already-current: current unchanged" "$RELEASES/current" "$NEW_RELEASE"
-notwant "already-current: gh not called"    "release download" "$(cat "$CALL_LOG")"
+nowant "already-current: gh not called"    "release download" "$(cat "$CALL_LOG")"
 
 # ==========================================================================
 echo
@@ -363,7 +357,7 @@ _out="$(run_deploy "WORLD_DRAIN_EXIT=1" -- "$NEW_TAG" 2>&1)"
 _rc=$?
 not0    "drain-refuses: exits non-zero"           "$_rc"
 want    "drain-refuses: mentions drain"           "drain" "$_out"
-notwant "drain-refuses: no aeon stopped"          "stop spira-aeon-" "$(cat "$SC_LOG")"
+nowant "drain-refuses: no aeon stopped"          "stop spira-aeon-" "$(cat "$SC_LOG")"
 islink  "drain-refuses: current unchanged"        "$RELEASES/current" "$PRIOR_RELEASE"
 
 # ==========================================================================
@@ -412,13 +406,13 @@ _rollback_install="$(grep 'install-resolved' "$CALL_LOG" | tail -1)"
 _fake_wrong="install-resolved SPIRA_HOME=$_real_releases/$NEW_RELEASE/spira"
 want "fail-first: wrong-release resolution is detectable" \
     "install-resolved SPIRA_HOME=$_real_releases/$NEW_RELEASE/spira" "$_fake_wrong"
-notwant "fail-first: wrong-release resolution is distinguishable from the prior release" \
+nowant "fail-first: wrong-release resolution is distinguishable from the prior release" \
     "install-resolved SPIRA_HOME=$_real_releases/$PRIOR_RELEASE/spira" "$_fake_wrong"
 unset _fake_wrong
 
 want   "rollback: re-rendered units resolve into the prior release's tree" \
     "install-resolved SPIRA_HOME=$_real_releases/$PRIOR_RELEASE/spira" "$_rollback_install"
-notwant "rollback: re-rendered units do not resolve into the new release's tree" \
+nowant "rollback: re-rendered units do not resolve into the new release's tree" \
     "$_real_releases/$NEW_RELEASE/spira" "$_rollback_install"
 unset _real_releases _rollback_install
 
@@ -492,8 +486,8 @@ if [ ! -e "$RELEASES/current" ]; then
 else
     bad "dry-run: current not created"  "current exists after --dry-run"
 fi
-notwant "dry-run: gh not called"        "release download" "$(cat "$CALL_LOG")"
-notwant "dry-run: activate not called"  "activate"            "$(cat "$CALL_LOG")"
+nowant "dry-run: gh not called"        "release download" "$(cat "$CALL_LOG")"
+nowant "dry-run: activate not called"  "activate"            "$(cat "$CALL_LOG")"
 
 # ==========================================================================
 echo
@@ -560,7 +554,7 @@ _count="$(grep -c 'SPIRA_PROD' "$_conf_file" 2>/dev/null || echo 0)"
 [ "$_count" -eq 1 ] \
     && ok "conf-update: only one SPIRA_PROD line after update" \
     || bad "conf-update: only one SPIRA_PROD line after update" "found $_count"
-notwant "conf-update: old path removed" "/old/checkout" "$(cat "$_conf_file")"
+nowant "conf-update: old path removed" "/old/checkout" "$(cat "$_conf_file")"
 
 # ==========================================================================
 echo
@@ -619,7 +613,7 @@ else
     bad "conf-before-activate: new SPIRA_PROD must be in conf before activate" \
         "got [${_val_at_activate:-<empty>}]"
 fi
-notwant "conf-before-activate: old path absent at activate time" \
+nowant "conf-before-activate: old path absent at activate time" \
     "/old/checkout" "$_val_at_activate"
 
 # ==========================================================================
@@ -642,7 +636,7 @@ _out="$(run_deploy "GH_RELEASE_LIST=$_mixed_list" -- latest 2>&1)"
 _rc=$?
 is0    "draft-skip: latest exits 0"                 "$_rc"
 islink "draft-skip: current -> non-draft release"   "$RELEASES/current" "$NEW_RELEASE"
-notwant "draft-skip: draft release not activated"   "$DRAFT_RELEASE"    "$(readlink "$RELEASES/current" 2>/dev/null)"
+nowant "draft-skip: draft release not activated"   "$DRAFT_RELEASE"    "$(readlink "$RELEASES/current" 2>/dev/null)"
 
 # A named draft release is refused before any disruptive action.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
@@ -653,7 +647,7 @@ _rc=$?
 not0   "draft-named: exits non-zero"               "$_rc"
 want   "draft-named: mentions draft"               "draft" "$_out"
 islink "draft-named: current unchanged"            "$RELEASES/current" "$PRIOR_RELEASE"
-notwant "draft-named: drain not called"            "world drain" "$(cat "$CALL_LOG")"
+nowant "draft-named: drain not called"            "world drain" "$(cat "$CALL_LOG")"
 
 # ==========================================================================
 echo
@@ -684,8 +678,8 @@ _out="$(run_deploy \
 _rc=$?
 not0    "migration-check: exits non-zero"          "$_rc"
 want    "migration-check: mentions mismatch"        "migration mismatch" "$_out"
-notwant "migration-check: drain not called"         "world drain"       "$(cat "$CALL_LOG")"
-notwant "migration-check: activate not called"      "activate"          "$(cat "$CALL_LOG")"
+nowant "migration-check: drain not called"         "world drain"       "$(cat "$CALL_LOG")"
+nowant "migration-check: activate not called"      "activate"          "$(cat "$CALL_LOG")"
 
 # FAIL-FIRST for "cannot read" path: unreachable (fatal) → "cannot read" message, not "mismatch".
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
@@ -696,9 +690,9 @@ _out="$(run_deploy \
 _rc=$?
 not0    "migration-unreachable/fail-first: exits non-zero"      "$_rc"
 want    "migration-unreachable/fail-first: says cannot read"    "cannot read" "$_out"
-notwant "migration-unreachable/fail-first: not mismatch"        "migration mismatch" "$_out"
+nowant "migration-unreachable/fail-first: not mismatch"        "migration mismatch" "$_out"
 want    "migration-unreachable/fail-first: names address"       "127.0.0.1" "$_out"
-notwant "migration-unreachable/fail-first: drain not called"    "world drain" "$(cat "$CALL_LOG")"
+nowant "migration-unreachable/fail-first: drain not called"    "world drain" "$(cat "$CALL_LOG")"
 
 # Recover: unreachable, dolt start succeeds, second migrate schema succeeds → deploy proceeds.
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
@@ -710,7 +704,7 @@ _rc=$?
 is0     "migration-unreachable/recover: deploy succeeds"         "$_rc"
 islink  "migration-unreachable/recover: current -> new release"  "$RELEASES/current" "$NEW_RELEASE"
 want    "migration-unreachable/recover: dolt start called"       "dolt start" "$(cat "$CALL_LOG")"
-notwant "migration-unreachable/recover: no cannot-read in output" "cannot read" "$_out"
+nowant "migration-unreachable/recover: no cannot-read in output" "cannot read" "$_out"
 
 # ==========================================================================
 echo
@@ -736,7 +730,7 @@ _out="$(run_deploy "GH_RELEASE_ASSET_NAME=$NEW_RELEASE.tar.gz" -- "$DIFF_TAG" 2>
 _rc=$?
 is0    "asset-mismatch: exits 0"                             "$_rc"
 islink "asset-mismatch: current -> asset release, not tag"   "$RELEASES/current" "$NEW_RELEASE"
-notwant "asset-mismatch: tag-derived name not used"          "$DIFF_RELEASE" \
+nowant "asset-mismatch: tag-derived name not used"          "$DIFF_RELEASE" \
         "$(readlink "$RELEASES/current" 2>/dev/null)"
 
 # ==========================================================================
@@ -794,7 +788,7 @@ _rc=$?
 is0  "dry-run/good-exec: exits 0"       "$_rc"
 want "dry-run/good-exec: says dry-run"  "dry-run" "$_out"
 want "dry-run/good-exec: mentions ExecStart" "ExecStart" "$_out"
-notwant "dry-run/good-exec: activate not called" "activate" "$(cat "$CALL_LOG")"
+nowant "dry-run/good-exec: activate not called" "activate" "$(cat "$CALL_LOG")"
 
 # ==========================================================================
 echo
@@ -827,7 +821,7 @@ rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 _out="$(run_deploy "WORLD_DRAIN_EXIT=1" -- "$NEW_TAG" 2>&1)"
 _rc=$?
 not0    "fail-first: drain refusal blocks without --force"  "$_rc"
-notwant "fail-first: slay not called without --force"       "slay --bead" "$(cat "$SLAY_LOG")"
+nowant "fail-first: slay not called without --force"       "slay --bead" "$(cat "$SLAY_LOG")"
 
 # Simulate a live aeon: pidfile pointing at the running test shell (process exists in /proc).
 _force_pf="$RUN_DIR/aeon-bahamut-$FORCE_BEAD.pid"
@@ -1012,7 +1006,7 @@ _rdonly_out="$(env -i \
     bash "$DEPLOY" "$RDONLY_TAG" 2>&1)"
 _rdonly_rc=$?
 is0    "rdonly: deploy exits 0 (no rollback)"        "$_rdonly_rc"
-notwant "rdonly: no ROLLBACK"                        "ROLLBACK" "$_rdonly_out"
+nowant "rdonly: no ROLLBACK"                        "ROLLBACK" "$_rdonly_out"
 islink "rdonly: current -> $RDONLY_RELEASE"          "$RELEASES/current" "$RDONLY_RELEASE"
 if [ -f "$RELEASES/.tags/$RDONLY_RELEASE" ]; then
     ok "rdonly: sidecar written to .tags/$RDONLY_RELEASE"
@@ -1264,8 +1258,8 @@ _out="$(run_deploy "DOCTOR_EXIT=1" "DOCTOR_FAIL_MSG=hooks-path-missing" -- "$NEW
 _rc=$?
 not0   "p21: pre-deploy fatal refuses deploy"              "$_rc"
 want   "p21: output names the failure"                     "hooks-path-missing" "$_out"
-notwant "p21: drain not called before pre-deploy check"    "world drain" "$(cat "$CALL_LOG")"
-notwant "p21: activate not called"                         "activate"    "$(cat "$CALL_LOG")"
+nowant "p21: drain not called before pre-deploy check"    "world drain" "$(cat "$CALL_LOG")"
+nowant "p21: activate not called"                         "activate"    "$(cat "$CALL_LOG")"
 islink "p21: current unchanged after refusal"              "$RELEASES/current" "$PRIOR_RELEASE"
 
 # ==========================================================================
@@ -1392,7 +1386,7 @@ _tb_rc=$?
 is0  "tarball/explicit-tag: exits 0"             "$_tb_rc"
 want "tarball/explicit-tag: names asset"         "$NEW_RELEASE" "$_tb_out"
 want "tarball/explicit-tag: says dry-run"        "dry-run"      "$_tb_out"
-notwant "tarball/explicit-tag: no asset-not-found error" "no unique" "$_tb_out"
+nowant "tarball/explicit-tag: no asset-not-found error" "no unique" "$_tb_out"
 
 # ==========================================================================
 echo
@@ -1556,5 +1550,4 @@ islink "artifact/gh-repo-direct: current -> $NEW_RELEASE" "$RELEASES/current" "$
 
 # ==========================================================================
 echo
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

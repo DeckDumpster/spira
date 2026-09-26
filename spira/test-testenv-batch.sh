@@ -27,14 +27,10 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+. "$HERE/testlib.sh"
 iszero()  { [ "$2" = 0 ]    && ok "$1" || bad "$1" "expected 0, got $2"; }
 isexit1() { [ "$2" = 1 ]    && ok "$1" || bad "$1" "expected 1, got $2"; }
 isexit2() { [ "$2" = 2 ]    && ok "$1" || bad "$1" "expected 2, got $2"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 isfile()  { [ -f "$2" ] && ok "$1" || bad "$1" "file not found: $2"; }
 nofile()  { [ ! -f "$2" ] && ok "$1" || bad "$1" "unexpected file: $2"; }
 
@@ -291,7 +287,7 @@ sel_a="$(_select_suites "$SUITE_HOST" $_changed)"
 # A+C should be selected; B should not.
 want "A1: suite A is selected (covers changed.sh)"  "test-fx-a.sh" "$sel_a"
 want "A1: suite C is selected (no covers)"          "test-fx-c.sh" "$sel_a"
-notwant "A1: suite B is not selected (covers different.sh)" "test-fx-b.sh" "$sel_a"
+nowant "A1: suite B is not selected (covers different.sh)" "test-fx-b.sh" "$sel_a"
 
 _n_a=0; for _s in $sel_a; do _n_a=$((_n_a+1)); done
 [ "$_n_a" = 2 ] && ok "A1: exactly 2 suites selected" \
@@ -403,7 +399,7 @@ echo "Part B: container integration"
 
 command -v podman >/dev/null 2>&1 || {
     printf 'SKIP test-testenv-batch.sh Part B: podman not on PATH\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 }
 
 # Pre-flight: confirm the image and user systemd are usable.
@@ -411,12 +407,12 @@ PRE_CNAME="spira-batch-preflight-$$"
 printf 'batch-test: pre-flight container check...\n' >&2
 bash "$TESTENV" up --name "$PRE_CNAME" >&2 || {
     printf 'SKIP test-testenv-batch.sh Part B: container did not start\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 }
 if ! bash "$TESTENV" probe --name "$PRE_CNAME" 2>/dev/null; then
     bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
     printf 'SKIP test-testenv-batch.sh Part B: user systemd not available\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 fi
 bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
 ok "B0: pre-flight: container + user systemd available"
@@ -1726,5 +1722,4 @@ rm -rf "$_D_HOME" 2>/dev/null
 
 # ===========================================================================
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ] || exit 1
+tl_summary

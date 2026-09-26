@@ -15,17 +15,14 @@
 #      catch it. Without the positive control a silent grep reports clean even when
 #      pointed at the wrong directory.
 #
+# tier: T1
 # covers: cockpit/remote/cockpit cockpit/remote/cockpit-remote spira/inventory.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 REMOTE_DIR="$(dirname "$HERE")/cockpit/remote"
 INVENTORY="$HERE/inventory.sh"
 
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 
 echo "test-cockpit-remote.sh"
 
@@ -173,5 +170,4 @@ else
 fi
 
 echo
-printf 'test-cockpit-remote.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

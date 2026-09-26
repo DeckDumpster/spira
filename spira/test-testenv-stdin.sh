@@ -23,17 +23,14 @@
 #
 # host-reason: Part A-B tests pure validation logic before the container starts.
 #              Part C-D requires podman for container integration.
+# tier: T0
 # covers: spira/testenv-batch.sh
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 iszero()  { [ "$2" = 0 ]    && ok "$1" || bad "$1" "expected 0, got $2"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 isfile()  { [ -f "$2" ] && ok "$1" || bad "$1" "file not found: $2"; }
 nofile()  { [ ! -f "$2" ] && ok "$1" || bad "$1" "unexpected file: $2"; }
 
@@ -123,7 +120,7 @@ _err_b="$(printf 'test-nonexistent-xyz.sh\n' | SPIRA_BATCH_SUITE_DIR="$SUITE_HOS
     && ok "B: unknown suite on stdin exits non-zero (rc=$rc_b)" \
     || bad "B: unknown suite on stdin exits non-zero" "expected non-zero, got 0"
 want "B: error names the suite" "test-nonexistent-xyz.sh" "$_err_b"
-notwant "B: error is not 'unknown suite: -' (old literal-dash error)" \
+nowant "B: error is not 'unknown suite: -' (old literal-dash error)" \
     "unknown suite: -" "$_err_b"
 
 # ===========================================================================
@@ -134,18 +131,18 @@ echo "Part C-D: container integration"
 
 command -v podman >/dev/null 2>&1 || {
     printf 'SKIP test-testenv-stdin.sh Part C-D: podman not on PATH\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 }
 
 PRE_CNAME="spira-stdin-preflight-$$"
 bash "$TESTENV" up --name "$PRE_CNAME" >&2 || {
     printf 'SKIP test-testenv-stdin.sh Part C-D: container did not start\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 }
 if ! bash "$TESTENV" probe --name "$PRE_CNAME" 2>/dev/null; then
     bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
     printf 'SKIP test-testenv-stdin.sh Part C-D: user systemd not available\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 fi
 bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
 ok "C0: pre-flight: container + user systemd available"
@@ -229,5 +226,4 @@ fi
 
 # ===========================================================================
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ] || exit 1
+tl_summary

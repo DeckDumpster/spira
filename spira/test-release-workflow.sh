@@ -46,11 +46,7 @@ TARBALL_SH="$HERE/build-tarball.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { grep -qF -- "$2" "$WORKFLOW" 2>/dev/null && ok "$1" || bad "$1" "not found in workflow: $2"; }
-nowant() { grep -qF -- "$2" "$WORKFLOW" 2>/dev/null && bad "$1" "found in workflow (should not be): $2" || ok "$1"; }
+. "$HERE/testlib.sh"
 
 echo "test-release-workflow.sh"
 
@@ -63,8 +59,7 @@ if [ -f "$WORKFLOW" ]; then
     ok "release.yml exists at .github/workflows/release.yml"
 else
     bad "release.yml exists at .github/workflows/release.yml" "not found; skipping remaining cases"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    exit 1
+    tl_summary; exit 1
 fi
 
 # ============================================================================
@@ -72,8 +67,8 @@ echo
 echo "2. Trigger — push on tags matching spira-release-*"
 # ============================================================================
 
-want "on: push" "push:" "$WORKFLOW"
-want "tag pattern spira-release-*" "spira-release-*"
+want "on: push" "push:" "$(cat "$WORKFLOW")"
+want "tag pattern spira-release-*" "spira-release-*" "$(cat "$WORKFLOW")"
 
 # ============================================================================
 echo
@@ -83,10 +78,10 @@ echo "3. Toolchain — pinned to a semver, not a floating alias"
 # A floating alias ("stable", "nightly", "beta") produces unreproducible builds
 # and hides version drift. The pin lives in rust-toolchain.toml, which this
 # workflow reads rather than duplicating, so it and gate.yml cannot disagree.
-nowant "not toolchain: stable" "toolchain: stable"
-nowant "not toolchain: nightly" "toolchain: nightly"
-nowant "not toolchain: beta" "toolchain: beta"
-want "toolchain pin read from rust-toolchain.toml" "rust-toolchain.toml"
+nowant "not toolchain: stable" "toolchain: stable" "$(cat "$WORKFLOW")"
+nowant "not toolchain: nightly" "toolchain: nightly" "$(cat "$WORKFLOW")"
+nowant "not toolchain: beta" "toolchain: beta" "$(cat "$WORKFLOW")"
+want "toolchain pin read from rust-toolchain.toml" "rust-toolchain.toml" "$(cat "$WORKFLOW")"
 
 TOOLCHAIN_TOML="$REPO_ROOT/rust-toolchain.toml"
 if grep -qE 'channel *= *"1\.[0-9]+\.[0-9]+"' "$TOOLCHAIN_TOML" 2>/dev/null; then
@@ -103,7 +98,7 @@ echo "4. Assertion step — rustc --version checked at runtime"
 # The assertion step runs after toolchain installation and exits non-zero if
 # the installed version does not match the pinned value. Without it, a runner
 # that ships the wrong Rust version produces a binary without any notice.
-want "rustc --version checked" "rustc --version"
+want "rustc --version checked" "rustc --version" "$(cat "$WORKFLOW")"
 
 # ============================================================================
 echo
@@ -113,7 +108,7 @@ echo "5. Build steps do not suppress failure"
 # A workflow that publishes despite a build failure is worse than one that
 # publishes nothing — the published artifact appears good. continue-on-error:
 # true on any step suppresses the failure the job would otherwise propagate.
-nowant "no continue-on-error: true" "continue-on-error: true"
+nowant "no continue-on-error: true" "continue-on-error: true" "$(cat "$WORKFLOW")"
 
 # ============================================================================
 echo
@@ -124,7 +119,7 @@ echo "6. build-tarball.sh is called with --name to stamp once per release"
 # can correlate them without a separate asset lookup or timestamp fallback.
 # Without --name, build-tarball.sh generates its own timestamp independently
 # of the tag, producing the mismatch that issue #51 describes.
-want "build-tarball.sh uses --name" "--name"
+want "build-tarball.sh uses --name" "--name" "$(cat "$WORKFLOW")"
 
 # ============================================================================
 echo
@@ -158,7 +153,6 @@ GATE_WORKFLOW="$REPO_ROOT/.github/workflows/gate.yml"
 
 if [ ! -f "$GATE_WORKFLOW" ]; then
     bad "gate.yml exists" "not found; skipping retraction case"
-    fail=$((fail+1))
 else
     ok "gate.yml exists at .github/workflows/gate.yml"
 
@@ -201,5 +195,4 @@ else
 fi
 
 # ============================================================================
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

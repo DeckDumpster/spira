@@ -19,8 +19,8 @@
 # covers: spira/cockpit.sh cockpit/health.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 PANE="$HERE/../cockpit/health.sh"
-pass=0; fail=0
 TMP="$(mktemp -d)"; trap 'kill_all 2>/dev/null; rm -rf "$TMP"' EXIT
 RUN="$TMP/run"
 mkdir -p "$RUN"
@@ -28,11 +28,6 @@ PIDS=()
 
 # kill_all: clean up any background processes created during the suite.
 kill_all() { [ "${#PIDS[@]}" -gt 0 ] && kill "${PIDS[@]}" 2>/dev/null; wait 2>/dev/null; }
-
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s\n' "$1"; }
-is_n() { if [ "$2" = "$3" ]; then pass=$((pass+1)); printf '  ok    %s\n' "$1"
-         else fail=$((fail+1)); printf '  FAIL  %s: want [%s] got [%s]\n' "$1" "$2" "$3"; fi; }
 
 # field <output> <key> -> the value of SP_AEON0_<KEY> or the bare key
 field() { sed -n "s/^$2=//p" <<< "$1" | head -1; }
@@ -122,7 +117,7 @@ case "$wall1" in
     *)      bad "WALL is a number: got [$wall1]" ;;
 esac
 # The fuse must be 0 or very small — we just wrote a file.
-is_n "a just-written worktree has fuse 0" "0" "$fuse1"
+is "a just-written worktree has fuse 0" "0" "$fuse1"
 
 # ---- Part 2: missing worktree renders ? ---------------------------------------------
 echo
@@ -146,7 +141,7 @@ if grep -q "SP_AEON.*_BEAD=$BEAD2" <<< "$out2"; then
 else
     bad "SP_AEON?_BEAD=$BEAD2 was not found in output — bead key missing entirely"
 fi
-is_n "no worktree renders FUSE=?" "?" "$fuse2"
+is "no worktree renders FUSE=?" "?" "$fuse2"
 
 # ---- Part 3: gate suppresses the fuse -----------------------------------------------
 echo
@@ -170,7 +165,7 @@ if grep -q "SP_AEON.*_BEAD=$BEAD3" <<< "$out3"; then
 else
     bad "SP_AEON?_BEAD=$BEAD3 not found — bead key missing entirely"
 fi
-is_n "live gate for this bead yields FUSE=gate" "gate" "$fuse3"
+is "live gate for this bead yields FUSE=gate" "gate" "$fuse3"
 
 # Gate detection requires a LIVE process. Kill the gate and verify the fuse resumes
 # computing normally — a dead pid must not render as gate, because it would be the
@@ -303,5 +298,4 @@ fi
 fi  # pane exists
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

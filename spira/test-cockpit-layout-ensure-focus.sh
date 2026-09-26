@@ -21,13 +21,9 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 COCKPIT_DIR="$(dirname "$HERE")/cockpit"
 LAYOUT="$COCKPIT_DIR/layout.sh"
-
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 command -v tmux >/dev/null 2>&1 || { echo "  SKIP  tmux is not on PATH"; exit 77; }
 
@@ -132,5 +128,4 @@ is "the duplicate really was killed by repair_dashboards" "0" "$still_there"
 after2="$(active_of w2:0)"
 is "focus falls back to the session pane once its target is gone" "$sess_id2" "$after2"
 
-printf '\ntest-cockpit-layout-ensure-focus: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

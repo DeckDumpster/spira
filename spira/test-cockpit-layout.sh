@@ -15,14 +15,9 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 COCKPIT_DIR="$(dirname "$HERE")/cockpit"
 LAYOUT="$COCKPIT_DIR/layout.sh"
-
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 
 if ! command -v script >/dev/null 2>&1; then
     echo "SKIP: 'script' not available" >&2
@@ -176,5 +171,4 @@ else
     bad "heal.log written" "not found at $HEAL"
 fi
 
-printf '\ntest-cockpit-layout: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

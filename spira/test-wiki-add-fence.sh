@@ -18,14 +18,11 @@
 #
 # host-reason: tests wiki-add-fence.sh against scratch git repositories only
 #
+# tier: T0
 # covers: spira/wiki-add-fence.sh spira/gate-spira.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-wiki-add-fence.sh"
 
@@ -126,6 +123,4 @@ if grep -q "wiki-add-fence" "$HERE/gate-spira.sh" 2>/dev/null; then
 else
     bad "gate-spira.sh references wiki-add-fence.sh" "not found in gate-spira.sh"
 fi
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

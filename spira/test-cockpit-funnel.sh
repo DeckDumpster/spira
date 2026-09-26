@@ -9,19 +9,15 @@
 #   (b) unreadable landstate directory — all funnel keys must be ?, pane shows ?.
 #   (c) positive control — funnel keys absent from env renders ? in the pane (not 0).
 #
+# tier: T2
 # covers: spira/cockpit.sh cockpit/health.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 . "$HERE/testdb.sh"
 testdb_require cockpit-funnel
 testdb_up cockpit-funnel || exit 1
 
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
@@ -253,5 +249,4 @@ want   "absent keys: pane shows certify ?"           "certify  ?" "$pane_c"
 want   "absent keys: pane shows red ?"               "red  ?"     "$pane_c"
 
 echo
-printf 'test-cockpit-funnel: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

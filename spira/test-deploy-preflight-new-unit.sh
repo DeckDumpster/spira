@@ -28,15 +28,11 @@
 # THE FIXTURE IS BUILT FROM THE REAL INSTALLER (law-prefer-the-real-dependency), the same
 # approach as test-unit-drift.sh: real templates, real install.sh, a DEST this test controls.
 #
+# tier: T1
 # covers: spira/deploy.sh spira/doctor.sh systemd/install.sh spira/skew.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "wanted [$2] in output: $3" ;; esac; }
-nowant() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in output: $3" ;; *) ok "$1" ;; esac; }
+. "$HERE/testlib.sh"
 
 echo "test-deploy-preflight-new-unit.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -191,5 +187,4 @@ nowant "doctor.sh: no MISSING finding" "MISSING" "$doctor_out"
 is     "doctor.sh: exits 0 (only remaining fault would be unrelated)" "0" "$doctor_rc"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

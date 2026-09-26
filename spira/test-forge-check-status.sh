@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# test-forge-check-status.sh — forge.sh check-status reads a real gh rollup.
+# test-forge-check-status.sh — forge.sh check-status reads the run scoped to this
+# PR's own head branch, never the PR-view rollup keyed to the head commit.
 #
-# The verdict suite drives a fixture forge, so the real forge's parsing of gh's JSON was never
-# run: a parameter default of `{}` inside `${...}` appended a stray brace to every non-empty
-# rollup, the parse failed, and the fallback printed `pending` for a green batch forever.
+# The rollup `gh pr view --json statusCheckRollup` is keyed to the head COMMIT: when a batch
+# is re-opened on an unchanged tree, the new PR shares its predecessor's commit and the old
+# rollup approach saw the predecessor's already-failed check run from the moment the new PR
+# opened, closing a batch that never ran (sp-uwwt3). check-status instead looks up the
+# workflow run for the PR's own branch — unique per PR even when the commit is shared.
 #
 # covers: spira/forge.sh
 set -uo pipefail
@@ -17,13 +20,28 @@ echo "test-forge-check-status.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 git init -q "$TMP/repo"
 
-# A gh stand-in that answers `pr view --json statusCheckRollup` with the rollup in $ROLLUP,
-# returns jobs from $JOBS_JSON for runs-jobs queries (default: one job id=99, no name),
-# serves $ANNOTATIONS for annotations, and artifact list/zip from $ARTIFACTS_JSON/$ARTIFACT_ZIP.
+# A gh stand-in: `run list --branch X` answers from the run-list fixture registered for
+# branch X (BRANCH_A/RUNLIST_A, BRANCH_B/RUNLIST_B) — an empty array for any other branch,
+# same as GitHub would return for a branch with no runs. Jobs/artifacts/annotations queries
+# are unscoped, as in the real API (they key off a run id, not a branch).
 cat > "$TMP/gh" <<'GH'
 #!/usr/bin/env bash
+if [ "${1:-}" = "run" ] && [ "${2:-}" = "list" ]; then
+    branch="" prev=""
+    for a in "$@"; do
+        [ "$prev" = "--branch" ] && branch="$a"
+        prev="$a"
+    done
+    if [ -n "${BRANCH_A:-}" ] && [ "$branch" = "$BRANCH_A" ]; then
+        cat "${RUNLIST_A:-/dev/null}" 2>/dev/null || printf '[]\n'
+    elif [ -n "${BRANCH_B:-}" ] && [ "$branch" = "$BRANCH_B" ]; then
+        cat "${RUNLIST_B:-/dev/null}" 2>/dev/null || printf '[]\n'
+    else
+        printf '[]\n'
+    fi
+    exit 0
+fi
 case "$*" in
-    *statusCheckRollup*)       cat "$ROLLUP" ;;
     *actions/runs*artifacts*)  [ -n "${ARTIFACTS_JSON:-}" ] && cat "$ARTIFACTS_JSON" || printf '{"artifacts":[]}\n' ;;
     *actions/artifacts*zip*)   [ -n "${ARTIFACT_ZIP:-}" ] && cat "$ARTIFACT_ZIP" || true ;;
     *actions/runs*jobs*)       [ -n "${JOBS_JSON:-}" ] && cat "$JOBS_JSON" || printf '{"jobs":[{"id":99}]}\n' ;;
@@ -37,41 +55,83 @@ JOBS_JSON=""
 ARTIFACTS_JSON=""
 ARTIFACT_ZIP=""
 
-rollup() {   # rollup <gate status> <gate conclusion>
-    printf '{"headRefOid":"abc123def456abc123def456abc123def456abc123","statusCheckRollup":[{"__typename":"CheckRun","name":"suites","status":"COMPLETED","conclusion":"SUCCESS","detailsUrl":"https://example.invalid/actions/runs/1/job/2"},{"__typename":"CheckRun","name":"gate","status":"%s","conclusion":"%s","detailsUrl":"https://example.invalid/actions/runs/1/job/3"}]}\n' "$1" "$2" > "$TMP/rollup.json"
+BRANCH="spira/queue/369"
+SHA="abc123def456abc123def456abc123def456abc123"
+
+runlist() {   # runlist <run-status> <conclusion> [sha] [url]
+    printf '[{"databaseId":1,"status":"%s","conclusion":"%s","headSha":"%s","url":"%s"}]\n' \
+        "$1" "$2" "${3:-$SHA}" "${4:-https://example.invalid/actions/runs/1}" > "$TMP/runlist.json"
 }
+runlist_none() { printf '[]\n' > "$TMP/runlist.json"; }
+
 status() {
     env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" ROLLUP="$TMP/rollup.json" \
+        SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" BRANCH_A="$BRANCH" RUNLIST_A="$TMP/runlist.json" \
         ANNOTATIONS="${ANNOTATIONS:-}" JOBS_JSON="${JOBS_JSON:-}" \
         ARTIFACTS_JSON="${ARTIFACTS_JSON:-}" ARTIFACT_ZIP="${ARTIFACT_ZIP:-}" \
-        bash "$HERE/forge.sh" check-status "$TMP/repo" 7 2>/dev/null | head -1
+        bash "$HERE/forge.sh" check-status "$TMP/repo" 7 "$BRANCH" 2>/dev/null | head -1
 }
 status_all() {
     env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
-        SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" ROLLUP="$TMP/rollup.json" \
+        SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" BRANCH_A="$BRANCH" RUNLIST_A="$TMP/runlist.json" \
         ANNOTATIONS="${ANNOTATIONS:-}" JOBS_JSON="${JOBS_JSON:-}" \
         ARTIFACTS_JSON="${ARTIFACTS_JSON:-}" ARTIFACT_ZIP="${ARTIFACT_ZIP:-}" \
-        bash "$HERE/forge.sh" check-status "$TMP/repo" 7 2>/dev/null
+        bash "$HERE/forge.sh" check-status "$TMP/repo" 7 "$BRANCH" 2>/dev/null
 }
 
 echo
 echo "positive control — a gate still running is pending:"
-rollup IN_PROGRESS ""
-is "in-progress gate reads pending" "pending" "$(status)"
+runlist in_progress ""
+is "in-progress run reads pending" "pending" "$(status)"
 
 echo
-echo "a completed gate is read from the real rollup shape:"
-rollup COMPLETED SUCCESS
-is "successful gate reads green" "green" "$(status)"
-rollup COMPLETED FAILURE
-is "failed gate reads red" "red" "$(status)"
-rollup COMPLETED SKIPPED
-is "skipped gate reads harness_fault" "harness_fault" "$(status)"
+echo "a completed run is read from the run-list shape:"
+runlist completed success
+is "successful run reads green" "green" "$(status)"
+runlist completed failure
+is "failed run reads red" "red" "$(status)"
+runlist completed skipped
+is "skipped run reads harness_fault" "harness_fault" "$(status)"
+
+echo
+echo "positive control — no run at all for this branch reads pending, not red:"
+runlist_none
+is "no run for branch reads pending" "pending" "$(status)"
+
+echo
+echo "THE BUG THIS SUITE PINS (sp-uwwt3): a re-issued PR must never inherit a prior"
+echo "PR's red just because they share a head commit. Two branches, same head SHA:"
+echo "the first is red and closed; the second has its own, still-running run."
+BRANCH_A_SAVE="spira/queue/369"
+BRANCH_B_SAVE="spira/queue/370"
+printf '[{"databaseId":1,"status":"completed","conclusion":"failure","headSha":"%s","url":"https://example.invalid/actions/runs/1"}]\n' \
+    "$SHA" > "$TMP/runlist-a.json"
+printf '[{"databaseId":2,"status":"in_progress","conclusion":"","headSha":"%s","url":"https://example.invalid/actions/runs/2"}]\n' \
+    "$SHA" > "$TMP/runlist-b.json"
+_status_for_branch() {
+    env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+        SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" \
+        BRANCH_A="$BRANCH_A_SAVE" RUNLIST_A="$TMP/runlist-a.json" \
+        BRANCH_B="$BRANCH_B_SAVE" RUNLIST_B="$TMP/runlist-b.json" \
+        bash "$HERE/forge.sh" check-status "$TMP/repo" "$1" "$2" 2>/dev/null | head -1
+}
+is "PR 369 (its own branch) reads red" "red" "$(_status_for_branch 369 "$BRANCH_A_SAVE")"
+is "PR 370 (same commit, its own still-running branch) is NOT red" "pending" \
+    "$(_status_for_branch 370 "$BRANCH_B_SAVE")"
+
+echo
+echo "positive control — an empty branch argument cannot be attributed: pending, not red"
+echo "(this is the fail-closed direction: a caller that forgot to pass the branch must"
+echo "never read a red it cannot prove belongs to this PR):"
+runlist completed failure
+is "no branch given reads pending" "pending" \
+    "$(env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+        SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" BRANCH_A="$BRANCH" RUNLIST_A="$TMP/runlist.json" \
+        bash "$HERE/forge.sh" check-status "$TMP/repo" 7 "" 2>/dev/null | head -1)"
 
 echo
 echo "gate-diag.sh format: annotation_level=failure, spira/test-*.sh path → red-suite:"
-rollup COMPLETED FAILURE
+runlist completed failure
 printf '[{"annotation_level":"failure","title":"","path":"spira/test-auron.sh","message":"FAIL x"}]\n' \
     > "$TMP/annot.json"
 ANNOTATIONS="$TMP/annot.json"
@@ -92,31 +152,30 @@ printf '%s\n' "$_out2" | grep -qF "red-suite:" \
 ANNOTATIONS=""
 
 echo
-echo "headRefOid is reported as head-sha line:"
-rollup COMPLETED SUCCESS
+echo "head-sha is reported from the run's own headSha:"
+runlist completed success
 _out3="$(status_all)"
-printf '%s\n' "$_out3" | grep -qF "head-sha: abc123def456abc123def456abc123def456abc123" \
-    && ok "head-sha line present when headRefOid in rollup" \
-    || bad "head-sha line present when headRefOid in rollup" "not in output: [$_out3]"
+printf '%s\n' "$_out3" | grep -qF "head-sha: $SHA" \
+    && ok "head-sha line present when the run reports one" \
+    || bad "head-sha line present when the run reports one" "not in output: [$_out3]"
 
-echo "positive control — no head-sha line when headRefOid absent:"
-printf '{"statusCheckRollup":[{"__typename":"CheckRun","name":"gate","status":"IN_PROGRESS","conclusion":"","detailsUrl":"https://example.invalid/actions/runs/1/job/3"}]}\n' \
-    > "$TMP/rollup.json"
+echo "positive control — no head-sha line when no run exists:"
+runlist_none
 _out4="$(status_all)"
 printf '%s\n' "$_out4" | grep -qF "head-sha:" \
-    && bad "no head-sha when headRefOid absent" "found head-sha in: [$_out4]" \
-    || ok "no head-sha when headRefOid absent"
+    && bad "no head-sha when no run" "found head-sha in: [$_out4]" \
+    || ok "no head-sha when no run"
 
 echo
-echo "the gate's run URL is reported as run-url (verdict.sh's ejection mail links it):"
-rollup COMPLETED SUCCESS
+echo "the run's own URL is reported as run-url (verdict.sh's ejection mail links it):"
+runlist completed success
 _out3b="$(status_all)"
-printf '%s\n' "$_out3b" | grep -qF "run-url: https://example.invalid/actions/runs/1/job/3" \
-    && ok "run-url line present for a completed gate" \
-    || bad "run-url line present for a completed gate" "not in output: [$_out3b]"
+printf '%s\n' "$_out3b" | grep -qF "run-url: https://example.invalid/actions/runs/1" \
+    && ok "run-url line present for a completed run" \
+    || bad "run-url line present for a completed run" "not in output: [$_out3b]"
 
-echo "positive control — no run-url line while the gate is still pending:"
-rollup IN_PROGRESS ""
+echo "positive control — no run-url line while the run is still pending:"
+runlist in_progress ""
 _out3c="$(status_all)"
 printf '%s\n' "$_out3c" | grep -qF "run-url:" \
     && bad "no run-url while pending" "found run-url in: [$_out3c]" \
@@ -124,7 +183,7 @@ printf '%s\n' "$_out3c" | grep -qF "run-url:" \
 
 echo
 echo "provision_fault: red run with failed provision job → provision_fault:"
-rollup COMPLETED FAILURE
+runlist completed failure
 printf '{"jobs":[{"id":99,"name":"provision","conclusion":"failure"},{"id":100,"name":"gate","conclusion":"failure"}]}\n' \
     > "$TMP/jobs-prov-fail.json"
 JOBS_JSON="$TMP/jobs-prov-fail.json"
@@ -138,7 +197,7 @@ is "provision success → still red" "red" "$(status)"
 JOBS_JSON=""
 
 echo "positive control — provision_fault only when status is red (green ignores jobs):"
-rollup COMPLETED SUCCESS
+runlist completed success
 JOBS_JSON="$TMP/jobs-prov-fail.json"
 is "green with failed provision job → still green" "green" "$(status)"
 JOBS_JSON=""
@@ -187,7 +246,7 @@ grep -q -- '--failed' "$RERUN_LOG" \
 
 echo
 echo "artifact-based suite list: 28 suites in artifact, only 10 in annotations:"
-rollup COMPLETED FAILURE
+runlist completed failure
 python3 -c "
 import zipfile, json, io, sys
 buf = io.BytesIO()
@@ -211,7 +270,7 @@ ANNOTATIONS="" ARTIFACTS_JSON="" ARTIFACT_ZIP=""
 
 echo
 echo "positive control — no artifact falls back to annotations:"
-rollup COMPLETED FAILURE
+runlist completed failure
 ANNOTATIONS="$TMP/ann-10.json"
 _out_fb="$(status_all)"
 is "annotation fallback: status still red" "red" "$(printf '%s\n' "$_out_fb" | head -1)"
@@ -221,7 +280,7 @@ ANNOTATIONS=""
 
 echo
 echo "truncated artifact (red_count > len) → harness_fault:"
-rollup COMPLETED FAILURE
+runlist completed failure
 python3 -c "
 import zipfile, json, io, sys
 buf = io.BytesIO()
@@ -238,8 +297,8 @@ is "truncated artifact → harness_fault" "harness_fault" "$(status)"
 ARTIFACTS_JSON="" ARTIFACT_ZIP=""
 
 echo
-echo "suites job cancelled (job timeout): red rollup, no annotations → harness_fault:"
-rollup COMPLETED FAILURE
+echo "suites job cancelled (job timeout): red run, no annotations → harness_fault:"
+runlist completed failure
 printf '{"jobs":[{"id":99,"name":"provision","conclusion":"success"},{"id":100,"name":"build","conclusion":"success"},{"id":101,"name":"suites","conclusion":"cancelled","steps":[{"name":"Suites","conclusion":"cancelled"}]},{"id":102,"name":"gate","conclusion":"failure"}]}\n' \
     > "$TMP/jobs-suites-cancelled.json"
 JOBS_JSON="$TMP/jobs-suites-cancelled.json"
@@ -247,7 +306,7 @@ is "suites job cancelled → harness_fault" "harness_fault" "$(status)"
 JOBS_JSON=""
 
 echo "suites job timed_out (step-level only) → harness_fault:"
-rollup COMPLETED FAILURE
+runlist completed failure
 printf '{"jobs":[{"id":99,"name":"provision","conclusion":"success"},{"id":100,"name":"build","conclusion":"success"},{"id":101,"name":"suites","conclusion":"failure","steps":[{"name":"Suites","conclusion":"timed_out"}]},{"id":102,"name":"gate","conclusion":"failure"}]}\n' \
     > "$TMP/jobs-suites-step-timeout.json"
 JOBS_JSON="$TMP/jobs-suites-step-timeout.json"
@@ -255,7 +314,7 @@ is "suites step timed_out → harness_fault" "harness_fault" "$(status)"
 JOBS_JSON=""
 
 echo "positive control — suites job success with red suites → still red:"
-rollup COMPLETED FAILURE
+runlist completed failure
 printf '{"jobs":[{"id":99,"name":"provision","conclusion":"success"},{"id":100,"name":"build","conclusion":"success"},{"id":101,"name":"suites","conclusion":"success","steps":[{"name":"Suites","conclusion":"failure"}]},{"id":102,"name":"gate","conclusion":"failure"}]}\n' \
     > "$TMP/jobs-suites-ok.json"
 JOBS_JSON="$TMP/jobs-suites-ok.json"

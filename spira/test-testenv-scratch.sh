@@ -17,12 +17,11 @@
 # running scratch, and asserts they are equal. scratch must create a NEW database; it must
 # not write to whatever SPIRA_DB was set in the environment.
 #
+# tier: T1
 # covers: spira/testenv.sh spira/testdb.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+. "$HERE/testlib.sh"
 skip() { printf '  SKIP  %s\n' "$1"; }
 
 echo "test-testenv-scratch.sh"
@@ -237,7 +236,4 @@ else
     bad "shell: -c teardown: SPIRA_DB removed" "still exists: $shell_c_db"
     rm -rf "$shell_c_db"
 fi
-
-# ---- SUMMARY -------------------------------------------------------------------------
-printf 'test-testenv-scratch: %d ok, %d FAIL\n' "$pass" "$fail"
-exit $((fail > 0 ? 1 : 0))
+tl_summary

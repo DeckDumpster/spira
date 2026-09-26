@@ -39,17 +39,13 @@
 # here.
 #
 # defect: sp-wwav
+# tier: T2
 # covers: spira/cockpit.sh spira/sop.sh
 # covers: spira/cockpit-metrics.py
 # scar: SP_SOP_NEVER_FIRED and SP_SOP_RECURRED were absent from the snapshot; a broken probe rendered as all-clear for dead-weight runbooks and recurring incidents.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-cockpit-sop.sh"
 
@@ -216,5 +212,4 @@ out="$(run_sops)"
 is "SP_SOP_RECURRED stays 0 after a check=fail entry" "SP_SOP_RECURRED=0" "$(grep 'SP_SOP_RECURRED=' <<< "$out")"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

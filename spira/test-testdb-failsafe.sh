@@ -26,13 +26,9 @@
 #         spira/test-landing.sh spira/test-timeout.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 . "$HERE/testdb.sh"
 testdb_require testdb-failsafe
-
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 # Build the "production stand-in" fixture: a real bd store that we check for spurious writes.
 # Use a clean call that bypasses any inherited TESTDB_SHARED from the harness environment.
@@ -145,5 +141,4 @@ count_after="$("$PROD_BD" -C "$PROD_DB" list --limit 0 --json 2>/dev/null \
 is "production stand-in bead count unchanged after all suite runs" \
    "$count_before" "$count_after"
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
