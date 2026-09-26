@@ -265,6 +265,14 @@ if [ "${#_un_unit_names[@]}" -gt 0 ]; then
         "${SPIRA_SYSTEMCTL:-systemctl}" --user reset-failed "$_un_u" 2>/dev/null || true
     done
     printf 'units: stopped %d, removed %d files\n' "$_un_stopped" "$_un_removed"
+    # THE STOPPED COLLECTOR'S LAST SNAPSHOT GOES WITH IT. $SPIRA_RUN is kept, but
+    # cockpit.env describes a collector this uninstall just stopped; nothing will ever write
+    # it again, so it only goes stale — and a re-install more than SPIRA_SNAP_STALE_S later
+    # was refused by its own doctor preflight ("cockpit snapshot stale"). Absent, doctor
+    # reports "no snapshot yet", exactly as on a first install.
+    if [ -n "${SPIRA_RUN:-}" ] && [ -f "$SPIRA_RUN/cockpit.env" ]; then
+        rm -f "$SPIRA_RUN/cockpit.env" && printf '  removed %s (the stopped collector'"'"'s snapshot)\n' "$SPIRA_RUN/cockpit.env"
+    fi
 fi
 
 # ---------------------------------------------------------------------------

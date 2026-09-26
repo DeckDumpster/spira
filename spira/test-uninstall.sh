@@ -231,10 +231,21 @@ _unit_count="$(ls -1 "$DEST"/*.service "$DEST"/*.timer 2>/dev/null | wc -l | tr 
 mkdir -p "$SPIRA_RUN_DIR"
 : > "$SPIRA_RUN_DIR/install-linger-enabled"
 
+# THE COLLECTOR'S LAST SNAPSHOT. The runtime tree is kept, but cockpit.env describes a
+# collector this uninstall stops; left behind it goes stale and a re-install more than
+# SPIRA_SNAP_STALE_S later is refused by its own doctor preflight ("cockpit snapshot stale").
+printf 'SNAP=1\n' > "$SPIRA_RUN_DIR/cockpit.env"
+
 out="$(un)"
 rc=$?
 
 iszero "default: exit 0" "$rc"
+[ -e "$SPIRA_RUN_DIR/cockpit.env" ] \
+    && bad "default: the stopped collector's cockpit snapshot is removed" "still at $SPIRA_RUN_DIR/cockpit.env" \
+    || ok  "default: the stopped collector's cockpit snapshot is removed"
+[ -d "$SPIRA_RUN_DIR" ] \
+    && ok  "default: the runtime tree itself is kept (retention tier unchanged)" \
+    || bad "default: the runtime tree itself is kept (retention tier unchanged)" "gone"
 
 # Units must be gone from DEST.
 _remaining="$(ls -1 "$DEST"/spira-*-test.service "$DEST"/spira-*-test.timer 2>/dev/null | wc -l | tr -d ' ')"
