@@ -238,5 +238,30 @@ is "truncated artifact → harness_fault" "harness_fault" "$(status)"
 ARTIFACTS_JSON="" ARTIFACT_ZIP=""
 
 echo
+echo "suites job cancelled (job timeout): red rollup, no annotations → harness_fault:"
+rollup COMPLETED FAILURE
+printf '{"jobs":[{"id":99,"name":"provision","conclusion":"success"},{"id":100,"name":"build","conclusion":"success"},{"id":101,"name":"suites","conclusion":"cancelled","steps":[{"name":"Suites","conclusion":"cancelled"}]},{"id":102,"name":"gate","conclusion":"failure"}]}\n' \
+    > "$TMP/jobs-suites-cancelled.json"
+JOBS_JSON="$TMP/jobs-suites-cancelled.json"
+is "suites job cancelled → harness_fault" "harness_fault" "$(status)"
+JOBS_JSON=""
+
+echo "suites job timed_out (step-level only) → harness_fault:"
+rollup COMPLETED FAILURE
+printf '{"jobs":[{"id":99,"name":"provision","conclusion":"success"},{"id":100,"name":"build","conclusion":"success"},{"id":101,"name":"suites","conclusion":"failure","steps":[{"name":"Suites","conclusion":"timed_out"}]},{"id":102,"name":"gate","conclusion":"failure"}]}\n' \
+    > "$TMP/jobs-suites-step-timeout.json"
+JOBS_JSON="$TMP/jobs-suites-step-timeout.json"
+is "suites step timed_out → harness_fault" "harness_fault" "$(status)"
+JOBS_JSON=""
+
+echo "positive control — suites job success with red suites → still red:"
+rollup COMPLETED FAILURE
+printf '{"jobs":[{"id":99,"name":"provision","conclusion":"success"},{"id":100,"name":"build","conclusion":"success"},{"id":101,"name":"suites","conclusion":"success","steps":[{"name":"Suites","conclusion":"failure"}]},{"id":102,"name":"gate","conclusion":"failure"}]}\n' \
+    > "$TMP/jobs-suites-ok.json"
+JOBS_JSON="$TMP/jobs-suites-ok.json"
+is "suites job success (red suite failure) → still red" "red" "$(status)"
+JOBS_JSON=""
+
+echo
 echo "test-forge-check-status.sh: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
