@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-census.sh — census.sh against a real bd fixture: the one server-mode suite for
-#   UC-ops-detection-remediation-12 and -14 (law-prefer-the-real-dependency).
+#   UC-ops-detection-remediation-07, -12 and -14 (law-prefer-the-real-dependency).
 #
 #   ./test-census.sh
 #
@@ -15,7 +15,7 @@
 # bd list against a real store.
 #
 # tier: T3
-# covers: spira/census.sh spira/lib.sh UC-ops-detection-remediation-12 UC-ops-detection-remediation-14
+# covers: spira/census.sh spira/lib.sh UC-ops-detection-remediation-07 UC-ops-detection-remediation-12 UC-ops-detection-remediation-14
 # hermetic-ok: uses a fixture database; no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -97,6 +97,13 @@ out1="$(run_census)"
 want "bump_recur: 2 distinct beads, 4 detections" "2 sp-recur-suite-red (4" "$out1"
 want "bump_requeue: 1 distinct bead, 1 detection"  "1 sp-requeue-quota-exceeded (1" "$out1"
 want "bump_reclaim: 1 distinct bead, 1 detection"  "1 sp-reclaim (1"          "$out1"
+
+# UC-ops-detection-remediation-07: the Sin escalation's recurrence counter (recurs_of,
+# lib.sh) is what decides when SPIRA_SIN_AT is reached. The decision itself (threshold,
+# exempt refs, DRAINING) is table-tested against a stub bd in test-sin-exempt.sh; this is
+# the one row proving recurs_of counts real 'recurred' events rather than a stub's canned
+# response, reusing bid_a's three bump_recur calls above instead of a second testdb_up.
+is "recurs_of reads the real events table (UC-ops-detection-remediation-07)" "3" "$(recurs_of "$bid_a")"
 
 # ==============================================================================
 echo
