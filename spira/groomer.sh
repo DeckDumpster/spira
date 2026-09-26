@@ -217,7 +217,7 @@ except Exception: print("")
                     _sw_log "REOPENED $_sw_bid — closed-never-landed, batch-ready: $_sw_reason"
                     if [ "$_sw_dry" -eq 0 ]; then
                         bead_reopen "$_sw_bid" closed-never-landed-batch-ready \
-                            "Reopened by groomer.sh sweep: closed but never landed — $_sw_reason. The branch merges cleanly; it is ready to requeue as-is."
+                            "Reopened by groomer.sh sweep: closed but never landed — $_sw_reason. The branch merges cleanly; it is batch-ready to requeue as-is."
                     fi
                     _sw_reopened="$_sw_reopened $_sw_bid"
                     _sw_n=$((_sw_n+1))
