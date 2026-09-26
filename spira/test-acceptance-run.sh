@@ -213,7 +213,29 @@ wantfile "phase C diffs pre vs post"                  "_unit_diff"        "$SCRI
 wantfile "phase D checks bead count preserved"        "_aged_pre_beads"   "$SCRIPT"
 wantfile "phase D checks memory count preserved"      "_aged_pre_mems"    "$SCRIPT"
 wantfile "phase D runs doctor.sh"                     "_aged_doctor_rc"   "$SCRIPT"
-wantfile "phase D checks operator override survives"  "ACCEPTANCE_AGED_OVERRIDE" "$SCRIPT"
+# THE OVERRIDE MUST BE A KEY THE HARNESS HONOURS. conf.sh refuses a key it does not know
+# ("spira.conf:5: unknown key ACCEPTANCE_AGED_OVERRIDE, ignored"), so an invented key
+# proved nothing about an operator's setting surviving — it was never in force — and its
+# warning replaced the migration line phase D's rollback check looks for.
+_aged_key="$(grep -F '>> "$_aged_conf"' "$SCRIPT" \
+    | sed -n 's/.*printf .\\n\([A-Z_][A-Z0-9_]*\) = .*/\1/p' | head -1)"
+[ -n "$_aged_key" ] \
+    && ok  "phase D writes an operator override into spira.conf ($_aged_key)" \
+    || bad "phase D writes an operator override into spira.conf" "no KEY = line appended to \$_aged_conf"
+_conf_keys="$(env -i PATH="$PATH" HOME="$HOME" SPIRA_CONF=/nonexistent \
+    bash -c '. "$1/conf.sh" >/dev/null 2>&1; printf %s "$SPIRA_CONF_KEYS"' _ "$HERE")"
+case " $_conf_keys " in
+    *" ${_aged_key:-<none>} "*) ok  "the override key is one conf.sh honours" ;;
+    *) bad "the override key is one conf.sh honours" "${_aged_key:-<none>} is not in SPIRA_CONF_KEYS" ;;
+esac
+wantfile "phase D checks operator override survives"  "_aged_override_got" "$SCRIPT"
+
+# THE RELEASE UNDER TEST IS A DRAFT until it passes, so every deploy of "$tag" must say
+# --allow-draft; deploy.sh refuses a draft otherwise and phases B-D could never pass.
+_draft_less="$(grep -E 'deploy\.sh"? .*"\$tag"' "$SCRIPT" | grep -v -- '--allow-draft' || true)"
+[ -z "$_draft_less" ] \
+    && ok  "every deploy of the release under test passes --allow-draft" \
+    || bad "every deploy of the release under test passes --allow-draft" "$_draft_less"
 wantfile "phase D checks for failed units"            "_aged_failed"      "$SCRIPT"
 wantfile "phase D checks world not halted"            "_aged_world_out"   "$SCRIPT"
 wantfile "phase D rollback-refused names the migration" "migrat"          "$SCRIPT"

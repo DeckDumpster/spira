@@ -502,7 +502,7 @@ else
 
         # Run deploy.sh to upgrade to newest tag.
         _deploy_rc=0
-        bash "$HERE/deploy.sh" "$tag" 2>&1 | tee "$TMP/deploy-upgrade.log" || _deploy_rc=$?
+        bash "$HERE/deploy.sh" --allow-draft "$tag" 2>&1 | tee "$TMP/deploy-upgrade.log" || _deploy_rc=$?
         is0 "phase B: deploy.sh $tag exits 0 (no rollback)" "$_deploy_rc"
 
         # Verify .tag sidecar names the new tag (sp-cb0q1: sidecar written to releases dir).
@@ -638,9 +638,13 @@ else
         _aged_pre_mems="$(bd -C "$bd_db" memories 2>/dev/null | grep -c . 2>/dev/null \
             || printf 0)"
 
-        # Write an operator override into spira.conf to verify it survives the upgrade.
-        _aged_override_val="aged-install-override-$$"
-        printf '\nACCEPTANCE_AGED_OVERRIDE = %s\n' "$_aged_override_val" >> "$_aged_conf"
+        # Write an operator override into spira.conf to verify it survives the upgrade. A
+        # REAL KEY, set to a non-default value: conf.sh refuses a key it does not know, so
+        # the invented ACCEPTANCE_AGED_OVERRIDE was never in force (and its "unknown key"
+        # warning displaced the migration line the rollback check below reads). CHECK 5's
+        # incident cap is inert on an acceptance box, so the value changes nothing else.
+        _aged_override_val="$(( 20 + $$ % 70 ))"
+        printf '\nSPIRA_CHECK5_MAX_FILE = %s\n' "$_aged_override_val" >> "$_aged_conf"
 
         # Start world and confirm the sentinel timer is active.
         bash "$HERE/world.sh" start 2>&1 | tee "$TMP/aged-world-start.log" || true
@@ -656,7 +660,7 @@ else
 
         # Upgrade to tag from the aged, populated state.
         _aged_deploy_rc=0
-        bash "$HERE/deploy.sh" "$tag" 2>&1 | tee "$TMP/aged-deploy.log" \
+        bash "$HERE/deploy.sh" --allow-draft "$tag" 2>&1 | tee "$TMP/aged-deploy.log" \
             || _aged_deploy_rc=$?
         is0 "phase D: deploy.sh $tag (aged upgrade) exits 0 — no rollback" "$_aged_deploy_rc"
 
@@ -686,7 +690,7 @@ else
             is0 "phase D: doctor.sh no fatal after aged upgrade" "$_aged_doctor_rc"
 
             # Assert: operator override survived in spira.conf.
-            _aged_override_got="$(grep -E '^\s*ACCEPTANCE_AGED_OVERRIDE\s*=' \
+            _aged_override_got="$(grep -E '^\s*SPIRA_CHECK5_MAX_FILE\s*=' \
                 "$_aged_conf" 2>/dev/null \
                 | sed 's/[^=]*=\s*//' | head -1 || true)"
             is_same "phase D: operator override survived aged upgrade" \

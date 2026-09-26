@@ -106,6 +106,8 @@ if [ "${1:-}" = release ] && [ "${2:-}" = view ]; then
         else
             printf '{"assets":[]}\n'
         fi
+    elif [ "${GH_RELEASE_DRAFT:-0}" = 1 ]; then
+        printf '{"isDraft":true}\n'
     else
         printf '{"isDraft":false}\n'
     fi
@@ -648,6 +650,26 @@ not0   "draft-named: exits non-zero"               "$_rc"
 want   "draft-named: mentions draft"               "draft" "$_out"
 islink "draft-named: current unchanged"            "$RELEASES/current" "$PRIOR_RELEASE"
 nowant "draft-named: drain not called"            "world drain" "$(cat "$CALL_LOG")"
+
+# --allow-draft: RELEASE ACCEPTANCE deploys the release under test, which is a draft until
+# it passes — refusing it made phases B-D fail for every release by construction. The
+# default stays a refusal (the draft-named case above, and again here with a real asset so
+# the flag is the only difference between the two runs).
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"
+ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "GH_RELEASE_DRAFT=1" -- "$NEW_TAG" 2>&1)"
+_rc=$?
+not0   "draft-default: a draft with a real asset is still refused without the flag" "$_rc"
+want   "draft-default: the refusal names the draft"                                 "draft release" "$_out"
+islink "draft-default: current unchanged"                                           "$RELEASES/current" "$PRIOR_RELEASE"
+
+rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"
+ln -s "$PRIOR_RELEASE" "$RELEASES/current"
+_out="$(run_deploy "GH_RELEASE_DRAFT=1" -- --allow-draft "$NEW_TAG" 2>&1)"
+_rc=$?
+is0    "allow-draft: the draft deploys"                    "$_rc"
+islink "allow-draft: current -> the draft's release"       "$RELEASES/current" "$NEW_RELEASE"
+want   "allow-draft: says it is deploying a draft"         "--allow-draft" "$_out"
 
 # ==========================================================================
 echo

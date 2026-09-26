@@ -2,7 +2,14 @@
 #
 # deploy.sh — operator-run release deploy.
 #
-#   deploy.sh [--dry-run] [--force] <tag|latest>
+#   deploy.sh [--dry-run] [--force] [--allow-draft] <tag|latest>
+#
+#   --allow-draft  deploy a NAMED release even though it is still a draft. For release
+#                  acceptance only: a release is published after it passes acceptance, and
+#                  acceptance's upgrade and aged-upgrade phases deploy the release under test,
+#                  so refusing its draft made them fail for every release by construction.
+#                  Never implied, never read from config; "latest" still resolves to the
+#                  newest PUBLISHED release with or without it.
 #
 # BOOTSTRAP
 #   An instance whose checkout predates deploy.sh can bootstrap:
@@ -63,18 +70,20 @@ _orig_prod="${SPIRA_PROD:-$SPIRA_HOME}"
 
 dry_run=0
 force=0
+allow_draft=0
 tag=""
 for _a in "$@"; do
     case "$_a" in
         --dry-run) dry_run=1 ;;
         --force)   force=1 ;;
+        --allow-draft) allow_draft=1 ;;
         -*) printf 'deploy: unknown option: %s\n' "$_a" >&2; exit 2 ;;
         *)  [ -z "$tag" ] && tag="$_a" \
                 || { printf 'deploy: too many arguments\n' >&2; exit 2; } ;;
     esac
 done
 unset _a
-[ -n "$tag" ] || { printf 'usage: deploy.sh [--dry-run] [--force] <tag|latest>\n' >&2; exit 2; }
+[ -n "$tag" ] || { printf 'usage: deploy.sh [--dry-run] [--force] [--allow-draft] <tag|latest>\n' >&2; exit 2; }
 
 # Resolve the forge repository identifier for --repo on all gh calls.
 # Required when SPIRA_REPO is an extracted tarball with no .git; also used for normal
@@ -152,7 +161,11 @@ if [ -n "$_draft_info" ]; then
         | python3 -c 'import json,sys; print("yes" if json.load(sys.stdin).get("isDraft") else "no")' \
         2>/dev/null)" || _is_draft=""
     if [ "${_is_draft:-no}" = "yes" ]; then
-        printf 'deploy: %s is a draft release — publish it first\n' "$tag" >&2; exit 2
+        if [ "$allow_draft" = 1 ]; then
+            log "deploy: $tag is a draft release — deploying it anyway (--allow-draft)"
+        else
+            printf 'deploy: %s is a draft release — publish it first\n' "$tag" >&2; exit 2
+        fi
     fi
 fi
 unset _draft_info _is_draft
