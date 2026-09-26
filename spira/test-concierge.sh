@@ -28,15 +28,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 HARNESS="$(cd "$HERE/.." && pwd)"
-pass=0; fail=0
+. "$HERE/testlib.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-
-is()     { if [ "$2" = "$3" ]; then pass=$((pass+1)); printf '  ok    %s\n' "$1"
-           else fail=$((fail+1)); printf '  FAIL  %s: want [%s] got [%s]\n' "$1" "$2" "$3"; fi; }
-want()   { case "$3" in *"$2"*) pass=$((pass+1)); printf '  ok    %s\n' "$1" ;;
-           *) fail=$((fail+1)); printf '  FAIL  %s: wanted [%s] got [%s]\n' "$1" "$2" "$3" ;; esac; }
-nowant() { case "$3" in *"$2"*) fail=$((fail+1)); printf '  FAIL  %s: did not want [%s]\n' "$1" "$2" ;;
-           *) pass=$((pass+1)); printf '  ok    %s\n' "$1" ;; esac; }
 
 echo "the roster — who the sentinel may summon"
 
@@ -133,9 +126,9 @@ want "and names the working composition"   "append-system-prompt" "$out"
 # fires on the flag and not on something unrelated.
 rc_plain=0; bash "$HARNESS/concierge.sh" brief 2>/dev/null >/dev/null || rc_plain=$?
 if [ "$rc_plain" -ne 2 ]; then
-    pass=$((pass+1)); printf '  ok    brief without args does not exit 2\n'
+    ok "brief without args does not exit 2"
 else
-    fail=$((fail+1)); printf '  FAIL  brief without args exited 2 — positive control broken\n'
+    bad "brief without args does not exit 2" "exited 2 — positive control broken"
 fi
 
 echo
@@ -189,7 +182,7 @@ else
 
 BRIEF="$(bash "$HARNESS/concierge.sh" brief 2>"$TMP/err")"
 if [ -n "$BRIEF" ] && [ -f "$BRIEF" ]; then
-    pass=$((pass+1)); printf '  ok    concierge.sh brief renders a file\n'
+    ok "concierge.sh brief renders a file"
     B="$(cat "$BRIEF")"
     # EVERY PLACEHOLDER, because an unsubstituted one is a command line the session will try
     # to run. The failure arrives hours later as "the concierge does not escalate anything".
@@ -197,9 +190,9 @@ if [ -n "$BRIEF" ] && [ -f "$BRIEF" ]; then
     want   "the brief names the mail path"      "mail.sh send operator"  "$B"
     mail_path="$(printf '%s\n' "$B" | grep -oE '[^ `]+mail\.sh' | head -1)"
     if [ -n "$mail_path" ] && [ -x "$mail_path" ]; then
-        pass=$((pass+1)); printf '  ok    mail path in brief exists and is executable: %s\n' "$mail_path"
+        ok "mail path in brief exists and is executable: $mail_path"
     else
-        fail=$((fail+1)); printf '  FAIL  mail path in brief does not exist or is not executable: [%s]\n' "${mail_path:-<not found>}"
+        bad "mail path in brief exists and is executable" "does not exist or is not executable: [${mail_path:-<not found>}]"
     fi
     want   "and the bead contract"              "bead.sh file" "$B"
     # THE FILE, NOT THE STRING. The string check above is the positive control: the path
@@ -207,9 +200,9 @@ if [ -n "$BRIEF" ] && [ -f "$BRIEF" ]; then
     # a path that is named but absent passes the string check and fails here.
     bead_path="$(printf '%s\n' "$B" | grep -oE '[^ ]+bead\.sh' | head -1)"
     if [ -n "$bead_path" ] && [ -x "$bead_path" ]; then
-        pass=$((pass+1)); printf '  ok    bead tool path in brief exists and is executable: %s\n' "$bead_path"
+        ok "bead tool path in brief exists and is executable: $bead_path"
     else
-        fail=$((fail+1)); printf '  FAIL  bead tool path in brief does not exist or is not executable: [%s]\n' "${bead_path:-<not found>}"
+        bad "bead tool path in brief exists and is executable" "does not exist or is not executable: [${bead_path:-<not found>}]"
     fi
     want   "and carries the statute book"       "# Memories in force" "$B"
     # THE STATUTES THIS ROLE IS ACTUALLY HELD TO, IN FULL TEXT — not as index slugs. This is
@@ -220,7 +213,7 @@ if [ -n "$BRIEF" ] && [ -f "$BRIEF" ]; then
         want "  $law is rendered in full" "## $law" "$B"
     done
 else
-    fail=$((fail+1)); printf '  FAIL  concierge.sh brief produced nothing:\n%s\n' "$(cat "$TMP/err")"
+    bad "concierge.sh brief renders a file" "produced nothing: $(cat "$TMP/err")"
 fi
 
 # A MISSING BRIEF IS A REFUSAL, NOT A DEGRADED START — the assertion that the refusal exists.
@@ -269,18 +262,18 @@ echo "the brief — no-wiki install (SPIRA_WIKI unset)"
 # alone would pass just as well against a brief that named nothing at all.
 BRIEF_NW="$(SPIRA_WIKI= bash "$HARNESS/concierge.sh" brief 2>"$TMP/err_nw")"
 if [ -n "$BRIEF_NW" ] && [ -f "$BRIEF_NW" ]; then
-    pass=$((pass+1)); printf '  ok    no-wiki brief renders\n'
+    ok "no-wiki brief renders"
     BNW="$(cat "$BRIEF_NW")"
     nowant "no-wiki brief does not name the wiki-relative tool"  ".claude/bead.sh" "$BNW"
     want   "no-wiki brief still names the harness bead tool"     "bead.sh file"    "$BNW"
     bead_path="$(printf '%s\n' "$BNW" | grep -oE '[^ ]+bead\.sh' | head -1)"
     if [ -n "$bead_path" ] && [ -f "$bead_path" ]; then
-        pass=$((pass+1)); printf '  ok    bead tool path in brief exists: %s\n' "$bead_path"
+        ok "bead tool path in brief exists: $bead_path"
     else
-        fail=$((fail+1)); printf '  FAIL  bead tool path in brief does not exist: [%s]\n' "${bead_path:-<not found>}"
+        bad "bead tool path in brief exists" "does not exist: [${bead_path:-<not found>}]"
     fi
 else
-    fail=$((fail+1)); printf '  FAIL  no-wiki brief failed:\n%s\n' "$(cat "$TMP/err_nw")"
+    bad "no-wiki brief renders" "failed: $(cat "$TMP/err_nw")"
 fi
 
 echo
@@ -341,7 +334,7 @@ else
         nowant "launcher has no --resume when no session file" "--resume" \
             "$(cat "$TMP_RUN/concierge-launch.sh")"
     else
-        fail=$((fail+1)); printf '  FAIL  start did not write launcher (no-session case)\n'
+        bad "launcher has no --resume when no session file" "start did not write launcher (no-session case)"
     fi
 
     # Second: session file with matching cwd → launcher must carry --resume <id>.
@@ -361,7 +354,7 @@ else
         want "launcher carries --resume when session file exists" "--resume"    "$lnch"
         want "launcher carries the specific session id"           "$FAKE_SID_R" "$lnch"
     else
-        fail=$((fail+1)); printf '  FAIL  start did not write launcher (resume case)\n'
+        bad "launcher carries --resume when session file exists" "start did not write launcher (resume case)"
     fi
 fi
 
@@ -615,7 +608,7 @@ if [ -f "$CC_TMP/concierge-launch.sh" ]; then
     want "and names the recorded session id"  "$CC_SID" "$lnch"
     want "and the launcher exports SPIRA_CONCIERGE=1" "SPIRA_CONCIERGE=1" "$lnch"
 else
-    fail=$((fail+1)); printf '  FAIL  start did not write launcher (cockpit-attach case)\n'
+    bad "after cockpit kills and restarts, launcher carries --resume" "start did not write launcher (cockpit-attach case)"
 fi
 
 fi  # systemd guard
@@ -741,9 +734,9 @@ kill "$_opid" 2>/dev/null; wait "$_opid" 2>/dev/null
 want "the fixture holder is detected"              "$_oid"           "$_oout"
 nowant "no claude stub was launched"               "STUB_CLAUDE_RAN" "$_oout"
 if [ "$_orc" -ne 0 ]; then
-    pass=$((pass+1)); printf '  ok    %s\n' "a holder with no tmux session does not exit 0"
+    ok "a holder with no tmux session does not exit 0"
 else
-    fail=$((fail+1)); printf '  FAIL  %s: exited 0\n' "a holder with no tmux session does not exit 0"
+    bad "a holder with no tmux session does not exit 0" "exited 0"
 fi
 want   "it names the condition"                        "HEADLESS"    "$_oout"
 nowant "it does not advise an attach that cannot work" "attach:  tmux" "$_oout"
@@ -854,6 +847,4 @@ CONCIERGE_SOCKET="$WK_LIVE" CONCIERGE_SESSION="$WK_LIVE" \
 is "wake succeeds against a live pane (positive control)" 0 "$rc_wake_live"
 tmux -L "$WK_LIVE" kill-server 2>/dev/null || true
 
-echo
-echo "concierge self-test: $pass passed, $fail failed"
-[ "$fail" -eq 0 ]
+tl_summary
