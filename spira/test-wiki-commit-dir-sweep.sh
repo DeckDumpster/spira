@@ -26,15 +26,12 @@
 #
 # Requires only git and bash — no database fixture.
 #
+# tier: T1
 # covers: spira/wiki-commit.sh spira/aeon.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 WIKI_COMMIT="$HERE/wiki-commit.sh"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 
 [ -f "$WIKI_COMMIT" ] || { printf 'FATAL: wiki-commit.sh not found at %s\n' "$WIKI_COMMIT" >&2; exit 1; }
 
@@ -92,5 +89,4 @@ is "the draft directory is still not in that commit" "" \
     "$(git -C "$WIKI" show --name-only --format='' HEAD -- wiki/notes/designs/someone-elses-draft 2>/dev/null)"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

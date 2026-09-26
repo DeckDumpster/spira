@@ -26,13 +26,12 @@
 # POSITIVE CONTROL FIRST. A corrupted copy with the orientation moved below the first
 # production-path example must fail (SEEN RED) before the real file's order is trusted.
 #
+# tier: T0
 # covers: spira/chamber/ops.md
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 OPS_MD="$HERE/chamber/ops.md"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 
 [ -f "$OPS_MD" ] || { printf 'FATAL: ops.md not found at %s\n' "$OPS_MD" >&2; exit 1; }
 
@@ -111,5 +110,4 @@ else
 fi
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

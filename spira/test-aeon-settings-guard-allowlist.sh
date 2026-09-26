@@ -28,9 +28,7 @@
 # covers: spira/aeon.sh spira/lib.sh UC-safety-fences-16
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+. "$HERE/testlib.sh"
 
 echo "test-aeon-settings-guard-allowlist.sh"
 
@@ -107,5 +105,4 @@ case "$REAL_JSON" in
 esac
 
 echo
-printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

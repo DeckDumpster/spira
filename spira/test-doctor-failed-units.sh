@@ -15,14 +15,11 @@
 #    silent "no failed units" — an unanswerable probe must not read as a clean bill of
 #    health.
 #
+# tier: T1
 # covers: spira/doctor.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in output"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in output"; }
+. "$HERE/testlib.sh"
 
 echo "test-doctor-failed-units.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -122,5 +119,4 @@ want   "probe failure: FAIL fires" "FAIL" "$probe_sec"
 nowant "probe failure: no false-clean ok" "no failed spira-* units" "$probe_sec"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
