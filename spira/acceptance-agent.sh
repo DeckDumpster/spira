@@ -9,7 +9,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 cat >/dev/null  # drain the aeon prompt from stdin
 
-[ -n "${BEAD_ID:-}" ] || { printf 'acceptance-agent: BEAD_ID not set\n' >&2; exit 1; }
+# A SWEEP SESSION HAS NO BEAD. Ops and the other sweep personas summon the agent with no
+# BEAD_ID; there is nothing to commit or close, so report a finished turn and succeed. Exiting
+# 1 here left spira-ops FAILED and every later deploy's pre-health check refused on it.
+if [ -z "${BEAD_ID:-}" ]; then
+    printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":100,"num_turns":1,"total_cost_usd":0}\n'
+    exit 0
+fi
 
 # Source conf.sh to get SPIRA_DB (not exported by aeon.sh).
 unset SPIRA_CONF_LOADED

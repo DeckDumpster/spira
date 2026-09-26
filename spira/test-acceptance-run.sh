@@ -219,7 +219,16 @@ git -C "$_ag_tmp/repo" checkout -q -b spira/sp-agt2
 _ag_run sp-agt2
 is "and again for a second bead on a branch that already carries the first probe" \
    "sp-agt2: acceptance probe" "$(git -C "$_ag_tmp/repo" log -1 --format=%s 2>/dev/null)"
-rm -rf "$_ag_tmp"; unset _ag_tmp
+# A SWEEP SESSION HAS NO BEAD. Ops and the other sweep personas summon the agent with no
+# BEAD_ID; the stub exited 1 ("BEAD_ID not set"), spira-ops was left FAILED, and every later
+# deploy's pre-health check refused on it (local phases B and D, 2026-09-26). A sweep has
+# nothing to commit or close: the stub reports a finished turn and exits 0.
+_sw_out="$( cd "$_ag_tmp/repo" && env -i PATH="$PATH" HOME="$_ag_tmp" SPIRA_CONF=/nonexistent \
+    SPIRA_BD="$_ag_tmp/bd" SPIRA_DB="$_ag_tmp/db" SPIRA_RUN="$_ag_tmp/run" \
+    bash "$AGENT" </dev/null 2>&1 )"; _sw_rc=$?
+is   "acceptance-agent.sh: a sweep session (no BEAD_ID) exits 0" 0 "$_sw_rc"
+want "and reports a finished turn"                             '"type":"result"' "$_sw_out"
+rm -rf "$_ag_tmp"; unset _ag_tmp _sw_out _sw_rc
 wantfile "acceptance-agent.sh closes bead"   "close" "$AGENT"
 
 # ============================================================================
