@@ -1,6 +1,6 @@
 # plan-bin.sh — resolve_test_plan_bin, shared by plan-lint.sh and plan-matrix.sh so
-# there is one place that knows how to find or build the test-plan binary. Sourced, never
-# executed; requires ROOT to already be set by the caller.
+# there is one place that knows how to find or build the test-plan binary.
+# Sourced, never executed; requires ROOT to already be set by the caller.
 
 # resolve_test_plan_bin -> prints the path to a built test-plan binary, or returns 1 having
 # printed why not. SPIRA_TEST_PLAN_BIN (conf.sh) is preferred so an activated release with no
