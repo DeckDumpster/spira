@@ -408,6 +408,30 @@ out="$(SPIRA_CHECK5_MAX_FILE=2 sentinel)"
 is   "(d) exactly SPIRA_CHECK5_MAX_FILE incidents are filed" 2 "$(grep -c 'REF=closed-not-landed:' "$INC_LOG")"
 want "(d) the pass logs how many the cap skipped" "1 more not filed" "$out"
 
+# ======================================================================================
+echo
+echo "THE COUNT CAP IS NOT ENOUGH — a wall-clock budget bounds filing too:"
+# ======================================================================================
+# SPIRA_CHECK5_MAX_FILE is left at its default (5, above every count used here) so only
+# the budget can be what stops filing. SPIRA_CHECK5_BUDGET_SECS=0 makes the very first
+# elapsed-time check true — a slow store cannot need real time to prove this holds
+# (sp-dxntp: 735s in this loop alone pushed a pass past its TimeoutStartSec).
+testdb_reset
+{
+    printf '{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}\n'
+    for n in 1 2; do
+        printf '{"id":"sp-tb%s","title":"time-budget","status":"closed","issue_type":"task","labels":["spira","plan","repo:%s"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-tb%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' "$n" "$HOME_REPO" "$n"
+        touch "$RUN/sp-tb$n.log"; rm -f "$RUN/landstate/sp-tb$n"
+    done
+} | testdb_seed
+: > "$INC_LOG"
+
+out="$(SPIRA_CHECK5_BUDGET_SECS=0 sentinel)"
+is   "(f) the budget alone stops every filing, not just the count cap" 0 "$(grep -c 'REF=closed-not-landed:' "$INC_LOG")"
+want "(f) the pass logs the budget, not the count cap, as the reason" \
+    "pass budget exhausted (SPIRA_CHECK5_BUDGET_SECS=0)" "$out"
+is   "(f) sp-tb1 stays closed — reported, not reopened" closed "$(status_of sp-tb1)"
+
 ref_hash() { printf '%s' "$1" | sha256sum | cut -c1-8; }
 
 # ======================================================================================
@@ -508,5 +532,29 @@ resolved=0
 for n in 1 2 3; do [ "$(status_of "sp-rl${n}inc")" = closed ] && resolved=$((resolved+1)); done
 is   "(e) exactly SPIRA_CHECK5_MAX_RESOLVE incidents are resolved" 2 "$resolved"
 want "(e) the pass logs how many the cap left unresolved" "1 more proven landed but not resolved" "$out"
+
+# ======================================================================================
+echo
+echo "THE COUNT CAP IS NOT ENOUGH — a wall-clock budget bounds resolving too:"
+# ======================================================================================
+# SPIRA_CHECK5_MAX_RESOLVE is left at its default (5, above the one bead used here), so
+# only the budget can be what stops the resolve.
+testdb_reset
+h="$(ref_hash "closed-not-landed:sp-rb1")"
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-rb1","title":"resolve-budget","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-rb1","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-rb1inc","title":"CLOSED NOT LANDED: sp-rb1 has no LANDED record","status":"open","issue_type":"bug","labels":["spira","incident","ref:$h"]}
+JSONL
+touch "$RUN/sp-rb1.log"
+rm -f "$RUN/landstate/sp-rb1"
+git -C "$REPO" commit -q --allow-empty -m "spira: land sp-rb1"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+
+out="$(SPIRA_CHECK5_BUDGET_SECS=0 sentinel)"
+is   "(g) the budget alone stops the resolve, not just the count cap" open "$(status_of sp-rb1inc)"
+want "(g) the pass logs the budget, not the count cap, as the reason" \
+    "pass budget exhausted (SPIRA_CHECK5_BUDGET_SECS=0)" "$out"
 
 tl_summary

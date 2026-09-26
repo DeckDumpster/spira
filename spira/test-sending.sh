@@ -162,6 +162,12 @@ git -C "$REPO" commit -q --allow-empty -m "sp-clnoassert: review only"
 git -C "$REPO" checkout -q main
 bead sp-clnoassert closed
 
+# spira/round-54: a Concierge round-merge branch, an ancestor of main and with no bead of
+# its own — the same content-landed shape as sp-clnoassert, and with no landstate record
+# either, but it must never reach content_landed or the ASSERT at all: it is not a bead
+# branch (sp-dxntp).
+git -C "$REPO" branch spira/round-54 main
+
 # sp-supsafe: superseded, and the base already holds a conflicting version of its one
 # commit's content — merge-tree conflicts, so nothing of this branch's is missing from the
 # base. REAP superseded-safe.
@@ -357,6 +363,11 @@ nowant "no ASSERT line for sp-cl1 (landstate present)" "ASSERT sp-cl1" "$out"
 want   "sp-clnoassert is SENT"              "SENT sp-clnoassert"   "$out"
 want   "ASSERT fires for sp-clnoassert (no landstate)" "ASSERT sp-clnoassert" "$out"
 is     "sp-clnoassert branch is gone despite the ASSERT" 1 "$(branch_exists spira/sp-clnoassert; echo $?)"
+
+want   "round-54 is SKIPped before disposition ever runs" "SKIP   round-54" "$out"
+nowant "no ASSERT line for a round branch (it never has a landstate)" "ASSERT round-54" "$out"
+nowant "a round branch is never SENT"       "SENT round-54"        "$out"
+is     "round-54 branch survives — left for the Concierge's own toolchain" 0 "$(branch_exists spira/round-54; echo $?)"
 
 # REAP / superseded
 want   "sp-supsafe is REAPED"               "REAPED sp-supsafe"    "$out"
