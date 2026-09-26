@@ -109,6 +109,7 @@ SPIRA_RELEASES SPIRA_RELEASES_KEEP SPIRA_GH_REPO
 SPIRA_REVIEWER_MODEL SPIRA_REVIEWER_VERDICTS SPIRA_REVIEWER_TIMEOUT SPIRA_REVIEWER_DIFF_LIMIT
 SPIRA_REVIEW_LABEL
 SPIRA_CAPACITY_PROBE_MODEL SPIRA_CAPACITY_PROBE_INTERVAL SPIRA_CAPACITY_PROBE_WINDOW SPIRA_CAPACITY_PROBE_TIMEOUT
+SPIRA_CONFIG_BIN SPIRA_LIVENESS_MODEL SPIRA_REFLECT_MODEL
 SPIRA_SELF_WINDOW
 SPIRA_DELIVERS_CHECK_TIMEOUT
 SPIRA_CERT_WINDOW_MINS
@@ -633,6 +634,86 @@ spira_toml_read() {
         case " $_spira_conf_env " in *" $key "*) continue ;; esac
         eval "$key=$val"
     done <<< "$out"
+}
+
+# spira_toml_file -> the path of the typed config in force, or empty. Same search order as
+# spira_conf_file, one file extension over: an explicit SPIRA_TOML wins, then the repo, then
+# XDG, then /etc.
+spira_toml_file() {
+    local c
+    if [ -n "${SPIRA_TOML+set}" ]; then
+        [ -f "$SPIRA_TOML" ] && printf '%s' "$SPIRA_TOML"
+        return 0
+    fi
+    for c in "$SPIRA_REPO/spira.toml" \
+             "${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml" \
+             /etc/spira/spira.toml; do
+        [ -f "$c" ] && { printf '%s' "$c"; return 0; }
+    done
+    return 0
+}
+
+# spira_config_bin -> the spira-config binary, or empty if none can be found or built.
+# A release install ships it at $SPIRA_HOME/bin/spira-config (the Makefile's install
+# target); a bare checkout has no such binary until cargo builds one, so this falls back to
+# building it once into the crate's own target dir. Memoized in SPIRA_CONFIG_BIN so every
+# persona_model call in one process doesn't each pay a `cargo build` check.
+spira_config_bin() {
+    [ -n "${SPIRA_CONFIG_BIN:-}" ] && [ -x "$SPIRA_CONFIG_BIN" ] && { printf '%s' "$SPIRA_CONFIG_BIN"; return 0; }
+    [ -x "$SPIRA_HOME/bin/spira-config" ] && { SPIRA_CONFIG_BIN="$SPIRA_HOME/bin/spira-config"; printf '%s' "$SPIRA_CONFIG_BIN"; return 0; }
+    local crate="$SPIRA_REPO/spira-config" cargo
+    [ -d "$crate" ] || return 1
+    cargo="$(command -v cargo 2>/dev/null || true)"
+    [ -n "$cargo" ] || cargo="$HOME/.cargo/bin/cargo"
+    [ -x "$cargo" ] || return 1
+    "$cargo" build --release --manifest-path "$crate/Cargo.toml" >/dev/null 2>&1 || return 1
+    [ -x "$SPIRA_REPO/target/release/spira-config" ] || return 1
+    SPIRA_CONFIG_BIN="$SPIRA_REPO/target/release/spira-config"
+    printf '%s' "$SPIRA_CONFIG_BIN"
+}
+
+# spira_toml_resolve -> the spira.toml path to read, or empty.
+#
+# SEEDED FROM chamber/*.fayth ONLY, for now: this is sp-zs04v.4's own scope (persona models),
+# not the fuller spira.conf/repo-map cutover (sp-zs04v.2, .3), which is expected to extend
+# this same function once it lands. Regenerated whenever a fayth is newer than the cached
+# toml, or the toml has no [persona.*] table at all yet — the same "cache, don't migrate
+# once" shape as spira_conf_file, and for the same reason: a box whose only record of a
+# persona's model is FAYTH_MODEL in the fayth itself must not silently lose it the moment
+# fayth_get stops reading that field at launch (persona_model, lib.sh).
+spira_toml_resolve() {
+    local toml fayth_dir f stale=0
+    local -a fayth_files=()
+    toml="$(spira_toml_file)"
+    fayth_dir="${SPIRA_CHAMBER:-$SPIRA_HOME/chamber}"
+    if [ -d "$fayth_dir" ]; then
+        for f in "$fayth_dir"/*.fayth; do
+            [ -f "$f" ] && fayth_files+=("$f")
+        done
+    fi
+    [ "${#fayth_files[@]}" -eq 0 ] && { [ -n "$toml" ] && printf '%s' "$toml"; return 0; }
+    if [ -z "$toml" ]; then
+        stale=1
+    else
+        grep -q '^\[persona\.' "$toml" 2>/dev/null || stale=1
+        for f in "${fayth_files[@]}"; do
+            [ "$f" -nt "$toml" ] && stale=1
+        done
+    fi
+    [ "$stale" -eq 0 ] && { printf '%s' "$toml"; return 0; }
+
+    local bin target out
+    bin="$(spira_config_bin)" || { [ -n "$toml" ] && printf '%s' "$toml"; return 0; }
+    target="${toml:-$SPIRA_REPO/spira.toml}"
+    local -a args=(--home "$HOME" --out "$target")
+    for f in "${fayth_files[@]}"; do args+=(--fayth "$f"); done
+    if out="$("$bin" convert "${args[@]}" 2>&1)"; then
+        [ -n "$out" ] && printf '%s\n' "$out" >&2
+        printf '%s' "$target"
+    else
+        printf '%s\n' "$out" >&2
+        [ -n "$toml" ] && printf '%s' "$toml"
+    fi
 }
 
 # _spira_join <base> <rel> — join a base path and a relative segment without doubling
@@ -2005,7 +2086,11 @@ spira_conf_defaults() {
     # cannot answer is evidence the account is genuinely out for builders. An operator
     # whose pool uses a different model sets this key. Probe with the cheapest capable
     # model — a refused probe costs nothing; a served one costs one minimal request.
-    : "${SPIRA_CAPACITY_PROBE_MODEL:=claude-sonnet-5}"
+    #
+    # NO `:=` DEFAULT HERE. A literal default would fix this at conf.sh-sourcing time and
+    # could never track a builder model changed later — capacity_probe() (lib.sh) resolves
+    # the default itself, via persona_model builder, at the moment it actually probes. Left
+    # unset, this key stays purely an operator override.
     # PROBE_INTERVAL: minimum seconds between probes. One per hour is enough — the reset
     # time from a refusal is typically several hours, so a probe that keeps the pause for
     # an hour costs nothing and one that lifts it early unblocks the whole queue.
@@ -2042,6 +2127,13 @@ spira_conf_defaults() {
         SPIRA_AGENT="${SPIRA_CLAUDE}"
     fi
     : "${SPIRA_AGENT:=claude}"
+
+    # THE TWO REMAINING MODELS THAT WERE A LITERAL IN THE CODE RATHER THAN AN OPERATOR KEY:
+    # the stall-vs-waiting liveness judge (lib.sh's still_waiting) and reflect.sh's inference
+    # tier. Both are cheap, infrequent, single-purpose calls — not a persona with a fayth of
+    # its own — so a plain [spira] key is enough; they do not need persona_model's resolver.
+    : "${SPIRA_LIVENESS_MODEL:=claude-haiku-4-5-20251001}"
+    : "${SPIRA_REFLECT_MODEL:=claude-opus-5}"
 
     # WHICH STATUTES GET FULL TEXT AT SUMMON. render_memories renders these in complete
     # paragraph form; everything else is rendered as a slug-only index line. Seeded from
@@ -2223,6 +2315,7 @@ SPIRA_CONF_FILE="$(spira_conf_file)"
 SPIRA_TOML_FILE="$(spira_toml_resolve)"
 [ -n "$SPIRA_TOML_FILE" ] && spira_toml_read "$SPIRA_TOML_FILE"
 spira_conf_defaults
+SPIRA_TOML_FILE="$(spira_toml_resolve)"
 unset _spira_conf_here _spira_conf_env _spira_conf_home_env
 
 # --------------------------------------------------------------------------------------

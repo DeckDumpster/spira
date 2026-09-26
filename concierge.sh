@@ -411,7 +411,7 @@ start)
     bash "$_tmuxenv" scrub -L "$SOCKET" 2>/dev/null
     unset $(bash "$_tmuxenv" names) 2>/dev/null || true
     BRIEF="$(compose_brief)" || exit 1
-    MODEL="$(fayth_get "$FAYTH" FAYTH_MODEL "")"
+    MODEL="$(persona_model "$FAYTH")"
     brief_summary "$BRIEF" "$MODEL"
     SHIM_DIR="$(write_tmux_shim)" || exit 1
 

@@ -24,6 +24,9 @@ FAYTH_MEMORY_PREFIXES="law-"
 # (delete the wrong test, pin the wrong member, revert main for a red that was never main's)
 # costs more than the model tier saved. Judgement is the product; a wrong one is a second
 # incident, not a faster one.
+# SEED ONLY (sp-zs04v.4): the live value is persona.batcher.model in spira.toml,
+# resolved by lib.sh's persona_model — this line only seeds that table on first
+# convert and is no longer read at launch.
 FAYTH_MODEL=claude-opus-5-5
 
 # NOT ELASTIC. A double-red is rare — draining it fast does not need it to also absorb

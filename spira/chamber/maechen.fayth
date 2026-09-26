@@ -41,6 +41,9 @@ FAYTH_MEMORY_PREFIXES="law-"
 # diagnosis (large) is the likely optimisation — item 7's scorecard makes that
 # evidence-based rather than a guess. (Ryan, 2026-09-11: "Start with Opus 5, get that
 # working, then we'll tweak with other models later.")
+# SEED ONLY (sp-zs04v.4): the live value is persona.maechen.model in spira.toml,
+# resolved by lib.sh's persona_model — this line only seeds that table on first
+# convert and is no longer read at launch.
 FAYTH_MODEL=claude-opus-5
 FAYTH_MAX_CONCURRENT=1
 
