@@ -283,6 +283,140 @@ _pid_is_caller_or_ancestor() {
     return 1
 }
 
+# CONCURRENT-START ADMISSION (sp-cvle7). Every container this script starts carries this
+# label, so the count below is exact no matter which caller's naming scheme created it —
+# a lone --name spira-testenv, batch.sh's spira-batch-<hash>, an accept or debug session.
+# Bounding it is what makes an oversubscribed box queue instead of failing: inotify
+# instances, the kernel keyring quota and (per-uid) the pids ceiling are all charged
+# against this real UID across the WHOLE user-namespace hierarchy, hierarchically, for as
+# long as each container's systemd keeps running — not just while it boots — so no
+# per-container flag (e.g. --pids-limit above) can bound them; only the count of
+# containers running at once can.
+_TESTENV_LABEL="spira.testenv=1"
+
+_testenv_running_count() { podman ps -q --filter "label=$_TESTENV_LABEL" 2>/dev/null | wc -l | tr -d ' '; }
+
+# Block until a slot is free, polling and reporting progress rather than looping silently
+# (law-a-control-that-cannot-check-must-refuse: a wait with no visible end is
+# indistinguishable from a hang). SPIRA_TESTENV_MAX_CONCURRENT=0 disables the gate.
+_testenv_admit() {
+    [ -z "${SPIRA_CONF_LOADED:-}" ] && . "$HERE/conf.sh"
+    local max="${SPIRA_TESTENV_MAX_CONCURRENT:-8}"
+    local timeout="${SPIRA_TESTENV_QUEUE_TIMEOUT:-900}"
+    local poll="${SPIRA_TESTENV_QUEUE_POLL:-5}"
+    [ "$max" -gt 0 ] 2>/dev/null || return 0
+    local waited=0 n; n="$(_testenv_running_count)"
+    [ "$n" -lt "$max" ] && return 0
+    printf 'testenv: %s testenv containers already running (limit %s) — queueing\n' "$n" "$max" >&2
+    while [ "$n" -ge "$max" ]; do
+        if [ "$waited" -ge "$timeout" ]; then
+            printf 'testenv: gave up waiting for a slot after %ss (still %s/%s running)\n' \
+                "$timeout" "$n" "$max" >&2
+            return 1
+        fi
+        sleep "$poll"
+        waited=$((waited + poll))
+        n="$(_testenv_running_count)"
+    done
+    printf 'testenv: slot free (%s/%s running) — starting\n' "$n" "$max" >&2
+    return 0
+}
+
+# RESOURCE CEILINGS a boot failure might be hitting (sp-cvle7's four candidates). inotify
+# is checked host-wide and unconditionally: it is a single per-real-UID budget that every
+# rootless container's user namespace charges against, hierarchically, so it can be
+# exhausted by containers this script never touched. The other three live inside the
+# failing container's own cgroup/namespace and read "?" once podman can no longer exec
+# into it — which a failure this deep in systemd's own startup routinely causes.
+_inotify_pressure() {   # -> "<used> <max>"
+    local used=0 f link
+    for f in /proc/[0-9]*/fd/*; do
+        [ -e "$f" ] || continue
+        link="$(readlink "$f" 2>/dev/null)" || continue
+        case "$link" in anon_inode:inotify*) used=$((used + 1)) ;; esac
+    done
+    # Two sysctls enforce this, independently; either can be the one that actually
+    # refuses, so the tighter of the two is the effective ceiling.
+    local a b max
+    a="$(cat /proc/sys/fs/inotify/max_user_instances 2>/dev/null)" || a=""
+    b="$(cat /proc/sys/user/max_inotify_instances 2>/dev/null)" || b=""
+    max="${a:-${b:-0}}"
+    [ -n "${b:-}" ] && [ "$b" -lt "$max" ] 2>/dev/null && max="$b"
+    printf '%s %s' "$used" "$max"
+}
+
+_container_pids_pressure() {   # $1=name -> "<used> <max>", or "? ?" if unreachable
+    local out cur max
+    out="$(podman exec "$1" cat /sys/fs/cgroup/pids.current /sys/fs/cgroup/pids.max 2>/dev/null)" \
+        || { printf '? ?'; return; }
+    cur="$(printf '%s\n' "$out" | sed -n '1p')"
+    max="$(printf '%s\n' "$out" | sed -n '2p')"
+    [ -n "$cur" ] && [ -n "$max" ] && [ "$max" != "max" ] || { printf '? ?'; return; }
+    printf '%s %s' "$cur" "$max"
+}
+
+_container_user_slice_pressure() {   # $1=name -> "<used> <max>", or "? ?" if unreachable
+    local line cur max
+    line="$(podman exec "$1" systemctl show "user-${_SPIRA_UID}.slice" -p TasksCurrent -p TasksMax 2>/dev/null)" \
+        || { printf '? ?'; return; }
+    cur="$(printf '%s\n' "$line" | sed -n 's/^TasksCurrent=//p')"
+    max="$(printf '%s\n' "$line" | sed -n 's/^TasksMax=//p')"
+    [ -n "$cur" ] && [ -n "$max" ] && [ "$max" != "infinity" ] || { printf '? ?'; return; }
+    printf '%s %s' "$cur" "$max"
+}
+
+_container_keyring_pressure() {   # $1=name -> "<used> <max>", or "? ?" if unreachable
+    local cur max
+    cur="$(podman exec "$1" sh -c 'wc -l < /proc/keys' 2>/dev/null)" || cur=""
+    max="$(podman exec "$1" cat /proc/sys/kernel/keys/maxkeys 2>/dev/null)" || max=""
+    [ -n "$cur" ] && [ -n "$max" ] || { printf '? ?'; return; }
+    printf '%s %s' "$cur" "$max"
+}
+
+# Integer percent of used/max, or non-zero (unmeasurable) when either side is "?" or 0.
+_pct() {
+    local used="$1" max="$2"
+    case "$used $max" in *'?'*) return 1 ;; esac
+    [ "$max" -gt 0 ] 2>/dev/null || return 1
+    printf '%s' $((used * 100 / max))
+}
+
+# Measure all four candidates and print which is closest to its cap — from evidence, not
+# a guess (law-a-hand-fix-names-its-root-cause). Always prints the full measurement line
+# so a caller capturing stderr (verdict.sh's attribution log) has the numbers even when no
+# single resource has crossed the threshold below.
+_diagnose_boot_failure() {
+    local name="$1"
+    local i_used i_max p_used p_max t_used t_max k_used k_max
+    read -r i_used i_max <<<"$(_inotify_pressure)"
+    read -r p_used p_max <<<"$(_container_pids_pressure "$name")"
+    read -r t_used t_max <<<"$(_container_user_slice_pressure "$name")"
+    read -r k_used k_max <<<"$(_container_keyring_pressure "$name")"
+
+    printf 'testenv: resource check for %s — inotify instances %s/%s, pids %s/%s, user-%s.slice tasks %s/%s, keyring %s/%s\n' \
+        "$name" "$i_used" "$i_max" "$p_used" "$p_max" "$_SPIRA_UID" "$t_used" "$t_max" "$k_used" "$k_max" >&2
+
+    local entry n u m pct best_label="" best_pct=-1
+    for entry in "inotify $i_used $i_max" "pids $p_used $p_max" \
+                 "user-slice-tasks $t_used $t_max" "keyring $k_used $k_max"; do
+        read -r n u m <<<"$entry"
+        pct="$(_pct "$u" "$m")" || continue
+        if [ "$pct" -gt "$best_pct" ]; then
+            best_pct="$pct"
+            best_label="$n ($u/$m, ${pct}%)"
+        fi
+    done
+
+    if [ "$best_pct" -ge 90 ] 2>/dev/null; then
+        printf 'testenv: exhausted resource for %s — %s\n' "$name" "$best_label" >&2
+    elif [ -n "$best_label" ]; then
+        printf 'testenv: no candidate resource for %s is near its cap (closest: %s) — inconclusive\n' \
+            "$name" "$best_label" >&2
+    else
+        printf 'testenv: could not measure any candidate resource for %s — container unreachable\n' "$name" >&2
+    fi
+}
+
 cmd_up() {
     local name="$_DEFAULT_NAME" checkout=""
     while [[ $# -gt 0 ]]; do
@@ -309,6 +443,8 @@ cmd_up() {
     local vol_reg="${name}-cargo-reg"
     local vol_git="${name}-cargo-git"
 
+    _testenv_admit || return 1
+
     # PIDS LIMIT: rootless podman defaults to 2048. Running many parallel test suites
     # simultaneously — each spawning bd, git, python3, and bash subshells, plus systemd
     # and the dolt test-fixture server in the baseline — exhausts the default: fork()
@@ -320,6 +456,7 @@ cmd_up() {
         --name "$name" \
         --systemd=true \
         --pids-limit 8192 \
+        --label "$_TESTENV_LABEL" \
         --volume "${checkout}:${_CONTAINER_CHECKOUT}:z" \
         --volume "${vol_reg}:${_CONTAINER_CARGO}/registry" \
         --volume "${vol_git}:${_CONTAINER_CARGO}/git" \
@@ -335,21 +472,27 @@ cmd_up() {
     # (law-a-control-that-cannot-check-must-refuse: Failing here could mean either
     # permanent misconfiguration OR transient resource contention; retry once to
     # distinguish them. If both attempts fail, the issue is real.)
+    # Ticks/backoff are overridable so a suite driving this loop against a stub podman (a
+    # forced, instant failure) does not have to spend the ~22s the real timing calls for.
+    local wait_ticks="${SPIRA_TESTENV_BASIC_WAIT_TICKS:-20}"
+    local retry_sleep="${SPIRA_TESTENV_BASIC_RETRY_SLEEP:-2}"
     local retry_count=0
     local max_retries=1
     while true; do
-        if _wait_for 20 podman exec "$name" systemctl is-active basic.target; then
+        if _wait_for "$wait_ticks" podman exec "$name" systemctl is-active basic.target; then
             break  # Success
         fi
         if [ "$retry_count" -lt "$max_retries" ]; then
-            printf 'testenv: systemd basic.target startup attempt %d failed; retrying after 2s\n' "$((retry_count+1))" >&2
+            printf 'testenv: systemd basic.target startup attempt %d failed; retrying after %ss\n' \
+                "$((retry_count+1))" "$retry_sleep" >&2
             retry_count=$((retry_count+1))
-            sleep 2
+            sleep "$retry_sleep"
             # Container is still running; try again
             continue
         fi
         # Both attempts failed; give up
         printf 'testenv: system systemd did not reach basic.target after %d attempt(s)\n' "$((retry_count+1))" >&2
+        _diagnose_boot_failure "$name"
         podman stop "$name" >/dev/null 2>&1 || true
         podman rm   "$name" >/dev/null 2>&1 || true
         return 1
