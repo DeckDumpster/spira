@@ -221,20 +221,31 @@ _un_act() {
 }
 
 # ---------------------------------------------------------------------------
-# 1. STOP AND DISABLE UNITS. Stop first so timers do not restart services
-#    we are about to delete; disable next; remove files last; reload after.
+# 1. STOP AND DISABLE UNITS. Every .timer first, across the WHOLE set, before
+#    any .service — a timer stopped only after its own service already had its
+#    turn is a race: a firing in that gap restarts the service and nothing
+#    stops it again (sp-6k3pr). Disable next; remove files last; reload after.
 # ---------------------------------------------------------------------------
 _un_stopped=0
 _un_removed=0
 _un_removed_names=()   # for sweep exclusion
 
+_un_stop_disable() {
+    local u="$1"
+    "${SPIRA_SYSTEMCTL:-systemctl}" --user stop "$u" 2>/dev/null && \
+        _un_stopped=$((_un_stopped+1)) || true
+    "${SPIRA_SYSTEMCTL:-systemctl}" --user disable "$u" 2>/dev/null || true
+    _un_removed_names+=("$u")
+}
+
 if [ "${#_un_unit_names[@]}" -gt 0 ]; then
     printf '\nStopping and disabling units...\n'
     for _un_u in "${_un_unit_names[@]}"; do
-        "${SPIRA_SYSTEMCTL:-systemctl}" --user stop "$_un_u" 2>/dev/null && \
-            _un_stopped=$((_un_stopped+1)) || true
-        "${SPIRA_SYSTEMCTL:-systemctl}" --user disable "$_un_u" 2>/dev/null || true
-        _un_removed_names+=("$_un_u")
+        case "$_un_u" in *.timer) _un_stop_disable "$_un_u" ;; esac
+    done
+    for _un_u in "${_un_unit_names[@]}"; do
+        case "$_un_u" in *.timer) continue ;; esac
+        _un_stop_disable "$_un_u"
     done
     printf '\nRemoving unit files...\n'
     for _un_p in "${_un_unit_paths[@]}"; do
