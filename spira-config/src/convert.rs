@@ -170,7 +170,7 @@ pub fn spira_section(
                 }
             }
             other => warnings.push(format!(
-                "spira.conf: {other} has no [spira] field yet (schema covers the keys this \
+                "spira.conf: unknown key {other}, ignored (schema covers the keys this \
                  install sets; widen it in the cutover bead if a consumer still needs it)"
             )),
         }

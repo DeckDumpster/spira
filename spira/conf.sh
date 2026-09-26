@@ -288,6 +288,7 @@ spira_toml_resolve() {
         conv_args+=(--fayth "$f")
     done < <(_spira_fayth_paths)
     if out="$("$SPIRA_CONFIG_BIN" convert "${conv_args[@]}" 2>&1)"; then
+        [ -n "$out" ] && printf '%s\n' "$out" >&2
         printf '%s' "$target"
     else
         printf 'spira.conf: auto-convert to spira.toml failed: %s\n' "$out" >&2

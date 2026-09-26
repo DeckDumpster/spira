@@ -122,9 +122,13 @@ CONF_FILE="$LEGACY_DIR/spira.conf"
 conf_prod="$T/legacy-chosen/spira"
 printf 'SPIRA_PROD = %s\nSPIRA_MAX_AEONS = 7\n' "$conf_prod" > "$CONF_FILE"
 
-got_prod="$(conf_val SPIRA_PROD SPIRA_CONF="$CONF_FILE")"
+# SPIRA_CONFIG_WRITE=1 bypasses spira_config_writeback's redirect (sp-q5hzx): this
+# fixture is not the installed release, so without it every write here would land
+# under SPIRA_REPO instead of beside spira.conf. The redirect itself is covered by
+# test-conf-writeback.sh; this suite is about the conversion, not the guard.
+got_prod="$(conf_val SPIRA_PROD SPIRA_CONF="$CONF_FILE" SPIRA_CONFIG_WRITE=1)"
 is "auto-converted SPIRA_PROD is read by conf.sh" "$conf_prod" "$got_prod"
-got_max="$(conf_val SPIRA_MAX_AEONS SPIRA_CONF="$CONF_FILE")"
+got_max="$(conf_val SPIRA_MAX_AEONS SPIRA_CONF="$CONF_FILE" SPIRA_CONFIG_WRITE=1)"
 is "auto-converted SPIRA_MAX_AEONS is read by conf.sh" "7" "$got_max"
 
 if [ -f "$LEGACY_DIR/spira.toml" ]; then
@@ -137,7 +141,7 @@ fi
 # effect, since aeons.sh and deploy.sh keep writing that file, not the derived .toml.
 sleep 1.1
 printf 'SPIRA_PROD = %s/v2\n' "$T" > "$CONF_FILE"
-got_prod2="$(conf_val SPIRA_PROD SPIRA_CONF="$CONF_FILE")"
+got_prod2="$(conf_val SPIRA_PROD SPIRA_CONF="$CONF_FILE" SPIRA_CONFIG_WRITE=1)"
 is "editing spira.conf again regenerates spira.toml on the next read" "$T/v2" "$got_prod2"
 
 # ==========================================================================
@@ -157,7 +161,7 @@ cp "$CRATE/tests/fixtures/chamber/builder.fayth" "$CRATE/tests/fixtures/chamber/
 FULL_CONF="$FULL_DIR/spira.conf"
 printf 'SPIRA_PROD = %s\n' "$T/full-chosen/spira" > "$FULL_CONF"
 
-conf_val SPIRA_PROD SPIRA_CONF="$FULL_CONF" >/dev/null
+conf_val SPIRA_PROD SPIRA_CONF="$FULL_CONF" SPIRA_CONFIG_WRITE=1 >/dev/null
 GENERATED="$FULL_DIR/spira.toml"
 generated_text="$(cat "$GENERATED" 2>/dev/null)"
 if [ -n "$generated_text" ]; then
