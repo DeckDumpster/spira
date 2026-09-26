@@ -18,14 +18,11 @@
 # Driven entirely from fixture files in a temp dir; no database or network.
 #
 # defect: sp-59ej
+# tier: T1
 # covers: spira/model-switch-report.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -172,5 +169,4 @@ nowant "not reported as 0"      "\$0" "$cost_q"
 
 # -------------------------------------------------------------------------
 echo
-echo "$pass passed, $fail failed"
-[ "$fail" = 0 ]
+tl_summary

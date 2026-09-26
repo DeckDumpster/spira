@@ -23,17 +23,13 @@
 # THE ALLOW_AUTO_MERGE=FALSE PATH IS COVERED FIRST (it is the case that blocked
 # seven beads for 36 hours). The arm path is covered second.
 #
-# covers: spira/watchtower.sh spira/sentinel.sh spira/conf.sh spira/landing.sh
+# tier: T1
+# covers: spira/watchtower.sh spira/sentinel.sh spira/doctor.sh spira/conf.sh spira/landing.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 ROOT="$(cd "$HERE/.." && pwd -P)"
 
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { case "$3" in *"$2"*) ok "$1" ;; *) bad "$1" "[$2] not in output"; esac; }
-nowant() { case "$3" in *"$2"*) bad "$1" "[$2] in output unexpectedly" ;; *) ok "$1"; esac; }
 
 echo "test-pr-stall.sh"
 
@@ -260,5 +256,4 @@ want "SPIRA_PR_STALL_MINS is overridable from env" "stall=30" "$conf_out2"
 
 # ====================================================================================
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

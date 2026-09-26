@@ -32,14 +32,12 @@
 # the operator's own configuration or their live client settings file.
 #
 # defect: sp-4vp
+# tier: T1
 # covers: spira/install-session-hook.sh spira/hooks/session.sh spira/watchd.sh spira/mail.sh systemd/install.sh systemd/cockpit-ensure.service
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()  { printf '  ok    %s\n' "$1"; pass=$((pass+1)); }
-bad() { printf '  FAIL  %s\n        got: %s\n' "$1" "$2"; fail=$((fail+1)); }
-is()  { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "want [$2] got [$3]"; fi; }
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "$2" ;; esac; }
 hasnt() { case "$2" in *"$3"*) bad "$1" "$2" ;; *) ok "$1" ;; esac; }
 le()  { if [ "$3" -le "$2" ]; then ok "$1"; else bad "$1" "want <= $2, got $3"; fi; }
@@ -504,5 +502,4 @@ pout="$(hook SessionStart startup)"
 has "an operator session still gets the status table" "$pout" "## Spira watchers"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

@@ -15,16 +15,13 @@
 #   • B: suite A is the planted offender that must appear to trust the selection
 #   • C: all three suites are the planted offenders for unmapped fallback
 #
+# tier: T1
 # covers: spira/select.sh spira/select-globs.sh spira/gate-spira.sh spira/testenv-batch.sh spira/gate-touched.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 iszero()  { [ "$2" = 0 ]    && ok "$1" || bad "$1" "expected 0, got $2"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 iseq()    { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$3], got [$2]"; }
 
 SELECT="$HERE/select.sh"
@@ -133,7 +130,7 @@ rc=$?
 iszero  "B1: covered diff exits 0" "$rc"
 want    "B1: covering suite A selected"     "test-fx-a.sh" "$out"
 want    "B1: always-run suite C selected"   "test-fx-c.sh" "$out"
-notwant "B1: unrelated suite B not selected" "test-fx-b.sh" "$out"
+nowant "B1: unrelated suite B not selected" "test-fx-b.sh" "$out"
 
 mf="$TMP/mode-b"
 bash "$SELECT" --base "$BASE" --head "$HEAD_COVERED" \
@@ -169,8 +166,8 @@ out="$(bash "$SELECT" --base "$BASE" --head "$BASE" \
 rc=$?
 iszero  "D1: empty diff exits 0" "$rc"
 want    "D1: always-run suite C selected"      "test-fx-c.sh" "$out"
-notwant "D1: suite A not selected (empty diff)" "test-fx-a.sh" "$out"
-notwant "D1: suite B not selected (empty diff)" "test-fx-b.sh" "$out"
+nowant "D1: suite A not selected (empty diff)" "test-fx-a.sh" "$out"
+nowant "D1: suite B not selected (empty diff)" "test-fx-b.sh" "$out"
 
 mf="$TMP/mode-d"
 bash "$SELECT" --base "$BASE" --head "$BASE" \
@@ -236,8 +233,8 @@ out="$(bash "$SELECT" --base "$BASE" --head "$HEAD_UNMAPPED" \
           --repo "$REPO" --suite-dir "$SD" --no-all-fallback 2>/dev/null)"
 rc=$?
 iszero  "F1: --no-all-fallback unmapped exits 0"   "$rc"
-notwant "F1: suite A not selected (not covered)"   "test-fx-a.sh" "$out"
-notwant "F1: suite B not selected (not covered)"   "test-fx-b.sh" "$out"
+nowant "F1: suite A not selected (not covered)"   "test-fx-a.sh" "$out"
+nowant "F1: suite B not selected (not covered)"   "test-fx-b.sh" "$out"
 want    "F1: always-run suite C still selected"    "test-fx-c.sh" "$out"
 
 # F2: --no-all-fallback mode-file writes "diff" (not "all")
@@ -264,7 +261,7 @@ rc=$?
 iszero  "G1: --files covered exits 0"          "$rc"
 want    "G1: covering suite A selected"         "test-fx-a.sh" "$out"
 want    "G1: always-run suite C selected"       "test-fx-c.sh" "$out"
-notwant "G1: unrelated suite B not selected"    "test-fx-b.sh" "$out"
+nowant "G1: unrelated suite B not selected"    "test-fx-b.sh" "$out"
 
 # UNMAPPED FILE: mirrors C — triggers all-suites fallback.
 FLIST_UNMAPPED="$TMP/flist-unmapped"
@@ -281,8 +278,8 @@ want   "G2: fallback includes test-fx-c.sh"    "test-fx-c.sh" "$out"
 out="$(bash "$SELECT" --files "$FLIST_UNMAPPED" --suite-dir "$SD" --no-all-fallback 2>/dev/null)"
 rc=$?
 iszero  "G3: --files --no-all-fallback exits 0"           "$rc"
-notwant "G3: suite A not selected (not covered)"          "test-fx-a.sh" "$out"
-notwant "G3: suite B not selected (not covered)"          "test-fx-b.sh" "$out"
+nowant "G3: suite A not selected (not covered)"          "test-fx-a.sh" "$out"
+nowant "G3: suite B not selected (not covered)"          "test-fx-b.sh" "$out"
 want    "G3: always-run suite C still selected"           "test-fx-c.sh" "$out"
 
 # mode-file with --files: covered → "diff", unmapped fallback → "all"
@@ -486,9 +483,12 @@ _n="$(grep -c 'select\.sh' "$TOUCHED" 2>/dev/null || true)"
 # Positive control (law-absence-needs-a-positive-control): the old gate-touched.sh (git diff on
 # test-*.sh only) would miss test-aeon-world-stop.sh since it isn't the file that changed.
 # The new gate-touched.sh reads # covers: via select.sh and selects it.
+# test-aeon-world-stop.sh is tier T2, so SPIRA_GATE_TIERS must include it here — the default
+# T0,T1 cert-gate restriction (sp-qu948) is a separate concern from this covers: match.
 FLIST_CONF="$TMP/flist-conf"
 printf 'spira/conf.sh\n' > "$FLIST_CONF"
-out_k="$(SPIRA_GATE_FILES="$FLIST_CONF" bash "$TOUCHED" dummy-base dummy-head 2>/dev/null)"
+out_k="$(SPIRA_GATE_FILES="$FLIST_CONF" SPIRA_GATE_TIERS="T0,T1,T2" \
+    bash "$TOUCHED" dummy-base dummy-head 2>/dev/null)"
 want "K2: conf.sh change selects test-aeon-world-stop.sh (acceptance criterion)" \
     "test-aeon-world-stop.sh" "$out_k"
 
@@ -499,7 +499,7 @@ printf 'covered.sh\n' > "$FLIST_K"
 out_k3="$(SPIRA_GATE_FILES="$FLIST_K" SPIRA_BATCH_SUITE_DIR="$SD" \
     bash "$TOUCHED" dummy-base dummy-head 2>/dev/null)"
 want    "K3: fixture: covered file selects its suite"    "test-fx-a.sh" "$out_k3"
-notwant "K3: fixture: uncovered suite not selected"      "test-fx-b.sh" "$out_k3"
+nowant "K3: fixture: uncovered suite not selected"      "test-fx-b.sh" "$out_k3"
 
 # ---------------------------------------------------------------------------
 echo
@@ -530,7 +530,7 @@ out="$(SPIRA_SELECT_INERT='*.md *.txt' bash "$SELECT" \
     --files "$FLIST_DOCS" --suite-dir "$SD_L" 2>/dev/null)"
 rc=$?
 iszero  "L1: docs-only diff exits 0"                   "$rc"
-notwant "L1: coverage suite not selected"              "test-fx-l.sh" "$out"
+nowant "L1: coverage suite not selected"              "test-fx-l.sh" "$out"
 want    "L1: always-run suite still selected"          "test-fx-l-nocov.sh" "$out"
 
 # L1-ctrl: unmapped .sh with the same suite dir → all-suites fallback
@@ -627,7 +627,7 @@ out="$(bash "$SELECT" --base "$BASE_M" --head "$HEAD_FOO" \
 rc=$?
 iszero  "M1: foo-only diff exits 0"                        "$rc"
 want    "M1: lib-hub.sh#foo suite selected"                "test-fx-ma.sh" "$out"
-notwant "M1: lib-hub.sh#bar suite not selected"            "test-fx-mb.sh" "$out"
+nowant "M1: lib-hub.sh#bar suite not selected"            "test-fx-mb.sh" "$out"
 
 # M1-ctrl: hunk outside any declared function → both suites selected (cannot narrow further)
 out="$(bash "$SELECT" --base "$BASE_M" --head "$HEAD_GLOBAL" \
@@ -704,7 +704,7 @@ rc=$?
 iszero  "N1: clean batch diff exits 0"                   "$rc"
 want    "N1: alpha.sh suite selected"                    "test-fx-na.sh" "$out"
 want    "N1: beta.sh suite selected"                     "test-fx-nb.sh" "$out"
-notwant "N1: uncovered suite not selected"               "test-fx-nc.sh" "$out"
+nowant "N1: uncovered suite not selected"               "test-fx-nc.sh" "$out"
 
 # N1-ctrl: batch diff with unmapped member → all-suites fallback
 out="$(bash "$SELECT" --base "$BASE_N" --head "$HEAD_N_UNMAPPED" \
@@ -762,7 +762,7 @@ printf 'spira/new.sh\n' > "$FLIST_O_PLAIN"
 out="$(bash "$SELECT" --files "$FLIST_O_PLAIN" --suite-dir "$SD_O" 2>/dev/null)"
 rc=$?
 iszero  "O1-ctrl: plain file exits 0"                                  "$rc"
-notwant "O1-ctrl: selects-on:added NOT fired for plain (M) file"      "test-fx-o-inv.sh" "$out"
+nowant "O1-ctrl: selects-on:added NOT fired for plain (M) file"      "test-fx-o-inv.sh" "$out"
 want    "O1-ctrl: covers-only suite selected (content match)"          "test-fx-o-cov.sh" "$out"
 
 # O2: --base/--head with a branch that ADDS spira/new.sh → selects-on:added fires
@@ -802,8 +802,8 @@ out="$(SPIRA_SELECT_INERT='*.md *.txt' bash "$SELECT" \
           --repo "$REPO_O" --suite-dir "$SD_O" 2>/dev/null)"
 rc=$?
 iszero  "O2-ctrl: .md-only diff exits 0"                                     "$rc"
-notwant "O2-ctrl: selects-on suite NOT selected for .md edit"                "test-fx-o-inv.sh" "$out"
-notwant "O2-ctrl: covers-only suite NOT selected for inert .md edit"         "test-fx-o-cov.sh" "$out"
+nowant "O2-ctrl: selects-on suite NOT selected for .md edit"                "test-fx-o-inv.sh" "$out"
+nowant "O2-ctrl: covers-only suite NOT selected for inert .md edit"         "test-fx-o-cov.sh" "$out"
 
 # O3: --base/--head with a mode change on an existing file
 git -C "$REPO_O" checkout -q main
@@ -850,7 +850,7 @@ out_p_md="$(SPIRA_SELECT_INERT='*.md *.txt' bash "$SELECT" \
     --files "$FLIST_P_MD" --suite-dir "$HERE" 2>/dev/null)"
 rc_p_md=$?
 iszero  "P2: .md-only diff exits 0"                                                  "$rc_p_md"
-notwant "P2: test-script-exec.sh NOT selected for .md edit"                         "test-script-exec.sh" "$out_p_md"
+nowant "P2: test-script-exec.sh NOT selected for .md edit"                         "test-script-exec.sh" "$out_p_md"
 
 # ---------------------------------------------------------------------------
 echo
@@ -872,7 +872,7 @@ rc_q_ctrl=$?
 iszero  "Q0-ctrl: without PLUMBING, claimed Makefile change exits 0" "$rc_q_ctrl"
 want    "Q0-ctrl: claiming suite D selected"      "test-fx-d.sh" "$out_q_ctrl"
 want    "Q0-ctrl: always-run suite C selected"    "test-fx-c.sh" "$out_q_ctrl"
-notwant "Q0-ctrl: unrelated suite B NOT selected" "test-fx-b.sh" "$out_q_ctrl"
+nowant "Q0-ctrl: unrelated suite B NOT selected" "test-fx-b.sh" "$out_q_ctrl"
 
 out_q="$(bash "$SELECT" --base "$BASE" --head "$HEAD_PLUMBING" \
     --repo "$REPO" --suite-dir "$SD" 2>/dev/null)"
@@ -894,9 +894,8 @@ out_q_nf="$(bash "$SELECT" --base "$BASE" --head "$HEAD_PLUMBING" \
 rc_q_nf=$?
 iszero  "Q3: --no-all-fallback plumbing exits 0"        "$rc_q_nf"
 want    "Q3: claiming suite D still selected"           "test-fx-d.sh" "$out_q_nf"
-notwant "Q3: unrelated suite B not selected"             "test-fx-b.sh" "$out_q_nf"
+nowant "Q3: unrelated suite B not selected"             "test-fx-b.sh" "$out_q_nf"
 
 # ---------------------------------------------------------------------------
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ] || exit 1
+tl_summary

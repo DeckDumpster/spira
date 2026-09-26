@@ -33,15 +33,11 @@
 # Python parser in review.sh searches for the literal '"type":"result"'.
 #
 # defect: sp-gsmx.4
+# tier: T2
 # covers: spira/review.sh spira/conf.sh spira/lib.sh spira/release.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 # ---- test database (real bd, throwaway database) ----------------------------
 # shellcheck disable=SC1090
@@ -271,7 +267,4 @@ echo "5. SUITE SELF-CHECK — suite fails without review.sh"
 rm -f "$SH/review.sh"
 out_absent="$(run_review "$TAG" 2>&1 || true)"
 nowant "review absent: no ship output"  "ship"  "$out_absent"
-
-# ======================================================================================
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

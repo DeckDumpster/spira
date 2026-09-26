@@ -26,15 +26,14 @@
 # This avoids relying on the test environment's workspace git (which is itself a worktree
 # with .git pointing to paths the container cannot see).
 #
+# tier: T2
 # covers: spira/lib.sh spira/conf.sh
 # defect: sp-b0j0s
 # hermetic-ok: fixture database; fresh git repo in TMP, no system git state
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok   — %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL — %s: %s\n' "$1" "$2"; }
 has()  { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 lacks(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
@@ -165,5 +164,4 @@ lacks "worktree: claimable bead not flagged"     "sp-wt3a" "$wt_out3"
 has   "worktree: unclaimable bead flagged"       "UNCLAIMABLE sp-wt3b" "$wt_out3"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

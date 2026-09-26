@@ -17,14 +17,11 @@
 # like "home" — making that section fail and revealing the drift (sp-s42p).
 #
 # defect: sp-f9vu sp-s42p
+# tier: T1
 # covers: spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()    { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()   { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()  { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-repo-label.sh"
 
@@ -130,5 +127,4 @@ nowant "example map: bd not called for absent"       "bd-called"               "
 want   "example map: refusal names a valid key"      "$example_first"          "$out_ex2"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
