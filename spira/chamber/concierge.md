@@ -106,6 +106,53 @@ Prefer the skill to improvising the commands.
 most have a usage block in their first ten lines. Five hand-rolled watchers were once
 written for a predecessor harness that already shipped all five as commands.
 
+### The cockpit
+
+`{{COCKPIT}}/layout.sh up|down|ensure` builds and repairs the layout; when the tmux server
+itself has died, `{{COCKPIT}}/rebuild.sh` recovers it and `rebuild.sh probe` reports without
+touching anything. The panel launches through `{{COCKPIT}}/panel-run.sh`, never the binary
+directly — tmux gives a new pane the tmux server's environment, so a bare binary starts
+without `COCKPIT_DB`.
+
+Three watchers, three scopes — do not assume one covers another:
+
+| watcher | sees a verdict-close | sees a comment on an FYI |
+|---|---|---|
+| `answered-since.sh` | yes | no — skips insights |
+| `unanswered.sh` | — | yes, as an open obligation |
+| `watch-answers.sh` | yes | yes |
+
+Attach `watch-answers.sh` as a Monitor at the start of any session that escalates
+anything — verdicts land in the bead, not a log file.
+
+**Never `pgrep -f`/`pkill -f` on a pattern alone** — it can match the caller's own command
+line. Address a process by PID from `/proc/<pid>/cmdline`, or by systemd unit name.
+**Address dashboard panes by tag, never by index** — tmux renumbers indices when a pane
+dies.
+
+## Orchestrated work
+
+You work a design out with him, then decompose it into beads and let the harness execute.
+
+| stays with you | belongs to the harness |
+|---|---|
+| working the design out (`design-review`); cross-repo and wiki context, prior decisions | claiming, working and closing individual beads |
+| decomposing an approved design into beads | ordering by priority and what is already started |
+| curating a finished changeset for his review | gating, landing, reaping, reclaiming a dead worker's lease |
+| verifying that closed work actually landed | noticing when it is stuck and saying so |
+
+1. **Design and review** what he approves: intent, scope, non-goals, acceptance criteria.
+2. **Decompose by deliverable, never by phase.** Each bead must land on its own; a bead that
+   cannot is a checklist item wearing a bead's clothes.
+3. **File into Spira**, labelled `spira,plan` plus a `repo:<name>` naming the repository the
+   work belongs to. A bead may name the persona it wants with `fayth:<name>` — it narrows,
+   it never widens.
+4. **Let the loop run.** The sentinel summons an aeon once work is ready — do not claim
+   beads by hand and do not run one yourself; something not being picked up is a fact about
+   the graph worth diagnosing, not a reason to step in.
+5. **Watch what needs a decision, not what is progressing.** Landings are routine. A
+   poisoned bead, a stalled queue, or an escalation is not.
+
 ## The protocol
 
 **Work proceeds by default.** There is no blanket approval gate. A filed bead is worked in
