@@ -24,7 +24,9 @@
 # green run that never called the watchdog at all (gap #11). The main guard in layout.sh
 # ([[ ${BASH_SOURCE[0]} == $0 ]]) lets a test `.` the real file and call the real function
 # by name instead: if it is gone, `restart_spira_collector_if_stale` is an unknown command
-# and the run fails loudly, the way any other missing dependency does.
+# and the run fails loudly, the way any other missing dependency does. Sourcing it also
+# sources conf.sh, which rebuilds PATH from SPIRA_PATH; the mocks go in SPIRA_PATH or the
+# real systemctl answers and every restart assertion reads empty.
 #
 # defect: sp-vjiug
 # covers: cockpit/layout.sh
@@ -103,7 +105,7 @@ run_watchdog() {
     local now; now=$(date +%s)
     touch -d "@$(( now - src_age_s ))" "$PROD/cockpit.sh"
 
-    env -i HOME="$TMP" PATH="$BIN:/usr/bin:/bin" \
+    env -i HOME="$TMP" PATH="$BIN:/usr/bin:/bin" SPIRA_PATH="$BIN" \
         SPIRA_REPO="$TMP" SPIRA_COCKPIT="$TMP/cockpit" SPIRA_RUN="$RUN" \
         SPIRA_LOOM_BIN="" COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
         COCKPIT_MAIL="" \
@@ -150,7 +152,7 @@ echo ""
 echo "replaced during a pass: a promotion after an earlier fresh check is still caught"
 
 run_watchdog_once() {
-    env -i HOME="$TMP" PATH="$BIN:/usr/bin:/bin" \
+    env -i HOME="$TMP" PATH="$BIN:/usr/bin:/bin" SPIRA_PATH="$BIN" \
         SPIRA_REPO="$TMP" SPIRA_COCKPIT="$TMP/cockpit" SPIRA_RUN="$RUN" \
         SPIRA_LOOM_BIN="" COCKPIT_CWD="$TMP" COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
         COCKPIT_MAIL="" \
