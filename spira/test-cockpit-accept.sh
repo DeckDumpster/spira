@@ -60,7 +60,7 @@ echo "no acceptance ref at all renders NEVER, not FAIL and not 0:"
 
 tag_release 20260101T000000Z
 tag_release 20260102T000000Z
-out="$(SPIRA_PROD="$SPIRA_PROD" run_unsent)"
+out="$(run_unsent SPIRA_PROD="$SPIRA_PROD")"
 want "verdict is NEVER"       "SP_ACCEPT_VERDICT=NEVER" "$out"
 want "since counts both tags" "SP_ACCEPT_SINCE=2"       "$out"
 nowant "never is not FAIL"    "SP_ACCEPT_VERDICT=FAIL"  "$out"
@@ -73,7 +73,7 @@ first_tag="spira-release-spira-20260101T000000Z"
 note_obj="$(git -C "$PROD_ROOT" rev-parse "$first_tag")"
 git -C "$PROD_ROOT" notes --ref=acceptance add -m "FAIL: install refused" "$note_obj"
 tag_release 20260103T000000Z
-out="$(SPIRA_PROD="$SPIRA_PROD" run_unsent)"
+out="$(run_unsent SPIRA_PROD="$SPIRA_PROD")"
 want "verdict is FAIL"           "SP_ACCEPT_VERDICT=FAIL"                  "$out"
 want "tag is the noted one"      "SP_ACCEPT_TAG=$first_tag"                "$out"
 want "since counts the two cut after it" "SP_ACCEPT_SINCE=2"               "$out"
@@ -82,7 +82,7 @@ want "since counts the two cut after it" "SP_ACCEPT_SINCE=2"               "$out
 echo
 echo "an unreadable SPIRA_PROD renders ? everywhere, never 0:"
 
-out="$(SPIRA_PROD="$TMP/does-not-exist/spira" run_unsent)"
+out="$(run_unsent SPIRA_PROD="$TMP/does-not-exist/spira")"
 want "verdict is ?" "SP_ACCEPT_VERDICT=?" "$out"
 want "since is ?"   "SP_ACCEPT_SINCE=?"   "$out"
 nowant "unreadable is not zero releases" "SP_ACCEPT_SINCE=0" "$out"
@@ -94,7 +94,7 @@ echo "a fresh PASS with nothing cut since it renders SP_ACCEPT_SINCE=0:"
 last_tag="spira-release-spira-20260103T000000Z"
 last_obj="$(git -C "$PROD_ROOT" rev-parse "$last_tag")"
 git -C "$PROD_ROOT" notes --ref=acceptance add -m "PASS: installed clean" "$last_obj"
-out="$(SPIRA_PROD="$SPIRA_PROD" run_unsent)"
+out="$(run_unsent SPIRA_PROD="$SPIRA_PROD")"
 want "verdict is PASS" "SP_ACCEPT_VERDICT=PASS" "$out"
 want "since is 0"      "SP_ACCEPT_SINCE=0"      "$out"
 
@@ -121,9 +121,11 @@ SNAP
         bash "$(cd "$(dirname "$0")/../cockpit" && pwd)/health.sh" once 2>/dev/null
 }
 
-never_out="$(render_row NEVER - '?' 2)"
-fail_out="$(render_row FAIL "$first_tag" 1788800000 2)"
-unknown_out="$(render_row '?' - '?' '?')"
+strip_ansi() { sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g'; }
+
+never_out="$(render_row NEVER - '?' 2 | strip_ansi)"
+fail_out="$(render_row FAIL "$first_tag" 1788800000 2 | strip_ansi)"
+unknown_out="$(render_row '?' - '?' '?' | strip_ansi)"
 want "NEVER row says NEVER"  "NEVER"  "$never_out"
 want "FAIL row says FAIL"    "FAIL"   "$fail_out"
 want "unknown row says ?"    "accept ?" "$unknown_out"
