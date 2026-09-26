@@ -118,6 +118,7 @@ gate_fixture_branch spira/sp-u6 ok6.txt fine
 out="$(rungate spira/sp-u6)"; rc=$?
 is     "skew-init-fault: exits NO_VERDICT, not FAIL" 75 "$rc"
 want   "skew-init-fault: names the reason"           "reason=skew-init-fault" "$out"
-nowant "skew-init-fault: never says foreign-harness" "foreign-harness" "$out"
+nowant "skew-init-fault: is never charged as a FAIL" "VERDICT=FAIL" "$out"
+nowant "skew-init-fault: never uses the foreign-harness reason slug" "reason=foreign-harness" "$out"
 
 tl_summary
