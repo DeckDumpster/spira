@@ -261,14 +261,8 @@ test-scope-label.sh
 test-scratch-fence.sh
 test-script-exec.sh
 test-select.sh
-test-sending-certified-guard.sh
 test-sending-closed-reap.sh
-test-sending-content-label.sh
-test-sending-empty-commit.sh
-test-sending-landstate-assert.sh
 test-sending-metrics.sh
-test-sending-squash-merged.sh
-test-sending-unlanded-guard.sh
 test-sentinel-pass.sh
 test-session-hook.sh
 test-skew-escalate.sh

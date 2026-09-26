@@ -316,3 +316,41 @@ no-partition-declares log line. Added as five further cases to `test-check5-inva
 GATED/REBASED/CERTIFIED-restore, push-mode ahead-vs-zero-ahead, gap 10's now-deleted
 `# covers:` lines, gap 11's nopayload tautology) describes code and suites that no longer
 exist and needs no further action.
+
+### UC-14, UC-16 through UC-22 (added by sp-rg46a, superseding the deferral above)
+
+sp-qsona's landing touched only CHECK 5 (above); `sending.sh` was never simplified — it
+still carries the full HELD/KEEP/UNADOPTED/SENT/REAPED/SKIP disposition surface this area
+plan expected it to lose. Per the bead's own fallback for that outcome, the per-branch
+decision in `sweep_repo` is now `send_disposition` (git and bd reads only, no ref, worktree
+or label writes — those stay in `sweep_repo`, chosen by the disposition returned), and
+`test-sending.sh` replaces the six retired suites plus the sending half of
+`test-content-landed-empty-branch.sh`: one fixture, one stub `bd` (`SPIRA_BD`, a JSON file
+per id, read via `bdjson show` and mutated by `bdq label add/remove` — the same seam
+argument `test-held.sh` already made), one pass, a row per disposition.
+
+**A confirmed dead path, inherited unchanged.** `content_landed` returns true for any
+branch with zero commits ahead of the base (ahead=0 and is-ancestor are the same fact,
+sp-bf31a), so the FAST-FORWARD / non-code-delivers / open-zero-ahead arms in
+`send_disposition` — all gated on `ahead == 0` — can never run: content_landed already
+claimed the branch first. `test-sending-closed-reap.sh` already documented the identical
+shape for two other arms ("SENT, not REAPED, since the [...] arm is never reached").
+`test-sending.sh` tests what these branches actually do (SEND content-landed, labelled iff
+`ahead > 0`) rather than asserting a verdict the code cannot produce; the dead arms
+themselves are left in place, faithfully extracted rather than pruned, since removing them
+is a separate decision from the one this bead was asked to make. Filed forward as sp-53wmr
+against this area.
+
+Gaps filled directly in `test-sending.sh`: HELD (including the mid-send recheck inside
+`send_branch`, exercised by calling it directly now that `sending.sh` carries the same
+`BASH_SOURCE[0] != $0` guard `landing.sh`/`pilgrimage.sh` already do), UNADOPTED, pass-2
+orphaned-worktree SENT, legacy `.landing`/`.rebase` RETIRED, SKIP for an unresolvable land
+ref, the remote branch delete and `branch:` label removal (with the aeon log confirmed
+kept), and the FAILED/non-zero-exit path (a worktree whose `.git` pointer is corrupted, so
+salvage refuses rather than guessing the tree is clean).
+
+`test-destroy-branch.sh`, `test-worktree-absent.sh` and `test-sending-metrics.sh` were not
+touched beyond what already stood (KEEP, per the coverage map). Cluster 7 (the content_landed
+self-check duplicates) resolves automatically: four of its five sources are deleted outright
+and the fifth, `test-content-landed-empty-branch.sh`, keeps only its content_landed-direct
+cases now that its sending.sh half moved into `test-sending.sh`.

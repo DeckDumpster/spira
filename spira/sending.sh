@@ -167,6 +167,163 @@ send_branch() {
     say "$verb $id  $REPONAME $br"
 }
 
+# --------------------------------------------------------------------------------------
+# send_disposition <id> <br> -> prints "<VERB> <CODE>" and returns 0. VERB is one of
+# KEEP, UNADOPTED, SEND, REAP; CODE distinguishes the reason within it. Reads $REPO and
+# $LANDREF (set by sweep_repo for the repository under sweep) and the branch's own bd
+# record; performs no destructive action and no caller-visible I/O beyond that reading —
+# sweep_repo alone deletes a ref, frees a worktree, or writes a label, chosen by the
+# disposition this returns (UC-landed-audit-reaping-16).
+#
+# THE PR-MERGED NETWORK CALL STAYS WHERE IT WAS: reachable only after content_landed and
+# the supersede check have both said no, exactly as when this was inline in the sweep
+# loop. Moving the decision into its own function must not turn a local-only common path
+# into one that calls GitHub on every branch.
+# --------------------------------------------------------------------------------------
+send_disposition() {
+    local id="$1" br="$2" _bead_json _sup_n _br_tip _pr_tip n _cherry_plus
+
+    if content_landed "$REPO" "$br" "$LANDREF"; then
+        printf 'SEND content-landed\n'; return 0
+    fi
+
+    # THREE CHECKS BELOW ALL READ THE SAME BEAD. Fetch once, reuse via printf — each
+    # bdjson call starts the binary fresh and costs ~0.5s on a cold path, so three calls
+    # for one unlanded branch compound into a per-pass tax that pushed this suite past the
+    # harness's slice (sp-8ekik).
+    _bead_json="$(bdjson show "$id" 2>/dev/null)"
+
+    # A SUPERSEDED BEAD'S BRANCH IS THE EXCEPTION. Its work landed under the successor's
+    # id; merging this branch would conflict with changes already on the base, so
+    # content_landed returns false — but leaving the branch standing re-exposes it to the
+    # landing pass, which would otherwise have to skip it on every pass forever. The same
+    # check landing.sh uses: both spellings of the supersession field, because bd list and
+    # bd show name it differently (law-absence-needs-a-positive-control: the first version
+    # read only the show spelling off a list row and the exemption never fired once).
+    if printf '%s\n' "$_bead_json" | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+if not d: sys.exit(1)
+sys.exit(0 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
+                  for x in (d[0].get("dependencies") or [])) else 1)' 2>/dev/null; then
+        # SAFETY CHECK: the supersedes edge is a human or agent claim, not a mechanical
+        # proof. If merge-tree exits 0 (no conflict), the branch adds content absent from
+        # the base — a wrong or premature supersede mark, and reaping would silently
+        # destroy that work (sp-bxd0). Only reap on a conflict.
+        #
+        # n=0 GUARD: an empty branch cannot carry unlanded content, so merge-tree's answer
+        # is meaningless — it trivially exits 0 on nothing. Skip the check and reap.
+        _sup_n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo '?')"
+        if [ "${_sup_n:-?}" != "0" ] && git -C "$REPO" merge-tree --write-tree "$LANDREF" "$br" >/dev/null 2>&1; then
+            printf 'KEEP superseded-unsafe\n'; return 0
+        fi
+        printf 'REAP superseded-safe\n'; return 0
+    fi
+
+    # SQUASH-MERGED CLOSED BEAD. A merged PR whose headRefOid still matches the current
+    # branch tip is proof that every commit on this branch was captured by the squash and
+    # nothing was added after, which together with a CLOSED bead is the same assurance
+    # content_landed gives for a fast-forward.
+    #
+    # NETWORK CALL. ghq reaches GitHub, so this runs only after content_landed and
+    # superseded have both said no — never on the common path.
+    if printf '%s\n' "$_bead_json" | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+sys.exit(0 if d and d[0].get("status") == "closed" else 1)' 2>/dev/null; then
+        _br_tip="$(git -C "$REPO" rev-parse "$br" 2>/dev/null)"
+        _pr_tip="$(cd "$REPO" 2>/dev/null && ghq pr view "$br" \
+            --json state,headRefOid \
+            -q 'select(.state=="MERGED") | .headRefOid' 2>/dev/null)"
+        if [ -n "$_pr_tip" ] && [ "${_br_tip:-}" = "$_pr_tip" ]; then
+            printf 'REAP squash-merged\n'; return 0
+        fi
+    fi
+
+    # FAST-FORWARD MERGED. After a push-mode landing the base advances to the branch tip,
+    # so the branch has zero commits ahead and IS an ancestor of the base. content_landed
+    # returns non-zero for all zero-ahead branches (cannot tell landed from empty without
+    # a positive control), but a commit on the base that names the bead IS that control
+    # (law-landed-is-content, law-absence-needs-a-positive-control).
+    n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo '?')"
+    if [ "${n:-?}" = 0 ] && git -C "$REPO" merge-base --is-ancestor "$br" "$LANDREF" 2>/dev/null; then
+        if landed "$id" "$REPO" 2>/dev/null; then
+            printf 'SEND ff\n'; return 0
+        fi
+        # NON-CODE DELIVERS: a bead that declared a non-code deliverable was never
+        # expected to commit. 0 ahead + ancestor means nothing to protect; the delivers:
+        # label is the positive control that says the empty branch is intentional rather
+        # than an aeon that failed to commit (sp-v4652). Works for OPEN and CLOSED beads.
+        if printf '%s\n' "$_bead_json" | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+if not d: sys.exit(1)
+b = d[0]
+labs = b.get("labels") or []
+has_delivers = any(str(l).startswith("delivers:") for l in labs)
+sys.exit(0 if has_delivers else 1)' 2>/dev/null; then
+            printf 'REAP non-code-delivers\n'; return 0
+        fi
+        # OPEN BEAD (OR NONE AT ALL) WITH ZERO AHEAD: reachable from the base already, so
+        # reap it even when landed() found no commit naming the bead explicitly — work
+        # that lands through a batch commit or other mechanism that does not name it.
+        if ! printf '%s\n' "$_bead_json" | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+sys.exit(0 if d and d[0].get("status") == "closed" else 1)' 2>/dev/null; then
+            printf 'REAP open-zero-ahead\n'; return 0
+        fi
+    fi
+
+    # LANDED BY OTHER PR. A batch commit that names this bead satisfies landed() even when
+    # the bead's own PR was closed unmerged and the branch conflicts with the base. Ask
+    # here, not only at n=0 (law-closed-is-not-landed, sp-v4652).
+    #
+    # landed() ALONE IS NOT ENOUGH TO DELETE: it answers "a landing record names this
+    # bead", not "this branch's own commits are the ones that landed" — a correct record
+    # for a PRIOR push of this same branch stays true forever, even after the branch
+    # gained commits that record never saw. `git cherry` asks content_landed's question
+    # per-commit: every commit unique to $br must already be patch-equivalent to something
+    # on $LANDREF ('-'), or this reap deletes real, unlanded work under a landed() that is
+    # true about the past (sp-dgaig).
+    if printf '%s\n' "$_bead_json" | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+sys.exit(0 if d else 1)' 2>/dev/null \
+       && landed "$id" "$REPO" 2>/dev/null; then
+        # NO -q: grep -q closes the pipe at its first match, and git cherry then dies of
+        # SIGPIPE — under pipefail that reads as "nothing found" exactly when something
+        # was (law-no-grep-q-under-pipefail). grep without -q drains the whole pipe every
+        # time, so git cherry always exits on its own.
+        _cherry_plus="$(git -C "$REPO" cherry "$LANDREF" "$br" 2>/dev/null | grep '^+')"
+        if [ -n "$_cherry_plus" ]; then
+            printf 'KEEP cherry-unapplied\n'; return 0
+        fi
+        printf 'SEND other-pr\n'; return 0
+    fi
+
+    if printf '%s\n' "$_bead_json" | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(1)
+d = d if isinstance(d, list) else [d]
+sys.exit(0 if d and "status" in d[0] else 1)' 2>/dev/null; then
+        printf 'KEEP unlanded\n'
+    else
+        printf 'UNADOPTED no-bead\n'
+    fi
+}
+
 # ======================================================================================
 # THE SWEEP — one repository, both passes. Called once per repository the harness manages,
 # with $REPO and $LANDREF set for it.
@@ -180,7 +337,7 @@ send_branch() {
 # file and catastrophic in CHECK 6; skipping loudly is what makes it visible in both.
 # ======================================================================================
 sweep_repo() {
-    local name="$1" br id n w brs rem held
+    local name="$1" br id n w brs rem held disp verb code files
     REPO="$(repo_root "$name")" || { say "SKIP   $name  repo-map has no path for it"; return 0; }
     REPONAME="$name"
 
@@ -212,260 +369,121 @@ sweep_repo() {
         # ONE WITNESS FUNCTION, the same one every deleter asks. Asked separately here, this
         # pass had two witnesses and no positive control on either — an unreachable database
         # answers "not in_progress" exactly as an open bead does, and that reads as permission.
+        # Checked before send_disposition, not inside it: a held branch's disposition is
+        # never worth computing.
         if held="$(spira_holder_witnesses "$id")"; then
             say "HELD   $id  $held"; continue
         fi
-        # ANCESTRY, THEN CONTENT. A squashing repository lands the work as one new commit
-        # the branch is not in the history of, so ancestry alone answers "unlanded" forever
-        # about a branch whose changes are all on the base — and a branch that is never
-        # sent is re-examined on every pass, which is how one merged bead was reopened
-        # three times in thirteen minutes. content_landed asks whether merging this branch
-        # would change anything; it is exact, local, and answers NO on a conflict, so it can
-        # never authorise deleting a ref that still carries work.
-        #
-        # A SUPERSEDED BEAD'S BRANCH IS THE EXCEPTION. Its work landed under the successor's
-        # id; merging this branch would conflict with changes already on the base, so
-        # content_landed returns false — but leaving the branch standing re-exposes it to the
-        # landing pass, which would otherwise have to skip it on every pass forever. Reap it
-        # here. The same check landing.sh uses: both spellings of the supersession field,
-        # because bd list and bd show name it differently (law-absence-needs-a-positive-control:
-        # the first version read only the show spelling off a list row and the exemption never
-        # fired once).
-        if ! content_landed "$REPO" "$br" "$LANDREF"; then
-            # THREE CHECKS BELOW ALL READ THE SAME BEAD. Fetch once, reuse via printf —
-            # each bdjson call starts the binary fresh and costs ~0.5s on a cold path, so
-            # three calls for one unlanded branch compound into a per-pass tax that pushed
-            # this suite past the harness's slice (sp-8ekik).
-            _bead_json="$(bdjson show "$id" 2>/dev/null)"
-            if printf '%s\n' "$_bead_json" | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(1)
-d = d if isinstance(d, list) else [d]
-if not d: sys.exit(1)
-sys.exit(0 if any((x.get("dependency_type") or x.get("type")) == "supersedes"
-                  for x in (d[0].get("dependencies") or [])) else 1)' 2>/dev/null; then
-                # SAFETY CHECK: the supersedes edge is a human or agent claim, not a
-                # mechanical proof. If merge-tree exits 0 (no conflict), the branch adds
-                # content absent from the base — a wrong or premature supersede mark, and
-                # reaping would silently destroy that work. A non-zero exit (conflict) means
-                # the base already holds the same content from the successor's commits, which
-                # is the case this arm was written for. Only reap on a conflict; keep
-                # otherwise and let landing.sh or a corrected supersede handle it. (sp-bxd0)
-                #
-                # n=0 GUARD: an empty branch cannot carry unlanded content, so merge-tree's
-                # answer is meaningless — it trivially exits 0 on nothing. Skip the check
-                # and reap directly.
-                _sup_n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo '?')"
-                if [ "${_sup_n:-?}" != "0" ] && git -C "$REPO" merge-tree --write-tree "$LANDREF" "$br" >/dev/null 2>&1; then
-                    _sup_files="$(git -C "$REPO" diff --name-only "$LANDREF" "$br" 2>/dev/null | head -5)"
-                    say "KEEP   $id  superseded but $_sup_n unlanded commit(s) add content absent from $LANDREF: ${_sup_files:-unknown files}"
-                    # THE BRANCH STAYS; THE WORKTREE DOES NOT. spira_destroy_branch refuses a
-                    # branch "checked out at <worktree>" regardless of whether the branch
-                    # itself is safe to reap, so a KEPT branch's own worktree stands forever
-                    # once its aeon exits — the worktree was never what made this branch
-                    # unsafe. The holder witness at the top of this loop already established
-                    # no live aeon is inside it, so freeing the worktree here costs nothing
-                    # and lets a later correction (a fixed supersede mark, a content_landed
-                    # fix) reap the branch without a hand clearing worktrees first.
-                    _sup_w="$(worktree_of "$br" "$REPO")"
-                    if [ -n "$_sup_w" ]; then
-                        if [ "$DRY" = 1 ]; then
-                            say "WOULD  $id  free worktree $_sup_w (branch kept)"
-                        else
-                            spira_destroy_worktree "$id" "$_sup_w" "$REPO" "branch $id kept as superseded; worktree freed"
-                        fi
+
+        disp="$(send_disposition "$id" "$br")"
+        verb="${disp%% *}"; code="${disp#* }"
+
+        case "$verb $code" in
+            "KEEP superseded-unsafe")
+                n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo '?')"
+                files="$(git -C "$REPO" diff --name-only "$LANDREF" "$br" 2>/dev/null | head -5)"
+                say "KEEP   $id  superseded but $n unlanded commit(s) add content absent from $LANDREF: ${files:-unknown files}"
+                # THE BRANCH STAYS; THE WORKTREE DOES NOT. spira_destroy_branch refuses a
+                # branch "checked out at <worktree>" regardless of whether the branch itself
+                # is safe to reap, so a KEPT branch's own worktree stands forever once its
+                # aeon exits — the worktree was never what made this branch unsafe. The
+                # holder witness above already established no live aeon is inside it, so
+                # freeing the worktree here costs nothing.
+                w="$(worktree_of "$br" "$REPO")"
+                if [ -n "$w" ]; then
+                    if [ "$DRY" = 1 ]; then
+                        say "WOULD  $id  free worktree $w (branch kept)"
+                    else
+                        spira_destroy_worktree "$id" "$w" "$REPO" "branch $id kept as superseded; worktree freed"
                     fi
-                    continue
                 fi
+                ;;
+            "KEEP unlanded")
+                n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo '?')"
+                say "KEEP   $id  unlanded — $n commit(s) not in $LANDREF"
+                ;;
+            "KEEP cherry-unapplied")
+                n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo '?')"
+                say "KEEP   $id  $n commit(s) not in $LANDREF; landed() names it but git cherry finds unapplied commits — not safe to reap"
+                ;;
+            "UNADOPTED no-bead")
+                n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo '?')"
+                say "UNADOPTED $id  no bead — $n commit(s) not in $LANDREF"
+                ;;
+            "SEND content-landed")
                 if [ "$DRY" = 1 ]; then
-                    say "WOULD  $id  reap superseded branch $br$( [ -n "$(worktree_of "$br" "$REPO")" ] && printf ' and its worktree')"
+                    say "WOULD  $id  send branch $br$( [ -n "$(worktree_of "$br" "$REPO")" ] && printf ' and its worktree')"
                     continue
                 fi
-                send_branch "$id" "$br" "REAPED"
-                continue
-            fi
-            # SQUASH-MERGED CLOSED BEAD. A squash lands the work as one commit the branch is
-            # not an ancestor of. content_landed then answers NO about a finished branch whose
-            # changes are all on the base — specifically when post-squash commits on the base
-            # touch the same files and produce a conflict on merge-tree. The conflict means the
-            # base holds the squashed content AND something beyond it; the branch carries
-            # nothing the base lacks.
-            #
-            # A merged PR whose headRefOid still matches the current branch tip is proof that:
-            # (a) every commit on this branch was captured by the PR at the moment of the
-            # squash-merge, and (b) no commits were added to the branch after the merge, so
-            # the ref holds nothing further. Together with a CLOSED bead these three facts
-            # constitute the same assurance content_landed gives for a fast-forward: the work
-            # is on the base and the ref can be reaped safely.
-            #
-            # pr_merged alone is never evidence for deletion (its own comment says so), but
-            # pr_merged AND unchanged-tip AND closed-bead together are. The tip check is what
-            # makes it safe: without it, commits added after the squash would be silently
-            # destroyed. With it, those commits are impossible by definition.
-            #
-            # NETWORK CALL. ghq reaches GitHub, so this runs only after content_landed and
-            # superseded have both said no — never on the common path.
-            if printf '%s\n' "$_bead_json" | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(1)
-d = d if isinstance(d, list) else [d]
-sys.exit(0 if d and d[0].get("status") == "closed" else 1)' 2>/dev/null; then
-                _br_tip="$(git -C "$REPO" rev-parse "$br" 2>/dev/null)"
-                _pr_tip="$(cd "$REPO" 2>/dev/null && ghq pr view "$br" \
-                    --json state,headRefOid \
-                    -q 'select(.state=="MERGED") | .headRefOid' 2>/dev/null)"
-                if [ -n "$_pr_tip" ] && [ "${_br_tip:-}" = "$_pr_tip" ]; then
-                    if [ "$DRY" = 1 ]; then
-                        say "WOULD  $id  reap squash-merged branch $br (PR merged at this tip)"
-                        continue
-                    fi
-                    send_branch "$id" "$br" "REAPED"
+                # LABEL BEFORE DELETING, AND ONLY WHEN THERE WAS WORK TO LAND. This branch is
+                # about to disappear, and with it the only evidence CHECK 5 has that the bead
+                # was not simply closed on nothing: it searches the base for a commit naming
+                # the id, and a content reap makes no such commit. Without the label it
+                # reopens the bead a pass later and a fresh aeon redoes finished work — 99
+                # reopens over 80 beads in a day (sp-796o).
+                #
+                # AHEAD-COUNT FIRST, because content_landed is also true for a branch
+                # carrying nothing. Zero ahead is either a real fast-forward merge, whose
+                # commit names the bead so CHECK 5 is satisfied anyway, or empty work that
+                # SHOULD be reopened. Only a branch with commits of its own whose diff is
+                # nonetheless already on the base is the case this label describes.
+                n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo 0)"
+                if [ "${n:-0}" -gt 0 ] 2>/dev/null; then
+                    bdq label add "$id" content-landed >/dev/null 2>&1 || true
+                fi
+                # ASSERT: every branch content_landed confirms as done should have been seen
+                # by landing.sh first, which writes $SPIRA_RUN/landstate/$id on every code
+                # path that processes a branch. A missing record means the branch slipped
+                # past landing.sh's selection entirely — the shape of sp-qj8n. Logged, not
+                # blocking: the send proceeds regardless.
+                if [ ! -f "${SPIRA_RUN}/landstate/$id" ]; then
+                    log "sending: ASSERT $id — content landed but no landstate/$id; landing.sh may not have selected this branch (sp-qj8n shape)"
+                fi
+                send_branch "$id" "$br"
+                ;;
+            "SEND ff")
+                if [ "$DRY" = 1 ]; then
+                    say "WOULD  $id  send branch $br (zero ahead, commit on $LANDREF names it)"
                     continue
                 fi
-            fi
-            n="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo '?')"
-            # FAST-FORWARD MERGED. After a push-mode landing the base advances to the branch
-            # tip, so the branch has zero commits ahead and IS an ancestor of the base.
-            # content_landed returns non-zero for all zero-ahead branches (cannot tell landed
-            # from empty without a positive control), but a commit on the base that names the
-            # bead IS that control (law-landed-is-content, law-absence-needs-a-positive-control).
-            # Reap it. No content-landed label is needed — CHECK 5 finds the commit itself.
-            # An empty branch falls through: no such commit means landed() returns non-zero.
-            if [ "${n:-?}" = 0 ] \
-               && git -C "$REPO" merge-base --is-ancestor "$br" "$LANDREF" 2>/dev/null; then
-                if landed "$id" "$REPO" 2>/dev/null; then
-                    if [ "$DRY" = 1 ]; then
-                        say "WOULD  $id  send branch $br (zero ahead, commit on $LANDREF names it)"
-                        continue
-                    fi
-                    send_branch "$id" "$br"
-                    continue
-                fi
-                # NON-CODE DELIVERS: a bead that declared a non-code deliverable
-                # was never expected to commit. 0 ahead + ancestor means nothing to protect;
-                # the delivers: label is the positive control that says the empty branch is
-                # intentional rather than an aeon that failed to commit (sp-v4652).
-                # Works for both OPEN and CLOSED beads (OPEN beads with 0 commits can have
-                # non-code deliverables like sp-5lvh5).
-                if printf '%s\n' "$_bead_json" | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(1)
-d = d if isinstance(d, list) else [d]
-if not d: sys.exit(1)
-b = d[0]
-labs = b.get("labels") or []
-has_delivers = any(str(l).startswith("delivers:") for l in labs)
-sys.exit(0 if has_delivers else 1)' 2>/dev/null; then
-                    if [ "$DRY" = 1 ]; then
-                        say "WOULD  $id  reap non-code-delivers branch $br (closed, 0 ahead, no commit expected)"
-                        continue
-                    fi
-                    send_branch "$id" "$br" "REAPED"
-                    continue
-                fi
-                # OPEN BEAD WITH ZERO AHEAD: an open bead with n=0 that is an ancestor of
-                # the landing ref has its work already on main. Even if landed() did not find
-                # a commit explicitly naming the bead, the branch itself is reachable from the
-                # base, so reap it. This handles cases where work lands through a batch commit
-                # or other mechanism that does not name the individual bead.
-                if ! printf '%s\n' "$_bead_json" | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(1)
-d = d if isinstance(d, list) else [d]
-sys.exit(0 if d and d[0].get("status") == "closed" else 1)' 2>/dev/null; then
-                    if [ "$DRY" = 1 ]; then
-                        say "WOULD  $id  reap branch $br (open, 0 ahead, already on $LANDREF)"
-                        continue
-                    fi
-                    send_branch "$id" "$br" "REAPED"
-                    continue
-                fi
-            fi
-            # LANDED BY OTHER PR. A batch commit that names this bead satisfies landed()
-            # even when the bead's own PR was closed unmerged and the branch conflicts with
-            # the base. Ask here, not only at n=0 (law-closed-is-not-landed, sp-v4652).
-            # Works for OPEN beads with n=0 as well (sp-5lvh5).
-            #
-            # landed() ALONE IS NOT ENOUGH TO DELETE. It answers "a landing record names
-            # this bead", not "this branch's own commits are the ones that landed" — a
-            # correct record for a PRIOR push of this same branch stays true forever, even
-            # after the branch gained commits that record never saw. `git cherry` asks the
-            # question content_landed asks but per-commit: every commit unique to $br must
-            # already be patch-equivalent to something on $LANDREF ('-'), or this reap
-            # deletes real, unlanded work under a landed() that is true about the past
-            # (sp-dgaig).
-            if printf '%s\n' "$_bead_json" | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(1)
-d = d if isinstance(d, list) else [d]
-sys.exit(0 if d else 1)' 2>/dev/null \
-               && landed "$id" "$REPO" 2>/dev/null; then
-                # NO -q: grep -q closes the pipe at its first match, and git cherry then
-                # dies of SIGPIPE — under pipefail that reads as "nothing found" exactly when
-                # something was (law-no-grep-q-under-pipefail). grep without -q drains the
-                # whole pipe every time, so git cherry always exits on its own.
-                _cherry_plus="$(git -C "$REPO" cherry "$LANDREF" "$br" 2>/dev/null | grep '^+')"
-                if [ -n "$_cherry_plus" ]; then
-                    say "KEEP   $id  $n commit(s) not in $LANDREF; landed() names it but git cherry finds unapplied commits — not safe to reap"
-                    continue
-                fi
+                send_branch "$id" "$br"
+                ;;
+            "SEND other-pr")
                 if [ "$DRY" = 1 ]; then
                     say "WOULD  $id  send branch $br (commit on $LANDREF names it)"
                     continue
                 fi
                 send_branch "$id" "$br"
-                continue
-            fi
-            if printf '%s\n' "$_bead_json" | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(1)
-d = d if isinstance(d, list) else [d]
-sys.exit(0 if d and "status" in d[0] else 1)' 2>/dev/null; then
-                say "KEEP   $id  unlanded — $n commit(s) not in $LANDREF"
-            else
-                say "UNADOPTED $id  no bead — $n commit(s) not in $LANDREF"
-            fi
-            continue
-        fi
-        if [ "$DRY" = 1 ]; then
-            say "WOULD  $id  send branch $br$( [ -n "$(worktree_of "$br" "$REPO")" ] && printf ' and its worktree')"
-            continue
-        fi
-        # LABEL BEFORE DELETING, AND ONLY WHEN THERE WAS WORK TO LAND. This branch is about
-        # to disappear, and with it the only evidence CHECK 5 has that the bead was not simply
-        # closed on nothing: it searches the base for a commit naming the id, and a content
-        # reap makes no such commit. Without the label it reopens the bead a pass later and a
-        # fresh aeon redoes finished work — 99 reopens over 80 beads in a day (sp-796o).
-        #
-        # AHEAD-COUNT FIRST, because content_landed is also true for a branch carrying nothing.
-        # An aeon that closes its bead having committed no working change leaves a branch with
-        # zero commits ahead of the base, merging it produces the base tree, and labelling that
-        # would exempt the empty case from the one check that exists to catch it. Zero ahead is
-        # either a real fast-forward merge, whose commit names the bead so CHECK 5 is satisfied
-        # anyway, or empty work that SHOULD be reopened. Only a branch with commits of its own
-        # whose diff is nonetheless already on the base is the case this label describes.
-        _ahead="$(git -C "$REPO" rev-list --count "$LANDREF..$br" 2>/dev/null || echo 0)"
-        if [ "${_ahead:-0}" -gt 0 ] 2>/dev/null; then
-            bdq label add "$id" content-landed >/dev/null 2>&1 || true
-        fi
-        # ASSERT: every branch content_landed confirms as done should have been seen by
-        # landing.sh first. landing.sh writes $SPIRA_RUN/landstate/$id on every code path
-        # that processes a branch — gate, rebase conflict, or the actual push — so a missing
-        # record means the branch slipped past landing.sh's selection entirely. That is the
-        # shape of sp-qj8n: four close/reopen cycles, no landstate entry on any of them,
-        # because landing.sh's scan never included the branch. Logging here flags the anomaly
-        # on the FIRST reap rather than after the reopen cycles that diagnosed the original.
-        # The send proceeds regardless — cleanup must not stall on a diagnostic.
-        if [ ! -f "${SPIRA_RUN}/landstate/$id" ]; then
-            log "sending: ASSERT $id — content landed but no landstate/$id; landing.sh may not have selected this branch (sp-qj8n shape)"
-        fi
-        send_branch "$id" "$br"
+                ;;
+            "REAP superseded-safe")
+                if [ "$DRY" = 1 ]; then
+                    say "WOULD  $id  reap superseded branch $br$( [ -n "$(worktree_of "$br" "$REPO")" ] && printf ' and its worktree')"
+                    continue
+                fi
+                send_branch "$id" "$br" "REAPED"
+                ;;
+            "REAP squash-merged")
+                if [ "$DRY" = 1 ]; then
+                    say "WOULD  $id  reap squash-merged branch $br (PR merged at this tip)"
+                    continue
+                fi
+                send_branch "$id" "$br" "REAPED"
+                ;;
+            "REAP non-code-delivers")
+                if [ "$DRY" = 1 ]; then
+                    say "WOULD  $id  reap non-code-delivers branch $br (closed, 0 ahead, no commit expected)"
+                    continue
+                fi
+                send_branch "$id" "$br" "REAPED"
+                ;;
+            "REAP open-zero-ahead")
+                if [ "$DRY" = 1 ]; then
+                    say "WOULD  $id  reap branch $br (open, 0 ahead, already on $LANDREF)"
+                    continue
+                fi
+                send_branch "$id" "$br" "REAPED"
+                ;;
+        esac
     done
 
     # ----------------------------------------------------------------------------------
@@ -521,6 +539,12 @@ for line in sys.stdin:
     [ "$DRY" = 1 ] || spira_prune_worktrees "$REPO"
     return 0
 }
+
+# EXECUTABLE FROM HERE. Everything above is argument parsing and function definitions;
+# everything below performs a real sweep. Sourcing this file to call send_disposition or
+# send_branch directly — the seam a suite drives them through — must not also run a live
+# pass as a side effect of the `.` (same guard, same reason, as landing.sh).
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then return 0 2>/dev/null || true; fi
 
 # ======================================================================================
 # THE LEGACY TREES. `.landing` and `.rebase` were single, unsuffixed and registered against
