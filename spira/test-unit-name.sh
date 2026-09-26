@@ -31,15 +31,11 @@
 # strand.sh prints, not on systemctl exit codes.
 #
 # defect: sp-smbq0
+# tier: T1
 # covers: spira/conf.sh spira/strand.sh spira/doctor.sh spira/cockpit.sh spira/auron.sh cockpit/layout.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-unit-name.sh"
 
@@ -172,11 +168,4 @@ nowant "D: harness_state does not report 'inactive' when sentinel is active" \
        "inactive" "$out"
 
 # ---------------------------------------------------------------------------
-echo
-if [ "$fail" -eq 0 ]; then
-    printf 'passed %d/%d\n' "$pass" "$((pass + fail))"
-    exit 0
-else
-    printf 'FAILED %d/%d\n' "$fail" "$((pass + fail))"
-    exit 1
-fi
+tl_summary

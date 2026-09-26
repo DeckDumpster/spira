@@ -18,19 +18,18 @@
 #    exits 0 on this host, catching any divergence between the stub cases above and what
 #    the actual Containerfile runs.
 #
+# SKIP CONDITION: none. Only bash and the filesystem are needed.
+#
 # defect: sp-qwmj (this suite was rewritten for sp-utt1i: doctor-check.sh reads conf.sh's
 # deps.toml manifest now, not doctor.sh's own program loops — doctor.sh no longer carries
 # build-input checks at all)
+# tier: T1
 # covers: spira/testenv/doctor-check.sh spira/testenv/Containerfile spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+. "$HERE/testlib.sh"
 isnz()   { [ "$2" -ne 0 ] && ok "$1" || bad "$1" "expected exit non-zero, got 0"; }
 iszero() { [ "$2" -eq 0 ] && ok "$1" || bad "$1" "expected exit 0, got $2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in output [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in output [$3]"; }
 
 echo "test-testenv-doctor-check.sh"
 
@@ -38,8 +37,7 @@ CHECKER="$HERE/testenv/doctor-check.sh"
 
 if [ ! -f "$CHECKER" ]; then
     bad "doctor-check.sh exists" "not found at $CHECKER"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    exit 1
+    tl_summary; exit 1
 fi
 
 TMP="$(mktemp -d)"
@@ -146,5 +144,4 @@ fi
 
 # ============================================================================
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

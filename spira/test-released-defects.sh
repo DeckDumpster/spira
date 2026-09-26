@@ -41,11 +41,7 @@
 # covers: spira/released-defects.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -198,5 +194,4 @@ out_absent="$(rds 2>&1 || true)"
 nowant "RELEASED does not appear without the script" "RELEASED" "$out_absent"
 
 # ======================================================================================
-printf '\n%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

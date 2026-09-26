@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
+# tier: T2
 # covers: spira/testdb.sh
 # Positive control: concurrent borrowers must get DISTINCT SPIRA_DBs. Old code gave each
 # borrower TESTDB_DIR; both equal → this assertion fails (law-absence-needs-a-positive-control).
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 . "$HERE/testdb.sh"
 testdb_require testdb-concurrent
 
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 # Build a fresh shared fixture as the owner (TESTDB_SHARED not set).
 unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_MODE \
@@ -98,6 +96,4 @@ else
     detect_err="$(cat "$STDERR_FILE" 2>/dev/null || true)"
     bad "gone baseline must exit fixture-fault (75)" "got rc=[${detect_rc}]${detect_err:+ stderr=[$detect_err]}"
 fi
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

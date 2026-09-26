@@ -20,14 +20,13 @@
 #   the container mounted origin/main regardless of the branch argument.
 #
 # host-reason: requires podman
+# tier: T0
 # covers: spira/testenv-batch.sh
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 iszero()  { [ "$2" = 0 ]    && ok "$1" || bad "$1" "expected 0, got $2"; }
 isexit1() { [ "$2" = 1 ]    && ok "$1" || bad "$1" "expected 1, got $2"; }
 
@@ -131,5 +130,4 @@ SPIRA_VERDICT_TTL=0 \
 iszero "D2: running against main gives rc=0 even though working tree is on breaks-it" "$rc_d2"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ] || exit 1
+tl_summary

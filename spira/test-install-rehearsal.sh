@@ -36,12 +36,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+. "$HERE/testlib.sh"
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 echo "test-install-rehearsal.sh"
 
@@ -271,7 +267,7 @@ want "sentinel timer active" "active" "$active_out"
 doc_out="$("${CEXEC[@]}" "$CNAME" bash /workspace/spira/doctor.sh 2>&1)"
 doc_rc=$?
 iszero "doctor.sh exits 0" "$doc_rc"
-notwant "doctor.sh: no FAIL at all" "FAIL" "$doc_out"
+nowant "doctor.sh: no FAIL at all" "FAIL" "$doc_out"
 
 # 5. ready.sh with stubs. SPIRA_LOOM_BIN points to the stub loom binary so the
 #    binary-present gate passes; SPIRA_LOOM_PROBE then returns "200 5ms".
@@ -347,5 +343,4 @@ want "stray sweep names the planted unit" "spira-legacy-stray.service"   "$stray
 
 # ===========================================================================
 echo
-printf '%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

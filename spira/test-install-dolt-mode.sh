@@ -14,16 +14,13 @@
 #    port, phase 3 calls bd init --server and the resulting metadata has dolt_mode=server.
 #    (Requires nc; skipped if unavailable.)
 #
+# tier: T1
 # covers: install.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 REAL_REPO="$(cd "$HERE/.." && pwd -P)"
-pass=0; fail=0
-ok()    { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()   { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()  { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 is2()     { [ "$2" = 2 ] && ok "$1" || bad "$1" "wanted exit 2, got $2"; }
-nowant()  { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in output"; }
 
 echo "test-install-dolt-mode.sh"
 
@@ -513,5 +510,4 @@ nowant "emb-seed: no FAILED in output"           "FAILED" "$_emb_seed_out"
 unset _dbname6
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

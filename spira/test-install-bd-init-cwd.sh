@@ -16,15 +16,12 @@
 # 4. REAL BD FRESH-BOX. With the real bd binary, an empty directory outside any
 #    .beads tree gains .beads after the cd form of bd init. Skipped if bd absent.
 #
+# tier: T1
 # covers: install.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 REAL_REPO="$(cd "$HERE/.." && pwd -P)"
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant()  { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0, got $2"; }
 nonzero() { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit, got 0"; }
 
@@ -319,9 +316,7 @@ echo "4. REAL BD FRESH-BOX — empty dir outside .beads tree gains .beads:"
 _real_bd="${SPIRA_BD:-$(command -v bd 2>/dev/null || true)}"
 [ -x "${_real_bd:-}" ] || {
     ok "real-bd: bd not found — skipping fresh-box test"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    [ "$fail" -eq 0 ]
-    exit $?
+    tl_summary; exit
 }
 
 # Use a directory under /var/tmp to stay outside /home, which may have a
@@ -341,9 +336,7 @@ while [ "$_walk" != "/" ] && [ "$_walk" != "" ]; do
 done
 if [ "$_found_beads" = 1 ]; then
     ok "real-bd: parent .beads found above test dir — cannot isolate; skipping"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    [ "$fail" -eq 0 ]
-    exit $?
+    tl_summary; exit
 fi
 unset _walk _found_beads
 
@@ -363,5 +356,4 @@ iszero "real-bd: bd init with cwd exits 0 on fresh empty directory" "$_fb_rc"
 
 # ==========================================================================
 echo
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -32,12 +32,11 @@
 # image is pulled, built or pushed by this suite. The stub records its own argv,
 # which is what every assertion here reads.
 #
+# tier: T1
 # covers: spira/testenv.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
+. "$HERE/testlib.sh"
 saw()    { if grep -q -- "$2" "$3" 2>/dev/null; then ok "$1"; else bad "$1" "no [$2] in podman calls"; fi; }
 notsaw() { if grep -q -- "$2" "$3" 2>/dev/null; then bad "$1" "podman was called with [$2]"; else ok "$1"; fi; }
 
@@ -126,5 +125,4 @@ saw    "it pushes the closure hash"     "$TAG"   "$LOG"
 notsaw "it does not push :latest"       ":latest" "$LOG"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

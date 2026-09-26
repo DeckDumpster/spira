@@ -17,9 +17,7 @@
 # covers: spira/testenv.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
+. "$HERE/testlib.sh"
 
 echo "test-testenv-image-heartbeat.sh"
 
@@ -136,5 +134,4 @@ grep -qi 'disk exhausted' "$ERR" \
     || bad "SEEN GREEN: ENOSPC is reported as disk exhaustion" "no [disk exhausted] line"
 
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

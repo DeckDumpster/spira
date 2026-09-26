@@ -26,15 +26,11 @@
 # a full systemctl environment and is not what this suite covers.
 #
 # defect: sp-mlcd sp-y9zp
+# tier: T1
 # covers: systemd/install.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-pass=0; fail=0
-ok()       { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()      { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()       { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()     { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant()   { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 nonzero()  { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit, got 0"; }
 dest_empty() {
     local name="$1" dest="$TMP/home/.config/systemd/user"
@@ -260,6 +256,4 @@ out_tag="$(inst "$TAG_REPO")"; rc_tag=$?
 nowant "tag install: no 'cannot resolve landref' in output"  "cannot resolve landref"    "$out_tag"
 nowant "tag install: no landref refusal"                     "refusing — checkout is"    "$out_tag"
 want   "tag install: mentions release install in output"     "release install from tag"  "$out_tag"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

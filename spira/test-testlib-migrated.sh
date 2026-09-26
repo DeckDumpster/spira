@@ -31,9 +31,7 @@ test-install-refusal.sh"
 # 9 incident suites + test-install-refusal.sh extension). Mechanical migration (like
 # sp-qvjzb's 459 suites) is blocked until sp-l2be6 decides whether to migrate or exempt.
 # Track this in test-testlib-migrated.sh to prevent silent growth of unmigrated suites.
-DEFERRED_MIGRATION="test-acceptance-ci.sh
-test-acceptance-prev-tag.sh
-test-aeon-base-ref-qualify.sh
+DEFERRED_MIGRATION="test-aeon-base-ref-qualify.sh
 test-aeon-chamber-overlay.sh
 test-aeon-decision-blocked.sh
 test-aeon-elastic-concurrency.sh
@@ -137,8 +135,6 @@ test-czar-partition.sh
 test-czar-pass.sh
 test-czar-shadow.sh
 test-dependents.sh
-test-deploy-preflight-new-unit.sh
-test-deploy.sh
 test-deps-lint.sh
 test-desired-state.sh
 test-destroy-branch.sh
@@ -182,21 +178,6 @@ test-hold.sh
 test-host-reason.sh
 test-id-prefix.sh
 test-incident-delivers-reopen-mismatch.sh
-test-install-bd-init-cwd.sh
-test-install-bootstrap-release.sh
-test-install-dolt-breaker.sh
-test-install-dolt-mode.sh
-test-install-dolt-port-wait.sh
-test-install-dolt.sh
-test-install-exec.sh
-test-install-hooks-artifact.sh
-test-install-instance.sh
-test-install-landref.sh
-test-install-migrate.sh
-test-install-paths.sh
-test-install-rehearsal.sh
-test-install-unit-ensure.sh
-test-install-unit-prune.sh
 test-inventory.sh
 test-land-build-ensure.sh
 test-landing-base-fail.sh
@@ -241,9 +222,6 @@ test-rebase-branch.sh
 test-rebase-escalation.sh
 test-reclaim-slay-branch-guard.sh
 test-reconciler.sh
-test-release-workflow.sh
-test-release.sh
-test-released-defects.sh
 test-repo-label.sh
 test-repo-lanes.sh
 test-requeue.sh
@@ -275,26 +253,6 @@ test-strand-truncated.sh
 test-suites-hygiene.sh
 test-superseded.sh
 test-tarball-bins.sh
-test-testdb-concurrent.sh
-test-testdb-failsafe.sh
-test-testdb-mode-lint.sh
-test-testenv-batch-baseline.sh
-test-testenv-batch-branch.sh
-test-testenv-batch-with-bins.sh
-test-testenv-batch.sh
-test-testenv-doctor-check.sh
-test-testenv-image-heartbeat.sh
-test-testenv-image-tag.sh
-test-testenv-mode.sh
-test-testenv-owner-guard.sh
-test-testenv-registry.sh
-test-testenv-scratch.sh
-test-testenv-stdin.sh
-test-testenv-suites.sh
-test-testenv-systemctl.sh
-test-testenv-timeout.sh
-test-testenv-tmux-isolation.sh
-test-testenv.sh
 test-thrash-streak.sh
 test-timeout-lint.sh
 test-timeout.sh
@@ -302,8 +260,6 @@ test-tmux-env.sh
 test-tokens.sh
 test-tsd.sh
 test-unclaimable-worktree.sh
-test-unit-binary.sh
-test-unit-name.sh
 test-verdict-replay.sh
 test-verdict.sh
 test-watchd-unit-name.sh
