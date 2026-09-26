@@ -392,7 +392,7 @@ _attr_eject() {
     local _method_line
     case "$method" in
         reproduced-alone)
-            _method_line="Reproduced alone: suites ($suites) were rerun directly against spira/$id and failed the same way." ;;
+            _method_line="Reproduced alone: spira/$id ($suites) was rerun directly and failed the same way." ;;
         bisect-split)
             _method_line="Ejected as part of a bisection split, not reproduced against a named suite." ;;
         suite-overlap)
