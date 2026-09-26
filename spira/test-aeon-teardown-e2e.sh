@@ -32,6 +32,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
+# testdb-mode: server — the rebase-conflict row's attempts_of/requeues_of read the events table via bd sql, which embedded mode refuses.
 export SPIRA_TESTDB_MODE=server
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"

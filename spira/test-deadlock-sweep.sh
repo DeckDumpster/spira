@@ -21,6 +21,7 @@ testdb_require test-deadlock-sweep
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT; trap 'exit 143' INT TERM
 # attempts_of/requeues_of read the events table via bd sql, which embedded mode refuses.
+# testdb-mode: server — attempts_of/requeues_of read the events table via bd sql, which embedded mode refuses.
 export SPIRA_TESTDB_MODE=server
 testdb_up deadlocksweep || {
     printf 'SKIP test-deadlock-sweep: server testdb not available\n' >&2
