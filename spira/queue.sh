@@ -7,6 +7,7 @@
 #   queue.sh flush [<repo>]
 #   queue.sh step <repo>
 #   queue.sh abandon [<repo>] --reason <text> [--dry-run]
+#   queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run]
 #
 # submit: certifies any branch by running the repository's gate. In a queue-mode
 # repository, a green branch is recorded CERTIFIED for the batch builder.
@@ -30,6 +31,16 @@
 # branch someone deliberately ejected. Break-glass: --reason is required, and one
 # QUEUE ABANDON line (landing.log) plus a queue.abandoned event names the actor, the
 # PR and every member's disposition.
+#
+# open-batch: assembles a batch, pushes it, opens the PR and writes the open record — the
+# hand tool for when the automatic cut cannot run. Selects from CERTIFIED with the same
+# queue_sort_rows order batch.sh uses; --members overrides the selection with an explicit,
+# space- or comma-separated list. A member that conflicts with the base or with the batch
+# already assembled is skipped, not reopened, and the reason is printed. --skip-pregate
+# opens the PR without the local pre-flight gate, leaving CI as the sole authority
+# (law-local-gates-buy-latency-not-coverage); it is never the default, and the PR body says
+# so when it is used. --dry-run reports the members, the skips, the merge head and the exact
+# open record that would be written, without creating a branch, pushing, or opening a PR.
 #
 # covers: spira/queue.sh spira/suites.sh spira/conf.sh
 set -uo pipefail
@@ -517,6 +528,264 @@ cmd_abandon() {
     printf 'queue.sh abandon: PR %s closed, batch abandoned for %s\n' "$pr_n" "$name"
 }
 
+cmd_open_batch() {
+    # Sourced here, not at file scope: a suite that replaces batch.sh with a bare spy
+    # script (to watch how _batch_cut invokes it) must not have that spy's top-level
+    # code executed just because queue.sh loaded — only open-batch needs its assembly
+    # primitives (_base_conflict, format_batch, _batch_open_file, _batch_is_open, _pf_gate).
+    . "$HERE/batch.sh"
+
+    local name="" members_arg="" skip_pregate=0 dry_run=0
+    if [ "${SPIRA_FAYTH:-}" = czar ] && [ -n "${SPIRA_CZAR_CLASS:-}" ]; then
+        bash "$HERE/czar-fence.sh" "$SPIRA_CZAR_CLASS" || return 1
+    fi
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --members)      shift; members_arg="${1:-}"; shift ;;
+        --members=*)    members_arg="${1#--members=}"; shift ;;
+        --skip-pregate) skip_pregate=1; shift ;;
+        --dry-run)      dry_run=1; shift ;;
+        -*)  printf 'queue.sh open-batch: unknown option: %s\n' "$1" >&2; return 2 ;;
+        *)   name="$1"; shift ;;
+        esac
+    done
+    [ -n "$name" ] || name="$(spira_home_repo)"
+
+    local repo; repo="$(repo_root "$name" 2>/dev/null)" || {
+        printf 'queue.sh open-batch: no such repo: %s\n' "$name" >&2; return 1
+    }
+    local mode; mode="$(repo_land "$name")"
+    [ "$mode" = queue ] || {
+        printf 'queue.sh open-batch: repo is not in queue mode (mode=%s)\n' "$mode" >&2; return 1
+    }
+
+    # Take the sp-qdtnw lock — open-batch racing the landing pass's own cut produces
+    # the two-PRs-one-batch state that lock exists to prevent.
+    local lockfile; lockfile="${SPIRA_QUEUE_DIR:?}/$name/lock"
+    mkdir -p "${SPIRA_QUEUE_DIR:?}/$name" 2>/dev/null || true
+    { exec 9>"$lockfile"; } 2>/dev/null \
+        || { printf 'queue.sh open-batch: cannot open lock file for %s\n' "$name" >&2; return 1; }
+    if ! flock -n 9; then
+        printf 'queue.sh open-batch: another queue operation holds the lock for %s\n' "$name" >&2
+        return 1
+    fi
+
+    if _batch_is_open "$name"; then
+        printf 'queue.sh open-batch: a batch is already open for %s\n' "$name" >&2
+        return 1
+    fi
+
+    local base base_sha remote base_branch
+    base="$(spira_landref "$repo")" || {
+        printf 'queue.sh open-batch: cannot resolve landing ref for %s\n' "$name" >&2; return 1
+    }
+    base_sha="$(git -C "$repo" rev-parse "$base" 2>/dev/null)" || {
+        printf 'queue.sh open-batch: cannot resolve %s\n' "$base" >&2; return 1
+    }
+    remote="$(ref_remote "$base")"
+    base_branch="$(ref_branch "$base")"
+
+    local certs; certs="$(queue_certified_list "$repo")"
+
+    # Candidate rows ("<id> <tip>"), in the order they will be tried.
+    local candfile admfile; candfile="$(mktemp)"; admfile="$(mktemp)"
+    trap 'rm -f "$candfile" "$admfile"' RETURN
+    local skips=()
+
+    if [ -n "$members_arg" ]; then
+        local _mid _row
+        for _mid in $(printf '%s' "$members_arg" | tr ',' ' '); do
+            [ -n "$_mid" ] || continue
+            _row="$(printf '%s\n' "$certs" | awk -v id="$_mid" '$1==id{print $1, $2; exit}')"
+            if [ -z "$_row" ]; then
+                skips+=("$_mid: not CERTIFIED")
+                continue
+            fi
+            printf '%s\n' "$_row" >> "$candfile"
+        done
+    else
+        local all_ids=() _cid
+        while read -r _cid _ _; do [ -n "$_cid" ] && all_ids+=("$_cid"); done <<< "$certs"
+        local prio_json="[]"
+        [ "${#all_ids[@]}" -gt 0 ] && prio_json="$(bdjson show "${all_ids[@]}" 2>/dev/null)"
+        [ -n "$prio_json" ] || prio_json="[]"
+        PRIO_JSON="$prio_json" queue_sort_rows "$repo" "$base_sha" \
+            < <(printf '%s\n' "$certs") \
+            | awk '{print $5, $6}' > "$candfile"
+    fi
+
+    # Second line of defence, matching batch.sh's own admission check: a CERTIFIED
+    # landstate whose bead is neither closed nor carrying the submitted label is not
+    # admissible. An empty bd answer is "unknown", never "admit".
+    local _cid2 _ctip2 _st
+    while read -r _cid2 _ctip2; do
+        [ -n "$_cid2" ] || continue
+        _st="$(spira_bead_status "$_cid2")"
+        if [ -n "$_st" ] && [ "$_st" != closed ] \
+           && ! bead_has_label "$(bdjson show "$_cid2" 2>/dev/null)" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"; then
+            skips+=("$_cid2: bead status=$_st (not closed, not submitted)")
+            continue
+        fi
+        printf '%s %s\n' "$_cid2" "$_ctip2" >> "$admfile"
+    done < "$candfile"
+    cp "$admfile" "$candfile"
+
+    # Assemble in a scratch worktree from the land ref — never the landing pass's own
+    # .batch-<repo> worktree, so a hand-invoked open-batch cannot collide with a live
+    # automatic cut.
+    local wt; wt="$SPIRA_RUN/worktree/.open-batch-$name-$$"
+    git -C "$repo" worktree prune 2>/dev/null || true
+    mkdir -p "$(dirname "$wt")"
+    git -C "$repo" worktree add -q --detach "$wt" "$base_sha" 2>/dev/null || {
+        printf 'queue.sh open-batch: cannot create assembly worktree\n' >&2
+        return 1
+    }
+
+    local members=() member_ids=() _bid _btip _reason
+    while read -r _bid _btip; do
+        [ -n "$_bid" ] || continue
+        if git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" \
+               merge --no-edit --no-ff -m "spira: land $_bid" "$_btip" >/dev/null 2>&1; then
+            members+=("$_bid:$_btip")
+            member_ids+=("$_bid")
+        else
+            git -C "$wt" merge --abort 2>/dev/null || true
+            if _base_conflict "$repo" "$base_sha" "$_btip"; then
+                _reason="conflicts with base"
+            else
+                _reason="conflicts with batch"
+            fi
+            skips+=("$_bid: $_reason")
+        fi
+    done < "$candfile"
+
+    local _s
+    for _s in "${skips[@]:-}"; do
+        [ -n "$_s" ] && printf 'queue.sh open-batch: skip — %s\n' "$_s"
+    done
+
+    if [ "${#members[@]}" -eq 0 ]; then
+        printf 'queue.sh open-batch: no cut — nothing admissible for %s\n' "$name"
+        git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
+        return 1
+    fi
+
+    format_batch "$wt" "$base_sha" "$name"
+    local batch_head; batch_head="$(git -C "$wt" rev-parse HEAD 2>/dev/null)"
+
+    local stamp batch_br
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    batch_br="spira/queue/$stamp"
+
+    if [ "$dry_run" -eq 1 ]; then
+        printf 'queue.sh open-batch: dry-run for %s\n' "$name"
+        printf 'members:\n'
+        for _s in "${members[@]}"; do printf '  %s\n' "$_s"; done
+        printf 'merge head: %s\n' "$batch_head"
+        printf 'would write open record:\n'
+        printf '  pr=<pending>\n'
+        printf '  head=%s\n' "$batch_head"
+        printf '  base=%s\n' "$base_sha"
+        printf '  members=%s\n' "${members[*]}"
+        printf '  opened=<pending>\n'
+        printf '  branch=%s\n' "$batch_br"
+        git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
+        return 0
+    fi
+
+    git -C "$repo" branch -f "$batch_br" "$batch_head" 2>/dev/null || true
+    git -C "$repo" worktree remove -f "$wt" 2>/dev/null || true
+
+    local lg_out="" lg_rc=0
+    if [ "$skip_pregate" -eq 1 ]; then
+        printf 'queue.sh open-batch: pre-flight gate skipped (--skip-pregate) — CI is the authority\n'
+    else
+        _PF_DEADLINE=$(( $(date +%s) + ${SPIRA_PREFLIGHT_WALL_SECS:-240} ))
+        lg_out="$(_pf_gate "$batch_br" "$name" "$stamp")"
+        lg_rc=$?
+        if [ "$lg_rc" -eq 124 ]; then
+            printf 'queue.sh open-batch: pre-flight hit its wall — opening the PR, CI decides\n'
+            lg_rc=0
+        fi
+    fi
+
+    if [ "$lg_rc" -ne 0 ]; then
+        printf 'queue.sh open-batch: local pre-flight gate failed for %s — not opening a batch\n' "$batch_br" >&2
+        printf '%s\n' "$lg_out" >&2
+        printf 'queue.sh open-batch: retry with --skip-pregate to let CI be the gate\n' >&2
+        git -C "$repo" branch -D "$batch_br" 2>/dev/null || true
+        return 1
+    fi
+
+    if ! spira_git_push "$repo" -q "${remote:-origin}" "${batch_head}:refs/heads/${batch_br}" 2>/dev/null; then
+        printf 'queue.sh open-batch: could not push %s\n' "$batch_br" >&2
+        return 1
+    fi
+
+    local forge="${SPIRA_FORGE:-$HERE/forge.sh}"
+    local member_titles_json
+    member_titles_json="$(bdjson show "${member_ids[@]}" 2>/dev/null)" || member_titles_json="[]"
+
+    local pr_body mid t
+    pr_body="$(
+        printf 'Merge-queue batch: %d beads for %s, onto %s.\n\n' \
+            "${#members[@]}" "$name" "$base_branch"
+        if [ "$skip_pregate" -eq 1 ]; then
+            printf 'Opened with --skip-pregate: the local pre-flight gate was not run for this batch; CI is the gate.\n\n'
+        fi
+        for mid in "${member_ids[@]}"; do
+            t="$(printf '%s\n' "$member_titles_json" | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+items = data if isinstance(data, list) else [data]
+t = next((str(i.get('title','')) for i in items if i.get('id') == '$mid'), '')
+print((t[:120] if t else '(title unavailable)') or '(title unavailable)')
+" 2>/dev/null)" || t="(title unavailable)"
+            printf -- '- %s — %s\n' "$mid" "${t:-(title unavailable)}"
+        done
+    )"
+
+    local pr_n
+    pr_n="$(printf '%s' "$pr_body" \
+            | "$forge" pr-create "$repo" "$batch_br" "$base_branch" \
+                "queue: ${#members[@]} beads for $name" 2>/dev/null)" || {
+        printf 'queue.sh open-batch: forge pr-create failed for %s\n' "$batch_br" >&2
+        return 1
+    }
+    [ -n "${pr_n:-}" ] || {
+        printf 'queue.sh open-batch: forge returned no PR number for %s\n' "$batch_br" >&2
+        return 1
+    }
+
+    # Write the open record and mark members BATCHED only now that the PR exists and its
+    # number is known — writing either before the PR was certain was a real defect.
+    local bdir; bdir="$(dirname "$(_batch_open_file "$name")")"
+    mkdir -p "$bdir"
+    local opened_at; opened_at="$(date +%s)"
+    {
+        printf 'pr=%s\n'      "$pr_n"
+        printf 'head=%s\n'    "$batch_head"
+        printf 'base=%s\n'    "$base_sha"
+        printf 'members=%s\n' "${members[*]}"
+        printf 'opened=%s\n'  "$opened_at"
+        printf 'branch=%s\n'  "$batch_br"
+    } > "$(_batch_open_file "$name")"
+
+    local _mm _mid2 _mtip2
+    for _mm in "${members[@]}"; do
+        _mid2="${_mm%%:*}"; _mtip2="${_mm##*:}"
+        land_mark "$_mid2" BATCHED "$_mtip2"
+    done
+    rm -f "$SPIRA_RUN/queue-stuck-$name" 2>/dev/null || true
+
+    printf 'QUEUE BATCH %s repo=%s members=%d gate_seconds=0 verdict=green source=open-batch\n' \
+        "$opened_at" "$name" "${#members[@]}" >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+
+    printf 'queue.sh open-batch: PR %s opened — %d branches (%s)\n' \
+        "$pr_n" "${#members[@]}" "$batch_br"
+}
+
 case "${1:-}" in
     submit)  shift; cmd_submit "$@" ;;
     protect) shift; cmd_protect "$@" ;;
@@ -525,5 +794,6 @@ case "${1:-}" in
     step)    shift; cmd_step "$@" ;;
     eject)   shift; cmd_eject "$@" ;;
     abandon) shift; cmd_abandon "$@" ;;
-    *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run]\n' >&2; exit 2 ;;
+    open-batch) shift; cmd_open_batch "$@" ;;
+    *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run]\n' >&2; exit 2 ;;
 esac
