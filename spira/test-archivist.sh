@@ -689,5 +689,21 @@ has "digest-send on an empty queue says nothing pending" "$out" "nothing pending
 is "no mail is delivered from an empty queue" "" "$(ls "$T/mail/operator/new" 2>/dev/null)"
 
 echo
+echo "brief text: the archivist brief states the ask-rollup rule (sp-z6m7y)"
+# ==========================================================================================
+# The real brief, not a synthetic stand-in — a check against a hand-written excerpt would
+# pass even after the rule was deleted from what an archivist session actually reads.
+briefed="$(cat "$HERE/chamber/archivist.md")"
+has "the brief tells the archivist to use bd dep relate for a rollup" \
+    "$briefed" "bd dep relate <rollup> <ask>"
+has "the brief forbids an untyped bd dep add between two ask-labelled beads" \
+    "$briefed" "Never use an untyped \`bd dep add\` between two beads"
+
+# POSITIVE CONTROL: the check must be able to fail. Strip the phrase and confirm it is gone,
+# so a `has` that never fires would not pass every assertion above for the wrong reason.
+stripped="${briefed//bd dep relate <rollup> <ask>/}"
+hasnt "positive control: stripping the phrase removes it" "$stripped" "bd dep relate <rollup> <ask>"
+
+echo
 echo "  $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
