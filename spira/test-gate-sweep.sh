@@ -11,31 +11,21 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+. "$HERE/testlib/gate-fixture.sh"
 
 command -v flock >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH"; exit 77; }
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-REPO="$TMP/repo"; REMOTE="$TMP/remote.git"; RUN="$TMP/run"; SH="$TMP/spira"
-mkdir -p "$RUN/worktree" "$SH"
-
-cp "$HERE/gate-sweep.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
-
-git init -q --bare -b main "$REMOTE"
-git init -q -b main "$REPO"
-printf 'base\n' > "$REPO/marker"
-git -C "$REPO" add -A; git -C "$REPO" commit -q -m base
-git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
+gate_fixture_init "$TMP"
 
 TREE="$RUN/worktree/.gate.$(basename "$REPO")"
 
 echo "test-gate-sweep.sh — gate-sweep.sh removes stale gate worktrees"
 
 run_sweep() {
-    env -i HOME="$TMP/home" PATH="/usr/bin:/bin" \
-        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$TMP/nonexistent-db" \
+    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+        SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
+        SPIRA_DB="$SPIRA_DB_NONE" \
         bash "$SH/gate-sweep.sh" "$REPO" "$@" 2>&1
 }
 
@@ -106,9 +96,9 @@ PS_EMPTY="$TMP/ps-empty.txt"; touch "$PS_EMPTY"
 PS_LIVE="$TMP/ps-live.txt"
 
 run_sweep_batch() {
-    env -i HOME="$TMP/home" PATH="/usr/bin:/bin" \
-        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$TMP/nonexistent-db" \
+    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+        SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
+        SPIRA_DB="$SPIRA_DB_NONE" \
         SPIRA_SUITE_TIMEOUT="${1}" \
         SPIRA_PODMAN_PS_FILE="${2}" \
         SPIRA_BATCH_HOME_GLOB="/tmp/spira-batch-sweeptest-*" \
