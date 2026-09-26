@@ -257,7 +257,7 @@ except Exception:
         --jq '.[] | [(.databaseId|tostring), .headSha] | @tsv' 2>/dev/null || true)
 fi
 
-# STEP 5: TSD INGEST — pull each recently completed run's tsd/*.jsonl rows (sp-au8a7) into
+# STEP 5: TSD INGEST — pull each recently completed run's tsd/*.jsonl rows into
 # the local run/tsd/ tree via tsd-ingest.sh, which is idempotent per run id on its own, so
 # reprocessing the same 20-run window every tick costs one marker-file stat per run, not a
 # re-download.

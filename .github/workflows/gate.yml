@@ -385,7 +385,7 @@ jobs:
           export SPIRA_BATCH_RESULTS="$RUNNER_TEMP/batch"
           # Same root as the batch results: testenv-batch.sh's suite-timing hook writes
           # run/tsd/suite-timing.jsonl under SPIRA_RUN, and this is the only tree the
-          # Upload step below carries off the runner (sp-au8a7).
+          # Upload step below carries off the runner.
           export SPIRA_RUN="$RUNNER_TEMP/batch"
 
           # THE LOG IS THE ONLY ARTIFACT THAT SURVIVES THE MACHINE.

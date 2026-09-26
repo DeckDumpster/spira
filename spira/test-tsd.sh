@@ -19,7 +19,7 @@
 #   8. land_mark still succeeds, unchanged, when SPIRA_TSD_BIN names nothing executable —
 #      the tsd row is best-effort, landing itself never depends on it.
 #   9. testenv-batch.sh's suite-times hook (_append_suite_times) appends a suite-timing row —
-#      the sole producer since the git-notes ledger and suite-times.sh were retired (sp-au8a7).
+#      the sole producer since the git-notes ledger and suite-times.sh were retired.
 #  10. tsd-query.sh: baseline (avg), rate (count/hours), dwell (quantile), and by-group
 #      (per-group avg, longest-first — sp-ezkp3's LPT lookup) against a synthetic fixture,
 #      plus refusals for a bad family, a missing family, and a bad field name.
@@ -278,9 +278,9 @@ else
 fi
 
 # ============================================================================================
-printf '\n%s\n' "11. tsd-query.sh: suite-p50, suite-medians, last-run, slow-in-branch (sp-au8a7)"
+printf '\n%s\n' "11. tsd-query.sh: suite-p50, suite-medians, last-run, slow-in-branch"
 # ============================================================================================
-# ACCEPTANCE (sp-au8a7): one query answers p50 wall time of a suite over its last 10 runs,
+# ACCEPTANCE: one query answers p50 wall time of a suite over its last 10 runs,
 # local and CI both present. Two hosts stand in for "local" and "CI"; two older, out-of-window
 # rows prove the "last 10" limit is live, not decorative (law-absence-needs-a-positive-control).
 if [ -z "$DUCKDB_BIN" ]; then

@@ -901,7 +901,7 @@ _batch_bd_read() {
 }
 
 # _append_suite_times <suite> <rc> <wall_secs> <bd_calls> <bd_ms> <mode>
-# The single producer of a suite's timing (sp-au8a7): appends into run/tsd/'s suite-timing
+# The single producer of a suite's timing: appends into run/tsd/'s suite-timing
 # family. Best-effort — an unbuilt tsd-write leaves the family file simply absent, which
 # never fails the suite it is watching.
 _append_suite_times() {

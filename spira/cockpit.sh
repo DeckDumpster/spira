@@ -1184,7 +1184,7 @@ else:
     echo "SP_YIELD_CONC_MED=$_y_conc"
     echo "SP_YIELD_TOP_FAULT=$_y_worst"
 
-    # ---- suite-times: last-run sum and wall, from run/tsd/ (sp-au8a7) -----------------
+    # ---- suite-times: last-run sum and wall, from run/tsd/ -----------------
     local _st_sum="?" _st_wall="?"
     local _st_json; _st_json="$(bash "$HERE/tsd-query.sh" last-run 2>/dev/null)"
     if [ -n "$_st_json" ]; then

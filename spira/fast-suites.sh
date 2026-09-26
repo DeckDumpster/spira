@@ -8,7 +8,7 @@
 # Reads suite names on stdin, one per line, and writes back those whose MEDIAN wall_secs over
 # their last --runs (default 20) run/tsd/ suite-timing rows is at most N seconds (default
 # SPIRA_PREFLIGHT_SUITE_MAX_SECS, else 60) — local and CI runs counted together, since both
-# write the same family (sp-au8a7). A suite with no history is KEPT: a new suite is usually
+# write the same family. A suite with no history is KEPT: a new suite is usually
 # small, and the pre-flight's own wall bounds the cost of being wrong.
 #
 # Every suite it drops is named on stderr with its median, so a batch's log says exactly what

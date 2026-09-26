@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # tsd-ingest.sh — coordinator-side ingest: pull a CI gate run's tsd/*.jsonl rows (uploaded
-# in its batch-results artifact, sp-au8a7) into the local run/tsd/ tree, so one family file
+# in its batch-results artifact) into the local run/tsd/ tree, so one family file
 # answers queries over local and CI producers together. Every row already carries its own
 # producer's host id and clock stamp (law-producers-stamp-their-own-clock); ingest appends
 # each line unchanged, it does not relabel it.

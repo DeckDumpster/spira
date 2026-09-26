@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-tsd-ingest.sh — tsd-ingest.sh (sp-au8a7): pulling a CI run's tsd/*.jsonl rows into
+# test-tsd-ingest.sh — tsd-ingest.sh: pulling a CI run's tsd/*.jsonl rows into
 # the local run/tsd/ tree.
 #
 # WHAT THIS SUITE CHECKS.
