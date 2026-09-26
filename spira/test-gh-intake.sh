@@ -236,16 +236,49 @@ else ok "the pull request was not ingested"; fi
 
 echo
 echo "4b. a second run ingests nothing twice:"
-out="$(run 2)"
+out="$(run 2)"; rc=$?
+if [ "$rc" -eq 0 ]; then ok "the second run exits 0"
+else bad "the second run exits 0" "rc=$rc"; fi
 if grep -q 'already present 2\|skipped 2' <<<"$out"; then ok "re-running is idempotent"
 else bad "re-running is idempotent" "expected skip of 2, got: $(printf '%s' "$out" | tail -2 | tr '\n' ' ')"; fi
+if grep -q 'note sp-gh00 ' "$BDLOG" && grep -q 'note sp-gh01 ' "$BDLOG"; then
+    ok "the existing bead is noted, not left silent, on re-ingest"
+else
+    bad "the existing bead is noted, not left silent, on re-ingest" "no note call in bd log: $(grep note "$BDLOG")"
+fi
+if grep -q 'Seen again at intake' "$BDLOG"; then ok "the note explains why nothing was filed"
+else bad "the note explains why nothing was filed" "no 'Seen again' text in bd log"; fi
+if grep -q create "$BDLOG"; then bad "no second bead is filed for a known ref" "a create call appears in bd log"
+else ok "no second bead is filed for a known ref"; fi
 
 echo "4c. an ingested issue whose bead is closed is not ingested again:"
 printf '1' > "$STATE/closed_bead_flag"
 out="$(run 2)"
 if grep -q 'already present 2\|skipped 2' <<<"$out"; then ok "closed ingested beads are found"
 else bad "closed ingested beads are found" "expected skip of 2, got: $(printf '%s' "$out" | tail -2 | tr '\n' ' ')"; fi
+if grep -q 'note sp-gh00 ' "$BDLOG" && grep -q 'Seen again at intake' "$BDLOG"; then
+    ok "a closed bead is noted on re-ingest, exactly like an open one"
+else
+    bad "a closed bead is noted on re-ingest, exactly like an open one" "no note call in bd log: $(grep note "$BDLOG")"
+fi
+if grep -q create "$BDLOG"; then bad "a closed bead's ref does not get a second bead" "a create call appears in bd log"
+else ok "a closed bead's ref does not get a second bead"; fi
 rm -f "$STATE/closed_bead_flag"
+
+echo "4d. positive control: a genuinely new issue in the same run still files a bead:"
+out="$(run 3)"
+if grep -q 'github:DeckDumpster/spira#3' "$STATE/created_work" 2>/dev/null; then
+    ok "the new issue (#3) is filed even though #1 and #2 are already known"
+else
+    bad "the new issue (#3) is filed even though #1 and #2 are already known" "no bead created for #3"
+fi
+if grep -q 'note sp-gh00 ' "$BDLOG" && grep -q 'note sp-gh01 ' "$BDLOG"; then
+    ok "#1 and #2 are still only noted, not refiled, in the same run"
+else
+    bad "#1 and #2 are still only noted, not refiled, in the same run" "missing note calls: $(grep note "$BDLOG")"
+fi
+if grep -q 'created 1 work bead' <<<"$out"; then ok "the run reports exactly one new bead"
+else bad "the run reports exactly one new bead" "got: $(grep created <<<"$out")"; fi
 
 echo "5. --dry-run changes nothing and says 'would create':"
 reset
