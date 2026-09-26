@@ -63,8 +63,11 @@ case "$*" in
     *) exit 0 ;;
 esac
 MOCK
-# Inject SC_LOG into the mock's environment.
-sed -i "s|SC_LOG|$SC_LOG|" "$TMP/sc"
+# Inject SC_LOG into the mock's environment. Matching the leading '$' matters: without
+# it the redirect target becomes the unexpandable "$/tmp/.../sc.log" and every call's
+# logging line fails silently — invisible until something greps SC_LOG for a call that
+# should be present, since a grep for absence passes either way.
+sed -i "s|\$SC_LOG|$SC_LOG|" "$TMP/sc"
 chmod +x "$TMP/sc"
 
 # A real, executable ExecStart target for spira-cockpit.service's @SPIRA_SUPERVISE_BIN@.
