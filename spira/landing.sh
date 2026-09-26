@@ -299,7 +299,8 @@ _cmd_halt() {
             # parent does not kill its children) with no ancestor relation to this
             # process — the one case where halt, not an ad hoc loop, is the checked
             # operator override the guard exists to require (law-guard-binds-the-caller).
-            bash "${SPIRA_PROD:-$SPIRA_HOME}/testenv.sh" down --name "$cname" --force-foreign >/dev/null 2>&1 \
+            # --volumes: the run's cargo-reg/cargo-git volumes go with it (sp-vcobo).
+            bash "${SPIRA_PROD:-$SPIRA_HOME}/testenv.sh" down --name "$cname" --volumes --force-foreign >/dev/null 2>&1 \
                 || printf 'landing: WARNING — could not tear down container %s\n' "$cname"
         fi
     done

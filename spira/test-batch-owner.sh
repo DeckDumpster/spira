@@ -52,15 +52,25 @@ command -v podman >/dev/null 2>&1 || {
 IMG="docker.io/library/ubuntu:24.04"
 TMP="$(mktemp -d)"
 _ALL_CNAMES=""
+_ALL_VOLS=""
 
 _mk_container() {  # _mk_container <cname> — a real, long-lived, ownerless container
     podman run -d --name "$1" --rm "$IMG" sleep 300 >/dev/null 2>&1
     _ALL_CNAMES="$_ALL_CNAMES $1"
 }
 
+_mk_cargo_vols() {  # _mk_cargo_vols <cname> — the named pair testenv.sh mounts under it
+    podman volume create "${1}-cargo-reg" >/dev/null 2>&1
+    podman volume create "${1}-cargo-git" >/dev/null 2>&1
+    _ALL_VOLS="$_ALL_VOLS ${1}-cargo-reg ${1}-cargo-git"
+}
+
 _cleanup() {
     for _c in $_ALL_CNAMES; do
         podman rm -f "$_c" >/dev/null 2>&1 || true
+    done
+    for _v in $_ALL_VOLS; do
+        podman volume rm "$_v" >/dev/null 2>&1 || true
     done
     rm -f /tmp/spira-batch-own*-"$$".owner 2>/dev/null
     rm -rf "$TMP"
@@ -267,6 +277,64 @@ podman container exists "$CN_D" 2>/dev/null \
 [ ! -f "$OF_D" ] && ok "D5: the sweep removes the owner file too" \
                   || bad "D5: the sweep removes the owner file" "file still present"
 want "D6: sweep reports the reaped container" "$CN_D" "$_sweep_out_d"
+
+# ===========================================================================
+echo
+echo "E: sweeps also remove the container's cargo-reg/cargo-git volumes (sp-vcobo)"
+# ===========================================================================
+# A container's named volumes outlive a plain `podman rm`. A sweep that reaps the
+# container but leaves its cargo-reg/cargo-git pair behind is the same leak the
+# bead reported for ordinary batch teardown, just reached through the sweep path
+# instead: an abandoned batch instance's volumes would still never be freed.
+
+CN_E1="spira-batch-owne1-$$"
+_mk_container "$CN_E1"
+_mk_cargo_vols "$CN_E1"
+OF_E1="/tmp/${CN_E1}.owner"
+( exit 0 ) &
+_e1_dead_pid=$!
+wait "$_e1_dead_pid"
+printf '%s\n' "$_e1_dead_pid" > "$OF_E1"
+
+# E0 POSITIVE CONTROL: the volumes exist before the sweep runs.
+podman volume exists "${CN_E1}-cargo-reg" 2>/dev/null \
+    && ok "E0: positive-control: cargo-reg volume exists before the sweep" \
+    || bad "E0: positive-control: cargo-reg volume exists before the sweep" "volume missing"
+
+_batch_sweep_dead_owners >/dev/null
+_ALL_CNAMES="${_ALL_CNAMES/ $CN_E1/}"
+if podman volume exists "${CN_E1}-cargo-reg" 2>/dev/null; then
+    bad "E1: dead-owner sweep removes the cargo-reg volume" "volume still exists"
+else
+    ok "E1: dead-owner sweep removes the cargo-reg volume"
+    _ALL_VOLS="${_ALL_VOLS/ ${CN_E1}-cargo-reg/}"
+fi
+if podman volume exists "${CN_E1}-cargo-git" 2>/dev/null; then
+    bad "E2: dead-owner sweep removes the cargo-git volume" "volume still exists"
+else
+    ok "E2: dead-owner sweep removes the cargo-git volume"
+    _ALL_VOLS="${_ALL_VOLS/ ${CN_E1}-cargo-git/}"
+fi
+
+CN_E2="spira-batch-owne2-$$"
+_mk_container "$CN_E2"
+_mk_cargo_vols "$CN_E2"
+rm -f "/tmp/${CN_E2}.owner"
+
+_batch_sweep_ownerless 0 >/dev/null
+_ALL_CNAMES="${_ALL_CNAMES/ $CN_E2/}"
+if podman volume exists "${CN_E2}-cargo-reg" 2>/dev/null; then
+    bad "E3: ownerless sweep removes the cargo-reg volume" "volume still exists"
+else
+    ok "E3: ownerless sweep removes the cargo-reg volume"
+    _ALL_VOLS="${_ALL_VOLS/ ${CN_E2}-cargo-reg/}"
+fi
+if podman volume exists "${CN_E2}-cargo-git" 2>/dev/null; then
+    bad "E4: ownerless sweep removes the cargo-git volume" "volume still exists"
+else
+    ok "E4: ownerless sweep removes the cargo-git volume"
+    _ALL_VOLS="${_ALL_VOLS/ ${CN_E2}-cargo-git/}"
+fi
 
 # ===========================================================================
 echo
