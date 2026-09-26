@@ -88,7 +88,7 @@ inc() {
 # Filters client-side on external_ref — required because bd-embedded does not support
 # --external-ref server-side filtering (same approach as incident.sh _dedup_incident).
 count_by_ref() {    # count_by_ref <external-ref> -> integer
-    bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label spira,partition:incident --json 2>/dev/null \
+    bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label spira,incident --json 2>/dev/null \
       | python3 -c '
 import sys, json
 target = sys.argv[1]; count = 0
@@ -117,7 +117,7 @@ echo "external_ref in bd list --json — field must be present in the response (
 # external_ref, then confirm that field appears in bd list --json. If it does not appear,
 # the dedup assertions below test nothing meaningful — the field check is the gating proof.
 bd -C "$SPIRA_DB" create "external-ref field probe" \
-    --type bug --priority 2 --labels spira,partition:incident \
+    --type bug --priority 2 --labels spira,incident \
     --external-ref "probe:external-ref-field-check" --silent >/dev/null 2>&1 || true
 
 _raw_json="$(bd -C "$SPIRA_DB" list --status open --limit 0 --json 2>/dev/null)"
@@ -152,7 +152,7 @@ echo "positive control — N direct inserts create N beads (proves the counter w
 BD_REAL="${SPIRA_BD:-bd}"
 for _i in $(seq 1 $N); do
     "$BD_REAL" -C "$SPIRA_DB" create "direct-insert-$_i" \
-        --type bug --priority 2 --labels spira,partition:incident \
+        --type bug --priority 2 --labels spira,incident \
         --external-ref "$DEDUP_REF" --silent >/dev/null 2>&1
 done
 n_direct="$(count_by_ref "$DEDUP_REF")"
@@ -201,7 +201,7 @@ EXPLICIT_REF="incident:explicit-ref-dedup-test"
 for _i in $(seq 1 $N); do
     printf 'explicit ref filing %d\n' "$_i" | inc SPIRA_INCIDENT_REF="$EXPLICIT_REF" >/dev/null
 done
-n_explicit="$(bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label spira,partition:incident --json 2>/dev/null \
+n_explicit="$(bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label spira,incident --json 2>/dev/null \
   | python3 -c '
 import sys, json
 target = sys.argv[1]; count = 0
@@ -227,7 +227,7 @@ echo "surplus absence — no beads exist beyond the single incumbent after $N fi
 for _i in $(seq 1 $N); do
     printf 'surplus check filing %d\n' "$_i" | inc >/dev/null
 done
-n_total="$(bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label spira,partition:incident --json 2>/dev/null \
+n_total="$(bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --label spira,incident --json 2>/dev/null \
   | python3 -c '
 import sys, json
 try:
