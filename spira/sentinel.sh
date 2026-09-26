@@ -1197,17 +1197,27 @@ fi  # SPIRA_SKIP_RECLAIM
 # worktree. aeon.sh's law-one-aeon-one-worktree refusal at claim time is correct; what it
 # cannot do is stop the NEXT summon, because nothing about the input changes between
 # claims (law-a-retry-must-change-an-input). Unlike CHECK 7c's label mismatches, the remedy
-# here is mechanical, not a human judgement call — so this parks the bead directly with
-# $SPIRA_ASK_LABEL rather than waiting on a Groomer incident.
+# is mechanical whenever the squatter's own bead is closed, clean and unheld: free that
+# worktree and let the blocked bead through. Only a squatter that is open, dirty or still
+# live needs the operator, and that is what still gets parked with $SPIRA_ASK_LABEL.
 # ======================================================================================
 if [ "${SPIRA_SKIP_RECLAIM:-0}" != 1 ]; then
 collision_out="$(detect_branch_collisions 2>/dev/null)"
 if [ -n "$collision_out" ]; then
     printf '%s\n' "$collision_out"
     n_col="$(grep -c '^COLLISION' <<< "$collision_out" || true)"
-    log "CHECK7d: $n_col bead(s) whose recorded branch is held by another bead's worktree — parking with $SPIRA_ASK_LABEL"
-    act "parked $n_col branch-collision bead(s)"
-    park_branch_collisions "$collision_out"
+    park_out="$(park_branch_collisions "$collision_out")"
+    [ -n "$park_out" ] && printf '%s\n' "$park_out"
+    n_freed="$(grep -c '^FREED' <<< "$park_out" || true)"
+    n_parked=$((n_col - n_freed))
+    if [ "$n_freed" -gt 0 ]; then
+        log "CHECK7d: freed $n_freed stale squatting worktree(s) whose owning bead is closed and clean"
+        act "freed $n_freed branch-collision worktree(s)"
+    fi
+    if [ "$n_parked" -gt 0 ]; then
+        log "CHECK7d: $n_parked bead(s) whose recorded branch is held by another bead's worktree — parking with $SPIRA_ASK_LABEL"
+        act "parked $n_parked branch-collision bead(s)"
+    fi
 fi
 fi  # SPIRA_SKIP_RECLAIM
 
