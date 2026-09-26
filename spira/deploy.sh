@@ -551,8 +551,13 @@ log "deploy: health check"
 _deploy_failed=""
 "$_WORLD" status >/dev/null 2>&1 \
     || _deploy_failed="${_deploy_failed:+$_deploy_failed, }world status"
-SPIRA_DOCTOR=1 "$_DOCTOR" >/dev/null 2>&1 \
-    || _deploy_failed="${_deploy_failed:+$_deploy_failed, }doctor"
+# THE FAIL LINES ARE THE EVIDENCE. A bare "ROLLBACK — doctor" says a check failed and not
+# which; the rollback that follows destroys the state it failed on. Print what doctor said.
+if ! _doctor_out="$(SPIRA_DOCTOR=1 "$_DOCTOR" 2>&1)"; then
+    _deploy_failed="${_deploy_failed:+$_deploy_failed, }doctor"
+    printf '%s\n' "$_doctor_out" | grep -E '^\s*FAIL' | sed 's/^/deploy: doctor: /' >&2
+fi
+unset _doctor_out
 _skew_out="$("$_SKEW" check 2>/dev/null)"
 _skew_exit=$?
 # AN OLDER RELEASE THE OPERATOR NAMED IS NOT-LATEST BY CONSTRUCTION. skew.sh check answers

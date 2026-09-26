@@ -393,6 +393,9 @@ _rc=$?
 not0   "rollback: exits non-zero on health failure" "$_rc"
 want   "rollback: mentions ROLLBACK"                "ROLLBACK" "$_out"
 want   "rollback: names the failure"                "doctor"   "$_out"
+# AND WHICH DOCTOR CHECK. The rollback destroys the state the check failed on, so a bare
+# "doctor" left nothing to diagnose (acceptance phase B, 2026-09-26).
+want   "rollback: prints doctor's own FAIL line"    "deploy: doctor:   FAIL  injected failure" "$_out"
 islink "rollback: current restored to prior"        "$RELEASES/current" "$PRIOR_RELEASE"
 # ExecStart is parameterized by the "current" symlink and never changes text across releases,
 # so install.sh's diff-based re-render alone restarts nothing — the already-active unit that
