@@ -624,8 +624,11 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 
 ```
 1. bd label add <bead> incident
-   CRITICAL: label must be bare name (incident, plan, spike, etc.) — NOT "partition:incident"
-2. Amend bdq create calls in: auron.sh, gate-spira.sh, review.sh, incident.sh — ensure labels passed are bare names without partition: prefix
+   CRITICAL: label must be bare name (incident, plan, spike, etc.) — conf.sh's SPIRA_*_LABEL
+   defaults carry no prefix, and every FAYTH_LABELS in spira/chamber/*.fayth reads the bare form.
+2. If a bead-creation call site is still writing a dimension-prefixed label, that site is the
+   recurring root cause, not this bead — fix the call site (sp-e2u7d fixed the last three:
+   gate-spira.sh, review.sh, incident.sh).
 ```
 
 **Escalate** — If partition type other than incident, pick the correct persona and use its bare partition name. If recurrence, code is creating beads without calling partition labeling.
