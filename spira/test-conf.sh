@@ -249,4 +249,17 @@ is   "non-release non-git dir: SPIRA_HOME_REPO keeps its directory name" "scratc
 
 # ==========================================================================
 echo
+# HOOK CONTEXT — git's GIT_DIR in the environment does not move SPIRA_REPO. Every git hook
+# runs with GIT_DIR exported, and with it set `git -C <dir> rev-parse --show-toplevel`
+# answers <dir> itself, not the checkout's top: conf.sh sourced from a hook (pre-commit ->
+# branch-guard.sh -> lib.sh) resolved SPIRA_REPO to <repo>/spira. Seen 2026-09-26 in a
+# merge's hook output looking for <repo>/spira/target/release/spira-config.
+GH="$TMP/git-harness"
+mkdir -p "$GH/spira"
+ln -s "$HERE/conf.sh" "$GH/spira/conf.sh"
+git -C "$GH" init -q
+hook_repo="$(env -i PATH="$PATH" HOME="$TMP/hook-home" SPIRA_CONF=/nonexistent GIT_DIR="$GH/.git" \
+    bash -c ". '$GH/spira/conf.sh' >/dev/null 2>&1; printf '%s' \"\$SPIRA_REPO\"" 2>/dev/null)"
+is "SPIRA_REPO is the checkout's top even with GIT_DIR exported" "$(cd "$GH" && pwd -P)" "$hook_repo"
+
 tl_summary
