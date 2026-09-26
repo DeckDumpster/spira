@@ -472,6 +472,43 @@ jobs:
             *) printf 'gate: suites failed (batch rc=%s)\n' "$_b" >&2; exit "$_b" ;;
           esac
 
+      - name: G12 — install-rehearsal and cadence-tool (real systemd, host podman)
+        # test-install-rehearsal.sh and test-cadence-tool.sh each build their OWN
+        # container via testenv.sh. Run through the step above they would be nested
+        # inside the corpus's own container, whose image carries no podman — that
+        # is why they only ever SKIP (77) there. acceptance.yml is no longer the
+        # place they run either: no prebuilt binaries there, plus a cold image
+        # build on every run. Run them directly on this runner instead: it already
+        # has podman (runner-deps.sh), the same warm testenv image the step above
+        # just used, and this job's own compiled binaries in bin/.
+        #
+        # if: always() so a corpus failure above does not hide these two — they are
+        # independent containers and this is the only place either runs.
+        #
+        # SELECTION MATCHES THE CORPUS. On a push the whole corpus is selected, so
+        # both always run here; on a pull request only when the diff touched what
+        # they cover (docs/test-plan/instance-lifecycle.md, gap G12).
+        if: always()
+        env:
+          SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
+        run: |
+          set -uo pipefail
+          _selected=",${{ needs.select.outputs.suites }},"
+          _g12_fail=0
+          for _s in test-install-rehearsal.sh test-cadence-tool.sh; do
+            case "$_selected" in
+              *",$_s,"*) ;;
+              *) printf 'gate: %s not selected — skipping\n' "$_s"; continue ;;
+            esac
+            _rc=0
+            bash "spira/$_s" || _rc=$?
+            if [ "$_rc" != 0 ] && [ "$_rc" != 77 ]; then
+              printf 'gate: %s FAILED (exit %d)\n' "$_s" "$_rc" >&2
+              _g12_fail=1
+            fi
+          done
+          exit "$_g12_fail"
+
       - name: Diagnostics
         # Print failing lines, annotations, and step summary for every red suite.
         # Runs after both passes so the retry verdict (red-red / red-green) is known.
