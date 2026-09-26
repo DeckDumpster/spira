@@ -204,6 +204,49 @@ _repro_members_par() {
     wait "${_pids[@]}" 2>/dev/null || true
 }
 
+# _suite_names_red_in_output <testenv-batch.sh output> -> newline-separated suite
+# names testenv-batch.sh marked RED/TIMEOUT/QUARANTINED-RED, read from its own
+# per-suite result lines (the shape batch.sh's _lg_red_suites reads from gate.sh's).
+_suite_names_red_in_output() {
+    printf '%s\n' "$1" | awk '{
+        for (i = 1; i < NF; i++)
+            if ($i ~ /\.sh$/ && $(i+1) ~ /^(RED|TIMEOUT|QUARANTINED-RED)$/)
+                if (!seen[$i]++) print $i
+    }'
+}
+
+# _suites_red_on_base <suites-csv> <repo> <base-sha> -> space-separated suite names,
+# of those named in <suites-csv>, that are red on <base-sha> ALONE — no member merged
+# in. Every member's tree contains base-sha, so a suite already broken there
+# reproduces against every member regardless of fault; this is run once, before
+# blaming anyone, and its result is subtracted from every member's blame list
+# (sp-a2nk8). A red on the first (parallel) pass is confirmed serial before being
+# believed — the same flake guard _repro_is_red uses — so a base-side flake cannot
+# wrongly excuse a member that actually broke the suite. Any harness fault along the
+# way returns empty: nothing is excluded, which is exactly the old (buggy) behavior,
+# not a worse one.
+_suites_red_on_base() {
+    local suites="$1" repo="$2" base="$3"
+    [ -n "$suites" ] || return 0
+    local tmp out rc names_csv
+    tmp="$(mktemp -d)"
+    out="$(SPIRA_REPO="$repo" SPIRA_BATCH_RESULTS="$tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
+        --mode parallel --suites "$suites" "$base" 2>&1)"
+    rc=$?
+    rm -rf "$tmp"
+    [ "$rc" -eq 1 ] || return 0
+    names_csv="$(_suite_names_red_in_output "$out" | paste -sd, -)"
+    [ -n "$names_csv" ] || return 0
+
+    tmp="$(mktemp -d)"
+    out="$(SPIRA_REPO="$repo" SPIRA_BATCH_RESULTS="$tmp" bash "$SPIRA_QUEUE_REPRO_BATCH" \
+        --mode serial --suites "$names_csv" "$base" 2>&1)"
+    rc=$?
+    rm -rf "$tmp"
+    [ "$rc" -eq 1 ] || return 0
+    _suite_names_red_in_output "$out" | tr '\n' ' ' | sed -e 's/^ *//' -e 's/ *$//'
+}
+
 _any_suite_in_selection() {  # _any_suite_in_selection <suites-spacesep> <repo> <base-sha> <tip> -> 0 if any matches
     local suites="$1" repo="$2" base="$3" tip="$4" tmp sel s
     tmp="$(mktemp)"
@@ -245,8 +288,8 @@ _meter_write() {  # _meter_write <repo> <members> <caught> <escaped> <start-epoc
         >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
 }
 
-_attr_notify_red() {  # _attr_notify_red <pr-n> <name> <suites-csv> <decision> <ejected-ids> <requeued-ids> [unjudged-ids]
-    local pr_n="$1" name="$2" suites="$3" decision="$4" ejected_ids="$5" requeued_ids="$6" unjudged_ids="${7:-}"
+_attr_notify_red() {  # _attr_notify_red <pr-n> <name> <suites-csv> <decision> <ejected-ids> <requeued-ids> [unjudged-ids] [excluded-suites]
+    local pr_n="$1" name="$2" suites="$3" decision="$4" ejected_ids="$5" requeued_ids="$6" unjudged_ids="${7:-}" excluded_suites="${8:-}"
     local body="## Note
 Merge queue batch for $name failed CI and was processed.
 
@@ -254,6 +297,10 @@ PR: $pr_n
 Red suites: $suites
 Decision: $decision
 "
+    if [ -n "$excluded_suites" ]; then
+        body="$body
+Excluded (already red on base, not attributable to any member): $excluded_suites"
+    fi
     if [ -n "$ejected_ids" ]; then
         body="$body
 Ejected branches: $ejected_ids"
@@ -309,7 +356,7 @@ except Exception:
 }
 
 # _attr_eject <id> <tip> <suites-csv> <pr-n> <name> <method> <detail> <title>
-#             <summary> <diffstat> <run-url> <rest-of-batch> [fail-lines]
+#             <summary> <diffstat> <run-url> <rest-of-batch> [fail-lines] [excluded-suites]
 #
 # <method> is one of the attribution procedures verdict.sh actually runs:
 #   reproduced-alone  — suites were rerun against this branch alone and failed
@@ -324,10 +371,13 @@ except Exception:
 _attr_eject() {
     local id="$1" tip="$2" suites="$3" pr_n="$4" name="$5" method="$6" detail="$7"
     local title="$8" summary="$9" diffstat="${10}" run_url="${11}" rest_of_batch="${12}"
-    local fail_lines="${13:-}"
+    local fail_lines="${13:-}" excluded="${14:-}"
 
     local _note="Ejected by merge-queue attribution ($method): spira/$id ($suites) from PR $pr_n in $name."
     [ -n "$detail" ] && _note="$(printf '%s\n\n%s' "$_note" "$detail")"
+    if [ -n "$excluded" ]; then
+        _note="$(printf "%s\n\nExcluded from blame (already red on the batch's base, not this branch's fault): %s" "$_note" "$excluded")"
+    fi
     if [ -n "$fail_lines" ]; then
         _note="$(printf '%s\n\nFailing assertions:\n%s' "$_note" "$fail_lines")"
     fi
@@ -358,10 +408,13 @@ _attr_eject() {
     local _run_line="not available"
     [ -n "$run_url" ] && _run_line="$run_url"
 
-    printf '## Note\nspira/%s was ejected from the merge queue in PR %s (%s).\n\n**The change:** %s\n\n%s\n\nDiffstat: %s\n\n**How it was chosen:** %s\n\n**The evidence:**\nFailing suites: %s\n%s\nCI run: %s\n\n**The rest of the batch:**%s\n\nNext: reopened as queue-eject; goes back to a builder.\n\nRun those suites against spira/%s to reproduce.\n' \
+    local _excluded_line=""
+    [ -n "$excluded" ] && _excluded_line="$(printf "\nExcluded from blame (already red on the batch's base, not this branch's fault): %s\n" "$excluded")"
+
+    printf '## Note\nspira/%s was ejected from the merge queue in PR %s (%s).\n\n**The change:** %s\n\n%s\n\nDiffstat: %s\n\n**How it was chosen:** %s\n\n**The evidence:**\nFailing suites: %s\n%s%s\nCI run: %s\n\n**The rest of the batch:**%s\n\nNext: reopened as queue-eject; goes back to a builder.\n\nRun those suites against spira/%s to reproduce.\n' \
         "$id" "$pr_n" "$name" \
         "${title:-(title unavailable)}" "${summary:-(no description)}" "${diffstat:-(diffstat unavailable)}" \
-        "$_method_line" "$suites" "$_fail_section" "$_run_line" "$rest_of_batch" "$id" \
+        "$_method_line" "$suites" "$_excluded_line" "$_fail_section" "$_run_line" "$rest_of_batch" "$id" \
     | bash "$HERE/mail.sh" send operator \
         --from "Spira Queue <queue@spira>" \
         --subject "Merge queue: $id ejected from $name" \
@@ -448,6 +501,26 @@ ${_line#build-error: }" ;;
     build_error="${build_error#$'\n'}"
 
     local suites_csv; suites_csv="$(printf '%s\n' $red_suites | awk '!seen[$0]++' | tr '\n' ',' | sed 's/,$//')"
+
+    # BASELINE — a suite already red on the batch's own base predates every member (every
+    # member's tree contains base_sha) and reproduces against all of them regardless of
+    # fault. Exclude it from every member's blame list before attributing anyone (sp-a2nk8).
+    local suites_csv_all="$suites_csv" baseline_red=""
+    baseline_red="$(_suites_red_on_base "$suites_csv" "$repo" "$base_sha")"
+    if [ -n "$baseline_red" ]; then
+        local _rs _kept=""
+        for _rs in $red_suites; do
+            case " $baseline_red " in
+                *" $_rs "*) ;;
+                *) _kept="$_kept $_rs" ;;
+            esac
+        done
+        red_suites="${_kept# }"
+        suites_csv="$(printf '%s\n' $red_suites | awk '!seen[$0]++' | tr '\n' ',' | sed 's/,$//')"
+        printf 'verdict %s: excluding suite(s) already red on base %s — not attributable: %s\n' \
+            "$name" "${base_sha:0:12}" "$baseline_red"
+    fi
+
     local members_arr=(); read -ra members_arr <<< "$members_str"
     local mc="${#members_arr[@]}"
     local caught=0 escaped=0
@@ -461,6 +534,26 @@ ${_line#build-error: }" ;;
     local _bisect_current; _bisect_current="$(queue_bisect_current "$name" "$repo" "$base_sha")" || _bisect_current=""
 
     _verdict_trap_pr="$pr_n"
+
+    if [ -n "$suites_csv_all" ] && [ -z "$suites_csv" ]; then
+        # Every suite CI named red was already red on the batch's own base — none of
+        # these members caused it, so there is nothing to attribute or bisect; requeue
+        # the batch unchanged (sp-a2nk8).
+        for _mm in "${members_arr[@]}"; do
+            _mid="${_mm%%:*}"; _mtip="${_mm##*:}"
+            land_mark "$_mid" CERTIFIED "$_mtip"
+        done
+        "$forge" pr-close "$repo" "$pr_n" 2>/dev/null || true
+        rm -f "$batch_file"
+        local _all_ids; _all_ids="$(printf '%s\n' "${members_arr[@]}" | cut -d: -f1 | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
+        printf 'verdict %s: PR %s red only on suite(s) already red on base — requeueing all, not attributable: %s\n' \
+            "$name" "$pr_n" "$baseline_red"
+        _attr_notify_red "$pr_n" "$name" "$suites_csv_all" \
+            "Red on base, not attributable — all members requeued" "" "$_all_ids" "" "$baseline_red"
+        _meter_write "$name" "$mc" 0 0 "$attr_start"
+        rm -rf "$_eject_fail_dir" 2>/dev/null || true
+        return 0
+    fi
 
     if [ -z "$red_suites" ] && [ "$mc" -gt 1 ]; then
         # No Spira-shaped annotations and multiple members: bisect by halving.
@@ -725,7 +818,7 @@ ${_line#build-error: }" ;;
                     "$name" "$pr_n" "$half" "$(( mc - half ))"
                 # Notify on together-only red
                 local all_ids="$(printf '%s\n' "${members_arr[@]}" | cut -d: -f1 | tr '\n' ' ' | sed 's/ /, /g' | sed 's/, $//')"
-                _attr_notify_red "$pr_n" "$name" "$suites_csv" "Together-only red: batch halved, all members requeued" "" "$all_ids"
+                _attr_notify_red "$pr_n" "$name" "$suites_csv_all" "Together-only red: batch halved, all members requeued" "" "$all_ids" "" "$baseline_red"
                 _meter_write "$name" "$mc" 0 0 "$attr_start"
                 rm -rf "$_eject_fail_dir" 2>/dev/null || true
                 return 0
@@ -800,7 +893,7 @@ ${_line#build-error: }" ;;
         _attr_eject "$_ej_id" "$_ej_tip" "$_ej_csv" "$pr_n" "$name" \
             "${_ej_method[$_ej_id]:-suite-overlap}" "${_ej_detail[$_ej_id]:-}" \
             "$_ej_title" "$_ej_summary" "$_ej_diffstat" "$run_url" "$_ej_rest_text" \
-            "$_ej_fail_lines"
+            "$_ej_fail_lines" "$baseline_red"
     done
 
     # When ejection leaves survivors, rebuild on the same base and re-push to
@@ -884,7 +977,7 @@ ${_line#build-error: }" ;;
     elif [ "${#ejected[@]}" -eq 0 ] && [ "${#survivors[@]}" -gt 0 ]; then
         decision_text="Flake: suites quarantined, all members requeued"
     fi
-    _attr_notify_red "$pr_n" "$name" "$suites_csv" "$decision_text" "$ejected_ids" "$requeued_ids" "$unjudged_ids"
+    _attr_notify_red "$pr_n" "$name" "$suites_csv_all" "$decision_text" "$ejected_ids" "$requeued_ids" "$unjudged_ids" "$baseline_red"
 
     _meter_write "$name" "$mc" "$caught" "$escaped" "$attr_start"
     rm -rf "$_eject_fail_dir" 2>/dev/null || true
