@@ -222,5 +222,4 @@ rm -f "$SPIRA_RUN/hold-sp-h3.pid"
 # SUMMARY
 # ======================================================================================
 echo
-total=$((pass + fail))
 tl_summary

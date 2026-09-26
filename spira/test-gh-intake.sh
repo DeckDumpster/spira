@@ -31,7 +31,7 @@ echo
 
 if [ ! -x "$SCRIPT" ]; then
     bad "gh-intake.sh is executable" "not found at $SCRIPT"
-    printf '\n  %d passed, %d failed\n' "$pass" "$fail"; exit 1
+    printf '\n  %d passed, %d failed\n' "$_TL_PASS" "$_TL_FAIL"; exit 1
 fi
 ok "gh-intake.sh is executable"
 

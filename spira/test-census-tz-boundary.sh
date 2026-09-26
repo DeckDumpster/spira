@@ -81,8 +81,8 @@ export SPIRA_TESTDB_MODE=server
 testdb_up census-tz-boundary || {
     printf 'SKIP test-census-tz-boundary part-2: server testdb not available\n' >&2
     # Still report part-1 results before exiting.
-    printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-    [ "$fail" -eq 0 ]
+    printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$_TL_PASS" "$_TL_FAIL"
+    [ "$_TL_FAIL" -eq 0 ]
     exit $?
 }
 

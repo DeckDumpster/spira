@@ -32,7 +32,7 @@ SPARKLINES_PY="$HERE/cockpit-sparklines.py"
 if [ ! -f "$SPARKLINES_PY" ]; then
     bad "extract" "cockpit-sparklines.py not found next to cockpit.sh"
     echo ""
-    echo "RESULTS: $pass passed, $fail failed"
+    echo "RESULTS: $_TL_PASS passed, $_TL_FAIL failed"
     exit 1
 fi
 ok "extract: cockpit-sparklines.py present"
@@ -81,7 +81,7 @@ print(json.dumps(beads))
 if [ -z "$BEADS_JSON" ]; then
     bad "fixture" "failed to generate beads JSON"
     echo ""
-    echo "RESULTS: $pass passed, $fail failed"
+    echo "RESULTS: $_TL_PASS passed, $_TL_FAIL failed"
     exit 1
 fi
 ok "fixture: generated bead JSON"

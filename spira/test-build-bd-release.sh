@@ -83,7 +83,7 @@ if [ -f "$STUB_DIR/$ASSET" ]; then
     ok "stub serves $ASSET (naming positive control)"
 else
     bad "stub serves $ASSET" "file not found — test cannot proceed"
-    printf '%s passed, %s failed\n' "$pass" "$fail"; [ "$fail" = 0 ]; exit
+    printf '%s passed, %s failed\n' "$_TL_PASS" "$_TL_FAIL"; [ "$_TL_FAIL" = 0 ]; exit
 fi
 
 rel_out="$(env -i PATH="$PATH" HOME="$FAKE_HOME" \

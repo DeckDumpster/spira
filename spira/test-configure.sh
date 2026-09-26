@@ -59,7 +59,7 @@ else
     bad "configure.sh not found or not executable" \
         "expected: $HERE/configure.sh"
     printf '  (all tests below will fail until configure.sh exists)\n'
-    printf '\n  %d passed, %d failed\n' "$pass" "$fail"
+    printf '\n  %d passed, %d failed\n' "$_TL_PASS" "$_TL_FAIL"
     exit 1
 fi
 

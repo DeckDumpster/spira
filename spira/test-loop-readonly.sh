@@ -80,7 +80,7 @@ printf 'commit 0000000000000000000000000000000000000000\ntimestamp %s\n' "$_ts" 
 TARBALL="$SCRATCH/$_name.tar.gz"
 tar -czf "$TARBALL" -C "$SCRATCH" "$_name" \
     && ok "tarball built" \
-    || { bad "tarball" "tar failed"; printf '%s passed, %s failed\n' "$pass" "$fail"; exit 1; }
+    || { bad "tarball" "tar failed"; printf '%s passed, %s failed\n' "$_TL_PASS" "$_TL_FAIL"; exit 1; }
 
 SPIRA_SYSTEMCTL="$MOCK_SC" SPIRA_ACTIVATE_FORCE=1 SPIRA_RELEASES="$RELEASES" \
     bash "$HERE/activate.sh" "$TARBALL" >/dev/null 2>&1
@@ -89,7 +89,7 @@ iszero "activate.sh exits 0" "$?"
 CURRENT="$RELEASES/current"
 [ -L "$CURRENT" ] \
     && ok "current symlink created" \
-    || { bad "current symlink" "missing at $RELEASES/current"; printf '%s passed, %s failed\n' "$pass" "$fail"; exit 1; }
+    || { bad "current symlink" "missing at $RELEASES/current"; printf '%s passed, %s failed\n' "$_TL_PASS" "$_TL_FAIL"; exit 1; }
 
 # POSITIVE CONTROL: before making read-only, writing the sentinel log from within
 # the release succeeds — confirming the test-writable path exists before activate.sh

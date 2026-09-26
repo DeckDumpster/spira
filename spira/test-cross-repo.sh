@@ -155,7 +155,7 @@ seed
 BID="$(B list --status open --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:second" --json 2>/dev/null \
     | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d[0]["id"] if isinstance(d,list) and d else "")' 2>/dev/null)"
 
-[ -n "$BID" ] || { bad "fixture: could not create bead"; printf '\n  %d passed, %d failed\n' "$pass" "$fail"; exit 1; }
+[ -n "$BID" ] || { bad "fixture: could not create bead"; printf '\n  %d passed, %d failed\n' "$_TL_PASS" "$_TL_FAIL"; exit 1; }
 
 run_aeon
 
