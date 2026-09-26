@@ -16,6 +16,10 @@
 # all, because the harness never certified on the session's behalf.
 #
 # WHAT IS TESTED:
+#   0. gate status 0 (a recorded PASS for this exact tree) writes a note naming the PASS
+#      and quoting gate-run.sh's own key and covered-suite list, and does not reopen the
+#      bead (sp-0pk2x: this status fell through the case entirely — 73 of 76 cert-gate-red
+#      reopens held exactly this status at close time with no note at all).
 #   1. POSITIVE CONTROL — gate status 2 (still running) writes a note, passes in both trees.
 #   2. gate status 1 (FAIL verdict already on record for this tree) — REOPENS the bead with
 #      the recorded evidence, rather than leaving it for a later pass to rediscover.
@@ -75,6 +79,9 @@ cat > "$SPIRA_HOME/gate-run.sh" <<'STUB'
 #!/usr/bin/env bash
 code="$(cat "${TMP}/gate-status-code" 2>/dev/null)"; code="${code:-2}"
 case "$code" in
+    0) echo "gate-run: PASSED fixture in fixture after 10s"
+       echo "gate-run: key deadbeef cafefeed"
+       echo "gate-run: gate PASS covered suites: test-fixture.sh" ;;
     2) echo "gate-run: still running for fixture — 10s so far, pid $$" ;;
     1) echo "gate-run: FAILED fixture in fixture after 10s" ;;
 esac
@@ -178,6 +185,19 @@ print(d[0].get("status", "") or "")' 2>/dev/null
 fresh() { testdb_reset; : > "$TMP/queue-calls.log"; }
 
 echo "test-aeon-gate-close-silent.sh"
+
+# ======================================================================================
+echo
+echo "st=0 (recorded PASS for this exact tree) writes a note naming key + covered suites (sp-0pk2x):"
+# ======================================================================================
+fresh; seed sp-gcs-0
+run_aeon 0
+want "st=0: note mentions 'gate PASS covered suites'" "gate PASS covered suites" "$(bead_notes sp-gcs-0)"
+want "st=0: note names the covered suite" "test-fixture.sh" "$(bead_notes sp-gcs-0)"
+want "st=0: note names the (tip, base) key" "key deadbeef cafefeed" "$(bead_notes sp-gcs-0)"
+want "st=0: log mentions the recorded PASS" "closed with a recorded PASS gate verdict" \
+    "$(cat "$TMP/out" 2>/dev/null)"
+want "st=0: bead is left closed, not reopened" "closed" "$(bead_status sp-gcs-0)"
 
 # ======================================================================================
 echo

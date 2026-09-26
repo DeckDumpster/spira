@@ -950,6 +950,15 @@ Requeued (thrash): the deliverable did not move for ${SPIRA_THRASH_MINUTES:-20}m
             _cert_hasown=0
         fi
         case "$gate_st" in
+            0)  # CLOSED AGAINST A RECORDED PASS — the arm that did not exist (sp-0pk2x): 73
+                # of 76 cert-gate-red reopens held exactly this status at close time and left
+                # no note, because every other status left one and this one fell through the
+                # case. gate_why carries gate-run.sh's own (tip, base) key and the suite list
+                # its PASS covered; quoting it here is what lets a later cert-gate-red reopen
+                # name whether certification's failing suite was ever in that list
+                # (law-producers-declare-what-they-know).
+                bdq note "$BEAD_ID" "Closed against a recorded PASS verdict for this exact tree — $gate_why" >/dev/null 2>&1
+                log "$FAYTH: $BEAD_ID closed with a recorded PASS gate verdict ($gate_why)" ;;
             2)  # CLOSED WITH THE GATE STILL RUNNING is not reopened: the work is committed,
                 # and the landing pass gates the branch again before it merges. Must not be silent.
                 bdq note "$BEAD_ID" "Closed by the session while its landing gate was still running — $gate_why. The close carries no gate verdict; the landing pass gates this branch again and reopens the bead if it fails." >/dev/null 2>&1

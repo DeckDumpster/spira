@@ -97,6 +97,15 @@ certify_needs_gate() {
     fi
 }
 
+# prior_pass_suites <gate-run.sh --status output> -> the suite list a recorded PASS
+# covered, or empty when the text carries no such record — gate-run.sh --status exited
+# non-zero, or nothing has ever gated this (tip, base) pair. Reading it back here is what
+# lets a cert-gate-red reopen name whether the failing suite was ever in the aeon's own
+# gate's scope, rather than leave that the one fact nothing recorded (sp-0pk2x).
+prior_pass_suites() {
+    printf '%s\n' "$1" | sed -n 's/^gate-run: gate PASS covered suites: //p' | tail -1
+}
+
 # basefail_fix_decision <external_ref> <name> <gate_out> — returns 0 (a green base-fix)
 # when external_ref names this repository's base-fix suite (basefail:<name>:<suite>) AND
 # the branch's own section of gate_out shows that suite green (absent from its RED/TIMEOUT/

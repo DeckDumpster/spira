@@ -208,4 +208,29 @@ got="$(bash -c '
 ')"
 is "host_cores(): returns getconf's count even with nproc stubbed to 1" "$real_cores" "$got"
 
+# --- 8. ran_suites(): every suite a PASS covered, not only the (nonexistent) reds ---------
+# (sp-0pk2x). Unlike red_suites(), a genuine status word of any kind names the suite —
+# this is what lets a PASS say what it was about, when there is nothing red to report.
+out="$(ran_suites "spira/test-foo.sh ok      3s
+spira/test-bar.sh RED     rc=1 after 5s
+spira/test-baz.sh SKIPPED
+spira/test-qux.sh TIMEOUT after 90s
+spira/test-quux.sh QUARANTINED-RED  rc=1 after 2s")"
+is "ran_suites(): names every suite regardless of status, in order, deduplicated" \
+    "spira/test-foo.sh
+spira/test-bar.sh
+spira/test-baz.sh
+spira/test-qux.sh
+spira/test-quux.sh" "$out"
+
+# POSITIVE CONTROL: a suite mentioned twice (once in a summary line, once in a detail line)
+# is named once, proving the seen[] dedup actually runs rather than merely never triggering.
+out="$(ran_suites "spira/test-foo.sh ok      3s
+spira/test-foo.sh ok      3s")"
+is "ran_suites(): the same suite twice is named once" "spira/test-foo.sh" "$out"
+
+# Output with no recognisable suite line at all names nothing — never a guess.
+out="$(ran_suites "the command exploded")"
+is "ran_suites(): unstructured output names no suite" "" "$out"
+
 tl_summary

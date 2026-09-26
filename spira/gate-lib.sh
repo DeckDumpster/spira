@@ -87,6 +87,20 @@ red_suites() {
     }'
 }
 
+# ran_suites <gate output> -> one suite per line, every suite the batch runner reported a
+# status for — ok, red, skipped or otherwise — not only the reds red_suites() finds. A PASS
+# has no reds to name, so this is the only way a caller can learn what a passing gate's
+# verdict was actually about (sp-0pk2x: 73 of 76 cert-gate-red reopens carried a recorded
+# PASS with no record of which suites it covered).
+ran_suites() {
+    printf '%s\n' "$1" | awk '{
+        for (i = 1; i < NF; i++)
+            if ($i ~ /\.sh$/ && ($(i+1) ~ /^(ok|SKIPPED|SKIP-REQ|TIMEOUT|RED|QUARANTINED-RED|DISABLED|UNREACHED|FAILED)$/ \
+                                 || ($(i+1) == "was" && $(i+2) == "killed")))
+                if (!seen[$i]++) print $i
+    }'
+}
+
 # timed_out_suites <gate output> -> only the suites the watchdog killed, never a genuine
 # FAIL — a killed suite proves nothing about whether it would have passed.
 timed_out_suites() {

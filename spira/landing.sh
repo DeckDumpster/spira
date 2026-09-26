@@ -531,6 +531,23 @@ _basefail_fix_check() {  # _basefail_fix_check <id> <gate_out> <gate_suite> <nam
     basefail_fix_decision "${_scan_extref[$1]:-}" "$4" "$2"
 }
 
+# cert_gate_red_scope_note <repo> <branch> <failing suite> -> a reopen-note fragment naming
+# the suite set the branch's own recorded PASS covered next to the suite certification just
+# failed on — empty when no recorded PASS exists for this exact (tip, base) pair. Without
+# this, 73 of 76 cert-gate-red reopens gave the next aeon no way to tell a suite its own
+# gate never selected from a base that moved under a green branch (sp-0pk2x). The status
+# call is read-only (gate-run.sh --status answers from state already on disk, it starts
+# nothing) so it is safe to make on every reopen without racing the branch's own gate.
+cert_gate_red_scope_note() {
+    local repo="$1" br="$2" failing="$3" why suites
+    why="$(bash "$SPIRA_HOME/gate-run.sh" --status "$br" "$repo" 2>/dev/null)"
+    [ $? -eq 0 ] || return 0
+    suites="$(prior_pass_suites "$why")"
+    [ -n "$suites" ] || return 0
+    printf 'The branch held a recorded gate PASS covering: %s\nCertification just failed on: %s\n' \
+        "$suites" "$failing"
+}
+
 base_incident() {        # base_incident <repo> <suite> <reason> <branch> <base> <gate output>
     local name="$1" suite="$2" reason="$3" br="$4" base="$5" out="$6" id named
     if [ ! -r "$INC" ]; then
@@ -1222,12 +1239,15 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                         log "CHECK6 $id: bead is now ${_cur_st:--} (was closed at scan time) — not reopening $br"
                         continue
                     fi
-                    local _rn_cert
+                    local _rn_cert _rn_scope
                     _rn_cert="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
+                    _rn_scope="$(cert_gate_red_scope_note "$name" "$br" "$gate_suite")"
                     bead_reopen "$id" cert-gate-red "Reopened by sentinel: branch $br failed $name's certification gate. The branch carries $_rn_cert commit(s) from the previous session — the next aeon should resume from the existing work, not restart.
+${_rn_scope:+
+$_rn_scope}
 
 $(printf '%s' "$gate_out" | tail -20)"
-                    unset _rn_cert
+                    unset _rn_cert _rn_scope
                     progress "reopened $id — failed the certification gate"
                     spira_event bead.reopened "$id" "reopened $id — $br failed $name's certification gate" \
                         "$(printf '%s' "$gate_out" | tail -3)" || true
@@ -1787,7 +1807,7 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
         # name/repo/base/basefail_filed are read via dynamic scope.
         _cert_process_result() {
             local br id tip gate_rc gate_out gate_outcome gate_reason gate_suite
-            local _rn_cert nv_key nv_file nv_n _cur_st
+            local _rn_cert _rn_scope nv_key nv_file nv_n _cur_st
             local _finished_pid _idx _tmp
             wait -n -p _finished_pid "${_cp_pids[@]}" 2>/dev/null; gate_rc=$?
             _idx=0
@@ -1873,7 +1893,10 @@ print(d[0].get("status","-") if d else "-")' 2>/dev/null)"
                     return 0
                 fi
                 _rn_cert="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
+                _rn_scope="$(cert_gate_red_scope_note "$name" "$br" "$gate_suite")"
                 bead_reopen "$id" cert-gate-red "Reopened by sentinel: branch $br failed $name's certification gate. The branch carries $_rn_cert commit(s) from the previous session — the next aeon should resume from the existing work, not restart.
+${_rn_scope:+
+$_rn_scope}
 
 $(printf '%s' "$gate_out" | tail -20)"
                 progress "reopened $id — failed the certification gate"

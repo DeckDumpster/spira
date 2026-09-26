@@ -369,9 +369,12 @@ if [ -n "$GATE_KEY" ] && [ -r "$VERDICT_DIR/$GATE_KEY" ]; then
     # form built an eval string from the entry file's own text, so a `when=` containing
     # `$(...)` would have run it (gate.sh gap sp-04yh0#10).
     if _cf="$(cache_fresh "$VERDICT_DIR/$GATE_KEY" "$verdict_ttl" "$(date +%s)")"; then
+        _cached_suites="$(sed -n 's/^suites=//p' "$VERDICT_DIR/$GATE_KEY" 2>/dev/null | tail -1)"
+        [ -n "$_cached_suites" ] || _cached_suites=-
         verdict 0 cached \
             "gate: this exact tree already passed $REPO_NAME's gate at ${_cf%%|*} (${_cf#*|})
-gate: key $GATE_KEY — same tree, same changed files, same command, same harness."
+gate: key $GATE_KEY — same tree, same changed files, same command, same harness.
+gate: gate PASS covered suites: $_cached_suites"
     fi
 fi
 
@@ -576,6 +579,11 @@ run_gate() {             # run_gate <ref-being-tested> -> the command's own stat
 # red read as "exited 0" and every classification below it was made on the wrong number.
 out="$(run_gate "$BR")"; gate_rc_branch=$?
 if [ "$gate_rc_branch" -eq 0 ]; then
+    # WHAT THE PASS WAS ABOUT. red_suites() has nothing to name on a pass, and until now
+    # nothing else named the suites either — the one fact a later disagreeing verdict on
+    # the same tree would need was never recorded (sp-0pk2x).
+    _pass_suites="$(ran_suites "$out" | paste -sd, - 2>/dev/null)"
+    [ -n "$_pass_suites" ] || _pass_suites=-
     # RECORDED ONLY ON A PASS, and written through a temporary file so a caller that dies
     # mid-write cannot leave a half-file that reads as a valid verdict.
     if [ -n "$GATE_KEY" ]; then
@@ -587,10 +595,11 @@ if [ "$gate_rc_branch" -eq 0 ]; then
           printf 'at=%s\n'   "$(date +%s)"
           printf 'by=%s\n'   "${SPIRA_GATE_CALLER:-$BR}"
           printf 'repo=%s\nbranch=%s\n' "$REPO_NAME" "$BR"
+          printf 'suites=%s\n' "$_pass_suites"
         } > "$VERDICT_DIR/.$GATE_KEY.$$" 2>/dev/null \
           && mv -f "$VERDICT_DIR/.$GATE_KEY.$$" "$VERDICT_DIR/$GATE_KEY" 2>/dev/null
     fi
-    verdict 0 pass ""
+    verdict 0 pass "gate: gate PASS covered suites: $_pass_suites"
 fi
 
 # A DEADLINE IS NOT A RED. `timeout` exits 124 when it kills the command, and gate-spira.sh
