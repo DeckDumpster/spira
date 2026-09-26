@@ -65,8 +65,13 @@ nowant "law-synth: no SPIRA_WIKI: does NOT write"               "wrote"         
 
 echo "=== law-synth.sh: wrong-database guard ==="
 
-# Plant one law- entry so the fixture db isn't empty for the positive control.
-"$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-seed" "Seed statute." >/dev/null 2>&1
+# Plant a book the size of the committed page (10) for the positive control. ONE entry is not
+# "the real book": 1 < 10/2 trips the floor check below, so a single seed made this control
+# assert a refusal law-synth.sh is right to make. It went unseen while this suite was a T4
+# host case that every container run skipped.
+for i in $(seq 1 10); do
+    "$SPIRA_BD" -C "$SPIRA_DB" remember --key "law-synth-seed-$i" "Seed statute $i." >/dev/null 2>&1
+done
 
 # POSITIVE CONTROL: pointed at real book.
 out_synth_ok=$(run_synth); rc_synth_ok=$?
