@@ -312,6 +312,12 @@
             "null"
           ]
         },
+        "instance": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "loom_addr": {
           "type": [
             "string",

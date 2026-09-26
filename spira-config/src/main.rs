@@ -16,7 +16,10 @@ use std::io::Read;
 use std::path::Path;
 use std::process::ExitCode;
 
-use spira_config::{convert, export_sh, get_path, json_schema, shrink_reason, validate, write_atomic};
+use spira_config::{
+    convert, export_sh, get_path, json_schema, set_path, shrink_reason, validate, write_atomic,
+    SpiraToml,
+};
 
 fn read_input(file: Option<&str>) -> Result<String, String> {
     match file {
@@ -116,6 +119,57 @@ fn cmd_schema() -> ExitCode {
         }
         Err(e) => {
             eprintln!("spira-config: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `set <dotted.path> <value> <file>` — the file is read (and validated) if it exists,
+/// starts as an empty document otherwise, and is written back with the one path set. Unlike
+/// `validate`/`get`/`export`, the file argument is required: `set` mutates a specific file
+/// in place rather than reading `$SPIRA_TOML`/stdin, because its callers (`deploy.sh`,
+/// `install.sh`) already know exactly which file is in force.
+fn cmd_set(path: &str, value: &str, file: &str) -> ExitCode {
+    let doc = if Path::new(file).exists() {
+        let text = match fs::read_to_string(file) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("spira-config: {file}: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        if text.trim().is_empty() {
+            SpiraToml::default()
+        } else {
+            match validate(&text) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("spira-config: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+    } else {
+        SpiraToml::default()
+    };
+    let new_doc = match set_path(&doc, path, value) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("spira-config set: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let out = match toml::to_string_pretty(&new_doc) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("spira-config set: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match fs::write(file, out) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("spira-config set: {file}: {e}");
             ExitCode::FAILURE
         }
     }
@@ -263,16 +317,24 @@ fn main() -> ExitCode {
             }
         }
         Some("convert") => cmd_convert(&args[1..]),
+        Some("set") => match (args.get(1), args.get(2), args.get(3)) {
+            (Some(path), Some(value), Some(file)) => cmd_set(path, value, file),
+            _ => {
+                eprintln!("usage: spira-config set <dotted.path> <value> <file>");
+                ExitCode::FAILURE
+            }
+        },
         Some("schema") => cmd_schema(),
         _ => {
             eprintln!(
-                "usage: spira-config <validate|get|export|convert|schema> ...\n\
+                "usage: spira-config <validate|get|export|convert|set|schema> ...\n\
                  \n\
                  \x20 validate [file]\n\
                  \x20 get <dotted.path> [file]\n\
                  \x20 export --sh [file]\n\
                  \x20 convert --conf F --repo-map F [--fayth F]... [--home DIR] [--out F]\n\
                  \x20         [--force-shrink]\n\
+                 \x20 set <dotted.path> <value> <file>\n\
                  \x20 schema"
             );
             ExitCode::FAILURE
