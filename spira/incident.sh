@@ -157,7 +157,7 @@ _ref_hash() {   # _ref_hash <ref> -> 8-char hex
 # PROVENANCE: the three facts an operator needs to decide whether an escalated ask is real.
 #
 # _unit_from_cgroup derives the calling systemd unit from /proc/self/cgroup, whose last
-# path component is the unit name (e.g. spira-suites.service). Outputs ? rather than
+# path component is the unit name (e.g. spira-groom.service). Outputs ? rather than
 # guessing when the path carries no recognisable unit suffix — a failed probe must render ?
 # and never a plausible-looking name (law-detection-outranks-rejection).
 #

@@ -31,10 +31,6 @@ name = "spira-landing-pass.timer"
 enabled = true
 active = true
 [[resources.spec.units]]
-name = "spira-suites.timer"
-enabled = true
-active = true
-[[resources.spec.units]]
 name = "spira-watchtower.timer"
 enabled = true
 active = true

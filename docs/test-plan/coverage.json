@@ -1462,37 +1462,34 @@
           "id": "UC-test-infrastructure-25",
           "tier": "T1",
           "statement": "Classification of one suite outcome from (rc, output, watchdog-killed, shared-fixture, trailer, budget): ok, red, skip, timeout (even when TERM is trapped), setup-fault (ASSERTIONS 0 and rc≠0), red when the trailer is missing, fixture-fault (75 with shared fixture, else red), red-unconfirmed (no budget to confirm). Signal exits map to 124.",
-          "covering_suites": [
-            {
-              "path": "spira/test-suites-classify.sh",
-              "tier": "T1",
-              "over_budget": false
-            }
-          ]
+          "covering_suites": [],
+          "uncovered": {
+            "reason": "classify() lived only in suites.sh's cmd_run, retired with the background suites sweep",
+            "date": "2026-09-26",
+            "bead": "sp-b99nj"
+          }
         },
         {
           "id": "UC-test-infrastructure-26",
           "tier": "T1",
           "statement": "The failure fingerprint is stable across ISO timestamps, per-suite slice length and debris output. The cause fingerprint (normalised first FAIL line) groups same-cause suites.",
-          "covering_suites": [
-            {
-              "path": "spira/test-suites-classify.sh",
-              "tier": "T1",
-              "over_budget": false
-            }
-          ]
+          "covering_suites": [],
+          "uncovered": {
+            "reason": "fingerprint() lived only in suites.sh's cmd_run, retired with the background suites sweep",
+            "date": "2026-09-26",
+            "bead": "sp-b99nj"
+          }
         },
         {
           "id": "UC-test-infrastructure-27",
           "tier": "T1",
           "statement": "Filing: each red files one bead with ref `suite:<name>`, sin-exempt, labelled plan + `repo:`, at the declared priority, with its output. If there is no output, the body carries a \"no output\" sentinel. A recurring or changed failure stays on one bead and logs a recurrence. Same-cause reds file one cluster bead naming all members, with a stable ref and a suppressed count reported. Fixture-faults file one bead naming all borrowers. Setup-faults name the suite, not the covered file. Timeouts name the limit. Greens and skips file nothing.",
-          "covering_suites": [
-            {
-              "path": "spira/test-suites-filing.sh",
-              "tier": "T1",
-              "over_budget": false
-            }
-          ]
+          "covering_suites": [],
+          "uncovered": {
+            "reason": "file_red/file_cluster/file_fixture_fault/file_setup_fault lived only in suites.sh's cmd_run, retired with the background suites sweep",
+            "date": "2026-09-26",
+            "bead": "sp-b99nj"
+          }
         },
         {
           "id": "UC-test-infrastructure-28",
@@ -1504,13 +1501,12 @@
           "id": "UC-test-infrastructure-29",
           "tier": "T1",
           "statement": "Budget is a wall. `MAXSEC` caps the budget (MAXSEC−60) and never raises it. A suite whose last runtime exceeds the remaining budget, or whose `# timeout:` exceeds it, is `unreached` (not TIMEOUT). The cursor names where the next pass starts. Unreached never overwrites the last verdict or runtime and is cleared when the suite is next reached.",
-          "covering_suites": [
-            {
-              "path": "spira/test-suites-classify.sh",
-              "tier": "T1",
-              "over_budget": false
-            }
-          ]
+          "covering_suites": [],
+          "uncovered": {
+            "reason": "the unreached/budget-wall bookkeeping lived only in suites.sh's cmd_run, retired with the background suites sweep",
+            "date": "2026-09-26",
+            "bead": "sp-b99nj"
+          }
         },
         {
           "id": "UC-test-infrastructure-30",
@@ -1594,13 +1590,12 @@
           "id": "UC-test-infrastructure-43",
           "tier": "T1",
           "statement": "A suite skipping (77) on consecutive timed passes files a `suite-skip:<name>` bead, so that \"a check that cannot run is not a check that passed\". A skip must exit 77, never 0. **Untested today.**",
-          "covering_suites": [
-            {
-              "path": "spira/test-suites-filing.sh",
-              "tier": "T1",
-              "over_budget": false
-            }
-          ]
+          "covering_suites": [],
+          "uncovered": {
+            "reason": "file_skip's suite-skip filing lived only in suites.sh's cmd_run, retired with the background suites sweep",
+            "date": "2026-09-26",
+            "bead": "sp-b99nj"
+          }
         }
       ]
     }

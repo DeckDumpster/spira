@@ -158,7 +158,7 @@ rc_is "divergence with no ctrl file exits 0" 0 $rc
 want  "divergence with no ctrl file reports summary" "0 divergences" "$out"
 
 # Suspend a unit; systemctl says it's inactive → no divergence
-ctrl suspend spira-suites --reason "test" --owner sp-x000 >/dev/null
+ctrl suspend spira-groom --reason "test" --owner sp-x000 >/dev/null
 write_sc "" ""   # nothing active or enabled
 out="$(ctrl divergence 2>&1)"; rc=$?
 rc_is "divergence: suspended + inactive exits 0" 0 $rc
@@ -166,22 +166,22 @@ nowant "divergence: suspended + inactive is silent" "DIVERGENCE" "$out"
 
 # POSITIVE CONTROL: prove the divergence check ran by planting a divergence.
 # Stub says the suspended unit's timer is active — this must be caught.
-write_sc "spira-suites-prod.timer" ""
+write_sc "spira-groom-prod.timer" ""
 out="$(ctrl divergence 2>&1)"; rc=$?
 rc_is "divergence: suspended + active exits 1" 1 $rc
-want  "divergence: names the subject" "spira-suites" "$out"
+want  "divergence: names the subject" "spira-groom" "$out"
 want  "divergence: prints DIVERGENCE" "DIVERGENCE"   "$out"
 
 # Also catches 'enabled' (timer enabled but not yet ticking)
-write_sc "" "spira-suites-prod.timer"
+write_sc "" "spira-groom-prod.timer"
 out="$(ctrl divergence 2>&1)"; rc=$?
 rc_is "divergence: suspended + enabled exits 1" 1 $rc
 want  "divergence: catches enabled unit" "DIVERGENCE" "$out"
 
 # Positive control: remove the suspension → divergence check runs but finds nothing.
 # This proves silence means agreement, not a broken check.
-ctrl resume spira-suites >/dev/null
-write_sc "spira-suites-prod.timer" ""   # unit is still "active" in stub
+ctrl resume spira-groom >/dev/null
+write_sc "spira-groom-prod.timer" ""   # unit is still "active" in stub
 out="$(ctrl divergence 2>&1)"; rc=$?
 rc_is "divergence: no suspension → exits 0 even when unit is active" 0 $rc
 nowant "divergence: without suspension, active unit is not a divergence" "DIVERGENCE" "$out"
@@ -201,20 +201,20 @@ nowant "undeclared: no masked units → no DIVERGENCE" "DIVERGENCE" "$out"
 # Plant the offender: a unit is masked in systemd with NO control-plane entry.
 # This is the shape found in production — units masked outside the control plane.
 # The check must exit non-zero.
-write_sc "" "" "spira-suites-prod.timer"
+write_sc "" "" "spira-groom-prod.timer"
 out="$(ctrl divergence 2>&1)"; rc=$?
 rc_is "undeclared: masked unit without entry exits 1" 1 $rc
 want  "undeclared: prints DIVERGENCE"      "DIVERGENCE"              "$out"
-want  "undeclared: names the masked unit"  "spira-suites-prod.timer" "$out"
+want  "undeclared: names the masked unit"  "spira-groom-prod.timer" "$out"
 
 # Positive control: register the suspension in the control plane.
 # The masked unit is now declared — divergence must exit 0.
-ctrl suspend spira-suites --reason "probe test" --owner sp-x000 >/dev/null
+ctrl suspend spira-groom --reason "probe test" --owner sp-x000 >/dev/null
 out="$(ctrl divergence 2>&1)"; rc=$?
 rc_is "undeclared: declared masked unit exits 0" 0 $rc
 nowant "undeclared: declared masked unit not a divergence" "DIVERGENCE" "$out"
 
-ctrl resume spira-suites >/dev/null
+ctrl resume spira-groom >/dev/null
 
 # ==========================================================================
 tl_summary

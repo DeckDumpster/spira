@@ -719,7 +719,7 @@ for u in "${ENABLE[@]}"; do
     _masked=0; [ "${_MASKED[$u]:-}" = "1" ] && _masked=1
     # CONTROL PLANE: a unit declared suspended in $SPIRA_CTRL is not enabled, halted world
     # or not. The subject is the base unit name without instance suffix or extension (e.g.
-    # "spira-suites" from "spira-suites-prod.timer"). ctrl_is_suspended reads the single
+    # "spira-groom" from "spira-groom-prod.timer"). ctrl_is_suspended reads the single
     # load done above the UNITS loop. If ctrl.sh was absent, the fallback defined there
     # always says "not suspended" — a missing control tool is not a reason to refuse
     # enabling everything.

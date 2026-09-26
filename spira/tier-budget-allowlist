@@ -93,7 +93,6 @@ test-branch-guard.sh	T1	3.0
 test-brief-mail-options.sh	T0	3.0
 test-broker-allowlist-lint.sh	T0	5.0
 test-broker.sh	T1	15.0
-test-budget-drift.sh	T1	2.5
 test-build-bd-release.sh	T1	2.0
 test-builder-qa-proposed.sh	T1	4.0
 test-cadence-tool.sh	T1	2.0
@@ -273,7 +272,6 @@ test-install-migrate.sh	T1	48.0
 test-install-paths.sh	T1	63.0
 test-install-prod-checkout.sh	T1	9.5
 test-install-rehearsal.sh	T1	1.5
-test-install-self-test.sh	T1	6.0
 test-install-unit-directive.sh	T1	2.0
 test-install-unit-ensure.sh	T1	16.0
 test-install-unit-prune.sh	T1	45.0
@@ -316,7 +314,6 @@ test-now.sh	T1	8.5
 test-ops-allowlist.sh	T1	2.0
 test-ops-closing.sh	T1	152.5
 test-orphan-test.sh	T1	2.0
-test-output-visibility.sh	T1	16.0
 test-plan-lint.sh	T1	2.0
 test-poison-ask.sh	T1	37.5
 test-poison-edge.sh	T1	77.5
@@ -392,15 +389,10 @@ test-strand-truncated.sh	T1	4.0
 test-suite-state-fence.sh	T1	6.0
 test-suite-state.sh	T1	2.0
 test-suite-times.sh	T1	2.0
-test-suites-classify.sh	T1	2.0
-test-suites-cluster.sh	T1	45.5
 test-suites-fixture-fault.sh	T1	19.5
 test-suites-flake-report.sh	T1	2.0
 test-suites-hygiene.sh	T1	12.5
-test-suites-red-dedup.sh	T1	32.0
 test-suites-timeout.sh	T2	14.0
-test-suites-timer.sh	T1	2.0
-test-suites-unreached.sh	T1	42.5
 test-summon-fayth.sh	T1	4.0
 test-superseded.sh	T1	19.0
 test-tarball-bins.sh	T1	4.0

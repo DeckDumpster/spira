@@ -42,12 +42,12 @@ want "empty fixture dir is refused by name" "no timer units installed under $SCR
 echo
 echo "resolve_unit — naming (exact, suffixed, prefixed, ambiguous, unknown):"
 # ============================================================================
-: > "$SCRATCH/spira-suites-prod.timer"
+: > "$SCRATCH/spira-groom-prod.timer"
 : > "$SCRATCH/spira-verdict-prod.timer"
 : > "$SCRATCH/cockpit-ensure.timer"
 
 is "bare name + spira- prefix + instance suffix resolves" \
-    "spira-suites-prod.timer" "$(resolve_unit suites)"
+    "spira-groom-prod.timer" "$(resolve_unit groom)"
 is "shared unit's exact filename resolves" \
     "cockpit-ensure.timer" "$(resolve_unit cockpit-ensure)"
 

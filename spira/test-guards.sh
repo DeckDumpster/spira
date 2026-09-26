@@ -207,7 +207,7 @@ for _cmd in \
     "${FAKE_PROD}/sop.sh match /tmp/sp-x.payload" \
     "${FAKE_PROD}/incident.sh list" \
     "${FAKE_PROD}/mail.sh send operator --from Ops --subject q --kind question --default x" \
-    "${FAKE_PROD}/suites.sh run" \
+    "${FAKE_PROD}/suites.sh status" \
     "${FAKE_PROD}/groomer.sh run"; do
     out="$(fence_run "$_cmd" SPIRA_AEON=test-aeon)"
     nowant "UC-safety-fences-02/rendered-brief-cmd-allowed-${_cmd##*/}" '"decision":"block"' "$out"

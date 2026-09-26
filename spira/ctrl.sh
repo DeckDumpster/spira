@@ -30,7 +30,7 @@
 # New operation types extend the file without changing the structure.
 #
 #   {
-#     "spira-suites": {
+#     "spira-groom": {
 #       "suspend": {
 #         "reason": "...",
 #         "owner": "sp-xxxx",
@@ -284,7 +284,7 @@ PY
     while IFS= read -r subject; do
         [ -n "$subject" ] || continue
         # Check instance-qualified forms first, then plain forms. A subject like
-        # "spira-suites" corresponds to "spira-suites-prod.timer" on instance "prod".
+        # "spira-groom" corresponds to "spira-groom-prod.timer" on instance "prod".
         # Non-spira units (e.g. "cockpit-ensure") keep their plain names.
         for unit in "${subject}-${inst}.timer"  "${subject}-${inst}.service" \
                     "${subject}.timer"           "${subject}.service"; do
