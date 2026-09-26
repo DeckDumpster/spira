@@ -1011,30 +1011,42 @@ sys.exit(0)' 2>/dev/null; then
         fi
         release_own_claim "$BEAD_ID"
     elif [ -f "$SPIRA_HOME/gate-run.sh" ]; then
-        local gate_st _cert_ahead _cert_tip _cert_ls_state _cert_ls_tip _cert_out _cert_rc
+        local gate_st _cert_ahead_subjects _cert_hasown _cert_tip _cert_ls_state _cert_ls_tip _cert_out _cert_rc
         gate_why="$(bash "$SPIRA_HOME/gate-run.sh" --status "$BRANCH" "$REPO_NAME" 2>/dev/null)"; gate_st=$?
         # A CLOSED, COMMITTED BRANCH MUST NOT DEPEND ON THE SESSION HAVING CALLED
         # queue.sh submit ITSELF (sp-u9f82). A branch ahead of the base is certified here,
         # by the harness, unless it is CERTIFIED already.
-        _cert_ahead="$(git -C "$REPO" rev-list --count "$BASE_FQREF..$BRANCH" 2>/dev/null)" || _cert_ahead=0
+        #
+        # "AHEAD" MEANS A COMMIT NAMING THIS BEAD, not merely a nonzero count. sp-vd-deep
+        # (test-aeon-verdict.sh) landed its own commit straight onto the base and was closed
+        # over a branch that still carried unrelated leftover commits from an earlier,
+        # abandoned attempt; those commits are ahead of the base but are nobody's fault this
+        # bead answers for, and gating or certifying them in its name is simply wrong.
+        _cert_ahead_subjects="$(git -C "$REPO" log --format='%s%n%b' "$BASE_FQREF..$BRANCH" 2>/dev/null)"
+        if grep -qF "$BEAD_ID" <<< "$_cert_ahead_subjects"; then _cert_hasown=1; else _cert_hasown=0; fi
         case "$gate_st" in
             2)  # CLOSED WITH THE GATE STILL RUNNING is not reopened: the work is committed,
                 # and the landing pass gates the branch again before it merges. Must not be silent.
                 bdq note "$BEAD_ID" "Closed by the session while its landing gate was still running — $gate_why. The close carries no gate verdict; the landing pass gates this branch again and reopens the bead if it fails." >/dev/null 2>&1
                 log "$FAYTH: $BEAD_ID closed with its gate still running ($gate_why)" ;;
-            1)  # A FAIL IS ALREADY ON RECORD FOR THIS EXACT TREE — gate-run.sh's key covers
-                # both the branch tip and the base tip, so this verdict is about the tree as it
-                # stands, not a stale one. Reopen on it now rather than defer to the landing
-                # pass, which would only rediscover the same FAIL at the cost of a full gate
-                # re-run: gate.sh's verdict cache holds a PASS, never a FAIL.
-                bead_reopen "$BEAD_ID" cert-gate-red "Reopened by aeon.sh: closed against a recorded FAIL gate verdict for $BRANCH in $REPO_NAME.
+            1)  if [ "$_cert_hasown" != 1 ]; then
+                    log "$FAYTH: $BEAD_ID closed against a recorded FAIL gate verdict, but $BRANCH carries no commit of $BEAD_ID's own ahead of base — not this bead's fault, not reopening"
+                else
+                    # A FAIL IS ALREADY ON RECORD FOR THIS EXACT TREE — gate-run.sh's key
+                    # covers both the branch tip and the base tip, so this verdict is about
+                    # the tree as it stands, not a stale one. Reopen on it now rather than
+                    # defer to the landing pass, which would only rediscover the same FAIL at
+                    # the cost of a full gate re-run: gate.sh's verdict cache holds a PASS,
+                    # never a FAIL.
+                    bead_reopen "$BEAD_ID" cert-gate-red "Reopened by aeon.sh: closed against a recorded FAIL gate verdict for $BRANCH in $REPO_NAME.
 
 $gate_why"
-                st=open
-                log "$FAYTH: $BEAD_ID REOPENED — closed against a recorded FAIL gate verdict" ;;
-            3)  if [ "${_cert_ahead:-0}" -le 0 ] 2>/dev/null; then
-                    bdq note "$BEAD_ID" "Closed without ever obtaining a gate verdict — no gate ran or finished for this branch. $BRANCH carries no commit ahead of $REPO_NAME's base, so there is nothing to certify." >/dev/null 2>&1
-                    log "$FAYTH: $BEAD_ID closed with no gate verdict (none ran) — $BRANCH has no commits ahead of base, nothing to certify"
+                    st=open
+                    log "$FAYTH: $BEAD_ID REOPENED — closed against a recorded FAIL gate verdict"
+                fi ;;
+            3)  if [ "$_cert_hasown" != 1 ]; then
+                    bdq note "$BEAD_ID" "Closed without ever obtaining a gate verdict — no gate ran or finished for this branch. $BRANCH carries no commit of $BEAD_ID's own ahead of $REPO_NAME's base, so there is nothing to certify." >/dev/null 2>&1
+                    log "$FAYTH: $BEAD_ID closed with no gate verdict (none ran) — $BRANCH has no commit naming $BEAD_ID ahead of base, nothing to certify"
                 else
                     _cert_tip="$(git -C "$REPO" rev-parse "$BRANCH" 2>/dev/null)"
                     _cert_ls_state=""; _cert_ls_tip=""
