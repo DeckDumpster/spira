@@ -327,7 +327,7 @@ _bead_title="acceptance-run: trivial land proof for $tag"
 _bead_out=""
 _bead_out="$(bd -C "$bd_db" create \
     --title "$_bead_title" \
-    --description "Acceptance test: commit an empty file named acceptance-probe.txt to prove end-to-end landing works. Content: the tag under test is $tag." \
+    --description "Acceptance test: commit a file named acceptance-probe-<bead-id>.txt to prove end-to-end landing works. Content: the tag under test is $tag." \
     --label "acceptance,${_a_plan_label},${_a_scope_label},repo:$(basename "$scratch_repo")" \
     --type task \
     2>&1)" || true

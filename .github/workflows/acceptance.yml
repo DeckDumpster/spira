@@ -13,7 +13,7 @@
 #     tested upgrade.
 #
 # THE STUB AGENT. acceptance-agent.sh replaces claude so no model credential is
-# needed. It commits acceptance-probe.txt and closes the bead — proving the full
+# needed. It commits acceptance-probe-<bead-id>.txt and closes the bead — proving the full
 # sentinel → summon → claim → branch → commit → land path deterministically.
 #
 # TARBALL INSTALL. Phase A downloads the candidate tarball from the draft GitHub
