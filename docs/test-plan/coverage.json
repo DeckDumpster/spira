@@ -20,7 +20,13 @@
           "id": "UC-aeon-execution-03",
           "tier": "T1",
           "statement": "a bead poisoned right after claim is released before workspace setup, ledger `poison-raced`",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-aeon-disposition.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-aeon-execution-04",
@@ -50,13 +56,30 @@
           "id": "UC-aeon-execution-08",
           "tier": "T1",
           "statement": "the lease renews on trace growth and lapses on silence past `FAYTH_LEASE_SECONDS`, killing `-$$`",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-aeon-lease.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-aeon-execution-09",
           "tier": "T1",
           "statement": "the thrash wall trips only when the fuse and the session age both clear the wall",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-aeon-lease.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-thrash.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-aeon-execution-10",
@@ -68,7 +91,18 @@
           "id": "UC-aeon-execution-11",
           "tier": "T1",
           "statement": "open-bead teardown disposition runs its 13 branches in precedence order and charges only `unlanded`-family outcomes",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-aeon-disposition.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-thrash-teardown.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-aeon-execution-12",
@@ -80,7 +114,12 @@
           "id": "UC-aeon-execution-13",
           "tier": "T1",
           "statement": "the close verdict (commit-naming keeps closed; no commit reopens) is decided identically by aeon and sentinel",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-aeon-verdict.sh",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-aeon-execution-14",
@@ -276,7 +315,7 @@
         {
           "id": "UC-dispatch-11",
           "tier": "T1",
-          "statement": "`fayth_free` arithmetic: elastic pool remainder, non-elastic cap-minus-running, governor clamp",
+          "statement": "`fayth_free` arithmetic: elastic pool remainder, non-elastic cap-minus-running",
           "covering_suites": [
             {
               "path": "spira/test-summon-fayth.sh",
@@ -449,13 +488,25 @@
           "id": "UC-gate-verdict-05",
           "tier": "T2",
           "statement": "Universal layer: a changed `*.sh` that fails `bash -n` gives FAIL `syntax`. So does beads data anywhere in the branch tree (`beads-data`). A branch that vendors a foreign harness copy gives FAIL `foreign-harness`. If `exclude.sh` or `skew.sh` is missing, or skew exits 3, the result is NO_VERDICT (`missing-exclude`, `missing-skew`, `skew-init-fault`).",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-universal.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-gate-verdict-06",
           "tier": "T2",
           "statement": "A repo whose map row has an empty gate column passes with `reason=syntax-only`, and the VERDICT line is still printed.",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-preflight.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-gate-verdict-07",
@@ -487,7 +538,7 @@
           "statement": "Suites in `SPIRA_GATE_EJECTED_SUITES` (CSV) are always added. A suite that is both covered and ejected appears once. An ejected suite that no longer exists is skipped. (sp-px6ng)",
           "covering_suites": [
             {
-              "path": "spira/test-reopen-queue-eject.sh",
+              "path": "spira/test-gate-touched.sh",
               "tier": "T1",
               "over_budget": false
             }
@@ -497,7 +548,13 @@
           "id": "UC-gate-verdict-10",
           "tier": "T2",
           "statement": "The gate command receives the env contract: `SPIRA_GATE_BRANCH`, `_BASE`, `_SELECT_HEAD` (= the branch on *both* trials), `_FILES`, `_HOST_CORES` (= `host_cores()`, not `nproc`), `_EJECTED_SUITES`, `_SUITES`.",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-base-evidence.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-gate-verdict-11",
@@ -527,13 +584,25 @@
           "id": "UC-gate-verdict-13",
           "tier": "T2",
           "statement": "A branch trial killed at `SPIRA_GATE_TIMEOUT` gives NO_VERDICT `timeout`, naming the budget and the command, and is not cached. A branch trial exiting 75 gives NO_VERDICT `harness-fault`. (sp-p4rl)",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-verdict.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-gate-verdict-14",
           "tier": "T2",
           "statement": "A red verdict carries the command's full early diagnostics, not a `tail -20` window. A passing gate does not print them.",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-base-evidence.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-gate-verdict-15",
@@ -658,7 +727,13 @@
           "id": "UC-gate-verdict-25",
           "tier": "T2",
           "statement": "Metering. Every verdict reached after the lock writes one `gate.log` row (rc, waited, ran). Preflight refusals write none. The EXIT trap is disarmed so a verdict is never metered twice, and a `set -e` death or signal is still metered once.",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-gate-metering.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
         }
       ]
     },
@@ -1134,43 +1209,105 @@
           "id": "UC-operator-channel-39",
           "tier": "T1",
           "statement": "A fayth with FAYTH_SUMMON=operator never enters the task pool or the lanes. The shipped concierge is operator-only and the builder stays summonable.",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-concierge-roster.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-operator-channel-40",
           "tier": "T1",
           "statement": "Concierge resume: the resume id is used only when the recorded cwd matches the brain dir. The SessionStart hook records the session only when SPIRA_CONCIERGE=1…",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-concierge-acceptance.sh",
+              "tier": "T4",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-concierge-roster.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-concierge.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-operator-channel-41",
           "tier": "T1",
           "statement": "The composed brief has no surviving {{, names an executable mail.sh and bead.sh (the harness one when SPIRA_WIKI is unset), and carries the statutes. A missing…",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-concierge.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-operator-channel-42",
           "tier": "T1",
           "statement": "render_memories renders SPIRA_STATUTE_CORE in full and every other statute as exactly one slug line. An over-budget core statute falls back to a slug. The…",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-render-memories.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-operator-channel-43",
           "tier": "T2",
           "statement": "rule.sh enact prints \"Statute is live\" only when the synth hook succeeds. A failing, missing or non-executable hook is non-zero and prints \"NOT regenerated\".…",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-law-synth.sh",
+              "tier": "T2",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-statute-projection.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-operator-channel-44",
           "tier": "T1",
           "statement": "SOP validation (write and lint): SYMPTOM/CHECK/FIX present, MATCH is a valid ERE, 250-word cap, no operator-specific /home path, METRIC well-formed. Each rule…",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-sop-gate-wired.sh",
+              "tier": "T0",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-sop.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-operator-channel-45",
           "tier": "T2",
           "statement": "The SOP ledger: applied appends one complete JSON record at the configured path, append-only in epoch order, and refuses bad arguments while writing nothing. A…",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-sop.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
         }
       ]
     },
@@ -1324,11 +1461,6 @@
               "path": "spira/test-suites-classify.sh",
               "tier": "T1",
               "over_budget": false
-            },
-            {
-              "path": "spira/test-suites-timeout.sh",
-              "tier": "T2",
-              "over_budget": false
             }
           ]
         },
@@ -1371,11 +1503,6 @@
               "path": "spira/test-suites-classify.sh",
               "tier": "T1",
               "over_budget": false
-            },
-            {
-              "path": "spira/test-suites-timeout.sh",
-              "tier": "T2",
-              "over_budget": false
             }
           ]
         },
@@ -1383,13 +1510,7 @@
           "id": "UC-test-infrastructure-30",
           "tier": "T2",
           "statement": "The per-suite watchdog kills a hung suite at its limit (process group). The runner continues. A leaky background child holding stdout does not wedge the pass and marks its suite red.",
-          "covering_suites": [
-            {
-              "path": "spira/test-suites-timeout.sh",
-              "tier": "T2",
-              "over_budget": false
-            }
-          ]
+          "covering_suites": []
         },
         {
           "id": "UC-test-infrastructure-31",
