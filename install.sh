@@ -514,9 +514,9 @@ else
             fi
             _dolt_dbname="$(basename "$SPIRA_DB")"
             _dolt_bg_pid=""
+            command -v dolt >/dev/null 2>&1 \
+                || _phase_fail "database" "dolt is not on PATH — required to init the database"
             if ! (echo -n "" >/dev/tcp/127.0.0.1/"$_dolt_port") 2>/dev/null; then
-                command -v dolt >/dev/null 2>&1 \
-                    || _phase_fail "database" "dolt is not on PATH — required to start the server for bd init"
                 phase_info "starting dolt server on port $_dolt_port for database init"
                 dolt sql-server --config "$_dolt_yaml" </dev/null >/dev/null 2>&1 &
                 _dolt_bg_pid=$!
@@ -531,13 +531,48 @@ else
                     _phase_fail "database" "dolt server did not start on port $_dolt_port within 30s"
                 fi
             fi
-            ( cd "$SPIRA_DB" && BD_NON_INTERACTIVE=1 \
-                "$SPIRA_BD" init --non-interactive --prefix sp \
-                --skip-agents --skip-hooks \
-                --server --server-host 127.0.0.1 --server-port "$_dolt_port" \
-                --database "$_dolt_dbname" --external -q ) \
-                || { [ -n "$_dolt_bg_pid" ] && kill "$_dolt_bg_pid" 2>/dev/null || true
-                     _phase_fail "database" "bd init (server mode) failed"; }
+
+            # The port accepts TCP before dolt can serve queries; a bd init issued in
+            # that gap fails with "invalid connection". Wait for a real query to answer.
+            _dolt_ready=0
+            _dolt_ready_wait=0
+            _dolt_ready_max="${SPIRA_INSTALL_DOLT_READY_WAIT:-30}"
+            while [ "$_dolt_ready_wait" -lt "$_dolt_ready_max" ]; do
+                timeout 3 dolt --host 127.0.0.1 --port "$_dolt_port" --no-tls \
+                    --user root --password "" sql -q "select 1" \
+                    </dev/null >/dev/null 2>&1 \
+                    && { _dolt_ready=1; break; }
+                sleep 1
+                _dolt_ready_wait=$((_dolt_ready_wait + 1))
+            done
+            if [ "$_dolt_ready" = 0 ]; then
+                [ -n "$_dolt_bg_pid" ] && kill "$_dolt_bg_pid" 2>/dev/null || true
+                _phase_fail "database" \
+                    "dolt server on port $_dolt_port did not answer queries within ${_dolt_ready_max}s"
+            fi
+            unset _dolt_ready _dolt_ready_wait _dolt_ready_max
+
+            _bd_init_try=0
+            while :; do
+                _bd_init_try=$((_bd_init_try + 1))
+                _bd_init_out="$( (cd "$SPIRA_DB" && BD_NON_INTERACTIVE=1 \
+                    "$SPIRA_BD" init --non-interactive --prefix sp \
+                    --skip-agents --skip-hooks \
+                    --server --server-host 127.0.0.1 --server-port "$_dolt_port" \
+                    --database "$_dolt_dbname" --external -q) 2>&1 )"
+                _bd_init_rc=$?
+                [ "$_bd_init_rc" = 0 ] && break
+                if [ "$_bd_init_try" -lt 2 ] \
+                        && printf '%s' "$_bd_init_out" | grep -q "invalid connection"; then
+                    phase_info "  bd init hit an invalid connection — removing the partial database and retrying"
+                    rm -rf "$SPIRA_DB/.beads"
+                    continue
+                fi
+                printf '%s\n' "$_bd_init_out" | sed 's/^/  /' >&2
+                [ -n "$_dolt_bg_pid" ] && kill "$_dolt_bg_pid" 2>/dev/null || true
+                _phase_fail "database" "bd init (server mode) failed"
+            done
+            unset _bd_init_try _bd_init_out _bd_init_rc
             git -C "$SPIRA_DB" config beads.role maintainer 2>/dev/null || true
             unset _dolt_yaml _dolt_dbname _dolt_wait
         else
