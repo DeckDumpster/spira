@@ -717,12 +717,11 @@ _c5_resolve_max="${SPIRA_CHECK5_MAX_RESOLVE:-5}"
 _c5_resolve() {
     local _id="$1" _evidence="$2" _hash _inc_id
     _hash="$(printf '%s' "closed-not-landed:$_id" | sha256sum | cut -c1-8)"
-    _inc_id="$(bdjson list --status open,in_progress --limit 0 --label "ref:$_hash" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-d = d if isinstance(d, list) else [d]
-print(d[0]["id"] if d else "")' 2>/dev/null)"
+    # ONE LOOKUP PER PASS, NOT PER BEAD. This used to run a `bd list` for every closed bead
+    # the commit graph proved landed — ~745 of them at ~1s each — which alone pushed the
+    # sentinel past its 15-minute TimeoutStartSec (2026-09-26 21:18-21:30Z: 735s after one
+    # filing line). _c5_incidents is filled once, below, before the loop.
+    _inc_id="${_c5_incidents[$_hash]:-}"
     [ -n "${_inc_id:-}" ] || return 0
     if [ "$_c5_resolved" -ge "$_c5_resolve_max" ] 2>/dev/null; then
         _c5_resolve_capped=$((_c5_resolve_capped + 1))
@@ -734,6 +733,18 @@ print(d[0]["id"] if d else "")' 2>/dev/null)"
         log "CHECK5 resolve $_id -> $_inc_id: $_evidence"
     fi
 }
+# The open closed-not-landed incidents, keyed by the ref hash incident.sh labels them with,
+# read ONCE per pass for _c5_resolve.
+declare -A _c5_incidents=()
+while read -r _c5_h _c5_i; do
+    [ -n "$_c5_h" ] && _c5_incidents["$_c5_h"]="$_c5_i"
+done < <(bdjson list --status open,in_progress --limit 0 --label "${SPIRA_INCIDENT_LABEL:-incident}" 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+for b in (d if isinstance(d, list) else [d]):
+    for l in b.get("labels") or []:
+        if l.startswith("ref:"): print(l[4:], b["id"])' 2>/dev/null)
 while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed; do
     [ -n "$id" ] || continue
     # Only beads an aeon worked — anything closed by hand outside the pipeline has its own
