@@ -268,17 +268,20 @@ is "workaround: SP_UNFILED_FOLLOW=0" "0" \
 
 # ==========================================================================================
 echo
-echo "NEGATIVE CONTROL — INVALID-CLOSED: a quoted MENTION of a statute phrase is not an admission:"
+echo "POSITIVE CONTROL — INVALID-CLOSED: a quoted MENTION of a statute phrase still surfaces:"
 # ==========================================================================================
-# The same phrase inside a parenthetical is a mention; only a bare admission triggers the flag.
-# Positive control: the bare admission case at line 230 above already fires.
+# Whether a hit is an admission or a quotation is a judgment call, and it must not be
+# answered by widening the detector's own pattern (law-a-pattern-match-is-not-an-identity-
+# check) — the detector surfaces every raw occurrence and Maechen decides, allowlisting the
+# quotations (test-maechen-closed-record.sh covers that decision end to end).
 testdb_reset
 testdb_seed <<JSONL
 {"id":"sp-ll-ment","title":"mentioned phrase bead","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"],"close_reason":"pair added — bad-reason (\"TEMPORARY WORKAROUND\") is reopened; clean reason stays closed"}
 JSONL
 out="$(run_ll)"
-nowant "mention: no INVALID-CLOSED row" "INVALID-CLOSED" "$out"
-is "mention: SP_INVALID_CLOSED=0" "0" \
+want "mention: INVALID-CLOSED row surfaces" "INVALID-CLOSED" "$out"
+want "mention: bead id in row" "sp-ll-ment" "$out"
+is "mention: SP_INVALID_CLOSED=1" "1" \
    "$(printf '%s\n' "$out" | sed -n 's/^SP_INVALID_CLOSED=//p' | head -1)"
 
 # ==========================================================================================
