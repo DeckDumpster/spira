@@ -311,4 +311,76 @@ out="$(sentinel ghost-persona)"
 want "the pass logs that no partition is being checked" \
     "no persona in the chamber declares a partition" "$out"
 
+# ======================================================================================
+echo
+echo "LANDED PROVEN BY THE COMMIT GRAPH — no landstate file, but the base names the bead:"
+# ======================================================================================
+# THE PRODUCTION FLOOD. The landing pass prunes landstate records after a landing, so every
+# historical closed work bead has NO file at all; reading absence as "not landed" filed 138
+# incidents in 30 minutes and pushed the pass past its TimeoutStartSec. The base's history
+# is the other proof, by the same two subject shapes landed() trusts (lib.sh): the queue's
+# own "spira: land <id>" merge subject, or an aeon's "<id>: ..." commit.
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-qland","title":"queue-landed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-qland","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-cland","title":"colon-landed","status":"closed","issue_type":"bug","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-cland","depends_on_id":"sp-goal","type":"parent-child"}]}
+JSONL
+touch "$RUN/sp-qland.log" "$RUN/sp-cland.log"
+rm -f "$RUN/landstate/sp-qland" "$RUN/landstate/sp-cland"
+git -C "$REPO" commit -q --allow-empty -m "spira: land sp-qland"
+git -C "$REPO" commit -q --allow-empty -m "sp-cland: the fix"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+: > "$INC_LOG"
+
+out="$(sentinel)"
+inc_out="$(cat "$INC_LOG")"
+nowant "(a) a 'spira: land <id>' subject on the base files no incident" "sp-qland" "$inc_out"
+nowant "(b) an '<id>: ...' subject on the base files no incident"       "sp-cland" "$inc_out"
+is "(a) sp-qland stays closed" closed "$(status_of sp-qland)"
+is "(b) sp-cland stays closed" closed "$(status_of sp-cland)"
+
+# ======================================================================================
+echo
+echo "GENUINELY UNLANDED — a mention or a longer id sharing the prefix is not a landing:"
+# ======================================================================================
+# The base carries commits that MENTION sp-unl and one for sp-unl.1 (a sibling whose id
+# begins with it), but none is a landing record for sp-unl itself, so it is still reported.
+testdb_reset
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-unl","title":"unlanded","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-unl","depends_on_id":"sp-goal","type":"parent-child"}]}
+JSONL
+touch "$RUN/sp-unl.log"
+rm -f "$RUN/landstate/sp-unl"
+git -C "$REPO" commit -q --allow-empty -m "follow-up for sp-unl: notes only"
+git -C "$REPO" commit -q --allow-empty -m "sp-unl.1: a sibling's work"
+git -C "$REPO" commit -q --allow-empty -m "spira: land sp-unl.1"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+: > "$INC_LOG"
+
+out="$(sentinel)"
+inc_out="$(cat "$INC_LOG")"
+want "(c) a genuinely unlanded closed bead still files an incident" "REF=closed-not-landed:sp-unl " "$inc_out"
+
+# ======================================================================================
+echo
+echo "A FLOOD IS IMPOSSIBLE — N+1 unlanded beads file exactly N, and the skip is logged:"
+# ======================================================================================
+testdb_reset
+{
+    printf '{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}\n'
+    for n in 1 2 3; do
+        printf '{"id":"sp-fl%s","title":"flood","status":"closed","issue_type":"task","labels":["spira","plan","repo:%s"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-fl%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' "$n" "$HOME_REPO" "$n"
+        touch "$RUN/sp-fl$n.log"; rm -f "$RUN/landstate/sp-fl$n"
+    done
+} | testdb_seed
+: > "$INC_LOG"
+
+out="$(SPIRA_CHECK5_MAX_FILE=2 sentinel)"
+is   "(d) exactly SPIRA_CHECK5_MAX_FILE incidents are filed" 2 "$(grep -c 'REF=closed-not-landed:' "$INC_LOG")"
+want "(d) the pass logs how many the cap skipped" "1 more not filed" "$out"
+
 tl_summary

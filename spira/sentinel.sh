@@ -675,12 +675,30 @@ for i in (d if isinstance(d, list) else [d]):
 # (bead_is_work_type call site); this invariant must agree, or it files a false Ops
 # incident against every one of them, forever, since none will ever get a LANDED record.
 #
+# LANDED IS ALSO PROVEN BY THE COMMIT GRAPH. The landing pass prunes landstate records after
+# a landing, so a bead that landed rounds ago has no file at all; reading that absence as "not
+# landed" filed 138 incidents in 30 minutes on the day this invariant went live and pushed
+# the pass past its TimeoutStartSec. The base's own history is the other proof, by the same
+# two subject shapes landed() (lib.sh) trusts: the queue's merge subject, exactly
+# "spira: land <id>", or an aeon's own "<id>: ..." commit — never a mention elsewhere in a
+# subject, and never a longer id that merely starts with this one. The subject list is read
+# ONCE per repository per pass into a set (_c5_landed), so each bead costs a lookup, not a
+# git walk.
+#
+# A FLOOD IS IMPOSSIBLE. At most SPIRA_CHECK5_MAX_FILE incidents are filed per pass (each
+# costs an incident.sh run); the rest are counted and named in one log line, and the next
+# pass files the next batch. Filing is the rare path and must stay bounded however wrong the
+# evidence above turns out to be.
+#
 # Skipped when SPIRA_SKIP_CLOSED_CHECK=1, same reason as before: a fixture that seeds all
 # beads directly has none of them in $SPIRA_RUN/<id>.log, so every row is skipped anyway —
 # but the query cost per partition is not worth paying to prove that.
 # ======================================================================================
 if [ "${SPIRA_SKIP_CLOSED_CHECK:-0}" != 1 ]; then
 _c5_absent_repos=""
+declare -A _c5_landed=()
+_c5_filed=0; _c5_capped=0; _c5_capped_ids=""; _c5_graph=0
+_c5_max="${SPIRA_CHECK5_MAX_FILE:-5}"
 while IFS=$'\x1f' read -r id r_name superseded dropped delivers; do
     [ -n "$id" ] || continue
     # Only beads an aeon worked — anything closed by hand outside the pipeline has its own
@@ -700,11 +718,25 @@ while IFS=$'\x1f' read -r id r_name superseded dropped delivers; do
         subj_repo="$r_path"
         subj_refs="$(spira_landrefs "$r_path")" || subj_refs=""
         subj_base="${subj_refs%% *}"
+        # ONE WALK PER REPOSITORY, into a set of the ids the base's subjects prove landed.
+        # Rows arrive sorted by repository, so this runs once per repository per pass.
+        _c5_landed=()
+        if [ -n "${subj_base:-}" ]; then
+            while IFS= read -r _c5_lid; do
+                [ -n "$_c5_lid" ] && _c5_landed["$_c5_lid"]=1
+            done < <(git -C "$r_path" log --format=%s "$subj_base" 2>/dev/null | awk '
+                substr($0, 1, 12) == "spira: land " { r = substr($0, 13); if (r != "" && r !~ / /) print r; next }
+                match($0, /^[^: ]+:/) { print substr($0, 1, RLENGTH - 1) }')
+        fi
     fi
     # CANNOT TELL IS NOT "NOT LANDED". A repository whose base cannot be resolved is left
     # unjudged rather than read as unlanded, which would report every closed bead in it.
     if [ -z "${subj_base:-}" ]; then
         log "CHECK5 $id: cannot resolve the ref $r_name lands on — not judging whether it landed"
+        continue
+    fi
+    if [ -n "${_c5_landed[$id]:-}" ]; then
+        _c5_graph=$((_c5_graph + 1))
         continue
     fi
     _c5_ls_state=""; _c5_ls_tip=""
@@ -715,6 +747,11 @@ while IFS=$'\x1f' read -r id r_name superseded dropped delivers; do
            && git -C "$r_path" merge-base --is-ancestor "$_c5_ls_tip" "$subj_base" 2>/dev/null; then
         continue
     fi
+    if [ "$_c5_filed" -ge "$_c5_max" ] 2>/dev/null; then
+        _c5_capped=$((_c5_capped + 1)); _c5_capped_ids+="${_c5_capped_ids:+ }$id"
+        continue
+    fi
+    _c5_filed=$((_c5_filed + 1))
     log "CHECK5 $id: closed with no LANDED record on $r_name ($subj_base) — filing an Ops incident"
     SPIRA_DB="$SPIRA_DB" \
     SPIRA_INCIDENT_TYPE=bug \
@@ -755,6 +792,11 @@ for i in (d if isinstance(d, list) else [d]):
     sort -u -t$'\x1f' -k2,2 -k1,1
 )
 [ -n "$PARTITIONS" ] || log "CHECK5 no persona in the chamber declares a partition — no closed bead is being checked for landing"
+[ "$_c5_graph" -gt 0 ] && log "CHECK5: $_c5_graph closed bead(s) with no LANDED record proven landed by the base's commit graph"
+if [ "$_c5_capped" -gt 0 ]; then
+    log "CHECK5: filed $_c5_filed incident(s), the cap (SPIRA_CHECK5_MAX_FILE=$_c5_max); $_c5_capped more not filed this pass: $_c5_capped_ids"
+fi
+unset _c5_landed _c5_filed _c5_capped _c5_capped_ids _c5_graph _c5_max _c5_lid
 fi  # SPIRA_SKIP_CLOSED_CHECK
 
 # ======================================================================================
