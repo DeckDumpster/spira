@@ -17,7 +17,7 @@
 # and not for the second. Without the second case the assertion could fire unconditionally
 # and the suite would still pass.
 #
-# NO DATABASE, and the fixture git state is minimal: a base branch with a commit already on
+# The fixture git state is minimal: a base branch with a commit already on
 # it, and a spira/* branch that ancestry says is already contained. content_landed can
 # answer YES to a branch that is an ancestor of the base — the simplest shape — so no
 # merge-tree machinery needs to be tested here. The assertion is in sending.sh; this suite
