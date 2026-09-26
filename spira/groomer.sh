@@ -8,6 +8,7 @@
 #   groomer.sh close          <id> --evidence <text>                         close a bead whose premise is gone
 #   groomer.sh correct-lane   <id> --lane <lane>                             correct a mislabelled lane label
 #   groomer.sh depends-on-fix <bug-id> --fix <id> --evidence <text>         link bug to in-flight fix, order accordingly
+#   groomer.sh unpoison       <id> --cause <c> --evidence <text>            credit a harness-caused attempt, lift spira-poison
 #   groomer.sh unwanted       ...                                            REFUSED — exits 2 always
 #
 # WHAT IT DOES NOT DO:
@@ -57,6 +58,15 @@ case "$cmd" in
     #   ci-stuck               → strip awaiting-ci (repo is not pr-mode; no run will ever clear it)
     #   unmapped-repo, litter  → close (no description, no notes — predicate is fully computable)
     # unclaimable → REPORT only; partition repair is a judgment.
+    #
+    # Then runs the whole-graph STATE scan (sp-0qp7s) — no partition filter, unlike the
+    # LIVELOCK worklist above, which is why it is a second pass rather than folded into the
+    # same loop:
+    #   landed-but-open        → close it; the base already carries the work (fully computable)
+    #   closed-no-branch       → label spira-dropped; nothing was ever committed
+    #   closed-never-landed    → reopen for rebase (conflict) or reopen batch-ready (clean);
+    #                            either way the bead was claimed done and is not
+    #   blocked-by-unlanded    → note only; the blocker's own reopen above is the remedy
     _sw_dry=0
     while [ $# -gt 0 ]; do
       case "$1" in
@@ -76,13 +86,12 @@ case "$cmd" in
         [ -d "${SPIRA_RUN:-}" ] && printf '%s\n' "$_msg" >> "$SPIRA_RUN/groom.log" 2>/dev/null || true
     }
 
+    _sw_n=0
     _sw_ll="$(detect_livelocked 2>/dev/null)"
     if [ -z "$_sw_ll" ]; then
         _sw_log "no livelocked beads"
-        exit 0
     fi
 
-    _sw_n=0
     while IFS= read -r _sw_line; do
         [ -n "$_sw_line" ] || continue
         case "$_sw_line" in
@@ -150,6 +159,93 @@ except Exception: print("")
                 ;;
         esac
     done <<< "$_sw_ll"
+
+    # ---- whole-graph STATE scan (sp-0qp7s): landed-but-open, closed-never-landed, false blockers ----
+    _sw_reopened=""
+    _sw_lbo="$(detect_landed_but_open 2>/dev/null)"
+    if [ -n "$_sw_lbo" ]; then
+        while IFS= read -r _sw_line; do
+            [ -n "$_sw_line" ] || continue
+            case "$_sw_line" in
+                STATE\ *\ landed-but-open\ *)
+                    _sw_rest="${_sw_line#STATE }"
+                    _sw_bid="${_sw_rest%% *}"
+                    _sw_reason="${_sw_rest#* landed-but-open — }"
+                    _sw_log "CLOSED $_sw_bid — landed-but-open: $_sw_reason"
+                    if [ "$_sw_dry" -eq 0 ]; then
+                        "$BD_CMD" -C "$DB" close "$_sw_bid" --reason-file - <<< \
+                            "landed-but-open: $_sw_reason"
+                    fi
+                    _sw_n=$((_sw_n+1))
+                    ;;
+            esac
+        done <<< "$_sw_lbo"
+    fi
+
+    _sw_cul="$(detect_closed_unlanded_states 2>/dev/null)"
+    if [ -n "$_sw_cul" ]; then
+        while IFS= read -r _sw_line; do
+            [ -n "$_sw_line" ] || continue
+            case "$_sw_line" in
+                STATE\ *\ closed-no-branch\ *)
+                    _sw_rest="${_sw_line#STATE }"
+                    _sw_bid="${_sw_rest%% *}"
+                    _sw_reason="${_sw_rest#* closed-no-branch — }"
+                    _sw_log "DROPPED $_sw_bid — closed-no-branch: $_sw_reason"
+                    if [ "$_sw_dry" -eq 0 ]; then
+                        "$BD_CMD" -C "$DB" label add "$_sw_bid" spira-dropped >/dev/null 2>&1
+                        "$BD_CMD" -C "$DB" note "$_sw_bid" "Labeled spira-dropped by groomer.sh sweep: closed-no-branch — $_sw_reason" >/dev/null 2>&1
+                    fi
+                    _sw_n=$((_sw_n+1))
+                    ;;
+                STATE\ *\ closed-never-landed\ conflict\ *)
+                    _sw_rest="${_sw_line#STATE }"
+                    _sw_bid="${_sw_rest%% *}"
+                    _sw_reason="${_sw_rest#*closed-never-landed conflict }"
+                    _sw_log "REOPENED $_sw_bid — closed-never-landed, needs a rebase: $_sw_reason"
+                    if [ "$_sw_dry" -eq 0 ]; then
+                        bead_reopen "$_sw_bid" closed-never-landed-conflict \
+                            "Reopened by groomer.sh sweep: closed but its branch does not merge cleanly into the base — $_sw_reason. Needs a rebase before it can land."
+                    fi
+                    _sw_reopened="$_sw_reopened $_sw_bid"
+                    _sw_n=$((_sw_n+1))
+                    ;;
+                STATE\ *\ closed-never-landed\ batch-ready\ *)
+                    _sw_rest="${_sw_line#STATE }"
+                    _sw_bid="${_sw_rest%% *}"
+                    _sw_reason="${_sw_rest#*closed-never-landed batch-ready }"
+                    _sw_log "REOPENED $_sw_bid — closed-never-landed, batch-ready: $_sw_reason"
+                    if [ "$_sw_dry" -eq 0 ]; then
+                        bead_reopen "$_sw_bid" closed-never-landed-batch-ready \
+                            "Reopened by groomer.sh sweep: closed but never landed — $_sw_reason. The branch merges cleanly; it is ready to requeue as-is."
+                    fi
+                    _sw_reopened="$_sw_reopened $_sw_bid"
+                    _sw_n=$((_sw_n+1))
+                    ;;
+            esac
+        done <<< "$_sw_cul"
+    fi
+
+    if [ -n "$(printf '%s' "$_sw_reopened" | tr -d '[:space:]')" ]; then
+        _sw_fb="$(detect_false_blockers "$_sw_reopened" 2>/dev/null)"
+        if [ -n "$_sw_fb" ]; then
+            while IFS= read -r _sw_line; do
+                [ -n "$_sw_line" ] || continue
+                case "$_sw_line" in
+                    STATE\ *\ blocked-by-unlanded\ *)
+                        _sw_rest="${_sw_line#STATE }"
+                        _sw_bid="${_sw_rest%% *}"
+                        _sw_reason="${_sw_rest#* blocked-by-unlanded }"
+                        _sw_log "NOTED $_sw_bid — false blocker: $_sw_reason"
+                        if [ "$_sw_dry" -eq 0 ]; then
+                            "$BD_CMD" -C "$DB" note "$_sw_bid" "groomer.sh sweep: this bead was blocked-by-unlanded — $_sw_reason. The blocker was reopened this pass; this bead should become ready once it lands." >/dev/null 2>&1
+                        fi
+                        _sw_n=$((_sw_n+1))
+                        ;;
+                esac
+            done <<< "$_sw_fb"
+        fi
+    fi
 
     _sw_log "sweep complete; acted on $_sw_n bead(s)"
     ;;
@@ -311,6 +407,67 @@ except Exception: pass
 
     # Record the evidence on the bug.
     "$BD_CMD" -C "$DB" note "$bug_id" "Parked behind fix $fix_id: $evidence"
+    ;;
+
+  unpoison)
+    # groomer.sh unpoison <id> --cause <c> --evidence <text>
+    #
+    # Lifts spira-poison when the charge was the HARNESS's fault, not the work's: a
+    # pre-session death, a branch collision, yield-headless (the session backgrounded a test
+    # batch and ended its turn), a gate that was still running when the release fired, or a
+    # precondition that is now satisfied. --cause and --evidence are both REQUIRED — a lift
+    # without evidence is indistinguishable from an ungrounded amnesty, which is exactly what
+    # attempts.sh clear already provides for the operator's own judgement; this tool exists
+    # so the groomer's judgement leaves the same kind of trace.
+    #
+    # Credits the charge as `requeued`/`unjudged-<cause>` — the same vocabulary
+    # session_outcome (lib.sh) already writes when a live charge turns out not to be the
+    # work's fault — so a census reading the events trail sees this lift in the one
+    # vocabulary it already knows, not a second one invented here. bump_poison_cleared then
+    # floors the attempt count itself (sp-qd2ul): the SQL that feeds the poison threshold
+    # discounts every event at or before it, so the charge does not carry forward.
+    id="${1:-}"; [ $# -gt 0 ] && shift
+    cause=""
+    evidence=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --cause)
+          [ $# -lt 2 ] && { printf 'groomer: --cause requires a value\n' >&2; exit 1; }
+          cause="$2"; shift 2 ;;
+        --evidence)
+          [ $# -lt 2 ] && { printf 'groomer: --evidence requires a value\n' >&2; exit 1; }
+          evidence="$2"; shift 2 ;;
+        *) printf 'groomer: unpoison: unknown option: %s\n' "$1" >&2; exit 1 ;;
+      esac
+    done
+    [ -z "$id" ] && { printf 'groomer: unpoison: bead id required\n' >&2; exit 1; }
+    if [ -z "$cause" ]; then
+        printf 'groomer: unpoison: --cause <c> is required (e.g. pre-session-death, branch-collision, yield-headless, gate-still-running, precondition-satisfied)\n' >&2
+        exit 1
+    fi
+    if [ -z "$evidence" ]; then
+        printf 'groomer: unpoison: --evidence <text> is required\n' >&2
+        printf 'groomer: a lift without evidence may be an ungrounded amnesty in disguise;\n' >&2
+        printf 'groomer: name the sessions and the harness fault this cause credits\n' >&2
+        exit 1
+    fi
+
+    # shellcheck source=lib.sh
+    . "$HERE/lib.sh"
+
+    _up_labels="$("$BD_CMD" -C "$DB" label list "$id" 2>/dev/null)" || _up_labels=""
+    if ! grep -q spira-poison <<< "$_up_labels"; then
+        printf 'groomer: unpoison: %s does not carry spira-poison — nothing to lift\n' "$id" >&2
+        exit 1
+    fi
+
+    bump_requeue "$id" "unjudged-$cause"
+    "$BD_CMD" -C "$DB" label remove "$id" spira-poison >/dev/null 2>&1 \
+        || { printf 'groomer: unpoison: could not remove spira-poison from %s\n' "$id" >&2; exit 1; }
+    bump_poison_cleared "$id" "$cause"
+    poison_asked_clear "$id"
+    "$BD_CMD" -C "$DB" note "$id" "Poison lifted by groomer.sh unpoison, cause: $cause. $evidence A requeued/unjudged-$cause event was recorded, crediting the charged attempt(s) to the harness rather than the work; a poison.cleared event floors the attempt count so this does not immediately re-poison. A genuinely new failure after this still poisons the bead again, at the count starting from zero." >/dev/null 2>&1
+    printf 'UNPOISONED %s cause=%s\n' "$id" "$cause"
     ;;
 
   unwanted)
