@@ -35,34 +35,18 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+. "$HERE/testlib/gate-fixture.sh"
 
 echo "test-yield.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-REPO="$TMP/repo"; RUN="$TMP/run"; MAP="$TMP/map"
-YDIR="$TMP/yield"; GATELOG="$TMP/gate.log"; VDIR="$TMP/verdicts"; HOMEDIR="$TMP/home"
-mkdir -p "$RUN/worktree" "$HOMEDIR"
+gate_fixture_init "$TMP"
+YDIR="$TMP/yield"
 
 # PINNED TO A NON-DEFAULT. The shipped window is a day; asserting against it would pass just
 # as well if the code had 86400 written in, which is the thing the key exists to stop.
 WINDOW=7200
 
-git init -q --bare -b main "$TMP/remote.git"
-git init -q -b main "$REPO"
-printf 'base\n' > "$REPO/marker"
-git -C "$REPO" add -A; git -C "$REPO" commit -q -m base
-git -C "$REPO" remote add origin "$TMP/remote.git"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
-
-branch() {               # branch <name> <file> — a branch off the base carrying one file
-    local br="$1" f="$2" w="$TMP/w.$1"
-    w="$TMP/w.$(printf '%s' "$br" | tr / _)"
-    git -C "$REPO" worktree add -q -b "$br" "$w" origin/main
-    printf 'x\n' > "$w/$f"
-    git -C "$w" add -A; git -C "$w" commit -q -m "$br work"
-    git -C "$REPO" worktree remove --force "$w"
-}
 amend() {                # amend <branch> <file-to-remove> — the fix an aeon would make
     local br="$1" f="$2" w
     w="$TMP/w.fix.$(printf '%s' "$br" | tr / _)"
@@ -85,19 +69,19 @@ ALWAYS='echo "gate: test-boxreader.sh FAILED (rc=1)" >&2; false'
 # record (law-gates-run-in-a-clean-environment).
 rungate() {              # rungate <branch> [VAR=VAL ...]
     local br="$1"; shift
-    env -i HOME="$HOMEDIR" PATH="$PATH" \
+    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
-        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" SPIRA_GATE_LOG="$GATELOG" \
+        SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
+        SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP" SPIRA_GATE_LOG="$GATELOG" \
         SPIRA_VERDICTS="$VDIR" SPIRA_YIELD="$YDIR" \
-        "$@" bash "$HERE/gate.sh" "$br" repo
+        "$@" bash "$SH/gate.sh" "$br" repo
 }
 yield() {                # yield <args...> -> yield.sh, reading the same record the gate wrote
-    env -i HOME="$HOMEDIR" PATH="$PATH" \
-        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$TMP/nonexistent-db" SPIRA_YIELD="$YDIR" SPIRA_GATE_LOG="$GATELOG" \
+    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+        SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
+        SPIRA_DB="$SPIRA_DB_NONE" SPIRA_YIELD="$YDIR" SPIRA_GATE_LOG="$GATELOG" \
         SPIRA_YIELD_WINDOW="$WINDOW" \
-        bash "$HERE/yield.sh" "$@"
+        bash "$SH/yield.sh" "$@"
 }
 f() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }
 
@@ -123,7 +107,7 @@ echo
 echo "a branch that is genuinely wrong — the gate was right to refuse it:"
 # ======================================================================================
 map_gate "$GUILTY"
-branch spira/sp-guilty guilty.txt
+gate_fixture_branch spira/sp-guilty guilty.txt x
 rungate spira/sp-guilty > "$TMP/guilty.out" 2>&1; rc=$?
 is "the gate blames the branch" 1 "$rc"
 want "the verdict line says FAIL" "VERDICT=FAIL" "$(cat "$TMP/guilty.out")"
@@ -166,7 +150,7 @@ echo
 echo "a red the branch did not cause — the same command fails on the base:"
 # ======================================================================================
 map_gate "$ALWAYS"
-branch spira/sp-innocent innocent.txt
+gate_fixture_branch spira/sp-innocent innocent.txt x
 rungate spira/sp-innocent > "$TMP/innocent.out" 2>&1; rc=$?
 is "the gate refuses it as BASE_FAIL, not FAIL" 76 "$rc"
 # AND THE VERDICT LINE CARRIES THE SUITE, because the landing pass keys an incident on it.
@@ -192,7 +176,7 @@ want "the worst offender is named by its suite" "test-boxreader.sh" "$(f "$R" YI
 # wrongly named suite is worse than an unnamed one, because the wrong suite is the one
 # somebody deletes.
 map_gate 'echo "everything is broken" >&2; false'
-branch spira/sp-anon anon.txt
+gate_fixture_branch spira/sp-anon anon.txt x
 rungate spira/sp-anon > "$TMP/anon.out" 2>&1
 want "a red naming no suite records no suite" "suite=-" "$(cat "$YDIR"/*sp-anon* 2>/dev/null)"
 want "and its verdict line says so too, rather than omitting the field" \
@@ -307,20 +291,20 @@ echo "the count has a positive control — a recorder that stopped is not a clea
 # they are seen to make the counts be withheld.
 CTL="$TMP/ctl"; mkdir -p "$CTL"
 ctl() {                  # ctl -> a report over an EMPTY record, against $GATELOG
-    env -i HOME="$HOMEDIR" PATH="$PATH" \
-        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$TMP/nonexistent-db" SPIRA_YIELD="$CTL" SPIRA_GATE_LOG="$GATELOG" \
-        SPIRA_YIELD_WINDOW="$WINDOW" bash "$HERE/yield.sh" report
+    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+        SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
+        SPIRA_DB="$SPIRA_DB_NONE" SPIRA_YIELD="$CTL" SPIRA_GATE_LOG="$GATELOG" \
+        SPIRA_YIELD_WINDOW="$WINDOW" bash "$SH/yield.sh" report
 }
 # FIRST, THE HEALTHY SHAPE: a log of passes and an empty record agree that nothing went red.
 { row 300 spira/sp-x 0 100; row 40 spira/sp-z 0 60; } > "$GATELOG"
 # WITH NO RECORD DIRECTORY AT ALL and a meter that saw no reds, nothing is wrong: the gate
 # has simply never refused anything here. That is `absent`, and it must not read the same as
 # a recorder that stopped — which is the very next case.
-R="$(env -i HOME="$HOMEDIR" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent.conf" \
-      SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nonexistent-db" \
+R="$(env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" SPIRA_CONF="$SPIRA_CONF_NONE" \
+      SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE" \
       SPIRA_YIELD="$TMP/never-written" SPIRA_GATE_LOG="$GATELOG" \
-      SPIRA_YIELD_WINDOW="$WINDOW" bash "$HERE/yield.sh" report)"
+      SPIRA_YIELD_WINDOW="$WINDOW" bash "$SH/yield.sh" report)"
 is "no record and no reds in the meter is absent, not broken" absent "$(f "$R" YIELD_RECORDER)"
 
 R="$(ctl)"
@@ -338,10 +322,10 @@ is "so the reds count is WITHHELD, not reported as 0" "?" "$(f "$R" YIELD_REDS)"
 is "and so is the gate-fault column"                  "?" "$(f "$R" YIELD_FAULT)"
 is "and the unknown column"                           "?" "$(f "$R" YIELD_UNKNOWN)"
 want "and the human view says which side went quiet" "THE RECORDER IS NOT RUNNING" \
-     "$(env -i HOME="$HOMEDIR" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent.conf" \
-        SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nonexistent-db" \
+     "$(env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" SPIRA_CONF="$SPIRA_CONF_NONE" \
+        SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE" \
         SPIRA_YIELD="$CTL" SPIRA_GATE_LOG="$GATELOG" SPIRA_YIELD_WINDOW="$WINDOW" \
-        bash "$HERE/yield.sh" show)"
+        bash "$SH/yield.sh" show)"
 
 # AND THE REAL RECORD IS NOT WITHHELD BY THE SAME LOG. Dedupe means the two counts never
 # agree on magnitude — a tree gated twice is two meter rows and one record — so a control
@@ -363,9 +347,9 @@ echo "it reaches the actor that acts on it — the Ops sweep, not only a human a
 #
 # `--show` gathers and prints and touches nothing, so nothing here can reach a database.
 snap() {
-    env -i HOME="$HOMEDIR" PATH="$PATH" \
-        SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$TMP/nonexistent-db" SPIRA_YIELD="$YDIR" SPIRA_GATE_LOG="$GATELOG" \
+    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+        SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
+        SPIRA_DB="$SPIRA_DB_NONE" SPIRA_YIELD="$YDIR" SPIRA_GATE_LOG="$GATELOG" \
         SPIRA_YIELD_WINDOW="$WINDOW" \
         bash "$HERE/watchtower.sh" --show 2>/dev/null
 }

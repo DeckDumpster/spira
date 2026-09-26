@@ -21,9 +21,11 @@
 > reader(`gate.sh`) test, kept in gate-verdict since gate.sh is the reader; and
 > `test-gate-base-selection.sh`/`test-gate-sweep.sh` migrated onto `gate-fixture.sh`
 > (`test-gate-touched.sh` and the sidecar test diff local branches directly rather than
-> building a remote-plus-clone, so they stay out of that migration). `test-yield.sh`'s
-> migration is still open — its gate.sh calls run the file in place, not a frozen copy,
-> which the cache-key rows (UC-15) may depend on, so it is left as a follow-up.
+> building a remote-plus-clone, so they stay out of that migration). `test-yield.sh` is now
+> migrated too: its gate/yield calls run `$SH/gate.sh` and `$SH/yield.sh`, the fixture's own
+> frozen copy. The UC-15 harness-bytes cache-invalidation row does not live here — it is
+> already proved against that same frozen copy by `test-gate-verdict.sh` (which mutates
+> `$SH/exclude.sh` directly), so the copy is not a coverage loss.
 
 Part of [[test-plan-2026-09-23]], section 5. Area id `gate-verdict`; use-case ids are `UC-gate-verdict-NN`.
 
