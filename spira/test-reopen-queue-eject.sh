@@ -16,7 +16,7 @@
 # absent-skipped) has moved to test-gate-touched.sh, which already owns UC-gate-verdict-09.
 #
 # tier: T1
-# covers: spira/verdict.sh spira/gate.sh UC-gate-verdict-09
+# covers: spira/verdict.sh spira/gate.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
