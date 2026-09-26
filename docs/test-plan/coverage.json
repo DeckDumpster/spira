@@ -264,7 +264,13 @@
           "id": "UC-dispatch-06",
           "tier": "T1",
           "statement": "GitHub intake never mutates GitHub, dedups idempotently, promotes only on write access",
-          "covering_suites": []
+          "covering_suites": [
+            {
+              "path": "spira/test-gh-intake-lint.sh",
+              "tier": "T0",
+              "over_budget": false
+            }
+          ]
         },
         {
           "id": "UC-dispatch-07",

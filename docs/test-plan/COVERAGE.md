@@ -42,7 +42,7 @@ Generated from docs/test-plan/*.toml, every suite's # tier:/# covers: header, an
 | UC-dispatch-03 | T1 | a persona files only against a repo whose lanes admit its partition | spira/test-bead-file.sh | covered |
 | UC-dispatch-04 | T1 | `bead.sh lint` reports every stored bead lacking `repo:`/partition, unreadable ids named as such | spira/test-bead-lint.sh | covered |
 | UC-dispatch-05 | T0 | no harness script passes a bare `-` body to `bd note`/`bd create -d` | spira/test-bd-stdin.sh | covered |
-| UC-dispatch-06 | T1 | GitHub intake never mutates GitHub, dedups idempotently, promotes only on write access | — | **GAP** |
+| UC-dispatch-06 | T1 | GitHub intake never mutates GitHub, dedups idempotently, promotes only on write access | spira/test-gh-intake-lint.sh | covered |
 | UC-dispatch-07 | T1 | the roster is discovered from `chamber/*.fayth`; lane xor task xor operator, never two | spira/test-fayth.sh | covered |
 | UC-dispatch-08 | T1 | every auto-summoned predicate is built from `$SPIRA_*_LABEL`, never a literal | spira/test-fayth.sh | covered |
 | UC-dispatch-09 | T1 | `summon_fayth` asks each persona's own predicate; partitions don't cross-leak | spira/test-summon-fayth.sh | covered |
