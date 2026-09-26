@@ -94,6 +94,8 @@ run() {
         FORGE_LOG="$FORGE_LOG" \
         RUNS_FILE="$RUNS_FILE" \
         CANCEL_FAIL="$CANCEL_FAIL" \
+        BEADS_ACTOR="aeon-abandontest" \
+        SPIRA_EVENT_COOLDOWN=0 \
         bash "$SH/queue.sh" "$@" 2>&1
 }
 
@@ -274,9 +276,27 @@ st="$(awk '{print $1}' "$LANDSTATE/sp-ej01" 2>/dev/null || true)"
 # =============================================================================
 
 echo
+echo "abandon: --reason is required — refuses, changes no landstate, leaves the open record in place:"
+write_abandon_batch
+printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ab01"
+printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
+printf 'BATCHED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
+> "$FORGE_LOG"
+: > "$RUN/landing.log"
+out="$(run abandon $REPONAME)"; rc=$?
+[ "$rc" -ne 0 ] && ok "refuses without --reason" || bad "refuses without --reason" "rc=$rc out=$out"
+want "the refusal names the flag" "--reason" "$out"
+[ -f "$OPEN_FILE" ] && ok "no --reason: open record left in place" || bad "open record left in place" "file gone"
+st01="$(awk '{print $1}' "$LANDSTATE/sp-ab01" 2>/dev/null || true)"
+[ "$st01" = "BATCHED" ] && ok "no --reason: sp-ab01 still BATCHED (positive control)" \
+    || bad "sp-ab01 still BATCHED" "got $st01"
+[ -z "$(cat "$FORGE_LOG")" ] && ok "no --reason: forge not called" || bad "no --reason: forge untouched" "got $(cat "$FORGE_LOG")"
+nowant "no --reason: no audit line written" "QUEUE ABANDON" "$(cat "$RUN/landing.log" 2>/dev/null || true)"
+
+echo
 echo "abandon: positive control — no-open-batch is detected (guard is live):"
 rm -f "$OPEN_FILE"
-out="$(run abandon $REPONAME)"; rc=$?
+out="$(run abandon $REPONAME --reason 'checking the no-open-batch guard')"; rc=$?
 [ "$rc" -ne 0 ] && ok "exits non-zero when no open batch" || bad "exits non-zero" "rc=$rc"
 want "message says no open batch" "no open batch for $REPONAME" "$out"
 
@@ -289,7 +309,7 @@ printf 'BATCHED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
 lockfile="$QUEUEDIR/$REPONAME/lock"
 exec 8>"$lockfile"
 flock 8
-out="$(run abandon $REPONAME)"; rc=$?
+out="$(run abandon $REPONAME --reason 'checking the lock guard')"; rc=$?
 exec 8>&-
 [ "$rc" -ne 0 ] && ok "exit non-zero when lock held" || bad "exit non-zero" "rc=$rc"
 want "mentions lock" "holds the lock" "$out"
@@ -304,6 +324,7 @@ printf 'EJECTED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
 > "$FORGE_LOG"
 printf '55501 in_progress\n' > "$RUNS_FILE"
 : > "$RUN/landing.log"
+: > "$RUN/events.log"
 
 out="$(run abandon $REPONAME --reason 'guilty branch found')"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0" || bad "exit 0" "rc=$rc out=$out"
@@ -340,6 +361,28 @@ archive="$(ls "$QUEUEDIR/$REPONAME/closed-pr58-"* 2>/dev/null | head -1)"
 [ -n "$archive" ] && ok "archive exists" || bad "archive exists" "no closed-pr58-* found"
 [[ "$archive" == *Z ]] && ok "archive name ends with Z" || bad "archive name Z suffix" "got $archive"
 want "reason in forge call" "guilty branch found" "$forge_calls"
+
+# The durable audit line: one row in landing.log naming who ran it, on what PR, with
+# every member's disposition — a positive control (sp-ab01 present), not just quiet.
+audit_count="$(grep -c '^QUEUE ABANDON ' "$RUN/landing.log" 2>/dev/null || echo 0)"
+[ "${audit_count:-0}" -eq 1 ] && ok "exactly one QUEUE ABANDON audit line" \
+    || bad "exactly one audit line" "count=$audit_count"
+audit_line="$(grep '^QUEUE ABANDON ' "$RUN/landing.log" | head -1)"
+want "audit line names the actor"                            "actor=aeon-abandontest"  "$audit_line"
+want "audit line names the PR"                                "pr=58"                   "$audit_line"
+want "audit line names a present member (positive control)"   "sp-ab01:CERTIFIED"       "$audit_line"
+want "audit line names the ejected member's disposition"      "sp-ab03:EJECTED"         "$audit_line"
+want "audit line names the reason"                            "guilty branch found"     "$audit_line"
+
+events_out="$(cat "$RUN/events.log" 2>/dev/null || true)"
+want "a spira_event was emitted for the abandon"      "kind: queue.abandoned"    "$events_out"
+want "the event names the actor"                      "actor=aeon-abandontest"   "$events_out"
+want "the event names a present member (positive control)" "sp-ab01:CERTIFIED"  "$events_out"
+
+archive_body="$(cat "$archive" 2>/dev/null || true)"
+want "the archived record keeps the reason" "reason=guilty branch found" "$archive_body"
+want "the archived record keeps the actor"  "actor=aeon-abandontest"     "$archive_body"
+
 rm -f "$archive"
 
 echo
@@ -349,7 +392,7 @@ printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ab01"
 printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
 printf 'RED %s %s\n'     "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
 > "$FORGE_LOG"
-out="$(run abandon $REPONAME)"; rc=$?
+out="$(run abandon $REPONAME --reason 'checking RED survives abandon')"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 with RED member" || bad "exit 0 RED" "rc=$rc out=$out"
 st03="$(awk '{print $1}' "$LANDSTATE/sp-ab03" 2>/dev/null || true)"
 [ "$st03" = "RED" ] && ok "RED member left as RED" || bad "RED untouched" "got $st03"
@@ -362,17 +405,26 @@ printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ab01"
 printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
 printf 'EJECTED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
 > "$FORGE_LOG"
-out="$(run abandon $REPONAME --dry-run)"; rc=$?
+: > "$RUN/landing.log"
+: > "$RUN/events.log"
+out="$(run abandon $REPONAME --dry-run --reason 'dry-run preview check')"; rc=$?
 [ "$rc" -eq 0 ] && ok "dry-run exits 0" || bad "dry-run exits 0" "rc=$rc"
 want "dry-run mentions PR"             "would close PR 58"   "$out"
 want "dry-run innocent member"         "return to CERTIFIED" "$out"
 want "dry-run ejected member"          "leave alone"          "$out"
 want "dry-run mentions the run cancel" "would cancel"         "$out"
 want "dry-run shows archive path"      "archive path"         "$out"
+want "dry-run prints the audit line it would write" \
+    "dry-run: audit line (landing.log): QUEUE ABANDON" "$out"
+want "dry-run audit preview names the actor"  "actor=aeon-abandontest"     "$out"
+want "dry-run audit preview names a member"   "sp-ab01:CERTIFIED"          "$out"
+want "dry-run audit preview names the reason" "dry-run preview check"      "$out"
 [ -f "$OPEN_FILE" ] && ok "dry-run: open file unchanged" || bad "dry-run no change" "open file gone"
 [ -z "$(cat "$FORGE_LOG")" ] && ok "dry-run: forge not called" || bad "dry-run no forge" "got $(cat "$FORGE_LOG")"
 st01="$(awk '{print $1}' "$LANDSTATE/sp-ab01" 2>/dev/null || true)"
 [ "$st01" = "BATCHED" ] && ok "dry-run: landstate unchanged" || bad "dry-run landstate" "got $st01"
+nowant "dry-run: no audit line written to landing.log" "QUEUE ABANDON" "$(cat "$RUN/landing.log" 2>/dev/null || true)"
+nowant "dry-run: no event written to events.log" "queue.abandoned" "$(cat "$RUN/events.log" 2>/dev/null || true)"
 
 echo
 echo "abandon: run cancel fails: logged loudly, not swallowed, abandon still proceeds:"
@@ -384,7 +436,7 @@ printf '55502 in_progress\n' > "$RUNS_FILE"
 : > "$CANCEL_FAIL"
 > "$FORGE_LOG"
 : > "$RUN/landing.log"
-out="$(run abandon $REPONAME)"; rc=$?
+out="$(run abandon $REPONAME --reason 'checking run-cancel failure is logged')"; rc=$?
 [ "$rc" -eq 0 ] && ok "abandon still exits 0 when a run cancel fails" \
     || bad "abandon exits 0" "rc=$rc out=$out"
 want "failure is reported loudly, not swallowed" "WARN" "$out"
@@ -402,7 +454,7 @@ write_abandon_batch
 printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ab01"
 printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
 printf 'BATCHED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
-run abandon $REPONAME >/dev/null 2>&1 || true
+run abandon $REPONAME --reason 'checking archive name format' >/dev/null 2>&1 || true
 archive="$(ls "$QUEUEDIR/$REPONAME/closed-pr58-"* 2>/dev/null | tail -1)"
 [[ "$archive" == *Z ]] && ok "consistent archive name ends with Z" || bad "archive Z suffix" "got $archive"
 rm -f "$QUEUEDIR/$REPONAME/closed-pr58-"*

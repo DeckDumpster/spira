@@ -6,7 +6,7 @@
 #   queue.sh stats
 #   queue.sh flush [<repo>]
 #   queue.sh step <repo>
-#   queue.sh abandon [<repo>] [--reason <text>] [--dry-run]
+#   queue.sh abandon [<repo>] --reason <text> [--dry-run]
 #
 # submit: certifies any branch by running the repository's gate. In a queue-mode
 # repository, a green branch is recorded CERTIFIED for the batch builder.
@@ -27,7 +27,9 @@
 # stats: reads QUEUE lines from landing.log and prints caught/escaped/cost totals.
 # abandon: closes the open batch PR, returns innocent members to CERTIFIED, archives
 # the record. RED and EJECTED members are left alone — abandon never re-certifies a
-# branch someone deliberately ejected.
+# branch someone deliberately ejected. Break-glass: --reason is required, and one
+# QUEUE ABANDON line (landing.log) plus a queue.abandoned event names the actor, the
+# PR and every member's disposition.
 #
 # covers: spira/queue.sh spira/suites.sh spira/conf.sh
 set -uo pipefail
@@ -391,6 +393,16 @@ cmd_abandon() {
         esac
     done
 
+    # Break-glass with no glass is a quiet door: refuse without a stated cause, and
+    # name the sanctioned way through (law-a-refusal-must-name-its-own-authorised-exit,
+    # proposed but not yet in force).
+    [ -n "$reason" ] || {
+        printf 'queue.sh abandon: --reason is required — pass --reason "<why>" so the abandon is auditable\n' >&2
+        return 2
+    }
+
+    local actor; actor="${BEADS_ACTOR:-${SPIRA_AEON:+aeon-$SPIRA_AEON}}"; actor="${actor:-${USER:-unknown}}"
+
     [ -n "$name" ] || name="$(spira_home_repo)"
     repo_root "$name" >/dev/null 2>&1 || {
         printf 'queue.sh abandon: no such repo: %s\n' "$name" >&2; return 1
@@ -424,18 +436,26 @@ cmd_abandon() {
 
     if [ "$dry_run" -eq 1 ]; then
         printf 'dry-run: would close PR %s for %s\n' "$pr_n" "$name"
-        local _m mid mtip cur_state
+        local _m mid mtip cur_state member_audit=""
         for _m in $members_val; do
             mid="${_m%%:*}"; mtip="${_m##*:}"
             cur_state=""
             [ -f "$LANDSTATE/$mid" ] && { read -r cur_state _ < "$LANDSTATE/$mid" 2>/dev/null || true; }
             case "${cur_state:-}" in
-            RED|EJECTED) printf 'dry-run: %s: leave alone (%s)\n' "$mid" "$cur_state" ;;
-            *)           printf 'dry-run: %s: return to CERTIFIED at %s\n' "$mid" "$mtip" ;;
+            RED|EJECTED)
+                printf 'dry-run: %s: leave alone (%s)\n' "$mid" "$cur_state"
+                member_audit="${member_audit:+$member_audit,}${mid}:${cur_state}"
+                ;;
+            *)
+                printf 'dry-run: %s: return to CERTIFIED at %s\n' "$mid" "$mtip"
+                member_audit="${member_audit:+$member_audit,}${mid}:CERTIFIED"
+                ;;
             esac
         done
         printf 'dry-run: would cancel non-completed Gate run(s) for branch %s\n' "$branch_val"
         printf 'dry-run: archive path: %s\n' "$archive_path"
+        printf 'dry-run: audit line (landing.log): QUEUE ABANDON %s repo=%s pr=%s actor=%s members=%s reason=%s\n' \
+            "$(date +%s)" "$name" "$pr_n" "$actor" "${member_audit:-<none>}" "${reason//$'\n'/ }"
         return 0
     fi
 
@@ -448,7 +468,7 @@ cmd_abandon() {
 
     # Return each member to CERTIFIED unless it was deliberately ejected.
     # RED and EJECTED are operator/batch verdicts that must survive an abandon.
-    local _m mid mtip cur_state
+    local _m mid mtip cur_state member_audit=""
     for _m in $members_val; do
         mid="${_m%%:*}"; mtip="${_m##*:}"
         cur_state=""
@@ -456,17 +476,35 @@ cmd_abandon() {
         case "${cur_state:-}" in
         RED|EJECTED)
             printf 'queue.sh abandon: %s: left as %s\n' "$mid" "$cur_state"
+            member_audit="${member_audit:+$member_audit,}${mid}:${cur_state}"
             ;;
         *)
             land_mark "$mid" CERTIFIED "$mtip"
             printf 'queue.sh abandon: %s: returned to CERTIFIED\n' "$mid"
+            member_audit="${member_audit:+$member_audit,}${mid}:CERTIFIED"
             ;;
         esac
     done
 
+    local reason_clean="${reason//$'\n'/ }"
+
+    # The archived record is the one place this survives once the PR is closed and its
+    # comment is unreadable history — keep the actor and reason IN the file, not only there.
+    {
+        printf 'reason=%s\n' "$reason_clean"
+        printf 'actor=%s\n' "$actor"
+    } >> "$open_file"
+
     mv "$open_file" "$archive_path" || {
         printf 'queue.sh abandon: failed to archive open record\n' >&2; return 1
     }
+
+    local audit_epoch; audit_epoch="$(date +%s)"
+    printf 'QUEUE ABANDON %s repo=%s pr=%s actor=%s members=%s reason=%s\n' \
+        "$audit_epoch" "$name" "$pr_n" "$actor" "${member_audit:-<none>}" "$reason_clean" \
+        >> "$SPIRA_RUN/landing.log" 2>/dev/null || true
+    spira_event queue.abandoned - "abandoned PR $pr_n for $name (actor=$actor)" \
+        "members=${member_audit:-<none>} reason=$reason_clean" || true
 
     printf 'queue.sh abandon: PR %s closed, batch abandoned for %s\n' "$pr_n" "$name"
 }
@@ -479,5 +517,5 @@ case "${1:-}" in
     step)    shift; cmd_step "$@" ;;
     eject)   shift; cmd_eject "$@" ;;
     abandon) shift; cmd_abandon "$@" ;;
-    *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] [--reason <text>] [--dry-run]\n' >&2; exit 2 ;;
+    *) printf 'usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run]\n' >&2; exit 2 ;;
 esac
