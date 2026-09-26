@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # test-reconciler.sh — the reconciler: structural invariants and their deterministic
-# remedies (sp-ocmes).
+# remedies (sp-ocmes), and reading them from spira-desired-state's typed Composite in
+# preference to the ad-hoc bash/env defaults each invariant fell back to before (sp-8c3ib).
 #
 # WHAT THIS SUITE CHECKS.
 #   1. reconciler.sh exists, is executable, and a pass completes inside its budget.
@@ -32,11 +33,23 @@
 #  19. Unobservable: systemctl unreadable → status=unobservable, never satisfied.
 #  20. A remedy that does not close its gap escalates on the next pass instead of being
 #      retried blind, and is not retried a second time.
+#  21. Fleet: a materialised Composite's ceiling is read even when fleet-status.sh's own
+#      SPIRA_MAX_LIVE_AEONS column is empty (so this is a gap, not unobservable).
+#  22. Units: a materialised Composite's UnitsSpec names the unit set — units-manifest.sh's
+#      own list is not consulted once one exists.
+#  23. Cockpit: a materialised Composite's CockpitSpec.dashboards replaces the hardcoded
+#      health+mail pair, both when it demands more and when it demands less.
+#  24. Release: a materialised Composite's ReleaseSpec names the target explicitly, and
+#      allow_override lets a local divergence from it satisfy instead of escalating.
+#
+# 1-20 run with no Composite ever materialised — every invariant's fallback to its old
+# bash/env default, still the state of an install that has not adopted desired-state yet.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): 3 and 10 assert nothing fires
 # on a healthy fixture before 4-9 and 11-17 add the trigger and assert it does.
 #
-# covers: reconciler/src/main.rs reconciler-engine/src/**.rs spira/reconciler.sh
+# covers: reconciler/src/main.rs reconciler-engine/src/**.rs desired-state/src/store.rs
+#         desired-state/src/resource.rs spira/reconciler.sh
 #         spira/units-manifest.sh spira/fleet-status.sh spira/queue-certified-list.sh
 #         spira/conf.sh cockpit/layout.sh
 #         systemd/spira-reconciler.service systemd/spira-reconciler.timer
@@ -66,6 +79,7 @@ RECONCILER_BIN="$RECONCILER_ROOT/target/release/reconciler"
 if [ ! -x "$RECONCILER_BIN" ]; then
     cp -r "$RECONCILER_ROOT/." "$T/reconciler-src"
     cp -r "$HERE/../reconciler-engine" "$T/reconciler-engine"
+    cp -r "$HERE/../desired-state" "$T/desired-state"
     printf '  (building reconciler into %s)\n' "$T/reconciler-target"
     CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/reconciler-target" \
         "$CARGO_BIN" build --release \
@@ -83,6 +97,27 @@ export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$T/run"
 export SPIRA_DB="$T/db"
 mkdir -p "$SPIRA_RUN/queue" "$SPIRA_DB"
+
+# Pinned so this suite's verdict never depends on whatever composite the real host it runs
+# on has actually applied. desired_state_write below populates it on demand.
+DESIRED_DIR="$T/desired"
+export SPIRA_DESIRED_DIR="$DESIRED_DIR"
+
+# desired_state_write <resource-toml-fragment>... — hand-writes a single-version composite
+# document directly in the store's own on-disk shape (meta + [[resource]]), rather than
+# shelling out to the `spira` binary this suite does not otherwise build: read_current()
+# never checks content_hash, only that each resource still parses.
+desired_state_write() {
+    mkdir -p "$DESIRED_DIR/versions"
+    {
+        printf '[meta]\nversion = 1\ncontent_hash = "test"\nmaterialized_at = "2026-09-25T00:00:00Z"\n'
+        printf '%s\n' "$@"
+    } > "$DESIRED_DIR/versions/000001.toml"
+    printf '1\n' > "$DESIRED_DIR/current"
+}
+desired_state_clear() {
+    rm -rf "$DESIRED_DIR"
+}
 
 # ------------------------------------------------------------------------------------------
 # Stubs. Every IO seam the reconciler shells out to is overridden with a small script this
@@ -213,6 +248,7 @@ reset_state() {
     rm -f "$SPIRA_RUN/reconciler-state.json" "$SPIRA_RUN/reconciler-status.jsonl" \
           "$SPIRA_RUN/reconciler.log" "$SPIRA_RUN/cockpit.down"
     : > "$SYSTEMCTL_CALLS"; : > "$COCKPIT_CALLS"; : > "$QUEUE_CALLS"; : > "$INC_LOG"
+    desired_state_clear
 }
 
 status_jsonl() { cat "$SPIRA_RUN/reconciler-status.jsonl" 2>/dev/null || true; }
@@ -451,6 +487,114 @@ bash "$RECONCILER_SH" --pass >/dev/null 2>&1   # pass 2: still a gap
 _n2="$(grep -c -- '--user enable --now r.timer' "$SYSTEMCTL_CALLS" || true)"
 is "pass 2 does not retry the remedy blind" "1" "$_n2"
 want "pass 2 escalates instead" "cause=units-timer:r.timer" "$(cat "$INC_LOG")"
+
+# ==========================================================================================
+printf '\n%s\n' "21. Fleet: a materialised Composite's ceiling is read instead of fleet-status.sh's own SPIRA_MAX_LIVE_AEONS column"
+# ==========================================================================================
+reset_state
+printf 'TOTAL\t\t0\nbuilder\t5\t0\n' > "$FLEET_LINES"   # empty TOTAL column: fleet-status.sh itself has no ceiling
+desired_state_write \
+'[[resource]]
+apiVersion = "spira/v1"
+kind = "Fleet"
+producer = "test"
+[resource.metadata]
+name = "fleet"
+[resource.spec]
+ceiling = 3
+lane_cap = 1'
+bash "$RECONCILER_SH" --pass >/dev/null 2>&1
+lack "the Composite's ceiling makes this observable, not unobservable" '"key":"fleet:builder","status":"unobservable"' "$(status_jsonl)"
+want "fleet gap escalates against the Composite's ceiling" "cause=fleet:builder" "$(cat "$INC_LOG")"
+
+# ==========================================================================================
+printf '\n%s\n' "22. Units: a materialised Composite's UnitsSpec names the unit set instead of units-manifest.sh"
+# ==========================================================================================
+reset_state
+printf 'wrong.service\n' > "$UNITS_LIST"    # units-manifest.sh's own list — must be ignored
+printf 'right.service enabled active\n' > "$SYSTEMCTL_STATE"
+desired_state_write \
+'[[resource]]
+apiVersion = "spira/v1"
+kind = "Units"
+producer = "test"
+[resource.metadata]
+name = "units"
+[[resource.spec.units]]
+name = "right.service"
+enabled = true
+active = true'
+bash "$RECONCILER_SH" --pass >/dev/null 2>&1
+lack "units-manifest.sh's own unit is never checked" "wrong.service" "$(cat "$SYSTEMCTL_CALLS")"
+want "the Composite's unit is checked and satisfied" '"key":"units-daemon:right.service","status":"satisfied"' "$(status_jsonl)"
+
+# ==========================================================================================
+printf '\n%s\n' "23. Cockpit: a materialised Composite's CockpitSpec.dashboards replaces the hardcoded health+mail pair"
+# ==========================================================================================
+reset_state
+cat > "$TMUX_STATE" <<'TEOF'
+tag=health
+TEOF
+desired_state_write \
+'[[resource]]
+apiVersion = "spira/v1"
+kind = "Cockpit"
+producer = "test"
+[resource.metadata]
+name = "cockpit"
+[resource.spec]
+dashboards = ["queue"]'
+bash "$RECONCILER_SH" --pass >/dev/null 2>&1
+want "health alone no longer satisfies once the Composite asks for queue" "cockpit.sh --no-attach" "$(cat "$COCKPIT_CALLS")"
+
+reset_state
+cat > "$TMUX_STATE" <<'TEOF'
+tag=queue
+TEOF
+desired_state_write \
+'[[resource]]
+apiVersion = "spira/v1"
+kind = "Cockpit"
+producer = "test"
+[resource.metadata]
+name = "cockpit"
+[resource.spec]
+dashboards = ["queue"]'
+bash "$RECONCILER_SH" --pass >/dev/null 2>&1
+[ ! -s "$COCKPIT_CALLS" ] && ok "queue alone satisfies the Composite's own dashboard list" || bad "unexpected cockpit call: $(cat "$COCKPIT_CALLS")"
+
+# ==========================================================================================
+printf '\n%s\n' "24. Release: a materialised Composite's ReleaseSpec names the target and can allow a local override"
+# ==========================================================================================
+reset_state
+echo "feature-x" > "$GIT_BRANCH_STATE"
+desired_state_write \
+'[[resource]]
+apiVersion = "spira/v1"
+kind = "Release"
+producer = "test"
+[resource.metadata]
+name = "release"
+[resource.spec]
+release = "v9"
+allow_override = false'
+bash "$RECONCILER_SH" --pass >/dev/null 2>&1
+want "a non-main checkout not at the declared release still gaps and escalates" "cause=release" "$(cat "$INC_LOG")"
+
+reset_state
+echo "feature-x" > "$GIT_BRANCH_STATE"
+desired_state_write \
+'[[resource]]
+apiVersion = "spira/v1"
+kind = "Release"
+producer = "test"
+[resource.metadata]
+name = "release"
+[resource.spec]
+release = "v9"
+allow_override = true'
+bash "$RECONCILER_SH" --pass >/dev/null 2>&1
+want "allow_override lets a local override satisfy — a deliberate state is not a fault" '"key":"release","status":"satisfied"' "$(status_jsonl)"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

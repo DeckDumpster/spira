@@ -2,15 +2,16 @@
 //! version is written only when [`Composite::content_hash`] changes; every version keeps the
 //! provenance of the fragments that produced it.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::compose::Composite;
+use crate::compose::{ComposedResource, Composite};
 use crate::producer::Provenance;
-use crate::resource::Metadata;
+use crate::resource::{parse_resource, Metadata, RawResource};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredResource {
@@ -45,6 +46,24 @@ pub struct StoredVersion {
     pub path: PathBuf,
 }
 
+struct FoundDocument {
+    version: u64,
+    path: PathBuf,
+    doc: StoredDocument,
+}
+
+/// Where a host's composite and version history live absent `$SPIRA_DESIRED_DIR` —
+/// `${XDG_CONFIG_HOME:-$HOME/.config}/spira/desired`. The one place this path is computed, so
+/// `spira compose`/`spira apply` and every reader of the materialised composite agree on it.
+pub fn default_dir() -> PathBuf {
+    let config_home = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"));
+    std::env::var("SPIRA_DESIRED_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| config_home.join("spira").join("desired"))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MaterializeOutcome {
     Unchanged { version: u64 },
@@ -75,6 +94,43 @@ impl FsStore {
     }
 
     pub fn latest(&self) -> Result<Option<StoredVersion>, String> {
+        let found = match self.latest_document()? {
+            Some(f) => f,
+            None => return Ok(None),
+        };
+        Ok(Some(StoredVersion {
+            version: found.version,
+            content_hash: found.doc.meta.content_hash,
+            path: found.path,
+        }))
+    }
+
+    /// The composite this host last materialised — `None` before the first `spira apply` or
+    /// `spira compose` — reparsed against today's resource schema, so a reader on a newer
+    /// binary than the writer sees the same refusal `compose` would give a fresh spec
+    /// (law-fail-closed-at-the-source): a producer this host still runs consults the same
+    /// document a fresh compose would, not a copy it can drift from.
+    pub fn read_current(&self) -> Result<Option<Composite>, String> {
+        let found = match self.latest_document()? {
+            Some(f) => f,
+            None => return Ok(None),
+        };
+        let mut resources = BTreeMap::new();
+        for r in found.doc.resource {
+            let raw = RawResource {
+                api_version: r.api_version,
+                kind: r.kind,
+                metadata: r.metadata,
+                spec: r.spec,
+            };
+            parse_resource(&raw).map_err(|e| format!("{}: {e}", found.path.display()))?;
+            let key = (raw.kind.clone(), raw.metadata.name.clone());
+            resources.insert(key, ComposedResource { raw, producer: r.producer });
+        }
+        Ok(Some(Composite { resources }))
+    }
+
+    fn latest_document(&self) -> Result<Option<FoundDocument>, String> {
         let pointer = self.current_pointer();
         let text = match fs::read_to_string(&pointer) {
             Ok(t) => t,
@@ -89,11 +145,7 @@ impl FsStore {
         let doc_text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let doc: StoredDocument =
             toml::from_str(&doc_text).map_err(|e| format!("{}: {e}", path.display()))?;
-        Ok(Some(StoredVersion {
-            version,
-            content_hash: doc.meta.content_hash,
-            path,
-        }))
+        Ok(Some(FoundDocument { version, path, doc }))
     }
 
     /// Writes `composite` as the next version if its content differs from the current one.
@@ -222,6 +274,29 @@ mod tests {
             .write_version(&composite, &[], "2026-09-25T00:00:00Z")
             .unwrap();
         assert_eq!(outcome, MaterializeOutcome::NewVersion { version: 1 });
+    }
+
+    #[test]
+    fn read_current_with_nothing_materialised_is_none() {
+        let dir = tempdir();
+        let store = FsStore::new(dir.path());
+        assert!(store.read_current().unwrap().is_none());
+    }
+
+    #[test]
+    fn read_current_round_trips_the_written_composite() {
+        let dir = tempdir();
+        let store = FsStore::new(dir.path());
+        let composite = compose(&[fleet_fragment("operator", 8)]).unwrap();
+        store
+            .write_version(&composite, &[], "2026-09-25T00:00:00Z")
+            .unwrap();
+
+        let read_back = store.read_current().unwrap().expect("a composite was written");
+        let key = ("Fleet".to_string(), "fleet".to_string());
+        let resource = &read_back.resources[&key];
+        assert_eq!(resource.producer, "operator");
+        assert_eq!(read_back.content_hash(), composite.content_hash());
     }
 
     #[test]

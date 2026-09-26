@@ -471,6 +471,7 @@ version = "1.0.0"
 dependencies = [
  "reconciler-engine",
  "serde_json",
+ "spira-desired-state",
 ]
 
 [[package]]

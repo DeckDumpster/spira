@@ -6,6 +6,7 @@ description = "Structural-invariant control loop: desired state vs observed stat
 
 [dependencies]
 reconciler-engine = { path = "../reconciler-engine" }
+spira-desired-state = { path = "../desired-state" }
 serde_json = "1"
 
 [profile.release]

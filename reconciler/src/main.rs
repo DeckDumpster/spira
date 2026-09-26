@@ -15,6 +15,9 @@
 
 use reconciler_engine::core::{record_remedy, step, HysteresisState, RawStatus, Verdict};
 use reconciler_engine::io::{append_status, load_state, save_state, StateMap};
+use spira_desired_state::compose::Composite;
+use spira_desired_state::resource::{parse_resource, CockpitSpec, FleetSpec, KindSpec, ReleaseSpec, UnitsSpec};
+use spira_desired_state::store::FsStore;
 use std::env;
 use std::fs;
 use std::io::Write;
@@ -22,6 +25,54 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Desired state (sp-8c3ib): the typed Composite this host last materialised via `spira
+// apply`/`spira compose` (spira-desired-state) is the primary source for Fleet, Units,
+// Cockpit and Release. A kind absent from the Composite — including "no Composite at all",
+// the state of every install that has not yet adopted it — falls back to the bash/env
+// default that kind always had, per resource rather than for the whole pass.
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[derive(Default, Clone)]
+struct DesiredState {
+    fleet: Option<FleetSpec>,
+    units: Option<UnitsSpec>,
+    cockpit: Option<CockpitSpec>,
+    release: Option<ReleaseSpec>,
+}
+
+impl DesiredState {
+    fn load(cfg_log: impl Fn(&str), dir: &Path) -> DesiredState {
+        let composite = match FsStore::new(dir).read_current() {
+            Ok(Some(c)) => c,
+            Ok(None) => return DesiredState::default(),
+            Err(e) => {
+                cfg_log(&format!("reconciler: desired-state at {} unreadable: {}", dir.display(), e));
+                return DesiredState::default();
+            }
+        };
+        DesiredState::from_composite(&composite)
+    }
+
+    fn from_composite(composite: &Composite) -> DesiredState {
+        let mut ds = DesiredState::default();
+        for resource in composite.resources.values() {
+            let parsed = match parse_resource(&resource.raw) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            match parsed.spec {
+                KindSpec::Fleet(f) => ds.fleet = Some(f),
+                KindSpec::Units(u) => ds.units = Some(u),
+                KindSpec::Cockpit(c) => ds.cockpit = Some(c),
+                KindSpec::Release(r) => ds.release = Some(r),
+                _ => {}
+            }
+        }
+        ds
+    }
+}
 
 extern "C" {
     fn flock(fd: i32, operation: i32) -> i32;
@@ -78,6 +129,8 @@ struct Config {
     preflight_wall_secs: u64,
     now_secs: u64,
     now_iso: String,
+    desired_dir: PathBuf,
+    desired: DesiredState,
 }
 
 impl Config {
@@ -139,9 +192,18 @@ impl Config {
                 .unwrap_or(240),
             now_secs: unix_now(),
             now_iso: compute_now_iso(),
+            desired_dir: spira_desired_state::store::default_dir(),
+            desired: DesiredState::default(),
             spira_run,
             spira_home,
         }
+    }
+}
+
+impl Config {
+    fn with_desired_state(mut self) -> Config {
+        self.desired = DesiredState::load(|msg| eprintln!("{}", msg), &self.desired_dir);
+        self
     }
 }
 
@@ -276,10 +338,35 @@ fn systemctl_state(cfg: &Config, verb: &str, unit: &str) -> Option<String> {
     }
 }
 
+/// A unit's desired (enabled, active) — from the Composite's UnitsSpec when it names the
+/// unit, else the legacy assumption every name in the manifest carries: it should be both
+/// (sp-8c3ib: units-manifest.sh's ENABLE array only ever lists what should be enabled, never
+/// what should not be, so a unit the Composite has not caught up to yet keeps the old default
+/// rather than being treated as having no desired state at all).
+fn desired_unit_state(cfg: &Config, unit: &str) -> (bool, bool) {
+    match &cfg.desired.units {
+        Some(spec) => match spec.units.iter().find(|u| u.name == unit) {
+            Some(u) => (u.enabled, u.active),
+            None => (true, true),
+        },
+        None => (true, true),
+    }
+}
+
 fn observe_units(cfg: &Config) -> Vec<Check> {
-    let out = run_cmd("bash", &[&cfg.units_manifest_sh]);
+    // The Composite's UnitsSpec.units is the declared unit set (sp-8c3ib); an install that
+    // has not materialised one yet falls back to units-manifest.sh's own walk of
+    // systemd/units.sh's ENABLE array, exactly as before.
+    let manifest_names;
+    let unit_names: Vec<&str> = match &cfg.desired.units {
+        Some(spec) if !spec.units.is_empty() => spec.units.iter().map(|u| u.name.as_str()).collect(),
+        _ => {
+            manifest_names = run_cmd("bash", &[&cfg.units_manifest_sh]);
+            manifest_names.lines().map(str::trim).filter(|l| !l.is_empty()).collect()
+        }
+    };
     let mut checks = Vec::new();
-    for unit in out.lines().map(str::trim).filter(|l| !l.is_empty()) {
+    for unit in unit_names {
         let enabled = systemctl_state(cfg, "is-enabled", unit);
         let active = systemctl_state(cfg, "is-active", unit);
         let (enabled, active) = match (enabled, active) {
@@ -312,46 +399,53 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
             continue;
         }
 
+        let (want_enabled, want_active) = desired_unit_state(cfg, unit);
+
         if unit.ends_with(".timer") {
-            let raw = if is_enabled && is_active {
+            let raw = if is_enabled == want_enabled && is_active == want_active {
                 RawStatus::Satisfied
             } else {
                 RawStatus::Gap {
-                    desired: "enabled,active".into(),
+                    desired: format!("enabled={},active={}", want_enabled, want_active),
                     observed: format!("{},{}", enabled, active),
                     since_hint: None,
                 }
             };
-            checks.push(Check {
-                key: format!("units-timer:{}", unit),
-                raw,
-                remedy: Remedy::Command {
+            // No deterministic remedy exists here for anything but "should be enabled and
+            // active" — the only shape units-manifest.sh (or the Composite's own
+            // examples/default.toml) has ever declared.
+            let remedy = if want_enabled && want_active {
+                Remedy::Command {
                     program: cfg.systemctl.clone(),
                     args: vec!["--user".into(), "enable".into(), "--now".into(), unit.to_string()],
-                },
-            });
+                }
+            } else {
+                Remedy::Escalate
+            };
+            checks.push(Check { key: format!("units-timer:{}", unit), raw, remedy });
             continue;
         }
 
-        // A daemon row: needs to be both enabled and active (sp-ocmes evidence, 2026-09-25:
-        // several *.service rows were found disabled, not merely stopped). An inactive
-        // daemon is restarted; an active-but-not-enabled one is enabled WITHOUT --now, so a
-        // unit already running is never bounced just to satisfy its enablement bit.
-        let raw = if is_active && is_enabled {
+        // A daemon row: sp-ocmes evidence, 2026-09-25: several *.service rows were found
+        // disabled, not merely stopped. An inactive-but-wanted-active daemon is restarted; an
+        // active-but-not-enabled one wanted enabled is enabled WITHOUT --now, so a unit
+        // already running is never bounced just to satisfy its enablement bit. Wanting a
+        // daemon down is not a shape this bead's remedy list covers, so it always escalates.
+        let raw = if is_active == want_active && is_enabled == want_enabled {
             RawStatus::Satisfied
         } else {
             RawStatus::Gap {
-                desired: "enabled,active".into(),
+                desired: format!("enabled={},active={}", want_enabled, want_active),
                 observed: format!("{},{}", enabled, active),
                 since_hint: None,
             }
         };
-        let remedy = if !is_active {
+        let remedy = if want_active && !is_active {
             Remedy::Command {
                 program: cfg.systemctl.clone(),
                 args: vec!["--user".into(), "restart".into(), unit.to_string()],
             }
-        } else if !is_enabled {
+        } else if want_enabled && !is_enabled {
             Remedy::Command {
                 program: cfg.systemctl.clone(),
                 args: vec!["--user".into(), "enable".into(), unit.to_string()],
@@ -389,17 +483,21 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
         rows.push((parts[0].to_string(), ready, live));
     }
 
+    // The Composite's FleetSpec.ceiling is the declared desired state (sp-8c3ib); an install
+    // that has not materialised one yet falls back to fleet-status.sh's own reading of
+    // SPIRA_MAX_LIVE_AEONS, exactly as before.
+    let max_live = cfg.desired.fleet.as_ref().map(|f| f.ceiling as i64).or(max_live);
+
     let mut checks = Vec::new();
     let max_live = match max_live {
         Some(m) => m,
         None => {
-            // SPIRA_MAX_LIVE_AEONS is unset on some installs by design (conf.sh's own
-            // default is empty) — there is no ceiling to diff against, so this is not a
-            // gap, it is unobservable.
+            // Neither the Composite nor SPIRA_MAX_LIVE_AEONS declares a ceiling — there is
+            // no ceiling to diff against, so this is not a gap, it is unobservable.
             for (labels, _, _) in rows {
                 checks.push(Check {
                     key: format!("fleet:{}", labels),
-                    raw: RawStatus::Unobservable { reason: "SPIRA_MAX_LIVE_AEONS is unset".into() },
+                    raw: RawStatus::Unobservable { reason: "no Fleet ceiling declared".into() },
                     remedy: Remedy::Escalate,
                 });
             }
@@ -469,15 +567,26 @@ fn observe_cockpit(cfg: &Config) -> Check {
     let tags_out = run_cmd(&cfg.tmux, &["list-panes", "-t", &format!("{}:0", dash_session), "-F", "#{@cockpit}"]);
     let tags: Vec<&str> = tags_out.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
 
-    let has_health = tags.contains(&"health");
-    let needs_mail = !cfg.cockpit_mail.is_empty();
-    let has_mail = tags.contains(&"mail");
+    // The Composite's CockpitSpec.dashboards is the declared set (sp-8c3ib); an install that
+    // has not materialised one yet falls back to health always, plus mail when COCKPIT_MAIL
+    // names an aggregator, exactly as before.
+    let want_dashboards: Vec<String> = match &cfg.desired.cockpit {
+        Some(spec) => spec.dashboards.clone(),
+        None => {
+            let mut d = vec!["health".to_string()];
+            if !cfg.cockpit_mail.is_empty() {
+                d.push("mail".to_string());
+            }
+            d
+        }
+    };
+    let missing = want_dashboards.iter().any(|d| !tags.contains(&d.as_str()));
 
-    if !has_health || (needs_mail && !has_mail) {
+    if missing {
         return Check {
             key: "cockpit".into(),
             raw: RawStatus::Gap {
-                desired: "health + mail dashboards".into(),
+                desired: want_dashboards.join(","),
                 observed: tags.join(","),
                 since_hint: None,
             },
@@ -511,19 +620,34 @@ fn on_main_branch(cfg: &Config) -> Option<bool> {
 
 fn observe_release(cfg: &Config) -> Check {
     let home_resolved = fs::canonicalize(&cfg.spira_home).ok();
-    let releases_current = if cfg.releases_dir.as_os_str().is_empty() {
-        None
-    } else {
-        fs::canonicalize(cfg.releases_dir.join("current")).ok()
-    };
-
-    let at_release = match (&home_resolved, &releases_current) {
-        (Some(h), Some(c)) => h.starts_with(c) || h == c,
-        _ => false,
-    };
     let on_main = on_main_branch(cfg);
 
-    if at_release || on_main == Some(true) {
+    // The Composite's ReleaseSpec names the declared target explicitly (sp-8c3ib); an install
+    // that has not materialised one yet falls back to "latest" against $SPIRA_RELEASES —
+    // exactly the target the old on_main-or-releases_dir/current logic always meant.
+    let (target, allow_override) = match &cfg.desired.release {
+        Some(spec) => (spec.release.clone(), spec.allow_override),
+        None => ("latest".to_string(), false),
+    };
+
+    let target_dir = if target == "main" || cfg.releases_dir.as_os_str().is_empty() {
+        None
+    } else if target == "latest" {
+        Some(cfg.releases_dir.join("current"))
+    } else {
+        Some(cfg.releases_dir.join(&target))
+    };
+    let target_resolved = target_dir.and_then(|p| fs::canonicalize(p).ok());
+
+    let at_target = match (&home_resolved, &target_resolved) {
+        (Some(h), Some(t)) => h.starts_with(t) || h == t,
+        _ => false,
+    };
+    // A checkout on main always satisfies this invariant, whatever the declared target — the
+    // same escape hatch the pre-desired-state logic always had.
+    let at_release = at_target || on_main == Some(true);
+
+    if at_release {
         return Check { key: "release".into(), raw: RawStatus::Satisfied, remedy: Remedy::Escalate };
     }
     if home_resolved.is_none() || on_main.is_none() {
@@ -533,10 +657,15 @@ fn observe_release(cfg: &Config) -> Check {
             remedy: Remedy::Escalate,
         };
     }
+    if allow_override {
+        // The Composite explicitly permits a local override away from its declared release
+        // — a deliberate state, not a fault (law-a-deliberate-state-is-not-a-fault).
+        return Check { key: "release".into(), raw: RawStatus::Satisfied, remedy: Remedy::Escalate };
+    }
     Check {
         key: "release".into(),
         raw: RawStatus::Gap {
-            desired: "activated release or main".into(),
+            desired: format!("release {}", target),
             observed: format!("{:?}", home_resolved.unwrap()),
             since_hint: None,
         },
@@ -750,7 +879,7 @@ fn escalate(cfg: &Config, key: &str, verdict: &Verdict) {
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn run_pass() -> Result<(), String> {
-    let cfg = Config::from_env();
+    let cfg = Config::from_env().with_desired_state();
 
     if cfg.spira_run.join("world.halted").exists() {
         log_print(&cfg, "reconciler: skipped — world is halted");
@@ -979,6 +1108,8 @@ mod tests {
             preflight_wall_secs: 240,
             now_secs: 0,
             now_iso: "2026-09-25T00:00:00Z".into(),
+            desired_dir: PathBuf::from("/dev/null"),
+            desired: DesiredState::default(),
         }
     }
 
@@ -1012,6 +1143,8 @@ mod tests {
             preflight_wall_secs: base.preflight_wall_secs,
             now_secs: base.now_secs,
             now_iso: base.now_iso.clone(),
+            desired_dir: base.desired_dir.clone(),
+            desired: base.desired.clone(),
         }
     }
 }
