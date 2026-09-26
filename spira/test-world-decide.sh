@@ -87,11 +87,11 @@ is "no control file -> zero suspended entries" "n=0" "$out"
 
 python3 - "$SPIRA_CTRL" <<'PY'
 import json, sys
-json.dump({"spira-suites": {"suspend": {"reason": "testing sp-rnps9", "owner": "sp-x"}}}, open(sys.argv[1], "w"))
+json.dump({"spira-groom": {"suspend": {"reason": "testing sp-rnps9", "owner": "sp-x"}}}, open(sys.argv[1], "w"))
 PY
 
 out="$(bash -c 'CTRL_LIB=1 . "$SPIRA_HOME/ctrl.sh"; declare -A A=(); ctrl_load_suspended A
-    if r=$(ctrl_is_suspended A spira-suites); then echo "suspended:$r"; else echo "not-suspended"; fi')"
+    if r=$(ctrl_is_suspended A spira-groom); then echo "suspended:$r"; else echo "not-suspended"; fi')"
 is "declared-suspended subject reports its reason" "suspended:testing sp-rnps9" "$out"
 
 out="$(bash -c 'CTRL_LIB=1 . "$SPIRA_HOME/ctrl.sh"; declare -A A=(); ctrl_load_suspended A
