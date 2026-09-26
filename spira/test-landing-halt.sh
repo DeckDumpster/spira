@@ -274,7 +274,11 @@ printf 'pid=%s\nstarted=%s\nrepo=spira\nbranch=spira/sp-vol\nphase=gate\n' \
     "$VOL_PID" "$(date +%s)" > "$LAND_RUN"
 printf '%s\n' "$FAKE_CNAME" > "$LAND_CONTAINERS"
 
-out="$(env -i PATH="$STUBDIR:$PATH" HOME="$HOME" \
+# SPIRA_PATH, not PATH: conf.sh rebuilds PATH from scratch on every source
+# (`export PATH="${SPIRA_PATH:+$SPIRA_PATH:}$HOME/.local/bin:..."`), so a plain
+# PATH prefix set here is discarded the moment landing.sh sources it — the stub
+# must go in the one seam conf.sh actually reads.
+out="$(env -i PATH="$STUBDIR:$PATH" SPIRA_PATH="$STUBDIR" HOME="$HOME" \
     SPIRA_RUN="$SPIRA_RUN" \
     SPIRA_HOME="$HERE" \
     SPIRA_PROD="$HERE" \
