@@ -193,18 +193,28 @@ else
     else
         # Python probe: measures wall-clock ms inside the budget ceiling.
         # Outputs "200 Nms" on success, "ERR Nms <reason>" otherwise.
-        _loom_result="$(python3 - "$_loom_url" "$SPIRA_LOOM_BUDGET_MS" 2>/dev/null <<'PYEOF'
+        # A FRESHLY STARTED loom answers its first request slowly (a cold bd query), and at
+        # install's verify phase it has only just started. An unanswered probe is retried
+        # for a short bounded grace before it is a FAIL; a slow ANSWER is still judged
+        # against the budget below (sp-bn9go).
+        _loom_result="$(python3 - "$_loom_url" "$SPIRA_LOOM_BUDGET_MS" "${SPIRA_LOOM_READY_GRACE:-20}" 2>/dev/null <<'PYEOF'
 import sys, urllib.request, time
 url = sys.argv[1]
 budget_ms = float(sys.argv[2])
-t0 = time.monotonic()
-try:
-    r = urllib.request.urlopen(url, timeout=budget_ms / 1000)
-    ms = int((time.monotonic() - t0) * 1000)
-    sys.stdout.write("%d %dms\n" % (r.status, ms))
-except Exception as e:
-    ms = int((time.monotonic() - t0) * 1000)
-    sys.stdout.write("ERR %dms %s\n" % (ms, str(e)[:100]))
+deadline = time.monotonic() + float(sys.argv[3])
+while True:
+    t0 = time.monotonic()
+    try:
+        r = urllib.request.urlopen(url, timeout=budget_ms / 1000)
+        ms = int((time.monotonic() - t0) * 1000)
+        sys.stdout.write("%d %dms\n" % (r.status, ms))
+        break
+    except Exception as e:
+        ms = int((time.monotonic() - t0) * 1000)
+        if time.monotonic() >= deadline:
+            sys.stdout.write("ERR %dms %s\n" % (ms, str(e)[:100]))
+            break
+        time.sleep(1)
 PYEOF
         )"
     fi
