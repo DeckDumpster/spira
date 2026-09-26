@@ -1,5 +1,16 @@
 # Test plan — Test and CI infrastructure (`test-infrastructure`)
 
+> **2026-09-26: the background suites sweep retired** (sp-b99nj; operator verdict — it ran
+> hourly in production failing every run and filing incidents misdiagnosed as cgroup faults).
+> `suites.sh`'s timed runner (`cmd_run`, `classify`, `fingerprint`, the `file_*` filers) and
+> `systemd/spira-suites.{service,timer}` are deleted outright, not repaired. UC-25, -26, -27
+> and -29 (classification, fingerprint, filing) and UC-43 (skip filing) lose their last cover
+> with no replacement — marked `[use_case.uncovered]` in the toml — because the behavior they
+> describe no longer exists, not because it went untested. UC-33 (the systemd unit itself) was
+> already ungapped coverage from an earlier deletion; the unit it describes is now gone too.
+> `suites.sh` keeps `list`/`status`/`hygiene`/`observe-flake`/`quarantine`/`disable`/`activate`
+> (UC-31, -32), which watchtower and the quarantine fence still read.
+
 > **2026-09-25: suite timing converged onto `run/tsd/`.** The `refs/notes/suite-times` ledger
 > and `suite-times.sh` (UC-34, G11 below) are retired; `testenv-batch.sh` now appends each
 > suite-timing row via `tsd-write`, CI uploads it as an artifact, `tsd-ingest.sh` pulls it into
