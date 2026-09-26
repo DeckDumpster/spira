@@ -74,6 +74,16 @@ startup_ms=$(( (t1 - t0) / 1000000 ))
 iszero "up exits 0" "$up_rc"
 printf '  note  up completed in %dms\n' "$startup_ms"
 
+# up must record an owner file naming a live pid — the guard down enforces
+# depends on this having been written (law-guard-binds-the-caller).
+owner_pid="$(cat "/tmp/${CNAME}.owner" 2>/dev/null || true)"
+[ -n "$owner_pid" ] \
+    && ok "up recorded an owner file" \
+    || bad "up recorded an owner file" "no pid in /tmp/${CNAME}.owner"
+[ -n "$owner_pid" ] && [ -d "/proc/$owner_pid" ] \
+    && ok "owner pid is live" \
+    || bad "owner pid is live" "pid ${owner_pid:-<empty>} not found in /proc"
+
 # PID 1 inside the container must be systemd.
 pid1="$(podman exec "$CNAME" cat /proc/1/comm 2>/dev/null)"
 is "PID 1 is systemd" "systemd" "$pid1"
