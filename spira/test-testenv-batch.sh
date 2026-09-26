@@ -10,14 +10,19 @@
 #   4. Batch metadata: batch.meta carries image_tag.
 #   5. CI portability: the batch runs from a clean HOME/XDG_CONFIG_HOME with no
 #      spira.conf present.
+#   6. B13: the non-exclusive pool runs longest-first (LPT), using historical wall_secs
+#      from the run/tsd/ suite-timing family via tsd-query.sh; a suite absent from the
+#      ledger is treated as the longest suite on record (sp-ezkp3).
 #
 # POSITIVE CONTROLS (law-absence-needs-a-positive-control)
 #   • A2: unmapped-fallback fires correctly before coverage-selection is trusted.
 #   • B3: suite ka's result is confirmed written before the kill fires;
 #     the unreached loop must not overwrite ka's "ok" status afterward.
+#   • B13: list order is the exact reverse of the expected LPT order, so a build that
+#     never reorders the pool trips alpha's own assertion.
 #
 # host-reason: Part A tests pure text logic on the host; Part B needs podman on PATH
-# covers: spira/testenv-batch.sh spira/suite-covers.sh
+# covers: spira/testenv-batch.sh spira/suite-covers.sh spira/tsd-query.sh
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -136,6 +141,46 @@ cat > "$REMOTE/spira/test-fx-b12q.sh" << 'EOF'
 [ -f /tmp/b12-p-done  ] || { printf 'FAIL: p-done absent\n'; exit 1; }
 printf '  ok  q check\n'
 exit 0
+EOF
+# B13 fixture: LPT (longest-first) pool ordering (sp-ezkp3). Each suite appends its own
+# name to a shared order log; alpha runs last in LPT order, so it is the one that checks
+# the log's full contents against the expected longest-first sequence.
+# Seeded historical wall_secs (via SPIRA_RUN's suite-timing family): gamma=500, beta=50,
+# alpha=5 — list/selection order is alphabetical (alpha,beta,gamma,unmeasured), the exact
+# opposite of the expected LPT order, so a build that kept list order fails this check
+# (the positive control: alpha's own assertion is what a missing reorder trips).
+# unmeasured has no ledger entry at all — treated as longest, so it must run first.
+cat > "$REMOTE/spira/test-fx-b13-unmeasured.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: b13-fixture.sh
+echo unmeasured >> /tmp/b13-order.log
+exit 0
+EOF
+cat > "$REMOTE/spira/test-fx-b13-gamma.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: b13-fixture.sh
+echo gamma >> /tmp/b13-order.log
+exit 0
+EOF
+cat > "$REMOTE/spira/test-fx-b13-beta.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: b13-fixture.sh
+echo beta >> /tmp/b13-order.log
+exit 0
+EOF
+cat > "$REMOTE/spira/test-fx-b13-alpha.sh" << 'EOF'
+#!/usr/bin/env bash
+# covers: b13-fixture.sh
+echo alpha >> /tmp/b13-order.log
+got="$(cat /tmp/b13-order.log)"
+want="$(printf 'unmeasured\ngamma\nbeta\nalpha')"
+if [ "$got" = "$want" ]; then
+    printf '  ok  LPT order: %s\n' "$(tr '\n' ',' < /tmp/b13-order.log)"
+    exit 0
+else
+    printf 'FAIL: order was [%s], wanted [%s]\n' "$(tr '\n' ',' <<<"$got")" "$(tr '\n' ',' <<<"$want")"
+    exit 1
+fi
 EOF
 chmod +x "$REMOTE/spira"/test-fx-*.sh
 git -C "$REMOTE" add spira/
@@ -1378,6 +1423,83 @@ if [ -n "$RD_B12" ] && [ -f "$RD_B12/test-fx-b12b.sh.result" ]; then
         && ok "B12b: exclusive suite b ran before a started, despite list position" \
         || bad "B12b: exclusive suite b ran before a started" \
                "got $_st_b12b ($(cat "$RD_B12/test-fx-b12b.sh.out" 2>/dev/null))"
+fi
+
+# ===========================================================================
+# B13: LPT (LONGEST-FIRST) POOL ORDERING (sp-ezkp3)
+#
+# The non-exclusive pool is ordered longest-first using historical wall_secs from the
+# run/tsd/ suite-timing family (sp-sbc6o), read through tsd-query.sh's by-group query.
+# Seeded durations: gamma=500s, beta=50s, alpha=5s; unmeasured has no ledger row at all
+# and must be treated as the longest suite on record, so the expected start order is
+# unmeasured, gamma, beta, alpha. Selection/list order is alphabetical — the exact
+# reverse of that — so alpha's self-check (see the fixture above) only passes when the
+# reorder actually fires: the mismatch it would otherwise report IS the positive
+# control (law-absence-needs-a-positive-control) — no separate unreordered run needed.
+# ===========================================================================
+echo
+echo "B13: LPT pool ordering"
+
+if ! command -v duckdb >/dev/null 2>&1; then
+    echo "SKIP B13: duckdb not on PATH — tsd-query.sh needs it"
+else
+    CARGO_BIN_B13="$(command -v cargo 2>/dev/null || true)"
+    [ -z "$CARGO_BIN_B13" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN_B13="$HOME/.cargo/bin/cargo"
+    if [ -z "$CARGO_BIN_B13" ]; then
+        echo "SKIP B13: cargo not found — tsd-write binary cannot be built"
+    else
+        TSD_ROOT_B13="$HERE/../tsd"
+        TSD_BIN_B13="$TSD_ROOT_B13/target/release/tsd-write"
+        if [ ! -x "$TSD_BIN_B13" ]; then
+            cp -r "$TSD_ROOT_B13/." "$TMP/tsd-src-b13"
+            CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$TMP/tsd-target-b13" \
+                "$CARGO_BIN_B13" build --release --manifest-path "$TMP/tsd-src-b13/Cargo.toml" >/dev/null 2>&1
+            TSD_BIN_B13="$TMP/tsd-target-b13/release/tsd-write"
+        fi
+        if [ ! -x "$TSD_BIN_B13" ]; then
+            bad "B13: tsd-write binary built" "not found at $TSD_BIN_B13"
+        else
+            SUITE_B13="$TMP/suites-B13"
+            mkdir -p "$SUITE_B13"
+            cp "$REMOTE/spira/test-fx-b13-unmeasured.sh" "$SUITE_B13/"
+            cp "$REMOTE/spira/test-fx-b13-gamma.sh" "$SUITE_B13/"
+            cp "$REMOTE/spira/test-fx-b13-beta.sh" "$SUITE_B13/"
+            cp "$REMOTE/spira/test-fx-b13-alpha.sh" "$SUITE_B13/"
+
+            RUN_B13="$TMP/run-b13"; mkdir -p "$RUN_B13"
+            "$TSD_BIN_B13" --family suite-timing --root "$RUN_B13" \
+                --field-str suite=test-fx-b13-gamma.sh --field wall_secs=500
+            "$TSD_BIN_B13" --family suite-timing --root "$RUN_B13" \
+                --field-str suite=test-fx-b13-beta.sh --field wall_secs=50
+            "$TSD_BIN_B13" --family suite-timing --root "$RUN_B13" \
+                --field-str suite=test-fx-b13-alpha.sh --field wall_secs=5
+
+            RESULTS_ROOT_B13="$TMP/results-B13"
+            rc_b13=0
+            SPIRA_BATCH_SUITE_DIR="$SUITE_B13" \
+            SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B13" \
+            SPIRA_BATCH_SKIP_INSTALL=1 \
+            SPIRA_VERDICT_TTL=0 \
+            SPIRA_BATCH_INSTANCE="b13-$$" \
+            SPIRA_BATCH_MAXPAR=1 \
+            SPIRA_RUN="$RUN_B13" \
+            SPIRA_TSD_BIN="$TSD_BIN_B13" \
+                bash "$BATCH" --mode parallel \
+                --suites test-fx-b13-alpha.sh,test-fx-b13-beta.sh,test-fx-b13-gamma.sh,test-fx-b13-unmeasured.sh \
+                topic "$FIXTURE" || rc_b13=$?
+
+            iszero "B13: batch exits 0 (LPT order matched alpha's expectation)" "$rc_b13"
+
+            RD_B13="$(find_results_dir "$RESULTS_ROOT_B13")"
+            if [ -n "$RD_B13" ] && [ -f "$RD_B13/test-fx-b13-alpha.sh.result" ]; then
+                _st_b13a="$(awk '{print $1}' "$RD_B13/test-fx-b13-alpha.sh.result")"
+                [ "$_st_b13a" = ok ] \
+                    && ok "B13: pool ran longest-first (unmeasured, gamma, beta, alpha)" \
+                    || bad "B13: pool ran longest-first" \
+                           "got $_st_b13a ($(cat "$RD_B13/test-fx-b13-alpha.sh.out" 2>/dev/null))"
+            fi
+        fi
+    fi
 fi
 
 # ===========================================================================
