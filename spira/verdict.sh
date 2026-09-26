@@ -116,18 +116,25 @@ _repro_ci_branch() {
     printf 'spira/attr/%s-%s-%s' "${1:-x}" "${2:-x}" "${3:0:12}"
 }
 
-# _repro_ci_wait <repo> <branch> <forge> -> prints check-status's output once the run
-# on <branch> leaves pending, or after SPIRA_QUEUE_REPRO_CI_MAXSEC of polling — in which
-# case it prints "pending" and the caller treats that like any other unjudgeable result.
+# _repro_ci_wait <repo> <branch> <forge> -> sets _REPRO_CI_STATUS_OUT to check-status's
+# output once the run on <branch> leaves pending, or to "pending" after
+# SPIRA_QUEUE_REPRO_CI_MAXSEC of polling (the caller treats that like any other
+# unjudgeable result). NEVER call this via command substitution: bash defers a
+# caught signal until the current foreground command returns, so a TERM sent while
+# this is blocked in the poll's `sleep` only takes effect once that sleep call
+# completes on its own — and `$(_repro_ci_wait ...)` would add a subshell layer
+# between this loop and the process TERM is actually sent to, deferring it until
+# SPIRA_QUEUE_REPRO_CI_MAXSEC instead of one poll interval.
+_REPRO_CI_STATUS_OUT=""
 _repro_ci_wait() {
     local repo="$1" br="$2" forge="$3"
     local _pollsec="${SPIRA_QUEUE_REPRO_CI_POLLSEC:-15}" _maxsec="${SPIRA_QUEUE_REPRO_CI_MAXSEC:-1800}"
-    local _elapsed=0 status_out status
+    local _elapsed=0 status
     while :; do
-        status_out="$("$forge" check-status "$repo" "" "$br" 2>/dev/null)"
-        status="$(printf '%s\n' "$status_out" | head -1)"
-        [ "${status:-pending}" != pending ] && { printf '%s\n' "$status_out"; return 0; }
-        [ "$_elapsed" -ge "$_maxsec" ] && { printf 'pending\n'; return 0; }
+        _REPRO_CI_STATUS_OUT="$("$forge" check-status "$repo" "" "$br" 2>/dev/null)"
+        status="$(printf '%s\n' "$_REPRO_CI_STATUS_OUT" | head -1)"
+        [ "${status:-pending}" != pending ] && return 0
+        [ "$_elapsed" -ge "$_maxsec" ] && { _REPRO_CI_STATUS_OUT="pending"; return 0; }
         sleep "$_pollsec"
         _elapsed=$(( _elapsed + _pollsec ))
     done
@@ -153,6 +160,14 @@ _repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-f
     local status_out status run_id="" br="" remote=""
 
     if [ -z "$base" ]; then
+        if [ -z "$tip" ]; then
+            # No branch to read back — forge.sh's own check-status refuses to guess
+            # from an empty branch (law-a-control-that-cannot-check-must-refuse),
+            # and a batch record with no branch field is exactly that: nothing to
+            # check, not evidence that the batch head is clean.
+            _repro_fault "$_pr" "$_member" "batch-head branch name missing"
+            return 2
+        fi
         status_out="$("$forge" check-status "$repo" "" "$tip" 2>/dev/null)"
         status="$(printf '%s\n' "$status_out" | head -1)"
         run_id="$("$forge" run-id "$repo" "$tip" 2>/dev/null)" || run_id=""
@@ -189,7 +204,8 @@ _repro_is_red() {   # _repro_is_red <suites-csv> <repo> <base-sha> <tip> [fail-f
             _repro_fault "$_pr" "$_member" "dispatch attribution run"
             return 2
         fi
-        status_out="$(_repro_ci_wait "$repo" "$br" "$forge")"
+        _repro_ci_wait "$repo" "$br" "$forge"
+        status_out="$_REPRO_CI_STATUS_OUT"
         status="$(printf '%s\n' "$status_out" | head -1)"
         run_id="$("$forge" run-id "$repo" "$br" 2>/dev/null)" || run_id=""
         spira_git_push "$repo" -q "$remote" ":refs/heads/${br}" 2>/dev/null || true
@@ -276,7 +292,8 @@ _suites_red_on_base() {
         spira_git_push "$repo" -q "$remote" ":refs/heads/${br}" 2>/dev/null || true
         return 0
     }
-    status_out="$(_repro_ci_wait "$repo" "$br" "$forge")"
+    _repro_ci_wait "$repo" "$br" "$forge"
+    status_out="$_REPRO_CI_STATUS_OUT"
     status="$(printf '%s\n' "$status_out" | head -1)"
     spira_git_push "$repo" -q "$remote" ":refs/heads/${br}" 2>/dev/null || true
     [ "$status" = red ] || return 0

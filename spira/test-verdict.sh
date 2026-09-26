@@ -186,7 +186,16 @@ case "$cmd" in
     dispatch)
         branch="${1:-}" suites="${2:-}"
         printf '%s\t%s\tdispatch\n' "$branch" "$suites" >> "$FORGE_LOG"
-        kind="${MEMBER_RC_DEFAULT:-green}" vsuites="$suites"
+        # The baseline-red-on-base check (branch names "base-base-") defaults to
+        # green unless a case writes $MEMBER_RC_DIR/base explicitly — it must
+        # never inherit MEMBER_RC_DEFAULT, or a case that sets a red/fault
+        # default for its members would also make every suite look red on base
+        # and get wrongly excluded before any member is even attributed.
+        case "$branch" in
+            */attr/base-base-*) kind="green" ;;
+            *) kind="${MEMBER_RC_DEFAULT:-green}" ;;
+        esac
+        vsuites="$suites"
         if [ -d "${MEMBER_RC_DIR:-/nonexistent}" ]; then
             for mf in "$MEMBER_RC_DIR"/*; do
                 [ -e "$mf" ] || continue
