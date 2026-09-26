@@ -59,17 +59,14 @@ commit_common_law() {
 # are running `rule.sh enact`, you expect the wiki page to be regenerated. Silently succeeding
 # when it cannot is how the operator is told "Statute is live" while the page sits stale —
 # observed verbatim when law-synth.sh failed with "Argument list too long" and rule.sh still
-# printed the success banner (sp-p0xyt). The hook is CONFIGURED in spira.conf as SPIRA_WIKI_HOOK;
-# an operator without a wiki checkout should not be running rule.sh enact in that environment.
+# printed the success banner (sp-p0xyt). The default hook is the harness's own
+# spira/law-synth.sh, which itself no-ops when SPIRA_WIKI is unset; SPIRA_WIKI_HOOK in
+# spira.conf overrides it only when some other regeneration is wanted.
 synth() {
-    local hook="$SPIRA_WIKI_HOOK"
-    if [ -z "${hook:-}" ]; then
-        echo "rule: SPIRA_WIKI_HOOK is not set — statute NOT regenerated in wiki." >&2
-        echo "      Set SPIRA_WIKI_HOOK in spira.conf to the path of .claude/law-synth.sh." >&2
-        return 1
-    fi
+    local hook="${SPIRA_WIKI_HOOK:-}"
+    [ -n "$hook" ] || hook="$SPIRA_HOME_DIR/law-synth.sh"
     if [ ! -x "$hook" ]; then
-        echo "rule: SPIRA_WIKI_HOOK='$hook' is not executable — statute NOT regenerated in wiki." >&2
+        echo "rule: hook '$hook' is not executable — statute NOT regenerated in wiki." >&2
         return 1
     fi
     "$hook"

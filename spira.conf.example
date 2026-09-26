@@ -446,8 +446,9 @@
 # and carries on in silence if it is not. An optional call is not a dependency; a hard path is.
 # SPIRA_WIKI = $HOME/notes
 
-# A hook called where the harness wants an effect on that repository — regenerating whatever
-# it renders. Absent, the harness carries on.
+# Overrides rule.sh's default statute-synthesis hook (spira/law-synth.sh, which already
+# writes to SPIRA_WIKI and needs no config of its own). Set this only to run some other
+# program in its place.
 # SPIRA_WIKI_HOOK = $HOME/notes/bin/synth-statutes
 
 # THE VIEW FOLLOWER: your program for keeping the attention surface pointed at whatever you
