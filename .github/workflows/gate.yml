@@ -165,6 +165,7 @@ jobs:
 
       - name: Assert Rust version
         run: |
+          want=$(awk -F'"' '/^channel/{print $2; exit}' rust-toolchain.toml)
           got=$(rustc --version | awk '{print $2}')
           want="${{ steps.toolchain.outputs.version }}"
           [ "$got" = "$want" ] || {

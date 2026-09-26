@@ -30,7 +30,10 @@
 # Global: redeclared per-stage (ARG scope ends at the next FROM). Stage 3 pins
 # RUSTUP_TOOLCHAIN to this so a workspace rust-toolchain.toml naming another
 # channel can't send rustup to install into the read-only /usr/local/rustup.
-ARG RUST_VERSION=1.96.0
+# Must equal rust-toolchain.toml's channel (the compiler the gate builds with), checked by
+# test-rust-toolchain-pin.sh: a different local cargo can rewrite Cargo.lock to crates CI
+# cannot build (PR 361).
+ARG RUST_VERSION=1.82.0
 
 # ── Stage 1: build bd ─────────────────────────────────────────────────────────
 FROM docker.io/library/ubuntu:24.04 AS bd-builder
