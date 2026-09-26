@@ -49,7 +49,7 @@ echo
 echo "the call sites — every outcome the harness has is wired to one"
 # aeon.claimed cannot be driven by a suite: aeon.sh launches a Claude session, so every
 # suite stubs it. The other five are exercised through their own scripts in test-landing.sh,
-# test-poison.sh and test-ci-park.sh. What is checkable here is that the claim is still
+# test-poison.sh. What is checkable here is that the claim is still
 # wired, and wired AFTER the ledger — the ledger is what aeon_count and the born/awake
 # positive control read, and it must not come to depend on a database being reachable.
 claim="$(grep -n -A14 '^ledger "awake \$FAYTH \$BEAD_ID"' "$HERE/aeon.sh" 2>/dev/null)"
