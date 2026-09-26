@@ -293,3 +293,26 @@ brief, and each noting the dependency it is blocked on:
   `conf.sh` stayed, since that one genuinely is copied and sourced. `test-sending-
   landstate-assert.sh`'s "NO DATABASE" header claim was stale — it builds a testdb — and was
   reworded.
+
+### UC-04 through UC-13 (added by sp-pyowh, superseding the deferral above)
+
+sp-qsona's C3 did not land the skip/restore/reopen decision table these UCs describe. It
+replaced CHECK 5 with a single straight-line invariant — closed, aeon-worked, not
+superseded/dropped/`delivers:`-labeled, no ancestry-verified LANDED tip → file an Ops
+incident; otherwise leave the bead alone — and deleted all 15 old suites plus
+`test-content-landed-no-reopen.sh` and `test-landed-stays-landed.sh` itself, replacing them
+with `test-check5-invariant.sh` (5 cases: positive control, LANDED, DROPPED, SUPERSEDED,
+NON-CODE TYPE). There is no `check5_decide` or `delivers_verify` to extract: the invariant
+has no decision states left to table, and a `delivers:` label is never verified — it is
+skipped outright. Extracting one now would be inventing an abstraction the code no longer
+has a use for.
+
+What the new shape still leaves untested, matched against `sentinel.sh`'s actual lines
+rather than the pre-C3 ones this plan cited: the `delivers:` skip, the hand-closed skip (no
+`$SPIRA_RUN/<id>.log`), the unmapped-repo skip and its log line, the cannot-resolve-ref path
+and its log line, enumeration across more than one persona's partition, and the
+no-partition-declares log line. Added as five further cases to `test-check5-invariant.sh`
+(sp-pyowh). The rest of the old UC-04..13 text (delivers:report/unknown-type/hanging-check,
+GATED/REBASED/CERTIFIED-restore, push-mode ahead-vs-zero-ahead, gap 10's now-deleted
+`# covers:` lines, gap 11's nopayload tautology) describes code and suites that no longer
+exist and needs no further action.
