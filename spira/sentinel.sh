@@ -701,7 +701,36 @@ if [ "${SPIRA_SKIP_CLOSED_CHECK:-0}" != 1 ]; then
 _c5_absent_repos=""
 declare -A _c5_landed=()
 _c5_filed=0; _c5_capped=0; _c5_capped_ids=""; _c5_graph=0
+_c5_resolved=0; _c5_resolve_capped=0; _c5_resolve_capped_ids=""
 _c5_max="${SPIRA_CHECK5_MAX_FILE:-5}"
+_c5_resolve_max="${SPIRA_CHECK5_MAX_RESOLVE:-5}"
+
+# _c5_resolve <id> <evidence> — closes the open incident THIS CHECK filed for <id>, now that
+# the same check has proven <id> landed. Keyed on the identical dedup ref incident.sh's own
+# filing used (SPIRA_INCIDENT_REF="closed-not-landed:$id"), so this finds exactly the bead
+# file_one would have deduped onto had it fired again — never a bead some other check filed.
+# Filing is bounded so a flood cannot file forever; this must be bounded the same way so a
+# large residue cannot be cleared in one pass that blows the service's TimeoutStartSec.
+_c5_resolve() {
+    local _id="$1" _evidence="$2" _hash _inc_id
+    _hash="$(printf '%s' "closed-not-landed:$_id" | sha256sum | cut -c1-8)"
+    _inc_id="$(bdjson list --status open,in_progress --limit 0 --label "ref:$_hash" 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: sys.exit(0)
+d = d if isinstance(d, list) else [d]
+print(d[0]["id"] if d else "")' 2>/dev/null)"
+    [ -n "${_inc_id:-}" ] || return 0
+    if [ "$_c5_resolved" -ge "$_c5_resolve_max" ] 2>/dev/null; then
+        _c5_resolve_capped=$((_c5_resolve_capped + 1))
+        _c5_resolve_capped_ids+="${_c5_resolve_capped_ids:+ }$_id"
+        return 0
+    fi
+    if bdq close "$_inc_id" --reason-file - <<< "$_evidence" >/dev/null 2>&1; then
+        _c5_resolved=$((_c5_resolved + 1))
+        log "CHECK5 resolve $_id -> $_inc_id: $_evidence"
+    fi
+}
 while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed; do
     [ -n "$id" ] || continue
     # Only beads an aeon worked — anything closed by hand outside the pipeline has its own
@@ -741,6 +770,7 @@ while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed; 
     fi
     if [ -n "${_c5_landed[$id]:-}" ]; then
         _c5_graph=$((_c5_graph + 1))
+        _c5_resolve "$id" "$id is landed: $r_name's base ($subj_base) names it in a 'spira: land' or '<id>:' subject, proven by the same commit-graph walk that filed this incident (law-closed-is-not-landed)."
         continue
     fi
     _c5_ls_state=""; _c5_ls_tip=""
@@ -749,6 +779,7 @@ while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed; 
     fi
     if [ "${_c5_ls_state:-}" = LANDED ] && [ -n "${_c5_ls_tip:-}" ] && [ "$_c5_ls_tip" != none ] \
            && git -C "$r_path" merge-base --is-ancestor "$_c5_ls_tip" "$subj_base" 2>/dev/null; then
+        _c5_resolve "$id" "$id is landed: its LANDED landstate tip ($_c5_ls_tip) is an ancestor of $r_name's base ($subj_base)."
         continue
     fi
     if [ "$_c5_filed" -ge "$_c5_max" ] 2>/dev/null; then
@@ -801,7 +832,13 @@ for i in (d if isinstance(d, list) else [d]):
 if [ "$_c5_capped" -gt 0 ]; then
     log "CHECK5: filed $_c5_filed incident(s), the cap (SPIRA_CHECK5_MAX_FILE=$_c5_max); $_c5_capped more not filed this pass: $_c5_capped_ids"
 fi
+[ "$_c5_resolved" -gt 0 ] && log "CHECK5: resolved $_c5_resolved incident(s) for beads this pass proved landed"
+if [ "$_c5_resolve_capped" -gt 0 ]; then
+    log "CHECK5: resolved $_c5_resolved incident(s), the cap (SPIRA_CHECK5_MAX_RESOLVE=$_c5_resolve_max); $_c5_resolve_capped more proven landed but not resolved this pass: $_c5_resolve_capped_ids"
+fi
+unset -f _c5_resolve
 unset _c5_landed _c5_filed _c5_capped _c5_capped_ids _c5_graph _c5_max _c5_lid
+unset _c5_resolved _c5_resolve_capped _c5_resolve_capped_ids _c5_resolve_max
 fi  # SPIRA_SKIP_CLOSED_CHECK
 
 # ======================================================================================
