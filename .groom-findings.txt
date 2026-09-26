@@ -292,4 +292,10 @@ CURRENT STATE:
 - No duplicates found
 - No splits needed
 - 1 groom-asked bead skipped (sp-psenn)
-
+GROOM PASS sp-9iryu
+TRIGGER: UNCLAIMABLE: sp-oc2k2 — fix the fayth: or partition label
+SWEEP: groomer.sh sweep found 1 bead (sp-oc2k2 unclaimable); acted on 0 (sweep does
+1. sp-oc2k2 — Container startup failure root cause investigation needed
+   - Verified: groomer.sh sweep reports "no livelocked beads" after fix
+- 33 open beads examined
+- 1 LIVELOCK row resolved (sp-oc2k2: added 'incident', removed 'partition:incident')
