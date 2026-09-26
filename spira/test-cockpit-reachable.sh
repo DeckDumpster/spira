@@ -19,15 +19,11 @@
 #   Also tests: SP_REACHABLE=? and SP_STRANDED=? when the store is unreadable.
 #   And: health.sh renders "N ready · M reachable" and "K stranded" when K > 0.
 #
+# tier: T1
 # covers: spira/cockpit.sh cockpit/health.sh spira/collect.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in output"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in output"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -405,5 +401,4 @@ is "SP_STRANDED=1 with orphan bead" "1" \
 
 # =============================================================================
 echo ""
-printf 'test-cockpit-reachable: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

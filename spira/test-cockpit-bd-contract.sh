@@ -24,6 +24,7 @@
 # covers: spira/cockpit.sh spira/bdsim.py cockpit/panel/src/store.rs loom/static/model.js
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 # Resolved BEFORE testdb.sh, which sources conf.sh, which rebuilds PATH from SPIRA_PATH +
 # $HOME/.local/bin + /usr/local/bin + /usr/bin + /bin — dropping wherever this box's cargo
 # actually lives (gap #4's row below needs it after that rebuild has already happened).
@@ -36,11 +37,6 @@ testdb_require test-cockpit-bd-contract
 TMP="$(mktemp -d)"
 testdb_up bdcontract || { echo "test-cockpit-bd-contract: could not build a fixture database"; exit 1; }
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
 
 RUN="$TMP/run"; mkdir -p "$RUN"
 run_probe() {    # run_probe <subcommand> [env KEY=val ...]
@@ -203,5 +199,4 @@ console.log([m.stats.live, m.edges.length, m.components.length,
 fi
 
 echo
-printf 'test-cockpit-bd-contract: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

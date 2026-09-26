@@ -22,13 +22,9 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 COCKPIT_DIR="$(dirname "$HERE")/cockpit"
 HEALTH="$COCKPIT_DIR/health.sh"
-
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 command -v tmux >/dev/null 2>&1 || { echo "SKIP: tmux not available" >&2; exit 0; }
 
@@ -136,5 +132,4 @@ sleep 0.5
 is "B: ensure recreated the health pane" "1" \
     "$(tmux list-panes -t "$WIN2" -F '#{@cockpit}' 2>/dev/null | grep -Fxc health)"
 
-printf '\ntest-cockpit-health-restart: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

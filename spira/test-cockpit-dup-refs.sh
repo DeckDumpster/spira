@@ -26,17 +26,13 @@
 # — is covered once in test-cockpit-bd-contract.sh, against real bd.
 #
 # COVERS: spira/cockpit.sh spira/watchtower.sh spira/incident.sh
+# tier: T2
 # covers: spira/cockpit.sh spira/watchtower.sh spira/incident.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 echo "test-cockpit-dup-refs.sh"
 
@@ -165,5 +161,4 @@ is   "old closed beads outside 7-day window: SP_DUP_REFS=0" "0" "$(key "$keys_ol
 is   "SP_DUP_BEADS=0"                                        "0" "$(key "$keys_old" SP_DUP_BEADS)"
 
 echo
-printf '%s: %d passed, %d failed\n' "$(basename "$0")" "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

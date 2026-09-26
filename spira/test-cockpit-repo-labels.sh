@@ -29,17 +29,13 @@
 # once, against real bd, in test-cockpit-bd-contract.sh.
 #
 # defect: sp-sqlk
+# tier: T2
 # covers: spira/cockpit.sh spira/watchtower.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
-
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "expected [$2] got [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 # A minimal repo-map with one valid entry. Pin to a non-default name ('validrepo') so the
 # test cannot silently pass if the code has a literal like 'brain' baked in.
@@ -163,5 +159,4 @@ nowant "readable map: SP_REPO_UNMAPPED is not ?" "SP_REPO_UNMAPPED=?" "$out"
 nowant "readable map: SP_REPO_ABSENT is not ?"   "SP_REPO_ABSENT=?"   "$out"
 
 echo
-printf 'test-cockpit-repo-labels: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

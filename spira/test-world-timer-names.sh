@@ -35,14 +35,11 @@
 # systemctl IS STUBBED throughout. Assertions are on what world.sh ASKED systemd to do.
 #
 # defect: sp-4biz
+# tier: T1
 # covers: spira/world.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-world-timer-names.sh"
 
@@ -187,5 +184,4 @@ want   "D: calls stop on legacy @ watcher" \
        "stop spira-watch@answers.service"  "$calls"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

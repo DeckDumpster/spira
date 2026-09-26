@@ -5,14 +5,12 @@
 # `up` builds session, mail and a full-height health column; `ensure` brings a closed mail
 # pane back; a client that is unset or not installed gets no pane rather than one that dies.
 #
+# tier: T1
 # covers: cockpit/layout.sh spira/conf.sh
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 command -v tmux >/dev/null 2>&1 || { echo "  SKIP  tmux is not on PATH"; exit 77; }
 
@@ -75,5 +73,4 @@ is "two panes"                           2 "$(panes c3:0 | wc -l | tr -d ' ')"
 is "none tagged mail"                    "" "$(field c3:0 mail 2)"
 
 echo
-printf 'test-cockpit-layout-mail: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

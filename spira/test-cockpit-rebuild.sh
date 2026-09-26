@@ -26,16 +26,13 @@
 # the classifier so that misreading cannot come back.
 #
 # defect: sp-9zs0y
+# tier: T1
 # covers: cockpit/rebuild.sh cockpit/layout.sh
 # hermetic-ok: its own TMUX_TMPDIR server and temp dirs; reads no operator state it can change
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 COCKPIT="$HERE/../cockpit"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 
 T="$(mktemp -d)"
 TM="$(mktemp -d)"
@@ -187,5 +184,4 @@ is   "mail build: brain:0 has a session pane" "1" "$sess_cnt6"
 want "mail build: verify reports mail pane ok" "ok    brain:0 has a mail pane" "$out6"
 
 echo
-printf 'test-cockpit-rebuild.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

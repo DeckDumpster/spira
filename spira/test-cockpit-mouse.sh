@@ -19,18 +19,13 @@
 # which has no runtime behaviour to call.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 LAYOUT="$HERE/../cockpit/layout.sh"
 CONF="$HERE/conf.sh"
 
 code() { grep -vE '^[[:space:]]*#' "$1"; }
 CONF_CODE="$(code "$CONF")"
 LAYOUT_CODE="$(code "$LAYOUT")"
-
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 echo "test-cockpit-mouse.sh"
 echo
@@ -118,5 +113,4 @@ want "COCKPIT_MOUSE=on: turns mouse on" "set-option -g mouse on" "$(cat "$LOG")"
 out="$(call_mouse on 1)"
 want "the shim failing still exits 0: it never fails the caller" "RC=0" "$out"
 
-printf '\n  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

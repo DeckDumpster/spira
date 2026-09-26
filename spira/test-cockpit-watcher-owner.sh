@@ -19,18 +19,14 @@
 #   For (2): when no orphan holds the lock, the escalation carries no "pid"
 #             line — proves the orphan probe is live.
 #
+# tier: T1
 # covers: cockpit/remote/cockpit-remote spira/watchd.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 CR="$HERE/../cockpit/remote/cockpit-remote"
 WATCHD="$HERE/watchd.sh"
 
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 
 echo "test-cockpit-watcher-owner.sh"
 
@@ -384,5 +380,4 @@ fi
 
 # ===========================================================================
 echo
-printf 'test-cockpit-watcher-owner.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

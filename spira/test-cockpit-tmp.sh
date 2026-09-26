@@ -26,8 +26,8 @@
 # shellcheck disable=SC2034
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 COCKPIT="$HERE/cockpit.sh"
-pass=0; fail=0
 
 RUN="$(mktemp -d)"
 TMP="$(mktemp -d)"
@@ -36,9 +36,6 @@ BASE_PATH="$PATH"
 
 # temps -> how many .cockpit.* files are in the scratch run dir right now.
 temps() { find "$RUN" -maxdepth 1 -name '.cockpit.*' | wc -l; }
-
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s\n' "$1"; }
 
 # A marker snapshot: an interrupted pass must not touch the one already published. The
 # rename is what makes that true, and it is the other half of writing to a temp at all.
@@ -150,5 +147,4 @@ n="$(temps)"
               || bad "$n orphaned temp(s) survived startup sweep"
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

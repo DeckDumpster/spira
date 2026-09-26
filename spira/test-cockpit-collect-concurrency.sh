@@ -22,10 +22,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 COLLECT="$HERE/collect.sh"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()  { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -149,6 +146,4 @@ if [ -f "$FRAG_DIR/slow_b.env" ] && grep -q '^SP_MOCK=1' "$FRAG_DIR/slow_b.env";
 else
     bad "slow_b's fragment carries the real probe's output" "$(cat "$FRAG_DIR/slow_b.env" 2>&1)"
 fi
-
-printf '\n  %d ok, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

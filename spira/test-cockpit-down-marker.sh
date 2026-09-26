@@ -19,15 +19,9 @@
 # hermetic-ok: its own TMUX_TMPDIR servers and temp dirs; reads no operator state it can change
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 COCKPIT_DIR="$HERE/../cockpit"
 LAYOUT="$COCKPIT_DIR/layout.sh"
-
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-hasnt(){ [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 T1="$(mktemp -d)"; T2="$(mktemp -d)"
 cleanup() {
@@ -85,7 +79,7 @@ is "ensure after down: still no dashboard panes" "0" "$(dash_tags)"
 is "ensure after down: DOWN_MARKER still there" "1" \
    "$([ -f "$RUN1/cockpit.down" ] && echo 1 || echo 0)"
 if [ -f "$RUN1/cockpit-heal.log" ]; then
-    hasnt "ensure after down: heal.log does not claim a rebuild" \
+    nowant "ensure after down: heal.log does not claim a rebuild" \
           "rebuilding from scratch" "$(cat "$RUN1/cockpit-heal.log")"
 else
     ok "ensure after down: no heal.log written at all"
@@ -128,5 +122,4 @@ want "2: heal.log records the rebuild" \
      "rebuilding from scratch" "$(cat "$RUN2/cockpit-heal.log" 2>/dev/null)"
 
 echo
-printf 'test-cockpit-down-marker.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

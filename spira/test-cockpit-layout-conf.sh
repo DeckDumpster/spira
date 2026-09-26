@@ -18,14 +18,9 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 COCKPIT_DIR="$(dirname "$HERE")/cockpit"
 LAYOUT="$COCKPIT_DIR/layout.sh"
-
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -73,5 +68,4 @@ echo "SPIRA_DEV_RENDERER=1 opts back into the dev checkout even with SPIRA_PROD 
 out4="$(health_cmd env SPIRA_REPO="$FAKE_DEV_REPO" SPIRA_PROD="$TMP/prodroot" SPIRA_DEV_RENDERER=1)"
 want "keeps the dev checkout's renderer" "$FAKE_COCK/health.sh" "$out4"
 
-printf '\ntest-cockpit-layout-conf: %d ok, %d fail\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
