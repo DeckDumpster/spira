@@ -84,9 +84,9 @@ printf '\nT4: suite that dies mid-setup (no FAIL line) reports rc, timing and la
 (
     root="$(mktemp -d)"
     trap 'rm -rf "$root"' EXIT
-    printf 'red _ 70 _ _ _ 255\n' > "$root/test-landing-queue-early.result"
+    printf 'red _ 70 _ _ _ 255\n' > "$root/test-landing-queue-early.sh.result"
     printf 'testdb: TRACE: entering server mode initialization for tag=x\ntestdb: TRACE: calling bd init --server with database=x\n' \
-        > "$root/test-landing-queue-early.out"
+        > "$root/test-landing-queue-early.sh.out"
 
     out="$(bash "$HERE/gate-diag.sh" "$root" 2>/dev/null)"
 
