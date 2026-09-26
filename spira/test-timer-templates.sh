@@ -5,7 +5,7 @@
 # unit files instead of six suites each re-reading them.
 #
 # tier: T0
-# covers: systemd/*.timer systemd/*.service systemd/units.sh systemd/install.sh systemd/concierge.service systemd/beads-push.service spira/spira-verdict.sh spira/collect.sh supervise/** UC-instance-lifecycle-31
+# covers: systemd/*.timer systemd/*.service systemd/units.sh systemd/render.py systemd/concierge.service systemd/beads-push.service spira/spira-verdict.sh spira/collect.sh supervise/** UC-instance-lifecycle-31
 #
 # WHAT THIS GUARDS. Defect sp-7gklu: a timer template existed in systemd/ but was absent from
 # units.sh's UNITS array, so install.sh never wrote it to disk. Defect sp-mplcb: WatchdogSec
@@ -329,15 +329,12 @@ fi
 
 # ============================================================================
 echo
-echo "install.sh renders shared units against the release root, not the git checkout:"
+echo "render.py renders shared units against the release root, not the git checkout:"
 # ============================================================================
 # In a split-checkout deployment SPIRA_REPO is the git checkout and SPIRA_PROD is the
 # release tree; an ExecStart using @SPIRA_REPO@ points into the checkout, which a release
 # activation does not update. @SPIRA_PROD_ROOT@ (dirname of SPIRA_PROD) is the placeholder
 # that resolves into the release tree instead.
-
-want "install.sh: SPIRA_PROD_ROOT = dirname(SPIRA_PROD) is present" \
-    "SPIRA_PROD_ROOT" "$(grep 'SPIRA_PROD_ROOT.*dirname.*SPIRA_PROD' "$UNIT_DIR/install.sh")"
 
 _rd_tmp="$(mktemp -d)"
 _rd_repo="$_rd_tmp/repo"
@@ -345,23 +342,12 @@ _rd_prod="$_rd_tmp/releases/current/spira"
 _rd_prod_root="$_rd_tmp/releases/current"
 mkdir -p "$_rd_repo" "$_rd_prod" "$_rd_prod_root/cockpit"
 
-# Renders using the same @KEY@ substitution install.sh performs (kept in sync by the grep
-# check above: a renamed placeholder key breaks that check before this one goes stale).
+# Render using render.py directly — the actual module install.sh and unit-ensure.sh both
+# call, not a copy of its substitution logic.
 render_unit() {
-    python3 - "$1" "$_rd_repo" "$_rd_repo" "$_rd_tmp/run" "$_rd_tmp/db" "$_rd_prod_root/cockpit" \
-        "" "" "" "$_rd_prod" "test" "" "" "" << 'PYEOF'
-import os, re, sys
-keys = ["SPIRA_HOME", "SPIRA_REPO", "SPIRA_RUN", "SPIRA_DB", "SPIRA_COCKPIT",
-        "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "DOLT", "SPIRA_PROD", "SPIRA_INSTANCE",
-        "SPIRA_TESTDB_PORT", "SPIRA_SUPERVISE_BIN", "SPIRA_SNAP_STALE_S"]
-m = dict(zip(keys, sys.argv[2:15]))
-if not m["SPIRA_PROD"]:
-    m["SPIRA_PROD"] = m["SPIRA_HOME"]
-m["SPIRA_PROD_COCK"] = os.path.dirname(m["SPIRA_PROD"]) + "/cockpit"
-m["SPIRA_PROD_ROOT"] = os.path.dirname(m["SPIRA_PROD"])
-text = open(sys.argv[1]).read()
-sys.stdout.write(re.sub(r"@([A-Z_]+)@", lambda x: m.get(x.group(1), x.group(0)), text))
-PYEOF
+    python3 "$UNIT_DIR/render.py" "$1" \
+        --home "$_rd_repo" --repo "$_rd_repo" --run "$_rd_tmp/run" --db "$_rd_tmp/db" \
+        --cockpit "$_rd_prod_root/cockpit" --prod "$_rd_prod" --instance test
 }
 
 # POSITIVE CONTROL: a synthetic @SPIRA_REPO@ template must render to the checkout path, so
