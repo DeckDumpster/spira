@@ -44,6 +44,19 @@ def check_close_reason(reason):
     return None
 
 
+def detect_close_reason(reason):
+    """Return the first RED_FLAG match in the raw reason, or None.
+
+    No quote-masking, no mention-file skip: the detector surfaces all occurrences
+    so Maechen can decide admission vs quotation (law-a-pattern-match-is-not-an-identity-check).
+    """
+    for f, fl in RED_FLAGS:
+        m = re.search(f, reason, fl)
+        if m:
+            return reason[m.start():m.end()]
+    return None
+
+
 if __name__ == "__main__":
     reason = sys.argv[1] if len(sys.argv) > 1 else ""
     hit = check_close_reason(reason)

@@ -4846,16 +4846,17 @@ detect_invalid_closed() {
         _closed_raw="$(bdjson list --status closed --limit 0 2>/dev/null)"
     fi
     [ -n "$_closed_raw" ] || return 0
-    printf '%s\n' "$_closed_raw" | SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_ID_PREFIX="${SPIRA_ID_PREFIX:-sp}" python3 -c '
+    printf '%s\n' "$_closed_raw" | SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_ID_PREFIX="${SPIRA_ID_PREFIX:-sp}" SPIRA_RUN="${SPIRA_RUN:-}" python3 -c '
 import sys, json, re, os
 
-# Load RED_FLAGS and check_close_reason from the shared helper so the detector and the
-# close-time fence in aeon.sh cannot disagree about what constitutes an unfinished close.
+# Load detect_close_reason from the shared helper. The detector uses detect_close_reason
+# (raw scan, no masking) so all occurrences reach Maechen; check_close_reason (quote-masked)
+# belongs to the close-time fence in aeon.sh.
 _flags_path = os.path.join(os.environ.get("SPIRA_HOME", ""), "close-reason-flags.py")
 try:
     _ns = {"re": re, "__name__": ""}
     exec(open(_flags_path).read(), _ns)
-    check_close_reason = _ns["check_close_reason"]
+    check_close_reason = _ns.get("detect_close_reason") or _ns["check_close_reason"]
 except Exception:
     check_close_reason = lambda r: None
 
@@ -4876,23 +4877,42 @@ TRACKING_RE = re.compile(
     re.IGNORECASE
 )
 
+# ALLOWLIST. Beads whose id appears in $SPIRA_RUN/invalid-closed.allow are reported
+# as ALLOWED-IC (not counted) rather than as INVALID-CLOSED or UNFILED-FOLLOW. Each
+# line in the allowlist is "<id> <reason>" — the reason is what Maechen recorded when
+# it judged the row a false positive (quotation) or resolved it (follow-up filed).
+allowlist = {}
+_run = os.environ.get("SPIRA_RUN", "")
+_allow_path = os.path.join(_run, "invalid-closed.allow") if _run else ""
+if _allow_path and os.path.isfile(_allow_path):
+    with open(_allow_path) as _af:
+        for _line in _af:
+            _parts = _line.strip().split(None, 1)
+            if _parts and re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)+$", _parts[0]):
+                allowlist[_parts[0]] = _parts[1] if len(_parts) > 1 else ""
+
 try: d = json.load(sys.stdin)
 except Exception: raise SystemExit
 for i in (d if isinstance(d, list) else [d]):
+    bid = i["id"]
     reason = i.get("close_reason") or ""
     title = re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:60]
     reason_short = re.sub(r"\s+", " ", reason.strip())[:120]
 
+    if bid in allowlist:
+        print("ALLOWED-IC %s — %s" % (bid, allowlist[bid]))
+        continue
+
     hit = check_close_reason(reason)
     if hit:
         print("INVALID-CLOSED %s — close reason contains %r: %s. title: %s" % (
-            i["id"], hit, reason_short, title))
+            bid, hit, reason_short, title))
         continue
 
     follow_hit = next((f for f in FOLLOW_ON if f.lower() in reason.lower()), None)
     if follow_hit and not TRACKING_RE.search(reason):
         print("UNFILED-FOLLOW %s — follow-on phrase %r without a tracking reference: %s. title: %s" % (
-            i["id"], follow_hit, reason_short, title))
+            bid, follow_hit, reason_short, title))
 ' 2>/dev/null
 }
 
