@@ -21,16 +21,14 @@
 #
 # host-reason: The per-suite timeout is applied by the host's `timeout` command
 #              around each podman exec; Part A requires a container.
+# tier: T0
 # covers: spira/testenv-batch.sh
 
 # covers: spira/testenv-batch.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 isfile() { [ -f "$2" ] && ok "$1" || bad "$1" "file not found: $2"; }
 isnoteq(){ [ "$2" != "$3" ] && ok "$1" || bad "$1" "did not want [$2] got [$3]"; }
 
@@ -105,18 +103,18 @@ echo "Container availability check"
 
 command -v podman >/dev/null 2>&1 || {
     printf 'SKIP test-testenv-timeout.sh: podman not on PATH\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 }
 
 PRE_CNAME="spira-timeout-preflight-$$"
 bash "$TESTENV" up --name "$PRE_CNAME" >&2 || {
     printf 'SKIP test-testenv-timeout.sh: container did not start\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 }
 if ! bash "$TESTENV" probe --name "$PRE_CNAME" 2>/dev/null; then
     bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
     printf 'SKIP test-testenv-timeout.sh: user systemd not available\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 fi
 bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
 ok "P0: pre-flight: container + user systemd available"
@@ -213,5 +211,4 @@ fi
 # SUMMARY
 # ===========================================================================
 echo
-printf 'Results: %s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" -gt 0 ] && exit 1; exit 0
+tl_summary

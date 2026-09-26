@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: T1
 # covers: spira/acceptance-ci.sh .github/workflows/acceptance.yml
 # requires: testenv
 set -uo pipefail
@@ -6,15 +7,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # The prereq-pass case below runs the real acceptance-run.sh (no SPIRA_ACCEPTANCE_RUN
 # stub), which reaches systemctl --user for real against whatever XDG_RUNTIME_DIR/
 # DBUS_SESSION_BUS_ADDRESS is ambient — the operator's real session outside a container.
-. "$HERE/testenv-guard.sh"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
 notzero() { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
 echo "test-acceptance-ci.sh"
 
@@ -277,7 +273,7 @@ want "regression: verdict note pushed to remote when remote already has notes re
 _yml="$(cat "$HERE/../.github/workflows/acceptance.yml" 2>/dev/null || true)"
 want "acceptance.yml: derives prev-tag via acceptance-prev-tag.sh" \
     "acceptance-prev-tag.sh" "$_yml"
-notwant "acceptance.yml: no longer derives prev-tag from the raw git tag list" \
+nowant "acceptance.yml: no longer derives prev-tag from the raw git tag list" \
     "git tag -l 'spira-release-*' | sort -V" "$_yml"
 
 # --- acceptance.yml: waive-upgrade workflow_dispatch input, tag-push never waives ---
@@ -307,5 +303,4 @@ _args8="$(cat "$SCRATCH/stub8-args" 2>/dev/null || true)"
 want "acceptance-ci.sh: --waive-upgrade passed through to acceptance-run.sh" \
     "--waive-upgrade" "$_args8"
 
-printf '\n%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

@@ -15,12 +15,9 @@
 # covers: spira/testenv-batch.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+. "$HERE/testlib.sh"
 BATCH="$HERE/testenv-batch.sh"
 TESTENV="$HERE/testenv.sh"
-
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 
 echo "test-testenv-tmux-isolation.sh"
 
@@ -58,9 +55,7 @@ _tmux_clears="$(grep -c '"TMUX="' "$HERE/testenv-batch.sh" 2>/dev/null || echo 0
 # ===========================================================================
 if ! command -v podman >/dev/null 2>&1; then
     printf 'SKIP Parts A+B: podman not available — container tests skipped\n' >&2
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    [ "$fail" -eq 0 ] || exit 1
-    exit 0
+    tl_summary; exit
 fi
 
 # ===========================================================================
@@ -79,9 +74,7 @@ trap '_ctrl_cleanup; rm -rf "$TMP"' EXIT INT TERM
 
 bash "$TESTENV" up --name "$CTRL_CNAME" >&2 || {
     printf 'SKIP Parts A+B: control container did not start\n' >&2
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"
-    [ "$fail" -eq 0 ] || exit 1
-    exit 0
+    tl_summary; exit
 }
 
 _a1_out="$(podman exec --user spirauser \
@@ -163,5 +156,4 @@ else
 fi
 
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

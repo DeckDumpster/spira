@@ -20,15 +20,11 @@
 # THE FIXTURE builds from the real installer (law-prefer-the-real-dependency).
 # A mock systemctl records calls without touching systemd.
 #
+# tier: T1
 # covers: systemd/unit-ensure.sh systemd/install.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-install-unit-ensure.sh"
 
@@ -220,5 +216,4 @@ want "MISSING-TARGET: present ExecStart target is enabled" \
 
 # ==========================================================================
 echo
-printf '  %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

@@ -14,14 +14,12 @@
 # POSITIVE CONTROL: the refuse case (test 2) is verified first so a silent bootstrap
 # is believed (law-absence-needs-a-positive-control).
 #
+# tier: T1
 # covers: install.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 REAL_REPO="$(cd "$HERE/.." && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 is2()    { [ "$2" = 2 ] && ok "$1" || bad "$1" "wanted exit 2, got $2"; }
 not2()   { [ "$2" != 2 ] && ok "$1" || { bad "$1" "must not exit 2"; printf '  install output:\n'; printf '%s\n' "${3:-}" | sed 's/^/    /'; }; }
 islink() { [ -L "$2" ] && ok "$1" || bad "$1" "expected symlink at $2"; }
@@ -309,5 +307,4 @@ _cur_target="$(readlink "$FAKE_RELEASES_B/current" 2>/dev/null || true)"
 
 # ===========================================================================
 echo
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

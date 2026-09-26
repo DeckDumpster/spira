@@ -23,13 +23,12 @@
 # SKIP CONDITION: none — only sha256sum is required.
 #
 # defect: sp-2v7v
+# tier: T1
 # covers: spira/testenv.sh spira/conf.sh spira/deps.toml
 # covers: spira/testenv/Containerfile
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
+. "$HERE/testlib.sh"
 differs() { [ "$2" != "$3" ] && ok "$1" \
             || bad "$1" "tag did not change: was and still is [$2]"; }
 same()    { [ "$2" = "$3" ] && ok "$1" \
@@ -137,5 +136,4 @@ same "same content at another path gives the same tag" "$tag_base" "$tag_elsewhe
 
 # ──────────────────────────────────────────────────────────────────────────────
 echo
-printf '%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

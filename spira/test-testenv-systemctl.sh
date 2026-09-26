@@ -19,14 +19,11 @@
 #
 # SKIP CONDITION: no podman on PATH, or the testenv image cannot be built.
 #
+# tier: T1
 # covers: spira/testenv.sh spira/testenv/Containerfile
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 iszero() { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0, got $2"; }
 
 echo "test-testenv-systemctl.sh"
@@ -130,5 +127,4 @@ podman exec --user spirauser \
 
 # ==========================================================================
 echo
-printf '%s passed, %s failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

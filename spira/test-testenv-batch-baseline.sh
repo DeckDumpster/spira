@@ -21,14 +21,13 @@
 #   to a private tmpdir — not the shared baseline dir — so this suite's
 #   testdb writes are isolated from other concurrent suites.
 #
+# tier: T2
 # covers: spira/testenv-batch.sh spira/testdb.sh
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 iszero()  { [ "$2" = 0 ]    && ok "$1" || bad "$1" "expected 0, got $2"; }
 isexit1() { [ "$2" = 1 ]    && ok "$1" || bad "$1" "expected 1, got $2"; }
 isnot()   { [ "$2" != "$3" ] && ok "$1" || bad "$1" "wanted not [$2], got [$3]"; }
@@ -80,7 +79,7 @@ echo "Part B: this suite's environment — baseline delivered by testenv-batch.s
 # the batch environment.
 if [ "${SPIRA_IN_TESTENV:-}" != 1 ]; then
     printf 'SKIP Part B: not inside a testenv container (SPIRA_IN_TESTENV not set)\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 fi
 
 _rc=0; check_baseline "${TESTDB_SHARED:-0}" "${TESTDB_BASELINE:-}" || _rc=$?
@@ -105,7 +104,7 @@ trap 'testdb_drop 2>/dev/null || true; rm -rf "$TMP"' EXIT
 . "$HERE/testdb.sh"
 if ! testdb_up baseline-isolation-check 2>/dev/null; then
     printf 'SKIP Part C: testdb_up failed (no bd engine in this environment)\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 fi
 
 # SPIRA_DB must be set and must NOT equal TESTDB_BASELINE.
@@ -123,6 +122,4 @@ if [ -d "${SPIRA_DB:-}/.beads" ]; then
 else
     bad "C3: SPIRA_DB/.beads exists" "not a directory: ${SPIRA_DB:-}/.beads"
 fi
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

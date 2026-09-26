@@ -15,19 +15,16 @@
 #
 # host-reason: Part A tests flag parsing on the host (no container needed).
 #              Part B-E requires podman for the container integration.
+# tier: T0
 # covers: spira/testenv-batch.sh
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 iszero()  { [ "$2" = 0 ]    && ok "$1" || bad "$1" "expected 0, got $2"; }
 isexit1() { [ "$2" = 1 ]    && ok "$1" || bad "$1" "expected 1, got $2"; }
 isexit2() { [ "$2" = 2 ]    && ok "$1" || bad "$1" "expected 2, got $2"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 isfile()  { [ -f "$2" ] && ok "$1" || bad "$1" "file not found: $2"; }
 
 find_results_dir() {
@@ -87,7 +84,7 @@ bash "$BATCH" --mode=parallel topic "$FIXTURE" >/dev/null 2>&1 || rc_a3=$?
 # We just want it not to exit 2 due to a bad --mode value; container absence
 # or no-podman will still produce 2, which is fine — we check the error output.
 err_a3="$(bash "$BATCH" --mode=parallel topic "$FIXTURE" 2>&1 >/dev/null || true)"
-notwant "A3: --mode=parallel is not rejected as an unknown mode" \
+nowant "A3: --mode=parallel is not rejected as an unknown mode" \
     "--mode must be parallel or serial" "$err_a3"
 
 # ===========================================================================
@@ -98,19 +95,19 @@ echo "Part B-E: container integration"
 
 command -v podman >/dev/null 2>&1 || {
     printf 'SKIP test-testenv-mode.sh Part B-E: podman not on PATH\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 }
 
 # Pre-flight: container + user systemd available.
 PRE_CNAME="spira-mode-preflight-$$"
 bash "$TESTENV" up --name "$PRE_CNAME" >&2 || {
     printf 'SKIP test-testenv-mode.sh Part B-E: container did not start\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 }
 if ! bash "$TESTENV" probe --name "$PRE_CNAME" 2>/dev/null; then
     bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
     printf 'SKIP test-testenv-mode.sh Part B-E: user systemd not available\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 fi
 bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
 ok "B0: pre-flight: container + user systemd available"
@@ -356,5 +353,4 @@ fi
 
 # ===========================================================================
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ] || exit 1
+tl_summary

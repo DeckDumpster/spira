@@ -21,18 +21,14 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SCRIPT="$HERE/acceptance-prev-tag.sh"
-
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()   { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-acceptance-prev-tag.sh"
 
 # --- PROPERTY 1: self-check --------------------------------------------------
 if [ ! -x "$SCRIPT" ]; then
     bad "self-check: acceptance-prev-tag.sh must exist and be executable" "missing"
-    printf '\n%d passed, %d failed\n' "$pass" "$fail"; exit 1
+    tl_summary; exit 1
 fi
 
 TMP="$(mktemp -d)"
@@ -121,5 +117,4 @@ case "$_call" in
     *) bad "--repo forwarded to gh release list" "call log: $_call" ;;
 esac
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

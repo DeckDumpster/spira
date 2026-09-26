@@ -24,18 +24,15 @@
 #
 # host-reason: Part A tests pure flag/validation logic before the container starts.
 #              Part B-C requires podman for container integration.
+# tier: T0
 # covers: spira/testenv-batch.sh
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
-ok()      { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()     { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
 iszero()  { [ "$2" = 0 ]    && ok "$1" || bad "$1" "expected 0, got $2"; }
 isexit2() { [ "$2" = 2 ]    && ok "$1" || bad "$1" "expected 2, got $2"; }
-want()    { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-notwant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 isfile()  { [ -f "$2" ] && ok "$1" || bad "$1" "file not found: $2"; }
 nofile()  { [ ! -f "$2" ] && ok "$1" || bad "$1" "unexpected file: $2"; }
 
@@ -126,7 +123,7 @@ SPIRA_BATCH_SUITE_DIR="$SUITE_HOST" \
     && ok "A1: unknown suite exits non-zero (rc=$rc_a1)" \
     || bad "A1: unknown suite exits non-zero" "expected non-zero, got 0"
 want "A1: error names the unknown suite" "test-nonexistent-xyz.sh" "$_err_a1"
-notwant "A1: error is not the generic 'unknown option' message" \
+nowant "A1: error is not the generic 'unknown option' message" \
     "unknown option:" "$_err_a1"
 
 # A2: POSITIVE CONTROL — a known suite passes validation and does NOT produce an
@@ -137,9 +134,9 @@ _err_a2=""
 _err_a2="$(SPIRA_BATCH_SUITE_DIR="$SUITE_HOST" \
     bash "$BATCH" --suites "test-fx-s1.sh" topic "$FIXTURE" 2>&1 >/dev/null \
     || true)"
-notwant "A2: known suite is not reported as 'unknown suite' (positive control)" \
+nowant "A2: known suite is not reported as 'unknown suite' (positive control)" \
     "unknown suite:" "$_err_a2"
-notwant "A2: known suite does not trigger 'unknown option' (positive control)" \
+nowant "A2: known suite does not trigger 'unknown option' (positive control)" \
     "unknown option:" "$_err_a2"
 
 # ===========================================================================
@@ -150,18 +147,18 @@ echo "Part B-C: container integration"
 
 command -v podman >/dev/null 2>&1 || {
     printf 'SKIP test-testenv-suites.sh Part B-C: podman not on PATH\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 }
 
 PRE_CNAME="spira-suites-preflight-$$"
 bash "$TESTENV" up --name "$PRE_CNAME" >&2 || {
     printf 'SKIP test-testenv-suites.sh Part B-C: container did not start\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 }
 if ! bash "$TESTENV" probe --name "$PRE_CNAME" 2>/dev/null; then
     bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
     printf 'SKIP test-testenv-suites.sh Part B-C: user systemd not available\n' >&2
-    [ "$fail" -gt 0 ] && exit 1; exit 77
+    [ "$_TL_FAIL" -gt 0 ] && exit 1; exit 77
 fi
 bash "$TESTENV" down --name "$PRE_CNAME" >/dev/null 2>&1 || true
 ok "B0: pre-flight: container + user systemd available"
@@ -277,5 +274,4 @@ fi
 
 # ===========================================================================
 echo
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ] || exit 1
+tl_summary

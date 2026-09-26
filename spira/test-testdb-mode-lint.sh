@@ -17,15 +17,11 @@
 # withdrawn, and only then is the shipped tree's silence evidence of anything
 # (law-absence-needs-a-positive-control).
 #
+# tier: T1
 # covers: spira/testdb-mode-lint.sh spira/gate-spira.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-testdb-mode-lint.sh"
 
@@ -149,6 +145,4 @@ want "an inline request without export is still caught" "SPIRA_TESTDB_MODE=serve
 # ---------------------------------------------------------------------------------------
 want "the gate names this fence" "spira/testdb-mode-lint.sh" "$(cat "$HERE/gate-spira.sh")"
 is   "and it is executable"      "0" "$([ -x "$HERE/testdb-mode-lint.sh" ]; echo $?)"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

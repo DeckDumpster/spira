@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: T0
 # covers: systemd/*.service .github/workflows/gate.yml
 #
 # Verifies the unit-to-binary contract: every binary crate in the repo must
@@ -14,11 +15,8 @@
 #              tree; no container state, no network, no cargo invocation needed
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+. "$HERE/testlib.sh"
 REPO="$(cd "$HERE/.." && pwd -P)"
-pass=0; fail=0
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
-want() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 
 echo "test-unit-binary.sh"
 
@@ -135,6 +133,4 @@ fi
 want "gate.yml build job calls make build" \
     "make build" \
     "$(cat "$REPO/.github/workflows/gate.yml" 2>/dev/null)"
-
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
