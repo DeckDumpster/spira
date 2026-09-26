@@ -166,6 +166,15 @@ spira/test-build-fence.sh
 # SPIRA_GATE_SUITES.
 spira/test-lockfile-lint.sh
 
+# THE TMUX-SCOPE FENCE'S OWN POSITIVE CONTROL. tmux-scope-fence.sh refuses a suite that
+# calls a tmux session command, or runs concierge.sh start/wake/here/stop, without scoping
+# it to a socket of its own — the class that reached the operator's real tmux server twice
+# (sp-pfca0: test-concierge.sh run directly killed the cockpit, then OOM-killed itself).
+# This suite plants an unscoped offender of each kind (SEEN RED), withdraws it (SEEN
+# GREEN), confirms -L/TMUX_TMPDIR/CONCIERGE_SOCKET scoping clears the same shape, and
+# requires the fence to find nothing in the shipped tree.
+spira/test-tmux-scope-fence.sh
+
 # NOT IN THE GATE (budget): test-watchtower, test-soak, test-owned, test-uninstall, test-ready,
 # test-install-conflicts, test-configure. test-watchtower (~263s) was moved to the
 # timed set to bring the gate under SPIRA_GATE_BUDGET (sp-6ceo); the pipeline-stall detection
