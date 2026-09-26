@@ -94,6 +94,14 @@ version_min = "1.78.0"
 version_probe = "cargo --version"
 
 [[dep]]
+name = "rustup"
+tier = "dev"
+purpose = "acceptance-local.sh: pins the tarball build to release.yml's own Rust toolchain (SPIRA_RELEASE_RUST_TOOLCHAIN)"
+version_min = ""
+version_probe = "rustup --version"
+absent = "acceptance-local.sh builds with whatever cargo resolves to on PATH instead of the pinned release toolchain, and says so"
+
+[[dep]]
 name = "jq"
 tier = "optional"
 purpose = "optional JSON convenience"

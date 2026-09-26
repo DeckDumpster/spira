@@ -212,4 +212,23 @@ wantfile "phase D checks world not halted"            "_aged_world_out"   "$SCRI
 wantfile "phase D rollback-refused names the migration" "migrat"          "$SCRIPT"
 wantfile "aged-install (from, to) pair recorded in git note" "aged-install from=" "$SCRIPT"
 
+# ============================================================================
+echo
+echo "14. --tarball: recognized flag; phase A drives it through _acquire_tarball"
+# ============================================================================
+# _acquire_tarball itself (the download-skip mechanism) is unit-tested in
+# test-acceptance-lib.sh #10, including the positive control proving gh is
+# never invoked when a path is given. This suite covers only the wiring: the
+# flag is parsed, and both the --tarball and the download code paths in
+# acceptance-run.sh call through the same extracted function.
+
+wantrefile "--tarball is a recognized flag" \
+    '--tarball\) *tarball_path=' "$SCRIPT"
+wantfile "phase A: --tarball path acquires via _acquire_tarball" \
+    '_acquire_tarball "$tag" "$tarball_path" ""' "$SCRIPT"
+wantfile "phase A: download path also acquires via _acquire_tarball (one mechanism)" \
+    '_acquire_tarball "$tag" "" "$_tarball_dir"' "$SCRIPT"
+wantfile "phase A: --tarball reports the download as skipped" \
+    "download skipped" "$SCRIPT"
+
 tl_summary

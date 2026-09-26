@@ -128,6 +128,21 @@ _download_tarball() {
     ls "$_ddir"/spira-*.tar.gz 2>/dev/null | head -1
 }
 
+# _acquire_tarball <tag> <given-path> <download-dir> — print the tarball path on
+# stdout. <given-path> non-empty (acceptance-run.sh's --tarball): use it
+# directly and never call gh at all — acceptance-local.sh's own build has
+# nothing published yet to download. Empty: download <tag> via
+# _download_tarball, unchanged. Nothing prints on failure.
+_acquire_tarball() {
+    local _at_tag="$1" _at_given="$2" _at_dir="$3"
+    if [ -n "$_at_given" ]; then
+        [ -f "$_at_given" ] || return 1
+        printf '%s' "$_at_given"
+        return 0
+    fi
+    _download_tarball "$_at_tag" "$_at_dir"
+}
+
 # _install_from_tarball <tarball> <releases-dir> <conf> — activate + install.sh --skip-build.
 _install_from_tarball() {
     local _tb="$1" _rel="$2" _cf="$3"

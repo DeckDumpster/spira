@@ -78,7 +78,7 @@ SPIRA_ARCHIVE
 SPIRA_ARCHIVIST_EVERY SPIRA_ARCHIVIST_IDLE SPIRA_ARCHIVIST_MODEL SPIRA_ARCHIVIST_TIMEOUT
 SPIRA_ARCHIVIST_PER_PASS SPIRA_ARCHIVIST_TIMEOUT_RETRIES
 SPIRA_TESTDB_LIB SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT
-SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY SPIRA_GH_INTAKE_BEAD_REPO SPIRA_FLAKY_GH_REPO SPIRA_RELEASE_REPO
+SPIRA_TESTENV_REGISTRY SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY SPIRA_GH_INTAKE_BEAD_REPO SPIRA_FLAKY_GH_REPO SPIRA_RELEASE_REPO SPIRA_RELEASE_RUST_TOOLCHAIN
 SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET SPIRA_GATE_SELECT_CAP SPIRA_AEON_CPU_QUOTA
 SPIRA_GATE_SUITES SPIRA_SUITE_STATE_FILE SPIRA_SUITES_STATE SPIRA_SUITES_BUDGET SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR
 SPIRA_TIER_BUDGET_T0_MS SPIRA_TIER_BUDGET_T1_MS SPIRA_TIER_BUDGET_T2_MS SPIRA_TIER_BUDGET_T3_MS SPIRA_TIER_BUDGET_WINDOW SPIRA_TIER_ALLOWLIST_MARGIN_PCT SPIRA_TIER_ALLOWLIST SPIRA_TIER_AREA_ALLOWLIST
@@ -519,6 +519,12 @@ spira_conf_defaults() {
     # install this equals SPIRA_GH_INTAKE_REPO; a consuming install points issue intake
     # at its own tracker while this key names the release publisher independently.
     : "${SPIRA_RELEASE_REPO:=${SPIRA_GH_INTAKE_REPO}}"
+    # THE TOOLCHAIN release.yml PINS ("Install Rust <version>", asserted exactly). Read by
+    # acceptance-local.sh so a local rehearsal builds under the same compiler the release job
+    # would use, not whatever `cargo` happens to resolve to on the machine running it — the
+    # two must never independently drift, or a rehearsal can pass on a tree the real release
+    # job would fail to build.
+    : "${SPIRA_RELEASE_RUST_TOOLCHAIN:=1.82.0}"
     # WHICH GITHUB ORG/REPO the gate watcher scans for completed runs carrying "flaky suite"
     # annotations. Empty means no scan. Format: "owner/repo".
     : "${SPIRA_FLAKY_GH_REPO:=}"
