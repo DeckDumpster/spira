@@ -36,6 +36,7 @@
 # retry. CHECK 5 reports it to Ops and leaves the bead exactly as it found it.
 #
 # defect: sp-qsona
+# tier: T3
 # covers: spira/sentinel.sh spira/lib.sh
 # timeout: 120
 # hermetic-ok: uses a fixture database and a local git repo, no systemd or gh
@@ -89,12 +90,11 @@ chmod +x "$TMP/mock-incident.sh"
 
 HOME_REPO="$(basename "$REPO")"
 
-# OTHER — a mapped repo whose land ref can never be determined: a remote is configured
-# (so rung 4's bare-HEAD fallback never runs) but never fetched, so no rung resolves.
-OTHER="$TMP/other"; OTHER_REMOTE="$TMP/other-remote.git"
-git init -q --bare -b main "$OTHER_REMOTE"
+# OTHER — a mapped repo whose land ref can never be determined: no remote (so rung 3 never
+# runs a network-shaped remote query) and no commit (so rung 4's HEAD is unborn and
+# rev-parse -verify fails). Both rungs return fast, purely from the ref store.
+OTHER="$TMP/other"
 git init -q -b main "$OTHER"
-git -C "$OTHER" remote add origin "$OTHER_REMOTE"
 
 printf '%s | %s | pr | main | |\n' "$HOME_REPO" "$REPO" > "$TMP/repo-map"
 printf '%s | %s | pr | | |\n' other "$OTHER" >> "$TMP/repo-map"
