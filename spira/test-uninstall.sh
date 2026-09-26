@@ -7,8 +7,10 @@
 # PROPERTIES UNDER TEST
 # ---------------------
 # 1. DEFAULT REMOVAL: units are stopped, disabled, and removed from UNITDIR;
-#    linger is disabled; ~/.local/bin symlinks pointing to the harness are removed;
-#    session hooks are removed from the agent settings file.
+#    linger is disabled when install.sh's stamp says this install enabled it, and left
+#    alone when the stamp is absent even though it is currently on; ~/.local/bin symlinks
+#    pointing to the harness are removed; session hooks are removed from the agent
+#    settings file.
 # 2. IDEMPOTENCY: a second run exits 0 with nothing to remove.
 # 3. INSTANCE AWARENESS: refuses when multiple instances are installed and no
 #    argument is given; accepts an explicit instance argument.
@@ -225,6 +227,10 @@ _seed_units || { printf 'fixture: seeding failed\n'; exit 1; }
 _unit_count="$(ls -1 "$DEST"/*.service "$DEST"/*.timer 2>/dev/null | wc -l | tr -d ' ')"
 [ "$_unit_count" -gt 0 ] || { printf 'fixture: no units seeded in DEST\n'; exit 1; }
 
+# install.sh's stamp: this install is the one that turned linger on.
+mkdir -p "$SPIRA_RUN_DIR"
+: > "$SPIRA_RUN_DIR/install-linger-enabled"
+
 out="$(un)"
 rc=$?
 
@@ -240,8 +246,9 @@ _remaining="$(ls -1 "$DEST"/spira-*-test.service "$DEST"/spira-*-test.timer 2>/d
 want "default: stop called on units"    "stop"    "$(cat "$MOCK_LOG")"
 want "default: disable called on units" "disable" "$(cat "$MOCK_LOG")"
 
-# Linger must have been disabled.
-want "default: loginctl disable-linger called" "disable-linger" "$(cat "$LINGER_LOG")"
+# Linger must have been disabled, and the stamp consumed.
+want   "default: loginctl disable-linger called" "disable-linger" "$(cat "$LINGER_LOG")"
+nofile "default: linger stamp removed after disabling" "$SPIRA_RUN_DIR/install-linger-enabled"
 
 # ~/.local/bin/cockpit-remote symlink must be gone.
 nofile "default: cockpit-remote symlink removed" "$LOCAL_BIN/cockpit-remote"
@@ -590,6 +597,18 @@ iszero "race: uninstall.sh --yes exits 0" "$race_rc"
     || ok  "race: timer-fires-mid-uninstall does not resurrect the service (T2)"
 
 rm -rf "$RACE_STATE" "$RACE_BIN"
+
+# ==========================================================================
+echo
+echo "LINGER STAMP ABSENT — linger already on but not by this install is left alone:"
+# ==========================================================================
+
+rm -f "$SPIRA_RUN_DIR/install-linger-enabled"
+stamp_out="$(un)"
+stamp_rc=$?
+iszero "stamp-absent: exit 0"                                     "$stamp_rc"
+nowant "stamp-absent: loginctl disable-linger not called" "disable-linger" "$(cat "$LINGER_LOG")"
+want   "stamp-absent: reports linger left on"              "left on"        "$stamp_out"
 
 # ==========================================================================
 echo
