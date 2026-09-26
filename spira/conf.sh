@@ -654,13 +654,15 @@ spira_toml_file() {
 }
 
 # spira_config_bin -> the spira-config binary, or empty if none can be found or built.
-# A release install ships it at $SPIRA_HOME/bin/spira-config (the Makefile's install
-# target); a bare checkout has no such binary until cargo builds one, so this falls back to
-# building it once into the crate's own target dir. Memoized in SPIRA_CONFIG_BIN so every
-# persona_model call in one process doesn't each pay a `cargo build` check.
+# A release install ships it at $SPIRA_REPO/bin/spira-config (make install's release
+# layout: bin/ is a sibling of the spira/ this file sits in, never inside it — see
+# pre-activate.sh's own $REL/bin/spira-config); a bare checkout has no such binary until
+# cargo builds one, so this falls back to building it once into the crate's own target dir.
+# Memoized in SPIRA_CONFIG_BIN so every persona_model call in one process doesn't each pay
+# a `cargo build` check.
 spira_config_bin() {
     [ -n "${SPIRA_CONFIG_BIN:-}" ] && [ -x "$SPIRA_CONFIG_BIN" ] && { printf '%s' "$SPIRA_CONFIG_BIN"; return 0; }
-    [ -x "$SPIRA_HOME/bin/spira-config" ] && { SPIRA_CONFIG_BIN="$SPIRA_HOME/bin/spira-config"; printf '%s' "$SPIRA_CONFIG_BIN"; return 0; }
+    [ -x "$SPIRA_REPO/bin/spira-config" ] && { SPIRA_CONFIG_BIN="$SPIRA_REPO/bin/spira-config"; printf '%s' "$SPIRA_CONFIG_BIN"; return 0; }
     local crate="$SPIRA_REPO/spira-config" cargo
     [ -d "$crate" ] || return 1
     cargo="$(command -v cargo 2>/dev/null || true)"
