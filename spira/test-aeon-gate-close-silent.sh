@@ -308,7 +308,7 @@ echo "note names the stale verdict and never claims no gate ran (sp-7uah8):"
 fresh; seed sp-gcs-stale4
 run_aeon 4 0
 want "st=4: note names the stale verdict as the reason, not a missing gate" \
-    "no longer applies" "$(bead_notes sp-gcs-stale4)"
+    "stopped applying" "$(bead_notes sp-gcs-stale4)"
 nowant "st=4: note must never claim no gate ran" "no gate ran" "$(bead_notes sp-gcs-stale4)"
 want "st=4: log mentions certifying after a stale verdict" \
     "certified by aeon.sh after a stale gate verdict" "$(cat "$TMP/out" 2>/dev/null)"
