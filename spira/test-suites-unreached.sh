@@ -53,8 +53,13 @@ SH="$TMP/spira"; RUN="$TMP/run"; STATE="$TMP/state"; GATEF="$TMP/gate-suites"
 mkdir -p "$SH" "$RUN" "$STATE" "$TMP/home" "$TMP/repo"
 cp "$HERE/suites.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" "$SH/"
 
-# Knobs — every one pinned away from the shipped default.
-BUDGET=60; PERSUITE=5; STALE=3600; PRIO=3; REPONAME=unreached-fixture
+# Knobs — every one pinned away from the shipped default. PERSUITE is the watchdog slice
+# for test-fx-red.sh and test-fx-secs.sh below, which do no real work and are never meant
+# to hit it — but under host contention in a real parallel batch, scheduling latency alone
+# can exceed a slice that thin, killing an instant `exit 1` before it runs and misfiling it
+# as a timeout instead of red. Defect 3 needs a genuinely short slice to exercise the
+# timeout path and sets its own (3, 5) per call, independent of this default.
+BUDGET=60; PERSUITE=30; STALE=3600; PRIO=3; REPONAME=unreached-fixture
 
 printf '%s | %s | push | main | : | :\n' "$REPONAME" "$TMP/repo" > "$SH/repo-map"
 
