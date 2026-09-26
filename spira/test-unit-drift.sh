@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# tier: T2
+# covers: systemd/install.sh spira/skew.sh UC-instance-lifecycle-34
 #
 # test-unit-drift.sh — a landed template change leaves the installed unit stale, and is
 # detected.
@@ -17,7 +19,8 @@
 # --render produces the rendered units; those are written to a fake DEST, one is modified, and
 # --diff is asked to compare. A test that modelled the rendering would reproduce whichever half
 # of the substitution the test author remembered, and miss the same placeholders the real one
-# does (law-prefer-the-real-dependency).
+# does (law-prefer-the-real-dependency). The fixture and the render itself come from
+# lib-test-install.sh, shared with the other suites that drive this same installer output.
 #
 # THE POSITIVE CONTROL IS THE FIRST ASSERTION (law-absence-needs-a-positive-control). Before
 # claiming the check finds a stale unit, prove it finds anything at all — the installed
@@ -30,45 +33,17 @@
 # file so no box configuration leaks in (law-gates-run-in-a-clean-environment).
 #
 # defect: sp-0dx3
-# covers: systemd/install.sh spira/skew.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()  { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
+. "$HERE/lib-test-install.sh"
 
 echo "test-unit-drift.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-# ---------------------------------------------------------------------------
-# Fixture: a minimal harness tree that install.sh can render against.
-#
-# install.sh finds its templates at $SRC (its own directory), sources conf.sh from
-# $SRC/../spira/conf.sh, and writes to $HOME/.config/systemd/user. A watcher manifest
-# is needed because install.sh reads it for the spira-watch@ instance units.
-# ---------------------------------------------------------------------------
 FIXTURE="$TMP/harness"
-mkdir -p "$FIXTURE/systemd" "$FIXTURE/spira"
-
-# Real files, in their real layout. Symlinks so the fixtures stay current.
-for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
-    [ -e "$f" ] || continue
-    ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
-done
-ln -s "$HERE/../systemd/install.sh" "$FIXTURE/systemd/install.sh"
-for f in conf.sh watchd.sh lib.sh; do
-    [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
-done
-
-# An empty watchers file — valid, producing no daemon rows and no watch@ units.
-printf '# empty — test fixture\n' > "$FIXTURE/spira/watchers"
-
-# A repo-map.example so conf.sh's fallback resolves.
-printf '# empty\n' > "$FIXTURE/spira/repo-map.example"
+tinstall_fixture "$FIXTURE"
 
 DEST="$TMP/home/.config/systemd/user"
 mkdir -p "$DEST"
@@ -87,22 +62,11 @@ inst() {
 echo
 echo "positive control — the installer can render and the fixture is sane:"
 # ==========================================================================
-rendered="$(inst --render 2>&1)"; rc=$?
+rendered="$(tinstall_render "$FIXTURE" "$TMP/home")"; rc=$?
 is "render exits 0" "0" "$rc"
 want "render produces output" "=====" "$rendered"
 
-# Install matching units: render each and write to DEST.
-# install.sh --render prints `===== <name> =====` headers followed by the rendered content.
-# Parse that and write each unit to DEST.
-current_unit=""
-while IFS= read -r line; do
-    if [[ "$line" =~ ^=====\ (.+)\ =====$ ]]; then
-        current_unit="${BASH_REMATCH[1]}"
-        > "$DEST/$current_unit"
-    elif [ -n "$current_unit" ]; then
-        printf '%s\n' "$line" >> "$DEST/$current_unit"
-    fi
-done <<< "$rendered"
+tinstall_write_dest "$DEST" "$rendered"
 installed_count="$(find "$DEST" -maxdepth 1 -type f | wc -l)"
 [ "$installed_count" -gt 0 ] && ok "rendered $installed_count unit(s) into DEST" \
     || bad "rendered units into DEST" "no files in $DEST"
@@ -148,16 +112,8 @@ echo "skew.sh units — the standalone entry point:"
 # Set up a tree where skew.sh can find install.sh at $SPIRA_HOME/../systemd/install.sh.
 # SPIRA_HOME is $FIXTURE/spira, so it looks at $FIXTURE/systemd/install.sh.
 
-# First, restore matching units.
-current_unit=""
-while IFS= read -r line; do
-    if [[ "$line" =~ ^=====\ (.+)\ =====$ ]]; then
-        current_unit="${BASH_REMATCH[1]}"
-        > "$DEST/$current_unit"
-    elif [ -n "$current_unit" ]; then
-        printf '%s\n' "$line" >> "$DEST/$current_unit"
-    fi
-done <<< "$rendered"
+# Restore matching units from the cached render.
+tinstall_write_dest "$DEST" "$rendered"
 
 skew_units() {
     env -i PATH="$PATH" HOME="$TMP/home" \
@@ -196,7 +152,4 @@ out="$(env -i PATH="$PATH" HOME="$TMP/home" \
 is "skew.sh units exits 3 when installer missing" "3" "$rc"
 want "skew.sh units names the missing installer" "missing" "$out"
 
-# ==========================================================================
-echo
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary

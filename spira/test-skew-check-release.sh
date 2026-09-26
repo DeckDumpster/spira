@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# tier: T2
 #
 # test-skew-check-release.sh — skew.sh check asks whether the activated release is the
 # latest published and whether its MANIFEST commit matches its release tag.
@@ -22,12 +23,7 @@
 # covers: spira/skew.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+. "$HERE/testlib.sh"
 
 echo "test-skew-check-release.sh"
 
@@ -432,5 +428,4 @@ is   "checkout-clean: exits 0"                    "0"          "$ck_clean_rc"
 want "checkout-clean: reports 0 commits behind"   "0 commits"  "$ck_clean_out"
 
 echo
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" = 0 ]
+tl_summary
