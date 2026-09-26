@@ -132,6 +132,7 @@ RUN apt-get update -q && \
     apt-get install -yq --no-install-recommends \
         systemd \
         systemd-sysv \
+        libpam-systemd \
         dbus \
         dbus-user-session \
         sudo \
