@@ -137,7 +137,11 @@ SPIRA_HOME="${SPIRA_HOME:-$_spira_conf_here}"
 # "two directories up", because the harness may be installed anywhere, and because a
 # worktree must resolve to ITSELF — an aeon running from a worktree whose helpers resolve
 # to the installed copy on main is a version skew that shows up as nothing at all.
-SPIRA_REPO_DERIVED="$(git -C "$SPIRA_HOME" rev-parse --show-toplevel 2>/dev/null)" || SPIRA_REPO_DERIVED=""
+# WITHOUT GIT'S HOOK ENVIRONMENT: a git hook runs with GIT_DIR exported, and with it set
+# --show-toplevel answers the -C directory itself — <repo>/spira — so a hook sourcing this
+# file resolved SPIRA_REPO one level too deep.
+SPIRA_REPO_DERIVED="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_PREFIX \
+    git -C "$SPIRA_HOME" rev-parse --show-toplevel 2>/dev/null)" || SPIRA_REPO_DERIVED=""
 # THE FALLBACK IS THE PARENT, not a fixed number of levels up. Outside a git checkout there
 # is nothing to ask, and "two directories up" was an assumption about one layout that became
 # silently wrong the moment the harness moved from `<repo>/.claude/spira` to `<repo>/spira` —
