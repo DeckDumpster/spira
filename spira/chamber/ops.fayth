@@ -81,27 +81,24 @@ FAYTH_SOP_REQUIRED=0
 # persona that can only ever work one of them, and every fayth here named the same
 # one. A bead with no `repo:` label is the home repo, which is what Spira's own plan
 # beads are.
-# HAIKU (per the operator, 2026-09-08). Ops recognises a known failure off the shelf and
-# writes down what it found — recognition and description, which is the shape the small
-# model is for. It no longer executes the runbook it matched; see the header. It is also the persona that runs most often: it wakes on every sweep whether or not
-# anything is wrong, and one such no-op sweep was measured at 1.8M cache-read tokens and
-# $2.23 to conclude the pipeline was fine. The account's five-hour window is Spira's real
-# throughput ceiling, so a persistent role spending it on routine confirmation takes capacity
-# from the builders (law-alerts-must-be-actionable, in its cost form).
+
+# SONNET, NOT HAIKU (sp-8g6lf, 2026-09-26). Ops was moved off Haiku for the same reason as
+# the groomer (sp-nk8le): "is this incident resolved" is judgment, not recognition, and the
+# one hard record here (sp-ssztx, closed "TEMPORARY WORKAROUND" and never re-recorded once
+# the workaround was lifted) is a plausible-sentence failure, not a missing fact. At Ops's
+# volume the cost difference is small next to a mis-closed production incident.
 #
 # THE TRADE IS REAL AND ACCEPTED. The subtlest Ops session so far — the one that worked out
 # that a sweep's recurrence count measures ten-minute intervals rather than failed fixes —
-# was diagnosis, not procedure, and is the kind of pass this may do less well. That is why
-# the closing rule below is a mechanism rather than an instruction: an Ops session that
-# learns something must leave an SOP behind, so what a cheaper model works out once is on
-# the shelf for every session after it.
+# was diagnosis, not procedure. That is why the closing rule below is a mechanism rather
+# than an instruction: an Ops session that learns something must leave an SOP behind, so
+# what one session works out is on the shelf for every session after it.
 #
-# VERIFIED, NOT ASSUMED: `claude --model claude-haiku-4-5-20251001 -p ...` answers on this
-# box, and the DATED id is the one that answers — the catalog at CLI 2.1.263 rejects
-# claude-haiku-5 and claude-haiku-4-6 outright. An id the CLI rejects does not fail loudly:
-# every summon dies and the role looks merely quiet, which is the shape of outage this
-# harness is worst at noticing. Probe a candidate id before writing it here.
-FAYTH_MODEL=claude-haiku-4-5-20251001
+# VERIFIED, NOT ASSUMED: `claude --model claude-sonnet-5 -p ...` answers on this box. An id
+# the CLI rejects does not fail loudly: every summon dies and the role looks merely quiet,
+# which is the shape of outage this harness is worst at noticing. Probe a candidate id
+# before writing it here.
+FAYTH_MODEL=claude-sonnet-5
 FAYTH_MAX_CONCURRENT=1
 
 # THE OPS LANE — the declared configuration for what FAYTH_ROLE=party expressed implicitly.
