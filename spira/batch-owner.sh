@@ -28,6 +28,8 @@ _batch_sweep_dead_owners() {
         _sw_cname="${_sw_f#/tmp/}"; _sw_cname="${_sw_cname%.owner}"
         podman stop "$_sw_cname" >/dev/null 2>&1 || true
         podman rm   "$_sw_cname" >/dev/null 2>&1 || true
+        podman volume rm "${_sw_cname}-cargo-reg" >/dev/null 2>&1 || true
+        podman volume rm "${_sw_cname}-cargo-git" >/dev/null 2>&1 || true
         rm -rf "/tmp/${_sw_cname}" 2>/dev/null || true
         rm -f "$_sw_f"
         printf 'swept orphan container %s (owner pid %s gone)\n' "$_sw_cname" "$_sw_pid"
@@ -49,6 +51,8 @@ _batch_sweep_ownerless() {
         [ "$_sw_age" -ge "$min_age" ] || continue
         podman stop "$_sw_cname" >/dev/null 2>&1 || true
         podman rm   "$_sw_cname" >/dev/null 2>&1 || true
+        podman volume rm "${_sw_cname}-cargo-reg" >/dev/null 2>&1 || true
+        podman volume rm "${_sw_cname}-cargo-git" >/dev/null 2>&1 || true
         rm -rf "/tmp/${_sw_cname}" 2>/dev/null || true
         printf 'swept ownerless container %s (age %ss, no owner file)\n' "$_sw_cname" "$_sw_age"
     done

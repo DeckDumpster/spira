@@ -242,5 +242,57 @@ else
 fi
 
 # ===========================================================================
+echo
+echo "container teardown passes --volumes (sp-vcobo)"
+# ===========================================================================
+# A halted pass tears down containers by the same registry testenv-batch.sh feeds
+# (SPIRA_LANDING_CONTAINERS): a spira-batch-* name unique to that one run, never
+# reused. Skipping --volumes here leaves that run's cargo-reg/cargo-git pair
+# behind forever, the same leak the bead reported for ordinary batch teardown —
+# just reached through an interrupted pass instead of a normal one.
+#
+# podman is stubbed on PATH so the assertion is on the exact argv landing.sh's
+# teardown produces, without needing a real container or volumes.
+STUBDIR="$TMP/stubbin"
+mkdir -p "$STUBDIR"
+cat > "$STUBDIR/podman" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$PODMAN_LOG"
+case "$1" in
+    ps) printf '%s\n' "$FAKE_CNAME" ;;
+esac
+exit 0
+STUB
+chmod +x "$STUBDIR/podman"
+
+FAKE_CNAME="spira-batch-volcheck-$$"
+PODMAN_LOG="$TMP/podman-vol.log"; : > "$PODMAN_LOG"
+
+sleep 300 &
+VOL_PID=$!
+printf 'pid=%s\nstarted=%s\nrepo=spira\nbranch=spira/sp-vol\nphase=gate\n' \
+    "$VOL_PID" "$(date +%s)" > "$LAND_RUN"
+printf '%s\n' "$FAKE_CNAME" > "$LAND_CONTAINERS"
+
+out="$(env -i PATH="$STUBDIR:$PATH" HOME="$HOME" \
+    SPIRA_RUN="$SPIRA_RUN" \
+    SPIRA_HOME="$HERE" \
+    SPIRA_PROD="$HERE" \
+    SPIRA_CONF=/nonexistent \
+    SPIRA_REPO_MAP="$SPIRA_REPO_MAP" \
+    PODMAN_LOG="$PODMAN_LOG" \
+    FAKE_CNAME="$FAKE_CNAME" \
+    bash "$HERE/landing.sh" halt 2>&1)"
+kill "$VOL_PID" 2>/dev/null || true
+
+want "volumes: halt names the container it tore down" "$FAKE_CNAME" "$out"
+vol_log="$(cat "$PODMAN_LOG" 2>/dev/null)"
+want "volumes: testenv.sh stops the container" "stop $FAKE_CNAME" "$vol_log"
+want "volumes: cargo-reg volume is removed" \
+    "volume rm ${FAKE_CNAME}-cargo-reg" "$vol_log"
+want "volumes: cargo-git volume is removed" \
+    "volume rm ${FAKE_CNAME}-cargo-git" "$vol_log"
+
+# ===========================================================================
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

@@ -294,7 +294,7 @@ _cmd_halt() {
         [ -n "$cname" ] || continue
         if podman ps --format '{{.Names}}' 2>/dev/null | grep -qxF "$cname"; then
             printf 'landing: tearing down container %s\n' "$cname"
-            bash "${SPIRA_PROD:-$SPIRA_HOME}/testenv.sh" down --name "$cname" >/dev/null 2>&1 \
+            bash "${SPIRA_PROD:-$SPIRA_HOME}/testenv.sh" down --name "$cname" --volumes >/dev/null 2>&1 \
                 || printf 'landing: WARNING — could not tear down container %s\n' "$cname"
         fi
     done

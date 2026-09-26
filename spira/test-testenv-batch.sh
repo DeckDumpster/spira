@@ -1504,6 +1504,74 @@ fi
 
 # ===========================================================================
 echo
+echo "B13: VOLUME LEAK (sp-vcobo) — teardown removes the cargo-reg/cargo-git pair"
+# ===========================================================================
+# Every batch instance name is derived from BATCH_KEY (tree + selection + harness
+# hash) so it is never reused — the cache-reuse `testenv.sh down` normally preserves
+# a name for never applies here. Before the fix, ordinary teardown (no --volumes)
+# left each run's named cargo-reg/cargo-git pair behind forever; over enough runs
+# that exhausted podman's num_locks for the whole host, not just spira's containers.
+#
+# REGRESSION CHECK (law-a-regression-test-must-be-seen-to-fail): against the
+# pre-fix _batch_cleanup (down without --volumes) both B13a and B13b below fail,
+# since the volumes survive teardown. Two distinct instances prove the count does
+# not grow across repeated runs, not just that one pair happens to be absent.
+_vol_count() {  # count spira-batch-*-cargo-{reg,git} volumes on the host
+    podman volume ls -q 2>/dev/null | grep -cE '^spira-batch-.*-cargo-(reg|git)$' || true
+}
+
+_vols_baseline="$(_vol_count)"
+
+B13A_INSTANCE="b13a-$$"
+B13A_CNAME="spira-batch-${B13A_INSTANCE}"
+RESULTS_ROOT_B13A="$TMP/results-B13a"
+SPIRA_BATCH_SUITE_DIR="$SUITE_B1" \
+SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B13A" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_VERDICT_TTL=0 \
+SPIRA_BATCH_INSTANCE="$B13A_INSTANCE" \
+    bash "$BATCH" topic "$FIXTURE" >/dev/null 2>&1
+
+if podman volume exists "${B13A_CNAME}-cargo-reg" 2>/dev/null; then
+    bad "B13a: cargo-reg volume removed after teardown" "${B13A_CNAME}-cargo-reg still exists"
+else
+    ok "B13a: cargo-reg volume removed after teardown"
+fi
+if podman volume exists "${B13A_CNAME}-cargo-git" 2>/dev/null; then
+    bad "B13a: cargo-git volume removed after teardown" "${B13A_CNAME}-cargo-git still exists"
+else
+    ok "B13a: cargo-git volume removed after teardown"
+fi
+
+B13B_INSTANCE="b13b-$$"
+B13B_CNAME="spira-batch-${B13B_INSTANCE}"
+RESULTS_ROOT_B13B="$TMP/results-B13b"
+SPIRA_BATCH_SUITE_DIR="$SUITE_B1" \
+SPIRA_BATCH_RESULTS="$RESULTS_ROOT_B13B" \
+SPIRA_BATCH_SKIP_INSTALL=1 \
+SPIRA_VERDICT_TTL=0 \
+SPIRA_BATCH_INSTANCE="$B13B_INSTANCE" \
+    bash "$BATCH" topic "$FIXTURE" >/dev/null 2>&1
+
+if podman volume exists "${B13B_CNAME}-cargo-reg" 2>/dev/null; then
+    bad "B13b: cargo-reg volume removed after teardown" "${B13B_CNAME}-cargo-reg still exists"
+else
+    ok "B13b: cargo-reg volume removed after teardown"
+fi
+if podman volume exists "${B13B_CNAME}-cargo-git" 2>/dev/null; then
+    bad "B13b: cargo-git volume removed after teardown" "${B13B_CNAME}-cargo-git still exists"
+else
+    ok "B13b: cargo-git volume removed after teardown"
+fi
+
+_vols_after="$(_vol_count)"
+[ "$_vols_after" -le "$_vols_baseline" ] \
+    && ok "B13c: two synthetic batch runs leave the host volume count unchanged ($_vols_baseline -> $_vols_after)" \
+    || bad "B13c: two synthetic batch runs leave the host volume count unchanged" \
+           "$_vols_baseline -> $_vols_after"
+
+# ===========================================================================
+echo
 echo "C: the constants testenv-batch.sh mirrors from testenv.sh still agree"
 # ===========================================================================
 # testenv-batch.sh does not source testenv.sh; it re-declares the container constants under

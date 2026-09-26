@@ -557,7 +557,12 @@ _BATCH_OWNER_FILE="/tmp/${CNAME}.owner"
 _BATCH_HOME="/tmp/spira-batch-${INSTANCE}"
 
 _batch_cleanup() {
-    bash "$TESTENV" down --name "$CNAME" >/dev/null 2>&1 || \
+    # --volumes: the container name is keyed off BATCH_KEY (tree + selection +
+    # harness hash), so it is never reused across runs — the warm-cache reuse
+    # `down` normally preserves a name for never happens here, and skipping
+    # --volumes only left every run's cargo-reg/cargo-git pair to accumulate
+    # forever, eventually exhausting podman's num_locks for the whole host.
+    bash "$TESTENV" down --name "$CNAME" --volumes >/dev/null 2>&1 || \
         log "batch: teardown failed for $CNAME — checking whether it survived"
     rm -rf "$_BATCH_HOME" 2>/dev/null || true
     # _batch_owner_release unlinks the owner file only once the container is
