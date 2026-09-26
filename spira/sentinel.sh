@@ -755,6 +755,10 @@ while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed; 
         subj_refs="$(spira_landrefs "$r_path")" || subj_refs=""
         subj_base="${subj_refs%% *}"
         # ONE WALK PER REPOSITORY, into a set of the ids the base's subjects prove landed.
+        # Three shapes: the queue's "spira: land <id>", an aeon's "<id>: ...", and a round
+        # merge committed under git's default "Merge branch 'spira/<id>' ..." (Concierge rounds
+        # before round.sh used the land subject) — without it those closes were re-flagged every
+        # pass, and filing them pushed the pass past TimeoutStartSec (sp-dxntp).
         # Rows arrive sorted by repository, so this runs once per repository per pass.
         _c5_landed=()
         if [ -n "${subj_base:-}" ]; then
@@ -762,6 +766,7 @@ while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed; 
                 [ -n "$_c5_lid" ] && _c5_landed["$_c5_lid"]=1
             done < <(git -C "$r_path" log --format=%s "$subj_base" 2>/dev/null | awk '
                 substr($0, 1, 12) == "spira: land " { r = substr($0, 13); if (r != "" && r !~ / /) print r; next }
+                index($0, "Merge branch \047spira/") == 1 { r = substr($0, 21); sub(/\047.*/, "", r); if (r != "" && r !~ / / && r !~ /^round-/) print r; next }
                 match($0, /^[^: ]+:/) { print substr($0, 1, RLENGTH - 1) }')
         fi
     fi
