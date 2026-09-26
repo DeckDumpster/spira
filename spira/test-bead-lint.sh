@@ -59,7 +59,7 @@ testdb_up bead_lint || { printf 'test-bead-lint: could not build fixture databas
 run_lint() {              # run_lint <args...> -> sets LINT_OUT and LINT_RC from ONE call
     LINT_OUT="$(SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
-        SPIRA_NO_LOOP_LABEL="no-loop" \
+        SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test" \
         bash "$HERE/bead.sh" lint "$@" 2>&1)"
     LINT_RC=$?
 }
@@ -98,5 +98,32 @@ run_lint sp-lint-mix-brbad
 wantrc "branch: label naming another bead exits 1" "1" "$LINT_RC"
 want   "branch: label naming another bead is reported" \
        "sp-lint-mix-brbad: branch: label names sp-lint-mix-brgood, not itself" "$LINT_OUT"
+
+# ===========================================================================================
+echo
+echo "T3: two ask-labelled beads sharing a blocks edge (sp-z6m7y)"
+# ===========================================================================================
+# THE POSITIVE CONTROL IS FIRST: two ask-labelled beads wired with a plain blocks edge must
+# be caught, before checking the shapes that must pass it through.
+testdb_seed <<'JSONL'
+{"id":"sp-lint-ask-a","title":"ask a","status":"open","issue_type":"decision","labels":["needs-op-test","overseer"],"updated_at":"2026-09-25T00:00:00Z"}
+{"id":"sp-lint-ask-b","title":"ask b","status":"open","issue_type":"decision","labels":["needs-op-test","overseer"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-ask-b","depends_on_id":"sp-lint-ask-a","type":"blocks"}]}
+{"id":"sp-lint-ask-rel-a","title":"ask rel a","status":"open","issue_type":"decision","labels":["needs-op-test","overseer"],"updated_at":"2026-09-25T00:00:00Z"}
+{"id":"sp-lint-ask-rel-b","title":"ask rel b","status":"open","issue_type":"decision","labels":["needs-op-test","overseer"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-ask-rel-b","depends_on_id":"sp-lint-ask-rel-a","type":"relates-to"}]}
+{"id":"sp-lint-ask-work","title":"work bead deliberately blocking an ask","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z"}
+{"id":"sp-lint-ask-target","title":"ask blocked by a work bead","status":"open","issue_type":"decision","labels":["needs-op-test","overseer"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-ask-target","depends_on_id":"sp-lint-ask-work","type":"blocks"}]}
+JSONL
+
+run_lint --all
+wantrc "ask-edge fixture --all exits 1 (offender present)" "1" "$LINT_RC"
+want   "blocks edge between two ask-labelled beads is flagged" \
+       "sp-lint-ask-b: blocks edge to ask-labelled sp-lint-ask-a" "$LINT_OUT"
+nowant "relates-to edge between two ask-labelled beads is not flagged" \
+       "sp-lint-ask-rel-b: blocks edge" "$LINT_OUT"
+nowant "a work bead's deliberate block onto an ask is not flagged" \
+       "sp-lint-ask-target: blocks edge" "$LINT_OUT"
+
+run_lint sp-lint-ask-a
+wantrc "the non-blocking end of the flagged edge passes alone" "0" "$LINT_RC"
 
 tl_summary

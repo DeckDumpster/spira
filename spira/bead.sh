@@ -202,7 +202,8 @@ _bead_lint_judge() {
 
 _bead_lint() {
     local rc=0 n=0 bad=0 id labels show_out show_rc show_parsed bead_status bead_type
-    local ids=""
+    local ids="" _ask_label="${SPIRA_ASK_LABEL:-needs-operator}"
+    local -A _ask_cache=()
     if [ "${1:-}" = "--all" ] || [ $# -eq 0 ]; then
         ids="$(bdq list --all --limit 0 --json 2>/dev/null \
             | python3 -c '
@@ -269,6 +270,48 @@ print(d.get("issue_type") or "")
                 bad=$((bad+1)); rc=1
             fi
         fi
+        # Two beads that both carry the ask label must never share a `blocks` edge: an ask
+        # to the operator does not gate another ask, and a blocked one drops out of `bd
+        # ready` silently. `bd dep relate` is the right edge for "this rollup subsumes that".
+        case " $labels " in
+            *" $_ask_label "*)
+                local _blk_other _oid
+                _blk_other="$(bdq dep list "$id" --type blocks --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except ValueError:
+    data = []
+for d in data:
+    print(d.get("depends_on_id", ""))
+' 2>/dev/null)"
+                while IFS= read -r _oid; do
+                    [ -n "$_oid" ] || continue
+                    if [ -z "${_ask_cache[$_oid]+x}" ]; then
+                        local _oid_labels
+                        _oid_labels="$(bdq show "$_oid" --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    d = data[0] if isinstance(data, list) else data
+    print(" ".join(d.get("labels") or []))
+except Exception:
+    print("")
+' 2>/dev/null)"
+                        case " $_oid_labels " in
+                            *" $_ask_label "*) _ask_cache[$_oid]=1 ;;
+                            *)                  _ask_cache[$_oid]=0 ;;
+                        esac
+                    fi
+                    if [ "${_ask_cache[$_oid]}" = 1 ]; then
+                        printf 'bead: %s: blocks edge to ask-labelled %s (asks must not block each other; use bd dep relate)\n' \
+                            "$id" "$_oid" >&2
+                        bad=$((bad+1)); rc=1
+                    fi
+                done <<< "$_blk_other"
+                ;;
+        esac
+
         local judge_out
         judge_out="$(_bead_lint_judge "$labels" "$bead_status" "$bead_type" "$_part")"
         if [ -n "$judge_out" ]; then

@@ -57,6 +57,14 @@ call. This creates a non-blocking reference (a relates_to link): the cited bead 
 ready and claimable. An ask is never a gate on the work it references; the guard in
 `mail.sh` enforces this and will refuse any attempt to wire a blocking edge.
 
+**Rolling repeated questions into one ask.** When several loose questions are really the same
+ask, file one and link the ones it subsumes to it with `bd dep relate <rollup> <ask>`, naming
+every subsumed id in the rollup's body. Never use an untyped `bd dep add` between two beads
+that both carry the ask label — its default type is `blocks`, and asks do not block each
+other: answering one does not gate starting another, and a blocked ask silently drops out of
+any view that hides blocked work. When the rollup is answered, the concierge resolves the
+subsumed asks with a pointer to it.
+
 **No per-finding mail.** A finding's durable home is the bead, the note or the wiki page
 above — never a mail of its own. Every time you file one, register it with
 `{{ARCHIVIST}} record "<where it lives>: <what it is>"`, and say nothing to the operator
