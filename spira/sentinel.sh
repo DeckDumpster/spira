@@ -665,7 +665,10 @@ for i in (d if isinstance(d, list) else [d]):
 #
 # NOT CHECKED: superseded (bd supersede records the relation; the work lands under the
 # successor's name), spira-dropped (the operator's verdict that no branch is ever coming),
-# and any delivers:TYPE label. NOT CHECKED AT ALL: non-code types. Only SPIRA_WORK_CLOSE_TYPES
+# content-landed (the Sending's own verdict that a branch's diff is already on the base,
+# reaped by content rather than by a naming commit — sending.sh labels it but writes no
+# landstate record, so this invariant cannot ask for one), and any delivers:TYPE label.
+# NOT CHECKED AT ALL: non-code types. Only SPIRA_WORK_CLOSE_TYPES
 # beads go through the submitted/landed pipeline this invariant polices — spike, ask,
 # insight, investigation, event, chore and epic close by the agent's own hand, same as
 # always. delivers: is the same shape for a different reason: groom-trigger.sh,
@@ -699,7 +702,7 @@ _c5_absent_repos=""
 declare -A _c5_landed=()
 _c5_filed=0; _c5_capped=0; _c5_capped_ids=""; _c5_graph=0
 _c5_max="${SPIRA_CHECK5_MAX_FILE:-5}"
-while IFS=$'\x1f' read -r id r_name superseded dropped delivers; do
+while IFS=$'\x1f' read -r id r_name superseded dropped delivers content_landed; do
     [ -n "$id" ] || continue
     # Only beads an aeon worked — anything closed by hand outside the pipeline has its own
     # evidence, and this check has no branch of its own to judge it against.
@@ -707,6 +710,7 @@ while IFS=$'\x1f' read -r id r_name superseded dropped delivers; do
     [ "$superseded" = 1 ] && continue
     [ "$dropped" = 1 ] && continue
     [ -n "${delivers:-}" ] && continue
+    [ "$content_landed" = 1 ] && continue
     r_path="$(repo_root "${r_name:-}")" || {
         case $'\n'"$_c5_absent_repos" in
             *$'\n'"$r_name"$'\n'*) ;;
@@ -786,7 +790,8 @@ for i in (d if isinstance(d, list) else [d]):
                    for x in (i.get("dependencies") or [])) else 0
     drop = 1 if "spira-dropped" in (i.get("labels") or []) else 0
     deliv = "1" if any(l.startswith("delivers:") for l in (i.get("labels") or [])) else ""
-    print("\x1f".join([i["id"], repo, str(sup), str(drop), deliv]))' "$home_repo" \
+    cl = 1 if "content-landed" in (i.get("labels") or []) else 0
+    print("\x1f".join([i["id"], repo, str(sup), str(drop), deliv, str(cl)]))' "$home_repo" \
             "${SPIRA_WORK_CLOSE_TYPES:-task bug feature}" 2>/dev/null
     done <<< "$PARTITIONS" |
     sort -u -t$'\x1f' -k2,2 -k1,1
