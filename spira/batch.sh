@@ -100,8 +100,14 @@ _pf_gate() {
 # _pf_over <name> <stage> — the wall was hit: say so, name what to evict, and let CI decide.
 _pf_over() {
     local slow
-    slow="$(awk -F'\t' -v b="$batch_br" '$2==b && $3!="__batch__" {print $5"s "$3}' \
-        "${SPIRA_SUITE_TIMES_LOG:-$SPIRA_RUN/suite-times.log}" 2>/dev/null | sort -rn | head -5 | paste -sd, -)"
+    slow="$(bash "$HERE/tsd-query.sh" slow-in-branch "$batch_br" 5 2>/dev/null | python3 -c '
+import json, sys
+try:
+    rows = json.load(sys.stdin)
+except Exception:
+    rows = []
+print(",".join("%ss %s" % (r["wall_secs"], r["suite"]) for r in rows))
+' 2>/dev/null)"
     printf 'batch %s: pre-flight hit its %ss wall during %s — opening the PR, CI decides. Slowest suites (evict candidates): %s\n' \
         "$1" "${SPIRA_PREFLIGHT_WALL_SECS:-240}" "$2" "${slow:-none recorded}"
     printf 'QUEUE PREFLIGHT_OVER %s repo=%s stage=%s wall=%s slowest=%s\n' \

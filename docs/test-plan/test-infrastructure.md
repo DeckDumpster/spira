@@ -1,5 +1,11 @@
 # Test plan — Test and CI infrastructure (`test-infrastructure`)
 
+> **2026-09-25: suite timing converged onto `run/tsd/`.** The `refs/notes/suite-times` ledger
+> and `suite-times.sh` (UC-34, G11 below) are retired; `testenv-batch.sh` now appends each
+> suite-timing row via `tsd-write`, CI uploads it as an artifact, `tsd-ingest.sh` pulls it into
+> the coordinator's `run/tsd/`, and every former reader queries `tsd-query.sh` instead.
+> `test-suite-times.sh` is gone; `test-tsd.sh` and `test-tsd-ingest.sh` cover the replacement.
+
 > **2026-09-25: `test-testenv-publish.sh` deleted** (sp-2076n; law-a-test-that-flips-is-deleted). It flipped in the full-corpus round 6 run. Its coverage — the suites job holding packages:write, and publish pushing the closure tag rather than :latest — is lost until a deterministic test is written.
 
 > **2026-09-25: `test-suites-timeout.sh` deleted** (sp-95ooh; `law-a-test-that-flips-is-deleted`; flake:test-suites-timeout.sh, 6 recurrences). It was the suite the row below describes as "applied" for UC-30, and it also carried real-process cases for UC-25 and UC-29 and the systemd structural checks named in row 33. **UC-25 lost coverage:** the real watchdog killing a TERM-trapping suite and classifying it `timeout`, not `red` (the pure `classify()` table in `test-suites-classify.sh` still covers rc→status mapping, but not the watchdog's own kill detection). **UC-29 lost coverage:** `# timeout: N` deferring a suite to `unreached` when the declared minimum exceeds the remaining budget (real budget-wall arithmetic for a size the suite has never run is otherwise untested; `test-suites-unreached.sh` covers the last-runtime-based defer). **UC-30 lost coverage:** the per-suite watchdog killing a hung suite by process group and the runner continuing to the next suite, and a leaked background child marking its own suite red without wedging the pass — UC-30's only remaining coverage after this deletion is none. The systemd unit's structural checks (`TimeoutStartSec`, `SPIRA_SUITES_MAXSEC` injection, `SuccessExitStatus=2`) that row 33 lists as living here are also gone. See Gaps G17; replacement filed as sp-z3i42.
