@@ -31,7 +31,7 @@
 #
 # tier: T2
 # defect: sp-rzyl
-# covers: spira/sentinel.sh spira/lib.sh
+# covers: spira/sentinel.sh spira/lib.sh UC-dispatch-21
 # hermetic-ok: uses a fixture database, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
