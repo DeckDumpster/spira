@@ -14,14 +14,19 @@
 # 'in_progress'. The events table is always populated by bd and cannot disagree with itself.
 # The poison decision reads it on demand, never stores it.
 #
-# THREE ACCEPTANCE CRITERIA, ALL TESTED HERE:
+# TWO ACCEPTANCE CRITERIA, TESTED HERE:
 # 1. No counter label (sp-attempt-*, sp-reclaim-*, sp-requeue-*, sp-timeout-*, sp-recur-*) is
 #    written by any harness path — asserted structurally on the code.
 # 2. A bead cycled N times reports exactly N; unclaimed rows carrying the string do not
 #    over-count — asserted against a real database with known event counts.
-# 3. The poison decision uses the events predicate — asserted via sentinel.sh CHECK4.
 #
-# FAIL-FIRST for criteria 2 and 3: each assertion below is run against the unfixed code first
+# A third criterion — the poison decision uses the events predicate, via a full sentinel.sh
+# CHECK4 pass — used to live here too (D1: sp-eq8a4.2.2). It duplicated test-poison.sh's own
+# events-based poison-at-threshold/below-threshold/stale-clear assertions one for one, on a
+# second from-scratch sentinel fixture; criterion 2 above already proves attempts_of reads
+# events, not labels, without needing a sentinel pass to demonstrate it a second time.
+#
+# FAIL-FIRST for criterion 2: each assertion below is run against the unfixed code first
 # (where attempts_of reads labels), confirmed to fail, then run against the fixed code.
 #
 # A REAL bd ON A THROWAWAY DATABASE. The events are written by bd itself; a stub would be a
@@ -29,15 +34,11 @@
 # (law-prefer-the-real-dependency).
 #
 # defect: sp-lzt
-# covers: spira/*.sh
+# tier: T2
+# covers: spira/*.sh UC-aeon-execution-19
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
-ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
-want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
-nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
+HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -140,113 +141,4 @@ labels="$(bdq label list sp-ev6 2>/dev/null)" || labels=""
 nowant "no sp-attempt-* labels exist on the cycled bead" "sp-attempt-" "$labels"
 is "yet three cycles still count as 3 attempts" "3" "$(num "$(attempts_of sp-ev6)")"
 
-# --------------------------------------------------------------------------------------
-# CRITERION 3: The poison decision uses the events predicate.
-#
-# The sentinel's CHECK4 must poison a bead when its events-based attempt count reaches
-# POISON_AT, even with no sp-attempt-* labels present. The unfixed code reads labels and
-# would not poison a bead with only event-based attempts.
-# --------------------------------------------------------------------------------------
-echo
-echo "criterion 3: poison decision uses the events predicate"
-
-REPO="$TMP/repo"; RUN="$TMP/run"; REMOTE="$TMP/remote.git"; SH="$TMP/spira"
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-git init -q --bare -b main "$REMOTE"
-git init -q -b main "$REPO"
-git -C "$REPO" commit -q --allow-empty -m base
-git -C "$REPO" remote add origin "$REMOTE"
-git -C "$REPO" push -q origin main
-git -C "$REPO" fetch -q origin
-mkdir -p "$RUN/worktree" "$SH/chamber"
-
-cp "$HERE/sentinel.sh" "$HERE/lib.sh" "$HERE/landing.sh" "$HERE/conf.sh" "$SH/"
-stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
-stub pilgrimage.sh 'printf "%s" "${PILGRIMAGE_OUT:-}"'
-stub strand.sh     'printf "%s" "${STRAND_OUT:-}"'
-stub sending.sh    'printf "%s" "${SENDING_OUT:-}"'
-stub gate.sh       'exit ${GATE_RC:-0}'
-stub reflect.sh    'true'
-stub mail.sh       '[ "${1:-}" = send ] || exit 0'
-
-cat > "$TMP/launch" <<'L'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$LAUNCH_LOG"
-exit "${LAUNCH_RC:-0}"
-L
-cat > "$TMP/systemctl" <<'S'
-#!/usr/bin/env bash
-printf '%s\n' "${LAND_STATE:-inactive}"
-S
-chmod +x "$TMP/launch" "$TMP/systemctl"
-export LAUNCH_LOG="$TMP/launch.log"
-
-printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/t.fayth"
-
-sentinel() {
-    rm -f "$RUN/reflect.fired" "$RUN/inference.cooldown"
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_REPO="$REPO" \
-    SPIRA_GOAL=sp-goal SPIRA_FAYTHS="t" SPIRA_INFERENCE_EVERY=0 \
-    SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
-    SPIRA_SUMMON="$TMP/launch" \
-    SPIRA_SKIP_RECLAIM=1 \
-    SPIRA_SKIP_CLOSED_CHECK=1 \
-        bash "$SH/sentinel.sh" 2>&1
-}
-
-labels_of() { bdq show "$1" --json 2>/dev/null | python3 -c '
-import json, sys
-d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-print(" ".join(d[0].get("labels") or []))'; }
-poisoned()    { [[ " $(labels_of "$1") " == *" spira-poison "* ]]; }
-ispoisoned()  { poisoned "$2" && ok "$1" || bad "$1" "$2 was not poisoned"; }
-notpoisoned() { poisoned "$2" && bad "$1" "$2 was poisoned" || ok "$1"; }
-
-# SEED: one open, dispatchable bead with no sp-attempt-* labels.
-# The goal epic is not needed because dispatchable_open uses fayth partitions.
-testdb_reset; rm -rf "$RUN/poison-asked"
-testdb_seed <<'JSONL'
-{"id":"sp-ev-p1","title":"events-only bead at threshold","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
-JSONL
-# Cycle it to in_progress exactly POISON_AT (3) times via bd update — creates real events.
-cycle_to_inprogress sp-ev-p1 3
-# Confirm: no counter labels, but 3 events.
-labels_pre="$(labels_of sp-ev-p1)"
-nowant "bead has no sp-attempt-* labels"       "sp-attempt-" "$labels_pre"
-is "bead has 3 in_progress events" "3" "$(num "$(attempts_of sp-ev-p1)")"
-
-# THE SENTINEL MUST POISON IT. Without the fix (reading labels), the count is 0 and the
-# bead is not poisoned. With the fix (reading events), the count is 3 and it is poisoned.
-out="$(sentinel)"
-ispoisoned "sentinel poisons a bead at threshold via events" sp-ev-p1
-want "pass records the poisoning" "poisoned sp-ev-p1" "$out"
-
-# BELOW THRESHOLD: a bead cycled twice is not poisoned.
-testdb_reset; rm -rf "$RUN/poison-asked"
-testdb_seed <<'JSONL'
-{"id":"sp-ev-p2","title":"events-only bead below threshold","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
-JSONL
-cycle_to_inprogress sp-ev-p2 2
-out="$(SPIRA_POISON_AT=3 sentinel)"
-notpoisoned "a bead below threshold is not poisoned" sp-ev-p2
-
-# STALE POISON CLEAR: if events count is now below threshold (e.g., bead was seeded
-# with spira-poison but has only 1 in_progress event), the label is cleared.
-testdb_reset; rm -rf "$RUN/poison-asked"
-testdb_seed <<'JSONL'
-{"id":"sp-ev-stale","title":"stale poison — events below threshold","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-06T00:00:00Z"}
-{"id":"sp-ev-live","title":"live poison — events at threshold","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-06T00:00:00Z"}
-JSONL
-# One event for stale, POISON_AT events for live.
-bdq update sp-ev-stale --status in_progress >/dev/null 2>&1
-bdq update sp-ev-stale --status open >/dev/null 2>&1
-cycle_to_inprogress sp-ev-live 3
-
-out="$(SPIRA_POISON_AT=3 sentinel)"
-notpoisoned "stale poison (1 event < threshold 3) is cleared"   sp-ev-stale
-ispoisoned  "live poison (3 events >= threshold 3) is kept"     sp-ev-live
-want        "pass records the stale clear" "stale poison cleared" "$out"
-
-printf '\ntest-check4-events.sh: %d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary

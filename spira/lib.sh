@@ -3549,6 +3549,34 @@ aeon_lease_minutes() {
 }
 
 # --------------------------------------------------------------------------------------
+# hb_tick <prev_mtime> <cur_mtime> <now> <deadline> <fuse> <wall> <session_start>
+#   -> ok | renew | lapse | thrash
+#
+# THE HEARTBEAT'S DECISION, EXTRACTED. aeon.sh's heartbeat subshell used to make this call
+# inline, so the only way to test it was a copy of the same three `if`s rewritten inside the
+# test — which proves the copy self-consistent, not the aeon. One function, called from both.
+#
+# ORDER MATTERS AND MIRRORS THE ORIGINAL INLINE CODE: trace growth renews unconditionally
+# (the caller's new deadline is always in the future, so a tick that grew never also lapses);
+# only a still trace can lapse; only a trace that neither grew nor lapsed can thrash. A fuse
+# of anything but a plain non-negative integer (including "?", a probe failure) never trips.
+# --------------------------------------------------------------------------------------
+hb_tick() {
+    local prev_mtime="$1" cur_mtime="$2" now="$3" deadline="$4" fuse="$5" wall="$6" session_start="$7"
+    if [ "$cur_mtime" != "$prev_mtime" ]; then
+        printf 'renew'; return 0
+    fi
+    if [ "$now" -ge "$deadline" ]; then
+        printf 'lapse'; return 0
+    fi
+    local dsess=$(( (now - session_start) / 60 ))
+    if [[ "${fuse:-?}" =~ ^[0-9]+$ ]] && [ "$fuse" -ge "$wall" ] && [ "$dsess" -ge "$wall" ]; then
+        printf 'thrash'; return 0
+    fi
+    printf 'ok'
+}
+
+# --------------------------------------------------------------------------------------
 # trace_tail <logfile> [n] -> the last n human-readable moments of a session.
 #
 # The session log is stream-json now, which is the right format for a machine watching for

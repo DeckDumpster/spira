@@ -1,30 +1,29 @@
 #!/usr/bin/env bash
 #
-# test-thrash.sh — deliverable-progress wall (sp-cuvi)
+# test-thrash.sh — aeon_fuse_minutes: the deliverable-progress probe (sp-cuvi)
 #
 # The wall detects when an aeon's turns advance but its deliverable (commits ahead
 # of the base ref or file writes in the worktree) has not moved for SPIRA_THRASH_MINUTES.
 # A running gate suppresses the fuse so a correct mid-review aeon is never tripped.
-# On trip the heartbeat sends SIGTERM, and cleanup reads the .thrash marker to requeue
-# the bead without charging an attempt.
 #
-# covers: spira/lib.sh spira/aeon.sh spira/cockpit.sh spira/cockpit-metrics.py
+# The trip decision itself (both the fuse AND the session's own age must clear the wall)
+# is hb_tick's table, tested in test-aeon-lease.sh. The teardown behaviour once tripped
+# (requeue, no attempt / attempt-charged streak) is test-thrash-teardown.sh (G2). This
+# suite is left with what those two do not cover: the probe aeon_fuse_minutes itself.
+#
+# tier: T1
+# covers: spira/lib.sh spira/aeon.sh spira/cockpit.sh spira/cockpit-metrics.py UC-aeon-execution-09
 # scar: unrecorded
 set -uo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
+HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
 
-pass=0; fail=0
 TMP="$(mktemp -d)"; trap 'kill_all 2>/dev/null; rm -rf "$TMP"' EXIT
 RUN="$TMP/run"
 mkdir -p "$RUN/gate-run"
 PIDS=()
 
 kill_all() { [ "${#PIDS[@]}" -gt 0 ] && kill "${PIDS[@]}" 2>/dev/null; wait 2>/dev/null; }
-
-ok()   { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
-bad()  { fail=$((fail+1)); printf '  FAIL  %s\n' "$1"; }
-is_n() { if [ "$2" = "$3" ]; then pass=$((pass+1)); printf '  ok    %s\n' "$1"
-         else fail=$((fail+1)); printf '  FAIL  %s: want [%s] got [%s]\n' "$1" "$2" "$3"; fi; }
 
 # fuse <bead> [<wt>] -> call aeon_fuse_minutes via lib.sh in a clean environment.
 fuse() {
@@ -71,14 +70,11 @@ echo "aeon_fuse_minutes: no worktree returns ?"
 lib_check="$(env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$RUN" \
     bash -c '. "$1/lib.sh"; echo aeon_fuse_minutes_exists' _ "$HERE" 2>/dev/null)"
-if [ "$lib_check" = "aeon_fuse_minutes_exists" ]; then
-    ok "lib.sh sources cleanly and aeon_fuse_minutes is defined (positive control)"
-else
-    bad "lib.sh sourcing failed or aeon_fuse_minutes not defined (positive control)"
-fi
+is "lib.sh sources cleanly and aeon_fuse_minutes is defined (positive control)" \
+    "aeon_fuse_minutes_exists" "$lib_check"
 
 no_wt="$(fuse "sp-noworktree-x" "$RUN/worktree/sp-noworktree-x")"
-is_n "no worktree → ?" "?" "$no_wt"
+is "no worktree → ?" "?" "$no_wt"
 
 # ---- Part 2: aeon_fuse_minutes — recent file write → 0 (positive control) -----------
 echo
@@ -86,7 +82,7 @@ echo "aeon_fuse_minutes: recent file write returns 0"
 
 WT2="$(make_worktree "sp-fresh-x")"
 fresh="$(fuse "sp-fresh-x" "$WT2")"
-is_n "just-written worktree → 0" "0" "$fresh"
+is "just-written worktree → 0" "0" "$fresh"
 
 # ---- Part 3: aeon_fuse_minutes — old file write → numeric ----------------------------
 echo
@@ -102,12 +98,12 @@ touch -d "90 minutes ago" "$WT3"
 stale="$(fuse "$BEAD3" "$WT3")"
 case "$stale" in
     [0-9]*) ok "stale worktree returns a number" ;;
-    *)      bad "stale worktree should return a number, got [$stale]" ;;
+    *)      bad "stale worktree returns a number" "got [$stale]" ;;
 esac
 if [ "$stale" -ge 85 ] 2>/dev/null && [ "$stale" -le 95 ] 2>/dev/null; then
     ok "stale worktree fuse ≈ 90 minutes (got $stale)"
 else
-    bad "stale worktree fuse expected ~90 minutes, got [$stale]"
+    bad "stale worktree fuse ≈ 90 minutes" "expected 85..95, got [$stale]"
 fi
 
 # ---- Part 4: gate suppression (positive control required) ---------------------------
@@ -123,23 +119,23 @@ touch -d "60 minutes ago" "$WT4"
 no_gate_fuse="$(fuse "$BEAD4" "$WT4")"
 case "$no_gate_fuse" in
     [0-9]*) ok "without gate: fuse is a number (positive control)" ;;
-    *)      bad "without gate: expected a number, got [$no_gate_fuse] (positive control)" ;;
+    *)      bad "without gate: fuse is a number (positive control)" "got [$no_gate_fuse]" ;;
 esac
 
 # Now start a gate and re-probe.
 make_gate "$BEAD4"
 GATE4_PID="$(cat "$RUN/gate-run/testname.spira_${BEAD4}/pid")"
 gate_fuse="$(fuse "$BEAD4" "$WT4")"
-is_n "live gate suppresses fuse → gate" "gate" "$gate_fuse"
+is "live gate suppresses fuse → gate" "gate" "$gate_fuse"
 
 # Dead gate must not keep the suppression — a stale pid file must not read as gate.
 kill "$GATE4_PID" 2>/dev/null; wait "$GATE4_PID" 2>/dev/null || true
 dead_gate_fuse="$(fuse "$BEAD4" "$WT4")"
 case "$dead_gate_fuse" in
-    gate) bad "dead gate pid: fuse still reads 'gate'" ;;
-    ?)    ok "dead gate pid: fuse reads ? (worktree no-pid fallback, acceptable)" ;;
+    gate) bad "dead gate pid: fuse must not still read 'gate'" "still [gate]" ;;
+    \?)   ok "dead gate pid: fuse reads ? (worktree no-pid fallback, acceptable)" ;;
     [0-9]*) ok "dead gate pid: fuse resumes as a number (got $dead_gate_fuse)" ;;
-    *)    bad "dead gate pid: unexpected value [$dead_gate_fuse]" ;;
+    *)    bad "dead gate pid: expected a number or ?" "got [$dead_gate_fuse]" ;;
 esac
 
 # ---- Part 4b: a gate that just finished resets the fuse (sp-l99q6) ------------------
@@ -166,7 +162,7 @@ no_gate_fuse5="$(fuse "$BEAD5" "$WT5")"
 if [[ "$no_gate_fuse5" =~ ^[0-9]+$ ]] && [ "$no_gate_fuse5" -ge 55 ] 2>/dev/null; then
     ok "no gate activity: stale worktree reads ~60m (positive control, got $no_gate_fuse5)"
 else
-    bad "no gate activity: expected ~60m, got [$no_gate_fuse5] (positive control)"
+    bad "no gate activity: stale worktree reads ~60m (positive control)" "got [$no_gate_fuse5]"
 fi
 
 # B. gate rc/out/started files written just now, but no live gate process (it exited).
@@ -178,77 +174,16 @@ finished_fuse5="$(fuse "$BEAD5" "$WT5")"
 if [[ "$finished_fuse5" =~ ^[0-9]+$ ]] && [ "$finished_fuse5" -lt 5 ] 2>/dev/null; then
     ok "gate just finished: fuse resets from the gate's own timestamps (got $finished_fuse5)"
 else
-    bad "gate just finished: expected a fuse near 0, got [$finished_fuse5]"
+    bad "gate just finished: fuse resets from the gate's own timestamps" "expected near 0, got [$finished_fuse5]"
 fi
 
-# ---- Part 5: structural — .thrash appears after .slain in cleanup --------------------
-echo
-echo "aeon.sh structural: .thrash handler appears after .slain in cleanup function"
-
-AEON="$HERE/aeon.sh"
-if [ ! -f "$AEON" ]; then
-    bad "aeon.sh not found at $AEON"
-else
-    slain_line="$(grep -n '\.slain' "$AEON" | grep -v 'thrash' | tail -1 | cut -d: -f1)"
-    thrash_line="$(grep -n '\.thrash' "$AEON" | grep 'f.*BEAD_ID' | head -1 | cut -d: -f1)"
-    if [ -z "$slain_line" ] || [ -z "$thrash_line" ]; then
-        bad ".slain or .thrash line not found in aeon.sh (slain=$slain_line thrash=$thrash_line)"
-    elif [ "$thrash_line" -gt "$slain_line" ]; then
-        ok ".thrash check (line $thrash_line) is after .slain check (line $slain_line)"
-    else
-        bad ".thrash check (line $thrash_line) should come after .slain (line $slain_line)"
-    fi
-
-    # The handler now branches on the thrash streak (sp-4rzlw): below the cap it must still
-    # requeue with the bare "thrash" cause the SQL exemption matches (no attempt), and at or
-    # over the cap it must requeue with a DIFFERENT cause so the exemption does not apply (an
-    # attempt is charged). The block runs from the .thrash marker line through its OUTER fi —
-    # two standalone "fi" lines now live inside it (the streak if/else and the marker if), so
-    # the extraction must not stop at the first one the way a single flat block would.
-    thrash_block="$(awk '/BEAD_ID\.thrash/{f=1} f{print; if(/^[[:space:]]*fi$/){n++; if(n==2) exit}}' "$AEON")"
-    if grep -q 'increment_attempt\|ATTEMPTS\b' <<< "${thrash_block:-}" 2>/dev/null; then
-        bad "aeon.sh thrash region references attempt increment — nothing here should touch a counter directly"
-    else
-        ok "thrash cleanup block does not increment attempts directly"
-    fi
-    # The below-cap/at-cap cause strings and the requeue-thrash ledger status moved into
-    # aeon_disposition's own output (lib.sh) as part of sp-eq8a4.2.1, so they are no longer
-    # literals beside bump_requeue/ledger_done in aeon.sh; behaviour is covered by
-    # test-aeon-disposition.sh's "thrash below the streak cap is free" and "thrash streak at
-    # cap charges" rows instead of a source-order grep here.
-fi
-
-# ---- Part 6: structural — thrash check guarded by idle < STALL_BEATS ----------------
-echo
-echo "aeon.sh structural: thrash check in heartbeat is after the lease expiry guard"
-
-if [ ! -f "$AEON" ]; then
-    bad "aeon.sh not found"
-else
-    # The thrash trip must come AFTER the lease expiry check so that a silent (lapsed) aeon
-    # is killed by the lease path before the thrash fuse can fire. The old model used
-    # `idle < STALL_BEATS`; the current model uses `_now >= _deadline`. Either way the
-    # structural invariant is: lease/stall detection exits first, thrash follows.
-    lease_guard_line="$(grep -n '_now.*_deadline\|_deadline.*_now' "$AEON" \
-        | grep '\-ge\|\-lt' | head -1 | cut -d: -f1)"
-    thrash_fuse_line="$(grep -n '_dfuse.*aeon_fuse_minutes\|aeon_fuse_minutes.*_dfuse' "$AEON" \
-        | head -1 | cut -d: -f1)"
-    if [ -z "$lease_guard_line" ] || [ -z "$thrash_fuse_line" ]; then
-        bad "lease expiry guard or thrash fuse line not found (guard=$lease_guard_line fuse=$thrash_fuse_line)"
-    elif [ "$thrash_fuse_line" -gt "$lease_guard_line" ]; then
-        ok "thrash fuse check (line $thrash_fuse_line) is after the lease expiry guard (line $lease_guard_line)"
-    else
-        bad "thrash fuse check (line $thrash_fuse_line) must come after lease expiry guard (line $lease_guard_line)"
-    fi
-fi
-
-# ---- Part 7: cockpit-metrics.py counts requeue-thrash ledger lines ------------------
+# ---- Part 5: cockpit-metrics.py counts requeue-thrash ledger lines ------------------
 echo
 echo "cockpit-metrics.py: status=requeue-thrash is counted as SP_AEON_THRASH"
 
 METRICS="$HERE/cockpit-metrics.py"
 if [ ! -f "$METRICS" ]; then
-    bad "cockpit-metrics.py not found at $METRICS"
+    bad "cockpit-metrics.py exists" "not found at $METRICS"
 else
     LEDGER="$TMP/aeon-ledger.log"
     SENTINEL="$TMP/sentinel.log"
@@ -283,7 +218,7 @@ for k, v in sorted(d.items()):
     # POSITIVE CONTROL: an empty ledger must return SP_AEON_THRASH=0, not missing.
     out0="$(call_ledger)"
     zero_thrash="$(key_val SP_AEON_THRASH "$out0")"
-    is_n "empty ledger → SP_AEON_THRASH=0 (positive control)" "0" "$zero_thrash"
+    is "empty ledger → SP_AEON_THRASH=0 (positive control)" "0" "$zero_thrash"
 
     # Now add timestamped ledger lines (cockpit-metrics.py expects ISO timestamps).
     NOW="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
@@ -294,83 +229,28 @@ for k, v in sorted(d.items()):
     printf '%s done fayth sp-eee rc=0 status=requeue-slain\n' "$NOW" >> "$LEDGER"
     out3="$(call_ledger)"
     thrash_count="$(key_val SP_AEON_THRASH "$out3")"
-    is_n "three requeue-thrash lines → SP_AEON_THRASH=3" "3" "$thrash_count"
+    is "three requeue-thrash lines → SP_AEON_THRASH=3" "3" "$thrash_count"
 
     # Verify other counters are not contaminated.
     worked_count="$(key_val SP_AEON_WORKED "$out3")"
-    is_n "thrash lines do not inflate SP_AEON_WORKED" "1" "$worked_count"
+    is "thrash lines do not inflate SP_AEON_WORKED" "1" "$worked_count"
 fi
 
-# ---- Part 8: aeon.sh creates .thrash marker on thrash detection ---------------------
-echo
-echo "aeon.sh structural: .thrash marker path uses BEAD_ID"
-
-AEON="$HERE/aeon.sh"
-if [ ! -f "$AEON" ]; then
-    bad "aeon.sh not found"
-else
-    if grep -q 'BEAD_ID\.thrash' "$AEON"; then
-        ok "aeon.sh references BEAD_ID.thrash marker"
-    else
-        bad "aeon.sh does not reference BEAD_ID.thrash marker"
-    fi
-fi
-
-# ---- Part 9: SPIRA_THRASH_MINUTES in conf.sh ----------------------------------------
+# ---- Part 6: SPIRA_THRASH_MINUTES in conf.sh ----------------------------------------
 echo
 echo "conf.sh: SPIRA_THRASH_MINUTES has a default value"
 
 CONF="$HERE/conf.sh"
 if [ ! -f "$CONF" ]; then
-    bad "conf.sh not found"
+    bad "conf.sh exists" "not found"
 else
-    if grep -q 'SPIRA_THRASH_MINUTES' "$CONF"; then
-        ok "conf.sh defines SPIRA_THRASH_MINUTES"
-    else
-        bad "conf.sh does not define SPIRA_THRASH_MINUTES"
-    fi
+    want "conf.sh defines SPIRA_THRASH_MINUTES" "SPIRA_THRASH_MINUTES" "$(cat "$CONF")"
     # Extract the default and verify it is a number.
     default_val="$(grep 'SPIRA_THRASH_MINUTES' "$CONF" | grep -o '[0-9]\+' | head -1)"
     case "${default_val:-}" in
         [0-9]*) ok "SPIRA_THRASH_MINUTES default is a number ($default_val)" ;;
-        *)      bad "SPIRA_THRASH_MINUTES default is not a number: [$default_val]" ;;
+        *)      bad "SPIRA_THRASH_MINUTES default is a number" "got [${default_val:-}]" ;;
     esac
 fi
 
-# ---- Part 10: thrash detection kills the process group, not just the parent shell -----
-echo
-echo "aeon.sh structural: thrash detection uses process-group kill (-\$\$)"
-
-AEON="$HERE/aeon.sh"
-if [ ! -f "$AEON" ]; then
-    bad "aeon.sh not found"
-else
-    # POSITIVE CONTROL: the lease-lapse path must use -$$ (it is the reference that works).
-    # If this fails, something else changed and neither check is meaningful.
-    if grep -qF 'kill -TERM -$$ 2>/dev/null' "$AEON"; then
-        ok "lease-lapse kill uses -\$\$ (positive control)"
-    else
-        bad "lease-lapse kill does not use -\$\$ — positive control failed"
-    fi
-
-    # Extract the kill inside the thrash-WRITE block (the printf that creates the .thrash
-    # file, followed by the kill). The cleanup READ block is distinct: it cats the file.
-    # Find the write line and check the kill that follows within 5 lines.
-    write_line="$(grep -n 'printf.*BEAD_ID\.thrash' "$AEON" | head -1 | cut -d: -f1)"
-    if [ -z "$write_line" ]; then
-        bad "thrash write line (printf > BEAD_ID.thrash) not found in aeon.sh"
-    else
-        kill_cmd="$(awk "NR>$write_line && NR<=$((write_line+5))" "$AEON" | grep 'kill')"
-        if printf '%s' "$kill_cmd" | grep -qF 'kill -TERM -$$'; then
-            ok "thrash detection uses kill -TERM -\$\$ (process-group kill)"
-        else
-            bad "thrash detection does not use kill -TERM -\$\$: [$(printf '%s' "$kill_cmd" | head -c 120)]"
-        fi
-    fi
-fi
-
-# ---- Results -------------------------------------------------------------------------
-echo
-echo "---"
-printf '%d passed, %d failed\n' "$pass" "$fail"
-[ "$fail" -eq 0 ]
+tl_summary
