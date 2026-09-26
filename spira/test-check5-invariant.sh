@@ -490,6 +490,79 @@ want "the log names both ids for the landstate proof" "CHECK5 resolve sp-lsold -
 
 # ======================================================================================
 echo
+echo "RESOLVE CLOSES A BLOCKED INCIDENT — Ops rolled it up under an open root-cause parent:"
+# ======================================================================================
+# Ops links an instance incident to its root-cause parent with a blocking dependency, and bd
+# refuses a bare close on a blocked issue — that refusal, swallowed silently, is exactly why
+# 33 proven-landed incidents sat open. The resolve must get past it (33 piled up because it
+# didn't) — proven here by a positive control that a bare close on the same bead fails first.
+testdb_reset
+INC_HASH="$(ref_hash "closed-not-landed:sp-blkd")"
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-blkd","title":"blocked-instance","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-blkd","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-rootcause","title":"root cause parent incident","status":"open","issue_type":"bug","labels":["spira","incident"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-blkdinc","title":"CLOSED NOT LANDED: sp-blkd has no LANDED record on $HOME_REPO","status":"open","issue_type":"bug","labels":["spira","incident","ref:$INC_HASH"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-blkdinc","depends_on_id":"sp-rootcause","type":"blocks"}]}
+JSONL
+touch "$RUN/sp-blkd.log"
+rm -f "$RUN/landstate/sp-blkd"
+git -C "$REPO" commit -q --allow-empty -m "spira: land sp-blkd"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+: > "$INC_LOG"
+
+if B close sp-blkdinc --reason-file - <<< "would fail" >/dev/null 2>&1; then
+    bad "bd's own refusal" "a bare close on sp-blkdinc plainly succeeded — the fixture proves nothing"
+else
+    ok "bd itself refuses a bare close on the blocked incident (the fixture is real)"
+fi
+is "the probe left the incident open" open "$(status_of sp-blkdinc)"
+
+out="$(sentinel)"
+is "sp-blkd stays closed" closed "$(status_of sp-blkd)"
+is "the blocked incident is closed by resolve anyway" closed "$(status_of sp-blkdinc)"
+want "the log names the resolve" "CHECK5 resolve sp-blkd -> sp-blkdinc" "$out"
+
+# ======================================================================================
+echo
+echo "RESOLVE FAILURE IS LOGGED, NOT SILENT — a close that still fails is named, not swallowed:"
+# ======================================================================================
+# The seam for a bd that fails on demand is SPIRA_BD (law-a-refusal-names-its-exit; the
+# comment above bdq in lib.sh names this the sanctioned exception). The shim passes every
+# call through to the real embedded binary except a close naming sp-failinc, which it refuses
+# — standing in for whatever the blocked-incident case above does not already cover.
+testdb_reset
+INC_HASH="$(ref_hash "closed-not-landed:sp-failsrc")"
+testdb_seed <<JSONL
+{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-failsrc","title":"proven landed, but its incident's close will fail","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-failsrc","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-failinc","title":"CLOSED NOT LANDED: sp-failsrc has no LANDED record on $HOME_REPO","status":"open","issue_type":"bug","labels":["spira","incident","ref:$INC_HASH"],"updated_at":"2026-09-04T00:00:00Z"}
+JSONL
+touch "$RUN/sp-failsrc.log"
+rm -f "$RUN/landstate/sp-failsrc"
+git -C "$REPO" commit -q --allow-empty -m "spira: land sp-failsrc"
+git -C "$REPO" push -q origin main
+git -C "$REPO" fetch -q origin
+: > "$INC_LOG"
+
+REAL_BD_PATH="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
+FAIL_BD="$TMP/fail-close-bd"
+{
+    printf '#!/usr/bin/env bash\n'
+    printf 'if [ "${3:-}" = close ]; then\n'
+    printf '    for a in "$@"; do [ "$a" = sp-failinc ] && { printf "fail-close-bd: simulated close failure\\n" >&2; exit 1; }; done\n'
+    printf 'fi\n'
+    printf 'exec %q "$@"\n' "$REAL_BD_PATH"
+} > "$FAIL_BD"
+chmod +x "$FAIL_BD"
+
+out="$(SPIRA_BD="$FAIL_BD" sentinel)"
+is "sp-failsrc stays closed" closed "$(status_of sp-failsrc)"
+is "the incident whose close failed stays open, not silently dropped" open "$(status_of sp-failinc)"
+want "the failure is logged by name, not swallowed" "CHECK5 resolve sp-failsrc -> sp-failinc FAILED" "$out"
+
+# ======================================================================================
+echo
 echo "RESOLVE HAS NO EFFECT WHEN NO INCIDENT WAS EVER FILED — proving landed alone closes nothing:"
 # ======================================================================================
 # This is the negative control for the resolve path: sp-qland/sp-cland above prove landed

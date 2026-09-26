@@ -712,7 +712,7 @@ _c5_filed=0; _c5_capped=0; _c5_capped_ids=""; _c5_graph=0
 _c5_resolved=0; _c5_resolve_capped=0; _c5_resolve_capped_ids=""
 _c5_start="$(date +%s)"; _c5_budget="${SPIRA_CHECK5_BUDGET_SECS:-60}"; _c5_budget_hit=0
 _c5_max="${SPIRA_CHECK5_MAX_FILE:-5}"
-_c5_resolve_max="${SPIRA_CHECK5_MAX_RESOLVE:-5}"
+_c5_resolve_max="${SPIRA_CHECK5_MAX_RESOLVE:-50}"
 
 # _c5_resolve <id> <evidence> — closes the open incident THIS CHECK filed for <id>, now that
 # the same check has proven <id> landed. Keyed on the identical dedup ref incident.sh's own
@@ -721,7 +721,7 @@ _c5_resolve_max="${SPIRA_CHECK5_MAX_RESOLVE:-5}"
 # Filing is bounded so a flood cannot file forever; this must be bounded the same way so a
 # large residue cannot be cleared in one pass that blows the service's TimeoutStartSec.
 _c5_resolve() {
-    local _id="$1" _evidence="$2" _hash _inc_id
+    local _id="$1" _evidence="$2" _hash _inc_id _err
     _hash="$(printf '%s' "closed-not-landed:$_id" | sha256sum | cut -c1-8)"
     # ONE LOOKUP PER PASS, NOT PER BEAD. This used to run a `bd list` for every closed bead
     # the commit graph proved landed — ~745 of them at ~1s each — which alone pushed the
@@ -740,9 +740,16 @@ _c5_resolve() {
         _c5_resolve_capped_ids+="${_c5_resolve_capped_ids:+ }$_id"
         return 0
     fi
-    if bdq close "$_inc_id" --reason-file - <<< "$_evidence" >/dev/null 2>&1; then
+    # --force: an instance incident rolled up under a root-cause parent carries a
+    # blocking dependency, and bd refuses to close a blocked issue. The evidence for
+    # this close is the independent landing proof in $_evidence, not the blocker's
+    # state, so forcing past it is correct — without --force this silently resolved
+    # nothing and left a growing pile of closed-not-landed incidents open.
+    if _err="$(bdq close --force "$_inc_id" --reason-file - <<< "$_evidence" 2>&1 1>/dev/null)"; then
         _c5_resolved=$((_c5_resolved + 1))
         log "CHECK5 resolve $_id -> $_inc_id: $_evidence"
+    else
+        log "CHECK5 resolve $_id -> $_inc_id FAILED: ${_err:-bd close exited nonzero with no message}"
     fi
 }
 # The open closed-not-landed incidents, keyed by the ref hash incident.sh labels them with,
