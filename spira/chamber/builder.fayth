@@ -82,17 +82,15 @@ FAYTH_MAX_CONCURRENT=3
 # clone does not discover this box's limits by exceeding them.
 FAYTH_ELASTIC=1
 
-# The lease TTL the claim carries, and how often the aeon's heartbeat beats. Heartbeats
-# write no Dolt commit, so a fast cadence is free; the reaper's grace window is ~2x TTL.
+# THE LIVENESS LEASE, in minutes: renewed each time the aeon's trace file grows, and the
+# aeon is killed with work preserved if it lapses. Ninety minutes because the builder does
+# the long work and a ten-minute default lease would kill it mid-task. FAYTH_HEARTBEAT_SECONDS
+# is how often the watchdog checks; heartbeats write no Dolt commit, so a fast cadence is free.
 FAYTH_LEASE_MINUTES=90
 FAYTH_HEARTBEAT_SECONDS=30
 
-# LIVENESS LEASE. An aeon holds a fixed 10-minute liveness lease renewed by its trace
-# growing. If the lease lapses the aeon is killed with work preserved. FAYTH_LEASE_SECONDS
-# is the liveness lease duration (not the Dolt claim TTL above); 600s is 10 minutes.
-# FAYTH_STALL_BEATS and FAYTH_STALL_GRANTS are unused by the new lease mechanism and
-# retained here only to avoid breaking any tooling that reads them.
-FAYTH_LEASE_SECONDS=600
+# FAYTH_STALL_BEATS is unused by the lease mechanism and retained only to avoid breaking any
+# tooling that still reads it.
 FAYTH_STALL_BEATS=10
 
 FAYTH_TOOLS="Bash,Read,Edit,Write,Glob,Grep,TodoWrite"

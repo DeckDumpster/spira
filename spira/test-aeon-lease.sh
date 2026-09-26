@@ -12,6 +12,15 @@
 # halves below — these suites called their own inline copies before, which proved the copy
 # self-consistent, never the aeon (Ryan's review named this directly).
 #
+# The lease mechanism replaces the STALL_BEATS/model_idle apparatus with a single rule:
+# if the trace file grows, the lease renews; if it does not grow for FAYTH_LEASE_MINUTES,
+# the aeon is killed. These tests also cover:
+#
+#   fayth_lease_seconds — FAYTH_LEASE_MINUTES is the one knob, converted to seconds
+#   hb_wait_outcome     — a killed sleep child is a shutdown; anything else is not
+#   lapse record        — lapsed event + $SPIRA_RUN/lapsed/<bead>-<ts> file
+#   regression case     — aeon whose trailing trace line is a result still trips
+#
 # No database, no network, under a second.
 #
 # defect: sp-9ix, sp-sv34w
@@ -81,6 +90,62 @@ is "a non-numeric lease file renders ?" "?" "$result"
 # Case 6: empty bead id → renders ?
 result="$(alm "" "$RUN")"
 is "an empty bead id renders ?" "?" "$result"
+
+echo
+echo "fayth_lease_seconds — FAYTH_LEASE_MINUTES is the one knob the heartbeat reads"
+
+fls() {
+    local minutes="${1:-}"
+    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
+        bash -c '. "$1"/lib.sh; fayth_lease_seconds "$2"' _ "$HERE" "$minutes"
+}
+is "no declared minutes defaults to a 600s (10m) lease" "600" "$(fls)"
+is "90 declared minutes is a 5400s lease"               "5400" "$(fls 90)"
+is "70 declared minutes is a 4200s lease"                "4200" "$(fls 70)"
+is "60 declared minutes is a 3600s lease"                "3600" "$(fls 60)"
+is "10 declared minutes is a 600s lease"                 "600" "$(fls 10)"
+
+echo
+echo "the shipped chamber fayths declare what the aeon actually enforces"
+# defect: every fayth declared FAYTH_LEASE_MINUTES beside a FAYTH_LEASE_SECONDS=600 that
+# silently overrode it — the builder's declared 90-minute lease was a 10-minute lease in
+# effect. Pinned against the real chamber files, not a fixture copy of them.
+fg() {
+    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
+        bash -c '. "$1"/lib.sh; fayth_get "$2" "$3" "$4"' _ "$HERE" "$1" "$2" "$3"
+}
+is "builder.fayth declares a 90-minute lease" "90" "$(fg builder FAYTH_LEASE_MINUTES 10)"
+is "maechen.fayth declares a 70-minute lease" "70" "$(fg maechen FAYTH_LEASE_MINUTES 10)"
+is "spike.fayth declares a 60-minute lease"   "60" "$(fg spike FAYTH_LEASE_MINUTES 10)"
+for fy in builder czar groomer maechen ops spike; do
+    if grep -q '^FAYTH_LEASE_SECONDS=' "$HERE/chamber/$fy.fayth"; then
+        bad "$fy.fayth does not declare the dead FAYTH_LEASE_SECONDS key"
+    else
+        ok "$fy.fayth does not declare the dead FAYTH_LEASE_SECONDS key"
+    fi
+done
+
+echo
+echo "hb_wait_outcome — a killed sleep child is a shutdown; every other failure is not"
+
+hwo() {
+    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
+        bash -c '. "$1"/lib.sh; hb_wait_outcome "$2"' _ "$HERE" "$1"
+}
+is "wait rc=0 (sleep ran to completion) is ok"          "ok"       "$(hwo 0)"
+is "wait rc=143 (killed by TERM) is a shutdown"         "shutdown" "$(hwo 143)"
+is "wait rc=130 (killed by INT) is a shutdown"          "shutdown" "$(hwo 130)"
+is "wait rc=137 (killed by KILL) is a shutdown"         "shutdown" "$(hwo 137)"
+is "wait rc=127 (no such pid — fork lost the race) is a retry, not a shutdown" "retry" "$(hwo 127)"
+is "wait rc=2 (an ordinary nonzero exit) is a retry, not a shutdown"           "retry" "$(hwo 2)"
+
+# THE OFFENDER THIS REPLACES: the old watchdog treated any nonzero wait as a shutdown and
+# broke out of its loop with nothing logged and no marker written — the exact failure
+# observed on an oversubscribed host, where the sleep child could not be forked in time.
+# Prove the check can tell the difference before trusting it to.
+naive_outcome() { [ "${1:-0}" -eq 0 ] 2>/dev/null && printf ok || printf shutdown; }
+is "the retired logic misreads rc=127 as a shutdown (the bug this replaces)" \
+    "shutdown" "$(naive_outcome 127)"
 
 echo
 echo "hb_tick — trace growth always renews, regardless of deadline or fuse"
