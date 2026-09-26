@@ -282,6 +282,14 @@ area_suite one-t3.sh   T3 UC-alpha-01
 out="$(TBS check-areas --suite-dir "$AREA_DIR" 2>&1)"; rc=$?
 is "a single T3 suite in an area passes" "0" "$rc"
 
+# MUST-FAIL CHECK: one suite naming its own area through several UC ids on the same
+# # covers: line (test-verdict-flow.sh's real shape) must still count as one suite, not one
+# per UC id — the bug this guards was inflating operator-channel from 3 suites to 8.
+area_suite multi-uc.sh T3 "UC-gamma-01 UC-gamma-02 UC-gamma-03"
+out="$(TBS check-areas --suite-dir "$AREA_DIR" 2>&1)"; rc=$?
+is "one suite naming its area three times still counts as one suite" "0" "$rc"
+lack "MUST-FAIL CHECK: a single multi-UC suite never trips the area cap" "area gamma" "$out"
+
 area_suite two-t3.sh   T3 UC-alpha-02
 out="$(TBS check-areas --suite-dir "$AREA_DIR" 2>&1)"; rc=$?
 is  "a second T3 suite in the same area fails" "1" "$rc"

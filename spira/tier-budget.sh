@@ -119,7 +119,7 @@ _judge() {
     budget="$(_budget_secs "$suite" "$tier")"
     awk -v m="$median" -v b="$budget" 'BEGIN{exit !(m>b)}' || return 0
     printf 'tier-budget: %s tier=%s budget=%ss measured=%ss — over budget\n' \
-        "$suite" "$tier" "$budget" "$median"
+        "$suite" "$tier" "$budget" "$median" >&2
     return 1
 }
 
@@ -175,19 +175,24 @@ cmd_check_batch() {
 }
 
 # _t3_area_rows <suite-dir> -> "<area>\t<suite>" one per line, for every UC area named by a
-# T3 suite. A T3 suite with no UC id on its # covers: line contributes no row.
+# T3 suite. A T3 suite with no UC id on its # covers: line contributes no row. A suite naming
+# the same area via more than one UC id (e.g. UC-operator-channel-14 and -15 on one line)
+# contributes exactly one row for it — sort -u collapses the rest, so a multi-UC suite is
+# still one suite when an area's T3 count is judged.
 _t3_area_rows() {
     local dir="$1" f tier uc area
-    for f in "$dir"/test-*.sh; do
-        [ -r "$f" ] || continue
-        tier="$(suite_tier_of "$f" 2>/dev/null || true)"
-        [ "$tier" = T3 ] || continue
-        for uc in $(suite_uc_of "$f" 2>/dev/null || true); do
-            area="${uc#UC-}"; area="${area%-*}"
-            [ -n "$area" ] || continue
-            printf '%s\t%s\n' "$area" "$(basename "$f")"
+    {
+        for f in "$dir"/test-*.sh; do
+            [ -r "$f" ] || continue
+            tier="$(suite_tier_of "$f" 2>/dev/null || true)"
+            [ "$tier" = T3 ] || continue
+            for uc in $(suite_uc_of "$f" 2>/dev/null || true); do
+                area="${uc#UC-}"; area="${area%-*}"
+                [ -n "$area" ] || continue
+                printf '%s\t%s\n' "$area" "$(basename "$f")"
+            done
         done
-    done
+    } | sort -u
 }
 
 # _area_allowlist_count <area> -> the recorded T3 count, or empty if not allowlisted.
@@ -215,7 +220,7 @@ cmd_check_areas() {
         allow="$(_area_allowlist_count "$area")"; allow="${allow:-0}"
         if [ "$count" -gt 1 ] && [ "$count" -gt "$allow" ]; then
             printf 'tier-budget: area %s has %d T3 suites (max 1; allowlisted %s) — %s\n' \
-                "$area" "$count" "$allow" "$(printf '%s\n' "$suites_here" | paste -sd, -)"
+                "$area" "$count" "$allow" "$(printf '%s\n' "$suites_here" | paste -sd, -)" >&2
             bad=1
         fi
     done < <(printf '%s\n' "$rows" | cut -f1 | sort -u)
@@ -261,7 +266,7 @@ cmd_lint_allowlist() {
         fi
     fi
     if [ "$prior_found" = 0 ]; then
-        printf 'tier-budget: lint-allowlist: no prior allowlist found — treating this as its introducing commit\n'
+        printf 'tier-budget: lint-allowlist: no prior allowlist found — treating this as its introducing commit\n' >&2
         return 0
     fi
 
@@ -276,13 +281,13 @@ cmd_lint_allowlist() {
         prior_val="$(printf '%s\n' "$prior" | \
             awk -F'\t' -v k="$key" '!/^[[:space:]]*#/ && $1==k {print $NF; exit}')"
         if [ -z "$prior_val" ]; then
-            printf 'tier-budget: lint-allowlist: new entry %s — the allowlist may only shrink\n' "$key"
+            printf 'tier-budget: lint-allowlist: new entry %s — the allowlist may only shrink\n' "$key" >&2
             bad=1
             continue
         fi
         if awk -v now="$val" -v was="$prior_val" 'BEGIN{exit !(now>was)}'; then
             printf 'tier-budget: lint-allowlist: %s raised %s -> %s — the allowlist may only shrink\n' \
-                "$key" "$prior_val" "$val"
+                "$key" "$prior_val" "$val" >&2
             bad=1
         fi
     done < <(grep -v '^[[:space:]]*#' "$allowlist" | grep -v '^[[:space:]]*$' | awk -F'\t' '{print $1"\t"$NF}')
