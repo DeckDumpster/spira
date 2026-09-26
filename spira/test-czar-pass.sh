@@ -255,7 +255,7 @@ printf '\n%s\n' "8. world halted: pass exits without acting"
 # ==========================================================================================
 touch "$SPIRA_RUN/world.halted"
 rm -f "$SPIRA_RUN/czar.log" "$INC_LOG"
-_halt_out="$(bash "$CZAR" --pass 2>&1 || true)"
+_halt_out="$(bash "$CZAR" --pass 2>&1)"
 _rc=$?
 rm -f "$SPIRA_RUN/world.halted"
 [ "$_rc" -eq 0 ] && ok "halted: exits 0" || bad "halted: expected exit 0, got $_rc"
