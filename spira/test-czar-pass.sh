@@ -3,6 +3,8 @@
 # test-czar-pass.sh — czar fast pass: budget, flock, and acceptance detectors
 #
 # WHAT THIS SUITE CHECKS.
+#   0. cargo test -p czar-pass: every detect_* function's fire/silent boundary against a
+#      scratch Config, run as Rust #[test]s rather than through the binary.
 #   1. czar.sh exists and is executable.
 #   2. Pass with an empty environment completes in under 5 s (budget).
 #   3. A concurrent pass is skipped (flock prevents overlap).
@@ -43,9 +45,7 @@
 # trigger and verifies detection. A detector that fires on empty data is not a detector.
 #
 # tier: T1
-# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/czar.sh spira/conf.sh
-#         spira/sentinel.sh spira/watchtower.sh
-#         spira/systemd/spira-czar-pass.service spira/systemd/spira-czar-pass.timer
+# covers: czar-pass/src/main.rs reconciler-engine/src/**.rs spira/czar.sh spira/conf.sh spira/sentinel.sh spira/watchtower.sh systemd/spira-czar-pass.service systemd/spira-czar-pass.timer UC-ops-detection-remediation-23 UC-ops-detection-remediation-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
@@ -67,6 +67,25 @@ if [ -z "$CARGO_BIN" ]; then
     exit 77
 fi
 CZAR_PASS_ROOT="$HERE/../czar-pass"
+
+# ==========================================================================================
+printf '\n%s\n' "0. cargo test -p czar-pass: every detector's fire/silent boundary (UC-ops-detection-remediation-23)"
+# ==========================================================================================
+# A separate, scratch CARGO_TARGET_DIR: this must never share the release build below (a
+# debug-profile test build and a release build of the same crate under one target dir just
+# means two full compiles instead of one, not a correctness problem, but there is no reason
+# to pay for the first one twice across runs).
+CARGO_TEST_LOG="$T/cargo-test-czar-pass.log"
+if CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$T/czar-pass-test-target" \
+    "$CARGO_BIN" test --manifest-path "$CZAR_PASS_ROOT/Cargo.toml" -p czar-pass \
+    >"$CARGO_TEST_LOG" 2>&1
+then
+    ok "cargo test -p czar-pass ($(grep -c '^test ' "$CARGO_TEST_LOG" 2>/dev/null || echo ?) tests)"
+else
+    bad "cargo test -p czar-pass (see $CARGO_TEST_LOG)"
+    tail -60 "$CARGO_TEST_LOG" >&2
+fi
+
 CZAR_PASS_BIN="$CZAR_PASS_ROOT/target/release/czar-pass"
 if [ ! -x "$CZAR_PASS_BIN" ]; then
     cp -r "$CZAR_PASS_ROOT/." "$T/czar-pass-src"

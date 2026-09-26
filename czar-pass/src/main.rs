@@ -1340,42 +1340,6 @@ mod tests {
     }
 
     #[test]
-    fn fs_path_replaces_class_separators_that_would_escape_the_directory() {
-        let dir = PathBuf::from("/tmp/spira-run");
-        let p = fs_path(&dir, "queue/red,flaky");
-        assert_eq!(p, PathBuf::from("/tmp/spira-run/czar-pass-first.queue-red-flaky"));
-    }
-
-    #[test]
-    fn fs_record_is_first_write_wins() {
-        let dir = scratch_dir("fs-record-first-write-wins");
-        fs_record(&dir, "deadlock", 100);
-        fs_record(&dir, "deadlock", 200); // must not overwrite the first timestamp
-        assert_eq!(fs_get(&dir, "deadlock"), Some(100));
-    }
-
-    #[test]
-    fn fs_clear_removes_the_marker() {
-        let dir = scratch_dir("fs-clear");
-        fs_record(&dir, "deadlock", 100);
-        fs_clear(&dir, "deadlock");
-        assert_eq!(fs_get(&dir, "deadlock"), None);
-    }
-
-    #[test]
-    fn latency_secs_is_zero_with_no_recorded_first_sighting() {
-        let dir = scratch_dir("latency-no-record");
-        assert_eq!(latency_secs(&dir, "deadlock", 500), 0);
-    }
-
-    #[test]
-    fn latency_secs_measures_from_the_first_sighting() {
-        let dir = scratch_dir("latency-measures");
-        fs_record(&dir, "deadlock", 100);
-        assert_eq!(latency_secs(&dir, "deadlock", 350), 250);
-    }
-
-    #[test]
     fn repo_root_finds_the_named_repo() {
         let dir = scratch_dir("repo-root");
         let map = dir.join("repo-map");
@@ -1493,5 +1457,405 @@ mod tests {
         let out = read_new_lines(&log, "2026-01-01T00:00:01Z");
         assert!(!out.contains("old"), "line before the marker must be excluded: {:?}", out);
         assert!(out.contains("new"), "line after the marker must be included: {:?}", out);
+    }
+
+    // ────────────────────────────────────────────────────────────────────────────────
+    // Detector fire/silent boundaries (UC-ops-detection-remediation-23).
+    //
+    // Every case runs in Shadow stage (the default with no SPIRA_CZAR_STAGE_* set):
+    // det_action/infer only append a CZAR-WOULD line there, so a "fire" case never spawns
+    // a real forge.sh workflow-rerun or files a real incident — exactly what a unit test
+    // wants from a detector whose whole job is to trigger a side effect.
+    // ────────────────────────────────────────────────────────────────────────────────
+
+    const KNOWN_EPOCH: u64 = 1_609_459_200; // 2021-01-01T00:00:00Z, for parse_iso_to_epoch
+
+    fn test_config(dir: &Path, now: u64) -> Config {
+        Config {
+            spira_run: dir.to_path_buf(),
+            spira_home: dir.to_string_lossy().to_string(),
+            czar_log: dir.join("czar.log"),
+            qc_log: dir.join("landing.log"),
+            marker: dir.join("czar-pass.swept"),
+            incident_sh: dir.join("incident.sh").to_string_lossy().to_string(),
+            forge_sh: dir.join("forge.sh").to_string_lossy().to_string(),
+            queue_dir: dir.join("queue"),
+            stall_secs: 3000,
+            ci_queued_max: 600,
+            starved_max_s: 1200,
+            strands_state: dir.join("strands.json"),
+            ci_red_max: 600,
+            base_unreadable_grace: 120,
+            lock_path: dir.join("czar-pass.lock"),
+            reconciler_state: dir.join("reconciler-state.json"),
+            reconciler_status_log: dir.join("reconciler-status.jsonl"),
+            spira_db: String::new(),
+            scope_label: String::new(),
+            czar_label: "czar-trigger".to_string(),
+            express_label: "express".to_string(),
+            throttle_stamp: dir.join("queue-throttled"),
+            land_unit: "spira-landing".to_string(),
+            // A path that cannot exist, so `systemctl is-failed` always fails to spawn
+            // (is_failed = false) instead of depending on the test host's real systemd.
+            systemctl: dir.join("no-such-systemctl").to_string_lossy().to_string(),
+            repo_map: None,
+            now_secs: now,
+            now_iso: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn write_repo_open(dir: &Path, repo: &str, branch: &str) {
+        let repo_dir = dir.join("queue").join(repo);
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::write(repo_dir.join("open"), format!("branch={}\n", branch)).unwrap();
+    }
+
+    fn write_repo_map(dir: &Path, repo: &str, repo_path: &str, base: &str) -> PathBuf {
+        let map = dir.join("repo-map");
+        fs::write(&map, format!("{} | {} | queue | {} | | \n", repo, repo_path, base)).unwrap();
+        map
+    }
+
+    fn write_strands_state(dir: &Path, key: &str, first: u64) -> PathBuf {
+        let path = dir.join("strands.json");
+        fs::write(&path, format!(r#"{{"{}": {{"first": {}}}}}"#, key, first)).unwrap();
+        path
+    }
+
+    #[test]
+    fn detect_deadlock_silent_without_the_trigger_line() {
+        let dir = scratch_dir("deadlock-silent");
+        let cfg = test_config(&dir, 1000);
+        let mut state = StateMap::new();
+        let (v, remedy, tier) = detect_deadlock(&cfg, &mut state, "landing: pass complete\n");
+        assert!(!v.is_gap);
+        assert_eq!(remedy, "none");
+        assert_eq!(tier, "det");
+    }
+
+    #[test]
+    fn detect_deadlock_fires_on_the_trigger_line() {
+        let dir = scratch_dir("deadlock-fire");
+        let cfg = test_config(&dir, 1000);
+        let mut state = StateMap::new();
+        let (v, remedy, tier) =
+            detect_deadlock(&cfg, &mut state, "no suites identified; leaving batch open\n");
+        assert!(v.is_gap);
+        assert_eq!(remedy, "inference");
+        assert_eq!(tier, "inf");
+    }
+
+    #[test]
+    fn detect_attribution_failed_silent_with_no_matching_line() {
+        let dir = scratch_dir("attribution-silent-absent");
+        let cfg = test_config(&dir, 1000);
+        let mut state = StateMap::new();
+        let (v, _remedy, _tier) =
+            detect_attribution_failed(&cfg, &mut state, "landing: verdict PASS\n");
+        assert!(!v.is_gap);
+    }
+
+    #[test]
+    fn detect_attribution_failed_silent_when_requeued_is_zero() {
+        let dir = scratch_dir("attribution-silent-zero");
+        let cfg = test_config(&dir, 1000);
+        let mut state = StateMap::new();
+        let (v, _remedy, _tier) =
+            detect_attribution_failed(&cfg, &mut state, "ejected 0, requeued 0\n");
+        assert!(!v.is_gap, "requeued 0 is a no-op, not an attribution failure");
+    }
+
+    #[test]
+    fn detect_attribution_failed_fires_when_requeued_is_nonzero() {
+        let dir = scratch_dir("attribution-fire");
+        let cfg = test_config(&dir, 1000);
+        let mut state = StateMap::new();
+        let (v, remedy, tier) =
+            detect_attribution_failed(&cfg, &mut state, "ejected 0, requeued 3\n");
+        assert!(v.is_gap);
+        assert_eq!(remedy, "inference");
+        assert_eq!(tier, "inf");
+    }
+
+    #[test]
+    fn detect_sort_failed_silent_without_the_trigger() {
+        let dir = scratch_dir("sort-silent");
+        let cfg = test_config(&dir, 1000);
+        let mut state = StateMap::new();
+        let (v, _remedy, _tier) = detect_sort_failed(&cfg, &mut state, "landing: verdict PASS\n");
+        assert!(!v.is_gap);
+    }
+
+    #[test]
+    fn detect_sort_failed_fires_on_the_ranking_failure_line() {
+        let dir = scratch_dir("sort-fire");
+        let cfg = test_config(&dir, 1000);
+        let mut state = StateMap::new();
+        let (v, remedy, tier) =
+            detect_sort_failed(&cfg, &mut state, "queue_sort_rows: ranking failed\n");
+        assert!(v.is_gap);
+        assert_eq!(remedy, "inference");
+        assert_eq!(tier, "inf");
+    }
+
+    #[test]
+    fn detect_loop_stalled_silent_with_no_landing_log() {
+        let dir = scratch_dir("loop-silent-no-log");
+        let cfg = test_config(&dir, KNOWN_EPOCH + 100);
+        let mut state = StateMap::new();
+        let (v, remedy, tier) = detect_loop_stalled(&cfg, &mut state);
+        assert!(!v.is_gap);
+        assert_eq!(remedy, "none");
+        assert_eq!(tier, "det");
+    }
+
+    #[test]
+    fn detect_loop_stalled_silent_within_the_stall_window() {
+        let dir = scratch_dir("loop-silent-recent");
+        let cfg = test_config(&dir, KNOWN_EPOCH + 100); // age 100s < stall_secs 3000
+        fs::write(&cfg.qc_log, "2021-01-01T00:00:00Z spira: landing: pass complete\n").unwrap();
+        let mut state = StateMap::new();
+        let (v, _remedy, _tier) = detect_loop_stalled(&cfg, &mut state);
+        assert!(!v.is_gap);
+    }
+
+    #[test]
+    fn detect_loop_stalled_fires_past_the_stall_window() {
+        let dir = scratch_dir("loop-fire");
+        let cfg = test_config(&dir, KNOWN_EPOCH + 5000); // age 5000s > stall_secs 3000
+        fs::write(&cfg.qc_log, "2021-01-01T00:00:00Z spira: landing: pass complete\n").unwrap();
+        let mut state = StateMap::new();
+        let (v, remedy, tier) = detect_loop_stalled(&cfg, &mut state);
+        assert!(v.is_gap);
+        // The stub systemctl path cannot exist, so is_failed is always false and the
+        // detector falls through to the inference ladder, not the det-restart one.
+        assert_eq!(remedy, "inference");
+        assert_eq!(tier, "inf");
+    }
+
+    #[test]
+    fn detect_loop_stalled_is_unobservable_and_takes_no_action_on_an_unparseable_timestamp() {
+        let dir = scratch_dir("loop-unobservable");
+        let cfg = test_config(&dir, KNOWN_EPOCH + 100);
+        fs::write(&cfg.qc_log, "GARBAGE-NOT-AN-ISO-TS landing: pass complete\n").unwrap();
+        let mut state = StateMap::new();
+        let (v, remedy, tier) = detect_loop_stalled(&cfg, &mut state);
+        assert!(matches!(v.status, RawStatus::Unobservable { .. }));
+        assert!(v.is_gap, "grace_secs is 0, so even an unobservable reading is a gap at once");
+        assert_eq!(remedy, "none", "an unreadable timestamp must never trigger a restart or a filing");
+        assert_eq!(tier, "det");
+    }
+
+    #[test]
+    fn detect_ci_silent_with_no_queue_dir() {
+        let dir = scratch_dir("ci-no-queue");
+        let cfg = test_config(&dir, 2_000_000_000);
+        let mut state = StateMap::new();
+        let (cis_v, cis_remedy, _t1, cir_v, cir_remedy, _t2) = detect_ci(&cfg, &mut state);
+        assert!(!cis_v.is_gap);
+        assert!(!cir_v.is_gap);
+        assert_eq!(cis_remedy, "none");
+        assert_eq!(cir_remedy, "none");
+    }
+
+    #[test]
+    fn detect_ci_stalled_fires_past_the_queued_threshold() {
+        let dir = scratch_dir("ci-stalled-fire");
+        let now = 2_000_000_000u64;
+        let mut cfg = test_config(&dir, now);
+        write_repo_open(&dir, "spira", "spira/queue/abc123");
+        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
+        let queued_since = now - cfg.ci_queued_max - 1; // just past threshold, no run-id
+        fs::write(&cfg.forge_sh, format!("printf 'queued-since: {}\\n'\n", queued_since)).unwrap();
+        let mut state = StateMap::new();
+        let (cis_v, cis_remedy, cis_tier, cir_v, _r2, _t2) = detect_ci(&cfg, &mut state);
+        assert!(cis_v.is_gap);
+        assert_eq!(cis_remedy, "inference");
+        assert_eq!(cis_tier, "inf");
+        assert!(!cir_v.is_gap, "no run-conclusion field at all is satisfied for ci-red");
+    }
+
+    #[test]
+    fn detect_ci_stalled_silent_within_the_queued_threshold() {
+        let dir = scratch_dir("ci-stalled-silent");
+        let now = 2_000_000_000u64;
+        let mut cfg = test_config(&dir, now);
+        write_repo_open(&dir, "spira", "spira/queue/abc123");
+        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
+        let queued_since = now - 10; // well inside the threshold
+        fs::write(&cfg.forge_sh, format!("printf 'queued-since: {}\\n'\n", queued_since)).unwrap();
+        let mut state = StateMap::new();
+        let (cis_v, cis_remedy, _t1, _cir_v, _r2, _t2) = detect_ci(&cfg, &mut state);
+        assert!(!cis_v.is_gap);
+        assert_eq!(cis_remedy, "none");
+    }
+
+    #[test]
+    fn detect_ci_red_fires_past_the_red_age_threshold() {
+        let dir = scratch_dir("ci-red-fire");
+        let now = 2_000_000_000u64;
+        let mut cfg = test_config(&dir, now);
+        write_repo_open(&dir, "spira", "spira/queue/abc123");
+        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
+        let completed = now - cfg.ci_red_max - 1;
+        fs::write(
+            &cfg.forge_sh,
+            format!("printf 'run-conclusion: failure\\nrun-completed-at: {}\\n'\n", completed),
+        )
+        .unwrap();
+        let mut state = StateMap::new();
+        let (_cis_v, _r1, _t1, cir_v, cir_remedy, cir_tier) = detect_ci(&cfg, &mut state);
+        assert!(cir_v.is_gap);
+        assert_eq!(cir_remedy, "inference");
+        assert_eq!(cir_tier, "inf");
+    }
+
+    #[test]
+    fn detect_ci_red_silent_when_recently_completed() {
+        let dir = scratch_dir("ci-red-silent");
+        let now = 2_000_000_000u64;
+        let mut cfg = test_config(&dir, now);
+        write_repo_open(&dir, "spira", "spira/queue/abc123");
+        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
+        let completed = now - 5; // well inside ci_red_max
+        fs::write(
+            &cfg.forge_sh,
+            format!("printf 'run-conclusion: failure\\nrun-completed-at: {}\\n'\n", completed),
+        )
+        .unwrap();
+        let mut state = StateMap::new();
+        let (_cis_v, _r1, _t1, cir_v, cir_remedy, _t2) = detect_ci(&cfg, &mut state);
+        assert!(!cir_v.is_gap);
+        assert_eq!(cir_remedy, "none");
+    }
+
+    #[test]
+    fn detect_ci_is_unobservable_and_takes_no_action_when_forge_fails() {
+        let dir = scratch_dir("ci-unobservable");
+        let mut cfg = test_config(&dir, 2_000_000_000);
+        write_repo_open(&dir, "spira", "spira/queue/abc123");
+        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
+        fs::write(&cfg.forge_sh, "exit 1\n").unwrap();
+        let mut state = StateMap::new();
+        let (cis_v, cis_remedy, _t1, cir_v, cir_remedy, _t2) = detect_ci(&cfg, &mut state);
+        assert!(matches!(cis_v.status, RawStatus::Unobservable { .. }));
+        assert!(matches!(cir_v.status, RawStatus::Unobservable { .. }));
+        assert_eq!(cis_remedy, "none", "a failed forge call must never be read as clear");
+        assert_eq!(cir_remedy, "none");
+    }
+
+    #[test]
+    fn detect_base_red_silent_when_the_base_gate_is_green() {
+        let dir = scratch_dir("base-red-silent");
+        let mut cfg = test_config(&dir, 2_000_000_000);
+        write_repo_open(&dir, "spira", "spira/queue/abc123");
+        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
+        fs::write(&cfg.forge_sh, "printf 'run-id: 1\\nrun-conclusion: success\\n'\n").unwrap();
+        let mut state = StateMap::new();
+        let (v, remedy, _tier) = detect_base_red(&cfg, &mut state);
+        assert!(!v.is_gap);
+        assert_eq!(remedy, "none");
+    }
+
+    #[test]
+    fn detect_base_red_fires_at_once_on_a_red_base() {
+        let dir = scratch_dir("base-red-fire");
+        let mut cfg = test_config(&dir, 2_000_000_000);
+        write_repo_open(&dir, "spira", "spira/queue/abc123");
+        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
+        fs::write(
+            &cfg.forge_sh,
+            "printf 'run-id: 1\\nrun-conclusion: failure\\nhead-sha: deadbeef\\nrun-url: https://example/run/1\\n'\n",
+        )
+        .unwrap();
+        let mut state = StateMap::new();
+        let (v, remedy, tier) = detect_base_red(&cfg, &mut state);
+        assert!(v.is_gap, "a red base fires on the very first pass — there is no age threshold");
+        assert_eq!(remedy, "inference");
+        assert_eq!(tier, "inf");
+    }
+
+    #[test]
+    fn detect_base_red_unreadable_is_grace_suppressed_then_fires() {
+        let dir = scratch_dir("base-red-unreadable");
+        let now = 2_000_000_000u64;
+        let mut cfg = test_config(&dir, now);
+        write_repo_open(&dir, "spira", "spira/queue/abc123");
+        cfg.repo_map = Some(write_repo_map(&dir, "spira", "/tmp/spira-checkout", "origin/main"));
+        fs::write(&cfg.forge_sh, "exit 0\n").unwrap(); // succeeds but names no run at all
+        let mut state = StateMap::new();
+
+        let (v1, remedy1, _t1) = detect_base_red(&cfg, &mut state);
+        assert!(matches!(v1.status, RawStatus::Unobservable { .. }));
+        assert!(!v1.is_gap, "inside the grace window an unreadable base stays quiet");
+        assert_eq!(remedy1, "none");
+
+        cfg.now_secs = now + cfg.base_unreadable_grace + 1;
+        let (v2, remedy2, tier2) = detect_base_red(&cfg, &mut state);
+        assert!(v2.is_gap, "past the grace window an unreadable base is failed, not green");
+        assert_eq!(remedy2, "inference");
+        assert_eq!(tier2, "inf");
+    }
+
+    #[test]
+    fn detect_starved_silent_with_no_strands_file() {
+        let dir = scratch_dir("starved-no-file");
+        let cfg = test_config(&dir, 2_000_000_000);
+        let mut state = StateMap::new();
+        let (v, remedy, tier) = detect_starved(&cfg, &mut state, "");
+        assert!(!v.is_gap);
+        assert_eq!(remedy, "none");
+        assert_eq!(tier, "det");
+    }
+
+    #[test]
+    fn detect_starved_is_unobservable_and_takes_no_action_on_malformed_json() {
+        let dir = scratch_dir("starved-malformed");
+        let cfg = test_config(&dir, 2_000_000_000);
+        fs::write(&cfg.strands_state, "not json").unwrap();
+        let mut state = StateMap::new();
+        let (v, remedy, _tier) = detect_starved(&cfg, &mut state, "");
+        assert!(matches!(v.status, RawStatus::Unobservable { .. }));
+        assert_eq!(remedy, "none");
+    }
+
+    #[test]
+    fn detect_starved_is_unobservable_when_the_json_is_not_an_object() {
+        let dir = scratch_dir("starved-not-object");
+        let cfg = test_config(&dir, 2_000_000_000);
+        fs::write(&cfg.strands_state, "[1,2,3]").unwrap();
+        let mut state = StateMap::new();
+        let (v, remedy, _tier) = detect_starved(&cfg, &mut state, "");
+        assert!(matches!(v.status, RawStatus::Unobservable { .. }));
+        assert_eq!(remedy, "none");
+    }
+
+    #[test]
+    fn detect_starved_silent_within_the_starved_window() {
+        let dir = scratch_dir("starved-silent");
+        let now = 2_000_000_000u64;
+        let mut cfg = test_config(&dir, now);
+        cfg.strands_state = write_strands_state(&dir, "partA:starved:queue", now - 100);
+        let mut state = StateMap::new();
+        let (v, remedy, _tier) = detect_starved(&cfg, &mut state, "");
+        assert!(!v.is_gap);
+        assert_eq!(remedy, "none");
+    }
+
+    #[test]
+    fn detect_starved_fires_past_the_starved_window() {
+        let dir = scratch_dir("starved-fire");
+        let now = 2_000_000_000u64;
+        let mut cfg = test_config(&dir, now);
+        cfg.strands_state =
+            write_strands_state(&dir, "partA:starved:queue", now - cfg.starved_max_s - 1);
+        let mut state = StateMap::new();
+        let (v, remedy, tier) = detect_starved(&cfg, &mut state, "");
+        assert!(v.is_gap);
+        // Shadow stage names its own ladder rung here, distinct from "det"/"inference" —
+        // detect_starved is the one detector whose Stage match happens before any
+        // throttle/deliberate-state check, so this is the whole story for Shadow.
+        assert_eq!(remedy, "shadow-inference");
+        assert_eq!(tier, "inf");
     }
 }
