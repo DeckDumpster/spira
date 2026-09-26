@@ -136,6 +136,10 @@ printf "scratch-repo | %s | push | origin/main | |\n" "$HOME/scratch-repo" \
     exit 2
 }
 
+# THE INSTALLED INSTANCE'S OWN DATABASE, exactly as acceptance-ci.sh passes it: the probe
+# bead must be filed where the installed sentinel and aeons read. acceptance-run.sh's own
+# default (~/spira-acceptance-test-db) is a path no install creates, so the first local run
+# failed at "bead filed" before reaching anything the release does.
 log "acceptance-local: running acceptance-run.sh phase A (tag=$_al_tag)"
 bash "$HERE/testenv.sh" exec --name "$CNAME" --user spirauser bash -c "
 set -uo pipefail
@@ -145,7 +149,7 @@ exec bash /workspace/spira/acceptance-run.sh '$_al_tag' \
     --scratch-repo \"\$HOME/scratch-repo\" \
     --tarball '$_al_ctar' \
     --agent /workspace/spira/acceptance-agent.sh \
-    --bd-db \"\$HOME/spira-acceptance-test-db\"
+    --bd-db \"\$HOME/.local/share/spira/db\"
 "
 _al_rc=$?
 
