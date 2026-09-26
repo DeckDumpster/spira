@@ -67,6 +67,7 @@ REPO="$(repo_root "$REPO_NAME")" || {
 slug="$(printf '%s.%s' "$REPO_NAME" "$BR" | tr -c 'A-Za-z0-9._-' '_')"
 D="$SPIRA_RUN/gate-run/$slug"
 PIDF="$D/pid"; RCF="$D/rc"; OUT="$D/out"; KEYF="$D/key"; STARTF="$D/started"
+SUITESF="$D/suites"
 
 # ---------------------------------------------------------------------------------------
 # --exec — the detached run. It records its own pid FIRST, so a parent that returns before
@@ -79,6 +80,14 @@ if [ "$MODE" = exec ]; then
     echo $$ > "$PIDF"
     bash "$(dirname "$0")/gate.sh" "$BR" "$REPO_NAME" > "$OUT" 2>&1
     rc=$?
+    # WRITTEN BEFORE THE EXIT CODE, same rule as the exit code itself: a reader must never
+    # see a verdict before the scope it was about. gate.sh prints this line on every PASS —
+    # fresh or cached — and on nothing else, so a FAIL leaves "-" here rather than a stale
+    # scope from whatever this branch last passed.
+    _suites="$(grep -m1 '^gate: gate PASS covered suites: ' "$OUT" 2>/dev/null)"
+    _suites="${_suites#gate: gate PASS covered suites: }"
+    printf '%s\n' "${_suites:--}" > "$SUITESF.part" 2>/dev/null \
+        && mv -f "$SUITESF.part" "$SUITESF" 2>/dev/null
     printf '%s\n' "$rc" > "$RCF.part" && mv -f "$RCF.part" "$RCF"
     exit "$rc"
 fi
@@ -165,10 +174,13 @@ report() {              # report -> prints the verdict and exits with it
     rc="$(cat "$RCF" 2>/dev/null)"
     case "${rc:-}" in
         0)  echo "gate-run: PASSED $BR in $REPO_NAME after $(elapsed)s"
+            echo "gate-run: key $key"
+            echo "gate-run: gate PASS covered suites: $(cat "$SUITESF" 2>/dev/null || echo -)"
             tail -5 "$OUT" 2>/dev/null
             exit 0 ;;
         [0-9]*)
             echo "gate-run: FAILED $BR in $REPO_NAME after $(elapsed)s (gate.sh exit $rc)"
+            echo "gate-run: key $key"
             cat "$OUT" 2>/dev/null
             exit 1 ;;
     esac
@@ -197,17 +209,23 @@ if [ "$MODE" = status ]; then
         # wrong tree, which is a reason to say so rather than a reason to say no.
         stale=""; stale_key && stale=" (started for an earlier commit)"
         echo "gate-run: still running for $BR$stale — $(elapsed)s so far, pid $(cat "$PIDF" 2>/dev/null)"
+        echo "gate-run: key $key"
         exit 2
     fi
     if [ -d "$D" ]; then
         # A finished run about a different tree answers nothing about this one.
-        if [ -f "$RCF" ] && stale_key; then exit 3; fi
+        if [ -f "$RCF" ] && stale_key; then
+            echo "gate-run: the recorded run for $BR is for another (tip, base) pair — key $key" >&2
+            exit 3
+        fi
         report
     fi
     if p="$(unmanaged_gate)"; then
         echo "gate-run: a gate.sh for $BR is running outside this runner, pid $p — its verdict reaches nobody"
+        echo "gate-run: key $key"
         exit 2
     fi
+    echo "gate-run: no gate has run or finished for $BR — key $key" >&2
     exit 3
 fi
 
