@@ -2397,7 +2397,15 @@ _attempts_sql_query() {   # _attempts_sql_query <id> -> the SQL that counts atte
     #
     # GREATEST(...,0) because a bead can carry more closes than claims — an operator closing
     # a bead by hand adds one with no claim behind it.
-    printf "select greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end), 0) from events where issue_id='%s'" "$1"
+    #
+    # THE created_at FLOOR. A cleared poison must stay cleared: `attempts.sh clear` records a
+    # poison.cleared event and this excludes everything at or before it, so a bead an operator
+    # judged worth retrying starts that retry at 0 rather than at the count that poisoned it.
+    # Without the floor, clearing the label alone changes nothing this query reads, and CHECK 4
+    # reads the same old count against a bare label on its very next pass (sp-qd2ul). COALESCE
+    # to the epoch when no poison.cleared event exists, so an uncleared bead's count is
+    # untouched.
+    printf "select greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end), 0) from events where issue_id='%s' and created_at > coalesce((select max(pc.created_at) from events pc where pc.issue_id=events.issue_id and pc.event_type='poison.cleared'), '1970-01-01')" "$1"
 }
 
 attempts_of() {          # attempts_of <id> -> count of in_progress status-change events
@@ -2452,6 +2460,12 @@ bump_requeue() { _bump_write_event "${1:-}" requeued  "${2:-unrecorded}"; }
 bump_timeout() { return 0; }
 bump_recur()   { _bump_write_event "${1:-}" recurred  "${2:-unrecorded}"; }
 bump_lapsed()  { _bump_write_event "${1:-}" lapsed    "${2:-unrecorded}"; }
+
+# bump_poison_cleared <id> <cause> — the event _attempts_sql_query/_check4_bulk_sql floor on
+# (sp-qd2ul). Written by attempts.sh clear, never by a bare label removal: a clear that leaves
+# no trace here is indistinguishable from one that was never judged, and the next CHECK 4 pass
+# reads the unchanged count against a bare label and re-poisons within minutes.
+bump_poison_cleared() { _bump_write_event "${1:-}" 'poison.cleared' "${2:-unrecorded}"; }
 
 # parse_reclaimed <bd-reclaim-output> -> prints the number of reclaimed leases; charges
 # each one through bump_reclaim as it goes.
@@ -4498,8 +4512,14 @@ for i in (d if isinstance(d, list) else [d]):
 }
 
 # _check4_bulk_sql <in-clause> -> SQL returning attempts, reopens and reclaims for each id
+#
+# THE poison.cleared FLOOR APPLIES ONLY TO att, per-row inside its own CASE WHEN — not as a
+# shared WHERE clause — because rep/rcl feed REQUEUE_AT/RECLAIM_AT, thresholds independent of
+# spira-poison by design (check4_decide's own comment), and a clear that reset them too would
+# silently forgive a reclaim streak the operator never judged. See _attempts_sql_query for why
+# the floor exists at all.
 _check4_bulk_sql() {
-    printf "select issue_id, greatest(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end) - sum(case when event_type='closed' then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end), 0) as att, sum(case when event_type='reopened' then 1 else 0 end) as rep, sum(case when event_type='reclaimed' then 1 else 0 end) as rcl from events where issue_id in (%s) group by issue_id" "$1"
+    printf "select issue_id, greatest(sum(case when (event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%')) and created_at > coalesce((select max(pc.created_at) from events pc where pc.issue_id=events.issue_id and pc.event_type='poison.cleared'), '1970-01-01') then 1 else 0 end) - sum(case when event_type='closed' and created_at > coalesce((select max(pc.created_at) from events pc where pc.issue_id=events.issue_id and pc.event_type='poison.cleared'), '1970-01-01') then 1 else 0 end) - sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') and created_at > coalesce((select max(pc.created_at) from events pc where pc.issue_id=events.issue_id and pc.event_type='poison.cleared'), '1970-01-01') then 1 else 0 end), 0) as att, sum(case when event_type='reopened' then 1 else 0 end) as rep, sum(case when event_type='reclaimed' then 1 else 0 end) as rcl from events where issue_id in (%s) group by issue_id" "$1"
 }
 
 # check4_bulk_data <dispatchable-output> -> id TAB attempts TAB reopens TAB reclaims, one per bead

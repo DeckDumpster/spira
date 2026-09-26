@@ -26,7 +26,7 @@
 # with a label, a lease and a compare-and-swap. A stub would be a second implementation of the
 # one thing being asked about (law-prefer-the-real-dependency).
 #
-# defect: sp-sc3
+# defect: sp-sc3 sp-qd2ul
 # tier: T2
 # covers: spira/*.sh
 set -uo pipefail
@@ -305,6 +305,49 @@ case "$out_prn" in *"nothing to prune"*) ok "prune-reclaims on clean bead exits 
 # NO IDs = error, not a sweep.
 if "$ATT" prune-reclaims 2>/dev/null; then r=0; else r=1; fi
 is "prune-reclaims with no args exits non-zero" 1 "$r"
+
+echo
+echo "attempts.sh clear — lift a poison and make it stick (sp-qd2ul):"
+
+if "$ATT" clear 2>/dev/null; then r=0; else r=1; fi
+is "clear with no args exits non-zero" 1 "$r"
+
+seed sp-cl1
+out_ns="$("$ATT" clear sp-cl1 --apply 2>&1)"
+case "$out_ns" in *"SKIP"*"sp-cl1"*"not poisoned"*) ok "clear refuses a bead that is not poisoned" ;;
+                   *) bad "clear refuses a bead that is not poisoned" "got [$out_ns]" ;; esac
+is "and nothing was cleared" "0" "$(grep -c CLEARED <<<"$out_ns")"
+
+seed sp-cl2
+bdq update sp-cl2 --status in_progress >/dev/null 2>&1
+bdq update sp-cl2 --status open        >/dev/null 2>&1
+bdq update sp-cl2 --status in_progress >/dev/null 2>&1
+bdq update sp-cl2 --status open        >/dev/null 2>&1
+bdq update sp-cl2 --status in_progress >/dev/null 2>&1
+bdq label add sp-cl2 spira-poison >/dev/null 2>&1
+is "the fixture starts poisoned with 3 attempts" 3 "$(num "$(attempts_of sp-cl2)")"
+
+out_dry="$("$ATT" clear sp-cl2 2>&1)"
+case "$out_dry" in *"would clear"*"sp-cl2"*"attempts 3 -> 0"*) ok "dry run names the reset" ;;
+                   *) bad "dry run names the reset" "got [$out_dry]" ;; esac
+labels_cl2="$(bdq label list sp-cl2 2>/dev/null)" || labels_cl2=""
+[[ "$labels_cl2" == *spira-poison* ]] && ok "and changes nothing without --apply" \
+    || bad "and changes nothing without --apply" "label already gone: [$labels_cl2]"
+
+out_apply="$("$ATT" clear sp-cl2 --apply 2>&1)"
+case "$out_apply" in *"CLEARED"*"sp-cl2"*) ok "--apply reports the clear" ;;
+                     *) bad "--apply reports the clear" "got [$out_apply]" ;; esac
+labels_cl2="$(bdq label list sp-cl2 2>/dev/null)" || labels_cl2=""
+[[ "$labels_cl2" != *spira-poison* ]] && ok "the label is off" \
+    || bad "the label is off" "got [$labels_cl2]"
+is "and attempts_of reads 0 — the clear sticks, not just the label" \
+   "0" "$(num "$(attempts_of sp-cl2)")"
+notes_cl2="$(bdq show sp-cl2 2>/dev/null | tr -s ' \n\t' ' ')" || notes_cl2=""
+[[ "$notes_cl2" == *"Poison cleared by attempts.sh clear"* ]] && ok "the bead records why" \
+    || bad "the bead records why" "got [$notes_cl2]"
+
+bdq update sp-cl2 --status in_progress >/dev/null 2>&1
+is "a claim after the clear is the whole count, not 4" "1" "$(num "$(attempts_of sp-cl2)")"
 
 echo
 echo "the release (real bd):"

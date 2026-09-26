@@ -5,6 +5,7 @@
 #   attempts.sh audit                  what every claimable bead is carrying, and why
 #   attempts.sh reclassify [--apply]   move rungs that name no cause onto the reclaim counter
 #   attempts.sh deadlocked [--apply]   poisoned beads whose work is finished and would merge
+#   attempts.sh clear <id>... [--apply]  lift a poison and make it stick (sp-qd2ul)
 #
 # WHY THIS EXISTS. The attempt counter feeds the poison threshold, and poison takes a bead
 # out of circulation permanently. It was default-ALLOW — anything a short list of exemptions
@@ -235,5 +236,46 @@ deadlocked)
     [ "$APPLY" = 1 ] || printf -- '--- dry run; pass --apply to lift these\n'
     ;;
 
-*) die "usage: attempts.sh audit | reclassify [--apply] | prune-reclaims <id>... [--apply] | deadlocked [--apply]" ;;
+clear)
+    # THE OPERATOR'S OWN REMEDY, MADE TO STICK. Sentinel's poison ask tells a human to clear
+    # spira-poison if the work is correct — `bd label remove` alone does that without writing
+    # anything the attempts query can see, so CHECK 4's very next pass reads the same
+    # unchanged count against a bead with no label and poisons it right back within minutes
+    # (sp-qd2ul). This writes a poison.cleared event alongside the label removal;
+    # _attempts_sql_query/_check4_bulk_sql both discount every attempt-feeding event at or
+    # before it, so the count itself — not a side file, not the label alone — is what the
+    # next pass reads. A genuinely new failure after this still poisons again, at the new
+    # count starting from zero.
+    #
+    # NAMED BEADS ONLY, no sweep mode, same as prune-reclaims: clearing poison is a judgement
+    # about specific work, never a thing to do to everything that happens to carry the label.
+    ids=()
+    for a in "$@"; do [ "$a" != "--apply" ] && ids+=("$a"); done
+    if [ "${#ids[@]}" -eq 0 ]; then
+        die "usage: attempts.sh clear <id> [<id>...] [--apply]"
+    fi
+    n=0
+    for id in "${ids[@]}"; do
+        if ! poisoned "$id"; then
+            printf 'SKIP     %-20s not poisoned\n' "$id"
+            continue
+        fi
+        n=$((n+1))
+        if [ "$APPLY" != 1 ]; then
+            printf 'would clear %-20s spira-poison, attempts %s -> 0\n' "$id" "$(attempts_of "$id")"
+            continue
+        fi
+        if bdq label remove "$id" spira-poison >/dev/null 2>&1; then
+            bump_poison_cleared "$id" operator
+            bdq note "$id" "Poison cleared by attempts.sh clear: an operator judged the approach worth retrying. A poison.cleared event was recorded, so the attempt count that produced the poison does not carry forward — only a claim after this point counts toward the threshold again." >/dev/null 2>&1
+            printf 'CLEARED  %-20s spira-poison lifted, attempts reset\n' "$id"
+        else
+            printf 'REFUSED  %-20s the poison label would not come off\n' "$id"
+        fi
+    done
+    [ "$n" = 0 ] && printf 'nothing to clear — no named bead carries spira-poison\n'
+    [ "$APPLY" = 1 ] || printf -- '--- dry run; pass --apply to clear these\n'
+    ;;
+
+*) die "usage: attempts.sh audit | reclassify [--apply] | prune-reclaims <id>... [--apply] | deadlocked [--apply] | clear <id>... [--apply]" ;;
 esac

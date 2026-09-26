@@ -43,7 +43,7 @@
 # do is not under test here, only which beads the valve reaches.
 #
 # tier: T3
-# defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez sp-wiyr2
+# defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez sp-wiyr2 sp-qd2ul
 # covers: spira/sentinel.sh spira/lib.sh spira/attempts.sh spira/chamber/*
 # timeout: 240
 set -uo pipefail
@@ -142,6 +142,12 @@ deadlocked() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     SPIRA_GOAL=sp-goal SPIRA_FAYTHS="${ROSTER:-t tinc}" \
         bash "$SH/attempts.sh" deadlocked "$@" 2>&1
+}
+# attempts.sh clear, same configuration — the operator's own remedy against the real store.
+clearpoison() {
+    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
+    SPIRA_GOAL=sp-goal SPIRA_FAYTHS="${ROSTER:-t tinc}" \
+        bash "$SH/attempts.sh" clear "$@" 2>&1
 }
 labels_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
@@ -490,5 +496,31 @@ notpoisoned "the label is off right after the lift" sp-orphan
 notpoisoned "and it is STILL off after the very next sentinel pass" sp-orphan
 nowant "no fresh poison ask went out for it either" "sp-orphan" "$(cat "$MAIL_LOG")"
 want "the check log shows CHECK 4 actually examined the set" "CHECK4 examining" "$out"
+
+# --------------------------------------------------------------------------------------
+# sp-qd2ul — CLEARING THE POISON LABEL MUST STICK. The operator's own remedy (sentinel's ask
+# tells a human to "clear spira-poison") is `attempts.sh clear`, not the tool-specific
+# `deadlocked` sweep above — the bead need not be finished, only judged worth retrying. What
+# is asserted here is the property the bare-removal case at line ~399 shows this codebase does
+# NOT get for free: a clear survives a sentinel pass with nothing new against it, and is NOT a
+# permanent exemption — a genuinely new run of failures after the clear poisons it again.
+# --------------------------------------------------------------------------------------
+echo
+seed_poison; : > "$MAIL_LOG"; out="$(sentinel)"
+ispoisoned "sp-orphan is poisoned by the first pass" sp-orphan
+cl_out="$(clearpoison sp-orphan --apply)"
+want "attempts.sh clear reports the lift" "CLEARED  sp-orphan" "$cl_out"
+notpoisoned "the label is off right after the clear" sp-orphan
+: > "$MAIL_LOG"; out="$(sentinel)"
+notpoisoned "and it is STILL off after the very next sentinel pass" sp-orphan
+nowant "no fresh poison ask went out for it either" "sp-orphan" "$(cat "$MAIL_LOG")"
+# THE NON-PERMANENCE CONTROL: three NEW in_progress transitions after the clear are a
+# genuinely new fact, and the valve must still reach it (law-absence-needs-a-positive-control
+# — a clear that could never poison again would look identical to one that works correctly).
+cycle sp-orphan 3
+out="$(sentinel)"
+ispoisoned "a fresh run of failures after the clear poisons it again" sp-orphan
+want "and the ask cites the count since the clear, not the total ever charged" \
+     "3 in_progress transition(s) without landing (3 attempts)" "$(cat "$MAIL_LOG")"
 
 tl_summary

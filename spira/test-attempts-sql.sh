@@ -23,7 +23,7 @@
 # hand-rolled dolt schema (test-attempts.sh's old copy, replaced here).
 #
 # tier: T2
-# defect: sp-lzt sp-f1m7f sp-6bop
+# defect: sp-lzt sp-f1m7f sp-6bop sp-qd2ul
 # covers: spira/lib.sh
 # timeout: 90
 set -uo pipefail
@@ -69,6 +69,16 @@ seedn() {   # seedn <id> <event_type> <new_value> <n> — n raw events via bd sq
         bdq sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$et', 'harness', '$nv', NOW())" >/dev/null 2>&1
         i=$((i+1))
     done
+}
+# seedt <id> <event_type> <new_value> <created_at> — one event at an EXPLICIT timestamp.
+# NOW() gives every event in one test process the same second, and the poison.cleared floor
+# is a strict ">" — two events tied on the same second could land on either side of it
+# depending on nothing but scheduling. The before/after cases below need the ordering to be
+# the thing under test, not a race against the clock.
+seedt() {
+    local id="$1" et="$2" nv="$3" ts="$4" uuid
+    uuid="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+    bdq sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$et', 'harness', '$nv', '$ts')" >/dev/null 2>&1
 }
 
 testdb_reset
@@ -124,6 +134,83 @@ is "b10: a reclaim alone is not an attempt"                        "0" "$(num "$
 body_attempts="$(sed -n '/^attempts_of()/,/^}/p' "$HERE/lib.sh" 2>/dev/null)"
 is "attempts_of delegates to the SQL builder" "1" \
    "$(grep -c '_attempts_sql_query' <<<"$body_attempts" || true)"
+
+echo
+echo "poison.cleared: attempts_of counts only what happened after it (sp-qd2ul):"
+
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"c1","title":"three failures, cleared, nothing since","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
+{"id":"c2","title":"three failures, cleared, one new failure","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
+{"id":"c3","title":"reopens and reclaims stand either side of a clear","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
+{"id":"c4","title":"never cleared","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
+JSONL
+
+# c1: three claims before the clear, nothing after. THE CONTROL for the fixture itself: an
+# identical bead with no clear reads 3 (c4, below) — proving the drop to 0 is the floor, not
+# an empty events table.
+seedt c1 claimed '' '2026-09-06 00:00:01'
+seedt c1 claimed '' '2026-09-06 00:00:02'
+seedt c1 claimed '' '2026-09-06 00:00:03'
+seedt c1 poison.cleared operator '2026-09-06 00:01:00'
+is "c1: three claims before a clear, nothing since = 0 attempts" "0" "$(num "$(attempts_of c1)")"
+
+# c2: the same three claims and clear, plus ONE claim after it. The clear discounts the old
+# three; it is not a permanent exemption, so the new claim is the whole count.
+seedt c2 claimed '' '2026-09-06 00:00:01'
+seedt c2 claimed '' '2026-09-06 00:00:02'
+seedt c2 claimed '' '2026-09-06 00:00:03'
+seedt c2 poison.cleared operator '2026-09-06 00:01:00'
+seedt c2 claimed '' '2026-09-06 00:02:00'
+is "c2: three claims, cleared, one new claim = 1 attempt (not 4)" "1" "$(num "$(attempts_of c2)")"
+
+# c3: a reopened and a reclaimed event on each side of the clear. reopens_of/reclaims_of feed
+# REQUEUE_AT/RECLAIM_AT, thresholds independent of spira-poison by design (check4_decide) —
+# the floor must not touch them.
+seedt c3 reopened  '' '2026-09-06 00:00:01'
+seedt c3 reclaimed '' '2026-09-06 00:00:02'
+seedt c3 poison.cleared operator '2026-09-06 00:01:00'
+seedt c3 reopened  '' '2026-09-06 00:02:00'
+seedt c3 reclaimed '' '2026-09-06 00:02:01'
+is "c3: reopens are not floored by a poison.cleared event"   "2" "$(num "$(reopens_of c3)")"
+is "c3: reclaims are not floored by a poison.cleared event"  "2" "$(num "$(reclaims_of c3)")"
+
+# c4 (CONTROL): the same three claims as c1, never cleared. Proves c1's 0 came from the floor.
+seedt c4 claimed '' '2026-09-06 00:00:01'
+seedt c4 claimed '' '2026-09-06 00:00:02'
+seedt c4 claimed '' '2026-09-06 00:00:03'
+is "CONTROL c4: three claims, never cleared = 3 attempts" "3" "$(num "$(attempts_of c4)")"
+
+echo
+echo "poison.cleared: check4_bulk_data agrees with the per-bead functions across a clear:"
+
+SH_C4="$TMP/spira-c4"; mkdir -p "$SH_C4/chamber"
+printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison"\nFAYTH_MAX_CONCURRENT=0\n' \
+    > "$SH_C4/chamber/t.fayth"
+bulk_predicate() {
+    SPIRA_HOME="$SH_C4" SPIRA_RUN="$TMP/run-c4" SPIRA_DB="$SPIRA_DB" SPIRA_GOAL=sp-goal \
+    SPIRA_FAYTHS="t" bash -c ". \"$HERE/lib.sh\"; $1" 2>/dev/null
+}
+bulk_c4="$(bulk_predicate 'check4_bulk_data "c1	spira,plan
+c2	spira,plan
+c3	spira,plan
+c4	spira,plan"')"
+bulk_att_c1="$(printf '%s' "$bulk_c4" | awk -F'\t' '$1=="c1"{print $2}')"
+bulk_att_c2="$(printf '%s' "$bulk_c4" | awk -F'\t' '$1=="c2"{print $2}')"
+bulk_rep_c3="$(printf '%s' "$bulk_c4" | awk -F'\t' '$1=="c3"{print $3}')"
+bulk_rcl_c3="$(printf '%s' "$bulk_c4" | awk -F'\t' '$1=="c3"{print $4}')"
+bulk_att_c4="$(printf '%s' "$bulk_c4" | awk -F'\t' '$1=="c4"{print $2}')"
+is "bulk c1 attempts match the per-bead floor (0)"     "0" "${bulk_att_c1:-0}"
+is "bulk c2 attempts match the per-bead floor (1)"     "1" "${bulk_att_c2:-0}"
+is "bulk c3 reopens unaffected by the floor (2)"       "2" "${bulk_rep_c3:-0}"
+is "bulk c3 reclaims unaffected by the floor (2)"      "2" "${bulk_rcl_c3:-0}"
+is "bulk c4 attempts match the per-bead control (3)"   "3" "${bulk_att_c4:-0}"
+
+echo
+echo "bump_poison_cleared writes no label (D6):"
+body_bpc="$(sed -n '/^bump_poison_cleared()/,/^}/p' "$HERE/lib.sh" 2>/dev/null)"
+is "bump_poison_cleared does not write a label" "0" \
+   "$(grep -c 'bdq label add\|bump_counter' <<<"$body_bpc" || true)"
 
 echo
 echo "attempts_of / reopens_of against real bd events (positive controls, real claims):"
