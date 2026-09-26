@@ -520,8 +520,11 @@ echo "TIMER RACE (T2, sp-6k3pr) — a timer firing mid-uninstall does not resurr
 # spira-broker.service/.timer are only in the manifest when SPIRA_BROKER_BIN is
 # executable (units.sh); set it to a stub so owned.sh includes them exactly as
 # a real broker install would.
-RACE_UNIT_SVC="spira-broker-race.service"
-RACE_UNIT_TMR="spira-broker-race.timer"
+# inst_name() (systemd/units.sh) suffixes spira-broker.{service,timer} with the
+# instance name below (SPIRA_INSTANCE=test) — the mock must match what uninstall.sh
+# actually calls, not an arbitrary name.
+RACE_UNIT_SVC="spira-broker-test.service"
+RACE_UNIT_TMR="spira-broker-test.timer"
 RACE_STATE="$TMP/race-state"
 RACE_BIN="$TMP/race-bin"
 mkdir -p "$RACE_STATE" "$RACE_BIN"
