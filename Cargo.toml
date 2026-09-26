@@ -10,6 +10,8 @@ members = [
     "tsd",
     "desired-state",
     "batcher",
+    "batcher-cut",
+    "tsd",
 ]
 resolver = "2"
 
