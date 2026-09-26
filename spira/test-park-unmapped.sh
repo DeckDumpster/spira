@@ -14,7 +14,8 @@
 # can assert on it directly, never on wall-clock timing.
 #
 # defect: sp-4l0d, sp-nlhy, sp-foi7
-# covers: spira/lib.sh spira/aeon.sh
+# tier: T1
+# covers: spira/lib.sh spira/aeon.sh UC-dispatch-22
 # hermetic-ok: no database, no systemd, no network
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -4,6 +4,7 @@
 # (_bead_lint_judge, T1 over canned rows) and the real `bd show --json` wiring around it
 # (--all enumeration, unreadable ids, the branch: label existence check — T2, one fixture).
 #
+# tier: T2
 # covers: spira/bead.sh UC-dispatch-04
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

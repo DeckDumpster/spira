@@ -10,6 +10,7 @@
 # REPOS. This suite pins a fixture chamber and repo-map (non-default names) so a pass here
 # is not merely "matches the box's own default output" (per CLAUDE.md's config-fixture rule).
 #
+# tier: T1
 # covers: spira/bead.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

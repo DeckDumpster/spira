@@ -18,7 +18,8 @@
 # defect the fayth_partitions comment says was already removed from CHECK 2 and CHECK 5.
 #
 # defect: sp-9ce60 (dispatch test plan, gaps G9/G10)
-# covers: spira/lib.sh spira/sentinel.sh
+# tier: T1
+# covers: spira/lib.sh spira/sentinel.sh UC-dispatch-20
 # hermetic-ok: no database, no systemd, no network
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
