@@ -1,0 +1,4 @@
+FAIL
+2026-09-26T10:42:12Z spira-release-spira-20260926T103514Z  24 passed, 5 failed
+sha256:5089502ca4af1dd5a8718a5150eacf9a42fd9c3aa4ebb062af030db93257fe64 tarball:spira-20260926T103514Z.tar.gz
+aged-install from=spira-release-spira-20260926T041932Z: FAIL
