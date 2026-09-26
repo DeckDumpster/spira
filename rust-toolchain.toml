@@ -1,0 +1,4 @@
+[toolchain]
+# The same compiler the gate builds with (.github/workflows/gate.yml reads this file).
+# A different local cargo can rewrite Cargo.lock to crates CI cannot build (PR 361).
+channel = "1.82.0"
