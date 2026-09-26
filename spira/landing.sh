@@ -1191,6 +1191,7 @@ for i in d:
                 fi
                 _land_state "repo=$name" "branch=$br" "phase=gate"
                 gate_lock_wait
+                land_mark "$id" GATING "$tip"
                 gate_out="$(SPIRA_GATE_LOCK_WAIT="$_gate_wait" SPIRA_GATE_BEAD="$id" \
                     SPIRA_GATE_SUITES="${SPIRA_CERTIFY_SUITES:-on}" \
                     "$SPIRA_HOME/gate.sh" "$br" "$name" 2>&1)"
@@ -1788,6 +1789,74 @@ $(printf '%s' "$gate_out" | tail -20)"
     fi
 
     # ==========================================================================
+    # RE-READ BEFORE EACH DISPATCH (sp-ob7uq / sp-ceemq). _cert_brs above comes from the
+    # bulk bdjson show taken once at the top of this function (the scan that fills
+    # _scan_st). A bead that closes after that snapshot is invisible to it — and the bead
+    # most likely to close mid-pass is a P0 base fix, the thing an aeon is rushed onto when
+    # the base goes red. _p2_admitted holds every id already in the phase-2 pipeline (from
+    # the snapshot, or admitted here); an id outside it is re-checked on every call — one
+    # cheap bulk query — for as long as bd still reports it open, and given exactly one
+    # admission attempt (rebase onto base, same as phase 1's own queue-mode prep) the
+    # moment bd reports it closed. A failed rebase is left for the next full pass rather
+    # than retried here, so a genuine conflict costs one rebase, not one per remaining
+    # dispatch this pass — the reopen/escalation machinery for that stays phase 1's alone.
+    # ==========================================================================
+    local -A _p2_admitted=()
+    local _p2_seed_id
+    for _p2_seed_id in "${_cert_beadids[@]}"; do _p2_admitted["$_p2_seed_id"]=1; done
+    _p2_admit_new_candidates() {
+        [ "$mode" = queue ] || return 0
+        local _adm_id _adm_st _adm_br _adm_tip _adm_repo_path _adm_ej_st
+        local -a _adm_probe=()
+        for _adm_br in $brs; do
+            _adm_id="${_adm_br#spira/}"
+            [ "${_scan_st[$_adm_id]:-}" = closed ] && continue
+            [ -n "${_p2_admitted[$_adm_id]:-}" ] && continue
+            _adm_probe+=("$_adm_id")
+        done
+        [ "${#_adm_probe[@]}" -gt 0 ] || return 0
+        while IFS=$'\t' read -r _adm_id _adm_st; do
+            [ -n "${_adm_id:-}" ] || continue
+            [ "$_adm_st" = closed ] || continue
+            _p2_admitted["$_adm_id"]=1
+            _adm_br="spira/$_adm_id"
+            git -C "$repo" show-ref --verify --quiet "refs/heads/$_adm_br" || continue
+            _adm_repo_path="$(repo_root "${_scan_repo[$_adm_id]:-}" 2>/dev/null)" || _adm_repo_path=""
+            [ "$_adm_repo_path" = "$repo" ] || continue
+            [ "${_scan_superseded[$_adm_id]:-0}" = 1 ] && continue
+            if [ -r "$LANDSTATE/$_adm_id" ]; then
+                _adm_ej_st=""
+                { read -r _adm_ej_st _ < "$LANDSTATE/$_adm_id"; } 2>/dev/null || true
+                [ "${_adm_ej_st:-}" = EJECTED ] && continue
+            fi
+            holder_alive "$_adm_id" && continue
+            content_landed "$repo" "$_adm_br" "$base_fqref" && continue
+            _adm_tip="$(git -C "$repo" rev-parse "$_adm_br" 2>/dev/null)"
+            submitted "$_adm_id" "$_adm_tip" && continue
+            rebase_branch "$_adm_br" "$base_fqref" "$repo" "$name" || continue
+            _adm_tip="$(git -C "$repo" rev-parse "$_adm_br" 2>/dev/null)"
+            judged["$_adm_br"]=1
+            log "CHECK6 $_adm_id: closed mid-pass — admitting $_adm_br to the running candidate list"
+            _cert_brs=("$_adm_br" "${_cert_brs[@]}")
+            _cert_beadids=("$_adm_id" "${_cert_beadids[@]}")
+            _cert_tips=("$_adm_tip" "${_cert_tips[@]}")
+        done < <(bdjson show "${_adm_probe[@]}" 2>/dev/null | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: raise SystemExit
+d = d if isinstance(d, list) else [d]
+sub = sys.argv[1]
+for i in d:
+    bid = i.get("id", "")
+    if not bid: continue
+    st = i.get("status", "-")
+    if sub in (i.get("labels") or []): st = "closed"
+    print(f"{bid}\t{st}")
+' "${SPIRA_SUBMITTED_LABEL:-spira-submitted}")
+    }
+    _p2_admit_new_candidates
+
+    # ==========================================================================
     # PHASE 2: PARALLEL CERTIFICATION. Branches deferred to _cert_brs above are
     # dispatched to gate.sh up to certify_pass_par at a time. Each result is
     # processed the moment its gate finishes (wait -n -p), not in dispatch order,
@@ -1957,9 +2026,16 @@ $(printf '%s' "$gate_out" | tail -20)"
         _cert_beadids=("${_t0_ids[@]+"${_t0_ids[@]}"}" "${_t1_ids[@]+"${_t1_ids[@]}"}" "${_t2_ids[@]+"${_t2_ids[@]}"}")
         _cert_tips=("${_t0_tips[@]+"${_t0_tips[@]}"}" "${_t1_tips[@]+"${_t1_tips[@]}"}" "${_t2_tips[@]+"${_t2_tips[@]}"}")
 
-        local _ci _ctmp _dbr _did _dtip
-        for _ci in "${!_cert_brs[@]}"; do
-            _dbr="${_cert_brs[$_ci]}"; _did="${_cert_beadids[$_ci]}"; _dtip="${_cert_tips[$_ci]}"
+        local _ctmp _dbr _did _dtip
+        # A while loop consuming from the front, not `for _ci in "${!_cert_brs[@]}"`:
+        # bash expands that index list once when the for loop starts, so an admission
+        # appended by _p2_admit_new_candidates mid-loop would never be iterated. Popping
+        # from a live array is what makes "before each dispatch" literal.
+        while [ "${#_cert_brs[@]}" -gt 0 ]; do
+            _dbr="${_cert_brs[0]}"; _did="${_cert_beadids[0]}"; _dtip="${_cert_tips[0]}"
+            _cert_brs=("${_cert_brs[@]:1}")
+            _cert_beadids=("${_cert_beadids[@]:1}")
+            _cert_tips=("${_cert_tips[@]:1}")
             if ! gate_fits; then
                 case "${_scan_extref[${_dbr#spira/}]:-}" in
                     basefail:"$name":*)
@@ -1971,6 +2047,12 @@ $(printf '%s' "$gate_out" | tail -20)"
             while [ "${#_cp_pids[@]}" -ge "${certify_pass_par:-1}" ]; do
                 _cert_process_result
             done
+            # PERSIST ACROSS A RESTART (sp-ob7uq / sp-ceemq): written the instant dispatch
+            # starts, so a pass killed while this gate is running leaves GATING on disk
+            # rather than nothing. certify_tier (landing-lib.sh) reads a later pass's own
+            # GATING record as never-gated, so the kill costs only this one gate's minutes,
+            # not a wait behind every other candidate first.
+            land_mark "$_did" GATING "$_dtip"
             _ctmp="$(mktemp -t spira-cert.XXXXXX)"
             gate_lock_wait
             SPIRA_GATE_LOCK_WAIT="$_gate_wait" SPIRA_GATE_BEAD="$_did" \
@@ -1978,6 +2060,7 @@ $(printf '%s' "$gate_out" | tail -20)"
                 "$SPIRA_HOME/gate.sh" "$_dbr" "$name" >"$_ctmp" 2>&1 &
             _cp_pids+=("$!"); _cp_brs+=("$_dbr"); _cp_ids+=("$_did")
             _cp_tips+=("$_dtip"); _cp_tmps+=("$_ctmp")
+            _p2_admit_new_candidates
         done
         while [ "${#_cp_pids[@]}" -gt 0 ]; do
             _cert_process_result

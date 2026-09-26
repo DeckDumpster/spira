@@ -101,4 +101,13 @@ is "certify_tier(): cwb record, current base but stale tip -> tier 0, tip-stale"
 out="$(certify_tier GATED sometip 500 gate-red sometip 1000)"
 is "certify_tier(): non-RED record -> tier 1, non-red" "tier=1 reason=non-red" "$out"
 
+# 8. GATING (sp-ob7uq/sp-ceemq): a dispatch in flight when a prior pass was killed or
+# restarted. The unit that runs a pass is its own mutex, so a GATING record read by a
+# later pass can only be one nothing ever overwrote — treat it like never-gated, not like
+# an ordinary non-RED record, so the kill costs only that one gate, not a wait behind
+# every other candidate.
+out="$(certify_tier GATING sometip 500 - sometip 1000)"
+is "certify_tier(): GATING record -> tier 0, inflight-restart" \
+    "tier=0 reason=inflight-restart" "$out"
+
 tl_summary
