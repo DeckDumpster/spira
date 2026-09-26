@@ -120,7 +120,11 @@ export SPIRA_RUN="$RUN" SPIRA_REAPLOG="$RUN/reap.log"
 OTHER="$TMP/other"; git init -q -b main "$OTHER"   # no remote, no commit: base unresolvable
 
 HOME_REPO="$(basename "$REPO")"
-printf '%s | %s | push | main | |\nother | %s | push | | |\n' "$HOME_REPO" "$REPO" "$OTHER" \
+# The base column stays EMPTY here on purpose: a declared `main` would resolve LANDREF to
+# the bare local ref "main", which ref_remote cannot split a remote out of (no "/"), so the
+# remote-branch-delete step (UC-19) would silently never fire. Leaving it unset falls
+# through to rung 2 (origin/HEAD, set below), giving "origin/main".
+printf '%s | %s | push | | |\nother | %s | push | | |\n' "$HOME_REPO" "$REPO" "$OTHER" \
     > "$TMP/repo-map"
 
 STATUS_FILE="$TMP/status-from"
