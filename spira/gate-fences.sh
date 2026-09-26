@@ -30,6 +30,7 @@ gate_fence_list() {    # gate_fence_list -> one repo-relative fence path per lin
         spira/literal-lint.sh \
         spira/testdb-mode-lint.sh \
         spira/bd-stdin-lint.sh \
+        spira/gh-intake-lint.sh \
         spira/suite-state-fence.sh \
         spira/orphan-test.sh
 }

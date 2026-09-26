@@ -19,6 +19,7 @@
 # chosen to FAIL against the pre-amendment (allowlist) script and PASS only
 # against the association-based gate.
 #
+# tier: T2
 # covers: spira/gh-intake.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -181,12 +182,7 @@ reset() {
 }
 reset
 
-echo "1. it is one-way, and that is structural:"
-if grep -qE 'curl[^|]*-X *(POST|PATCH|PUT|DELETE)|--data|-d ' "$SCRIPT"; then
-    bad "no write to GitHub is constructed" "the script issues a mutating request"
-else
-    ok "no write to GitHub is constructed"
-fi
+echo "1. it is one-way (structural check: spira/gh-intake-lint.sh, T0):"
 out="$(run 2)"
 if grep -qE '\-X *(POST|PATCH|PUT|DELETE)' "$CURLLOG" 2>/dev/null; then
     bad "no write was attempted" "curl log shows a mutating request"
@@ -194,12 +190,7 @@ else
     ok "no write was attempted"
 fi
 
-echo "2. it needs no credential at all:"
-if grep -qE 'GITHUB_TOKEN|github\.token|Authorization:' "$SCRIPT"; then
-    bad "no credential is read" "the script references a GitHub token"
-else
-    ok "no credential is read"
-fi
+echo "2. it needs no credential at all (structural check: spira/gh-intake-lint.sh, T0):"
 out="$(run 2)"
 if grep -qE 'Authorization|token' "$TMP/curl.log" 2>/dev/null; then
     bad "no credential is sent" "an Authorization header was sent"
