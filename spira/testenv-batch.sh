@@ -56,10 +56,13 @@
 # ENVIRONMENT (all optional)
 #   SPIRA_BATCH_RESULTS     host root for result directories
 #                           (default: SPIRA_RUN/batch-results)
-#   SPIRA_BATCH_BINS_TARGET_DIR  CARGO_TARGET_DIR used by --with-bins (default:
-#                           SPIRA_RUN/cargo-target-bins). Persistent across runs so
-#                           repeat builds are incremental; the branch worktree's own
-#                           target/ is not used, so nothing here survives worktree cleanup.
+#   SPIRA_BATCH_BINS_TARGET_DIR  base dir for --with-bins' CARGO_TARGET_DIR (default:
+#                           SPIRA_RUN/cargo-target-bins). The actual CARGO_TARGET_DIR is a
+#                           subdirectory of this keyed by the branch's tree hash, so two
+#                           concurrent runs on different trees never share one build dir —
+#                           only a repeat run of the same tree reuses (and stays incremental
+#                           in) the same subdirectory. The branch worktree's own target/ is
+#                           not used, so nothing here survives worktree cleanup.
 #   SPIRA_BATCH_INSTANCE    container instance name; determines CNAME and the
 #                           install instance; default: first 12 chars of the batch key
 #   SPIRA_BATCH_SUITE_DIR   where to look for test-*.sh on the host
@@ -267,7 +270,12 @@ if [ "$WITH_BINS" = 1 ]; then
         printf 'batch: --with-bins requires cargo on PATH\n' >&2
         exit 4
     }
-    _bins_target_dir="${SPIRA_BATCH_BINS_TARGET_DIR:-$SPIRA_RUN/cargo-target-bins}"
+    # Keyed by tree, not shared bare: two --with-bins runs on different trees
+    # race inside one CARGO_TARGET_DIR (same crate names, different source),
+    # so each tree gets its own subdirectory under the base dir. Same tree,
+    # repeat run -> same subdirectory -> still incremental.
+    _bins_tree="$(git -C "$REPO" rev-parse --verify -q "$BR^{tree}" 2>/dev/null)" || _bins_tree="pid-$$"
+    _bins_target_dir="${SPIRA_BATCH_BINS_TARGET_DIR:-$SPIRA_RUN/cargo-target-bins}/$_bins_tree"
     mkdir -p "$_bins_target_dir" 2>/dev/null || true
     log "batch: --with-bins: building workspace binaries for $BR"
     if ! CARGO_TARGET_DIR="$_bins_target_dir" make -C "$BRANCH_WT" build >&2; then
