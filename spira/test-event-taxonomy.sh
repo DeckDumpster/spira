@@ -17,7 +17,7 @@ echo "the taxonomy — every kind the harness emits is one the emitter accepts"
 # a taxonomy and free text, so the vocabulary is declared here and every call site checked
 # against it — adding a kind is then a deliberate act, which is what a taxonomy is.
 KINDS="aeon.claimed bead.landed bead.poisoned bead.reopened branch.reclaimed ci.failed"
-KINDS="$KINDS pilgrimage.complete note aeon.rapid"
+KINDS="$KINDS pilgrimage.complete note aeon.rapid queue.abandoned"
 
 sites="$(grep -rhE '[^#]spira_event [a-z0-9.]+' "$HERE"/*.sh 2>/dev/null \
          | grep -v '^\s*#' \
