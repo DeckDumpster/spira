@@ -55,7 +55,37 @@ except: pass
 import zipfile, json, sys
 try:
     with zipfile.ZipFile(sys.argv[1]) as z:
-        rs = next((n for n in z.namelist() if n.endswith('red-suites.json')), None)
+        names = z.namelist()
+        # results.jsonl carries the same retry-adjusted verdict as red-suites.json (one
+        # "(verdict)" row per suite: status red-red / red-green), plus every other suite's
+        # own rows a consumer other than this one may want — read it first so there is one
+        # format to read instead of two. red-suites.json (sp-a5vxs) stays as the fallback
+        # for an artifact produced before this file carried verdict rows.
+        rj = next((n for n in names if n.endswith('results.jsonl')), None)
+        if rj is not None:
+            red, flaky = [], []
+            for line in z.read(rj).decode('utf-8', 'replace').splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                if row.get('case') != '(verdict)':
+                    continue
+                st = row.get('status')
+                if st == 'red-red':
+                    red.append(row.get('suite', ''))
+                elif st == 'red-green':
+                    flaky.append(row.get('suite', ''))
+            if red or flaky:
+                for s in red:
+                    print('red-suite: ' + s)
+                for s in flaky:
+                    print('flaky: ' + s)
+                sys.exit(0)
+        rs = next((n for n in names if n.endswith('red-suites.json')), None)
         if rs is None:
             sys.exit(0)
         d = json.loads(z.read(rs))
