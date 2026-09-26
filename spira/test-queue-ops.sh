@@ -375,7 +375,7 @@ want "audit line names the ejected member's disposition"      "sp-ab03:EJECTED" 
 want "audit line names the reason"                            "guilty branch found"     "$audit_line"
 
 events_out="$(cat "$RUN/events.log" 2>/dev/null || true)"
-want "a spira_event was emitted for the abandon"      "kind: queue.abandoned"    "$events_out"
+want "an event was emitted for the abandon"      "kind: queue.abandoned"    "$events_out"
 want "the event names the actor"                      "actor=aeon-abandontest"   "$events_out"
 want "the event names a present member (positive control)" "sp-ab01:CERTIFIED"  "$events_out"
 
