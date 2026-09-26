@@ -274,8 +274,9 @@ if [ "$_install_rc" -eq 0 ] && [ -f "$_releases/current/spira/conf.sh" ]; then
         bash -c '. "$1" 2>/dev/null; printf "%s" "${SPIRA_PLAN_LABEL:-plan}"' \
         _ "$_releases/current/spira/conf.sh" 2>/dev/null)" || _a_plan_label="plan"
     [ -z "$_a_plan_label" ] && _a_plan_label="plan"
+    # No SPIRA_HOME_REPO override: an installed release takes its identity from MANIFEST,
+    # not the scratch repo's name, so the probe bead must be labelled the same way.
     _a_scope_label="$(SPIRA_CONF="$_conf" SPIRA_CONF_LOADED="" \
-        SPIRA_HOME_REPO="$(basename "$scratch_repo")" \
         bash -c '. "$1" 2>/dev/null; printf "%s" "${SPIRA_SCOPE_LABEL}"' \
         _ "$_releases/current/spira/conf.sh" 2>/dev/null)" || _a_scope_label="$(basename "$scratch_repo")"
     [ -z "$_a_scope_label" ] && _a_scope_label="$(basename "$scratch_repo")"
