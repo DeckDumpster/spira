@@ -14,6 +14,20 @@
 > exactly one — not zero, not two — for a gate killed mid-run). UC-21 (soak) remains
 > deferred to nightly/batch, per every prior bead in this chain (§7 "off-lane").
 
+>
+> **2026-09-26: section 4/5 cleanup** (sp-ffy9w): `test-gate-touched.sh`'s 5 `sel()` calls
+> in Part A collapsed to 1; `test-reopen-queue-eject.sh`'s selection cases (UC-09) folded
+> into `test-gate-touched.sh` as a new Part D on its existing fixture; the vacuous
+> `.ejected` sidecar pair (gap #15) replaced with a real writer(`verdict.sh:_attr_eject`)→
+> reader(`gate.sh`) test, kept in gate-verdict since gate.sh is the reader; and
+> `test-gate-base-selection.sh`/`test-gate-sweep.sh` migrated onto `gate-fixture.sh`
+> (`test-gate-touched.sh` and the sidecar test diff local branches directly rather than
+> building a remote-plus-clone, so they stay out of that migration). `test-yield.sh` is now
+> migrated too: its gate/yield calls run `$SH/gate.sh` and `$SH/yield.sh`, the fixture's own
+> frozen copy. The UC-15 harness-bytes cache-invalidation row does not live here — it is
+> already proved against that same frozen copy by `test-gate-verdict.sh` (which mutates
+> `$SH/exclude.sh` directly), so the copy is not a coverage loss.
+
 Part of [[test-plan-2026-09-23]], section 5. Area id `gate-verdict`; use-case ids are `UC-gate-verdict-NN`.
 
 Subject scripts: `spira/gate.sh` (761 lines), `gate-touched.sh` (96), `gate-locks.sh` (119), `gate-sweep.sh` (114), `yield.sh` (486), `lib.sh:host_cores`, `governor.sh` (host-core sizing only).
@@ -111,9 +125,9 @@ ci_secs are from main-push run 35947142904. "Level now" is the mapper's classifi
 | 05 universal layer | `test-gate-universal.sh` (6 cases, all through a real `gate.sh` run); `test-skew-foreign.sh::init failure exits 3` (skew side only, instance-lifecycle area) | T2 | DONE (sp-9ael3) |
 | 06 syntax-only PASS | `test-gate-preflight.sh::an empty gate column exits PASS` | T2, folded in | DONE (sp-ztxbr) |
 | 07 cmd-missing-file | `test-gate-preflight.sh::CASE 3/4` (was `test-gate-missing-cmd.sh::SEEN RED*`/`::SEEN GREEN*`) | T1, folded in | DONE (sp-ajxg3): merged into `test-gate-preflight.sh`, on the shared `gate-fixture.sh` builder; the SPIRA_HOME vs SPIRA_CONF env drift is resolved by always setting `SPIRA_CONF` to a nonexistent path |
-| 08 covers: selection | `test-gate-touched.sh::A1-A5`, `::B1-B2`, `::C1-C3`; `test-reopen-queue-eject.sh::positive control`; `test-select.sh` (test-infra area, 19 s) | T2, 1 s + 2 s | DEMOTE-TO-T1 for the `SPIRA_GATE_FILES` rows (no git). Keep one diff-derived row and the base-tree row at T2. Collapse the 5 `sel()` calls into 1. |
-| 09 ejected suites | `test-reopen-queue-eject.sh::ejected suite added`, `::CSV`, `::dedup`, `::absent ejected suite skipped` | T2, 2 s | MERGE-INTO `test-gate-touched.sh` as T1 rows |
-| — (landstate sidecar) | `test-reopen-queue-eject.sh::.ejected sidecar survives`, `::no sidecar → empty`, `::land_mark EJECTED`, `::RED overwrites EJECTED` | T2 | DELETE the sidecar pair: tautological, since the test writes and reads the file itself. Replace it with a behaviour test (`_attr_eject` writer → gate.sh reader) in landing-merge-queue. Move the `land_mark` rows to landing-merge-queue. |
+| 08 covers: selection | `test-gate-touched.sh::A1-A5`, `::B1-B2`, `::C1-C3`; `test-select.sh` (test-infra area, 19 s) | T1/T2, 1 s | DONE (sp-ffy9w): the 5 `sel()` calls in Part A collapsed into 1. |
+| 09 ejected suites | `test-gate-touched.sh::D1-D4` (was `test-reopen-queue-eject.sh::ejected suite added`, `::CSV`, `::dedup`, `::absent ejected suite skipped`) | T1 | DONE (sp-ffy9w): merged into `test-gate-touched.sh` as T1 rows on its existing fixture. |
+| — (landstate sidecar) | `test-reopen-queue-eject.sh` (was `::.ejected sidecar survives`, `::no sidecar → empty`) | T2 | DONE (sp-ffy9w): replaced with a real writer(`verdict.sh:_attr_eject`)→reader(`gate.sh` subprocess, via `gate-fixture.sh`) test proving the sidecar survives a RED overwrite. Stays in gate-verdict, not landing-merge-queue as first proposed here: `gate.sh`, this area's own subject script, is the reader, and landing-merge-queue has no test-plan file yet. The `land_mark EJECTED`/`RED overwrites EJECTED` rows (land_mark's own storage shape, no gate-verdict subject script involved) were dropped rather than stranded here; a follow-up bead covers them once landing-merge-queue exists. |
 | 10 env contract | `test-gate-base-evidence.sh::the env contract reaches both trials, unchanged in shape`; `test-gate-base-selection.sh::branch trial selects from branch`, `::base trial also selects from branch`, `::second trial ran at the base` | T2, 3 s | DONE (sp-ztxbr): env-logging command added to the base-evidence wiring run, asserting `SPIRA_GATE_BRANCH/_BASE/_SELECT_HEAD/_FILES/_HOST_CORES/_EJECTED_SUITES/_SUITES` on both trials. `test-gate-host-cores.sh` deleted, its one row folded in here. |
 | 11 host_cores / governor | `test-gate-unit.sh::host_cores()` (UC-11, T1) | T1 | DONE. `test-gate-host-cores.sh`'s stub-nproc/getconf controls were the duplicate of this and are deleted. `test-governor-host-cores.sh` was itself deleted with the governor (sp-8mzsh) — this row's own file list above is stale on that point, outside this bead's scope to sweep. |
 | 12 attribution | `test-gate-base-evidence.sh` (all 6 cases); `test-gate-base-selection.sh::red on both charged to base`; `test-yield.sh::the gate refuses it as BASE_FAIL`, `::verdict line names the suite`, `::a red naming no suite` | T2, 4 s (+2 s, + part of 34 s) | DEMOTE-TO-T1 for the 6 classification rows and the unnamed-suite row. KEEP one T2 wiring run (red on both → BASE_FAIL with base output + env log + early diagnostic). DELETE the test-yield BASE_FAIL line assertions (redundant). |
@@ -151,11 +165,11 @@ ci_secs are from main-push run 35947142904. "Level now" is the mapper's classifi
    **Keep:** test-gate-tree for isolation and serialisation, test-gate-verdict for the cache. Move test-soak off the per-push lane.
 
 6. **"covers: selection"**. `test-gate-touched.sh`, the selection half of `test-reopen-queue-eject.sh`, `test-certify-suites-off.sh` (ejected with suites=off) and `test-select.sh` (19 s, test-infrastructure) all drive `gate-touched.sh`/`select.sh` over tiny git repos.
-   **Keep:** one T1 table in `test-gate-touched.sh` (file list → suite list, ejected CSV, dedupe, missing). The selector internals stay with the test-infrastructure area's `test-select.sh`.
+   **DONE (sp-ffy9w):** one T1 table in `test-gate-touched.sh` (file list → suite list, ejected CSV, dedupe, missing — Part D). The selector internals stay with the test-infrastructure area's `test-select.sh`.
 
 7. **Internal duplicates**:
-   - `test-gate-fixture-diag.sh` runs the same red command twice (the "positive control" and case 1).
-   - `test-gate-touched.sh` calls `sel()` five times for Part A where one call would do.
+   - `test-gate-fixture-diag.sh` ran the same red command twice (the "positive control" and case 1) — moot, the file was deleted and its one live assertion (UC-14) folded into `test-gate-base-evidence.sh` (sp-ztxbr).
+   - `test-gate-touched.sh` called `sel()` five times for Part A where one call would do. DONE (sp-ffy9w): one call, five assertions against its output.
 
 ---
 
@@ -195,7 +209,7 @@ Every `verdict` reason in gate.sh was grepped across all `test-*.sh`. Nothing as
 12. ~~**Double metering / trap path** (L68–71).~~ CLOSED (sp-9ael3): `test-gate-metering.sh` kills a gate mid-run by signal (sent to its whole process group via `setsid`) and asserts exactly one `gate.log` row, and asserts a preflight refusal writes none.
 13. **Output bound**. Base output is `tail -c 8000` and branch output `tail -c 4000` (L746–748). `test-gate-fixture-diag.sh` proves there is no `tail -20`, but a diagnostic more than 8 KB before the end is still cut. Nothing states whether that is intended.
 14. **Yield bookkeeping cannot change the verdict** (L82–86, L126–138). No test makes `yield.sh` fail or hang and asserts that the exit code is unchanged. A *hang* would change it, because `yield_note` runs synchronously without a timeout.
-15. **`test-reopen-queue-eject.sh` sp-px6ng section is vacuous**. The regression it names (the `.ejected` sidecar surviving a RED overwrite, read by the gate) is unguarded until a writer→reader behaviour test exists.
+15. ~~**`test-reopen-queue-eject.sh` sp-px6ng section is vacuous**.~~ CLOSED (sp-ffy9w): the file now drives the real writer (`verdict.sh:_attr_eject`) and the real reader (`gate.sh`, via `gate-fixture.sh`), and asserts the ejected suite reaches the gate command after a RED overwrite.
 16. ~~**UC-16/17/18/19 have no covering suite at all.**~~ CLOSED (sp-fm2wn): `test-gate-tree.sh` and `test-gate-locks.sh` are rebuilt with the marker-based rewrite §4 point 3 called for, and UC-16/17/18/19 are tagged on them.
 
 ---

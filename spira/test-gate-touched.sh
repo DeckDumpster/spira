@@ -2,7 +2,7 @@
 # test-gate-touched.sh — gate-touched.sh: coverage-based landing gate suite selector.
 #
 # tier: T1
-# covers: spira/gate-touched.sh spira/select.sh UC-gate-verdict-08
+# covers: spira/gate-touched.sh spira/select.sh UC-gate-verdict-08 UC-gate-verdict-09
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -49,11 +49,12 @@ echo
 # absent-suite behavior below.
 # ---------------------------------------------------------------------------
 echo "Part A: coverage-based selection on branch tree"
-want    "A1: covering suite selected"           "test-a.sh"   "$(sel)"
-want    "A2: branch-added suite selected"       "test-a2.sh"  "$(sel)"
-want    "A3: always-run suite selected"         "test-c.sh"   "$(sel)"
-nowant "A4: unrelated suite not selected"      "test-b.sh"   "$(sel)"
-want    "A5: meta suite selected (test file in diff)" "test-meta.sh" "$(sel)"
+a_sel="$(sel)"
+want    "A1: covering suite selected"           "test-a.sh"   "$a_sel"
+want    "A2: branch-added suite selected"       "test-a2.sh"  "$a_sel"
+want    "A3: always-run suite selected"         "test-c.sh"   "$a_sel"
+nowant "A4: unrelated suite not selected"      "test-b.sh"   "$a_sel"
+want    "A5: meta suite selected (test file in diff)" "test-meta.sh" "$a_sel"
 
 # ---------------------------------------------------------------------------
 # BASE TREE: a suite added by the branch is absent from the base tree's corpus
@@ -83,6 +84,24 @@ fsel="$(cd "$R" && SPIRA_GATE_FILES="$FLIST" SPIRA_GATE_REPO="$R" SPIRA_BATCH_SU
 want    "C1: GATE_FILES: covering suite selected"     "test-a.sh"  "$fsel"
 nowant "C2: GATE_FILES: branch-added suite excluded" "test-a2.sh" "$fsel"
 nowant "C3: GATE_FILES: unrelated suite excluded"    "test-b.sh"  "$fsel"
+
+# ---------------------------------------------------------------------------
+# SPIRA_GATE_EJECTED_SUITES (UC-gate-verdict-09, sp-px6ng): a suite named here is
+# selected regardless of the diff. Folded in from test-reopen-queue-eject.sh, which
+# built a second git fixture to prove the same selector on the same code path.
+# ---------------------------------------------------------------------------
+echo
+echo "Part D: SPIRA_GATE_EJECTED_SUITES"
+sel_ej() {
+    (cd "$R" && SPIRA_GATE_EJECTED_SUITES="$1" SPIRA_GATE_REPO="$R" SPIRA_BATCH_SUITE_DIR="$R/spira" \
+        bash "$TOUCHED" main br 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')
+}
+want   "D1: ejected suite added though not covered by the diff" "test-b.sh" "$(sel_ej test-b.sh)"
+want   "D2: CSV ejected suites: both included (1)" "test-a.sh" "$(sel_ej "test-a.sh,test-b.sh")"
+want   "D2: CSV ejected suites: both included (2)" "test-b.sh" "$(sel_ej "test-a.sh,test-b.sh")"
+is     "D3: dedup — ejecting an already-covered suite changes nothing" \
+       "$a_sel" "$(sel_ej test-a.sh)"
+nowant "D4: an ejected suite absent from the tree is silently skipped" "test-gone.sh" "$(sel_ej test-gone.sh)"
 
 echo
 tl_summary
