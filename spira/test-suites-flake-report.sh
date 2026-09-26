@@ -7,10 +7,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/lib.sh"
 . "$HERE/suite-state.sh"
-
-pass() { printf 'ok: %s\n' "$*"; _ok=$((_ok+1)); }
-fail() { printf 'FAIL: %s\n' "$*" >&2; _fail=$((_fail+1)); }
-_ok=0; _fail=0
+. "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
@@ -29,8 +26,8 @@ git -C "$_pdir" add spira/suite-state
 git -C "$_pdir" commit -q --no-gpg-sign -m "init"
 suite_state_write "$_pdir/spira/suite-state" "test-fake.sh" quarantined "" "direct"
 _d="$(git -C "$_pdir" status --porcelain -- spira/suite-state 2>/dev/null)"
-[ -n "$_d" ] && pass "positive control: direct write dirtied the checkout" \
-    || fail "positive control: direct write was not detected by git status"
+[ -n "$_d" ] && ok "positive control: direct write dirtied the checkout" \
+    || bad "positive control: direct write was not detected by git status"
 
 # ---------------------------------------------------------------------------
 # FIXTURE — a scratch git repo acts as the harness checkout.
@@ -105,41 +102,34 @@ obs() {
 # First observation: below threshold.  Production checkout must stay clean, no report filed.
 obs run-1 >/dev/null
 _d="$(git -C "$_repo" status --porcelain -- spira/suite-state 2>/dev/null)"
-[ -z "$_d" ] && pass "observe(1): production checkout clean below threshold" \
-    || fail "observe(1): production checkout dirty after one observation: '$_d'"
-[ -z "$(cap_of flake_test-flaky.sh)" ] && pass "observe(1): below threshold, no report filed" \
-    || fail "observe(1): a report was filed below threshold"
+[ -z "$_d" ] && ok "observe(1): production checkout clean below threshold" \
+    || bad "observe(1): production checkout dirty after one observation: '$_d'"
+[ -z "$(cap_of flake_test-flaky.sh)" ] && ok "observe(1): below threshold, no report filed" \
+    || bad "observe(1): a report was filed below threshold"
 
 # Second observation: crosses threshold.  Reported through incident.sh; nothing else changes.
 out2="$(obs run-2)"
 _d="$(git -C "$_repo" status --porcelain -- spira/suite-state 2>/dev/null)"
-[ -z "$_d" ] && pass "observe(2): production checkout stays clean at threshold" \
-    || fail "observe(2): production checkout dirty after threshold: '$_d'"
+[ -z "$_d" ] && ok "observe(2): production checkout stays clean at threshold" \
+    || bad "observe(2): production checkout dirty after threshold: '$_d'"
 
 # No branch of any kind is created — the whole mechanism is gone, not just its target.
 _branch="$(git -C "$_repo" branch --list 'spira-suite-state/*' | head -1 | tr -d ' *')"
-[ -z "$_branch" ] && pass "observe(2): no branch created" \
-    || fail "observe(2): a branch was created: $_branch"
+[ -z "$_branch" ] && ok "observe(2): no branch created" \
+    || bad "observe(2): a branch was created: $_branch"
 
 # The suite is never written to suite-state — it is not quarantined by this path.
 _st="$(suite_state_of "$_sh/suite-state" "test-flaky.sh")"
-[ "$_st" = "active" ] && pass "observe(2): suite-state never written (stays active)" \
-    || fail "observe(2): suite-state shows '$_st', expected active"
+[ "$_st" = "active" ] && ok "observe(2): suite-state never written (stays active)" \
+    || bad "observe(2): suite-state shows '$_st', expected active"
 
-want() { [[ "$2" == *"$1"* ]]; }
 _c="$(cap_of flake_test-flaky.sh)"
-[ -n "$_c" ] && pass "observe(2): report filed through incident.sh" \
-    || fail "observe(2): no report was filed at threshold"
-want "SPIRA_INCIDENT_REF=flake:test-flaky.sh" "$_c" && pass "observe(2): ref is flake:<suite>" \
-    || fail "observe(2): ref missing or wrong: $_c"
-want "SPIRA_INCIDENT_CAUSE=suite-flaky" "$_c" && pass "observe(2): cause is suite-flaky" \
-    || fail "observe(2): cause missing or wrong: $_c"
-want "SPIRA_SIN_EXEMPT=1" "$_c" && pass "observe(2): sin-exempt (recurring flakes dedupe, never escalate alone)" \
-    || fail "observe(2): not sin-exempt: $_c"
-want "why does test-flaky.sh fail intermittently" "$_c" && pass "observe(2): filing named the question, not a quarantine" \
-    || fail "observe(2): filing did not name the question: $_c"
-want "reported (bead: sp-stubfake1)" "$out2" && pass "observe(2): output reports the filed bead id" \
-    || fail "observe(2): output did not report the bead id: $out2"
+[ -n "$_c" ] && ok "observe(2): report filed through incident.sh" \
+    || bad "observe(2): no report was filed at threshold"
+want "observe(2): ref is flake:<suite>" "SPIRA_INCIDENT_REF=flake:test-flaky.sh" "$_c"
+want "observe(2): cause is suite-flaky" "SPIRA_INCIDENT_CAUSE=suite-flaky" "$_c"
+want "observe(2): sin-exempt (recurring flakes dedupe, never escalate alone)" "SPIRA_SIN_EXEMPT=1" "$_c"
+want "observe(2): filing named the question, not a quarantine" "why does test-flaky.sh fail intermittently" "$_c"
+want "observe(2): output reports the filed bead id" "reported (bead: sp-stubfake1)" "$out2"
 
-printf '\nASSERTIONS %s\n' "$((_ok + _fail))"
-[ "$_fail" -eq 0 ] || { printf 'FAILURES: %s\n' "$_fail"; exit 1; }
+tl_summary
