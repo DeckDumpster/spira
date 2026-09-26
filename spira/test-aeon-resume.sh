@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # test-aeon-resume.sh — brief rendering: render_resume_brief / render_slain_brief / (see
-#   test-aeon-yield-headless.sh and test-aeon-ledger.sh for their lib.sh neighbours). When a
+#   test-session-yield-headless.sh and test-session-result-fields.sh for their lib.sh
+#   neighbours). When a
 #   branch carries prior commits, aeon.sh includes a RESUME_BRIEF in the model's prompt so it
 #   resumes the existing work rather than restarting from scratch; when the last commit is a
 #   slay.sh wip salvage, a SLAIN_BRIEF tells it to review that commit first.

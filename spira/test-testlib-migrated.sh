@@ -35,13 +35,9 @@ DEFERRED_MIGRATION="test-acceptance-ci.sh
 test-acceptance-prev-tag.sh
 test-aeon-base-ref-qualify.sh
 test-aeon-chamber-overlay.sh
-test-aeon-decision-blocked.sh
 test-aeon-elastic-concurrency.sh
-test-aeon-exit.sh
 test-aeon-gate-close-silent.sh
 test-aeon-launch-grammar.sh
-test-aeon-operator-wait.sh
-test-aeon-presession-death.sh
 test-aeon-prod-dirty.sh
 test-aeon-resume-collision.sh
 test-aeon-sweep.sh
@@ -246,7 +242,6 @@ test-release.sh
 test-released-defects.sh
 test-repo-label.sh
 test-repo-lanes.sh
-test-requeue.sh
 test-requires.sh
 test-resolve-output.sh
 test-review.sh

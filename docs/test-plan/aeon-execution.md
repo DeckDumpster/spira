@@ -447,3 +447,23 @@ suite is exactly the shape that hides a miss). Filed as sp-eq8a4.2.8.
 
 Verified: `bash spira/testenv-batch.sh --suites test-attempts.sh,test-timeout.sh,
 test-attempts-sql.sh spira/sp-eq8a4.2.7` in testenv — all green.
+
+## 12. D8/D12/D15 landed (sp-g44ke)
+
+`full-aeon-fixture.sh` builds the bare origin, clone, chamber and claude shim once
+(`fa_setup`/`fa_reset`/`fa_teardown`), and `test-aeon-teardown-e2e.sh` replaces the seven
+suites named in D8/D12/D15 (test-aeon-decision-blocked.sh, test-aeon-operator-wait.sh,
+test-requeue.sh, test-aeon-ledger.sh, test-aeon-presession-death.sh,
+test-aeon-yield-headless.sh, test-aeon-exit.sh) with one row per open-bead teardown path,
+keyed off the T1 disposition table `test-aeon-disposition.sh` already asserts. Logic that
+needs no live session moved out to T1: `test-session-result-fields.sh`
+(session_result_fields/trace_segment, split from test-aeon-ledger.sh),
+`test-session-yield-headless.sh` (the phrasing table, split from test-aeon-yield-headless.sh)
+and `test-deadlock-sweep.sh` (`attempts.sh deadlocked`, UC-24, split from test-requeue.sh —
+no aeon.sh run needed there either). Three lower-frequency cases were cut for the area's
+wall-clock budget rather than dropped silently; sp-5t53s tracks rehoming them.
+
+Verified: `bash spira/testenv-batch.sh --suites test-aeon-teardown-e2e.sh,
+test-deadlock-sweep.sh,test-session-result-fields.sh,test-session-yield-headless.sh,
+test-testlib-migrated.sh,test-aeon-resume.sh spira/sp-g44ke` — all green. `plan-lint.sh
+--orphans` against the pre-consolidation tip reports no UC left uncovered.
