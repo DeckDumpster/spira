@@ -707,7 +707,7 @@ _c5_resolve_max="${SPIRA_CHECK5_MAX_RESOLVE:-5}"
 
 # _c5_resolve <id> <evidence> — closes the open incident THIS CHECK filed for <id>, now that
 # the same check has proven <id> landed. Keyed on the identical dedup ref incident.sh's own
-# filing used (SPIRA_INCIDENT_REF="closed-not-landed:$id"), so this finds exactly the bead
+# filing used (the "closed-not-landed:<id>" ref), so this finds exactly the bead
 # file_one would have deduped onto had it fired again — never a bead some other check filed.
 # Filing is bounded so a flood cannot file forever; this must be bounded the same way so a
 # large residue cannot be cleared in one pass that blows the service's TimeoutStartSec.
