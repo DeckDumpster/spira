@@ -33,7 +33,7 @@
 #   9. POSITIVE CONTROL + release.yml passes --repo-name, derived from the tag, so an
 #      installed release's identity does not come from its own directory name.
 #
-# covers: .github/workflows/release.yml .github/workflows/gate.yml spira/build-tarball.sh
+# covers: .github/workflows/release.yml .github/workflows/gate.yml spira/build-tarball.sh rust-toolchain.toml
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 # $HERE is always the spira/ directory, one level below the repo root.
@@ -81,17 +81,18 @@ echo "3. Toolchain — pinned to a semver, not a floating alias"
 # ============================================================================
 
 # A floating alias ("stable", "nightly", "beta") produces unreproducible builds
-# and hides version drift. The pinned semver is what the assertion step checks
-# against — they must agree, and both must be explicit.
+# and hides version drift. The pin lives in rust-toolchain.toml, which this
+# workflow reads rather than duplicating, so it and gate.yml cannot disagree.
 nowant "not toolchain: stable" "toolchain: stable"
 nowant "not toolchain: nightly" "toolchain: nightly"
 nowant "not toolchain: beta" "toolchain: beta"
+want "toolchain pin read from rust-toolchain.toml" "rust-toolchain.toml"
 
-# A pinned semver matches X.Y.Z.
-if grep -qE "['\"]?1\.[0-9]+\.[0-9]+['\"]?" "$WORKFLOW" 2>/dev/null; then
-    ok "semver X.Y.Z pinned in workflow"
+TOOLCHAIN_TOML="$REPO_ROOT/rust-toolchain.toml"
+if grep -qE 'channel *= *"1\.[0-9]+\.[0-9]+"' "$TOOLCHAIN_TOML" 2>/dev/null; then
+    ok "semver X.Y.Z pinned in rust-toolchain.toml"
 else
-    bad "semver X.Y.Z pinned in workflow" "no 1.x.y version string found"
+    bad "semver X.Y.Z pinned in rust-toolchain.toml" "no channel = \"1.x.y\" found in $TOOLCHAIN_TOML"
 fi
 
 # ============================================================================

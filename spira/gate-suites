@@ -157,6 +157,15 @@ spira/test-deps-lint.sh
 # regardless of SPIRA_GATE_SUITES.
 spira/test-build-fence.sh
 
+# THE LOCKFILE LINT'S OWN POSITIVE CONTROL. lockfile-lint.sh refuses a Cargo.lock version
+# bump with no matching Cargo.toml change — the local host's newer cargo can re-resolve a
+# registry package to a version the gate's pinned toolchain cannot parse with nothing to
+# review in the diff. This suite plants such a bump in a scratch git repository (SEEN
+# RED), gives it a matching Cargo.toml change (SEEN GREEN), and confirms lockfile-lint.sh
+# is wired into gate-touched.sh alongside build-fence.sh so it runs regardless of
+# SPIRA_GATE_SUITES.
+spira/test-lockfile-lint.sh
+
 # NOT IN THE GATE (budget): test-watchtower, test-soak, test-owned, test-uninstall, test-ready,
 # test-install-conflicts, test-configure. test-watchtower (~263s) was moved to the
 # timed set to bring the gate under SPIRA_GATE_BUDGET (sp-6ceo); the pipeline-stall detection

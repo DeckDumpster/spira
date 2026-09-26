@@ -65,6 +65,12 @@ if [ "$_repo" = "." ] || [ "$(cd "$_repo" 2>/dev/null && pwd -P)" = "$(cd "$HERE
     bash "$HERE/plan-matrix-fence.sh" "$BASE" >&2 || exit 1
 fi
 
+# THE LOCKFILE LINT RUNS ALONGSIDE THE BUILD FENCE, for the same reason: a bumped
+# Cargo.lock with no matching Cargo.toml change is a static property of the tree, not
+# a suite result, and it must be caught before SPIRA_GATE_SUITES=off can skip everything
+# else (sp-4kws1).
+SPIRA_GATE_BASE="${SPIRA_GATE_BASE:-$BASE}" bash "$HERE/lockfile-lint.sh" || exit 1
+
 HEAD="${2:?usage: gate-touched.sh <base> <head>}"
 repo="${SPIRA_GATE_REPO:-.}"
 _tiers="${SPIRA_GATE_TIERS:-T0,T1}"

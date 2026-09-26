@@ -151,16 +151,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust 1.82.0
+      - name: Read pinned toolchain
+        id: toolchain
+        run: |
+          v=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          [ -n "$v" ] || { printf 'rust-toolchain.toml has no channel\n' >&2; exit 1; }
+          printf 'version=%s\n' "$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: '1.82.0'
+          toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Assert Rust version
         run: |
           got=$(rustc --version | awk '{print $2}')
-          [ "$got" = "1.82.0" ] || {
-            printf 'expected Rust 1.82.0, got %s\n' "$got" >&2
+          want="${{ steps.toolchain.outputs.version }}"
+          [ "$got" = "$want" ] || {
+            printf 'expected Rust %s (rust-toolchain.toml), got %s\n' "$want" "$got" >&2
             exit 1
           }
 

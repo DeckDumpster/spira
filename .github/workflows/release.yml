@@ -6,11 +6,11 @@
 # GitHub release of the same name.
 #
 # TOOLCHAIN PINNING
-# The lockfile version (v4) requires Rust >= 1.78. The version is pinned to a
-# specific semver — never "stable" — so a runner upgrade cannot silently change
-# what binary ships. An assertion step exits non-zero if the installed version
-# does not match the pin, so a mismatch is a hard failure rather than invisible
-# drift.
+# The version comes from rust-toolchain.toml at the workspace root — never
+# "stable" — so a runner upgrade cannot silently change what binary ships, and
+# gate.yml and this workflow cannot disagree about which version they mean. An
+# assertion step exits non-zero if the installed version does not match the
+# pin, so a mismatch is a hard failure rather than invisible drift.
 #
 # FAILURE SEMANTICS
 # Every build step runs with the default failure policy: a step that exits
@@ -51,10 +51,17 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Install Rust 1.82.0
+      - name: Read pinned toolchain
+        id: toolchain
+        run: |
+          v=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          [ -n "$v" ] || { printf 'rust-toolchain.toml has no channel\n' >&2; exit 1; }
+          printf 'version=%s\n' "$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: '1.82.0'
+          toolchain: ${{ steps.toolchain.outputs.version }}
 
       - name: Assert Rust version
         # The installed version must match the pinned value exactly. A runner
@@ -62,8 +69,9 @@ jobs:
         # binaries built against an unrecorded toolchain.
         run: |
           got=$(rustc --version | awk '{print $2}')
-          [ "$got" = "1.82.0" ] || {
-            printf 'expected Rust 1.82.0, got %s\n' "$got" >&2
+          want="${{ steps.toolchain.outputs.version }}"
+          [ "$got" = "$want" ] || {
+            printf 'expected Rust %s (rust-toolchain.toml), got %s\n' "$want" "$got" >&2
             exit 1
           }
 
