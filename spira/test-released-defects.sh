@@ -29,8 +29,13 @@
 # suite itself fails — so a suite run without the script does not read as a
 # pass (law-absence-needs-a-positive-control).
 #
+# DEMOTE-TO-T2 (test plan §5): the join over discovered-from links is a pure
+# function of the closed-bug list, so it is fed as a --graph JSON fixture
+# instead of 7 real testdb_seed calls against an embedded Dolt store. Git
+# stays real — the commit ordering is the other half of what is under test.
+#
 # The program is run in an isolated environment (law-gates-run-in-a-clean-environment):
-# SPIRA_CONF=/nonexistent, fixture SPIRA_DB, fixture SPIRA_REPO_MAP, fixture git repo.
+# SPIRA_CONF=/nonexistent, fixture git repo, fixture SPIRA_REPO_MAP, --graph fixture.
 #
 # defect: sp-gsmx.1
 # covers: spira/released-defects.sh
@@ -39,16 +44,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 pass=0; fail=0
 ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "$2"; }
-is()     { [ "$2" = "$3" ] && ok "$1" || bad "$1" "wanted [$2] got [$3]"; }
 want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
-# shellcheck disable=SC1090
-. "$HERE/testdb.sh"
-testdb_require test-released-defects
 TMP="$(mktemp -d)"
-trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up reldefects || { echo "test-released-defects: could not build fixture database"; exit 1; }
+trap 'rm -rf "$TMP"' EXIT INT TERM
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 # --------------------------------------------------------------------------------------
@@ -89,45 +89,19 @@ git -C "$REPO" commit -qm "sp-intro-e sp-fix-f — introduced and fixed in one u
 git -C "$REPO" push -q origin main 2>/dev/null
 
 # --------------------------------------------------------------------------------------
-# BEAD FIXTURE: seed beads with discovered-from links.
+# GRAPH FIXTURE: the closed-bug discovered-from graph, in the same shape
+# `bd list --status closed --type bug --json` returns. released-defects.sh's join is a
+# pure function over this list; only the fix beads need to appear in it (the introducing
+# bead's own record is never read — its landing is proven by git, not by bd).
 # --------------------------------------------------------------------------------------
-# Goal epic every bead is a child of
-testdb_seed <<'JSONL'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-08T00:00:00Z"}
-JSONL
-
-# Case 1 — RELEASED
-# Introducing bead sp-intro-a (task, closed, on main via commit Ca)
-testdb_seed <<'JSONL'
-{"id":"sp-intro-a","title":"introduce feature A","status":"closed","issue_type":"task","labels":["repo:fixture"],"updated_at":"2026-09-08T01:00:00Z","closed_at":"2026-09-08T01:00:00Z","dependencies":[{"issue_id":"sp-intro-a","depends_on_id":"sp-goal","type":"parent-child"}]}
-JSONL
-
-# Fixing bead sp-fix-b (bug, closed, discovered-from sp-intro-a)
-testdb_seed <<'JSONL'
-{"id":"sp-fix-b","title":"fix defect from feature A","status":"closed","issue_type":"bug","labels":["repo:fixture"],"updated_at":"2026-09-08T02:00:00Z","closed_at":"2026-09-08T02:00:00Z","dependencies":[{"issue_id":"sp-fix-b","depends_on_id":"sp-intro-a","type":"discovered-from"},{"issue_id":"sp-fix-b","depends_on_id":"sp-goal","type":"parent-child"}]}
-JSONL
-
-# Case 2 — CAUGHT
-# Introducing bead sp-intro-c (task, has spira-poison label, NO commit on main)
-testdb_seed <<'JSONL'
-{"id":"sp-intro-c","title":"poisoned work","status":"closed","issue_type":"task","labels":["repo:fixture","spira-poison"],"updated_at":"2026-09-08T01:00:00Z","closed_at":"2026-09-08T01:00:00Z","dependencies":[{"issue_id":"sp-intro-c","depends_on_id":"sp-goal","type":"parent-child"}]}
-JSONL
-
-# Fixing bead sp-fix-d (bug, closed, discovered-from sp-intro-c)
-testdb_seed <<'JSONL'
-{"id":"sp-fix-d","title":"fix for caught defect","status":"closed","issue_type":"bug","labels":["repo:fixture"],"updated_at":"2026-09-08T02:00:00Z","closed_at":"2026-09-08T02:00:00Z","dependencies":[{"issue_id":"sp-fix-d","depends_on_id":"sp-intro-c","type":"discovered-from"},{"issue_id":"sp-fix-d","depends_on_id":"sp-goal","type":"parent-child"}]}
-JSONL
-
-# Case 3 — SAME UNIT
-# Introducing bead sp-intro-e (task, closed, appears in same commit as sp-fix-f)
-testdb_seed <<'JSONL'
-{"id":"sp-intro-e","title":"introduce feature E","status":"closed","issue_type":"task","labels":["repo:fixture"],"updated_at":"2026-09-08T03:00:00Z","closed_at":"2026-09-08T03:00:00Z","dependencies":[{"issue_id":"sp-intro-e","depends_on_id":"sp-goal","type":"parent-child"}]}
-JSONL
-
-# Fixing bead sp-fix-f (bug, closed, discovered-from sp-intro-e; same commit)
-testdb_seed <<'JSONL'
-{"id":"sp-fix-f","title":"fix defect from feature E","status":"closed","issue_type":"bug","labels":["repo:fixture"],"updated_at":"2026-09-08T03:00:00Z","closed_at":"2026-09-08T03:00:00Z","dependencies":[{"issue_id":"sp-fix-f","depends_on_id":"sp-intro-e","type":"discovered-from"},{"issue_id":"sp-fix-f","depends_on_id":"sp-goal","type":"parent-child"}]}
-JSONL
+GRAPH="$TMP/graph.json"
+cat > "$GRAPH" <<'JSON'
+[
+  {"id":"sp-fix-b","title":"fix defect from feature A","status":"closed","issue_type":"bug","labels":["repo:fixture"],"updated_at":"2026-09-08T02:00:00Z","closed_at":"2026-09-08T02:00:00Z","dependencies":[{"issue_id":"sp-fix-b","depends_on_id":"sp-intro-a","type":"discovered-from"}]},
+  {"id":"sp-fix-d","title":"fix for caught defect","status":"closed","issue_type":"bug","labels":["repo:fixture"],"updated_at":"2026-09-08T02:00:00Z","closed_at":"2026-09-08T02:00:00Z","dependencies":[{"issue_id":"sp-fix-d","depends_on_id":"sp-intro-c","type":"discovered-from"}]},
+  {"id":"sp-fix-f","title":"fix defect from feature E","status":"closed","issue_type":"bug","labels":["repo:fixture"],"updated_at":"2026-09-08T03:00:00Z","closed_at":"2026-09-08T03:00:00Z","dependencies":[{"issue_id":"sp-fix-f","depends_on_id":"sp-intro-e","type":"discovered-from"}]}
+]
+JSON
 
 # --------------------------------------------------------------------------------------
 # ENVIRONMENT UNDER WHICH THE PROGRAM IS RUN.
@@ -148,17 +122,13 @@ printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$REPO_MAP"
 rds() {  # rds [args] -> output of released-defects.sh
     # HOME="$HOME" (not "$TMP") so the bd shim at ~/.local/bin/bd is reachable.
     # SPIRA_CONF=/nonexistent prevents loading the real ~/.config/spira/spira.conf.
-    # conf.sh sees SPIRA_PATH absent and rewrites PATH to $HOME/.local/bin:..., so
-    # the real bd is called directly rather than through any wrapper on the parent PATH.
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_BD="$SPIRA_BD" \
         SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_REPO="$REPO" \
         SPIRA_RUN="$TMP/run" \
         SPIRA_VERDICT_WINDOW=50 \
-        bash "$SH/released-defects.sh" "$@" 2>/dev/null
+        bash "$SH/released-defects.sh" --graph "$GRAPH" "$@" 2>/dev/null
 }
 mkdir -p "$TMP/run"
 
@@ -205,13 +175,11 @@ REPO_MAP_EMPTY="$TMP/repo-map-empty"
 printf '# empty\n' > "$REPO_MAP_EMPTY"
 out_nomap="$(env -i PATH="$PATH" HOME="$HOME" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="$SPIRA_BD" \
     SPIRA_REPO_MAP="$REPO_MAP_EMPTY" \
     SPIRA_REPO=/nonexistent \
     SPIRA_RUN="$TMP/run" \
     SPIRA_VERDICT_WINDOW=50 \
-    bash "$SH/released-defects.sh" 2>/dev/null || true)"
+    bash "$SH/released-defects.sh" --graph "$GRAPH" 2>/dev/null || true)"
 # When repo cannot be found, commits render ? — but the defects are still
 # counted (the fields report absence rather than hiding the record).
 want   "? appears when repo is unresolvable" "?" "$out_nomap"

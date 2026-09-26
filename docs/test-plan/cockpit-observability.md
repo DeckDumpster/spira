@@ -1,5 +1,19 @@
 # Test plan — Cockpit telemetry and operator views (`cockpit-observability`)
 
+> **2026-09-25 (sp-s088v.11): rows 17, 33, 35, 39, 40 closed.** Row 33: `test-loom-page.sh`'s
+> 12 fixture arms moved into `loom/static/model.test.js`, run under `node --test`; the
+> real-bd arm is now `test-cockpit-bd-contract.sh`'s "loom's model.js parses what the tracker
+> actually emits" row, and `test-testdb-failsafe.sh` was repointed at that suite for its
+> testdb_up fail-safe check. Missing node now exits 77, not 0 (gap #11). Row 35:
+> `test-ready.sh`'s nc-absent port-open case is a real `skip` now, not two fake `ok` lines;
+> its dolt-server.yaml ports are pinned into the ephemeral range instead of hardcoded.
+> Row 39: `test-tokens.sh` pins `SPIRA_HOME`/`SPIRA_REPO` off the real checkout it happens to
+> live in, so sourcing conf.sh does not shell out to git against a repo the token split has
+> no reason to touch; `test-released-defects.sh` is demoted off `testdb_up` onto a `--graph
+> <json>` fixture the script now accepts, keeping real git for the commit-ordering half. Row
+> 40: `test-resolve-output.sh`'s missing-subject guard exits 77, not 0. Row 17 (case 4's
+> per-id assertion) was already fixed by sp-9ce60.6.
+
 > **2026-09-25: `test-snap-stale-threshold.sh` deleted** (law-a-test-that-flips-is-deleted): same tree green in round 6, red twice after. The watchtower/doctor snapshot-staleness threshold has no coverage until a deterministic test replaces it.
 
 > **2026-09-25 (sp-s088v.7): the bdjson-fixture seam landed.** `spira/bdsim.py` answers

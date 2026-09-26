@@ -69,8 +69,13 @@ cat > "$PROJ/$SESS_DIR_NAME/session.jsonl" <<SESSJSONL
 SESSJSONL
 
 # ---------------------------------------------------------------------------
+# SPIRA_HOME and SPIRA_REPO are pinned to $TMP (no .git there) rather than left to
+# conf.sh's default derivation, which would run `git -C <this checkout>` against the
+# real, possibly large repo tokens.sh happens to live in — a fact about this box that
+# has nothing to do with the token split under test (law-gates-run-in-a-clean-environment).
 run_tokens() {
     env -i PATH="$PATH" HOME="$TMP" \
+        SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_REPO_MAP="$TMP/no-map" \
         SPIRA_RUN="$RUN" SPIRA_TOKEN_PROJECTS="$PROJ" \
         SPIRA_TOKEN_WINDOW_H=87600 SPIRA_CONF="$TMP/no.conf" \
         bash "$HERE/tokens.sh" "$1" 2>/dev/null
@@ -125,6 +130,7 @@ cp "$PROJ/$ARC_DIR_NAME/arc.jsonl"       "$PROJ2/$ARC_DIR_NAME/"
 cp "$PROJ/$SESS_DIR_NAME/session.jsonl"  "$PROJ2/$SESS_DIR_NAME/"
 
 ENV2="$(env -i PATH="$PATH" HOME="$TMP" \
+    SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_REPO_MAP="$TMP/no-map" \
     SPIRA_RUN="$RUN" SPIRA_TOKEN_PROJECTS="$PROJ2" \
     SPIRA_TOKEN_WINDOW_H=87600 SPIRA_CONF="$TMP/no.conf" \
     bash "$HERE/tokens.sh" env 2>/dev/null)"
@@ -147,6 +153,7 @@ cp "$PROJ/$ARC_DIR_NAME/arc.jsonl"       "$PROJ3/-wrong-arc-dir/"
 cp "$PROJ/$SESS_DIR_NAME/session.jsonl"  "$PROJ3/$SESS_DIR_NAME/"
 
 ENV3="$(env -i PATH="$PATH" HOME="$TMP" \
+    SPIRA_HOME="$TMP" SPIRA_REPO="$TMP" SPIRA_REPO_MAP="$TMP/no-map" \
     SPIRA_RUN="$RUN" SPIRA_TOKEN_PROJECTS="$PROJ3" \
     SPIRA_TOKEN_WINDOW_H=87600 SPIRA_CONF="$TMP/no.conf" \
     bash "$HERE/tokens.sh" env 2>/dev/null)"

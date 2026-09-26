@@ -2,7 +2,11 @@
 #
 # released-defects.sh — report released defects over a configurable window.
 #
-#   released-defects.sh [--window <days>]
+#   released-defects.sh [--window <days>] [--graph <file>]
+#
+# --graph <file>: read the closed-bug discovered-from graph (the bd list --status
+# closed --type bug --json shape) from <file> instead of querying bd. The join
+# this script does is pure over that list; git stays real either way.
 #
 # A RELEASED DEFECT is a bug bead (type: bug) with a 'discovered-from' link to
 # another bead (the introducing bead), where the introducing bead's commit
@@ -33,10 +37,12 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
 
 WINDOW_DAYS=""
+GRAPH_FILE=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --window) WINDOW_DAYS="${2:-}"; shift ;;
-        -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
+        --graph) GRAPH_FILE="${2:-}"; shift ;;
+        -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
         -*) printf 'released-defects.sh: unknown flag %s\n' "$1" >&2; exit 2 ;;
     esac
     shift
@@ -64,8 +70,12 @@ commit_for() {
     printf '%s' "${out%%$'\n'*}"
 }
 
-# Fetch all closed bug beads.
-bugs_json="$(bdjson list --status closed --type bug --limit 0 2>/dev/null)" || bugs_json=""
+# Fetch all closed bug beads — from the --graph fixture when given, else real bd.
+if [ -n "$GRAPH_FILE" ]; then
+    bugs_json="$(cat "$GRAPH_FILE" 2>/dev/null)" || bugs_json=""
+else
+    bugs_json="$(bdjson list --status closed --type bug --limit 0 2>/dev/null)" || bugs_json=""
+fi
 
 # A probe that cannot read should say so, not silently report clean.
 if [ -z "$bugs_json" ]; then

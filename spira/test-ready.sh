@@ -23,9 +23,10 @@
 # covers: spira/world.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-pass=0; fail=0
+pass=0; fail=0; skip=0
 ok()     { pass=$((pass+1)); printf '  ok    %s\n' "$1"; }
 bad()    { fail=$((fail+1)); printf '  FAIL  %s: %s\n' "$1" "${2:-}"; }
+skipped() { skip=$((skip+1)); printf '  skip  %s\n' "$1"; }
 want()   { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 nowant() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 
@@ -304,15 +305,20 @@ want "db-count: 3 bead(s)"                      "3 bead(s)"                    "
 
 # Database: bd fails and dolt-beads.service active but port not yet open → UNKN (starting).
 echo "database: dolt-beads active, port not open — starting up"
+# Ports are pinned into the IANA ephemeral range (49152-65535) so this suite does not
+# collide with a real registered service on the box.
+_ready_port1=$((49152 + ($$ % 8000)))
+_ready_port2=$((_ready_port1 + 1))
+
 _dolt_data_dir="$TMP/dolt-data-ready"
 mkdir -p "$_dolt_data_dir"
-printf 'listener:\n  port: 19880\n' > "$_dolt_data_dir/dolt-server.yaml"
+printf 'listener:\n  port: %s\n' "$_ready_port1" > "$_dolt_data_dir/dolt-server.yaml"
 out="$(run_ready "FAKE_SC_ACTIVE=dolt-beads.service" \
                  "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
                  "FAKE_BD_RC=1" \
                  "SPIRA_DOLT_DATA=$_dolt_data_dir" -- || true)"
 want "db-starting: ? line present"        "  ?     database: dolt-beads.service active" "$out"
-want "db-starting: names the port"        "port 19880"                                   "$out"
+want "db-starting: names the port"        "port $_ready_port1"                           "$out"
 want "db-starting: says server is starting" "server is starting"                         "$out"
 nowant "db-starting: no FAIL unreadable"  "  FAIL  database unreadable"                  "$out"
 unset _dolt_data_dir
@@ -321,10 +327,10 @@ unset _dolt_data_dir
 echo "database: dolt-beads active, port IS open — still fails"
 _dolt_data_dir2="$TMP/dolt-data-ready2"
 mkdir -p "$_dolt_data_dir2"
-printf 'listener:\n  port: 19881\n' > "$_dolt_data_dir2/dolt-server.yaml"
+printf 'listener:\n  port: %s\n' "$_ready_port2" > "$_dolt_data_dir2/dolt-server.yaml"
 _nc_pid=""
 if command -v nc >/dev/null 2>&1; then
-    nc -lk 19881 >/dev/null 2>&1 & _nc_pid=$!
+    nc -lk "$_ready_port2" >/dev/null 2>&1 & _nc_pid=$!
     sleep 0.1
 fi
 out="$(run_ready "FAKE_SC_ACTIVE=dolt-beads.service" \
@@ -336,8 +342,7 @@ if [ -n "$_nc_pid" ]; then
     want "db-portopen: FAIL unreadable (port open)"  "  FAIL  database unreadable" "$out"
     nowant "db-portopen: no ? starting"              "server is starting"           "$out"
 else
-    ok "db-portopen: nc unavailable — skip port-open case"
-    ok "db-portopen: nc unavailable — skip port-open case"
+    skipped "db-portopen: nc unavailable — skip port-open case"
 fi
 unset _dolt_data_dir2 _nc_pid
 
@@ -642,5 +647,5 @@ run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
     || bad "exit-pass: should exit 0 when armed" "exited non-zero"
 
 # ===========================================================================
-printf '\ntest-ready: %d ok, %d fail\n' "$pass" "$fail"
+printf '\ntest-ready: %d ok, %d fail, %d skip\n' "$pass" "$fail" "$skip"
 [ "$fail" -eq 0 ]
