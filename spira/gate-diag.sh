@@ -163,10 +163,18 @@ for suite in $reds; do
         fail_lines="$(printf '%s\n' "$raw_out" | grep -E 'FAIL|not ok' 2>/dev/null || true)"
     first_fail=""
     [ -n "$fail_lines" ] && first_fail="$(printf '%s\n' "$fail_lines" | head -1 | sed 's/^[[:space:]]*//')"
+
+    # A suite that dies before its own summary line leaves no FAIL line to show —
+    # "(no FAIL line — see log)" is a row that will not be read. Report the same
+    # facts a human would open the log for instead: the last thing the suite
+    # printed, the rc, and the wall time against its own declared budget.
+    _decl_to="$(sed -n 's/^# *timeout: *//p' "$HERE/$suite" 2>/dev/null | head -1 | tr -d '[:space:]')"
+    case "$_decl_to" in [0-9]*) ;; *) _decl_to="${SPIRA_SUITE_TIMEOUT:-600}" ;; esac
     if [ -z "$raw_out" ]; then
-        first_fail="(no output — rc=${rc_field})"
+        first_fail="(died rc=${rc_field} at ${secs}s/${_decl_to}s — no output)"
     elif [ -z "$first_fail" ]; then
-        first_fail="(no FAIL line — see log)"
+        _last_line="$(printf '%s\n' "$raw_out" | sed '/^[[:space:]]*$/d' | tail -1)"
+        first_fail="(died rc=${rc_field} at ${secs}s/${_decl_to}s — last: ${_last_line})"
     fi
 
     retry_st="$(_retry_status "$suite")"
