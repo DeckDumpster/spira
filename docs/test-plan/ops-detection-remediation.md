@@ -55,12 +55,13 @@ shadow→act per class; hold liveness witnesses; archivist capacity back-off.
 
 ## 2. Use cases
 
-Tier key: T0 static · T1 unit · T2 component · T3 integration · T4 acceptance. The 39
+Tier key: T0 static · T1 unit · T2 component · T3 integration · T4 acceptance. The 40
 declarations live in `ops-detection-remediation.toml`; see that file for id/tier/statement.
-Four of them (37-39, plus one clause of 23 left over from a name collision — see the toml)
-carry an `[use_case.uncovered]` marker: they name behaviour this page's design calls for
-that no suite exercises yet, all deferred to `sp-fhzib.4`, which was reopened separately
-from this bead and has not landed. Every other declared use case has at least one covering
+Four of them (37-40 — the lapse writer/reader contract, trigger-lock concurrency, the
+Auron-to-panel label contract, and strand partition isolation) carry an
+`[use_case.uncovered]` marker: they name behaviour this page's design calls for that no
+suite exercises yet, all deferred to `sp-fhzib.4`, which was reopened separately from this
+bead and has not landed. Every other declared use case has at least one covering
 suite today, whether or not that suite has yet been demoted to the cheapest tier that would
 catch its regression (tier is normative — "the cheapest tier that WOULD catch it" — not a
 description of where the current covering suite happens to run; a T2/T3 suite over-covering
@@ -221,20 +222,34 @@ What `sp-fhzib` itself still owed, on a fresh branch from `origin/main`:
   through the census path, and the same fixture is reused rather than a fifth
   `testdb_up`/`testdb_drop` round trip.
 
-**Suite-seconds, this slice** (measured via `spira/testenv-batch.sh`, never on the host):
+**Suite-seconds, this slice** (measured via `spira/testenv-batch.sh` on a shared embedded
+fixture, parallel mode, single run — not averaged; never on the host):
 
 ```
-Before (baseline, this slice's touched suites only):
-  test-czar-pass.sh            ~14 s  (no cargo test; 22 helper-only Rust tests, ~0.00s, uncounted)
-  test-census.sh                ~9 s  (3 rows: bump writes, cause column, since-filter)
+Before (§7's own baseline, this slice's touched suites only, main-push run 35947142904):
+  test-czar-pass.sh    14 s  (no cargo test; 5 of its 22 Rust tests did not compile —
+                              cargo test -p czar-pass was never run as part of this suite)
+  test-census.sh        9 s  (3 rows: bump writes, cause column, since-filter)
 
 After (measured this run):
-  test-czar-pass.sh            <TO-MEASURE> s  (adds: cargo test -p czar-pass, 48 tests, <0.05s wall;
-                                                 no change to the acceptance-layer fixtures)
-  test-census.sh                <TO-MEASURE> s  (adds: 1 Sin row, reusing the existing testdb_up)
+  test-czar-pass.sh    40 s  (+26 s: cargo test -p czar-pass — 42 tests, <0.2s wall itself;
+                              the rest of the delta is a second full cargo compile of the
+                              czar-pass/reconciler-engine crates under a scratch
+                              CARGO_TARGET_DIR, separate from the release-binary build the
+                              suite already paid for)
+  test-census.sh       73 s  (+64 s: this run built its own fresh embedded testdb baseline
+                              rather than reusing a warm one, which section 1-5's original
+                              9 s baseline did not have to pay; the Sin row itself is one
+                              `recurs_of` shell-out against data section 1 already wrote)
 ```
 
+Also run this slice: `test-census-pipeline.sh` (44 s, unchanged in shape — its `# covers:`
+line now resolves against a real catalogue instead of an absent one), `test-plan-lint.sh`
+(33 s) and `test-plan-matrix.sh` (33 s), both exercising the new catalogue file itself.
+
 Verified: `bash spira/testenv-batch.sh --suites test-czar-pass.sh,test-census.sh,
-test-census-pipeline.sh,test-incident.sh,test-plan-lint.sh spira/sp-n1twd` in testenv — see
-the commit for the actual measured numbers (this page is written before that run completes
-and is corrected in place, not left to state a guess as fact).
+test-census-pipeline.sh spira/sp-n1twd` and `bash spira/testenv-batch.sh --suites
+test-plan-lint.sh,test-plan-matrix.sh spira/sp-n1twd` in testenv — all five green.
+`spira/plan-matrix.sh` regenerated `coverage.json`/`COVERAGE.md`;
+`spira/plan-matrix.sh --check` and `test-plan validate --catalogue-dir docs/test-plan`
+both confirm the committed files match.

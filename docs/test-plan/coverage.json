@@ -1423,6 +1423,324 @@
       ]
     },
     {
+      "area": "ops-detection-remediation",
+      "use_cases": [
+        {
+          "id": "UC-ops-detection-remediation-01",
+          "tier": "T1",
+          "statement": "N filings of one ref leave exactly one open bead and log N-1 recurrences, whatever the caller's labels, repo, or whether the ref came from `SPIRA_INCIDENT_REF` or the title.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-02",
+          "tier": "T2",
+          "statement": "Two concurrent filers of one ref create exactly one bead; `drain_one` holds a flock around the check-and-create, proven with a deterministic barrier rather than timing.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-03",
+          "tier": "T2",
+          "statement": "Refiling a ref whose bead closed within `SPIRA_INCIDENT_DEDUP_LOOKBACK` reopens that bead; outside the lookback (including the BSD `date -v` fallback path) it creates a new bead.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-04",
+          "tier": "T1",
+          "statement": "The dedup lookup is label-keyed (`ref:<hash>`) and issues zero `bd show` calls; a legacy bead without a `ref:` label is still found through the fallback.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-05",
+          "tier": "T1",
+          "statement": "A declared `SPIRA_INCIDENT_REPO` becomes `repo:<name>`; an undeclared repo yields `needs-repo-triage` plus exactly one operator mail whose subject leads with `<unit> on <host>: <path>` provenance.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-06",
+          "tier": "T1",
+          "statement": "Recurrence notes grow by no more than ~120 B per unchanged payload, and a changed payload is recorded in full — a pure function of (previous payload hash, current payload).",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-07",
+          "tier": "T1",
+          "statement": "At `SPIRA_SIN_AT` recurrences exactly one Sin ask is mailed and the `sin` label is added; an exempt ref (`SPIRA_SIN_EXEMPT=1`) still advances its counter but never gets the label or the page; watchtower's DRAINING escalation files as exempt.",
+          "covering_suites": [
+            {
+              "path": "spira/test-census.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-ops-detection-remediation-08",
+          "tier": "T1",
+          "statement": "The `delivers:` label follows its rules: `delivers:note:<ledger>` is stamped only when the writer created the ledger directory inside this install's `SPIRA_RUN`; `SPIRA_INCIDENT_DELIVERS=action` replaces the note; an unknown value is rejected and logged; `retire-unsatisfiable-delivers` never mutates on a dry run.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-09",
+          "tier": "T0",
+          "statement": "Every filing site that sets `SPIRA_INCIDENT_REF` also declares `SPIRA_INCIDENT_CAUSE` (a source lint, run at gate T0 beside `literal-lint.sh`).",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-10",
+          "tier": "T2",
+          "statement": "When bd is unreachable a filing stays in the spool (exit 1); `incident.sh drain` later files it, reports both \"drained N, still spooled M\", moves a REF-less entry to `.bad`, and drains a pre-CAUSE entry as `unrecorded`.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-11",
+          "tier": "T1",
+          "statement": "The census reports each failure class with its distinct-bead and detection counts, ranked by distinct beads then events; requeue/recur/reclaim/reopen classes map to their cause suffix, a merge-conflict requeue folds into `sp-reopen-rebase-conflict`, a NULL cause counts under `-unrecorded` with no column-shifted phantom classes and no double-count of a requeue+reopen pair, and an empty store gives empty output.",
+          "covering_suites": [
+            {
+              "path": "spira/test-census-pipeline.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-ops-detection-remediation-12",
+          "tier": "T3",
+          "statement": "`bump_*` and `bead_reopen` write the event rows the census SQL reads, and the SQL respects the since-watermark bound — proven against a real bd store, not a canned model.",
+          "covering_suites": [
+            {
+              "path": "spira/test-census.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-ops-detection-remediation-13",
+          "tier": "T1",
+          "statement": "With a watermark, classes rank by events since the mark and each line still shows the all-time count; with no watermark the census falls back to all-time and says so on stderr.",
+          "covering_suites": [
+            {
+              "path": "spira/test-census-pipeline.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-ops-detection-remediation-14",
+          "tier": "T1",
+          "statement": "A remedy bead with `covers:<class>` suppresses that class: open, in_progress and blocked remedies suppress; a closed remedy keeps suppressing until its commit is on the base (including beyond `SPIRA_VERDICT_WINDOW`); `--with-suppressed` annotates instead of hiding; a `covers:` for an unrelated class does not suppress.",
+          "covering_suites": [
+            {
+              "path": "spira/test-census-pipeline.sh",
+              "tier": "T1",
+              "over_budget": false
+            },
+            {
+              "path": "spira/test-census.sh",
+              "tier": "T3",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-ops-detection-remediation-15",
+          "tier": "T1",
+          "statement": "The census SQL call retries transient failures three times and surfaces the driver error when all of them fail.",
+          "covering_suites": [
+            {
+              "path": "spira/test-census-pipeline.sh",
+              "tier": "T1",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-ops-detection-remediation-16",
+          "tier": "T2",
+          "statement": "Maechen triggers on a completed-pass gap exceeding `MAX_GAP` or on a bead-naming-landing interval (non-bead commits do not count; land/merge/PR-merge forms dedup per bead; a non-`origin` remote works; the home repo is not double-counted); an existing open or in_progress trigger suppresses a second one; `bd create` failure exits 1; the trigger never advances the watermark itself.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-17",
+          "tier": "T0",
+          "statement": "The Maechen brief encodes the five-step pass, the threshold, the output bar and the compare-and-swap watermark advance, with every `{{SPIRA_HOME}}` path in it resolving.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-18",
+          "tier": "T1",
+          "statement": "The Auron classifier: a healthy loop (including a replay of a real log) fires nothing; wedged passes or a dead timer raise `sentinel-stalled` with evidence naming the cause; an unreadable log is `sentinel-unobservable`; halt or drain suppresses the alarm; summon starvation needs sustained passes and excludes governor/capacity withholds and aeons at cap; DB, mirror, ghost-lease and restart-loop alerts are distinct and do not mask each other; the old `ready=` spelling still parses.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-19",
+          "tier": "T2",
+          "statement": "Auron reconcile: an alert must be seen twice before it raises a bead and clear twice before the bead closes; there is one bead per cause, and a return reopens the same bead with a single `flaps:N` label; an operator-closed alert is never reopened; when the DB is down or write-failing, alerts go to a fallback file and the heartbeat says so; a lock timeout reports `saturated`; extra probe beads are closed, not leaked.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-20",
+          "tier": "T1",
+          "statement": "The strand classifier: ready work with no live aeon is `starved`; capacity-paused, pool-paused, fleet-saturated and pass-truncated each replace `starved` with an info row; a deferred bead with a live blocker or an ask label is exempt, otherwise `deferred-unescalated`; an expired lease with a live holder pidfile is not a ghost; starved rows cite only their own partition's beads and state slots.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-21",
+          "tier": "T2",
+          "statement": "`strand.sh check` mails exactly one escalation per episode even under concurrent runners (a flock guards it, and a runner that cannot take the lock declines and logs that), and never mails for info rows.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-22",
+          "tier": "T2",
+          "statement": "`strand.sh report` detects an exhausted sentinel pass budget (\"CHECK7 <fayth>: not evaluated\" in the latest pass) and reports pass-truncated, marking every fayth not evaluated and summoning none.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-23",
+          "tier": "T1",
+          "statement": "czar-pass's reconciler-engine detectors — DEADLOCK, ATTRIBUTION-FAILED, SORT-FAILED, LOOP-STALLED, CI-STALLED, CI-RED, STARVED and base-red — each fire only past their own threshold and stay silent under it, coexist in one pass, and treat an unreadable input as `?` (unobservable), never as clear.",
+          "covering_suites": [
+            {
+              "path": "spira/test-czar-pass.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-ops-detection-remediation-24",
+          "tier": "T2",
+          "statement": "A czar pass has four guarantees: it finishes within its budget; a concurrent pass is skipped under flock; a halted world exits 0 without acting; a shadow-stage class logs `CZAR-WOULD` and files nothing, while act files. `czar-fence.sh <class>` refuses by default, names the stage var, and binds `queue.sh eject` for the czar only.",
+          "covering_suites": [
+            {
+              "path": "spira/test-czar-pass.sh",
+              "tier": "T2",
+              "over_budget": false
+            }
+          ]
+        },
+        {
+          "id": "UC-ops-detection-remediation-25",
+          "tier": "T1",
+          "statement": "The watchtower czar-outcome check escalates an open czar-trigger bead older than `UNCLAIMED_MINS` as unclaimed, and a czar-closed class that recurs after the outcome window as \"outcome not cleared\"; younger beads, beads with no recurrence, recurrences inside the window and non-czar-trigger beads stay silent; the ref is per-bead and stable; a halted world is silent.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-26",
+          "tier": "T1",
+          "statement": "Watchtower snapshot fields render real values, with `?` for a missing or unreadable input and `0` only for a true zero: the landing field reads the real `land_mark` record; a RED, empty or malformed record is never credited; the gate wait is the maximum inside a configured window; the strand ledger splits ghosts from other classes (with `?` before the split); the lapse section filters by marker with no dedup; every section is present.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-27",
+          "tier": "T1",
+          "statement": "The watchtower sweep files each Sending, DEDUP, drain and PR-stall escalation above its threshold (never on `0` or `?`) with a stable ref, writes `SWEEP:NOMINAL` only when all green, does nothing when halted (draining still writes the prompt), advances the lapse marker only on a real write, and runs no suites.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-28",
+          "tier": "T1",
+          "statement": "PR stall is handled per repo setting: a stale REBASED `pr-open` in a repo with auto-merge off files a stall incident with a repo-scoped ref; with auto-merge on, it arms auto-merge instead; a CONFLICTING PR's landstate is cleared; fresh, CERTIFIED and unknown-repo entries are ignored; doctor FAILs a pr-mode repo with auto-merge off and says \"could not check\" when gh errors.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-29",
+          "tier": "T2",
+          "statement": "The livelock detector reports, from an empty DB as 0 (never `?`): a bead unclaimable by every persona; an ask without `overseer`; an unmapped repo; `ci-stuck` (push-mode repos only). Claimable or blocked beads are never reported.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-30",
+          "tier": "T1",
+          "statement": "Close-reason classification sorts reasons into INVALID-CLOSED (\"PERMANENT FIX NEEDED\", or a temporary workaround), UNFILED-FOLLOW (follow-on work implied with no bead id, `owner/repo#N` or URL — a non-default id prefix acquits the reason), or not-flagged (quoted mentions, \"temporary\" describing something else, \"upstream\" alone).",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-31",
+          "tier": "T1",
+          "statement": "The groomer sweep applies its remedies idempotently — adds `overseer` to asks, removes `awaiting-ci` on push repos, closes description-less unmapped litter naming the predicate, and reports only described or unclaimable beads — logging each action; a dry run writes nothing; after a sweep the detector reports only what the sweep cannot fix.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-32",
+          "tier": "T1",
+          "statement": "Groomer subcommands validate their arguments before touching bd: `unwanted` is refused with exit 2; `supersede`, `close` and `depends-on-fix` require `--with`, `--evidence` or `--fix`; `depends-on-fix` refuses a closed fix bead.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-33",
+          "tier": "T1",
+          "statement": "groom-trigger files one trigger, with scope and groomer labels, only when the backlog score is at or above `SPIRA_GROOM_THRESHOLD`, no trigger is already open, and some repo admits the groom lane; an empty scope label gives no leading comma; a create failure exits 1.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-34",
+          "tier": "T1",
+          "statement": "`hold.sh` claims the bead, writes a pidfile and heartbeat, and refuses a double hold; `unhold.sh` removes both and kills the heartbeat; `hold_alive`/`holder_alive`/`spira_holder_witnesses` report held while the holder lives and unheld after release or death.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-35",
+          "tier": "T2",
+          "statement": "The archivist sweep archives sessions with drift at or above `EVERY`, most-drifted-first, at most `PER_PASS` per pass, deferring the rest; a capacity pause skips the sweep and reports `skipped`, not idle; an account refusal records `capacity`, stops the pass and raises a pause; exit 124 is `timeout` and retried until the budget is spent; a crash is `failed` and excluded; a bad cursor is coerced to 0 and logged.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-36",
+          "tier": "T0",
+          "statement": "Detector and trigger conf keys are allowlisted with documented defaults; priority bands put incidents and suite-reds below user-reported bugs; the `SENT` wire token agrees between `sending.sh`, `sentinel.sh` and `cockpit-metrics.py`.",
+          "covering_suites": []
+        },
+        {
+          "id": "UC-ops-detection-remediation-37",
+          "tier": "T1",
+          "statement": "aeon.sh's lapse-record write and the watchtower lapse reader agree on format: a real writer-produced record parses correctly, the same seam `land_mark` already gives landstate.",
+          "covering_suites": [],
+          "uncovered": {
+            "reason": "write_lapse_record() extraction and the writer-into-reader test are sp-fhzib.4's scope (gap G8), reopened separately and not yet landed",
+            "date": "2026-09-26",
+            "bead": "sp-fhzib.4"
+          }
+        },
+        {
+          "id": "UC-ops-detection-remediation-38",
+          "tier": "T1",
+          "statement": "Neither `maechen-trigger.sh` nor `groom-trigger.sh` files a second trigger bead when two callers race the list-then-create dedup check (a lock, not a timing window, closes the race).",
+          "covering_suites": [],
+          "uncovered": {
+            "reason": "gap G10: neither trigger takes a lock around its dedup check yet; the fix is sp-fhzib.4's scope, reopened separately and not yet landed",
+            "date": "2026-09-26",
+            "bead": "sp-fhzib.4"
+          }
+        },
+        {
+          "id": "UC-ops-detection-remediation-39",
+          "tier": "T1",
+          "statement": "Every existing ALERTS fixture that exercises Auron's bead label shape uses the exact labels `auron.sh` writes after two sightings and a flap (`alert:<key>`, `flaps:<n>`), not a hand-typed approximation — the panel's reader and Auron's writer are checked against each other, not independently.",
+          "covering_suites": [],
+          "uncovered": {
+            "reason": "gap G14: the panel's ALERTS fixtures hand-type the label set today rather than reusing Auron's real shape; closing it is sp-fhzib.4's scope, reopened separately and not yet landed",
+            "date": "2026-09-26",
+            "bead": "sp-fhzib.4"
+          }
+        },
+        {
+          "id": "UC-ops-detection-remediation-40",
+          "tier": "T1",
+          "statement": "strand.sh classify_one's label-threading to bd (partition isolation) is exercised end to end: a stub bd returning mixed-partition JSON, asserted on the ARGV strand.sh actually sent — not a response the stub could get right by accident.",
+          "covering_suites": [],
+          "uncovered": {
+            "reason": "gap G6: partition isolation is untested; the demotion that adds a stub-bd coverage row for it is sp-fhzib.4's scope, reopened separately and not yet landed",
+            "date": "2026-09-26",
+            "bead": "sp-fhzib.4"
+          }
+        }
+      ]
+    },
+    {
       "area": "test-infrastructure",
       "use_cases": [
         {

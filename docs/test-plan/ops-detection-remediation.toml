@@ -181,11 +181,6 @@ id = "UC-ops-detection-remediation-36"
 tier = "T0"
 statement = "Detector and trigger conf keys are allowlisted with documented defaults; priority bands put incidents and suite-reds below user-reported bugs; the `SENT` wire token agrees between `sending.sh`, `sentinel.sh` and `cockpit-metrics.py`."
 
-[use_case.uncovered]
-reason = "strand.sh classify_one's label-threading to bd (partition isolation) is untested; the demotion that adds a stub-bd coverage row for it is sp-fhzib.4's scope, reopened separately and not yet landed"
-date = "2026-09-26"
-bead = "sp-fhzib.4"
-
 [[use_case]]
 id = "UC-ops-detection-remediation-37"
 tier = "T1"
@@ -213,5 +208,15 @@ statement = "Every existing ALERTS fixture that exercises Auron's bead label sha
 
 [use_case.uncovered]
 reason = "gap G14: the panel's ALERTS fixtures hand-type the label set today rather than reusing Auron's real shape; closing it is sp-fhzib.4's scope, reopened separately and not yet landed"
+date = "2026-09-26"
+bead = "sp-fhzib.4"
+
+[[use_case]]
+id = "UC-ops-detection-remediation-40"
+tier = "T1"
+statement = "strand.sh classify_one's label-threading to bd (partition isolation) is exercised end to end: a stub bd returning mixed-partition JSON, asserted on the ARGV strand.sh actually sent — not a response the stub could get right by accident."
+
+[use_case.uncovered]
+reason = "gap G6: partition isolation is untested; the demotion that adds a stub-bd coverage row for it is sp-fhzib.4's scope, reopened separately and not yet landed"
 date = "2026-09-26"
 bead = "sp-fhzib.4"
