@@ -12,6 +12,8 @@ members = [
     "batcher",
     "batcher-cut",
     "tsd",
+    "reconciler-engine",
+    "reconciler",
 ]
 resolver = "2"
 

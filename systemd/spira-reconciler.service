@@ -1,0 +1,20 @@
+[Unit]
+Description=Spira reconciler — structural invariants: fleet, units, store, cockpit, release, queue
+Documentation=file://@SPIRA_HOME@/reconciler.sh
+After=default.target
+
+[Service]
+Type=oneshot
+ExecStart=@SPIRA_PROD@/reconciler.sh --pass
+# A pass reads local files and shells to a handful of read-mostly tools (systemctl, tmux,
+# git); 60 s is generous for all of them together.
+TimeoutStartSec=60
+# Nice=10 is the fence (law-fence-loops-on-shared-hardware).
+Nice=10
+Environment=SPIRA_HOME=@SPIRA_PROD@
+Environment=SPIRA_RUN=@SPIRA_RUN@
+StandardOutput=append:@SPIRA_RUN@/reconciler.log
+StandardError=append:@SPIRA_RUN@/reconciler.log
+
+[Install]
+WantedBy=default.target

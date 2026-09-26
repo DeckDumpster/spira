@@ -30,9 +30,7 @@ fn config_home() -> PathBuf {
 }
 
 fn desired_dir() -> PathBuf {
-    env::var("SPIRA_DESIRED_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| config_home().join("spira").join("desired"))
+    spira_desired_state::store::default_dir()
 }
 
 /// The operator's own fragments — one producer among the federation, not a special case.

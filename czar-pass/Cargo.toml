@@ -6,6 +6,7 @@ description = "Czar fast pass — deterministic queue-stall detection on a 30-se
 
 [dependencies]
 serde_json = "1"
+reconciler-engine = { path = "../reconciler-engine" }
 
 [profile.release]
 opt-level = "z"

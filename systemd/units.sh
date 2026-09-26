@@ -61,6 +61,7 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
        spira-skew.service spira-skew.timer
        spira-archivist.service spira-archivist.timer
        spira-czar-pass.service spira-czar-pass.timer
+       spira-reconciler.service spira-reconciler.timer
        spira-cockpit.service
        spira-watch@.service
        spira-watch-notify.service spira-watch-notify.timer
@@ -85,6 +86,7 @@ UNITS=(spira-sentinel.service spira-sentinel.timer
 _ENABLE_TMPL=(cockpit-ensure.timer concierge.timer spira-watch-refresh.timer
               beads-push.timer spira-sentinel.timer spira-ops.timer spira-auron.timer
               spira-watchtower.timer spira-skew.timer spira-czar-pass.timer
+              spira-reconciler.timer
               spira-archive.timer
               spira-archivist.timer spira-watch-notify.timer
               spira-groom.timer
