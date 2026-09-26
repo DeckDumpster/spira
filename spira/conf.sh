@@ -1664,7 +1664,9 @@ spira_single_checkout() {
 # config file (spira.toml, a converted spira.conf, ...) resolves its write target through.
 # <candidate> is returned unchanged only when this checkout IS the installed release
 # (SPIRA_HOME resolves to the same directory as SPIRA_PROD) or SPIRA_CONFIG_WRITE=1 is set
-# explicitly; otherwise the write is redirected to $SPIRA_REPO instead, same basename.
+# explicitly; otherwise the write is redirected to $SPIRA_REPO, then further to
+# XDG_CONFIG_HOME, then to a private scratch file, at the first of those that is actually
+# writable.
 #
 # scar: three cutover branches, each sourcing their own conf.sh with the operator's real
 # HOME, regenerated the operator's real spira.toml from worktree state — three times in one
@@ -1672,6 +1674,14 @@ spira_single_checkout() {
 # business writing outside itself, however it got HOME; an unresolved SPIRA_PROD (default
 # not yet derived) compares unequal to SPIRA_HOME and so fails closed into the redirect,
 # which is the safe side of this check.
+#
+# $SPIRA_REPO IS CHECKED, NOT ASSUMED, WRITABLE (sp-jv49c): a testenv container bind-mounts
+# it read-write for its host owner but read-only (or foreign-UID-owned) for the user conf.sh
+# runs as, so a redirect that lands there unconditionally hands `spira-config convert` a
+# target it cannot write and the whole auto-convert fails — silently reverting every
+# SPIRA_* key to its computed default instead of what spira.conf actually says. The final
+# fallback, a private scratch file, is chosen precisely because `mktemp` always succeeds:
+# the auto-convert this run's values depend on must not fail for want of a place to land.
 spira_config_writeback() {
     local candidate="$1"
     if [ "${SPIRA_CONFIG_WRITE:-0}" = "1" ]; then
@@ -1685,7 +1695,16 @@ spira_config_writeback() {
         printf '%s' "$candidate"
         return 0
     fi
-    printf '%s/%s' "$SPIRA_REPO" "$(basename "$candidate")"
+    if [ -w "$SPIRA_REPO" ]; then
+        printf '%s/%s' "$SPIRA_REPO" "$(basename "$candidate")"
+        return 0
+    fi
+    local xdg_dir="${XDG_CONFIG_HOME:-$HOME/.config}/spira"
+    if mkdir -p "$xdg_dir" 2>/dev/null && [ -w "$xdg_dir" ]; then
+        printf '%s/%s' "$xdg_dir" "$(basename "$candidate")"
+        return 0
+    fi
+    mktemp "${TMPDIR:-/tmp}/spira-toml.XXXXXX"
 }
 
 SPIRA_CONF_FILE="$(spira_conf_file)"

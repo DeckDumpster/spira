@@ -89,6 +89,28 @@ got="$(writeback env SPIRA_PROD=)"
 isne "empty SPIRA_PROD still redirects" "$REAL_TOML" "$got"
 
 echo
+echo "SPIRA_REPO not writable (sp-jv49c: a testenv container's bind-mounted /workspace) —"
+echo "the guard falls further, to XDG_CONFIG_HOME, instead of handing convert a dead target:"
+chmod a-w "$HARNESS"
+got="$(writeback env)"
+chmod u+w "$HARNESS"
+isne "an unwritable SPIRA_REPO does not redirect there" "$HARNESS/spira.toml" "$got"
+want "the fallback lives under XDG_CONFIG_HOME/spira" "$FIXHOME/.config/spira" "$got"
+
+echo
+echo "SPIRA_REPO and XDG_CONFIG_HOME both unwritable — the guard still returns a writable"
+echo "scratch path rather than nothing (the auto-convert this run depends on must not fail):"
+chmod a-w "$HARNESS"
+chmod a-w "$FIXHOME/.config/spira"
+got="$(writeback env)"
+chmod u+w "$HARNESS" "$FIXHOME/.config/spira"
+if [ -n "$got" ] && touch "$got" 2>/dev/null; then
+    ok "the double-unwritable fallback is itself a writable path"
+else
+    bad "the double-unwritable fallback is itself a writable path" "got [$got]"
+fi
+
+echo
 echo "the redirect is not a fiction — writing there truly leaves the real file untouched:"
 redirected="$(writeback env)"
 mkdir -p "$(dirname "$redirected")"

@@ -209,6 +209,27 @@ is "no leftover temp file after the refusal" "0" "$leftover"
 
 # ==========================================================================
 echo
+echo "CONTAINER PERMISSION DENIED (sp-jv49c) — an unwritable SPIRA_REPO does not cost"
+echo "spira.conf's real values:"
+# ==========================================================================
+# The concrete regression: a testenv container bind-mounts SPIRA_REPO read-write for its
+# host owner but read-only (or foreign-UID-owned) for the user conf.sh runs as, and
+# spira_toml_resolve's write target used to be $SPIRA_REPO unconditionally. Auto-convert
+# then failed with EACCES and, since no spira.toml existed yet either, every SPIRA_* key
+# silently reverted to its computed default instead of what spira.conf says. HARNESS
+# doubles as SPIRA_REPO here (no .git under it), so chmod on it reproduces the container.
+RO_DIR="$T/readonly-legacy"
+mkdir -p "$RO_DIR"
+RO_CONF="$RO_DIR/spira.conf"
+ro_prod="$T/readonly-chosen/spira"
+printf 'SPIRA_PROD = %s\n' "$ro_prod" > "$RO_CONF"
+chmod a-w "$HARNESS"
+got_ro_prod="$(conf_val SPIRA_PROD SPIRA_CONF="$RO_CONF")"
+chmod u+w "$HARNESS"
+is "SPIRA_PROD survives an unwritable SPIRA_REPO" "$ro_prod" "$got_ro_prod"
+
+# ==========================================================================
+echo
 echo "BOOTSTRAP — no spira-config binary anywhere: cargo stays reachable:"
 # ==========================================================================
 # A fresh worktree (no target/, no bin/ — $HARNESS above has neither) cannot resolve
